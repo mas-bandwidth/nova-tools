@@ -5,6 +5,7 @@ package friend
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -60,7 +61,7 @@ func TestRestartTransfersAFreshMarkForARealSurvivingProcess(t *testing.T) {
 		defer func() { killGroup(cmd.Process.Pid); _ = cmd.Wait() }()
 		identity := ProcessIdentity(cmd.Process.Pid)
 		require.NotEmpty(t, identity)
-		job, owner := "c1~15", "bob lane 1 (daemon previous)"
+		job, owner := "c1~15", "bob lane 1 (daemon 99999998.1)"
 		card := Card{ID: "c1", Brief: filepath.Join(dir, "inbox", job, "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", job)}
 		require.NoError(t, os.MkdirAll(filepath.Join(dir, "jobs", job), 0o755))
 		require.NoError(t, writeRunReceipt(dir, job, runReceipt{RunID: "real-run", PID: cmd.Process.Pid, Identity: identity}))
@@ -69,6 +70,7 @@ func TestRestartTransfersAFreshMarkForARealSurvivingProcess(t *testing.T) {
 		r, state := laneRig(t, h, 1)
 		*state = LaneState{Sessions: map[int]string{1: "ses_1"}, Started: map[string]Started{job: {Lane: 1, Card: card, At: t0.Add(-time.Minute), RunID: "real-run", Owner: owner}}}
 		r.d.ProcessIdentity = ProcessIdentity
+		r.d.ProcessAlive = ProcessAlive
 		r.d.WaitProcess = func(ctx context.Context, _ int) bool { <-ctx.Done(); return false }
 		var mark LaneMark
 		r.at[3] = func() { mark, _ = ReadLaneMark(dir, job) }
@@ -105,6 +107,47 @@ func TestStaleMarkCannotBeClaimedOverItsLiveRealRun(t *testing.T) {
 	holder, err = ClaimLane(dir, job, "new", now)
 	require.NoError(t, err)
 	assert.Empty(t, holder, "the live process has a different birth and cannot hold an old run")
+}
+
+func TestOlderStartedCannotFailAStaleMarkedLiveForeignRun(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "working"}}, []string{"c1"}, nil)
+		job, owner := "c1~15", "new-owner"
+		cmd := exec.CommandContext(context.Background(), "/bin/sleep", "10")
+		ownGroup(cmd)
+		require.NoError(t, cmd.Start())
+		defer func() { killGroup(cmd.Process.Pid); _ = cmd.Wait() }()
+		identity := ProcessIdentity(cmd.Process.Pid)
+		require.NotEmpty(t, identity)
+		card := Card{ID: "c1", Brief: filepath.Join(dir, "inbox", job, "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", job)}
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "jobs", job), 0o755))
+		require.NoError(t, writeRunReceipt(dir, job, runReceipt{RunID: "new-run", PID: cmd.Process.Pid, Identity: identity}))
+		require.NoError(t, os.WriteFile(laneMarkPath(dir, job), []byte(LaneMarkRunningRun(owner, t0.Add(-LaneMarkStale-time.Second), "new-run")), 0o644))
+		h := &lanesHarness{dir: dir, active: map[string]int{}}
+		r, state := laneRig(t, h, 1)
+		*state = LaneState{Sessions: map[int]string{1: "ses_1"}, Started: map[string]Started{job: {Lane: 1, Card: card, At: t0.Add(-time.Minute), RunID: "old-run", Owner: "old-owner"}}}
+		r.d.ProcessIdentity = ProcessIdentity
+		r.run(t, 3)
+		assert.NoFileExists(t, card.Report())
+		assert.Equal(t, "new-run", state.Started[job].RunID)
+		assert.Equal(t, identity, ProcessIdentity(cmd.Process.Pid))
+	})
+}
+
+func TestRecoveryCannotTransferFromAStillRunningDaemon(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	job := "c1~15"
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "jobs", job), 0o755))
+	owner := fmt.Sprintf("bob lane 1 (daemon %d.1)", os.Getpid())
+	require.NoError(t, os.WriteFile(laneMarkPath(dir, job), []byte(LaneMarkRunningRun(owner, t0, "live-run")), 0o644))
+	holder, err := transferLane(dir, job, "live-run", "new-owner", t0, ProcessIdentity, ProcessAlive)
+	require.NoError(t, err)
+	assert.Equal(t, owner, holder)
+	mark, found := ReadLaneMark(dir, job)
+	require.True(t, found)
+	assert.Equal(t, owner, mark.Who)
 }
 
 func TestStopVerifiedRunRefusesAReusedPID(t *testing.T) {

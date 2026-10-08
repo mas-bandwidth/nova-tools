@@ -28,7 +28,7 @@ func TestARestartedDaemonAdoptsALiveLaneRunAndFinishesItsCard(t *testing.T) {
 		h := &lanesHarness{dir: dir, finish: map[string]bool{"c2": true}, active: map[string]int{}, block: make(chan struct{})}
 		r, state := laneRig(t, h, 2)
 		c1 := Card{ID: "c1", Brief: filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", "c1~15")}
-		oldOwner := "bob lane 1 (daemon old)"
+		oldOwner := "bob lane 1 (daemon 99999998.1)"
 		*state = LaneState{Sessions: map[int]string{1: "ses_1", 2: "ses_2"}, Started: map[string]Started{"c1~15": {Lane: 1, Card: c1, At: t0.Add(-time.Minute), RunID: "old-run", Owner: oldOwner}}}
 		require.NoError(t, os.MkdirAll(filepath.Join(dir, "jobs", "c1~15"), 0o755))
 		require.NoError(t, writeRunReceipt(dir, "c1~15", runReceipt{RunID: "old-run", PID: 4242, Identity: "birth-1"}))
@@ -158,7 +158,7 @@ func TestASecondRestartTransfersTheSameRunAgain(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		dir := cardDirFixture(t, [][2]string{{"c1", "working"}}, []string{"c1"}, nil)
-		job, oldOwner := "c1~15", "bob lane 1 (daemon first)"
+		job, oldOwner := "c1~15", "bob lane 1 (daemon 99999998.1)"
 		card := Card{ID: "c1", Brief: filepath.Join(dir, "inbox", job, "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", job)}
 		require.NoError(t, os.MkdirAll(filepath.Join(dir, "jobs", job), 0o755))
 		require.NoError(t, writeRunReceipt(dir, job, runReceipt{RunID: "same-run", PID: 9999999, Identity: "birth"}))
@@ -169,7 +169,13 @@ func TestASecondRestartTransfersTheSameRunAgain(t *testing.T) {
 		for i := 0; i < 2; i++ {
 			r, saved := laneRig(t, h, 1)
 			*saved = state
-			r.d.ProcessIdentity = func(int) string { return "birth" }
+			r.d.ProcessAlive = func(pid int) bool { return pid == 9999999 }
+			r.d.ProcessIdentity = func(pid int) string {
+				if pid == 9999999 {
+					return "birth"
+				}
+				return ""
+			}
 			r.d.WaitProcess = func(ctx context.Context, _ int) bool { <-ctx.Done(); return false }
 			r.run(t, 3)
 			state = *saved
@@ -189,7 +195,7 @@ func TestASecondRestartTransfersTheSameRunAgain(t *testing.T) {
 func TestRecoveryCannotTakeAMissingLaneMark(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	holder, err := transferLane(dir, "c1~15", "same-run", "new", t0)
+	holder, err := transferLane(dir, "c1~15", "same-run", "new", t0, ProcessIdentity, ProcessAlive)
 	require.ErrorContains(t, err, "lane mark missing")
 	assert.Empty(t, holder)
 	assert.NoFileExists(t, laneMarkPath(dir, "c1~15"))

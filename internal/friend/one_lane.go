@@ -160,7 +160,7 @@ func claimLaneLocked(dir, job, who string, now time.Time) (holder string, err er
 
 // transferLane gives a verified surviving run's old mark to the new daemon.
 // A changed, ended, or foreign mark is never overwritten.
-func transferLane(dir, job, runID, newWho string, now time.Time) (string, error) {
+func transferLane(dir, job, runID, newWho string, now time.Time, processIdentity func(int) string, processAlive func(int) bool) (string, error) {
 	path := laneMarkPath(dir, job)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
@@ -173,8 +173,34 @@ func transferLane(dir, job, runID, newWho string, now time.Time) (string, error)
 		if m.Ended || runID == "" || m.RunID != runID {
 			return m.Who, nil
 		}
+		// A second daemon may start while the first still runs. The immutable
+		// harness run alone does not prove its old lane owner is gone.
+		pid, err := laneDaemonPID(m.Who)
+		if err != nil || processIdentity == nil || processAlive == nil || processIdentity(pid) != "" || processAlive(pid) {
+			return m.Who, nil
+		}
 		return "", atomicfile.WriteFile(path, []byte(LaneMarkRunningRun(newWho, now, runID)), 0o644)
 	})
+}
+
+func laneDaemonPID(who string) (int, error) {
+	_, tag, ok := strings.Cut(who, "(daemon ")
+	if !ok {
+		return 0, fmt.Errorf("lane mark has no daemon tag")
+	}
+	tag, ok = strings.CutSuffix(tag, ")")
+	if !ok {
+		return 0, fmt.Errorf("lane mark has no daemon tag")
+	}
+	pidText, _, ok := strings.Cut(tag, ".")
+	if !ok {
+		return 0, fmt.Errorf("lane mark has no daemon tag")
+	}
+	pid, err := strconv.Atoi(pidText)
+	if err != nil || pid <= 0 {
+		return 0, fmt.Errorf("lane mark has invalid daemon pid")
+	}
+	return pid, nil
 }
 
 func refreshLane(dir, job, who string, now time.Time, write bool) (string, error) {
@@ -184,7 +210,7 @@ func refreshLane(dir, job, who string, now time.Time, write bool) (string, error
 		if !ok {
 			return "", fmt.Errorf("lane mark missing")
 		}
-		if m.Ended || (m.Who != who && m.heldBy(who, now) != "") {
+		if m.Ended || m.Who != who {
 			return m.Who, nil
 		}
 		if !write {
@@ -215,14 +241,14 @@ func endLaneMark(dir, job, who string) error {
 
 // endOwnedLaneMark ends only this lane's mark. In particular, startup recovery
 // must not overwrite a newer claimant's running mark while failing an old run.
-func endOwnedLaneMark(dir, job, who string, now time.Time) error {
+func endOwnedLaneMark(dir, job, who string) error {
 	path := laneMarkPath(dir, job)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	_, err := withLaneLock(path, func() (string, error) {
 		m, ok := ReadLaneMark(dir, job)
-		if ok && (m.Ended || (m.Who != who && m.heldBy(who, now) != "")) {
+		if ok && (m.Ended || m.Who != who) {
 			return "", nil
 		}
 		return "", atomicfile.WriteFile(path, []byte(LaneMarkEnded(who)), 0o644)
