@@ -47,7 +47,10 @@ func TestLandTakesTheHighestPriorityStreamFirst(t *testing.T) {
 			for _, line := range tc.set {
 				r.ok(line)
 			}
-			out := r.ok("land")
+			// the streams merged one at a time, so the landing order is the pass's order; with
+			// the merges in parallel each batch lands as its gate finishes, the gates' race
+			// (landpass.go, the pass)
+			out := r.ok("land --land-parallel 1")
 			other := map[string]string{"s1": "s2", "s2": "s1"}[tc.first]
 			assert.Less(t, strings.Index(out, "LAND OK stream="+tc.first), strings.Index(out, "LAND OK stream="+other), "%s:\n%s", tc.message, out)
 			assert.Contains(t, out, "LAND DONE batches=2 cards=4 refused=0")

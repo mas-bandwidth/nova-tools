@@ -185,7 +185,9 @@ func TestLandScoresAfterThePassAndStopsAtTheFirstFailure(t *testing.T) {
 				return r.places("s2-1")["s2-1"] == "landed/merged" && r.places("s1-2")["s1-2"] == "landed/merged"
 			}
 			r.a.scoreBackend, r.a.landCtx = f, ctx
-			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+			// the streams merged one at a time, so the batches land, and are scored, in the
+			// pass's order (with parallel merges each lands as its gate finishes; landpass.go)
+			code, out, errs := r.do("land --land-parallel 1 --repo-dir " + r.clone + " --base main")
 			assert.Equal(t, 0, code, errs)
 			assert.Contains(t, out, "LAND OK stream=s1 cards=2")
 			assert.Contains(t, out, "LAND OK stream=s2 cards=1")

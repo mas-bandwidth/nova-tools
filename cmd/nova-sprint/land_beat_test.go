@@ -199,7 +199,6 @@ func TestTheLandLoopBeatsAndRaisesAStuckLanding(t *testing.T) {
 	}
 	close(release)
 
-	steps := 0
 	tooLong := false
 	for {
 		if nudge() {
@@ -207,18 +206,17 @@ func TestTheLandLoopBeatsAndRaisesAStuckLanding(t *testing.T) {
 		}
 		text := out.String()
 		// the landing past the deadline is refused with its gate abandoned; the next one
-		// lands on the bench
+		// lands on the bench. The loop's cycles are the wait, no clock: the test's own
+		// context ends it when the landing never finishes
 		if strings.Contains(text, "LAND FAILED") ||
 			(strings.Contains(text, "LAND OK") && strings.Contains(text, "bench=vision")) {
 			cancel()
 			nudge()
 			break
 		}
-		steps++
-		if steps > 100000 {
+		if t.Context().Err() != nil {
 			tooLong = true
 			cancel()
-			nudge()
 			break
 		}
 	}
