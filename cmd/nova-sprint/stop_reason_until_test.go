@@ -12,8 +12,8 @@ import (
 // TestStopByHandSaysWhoWhyAndWhenEverywhere pins stop's --reason and --until
 // at the command (docs/SPEC-SPRINT.md section 14): a stop missing either is
 // refused naming both, where's header and its JSON (the dashboard's machine
-// line) say "STOPPED by <actor>: <reason>, back by <time>", and a tick at
-// --until starts the machine.
+// line) say "STOPPED by <actor>: <reason>, back by <time>"; the time does
+// not restart it, and an explicit start does.
 func TestStopByHandSaysWhoWhyAndWhenEverywhere(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
@@ -42,7 +42,8 @@ func TestStopByHandSaysWhoWhyAndWhenEverywhere(t *testing.T) {
 	ta.now = ta.now.Add(time.Hour)
 	ta.mu.Unlock()
 	tick := ta.ok("tick")
-	assert.Contains(t, tick, "state=RUNNING", "the tick at --until starts the machine:\n%s", tick)
+	assert.Contains(t, tick, "state=STOPPED", "the tick at --until leaves the machine stopped:\n%s", tick)
+	ta.ok("start")
 	inbox := ta.ok("inbox")
 	require.True(t, strings.HasSuffix(inbox, "machine: running\n"), "inbox:\n%s", inbox)
 }

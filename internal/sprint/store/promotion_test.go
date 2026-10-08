@@ -143,10 +143,9 @@ func TestAPromotionQueuedAfterTheDrainRaisesNoSecondDevBehind(t *testing.T) {
 }
 
 // A step on a STOPPED machine drains the queue the machine left before it
-// runs; the drain reads and writes through the twin the step holds, so a step
-// loading no table (the stop's note, the tick-end note's) reads no table whole
-// for it (the dirty-tick drive of 2026-10-05: "/tick end read 1 whole" on the
-// tick the sprint was done). Red without the drain given the held twin.
+// runs. STOP now reads the owner tables once to capture live cancellation
+// debt; the queued promotion drains through the held twin without a second
+// whole read (the dirty-tick drive of 2026-10-05).
 func TestADrainBeforeAStepReadsThroughTheTwinTheStepHolds(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -159,10 +158,10 @@ func TestADrainBeforeAStepReadsThroughTheTwinTheStepHolds(t *testing.T) {
 	h.must(PromotedStep(sprint.PromotedReq{Sha: "0123abc", Who: "tester"}))
 	require.Positive(t, h.queueLen())
 	before := h.st.stats().reads.Load()
-	// the stop's note is a step loading no table: it drains the queue first
+	// STOP captures owner debt with one whole read and drains the queue first.
 	h.stopMachine()
 	assert.Zero(t, h.queueLen(), "the stop's step drained the queue first")
-	assert.Zero(t, h.st.stats().reads.Load()-before, "the drain read a table whole: the step's twin was not lent to it")
+	assert.EqualValues(t, 1, h.st.stats().reads.Load()-before, "STOP reads owner leases once; the drain must not add another whole read")
 	_, sha, ok := sprint.Promotion(h.snap())
 	require.True(t, ok)
 	assert.Equal(t, "0123abc", sha)

@@ -341,9 +341,36 @@ func (r *propRun) act(a pAct) {
 		r.run("nova-sprint fleet "+a.K+" "+member, FleetStep(sprint.FleetReq{Op: op, Member: member, Who: "coord", Fresh: true}))
 	case "start", "stop":
 		r.say("nova-sprint %s", a.K)
+		before, _, beforeErr := r.st.Machine(r.ctx)
+		if beforeErr != nil {
+			r.errs = append(r.errs, beforeErr)
+			return
+		}
 		if _, _, _, err := r.st.SetMachine(r.ctx, a.K == "start"); err != nil {
+			// A random START may race ahead of its own cancellation receipts.
+			// That refusal is required safety, not a property failure: verify
+			// the owed leases and that the machine stayed stopped.
+			if a.K == "start" && len(before.StopDebt) > 0 && strings.Contains(err.Error(), "STOP-owned work/read jobs lack same-owner cancellation receipts") {
+				after, _, readErr := r.st.Machine(r.ctx)
+				if readErr == nil && after.State == Stopped && len(after.StopDebt) == len(before.StopDebt) {
+					r.stats["start refused with owed cancellation"]++
+					return
+				}
+			}
 			r.errs = append(r.errs, err)
 		}
+	case "stop-return":
+		m, _, err := r.st.Machine(r.ctx)
+		if err != nil {
+			r.errs = append(r.errs, err)
+			return
+		}
+		if a.A >= len(m.StopDebt) {
+			return
+		}
+		d := m.StopDebt[a.A]
+		r.run(fmt.Sprintf("nova-sprint stop-return --as %s %s@%d --reason 'child stopped'", d.Row, d.ID, d.Gen),
+			StopReturnStep(sprint.StopReturnReq{As: d.Row, IDs: []string{d.ID}, Gens: map[string]int{d.ID: d.Gen}, Reason: "child stopped"}))
 	case "tick", "tickstop":
 		if a.K == "tickstop" {
 			r.stopAfter = 1 + a.A%3
@@ -378,7 +405,8 @@ func (r *propRun) act(a pAct) {
 			return
 		}
 		if c, ok := pickOf(s.Readers.Cell(reader, sprint.Asked), a.B); ok {
-			r.run(fmt.Sprintf("nova-sprint read %s --as %s --begin", c.ID, reader), ReadStep(sprint.ReadReq{As: reader, Begin: true, Sel: sprint.Sel{IDs: []string{c.ID}}, Who: reader}))
+			gen := max(c.Int("gen"), 1)
+			r.run(fmt.Sprintf("nova-sprint read %s@%d --as %s --begin", c.ID, gen, reader), ReadStep(sprint.ReadReq{As: reader, Begin: true, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: gen}, Who: reader}))
 		}
 	case "report":
 		s := r.snap()
@@ -387,11 +415,12 @@ func (r *propRun) act(a pAct) {
 		}
 		cs := append(append([]*sprint.Card{}, s.Readers.Cell(reader, sprint.Asked)...), s.Readers.Cell(reader, sprint.Reading)...)
 		if c, ok := pickOf(cs, a.B); ok {
+			gen := max(c.Int("gen"), 1)
 			v := "ok"
 			if a.F {
 				v = "broken"
 			}
-			r.run(fmt.Sprintf("nova-sprint read %s --as %s --verdict %s --finding f:1", c.ID, reader, v), ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: reader, Verdict: v, Finding: "f:1", Sel: sprint.Sel{IDs: []string{c.ID}}, Who: reader}))
+			r.run(fmt.Sprintf("nova-sprint read %s@%d --as %s --verdict %s --finding f:1", c.ID, gen, reader, v), ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: reader, Verdict: v, Finding: "f:1", Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: gen}, Who: reader}))
 		}
 	case "merge":
 		r.merge(stream, a.B, a.C, a.F)
@@ -642,7 +671,13 @@ func (r *propRun) decide(v InboxView, g sprint.Group, choice int, progress bool)
 		r.run(line+" --answers "+strings.Join(answers, ","), ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: ids}, Fix: fix, Answers: answers, Who: "coord"}))
 	}
 	drop := func(ids []string, answers []string) {
-		r.run("nova-sprint drop "+strings.Join(ids, " ")+" --reason why --answers "+strings.Join(answers, ","), DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: ids}, Reason: "why", Answers: answers, Who: "coord"}))
+		line := "nova-sprint drop " + strings.Join(ids, " ") + " --reason why"
+		if progress {
+			// A fair coordinator resolves dependants too; a narrow drop is
+			// properly refused while other primaries still need this card.
+			line += " --cascade"
+		}
+		r.run(line+" --answers "+strings.Join(answers, ","), DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: ids}, Reason: "why", Cascade: progress, Answers: answers, Who: "coord"}))
 	}
 	ack := func() {
 		for _, m := range members {
@@ -1071,13 +1106,25 @@ func (r *propRun) drain(i0 int) *propFail {
 		r.act(a)
 		return r.check(step, a)
 	}
-	for k := range r.cfg.members {
-		if f := do(pAct{K: "up", A: k}); f != nil {
+	// Fair actors first cancel every child whose lease STOP captured and
+	// acknowledge that cancellation on its owner row. START must not erase
+	// those debts merely because the property runner wants to make progress.
+	m, _, err := r.st.Machine(r.ctx)
+	if err != nil {
+		return &propFail{Step: step, Kind: "error", Detail: err.Error()}
+	}
+	for i := range m.StopDebt {
+		if f := do(pAct{K: "stop-return", A: i}); f != nil {
 			return f
 		}
 	}
 	if f := do(pAct{K: "start"}); f != nil {
 		return f
+	}
+	for k := range r.cfg.members {
+		if f := do(pAct{K: "up", A: k}); f != nil {
+			return f
+		}
 	}
 	for round := 0; round < 400; round++ {
 		fault := func(n int) bool { return round < 60 && r.rng.IntN(n+round) == 0 }

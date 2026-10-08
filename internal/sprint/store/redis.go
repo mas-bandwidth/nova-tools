@@ -447,7 +447,13 @@ func fenceOf(mget *redis.SliceCmd, llen *redis.IntCmd) (Fence, error) {
 	f.Queued = int(llen.Val())
 	if s, ok := vals[2].(string); ok {
 		var m Machine
-		f.Running = json.Unmarshal([]byte(s), &m) == nil && m.Running()
+		if json.Unmarshal([]byte(s), &m) == nil {
+			f.Running = m.Running()
+			f.RunSeq = m.RunSeq
+			f.StopRevoked = m.stopRevoked()
+			f.StopIssued = m.StopIssued
+			f.StopDebt = m.StopDebt
+		}
 	}
 	if s, ok := vals[1].(string); ok {
 		f.Gen, _ = strconv.ParseUint(s, 10, 64)

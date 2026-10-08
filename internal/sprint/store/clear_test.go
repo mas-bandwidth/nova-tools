@@ -50,14 +50,40 @@ func midFlight(t *testing.T) *harness {
 	return h
 }
 
+// settleMidFlightStop returns each captured lease by its original owner before
+// a clear fixture advances the epoch. START then permits the next run.
+func settleMidFlightStop(h *harness) {
+	h.t.Helper()
+	_, _, _, err := h.st.SetMachine(h.ctx, false)
+	require.NoError(h.t, err)
+	m, _, err := h.st.Machine(h.ctx)
+	require.NoError(h.t, err)
+	require.NotEmpty(h.t, m.StopDebt, "the fixture must exercise owner returns")
+	for _, debt := range m.StopDebt {
+		h.must(StopReturnStep(sprint.StopReturnReq{As: debt.Row, IDs: []string{debt.ID}, Gens: map[string]int{debt.ID: debt.Gen}, Reason: "owner child stopped"}))
+	}
+	_, _, _, err = h.st.SetMachine(h.ctx, true)
+	require.NoError(h.t, err, "START follows the captured same-owner cancellation receipts")
+}
+
 func TestClearStopsTheSprintAndClearsAllWork(t *testing.T) {
 	t.Parallel()
 	h := midFlight(t)
 	before := h.snap()
-	_, _, _, err := h.st.SetMachine(h.ctx, true)
-	require.NoError(t, err)
 	res, err := h.st.Clear(h.ctx)
+	require.ErrorContains(t, err, "captured owner work/read leases", "clear must not erase work while STOP still owes an owner cancellation receipt")
+	assert.Equal(t, uint64(0), h.snap().Epoch, "a refused clear keeps the old epoch for the owner to return its children")
 	m, _, merr := h.st.Machine(h.ctx)
+	require.NoError(t, merr)
+	require.Equal(t, Stopped, m.State)
+	require.NotEmpty(t, m.StopDebt)
+	for _, debt := range m.StopDebt {
+		h.must(StopReturnStep(sprint.StopReturnReq{As: debt.Row, IDs: []string{debt.ID}, Gens: map[string]int{debt.ID: debt.Gen}, Reason: "owner child stopped"}))
+	}
+	_, _, _, err = h.st.SetMachine(h.ctx, true)
+	require.NoError(t, err, "START follows the captured same-owner cancellation receipts")
+	res, err = h.st.Clear(h.ctx)
+	m, _, merr = h.st.Machine(h.ctx)
 	stopped := merr == nil && res.Machine == Running && m.State == Stopped
 	require.NoError(t, err, "clear: %v", err)
 	if !stopped || res.From != 0 || res.To != 1 || res.Held["primaries"] != 8 || res.Held["merge cards"] != 3 {
@@ -114,6 +140,8 @@ func TestClearStopsTheSprintAndClearsAllWork(t *testing.T) {
 
 	// The same ids run again, to landed, in the new epoch.
 	h.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s1", Count: 3}))
+	_, _, _, err = h.st.SetMachine(h.ctx, true)
+	require.NoError(t, err, "new work starts only after the cleared sprint starts its new run")
 	h.through("s1-1", "s1-2", "s1-3")
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1"}))
 	if s := h.snap(); s.StateOf("s1-1") != sprint.Landed || s.StateOf("s1-3") != sprint.Landed {
@@ -135,6 +163,7 @@ func TestClearStopsTheSprintAndClearsAllWork(t *testing.T) {
 func TestACutClearIsFinishedByTheNext(t *testing.T) {
 	t.Parallel()
 	h := midFlight(t)
+	settleMidFlightStop(h)
 	h.m.Fail = func(p string) error {
 		if strings.HasPrefix(p, "apply ") {
 			return errors.New("cut")
@@ -172,6 +201,7 @@ func TestTeardownAfterClearsLeavesNoKey(t *testing.T) {
 		_, err := h.st.Clear(h.ctx)
 		require.NoError(t, err)
 		h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 2}))
+		h.startMachine() // clear leaves STOPPED; the next epoch needs its own run
 		h.through("s1-1")
 	}
 	_, err := h.st.Teardown(h.ctx)

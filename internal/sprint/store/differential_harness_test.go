@@ -10,7 +10,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math/rand/v2"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -94,6 +96,8 @@ func (a dAction) verb() string {
 		return "tick"
 	case "start", "stop":
 		return a.Kind
+	case "stop-return":
+		return fmt.Sprintf("stop-return --as %s %s@%d --reason 'child stopped'", a.Member, a.Card, a.Gen)
 	case "take":
 		return fmt.Sprintf("take --as %s %s@%d", a.Member, a.Card, a.Gen)
 	case "finish":
@@ -103,13 +107,13 @@ func (a dAction) verb() string {
 		}
 		return fmt.Sprintf("finish --as %s %s@%d %s", a.Member, a.Card, a.Gen, v)
 	case "begin":
-		return fmt.Sprintf("read --as %s --begin %s", a.Reader, a.Card)
+		return fmt.Sprintf("read --as %s --begin %s@%d", a.Reader, a.Card, a.Gen)
 	case "read":
 		v := "ok"
 		if !a.OK {
 			v = "broken"
 		}
-		return fmt.Sprintf("read --as %s %s %s", a.Reader, a.Card, v)
+		return fmt.Sprintf("read --as %s %s@%d %s", a.Reader, a.Card, a.Gen, v)
 	case "merge":
 		s := fmt.Sprintf("merge --stream %s --batch %d", a.Stream, a.Batch)
 		switch a.Fact {
@@ -233,9 +237,16 @@ type dHarness struct {
 	mu    sync.Mutex
 	now   time.Time
 	model refmodel.State
-	seen  map[string]map[string]bool // logical table -> card ids to read, placed or not
-	epoch uint64
-	seq   []dAction
+	// The older table model has no STOP lease ledger. The differential driver
+	// keeps the model's captured owner leases separately so a generated trace
+	// can exercise refusal, cancellation receipt, and safe START in order.
+	stopIssued bool
+	stopHeld   map[string]dStopLease      // immutable STOP ledger until START
+	stopDebt   map[string]dStopLease      // leases still lacking an owner receipt
+	readGen    map[string]int             // the older table model omits read generations
+	seen       map[string]map[string]bool // logical table -> card ids to read, placed or not
+	epoch      uint64
+	seq        []dAction
 	// resync, when set, takes the engine's state as the model's after a
 	// difference, so one sequence can find more than one.
 	resync   bool
@@ -255,8 +266,32 @@ type dHarness struct {
 	mid      *refmodel.State // the state while cut, before repair (Leave)
 }
 
+type dStopLease struct {
+	table, row, card string
+	gen              int
+}
+
+func (d dStopLease) action() dAction {
+	return dAction{Kind: "stop-return", Op: d.table, Member: d.row, Card: d.card, Gen: d.gen}
+}
+
+func (h *dHarness) activeStopLeases(s refmodel.State) map[string]dStopLease {
+	owed := map[string]dStopLease{}
+	for id, c := range s.Work {
+		if c.Place == refmodel.FWorking {
+			owed[id] = dStopLease{table: sprint.Fleet, row: c.Member, card: id, gen: max(c.Gen, 1)}
+		}
+	}
+	for id, c := range s.Reads {
+		if c.Place == refmodel.Reading {
+			owed[id] = dStopLease{table: sprint.Readers, row: c.Reader, card: id, gen: max(h.readGen[id], 1)}
+		}
+	}
+	return owed
+}
+
 func newDHarness(t testing.TB) *dHarness {
-	h := &dHarness{t: t, ctx: context.Background(), m: NewMem(), now: t0, resync: true}
+	h := &dHarness{t: t, ctx: context.Background(), m: NewMem(), now: t0, resync: true, readGen: map[string]int{}}
 	n := 0
 	h.st = &Store{B: h.m, Names: sprint.Names{Prefix: "d-"}, Actor: dCoordinator,
 		Now:   func() time.Time { h.mu.Lock(); defer h.mu.Unlock(); return h.now },
@@ -447,7 +482,7 @@ func (h *dHarness) record(a dAction, post, next refmodel.State, merr error, refu
 	if len(out) > 0 && h.resync {
 		h.model = post
 	}
-	if a.Kind == "clear" {
+	if a.Kind == "clear" && refusedWhy == "" && merr == nil {
 		h.seen = map[string]map[string]bool{}
 	}
 	h.findings = append(h.findings, out...)
@@ -515,18 +550,20 @@ func (h *dHarness) engine(a dAction, pre refmodel.State) (refused string, cutOK 
 	case "start", "stop":
 		_, _, _, err := h.st.SetMachine(h.ctx, a.Kind == "start")
 		return engineErr(err, nil), cutOK
+	case "stop-return":
+		return run(StopReturnStep(sprint.StopReturnReq{As: a.Member, IDs: []string{a.Card}, Gens: map[string]int{a.Card: a.Gen}, Reason: "child stopped"})), cutOK
 	case "take":
 		return run(TakeStep(sprint.TakeReq{As: a.Member, Sel: sprint.Sel{IDs: []string{a.Card}}, Gens: map[string]int{a.Card: a.Gen}})), cutOK
 	case "finish":
 		return run(FinishStep(sprint.FinishReq{As: a.Member, Sel: sprint.Sel{IDs: []string{a.Card}}, Gens: map[string]int{a.Card: a.Gen}, Failed: !a.OK, Report: "report"})), cutOK
 	case "begin":
-		return run(ReadStep(sprint.ReadReq{As: a.Reader, Sel: sprint.Sel{IDs: []string{a.Card}}, Begin: true})), cutOK
+		return run(ReadStep(sprint.ReadReq{As: a.Reader, Sel: sprint.Sel{IDs: []string{a.Card}}, Gens: map[string]int{a.Card: a.Gen}, Begin: true})), cutOK
 	case "read":
 		v := "ok"
 		if !a.OK {
 			v = "broken"
 		}
-		return run(ReadStep(sprint.ReadReq{As: a.Reader, Sel: sprint.Sel{IDs: []string{a.Card}}, Verdict: v, Finding: "finding:1"})), cutOK
+		return run(ReadStep(sprint.ReadReq{As: a.Reader, Sel: sprint.Sel{IDs: []string{a.Card}}, Gens: map[string]int{a.Card: a.Gen}, Verdict: v, Finding: "finding:1"})), cutOK
 	case "accept":
 		return run(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: a.IDs}})), cutOK
 	case "rework":
@@ -655,15 +692,77 @@ func (h *dHarness) modelStep(a dAction, pre, post refmodel.State) (refmodel.Stat
 		next, err = refmodel.Add(s, args, scores)
 	case "tick":
 		next, err = refmodel.Tick(s, tickChoices(pre, post))
+		if err == nil && s.Machine == refmodel.Running && next.Machine == refmodel.Stopped {
+			h.stopIssued = true
+			h.stopHeld = h.activeStopLeases(next)
+			h.stopDebt = maps.Clone(h.stopHeld)
+		}
 	case "start", "stop":
-		next, err = refmodel.SetMachine(s, a.Kind == "start")
+		if a.Kind == "start" {
+			if len(h.stopDebt) > 0 {
+				return s, fmt.Errorf("STOP-owned work/read jobs lack same-owner cancellation receipts")
+			}
+			next, err = refmodel.SetMachine(s, true)
+			if err == nil {
+				h.stopIssued = false
+				h.stopHeld = nil
+				h.stopDebt = nil
+			}
+		} else {
+			next, err = refmodel.SetMachine(s, false)
+			if err == nil {
+				h.stopIssued = true
+				if h.stopHeld == nil {
+					h.stopHeld = h.activeStopLeases(s)
+					h.stopDebt = maps.Clone(h.stopHeld)
+				}
+			}
+		}
+	case "stop-return":
+		if s.Machine != refmodel.Stopped || !h.stopIssued {
+			return s, fmt.Errorf("stop-return requires a halted run")
+		}
+		lease, ok := h.stopDebt[a.Card]
+		if !ok || lease.row != a.Member || lease.gen != a.Gen || lease.table != a.Op {
+			return s, fmt.Errorf("stop-return must name the captured owner lease")
+		}
+		next = s.Clone()
+		if lease.table == sprint.Fleet {
+			c := next.Work[a.Card]
+			c.Place, c.Gen = refmodel.FReady, c.Gen+1
+			next.Work[a.Card] = c
+		} else {
+			c := next.Reads[a.Card]
+			c.Place = refmodel.Asked
+			next.Reads[a.Card] = c
+			h.readGen[a.Card] = a.Gen + 1
+		}
+		delete(h.stopDebt, a.Card)
 	case "take":
+		if s.Machine == refmodel.Stopped && h.stopIssued {
+			return s, fmt.Errorf("take requires a running machine")
+		}
 		next, err = refmodel.Take(s, a.Member, a.Card, a.Gen)
 	case "finish":
+		if s.Machine == refmodel.Stopped && h.stopIssued {
+			return s, fmt.Errorf("finish requires a running machine")
+		}
 		next, err = refmodel.Finish(s, a.Member, a.Card, a.Gen, a.OK)
 	case "begin":
+		if s.Machine == refmodel.Stopped && h.stopIssued {
+			return s, fmt.Errorf("read begin requires a running machine")
+		}
+		if a.Gen != max(h.readGen[a.Card], 1) {
+			return s, fmt.Errorf("read begin generation is stale")
+		}
 		next, err = refmodel.ReadStart(s, a.Reader, a.Card)
 	case "read":
+		if s.Machine == refmodel.Stopped && h.stopIssued {
+			return s, fmt.Errorf("read report requires a running machine")
+		}
+		if a.Gen != max(h.readGen[a.Card], 1) {
+			return s, fmt.Errorf("read report generation is stale")
+		}
 		next, err = refmodel.Read(s, a.Reader, a.Card, a.OK)
 	case "accept":
 		next, err = refmodel.Accept(s, a.IDs)
@@ -701,6 +800,13 @@ func (h *dHarness) modelStep(a dAction, pre, post refmodel.State) (refmodel.Stat
 	case "resume":
 		next, err = refmodel.Resume(s, a.Stream, a.Did)
 	case "fleet":
+		if h.stopIssued && a.Op == "down" {
+			for _, debt := range h.stopHeld {
+				if debt.table == sprint.Fleet && debt.row == a.Member {
+					return s, fmt.Errorf("fleet down cannot redeal STOP-owned work before %s returns it", a.Member)
+				}
+			}
+		}
 		moves := moved(pre, post)
 		switch a.Op {
 		case "up":
@@ -739,10 +845,30 @@ func (h *dHarness) modelStep(a dAction, pre, post refmodel.State) (refmodel.Stat
 	case "resolve":
 		next, err = refmodel.Resolve(s, a.id())
 	case "clear":
+		if len(h.stopDebt) > 0 {
+			return s, fmt.Errorf("clear requires STOP owner cancellation receipts")
+		}
 		next, err = refmodel.Clear(s)
+		if err == nil {
+			h.stopIssued = true
+			h.stopHeld = nil
+			h.stopDebt = nil
+			h.readGen = map[string]int{}
+		}
 	}
 	if err != nil {
 		return s, err
+	}
+	// STOP owns captured cards until START after their owners return them. The older
+	// table model can still apply a fleet or reader transition here; the engine
+	// must refuse that whole transition rather than erase its receipt path.
+	if h.stopIssued && a.Kind != "stop-return" {
+		for id, debt := range h.stopHeld {
+			if debt.table == sprint.Fleet && !reflect.DeepEqual(s.Work[id], next.Work[id]) ||
+				debt.table == sprint.Readers && !reflect.DeepEqual(s.Reads[id], next.Reads[id]) {
+				return s, fmt.Errorf("STOP owns captured lease %s@%d until its owner returns it", id, debt.gen)
+			}
+		}
 	}
 	return next, nil
 }
@@ -849,6 +975,14 @@ func (h *dHarness) pick(rng *rand.Rand, n *int) dAction {
 
 func (h *dHarness) pick1(rng *rand.Rand, n *int) dAction {
 	s := h.model
+	if s.Machine == refmodel.Stopped && len(h.stopDebt) > 0 && rng.IntN(3) == 0 {
+		keys := make([]string, 0, len(h.stopDebt))
+		for id := range h.stopDebt {
+			keys = append(keys, id)
+		}
+		sort.Strings(keys)
+		return h.stopDebt[keys[rng.IntN(len(keys))]].action()
+	}
 	fresh := func() string { *n++; return fmt.Sprintf("p%d", *n) }
 	placed := func(states ...string) []string {
 		var out []string
@@ -939,10 +1073,11 @@ func (h *dHarness) pick1(rng *rand.Rand, n *int) dAction {
 				continue
 			}
 			c := one(cards)
+			g := max(h.readGen[c], 1)
 			if s.Reads[c].Place == refmodel.Asked && rng.IntN(3) == 0 {
-				return dAction{Kind: "begin", Reader: s.Reads[c].Reader, Card: c}
+				return dAction{Kind: "begin", Reader: s.Reads[c].Reader, Card: c, Gen: g}
 			}
-			return dAction{Kind: "read", Reader: s.Reads[c].Reader, Card: c, OK: rng.IntN(6) != 0}
+			return dAction{Kind: "read", Reader: s.Reads[c].Reader, Card: c, Gen: g, OK: rng.IntN(6) != 0}
 		case w < 78:
 			rev := placed(refmodel.Review)
 			if len(rev) == 0 {
@@ -1131,6 +1266,31 @@ func dReplay(t testing.TB, seq []dAction) []dFinding {
 		h.do(a)
 	}
 	return h.findings
+}
+
+// A fleet change must not rewrite a child's captured STOP lease before its
+// owner can return that exact generation. Otherwise START becomes impossible.
+func TestStopDebtSurvivesFleetDownUntilOwnerReturn(t *testing.T) {
+	t.Parallel()
+	h := newDHarness(t)
+	for _, a := range dSetup() {
+		require.Empty(t, h.do(a))
+	}
+	require.Empty(t, h.do(dAction{Kind: "tick"}))
+	var owed dAction
+	for id, c := range h.model.Work {
+		if c.Place == refmodel.FReady {
+			owed = dAction{Kind: "take", Member: c.Member, Card: id, Gen: c.Gen}
+			break
+		}
+	}
+	require.NotEmpty(t, owed.Card)
+	require.Empty(t, h.do(owed))
+	require.Empty(t, h.do(dAction{Kind: "stop"}))
+	require.Empty(t, h.do(dAction{Kind: "fleet", Op: "down", Member: owed.Member}), "fleet down must refuse rather than mutate the captured lease")
+	require.Equal(t, dStopLease{table: sprint.Fleet, row: owed.Member, card: owed.Card, gen: owed.Gen}, h.stopDebt[owed.Card])
+	require.Empty(t, h.do(h.stopDebt[owed.Card].action()))
+	require.Empty(t, h.do(dAction{Kind: "start"}))
 }
 
 // dShrink finds a shortest sequence that still ends in a finding of the

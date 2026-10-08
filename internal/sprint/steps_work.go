@@ -1207,11 +1207,12 @@ func named(sel Sel) bool { return len(sel.IDs) > 0 || sel.Only != nil }
 // name, or names and is not the card's live one.
 func liveGen(verb string, c *Card, gens map[string]int) string {
 	g, ok := gens[c.ID]
+	live := max(c.Int("gen"), 1) // legacy first read cards omit gen; their lease is g1
 	switch {
 	case !ok:
-		return fmt.Sprintf("names no generation; the live one is %d: %s %s@%d", c.Int("gen"), verb, c.ID, c.Int("gen"))
-	case g != c.Int("gen"):
-		return fmt.Sprintf("stale: generation %d is not the live one (%d): the card was dealt again to %s", g, c.Int("gen"), orDash(c.Row))
+		return fmt.Sprintf("names no generation; the live one is %d: %s %s@%d", live, verb, c.ID, live)
+	case g != live:
+		return fmt.Sprintf("stale: generation %d is not the live one (%d): the card was dealt again to %s", g, live, orDash(c.Row))
 	}
 	return ""
 }

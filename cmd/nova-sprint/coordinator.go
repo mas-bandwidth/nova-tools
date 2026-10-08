@@ -43,7 +43,7 @@ var verbClasses = map[string]string{
 	"ack":               classCoordinator, "answer": classCoordinator, "clear": classCoordinator, "teardown": classCoordinator, "repair": classCoordinator,
 	"goal set": classCoordinator, "goal drop": classCoordinator, "play": classCoordinator,
 
-	"take": classWorker, "finish": classWorker, "progress": classWorker, "read": classWorker, "fleet beat": classWorker, "friend beat": classWorker, "lane take": classWorker, "lane give": classWorker,
+	"take": classWorker, "finish": classWorker, "progress": classWorker, "read": classWorker, "stop-return": classWorker, "fleet beat": classWorker, "friend beat": classWorker, "lane take": classWorker, "lane give": classWorker,
 	// remind is any actor's: it sets a timer for itself or for another (--for).
 	"remind": classWorker,
 

@@ -177,7 +177,7 @@ func TestTheModelAndTheEngineAgreeOnTheAcceptAndRedealLaws(t *testing.T) {
 			s := h.observe()
 			for _, id := range refmodel.Keys(s.Reads) {
 				if rc := s.Reads[id]; rc.Primary == p && (rc.Place == refmodel.Asked || rc.Place == refmodel.Reading) {
-					do(dAction{Kind: "read", Reader: rc.Reader, Card: id, OK: true})
+					do(dAction{Kind: "read", Reader: rc.Reader, Card: id, Gen: max(h.readGen[id], 1), OK: true})
 				}
 			}
 			if h.observe().Acceptable(p) {

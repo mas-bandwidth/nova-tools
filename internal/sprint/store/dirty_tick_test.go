@@ -457,13 +457,14 @@ func TestAMergeBeforeThePumpSeesTheQueuedAccept(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(2)
-	h.stopMachine()
+	h.startMachine()
 	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}}))
+	h.machine() // establish the deal before worker reports; later accept remains queued
 	h.work("m1")
 	h.work("m2")
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}}))
+	h.machine() // establish review and asked reads before the queued accept
 	h.readAll()
-	h.startMachine()
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}}))
 	st := h.table().StateOf("s1-1")
 	require.Equal(t, sprint.Review, st, "the accept's work change is not queued: s1-1 is %s on the table", st)

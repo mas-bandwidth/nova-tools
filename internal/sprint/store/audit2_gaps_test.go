@@ -591,8 +591,19 @@ func TestNoStoredIDReachesTheCoordinator(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 6}))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"stop"}, Sentinel: true}))
 	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"w"}, Needs: []string{"s1-6"}}))
+	h.startMachine()
+	h.st.Updates = []sprint.TableUpdate{{Table: sprint.Work}, {Table: sprint.Readers}, {Table: sprint.Merge}, {Table: sprint.Fleet}}
+	h.machine() // drain Add without dealing the prerequisite before seeding stored corruption
+	h.st.Updates = nil
+	require.Equal(t, sprint.Ready, h.table().StateOf("s1-6"), "the synthetic drop must not strand a worker")
 	seedDroppedNeed(h, "s1-6")
+	_, _, _, fields, ok := h.m.Record("t-work", sprint.StoredID("s1-6", h.snap().Epoch))
+	require.True(t, ok, "the later-epoch prerequisite must have a stored record")
+	require.Equal(t, "dropped", fields["outcome"], "the stored prerequisite must be dropped before resolve")
 	h.must(ResolveStep(sprint.ResolveReq{}))
+	blocked := h.a2Open(sprint.NBlocked)
+	require.Len(t, blocked, 1, "the dropped prerequisite has a judgment in the current epoch")
+	require.Equal(t, "w", blocked[0].Subject())
 	h.a2ToReview("s1-1", true) // work failed
 	h.a2ToReview("s1-2", false)
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}}))

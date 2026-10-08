@@ -66,7 +66,7 @@ func TakeStep(r sprint.TakeReq) Step {
 	// a take for a friend's row reads the friends' seats: her status is FriendStatus, never
 	// a control card's (sprint's takeSeat)
 	friends := slices.ContainsFunc(sprint.Split(r.As), sprint.IsFriendRow)
-	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "take", Load: tables(sprint.Fleet), Extras: sprint.NamedExtras(sprint.Fleet, r.IDs), Friends: friends,
+	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "take", Load: tables(sprint.Fleet), Extras: sprint.NamedExtras(sprint.Fleet, r.IDs), Friends: friends, StartsWork: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Take(s, r) }}
 }
 
@@ -76,7 +76,7 @@ func FinishStep(r sprint.FinishReq) Step {
 	// a member may read (sprint's cost.go; Step.Prices); a failed finish reads them too,
 	// with or without its usage: the second identical failure below its ceiling escalates
 	// the card in the finish, by the tiers its routes serve (sprint.NextTier)
-	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "finish", Load: tables(sprint.Fleet, sprint.Readers, sprint.Work), Mirrors: true, Prices: r.Usage != "" || r.Failed,
+	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "finish", Load: tables(sprint.Fleet, sprint.Readers, sprint.Work), Mirrors: true, Prices: r.Usage != "" || r.Failed, ReportsWork: true,
 		Friends: true,
 		Extras:  sprint.NamedExtras(sprint.Fleet, r.IDs),
 		Plan:    func(s *sprint.Snapshot) sprint.Plan { return sprint.Finish(s, r) }}
@@ -114,14 +114,24 @@ func ReadStep(r sprint.ReadReq) Step {
 		// a read card on a member's row (sprint read_cards.go) is read as hers is: a name
 		// that is no reader-<m> is a fleet row
 		if _, isReader := sprint.ReaderMachine(rd); sprint.IsFriendRow(rd) || !isReader {
-			return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "read", Load: tables(sprint.Fleet, sprint.Work, sprint.Readers), Extras: sprint.NamedExtras(sprint.Fleet, r.IDs), Mirrors: true, Prices: r.Usage != "",
+			return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "read", Load: tables(sprint.Fleet, sprint.Work, sprint.Readers), Extras: sprint.NamedExtras(sprint.Fleet, r.IDs), Mirrors: true, Prices: r.Usage != "", StartsWork: r.Begin, ReportsWork: !r.Begin && !r.Return,
 				Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Read(s, r) }}
 		}
 	}
 	// a read that reports what it spent prices it with the routes alone, the keys a
 	// reader may read (sprint's cost.go; Step.Prices)
-	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "read", Load: tables(sprint.Readers, sprint.Work), Extras: sprint.NamedExtras(sprint.Readers, r.IDs), Prices: r.Usage != "",
+	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "read", Load: tables(sprint.Readers, sprint.Work), Extras: sprint.NamedExtras(sprint.Readers, r.IDs), Prices: r.Usage != "", StartsWork: r.Begin, ReportsWork: !r.Begin && !r.Return,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Read(s, r) }}
+}
+
+// StopReturnStep is an owner's acknowledgement after its process was cancelled.
+// It preserves the card's placement and attempt, returning it to that owner.
+func StopReturnStep(r sprint.StopReturnReq) Step {
+	return Step{Named: true, Args: ArgsOf(r), Verb: "stop-return", Load: tables(sprint.Fleet, sprint.Readers),
+		Extras: func(s *sprint.Snapshot) map[string][]string {
+			return map[string][]string{sprint.Fleet: r.IDs, sprint.Readers: r.IDs}
+		}, RequiresStopped: true, Mirrors: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.StopReturn(s, r) }}
 }
 
 // AcceptStep is the coordinator accepting.

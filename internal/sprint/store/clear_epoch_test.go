@@ -62,6 +62,7 @@ func TestLateWritersOfEveryKind(t *testing.T) {
 	before := h.snap()
 	openBefore, _ := h.st.Inbox(h.ctx, 0, 0, 1000)
 	require.NotEmpty(t, openBefore.Open, "no open judgment mid-flight")
+	settleMidFlightStop(h)
 	_, err := h.st.Clear(h.ctx)
 	require.NoError(t, err)
 	h.clean("cleared")
@@ -210,6 +211,7 @@ func TestEmptyClearsThenTeardown(t *testing.T) {
 func TestOldEpochUnchangedByReuse(t *testing.T) {
 	t.Parallel()
 	h := midFlight(t)
+	settleMidFlightStop(h)
 	_, err := h.st.Clear(h.ctx)
 	require.NoError(t, err)
 	dump := func() string {
@@ -234,6 +236,8 @@ func TestOldEpochUnchangedByReuse(t *testing.T) {
 	}
 	was := dump()
 	h.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s1", Count: 4}))
+	_, _, _, err = h.st.SetMachine(h.ctx, true)
+	require.NoError(t, err, "the new epoch starts before reusing work IDs")
 	h.through("s1-1", "s1-2", "s1-3", "s1-4")
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1"}))
 	s := h.snap()

@@ -38,6 +38,7 @@ func TestWorkerTakeRetryIdentityAndEmptyResultContract(t *testing.T) {
 				ta.ok("start")
 				ta.ok("tick")
 				ta.ok("stop --reason r --until 9999h")
+				ta.ok("start") // a stopped machine accepts no new worker take
 			}
 			if !tc.emptyFirst {
 				deal()

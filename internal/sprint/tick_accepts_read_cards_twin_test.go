@@ -11,8 +11,8 @@ import (
 
 // The read-card path of TestTheTickAcceptsAPrimaryWhoseReadsAreAllOk
 // (internal/sprint/store/tick_accepts_test.go), on the twin with read cards on: a
-// pro card's two read cards say ok (LAND), on a RUNNING machine or a STOPPED one;
-// no ready to accept opens, the first tick after (after start, when STOPPED) moves
+// pro card's two read cards say ok (LAND) while RUNNING; the machine can then
+// stop before acceptance, and the first tick after start moves
 // it to merging with its readers named, the seat is told once (ready to merge), the
 // tick's check finds no rule broken, and accept --read-ok then finds nothing waiting.
 func TestTheTickAcceptsAPrimaryWhoseReadsAreAllOkOnReadCards(t *testing.T) {
@@ -28,10 +28,6 @@ func TestTheTickAcceptsAPrimaryWhoseReadsAreAllOkOnReadCards(t *testing.T) {
 			r.toReview("s1-1", proBrief)
 			reads := r.readCards("s1-1")
 			require.Len(t, reads, 2)
-			if stopped {
-				_, _, _, err := r.st.SetMachine(r.ctx, false)
-				require.NoError(t, err)
-			}
 			for _, c := range reads {
 				r.read(c, sprint.ReadReq{Verdict: "ok", Finding: "clean", Usage: "input=10 output=1", Who: c.Row})
 			}
@@ -46,8 +42,10 @@ func TestTheTickAcceptsAPrimaryWhoseReadsAreAllOkOnReadCards(t *testing.T) {
 			}
 			require.Zero(t, open(sprint.NReadyToAccept), "the last ok read card opened ready to accept")
 			if stopped {
+				_, _, _, err := r.st.SetMachine(r.ctx, false)
+				require.NoError(t, err)
 				require.Equal(t, sprint.Review, r.snap().Work.Card("s1-1").Col, "a STOPPED machine moves nothing")
-				_, _, _, err := r.st.SetMachine(r.ctx, true)
+				_, _, _, err = r.st.SetMachine(r.ctx, true)
 				require.NoError(t, err)
 			}
 			r.tick()

@@ -257,7 +257,7 @@ func TestARestartAtAStepBoundaryRepeatsNoEffectAndLosesNoTransition(t *testing.T
 			h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 		}, step: func(h *harness) Step {
 			rc := h.snap().Readers.Of("s1-1")[0]
-			step := ReadStep(sprint.ReadReq{As: rc.F("reader"), Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc.ID}}})
+			step := ReadStep(sprint.ReadReq{As: rc.F("reader"), Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc.ID}}, Gens: map[string]int{rc.ID: max(rc.Int("gen"), 1)}})
 			step.CallerOp = "reader-read-s1-1"
 			return step
 		}, landed: func(t *testing.T, h *harness) {
