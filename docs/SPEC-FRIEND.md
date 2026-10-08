@@ -2648,6 +2648,22 @@ fg-adopt-friend-daemons; the verb replaces its wake file and message wakes. The
 script's backlog and idle alarms are not this verb's: they read a work
 server's tables and belong to the tool that serves them.
 
+## Reach
+
+`nova-friend reach` is the escalation ladder (`cmd/nova-friend/reach.go`, `tla/Reach.tla`). It gets a silent friend's attention and stops at the first proof. The state is the step (`bus`, `push`, `window`, then `ok` or `failed`), whether a proof has been seen, and the step's clock. Each side effect is an injected function: sending, pushing, typing, reading the clock, sleeping, and drawing a nonce. The model has no fairness on the proof, because a proof is a choice at the bound; forcing it would make the ladder unable to climb.
+
+The friend is `--to`. A verb other than the default takes no bare word, so the shape is the same as `ping`. This verb is `reach`. see also: nova-friend ping --wake is the coordinator's periodic wake check; reach is this escalation ladder.
+
+Each step has one `--step-timeout` budget (default 60s), including delivery and waiting for a proof: a pong for the nonce that step carries, or any other message from the friend. A daemon-pong is the daemon's own answer and is not a proof. A pong for another nonce, or a malformed pong, is not an ordinary-message proof. The step arms at the bus log's tail and each proof poll reads forward from that cursor, advancing it as entries are consumed (`Bus.LogCursor`, `Bus.LogForward` in `internal/bus/bus.go`). A read of the log from its start is capped at the oldest 10,000 entries, so a poll that started there would miss a fresh pong once the log held more than that (`TestReachProofPastTheLogCap`). The result line is first, then one line per step in the order it happened.
+
+1. **bus.** A bus message to the friend, subject `reach <nonce>` (never a PING, which is the daemon's own), body the nonce and the exact pong command. The line is `REACH STEP step=bus sent=<id> nonce=<n>`.
+2. **push.** The daemon pushes a real message into the session as a turn, never a PING. The daemon is up when its status file, read when the push begins, is newer than the stale bound (`DaemonStale`), the same rule `status` uses. No status file is "no daemon has run (no status file)". Down skips the step: `REACH NONE step=push waited=0s: daemon down: <reason>`. Up is `REACH STEP` and then the push.
+3. **window.** A tmux-hosted session is typed with send-keys only while the pane is idle (`internal/friend/adapter_tmux.go`). A GUI harness is the app's window, found by the bundle id the step looks up (`internal/friend/window.go`, `AppBundles`; these are lookup ids, not a measured survey of installed apps), the message typed into the composer and submitted (`window_darwin.go` on the platform that can hold the permission, `window_other.go` elsewhere). That needs the accessibility permission a person grants to this binary. The check is `AXIsProcessTrusted` and never `AXIsProcessTrustedWithOptions`, so the tool does not ask. When the permission is absent the step is refused: grant Accessibility to this binary in System Settings, Privacy and Security, Accessibility; nova-friend does not ask. A harness with no bundle, and not tmux, has no window; that is a skipped step, not a permission refusal.
+
+A proof ends the ladder: `REACH PROOF step=<s> after=<duration> by=<pong|message>` and `REACH OK friend=<f> step=<s>`. Exit 0 on that proof. No proof prints `REACH NONE step=<s> waited=<d>` and the ladder climbs. No proof after the steps from `--from` prints `REACH FAILED friend=<f> tried=<steps>`, Exit 1, and one note of that line on the coordinator's own stream. A skipped push counts as tried. Exit 2 when it could not run (a flag, a store that did not answer, or the window step without the accessibility permission); that refusal sends no failed note. `--from bus|push|window` starts partway up. `--dry-run` prints `REACH DRY-RUN` and one `REACH STEP` per planned step, and sends, pushes and types nothing. `--json` carries the same value: facts `friend`, `step` (on OK), `tried` (on FAILED), `from` and `step_timeout` (on a dry run), `dry_run`; items `STEP` (`step`, `sent`, `nonce`), `PROOF` (`step`, `after`, `by`), `NONE` (`step`, `waited`, text when skipped).
+
+example: nova-friend reach --as ada --to bob --dry-run
+
 ## Identity
 
 The friend's name comes from one place, `install --as`, written into the
