@@ -177,9 +177,15 @@ const (
 )
 
 // Fault is one gate run a bench failed: the bench, the kind, and the first line of the
-// output that says so.
+// output that says so. Bench says the fault is the bench's own, to be marked on its fleet
+// row: a disk, tmp or toolchain phrase outside any test's FAIL output, a git phrase from the
+// build or vet (never from go test's output), ssh's exit 255, a command not found. A phrase
+// inside a test's FAIL output, or git's from a go test run, may be the test's own words (the
+// class tests print "git <args>: exit status 128: ..."; a test may quote "no space left on
+// device"): it is a fault of the run, never of the bench, and marks nothing.
 type Fault struct {
 	Host, Kind, What string
+	Bench            bool
 }
 
 // Line is the fault as the lander says it: GATE FAULT bench=<m> kind=<k> what=<first line>.
@@ -191,31 +197,64 @@ func (f Fault) Line() string {
 const faultWhatCap = 300
 
 // ClassifyGate reads a gate run that ended red on host (its exit code and its output, or a
-// refusal's text): the bench's fault and true when the output carries one of the bench's
-// failures, else false, a red tree (a `--- FAIL:` line naming a test, a build or vet error,
-// anything else). A bench's failure wins over a FAIL line it caused: the class tests that
-// call git fail with git's exit status 128 on a tree with no .git, and that is the bench's.
-// Exit 255 (ssh's own) and 127 (a command not found) are faults when no line names one.
+// refusal's text): the fault and true when the output carries one of the bench's failures,
+// else false, a red tree (a `--- FAIL:` line naming a test, a build or vet error, anything
+// else). A bench's failure wins over a FAIL line it caused: the class tests that call git
+// fail with git's exit status 128 on a tree with no .git (2026-10-07, 11:34 PM). Of the
+// phrases found, the first the bench owns (Fault.Bench) wins, else the first. The output
+// is read in its runs (each begins with a GATE RUN line, gateMark) and its tests' FAIL
+// blocks (from a `--- FAIL:` line to the next `--- ` result, `=== RUN`, `ok`, `FAIL`,
+// `PASS` or GATE RUN line). Exit 255 (ssh's own) and 127 (a command not found) are the
+// bench's when no line names a fault.
 func ClassifyGate(host string, code int, out string) (Fault, bool) {
-	last := ""
+	last, run, inFail := "", "", false
+	var first *Fault
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
 		last = line
-		if kind := lineFault(line); kind != "" {
-			return Fault{Host: host, Kind: kind, What: capWhat(line)}, true
+		switch {
+		case strings.HasPrefix(line, GateRunMark):
+			run, inFail = strings.TrimPrefix(line, GateRunMark), false
+			continue
+		case strings.HasPrefix(line, "--- FAIL:"):
+			inFail = true
+			continue
+		case strings.HasPrefix(line, "--- "), strings.HasPrefix(line, "=== RUN"), strings.HasPrefix(line, "ok "), strings.HasPrefix(line, "ok\t"),
+			line == "FAIL", strings.HasPrefix(line, "FAIL\t"), line == "PASS":
+			inFail = false
+			continue
 		}
+		kind := lineFault(line)
+		if kind == "" {
+			continue
+		}
+		f := Fault{Host: host, Kind: kind, What: capWhat(line)}
+		f.Bench = !inFail && !(kind == FaultGit && strings.HasPrefix(run, "go test"))
+		if f.Bench {
+			return f, true
+		}
+		if first == nil {
+			first = &f
+		}
+	}
+	if first != nil {
+		return *first, true
 	}
 	switch code {
 	case NoAnswer:
-		return Fault{Host: host, Kind: FaultSSH, What: capWhat(orSaid(last, "ssh exit 255"))}, true
+		return Fault{Host: host, Kind: FaultSSH, What: capWhat(orSaid(last, "ssh exit 255")), Bench: true}, true
 	case 127:
-		return Fault{Host: host, Kind: FaultToolchain, What: capWhat(orSaid(last, "exit 127: a command the gate runs was not found"))}, true
+		return Fault{Host: host, Kind: FaultToolchain, What: capWhat(orSaid(last, "exit 127: a command the gate runs was not found")), Bench: true}, true
 	}
 	return Fault{}, false
 }
+
+// GateRunMark starts the line a gate prints before each of its runs (cmd/nova-sprint's
+// gateScript, its gateMark).
+const GateRunMark = "GATE RUN: "
 
 // lineFault is the kind of bench fault one line of a gate's output names, "" for none.
 func lineFault(line string) string {

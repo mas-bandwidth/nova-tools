@@ -398,11 +398,14 @@ func (l *lander) ringGateFaults(ctx context.Context, hosts []string, dir string,
 // ringGate asks the ring for a lane and runs the gate there, stepping to the next slot
 // when a bench's stage is refused or its run faulted (benchGate); faults is every slot's
 // fault when none was left to ask (a slot passed over this pass for its refused stages is
-// one), nil when the gate ran or was not run for any other reason.
+// one), nil when the gate ran or was not run for any other reason. A slot that faulted and
+// has run another gate green since, in this pass, makes the fault the tree's: its red
+// finding, the fault's line attached (gateOn).
 func (l *lander) ringGate(ctx context.Context, hosts []string, dir string, runs [][]string, tests bool, st *bench.MirrorStage) (string, bool, []bench.Fault) {
 	skips := l.stageSkips()
 	tried, said := map[string]bool{}, map[string]bool{}
 	var faults []bench.Fault
+	reds := map[string]string{}
 	for {
 		ring, notes := skips.Ring(benchRing(l.gateKey, hosts))
 		for _, n := range notes {
@@ -418,6 +421,14 @@ func (l *lander) ringGate(ctx context.Context, hosts []string, dir string, runs 
 			}
 		}
 		if len(live) == 0 {
+			// a slot that ran another gate green since it faulted here: the tree's red
+			for _, f := range faults {
+				if red := reds[f.Host]; red != "" && f.Kind != bench.FaultSSH && l.locks().ranGreen(f.Host) {
+					l.ranOnBench(f.Host, 0)
+					l.gateRing, l.gateSlot = len(hosts), ringSlot(l.gateKey, len(hosts))
+					return red, true, nil
+				}
+			}
 			// every slot faulted: this gate's, and those passed over this pass for theirs
 			for _, h := range benchRing(l.gateKey, hosts) {
 				if why, skip := skips.Skipped(h); skip && !tried[h] {
@@ -439,6 +450,7 @@ func (l *lander) ringGate(ctx context.Context, hosts []string, dir string, runs 
 		if fault != nil {
 			l.benchFaulted(ctx, *fault)
 			faults = append(faults, *fault)
+			reds[host] = why
 			continue
 		}
 		if ran {
@@ -451,7 +463,10 @@ func (l *lander) ringGate(ctx context.Context, hosts []string, dir string, runs 
 // gateOn runs the gate on host, whose Go lane the lander holds and gives back: the finding
 // ("" green) and ran; or the stage's refusal when the tree never reached the bench; or the
 // bench's fault when the run failed for the bench and not the tree (bench.ClassifyGate:
-// its git, its disk, its temporary directory, its ssh, its toolchain), which is no finding.
+// its git, its disk, its temporary directory, its ssh, its toolchain), which is no finding
+// (why is then the red finding the run would be, the fault's line attached, for ringGate).
+// A fault on a bench that has run another gate green in this pass is the tree's (its run
+// output, not ssh's exit): the bench works, so the finding is red, the fault's line in it.
 func (l *lander) gateOn(ctx context.Context, host, dir string, runs [][]string, tests bool, st *bench.MirrorStage) (why string, ran bool, refused *bench.StageError, fault *bench.Fault) {
 	defer l.giveGateLane(host)
 	l.stage("gate", "bench "+host+" held by "+l.laneWho()+" ("+l.gateWhose()+"): "+strings.Join(runs[0], " "))
@@ -473,13 +488,18 @@ func (l *lander) gateOn(ctx context.Context, host, dir string, runs [][]string, 
 	}
 	if code == 0 {
 		l.ranOnBench(host, wall)
+		l.locks().green(host)
 		return "", true, nil, nil
 	}
+	red := gateWhy(redRun(runs, out), fmt.Errorf("exit status %d on the bench %s", code, host), out)
 	if f, ok := bench.ClassifyGate(host, code, out); ok {
-		return "", false, nil, &f
+		red = f.Line() + " (the bench ran another gate green this pass: the tree's red, not the bench's): " + red
+		if f.Kind == bench.FaultSSH || !l.locks().ranGreen(host) {
+			return red, false, nil, &f
+		}
 	}
 	l.ranOnBench(host, wall)
-	return gateWhy(redRun(runs, out), fmt.Errorf("exit status %d on the bench %s", code, host), out), true, nil, nil
+	return red, true, nil, nil
 }
 
 // benchFaulted is one bench fault met by a gate: said (the GATE FAULT line, on the beat and
@@ -490,7 +510,9 @@ func (l *lander) gateOn(ctx context.Context, host, dir string, runs [][]string, 
 func (l *lander) benchFaulted(ctx context.Context, f bench.Fault) {
 	l.stage("gate "+f.Line(), l.gateWhose())
 	l.gateFaults = append(l.gateFaults, f)
-	if f.Kind == bench.FaultCopy || l.a == nil || l.st == nil {
+	if !f.Bench || f.Kind == bench.FaultCopy || l.a == nil || l.st == nil {
+		// a phrase inside a test's FAIL output (or git's from go test) may be the test's
+		// own words: it steps or defers this landing alone and marks no bench
 		return
 	}
 	r := sprint.BenchFaultReq{Member: f.Host, Kind: f.Kind, What: f.What, Who: l.c.actor}
@@ -631,7 +653,7 @@ func (l *lander) stageSkips() *bench.StageSkips {
 }
 
 // gateMark starts the line a bench gate prints before each of its runs.
-const gateMark = "GATE RUN: "
+const gateMark = bench.GateRunMark
 
 // gateScript is the gate's runs as one shell line on the bench: each run named on its
 // own line (gateMark) and then run, the first red ending the line with its status.
@@ -949,6 +971,23 @@ func (l *lander) cureBase(ctx context.Context, dir, stream string, cards []landC
 	}
 	l.baseFix = cure.ID + " " + c.resolved
 	return i, ""
+}
+
+// green records a gate run green on host in this pass.
+func (s *landShared) green(host string) {
+	s.faultMu.Lock()
+	defer s.faultMu.Unlock()
+	if s.greens == nil {
+		s.greens = map[string]bool{}
+	}
+	s.greens[host] = true
+}
+
+// ranGreen says host has run a gate green in this pass.
+func (s *landShared) ranGreen(host string) bool {
+	s.faultMu.Lock()
+	defer s.faultMu.Unlock()
+	return s.greens[host]
 }
 
 // deferred records one deferred gate's faults for the pass's one judgment.

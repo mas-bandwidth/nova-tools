@@ -4189,13 +4189,24 @@ that ends red on a bench is classified before it is reported:
   (`go: command not found`, `go: not found`, `toolchain not available`, or exit 127).
   A bench that does not answer at all is still nobody's finding and the gate runs in
   the clone, as above.
+- a fault is **the bench's own** only where the tree cannot have said it: a `disk`,
+  `tmp` or `toolchain` phrase outside any test's FAIL output (from a `--- FAIL:` line
+  to the next result line), a `git` phrase from the build or the vet (never from `go
+  test`'s output), ssh's exit 255, exit 127. A phrase inside a test's FAIL output, or
+  git's from a `go test` run, may be the test's own words (`internal/ci` prints its
+  git errors as `git <args>: exit status 128: ...`; a test may quote `no space left on
+  device`): it steps or defers that landing alone and marks no bench (the cold read
+  of PR 5443). And a fault on a bench that has run another gate green in this land
+  pass, at the fault or since it, is the tree's: the finding is red, the fault's line
+  at its head (`GATE FAULT ... (the bench ran another gate green this pass: the tree's
+  red, not the bench's): <the run's finding>`), and the head is blamed as above.
 
 A fault is said as `GATE FAULT bench=<m> kind=<git|disk|tmp|ssh|copy|toolchain>
 what=<first line>`, on the loop's idle line as the step and under the batch's `LAND`
 line (stderr; the `--json` item's `faults`). It never marks the base red, never counts
 under the base-gate rule, never caches a base, never blames a head and never fails a
-stream: the gate steps to the ring's next slot and runs there. A bench that faulted
-(any kind but `copy`, which `bench.StageSkips` passes over for the pass) is marked on
+stream: the gate steps to the ring's next slot and runs there. A bench whose own fault
+it was (any kind but `copy`, which `bench.StageSkips` passes over for the pass) is marked on
 its fleet row for 15 minutes (`sprint.MarkBenchFault`, the fleet table's property
 `bench_fault_<member>`, `sprint.BenchFaultFor`): the ring skips it until then, `where
 --json` carries `bench_fault=<kind>` and `bench_fault_until=<t>` on its fleet row and

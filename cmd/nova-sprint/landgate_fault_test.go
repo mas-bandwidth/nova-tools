@@ -22,36 +22,48 @@ import (
 
 // Each fault text classifies to its kind, the first line that says it quoted; a FAIL line
 // from go test, a build error and a vet finding are a red tree; a bench's failure wins over
-// the FAIL line it caused.
+// the FAIL line it caused. A fault is the bench's own (marked) only outside a test's FAIL
+// output, and git's only from the build or vet; a phrase inside a FAIL block, or git's from
+// go test's output, is the run's alone (the class tests print "git <args>: exit status 128:
+// ..."; a test may quote "no space left on device"); a bench's own phrase anywhere wins.
 func TestEachGateFaultTextClassifiesToItsKind(t *testing.T) {
 	t.Parallel()
-	faults := []struct{ name, out, kind, what string }{
-		{"git exit 128", "GATE RUN: go test ./internal/ci/\n--- FAIL: TestClasses (0.01s)\n    classes_test.go:40: git ls-files from the repository root: exit status 128\nFAIL", bench.FaultGit,
-			"classes_test.go:40: git ls-files from the repository root: exit status 128"},
-		{"not a git repository", "fatal: not a git repository (or any of the parent directories): .git", bench.FaultGit, "fatal: not a git repository (or any of the parent directories): .git"},
-		{"vcs stamping", "error obtaining VCS status: exit status 128\n\tUse -buildvcs=false to disable VCS stamping.", bench.FaultGit, "error obtaining VCS status: exit status 128"},
+	faults := []struct {
+		name, out, kind, what string
+		own                   bool
+	}{
+		{"git exit 128 in a FAIL block", "GATE RUN: go test ./internal/ci/\n--- FAIL: TestClasses (0.01s)\n    classes_test.go:40: git ls-files from the repository root: exit status 128\nFAIL", bench.FaultGit,
+			"classes_test.go:40: git ls-files from the repository root: exit status 128", false},
+		{"git exit 128 in go test's output", "GATE RUN: go test ./internal/ci/\ngit ls-tree -r HEAD: exit status 128: fatal: not a tree object\nFAIL\texample.com/m/internal/ci\t0.1s", bench.FaultGit,
+			"git ls-tree -r HEAD: exit status 128: fatal: not a tree object", false},
+		{"a quoted enospc in a FAIL block", "GATE RUN: go test ./internal/docs/\n--- FAIL: TestGuardSays (0.00s)\n    guard_test.go:9: want \"write /tmp/x: no space left on device\"\nFAIL", bench.FaultTmp,
+			`guard_test.go:9: want "write /tmp/x: no space left on device"`, false},
+		{"the bench's own after a FAIL block", "GATE RUN: go test ./internal/ci/\n--- FAIL: TestClasses (0.01s)\n    git ls-files: exit status 128\nFAIL\tm/internal/ci\t0.1s\nopen /tmp/go-build9/x.a: disk quota exceeded", bench.FaultTmp,
+			"open /tmp/go-build9/x.a: disk quota exceeded", true},
+		{"not a git repository", "fatal: not a git repository (or any of the parent directories): .git", bench.FaultGit, "fatal: not a git repository (or any of the parent directories): .git", true},
+		{"vcs stamping", "GATE RUN: go build ./...\nerror obtaining VCS status: exit status 128\n\tUse -buildvcs=false to disable VCS stamping.", bench.FaultGit, "error obtaining VCS status: exit status 128", true},
 		{"enospc on the root", "GATE RUN: go build ./...\ngo: writing stat cache: write /home/n/nova-bench/cache/go-build/ab: no space left on device", bench.FaultDisk,
-			"go: writing stat cache: write /home/n/nova-bench/cache/go-build/ab: no space left on device"},
-		{"ENOSPC", "copy: ENOSPC while writing the tree", bench.FaultDisk, "copy: ENOSPC while writing the tree"},
-		{"quota in tmp", "GATE RUN: go build ./...\nopen /tmp/go-build1234/b001/_pkg_.a: disk quota exceeded", bench.FaultTmp, "open /tmp/go-build1234/b001/_pkg_.a: disk quota exceeded"},
-		{"no go", "GATE RUN: go build ./...\nsh: 1: go: not found", bench.FaultToolchain, "sh: 1: go: not found"},
-		{"go command not found", "bash: go: command not found", bench.FaultToolchain, "bash: go: command not found"},
+			"go: writing stat cache: write /home/n/nova-bench/cache/go-build/ab: no space left on device", true},
+		{"ENOSPC", "copy: ENOSPC while writing the tree", bench.FaultDisk, "copy: ENOSPC while writing the tree", true},
+		{"quota in tmp", "GATE RUN: go build ./...\nopen /tmp/go-build1234/b001/_pkg_.a: disk quota exceeded", bench.FaultTmp, "open /tmp/go-build1234/b001/_pkg_.a: disk quota exceeded", true},
+		{"no go", "GATE RUN: go build ./...\nsh: 1: go: not found", bench.FaultToolchain, "sh: 1: go: not found", true},
+		{"go command not found", "bash: go: command not found", bench.FaultToolchain, "bash: go: command not found", true},
 		{"toolchain download", "go: downloading go1.26 (linux/amd64)\ngo: download go1.26 for linux/amd64: toolchain not available", bench.FaultToolchain,
-			"go: download go1.26 for linux/amd64: toolchain not available"},
-		{"refused stage", "copy refused: vision after 2.0s: staging 0123456789ab exit 3: no mirror", bench.FaultCopy, "copy refused: vision after 2.0s: staging 0123456789ab exit 3: no mirror"},
+			"go: download go1.26 for linux/amd64: toolchain not available", true},
+		{"refused stage", "copy refused: vision after 2.0s: staging 0123456789ab exit 3: no mirror", bench.FaultCopy, "copy refused: vision after 2.0s: staging 0123456789ab exit 3: no mirror", true},
 	}
 	for _, c := range faults {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			f, ok := bench.ClassifyGate("vision", 1, c.out)
-			require.True(t, ok, "a bench fault: %q", c.out)
-			assert.Equal(t, bench.Fault{Host: "vision", Kind: c.kind, What: c.what}, f)
+			require.True(t, ok, "a fault: %q", c.out)
+			assert.Equal(t, bench.Fault{Host: "vision", Kind: c.kind, What: c.what, Bench: c.own}, f)
 			assert.Equal(t, "GATE FAULT bench=vision kind="+c.kind+" what="+c.what, f.Line())
 		})
 	}
 	f, ok := bench.ClassifyGate("space", bench.NoAnswer, "GATE RUN: go test ./internal/ci/\nConnection to space closed by remote host.")
 	require.True(t, ok, "ssh's own exit is the bench's")
-	assert.Equal(t, bench.Fault{Host: "space", Kind: bench.FaultSSH, What: "Connection to space closed by remote host."}, f)
+	assert.Equal(t, bench.Fault{Host: "space", Kind: bench.FaultSSH, What: "Connection to space closed by remote host.", Bench: true}, f)
 	f, ok = bench.ClassifyGate("space", 127, "")
 	require.True(t, ok, "a command not found is the bench's")
 	assert.Equal(t, bench.FaultToolchain, f.Kind)
@@ -209,7 +221,7 @@ func TestAFaultedBenchIsSkippedForTheBoundAndShowsOnItsRow(t *testing.T) {
 	ring := r.ring("s1")
 	bad, good := ring[0], ring[1]
 	r.answer[bad] = func() (string, int, error) {
-		return "--- FAIL: TestClasses (0.01s)\n    classes_test.go:40: git ls-files from the repository root: exit status 128", 1, nil
+		return "GATE RUN: go build ./...\nerror obtaining VCS status: exit status 128", 1, nil
 	}
 	dir := moduleDir(t)
 	assert.Empty(t, r.lander("s1").treeGate(context.Background(), dir, true))
@@ -223,7 +235,7 @@ func TestAFaultedBenchIsSkippedForTheBoundAndShowsOnItsRow(t *testing.T) {
 	assert.Equal(t, until, row[sprint.FieldBenchFaultUntil])
 	assert.NotContains(t, w.Tables[sprint.Fleet][good], sprint.FieldBenchFault, "the other bench is not marked")
 	text := r.ok("where")
-	assert.Contains(t, text, "bench fault: "+bad+" git until "+until+": classes_test.go:40: git ls-files from the repository root: exit status 128")
+	assert.Contains(t, text, "bench fault: "+bad+" git until "+until+": error obtaining VCS status: exit status 128")
 
 	for i := 0; i < 2; i++ {
 		assert.Empty(t, r.lander("s1").treeGate(context.Background(), dir, true))
@@ -299,4 +311,59 @@ func TestEverySlotFaultingDefersTheLandingWithOneJudgment(t *testing.T) {
 	}
 	inbox = r.ok("inbox")
 	assert.Equal(t, 1, strings.Count(inbox, "every bench faulted: git, tmp"), "the same faults raise no second judgment:\n%s", inbox)
+	var w whereView
+	r.json("where", &w)
+	assert.NotContains(t, w.Tables[sprint.Fleet]["vision"], sprint.FieldBenchFault, "git's words inside a test's FAIL output mark no bench")
+	assert.Equal(t, bench.FaultTmp, w.Tables[sprint.Fleet]["space"][sprint.FieldBenchFault], "the quota outside any FAIL output is the bench's")
+}
+
+// A red test that prints git's exit status 128 inside its FAIL output, on both slots, while
+// another stream's tree gates green on the same slots, is the tree's red (the cold read of
+// PR 5443, H1): the benches ran gates green this pass, so the fault is the tree's, the head
+// is blamed with the finding and the fault's line, no bench is marked, and the other stream
+// lands.
+func TestAGitLineInATestsFailOutputIsTheTreesRedWhenTheBenchRunsGreen(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.git(r.worker, "switch", "-q", "--detach", "origin/main")
+	r.files("the module", goModule)
+	r.git(r.worker, "push", "-q", "origin", "HEAD:refs/heads/main")
+	r.git(r.worker, "fetch", "-q", "origin")
+	r.ok("add --stream s1 --count 1 --one")
+	r.ok("add --stream s2 --count 1 --one")
+	heads := map[string]string{
+		"s1-1": r.card("s1-1", map[string]string{"red.txt": "the tree whose test fails\n"}),
+		"s2-1": r.card("s2-1", map[string]string{"two.go": "package main\n\nfunc two() {}\n"}),
+	}
+	r.queued(heads, "s1-1", "s2-1")
+	f := newFaultRig(t, r.testApp)
+	red := "GATE RUN: go test ./internal/docs/\n--- FAIL: TestTreeLs (0.01s)\n    tree_test.go:20: git ls-tree -r HEAD: exit status 128: fatal: not a tree object\nFAIL\nFAIL\texample.com/m/internal/docs\t0.1s"
+	b := r.a.landState()
+	b.mu.Lock()
+	b.gateBench = func(ctx context.Context, host, dir string, runs [][]string, withGit bool) (string, int, error) {
+		f.mu.Lock()
+		f.asked = append(f.asked, host)
+		f.mu.Unlock()
+		if _, err := os.Stat(filepath.Join(dir, "red.txt")); err == nil {
+			return red, 1, nil // s1's tree, on whichever slot
+		}
+		return "", 0, nil
+	}
+	b.mu.Unlock()
+
+	code, out, errs := r.do("land --repo-dir " + r.clone + " --base main --land-parallel 1")
+	assert.Equal(t, 1, code, out+errs)
+	assert.Contains(t, errs, "LAND REFUSED stream=s1 cards=1 base=- tip=- ids=s1-1 ", "s1 is refused:\n%s", errs)
+	assert.Contains(t, errs, " fact=conflict reason=the head "+heads["s1-1"]+" of s1-1 fails the tree gate: GATE FAULT bench=", "the head is blamed:\n%s", errs)
+	assert.Contains(t, errs, "git ls-tree -r HEAD: exit status 128", "the finding carries the fault's line:\n%s", errs)
+	assert.Contains(t, out, "LAND OK stream=s2 cards=1 base=main", "the other stream lands:\n%s%s", out, errs)
+	assert.NotContains(t, out+errs, "LAND DEFERRED")
+	assert.Equal(t, map[string]string{"s1-1": "ready/returned", "s2-1": "landed/merged"}, r.places("s1-1", "s2-1"))
+	assert.Empty(t, r.a.baseGateFails, "the base is not red")
+	var w whereView
+	r.json("where", &w)
+	for _, m := range []string{"vision", "space"} {
+		assert.NotContains(t, w.Tables[sprint.Fleet][m], sprint.FieldBenchFault, "%s is not marked", m)
+	}
+	assert.NotContains(t, r.ok("inbox"), "every bench faulted", "no fault judgment")
 }

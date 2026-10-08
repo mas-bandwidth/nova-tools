@@ -62,11 +62,13 @@ type landShared struct {
 	gateMu sync.Mutex
 	// checkMu serializes a red --check's gate decision, which appends to one record.
 	checkMu sync.Mutex
-	// faultMu guards faults and deferredN: every fault of the pass's deferred gates, and how
-	// many gates were deferred, for the pass's one judgment (judgeFaults).
+	// faultMu guards faults, deferredN and greens: every fault of the pass's deferred gates,
+	// and how many gates were deferred, for the pass's one judgment (judgeFaults); and the
+	// benches that ran a gate green this pass, whose later fault is the tree's (gateOn).
 	faultMu   sync.Mutex
 	faults    []bench.Fault
 	deferredN int
+	greens    map[string]bool
 	// treesMu guards pruned and used.
 	treesMu sync.Mutex
 	// pruned is each clone whose stale worktrees this pass has pruned; used is each clone's
