@@ -14,6 +14,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
@@ -40,7 +41,7 @@ func (w world) deliveryCheckVerb(c *tool.Call) *tool.Out {
 		}
 		nonce := w.random()
 		return tool.Done().Fact("harness", harness).Fact("dir", dir).Fact("within", c.Dur("within").String()).
-			Item("plan", "command", tool.Text(w.pongCommand(name, nonce, state, c.Str("redis"), dir)+" --to "+w.checkTo(c.Str("to"), name, state))).
+			Item("plan", "command", tool.Text(w.pongCommand(name, nonce, state, c.Str("redis"), dir)+" --to "+oneline.ShellWord(w.checkTo(c.Str("to"), name, state)))).
 			Note("nothing was delivered; the session would run the plan line and its pong would end the check")
 	}
 	c.Want("redis", "the bus store's Redis address, host:port (or "+RedisEnv+"), where the pong is read")

@@ -1324,11 +1324,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		Run:  fmt.Sprintf("r%d", w.now().Unix()), // this run, its generation: an answer proves only to the run that asked
 		Save: prover.Save(writePresence),
 		Text: func(nonce string) string {
-			bin, err := w.binary()
-			if err != nil {
-				bin = "nova-friend" // ignored: the name on PATH stands in when this binary's path is unknown
-			}
-			return friend.SessionCheckText(nonce, fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s --dir %s", bin, name, nonce, state, c.Str("redis"), dir), answerTo())
+			return friend.SessionCheckText(nonce, w.pongCommand(name, nonce, state, c.Str("redis"), dir), answerTo())
 		},
 	}
 	sc.Deliver = sc.Gate(fl.Gate(deliver))
@@ -1561,11 +1557,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return friend.WriteStatus(state, s)
 		},
 		PongCommand: func(nonce string) string {
-			bin, err := w.binary()
-			if err != nil {
-				bin = "nova-friend" // ignored: the name on PATH stands in when this binary's path is unknown
-			}
-			return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s --dir %s", bin, name, nonce, state, c.Str("redis"), dir)
+			return w.pongCommand(name, nonce, state, c.Str("redis"), dir)
 		},
 	}
 	if w.holders != nil {
@@ -1906,7 +1898,9 @@ func (w world) pongCommand(name, nonce, state, redis, dir string) string {
 	if err != nil {
 		bin = "nova-friend" // ignored: the name on PATH stands in when this binary's path is unknown
 	}
-	return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s --dir %s", bin, name, nonce, state, redis, dir)
+	return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s --dir %s",
+		oneline.ShellWord(bin), oneline.ShellWord(name), oneline.ShellWord(nonce),
+		oneline.ShellWord(state), oneline.ShellWord(redis), oneline.ShellWord(dir))
 }
 
 // deliveryCheck runs the push proof once against the live session

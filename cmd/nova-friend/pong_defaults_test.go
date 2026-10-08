@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
@@ -30,4 +31,18 @@ func TestPongOmittedCountsPreserveKnownWorkAndWidth(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	assert.Equal(t, [3]int{1, 1, 32}, [3]int{p.Queue, p.Working, p.Width})
+}
+
+func TestGeneratedPongCommandQuotesSpacedWorkingDirectory(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	w := r.world()
+	line := w.pongCommand("bob", "fresh", "/tmp/proof", "store.test:6379", "/work/project one")
+	assert.Contains(t, line, "--dir '/work/project one'")
+	assert.NotContains(t, line, "--dir /work/project one")
+	state := t.TempDir()
+	var out, errs strings.Builder
+	code := run([]string{"check", "--as", "bob", "--harness", "codex", "--dir", "/work/project one", "--state-dir", state, "--to", "ada", "--dry-run"}, strings.NewReader(""), &out, &errs, w)
+	require.Zero(t, code, errs.String())
+	assert.Contains(t, out.String(), "--dir '/work/project one'")
 }
