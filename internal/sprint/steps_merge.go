@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -242,6 +243,19 @@ func deadBaseStep(p Plan, s *Snapshot, r MergeReq) Plan {
 	return p
 }
 
+// baseRefRE is a branch name's shape: what git's check-ref-format accepts for the branches
+// a card's BASE may name. Glob and revision characters are refused, so `card base <id> "*"`
+// never stands in for the advertised branch it is not (the reader's finding, attempt 4).
+var baseRefRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_./-]*$`)
+
+// ValidBase says base is a branch name a lander could cut: the shape above and the
+// component rules git adds (no "..", "//", a trailing "/", ".lock" or ".").
+func ValidBase(base string) bool {
+	return len(base) <= 200 && baseRefRE.MatchString(base) && !strings.Contains(base, "..") &&
+		!strings.Contains(base, "//") && !strings.HasSuffix(base, "/") &&
+		!strings.HasSuffix(base, ".lock") && !strings.HasSuffix(base, ".")
+}
+
 // CardBaseReq re-points a merging card's BASE (nova-sprint card base). OnOrigin is the
 // caller's fact, one git ls-remote, that the branch is on the card's origin.
 type CardBaseReq struct {
@@ -270,7 +284,7 @@ func CardBase(s *Snapshot, r CardBaseReq) Plan {
 		why = r.ID + " is no card on the table"
 	case c.Col != Merging:
 		why = r.ID + " is " + c.Col + ": card base re-points a merging card; a card before merging takes a new brief (nova-sprint brief)"
-	case r.Base == "" || strings.HasPrefix(r.Base, "-") || strings.ContainsAny(r.Base, " \t\r\n@:"):
+	case !ValidBase(r.Base):
 		why = "'" + r.Base + "' is not a branch name"
 	case !r.OnOrigin:
 		why = r.Base + " is not a branch on origin; push the branch or name one origin holds; run: nova-sprint card base " + r.ID + " <a branch on origin>"

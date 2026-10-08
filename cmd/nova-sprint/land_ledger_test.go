@@ -226,8 +226,13 @@ func TestLandRefusesAResolutionThroughASymlink(t *testing.T) {
 				"s1-2": r.card("s1-2", map[string]string{"debt/b": "", fakeLedger: "# ceiling: 1\na\n"})}
 			r.queued(heads, "s1-1", "s1-2")
 			if !tc.tracked {
-				require.NoError(t, os.MkdirAll(filepath.Join(r.clone, filepath.Dir(linked)), 0o755))
-				require.NoError(t, os.Symlink(outside, filepath.Join(r.clone, linked)))
+				// the lander builds the stream's batch in its worktree of the clone (landpass.go):
+				// the link lies on the disk there, where the update would run
+				tree := worktreeDir(filepath.Join(r.dir, "land"), r.clone, "s1")
+				require.NoError(t, os.MkdirAll(filepath.Dir(tree), 0o755))
+				r.git(r.clone, "worktree", "add", "--detach", tree, "HEAD")
+				require.NoError(t, os.MkdirAll(filepath.Join(tree, filepath.Dir(linked)), 0o755))
+				require.NoError(t, os.Symlink(outside, filepath.Join(tree, linked)))
 			}
 			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
 			assert.Equal(t, 1, code, out+errs)

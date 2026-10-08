@@ -38,16 +38,20 @@ func reservedCardID(ids ...string) string {
 
 // storeRelease is the release check's facts, read from the store once.
 type storeRelease struct {
-	now      time.Time
-	lines    []sprint.Line
-	dealtMax time.Duration
-	accept   sprint.Acceptance
+	now         time.Time
+	lines       []sprint.Line
+	dealtMax    time.Duration
+	accept      sprint.Acceptance
+	mergeWindow time.Duration
+	mergeP90    time.Duration
 }
 
 func (s storeRelease) Now() time.Time                { return s.now }
 func (s storeRelease) Log() []sprint.Line            { return s.lines }
 func (s storeRelease) DealtMax() time.Duration       { return s.dealtMax }
 func (s storeRelease) Acceptance() sprint.Acceptance { return s.accept }
+func (s storeRelease) MergeWindow() time.Duration    { return s.mergeWindow }
+func (s storeRelease) MergeP90() time.Duration       { return s.mergeP90 }
 
 // cmdReleaseCheck runs the release checks and prints one RELEASE CHECK line per check, then
 // RELEASE OK checks=<n> or RELEASE NOT READY failed=<n>; --json prints the one report
@@ -55,6 +59,8 @@ func (s storeRelease) Acceptance() sprint.Acceptance { return s.accept }
 func (a *app) cmdReleaseCheck(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("release check")
 	streams := fs.String("streams", "", "only the log of the streams this glob names (path.Match over the stream's name; default every stream)")
+	window := fs.Duration("window", sprint.MergeQueueWindowDefault, "how far back a card's merging counts, for merge-queue-p90 (default 24h)")
+	mergeP90 := fs.Duration("merge-p90", sprint.MergeQueueP90Default, "the bar on merge-queue-p90: the p90 of the time cards spent merging (default 30m)")
 	var names stringList
 	fs.Var(&names, "check", "run only this check, by name (repeat for more; default every check): "+strings.Join(sprint.ReleaseCheckNames(), ", "))
 	pos, err := parse(fs, args)
@@ -88,7 +94,7 @@ func (a *app) cmdReleaseCheck(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return a.readFailed("release check", err, stderr)
 	}
-	rep, err := sprint.RunReleaseChecks(storeRelease{now: now, lines: lines, dealtMax: s.DealtMax(), accept: sprint.AcceptanceOf(s, lines, *streams)}, names)
+	rep, err := sprint.RunReleaseChecks(storeRelease{now: now, lines: lines, dealtMax: s.DealtMax(), accept: sprint.AcceptanceOf(s, lines, *streams), mergeWindow: *window, mergeP90: *mergeP90}, names)
 	if err != nil {
 		return refuse(stderr, "release check", err.Error())
 	}

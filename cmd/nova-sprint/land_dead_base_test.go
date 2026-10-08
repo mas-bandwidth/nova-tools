@@ -106,6 +106,26 @@ func TestLanderRefusesADeadBaseOnceAndTheStreamMovesOn(t *testing.T) {
 	assert.Equal(t, []string{"land a (sprint stream s1)", "land b (sprint stream s1)", "base"}, r.mainLog())
 }
 
+// A glob is not a branch: card base with an ls-remote pattern is refused before any write,
+// and the dead base's mark and its one judgment are kept (the reader's finding, attempt 4).
+func TestCardBaseRefusesAGlobForABranch(t *testing.T) {
+	t.Parallel()
+	r := deadBaseRig(t)
+	code, _, _ := r.do("land")
+	require.Equal(t, 1, code)
+	require.Len(t, r.deadBaseJudgments(), 1)
+
+	code, _, errs := r.do("card base a *")
+	assert.Equal(t, 1, code, errs)
+	assert.Contains(t, errs, "'*' is not a branch name")
+	assert.Len(t, r.deadBaseJudgments(), 1, "the judgment is kept")
+
+	var after cardView
+	r.json("card a", &after)
+	assert.Contains(t, after.Primary.F("brief"), "BASE: old-topic\n", "BASE is kept")
+	assert.Equal(t, "old-topic", after.Primary.F(sprint.FieldDeadBase), "the dead-base mark is kept")
+}
+
 // An answered judgment arms the card again: the next pass tries it once, and a base still
 // not on origin is refused once more with a new judgment.
 func TestLanderTriesADeadBaseAgainOnceItsJudgmentIsAnswered(t *testing.T) {
