@@ -89,7 +89,7 @@ func checkTailnet(ctx context.Context, env Env) Result {
 	if err != nil {
 		return Result{Status: Fail,
 			Evidence: "the machine inventory could not be read: " + err.Error(),
-			Fix:      "source the seat file (`set -a; . ~/nova/seat.env; set +a`), then run nova-doctor again (" + tailnetDoc + ")"}
+			Fix:      "source the seat file (`set -a; . ~/nova/seat.env; set +a`), then run nova-doctor run again (" + tailnetDoc + ")"}
 	}
 	var missing []string
 	for _, m := range inv {

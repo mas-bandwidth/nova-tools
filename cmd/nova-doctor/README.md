@@ -20,7 +20,9 @@ nova-doctor version
 The commands below are the tool's own example block, run by `cmd/nova-doctor/firstrun_test.go`.
 
 ```text
-$ nova-doctor --local
+$ nova-doctor run --check harness
+$ nova-doctor run --local
+$ nova-doctor run --local --json
 ```
 
 ## Verbs

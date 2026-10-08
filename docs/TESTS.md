@@ -1280,6 +1280,25 @@ $ nova-card lint --card ./cards/finding-cmd-nova-bus-main.md
 LINT OK file=./cards/finding-cmd-nova-bus-main.md
 ```
 
+## nova-doctor
+
+A login with no friend rows, `/home/you`: the harness check alone, as lines and
+as JSON, then a check name that is none. Each run reads and changes nothing. Run
+by `cmd/nova-doctor/firstrun_test.go`.
+
+### First run
+
+```
+$ nova-doctor run --check harness
+DOCTOR harness ok no friend rows at /home/you/.nova/friends
+
+$ nova-doctor run --check harness --json
+{"exit":0,"results":[{"check":"harness","dependency":"the friend harnesses","status":"ok","evidence":"no friend rows at /home/you/.nova/friends"}]}
+
+$ nova-doctor run --check nosuch
+! RUN REFUSED: no check named "nosuch"; the checks are gosdk, harness, providers, secrets, self, ssh, tailnet; run: nova-doctor help
+```
+
 ## One-shot lanes at parity (internal/friend/lane_parity_test.go, cmd/nova-friend/lane_parity_test.go)
 
 `TestOpencodeLanesDoWhatTheRunnerStopgapsDid` has one subtest per behaviour the two runner scripts had (card filter, row

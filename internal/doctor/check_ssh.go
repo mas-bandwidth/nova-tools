@@ -42,7 +42,7 @@ func checkBenchReach(ctx context.Context, env Env) Result {
 	if err != nil {
 		return Result{Status: Fail,
 			Evidence: "the bench inventory could not be read: " + err.Error(),
-			Fix:      "source the seat file (`set -a; . ~/nova/seat.env; set +a`), then run nova-doctor again (" + sshDoc + ")"}
+			Fix:      "source the seat file (`set -a; . ~/nova/seat.env; set +a`), then run nova-doctor run again (" + sshDoc + ")"}
 	}
 	if len(benches) == 0 {
 		return Result{Status: OK, Evidence: "no benches in the inventory"}
