@@ -21,7 +21,7 @@ import (
 var stepDryRun = map[string]bool{
 	"accept": true, "ack": true, "ask": true, "ci": true, "friend give": true, "funded": true,
 	"move": true, "priority": true, "redo": true, "resolve": true, "resume": true, "sentinel set": true,
-	"set": true,
+	"set": true, "twin": true,
 }
 
 // stepDryWords is the --dry-run flag's description on those verbs.

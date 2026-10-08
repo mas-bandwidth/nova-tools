@@ -110,6 +110,7 @@ var verbEffect = map[string]string{
 	"resolve":  "local write: moves the waiting primaries whose needs landed in the sprint's store; --dry-run writes nothing",
 	"resume":   "local write: resumes each named stopped stream in the sprint's store, with what was done; --dry-run writes nothing",
 	"set":      "local write: sets the sprint's settings named in the sprint's store; --dry-run writes nothing",
+	"twin":     "local write: replaces the card by its twin in the sprint's store (a merging card is returned first, then twinned; its dry run plans the return alone); --dry-run writes nothing",
 	// verbs that read and write nothing
 	"goal show": "inspection: reads the goals in the sprint's store, writes nothing",
 	"fsck seat": "inspection: reads the coordinator key, the seat record and the server's actor from the sprint's store and the sprint row's coordinator from nova-config's store, writes nothing",
