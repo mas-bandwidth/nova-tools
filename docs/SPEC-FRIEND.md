@@ -2370,10 +2370,16 @@ friend's reader row, `reader-<friend>`, the work the hand-written `reader.zsh` l
   work_branch, attempt, brief, report) are the reads.
 - **Read slots.** `row_read_slots=<n>` on her beat's answer (`nova-config friend set <f>
   --read-slots <n>`, default `DefaultReadSlots` = 2) is how many reads run at once. Read slots
-  are their own number beside `width`: width card lanes AND read-slots reads run at once, a read
-  never takes a card lane and a card never takes a read slot, so a dealt card never waits for a
-  read and an asked read never waits for a card. A read begins the step it is asked while a slot
-  is free, and the next as soon as one records.
+  remain an additional read-only cap. Under the owner's 2026-10-08 configured-width
+  requirement, a one-shot friend has at most `width` physical work and native read children
+  together. Each child consumes one slot; sprint read cards also consume one whole slot.
+  Server deal/take/finish uses that same configured width. The daemon counts owned jobs
+  once, including adopted children, work reserved between retry turns, and native ACTIVE
+  receipts or canonical reading rows whose exit is not proved. Failed reader-queue or
+  ACTIVE reads hold admission. Shrinking width retains existing children and launches no
+  new job until total occupancy falls below the new width. A read starts while both the
+  shared width and read-only cap permit, and completion refills the freed capacity.
+  STOP still prohibits every new work or read launch.
 - **A read.** `read --as reader-<f> --begin <card> --epoch <n>` (refused: said in the record, not
   begun); then READ.md, BRIEF.md and WORKER-REPORT.txt are written under `<dir>/reads/<card>/`
   (the clone at the head, the merge-base diff alone, the touched packages' vet and tests on a

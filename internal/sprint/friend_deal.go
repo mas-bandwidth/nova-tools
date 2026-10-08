@@ -306,11 +306,11 @@ func laneRunsIt(s *Snapshot, seats []FriendSeat, c, wc *Card) string {
 }
 
 // friendRoom is the friend's room and her lanes: DealAhead times her width and her width
-// in batch mode, 1 and 1 in one-shot mode (docs/SPEC-SPRINT.md section 1, "A friend's card"),
+// in batch mode, her width and her width in one-shot mode (docs/SPEC-SPRINT.md section 1, "A friend's card"),
 // the room less what her reads take first in this deal (FriendSeat.ReadsFirst).
 func friendRoom(f FriendSeat) (room, width int) {
 	if f.Mode == config.FriendModeOneShot {
-		return 1 - f.ReadsFirst, 1
+		return f.Width - f.ReadsFirst, f.Width
 	}
 	return DealAhead*f.Width - f.ReadsFirst, f.Width
 }
@@ -371,13 +371,13 @@ func (s *Snapshot) Members() []string {
 // friendLoad is the cards a friend holds: ready and working on her row, her work cards and
 // her reads together. One width bounds her row (docs/SPEC-SPRINT.md section 1, a friend's
 // card; the owner's rule): her reads hold her lanes and her room as her work does, and a
-// one-shot friend holds one card at a time, read or work.
+// one-shot friend holds her configured width of cards, read or work.
 //
 // While read cards are on (read_cards.go) a read holds half a slot of her width, as a
 // member's does (halfLoad): her row holds her width of work or twice it of reads.
 func friendLoad(s *Snapshot, name string) int {
 	row := FriendRow(name)
-	if s.ReadCardsOn() {
+	if s.ReadCardsOn() && s.FriendMode(name) != config.FriendModeOneShot {
 		return halfLoad(rowLoad(s, row))
 	}
 	return s.Fleet.Count(row, Ready) + s.Fleet.Count(row, Working)
@@ -406,8 +406,8 @@ func friendLoad(s *Snapshot, name string) int {
 // attempt retired (friendEscalateUnit). A friend at or over her room is never
 // dealt. In batch mode (the default), a friend's room is DealAhead times her width and
 // her lanes are her width; in one-shot mode (docs/SPEC-SPRINT.md section 1, "A friend's
-// card"), a friend's room is 1 and her lanes are 1: she gets one card at a time, and the
-// next only after the last one finished. A lane of hers is idle while no card on her row
+// card"), her room and lanes are her configured width: one job per lane, with no
+// ready backlog beyond those lanes. A lane of hers is idle while no card on her row
 // holds it, started or not.
 // Each is its next attempt's work card, created on the friend's row at generation 1, ready
 // whatever her lanes, untaken and with no deadline running (docs/SPEC-SPRINT.md section 1,

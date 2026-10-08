@@ -497,7 +497,7 @@ turn the provider rate-limits (429, "rate limit reached", "too many requests", "
 exceeded") keeps its card and pauses new lanes for a backoff (30s doubling to 10m), lowers the live lane
 cap by a quarter and raises it one lane per clean 10m, no hold; three lowerings in an hour are one
 blocker to the seat. Out of funds (402, insufficient balance) holds the lanes until a restart, told once. With a sprint server the daemon also serves the friend's reader row (reader-<friend>): every 10s it asks queue --as reader-<friend> --json,
-begins each asked read up to the row's read slots (row_read_slots=, 2 until the beat says; read slots are in addition to width, never taken by cards and never lent to them), writes <dir>/reads/<card>/{READ.md,BRIEF.md,WORKER-REPORT.txt},
+begins each asked read up to the row's read slots (row_read_slots=, 2 until the beat says; read slots additionally cap reads; work and reads together use at most configured width physical children), writes <dir>/reads/<card>/{READ.md,BRIEF.md,WORKER-REPORT.txt},
 runs it as a one-shot of the harness (a claude account's model by the read's tier) inside the lane wall, and records read --ok|--broken --finding --usage from the RESULT.md, or read --return --reason --usage when it names no verdict or the provider's usage limit stops it. Every
 lane child (the harness's session open and each card's turn) runs inside the wall profile the row names
 (row_profile=), else --profile: as nova-friend wall --profile <p> --dir <d> -- <harness>, writes only to

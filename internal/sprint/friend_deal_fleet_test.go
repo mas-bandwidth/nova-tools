@@ -145,14 +145,14 @@ func TestOneWidthHoldsHerWorkAndReads(t *testing.T) {
 	assert.Equal(t, 13, room-friendLoad(w.s, "amy"), "her room less work and reads")
 	assert.Equal(t, -3, width-friendLoad(w.s, "amy"), "her lanes: 16 less 19, none idle")
 
-	// the one-shot friend: a read on her row is her one card
+	// the one-shot friend: a read consumes one of her configured slots
 	w2 := friendWorld(t, fleetBrief("flash"))
 	putReads(w2, "bee", 1)
 	dealWith(w2, FriendSeat{Name: "bee", Width: 4, Status: Up, Mode: config.FriendModeOneShot, Class: "flash", Tiers: []string{"flash"}})
-	assert.Zero(t, workOn(w2, FriendRow("bee")), "one card at a time, read or work")
+	assert.Equal(t, 1, workOn(w2, FriendRow("bee")), "the remaining configured slots can take work beside a read")
 	wc := w2.s.Fleet.Card(WorkCardID("s1-1", 1))
 	require.NotNil(t, wc)
-	assert.Contains(t, []string{"m1", "m2"}, wc.Row, "the machines take it")
+	assert.Equal(t, FriendRow("bee"), wc.Row, "the friend with shared room takes it")
 
 	// her read room is her room: with her row full of work she is asked no read
 	w3 := newWorld(t, "reader-a", "reader-b")

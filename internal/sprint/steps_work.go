@@ -1275,7 +1275,7 @@ func Take(s *Snapshot, r TakeReq) Plan {
 // status (only a machine's has; docs/SPEC-SPRINT.md section 1, a take for a friend): she
 // takes while FriendStatus says up, as the snapshot's friend seats carry it (her session's
 // evidence: a wake ping her session answered, or a card of hers finished), to her width
-// (1 in one-shot mode), and is refused when she is held, her beat says down, or her session
+// in either delivery mode, and is refused when she is held, her beat says down, or her session
 // has given no evidence within its window, the refusal naming which (FriendDownWhy).
 // The model is tla/FriendPresence.tla (Take, TakeOnlyWhenUp, ReadyTakenWhileUp; the
 // witness "ctlstatus" is the control card read that refused every friend up).
@@ -1326,6 +1326,9 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 	// twice the width less twice the work and the reads working, a read taking one and a
 	// work card two.
 	halves := s.ReadCardsOn()
+	if name, ok := FriendOfRow(r.As); ok && s.FriendMode(name) == config.FriendModeOneShot {
+		halves = false // one active read or work child consumes one physical lane
+	}
 	room := max(width-len(s.Fleet.Cell(r.As, Working)), 0)
 	if halves {
 		ww, wr := rowWorking(s, r.As)
@@ -1351,7 +1354,7 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 	// from every stream alike, never one stream's lowest scores first. Its reads are taken
 	// before its work, a read being at reader priority (priority.go).
 	ready := takeTurns(s.Fleet.Cell(r.As, Ready), slices.Index(s.Members(), r.As))
-	if halves {
+	if s.ReadCardsOn() {
 		slices.SortStableFunc(ready, func(a, b *Card) int {
 			if isRead(a) == isRead(b) {
 				return 0
@@ -1361,7 +1364,7 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 			}
 			return 1
 		})
-		if !byID {
+		if halves && !byID {
 			// a take by count takes the cards that fit, in order: a work card that does not
 			// fit is passed over for the reads after it
 			var fit []*Card
@@ -1713,15 +1716,16 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 // same step, taken now, so she never waits for a tick between one card and the next
 // (the owner, 2026-10-04: "just like the fleet"). In one-shot mode (docs/SPEC-SPRINT.md
 // section 1, "A friend's card"), the next is only after the last finished: already-started
-// work is preserved, but queued promotion is gated until shared work/read occupancy on her
-// row reaches zero. A machine's finish does nothing of the kind: the member takes.
+// work is preserved, and queued promotion fills a free configured slot after counting
+// shared work/read occupancy on her row. A machine's finish does nothing of the kind: the member takes.
 func friendNext(s *Snapshot, c *Card, u *Unit, prior []Unit) {
 	if !IsFriendRow(c.Row) {
 		return
 	}
 	name, _ := FriendOfRow(c.Row)
 	if s.FriendMode(name) == config.FriendModeOneShot {
-		if friendOccupancy(s, c.Row, u, prior) > 0 {
+		width, _ := takeSeat(s, c.Row)
+		if friendOccupancy(s, c.Row, u, prior) >= width {
 			return
 		}
 	}

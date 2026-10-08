@@ -53,19 +53,20 @@ func cardDirFixture(t *testing.T, tasks [][2]string, delivered, done []string) s
 // card turn, writes the card's RESULT.md when finish says so; a turn of a
 // card in reject says that permission line.
 type lanesHarness struct {
-	mu      sync.Mutex
-	dir     string
-	seeds   []string
-	turns   []string // session: card
-	texts   []string
-	finish  map[string]bool
-	reject  map[string]string
-	active  map[string]int
-	maxBusy int
-	block   chan struct{}      // when set, a card turn waits for it
-	onPong  func(nonce string) // when set, the session "runs" each pong line a turn carries: called with its nonce
-	refuse  []error            // what the next message turns answer instead of running (a Deferred, a SessionRefused), in order
-	pid     int                // when set, the process id each card turn hands to the exec's sink (WithProcessStarted)
+	mu          sync.Mutex
+	dir         string
+	seeds       []string
+	turns       []string // session: card
+	texts       []string
+	finish      map[string]bool
+	reject      map[string]string
+	active      map[string]int
+	maxBusy     int
+	maxChildren int
+	block       chan struct{}      // when set, a card turn waits for it
+	onPong      func(nonce string) // when set, the session "runs" each pong line a turn carries: called with its nonce
+	refuse      []error            // what the next message turns answer instead of running (a Deferred, a SessionRefused), in order
+	pid         int                // when set, the process id each card turn hands to the exec's sink (WithProcessStarted)
 }
 
 var cardOfText = regexp.MustCompile(`one card this turn, ([^ ]+)\. Do exactly`)
@@ -107,6 +108,7 @@ func (h *lanesHarness) DeliverTo(ctx context.Context, session, text string) (Lan
 	}
 	h.active[session]++
 	h.maxBusy = max(h.maxBusy, h.active[session])
+	h.recordChildren()
 	block := h.block
 	h.mu.Unlock()
 	if block != nil {
@@ -128,6 +130,15 @@ func (h *lanesHarness) DeliverTo(ctx context.Context, session, text string) (Lan
 		}
 	}
 	return LaneTurn{Exit: 0, Rejected: h.reject[id]}, nil
+}
+
+// recordChildren runs under mu and measures physical work and native-read children together.
+func (h *lanesHarness) recordChildren() {
+	n := 0
+	for _, active := range h.active {
+		n += active
+	}
+	h.maxChildren = max(h.maxChildren, n)
 }
 
 func (h *lanesHarness) got() (turns, texts, seeds []string) {

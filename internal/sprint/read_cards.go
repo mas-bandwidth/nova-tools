@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 )
 
 // A read is a consumer card (docs/SPEC-SPRINT.md section 6, "A read is a consumer card";
@@ -156,6 +158,7 @@ type readUnit struct {
 	row    string // the fleet row
 	friend bool
 	seat   FriendSeat
+	cost   int // half slots held by one read: two for a one-shot friend, one otherwise
 	half   int // free room, in half slots: twice its room less twice its work and its reads
 	idle   int // idle lanes, in half slots: twice its width less what works
 }
@@ -180,7 +183,11 @@ func readUnitsOf(s *Snapshot, seats []FriendSeat) []readUnit {
 		row := FriendRow(f.Name)
 		work, reads := rowLoad(s, row)
 		ww, wr := rowWorking(s, row)
-		out = append(out, readUnit{name: f.Name, row: row, friend: true, seat: f, half: 2*(room-work) - reads, idle: 2*width - 2*ww - wr})
+		cost := 1
+		if f.Mode == config.FriendModeOneShot {
+			cost = 2 // one read or work child per configured lane
+		}
+		out = append(out, readUnit{name: f.Name, row: row, friend: true, seat: f, cost: cost, half: 2*(room-work) - cost*reads, idle: 2*width - 2*ww - cost*wr})
 	}
 	for _, m := range s.UpMembers() {
 		if !memberReads(s, m) {
@@ -189,7 +196,7 @@ func readUnitsOf(s *Snapshot, seats []FriendSeat) []readUnit {
 		w := s.Width(m)
 		work, reads := rowLoad(s, m)
 		ww, wr := rowWorking(s, m)
-		out = append(out, readUnit{name: m, row: m, half: 2*(DealAhead*w-work) - reads, idle: 2*w - 2*ww - wr})
+		out = append(out, readUnit{name: m, row: m, cost: 1, half: 2*(DealAhead*w-work) - reads, idle: 2*w - 2*ww - wr})
 	}
 	return out
 }
@@ -595,7 +602,7 @@ func readCardsAskWhy(s *Snapshot, seats []FriendSeat, ri routeIndexes, why *[]st
 		}
 		var room []int
 		for _, i := range may {
-			if units[i].half > 0 {
+			if units[i].half >= units[i].cost {
 				room = append(room, i)
 			}
 		}
@@ -632,8 +639,8 @@ func readCardsAskWhy(s *Snapshot, seats []FriendSeat, ri routeIndexes, why *[]st
 				var refused []string
 				for i, un := range units {
 					r := readRefusal(view, un, pr, attempt, worker, cards)
-					if r == "" && un.half <= 0 {
-						r = "half<=0"
+					if r == "" && un.half < un.cost {
+						r = "room below read cost"
 					}
 					if r != "" && !slices.Contains(picked, i) {
 						refused = append(refused, un.name+"="+r)
@@ -655,8 +662,8 @@ func readCardsAskWhy(s *Snapshot, seats []FriendSeat, ri routeIndexes, why *[]st
 		var names []string
 		for k, i := range picked {
 			un := &units[i]
-			un.half--
-			un.idle--
+			un.half -= un.cost
+			un.idle -= un.cost
 			id := readCardIDFor(cards, pr.ID, attempt, un.name)
 			fields := map[string]string{
 				"kind": "read", "primary": pr.ID, "stream": pr.Row, "reader": un.name,

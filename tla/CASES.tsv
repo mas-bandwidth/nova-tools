@@ -513,3 +513,5 @@ MCStopReturnAuthorityCancelStarve.cfg	MCStopReturnAuthority.tla	temporal	Authori
 MCStopReturnAuthorityStoreStarve.cfg	MCStopReturnAuthority.tla	temporal	AuthorityEventuallyReturned	ignore-terminal	stopauthority	required	-
 MCWakeCursor.cfg	MCWakeCursor.tla	pass	-	ignore-terminal	wakecursor	required	-
 MCWakeCursorBrokenRearm.cfg	MCWakeCursor.tla	invariant	NoSkipped	ignore-terminal	wakecursor	required	-
+MCFriendReadyTakeOneShot.cfg	MCFriendReadyTake.tla	pass	-	ignore-terminal	friendreadytake	required	-
+MCFriendReadyTakeOneShotRefillWitness.cfg	MCFriendReadyTake.tla	invariant	OneShotRefillWitness	ignore-terminal	friendreadytake	required	-

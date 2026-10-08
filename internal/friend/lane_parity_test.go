@@ -352,6 +352,9 @@ func TestOpencodeLanesDoWhatTheRunnerStopgapsDid(t *testing.T) {
 // coordinator verb asked is kept in asked.
 func serverSprint(mu *sync.Mutex, asked *[][]string) func(context.Context, []string) (string, error) {
 	return func(_ context.Context, argv []string) (string, error) {
+		if len(argv) > 0 && argv[0] == "queue" {
+			return `{"epoch":"15","cards":[]}`, nil
+		}
 		if len(argv) >= 2 && argv[0] == "friend" && argv[1] != "beat" && argv[1] != "cards" {
 			mu.Lock()
 			*asked = append(*asked, argv)

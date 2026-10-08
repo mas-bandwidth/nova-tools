@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/config"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -528,4 +530,53 @@ func TestAReadHandedBackByFriendTakeIsNotDealtToHerAgain(t *testing.T) {
 		}
 		require.Nil(t, w.s.Fleet.Placed(id+".g1"), "a read she handed back is never dealt to her again at the attempt")
 	}
+}
+
+// One-shot child capacity is physical: a read and a work run each hold one
+// configured lane (docs/SPEC-SPRINT.md section 1; tla/FriendReadyTake.tla).
+func TestOneShotReadCardsAndWorkSharePhysicalWidth(t *testing.T) {
+	t.Parallel()
+	for _, width := range []int{1, 2, 4} {
+		t.Run(itoa(width), func(t *testing.T) {
+			t.Parallel()
+			w := readCardsWorld(t, width)
+			seat := FriendSeat{Name: "amy", Width: width, Status: Up, Mode: config.FriendModeOneShot,
+				Class: "flash", Tiers: []string{"flash"}, Roles: []string{"builder", RoleReader}}
+			w.s.Friends = []FriendSeat{seat}
+			row := FriendRow(seat.Name)
+			w.s.Fleet.SetRows(append(w.s.Fleet.Rows(), row))
+			w.must(Add(w.s, AddReq{Stream: "busy", Cards: []CardAdd{{ID: "busy", Brief: friendBrief("only friend amy")}}}))
+			dealStarted(w, seat)
+			require.Equal(t, Working, w.s.Fleet.Card("busy.w1").Col, "a real started work card holds its physical child slot")
+			for i := range 2 * width {
+				id := "s1-" + itoa(i+1)
+				putReviewBy(w, id, id+": work (s1) tier: flash\n", "m1", float64(i+1))
+			}
+			dealReads(t, w, []FriendSeat{seat})
+			require.Equal(t, width, w.s.Fleet.Count(row, Working), "one work plus reads fills, never doubles, physical width")
+			require.Zero(t, w.s.Fleet.Count(row, Ready), "one-shot has no overflow read backlog")
+			w.s.Fleet.Put(&Card{ID: "overflow.r1.amy", Row: row, Col: Ready, Rev: 1,
+				Fields: map[string]string{"kind": "read", "gen": "1"}})
+			p := Take(w.s, TakeReq{As: row, Sel: Sel{IDs: []string{"overflow.r1.amy"}},
+				Gens: gensOf(w.s, "overflow.r1.amy")})
+			require.Empty(t, p.Units, "take cannot add a read child beside full physical occupancy")
+			require.NotEmpty(t, p.Refused)
+		})
+	}
+}
+
+// Read priority is independent of physical slot accounting. Different streams
+// expose the work-first ordering that same-stream SortCards can conceal.
+func TestOneShotTakeKeepsReadPriorityAcrossStreams(t *testing.T) {
+	t.Parallel()
+	w := readCardsWorld(t, 1)
+	seat := FriendSeat{Name: "amy", Width: 1, Status: Up, Mode: config.FriendModeOneShot}
+	w.s.Friends = []FriendSeat{seat}
+	row := FriendRow(seat.Name)
+	w.s.Fleet.SetRows(append(w.s.Fleet.Rows(), row))
+	w.s.Fleet.Put(&Card{ID: "a.w1", Row: row, Col: Ready, Rev: 1, Fields: map[string]string{"kind": "work", "stream": "a", "gen": "1"}})
+	w.s.Fleet.Put(&Card{ID: "z.r1.amy", Row: row, Col: Ready, Rev: 1, Fields: map[string]string{"kind": "read", "stream": "z", "gen": "1"}})
+	p := Take(w.s, TakeReq{As: row, Sel: Sel{Limit: 1}})
+	require.Len(t, p.Units, 1)
+	require.Equal(t, "z.r1.amy", p.Units[0].Key)
 }

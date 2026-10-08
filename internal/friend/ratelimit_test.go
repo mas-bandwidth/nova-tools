@@ -332,3 +332,63 @@ func TestOpenCodeLanesAnswerARateLimitAndOutOfFunds(t *testing.T) {
 	var pr ProviderRefused
 	require.ErrorAs(t, err, &pr, "a refusal is still one")
 }
+
+// retryShrinkHarness holds the first, report-free turn independently of the
+// second turn. Width can shrink between them without a provider cap changing it.
+type retryShrinkHarness struct {
+	*lanesHarness
+	calls map[string]int
+	first chan struct{}
+}
+
+func (h *retryShrinkHarness) DeliverTo(ctx context.Context, session, text string) (LaneTurn, error) {
+	id := cardOfText.FindStringSubmatch(text)[1]
+	h.mu.Lock()
+	h.calls[id]++
+	n := h.calls[id]
+	if n == 1 {
+		h.turns = append(h.turns, session+": "+id)
+		h.active[session]++
+		h.recordChildren()
+	}
+	h.mu.Unlock()
+	if n > 1 {
+		return h.lanesHarness.DeliverTo(ctx, session, text)
+	}
+	select {
+	case <-h.first:
+	case <-ctx.Done():
+	}
+	h.mu.Lock()
+	h.active[session]--
+	h.mu.Unlock()
+	return LaneTurn{Exit: 1}, nil
+}
+
+// A width shrink between report-free retry turns must not leave an abandoned
+// durable reservation that blocks every later child at the new width.
+func TestOneShotWidthShrinkBetweenRetriesRefillsWithoutStaleReservations(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}, {"c2", "queued"}, {"c3", "queued"}}, []string{"c1", "c2", "c3"}, nil)
+		lh := &lanesHarness{dir: dir, active: map[string]int{}, finish: map[string]bool{"c1": true, "c2": true, "c3": true}, block: make(chan struct{})}
+		h := &retryShrinkHarness{lanesHarness: lh, calls: map[string]int{}, first: make(chan struct{})}
+		r, state := laneRig(t, lh, 2)
+		r.d.Deliver = h
+		width := 2
+		r.d.Row = func() (string, int) { return ModeOneShot, width }
+		r.at[5] = func() {
+			require.Len(t, state.Started, 2, "two actual children retain their job identities")
+			width = 1
+			close(h.first)
+		}
+		r.at[10] = func() {
+			require.Len(t, state.Started, 1, "proved no-launch lane beyond new width releases its reservation while lane one retries")
+		}
+		r.at[15] = func() { close(lh.block) }
+		r.run(t, 40)
+		require.Empty(t, state.Started, "every card finishes at the new width without a stranded reservation")
+		require.Equal(t, 3, strings.Count(strings.Join(r.records, "\n"), " card=done"), "shrunk row automatically refills both remaining cards")
+		require.Equal(t, 2, lh.maxChildren, "shrink retains original children and adds none before they exit")
+	})
+}

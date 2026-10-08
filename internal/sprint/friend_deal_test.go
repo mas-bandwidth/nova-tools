@@ -217,74 +217,35 @@ func TestAFriendsRowIsNoMemberOfTheClearsShape(t *testing.T) {
 // on the friend row (docs/SPEC-SPRINT.md section 1, "A friend's card"). In batch mode
 // (the default) the machine deals up to the row's width
 // as today (DealAhead times width, working at her width and ready behind); in one-shot mode
-// it deals one card at a time and the next only after the last one finished.
+// it fills configured lanes without a ready backlog and refills each finished lane.
 func TestDealingRespectsAFriendDeliveryMode(t *testing.T) {
 	t.Parallel()
-	// Amy is batch (the default, width 2), Bob is one-shot (width 2, mode: one-shot).
-	// Amy with 4 cards waiting gets 2 working and 2 ready behind.
-	// Bob with 4 cards waiting gets 1 working and 0 ready; the other 3 wait on the work table.
-	w := friendWorld(t,
-		friendBrief("only friend amy"), friendBrief("only friend amy"), friendBrief("only friend amy"), friendBrief("only friend amy"),
-		friendBrief("only friend bob"), friendBrief("only friend bob"), friendBrief("only friend bob"), friendBrief("only friend bob"),
-	)
-	seats := []FriendSeat{
-		{Name: "amy", Width: 2, Status: Up, Mode: config.FriendModeBatch, Class: "flash,pro"},
-		{Name: "bob", Width: 2, Status: Up, Mode: config.FriendModeOneShot, Class: "flash,pro"},
+	for _, tc := range []struct {
+		name, mode   string
+		width, ready int
+	}{
+		{"batch", config.FriendModeBatch, 2, 2},
+		{"one-shot", config.FriendModeOneShot, 2, 0},
+		{"one-shot-width-one", config.FriendModeOneShot, 1, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			w := friendWorld(t, friendBrief("only friend amy"), friendBrief("only friend amy"), friendBrief("only friend amy"), friendBrief("only friend amy"))
+			seat := FriendSeat{Name: "amy", Width: tc.width, Status: Up, Mode: tc.mode, Class: "flash,pro"}
+			dealStarted(w, seat)
+			row := FriendRow("amy")
+			assert.Equal(t, tc.width, w.s.Fleet.Count(row, Working), "both modes fill configured lanes")
+			assert.Equal(t, tc.ready, w.s.Fleet.Count(row, Ready), "only batch prequeues behind its lanes")
+			w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1"}}, As: row,
+				Gens: gensOf(w.s, "s1-1.w1"), Head: "abc", Friends: []FriendSeat{seat}}))
+			dealStarted(w, seat)
+			assert.Equal(t, tc.width, w.s.Fleet.Count(row, Working), "a finish refills its slot without waiting for other jobs")
+		})
 	}
-	dealStarted(w, seats...)
-
-	amy := FriendRow("amy")
-	assert.Equal(t, 2, w.s.Fleet.Count(amy, Working), "amy works her width")
-	assert.Equal(t, 2, w.s.Fleet.Count(amy, Ready), "amy holds 2 ready behind (batch mode)")
-
-	bob := FriendRow("bob")
-	assert.Equal(t, 1, w.s.Fleet.Count(bob, Working), "bob gets exactly one card at a time in one-shot mode")
-	assert.Equal(t, 0, w.s.Fleet.Count(bob, Ready), "bob holds no cards ready behind in one-shot mode")
-	assert.Equal(t, Ready, w.s.StateOf("s1-6"), "the 2nd card for bob waits ready on the work table")
-	assert.Equal(t, Ready, w.s.StateOf("s1-7"), "the 3rd card for bob waits ready on the work table")
-	assert.Equal(t, Ready, w.s.StateOf("s1-8"), "the 4th card for bob waits ready on the work table")
-
-	// A tick later without bob finishing: nothing more is dealt to bob
-	dealStarted(w, seats...)
-	assert.Equal(t, 1, w.s.Fleet.Count(bob, Working))
-	assert.Equal(t, 0, w.s.Fleet.Count(bob, Ready))
-	assert.Equal(t, Ready, w.s.StateOf("s1-6"))
-
-	// Bob finishes his first card: finish moves it out of working; at finish 0 are working
-	// (no ready card auto-advances, unlike batch mode where friendNext takes the next)
-	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-5.w1"}}, As: bob, Gens: gensOf(w.s, "s1-5.w1"), Head: "abc"}))
-	assert.Equal(t, 0, w.s.Fleet.Count(bob, Working), "bob has no ready card to auto-advance at finish")
-
-	// The next deal/tick deals the next card to bob (and only one)
-	dealStarted(w, seats...)
-	assert.Equal(t, 1, w.s.Fleet.Count(bob, Working), "the next card is dealt after the last one finished")
-	assert.Equal(t, 0, w.s.Fleet.Count(bob, Ready))
-	assert.Equal(t, Working, w.s.StateOf("s1-6"))
-	assert.Equal(t, Ready, w.s.StateOf("s1-7"))
-
-	// Bob finishes the 2nd card, next deal gives the 3rd
-	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-6.w1"}}, As: bob, Gens: gensOf(w.s, "s1-6.w1"), Head: "def"}))
-	assert.Equal(t, 0, w.s.Fleet.Count(bob, Working))
-	dealStarted(w, seats...)
-	assert.Equal(t, 1, w.s.Fleet.Count(bob, Working))
-	assert.Equal(t, Working, w.s.StateOf("s1-7"))
-	assert.Equal(t, Ready, w.s.StateOf("s1-8"))
-
-	// WHO: friend (any friend) prefers friend with most room free:
-	// Amy (batch, width 2, load 0 => free 4) vs Bob (one-shot, load 0 => free 1)
-	w2 := friendWorld(t, friendBrief("friend"), friendBrief("friend"), friendBrief("friend"), friendBrief("friend"), friendBrief("friend"))
-	dealStarted(w2,
-		FriendSeat{Name: "amy", Width: 2, Status: Up, Mode: config.FriendModeBatch, Class: "flash"},
-		FriendSeat{Name: "bob", Width: 2, Status: Up, Mode: config.FriendModeOneShot, Class: "flash"},
-	)
-	assert.Equal(t, 2, w2.s.Fleet.Count(amy, Working), "amy gets 2 working")
-	assert.Equal(t, 2, w2.s.Fleet.Count(amy, Ready), "amy gets 2 ready (fills her room 4)")
-	assert.Equal(t, 1, w2.s.Fleet.Count(bob, Working), "5th card goes to bob who has free room 1")
-	assert.Equal(t, 0, w2.s.Fleet.Count(bob, Ready), "bob holds none ready")
 }
 
 // In one-shot mode, friendNext gates promotion of ready cards until shared work/read occupancy
-// on the friend's row reaches zero:
+// on the friend's row reaches its current configured width:
 // 1. If another working card remains active on her row, finishing one card does not promote a ready card.
 // 2. If an active frontier read card is on her row, finishing a work card does not promote a ready card.
 func TestFriendNextGatesQueuedPromotionWhenActiveWorkOrReadRemainsInOneShot(t *testing.T) {
@@ -302,9 +263,9 @@ func TestFriendNextGatesQueuedPromotionWhenActiveWorkOrReadRemainsInOneShot(t *t
 	require.Equal(t, 2, w.s.Fleet.Count(amy, Working))
 	require.Equal(t, 2, w.s.Fleet.Count(amy, Ready))
 
-	// Amy switches to one-shot mode:
+	// Her configured width shrinks to one while existing jobs are preserved:
 	seats := []FriendSeat{
-		{Name: "amy", Width: 2, Status: Up, Mode: config.FriendModeOneShot, Class: "flash,pro"},
+		{Name: "amy", Width: 1, Status: Up, Mode: config.FriendModeOneShot, Class: "flash,pro"},
 	}
 
 	// Finishing s1-1.w1 in one-shot mode: s1-2.w1 is still working, so occupancy is 1 > 0.
@@ -450,4 +411,21 @@ func TestAFriendUpWhoseControlCardIsHeldOrDownIsNotDealt(t *testing.T) {
 		assert.Zero(t, n, "friend %s is up, and her control card is held or down: dealt nothing", name)
 	}
 	assert.Equal(t, 3, w.s.Fleet.Count(FriendRow("dan"), Ready)+w.s.Fleet.Count(FriendRow("dan"), Working), "a friend up whose control card is not held or down is dealt")
+}
+
+// A batch-to-one-shot mode change can retain a ready backlog. Finishing one
+// child must immediately promote one ready child while another is still active.
+func TestOneShotFinishPromotesOneReadyCardAtConfiguredWidth(t *testing.T) {
+	t.Parallel()
+	w := friendWorld(t, friendBrief("only friend amy"), friendBrief("only friend amy"), friendBrief("only friend amy"), friendBrief("only friend amy"))
+	seat := FriendSeat{Name: "amy", Width: 2, Status: Up, Mode: config.FriendModeBatch, Class: "flash,pro"}
+	dealStarted(w, seat)
+	row := FriendRow("amy")
+	require.Equal(t, 2, w.s.Fleet.Count(row, Working))
+	require.Equal(t, 2, w.s.Fleet.Count(row, Ready))
+	seat.Mode = config.FriendModeOneShot
+	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1"}}, As: row, Gens: gensOf(w.s, "s1-1.w1"), Head: "abc", Friends: []FriendSeat{seat}}))
+	assert.Equal(t, 2, w.s.Fleet.Count(row, Working), "finish refills without another tick or waiting for the other job")
+	assert.Equal(t, 1, w.s.Fleet.Count(row, Ready))
+	assert.Equal(t, Working, w.s.Fleet.Card("s1-2.w1").Col, "the other active child is retained")
 }

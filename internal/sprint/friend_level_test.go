@@ -61,10 +61,10 @@ func TestFriendLevelRespectsFriendDeliveryMode(t *testing.T) {
 	require.Equal(t, 2, w.s.Fleet.Count(amy, Ready))
 	require.Equal(t, 2, w.s.Fleet.Count(amy, Working))
 
-	// bob is up in one-shot mode (width 2, but mode one-shot gives room 1 and width 1)
+	// bob is up in one-shot mode at configured width 1
 	seats := []FriendSeat{
 		{Name: "amy", Width: 2, Status: Up, Class: "flash", Mode: config.FriendModeBatch},
-		{Name: "bob", Width: 2, Status: Up, Class: "flash", Mode: config.FriendModeOneShot},
+		{Name: "bob", Width: 1, Status: Up, Class: "flash", Mode: config.FriendModeOneShot},
 	}
 
 	// amy's backlog is 4 - 2 = 2. bob's backlog is 0 - 1 = -1.

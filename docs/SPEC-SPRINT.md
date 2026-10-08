@@ -398,10 +398,12 @@ as a machine's lane that frees takes its next, and the next tick puts it back
 the next tick fills her room
 again (`TestAFriendAtWidthEightWithThirtyCardsHasSixteenDealt`: width 8 with 30
 waiting is 8 working and 8 ready, and a 17th on a landing). In one-shot mode
-(`mode: one-shot`), the machine deals one card at a time (room 1, lane 1), and
-the next only after the last one finished
-(item 22 of tmp/manual-to-verbs-2026-10-04.md;
-`TestDealingRespectsAFriendDeliveryMode`). For either mode, the deal (friends
+(`mode: one-shot`), the machine fills her configured width with one job per lane,
+work and reads sharing those slots, and keeps no extra ready backlog. Each active
+one-shot read or work child occupies one whole physical slot even with read cards
+on; this matches the daemon's configured lane count. A freed
+slot is refilled without waiting for the other lanes
+(`tla/FriendReadyTake.tla`, `TestDealingRespectsAFriendDeliveryMode`). For either mode, the deal (friends
 first, before the machines' deal) offers every ready card to its named friend
 whose tiers hold its tier first, then to the friends up whose tiers hold its
 tier, an idle lane first,
@@ -421,7 +423,7 @@ nothing ready for over an hour while the machines were dealt flash cards):
   row, ready and working, work card or read (`sprint.friendLoad`), in the deal, the
   level, her start and the friends' read ask alike; there is no read room beside it.
   A friend at width 16 holding 10 work cards and 9 reads has no idle lane, and a
-  one-shot friend holds one card at a time, read or work
+  one-shot friend holds her configured width of cards, read or work
   (`TestOneWidthHoldsHerWorkAndReads`).
 - The deal order is one for friends and machines (`sprint.dealOrder`): the stream
   turns from the deal's stream index, each stream's cards in work order, the order
@@ -566,8 +568,7 @@ row into working, by id (`<card>@<gen>`) or by count, as a member takes
 (`sprint.Take`, `takeSeat`; her presence as the section below reads it), and `progress` and `finish` then take it as
 they take a member's working card. Her status and her lanes are her friends
 row's, never a control card's: she takes while she is up (held or down, her
-cards wait ready, and the refusal names why), within her lanes (her width in batch mode,
-1 in one-shot mode; hard, as a member's width: a take past them is refused,
+cards wait ready, and the refusal names why), within her configured lanes in either mode (hard, as a member's width: a take past them is refused,
 `friend friend.<name> is at its width`), and a card she takes is taken now and
 carries her deadline (`friendTaken`). A card on another row is refused (`not in
 friend.<name> ready`), a friend not on the roster is refused (`no friend
@@ -1289,7 +1290,7 @@ her own session (a wake ping her session answered within `FriendPongWindow`,
 her session's answer to a check her daemon asked within `FriendProofLive` while her beats go on, or
 a card of hers finished within `FriendFinishWindow`; docs/SPEC-FRIEND.md,
 "Presence is her session's evidence"), never on her beat itself. `TakeStep` reads the friends' seats when it names a friend's row.
-Her take is held to her width (1 in one-shot mode), as a machine's is to its
+Her take is held to her configured width (whole read/work children in one-shot mode), as a machine's is to its
 own. It is refused only when she is not up, and the refusal names why: "friend
 <f> is held: held by the coordinator (friend down)[: <reason>]", "friend <f>
 is down: her beat says down until <t>: <reason>", or "friend <f> is down: no

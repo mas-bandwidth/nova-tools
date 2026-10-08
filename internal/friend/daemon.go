@@ -593,7 +593,6 @@ func (d *Daemon) Run(ctx context.Context) error {
 				l.startPresent(now, false)
 			}
 			l.laneStep(now, width)
-			l.readStep(now)
 			d.status.Lanes = l.lanes.said(width)
 		case (l.busy == nil || !l.busy.running) && l.presentOwed(now):
 			l.startPresent(now, true)

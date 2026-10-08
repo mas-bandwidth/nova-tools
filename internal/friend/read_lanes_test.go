@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -28,6 +29,7 @@ type readSprint struct {
 	queue       string
 	state       map[string]string // card -> begun | done: what the server's columns say after each verb
 	argvs       [][]string
+	failQueue   bool
 	failVerdict string // before or after the canonical write, once
 }
 
@@ -50,6 +52,9 @@ func (s *readSprint) ask(_ context.Context, argv []string) (string, error) {
 		b, _ := json.Marshal(map[string]any{"read_cards": reads})
 		return string(b), nil
 	case "queue":
+		if s.failQueue {
+			return "", fmt.Errorf("reader queue unavailable")
+		}
 		var q struct {
 			Epoch string
 			Cards []map[string]any
@@ -315,7 +320,7 @@ func TestReadStopRefusesAReusedLeaderIdentity(t *testing.T) {
 func TestAskedReadCannotOverwriteUnsettledNativeActiveReceipt(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		dir := cardDirFixture(t, nil, nil, nil)
+		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
 		readDir := filepath.Join(dir, "reads", "a.w1")
 		require.NoError(t, os.MkdirAll(readDir, 0o755))
 		old := AskedRead{ID: "a.w1", Epoch: "15", Gen: 1, Packet: ReadPacket{Head: "aaa"}}
@@ -324,6 +329,9 @@ func TestAskedReadCannotOverwriteUnsettledNativeActiveReceipt(t *testing.T) {
 		sp := &readSprint{queue: askedQueue}
 		r := readRig(t, h, sp, 1)
 		r.run(t, 20)
+		turns, _, _ := h.got()
+		assert.Empty(t, turns, "unknown native child holds the configured work slot too")
+		assert.Empty(t, sp.verbs("--begin"), "unknown native child leaves no spare read slot")
 		for _, argv := range sp.verbs("--begin") {
 			assert.NotEqual(t, "a.w1@1", argv[4], "the old ACTIVE receipt blocks another native launch under the same read ID")
 		}
@@ -378,6 +386,11 @@ type readHarness struct {
 
 func (h *readHarness) RunRead(ctx context.Context, model, prompt string) (LaneTurn, error) {
 	dir := readDirOfPrompt.FindStringSubmatch(prompt)[1]
+	h.mu.Lock()
+	h.active["read:"+filepath.Base(dir)]++
+	h.recordChildren()
+	h.mu.Unlock()
+	defer func() { h.mu.Lock(); h.active["read:"+filepath.Base(dir)]--; h.mu.Unlock() }()
 	h.rmu.Lock()
 	h.models = append(h.models, model)
 	h.prompts = append(h.prompts, prompt)
@@ -401,7 +414,7 @@ func (h *readHarness) RunRead(ctx context.Context, model, prompt string) (LaneTu
 }
 
 func readRig(t *testing.T, h *readHarness, sp *readSprint, slots int) *rig {
-	r, _ := laneRig(t, h.lanesHarness, 1)
+	r, _ := laneRig(t, h.lanesHarness, max(slots, 1))
 	r.d.Deliver = h
 	r.d.Sprint = sp.ask
 	r.d.ReadSlots = func() int { return slots }
@@ -461,8 +474,8 @@ func TestALaneDaemonReadsAnAskedReadAndRecordsTheVerdict(t *testing.T) {
 	})
 }
 
-// Read slots are their own number: with one read slot and the read held, a second asked read
-// waits, and a dealt card is started by its card lane at once, never waiting for a read.
+// Read slots remain an additional cap: with one read slot and the read held, a second asked read
+// waits. With two configured physical slots, one card and one read can run together.
 func TestAReadSlotIsNeverACardLaneAndNeverWaitsForOne(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
@@ -471,6 +484,7 @@ func TestAReadSlotIsNeverACardLaneAndNeverWaitsForOne(t *testing.T) {
 			verdicts: map[string]string{"a.w1": okResult, "b.w1": strings.ReplaceAll(okResult, "aaa", "bbb")}, rblock: make(chan struct{})}
 		sp := &readSprint{queue: askedQueue}
 		r := readRig(t, h, sp, 1)
+		r.d.Row = func() (string, int) { return ModeOneShot, 2 }
 		var turns []string
 		var begun int
 		r.at[20] = func() {
@@ -518,4 +532,132 @@ func TestParseReadSlotsAndVerdict(t *testing.T) {
 	assert.Empty(t, v, "none is no verdict")
 	_, err := ParseReadQueue(`{"cards":[]}`)
 	assert.Error(t, err, "a queue with no epoch is not trusted")
+}
+
+// Holding the actual harness turns makes an extra child visible rather than
+// merely checking table occupancy. Either admission order must share width.
+func TestOneShotWorkAndNativeReadsShareConfiguredChildren(t *testing.T) {
+	for _, readFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("read-first-%t", readFirst), func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				tasks, delivered := [][2]string{{"c1", "queued"}, {"c2", "queued"}}, []string{"c1", "c2"}
+				dir := cardDirFixture(t, tasks, delivered, nil)
+				h := &readHarness{lanesHarness: &lanesHarness{dir: dir, active: map[string]int{}, finish: map[string]bool{"c1": true, "c2": true}, block: make(chan struct{})}, rblock: make(chan struct{}), verdicts: map[string]string{"a.w1": okResult, "b.w1": strings.ReplaceAll(okResult, "aaa", "bbb")}}
+				sp := &readSprint{queue: askedQueue}
+				if !readFirst {
+					sp.queue = `{"epoch":"15","cards":[]}`
+				}
+				r := readRig(t, h, sp, 2)
+				r.at[10] = func() {
+					if readFirst {
+						turns, _, _ := h.got()
+						assert.Empty(t, turns)
+						require.Len(t, sp.verbs("--begin"), 2)
+					} else {
+						turns, _, _ := h.got()
+						require.Len(t, turns, 2)
+						assert.Empty(t, sp.verbs("--begin"), "work-filled capacity admits no reads")
+						sp.mu.Lock()
+						sp.queue = askedQueue
+						sp.mu.Unlock()
+					}
+				}
+				r.at[15] = func() {
+					if readFirst {
+						turns, _, _ := h.got()
+						assert.Empty(t, turns, "read-filled capacity admits no work")
+						close(h.rblock)
+					} else {
+						close(h.block)
+					}
+				}
+				r.at[25] = func() {
+					if readFirst {
+						close(h.block)
+					} else {
+						close(h.rblock)
+					}
+				}
+				r.run(t, 40)
+				turns, _, _ := h.got()
+				require.Len(t, turns, 2, "work automatically refills after reads exit")
+				require.Len(t, sp.verbs("--begin"), 2, "reads automatically refill after work exits")
+				assert.Equal(t, 2, h.maxChildren, "physical work + read children never exceed configured width")
+			})
+		})
+	}
+}
+
+func TestOneShotReaderQueueFailureHoldsWorkAdmission(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
+		h := &readHarness{lanesHarness: &lanesHarness{dir: dir, active: map[string]int{}, finish: map[string]bool{"c1": true}}}
+		sp := &readSprint{queue: askedQueue, failQueue: true}
+		r := readRig(t, h, sp, 1)
+		r.run(t, 20)
+		turns, _, _ := h.got()
+		assert.Empty(t, turns, "unobserved reader ownership cannot be treated as empty")
+		assert.Empty(t, sp.verbs("--begin"))
+	})
+}
+
+func TestOneShotWidthShrinkPreservesReadsAndHoldsNewWork(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, nil, nil, nil)
+		h := &readHarness{lanesHarness: &lanesHarness{dir: dir, active: map[string]int{}, finish: map[string]bool{"c1": true}}, rblock: make(chan struct{})}
+		sp := &readSprint{queue: askedQueue}
+		r := readRig(t, h, sp, 2)
+		width := 2
+		r.d.Row = func() (string, int) { return ModeOneShot, width }
+		r.at[10] = func() {
+			require.Len(t, sp.verbs("--begin"), 2)
+			width = 1
+			require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox", "c1~15"), 0755))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"), []byte("RESULT: c1\n"), 0644))
+			raw, _ := json.Marshal(Queue{Tasks: []Task{{ID: "c1", State: "queued"}}})
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), raw, 0644))
+		}
+		r.at[20] = func() {
+			turns, _, _ := h.got()
+			assert.Empty(t, turns, "over-width existing reads prohibit a new work child")
+			close(h.rblock)
+		}
+		r.run(t, 40)
+		turns, _, _ := h.got()
+		require.Len(t, turns, 1, "new width refills after existing children exit")
+		assert.Equal(t, 2, h.maxChildren, "shrink retains existing reads, never starts a third child")
+	})
+}
+
+func TestStoppedOneShotStartsNeitherWorkNorNativeRead(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
+		h := &readHarness{lanesHarness: &lanesHarness{dir: dir, active: map[string]int{}, finish: map[string]bool{"c1": true}}}
+		sp := &readSprint{queue: askedQueue}
+		r := readRig(t, h, sp, 2)
+		r.d.MachineStopped = func() bool { return true }
+		r.run(t, 20)
+		turns, _, _ := h.got()
+		assert.Empty(t, turns, "STOP prohibits work admission")
+		assert.Empty(t, sp.verbs("--begin"), "STOP prohibits native read admission")
+	})
+}
+
+func TestOneShotUnknownRecoveredWorkStateHoldsBothAdmissions(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
+		h := &readHarness{lanesHarness: &lanesHarness{dir: dir, active: map[string]int{}, finish: map[string]bool{"c1": true}}}
+		sp := &readSprint{queue: askedQueue}
+		r := readRig(t, h, sp, 2)
+		r.d.LoadLanes = func() (LaneState, error) { return LaneState{}, fmt.Errorf("unreadable recovered ownership") }
+		r.run(t, 20)
+		turns, _, _ := h.got()
+		assert.Empty(t, turns, "failed durable ownership read cannot imply vacant work slots")
+		assert.Empty(t, sp.verbs("--begin"), "native reads cannot claim unobserved recovered work capacity")
+	})
 }

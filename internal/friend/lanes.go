@@ -20,6 +20,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
+	"github.com/mas-bandwidth/nova-tools/internal/procgroup"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 )
 
@@ -259,6 +260,7 @@ type laneSet struct {
 	given           map[string]bool
 	state           LaneState
 	loaded          bool
+	stateUnknown    bool // failed durable state read holds new shared admission
 	results         chan laneResult
 	refused         map[string]string // each job a lane was refused, and who held it, said once while it stands
 	gov             LaneGovernor      // the live cap under rate limits, the hold when out of funds (ratelimit.go)
@@ -389,6 +391,43 @@ func (l *loop) releaseUnlaunchedClaim(job, owner string, now time.Time) {
 	}
 }
 
+// releaseIdleReservation drops a between-turn reservation after a width/cap
+// shrink. A returned harness call alone cannot prove that its descendants exited.
+func (l *loop) releaseIdleReservation(ln *lane, now time.Time) bool {
+	s, d := l.lanes, l.d
+	job := filepath.Base(ln.card.Outbox)
+	st, ok := s.state.Started[job]
+	if !ok || st.RunID == "" || ln.t != nil || d.SaveLanes == nil {
+		return false
+	}
+	receipt, err := readRunReceipt(d.Dir, job)
+	if !errors.Is(err, os.ErrNotExist) {
+		if err != nil || receipt.RunID != st.RunID || receipt.PID <= 0 || receipt.Identity == "" || d.ProcessIdentity == nil {
+			return false
+		}
+		identity := d.ProcessIdentity(receipt.PID)
+		if identity != "" && identity != receipt.Identity || procgroup.GroupRunnable(receipt.PID) {
+			return false
+		}
+	}
+	if mark, found := ReadLaneMark(d.Dir, job); found && mark.RunID != "" && mark.RunID != st.RunID {
+		return false
+	}
+	// Missing RUN is the durable no-launch proof of the existing launch gate.
+	delete(s.state.Started, job)
+	if err := d.SaveLanes(s.state); err != nil {
+		s.state.Started[job] = st // retain both the claim and capacity until removal is durable
+		d.Record(now.UTC().Format(time.RFC3339) + " lanes: idle reservation held: " + oneLine(err.Error(), 300))
+		return false
+	}
+	if err := releaseOwnedLane(d.Dir, job, l.laneWho(ln.n)); err != nil {
+		s.state.Started[job] = st
+		l.saveLanes(now)
+		return false
+	}
+	return true
+}
+
 func (l *loop) laneStep(now time.Time, width int) {
 	s := l.lanes
 	d := l.d
@@ -409,7 +448,8 @@ func (l *loop) laneStep(now time.Time, width int) {
 		if d.LoadLanes != nil {
 			st, err := d.LoadLanes()
 			if err != nil {
-				d.Record(now.UTC().Format(time.RFC3339) + " lanes: the lane state cannot be read: " + err.Error() + "; every lane opens a new session")
+				s.stateUnknown = true
+				d.Record(now.UTC().Format(time.RFC3339) + " lanes: the lane state cannot be read: " + err.Error() + "; new jobs held, control sessions remain available")
 			}
 			s.state = st
 		}
@@ -442,6 +482,11 @@ func (l *loop) laneStep(now time.Time, width int) {
 	l.pidStep(now)
 	l.adoptRuns(now)
 	l.oneLaneStep(now)
+	if l.proven {
+		// Recovered work reservations are prepared above before reads get first
+		// admission at the shared physical width. Continuous work cannot starve reads.
+		l.readStep(now)
+	}
 	lh, _ := d.Deliver.(LaneHarness)
 	runner, perCard := d.Deliver.(CardRunner)
 	asking := 0 // the lane the hand is asked for
@@ -475,7 +520,10 @@ func (l *loop) laneStep(now time.Time, width int) {
 			continue
 		}
 		if ln.n > limit {
-			if ln.card != nil { // between turns: the card goes back to the queue for a lane within the cap
+			if ln.card != nil { // between turns: hand back only after the previous child is proved gone
+				if !l.releaseIdleReservation(ln, now) {
+					continue
+				}
 				d.Record(fmt.Sprintf("%s lane %d: beyond the cap (%d of %d); card %s handed back for another lane", now.UTC().Format(time.RFC3339), ln.n, limit, width, ln.card.ID))
 				ln.card, ln.attempts = nil, 0
 			}
@@ -529,6 +577,9 @@ func (l *loop) laneStep(now time.Time, width int) {
 					l.messageTurn(ln, lh, width, now) // what waits with no card to ride with goes in as a turn of its own
 				}
 				continue
+			}
+			if !l.childRoom(width) {
+				continue // native reads and work share the configured physical child capacity
 			}
 			// the card's job claimed before its first turn: a lane that claimed it first runs it alone
 			holder, err := ClaimLane(d.Dir, filepath.Base(c.Outbox), l.laneWho(ln.n), now)

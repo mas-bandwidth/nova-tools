@@ -4,6 +4,8 @@ package friend
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -196,4 +198,81 @@ func TestStopDebtReapsLeaderlessGroupThroughPinnedAnchor(t *testing.T) {
 	assert.True(t, l.lanes.state.StopReturns[0].Ended)
 	assert.NotContains(t, l.lanes.state.Started, job)
 	assert.False(t, procgroup.GroupRunnable(pgid), "STOP reaped the descendant and anchor")
+}
+
+// A retired lane releases capacity only from native group exit proof, never
+// just because its harness call returned. This also pins failure atomicity.
+func TestRetiredWorkReservationWaitsForNativeGroupExitAndDurableSave(t *testing.T) {
+	t.Parallel()
+	dir, job := t.TempDir(), "c1~15"
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "jobs", job), 0755))
+	cmd := exec.CommandContext(context.Background(), "/bin/sleep", "30")
+	ownGroup(cmd)
+	require.NoError(t, cmd.Start())
+	waited := false
+	defer func() {
+		if !waited {
+			killGroup(cmd.Process.Pid)
+			_ = cmd.Wait()
+		}
+	}()
+	identity := ProcessIdentity(cmd.Process.Pid)
+	require.NotEmpty(t, identity)
+	card := Card{ID: "c1", Outbox: filepath.Join(dir, "outbox", job)}
+	ln := &lane{n: 2, card: &card}
+	st := Started{Lane: 2, Card: card, RunID: "retired-run", Pid: cmd.Process.Pid}
+	failSave := false
+	d := &Daemon{Dir: dir, Friend: "bob", Record: func(string) {}, ProcessIdentity: ProcessIdentity, SaveLanes: func(LaneState) error {
+		if failSave {
+			return fmt.Errorf("state write failed")
+		}
+		return nil
+	}}
+	l := &loop{d: d, tag: "fixture", lanes: &laneSet{lanes: []*lane{ln}, state: LaneState{Started: map[string]Started{job: st}}}, reads: &readSet{}}
+	owner := l.laneWho(ln.n)
+	require.NoError(t, os.MkdirAll(filepath.Dir(laneMarkPath(dir, job)), 0755))
+	require.NoError(t, os.WriteFile(laneMarkPath(dir, job), []byte(LaneMarkRunningRun(owner, t0, st.RunID)), 0644))
+	receipt := runReceipt{RunID: st.RunID, PID: cmd.Process.Pid, Identity: identity}
+	require.NoError(t, writeRunReceipt(dir, job, receipt))
+	assert.False(t, l.releaseIdleReservation(ln, t0), "a live matching native group keeps its child slot")
+	assert.Contains(t, l.lanes.state.Started, job)
+	mark, found := ReadLaneMark(dir, job)
+	require.True(t, found)
+	assert.Equal(t, owner, mark.Who)
+	assert.Equal(t, identity, ProcessIdentity(cmd.Process.Pid), "release does not kill existing shrink children")
+	killGroup(cmd.Process.Pid)
+	_ = cmd.Wait()
+	waited = true
+	require.False(t, procgroup.GroupRunnable(cmd.Process.Pid), "the group's exit is observed before capacity is released")
+	for _, tc := range []struct {
+		name      string
+		receipt   runReceipt
+		malformed bool
+		saveFails bool
+	}{
+		{name: "different-run", receipt: runReceipt{RunID: "other-run", PID: receipt.PID, Identity: identity}},
+		{name: "malformed", malformed: true},
+		{name: "nonpositive-pid", receipt: runReceipt{RunID: st.RunID, PID: 0, Identity: identity}},
+		{name: "state-save-failed", receipt: receipt, saveFails: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, _ := json.Marshal(tc.receipt)
+			if tc.malformed {
+				raw = []byte("{")
+			}
+			require.NoError(t, os.WriteFile(runReceiptPath(dir, job), raw, 0644))
+			failSave = tc.saveFails
+			assert.False(t, l.releaseIdleReservation(ln, t0), "unproved or uncommitted release must keep reservation")
+			assert.Contains(t, l.lanes.state.Started, job)
+			mark, found := ReadLaneMark(dir, job)
+			require.True(t, found)
+			assert.Equal(t, owner, mark.Who, "failed save retains the owning claim")
+		})
+	}
+	failSave = false
+	require.NoError(t, writeRunReceipt(dir, job, receipt))
+	require.True(t, l.releaseIdleReservation(ln, t0), "matching observed exit plus durable removal releases capacity")
+	assert.NotContains(t, l.lanes.state.Started, job)
+	_, found = ReadLaneMark(dir, job)
+	assert.False(t, found)
 }

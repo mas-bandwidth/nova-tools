@@ -251,6 +251,7 @@ type readSet struct {
 	begun   map[string]bool // asked reads this daemon began: the queue shows them asked until the verdict lands
 	asked   []AskedRead
 	askedAt time.Time
+	known   bool                          // false until a canonical reader queue answers; failures hold shared capacity
 	cancel  map[string]context.CancelFunc // each read under way: the machine's stop ends it (stop.go)
 	stopped map[string]bool               // reads the stop cancelled: no verdict, a stop-return
 	active  map[string]AskedRead          // each read under way as it was begun: its generation and epoch, which the queue's refresh no longer lists
@@ -386,10 +387,8 @@ func (d *Daemon) readModel(tier string) string {
 	return ""
 }
 
-// readStep is the reader row's step in one-shot mode: its queue asked once a ReadAskEvery,
-// and each asked read begun and run while a read slot is free and the lanes are neither
-// backing off from a rate limit nor held out of funds. It takes nothing from the card lanes.
-func (l *loop) readStep(now time.Time) {
+// readQueueStep refreshes native read ownership before either admission path.
+func (l *loop) readQueueStep(now time.Time) {
 	d, s := l.d, l.reads
 	if d.Sprint == nil {
 		return
@@ -400,13 +399,74 @@ func (l *loop) readStep(now time.Time) {
 		out, err := d.Sprint(l.ctx, ReadQueueArgv(d.Friend))
 		if err != nil {
 			d.Record(fmt.Sprintf("%s reads: the reader queue: %s", at, oneLine(err.Error(), 300)))
-			s.asked = nil
-		} else if s.asked, err = ParseReadQueue(out); err != nil {
-			d.Record(fmt.Sprintf("%s reads: %s", at, err))
+			s.known = false
+		} else if asked, parseErr := ParseReadQueue(out); parseErr != nil {
+			d.Record(fmt.Sprintf("%s reads: %s", at, parseErr))
+			s.known = false
 		} else {
+			s.asked, s.known = asked, true
 			l.retryReadSettlements(now)
 		}
 	}
+}
+
+// childRoom counts each owned job once, including reservations between turns
+// and recovered children whose exit is not proved. Control turns keep their own path.
+func (l *loop) childRoom(width int) bool {
+	if l.lanes.stateUnknown {
+		return false
+	}
+	jobs := map[string]bool{}
+	for job := range l.lanes.state.Started {
+		jobs["work:"+job] = true
+	}
+	for _, st := range l.lanes.adopt {
+		jobs["work:"+filepath.Base(st.Card.Outbox)] = true
+	}
+	for _, ln := range l.lanes.lanes {
+		if ln.card != nil {
+			jobs["work:"+filepath.Base(ln.card.Outbox)] = true
+		}
+	}
+	if l.d.Sprint != nil && !l.reads.known {
+		return false
+	}
+	for id := range l.reads.running {
+		jobs["read:"+id] = true
+	}
+	for _, r := range l.reads.asked {
+		if r.Col == "reading" {
+			jobs["read:"+r.ID] = true
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(l.d.Dir, "reads"))
+	if err != nil && !os.IsNotExist(err) {
+		return false
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			_, found, err := loadReadActive(filepath.Join(l.d.Dir, "reads", e.Name()))
+			if err != nil {
+				return false
+			}
+			if found {
+				jobs["read:"+e.Name()] = true
+			}
+		}
+	}
+	return len(jobs) < width
+}
+
+// readStep is the reader row's step in one-shot mode: its queue asked once a ReadAskEvery,
+// and each asked read begun and run while a read slot is free and the lanes are neither
+// backing off from a rate limit nor held out of funds. Work and reads share physical width.
+func (l *loop) readStep(now time.Time) {
+	d, s := l.d, l.reads
+	if d.Sprint == nil {
+		return
+	}
+	at := now.UTC().Format(time.RFC3339)
+	l.readQueueStep(now)
 	// Settlement is independent of read slots and provider availability. In
 	// particular, a down key must not strand a result already produced.
 	settled := map[string]bool{}
@@ -500,7 +560,7 @@ func (l *loop) readStep(now time.Time) {
 		if settled[r.ID] {
 			continue
 		}
-		if occupied >= d.readSlots() {
+		if occupied >= d.readSlots() || !l.childRoom(l.lanes.width) {
 			return
 		}
 		if s.running[r.ID] || s.begun[r.ID] || !d.machineMayLaunch() {
