@@ -90,43 +90,12 @@ func initHygLabGolden() {
 	hygLabGoldenDir = dir
 }
 
-func copyDirHyg(src, dst string) error {
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(dst, 0o755); err != nil {
-		return err
-	}
-	for _, e := range entries {
-		s := filepath.Join(src, e.Name())
-		d := filepath.Join(dst, e.Name())
-		if e.IsDir() {
-			if err := copyDirHyg(s, d); err != nil {
-				return err
-			}
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			return err
-		}
-		data, err := os.ReadFile(s)
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(d, data, info.Mode().Perm()); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 func hygLab(t *testing.T) string {
 	t.Helper()
 	hygLabGoldenOnce.Do(initHygLabGolden)
 	dir := t.TempDir()
-	require.NoError(t, copyDirHyg(hygLabGoldenDir, dir))
+	require.NoError(t, os.CopyFS(dir, os.DirFS(hygLabGoldenDir)))
 	return dir
 }
 
