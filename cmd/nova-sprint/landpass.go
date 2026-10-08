@@ -95,6 +95,10 @@ type landJob struct {
 	b      landBatch
 	clone  string // the repository's clone: the fetch and push hub, the land lock's home
 	dir    string // the stream's worktree of it, where the batch is built
+	// behind says the stream has more than one batch waiting (stream is behind); a
+	// conflicting card parks only that card for behind streams, but stops the batch for
+	// non-behind streams.
+	behind bool
 	// done says phase 1 ended the batch (refused, or reported with a fact): nothing to land;
 	// past, on and ok are the batch's outcome as batch reported it before (land.go until
 	// 2026-10-07): the stream goes on past its first past cards when on (every card of the
@@ -238,6 +242,7 @@ func (l *lander) pass(ctx context.Context, s *sprint.Snapshot, order []string) (
 				ids[i] = c.id
 			}
 			jobs = append(jobs, &landJob{stream: name, cards: cards[:n], ids: ids, f: l.fork(name),
+				behind: len(cards) > n,
 				b: landBatch{Stream: name, Status: "refused", Cards: n, IDs: ids, Repo: cards[0].repo, Base: cards[0].base, DryRun: l.dry}})
 		}
 		if len(jobs) == 0 {
@@ -563,7 +568,7 @@ func runBounded(width, n int, fn func(i int)) {
 func (l *lander) merge(ctx context.Context, j *landJob) {
 	b, stream, dir := &j.b, j.stream, j.dir
 	baseSha := j.cut.baseSha
-	merged, failed, why := l.mergeCards(ctx, dir, stream, j.cards, j.cut, b.Times, false)
+	merged, failed, why := l.mergeCards(ctx, dir, stream, j.cards, j.cut, b.Times, false, j.behind)
 	if why == "" && j.cut.first == 0 && len(merged) > 0 {
 		// one gate on the batch's tree, the tree tests included (a tip pushed as gated is
 		// cached, phase 2); red, each head is gated alone from the base again, as before, and

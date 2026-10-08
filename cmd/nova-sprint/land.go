@@ -1173,7 +1173,7 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 	if why != "" {
 		return nil, failed, c.baseSha, gateEach, why
 	}
-	merged, failed, why = l.mergeCards(ctx, dir, stream, cards, c, t, gateEach)
+	merged, failed, why = l.mergeCards(ctx, dir, stream, cards, c, t, gateEach, false)
 	return merged, failed, c.baseSha, gateEach || c.first > 0, why
 }
 
@@ -1241,7 +1241,9 @@ func (l *lander) cut(ctx context.Context, dir, stream string, cards []landCard, 
 // the cure's: each merged (mergeHead), its maps regenerated where both sides did (remap),
 // held to the lander's checks (checkCard), and with gateEach gated (gateCard); after a cure
 // each head is gated whatever gateEach says. The results are build's.
-func (l *lander) mergeCards(ctx context.Context, dir, stream string, cards []landCard, c landCut, t *landTimes, gateEach bool) (merged []string, failed conflictCard, why string) {
+// behind says the stream has more than one batch waiting; for such streams, a conflicting
+// card is parked but later cards still merge in work order and share one batch push.
+func (l *lander) mergeCards(ctx context.Context, dir, stream string, cards []landCard, c landCut, t *landTimes, gateEach bool, behind bool) (merged []string, failed conflictCard, why string) {
 	start := time.Now()
 	defer since(&t.Merge, start)
 	merged = slices.Clone(c.merged)
@@ -1279,6 +1281,13 @@ func (l *lander) mergeCards(ctx context.Context, dir, stream string, cards []lan
 		case env != "":
 			return nil, failed, env + "; no card is blamed and nothing was pushed or reported"
 		case refused != "":
+			// A code conflict parks only this member for redo on the current tip when the
+			// stream is behind (has more than one batch waiting); the remaining members still
+			// merge in work order and share one batch push (docs/SPEC-SPRINT.md section 7).
+			// For non-behind streams, a conflicting head stops the batch.
+			if behind {
+				continue
+			}
 			return merged, conflictCard{landCard: *card, why: refused, kind: l.conflictKind, paths: l.conflictPaths, emptyCommit: refused == emptyCommitFinding}, ""
 		}
 		merged = append(merged, card.id)
