@@ -359,7 +359,8 @@ left for nova-tools-1.1.0 into cards, and doing it via the sprint, but doing
 parts on friends where we would normally do friend work."). WHO is a preference (docs/SPEC-CARD-CONTRACT.md, the WHO line; `cardhdr.ReadWho`
 is the one parser). A card with no WHO line, or `WHO: -`, is unpinned. `WHO: friend`
 is any friend. `WHO: friend <name>` prefers that friend while she is up with room.
-`WHO: only friend <name>` is the one hard pin and waits for her alone. `add` and
+`WHO: only friend <name>` is a hard pin and waits for her alone, and so is
+`WHO: friend <name> only` (the same pin, that word order). `add` and
 `brief` refuse any other WHO value, a name that is no row of the friends table, and
 `WHO: friend` while the table has no row (exit 2, nothing written). A named friend's
 configured work restriction is held too: a card whose stream matches none of her
@@ -503,6 +504,28 @@ come back by a rework, a return or a redo (its `reworks` or `returns` counted;
 deal, and while she is down, held or without room it waits ready, held as a hard pin is,
 dealt to no other friend and no machine (`TestAReworkKeepsTheWhoPin`); a take-back alone
 (`friend take`) counts neither, so a preference taken back from her is still offered on.
+
+A named preference is a preference with a clock, never a hole
+(`sprint.PinWait`, `nova-sprint set --pin-wait <duration|default>`, default 30m).
+While the friend it names is down, held, or already at her room, and the sprint
+knows that has lasted no longer than the pin wait, the card waits ready for her
+and the machines' deal leaves it. A width of 0, a tier or restriction she does
+not take, a friend the card has left, and a row filled by an earlier card of the
+same pass are not that clock: the card is offered on at once, as a preference
+always was. Once the known wait is longer than the pin wait, or the sprint
+cannot tell how long she has been down, held, or full, the pin is waived. The
+card is dealt to the next unit of its tier as if unpinned. The unit's story line
+is `pin to <friend> waived after <d>: she is <down|held|full>; dealt to <unit>`.
+`who` stays `friend.<name>` (`preferred`), so the next attempt, and the next
+read when she has room, goes to her first when she is back and free, and
+`pin_waived` is cleared when she receives it. `where` shows a friend's open
+named pins as `pinned N, waived M` on her status when either count is non-zero,
+and lists briefs that say `WHO: friend <name> only` as `only: <id>, <id>`.
+`card <id>` prints `preferred=<friend> waived=<time>` on `CARD OK`, and the same
+two fields on `--json`, once `pin_waived` is set. `WHO: friend <name> only` and
+`WHO: only friend <name>` are hard pins and are never waived. Rebalance moves a
+waived card back to the preferred friend only when it has not started; a started
+waived card stays where it started.
 
 **A friend's card is working once she starts it** (the owner, 2026-10-05: "They
 are not working unless work turns from working to done."; the friends table had
@@ -1259,7 +1282,7 @@ them. `TestRunReconcilesFriendsEveryTick`.
 are missing"; an add was refused for a brief whose header said `WHO: -`).
 `cardhdr.ReadWho` reads `WHO: -` as no WHO line: the card is a machine's,
 dealt to the fleet, and `add` and `brief` take it with no refusal. `WHO: friend`,
-`WHO: friend <name>` and `WHO: only friend <name>` read as the preference section
+`WHO: friend <name>`, `WHO: only friend <name>` and `WHO: friend <name> only` read as the preference section
 says, and any other value (`WHO: - -`, `WHO: friend -`, `WHO: junk`) is refused
 (`TestWhoDashIsTheFleet`).
 
