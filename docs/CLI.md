@@ -1524,10 +1524,11 @@ from `nova-friend help`:
 example: nova-friend beat --as bob --server 127.0.0.1:6390
 flags:
   --as <string>  your name, a nova-config friend row (required)
+  --dry-run  print what the verb would write and write nothing
   --json  print the result as one JSON object instead of lines
   --server <string>  the sprint server, host:port (default: NOVA_SPRINT_SERVER, else 127.0.0.1:6390)
 exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
-effect: delivery: sends beyond this machine: one beat to the sprint server, the same beat the daemon's loop sends while its session is alive
+effect: delivery: sends beyond this machine: one beat to the sprint server, the same beat the daemon's loop sends while its session is alive; --dry-run sends nothing
 ```
 
 `nova-friend install -h`:

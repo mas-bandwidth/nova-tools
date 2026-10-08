@@ -532,13 +532,14 @@ go and gofmt that refuse (this binary, by symlink) first on the lane's PATH; and
 				Name:    "beat",
 				Usage:   "beat --as <me> [--server <addr>]",
 				Example: "", // the daemon's own act; the example block's first run has no beat line
-				Effect:  tool.Delivery + ": one beat to the sprint server, the same beat the daemon's loop sends while its session is alive",
+				Effect:  tool.Delivery + ": one beat to the sprint server, the same beat the daemon's loop sends while its session is alive; --dry-run sends nothing",
 				Detail: `The daemon's beat on its own (docs/SPEC-FRIEND.md, the loop): one "friend beat <me>" to
 the sprint server, what keeps the friend up in the sprint's friends table. The agent install writes
 runs the daemon, and the daemon beats already while its session is alive, so the beat needs no
 agent of its own and no hand plist: this verb is the canary, run by hand. A server that does not
-answer is exit 2.
+answer is exit 2. --dry-run says the beat it would send, and to which server, and sends nothing.
 example: nova-friend beat --as bob --server 127.0.0.1:6390`,
+				DryRun: true,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name, a nova-config friend row")
 					f.String("server", w.server(), "the sprint server, host:port (default: "+ServerEnv+", else "+DefaultServer+")")
@@ -1571,6 +1572,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 // the verb is the canary, and a server that does not answer is exit 2.
 func (w world) beatVerb(c *tool.Call) *tool.Out {
 	name, server := c.Str("as"), c.Str("server")
+	if c.DryRun() {
+		return tool.Done().Fact("as", name).Fact("server", server).Fact("dry_run", true).Note("dry run: no beat sent; it would send friend beat " + name + " to " + server)
+	}
 	if _, err := w.beat(context.Background(), server, name, time.Time{}, friend.BeatWords{}); err != nil {
 		return tool.Refuse("the beat was not taken: " + err.Error())
 	}

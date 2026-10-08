@@ -400,6 +400,8 @@ func TestInstallWritesTheBeatVerbAndNoHandPlist(t *testing.T) {
 	written, err := os.ReadDir(agents)
 	require.NoError(t, err)
 	assert.Len(t, written, 1, "install writes the daemon's agent alone; the beat needs no plist of its own")
+	cli.Do(t, "beat", "--as", "bob", "--server", "127.0.0.1:6390", "--dry-run").Exit(0).Out("BEAT OK as=bob server=127.0.0.1:6390 dry_run=true")
+	assert.Empty(t, r.beats, "a dry run sends no beat")
 	cli.Do(t, "beat", "--as", "bob", "--server", "127.0.0.1:6390").Exit(0).Out("BEAT OK as=bob server=127.0.0.1:6390")
 	assert.Equal(t, []string{"127.0.0.1:6390 bob"}, r.beats, "the verb makes the same call the daemon's loop makes")
 	r.beatErr = errors.New("the sprint server at 127.0.0.1:6390 did not answer")
