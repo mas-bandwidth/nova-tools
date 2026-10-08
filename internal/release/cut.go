@@ -60,6 +60,28 @@ func PullRequests(commits []Commit) []PR {
 	return prs
 }
 
+// certified is the release gate. A commit must have a green certification run
+// from certification.yml before a release can be cut. This is the same check
+// release.yml makes: the first job asks certification.yml to vouch for the commit.
+// Waivers (dogfood, journey, spend) never cover certification.
+func certified(runs []CheckRun) error {
+	// Look specifically for certification run
+	for _, r := range runs {
+		if r.Name != "certification" {
+			continue
+		}
+		if r.Status == "completed" && r.Conclusion != "success" {
+			return refuse("fix the certification failure and cut again; a tag cannot be amended",
+				"certification.yml failed on this commit: %s", r.Conclusion)
+		}
+		if r.Status != "completed" {
+			return refuse("wait for certification to finish and cut again",
+				"certification.yml is still running on this commit")
+		}
+	}
+	return nil
+}
+
 // green is the gate. A tag is the one thing in this repository that cannot be
 // quietly amended and pushed again, so the evidence is read before it is
 // written: every check run on the commit must have COMPLETED, and completed
@@ -495,6 +517,17 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	runs, err := forge.CheckRuns(ctx, o.repo, sha)
 	if err != nil {
 		return refusal(errs, "CUT", fmt.Errorf("cannot read the checks on %s: %w (ask again when the forge answers)", sha, err))
+	}
+	// Certification must be green before a release can be cut.
+	// This is the same check release.yml makes, and waivers never cover certification.
+	if err := certified(runs); err != nil {
+		if o.dispatchCertification {
+			// Offer to dispatch certification
+			fmt.Fprintf(errs, "To dispatch certification.yml, run:\n")
+			fmt.Fprintf(errs, "  gh workflow run certification.yml --ref %s\n", o.from)
+			return refusal(errs, "CUT", err)
+		}
+		return refusal(errs, "CUT", err)
 	}
 	if err := green(runs); err != nil {
 		return refusal(errs, "CUT", err)
