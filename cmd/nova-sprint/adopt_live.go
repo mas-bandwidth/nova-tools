@@ -34,7 +34,7 @@ func init() {
 	verbClasses["live"] = classRead
 	notServed = append(notServed, "live")
 	verbExit["live"] = "exit codes: 0 the manifest was read (whatever it says: a stale process or a library mismatch is a line, not a failure), 1 the installed nova-sprint or the agents directory could not be read, 2 usage"
-	verbEffect["live"] = "reads only: the installed nova-sprint's version and inode, the store's function library through nova-redis fn check, the dashboard links, and every com.nova.* launchd agent of this login (its plist, its pid from launchctl print, its running arguments from ps, its executable's inode from lsof); a friend daemon's last beat from nova-friend status"
+	verbEffect["live"] = "inspection: reads only, writes nothing: the installed nova-sprint's version and inode, the store's function library through nova-redis fn check, the dashboard links, and every com.nova.* launchd agent of this login (its plist, its pid from launchctl print, its running arguments from ps, its executable's inode from lsof); a friend daemon's last beat from nova-friend status"
 }
 
 // liveManifest is what live prints with --json.

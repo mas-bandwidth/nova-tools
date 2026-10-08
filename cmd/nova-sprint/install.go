@@ -46,7 +46,7 @@ func installVerbMeta() {
 	verbExit["units"] = "exit codes: 0 every unit a sprint needs is installed, 1 one or more is missing or different (each named with the verb that installs it), 2 usage"
 	verbEffect["install"] = "local write: writes the kind's unit (the verb itself, never a wrapper) into --dir and loads it with launchctl (macOS) or systemctl --user (Linux); --dry-run prints it and writes nothing"
 	verbEffect["uninstall"] = "local write: unloads the kind's unit and removes its file from --dir; --dry-run names the unit and unloads and removes nothing"
-	verbEffect["units"] = "read: reads the unit files in --dir and names each unit a sprint needs installed, missing or different; loads and changes nothing"
+	verbEffect["units"] = "inspection: reads the unit files in --dir and names each unit a sprint needs installed, missing or different; loads and changes nothing"
 }
 
 // sprintKinds are the kinds nova-sprint install takes.

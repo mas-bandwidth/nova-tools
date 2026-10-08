@@ -628,6 +628,9 @@ func (a *app) verbSetup(name string) (flagSet, *common) {
 	fs := verbflag.New(name)
 	c := &common{verb: name}
 	c.register(fs, a.getenv)
+	if stepDryRun[name] {
+		fs.BoolVar(&c.dry, "dry-run", false, stepDryWords)
+	}
 	return fs, c
 }
 
@@ -768,6 +771,9 @@ func (a *app) runStep(verbName string, c common, st *store.Store, step store.Ste
 	if c.epoch >= 0 {
 		e := uint64(c.epoch)
 		step.Epoch = &e
+	}
+	if c.dry {
+		return a.planDry(verbName, c, st, step, stdout, stderr)
 	}
 	res, err := st.Run(ctx, step)
 	c.says = append(c.says, res.Said...) // what the step said beside its moves (sprint.Plan.Said)

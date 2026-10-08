@@ -424,6 +424,7 @@ type common struct {
 	json             bool
 	max              int
 	epoch            int64       // the epoch the caller holds; -1 is none
+	dry              bool        // --dry-run on a verb of stepDryRun: runStep plans its step and writes nothing (stepdry.go)
 	group            groupReport // set by --group, for the verb's report
 	// packets, when set, is what the step hands its actor (take: each
 	// card's packet), read after the step and printed with its report.
