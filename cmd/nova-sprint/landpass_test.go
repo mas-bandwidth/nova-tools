@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -10,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 )
 
 // The merge step's receipt for a landing holds more than the batch's landings: the waiting
@@ -159,12 +163,36 @@ func gateCount(r *landRig) (count func() []string) {
 	}
 }
 
+// landsFirst holds every tree gate of the stream later until origin's main holds the landing
+// of id. Phase 2 lands each batch the moment its gate finishes (landpass.go, the pass), so
+// which of two green streams lands first is the race of their gates; a test whose outcome
+// turns on one stream's landing moving the base before the other's batch is gated holds the
+// other's gate until that landing is on origin. No clock: the hold ends on the landing alone.
+// It wraps the gateRan already set (gateCount), so set it after.
+func landsFirst(r *landRig, id, later string) {
+	prev := r.a.gateRan
+	r.a.gateRan = func(dir string, tests bool) {
+		if strings.HasSuffix(dir, "@"+later) {
+			for {
+				res, err := gitrun.Run(context.Background(), gitrun.Options{C: r.remote, Env: r.env, OwnRepo: true}, "log", "--first-parent", "--format=%s", "main")
+				if err == nil && strings.Contains(string(res.Stdout), "land "+id+" (") {
+					break
+				}
+				runtime.Gosched()
+			}
+		}
+		if prev != nil {
+			prev(dir, tests)
+		}
+	}
+}
+
 // Two streams of two cards each merge beside each other in their own worktrees and land one
-// after the other, in stream order, on one pass: the base gated once, each batch's tree gated
-// once (not once a head), and the second batch, cut from the tip the first moved, merged again
-// onto the new tip and pushed with no new gate, its files disjoint from the first's. Before
-// 2026-10-07 the same pass ran six gates one after another: the base, two heads, the base
-// again (the pushed tip was not cached), two heads.
+// after the other, each as its gate finishes (here s1's first: landsFirst), on one pass: the
+// base gated once, each batch's tree gated once (not once a head), and the second batch, cut
+// from the tip the first moved, merged again onto the new tip and pushed with no new gate, its
+// files disjoint from the first's. Before 2026-10-07 the same pass ran six gates one after
+// another: the base, two heads, the base again (the pushed tip was not cached), two heads.
 func TestLandMergesStreamsInParallelAndLandsThemOneAtATime(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
@@ -172,11 +200,12 @@ func TestLandMergesStreamsInParallelAndLandsThemOneAtATime(t *testing.T) {
 		map[string]map[string]string{"a1": {"a1.go": "package main\n\nfunc a1() {}\n"}, "a2": {"a2.go": "package main\n\nfunc a2() {}\n"}},
 		map[string]map[string]string{"b1": {"b1.go": "package main\n\nfunc b1() {}\n"}, "b2": {"b2.go": "package main\n\nfunc b2() {}\n"}})
 	gates := gateCount(r)
+	landsFirst(r, "a2", "s2")
 	out := r.ok("land --land-parallel 2")
 	assert.Contains(t, out, "LAND OK stream=s1 cards=2 base=main")
 	assert.Contains(t, out, "LAND OK stream=s2 cards=2 base=main")
 	assert.Contains(t, out, "LAND DONE batches=2 cards=4 refused=0")
-	assert.Less(t, strings.Index(out, "LAND OK stream=s1"), strings.Index(out, "LAND OK stream=s2"), "the lines keep stream order")
+	assert.Less(t, strings.Index(out, "LAND OK stream=s1"), strings.Index(out, "LAND OK stream=s2"), "the lines are in the order the batches landed")
 	assert.Equal(t, []string{"s1+tests", "s1+tests", "s2+tests"}, gates(), "the base once (in the first stream's worktree), each batch once, and no gate for the second batch's merge onto the moved tip")
 	assert.Equal(t, map[string]string{"a1": "landed/merged", "a2": "landed/merged", "b1": "landed/merged", "b2": "landed/merged"}, r.places("a1", "a2", "b1", "b2"))
 	assert.Equal(t, []string{"land b2 (sprint stream s2)", "land b1 (sprint stream s2)", "land a2 (sprint stream s1)", "land a1 (sprint stream s1)", "the module", "base"}, r.mainLog())
@@ -209,6 +238,7 @@ func TestLandGatesTheCombinedTreeOnceWhenFilesCollide(t *testing.T) {
 		map[string]map[string]string{"a1": {"NOTES.md": "fine\n\nand a1\n"}},
 		map[string]map[string]string{"b1": {"NOTES.md": "b1 first\n\nfine\n"}})
 	gates := gateCount(r)
+	landsFirst(r, "a1", "s2")
 	out := r.ok("land --land-parallel 2")
 	assert.Contains(t, out, "LAND OK stream=s1 cards=1 base=main")
 	assert.Contains(t, out, "LAND OK stream=s2 cards=1 base=main")
@@ -228,6 +258,7 @@ func TestLandRefusesARedCombinedTreeForThePassAndStopsNoStream(t *testing.T) {
 	twoStreams(t, r,
 		map[string]map[string]string{"a1": {"main.go": "package main\n\nvar n = 1\n\nfunc main() {}\n"}},
 		map[string]map[string]string{"b1": {"main.go": "package main\n\nfunc main() {}\n\nvar n = 2\n"}})
+	landsFirst(r, "a1", "s2")
 	code, out, errs := r.do("land --land-parallel 2")
 	assert.Equal(t, 1, code, out+errs)
 	assert.Contains(t, out, "LAND OK stream=s1 cards=1 base=main")
@@ -309,6 +340,7 @@ func TestLandReMergeOntoTheMovedBaseThatMergesFewerHeads(t *testing.T) {
 			map[string]map[string]string{"a1": edit("a1")},
 			map[string]map[string]string{"b1": {"b1.go": "package main\n\nfunc b1() {}\n"}, "b2": edit("b2")})
 		gates := gateCount(r)
+		landsFirst(r, "a1", "s2")
 		code, out, errs := r.do("land --land-parallel 2")
 		assert.Equal(t, 1, code, out+errs)
 		assert.Contains(t, out, "LAND OK stream=s1 cards=1 base=main")
@@ -326,6 +358,7 @@ func TestLandReMergeOntoTheMovedBaseThatMergesFewerHeads(t *testing.T) {
 		twoStreams(t, r,
 			map[string]map[string]string{"a1": edit("a1")},
 			map[string]map[string]string{"b1": edit("b1")})
+		landsFirst(r, "a1", "s2")
 		code, out, errs := r.do("land --land-parallel 2")
 		assert.Equal(t, 1, code, out+errs)
 		assert.Contains(t, out, "LAND OK stream=s1 cards=1 base=main")
