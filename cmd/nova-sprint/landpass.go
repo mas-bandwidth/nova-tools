@@ -34,6 +34,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"maps"
 	"os"
 	"path/filepath"
@@ -45,6 +46,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -155,7 +157,12 @@ func (l *lander) openStream(s *sprint.Snapshot, stream string) ([]landCard, bool
 	case ctl == nil:
 		return refused("no such stream; run: nova-sprint where")
 	case ctl.F("state") == sprint.StreamStopped:
-		return refused("stopped (" + ctl.F("cause") + "); run: nova-sprint resume --stream " + stream)
+		// a push the remote rejected is a fact the next land can change: land
+		// resumes it and retries. A gate or a protected base stays for resume.
+		cause := ctl.F("cause")
+		if l.dry || !sprint.LandResumes(cause) || !l.resumePush(stream) {
+			return refused("stopped (" + cause + "); run: nova-sprint resume --stream " + stream)
+		}
 	}
 	if l.prose == nil {
 		l.prose = map[string][]string{}
@@ -225,6 +232,12 @@ func batchOf(cards []landCard) int {
 // cards land in the same pass), and ending at the lander's own failure, as stream did.
 // failed says a push landed and its report did not.
 func (l *lander) pass(ctx context.Context, s *sprint.Snapshot, order []string) (failed bool) {
+	// the bound is the pass's, copied onto each stream's fork with the lander
+	v := ""
+	if s != nil && s.Work != nil {
+		v, _ = s.Work.Prop(sprint.PropLandPushRebuilds)
+	}
+	l.pushBound = sprint.PushRebuildBound(v)
 	queues := map[string][]landCard{}
 	var streams []string
 	for _, name := range order {
@@ -655,93 +668,189 @@ func lines(out string) []string {
 
 // land is one job's phase 2, serial: when a batch landed before it in this pass moved its
 // base, the base's tip is fetched and the batch merged again onto it (again); then the
-// queue read again, the push, and the report. A push rejected from outside is met once
-// more (the base fetched and the batch merged again), then reported with the rejected
-// fact, as before. A batch whose base nothing moved is pushed with the one fetch its build
-// made.
+// queue read again, the push, and the report. A push rejected because the base moved
+// (fetch first, or non-fast-forward) fetches, rebuilds and pushes again, up to the pass's
+// bound (sprint.DrivePush); past the bound the batch stays queued and the stream is not
+// stopped. A push rejected for any other reason stops the stream and names that reason.
+// A batch whose base nothing moved is pushed with the one fetch its build made.
 func (l *lander) land(ctx context.Context, j *landJob, pushed []*landJob) {
-	f, b, stream := j.f, &j.b, j.stream
-	moved := slices.ContainsFunc(pushed, func(p *landJob) bool { return p.clone == j.clone && p.b.Base == b.Base })
-	for attempt := 1; ; attempt++ {
-		if moved || attempt > 1 {
-			start := time.Now()
-			newBase, why := f.baseNow(ctx, j.dir, b.Base)
-			since(&b.Times.Fetch, start)
-			if why != "" {
-				j.refuse(why)
-				return
-			}
-			if newBase != j.baseSha {
-				if why := f.again(ctx, j, newBase, pushed); why != "" {
-					j.refuse(why)
-					return
-				}
-				if len(j.merged) == 0 {
-					// no head merges onto the new tip: the first met a conflict there, which
-					// ends the batch as it did before (the card's own refusal, reworked at the tip
-					// and the stream going on; or the lander's own failure, the stream stopped);
-					// nothing is pushed, and nothing is reported as a batch of none (the merge step
-					// reads an empty batch as the whole queue)
-					if j.failed.id == "" {
-						j.refuse("no head of the batch merges onto the moved base " + b.Base + " and no card was blamed; run land again")
-						return
-					}
-					j.ended(1, f.ownRefusal(stream, j.failed), true)
-					return
-				}
-			}
+	moved := slices.ContainsFunc(pushed, func(p *landJob) bool { return p.clone == j.clone && p.b.Base == j.b.Base })
+	sprint.DrivePush(sprint.PushDrive{
+		Base:  j.b.Base,
+		Tip:   j.tip,
+		Bound: l.pushBound,
+		Wait:  sprint.PushRebuildWait,
+		Moved: moved,
+	}, &landPushRepo{ctx: ctx, l: l, j: j, pushed: pushed})
+}
+
+// landPushRepo is one batch's git and store for sprint.DrivePush. The pass's lander
+// holds the shared clock, the push seam and the gate cache; the job's fork holds the
+// batch's own git and its lines.
+type landPushRepo struct {
+	ctx    context.Context
+	l      *lander
+	j      *landJob
+	pushed []*landJob
+}
+
+// Rebuild fetches the base and, when it moved, merges the batch onto the new tip.
+// A head whose words are a tree-gate failure is a stop; any other failure is a
+// refusal the next pass can retry. No head merged is not an error: the caller
+// ends the batch as the build did.
+func (p *landPushRepo) Rebuild() (string, bool, error) {
+	f, j, b := p.j.f, p.j, &p.j.b
+	start := time.Now()
+	newBase, why := f.baseNow(p.ctx, j.dir, b.Base)
+	since(&b.Times.Fetch, start)
+	if why != "" {
+		return "", false, errors.New(why)
+	}
+	if newBase == j.baseSha {
+		return j.tip, true, nil
+	}
+	if why = f.again(p.ctx, j, newBase, p.pushed); why != "" {
+		// the combined gate says "fails it merged onto" and stays a refusal.
+		// a head that fails the tree gate, named that way, stops the stream.
+		if strings.Contains(why, "fails the tree gate:") {
+			return "", false, sprint.GateFailure(why)
 		}
-		f.stage("queue", "queue read")
-		start := time.Now()
-		why := f.queueHead(ctx, stream, j.cards[:len(j.merged)])
-		since(&b.Times.Queue, start)
-		if why != "" {
-			j.refuse(why)
-			return
-		}
-		if l.a.beforePush != nil {
-			l.a.beforePush(attempt)
-		}
-		f.stage("push", "git push")
-		start = time.Now()
-		_, err := f.git(ctx, j.dir, "push", "--porcelain", "origin", j.tip+":refs/heads/"+b.Base)
-		since(&b.Times.Push, start)
-		if err == nil {
-			b.Tip = j.tip
-			// the tip pushed is the base's next tip: when its whole tree passed a gate with
-			// the tree tests (the batch's own, or the combined gate), it is recorded as gated
-			// and no batch gates it again; a clean merge of disjoint files was never gated as
-			// a tree and is not recorded, so the next pass's base gate runs on it (tla/
-			// LandPass.tla, CachedIsGreen: two heads green alone can be red together)
-			if j.gated {
-				l.locks().gateMu.Lock()
-				l.baseGateCache[j.tip] = ""
-				delete(l.baseGateFails, j.tip)
-				l.locks().gateMu.Unlock()
-			}
-			if !f.landed(*b, stream, j.cards[:len(j.merged)]) {
-				j.ended(0, false, false)
-				return
-			}
-			if j.failed.id != "" {
-				j.ended(len(j.merged)+1, f.ownRefusal(stream, j.failed), true)
-				return
-			}
-			j.ended(len(j.cards), true, true)
-			return
-		}
-		if !rejected(err) {
-			j.refuse("the push to " + b.Base + " failed: " + firstLine("", err) + "; nothing was reported")
-			return
-		}
-		if attempt == 2 {
-			b.Cards, b.IDs = len(j.merged), j.ids[:len(j.merged)]
-			f.fact(*b, sprint.MergeReq{Stream: stream, Batch: len(j.merged), Rejected: true, Note: firstLine("", err)}, j.cards[:len(j.merged)], "rejected", "the push to "+b.Base+" was rejected again after a rebuild on the moved base: "+firstLine("", err))
-			j.ended(0, false, true)
-			return
-		}
+		return "", false, errors.New(why)
+	}
+	if len(j.merged) == 0 {
+		return "", false, nil
+	}
+	return j.tip, true, nil
+}
+
+func (p *landPushRepo) Queue() string {
+	j := p.j
+	j.f.stage("queue", "queue read")
+	start := time.Now()
+	why := j.f.queueHead(p.ctx, j.stream, j.cards[:len(j.merged)])
+	since(&j.b.Times.Queue, start)
+	return why
+}
+
+func (p *landPushRepo) Before(attempt int) {
+	if p.l.a != nil && p.l.a.beforePush != nil {
+		p.l.a.beforePush(attempt)
 	}
 }
+
+func (p *landPushRepo) Push(tip string) error {
+	j := p.j
+	j.f.stage("push", "git push")
+	start := time.Now()
+	_, err := j.f.git(p.ctx, j.dir, "push", "--porcelain", "origin", tip+":refs/heads/"+j.b.Base)
+	since(&j.b.Times.Push, start)
+	return err
+}
+
+func (p *landPushRepo) Wait(d time.Duration) {
+	if p.l.a != nil && p.l.a.sleep != nil {
+		p.l.a.sleep(d)
+		return
+	}
+	time.Sleep(d)
+}
+
+func (p *landPushRepo) Landed(tip string) {
+	j, f, b := p.j, p.j.f, &p.j.b
+	b.Tip = tip
+	// the tip pushed is the base's next tip: when its whole tree passed a gate with
+	// the tree tests (the batch's own, or the combined gate), it is recorded as gated
+	// and no batch gates it again; a clean merge of disjoint files was never gated as
+	// a tree and is not recorded, so the next pass's base gate runs on it (tla/
+	// LandPass.tla, CachedIsGreen: two heads green alone can be red together)
+	if j.gated {
+		p.l.locks().gateMu.Lock()
+		p.l.baseGateCache[tip] = ""
+		delete(p.l.baseGateFails, tip)
+		p.l.locks().gateMu.Unlock()
+	}
+	if !f.landed(*b, j.stream, j.cards[:len(j.merged)]) {
+		j.ended(0, false, false)
+		return
+	}
+	if j.failed.id != "" {
+		j.ended(len(j.merged)+1, f.ownRefusal(j.stream, j.failed), true)
+		return
+	}
+	j.ended(len(j.cards), true, true)
+}
+
+func (p *landPushRepo) StopPush(reason string) {
+	p.recordStop(false, reason)
+}
+
+func (p *landPushRepo) StopGate(reason string) {
+	// ChooseGate names the cause red, so the next land does not resume it
+	c := sprint.ChooseGate(reason)
+	p.recordStop(true, c.Reason)
+}
+
+// recordStop writes one stop for the merged prefix and pushes nothing more.
+// An empty merge is not a fact: the merge step would read it as the whole queue.
+func (p *landPushRepo) recordStop(gate bool, reason string) {
+	j, b := p.j, &p.j.b
+	if len(j.merged) == 0 {
+		j.refuse(reason)
+		return
+	}
+	b.Also = append(b.Also, sprint.StoppedRow(reason))
+	b.Cards, b.IDs = len(j.merged), j.ids[:len(j.merged)]
+	req := sprint.MergeReq{Stream: j.stream, Batch: len(j.merged), Note: reason}
+	fact := "rejected"
+	if gate {
+		req.Red = true
+		fact = "red"
+	} else {
+		req.Rejected = true
+	}
+	j.f.fact(*b, req, j.cards[:len(j.merged)], fact, reason)
+	j.ended(0, false, true)
+}
+
+func (p *landPushRepo) Leave(note string) {
+	p.j.b.Also = append(p.j.b.Also, note)
+	p.j.refuse(note)
+}
+
+func (p *landPushRepo) Refuse(why string) { p.j.refuse(why) }
+
+// EndedNoMerge is a moved base no head of the batch merges onto: the card's own
+// refusal, reworked at the tip and the stream going on, or the lander's own
+// failure. Nothing is pushed, and nothing is reported as a batch of none.
+func (p *landPushRepo) EndedNoMerge() {
+	j := p.j
+	if j.failed.id == "" {
+		j.refuse("no head of the batch merges onto the moved base " + j.b.Base + " and no card was blamed; run land again")
+		return
+	}
+	j.ended(1, j.f.ownRefusal(j.stream, j.failed), true)
+}
+
+// resumePush moves a stream stopped on a rejected push back to merging, so this
+// pass can retry it. The snapshot openStream read is stale; the queue it already
+// holds is still the queued cards, and the push reads the store again.
+func (l *lander) resumePush(stream string) bool {
+	if l.st == nil || l.a == nil {
+		return false
+	}
+	step := store.ResumeStep(sprint.ResumeReq{Stream: stream, Did: "land retries a push the remote rejected", Who: l.c.actor})
+	epoch := l.epoch
+	step.Epoch = &epoch
+	if l.c.op != "" {
+		step.CallerOp = l.c.op + "." + stream + "." + step.Args
+	}
+	l.a.serial.Lock()
+	res, err := l.st.Run(context.Background(), step)
+	l.a.serial.Unlock()
+	return stepExit(res, err) == 0 && len(res.Moved) > 0
+}
+
+var _ sprint.PushRepo = (*landPushRepo)(nil)
 
 // baseNow is the base's tip on origin now, fetched under the pass's fetch lock.
 func (l *lander) baseNow(ctx context.Context, dir, base string) (sha, why string) {
