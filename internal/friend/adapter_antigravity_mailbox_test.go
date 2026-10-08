@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -775,9 +776,15 @@ func TestPartialOverlapWithConsumedDeliveryDoesNotAcknowledgeNewWork(t *testing.
 	assert.Equal(t, []string{"A"}, h.sentTo, "agentapi called for initial batch [A, B]")
 
 	// Verify Delivered reports true for landed messages
-	assert.True(t, a.Delivered("MSG_A"))
-	assert.True(t, a.Delivered("MSG_B"))
-	assert.False(t, a.Delivered("MSG_C"))
+	delA, errA := a.Delivered("MSG_A")
+	require.NoError(t, errA)
+	assert.True(t, delA)
+	delB, errB := a.Delivered("MSG_B")
+	require.NoError(t, errB)
+	assert.True(t, delB)
+	delC, errC := a.Delivered("MSG_C")
+	require.NoError(t, errC)
+	assert.False(t, delC)
 
 	// Simulate session reading A-1
 	h.reads("A", "A-1")
@@ -788,8 +795,12 @@ func TestPartialOverlapWithConsumedDeliveryDoesNotAcknowledgeNewWork(t *testing.
 	require.Len(t, l.Deliveries, 1)
 	assert.Equal(t, DeliveryConsumed, l.Deliveries[0].State)
 	assert.Equal(t, []string{"MSG_A", "MSG_B"}, l.Deliveries[0].BusIDs)
-	assert.True(t, a.Delivered("MSG_A"))
-	assert.True(t, a.Delivered("MSG_B"))
+	delA, errA = a.Delivered("MSG_A")
+	require.NoError(t, errA)
+	assert.True(t, delA)
+	delB, errB = a.Delivered("MSG_B")
+	require.NoError(t, errB)
+	assert.True(t, delB)
 
 	// Now a new incoming batch arrives carrying [B, C]: overlaps on MSG_B, but introduces new work MSG_C.
 	incomingBatch := []bus.Message{
@@ -918,4 +929,194 @@ func TestExplicitEmptyStructuredDeliveryContextDoesNotSuppressSecondIdenticalSen
 
 	l := a.load()
 	require.Len(t, l.Deliveries, 2, "both independent sends are recorded in ledger")
+}
+
+type ackRecorderStore struct {
+	bus.Store
+	mu    sync.Mutex
+	acked []string
+}
+
+func (s *ackRecorderStore) Ack(ctx context.Context, stream, group string, entries ...string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.acked = append(s.acked, entries...)
+	return s.Store.Ack(ctx, stream, group, entries...)
+}
+
+func (s *ackRecorderStore) getAcked() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := make([]string, len(s.acked))
+	copy(cp, s.acked)
+	return cp
+}
+
+func (s *ackRecorderStore) clearAcked() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.acked = nil
+}
+
+// Integration regression: verifies daemon batch delivery end-to-end with real Antigravity adapter,
+// real persistent ledger, and DISTINCT Redis stream entry IDs (<ms>-<seq>) vs bus Message IDs (01M4...).
+// Proves:
+//  1. Turn 1 delivers and consumes {A, B}. Stream entries 1001-0 and 1002-0 are acked; ledger records {01M4_MSG_A, 01M4_MSG_B}.
+//  2. Turn 2 receives {B, C}. startBatch identifies B is already delivered, drops B, acks entry 1002-0 on the bus,
+//     and renders an envelope containing ONLY C. The delivered envelope contains C only and does NOT contain B.
+//  3. Durable store acknowledgments are accurately routed to the distinct stream entry IDs (1002-0 drop ack, 1003-0 turn ack).
+//  4. Filter errors fail closed: when checking delivery status errors, messages are preserved pending (not dropped, not acked).
+func TestDaemonBatchIntegrationWithDistinctStreamAndMessageIDs(t *testing.T) {
+	t.Parallel()
+	h := newAgHarness(t0, "A")
+	var out strings.Builder
+	state := t.TempDir()
+	a := h.adapter("A", state, &out, func() time.Time { return t0 })
+
+	fakeStore := bustest.NewFake(t0, "ada", "bob")
+	recStore := &ackRecorderStore{Store: fakeStore}
+
+	var daemonLogs []string
+	var logMu sync.Mutex
+	recordLog := func(line string) {
+		logMu.Lock()
+		defer logMu.Unlock()
+		daemonLogs = append(daemonLogs, line)
+	}
+
+	d := &Daemon{
+		Friend:  "bob",
+		Deliver: a,
+		Store:   recStore,
+		Record:  recordLog,
+		Seat:    func(context.Context) (string, error) { return "ada", nil },
+		Now:     func() time.Time { return t0 },
+		m:       Start(t0),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	l := &loop{
+		d:          d,
+		b:          &bus.Bus{Store: recStore},
+		ctx:        ctx,
+		inHand:     map[string]bool{},
+		results:    make(chan result, 4),
+		silentStop: time.Minute,
+		answered:   map[string]bool{},
+		failed:     map[string]int{},
+		acted:      map[string]bool{},
+		lanes:      &laneSet{results: make(chan laneResult, 4), refused: map[string]string{}},
+		reads:      newReadSet(),
+		mode:       ModeBatch,
+	}
+
+	// Define three distinct messages with different Redis stream entry IDs and bus Message IDs
+	msgA := bus.Message{ID: "01M4_MSG_A", From: "ada", To: []string{"bob"}, Subject: "A", Body: "UniquePayload_A", At: t0}
+	entryA := bus.Entry{Stream: "friend:bob", Entry: "1001-0", Fields: msgA.Fields()}
+
+	msgB := bus.Message{ID: "01M4_MSG_B", From: "ada", To: []string{"bob"}, Subject: "B", Body: "UniquePayload_B", At: t0}
+	entryB := bus.Entry{Stream: "friend:bob", Entry: "1002-0", Fields: msgB.Fields()}
+
+	msgC := bus.Message{ID: "01M4_MSG_C", From: "ada", To: []string{"bob"}, Subject: "C", Body: "UniquePayload_C", At: t0}
+	entryC := bus.Entry{Stream: "friend:bob", Entry: "1003-0", Fields: msgC.Fields()}
+
+	// Turn 1: Hand receives {entryA, entryB}
+	l.hand = []bus.Entry{entryA, entryB}
+	l.inHand["1001-0"] = true
+	l.inHand["1002-0"] = true
+
+	l.startBatch(t0)
+	r1 := <-l.results
+	require.Equal(t, 0, r1.exit)
+	require.NoError(t, r1.err)
+	l.batchDone(r1, t0)
+
+	// Verify Turn 1 settlement:
+	// Redis stream entry IDs 1001-0 and 1002-0 must be acked on the store:
+	acked1 := recStore.getAcked()
+	assert.Contains(t, acked1, "1001-0")
+	assert.Contains(t, acked1, "1002-0")
+
+	// Real persistent ledger must record bus Message IDs (NOT Redis stream entry IDs):
+	l1 := a.load()
+	require.Len(t, l1.Deliveries, 1)
+	assert.Equal(t, []string{"01M4_MSG_A", "01M4_MSG_B"}, l1.Deliveries[0].BusIDs)
+	assert.Equal(t, DeliveryLanded, l1.Deliveries[0].State)
+
+	// Simulate session reading and consuming Turn 1:
+	h.reads("A", "A-1")
+	a.Follow(context.Background(), t0.Add(time.Minute))
+
+	delA, errA := a.Delivered("01M4_MSG_A")
+	require.NoError(t, errA)
+	assert.True(t, delA)
+	delB, errB := a.Delivered("01M4_MSG_B")
+	require.NoError(t, errB)
+	assert.True(t, delB)
+	delC, errC := a.Delivered("01M4_MSG_C")
+	require.NoError(t, errC)
+	assert.False(t, delC)
+
+	// Turn 2: Overlapping hand receives {entryB, entryC}
+	// entryB was already delivered and consumed in Turn 1!
+	recStore.clearAcked()
+	l.hand = []bus.Entry{entryB, entryC}
+	l.inHand["1002-0"] = true
+	l.inHand["1003-0"] = true
+
+	l.startBatch(t0.Add(time.Minute))
+	r2 := <-l.results
+	require.Equal(t, 0, r2.exit)
+	require.NoError(t, r2.err)
+	l.batchDone(r2, t0.Add(time.Minute))
+
+	// Verify Turn 2 delivery envelope sent to agentapi:
+	// Harness received second delivery at "A-2"
+	require.Len(t, h.sentTo, 2)
+	assert.Contains(t, h.texts["A-2"], "UniquePayload_C", "Envelope contains new message C")
+	assert.NotContains(t, h.texts["A-2"], "UniquePayload_B", "Envelope does NOT contain already delivered B")
+	assert.NotContains(t, h.texts["A-2"], "01M4_MSG_B", "Message B was filtered out before envelope rendering")
+
+	// Verify durable stream acknowledgments for Turn 2:
+	// entry 1002-0 was acked as a dropped duplicate during startBatch.
+	// entry 1003-0 was acked upon turn settlement in batchDone.
+	acked2 := recStore.getAcked()
+	assert.Contains(t, acked2, "1002-0", "stream entry 1002-0 acked on duplicate drop")
+	assert.Contains(t, acked2, "1003-0", "stream entry 1003-0 acked on turn completion")
+
+	// Ledger records Turn 2 carrying ONLY 01M4_MSG_C:
+	l2 := a.load()
+	require.Len(t, l2.Deliveries, 2)
+	assert.Equal(t, []string{"01M4_MSG_C"}, l2.Deliveries[1].BusIDs)
+
+	// Turn 3: Test filter errors preserve pending state (fail closed)
+	recStore.clearAcked()
+	msgErr := bus.Message{ID: "01M4_MSG_ERR", From: "ada", To: []string{"bob"}, Subject: "Err", Body: "UniquePayload_Err", At: t0}
+	entryErr := bus.Entry{Stream: "friend:bob", Entry: "1004-0", Fields: msgErr.Fields()}
+
+	// Corrupt ledger file on disk to simulate I/O or decode error, and invalidate cache
+	require.NoError(t, os.WriteFile(filepath.Join(state, AntigravityLedgerFile), []byte("{unparseable json garbage"), 0644))
+	a.mu.Lock()
+	a.ledger = nil
+	a.mu.Unlock()
+
+	// Verify Delivered now fails closed with an error
+	_, filterErr := a.Delivered("01M4_MSG_ERR")
+	require.Error(t, filterErr, "filter returns error on corrupted ledger")
+
+	// Pass entryErr to loop hand
+	l.hand = []bus.Entry{entryErr}
+	l.inHand["1004-0"] = true
+
+	l.startBatch(t0.Add(2 * time.Minute))
+
+	// startBatch must preserve entryErr in hand / pending, must NOT drop it, and must NOT ack 1004-0
+	acked3 := recStore.getAcked()
+	assert.NotContains(t, acked3, "1004-0", "stream entry was NOT prematurely acked during filter error")
+	assert.Len(t, l.hand, 1, "entryErr is preserved in hand")
+	assert.Equal(t, "1004-0", l.hand[0].Entry)
+	assert.True(t, l.inHand["1004-0"], "entry remains tracked inHand")
+	assert.Nil(t, l.busy, "no turn is started while filter is in error")
+	assert.Empty(t, l.results, "no result queued")
 }

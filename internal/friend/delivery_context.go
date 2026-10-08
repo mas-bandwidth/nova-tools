@@ -11,8 +11,10 @@ type deliveryIDsKey struct{}
 // DeliveredFilter is the caller contract for a Deliverer that durably records delivered bus IDs.
 // Callers (such as the daemon's startBatch) filter already delivered messages before rendering
 // an envelope, preventing duplicate delivery of overlapping messages.
+// If checking delivery status fails, it reports an error so the caller can preserve the message
+// pending (fail closed) instead of risking premature drop or acknowledgment.
 type DeliveredFilter interface {
-	Delivered(id string) bool
+	Delivered(id string) (bool, error)
 }
 
 // WithDeliveryIDs attaches trusted stream entry IDs or message IDs to ctx for delivery.
@@ -33,6 +35,8 @@ func DeliveryIDsFromContext(ctx context.Context) ([]string, bool) {
 
 // FilterDelivered filters messages, returning only those that have not yet been delivered
 // according to d, preventing duplicate delivery of overlapping messages.
+// If checking delivery status encounters an error for a message, that message is preserved
+// in the output (fail closed).
 func FilterDelivered(d Deliverer, msgs []bus.Message) []bus.Message {
 	var filter DeliveredFilter
 	under(d, func(del Deliverer) bool {
@@ -47,7 +51,8 @@ func FilterDelivered(d Deliverer, msgs []bus.Message) []bus.Message {
 	}
 	var out []bus.Message
 	for _, m := range msgs {
-		if !filter.Delivered(m.ID) {
+		del, err := filter.Delivered(m.ID)
+		if err != nil || !del {
 			out = append(out, m)
 		}
 	}

@@ -137,26 +137,48 @@ type AntigravityLedger struct {
 	Deliveries []AntigravityDelivery `json:"deliveries"`
 }
 
+// loadErr reads the ledger once; called with mu held.
+// If the ledger file is unreadable (e.g. corruption, permission error), it returns
+// the error without caching an empty struct, allowing callers to fail closed.
+func (a *Antigravity) loadErr() (*AntigravityLedger, error) {
+	if a.ledger != nil {
+		return a.ledger, nil
+	}
+	if a.State == "" {
+		a.ledger = &AntigravityLedger{}
+		return a.ledger, nil
+	}
+	l := &AntigravityLedger{}
+	found, err := read(filepath.Join(a.State, AntigravityLedgerFile), l)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		a.ledger = &AntigravityLedger{}
+		return a.ledger, nil
+	}
+	a.ledger = l
+	return a.ledger, nil
+}
+
 // load reads the ledger once; called with mu held. A ledger that cannot be read starts
 // empty, said once.
 func (a *Antigravity) load() *AntigravityLedger {
-	if a.ledger != nil {
-		return a.ledger
+	l, err := a.loadErr()
+	if err != nil {
+		a.say("antigravity: the ledger cannot be read: %s", oneLine(err.Error(), 300))
+		return &AntigravityLedger{}
 	}
-	a.ledger = &AntigravityLedger{}
-	if a.State != "" {
-		if _, err := read(filepath.Join(a.State, AntigravityLedgerFile), a.ledger); err != nil {
-			a.ledger = &AntigravityLedger{}
-			a.say("antigravity: the ledger cannot be read, starting empty: %s", oneLine(err.Error(), 300))
-		}
-	}
-	return a.ledger
+	return l
 }
 
 // save writes the ledger, the read and sent-again deliveries past AntigravityKeptRead
 // dropped (the newest kept); called with mu held.
 func (a *Antigravity) save() error {
-	l := a.load()
+	l, err := a.loadErr()
+	if err != nil {
+		return fmt.Errorf("ledger unreadable: %w", err)
+	}
 	done := 0
 	for _, d := range l.Deliveries {
 		if d.ReadAt != (time.Time{}) || d.ResentTo != "" {
@@ -185,7 +207,10 @@ func (a *Antigravity) save() error {
 func (a *Antigravity) keep(d AntigravityDelivery) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	l := a.load()
+	l, err := a.loadErr()
+	if err != nil {
+		return fmt.Errorf("ledger unreadable: %w", err)
+	}
 	l.Deliveries = append(l.Deliveries, d)
 	a.live = d.Conversation
 	if err := a.save(); err != nil {
@@ -203,16 +228,20 @@ func (a *Antigravity) known(id string) bool {
 }
 
 // Delivered reports whether the ledger holds bus message id in an already landed or consumed delivery.
-func (a *Antigravity) Delivered(id string) bool {
+// If reading the ledger encounters an error, it returns that error to fail closed.
+func (a *Antigravity) Delivered(id string) (bool, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	l := a.load()
+	l, err := a.loadErr()
+	if err != nil {
+		return false, err
+	}
 	for _, d := range l.Deliveries {
 		if (d.State == DeliveryConsumed || d.State == DeliveryLanded || !d.ReadAt.IsZero()) && slices.Contains(d.BusIDs, id) {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // following is the conversation delivery was moved to, while the named session is the one
@@ -318,7 +347,8 @@ func (a *Antigravity) untracked(c string) []string {
 // lastRead is when the daemon last saw conversation c read a delivery; called with mu held.
 func (a *Antigravity) lastRead(c string) time.Time {
 	var t time.Time
-	for _, d := range a.ledger.Deliveries {
+	l := a.load()
+	for _, d := range l.Deliveries {
 		if d.Conversation == c && d.ReadAt.After(t) {
 			t = d.ReadAt
 		}
@@ -330,7 +360,8 @@ func (a *Antigravity) lastRead(c string) time.Time {
 // with mu held.
 func (a *Antigravity) unread(c string) []AntigravityDelivery {
 	var out []AntigravityDelivery
-	for _, d := range a.ledger.Deliveries {
+	l := a.load()
+	for _, d := range l.Deliveries {
 		if d.Conversation == c && d.ReadAt.IsZero() && d.ResentTo == "" {
 			out = append(out, d)
 		}
@@ -343,12 +374,12 @@ func (a *Antigravity) unread(c string) []AntigravityDelivery {
 func (a *Antigravity) down(c string, now time.Time) string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.load()
+	l := a.load()
 	u := a.unread(c)
 	if len(u) == 0 || now.Sub(u[0].DeliveredAt) < AntigravityReadBound {
 		return ""
 	}
-	for _, d := range a.ledger.Deliveries {
+	for _, d := range l.Deliveries {
 		if d.ReadAt.After(u[0].DeliveredAt) {
 			return ""
 		}

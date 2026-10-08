@@ -314,6 +314,17 @@ type turn struct {
 	present  bool // the present turn (present.go)
 }
 
+func (t *turn) messageIDs() []string {
+	if t == nil || len(t.msgs) == 0 {
+		return nil
+	}
+	ids := make([]string, len(t.msgs))
+	for i, m := range t.msgs {
+		ids[i] = m.ID
+	}
+	return ids
+}
+
 type result struct {
 	t    *turn
 	exit int
@@ -978,7 +989,7 @@ func (l *loop) head() (notice, pong string) {
 		l.saidSilent = l.notice.Subject == "coordinator silent"
 		l.notice = nil
 	}
-	if l.d.m.Challenge != Quiet && l.d.PongCommand != nil {
+	if l.d.m != nil && l.d.m.Challenge != Quiet && l.d.PongCommand != nil {
 		pong = l.d.PongCommand(l.d.m.Nonce)
 		l.wake = false // the line rides in this turn: no wake turn of its own
 	}
@@ -1106,7 +1117,7 @@ func (l *loop) read(now time.Time) bool {
 					break
 				}
 				delete(l.answered, e.Entry)
-			} else if l.acted[msg.ID] || e.Stage == bus.Acted || l.isDelivered(msg.ID) {
+			} else if l.acted[msg.ID] || e.Stage == bus.Acted || l.hasDelivered(msg.ID) {
 				// a second delivery of a message a turn acted on: dropped and acked, never pushed in twice
 				d.Record(fmt.Sprintf("%s duplicate dropped id=%s", now.UTC().Format(time.RFC3339), msg.ID))
 				if _, aerr := b.AckEntry(l.ctx, d.Friend, e.Entry); aerr != nil {
@@ -1268,7 +1279,7 @@ func (l *loop) turnEnded() {
 
 func (l *loop) deliverBatch(t *turn) func(context.Context) result {
 	return func(ctx context.Context) result {
-		exit, err := l.d.Deliver.Deliver(WithDeliveryIDs(ctx, t.entries), t.text)
+		exit, err := l.d.Deliver.Deliver(WithDeliveryIDs(ctx, t.messageIDs()), t.text)
 		return result{t, exit, err}
 	}
 }
@@ -1279,26 +1290,47 @@ func (l *loop) deliverBatch(t *turn) func(context.Context) result {
 // not fit go back to the head of the hand, pending, and are the next turn.
 // The model is tla/FriendEnvelope.tla: EnvelopeTakesAll and
 // NoYoungerFirst.
-func (l *loop) isDelivered(id string) bool {
+func (l *loop) isDelivered(id string) (bool, error) {
 	if l.acted[id] {
-		return true
+		return true, nil
 	}
 	var delivered bool
+	var filterErr error
 	under(l.d.Deliver, func(d Deliverer) bool {
-		if f, ok := d.(DeliveredFilter); ok && f.Delivered(id) {
-			delivered = true
-			return true
+		if f, ok := d.(DeliveredFilter); ok {
+			del, err := f.Delivered(id)
+			if err != nil {
+				filterErr = err
+				return true
+			}
+			if del {
+				delivered = true
+				return true
+			}
 		}
 		return false
 	})
-	return delivered
+	if filterErr != nil {
+		return false, filterErr
+	}
+	return delivered, nil
+}
+
+func (l *loop) hasDelivered(id string) bool {
+	del, err := l.isDelivered(id)
+	return err == nil && del
 }
 
 func (l *loop) startBatch(now time.Time) {
 	var kept []bus.Entry
 	for _, e := range l.hand {
 		msg := e.Message()
-		if l.isDelivered(msg.ID) {
+		del, err := l.isDelivered(msg.ID)
+		if err != nil {
+			l.d.Record(fmt.Sprintf("%s filter error for id=%s: %v; preserving pending", now.UTC().Format(time.RFC3339), msg.ID, err))
+			return
+		}
+		if del {
 			l.d.Record(fmt.Sprintf("%s duplicate dropped id=%s (already delivered)", now.UTC().Format(time.RFC3339), msg.ID))
 			delete(l.inHand, e.Entry)
 			if _, aerr := l.d.Store.Ack(l.ctx, bus.StreamOf(l.d.Friend), l.d.Friend, e.Entry); aerr != nil {
