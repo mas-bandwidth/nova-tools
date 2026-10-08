@@ -2350,7 +2350,7 @@ func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	return a.runStep("finish", *c, st, store.FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: ids}, As: *as, Gens: gens, Failed: *failed,
-		Head: *head, Report: *report, Branch: *branch, Base: *baseBranch, Usage: *usage, Decided: decided, Who: *as}), stdout, stderr)
+		Head: *head, Report: *report, Branch: *branch, Base: *baseBranch, Usage: *usage, Decided: decided, Who: *as, AnswerRules: a.answersByRule()}), stdout, stderr)
 }
 
 // cmdProgress stamps progress on the work cards a worker holds: the late rule's sign that a
