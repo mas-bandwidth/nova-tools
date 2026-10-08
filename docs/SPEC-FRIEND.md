@@ -1490,7 +1490,9 @@ card from its brief; write its `REPORT.md` and `RESULT.md`; send one bus line
 messages ride only inside a card's turn, oldest first, with the pong line and
 the word about the coordinator; with no card to ride with they wait, pending.
 The lane waits for the turn to end and looks for the card's `RESULT.md`:
-there, the card is done and the lane takes the next; absent, the same card
+there, the card is done and the lane takes the next; a turn that exited 0 and
+left neither `RESULT.md` nor `REPORT.md` is a harness fault, the card kept with
+no turn counted (the lane's paths, below); otherwise absent, the same card
 is handed again once, and after `CardTurns` (two) turns without it the card
 is set aside (recorded in `lanes.json`, never handed again by this daemon),
 and the coordinator is told once on the bus, `friend <name>: card <id> not
@@ -2139,6 +2141,58 @@ and the server runs only the workers' verbs), so a card outside her tiers waits 
 coordinator acts on the request (a served `friend give <friend> <card> --reason` would end that); the runner's raise
 (width 8 after a clean load for 10 minutes, with a config-row write) is the lane governor's measured raise, not
 ported; the invoice-effective price beside the card price is not ported.
+
+### the-lane-hands-the-brief-by-absolute-path-bb — the lane's paths are absolute; a no-report exit is a harness fault (internal/friend/lane_parity.go)
+
+On 2026-10-07, between 10:32 and 10:41 PM, five cards on a flash friend's row (opencode,
+`inception/mercury-2.5`) ended `exit 0 ... and wrote no report; first error: File not found:
+Volumes/nova/ai/<friend>/working/inbox/<card>/BRIEF.md`: the model dropped the path's leading slash,
+read it relative to the friend's working directory, found nothing and wrote no report (a relative
+write even left a stray `<working>/Volumes/nova/...` tree there), and every card failed for $0.00 and
+walked toward the brief-is-wrong bound. The owner: "We need to stop making mistakes with [her]. It
+needs to be mechanical and just work."
+
+- **Every path is absolute.** `nova-friend run` makes `--dir` absolute with `filepath.Abs` before
+  anything starts, and refuses (`RUN REFUSED lane path not absolute: <dir>: ...`) when it cannot.
+  A lane makes its card's job with `LaneJobOf`: the brief and the outbox through `filepath.Abs`, the
+  job directory `<dir>/jobs/<job>`; a path that cannot be made absolute is one line on the record,
+  `lane <n>: card <id> not started: REFUSED lane path not absolute: <path>: <why>`, said once while
+  it stands, and the lane does not start the card (its claim on the job is withdrawn).
+- **The harness runs in the job directory, with the brief inline.** The lane's turn names the job
+  directory as its working directory, every path absolute ("leading slash and all"), and carries
+  the brief's text whole after its three steps (`THE BRIEF (<path>): ... END OF THE BRIEF`,
+  `CardText`), so a model that reads a path relative still has the brief, and a relative write
+  lands inside the job. The harness's process runs there: the lane's context carries the directory
+  (`WithLaneDir`, `LaneDirOf`), and `opencode run --session <id>` and the claude card runner
+  (`claude -p`) run in it; any other run (a session open, a batch turn, a read) stays in the
+  friend's directory. A `REPORT.md` or `RESULT.md` written under the outbox's relative spelling
+  inside the job (`<job dir>/<outbox less its leading slash>/`) is moved into the outbox at the
+  turn's end (`RescueStray`, `stray=` on the record).
+- **A no-report exit is a harness fault.** A turn that ended on its own (not stopped, capped or
+  held), exited 0, refused no permission, raised no error but its outbox's lack (`NoReport`, the
+  card runner's), and left neither `RESULT.md` nor `REPORT.md` is `harness-fault: no report`, said
+  with the harness's first error line (`LaneTurn.FirstError`, `HarnessFirstError`: the first line of
+  the run's output that says an error, else the output's tail's, else `the harness printed no error
+  line`): `card=kept turn=<n>/2 reason="harness-fault: no report; first error: <line>"`. The card
+  stays in the lane's hand, its turn not counted toward `CardTurns`; no `REPORT.md` is written for
+  it and no failed finish goes to the sprint server, so the attempt does not advance and no reader
+  ever reads it as the worker's. The lane hands it again.
+- **Three alike in ten minutes mark her row down once.** The same fault `FaultRepeats` (3) times
+  within `FaultWithin` (10 minutes) on her row (`FaultWatch`) holds her lanes until `FaultDownFor`
+  (15 minutes) later (the lane governor's pause, `:paused` on the status), calls `Daemon.FaultDown`
+  with that until and the reason, so her beat says her down with them
+  (`friend beat <friend> --until <t> --reason "harness-fault: no report; first error: <line>"`,
+  the worker's verb, sent each beat until it passes, then withdrawn), and tells the seat one
+  judgment (`friend <name> down until <t>: <reason>`, a blocker), not one per card. A fault while
+  the down stands adds nothing; once it has passed the count starts again. The cards stay in the
+  lanes' hands and run again after it.
+
+Tests: `internal/friend/lane_path_test.go` (`TestARelativeBriefPathBecomesAbsoluteInTheCommandAndThePrompt`,
+`TestANoReportExitIsAHarnessFaultAndThreeMarkTheRowDownOnce`,
+`TestThreeFaultsInTenMinutesMarkTheRowDownOnceWithUntil`). Not done here: the sprint server has no rule
+of its own named harness-fault; the daemon's fault never reaches it as an attempt, and the down is
+the friend's own beat. A turn the harness ended with a refused permission keeps its own path (handed
+again, then set aside). No TLA+ module models the fault watch yet.
 
 ### friend-token-cap-bb.w2
 

@@ -151,7 +151,7 @@ func TestOneShotLaneStopsAtTheTokenCapAndHoldsWithTheReason(t *testing.T) {
 						}
 					}
 				}()
-				lt, err = p.DeliverTo(ctx, "ses_1", CardText(c, 1, 1, "nova-bus send ...", "", "", "", nil))
+				lt, err = p.DeliverTo(ctx, "ses_1", CardText(LaneJob{Card: c}, 1, 1, "nova-bus send ...", "", "", "", nil))
 				close(stop)
 			}
 			require.NoError(t, ctx.Err(), "the lane's own context is cancelled, never its caller's")
