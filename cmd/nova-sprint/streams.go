@@ -68,9 +68,9 @@ func streamsText(v streamsView) string {
 	}
 	fmt.Fprintf(&b, "STREAMS OK streams=%d cards=%d\n", len(v.Streams), cards)
 	for _, s := range v.Streams {
-		fmt.Fprintf(&b, "STREAM %s repos=%s bases=%s release=%s open=%d landed=%d\n",
+		fmt.Fprintf(&b, "STREAM %s repos=%s bases=%s release=%s open=%d landed=%d state=%s\n",
 			s.Stream, streamsDash(strings.Join(s.Repos, ",")), streamsDash(strings.Join(s.Bases, ",")),
-			streamsDash(s.Release), s.Open, s.Landed)
+			streamsDash(s.Release), s.Open, s.Landed, streamsDash(s.State))
 		for _, c := range s.Cards {
 			fmt.Fprintf(&b, "CARD %s stream=%s state=%s tier=%s title=%s needs=%s\n",
 				c.ID, s.Stream, c.State, streamsDash(c.Tier), streamsDash(c.Title), streamsDash(strings.Join(c.Needs, ",")))

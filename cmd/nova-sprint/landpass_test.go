@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -217,6 +219,52 @@ func TestLandGatesTheCombinedTreeOnceWhenFilesCollide(t *testing.T) {
 	r.clean()
 }
 
+// A canceled loop caller interrupts the serial combined gate after the first batch
+// landed. The pending batch remains queued, and cancellation is not red evidence.
+func TestLandCallerCancelDuringCombinedGateLeavesSecondBatchQueued(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	twoStreams(t, r,
+		map[string]map[string]string{"a1": {"NOTES.md": "fine\n\nand a1\n"}},
+		map[string]map[string]string{"b1": {"NOTES.md": "b1 first\n\nfine\n"}})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	r.a.landCtx = ctx
+	var gates atomic.Int32
+	r.a.gateRan = func(string, bool) {
+		if gates.Add(1) == 4 { // base, both batches, then the combined tree
+			cancel()
+		}
+	}
+	code, out, errs := r.do("land --land-parallel 2")
+	r.a.landCtx = nil
+	assert.Equal(t, 1, code, out+errs)
+	assert.EqualValues(t, 4, gates.Load())
+	assert.Contains(t, out, "LAND OK stream=s1 cards=1 base=main")
+	assert.Contains(t, errs, "the gate of this batch was canceled; no card was blamed or pushed; run land again")
+	assert.NotContains(t, errs, "fails it merged onto")
+	assert.Equal(t, map[string]string{"a1": "landed/merged", "b1": "merging/queued"}, r.places("a1", "b1"))
+	assert.Equal(t, "merging", r.streamState("s2"))
+	assert.Equal(t, []string{"land a1 (sprint stream s1)", "the module", "base"}, r.mainLog())
+	r.clean()
+}
+
+func TestTreeGateDoesNotStartAfterCallerCanceled(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/canceled\n\ngo 1.22\n"), 0o600))
+	var gates atomic.Int32
+	r.a.gateRan = func(string, bool) { gates.Add(1) }
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	l := &lander{a: r.a}
+	assert.ErrorIs(t, ctx.Err(), context.Canceled)
+	assert.Equal(t, context.Canceled.Error(), l.treeGate(ctx, dir, true))
+	assert.Zero(t, gates.Load(), "an already-canceled caller starts no gate")
+	r.clean()
+}
+
 // A red combined gate refuses the batch for this pass, naming the batch it collided with and
 // the files, records no fact and stops no stream (its cards stay queued), and changes nothing
 // for the stream that landed before it; the next pass, cut from the new tip, meets the real
@@ -287,6 +335,60 @@ func TestLandParallelOneAndARefusedCount(t *testing.T) {
 	assert.Contains(t, errs, "--land-parallel wants a count of one or more, not 0")
 	out := r.ok("land --land-parallel 1")
 	assert.Contains(t, out, "LAND DONE batches=2 cards=2 refused=0")
+	r.clean()
+}
+
+// The second stream has built its old-base batch when the first stream pushes.
+// Rebuilding on the moved base must reset the branch's index and worktree as
+// well as HEAD; otherwise a1.go looks like a local deletion and b1 cannot merge.
+func TestLandRebuildOfTheSameBranchResetsItsTree(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	twoStreams(t, r,
+		map[string]map[string]string{"a1": {"a1.go": "package main\n\nfunc a1() {}\n"}},
+		map[string]map[string]string{"b1": {"b1.go": "package main\n\nfunc b1() {}\n"}})
+	built, pushed := make(chan struct{}), make(chan struct{})
+	var firstPush, secondGate sync.Once
+	r.a.gateRan = func(dir string, _ bool) {
+		if !strings.HasSuffix(dir, "@s2") || !strings.Contains(r.git(dir, "log", "-1", "--format=%s"), "land b1") {
+			return
+		}
+		secondGate.Do(func() {
+			close(built)
+			<-pushed
+		})
+	}
+	r.a.beforePush = func(int) {
+		firstPush.Do(func() {
+			<-built
+			root := filepath.Join(r.dir, "land")
+			s1 := worktreeDir(root, filepath.Join(root, repoDirName(r.remote)), "s1")
+			r.git(s1, "push", "origin", "HEAD:refs/heads/main")
+			close(pushed)
+		})
+	}
+	code, out, errs := r.do("land --land-parallel 1")
+	assert.Equal(t, 0, code, out+errs)
+	assert.Contains(t, out, "LAND DONE batches=2 cards=2 refused=0")
+	assert.Equal(t, map[string]string{"a1": "landed/merged", "b1": "landed/merged"}, r.places("a1", "b1"))
+	r.clean()
+}
+
+func TestCutBranchClearsStagedDeletionOnTheSameBranch(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.moveBase("main", "a1.go")
+	r.git(r.clone, "fetch", "-q", "origin")
+	r.git(r.clone, "switch", "-q", "-C", "land/s2", "refs/remotes/origin/main")
+	r.git(r.clone, "rm", "-q", "a1.go") // the mismatched index seen in a failed parallel land
+	assert.Contains(t, r.git(r.clone, "status", "--porcelain"), "D  a1.go")
+	l := &lander{a: r.a}
+	sha, why := l.cutBranch(t.Context(), r.clone, "s2", "main")
+	require.Empty(t, why)
+	assert.Equal(t, r.git(r.clone, "rev-parse", "refs/remotes/origin/main"), sha)
+	assert.Equal(t, sha, r.git(r.clone, "rev-parse", "HEAD"))
+	assert.Empty(t, r.git(r.clone, "status", "--porcelain"), "the new branch must have the base's index and worktree")
+	assert.Equal(t, "moved", strings.TrimSpace(func() string { b, _ := os.ReadFile(filepath.Join(r.clone, "a1.go")); return string(b) }()))
 	r.clean()
 }
 

@@ -247,6 +247,23 @@ func (st *Store) SyncMirrors(ctx context.Context) error {
 		return err
 	}
 	costs := map[string]string{}
+	openBy := map[string]int64{}
+	for _, shape := range shapes {
+		if shape.Name != st.Names.Table(sprint.Work) {
+			continue
+		}
+		for _, row := range shape.Rows {
+			for k, c := range shape.Columns {
+				if !c.HasSet() || k >= len(row.Cells) {
+					continue
+				}
+				switch c.Name {
+				case sprint.Waiting, sprint.Ready, sprint.Working, sprint.Review, sprint.Merging:
+					openBy[row.Key] += row.Cells[k].Count
+				}
+			}
+		}
+	}
 	for _, shape := range shapes {
 		if shape.Name != st.Names.Table(sprint.Merge) {
 			continue
@@ -271,7 +288,7 @@ func (st *Store) SyncMirrors(ctx context.Context) error {
 			}
 			want := map[string]string{
 				sprint.CI:       dash(ctl.Fields["ci"]),
-				sprint.StateCol: dash(sprint.StreamStateText(ctl.Fields)),
+				sprint.StateCol: dash(sprint.ShownStreamState(ctl.Fields, int(openBy[row.Key]))),
 				sprint.Since:    clock(ctl.Fields["since"]),
 			}
 			if d := rowDiff(row, want); len(d) > 0 {
@@ -560,7 +577,8 @@ func (st *Store) StreamClocks(ctx context.Context) ([]sprint.StreamClock, error)
 		if since.After(p) {
 			p = since
 		}
-		out = append(out, sprint.StreamClock{Stream: r.Key, Release: ctl.Fields[sprint.FieldRelease], State: sprint.StreamStateText(ctl.Fields), Since: since, Progress: p, Empty: onTable[r.Key] == 0,
+		open := int(waiting[r.Key] + moving[r.Key])
+		out = append(out, sprint.StreamClock{Stream: r.Key, Release: ctl.Fields[sprint.FieldRelease], State: sprint.ShownStreamState(ctl.Fields, open), Since: since, Progress: p, Empty: onTable[r.Key] == 0,
 			Held: waiting[r.Key] > 0 && moving[r.Key] == 0 || ctl.Fields[sprint.FieldHeld] != "", Reason: ctl.Fields[sprint.FieldHeldReason], Quiet: parseStamp(ctl.Fields[sprint.FieldStaleReview]), Promotion: ctl.Fields[sprint.FieldLandProtected]})
 	}
 	return out, nil

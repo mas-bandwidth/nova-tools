@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
@@ -263,10 +265,8 @@ func TestTheLandLoopBeatsAndRaisesAStuckLanding(t *testing.T) {
 	r.clean()
 }
 
-// A bench that does not answer is nobody's finding: the loop's gate runs here instead,
-// so the red base is found by this machine's own build, and the LAND line says the gate
-// ran here, not on the bench.
-func TestTheLandLoopGatesHereWhenTheBenchDoesNotAnswer(t *testing.T) {
+// A configured remote bench that does not answer refuses the gate without running Go here.
+func TestTheLandLoopRefusesWhenTheBenchDoesNotAnswer(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
 	r.git(r.worker, "switch", "-q", "--detach", "origin/main")
@@ -277,6 +277,10 @@ func TestTheLandLoopGatesHereWhenTheBenchDoesNotAnswer(t *testing.T) {
 	r.ok("add --stream s1 --count 1 --one")
 	heads := map[string]string{"s1-1": r.card("s1-1", map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"})}
 	r.queued(heads, "s1-1")
+	bin := t.TempDir()
+	marker := filepath.Join(bin, "local-go-ran")
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "go"), []byte("#!/bin/sh\nprintf ran > \"$GATE_MARKER\"\nexit 1\n"), 0o755))
+	r.a.gitEnv = append(r.env, "PATH="+bin+":"+os.Getenv("PATH"), "GATE_MARKER="+marker, "GOCACHE="+t.TempDir())
 	r.ok("fleet beat vision --load 1 --cores 8")
 	r.ok("fleet up vision")
 	var w whereView
@@ -335,15 +339,130 @@ func TestTheLandLoopGatesHereWhenTheBenchDoesNotAnswer(t *testing.T) {
 	asked.Lock()
 	got := append([]string(nil), benches...)
 	asked.Unlock()
-	// the base's gate, then the cure search's gate of the head on that base: each asks
-	// the bench first
 	assert.NotEmpty(t, got, "the gate asked the bench first:\n%s", text)
 	for _, h := range got {
 		assert.Equal(t, "vision", h, "the only bench up: %v", got)
 	}
-	assert.Regexp(t, regexp.MustCompile(`LAND REFUSED stream=s1 .* bench=here wall=\d+\.\ds reason=.*go build \./\.\.\.: exit status 1`), text)
+	assert.Contains(t, text, "the configured remote bench did not run the tree gate")
+	assert.Contains(t, text, "no card is blamed and nothing was pushed or reported")
+	assert.NotContains(t, text, "fails the tree gate at its tip", "bench infrastructure is not a red base:\n%s", text)
+	assert.NotContains(t, text, "bench=here", "the gate must not run on this host:\n%s", text)
 	assert.NotContains(t, text, "bench=vision", "a bench that did not answer ran nothing:\n%s", text)
+	_, err := os.Stat(marker)
+	assert.True(t, os.IsNotExist(err), "local Go executed after the remote bench refused: %v", err)
 	assert.NotContains(t, r.ok("lane list"), "lander", "the lane was given back")
+	r.clean()
+}
+
+// A bench refusal is not cached as a class failure: the next pass can gate that base.
+func TestUnavailableBenchLeavesTheBaseGateRetryOpen(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	for file, content := range goModule {
+		path := filepath.Join(r.clone, file)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	}
+	r.ok("fleet beat vision --load 1 --cores 8")
+	r.ok("fleet up vision")
+	var w whereView
+	r.json("where", &w)
+	for name, row := range w.Tables["fleet"] {
+		if name != "vision" && row["status"] == sprint.Up {
+			r.ok("fleet down " + name)
+		}
+	}
+	b := r.a.landState()
+	b.mu.Lock()
+	b.flight = &landFlight{}
+	b.hostName = func() (string, error) { return "coordinator.local", nil }
+	b.gateBench = func(context.Context, string, string, [][]string, bool) (string, int, error) {
+		return "", 0, bench.ErrNoBench
+	}
+	b.mu.Unlock()
+	st, err := r.a.store(common{redis: "mem:0", actor: "tester"})
+	require.NoError(t, err)
+	l := &lander{a: r.a, st: st, gateKey: "s1", base: "main"}
+	var why string
+	var stop bool
+	for range 2 {
+		why, stop = l.treeGateBase(t.Context(), r.clone, "base-1")
+		assert.Equal(t, benchGateUnavailableWhy, why)
+		assert.False(t, stop)
+	}
+	assert.Empty(t, l.baseGateFails, "bench refusal must not spend a red-base retry")
+	assert.Empty(t, l.baseGateCache, "bench refusal must not be cached")
+	_, _, env, why := l.gateBase(t.Context(), r.clone, "s1", []landCard{{base: "main"}}, "base-1")
+	assert.Equal(t, benchGateUnavailableWhy, env)
+	assert.Empty(t, why)
+	assert.Empty(t, l.baseGateFails)
+	b.mu.Lock()
+	b.gateBench = func(context.Context, string, string, [][]string, bool) (string, int, error) {
+		return "build failed", 1, nil
+	}
+	b.mu.Unlock()
+	why, stop = l.treeGateBase(t.Context(), r.clone, "base-1")
+	assert.Contains(t, why, "build failed")
+	assert.False(t, stop)
+	require.NotNil(t, l.baseGateFails["base-1"])
+	assert.Equal(t, 1, l.baseGateFails["base-1"].n, "the first real red gate starts the retry count")
+	r.clean()
+}
+
+// Canceling a cure gate leaves that head eligible when the base is tried again.
+func TestCanceledCureGateDoesNotRememberTheHeadAsRed(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.git(r.worker, "switch", "-q", "--detach", "origin/main")
+	r.files("the module", goModule)
+	r.files("the red base", map[string]string{"bad.go": buildRed})
+	r.git(r.worker, "push", "-q", "origin", "HEAD:refs/heads/main")
+	r.git(r.worker, "fetch", "-q", "origin")
+	r.ok("add --stream s1 --count 1 --one")
+	head := r.card("s1-1", map[string]string{"bad.go": ""})
+	r.queued(map[string]string{"s1-1": head}, "s1-1")
+	r.git(r.clone, "fetch", "-q", "origin", "+refs/heads/main:refs/remotes/origin/main", head)
+	r.git(r.clone, "switch", "-q", "--no-track", "--force-create", "land/s1", "refs/remotes/origin/main")
+	baseSha := r.git(r.clone, "rev-parse", "HEAD")
+	r.ok("fleet beat vision --load 1 --cores 8")
+	r.ok("fleet up vision")
+	var w whereView
+	r.json("where", &w)
+	for name, row := range w.Tables["fleet"] {
+		if name != "vision" && row["status"] == sprint.Up {
+			r.ok("fleet down " + name)
+		}
+	}
+	st, err := r.a.store(common{redis: "mem:0", actor: "tester"})
+	require.NoError(t, err)
+	l := &lander{a: r.a, st: st, gateKey: "s1", base: "main", prose: map[string][]string{}, diffs: map[string]string{}, scope: map[string][]string{}}
+	s, err := st.Load(t.Context(), []string{sprint.Work, sprint.Merge, sprint.Fleet}, nil)
+	require.NoError(t, err)
+	cards, ok := l.openStream(s, "s1")
+	require.True(t, ok)
+	ctx, cancel := context.WithCancel(t.Context())
+	b := r.a.landState()
+	b.mu.Lock()
+	b.flight = &landFlight{}
+	b.hostName = func() (string, error) { return "coordinator.local", nil }
+	b.gateBench = func(context.Context, string, string, [][]string, bool) (string, int, error) {
+		cancel()
+		return "", 0, bench.ErrNoBench
+	}
+	b.mu.Unlock()
+	cured, env := l.cureBase(ctx, r.clone, "s1", cards, baseSha, "red base")
+	assert.Equal(t, -1, cured)
+	assert.ErrorIs(t, ctx.Err(), context.Canceled)
+	assert.NotEmpty(t, env)
+	assert.Empty(t, l.cureTried, "the canceled candidate remains eligible")
+	b.mu.Lock()
+	b.gateBench = func(context.Context, string, string, [][]string, bool) (string, int, error) {
+		return "", 0, nil
+	}
+	b.mu.Unlock()
+	cured, env = l.cureBase(t.Context(), r.clone, "s1", cards, baseSha, "red base")
+	assert.Equal(t, 0, cured, "the same head can cure the base on retry")
+	assert.Empty(t, env)
 	r.clean()
 }
 

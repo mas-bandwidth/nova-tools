@@ -236,8 +236,8 @@ func TestTestMatrixPushDealsTheWholeTree(t *testing.T) {
 		t.Fatalf("exit %d, stderr %q\n%s", code, errb, out)
 	}
 	wantFunctional := `[{"name":"1/6 lin","packages":"./cmd/nova-swarm"},{"name":"2/6 lin","packages":"./internal/ci"},{"name":"3/6 lin","packages":"./cmd/a"},{"name":"4/6 lin","packages":"./internal/b"},{"name":"5/6 lin","packages":"./internal/docs"}]`
-	wantPackages := `[{"name":"1/8 lin","packages":"./cmd/nova-swarm","os":"linux","arch":"x64","group":"lin"},{"name":"2/8 lin","packages":"./cmd/a","os":"linux","arch":"x64","group":"lin"},{"name":"3/8 lin","packages":"./internal/b","os":"linux","arch":"x64","group":"lin"},{"name":"4/8 lin","packages":"./internal/ci","os":"linux","arch":"x64","group":"lin"},{"name":"5/8 lin","packages":"./internal/docs","os":"linux","arch":"x64","group":"lin"},` +
-		`{"name":"1/8 darwin-arm64","packages":"./cmd/nova-swarm","os":"macOS","arch":"ARM64","group":"mac"},{"name":"2/8 darwin-arm64","packages":"./cmd/a","os":"macOS","arch":"ARM64","group":"mac"},{"name":"3/8 darwin-arm64","packages":"./cmd/nova-sandbox","os":"macOS","arch":"ARM64","group":"mac"},{"name":"4/8 darwin-arm64","packages":"./internal/b","os":"macOS","arch":"ARM64","group":"mac"},{"name":"5/8 darwin-arm64","packages":"./internal/ci","os":"macOS","arch":"ARM64","group":"mac"},{"name":"6/8 darwin-arm64","packages":"./internal/docs","os":"macOS","arch":"ARM64","group":"mac"}]`
+	wantPackages := `[{"name":"1/8 lin","packages":"./cmd/nova-swarm","os":"linux","arch":"x64","group":"lin"},{"name":"2/8 lin","packages":"./internal/ci","os":"linux","arch":"x64","group":"lin"},{"name":"3/8 lin","packages":"./cmd/a","os":"linux","arch":"x64","group":"lin"},{"name":"4/8 lin","packages":"./internal/b","os":"linux","arch":"x64","group":"lin"},{"name":"5/8 lin","packages":"./internal/docs","os":"linux","arch":"x64","group":"lin"},` +
+		`{"name":"1/8 darwin-arm64","packages":"./cmd/nova-swarm","os":"macOS","arch":"ARM64","group":"mac"},{"name":"2/8 darwin-arm64","packages":"./internal/ci","os":"macOS","arch":"ARM64","group":"mac"},{"name":"3/8 darwin-arm64","packages":"./cmd/a","os":"macOS","arch":"ARM64","group":"mac"},{"name":"4/8 darwin-arm64","packages":"./cmd/nova-sandbox","os":"macOS","arch":"ARM64","group":"mac"},{"name":"5/8 darwin-arm64","packages":"./internal/b","os":"macOS","arch":"ARM64","group":"mac"},{"name":"6/8 darwin-arm64","packages":"./internal/docs","os":"macOS","arch":"ARM64","group":"mac"}]`
 	if got := selRead(t, gh); got != "functional="+wantFunctional+"\npackages="+wantPackages+"\n" {
 		t.Errorf("GITHUB_OUTPUT =\n%s\nwant functional and packages:\n%s\n%s", got, wantFunctional, wantPackages)
 	}
@@ -272,7 +272,7 @@ func TestTestMatrixPullRequestSelectsAgainstItsBase(t *testing.T) {
 		"pull_request: 3 package(s) touched: ./cmd/a ./internal/ci ./internal/docs\n",
 		"darwin-specific (own files or an import differ under GOOS=darwin): ./cmd/a \n",
 		`{"name":"1/8 darwin-arm64","packages":"./cmd/a","os":"macOS","arch":"ARM64","group":"mac"}`,
-		`{"name":"1/4 lin","packages":"./cmd/a","os":"linux","arch":"x64","group":"lin"},{"name":"2/4 lin","packages":"./internal/ci","os":"linux","arch":"x64","group":"lin"},{"name":"3/4 lin","packages":"./internal/docs","os":"linux","arch":"x64","group":"lin"}`,
+		`{"name":"1/4 lin","packages":"./internal/ci","os":"linux","arch":"x64","group":"lin"},{"name":"2/4 lin","packages":"./cmd/a","os":"linux","arch":"x64","group":"lin"},{"name":"3/4 lin","packages":"./internal/docs","os":"linux","arch":"x64","group":"lin"}`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout lacks %q:\n%s", want, out)
