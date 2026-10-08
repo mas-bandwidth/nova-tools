@@ -27,6 +27,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
 	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -50,7 +51,7 @@ func init() {
 		{"add", "--stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> [--brief-file <f2>...]: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--held] [--allow-shared-paths] [--one: a single card is meant] [--replaces <old-id>[,<old-id>]: the one card is their twin] [--allow-personal-base]", "add --stream s1 --count 100", (*app).cmdAdd},
 		{"quack", "--streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]", "quack --streams a,b --count 2 --repo https://example.com/quack.git", (*app).cmdQuack},
 		{"preflight", "--brief-dir <dir> [--repo-dir <dir>]", "preflight --brief-dir .", (*app).cmdPreflight},
-		{"release check", "[--json] [--streams <glob>] [--check <name>]...", "release check", (*app).cmdReleaseCheck},
+		{"release check", "[--json] [--streams <glob>] [--window <duration>] [--merge-p90 <duration>] [--check <name>]...", "release check", (*app).cmdReleaseCheck},
 		{"release", "(<sentinel or held card>... | <selector> [--dry-run]) --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdReleaseSel},
 		{"resolve", "[<id>...] [--stream <s>] [--max <n>]", "resolve", (*app).cmdResolve},
 		{"start", "", "start", (*app).cmdMachineStart},
@@ -79,6 +80,7 @@ func init() {
 		{"rank", "(<id>... | <selector> [--dry-run]) (--score <n> | --first | --before <id>) [--answers <note>]", "rank s2-3 --first", (*app).cmdRankSel},
 		{"relink", "<old-id>[,<old-id>...] <new-id> [--reason <text>]", "relink lint-pkg-cairn-t lint-pkg-cairn-tb --reason 're-cut as its twin'", (*app).cmdRelink},
 		{"recut", "<id> (--tier <flash|pro|heavy|frontier> | --brief-file <path> [--rules <file>]) [--new <id>] | <selector> (--tier <t> | --set-base <branch> | --drop-who)... [--dry-run]", "recut lint-pkg-cairn-t --tier heavy", (*app).cmdRecutSel},
+		{"twin", "<card> [--paths <extra,...>] [--needs <card,...>] [--before <card>] [--tier <t>] [--instruction <text>] [--carry]", "twin cards3 --paths internal/b/** --instruction 'widen the fix'", (*app).cmdTwin},
 		{"brief", "<id> (--brief <text> | --brief-file <path>) [--rules <file>] [--answers <note>] | --dir <dir> [--rules <file>] | --group <id> [--expect <n>] (--brief-file <path> | --dir <dir>) [--answers <note>] | <id> --widen [--repo-dir <clone>] | <id> --tier <flash|pro|heavy|frontier> | <selector> (--set-base <branch> | --drop-who | --tier <t>)... [--dry-run]", "brief s1-4 --brief-file s1-4.md", (*app).cmdBriefSel},
 		{"move", "<id>... --stream <s> [--before <id> | --after <id> | --score <n>]", "move s1-4 s1-5 --stream s2", (*app).cmdMove},
 		{"merge", "--stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
@@ -124,7 +126,7 @@ func init() {
 		{"stream remove", "<stream>...", "stream remove a b c", (*app).cmdStreamRemove},
 		{"stream archive", "<stream>...", "stream archive a b c", func(a *app, args []string, o, e io.Writer) int { return a.cmdStreamArchive(true, args, o, e) }},
 		{"stream unarchive", "<stream>...", "stream unarchive a", func(a *app, args []string, o, e io.Writer) int { return a.cmdStreamArchive(false, args, o, e) }},
-		{"stream set", "<stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--promotion[=false]] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--reason <text>] [--answers <notes>]", "stream set skips --read-tier pro", (*app).cmdStreamSet},
+		{"stream set", "<stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--promotion[=false]] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--base <branch>] [--reason <text>] [--answers <notes>]", "stream set skips --read-tier pro", (*app).cmdStreamSet},
 		{"set", "[--read-tier <flash|pro|default>] [--read-cards <on|off|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>] [--attempts <n|default>] [--friend-idle <duration|default>] [--friend-finish <duration|default>] [--fleet-tiers <tiers|all>] [--friends-tiers <tiers|all>] [--reads <0|1|2|default>]", "set --read-tier pro", (*app).cmdSet},
 		{"promoted", "--sha <merge sha> [--answers <note>]", "promoted --sha 0123abc", (*app).cmdPromoted},
 		{"merge-window open", "--for <duration> --reason <text>", "merge-window open --for 10m --reason 'the release merges by hand'", (*app).cmdMergeWindowOpen},
@@ -137,6 +139,7 @@ func init() {
 		{"ack", "<note>[,<note>]... --reason <text>", "ack ci-x-1.1 --reason 'a flaky runner; the rerun is green'", (*app).cmdAck},
 		{"answer", "[--dry-run] [--bar <p>] [--every <duration>] [--timeout <duration>] [--backend jev|fixed] [--answers <file>] [--record <file>]", "answer --dry-run", (*app).cmdAnswer},
 		{"inbox", "[--open <group>] [--read] [--wait [--timeout <duration>] [--push <dir> | --push seat]] [--deadline <duration>] [--stale <duration>]", "inbox --wait", (*app).cmdInbox},
+		{"card base", "<id> <branch> [--repo-dir <clone>]", "card base s1-4 main", (*app).cmdCardBase},
 		{"card", "<id> [--brief | --fields] [--at-epoch <n>] | (--all | --stream <s>) --json: every card, one JSON object a line", "card s1-4", (*app).cmdCard},
 		{"needs", "[--stream <s>] [--roots]", "needs --stream s1", (*app).cmdNeeds},
 		{"streams", "[--repo <owner/name>] [--release <name>] [--cards]", "streams --cards", (*app).cmdStreams},
@@ -157,6 +160,7 @@ func init() {
 		{"view cards", "[--col <c>] [--stream <s>] [--holder <member>] [--by tier|stream|col|holder] [--json]", "view cards --col review --by tier --json", (*app).cmdViewCards},
 		{"view worker", "--as <member|friend> [--since <cursor>] [--json]", "view worker --as m1 --json", (*app).cmdViewWorker},
 		{"seat install", "--harness <name> --target <dir> [--session <id>] [--dir <dir>] [--log <file>] [--server <host:port>] [--config-seat <name> --config-dsn <dsn> --config-password-env <NAME>] [--dry-run]", "seat install --dry-run --redis 127.0.0.1:6381", (*app).cmdSeatInstall},
+		{"seat watch", "<dir> [--json]", "seat watch ./inbox", (*app).cmdSeatWatch},
 		{"seat uninstall", "[--dir <dir>]", "seat uninstall --dir ./no-unit-here", (*app).cmdSeatUninstall},
 		{"seat", "[--repair --reason <text>] | push [--harness <name> --target <dir> [--session <id>]] | pong <nonce>", "seat", (*app).cmdSeat},
 		{"fsck seat", "[--pg <host:port or postgres:// URI>]", "fsck seat", (*app).cmdFsckSeat},
@@ -356,6 +360,7 @@ one answer to each judgment (every one prints its own, filled in):
   merge queue rejected        resume --stream <s> --did '<what you did>' --answers <note>
   the base fails its gate     resume --stream <s> --did '<the base is green again>' --answers <note>  (land gated it three times: at 0, 2 and 7 minutes)
   the base branch is gone     rebase --from <the base> --to '<the branch that replaces it>'  (every unlanded card on it moves, dealt cards included)
+  a merging card names a base not on origin    card base <id> <a branch on origin> (answers it; the next land tries the card once), or ack <note>
   ci red                      rework --group <id> --expect <n> --fix '<fix>' --answers <notes>
   blocked on a dropped card   drop --group <id> --expect <n> --reason '<why>' --answers <notes>
   blocked on a missing card   drop <ids> --reason '<why>' or ack <notes> --reason '<why the named missing needs can be waived>'
@@ -1281,7 +1286,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	if *brief == "" && *sentinel == "" {
 		c.says = append(c.says, "the cards have no brief, so a worker is handed no task with them; give each one before it is dealt, on a STOPPED machine: nova-sprint brief <id> --brief-file <path>")
 	}
-	if code := a.holdWho("add", st, stderr, *brief); code != 0 {
+	if code := a.holdWho("add", st, stderr, []string{*stream}, *brief); code != 0 {
 		return code
 	}
 	if code := a.holdBase("add", st, *allowPersonal, stderr, *brief); code != 0 {
@@ -1416,10 +1421,12 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 		st = s
 	}
 	texts := make([]string, len(cards))
+	streams := make([]string, len(cards))
 	for i, cd := range cards {
 		texts[i] = cd.Brief
+		streams[i] = stream
 	}
-	if code := a.holdWho("add", st, stderr, texts...); code != 0 {
+	if code := a.holdWho("add", st, stderr, streams, texts...); code != 0 {
 		return code
 	}
 	if code := a.holdBase("add", st, allowPersonal, stderr, texts...); code != 0 {
@@ -1682,13 +1689,18 @@ func uniquify(ids []string) []string {
 // holdWho holds each brief's WHO line (cardhdr.ReadWho; the owner, 2026-10-03: "doing
 // parts on friends where we would normally do friend work"): `WHO: friend` or
 // `WHO: friend <name>`, the name a row of the friends table (nova-config's friend rows,
-// copied by friend sync), and `WHO: friend` only while the table has a friend. A brief
-// whose line does not read, or names no friend of the table, refuses the whole call, exit
-// 2, nothing written. A brief with no WHO line is a machine's, as before.
-func (a *app) holdWho(verbName string, st *store.Store, stderr io.Writer, briefs ...string) int {
-	var names []string
+// copied by friend sync), and `WHO: friend` only while the table has a friend. A named
+// friend's configured work restriction is held too: the card's stream (streams, one per
+// brief, "" when the caller cannot say: no restriction is judged) and its KIND must be
+// within her streams and kinds, or the whole call refuses with the restriction named
+// (docs/SPEC-SPRINT.md section 1, a friend's card). A brief whose line does not read, or
+// names no friend of the table, refuses the whole call, exit 2, nothing written. A brief
+// with no WHO line is a machine's, as before.
+func (a *app) holdWho(verbName string, st *store.Store, stderr io.Writer, streams []string, briefs ...string) int {
+	var specs []store.FriendSpec
+	byName := map[string]store.FriendSpec{}
 	read := false
-	for _, b := range briefs {
+	for i, b := range briefs {
 		w, why := cardhdr.ReadWho(b)
 		if why != "" {
 			return refuse(stderr, verbName, "the brief's "+why)
@@ -1698,16 +1710,32 @@ func (a *app) holdWho(verbName string, st *store.Store, stderr io.Writer, briefs
 		}
 		if !read {
 			var err error
-			if names, err = st.FriendNames(context.Background()); err != nil {
+			if specs, err = st.FriendSpecs(context.Background()); err != nil {
 				return a.readFailed(verbName, err, stderr)
+			}
+			byName = make(map[string]store.FriendSpec, len(specs))
+			for _, spec := range specs {
+				byName[spec.Name] = spec
 			}
 			read = true
 		}
+		stream := ""
+		if i < len(streams) {
+			stream = streams[i]
+		}
 		switch {
-		case len(names) == 0:
+		case len(specs) == 0:
 			return refuse(stderr, verbName, "the brief says WHO: friend, and the friends table has no friend: its rows are nova-config's friend rows; run: nova-sprint friend sync")
-		case w.Name != "" && !slices.Contains(names, w.Name):
+		case w.Name != "" && byName[w.Name].Name == "":
+			names := make([]string, 0, len(specs))
+			for _, spec := range specs {
+				names = append(names, spec.Name)
+			}
 			return refuse(stderr, verbName, fmt.Sprintf("the brief says WHO: friend %s, and %s is no row of the friends table (friends: %s): name one, or write WHO: friend for any; run: nova-sprint friend sync", w.Name, w.Name, strings.Join(names, ",")))
+		case w.Name != "" && stream != "":
+			if why := byName[w.Name].RestrictionWhy(stream, sprint.BriefKind(b)); why != "" {
+				return refuse(stderr, verbName, "the named friend cannot receive this card: "+why)
+			}
 		}
 	}
 	return 0
@@ -2812,12 +2840,18 @@ func (a *app) replaceBriefs(cards []sprint.CardAdd, ans []string, rs ruleSet, c 
 	if code := a.holdPathsAdmit("brief", stderr, checks...); code != 0 {
 		return code
 	}
+	streams := make([]string, len(cards))
 	for i, cd := range cards {
 		texts[i] = cd.Brief
+		// the card's own stream, for its named friend's restriction; a card the store does
+		// not know yet is left to the write step's refusal
+		if info, err := st.CardOf(context.Background(), cd.ID); err == nil && info.Primary != nil {
+			streams[i] = info.Primary.F("stream")
+		}
 		req.Cards = append(req.Cards, sprint.BriefCard{ID: cd.ID, Brief: cd.Brief, Rules: cardRules(cd.Brief, rs).held, Needs: uniquify(briefNeeds(cd.Brief))})
 		c.says = append(c.says, unfilledSays("the brief of "+cd.ID, cd.Brief)...)
 	}
-	if code := a.holdWho("brief", st, stderr, texts...); code != 0 {
+	if code := a.holdWho("brief", st, stderr, streams, texts...); code != 0 {
 		return code
 	}
 	return a.runStep("brief", *c, st, store.BriefStep(req), stdout, stderr)
@@ -3405,8 +3439,10 @@ func (a *app) cmdFunded(args []string, stdout, stderr io.Writer) int {
 
 // cmdStreamSet writes the read tier or release of the streams named (sprint.Set), over the
 // sprint's, their protected-branch mark: the repositories whose protected branches the
-// lander lands their cards on, and their prose globs: the files the lander does not read
-// for a code span (docs/SPEC-SPRINT.md section 7 and section 11).
+// lander lands their cards on, their prose globs: the files the lander does not read
+// for a code span (docs/SPEC-SPRINT.md section 7 and section 11), and the base their
+// cards not yet dealt and queued to merge are re-pointed to (stream set --base,
+// docs/SPEC-SPRINT.md section 11).
 func (a *app) cmdStreamSet(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("stream set")
 	tier := fs.String("read-tier", "", "the tier the stream's reads draw their route from when it is stronger than the card's own (flash, pro or heavy; default takes it off: the sprint's)")
@@ -3414,6 +3450,7 @@ func (a *app) cmdStreamSet(args []string, stdout, stderr io.Writer) int {
 	release := fs.String("release", "", "the release this stream belongs to (default or none clears it)")
 	prose := fs.String("prose", "", "the globs (PATHS globs, comma separated: security/**,ratings/**) of the files whose backquotes are their own, which the lander does not read for a code span; default takes them off")
 	attempts := fs.String("attempts", "", fmt.Sprintf("the stream's attempt cap, over the sprint's: how many attempts one brief may run before the card is the coordinator's as a brief defect; 1 to %d, or default (the sprint's)", sprint.AttemptsMax))
+	base := fs.String("base", "", "the base branch to re-point the stream's cards to: every card not yet dealt and every card queued to merge has its BASE line rewritten; refused when origin holds no such branch or a card's PATHS are absent at its tip; dealt and working cards keep their base")
 	reason := fs.String("reason", "", "why the read tier is set, recorded on the stream row (the judgment 'raise the read tier of the stream?' names it)")
 	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated")
 	promotion := fs.Bool("promotion", false, "mark the streams the promotion stream: they alone take cards cut on dev or main, and land them there (--land-protected any); --promotion=false takes the mark off (--land-protected default)")
@@ -3431,14 +3468,39 @@ func (a *app) cmdStreamSet(args []string, stdout, stderr io.Writer) int {
 		}
 		*mark = map[bool]string{true: sprint.LandProtectedAny, false: sprint.ReadTierDefault}[*promotion]
 	}
-	if len(names) == 0 || (*tier == "" && *mark == "" && *release == "" && *prose == "" && *attempts == "") {
-		return refuse(stderr, "stream set", "wants at least one stream and --read-tier <flash|pro|heavy|default>, --land-protected <owner/name,...|any|default>, --promotion[=false], --release <name>, --prose <glob,...|default> or --attempts <n|default>")
+	if len(names) == 0 || (*tier == "" && *mark == "" && *release == "" && *prose == "" && *attempts == "" && *base == "") {
+		return refuse(stderr, "stream set", "wants at least one stream and --read-tier <flash|pro|heavy|default>, --land-protected <owner/name,...|any|default>, --promotion[=false], --release <name>, --prose <glob,...|default>, --attempts <n|default> or --base <branch>")
 	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "stream set", err.Error())
 	}
-	return a.runStep("stream set", *c, st, store.SetStep(sprint.SetReq{Streams: names, ReadTier: *tier, LandProtected: *mark, Release: *release, Prose: *prose, Attempts: *attempts, Reason: *reason, Answers: answers(*ans), Who: c.actor}), stdout, stderr)
+	var baseChecked []sprint.StreamSetBaseCheck
+	if *base != "" {
+		// The check add runs, over each brief the base rewrite would carry: the new
+		// branch is admitted as a base (pointing the stream at it is the verb's
+		// point), and each rewritten brief is held to the brief checks at its tip in
+		// the lander's clone of its repository, so a base origin does not hold, or a
+		// PATHS entry absent at its tip, refuses the whole call, nothing written
+		// (docs/SPEC-SPRINT.md section 11, stream set --base). The candidates read
+		// here are bound to the step, which plans over a snapshot of its own: a card
+		// added, dealt or revised while the check fetches refuses the step rather
+		// than being rewritten without its PATHS checked (sprint.baseChecksHeld).
+		ctx := context.Background()
+		s, err := st.Load(ctx, []string{sprint.Work, sprint.Merge}, nil)
+		if err != nil {
+			return a.readFailed("stream set", err, stderr)
+		}
+		baseChecked = sprint.StreamSetBaseChecks(s, names, *base)
+		var checks []briefCheck
+		for _, b := range baseChecked {
+			checks = append(checks, briefCheck{id: b.ID, brief: b.Brief})
+		}
+		if code := a.holdBriefBase("stream set", st, true, stderr, checks...); code != 0 {
+			return code
+		}
+	}
+	return a.runStep("stream set", *c, st, store.SetStep(sprint.SetReq{Streams: names, ReadTier: *tier, LandProtected: *mark, Release: *release, Prose: *prose, Attempts: *attempts, Base: *base, BaseChecked: baseChecked, Reason: *reason, Answers: answers(*ans), Who: c.actor}), stdout, stderr)
 }
 
 // cmdStreamRemove takes the named streams off the work and merge tables:
@@ -3860,4 +3922,68 @@ func (a *app) afterAnswering(verb string, before []sprint.Open, reason, fix, act
 		}
 		return append(said, a.recordAnswers(ctx, st, verb, before, res, reason, fix, actor)...)
 	}
+}
+
+func init() {
+	verbClasses["card base"] = classCoordinator
+}
+
+// card base <id> <branch>: a merging card's BASE re-pointed in one step, its work, its
+// reads and its place in the merge queue kept, one log line naming the base before and
+// after (sprint.CardBase; docs/SPEC-SPRINT.md section 7, a dead base). The branch is asked
+// of the card's origin first (its REPO: line, else --repo-dir's origin), and one not there
+// is refused. The next land pass tries the card once against the new base. The
+// coordinator's alone.
+func (a *app) cmdCardBase(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("card base")
+	repoDir := fs.String("repo-dir", "", "a clone whose origin is asked for the branch, for a card whose brief names no REPO: line")
+	pos, err := parse(fs, args)
+	if err != nil {
+		return refuse(stderr, "card base", err.Error())
+	}
+	if len(pos) == 0 {
+		return a.cmdCard(append([]string{"base"}, args...), stdout, stderr) // a card whose id is base
+	}
+	if len(pos) != 2 {
+		return refuse(stderr, "card base", argErr("wants <id> <branch>: a merging card and the branch on origin its BASE names now ", nil, pos...))
+	}
+	id, branch := pos[0], pos[1]
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "card base", err.Error())
+	}
+	// the card is read first: a card that is not merging is refused by the step, before any git
+	ctx := context.Background()
+	s, err := st.Load(ctx, []string{sprint.Work}, nil)
+	if err != nil {
+		return a.readFailed("card base", err, stderr)
+	}
+	onOrigin := false
+	if pr := s.Work.Placed(id); pr != nil && pr.Col == sprint.Merging && branch != "" && !strings.HasPrefix(branch, "-") {
+		remote, dir := swarm.ReadCardBase([]byte(pr.F("brief"))).Repo, ""
+		if remote == "" {
+			remote, dir = "origin", *repoDir
+		}
+		if remote == "origin" && dir == "" {
+			return refuse(stderr, "card base", id+" names no REPO: line and no --repo-dir was given; nothing was changed; run: nova-sprint card base "+id+" "+branch+" --repo-dir <clone>")
+		}
+		res, err := gitrun.Run(ctx, gitrun.Options{C: dir, Env: a.gitEnv, OwnRepo: dir != ""}, "ls-remote", "--heads", "--", remote, "refs/heads/"+branch)
+		if err != nil {
+			fmt.Fprintf(stderr, "%s card base: origin %s could not be asked for %s: %s; nothing was changed; run: nova-sprint card base %s %s\n", prog, oneline.Escape(remote), oneline.Escape(branch), oneline.Escape(strings.TrimSpace(string(res.Stderr)+" "+err.Error())), oneline.Escape(id), oneline.Escape(branch))
+			return 1
+		}
+		// the branch is on origin only where origin advertises that exact ref: a
+		// matching pattern (refs/heads/*) is not the branch the card names
+		want := "refs/heads/" + branch
+		for _, line := range strings.Split(string(res.Stdout), "\n") {
+			if _, ref, ok := strings.Cut(line, "\t"); ok && strings.TrimSpace(ref) == want {
+				onOrigin = true
+				break
+			}
+		}
+	}
+	return a.runStep("card base", *c, st, store.Step{Args: store.ArgsOf(sprint.CardBaseReq{ID: id, Base: branch, OnOrigin: onOrigin, Who: c.actor}), Verb: "card base", Load: []string{sprint.Work},
+		Plan: func(s *sprint.Snapshot) sprint.Plan {
+			return sprint.CardBase(s, sprint.CardBaseReq{ID: id, Base: branch, OnOrigin: onOrigin, Who: c.actor})
+		}}, stdout, stderr)
 }

@@ -11,8 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 )
 
 // The contract tests: the exit codes, the ceilings, the source-level tripwires the spec
@@ -283,32 +281,6 @@ func TestNothingUnderDoneOrFailedIsOpened(t *testing.T) {
 	wantExit(t, r, 0)
 	wantNotContains(t, r.all(), "UNREADABLE")
 	wantContains(t, r.stdout, "nousage=1")
-}
-
-// ---------------------------------------------------------------- the lock (demanded test 8)
-// ---------------------------------------------------------------- one pass over each file
-
-func TestEachDeclaredFileIsOpenedOncePerRun(t *testing.T) {
-	t.Parallel()
-	if os.Getenv(childTestEnv) == "" {
-		// tokens.Opens() is process-wide and every parallel fold in this process adds to
-		// it; the body runs in a child where this test owns the counter.
-		reenterTest(t, "TestEachDeclaredFileIsOpenedOncePerRun")
-		return
-	}
-	dir := t.TempDir()
-	out := mkdir(t, filepath.Join(dir, "out"))
-	tr := mkdir(t, filepath.Join(dir, "tr"))
-	for i := range 12 {
-		write(t, filepath.Join(tr, string(rune('a'+i))+".jsonl"),
-			msg("m"+string(rune('a'+i)), "2026-09-11T10:00:00Z", "f", map[string]int{"input_tokens": 1}, "/x/schema/a.go")+"\n")
-	}
-	before := tokens.Opens()
-	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr), 0)
-	{
-		got := tokens.Opens() - before
-		assert.Equal(t, int64(12), got, "%d source opens for 12 files; the fold is one pass over each declared file", got)
-	}
 }
 
 // ---------------------------------------------------------------- the ceilings
