@@ -735,7 +735,6 @@ example: nova-friend check --as ada bob`,
 			{
 				Name:    "host",
 				Usage:   "host --as <me> --harness <h> --dir <d> [--prompt <regexp>] [--state-dir <d>] [--dry-run] [--json] -- <launch command...>",
-				Example: "host --as bob --harness aider --dir ./bob --dry-run -- aider",
 				Effect:  tool.LocalWrite + ": starts the launch command in a new detached tmux session friend-<me> and saves the session and prompt in the state directory",
 				DryRun:  true,
 				Detail: `Hosts a terminal harness (OpenCode, Grok, Aider, any TUI) in tmux, so the friend's session is the TUI in

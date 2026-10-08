@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -62,6 +63,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	require.Equal(t, strings.Join(documentedExamples, "\n"), strings.Join(commands, "\n"), "the transcript and the examples this test names are one list")
 
 	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "bob"), 0o755), "the documented install names a real working directory")
 	w := realWorld()
 	addr := firstRunStore(t)
 	w.getenv = func(k string) string {
