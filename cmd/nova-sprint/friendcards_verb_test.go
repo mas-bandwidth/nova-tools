@@ -15,8 +15,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 )
 
@@ -179,4 +181,38 @@ func TestFriendCardsServesEveryHeldCardWithItsPacket(t *testing.T) {
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "no friend nobody on the friends table")
 	ta.clean()
+}
+
+// friend cards serves the model her row names for each card's tier, beside the tier: the
+// daemon needs it to launch the lane on the model and to check her report names it (the
+// reader of attempt 7 found friendCardsOf dropped the packet's model). Her tier is proven
+// first, as the deal requires: the probe's report names the model, so a flash card reaches
+// her and the served held card carries prov/m.
+func TestFriendCardsServesEachCardsTierModel(t *testing.T) {
+	t.Parallel()
+	ta, cfg := friendApp(t, "amy")
+	_, _, err := cfg.Update(context.Background(), config.KindFriend, "amy", map[string]string{"tiers": "flash", "model": "flash=prov/m"}, "t")
+	require.NoError(t, err)
+	root := t.TempDir()
+	ta.ok("friend sync --root " + root)
+	// her probe of flash returned prov/m: the deal takes the tier
+	st := &store.Store{B: ta.m, Names: sprint.Names{}, Now: ta.a.now}
+	changed, err := st.SetFriendProbe(context.Background(), "amy", "flash", "prov/m")
+	require.NoError(t, err)
+	require.True(t, changed)
+	ta.beatUp("amy")
+
+	brief := filepath.Join(t.TempDir(), "s1-1.md")
+	require.NoError(t, os.WriteFile(brief, []byte(passingBrief("s1-1: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy")), 0o644))
+	ta.ok("add --stream s1 --brief-dir " + filepath.Dir(brief))
+	ta.ok("start")
+	ta.ok("tick")
+
+	held := friendCardsAnswer(t, ta, "amy")
+	require.NotEmpty(t, held)
+	for _, h := range held {
+		assert.Equal(t, "flash", h.Tier, h.Card)
+		assert.Equal(t, "prov/m", h.Model, "the served held card carries her row's model for its tier: %s", h.Card)
+		assert.Contains(t, h.Brief, "tier: flash model: prov/m", h.Card)
+	}
 }
