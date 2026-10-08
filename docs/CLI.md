@@ -2368,6 +2368,9 @@ nova-sprint accept (<id>... | --stream <s> | --read-ok | --group <id> [--expect 
 nova-sprint rework (<id>... | --group <id> [--expect <n>] | <selector> [--dry-run]) [--fix <text>] [--answers <note>]
 nova-sprint return (<id>... | --group <id> [--expect <n>] | <selector> [--dry-run]) [--reason <text>] [--answers <note>]
 nova-sprint drop (<id>... | --stream <s> --col <state> | --repo <owner/name>... --expect <n> | --group <id> [--expect <n>] | <selector> [--dry-run]) --reason <text> [--answers <note>]
+nova-sprint defer --release <name> (<id>... | --stream <s> | --repo <owner/name>) [--expect <n>] --record <dir>
+nova-sprint roadmap restore <id> --record <dir>
+nova-sprint roadmap render --record <dir> [--out <file>]
 nova-sprint rank (<id>... | <selector> [--dry-run]) (--score <n> | --first) [--answers <note>]
 nova-sprint priority <id>... | (<id>... | --stream <s>) (--blocker | --critical | --high | --normal | --low) --reason <text>
 nova-sprint relink <old-id>[,<old-id>...] <new-id> [--reason <text>]
@@ -2570,6 +2573,20 @@ need that is no card on the table is refused, naming every one, and nothing chan
 `--needs ""` is refused, since a sentinel with nothing to wait on is released
 (`release v1 --reason '<why>'`), not emptied. The contract is
 [SPEC-SPRINT.md](SPEC-SPRINT.md) section 16.
+### Work deferred to a later release: the roadmap
+
+`nova-sprint defer --release v2 --stream later --expect 12 --record ~/work-record` takes the
+waiting cards of the stream (or the ids named, or `--repo <owner/name>`) off the table into
+the work record's roadmap, `~/work-record/roadmaps/<product>-v2.sexp`, a `:roadmap` form a Lisp
+reader reads back, each card with its id, stream, tier, needs, who, repo and whole brief. Only
+waiting cards are taken: a card named in another state is refused, and `--stream` or `--repo`
+print a `LEFT` line for each card they leave. `--expect` refuses another count, and nothing
+changes. The file is read back and counted before the cards are dropped, in one step, with the
+reason `deferred to release v2`. `nova-sprint roadmap restore <id> --record <dir>` adds a card
+back as its twin, `<id>b`, with its brief byte for byte, and takes it out of the file.
+`nova-sprint roadmap render --record <dir>` writes the public `ROADMAP.md`: releases, streams
+and card counts only. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 2, "The
+roadmap: work deferred to a later release".
 
 ### Role views: what a model reads instead of the dashboard
 
