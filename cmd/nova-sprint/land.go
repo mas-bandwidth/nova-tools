@@ -2082,6 +2082,13 @@ type protJob struct {
 // marked stream whose base is protected does not push that base. A pull request
 // already recorded is polled from the clone and is not cut or built again. Nil when
 // this batch pushes its base as landpass.go does, including a local path and a dry run.
+//
+// It does not pause before that decision. prepare pauses before any git and queueHead
+// pauses again just before the push (docs/SPEC-SPRINT.md section 7, the lander's pause);
+// a pause here would ask the merge queue once more, so an ordinary stream asks twice
+// before it builds and the second check lands before the build instead of before the
+// push. A batch that only polls skips prepare, so the one pause it needs is here, after
+// it is known to be protected, and a pause refuses it without a second ask.
 func (l *lander) protectPoll(ctx context.Context, s *sprint.Snapshot, j *landJob) *protJob {
 	if l.dry || j == nil {
 		return nil
@@ -2090,9 +2097,6 @@ func (l *lander) protectPoll(ctx context.Context, s *sprint.Snapshot, j *landJob
 		return nil
 	}
 	b := &j.b
-	if why := l.pause(ctx, s, b.Repo, b.Base); why != "" {
-		return nil
-	}
 	clone, why := l.clone(ctx, b.Repo)
 	if why != "" || clone == "" {
 		return nil
@@ -2104,6 +2108,10 @@ func (l *lander) protectPoll(ctx context.Context, s *sprint.Snapshot, j *landJob
 	_, anySet, mismatch := landPRState(j.cards)
 	if !anySet && !mismatch {
 		return &protJob{deferPR: true}
+	}
+	if why := l.pause(ctx, s, b.Repo, b.Base); why != "" {
+		j.refuse(why)
+		return nil
 	}
 	j.clone, b.Dir, j.dir = clone, clone, clone
 	return &protJob{deferPR: true, pollPR: true}
@@ -2143,6 +2151,10 @@ func (l *lander) passStreams(ctx context.Context, s *sprint.Snapshot, order []st
 		marks := map[*landJob]*protJob{}
 		for _, j := range jobs {
 			m := l.protectPoll(ctx, s, j)
+			if j.done {
+				// a protected poll that paused has already refused; prepare would ask again
+				continue
+			}
 			if m != nil && m.pollPR {
 				marks[j] = m
 				continue
@@ -2204,6 +2216,14 @@ func (l *lander) protectedLand(ctx context.Context, s *sprint.Snapshot, j *landJ
 		// a pull request already recorded is polled: the batch is not built or pushed again
 		tip = ""
 	} else {
+		// prepare paused before git; ask again just before this push, as queueHead does
+		// for a batch that pushes its base. The ask stays here, not in protectPoll
+		// before the batch is known to be protected, so an ordinary stream's two
+		// checks keep their timing (before the build, then before the push).
+		if why := l.pause(ctx, s, b.Repo, b.Base); why != "" {
+			j.refuse(why)
+			return
+		}
 		b.Cards, b.IDs = len(j.merged), j.ids[:len(j.merged)]
 		cards = j.cards[:len(j.merged)]
 	}
