@@ -31,11 +31,11 @@ import (
 // move: a play that stops, or ends without the line of every step, is a
 // refusal naming the step, and running it again finishes it (the play is
 // idempotent). The verb has no flag that runs a step alone.
-//
-// The adoption pipeline of adopt.go (cmdAdopt) is not this verb and is not in
-// the verb table.
 func init() {
 	verbClasses["adopt"] = classMachine
+	// it runs ansible against the fleet: it runs where it is typed or
+	// scheduled, never on the server
+	notServed = append(notServed, "adopt")
 	verbExit["adopt"] = "exit codes: 0 every step of the seat adopted the build (or, with --dry-run, said what it would change), 1 the play stopped or left a step without its line (ADOPT REFUSED step=<step>, with what the rollback did when the window had opened: the steps before it are done, or rolled back, and the play runs again to finish), 2 usage"
 	verbEffect["adopt"] = "local and remote writes through ansible-playbook: the tools play builds the version if missing and runs the new build's checks on the seat (shadow tick, nova-friend install --dry-run) before anything changes; then, in a window, it stops the seat's old server and member (bootout, seen gone in ps), migrates the configuration store, loads the function library, installs the tools and bootstraps every stopped or stale nova launchd agent, points the dashboard links at the installed nova-sprint and reinstalls each stale friend daemon with nova-friend install; a refusal in the window puts the tools and library of before back and restarts the old agents (the migration is never undone); --dry-run runs the play with --check and writes nothing"
 }

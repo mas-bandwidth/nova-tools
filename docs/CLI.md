@@ -2774,10 +2774,6 @@ command again finishes it), or when `--source` holds no
 `fleet/tools.yml`; 2 usage. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 14,
 "Adopting a build".
 
-The adoption pipeline (`(*app).cmdAdopt`, `cmd/nova-sprint/adopt.go`; the runbook is
-[SPRINT-COORDINATOR.md](SPRINT-COORDINATOR.md) section 7, "Adoption is a pipeline") is in no
-verb table and the tick does not call its pass.
-
 ### Exit codes
 
 | exit | meaning |

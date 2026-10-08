@@ -3917,26 +3917,15 @@ naming no open judgment refuses the whole step, nothing written
 
 **Dev sync every cycle.** On 2026-10-04 the base and the development branch drifted for an
 afternoon while hundreds of cards landed on each; folding them took 105 conflicts and an evening
-(the owner: "promote every cycle or drift causes a big fuckup"). Each land cycle in which a sync
-is due (`sprint.DevSyncDue`: `sprint.DevSyncEveryLandings` landed since the last sync, counted
-from the store by `sprint.LandedSinceSync`; `sprint.DevSyncAge` since it with nothing landed, as
-dev moves on its own; none recorded; or a conflict open), the land round merges the development
-branch into the base in its clone (`sprint.LandCycleSync`, `sprint.RunDevSync`): fetched, the
-drift counted, merged on a detached base so no local branch ever holds an ungated merge; a clean
-merge goes through the round's own tree gate (`DevSyncReq.Check`, required: a sync with no gate
-refuses) and is pushed onto the base like a batch; a red gate or a refused push pushes nothing.
-The facts are recorded by one pure step, `sprint.DevSynced`, on the step's own snapshot (git runs
-once, outside the plan, which a retry runs again): the drift (commits each side lacks, the last
-sync and its sha) on the merge table's properties and on every stream's control card, the
-dashboard's merge row, and `sprint.DevDriftOf` reads it with the minutes since. A conflict stops
-every stream (cause `dev sync conflict`, its files in `conflict_paths`) with ONE judgment naming
-the files while they are few (`sprint.NDevSyncConflict`); each cycle tries again while it is open,
-bringing its text up to date and raising no second one; the cycle that finds the base holding dev
-(merged by hand, or cleanly) closes it and resumes only the streams it stopped; `sprint.CanLand`
-is false meanwhile (`TestTheBaseTakesTheDevelopmentBranchEveryCycle`, on the twin store and a twin
-repository; `TestADevSyncConflictStopsEveryStreamWithOneJudgment`). Owed, outside this card's
-paths: the call in the land round itself (`nova-sprint land`, before its first batch, with the
-round's tree gate as `Check`), and the drift on `where --json`.
+(the owner: "promote every cycle or drift causes a big fuckup"). The land round is to merge the
+development branch into the base each cycle in which a sync is due, push a clean merge through
+the round's own tree gate, and on a conflict stop every stream with one judgment naming the
+files. It is not built: a library for it (commit 901463230) was never called by the land round
+and went in the dead code sweep of 2026-10-07. What stands is the reader: the drift (commits
+each side lacks, the last sync and its sha) on the merge table's properties, which
+`sprint.DevDriftOf` reads with the minutes since for the dashboard's merge row and nothing
+writes yet (`TestDevDriftOfReadsTheMergeTablesProperties`). The promotion of dev
+(above) is what keeps the two together until then.
 
 **The lander's checks.** Each head `land` merges is checked by script, no model,
 before the batch's check runs (`internal/diffcheck`), the two checks the decide
