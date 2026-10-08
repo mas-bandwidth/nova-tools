@@ -243,9 +243,25 @@ The plain `where --json` response carries cached fix counts without requiring `-
 
 
 
+## Landings chart
+
+The existing Landings panel remains the last panel, below all tables, at full width.
+It shows stacked ten-minute buckets over the last twenty-four hours, fleet below
+friends, using `--series-fleet` and `--series-friends`. Its header shows each series'
+twenty-four-hour total and last-hour count. Count gridlines label the vertical axis;
+the horizontal axis uses twelve-hour time labels every two hours. The panel folds
+like the other panels and has no tooltips or title attributes.
+
+The chart reads `/landings.json`, redraws when its `generated` value changes, and
+stays hidden while that file cannot be fetched. Its historical series is refreshed
+every sixty seconds; this does not change the one-second live snapshot requirement.
+
 ## Freshness: once per second, end to end (hard requirement)
 
-The dashboard reads once per configured tick, keeps the last successful snapshot, and
+The live dashboard uses a one-second tick end to end, including the public puller.
+The page receives each snapshot through server-sent events; its polling fallback
+runs every 1000 ms. Viewer count does not multiply upstream reads.
+The dashboard keeps the last successful snapshot and
 measures its age from the read time. A snapshot older than two seconds for thirty seconds
 raises one stale alarm; the first fresh snapshot clears it. `/healthz` reports stale state,
 `/api/sprint` carries it, and the page does not expose the read's error text.
