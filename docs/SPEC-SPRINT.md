@@ -5513,6 +5513,29 @@ epoch, and with no `--epoch` runs at the epoch that read finds (a clear between
 the read and the write is read again), so they need none; the coordinator
 given `--epoch` is held to it like any other actor.
 
+#### stream-set-base-bc.w7: stream set --base re-points a stream to a live base
+
+`stream set <s>... --base <branch>` moves a stream off a base that is gone,
+merged or red: for each named stream it rewrites the `BASE:` line of every card
+not yet dealt (its attempt is 0) and of every card queued to merge (its merge
+card is in the queue), each a change of the work table the store writes, with the
+brief revision the replacement is (`brief_attempt`, as `brief` records one). A
+card dealt and working keeps its base and is listed. It is refused whole,
+writing nothing, when origin holds no branch of the name, or when a card's
+`PATHS:` name something absent at its tip: the check `add` runs, held over each
+brief the rewrite would carry at the new base. The cards are
+`StreamSetBaseChecks`, the rewrite `briefOnBase`, and the plan `Set`'s
+(`SetReq.Base`).
+
+The check reads its candidates over a snapshot of its own, and the step's plan
+recomputes them from the snapshot the step reads, so the write is bound to the
+candidates the check read: by stream, id and the brief it read each one with
+(`SetReq.BaseChecked`, `baseChecksHeld`). A card added to the stream, dealt, or
+revised between the two reads refuses the step whole, nothing written, and no
+brief is ever rewritten without its `PATHS:` held to the base; run the verb
+again. The binding is no part of the verb's arguments (`ArgsOf`), so a retry
+under `--op` is the same call.
+
 #### resume-many-streams-b
 
 `resume` takes `--stream` again or comma separated, with one `--did` for all: each stream is resumed or refused on its own line, and the exit is 1 when any is refused.
