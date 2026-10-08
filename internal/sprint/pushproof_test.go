@@ -50,8 +50,8 @@ func TestThePushProofIsLiveOnlyAfterThePongOfTheLastCheck(t *testing.T) {
 	_, why = PushPong(failed, true, "n2", at.Add(PushProofEvery))
 	assert.Contains(t, why, "a pong to it is no proof")
 
-	assert.Contains(t, PushCheckText("rowan", "n3"), PushCheckPrefix+"n3\n")
-	assert.Contains(t, PushCheckText("rowan", "n3"), "nova-sprint seat pong n3 --actor rowan")
+	assert.Contains(t, PushCheckText("n3", PushPongCommand("rowan", "n3", "127.0.0.1:6380", "")), PushCheckPrefix+"n3\n")
+	assert.Contains(t, PushCheckText("n3", PushPongCommand("rowan", "n3", "127.0.0.1:6380", "")), "nova-sprint seat pong n3 --actor rowan")
 	assert.Equal(t, "nova-sprint seat install --actor rowan --harness opencode --target /w", PushSetup("rowan", rec, true))
 	assert.Contains(t, NotPushTarget(PushRecord{Name: "rowan", Target: "/w"}), "--harness <name> is required")
 	assert.Contains(t, NotPushTarget(PushRecord{Name: "rowan", Harness: "codex"}), "--target <dir> is required")

@@ -78,13 +78,14 @@ type inboxLook struct {
 // storeSource is inbox --wait on the store.
 type storeSource struct {
 	st              *store.Store
+	redis           string // the resolved direct endpoint, carried into proof replies
 	after           string // the notes' tail at the last tick end seen
 	deadline, stale time.Duration
 }
 
-func (a *app) storeSource(ctx context.Context, st *store.Store, deadline, stale time.Duration) (*storeSource, error) {
+func (a *app) storeSource(ctx context.Context, st *store.Store, redis string, deadline, stale time.Duration) (*storeSource, error) {
 	_, after, err := st.B.Tails(ctx)
-	return &storeSource{st: st, after: after, deadline: deadline, stale: stale}, err
+	return &storeSource{st: st, redis: redis, after: after, deadline: deadline, stale: stale}, err
 }
 
 func (s *storeSource) tickEnd(ctx context.Context, d time.Duration) error {
