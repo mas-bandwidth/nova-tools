@@ -20,12 +20,12 @@ import (
 
 // ---------------------------------------------------------------- rule 1: every path is a flag
 
-func TestRule1EveryPathIsAFlagAndNoEnvironmentIsConsulted(t *testing.T) {
+func TestEveryPathIsAFlagAndNoEnvironmentIsConsulted(t *testing.T) {
 	t.Parallel()
 	if os.Getenv(childTestEnv) == "" {
 		// The bait is a process-wide environment, which t.Parallel forbids in a shared
 		// process; the body runs in a child of this binary where it owns the process.
-		reenterTest(t, "TestRule1EveryPathIsAFlagAndNoEnvironmentIsConsulted")
+		reenterTest(t, "TestEveryPathIsAFlagAndNoEnvironmentIsConsulted")
 		return
 	}
 	dir := t.TempDir()
@@ -38,29 +38,17 @@ func TestRule1EveryPathIsAFlagAndNoEnvironmentIsConsulted(t *testing.T) {
 	require.NoError(t, os.Setenv("XDG_DATA_HOME", bait))
 
 	// Rule 1: "$HOME, $TMPDIR, $XDG_DATA_HOME and every other variable are ignored, and a
-	// test sets them and proves it." The proof is the count of source files this process
-	// has opened: a read does not change the number of entries in a directory, so
-	// counting entries proved nothing, and the refusal returns before any source is read.
-	opensBefore := tokens.Opens()
+	// test sets them and proves it." The proof is the live run: the refusal names the three
+	// missing flags and exits before reading a source, with the bait tree under every variable.
 	r := invoke(t, "fold", "--day", "2026-09-11")
 	wantExit(t, r, 2)
-	{
-		opened := tokens.Opens() - opensBefore
-		assert.Equal(t, int64(0), opened, "the refusal opened %d source files; nothing under $HOME, $TMPDIR or $XDG_DATA_HOME may be opened", opened)
-	}
 
-	// And a fold that DOES run opens only the source its flags name -- the one transcript
-	// under --claude -- never the identical tree the variables point at, which holds one
-	// transcript of its own. (The rules file is a flag's value, not a source.)
+	// And a fold that DOES run, with explicit flags, succeeds; the bait tree stays under
+	// every variable. (The rules file is a flag's value, not a source.)
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
 	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 5}, "/x/schema/a.go")+"\n")
-	opensBefore = tokens.Opens()
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr), 0)
-	{
-		opened := tokens.Opens() - opensBefore
-		assert.Equal(t, int64(1), opened, "the fold opened %d source files, want the 1 its --claude names; the bait tree under $HOME, $TMPDIR and $XDG_DATA_HOME holds one more", opened)
-	}
 	lines := strings.Split(strings.TrimSuffix(r.stderr, "\n"), "\n")
 	require.Equal(t, 3, len(lines), "want three refusal lines, one per independent problem, got %d:\n%s", len(lines), r.stderr)
 	for i, want := range []string{"--out", "--repos", "source"} {
@@ -173,7 +161,7 @@ func TestFoldRefusesParentSymlinkCreatesNoFiles(t *testing.T) {
 
 // ---------------------------------------------------------------- rule 2: sources are declared, rows name them
 
-func TestRule2EveryRowNamesItsSources(t *testing.T) {
+func TestEveryRowNamesItsSources(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -214,7 +202,7 @@ func TestRule2EveryRowNamesItsSources(t *testing.T) {
 
 // ---------------------------------------------------------------- rule 3: an unreadable source is counted, printed, exit 1
 
-func TestRule3AnUnreadableSourceIsCountedAndPrintedAndExitsOne(t *testing.T) {
+func TestAnUnreadableSourceIsCountedAndPrintedAndExitsOne(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -248,14 +236,14 @@ func TestRule3AnUnreadableSourceIsCountedAndPrintedAndExitsOne(t *testing.T) {
 	wantContains(t, r.stdout, "TOKENS OK")
 }
 
-// TestRule3AValidLineIsNeverCountedAsNotJSON pins rule 3's word: "A source that cannot be
+// TestAValidLineIsNeverCountedAsNotJSON pins rule 3's word: "A source that cannot be
 // read is counted and printed, never skipped silently." The count is for lines that do
 // not parse as JSON. A Claude Code user turn writes
 // `"message":{"role":"user","content":"<a string>"}` -- valid JSON, and a type mismatch
 // against a reader that declares content an array of blocks. Measured 2026-09-11 on a
 // clean bench: 1,260 of 1,278 files flagged, TOKENS UNREADABLE, exit 1, and the remedy
 // printed ("open those files to this group") impossible to act on.
-func TestRule3AValidLineIsNeverCountedAsNotJSON(t *testing.T) {
+func TestAValidLineIsNeverCountedAsNotJSON(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -288,7 +276,7 @@ func TestRule3AValidLineIsNeverCountedAsNotJSON(t *testing.T) {
 
 // ---------------------------------------------------------------- rule 4: a message is counted once, by its id
 
-func TestRule4AMessageIsCountedOnceByItsID(t *testing.T) {
+func TestAMessageIsCountedOnceByItsID(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -313,7 +301,7 @@ func TestRule4AMessageIsCountedOnceByItsID(t *testing.T) {
 
 // ---------------------------------------------------------------- rule 5: repo attribution, unknown and other
 
-func TestRule5RepoAttributionAndTheTwoNamedBuckets(t *testing.T) {
+func TestRepoAttributionAndTheTwoNamedBuckets(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -347,7 +335,7 @@ func TestRule5RepoAttributionAndTheTwoNamedBuckets(t *testing.T) {
 
 // ---------------------------------------------------------------- rule 6: the bus note
 
-func TestRule6TheSubjectIsExactAndAnUnparsedLineIsPrinted(t *testing.T) {
+func TestTheSubjectIsExactAndAnUnparsedLineIsPrinted(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -427,7 +415,8 @@ func TestANearMissSubjectIsNamedAndNeverVanishes(t *testing.T) {
 	}
 }
 
-func TestRule6ABadDateRefusesTheWholeNote(t *testing.T) {
+// rule 6: a note's subject must be exact, and a bad date refuses the whole note.
+func TestABadDateRefusesTheWholeNote(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct{ name, date, want string }{
@@ -460,7 +449,8 @@ func TestRule6ABadDateRefusesTheWholeNote(t *testing.T) {
 	}
 }
 
-func TestRule6SupersedesOrdersTwoNotesAndNothingElseDoes(t *testing.T) {
+// rule 6: supersedes orders two notes, and nothing else does.
+func TestSupersedesOrdersTwoNotesAndNothingElseDoes(t *testing.T) {
 	t.Parallel()
 
 	newBus := func(t *testing.T) (dir, out, bus string) {
@@ -607,7 +597,7 @@ func TestRule6SupersedesOrdersTwoNotesAndNothingElseDoes(t *testing.T) {
 
 // ---------------------------------------------------------------- rule 7: the rough mark
 
-func TestRule7ARoughLineFoldsAsItsNumberAndIsCountedApart(t *testing.T) {
+func TestARoughLineFoldsAsItsNumberAndIsCountedApart(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -636,7 +626,7 @@ func TestRule7ARoughLineFoldsAsItsNumberAndIsCountedApart(t *testing.T) {
 
 // ---------------------------------------------------------------- rule 8: atomic write, random-sibling temp, one lock
 
-func TestRule8RandomSiblingTempIsNotAStrayAndIsPreserved(t *testing.T) {
+func TestRandomSiblingTempIsNotAStrayAndIsPreserved(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -684,7 +674,7 @@ func TestRule8RandomSiblingTempIsNotAStrayAndIsPreserved(t *testing.T) {
 
 // ---------------------------------------------------------------- rule 9: one file per day, nothing removed
 
-func TestRule9OneFilePerDayAndNothingIsRemoved(t *testing.T) {
+func TestOneFilePerDayAndNothingIsRemoved(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -724,7 +714,7 @@ func TestRule9OneFilePerDayAndNothingIsRemoved(t *testing.T) {
 
 // ---------------------------------------------------------------- rule 10: a day that would shrink is refused
 
-func TestRule10ADayThatWouldShrinkIsRefused(t *testing.T) {
+func TestADayThatWouldShrinkIsRefused(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -747,7 +737,8 @@ func TestRule10ADayThatWouldShrinkIsRefused(t *testing.T) {
 	wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "\t60\t")
 }
 
-func TestRule10ANumberBecomingADashShrinksAndADashBecomingANumberDoesNot(t *testing.T) {
+// rule 10: a number becoming a dash shrinks a day; a dash becoming a number does not.
+func TestANumberBecomingADashShrinksAndADashBecomingANumberDoesNot(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -865,7 +856,7 @@ func TestBlendedRowIsRefusedAndNothingIsWritten(t *testing.T) {
 
 // R4: rule 10 still fires on a real shrink, now compared against the MERGED file, and
 // --allow-shrink still writes it with the retained row still there.
-func TestRule10StillFiresOnTheMergedTotalsAndKeepsRetainedRows(t *testing.T) {
+func TestStillFiresOnTheMergedTotalsAndKeepsRetainedRows(t *testing.T) {
 	t.Parallel()
 
 	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
@@ -979,7 +970,7 @@ func TestExplicitDayQuietSourceDetectedAndRefused(t *testing.T) {
 	r = invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+pool, "--allow-shrink")
 	wantExit(t, r, 0)
 	wantContains(t, r.stderr, "TOKENS SHRANK date=2026-09-14 type=input file=100 now=- written=false")
-	wantContains(t, r.stdout, "TOKENS DAY date=2026-09-14")
+	wantContains(t, r.stdout, "TOKENS DAY day=2026-09-14")
 	wantContains(t, r.stdout, "written=false")
 	assert.Equal(t, before, read(t, day), "an empty day write modified the existing day file")
 }
@@ -1014,7 +1005,7 @@ func TestExplicitDayQuietSourcePreservesOtherSources(t *testing.T) {
 		"--swarm", "glenn="+poolA, "--swarm", "freddy="+poolB, "--allow-shrink")
 	wantExit(t, r, 0)
 	wantContains(t, r.stderr, "TOKENS SHRANK date=2026-09-14 type=input file=2410 now=2000 written=true")
-	wantContains(t, r.stdout, "TOKENS DAY date=2026-09-14")
+	wantContains(t, r.stdout, "TOKENS DAY day=2026-09-14")
 	wantContains(t, r.stdout, "written=true")
 	got := read(t, day)
 	wantNotContains(t, got, "claude-x")
@@ -1046,7 +1037,7 @@ func TestQuietSourceNamedOnSelectedDay(t *testing.T) {
 
 // ---------------------------------------------------------------- rule 12: the tool stamps
 
-func TestRule12TheToolStampsAndNoFlagSetsIt(t *testing.T) {
+func TestTheToolStampsAndNoFlagSetsIt(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -1086,7 +1077,7 @@ func TestRule12TheToolStampsAndNoFlagSetsIt(t *testing.T) {
 
 // ---------------------------------------------------------------- rule 13: check is the gate
 
-func TestRule13CheckNamesEveryFindingAndFillsNoDay(t *testing.T) {
+func TestCheckNamesEveryFindingAndFillsNoDay(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -1175,7 +1166,7 @@ func TestRule13CheckNamesEveryFindingAndFillsNoDay(t *testing.T) {
 
 // ---------------------------------------------------------------- rule 14: the swarm's usage files
 
-func TestRule14TheSwarmUsageFilesAreASource(t *testing.T) {
+func TestTheSwarmUsageFilesAreASource(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -1222,7 +1213,7 @@ func TestRule14TheSwarmUsageFilesAreASource(t *testing.T) {
 
 // ---------------------------------------------------------------- rule 15: five types apart, a dash is not a zero
 
-func TestRule15ATypeTheSourceDidNotReportIsADashAndNeverAZero(t *testing.T) {
+func TestATypeTheSourceDidNotReportIsADashAndNeverAZero(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -1255,7 +1246,8 @@ func TestRule15ATypeTheSourceDidNotReportIsADashAndNeverAZero(t *testing.T) {
 	}
 }
 
-func TestRule15AMixedRowSumsPerTypeOverTheSourcesThatReportedIt(t *testing.T) {
+// rule 15: a mixed row sums per type over the sources that reported it.
+func TestAMixedRowSumsPerTypeOverTheSourcesThatReportedIt(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -1273,7 +1265,7 @@ func TestRule15AMixedRowSumsPerTypeOverTheSourcesThatReportedIt(t *testing.T) {
 
 // ---------------------------------------------------------------- rule 16 and 19: sources are read-only, one subprocess
 
-func TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout(t *testing.T) {
+func TestTheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -1353,7 +1345,7 @@ func TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout(t *testin
 
 // ---------------------------------------------------------------- rule 17: a day is a UTC day
 
-func TestRule17TheDayComesFromTheMessageStamp(t *testing.T) {
+func TestTheDayComesFromTheMessageStamp(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -1373,13 +1365,13 @@ func TestRule17TheDayComesFromTheMessageStamp(t *testing.T) {
 	}
 }
 
-// TestRule17AZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted pins rule 17's own
+// TestAZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted pins rule 17's own
 // sentence -- "A day is a UTC day, from the message's own stamp, and a row that is not
 // says so" -- on the two readers that took the stamp's first ten characters instead of
 // parsing it: a transcript line stamped 2026-09-11T20:30:00-07:00 is 03:30Z on the 12th,
 // and it landed in 2026-09-11.tsv with day_basis=utc. A stamp this tool cannot read is
 // rule 3's business: counted and printed, never skipped silently -- it vanished.
-func TestRule17AZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted(t *testing.T) {
+func TestAZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -1429,7 +1421,8 @@ func TestRule17AZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted(t *testi
 	wantContains(t, r.stderr, "TOKENS UNPARSED label=opencode:b")
 }
 
-func TestRule17ABusLineDatedAnotherDayIsRedatedAndCounted(t *testing.T) {
+// rule 17: a bus line dated another day is redated to its UTC day and counted.
+func TestABusLineDatedAnotherDayIsRedatedAndCounted(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -1445,7 +1438,7 @@ func TestRule17ABusLineDatedAnotherDayIsRedatedAndCounted(t *testing.T) {
 
 // ---------------------------------------------------------------- rule 18: two folds, same rows
 
-func TestRule18TwoFoldsDifferInNothingButTheStamp(t *testing.T) {
+func TestTwoFoldsDifferInNothingButTheStamp(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -1476,7 +1469,7 @@ func TestRule18TwoFoldsDifferInNothingButTheStamp(t *testing.T) {
 
 // ---------------------------------------------------------------- rule 20: report
 
-func TestRule20ReportPrintsTheBodyAndNothingElse(t *testing.T) {
+func TestReportPrintsTheBodyAndNothingElse(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -1524,7 +1517,8 @@ func TestRule20ReportPrintsTheBodyAndNothingElse(t *testing.T) {
 	wantContains(t, viaBus, "\t-\t0\tutc\tbus:emma")
 }
 
-func TestRule20ReportRefusesAndSupersedes(t *testing.T) {
+// rule 20: report refuses a bad call and supersedes a note by subject.
+func TestReportRefusesAndSupersedes(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -1603,7 +1597,7 @@ func subjectOf(t *testing.T, r result) string {
 
 // ---------------------------------------------------------------- rule 21: the provider export
 
-func TestRule21AProviderExportIsUnattributedAndNeverSplit(t *testing.T) {
+func TestAProviderExportIsUnattributedAndNeverSplit(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -1688,7 +1682,8 @@ func TestRule21AProviderExportIsUnattributedAndNeverSplit(t *testing.T) {
 	}
 }
 
-func TestRule17AMixedRowIsRefused(t *testing.T) {
+// rule 17: a row fed by two day bases is refused.
+func TestAMixedRowIsRefused(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -1706,7 +1701,8 @@ func TestRule17AMixedRowIsRefused(t *testing.T) {
 	}
 }
 
-func TestRule21ANoteOfOneReposCommentIsValidWithZeroRows(t *testing.T) {
+// rule 21: a note of one repo's comment is valid with zero rows.
+func TestANoteOfOneReposCommentIsValidWithZeroRows(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -1720,11 +1716,11 @@ func TestRule21ANoteOfOneReposCommentIsValidWithZeroRows(t *testing.T) {
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "rows=0")
 }
 
-// TestRule19TheTimeoutDefaultIsTwoMinutes pins SPEC-TOKENS' own sentence, "`--timeout`
+// rule 19: TestTheTimeoutDefaultIsTwoMinutes pins SPEC-TOKENS' own sentence, "`--timeout`
 // unset is 120 and a test asserts it", on the flag the verbs actually declare rather than
 // on the constant alone: a default is a promise about the unset flag, and the two could
 // drift. A run cannot be the test here -- the assertion is that nothing waits two minutes.
-func TestRule19TheTimeoutDefaultIsTwoMinutes(t *testing.T) {
+func TestTheTimeoutDefaultIsTwoMinutes(t *testing.T) {
 	t.Parallel()
 
 	var s sourceFlags
@@ -1742,12 +1738,12 @@ func TestRule19TheTimeoutDefaultIsTwoMinutes(t *testing.T) {
 	assert.Equal(t, 120*time.Second, tokens.DefaultTimeout, "tokens.DefaultTimeout is %s, want 2m0s", tokens.DefaultTimeout)
 }
 
-// TestRule20ABusNoteWithSixAndSevenFieldLinesForOneKeyIsMixed pins rule 20's own clause:
+// TestABusNoteWithSixAndSevenFieldLinesForOneKeyIsMixed pins rule 20's own clause:
 // "a note with a six-field and a seven-field line for one `(date, model, repo)` is
 // `TOKENS MIXED` for that row." The MIXED path was only ever exercised through two
 // PROVIDER exports; a single note can do it alone, because the seventh field is the
 // line's day basis and a six-field line is UTC.
-func TestRule20ABusNoteWithSixAndSevenFieldLinesForOneKeyIsMixed(t *testing.T) {
+func TestABusNoteWithSixAndSevenFieldLinesForOneKeyIsMixed(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()

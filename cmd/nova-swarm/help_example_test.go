@@ -44,7 +44,7 @@ func TestTemplateHelpListsTheCardsRequiredLines(t *testing.T) {
 	t.Parallel()
 	help := swarmHelp(t, "template", "-h")
 	card := swarmHelp(t, "template", "--name", "card")
-	for _, anchor := range []string{"RESULT: <label> sha=<sha12>", "Deadline: finish within <n> minutes.", "RULES.", "THE TASK.", "STEP 1.", "RESULT.md"} {
+	for _, anchor := range []string{"RESULT: <label> sha=<sha12>", "Deadline: finish within <n> minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.", "RULES.", "THE TASK.", "STEP 1.", "RESULT.md"} {
 		assert.Contains(t, help, anchor, "template -h does not list %q", anchor)
 		assert.Contains(t, card, anchor, "template --name card does not write %q, which template -h lists", anchor)
 	}

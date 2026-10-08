@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -187,4 +188,115 @@ func TestWakeLineIsOneLine(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, "nova-friend: hello", WakeLine("hello\n"))
 	assert.Equal(t, "nova-friend: PING n1 ⏎ run: pong", WakeLine("PING n1\r\nrun: pong\n\n"))
+}
+
+// grokPaced is one adapter whose clock and pace wait are the test's.
+func grokPaced(t *testing.T, now *time.Time) (Deliverer, string) {
+	t.Helper()
+	home, dir, wake, listing := grokHouse(t)
+	d, err := NewDeliverer("grok", dir, "", (&fakeExec{out: listing}).run, nil)
+	require.NoError(t, err)
+	g := d.(*Grok)
+	g.Home = home
+	g.now = func() time.Time { return *now }
+	return d, wake
+}
+
+func TestGrokPacesTwelveDeliveriesSoABacklogIsNotOneBurst(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(1_700_000_000, 0).UTC()
+	d, wake := grokPaced(t, &now)
+	g := d.(*Grok)
+	var waits []time.Duration
+	g.wait = func(ctx context.Context, gap time.Duration) error {
+		got, err := os.ReadFile(wake)
+		require.NoError(t, err)
+		lines := strings.Split(strings.TrimRight(string(got), "\n"), "\n")
+		// the line this wait is holding is not in the file yet: the inbox line, plus one per delivery already written
+		assert.Len(t, lines, 2+len(waits))
+		assert.Equal(t, "nova-friend: note "+strconv.Itoa(len(waits)), lines[len(lines)-1])
+		waits = append(waits, gap)
+		now = now.Add(gap)
+		return ctx.Err()
+	}
+
+	for i := 0; i < 12; i++ {
+		exit, err := d.Deliver(context.Background(), "note "+strconv.Itoa(i))
+		require.NoError(t, err)
+		assert.Equal(t, 0, exit)
+	}
+	require.Len(t, waits, 11, "the first line is immediate; the other eleven wait")
+	for i, gap := range waits {
+		assert.Equal(t, wakePace, gap, "wait %d", i)
+	}
+	got, err := os.ReadFile(wake)
+	require.NoError(t, err)
+	var want strings.Builder
+	want.WriteString("INBOX NOTE id=old\n")
+	for i := 0; i < 12; i++ {
+		want.WriteString("nova-friend: note " + strconv.Itoa(i) + "\n")
+	}
+	assert.Equal(t, want.String(), string(got), "twelve deliveries are twelve lines, in order, not one burst")
+
+	// the remainder checks record a gap without the burst's line count
+	g.wait = func(ctx context.Context, gap time.Duration) error {
+		got, err := os.ReadFile(wake)
+		require.NoError(t, err)
+		assert.NotContains(t, string(got), "nova-friend: half")
+		waits = append(waits, gap)
+		now = now.Add(gap)
+		return ctx.Err()
+	}
+
+	// a full gap later, the next line does not wait
+	now = now.Add(wakePace)
+	exit, err := d.Deliver(context.Background(), "later")
+	require.NoError(t, err)
+	assert.Equal(t, 0, exit)
+	assert.Len(t, waits, 11)
+
+	// halfway through the gap, the next line waits out the remainder
+	now = now.Add(wakePace / 2)
+	exit, err = d.Deliver(context.Background(), "half")
+	require.NoError(t, err)
+	assert.Equal(t, 0, exit)
+	require.Len(t, waits, 12)
+	assert.Equal(t, wakePace/2, waits[11])
+	got, err = os.ReadFile(wake)
+	require.NoError(t, err)
+	assert.Equal(t, want.String()+"nova-friend: later\nnova-friend: half\n", string(got))
+}
+
+func TestGrokDoesNotAppendWhenThePaceWaitIsCancelled(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(1_700_000_000, 0).UTC()
+	d, wake := grokPaced(t, &now)
+	g := d.(*Grok)
+	g.wait = func(context.Context, time.Duration) error { return context.Canceled }
+
+	exit, err := d.Deliver(context.Background(), "first")
+	require.NoError(t, err)
+	assert.Equal(t, 0, exit)
+	exit, err = d.Deliver(context.Background(), "second")
+	assert.Equal(t, 0, exit)
+	assert.ErrorIs(t, err, context.Canceled)
+	got, err := os.ReadFile(wake)
+	require.NoError(t, err)
+	assert.Equal(t, "INBOX NOTE id=old\nnova-friend: first\n", string(got))
+
+	// the cancelled attempt gave the booking back, so the next line waits once and lands
+	waited := false
+	g.wait = func(ctx context.Context, gap time.Duration) error {
+		assert.Equal(t, wakePace, gap)
+		waited = true
+		now = now.Add(gap)
+		return ctx.Err()
+	}
+	exit, err = d.Deliver(context.Background(), "third")
+	require.NoError(t, err)
+	assert.Equal(t, 0, exit)
+	assert.True(t, waited, "the booking was given back, so this line waits one pace")
+	got, err = os.ReadFile(wake)
+	require.NoError(t, err)
+	assert.Equal(t, "INBOX NOTE id=old\nnova-friend: first\nnova-friend: third\n", string(got))
 }

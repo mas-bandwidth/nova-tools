@@ -50,10 +50,11 @@ first run: quickstart --root on any folder of .md files, or create the small
 corpus in setup: and run the lines under example:.
 
 SEARCH CAL score=1.46 score-channel=bm25 probe=unrelated-control
-is the CAL line every retrieval run prints: the score a fixed unrelated
-probe gets here, and a hit's score= at or below it is no better than noise
-when the hit's score-channel= names the same channel. The example's search
-prints, as its rank 1 of 2:
+is the CAL line every retrieval run prints. CAL is context, not a cutoff.
+CAL is the top score of a fixed unrelated query, for scale; it does not
+prove relevance, and a hit's score= at or below it is not noise: the probe
+may be about your own notes, and a right answer can fall below it. search -h
+prints the probe's own text. The example's search prints, as its rank 1 of 2:
 SEARCH HIT rank=1 score=0.99 score-channel=bm25 fused=0.01667 class=notes name=- type=- root=./corpus: notes/lantern.md:1 "The lantern glazing needs clean cloths for brass and glass."
 class is the top-level directory ("." for root files); name/type are
 frontmatter values, with "-" meaning absent.
@@ -62,8 +63,8 @@ usage:
   nova-memory version    print this build identity (--version also accepted)
   nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>] [--exclude <glob>]... [--json]
   nova-memory stats  --root <dir>... [--exclude <glob>]... [--json]
-  nova-memory search --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--json] <words>...
-  nova-memory check  --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--json] <file|->
+  nova-memory search --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--whole] [--json] <words>...
+  nova-memory check  --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--whole] [--json] <file|->
   nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]...
                      [--frontmatter <glob>]... [--exempt <prefix>]... [--exclude <glob>]...
                      [--fail-max <n>] [--json]
@@ -92,15 +93,20 @@ flags:
                         answer means, and no channel set is right by default:
                         eval can measure bm25+trigram worse than bm25 alone.
                         With two channels a hit is ranked by fused= (rank
-                        fusion over the channels); its score= is its score in
-                        the channel named beside it (score-channel=), which
-                        compares only with scores of that channel and with the
-                        CAL line, so score= need not fall with rank.
+                        fusion over the channels); its native score is named
+                        for the channel that produced it (bm25= or trigram=),
+                        beside score-channel=, which compares only with scores
+                        of that channel and with the CAL line, so score= need not fall with rank.
   --k <n>               receipts per query, positive. Required: k IS the mind's
                         budget, and zero is not "unlimited".
   --exclude <glob>      path or glob to skip, repeatable. Nothing is excluded
                         by default except .git; every exclusion is yours,
                         stated this run.
+  --whole               search and check: print each hit's whole paragraph in
+                        place of its 120-byte snippet, so a word just past that
+                        cut still prints. A paragraph past the byte cap is cut
+                        at the cap and the dropped bytes are counted in the
+                        value (...+<n>B), so the cut is never silent.
   --floor <f>           eval only: minimum recall@k, in (0,1]. Required — a
                         harness with no floor cannot fail, so its green is
                         worth nothing.
@@ -245,7 +251,8 @@ func refuseWith(stderr io.Writer, where, what, remedy string) int {
 }
 
 // verbHelp is the lines run adds to a verb's -h: its effect, and for a verb that
-// needs extra context (eval's gold file format, boot's pin check), that context.
+// needs extra context (eval's gold file format, boot's pin check, search's
+// calibration probe), that context.
 func verbHelp(verb string) string {
 	extra := ""
 	switch verb {
@@ -255,6 +262,8 @@ func verbHelp(verb string) string {
 			"  washing the glazing before an onshore gale\tnotes/lantern.md,log/1974-03-11.md\n"
 	case "boot":
 		extra = "checks the pin: every file present and readable, and their size\n"
+	case "search":
+		extra = "calibration probe text: " + calibrationProbe + "\n"
 	}
 	return extra + "effect: " + string(tool.Inspection) + " (the index lives in memory for the run)\n"
 }
@@ -521,12 +530,49 @@ func scoreFields(score float64, chn string) string {
 	return fmt.Sprintf("score=%.2f score-channel=%s", score, chn)
 }
 
+// receiptHits stops a receipt list at the last hit above zero. scoreFields
+// prints every native score with two decimals, so a hit whose score rounds to
+// 0.00 is the same text an absent score would give and a reader cannot tell it
+// from no evidence. The list is left whole when no hit prints above zero: the
+// MISS line already explains an empty result as out-of-vocabulary, which a
+// weak in-vocabulary match is not.
+func receiptHits(hits []memindex.FileHit) []memindex.FileHit {
+	last := -1
+	for i, h := range hits {
+		if math.Round(h.Native*100) > 0 {
+			last = i
+		}
+	}
+	if last < 0 {
+		return hits
+	}
+	return hits[:last+1]
+}
+
+// wholeCap bounds a --whole paragraph. The snippet cuts at 120 bytes and the
+// words searched for can sit just past that cut; --whole prints the whole
+// paragraph up to this cap, and oneline.Cap counts the bytes it dropped, so
+// the cut is never silent. The cap keeps one pathological paragraph from being
+// the whole of a reader's context.
+const wholeCap = 4096
+
+// wholePassage is the paragraph --whole prints: the whole original text,
+// bounded by wholeCap with oneline.Cap's `...+<n>B` note when it had to cut.
+func wholePassage(s string) string { return oneline.Cap(s, wholeCap) }
+
 // hitLine renders one receipt as a single machine-scannable line. Absent
 // frontmatter prints as "-" so the field count never changes. The class, the
 // name and the type are the corpus's own text and are fields, so each is one
-// token; the file is a positional slot and keeps its spaces; the snippet is
-// Go-quoted, which is one line in a different escape form.
-func hitLine(token, prefix string, rank int, h memindex.FileHit) string {
+// token; the file is a positional slot and keeps its spaces; the passage is
+// Go-quoted, which is one line in a different escape form. whole swaps the
+// 120-byte snippet for the whole paragraph (capped, and marked when cut).
+//
+// Under fusion (more than one channel) the native score is printed under the
+// name of the channel that produced it — bm25= or trigram= — because the
+// channels score on different scales and one bare score= beside rank= would
+// claim an ordering the number does not have (M-4). score-channel= still names
+// it, so a reader who looks for the channel finds it either way.
+func hitLine(token, prefix string, rank int, h memindex.FileHit, whole, fused bool) string {
 	name, typ := h.FMName, h.FMType
 	if name == "" {
 		name = "-"
@@ -538,8 +584,16 @@ func hitLine(token, prefix string, rank int, h memindex.FileHit) string {
 	if root == "" {
 		root = "-"
 	}
+	native := scoreFields(h.Native, h.NativeChan)
+	if fused && h.NativeChan != "" {
+		native = fmt.Sprintf("%s=%.2f score-channel=%s", h.NativeChan, h.Native, h.NativeChan)
+	}
+	passage := h.Snippet
+	if whole {
+		passage = wholePassage(h.Whole)
+	}
 	return fmt.Sprintf("%s HIT %srank=%d %s fused=%.5f class=%s name=%s type=%s root=%s: %s:%d %q\n",
-		token, prefix, rank, scoreFields(h.Native, h.NativeChan), h.Fused, oneline.Field(h.Class), oneline.Field(name), oneline.Field(typ), oneline.Field(root), oneline.Escape(h.File), h.Line, h.Snippet)
+		token, prefix, rank, native, h.Fused, oneline.Field(h.Class), oneline.Field(name), oneline.Field(typ), oneline.Field(root), oneline.Escape(h.File), h.Line, passage)
 }
 
 // ---------------------------------------------------------------------------

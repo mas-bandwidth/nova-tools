@@ -3,7 +3,9 @@ package sprint
 import (
 	"fmt"
 	"math"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -210,7 +212,7 @@ func (s *Snapshot) refusedNoRoute(pr *Card) bool {
 		return false
 	}
 	attempt := pr.Int("attempt")
-	if len(s.freeReaders(pr, attempt))+len(returnedInTier(s, pr, attempt)) >= ReadsNeeded(pr)-len(liveReadsAt(s, pr, attempt)) {
+	if len(s.freeReaders(pr, attempt))+len(returnedInTier(s, pr, attempt)) >= ReadsNeededIn(s, pr)-len(liveReadsAt(s, pr, attempt)) {
 		return false
 	}
 	for _, rd := range s.Readers.Rows() {
@@ -238,17 +240,17 @@ const (
 // read is never shuttled between readers tick after tick and the level never sticks on one card.
 const FieldLeveled = "leveled"
 
-// ReadsNeeded is how many different readers' ok reads at its head make the
-// primary acceptable, and so how many readers the ask asks at an attempt: one
-// when the tier the card is on (cardTier) is flash, and two at any stronger tier
-// (pro, or frontier). A friend whose class is at or above the read tier is asked
+// ReadsNeeded is the read rule of a card's tier: how many different readers' ok
+// reads at its head make the primary acceptable, and so how many readers the ask
+// asks at an attempt, while the sprint sets no count (ReadsNeededIn): one when the
+// tier the card is on (cardTier) is flash, and two at any stronger tier (pro, or
+// frontier). A friend whose class is at or above the read tier is asked
 // first when she has room (friend_read.go); a machine read is drawn on a route of
 // the card's read tier (readTierOf) only when no such friend has room (the owner,
 // 2026-10-02, cost rule 4, nova-tools#5174: "Reads: one cold read per flash
 // card on a flash route; two per pro card; readers still equal workers per
 // machine"). The tier is the card's own, the tier it is on (cardTier: flash first,
-// then the tier it escalated to, or the tier a rework recorded), never a setting, so
-// a card in merging or landed is held to the count it was accepted on.
+// then the tier it escalated to, or the tier a rework recorded).
 func ReadsNeeded(pr *Card) int {
 	m, _ := cardhdr.ReadModel(pr.F("brief"))
 	if cardTier(pr, m) == cardhdr.RouteFlash {
@@ -257,8 +259,38 @@ func ReadsNeeded(pr *Card) int {
 	return 2
 }
 
+// FieldReadsNeeded is the primary's field the accept writes when it accepted the card on
+// the sprint's count (set --reads) rather than its tier's rule (ReadsNeeded): that count,
+// so a card past review is held to the count it was accepted on.
+const FieldReadsNeeded = "reads_needed"
+
+// ReadsNeededIn is how many different readers' ok reads at its head the primary needs in
+// the snapshot, the count every live caller uses. In review: the sprint's count while one
+// is set (nova-sprint set --reads 0, 1 or 2, PropReadsNeeded; the owner, 2026-10-06: "I'd
+// like to waive the second read for the moment"), whatever the card's tier, so a card
+// with that many ok reads at its head is accepted on the next tick after the setting
+// changes; else its tier's rule (ReadsNeeded). At 0 no read is asked, and a primary whose
+// work finished LAND at its head is accepted on it (acceptable). A card in merging or
+// landed is never judged again: it is held to the count it was accepted on, the accept's
+// FieldReadsNeeded, else its tier's rule.
+func ReadsNeededIn(s *Snapshot, pr *Card) int {
+	if pr.Col == Merging || pr.Col == Landed {
+		if n, err := strconv.Atoi(pr.F(FieldReadsNeeded)); err == nil && n >= 0 {
+			return n
+		}
+		return ReadsNeeded(pr)
+	}
+	if s != nil && s.Work != nil {
+		if v, _ := s.Work.Prop(PropReadsNeeded); slices.Contains(readsWords, v) {
+			n, _ := strconv.Atoi(v)
+			return n
+		}
+	}
+	return ReadsNeeded(pr)
+}
+
 // enoughReadersUp says as many readers of the primary's tier are up as it needs
-// (ReadsNeeded). A reader counts only when it serves that tier (readerServesTier:
+// (ReadsNeededIn). A reader counts only when it serves that tier (readerServesTier:
 // its tiers cell names it, an empty cell every tier, and it brings its own model
 // or a route of the tier is there to draw). A snapshot with no reader states, no
 // tiers cell set and a route of the tier (or none at all) holds every reader up, as
@@ -280,7 +312,7 @@ func enoughReadersUp(s *Snapshot, pr *Card) bool {
 		}
 	}
 	placed, oks, _ := friendReadLive(s, pr)
-	return n+len(placed)+len(oks) >= ReadsNeeded(pr)
+	return n+len(placed)+len(oks) >= ReadsNeededIn(s, pr)
 }
 
 // ScriptReadPrefix begins the finding of an ok read a script reader gave: the reader ran
@@ -307,11 +339,16 @@ func scriptVerified(s *Snapshot, pr *Card) bool {
 	return false
 }
 
-// acceptable says the primary has ok reads from ReadsNeeded different readers
+// acceptable says the primary has ok reads from ReadsNeededIn different readers
 // at its current attempt and head (okReaders), or one script read of a script card
-// (scriptVerified).
+// (scriptVerified). With no read needed (set --reads 0) its work's finish is the
+// evidence: the work came back LAND at a head.
 func acceptable(s *Snapshot, pr *Card) bool {
-	return len(okReaders(s, pr)) >= ReadsNeeded(pr) || scriptVerified(s, pr)
+	need := ReadsNeededIn(s, pr)
+	if need == 0 {
+		return pr.F("result") != "failed" && pr.F("head") != ""
+	}
+	return len(okReaders(s, pr)) >= need || scriptVerified(s, pr)
 }
 
 // placedReadsAt is the primary's placed read cards at an attempt,
@@ -405,7 +442,7 @@ func (s *Snapshot) freeReaders(pr *Card, attempt int) []string {
 // ReadsWanted is how many reads the ask places on the primary now, at its
 // attempt. Under the interim rule of 2026-10-06 (docs/SPEC-SPRINT.md section 6;
 // the owner, 6:02 PM ET: "send out multiple consumer cards in ||") a card's reads
-// are asked together: the rest it needs (ReadsNeeded), a read outstanding counted
+// are asked together: the rest it needs (ReadsNeededIn), a read outstanding counted
 // among those that stand; none once a read found it broken (the judgment stands
 // and a rework follows). The sequential rule before it (2026-10-04) asked the
 // first read alone and the rest once it came back ok. A read
@@ -423,11 +460,11 @@ func ReadsWanted(s *Snapshot, pr *Card) int {
 	fp, fok, fbr := friendReadLive(s, pr)
 	placed = append(placed, fp...)
 	live = append(append(append(live, fp...), fok...), fbr...)
-	return max(readsWantedOf(pr, live), len(placed)-len(live))
+	return max(readsWantedOf(s, pr, live), len(placed)-len(live))
 }
 
 // readsWantedOf is ReadsWanted over the reads that stand, live.
-func readsWantedOf(pr *Card, live []*Card) int {
+func readsWantedOf(s *Snapshot, pr *Card, live []*Card) int {
 	// Workaround (the coordinator, 2026-10-06 7:47 PM ET; the owner: 6:02 PM: "send out multiple consumer
 	// cards in ||"): a card's reads are asked together, not one after the other; a read
 	// outstanding counts toward the reads it needs, and only a broken read stops the rest.
@@ -437,7 +474,7 @@ func readsWantedOf(pr *Card, live []*Card) int {
 			return 0
 		}
 	}
-	return max(0, ReadsNeeded(pr)-len(live))
+	return max(0, ReadsNeededIn(s, pr)-len(live))
 }
 
 // FieldFindingReader is the primary's field naming the reader whose finding its

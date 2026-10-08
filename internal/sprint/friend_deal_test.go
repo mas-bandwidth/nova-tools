@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -450,4 +451,41 @@ func TestAFriendUpWhoseControlCardIsHeldOrDownIsNotDealt(t *testing.T) {
 		assert.Zero(t, n, "friend %s is up, and her control card is held or down: dealt nothing", name)
 	}
 	assert.Equal(t, 3, w.s.Fleet.Count(FriendRow("dan"), Ready)+w.s.Fleet.Count(FriendRow("dan"), Working), "a friend up whose control card is not held or down is dealt")
+}
+
+// A friend's configured work restriction (her nova-config row's streams and kinds,
+// docs/SPEC-SPRINT.md section 1, a friend's card): the deal hands her no card outside it,
+// on either the stream or the KIND, and an unrestricted friend is dealt as before.
+func TestDealerNeverDealsAFriendOutsideHerStreams(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, "reader-a", "reader-b")
+	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1"}))
+	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m2"}))
+	brief := "c: in-scope friend work\nREPO: mas-bandwidth/nova-tools\nWHO: friend\nKIND: fix\n\nThe task."
+	w.must(Add(w.s, AddReq{Stream: "security-a", Cards: []CardAdd{
+		{ID: "security-a-1", Brief: brief},
+		{ID: "security-a-2", Brief: strings.Replace(brief, "KIND: fix", "KIND: test", 1)},
+	}}))
+	w.must(Add(w.s, AddReq{Stream: "s1", Cards: []CardAdd{{ID: "s1-1", Brief: brief}}}))
+	dealWith(w,
+		FriendSeat{Name: "amy", Width: 2, Status: Up, Class: "flash,pro", Streams: []string{"security*"}, Kinds: []string{"fix"}},
+		FriendSeat{Name: "bob", Width: 2, Status: Up, Class: "flash,pro"},
+	)
+	require.NotNil(t, w.s.Fleet.Card("security-a-1.w1"))
+	assert.Equal(t, FriendRow("amy"), w.s.Fleet.Card("security-a-1.w1").Row, "a matching stream and kind are hers")
+	assert.Equal(t, FriendRow("bob"), w.s.Fleet.Card("security-a-2.w1").Row, "a KIND outside her restriction is dealt to the unrestricted friend")
+	assert.Equal(t, FriendRow("bob"), w.s.Fleet.Card("s1-1.w1").Row, "a stream outside her restriction is dealt to the unrestricted friend")
+	assert.Equal(t, 1, w.s.Fleet.Count(FriendRow("amy"), Ready)+w.s.Fleet.Count(FriendRow("amy"), Working), "her row holds only the in-scope card")
+}
+
+func TestFriendRestrictionsTrimConfigWhitespace(t *testing.T) {
+	t.Parallel()
+	why := FriendRestrictionWhy(Split(" security* "), Split(" fix-red, review "), "security-a", "review")
+	assert.Empty(t, why, "comma-separated config values with surrounding spaces match after sync")
+}
+
+func TestBriefKindReadsOnlyTheTypedHeader(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "fix-red", BriefKind("task\nREPO: mas-bandwidth/nova-tools\nKIND: fix-red\n\nThe work."))
+	assert.Empty(t, BriefKind("task\nREPO: mas-bandwidth/nova-tools\n\nThe work.\nKIND: fix-red"), "a KIND line in the body does not grant a restriction match")
 }

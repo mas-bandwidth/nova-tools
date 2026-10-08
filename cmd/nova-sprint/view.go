@@ -107,6 +107,7 @@ type viewRow struct {
 	Wd  int    `json:"wd"`            // the row's width
 	F30 int    `json:"f30"`           // finished in the last 30m
 	Rep string `json:"rep,omitempty"` // how long since its last beat; "never"
+	Run string `json:"run,omitempty"` // a friend's live lane that kept a judgment quiet: "running 32m of 90m"
 }
 
 // coordCounts are the sprint's counts, always carried: the work table's primaries by state,
@@ -127,6 +128,20 @@ type coordCounts struct {
 	// Rules is the cards a rule answered in the last hour (sprint.RuleAnsweredWithin): the
 	// judgments the coordinator did not have to answer.
 	Rules int `json:"rules"`
+	// Suppressed is the judgments the tick's lane check kept from rising since the epoch
+	// began (store.Heartbeat.Suppressed), and By its three causes beside it: the coordinator
+	// turns the checks saved.
+	Suppressed int           `json:"suppressed"`
+	By         suppressedWhy `json:"by"`
+}
+
+// suppressedWhy is the suppressed count by cause: a friend's lane live inside its cap (a
+// lateness, a stall, finishes none), readers busy (readers behind), a read tier question the
+// rule answered.
+type suppressedWhy struct {
+	Lane    int `json:"lane"`
+	Readers int `json:"readers"`
+	Tier    int `json:"tier"`
 }
 
 // coordinatorView is view coordinator's document, schema 1.
@@ -190,6 +205,7 @@ type workerView struct {
 	Kind   string       `json:"kind"` // member or friend
 	Cursor string       `json:"cursor"`
 	Next   string       `json:"next,omitempty"`
+	Quiet  []string     `json:"quiet,omitempty"` // a QUIET line per machine quiet now (fleet quiet)
 	Cards  []workerCard `json:"cards"`
 	Wait   []waitCard   `json:"wait,omitempty"`
 	NWait  int          `json:"nwait,omitempty"` // every result not landed, when more than are listed
@@ -319,7 +335,7 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 		return v, err
 	}
 
-	machine, _, merr := st.Machine(ctx) // a store that keeps no machine record: the machine's alarm is not drawn
+	machine, hb, merr := st.Machine(ctx) // a store that keeps no machine record: the machine's alarm is not drawn
 	within := func(stamp string) bool {
 		t, err := time.Parse(time.RFC3339, stamp)
 		return err == nil && !t.Before(now.Add(-viewWindow)) && !t.After(now)
@@ -357,6 +373,16 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 	n.Held = sprint.HeldBack(s)
 	for _, k := range sprint.RuleAnsweredWithin(append(s.Work.Cards(), s.Fleet.Cards()...), now, time.Hour) {
 		n.Rules += k
+	}
+	runs := map[string]string{} // friend: her live lane as the last tick's lane check read it
+	if sup := hb.Suppressed; merr == nil && sup.Epoch == v.Epoch {
+		// a count of an earlier epoch is not this one's: the first tick after a clear starts it again
+		n.Suppressed, n.By = sup.N, suppressedWhy{Lane: sup.Lane, Readers: sup.Readers, Tier: sup.Tier}
+		for _, q := range hb.Quiet {
+			if q.Friend != "" && runs[q.Friend] == "" {
+				runs[q.Friend] = q.Run
+			}
+		}
 	}
 	finished := func(row string) int {
 		f := 0
@@ -445,7 +471,7 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 			since = now.Sub(f.Beat)
 			rep = ageWord(since)
 		}
-		rows = append(rows, viewRow{K: "f:" + f.Name, St: f.Status, R: r, W: w, Wd: f.Width, F30: finished(row), Rep: rep})
+		rows = append(rows, viewRow{K: "f:" + f.Name, St: f.Status, R: r, W: w, Wd: f.Width, F30: finished(row), Rep: rep, Run: runs[f.Name]})
 		if r+w == 0 {
 			continue
 		}
@@ -687,9 +713,9 @@ func coordinatorSum(v coordinatorView, known bool, m store.Machine) string {
 	default:
 		state = "STOPPED"
 	}
-	sum := fmt.Sprintf("seat=%s machine=%s j=%d(max %d behind) alarms=%d asks=%d sentinels=%d friends=%d machines=%d | landed %d/%d +%d/30m | ready %d wait %d work %d review %d merge %d | busy %d/%d | rules %d/h",
+	sum := fmt.Sprintf("seat=%s machine=%s j=%d(max %d behind) alarms=%d asks=%d sentinels=%d friends=%d machines=%d | landed %d/%d +%d/30m | ready %d wait %d work %d review %d merge %d | busy %d/%d | rules %d/h | suppressed %d (lane %d readers %d tier %d)",
 		cmp.Or(v.Seat, "-"), state, n.J, behind, types[itemAlarm], types[itemRequest], types[itemSentinel], types[itemFriend], types[itemMachine],
-		n.Landed, n.All, n.L30, n.Ready, n.Waiting, n.Working, n.Review, n.Merging, n.Busy, n.Width, n.Rules)
+		n.Landed, n.All, n.L30, n.Ready, n.Waiting, n.Working, n.Review, n.Merging, n.Busy, n.Width, n.Rules, n.Suppressed, n.By.Lane, n.By.Readers, n.By.Tier)
 	if v.Push != "" {
 		sum += " | push " + v.Push
 	}
@@ -819,6 +845,13 @@ func (a *app) workerView(ctx context.Context, st *store.Store, as string) (worke
 	if len(mine) > 0 {
 		v.Next = workerNext(v, mine[0], ps[0])
 	}
+	// every machine quiet now, for every member and friend: run no go build or test there
+	// (docs/SPEC-SPRINT.md section 5, fleet-quiet-machine-b.w7)
+	shapes, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Fleet)})
+	if err != nil {
+		return v, false, err
+	}
+	v.Quiet = sprint.QuietLines(shapes[0].Props, now)
 
 	// my results not landed: the cards finished ok whose primaries wait in review or merging
 	done, err := st.ReadCells(ctx, sprint.Fleet, row, sprint.DoneOK)
@@ -891,6 +924,9 @@ func workerText(v workerView) string {
 	line("VIEW worker " + v.Sum)
 	if v.Next != "" {
 		line("NEXT " + v.Next)
+	}
+	for _, q := range v.Quiet {
+		line(q)
 	}
 	for _, c := range v.Cards {
 		l := "CARD " + c.ID + " " + c.St + " att=" + strconv.Itoa(c.Att) + " base=" + cmp.Or(c.Base, "-") + " paths=" + cmp.Or(strings.Join(c.Paths, ","), "-")

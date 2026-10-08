@@ -64,6 +64,12 @@ type PlaceInput struct {
 	// version probe and the ssh delivery all run through it. Tests set a strict fake so
 	// place's refusals run with no real sops and no host reached.
 	Exec execCommand
+
+	// Guard replaces the process-wide host guard for the ssh delivery. A test passes
+	// testguard.NewGuard(true) so it can assert the seam refuses without setting
+	// NOVA_TEST_NO_HOST in the process environment, which would race every parallel
+	// test. Nil uses testguard's process-wide default, the production path.
+	Guard *testguard.Guard
 }
 
 func (in PlaceInput) exec() execCommand {
@@ -302,7 +308,7 @@ func RunPlace(in PlaceInput) (string, error) {
 	}
 
 	if err := sec.Use(func(value string) error {
-		return sshPlaceSecret(run, in.SSH, machine.Target, remotePath, value)
+		return sshPlaceSecret(run, in.Guard, in.SSH, machine.Target, remotePath, value)
 	}); err != nil {
 		return "", err
 	}
@@ -405,10 +411,18 @@ func RunPlaced(in PlacedInput) (string, []string, error) {
 
 // sshPlaceSecret writes value to remotePath over ssh with mode 0600. The value travels on
 // stdin; the remote path is the only caller text in the command, shell-quoted.
-func sshPlaceSecret(run execCommand, sshPath, target, remotePath, value string) error {
+//
+// guard is the host seam. Nil uses testguard's process-wide default, which production
+// arms from the environment; a test injects its own guard so it can run under t.Parallel
+// without setting the variable in the process environment.
+func sshPlaceSecret(run execCommand, guard *testguard.Guard, sshPath, target, remotePath, value string) error {
 	remoteCmd := fmt.Sprintf("umask 077 && set -e && mkdir -p \"$(dirname %s)\" && cat > %s && chmod 600 %s",
 		shSingleQuote(remotePath), shSingleQuote(remotePath), shSingleQuote(remotePath))
-	testguard.RefuseHosts(sshPath, target, remoteCmd)
+	if guard == nil {
+		testguard.RefuseHosts(sshPath, target, remoteCmd)
+	} else {
+		guard.RefuseHosts(sshPath, target, remoteCmd)
+	}
 	_, err := runOr(run)(bytes.NewReader([]byte(value)), nil, "", sshPath, target, remoteCmd)
 	if err != nil {
 		// The remote transcript is withheld; it can carry a command's own output and this

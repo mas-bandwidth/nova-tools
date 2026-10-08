@@ -29,16 +29,17 @@ const (
 )
 
 // cmdSnapshot is the store-level snapshot (store.Snapshotter): the store is
-// asked for an RDB, the copy is checksummed, loaded into a twin and compared,
-// and the directory pruned to --keep; with --every it is a loop. With
-// --restore-drill it loads a file into a twin and prints its counts, and
-// never opens the live store (SPEC-SPRINT, store-snapshot-verb).
+// asked for an RDB, the copy is checksummed, loaded into a twin and compared
+// (on a twin store its sprint state with the store's), and the
+// directory pruned to --keep; with --every it is a loop. With --restore-drill it
+// checks a file's integrity and prints its counts, never opens the live store,
+// and never says it restored the sprint (SPEC-SPRINT, store-snapshot-verb).
 func (a *app) cmdSnapshot(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("snapshot")
 	dir := fs.String("dir", "", "the directory the snapshots are written to (required unless --restore-drill)")
 	keep := fs.Int("keep", snapshotKeepDefault, "how many verified snapshots stay; older ones are pruned after a newer one verifies")
 	every := fs.Duration("every", 0, "take a snapshot now and again each time this passes, until interrupted (default: once)")
-	drill := fs.String("restore-drill", "", "load this snapshot file into a twin and print its counts; the live store is never opened")
+	drill := fs.String("restore-drill", "", "check this snapshot file's integrity (its checksum, the RDB's header, version and CRC-64) and print its counts; not a semantic restore; the live store is never opened")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "snapshot", argErr("takes no words ", err, pos...))
@@ -52,11 +53,11 @@ func (a *app) cmdSnapshot(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, "snapshot", err.Error())
 		}
 		if c.json {
-			b, _ := json.Marshal(map[string]any{"file": *drill, "sha256": sum, "counts": counts})
+			b, _ := json.Marshal(map[string]any{"file": *drill, "sha256": sum, "counts": counts, "restore": store.RestoreIntegrity})
 			fmt.Fprintln(stdout, string(b))
 			return 0
 		}
-		fmt.Fprintf(stdout, "SNAPSHOT DRILL OK file=%s sha256=%s %s; the live store was not opened\n", *drill, sum, countsText(counts))
+		fmt.Fprintf(stdout, "SNAPSHOT DRILL OK file=%s sha256=%s %s restore=%s%s; the live store was not opened\n", *drill, sum, countsText(counts), store.RestoreIntegrity, integrityOnly(store.RestoreIntegrity))
 		return 0
 	}
 	if *dir == "" || *keep < 1 || *every < 0 {
@@ -76,7 +77,7 @@ func (a *app) cmdSnapshot(args []string, stdout, stderr io.Writer) int {
 	case *store.Redis:
 		src = &redisSource{b: b}
 	case *store.Mem:
-		src, twin = store.MemSource{M: b}, store.MemTwin{}
+		src, twin = store.MemSource{M: b, Names: st.Names}, store.MemTwin{Names: st.Names}
 	default:
 		return refuse(stderr, "snapshot", "this store has no snapshot; run: nova-sprint snapshot --redis <a Redis address> --dir "+*dir)
 	}
@@ -100,7 +101,7 @@ func (a *app) cmdSnapshot(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, string(b))
 			return nil
 		}
-		fmt.Fprintf(stdout, "SNAPSHOT OK file=%s sha256=%s bytes=%d %s verified=checksum+twin pruned=%d keep=%d\n", got.File, got.SHA256, got.Bytes, countsText(got.Counts), len(got.Pruned), *keep)
+		fmt.Fprintf(stdout, "SNAPSHOT OK file=%s sha256=%s bytes=%d %s verified=checksum+twin restore=%s pruned=%d keep=%d%s\n", got.File, got.SHA256, got.Bytes, countsText(got.Counts), got.Restore, len(got.Pruned), *keep, integrityOnly(got.Restore))
 		return nil
 	}
 	if *every == 0 {

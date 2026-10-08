@@ -162,7 +162,13 @@ func TestLandResolvesAConflictOnlyInGeneratedLedgers(t *testing.T) {
 				assert.Contains(t, errs, "LAND REFUSED stream=s1 cards=1 base=- tip=- ids=s1-2 fact=conflict reason=the head "+heads["s1-2"]+" of s1-2 does not merge")
 				assert.Contains(t, errs, tc.why)
 				assert.Equal(t, []string{"land s1-1 (sprint stream s1)", "the debt", "base"}, r.mainLog())
-				assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "merging/stuck"}, r.places("s1-1", "s1-2"))
+				// a file conflict in the card's own head is reworked at the tip; generated ledgers the
+				// lander could not resolve are its own failure, the stream stopped for a mind
+				place := "ready/returned"
+				if strings.Contains(tc.name, "update") {
+					place = "merging/stuck"
+				}
+				assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": place}, r.places("s1-1", "s1-2"))
 				assert.Empty(t, r.git(r.clone, "status", "--porcelain", "--untracked-files=all"), "the refused merge is aborted and what the update wrote is gone")
 				r.clean()
 				return
@@ -220,8 +226,13 @@ func TestLandRefusesAResolutionThroughASymlink(t *testing.T) {
 				"s1-2": r.card("s1-2", map[string]string{"debt/b": "", fakeLedger: "# ceiling: 1\na\n"})}
 			r.queued(heads, "s1-1", "s1-2")
 			if !tc.tracked {
-				require.NoError(t, os.MkdirAll(filepath.Join(r.clone, filepath.Dir(linked)), 0o755))
-				require.NoError(t, os.Symlink(outside, filepath.Join(r.clone, linked)))
+				// the lander builds the stream's batch in its worktree of the clone (landpass.go):
+				// the link lies on the disk there, where the update would run
+				tree := worktreeDir(filepath.Join(r.dir, "land"), r.clone, "s1")
+				require.NoError(t, os.MkdirAll(filepath.Dir(tree), 0o755))
+				r.git(r.clone, "worktree", "add", "--detach", tree, "HEAD")
+				require.NoError(t, os.MkdirAll(filepath.Join(tree, filepath.Dir(linked)), 0o755))
+				require.NoError(t, os.Symlink(outside, filepath.Join(tree, linked)))
 			}
 			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
 			assert.Equal(t, 1, code, out+errs)

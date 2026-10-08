@@ -1,0 +1,3 @@
+------------------ MODULE MCFriendNotificationsCapacity ------------------
+EXTENDS FriendNotificationsCapacity
+=============================================================================
