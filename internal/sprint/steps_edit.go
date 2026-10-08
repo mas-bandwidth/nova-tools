@@ -184,7 +184,10 @@ func briefInPlace(s *Snapshot, c *Card, brief string, set map[string]string, uns
 	n := c.Int("attempt")
 	said := fmt.Sprintf("brief edited in place by %s at attempt %d: %s", orDash(who), n, briefChange(c.F("brief"), brief))
 	set["why"] = cutText(said, MaxCardTextBytes)
-	unset = append(unset, "fix", "finding", FieldFindingAttempt)
+	// a replaced brief is no longer the one judged wrong: the defect mark and the review
+	// reason it carried are cleared with it (columns.go, the card
+	// a-brief-defect-is-a-column-not-a-hole-bb)
+	unset = append(unset, "fix", "finding", FieldFindingAttempt, FieldBriefDefect, FieldReviewReason, FieldReviewReasonAt)
 	var changes []Change
 	retire := func(table string, x *Card) {
 		changes = append(changes, change(table, removeEntry(x, map[string]string{"retired": stamp(s.Now), "retired_by": "brief"})))

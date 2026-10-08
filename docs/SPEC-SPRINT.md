@@ -3046,6 +3046,26 @@ rule is `internal/sprint/fleet_quiet.go`; the twin test is
 
 ## 6. The readers
 
+**Review is two states in one column** (the card a-brief-defect-is-a-column-not-a-hole-bb;
+the owner, 2026-10-07 5:49 PM ET: "this feels like another state that is not being
+visualized" and "it also feels like a current hole where all our work goes to die"). The work
+table's locked shape keeps the column, so each review card carries `review_reason`: `read`
+for an ok report waiting on or under a read (the machine's work), and `defect` for a card
+whose brief is wrong, not the worker (the seat's work): a bound judgment ("the brief is
+wrong"), the same failure reason across two attempts, or a reader's finding that names the
+brief. A card enters `defect` when its failed finish names a brief defect, when the attempt
+cap or the same finding twice raises the bound's judgment, and when the brief-defect rule
+marks it (`brief_defect`, `review_reason_at` its stamp); it leaves `defect` only by `brief
+<id> --brief-file` (the edit clears the reason and the mark and opens the next attempt),
+`recut`, or `drop`. Every count that shows review shows the split as `reads <n> · defect
+<n>`: `where` (its `review: reads <n> · defect <n>` line), `view coordinator` (its summary
+and `review_reads`/`review_defect`), the dashboard's `merge_row.review_reads` and
+`.review_defect`, and `where --json --rows` / `card --all --json`, whose fields carry
+`review_reason`. The defect alarm (`set --alarm-defect <n>`, default 10) raises one judgment
+to the coordinator, listing the oldest five with their reasons, while more than n cards are
+in defect or any one has been in defect longer than 2 hours, and closes itself when the
+count falls under.
+
 - **The interim rules of 2026-10-06, until read cards** (the owner, 7:25 PM ET: "fix it
   now, to work around it"; the read-cards change (PR 5392) replaces
   the ask, and these rules with it):
@@ -4728,12 +4748,16 @@ The nova-wake unit: the tool left cmd/ (fleet/retired-tools.txt) and its binary 
 
 ### Backlog alarms
 
-Four conditions of the whole sprint the tick keeps (its deadlines part plans them
+Five conditions of the whole sprint the tick keeps (its deadlines part plans them
 with the deadlines), each off until the coordinator sets its threshold with `set`,
-the work table's properties `alarm_review`, `alarm_merging`, `alarm_fleet` and `alarm_ready`
+the work table's properties `alarm_review`, `alarm_defect`, `alarm_merging`, `alarm_fleet` and `alarm_ready`
 (a clear starts the next epoch with none):
 
 - review above its alarm: more primaries in review than `--alarm-review <n>`;
+- defect above its alarm: more primaries in defect (`review_reason=defect`, section 6,
+  review is two states) than `--alarm-defect <n>` (default 10, the one alarm on by
+  default), or any one in defect longer than 2 hours, whatever the count; the judgment
+  lists the oldest five with their reasons, and it closes when the count falls under;
 - merging above its alarm: more primaries merging than `--alarm-merging <n>`;
 - nothing ready while cards wait: with `--alarm-ready on`, no primary ready and one or
   more waiting;

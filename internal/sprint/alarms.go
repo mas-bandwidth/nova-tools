@@ -3,6 +3,7 @@ package sprint
 import (
 	"fmt"
 	"strconv"
+	"time"
 )
 
 // The backlog alarms (docs/SPEC-SPRINT.md section 8, "Backlog alarms"): four conditions
@@ -13,6 +14,7 @@ import (
 // once) and closed once when it ends, with one cleared note to the coordinator.
 const (
 	NAlarmReview  = "review above its alarm"
+	NAlarmDefect  = "defect above its alarm"
 	NAlarmMerging = "merging above its alarm"
 	NAlarmReady   = "nothing ready while cards wait"
 	NAlarmFleet   = "the fleet works below its alarm"
@@ -21,19 +23,29 @@ const (
 	NAlarmCleared = "an alarm cleared"
 
 	PropAlarmReview  = "alarm_review"  // a count: raised while review holds more
+	PropAlarmDefect  = "alarm_defect"  // a count: raised while defect holds more, or one card longer than DefectAlarmAge (default AlarmDefectDefault)
 	PropAlarmMerging = "alarm_merging" // a count: raised while merging holds more
 	PropAlarmFleet   = "alarm_fleet"   // a percent: raised while the up members work below it of their width
 	PropAlarmReady   = "alarm_ready"   // on: raised while nothing is ready and a card waits
 	// AlarmOff is the word that takes an alarm off.
 	AlarmOff = "off"
+
+	// AlarmDefectDefault is the defect alarm's threshold while the sprint sets none: the
+	// owner's number of 2026-10-07 (the card a-brief-defect-is-a-column-not-a-hole-bb:
+	// "set --alarm-defect <n> (default 10)").
+	AlarmDefectDefault = 10
+	// DefectAlarmAge is how long one card may sit in defect before the alarm raises by
+	// itself, however few cards there are.
+	DefectAlarmAge = 2 * time.Hour
 )
 
 // AlarmTypes is the backlog alarms' judgment types, in the order the tick checks them.
-var AlarmTypes = []string{NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet}
+var AlarmTypes = []string{NAlarmReview, NAlarmDefect, NAlarmMerging, NAlarmReady, NAlarmFleet}
 
 // alarmProps is each alarm's property, the flag that sets it and what its value wants.
 var alarmProps = []struct{ typ, prop, flag, wants string }{
 	{NAlarmReview, PropAlarmReview, "--alarm-review", "a whole number of primaries, 0 or more"},
+	{NAlarmDefect, PropAlarmDefect, "--alarm-defect", "a whole number of primaries in defect, 0 or more (default " + itoa(AlarmDefectDefault) + ")"},
 	{NAlarmMerging, PropAlarmMerging, "--alarm-merging", "a whole number of primaries, 0 or more"},
 	{NAlarmFleet, PropAlarmFleet, "--alarm-fleet", "a percent of the up members' width, 1 to 100"},
 	{NAlarmReady, PropAlarmReady, "--alarm-ready", "on"},
@@ -55,9 +67,19 @@ func alarmValid(prop, v string) bool {
 }
 
 // alarmSetting is an alarm's threshold as the work table's property holds it, ok false
-// when it is off (no property, off, or a value it does not take).
+// when it is off (no property, off, or a value it does not take). The defect alarm is on
+// by default at AlarmDefectDefault: an unset property is that threshold, and only a
+// written off takes it off (the card a-brief-defect-is-a-column-not-a-hole-bb).
 func (s *Snapshot) alarmSetting(prop string) (int, bool) {
 	v, ok := s.Work.Prop(prop)
+	if prop == PropAlarmDefect {
+		if ok && v == AlarmOff {
+			return 0, false
+		}
+		if !ok || !alarmValid(prop, v) {
+			return AlarmDefectDefault, true
+		}
+	}
 	if !ok || !alarmValid(prop, v) || v == AlarmOff {
 		return 0, false
 	}
@@ -81,6 +103,11 @@ func alarmFacts(s *Snapshot) map[string]string {
 	ready, waiting := len(s.Work.Column(Ready)), len(s.Work.Column(Waiting))
 	if n, on := s.alarmSetting(PropAlarmReview); on && review > n {
 		out[NAlarmReview] = fmt.Sprintf("%d primaries in review, above the alarm of %d: reads or accepts are behind; run: nova-sprint where", review, n)
+	}
+	if n, on := s.alarmSetting(PropAlarmDefect); on {
+		if what := DefectAlarm(s.Work, n, s.Now); what != "" {
+			out[NAlarmDefect] = what
+		}
 	}
 	if n, on := s.alarmSetting(PropAlarmMerging); on && merging > n {
 		out[NAlarmMerging] = fmt.Sprintf("%d primaries merging, above the alarm of %d: landing is behind; run: nova-sprint land", merging, n)
@@ -145,6 +172,9 @@ func alarmNow(s *Snapshot, typ string) string {
 	switch typ {
 	case NAlarmReview:
 		return fmt.Sprintf("%d primaries in review", len(s.Work.Column(Review)))
+	case NAlarmDefect:
+		_, defect := ReviewSplit(s.Work)
+		return fmt.Sprintf("%d primaries in defect", defect)
 	case NAlarmMerging:
 		return fmt.Sprintf("%d primaries merging", len(s.Work.Column(Merging)))
 	case NAlarmReady:

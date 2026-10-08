@@ -282,6 +282,7 @@ type SetReq struct {
 	Prose string `json:",omitempty"`
 	// The backlog alarms' thresholds (alarms.go): a count, a percent, on, or off.
 	AlarmReview  string `json:",omitempty"`
+	AlarmDefect  string `json:",omitempty"`
 	AlarmMerging string `json:",omitempty"`
 	AlarmFleet   string `json:",omitempty"`
 	AlarmReady   string `json:",omitempty"`
@@ -627,7 +628,7 @@ func orDefault(v, name string) string {
 // alarms is the backlog alarms' thresholds the request sets, by property; none unset.
 func (r SetReq) alarms() map[string]string {
 	out := map[string]string{}
-	for prop, v := range map[string]string{PropAlarmReview: r.AlarmReview, PropAlarmMerging: r.AlarmMerging, PropAlarmFleet: r.AlarmFleet, PropAlarmReady: r.AlarmReady} {
+	for prop, v := range map[string]string{PropAlarmReview: r.AlarmReview, PropAlarmDefect: r.AlarmDefect, PropAlarmMerging: r.AlarmMerging, PropAlarmFleet: r.AlarmFleet, PropAlarmReady: r.AlarmReady} {
 		if v != "" {
 			out[prop] = v
 		}

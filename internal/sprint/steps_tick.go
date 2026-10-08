@@ -144,6 +144,7 @@ var TickDecisions = map[string][]string{
 	NStalled:        {"look at the card", "wait"},
 	// the backlog alarms (alarms.go): seen, or quiet for a while
 	NAlarmReview:  {"ack", "wait"},
+	NAlarmDefect:  {"ack", "wait"},
 	NAlarmMerging: {"ack", "wait"},
 	NAlarmReady:   {"ack", "wait"},
 	NAlarmFleet:   {"ack", "wait"},
@@ -1387,7 +1388,7 @@ type cond struct {
 func condKey(typ, subject, card, what string) string {
 	switch typ {
 	case NNoMember, NAdoptFailed, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NStarving, NOverloaded, NReadersBehind, NDevBehind, NRaiseReadTier,
-		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFilesAlarm, NFriendDeaf, NFriendIdle, NCoordinatorBehind,
+		NAlarmReview, NAlarmDefect, NAlarmMerging, NAlarmReady, NAlarmFleet, NFilesAlarm, NFriendDeaf, NFriendIdle, NCoordinatorBehind,
 		NDriftAhead, NDriftCardBase, NDriftServer, NDriftBaseRed:
 		what = ""
 	case NWorkLate, NReadLate:

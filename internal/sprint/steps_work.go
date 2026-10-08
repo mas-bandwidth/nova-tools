@@ -1674,6 +1674,14 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			}
 			u.Notes = append(u.Notes, n)
 		}
+		// the review reason (columns.go): a card whose brief is wrong waits on a person
+		// (defect), an ok report waits on or under a read (read). A worker's HOLD naming
+		// the brief, and the attempt cap (atBound), are the brief's, not the worker's.
+		reason := ReviewReasonRead
+		if defect != "" || atBound {
+			reason = ReviewReasonDefect
+		}
+		set[FieldReviewReason], set[FieldReviewReasonAt] = reason, stamp(s.Now)
 		u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Review, set)))
 		if j, ok := reviewJudgment(s, inReview(pr, set), reviewStep{moved: asked, writes: u.Notes, who: who}); ok {
 			u.Notes = append(u.Notes, j)

@@ -55,6 +55,10 @@ type WhereRecord struct {
 	ReadsWaiting     int                 `json:"reads_waiting,omitempty"`
 	Priorities       map[string][]string `json:"priorities,omitempty"`
 	StreamPriorities map[string]string   `json:"stream_priorities,omitempty"`
+	// ReviewReads and ReviewDefect split the review column (sprint.ReviewSplit, columns.go):
+	// reads wait on the machine, defect waits on a person to re-cut the brief.
+	ReviewReads  int `json:"review_reads,omitempty"`
+	ReviewDefect int `json:"review_defect,omitempty"`
 	// FleetRev is the fleet table's revision at the count: a take moves the fleet alone.
 	// RowCards is each fleet row's cards by level and its reads, ReadCards the epoch's read
 	// cards (sprint.RowCardCounts), the dashboard's rows and read_cards.
@@ -75,6 +79,7 @@ func whereOf(s *sprint.Snapshot, m Machine, now time.Time) WhereRecord {
 	r := WhereRecord{Epoch: s.Epoch, Rev: s.Work.Revision, Held: sprint.HeldBack(s), Critical: sprint.Critical(s, 5),
 		Tiers: sprint.TierCounts(s), Streams: sprint.StreamTierCosts(s), StageTimes: sprint.CycleTimes(s, now), DealtFleet: sprint.FriendsDealtFleet(s),
 		ReadsWaiting: sprint.ReadsWaiting(s), Priorities: sprint.PriorityCounts(s), StreamPriorities: sprint.StreamPriorities(s)}
+	r.ReviewReads, r.ReviewDefect = sprint.ReviewSplit(s.Work)
 	if s.Fleet != nil {
 		r.FleetRev = s.Fleet.Revision
 	}
@@ -294,6 +299,10 @@ type WhereFacts struct {
 	ReadsWaiting     int
 	Priorities       map[string][]string
 	StreamPriorities map[string]string
+	// ReviewReads and ReviewDefect are the record's review split (WhereRecord; columns.go):
+	// zero without the record.
+	ReviewReads  int
+	ReviewDefect int
 	// HasStoreRTT is set when the server's store round trip record has a sample
 	// within StoreRTTWindow; StoreRTTP50MS and StoreRTTP99MS are its p50 and p99.
 	HasStoreRTT   bool
@@ -344,6 +353,7 @@ func (st *Store) WhereFacts(ctx context.Context, workRev uint64) (WhereFacts, er
 		if r, ok := readWhere(vals[2], oks[2]); ok && r.Epoch == st.epoch && (r.Rev == workRev || st.keptBy(r, f.Machine, f.Heartbeat)) {
 			f.Held, f.Critical, f.Tiers, f.Streams, f.StageTimes, f.DealtFleet = r.Held, r.Critical, r.Tiers, r.Streams, r.StageTimes, r.DealtFleet
 			f.ReadsWaiting, f.Priorities, f.StreamPriorities = r.ReadsWaiting, r.Priorities, r.StreamPriorities
+			f.ReviewReads, f.ReviewDefect = r.ReviewReads, r.ReviewDefect
 			f.RowCards, f.ReadCards = r.RowCards, r.ReadCards
 			for _, s := range r.Landings {
 				f.Landed = append(f.Landed, time.Unix(s, 0).UTC())

@@ -826,7 +826,11 @@ function renderMerge(d) {
   var m = d.merge_row || {};
   var mins = function (n, suffix) { return n == null ? "-" : n + "m" + (suffix || ""); };
   var count = function (n) { return n == null ? "-" : String(n); };
-  [["mr-merging", count(m.merging)], ["mr-review", count(m.review)], ["mr-landed", count(m.landed_per_30m)],
+  // review is two states in one column (docs/SPEC-SPRINT.md, "review is reads and defect"):
+  // reads wait on the machine, defect waits on a person to re-cut the brief
+  var rev = count(m.review);
+  if (m.review_defect != null) rev += " (" + count(m.review_reads) + " reads · " + count(m.review_defect) + " defect)";
+  [["mr-merging", count(m.merging)], ["mr-review", rev], ["mr-landed", count(m.landed_per_30m)],
    ["mr-oldest", mins(m.oldest_merging_min)],
    ["mr-drift", m.base_lacks == null ? "-" : "base lacks " + m.base_lacks + " · dev lacks " + m.dev_lacks],
    ["mr-sync", mins(m.sync_minutes, " ago")], ["mr-promoted", mins(m.promotion_minutes, " ago")]].forEach(function (f) {

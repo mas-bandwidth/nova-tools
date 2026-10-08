@@ -21,7 +21,7 @@ func TestTheMergeRowCarriesTheBaseGateAndTheDrift(t *testing.T) {
 
 	// red: an open base-red judgment names the failing test, whatever the lander last saw
 	red := MergeRowOf(MergeFacts{
-		Now: now, Merging: 4, Review: 9,
+		Now: now, Merging: 4, Review: 9, ReviewDefect: 3,
 		Landed:       []time.Time{ago(45), ago(29), ago(10), ago(0), now.Add(time.Minute)},
 		MergingRead:  true,
 		MergingSince: []time.Time{ago(12), ago(41), {}},
@@ -32,6 +32,8 @@ func TestTheMergeRowCarriesTheBaseGateAndTheDrift(t *testing.T) {
 	})
 	assert.Equal(t, int64(4), red.Merging)
 	assert.Equal(t, int64(9), red.Review)
+	assert.Equal(t, int64(6), red.ReviewReads, "review less the defect cards")
+	assert.Equal(t, int64(3), red.ReviewDefect)
 	assert.Equal(t, int64(3), red.LandedPer30m, "the landings of the last 30 minutes, the edges in, none from the future")
 	require.NotNil(t, red.OldestMergingMin)
 	assert.Equal(t, 41, *red.OldestMergingMin, "the oldest merging card by its accepted stamp; an unreadable stamp is skipped")
@@ -43,7 +45,7 @@ func TestTheMergeRowCarriesTheBaseGateAndTheDrift(t *testing.T) {
 	assert.Equal(t, 12, *red.SyncMinutes)
 	require.NotNil(t, red.PromotionMinutes)
 	assert.Equal(t, 7, *red.PromotionMinutes)
-	assert.Equal(t, "merging 4 · review 9 · landed 3/30m · oldest 41m · base red TestTheTreeGate · base lacks 5, dev lacks 2 · sync 12m ago · promoted 7m ago", red.Line())
+	assert.Equal(t, "merging 4 · review 9 (reads 6 · defect 3) · landed 3/30m · oldest 41m · base red TestTheTreeGate · base lacks 5, dev lacks 2 · sync 12m ago · promoted 7m ago", red.Line())
 
 	// a finding naming no test is carried as the finding itself, cut to one short line
 	plain := MergeRowOf(MergeFacts{Now: now, BaseRed: []string{"the base b fails its tree gate, refused 3 times, first refused at 11:02:00 UTC: go vet ./... exit 1"}})
@@ -57,7 +59,7 @@ func TestTheMergeRowCarriesTheBaseGateAndTheDrift(t *testing.T) {
 	assert.Nil(t, green.OldestMergingMin, "the merging cards not read: not known, never 0")
 	assert.Nil(t, green.SyncMinutes, "no sync recorded: not known")
 	assert.Nil(t, green.PromotionMinutes, "no promotion recorded: not known")
-	assert.Equal(t, "merging 0 · review 0 · landed 0/30m · oldest - · base green · base lacks 0, dev lacks 1 · sync - · promoted -", green.Line())
+	assert.Equal(t, "merging 0 · review 0 (reads 0 · defect 0) · landed 0/30m · oldest - · base green · base lacks 0, dev lacks 1 · sync - · promoted -", green.Line())
 
 	// neither: the gate is not known, never green by default
 	assert.Equal(t, GateUnknown, MergeRowOf(MergeFacts{Now: now}).BaseGate)
@@ -70,11 +72,11 @@ func TestTheMergeRowCarriesTheBaseGateAndTheDrift(t *testing.T) {
 	var keys map[string]any
 	require.NoError(t, json.Unmarshal(b, &keys))
 	js := string(file("app.js"))
-	for _, k := range []string{"merging", "review", "landed_per_30m", "oldest_merging_min", "base_gate", "failing_test", "base_lacks", "dev_lacks", "sync_minutes", "promotion_minutes"} {
+	for _, k := range []string{"merging", "review", "review_reads", "review_defect", "landed_per_30m", "oldest_merging_min", "base_gate", "failing_test", "base_lacks", "dev_lacks", "sync_minutes", "promotion_minutes"} {
 		assert.Contains(t, keys, k, "merge_row carries %s", k)
 		assert.Contains(t, js, "m."+k, "the page reads merge_row.%s", k)
 	}
-	assert.Len(t, keys, 10, "merge_row carries the spec's fields and nothing else: %v", keys)
+	assert.Len(t, keys, 12, "merge_row carries the spec's fields and nothing else: %v", keys)
 	assert.Contains(t, js, "d.merge_row")
 	assert.Contains(t, js, "renderMerge(d);")
 

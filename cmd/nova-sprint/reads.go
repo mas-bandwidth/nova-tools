@@ -652,6 +652,11 @@ type whereView struct {
 	// tick's where record (sprint.ReadsWaiting).
 	Backup       string `json:"backup"`
 	ReadsWaiting int    `json:"reads_waiting"`
+	// ReviewReads and ReviewDefect split the work table's review count (internal/sprint,
+	// columns.go): reads wait on the machine, defect waits on a person to re-cut the brief;
+	// the same split is merge_row.review_reads and merge_row.review_defect.
+	ReviewReads  int `json:"review_reads"`
+	ReviewDefect int `json:"review_defect"`
 	// ReadCards is the epoch's read cards ready, working and done, and each fleet and friends
 	// row of tables carries its cards by level and its reads (rowCardFields), from the tick's
 	// where record (sprint.RowCardCounts).
@@ -1173,6 +1178,7 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	working, review, merging := pipelineCounts(shapes[0])
 	v.Backup = sprint.BackupOf(int(working), int(review), int(merging))
 	v.ReadsWaiting, v.Priorities, v.StreamPriorities = facts.ReadsWaiting, facts.Priorities, facts.StreamPriorities
+	v.ReviewReads, v.ReviewDefect = facts.ReviewReads, facts.ReviewDefect
 	v.ReadCards = facts.ReadCards
 	v.Width = upWidth(shapes[3])
 	v.Buffer = fmt.Sprintf("%d/%d", v.Ready, 2*v.Width)
@@ -1192,6 +1198,7 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	if err != nil {
 		return whereView{}, "", err
 	}
+	mf.ReviewDefect = int64(facts.ReviewDefect)
 	v.MergeRow = sprintdash.MergeRowOf(mf)
 
 	if f.Pending != nil {
@@ -1205,6 +1212,11 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	v.FleetTiers, v.FriendsTiers = tiersJSON(fleetTiers), tiersJSON(friendsTiers)
 	var b strings.Builder
 	b.WriteString(a.seatTitle(v.Coordinator, v.Seat, now) + "\n\n" + whereHeader(v.Summary, v.Machine) + "\n")
+	// review is two states in one column (internal/sprint, columns.go): reads wait on the
+	// machine, defect waits on a person to re-cut the brief. Nothing in review: nothing to say.
+	if v.ReviewReads+v.ReviewDefect > 0 {
+		b.WriteString(fmt.Sprintf("review: reads %d · defect %d\n", v.ReviewReads, v.ReviewDefect))
+	}
 	if line := switchesLine(v.FleetWork, v.FriendsWork, fleetTiers, friendsTiers); line != "" {
 		b.WriteString(line + "\n")
 	}

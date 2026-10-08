@@ -26,6 +26,8 @@ const (
 type MergeRow struct {
 	Merging          int64  `json:"merging"`
 	Review           int64  `json:"review"`
+	ReviewReads      int64  `json:"review_reads"`
+	ReviewDefect     int64  `json:"review_defect"`
 	LandedPer30m     int64  `json:"landed_per_30m"`
 	OldestMergingMin *int   `json:"oldest_merging_min"`
 	BaseGate         string `json:"base_gate"`
@@ -41,6 +43,10 @@ type MergeFacts struct {
 	Now             time.Time
 	Merging, Review int64       // the work table's merging and review counts
 	Landed          []time.Time // landing stamps (the where record's)
+	// ReviewDefect is how many of the review cards are defect (the brief is wrong, not the
+	// worker): review_reads is Review less it (internal/sprint, columns.go; the card
+	// a-brief-defect-is-a-column-not-a-hole-bb).
+	ReviewDefect int64
 	// MergingRead says the merging cards were read (where --json --cards or --rows), and
 	// MergingSince is their accepted stamps, a zero one unreadable. Unread, the oldest is
 	// not known.
@@ -64,7 +70,14 @@ const MergeWindow = 30 * time.Minute
 // green when there is none and the lander's gate passed at its last landing, and not known
 // otherwise: never green by default.
 func MergeRowOf(f MergeFacts) MergeRow {
-	m := MergeRow{Merging: f.Merging, Review: f.Review, BaseLacks: f.BaseLacks, DevLacks: f.DevLacks}
+	defect := f.ReviewDefect
+	if defect < 0 {
+		defect = 0
+	}
+	if defect > f.Review {
+		defect = f.Review
+	}
+	m := MergeRow{Merging: f.Merging, Review: f.Review, ReviewReads: f.Review - defect, ReviewDefect: defect, BaseLacks: f.BaseLacks, DevLacks: f.DevLacks}
 	from := f.Now.Add(-MergeWindow)
 	for _, at := range f.Landed {
 		if !at.Before(from) && !at.After(f.Now) {
@@ -131,8 +144,8 @@ func (m MergeRow) Line() string {
 	if m.FailingTest != "" {
 		gate += " " + m.FailingTest
 	}
-	return fmt.Sprintf("merging %d · review %d · landed %d/30m · oldest %s · base %s · base lacks %d, dev lacks %d · sync %s · promoted %s",
-		m.Merging, m.Review, m.LandedPer30m, minutesText(m.OldestMergingMin, ""), gate, m.BaseLacks, m.DevLacks,
+	return fmt.Sprintf("merging %d · review %d (reads %d · defect %d) · landed %d/30m · oldest %s · base %s · base lacks %d, dev lacks %d · sync %s · promoted %s",
+		m.Merging, m.Review, m.ReviewReads, m.ReviewDefect, m.LandedPer30m, minutesText(m.OldestMergingMin, ""), gate, m.BaseLacks, m.DevLacks,
 		minutesText(m.SyncMinutes, " ago"), minutesText(m.PromotionMinutes, " ago"))
 }
 
