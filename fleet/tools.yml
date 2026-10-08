@@ -295,7 +295,7 @@
               - seat_dry.facts.ready | default('') == 'yes'
             fail_msg: >-
               ADOPT REFUSED step=server host={{ inventory_hostname }}:
-              {{ ('the candidate\'s nova-config migrate --dry-run as ' ~ nova_pg_owner ~ ' did not answer (' ~ ((seat_migrate_dry.stderr | default('')) or (seat_migrate_dry.stdout | default(''))) | truncate(300) ~ ')')
+              {{ ("the candidate's nova-config migrate --dry-run as " ~ nova_pg_owner ~ " did not answer (" ~ ((seat_migrate_dry.stderr | default('')) or (seat_migrate_dry.stdout | default(''))) | truncate(300) ~ ')')
                  if not seat_dry_json
                  else ('the store answered as role ' ~ (seat_dry.facts.role | default('?')) ~ ', not the owner ' ~ nova_pg_owner ~ ' (nova_pg_owner_dsn=' ~ nova_pg_owner_dsn ~ ')')
                  if seat_dry.facts.role | default('') != nova_pg_owner
@@ -305,7 +305,7 @@
                                                           | map(attribute='fields') | map(attribute='owner'))
                           | map('join', ' owned by ') | join(', ')))
                  if seat_dry.facts.owner | default('') not in [nova_pg_owner, 'none']
-                 else ('the owner ' ~ nova_pg_owner ~ ' cannot apply the candidate\'s schema: ' ~ (seat_dry.result.why | default([]) | join('; '))) }};
+                 else ("the owner " ~ nova_pg_owner ~ " cannot apply the candidate's schema: " ~ (seat_dry.result.why | default([]) | join('; '))) }};
               nothing was stopped, migrated, installed or loaded; the window migrates only a store the owner owns whole,
               inside the window, as the owner; a person with the owners' rights runs, in psql:
               {{ seat_dry.result.remedy | default('ALTER TABLE config.<table> OWNER TO ' ~ nova_pg_owner ~ ';') if seat_dry_json else 'nova-config migrate --dry-run --json --pg ' ~ nova_pg_owner_dsn }}
