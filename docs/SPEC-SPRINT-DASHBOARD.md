@@ -105,7 +105,7 @@ builder checks each line below against a screenshot at 1440 and 375 and fixes an
 from the owner edits one line here and nothing else moves.
 
 ## Page
-- Dark only: no theme toggle (the owner, 2:21 PM 2026-10-04: "just remove the toggle light/dark. always dark."). Panels full width, stacked: header, progress bar, Merge, Work, Fleet,
+- Dark only: no theme toggle (the owner, 2:21 PM 2026-10-04: "just remove the toggle light/dark. always dark."). Panels full width, stacked: header, progress bar, Work, Fleet,
   Friends, Lanes, footer. No readers or merge panel (available at ?all=1 only). No two-column layout at any width.
 - Base type 28 px (doubled). Labels and headers: system proportional face. All numbers: monospace (ui-monospace,
   Menlo), right-aligned. Headers over numeric columns right-aligned too.
@@ -135,15 +135,7 @@ from the owner edits one line here and nothing else moves.
 ## Progress bar: "ALL CARDS BY STATE" with the legend (landed, merging, fix, review, working, ready, waiting) and counts;
   one cell per card (per N cards when they would be under 4 px; no "1 cell = N" label); working cells pulse steadily
   (2 s); other cells still.
-- Priority (the card reads-are-a-card-priority-b, 2026-10-06; the owner's line is quoted under LOCK 2): under
-  the bar, one row of marks, hidden while it holds none: a mark for each open card whose level is
-  not normal (`where --json`'s `priorities`) and one for each read waiting (`reads_waiting`), in the ladder's
-  order (blocker, critical, high, reader, low), at most 40 a level, the last saying how many more in its title.
-  A blocker's mark is bright red (`--p-blocker` #ff1a1a), a critical's same bright red (`--p-critical` #ff1a1a), a
-  read's the orange of the robot logo's shoes (`--p-reader` #fb8321, the modal shoe pixel of
-  logo-robot-384.png), and every work card's blue (`--p-work`, the working colour) whatever its level.
-  A card awaiting rework (`priorities.fix`, Fix below) is purple (`--p-fix`, the fix state's `--s-fix`), its
-  marks after the reds and before high. `TestPriorityMarksShowTheThreeColours` draws it.
+
 - Fix (the owner, 2026-10-07; his lines are quoted under LOCK 2): a card awaiting
   rework is one purple, `--s-fix` (#8b5cf6 on this dark page; #7c3aed on a light one), everywhere a state is
   drawn: the progress bar and its legend carry `fix <n>` between review and merging (in the bar's order,
@@ -161,24 +153,6 @@ from the owner edits one line here and nothing else moves.
   working. Owed from where: a primary in review awaiting the coordinator's rework, and one parked on a brief
   defect, carry no dealt card, so the view cannot see them until where prints the Work row's `fix`.
   `TestFixView*` and `TestFixPage*` (internal/sprintdash/view_fix_test.go) hold it.
-
-## Merge (title "Merge"; the card v11-merge-row-on-dashboard-b, 2026-10-06; the owner's line is quoted under LOCK 2)
-- One dark row under the progress bar, the house style: a label over each figure, side by side, wrapping at a narrow
-  width, never scrolled. It reads `where --json`'s `merge_row`, and the coordinator reads the same object there:
-  `merging` and `review` (the cards in each, the work table's counts); `landed_per_30m` (landed per 30 minutes, the
-  where record's landing stamps); `oldest_merging_min` (the oldest merging card's age by its accepted stamp, read
-  only with `--cards` or `--rows`, which read the merging cards; null without); `base_gate` and `failing_test` (red
-  on an open base-red judgment, the base-gate rule's stop or the drift alarm's whole-tree gate, naming the first
-  test its finding names, or the finding itself when it names none; green when none is open and the lander's tree
-  gate passed at a stream's last landing; empty, not known, otherwise: never green by default); `base_lacks` and
-  `dev_lacks` (the drift between the base and the development branch the last dev sync measured: commits dev has
-  that the base lacks, and the base has that dev lacks); `sync_minutes` and `promotion_minutes` (since the last dev
-  sync and the last promotion into dev; null when none is recorded).
-- Drawn: merging | review | landed / 30m | oldest merging | base gate | drift | since sync | since promotion. The
-  gate is a pill, red (critical), green (good) or "-" (neutral), with the failing test after it; the drift reads
-  "base lacks X · dev lacks Y"; a minute not known is "-". Nothing in the row flashes.
-- The base-red judgments are read only when a stream is stopped, so a plain where makes no exchange more on a
-  sprint that runs; a drift alarm that the base is red while no stream is stopped is in the inbox, not this row.
 
 ## Work (title exactly "Work"; subtitle "<n> streams · <l> landed · <h> held")
 - Columns: stream | status | waiting | ready | working | review | fix | merging | landed | cost (headers exactly so, all lowercase). The "landed" header is centred over its "n / total" cell (the owner, 7:34 PM: "Landed column in work stream table, please horizontal center align the column header"); every other numeric header stays right-aligned. The status column with its pills stays (the owner, after the lock, 7:32 PM: "we just lost the nice state tabs in the workstream table. undo pls."); the sort by status stays; a thin rule separates the groups (landed, working, stopped, held).
@@ -209,15 +183,6 @@ from the owner edits one line here and nothing else moves.
 
 ## Friends (title "Friends"): same eight-column shape as the live Fleet table, including load (friend, status, ready, working track and fraction, done, ok%, load; headers lowercase); honest empty
   state until the JSON carries tables.friends.
-
-## Lanes (the card dash-lanes-panel.w2, 2026-10-04; the owner's line is owed)
-- The page shows a lanes panel: one row per machine's lane of a kind, the friends or machines
-  that hold it, and those that wait, read from `nova-sprint where --json --cards` (the `lanes`
-  array, verb-lane-take-give). Names are in the order the sprint records them; an empty `lanes`
-  shows an honest empty state, as Friends does.
-- Columns: machine | kind | width | held | waiting (headers exactly so, all lowercase); width alone
-  is a number (right-aligned), the others names. The row's five columns sit beside each other at
-  every width, never stacked and never scrolled.
 
 ## Footer: one link, "https://github.com/mas-bandwidth/nova-sprint", matching the live page.
 
@@ -276,52 +241,35 @@ The owner uses one live dashboard. The packaged page is the source of that page,
 
 The plain `where --json` response carries cached fix counts without requiring `--cards`: ready and working primaries with explicit fix priority, and review primaries whose work result failed, are counted under fix. Blocker and critical retain their priority; a successful repair awaiting an independent read stays in review. JSON Work counts partition these cards into fix rather than counting them twice; the text table schema is unchanged. The cache is computed with the tick snapshot, not a separate dashboard scan.
 
-Priority marks report the configured priority, whereas the Work state counts report whether a card is awaiting repair. A failed attempt or brief defect can await repair before its next attempt receives rework priority; its purple Work count does not rewrite its configured priority mark. A successful repair awaiting a read remains in review even when its priority mark is purple. When a release is selected, priority marks and waiting-read counts are explicitly labelled as spanning all releases; release totals include only that release's cards, including fix.
 
-The following historical live-page decisions remain recorded; the deployment contract above and later dated decisions supersede earlier contradictory wording.
 
-### Live-page decisions carried into the canonical source
+### Landings chart
 
-The page's specification is nova-sprint's docs/SPEC-SPRINT-DASHBOARD.md (locked there). This
-file holds the lines of this local copy (live/, served by ../server.py on 127.0.0.1:7390)
-that the canonical spec does not carry yet; each moves into it with the card that does the
-same in nova-sprint.
+The existing Landings panel remains the last panel, below all tables, at full width.
+It shows stacked ten-minute buckets over the last twenty-four hours, fleet below
+friends, using `--series-fleet` and `--series-friends`. Its header shows each series'
+twenty-four-hour total and last-hour count. Count gridlines label the vertical axis;
+the horizontal axis uses twelve-hour time labels every two hours. The panel folds
+like the other panels and has no tooltips or title attributes.
 
-- Landings chart (Glenn 2026-10-04 4:20 PM ET: "Can I get a cool graph showing cards landed for 'friends' and 'fleet' over time, like # of cards landed per-10 minutes as the sample." / "Put this graph underneath all tables" / "full width."): one panel titled "Landings", the last panel on the page, below every table, full width; stacked bars, one per 10-minute bucket over the last 24 hours, fleet at the base and friends on top, colours --series-fleet and --series-friends from :root; header legend: a swatch and total per series over the 24 hours, then the last hour's counts; y gridlines with counts, x labels every 2 hours in 12-hour time; no tooltips, no title attributes; dark; folds like the other panels; read from /landings.json (written every 60 s by ../bin/landings.sh, a stopgap) and redrawn when its "generated" changes; the panel stays hidden while that file cannot be fetched.
+The chart reads `/landings.json`, redraws when its `generated` value changes, and
+stays hidden while that file cannot be fetched. Its historical series is refreshed
+every sixty seconds; this does not change the one-second live snapshot requirement.
 
 ## Freshness: once per second, end to end (hard requirement)
-Glenn, 2026-10-04 ~6:03 PM ET: "once per-second updates are a hard requirement." / "lock that in."
-- The public page (served from space) shows data at most 2 s old: the Studio's poller makes a fresh snapshot every second, space's puller fetches once per second, Caddy serves the JSON with max-age=1, and the page polls every 1000 ms.
-- It holds under any viewer count: the Studio sees one request per second from space, never one per viewer.
-- A freshness check measures the served snapshot's age, and an age over 2 s for 30 s is an alarm to the coordinator.
-- The machine pill says RUNNING, STALE or STOPPED and nothing more; a stop's reason is the coordinator's view only (Glenn 2026-10-04 ~10:15 PM: "STOPPED is plenty").
-- The cost tile shows the recorded total and, under it, the cost per landed card (Glenn 2026-10-04 ~10:50 PM: "Please bring that back"). No other text is added to the page unless Glenn asks for it.
-- A status pill shows the status word only (up, held, down); a reason the server carries after it is the coordinator's view (Glenn 2026-10-04 ~10:40 PM).
-- The Work name column fits the longest stream name with its tag (cap 27.75rem); the shared status edge --E is clamp(18.5rem, 45vw, 42rem), so the pills of Work, Fleet and Friends still end on one line (Glenn 2026-10-04 ~11:58 PM).
-- Fleet and Friends rows (Glenn 2026-10-06 8:42-8:46 PM ET: "the segmented bar when fleet or friends work on them", then the final rule, "so highest priority on the left"): the row's segments run in the priority ladder, highest on the left: blocker, critical, reads, then the blue work cards (high, normal, low) on the right (9:09 PM: "orange is ON THE LEFT, not right"). Blocker is --s-blocker (#ff1a1a), critical --s-critical (#9b1c1c), a read card --s-read (#fb8321, light #f0892e), high, normal and low the working blue; counts from the row's <level>_working fields in where --json; a read is half a slot, so the row draws one orange cell per two reads, a lone read filling a whole cell until its pair arrives (9:11 PM: "Each segment is 1 work, or 2 reads"), and the working cell reads "n / width" only (9:08 PM: no reads count; "I'll just use the number of orange cells to estimate it").
 
-- Fleet and Friends panels (Glenn 2026-10-06 ~8:02 PM ET: "We should be able to enable/disable fleet, enable/disable friends. default enabled", "When [disabled], the table greys out a bit visually in the dash", "I want to see this both chevron'd and open"): the panel head says "· off" when the side is off (where --json fleet_work / friends_work) and "· tiers <list>" when its tiers are limited (fleet_tiers / friends_tiers, "all" otherwise); an off side's whole panel is dimmed to 45% opacity, open or collapsed.
+The live dashboard uses a one-second tick end to end, including the public puller.
+The page receives each snapshot through server-sent events; its polling fallback
+runs every 1000 ms. Viewer count does not multiply upstream reads.
+The dashboard keeps the last successful snapshot and
+measures its age from the read time. A snapshot older than two seconds for thirty seconds
+raises one stale alarm; the first fresh snapshot clears it. `/healthz` reports stale state,
+`/api/sprint` carries it, and the page does not expose the read's error text.
 
-- Fleet and Friends working fraction (Glenn 2026-10-06 ~9:25 PM ET: "you only need to reserve the maximum value across each row's digits because the sum is below and no segmented bars are there"): each row's "n / width" numerator is as wide as the widest numerator in the table, the Total's included, so every slash sits on one line (9:28 PM: "the totals are slightly misaligned"); only the Total's denominator may be wider.
+### Requested removals (2026-10-08)
 
-- Fix cards are purple (Glenn 2026-10-07 5:58-6:00 PM ET: "I would like the cards that are awaiting
-  rework to be purple. and the state of the cards to be purple in the total card segmented graph,
-  and the segmented graph for fleet/friends." and "they should be shown to the left of read cards,
-  and to the right of critical cards in ordering."): a card at priority `fix` (a rework: a failed or
-  broken attempt sent out again, or a card re-briefed out of the defect column; until the fix level
-  lands, a card on its second or later attempt at high) is one purple colour (`--s-fix`, dark
-  `#8b5cf6`, light `#7c3aed`) everywhere a state is drawn: the card list, the total cards segmented
-  bar, and each fleet and friends row's segmented bar. The cell order in every segmented bar, left
-  to right: blocker (red), critical (dark red), fix (purple), reads (orange), working (blue), then
-  the rest as before. The counts under the bars gain a `fix` figure beside the others.
-  And a `fix` STATE in ALL CARDS BY STATE and in the Work table (Glenn 2026-10-07 ~6:01 PM ET: "And
-  should show up as 'fix' state here", "between review and merging"): the legend and the bar carry
-  `fix <n>` between `review` and `merging`, purple; the Work table gains a `fix` column between
-  review and merging, counting the stream's cards awaiting rework (a failed or broken attempt sent
-  out again, or parked on a brief defect) so review counts only cards waiting on or under a read.
-- Critical and blocker are one bright red (Glenn 2026-10-07 ~6:26 PM ET: "please change critical
-  and blocker to have the same bright red color. The difference is that a blocker can evict an
-  already working slot, while a critical does not."): `--s-critical` takes `--s-blocker`'s value
-  (dark `#ff1a1a`, light `#ff1a1a`); both cells read the same red in every segmented bar and card
-  list; the legend keeps both words. The order stays blocker, critical, fix (purple), reads
-  (orange), working (blue).
+The live page has no priority-square strip under All cards by state, Merge panel,
+Lanes panel, archived-stream summary or show/hide control, or tiers suffix on Fleet.
+Work keeps its existing stream, landed and held counts. Archived streams stay excluded.
+These removals supersede earlier display descriptions. No new dashboard content is added
+without an explicit request.

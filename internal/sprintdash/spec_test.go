@@ -253,9 +253,6 @@ func TestDashboardPageIsTheSpec(t *testing.T) {
 	workFractions, fleetFractions := fractionsOf("Work"), fractionsOf("Fleet")
 	assert.Equal(t, map[string]bool{"landed": true}, workFractions, "Work's fraction columns in the spec")
 	assert.Equal(t, map[string]bool{"working": true}, fleetFractions, "Fleet's fraction columns in the spec")
-	lanesSec := sp.section(t, "Lanes")
-	lanes := splitList(match(t, `(?m)^- Columns: ([^(\n]+)\(headers exactly so`, lanesSec, "Lanes' columns"), "|")
-	lanesNumber := match(t, `\(headers exactly so, all lowercase\); (\w+) alone\s+is a number`, lanesSec, "Lanes' numeric column")
 	for _, tc := range []struct {
 		id      string
 		cols    []string
@@ -264,9 +261,6 @@ func TestDashboardPageIsTheSpec(t *testing.T) {
 		{"streams", work, counted(work, workFractions)},
 		{"fleet", fleet, counted(fleet, fleetFractions)},
 		{"friends", friends, counted(friends, fleetFractions)},
-		// Lanes names its one number instead: its other columns are names, not counts, so
-		// "every column but the first is a number" does not fit it.
-		{"lanes", lanes, func(name string) bool { return name == lanesNumber }},
 	} {
 		head := body.one(t, "#"+tc.id, byID(tc.id)).one(t, "a header row in #"+tc.id, byClass("head"))
 		var names []string

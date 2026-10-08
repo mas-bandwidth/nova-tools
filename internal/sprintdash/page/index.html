@@ -28,9 +28,9 @@
   /* the seven card states */
   --s-waiting: #4a4f58;
   --s-ready: #7d8490;
-  --s-working: #3d9bff;  /* brighter, to sit with the reader orange (Glenn 2026-10-06) */
+  --s-working: #3d9bff;  /* brighter, to sit with the reader orange (the owner 2026-10-06) */
   --s-fix: #8b5cf6;
-  --s-review: #fb8321;   /* review is the reader orange, the colour of a read card (Glenn 2026-10-06) */
+  --s-review: #fb8321;   /* review is the reader orange, the colour of a read card (the owner 2026-10-06) */
   --s-merging: #d55181;  /* merging takes the pink review had */
   --s-landed: #199e70;
   /* a row's working cells by level (SPEC.md): a read card orange, blocker and critical red */
@@ -108,7 +108,7 @@ body {
 .row.head .frac { font-family: inherit; }
 .muted { color: var(--text-2); }
 .faint { color: var(--text-3); }
-/* the Cost breakdown's header line is the pie's legend (Glenn 2026-10-04 2:43 to 3:05 PM): drawn as the state legend (.legend), on one line, the amount white */
+/* the Cost breakdown's header line is the pie's legend (the owner 2026-10-04 2:43 to 3:05 PM): drawn as the state legend (.legend), on one line, the amount white */
 #tier-sub { flex-wrap: nowrap; white-space: nowrap; align-items: baseline; } /* the header row is align-items: baseline: the legend's text sits on the title's baseline */
 #tier-sub > span { align-items: baseline; } /* each square stands on the text's baseline, as tall as the capitals, not centered on the box */
 #tier-sub .ta { color: var(--text); font-family: var(--mono); font-variant-numeric: tabular-nums; }
@@ -124,7 +124,7 @@ img#logo.logo-tile { width: 6rem; height: 6rem; flex: none; border-radius: 22.5%
 /* the lockup: tile, then the wordmark in a heavy rounded face */
 .wordmark { font-family: ui-rounded, "SF Pro Rounded", "Nunito", system-ui, sans-serif; font-weight: 800; font-size: 5.5rem; line-height: 6rem; letter-spacing: -.02em; color: var(--text); text-transform: lowercase; }
 /* One centre line in the top bar, as static CSS so the first paint is already aligned (SPEC.md,
-   Glenn 10:09 and 11:12 PM). Flex centres each item's line box; lowercase text sits below that
+   the owner 10:09 and 11:12 PM). Flex centres each item's line box; lowercase text sits below that
    centre by a fixed fraction of its own font size, measured for these faces and baked in here:
    the title (Nunito 800) up 0.0795em; the words in the pills (SF) and the button lifted by a
    bottom padding of 0.2333em and 0.2375em (twice the offset, inside the fixed 3rem box); the
@@ -144,20 +144,20 @@ img#logo.logo-tile { width: 6rem; height: 6rem; flex: none; border-radius: 22.5%
 button.toggle { font: inherit; font-size: 1.5rem; height: 3rem; padding: 0 1rem .2375em; border-radius: 0.75rem; border: 1px solid var(--border); background: transparent; color: var(--text-2); cursor: pointer; }
 button.toggle:hover { color: var(--text); border-color: var(--border-strong); }
 
-/* spend panel (Glenn 2026-10-04 10:35 AM): one collapsible panel; the pie of cards by tier on the left, one and a half hero
+/* spend panel (the owner 2026-10-04 10:35 AM): one collapsible panel; the pie of cards by tier on the left, one and a half hero
    columns wide, the ten most expensive streams as a table on the right; the fold hides both */
 .spend { margin-bottom: 3rem; }
-.spend .folded-only { display: none; } /* the tier line in the head shows open and folded (Glenn 11:30 AM) */
+.spend .folded-only { display: none; } /* the tier line in the head shows open and folded (the owner 11:30 AM) */
 .spend.folded .folded-only { display: inline; }
-.spend.folded .open-only { display: none; } /* folded: the head carries the top streams by cost as a summary (Glenn 11:00 AM) */
+.spend.folded .open-only { display: none; } /* folded: the head carries the top streams by cost as a summary (the owner 11:00 AM) */
 .spend-body { display: grid; grid-template-columns: 3fr 7fr; align-items: stretch; }
 @media (max-width: 2000px) { .spend-body { grid-template-columns: 3fr 9fr; } }
 @media (max-width: 1100px) { .spend-body { grid-template-columns: 1fr; } }
 .pie-wrap { display: flex; align-items: flex-start; justify-content: center; padding: 2rem 3rem 2rem; border-right: 1px solid var(--border); } /* the disc sits at the top of its column, level with the table head */
 @media (max-width: 1100px) { .pie-wrap { border-right: 0; border-bottom: 1px solid var(--border); } }
-.pie { width: 100%; max-width: 40rem; aspect-ratio: 1 / 1; height: auto; } /* the disc fills its column (Glenn 10:50 AM: "too small") */
+.pie { width: 100%; max-width: 40rem; aspect-ratio: 1 / 1; height: auto; } /* the disc fills its column (the owner 10:50 AM: "too small") */
 .pie path { stroke: var(--surface); stroke-width: 1; }
-.toprows .row { grid-template-columns: minmax(var(--name-w), 2fr) repeat(var(--tier-cols, 5), minmax(6rem, 1fr)); } /* the stream name column takes the spare room so a name is never cut (Glenn 2026-10-05 4:09 PM: "plenty of room there to print the stream name"); stream, then the tiers with spend in spend order and total, at equal widths (Glenn 11:20 AM; 2:50 PM: $0 tiers dropped) */
+.toprows .row { grid-template-columns: minmax(var(--name-w), 2fr) repeat(var(--tier-cols, 5), minmax(6rem, 1fr)); } /* the stream name column takes the spare room so a name is never cut (the owner 2026-10-05 4:09 PM: "plenty of room there to print the stream name"); stream, then the tiers with spend in spend order and total, at equal widths (the owner 11:20 AM; 2:50 PM: $0 tiers dropped) */
 .toprows .rank { color: var(--text-3); font-variant-numeric: tabular-nums; }
 .toprows .tiers { color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .toprows .tiers i { font-style: normal; display: inline-block; width: .6em; height: .6em; border-radius: 2px; margin: 0 .35em 0 .75em; vertical-align: -.02em; }
@@ -182,9 +182,9 @@ button.toggle:hover { color: var(--text); border-color: var(--border-strong); }
 .label { font-size: 1.5rem; line-height: 2rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); }
 .big { font-size: 4.5rem; line-height: 1.3; font-weight: 600; margin-top: 0.5rem; white-space: nowrap; }
 .big small { margin-left: 0.5rem; font-size: .5em; font-weight: 500; color: var(--text-2); }
-.big { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", system-ui, sans-serif; font-variant-numeric: tabular-nums; letter-spacing: -.01em; } /* a monospace comma reads as a space (Glenn 2026-10-04 2:40 PM) */
+.big { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", system-ui, sans-serif; font-variant-numeric: tabular-nums; letter-spacing: -.01em; } /* a monospace comma reads as a blank (the owner 2026-10-04 2:40 PM) */
 .sub { font-size: 1.625rem; line-height: 2.25rem; color: var(--text-2); }
-.hero .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* a tile's subline is one line at every width (Glenn 2026-10-04 3:20 PM) */
+.hero .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* a tile's subline is one line at every width (the owner 2026-10-04 3:20 PM) */
 #inflight-sub .pn { color: var(--text); font-variant-numeric: tabular-nums; }
 .sub.small { font-size: 1.25rem; line-height: 1.75rem; }
 .progress-card { background: var(--surface); border: 1px solid var(--border); border-radius: 1.5rem; padding: 2rem 3rem; margin-bottom: 3rem; }
@@ -210,22 +210,15 @@ button.toggle:hover { color: var(--text); border-color: var(--border-strong); }
 .merging { background: var(--s-merging); } .landed { background: var(--s-landed); }
 .seg-read { background: var(--s-read); } .seg-blocker { background: var(--s-blocker); } .seg-critical { background: var(--s-critical); }
 
-.priority-marks { display: flex; gap: .25rem; flex-wrap: wrap; margin-top: 1rem; }
-.mark { width: .5rem; height: .5rem; border-radius: 1px; }
 .p-work { background: var(--p-work); }
 
 
 .win { color: var(--text-3); font-size: .8em; white-space: nowrap; }
-.panel-head .archived { background: none; border: 0; padding: 0; font: inherit; font-size: 1.625rem; cursor: pointer; text-decoration: underline dotted; }
 .release { display: inline-flex; align-items: center; gap: 0.25rem; height: 3rem; padding: 0 0.25rem; border: 1px solid var(--border); border-radius: 0.75rem; font-size: 1.5rem; }
 .release[hidden] { display: none; }
 .release a { padding: 0 0.75rem; border-radius: 0.5rem; line-height: 2.25rem; color: var(--text-3); text-decoration: none; font-family: var(--mono); }
 .release a:hover { color: var(--text-2); }
 .release a.on { color: var(--text); background: var(--neutral-tint); }
-.merge-facts { display: flex; flex-wrap: wrap; gap: 1.5rem 4rem; padding: 0.5rem 3rem 2.5rem; }
-.merge-facts .label { display: block; color: var(--text-2); font-size: 1.5rem; }
-.merge-facts .num { font-family: var(--mono); font-size: 2rem; }
-.lanes .row { grid-template-columns: minmax(10rem, 1fr) minmax(6rem, .6fr) 6rem minmax(10rem, 1.4fr) minmax(10rem, 1.4fr); }
 :root { --p-blocker: #ff1a1a; --p-critical: #9b1c1c; --p-reader: #fb8321; --p-work: var(--s-working); }
 .p-blocker { background: var(--p-blocker); }
 .p-critical { background: var(--p-critical); }
@@ -273,7 +266,7 @@ button.toggle:hover { color: var(--text); border-color: var(--border-strong); }
 .strip > div:last-child { border-right: 0; }
 .strip .v { font-size: 3rem; line-height: 4rem; font-weight: 600; margin-top: 1rem; white-space: nowrap; }
 
-/* Landings chart (Glenn 2026-10-04 4:20 PM, live/SPEC.md): the last panel, full width; stacked bars per 10 minutes */
+/* Landings chart (the owner 2026-10-04 4:20 PM, live/SPEC.md): the last panel, full width; stacked bars per 10 minutes */
 .chart-body { padding: 1rem 3rem 2.5rem; }
 .landchart { display: block; width: 100%; height: 26rem; }
 .landchart .grid { stroke: var(--border); stroke-width: 1; shape-rendering: crispEdges; }
@@ -301,14 +294,14 @@ footer a:hover { color: var(--text); }
    changing state never restarts its clock and every cell of a state moves with the others. Landed, ready and
    waiting cells are still; table cells flash once on change. */
 @property --pulse { syntax: "<number>"; inherits: false; initial-value: 1; }
-/* Glenn 2026-10-04 9:15 AM: hold max intensity about 50% longer: the cycle grows 2 s -> 2.4 s and the extra
+/* the owner 2026-10-04 9:15 AM: hold max intensity about 50% longer: the cycle grows 2 s -> 2.4 s and the extra
    0.4 s is a plateau at full opacity before the dip. */
 @keyframes pulse { 0%, 17%, 100% { --pulse: 1; } 58.5% { --pulse: .55; } }
 #overall .cell { animation: pulse 2.4s ease-in-out infinite; }
 #overall .cell.merging { opacity: var(--pulse); }
-#overall .cell.review { opacity: var(--pulse); animation-delay: -2.25s; } /* 0.15 s behind merging on the 2.4 s cycle (Glenn 12:27 PM) */
+#overall .cell.review { opacity: var(--pulse); animation-delay: -2.25s; } /* 0.15 s behind merging on the 2.4 s cycle (the owner 12:27 PM) */
 #overall .cell.working { opacity: var(--pulse); animation-delay: -2.1s; } /* 0.15 s behind review */
-/* When the machine is not running (Glenn 2026-10-04 9:14 AM: "When the sprint is stopped ... the pulsing ... should stop"),
+/* When the machine is not running (the owner 2026-10-04 9:14 AM: "When the sprint is stopped ... the pulsing ... should stop"),
    the bar holds still: app.js puts .stopped on #overall whenever the machine line does not say running. */
 #overall.stopped .cell { animation: none; }
 @media (prefers-reduced-motion: reduce) { .flash, #overall .cell { animation: none; } }
@@ -322,10 +315,10 @@ footer a:hover { color: var(--text); }
    5 working / width 6 done 7 ok% 8 load; Friends the same without load. Minimum widths
    are the measured widest content of each column at the 28 px type. */
 .row > * { min-width: 0; }
-/* One right edge for the status column of Work, Fleet and Friends (SPEC.md, Glenn 7:36 PM):
+/* One right edge for the status column of Work, Fleet and Friends (SPEC.md, the owner 7:36 PM):
    every table's status column ends --E from the panel's left edge, whatever its padding,
    gutter or status width, so the pills line up down the page. The panels are all full width,
-   and 45vw is the same length in each; 42rem gives Work's name column ~425 px, the longest stream name with its "1 stuck" tag (Glenn 2026-10-04 ~11:55 PM: names were cut off). */
+   and 45vw is the same length in each; 42rem gives Work's name column ~425 px, the longest stream name with its "1 stuck" tag (the owner 2026-10-04 ~11:55 PM: names were cut off). */
 .panel { --E: clamp(18.5rem, 45vw, 42rem); }
 /* the name column is at most its cap (Work ~425 px, Fleet and Friends 240 px); the status
    column (pills right-aligned) takes whatever is left up to the shared edge, never less than --S */
@@ -335,7 +328,7 @@ footer a:hover { color: var(--text); }
 .streams .row { --name-cap: 27.75rem; }
 .name { overflow: hidden; text-overflow: ellipsis; }
 .alt { display: none; }
-/* Providers (SPEC.md, Glenn 8:03 and 8:18 AM): provider | status | balance | spend/hour | note, the
+/* Providers (SPEC.md, the owner 8:03 and 8:18 AM): provider | status | balance | spend/hour | note, the
    status column on the shared status edge */
 .providers .row { --pad: 2rem; --gap: 2.5rem; --S: 11rem; column-gap: var(--gap); padding: 0 var(--pad);
   grid-template-columns: var(--name-w) var(--status-w) minmax(8rem, 1fr) minmax(8rem, 1fr) minmax(10rem, 2.5fr); }
@@ -349,7 +342,7 @@ footer a:hover { color: var(--text); }
 .readers .row { grid-template-columns: minmax(10rem, 1fr) repeat(4, 7.5rem); }
 
 /* Work, full: stream capped at ~220 px; status (pills), the counts, landed and cost share
-   the spare width evenly, every content right-aligned, so the space before each is a gutter
+   the spare width evenly, every content right-aligned, so the blank before each is a gutter
    plus its share. landed spans a 4rem spacer track plus a share: the spacer is the landed
    figure's extra width over a count's, so the gap from merging to landed matches the gaps
    between the counts. 40 px gutters. Rows grouped by status: no rule between rows, a 1 px
@@ -367,11 +360,11 @@ footer a:hover { color: var(--text); }
    width (contents right-aligned); 56 px gutters; ~64 px from Ready to the track and from the
    track to the figure; cells a fixed 27 x 11 px with 4 px gaps */
 .fleet .row, .friends .row { --pad: 2rem; --gap: 3.5rem; --S: 9.5rem; column-gap: var(--gap); padding: 0 var(--pad); }
-.fleet .row, .friends .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) minmax(0, calc(var(--track-w, 61.75rem) + .5rem)) 10rem 5.5rem minmax(6.75rem, 1fr) minmax(6.5rem, 1fr); } /* the fraction and done columns are fixed, never content-sized: each row is its own grid, so a max-content column made the Total row (a longer "n / width", a 4-digit done) 15px wider than the rows and its figures sat off the line (Glenn 2026-10-06 9:28 PM; 9:33 PM "that did it") */ /* ok% fits "100.0%" (Glenn 11:52 AM) */
+.fleet .row, .friends .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) minmax(0, calc(var(--track-w, 61.75rem) + .5rem)) 10rem 5.5rem minmax(6.75rem, 1fr) minmax(6.5rem, 1fr); } /* the fraction and done columns are fixed, never content-sized: each row is its own grid, so a max-content column made the Total row (a longer "n / width", a 4-digit done) 15px wider than the rows and its figures sat off the line (the owner 2026-10-06 9:28 PM; 9:33 PM "that did it") */ /* ok% fits "100.0%" (the owner 11:52 AM) */
 .fleet .row > :nth-child(4), .friends .row > :nth-child(4) { margin-left: .5rem; }
 .fleet .row > :nth-child(5), .friends .row > :nth-child(5) { padding-left: .5rem; }
 .fleet .cells, .friends .cells { gap: .25rem; grid-auto-rows: .6875rem; }
-.panel.off { opacity: .45; } /* a side switched off (set --fleet off, --friends off) is dimmed, open or collapsed (Glenn 2026-10-06 8:02 PM) */
+.panel.off { opacity: .45; } /* a side switched off (set --fleet off, --friends off) is dimmed, open or collapsed (the owner 2026-10-06 8:02 PM) */
 
 /* compact forms: Work is stream | status (dot) | landed; Fleet and Friends are
    Machine | Status (dot only) | Working "n / width" | OK% */
@@ -462,7 +455,7 @@ footer a:hover { color: var(--text); }
   </div>
 </section>
 
-<!-- Spend row (Glenn 2026-10-04 10:15 AM): a square pie of cards by tier under Landed and ETA, as wide as the two of them,
+<!-- Spend row (the owner 2026-10-04 10:15 AM): a square pie of cards by tier under Landed and ETA, as wide as the two of them,
      and beside it, filling the same height, the ten most expensive work streams with their cost, cost per landed card,
      counts by state and tiers. The tier counts come from `where —json` (`tiers`, `tables.work[s].tiers`) once the
      next nova-sprint build serves them; until then the pie says so. -->
@@ -480,24 +473,10 @@ footer a:hover { color: var(--text); }
     <div class="legend" id="legend"></div>
   </div>
   <div class="cells thick" id="overall"></div>
-  <div id="priority-marks" class="priority-marks" aria-label="Card priorities"></div>
-</section>
-<section class="panel merge" id="merge-row">
-  <div class="panel-head"><h2>Merge</h2></div>
-  <div class="merge-facts">
-    <div><span class="label">merging</span><span class="num" id="mr-merging">-</span></div>
-    <div><span class="label">review</span><span class="num" id="mr-review">-</span></div>
-    <div><span class="label">landed / 30m</span><span class="num" id="mr-landed">-</span></div>
-    <div><span class="label">oldest merging</span><span class="num" id="mr-oldest">-</span></div>
-    <div><span class="label">base gate</span><span id="mr-gate"></span></div>
-    <div><span class="label">drift</span><span class="num" id="mr-drift">-</span></div>
-    <div><span class="label">since sync</span><span class="num" id="mr-sync">-</span></div>
-    <div><span class="label">since promotion</span><span class="num" id="mr-promoted">-</span></div>
-  </div>
 </section>
 
 <section class="panel streams">
-  <div class="panel-head"><h2>Work</h2><span class="muted" id="streams-sub"></span><button type="button" class="muted archived" id="streams-archived" hidden></button></div>
+  <div class="panel-head"><h2>Work</h2><span class="muted" id="streams-sub"></span></div>
   <div class="scroll"><div class="rows" id="streams"><div class="row head"><div>stream</div><div>status</div><div class="num">waiting</div><div class="num">ready</div><div class="num">working</div><div class="num">review</div><div class="num">fix</div><div class="num">merging</div><div class="frac">landed</div><div class="num">cost</div></div></div></div>
 </section>
 
@@ -516,10 +495,6 @@ footer a:hover { color: var(--text); }
   <div class="scroll"><div class="rows" id="providers"></div></div>
 </section>
 
-<section class="panel lanes">
-  <div class="panel-head"><h2>Lanes</h2><span class="muted" id="lanes-sub"></span></div>
-  <div class="scroll"><div class="rows" id="lanes"><div class="row head"><div>machine</div><div>kind</div><div class="num">width</div><div>held</div><div>waiting</div></div></div></div>
-</section>
 
 <section class="panel readers" id="readers-panel" hidden>
   <div class="panel-head"><h2>Readers and merge</h2><span class="muted" id="readers-sub"></span></div>

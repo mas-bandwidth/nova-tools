@@ -56,7 +56,7 @@ func init() {
 		{"resolve", "[<id>...] [--stream <s>] [--max <n>]", "resolve", (*app).cmdResolve},
 		{"start", "", "start", (*app).cmdMachineStart},
 		{"stop", "--reason <text> --until <time or duration>", "stop --reason 'the bench is rebooting' --until 30m", (*app).cmdMachineStop},
-		{"stop-return", "--as <owner-row> <card>@<gen>... --epoch <n> --reason <cancel acknowledgement>", "stop-return --as friend.stella s1-1.w1@1 --epoch 15 --reason 'owned process stopped'", (*app).cmdStopReturn},
+		{"stop-return", "--as <owner-row> <card>@<gen>... --epoch <n> --reason <cancel acknowledgement>", "stop-return --as friend-a s1-1.w1@1 --epoch 15 --reason 'owned process stopped'", (*app).cmdStopReturn},
 		{"run", "[--answer-rules=false] [--idle-alarm=false] [--listen <address:port>] [--land] [--decide <dir>]", "run", (*app).cmdRunGC},
 		{"tick", "[--answer-rules] [--idle-alarm] [--shadow]", "tick", (*app).cmdTick},
 		{"selftest land", "[--binary <path>] [--scratch-dir <dir>]", "selftest land", (*app).cmdSelftestLand},

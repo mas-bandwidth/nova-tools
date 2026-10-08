@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -182,4 +183,28 @@ func TestFolderDeliveryFailureAndWakeDoNotImpersonatePong(t *testing.T) {
 	f.Dir = filepath.Join(dir, "gone")
 	_, err = f.Deliver(context.Background(), "x")
 	require.ErrorContains(t, err, "not a directory")
+}
+
+func TestFolderUnlockFaultDoesNotRetryAnAlreadyPublishedTurn(t *testing.T) {
+	t.Parallel()
+	unlockErr := errors.New("sync failed")
+	path := "/watch/FRIEND-PUSH-one.md"
+	var reportedPath string
+	var reportedErr error
+	report := func(path string, err error) { reportedPath, reportedErr = path, err }
+
+	// Returning an error after the rename would make the daemon deliver this
+	// non-nonce turn again under a new random filename.
+	require.NoError(t, folderReleaseResult(nil, unlockErr, path, "/watch", report))
+	assert.Equal(t, path, reportedPath)
+	assert.ErrorIs(t, reportedErr, unlockErr)
+
+	// Before publication, both the original failure and cleanup fault matter.
+	deliveryErr := errors.New("write failed")
+	reportedPath, reportedErr = "", nil
+	err := folderReleaseResult(deliveryErr, unlockErr, "", "/watch", report)
+	assert.ErrorIs(t, err, deliveryErr)
+	assert.ErrorIs(t, err, unlockErr)
+	assert.Empty(t, reportedPath)
+	assert.NoError(t, reportedErr)
 }
