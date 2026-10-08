@@ -1,4 +1,4 @@
-# The defaults of the fleet plays (tools.yml, redis.yml, loops.yml). The
+# The defaults of the fleet plays (tools.yml, redis.yml, loops.yml, backup.yml). The
 # inventory nova-config prints (its host variables) overrides each, and so do
 # a group_vars/<group>.yml (benches.yml) and host_vars/<machine>.yml beside the
 # inventory; a group_vars/all.yml beside the inventory does not (this file is
@@ -133,3 +133,29 @@ nova_seat_friend_drain: 180
 # nova-sprint and nova-swarm member to be gone before it migrates (seconds).
 nova_seat_rollback_dir: "{{ nova_release_dir }}/adopt-rollback"
 nova_seat_quiet: 60
+
+# The data lifecycle (docs/DATA.md): backup.yml writes these settings on the
+# store machine to nova_data_settings_file, and holds the Redis backup loops to
+# them. nova_data_backup_dir and nova_data_bus_addr have no default: the backup
+# directory is a volume that outlives the store's host, and the bus store is the
+# fleet row's bus, which the inventory does not print (-e or host_vars). The
+# backup loops log in to each store as nova_data_redis_user, its password the
+# secret nova_data_redis_password_key in the store machine's seat (a snapshot
+# asks for BGSAVE and CONFIG GET).
+nova_data_settings_file: "{{ nova_home }}/.config/nova/data.json"
+nova_data_redis_user: "{{ nova_redis_admin_user }}"
+nova_data_redis_password_key: "{{ nova_redis_admin_password_key }}"
+# Seconds between backups, and how many verified backups are kept.
+nova_data_redis_every: 3600
+nova_data_redis_keep: 48
+nova_data_pg_every: 86400
+nova_data_pg_keep: 14
+# The thresholds: a measure that reaches one is an alarm (docs/DATA.md, Thresholds).
+nova_data_bus_messages_per_hour: 2000
+nova_data_oldest_pending_seconds: 3600
+nova_data_unreceipted_age_seconds: 1800
+nova_data_disk_free_percent: 20
+nova_data_redis_memory_percent: 75
+# Retention, in days (docs/DATA.md, Retention): no trim applies it yet.
+nova_data_bus_stream_keep_days: 30
+nova_data_bus_log_keep_days: 365

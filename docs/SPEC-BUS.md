@@ -2,7 +2,9 @@
 
 nova-bus is the message bus between AIs: a message is sent once and delivered
 until it is acked. It depends on Redis, reached over the tailnet, and on
-nothing else: no git, no file twin, no mode that works without a server. The
+nothing else: no git, no file twin, no mode that works without a server. Redis
+is the source of truth for the bus's messages and receipts, and their backups,
+restore, acceptable loss and retention are [DATA.md](DATA.md)'s. The
 tool is `cmd/nova-bus`, the rules are `internal/bus`, the delivery machine is
 `tla/Bus2.tla`. It was built as nova-bus2 beside the git bus and took the name
 nova-bus on 2026-10-04, when the git bus was removed.
@@ -10,8 +12,8 @@ nova-bus on 2026-10-04, when the git bus was removed.
 ## The data
 
 - One stream per recipient, `bus2:to:<name>`, with one consumer group on it
-  named `<name>`, made on the recipient's first `recv` (`XGROUP CREATE ... 0
-  MKSTREAM`). Every reader is the one consumer `nova-bus2`: who holds an entry
+  named `<name>`, made on the recipient's first `recv`
+  (`XGROUP CREATE ... 0 MKSTREAM`). Every reader is the one consumer `nova-bus2`: who holds an entry
   is told by its idle time, never by a name.
 - One stream `bus2:log` holding every message once, for history and audit.
 - A message is one stream entry with the fields `id` (a ULID the sender makes
@@ -33,8 +35,12 @@ nova-bus on 2026-10-04, when the git bus was removed.
   the token's record as JSON (`fingerprint`, `id`, `at`), written in the
   send's own atomic step and expiring at the token's cleanup (below,
   a-lost-send-response-is-safe-to-retry.w1).
-- Nothing is ever deleted by the tool. Trimming is a later decision. The one
-  key the store removes is a token's record, by its own expiry.
+- Nothing is ever deleted by the tool. Retention is defined in
+  [DATA.md](DATA.md), after the audit history (`bus2:log`) and the delivery
+  state (undelivered, pending and unreceipted entries) it must keep; the trim
+  that applies it is not built, so until it is, the store's memory and disk
+  thresholds (DATA.md, Thresholds) are what bound the history. The one key the
+  store removes is a token's record, by its own expiry.
 - The keys keep the `bus2:` prefix (`bus2:to:<name>`, `bus2:log`, and
   `bus2:keepalive:<name>`, the coordinator keepalive), and the consumer keeps its
   `nova-bus2` name, although the tool is nova-bus: the fleet's store already holds
@@ -216,8 +222,8 @@ refused with the list), the entry holds it as the field `kind`, and `recv`,
 before kinds) reads as `status`. `recv --kind <k>[,<k>]` (also `--all`,
 `--max`, `--forever`, `--dry-run`) and `peek --kind <k>[,<k>]` take only
 messages of those kinds. A message the filter skips is neither acked nor held:
-it is claimed with the filter's read and handed back at once (`XCLAIM ...
-IDLE` of `ClaimAfter`, `JUSTID`), so the next `recv` without the filter, or
+it is claimed with the filter's read and handed back at once
+(`XCLAIM ... IDLE` of `ClaimAfter`, `JUSTID`), so the next `recv` without the filter, or
 with another, gets it in its order; a skip costs a round trip, and a run of
 skipped claimed messages one more to hand them back.
 
@@ -226,8 +232,8 @@ skipped claimed messages one more to hand them back.
 The finding of 2026-10-05: "nova-bus is useless if the friend using it is deaf and is
 not listening to messages sent back." A note sat forty minutes unread while
 neither the sender nor the coordinator had a push into its session, and the
-bus took every message. So the push is mandatory and enforced: `nova-bus
-send --as <me>` and `recv --as <me>` refuse until `<me>` has a proven inbox
+bus took every message. So the push is mandatory and enforced:
+`nova-bus send --as <me>` and `recv --as <me>` refuse until `<me>` has a proven inbox
 push younger than ten minutes (`bus.PushFresh`), and `send --to <x>` (and
 `--cc`) refuses a recipient without one, in one line each, all at once,
 writing nothing:
@@ -367,8 +373,8 @@ writes `delivered` over the receipt (`MCBus2BrokenBackStamp`,
 Who a verb acts as is the user the connection logged in as, never a word on
 the line. With a login user (`NOVA_SPRINT_REDIS_USER`, or whatever
 internal/redisconn resolves), `--as` defaults to that user, may repeat it, and
-any other name is refused: `--as bob is not the login user ada: this connection
-acts as ada; drop --as, or log in as bob`. `send`'s `from` is that identity.
+any other name is refused:
+`--as bob is not the login user ada: this connection acts as ada; drop --as, or log in as bob`. `send`'s `from` is that identity.
 With no login user (a store whose default user is open, as a trial store is)
 `--as` is required and every write (`SEND OK`, `RECV OK`, `ACK OK`) carries
 `login=none`, so the weakness (any name on the line is believed) is visible,
@@ -378,8 +384,8 @@ the friend is; creating users is the owner's, never the tool's.
 ## The ACL per friend
 
 The user for friend `<f>` is named `<f>` and needs, measured against what
-the tool sends (`internal/bus/redis.go`; the key flags are what `COMMAND
-INFO` on Redis 8 answers):
+the tool sends (`internal/bus/redis.go`; the key flags are what
+`COMMAND INFO` on Redis 8 answers):
 
 | Verb | Commands | Keys |
 | --- | --- | --- |
