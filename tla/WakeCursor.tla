@@ -1,5 +1,5 @@
 --------------------------- MODULE WakeCursor ---------------------------
-EXTENDS Naturals, Sequences
+EXTENDS Naturals
 CONSTANTS MaxLines, Broken
 VARIABLES lines, saved, offset, shown, armed, generation, bound, refused
 vars == <<lines, saved, offset, shown, armed, generation, bound, refused>>
