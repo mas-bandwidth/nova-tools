@@ -160,6 +160,7 @@ func TestStatusReportsGapAgeAndJudgment(t *testing.T) {
 	assert.Contains(t, out, "machine_rev=1")
 	assert.Contains(t, out, "machine_applied=0 machine_gap_age=90s")
 	assert.Contains(t, out, "JUDGMENT kind=machine store=1 applied=0 age=90s")
+	assert.Equal(t, 1, strings.Count(out, "JUDGMENT kind=machine"), "the judgment is one line, never also a NOTE: %q", out)
 }
 
 func TestApplyPassClosesExactlyTheRevsBetweenAppliedAndStore(t *testing.T) {

@@ -126,7 +126,12 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 				if age > applyGapJudgment {
 					judgment := judgmentLine(k.Name, revs[k.Name], applied, age)
 					judgments = append(judgments, judgment)
-					o.Note(judgment)
+					if *asJSON {
+						// The line rendering below carries the judgment once
+						// for a text status; only JSON, which prints no line,
+						// needs it as a note too.
+						o.Note(judgment)
+					}
 				}
 			} else {
 				line += " " + k.Name + "_gap_age=unknown"
