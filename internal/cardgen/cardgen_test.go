@@ -41,7 +41,30 @@ func TestLedgerRowsGroupByFileInLedgerOrder(t *testing.T) {
 	assert.Equal(t, "serial-tests-cmd-nova-bus-a", p.Cards[0].ID)
 	assert.Len(t, p.Cards[0].Rows, 2)
 	assert.Equal(t, "flash", p.Tier)
-	assert.Equal(t, "fix-red", p.Cards[0].Kind)
+	assert.Equal(t, swarm.LedgerKind, p.Cards[0].Kind)
+}
+
+// A ledger card is KIND: ledger and its STOP is the ledger shrinking with the class test
+// green, since that test is green at the base by construction: the rows for its file, or
+// a counted row's count, shrink to 0. Any other card's STOP is its test red then green.
+func TestALedgerCardStopsWhenItsLedgerEntryShrinks(t *testing.T) {
+	t.Parallel()
+	l := Ledgers["serial-tests"]
+	rows, _ := ParseLedger(l, serialFixture)
+	p := PlanLedger(l, rows, "", "", 0)
+	two, one := Render(header, p.Cards[0]), Render(header, p.Cards[1])
+	assert.Contains(t, two, "\nKIND: ledger\n")
+	assert.Contains(t, two, "\nSTOP: the ledger rows for cmd/nova-bus/a_test.go in internal/ci/testdata/serial-tests_allowlist.txt shrink from 2 to 0 and the class test TestEveryTestOpensWithTParallel stays green, and the STEP 4 gate passes\n")
+	assert.Contains(t, one, "\nSTOP: the ledger row for cmd/nova-bus/b_test.go in internal/ci/testdata/serial-tests_allowlist.txt shrinks from 1 to 0 and the class test TestEveryTestOpensWithTParallel stays green, and the STEP 4 gate passes\n")
+
+	d := Ledgers["dead-code"]
+	drows, _ := ParseLedger(d, "# ceiling: 3\ninternal/bounded 3\n")
+	dc := PlanLedger(d, drows, "", "", 0).Cards[0]
+	assert.Contains(t, Render(header, dc), "\nSTOP: the count on the ledger row for internal/bounded in internal/ci/testdata/dead_code_allowlist.txt shrinks from 3 to 0 and the class test TestDeadCode stays green, and the STEP 4 gate passes\n")
+
+	other := Render(header, Card{ID: "a", File: "x/y.go", Paths: []string{"x/y.go"}, Test: "x TestA", Tier: "pro", Kind: "fix-red", Task: "Do it."})
+	assert.Contains(t, other, "\nSTOP: the test TestA is red before the change and green after it, and the STEP 4 gate passes\n")
+	assert.Contains(t, other, "\nKIND: fix-red\n")
 }
 
 // PATHS: the file, its package's test files, the ledger; never more than MaxPaths.
@@ -145,7 +168,7 @@ func TestEveryRenderedBriefPassesTheLint(t *testing.T) {
 			assert.Empty(t, Lint(c.ID, brief), "%s: %s\n%s", name, c.ID, brief)
 			assert.True(t, strings.HasPrefix(brief, "RESULT: "+c.ID+" sha=0123456789ab tier: "+c.Tier+"\n"), brief)
 			assert.Contains(t, brief, "\nTEST: "+l.Test+"\n")
-			assert.Contains(t, brief, "\nKIND: fix-red\n")
+			assert.Contains(t, brief, "\nKIND: ledger\n")
 			_, read, ok := strings.Cut(brief, "\nAS A READ\n")
 			assert.True(t, ok, "the brief has an AS A READ section")
 			assert.Contains(t, "\n"+read, "\nThe scope of this change is its PATHS line. "+AlwaysInPathsRule+"\n", "the reader is handed the scope rule")

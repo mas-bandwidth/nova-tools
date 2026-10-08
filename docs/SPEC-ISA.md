@@ -21,7 +21,7 @@ Candidates: script, think, verify, merge, wait, fence, vector.
 
 | kind | operands | results | today's card line | KIND: line | current card |
 |---|---|---|---|---|---|
-| `think` | `BASE`, `PATHS`, `DEPENDS-ON`, `TEST`, `tier` | `head`, `verdict` | a primary's `tier`, its work card, and the finish's `head` and verdict | the model work kinds: `fix-red`, `transcript-test`, `rebase`, `sweep`, `mutation-kill`, `guard` | a work card (`kind=work`) |
+| `think` | `BASE`, `PATHS`, `DEPENDS-ON`, `TEST`, `tier` | `head`, `verdict` | a primary's `tier`, its work card, and the finish's `head` and verdict | the model work kinds: `fix-red`, `transcript-test`, `rebase`, `sweep`, `mutation-kill`, `guard`, `ledger` | a work card (`kind=work`) |
 | `verify` | `BASE`, `PATHS`, `TEST`, `DEPENDS-ON` | `verdict` (`ok`, `broken`) | a primary's `readers`, its read card, and the read's verdict | the read kinds: `read`, `probe`, `text`, `tone`, `report` | a read card (`kind=read`) |
 | `script` | `BASE`, `PATHS`, `DEPENDS-ON`, `TEST`, `SCRIPT` | `head`, `verdict` | a work card's `SCRIPT:` steps and their `POST:` lines | none of its own: the step's `SCRIPT:` line, the brief still carries one work kind | a work card whose every work step is a script step (`internal/cardtree`) |
 | `merge` | `BASE`, `REPO` | `head`, `verdict` | the merge table's place and the stream's `state` | none: a merge card carries no brief and no child | a merge card (`kind=merge`) |

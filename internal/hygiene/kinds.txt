@@ -20,6 +20,7 @@ rebase	replays one of our own open PRs onto the base, changing nothing	gated	thi
 sweep	applies one mechanical class fix at every site the class test names	gated	think
 mutation-kill	writes the test that kills one surviving mutant	gated	think
 guard	reverts one commit's non-test files; the named tests must go red	gated	think
+ledger	shrinks one ratchet ledger of internal/ci; its class test stays green	gated	think
 read	read and report	ungated	verify
 probe	read and report	ungated	verify
 text	read and report	ungated	verify

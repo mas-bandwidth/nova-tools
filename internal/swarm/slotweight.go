@@ -25,6 +25,7 @@ var heavySlotKinds = map[string]bool{
 	"spec":            true,
 	"fix":             true,
 	"fix-red":         true,
+	"ledger":          true,
 	"replay":          true,
 	"rebase":          true,
 	"go":              true,

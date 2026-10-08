@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
@@ -44,6 +45,9 @@ type Ledger struct {
 	// Generated says the ledger is one land regenerates (docs/SPEC-SPRINT.md section
 	// 7, the generality family): cards on it need no dependency on one another.
 	Generated bool
+	// Counted says a row carries a count (`pkg N`, dead_code) rather than naming one
+	// site: the card's STOP reads the count, not the number of rows.
+	Counted bool
 	// Task is the card's task paragraph. {{file}}, {{rows}}, {{ledger}}, {{test}} and
 	// {{count}} are substituted; everything else is written as it stands.
 	Task string
@@ -117,7 +121,7 @@ var Ledgers = map[string]Ledger{
 		},
 	},
 	"dead-code": {
-		Name: "dead-code", File: "internal/ci/testdata/dead_code_allowlist.txt", Test: "internal/ci TestDeadCode", Tier: "pro",
+		Name: "dead-code", File: "internal/ci/testdata/dead_code_allowlist.txt", Test: "internal/ci TestDeadCode", Tier: "pro", Counted: true,
 		Task: "The dead code ledger {{ledger}} carries the row `{{rows}}`: the package {{file}} has that many functions unreachable from any cmd/ root (the union over GOOS linux, darwin and windows). Run the class test {{test}} to read the names the deadcode tool reports for the package; delete each unreachable function with its tests and any helper only it used, then lower the package's count on its ledger row (to zero deletes the row) so {{test}} is green with fewer rows. A function that is reachable on one GOOS only is not dead and stays." + ceilingNote + draftRule,
 		Parse: func(line string) (Row, bool) {
 			m := countRowRE.FindStringSubmatch(line)
@@ -203,8 +207,16 @@ type Card struct {
 	Wave  int
 	Deps  []string
 	Task  string
-	// Kind is the KIND: line; fix-red for every generated card today.
+	// Kind is the KIND: line: swarm.LedgerKind for a card cut from a ledger, fix-red for
+	// every other generated card.
 	Kind string
+	// Ledger, Count and Counted are a ledger card's: the ledger file, what its entry for
+	// File reads at the base (the number of rows for File, or, Counted, the count a
+	// `pkg N` row carries), so the STOP line says the entry shrinks from Count to 0 with
+	// the class test green.
+	Ledger  string
+	Count   int
+	Counted bool
 	// New is the NEW: line, the files the card creates (none for most): a test file
 	// in a package that has none yet (NewTestFile).
 	New []string
@@ -246,10 +258,16 @@ func PlanLedger(l Ledger, rows []Row, prefix, tier string, max int) Plan {
 		i, ok := index[r.File]
 		if !ok {
 			index[r.File] = len(cards)
-			cards = append(cards, Card{File: r.File, Test: l.Test, Tier: tier, Kind: "fix-red"})
+			cards = append(cards, Card{File: r.File, Test: l.Test, Tier: tier, Kind: swarm.LedgerKind, Ledger: l.File})
 			i = len(cards) - 1
 		}
 		cards[i].Rows = append(cards[i].Rows, r)
+		n := 1
+		if v, err := strconv.Atoi(r.Key); l.Counted && err == nil {
+			n = v // the row is `pkg N`, its Key N
+		}
+		cards[i].Count += n
+		cards[i].Counted = l.Counted
 	}
 	cards = first(cards, max)
 	seen := map[string]int{}
@@ -418,6 +436,23 @@ func ledgerTask(l Ledger, c Card) string {
 		"{{count}}", fmt.Sprint(len(c.Rows)),
 	)
 	return rep.Replace(l.Task)
+}
+
+// stopCondition is what ends a card's task. A ledger card's class test is green at the
+// base and stays green, so it ends when the ledger's entry for its file shrinks to 0;
+// every other card's test is red before the change and green after it.
+func stopCondition(c Card) string {
+	if c.Kind != swarm.LedgerKind {
+		return "the test " + testName(c.Test) + " is red before the change and green after it"
+	}
+	entry := "the ledger rows for %s in %s shrink"
+	switch {
+	case c.Counted:
+		entry = "the count on the ledger row for %s in %s shrinks"
+	case c.Count == 1:
+		entry = "the ledger row for %s in %s shrinks"
+	}
+	return fmt.Sprintf(entry+" from %d to 0 and the class test %s stays green", c.File, c.Ledger, c.Count, testName(c.Test))
 }
 
 // testName is the TestX of a `pkg TestX` TEST line.
@@ -717,7 +752,7 @@ func Render(h Header, c Card) string {
 	}
 	fmt.Fprintf(&b, "TEST: %s\n", c.Test)
 	fmt.Fprintf(&b, "START: %s, %s\n", c.File, pkg)
-	fmt.Fprintf(&b, "STOP: the test %s is red before the change and green after it, and the STEP 4 gate passes\n", testName(c.Test))
+	fmt.Fprintf(&b, "STOP: %s, and the STEP 4 gate passes\n", stopCondition(c))
 	// docs/SPEC-CARD-CONTRACT.md: the deadline is a bound; past it is the coordinator's judgment.
 	fmt.Fprintf(&b, "Deadline: finish within %d minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.\n", minutes)
 	fmt.Fprintf(&b, "You are a child of the coordinator: one task, one staged checkout, one branch, unattended. This card is the whole task. Read $JOB/JOB.md first. Start at the current BASE tip; admission inspected exact base %s. Verify the defect still exists before editing; if already fixed report not-done with exact evidence rather than duplicate work. One change, one test that is red before and green after.\n", h.Sha)

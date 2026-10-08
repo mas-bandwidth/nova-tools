@@ -507,10 +507,11 @@ with no clock and no store). What it holds:
 
 - One card per file the source names, its id `<prefix>-<slug of the file>`,
   its `RESULT:` line carrying the tier (`tier: flash|pro`), `REPO:` and `BASE:`
-  from the checkout the source was read from, `KIND: fix-red`, `DEPENDS-ON:`,
+  from the checkout the source was read from, `KIND:` (`ledger` for a card cut
+  from a ledger, `fix-red` for every other), `DEPENDS-ON:`,
   `PATHS:` (at most eight entries, files folded into their directory's glob
   past that), `NEW:` for a test file the card creates in a package that has
-  none, `TEST:` and the `Deadline:` line; the RULES paragraph of the general
+  none, `TEST:`, `STOP:` and the `Deadline:` line; the RULES paragraph of the general
   child rules (`swarm.ChildRulesParagraph`, the paragraph the card template
   carries); the `ATTRIBUTION:` line (`cardgen.Attribution`); the task from the
   source's template with the rows substituted; the template's steps; and the
@@ -550,6 +551,16 @@ with no clock and no store). What it holds:
   section. Two cards that share an entry and neither needs the other set
   `shared-paths=yes`. With a checkout, every entry is checked to exist in it;
   a package's `*.go` is not answered by a test file the card creates.
+- A ledger card is its own kind of card, `KIND: ledger`: its `TEST:` is the
+  ledger's class test under `internal/ci`, green at the base by construction,
+  and its proof is the ledger shrinking with that test still green, so its
+  `STOP:` line reads `the ledger rows for <file> in <ledger> shrink from N to 0
+  and the class test <Test> stays green` (for a counted row, dead code's
+  `pkg N`, `the count on the ledger row ... shrinks from N to 0`). Every other
+  card's `STOP:` is its test red before the change and green after it. `nova-sprint
+  add`'s `donewhen-test-name` lets a test that exists at the base pass for a
+  ledger card, and only for one whose brief says `KIND: ledger` and whose
+  `TEST:` package is under `internal/ci/` (`swarm.LedgerKind`).
 - Waves: a ledger plan is one wave with no dependency chain. The lander resolves
   a ledger conflict as the union of removals, so adjacent deletions of one file
   no longer conflict at land; every card's `DEPENDS-ON:` is `-`, and every card
