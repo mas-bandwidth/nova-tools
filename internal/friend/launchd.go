@@ -400,7 +400,11 @@ func daemonPart(args []string) []string {
 // secrets wrap by its names and seat, then the daemon's own flags, --redis
 // and --server left to the install line that gave them.
 func (a Agent) Said() string {
-	said := fmt.Sprintf("nova-friend run --as %s --harness %s --dir %s --width %d, with --redis and --server as given here", a.Friend, a.Harness, a.Dir, a.Width)
+	said := fmt.Sprintf("nova-friend run --as %s --harness %s --dir %s --width %d", a.Friend, a.Harness, a.Dir, a.Width)
+	if a.Adapter == "folder" {
+		said += " --session " + a.Session + " --adapter folder --delivery-dir " + a.DeliveryDir
+	}
+	said += ", with --redis and --server as given here"
 	if len(a.Secrets) == 0 {
 		return said
 	}
