@@ -4208,7 +4208,34 @@ report is the merge step as before, and its receipt is read for the batch's land
 the step also releases the waiting cards the landing unblocks and marks sentinels reached,
 lines that until 2026-10-07 made a committed landing `LAND FAILED ... NOT reported (moved
 N+k)`, stopped the stream's next batches, exited 2 and could roll the server back
-(`movedExactly`). The lines a pass prints keep their form and their stream order.
+(`movedExactly`). The lines a pass prints keep their form, in the order the batches finished.
+
+**The pass lands as batches finish, and the gate bound** (the cold read of the parallel
+lander, PR 5435, and the serial pass of 2026-10-07: one stream's ssh to its bench hung and
+three green streams sat unpushed for 45 minutes, 27 batches behind one bench in the day;
+cmd/nova-sprint/landpass.go, landgo.go, landloop.go; `TestThreeGreenStreamsLandWhileAFourthsGateHangsAndItIsRegatedOnTheNextBench`,
+`TestLandDeadlineCancelsTheGateContextAndBlamesNoCard`). The second phase does not wait for
+the slowest merge: a job whose gate is green hands its batch to the serial landing the moment
+its merge returns (a channel the lander drains in the order the jobs arrive), so one hung
+gate never holds the other streams' landings. Every landed batch's report carries its land
+time (`NOTE landed at <hh:mm:ss UTC>`), and the land loop keeps a landed batch's NOTE lines
+with its `LAND OK` line. One bench gate run is bounded by the gate bound (eight minutes,
+`gateBoundDefault`; the pass's setting `landShared.gateBound`, whose `--gate-bound` flag on
+`land` and `run --land` is owed with the LAND line's own `landed_at` field, both on land.go
+and run.go) on top of the gate's budget: past it the gate is abandoned on that bench with the
+line `gate abandoned: <bench> after <t>` (a NOTE of the batch, the loop's step while it
+happens; the bench and the wall go on the batch's `bench=`), its Go lane is given back, and
+the batch gates again on the next bench of the ring; when the ring runs out the batch waits
+for the next pass with that line as its `LAND REFUSED` reason, nothing recorded against a
+card and no stream stopped. The wait for a bench's Go lane carries the same bound (`gate
+abandoned: <bench> after <t> waiting on its Go lane`). An abandoned gate is a fact of the
+pass, never a finding: a base gate abandoned is not cached, not counted under the base-gate
+rule and starts no cure search; a head's gate abandoned ends the batch as a refusal, not as
+the head's; a combined gate abandoned refuses the batch for the pass. `LandDeadline` cancels
+the landing's gate context when its judgment is written (`landFlight.gates`, `raiseIfStuck`),
+so the judgment is also an action: every gate of the pass still running or waiting on a lane
+is abandoned (`gate abandoned: <bench> after <t>`, `here` for this machine), the batches
+still gating wait for the next pass, and what landed stays landed.
 
 **The scope amendment.** A file outside the brief's `PATHS` that is the test, the fixture or
 the doc of the same change is allowed by rule, never by a message to the coordinator

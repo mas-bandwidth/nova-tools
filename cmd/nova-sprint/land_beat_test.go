@@ -38,7 +38,10 @@ func (s *beatBuf) String() string {
 
 // The land loop prints one line a cycle while a landing runs, raises one stuck
 // judgment naming the gate and the go command it waits on, and sends that gate
-// to an up bench's Go lane. The bench is a fake: the live fleet is not touched.
+// to an up bench's Go lane. The judgment is also an action: the landing's gates are
+// cancelled, the hung gate is abandoned with the fact on the batch's line and no card
+// blamed, and the next landing gates again and lands on the bench. The bench is a fake:
+// the live fleet is not touched.
 func TestTheLandLoopBeatsAndRaisesAStuckLanding(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
@@ -203,7 +206,9 @@ func TestTheLandLoopBeatsAndRaisesAStuckLanding(t *testing.T) {
 			break
 		}
 		text := out.String()
-		if strings.Contains(text, "LAND REFUSED") || strings.Contains(text, "LAND FAILED") ||
+		// the landing past the deadline is refused with its gate abandoned; the next one
+		// lands on the bench
+		if strings.Contains(text, "LAND FAILED") ||
 			(strings.Contains(text, "LAND OK") && strings.Contains(text, "bench=vision")) {
 			cancel()
 			nudge()
@@ -248,6 +253,8 @@ func TestTheLandLoopBeatsAndRaisesAStuckLanding(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(inbox, "landing stuck at step=gate"), "one stuck line:\n%s", inbox)
 	assert.Contains(t, inbox, "go build ./...", "the judgment names the process:\n%s", inbox)
 
+	assert.Regexp(t, regexp.MustCompile(`LAND REFUSED stream=s1 .* reason=gate abandoned: vision after 10m\d+s`), text, "the judgment cancelled the hung gate: abandoned, not failed")
+	assert.NotContains(t, text, "fails the tree gate", "no head was blamed for the hung gate:\n%s", text)
 	assert.Regexp(t, regexp.MustCompile(`LAND OK stream=s1 .* bench=vision wall=\d+\.\ds`), text)
 	idle := regexp.MustCompile(`LAND IDLE queued=([1-9]\d*) step=gate since=(\S+)`)
 	var long bool

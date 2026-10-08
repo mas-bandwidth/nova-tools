@@ -17,8 +17,12 @@ package main
 // fetches and every write of the clone's shared refs too (fetchMu), and each stream's lander
 // (fork) has its own scratch and output, so the log keeps its lines and their order.
 //
-// PHASE 2, THE LANDING, SERIAL. The green batches land onto the base one at a time, in the
-// pass's priority order. A batch cut from the tip the base still has is pushed as before,
+// PHASE 2, THE LANDING, SERIAL, AS THE BATCHES FINISH. The green batches land onto the base
+// one at a time, each as its job's merge returns (a channel the lander drains in the order
+// the jobs arrive, so one hung gate never holds the other streams' landings: one stream's
+// ssh to its bench hung on 2026-10-07 and three green streams sat unpushed behind it; a
+// bench gate run and a lane wait are bounded besides, landgo.go gateBound), the batch's land
+// time a NOTE of its report. A batch cut from the tip the base still has is pushed as before,
 // with no new gate. When the base moved (a batch before it in this pass landed, or a push
 // from outside), the batch is merged again onto the new tip in its worktree, the same merges
 // and checks and no gate per head: when the files it changes and the files landed since
@@ -61,6 +65,10 @@ type landShared struct {
 	gateMu sync.Mutex
 	// checkMu serializes a red --check's gate decision, which appends to one record.
 	checkMu sync.Mutex
+	// gateBound is the pass's bound on one bench gate run or one lane wait (landgo.go,
+	// gateBound): zero is gateBoundDefault. The --gate-bound flag that sets it is owed on
+	// land.go and run.go.
+	gateBound time.Duration
 	// treesMu guards pruned and used.
 	treesMu sync.Mutex
 	// pruned is each clone whose stale worktrees this pass has pruned; used is each clone's
@@ -219,8 +227,9 @@ func batchOf(cards []landCard) int {
 }
 
 // pass lands every stream of order: round after round, each stream's next batch merged
-// beside the others' (phase 1, merges), then the green ones landed one at a time in order
-// (phase 2, land), a stream going on past the cards its batch landed and past a card whose
+// beside the others' (phase 1, merges), and the green ones landed one at a time as their
+// merges return, in the order they arrive (phase 2, land: a job still gating holds no other
+// job's landing), a stream going on past the cards its batch landed and past a card whose
 // own refusal was recorded (reworked at the tip, or returned to review: the stream's other
 // cards land in the same pass), and ending at the lander's own failure, as stream did.
 // failed says a push landed and its report did not.
@@ -254,8 +263,12 @@ func (l *lander) pass(ctx context.Context, s *sprint.Snapshot, order []string) (
 		for _, j := range jobs {
 			l.prepare(ctx, s, j)
 		}
-		l.merges(ctx, jobs)
-		for _, j := range jobs {
+		finished := make(chan *landJob)
+		go func() {
+			l.merges(ctx, jobs, finished)
+			close(finished)
+		}()
+		for j := range finished {
 			if !j.done {
 				l.land(ctx, j, pushed)
 			}
@@ -538,15 +551,22 @@ func (l *lander) pruneWorktrees(ctx context.Context) {
 }
 
 // merges is phase 1: every job not yet ended merged in its own worktree, up to parallel at
-// a time (runBounded), each in its own lander.
-func (l *lander) merges(ctx context.Context, jobs []*landJob) {
+// a time (runBounded), each in its own lander. Each job is sent on finished as it is ready
+// for phase 2: the jobs prepare already ended first, then each merged job the moment its
+// merge returns, so the pass lands a green batch while a slower one still gates.
+func (l *lander) merges(ctx context.Context, jobs []*landJob, finished chan<- *landJob) {
 	var todo []*landJob
 	for _, j := range jobs {
-		if !j.done {
+		if j.done {
+			finished <- j
+		} else {
 			todo = append(todo, j)
 		}
 	}
-	runBounded(l.parallel, len(todo), func(i int) { todo[i].f.merge(ctx, todo[i]) })
+	runBounded(l.parallel, len(todo), func(i int) {
+		todo[i].f.merge(ctx, todo[i])
+		finished <- todo[i]
+	})
 }
 
 // runBounded runs fn(i) for each i in 0..n-1 in goroutines, at most width at a time, and
@@ -587,9 +607,16 @@ func (l *lander) merge(ctx context.Context, j *landJob) {
 		l.stage("gate", "the batch's tree")
 		red := l.treeGate(ctx, dir, true)
 		since(&b.Times.Merge, start)
-		if red == "" {
+		switch {
+		case red == "":
 			j.gated = true
-		} else {
+		case gateAbandoned(red):
+			// the gate was given up, not failed (the bound, or the pass's gates cancelled):
+			// the batch waits for the next pass with the fact on its line, no head blamed
+			l.buildNotes(j)
+			j.refuse(red)
+			return
+		default:
 			l.ledgerLog = nil // the second build logs the same resolutions
 			merged, failed, baseSha, _, why = l.build(ctx, dir, stream, j.cards, b.Times, true)
 		}
@@ -708,6 +735,9 @@ func (l *lander) land(ctx context.Context, j *landJob, pushed []*landJob) {
 		since(&b.Times.Push, start)
 		if err == nil {
 			b.Tip = j.tip
+			// the batch's land time, one NOTE of its report (the LAND line's own field is owed
+			// on land.go)
+			b.Also = append(b.Also, "landed at "+l.clock().UTC().Format("15:04:05 MST"))
 			// the tip pushed is the base's next tip: when its whole tree passed a gate with
 			// the tree tests (the batch's own, or the combined gate), it is recorded as gated
 			// and no batch gates it again; a clean merge of disjoint files was never gated as
@@ -801,6 +831,9 @@ func (l *lander) again(ctx context.Context, j *landJob, newBase string, pushed [
 			}
 		}
 		since(&b.Times.Check, start)
+		if gateAbandoned(red) {
+			return red // given up, not failed: the batch waits for the next pass
+		}
 		if red != "" {
 			return "the batch passes the gate alone and fails it merged onto " + b.Base + " as this pass moved it (" + collidedWith(pushed, collide, len(merged) != len(j.merged)) + "): " + red + "; nothing was pushed or reported, its cards stay queued, and the next pass merges it onto the new tip"
 		}

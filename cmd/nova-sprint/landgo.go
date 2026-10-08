@@ -48,6 +48,81 @@ import (
 // the tree's own packages, or one update run (a build and two tests of one package).
 const landGoBudget = 15 * time.Minute
 
+// gateBoundDefault bounds one bench gate run, and one wait for a bench's Go lane, on top of
+// the budget (the pass's setting, landShared.gateBound; the --gate-bound flag that sets it
+// is owed on land.go and run.go). Past it the gate is abandoned on that bench, its lane
+// given back, and the batch gates again on the next bench of the ring, or waits for the
+// next pass with the fact recorded, never blamed on the card (gateAbandonedMark). One
+// stream's ssh to its bench hung on 2026-10-07 and three green streams sat unpushed behind
+// it for the budget, 27 batches behind one bench in the day.
+const gateBoundDefault = 8 * time.Minute
+
+// gateAbandonedMark starts the line of a gate given up before it answered: "gate abandoned:
+// <bench> after <t>" (a bench past the bound or the budget, the pass's gates cancelled by
+// LandDeadline, "here" for this machine). It is a fact of the pass, never a finding against
+// a head or the base: every caller of treeGate refuses the batch for this pass on it, records
+// no fact, counts no base failure and blames no card (gateAbandoned).
+const gateAbandonedMark = "gate abandoned: "
+
+// errGateBound is the cause a bounded context ends with when the gate bound passes.
+var errGateBound = errors.New("the gate bound passed")
+
+// gateAbandoned says why is an abandoned gate's line, not a red run's finding.
+func gateAbandoned(why string) bool { return strings.HasPrefix(why, gateAbandonedMark) }
+
+// abandonedLine is the abandoned gate's line: the bench it was given up on, and after how long.
+func abandonedLine(host string, wall time.Duration) string {
+	return gateAbandonedMark + host + " after " + wall.Round(time.Second).String()
+}
+
+// gateBound is the pass's bound on one bench gate run or one lane wait: the pass's setting
+// when set, else gateBoundDefault.
+func (l *lander) gateBound() time.Duration {
+	if l.shared != nil && l.shared.gateBound > 0 {
+		return l.shared.gateBound
+	}
+	return gateBoundDefault
+}
+
+// after is the lander's timer: the app's clock (a test's), else time.After.
+func (l *lander) after(d time.Duration) <-chan time.Time {
+	if l.a != nil && l.a.after != nil {
+		return l.a.after(d)
+	}
+	return time.After(d)
+}
+
+// bounded is ctx ended with the cause errGateBound when the gate bound passes; the cancel
+// returned ends the watch. context.Cause tells the bound from the parent's own end.
+func (l *lander) bounded(ctx context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancelCause(ctx)
+	timer := l.after(l.gateBound())
+	go func() {
+		select {
+		case <-timer:
+			cancel(errGateBound)
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, func() { cancel(nil) }
+}
+
+// gateContext is ctx ended too when the land loop's flight cancels its gates (LandDeadline,
+// landloop.go: the stuck judgment is also an action), and ctx itself for a land with no
+// flight (a hand land, a test with no loop).
+func (l *lander) gateContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if l == nil || l.a == nil {
+		return ctx, func() {}
+	}
+	gates := l.a.landState().gateCtx()
+	if gates == nil {
+		return ctx, func() {}
+	}
+	ctx, cancel := context.WithCancelCause(ctx)
+	stop := context.AfterFunc(gates, func() { cancel(context.Cause(gates)) })
+	return ctx, func() { stop(); cancel(nil) }
+}
+
 // treeTests are the packages that test the tree itself (its docs and its tests), run by
 // the gate when a head changes a .md or a _test.go file; one the clone lacks is not run.
 var treeTests = []string{"internal/docs", "internal/ci"}
@@ -224,6 +299,9 @@ func (l *lander) treeGateBase(ctx context.Context, dir, baseSha string) (why str
 		return f.said(), false
 	}
 	why = l.treeGate(ctx, dir, true)
+	if gateAbandoned(why) {
+		return why, false // the pass's fact, not the base's failure: not cached, not counted
+	}
 	if why == "" || slices.Contains(l.offRules(ctx), sprint.RuleBaseGate) {
 		l.baseGateCache[baseSha] = why
 		delete(l.baseGateFails, baseSha)
@@ -305,18 +383,23 @@ func treePackages(dir string) []string {
 // member that grants its Go lane, asked in the ring's order from the slot the batch's
 // stream hashes to (benchRing, landring.go), as one bench run (benchGate); a bench that
 // cannot be reached runs it here instead, and never blames the card. Otherwise, and for a
-// land command on its own, it runs here (goRun). The ledgers' update runs stay here.
+// land command on its own, it runs here (goRun). The ledgers' update runs stay here. A gate
+// abandoned on every bench it was given (the bound, the budget, or the pass's gates
+// cancelled by LandDeadline; gateContext, gateOn) is not run here: the abandoned line is
+// returned (gateAbandoned), and so is a run here that the pass's gates cancelled.
 func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
 		return ""
 	}
+	ctx, done := l.gateContext(ctx)
+	defer done()
 	if l.a != nil && l.a.gateRan != nil {
 		l.a.gateRan(dir, tests)
 	}
 	runs := gateRuns(tests, treePackages(dir))
 	hosts, inLoop := l.gateBenches(ctx)
 	if len(hosts) > 0 {
-		if why, ran := l.benchGate(ctx, hosts, dir, runs, tests); ran {
+		if why, ran := l.benchGate(ctx, hosts, dir, runs, tests); ran || gateAbandoned(why) {
 			return why
 		}
 	}
@@ -329,6 +412,11 @@ func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 	for _, run := range runs {
 		l.stage("gate", strings.Join(run, " "))
 		if out, err := l.goRun(ctx, dir, run); err != nil {
+			if ctx.Err() != nil {
+				why := abandonedLine("here", l.clock().Sub(start))
+				l.copySaid(why)
+				return why
+			}
 			return gateWhy(run, err, out)
 		}
 	}
@@ -370,10 +458,15 @@ func (l *lander) benchGate(ctx context.Context, hosts []string, dir string, runs
 }
 
 // ringGate asks the ring for a lane and runs the gate there, stepping to the next slot
-// when a bench's stage is refused (benchGate).
+// when a bench's stage is refused (benchGate), and to the next slot too when a bench's gate
+// is abandoned at the bound (gateOn): the batch gates again on the next bench of the ring,
+// and when the ring runs out the abandoned line is the gate's outcome, said and not run
+// here. The wait for a lane carries the same bound (bounded): past it, or with the pass's
+// gates cancelled, the gate is abandoned for this pass and the lander's place given back.
 func (l *lander) ringGate(ctx context.Context, hosts []string, dir string, runs [][]string, tests bool, st *bench.MirrorStage) (string, bool) {
 	skips := l.stageSkips()
 	tried, said := map[string]bool{}, map[string]bool{}
+	abandoned := ""
 	for {
 		ring, notes := skips.Ring(benchRing(l.gateKey, hosts))
 		for _, n := range notes {
@@ -389,17 +482,33 @@ func (l *lander) ringGate(ctx context.Context, hosts []string, dir string, runs 
 			}
 		}
 		if len(live) == 0 {
-			return "", false
+			return abandoned, false
 		}
-		host, err := l.takeGateLane(ctx, live)
+		start := l.clock()
+		lctx, unbound := l.bounded(ctx)
+		host, err := l.takeGateLane(lctx, live)
+		unbound()
 		if err != nil {
-			return "", false
+			if lctx.Err() == nil {
+				return "", false
+			}
+			why := abandonedLine(live[0], l.clock().Sub(start)) + " waiting on its Go lane"
+			l.copySaid(why)
+			return why, false
 		}
 		tried[host] = true
 		why, ran, refused := l.gateOn(ctx, host, dir, runs, tests, st)
 		if refused != nil {
 			skips.Fail(host, refused.Error())
 			continue
+		}
+		if !ran && gateAbandoned(why) {
+			l.copySaid(why)
+			abandoned = why
+			if ctx.Err() != nil {
+				return why, false // the pass's gates are cancelled: no next bench
+			}
+			continue // the next bench of the ring
 		}
 		if ran {
 			l.gateRing, l.gateSlot = len(hosts), ringSlot(l.gateKey, len(hosts))
@@ -409,17 +518,28 @@ func (l *lander) ringGate(ctx context.Context, hosts []string, dir string, runs 
 }
 
 // gateOn runs the gate on host, whose Go lane the lander holds and gives back: the finding
-// ("" green) and ran, or the stage's refusal when the tree never reached the bench.
+// ("" green) and ran, or the stage's refusal when the tree never reached the bench. The run
+// is bounded by the gate bound on top of the budget (bounded): a run that did not answer
+// before its context ended (the bound, the budget, or the pass's gates cancelled) is
+// abandoned on this bench, the abandoned line returned with ran false, the bench and the
+// wall on the batch's line; a bench that did not answer with the context still live is
+// nobody's finding, as before, and the caller runs the gate here.
 func (l *lander) gateOn(ctx context.Context, host, dir string, runs [][]string, tests bool, st *bench.MirrorStage) (why string, ran bool, refused *bench.StageError) {
 	defer l.giveGateLane(host)
 	l.stage("gate", "bench "+host+" held by "+l.laneWho()+" ("+l.gateWhose()+"): "+strings.Join(runs[0], " "))
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(len(runs))*landGoBudget)
 	defer cancel()
+	ctx, unbound := l.bounded(ctx)
+	defer unbound()
 	start := l.clock()
 	out, code, err := l.runOnBench(ctx, host, dir, runs, tests, st)
 	wall := l.clock().Sub(start)
 	if errors.As(err, &refused) {
 		return "", false, refused
+	}
+	if (err != nil || code == bench.NoAnswer) && ctx.Err() != nil {
+		l.ranOnBench(host, wall)
+		return abandonedLine(host, wall), false, nil
 	}
 	if err != nil || code == bench.NoAnswer {
 		return "", false, nil
@@ -730,6 +850,9 @@ func (l *lander) gateCard(ctx context.Context, dir string, c landCard, before st
 	if why == "" {
 		return "", ""
 	}
+	if gateAbandoned(why) {
+		return "", why // the pass's fact, not the head's: the batch is refused, the card not blamed
+	}
 	if _, err := l.git(ctx, dir, "reset", "-q", "--hard", before); err != nil {
 		return "", "the batch branch could not be reset after " + c.id + " failed the tree gate: " + firstLine("", err)
 	}
@@ -742,11 +865,18 @@ func (l *lander) gateCard(ctx context.Context, dir string, c landCard, before st
 // The first green is the cure: its index in cards, the batch branch left at its merge, and its
 // landing note naming the fix; -1 when no head cures the base, the branch at the base again.
 // A head found no cure on this base is not tried on it again. env is a failure that is not a
-// card's.
+// card's: a base gate abandoned (gateAbandoned) is one, and so is a cure's gate abandoned,
+// which ends the search at once with the abandoned line.
 func (l *lander) cureBase(ctx context.Context, dir, stream string, cards []landCard, baseSha, why string) (cured int, env string) {
+	if gateAbandoned(why) {
+		return -1, why
+	}
 	if l.cureTried == nil {
 		l.cureTried = map[string]bool{}
 	}
+	ctx, stopCure := context.WithCancelCause(ctx)
+	defer stopCure(nil)
+	abandoned := ""
 	tried := func(h sprint.CureHead) string { return baseSha + " " + h.ID + "@" + h.Head }
 	heads := make([]sprint.CureHead, len(cards))
 	at := map[string]int{}
@@ -768,12 +898,22 @@ func (l *lander) cureBase(ctx context.Context, dir, stream string, cards []landC
 			notes[h.ID] = note
 			return card, env
 		},
-		Gate:  func(ctx context.Context, dir string) string { return l.treeGate(ctx, dir, true) },
+		Gate: func(ctx context.Context, dir string) string {
+			why := l.treeGate(ctx, dir, true)
+			if gateAbandoned(why) && abandoned == "" {
+				abandoned = why
+				stopCure(errGateBound) // the heads after this one are not gated: the search ends
+			}
+			return why
+		},
 		Tried: func(h sprint.CureHead) bool { return l.cureTried[tried(h)] },
 	})
 	l.conflictKind, l.conflictPaths = "", nil // a try's conflict is no card's stop
 	for _, t := range cure.Tried {
 		l.cureTried[tried(t.CureHead)] = true
+	}
+	if abandoned != "" {
+		return -1, abandoned
 	}
 	if err != nil {
 		return -1, "the search for a fix of the red base " + shortSha(baseSha) + " failed: " + oneline.Err(err)

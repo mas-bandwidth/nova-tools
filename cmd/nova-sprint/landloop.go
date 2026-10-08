@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -27,9 +28,15 @@ import (
 const LandEvery = 2 * time.Second
 
 // LandDeadline is how long a landing may run before the loop raises one judgment
-// naming the stage it is in. The landing is not stopped. A hand land of two cards
+// naming the stage it is in, and cancels the landing's gates (landFlight.gates): every
+// gate still running or waiting on a lane is abandoned for this pass and its batch waits
+// for the next, the fact on its line and no card blamed (landgo.go, gateAbandonedMark),
+// so the judgment is also an action. What landed stays landed. A hand land of two cards
 // finished in under eight minutes; the gate's own budget stays landGoBudget.
 const LandDeadline = 10 * time.Minute
+
+// errLandDeadline is the cause a flight's gate context ends with at LandDeadline.
+var errLandDeadline = errors.New("the landing ran past LandDeadline")
 
 // landLaneWho is the lander's name on a bench's Go lane, and the prefix of every holder it
 // records there: a stream's gate holds as lander/<stream> (fork, laneWho), the base
@@ -102,11 +109,12 @@ func (a *app) landOnce(ctx context.Context, addr string, more []string, stdout i
 		a.landLazy, a.landCtx = true, ctx
 		code = a.cmdLand(append([]string{"--redis", addr, "--actor", coordinator}, more...), &out, &errb)
 		a.landLazy, a.landCtx = false, nil
-		// what landed (stdout's LAND lines, but its summary), and everything land said
-		// was wrong (stderr: a refused or failed batch, a refusal before any batch, the
-		// remedy)
+		// what landed (stdout's LAND lines, but its summary, and each landed batch's NOTE
+		// lines: its land time, the gate stages it went through, a gate abandoned on a bench
+		// before it landed on the next), and everything land said was wrong (stderr: a
+		// refused or failed batch, a refusal before any batch, the remedy)
 		for _, line := range strings.Split(out.String(), "\n") {
-			if strings.HasPrefix(line, "LAND ") && !strings.HasPrefix(line, "LAND DONE") {
+			if strings.HasPrefix(line, "LAND ") && !strings.HasPrefix(line, "LAND DONE") || strings.HasPrefix(line, "NOTE ") {
 				lines = append(lines, line)
 			}
 		}
@@ -189,6 +197,25 @@ type landFlight struct {
 	done, judged, idle bool
 	out                []byte
 	code               int
+	// gates is the context the landing's gates run under (lander.gateContext), ended by
+	// stopGates when the landing runs past LandDeadline (raiseIfStuck) and when it is done;
+	// nil for a flight made without them (a test's).
+	gates     context.Context
+	stopGates context.CancelCauseFunc
+}
+
+// gateCtx is the in-flight landing's gate context, nil when no landing is in flight or
+// the flight has none.
+func (b *landBeat) gateCtx() context.Context {
+	b.mu.Lock()
+	f := b.flight
+	b.mu.Unlock()
+	if f == nil {
+		return nil
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.gates
 }
 
 // landBeat is the loop's bench seam and the landing in flight.
@@ -309,6 +336,7 @@ func (a *app) landCycle(ctx context.Context, addr string, stdout io.Writer, flig
 		return nil
 	}
 	f := &landFlight{queued: n, step: "land", proc: "nova-sprint land", stream: stream, coord: coord, began: a.now()}
+	f.gates, f.stopGates = context.WithCancelCause(ctx)
 	b := a.landState()
 	b.mu.Lock()
 	b.flight = f
@@ -328,7 +356,11 @@ func (a *app) runFlight(ctx context.Context, addr string, f *landFlight, more []
 	a.landLazy, a.landCtx = false, nil
 	f.mu.Lock()
 	f.done, f.code, f.idle, f.out = true, code, idle, append([]byte(nil), buf.Bytes()...)
+	stop := f.stopGates
 	f.mu.Unlock()
+	if stop != nil {
+		stop(nil) // the landing is over: its gate context is released
+	}
 }
 
 // clearFlight forgets f once the loop has reported it.
@@ -380,8 +412,9 @@ func (a *app) writeCycle(w io.Writer, line string) {
 }
 
 // raiseIfStuck writes one judgment when a landing with cards queued has run past
-// LandDeadline. The line is tried, not waited on, so the beat is never stuck
-// behind the landing. A write that does not land is tried again next cycle.
+// LandDeadline, and with it cancels the landing's gates (gates): the judgment is also an
+// action. The line is tried, not waited on, so the beat is never stuck behind the
+// landing. A write that does not land is tried again next cycle, the gates with it.
 func (a *app) raiseIfStuck(ctx context.Context, addr string, f *landFlight) {
 	f.mu.Lock()
 	if f.judged || f.queued == 0 || a.now().Sub(f.began) < LandDeadline {
@@ -423,7 +456,11 @@ func (a *app) raiseIfStuck(ctx context.Context, addr string, f *landFlight) {
 	}
 	f.mu.Lock()
 	f.judged = true
+	stop := f.stopGates
 	f.mu.Unlock()
+	if stop != nil {
+		stop(errLandDeadline) // the judgment is also an action: every gate of the pass is abandoned
+	}
 }
 
 // landAfter is the cleanup and the promote step, never during a landing.
