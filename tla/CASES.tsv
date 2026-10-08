@@ -521,3 +521,8 @@ MCOneShotPresent.cfg	MCOneShotPresent.tla	pass	-	ignore-terminal	oneshotpresent	
 MCOneShotPresentBrokenSupersede.cfg	MCOneShotPresent.tla	invariant	UnacceptedRequestOwed	ignore-terminal	oneshotpresent	required	-
 MCOneShotPresentBrokenRedeliver.cfg	MCOneShotPresent.tla	invariant	AcceptedOnce	ignore-terminal	oneshotpresent	required	-
 MCOneShotPresentWitness.cfg	MCOneShotPresent.tla	invariant	ReachAcceptedThenRestartWitness	ignore-terminal	oneshotpresent	required	-
+MCFriendFinishNotice.cfg	MCFriendFinishNotice.tla	pass	-	ignore-terminal	friendfinishnotice	required	-
+MCFriendFinishNoticeBrokenClear.cfg	MCFriendFinishNotice.tla	invariant	NoLostCompletion	ignore-terminal	friendfinishnotice	required	-
+MCFriendFinishNoticeBrokenToken.cfg	MCFriendFinishNotice.tla	invariant	AtMostOneBusEntry	ignore-terminal	friendfinishnotice	required	-
+MCFriendFinishNoticeBrokenCleanup.cfg	MCFriendFinishNotice.tla	invariant	CleanupAfterDurableClear	ignore-terminal	friendfinishnotice	required	-
+MCFriendFinishNoticeRetry.cfg	MCFriendFinishNotice.tla	pass	-	ignore-terminal	friendfinishnotice	required	-

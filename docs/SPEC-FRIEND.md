@@ -2298,6 +2298,17 @@ nothing about a friend is in the code. Every one is off while `Daemon.Rules` is 
 | `go` and `gofmt` that refuse, first on every lane child's PATH, GOROOT pointing nowhere: a directory of symlinks to this binary, which run by those names answers the `refuse-go` verb (exit 2, with the way to a bench); no script | `row_refuse_go=1` / `--refuse-go` | `GoShims`, `GoShimName`, `ShimExec` (outside `Wall.Exec`, so `env` runs inside the wall), `GoRefusal` | `.../go_on_the_lane_machine_is_refused_by_a_shim_on_the_lane's_PATH`, `TestRefuseGoRefusesWithTheWayToABench` |
 | a bus note to the coordinator at each finish: `<friend> card <job>: <verdict>`, with the cost and wall | | `FinishNote`, `loop.finishNote` | `.../a_bus_note_at_each_finish`, `TestACardOverTheTokenCapIsHeldAndItsCostPublished` |
 
+The finish note's exact bytes and bus token are journaled under the daemon's state directory before its completed
+job loses durable `Started`. A failed journal write leaves that claim owed. A failed bus send or lost response is
+retried from the journal after restart; a successful receipt is retained until the lane state is durably clear.
+Each daemon step tries at most eight saved notices with one shared 250 ms bus budget and rotates the selected
+filename, so notification debt cannot hold a beat or lane step behind a series of slow bus calls.
+The bus replays a token for 24 hours and retains its record for seven days. Once a possibly committed send passes
+the 24-hour replay window, the notice remains owed for reconciliation rather than being sent again after record
+cleanup. Thus automatic delivery is bounded by the replay window; no unbounded exactly-once or eventual-delivery
+claim is made. `tla/FriendFinishNotice.tla` models the durable order, write failures, crash/restart, token replay,
+receipt, and expiry. Its retry case proves progress only while the store answers inside the replay window.
+
 A rate limit still backs off by default (rate-limit-backs-off-not-down.w1, above): the runner held a friend down on
 a 429 as on a 402, and that finding stands unless the row says `pause_on=any`. The pause marker outlives the daemon:
 a daemon that starts and finds `PAUSED` holds its lanes at once, and one that finds it cleared lifts the hold it

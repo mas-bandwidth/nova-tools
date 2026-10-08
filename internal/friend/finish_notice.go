@@ -24,6 +24,13 @@ import (
 // then makes a lost send response safe to retry after a daemon restart.
 const FinishNoticesDir = "finish-notices"
 
+// One daemon step spends at most this shared bus budget and tries at most
+// this many notice files. The rotating cursor keeps other notes reachable.
+const (
+	FinishNoticePassBudget = 250 * time.Millisecond
+	FinishNoticePassLimit  = 8
+)
+
 type finishNotice struct {
 	Job         string      `json:"job"`
 	Message     bus.Message `json:"message"`
@@ -131,8 +138,9 @@ func (l *loop) finishNote(card Card, wall time.Duration, now time.Time) error {
 	return nil
 }
 
-// sendFinishNotes retries only saved messages. A successful send is marked
-// before cleanup; failed sends and failed receipt writes keep the same token.
+// sendFinishNotes retries a bounded batch under one bus budget per daemon
+// step. Failed sends keep the same token. The cursor prevents a slow first
+// note from starving later notes; healthy bursts drain several per step.
 func (l *loop) sendFinishNotes(now time.Time) {
 	dir := l.d.finishNoticesDir()
 	entries, err := os.ReadDir(dir)
@@ -144,75 +152,99 @@ func (l *loop) sendFinishNotes(now time.Time) {
 		return
 	}
 	slices.SortFunc(entries, func(a, b os.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
+	files := entries[:0]
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-			continue
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
+			files = append(files, entry)
 		}
-		path := filepath.Join(dir, entry.Name())
-		var note finishNotice
-		if _, err := read(path, &note); err != nil {
-			l.d.Record(now.UTC().Format(time.RFC3339) + " finish notes: " + oneLine(err.Error(), 300))
-			continue
+	}
+	if len(files) == 0 {
+		return
+	}
+	i := 0
+	for i < len(files) && files[i].Name() <= l.finishCursor {
+		i++
+	}
+	if i == len(files) {
+		i = 0
+	}
+	ctx, cancel := context.WithTimeout(l.ctx, FinishNoticePassBudget)
+	defer cancel()
+	for n := 0; n < len(files) && n < FinishNoticePassLimit; n++ {
+		entry := files[(i+n)%len(files)]
+		l.finishCursor = entry.Name()
+		l.sendFinishNotice(ctx, filepath.Join(dir, entry.Name()), entry.Name(), now)
+		if ctx.Err() != nil {
+			return
 		}
-		if note.Job+".json" != entry.Name() || !validJob(note.Job) || note.Message.Token != finishNoticeToken(l.d.Friend, note.Job) {
-			l.d.Record(now.UTC().Format(time.RFC3339) + " finish notes: invalid saved notice " + entry.Name())
-			continue
+	}
+}
+
+func (l *loop) sendFinishNotice(ctx context.Context, path, name string, now time.Time) {
+	var note finishNotice
+	if _, err := read(path, &note); err != nil {
+		l.d.Record(now.UTC().Format(time.RFC3339) + " finish notes: " + oneLine(err.Error(), 300))
+		return
+	}
+	if note.Job+".json" != name || !validJob(note.Job) || note.Message.Token != finishNoticeToken(l.d.Friend, note.Job) {
+		l.d.Record(now.UTC().Format(time.RFC3339) + " finish notes: invalid saved notice " + name)
+		return
+	}
+	if !note.Sent {
+		if l.b == nil {
+			return
 		}
-		if !note.Sent {
-			if l.b == nil {
-				continue
+		if !note.AttemptedAt.IsZero() && !now.Before(note.AttemptedAt.Add(bus.DefaultTokenLife)) {
+			l.d.Record(now.UTC().Format(time.RFC3339) + " finish notes: " + note.Job + " remains owed; the idempotent send window elapsed, reconcile its token before another attempt")
+			return
+		}
+		if note.AttemptedAt.IsZero() {
+			// A failed read-only check cannot have sent anything. Keep the
+			// retry window open through a long store or roster outage.
+			if _, err := l.b.Check(ctx, note.Message); err != nil {
+				l.d.Record(now.UTC().Format(time.RFC3339) + " finish notes: " + note.Job + " remains pending: " + oneLine(err.Error(), 300))
+				return
 			}
-			if !note.AttemptedAt.IsZero() && !now.Before(note.AttemptedAt.Add(bus.DefaultTokenLife)) {
-				l.d.Record(now.UTC().Format(time.RFC3339) + " finish notes: " + note.Job + " remains owed; the idempotent send window elapsed, reconcile its token before another attempt")
-				continue
+			if ctx.Err() != nil {
+				return
 			}
-			if note.AttemptedAt.IsZero() {
-				// A failed read-only check cannot have sent anything. Keep the
-				// retry window open through a long store or roster outage.
-				checkCtx, checkCancel := context.WithTimeout(l.ctx, 10*time.Second)
-				_, checkErr := l.b.Check(checkCtx, note.Message)
-				checkCancel()
-				if checkErr != nil {
-					l.d.Record(now.UTC().Format(time.RFC3339) + " finish notes: " + note.Job + " remains pending: " + oneLine(checkErr.Error(), 300))
-					continue
-				}
-				note.AttemptedAt = now
-				if err := write(path, note); err != nil {
-					l.d.Record(now.UTC().Format(time.RFC3339) + " finish notes: " + note.Job + " remains owed; first-attempt marker cannot be written: " + oneLine(err.Error(), 300))
-					continue
-				}
-			}
-			ctx, cancel := context.WithTimeout(l.ctx, 10*time.Second)
-			got, sendErr := l.b.Send(ctx, note.Message)
-			cancel()
-			if sendErr != nil {
-				l.d.Record(now.UTC().Format(time.RFC3339) + " finish notes: " + note.Job + " remains pending: " + oneLine(sendErr.Error(), 300))
-				continue
-			}
-			note.Sent, note.ID = true, got.ID
+			note.AttemptedAt = now
 			if err := write(path, note); err != nil {
-				l.d.Record(now.UTC().Format(time.RFC3339) + " finish notes: " + note.Job + " sent but receipt remains pending: " + oneLine(err.Error(), 300))
-				continue
-			}
-			l.d.Record(now.UTC().Format(time.RFC3339) + " finish notes: " + note.Job + " sent id=" + got.ID)
-		}
-		// Retain the sent marker while a crashed daemon's Started entry might
-		// still be on disk. It prevents a restart from creating another send.
-		if l.lanes != nil {
-			if _, started := l.lanes.state.Started[note.Job]; started {
-				continue
+				l.d.Record(now.UTC().Format(time.RFC3339) + " finish notes: " + note.Job + " remains owed; first-attempt marker cannot be written: " + oneLine(err.Error(), 300))
+				return
 			}
 		}
-		state, err := ReadLanes(filepath.Dir(dir))
+		if ctx.Err() != nil {
+			return
+		}
+		got, err := l.b.Send(ctx, note.Message)
 		if err != nil {
-			l.d.Record(now.UTC().Format(time.RFC3339) + " finish notes: " + note.Job + " receipt held; lane state cannot be read: " + oneLine(err.Error(), 300))
-			continue
+			l.d.Record(now.UTC().Format(time.RFC3339) + " finish notes: " + note.Job + " remains pending: " + oneLine(err.Error(), 300))
+			return
 		}
-		if _, started := state.Started[note.Job]; started {
-			continue
+		note.Sent, note.ID = true, got.ID
+		if err := write(path, note); err != nil {
+			l.d.Record(now.UTC().Format(time.RFC3339) + " finish notes: " + note.Job + " sent but receipt remains pending: " + oneLine(err.Error(), 300))
+			return
 		}
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			l.d.Record(now.UTC().Format(time.RFC3339) + " finish notes: " + note.Job + " receipt cleanup failed: " + oneLine(err.Error(), 300))
+		l.d.Record(now.UTC().Format(time.RFC3339) + " finish notes: " + note.Job + " sent id=" + got.ID)
+	}
+	// Retain the sent marker while a crashed daemon's Started entry might
+	// still be on disk. It prevents a restart from creating another send.
+	if l.lanes != nil {
+		if _, started := l.lanes.state.Started[note.Job]; started {
+			return
 		}
+	}
+	state, err := ReadLanes(filepath.Dir(filepath.Dir(path)))
+	if err != nil {
+		l.d.Record(now.UTC().Format(time.RFC3339) + " finish notes: " + note.Job + " receipt held; lane state cannot be read: " + oneLine(err.Error(), 300))
+		return
+	}
+	if _, started := state.Started[note.Job]; started {
+		return
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		l.d.Record(now.UTC().Format(time.RFC3339) + " finish notes: " + note.Job + " receipt cleanup failed: " + oneLine(err.Error(), 300))
 	}
 }

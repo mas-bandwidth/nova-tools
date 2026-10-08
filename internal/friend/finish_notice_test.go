@@ -3,16 +3,72 @@ package friend
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
 	"github.com/stretchr/testify/require"
 )
+
+type firstSlowMembers struct {
+	bus.Store
+	calls int
+}
+
+func (s *firstSlowMembers) Members(ctx context.Context) ([]string, []string, time.Time, error) {
+	s.calls++
+	if s.calls == 1 {
+		<-ctx.Done()
+		return nil, nil, time.Time{}, ctx.Err()
+	}
+	return s.Store.Members(ctx)
+}
+
+func TestFinishNotePassBoundsSlowStoreAndRotatesDebt(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		now := time.Now()
+		dir, stateDir := t.TempDir(), t.TempDir()
+		fake := bustest.NewFake(now, "coordinator", "worker")
+		fake.Friends = []string{"coordinator", "worker"}
+		store := &firstSlowMembers{Store: fake}
+		d := &Daemon{Friend: "worker", Dir: dir, StateDir: stateDir, Record: func(string) {}}
+		started := LaneState{Started: map[string]Started{}}
+		for i := range 16 {
+			job := fmt.Sprintf("c%02d~15", i)
+			started.Started[job] = Started{}
+			note := finishNotice{Job: job, Message: bus.Message{From: "worker", To: []string{"coordinator"}, Subject: job + " completed", Body: job + " completed", Token: finishNoticeToken("worker", job)}}
+			require.NoError(t, write(finishNoticePath(d, job), note))
+		}
+		require.NoError(t, WriteLanes(stateDir, started))
+		l := &loop{d: d, ctx: context.Background(), b: &bus.Bus{Store: store}, lanes: &laneSet{state: started}}
+		before := time.Now()
+		l.sendFinishNotes(now)
+		require.LessOrEqual(t, time.Since(before), FinishNoticePassBudget)
+		require.Equal(t, 0, fake.Len(bus.StreamOf("coordinator")))
+		before = time.Now()
+		l.sendFinishNotes(now.Add(time.Second))
+		require.LessOrEqual(t, time.Since(before), FinishNoticePassBudget)
+		require.Equal(t, FinishNoticePassLimit, fake.Len(bus.StreamOf("coordinator")), "the next debt remains reachable after a slow first debt")
+		var first, second finishNotice
+		_, err := read(finishNoticePath(d, "c00~15"), &first)
+		require.NoError(t, err)
+		_, err = read(finishNoticePath(d, "c01~15"), &second)
+		require.NoError(t, err)
+		require.False(t, first.Sent)
+		require.True(t, second.Sent)
+		before = time.Now()
+		l.sendFinishNotes(now.Add(2 * time.Second))
+		require.LessOrEqual(t, time.Since(before), FinishNoticePassBudget)
+		require.Equal(t, 16, fake.Len(bus.StreamOf("coordinator")), "healthy debt drains in two bounded passes")
+	})
+}
 
 func TestFinishNoteRetrySurvivesLostResponseAndRestart(t *testing.T) {
 	t.Parallel()

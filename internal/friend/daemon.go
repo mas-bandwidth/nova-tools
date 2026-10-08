@@ -478,6 +478,7 @@ type loop struct {
 	messageSaid   string
 	messageTries  int
 	messageSaidAt time.Time
+	finishCursor  string          // next pending finish note follows this filename, wrapping at the end
 	controlWG     sync.WaitGroup  // cardless adapters finish native cleanup before Run returns
 	controlRun    uint64          // unique native receipt for each session open or message turn
 	saidRefusal   string          // the card runner's refusal last recorded, "" when it runs
