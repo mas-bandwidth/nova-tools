@@ -1452,7 +1452,7 @@ usage:
   nova-friend ping --as <coordinator> (--to <friend> | --wake --to-friends [--every <d>] [--within <d>] [--never-wake <f,...>] [--server <addr>]) [--nonce <n>] [--since <RFC3339>] [--redis <addr>] [--dry-run]
   nova-friend ping-install --as <coordinator> --every <d> [--within <d>] [--never-wake <f,...>] [--server <addr>] [--redis <addr>] [--launchd-log <file>] [--dry-run]
   nova-friend ping-uninstall --as <coordinator> [--dry-run]
-  nova-friend pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]
+  nova-friend pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--session <id>] [--state-dir <d>] [--redis <addr>] [--dry-run]
   nova-friend wait-pong --from <friend> --nonce <n> [--timeout <d>] [--redis <addr>]
   nova-friend watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]
   nova-friend status --as <me> --dir <d> [--state-dir <d>]
@@ -1654,7 +1654,7 @@ effect: delivery: sends beyond this machine: one PING on the friend's stream, as
 ```
 usage: nova-friend pong [flags]
 from `nova-friend help`:
-  nova-friend pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]
+  nova-friend pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--session <id>] [--state-dir <d>] [--redis <addr>] [--dry-run]
   nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
 flags:
   --as <string>  your name, the friend the daemon in --dir runs as (required)
@@ -1663,6 +1663,7 @@ flags:
   --nonce <string>  the nonce the PING carried (required)
   --queue <int>  tasks queued, from your own task list
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
+  --session <string>  the id of the conversation answering this nonce (default the harness runtime session id); never the daemon target assumed from its plist
   --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
   --to <string>  the coordinator (default: the seat the last ping named)
   --width <int>  your width, from the nova-config friend row

@@ -2726,7 +2726,8 @@ harness's existing `--session` form (conversation id, tmux session name, or the
 monitor's wake file for a mailbox harness). They are explicit before proof; a
 harness that cannot report a target remains unproven.
 
-`tla/Delivery.tla` models self-request, fresh nonce, answering conversation,
+`tla/DeliverySession.tla` (MCDeliverySession: two conversations, three steps) models
+self-request, fresh nonce, answering conversation,
 persistent target and ordinary delivery. `DeliveryOnlyToProvenSession` pins every
 delivery to the conversation that supplied its receipt; `SwitchAfterRoundTrip`
 pins target changes to the new conversation's answer. The wrong-session mutation
