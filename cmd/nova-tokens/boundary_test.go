@@ -29,7 +29,8 @@ import (
 //
 // These tests hold the whole binary to it: every package the binary reaches and every
 // directory the tool owns (a publisher cannot hide in a subpackage), and every verb, over a
-// checkout that has a remote, with a fake git on PATH that must never run.
+// checkout that has a remote. The verbs run in process with a fake Redis bus; the local Git
+// fixture proves the test can detect changes to a checkout or remote without contacting one.
 
 // binaryPackages returns every first-party package reachable from cmd/nova-tokens.
 //
@@ -259,13 +260,25 @@ func TestNamesGitKnowsAProgramNameFromASubstring(t *testing.T) {
 // Rule 16 and demanded test 16's behavioural half, widened from one verb to every verb and
 // from a bare checkout to one with a REMOTE.
 //
-// The fixture is a real git repository holding the bus lane, with `origin` set to a bare
-// repository beside it -- everything a push would need and nothing it may use. A fake git
-// on PATH records any invocation. Then every verb runs, and afterwards: the fake was never
-// called, the bare repository is byte-identical, and the checkout's own .git is too.
+// The local checkout has `origin` set to a bare repository beside it -- everything a push
+// would need and nothing it may use. Every verb runs with an injected fake Redis bus. The
+// snapshots then prove both the bare repository and checkout metadata stayed unchanged.
 func TestEveryVerbRunsWithRedisBusFake(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
+	git, err := exec.LookPath("git")
+	require.NoError(t, err, "git is required for the isolated boundary fixture")
+	checkout := mkdir(t, filepath.Join(dir, "checkout"))
+	remote := filepath.Join(dir, "remote.git")
+	gitRun(t, git, dir, "init", "--bare", remote)
+	gitRun(t, git, checkout, "init")
+	write(t, filepath.Join(checkout, "README"), "fixture\n")
+	gitRun(t, git, checkout, "add", "README")
+	gitRun(t, git, checkout, "commit", "-m", "fixture")
+	gitRun(t, git, checkout, "remote", "add", "origin", remote)
+	gitRun(t, git, checkout, "push", "-u", "origin", "HEAD")
+	beforeRemote := readTree(t, remote)
+	beforeGit := readTree(t, filepath.Join(checkout, ".git"))
 	repos := reposFile(t, dir)
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
@@ -288,6 +301,10 @@ func TestEveryVerbRunsWithRedisBusFake(t *testing.T) {
 		r := invoke(t, args...)
 		assert.LessOrEqual(t, r.exit, 1, "%v exits %d; the fixture is meant to be a run the tool can complete\n%s", args, r.exit, r.all())
 	}
+	afterRemote := readTree(t, remote)
+	afterGit := readTree(t, filepath.Join(checkout, ".git"))
+	assert.Equal(t, beforeRemote.digest, afterRemote.digest, "the bare remote changed: %s", diffTrees(beforeRemote, afterRemote))
+	assert.Equal(t, beforeGit.digest, afterGit.digest, "the checkout metadata changed: %s", diffTrees(beforeGit, afterGit))
 }
 
 // gitRunErr runs git the way the fixture does -- no global or system config, a fixed
