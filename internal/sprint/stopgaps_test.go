@@ -78,7 +78,8 @@ func parseStopgapTable(md string) ([]Stopgap, []string) {
 // checkStopgaps refuses every row whose verb or proof is missing: no name,
 // card, verb or test; a test that is not a test's name; a Landed that is not a
 // commit; a landed row whose test is not in the tree; a real run on a row not
-// landed; a name twice; and a stopgap of the card's missing.
+// landed; a landed row without a real run; a name twice; and a stopgap of
+// the card's missing.
 func checkStopgaps(rows []Stopgap, testInTree func(string) bool) []string {
 	var refusals []string
 	seen := map[string]bool{}
@@ -111,6 +112,9 @@ func checkStopgaps(rows []Stopgap, testInTree func(string) bool) []string {
 		}
 		if s.Run != "" && s.Landed == "" {
 			refusals = append(refusals, name+": a real run of a verb that has not landed")
+		}
+		if s.Landed != "" && s.Run == "" {
+			refusals = append(refusals, name+": landed without a real run")
 		}
 	}
 	for _, n := range stopgapNames {
@@ -187,6 +191,7 @@ func TestTheStopgapTableRefusesARowWithNoVerbOrProof(t *testing.T) {
 		{"not a test", func(s *Stopgap) { s.Test = "it works" }, "runner.zsh: it works is not a test's name"},
 		{"landed test not in tree", func(s *Stopgap) { s.Landed, s.Test = "abc1234", "TestGone" }, "runner.zsh: landed, and its test TestGone is not in the tree"},
 		{"landed not a commit", func(s *Stopgap) { s.Landed = "yes" }, "runner.zsh: Landed yes is neither a commit nor no"},
+		{"landed without a real run", func(s *Stopgap) { s.Landed = "abc1234" }, "runner.zsh: landed without a real run"},
 		{"run of an unlanded verb", func(s *Stopgap) { s.Run = "studio 2026-10-06" }, "runner.zsh: a real run of a verb that has not landed"},
 	} {
 		rows := whole()
@@ -270,9 +275,13 @@ func TestTheSeatCheckPrintsEveryStopgapStillRunning(t *testing.T) {
 	assert.Empty(t, r.Stopgaps)
 	assert.NotContains(t, r.Text(), StopgapToken)
 
-	// Not measured (the server's own check, or a ps that failed): no line.
+	// A failed process scan is an explicit unknown result, never MACHINERY OK.
 	m.Stopgaps = StopgapsM{Err: "ps: exit 1"}
-	assert.Empty(t, JudgeSeatCheck(m, now).Stopgaps)
+	r = JudgeSeatCheck(m, now)
+	assert.Equal(t, 1, r.ExitCode)
+	assert.Contains(t, r.Text(), "ps: exit 1")
+	assert.Contains(t, r.Text(), "MACHINERY stopgaps DOWN")
+	assert.Contains(t, r.Text(), "MACHINERY DOWN")
 }
 
 func TestARetiredStopgapStillRunningIsDownInTheReport(t *testing.T) {

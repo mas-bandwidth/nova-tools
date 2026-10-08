@@ -5843,9 +5843,14 @@ prints, after the `MACHINERY` lines and before the summary, one line per stopgap
 An owed or landed stopgap's line is a note; a retired one (its card landed and a real run of its
 verb recorded) still running is DOWN with `remedy="kill <pid> ..."`, so the check exits 1 until it
 is removed. The summary's `n` counts these lines with the checks'. The server's own check, and a
-process table that cannot be read, print no stopgap line. `--json` carries them as `stopgaps`.
+process table that cannot be read, print no stopgap line. An unreadable process table instead
+prints `MACHINERY stopgaps DOWN why="process scan failed: <error>" remedy="ps -axww -o pid=,args="`
+and exits 1: an unknown scan cannot prove the stopgaps are gone. `--json` carries the
+error in `measures.stopgaps.err`, the DOWN line, and `exit_code: 1`; successful live
+matches appear as `stopgaps`.
 Tests: `TestEveryStopgapNamesItsVerbAndProof` (the table against `sprint.Stopgaps`, row for row,
-refusing a row with no card, verb or test, a landed row whose test is not in the tree, and a real
+refusing a row with no card, verb or test, a landed row whose test is not in the tree, a landed
+row with no real run, and a real
 run of a verb not landed), `TestTheStopgapTableRefusesARowWithNoVerbOrProof`,
 `TestTheSeatCheckPrintsEveryStopgapStillRunning`, `TestSeatCheckPrintsAStopgapStillRunning`.
 

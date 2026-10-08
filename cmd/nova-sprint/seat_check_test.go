@@ -170,3 +170,24 @@ func TestSeatCheckPrintsAStopgapStillRunning(t *testing.T) {
 	ta.a.outside = o
 	assert.NotContains(t, ta.ok("seat check"), sprint.StopgapToken)
 }
+
+func TestSeatCheckReportsFailedStopgapProcessScan(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a --members m1")
+	ta.ok("start")
+	ta.ok("tick")
+	o := mockHealthyOutside()
+	o.processes = func(context.Context) ([]sprint.Proc, error) {
+		return nil, fmt.Errorf("ps unavailable")
+	}
+	ta.a.outside = o
+	code, out, errs := ta.do("seat check")
+	require.Equal(t, 1, code, errs)
+	assert.Contains(t, out, `MACHINERY stopgaps DOWN why="process scan failed: ps unavailable" remedy="ps -axww -o pid=,args="`)
+	assert.Contains(t, out, "MACHINERY DOWN")
+	code, out, errs = ta.do("seat check --json")
+	require.Equal(t, 1, code, errs)
+	assert.Contains(t, out, `"exit_code":1`)
+	assert.Contains(t, out, `"thing":"stopgaps"`)
+}

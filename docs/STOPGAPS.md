@@ -164,7 +164,7 @@ STOPGAP <name> still running pids=<pid,...> state=<owed|landed|retired> card=<ca
 
 An owed or landed stopgap's line is a note: its verb is not yet seen doing the job, so the script still does it. A retired one still running is DOWN, its remedy the `kill`, and the check exits 1 until it is gone. A process is the script when the script is its program, or the first word past an interpreter's flags (`sh`, `bash`, `zsh`, `dash`, `python*`); a shell's `-c` text, or a `grep`, `tail` or editor that names a script, is not it (`sprint.StopgapScript`). The server's own check reads no process table.
 
-The rows are `sprint.Stopgaps` (internal/sprint/seat_check.go). `TestEveryStopgapNamesItsVerbAndProof` reads this table, holds it to `sprint.Stopgaps` row for row, and refuses a row with no card, no verb or no test, a landed row whose test is not in the tree, and a real run on a row not landed.
+The rows are `sprint.Stopgaps` (internal/sprint/seat_check.go). `TestEveryStopgapNamesItsVerbAndProof` reads this table, holds it to `sprint.Stopgaps` row for row, and refuses a row with no card, no verb or no test, a landed row whose test is not in the tree, a landed row without a recorded real run, and a real run on a row not landed. The four currently landed rows still say `owed` below; the class test remains red until those runs are observed and recorded, rather than treating an empty proof as success.
 
 | Stopgap | What it did | Card | Verb | Test | Landed | Real run |
 |---|---|---|---|---|---|---|
