@@ -63,7 +63,7 @@ func init() {
 		{"goal show", "[<name>]", "goal show friend-a", (*app).cmdGoalShow},
 		{"goal drop", "<name>", "goal drop friend-a", (*app).cmdGoalDrop},
 		{"take", "--as <member> [<card>@<gen>...] [--epoch <n>] [--max <n>]", "take --as m1 s1-1.w1@1 --epoch 0", (*app).cmdTake},
-		{"finish", "--as <member> <card>@<gen>... --epoch <n> (--head <commit> | --failed) [--report <text>] [--usage <text>]", "finish --as m1 s1-1.w1@1 --epoch 0 --head 9f3c2e1 --report 'tests green'", (*app).cmdFinish},
+		{"finish", "--as <member> <card>@<gen>... --epoch <n> (--head <commit> | --failed | --harness-fault) [--report <text>] [--usage <text>]", "finish --as m1 s1-1.w1@1 --epoch 0 --head 9f3c2e1 --report 'tests green'", (*app).cmdFinish},
 		{"progress", "--as <worker> <card>[@<gen>]... --epoch <n>", "progress --as m1 s1-1.w1@1 --epoch 0", (*app).cmdProgress},
 		{"ask", "[<id>... | --group <id> [--expect <n>]] [--stream <s>] [--max <n>] [--another] [--answers <note>]", "ask", (*app).cmdAsk},
 		{"queue", "--as <reader|member> | --stream <s>", "queue --as reader-a", (*app).cmdQueue},
@@ -2305,6 +2305,7 @@ func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("finish")
 	as := fs.String("as", "", "the fleet member finishing its cards; several, comma separated, each finishing its own named cards in one step")
 	failed := fs.Bool("failed", false, "the work failed (default: ok)")
+	harnessFault := fs.Bool("harness-fault", false, "a friend's runner ended with no report: return the same attempt for a fresh generation, without a failed finish")
 	head := fs.String("head", "", "the commit the work finished at, the head land merges (default: the card's id, for a run with no git: land refuses a head that is not a commit id)")
 	report := fs.String("report", "", "the worker's report")
 	branch := fs.String("branch", "", "the branch the work is on (its packet names the one to use)")
@@ -2333,6 +2334,19 @@ func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 	}
 	if *as == "" || len(ids) == 0 || len(gens) != len(ids) {
 		return refuse(stderr, "finish", "wants --as <member> and every card as <card>@<gen>, the generation the worker holds")
+	}
+	if *harnessFault {
+		friend, ok := strings.CutPrefix(*as, "friend.")
+		if !ok || friend == "" || len(ids) != 1 || *failed || *head != "" || *decision != "" || *usage != "" || *report == "" {
+			return refuse(stderr, "finish", "--harness-fault wants one card and --as friend.<name> with --report <the runner END>, without --failed, --head, --decision or --usage")
+		}
+		c.orActor(*as)
+		st, err := a.store(*c)
+		if err != nil {
+			return refuse(stderr, "finish", err.Error())
+		}
+		return a.runStep("finish", *c, st, store.FriendReturnStep(sprint.FriendReturnReq{Friend: friend, Who: *as,
+			Cards: []sprint.FriendReturnCard{{ID: ids[0], Gen: gens[ids[0]], Why: *report}}, HarnessFault: true}), stdout, stderr)
 	}
 	c.orActor(*as)
 	st, err := a.store(*c)

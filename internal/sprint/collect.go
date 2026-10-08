@@ -105,6 +105,9 @@ func collectReport(c CollectCard, from, report string) Collected {
 	switch {
 	case verdict == "":
 		r.Left = "outbox/" + c.Job + "/REPORT.md of " + from + " has no Verdict line"
+	case verdict == "HARNESS-FAULT" && strings.Contains(report, "\nRunner-END: "):
+		r.Dead = true
+		r.Report = "harness-fault: no report; " + collectChars(report, CollectReportChars)
 	case verdict == "LAND" && full:
 		r.Head, r.Report = head, "friend "+c.Friend+" LAND: "+collectChars(collectPara(report), CollectReportChars)
 	case verdict == "LAND":

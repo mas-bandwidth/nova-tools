@@ -117,6 +117,9 @@ func OutboxFinishArgv(friend string, c Card, verdict, head, branch, report strin
 	full := fullSha.MatchString(head)
 	var words string
 	switch {
+	case verdict == "HARNESS-FAULT" && strings.Contains(report, "\nRunner-END: "):
+		argv = append(argv, "--harness-fault")
+		words = "harness-fault: no report; " + firstChars(report, ReportChars)
 	case verdict == "LAND" && full:
 		words = "friend " + friend + " LAND: " + oneLine(reportPara(report), ReportChars)
 	case verdict == "LAND":
@@ -129,7 +132,7 @@ func OutboxFinishArgv(friend string, c Card, verdict, head, branch, report strin
 	if full {
 		argv = append(argv, "--head", head)
 	}
-	if branch != "" {
+	if branch != "" && !slices.Contains(argv, "--harness-fault") {
 		argv = append(argv, "--branch", branch)
 	}
 	return append(argv, "--report", words)
@@ -194,7 +197,7 @@ func (l *loop) outboxStep(now time.Time) {
 			running[filepath.Base(ln.card.Outbox)] = true
 		}
 	}
-	if l.deadLanes(outbox, running, at) {
+	if l.deadLanes(outbox, running, now) {
 		if entries, err = os.ReadDir(outbox); err != nil {
 			note("*", "the outbox cannot be read: "+oneLine(err.Error(), 300))
 			return
@@ -392,17 +395,18 @@ func RunnerEnded(log, job string) (end string, dead bool) {
 	return end, dead
 }
 
-// DeadLaneReport is the REPORT.md the daemon writes for a dead lane: Verdict FAIL, and the
-// runner's END line.
+// DeadLaneReport is the REPORT.md the daemon atomically claims for a dead lane. An
+// actual report published first wins NoReplace and keeps its own verdict.
 func DeadLaneReport(friend, job, end string) string {
-	return fmt.Sprintf("Verdict: FAIL\n\nnova-friend of %s: the runner ended job %s with no report, and no run of it is live: %s\n", friend, job, oneLine(end, 600))
+	return fmt.Sprintf("Verdict: HARNESS-FAULT\nRunner-END: %s\n\nnova-friend of %s: the runner ended job %s with no report, and no run of it is live.\n", oneLine(end, 600), friend, job)
 }
 
 // deadLanes writes the REPORT.md of every dead lane on her row (DeadLaneReport) and says
 // whether it wrote one; the outbox pass that follows finishes it. The runner's log is read
 // only when a working card has no report and no lane.
-func (l *loop) deadLanes(outbox string, running map[string]bool, at string) bool {
+func (l *loop) deadLanes(outbox string, running map[string]bool, now time.Time) bool {
 	d := l.d
+	at := now.UTC().Format(time.RFC3339)
 	log, read, wrote := "", false, false
 	for _, h := range d.heldCards {
 		job := h.Job
@@ -428,11 +432,15 @@ func (l *loop) deadLanes(outbox string, running map[string]bool, at string) bool
 			continue
 		}
 		if err := atomicfile.WriteFile(path, []byte(DeadLaneReport(d.Friend, job, end)), 0o644, atomicfile.NoReplace()); err != nil {
+			if errors.Is(err, fs.ErrExist) {
+				continue // a worker report won the atomic publication race
+			}
 			d.Record(fmt.Sprintf("%s outbox: dead lane %s: its REPORT.md cannot be written: %s", at, job, oneLine(err.Error(), 300)))
 			continue
 		}
 		wrote = true
-		d.Record(fmt.Sprintf("%s outbox: dead lane %s: the runner ended it with no report (%s); wrote outbox/%s/REPORT.md Verdict FAIL", at, job, oneLine(end, 300), job))
+		d.Record(fmt.Sprintf("%s outbox: dead lane %s: the runner ended it with no report (%s); wrote outbox/%s/REPORT.md Verdict HARNESS-FAULT", at, job, oneLine(end, 300), job))
+		l.observeFault(HarnessFaultNoReport, end, now)
 	}
 	return wrote
 }

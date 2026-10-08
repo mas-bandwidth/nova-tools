@@ -1972,9 +1972,12 @@ outbox pass keeps the same rule for her own tree on every sync:
   `REPORT.md`, whose job's last event in her runner's log (`runner.log` in her working
   directory, else in the directory it links into; its last `RunnerLogCap`, 4 MiB) is
   `END <job> ... report=no` with no `LIMIT` after its `START` (`RunnerEnded`, the rule of
-  `sprint.RunnerEnded`), gets a `REPORT.md` written (`DeadLaneReport`: `Verdict: FAIL`
-  and the END line, never over a file there), said on the record (`outbox: dead lane
-  <job>: ...`), and the same pass finishes it `--failed`, so the card is dealt again.
+  `sprint.RunnerEnded`), gets a `REPORT.md` marker written (`DeadLaneReport`:
+  `Verdict: HARNESS-FAULT` and the END line, never over a worker's report), said on
+  the record (`outbox: dead lane <job>: ...`), and the same pass returns the same
+  work card for a fresh generation without advancing its primary attempt. A worker's
+  `FAIL` or `HOLD` report still finishes failed. Repeated no-report faults feed the
+  row's existing `FaultWatch` hold.
 
 The model is `internal/friend/tla/Collect.tla`, both hands (the coordinator's verb over
 every tree, the daemon over hers) finishing from their snapshots against a server that
@@ -2189,9 +2192,9 @@ needs to be mechanical and just work."
 
 Tests: `internal/friend/lane_path_test.go` (`TestARelativeBriefPathBecomesAbsoluteInTheCommandAndThePrompt`,
 `TestANoReportExitIsAHarnessFaultAndThreeMarkTheRowDownOnce`,
-`TestThreeFaultsInTenMinutesMarkTheRowDownOnceWithUntil`). Not done here: the sprint server has no rule
-of its own named harness-fault; the daemon's fault never reaches it as an attempt, and the down is
-the friend's own beat. A turn the harness ended with a refused permission keeps its own path (handed
+`TestThreeFaultsInTenMinutesMarkTheRowDownOnceWithUntil`). A recovered dead lane returns
+the same sprint work card through `FriendReturn` at a fresh generation; it consumes no
+attempt. The down remains the friend's own beat. A turn the harness ended with a refused permission keeps its own path (handed
 again, then set aside). No TLA+ module models the fault watch yet.
 
 ### friend-token-cap-bb.w2

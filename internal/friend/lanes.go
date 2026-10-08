@@ -715,9 +715,15 @@ func (l *loop) harnessFault(r laneResult, t *turn, card Card) (first string, fau
 // within FaultWithin on her row marks her down until FaultDownFor later (her lanes held, her
 // beat down with the reason), with one judgment to the seat, not one per card.
 func (l *loop) faultTurn(ln *lane, line, fault, first string, now time.Time) {
+	reason := FaultWords(fault, first)
+	l.d.Record(line + fmt.Sprintf(" card=kept turn=%d/%d reason=%q", ln.attempts, CardTurns, reason))
+	l.observeFault(fault, first, now)
+}
+
+// observeFault is the row's one fault counter for active lanes and recovered dead lanes.
+func (l *loop) observeFault(fault, first string, now time.Time) {
 	d, s := l.d, l.lanes
 	reason := FaultWords(fault, first)
-	d.Record(line + fmt.Sprintf(" card=kept turn=%d/%d reason=%q", ln.attempts, CardTurns, reason))
 	until, down := s.faults.Observe(fault, now)
 	if !down {
 		return

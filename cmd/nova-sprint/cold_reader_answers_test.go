@@ -240,7 +240,7 @@ func TestTheHelpSaysWhereTheRestIsAndFinishNamesItsHead(t *testing.T) {
 	t.Parallel()
 	first := strings.Join(strings.SplitN(banner(), "\n", 16)[:15], "\n")
 	assert.Contains(t, first, "nova-sprint help <verb>")
-	assert.Contains(t, banner(), "  nova-sprint finish --as <member> <card>@<gen>... --epoch <n> (--head <commit> | --failed)")
+	assert.Contains(t, banner(), "  nova-sprint finish --as <member> <card>@<gen>... --epoch <n> (--head <commit> | --failed | --harness-fault)")
 	assert.Contains(t, banner(), "\n  nova-sprint land --stream s1 --check 'make test'\n", "the coordinator's day lands with land")
 	assert.NotContains(t, banner(), "\n\nmachine has no ETA", "the ETA paragraph is one paragraph")
 }

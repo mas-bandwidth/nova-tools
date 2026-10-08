@@ -883,8 +883,9 @@ whose friend's runner log (`runner.log` in her working directory, else beside th
 directory it links to, never `<root>`'s own; its last 4 MiB) holds, as the job's last
 event, `END <job> ... report=no` with no `LIMIT` after its `START` (`sprint.RunnerEnded`:
 a run stopped at its usage limit is run again) is a `harness-fault: no report`:
-the work card is returned through `FriendReturn` and its primary goes ready without a
-failed-work judgment. An explicit `HOLD` or `FAIL` report still finishes failed. A finish taken moves
+the same work card is withdrawn through `FriendReturn` for a fresh generation and its
+primary goes ready without advancing its attempt or recording a failed-work judgment.
+An explicit `HOLD` or `FAIL` report still finishes failed. A finish taken moves
 the card off working, so a report finished once is never finished twice (a card dealt
 again is another job, `.g<gen>`). One line per card, `COLLECT <card> LAND <head>`,
 `COLLECT <card> FAILED <reason>`, `COLLECT <card> RETURNED <fault>`, `COLLECT <card> REFUSED <why>` or `COLLECT <card> LEFT

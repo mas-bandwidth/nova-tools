@@ -10,8 +10,8 @@
    limit and is run again. A LAND's Head is origin's tip of the card's branch
    or not yet (she pushes later). The card may be taken back. Each hand asks
    for the rows (a snapshot) and finishes from it; the server takes a finish
-   only while the card is working on her row, so one taken leaves it working
-   no more and nothing finishes it twice.
+   only while the card is working on her row. A dead lane returns the same
+   attempt to ready; a real report finishes it once.
    SearchAll = FALSE is the reversed witness of the coordinator reading her own
    tree alone (friend sync before collect); CheckTip = FALSE that of a LAND
    finished at a Head not on origin. *)
@@ -30,7 +30,7 @@ VARIABLES col,     \* the server: "ready", "working", "done", "gone"
           seen,    \* each hand's last snapshot of the rows
           taken,   \* the finishes the server took, per card
           badLand, \* a LAND was finished at a Head not on origin
-          badDead  \* a card was finished as a dead lane that was not one
+          badDead  \* a card was returned as a dead lane that was not one
 
 vars == <<col, run, rep, tree, pushed, seen, taken, badLand, badDead>>
 
@@ -79,7 +79,7 @@ Ask(h) == /\ seen' = [seen EXCEPT ![h] = col]
 \* the report is in a tree the hand reads: the daemon reads her own, the coordinator every one
 Reads(h, c) == tree[c] = "own" \/ (h = "coord" /\ SearchAll)
 
-\* what the hand finishes the card by: a report with a verdict it reads (a LAND only at
+\* what the hand resolves: a report with a verdict it reads (a LAND only at
 \* origin's tip when CheckTip), or, with no report, a dead lane
 Finishes(h, c) == \/ /\ rep[c] = "hold" /\ Reads(h, c)
                   \/ /\ rep[c] = "land" /\ Reads(h, c) /\ (CheckTip => pushed[c])
@@ -88,12 +88,13 @@ Finishes(h, c) == \/ /\ rep[c] = "hold" /\ Reads(h, c)
 \* the hand finishes from its snapshot; the server takes it only while the card is working
 Collect(h, c) == /\ seen[h][c] = "working" /\ Finishes(h, c)
                  /\ IF col[c] = "working"
-                      THEN /\ col' = [col EXCEPT ![c] = "done"]
-                           /\ taken' = [taken EXCEPT ![c] = @ + 1]
+                      THEN /\ col' = [col EXCEPT ![c] = IF rep[c] = "none" THEN "ready" ELSE "done"]
+                           /\ taken' = [taken EXCEPT ![c] = IF rep[c] = "none" THEN @ ELSE @ + 1]
                            /\ badLand' = (badLand \/ (rep[c] = "land" /\ ~pushed[c]))
                            /\ badDead' = (badDead \/ (rep[c] = "none" /\ run[c] # "dead"))
                       ELSE UNCHANGED <<col, taken, badLand, badDead>>
-                 /\ UNCHANGED <<run, rep, tree, pushed, seen>>
+                 /\ run' = [run EXCEPT ![c] = IF col[c] = "working" /\ rep[c] = "none" THEN "idle" ELSE @]
+                 /\ UNCHANGED <<rep, tree, pushed, seen>>
 
 Next == \/ \E h \in Hands : Ask(h)
         \/ \E c \in Cards : \/ Deal(c) \/ Start(c) \/ EndReport(c) \/ EndNoReport(c) \/ Limit(c)
@@ -116,7 +117,7 @@ TypeOK == /\ col \in [Cards -> {"ready", "working", "done", "gone"}]
 FinishedOnce == \A c \in Cards : taken[c] <= 1
 \* a LAND finishes only at origin's tip of the card's branch
 LandOnTip == ~badLand
-\* a dead lane is a run that ENDed with no report, never one stopped at its limit or running
+\* a dead lane returned only after END with no report, never at its limit or running
 DeadOnlyEnded == ~badDead
 
 \* a working card whose report says HOLD (in any tree), LAND on origin's tip, or whose run

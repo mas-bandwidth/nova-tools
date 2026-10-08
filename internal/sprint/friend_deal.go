@@ -253,7 +253,7 @@ func (s *Snapshot) friendsFor(c *Card, tier string) []FriendSeat {
 // (FieldTakenFrom), never the friends the level moved it off.
 func withdrawnFrom(wc *Card) []string {
 	var out []string
-	if f, ok := FriendOfRow(wc.Row); ok {
+	if f, ok := FriendOfRow(wc.Row); ok && wc.F(FieldHarnessFault) == "" {
 		out = append(out, f)
 	}
 	if f, ok := FriendOfRow(wc.F(FieldTakenFrom)); ok && !slices.Contains(out, f) {
@@ -783,7 +783,7 @@ func friendRedealUnit(s *Snapshot, c, wc *Card, row string, set map[string]strin
 	// set rides the primary's move: the tier the deal drew when it names none (tierNowSet)
 	prim := map[string]string{"work": wc.ID}
 	maps.Copy(prim, set)
-	set, unset := nextGen(wc, row, s.Now), []string{"withdrawn", FieldTakenBack, FieldTakenFrom,
+	set, unset := nextGen(wc, row, s.Now), []string{"withdrawn", FieldTakenBack, FieldTakenFrom, FieldHarnessFault,
 		FieldRoute, FieldModel, FieldTokens, FieldUSD, FieldHarness, FieldDeadline}
 	if left := friendsLeft(wc); len(left) > 0 {
 		set[FieldFriendsLeft] = strings.Join(left, ",") // the friend it was taken from, kept past the take

@@ -63,7 +63,10 @@ func TestCollectFailsAReportedHoldAndReturnsANoReportHarnessFault(t *testing.T) 
 	ta2.ok("tick") // the work table's queued return drains at the next tick
 	var c cardView
 	ta2.json("card s1-1", &c)
-	assert.NotEqual(t, "s1-1.w1", c.Primary.F("work"), "the no-report work card was retired for a fresh deal")
+	assert.Equal(t, "1", c.Primary.F("attempt"), "a harness fault does not spend the brief's attempt budget")
+	assert.Equal(t, "s1-1.w1", c.Primary.F("work"), "the same attempt is dealt at a fresh generation")
+	require.Len(t, c.Work, 1)
+	assert.Greater(t, c.Work[0].Int("gen"), 1, "the new job cannot collide with the dead lane's report")
 	assert.Empty(t, c.Primary.F("result"), "the harness fault is not a failed result")
 	for _, g := range ta2.inboxGroups() {
 		assert.NotEqual(t, sprint.NWorkFailed, g.Type, "a harness fault must not ask for failed-work judgment")

@@ -99,6 +99,29 @@ func TestFriendReconcileCollectsOrReturnsEachCard(t *testing.T) {
 	assert.Empty(t, FriendReturn(w.s, FriendReturnReq{Friend: "bob", Who: "coordinator", Cards: []FriendReturnCard{{ID: "s1-2.w1", Gen: 1, Why: "not hers"}}}).Units)
 }
 
+func TestHarnessFaultReturnsTheSameAttemptAtANewGeneration(t *testing.T) {
+	t.Parallel()
+	w := friendWorld(t, friendBrief("only friend amy"))
+	dealStarted(w, FriendSeat{Name: "amy", Width: 1, Status: Up, Class: "flash"})
+	wc := w.s.Fleet.Card("s1-1.w1")
+	gen := wc.Int("gen")
+	req := FriendReturnReq{Friend: "amy", Who: "friend.amy", HarnessFault: true,
+		Cards: []FriendReturnCard{{ID: wc.ID, Gen: gen, Why: "runner ended without a report"}}}
+	w.must(FriendReturn(w.s, req))
+	assert.Equal(t, Withdrawn, wc.Col)
+	assert.Equal(t, "1", w.s.Primary("s1-1").F("attempt"))
+	assert.Equal(t, Ready, w.state("s1-1"))
+	assert.Equal(t, "runner ended without a report", wc.F(FieldHarnessFault))
+	assert.Empty(t, FriendReturn(w.s, req).Units, "a duplicate return cannot withdraw a newer generation")
+	dealStarted(w, FriendSeat{Name: "amy", Width: 1, Status: Up, Class: "flash"})
+	assert.Equal(t, Working, wc.Col, "the sole eligible friend can take the same card again")
+	assert.Greater(t, wc.Int("gen"), gen)
+	assert.Equal(t, "1", w.s.Primary("s1-1").F("attempt"))
+	assert.Empty(t, wc.F(FieldHarnessFault), "the next generation owns a fresh fault cause")
+	assert.Empty(t, FriendReturn(w.s, req).Units, "a stale runner cannot withdraw the new generation")
+	w.clean("after harness fault retry")
+}
+
 func TestReadFriendQueueRefusesWhatItCannotRead(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ name, in, want string }{

@@ -128,6 +128,10 @@ func FriendQueueStrays(queue map[string]string, held []string) []string {
 // RetiredByReconcile is the retired_by of a friend's work card friend reconcile returned.
 const RetiredByReconcile = "friend reconcile"
 
+// FieldHarnessFault marks a withdrawn friend work card whose run ended with no report.
+// Its attempt remains the same; the next friend deal uses a new generation of that card.
+const FieldHarnessFault = "harness_fault"
+
 // FriendReturnCard is one card reconcile returns: the work card, the generation it read
 // and why.
 type FriendReturnCard struct {
@@ -141,13 +145,16 @@ type FriendReturnReq struct {
 	Friend string
 	Who    string // who acts: the coordinator
 	Cards  []FriendReturnCard
+	// HarnessFault keeps the work card and attempt for a no-report runner fault.
+	// Ordinary friend reconcile retires the work card as before.
+	HarnessFault bool
 	// Push addresses each card's note to the coordinator, so inbox --push carries it: the
 	// run loop's pass, which nobody watches as it acts (friend_reconcile_tick.go).
 	Push bool
 }
 
 // FriendReturn returns each card named from the friend's row (docs/SPEC-SPRINT.md section
-// 1, friend reconcile): a work card working on her row at the generation read, its
+// 1, friend reconcile): an ordinary work card working on her row at the generation read, its
 // primary working on it, is retired off the table (its record kept, retired_by friend
 // reconcile, its return_reason the why), as rework retires a bound card, and its primary
 // moves working -> ready, as a member going down leaves one, with no failed-work judgment
@@ -155,7 +162,8 @@ type FriendReturnReq struct {
 // again at its next attempt. A friend's next attempt is a new work card, never this one
 // redealt, so the card leaves the table rather than wait withdrawn. One move line and one
 // happened note each, saying why. A card not working on her row, at another generation,
-// whose primary is not working on it, or named twice is refused.
+// whose primary is not working on it, or named twice is refused. HarnessFault instead
+// withdraws the same work card for a new generation, preserving the primary attempt.
 func FriendReturn(s *Snapshot, r FriendReturnReq) Plan {
 	var p Plan
 	row := FriendRow(r.Friend)
@@ -192,6 +200,13 @@ func FriendReturn(s *Snapshot, r FriendReturnReq) Plan {
 			continue
 		}
 		what := "returned by friend reconcile: " + fc.Why
+		if r.HarnessFault {
+			what = "harness fault: " + fc.Why
+			u := withdrawUnit(s, c, map[string]string{FieldHarnessFault: fc.Why, FieldTakenBack: what,
+				"untaken_since": stamp(s.Now)}, []string{FieldTakenFrom, "first_taken"}, NFriendReturned, r.Who, what)
+			p.Units = append(p.Units, u)
+			continue
+		}
 		n := happened(NFriendReturned, pr.Row, s.Now, pr.ID)
 		n.Who, n.What = r.Who, what
 		if r.Push {

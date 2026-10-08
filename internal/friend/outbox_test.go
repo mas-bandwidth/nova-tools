@@ -43,6 +43,8 @@ func TestTheDaemonFinishesAReportItDidNotStage(t *testing.T) {
 	outboxReport(t, dir, land.Job, "Verdict: LAND\nHead: "+head+"\n\nThe card is done.\n")
 	outboxReport(t, dir, hold.Job, "Verdict: HOLD\nHead: "+head+"\n\nno push\n")
 	outboxReport(t, dir, fail.Job, "Verdict: FAIL\n\n"+long)
+	// A worker report wins even if the runner log also says END report=no.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "runner.log"), []byte("t START "+fail.Job+" tier=heavy\nt END "+fail.Job+" exit=0 report=no\n"), 0o644))
 	outboxReport(t, dir, gen.Job, "**Verdict:** land\nHead: "+strings.ToUpper(head)+"\n\nthird time.\n")
 	outboxReport(t, dir, silent.Job, "I am still working on it.\n")
 	outboxReport(t, dir, ready.Job, "Verdict: LAND\nHead: "+head+"\n")
@@ -65,6 +67,9 @@ func TestTheDaemonFinishesAReportItDidNotStage(t *testing.T) {
 	require.Len(t, failed, 11)
 	assert.Equal(t, []string{"finish", "--as", "friend.bob", "failed.w1@1", "--epoch", "15", "--failed", "--branch", "sprint/failed.w1.g1.e15", "--report"}, failed[:10])
 	assert.Equal(t, "friend bob FAIL: "+oneLine(("Verdict: FAIL\n\n" + long)[:600], 600), failed[10], "a failed finish carries the report's first 600 characters")
+	gotReport, err := os.ReadFile(filepath.Join(dir, "outbox", fail.Job, "REPORT.md"))
+	require.NoError(t, err)
+	assert.Equal(t, "Verdict: FAIL\n\n"+long, string(gotReport), "the no-report marker never replaces a worker report")
 
 	count := func(sub string) int {
 		n := 0
@@ -106,8 +111,8 @@ func TestReportVerdictReadsTheFriendsWords(t *testing.T) {
 
 // The daemon's duty is nova-sprint collect's for her own tree: a LAND finishes only at
 // origin's tip of the card's branch (refused naming the branch otherwise), and a lane her
-// runner ENDed with no report (and no LIMIT) is a dead lane, its REPORT.md written FAIL and
-// its card finished --failed so it is dealt again.
+// runner ENDed with no report (and no LIMIT) is a dead lane, its REPORT.md atomically
+// claimed as a harness fault and its same attempt returned for a fresh generation.
 func TestTheDaemonFinishesADeadLaneAndALandOnlyAtOriginsTip(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
@@ -154,9 +159,9 @@ func TestTheDaemonFinishesADeadLaneAndALandOnlyAtOriginsTip(t *testing.T) {
 	require.Len(t, got, 2, "the LAND on origin's tip and the dead lane, once each: %v", f.got())
 	assert.Equal(t, []string{"finish", "--as", "friend.bob", "on.w1@1", "--epoch", "15", "--head", head, "--branch", "sprint/on.w1.g1.e15", "--report", "friend bob LAND: On the tip."}, got["on.w1@1"])
 	d := got["dead.w1@1"]
-	require.Len(t, d, 11)
-	assert.Equal(t, []string{"finish", "--as", "friend.bob", "dead.w1@1", "--epoch", "15", "--failed", "--branch", "sprint/dead.w1.g1.e15", "--report"}, d[:10])
-	assert.Contains(t, d[10], "friend bob FAIL: Verdict: FAIL nova-friend of bob: the runner ended job dead.w1~15 with no report, and no run of it is live: "+end)
+	require.Len(t, d, 9)
+	assert.Equal(t, []string{"finish", "--as", "friend.bob", "dead.w1@1", "--epoch", "15", "--harness-fault", "--report"}, d[:8])
+	assert.Contains(t, d[8], "harness-fault: no report; Verdict: HARNESS-FAULT Runner-END: "+end)
 	report, err := os.ReadFile(filepath.Join(dir, "outbox", dead.Job, "REPORT.md"))
 	require.NoError(t, err)
 	assert.Equal(t, DeadLaneReport("bob", dead.Job, end), string(report))
