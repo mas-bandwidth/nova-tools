@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -24,9 +25,7 @@ func TestExitWordReadsFixtures(t *testing.T) {
 
 	// Test: OK with non-zero exit should be a breach
 	breachContent := "$ nova-check OK 1\n"
-	if !strings.Contains(breachContent, "OK 1") {
-		t.Error("expected breach fixture to contain OK 1")
-	}
+	assert.Contains(t, breachContent, "OK 1")
 }
 
 // TestExitWordClassRuleHoldsOverTranscripts is the class test for exit codes matching status words.
