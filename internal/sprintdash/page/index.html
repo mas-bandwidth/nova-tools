@@ -22,7 +22,7 @@
   --text-2: #a4aab4;
   --text-3: #6b727d;
   --track: #262a31;
-  /* the six card states */
+  /* the seven card states */
   --s-waiting: #4a4f58;
   --s-ready: #7d8490;
   --s-working: #3987e5;
@@ -32,6 +32,10 @@
   --p-critical: #9b1c1c;
   --p-reader: #fb8321;
   --p-work: var(--s-working);
+  /* a card awaiting rework (fix) purple, beside the reds (the owner, 2026-10-07; light #7c3aed
+     on a light page): the fix state's cells, its mark and a row's fix cells */
+  --s-fix: #8b5cf6;
+  --p-fix: var(--s-fix);
   --s-review: #d55181;
   --s-merging: #c98500;
   --s-landed: #199e70;
@@ -156,8 +160,10 @@ img#logo.logo-tile { width: 6rem; height: 6rem; flex: none; }
 .waiting { background: var(--s-waiting); } .ready { background: var(--s-ready); }
 .working { background: var(--s-working); } .review { background: var(--s-review); }
 .merging { background: var(--s-merging); } .landed { background: var(--s-landed); }
+.fix { background: var(--s-fix); }
 .p-blocker { background: var(--p-blocker); } .p-critical { background: var(--p-critical); }
 .p-reader { background: var(--p-reader); } .p-work { background: var(--p-work); }
+.p-fix { background: var(--p-fix); }
 .marks { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.75rem; }
 .mark { width: 1rem; height: 1rem; border-radius: 2px; }
 
@@ -253,9 +259,9 @@ footer a:hover { color: var(--text); }
    between the counts. 40 px gutters. Rows grouped by status: no rule between rows, a 1 px
    rule (the panel's border colour) between groups. */
 .streams .row { --pad: 2rem; --gap: 2.5rem; --S: 9.75rem; column-gap: var(--gap); padding: 0 var(--pad);
-  grid-template-columns: var(--name-w) var(--status-w) repeat(5, minmax(5.625rem, 1fr)) 4rem minmax(5.625rem, 1fr) minmax(7.5rem, 1.25fr); }
-.streams .row > :nth-child(8) { grid-column: span 2; justify-self: end; }
-.streams .row.head > :nth-child(8) { text-align: center; }  /* width set by app.js to the n / total cell's */
+  grid-template-columns: var(--name-w) var(--status-w) repeat(6, minmax(5.625rem, 1fr)) 4rem minmax(5.625rem, 1fr) minmax(7.5rem, 1.25fr); }
+.streams .row > :nth-child(9) { grid-column: span 2; justify-self: end; }
+.streams .row.head > :nth-child(9) { text-align: center; }  /* width set by app.js to the n / total cell's */
 .streams .row > :nth-child(2) { justify-self: end; }
 .streams .row:not(.head):not(.total) { border-bottom: 0; }
 .streams .row.group-start { border-top: 1px solid var(--border); }
@@ -276,8 +282,8 @@ footer a:hover { color: var(--text); }
 .panel.compact .row { --pad: 1.5rem; --gap: 1.5rem; --S: 3.5rem; column-gap: var(--gap); padding: 0 var(--pad); }
 .panel.compact .panel-head, .panel.compact .empty { padding-left: 1.5rem; padding-right: 1.5rem; }
 .streams.compact .row { grid-template-columns: var(--name-w) var(--status-w) minmax(10.25rem, 1fr); }
-.streams.compact .row > :nth-child(8) { grid-column: auto; }
-.streams.compact .row > :nth-child(n+3):nth-child(-n+7), .streams.compact .row > :nth-child(9) { display: none; }
+.streams.compact .row > :nth-child(9) { grid-column: auto; }
+.streams.compact .row > :nth-child(n+3):nth-child(-n+8), .streams.compact .row > :nth-child(10) { display: none; }
 .streams.compact .pill > span:last-child { display: none; }
 .fleet.compact .row, .friends.compact .row { grid-template-columns: var(--name-w) var(--status-w) minmax(7rem, 1fr) minmax(5.375rem, 1fr); }
 .fleet.compact .row > :nth-child(5), .friends.compact .row > :nth-child(5) { padding-left: 0; }
@@ -392,7 +398,7 @@ footer a:hover { color: var(--text); }
 
 <section class="panel streams">
   <div class="panel-head"><h2>Work</h2><span class="muted" id="streams-sub"></span><button type="button" class="muted archived" id="streams-archived" hidden></button></div>
-  <div class="scroll"><div class="rows" id="streams"><div class="row head"><div>stream</div><div>status</div><div class="num">waiting</div><div class="num">ready</div><div class="num">working</div><div class="num">review</div><div class="num">merging</div><div class="frac">landed</div><div class="num">cost</div></div></div></div>
+  <div class="scroll"><div class="rows" id="streams"><div class="row head"><div>stream</div><div>status</div><div class="num">waiting</div><div class="num">ready</div><div class="num">working</div><div class="num">review</div><div class="num">fix</div><div class="num">merging</div><div class="frac">landed</div><div class="num">cost</div></div></div></div>
 </section>
 
 <section class="panel wall" id="wall-panel" hidden>
