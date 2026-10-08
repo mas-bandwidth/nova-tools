@@ -361,7 +361,11 @@ is the one parser). A card with no WHO line, or `WHO: -`, is unpinned. `WHO: fri
 is any friend. `WHO: friend <name>` prefers that friend while she is up with room.
 `WHO: only friend <name>` is the one hard pin and waits for her alone. `add` and
 `brief` refuse any other WHO value, a name that is no row of the friends table, and
-`WHO: friend` while the table has no row (exit 2, nothing written). The primary's
+`WHO: friend` while the table has no row (exit 2, nothing written). A named friend's
+configured work restriction is held too: a card whose stream matches none of her
+`streams` globs, or whose `KIND:` is none of her `kinds`, is refused with the
+restriction named, an empty list being no restriction (docs/SPEC-CONFIG.md, friend).
+The primary's
 field `who` is `friend`, `friend.<name>`, or `only.friend.<name>`, written with its
 brief, and `card` prints `who=` on its `CARD OK` line (`--json` `who`).
 `nova-sprint unpin <id>... --reason <text>` (or `unpin --stream <s> --reason <text>`)
@@ -382,7 +386,10 @@ no evidence), whose control row on the fleet table says down or held, or whom th
 ladder marked down until her activity releases her is dealt nothing, by the deal, the
 level and the attempt cap's deal alike (`sprint.friendDealable`; 2026-10-06: a friend
 whose row read down, her daemon beating, was dealt 18 cards twice;
-`TestTheDealSkipsADownRowAndHonoursTheWhoPin`): in
+`TestTheDealSkipsADownRowAndHonoursTheWhoPin`), and her row's `streams` and
+`kinds` restriction (docs/SPEC-CONFIG.md, friend) filters every card the deal, the
+level, the start-bound level and the attempt cap's deal may hand her
+(`sprint.friendRestrictionAllows`; `TestDealerNeverDealsAFriendOutsideHerStreams`): in
 batch mode (the default, her nova-config row's `mode: batch`), DealAhead (two)
 times her friends row's `width`, as the machines' rule fills a member (section
 5; the cards on her row, ready and working, her work and her reads together, count
