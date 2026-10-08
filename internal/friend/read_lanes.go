@@ -517,15 +517,15 @@ func (l *loop) confirmReadSettlement(dir string, p readSettlement, now time.Time
 	}
 	var card struct {
 		Reads []struct {
-			ID, Col string
-			Fields  map[string]string
+			ID     string
+			Fields map[string]string
 		} `json:"read_cards"`
 	}
 	if json.Unmarshal([]byte(out), &card) != nil {
 		return false
 	}
 	for _, c := range card.Reads {
-		if c.ID == p.Read.ID && c.Col == p.Verdict && c.Fields["verdict"] == p.Verdict && c.Fields["head"] == p.Read.Packet.Head && c.Fields["finding"] == p.Finding && c.Fields["usage"] != "" {
+		if c.ID == p.Read.ID && c.Fields["verdict"] == p.Verdict && c.Fields["head"] == p.Read.Packet.Head && c.Fields["finding"] == p.Finding && c.Fields["usage"] != "" {
 			if err := os.Remove(readSettlementPath(dir)); err == nil {
 				l.d.Record(fmt.Sprintf("%s read %s: canonical verdict confirmed after lost response", now.UTC().Format(time.RFC3339), p.Read.ID))
 				return true
