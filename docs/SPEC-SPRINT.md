@@ -5376,9 +5376,10 @@ result to ok, and the reads are asked as for any finish; a HOLD replaces the fai
 own report, counted as the one failed attempt it is. The attempt's open `work came back
 failed`, bound and stranded judgments close in the same step, a late finish frees no lane on
 the worker's row, and the log says `a late report for the attempt the deadline failed`. A
-report that is itself a provider failure, a take with no result, a staging refusal or a lane
-cap, and a report carrying an attempt decision, are still refused; once a later attempt has
-started the old one stays failed (`TestFinishAcceptsAReportForAnAttemptTheDeadlineFailed`,
+failed report that is no HOLD (a FAIL, a provider failure, a take with no result, a staging
+refusal, a lane cap), the very report the attempt failed on already (a retry of the finish
+that failed it, after a restart: the attempt is not finished twice), and a report carrying an
+attempt decision are still refused; once a later attempt has started the old one stays failed (`TestFinishAcceptsAReportForAnAttemptTheDeadlineFailed`,
 `TestALateLandFinishesTheFailedAttemptOnTheStore`).
 
 #### paths-proposed-answered-by-rule

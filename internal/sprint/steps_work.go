@@ -1715,19 +1715,22 @@ func lateFinish(s *Snapshot, c *Card) bool {
 }
 
 // lateFinishWhy is why a late report is refused: only a LAND with its head or a HOLD (a
-// failed report the finish routes as failed work) finishes a failed attempt; a provider
-// failure, a take with no result, a staging refusal and a lane cap are the deadline's
-// failure again.
+// failed report that says the word) finishes a failed attempt. A FAIL, a provider failure, a
+// take with no result, a staging refusal and a lane cap are the deadline's failure again, and
+// the very report the attempt failed on already is a retry of the finish that failed it
+// (store.TestARestartOnADumpWithoutTheResultsCannotAnswerTheRetry), not a late report.
 func lateFinishWhy(c *Card, r FinishReq) string {
-	if !r.Failed || r.Decided != "" {
-		if r.Decided != "" {
-			return "failed already (" + placeWord(c) + "): a late report carries no attempt decision"
-		}
+	if r.Decided != "" {
+		return "failed already (" + placeWord(c) + "): a late report carries no attempt decision"
+	}
+	if !r.Failed {
 		return ""
 	}
-	_, capped := ParseLaneCap(r.Report)
-	if IsProviderFailure(r.Report) || IsNoResult(r.Report) || IsStagingRefusal(r.Report) || capped {
+	if !reportHolds(r.Report) {
 		return "not working (it is " + placeWord(c) + "): its attempt failed already, and this report is no LAND or HOLD"
+	}
+	if strings.TrimSpace(r.Report) == strings.TrimSpace(c.F("report")) {
+		return "not working (it is " + placeWord(c) + "): its attempt failed already on this same report"
 	}
 	return ""
 }
