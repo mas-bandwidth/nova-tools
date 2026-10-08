@@ -550,10 +550,11 @@ with no clock and no store). What it holds:
   section. Two cards that share an entry and neither needs the other set
   `shared-paths=yes`. With a checkout, every entry is checked to exist in it;
   a package's `*.go` is not answered by a test file the card creates.
-- Waves: cards of one ordinary ledger alternate (odd wave 1, even wave 2
-  depending on their wave 1 neighbours), because adjacent deletions of one file
-  conflict at land; a generated ledger (SPEC-SPRINT.md section 7) gets one wave
-  and no dependency.
+- Waves: a ledger plan is one wave with no dependency chain. The lander resolves
+  a ledger conflict as the union of removals, so adjacent deletions of one file
+  no longer conflict at land; every card's `DEPENDS-ON:` is `-`, and every card
+  shares the ledger's path with no need between them, so the CARDS line says
+  `shared-paths=yes`.
 - Every brief is held to the lint `nova-sprint add` runs (the model lines, the
   child rules under the default rule set, a tree card's steps), and past the add
   to the typed header and the template's placeholders, which the add does not

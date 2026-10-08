@@ -31,8 +31,16 @@ const LandEvery = 2 * time.Second
 // finished in under eight minutes; the gate's own budget stays landGoBudget.
 const LandDeadline = 10 * time.Minute
 
-// landLaneWho is the holder the lander records on a bench's Go lane.
+// landLaneWho is the lander's name on a bench's Go lane, and the prefix of every holder it
+// records there: a stream's gate holds as lander/<stream> (fork, laneWho), the base
+// re-check as landLaneBase, so the parallel pass's forks are distinct holders and a sibling
+// asking a bench one of them holds is queued, never granted by the other's name, and one
+// fork's give never frees another's bench (docs/SPEC-SPRINT.md section 7). A lander that is
+// neither (none today) holds as landLaneWho.
 const landLaneWho = "lander"
+
+// landLaneBase is the holder the base re-check's gate records on a bench's Go lane.
+const landLaneBase = landLaneWho + "/base"
 
 // landLoop runs one land cycle every LandEvery until ctx ends. Each cycle writes
 // one line: LAND OK, LAND REFUSED, or LAND IDLE. A landing runs beside the loop,
