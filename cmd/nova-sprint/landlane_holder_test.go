@@ -165,3 +165,12 @@ func TestEachStreamsGateHoldsABenchLaneUnderItsOwnName(t *testing.T) {
 		assert.False(t, sprint.ValidLaneWho("/s1"), "both parts named")
 	})
 }
+
+func TestTheServerAcceptsALaneHoldersName(t *testing.T) {
+	t.Parallel()
+	as, _, why := workerVerb([]string{"lane", "take", "go", "--machine", "m1", "--as", "lander/s2"})
+	assert.Empty(t, why, "a lane holder lander/<stream> is a worker the server's lane verb accepts")
+	assert.Equal(t, "lander/s2", as)
+	_, _, why = workerVerb([]string{"lane", "give", "go", "--machine", "m1", "--as", "lander/s2/x"})
+	assert.NotEmpty(t, why, "a holder is at most two names joined by one slash")
+}
