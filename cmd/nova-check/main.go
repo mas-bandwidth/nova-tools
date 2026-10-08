@@ -50,7 +50,7 @@ const exitCodes = "0 pass, 1 check failed, 2 could not run (bad invocation)"
 // holds the dispatch, the banner, -h, --json, --max with its MORE line, the
 // refusal grammar and the exit table.
 func novaCheck(s seams) *tool.Tool {
-	return &tool.Tool{
+	t := &tool.Tool{
 		Name:      "nova-check",
 		What:      "checks over markdown records and repositories, each finding named by file and line",
 		Stamp:     version,
@@ -88,10 +88,27 @@ func novaCheck(s seams) *tool.Tool {
 			spellingVerb(),
 		},
 	}
+	// A refusal the verb itself builds names the verb's own help: `nova-check
+	// help` prints the whole banner, while one verb's page answers the reader
+	// who mis-invoked that verb (the card's step 3). hygiene is the one verb
+	// left on the tool's door: its refusal lines are the transcripts in
+	// docs/TESTS.md and docs/CLI.md, which this card's PATHS do not hold, and
+	// cmd/nova-check executes them value for value.
+	for i := range t.Verbs {
+		v := &t.Verbs[i]
+		if v.Name == "hygiene" {
+			continue
+		}
+		v.Run = verbHelpDoor(v.Name, v.Run)
+	}
+	return t
 }
 
 func linksFlags(f *tool.Flags) {
-	f.Required("dir", dirHint)
+	// --dir is required, but checked in links' own Run (c.Want) rather than by
+	// f.Required: a required-flag refusal is built by internal/tool before the
+	// verb runs, so it cannot name this verb's help (the card's step 3).
+	f.String("dir", "", dirHint+" (required)")
 	f.Var(&repeatable{}, "file", "one markdown file to scan, narrowing the walk to just these (repeatable; --dir is still the resolution root)")
 	f.Var(&repeatable{}, "exclude", "path prefix not scanned, and links into it not checked (repeatable; empty by default)")
 	addAllowEmpty(f)

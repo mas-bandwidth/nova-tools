@@ -51,6 +51,23 @@ func withAlias(run func(c *tool.Call) *tool.Out) func(c *tool.Call) *tool.Out {
 	}
 }
 
+// verbHelpDoor points a refusal the verb itself builds at the verb's own help
+// instead of the whole banner: the card's door is `nova-check help <verb>`
+// (docs/STANDARD.md section 3, recovery takes one turn, so a reader who
+// mis-invoked one verb pastes the page with that verb's flags and effect). The
+// skeleton already names `<verb> -h` for a flag it cannot parse; this names the
+// same page for the refusals a verb returns, which the skeleton builds without a
+// verb to point at.
+func verbHelpDoor(name string, run func(c *tool.Call) *tool.Out) func(c *tool.Call) *tool.Out {
+	return func(c *tool.Call) *tool.Out {
+		o := run(c)
+		if o != nil && o.Status == tool.Refused && o.Remedy == "" {
+			o.Remedy = "nova-check help " + name
+		}
+		return o
+	}
+}
+
 // aliasNote is withAlias for a verb that prints its own lines (Prints), whose
 // Out carries no notes: the note goes to stderr as the line it always was.
 func aliasNote(c *tool.Call) {
@@ -139,12 +156,12 @@ func quickstart(c *tool.Call) *tool.Out {
 
 // writeOut renders one delegated check's Out to the stream its status belongs
 // on: a run that said no writes to stderr, a clean one to stdout. A refusal
-// carries the door the skeleton gives every refusal, nova-check help, because
-// this Out is rendered here and not by Tool.Run.
+// carries the door the card gives every refusal, the refusing verb's own help,
+// because this Out is rendered here and not by Tool.Run.
 func writeOut(c *tool.Call, o *tool.Out) {
 	o.Cap(c.Int("max"))
 	if o.Status == tool.Refused && o.Remedy == "" {
-		o.Remedy = "nova-check help"
+		o.Remedy = "nova-check help " + o.Verb
 	}
 	w := c.Stdout
 	if o.Exit != 0 {
@@ -193,6 +210,12 @@ func linksVerb() tool.Verb {
 }
 
 func links(c *tool.Call) *tool.Out {
+	// --dir's requirement is read here rather than by f.Required, so the
+	// refusal is one this verb builds and verbHelpDoor can name its own help.
+	c.Want("dir", dirHint)
+	if o := c.Refused(); o != nil {
+		return o
+	}
 	return linksLookedAtNothing(c, linksOut(c.Str("dir"), c.Get("file").([]string), c.Get("exclude").([]string)))
 }
 
