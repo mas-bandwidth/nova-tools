@@ -163,7 +163,8 @@ func TestATwiceRefusedBenchIsPassedOverForThePass(t *testing.T) {
 	}
 	assert.Equal(t, []string{bad, good, bad, good, good}, asked, "the first slot is asked twice, then passed over")
 	skip := "skip " + bad + ": its stage failed 2 times this pass, last: " + said
-	assert.Equal(t, []string{"tree gate: " + said, "tree gate: " + said, "tree gate: " + skip}, l.ledgerLog)
+	assert.Equal(t, []string{"tree gate: " + said, "tree gate: " + said, "tree gate: " + skip, "tree gate: " + skip}, l.ledgerLog,
+		"each refusal said; the pass-over said once by each gate it shapes, the second (where it began) and the third")
 	assert.Equal(t, good, l.gateHost)
 	assert.Equal(t, 2, l.gateRing)
 	lanes := r.ok("lane list")
