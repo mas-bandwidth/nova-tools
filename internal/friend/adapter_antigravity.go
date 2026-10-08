@@ -78,8 +78,8 @@ const AntigravityTitle = "nova-friend"
 
 // AntigravityPoll is how often the mailbox is read while waiting for the sent
 // message to appear in it, and AntigravityLandBudget how long: past it the
-// message agentapi took is in the ledger as delivered, its id read off the
-// mailbox when it lands (Follow).
+// send refuses (SessionRefused) so the message stays pending on the bus until
+// a real receipt lands.
 const (
 	AntigravityPoll       = 500 * time.Millisecond
 	AntigravityLandBudget = 30 * time.Second
@@ -276,8 +276,8 @@ func (a *Antigravity) server(ctx context.Context) (antigravityServer, int, error
 }
 
 // send puts text into conversation session's mailbox through srv and keeps it in the
-// ledger: 0 once agentapi took it, its id once it is there (within AntigravityLandBudget,
-// else read off the mailbox later by Follow). One send at a time.
+// ledger: 0 once its file lands in the mailbox within AntigravityLandBudget, or refuses
+// (SessionRefused) if it does not land. One send at a time.
 func (a *Antigravity) send(ctx context.Context, srv antigravityServer, session, text string) (int, error) {
 	a.sendMu.Lock()
 	defer a.sendMu.Unlock()
@@ -318,11 +318,11 @@ func (a *Antigravity) send(ctx context.Context, srv antigravityServer, session, 
 			break
 		}
 	}
-	a.keep(AntigravityDelivery{ID: id, Conversation: session, DeliveredAt: at, Text: text})
 	if id == "" {
-		a.say("antigravity: agentapi took a message for conversation %s and it is not in the mailbox after %s; kept as delivered, its id read when it lands", session, AntigravityLandBudget)
-		return 0, nil
+		a.say("antigravity: agentapi took a message for conversation %s and it is not in the mailbox after %s", session, AntigravityLandBudget)
+		return a.refuse(session, fmt.Sprintf("agentapi took message for conversation %s but it did not appear in the mailbox after %s", session, AntigravityLandBudget))
 	}
+	a.keep(AntigravityDelivery{ID: id, Conversation: session, DeliveredAt: at, Text: text})
 	a.say("antigravity: message %s in the mailbox of conversation %s", id, session)
 	return 0, nil
 }

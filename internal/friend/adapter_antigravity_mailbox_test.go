@@ -365,31 +365,89 @@ func TestASessionThatReadsNothingKeepsMessagesPending(t *testing.T) {
 	assert.Equal(t, "the window is open", h.got("A")[2])
 }
 
-// A message agentapi took is delivered to that conversation even when its file lands after
-// the land budget: answered 0, kept in the ledger, its id read off the mailbox when it lands,
-// and its read said as any other; it is never sent a second time.
-func TestAMessageThatLandsLateIsDeliveredOnce(t *testing.T) {
+// A message agentapi took is refused when its file does not appear in the mailbox within the
+// land budget: answered 1 (SessionRefused), so the bus keeps it pending and never acks prematurely.
+// No delivery is kept in the ledger with an empty id.
+func TestAMessageThatDoesNotLandInMailboxIsRefused(t *testing.T) {
 	t.Parallel()
 	h := newAgHarness(t0, "A")
 	h.late = true
 	var out strings.Builder
 	state := t.TempDir()
 	a := h.adapter("A", state, &out, func() time.Time { return t0 })
-	agDeliver(t, a, "slow")
-	assert.Equal(t, []string{"A"}, h.sentTo, "sent once")
-	assert.Equal(t, "antigravity: agentapi took a message for conversation A and it is not in the mailbox after 30s; kept as delivered, its id read when it lands\n", out.String())
+	exit, err := a.Deliver(context.Background(), "slow")
+	assert.Equal(t, 1, exit)
+	var refused SessionRefused
+	require.ErrorAs(t, err, &refused)
+	assert.Contains(t, refused.Reason, "did not appear in the mailbox")
+	assert.Equal(t, []string{"A"}, h.sentTo, "agentapi was called once")
+	assert.Contains(t, out.String(), "antigravity: agentapi took a message for conversation A and it is not in the mailbox after 30s")
 
-	h.land("A", "A-1")
-	h.reads("A", "A-1")
-	a.Follow(context.Background(), t0.Add(time.Minute))
-	assert.Contains(t, out.String(), "antigravity: message A-1 in the mailbox of conversation A (landed late)\nantigravity: message A-1 read by conversation A\n")
 	var l AntigravityLedger
-	_, err := read(filepath.Join(state, AntigravityLedgerFile), &l)
+	found, err := read(filepath.Join(state, AntigravityLedgerFile), &l)
 	require.NoError(t, err)
-	require.Len(t, l.Deliveries, 1)
-	assert.Equal(t, "A-1", l.Deliveries[0].ID)
-	assert.False(t, l.Deliveries[0].ReadAt.IsZero())
-	assert.Equal(t, []string{"A"}, h.sentTo, "never sent a second time")
+	if found {
+		assert.Empty(t, l.Deliveries, "no unlanded delivery kept in ledger")
+	}
+}
+
+// Durable unread deliveries in the ledger are replayed on same-session restart when the receipt
+// is missing from the mailbox, without duplicate effects if already present.
+func TestSameSessionRestartReplaysUnreadDelivery(t *testing.T) {
+	t.Parallel()
+	t.Run("replays unread delivery when mailbox receipt is missing", func(t *testing.T) {
+		t.Parallel()
+		h := newAgHarness(t0, "A")
+		var out strings.Builder
+		state := t.TempDir()
+		now := t0
+		clock := func() time.Time { return now }
+		a := h.adapter("A", state, &out, clock)
+		agDeliver(t, a, "m-1")
+		assert.Equal(t, []string{"A"}, h.sentTo)
+
+		// Simulate message missing from mailbox (e.g. wiped or lost before read)
+		h.fs.mu.Lock()
+		delete(h.fs.m, agBox("A")+"/A-1.json")
+		h.fs.mu.Unlock()
+
+		// Daemon restarts with --session A
+		restarted := h.adapter("A", state, &out, clock)
+		now = t0.Add(time.Minute)
+		restarted.Follow(context.Background(), now)
+
+		assert.Equal(t, []string{"A", "A"}, h.sentTo, "unread delivery replayed on restart")
+		got := h.got("A")
+		require.Len(t, got, 2)
+		assert.Contains(t, got[1], "re-sent: A-1 was delivered to A")
+		assert.Contains(t, got[1], "m-1")
+
+		var l AntigravityLedger
+		_, err := read(filepath.Join(state, AntigravityLedgerFile), &l)
+		require.NoError(t, err)
+		require.Len(t, l.Deliveries, 2)
+		assert.Equal(t, "A", l.Deliveries[0].ResentTo)
+		assert.Empty(t, l.Deliveries[0].Text)
+	})
+
+	t.Run("does not duplicate unread delivery when mailbox receipt is present", func(t *testing.T) {
+		t.Parallel()
+		h := newAgHarness(t0, "A")
+		var out strings.Builder
+		state := t.TempDir()
+		now := t0
+		clock := func() time.Time { return now }
+		a := h.adapter("A", state, &out, clock)
+		agDeliver(t, a, "m-1")
+		assert.Equal(t, []string{"A"}, h.sentTo)
+
+		// Message A-1.json is still in mailbox, unread
+		restarted := h.adapter("A", state, &out, clock)
+		now = t0.Add(time.Minute)
+		restarted.Follow(context.Background(), now)
+
+		assert.Equal(t, []string{"A"}, h.sentTo, "already in mailbox; not resent (no duplicate effects)")
+	})
 }
 
 // An antigravity friend's REPORT.md is finished by the daemon whatever her session is doing:

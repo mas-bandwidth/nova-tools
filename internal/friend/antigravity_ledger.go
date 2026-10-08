@@ -302,6 +302,17 @@ func (a *Antigravity) Follow(ctx context.Context, now time.Time) {
 				owed = append(owed, d)
 			}
 		}
+	} else if live != "" {
+		mailbox := antigravityMailbox(live)
+		inBox, _ := a.mailbox(mailbox)
+		for _, d := range l.Deliveries {
+			if d.Conversation == live && d.ReadAt.IsZero() && d.ResentTo == "" && d.Text != "" {
+				if d.ID == "" || !slices.Contains(inBox, d.ID) {
+					owed = append(owed, d)
+				}
+			}
+		}
+		to = live
 	}
 	a.mu.Unlock()
 	if len(owed) == 0 {
