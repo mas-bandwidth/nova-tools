@@ -4751,6 +4751,19 @@ it quiet until the episode ends (the next is raised again); `wait --for` until t
 much running time has passed, when one that still stands is raised again; `off` takes
 an alarm off, and an open one clears.
 
+### Review starved, and reads idle
+
+On 2026-10-07 at 5:40 PM ET the owner had 115 cards in review and zero read cards on every friend and every fleet member, and separately readers free while many reads still waited. Both are failures the seat was finding by looking. The tick's end raises them (internal/sprint steps_review.go, `TickReviewStarved`, the part `review-starved`), and `inbox --wait --push` pushes them as it pushes every judgment.
+
+- **review starved** (`review starved`): the review column holds at least one card whose attempt came back ok and still wants a read (the reads it needs are not met), and no read is in flight, for the threshold of running time. A read in flight is a read card ready or working on any fleet row, or a read asked or reading on the readers table. The judgment names the count, the first three ids in work order, and why the deal left each of those: stream held, readers spent, dealt max, or no up reader of the tier. One judgment per episode. It closes when a read goes out, or when no card in review wants a read, in the same step as one happened note to the coordinator, `a review alarm cleared`, whose text opens with `review starved:` and says which of those ended it.
+- **reads idle** (`reads idle`): a reader is free and a card in review wants a read, for the same threshold. A free reader is a unit the read-card deal may use that has a half slot free, or a reader up on the readers table under its width that those units did not already count. The judgment names both counts: `reads idle: <n> readers free and <m> cards in review want a read`. One judgment per episode. It closes when no reader is free, or when no card in review wants a read, with the same kind of note, the text opening with `reads idle:`.
+
+The threshold is the work table's property `review_starved`. Absent, empty, or not a duration, it is two ticks (2s). A duration below one tick is one tick. `off` disables both judgments and clears an episode already open, with no note. The episode itself is two fleet-table properties, `review_starved_ep` and `reads_idle_ep`: when the condition was first seen, and whether its judgment has been raised. The tick that first sees the condition records that and writes no note; a later tick, once the window of running time has passed, raises the judgment once. Two ticks at the same clock do not make a window. `ack` and `wait` are the judgment's decisions; the episode stays one until the condition ends, whether or not it was acknowledged.
+
+The part is installed on the tick's end, before the done part, which `TickEndWith` keeps in its tail, so a live tick runs it. It is not installed on `TickParts`. Every name there is a duty of the reference model (`TestEveryPartOfTheTickIsADutyAndEveryDutyIsNamedInOrder`), and that list is outside this change, so a reference walk does not run the part.
+
+`nova-sprint set --review-starved <duration>` writes the work-table threshold for both judgments. A positive duration shorter than one tick is stored as one tick. `nova-sprint set --review-starved off` disables both; with no setting, the default is two ticks. The setting rejects an invalid or non-positive duration without changing the table.
+
 ### Drift alarms
 
 On 2026-10-04 and 2026-10-05 the branches drifted for hours before anyone looked: the live
