@@ -38,11 +38,12 @@ func TestLandAnotherBaseProgressesWhileFirstBaseGateWaits(t *testing.T) {
 	r.queued(heads, "s1-1", "s2-1")
 	blocked, green, release, pushed := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
 	deadline := make(chan time.Time, 1)
+	parentAfter := r.a.after
 	r.a.after = func(d time.Duration) <-chan time.Time {
 		if d == LandDeadline {
 			return deadline
 		}
-		return time.After(d)
+		return parentAfter(d)
 	}
 	var once sync.Once
 	r.a.gateRan = func(dir string, tests bool) {
@@ -82,14 +83,14 @@ func TestLandAnotherBaseProgressesWhileFirstBaseGateWaits(t *testing.T) {
 	select {
 	case <-green:
 		deadline <- time.Now() // the higher-priority gate reached its bound
-	case <-time.After(30 * time.Second):
+	case <-t.Context().Done():
 		t.Error("second base could not gate while first base gate waited")
 	}
 	select {
 	case <-pushed:
 		// This hook runs immediately before the push. The first base gate
 		// was abandoned, so only the second stream can reach it.
-	case <-time.After(30 * time.Second):
+	case <-t.Context().Done():
 		t.Error("green second base did not push while first base gate waited")
 	}
 	close(release)
