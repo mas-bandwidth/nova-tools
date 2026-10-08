@@ -29,6 +29,16 @@ type Deliverer interface {
 	Deliver(ctx context.Context, text string) (exit int, err error)
 }
 
+// TextLimit is the most bytes of text d takes as one turn: its own
+// TextLimit() when it has one above zero, else BatchBytes. The daemon's
+// envelope is cut to it (Envelope).
+func TextLimit(d Deliverer) int {
+	if l, ok := d.(interface{ TextLimit() int }); ok && l.TextLimit() > 0 {
+		return l.TextLimit()
+	}
+	return BatchBytes
+}
+
 // Deferred is a Deliverer's answer when the session cannot take a turn now
 // and nothing has failed (for example, neither Codex queue nor resume can
 // accept it). The daemon keeps the message in hand, tries again

@@ -354,16 +354,82 @@ in `internal/sprint` and `cmd/nova-sprint`.
 
 Push, not poll (docs/SPEC-SPRINT.md, section 8, "Push, not poll", audited 2026-10-06): the daemon's read blocks on the stream (`XREADGROUP BLOCK`, one `BeatEvery`) only while the session is free; while a turn runs, in one-shot mode, and for a passive harness it reads without blocking or peeks and then pauses a `BeatEvery`, which is a timer poll, and card friend-bus-read-blocks makes it block in every mode. Her cards (`InboxEvery`) and her reader row (`ReadAskEvery`, 10 s) are asked of the server on the daemon's step, timer polls too, until friend-cards-pushed-on-the-bus and friend-reads-pushed-on-the-bus put them on her stream. The beat is a beat, and a delivery is a turn in her session. The class test `TestEveryTimerLoopIsNamedInThePushTable` holds every timer loop of the tree to that table.
 
-Each second: the clock is stepped; when the session is free, every message
-waiting is read off the stream (a ping is answered by the daemon at once and
-acked, never pushed in), and one turn is started with all of them, oldest
-first, at most 32 messages or 256 KiB (`MaxBatch`, `BatchBytes`; the rest is
-the next turn): one envelope listing each message's id, from and subject, with
-the message as `nova-bus recv` prints it, the pong line first while a challenge
-is open, and the daemon's latest word about the coordinator; a single message
-with nothing else is its `recv` text alone. The adapter blocks for the whole
-turn; exit 0 acks every message it carried, together (for Codex queue, exit 0 is the
-command accepting the input, not the turn ending). Any other exit leaves
+Each second: the clock is stepped; when the session is free (a turn has
+ended, or none ran), every available pending message is read off the stream
+without a message-count cap, and one turn is started with all of them: a message never waits
+behind a turn per older message.
+
+The base, before this change: the turn was already one turn for every message
+in hand (`Batch`), oldest first, at most 32 messages or 256 KiB (`MaxBatch`,
+`BatchBytes`; the rest the next turn), each under a rule
+`=== message <i> of <n>: id=<id> from=<f> subject="<s>" ===` and then the
+message as `nova-bus recv` prints it, with no time or age; the daemon's word
+about the coordinator was one slot, a newer word replacing the older with
+nothing on the record; and only `nova-friend pong --nonce` ended a challenge.
+The finding of 2026-10-04 (one message per turn, with turns of 2 to 10
+minutes, a notice delivered 30 minutes stale while newer messages queued
+behind it) is the form this rule forbids, not the base's rule.
+
+The change. The turn is one envelope (`Envelope`, a function of the pending
+list and a clock): the pong line first while a challenge is open, the daemon's
+latest word about the coordinator, the count, then each message oldest first as
+
+    [1/3] <id> from=<f> at=<RFC3339> age=<m>m subject=<s>
+    <body>
+
+where `age` is how long it has waited when the turn starts. The text is capped
+at the adapter's text limit (`TextLimit`: its own when it names one, else 256
+KiB, `BatchBytes`; the first message always goes in), the rest block included:
+a message goes in only while the `and <n> more` line for those after it still
+fits. The messages that do not fit are named under
+`and <n> more: nova-bus recv --as <me> --all`, one line each while the limit
+allows (the count line alone when it does not), stay pending, and are the next turn. A single message with nothing else
+is its `recv` text alone. Each message keeps its sender's authority label
+(`bus-authority-labels.w3`): the seat holder's message is plain, every other
+sender's metadata and body are quoted as data. The rest count includes every
+message read, including messages beyond the former 32-message hand cap.
+The envelope's size is on the status:
+`envelope` (status.json, and `envelope=` on `nova-friend status`) is how many
+messages the last envelope carried and `envelope_bytes` its text's size, at
+most the text limit unless the first message alone is larger; both are 0
+before the first envelope.
+
+A ping is never a turn: it is the daemon's, answered at once with
+`daemon-pong` and acked, never pushed in, so the session's turns are spent on
+work. A session proves itself by any bus line it sends after the ping (a real
+message counts; `nova-friend pong --nonce` still counts when a session runs
+it), which ends the challenge and with it the pong line at the head of its
+turns, while the daemon's own sends (`daemon-pong`, a word to the coordinator,
+a session check) prove nothing. Daemon-pong and session-check ids need no
+storage because their subjects exclude them. Other daemon sends are remembered
+only while a challenge is open, until the proof read passes their log line or
+a newer ping makes their store timestamp too old; ending the challenge clears
+the remainder. Keepalive traffic never accumulates proof ids.
+
+The supersede rule (`SupersededNotices`) acts on the daemon's own notices
+about the coordinator and nothing else: the words `coordinator silent` and
+`coordinator back` its machine says (`Machine.Tick`, `Machine.Ping`), each
+given an id (`notice-<unix ms>-<n>`) when said, which ride at the head of a
+turn (the batch envelope, or a lane's card), never a message on the stream,
+whoever sent it. Of those not yet in a turn only the newest is delivered; each
+older one is dropped, its record line
+`<RFC3339> notice=<id> subject="<s>" superseded=<newer id> dropped=true`. A
+`coordinator back` the session would not need, never having heard it was
+silent, still supersedes and is itself not said; a notice a failed turn hands
+back while a newer one is owed is the one dropped.
+
+The adapter blocks for the whole turn; exit 0 acks every message the envelope
+carried, together, and a failure acks none of them (for Codex queue, exit 0 is
+the command accepting the input, not the turn ending). The model is
+`tla/FriendEnvelope.tla` (TLC on a Linux bench, four messages, a cap
+of two, two failures): a turn takes the whole pending set up to the cap
+(`EnvelopeTakesAll`), no message is acked in a later turn than a younger one
+(`NoYoungerFirst`), only an accepted turn acks, and every message is acked in
+the end; a turn that takes the youngest first and one message per turn are its
+reversed witnesses. Its known gap, `MCFriendEnvelopeFailureReorders`: a failed
+turn's messages wait out their claim (`ClaimAfter`) and a younger message can
+go in and be acked first, so `NoYoungerFirst` holds only for messages no failed
+turn carried. Any other exit leaves
 them pending, handed in again when their claims open, and the third failure
 acks a message with `given_up=true` on the record, so a message the session
 cannot take never comes back for ever. A delivery the adapter defers,
