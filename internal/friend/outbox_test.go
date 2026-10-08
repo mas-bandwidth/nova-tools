@@ -168,6 +168,7 @@ func TestTheDaemonFinishesADeadLaneAndALandOnlyAtOriginsTip(t *testing.T) {
 	_, err = os.Stat(filepath.Join(dir, "outbox", limit.Job, "REPORT.md"))
 	assert.True(t, os.IsNotExist(err), "a run stopped at its usage limit is run again, never dead")
 	said := strings.Join(r.records, "\n")
+	assert.Contains(t, said, "return=harness-fault", "the daemon records a return, not a successful finish")
 	assert.Contains(t, said, "outbox: left outbox/off.w1~15/REPORT.md: Head "+head+" is not origin's tip of sprint/off.w1.g1.e15, "+other)
 }
 
