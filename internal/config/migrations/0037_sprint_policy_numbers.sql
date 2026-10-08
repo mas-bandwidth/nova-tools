@@ -1,4 +1,4 @@
--- 0036: the sprint's policy numbers (internal/config/policy.go: SprintPolicies;
+-- 0037: the sprint's policy numbers (internal/config/policy.go: SprintPolicies;
 -- docs/SPEC-CONFIG.md, "The sprint's policy numbers"): one text column each, '' (the
 -- default) being the sprint's compiled default. Apply writes each to sprint:<name>,
 -- which the sprint's routes read takes into every tick.
