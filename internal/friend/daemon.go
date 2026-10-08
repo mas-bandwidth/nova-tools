@@ -97,9 +97,12 @@ type Daemon struct {
 	Store                bus.Store
 	Deliver              Deliverer
 	Beat                 func(ctx context.Context, active time.Time) error // one beat to the sprint server, carrying the session's last activity (zero: none known)
+	StepBeatForTests     bool                                              // deterministic fake-clock seam; production has one independent beat caller
+	HarnessStatus        func() (seen, rule string)                        // the beat worker's advisory harness observation; only the loop writes Status
 	// Activity is the newest write of the session's files and Cards the ids of
 	// the cards she holds, oldest first (nil: the queue file's queued and working
-	// tasks under Dir), both read at most once an IdleWalkEvery; IdleAfter is her
+	// tasks under Dir). Activity is read by the independent beat cadence at
+	// ActivityEvery; Cards is read by the idle walk at IdleWalkEvery. IdleAfter is her
 	// row's idle setting, read each step (nil or zero: DefaultIdleAfter). They
 	// drive the idle wake (IdleStep); a nil Activity knows no write, and the
 	// watch is off.
@@ -244,6 +247,11 @@ type Daemon struct {
 	// it is a new session, owed the present (present.go). Nil reads none: the daemon's start
 	// and the stale bound still bring the present.
 	Session func() string
+
+	// NotificationOnly uses the notification receiver without any sprint or job hooks (SPEC-FRIEND.md, notifications).
+	NotificationOnly     bool
+	NotificationStateDir string
+	Notifications        *NotificationPolicy
 
 	m           *Machine
 	noPresent   bool // a test's: no present, so a rig delivers its messages as they come
@@ -554,6 +562,51 @@ type loop struct {
 	session      string          // the session id as last read (Session)
 }
 
+// beatState is the cadence worker's last result. The main loop owns Status and
+// reads a snapshot, so a slow inbox or finish cannot hold the native beat or
+// race a status-file write (docs/SPEC-FRIEND.md, the loop and presence).
+type beatState struct {
+	mu     sync.Mutex
+	active time.Time
+	last   time.Time
+	beats  int
+	err    string
+}
+
+func (b *beatState) snapshot() (active, last time.Time, beats int, err string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.active, b.last, b.beats, b.err
+}
+
+// beatLoop is this daemon's sole production beat caller. A tick waits for the
+// previous beat, never sending overlapping proof words or duplicate beat verbs.
+func (d *Daemon) beatLoop(ctx context.Context, b *beatState) {
+	ticker := time.NewTicker(BeatEvery)
+	defer ticker.Stop()
+	var active, walked time.Time
+	for {
+		now := d.Now()
+		if d.Activity != nil && (walked.IsZero() || now.Sub(walked) >= ActivityEvery) {
+			active, walked = d.Activity(), now
+		}
+		err := d.Beat(ctx, active)
+		b.mu.Lock()
+		b.active = active
+		if err != nil {
+			b.err = err.Error()
+		} else {
+			b.err, b.beats, b.last = "", b.beats+1, now
+		}
+		b.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
 // Run is the loop until ctx ends. Each step: the clock; the friend's row
 // (Row: her delivery mode and width); every pending message read off the
 // stream when nothing waits on it (a ping is answered by the daemon at once
@@ -565,10 +618,13 @@ type loop struct {
 // in as its own turn holding only the pong line (startWake), and in one-shot
 // mode, each free lane handed its next card with the waiting messages riding
 // along (lanes.go);
-// a beat when the store answered; the session's pong; the status. The
+// an independent beat carrying the session's proof; the session's pong; the status. The
 // daemon's own words about the coordinator collapse to the latest and ride in
 // a turn that carries messages or a card, never alone.
 func (d *Daemon) Run(ctx context.Context) error {
+	if d.NotificationOnly {
+		return d.runNotifications(ctx)
+	}
 	l := &loop{d: d, ctx: ctx, b: &bus.Bus{Store: d.Store}, silentStop: d.SilentStop, brokenAfter: d.BrokenAfter,
 		answered: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, results: make(chan result, 1),
 		lanes: &laneSet{results: make(chan laneResult, 64), refused: map[string]string{}}, reads: newReadSet(), mode: ModeBatch, tag: laneTag()}
@@ -591,6 +647,14 @@ func (d *Daemon) Run(ctx context.Context) error {
 	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
 	if !l.passive {
 		d.status.Session = SessionOK
+	}
+	var beats beatState
+	if !d.StepBeatForTests {
+		beatCtx, stopBeat := context.WithCancel(ctx)
+		var beatWG sync.WaitGroup
+		beatWG.Add(1)
+		go func() { defer beatWG.Done(); d.beatLoop(beatCtx, &beats) }()
+		defer func() { stopBeat(); beatWG.Wait() }()
 	}
 	for ctx.Err() == nil {
 		now := d.Now()
@@ -683,19 +747,29 @@ func (d *Daemon) Run(ctx context.Context) error {
 		} else if l.unable != "" && !l.told {
 			l.told = d.tellBroken(ctx, l.b, fmt.Sprintf("The session cannot take a turn: %s. The friend reads down; every message stays pending, none given up, and the daemon tries again every %s until a turn succeeds.", l.unable, RecheckEvery))
 		}
-		if storeOK {
-			if d.Activity != nil && (d.walked.IsZero() || now.Sub(d.walked) >= ActivityEvery) {
-				d.active, d.cards, d.walked = d.Activity(), d.held(), now // one walk serves the beat and the idle watch (they share walked)
+		if d.StepBeatForTests {
+			if storeOK {
+				if d.Activity != nil && (d.walked.IsZero() || now.Sub(d.walked) >= ActivityEvery) {
+					d.active, d.cards, d.walked = d.Activity(), d.held(), now
+				}
+				if err := d.Beat(ctx, d.active); err != nil {
+					d.status.BeatError = err.Error()
+				} else {
+					d.status.BeatError, d.status.Beats, d.status.LastBeat = "", d.status.Beats+1, now
+				}
 			}
-			if err := d.Beat(ctx, d.active); err != nil {
-				d.status.BeatError = err.Error()
-			} else {
-				d.status.BeatError, d.status.Beats, d.status.LastBeat = "", d.status.Beats+1, now
-			}
+		} else {
+			d.active, d.status.LastBeat, d.status.Beats, d.status.BeatError = beats.snapshot()
+		}
+		if d.HarnessStatus != nil {
+			d.status.HarnessSeen, d.status.HarnessAlive = d.HarnessStatus()
 		}
 		if d.Activity != nil && l.mode == ModeBatch && !l.broken && l.busy == nil && proven {
 			if d.walked.IsZero() || now.Sub(d.walked) >= IdleWalkEvery {
-				d.active, d.cards, d.walked = d.Activity(), d.held(), now
+				if d.StepBeatForTests {
+					d.active = d.Activity()
+				}
+				d.cards, d.walked = d.held(), now
 			}
 			l.idle(now)
 		}
