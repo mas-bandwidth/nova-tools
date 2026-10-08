@@ -168,6 +168,39 @@ func TestReachClimbsTheLadderOnlyUntilProof(t *testing.T) {
 	})
 }
 
+// TestReachProofPastTheLogCap is a fresh proof after more than the log
+// read's oldest window (internal/bus logLimit, 10000). A poll that re-reads
+// Log from the start never sees that pong and the ladder returns REACH FAILED.
+func TestReachProofPastTheLogCap(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	const prior = 10001
+	ctx := context.Background()
+	for i := 0; i < prior; i++ {
+		require.NoError(t, r.store.AddAll(ctx, []string{bus.LogKey}, map[string]string{
+			"from": "ada", "to": "bob", "subject": "old", "body": "prior\n",
+		}))
+	}
+	require.Equal(t, prior, r.store.Len(bus.LogKey))
+	w, clock := reachWorld(t, r)
+	dir := t.TempDir()
+	var sleeps int
+	base := w.sleep
+	w.sleep = func(ctx context.Context, d time.Duration) {
+		base(ctx, d)
+		sleeps++
+		if sleeps == 1 {
+			reachSend(t, r.store, friend.PongSubject, friend.PongLine("n1", 0, 0, 0)+"\n")
+		}
+	}
+	w.exec = func(context.Context, string, string, []string, string) (string, int, error) {
+		t.Error("the ladder typed after a proof past the log cap")
+		return "", 0, nil
+	}
+	reachRun(w).Do(t, reachCmd(dir)...).Exit(0).Out("REACH PROOF step=bus", "by=pong").NotOut("REACH FAILED", "step=push", "step=window")
+	require.Equal(t, time.Second, clock.slept)
+}
+
 func TestReachSkipsThePushWhenTheDaemonIsDown(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")

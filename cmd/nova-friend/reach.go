@@ -126,7 +126,7 @@ func (w world) reach(c *tool.Call) *tool.Out {
 	if harness == "" && found {
 		harness = status.Harness
 	}
-	var seen map[string]bool
+	var cursor string
 	fx := reachFX{
 		coordinator: me,
 		Send: func(ctx context.Context, nonce, body string) (string, error) {
@@ -157,18 +157,17 @@ func (w world) reach(c *tool.Call) *tool.Out {
 		Push:   func(ctx context.Context, body string) error { return w.reachPush(ctx, c, harness, to, state, body) },
 		Window: func(ctx context.Context, body string) error { return w.reachWindow(ctx, c, harness, state, to, body) },
 		Arm: func(ctx context.Context) error {
-			es, err := b.Log(ctx, "-")
+			// The log read is capped at its oldest entries. Arm at the tail
+			// so a fresh pong past that cap is still in the window.
+			c, err := b.LogCursor(ctx)
 			if err != nil {
 				return err
 			}
-			seen = map[string]bool{}
-			for _, e := range es {
-				seen[e.Entry] = true
-			}
+			cursor = c
 			return nil
 		},
 		Proof: func(ctx context.Context, nonce string) (string, bool, error) {
-			return reachProof(ctx, b, seen, to, nonce)
+			return reachProof(ctx, b, &cursor, to, nonce)
 		},
 		Tell: func(ctx context.Context, line string) error {
 			_, err := b.Send(ctx, bus.Message{From: me, To: []string{me}, Subject: "reach failed", Body: line + "\n"})
@@ -389,33 +388,38 @@ func reachWith(res, acc *tool.Out) *tool.Out {
 
 // reachProof is a proof from the friend since Arm: a pong for nonce, or any
 // other message. A daemon-pong, a ping, and a pong for another nonce are none.
-func reachProof(ctx context.Context, b *bus.Bus, seen map[string]bool, friendName, nonce string) (string, bool, error) {
-	es, err := b.Log(ctx, "-")
-	if err != nil {
-		return "", false, err
-	}
-	for _, e := range es {
-		if seen[e.Entry] {
-			continue
+// cursor is the log tail Arm captured; each poll reads forward from it and
+// advances it, so a log longer than the oldest-window cap still yields a
+// fresh pong.
+func reachProof(ctx context.Context, b *bus.Bus, cursor *string, friendName, nonce string) (string, bool, error) {
+	for {
+		es, next, more, err := b.LogForward(ctx, *cursor)
+		if err != nil {
+			return "", false, err
 		}
-		m := e.Message()
-		if m.From != friendName {
-			continue
-		}
-		subject := strings.ToLower(strings.TrimSpace(m.Subject))
-		if subject == strings.ToLower(friend.DaemonPongSubject) || strings.HasPrefix(subject, strings.ToLower(friend.PingPrefix)) || strings.HasPrefix(subject, "ping") {
-			continue
-		}
-		if n, _, _, _, ok := friend.ParsePong(strings.TrimSpace(m.Body)); ok {
-			if n == nonce {
-				return "pong", true, nil
+		*cursor = next
+		for _, e := range es {
+			m := e.Message()
+			if m.From != friendName {
+				continue
 			}
-			continue
+			subject := strings.ToLower(strings.TrimSpace(m.Subject))
+			if subject == strings.ToLower(friend.DaemonPongSubject) || strings.HasPrefix(subject, strings.ToLower(friend.PingPrefix)) || strings.HasPrefix(subject, "ping") {
+				continue
+			}
+			if n, _, _, _, ok := friend.ParsePong(strings.TrimSpace(m.Body)); ok {
+				if n == nonce {
+					return "pong", true, nil
+				}
+				continue
+			}
+			if subject == strings.ToLower(friend.PongSubject) {
+				continue // malformed pongs cannot become ordinary-message proof
+			}
+			return "message", true, nil
 		}
-		if subject == strings.ToLower(friend.PongSubject) {
-			continue // malformed pongs cannot become ordinary-message proof
+		if !more {
+			return "", false, nil
 		}
-		return "message", true, nil
 	}
-	return "", false, nil
 }
