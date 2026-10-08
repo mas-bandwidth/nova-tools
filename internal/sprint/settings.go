@@ -22,6 +22,8 @@ const (
 	// PropFriendIdle is the work table's property: how long a friend holding cards may
 	// show no session activity before it is an alarm, a duration.
 	PropFriendIdle = "friend_idle"
+	// PropFriendIdleSince is the work table's property: when a friend was marked idle.
+	PropFriendIdleSince = "idle_since"
 	// PropFriendStallAfter is the work table's property: how long a friend holding cards
 	// may show neither session activity nor card progress before she is stalled, a duration.
 	PropFriendStallAfter = "friend_stall_after"
@@ -183,7 +185,7 @@ func (s *Snapshot) DealtMax() time.Duration {
 
 // FriendIdleDefault is how long a friend holding cards may show no file write under her
 // working directory and outbox before it is an alarm (nova-sprint set --friend-idle).
-const FriendIdleDefault = 20 * time.Minute
+const FriendIdleDefault = 15 * time.Minute
 
 // FriendIdleAfter is that bound: the sprint's setting, else FriendIdleDefault.
 func (s *Snapshot) FriendIdleAfter() time.Duration {
@@ -411,7 +413,7 @@ func Set(s *Snapshot, r SetReq) Plan {
 	}
 	if r.FriendIdle != "" && r.FriendIdle != ReadTierDefault {
 		if d, err := time.ParseDuration(r.FriendIdle); err != nil || d <= 0 {
-			why = append(why, "--friend-idle wants a duration above zero (20m, 1h), or "+ReadTierDefault+" for "+FriendIdleDefault.String()+"; found "+r.FriendIdle)
+			why = append(why, "--friend-idle wants a duration above zero (15m, 1h), or "+ReadTierDefault+" for "+FriendIdleDefault.String()+"; found "+r.FriendIdle)
 		}
 	}
 	if r.FriendStallAfter != "" && r.FriendStallAfter != ReadTierDefault {

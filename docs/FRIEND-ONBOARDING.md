@@ -167,6 +167,19 @@ It handles:
 - Sending progress updates
 - Acknowledging heartbeats
 
+## The Width Goal
+
+When the machine detects you are loaded but idle (you have cards in working or ready for you, and your newest evidence of work is older than the idle bound, default 20m), it will send you a message on the bus with subject `WIDTH: your row is loaded and idle`. The body will say:
+
+```
+WIDTH <your-name>: WIDTH: <your-name> is loaded and idle: <reads> reads, <work> work, width <width>, idle <mins>m
+```
+
+When this happens:
+1. Report on any cards you have been working on
+2. Push your branch if you have commits
+3. If still idle, your cards will be returned to the pool after another idle bound
+
 ## Going Up and Down
 
 ### Checking Your Status

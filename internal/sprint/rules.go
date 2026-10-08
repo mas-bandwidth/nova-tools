@@ -44,7 +44,7 @@ const (
 )
 
 // RuleNames is every rule nova-config's answer_rules_off names, in name order.
-var RuleNames = []string{RuleBaseGate, RuleBound, RuleBriefDefect, RuleConflict, RuleFailed, RuleFriendTake, RuleHoldNeed, RuleLate, RuleReadBroken, RuleReadLate}
+var RuleNames = []string{RuleBaseGate, RuleBound, RuleBriefDefect, RuleConflict, RuleFailed, RuleFriendIdle, RuleFriendIdleReturn, RuleFriendTake, RuleHoldNeed, RuleLate, RuleReadBroken, RuleReadLate}
 
 // The fields the rules write.
 const (
