@@ -2428,6 +2428,7 @@ nova-sprint answer [--dry-run] [--bar <p>] [--every <duration>] [--timeout <dura
 nova-sprint inbox [--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>]
 nova-sprint card <id> [--brief | --fields] [--json] [--at-epoch <n>]
 nova-sprint card (--all | --stream <s>) --json [--at-epoch <n>]
+nova-sprint card base <id> <branch> [--repo-dir <clone>]
 nova-sprint streams [--repo <owner/name>] [--release <name>] [--cards]
 nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]
 nova-sprint check
@@ -2575,6 +2576,18 @@ need that is no card on the table is refused, naming every one, and nothing chan
 `--needs ""` is refused, since a sentinel with nothing to wait on is released
 (`release v1 --reason '<why>'`), not emptied. The contract is
 [SPEC-SPRINT.md](SPEC-SPRINT.md) section 16.
+
+### A merging card whose base is gone
+
+When a merging card's `BASE:` branch is deleted from origin, the lander refuses it once,
+`LAND REFUSED ... reason=card <id> names BASE <b>, which is not on origin`, raises one
+judgment for it, and lands the rest of its stream; it does not try the card again while
+that judgment is open. `card base <id> <branch>` re-points it: the branch is asked of the
+card's origin first and one not there is refused, nothing changed; else the brief's
+`BASE:` line names the new branch, the judgment is answered, the card's work and reads are
+kept, the log gains one line, `<id> BASE <old> -> <new>`, and the next land pass tries the
+card once. `ack` of the judgment has the next pass try the card once on its old base. The
+contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 7, a dead base.
 
 ### Role views: what a model reads instead of the dashboard
 
