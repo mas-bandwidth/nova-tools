@@ -763,6 +763,32 @@ func TestMergeRuleReadsTheDeletionOutOfGit(t *testing.T) {
 	require.True(t, strings.Contains(gotOld[0], "deletes b/keep_functional_test.go"), "an old row: findings = %q; want the deletion red", gotOld)
 }
 
+// TestPromotionReadsDeclarationsBelowItsMergeTip is the promotion regression:
+// the throwaway branch declares a deleted test in an earlier commit, then the
+// promotion merge brings that branch to the development tip. Reading only the
+// merge tip would reject the promotion; reading the branch range keeps it
+// green.
+func TestPromotionReadsDeclarationsBelowItsMergeTip(t *testing.T) {
+	t.Parallel()
+	r := newScratchRepo(t, "main")
+	r.write("gone_test.go", "package gone\n")
+	r.write(deletedTestsLogPath, "# the log\n")
+	r.stage("base")
+	r.git("checkout", "-q", "-b", "dev")
+	r.remove("gone_test.go")
+	r.write(deletedTestsLogPath, "# the log\ngone_test.go moved to the functional tier\n")
+	r.stage("declare deletion below promotion")
+	r.write(deletedTestsLogPath, "# the log\n")
+	r.stage("trim the log")
+	r.git("checkout", "-q", "main")
+	r.git("merge", "-q", "--no-edit", "--no-ff", "dev")
+	r.git("update-ref", "refs/remotes/origin/dev", "dev")
+
+	got, note := r.run("HEAD", "push", "refs/heads/main", "")
+	assert.Empty(t, got, "the promotion uses the declaration from the dev branch history")
+	assert.Contains(t, note, "excused")
+}
+
 // TestPromotionSkipReadsTheEvent pins the one shape that skips the
 // comparison, the promotion pull request from this repository's dev to main
 // or sprint/foundation to dev, against its reversed witnesses: the same event

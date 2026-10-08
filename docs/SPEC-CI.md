@@ -2709,6 +2709,7 @@ over a merge ref built as GitHub builds it (dev's tip an ancestor of the head
 passes; a head cut from before dev moved is refused naming dev's tip; dev to
 main has no precondition; a one-parent checkout is refused; a depth-2 checkout
 is refused naming the fetch, and passes after it);
+`TestPromotionReadsDeclarationsBelowItsMergeTip` pins the promotion deletion declarations in range: a throwaway branch declares a deleted test in an earlier commit, then the promotion merge brings that branch to the development tip; reading only the merge tip would reject the promotion; reading the branch range keeps it green;
 `TestDevRunReadsTheEventRefAndBranch` pins the dev-run shape against its own
 (main's events, another branch's queue, a dev-prefixed branch's queue,
 sprint/foundation's push, a pull request's merge ref, a local run off dev);
