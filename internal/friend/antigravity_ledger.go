@@ -2,6 +2,8 @@ package friend
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"path"
@@ -37,6 +39,14 @@ const (
 	AntigravityKeptRead    = 64
 )
 
+// Delivery states for durable ledger tracking.
+const (
+	DeliveryPending   = "pending"   // recorded before external send
+	DeliveryUncertain = "uncertain" // send timed out or had ambiguous error waiting for receipt
+	DeliveryLanded    = "landed"    // message file confirmed in mailbox (ID != "")
+	DeliveryConsumed  = "consumed"  // message read by conversation (ReadAt != zero)
+)
+
 // AntigravityDelivery is one delivery: its message id in the conversation's mailbox ("" until
 // it lands), when it went in and when the daemon saw it read, the conversation it was sent
 // again into, and its text while it may be sent again.
@@ -47,6 +57,25 @@ type AntigravityDelivery struct {
 	ReadAt       time.Time `json:"read_at,omitzero"`
 	ResentTo     string    `json:"resent_to,omitempty"`
 	Text         string    `json:"text,omitempty"`
+	Hash         string    `json:"hash,omitempty"`
+	State        string    `json:"state,omitempty"`
+}
+
+// antigravityHash computes a stable sha256 hex string for the delivery text.
+func antigravityHash(text string) string {
+	h := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(h[:])
+}
+
+// matches checks if delivery d matches text either by durable hash or text content.
+func (d *AntigravityDelivery) matches(text string) bool {
+	if d.Hash != "" && d.Hash == antigravityHash(text) {
+		return true
+	}
+	if d.Text != "" && d.Text == text {
+		return true
+	}
+	return false
 }
 
 // AntigravityLedger is the ledger's file: the conversation delivery follows (Followed, moved
@@ -173,6 +202,7 @@ func (a *Antigravity) observe(now time.Time) {
 			}
 			if len(ids) > 0 {
 				d.ID, ids, changed = ids[0], ids[1:], true
+				d.State = DeliveryLanded
 				a.say("antigravity: message %s in the mailbox of conversation %s (landed late)", d.ID, d.Conversation)
 			}
 			landed[d.Conversation] = ids
@@ -187,6 +217,7 @@ func (a *Antigravity) observe(now time.Time) {
 		}
 		if Read(raw, d.ID) {
 			d.ReadAt, d.Text, changed = now, "", true
+			d.State = DeliveryConsumed
 			a.say("antigravity: message %s read by conversation %s", d.ID, d.Conversation)
 		}
 	}
@@ -317,7 +348,7 @@ func (a *Antigravity) Follow(ctx context.Context, now time.Time) {
 		} else {
 			for _, d := range l.Deliveries {
 				if d.Conversation == live && d.ReadAt.IsZero() && d.ResentTo == "" && d.Text != "" {
-					if d.ID == "" || !slices.Contains(inBox, d.ID) {
+					if d.ID != "" && !slices.Contains(inBox, d.ID) {
 						owed = append(owed, d)
 					}
 				}
@@ -354,27 +385,75 @@ func (a *Antigravity) Follow(ctx context.Context, now time.Time) {
 }
 
 // antigravityMailbox is conversation c's mailbox, under the home.
-// reconcilePending checks if an unread delivery for session with matching text has
-// already landed in the mailbox (e.g. from a prior accepted send that timed out waiting
-// for receipt, then landed late). If found, it returns the landed message ID.
-func (a *Antigravity) reconcilePending(session, text string) string {
+// reconcile checks if an existing delivery for session and text is already pending, landed,
+// or consumed. It reconciles without duplicate send, or holds an ambiguous/pending send visibly.
+func (a *Antigravity) reconcile(session, text string) (reconciled bool, exit int, err error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	l := a.load()
 	mailbox := antigravityMailbox(session)
-	inBox, err := a.mailbox(mailbox)
-	if err != nil {
-		return ""
-	}
-	for i := range l.Deliveries {
+	inBox, _ := a.mailbox(mailbox)
+	for i := len(l.Deliveries) - 1; i >= 0; i-- {
 		d := &l.Deliveries[i]
-		if d.Conversation == session && d.Text == text && d.ReadAt.IsZero() && d.ResentTo == "" {
-			if d.ID != "" && slices.Contains(inBox, d.ID) {
-				return d.ID
+		if d.Conversation != session || !d.matches(text) {
+			continue
+		}
+		// Case 1: Already consumed by conversation
+		if !d.ReadAt.IsZero() || d.State == DeliveryConsumed {
+			a.say("antigravity: message %s already consumed by conversation %s; reconciled without duplicate send", dash(d.ID), session)
+			return true, 0, nil
+		}
+		// Case 2: Already landed in mailbox
+		if d.ID != "" && slices.Contains(inBox, d.ID) {
+			a.say("antigravity: message %s already in the mailbox of conversation %s from prior accepted send; reconciled without duplicate send", d.ID, session)
+			return true, 0, nil
+		}
+		// Case 3: Pending or uncertain send
+		if d.ID == "" {
+			ids := a.untracked(session)
+			if len(ids) > 0 {
+				d.ID = ids[0]
+				d.State = DeliveryLanded
+				a.save()
+				a.say("antigravity: message %s in the mailbox of conversation %s (reconciled late landing)", d.ID, session)
+				return true, 0, nil
 			}
+			// File not yet in mailbox: hold ambiguous send visibly, do not send again
+			a.say("antigravity: delivery for conversation %s is pending/uncertain (hash %s); holding send visibly rather than duplicate send", session, d.Hash)
+			exit, err := a.refuse(session, fmt.Sprintf("message delivery for conversation %s is already pending/uncertain; waiting for mailbox receipt rather than duplicate send", session))
+			return true, exit, err
 		}
 	}
-	return ""
+	return false, 0, nil
+}
+
+func (a *Antigravity) markLanded(session, hash, id string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	l := a.load()
+	for i := len(l.Deliveries) - 1; i >= 0; i-- {
+		d := &l.Deliveries[i]
+		if d.Conversation == session && (d.Hash == hash || (hash == "" && d.ID == id)) {
+			d.ID = id
+			d.State = DeliveryLanded
+			a.save()
+			return
+		}
+	}
+}
+
+func (a *Antigravity) markUncertain(session, hash string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	l := a.load()
+	for i := len(l.Deliveries) - 1; i >= 0; i-- {
+		d := &l.Deliveries[i]
+		if d.Conversation == session && d.Hash == hash {
+			d.State = DeliveryUncertain
+			a.save()
+			return
+		}
+	}
 }
 
 func antigravityMailbox(c string) string {

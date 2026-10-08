@@ -63,14 +63,15 @@ func (l *lockedFS) put(name string, f *fstest.MapFile) {
 // each message (<conversation>-1, -2, ...) in the named conversation's mailbox (or nowhere
 // yet, while late is set), where nothing reads it unless the test marks it.
 type agHarness struct {
-	mu     sync.Mutex
-	fs     *lockedFS
-	closed bool
-	late   bool
-	rows   string
-	n      map[string]int
-	sentTo []string
-	texts  map[string]string // message id to the text sent
+	mu       sync.Mutex
+	fs       *lockedFS
+	closed   bool
+	late     bool
+	failSend bool
+	rows     string
+	n        map[string]int
+	sentTo   []string
+	texts    map[string]string // message id to the text sent
 }
 
 func agBox(c string) string { return antigravityMailbox(c) }
@@ -109,6 +110,9 @@ func (h *agHarness) run(_ context.Context, _, name string, args []string, _ stri
 		id := fmt.Sprintf("%s-%d", c, h.n[c])
 		h.sentTo = append(h.sentTo, c)
 		h.texts[id] = args[6]
+		if h.failSend {
+			return "", 1, errors.New("agentapi: connection reset by peer")
+		}
 		if !h.late {
 			h.land(c, id)
 		}
@@ -418,6 +422,108 @@ func TestAMessageThatLandsLateIsReconciledOnRetryWithoutDuplicate(t *testing.T) 
 	require.NoError(t, err, "accepted delivery once reconciled")
 	assert.Equal(t, 0, exit)
 	assert.Equal(t, []string{"A"}, h.sentTo, "agentapi send-message was NOT called a second time (reconciled)")
+	assert.Contains(t, out.String(), "already in the mailbox of conversation A from prior accepted send; reconciled without duplicate send")
+}
+
+// Immediate retry before the late file lands holds the send visibly and does NOT call agentapi again.
+func TestImmediateRetryBeforeLateLandingHoldsSendVisiblyWithoutDuplicate(t *testing.T) {
+	t.Parallel()
+	h := newAgHarness(t0, "A")
+	h.late = true
+	var out strings.Builder
+	state := t.TempDir()
+	a := h.adapter("A", state, &out, func() time.Time { return t0 })
+	exit, err := a.Deliver(context.Background(), "slow")
+	assert.Equal(t, 1, exit, "initial attempt times out and returns refusal")
+	assert.Equal(t, []string{"A"}, h.sentTo, "agentapi called once")
+
+	// Immediate retry arrives before the file has landed
+	exit, err = a.Deliver(context.Background(), "slow")
+	assert.Equal(t, 1, exit, "retry held visibly while pending/uncertain")
+	var refused SessionRefused
+	require.ErrorAs(t, err, &refused)
+	assert.Contains(t, refused.Reason, "already pending/uncertain")
+	assert.Equal(t, []string{"A"}, h.sentTo, "agentapi send-message was NOT called a second time")
+
+	// File now lands in mailbox
+	h.land("A", "A-1")
+
+	// Subsequent retry reconciles against landed receipt
+	exit, err = a.Deliver(context.Background(), "slow")
+	require.NoError(t, err, "accepted delivery once file is confirmed")
+	assert.Equal(t, 0, exit)
+	assert.Equal(t, []string{"A"}, h.sentTo, "still only one agentapi send-message call across entire lifecycle")
+	assert.Contains(t, out.String(), "already in the mailbox of conversation A from prior accepted send; reconciled without duplicate send")
+}
+
+// A late message that lands and is read by the conversation before the bus retries is reconciled
+// as consumed without duplicate send.
+func TestLateReadBeforeRetryReconcilesConsumedDeliveryWithoutDuplicate(t *testing.T) {
+	t.Parallel()
+	h := newAgHarness(t0, "A")
+	h.late = true
+	var out strings.Builder
+	state := t.TempDir()
+	a := h.adapter("A", state, &out, func() time.Time { return t0 })
+	exit, err := a.Deliver(context.Background(), "slow")
+	assert.Equal(t, 1, exit, "initial attempt times out and returns refusal")
+	assert.Equal(t, []string{"A"}, h.sentTo, "agentapi called once")
+
+	// File lands late and conversation reads it before bus retry
+	h.land("A", "A-1")
+	h.reads("A", "A-1")
+	a.Follow(context.Background(), t0.Add(time.Minute))
+
+	// Verify ledger reflects consumed state with cleared text
+	var l AntigravityLedger
+	found, err := read(filepath.Join(state, AntigravityLedgerFile), &l)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Len(t, l.Deliveries, 1)
+	assert.Equal(t, "A-1", l.Deliveries[0].ID)
+	assert.NotEmpty(t, l.Deliveries[0].ReadAt)
+	assert.Empty(t, l.Deliveries[0].Text, "text cleared upon read")
+	assert.Equal(t, DeliveryConsumed, l.Deliveries[0].State)
+
+	// Daemon now retries the bus delivery
+	exit, err = a.Deliver(context.Background(), "slow")
+	require.NoError(t, err, "already consumed delivery reconciled with exit 0")
+	assert.Equal(t, 0, exit)
+	assert.Equal(t, []string{"A"}, h.sentTo, "agentapi was NOT called a second time")
+	assert.Contains(t, out.String(), "already consumed by conversation A; reconciled without duplicate send")
+}
+
+// Response loss: agentapi call returns an error, but the message was accepted and lands;
+// retry reconciles the landed delivery without duplicate send.
+func TestResponseLossAcceptanceReconcilesOnRetryWhenFileLands(t *testing.T) {
+	t.Parallel()
+	h := newAgHarness(t0, "A")
+	h.failSend = true
+	var out strings.Builder
+	state := t.TempDir()
+	a := h.adapter("A", state, &out, func() time.Time { return t0 })
+	exit, err := a.Deliver(context.Background(), "m-loss")
+	assert.Equal(t, 1, exit, "returns exit 1 on agentapi error")
+	assert.ErrorContains(t, err, "connection reset by peer")
+
+	// Durable evidence was recorded in the ledger prior to failure
+	var l AntigravityLedger
+	found, err := read(filepath.Join(state, AntigravityLedgerFile), &l)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Len(t, l.Deliveries, 1)
+	assert.Equal(t, DeliveryUncertain, l.Deliveries[0].State)
+	assert.Equal(t, "m-loss", l.Deliveries[0].Text)
+
+	// Message actually landed in mailbox despite response failure
+	h.failSend = false
+	h.land("A", "A-1")
+
+	// Retry reconciles without duplicate send
+	exit, err = a.Deliver(context.Background(), "m-loss")
+	require.NoError(t, err)
+	assert.Equal(t, 0, exit)
+	assert.Equal(t, []string{"A"}, h.sentTo, "agentapi was NOT called a second time on retry")
 	assert.Contains(t, out.String(), "already in the mailbox of conversation A from prior accepted send; reconciled without duplicate send")
 }
 

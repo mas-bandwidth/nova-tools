@@ -292,16 +292,27 @@ func (a *Antigravity) send(ctx context.Context, srv antigravityServer, session, 
 	if port == "" {
 		return a.refuse(session, fmt.Sprintf("no port of the antigravity language server (%s) answers for conversation %s: %v", strings.Join(srv.ports, ", "), session, err))
 	}
-	if matchedID := a.reconcilePending(session, text); matchedID != "" {
-		a.say("antigravity: message %s already in the mailbox of conversation %s from prior accepted send; reconciled without duplicate send", matchedID, session)
-		return 0, nil
+	if reconciled, exit, err := a.reconcile(session, text); reconciled {
+		return exit, err
 	}
 	mailbox := antigravityMailbox(session)
 	before, err := a.mailbox(mailbox)
 	if err != nil {
 		return a.refuse(session, fmt.Sprintf("conversation %s has no mailbox: %v", session, err))
 	}
+
+	hash := antigravityHash(text)
+	at := a.now()
+	a.keep(AntigravityDelivery{
+		Hash:         hash,
+		Conversation: session,
+		DeliveredAt:  at,
+		Text:         text,
+		State:        DeliveryPending,
+	})
+
 	if _, err = a.agentapi(ctx, port, srv.token, "send-message", "--title="+AntigravityTitle, session, text); err != nil {
+		a.markUncertain(session, hash)
 		var no AgentAPIRefusal
 		if errors.As(err, &no) {
 			return a.refuse(session, fmt.Sprintf("conversation %s: %s", session, err))
@@ -309,7 +320,6 @@ func (a *Antigravity) send(ctx context.Context, srv antigravityServer, session, 
 		return 1, err
 	}
 	// agentapi took it: it is delivered to session from here on, whenever its file lands
-	at := a.now()
 	lctx, cancel := context.WithTimeout(ctx, AntigravityLandBudget)
 	defer cancel()
 	id := ""
@@ -322,11 +332,12 @@ func (a *Antigravity) send(ctx context.Context, srv antigravityServer, session, 
 			break
 		}
 	}
-	a.keep(AntigravityDelivery{ID: id, Conversation: session, DeliveredAt: at, Text: text})
 	if id == "" {
+		a.markUncertain(session, hash)
 		a.say("antigravity: agentapi took a message for conversation %s and it is not in the mailbox after %s; kept as uncertain delivery, its id read when it lands", session, AntigravityLandBudget)
 		return a.refuse(session, fmt.Sprintf("agentapi took message for conversation %s but it did not appear in the mailbox after %s", session, AntigravityLandBudget))
 	}
+	a.markLanded(session, hash, id)
 	a.say("antigravity: message %s in the mailbox of conversation %s", id, session)
 	return 0, nil
 }
