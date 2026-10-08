@@ -824,3 +824,30 @@ func TestAFriendsConfigDirRoundTripsThroughSet(t *testing.T) {
 	out, _ = step(0, "friend", "show", "amy")
 	assert.Contains(t, out, " config_dir=- ", "cleared: %q", out)
 }
+
+// A friend's billing, how her work is paid, is subscription when add is not given one,
+// friend set writes it and show reads it back, and api is accepted.
+func TestAFriendsBillingRoundTripsThroughSet(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness()
+	h.env["NOVA_PG_DSN"] = dsn
+	h.env["NOVA_FRIEND"] = "rowan"
+	step := func(want int, args ...string) (string, string) {
+		t.Helper()
+		code, out, errs := h.run(t, args...)
+		require.Equal(t, want, code, "%v: exit %d, want %d\nstdout: %s\nstderr: %s", args, code, want, out, errs)
+		return out, errs
+	}
+	step(0, "friend", "add", "amy", "--slots", "2", "--tiers", "heavy")
+	out, _ := step(0, "friend", "show", "amy")
+	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=2 tiers=heavy roles=- width=8 mode=batch billing=subscription "), "default billing: %q", out)
+	out, _ = step(0, "friend", "set", "amy", "--billing", "api")
+	assert.Equal(t, "CONFIG SET kind=friend name=amy rev=2 changed=billing\n", out)
+	out, _ = step(0, "friend", "show", "amy")
+	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=2 tiers=heavy roles=- width=8 mode=batch billing=api "), "billing set to api: %q", out)
+	_, errs := step(1, "friend", "set", "amy", "--billing", "premium")
+	assert.Contains(t, errs, "api, subscription")
+	out, _ = step(0, "friend", "show", "amy")
+	assert.Contains(t, out, " billing=api ", "the refusal changed nothing: %q", out)
+}
