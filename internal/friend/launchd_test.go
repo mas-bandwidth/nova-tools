@@ -255,3 +255,41 @@ func TestThePlistWrapsTheDaemonInNovaSecretsExecForItsSecrets(t *testing.T) {
 	a.Secrets = nil
 	assert.Equal(t, "/opt/nova/bin/nova-friend", a.Args()[0], "no secrets, no wrap")
 }
+
+// Notification installation has its own label and carries its safe mode and policy;
+// it never boots out the ordinary daemon (SPEC-FRIEND.md, notifications).
+func TestNotificationsAgentKeepsPolicyAndSeparateLabel(t *testing.T) {
+	t.Parallel()
+	a := agent()
+	normal := a.Label()
+	a.NotificationsOnly = true
+	a.NotifyKinds = "request,blocker,report"
+	a.NotifyWindow = NotificationWindow
+	assert.NotEqual(t, normal, a.Label())
+	assert.Contains(t, a.Args(), "--notifications-only")
+	assert.Contains(t, a.Args(), "--notify-kinds")
+	assert.Contains(t, a.Args(), a.NotifyKinds)
+	assert.Contains(t, a.Args(), "--notify-window")
+	assert.Contains(t, a.Plist(), a.Label())
+	assert.NotContains(t, a.Plist(), "<string>"+normal+"</string>")
+}
+
+// Each notification artifact has an immutable path of its own; a source change never
+// overwrites either the native daemon or a previous notification version.
+func TestNotificationBinaryPlanIsContentAddressedAndNativeBinaryIsSeparate(t *testing.T) {
+	t.Parallel()
+	a := agent()
+	a.Home = t.TempDir()
+	a.Binary = filepath.Join(t.TempDir(), "source")
+	a.NotificationsOnly = true
+	require.NoError(t, os.WriteFile(a.Binary, []byte("first executable"), 0o755))
+	first, copy, err := a.BinaryPlan()
+	require.NoError(t, err)
+	assert.True(t, copy)
+	assert.NotEqual(t, InstalledBinary(a.Home), first)
+	require.NoError(t, os.WriteFile(a.Binary, []byte("second executable"), 0o755))
+	second, _, err := a.BinaryPlan()
+	require.NoError(t, err)
+	assert.NotEqual(t, first, second)
+	assert.Contains(t, first, filepath.Join(a.Home, ".nova-friend", "notifications", "bin"))
+}

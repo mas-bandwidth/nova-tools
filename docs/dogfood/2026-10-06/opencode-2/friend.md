@@ -44,7 +44,7 @@ Tool: nova-friend. The binary was built in the staged checkout of commit `1b5590
 5. `HOME=$S/home nova-friend install --as bob --harness opencode --dir $S/work/bob --redis $R`
    Printed:
    ```
-   INSTALL FAILED plist=<bench>/scratch/home/Library/LaunchAgents/com.nova.friend-bob.plist: launchctl bootstrap: exec: "launchctl": executable file not found in $PATH: 
+   INSTALL FAILED plist=<bench>/scratch/home/Library/LaunchAgents/com.nova.friend-bob.plist: launchctl bootstrap: exec: "launchctl": executable file not found in $PATH:
    (one line printed)
    ```
    I expected the platform checked before anything is written: install's own effect line is "writes the harness's settings and the launchd agent ... and loads it", and both `launchctl` and `launchd` are macOS-only. The plist and `$S/work/bob/opencode.json` stayed on disk after the failure, so the friend is half-installed and the next `run` reads the plist as drift; the line also ends in a bare `:` and a trailing space where the failed command's stderr was empty.
