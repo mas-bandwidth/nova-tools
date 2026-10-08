@@ -20,6 +20,7 @@ func TestReworkedWorkIsAskedRoundTheReaders(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(2)
+	h.startMachine()
 	h.a2ToReview("s1-1", false)
 	h.a2ToReview("s1-2", false)
 	ask := func(id string) []*sprint.Card {
@@ -47,7 +48,6 @@ func TestReworkedWorkIsAskedRoundTheReaders(t *testing.T) {
 		}
 	}
 	h.finishAttempt("s1-1", false, "h2")
-	h.startMachine()
 	h.machine()
 	var who []string
 	for _, rc := range readsAt(h.snap(), h.snap().Work.Card("s1-1")) {

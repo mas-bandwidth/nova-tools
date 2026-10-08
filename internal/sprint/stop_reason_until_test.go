@@ -2,7 +2,6 @@ package sprint_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -50,11 +49,11 @@ func makeProviderOutOfCredit(t *testing.T, c *twinClock) {
 	require.NoError(t, err)
 }
 
-// TestStopCarriesReasonAndUntilAndTheMachineRestartsItself pins a stop by hand
+// TestStopCarriesReasonAndUntilUntilExplicitStart pins a stop by hand
 // (docs/SPEC-SPRINT.md section 14): both --reason and --until are wanted, the
-// machine line says who stopped it, why, and when it is back, and at --until
-// the tick starts the machine itself unless it was stopped again since.
-func TestStopCarriesReasonAndUntilAndTheMachineRestartsItself(t *testing.T) {
+// machine line says who stopped it, why, and when it is back; only an explicit
+// start resumes it after the owned jobs are returned.
+func TestStopCarriesReasonAndUntilUntilExplicitStart(t *testing.T) {
 	t.Parallel()
 	t.Run("a stop without --reason or --until is refused, naming each", func(t *testing.T) {
 		t.Parallel()
@@ -115,7 +114,7 @@ func TestStopCarriesReasonAndUntilAndTheMachineRestartsItself(t *testing.T) {
 		assert.Equal(t, 1, res.Notes, "the stop is a happened note")
 		assert.Equal(t, "machine: STOPPED by coordinator: the bench is rebooting, back by 2:04 PM", c.st.MachineLine(ctx))
 	})
-	t.Run("the machine starts itself at --until on the twin with a fake clock", func(t *testing.T) {
+	t.Run("the machine stays stopped at --until until explicit start", func(t *testing.T) {
 		t.Parallel()
 		c := newTwinClock(t)
 		ctx := context.Background()
@@ -130,13 +129,12 @@ func TestStopCarriesReasonAndUntilAndTheMachineRestartsItself(t *testing.T) {
 		c.step(time.Minute)
 		res, err = c.st.Tick(ctx)
 		require.NoError(t, err)
-		assert.Equal(t, store.Running, res.State, "at --until the tick starts the machine")
+		assert.Equal(t, store.Stopped, res.State, "at --until the tick does not start the machine")
 		m, _, err := c.st.Machine(ctx)
 		require.NoError(t, err)
-		assert.True(t, m.Running())
-		assert.Equal(t, sprint.MachineActor, m.Who, "the start is the machine's own")
-		assert.Empty(t, m.Reason)
-		assert.True(t, m.Until.IsZero())
+		assert.False(t, m.Running())
+		_, _, _, err = c.st.SetMachine(ctx, true)
+		require.NoError(t, err)
 		assert.Equal(t, "machine: running", c.st.MachineLine(ctx))
 	})
 	t.Run("a stop again before --until moves the time back", func(t *testing.T) {
@@ -159,9 +157,9 @@ func TestStopCarriesReasonAndUntilAndTheMachineRestartsItself(t *testing.T) {
 		c.step(time.Hour)
 		res, err = c.st.Tick(ctx)
 		require.NoError(t, err)
-		assert.Equal(t, store.Running, res.State, "at the second --until")
+		assert.Equal(t, store.Stopped, res.State, "the second --until also does not start the machine")
 	})
-	t.Run("an expiry with every provider out keeps the machine stopped for funds", func(t *testing.T) {
+	t.Run("an expiry with every provider out keeps the explicit stop unchanged", func(t *testing.T) {
 		t.Parallel()
 		c := newTwinClock(t)
 		ctx := context.Background()
@@ -172,32 +170,6 @@ func TestStopCarriesReasonAndUntilAndTheMachineRestartsItself(t *testing.T) {
 		res, err := c.st.Tick(ctx)
 		require.NoError(t, err)
 		assert.Equal(t, store.Stopped, res.State)
-		m, _, err := c.st.Machine(ctx)
-		require.NoError(t, err)
-		assert.Equal(t, sprint.FundsCause, m.Cause)
-		assert.Empty(t, m.Reason)
-		assert.True(t, m.Until.IsZero())
-		assert.Contains(t, res.Parts[0].Refused[0].Why, sprint.FundsCause)
-	})
-	t.Run("a failed funds read leaves the due stop unchanged", func(t *testing.T) {
-		t.Parallel()
-		c := newTwinClock(t)
-		ctx := context.Background()
-		mem := c.st.B.(*store.Mem)
-		mem.SetRoutes([]sprint.Route{{Name: "flash-a", Tier: "flash", Provider: "provider-a", Enabled: true}})
-		mem.SetTiers(map[string][]string{"flash": {"flash-a"}})
-		_, _, _, err := c.st.StopUntil(ctx, "a bench", stopAt.Add(time.Hour))
-		require.NoError(t, err)
-		c.step(time.Hour)
-		mem.Fail = func(point string) error {
-			if point == "routes" {
-				return errors.New("route read failed")
-			}
-			return nil
-		}
-		_, err = c.st.Tick(ctx)
-		require.ErrorContains(t, err, "route read failed")
-		mem.Fail = nil
 		m, _, err := c.st.Machine(ctx)
 		require.NoError(t, err)
 		assert.False(t, m.Running())

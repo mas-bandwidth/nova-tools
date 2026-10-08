@@ -97,7 +97,7 @@ func (ta *testApp) raw(line string) (int, string, string) {
 // but the coordinator), never the coordinator's own. A table over every verb.
 func TestWhichVerbsNeedAnEpoch(t *testing.T) {
 	t.Parallel()
-	always := map[string]bool{"finish": true, "progress": true, "read": true, "ci": true, "take by id": true}
+	always := map[string]bool{"finish": true, "progress": true, "read": true, "stop-return": true, "ci": true, "take by id": true}
 	seen := map[string]bool{}
 	for _, v := range append(append([]verb(nil), verbs...), verb{name: "take by id"}) {
 		seen[v.name] = true
