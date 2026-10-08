@@ -214,7 +214,7 @@ func readableRegular(path string) bool {
 	if err != nil {
 		return false
 	}
-	_ = f.Close() // a read-only file: the open is the check
+	_ = f.Close() // ignored: a read-only file; the open is the check
 	return true
 }
 
@@ -236,7 +236,7 @@ func validCheckout(path string) bool {
 		if err != nil {
 			return false
 		}
-		_ = f.Close() // a read-only file: the open is the check
+		_ = f.Close() // ignored: a read-only file; the open is the check
 		return true
 	}
 	if !gi.Mode().IsRegular() {
@@ -275,7 +275,7 @@ func StageGate(dir string, c Card, job, brief string, goOnPath func() bool) (Sta
 		}
 		return StageFailure{Card: c.ID, What: "its brief " + dash(briefPath), Why: why}, true
 	}
-	if !Staged(dir, job) {
+	if !readableRegular(filepath.Join(JobDir(dir, job), JobFile)) {
 		return StageFailure{Card: c.ID, What: JobFile + " is not in " + filepath.Join(JobsDir, job), Why: "the stage did not finish"}, true
 	}
 	if checkout == "" {
