@@ -1,65 +1,100 @@
-# Stranger run: nova-bus between two names
+# A cold stranger run: nova-bus between two names on a throwaway Redis
 
-A cold run by a bud (deepseek/deepseek-v4.1-flash, in the DeepSeek Harness) who
-knew nova-tools only from `README.md`, the README each tool links, and the
-tools' own help. The goal: with `nova-bus`, two names (alice and bob) on a
-throwaway Redis inside the container send each other a message, read it, and
-acknowledge it, as a person new to nova-tools would. Where the run could not go
-on from those pages alone, that is a stumble below, with what was read to get
-past it.
+One run, 2026-10-08, by an AI worker (deepseek-v4.1-flash in the DeepSeek
+Harness headless runner, dsh), as a person new to nova-tools: README.md, the
+tool README it links, and the tools' own help first; anything else only after a
+stumble, named under Stumbles. The goal: with nova-bus, two names (alice and
+bob) on a throwaway Redis inside the container send each other a message, read
+it, and acknowledge it. Every process of the run, the Redis and the two friend
+daemons included, ran inside one container and died with it. Nothing was pushed
+to the forge.
 
 ## Setup
 
-- Bench: a Linux bench (x86_64, Go 1.26.6), one throwaway container
-  (`podman run --rm --timeout 14400 --network none`) from the functional image
-  `localhost/nova-functional:latest` (Ubuntu 24.04.5, Redis 8.10.2), with a
-  scratch directory mounted as `/work`. The Redis and every `nova-bus` process
-  ran inside it; the container was stopped and the scratch directory removed at
-  the end.
-- Source: the checkout of `sprint/mechanical-2026-10-02` (the container has no
-  network, so the release install could not run; see stumble 1), built inside
-  the container with `go build -o /work/bin/<tool> ./cmd/<tool>`.
-- Versions, as `<tool> version` printed them: `nova-bus devel linux/amd64 go1.26.6`,
-  `nova-redis devel linux/amd64 go1.26.6`; `redis-server` was
-  `Redis server v=8.10.2`.
-- Read: `README.md`; `cmd/nova-bus/README.md` and `cmd/nova-redis/README.md`
-  (the README links them); `nova-bus help`, `nova-bus wait -h` and
-  `nova-redis help`, the three help pages the transcript records. Beyond that,
-  only to get past stumbles 2 and 3: the Go source of
-  `internal/bus/redis.go`, `internal/bus/names.go`, `internal/bus/pushproof.go`
-  and `cmd/nova-bus/firstrun_test.go`.
-- Store: one throwaway `redis-server` on a unix socket inside the container,
-  started by the recipe in `nova-redis help`, with no users (`login=none`); the
-  two names were put in the `friends` set and their push proofs in the
-  `bus2:push` hash with `redis-cli`, as the transcript shows.
+- Bench: a Linux bench (Linux, x86_64, 64 cores, podman 5.7.0, Go 1.26.6). The
+  transcript's first block is the setup run on the bench (host): the source
+  copied into the mounted work directory, the modules fetched into it, and the
+  one throwaway container started.
+- Container: `localhost/nova-functional:latest` (Ubuntu 24.04.5, Redis 8.10.2,
+  Go 1.26.6), one container for the whole session, started on the bench with
+  `podman --cgroup-manager=cgroupfs run -d --rm --name stranger-bus --timeout 14400 --network none --userns=keep-id --user <uid>:<gid> -v <bench>/<job>:/work -w /work -e HOME=/work/home -e GOMODCACHE=/work/gomodcache -e GOCACHE=/work/gocache -e GOPROXY=off -e GOFLAGS=-mod=readonly -e NOVA_TEST_NO_HOST=1 -e PATH=/work/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin localhost/nova-functional:latest sleep 14400`. Each command of the second
+  block ran in it as `podman exec stranger-bus bash -lc '<command>'` (the
+  detached ones with `podman exec -d`). The image's own user (uid 10001) could
+  not write the mounted directory, hence `--user`; that is not the tools'
+  business.
+- Source: nova-tools at 23864704a (the tip of sprint/mechanical-2026-10-02),
+  copied into /work/src without its .git. The container has no network and the
+  image's module cache is empty, so the modules were fetched once on the bench
+  into the mounted directory (`go mod download` with GOMODCACHE there) before
+  the run; inside, GOPROXY=off.
+- Versions, as `<tool> version` printed them (built from the checkout):
+  `nova-bus devel linux/amd64 go1.26.6`, `nova-redis devel linux/amd64 go1.26.6`, `nova-config devel linux/amd64 go1.26.6`. `nova-friend devel linux/amd64 go1.26.6` was built too, only to prove the two pushes (stumble 4).
+- Read before the run: README.md and the tool README it links
+  (cmd/nova-bus/README.md); `nova-bus help` and the `-h` of send, recv, ack,
+  peek, wait, log and names; `nova-redis help`, `serve -h` and `acl -h`;
+  `nova-config help`; `nova-friend help` and `run -h`. Read only after a
+  stumble: internal/nsprint/redisauth/redisauth.go for the login variable names
+  (stumble 1), docs/stranger/friend-fake-harness.md after stumble 1 and
+  docs/stranger/three-card-sprint.md after stumble 2, and
+  internal/friend/adapter.go and adapter_opencode_lanes.go for the opencode
+  deliver command (stumble 5). The two earlier records name the same login and
+  names walls this run hit.
+- Time: the container started at 01:06 UTC; the two messages were sent, read
+  and acked by 01:08:33 UTC; the redis and the container were removed after
+  that, and the bench's scratch directory with them.
 
 ## Transcript
 
-Every command is run inside the container; `...` marks a trim. The store's
-messages, ids and `at=` values are the run's own.
+The transcript covers every command of the run, in order, with its output. Its
+first block is the bench (host) setup, before the container; its second block
+is the session inside the container, where each line ran as
+`podman exec stranger-bus bash -lc '<command>'` (the detached ones with
+`podman exec -d`). The long `nova-bus help`, `nova-redis acl render` and
+`nova-config apply` outputs are trimmed where a `[trimmed: ...]` line says so.
+The Redis password and the two login passwords are throwaways that died with
+the container. Steps 15 to 17 (the stand-in harness and the two friend daemons)
+exist only to satisfy the proven-push gate of stumble 4; the daemons are
+stopped before the exchange so that the nova-bus verbs, not the daemons, read
+and ack the messages.
+
+On the bench (host), before the container:
 
 ```text
-$ go install github.com/mas-bandwidth/nova-tools/cmd/nova-bus@latest
+$ mkdir -p <bench>/<job>/{src,bin,coldrun,home}
+(no output)
+
+$ rsync -a --exclude .git <checkout>/ <bench>/<job>/src/
+(no output)
+
+$ cd <bench>/<job>/src && GOMODCACHE=<bench>/<job>/gomodcache GOFLAGS=-mod=readonly go mod download
+(no output)
+
+$ podman --cgroup-manager=cgroupfs run -d --rm --name stranger-bus --timeout 14400 --network none --userns=keep-id --user <uid>:<gid> -v <bench>/<job>:/work -w /work -e HOME=/work/home -e GOMODCACHE=/work/gomodcache -e GOCACHE=/work/gocache -e GOPROXY=off -e GOFLAGS=-mod=readonly -e NOVA_TEST_NO_HOST=1 -e PATH=/work/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin localhost/nova-functional:latest sleep 14400
+f826020257a72aa4c856b8182279226f28d9a7e0c28e8d8be96dfd9d3ad8e826
+
+$ podman ps --format '{{.Names}} {{.Status}}'
+stranger-bus Up Less than a second
+```
+
+Inside the container, in order:
+
+```text
+$ cd /work/src && go install github.com/mas-bandwidth/nova-tools/cmd/nova-bus@latest
 go: github.com/mas-bandwidth/nova-tools/cmd/nova-bus@latest: module lookup disabled by GOPROXY=off
-exit=1
+[exit 1]
 
-$ go build -o /work/bin/nova-bus ./cmd/nova-bus
-exit=0
+$ cd /work/src && GOBIN=/work/bin nice -n 19 go install ./cmd/nova-bus ./cmd/nova-redis ./cmd/nova-config
+(no output)
 
-$ go build -o /work/bin/nova-redis ./cmd/nova-redis
-exit=0
+$ ls /work/bin
+nova-bus
+nova-config
+nova-redis
 
-$ nova-bus version
+$ nova-bus version; nova-redis version; nova-config version
 nova-bus devel linux/amd64 go1.26.6
-exit=0
-
-$ nova-redis version
 nova-redis devel linux/amd64 go1.26.6
-exit=0
-
-$ nova-bus wait --as bob --timeout 1s
-WAIT REFUSED: --redis is required: NOVA_BUS_REDIS is unset, and with no NOVA_SPRINT_REDIS the fleet's bus row (nova-config fleet set --bus <host:port>, then apply) cannot be read either; refusing to guess; run: nova-bus help
-exit=2
+nova-config devel linux/amd64 go1.26.6
 
 $ nova-bus help
 nova-bus: messages between AIs over Redis streams: sent once, delivered until acked
@@ -82,283 +117,327 @@ usage:
   nova-bus names [--timeout <duration>] [--redis <addr>]
   nova-bus version
   nova-bus help [<verb>]
+[trimmed: the flag, exit-code and example paragraphs follow]
 
-Every verb takes --json: the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
+$ nova-redis serve --bind 127.0.0.1 --port 6379 --dir /work/redis --dry-run
+SERVE OK bind=127.0.0.1 port=6379 auth=on persistence=aof eviction=none dir=/work/redis aclfile=/work/redis/users.acl users=0 dry_run=true created=0 launched=0
 
-exit codes: 0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).
+$ NOVA_REDIS_PASSWORD=trial-pw nova-redis serve --bind 127.0.0.1 --port 6379 --dir /work/redis > /work/coldrun/redis.log 2>&1 &   # detached in the container
+$ sleep 3; cat /work/coldrun/redis.log
+SERVE START bind=127.0.0.1 port=6379 auth=on persistence=aof eviction=none dir=/work/redis aclfile=/work/redis/users.acl users=0 program=/usr/local/bin/redis-server
+[trimmed: the redis-server startup lines]
+$ nova-bus names --redis 127.0.0.1:6379
+NAMES REFUSED: redis at 127.0.0.1:6379 as the default user, no password: login refused: NOAUTH Authentication required.; next: name the user (NOVA_SPRINT_REDIS_USER) and the variable that holds its password; run: nova-bus help
+[exit 2]
 
-example:
-  nova-bus wait --as bob --timeout 1s
-  nova-bus send --as ada --to bob --subject hello --body "are you there?"
-  nova-bus peek --as bob
-  nova-bus recv --as bob --exec true
-  nova-bus ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
-  nova-bus log --max 5
-  nova-bus names
-exit=0
+$ NOVA_REDIS_PASSWORD=trial-pw nova-bus names --redis 127.0.0.1:6379
+NAMES REFUSED: redis at 127.0.0.1:6379 as the default user, no password: login refused: NOAUTH Authentication required.; next: name the user (NOVA_SPRINT_REDIS_USER) and the variable that holds its password; run: nova-bus help
+[exit 2]
 
-$ nova-bus wait -h
-usage: nova-bus wait [flags]
-from `nova-bus help`:
-  nova-bus wait [--as <me>] [--after <id>] [--timeout <duration>] [--skip-subject <prefix,...>] [--wake-file <path>] [--redis <addr>]
-  nova-bus wait --as bob --timeout 1s
-Prints WAIT ARMED after=<id> first: the cursor the wait starts past, --after <id> when given (a stream
-entry id, <ms>-<seq>), else the stream's last id read once at start, 0-0 when the stream is empty.
-Re-arm the next run with the id WAIT OK or WAIT NONE printed, and nothing between two runs is missed.
-The wait takes nothing: it reads your stream past the cursor with XREAD, never the consumer group,
-so a later recv still delivers and acks what it saw. It ends on the first entries past the cursor
-that are not from you and whose subject starts with none of --skip-subject's prefixes (matched
-without case; default PING,PONG): one WAIT MESSAGE id=<id> from=<name> subject=<s> bytes=<n> line
-each, at most 5, then WAIT OK after=<last id seen> at exit 0. Skipped entries move the cursor and
-are not printed. --wake-file <path> also ends the wait when a line is appended to the file after the
-start (a harness's deliver adapter appends one per message): WAIT WAKE file=<path> line=<first line>
-at exit 0. Past --timeout <duration> (a Go duration; 0, the default, is for ever) it is WAIT NONE
-after=<cursor> waited=<duration> on standard error at exit 1. --json prints one object when the
-wait ends: {"status":"ok","word":"OK|NONE|WAKE","after":<id>,"messages":[{"id":<id>,"from":<name>,
-"subject":<s>,"bytes":<n>}],"wake":{"file":<path>,"line":<text>}} (messages is empty and wake left
-out when they hold nothing; the ARMED line is the text form's). Exit 2 when a flag is wrong, the
-name is not on the roster, or the store does not answer.
-example: nova-bus wait --as bob --timeout 1s
-flags:
-  --after <string>  the stream entry id <ms>-<seq> to wait past; default: the stream's last id read once at start, as WAIT ARMED prints it
-  --as <string>  your name, the recipient: the login user when there is one (then it may be left out)
-  --json  print the result as one JSON object instead of lines
-  --redis <string>  the Redis address, host:port (default: NOVA_BUS_REDIS, else the fleet row's bus)
-  --skip-subject <string>  subjects starting with one of these prefixes, comma-separated, are skipped; matched without case
-  --timeout <duration>  how long to wait before WAIT NONE, a Go duration (1s, 2m); 0 is for ever
-  --wake-file <string>  a file whose lines, appended after the start, also end the wait (one line per message)
-exit codes: 0 the wait ended: WAIT OK, entries that counted, or WAIT WAKE, a line on the wake file; 1 WAIT NONE, the timeout ran out; 2 could not run (a flag, an input, a store that did not answer).
-effect: inspection: reads, writes nothing
-exit=0
+$ NOVA_SPRINT_REDIS_PASSWORD=trial-pw nova-bus names --redis 127.0.0.1:6379
+NAMES REFUSED: redis at 127.0.0.1:6379 as the default user, no password: login refused: NOAUTH Authentication required.; next: name the user (NOVA_SPRINT_REDIS_USER) and the variable that holds its password; run: nova-bus help
+[exit 2]
 
-$ nova-redis help
-nova-redis: run a local Redis store, and keep short-lived named values in it
-
-how it works: serve runs redis-server on loopback or tailnet addresses only, with its data in --dir.
-spill writes a value under <owner>:<name> with a required expiry; recall reads it back.
-fn load and fn check install and verify the functions nova-table and nova-sprint call.
-The password is read from the variable NOVA_REDIS_PASSWORD_ENV names, else NOVA_REDIS_PASSWORD.
-first run: --dry-run needs no store; the throwaway recipe below starts a store on a socket.
-
-usage:
-  nova-redis serve --bind <addr>[,<addr>...] --port <port> --dir <store-dir> [--users <name>[,<name>...]] [--secrets <dir> --as <seat> --key <file> --sops <path> --secret <NAME>] [--dry-run]
-  nova-redis spill --redis <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name> --ttl <duration> --value <text> [--dry-run]
-  nova-redis recall --redis <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name>
-  nova-redis fn load --redis <host:port> [--user <name>] [--password-env <NAME>]
-  nova-redis fn check --redis <host:port> [--user <name>] [--password-env <NAME>]
-  nova-redis acl render
-  nova-redis acl check --redis <host:port> [--user <name>] [--password-env <NAME>]
-  nova-redis acl apply --redis <host:port> [--user <name>] [--password-env <NAME>] [--password-env-for <user>=<VARIABLE>]... [--dry-run]
-  nova-redis install store --secrets <dir> --as <seat> --key <file> --sops <path> --secret <NAME> [--bind <addr>[,<addr>...]] [--port <port>] [--dir <store-dir>] [--units <dir>] [--log <file>] [--dry-run]
-  nova-redis install bus --secrets <dir> --as <seat> --key <file> --sops <path> --secret <NAME> [--bind <addr>[,<addr>...]] [--port <port>] [--dir <store-dir>] [--units <dir>] [--log <file>] [--dry-run]
-  nova-redis uninstall store [--units <dir>] [--dry-run]
-  nova-redis uninstall bus [--units <dir>] [--dry-run]
-  nova-redis version
-  nova-redis help [<verb>]
-
-a throwaway store, by hand: (stop it: redis-cli -s "$d/redis.sock" shutdown nosave)
-  d=$(mktemp -d)
-  redis-server --port 0 --unixsocket "$d/redis.sock" --save '' --appendonly no --daemonize yes
-  for _ in $(seq 50); do redis-cli -s "$d/redis.sock" ping >/dev/null 2>&1 && break; sleep 0.1; done
-then run spill or recall with --redis "$d/redis.sock" (or a store you may write to).
-
-Every verb but serve, fn load, fn check, acl render, acl check, acl apply, install store, install bus, uninstall store, uninstall bus takes --json: the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
-
-exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
-
-example:
-  nova-redis version
-  nova-redis spill --dry-run --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi
-  nova-redis spill --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi
-  nova-redis recall --addr 127.0.0.1:6379 --owner ada --name note
-exit=0
-
-$ d=/work/run/redis2; mkdir -p "$d"
-$ redis-server --port 0 --unixsocket "$d/redis.sock" --save '' --appendonly no --daemonize yes
-... a memory-overcommit warning, then:
-$ redis-cli -s "$d/redis.sock" ping
-PONG
-
-$ export NOVA_BUS_REDIS="$d/redis.sock"
-
-$ nova-bus names
+$ NOVA_SPRINT_REDIS_USER=default NOVA_SPRINT_REDIS_PASSWORD_ENV=PW PW=trial-pw nova-bus names --redis 127.0.0.1:6379
 NAMES OK count=0 proven=0
-exit=0
 
-$ nova-bus send --as alice --to bob --subject hello --body "are you there?"
-SEND REFUSED: alice is no known name; the names are nova-config's friend and machine rows (nova-bus names lists them); add one with nova-config friend add alice --slots 1 --tiers flash --as <you>, then nova-config apply; run: nova-bus help
-SEND REFUSED: bob is no known name; the names are nova-config's friend and machine rows (nova-bus names lists them); add one with nova-config friend add bob --slots 1 --tiers flash --as <you>, then nova-config apply; run: nova-bus help
-exit=2
+$ mkdir -p /work/trial
+(no output)
+$ nova-config migrate --file /work/trial/try.json
+CONFIG MIGRATE file=/work/trial/try.json from=0 to=35 applied=35
+$ nova-config friend add alice --slots 1 --tiers flash --as alice --file /work/trial/try.json
+CONFIG ADD kind=friend name=alice rev=1
+NOTE --as is --actor
+$ nova-config friend add bob --slots 1 --tiers flash --as alice --file /work/trial/try.json
+CONFIG ADD kind=friend name=bob rev=2
+NOTE --as is --actor
+$ nova-config apply --file /work/trial/try.json --redis 127.0.0.1:6379 --as alice
+nova-config apply REFUSED: fleet: endpoints are unset: redis_port, pg_dsn; run: nova-config fleet set --redis_port <port> --pg_dsn <dsn> --as <actor>, then nova-config apply --kind fleet --as <actor>
+[exit 1]
 
-$ redis-cli -s "$d/redis.sock" SADD friends alice bob
-2
+$ nova-config machine add m1 --user ubuntu --seat s1 --slots 4 --width 1 --as alice --file /work/trial/try.json
+CONFIG ADD kind=machine name=m1 rev=3
+NOTE --as is --actor
+$ nova-config fleet set --store m1 --coordinator m1 --redis_port 6379 --pg_dsn postgres://nova@127.0.0.1:5432/nova --bus 127.0.0.1:6379 --as alice --file /work/trial/try.json
+CONFIG SET kind=fleet name=fleet rev=4 changed=bus,coordinator,pg_dsn,redis_port,store
+NOTE --as is --actor
+$ nova-config apply --file /work/trial/try.json --redis 127.0.0.1:6379 --as alice
+nova-config apply REFUSED: redis: read machines: NOAUTH Authentication required.; run: nova-config apply -h
+[exit 2]
 
-$ nova-bus names
-NAMES OK count=2 proven=0
+$ export NOVA_SPRINT_REDIS_USER=default NOVA_SPRINT_REDIS_PASSWORD_ENV=PW PW=trial-pw
+$ nova-config apply --file /work/trial/try.json --redis 127.0.0.1:6379 --as alice
+APPLY ADD kind=machine name=m1
+CONFIG APPLY kind=machine add=1 set=0 remove=0 rev=3 ms=12
+APPLY SET kind=fleet name=fleet changed=store,coordinator,redis_port,pg_dsn,bus,loops_dir
+CONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=4 ms=0
+APPLY ADD kind=friend name=alice
+APPLY ADD kind=friend name=bob
+CONFIG APPLY kind=friend add=2 set=0 remove=0 rev=2 ms=1
+[trimmed: the sprint, loop, route and tier rows of the same apply]
+NOTE --as is --actor
+$ nova-bus names --redis 127.0.0.1:6379
+NAMES OK count=3 proven=0
 NAMES NAME name=alice push=none age=never harness=-
 NAMES NAME name=bob push=none age=never harness=-
-exit=0
+NAMES NAME name=m1 push=none age=never harness=-
 
-$ nova-bus send --as alice --to bob --subject hello --body "are you there?"
+$ NOVA_SPRINT_REDIS_USER=default NOVA_SPRINT_REDIS_PASSWORD_ENV=PW PW=trial-pw nova-bus send --as alice --to bob --subject hello --body "are you there?" --redis 127.0.0.1:6379
+SEND REFUSED: --as alice is not the login user default: this connection acts as default; drop --as, or log in as alice (NOVA_SPRINT_REDIS_USER=alice with its password); run: nova-bus help
+[exit 2]
+$ NOVA_SPRINT_REDIS_USER=default NOVA_SPRINT_REDIS_PASSWORD_ENV=PW PW=trial-pw nova-bus recv --as bob --redis 127.0.0.1:6379
+RECV REFUSED: --as bob is not the login user default: this connection acts as default; drop --as, or log in as bob (NOVA_SPRINT_REDIS_USER=bob with its password); run: nova-bus help
+[exit 2]
+
+$ nova-redis acl render
+ACL FAMILY name=tables keys=table:*,tables
+[trimmed: the remaining family lines and the four ACL SETUSER lines for coordinator, bench, ns-table and ns-friend]
+ACL RENDER OK users=4 functions=41 library=5ad34e439bc4996e
+
+$ redis-cli -a trial-pw ACL SETUSER alice on ">alicepw" "~*" "&*" "+@all"
+Warning: Using a password with '-a' or '-u' option on the command line interface may not be safe.
+OK
+$ redis-cli -a trial-pw ACL SETUSER bob on ">bobpw" "~*" "&*" "+@all"
+Warning: Using a password with '-a' or '-u' option on the command line interface may not be safe.
+OK
+$ NOVA_SPRINT_REDIS_USER=alice NOVA_SPRINT_REDIS_PASSWORD_ENV=ALICEPW ALICEPW=alicepw nova-bus send --to bob --subject hello --body "are you there?" --redis 127.0.0.1:6379
 SEND REFUSED: deaf: alice has no proven push since never: no daemon has recorded one; the remedy: alice runs its friend daemon with a deliver adapter for its harness (nova-friend install --as alice --harness <h> --dir <d>) and its session answers the daemon's SESSION CHECK, which records the proof; nova-bus names shows every name's push; run: nova-bus help
 SEND REFUSED: deaf: bob has no proven push since never: no daemon has recorded one; the remedy: bob runs its friend daemon with a deliver adapter for its harness (nova-friend install --as bob --harness <h> --dir <d>) and its session answers the daemon's SESSION CHECK, which records the proof; nova-bus names shows every name's push; run: nova-bus help
-exit=2
+[exit 2]
+$ NOVA_SPRINT_REDIS_USER=bob NOVA_SPRINT_REDIS_PASSWORD_ENV=BOBPW BOBPW=bobpw nova-bus recv --redis 127.0.0.1:6379
+RECV REFUSED: deaf: bob has no proven push since never: no daemon has recorded one; the remedy: bob runs its friend daemon with a deliver adapter for its harness (nova-friend install --as bob --harness <h> --dir <d>) and its session answers the daemon's SESSION CHECK, which records the proof; nova-bus names shows every name's push; run: nova-bus help
+[exit 2]
 
-$ now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-$ proof='{"harness":"fake","nonce":"cold-run","proven":"'$now'","up":true,"at":"'$now'"}'
-$ redis-cli -s "$d/redis.sock" HSET bus2:push alice "$proof"
-1
-$ redis-cli -s "$d/redis.sock" HSET bus2:push bob "$proof"
-1
+$ cd /work/src && GOBIN=/work/bin nice -n 19 go install ./cmd/nova-friend
+(no output)
+$ nova-friend run --as bob --harness opencode --dir /work/bob --redis 127.0.0.1:6379 --dry-run
+RUN DRY-RUN as=bob harness=opencode dir=/work/bob state=/work/bob/.nova-friend redis=127.0.0.1:6379; nothing was started
 
-$ nova-bus names
-NAMES OK count=2 proven=2
-NAMES NAME name=alice push=proven age=0s harness=fake
-NAMES NAME name=bob push=proven age=0s harness=fake
-exit=0
+$ cat > /work/bin/opencode <<'FAKE'
+#!/bin/sh
+for last; do :; done
+turn="$last"
+cmd=$(printf "%s\n" "$turn" | sed -n "s/^.*end this turn: //p")
+if [ -n "$cmd" ]; then
+  me=$(basename "$PWD")
+  case "$cmd" in
+    *" --to "*) : ;;
+    *) cmd="$cmd --to $me" ;;
+  esac
+  eval "$cmd"
+fi
+exit 0
+FAKE
+$ chmod +x /work/bin/opencode
 
-$ nova-bus send --as alice --to bob --subject hello --body "are you there?"
-SEND OK id=01M4C9DNANQNQVVGGA8QYWG5N8 to=bob cc=- at=2026-10-07T22:58:20Z bytes=14 sha256=cf97adc337983a14daab1089bf14c6ab50e658f0136517e0048407e786b6e745 login=none
-exit=0
+$ NOVA_SPRINT_REDIS_USER=alice NOVA_SPRINT_REDIS_PASSWORD_ENV=ALICEPW ALICEPW=alicepw nova-friend run --as alice --harness opencode --dir /work/alice --redis 127.0.0.1:6379 --session s1 > /work/coldrun/alice-daemon.log 2>&1 &   # detached
+$ NOVA_SPRINT_REDIS_USER=bob NOVA_SPRINT_REDIS_PASSWORD_ENV=BOBPW BOBPW=bobpw nova-friend run --as bob --harness opencode --dir /work/bob --redis 127.0.0.1:6379 --session s1 > /work/coldrun/bob-daemon.log 2>&1 &   # detached
+$ sleep 10; cat /work/coldrun/bob-daemon.log
+RUN 2026-10-08T01:08:00Z push proof: pending: the first session check goes into the opencode session now; nothing is delivered until the session answers it
+RUN 2026-10-08T01:08:00Z inbox: the server did not say which cards are on her row: the sprint server at 127.0.0.1:6390 did not answer: Post "http://127.0.0.1:6390/verbs": dial tcp 127.0.0.1:6390: connect: connection refused; nothing written or retired until it does
+RUN 2026-10-08T01:08:01Z harness check: cannot tell: alive=session no turn into the opencode session has ended yet; the session check alone
+RUN 2026-10-08T01:08:01Z presence: session check 111iu1 into the session
+RUN 2026-10-08T01:08:01Z push proof: down: no session answer yet; nova-bus refuses bob as deaf
+RUN 2026-10-08T01:08:01Z presence: up: the session answered 111iu1
+RUN 2026-10-08T01:08:01Z push proof: proved: the session answered; the daemon delivers from now
+RUN 2026-10-08T01:08:01Z push proof: up: the session answered 111iu1 through opencode's deliver adapter; nova-bus hears bob
+RUN 2026-10-08T01:08:02Z subject="pong" messages=1 took=1.02s exit=0 acked=true
 
-$ nova-bus peek --as bob
+$ /work/bin/nova-friend pong --as bob --nonce 111iu1 --state-dir /work/bob/.nova-friend --redis 127.0.0.1:6379
+PONG REFUSED: --to is required: no ping has named a seat yet (no status file in /work/bob/.nova-friend); it wants the coordinator's name; run: nova-friend help
+[exit 2]
+
+$ cat /work/bob/.nova-friend/deliver.log
+2026-10-08T01:08:00Z push proof: pending: the first session check goes into the opencode session now; nothing is delivered until the session answers it
+2026-10-08T01:08:00Z inbox: the server did not say which cards are on her row: the sprint server at 127.0.0.1:6390 did not answer: Post "http://127.0.0.1:6390/verbs": dial tcp 127.0.0.1:6390: connect: connection refused; nothing written or retired until it does
+2026-10-08T01:08:01Z harness check: cannot tell: alive=session no turn into the opencode session has ended yet; the session check alone
+2026-10-08T01:08:01Z presence: session check 111iu1 into the session
+2026-10-08T01:08:01Z push proof: down: no session answer yet; nova-bus refuses bob as deaf
+2026-10-08T01:08:01Z presence: up: the session answered 111iu1
+2026-10-08T01:08:01Z push proof: proved: the session answered; the daemon delivers from now
+2026-10-08T01:08:01Z push proof: up: the session answered 111iu1 through opencode's deliver adapter; nova-bus hears bob
+2026-10-08T01:08:02Z subject="pong" messages=1 took=1.02s exit=0 acked=true
+
+$ pkill -f "nova-friend run"   # the two daemons started above, now stopped so the verbs read the messages
+[exit 143: the pattern also matched the shell that ran it; the two daemons were stopped]
+$ NOVA_SPRINT_REDIS_USER=default NOVA_SPRINT_REDIS_PASSWORD_ENV=PW PW=trial-pw nova-bus names --redis 127.0.0.1:6379
+NAMES OK count=3 proven=2
+NAMES NAME name=alice push=proven age=31s harness=opencode
+NAMES NAME name=bob push=proven age=31s harness=opencode
+NAMES NAME name=m1 push=none age=never harness=-
+
+$ NOVA_SPRINT_REDIS_USER=alice NOVA_SPRINT_REDIS_PASSWORD_ENV=ALICEPW ALICEPW=alicepw nova-bus send --as alice --to bob --subject hello --body "are you there?" --redis 127.0.0.1:6379
+SEND OK id=01M4CGW2PP6Z6XZAYTQ5V64110 to=bob cc=- at=2026-10-08T01:08:33Z bytes=14 sha256=cf97adc337983a14daab1089bf14c6ab50e658f0136517e0048407e786b6e745
+$ NOVA_SPRINT_REDIS_USER=bob NOVA_SPRINT_REDIS_PASSWORD_ENV=BOBPW BOBPW=bobpw nova-bus peek --as bob --redis 127.0.0.1:6379
 PEEK OK pending=0 new=1
-PEEK MESSAGE state=new id=01M4C9DNANQNQVVGGA8QYWG5N8 from=alice at=2026-10-07T22:58:20Z subject="hello"
-exit=0
-
-$ nova-bus recv --as bob --max 1
-RECV OK id=01M4C9DNANQNQVVGGA8QYWG5N8 from=alice to=bob cc=- re=- at=2026-10-07T22:58:20Z login=none subject="hello"
+PEEK MESSAGE state=new id=01M4CGW2PP6Z6XZAYTQ5V64110 from=alice at=2026-10-08T01:08:33Z subject="hello"
+$ NOVA_SPRINT_REDIS_USER=bob NOVA_SPRINT_REDIS_PASSWORD_ENV=BOBPW BOBPW=bobpw nova-bus recv --as bob --redis 127.0.0.1:6379
+RECV OK id=01M4CGW2PP6Z6XZAYTQ5V64110 from=alice to=bob cc=- re=- at=2026-10-08T01:08:33Z subject="hello"
 
 are you there?
-exit=0
+$ NOVA_SPRINT_REDIS_USER=bob NOVA_SPRINT_REDIS_PASSWORD_ENV=BOBPW BOBPW=bobpw nova-bus ack --as bob --id 01M4CGW2PP6Z6XZAYTQ5V64110 --redis 127.0.0.1:6379
+ACK OK acked=1 asked=1
+ACK ID id=01M4CGW2PP6Z6XZAYTQ5V64110 acked=true
+$ NOVA_SPRINT_REDIS_USER=bob NOVA_SPRINT_REDIS_PASSWORD_ENV=BOBPW BOBPW=bobpw nova-bus log --max 5 --redis 127.0.0.1:6379
+LOG OK total=3
+LOG MESSAGE id=01M4CGV3GBACDGJHTFYQP7FXQK from=alice to=alice cc=- re=- at=2026-10-08T01:08:01Z subject="pong"
+LOG MESSAGE id=01M4CGV3HPTKGAFB3KSK4F4F81 from=bob to=bob cc=- re=- at=2026-10-08T01:08:01Z subject="pong"
+LOG MESSAGE id=01M4CGW2PP6Z6XZAYTQ5V64110 from=alice to=bob cc=- re=- at=2026-10-08T01:08:33Z subject="hello"
 
-$ nova-bus ack --as bob --id 01M4C9DNANQNQVVGGA8QYWG5N8
-ACK OK acked=1 asked=1 login=none
-ACK ID id=01M4C9DNANQNQVVGGA8QYWG5N8 acked=true
-exit=0
+$ NOVA_SPRINT_REDIS_USER=bob NOVA_SPRINT_REDIS_PASSWORD_ENV=BOBPW BOBPW=bobpw nova-bus send --as bob --to alice --subject re --body "yes, here" --redis 127.0.0.1:6379
+SEND OK id=01M4CGW2QZ90KY8WEA8HX8VXHZ to=alice cc=- at=2026-10-08T01:08:33Z bytes=9 sha256=cf4ff293d349a9ba5a37e129df00975540c336b6609fef3f9a310dfb65f23a87
+$ NOVA_SPRINT_REDIS_USER=alice NOVA_SPRINT_REDIS_PASSWORD_ENV=ALICEPW ALICEPW=alicepw nova-bus peek --as alice --redis 127.0.0.1:6379
+PEEK OK pending=0 new=1
+PEEK MESSAGE state=new id=01M4CGW2QZ90KY8WEA8HX8VXHZ from=bob at=2026-10-08T01:08:33Z subject="re"
+$ NOVA_SPRINT_REDIS_USER=alice NOVA_SPRINT_REDIS_PASSWORD_ENV=ALICEPW ALICEPW=alicepw nova-bus recv --as alice --ack --redis 127.0.0.1:6379
+RECV OK id=01M4CGW2QZ90KY8WEA8HX8VXHZ from=bob to=alice cc=- re=- at=2026-10-08T01:08:33Z acked=true subject="re"
 
-$ nova-bus log --max 5
-LOG OK total=1
-LOG MESSAGE id=01M4C9DNANQNQVVGGA8QYWG5N8 from=alice to=bob cc=- re=- at=2026-10-07T22:58:20Z subject="hello"
-exit=0
+yes, here
+$ NOVA_SPRINT_REDIS_USER=alice NOVA_SPRINT_REDIS_PASSWORD_ENV=ALICEPW ALICEPW=alicepw nova-bus ack --as alice --id 01M4CGW2QZ90KY8WEA8HX8VXHZ --redis 127.0.0.1:6379
+ACK OK acked=0 asked=1
+ACK ID id=01M4CGW2QZ90KY8WEA8HX8VXHZ acked=false
+$ NOVA_SPRINT_REDIS_USER=alice NOVA_SPRINT_REDIS_PASSWORD_ENV=ALICEPW ALICEPW=alicepw nova-bus log --max 5 --redis 127.0.0.1:6379
+LOG OK total=4
+LOG MESSAGE id=01M4CGV3GBACDGJHTFYQP7FXQK from=alice to=alice cc=- re=- at=2026-10-08T01:08:01Z subject="pong"
+LOG MESSAGE id=01M4CGV3HPTKGAFB3KSK4F4F81 from=bob to=bob cc=- re=- at=2026-10-08T01:08:01Z subject="pong"
+LOG MESSAGE id=01M4CGW2PP6Z6XZAYTQ5V64110 from=alice to=bob cc=- re=- at=2026-10-08T01:08:33Z subject="hello"
+LOG MESSAGE id=01M4CGW2QZ90KY8WEA8HX8VXHZ from=bob to=alice cc=- re=- at=2026-10-08T01:08:33Z subject="re"
+$ NOVA_SPRINT_REDIS_USER=default NOVA_SPRINT_REDIS_PASSWORD_ENV=PW PW=trial-pw nova-bus names --redis 127.0.0.1:6379
+NAMES OK count=3 proven=2
+NAMES NAME name=alice push=proven age=32s harness=opencode
+NAMES NAME name=bob push=proven age=31s harness=opencode
+NAMES NAME name=m1 push=none age=never harness=-
 
-$ nova-bus send --as bob --to alice --subject got-it --body "got it, thanks"
-SEND OK id=01M4C9DNCG9WJYNX6QCHCEV9Q3 to=alice cc=- at=2026-10-07T22:58:20Z bytes=14 sha256=3f49bcd863d57ac7426db3cedcbc7220ded908009ac42fbbcad3eda06990187d login=none
-exit=0
-
-$ nova-bus recv --as alice --max 1
-RECV OK id=01M4C9DNCG9WJYNX6QCHCEV9Q3 from=bob to=alice cc=- re=- at=2026-10-07T22:58:20Z login=none subject="got-it"
-
-got it, thanks
-exit=0
-
-$ nova-bus ack --as alice --id 01M4C9DNCG9WJYNX6QCHCEV9Q3
-ACK OK acked=1 asked=1 login=none
-ACK ID id=01M4C9DNCG9WJYNX6QCHCEV9Q3 acked=true
-exit=0
-
-$ nova-bus log --max 5
-LOG OK total=2
-LOG MESSAGE id=01M4C9DNANQNQVVGGA8QYWG5N8 from=alice to=bob cc=- re=- at=2026-10-07T22:58:20Z subject="hello"
-LOG MESSAGE id=01M4C9DNCG9WJYNX6QCHCEV9Q3 from=bob to=alice cc=- re=- at=2026-10-07T22:58:20Z subject="got-it"
-exit=0
-
-$ nova-bus names
-NAMES OK count=2 proven=2
-NAMES NAME name=alice push=proven age=0s harness=fake
-NAMES NAME name=bob push=proven age=0s harness=fake
-exit=0
+$ podman stop stranger-bus
+stranger-bus
+$ rm -rf <bench>/<job>
 ```
+
+The stand-in harness the daemons ran as `opencode` (`/work/bin/opencode`), the
+file written in the transcript above. The daemon calls it as
+`opencode run --session s1 <turn>` with the friend's directory as its working
+directory (no `--dir`: the adapter's own comment records that opencode's `run`
+rejects it); it runs the pong line a SESSION CHECK carries (adding `--to` when
+the line lacks it, stumble 6) and otherwise exits 0. Nothing in the help says
+what a deliver command is called with; the shape was found by reading
+internal/friend/adapter.go after the stumble.
 
 ## Stumbles
 
 Each stumble: what was read, what was expected, what happened, and a proposed
 card.
 
-### 1. The install line needs the network and no page builds from a checkout
+### 1. The NOAUTH refusal does not name the variable that names the password
 
-- Read: `README.md` "Try one on a small example" (`go install .../cmd/nova-memory@v1.0.0`,
-  "or build just that tool with Go 1.26.6 or newer") and the Install block of
-  `cmd/nova-bus/README.md` (`go install .../cmd/nova-bus@latest`).
-- Expected: a way to get `nova-bus` in a container with no network.
-- Happened: `go install ...@latest` printed `module lookup disabled by GOPROXY=off`.
-  The README says to build "with Go 1.26.6 or newer", but the line under it is
-  another release install (`@v1.0.0`); neither page shows the checkout build a
-  reader with the tree in hand needs. I guessed
-  `go build -o /work/bin/nova-bus ./cmd/nova-bus`.
+- Read: the `NAMES REFUSED ... NOAUTH Authentication required.` line, `nova-bus help`, `nova-redis help serve`.
+- Expected: a throwaway Redis, brought up the way the help says, that the
+  README's own first-run line works against.
+- Happened: `nova-redis serve` always starts `auth=on`, so every `nova-bus`
+  verb against it is refused with `NOAUTH`. The refusal says to name the user
+  (`NOVA_SPRINT_REDIS_USER`) and "the variable that holds its password", but not
+  the variable that names that variable. `NOVA_REDIS_PASSWORD` (what serve
+  reads), `NOVA_SPRINT_REDIS_PASSWORD` and `NOVA_BUS_REDIS_PASSWORD` all did
+  nothing. Only `NOVA_SPRINT_REDIS_USER=default NOVA_SPRINT_REDIS_PASSWORD_ENV=PW PW=<password>` worked, and the name `NOVA_SPRINT_REDIS_PASSWORD_ENV` is in
+  internal/nsprint/redisauth/redisauth.go, not in the README or the help.
 
-card: bus-install-says-how-to-build-a-checkout-offline
-paths: README.md,cmd/nova-bus/README.md
-task: show the offline checkout build line (`go build -o <dir>/nova-bus ./cmd/nova-bus`) beside the release install, and say which release carries which tool.
-
-### 2. The first run's throwaway store has no setup, and the names come from PostgreSQL
-
-- Read: the nova-bus row of `README.md` ("Use a separate running Redis instance
-  whose nova-config rows name the sender and the recipient"),
-  `cmd/nova-bus/README.md` "First run" (the store is "a throwaway redis-server
-  whose `friends` set names ada and bob (what `nova-config apply` writes for two
-  friend rows) ... Run by `cmd/nova-bus/firstrun_test.go`"), `nova-bus help`
-  ("first run: a Redis naming ada and bob"), and the send refusal.
-- Expected: a command that puts two names on the throwaway store the README
-  sends a reader to.
-- Happened: `nova-bus names` said `count=0`; `send` refused both names with
-  `add one with nova-config friend add <name> --slots 1 --tiers flash --as <you>, then nova-config apply` — and `nova-config` stores its rows in PostgreSQL, a
-  database for a two-name trial. Nothing in nova-bus's README or help starts the
-  Redis either; the throwaway recipe is only in `nova-redis help`. To get past it
-  I read `internal/bus/redis.go` and `internal/bus/names.go` and set the key by
-  hand: `redis-cli SADD friends alice bob`.
-
-card: bus-first-run-names-a-two-name-throwaway-in-one-command
-paths: cmd/nova-bus/README.md,cmd/nova-bus/main.go,docs/SPEC-BUS.md
-task: give the throwaway two-name setup as copy-pasteable commands (start Redis, `SADD friends alice bob`, prove the push), or a nova-bus verb that writes a name and its proof, so the first run needs no PostgreSQL.
-
-### 3. A name is not heard until a push is proven, and the proof is an undocumented JSON blob
-
-- Read: `cmd/nova-bus/README.md` ("each with a proven inbox push on `bus2:push`
-  (what each one's friend daemon writes ...)"), `nova-bus help` ("send and recv
-  refuse a deaf name (no push proven in 10m)"), and the `SEND REFUSED: deaf: ...`
-  line.
-- Expected: once the two names exist, a message can be sent.
-- Happened: with `friends` set, `nova-bus names` said `count=2 proven=0` and
-  `send` refused both names as deaf, with the remedy "runs its friend daemon ...
-  and its session answers the daemon's SESSION CHECK". A bus-only two-name trial
-  has no friend daemon, and nothing says the proof can be written by hand. To get
-  past it I read `internal/bus/pushproof.go` and `cmd/nova-bus/firstrun_test.go`
-  and hand-wrote the proof into the `bus2:push` hash:
-  `{"harness":"fake","nonce":"cold-run","proven":"<now>","up":true,"at":"<now>"}`.
-  The proof's field shape is in no help page.
-
-card: bus-help-names-the-push-proof-and-lets-a-name-be-proven-by-hand
+card: bus-noauth-refusal-names-the-password-variable
 paths: cmd/nova-bus/main.go,docs/SPEC-BUS.md
-task: document the `bus2:push` proof shape and add `nova-bus prove --as <name> [--harness <h>]` (with `--dry-run`) that writes it, so a bus-only trial hears two names with no daemon.
+task: make the NOAUTH refusal print the full recipe, NOVA_SPRINT_REDIS_USER=<user> NOVA_SPRINT_REDIS_PASSWORD_ENV=<VAR> <VAR>=<password>, and say the README's Redis examples need it after nova-redis serve.
 
-### 4. `--redis` takes a unix socket path, but the help says only `<addr>`
+### 2. Two names take a five-step nova-config detour no page lists
 
-- Read: `nova-bus help` and `nova-bus wait -h` (`--redis <addr>`), the main
-  README ("The Redis examples assume your throwaway instance listens on
-  `127.0.0.1:6379`. Supply its address and login when they differ.") and the
-  throwaway recipe in `nova-redis help` (a `--port 0 --unixsocket` store).
-- Expected: the recipe's socket has no host:port to give, so the two pages do
-  not meet.
-- Happened: passing the socket path in `NOVA_BUS_REDIS` worked
-  (`NAMES OK count=0`), which no help says. A reader who follows "listens on
-  127.0.0.1:6379" starts a different store rather than the recipe they were just
-  shown.
+- Read: `nova-bus help` ("first run: a Redis naming ada and bob"), the README's
+  nova-bus row ("whose nova-config rows name the sender and the recipient"),
+  `nova-config help`.
+- Expected: one line saying how a name gets into the store.
+- Happened: `names` showed `count=0`. Getting alice and bob in took a
+  `mkdir -p /work/trial` (migrate will not make the file's directory), `migrate --file`, two `friend add`, a `machine add` (no friend has a machine to beat),
+  a `fleet set` (apply refuses until the fleet names `redis_port` and
+  `pg_dsn`, a PostgreSQL URI), and `apply`, which itself needed the Redis login
+  and was refused twice more, each naming the next missing thing. Only then
+  `NAMES OK count=3`.
 
-card: bus-help-says-redis-takes-a-unix-socket-path
-paths: cmd/nova-bus/main.go,cmd/nova-redis/README.md
-task: say in `--redis`'s help and the nova-bus first run that a unix socket path is accepted, and give the one throwaway recipe both tools use.
+card: bus-first-run-lists-the-config-steps-for-two-names
+paths: cmd/nova-bus/main.go,cmd/nova-config/main.go
+task: put the whole sequence (migrate --file, friend add, machine add, fleet set, apply --as) in nova-bus's first run, or add a nova-config verb that makes two names in one call.
+
+### 3. A name's Redis login is a user nothing shows how to make
+
+- Read: the refusal `--as alice is not the login user default ... log in as alice (NOVA_SPRINT_REDIS_USER=alice with its password)`, `nova-redis acl render`, `acl -h`.
+- Expected: the way to make a user named alice with a password, from the help.
+- Happened: `acl render` prints four fixed users (coordinator, bench, ns-table,
+  ns-friend), none a name of mine, and `acl apply` applies that fixed render.
+  The users had to be made by hand with `redis-cli -a <store-password> ACL SETUSER alice on ">alicepw" "~*" "&*" "+@all"`, which is nowhere in the help
+  and is wide open. Without it the sender cannot be alice at all.
+
+card: bus-help-says-how-a-name-gets-a-redis-login
+paths: cmd/nova-bus/main.go,cmd/nova-redis/main.go,docs/SPEC-BUS.md
+task: say how a name gets a Redis user (a nova-redis verb that writes one user per name with a narrow key family, or the exact ACL SETUSER) and what keys it may touch.
+
+### 4. Every send and recv is refused as deaf until a push is proven
+
+- Read: `nova-bus help` ("send and recv refuse a deaf name (no push proven in
+  10m)"), `nova-bus send -h`, the `deaf:` refusal and its remedy,
+  `nova-friend help`, `nova-friend run -h`.
+- Expected: the README's nova-bus first run, a stranger's two names sending a
+  message to each other, as the row promises.
+- Happened: with the names in and each one's own Redis user made, `send` and
+  `recv` were refused: `deaf: alice has no proven push since never`. The
+  README's own first-run transcript is produced by a test fixture whose store
+  already holds proven pushes, so it shows none of this. A name is heard only
+  after a standing `nova-friend` daemon carries a SESSION CHECK into its harness
+  and the session answers it. There is no throwaway path from "two names I just
+  made up" to a first message; a stranger must stand up two daemons (and, on
+  this bench, write a stand-in harness) before the tool the README row sends
+  them to will send anything.
+
+card: bus-first-run-says-how-a-name-proves-its-push
+paths: cmd/nova-bus/README.md,cmd/nova-bus/main.go,docs/SPEC-BUS.md
+task: say in the nova-bus first run that each name needs a proven push, give the shortest throwaway path for two names through nova-friend, and show its shape in the README transcript.
+
+### 5. A stand-in harness must be written from the source, not the help
+
+- Read: `nova-friend help`, `nova-friend run -h`, internal/friend/adapter.go and
+  adapter_opencode_lanes.go (after the daemon would not deliver without a
+  harness binary the container did not have).
+- Expected: for a harness, what the daemon runs for one delivery: the command,
+  its arguments, the turn text shape, what exit 0 means.
+- Happened: `--harness` is one of a fixed list, so a made-up harness cannot be
+  named; the stand-in has to answer to a real name (`opencode`) on `PATH`. The
+  help speaks of "the harness's deliver command" and prints none. The source
+  shows the call is `opencode run --session <id> <turn>` with the friend's
+  directory as the working directory (there is no `--dir`; opencode's `run`
+  rejects it), and the turn text of a SESSION CHECK ends with the pong line the
+  session must run. None of that is in the help.
+
+card: friend-help-shows-each-harness-deliver-command
+paths: cmd/nova-friend/main.go,docs/SPEC-FRIEND.md
+task: print per harness the exact deliver command, the turn text shape (SESSION CHECK and RECV OK) and the exit-code meaning, so a stand-in can be written from the help.
+
+### 6. The SESSION CHECK's pong line is refused as written
+
+- Read: the turn text the daemon carried, `nova-friend pong -h`.
+- Expected: the line the check carries, run exactly as written, answers it.
+- Happened: the carried line `/work/bin/nova-friend pong --as bob --nonce 111iu1 --state-dir /work/bob/.nova-friend --redis 127.0.0.1:6379` is refused:
+  `PONG REFUSED: --to is required: no ping has named a seat yet (no status file in /work/bob/.nova-friend); it wants the coordinator's name; run: nova-friend help` (the invocation and its exit 2 stand in the transcript). The stand-in
+  had to add `--to <itself>`. No ping had named a seat, so the one command the
+  check asks for cannot run.
+
+card: session-check-line-always-names-its-coordinator
+paths: cmd/nova-friend/main.go,cmd/nova-friend/pushproof_test.go
+task: make the pong line of every SESSION CHECK carry --to, so running it as written is enough.
 
 ## Verdict
 
-could a stranger do it: no, not from the README and the help alone. It took
-about 3 minutes of bench time from the first container command to the last
-acknowledgement (22:55 to 22:58 UTC), after the README and the help had been
-read; most of it was finding the two keys the run needs. The pieces do work:
-with the `friends` set and the `bus2:push` proofs in place, alice sent bob a
-message, bob peeked, received and acked it, bob sent alice the reply, and alice
-received and acked that, all `login=none` on the throwaway store. What stops a
-stranger is the way in: an install line that needs the network, a first run
-whose store is a test fixture (`cmd/nova-bus/firstrun_test.go`) named but not
-given, two names that come from PostgreSQL, and a push proof that has to be
-written by hand from the source. Of the four stumbles, 2 and 3 each stop the run.
+could a stranger do it: no, not from README.md and the help alone. It took
+about two minutes of bench time from the container's first command to the acked
+reply (01:06 to 01:08:33 UTC), after the README and the help had been read, and
+four things had to be read or done outside them: the login variable names in
+internal/nsprint/redisauth/redisauth.go (stumble 1), the five-step nova-config
+detour (stumble 2), `redis-cli ACL SETUSER` (stumble 3) and a stand-in harness
+plus two friend daemons (stumbles 4, 5 and 6). With the two pushes proven, the
+exchange itself is clean: `send`, `peek`, `recv`, `ack` and `log` print exactly
+what the README's first-run transcript shows, and `ack` of an already-acked id
+is false at exit 0 as documented. What stops a stranger is not the bus but the
+way in: the store's login, the names, each name's Redis user, and the
+proven-push gate that the README's first run silently presupposes.

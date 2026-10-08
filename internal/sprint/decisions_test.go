@@ -578,7 +578,7 @@ func TestAckAnswersOnlyTheTypesThatListIt(t *testing.T) {
 	}
 	all[NRemindFailed] = []string{"goal set friend-a --to <route>", "goal drop friend-a", "ack"}
 	ackable := map[string]bool{NTimer: true, NBlocked: true, NMissingNeed: true, NCIRed: true, NRepairSkipped: true, NOpStuck: true, NRemindFailed: true, NProviderFunds: true, NProviderLow: true, NProviderKey: true, NAllOutOfCredit: true, NScoredLow: true, NRaiseReadTier: true,
-		NAlarmReview: true, NAlarmMerging: true, NAlarmReady: true, NAlarmFleet: true, NFilesAlarm: true, NFriendDeaf: true, NFriendIdle: true, NFriendEmpty: true, NPinIgnored: true, NStatus: true}
+		NAlarmReview: true, NAlarmMerging: true, NAlarmReady: true, NAlarmFleet: true, NFilesAlarm: true, NFriendDeaf: true, NFriendIdle: true, NFriendEmpty: true, NPinIgnored: true, NStatus: true, NDeadBase: true}
 	for typ, ds := range all {
 		w := setup(t, 1)
 		n := Note{ID: "n-x.1", Kind: Judgment, Type: typ, Stream: "s1", Primaries: []string{"s1-1"}, Count: 1, Decisions: ds, At: w.s.Now}

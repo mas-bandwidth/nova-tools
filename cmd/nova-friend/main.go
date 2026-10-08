@@ -431,8 +431,10 @@ Skipped: n deals, n pings, n notes); every older message is acked "superseded by
 on the record and to the seat on the bus, and a PING past the ` + friend.Window.String() + ` challenge window is dropped, never
 answered. A report on a card no longer on her row is never finished; the record names who holds it now.
 Each second, when the session is free: every waiting
-message read off the stream and pushed in as ONE turn, oldest first (at most ` + fmt.Sprint(friend.MaxBatch) + `; the rest is the next
-turn), acked together when the turn ends at exit 0; a turn that fails leaves them pending, handed in
+message is read off the stream and pushed in as ONE turn, one envelope, oldest first, each message under a line
+[i/n] <id> from=<f> at=<RFC3339> age=<m>m subject=<s>, capped at the harness's text limit
+(` + fmt.Sprint(friend.BatchBytes) + ` bytes unless it names its own; the first message always goes in) with the rest named under
+and <n> more: nova-bus recv --as <me> --all; exit 0 acks every message the envelope carried, a failure acks none. A turn that fails leaves them pending, handed in
 again when their claims open, and the third failure acks a message, given_up=true on the record. A
 PING is answered at once with a daemon-pong and acked, never a turn; while a challenge is open the
 pong line rides at the head of the next turn. No ping for ` + friend.Window.String() + `: "coordinator silent", and
@@ -900,7 +902,7 @@ example: nova-friend watch --as ada --timeout 10m`,
 				Example: "status --as bob --dir ./bob",
 				Effect:  tool.Inspection,
 				Detail: `Prints STATUS OK daemon=<up|down> harness= connection=<connected|silent> seat= last_ping= challenge=<quiet|challenged|deaf>
-last_pong= session_pong_age= daemon_pong_age= pongs= queue= working= width= beats= delivered= session=<ok|broken|-> mode=<batch|one-shot|-> presence=<up|down>
+last_pong= session_pong_age= daemon_pong_age= pongs= queue= working= width= beats= delivered= envelope= envelope_bytes= session=<ok|broken|-> mode=<batch|one-shot|-> presence=<up|down>
 (once a daemon has written it; last_session=, and when down presence_reason=, "no session answer" or "no daemon") (broken: session_id= broken_at= reason=; one-shot: lanes=)
 status=<up|down> why= evidence=, and for harness grok route=<push|defer>, for harness claude route=passive,
 from the daemon's status file (up while it is under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file;
@@ -916,7 +918,8 @@ line has no app to see); at a limit (the state directory's
 deliver (the daemon down, the session broken, the store failing) is down; otherwise up. The daemon's beat never makes it up. why
 is the rule that decided it, as a person reads it ("no session answer 12m", "limit until Mon 1:00 PM"); evidence is every piece,
 "; "-separated: the harness, the session answer, the limit, the messages waiting on the stream (counted with --redis), the last
-turn's end and exit from the log. STATUS NONE at
+turn's end and exit from the log. envelope is how many messages the last turn's envelope carried and envelope_bytes its size
+(at most the harness's text limit, ` + fmt.Sprint(friend.BatchBytes) + ` bytes unless it names its own; the first message always goes in), 0 before the first. STATUS NONE at
 exit 1 when no daemon ever ran as --as (no status file in the state directory).`,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name")
@@ -1039,6 +1042,13 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return o
 	}
 	name, dir, server := c.Str("as"), c.Str("dir"), c.Str("server")
+	// every path a lane names is absolute, its working directory first: a model that reads a
+	// path relative must never be handed one (friend.LaneJobOf, docs/SPEC-FRIEND.md)
+	abs, err := filepath.Abs(dir)
+	if err != nil || !filepath.IsAbs(abs) {
+		return tool.Refuse(fmt.Sprintf("lane path not absolute: %s: %v; the daemon does not start", dir, err))
+	}
+	dir = abs
 	state, stateWhy := w.daemonStateDir(c)
 	// every lane child runs inside the wall of the profile her row names, else --profile
 	// (docs/SPEC-FRIEND.md, buds-in-the-wall-r.w5); a batch turn runs as it did
@@ -1320,6 +1330,12 @@ func (w world) run(c *tool.Call) *tool.Out {
 		record(w.now().UTC().Format(time.RFC3339) + " limit: " + text)
 		tellSeat(friend.LimitAlikeText(name, text))
 	}
+	// the down her lanes' harness faults owe her row (Daemon.FaultDown): her beat says it until it passes
+	type faultHold struct {
+		until  time.Time
+		reason string
+	}
+	var faultDown atomic.Pointer[faultHold]
 	stager := w.stager(dir)
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
@@ -1431,6 +1447,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 				until, reason := friend.PauseBeat(marker, c.Str("model"), w.now())
 				return down(ctx, until, reason)
 			}
+			// her lanes hit the same harness fault three times in ten minutes: her beat says
+			// her down with the fault until it passes (friend.FaultWatch), then up again
+			if h := faultDown.Load(); h != nil && w.now().Before(h.until) {
+				return down(ctx, h.until, h.reason)
+			}
 			if _, _, limited := fl.Limited(); limited && !perCard {
 				sc.Step(ctx)
 			}
@@ -1450,6 +1471,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 		LaneHold:  func() string { return friend.ReadPause(state) },
 		LaneHoldDown: func(_ context.Context, message string) error {
 			return friend.WritePause(state, message, w.now()) // her next beat says her down with it
+		},
+		FaultDown: func(until time.Time, reason string) {
+			faultDown.Store(&faultHold{until: until, reason: reason}) // her next beat says her down with it
 		},
 		ReadSlots: func() int { return int(rowReadSlots.Load()) },
 		LaneCaps: func() map[string]time.Duration {
@@ -1991,7 +2015,7 @@ func (w world) status(c *tool.Call) *tool.Out {
 	o := tool.Done().Fact("daemon", daemon).Fact("harness", s.Harness).Fact("status_age", age(now, s.At)).
 		Fact("connection", s.Connection).Fact("seat", dash(s.Seat)).Fact("last_ping", stamp(s.LastPing)).Fact("ping_age", age(now, s.LastPing)).
 		Fact("challenge", s.Challenge).Fact("nonce", dash(s.Nonce)).Fact("last_pong", stamp(p.At)).Fact("session_pong_age", age(now, p.At)).Fact("daemon_pong_age", age(now, s.LastDaemonPong)).Fact("pongs", s.Pongs).
-		Fact("queue", queue).Fact("working", working).Fact("width", width).Fact("beats", s.Beats).Fact("last_beat", stamp(s.LastBeat)).Fact("delivered", s.Delivered).Fact("session", dash(s.Session)).Fact("mode", dash(s.Mode))
+		Fact("queue", queue).Fact("working", working).Fact("width", width).Fact("beats", s.Beats).Fact("last_beat", stamp(s.LastBeat)).Fact("delivered", s.Delivered).Fact("envelope", s.Envelope).Fact("envelope_bytes", s.EnvelopeBytes).Fact("session", dash(s.Session)).Fact("mode", dash(s.Mode))
 	if s.Lanes != "" {
 		o.Fact("lanes", tool.Text(s.Lanes))
 	}
