@@ -580,8 +580,14 @@ each history id; a second pass of the same store writes nothing. An apply that
 fails leaves that kind's applied revision where it was and is reported once,
 until a later pass fails differently or succeeds.
 
-A gap prints `CONFIG GAP kind=<k> store=<n> applied=<n> age=<seconds>s`. A gap
-older than 60s is also a judgment line for the seat:
+A gap prints `CONFIG GAP kind=<k> store=<n> applied=<n> age=<seconds>s`.
+The age is the wait since the first history revision of that kind after the
+applied revision, not since the latest write. A row the store has removed is
+included while the Redis copy still holds its name: List no longer returns it,
+and its history still does, so a removal does not leave the age unknown and a
+recent write does not hide an older unapplied change. `nova-config status`
+shows the same age as `<kind>_gap_age`, or `unknown` when that revision has no
+history time. A gap older than 60s is also a judgment line for the seat:
 `JUDGMENT kind=<k> store=<n> applied=<n> age=<seconds>s: the Redis copy is behind the store; run: nova-config apply`.
 
 `nova-config apply install [--every <d>] [--machine <m>]` writes the loop as
