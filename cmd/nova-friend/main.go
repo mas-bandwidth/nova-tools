@@ -95,6 +95,7 @@ type world struct {
 	settings  friend.SettingsFS // where a harness's own settings are read and written (install, check --settings)
 	argv      []string          // this run's arguments after the program's name: what the plist drift is read against
 	wake      *wakeFS           // watch: the wake file's reads; nil reads the disk
+	stepBeat  bool              // deterministic fake clock in CLI tests; never set by realWorld
 }
 
 // readPlist is the installed plist at path, empty when there is none or it
@@ -1214,6 +1215,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	// her row, as her beat last answered it (nova-sprint friend beat: row_mode, row_width, row_config_dir)
 	rowMode, rowWidth := "", 0
+	var rowMu sync.Mutex          // the cadence beat writes the row while the delivery loop reads it
 	var rowReadSlots atomic.Int64 // her row's read slots as her beat last answered; friend.DefaultReadSlots until it says
 	rowReadSlots.Store(friend.DefaultReadSlots)
 	// her row's lane caps by tier as her beat last answered; friend.DefaultLaneCaps until it says
@@ -1231,7 +1233,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return ""
 		}
 	}
+	var recordMu sync.Mutex // the beat and delivery loop share one ordered native record
 	record := func(line string) {
+		recordMu.Lock()
+		defer recordMu.Unlock()
 		fmt.Fprintln(c.Stdout, "RUN "+line)
 		_ = friend.Record(state, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
 	}
@@ -1366,7 +1371,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	stager := w.stager(dir)
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
-		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,
+		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep, StepBeatForTests: w.stepBeat,
 		Sent: func() time.Time {
 			if at := sent.Load(); at != nil {
 				return *at
@@ -1418,7 +1423,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 					}
 				}
 				if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
+					rowMu.Lock()
 					rowMode, rowWidth = m, wd
+					rowMu.Unlock()
 					dir := friend.RowConfigDir(answer)
 					rowConfigDir.Store(&dir)
 				}
@@ -1485,6 +1492,8 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return fl.BeatOrDown(held(fl.BeatOrDown(up, down)), down)(ctx)
 		},
 		Row: func() (string, int) {
+			rowMu.Lock()
+			defer rowMu.Unlock()
 			if m := c.Str("mode"); m != "" {
 				return m, rowWidth // the override, for a test
 			}

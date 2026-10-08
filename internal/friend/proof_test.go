@@ -2,6 +2,7 @@ package friend
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"slices"
 	"strings"
@@ -150,7 +151,7 @@ func newProofRig(t *testing.T, headless bool) *proofRig {
 	}
 	beat := r.sc.BeatOr(up, down)
 	r.d = &Daemon{
-		Friend: "bob", Harness: "fake", Dir: t.TempDir(), Width: 1, Store: r.sc.DaemonStore(), Deliver: r.sc.Deliver,
+		Friend: "bob", Harness: "fake", Dir: t.TempDir(), Width: 1, Store: r.sc.DaemonStore(), Deliver: r.sc.Deliver, StepBeatForTests: true,
 		Now: r.step, Record: r.record, Proof: r.sc.Proof,
 		Sent:  func() time.Time { r.mu.Lock(); defer r.mu.Unlock(); return r.sent },
 		Pause: func(context.Context, time.Duration) { synctest.Wait() },
@@ -352,6 +353,51 @@ func TestAnAnsweredCheckIsProvedToTheServerByTheDaemon(t *testing.T) {
 		_, proved, _ = sprint.ProveBeat(asked, sprint.BeatWords{Run: "run1", Pong: "n9"}, t0)
 		assert.False(t, proved, "the same nonce twice proves once")
 	})
+}
+
+// A slow finish may occupy the reconcile loop for more than the server's beat
+// freshness bound. The one cadence caller still carries the session's actual
+// nonce answer; without that answer, the same cadence says down.
+func TestAStalledFinishDoesNotHoldTheNativeBeat(t *testing.T) {
+	t.Parallel()
+	for _, answers := range []bool{true, false} {
+		t.Run(fmt.Sprintf("session-answers-%t", answers), func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				r := newProofRig(t, false)
+				r.d.StepBeatForTests = false
+				r.h.set(answers)
+				row := &twinRow{}
+				r.d.Held = row.held
+				for _, id := range []string{"first.w1", "second.w1"} {
+					card := workCard(id, "working")
+					inboxJob(t, r.d.Dir, card.Job, card.Brief)
+					outboxReport(t, r.d.Dir, card.Job, "Verdict: HOLD\n\nneeds repair\n")
+					row.set(append(row.cards, card)...)
+				}
+				var finishes int
+				r.d.Finish = func(ctx context.Context, _ []string) error {
+					finishes++
+					<-ctx.Done()
+					return ctx.Err()
+				}
+				var during, later [2]string
+				r.at(6*BeatEvery, func() { during[0], during[1] = r.server() })
+				r.at(17*BeatEvery, func() { later[0], later[1] = r.server() })
+				r.run(21 * BeatEvery)
+				assert.Equal(t, 2, finishes, "each blocked report is attempted once; no concurrent duplicate finish")
+				want := sprint.Down
+				if answers {
+					want = sprint.Up
+				}
+				assert.Equal(t, want, during[0], "the native beat stays fresh during the first blocked finish: %s", during[1])
+				assert.Equal(t, want, later[0], "the native beat stays fresh during the second blocked finish: %s", later[1])
+				if !answers {
+					assert.True(t, r.proof.IsZero(), "an unanswered check never manufactures session proof")
+				}
+			})
+		})
+	}
 }
 
 // TestADaemonWaitsForItsProofInsteadOfExiting: a session in a long turn answers no
