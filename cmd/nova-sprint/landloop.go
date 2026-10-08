@@ -196,8 +196,11 @@ type landBeat struct {
 	mu        sync.Mutex
 	hostName  func() (string, error)
 	gateBench func(ctx context.Context, host, dir string, runs [][]string, withGit bool) (string, int, error)
-	landMore  []string
-	flight    *landFlight
+	// guardBench is the test seam that stands in for a bench's disk-guard run at once
+	// (landgo.go, guardBench)
+	guardBench func(ctx context.Context, host string) error
+	landMore   []string
+	flight     *landFlight
 	// pulse is one slot filled each land-loop cycle. A landing waiting to ask
 	// for a Go lane again receives it. The loop's own clock is the wait; the
 	// ask adds none.

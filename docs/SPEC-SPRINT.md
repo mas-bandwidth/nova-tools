@@ -4084,8 +4084,9 @@ as one bench run (the gated commit staged from the bench's own mirror, below,
 with its history, since `internal/ci` reads it; `nice -n 19`,
 `GOFLAGS=-mod=readonly`, `NOVA_TEST_NO_HOST=1`; each run named on its own line,
 the first red ending it and named in the finding), then gives the lane back. A
-bench that does not answer, or a gate no bench could stage, is nobody's
-finding: that gate runs in the clone instead. The batch's `LAND` line carries `bench=<member>` (`here` for a gate
+bench that does not answer, or a gate whose commit could not be offered for
+staging, is nobody's finding: that gate runs in the clone instead (every bench
+refusing its stage is a fault of each, below: the landing is deferred). The batch's `LAND` line carries `bench=<member>` (`here` for a gate
 the loop ran in the clone; `+` between them when a batch's gates ran in more
 than one place) and `wall=<seconds>`, the gates' total. With no such bench,
 the loop's gate runs in the clone; a `land` command on its own (a hand land,
@@ -4158,10 +4159,59 @@ exit). A refused stage is never retried on the same bench within the gate: the
 ring's next slot is asked; a bench whose stage is refused twice in one land pass
 is passed over by the ring for the rest of the pass, said once a gate as `NOTE
 tree gate: skip <host>: its stage failed 2 times this pass, last: <refusal>`
-(`bench.StageSkips`). When every slot refused, the gate runs in the clone. A
+(`bench.StageSkips`). A refused stage is a bench fault of kind `copy` (below):
+when every slot faulted, the landing is deferred, never gated in the clone. A
 push of the temporary ref that is refused is said as `copy refused: push
 <ref>: ...` and the gate runs in the clone.
 `--check` is the caller's own command on top, once a batch, as before.
+
+**The gate's two outcomes: a red tree, or a bench's fault**
+(the-tree-gate-tells-a-bench-fault-from-a-red-test-bb; `bench.ClassifyGate`,
+`internal/bench/exec.go`; `gateOn`, `ringGate`, `treeGate` in
+`cmd/nova-sprint/landgo.go`). On 2026-10-07 at 11:34 PM the lander refused sixteen
+landings in one pass for "the base fails the tree gate at its tip": the base's gate
+ran on a copy staged without `.git`, and six class tests failed with `git ls-files
+from the repository root: exit status 128`. The same evening a bench's `/tmp` at its
+disk quota and another's root at 40 MB free failed every gate there at build, each
+counted as a red tree. A fault of the bench is never a verdict on the tree, so a gate
+that ends red on a bench is classified before it is reported:
+
+- a **red tree** is the tree's own failure: a `--- FAIL:` line from `go test` naming
+  a test, a build or vet error, anything the bench's faults below do not name. It is
+  the finding, as above.
+- a **bench fault** is the bench's: its output (or the refusal of its run) names one
+  of the bench's failures, and that wins over a FAIL line it caused. The kinds:
+  `git` (git's `exit status 128`, `not a git repository`, go's `error obtaining VCS
+  status`, `detected dubious ownership`), `disk` (`no space left on device`,
+  `ENOSPC`, `disk quota exceeded`), `tmp` (the same on a line naming `/tmp` or
+  `TMPDIR`), `ssh` (the run's exit 255, ssh's own, after the bench answered),
+  `copy` (a stage or copy that did not finish: a refused stage), and `toolchain`
+  (`go: command not found`, `go: not found`, `toolchain not available`, or exit 127).
+  A bench that does not answer at all is still nobody's finding and the gate runs in
+  the clone, as above.
+
+A fault is said as `GATE FAULT bench=<m> kind=<git|disk|tmp|ssh|copy|toolchain>
+what=<first line>`, on the loop's idle line as the step and under the batch's `LAND`
+line (stderr; the `--json` item's `faults`). It never marks the base red, never counts
+under the base-gate rule, never caches a base, never blames a head and never fails a
+stream: the gate steps to the ring's next slot and runs there. A bench that faulted
+(any kind but `copy`, which `bench.StageSkips` passes over for the pass) is marked on
+its fleet row for 15 minutes (`sprint.MarkBenchFault`, the fleet table's property
+`bench_fault_<member>`, `sprint.BenchFaultFor`): the ring skips it until then, `where
+--json` carries `bench_fault=<kind>` and `bench_fault_until=<t>` on its fleet row and
+`where` a `bench fault: <m> <kind> until <t>: <what>` line under the fleet table, and
+the mark ends by itself at its time. A `disk` or `tmp` fault also runs the bench's
+disk-guard loop at once (`bench.DiskGuardLine`, the unit `fleet/loops.yml` installs).
+When every member of the ring faulted, or every up bench is marked, the gate is
+deferred: the landing is deferred one tick, `LAND DEFERRED stream=<s> faults=<n>
+...` with each fault's `GATE FAULT` line and a NOTE, nothing pushed or reported, no
+card blamed, the base not marked red and the stream not stopped; its cards stay
+queued and the next pass lands them. A base re-check deferred so says it in a NOTE
+and re-checks at the next pass. Each pass that deferred a gate raises ONE judgment to
+the seat, never one per stream: `an operation was stuck`, its text `every bench
+faulted: <kinds>; <n> tree gates deferred this pass ...` with each bench's fault; the
+same benches and kinds again raise none until a pass defers nothing
+(`landgate_fault_test.go`).
 
 **Always inside PATHS.** Files a change must touch to keep the tree green are always
 inside PATHS, whatever the brief names: every `*_test.go`, every file under a `testdata/`

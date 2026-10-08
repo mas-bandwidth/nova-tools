@@ -188,6 +188,10 @@ type app struct {
 	// baseGateFails is the base-gate rule's record of base commits that failed their tree
 	// gate (landgo.go, treeGateBase), kept across rounds as the cache is.
 	baseGateFails map[string]*baseGateFail
+	// faultJudged is the last judgment the lander raised for a pass whose gates every bench
+	// faulted (landgo.go, judgeFaults): the same benches and kinds again raise none, so a
+	// fault that lasts is one judgment, not one a pass; "" after a pass that deferred none.
+	faultJudged string
 	// goCachePath is the build cache the lander's go runs share (landgo.go, goCache),
 	// resolved once a process under goCacheOnce.
 	goCacheOnce sync.Once

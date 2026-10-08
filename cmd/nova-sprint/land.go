@@ -46,6 +46,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bench"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
 	"github.com/mas-bandwidth/nova-tools/internal/filelock"
@@ -134,10 +135,15 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     stream stops, and the cards land on a run after the pause ends.`) + "\n"
 }
 
+// landDeferred is the status of a batch whose tree gate every bench of the ring faulted
+// (bench.ClassifyGate): LAND DEFERRED stream=<s> faults=<n>; nothing pushed or reported, no
+// card blamed, the base not marked red, and the batch landed again next tick.
+const landDeferred = "deferred"
+
 // landBatch is one batch's outcome, a line of output and an item of --json.
 type landBatch struct {
 	Stream string   `json:"stream"`
-	Status string   `json:"status"` // ok, refused, failed
+	Status string   `json:"status"` // ok, refused, failed, deferred (landDeferred)
 	Cards  int      `json:"cards"`
 	IDs    []string `json:"ids"`
 	Repo   string   `json:"repo,omitempty"`
@@ -181,6 +187,10 @@ type landBatch struct {
 	// stream hashed to (landring.go), zero when no bench ran a gate.
 	Ring int `json:"ring,omitempty"`
 	Slot int `json:"slot,omitempty"`
+	// Faults is the GATE FAULT line of every bench fault the batch's gates met (a gate that
+	// failed for its bench and stepped to the ring's next slot), and of a deferred batch's
+	// faults (status deferred: every ring member faulted).
+	Faults []string `json:"faults,omitempty"`
 	// stopped says the fact recorded stopped the stream (the conflict fact of a card's own
 	// head does not).
 	stopped bool
@@ -207,7 +217,11 @@ func (b landBatch) line() string {
 	if tip == "" {
 		tip = "-"
 	}
-	l := fmt.Sprintf("LAND %s stream=%s cards=%d base=%s tip=%s ids=%s", strings.ToUpper(b.Status), oneline.Field(b.Stream), b.Cards,
+	faults := ""
+	if b.Status == landDeferred {
+		faults = " faults=" + strconv.Itoa(len(b.Faults))
+	}
+	l := fmt.Sprintf("LAND %s stream=%s%s cards=%d base=%s tip=%s ids=%s", strings.ToUpper(b.Status), oneline.Field(b.Stream), faults, b.Cards,
 		oneline.Field(dashed(b.Base)), tip, oneline.Field(idSpan(b.IDs)))
 	if b.Repo != "" {
 		l += " repo=" + oneline.Field(b.Repo)
@@ -367,15 +381,26 @@ type lander struct {
 	// landpass.go), and shared the locks and records the pass's streams share.
 	parallel int
 	shared   *landShared
+	// gateFaults is every bench fault the batch's gates met (bench.ClassifyGate: a gate
+	// that failed for its bench, never its tree), each said as a GATE FAULT line with the
+	// batch (keep); deferral is the faults of the last tree gate when every ring member
+	// faulted, nil otherwise: the landing is deferred one tick (LAND DEFERRED), the base is
+	// not marked red and no card is blamed.
+	gateFaults []bench.Fault
+	deferral   []bench.Fault
 }
 
-// keep appends a batch, carrying the tree gate's bench and wall when one ran.
+// keep appends a batch, carrying the tree gate's bench and wall when one ran, and the
+// bench faults its gates met.
 func (l *lander) keep(b landBatch) {
 	if b.Bench == "" && l.gateHost != "" {
 		b.Bench, b.Wall = l.gateHost, l.gateWall.Seconds()
 		b.Ring, b.Slot = l.gateRing, l.gateSlot
 	}
-	l.gateHost, l.gateWall, l.gateRing, l.gateSlot = "", 0, 0, 0
+	for _, f := range l.gateFaults {
+		b.Faults = append(b.Faults, f.Line())
+	}
+	l.gateHost, l.gateWall, l.gateRing, l.gateSlot, l.gateFaults = "", 0, 0, 0, nil
 	l.out = append(l.out, b)
 }
 
@@ -492,6 +517,10 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	}
 	// the bases that stopped streams, re-checked once each before the streams land
 	l.baseRecheck(ctx, s)
+	for _, f := range l.gateFaults {
+		l.baseNotes = append(l.baseNotes, f.Line())
+	}
+	l.gateFaults = nil
 	// by priority (sprint.LandOrder): the stream whose merging set holds the highest level
 	// first, then the most cards behind, then stream order; a named stream that is no stream
 	// keeps its place last
@@ -499,6 +528,9 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	// the pass: every stream's batch merged beside the others', then the green ones landed
 	// one at a time in this order (landpass.go; tla/LandPass.tla)
 	failed := l.pass(ctx, s, order)
+	if !l.dry {
+		l.judgeFaults(ctx)
+	}
 	if !l.dry {
 		l.pruneWorktrees(ctx)
 	}
@@ -567,6 +599,10 @@ func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Wri
 			w = stderr
 		}
 		fmt.Fprintln(w, b.line())
+		for _, x := range b.Faults {
+			// on stderr, a landed batch's too: the land loop shows what went wrong there
+			fmt.Fprintln(stderr, oneline.Escape(x))
+		}
 		for _, x := range b.Also {
 			fmt.Fprintf(w, "NOTE %s\n", oneline.Escape(x))
 		}
@@ -577,6 +613,8 @@ func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Wri
 			fmt.Fprintf(w, "NOTE the card is reworked at the tip and stream %s goes on; the seat is told\n", oneline.Field(b.Stream))
 		case b.Fact != "":
 			fmt.Fprintf(w, "NOTE the stream is stopped (%s); run: nova-sprint inbox\n", b.Fact)
+		case b.Status == landDeferred:
+			fmt.Fprintf(w, "NOTE every bench faulted: nothing was pushed or reported for stream %s, no card is blamed and the base is not marked red; its cards stay queued and land again next tick\n", oneline.Field(b.Stream))
 		case b.Status == "refused" && !l.dry:
 			fmt.Fprintf(w, "NOTE nothing was pushed or reported for stream %s; its cards stay queued\n", oneline.Field(b.Stream))
 		}
@@ -878,6 +916,11 @@ func (l *lander) baseRecheck(ctx context.Context, s *sprint.Snapshot) {
 			dir, _ := l.clone(ctx, at.repo)
 			l.gatesBase(at.base)
 			red = l.treeGate(ctx, dir, true)
+			if l.deferral != nil {
+				l.deferral = nil
+				l.baseNotes = append(l.baseNotes, "the base "+at.base+" was not re-checked at "+shortSha(sha)+": "+red+"; it is re-checked again at the next pass")
+				continue
+			}
 		}
 		if red != "" {
 			f := l.baseGateFails[sha]
@@ -1297,7 +1340,7 @@ func (l *lander) gateBase(ctx context.Context, dir, stream string, cards []landC
 	s.gateMu.Lock()
 	defer s.gateMu.Unlock()
 	base := cards[0].base
-	l.baseStop, l.baseCount, l.baseWhy = false, false, ""
+	l.baseStop, l.baseCount, l.baseWhy, l.deferral = false, false, "", nil
 	was := 0
 	if f := l.baseGateFails[baseSha]; f != nil {
 		was = f.n
@@ -1305,6 +1348,10 @@ func (l *lander) gateBase(ctx context.Context, dir, stream string, cards []landC
 	red, stop := l.treeGateBase(ctx, dir, baseSha)
 	if red == "" {
 		return nil, 0, "", ""
+	}
+	if l.deferral != nil {
+		// every bench faulted: the base is not red, and no card is blamed (buildFailed defers)
+		return nil, 0, red, ""
 	}
 	// a queued head whose tree passes the gate the base fails is the base's fix, not a
 	// casualty of it: it lands first and the batch goes on after it (sprint.FindBaseCure)

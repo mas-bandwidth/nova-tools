@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
@@ -153,3 +154,112 @@ func WriteTree(w io.Writer, src string, withGit bool) error {
 	})
 	return errors.Join(err, tw.Close())
 }
+
+// THE GATE'S TWO OUTCOMES (docs/SPEC-SPRINT.md section 7, the tree gate's fault). A gate run
+// on a bench that ends red is either the tree's verdict (a test's own FAIL, a build or vet
+// error) or the bench's fault: its git, its disk, its temporary directory, its ssh, its
+// copy, its toolchain. On 2026-10-07 at 11:34 PM sixteen landings were refused in one pass
+// for "the base fails the tree gate at its tip" when six class tests failed with "git
+// ls-files from the repository root: exit status 128" on a copy staged without .git; the
+// same evening a bench's /tmp at its disk quota and another's root at 40 MB free failed
+// every gate there with "disk quota exceeded" and ENOSPC, each counted as a red tree. A
+// fault of the bench is never a verdict on the tree: ClassifyGate tells them apart, and the
+// lander steps to the next bench on a fault.
+
+// The kinds of a bench's fault.
+const (
+	FaultGit       = "git"       // git could not read the tree's repository (exit status 128, not a git repository)
+	FaultDisk      = "disk"      // a disk full or at its quota (ENOSPC, no space left, disk quota exceeded)
+	FaultTmp       = "tmp"       // the same, in a temporary directory (/tmp, TMPDIR)
+	FaultSSH       = "ssh"       // ssh ended the run (exit 255)
+	FaultCopy      = "copy"      // the tree's copy or stage did not finish
+	FaultToolchain = "toolchain" // no go toolchain on the bench
+)
+
+// Fault is one gate run a bench failed: the bench, the kind, and the first line of the
+// output that says so.
+type Fault struct {
+	Host, Kind, What string
+}
+
+// Line is the fault as the lander says it: GATE FAULT bench=<m> kind=<k> what=<first line>.
+func (f Fault) Line() string {
+	return "GATE FAULT bench=" + f.Host + " kind=" + f.Kind + " what=" + f.What
+}
+
+// faultWhatCap bounds the line a fault quotes.
+const faultWhatCap = 300
+
+// ClassifyGate reads a gate run that ended red on host (its exit code and its output, or a
+// refusal's text): the bench's fault and true when the output carries one of the bench's
+// failures, else false, a red tree (a `--- FAIL:` line naming a test, a build or vet error,
+// anything else). A bench's failure wins over a FAIL line it caused: the class tests that
+// call git fail with git's exit status 128 on a tree with no .git, and that is the bench's.
+// Exit 255 (ssh's own) and 127 (a command not found) are faults when no line names one.
+func ClassifyGate(host string, code int, out string) (Fault, bool) {
+	last := ""
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		last = line
+		if kind := lineFault(line); kind != "" {
+			return Fault{Host: host, Kind: kind, What: capWhat(line)}, true
+		}
+	}
+	switch code {
+	case NoAnswer:
+		return Fault{Host: host, Kind: FaultSSH, What: capWhat(orSaid(last, "ssh exit 255"))}, true
+	case 127:
+		return Fault{Host: host, Kind: FaultToolchain, What: capWhat(orSaid(last, "exit 127: a command the gate runs was not found"))}, true
+	}
+	return Fault{}, false
+}
+
+// lineFault is the kind of bench fault one line of a gate's output names, "" for none.
+func lineFault(line string) string {
+	l := strings.ToLower(line)
+	has := func(words ...string) bool {
+		for _, w := range words {
+			if strings.Contains(l, w) {
+				return true
+			}
+		}
+		return false
+	}
+	switch {
+	case has("no space left on device", "enospc", "disk quota exceeded", "edquot"):
+		if has("/tmp", "tmpdir") {
+			return FaultTmp
+		}
+		return FaultDisk
+	case has("not a git repository", "error obtaining vcs status", "detected dubious ownership"),
+		strings.Contains(l, "exit status 128") && strings.Contains(l, "git"):
+		return FaultGit
+	case has("go: command not found", "go: not found", `exec: "go": executable file not found`, "toolchain not available", "cannot find goroot"):
+		return FaultToolchain
+	case strings.HasPrefix(l, "copy refused:"):
+		return FaultCopy
+	}
+	return ""
+}
+
+func capWhat(s string) string {
+	if len(s) > faultWhatCap {
+		return s[:faultWhatCap] + "..."
+	}
+	return s
+}
+
+func orSaid(s, none string) string {
+	if s == "" {
+		return none
+	}
+	return s
+}
+
+// DiskGuardLine is the remote line that runs a bench's disk-guard loop at once: the unit
+// fleet/loops.yml installs on every member (nova-swarm disk-guard), started out of its
+// period, under systemd or launchd, whichever the bench has.
+const DiskGuardLine = "systemctl --user start nova-loop-disk-guard.service 2>/dev/null || launchctl kickstart \"gui/$(id -u)/com.nova.loop.disk-guard\""

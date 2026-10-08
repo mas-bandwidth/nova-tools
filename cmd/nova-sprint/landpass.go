@@ -42,6 +42,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bench"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -61,6 +62,11 @@ type landShared struct {
 	gateMu sync.Mutex
 	// checkMu serializes a red --check's gate decision, which appends to one record.
 	checkMu sync.Mutex
+	// faultMu guards faults and deferredN: every fault of the pass's deferred gates, and how
+	// many gates were deferred, for the pass's one judgment (judgeFaults).
+	faultMu   sync.Mutex
+	faults    []bench.Fault
+	deferredN int
 	// treesMu guards pruned and used.
 	treesMu sync.Mutex
 	// pruned is each clone whose stale worktrees this pass has pruned; used is each clone's
@@ -123,6 +129,7 @@ func (l *lander) fork(stream string) *lander {
 	f.conflictKind, f.conflictPaths = "", nil
 	f.baseStop, f.baseCount, f.baseWhy = false, false, ""
 	f.gateHost, f.gateWall = "", 0
+	f.gateFaults, f.deferral = nil, nil
 	f.gateKey, f.gateRing, f.gateSlot = stream, 0, 0
 	f.laneAs = landLaneWho + "/" + stream
 	f.baseNotes = nil
@@ -277,6 +284,18 @@ func (j *landJob) refuse(why string) {
 	j.done, j.past, j.on, j.ok = true, 0, false, true
 }
 
+// deferred ends the job in a tick the gate could not judge: every bench of the ring faulted
+// (bench.ClassifyGate). LAND DEFERRED stream=<s> faults=<n>: nothing pushed or reported, no
+// card blamed, the base not marked red, the stream not stopped; its cards stay queued and
+// the next pass lands them.
+func (j *landJob) deferred(why string) {
+	j.b.Status = landDeferred
+	j.b.Reason = strings.TrimSuffix(why, "; no card is blamed and nothing was pushed or reported")
+	j.b.Fact = ""
+	j.f.keep(j.b)
+	j.done, j.past, j.on, j.ok = true, 0, false, true
+}
+
 // ended ends the job with the outcome a report gave it: the cards the stream goes past, whether
 // it goes on, and whether a push landed was reported (batch's done, on, ok).
 func (j *landJob) ended(past int, on, ok bool) { j.done, j.past, j.on, j.ok = true, past, on, ok }
@@ -366,10 +385,15 @@ func (l *lander) buildNotes(j *landJob) {
 }
 
 // buildFailed ends the job on a build that refused the whole batch and blamed no card:
-// counted under the base-gate rule when the base's gate ran red (baseRefused), the one
-// judgment of a base branch that is gone (missingBase), else the refusal as it is.
+// deferred one tick when every bench of the gate's ring faulted (deferred), counted under the
+// base-gate rule when the base's gate ran red (baseRefused), the one judgment of a base
+// branch that is gone (missingBase), else the refusal as it is.
 func (l *lander) buildFailed(ctx context.Context, j *landJob, why string) {
 	l.buildNotes(j)
+	if l.deferral != nil {
+		j.deferred(why)
+		return
+	}
 	if l.baseCount {
 		// the base-gate rule: the refusal counted per stream and base in the store, its third
 		// (or this process's third failure) stopping the stream with the coordinator's judgment
@@ -573,6 +597,10 @@ func (l *lander) merge(ctx context.Context, j *landJob) {
 		l.stage("gate", "the batch's tree")
 		red := l.treeGate(ctx, dir, true)
 		since(&b.Times.Merge, start)
+		if l.deferral != nil {
+			l.buildFailed(ctx, j, red)
+			return
+		}
 		if red == "" {
 			j.gated = true
 		} else {
@@ -659,6 +687,10 @@ func (l *lander) land(ctx context.Context, j *landJob, pushed []*landJob) {
 			}
 			if newBase != j.baseSha {
 				if why := f.again(ctx, j, newBase, pushed); why != "" {
+					if f.deferral != nil {
+						j.deferred(why)
+						return
+					}
 					j.refuse(why)
 					return
 				}
@@ -780,6 +812,9 @@ func (l *lander) again(ctx context.Context, j *landJob, newBase string, pushed [
 		start := time.Now()
 		l.stage("gate", "the combined tree")
 		red := l.treeGate(ctx, dir, true)
+		if l.deferral != nil {
+			return red
+		}
 		if red == "" {
 			var out string
 			if red, out = l.runCheck(ctx, dir); red != "" {

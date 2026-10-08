@@ -1255,6 +1255,10 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 			}
 			if logical == sprint.Fleet {
 				rowCardFields(cells, facts.RowCards[r.Key])
+				// a bench the lander marked faulted, while the mark holds (bench_fault.go)
+				if f, ok := sprint.BenchFaultsNow(t.Props, now)[r.Key]; ok {
+					cells[sprint.FieldBenchFault], cells[sprint.FieldBenchFaultUntil] = f.Kind, f.Until.UTC().Format(time.RFC3339)
+				}
 			}
 			rows[r.Key] = cells
 		}
@@ -1293,6 +1297,10 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		}
 		if logical == sprint.Fleet {
 			parts[logical] = fleetText(t)
+			faulted := sprint.BenchFaultsNow(t.Props, now)
+			for _, m := range slices.Sorted(maps.Keys(faulted)) {
+				parts[logical] += faulted[m].Line() + "\n"
+			}
 			continue
 		}
 		// every table shows, every stream row in it, empty or not, but an archived one,
