@@ -105,4 +105,12 @@ func TestStrangerRunBusTwoNamesIsRecorded(t *testing.T) {
 	text := string(raw)
 	require.Empty(t, strangerBusProblems(text), "%s", strangerBusPath)
 	require.Contains(t, strangerBusSectionBodies(text), "Stumbles")
+
+	// The correction attempt 2 carried: a stumble that names the refused pong
+	// line points at the transcript for it, so the refused invocation and its
+	// exact line must stand in the transcript, not only the retry the stand-in
+	// made with --to.
+	transcript := strings.Join(strangerBusSectionBodies(text)["Transcript"], "\n")
+	require.Contains(t, transcript, "PONG REFUSED: --to is required: no ping has named a seat yet",
+		"the refused pong invocation and its line must stand in the transcript of %s", strangerBusPath)
 }
