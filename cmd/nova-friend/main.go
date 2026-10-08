@@ -72,9 +72,11 @@ type world struct {
 	beatDown     func(ctx context.Context, server, friend string, active, until time.Time, reason string, proof friend.BeatWords) error // her beat while she is down (friend beat --until --reason); nil holds the beat back
 	progress     func(ctx context.Context, server string, argv []string) error                                                          // one progress verb to the sprint server (friend.ProgressArgv)
 	finish       func(ctx context.Context, server string, argv []string) error                                                          // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
+	down         func(ctx context.Context, server string, argv []string) error                                                          // one down verb to the sprint server (DownArgv: a credit refusal's friend down --reason --until); nil names none (a test's)
 	sqlite       friend.Exec                                                                                                            // reads opencode's database (the sqlite3 CLI); nil reads none: no card cost, no token cap
 	cards        func(ctx context.Context, server string, argv []string) (string, error)                                                // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
 	friends      func(ctx context.Context, server string) (rows []friend.WakeRow, seat string, err error)                               // the friends table and the seat's holder, from the sprint server's coordinator view (GET /api/view/coordinator?all=1)
+	holders      func(ctx context.Context, server string) (map[string]string, error)                                                    // current card holders from GET /api/view/cards; nil in a world that reads none
 	view         func(ctx context.Context, server, friend string) (string, error)                                                       // the sprint server's worker view of her (GET /api/view/worker), while friend cards is refused; nil reads none
 	stage        func(dir string) *friend.Stager                                                                                        // stages a held card's job under her working directory and prunes the finished ones (friend.Stager, with the daemon's git credentials); nil stages none (a test's)
 	tip          func(ctx context.Context, repo, branch string) (string, error)                                                         // origin's tip of a card's branch (friend.Stager.Tip, one git ls-remote): a report's LAND finishes only there; nil reads none (a test's)
@@ -88,12 +90,13 @@ type world struct {
 	copy         friend.CopyFile              // places a removable-volume binary under home; nil refuses it
 	lookPath     func(string) (string, error) // a program on PATH by absolute path, for the agent's secrets wrap
 	random       func() string
-	alive        friend.Aliver       // the harness check, when set (a test's fake harness); nil watches the adapter
-	launch       []string            // host: the launch command after "--"
-	settings     friend.SettingsFS   // where a harness's own settings are read and written (install, check --settings)
+	alive        friend.Aliver     // the harness check, when set (a test's fake harness); nil watches the adapter
+	launch       []string          // host: the launch command after "--"
+	settings     friend.SettingsFS // where a harness's own settings are read and written (install, check --settings)
 	windowReader friend.WindowReader // reads a GUI harness window through accessibility; nil uses DefaultWindowReader
 	screenFriend string              // screen: the friend whose session to read
-	argv         []string            // this run's arguments after the program's name: what the plist drift is read against
+	argv         []string          // this run's arguments after the program's name: what the plist drift is read against
+	wake         *wakeFS           // watch: the wake file's reads; nil reads the disk
 }
 
 // readPlist is the installed plist at path, empty when there is none or it
