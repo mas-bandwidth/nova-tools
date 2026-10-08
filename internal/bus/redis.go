@@ -253,8 +253,8 @@ func (r Redis) Marks(ctx context.Context, keys ...string) ([]map[string]string, 
 	return out, nil
 }
 
-// forwardLua is the receipt rule Forward (stages.go) keeps, as the store's
-// scripts run it: the receipt of id on the hash key moves to state at now
+// forwardLua is the receipt rule as the store's scripts run it (the fakes
+// keep the same rule in Go: forward in bustest/fake.go): the receipt of id on the hash key moves to state at now
 // (the store's TIME, in seconds) only forward, and only delivered starts one;
 // it answers the state before ("" none).
 const forwardLua = `

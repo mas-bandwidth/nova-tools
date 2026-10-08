@@ -57,3 +57,18 @@ func ProcHolders(root string, deadline time.Time) ([]Holder, error) {
 	}
 	return out, nil
 }
+
+// ParseFileNr is Linux's /proc/sys/fs/file-nr: the handles allocated, the unused (0
+// since 2.6) and the maximum.
+func ParseFileNr(s string) (open, limit int, ok bool) {
+	f := strings.Fields(s)
+	if len(f) < 3 {
+		return 0, 0, false
+	}
+	a, err1 := strconv.Atoi(f[0])
+	m, err2 := strconv.Atoi(f[2])
+	if err1 != nil || err2 != nil || a < 0 || m < 0 {
+		return 0, 0, false
+	}
+	return a, m, true
+}

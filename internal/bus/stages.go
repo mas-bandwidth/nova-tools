@@ -34,26 +34,6 @@ var StageStates = []string{Delivered, Read, Acted}
 // rank is the state's place in StageStates from 1, 0 for none.
 func rank(state string) int { return slices.Index(StageStates, state) + 1 }
 
-// Forward is the receipt rule, the one the store's script keeps
-// (redis.go, forward) and the fakes call: the value a receipt holding cur
-// moves to when state is asked at now, and whether it moves. It moves only
-// forward, and only delivered starts one: a message is never read or acted
-// before it is delivered. (tla/Bus2Receipts.tla: ReceiptNeverMovesBack,
-// ActedImpliesDelivered)
-func Forward(cur, state string, now time.Time) (string, bool) {
-	have, want := rank(stageState(cur)), rank(state)
-	if want <= have || (have == 0 && want != 1) {
-		return cur, false
-	}
-	return state + " " + strconv.FormatInt(now.Unix(), 10), true
-}
-
-// stageState is the state word of a receipt's value.
-func stageState(v string) string {
-	s, _, _ := strings.Cut(v, " ")
-	return s
-}
-
 // Stage is one message's receipt: its state ("" none) and when the store
 // reached it.
 type Stage struct {

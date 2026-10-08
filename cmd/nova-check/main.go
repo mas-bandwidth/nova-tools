@@ -33,7 +33,7 @@ type seams struct {
 	dogfood dogfoodSeams
 }
 
-func main() { os.Exit(novaCheck(seams{}).Main()) }
+func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
 func run(args []string, stdout, stderr io.Writer) int {
 	return runWith(seams{}, args, stdout, stderr)

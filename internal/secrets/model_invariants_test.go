@@ -290,9 +290,9 @@ func TestModelSecretsValueNeverInTheClearAtRest(t *testing.T) {
 		atHead := modelSeatFilesAtHead(t, f.storeDir)
 		require.Contains(t, atHead, "rowan.yaml", "the seat file seal wrote is not at HEAD: %v", atHead)
 		for name, data := range atHead {
-			key, plain, err := firstPlainValue(data, "")
-			require.NoError(t, err, "firstPlainValue(%s): %v", name, err)
-			assert.False(t, plain, "head.file[%s].plain holds %q: a value rests in the clear at HEAD:\n%s", name, key, data)
+			keys, err := plainValues(data, "")
+			require.NoError(t, err, "plainValues(%s): %v", name, err)
+			assert.Empty(t, keys, "head.file[%s].plain holds %q: a value rests in the clear at HEAD:\n%s", name, keys, data)
 			assert.NotContains(t, string(data), value, "the value rests in the clear at HEAD in %s:\n%s", name, data)
 		}
 	})

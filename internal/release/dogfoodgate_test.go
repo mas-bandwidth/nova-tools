@@ -432,7 +432,7 @@ func TestTheRefusalIsBounded(t *testing.T) {
 func TestTheSectionCarriesNoWaiverWhenThereWasNone(t *testing.T) {
 	t.Parallel()
 
-	s := Section("v0.16.0", "abc", "v0.15.10", "", "", time.Date(2026, 9, 18, 0, 0, 0, 0, time.UTC), nil)
+	s := sectionWith("v0.16.0", "abc", "v0.15.10", "", "", "", time.Date(2026, 9, 18, 0, 0, 0, 0, time.UTC), nil)
 	if strings.Contains(s, DogfoodWaiverPrefix) {
 		require.NotContains(t, s, DogfoodWaiverPrefix, "a gated release wrote a waiver line:\n%s", s)
 	}

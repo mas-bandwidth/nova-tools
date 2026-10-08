@@ -64,7 +64,7 @@ func TestWriteAtomicDoesNotWriteThroughAPlantedTemp(t *testing.T) {
 	job := filepath.Join(dir, "job")
 	require.NoError(t, os.MkdirAll(job, 0o755))
 	v := outsideFile(t, dir)
-	target := ExitPath(job)
+	target := filepath.Join(job, "exit.json")
 	plantLink(t, v, target+".tmp")
 	err := writeAtomic(target, []byte("{\"rc\":0}\n"), 0o644)
 	require.NoError(t, err, "a correct write was refused: %v", err)
@@ -95,8 +95,8 @@ func TestReadJSONDoesNotBlockOnAFIFO(t *testing.T) {
 	dir := t.TempDir()
 	job := filepath.Join(dir, "job")
 	require.NoError(t, os.MkdirAll(job, 0o755))
-	plantFIFO(t, ExitPath(job))
+	plantFIFO(t, filepath.Join(job, "exit.json"))
 	var ex ExitRecord
-	err := ReadJSON(ExitPath(job), &ex)
+	err := ReadJSON(filepath.Join(job, "exit.json"), &ex)
 	require.Error(t, err, "a FIFO read as an exit record")
 }

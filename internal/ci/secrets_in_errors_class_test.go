@@ -304,8 +304,6 @@ var secretOpeners = map[string]any{
 	"internal/friend.ParseReadSlots":                   friend.ParseReadSlots,
 	"internal/friend.ParseRow":                         friend.ParseRow,
 	"internal/friend.ParseView":                        friend.ParseView,
-	"internal/hostload.ParseFileNr":                    hostload.ParseFileNr,
-	"internal/hostload.ParseLsof":                      hostload.ParseLsof,
 	"internal/hostload.ParseProcStat":                  hostload.ParseProcStat,
 	"internal/hostload.ParseTopCPU":                    hostload.ParseTopCPU,
 	"internal/log.New":                                 nslog.New,
@@ -357,6 +355,8 @@ var secretOpeners = map[string]any{
 // the reason; a row is held to the same two-way comparison as the table.
 var secretExempt = map[string]string{
 	"internal/hostload.ParseIostat":            "built on darwin only, so a test binary on another platform cannot name it",
+	"internal/hostload.ParseLsof":              "built on darwin only, so a test binary on another platform cannot name it",
+	"internal/hostload.ParseFileNr":            "built on linux only, so a test binary on another platform cannot name it",
 	"internal/hostload.ParseProcLoadavg":       "built on linux only, so a test binary on another platform cannot name it",
 	"internal/cairn.Open":                      "writes a session record under the store directory its first string names; driving it would write into the working tree",
 	"internal/nsprint/testutil.NewLocalRemote": "takes a *testing.T and builds a git remote on disk; it is a test fixture, not an opener of a secret",

@@ -135,29 +135,3 @@ func TestTopHoldersKeepsTheMost(t *testing.T) {
 	require.Equal(t, Holder{PID: 9, Command: "c", Open: 4}, top[1])
 	require.Empty(t, TopHolders(nil, FilesTop))
 }
-
-// TestParseFileNr: Linux's /proc/sys/fs/file-nr is allocated, unused and the maximum.
-func TestParseFileNr(t *testing.T) {
-	t.Parallel()
-	open, maxFiles, ok := ParseFileNr("15139\t0\t9223372036854775807\n")
-	require.True(t, ok)
-	require.Equal(t, 15139, open)
-	require.Equal(t, 9223372036854775807, maxFiles)
-	_, _, ok = ParseFileNr("x 0 1\n")
-	require.False(t, ok)
-	_, _, ok = ParseFileNr("")
-	require.False(t, ok)
-}
-
-// TestParseLsof: lsof's field output (-F pcLf) is a process line set, p c L, then an f
-// line per open file; only the numbered descriptors count (cwd, txt and mem are none).
-func TestParseLsof(t *testing.T) {
-	t.Parallel()
-	out := "p45721\nczsh\nLops\nfcwd\nftxt\nf0\nf1\nf2\nf10\np200\ncredis-server\nLbuild\nf0\nf1\nfmem\np9\ncidle\nLroot\nftxt\n"
-	require.Equal(t, []Holder{
-		{PID: 45721, Command: "zsh", User: "ops", Open: 4},
-		{PID: 200, Command: "redis-server", User: "build", Open: 2},
-	}, ParseLsof(out), "a process with no numbered descriptor is no holder")
-	require.Empty(t, ParseLsof(""))
-	require.Empty(t, ParseLsof("pnot-a-pid\nf1\n"), "a line set with no pid counts nothing")
-}

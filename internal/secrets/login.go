@@ -182,31 +182,3 @@ func RouteKey(model string, names []string) string {
 	}
 	return ""
 }
-
-// ChildWithOneKey is env with exactly one held secret appended, name, the key
-// the route needs. Every other held secret is absent, including one the
-// environment already carried. The value is not printed. A name the set does
-// not hold is a refusal naming it.
-func ChildWithOneKey(env []string, held map[string]Secret, name string) ([]string, error) {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return nil, errors.New("a child is handed no key: the route names none of the login's keys; name the route's <PROVIDER>_API_KEY in the seat login's keys")
-	}
-	s, ok := held[name]
-	if !ok || !s.Loaded() || s.Empty() {
-		return nil, fmt.Errorf("a child is handed no %s: the login's keys do not hold it; name it in the seat login's keys and seal it", name)
-	}
-	out := make([]string, 0, len(env)+1)
-	for _, kv := range env {
-		n, _, _ := strings.Cut(kv, "=")
-		if _, heldName := held[n]; heldName {
-			continue
-		}
-		out = append(out, kv)
-	}
-	var v string
-	if err := s.Use(func(p string) error { v = p; return nil }); err != nil {
-		return nil, err
-	}
-	return append(out, name+"="+v), nil
-}

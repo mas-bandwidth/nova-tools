@@ -425,24 +425,11 @@ func matchingRuleIndex(cfg *SopsConfig, relPath string) int {
 
 func filepathSlash(p string) string { return strings.ReplaceAll(p, "\\", "/") }
 
-// firstPlainValue returns the first root-level key whose value is not encrypted
-// and not permitted in the clear by unencryptedRegex. An unencryptedRegex that does
-// not compile is the rule's own defect: it is returned as an error, and nothing is
-// judged against a regex that does not compile, so the gate refuses on the real cause
-// instead of reporting a permitted key as a plain value.
-func firstPlainValue(data []byte, unencryptedRegex string) (string, bool, error) {
-	keys, err := plainValues(data, unencryptedRegex)
-	if err != nil {
-		return "", false, err
-	}
-	if len(keys) == 0 {
-		return "", false, nil
-	}
-	return keys[0], true, nil
-}
-
 // plainValues returns every root-level key whose value is not encrypted and is not
-// permitted in the clear by unencryptedRegex (SPEC-SECRETS "gate").
+// permitted in the clear by unencryptedRegex (SPEC-SECRETS "gate"). An
+// unencryptedRegex that does not compile is the rule's own defect: it is returned as
+// an error, and nothing is judged against a regex that does not compile, so the gate
+// refuses on the real cause instead of reporting a permitted key as a plain value.
 func plainValues(data []byte, unencryptedRegex string) ([]string, error) {
 	var unencRe *regexp.Regexp
 	if unencryptedRegex != "" {

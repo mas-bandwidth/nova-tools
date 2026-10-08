@@ -49,5 +49,4 @@ func ReadJSON(path string, v any) error {
 }
 
 // The job directory's durable records.
-func ExitPath(jobDir string) string   { return filepath.Join(jobDir, "exit.json") }
 func ResultPath(jobDir string) string { return filepath.Join(jobDir, "RESULT.md") }

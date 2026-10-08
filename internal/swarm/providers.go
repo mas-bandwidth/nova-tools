@@ -92,18 +92,12 @@ type LaunchRequest struct {
 	Prompt  string // the prompt argument the harness is handed
 }
 
-// LaunchArgv returns the argv for launching a provider on the given OS. The argv
-// is the harness binary followed by the expanded harness arguments: {model} is
-// replaced with the provider's model from the table, {title} with the provider
-// name, and {prompt} with the literal "PROMPT.md". Unknown providers return an
-// error rather than a guessed argv -- a launcher that guesses is a bespoke
-// launcher with extra steps.
-func LaunchArgv(provider, goos string) ([]string, error) {
-	return LaunchArgvFor(provider, goos, LaunchRequest{})
-}
-
-// LaunchArgvFor is LaunchArgv for one run: the table's row for provider gives the
-// argv shape, and the request's non-empty fields fill it. This is the one launcher:
+// LaunchArgvFor returns the argv for launching a provider on the given OS for one
+// run. The argv is the harness binary followed by the expanded harness arguments:
+// the table's row for provider gives the argv shape, and the request's non-empty
+// fields fill it ({model}, {title}, {prompt}). Unknown providers return an error
+// rather than a guessed argv -- a launcher that guesses is a bespoke launcher with
+// extra steps. This is the one launcher:
 // `nova-swarm native` builds every harness argv here (cmd/nova-swarm nativeLaunchArgv),
 // so the table, not a per-provider script and not a literal in the caller, decides the
 // shape a provider is launched with. The table declares OS-specific columns
