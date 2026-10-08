@@ -82,6 +82,24 @@ type PassStats struct {
 	Work      []MemberStat `json:"work"`
 	Reads     []ReaderStat `json:"reads"`
 	Routes    []RouteTakes `json:"routes"`
+	// Streams and Tiers are the epoch's complete cost (CostSplits), not the tidy
+	// window the timing tables use: each stream, and each tier a record ran on,
+	// in the four parts beside the total. Per landed is on the stream.
+	Streams []StreamCost `json:"streams"`
+	Tiers   []TierCost   `json:"tiers"`
+}
+
+// StreamCost is one stream's complete cost as nova-sprint stats prints it.
+type StreamCost struct {
+	Stream string `json:"stream"`
+	CostParts
+	PerLanded string `json:"per_landed"`
+}
+
+// TierCost is one tier's complete cost, the same four parts, over every stream.
+type TierCost struct {
+	Tier string `json:"tier"`
+	CostParts
 }
 
 // StatsRecords is the Load extras Stats wants: every work card and read card of
@@ -195,6 +213,7 @@ func StatsSince(s *Snapshot, since time.Time) PassStats {
 	}
 	ps.Stages = Stages{DealWait: measure(deal), FinishToReads: measure(toReads), AcceptToLand: measure(toLand), Total: measure(total)}
 	ps.Work, ps.Reads, ps.Routes = []MemberStat{}, []ReaderStat{}, []RouteTakes{}
+	ps.Streams, ps.Tiers = []StreamCost{}, []TierCost{}
 	for _, name := range slices.Sorted(maps.Keys(work)) {
 		x := work[name]
 		ps.Work = append(ps.Work, MemberStat{Member: name, Cards: x.n, Failed: x.failed, TakeWait: measure(x.wait), RunWall: measure(x.wall), ReportLag: measure(x.lag)})
@@ -206,6 +225,21 @@ func StatsSince(s *Snapshot, since time.Time) PassStats {
 	for _, name := range slices.Sorted(maps.Keys(routes)) {
 		z := routes[name]
 		ps.Routes = append(ps.Routes, RouteTakes{Route: name, Takes: z.n, OK: z.ok, Failed: z.failed, Provider: z.provider, RunWall: measure(z.wall)})
+	}
+	streamCosts, tierCosts := CostSplits(s)
+	for _, name := range slices.Sorted(maps.Keys(streamCosts)) {
+		tc := streamCosts[name]
+		ps.Streams = append(ps.Streams, StreamCost{
+			Stream: name,
+			CostParts: CostParts{
+				CostWork: tc.CostWork, CostReads: tc.CostReads, CostLand: tc.CostLand,
+				CostUnanswered: tc.CostUnanswered, TotalCost: tc.TotalCost,
+			},
+			PerLanded: tc.PerLanded,
+		})
+	}
+	for _, name := range slices.Sorted(maps.Keys(tierCosts)) {
+		ps.Tiers = append(ps.Tiers, TierCost{Tier: name, CostParts: tierCosts[name]})
 	}
 	return ps
 }
