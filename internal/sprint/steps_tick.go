@@ -121,17 +121,18 @@ const ReworkOnAHigherTier = "rework with a fix on a higher tier"
 
 // TickDecisions are the decisions open to the tick's judgments.
 var TickDecisions = map[string][]string{
-	NBound:         {"rework with a fix", "drop", "wait"},
-	NCannotAsk:     {"reader add", "rework", "drop", "wait"},
-	NFewReaders:    {"reader up", "reader add", "wait"},
-	NNoMember:      {"fleet beat", "fleet up", "wait"},
-	NAdoptFailed:   {"fleet up <m>", "wait"},                     // named per member (fleet_back.go)
-	NStarving:      {"release", "wait"},                          // the first held wave's sentinel, never a single card
-	NOverloaded:    {"fleet up <m> --width <half>", "wait 15m"},  // named per member (overload.go, Overload.Decisions)
-	NReadersBehind: {"reader up <r>", "restart <r>", "wait 10m"}, // named per reader (readers_behind.go, Behind.Decisions)
-	NRaiseReadTier: {"raise", "keep"},                            // readtier.go
-	NDevBehind:     {"promoted", "wait 30m"},                     // promotion.go
-	NNoRoute:       {"route add", "look at the card", "drop", "wait"},
+	NFriendSyncFailing: {"ack", "wait"},
+	NBound:             {"rework with a fix", "drop", "wait"},
+	NCannotAsk:         {"reader add", "rework", "drop", "wait"},
+	NFewReaders:        {"reader up", "reader add", "wait"},
+	NNoMember:          {"fleet beat", "fleet up", "wait"},
+	NAdoptFailed:       {"fleet up <m>", "wait"},                     // named per member (fleet_back.go)
+	NStarving:          {"release", "wait"},                          // the first held wave's sentinel, never a single card
+	NOverloaded:        {"fleet up <m> --width <half>", "wait 15m"},  // named per member (overload.go, Overload.Decisions)
+	NReadersBehind:     {"reader up <r>", "restart <r>", "wait 10m"}, // named per reader (readers_behind.go, Behind.Decisions)
+	NRaiseReadTier:     {"raise", "keep"},                            // readtier.go
+	NDevBehind:         {"promoted", "wait 30m"},                     // promotion.go
+	NNoRoute:           {"route add", "look at the card", "drop", "wait"},
 	// a payment and a key are the owner's: no rework is offered (provider_funds.go)
 	NProviderFunds:  {"ack", "wait"}, // and "funded <provider>", named per provider (providerConds)
 	NProviderLow:    {"ack", "wait"}, // the same
@@ -747,6 +748,8 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	conds = append(conds, overloadConds(s)...)
 	// a member back from down whose adoption of the latest failed (fleet_back.go)
 	conds = append(conds, adoptConds(s)...)
+	// the friend sync loop refusing past its bound (friend_sync_state.go)
+	conds = append(conds, friendSyncConds(s)...)
 	// landings on the sprint branch not promoted into dev (promotion.go)
 	conds = append(conds, devBehindCond(s)...)
 	// one deal order for friends and machines, by the ladder: a low card fills only a lane no
@@ -836,7 +839,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	// a ready card dealt on a route that rests now is withdrawn, never taken there
 	p.Units = append(p.Units, restWithdrawals(s, r.who())...)
 	restWrites(&p, s, rests, r.who())
-	due += notify(&p, s, conds, []string{NNoMember, NStarving, NOverloaded, NAdoptFailed, NDevBehind, NBound, NNoRoute, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit}, r)
+	due += notify(&p, s, conds, []string{NNoMember, NStarving, NOverloaded, NAdoptFailed, NDevBehind, NBound, NNoRoute, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NFriendSyncFailing}, r)
 	// every provider out of credit: the binding stops the machine as the plan commits
 	p.Stop = stop
 	return p, due
@@ -1388,7 +1391,7 @@ func condKey(typ, subject, card, what string) string {
 	switch typ {
 	case NNoMember, NAdoptFailed, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NStarving, NOverloaded, NReadersBehind, NDevBehind, NRaiseReadTier,
 		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFilesAlarm, NFriendDeaf, NFriendIdle, NCoordinatorBehind,
-		NDriftAhead, NDriftCardBase, NDriftServer, NDriftBaseRed:
+		NDriftAhead, NDriftCardBase, NDriftServer, NDriftBaseRed, NFriendSyncFailing:
 		what = ""
 	case NWorkLate, NReadLate:
 		// a lateness is one per attempt's card and kind (not taken, not
@@ -1526,7 +1529,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 			if !open[k] {
 				fresh = append(fresh, sub)
 			}
-			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate || c.typ == NFewReaders || c.typ == NStarving || c.typ == NOverloaded || c.typ == NFilesAlarm || c.typ == NReadersBehind || c.typ == NDevBehind) {
+			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate || c.typ == NFewReaders || c.typ == NStarving || c.typ == NOverloaded || c.typ == NFilesAlarm || c.typ == NReadersBehind || c.typ == NDevBehind || c.typ == NFriendSyncFailing) {
 				update(n, c.what, c.decisions) // the latest facts, in place
 			}
 		}

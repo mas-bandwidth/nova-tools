@@ -7,6 +7,9 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
 // friend sync's own exit codes, its -h's line (verbhelp.go): one pass's, and the loop's.
@@ -38,6 +41,11 @@ func (a *app) friendSyncLoop(c common, pg, root string, every time.Duration, std
 	}
 	began := a.binaryStamp()
 	failing, failed := "", 0
+	var since time.Time // the first failing pass of this run of failures
+	var recorded string // what the store holds of this failure, "" for nothing
+	// a run before this one may have recorded a failure and ended (its binary replaced):
+	// the first ok pass of this run clears whatever stands, so a judgment outlives no failure
+	clearFirst := true
 	for {
 		if ctx.Err() != nil {
 			fmt.Fprintln(stdout, "FRIEND-SYNC STOP interrupted")
@@ -54,12 +62,26 @@ func (a *app) friendSyncLoop(c common, pg, root string, every time.Duration, std
 		} else {
 			code, changed = a.friendSyncPass(pc, pg, root, &out, &errs)
 		}
-		stamp := a.now().Format(time.RFC3339)
+		now := a.now()
+		stamp := now.Format(time.RFC3339)
 		if code != 0 {
 			failed++
+			if since.IsZero() {
+				since = now
+			}
 			if said := strings.ReplaceAll(strings.TrimSpace(errs.String()), "\n", "; "); said != failing {
 				fmt.Fprintf(stderr, "%s FRIEND-SYNC FAILING exit=%d, said once until it changes or a pass is ok; the next try is in %s: %s\n", stamp, code, every, said)
 				failing = said
+			}
+			// past the bound, the failure is recorded on the store, once per text: the
+			// tick raises its one judgment on the record (sprint.NFriendSyncFailing)
+			if now.Sub(since) >= sprint.FriendSyncJudgeAfter && recorded != failing {
+				if why := a.friendSyncRecord(ctx, c, sprint.FriendSyncStateReq{Failing: true, Since: since, Failed: failed, Exit: code, Said: failing}); why != "" {
+					fmt.Fprintf(stderr, "%s FRIEND-SYNC NOTE the failure could not be recorded for the coordinator's judgment: %s\n", stamp, why)
+				} else {
+					recorded = failing
+					fmt.Fprintf(stdout, "%s FRIEND-SYNC JUDGMENT recorded after %d failing passes since %s: the tick raises it to the coordinator, and an ok pass clears it\n", stamp, failed, since.Format(time.RFC3339))
+				}
 			}
 		} else {
 			if changed {
@@ -69,13 +91,43 @@ func (a *app) friendSyncLoop(c common, pg, root string, every time.Duration, std
 			if failing != "" {
 				fmt.Fprintf(stdout, "%s FRIEND-SYNC OK again after %d failing passes\n", stamp, failed)
 			}
-			failing, failed = "", 0
+			if recorded != "" || clearFirst {
+				if why := a.friendSyncRecord(ctx, c, sprint.FriendSyncStateReq{Failing: false, Failed: failed}); why != "" {
+					fmt.Fprintf(stderr, "%s FRIEND-SYNC NOTE the recovery could not be recorded, so the judgment stays open: %s\n", stamp, why)
+				} else {
+					recorded, clearFirst = "", false
+				}
+			}
+			failing, failed, since = "", 0, time.Time{}
 		}
 		select {
 		case <-ctx.Done():
 		case <-after(every):
 		}
 	}
+}
+
+// friendSyncRecord writes the loop's state to the store (store.FriendSyncStateStep) as
+// the seat the pass acts as; why is the reason it could not, "" when it did. The store is
+// the sprint's, not the config's: a loop refused by the config store can still be told of.
+func (a *app) friendSyncRecord(ctx context.Context, c common, r sprint.FriendSyncStateReq) string {
+	pc, why := a.friendSyncActor(ctx, c)
+	if why != "" {
+		return why
+	}
+	st, err := a.storeCtx(ctx, pc)
+	if err != nil {
+		return err.Error()
+	}
+	r.Who = st.Actor
+	res, err := st.Run(ctx, store.FriendSyncStateStep(r))
+	if err != nil {
+		return err.Error()
+	}
+	if len(res.Refused) > 0 {
+		return res.Refused[0].Why
+	}
+	return ""
 }
 
 // friendSyncActor is c as a pass of the loop acts: c itself when it names an actor,

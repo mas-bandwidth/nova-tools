@@ -259,6 +259,9 @@ type Mem struct {
 	Now     func() time.Time
 	// Catalog is what Ownership answers; a test sets the owners it needs.
 	Catalog Ownership
+	// Held is what Sessions answers: the other backends a test says hold the
+	// database (none, as a quiet store).
+	Held []Session
 }
 
 // memRole is the role a Mem is connected as: it owns schema config and every
@@ -417,6 +420,13 @@ func (m *Mem) Counts(_ context.Context) (map[string]int, error) {
 		}
 	}
 	return out, nil
+}
+
+// Sessions is the other backends holding the database: Held, as a test set it.
+func (m *Mem) Sessions(context.Context) ([]Session, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]Session(nil), m.Held...), nil
 }
 
 func (m *Mem) Ownership(context.Context) (Ownership, error) {

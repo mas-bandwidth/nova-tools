@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // friendSyncInstall is the install line docs/FRIENDS.md gives for the friend
@@ -155,4 +156,86 @@ func TestFriendSyncRunsAsAnInstalledLoopWithNoShell(t *testing.T) {
 		assert.NotContains(t, help, "while :")
 		assert.Contains(t, help, "nova-friend")
 	}
+}
+
+// A friend sync loop failing past one minute is one judgment in the
+// coordinator's inbox (sprint.NFriendSyncFailing), naming the refusal and its
+// remedy, raised by the tick on the state the loop records; the first ok pass
+// clears the state and the next tick closes the judgment. On 2026-10-08 the
+// loop refused for 7h45m ("schema config is at version 35 and this binary
+// carries 36; run: nova-config migrate") and told no one.
+func TestFriendSyncFailingPastAMinuteIsOneJudgmentThatClosesWhenAPassIsOK(t *testing.T) {
+	t.Parallel()
+
+	ta, _ := friendApp(t, "amy")
+	prev := ta.a.getenv
+	ta.a.getenv = func(k string) string {
+		if k == "NOVA_SPRINT_ACTOR" {
+			return ""
+		}
+		return prev(k)
+	}
+	readable := ta.a.friends
+	refusal := errors.New("schema config is at version 35 and this binary carries 36; run: nova-config migrate")
+	ta.a.friends = func(context.Context, string) ([]config.Row, error) { return nil, refusal }
+	stopCtx, stop := context.WithCancel(context.Background())
+	defer stop()
+	ta.a.notify = func(context.Context) (context.Context, context.CancelFunc) { return stopCtx, stop }
+	passes := 0
+	ta.a.after = func(d time.Duration) <-chan time.Time {
+		passes++
+		if passes == 6 { // six failing passes, 75 s: past the minute
+			stop()
+		}
+		ta.mu.Lock()
+		ta.now = ta.now.Add(d)
+		ta.mu.Unlock()
+		fired := make(chan time.Time, 1)
+		fired <- ta.a.now()
+		return fired
+	}
+	var out, errs bytes.Buffer
+	code := ta.a.run([]string{"friend", "sync", "--every", "15s"}, &out, &errs)
+	require.Equal(t, 0, code, errs.String())
+	assert.Equal(t, 1, strings.Count(out.String(), "FRIEND-SYNC JUDGMENT recorded"), "recorded once, not every pass: %s", out.String())
+	assert.Equal(t, 1, strings.Count(errs.String(), "FRIEND-SYNC FAILING"), errs.String())
+
+	ta.ok("start --actor coordinator") // the machine RUNNING: its tick raises the judgment on the record
+	ta.ok("tick")
+	g := ta.group(sprint.NFriendSyncFailing, "")
+	assert.Equal(t, 1, g.Count, "one judgment")
+	assert.Contains(t, g.What, "schema config is at version 35 and this binary carries 36; run: nova-config migrate", "it names the refusal and its remedy")
+	assert.Contains(t, g.What, "no friend card is delivered or collected")
+	ta.ok("tick")
+	n := 0
+	for _, g := range ta.inboxGroups() {
+		if g.Type == sprint.NFriendSyncFailing {
+			n += g.Count
+		}
+	}
+	assert.Equal(t, 1, n, "a later tick raises no second judgment while the failure stands")
+
+	// a new run of the loop (the binary replaced, say) whose first pass is ok clears it
+	ta.a.friends = readable
+	stopCtx, stop = context.WithCancel(context.Background())
+	ta.a.notify = func(context.Context) (context.Context, context.CancelFunc) { return stopCtx, stop }
+	passes = 0
+	ta.a.after = func(d time.Duration) <-chan time.Time {
+		passes++
+		stop()
+		fired := make(chan time.Time, 1)
+		fired <- ta.a.now()
+		return fired
+	}
+	out.Reset()
+	errs.Reset()
+	code = ta.a.run([]string{"friend", "sync", "--every", "15s"}, &out, &errs)
+	require.Equal(t, 0, code, errs.String())
+	ta.ok("tick")
+	for _, g := range ta.inboxGroups() {
+		if g.Kind == sprint.Judgment {
+			assert.NotEqual(t, sprint.NFriendSyncFailing, g.Type, "the judgment closed when a pass was ok: %+v", g)
+		}
+	}
+	assert.Equal(t, 1, ta.group(sprint.NFriendSyncFailing, "").Count, "its answer stands in the inbox: closed by the tick, not the coordinator")
 }
