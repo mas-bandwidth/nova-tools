@@ -4064,9 +4064,9 @@ base's tip is gated once a batch, the tree tests included, before any head is
 merged. A base that is red is first offered its cure (section 8, the base cure):
 each head of the batch, merged onto the base alone, through the same gate; the
 first whose tree passes lands first as the base fix and the batch goes on after
-it. With no such head the base refuses the batch, nothing pushed or reported and
-no card blamed, the reason naming the base and the run, and the remedy is to fix
-the base. A head whose merged tree is red is taken off the batch branch and ends
+it. With no such head the base is said once (the base gate first, below): one line
+`BASE RED <tip>: <first failing test>`, one judgment, no batch refused and no card
+blamed, nothing merged, and the remedy is to fix the base. A head whose merged tree is red is taken off the batch branch and ends
 the batch as a head that does not merge does, the conflict fact's note the run,
 how it ended and its output on one line (the finding; the heads before it land).
 A merge that made no commit is not gated. Every go run the lander makes in the
@@ -4211,6 +4211,60 @@ the step also releases the waiting cards the landing unblocks and marks sentinel
 lines that until 2026-10-07 made a committed landing `LAND FAILED ... NOT reported (moved
 N+k)`, stopped the stream's next batches, exited 2 and could roll the server back
 (`movedExactly`). The lines a pass prints keep their form and their stream order.
+
+**The base gate first: a red base is said once, on the base, never on each batch** (the
+owner, 2026-10-07, 9:20 PM: anything found running the candidate is fixed as critical. Found
+dogfooding the v1.2 candidate that evening: the base's tree gate went red from a landing at
+about 7:30 PM while `baseGateCache` held that tip as green, from 8:10 PM to 9:50 PM every
+batch's gate failed on every bench, the lander refused each batch as the card's conflict, the
+seat blamed the benches, held and unheld machines, and nothing landed for 100 minutes until the
+gate was run by hand; cmd/nova-sprint/land.go `sayBaseRed`, landpass.go `baseRegate`, landgo.go
+`secondOpinion`; `TestARedBaseIsSaidOnceAndBlamesNoCard`). Before a pass gates any batch, the
+lander gates the base's tip itself, once, serial, in the streams' order (`prepare`, `cut`,
+`gateBase`; the cache consulted first, so a tip a pass pushed as gated is not gated again). A
+base whose tip fails a test ends the pass at once with one line, `BASE RED <tip>: <first
+failing test>` (stderr, where the loop shows what went wrong; `--json`: `base_red`), and one
+judgment to the seat: the base-gate rule's (`stream stopped: the base fails its tree gate`,
+`sprint.LandBaseRefused`), on the first stream in order to meet the red base, which stops and
+is resumed by rule when a land pass finds the base green again (section 8, the base re-check);
+every other stream that meets the red base is refused under that judgment and never stopped,
+so one judgment stands per base. No batch is refused, no card is blamed, nothing is merged onto
+the red base: the batches prepared before it and the rest of the pass are left queued with no
+line of their own, and the next pass says the line again until the base is green. The judgment
+names the landing that turned the base red: the commits behind the tip on the base's first-parent
+line are walked from the tip to the newest whose tree the cache holds green (the last green),
+and the commit just after it is the suspect, as git logs it (`<sha> land <id> (sprint stream
+<s>)`; with no tip behind it recorded green, the oldest commit walked is named and the note
+says so). The judgment also opens the fix by rule: one card per failing test the finding names,
+in the stream `critical-base-red` at `PRIORITY: critical`, its id `red-<TestName>`, its brief
+`sprint.FixBrief`'s form (the heavy tier, `REPO:` and `BASE:` the card's, `START:` the test and
+its failing line, `STOP:` the test green, `PATHS:` the failing test's named file and its
+package, `TEST:` the test) with the base's own task (the tip, the suspect, what the gate said),
+held to the card lint as `add` holds a brief, ranked first and deduplicated by test name against
+the open cards inside the one add step (`sprint.FixCards`: a test an open card's `TEST:` line
+names is cut by no one), recorded as the machine's; so the fix is dealt within the tick, and the
+base cure (section 8) lands it first once it is queued. The dashboard's merge row reads the
+failing test out of the open judgment and shows the gate red until the base is green again
+(internal/sprintdash, `MergeRowOf`). The row keeps the red-since time: it keeps only the
+first `Test*` word of the judgment, or, when the judgment names none, the text after the
+last colon, so the judgment puts the time in that kept text (`<Test>_since_<time>`, or
+`since <time> <run>`). A base red with no test named (a build or a vet failure, including
+the toolchain's transient of 2026-10-04) is said the same way, at once: one line, one
+judgment, no batch refused and no card blamed. It is not counted as three refusals of the
+batch.
+
+**A red batch gate gates the base before any head is blamed.** The tip the cache holds green
+can be red (a gate on one bench said green; the tree is red): when a batch's one gate is red,
+the base's tip itself is gated again in the stream's worktree, the cache set aside
+(`baseRegate`). Red, the base is said once as above and the pass ends, no head blamed; green,
+the tip is recorded so and each head is gated alone from the base as before, the red one
+blamed with the finding. **Two benches alike are the tree's.** A gate red on a bench is asked
+of one more bench of the ring before it is believed (`secondOpinion`; the seat, 2026-10-07,
+blamed the benches): two findings alike, the benches' names and the runs' seconds set aside
+(`sameFinding`), are the tree's finding, said (`tree gate: gate red on <a> and on <b> alike`),
+and no other bench is asked; two that differ, or a second bench green, are a bench's own trouble
+and nobody's finding, said, and the gate runs here instead. With one bench up, the one finding
+stands as before (`TestAGateRedAlikeOnTwoBenchesIsTheBases`, `TestSameFindingSetsAsideTheBenchAndTheSeconds`).
 
 **The scope amendment.** A file outside the brief's `PATHS` that is the test, the fixture or
 the doc of the same change is allowed by rule, never by a message to the coordinator
@@ -4574,7 +4628,7 @@ the tick would make, no other open judgment on it).
 | stream stopped: stream branch red | return the suspect and resume, rework the suspect | no |
 | stream stopped: needs a card of another stream first | rank that card first (the tick resumes when it lands), wait, card (look at both), return, drop | no |
 | stream stopped: the merge queue rejected | resume, return, drop | no |
-| stream stopped: the base fails its tree gate (land's base-gate rule, its third failure; section 8, answered by rule) | resume (the base passes again), wait | no |
+| stream stopped: the base fails its tree gate (land's base-gate rule, said at once, section 7; section 8, answered by rule) | resume (the base passes again), wait | no |
 | a merging card names a base not on origin (section 7, a dead base) | card base (re-points BASE to a branch on origin), or ack (the lander tries the card once more); look at the card, return, drop | yes |
 | ci red on a primary | rework (with a fix), return, drop, card (look), ack (looked, nothing to do) | yes |
 | a primary came back a second time for the same cause | card (stop and look) | no |
@@ -5302,7 +5356,7 @@ rules` prints the same answers, read-only: one `RULE` line per judgment and subj
 | `read-broken` | a reader found it broken, on a card in review below its brief's bound | the next attempt (rework) on the same tier, the findings of the attempt's broken reads its fix (as `rework <card> --answers <id>` with no `--fix`); when the findings name a file outside the brief's PATHS (`sprint.FilesOutsidePaths`: a relative path with a directory and an extension of letters, read through quotes and a line number, that no PATHS name, glob or directory covers, and that `cardgen.AlwaysInPaths` does not put inside every PATHS), the card is twinned instead (`rule twin`: `add --replaces`), its brief's `PATHS:` lines widened by exactly those files and a `CARRY: <id> attempt <n> head=<sha>` line at the broken attempt's head, the findings the twin's `fix`, one card a tick. A card at its brief's bound (the same finding twice, or its attempts cap: the read raises `the brief is wrong` instead), a friend's card, a brief defect and a card whose twin ids are all taken are left; the coordinator sees only those and refusals (`TestABrokenReadIsReworkedByRuleWithItsFinding`; tla/SprintRules.tla Part `reads`: `ReadAnswersBounded`, `TwinsWiden`, `ReadAnswered`) |
 | `widen` | work came back failed, a card reached its bound, or its brief is wrong, where the worker's report is a HOLD that says PATHS and names files outside them; or returned to review by the merge step or the `conflict` rule on an E12 refusal (files outside its PATHS) at this attempt; on a card in review at a full sha head, not a friend's, a brief defect or a pinned model's | when every file named outside PATHS (`sprint.FilesOutsidePaths`, which does not count a file `cardgen.AlwaysInPaths` puts inside every PATHS) is adjacent to the change (`sprint.WidenAdjacent`: a test file of a package PATHS name, a file under that package's `testdata/`, a ledger under `internal/ci/testdata/`, a markdown file under `docs/` or an `AGENTS.md` map, or, in a HOLD, a file named with its reason, three words or more after it), the card's brief is edited in place (`rule widen`, before `rule rework`; `brief`, as `brief --widen` edits it, never a twin: the owner, 2026-10-06, "stop doing this twin shit"), its `PATHS:` and `SHARED:` lines widened by exactly those files and a `CARRY: <id> attempt <n> head=<sha>` line at the finished head: the same id, review -> ready, its next attempt staged from that head and its brief's bound counted from it, its `fix` naming the head to start from and the files, one card a tick, and the coordinator gets one happened note, `PATHS widened by rule`, naming each file and why it is adjacent. A HOLD naming a file that is not adjacent stays a judgment, its text prefixed `outside PATHS and not adjacent: <files> (its HOLD): ` once, and neither `failed` nor `bound` reworks it; an E12 refusal naming one is the `conflict` rule's redo, inside its PATHS. A HOLD with a `PATHS-PROPOSED:` line is `paths`'s, one naming a card that has not landed `hold-need`'s, and a reader's finding `read-broken`'s (`TestACardHeldOnlyForAdjacentPathsIsWidenedInPlace`, `TestAFileOutsidePathsIsAdjacentByRule`) |
 | `brief-defect` | a card has reached its bound: the brief is wrong, not the worker (the same finding twice, section 2) | the card marked (`brief_defect`), the judgment's text prefixed `brief defect: `, once; the judgment stays open (brief or drop) and no rule moves the card |
-| `base-gate` | (no judgment: the lander's) the base fails its tree gate at its tip | a queued head whose tree, merged onto that base alone, passes the same gate lands first as the base fix and the stream goes on (the base cure, below); with none, land gates that base commit again after 2 minutes and again after 5 (`sprint.BaseGateRetries`), each landing in between refused with the finding and when it is gated again; the third failure stops the stream that met it, `stream stopped: the base fails its tree gate` (`merge --base-red`), the one judgment for that base, carrying the error and naming the failing tests; every other stream that meets the base red is refused under that judgment and never stopped. Each land pass re-checks the tip of a base that stopped a stream, and a green tip (`sprint.BaseGreen`, `base_gate_passed`) resumes every stream stopped only on that base's red, the judgment answered by rule (`v11-base-red-auto-resume-now`, below); a green base is cached for its commit. With the rule off, a red base is cached for its commit as before (every landing refused until the base moves), the pass re-checks nothing and a stopped stream waits for a mind |
+| `base-gate` | (no judgment: the lander's) the base fails its tree gate at its tip | a queued head whose tree, merged onto that base alone, passes the same gate lands first as the base fix and the stream goes on (the base cure, below); with none, the lander says that red base at once (section 7, the base gate first): one line, one judgment, no batch refused, a build or vet failure included, and it does not count three refusals; the merge step's count still stops the stream that met it, `stream stopped: the base fails its tree gate` (`merge --base-red`), the one judgment for that base, carrying the error and naming the failing tests; every other stream that meets the base red is refused under that judgment and never stopped. Each land pass re-checks the tip of a base that stopped a stream, and a green tip (`sprint.BaseGreen`, `base_gate_passed`) resumes every stream stopped only on that base's red, the judgment answered by rule (`v11-base-red-auto-resume-now`, below); a green base is cached for its commit. With the rule off, a red base is cached for its commit as before (every landing refused until the base moves), the pass re-checks nothing and a stopped stream waits for a mind |
 | `paths` | work came back failed (or at its bound or its attempt cap) and its report proposes PATHS: a `PATHS-PROPOSED:` line (docs/SPEC-CARD-CONTRACT.md section 4), read off its work card's report; checked before the judgment's own rule, so the same brief is never dealt again on the same proposal | no proposed glob SHARED (named on the `PATHS:` or `SHARED:` line of another open card, or on the card's own `SHARED:` line): the card replaced by its twin (`recut`, so dependents need the twin), its id the old one with `-t` (`-t2` to `-t9` after it), its brief every `PATHS:` line widened by the proposed globs it lacked and a `CARRY:` line naming the held attempt's pushed head; the judgment closed with `answered by rule paths: <id> attempt <n> held with PATHS-PROPOSED: <globs>: replaced by <twin>, ...`. A proposed glob SHARED: the judgment stays the one judgment, its text prefixed `paths proposed, shared: a mind's; ...` with the shared globs and the cards that name them and the complete command `nova-sprint add --stream <s> --replaces <id> --before <id> --brief-file <file> [--needs ...] [--held]`, the twin's brief written by the machine at `<jobs>/<id>/<twin>.md` (`NOVA_SPRINT_JOBS`, else `~/nova-sprint/jobs`), once (`paths_proposed` on the primary); the card is dealt nothing more. A proposal that climbs out of the repository, is no glob, or is inside its PATHS already is left, and not dealt again either |
 
 A failure many cards share is the fleet's, not the card's: when `RuleSameFailureCards` (3) or
@@ -5359,6 +5413,8 @@ store: the stream merging again after one tick, the next card landing, the redo 
 with its fix, and the repeat stopping the stream with the mark.
 
 #### land-base-gate-stops-stream
+
+The lander's uncured red base is said at once (section 7, the base gate first), one line and one judgment, and is not this count. The count below is the merge step's, for a refusal sent as `BaseRefused`.
 
 The base-gate count is the store's, never only the lander's memory: a hand land starts every
 run with none, and the server every start, so a base red at its tip was refused round after
