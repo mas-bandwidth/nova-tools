@@ -257,7 +257,7 @@ const FieldLeveled = "leveled"
 // then the tier it escalated to, or the tier a rework recorded).
 func ReadsNeeded(pr *Card) int {
 	m, _ := cardhdr.ReadModel(pr.F("brief"))
-	if cardTier(pr, m) == cardhdr.RouteFlash {
+	if cardTier(nil, pr, m) == cardhdr.RouteFlash {
 		return 1
 	}
 	return 2
@@ -818,7 +818,11 @@ const RetiredByLapsed = "lapsed"
 
 // ReadLeaseExpires returns when an in-flight read's lease expires.
 // Started by read --begin (begun + DefaultReadLease) and renewed by reader beat (FieldLease).
-func ReadLeaseExpires(c *Card) time.Time {
+func ReadLeaseExpires(c *Card) time.Time { return readLeaseExpires(c, DefaultReadLease) }
+
+// readLeaseExpires is ReadLeaseExpires with the lease a read begun and never renewed has
+// (read_lease, policy.go).
+func readLeaseExpires(c *Card, lease time.Duration) time.Time {
 	if c == nil {
 		return time.Time{}
 	}
@@ -829,15 +833,18 @@ func ReadLeaseExpires(c *Card) time.Time {
 	}
 	if s := c.F("begun"); s != "" {
 		if t, err := time.Parse(time.RFC3339, s); err == nil {
-			return t.Add(DefaultReadLease)
+			return t.Add(lease)
 		}
 	}
 	return time.Time{}
 }
 
 // ReadLeaseLive reports whether the in-flight read's lease is live at now.
-func ReadLeaseLive(c *Card, now time.Time) bool {
-	exp := ReadLeaseExpires(c)
+func ReadLeaseLive(c *Card, now time.Time) bool { return readLeaseLive(c, now, DefaultReadLease) }
+
+// readLeaseLive is ReadLeaseLive with the lease of a read begun and never renewed.
+func readLeaseLive(c *Card, now time.Time, lease time.Duration) bool {
+	exp := readLeaseExpires(c, lease)
 	if exp.IsZero() {
 		return false
 	}
@@ -857,7 +864,7 @@ func RestartReads(s *Snapshot) Plan {
 		cards := s.Readers.Cell(rd, Reading)
 		SortCards(cards)
 		for _, c := range cards {
-			if ReadLeaseLive(c, s.Now) {
+			if readLeaseLive(c, s.Now, s.PolicyDuration(PolicyReadLease)) {
 				continue
 			}
 			p.Units = append(p.Units, Unit{
@@ -891,7 +898,7 @@ func RenewReaderLeases(s *Snapshot, reader string) Plan {
 	cards := s.Readers.Cell(reader, Reading)
 	SortCards(cards)
 	for _, c := range cards {
-		exp := s.Now.Add(DefaultReadLease)
+		exp := s.Now.Add(s.PolicyDuration(PolicyReadLease))
 		p.Units = append(p.Units, Unit{
 			Key:    c.ID,
 			Stream: c.F("stream"),

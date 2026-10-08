@@ -48,7 +48,7 @@ Where each field of this cut sits:
 | machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
 | friend (decided for her) | `slots`, `tiers`, `roles`, `width`, `mode`, `config_dir`, `token_cap`, `streams`, `kinds` |
-| sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar`, `decide_attempt_no_result`, `decide_attempt_nothing_to_do`, `decide_grade`, `decide_gate_flaky`, `decide_gate_preexisting`, `decide_judgment_bar`, `decide_brief_bar`, `answer_rules_off` |
+| sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar`, `decide_attempt_no_result`, `decide_attempt_nothing_to_do`, `decide_grade`, `decide_gate_flaky`, `decide_gate_preexisting`, `decide_judgment_bar`, `decide_brief_bar`, `answer_rules_off`, and the policy numbers below |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
 | route (decided per way to run a tier) | `tier`, `provider`, `model`, `harness`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
 | tier (decided per tier) | `routes` |
@@ -253,6 +253,42 @@ facts.
 | `decide_judgment_bar` | decimal, default empty | | the ask: `nova-sprint answer` applies the verb the judgment decision chose at or above this bar and lists it for the coordinator below it (docs/SPEC-SPRINT.md section 8, answered by nova-decide); a probability; empty applies nothing (every decision recorded, what a bar would apply listed); 0.8 is a starting point measured on 100 of the coordinator's own judgments (docs/SPEC-NOVA-DECIDE.md section 13), not an independent calibration | `sprint:decide_judgment_bar` |
 | `decide_brief_bar` | decimal, default empty | | `nova-sprint add`: it asks the brief decision of each card (docs/SPEC-NOVA-DECIDE.md section 14) and refuses a card whose p(converges) is under this bar, naming the questions it failed; empty asks and reports only. The decision is uncalibrated (AUC 0.600 on 234 review labels): it stays empty until `calibrate` on the brief record's own outcomes supports a bar | `sprint:decide_brief_bar` |
 | `answer_rules_off` | list of base-gate, bound, brief-defect, conflict, failed, late; default empty | | the tick (`run`, `tick`) and the lander: each rule listed does not answer its judgments; empty (the default) answers by every rule (docs/SPEC-SPRINT.md section 8, answered by rule); `run --answer-rules=false` turns every rule off for that loop | `sprint:answer_rules_off` |
+| `deal_ahead` | text: a whole number from 1 to 10 (times a member's width); default empty, the sprint's 2 | | the cards the deal holds on a member or a friend, ready and working: this times its width | `sprint:deal_ahead` |
+| `max_redeals` | text: a whole number from 0 to 20 (redeals); default empty, the sprint's 3 | | the redeals of one work card before its next deal escalates it or raises the redeal-bound judgment | `sprint:max_redeals` |
+| `max_read_reasks` | text: a whole number from 0 to 20 (re-asks); default empty, the sprint's 2 | | how often a returned read is asked again in place before it is retired | `sprint:max_read_reasks` |
+| `read_lease` | text: a duration from 1m to 6h (duration); default empty, the sprint's 10m0s | | the lease of a read in progress, renewed by the reader's beat | `sprint:read_lease` |
+| `readers_window` | text: a duration from 1m to 24h (duration); default empty, the sprint's 10m0s | | how long a read may wait asked and not begun before the readers are behind | `sprint:readers_window` |
+| `friend_read_deadline` | text: a duration from 10m to 48h (duration); default empty, the sprint's 30m0s | | the deadline of a read card dealt to a friend | `sprint:friend_read_deadline` |
+| `friend_idle` | text: a duration from 1m to 24h (duration); default empty, the sprint's 20m0s | | how long a friend holding cards may show no file write before it is an alarm | `sprint:friend_idle` |
+| `friend_stall_after` | text: a duration from 1m to 24h (duration); default empty, the sprint's 20m0s | | how long a friend holding cards may show neither file write nor card progress before the stall ladder begins | `sprint:friend_stall_after` |
+| `friend_stall_step` | text: a duration from 1m to 6h (duration); default empty, the sprint's 5m0s | | the time between rungs of the friend stall ladder | `sprint:friend_stall_step` |
+| `member_down_after` | text: a duration from 15s to 1h (duration); default empty, the sprint's 45s | | how long a fleet member may go without a beat before seat check calls it DOWN | `sprint:member_down_after` |
+| `loop_silence` | text: a duration from 5s to 1h (duration); default empty, the sprint's 15s | | how long the run loop may go unseen before seat check calls it DOWN | `sprint:loop_silence` |
+| `overload_timeouts` | text: a whole number from 1 to 100 (timeouts); default empty, the sprint's 3 | | the timeouts within overload_window that make a member overloaded | `sprint:overload_timeouts` |
+| `overload_window` | text: a duration from 1m to 24h (duration); default empty, the sprint's 15m0s | | the window the overload count is taken over | `sprint:overload_window` |
+| `promote_cards` | text: a whole number from 1 to 1000 (cards); default empty, the sprint's 25 | | the cards landed since the last promotion that make dev behind | `sprint:promote_cards` |
+| `promote_age` | text: a duration from 1m to 24h (duration); default empty, the sprint's 30m0s | | how long the oldest card landed since the last promotion may wait before dev is behind | `sprint:promote_age` |
+| `remind_every` | text: a duration from 1m to 24h (duration); default empty, the sprint's 5m0s | | the running time between two reminders of one person's goal | `sprint:remind_every` |
+| `balance_poll_every` | text: a duration from 1m to 24h (duration); default empty, the sprint's 10m0s | | how often nova-sprint balance reads each provider's balance | `sprint:balance_poll_every` |
+| `flash_gate_bound` | text: a duration from 1m to 6h (duration); default empty, the sprint's 15m0s | | the gate wall over which nova-sprint add starts a card on pro | `sprint:flash_gate_bound` |
+| `friend_pong_window` | text: a duration from 1m to 24h (duration); default empty, the sprint's 10m0s | | how long a wake ping a friend's session answered keeps her up | `sprint:friend_pong_window` |
+| `friend_finish_window` | text: a duration from 1m to 24h (duration); default empty, the sprint's 30m0s | | how long a card a friend finished keeps her up | `sprint:friend_finish_window` |
+| `rollback_window` | text: a duration from 1m to 24h (duration); default empty, the sprint's 15m0s | | how long nova-sprint server switch --rollback watches for a failed land before the switch is permanent, when no --window is given | `sprint:rollback_window` |
+| `critical_behind` | text: a whole number from 1 to 1000 (cards behind); default empty, the sprint's 10 | | the cards waiting on a primary that make it critical: it starts on pro and the inbox marks its judgments CRITICAL | `sprint:critical_behind` |
+
+**The sprint's policy numbers** (internal/config/policy.go, `SprintPolicies`; migration
+0036; the owner, 2026-10-02: "i just want to set numbers as I see fit directly in
+nova-config"). Each is a text field of the sprint row, empty by default, and empty is the
+sprint's compiled default, today's value (`sprint.PolicyDefaults`, held equal to the
+table by TestEveryPolicyNumberIsASettingWithItsDefault). A value outside the number's
+range is refused by `sprint set` naming the number and its range, and nothing is written:
+`nova-config sprint set --deal_ahead 3 --as <you>` (or by its dotted name, `nova-config
+setting set sprint.deal_ahead 3 --as <you>`, the same write, cmd/nova-config/setting.go),
+then `nova-config apply --kind sprint`; `--deal_ahead ''` takes it back to the default. Apply writes `sprint:<name>`, which the
+sprint's routes read takes with the set of routes in its first round trip (no trip
+added), so every part of the next tick plans with it, with no rebuild and no server
+switch; `nova-sprint set --list` prints every number, its value now and its source
+(docs/SPEC-SPRINT.md section 11). All twenty-two are settings; none is left compiled.
 
 **`loop`** (`config.loops`): a supervised process on one machine. Every
 value is data in the row: the code names no machine, seat, secret or
@@ -524,7 +560,10 @@ config.sprint            (name PK = 'sprint', coordinator -> friends.name,
                           decide_brief_bar added by 0026, text NOT NULL
                           DEFAULT '', a decimal or '';
                           answer_rules_off added by 0031, text NOT NULL
-                          DEFAULT '', a list of rule names)
+                          DEFAULT '', a list of rule names; the policy
+                          numbers deal_ahead ... critical_behind added
+                          by 0035, text NOT NULL DEFAULT '' each, a
+                          number or a duration in its range, or '')
 config.loops             (name PK, machine -> machines.name, argv, seat, keys,
                           every, keepalive boolean, width, enabled boolean,
                           created_at, updated_at; CHECK exactly one of

@@ -14,7 +14,8 @@ func DealtTier(c, primary *Card) string {
 		return t
 	}
 	if primary != nil {
-		if now, _ := CardTiers(primary); now != "" {
+		// the packet read has no snapshot: critical_behind at its default
+		if now, _ := CardTiers(nil, primary); now != "" {
 			return now
 		}
 	}

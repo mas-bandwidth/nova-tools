@@ -217,7 +217,7 @@ func friendUnstartedLevel(s *Snapshot, seats []FriendSeat, since func(string) (t
 	}
 	lanes, free := map[string]int{}, map[string]int{}
 	for _, n := range names {
-		room, width := friendRoom(up[n])
+		room, width := friendRoom(s, up[n])
 		lanes[n] = width - friendLoad(s, n) - placed[n]
 		free[n] = room - friendLoad(s, n) - placed[n]
 	}
@@ -228,7 +228,7 @@ func friendUnstartedLevel(s *Snapshot, seats []FriendSeat, since func(string) (t
 				return p
 			}
 			pr := s.Work.Placed(c.F("primary"))
-			tier, left := cardTierOf(pr), friendsLeft(c)
+			tier, left := cardTierOf(s, pr), friendsLeft(c)
 			var may []string
 			for _, n := range names {
 				if n != giver && len(stale[n]) == 0 && lanes[n] > 0 && free[n] > 0 && !slices.Contains(left, n) && friendTakes(s, up[n], tier) && friendRestrictionAllows(up[n], pr) {

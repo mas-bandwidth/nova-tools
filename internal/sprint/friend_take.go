@@ -238,7 +238,7 @@ func friendLaneIdle(s *Snapshot, seats []FriendSeat, c *Card) (friend string, id
 	}
 	for _, f := range seats {
 		if f.Name == friend {
-			_, lanes := friendRoom(f)
+			_, lanes := friendRoom(s, f)
 			return friend, s.Fleet.Count(c.Row, Working) < lanes
 		}
 	}

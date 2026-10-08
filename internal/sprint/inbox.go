@@ -57,6 +57,7 @@ type InboxReq struct {
 	Prefix   string         // the deployment's prefix (empty for none), for the commands that name it
 	Epoch    uint64         // the sprint's epoch: the stale groups' ids carry it
 	Weights  map[string]int // each open primary's weight (sprint.Weights): the heaviest judgments first
+	Policy   PolicyValues   // the policy numbers nova-config applied: critical_behind marks a group critical (policy.go)
 	// Stopped is the time the machine was STOPPED between two clock
 	// readings: the deadlines count running time only, as the tick's do. nil
 	// is none.
@@ -127,6 +128,7 @@ type Group struct {
 	What      string        `json:"what,omitempty"`
 	Before    int           `json:"before,omitempty"`
 	Behind    int           `json:"behind,omitempty"`   // the heaviest of its primaries' weights (weight.go)
+	Critical  bool          `json:"critical,omitempty"` // Behind is at or above critical_behind (weight.go, policy.go)
 	Suspects  []string      `json:"suspects,omitempty"` // a red branch: the suspects named
 	// Commands is every decision open to the coordinator as the commands
 	// that make it, filled in: the group's id, --expect and --answers.
@@ -273,6 +275,7 @@ func Inbox(r InboxReq) []Group {
 		for _, m := range judg[i].Members {
 			judg[i].Behind = max(judg[i].Behind, r.Weights[m])
 		}
+		judg[i].Critical = (&Snapshot{Policy: r.Policy}).CriticalAt(judg[i].Behind)
 	}
 	// marked first, then the heaviest (the cards most wait on, weight.go), then the oldest
 	sort.SliceStable(judg, func(i, j int) bool {

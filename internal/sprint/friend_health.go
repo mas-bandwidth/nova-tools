@@ -139,11 +139,36 @@ type FriendHealthWrite struct {
 // FriendPresence is everything the friends' rule reads of one friend: the
 // coordinator's hold, her own beat (shown, never evidence), the coordinator's
 // observation of her, the seat's generation now, and when a card of hers last
-// finished (working to done), zero for never.
+// finished (working to done), zero for never; and the windows that evidence keeps her
+// up for, as the reader took them (policy.go).
 type FriendPresence struct {
 	Held       bool
 	Beat       Beat
 	Health     FriendHealth
 	Generation uint64
 	Finished   time.Time
+	Windows    PresenceWindows
+}
+
+// PresenceWindows is how long each kind of a friend's evidence keeps her up: a wake ping
+// her session answered (friend_pong_window) and a card of hers finished
+// (friend_finish_window). Zero is the default, FriendPongWindow and FriendFinishWindow.
+type PresenceWindows struct {
+	Pong, Finish time.Duration
+}
+
+// pong is the pong window, its default when unset.
+func (w PresenceWindows) pong() time.Duration {
+	if w.Pong > 0 {
+		return w.Pong
+	}
+	return FriendPongWindow
+}
+
+// finish is the finish window, its default when unset.
+func (w PresenceWindows) finish() time.Duration {
+	if w.Finish > 0 {
+		return w.Finish
+	}
+	return FriendFinishWindow
 }

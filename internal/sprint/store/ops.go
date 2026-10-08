@@ -391,6 +391,10 @@ func (st *Store) Inbox(ctx context.Context, deadline, stale time.Duration, max i
 	if snap, err := st.Load(ctx, []string{sprint.Work}, nil); err == nil {
 		req.Weights = sprint.Weights(snap) // the heaviest judgments first (weight.go)
 	}
+	// critical_behind, nova-config's, marks a group critical (policy.go)
+	if req.Policy, err = st.Policy(ctx); err != nil {
+		return v, err
+	}
 	var machine []sprint.Group
 	if _, ok := st.B.(KV); ok {
 		// One clock for overdue: running time, as the tick's deadlines.

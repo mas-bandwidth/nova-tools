@@ -339,7 +339,7 @@ func TestBriefTierRetiersACardInAnyState(t *testing.T) {
 		w.must(p)
 		c := w.s.Work.Placed("a-1")
 		assert.Equal(t, "heavy", c.F(FieldTier), tc.name)
-		assert.Equal(t, "heavy", cardTierOf(c), "%s: the next deal draws from the pinned tier", tc.name)
+		assert.Equal(t, "heavy", cardTierOf(w.s, c), "%s: the next deal draws from the pinned tier", tc.name)
 		assert.Equal(t, "", w.s.NextTier(c), "%s: a pinned tier is its ceiling", tc.name)
 		assert.Equal(t, before.F("brief"), c.F("brief"), tc.name)
 		assert.Equal(t, before.Col, c.Col, tc.name)

@@ -186,6 +186,21 @@ func MemberStatus(ctl *Card, b Beat, now time.Time) string {
 	return PresenceStatus(ctl.F("held") != "", b, now)
 }
 
+// PolicyMemberStatus derives a fleet member's status using member_down_after
+// (docs/SPEC-SPRINT.md section 11). The default preserves the inclusive last beat window.
+func (s *Snapshot) PolicyMemberStatus(ctl *Card, b Beat, now time.Time) string {
+	if AdoptingHeld(ctl) {
+		return Adopting
+	}
+	if ctl.F("held") != "" {
+		return Held
+	}
+	if b.Beaten() && now.Sub(b.At) <= s.PolicyDuration(PolicyMemberDownAfter) {
+		return Up
+	}
+	return Down
+}
+
 // PresenceStatus is the one rule of a fleet member's status at now: held while
 // the coordinator holds it (fleet down), else up while it has missed fewer
 // than MissedBeatsDown beat windows of BeatDeadline, else down (never beaten,
@@ -233,7 +248,7 @@ func FriendEvidence(f FriendPresence, now time.Time) (string, string) {
 		return Down, beatSaysDownWhy(f.Beat)
 	}
 	pong := !f.Health.Seen.IsZero() && f.Health.State == Up && f.Health.Generation == f.Generation
-	if age := now.Sub(f.Health.Seen); pong && age >= 0 && age < FriendPongWindow {
+	if age := now.Sub(f.Health.Seen); pong && age >= 0 && age < f.Windows.pong() {
 		return Up, "session pong " + ago(age)
 	}
 	// the proof her beat record keeps is an answer to a check her daemon asked (ProveBeat),
@@ -242,10 +257,10 @@ func FriendEvidence(f FriendPresence, now time.Time) (string, string) {
 	if age := now.Sub(f.Beat.Proof); proof && age >= 0 && age < FriendProofLive && f.Beat.Fresh(now) {
 		return Up, "session proof " + ago(age)
 	}
-	if age := now.Sub(f.Finished); !f.Finished.IsZero() && age >= 0 && age < FriendFinishWindow {
+	if age := now.Sub(f.Finished); !f.Finished.IsZero() && age >= 0 && age < f.Windows.finish() {
 		return Up, "finish " + ago(age)
 	}
-	why := "no session evidence: no wake ping answered by her session within " + FriendPongWindow.String()
+	why := "no session evidence: no wake ping answered by her session within " + f.Windows.pong().String()
 	if pong {
 		why += " (last " + ago(now.Sub(f.Health.Seen)) + ")"
 	}
@@ -257,7 +272,7 @@ func FriendEvidence(f FriendPresence, now time.Time) (string, string) {
 		}
 		why += ")"
 	}
-	why += ", no card finished within " + FriendFinishWindow.String()
+	why += ", no card finished within " + f.Windows.finish().String()
 	if !f.Finished.IsZero() {
 		why += " (last " + ago(now.Sub(f.Finished)) + ")"
 	}
@@ -340,7 +355,7 @@ func presence(s *Snapshot, r TickReq) (Plan, int) {
 		if ctl == nil {
 			continue
 		}
-		want := MemberStatus(ctl, r.Beats[m], s.Now) == Up
+		want := s.PolicyMemberStatus(ctl, r.Beats[m], s.Now) == Up
 		have := ctl.F("status") == Up
 		switch {
 		case want && have:

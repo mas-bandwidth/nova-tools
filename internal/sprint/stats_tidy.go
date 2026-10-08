@@ -41,9 +41,9 @@ const TidyViewWindow = 30 * time.Minute
 
 // TidyKeepWindow is how recent a finish a tidy keeps, in running time: the largest of
 // the windows that read the newest finishes, the friend-finish window (the idle rule),
-// OverloadWindow and TidyViewWindow.
+// the configured overload_window (policy.go) and TidyViewWindow.
 func TidyKeepWindow(s *Snapshot) time.Duration {
-	return max(s.FriendFinishAfter(), OverloadWindow, TidyViewWindow)
+	return max(s.FriendFinishAfter(), s.PolicyDuration(PolicyOverloadWindow), TidyViewWindow)
 }
 
 // TidyCard is one finished card a tidy took off, or kept: its id, the cell it was on
@@ -99,7 +99,7 @@ func TidyKept(s *Snapshot, stopped func(from, to time.Time) time.Duration) map[s
 				if stopped != nil {
 					d -= stopped(t, s.Now)
 				}
-				if d < window {
+				if d <= window {
 					keep(wc.ID, "finished within "+window.String()+" of running time")
 				}
 			}

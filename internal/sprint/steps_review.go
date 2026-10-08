@@ -558,7 +558,7 @@ func Read(s *Snapshot, r ReadReq) Plan {
 	for _, c := range chosen {
 		pr := s.Work.Card(c.F("primary"))
 		if r.Begin {
-			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Readers, moveEntry(c, c.Row, Reading, map[string]string{"begun": stamp(s.Now)}, FieldReturned))},
+			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Readers, moveEntry(c, c.Row, Reading, map[string]string{"begun": stamp(s.Now), FieldLease: stamp(s.Now.Add(s.PolicyDuration(PolicyReadLease)))}, FieldReturned))},
 				Moved: c.ID + " asked -> reading"})
 			continue
 		}
@@ -599,8 +599,8 @@ func Read(s *Snapshot, r ReadReq) Plan {
 			}
 			set := map[string]string{FieldReadTake + itoa(run): rec, FieldReasked: itoa(returns)}
 			record(pr, readConsumer(s, c, run, "returned", rec))
-			if returns > MaxReadReasks {
-				n.What += fmt.Sprintf("; asked again of %s %d times, the read is retired", c.Row, MaxReadReasks)
+			if reasks := s.PolicyCount(PolicyMaxReadReasks); returns > reasks {
+				n.What += fmt.Sprintf("; asked again of %s %d times, the read is retired", c.Row, reasks)
 				set["retired"], set["retired_by"] = stamp(s.Now), "returned"
 				p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"),
 					Changes: []Change{change(Readers, removeEntry(c, set))},
@@ -1329,11 +1329,11 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		if bound != nil {
 			// the attempt ended at its bound: its end is the primary's record of its failed
 			// work, as a failed finish writes it (failureSet), read by the next rework at a bound
-			set[FieldFailure], set[FieldFailureAt], set[FieldFailureTier], set[FieldFailureBound] = BoundClass(bound), c.F("attempt"), cardTierOf(c), "yes"
+			set[FieldFailure], set[FieldFailureAt], set[FieldFailureTier], set[FieldFailureBound] = BoundClass(bound), c.F("attempt"), cardTierOf(s, c), "yes"
 		}
 		if lift {
 			// the provider's return lifted the held bound: spent on this tier for good
-			set[FieldFailureBack] = strings.Join(append(Split(c.F(FieldFailureBack)), cardTierOf(c)), ",")
+			set[FieldFailureBack] = strings.Join(append(Split(c.F(FieldFailureBack)), cardTierOf(s, c)), ",")
 		}
 		if tier != "" {
 			// the card records its tier and this attempt's deal draws from it already
