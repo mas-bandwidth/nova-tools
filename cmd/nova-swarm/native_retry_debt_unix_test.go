@@ -49,7 +49,7 @@ func TestNativeDoesNotRetryOrReplaceReceiptForUnprovenPreviousGroup(t *testing.T
 			b, err := os.ReadFile(filepath.Join(slot, nativeAnchorReceiptName))
 			require.NoError(t, err)
 			fields := strings.Fields(string(b))
-			require.Len(t, fields, 2)
+			require.Len(t, fields, 5)
 			anchorPID, err := strconv.Atoi(fields[0])
 			require.NoError(t, err)
 			require.NoError(t, syscall.Kill(anchorPID, syscall.SIGKILL))

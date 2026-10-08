@@ -24,6 +24,7 @@ cmd/nova-swarm/member.go cmdMember member pass
 cmd/nova-swarm/member.go memberLoop member pass
 cmd/nova-swarm/member.go nativeRunner.RecoverStopped waits and retries
 internal/procgroup/anchor_unix.go waitGone waits and retries
+internal/procgroup/anchor_unix.go sendAnchorCommand waits and retries
 internal/member/member.go Member.BeatLoop member beat
 
 # the coordinator's inbox and wake (cmd/nova-sprint)
