@@ -28,7 +28,7 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 			return refuse(stderr, verb, "apply takes no arguments; flags only")
 		}
 	}
-	fs := verbflag.New(verb)
+	fs := applyFlagSet(verb)
 	c := seatStoreFlags(fs)
 	redisFlag := fs.String("redis", "", "the Redis `host:port` to write (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address)")
 	as := actorFlag(fs)
@@ -165,3 +165,7 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	}
 	return 0
 }
+
+// applyFlagSet keeps the apply family at the existing parser seam. Install
+// and uninstall share it rather than adding new flag constructors.
+func applyFlagSet(verb string) *stdflag.FlagSet { return verbflag.New(verb) }

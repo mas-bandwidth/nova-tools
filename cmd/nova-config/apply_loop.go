@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 	"github.com/mas-bandwidth/nova-tools/internal/units"
@@ -321,7 +320,7 @@ func containsKind(kinds []string, name string) bool {
 // runApplyInstall writes the apply loop's unit and its loop row.
 func runApplyInstall(ctx context.Context, args []string, stdout, stderr io.Writer, d deps, host applyHost) int {
 	const verb = "apply install"
-	fs := verbflag.New(verb)
+	fs := applyFlagSet(verb)
 	c := seatStoreFlags(fs)
 	redisFlag := fs.String("redis", "", "the Redis `host:port` the loop writes (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address)")
 	as := actorFlag(fs)
@@ -433,7 +432,11 @@ func finishApplyInstall(ctx context.Context, stdout, stderr io.Writer, d deps, h
 	if err != nil {
 		return storeErr(stderr, verb, err, toolName+" apply")
 	}
-	applyFailed := applyLoopKind(ctx, stdout, d, addr, actor, st)
+	applyOutput := stdout
+	if asJSON {
+		applyOutput = io.Discard
+	}
+	applyFailed := applyLoopKind(ctx, applyOutput, d, addr, actor, st)
 	if host.load == nil {
 		return refuse(stderr, verb, "apply install has no loader for the unit")
 	}
@@ -496,7 +499,7 @@ func applyLoopKind(ctx context.Context, stdout io.Writer, d deps, addr, actor st
 // runApplyUninstall removes the apply loop's unit and its loop row.
 func runApplyUninstall(ctx context.Context, args []string, stdout, stderr io.Writer, d deps, host applyHost) int {
 	const verb = "apply uninstall"
-	fs := verbflag.New(verb)
+	fs := applyFlagSet(verb)
 	c := seatStoreFlags(fs)
 	redisFlag := fs.String("redis", "", "the Redis `host:port` the loop wrote (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address)")
 	as := actorFlag(fs)
@@ -575,7 +578,11 @@ func runApplyUninstall(ctx context.Context, args []string, stdout, stderr io.Wri
 			return storeErr(stderr, verb, err, toolName+" loop remove "+applyLoopRow)
 		}
 	}
-	applyFailed := applyLoopKind(ctx, stdout, d, addr, actor, st)
+	applyOutput := stdout
+	if *asJSON {
+		applyOutput = io.Discard
+	}
+	applyFailed := applyLoopKind(ctx, applyOutput, d, addr, actor, st)
 	rev, revErr := st.Rev(ctx, config.KindLoop)
 	if revErr != nil {
 		return storeErr(stderr, verb, revErr, toolName+" apply")

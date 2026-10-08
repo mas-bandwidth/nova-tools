@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -30,6 +31,13 @@ func (g *gateRedis) Write(ctx context.Context, kind string, row config.Row, prev
 	return g.fakeRedis.Write(ctx, kind, row, prev, actor, idem)
 }
 
+func (g *gateRedis) Remove(ctx context.Context, kind, name, actor, idem string) error {
+	if g.failWrite {
+		return errors.New("redis refused the remove")
+	}
+	return g.fakeRedis.Remove(ctx, kind, name, actor, idem)
+}
+
 func (g *gateRedis) Stamp(ctx context.Context, kind string, prev, rev int64) error {
 	g.stamps = append(g.stamps, fmt.Sprintf("%s %d %d", kind, prev, rev))
 	return g.fakeRedis.Stamp(ctx, kind, prev, rev)
@@ -45,6 +53,113 @@ func insertMachines(t *testing.T, h *harness, n int) {
 		_, err = h.store.Insert(context.Background(), config.KindMachine, row, "a1")
 		require.NoError(t, err)
 	}
+}
+
+func TestWritingVerbEndsWithApplyDisposition(t *testing.T) {
+	t.Parallel()
+	h := newHarness()
+	h.env["NOVA_FRIEND"] = "a1"
+	h.env["NOVA_PG_DSN"] = dsn
+	code, out, errs := h.run(t, "machine", "add", "m1", "--user", "login", "--seat", "s1", "--slots", "1")
+	require.Equal(t, 0, code, errs)
+	assert.Contains(t, out, "CONFIG ADD kind=machine")
+	assert.True(t, strings.HasSuffix(out, "UNAPPLIED rev=1: --redis is required: host:port (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, or a seat); run: nova-config apply\n"), out)
+
+	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
+	code, out, errs = h.run(t, "machine", "set", "m1", "--slots", "2")
+	require.Equal(t, 0, code, errs)
+	assert.True(t, strings.HasSuffix(out, "APPLIED rev=2\n"), out)
+	assert.Equal(t, int64(2), h.redis.revs[config.KindMachine])
+}
+
+func TestWritingVerbReportsFailedApplyAfterStoreCommit(t *testing.T) {
+	t.Parallel()
+	h := newHarness()
+	h.env["NOVA_FRIEND"] = "a1"
+	h.env["NOVA_PG_DSN"] = dsn
+	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
+	g := &gateRedis{fakeRedis: h.redis, failWrite: true}
+	d := h.deps()
+	d.openRedis = func(context.Context, string) (redisSide, error) { return g, nil }
+	var out, errb bytes.Buffer
+	code := runKind(context.Background(), mustMachine(), []string{"add", "m1", "--user", "login", "--seat", "s1", "--slots", "1"}, &out, &errb, d)
+	require.Equal(t, 1, code, errb.String())
+	assert.True(t, strings.HasSuffix(out.String(), "UNAPPLIED rev=1: redis refused the write; run: nova-config apply\n"), out.String())
+	rev, err := h.store.Rev(context.Background(), config.KindMachine)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), rev)
+	assert.Equal(t, int64(0), h.redis.revs[config.KindMachine])
+}
+
+func TestApplyInstallAndUninstallJSONStayOneObject(t *testing.T) {
+	t.Parallel()
+	h := newHarness()
+	insertMachines(t, h, 1)
+	h.env["NOVA_FRIEND"] = "a1"
+	h.env["NOVA_PG_DSN"] = dsn
+	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
+	dir := t.TempDir()
+	host := applyHost{
+		goos:   "linux",
+		exe:    func() (string, error) { return "/usr/local/bin/nova-config", nil },
+		home:   func() (string, error) { return dir, nil },
+		load:   func(string) error { return nil },
+		unload: func(string) error { return nil },
+	}
+	g := &gateRedis{fakeRedis: h.redis}
+	d := h.deps()
+	d.openRedis = func(context.Context, string) (redisSide, error) { return g, nil }
+	var out, errb bytes.Buffer
+	code := runApplyInstall(context.Background(), []string{"--machine", "m1", "--dir", dir, "--json"}, &out, &errb, d, host)
+	require.Equal(t, 0, code, errb.String())
+	assert.True(t, json.Valid(out.Bytes()), out.String())
+	assert.NotContains(t, out.String(), "CONFIG APPLY")
+	out.Reset()
+	g.failWrite = true
+	code = runApplyUninstall(context.Background(), []string{"--dir", dir, "--json"}, &out, &errb, d, host)
+	require.Equal(t, 1, code, errb.String())
+	assert.True(t, json.Valid(out.Bytes()), out.String())
+	assert.Contains(t, out.String(), "UNAPPLIED rev=")
+	assert.NotContains(t, out.String(), "CONFIG APPLY")
+}
+
+// withoutDisposition lets older CRUD tests keep checking their original
+// operation lines while also checking the new final apply result.
+func withoutDisposition(t *testing.T, out string) string {
+	t.Helper()
+	first, _, ok := strings.Cut(out, "\n")
+	if !ok || (!strings.HasPrefix(first, "CONFIG ADD ") && !strings.HasPrefix(first, "CONFIG SET ") && !strings.HasPrefix(first, "CONFIG REMOVE ")) {
+		return out
+	}
+	trimmed := strings.TrimSuffix(out, "\n")
+	pos := strings.LastIndex(trimmed, "\n")
+	require.GreaterOrEqual(t, pos, 0, out)
+	last := trimmed[pos+1:]
+	assert.True(t, strings.HasPrefix(last, "APPLIED rev=") || strings.HasPrefix(last, "UNAPPLIED rev="), "write has no final disposition: %q", out)
+	var rev string
+	for _, word := range strings.Fields(first) {
+		if strings.HasPrefix(word, "rev=") {
+			rev = word
+		}
+	}
+	require.NotEmpty(t, rev, first)
+	assert.Contains(t, last, rev, out)
+	return trimmed[:pos+1]
+}
+
+func TestStatusReportsGapAgeAndJudgment(t *testing.T) {
+	t.Parallel()
+	h := newHarness()
+	base := time.Unix(1_700_000_000, 0).UTC()
+	h.store.Now = func() time.Time { return base.Add(-90 * time.Second) }
+	insertMachines(t, h, 1)
+	h.env["NOVA_PG_DSN"] = dsn
+	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
+	code, out, _ := h.run(t, "status")
+	require.Equal(t, 1, code)
+	assert.Contains(t, out, "machine_rev=1")
+	assert.Contains(t, out, "machine_applied=0 machine_gap_age=90s")
+	assert.Contains(t, out, "JUDGMENT kind=machine store=1 applied=0 age=90s")
 }
 
 func TestApplyPassClosesExactlyTheRevsBetweenAppliedAndStore(t *testing.T) {

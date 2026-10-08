@@ -579,6 +579,15 @@ loop row `nova-config-apply`, so the dashboard shows it. Its last line is
 `UNAPPLIED rev=<n>: <why>; run: nova-config apply` when the row is stored and
 the copy is not. `nova-config apply uninstall` removes the unit and that row.
 The by-hand verb remains for recovery. Lose Redis: run `nova-config apply`.
+Each successful add, set, or remove writes the store first, then applies its
+own kind when `--redis`, an environment address, or the seat names Redis. Its
+last line says `APPLIED rev=<n>` when Redis has the write, or `UNAPPLIED
+rev=<n>: <why>; run: nova-config apply` when the store has it but Redis does
+not. A write with no Redis address still succeeds in the store and says
+`UNAPPLIED`; an attempted apply that fails exits 1 so an unattended writer
+sees the failure.
+An explicit `sprint set --coordinator` applies that seat change; background
+passes still hold an unrequested seat move as described below.
 
 `nova-config apply [--kind <k>] [--check]` runs one pass per kind, in kind order:
 machines (the ceilings), the fleet row (a friend with no beat is charged to
@@ -668,9 +677,10 @@ leaves `sprint:coordinator` as it is, and the library reports one
 `APPLY HELD kind=sprint field=coordinator live=<a> row=<b>: the seat moves by
 nova-sprint's seat verb or nova-config apply --kind sprint --move-seat; run
 nova-config sprint set --coordinator <a> to make the row agree` line and exits
-0. A configuration publish never moves the seat unless the owner names the move:
+0. A background configuration publish never moves the seat unless the owner names the move:
 `nova-config apply --move-seat` (`ApplyMovingSeat`) writes the differing
-coordinator. Otherwise the seat moves by nova-sprint's seat verb. `nova-config
+coordinator. An explicit `nova-config sprint set --coordinator` applies its own
+seat move; nova-sprint's seat verb may also move it. `nova-config
 apply` prints every op through `SaidLine`, so the held line is printed whole,
 as the library says it (on `--dry-run` too). `--json` emits `op=held` with
 `name` equal to that line. When the only difference is the coordinator, the
@@ -724,8 +734,8 @@ CONFIG APPLY kind=<k> add=<n> set=<n> remove=<n> rev=<r> ms=<n>
 CONFIG GAP kind=<k> store=<n> applied=<n> age=<seconds>s          (apply --every, a kind whose revisions differ)
 JUDGMENT kind=<k> store=<n> applied=<n> age=<seconds>s: the Redis copy is behind the store; run: nova-config apply
                                                                    (that gap older than 60s)
-APPLIED rev=<n>                                                    (apply install, the loop row reached Redis)
-UNAPPLIED rev=<n>: <why>; run: nova-config apply                  (apply install, or one pass of --every that failed)
+APPLIED rev=<n>                                                    (a write or apply install reached Redis)
+UNAPPLIED rev=<n>: <why>; run: nova-config apply                  (a write, install, or --every pass failed to apply)
 APPLY INSTALL OK unit=<path> written=<t> loaded=true loop=nova-config-apply every=<d>
 APPLY UNINSTALL OK unit=<path> removed=<t> loop=nova-config-apply
 MIGRATION version=<v> file=<f> lines=<n>                 (migrate --print)
