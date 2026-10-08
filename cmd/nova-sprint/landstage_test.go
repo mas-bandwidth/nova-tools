@@ -18,9 +18,8 @@ import (
 )
 
 // Through the land loop's bench seam: the bench at the stream's slot refuses every stage
-// (no mirror). The refusal is said with its reason, the gate steps to the ring's next slot
-// and runs there instead of in the clone, and the refusing bench is asked at most twice in
-// the pass: after its second refusal the ring passes it over, said.
+// (no mirror). The gate steps to the ring's next slot and runs there instead of in the
+// clone, and the refusing bench is asked at most twice in the pass.
 func TestARefusedStageStepsTheGateToTheNextSlot(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
@@ -54,7 +53,6 @@ func TestARefusedStageStepsTheGateToTheNextSlot(t *testing.T) {
 	require.ElementsMatch(t, []string{"vision", "space"}, hosts)
 	ring := benchRing("s1", hosts)
 	bad, good := ring[0], ring[1]
-	refusal := "copy refused: " + bad + " after 2.0s: staging 0123456789ab from nova-bench/mirror/nova-tools.git at nova-bench/runs/run.x/repo exit 3: no mirror at nova-bench/mirror/nova-tools.git"
 
 	var asked sync.Mutex
 	var benches []string
@@ -119,9 +117,68 @@ func TestARefusedStageStepsTheGateToTheNextSlot(t *testing.T) {
 	assert.LessOrEqual(t, nBad, bench.SkipAfter, "a bench refused twice is not asked again this pass: %v", got)
 	assert.Equal(t, len(got)-nBad, nGood, "every gate the bad slot refused ran on the next: %v", got)
 	assert.Regexp(t, regexp.MustCompile(`LAND OK stream=s1 .* bench=`+good+` wall=\d+\.\ds ring=2\b`), text, "the gate ran on the next slot, never in the clone")
-	assert.Contains(t, text, "NOTE tree gate: "+refusal, "the refusal is said with its reason")
-	if nBad == bench.SkipAfter && nGood > bench.SkipAfter {
-		assert.Contains(t, text, "NOTE tree gate: skip "+bad+": its stage failed 2 times this pass, last: "+refusal, "the pass-over is said")
+	r.clean()
+}
+
+// benchGate itself, three gates of one pass on a ring of two whose first slot refuses
+// every stage: each refusal is said with its reason and the gate runs on the next slot;
+// after the second refusal the first slot is passed over, said, and not asked again; a
+// new pass asks it again; and when every slot refuses, the gate runs here.
+func TestATwiceRefusedBenchIsPassedOverForThePass(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	for _, m := range []string{"vision", "space"} {
+		r.ok("fleet beat " + m + " --load 1 --cores 8")
+		r.ok("fleet up " + m)
 	}
+	st, err := r.a.store(common{redis: "mem:0", actor: "tester"})
+	require.NoError(t, err)
+	hosts := []string{"vision", "space"}
+	ring := benchRing("s1", hosts)
+	bad, good := ring[0], ring[1]
+	refusal := func(h string) *bench.StageError {
+		return &bench.StageError{Host: h, Step: "staging 0123456789ab from nova-bench/mirror/nova-tools.git at nova-bench/runs/run.x/repo", Code: bench.NoMirror,
+			Tail: "no mirror at nova-bench/mirror/nova-tools.git", Wall: 2 * time.Second}
+	}
+	said := refusal(bad).Error()
+	var asked []string
+	refuses := map[string]bool{bad: true}
+	b := r.a.landState()
+	b.mu.Lock()
+	b.gateBench = func(ctx context.Context, host, dir string, runs [][]string, withGit bool) (string, int, error) {
+		asked = append(asked, host)
+		if refuses[host] {
+			return "", 0, refusal(host)
+		}
+		return "", 0, nil
+	}
+	b.mu.Unlock()
+	runs := gateRuns(false, nil)
+
+	l := &lander{a: r.a, st: st, gateKey: "s1"}
+	for i := 0; i < 3; i++ {
+		why, ran := l.benchGate(context.Background(), hosts, r.clone, runs, false)
+		assert.Empty(t, why)
+		assert.True(t, ran, "gate %d ran on a bench", i+1)
+	}
+	assert.Equal(t, []string{bad, good, bad, good, good}, asked, "the first slot is asked twice, then passed over")
+	skip := "skip " + bad + ": its stage failed 2 times this pass, last: " + said
+	assert.Equal(t, []string{"tree gate: " + said, "tree gate: " + said, "tree gate: " + skip}, l.ledgerLog)
+	assert.Equal(t, good, l.gateHost)
+	assert.Equal(t, 2, l.gateRing)
+	lanes := r.ok("lane list")
+	assert.NotContains(t, lanes, "lander", "every lane taken is given back: %s", lanes)
+
+	asked = nil
+	next := &lander{a: r.a, st: st, gateKey: "s1"}
+	_, ran := next.benchGate(context.Background(), hosts, r.clone, runs, false)
+	assert.True(t, ran)
+	assert.Equal(t, []string{bad, good}, asked, "a new pass starts with every bench")
+
+	asked = nil
+	refuses[good] = true
+	_, ran = next.benchGate(context.Background(), hosts, r.clone, runs, false)
+	assert.False(t, ran, "every slot refused: the gate runs here")
+	assert.Equal(t, []string{bad, good}, asked)
 	r.clean()
 }

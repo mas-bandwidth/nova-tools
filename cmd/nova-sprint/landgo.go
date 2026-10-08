@@ -424,7 +424,7 @@ func (l *lander) gateOn(ctx context.Context, host, dir string, runs [][]string, 
 }
 
 // copySaid says one stage line: the loop's idle line carries it as the step, and the
-// batch's report as a NOTE.
+// batch's report as a NOTE ("tree gate: <line>", the batch's also).
 func (l *lander) copySaid(line string) {
 	l.stage("gate "+line, "the tree gate's stage")
 	l.ledgerLog = append(l.ledgerLog, "tree gate: "+line)
