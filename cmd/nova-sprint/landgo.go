@@ -49,6 +49,8 @@ import (
 // the tree's own packages, or one update run (a build and two tests of one package).
 const landGoBudget = 15 * time.Minute
 
+const benchGateUnavailableWhy = "the configured remote bench did not run the tree gate; restore a bench and run land again"
+
 // treeTests are the packages that test the tree itself (its docs and its tests), run by
 // the gate when a head changes a .md or a _test.go file; one the clone lacks is not run.
 var treeTests = []string{"internal/docs", "internal/ci"}
@@ -239,6 +241,9 @@ func (l *lander) treeGateBase(ctx context.Context, dir, baseSha string, branch .
 	if err := ctx.Err(); err != nil {
 		return err.Error(), false // an abandoned gate never counts as a red base
 	}
+	if why == benchGateUnavailableWhy {
+		return why, false // infrastructure refusal is not a red base or a retry
+	}
 	if why != "" {
 		base := l.base
 		if len(branch) > 0 {
@@ -364,7 +369,7 @@ func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 	}
 	if remote {
 		l.stage("gate", "remote bench unavailable")
-		return "the configured remote bench did not run the tree gate; restore a bench and run land again"
+		return benchGateUnavailableWhy
 	}
 	start := l.clock()
 	defer func() {
@@ -798,6 +803,9 @@ func (l *lander) gateCard(ctx context.Context, dir string, c landCard, before st
 	if why == "" {
 		return "", ""
 	}
+	if why == benchGateUnavailableWhy {
+		return "", why // no card failed its gate
+	}
 	if _, err := l.git(ctx, dir, "reset", "-q", "--hard", before); err != nil {
 		return "", "the batch branch could not be reset after " + c.id + " failed the tree gate: " + firstLine("", err)
 	}
@@ -825,6 +833,7 @@ func (l *lander) cureBase(ctx context.Context, dir, stream string, cards []landC
 		heads[i], at[c.id] = sprint.CureHead{ID: c.id, Head: c.head}, i
 	}
 	notes, repairs := map[string]string{}, map[string]string{}
+	benchUnavailable := false
 	cure, err := sprint.FindBaseCure(ctx, sprint.BaseCureReq{RepoDir: dir, Base: baseSha, Heads: heads, Env: l.a.gitEnv,
 		Merge: func(ctx context.Context, h sprint.CureHead) (string, string) {
 			c := cards[at[h.ID]]
@@ -839,7 +848,11 @@ func (l *lander) cureBase(ctx context.Context, dir, stream string, cards []landC
 			notes[h.ID] = note
 			return card, env
 		},
-		Gate: func(ctx context.Context, dir string) string { return l.treeGate(ctx, dir, true) },
+		Gate: func(ctx context.Context, dir string) string {
+			gate := l.treeGate(ctx, dir, true)
+			benchUnavailable = benchUnavailable || gate == benchGateUnavailableWhy
+			return gate
+		},
 		Tried: func(h sprint.CureHead) bool {
 			s.gateMu.Lock()
 			defer s.gateMu.Unlock()
@@ -847,6 +860,9 @@ func (l *lander) cureBase(ctx context.Context, dir, stream string, cards []landC
 		},
 	})
 	l.conflictKind, l.conflictPaths = "", nil // a try's conflict is no card's stop
+	if benchUnavailable {
+		return -1, benchGateUnavailableWhy // leave every head eligible for a later cure search
+	}
 	s.gateMu.Lock()
 	for _, t := range cure.Tried {
 		l.cureTried[tried(t.CureHead)] = true

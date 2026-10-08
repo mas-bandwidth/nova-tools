@@ -885,6 +885,10 @@ func (l *lander) baseRecheck(ctx context.Context, s *sprint.Snapshot) {
 			l.gatesBase(at.base)
 			red = l.treeGate(ctx, dir, true)
 		}
+		if red == benchGateUnavailableWhy {
+			l.baseNotes = append(l.baseNotes, "the base "+at.base+" was not re-checked: "+red)
+			continue
+		}
 		if red != "" {
 			f := l.baseGateFails[sha]
 			if f == nil {
@@ -1344,6 +1348,9 @@ func (l *lander) gateBase(ctx context.Context, dir, stream string, cards []landC
 	red, stop := l.treeGateBase(ctx, dir, baseSha, base)
 	if err := ctx.Err(); err != nil {
 		return nil, 0, err.Error(), "" // no cure or base failure for an abandoned gate
+	}
+	if red == benchGateUnavailableWhy {
+		return nil, 0, red, "" // no cure search or red-base retry for a missing bench
 	}
 	if red == "" {
 		return nil, 0, "", ""

@@ -686,6 +686,10 @@ func (l *lander) merge(ctx context.Context, j *landJob) {
 			j.refuse(why)
 			return
 		}
+		if red == benchGateUnavailableWhy {
+			j.refuse(red + "; no card is blamed and nothing was pushed or reported")
+			return
+		}
 		if red == "" {
 			j.gated = true
 		} else {
@@ -901,6 +905,9 @@ func (l *lander) again(ctx context.Context, j *landJob, newBase string, pushed [
 		start := time.Now()
 		l.stage("gate", "the combined tree")
 		red := l.treeGate(ctx, dir, true)
+		if red == benchGateUnavailableWhy {
+			return red + "; no card is blamed and nothing was pushed or reported"
+		}
 		if red == "" {
 			var out string
 			if red, out = l.runCheck(ctx, dir); red != "" {
