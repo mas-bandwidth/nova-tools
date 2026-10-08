@@ -103,8 +103,7 @@ func diskLargestDirs(root string) []diskDir {
 	var walk func(string, int)
 	walk = func(dir string, level int) {
 		entries, err := os.ReadDir(dir)
-		if err != nil {
-			// ignored: an unreadable directory is skipped; the scan is best-effort evidence for a judgment
+		if err != nil { // ignored: an unreadable directory is skipped; the scan is best-effort evidence for a judgment
 			return
 		}
 		var total uint64
