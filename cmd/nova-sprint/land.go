@@ -13,8 +13,10 @@ package main
 // changes it. The streams' batches merge beside each other and land one at a
 // time (landpass.go, the pass in two phases; tla/LandPass.tla). A head that is missing or conflicts ends the batch before it and
 // is reported with the merge step's conflict fact; a check that fails, with
-// its red fact; a push rejected again after one rebuild on the moved base,
-// with its rejected fact. The verb keeps no state of its own: the store
+// its red fact; a push the remote rejected because the base moved is fetched
+// and rebuilt up to the bound and never stops the stream; a push rejected for
+// any other reason is the rejected fact, which the next land resumes and
+// retries. The verb keeps no state of its own: the store
 // changes only through those merge steps, and git and the check run as
 // programs in the caller's environment.
 //
@@ -69,11 +71,15 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     merges each queued card's head (--no-ff) in queue order onto a branch cut
     from origin's base, one batch per run of cards naming one REPO: and BASE:
     (--base for a card naming none); runs --check once per batch; pushes, never
-    forced, rebuilding once on a moved base; then reports the batch as merge
+    forced. A push rejected because the base moved (fetch first) fetches the
+    base, rebuilds and pushes again, up to land_push_rebuilds tries (default 5),
+    then leaves the batch queued (base moving: N rebuilds) and never stops the
+    stream. A push rejected for any other reason is merge --rejected and stops
+    the stream, naming the reason; the next land resumes that stop and retries.
+    It reports the batch as merge
     --stream s1 --batch <n> does. A head missing or in conflict ends the batch
-    before it and is reported as merge --conflict, a red check as --red, a
-    second rejected push as --rejected. Each head merged is checked first, by
-    script and no model: a head whose diff changes a file outside its brief's
+    before it and is reported as merge --conflict, a red check as --red. Each
+    head merged is checked first, by script and no model: a head whose diff changes a file outside its brief's
     PATHS, or leaves a stranded sentence fragment or an unmatched backquote in
     prose, ends the batch as a head in conflict does. Tests, testdata, tla/RUNS.tsv and
     tla/CASES.tsv, the docs catalog and AGENTS.md maps are inside every PATHS. A card that adds a directory
@@ -121,10 +127,14 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
   nova-sprint land --stream s1
     run again, it recovers once the outside is quiet (tla/Land.tla, Recovers),
     not otherwise: a run cut short between the push and the report on every
-    try never reports; and a base that moves twice between the read and the
-    push gives up (one rebuild, then the rejected fact, the stream stopped):
-    nothing is pushed or lost and the cards stay queued; resume the stream
-    (nova-sprint resume --stream s1 --did 'the base moved') and run land again.
+    try never reports. A base that keeps moving is fetched and the batch
+    rebuilt up to the bound; past it nothing is pushed or lost and the cards
+    stay queued for the next pass (base moving: N rebuilds), and the stream
+    is not stopped. The next land resumes a stream a rejected push stopped
+    and retries that push. A gate stays stopped until
+    nova-sprint resume --stream s1. A land-protected refusal is refused before
+    any git and does not stop the stream; the cards stay queued until the
+    stream is marked.
   nova-sprint merge-window open --for 10m --reason 'the release merges by hand'
     pauses every landing for 10 minutes, its reason on each batch it pauses;
     land pauses a batch too while the merge queue of the branch it lands onto
@@ -371,6 +381,12 @@ type lander struct {
 	// landpass.go), and shared the locks and records the pass's streams share.
 	parallel int
 	shared   *landShared
+	// pushBound is how many times one pass pushes a batch the remote rejected
+	// because the base moved (sprint.PushRebuildBound, work property
+	// land_push_rebuilds, default 5). Set on the pass before it forks, so each
+	// stream's lander copies it. A fetch-first rejection under the bound
+	// rebuilds; at the bound the batch stays queued and the stream is not stopped.
+	pushBound int
 }
 
 // keep appends a batch, carrying the tree gate's bench and wall when one ran.
@@ -485,7 +501,15 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	var order []string
 	for _, name := range s.Streams() {
 		named := slices.Contains(streams, name)
-		if named || len(streams) == 0 && s.StreamCtl(name) != nil && s.StreamCtl(name).F("state") != sprint.StreamStopped && len(landQueue(s, name)) > 0 {
+		ctl := s.StreamCtl(name)
+		stopped := ctl != nil && ctl.F("state") == sprint.StreamStopped
+		// a bare land resumes a stream a transient push stopped; a dry run and
+		// every other stop stay out of the default order, as before
+		resumable := false
+		if ctl != nil && !l.dry && stopped {
+			resumable = sprint.LandResumes(ctl.F("cause"))
+		}
+		if named || len(streams) == 0 && ctl != nil && (!stopped || resumable) && len(landQueue(s, name)) > 0 {
 			order = append(order, name)
 		}
 	}
@@ -661,8 +685,10 @@ func (l *lander) placeWhy(stream string, cards []landCard) (string, []string) {
 	}
 	if len(why) == 0 {
 		// a protected base in an unmarked stream (docs/SPEC-SPRINT.md section 7), refused
-		// before any git with the mark as its one next command
-		return cards[0].protected, nil
+		// before any git with the mark as its one next command. The choice names it a
+		// stop land does not resume; recording that stop is the merge step's, and this
+		// refusal writes nothing, so the cards stay queued until the stream is marked.
+		return sprint.ChooseProtected(cards[0].protected).Reason, nil
 	}
 	var also []string
 	for _, c := range cards {
@@ -807,8 +833,41 @@ func (l *lander) fact(b landBatch, r sprint.MergeReq, pins []landCard, fact, why
 		b.Reason = why + "; the merge step did not record it (" + stepWhy(res, err) + "); " + againRemedy(r.Stream)
 	}
 	b.stopped = slices.ContainsFunc(res.Moved, func(m string) bool { return strings.Contains(m, " stopped: ") })
+	if b.stopped {
+		l.tellSeat(r.Stream, why)
+	}
 	l.keep(b)
 	return b.Fact != "", b.stopped
+}
+
+// tellSeat pushes one judgment to the coordinator's seat at the moment the
+// stream stops. No push record (a land test, a seat with none) records nothing
+// more; a delivery that did not go in is a note on the pass, and the stop
+// itself stays the merge step's.
+func (l *lander) tellSeat(stream, why string) {
+	if l.dry || l.st == nil || l.a == nil {
+		return
+	}
+	ctx := context.Background()
+	holder, err := l.st.B.Coordinator(ctx)
+	if err != nil {
+		l.baseNotes = append(l.baseNotes, "the seat was not told that stream "+stream+" stopped: "+firstLine("", err))
+		return
+	}
+	if holder == "" {
+		return
+	}
+	rec, ok, err := readPush(ctx, l.st, holder)
+	if err != nil {
+		l.baseNotes = append(l.baseNotes, "the seat was not told that stream "+stream+" stopped: "+firstLine("", err))
+		return
+	}
+	if !ok {
+		return
+	}
+	if w := l.a.deliverPush(ctx, rec, sprint.StopJudgment(stream, why)); w != "" {
+		l.baseNotes = append(l.baseNotes, "the seat was not told that stream "+stream+" stopped: "+w)
+	}
 }
 
 // baseRefused counts a refusal on the base's gate through the merge step
@@ -827,6 +886,8 @@ func (l *lander) baseRefused(b landBatch, stream, why string) (bool, bool) {
 		b.Reason = why + "; the merge step did not count it (" + stepWhy(res, err) + "); " + againRemedy(stream)
 	case slices.ContainsFunc(res.Moved, func(m string) bool { return strings.Contains(m, " stopped: ") }):
 		b.Fact = "base"
+		b.stopped = true
+		l.tellSeat(stream, why)
 	}
 	l.keep(b)
 	return false, true
@@ -1968,12 +2029,6 @@ func normRepo(u string) string {
 
 // sameRepo says two spellings name one repository.
 func sameRepo(a, b string) bool { return normRepo(a) == normRepo(b) }
-
-// rejected says a failed push was refused by the remote (the base moved, or
-// a rule on it), not a push that could not reach it.
-func rejected(err error) bool {
-	return containsAny(err.Error(), []string{"[rejected]", "[remote rejected]", "non-fast-forward", "fetch first"})
-}
 
 // git runs one git in dir (none: the current directory, for a clone into a
 // path it names), in the caller's environment, and returns its trimmed stdout,
