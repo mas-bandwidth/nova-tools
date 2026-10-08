@@ -1476,8 +1476,9 @@ removing it would drop commits that exist only there.
 
 A reader lane removes its checkout `reads/<id>/repo` after the verdict is recorded, and, when
 `Daemon.BenchRoot` is set (nova-friend sets it to `~/nova-bench` when that directory is there),
-the bench copy `BenchRoot/buds/<friend>/reads/<id>`. Both go through `safepath.RemoveUnder`.
-The read's own files stay. The reader runs remote gates through `nova-ci bench run`: the existing native
+the legacy bench copy `BenchRoot/buds/<friend>/reads/<id>` only with its matching
+`.nova-read-owner` receipt. Unmarked copies stay. Both go through `safepath.RemoveUnder`.
+The read's own files stay. Checkout removal runs asynchronously; its reservation prevents the same read being begun again until the removal receipt is consumed. The reader runs remote gates through `nova-ci bench run`: the existing native
 bench runner makes a unique run directory, streams the command's output and removes only
 that directory on success, failure or interruption (`internal/bench`, `tla/BenchRun.tla`).
 The finding retains the streamed output. The lane's local legacy bench cleanup does not

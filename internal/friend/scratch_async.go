@@ -141,6 +141,9 @@ func (s *Stager) lockMirror(repo string, try bool) (*filelock.FileLock, error) {
 // mirror. Local clone object files are hardlinks, so bench --with-git can copy it
 // without depending on an alternates path on the originating machine.
 func (s *Stager) StageRead(ctx context.Context, r AskedRead) error {
+	if s.ReadCleanupPending(r.ID) {
+		return fmt.Errorf("reader cleanup is still running")
+	}
 	repo := briefField(repoLine, r.Packet.Brief)
 	if !validJob(r.ID) || !repoRE.MatchString(repo) || !shaRE.MatchString(r.Packet.Head) || !validRef(r.Packet.WorkBranch) || strings.Contains(repo, "..") {
 		return fmt.Errorf("invalid reader checkout packet")
@@ -232,4 +235,38 @@ func (s *Stager) ReleaseAsync(_ context.Context, job string) error {
 	}
 	s.releases[job] = true
 	return errCleanupQueued
+}
+
+// Reader completion also removes scratch away from the delivery loop. A queue
+// sweep drains the result and retries failures; a reused read cannot race it.
+func (s *Stager) ReleaseReadAsync(id string) error {
+	if !validJob(id) {
+		return fmt.Errorf("invalid read id")
+	}
+	s.cleanupMu.Lock()
+	defer s.cleanupMu.Unlock()
+	if s.readCleanup == nil {
+		s.readCleanup = map[string]chan error{}
+	}
+	if done := s.readCleanup[id]; done != nil {
+		select {
+		case err := <-done:
+			delete(s.readCleanup, id)
+			return err
+		default:
+			return errCleanupQueued
+		}
+	}
+	if !exists(filepath.Join(s.Dir, "reads", id, "repo")) {
+		return nil
+	}
+	done := make(chan error, 1)
+	s.readCleanup[id] = done
+	go func() { done <- s.ReleaseRead(id) }()
+	return errCleanupQueued
+}
+func (s *Stager) ReadCleanupPending(id string) bool {
+	s.cleanupMu.Lock()
+	defer s.cleanupMu.Unlock()
+	return s.readCleanup[id] != nil
 }

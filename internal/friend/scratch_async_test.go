@@ -100,8 +100,17 @@ func TestFriendsAndReadersShareOneMachineMirror(t *testing.T) {
 	}))
 	assert.True(t, linked, "reader uses hardlinked mirror objects, not another physical full clone")
 	require.NoError(t, os.WriteFile(filepath.Join(b.Dir, "reads", read.ID, "RESULT.md"), []byte("verdict: ok\n"), 0600))
-	l := &loop{d: &Daemon{Dir: b.Dir, ReleaseRead: b.ReleaseRead, Record: func(string) {}}, reads: &readSet{running: map[string]bool{}}}
+	l := &loop{d: &Daemon{Dir: b.Dir, ReleaseRead: b.ReleaseReadAsync, ReadCleanupPending: b.ReadCleanupPending, Record: func(string) {}}, reads: &readSet{running: map[string]bool{}}}
 	l.sweepReads(`{"cards":[]}`, time.Unix(0, 0))
+	require.True(t, b.ReadCleanupPending(read.ID))
+	require.ErrorContains(t, b.StageRead(context.Background(), read), "cleanup")
+	b.cleanupMu.Lock()
+	done := b.readCleanup[read.ID]
+	b.cleanupMu.Unlock()
+	removed := <-done
+	done <- removed
+	l.sweepReads(`{"cards":[]}`, time.Unix(0, 0))
+	require.False(t, b.ReadCleanupPending(read.ID))
 	assert.NoDirExists(t, checkout, "a killed read absent from a successful queue is swept")
 	assert.FileExists(t, filepath.Join(b.Dir, "reads", read.ID, "RESULT.md"))
 }

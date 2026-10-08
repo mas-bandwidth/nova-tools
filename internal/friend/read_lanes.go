@@ -272,7 +272,7 @@ func (l *loop) readStep(now time.Time) {
 		if len(s.running) >= d.readSlots() {
 			return
 		}
-		if s.running[r.ID] || s.begun[r.ID] {
+		if s.running[r.ID] || s.begun[r.ID] || (d.ReadCleanupPending != nil && d.ReadCleanupPending(r.ID)) {
 			continue
 		}
 		out, err := d.Sprint(l.ctx, ReadBeginArgv(d.Friend, r))
@@ -400,13 +400,17 @@ func (l *loop) releaseRead(id string, now time.Time) {
 		}
 		return safepath.RemoveUnder(dir, filepath.Join(dir, "repo"))
 	}
-	if err := remove(); err != nil {
+	if err := remove(); err != nil && !errors.Is(err, errCleanupQueued) {
 		d.Record(fmt.Sprintf("%s read %s: not removed reads/%s/repo: %s", now.UTC().Format(time.RFC3339), id, id, oneLine(err.Error(), 200)))
 	}
 	if d.BenchRoot == "" || !validJob(d.Friend) {
 		return
 	}
 	bench := filepath.Join(d.BenchRoot, "buds", d.Friend, "reads", id)
+	owner, err := os.ReadFile(filepath.Join(bench, ".nova-read-owner"))
+	if err != nil || string(owner) != d.Friend+"/"+id+"\n" {
+		return
+	}
 	if err := safepath.RemoveUnder(d.BenchRoot, bench); err != nil {
 		d.Record(fmt.Sprintf("%s read %s: not removed bench reads/%s: %s", now.UTC().Format(time.RFC3339), id, id, oneLine(err.Error(), 200)))
 	}

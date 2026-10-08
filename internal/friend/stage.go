@@ -178,12 +178,13 @@ func GitHubURL(repo string) string { return "https://github.com/" + repo + ".git
 type Stager struct {
 	Dir string
 	// MirrorRoot is shared by every friend on this machine; empty preserves the local layout.
-	MirrorRoot string
-	cleanupMu  sync.Mutex
-	cleanup    *cleanupPass
-	releases   map[string]bool
-	URL        func(repo string) string
-	Env        []string
+	MirrorRoot  string
+	cleanupMu   sync.Mutex
+	cleanup     *cleanupPass
+	releases    map[string]bool
+	readCleanup map[string]chan error
+	URL         func(repo string) string
+	Env         []string
 
 	mu      sync.Mutex
 	repos   map[string]*sync.Mutex
@@ -475,12 +476,13 @@ func (s *Stager) base(ctx context.Context, mirror string, p Packet) (string, err
 		Remedy: fmt.Sprintf("push %s to %s, or rework the card onto a base it holds", named, p.Repo)}
 }
 
-// FinishedJobsKept is how many finished jobs whose head is not on origin the daemon's
+// FinishedJobsKept is the legacy direct-Prune retention setting. Production PruneAsync
+// passes zero: inactive clean worktrees are scratch, not a cache. The direct API
+// keeps the newest finished jobs whose head is not on origin; the daemon's
 // cleanup keeps, the newest staged. A job whose report names a head origin holds is not one
 // of them: it is removed even inside the cap (a finished lane leaves no job directory,
 // tla/DeliveryLane.tla FinishedLaneLeavesNoJobDirectory). The rest are pruned past the cap
-// (Stager.Prune), at most PrunePerPass a cleanup, so the loop that runs it is held a few
-// seconds at most.
+// (Stager.Prune), at most PrunePerPass a cleanup. Production runs that I/O off the loop.
 const (
 	FinishedJobsKept = 8
 	PrunePerPass     = 4

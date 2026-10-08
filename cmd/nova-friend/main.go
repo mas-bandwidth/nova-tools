@@ -1439,17 +1439,18 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			return nil
 		},
-		SaveLanes:      func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
-		Held:           w.held(name, server),
-		Seat:           w.seat(server),
-		Stage:          stager.stage(),
-		StageRead:      stager.stageRead(),
-		ReleaseRead:    stager.releaseRead(),
-		CleanupPending: stager.pending(),
-		Prune:          stager.prune(),
-		Release:        stager.release(),
-		BenchRoot:      benchRoot(w.home),
-		Tip:            w.tip,
+		SaveLanes:          func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
+		Held:               w.held(name, server),
+		Seat:               w.seat(server),
+		Stage:              stager.stage(),
+		StageRead:          stager.stageRead(),
+		ReleaseRead:        stager.releaseRead(),
+		ReadCleanupPending: stager.readPending(),
+		CleanupPending:     stager.pending(),
+		Prune:              stager.prune(),
+		Release:            stager.release(),
+		BenchRoot:          benchRoot(w.home),
+		Tip:                w.tip,
 		Finish: func(ctx context.Context, argv []string) error {
 			if w.finish == nil {
 				return errors.New("this world sends no finish") // a test's: friend sync reads the lane's REPORT.md
@@ -2374,5 +2375,12 @@ func (d daemonStager) releaseRead() func(string) error {
 	if d.s == nil {
 		return nil
 	}
-	return d.s.ReleaseRead
+	return d.s.ReleaseReadAsync
+}
+
+func (d daemonStager) readPending() func(string) bool {
+	if d.s == nil {
+		return nil
+	}
+	return d.s.ReadCleanupPending
 }

@@ -85,6 +85,7 @@ func TestARecordedReadRemovesItsCheckoutAndBenchCopy(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "repo"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "RESULT.md"), []byte("verdict: ok\n"), 0o644))
 	require.NoError(t, os.MkdirAll(filepath.Join(bench, "buds", "ada", "reads", id, "repo"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(bench, "buds", "ada", "reads", id, ".nova-read-owner"), []byte("ada/"+id+"\n"), 0600))
 	l := &loop{d: &Daemon{Dir: root, Friend: "ada", BenchRoot: bench}}
 	l.releaseRead(id, time.Unix(0, 0).UTC())
 	assert.NoDirExists(t, filepath.Join(dir, "repo"))
