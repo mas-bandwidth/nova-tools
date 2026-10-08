@@ -151,7 +151,8 @@ func sprintBrief(head string, reads bool) bool {
 
 // SyncInbox reconciles her inbox under dir with row, the cards on her row as the server
 // answered an ask begun at asked: each held card's inbox/<job>/BRIEF.md is written when it
-// is not there (written whole, never over a file there), and each sprint job in the inbox
+// is not there (written whole, never over a file there; a rework's with its fix first,
+// ReworkedBrief), and each sprint job in the inbox
 // that no held card names, that no lane runs (keep), whose kind the answer covers (row.Reads),
 // and whose BRIEF.md was written before asked, is moved to inbox/retired/. A brief written since the ask began is friend sync's for
 // a card dealt after the server answered, and the next pass decides it (without this, the
@@ -196,7 +197,8 @@ func SyncInbox(dir string, row Row, keep map[string]bool, asked, now time.Time, 
 			firstErr = cmpErr(firstErr, err)
 			continue
 		}
-		switch err := atomicfile.WriteFile(brief, []byte(h.Brief), 0o644, atomicfile.NoReplace()); {
+		// a rework's brief is written with its fix first (rework.go, ReworkedBrief)
+		switch err := atomicfile.WriteFile(brief, []byte(ReworkedBrief(h.Brief)), 0o644, atomicfile.NoReplace()); {
 		case err == nil:
 			record(fmt.Sprintf("%s inbox: wrote inbox/%s/BRIEF.md (card %s, %s on her row)", at, h.Job, h.Card, dash(h.Col)))
 		case errors.Is(err, fs.ErrExist): // friend sync wrote it between the look and the write
