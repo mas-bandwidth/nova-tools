@@ -179,7 +179,24 @@ func TestPullRoutes(t *testing.T) {
 		Data json.RawMessage `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(r.pull("/api/sprint").Body.Bytes(), &whole))
-	assert.JSONEq(t, string(fixture(t)), string(whole.Data))
+	// the copy as the view serves it (dashboard.go, fixView): ci-03.w2, amy's second attempt,
+	// at high, awaits rework, so it is marked fix, counted on amy's row and off ci's working,
+	// listed at fix and off high, and the copy's fix is 1; everything else as where printed it
+	var want map[string]any
+	require.NoError(t, json.Unmarshal(fixture(t), &want))
+	tables := want["tables"].(map[string]any)
+	ci := tables["work"].(map[string]any)["ci"].(map[string]any)
+	require.Equal(t, "2", ci["working"])
+	ci["working"], ci["fix"] = "1", "1"
+	tables["friends"].(map[string]any)["amy"].(map[string]any)["fix"] = "1"
+	card := want["cards"].([]any)[0].(map[string]any)
+	require.Equal(t, "ci-03.w2", card["id"])
+	card["fix"] = true
+	want["priorities"] = map[string]any{"fix": []any{"ci-03"}}
+	want["fix"] = 1
+	served, err := json.Marshal(want)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(served), string(whole.Data))
 
 	for path, want := range map[string]string{
 		"/friend/zed":          `no friend named "zed" on the friends table`,

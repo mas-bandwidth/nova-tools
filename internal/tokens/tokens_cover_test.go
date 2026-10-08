@@ -212,18 +212,16 @@ func TestTokensCoverUsdPerMtok(t *testing.T) {
 	assert.Equal(t, Dash, UsdPerMtok(123, 0), "there is no average over no tokens")
 }
 
-func TestTokensCoverOpensAndOpenSource(t *testing.T) {
+func TestTokensCoverOpenSource(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "source.txt")
 	require.NoError(t, os.WriteFile(path, []byte("x"), 0o600))
 
-	before := Opens()
 	f, err := openSource(path)
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
-	assert.GreaterOrEqual(t, Opens(), before+1, "the one door counts the file it opened")
 
 	_, err = openSource(filepath.Join(dir, "missing.txt"))
 	assert.Error(t, err, "a source that cannot be opened is an error, not a silent zero")

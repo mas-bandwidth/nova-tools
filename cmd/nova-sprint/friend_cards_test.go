@@ -389,7 +389,9 @@ func TestAFriendsReworkStartsFromTheTipOfItsBase(t *testing.T) {
 	text := friendBrief("amy", p)
 	assert.Contains(t, text, "This attempt starts from the current tip of sprint/s1 on origin, never from an older base: fetch it and start your branch there. "+
 		"Carry the work of attempt 2 onto it yourself: its head, "+landHead+", is the last pushed by any attempt before this one (`git diff origin/sprint/s1..."+landHead+"` shows that work); where it does not apply cleanly, redo it. "+
-		"The Head you report must be origin's tip of your branch when sync reads it; the attempt is expected to start from the tip named above.\nThe coordinator asks: assert the bound\n")
+		"The Head you report must be origin's tip of your branch when sync reads it; the attempt is expected to start from the tip named above.\n")
+	assert.Equal(t, "THE ONE THING LEFT: assert the bound", strings.Split(text, "\n")[1], "a reworked attempt's fix is its first line after STATUS")
+	assert.Contains(t, text, "\nThe carried work: attempt 2's head "+landHead+", carried onto sprint/s1-1.w3.g1.e0 from the tip of its base;")
 	assert.NotContains(t, text, "start from it.", "never the old head")
 
 	p.BaseHead, p.BaseAttempt = "", 0
@@ -513,4 +515,31 @@ func TestFriendQueueCarriesTheAssignmentGenerationAndJob(t *testing.T) {
 	require.NoError(t, json.Unmarshal(text, &q))
 	assert.Equal(t, "queued", q.Tasks[0].State, "a new epoch is a new job too")
 	assert.Equal(t, "c.w1~16.g2", q.Tasks[0].Job)
+}
+
+// A named friend's configured work restriction is held at admission (docs/SPEC-SPRINT.md
+// section 1, a friend's card): a card whose stream or KIND is outside her streams and
+// kinds is refused at add and at brief, with the restriction named, so it never sits
+// undealable.
+func TestAddAndBriefRefuseNamedFriendOutsideRestrictions(t *testing.T) {
+	t.Parallel()
+	ta, cfg := friendApp(t, "amy")
+	_, _, err := cfg.Update(context.Background(), config.KindFriend, "amy", map[string]string{"streams": " security* ", "kinds": " fix-red, review "}, "test")
+	require.NoError(t, err)
+	ta.ok("friend sync")
+	brief := passingBrief("s1-1: restricted friend card\nREPO: mas-bandwidth/nova-tools\nWHO: friend amy\nKIND: fix-red")
+	briefPath := filepath.Join(t.TempDir(), "brief.md")
+	require.NoError(t, os.WriteFile(briefPath, []byte(brief), 0o644))
+	code, _, errs := ta.do("add --stream s1 --one --brief-file " + briefPath)
+	assert.NotZero(t, code)
+	assert.Contains(t, errs, "streams restriction")
+
+	ta, cfg = friendApp(t, "amy")
+	_, _, err = cfg.Update(context.Background(), config.KindFriend, "amy", map[string]string{"streams": "security*"}, "test")
+	require.NoError(t, err)
+	ta.ok("friend sync")
+	ta.ok("add --stream s1 --count 1 --one")
+	code, _, errs = ta.do("brief s1-1 --brief-file " + briefPath)
+	assert.NotZero(t, code)
+	assert.Contains(t, errs, "streams restriction")
 }

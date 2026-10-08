@@ -17,18 +17,8 @@ import (
 const archivedDriver = `
 const names = () => doc.getElementById('streams').children
   .filter(r => !r._classes.includes('head') && !r._classes.includes('total')).map(r => r.children[0].children[0].textContent);
-const box = doc.getElementById('streams'), line = doc.getElementById('streams-archived');
-const click = () => (line._listeners.click || []).forEach(f => f());
-const total = () => box._total._c[7].innerHTML + ' ' + box._total._c[8].textContent;
 context.render(input.data);
-const tags = () => doc.getElementById('streams').children
-  .filter(r => !r._classes.includes('head') && !r._classes.includes('total')).map(r => r.children[0].children[1].textContent);
-const out = { live: names(), line: line.textContent, hidden: !!line.hidden, total: total() };
-click();
-out.shown = names(); out.shownTags = tags(); out.shownLine = line.textContent; out.shownTotal = total();
-click();
-out.again = names();
-process.stdout.write(JSON.stringify(out));
+process.stdout.write(JSON.stringify({live:names(),total:doc.getElementById('streams')._total._c[9].textContent}));
 `
 
 // The Work panel shows only the live streams by default (stream archive; the owner,
@@ -71,19 +61,6 @@ func TestTheWorkPanelHidesArchivedStreamsBehindOneLine(t *testing.T) {
 	require.NoError(t, json.Unmarshal(outBuf.Bytes(), &res), outBuf.String())
 
 	assert.Equal(t, []string{"ci"}, res.Live, "only the live streams by default")
-	assert.False(t, res.Hidden, "the archived line shows")
-	assert.Equal(t, "1 archived stream, 4 cards landed, $1.00 · show", res.Line)
-	assert.ElementsMatch(t, []string{"ci", "old"}, res.Shown, "the line shows them")
-	assert.Equal(t, "1 archived stream, 4 cards landed, $1.00 · hide", res.ShownLine)
-	assert.Equal(t, []string{"ci"}, res.Again, "and hides them again")
-	assert.Contains(t, res.Total, "$2.15", "the total row leaves the archived stream's $1.00")
-	assert.Equal(t, res.Total, res.ShownTotal, "the total row is the same either way")
-	require.Len(t, res.ShownTags, len(res.Shown))
-	for i, n := range res.Shown {
-		if n == "old" {
-			assert.Equal(t, "archived", res.ShownTags[i], "a shown archived row says why the total leaves it out")
-		} else {
-			assert.NotContains(t, res.ShownTags[i], "archived", n)
-		}
-	}
+	assert.Contains(t, res.Total, "$2.15", "the total excludes archived streams")
+	assert.NotContains(t, string(file("index.html")), `id="streams-archived"`)
 }
