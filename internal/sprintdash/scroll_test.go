@@ -27,7 +27,7 @@ class Node {
   constructor(tag, id) {
     this.tagName = String(tag).toUpperCase(); this.id = id || ''; this.parentNode = null; this.children = [];
     this._classes = []; this._text = ''; this.attributes = {}; this._title = ''; this._listeners = {};
-    this.dataset = {}; this.style = { setProperty(k, v) { this[k] = v; }, getPropertyValue(k) { return this[k] || ''; } }; this.hidden = false;
+    this.dataset = {}; this.style = { setProperty(k, v) { this[k] = v; }, getPropertyValue(k) { return this[k] || ''; }, removeProperty(k) { delete this[k]; } }; this.hidden = false;
     this.scrollWidth = 50; this.clientWidth = 100; this.offsetWidth = 0; this.offsetParent = {};
   }
   get className() { return this._classes.join(' '); }
@@ -47,6 +47,7 @@ class Node {
   getAttribute(k) { return k in this.attributes ? this.attributes[k] : null; }
   addEventListener(t, f) { (this._listeners[t] = this._listeners[t] || []).push(f); }
   removeEventListener() {}
+  closest(selector) { let n = this.parentNode; while (n) { if (n.tagName.toLowerCase() === selector) return n; n = n.parentNode; } return null; }
   _detach() { if (this.parentNode) { const i = this.parentNode.children.indexOf(this); this.parentNode.children.splice(i, 1); this.parentNode = null; } }
   appendChild(c) { writes++; c._detach(); c.parentNode = this; this.children.push(c); return c; }
   insertBefore(c, ref) {

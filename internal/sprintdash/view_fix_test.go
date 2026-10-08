@@ -130,7 +130,7 @@ func TestFixPageConstants(t *testing.T) {
 	}
 	assert.Contains(t, page, ".fix { background: var(--s-fix); }")
 	assert.Contains(t, page, ".p-fix { background: var(--p-fix); }")
-	assert.Contains(t, page, `<div class="num">review</div><div class="num">fix</div><div class="num">merging</div>`, "Work's fix column between review and merging")
+	assert.Contains(t, js, `FLOW.forEach`, "Work headers and cells follow the flow order")
 	assert.Contains(t, js, `var STATES = ["landed", "merging", "fix", "review", "working", "ready", "waiting"];`)
 	assert.Contains(t, js, `var FLOW = ["waiting", "ready", "working", "review", "fix", "merging", "landed"];`)
 	assert.Contains(t, js, `if (level === "fix") return "p-fix";`)
@@ -213,4 +213,16 @@ func TestFixPageDrawsFixBetweenReviewAndMerging(t *testing.T) {
 	assert.Equal(t, "1 fix", res.FriendsTotal, "the fix figure under the bars")
 	assert.Equal(t, "2 working (1 fix), 0 review, 1 merging", res.Inflight)
 	assert.Equal(t, []string{"p-blocker blocker: ci-09", "p-fix fix: ci-03"}, res.Marks, "the fix mark purple, after the reds")
+}
+
+// New servers state the priority; legacy attempt inference must not override it.
+func TestFixViewRespectsExplicitReworkPolicy(t *testing.T) {
+	t.Parallel()
+	for _, level := range []string{"normal", "low", "high", "reader", "critical", "blocker"} {
+		t.Run(level, func(t *testing.T) {
+			t.Parallel()
+			body := fixCopy("", dealt("s1-1.w3", "s1-1", "friend.amy", "working", `,"priority":"`+level+`"`))
+			assert.Equal(t, string(body), string(fixView(body)))
+		})
+	}
 }

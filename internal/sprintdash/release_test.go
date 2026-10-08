@@ -1,9 +1,12 @@
 package sprintdash
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"testing"
@@ -147,7 +150,8 @@ func TestTheDashboardShowsOnlyTheCurrentReleasesStreams(t *testing.T) {
 	assert.Contains(t, html, `<nav class="release" id="release" aria-label="release" hidden></nav>`)
 	assert.Contains(t, js, `fetch("/api/sprint" + RELEASE_Q`)
 	assert.Contains(t, js, `new EventSource("/events" + RELEASE_Q)`)
-	assert.NotContains(t, html, `data-theme="light"`)
+	assert.Contains(t, html, `<html lang="en" data-theme="dark">`)
+	assert.NotContains(t, html, `id="theme"`)
 
 	// v1.0.0 done: v1.1.0 is the current release
 	r.advance(2 * r.s.Every)
@@ -157,6 +161,51 @@ func TestTheDashboardShowsOnlyTheCurrentReleasesStreams(t *testing.T) {
 	snap, _ = apiOf(t, r.s, "/api/sprint")
 	assert.Equal(t, "v1.1.0", snap.Current)
 	assert.Equal(t, "v1.1.0", snap.Release)
+}
+
+// A cached fix is partitioned out of working by where. Release totals must count
+// that column when they reconstruct the selected release from its Work rows.
+func TestReleaseTotalIncludesCachedFix(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	body := strings.Replace(string(twoReleases(8)), `"working":"1","review":"0"`, `"working":"0","review":"0","fix":"1"`, 1)
+	r.next = func() ([]byte, error) { return []byte(body), nil }
+
+	_, d := apiOf(t, r.s, "/api/sprint?release=v1.0.0")
+	assert.InDelta(t, 20, d["all"], 0, "a fix card remains in the selected release's total")
+	assert.InDelta(t, 12, d["landed"], 0)
+	assert.Equal(t, "12/20 60.0% -> ETA 1h41m", d["summary"])
+	work := d["tables"].(map[string]any)["work"].(map[string]any)
+	assert.Equal(t, "1", work["sprint-v1-release"].(map[string]any)["fix"])
+}
+
+func TestScopedReleaseLabelsSprintWidePriorityMarks(t *testing.T) {
+	t.Parallel()
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		if os.Getenv("NOVA_CI") == "1" {
+			require.NoError(t, err, "node is required for dashboard JS tests")
+		}
+		t.Skip("node is not installed")
+	}
+	shim, _, ok := strings.Cut(scrollShim, "// the viewer:")
+	require.True(t, ok)
+	input, err := json.Marshal(map[string]any{"appJS": string(file("app.js"))})
+	require.NoError(t, err)
+	const probe = `
+const box = doc.getElementById('priority-marks');
+context.priorityScope = 'v1.0.0';
+context.renderPriorityMarks({priorities: {fix: ['other-release-card']}, reads_waiting: 1});
+const scoped = [box._scopeLabel.textContent, box._scopeLabel.hidden, box.children.length];
+context.priorityScope = 'all';
+context.renderPriorityMarks({priorities: {fix: ['other-release-card']}, reads_waiting: 1});
+process.stdout.write(JSON.stringify({scoped, allHidden: box._scopeLabel.hidden}));
+`
+	cmd := exec.Command(nodePath, "-e", shim+probe)
+	cmd.Stdin = bytes.NewReader(input)
+	out, err := cmd.Output()
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"scoped":["Priorities and waiting reads across all releases",false,2],"allHidden":true}`, string(out))
 }
 
 // A sprint whose streams carry no release is shown whole, as where printed it.
