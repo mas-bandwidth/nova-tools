@@ -1309,6 +1309,9 @@ func TestHostHelpExampleIsWhatTheToolPrints(t *testing.T) {
 		Args: []string{"host", "--as", "bob", "--harness", "aider", "--dir", "./bob", "--dry-run", "--", "aider"},
 		Want: []string{"HOST DRY-RUN session=friend-bob dir=./bob dry_run=true command=\"tmux new-session -d -s friend-bob -c ./bob -- aider\""},
 	}
+	doc, err := os.ReadFile("../../docs/CLI.md")
+	require.NoError(t, err)
+	assert.Contains(t, string(doc), strings.TrimPrefix(step.Line, "$ "), "the executed command is also in the reference")
 	var out, errb strings.Builder
 	w := newRig(t).world()
 	code := run(step.Args, strings.NewReader(""), &out, &errb, w)
