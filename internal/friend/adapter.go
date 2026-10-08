@@ -166,13 +166,28 @@ func realExec(ctx context.Context, killDelay time.Duration, dir, name string, ar
 	cmd.Stdout = out
 	cmd.Stderr = stderr
 	ownGroup(cmd)
+	started := processStarted(ctx)
+	release, gateErr := gateProcess(cmd, started != nil)
+	if gateErr != nil {
+		return "", 0, gateErr
+	}
 	cmd.WaitDelay = killDelay // the pipes close this long after the group is signalled
 	err := cmd.Start()
 	if err == nil {
-		if started := processStarted(ctx); started != nil {
-			started(cmd.Process.Pid) // the lane records it: a daemon starting up adopts a run still alive (adopt.go)
+		if started != nil {
+			err = started(cmd.Process.Pid)
+		}
+		if releaseErr := release(err == nil); err == nil {
+			err = releaseErr
+		}
+		if err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return "", 0, err
 		}
 		err = cmd.Wait()
+	} else {
+		_ = release(false)
 	}
 	if ctx.Err() != nil && cmd.Process != nil {
 		killGroup(cmd.Process.Pid) // the leader is dead by now; what it forked is not

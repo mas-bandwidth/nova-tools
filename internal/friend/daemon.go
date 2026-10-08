@@ -196,8 +196,9 @@ type Daemon struct {
 	// word, ProcessAlive); nil: no run is ever adopted, every started card is ended.
 	// WaitProcess waits until pid is no longer alive or ctx ends, answering whether it
 	// ended; nil: a poll every AdoptPoll on Pause.
-	ProcessAlive func(pid int) bool
-	WaitProcess  func(ctx context.Context, pid int) bool
+	ProcessAlive    func(pid int) bool
+	ProcessIdentity func(pid int) string
+	WaitProcess     func(ctx context.Context, pid int) bool
 	// Held is every card on her row as the sprint server says it (HeldVia: friend cards
 	// <friend>, else the worker view), asked once an InboxEvery; her inbox is reconciled with
 	// the answer (SyncInbox, inbox.go). Nil leaves her inbox to friend sync alone.

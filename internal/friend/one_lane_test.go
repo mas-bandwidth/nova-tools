@@ -176,3 +176,57 @@ func TestALaneMarkIsClaimedByOneLane(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "bob lane 2", holder, "an ended card is never claimed again")
 }
+
+func TestTwoContendersCannotBothTakeOneStaleLane(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	_, err := ClaimLane(dir, "c1~15", "old", now.Add(-LaneMarkStale-time.Second))
+	require.NoError(t, err)
+	start := make(chan struct{})
+	type result struct {
+		who, holder string
+		err         error
+	}
+	results := make(chan result, 2)
+	for _, who := range []string{"new-a", "new-b"} {
+		go func(who string) {
+			<-start
+			holder, err := ClaimLane(dir, "c1~15", who, now)
+			results <- result{who, holder, err}
+		}(who)
+	}
+	close(start)
+	a, b := <-results, <-results
+	require.NoError(t, a.err)
+	require.NoError(t, b.err)
+	wins := 0
+	for _, r := range []result{a, b} {
+		if r.holder == "" {
+			wins++
+		}
+	}
+	assert.Equal(t, 1, wins)
+	mark, found := ReadLaneMark(dir, "c1~15")
+	require.True(t, found)
+	assert.False(t, mark.Ended)
+	assert.Contains(t, []string{"new-a", "new-b"}, mark.Who)
+}
+
+func TestAnOldOwnerCannotRefreshOrEndAStaleTransferredRun(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	job := "c1~15"
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "jobs", job), 0o755))
+	require.NoError(t, os.WriteFile(laneMarkPath(dir, job), []byte(LaneMarkRunningRun("new-owner", now.Add(-LaneMarkStale-time.Second), "live-run")), 0o644))
+	holder, err := refreshLane(dir, job, "old-owner", now, true)
+	require.NoError(t, err)
+	assert.Equal(t, "new-owner", holder)
+	require.NoError(t, endOwnedLaneMark(dir, job, "old-owner"))
+	mark, found := ReadLaneMark(dir, job)
+	require.True(t, found)
+	assert.Equal(t, "new-owner", mark.Who)
+	assert.Equal(t, "live-run", mark.RunID)
+	assert.False(t, mark.Ended)
+}

@@ -2,7 +2,13 @@ package friend
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
 
 // A lane's run is its own process group (RealExec, Setsid), so a daemon that is killed,
@@ -22,14 +28,56 @@ import (
 type processKey struct{}
 
 // WithProcessStarted marks ctx so the exec hands the started process's id to started.
-func WithProcessStarted(ctx context.Context, started func(pid int)) context.Context {
+func WithProcessStarted(ctx context.Context, started func(pid int) error) context.Context {
 	return context.WithValue(ctx, processKey{}, started)
 }
 
 // processStarted is the sink in ctx, nil when none.
-func processStarted(ctx context.Context) func(pid int) {
-	f, _ := ctx.Value(processKey{}).(func(pid int))
+func processStarted(ctx context.Context) func(pid int) error {
+	f, _ := ctx.Value(processKey{}).(func(pid int) error)
 	return f
+}
+
+// runReceipt is written before the launch gate lets the child execute the
+// harness. The run ID binds it to one Started record even if a job is reused.
+type runReceipt struct {
+	RunID    string `json:"run_id"`
+	PID      int    `json:"pid"`
+	Identity string `json:"identity"`
+}
+
+func runReceiptPath(dir, job string) string { return filepath.Join(dir, "jobs", job, "RUN") }
+
+func writeRunReceipt(dir, job string, r runReceipt) error {
+	if r.RunID == "" || r.PID <= 0 || r.Identity == "" {
+		return errors.New("incomplete run identity")
+	}
+	raw, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	return atomicfile.WriteFile(runReceiptPath(dir, job), append(raw, '\n'), 0o644)
+}
+
+func readRunReceipt(dir, job string) (runReceipt, error) {
+	raw, err := os.ReadFile(runReceiptPath(dir, job))
+	if err != nil {
+		return runReceipt{}, err
+	}
+	var r runReceipt
+	err = json.Unmarshal(raw, &r)
+	return r, err
+}
+
+// runStillAlive rejects PID reuse: a different live leader is never evidence
+// for the old run. Only an absent leader leaves open the possibility that
+// members of its original group are still working.
+func runStillAlive(pid int, identity string) bool {
+	if identity == "" {
+		return false
+	}
+	current := ProcessIdentity(pid)
+	return current == identity || current == "" && ProcessGroupAlive(pid)
 }
 
 // AdoptPoll is how often an adopted run's process is looked at while the lane waits on it.

@@ -8,6 +8,10 @@ import "os/exec"
 // ends the one process (the harnesses this tool delivers to run on Unix).
 func ownGroup(*exec.Cmd) {}
 
+func gateProcess(*exec.Cmd, bool) (func(bool) error, error) {
+	return func(bool) error { return nil }, nil
+}
+
 func killGroup(int) {}
 
 // ProcessAlive is not read on Windows: no run is adopted there.
