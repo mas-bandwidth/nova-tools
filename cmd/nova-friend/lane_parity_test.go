@@ -72,10 +72,13 @@ func TestRunBeatsDownWhileTheLanesArePausedUntilAPersonResumes(t *testing.T) {
 		}
 	}
 	var ups []time.Time
-	w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
+	w.beat = func(_ context.Context, _, _ string, _ time.Time, words friend.BeatWords) (string, error) {
 		mu.Lock()
-		ups = append(ups, clock)
-		mu.Unlock()
+		defer mu.Unlock()
+		// the managed-row fetch carries no proof words and is not an up beat
+		if words != (friend.BeatWords{}) {
+			ups = append(ups, clock)
+		}
 		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1", nil
 	}
 	type downBeat struct {

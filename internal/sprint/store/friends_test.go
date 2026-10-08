@@ -203,3 +203,65 @@ func TestTwinStoreConfigSyncToOneShotGatesQueuedPromotionUntilOccupancyReachesZe
 	assert.Equal(t, 0, snap.Fleet.Count(amyRow, sprint.Ready))
 	assert.Equal(t, sprint.Working, snap.Fleet.Card("s1-4.w1").Col)
 }
+
+// A beat that says her named session is gone (friend beat --target-invalid) reads
+// target-invalid on her row, its own word and never down, even with a session pong in
+// its window: she is not up, the seat's why names the rebind, and her row's session
+// rides the roster (friend sync) for her beat to answer. A beat without it clears it;
+// the coordinator's hold comes first.
+func TestAGoneTargetReadsTargetInvalidOnHerRow(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "stella", Width: 2, Session: "019a-new"}})
+	require.NoError(t, err)
+	spec, err := h.st.FriendSpecOf(h.ctx, "stella")
+	require.NoError(t, err)
+	assert.Equal(t, "019a-new", spec.Session)
+	_, _, _, err = h.health("stella", "tester", sprint.Up, h.now, 1)
+	require.NoError(t, err)
+	_, err = h.st.FriendBeatGone(h.ctx, "stella", sprint.FriendReport{}, nil, time.Time{}, &GoneTarget{Session: "01a10e84", State: "archived: the thread's rollout is under archived_sessions"})
+	require.NoError(t, err)
+
+	rows, err := h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, TargetInvalid, rows[0].Status)
+	assert.NotEqual(t, sprint.Down, rows[0].Status)
+	assert.Contains(t, rows[0].Evidence, "01a10e84")
+	assert.Contains(t, rows[0].Evidence, "nova-friend rebind --as stella --session <id>")
+	seats, err := h.st.FriendSeats(h.ctx, h.now)
+	require.NoError(t, err)
+	assert.Equal(t, TargetInvalid, seats[0].Status, "nothing is dealt to her")
+	assert.Contains(t, seats[0].Why, "target is invalid")
+
+	_, err = h.st.FriendBeat(h.ctx, "stella")
+	require.NoError(t, err)
+	rows, err = h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	assert.Equal(t, sprint.Up, rows[0].Status, "a beat without it clears it")
+
+	_, err = h.st.FriendBeatGone(h.ctx, "stella", sprint.FriendReport{}, nil, time.Time{}, &GoneTarget{Session: "01a10e84", State: "archived"})
+	require.NoError(t, err)
+	require.NoError(t, h.st.SetFriendHeld(h.ctx, "stella", true, "c", "", time.Time{}, 0))
+	rows, err = h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	assert.Equal(t, sprint.Held, rows[0].Status, "the hold comes first")
+}
+
+// The beat record keeps her proof on its outer pong, and that field owns the json
+// name the beat's Proof also uses. Her row reads the beat, so an answered check is up.
+func TestAProvedBeatReadsUpFromTheRecordsPong(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1}})
+	require.NoError(t, err)
+	_, proof, err := h.st.FriendBeatProof(h.ctx, "amy", sprint.FriendReport{}, nil, sprint.BeatWords{Run: "r1", Check: "n1", Pong: "n1"})
+	require.NoError(t, err)
+	require.True(t, proof.Proved)
+	rows, err := h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, sprint.Up, rows[0].Status)
+	assert.Equal(t, proof.Proof, rows[0].Proof)
+	assert.Contains(t, rows[0].Evidence, "session proof")
+}

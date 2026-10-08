@@ -23,6 +23,9 @@ const (
 	VerdictSilent = "silent"
 	VerdictDown   = "down"
 	VerdictUntrue = "untrue"
+	// VerdictTargetInvalid: the session the daemon names is gone (archived,
+	// deleted, moved); its own word, never down: the remedy is a rebind.
+	VerdictTargetInvalid = "target-invalid"
 )
 
 // DaemonFacts carries facts about the launchd agent and daemon.
@@ -59,6 +62,8 @@ type HarnessFacts struct {
 	Reason         string `json:"reason"`       // one line or "-"
 	SessionLive    string `json:"session_live"` // the conversation a mailbox harness delivers into, or "-"
 	Queued         string `json:"queued"`       // the harness's own queue not yet taken (codex), or "-"
+	// TargetInvalid is the named session found gone (SessionTargetInvalid), "" when not (JSON only).
+	TargetInvalid string `json:"target_invalid,omitempty"`
 }
 
 // BusFacts carries facts about real messages on the bus.
@@ -104,6 +109,8 @@ type CheckSummary struct {
 	Silent  int `json:"silent"`
 	Down    int `json:"down"`
 	Untrue  int `json:"untrue"`
+	// TargetInvalid counts the friends whose named session is gone.
+	TargetInvalid int `json:"target_invalid"`
 }
 
 // CheckReport is the top-level report for JSON serialization.
@@ -288,6 +295,8 @@ func DecideVerdict(df DaemonFacts, hf HarnessFacts, bf BusFacts, wf WorkFacts, s
 func factsVerdict(df DaemonFacts, hf HarnessFacts, bf BusFacts, wf WorkFacts, window time.Duration) (verdict, why string) {
 	cameBack := bf.RealSince > 0 || pongWithin(df.PongAge, window)
 	switch {
+	case hf.TargetInvalid != "":
+		return VerdictTargetInvalid, "session " + hf.TargetInvalid + " " + hf.Reason + "; " + RebindLine(df.Friend)
 	case hf.Broken != "-":
 		if hf.Reason != "-" && hf.Reason != "" {
 			return VerdictBroken, "session broken: " + hf.Reason
@@ -477,6 +486,9 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 		}
 		hf.Reason = dash(st.SessionReason)
 	}
+	if st.Session == SessionTargetInvalid {
+		hf.TargetInvalid, hf.Reason = dash(st.SessionID), dash(st.SessionReason)
+	}
 
 	// Bus facts
 	bf := BusFacts{
@@ -541,6 +553,8 @@ func ComputeSummary(checks []FriendCheck) CheckSummary {
 			s.Down++
 		case VerdictUntrue:
 			s.Untrue++
+		case VerdictTargetInvalid:
+			s.TargetInvalid++
 		}
 	}
 	return s
@@ -634,8 +648,8 @@ func (fc FriendCheck) Lines() []string {
 
 // Line renders the CHECK OK summary line.
 func (s CheckSummary) Line() string {
-	return fmt.Sprintf("CHECK OK friends=%d ok=%d broken=%d deaf=%d silent=%d down=%d untrue=%d",
-		s.Friends, s.OK, s.Broken, s.Deaf, s.Silent, s.Down, s.Untrue)
+	return fmt.Sprintf("CHECK OK friends=%d ok=%d broken=%d deaf=%d silent=%d down=%d untrue=%d target_invalid=%d",
+		s.Friends, s.OK, s.Broken, s.Deaf, s.Silent, s.Down, s.Untrue, s.TargetInvalid)
 }
 
 // Lines renders all output lines for the full report.
