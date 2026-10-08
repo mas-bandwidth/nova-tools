@@ -198,7 +198,7 @@ func TestTheHelpExampleIsWhatSeatInjectPrints(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		cmd := exec.Command(bin, args...)
 		cmd.Dir = home
-		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home}
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TMPDIR=" + os.TempDir()}
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
 		err := cmd.Run()
 		code := 0
