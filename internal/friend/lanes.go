@@ -465,13 +465,21 @@ func (l *loop) laneStep(now time.Time, width int) {
 		}
 		if ln.card == nil {
 			asking = ln.n
-			c, found, err := d.nextCard(held)
-			if err != nil {
-				d.Record(now.UTC().Format(time.RFC3339) + " lanes: the queue file: " + err.Error())
-				return
+			var c Card
+			var found bool
+			if l.proven { // a card goes into a session only once the push is proven; a message turn is how it is
+				var err error
+				c, found, err = d.nextCard(held)
+				if err != nil {
+					d.Record(now.UTC().Format(time.RFC3339) + " lanes: the queue file: " + err.Error())
+					return
+				}
 			}
 			if !found {
-				continue // messages wait: they ride only with a card
+				if !perCard && lh != nil {
+					l.messageTurn(ln, lh, width, now) // what waits with no card to ride with goes in as a turn of its own
+				}
+				continue
 			}
 			// the card's job claimed before its first turn: a lane that claimed it first runs it alone
 			holder, err := ClaimLane(d.Dir, filepath.Base(c.Outbox), l.laneWho(ln.n), now)
@@ -542,6 +550,118 @@ func (l *loop) laneStep(now time.Time, width int) {
 	}
 }
 
+// MessageTurnEvery is how often the push check's pong line is handed again in a message
+// turn while the same check stands unanswered: the check's own cadence (SessionQuiet), so a
+// session that did not run the line is asked once a check period, never once a step.
+const MessageTurnEvery = SessionQuiet
+
+// messageTurn hands a free lane what waits with no card to ride with, as one turn of its
+// own in the friend's directory: the pong line of an open challenge (a wake ping, which a
+// lane friend with no card could not answer before), the push check's pong line while the
+// push is unproven (the only way a one-shot friend's proof can come: her session is a
+// lane's), and the bus messages pending, oldest first; a notice alone never makes a turn.
+// It answers whether a turn started. The daemon writes no pong itself: the line goes in,
+// and the session's own run of it is the answer (docs/SPEC-FRIEND.md, one-shot lanes).
+func (l *loop) messageTurn(ln *lane, lh LaneHarness, width int, now time.Time) bool {
+	d := l.d
+	if l.wake && (d.m.Challenge == Quiet || d.PongCommand == nil) {
+		l.wake = false // answered already, or no line to hand: nothing owed
+	}
+	check, checkNonce := "", ""
+	if d.Proof != nil && d.PongCommand != nil {
+		if proven, nonce := d.Proof(); !proven && nonce != "" && (l.checkHanded != nonce || now.Sub(l.checkHandedAt) >= MessageTurnEvery) {
+			check, checkNonce = d.PongCommand(nonce), nonce
+		}
+	}
+	if len(l.hand) == 0 && !l.wake && check == "" {
+		return false
+	}
+	t := &turn{}
+	t.entries, t.msgs = l.take()
+	notice, pong := l.head()
+	t.notice = l.noticeTaken
+	var subjects []string
+	if pong != "" {
+		subjects = append(subjects, "wake "+d.m.Nonce)
+	}
+	if check != "" {
+		subjects = append(subjects, "push check "+checkNonce)
+		l.checkHanded, l.checkHandedAt = checkNonce, now
+	}
+	for _, m := range t.msgs {
+		subjects = append(subjects, m.Subject)
+	}
+	t.subjects = fmt.Sprintf("%q", strings.Join(subjects, " | "))
+	t.text = MessageText(d.Friend, ln.n, width, pong, check, notice, l.seat(now), t.msgs)
+	ln.t = t
+	l.startTurn(t, now, func(ctx context.Context) laneResult {
+		lt, err := lh.DeliverTo(WithLaneDir(LaneContext(ctx), d.Dir), ln.session, t.text)
+		return laneResult{ln: ln, turn: lt, err: err, t: t}
+	})
+	return true
+}
+
+// MessageText is a lane's turn with no card: the pong lines first (the challenge's, then
+// the push check's), the word about the coordinator, then the bus messages waiting, each
+// labelled by its sender's authority against seat; nothing else rides, and the turn ends
+// when they are read.
+func MessageText(friend string, n, width int, pong, check, notice, seat string, msgs []bus.Message) string {
+	var b strings.Builder
+	if pong != "" {
+		b.WriteString("Run this now, first, exactly as written: " + pong + "\n")
+	}
+	if check != "" {
+		b.WriteString("Run this now, exactly as written, then read on: " + check + "\n")
+	}
+	fmt.Fprintf(&b, "nova-friend: lane %d of %d of %s: no card this turn; what follows is for you, then stop.\n", n, width, friend)
+	if notice != "" {
+		b.WriteString("\nnova-friend: " + notice + "\n")
+	}
+	if len(msgs) > 0 {
+		b.WriteString("\n" + BatchFor(seat, msgs, "", ""))
+	}
+	return b.String()
+}
+
+// messageDone is a message turn's end (messageTurn): exit 0 acks its messages, any other
+// end leaves them pending for the claim to hand in again, as a batch turn's does (settle);
+// a provider's limit is the governor's (providerLimit). The pong lines it carried are
+// answered by the session or not: the daemon reads nothing into that.
+func (l *loop) messageDone(r laneResult, now time.Time) {
+	d, s, ln, t := l.d, l.lanes, r.ln, r.t
+	line := fmt.Sprintf("%s lane=%d session=%s subject=%s messages=%d took=%s exit=%d", now.UTC().Format(time.RFC3339), ln.n, ln.session, t.subjects, len(t.entries), now.Sub(t.started).Round(time.Millisecond), r.turn.Exit)
+	if r.err != nil {
+		line += fmt.Sprintf(" error=%q", r.err.Error())
+	}
+	if t.stopped {
+		line += fmt.Sprintf(" stopped=%q", "no output for "+l.silentStop.String())
+	}
+	if r.turn.Rejected != "" {
+		line += fmt.Sprintf(" rejected=%q", r.turn.Rejected)
+	}
+	var rate RateLimited
+	var funds OutOfFunds
+	var usage UsageLimited
+	if (errors.As(r.err, &rate) || errors.As(r.err, &funds) || errors.As(r.err, &usage)) && !t.stopped && !t.held {
+		for _, e := range t.entries {
+			delete(l.inHand, e) // pending: the claim hands them in again
+		}
+		if t.notice != nil {
+			l.owedAgain(t.notice, now)
+		}
+		d.Record(line + " messages=pending")
+		l.providerLimit(r.err, t.started, now)
+		return
+	}
+	ok := r.err == nil && r.turn.Exit == 0 && !t.stopped && !t.held
+	if ok {
+		s.gov.Clean(now)
+	}
+	line += l.settle(t, ok, r.err, now)
+	l.delivered = now
+	d.Record(line)
+}
+
 // laneDone is a lane's open or turn ending: a session kept, or a card done,
 // handed again, or set aside and reported.
 func (l *loop) laneDone(r laneResult, now time.Time) {
@@ -568,6 +688,10 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	t := r.t
 	t.running = false
 	ln.t = nil
+	if ln.card == nil {
+		l.messageDone(r, now) // a turn with no card: the messages and pong lines it carried
+		return
+	}
 	if ln.ended != "" {
 		// another lane finished the card: its messages go back pending, counted toward nothing
 		for _, e := range t.entries {

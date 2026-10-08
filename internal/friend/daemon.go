@@ -512,54 +512,57 @@ func oneLine(s string, n int) string {
 // loop is one run of the daemon: what Run keeps between steps, shared by the
 // batch turn and the one-shot lanes.
 type loop struct {
-	d            *Daemon
-	ctx          context.Context
-	b            *bus.Bus
-	passive      bool
-	silentStop   time.Duration
-	brokenAfter  int
-	answered     map[string]bool // entries whose ping the daemon has ponged
-	acted        map[string]bool // message ids pushed into a turn that ended acted, at most ActedKept
-	actedOrder   []string        // the same ids, oldest first, for the bound
-	now          time.Time       // the step's clock, for a line said beside a verb (OnStampError)
-	failed       map[string]int  // entries whose turn failed, and how often
-	hand         []bus.Entry     // messages read and not yet in a turn, oldest first
-	pingAt       time.Time       // the store's time on the newest ping read: a session line after it is its proof of life
-	proofFrom    string          // where the next read of the log for that proof starts
-	inHand       map[string]bool // entries read and not yet acked or failed: in hand or in a turn
-	notice       *Notice         // the latest word about the coordinator the session is owed
-	noticeTaken  *Notice         // the word the last head() put in a turn
-	notices      int             // how many notices the daemon has said: each one's id (say)
-	saidSilent   bool            // what the session last heard: the coordinator silent
-	busy         *turn           // the batch turn under way, or deferred in hand
-	retry        time.Time       // when the deferred turn in hand is tried again; zero while none is
-	deferrals    int
-	deferSaid    time.Time
-	refusal      string // the last provider refusal, and how many turns in a row said it
-	streak       int
-	broken, told bool
-	unable       string // the reason the session cannot take a turn (SessionRefused), "" when it can; cleared by a turn that succeeds
-	unableTries  int    // the turns refused for it since
-	results      chan result
-	lanes        *laneSet
-	reads        *readSet
-	mode         string // the mode the daemon delivers in now
-	saidNoLanes  bool
-	dealt        []string        // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
-	wake         bool            // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
-	saidRefusal  string          // the card runner's refusal last recorded, "" when it runs
-	tag          string          // this daemon's tag in its lanes' names on a lane mark (laneTag, one_lane.go)
-	following    atomic.Bool     // a Mailbox.Follow runs
-	followWG     sync.WaitGroup  // it, waited for when Run ends
-	seatHolder   string          // the seat holder as last read; empty while unknown
-	seatRead     time.Time       // when it was read; zero before the first read
-	presentDue   bool            // the present is owed: the session started, its id changed, or she asked (present.go)
-	presentAt    time.Time       // the store's time of the last present, named in the reason
-	lost         map[string]bool // entries the present superseded whose ack failed: superseded again when the claim hands them in
-	presentCarry *bus.Entry      // the note a present turn that failed carried, carried again by the next
-	presentRetry time.Time       // when a present whose turn failed is tried again
-	delivered    time.Time       // when the session last took a turn: the stale bound runs from it
-	session      string          // the session id as last read (Session)
+	d             *Daemon
+	ctx           context.Context
+	b             *bus.Bus
+	passive       bool
+	silentStop    time.Duration
+	brokenAfter   int
+	answered      map[string]bool // entries whose ping the daemon has ponged
+	acted         map[string]bool // message ids pushed into a turn that ended acted, at most ActedKept
+	actedOrder    []string        // the same ids, oldest first, for the bound
+	now           time.Time       // the step's clock, for a line said beside a verb (OnStampError)
+	failed        map[string]int  // entries whose turn failed, and how often
+	hand          []bus.Entry     // messages read and not yet in a turn, oldest first
+	pingAt        time.Time       // the store's time on the newest ping read: a session line after it is its proof of life
+	proofFrom     string          // where the next read of the log for that proof starts
+	inHand        map[string]bool // entries read and not yet acked or failed: in hand or in a turn
+	notice        *Notice         // the latest word about the coordinator the session is owed
+	noticeTaken   *Notice         // the word the last head() put in a turn
+	notices       int             // how many notices the daemon has said: each one's id (say)
+	saidSilent    bool            // what the session last heard: the coordinator silent
+	busy          *turn           // the batch turn under way, or deferred in hand
+	retry         time.Time       // when the deferred turn in hand is tried again; zero while none is
+	deferrals     int
+	deferSaid     time.Time
+	refusal       string // the last provider refusal, and how many turns in a row said it
+	streak        int
+	broken, told  bool
+	unable        string // the reason the session cannot take a turn (SessionRefused), "" when it can; cleared by a turn that succeeds
+	unableTries   int    // the turns refused for it since
+	results       chan result
+	lanes         *laneSet
+	reads         *readSet
+	mode          string // the mode the daemon delivers in now
+	saidNoLanes   bool
+	dealt         []string // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
+	wake          bool     // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
+	proven        bool     // the push proof this step (proof): a card goes into a lane only while it holds
+	checkHanded   string   // the push check whose pong line a message turn last carried, and when (lanes.go messageTurn)
+	checkHandedAt time.Time
+	saidRefusal   string          // the card runner's refusal last recorded, "" when it runs
+	tag           string          // this daemon's tag in its lanes' names on a lane mark (laneTag, one_lane.go)
+	following     atomic.Bool     // a Mailbox.Follow runs
+	followWG      sync.WaitGroup  // it, waited for when Run ends
+	seatHolder    string          // the seat holder as last read; empty while unknown
+	seatRead      time.Time       // when it was read; zero before the first read
+	presentDue    bool            // the present is owed: the session started, its id changed, or she asked (present.go)
+	presentAt     time.Time       // the store's time of the last present, named in the reason
+	lost          map[string]bool // entries the present superseded whose ack failed: superseded again when the claim hands them in
+	presentCarry  *bus.Entry      // the note a present turn that failed carried, carried again by the next
+	presentRetry  time.Time       // when a present whose turn failed is tried again
+	delivered     time.Time       // when the session last took a turn: the stale bound runs from it
+	session       string          // the session id as last read (Session)
 }
 
 // beatState is the cadence worker's last result. The main loop owns Status and
@@ -669,6 +672,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		mode, width := l.row(now)
 		proven := l.proof(now)
+		l.proven = proven
 		if d.Session != nil {
 			if s := d.Session(); s != l.session {
 				if l.session != "" {
@@ -714,6 +718,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 		l.inboxStep(now) // before the lanes: a card written this step is handed this step
 		switch {
 		case l.broken:
+		case !proven && l.mode == ModeOneShot:
+			// the push rule for a lane friend: her sessions are her lanes', so the lanes open and
+			// hand the check's own pong line and the messages pending as message turns, the only
+			// way her proof can come; no card and no read goes in until it has (lanes.go)
+			l.laneStep(now, width)
+			d.status.Lanes = l.lanes.said(width)
 		case !proven: // the push rule: nothing goes into a session that has not answered
 		case l.mode == ModeOneShot:
 			if l.presentOwed(now) {

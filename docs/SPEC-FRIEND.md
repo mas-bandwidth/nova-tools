@@ -1674,8 +1674,34 @@ epoch), not done (no `outbox/<id>~<epoch>/RESULT.md`), and not held by
 another lane or set aside, and hands it as one turn with three steps: do the
 card from its brief; write its `REPORT.md` and `RESULT.md`; send one bus line
 (the exact `nova-bus send` to the coordinator, printed in the turn). Bus
-messages ride only inside a card's turn, oldest first, with the pong line and
-the word about the coordinator; with no card to ride with they wait, pending.
+messages ride inside a card's turn, oldest first, with the pong line and the
+word about the coordinator; with no card to ride with they go into a free lane
+as a **message turn** of their own (`messageTurn`, `MessageText`): the pong
+line of an open challenge first (a wake ping; before this a lane friend between
+cards could not answer one, `TestALaneFriendWithNoCardAnswersAWakeInAMessageTurn`),
+then the push check's own pong line while the push is unproven, then the
+messages, each labelled by its sender's authority; a notice alone never makes a
+turn. Exit 0 acks the messages, any other end leaves them pending for the claim
+to hand in again, a provider's limit is the governor's (`messageDone`). The
+push rule for a lane friend follows from it: her session is a lane's, so while
+the push is unproven the lanes open their sessions and run message turns, and
+no card and no read goes in until the session has answered the check (the
+`!proven && one-shot` arm of the loop); the check's line is handed again on the
+check's cadence (`MessageTurnEvery`, `SessionQuiet`) while the same nonce stands,
+never once a step. The daemon writes no pong of its own: the line goes in, and
+the session's run of it (`nova-friend pong`, its bus message) is the only
+answer (`TestAOneShotFriendProvesHerPushFromALaneAndCardsWaitForIt`; the
+reversed witness `TestNoPongFromTheSessionLeavesThePushUnprovenAndNoCardRuns`:
+a session that never runs the line leaves the push unproven, no card runs, and
+nothing from the daemon is on the bus). The message turn runs in the friend's
+directory, not a job's. The rule is the lanes model's (tla/FriendLanes.tla):
+`CheckTurn` hands the line while unproven, `Answer` is the session's and the
+only thing that sets `proven`; `CardsOnlyAfterProof` (a card in a lane's hand
+means the push is proven) and `ProvenOnlyBySession` (proven means the session
+answered) hold, and their reversed witnesses
+`MCFriendLanesBrokenCardBeforeProof.cfg` (cards dealt before the answer) and
+`MCFriendLanesBrokenDaemonPong.cfg` (the daemon's own pong counted as the proof)
+break them.
 The lane waits for the turn to end and looks for the card's `RESULT.md`:
 there, the card is done and the lane takes the next; a turn that exited 0 and
 left neither `RESULT.md` nor `REPORT.md` is a harness fault, the card kept with

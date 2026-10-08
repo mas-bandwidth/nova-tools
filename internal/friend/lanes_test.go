@@ -12,6 +12,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -61,10 +62,12 @@ type lanesHarness struct {
 	reject  map[string]string
 	active  map[string]int
 	maxBusy int
-	block   chan struct{} // when set, a card turn waits for it
+	block   chan struct{}      // when set, a card turn waits for it
+	onPong  func(nonce string) // when set, the session "runs" each pong line a turn carries: called with its nonce
 }
 
 var cardOfText = regexp.MustCompile(`one card this turn, ([^ ]+)\. Do exactly`)
+var nonceOfLine = regexp.MustCompile(`nova-friend pong --as bob --nonce ([^ \n]+)`)
 var laneOfSeed = regexp.MustCompile(`this is lane (\d+),`)
 
 func (h *lanesHarness) Deliver(context.Context, string) (int, error) { return 0, nil }
@@ -77,7 +80,15 @@ func (h *lanesHarness) OpenSession(_ context.Context, seed string) (string, erro
 }
 
 func (h *lanesHarness) DeliverTo(ctx context.Context, session, text string) (LaneTurn, error) {
-	id := cardOfText.FindStringSubmatch(text)[1]
+	id := "-" // a message turn: no card
+	if m := cardOfText.FindStringSubmatch(text); m != nil {
+		id = m[1]
+	}
+	if h.onPong != nil {
+		for _, m := range nonceOfLine.FindAllStringSubmatch(text, -1) {
+			h.onPong(m[1])
+		}
+	}
 	h.mu.Lock()
 	h.turns = append(h.turns, session+": "+id)
 	h.texts = append(h.texts, text)
@@ -158,7 +169,9 @@ func TestOneShotLanesHandOneCardPerTurnEachInItsOwnSession(t *testing.T) {
 		byLane := map[string][]string{}
 		for _, tn := range turns {
 			ses, card, _ := strings.Cut(tn, ": ")
-			byLane[ses] = append(byLane[ses], card)
+			if card != "-" {
+				byLane[ses] = append(byLane[ses], card)
+			}
 		}
 		assert.ElementsMatch(t, [][]string{{"c1", "c3"}, {"c2", "c2"}}, [][]string{byLane["ses_1"], byLane["ses_2"]}, "%v", turns)
 		c1Lane := "1"
@@ -176,10 +189,13 @@ func TestOneShotLanesHandOneCardPerTurnEachInItsOwnSession(t *testing.T) {
 		for _, text := range texts[1:] {
 			assert.NotContains(t, text, "for whichever lane is next", "and only with it")
 		}
-		assert.NotContains(t, strings.Join(texts, "\n"), "after every card", "a message with no card to ride with waits")
+		last := texts[len(texts)-1]
+		assert.Contains(t, last, "after every card", "a message with no card to ride with goes in as a message turn of its own")
+		assert.Contains(t, last, "no card this turn")
+		assert.NotContains(t, last, "one card this turn")
+		assert.Equal(t, "-", strings.SplitN(turns[len(turns)-1], ": ", 2)[1], "the message turn names no card: %v", turns)
 		pending, fresh := r.pending(t)
-		assert.Len(t, pending, 1, "the late message waits in hand, pending")
-		assert.Equal(t, "later", pending[0].Message().Subject)
+		assert.Empty(t, pending, "the late message is acked by its message turn")
 		assert.Empty(t, fresh)
 
 		got := r.adaGot(t)
@@ -193,10 +209,117 @@ func TestOneShotLanesHandOneCardPerTurnEachInItsOwnSession(t *testing.T) {
 		assert.Contains(t, records, "lane="+c2Lane+" session=ses_"+c2Lane+` subject="card c2" messages=0`)
 		assert.Contains(t, records, `card=again turn=1/2 reason="the harness refused a permission: Permission to read /elsewhere was auto-rejected"`)
 		assert.Contains(t, records, "card=set_aside turn=2/2")
+		assert.Contains(t, records, `subject="later" messages=1`)
 		s := r.last()
 		assert.Equal(t, ModeOneShot, s.Mode)
 		assert.Equal(t, "1:ses_1:- 2:ses_2:-", s.Lanes)
 		assert.Equal(t, 2, s.Width)
+	})
+}
+
+// A lane friend with no card answers a wake ping in a message turn of her own: the pong
+// line goes into a free lane, the session runs it (its own bus message and pong file), and
+// the challenge ends. Before this the line rode only with a card, and a lane friend between
+// cards was deaf to every wake. The daemon's own daemon-pong ends nothing.
+func TestALaneFriendWithNoCardAnswersAWakeInAMessageTurn(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, nil, nil, nil)
+		h := &lanesHarness{dir: dir, finish: map[string]bool{}, active: map[string]int{}}
+		r, _ := laneRig(t, h, 2)
+		pongCommand := func(nonce string) string { return "/opt/nova/bin/nova-friend pong --as bob --nonce " + nonce }
+		r.d.PongCommand = pongCommand
+		h.onPong = func(nonce string) { // the session runs the line: its own bus message, and the pong file
+			_, err := r.bus.Send(context.Background(), bus.Message{From: "bob", To: []string{"ada"}, Subject: "pong " + nonce, Body: "pong " + nonce})
+			require.NoError(t, err)
+			r.mu.Lock()
+			r.pong, r.pongSet = Pong{Nonce: nonce, At: r.now, To: "ada"}, true
+			r.mu.Unlock()
+		}
+		r.at[3] = func() { r.send(t, "ada", "PING w1", WakePingText("ada", t0, "w1")) }
+		r.run(t, 12)
+		turns, texts, _ := h.got()
+		require.Len(t, turns, 1, "one message turn, no card: %v", turns)
+		assert.Equal(t, "ses_1: -", turns[0])
+		assert.True(t, strings.HasPrefix(texts[0], "Run this now, first, exactly as written: "+pongCommand("w1")+"\n"), texts[0])
+		assert.Contains(t, texts[0], "lane 1 of 2 of bob: no card this turn")
+		got := r.adaGot(t)
+		assert.Contains(t, got, "daemon-pong: daemon-pong w1", "the daemon answers the ping at once, as ever")
+		assert.Contains(t, got, "pong w1: pong w1", "and the session's own pong is on the bus")
+		s := r.last()
+		assert.Equal(t, Quiet, s.Challenge, "the session's pong ends the wake challenge")
+		assert.Equal(t, 1, s.Pongs)
+		assert.Contains(t, strings.Join(r.records, "\n"), `subject="wake w1" messages=0`)
+	})
+}
+
+// A one-shot friend's push is proved from a lane: while unproven, the lane opens its
+// session and hands the push check's own pong line as a message turn; the session's run of
+// it is the proof, and only then does a card go in. The daemon writes no pong for it.
+func TestAOneShotFriendProvesHerPushFromALaneAndCardsWaitForIt(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
+		h := &lanesHarness{dir: dir, finish: map[string]bool{"c1": true}, active: map[string]int{}}
+		r, _ := laneRig(t, h, 1)
+		pongCommand := func(nonce string) string { return "/opt/nova/bin/nova-friend pong --as bob --nonce " + nonce }
+		r.d.PongCommand = pongCommand
+		var mu sync.Mutex
+		proven := false
+		r.d.Proof = func() (bool, string) {
+			mu.Lock()
+			defer mu.Unlock()
+			if proven {
+				return true, ""
+			}
+			return false, "chk1"
+		}
+		h.onPong = func(nonce string) { // the session runs the check's line: the check sees its pong on the bus
+			if nonce != "chk1" {
+				return
+			}
+			_, err := r.bus.Send(context.Background(), bus.Message{From: "bob", To: []string{"ada"}, Subject: "pong " + nonce, Body: "pong " + nonce})
+			require.NoError(t, err)
+			mu.Lock()
+			proven = true
+			mu.Unlock()
+		}
+		var before Status
+		r.at[2] = func() { before = r.last() }
+		r.run(t, 12)
+		turns, texts, seeds := h.got()
+		require.Len(t, seeds, 1, "the lane opens its session while the push is unproven")
+		require.Len(t, turns, 2, "the check's turn, then the card: %v", turns)
+		assert.Equal(t, "ses_1: -", turns[0], "the first turn carries the check's pong line and no card")
+		assert.Contains(t, texts[0], "Run this now, exactly as written, then read on: "+pongCommand("chk1")+"\n")
+		assert.Equal(t, "ses_1: c1", turns[1], "the card goes in once the session answered")
+		assert.Equal(t, PushUnproven, before.Push)
+		assert.Equal(t, "chk1", before.PushNonce)
+		assert.Equal(t, PushProved, r.last().Push)
+		records := strings.Join(r.records, "\n")
+		assert.Contains(t, records, `subject="push check chk1" messages=0`)
+		assert.Equal(t, []string{"pong chk1: pong chk1"}, r.adaGot(t), "the only pong on the bus is the session's")
+	})
+}
+
+// The reversed witness of the proof: a session that never runs the check's line leaves the
+// push unproven, and no card goes in however long the daemon runs; the daemon never
+// answers its own check (no pong of its own on the bus), and hands the line again only on
+// the check's cadence, never once a step.
+func TestNoPongFromTheSessionLeavesThePushUnprovenAndNoCardRuns(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
+		h := &lanesHarness{dir: dir, finish: map[string]bool{"c1": true}, active: map[string]int{}}
+		r, _ := laneRig(t, h, 1)
+		r.d.PongCommand = func(nonce string) string { return "/opt/nova/bin/nova-friend pong --as bob --nonce " + nonce }
+		r.d.Proof = func() (bool, string) { return false, "chk1" }
+		r.run(t, 40)
+		turns, _, _ := h.got()
+		assert.Equal(t, []string{"ses_1: -"}, turns, "one message turn with the check's line, no card, no second hand within the cadence: %v", turns)
+		assert.Equal(t, PushUnproven, r.last().Push)
+		assert.Empty(t, r.adaGot(t), "the daemon writes no pong of its own")
+		assert.NotContains(t, strings.Join(r.records, "\n"), "card=done")
 	})
 }
 
