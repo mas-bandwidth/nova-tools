@@ -1136,6 +1136,12 @@ func (l *lander) recordPushed(ctx context.Context, s *sprint.Snapshot, order []s
 			continue
 		}
 		lb.Status = "ok"
+		if dir, why := l.clone(ctx, b.pins[0].repo); why == "" {
+			lb.Dir = dir
+			l.tag(ctx, &lb, b.pins)
+		} else {
+			lb.Prune = &landPrune{Why: why}
+		}
 		l.keep(lb)
 	}
 	l.a.serial.Lock()
