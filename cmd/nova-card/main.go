@@ -233,6 +233,7 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 	minutes := fs.Int("minutes", 0, "the Deadline line's `minutes` (default: 45 flash, 60 pro)")
 	maxCards := fs.Int("max", 0, "write at most this many cards, in source order; 0 is all")
 	dryRun := fs.Bool("dry-run", false, "plan and lint, print the manifest and the CARDS line, and write nothing")
+	commitRange := fs.String("range", "", "with --from commits: the commit `range` (sha1..sha2)")
 	opts := lintFlags(fs)
 	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, "generate", verbflag.Explain(fs, err))
@@ -309,8 +310,39 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 			}
 			plan.Cards = append(plan.Cards, cardgen.PlanHelp(tool, help, exampleTest(*repoDir, tool), *prefix, *tier))
 		}
+	case "commits":
+		if *repoDir == "" {
+			return refuse(stderr, "generate", "--from commits needs --repo-dir <dir>, a checkout of the repository")
+		}
+		if *commitRange == "" {
+			return refuse(stderr, "generate", "--from commits wants --range <sha1>..<sha2>")
+		}
+		lines, err := gitlogRange(*repoDir, *commitRange)
+		if err != nil {
+			return refuse(stderr, "generate", "git log: "+err.Error())
+		}
+		if len(lines) == 0 {
+			return refuse(stderr, "generate", "no commits found in range")
+		}
+		prefix := *prefix
+		if prefix == "" {
+			prefix = "land"
+		}
+		tier := *tier
+		if tier == "" {
+			tier = "flash"
+		}
+		for i, sha := range lines {
+			c, err := planCommit(*repoDir, sha, prefix, tier, i+1)
+			if err != nil {
+				return refuse(stderr, "generate", "cannot plan commit "+sha+": "+err.Error())
+			}
+			plan.Cards = append(plan.Cards, c)
+		}
+		plan.Tier = tier
+		plan.Waves = 1
 	case "":
-		return refuse(stderr, "generate", "wants --from ledger|findings|help")
+		return refuse(stderr, "generate", "wants --from ledger|findings|help|commits")
 	default:
 		return refuse(stderr, "generate", fmt.Sprintf("--from %q; want ledger, findings or help", *from))
 	}
@@ -495,4 +527,49 @@ func renderedHelp(binDir, tool string) (string, error) {
 		return "", fmt.Errorf("`%s help` printed nothing: %v", bin, err)
 	}
 	return out.String(), nil
+}
+
+// gitlogRange returns the list of commit SHAs in the given range (sha1..sha2),
+// oldest first.
+func gitlogRange(dir, commitRange string) ([]string, error) {
+	res, err := gitrun.Run(context.Background(), gitrun.Options{C: dir}, "log", "--pretty=format:%H", "--reverse", commitRange)
+	if err != nil {
+		return nil, fmt.Errorf("git log: %s", strings.TrimSpace(string(res.Stderr)))
+	}
+	var lines []string
+	for _, line := range strings.Split(string(res.Stdout), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines, nil
+}
+
+// planCommit creates a card for a single commit, with PATHS from the commit's
+// changed files and TEST being ./internal/ci TestX. The index is used for sequential IDs.
+func planCommit(repoDir, sha, prefix, tier string, index int) (cardgen.Card, error) {
+	// Get changed files for this commit
+	res, err := gitrun.Run(context.Background(), gitrun.Options{C: repoDir}, "diff-tree", "--no-commit-id", "--name-only", "-r", sha)
+	if err != nil {
+		return cardgen.Card{}, fmt.Errorf("git diff-tree: %s", strings.TrimSpace(string(res.Stderr)))
+	}
+	paths := strings.FieldsFunc(strings.TrimSpace(string(res.Stdout)), func(r rune) bool { return r == '\n' })
+	if len(paths) == 0 {
+		return cardgen.Card{}, fmt.Errorf("commit %s has no changed files", sha)
+	}
+	// Create card with computed PATHS
+	id := fmt.Sprintf("%s-%d", prefix, index)
+	return cardgen.Card{
+		ID:    id,
+		File:  paths[0],
+		Rows:  nil,
+		Paths: paths,
+		Test:  "./internal/ci TestX",
+		Tier:  tier,
+		Wave:  1,
+		Deps:  nil,
+		Task:  "Re-land commit " + sha[:7],
+		Kind:  "fix-red",
+		New:   nil,
+	}, nil
 }
