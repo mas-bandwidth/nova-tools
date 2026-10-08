@@ -85,6 +85,12 @@ type Tool struct {
 	// read the usage lines, the shape of a value several of them name (the
 	// manifest of --file), so no usage line carries it. Empty prints none.
 	UsageNote string
+	// Setup, when set, is printed in the banner after the exit codes and
+	// before the example block: the `setup:` heading and the shell lines a
+	// stranger runs before the examples. It is not an exit code. A verb's
+	// -h quotes ExitTable alone, so this text does not ride on every verb
+	// (STANDARD §2, every verb's -h quotes the table). Empty prints none.
+	Setup string
 	// Topics are the tool's help topics: `help <topic>` prints the topic's
 	// text at exit 0, and the banner lists the topic names on one line
 	// (skeleton contract 2.7). A tool's reference text lives here, never in
@@ -500,7 +506,8 @@ func (t *Tool) names() []string {
 }
 
 // Banner is what `help` prints: what, how, usage, the standard flags, the exit
-// codes, and the example block last (docs/ONBOARDING.md point 1).
+// codes, the setup block when the tool sets one, and the example block last
+// (docs/ONBOARDING.md point 1).
 func (t *Tool) Banner() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s: %s\n", t.Name, t.What)
@@ -543,6 +550,9 @@ func (t *Tool) Banner() string {
 	}
 	b.WriteString(json + ": " + why + ". A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.\n\n")
 	fmt.Fprintf(&b, "exit codes: %s\n\n", t.ExitTable)
+	if setup := strings.TrimRight(t.Setup, "\n"); setup != "" {
+		b.WriteString(setup + "\n\n")
+	}
 	b.WriteString("example:\n")
 	for _, v := range t.shown() {
 		for _, l := range lines(v.Example) {
