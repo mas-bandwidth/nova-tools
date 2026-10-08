@@ -1,51 +1,169 @@
 -------------------------- MODULE StopGroupAnchor --------------------------
-(* Native STOP proof when the original harness group leader exits. The durable
-   sidecar is started and birth-recorded before the harness gate releases.
-   A signal may be sent only while a verified leader or sidecar pins the group.
-   Unexpected anchor loss leaves owed debt; it never licenses a bare PGID kill. *)
+(* One native harness group. leader is its original PGID leader; anchor is the
+   TERM-resistant sidecar; child is a resistant descendant. Receipts model
+   fsynced PID+kernel-birth records. The harness gate cannot open before both
+   receipts exist. Crash loses only volatile ownership, never live processes or
+   durable receipts. A sidecar PID can be reused while the old group persists;
+   its birth mismatch must never authorize a group signal. POSIX group-number
+   reuse is possible only after every old member exits.
+
+   SignalGroup abstracts a verified TERM/grace/KILL teardown as one transition.
+   It proves signal authority and return ordering, not an OS time bound.
+   UnsafeBareSignal and UnsafeRetry are model mutations with expected invariant
+   failures, so the signal and retry invariants have nonvacuous witnesses. *)
 EXTENDS Naturals
 
-VARIABLES leader, anchor, child, owed, returned, signaledUnpinned
-vars == <<leader, anchor, child, owed, returned, signaledUnpinned>>
+CONSTANTS UnsafeBareSignal, UnsafeRetry, PermitLoss, PermitCrash
+VARIABLES leader, anchor, child, leaderReceipt, anchorReceipt, gate,
+          owner, stopped, owed, returned, failed, attempt,
+          anchorPIDReused, pgidReused, signalBad, overwrote
+vars == <<leader, anchor, child, leaderReceipt, anchorReceipt, gate,
+          owner, stopped, owed, returned, failed, attempt,
+          anchorPIDReused, pgidReused, signalBad, overwrote>>
 
-Init == /\ leader = TRUE /\ anchor = TRUE /\ child = TRUE
-        /\ owed = FALSE /\ returned = FALSE /\ signaledUnpinned = FALSE
+Live == leader \/ anchor \/ child
+VerifiedPin == ~pgidReused /\
+               ((leader /\ leaderReceipt) \/
+                (anchor /\ anchorReceipt /\ ~anchorPIDReused))
 
-Stop == /\ ~owed /\ owed' = TRUE /\ returned' = FALSE
-        /\ UNCHANGED <<leader, anchor, child, signaledUnpinned>>
+Init == /\ leader = TRUE /\ anchor = FALSE /\ child = FALSE
+        /\ leaderReceipt = FALSE /\ anchorReceipt = FALSE /\ gate = FALSE
+        /\ owner = TRUE /\ stopped = FALSE /\ owed = FALSE
+        /\ returned = FALSE /\ failed = FALSE /\ attempt = 1
+        /\ anchorPIDReused = FALSE /\ pgidReused = FALSE
+        /\ signalBad = FALSE /\ overwrote = FALSE
 
-LeaderExit == /\ leader /\ leader' = FALSE
-              /\ UNCHANGED <<anchor, child, owed, returned, signaledUnpinned>>
+StoreLeader == /\ owner /\ leader /\ ~leaderReceipt
+               /\ leaderReceipt' = TRUE
+               /\ UNCHANGED <<leader, anchor, child, anchorReceipt, gate,
+                              owner, stopped, owed, returned, failed, attempt,
+                              anchorPIDReused, pgidReused, signalBad, overwrote>>
 
-AnchorLost == /\ anchor /\ anchor' = FALSE
-              /\ UNCHANGED <<leader, child, owed, returned, signaledUnpinned>>
+StartAnchor == /\ owner /\ leaderReceipt /\ leader /\ ~anchor /\ ~stopped
+               /\ anchor' = TRUE
+               /\ UNCHANGED <<leader, child, leaderReceipt, anchorReceipt, gate,
+                              owner, stopped, owed, returned, failed, attempt,
+                              anchorPIDReused, pgidReused, signalBad, overwrote>>
+
+StoreAnchor == /\ owner /\ anchor /\ ~anchorReceipt
+               /\ anchorReceipt' = TRUE
+               /\ UNCHANGED <<leader, anchor, child, leaderReceipt, gate,
+                              owner, stopped, owed, returned, failed, attempt,
+                              anchorPIDReused, pgidReused, signalBad, overwrote>>
+
+OpenGate == /\ owner /\ ~stopped /\ leaderReceipt /\ anchorReceipt
+            /\ leader /\ anchor /\ ~gate
+            /\ gate' = TRUE /\ child' = TRUE
+            /\ UNCHANGED <<leader, anchor, leaderReceipt, anchorReceipt,
+                           owner, stopped, owed, returned, failed, attempt,
+                           anchorPIDReused, pgidReused, signalBad, overwrote>>
+
+Stop == /\ ~stopped
+        /\ stopped' = TRUE /\ owed' = TRUE
+        /\ UNCHANGED <<leader, anchor, child, leaderReceipt, anchorReceipt,
+                       gate, owner, returned, failed, attempt,
+                       anchorPIDReused, pgidReused, signalBad, overwrote>>
+
+(* The original leader can exit while its sidecar and descendant remain. *)
+LeaderExit == /\ gate /\ leader
+              /\ leader' = FALSE
+              /\ UNCHANGED <<anchor, child, leaderReceipt, anchorReceipt,
+                             gate, owner, stopped, owed, returned, failed,
+                             attempt, anchorPIDReused, pgidReused,
+                             signalBad, overwrote>>
+
+FailStart == /\ gate /\ leader /\ ~failed
+             /\ leader' = FALSE /\ failed' = TRUE
+             /\ UNCHANGED <<anchor, child, leaderReceipt, anchorReceipt,
+                            gate, owner, stopped, owed, returned, attempt,
+                            anchorPIDReused, pgidReused, signalBad, overwrote>>
 
 ChildExit == /\ child /\ child' = FALSE
-             /\ UNCHANGED <<leader, anchor, owed, returned, signaledUnpinned>>
+             /\ UNCHANGED <<leader, anchor, leaderReceipt, anchorReceipt,
+                            gate, owner, stopped, owed, returned, failed,
+                            attempt, anchorPIDReused, pgidReused,
+                            signalBad, overwrote>>
 
-(* TERM may be ignored by a resistant child; the sidecar deliberately ignores
-   TERM. KILL is allowed only while an identity-backed pin still exists. *)
-Term == /\ owed /\ (leader \/ anchor)
-        /\ UNCHANGED vars
+AnchorLoss == /\ PermitLoss /\ anchor
+              /\ anchor' = FALSE
+              /\ UNCHANGED <<leader, child, leaderReceipt, anchorReceipt,
+                             gate, owner, stopped, owed, returned, failed,
+                             attempt, anchorPIDReused, pgidReused,
+                             signalBad, overwrote>>
 
-Kill == /\ owed /\ (leader \/ anchor)
-        /\ leader' = FALSE /\ anchor' = FALSE /\ child' = FALSE
-        /\ UNCHANGED <<owed, returned, signaledUnpinned>>
+(* A dead sidecar's PID may be reissued while the old descendant still holds
+   the original PGID. The stored birth must then fail verification. *)
+AnchorPIDReuse == /\ ~anchor /\ anchorReceipt /\ ~anchorPIDReused
+                  /\ anchorPIDReused' = TRUE
+                  /\ UNCHANGED <<leader, anchor, child, leaderReceipt,
+                                 anchorReceipt, gate, owner, stopped, owed,
+                                 returned, failed, attempt, pgidReused,
+                                 signalBad, overwrote>>
 
-Return == /\ owed /\ ~leader /\ ~anchor /\ ~child
-          /\ owed' = FALSE /\ returned' = TRUE
-          /\ UNCHANGED <<leader, anchor, child, signaledUnpinned>>
+(* The group number can be reused only after the entire old group exits. *)
+PGIDReuse == /\ ~Live /\ ~pgidReused
+             /\ pgidReused' = TRUE
+             /\ UNCHANGED <<leader, anchor, child, leaderReceipt,
+                            anchorReceipt, gate, owner, stopped, owed,
+                            returned, failed, attempt, anchorPIDReused,
+                            signalBad, overwrote>>
 
-Restart == UNCHANGED vars
+Crash == /\ PermitCrash /\ owner /\ owner' = FALSE
+         /\ UNCHANGED <<leader, anchor, child, leaderReceipt,
+                        anchorReceipt, gate, stopped, owed, returned,
+                        failed, attempt, anchorPIDReused, pgidReused,
+                        signalBad, overwrote>>
+Restart == /\ ~owner /\ owner' = TRUE
+           /\ UNCHANGED <<leader, anchor, child, leaderReceipt,
+                          anchorReceipt, gate, stopped, owed, returned,
+                          failed, attempt, anchorPIDReused, pgidReused,
+                          signalBad, overwrote>>
 
-Next == Stop \/ LeaderExit \/ AnchorLost \/ ChildExit \/ Term \/ Kill \/ Return \/ Restart
+(* The real implementation refuses signal when neither recorded live identity
+   pins the group. The mutation permits a bare PGID kill and records the
+   actual identity predicate at the signal instant. *)
+SignalGroup == /\ owner /\ (owed \/ failed) /\ Live
+               /\ (VerifiedPin \/ UnsafeBareSignal)
+               /\ signalBad' = (signalBad \/ ~VerifiedPin)
+               /\ leader' = FALSE /\ anchor' = FALSE /\ child' = FALSE
+               /\ UNCHANGED <<leaderReceipt, anchorReceipt, gate, owner,
+                              stopped, owed, returned, failed, attempt,
+                              anchorPIDReused, pgidReused, overwrote>>
+
+(* A failed launch may retry only after no old group member can execute.
+   The mutation retries while the sidecar or child still runs and replaces
+   the only durable identity for the old group. *)
+Retry == /\ owner /\ failed /\ ~stopped /\ attempt = 1
+         /\ (~Live \/ UnsafeRetry)
+         /\ attempt' = 2 /\ overwrote' = (overwrote \/ Live)
+         /\ UNCHANGED <<leader, anchor, child, leaderReceipt,
+                        anchorReceipt, gate, owner, stopped, owed,
+                        returned, failed, anchorPIDReused, pgidReused,
+                        signalBad>>
+
+Return == /\ owner /\ owed /\ ~Live
+          /\ returned' = TRUE /\ owed' = FALSE
+          /\ UNCHANGED <<leader, anchor, child, leaderReceipt,
+                         anchorReceipt, gate, owner, stopped, failed,
+                         attempt, anchorPIDReused, pgidReused,
+                         signalBad, overwrote>>
+
+Next == StoreLeader \/ StartAnchor \/ StoreAnchor \/ OpenGate \/ Stop \/
+        LeaderExit \/ FailStart \/ ChildExit \/ AnchorLoss \/
+        AnchorPIDReuse \/ PGIDReuse \/ Crash \/ Restart \/
+        SignalGroup \/ Retry \/ Return
 Spec == Init /\ [][Next]_vars
 
-NoPrematureReturn == returned => ~leader /\ ~anchor /\ ~child
-NoUnpinnedSignal == ~signaledUnpinned
-DebtUntilProof == owed /\ child => ~returned
+NoUnpinnedSignal == ~signalBad
+NoReceiptOverwriteWhileLive == ~overwrote
+NoPrematureReturn == returned => ~Live
+LostIdentityKeepsDebt == owed /\ Live /\ ~VerifiedPin => ~returned
+GateNeedsDurableAnchor == gate => leaderReceipt /\ anchorReceipt
 
-(* When the sidecar survives leader exit, fair escalation eventually clears
-   the group and permits Return. AnchorLost is deliberately outside this
-   liveness premise; its safe outcome is retained debt. *)
+(* Conditional progress: when the owner stays up and identities are not lost,
+   weak fairness of recording, STOP, verified teardown, and return suffices.
+   Crash and unexpected anchor loss are enabled in the safety case, not here. *)
+FairSpec == Spec /\ WF_vars(StoreLeader) /\ WF_vars(Stop) /\
+            WF_vars(SignalGroup) /\ WF_vars(Return)
+EventuallyReturned == <>returned
 =============================================================================

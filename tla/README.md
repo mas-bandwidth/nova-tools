@@ -17,6 +17,8 @@
 
 The TLA+ modules here are the specifications of the state machines this repo implements (rowan-new SPEC-COORDINATOR section 8: the backend is the state machine, the verbs are its actions; Glenn 2026-09-27: TLA+ for every state machine, every project). The findings each model produced, verified against the code by hand, are in rowan-new `specs/tla/FINDINGS.md`; the model documents (`TABLE-MODEL.md`, `MEMBER-TABLE-MODEL.md`) are copied here beside the modules they describe.
 
+`StopGroupAnchor.tla` models one native harness group, its durable birth receipts, a gated launch, owner crash with descendants still alive, identity loss and PID reuse. Its required `MCStopGroupAnchor*` cases check that an unverified group is never signalled, a live group's receipt is never overwritten on retry, and a STOP return waits for group exit. Broken-signal and broken-retry configurations produce counterexamples. The fair case proves eventual return only when the owner remains up and a recorded live identity survives; the model abstracts TERM/grace/KILL into one verified teardown action, so elapsed teardown time and real kernel behavior require the process tests.
+
 | Module | Instance | What it is |
 |---|---|---|
 | `CardMachine.tla` | `MCCardMachine` | the card's life over cells (the copy model of 02_card_move.lua), the corrected design after its three findings |
