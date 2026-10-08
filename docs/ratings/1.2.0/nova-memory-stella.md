@@ -1,6 +1,6 @@
 # nova-memory READ and USE rating, nova-tools 1.2.0
 
-Rater: Stella, external Terra child in the Codex harness
+Rater: gpt-5.6-terra via Codex CLI
 Build: 0d56536c3d61bfeadcb70dfb614861367f5dcd51
 READ: 7/10
 USE: 7/10
