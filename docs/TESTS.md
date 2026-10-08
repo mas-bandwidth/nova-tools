@@ -1280,6 +1280,34 @@ $ nova-card lint --card ./cards/finding-cmd-nova-bus-main.md
 LINT OK file=./cards/finding-cmd-nova-bus-main.md
 ```
 
+## nova-up
+
+A linux login, typing from its home `/home/you`, with every program the setup
+runs on its PATH: the first run is the dry run, which plans every step on the
+machine as it is, prints one `UP <step>` line each, and writes nothing. Run by
+`cmd/nova-up/firstrun_test.go` over a machine whose programs answer only their
+version, so no step can apply.
+
+### First run
+
+```
+$ nova-up --local --dry-run --root ./nova-try
+UP OK root=/home/you/nova-try steps=9 changes=7 applied=0 dry_run=true
+UP NOTE dry run: nothing written; run it without --dry-run to apply
+UP platform ok linux: loops are systemd user units
+UP dirs create /home/you/nova-try: . stores keys logs smoke
+UP binaries ok 8 on PATH, each answering its version
+UP sprint create mem:/home/you/nova-try/stores/sprint.twin
+UP secrets create /home/you/nova-try/secrets seat=coordinator
+UP ssh create known_hosts missing; run `ssh-keyscan <bench> >> ~/.ssh/known_hosts` for each bench
+UP redis create 127.0.0.1:6390 loop=redis-local for nova-bus: unit create, passwords to seal=4, acl apply, fn load
+UP seat create /home/you/nova-try/seat.env seat=coordinator
+UP smoke create one card on /home/you/nova-try/smoke/sprint.twin beside the throwaway repository /home/you/nova-try/smoke/repo
+
+$ nova-up --dry-run --root ./nova-try
+! UP REFUSED: --local is required; it wants nothing after it: the mode that sets up this one machine with no config; run: nova-up help
+```
+
 ## nova-doctor
 
 A login with no friend rows, `/home/you`: the harness check alone, as lines and
