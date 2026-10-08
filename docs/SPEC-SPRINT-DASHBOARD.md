@@ -121,6 +121,7 @@ from the owner edits one line here and nothing else moves.
 ## Progress bar: "ALL CARDS BY STATE" with the legend (landed, merging, fix, review, working, ready, waiting) and counts;
   one cell per card (per N cards when they would be under 4 px; no "1 cell = N" label); working cells pulse steadily
   (2 s); other cells still.
+- Stopped share: merging cards that sit in a stream whose state is stopped are drawn red (`--critical`, cell class `s-stopped`), taken out of the amber merging cells. The merging legend then reads `merging <n> (<k> in a stopped stream)`, or `streams` when more than one stream is stopped. With none stopped the legend and the cells stay the seven states above.
 - Priority (the card reads-are-a-card-priority-b, 2026-10-06; the owner's line is quoted under LOCK 2): under
   the bar, one row of marks, hidden while it holds none: a mark for each open card whose level is
   not normal (`where --json`'s `priorities`) and one for each read waiting (`reads_waiting`), in the ladder's
@@ -163,6 +164,8 @@ from the owner edits one line here and nothing else moves.
 - Drawn: merging | review | landed / 30m | oldest merging | base gate | drift | since sync | since promotion. The
   gate is a pill, red (critical), green (good) or "-" (neutral), with the failing test after it; the drift reads
   "base lacks X · dev lacks Y"; a minute not known is "-". Nothing in the row flashes.
+- The merging figure names a stopped stream's share when any merging card sits in one: `27 (27 in a stopped stream)`,
+  streams plural when more than one stopped stream has merging cards. The figure stays the bare count when none has.
 - The base-red judgments are read only when a stream is stopped, so a plain where makes no exchange more on a
   sprint that runs; a drift alarm that the base is red while no stream is stopped is in the inbox, not this row.
 
@@ -172,6 +175,7 @@ from the owner edits one line here and nothing else moves.
   spread evenly across the count columns (fixed table layout); Landed and Cost a little wider; gutters at least 40 px.
 - Rows sorted by status like the fleet table: landed first, then working, then stopped, then held; within a group by stream name. A row moves when its status changes (no animation).
 - Status pill in Work: landed (green), working (blue), held (amber), stopped (red); the subtitle keeps "<n> streams · <l> landed · <h> held". Zero counts muted grey.
+- A stopped stream's pill is red, text and dot. Where the stream's state carries a reason after the word (`stopped: <reason>`), the pill reads `stopped: <reason>`. `where --json` puts the word `stopped` in that state (the control card's cause is the reason; the state cell is the word alone), so the pill reads `stopped` in red until the state carries the reason.
 - Landed as "n / total" with the slash on one vertical line (left number right-aligned to it, total left of it), the
   gap before Landed (after merging) equal to every other column gutter in the row, never tighter. No per-stream bar. Total row: numbers only.
 - Flash: the count columns and Landed flash when their value differs from the previous second; Cost never.

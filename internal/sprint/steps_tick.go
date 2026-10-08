@@ -1171,7 +1171,7 @@ func TickCheck(s *Snapshot, r TickReq) (Plan, int) {
 // TickDeadlines writes one judgment for each card or stream past its
 // deadline, in running time (N4, N5, N6), and closes it when the card or the
 // stream moves. It keeps the backlog alarms too (tickAlarms, docs/SPEC-SPRINT.md
-// section 8, "Backlog alarms").
+// section 8, "Backlog alarms"), and the landing alarm (tickLandingAlarm).
 func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
 	var conds []cond
@@ -1263,6 +1263,10 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 	// the drift alarms, on a plan of their own the same way (drift.go)
 	d, driftDue := TickDrift(s, r, r.Drift)
 	p.Notes, p.Closes, p.Updates = append(p.Notes, d.Notes...), append(p.Closes, d.Closes...), append(p.Updates, d.Updates...)
+	// the landing alarm and the inbox's overdue line, on a plan of their own (landing_alarm.go)
+	land := tickLandingAlarm(s, r)
+	p.Notes, p.Closes, p.Updates = append(p.Notes, land.Notes...), append(p.Closes, land.Closes...), append(p.Updates, land.Updates...)
+	p.Props = append(p.Props, land.Props...)
 	return p, due + alarmsDue + driftDue
 }
 
@@ -1388,7 +1392,7 @@ func condKey(typ, subject, card, what string) string {
 	switch typ {
 	case NNoMember, NAdoptFailed, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NStarving, NOverloaded, NReadersBehind, NDevBehind, NRaiseReadTier,
 		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFilesAlarm, NFriendDeaf, NFriendIdle, NCoordinatorBehind,
-		NDriftAhead, NDriftCardBase, NDriftServer, NDriftBaseRed:
+		NDriftAhead, NDriftCardBase, NDriftServer, NDriftBaseRed, NNoLanding:
 		what = ""
 	case NWorkLate, NReadLate:
 		// a lateness is one per attempt's card and kind (not taken, not
@@ -1526,7 +1530,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 			if !open[k] {
 				fresh = append(fresh, sub)
 			}
-			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate || c.typ == NFewReaders || c.typ == NStarving || c.typ == NOverloaded || c.typ == NFilesAlarm || c.typ == NReadersBehind || c.typ == NDevBehind) {
+			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate || c.typ == NFewReaders || c.typ == NStarving || c.typ == NOverloaded || c.typ == NFilesAlarm || c.typ == NReadersBehind || c.typ == NDevBehind || c.typ == NNoLanding) {
 				update(n, c.what, c.decisions) // the latest facts, in place
 			}
 		}
