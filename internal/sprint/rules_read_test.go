@@ -151,7 +151,9 @@ func TestABrokenReadIsReworkedByRuleWithItsFinding(t *testing.T) {
 	})
 }
 
-// The files a finding names outside a brief's PATHS.
+// The files a finding names outside a brief's PATHS: a test, a testdata file, a TLA+
+// ledger, the docs catalog and an AGENTS.md map are inside every PATHS
+// (cardgen.AlwaysInPaths), so a finding naming only those twins nothing.
 func TestAFindingNamesFilesOutsidePaths(t *testing.T) {
 	t.Parallel()
 	brief := "c: x (s)\nREPO: o/r\nPATHS: internal/x/a.go,internal/z/*.go,docs/\n\nThe task.\n"
@@ -161,7 +163,8 @@ func TestAFindingNamesFilesOutsidePaths(t *testing.T) {
 	}{
 		{"internal/x/a.go:12 drops the error", nil},
 		{"internal/z/q.go:3 and docs/SPEC-X.md say otherwise", nil},
-		{"internal/y/b.go:40 calls the old name; `internal/y/b_test.go` too", []string{"internal/y/b.go", "internal/y/b_test.go"}},
+		{"internal/y/b.go:40 calls the old name; `internal/y/b_test.go` too", []string{"internal/y/b.go"}},
+		{"internal/y/b_test.go:9, internal/y/testdata/deep/g.txt, tla/RUNS.tsv, tla/CASES.tsv, internal/docs/catalog.go and internal/y/AGENTS.md are stale", nil},
 		{"branch sprint/c.w1.g3.e15 at /abs/x/y.go and ../up/z.go, see https://example.invalid/a/b.go", nil},
 		{"the TestA step fails", nil},
 	} {
@@ -196,4 +199,10 @@ func (r *conflictRig) openOnCard(typ, id string) []sprint.Open {
 		}
 	}
 	return out
+}
+
+func TestRequiredValidationFilesNeverWidenAReadersScope(t *testing.T) {
+	t.Parallel()
+	finding := "internal/y/y_test.go, internal/y/testdata/case.json, testdata/deep/witness.tla, tla/RUNS.tsv, tla/CASES.tsv, internal/docs/catalog.go and internal/y/AGENTS.md are required; internal/y/y.go remains source."
+	assert.Equal(t, []string{"internal/y/y.go"}, sprint.FilesOutsidePaths("PATHS: internal/x/x.go\n", finding))
 }

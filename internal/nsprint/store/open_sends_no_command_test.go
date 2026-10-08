@@ -21,10 +21,6 @@ const storeChildEnv = "NOVA_NSPRINT_STORE_TEST_CHILD"
 // the parent owns the listener or the throwaway Redis, the child dials it.
 const storeChildAddrEnv = "NOVA_NSPRINT_STORE_TEST_ADDR"
 
-// storeChildModeEnv picks which behavior a re-entered scenario test asserts,
-// one child per behavior instead of one process changing its environment.
-const storeChildModeEnv = "NOVA_NSPRINT_STORE_TEST_MODE"
-
 // inStoreTestChild reports whether this run is the child a store test
 // re-entered itself with.
 func inStoreTestChild(t *testing.T) bool {

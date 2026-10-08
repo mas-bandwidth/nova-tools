@@ -260,7 +260,7 @@ func newChaosRig(t *testing.T) *chaosRig {
 	_, _, _, err = r.st.SetMachine(ctx, true)
 	require.NoError(t, err)
 
-	d := &Daemon{Friend: "bob", Harness: "fake", Dir: t.TempDir(), Width: 2, Store: r.bobBus, Deliver: r.harness,
+	d := &Daemon{Friend: "bob", Harness: "fake", Dir: t.TempDir(), Width: 2, Store: r.bobBus, Deliver: r.harness, noPresent: true,
 		Coordinator: "coord", Now: time.Now,
 		Pause: func(ctx context.Context, d time.Duration) {
 			select {

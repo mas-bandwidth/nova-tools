@@ -80,19 +80,28 @@ func TestMergePathsFoldsPastTheCeiling(t *testing.T) {
 	assert.Equal(t, []string{"x.go", "y.go"}, MergePaths([]string{"x.go", "y.go", "x.go"}))
 }
 
-// Adjacent cards of one ledger delete adjacent lines: odd cards wave 1, even cards
-// wave 2 needing their neighbours; a generated ledger has one wave and no needs.
-func TestWavesAlternateOnAnOrdinaryLedgerAndNotOnAGeneratedOne(t *testing.T) {
+// The lander unions every generated ledger conflict, so adjacent deletions of one
+// file no longer conflict at land: every ledger plans one wave, every card carries
+// DEPENDS-ON: -, and the cards share the ledger's path with no need between them,
+// so the CARDS line says shared-paths=yes and the add wants --allow-shared-paths.
+func TestALedgerPlanIsOneWaveWithSharedPathsAndNoDependencyChain(t *testing.T) {
 	t.Parallel()
 	l := Ledgers["serial-tests"]
-	rows, _ := ParseLedger(l, serialFixture)
+	rows, _ := ParseLedger(l, "# ceiling: 5\n"+
+		"cmd/nova-bus/a_test.go:TestOne serial: t.Setenv\n"+
+		"cmd/nova-bus/b_test.go:TestTwo serial: t.Chdir\n"+
+		"internal/swarm/c_test.go:TestThree serial: os.Setenv\n"+
+		"internal/swarm/d_test.go:TestFour serial: t.Setenv\n"+
+		"internal/bus/e_test.go:TestFive serial: os.Setenv\n")
+	require.Len(t, rows, 5, "the plan under test covers a ledger of five rows")
 	p := PlanLedger(l, rows, "", "", 0)
-	assert.Equal(t, 2, p.Waves)
-	assert.Equal(t, []int{1, 2, 1, 2}, []int{p.Cards[0].Wave, p.Cards[1].Wave, p.Cards[2].Wave, p.Cards[3].Wave})
-	assert.Empty(t, p.Cards[0].Deps)
-	assert.Equal(t, []string{p.Cards[0].ID, p.Cards[2].ID}, p.Cards[1].Deps)
-	assert.Equal(t, []string{p.Cards[2].ID}, p.Cards[3].Deps, "the last even card has one neighbour")
-	assert.True(t, p.Shared, "wave-1 cards share the ledger with no need between them: the add wants --allow-shared-paths")
+	assert.Equal(t, 1, p.Waves, "a ledger plan is one wave")
+	assert.True(t, p.Shared, "the cards share the ledger's path with no need between them: the add wants --allow-shared-paths")
+	for _, c := range p.Cards {
+		assert.Equal(t, 1, c.Wave, c.ID)
+		assert.Empty(t, c.Deps, c.ID)
+		assert.Contains(t, Render(header, c), "\nDEPENDS-ON: -\n", c.ID)
+	}
 
 	g := Ledgers["generality-fixtures"]
 	grows, _ := ParseLedger(g, "a/one.md recorded\nb/two.md recorded\nc/three.md recorded\n")
@@ -137,6 +146,9 @@ func TestEveryRenderedBriefPassesTheLint(t *testing.T) {
 			assert.True(t, strings.HasPrefix(brief, "RESULT: "+c.ID+" sha=0123456789ab tier: "+c.Tier+"\n"), brief)
 			assert.Contains(t, brief, "\nTEST: "+l.Test+"\n")
 			assert.Contains(t, brief, "\nKIND: fix-red\n")
+			_, read, ok := strings.Cut(brief, "\nAS A READ\n")
+			assert.True(t, ok, "the brief has an AS A READ section")
+			assert.Contains(t, "\n"+read, "\nThe scope of this change is its PATHS line. "+AlwaysInPathsRule+"\n", "the reader is handed the scope rule")
 		}
 	}
 }
@@ -205,23 +217,23 @@ func TestTheOKLineAndTheDeadline(t *testing.T) {
 	assert.Equal(t, 45, Deadline("flash"))
 	assert.Equal(t, 60, Deadline("pro"))
 	c := Card{ID: "a", File: "x/y.go", Paths: []string{"x/y.go"}, Test: "x TestA", Tier: "pro", Kind: "fix-red", Task: "Do it."}
-	assert.Contains(t, Render(Header{Repo: "o/r", Base: "dev", Sha: "abc", Minutes: 7}, c), "Deadline: finish within 7 minutes.")
+	assert.Contains(t, Render(Header{Repo: "o/r", Base: "dev", Sha: "abc", Minutes: 7}, c), "Deadline: finish within 7 minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.")
 	c.New = []string{"x/z_test.go"}
 	assert.Contains(t, Render(Header{Repo: "o/r", Base: "dev", Sha: "abc"}, c), "\nNEW: x/z_test.go\n")
 }
 
-// --max cuts before the waves are assigned: the kept cards' needs name kept
-// cards only, so the directory is admitted (the add refuses a need that is no card
-// of the add), and the waves and the shared flag are those of the cut plan.
-func TestMaxCutsBeforeTheWavesAreAssigned(t *testing.T) {
+// --max cuts before the plan is rendered: the kept cards are the whole plan, so no
+// card needs a cut one (the add refuses a need that is no card of the add), the
+// plan is one wave, and the kept cards share the ledger with no need between them.
+func TestMaxCutsBeforeThePlanIsRendered(t *testing.T) {
 	t.Parallel()
 	l := Ledgers["serial-tests"]
 	rows, _ := ParseLedger(l, serialFixture)
 	p := PlanLedger(l, rows, "", "", 2)
 	require.Len(t, p.Cards, 2)
-	assert.Equal(t, []string{p.Cards[0].ID}, p.Cards[1].Deps, "the cut neighbour is not a need")
-	assert.Equal(t, 2, p.Waves)
-	assert.False(t, p.Shared, "one wave-1 card shares the ledger with nobody")
+	assert.Empty(t, p.Cards[1].Deps, "no card needs another, cut or kept")
+	assert.Equal(t, 1, p.Waves)
+	assert.True(t, p.Shared, "the two kept cards share the ledger with no need between them")
 	assert.Len(t, PlanLedger(l, rows, "", "", 0).Cards, 4, "0 is all")
 	assert.Len(t, PlanLedger(l, rows, "", "", 9).Cards, 4, "a max past the plan keeps every card")
 	fs, _ := ParseFindings("a/x.go:1\twrong\tfix\ta TestA\nb/y.go:1\twrong\tfix\tb TestB\n")
@@ -356,7 +368,7 @@ func TestACardThatTouchesAModelRunsItInItsGate(t *testing.T) {
 	}
 	plain := Render(header, Card{ID: "go-only", File: "internal/x/x.go", Paths: []string{"internal/x/x.go", "docs/tla.md"}, Test: "internal/x TestX", Tier: "pro", Wave: 1, Kind: "fix-red", Task: "Fix x."})
 	assert.NotContains(t, plain, "make tlc")
-	assert.NotContains(t, plain, "tla/RUNS.tsv")
+	assert.NotContains(t, strings.ReplaceAll(plain, AlwaysInPathsRule, ""), "tla/RUNS.tsv", "only the rule names the ledger")
 }
 
 // Every place the repository writes a card's GOCACHE sentence says the one thing JOB.md
@@ -448,4 +460,43 @@ func TestAGeneratedBriefDoesNotAskTheWorkerToSetTmp(t *testing.T) {
 	assert.Contains(t, brief, "TMPDIR and GOTMPDIR are already set inside the job directory by the card's lane")
 	assert.Contains(t, brief, "set neither by hand")
 	assert.NotContains(t, brief, "set TMPDIR and GOTMPDIR inside the job directory")
+}
+
+func TestTheDeadlineLineSaysTheJudgmentIsTheCoordinators(t *testing.T) {
+	t.Parallel()
+	const deadlineTail = "; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it."
+
+	// 1. Template card
+	tmpl, err := swarm.Template("card")
+	require.NoError(t, err)
+	assert.Contains(t, tmpl, "Deadline: finish within <n> minutes"+deadlineTail)
+	assert.Empty(t, swarm.LintCardChildWith([]byte(tmpl), swarm.DefaultChildRules))
+
+	// 2. Ledger generator
+	l := Ledgers["serial-tests"]
+	rows, _ := ParseLedger(l, serialFixture)
+	lp := PlanLedger(l, rows, "", "", 1)
+	require.NotEmpty(t, lp.Cards)
+	ledgerBrief := Render(header, lp.Cards[0])
+	assert.Contains(t, ledgerBrief, "Deadline: finish within 45 minutes"+deadlineTail)
+	assert.Empty(t, Lint(lp.Cards[0].ID, ledgerBrief))
+
+	// 3. Findings generator
+	findings, _ := ParseFindings("internal/bus/send.go:12\tthe receipt is not fsynced\tcall f.Sync before close\tinternal/bus TestReceiptIsFsynced\n")
+	fp := PlanFindings(findings, "", "", 1)
+	require.NotEmpty(t, fp.Cards)
+	findingsBrief := Render(header, fp.Cards[0])
+	assert.Contains(t, findingsBrief, "Deadline: finish within 60 minutes"+deadlineTail)
+	assert.Empty(t, Lint(fp.Cards[0].ID, findingsBrief))
+
+	// 4. Help generator
+	hc := PlanHelp("nova-x", "help text\n", "", "", "")
+	helpBrief := Render(header, hc)
+	assert.Contains(t, helpBrief, "Deadline: finish within 60 minutes"+deadlineTail)
+	assert.Empty(t, Lint(hc.ID, helpBrief))
+
+	// Custom deadline minutes
+	customBrief := Render(Header{Repo: "example/repo", Base: "dev", Sha: "0123456789abcdef0123456789abcdef01234567", Minutes: 20}, hc)
+	assert.Contains(t, customBrief, "Deadline: finish within 20 minutes"+deadlineTail)
+	assert.Empty(t, Lint(hc.ID, customBrief))
 }
