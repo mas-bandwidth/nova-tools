@@ -105,6 +105,14 @@ func Start(t testing.TB, extra ...string) string {
 	return real.start(t, extra).Addr()
 }
 
+// StartInDir is Start with a caller-owned test directory. It is used when a
+// fixture places an RDB in t.TempDir before Redis starts. The caller owns the
+// directory; Start still owns and reaps the child, including abnormal exits.
+func StartInDir(t testing.TB, dir string, extra ...string) string {
+	t.Helper()
+	return real.startIn(t, dir, extra).Addr()
+}
+
 // StartServer is Start with the server in hand, for a test that stops it
 // before the test ends.
 func StartServer(t testing.TB, extra ...string) *Server {
@@ -240,6 +248,11 @@ func freePort(listen func(network, address string) (net.Listener, error)) (strin
 // port.
 func (l launch) start(t testing.TB, extra []string) *Server {
 	t.Helper()
+	return l.startIn(t, "", extra)
+}
+
+func (l launch) startIn(t testing.TB, dir string, extra []string) *Server {
+	t.Helper()
 	l.refuse()
 	if err := check(extra); err != nil {
 		t.Fatalf("testredis: %v", err)
@@ -249,7 +262,9 @@ func (l launch) start(t testing.TB, extra []string) *Server {
 	if err != nil {
 		t.Fatalf("testredis: no server is started without its sentry: %v", err)
 	}
-	dir := t.TempDir()
+	if dir == "" {
+		dir = t.TempDir()
+	}
 	for try := 1; ; try++ {
 		s, up := l.run(t, bin, dir, l.freePort(t), extra, group)
 		if up {

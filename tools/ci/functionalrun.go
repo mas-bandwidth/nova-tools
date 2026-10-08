@@ -65,6 +65,12 @@ func functionalRun(e env, r cmdRunner, args []string) int {
 			pkgs = append(pkgs, a)
 		}
 	}
+	// A coordinator may run this tier under flock. Its descriptor is inherited
+	// by this process but must not pass to test binaries or their dependencies.
+	if err := markInheritedFDsCloseOnExec(); err != nil {
+		fmt.Fprintf(e.stderr, "functional-run: cannot close inherited descriptors for children: %v\n", err)
+		return 2
+	}
 
 	sel, code, err := capture(r, cmdSpec{Name: goCmd, Args: append([]string{"run", "./cmd/nova-ci", "functional"}, pkgs...), Dir: e.dir, Stderr: e.stderr})
 	if err != nil || code != 0 {
