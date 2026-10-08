@@ -180,3 +180,46 @@ func TestRunnerEndedReadsTheJobsLastEventAsCollectDoes(t *testing.T) {
 		assert.Equal(t, want, dead, "%q", log)
 	}
 }
+
+// The daemon's finish checks the model her delivered brief names: a LAND whose report names
+// no model, or another, is a HOLD, so a card that ran on the wrong model is not finished ok.
+// The reader of attempt 7 found the daemon's finish sent the report through without the check
+// the server's friendFinish keeps (outbox.go's OutboxFinishArgv).
+func TestTheFinishChecksTheModelTheDeliveredBriefNames(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	dir := r.d.Dir
+	row := &twinRow{}
+	r.d.Held = row.held
+	f := &finishes{}
+	r.d.Finish = f.finish
+
+	const head = "0123456789abcdef0123456789abcdef01234567"
+	right, wrong, silent := workCard("right.w1", "working"), workCard("wrong.w1", "working"), workCard("silent.w1", "working")
+	for _, c := range []*HeldCard{&right, &wrong, &silent} {
+		c.Tier, c.Model = "pro", "prov/m"
+		inboxJob(t, dir, c.Job, c.Brief)
+	}
+	outboxReport(t, dir, right.Job, "Verdict: LAND\nHead: "+head+"\n\nDone.\nModel: prov/m\n")
+	outboxReport(t, dir, wrong.Job, "Verdict: LAND\nHead: "+head+"\n\nDone.\nModel: other/m\n")
+	outboxReport(t, dir, silent.Job, "Verdict: LAND\nHead: "+head+"\n\nDone.\n")
+	row.set(right, wrong, silent)
+
+	r.run(t, 3)
+
+	got := map[string][]string{}
+	for _, argv := range f.got() {
+		require.GreaterOrEqual(t, len(argv), 4, "%v", argv)
+		got[argv[3]] = argv
+	}
+	require.Len(t, got, 3, "%v", f.got())
+	assert.Equal(t, []string{"finish", "--as", "friend.bob", "right.w1@1", "--epoch", "15", "--head", head, "--branch", "sprint/right.w1.g1.e15", "--report", "friend bob LAND: Done."}, got["right.w1@1"], "the model her brief names finishes ok")
+	for _, id := range []string{"wrong.w1@1", "silent.w1@1"} {
+		argv := got[id]
+		require.NotEmpty(t, argv)
+		assert.Contains(t, argv, "--failed", "%s is a HOLD, never an ok finish", id)
+		assert.Contains(t, argv[len(argv)-1], "friend bob HOLD: ", "%s's finish says the model was wrong", id)
+	}
+	assert.Contains(t, got["wrong.w1@1"][len(got["wrong.w1@1"])-1], "the report says the card ran on other/m, and her brief names prov/m")
+	assert.Contains(t, got["silent.w1@1"][len(got["silent.w1@1"])-1], "the report names no model (want a line Model: prov/m")
+}

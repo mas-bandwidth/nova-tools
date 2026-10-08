@@ -174,3 +174,45 @@ func modelArgs(ctx context.Context, harness string, args []string) []string {
 	}
 	return append([]string{args[0], flag, m}, args[1:]...)
 }
+
+// ReportModel is the model a friend's REPORT.md says the card ran on: the value of its first
+// Model: line, or the model= word of its first Usage: line, in lower case; "" when it says
+// none. It keeps sprint.ReportModel's rule: this package cannot import internal/sprint, whose
+// own test imports it (friend_model_test.go).
+func ReportModel(report string) string {
+	for _, l := range strings.Split(report, "\n") {
+		key, value, found := strings.Cut(strings.TrimLeft(l, "#*-_ \t"), ":")
+		if !found {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(strings.Trim(key, "*_"))) {
+		case "model":
+			if w := strings.Fields(strings.Trim(strings.TrimSpace(value), "*_`")); len(w) > 0 {
+				return strings.ToLower(strings.Trim(w[0], "*_`.,;"))
+			}
+		case "usage":
+			for _, w := range strings.Fields(value) {
+				if m, ok := strings.CutPrefix(w, "model="); ok && m != "" {
+					return strings.ToLower(strings.Trim(m, "*_`.,;"))
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// ModelMismatch is why a friend's finish whose held packet carries a model is refused: her
+// report names no model, or another; "" when it names the card's (case aside), or the packet
+// carries none. It keeps sprint.FriendModelMismatch's rule, beside ReportModel.
+func ModelMismatch(want, report string) string {
+	if want == "" {
+		return ""
+	}
+	switch got := ReportModel(report); {
+	case got == "":
+		return "the report names no model (want a line Model: " + want + ", the model her brief names for the card's tier)"
+	case got != strings.ToLower(want):
+		return "the report says the card ran on " + got + ", and her brief names " + want
+	}
+	return ""
+}
