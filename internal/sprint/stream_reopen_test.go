@@ -179,4 +179,3 @@ func TestALandedStreamWithAQueuedCardIsReportedNotRefused(t *testing.T) {
 	require.Equal(t, Merging, w.state("s1-2"), "the card after it is untouched")
 	require.Equal(t, StreamWaiting, w.s.Merge.Card(CtlID("s1")).F("state"), "the stream reopens: %+v", p.Units)
 }
-
