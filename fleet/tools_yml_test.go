@@ -89,6 +89,14 @@ func TestToolsYmlBuildsNovaSprintFromItsOwnRepo(t *testing.T) {
 		return str(cp["src"]) == "{{ nova_sprint_out }}/{{ nova_platform }}/SHA256SUMS" &&
 			str(cp["dest"]) == "{{ tools_sprint_stage }}/SHA256SUMS"
 	})
+	// The split stage is a sibling of the release stage, so the release
+	// directory task creates only tools_stage; without its own directory task
+	// the first copy into the fresh stage fails with "Destination directory
+	// ... does not exist" before the split build is verified or installed.
+	sprintDir := taskIndex(install, func(task map[string]any) bool {
+		f, _ := task["ansible.builtin.file"].(map[string]any)
+		return str(f["path"]) == "{{ tools_sprint_stage }}" && f["state"] == "directory"
+	})
 	// The staged bytes are checked against the build's checksum before anything
 	// installs them.
 	verified := taskIndex(install, func(task map[string]any) bool {
@@ -176,6 +184,7 @@ func TestToolsYmlBuildsNovaSprintFromItsOwnRepo(t *testing.T) {
 		{"the split build is staged in its own directory on every machine",
 			stagedSplit >= 0 && stagedSums > stagedSplit && !excludesCoordinators(install[stagedSplit]) &&
 				strings.Contains(strings.Join(whenLines(install[stagedSplit]), " "), "not ansible_check_mode")},
+		{"the split stage's directory is created before its first copy", sprintDir >= 0 && stagedSplit > sprintDir},
 		{"the staged split build is verified against the build's checksum before installation",
 			verified > stagedSums && stagedSums >= 0},
 		{"the install play's copy follows the verification and the release's own install",
