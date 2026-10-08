@@ -388,7 +388,11 @@ func (st *Store) SetFriendHeld(ctx context.Context, friend string, held bool, wh
 // in one exchange, and, when the roster has a friend, the fleet table's cards for
 // the token sum. A store that keeps no records has no friends.
 func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, error) {
-	rows, _, err := st.friendRows(ctx, now)
+	policy, err := st.Policy(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, _, err := st.friendRows(ctx, now, (&sprint.Snapshot{Policy: policy}).PresenceWindows())
 	if err != nil || len(rows) == 0 {
 		return rows, err
 	}
@@ -425,8 +429,9 @@ func (st *Store) friendFleet(ctx context.Context) (*sprint.Table, error) {
 
 // friendRows is FriendRows and, by name, why each friend is not up
 // (sprint.FriendDownWhy; absent while she is up): the words a take refused for her names
-// (FriendSeats).
-func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, map[string]string, error) {
+// (FriendSeats). Her presence is judged under the windows the caller took
+// (friend_pong_window, friend_finish_window).
+func (st *Store) friendRows(ctx context.Context, now time.Time, windows sprint.PresenceWindows) ([]FriendRow, map[string]string, error) {
 	r, kv, err := st.roster(ctx)
 	if kv == nil {
 		return nil, nil, nil // a store that keeps no records: no friend
@@ -468,7 +473,7 @@ func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, ma
 				fin, _ = time.Parse(time.RFC3339, vals[3*i+2])
 			}
 		}
-		presence := sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation, Finished: fin}
+		presence := sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation, Finished: fin, Windows: windows}
 		word, evidence := sprint.FriendEvidence(presence, now)
 		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Roles: r[n].Roles, Billing: r[n].Billing, Streams: r[n].Streams, Kinds: r[n].Kinds, Load: b.Load, Report: b.Friend, Beat: b.At, Proof: b.Proof}
 		if why := sprint.FriendDownWhy(presence, now); why != "" {
@@ -511,7 +516,16 @@ func (st *Store) friendNames(ctx context.Context) []string {
 // FriendSeats returns every friend of the roster as a FriendSeat (with Name, Width, Status,
 // Class, Mode, and Running: the cards her last beat names running).
 func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.FriendSeat, error) {
-	rows, whys, err := st.friendRows(ctx, now)
+	policy, err := st.Policy(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return st.seatsOf(ctx, &sprint.Snapshot{Policy: policy}, now)
+}
+
+// seatsOf is FriendSeats with the policy numbers the snapshot holds.
+func (st *Store) seatsOf(ctx context.Context, s *sprint.Snapshot, now time.Time) ([]sprint.FriendSeat, error) {
+	rows, whys, err := st.friendRows(ctx, now, s.PresenceWindows())
 	if err != nil {
 		return nil, err
 	}
@@ -543,9 +557,10 @@ func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.Frien
 // a dependency resolution can make work ready later in the same tick, and a friend coming
 // up is levelled on the same tick (docs/SPEC-SPRINT.md, WHO preference, and section 1,
 // friend-deal-idle-lanes-first.w1); nil when it has none.
-// The snapshot no longer gates the read; it stays in the signature for its callers.
-func (st *Store) friendSeats(ctx context.Context, _ *sprint.Snapshot, now time.Time) ([]sprint.FriendSeat, error) {
-	return st.FriendSeats(ctx, now)
+// The snapshot no longer gates the read; its policy numbers say how long her evidence
+// keeps her up (friend_pong_window, friend_finish_window).
+func (st *Store) friendSeats(ctx context.Context, s *sprint.Snapshot, now time.Time) ([]sprint.FriendSeat, error) {
+	return st.seatsOf(ctx, s, now)
 }
 
 // FriendNames is every friend of the roster in name order (the friends table's rows), for
@@ -639,8 +654,14 @@ func (st *Store) FriendHealth(ctx context.Context, friend, who string, obs sprin
 	if err != nil {
 		return sprint.FriendHealth{}, "", false, err
 	}
+	// her status as the friends' rule says it under friend_pong_window and friend_finish_window (policy.go)
+	policy, err := st.Policy(ctx)
+	if err != nil {
+		return sprint.FriendHealth{}, "", false, err
+	}
+	windows := (&sprint.Snapshot{Policy: policy}).PresenceWindows()
 	if req.Replays() && req.Obs.Generation == generation {
-		status, err := st.friendStatusAfter(ctx, friend, sprint.FriendPresence{Held: e.Held, Health: req.Prev, Generation: generation})
+		status, err := st.friendStatusAfter(ctx, friend, sprint.FriendPresence{Held: e.Held, Health: req.Prev, Generation: generation, Windows: windows})
 		return req.Prev, status, true, err
 	}
 	step := HealthStep(req)
@@ -652,7 +673,7 @@ func (st *Store) FriendHealth(ctx context.Context, friend, who string, obs sprin
 	if len(res.Refused) > 0 {
 		return sprint.FriendHealth{}, "", false, errors.New(res.Refused[0].Why)
 	}
-	status, err := st.friendStatusAfter(ctx, friend, sprint.FriendPresence{Held: e.Held, Health: obs, Generation: obs.Generation})
+	status, err := st.friendStatusAfter(ctx, friend, sprint.FriendPresence{Held: e.Held, Health: obs, Generation: obs.Generation, Windows: windows})
 	return obs, status, false, err
 }
 

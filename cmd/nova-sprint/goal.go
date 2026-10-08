@@ -138,6 +138,11 @@ func (a *app) cmdGoalSet(args []string, stdout, stderr io.Writer) int {
 			route = a.defaultGoalRoute(pos[0])
 		}
 	}
+	policy, err := st.Policy(ctx)
+	if err != nil {
+		return refuse(stderr, name, err.Error())
+	}
+	every := (&sprint.Snapshot{Policy: policy}).PolicyDuration(sprint.PolicyRemindEvery)
 	g, created, err := st.SetGoal(ctx, pos[0], text, route)
 	if err != nil {
 		return refuse(stderr, name, err.Error())
@@ -151,7 +156,7 @@ func (a *app) cmdGoalSet(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	fmt.Fprintf(stdout, "%s OK name=%s new=%t route=%s bytes=%d; pushed on the first tick of a RUNNING machine, then every %s of running time\n",
-		token(name), oneline.Escape(g.Name), created, oneline.Escape(g.Route), len(g.Text), sprint.RemindEvery)
+		token(name), oneline.Escape(g.Name), created, oneline.Escape(g.Route), len(g.Text), every)
 	return 0
 }
 

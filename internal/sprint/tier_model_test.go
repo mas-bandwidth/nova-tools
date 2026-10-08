@@ -35,7 +35,7 @@ func TestACardThatWritesAModelIsTieredFrontier(t *testing.T) {
 	for id, want := range map[string]string{"m1": cardhdr.RouteFrontier, "m2": cardhdr.RouteFrontier, "m3": cardhdr.RouteFrontier, "r1": cardhdr.RouteFlash, "g1": cardhdr.RoutePro} {
 		c := w.s.Primary(id)
 		require.NotNil(t, c, id)
-		assert.Equal(t, want, CardTier(c), "%s is dealt on %s", id, want)
+		assert.Equal(t, want, CardTier(nil, c), "%s is dealt on %s", id, want)
 		assert.Equal(t, want, TierWord(c), "%s is counted on %s", id, want)
 	}
 	m1 := w.s.Primary("m1").F("brief")

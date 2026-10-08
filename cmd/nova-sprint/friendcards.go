@@ -658,21 +658,24 @@ func (a *app) wakeFriendStall(ctx context.Context, st *store.Store, name string,
 	return err
 }
 
-// friendReadText is the BRIEF.md of a friend's read, as friend sync and friend cards
-// both write it: the read's brief, the attempt's branch, start commit and head (the packet's,
-// else the card's), and a deadline of thirty minutes on the sprint clock.
-func friendReadText(st *store.Store, name string, p sprint.Packet, c *sprint.Card) string {
+// friendReadTextContext renders a friend's read brief using the current policy.
+// A failed policy read is returned to the caller, so it cannot deliver a brief
+// with a stale compiled deadline.
+func friendReadTextContext(ctx context.Context, st *store.Store, name string, p sprint.Packet, c *sprint.Card) (string, error) {
 	if p.ReadJob != "" {
-		// a read asked the old way keeps the old brief
 		branch, head, start := p.WorkBranch, p.Head, ""
 		if c != nil {
 			branch, head, start = cmp.Or(branch, c.F("branch")), cmp.Or(head, c.F("head")), c.F("start")
 		}
+		policy, err := st.Policy(ctx)
+		if err != nil {
+			return "", fmt.Errorf("friend_read_deadline: %w", err)
+		}
 		var deadline time.Time
 		if st.Now != nil {
-			deadline = st.Now().Add(sprint.FriendReadDeadline)
+			deadline = st.Now().Add((&sprint.Snapshot{Policy: policy}).PolicyDuration(sprint.PolicyFriendReadDeadline))
 		}
-		return sprint.FriendReadBrief(name, p.Primary, p.Brief, branch, start, head, p.Attempt, deadline)
+		return sprint.FriendReadBrief(name, p.Primary, p.Brief, branch, start, head, p.Attempt, deadline), nil
 	}
 	start := ""
 	var deadline time.Time
@@ -680,14 +683,14 @@ func friendReadText(st *store.Store, name string, p sprint.Packet, c *sprint.Car
 		p.WorkBranch, p.Head = cmp.Or(p.WorkBranch, c.F("branch")), cmp.Or(p.Head, c.F("head"))
 		start = c.F("start")
 		if c.Col == sprint.Working {
-			// a read dealt to her working runs from its deal (sprint read_cards.go, readStart)
+			// A read card's deadline starts when its deal is taken.
 			deadline, _ = time.Parse(time.RFC3339, c.F("asked"))
 			if !deadline.IsZero() {
 				deadline = deadline.Add(sprint.ReadCardDeadline)
 			}
 		}
 	}
-	return sprint.ReadCardBrief(name, friendJobOf(p), p, start, deadline)
+	return sprint.ReadCardBrief(name, friendJobOf(p), p, start, deadline), nil
 }
 
 // friendReadOf delivers one friend's read and closes it from the friend's
@@ -711,7 +714,10 @@ func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir strin
 		if err := os.MkdirAll(in, 0o755); err != nil {
 			return 0, 0, err
 		}
-		text := friendReadText(st, name, p, c)
+		text, err := friendReadTextContext(ctx, st, name, p, c)
+		if err != nil {
+			return delivered, finished, err
+		}
 		switch err := atomicfile.WriteFile(brief, []byte(text), 0o644, atomicfile.NoReplace()); {
 		case err == nil:
 			delivered++

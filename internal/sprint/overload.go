@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"cmp"
 	"fmt"
 	"sort"
 	"strings"
@@ -64,7 +65,7 @@ func MemberTimeouts(s *Snapshot, member string) []Timeout {
 	if s.Fleet == nil {
 		return nil
 	}
-	since := s.Now.Add(-OverloadWindow)
+	since := s.Now.Add(-s.PolicyDuration(PolicyOverloadWindow))
 	within := func(stamp string) (time.Time, bool) {
 		t, err := time.Parse(time.RFC3339, stamp)
 		return t, err == nil && !t.Before(since) && !t.After(s.Now)
@@ -102,16 +103,31 @@ type Overload struct {
 	Member   string
 	Timeouts []Timeout
 	Width    int
+	Window   time.Duration // the window the timeouts were counted over (overload_window)
 }
 
 // Overloaded is whether the member is overloaded (OverloadTimeouts or more timeouts within
 // OverloadWindow), and the facts.
 func Overloaded(s *Snapshot, member string) (Overload, bool) {
 	ts := MemberTimeouts(s, member)
-	if len(ts) < OverloadTimeouts {
+	if len(ts) < s.PolicyCount(PolicyOverloadTimeouts) {
 		return Overload{}, false
 	}
-	return Overload{Member: member, Timeouts: ts, Width: s.Width(member)}, true
+	return Overload{Member: member, Timeouts: ts, Width: s.Width(member), Window: s.PolicyDuration(PolicyOverloadWindow)}, true
+}
+
+// window is the window the timeouts were counted over: OverloadWindow when the facts name none.
+func (o Overload) window() time.Duration { return cmp.Or(o.Window, OverloadWindow) }
+
+// waitText is a window as a decision's word says it: 15m, 2h, 90s.
+func waitText(d time.Duration) string {
+	switch {
+	case d > 0 && d%time.Hour == 0:
+		return fmt.Sprintf("%dh", d/time.Hour)
+	case d > 0 && d%time.Minute == 0:
+		return fmt.Sprintf("%dm", d/time.Minute)
+	}
+	return d.String()
 }
 
 // HalfWidth is the width the judgment offers: half the member's, at least 1.
@@ -123,13 +139,13 @@ func (o Overload) What() string {
 	for _, t := range o.Timeouts {
 		cards = append(cards, t.Card+" ("+t.Kind+")")
 	}
-	return fmt.Sprintf("%s is overloaded: %d cards ended on a timeout in the last %s: %s; halve its width: nova-sprint fleet up %s --width %d, or wait 15m",
-		o.Member, len(o.Timeouts), OverloadWindow, strings.Join(cards, ", "), o.Member, o.HalfWidth())
+	return fmt.Sprintf("%s is overloaded: %d cards ended on a timeout in the last %s: %s; halve its width: nova-sprint fleet up %s --width %d, or wait %s",
+		o.Member, len(o.Timeouts), o.window(), strings.Join(cards, ", "), o.Member, o.HalfWidth(), waitText(o.window()))
 }
 
 // Decisions are the judgment's: halve the member's width, or wait the window.
 func (o Overload) Decisions() []string {
-	return []string{fmt.Sprintf("fleet up %s --width %d", o.Member, o.HalfWidth()), "wait 15m"}
+	return []string{fmt.Sprintf("fleet up %s --width %d", o.Member, o.HalfWidth()), "wait " + waitText(o.window())}
 }
 
 // MemberSubject is the stream word a member's judgment is filed under.
