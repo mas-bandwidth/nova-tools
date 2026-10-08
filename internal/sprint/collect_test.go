@@ -11,7 +11,7 @@ import (
 // Collect finishes every outbox report of a working card (the coordinator's finish-loop.py,
 // 92 finishes on the night of 2026-10-05): the card's own friend's tree first, else any
 // friend's; LAND with a Head at that head, HOLD and FAIL failed with the report's first 600
-// characters; a lane its runner ENDed with no report failed when dead lanes are asked; and a
+// characters; a lane its runner ENDed with no report is a harness fault to return when dead lanes are asked; and a
 // card no longer working (finished once) is never named again.
 func TestCollectFinishesEveryOutboxReportOfAWorkingCard(t *testing.T) {
 	t.Parallel()
@@ -70,7 +70,8 @@ func TestCollectFinishesEveryOutboxReportOfAWorkingCard(t *testing.T) {
 	assert.True(t, fail.Failed)
 	assert.Empty(t, fail.Head)
 	assert.Equal(t, "friend amy FAIL: "+collectChars(("Verdict: FAIL\n\n" + long)[:600], 600), fail.Report, "a failed finish carries the report's first 600 characters")
-	assert.Equal(t, Collected{CollectCard: cards[4], Failed: true, Dead: true, Report: "friend amy lane ended with no report: 2026-10-06 07:10:00 AM END dead.w1~15 model=m exit=1 wall=600s report=no"}, got["dead.w1"], "a lane ENDed with no report is finished failed, so the card is dealt again")
+	assert.Equal(t, Collected{CollectCard: cards[4], Dead: true, Report: "harness-fault: no report; friend amy lane ended: 2026-10-06 07:10:00 AM END dead.w1~15 model=m exit=1 wall=600s report=no"}, got["dead.w1"], "a lane ENDed with no report returns without a failed finish")
+	assert.True(t, got["fail.w1"].Failed, "an explicit FAIL report still consumes a failed finish")
 	assert.NotContains(t, got, "limit.w1", "a run stopped at its usage limit is run again, never dead")
 	assert.NotContains(t, got, "again.w1", "a job started again after its END is running")
 	assert.Equal(t, "outbox/quiet.w1~15/REPORT.md of amy cannot be read: it is a symlink", got["quiet.w1"].Left)
