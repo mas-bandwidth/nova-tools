@@ -1042,6 +1042,13 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return o
 	}
 	name, dir, server := c.Str("as"), c.Str("dir"), c.Str("server")
+	// every path a lane names is absolute, its working directory first: a model that reads a
+	// path relative must never be handed one (friend.LaneJobOf, docs/SPEC-FRIEND.md)
+	abs, err := filepath.Abs(dir)
+	if err != nil || !filepath.IsAbs(abs) {
+		return tool.Refuse(fmt.Sprintf("lane path not absolute: %s: %v; the daemon does not start", dir, err))
+	}
+	dir = abs
 	state, stateWhy := w.daemonStateDir(c)
 	// every lane child runs inside the wall of the profile her row names, else --profile
 	// (docs/SPEC-FRIEND.md, buds-in-the-wall-r.w5); a batch turn runs as it did
@@ -1323,6 +1330,12 @@ func (w world) run(c *tool.Call) *tool.Out {
 		record(w.now().UTC().Format(time.RFC3339) + " limit: " + text)
 		tellSeat(friend.LimitAlikeText(name, text))
 	}
+	// the down her lanes' harness faults owe her row (Daemon.FaultDown): her beat says it until it passes
+	type faultHold struct {
+		until  time.Time
+		reason string
+	}
+	var faultDown atomic.Pointer[faultHold]
 	stager := w.stager(dir)
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
@@ -1434,6 +1447,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 				until, reason := friend.PauseBeat(marker, c.Str("model"), w.now())
 				return down(ctx, until, reason)
 			}
+			// her lanes hit the same harness fault three times in ten minutes: her beat says
+			// her down with the fault until it passes (friend.FaultWatch), then up again
+			if h := faultDown.Load(); h != nil && w.now().Before(h.until) {
+				return down(ctx, h.until, h.reason)
+			}
 			if _, _, limited := fl.Limited(); limited && !perCard {
 				sc.Step(ctx)
 			}
@@ -1453,6 +1471,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 		LaneHold:  func() string { return friend.ReadPause(state) },
 		LaneHoldDown: func(_ context.Context, message string) error {
 			return friend.WritePause(state, message, w.now()) // her next beat says her down with it
+		},
+		FaultDown: func(until time.Time, reason string) {
+			faultDown.Store(&faultHold{until: until, reason: reason}) // her next beat says her down with it
 		},
 		ReadSlots: func() int { return int(rowReadSlots.Load()) },
 		LaneCaps: func() map[string]time.Duration {

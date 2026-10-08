@@ -178,6 +178,11 @@ type Daemon struct {
 	Model        string
 	LaneHold     func() string
 	LaneHoldDown func(ctx context.Context, message string) error
+	// FaultDown marks her row down until until with reason: the same harness fault
+	// FaultRepeats times within FaultWithin on her lanes (lane_parity.go); her beat says
+	// her down with them until then (friend beat --until --reason). Nil: her lanes are
+	// held here alone.
+	FaultDown func(until time.Time, reason string)
 	// Held is every card on her row as the sprint server says it (HeldVia: friend cards
 	// <friend>, else the worker view), asked once an InboxEvery; her inbox is reconciled with
 	// the answer (SyncInbox, inbox.go). Nil leaves her inbox to friend sync alone.
