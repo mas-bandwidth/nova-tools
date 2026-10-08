@@ -1074,6 +1074,26 @@ func (l *lander) recordPushed(ctx context.Context, s *sprint.Snapshot, order []s
 	if l.st == nil || l.a == nil {
 		return s, false
 	}
+	// A returned or reworked card cannot inherit a receipt from its old head.
+	// Clear such receipts before choosing batches to recover.
+	for _, stream := range order {
+		if len(sprint.ClearObsoletePushedUnreported(s, stream).Units) == 0 {
+			continue
+		}
+		epoch := l.epoch
+		step := store.Step{Verb: "land", Load: []string{sprint.Work, sprint.Merge}, Epoch: &epoch, Actor: l.c.actor,
+			Plan: func(fresh *sprint.Snapshot) sprint.Plan { return sprint.ClearObsoletePushedUnreported(fresh, stream) }}
+		l.a.serial.Lock()
+		res, err := l.st.Run(ctx, step)
+		if err == nil && len(res.Refused) == 0 {
+			s, err = l.st.Load(ctx, []string{sprint.Work, sprint.Merge, sprint.Fleet}, nil)
+		}
+		l.a.serial.Unlock()
+		if err != nil || len(res.Refused) != 0 || s == nil {
+			l.keep(landBatch{Stream: stream, Status: "failed", Reason: "obsolete pushed receipt could not be cleared: " + stepWhy(res, err)})
+			return s, true
+		}
+	}
 	type pushed struct {
 		stream string
 		pins   []landCard
@@ -1200,9 +1220,9 @@ func (l *lander) markPushed(stream, sha string, pins []landCard) error {
 	if l == nil || l.dry || l.st == nil || l.a == nil || sha == "" || len(pins) == 0 {
 		return nil
 	}
-	ids := make([]string, len(pins))
+	marked := make([]sprint.PushedPin, len(pins))
 	for i, c := range pins {
-		ids[i] = c.id
+		marked[i] = sprint.PushedPin{ID: c.id, Head: c.head, Attempt: c.attempt}
 	}
 	epoch := l.epoch
 	step := store.Step{
@@ -1211,7 +1231,7 @@ func (l *lander) markPushed(stream, sha string, pins []landCard) error {
 		Epoch: &epoch,
 		Actor: l.c.actor,
 		Plan: func(s *sprint.Snapshot) sprint.Plan {
-			return sprint.MarkPushedUnreported(s, stream, sha, ids)
+			return sprint.MarkPushedUnreported(s, stream, sha, marked)
 		},
 	}
 	l.a.serial.Lock()
