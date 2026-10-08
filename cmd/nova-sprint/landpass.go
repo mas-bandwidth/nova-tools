@@ -25,8 +25,9 @@ package main
 // are disjoint and the same cards merged, it is pushed with no new gate (a clean merge of
 // disjoint files); else the combined tree is gated once and pushed. A red combined gate
 // refuses the batch naming the batches it collided with and leaves its cards queued for
-// the next pass; no stream stops for it, and no other stream's outcome changes. Every tip
-// pushed is recorded in baseGateCache, so the next batch on it gates no base. The report is
+// the next pass; no stream stops for it, and no other stream's outcome changes. A tip whose
+// whole tree a gate saw is recorded in baseGateCache (a clean merge of disjoint files is
+// not), so the next batch on a gated tip gates no base and a disjoint push is regated. The report is
 // the merge step as before (landed), and movedExactly reads the step's receipt for this
 // batch's landings alone: the step also releases the waiting cards the landing unblocks and
 // marks sentinels reached, lines that are not this batch's and never made it FAILED again.

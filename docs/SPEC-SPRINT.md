@@ -4120,7 +4120,7 @@ clean merge of disjoint files), else gated once on the combined tree and pushed 
 A red combined gate refuses the batch for this pass (`LAND REFUSED ... fails it merged onto
 <base> as this pass moved it (stream <s>, <ids>, on <files>)`), records no fact, stops no
 stream, and the next pass merges the batch onto the new tip, where the real finding is the
-head's own. Every tip pushed is recorded as gated (`baseGateCache`), so the next batch on
+head's own. A tip whose whole tree passed a gate is recorded as gated (`baseGateCache`); a clean merge of disjoint files is not, so the next pass gates the base. The next batch on a gated tip
 it gates no base. A pass of eight batches of two cards ran sixteen gates one after another
 (twenty minutes, 2026-10-07); it runs eight, up to four at once, and a base gate once. The
 report is the merge step as before, and its receipt is read for the batch's landings alone:
