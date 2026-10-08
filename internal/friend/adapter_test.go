@@ -58,11 +58,13 @@ func TestOpenCodeDeliversIntoTheNewestSessionOfTheDirectory(t *testing.T) {
 }
 
 // A fresh opencode with no session yet prints nothing for `session list
-// --format json` (opencode 1.18.20 on mini-m5, 2026-10-08 17:20Z: zero bytes),
-// and the daemon read that as a broken harness. Empty or whitespace-only is an
-// empty list: a delivery with no session named says there is no session to
-// start one, a lane's open sees an empty listing before its seed and the new
-// session after; garbage stays a refusal with its first line quoted.
+// --format json` (opencode 1.18.20 on a fresh install, 2026-10-08 17:20Z: zero
+// bytes), and the daemon read that as a broken harness. Empty or
+// whitespace-only is an empty list: a delivery with no session named says
+// there is no session to start one, a lane's open sees an empty listing before
+// its seed and the new session after; garbage stays a refusal that carries the
+// JSON error alone, and the listing's first line goes to the daemon's record,
+// never into the error (the harness's stdout can carry anything).
 func TestAnEmptyOpenCodeSessionListIsNoSessionNotABrokenHarness(t *testing.T) {
 	t.Parallel()
 	for _, listing := range []string{"", "\n", " \n\t\n"} {
@@ -97,12 +99,15 @@ func TestAnEmptyOpenCodeSessionListIsNoSessionNotABrokenHarness(t *testing.T) {
 	assert.Equal(t, "first", id, "the lane's open seeds the first session of a fresh opencode")
 
 	_, err = decodeSessions("Error: no config found\nat main.ts:1\n")
-	assert.EqualError(t, err, `opencode session list: not a JSON list: invalid character 'E' looking for beginning of value; its first line: "Error: no config found"`)
+	assert.EqualError(t, err, `opencode session list: not a JSON list: invalid character 'E' looking for beginning of value`)
+	var record strings.Builder
 	fe := &fakeExec{listing: "garbage\n"}
-	d, _ := NewDeliverer("opencode", "/w/bob", "", fe.run, nil)
+	d, err := NewDeliverer("opencode", "/w/bob", "", fe.run, &record)
+	require.NoError(t, err)
 	_, err = d.Deliver(context.Background(), "hello")
 	assert.ErrorContains(t, err, `not a JSON list`)
-	assert.ErrorContains(t, err, `its first line: "garbage"`)
+	assert.NotContains(t, err.Error(), "garbage", "the listing's text never enters the error")
+	assert.Equal(t, "opencode session list: not a JSON list; its first line: \"garbage\"\n", record.String())
 }
 
 func TestAnUnknownHarnessIsNamed(t *testing.T) {

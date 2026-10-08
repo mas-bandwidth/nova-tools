@@ -202,7 +202,11 @@ func (o *OpenCode) sessions(ctx context.Context) ([]session, error) {
 	if exit != 0 {
 		return nil, fmt.Errorf("opencode session list exited %d", exit)
 	}
-	return decodeSessions(listing)
+	rows, err := decodeSessions(listing)
+	if err != nil {
+		recordListing(o.Out, listing)
+	}
+	return rows, err
 }
 
 // DeliverTo is one card's turn in a lane's session: `opencode run --session

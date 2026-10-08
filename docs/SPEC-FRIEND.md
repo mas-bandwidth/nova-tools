@@ -782,9 +782,11 @@ SIGKILL, so a harness that forks leaves no orphan.
 Six adapters are real: OpenCode, `opencode run --session <id> <text>` with
 the friend's directory as the process's working directory, the newest session
 of the directory when none is named (a fresh opencode with no session yet
-prints nothing for `session list --format json`, opencode 1.18.20 on mini-m5
-2026-10-08: an empty or whitespace-only listing is an empty list, no session,
-never a broken harness, and a lane's open seeds the first one;
+prints nothing for `session list --format json`, opencode 1.18.20 on a fresh
+install on a new bench, 2026-10-08: an empty or whitespace-only listing is an
+empty list, no session, never a broken harness, and a lane's open seeds the
+first one; a listing that is not a JSON list is refused with the JSON error
+alone, its first line written to the daemon's record and never into the error;
 `TestAnEmptyOpenCodeSessionListIsNoSessionNotABrokenHarness`; the directory is never a flag: opencode
 v2.0.20's run has no `--dir`, and from 2026-10-06 02:02Z every delivery that
 passed one exited 1, "Unrecognized flag: --dir"; the daemon reads `opencode
