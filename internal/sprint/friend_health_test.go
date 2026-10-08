@@ -142,6 +142,8 @@ func TestMoveSeatTakesTheNextGeneration(t *testing.T) {
 // and not dated after now (a negative age is no proof); down otherwise,
 // whatever finer word the row keeps (DaemonPong, her daemon's own pong, is down).
 func ObservedStatus(h FriendHealth, generation uint64, now time.Time) string {
-	status, _ := FriendEvidence(FriendPresence{Health: h, Generation: generation}, now)
-	return status
+	if session, _ := FriendSessionHeard(FriendPresence{Health: h, Generation: generation}, now); session {
+		return Up
+	}
+	return Down
 }

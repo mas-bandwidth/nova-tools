@@ -14,9 +14,10 @@ import (
 )
 
 // BeatEvery is how often the daemon beats to the sprint server while its
-// loop runs: the sprint's own number (internal/sprint FriendBeatEvery, one
-// second; a friend is down after fifteen without one). It is also the
-// loop's read block: one read of the stream per beat.
+// loop runs, every step whatever the session says: the sprint's own number
+// (internal/sprint FriendBeatEvery, one second; her daemon reads not beating
+// after FriendBeatLive, ten, without one). It is also the loop's read block:
+// one read of the stream per beat.
 const BeatEvery = time.Second
 
 // MaxDeliveries is how many times a message is handed into the session
@@ -96,6 +97,7 @@ type Daemon struct {
 	Width                int
 	Store                bus.Store
 	Deliver              Deliverer
+	HeartbeatState       func() BeatState                                  // native heartbeat transport result, nil for a stepped test sender
 	Beat                 func(ctx context.Context, active time.Time) error // one beat to the sprint server, carrying the session's last activity (zero: none known)
 	StepBeatForTests     bool                                              // deterministic fake-clock seam; production has one independent beat caller
 	HarnessStatus        func() (seen, rule string)                        // the beat worker's advisory harness observation; only the loop writes Status
@@ -624,7 +626,8 @@ func (d *Daemon) beatLoop(ctx context.Context, b *beatState) {
 // in as its own turn holding only the pong line (startWake), and in one-shot
 // mode, each free lane handed its next card with the waiting messages riding
 // along (lanes.go);
-// an independent beat carrying the session's proof; the session's pong; the status. The
+// an independent beat, whatever the store and the session say; the session's
+// pong; the status. The
 // daemon's own words about the coordinator collapse to the latest and ride in
 // a turn that carries messages or a card, never alone.
 func (d *Daemon) Run(ctx context.Context) error {
@@ -685,7 +688,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 			}
 		}
 		drained := l.busy == nil // this step's read takes what is pending: a wake turn never jumps a message
-		storeOK := l.read(now)
+		storeOK := l.read(now)   // sessionProof runs only after the store answered; the beat does not wait on it
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -753,16 +756,17 @@ func (d *Daemon) Run(ctx context.Context) error {
 		} else if l.unable != "" && !l.told {
 			l.told = d.tellBroken(ctx, l.b, fmt.Sprintf("The session cannot take a turn: %s. The friend reads down; every message stays pending, none given up, and the daemon tries again every %s until a turn succeeds.", l.unable, RecheckEvery))
 		}
+		// the beat goes whatever the store or the session says. Production's caller is
+		// beatLoop; a stepped test beats in this step, including when the read failed
+		// (docs/SPEC-FRIEND.md, the beat). sessionProof above is the read's condition.
 		if d.StepBeatForTests {
-			if storeOK {
-				if d.Activity != nil && (d.walked.IsZero() || now.Sub(d.walked) >= ActivityEvery) {
-					d.active, d.cards, d.walked = d.Activity(), d.held(), now
-				}
-				if err := d.Beat(ctx, d.active); err != nil {
-					d.status.BeatError = err.Error()
-				} else {
-					d.status.BeatError, d.status.Beats, d.status.LastBeat = "", d.status.Beats+1, now
-				}
+			if d.Activity != nil && (d.walked.IsZero() || now.Sub(d.walked) >= ActivityEvery) {
+				d.active, d.cards, d.walked = d.Activity(), d.held(), now // one walk serves the beat and the idle watch (they share walked)
+			}
+			if err := d.Beat(ctx, d.active); err != nil {
+				d.status.BeatError = err.Error()
+			} else {
+				d.status.BeatError, d.status.Beats, d.status.LastBeat = "", d.status.Beats+1, now
 			}
 		} else {
 			d.active, d.status.LastBeat, d.status.Beats, d.status.BeatError = beats.snapshot()
@@ -1590,6 +1594,10 @@ func (d *Daemon) daemonPong(ctx context.Context, b *bus.Bus, ping bus.Message, n
 // flush writes the status when it changed, and every StatusEvery anyway,
 // so a reader tells a live daemon from a dead one by the file's age.
 func (d *Daemon) flush(now time.Time) {
+	if d.HeartbeatState != nil {
+		b := d.HeartbeatState()
+		d.status.LastBeat, d.status.Beats, d.status.BeatError = b.At, b.Count, b.Error
+	}
 	s := d.status
 	s.Connection, s.LastPing, s.Seat, s.SeatSince = d.m.Connection, d.m.LastPing, d.m.Seat, d.m.SeatSince
 	s.Challenge, s.Nonce, s.LastPong, s.Pongs = d.m.Challenge, d.m.Nonce, d.m.LastPong, d.m.Pongs

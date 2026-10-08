@@ -32,12 +32,17 @@ const (
 	MissedBeatsDown = 3
 	// LoadWindow is the span of beats whose highest load the load cell shows.
 	LoadWindow = 10 * time.Second
-	// FriendBeatEvery is how often a friend's daemon beats (friend beat). The
-	// beat is recorded and shown (her report, her load, its age), and it never
-	// makes her up: it proves a daemon, not a session (FriendStatus).
+	// FriendBeatEvery is how often a friend's daemon beats (friend beat): every
+	// second from the moment it starts until it stops, whatever her session says.
+	// The beat is her daemon's liveness and nothing else; it proves a daemon, not
+	// a session, so it is half of her up and never the whole (FriendStatus).
 	FriendBeatEvery = time.Second
-	// FriendProofLive is how old the session proof her beat carries may be while she is
-	// up (docs/SPEC-FRIEND.md, The push proof): her daemon asks the session eight
+	// FriendBeatLive is how old her daemon's last beat may be while her daemon
+	// reads up: ten beats missed and it reads not beating (the owner,
+	// 2026-10-04: "both sides ping each second").
+	FriendBeatLive = 10 * time.Second
+	// FriendProofLive is how old a verified session proof may be. FriendSessionHeard
+	// counts it with no beat-age gate (docs/SPEC-FRIEND.md, presence): her daemon asks the session eight
 	// minutes after its last ask and waits up to five for the answer (nova-friend's
 	// ProveEvery and SessionBound), so a session that answers is never proved longer
 	// ago than thirteen minutes, inside this window. The owner, 2026-10-05: "nova-bus is useless if the friend using it
@@ -200,31 +205,34 @@ func PresenceStatus(held bool, b Beat, now time.Time) string {
 	return Down
 }
 
-// FriendStatus is the one rule of a friend's status at now: held while the
-// coordinator holds her (friend down); else down while her last beat says so
-// (SaysDown: her harness at its limit, until when and why; a beat can say down,
-// never up); else up only on evidence from her own session within its window
-// (FriendEvidence): a wake ping her session answered
-// (the coordinator's friend health --state up, under the current seat
-// generation) under FriendPongWindow old, or her session's answer to a check her
-// daemon asked, proved on her beat (friend beat --check, then --pong naming its
-// nonce; ProveBeat; Beat.Proof) under FriendProofLive old while her beat is
-// fresh, or a card of hers finished under FriendFinishWindow old;
-// else down. Her beat itself, whoever sends it, is never evidence: a daemon or a
-// loop beating for her says an app is open, not that her session can work; only
-// the session's answer it carries is. Releasing a hold (friend up) is no
-// evidence either.
+// FriendStatus is the one rule of a friend's status at now
+// (docs/SPEC-SPRINT.md, friend presence): held while the coordinator holds her
+// (friend down); else down while her last beat says so (SaysDown: her harness at
+// its limit, until when and why; a beat can say down, never up alone); else up
+// when both facts hold, and down when either is missing:
+//
+//   - her daemon beats: her last beat is at most FriendBeatLive old (FriendDaemon);
+//   - her session has given evidence within its window (FriendSessionHeard): a
+//     wake ping her session answered (the coordinator's friend health --state
+//     up, under the current seat generation) under FriendPongWindow old, or a
+//     verified session check answer under FriendProofLive old, or a
+//     card of hers finished under FriendFinishWindow old.
+//
+// The beat alone is never up: a daemon or a loop
+// beating for her says a daemon runs, not that her session can work. Session
+// evidence alone is never up either: a session with no daemon delivers
+// nothing. Releasing a hold (friend up) is neither. The model is
+// tla/Presence.tla (UpHasSessionEvidence, UpHasDaemon).
 func FriendStatus(f FriendPresence, now time.Time) string {
 	status, _ := FriendEvidence(f, now)
 	return status
 }
 
-// FriendEvidence is FriendStatus with the evidence it rests on, as her row
-// names it: for up, the evidence and its age ("session pong 3m0s ago",
-// "finish 12m0s ago"); for down, what is missing, each with the age of the
-// last one seen, and the beat's age when she beats, so a row read down while
-// her daemon beats says why; for a beat that says down, until when and why;
-// for held, "held".
+// FriendEvidence is FriendStatus with the two facts it rests on, as her row
+// names them: "daemon up, session pong 3m0s ago" while up; while down, which of
+// the two is missing and the age of each ("daemon up, session deaf 14m0s: ...",
+// "daemon not beating (last beat 2m0s ago), finish 1m0s ago"); for a beat
+// that says down, until when and why; for held, "held".
 func FriendEvidence(f FriendPresence, now time.Time) (string, string) {
 	if f.Held {
 		return Held, "held"
@@ -232,39 +240,62 @@ func FriendEvidence(f FriendPresence, now time.Time) (string, string) {
 	if f.Beat.SaysDown() {
 		return Down, beatSaysDownWhy(f.Beat)
 	}
+	daemon, daemonWhy := FriendDaemon(f.Beat, now)
+	session, sessionWhy := FriendSessionHeard(f, now)
+	if daemon && session {
+		return Up, daemonWhy + ", " + sessionWhy
+	}
+	return Down, daemonWhy + ", " + sessionWhy
+}
+
+// FriendDaemon is the first fact of her up: whether her daemon beats, her last
+// beat at most FriendBeatLive old and not dated after now, and the words her row
+// says it in ("daemon up", "daemon not beating (last beat 2m0s ago)", "daemon
+// never beat").
+func FriendDaemon(b Beat, now time.Time) (bool, string) {
+	if !b.Beaten() {
+		return false, "daemon never beat"
+	}
+	if age := now.Sub(b.At); age >= 0 && age <= FriendBeatLive {
+		return true, "daemon up"
+	}
+	return false, "daemon not beating (last beat " + ago(now.Sub(b.At)) + ")"
+}
+
+// FriendSessionHeard is the second fact of her up: whether her session has given
+// evidence within its window (FriendStatus names the two), and the words her
+// row says it in: the evidence and its age while it holds ("session pong 3m0s
+// ago", "finish 12m0s ago"); else "session deaf" with the age of the newest
+// evidence ever seen ("session deaf 14m0s", or "never heard") and the windows
+// it missed. Her beat alone is never evidence. A stored proof is a verified answer to a
+// check this daemon run asked (ProveBeat).
+func FriendSessionHeard(f FriendPresence, now time.Time) (bool, string) {
 	pong := !f.Health.Seen.IsZero() && f.Health.State == Up && f.Health.Generation == f.Generation
 	if age := now.Sub(f.Health.Seen); pong && age >= 0 && age < FriendPongWindow {
-		return Up, "session pong " + ago(age)
+		return true, "session pong " + ago(age)
 	}
-	// the proof her beat record keeps is an answer to a check her daemon asked (ProveBeat),
-	// and it counts only while her beat is fresh: a daemon that stopped proves nothing more
-	proof := !f.Beat.Proof.IsZero()
-	if age := now.Sub(f.Beat.Proof); proof && age >= 0 && age < FriendProofLive && f.Beat.Fresh(now) {
-		return Up, "session proof " + ago(age)
+	if age := now.Sub(f.Beat.Proof); !f.Beat.Proof.IsZero() && age >= 0 && age < FriendProofLive {
+		return true, "session proof " + ago(age)
 	}
 	if age := now.Sub(f.Finished); !f.Finished.IsZero() && age >= 0 && age < FriendFinishWindow {
-		return Up, "finish " + ago(age)
+		return true, "finish " + ago(age)
 	}
-	why := "no session evidence: no wake ping answered by her session within " + FriendPongWindow.String()
-	if pong {
-		why += " (last " + ago(now.Sub(f.Health.Seen)) + ")"
+	var last time.Time
+	if !f.Finished.After(now) {
+		last = f.Finished
 	}
-	why += ", no session proof on her beat within " + FriendProofLive.String()
-	if proof {
-		why += " (last " + ago(now.Sub(f.Beat.Proof))
-		if !f.Beat.Fresh(now) {
-			why += ", her beat stopped " + ago(now.Sub(f.Beat.At))
-		}
-		why += ")"
+	if pong && f.Health.Seen.After(last) && !f.Health.Seen.After(now) {
+		last = f.Health.Seen
 	}
-	why += ", no card finished within " + FriendFinishWindow.String()
-	if !f.Finished.IsZero() {
-		why += " (last " + ago(now.Sub(f.Finished)) + ")"
+	if f.Beat.Proof.After(last) && !f.Beat.Proof.After(now) {
+		last = f.Beat.Proof
 	}
-	if f.Beat.Beaten() {
-		why += "; her beat " + ago(now.Sub(f.Beat.At)) + " is not evidence"
+	deaf := "session deaf (never heard)"
+	if !last.IsZero() {
+		deaf = "session deaf " + now.Sub(last).Truncate(time.Second).String()
 	}
-	return Down, why
+	return false, deaf + ": no wake ping answered by her session within " + FriendPongWindow.String() +
+		", no card finished within " + FriendFinishWindow.String()
 }
 
 // beatSaysDownWhy is why a beat that says down puts her down (SaysDown): until
@@ -411,8 +442,9 @@ func StrangerNotes(s *Snapshot, names []string) Plan {
 }
 
 // FriendDownWhy is why FriendStatus does not say up at now, in the words a take refused
-// for her names (takeOne): held by the coordinator; her beat says down, until when and why; or the session evidence she lacks as
-// FriendEvidence names it (her beat is never evidence). "" while she is up.
+// for her names (takeOne): held by the coordinator; her beat says down, until when and why; or
+// which of her daemon's beat and her session's evidence is missing, as FriendEvidence names
+// them. "" while she is up.
 func FriendDownWhy(f FriendPresence, now time.Time) string {
 	if f.Held {
 		return "held by the coordinator (friend down)"

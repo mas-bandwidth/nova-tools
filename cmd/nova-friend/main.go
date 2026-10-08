@@ -69,6 +69,8 @@ type world struct {
 	open           func(ctx context.Context, addr string) (bus.Store, func(), error)
 	exec           friend.Exec
 	wall           func(wl friend.Wall, run friend.Exec) friend.Exec                                                                      // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
+	heartbeat      func(context.Context, func(context.Context) error) error                                                               // native independent one-second clock; nil is a stepped fake sender
+	beatReport     func(context.Context, string, string, time.Time, friend.BeatWords, friend.BeatReport) (string, error)                  // friend beat carrying the lane report; nil sends beat without it
 	beat           func(ctx context.Context, server, friend string, active time.Time, proof friend.BeatWords) (answer string, err error)  // the FRIEND-BEAT line, which carries the friend's row
 	beatDown       func(ctx context.Context, server, friend string, active, until time.Time, reason string, proof friend.BeatWords) error // her beat while she is down (friend beat --until --reason); nil holds the beat back
 	progress       func(ctx context.Context, server string, argv []string) error                                                          // one progress verb to the sprint server (friend.ProgressArgv)
@@ -230,7 +232,7 @@ func sprintHolders(ctx context.Context, server string) (map[string]string, error
 }
 
 func realWorld() world {
-	w := world{getenv: os.Getenv, exec: friend.RealExec, sqlite: friend.RealExec, wall: friend.Wall.Exec, now: time.Now, uid: os.Getuid(), home: os.Getenv("HOME"),
+	w := world{heartbeat: friend.Heartbeat, getenv: os.Getenv, exec: friend.RealExec, sqlite: friend.RealExec, wall: friend.Wall.Exec, now: time.Now, uid: os.Getuid(), home: os.Getenv("HOME"),
 		sleep: func(ctx context.Context, d time.Duration) {
 			select {
 			case <-ctx.Done():
@@ -248,6 +250,22 @@ func realWorld() world {
 		},
 		beat: func(ctx context.Context, server, name string, active time.Time, proof friend.BeatWords) (string, error) {
 			args := []string{"friend", "beat", name}
+			if !active.IsZero() {
+				args = append(args, "--active", active.UTC().Format(time.RFC3339))
+			}
+			return sprintBeat(ctx, server, append(args, proofArgs(proof)...))
+		},
+		beatReport: func(ctx context.Context, server, name string, active time.Time, proof friend.BeatWords, rep friend.BeatReport) (string, error) {
+			args := []string{"friend", "beat", name, "--width", strconv.Itoa(rep.Width), "--started", rep.Started.UTC().Format(time.RFC3339)}
+			if len(rep.Running) > 0 {
+				args = append(args, "--running", strings.Join(rep.Running, ","))
+			}
+			if rep.Working != nil {
+				args = append(args, "--working", strconv.Itoa(*rep.Working))
+			}
+			if rep.Queue != nil {
+				args = append(args, "--queue", strconv.Itoa(*rep.Queue))
+			}
 			if !active.IsZero() {
 				args = append(args, "--active", active.UTC().Format(time.RFC3339))
 			}
@@ -466,9 +484,8 @@ cannot drive is one "presence: REFUSED" line with the remedy (a dsh session unde
 session in <dir> with no agent preset and name it with --session <id>). The beat after a check goes in
 says it (--check <nonce> --run <run>), and the beat after the session answers names it (--pong <nonce>
 --run <run>): the sprint server counts only an answer to a check this run asked, once, as her session's
-evidence while her beats go on, so a check goes in every ` + friend.ProveEvery.String() + ` while she is up; a per-card harness
-(claude) says neither. While the session is down the beat says so (--until, --reason: the push unproven,
-or no session answer, with the check's nonce). The present comes first, the backlog never does: on the
+evidence for fifteen minutes on its own (a stopped beat does not erase it), so a check goes in every ` + friend.ProveEvery.String() + ` while she is up; a per-card harness
+(claude) says neither. A session with no answer does not stop the beat and does not put --until on it for that: the row names the missing half. The present comes first, the backlog never does: on the
 daemon's start (once the first beat says her row's mode), after ` + friend.StaleAfter.String() + ` with no turn taken, and when she
 sends herself a message with the subject present, the next turn is one PRESENT turn (her live queue from her
 row or inbox/QUEUE.json, each card's column and BRIEF.md, the seat, the newest coordinator note, and one line
@@ -488,8 +505,10 @@ carries messages. Presence is the session's, never the daemon's: ` + friend.Prov
 (the session's own bus messages keep her up meanwhile; the daemon's never count), a SESSION CHECK <nonce> goes in through the harness
 as a turn of its own, once no turn is under way (on the friend's own stream for a harness with no
 deliver command), and only the session's pong carrying that nonce answers it; none within ` + friend.SessionBound.String() + `
-and the friend is down, "no session answer", her beat saying down until the next answer brings it up; it
-starts down until the first answer. The check waits while a turn is at the gate (from before the limit
+and the session is down, "no session answer", until the next answer brings it up; it
+starts down until the first answer. The native heartbeat goes immediately and every second, even while
+the bus opens, reads, or session checks block; each send has a 900ms deadline. Up requires a daemon beat
+within 10s and live session evidence. The check waits while a turn is at the gate (from before the limit
 gate's wait to its end) or, on a headless harness (dsh, gemini: a one-shot process per turn), while the
 adapter's own record says a turn runs, and a check owed ` + friend.SessionQuiet.String() + ` that has not
 gone in is one "presence: REFUSED" line naming why. A turn runs as long as it prints; one
@@ -1240,7 +1259,15 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	// her row, as her beat last answered it (nova-sprint friend beat: row_mode, row_width, row_config_dir)
 	rowMode, rowWidth := "", 0
-	var rowMu sync.Mutex          // the cadence beat writes the row while the delivery loop reads it
+	var rowMu sync.RWMutex // the cadence beat writes the row while the delivery loop and the heartbeat read it
+	var latestStatus atomic.Pointer[friend.Status]
+	var latestBeat atomic.Pointer[friend.BeatState]
+	var latestReport atomic.Pointer[friend.BeatReport]
+	var latestActive atomic.Pointer[time.Time]
+	var latestPause atomic.Pointer[string]
+	var beatSender atomic.Pointer[func(context.Context, time.Time) error]
+	started := w.now()
+	latestReport.Store(&friend.BeatReport{Width: c.Int("width"), Started: started})
 	var rowReadSlots atomic.Int64 // her row's read slots as her beat last answered; friend.DefaultReadSlots until it says
 	rowReadSlots.Store(friend.DefaultReadSlots)
 	// her row's lane caps by tier as her beat last answered; friend.DefaultLaneCaps until it says
@@ -1316,6 +1343,68 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	ctx, stop := w.signals(context.Background())
 	defer stop()
+	if w.heartbeat != nil {
+		hctx, hcancel := context.WithCancel(ctx)
+		stopped := make(chan struct{})
+		writes := make(chan friend.Status, 1)
+		writerDone := make(chan struct{})
+		latestStatus.Store(&friend.Status{Friend: name, Harness: c.Str("harness"), Width: c.Int("width"), Started: started})
+		go func() {
+			defer close(writerDone)
+			for status := range writes {
+				if err := friend.WriteStatus(state, status); err != nil {
+					record(w.now().UTC().Format(time.RFC3339) + " status: " + err.Error())
+				}
+			}
+		}()
+		go func() {
+			defer close(stopped)
+			defer close(writes)
+			state := friend.BeatState{}
+			// ignored: the heartbeat ends on cancellation; each send error is recorded on status.
+			_ = w.heartbeat(hctx, func(call context.Context) error {
+				active := time.Time{}
+				if a := latestActive.Load(); a != nil {
+					active = *a
+				}
+				var err error
+				if send := beatSender.Load(); send != nil {
+					err = (*send)(call, active)
+				} else if w.beatReport != nil {
+					_, err = w.beatReport(call, server, name, active, friend.BeatWords{}, *latestReport.Load())
+				} else {
+					_, err = w.beat(call, server, name, active, friend.BeatWords{})
+				}
+				now := w.now()
+				if err == nil {
+					state.At, state.Count, state.Error = now, state.Count+1, ""
+				} else {
+					state.Error = err.Error()
+				}
+				copy := state
+				latestBeat.Store(&copy)
+				status := *latestStatus.Load()
+				status.At, status.LastBeat, status.Beats, status.BeatError = now, state.At, state.Count, state.Error
+				if at := sent.Load(); at != nil {
+					status.ProofSent = *at
+				}
+				select {
+				case writes <- status:
+				default:
+					select {
+					case <-writes:
+					default:
+					}
+					select {
+					case writes <- status:
+					default:
+					}
+				}
+				return err
+			}) // ignored: the heartbeat stops only with its context; each result is on status
+		}()
+		defer func() { hcancel(); <-stopped; <-writerDone }()
+	}
 	st, closeStore := w.openUntil(ctx, addr, record)
 	if st == nil {
 		return tool.Exit(0) // a signal while the store was down
@@ -1438,23 +1527,42 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 		// the session check's and the limits' wrappers take a beat of ctx alone; the daemon's
 		// beat carries the session's last activity, closed over here (fold of 2026-10-05)
+		// the beat goes every step whatever the session says: it is the daemon's liveness, and
+		// the session's nonce-based proof rides on it as a separate fact
+		// (docs/SPEC-FRIEND.md, the beat)
 		Beat: func(ctx context.Context, active time.Time) error {
-			// up or down, held back or not: the beat's record says what the lanes cost
-			saySpend()
-			held := sc.Beat // the session's answer holds the beat back
-			if perCard {
-				// a per-card harness's beat is never held back: her cards' finishes are her presence
-				// at the server; the check still steps (by the folder) and its answer rides the beat
-				held = sc.BeatAlways
+			// up or down: the beat's record says what the lanes cost. A deaf session still
+			// beats; the server's up rule reads the proof and does not hold the beat.
+			if w.heartbeat == nil {
+				saySpend()
+				if !perCard {
+					sc.Step(ctx)
+				}
 			}
 			// the owner, 2026-10-05 ~9:30 AM ET: "there is no value in things that are answered
-			// just by the daemon": the words are the check asked and the check the session
-			// answered that no beat has said, for a per-card harness too (the folder's answer)
-			words := sc.Words
+			// just by the daemon". A per-card harness has no session to check, so its beat says
+			// no proof at all: her evidence is a card of hers finished, which the server counts
+			if !perCard {
+				if heard := sc.Evidence(); heard.After(active) {
+					active = heard
+				}
+			}
+			words := func() friend.BeatWords {
+				if perCard {
+					return friend.BeatWords{}
+				}
+				return sc.Words() // the check asked and the check answered that no beat has said
+			}
 			up := func(ctx context.Context) error {
 				said := words()
 				said.StopReturns = owedStopReturns()
-				answer, err := w.beat(ctx, server, name, active, said)
+				var answer string
+				var err error
+				if w.beatReport != nil {
+					answer, err = w.beatReport(ctx, server, name, active, said, *latestReport.Load())
+				} else {
+					answer, err = w.beat(ctx, server, name, active, said)
+				}
 				if err == nil {
 					sc.Said(said)
 					if said.Pong != "" && strings.Contains(answer, " proved="+said.Pong) {
@@ -1491,12 +1599,12 @@ func (w world) run(c *tool.Call) *tool.Out {
 				return err
 			}
 			if w.beatDown == nil {
-				return held(fl.Beat(up))(ctx) // no down beat: held back while she is at her limit
+				return fl.Beat(up)(ctx) // a world with no down beat (a test's): held back while she is at her limit
 			}
 			// while her harness is at its limit her beat says down with the until and the
-			// reason (limits-mean-down-w-r5.w1~15), the session's check stepped as before,
-			// ahead of the look; the inner check is the last before the up beat, so a limit
-			// seen during the step is never beaten up
+			// reason (limits-mean-down-w-r5.w1~15), the session's check stepped first; the
+			// look is the last thing before the up beat, so a limit seen during the step is
+			// never beaten up
 			down := func(ctx context.Context, until time.Time, reason string) error {
 				said := words()
 				err := w.beatDown(ctx, server, name, active, until, reason, said)
@@ -1505,38 +1613,30 @@ func (w world) run(c *tool.Call) *tool.Out {
 				}
 				return err
 			}
-			if !perCard {
-				// while her session is down her beat says so, with the check's nonce and why; a
-				// limit seen during the step is the reason first, with its reset
-				sessionDown := func(ctx context.Context, until time.Time, reason string) error {
-					if u, r, limited := fl.Limited(); limited {
-						until, reason = u, "harness limit: "+r
-					}
-					return down(ctx, until, reason)
-				}
-				held = func(beat func(context.Context) error) func(context.Context) error {
-					return sc.BeatOr(beat, sessionDown)
-				}
-			}
 			// a provider failure paused her lanes: her beat says her down with its exact
 			// message until a person clears the marker (nova-friend resume; friend.PauseBeat)
-			if marker := friend.ReadPause(state); marker != "" {
+			marker := ""
+			if w.heartbeat == nil {
+				marker = friend.ReadPause(state)
+			} else if p := latestPause.Load(); p != nil {
+				marker = *p
+			}
+			if marker != "" {
 				until, reason := friend.PauseBeat(marker, c.Str("model"), w.now())
 				return down(ctx, until, reason)
 			}
 			// her lanes hit the same harness fault three times in ten minutes: her beat says
-			// her down with the fault until it passes (friend.FaultWatch), then up again
+			// her down with the fault until it passes (friend.FaultWatch), then up again.
+			// The session does not hold the beat: a deaf session still beats (the up rule
+			// is the server's, docs/SPEC-FRIEND.md, the beat).
 			if h := faultDown.Load(); h != nil && w.now().Before(h.until) {
 				return down(ctx, h.until, h.reason)
 			}
-			if _, _, limited := fl.Limited(); limited && !perCard {
-				sc.Step(ctx)
-			}
-			return fl.BeatOrDown(held(fl.BeatOrDown(up, down)), down)(ctx)
+			return fl.BeatOrDown(up, down)(ctx)
 		},
 		Row: func() (string, int) {
-			rowMu.Lock()
-			defer rowMu.Unlock()
+			rowMu.RLock()
+			defer rowMu.RUnlock()
 			if m := c.Str("mode"); m != "" {
 				return m, rowWidth // the override, for a test
 			}
@@ -1578,12 +1678,24 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			return nil
 		},
-		SaveLanes: func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
-		Held:      w.held(name, server),
-		Seat:      w.seat(server),
-		Stage:     stager.stage(),
-		Prune:     stager.prune(),
-		Tip:       w.tip,
+		SaveLanes: func(s friend.LaneState) error {
+			running := make([]string, 0, len(s.Started))
+			for _, job := range s.Started {
+				running = append(running, job.Card.ID)
+			}
+			slices.Sort(running)
+			rep := *latestReport.Load()
+			rep.Running = running
+			working := len(running)
+			rep.Working = &working
+			latestReport.Store(&rep)
+			return friend.WriteLanes(state, s)
+		},
+		Held:  w.held(name, server),
+		Seat:  w.seat(server),
+		Stage: stager.stage(),
+		Prune: stager.prune(),
+		Tip:   w.tip,
 		Finish: func(ctx context.Context, argv []string) error {
 			if w.finish == nil {
 				return errors.New("this world sends no finish") // a test's: friend sync reads the lane's REPORT.md
@@ -1606,6 +1718,17 @@ func (w world) run(c *tool.Call) *tool.Out {
 			seatMu.Lock()
 			seat = s.Seat
 			seatMu.Unlock()
+			if w.heartbeat != nil {
+				latestStatus.Store(&s)
+				rep := *latestReport.Load()
+				rep.Width = s.Width
+				if s.HeldKnown {
+					queued := max(0, s.Held-len(rep.Running))
+					rep.Queue = &queued
+				}
+				latestReport.Store(&rep)
+				return nil
+			}
 			return friend.WriteStatus(state, s)
 		},
 		PongCommand: func(nonce string) string {
@@ -1631,6 +1754,28 @@ func (w world) run(c *tool.Call) *tool.Out {
 	watch := friend.WatchHarness(d, deliver)
 	if w.alive != nil {
 		watch.Alive = w.alive
+	}
+	if w.heartbeat != nil {
+		// The heartbeat has no session, bus or filesystem work on its path
+		// (docs/SPEC-FRIEND.md, The beat; tla/Presence.tla, Heartbeat).
+		emit := d.Beat
+		d.Beat = func(ctx context.Context, active time.Time) error {
+			latestActive.Store(&active)
+			marker := friend.ReadPause(state)
+			latestPause.Store(&marker)
+			saySpend()
+			if !perCard {
+				return sc.Beat(func(context.Context) error { return nil })(ctx)
+			}
+			return nil
+		}
+		d.HeartbeatState = func() friend.BeatState {
+			if b := latestBeat.Load(); b != nil {
+				return *b
+			}
+			return friend.BeatState{}
+		}
+		beatSender.Store(&emit)
 	}
 	if err := d.Run(ctx); err != nil {
 		fmt.Fprintln(c.Stderr, "RUN FAIL: "+err.Error())
@@ -2144,7 +2289,7 @@ func (w world) status(c *tool.Call) *tool.Out {
 		o.Fact("presence", pr.Presence).Fact("last_session", stamp(pr.LastHeard))
 		if pr.Presence != friend.PresenceUp {
 			o.Fact("presence_reason", tool.Text(pr.Reason))
-			o.Note("the daemon is up and the session is not (" + pr.Reason + "): the friend is down, and no beat goes to the sprint server until the session answers a session check")
+			o.Note("the daemon is up and the session is not (" + pr.Reason + "): the friend is down; the daemon still beats, and the sprint reads her session deaf until it answers a session check")
 		}
 	}
 	if prErr != nil {
