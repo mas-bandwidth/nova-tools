@@ -4094,6 +4094,22 @@ different benches instead of all on the first up member (the owner, 2026-10-07:
 "we do the uint64 and it is modulo % n", "even when we have parallel land"). A
 batch's `LAND` line adds `ring=<n> slot=<h % n>` after `bench=` when a bench ran
 a gate. The ring's model in TLA+ is its own card.
+
+**Each stream's gate holds its lane under its own name.** The lander records a
+bench's Go lane as `lander/<stream>` for a stream's gate (the stream's fork in the
+parallel pass) and as `lander/base` for the base re-check, never as one `lander`
+for all of them: a take renews a holder by its name, so under one shared name a
+sibling fork asking a bench another fork held was granted at once, and a give took
+back every holder and waiter of that name, so the first fork to finish freed the
+bench while its sibling's gate still ran. Under its own name a fork asking a bench
+a sibling holds is queued there, and the ring's step-while-held moves it to the next
+slot like any other held lane; its give (`Lanes.Give`) takes back its own hold or
+place alone, never another's. A lane name is one worker word, or two joined by one
+`/` (`sprint.ValidLaneWho`), so `lane list` shows `held=lander/<stream>` and the
+stage the land loop's beat names (and so the stuck judgment) reads `lane take go
+--machine <m> --as lander/<stream> (the gate of stream <stream>)` while a gate
+waits, and `bench <m> held by lander/<stream> (the gate of stream <stream>)` while
+it runs (`landlane_holder_test.go`).
 `--check` is the caller's own command on top, once a batch, as before.
 
 **Always inside PATHS.** Files a change must touch to keep the tree green are always
