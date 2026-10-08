@@ -61,6 +61,7 @@ type WhereRecord struct {
 	FleetRev  uint64                    `json:"fleet_rev,omitempty"`
 	RowCards  map[string]map[string]int `json:"row_cards,omitempty"`
 	ReadCards sprint.ReadCardCounts     `json:"read_cards"`
+	FixStates map[string]map[string]int `json:"fix_states,omitempty"`
 }
 
 // whereOf is the where record of a snapshot holding every card of the work
@@ -79,6 +80,7 @@ func whereOf(s *sprint.Snapshot, m Machine, now time.Time) WhereRecord {
 		r.FleetRev = s.Fleet.Revision
 	}
 	r.RowCards, r.ReadCards = sprint.RowCardCounts(s)
+	r.FixStates = sprint.FixStateCounts(s)
 	for _, at := range sprint.RecentLandings(landed, m.Spans, m.FirstStart(s.Cleared), now) {
 		r.Landings = append(r.Landings, at.Unix())
 	}
@@ -289,6 +291,7 @@ type WhereFacts struct {
 	// RowCards and ReadCards are the record's (sprint.RowCardCounts); nil and zero without it.
 	RowCards  map[string]map[string]int
 	ReadCards sprint.ReadCardCounts
+	FixStates map[string]map[string]int
 	// ReadsWaiting, Priorities and StreamPriorities are the record's (WhereRecord); zero
 	// without the record.
 	ReadsWaiting     int
@@ -345,6 +348,7 @@ func (st *Store) WhereFacts(ctx context.Context, workRev uint64) (WhereFacts, er
 			f.Held, f.Critical, f.Tiers, f.Streams, f.StageTimes, f.DealtFleet = r.Held, r.Critical, r.Tiers, r.Streams, r.StageTimes, r.DealtFleet
 			f.ReadsWaiting, f.Priorities, f.StreamPriorities = r.ReadsWaiting, r.Priorities, r.StreamPriorities
 			f.RowCards, f.ReadCards = r.RowCards, r.ReadCards
+			f.FixStates = r.FixStates
 			for _, s := range r.Landings {
 				f.Landed = append(f.Landed, time.Unix(s, 0).UTC())
 			}

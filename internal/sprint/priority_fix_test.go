@@ -210,3 +210,23 @@ func TestFixPrioritySurvivesRedoAndSubsequentRead(t *testing.T) {
 		assert.Equal(t, PriorityFix, QueuePriority(rc))
 	}
 }
+
+func TestFixStateSeparatesReworkFromReadReview(t *testing.T) {
+	t.Parallel()
+	w := setup(t, 4)
+	first := w.s.Work.Card("s1-1")
+	first.Fields[FieldPriority] = PriorityFix
+	other := w.s.Work.Card("s1-2")
+	other.Fields[FieldPriority] = PriorityCritical
+	assert.Equal(t, map[string]map[string]int{"s1": {Ready: 1}}, FixStateCounts(w.s))
+	// A completed repair awaiting an independent read belongs in review.
+	w.place(w.s.Work, first.ID, first.Row, Review)
+	assert.Empty(t, FixStateCounts(w.s))
+	first.Fields["work"] = first.ID + ".w1"
+	w.s.Fleet.Put(&Card{ID: first.F("work"), Row: "m1", Col: DoneFailed, Fields: map[string]string{"kind": "work", "primary": first.ID}})
+	assert.Equal(t, map[string]map[string]int{"s1": {Review: 1}}, FixStateCounts(w.s))
+	first.Fields[FieldPriority] = PriorityHigh
+	assert.Equal(t, map[string]map[string]int{"s1": {Review: 1}}, FixStateCounts(w.s), "failed high work awaits repair too")
+	first.Fields[FieldPriority] = PriorityBlocker
+	assert.Empty(t, FixStateCounts(w.s), "blockers keep their urgent colour")
+}

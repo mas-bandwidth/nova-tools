@@ -4,10 +4,14 @@
 // poll; the page holds the last data and says nothing.
 "use strict";
 
-// Left to right in the bars: done first, so the bar fills like progress.
-var STATES = ["landed", "merging", "review", "working", "ready", "waiting"];
+// Left to right in the bars: done first, so the bar fills like progress. fix is the cards awaiting
+// rework, purple, between review and merging (docs/SPEC-SPRINT-DASHBOARD.md, "Fix"; the owner,
+// 2026-10-07: "between review and merging"); the view (dashboard.go) counts it on the copy.
+var STATES = ["landed", "merging", "fix", "review", "working", "ready", "waiting"];
 // Columns of the streams table, in flow order.
-var FLOW = ["waiting", "ready", "working", "review", "merging", "landed"];
+var FLOW = ["waiting", "ready", "working", "review", "fix", "merging", "landed"];
+// A Work row's children: stream, status, then FLOW's counts, then cost.
+var LANDED_AT = 2 + FLOW.indexOf("landed"), COST_AT = 2 + FLOW.length;
 var POLL_MS = 1000;
 var MIN_CELL = 4;  // px: a cell never gets narrower; cards per cell grows instead
 var GAP = 2;       // px between cells
@@ -16,6 +20,7 @@ var TRACK_CELL = 1.6875, TRACK_GAP = 0.25; // rem: a fleet track cell and its ga
 var TRACK_SPAN = 16 * (TRACK_CELL + TRACK_GAP) - TRACK_GAP;
 function trackCell(scale) { scale = Math.max(1, scale); return (TRACK_SPAN - (scale - 1) * TRACK_GAP) / scale; }
 var $ = function (id) { return document.getElementById(id); };
+["streams", "fleet", "friends", "lanes"].forEach(function (id) { var h = $(id).querySelector(".row.head"); if (h) h.remove(); });
 
 // ---------- parsing (every value in the JSON is a string) ----------
 function int(s) { var n = parseInt(s, 10); return isNaN(n) ? 0 : n; }
@@ -190,11 +195,31 @@ function allocate(counts, total, n) {
 
 // VU meter track: exactly `slots` cells (the machine's width), on a grid of
 // `scale` columns (the widest member's width) so the cells line up down the
-// column; the first `value` are lit, the rest dark; nothing past the width.
-function setTrack(box, value, slots, scale, segs) {
-  var classes = [];
-  for (var i = 0; i < slots; i++) classes.push(i < value ? (segs && segs[i]) || "working" : "");
+// column; the lit cells first, the rest dark; nothing past the width. The lit cells run in the
+// priority ladder, highest on the left (docs/SPEC-SPRINT-DASHBOARD.md, "Fix"; the owner,
+// 2026-10-07: "to the left of read cards, and to the right of critical cards"): blocker,
+// critical, fix (purple), reads (one orange cell per two reads, a lone read a whole cell), then
+// the working blue; a row's counts are where's <level>_working and the view's fix.
+var TRACK_LEVELS = [["blocker_working", "p-blocker", "blocker"], ["critical_working", "p-critical", "critical"], ["fix", "p-fix", "fix"]];
+function trackSegs(m) {
+  var working = int(m.working), segs = [], words = [], cards = 0;
+  TRACK_LEVELS.forEach(function (l) {
+    var n = int(l[0] === "fix" && m.fix_working != null ? m.fix_working : m[l[0]]); cards += n;
+    for (var j = 0; j < n; j++) segs.push(l[1]);
+    if (n) words.push(n + " " + l[2]);
+  });
+  var reads = int(m.reads_working); cards += reads;
+  for (var j = 0; j < Math.ceil(reads / 2); j++) segs.push("p-reader");
+  if (reads) words.push(reads + " read" + (reads === 1 ? "" : "s"));
+  for (var k = cards; k < working; k++) segs.push("working");
+  return { segs: segs, words: words };
+}
+function setTrack(box, value, slots, scale, m) {
+  var t = m ? trackSegs(m) : { segs: [], words: [] }, classes = [];
+  if (!m) for (var j = 0; j < value; j++) t.segs.push("working");
+  for (var i = 0; i < slots; i++) classes.push(t.segs[i] || "");
   setCells(box, classes, scale, trackCell(scale));
+  setTitle(box, value + " working of " + slots + (t.words.length ? ": " + t.words.join(", ") : ""));
 }
 // "a / b" as a block of fixed width: a right-aligned in `digits` character widths, b
 // left-aligned in as many, so the slash of every row in a column sits on one vertical line
@@ -232,7 +257,7 @@ function streamStatus(state, c, total) {
   if (total > 0 && c.landed === total) return ["landed", "done"];
   if (state === "stopped") return ["stopped", "critical"];
   if (total > 0 && c.waiting === total) return ["held", "warning"];
-  if (c.ready + c.working + c.review + c.merging > 0) return ["working", "active"];
+  if (c.ready + c.working + c.review + (c.fix || 0) + c.merging > 0) return ["working", "active"];
   if (state === "landed") return ["landed", "done"];
   // cards still waiting and nothing in flight (some landed already): held, like a stream
   // whose cards all wait; the page names only the four states SPEC.md lists
@@ -240,15 +265,27 @@ function streamStatus(state, c, total) {
   return [state || "idle", "neutral"];
 }
 
+var showArchived = false, lastStreams = null;
+function archivedSet(d) { var a = {}; ((d.archived || {}).streams || []).forEach(function (s) { a[s] = 1; }); return a; }
+function renderArchived(d) {
+  var b = $("streams-archived"), a = d.archived;
+  if (!b._on) { b._on = 1; b.addEventListener("click", function () { showArchived = !showArchived; if (lastStreams) render(lastStreams); }); }
+  b.hidden = !a;
+  if (!a) return;
+  var n = a.streams.length;
+  setText(b, n + " archived stream" + (n === 1 ? "" : "s") + ", " + a.landed + " card" + (a.landed === 1 ? "" : "s") + " landed, " + a.cost + " · " + (showArchived ? "hide" : "show"));
+}
+
 function renderStreams(d) {
-  var box = $("streams"), work = d.tables.work || {}, merge = d.tables.merge || {};
+  lastStreams = d;
+  renderArchived(d);
+  var box = $("streams"), work = d.tables.work || {}, merge = d.tables.merge || {}, arch = archivedSet(d);
   var states = {}; (d.streams || []).forEach(function (s) { states[s.Stream] = s; });
-  // children: 1 stream, 2 status, 3 waiting, 4 ready, 5 working, 6 review, 7 merging, 8 landed, 9 cost
+  // children: 1 stream, 2 status, 3 waiting, 4 ready, 5 working, 6 review, 7 fix, 8 merging, 9 landed, 10 cost
   if (!box._head) {
     var cols = [["stream"], ["status"]];
-    FLOW.forEach(function (st) { if (st !== "landed") cols.push([st, "num"]); });
-    cols.push(["landed", "frac"], ["cost", "num"]);
-    box._head = headRow(cols);
+    FLOW.forEach(function (st) { cols.push([st, st === "landed" ? "frac" : "num"]); });
+    cols.push(["cost", "num"]); box._head = headRow(cols);
     box._total = el("div", "row total");
     box._total._c = [el("div", "", "Total"), el("div")];
     FLOW.forEach(function (st) { box._total._c.push(numCell(st === "landed" ? "frac" : "")); });
@@ -265,9 +302,20 @@ function renderStreams(d) {
     statusOf[k] = streamStatus((states[k] || {}).State, c, total)[0];
   });
   var rank = function (k) { return RANK[statusOf[k]] == null ? 3.5 : RANK[statusOf[k]]; };
-  var keys = streamOrder(d).sort(function (a, b) { return rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0); });
-  var sum = { cost: 0 }, held = 0, landedStreams = 0, prevRank = null;
-  var digits = digitsOf(keys.reduce(function (a, k) { return a + FLOW.reduce(function (b, st) { return b + int(work[k][st]); }, 0); }, 0));
+  var keys = streamOrder(d).filter(function (k) { return showArchived || !arch[k]; }).sort(function (a, b) { return rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0); });
+  var sum = { cost: 0, totalCost: 0, workCost: 0, readCost: 0, unreconciled: 0, unpriced: 0 }, held = 0, landedStreams = 0, prevRank = null;
+  // the epoch's spend, every stream's, the archived ones' too: the cost tile's scope once the
+  // sprint is done (where --json's done), when the table's streams are all archived
+  var epoch = { totalCost: 0, workCost: 0, readCost: 0, unpriced: 0 };
+  streamOrder(d).forEach(function (k) {
+    var sc = (d.stream_costs || {})[k] || {};
+    var tc = cents(sc.total_cost); if (tc) epoch.totalCost += tc;
+    var wc = cents(sc.work_cost); if (wc) epoch.workCost += wc;
+    var rc = cents(sc.read_cost); if (rc) epoch.readCost += rc;
+    epoch.unpriced += int(sc.unpriced_runs);
+  });
+  sum.epoch = epoch;
+  var digits = digitsOf(streamOrder(d).reduce(function (a, k) { return a + FLOW.reduce(function (b, st) { return b + int(work[k][st]); }, 0); }, 0));
   FLOW.forEach(function (st) { sum[st] = 0; });
   syncRows(box, box._head, keys, function () {
     var r = { node: el("div", "row"), n: {} };
@@ -280,8 +328,19 @@ function renderStreams(d) {
     return r;
   }, function (r, k) {
     var w = work[k], m = merge[k] || {}, s = states[k] || {}, c = {}, total = 0;
-    FLOW.forEach(function (st) { c[st] = int(w[st]); total += c[st]; sum[st] += c[st]; });
-    var ct = cents(w.cost); if (ct) sum.cost += ct;
+    FLOW.forEach(function (st) { c[st] = int(w[st]); total += c[st]; });
+    var ct = cents(w.cost);
+    // an archived stream shown is drawn, and counted only on its archived line
+    if (!arch[k]) {
+      FLOW.forEach(function (st) { sum[st] += c[st]; });
+      if (ct) sum.cost += ct;
+      var sc = (d.stream_costs || {})[k] || {};
+      var tc = cents(sc.total_cost); if (tc) sum.totalCost += tc;
+      // the reads beside the work: the same total split by kind (sprint.TierCosts)
+      var wc = cents(sc.work_cost); if (wc) sum.workCost += wc;
+      var rc = cents(sc.read_cost); if (rc) sum.readCost += rc;
+      sum.unpriced += int(sc.unpriced_runs);
+    }
     var status = statusOf[k];
     if (status === "held") held++;
     if (status === "landed") landedStreams++;
@@ -291,20 +350,26 @@ function renderStreams(d) {
     setText(r.nameT, k);
     var tone = { landed: "done", working: "active", held: "warning", stopped: "critical" }[status] || "neutral";
     setPill(r.pill, status, tone, status + (s.State ? " · stream " + s.State + (s.Since ? " since " + clockShort(new Date(s.Since)) : "") : ""));
-    var tags = []; if (int(m.stuck) > 0) tags.push(m.stuck + " stuck"); if (m.ci === "red") tags.push("ci red");
+    // an archived stream shown is marked: the total row leaves it out
+    var tags = arch[k] ? ["archived"] : []; if (int(m.stuck) > 0) tags.push(m.stuck + " stuck"); if (m.ci === "red") tags.push("ci red");
     setText(r.tag, tags.join(" · "));
     FLOW.forEach(function (st) { if (st !== "landed") setNum(r.n[st], c[st]); });
     setHTML(r.n.landed, frac(c.landed, total, digits));
     setText(r.cost, ct === null ? "-" : money(ct)); setClass(r.cost, "num" + (ct === null ? " zero" : ""));
   }, box._total);
+  // the sprint's unreconciled spend rides on every stream's record, an archived one's too:
+  // read once, never summed
+  Object.keys(d.stream_costs || {}).forEach(function (k) {
+    var uc = cents(d.stream_costs[k].unreconciled); if (uc) sum.unreconciled = Math.max(sum.unreconciled, uc);
+  });
   var tc = box._total._c, all = 0;
   FLOW.forEach(function (st, i) { all += sum[st]; if (st !== "landed") setNum(tc[2 + i], sum[st]); });
-  setHTML(tc[7], frac(sum.landed, all, digits));
-  setText(tc[8], money(sum.cost));
+  setHTML(tc[LANDED_AT], frac(sum.landed, all, digits));
+  setText(tc[COST_AT], money(sum.cost));
   setText($("streams-sub"), keys.length + " streams · " + landedStreams + " landed · " + held + " held");
   // the "landed" header is centred over its n / total cell: same width as the cell, text centred
-  var lw = tc[7].offsetWidth ? tc[7].offsetWidth + "px" : "";
-  if (lw && box._head.children[7].style.width !== lw) box._head.children[7].style.width = lw;
+  var lw = tc[LANDED_AT].offsetWidth ? tc[LANDED_AT].offsetWidth + "px" : "";
+  if (lw && box._head.children[LANDED_AT].style.width !== lw) box._head.children[LANDED_AT].style.width = lw;
   return { sum: sum, all: all };
 }
 
@@ -350,7 +415,7 @@ function fleetLike(box, table, nameLabel, scale, clamp) {
     box._total._c.push(el("div"));
     box._total._c.forEach(function (c) { box._total.appendChild(c); });
   }
-  var t = { ready: 0, working: 0, width: 0, done: 0, ok: 0, up: 0, held: 0, down: 0, upWidth: 0, upWorking: 0 };
+  var t = { ready: 0, working: 0, width: 0, done: 0, ok: 0, up: 0, held: 0, down: 0, upWidth: 0, upWorking: 0, fix: 0 };
   scale = scale || tableScale(table);
   // the track column is exactly the widest track, so the figure sits right after it
   var tw = TRACK_SPAN.toFixed(3) + "rem";
@@ -383,23 +448,16 @@ function fleetLike(box, table, nameLabel, scale, clamp) {
     if (shownStatus(m.status) === "up") { t.upWidth += width; t.upWorking += working; }
     setText(r.name, budLabel(k, table));
     setPill(r.pill, st || "-", STATUS_TONE[st] || "neutral");
-    // the working cells in the priority ladder, highest on the left: blocker, critical, reads,
-    // then every blue work card (high, normal, low) on the right (SPEC.md, Glenn 2026-10-06 8:46 PM, 9:09 PM: "orange is ON THE LEFT")
-    var segs = [];
-    [["blocker_working", "seg-blocker"], ["critical_working", "seg-critical"]].forEach(function (p) {
-      for (var j = 0; j < int(m[p[0]]); j++) segs.push(p[1]);
-    });
-    // a read holds half a slot: one orange cell per two reads, a lone read filling a whole cell
-    // until its pair arrives (Glenn 2026-10-06 9:11 PM: "Each segment is 1 work, or 2 reads")
-    for (var j = 0; j < Math.ceil(int(m.reads_working) / 2); j++) segs.push("seg-read");
-    setTrack(r.track, working, width, scale, segs);
-    setHTML(r.wf, frac(working, width, digits)); // no reads count beside the fraction: the orange cells say it, and the label widened the column and broke the alignment (Glenn 2026-10-06 9:08 PM)
+    setTrack(r.track, working, width, scale, m);
+    t.fix += int(m.fix_working != null ? m.fix_working : m.fix);
+    setHTML(r.wf, frac(working, width, digits) + (m.window ? "<span class=\"win\"> · " + escHTML(m.window) + "</span>" : "")); // no reads count beside the fraction: the orange cells say it, and the label widened the column and broke the alignment (Glenn 2026-10-06 9:08 PM)
     setNum(r.ready, int(m.ready)); setNum(r.done, done);
     setOk(r.ok, pct(okv), done);
     if (r.load) { var lp = pct(m.load); setText(r.load, lp === null ? "-" : lp.toFixed(1) + "%"); setClass(r.load, "num" + (lp === null ? " zero" : "")); }
   }, box._total);
   var c = box._total._c;
   setNum(c[2], t.ready);
+  setText(c[3], t.fix ? t.fix + " fix" : ""); setClass(c[3], "num" + (t.fix ? "" : " zero"));
   // working as "x / y": the sum of working over the sum of width (SPEC.md, Glenn 8:10 PM)
   setHTML(c[4], frac(t.working, t.width, digits, Math.max(digits, totalDigits)));
   setNum(c[5], t.done);
@@ -548,10 +606,24 @@ function renderHero(d, s, ft) {
     if (ms != null && !isNaN(at)) { etaAtLast = [etaAt, ms]; fitEtaAt(); } else { etaAtLast = null; setText($("eta-at"), "\u00a0"); }
   } else if (all && landed >= all) { setText($("eta"), "done"); setText($("eta-at"), " "); }
   else { setText($("eta"), "-"); setText($("eta-at"), "not in the summary"); }
-  setText($("cost"), money(s.sum.cost));
-  // the recorded total and its cost per landed card (SPEC.md, Glenn 2026-10-04 ~10:50 PM)
-  setHTML($("cost-per"), landed ? money(Math.ceil(s.sum.cost / landed)) + " per card" : " ");
-  setText($("inflight"), s.sum.working + s.sum.review + s.sum.merging);
+  // the cost tile and its tooltip cover one scope (docs/SPEC-SPRINT.md, the summary line): the
+  // streams on the table, or, the sprint done, the epoch's every stream, as the hero's count
+  // is. The cost is every recorded take and read of their cards in any column; the cost per
+  // card is that over the cards that landed
+  var c = d.done ? s.sum.epoch : s.sum, recorded = c.totalCost;
+  setText($("cost"), money(recorded));
+  // the reads are their own number beside the work, with their share of the two:
+  // "$0.42 per card · $310 work · $96 reads (24%)"
+  var both = c.workCost + c.readCost;
+  var split = both ? money(c.workCost) + " work \u00b7 " + money(c.readCost) + " reads (" + Math.round(100 * c.readCost / both) + "%)" : "";
+  var per = landed ? money(Math.ceil(recorded / landed)) + " per card" : "";
+  var unpriced = c.unpriced ? c.unpriced + " runs unpriced" : "";
+  setHTML($("cost-per"), [per, split, unpriced].filter(Boolean).join(" \u00b7 ") || " ");
+  setTitle($("cost-per"), readerSpendTitle(d, d.done ? null : archivedSet(d)));
+  // what the providers counted beyond the records is the epoch's (sprint.UnreconciledSpend,
+  // every day since the epoch began), never added into the tile: its own line, its scope named
+  setText($("cost-unreconciled"), money(s.sum.unreconciled) + " unreconciled since " + epochStart(d));
+  setText($("inflight"), s.sum.working + (s.sum.fix || 0) + s.sum.review + s.sum.merging);
   inflightLast = s.sum; renderInflight(s.sum);
   // throughput: cards landed per hour over the last hour, from the server's samples
   setText($("tput"), throughput == null ? "\u2014" : String(Math.round(throughput)));
@@ -568,6 +640,23 @@ if (SHOW_ALL) $("readers-panel").hidden = false;
 // The clock shows the time of the data on screen. A failed read or a
 // restarting server changes nothing on the page: the last data, clock and
 // dot stay exactly as they were (failures are logged by the server only).
+var RELEASE = (/(?:^|[?&])release=([^&]*)/.exec(location.search) || [])[1];
+RELEASE = RELEASE ? decodeURIComponent(RELEASE) : "";
+var RELEASE_Q = RELEASE ? "?release=" + encodeURIComponent(RELEASE) : "";
+function renderRelease(j) {
+  var box = $("release"); if (!box) return;
+  var names = (j.releases || []).concat(j.releases && j.releases.length ? ["all"] : []);
+  var key = names.join("|") + ">" + (j.release || "");
+  if (box._key === key) return;
+  box._key = key;
+  box.textContent = "";
+  box.hidden = !names.length;
+  names.forEach(function (n) {
+    var a = el("a", n === j.release ? "on" : "", n);
+    a.setAttribute("href", "?release=" + encodeURIComponent(n) + (SHOW_ALL ? "&all=1" : ""));
+    box.appendChild(a);
+  });
+}
 function setLive(since) {
   setClass($("live"), "live ok");
   // the viewer's zone after the time, from the browser (SPEC.md, Glenn 9:59 PM): EDT now, EST after the change
@@ -636,9 +725,12 @@ function tierSpend(d) {
   return { byTier: byTier, order: order, fmt: fmt, shown: shown, unit: inCents ? 1 : 100 };
 }
 function renderPie(d) {
-  var svg = $("pie"); if (!svg) return; // no legend below the chart (Glenn 10:20 AM): its legend is the panel's header line
+  var svg = $("pie"); if (!svg) return; // no legend below the chart: its legend is the panel's header line
   var sp = tierSpend(d), vals = sp.order.map(function (t) { return [t, sp.shown(sp.byTier[t])]; });
   var total = vals.reduce(function (a, v) { return a + v[1]; }, 0);
+  var key = JSON.stringify(vals) + "|" + sp.fmt(total);
+  if (svg._key === key) return; // the same pie is not drawn again
+  svg._key = key;
   while (svg.firstChild) svg.removeChild(svg.firstChild);
   svg.setAttribute("aria-label", "spend by tier");
   var ns = "http://www.w3.org/2000/svg";
@@ -667,10 +759,12 @@ function renderPie(d) {
 var inflightLast = null;
 function renderInflight(sum) {
   var box = $("inflight-sub"); if (!box) return;
+  var fx = sum.fix || 0;
+  setTitle(box, (sum.working + fx) + " working" + (fx ? " (" + fx + " fix)" : "") + ", " + sum.review + " review, " + sum.merging + " merging");
   // the words shorten in turn when the line does not fit the tile (a phone)
   var forms = [["working", "review + merge"], ["work", "review + merge"], ["work", "rev + merge"], ["work", "rev+mrg"], ["wk", "r+m"]];
   var draw = function (w) {
-    var parts = [[sum.working, w[0]], [sum.review + sum.merging, w[1]]].filter(function (p) { return p[0] > 0; });
+    var parts = [[sum.working + (sum.fix || 0), w[0]], [sum.review + sum.merging, w[1]]].filter(function (p) { return p[0] > 0; });
     box.textContent = "";
     if (!parts.length) box.textContent = "nothing in flight";
     parts.forEach(function (p, i) {
@@ -684,55 +778,195 @@ window.addEventListener("resize", function () { if (inflightLast) renderInflight
 function renderTopStreams(d) {
   var box = $("top-streams"); if (!box) return;
   lastSpendData = d;
-  var work = d.tables.work || {}, rows = [];
+  var work = (d.tables && d.tables.work) || {}, rows = [];
   var sp = tierSpend(d), byTier = sp.byTier, order = sp.order, fmt = sp.fmt;
   Object.keys(work).forEach(function (k) {
     var w = work[k], ct = cents(w.cost); if (!ct) return;
-    var n = {}; ["waiting", "ready", "working", "review", "merging", "landed"].forEach(function (c) { n[c] = parseInt(w[c], 10) || 0; });
+    var n = {}; FLOW.forEach(function (c) { n[c] = parseInt(w[c], 10) || 0; });
     rows.push({ name: k, cost: ct, n: n, per: n.landed ? Math.ceil(ct / n.landed) : null, tiers: tierCounts(w.tiers), byTier: w.cost_by_tier || null });
   });
   rows.sort(function (a, b) { return b.cost - a.cost; });
-  box.innerHTML = "";
-  box.style.setProperty("--tier-cols", String(order.length + 1)); // the tiers with spend, then total
-  // as many rows as fit the square of the pie column: the disc's width plus its padding, less the head, over the row height (Glenn 11:05 AM)
+  var cols = String(order.length + 1); // the tiers with spend, then total
+  if (box.style.getPropertyValue("--tier-cols") !== cols) box.style.setProperty("--tier-cols", cols);
   var pie = $("pie"), rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
   var n = 10;
   if (pie && pie.clientWidth) n = Math.max(3, Math.min(rows.length, Math.round((pie.clientWidth + 4 * rem - 4 * rem - 1 * rem) / (5 * rem))));
   topN = n;
-  var h = el("div", "row head"); h.appendChild(el("div", "", "stream"));
-  order.forEach(function (t) { h.appendChild(el("div", "num", t)); }); // plain headers, as every table's (Glenn 3:15 PM): the color keys are the legend's alone
-  h.appendChild(el("div", "num", "total")); box.appendChild(h);
-  rows.slice(0, n).forEach(function (r) {
-    var row = el("div", "row");
-    row.appendChild(el("div", "name", r.name));
-    // the tiers nudged to add up to the shown total (Glenn 2026-10-04 ~4:33 PM: "just nudge so the tiers add up to the total")
-    var raw = {}; order.forEach(function (t) { raw[t] = (r.byTier && cents(r.byTier[t])) || 0; });
-    var tot = sp.shown(r.cost), parts = nudge(raw, order, tot, sp.unit);
-    order.forEach(function (t) {
-      var c = parts[t];
-      row.appendChild(el("div", "num" + (c ? "" : " faint"), c ? fmt(c) : "-"));
+  // the rows are keyed by stream and patched in place like every other table's; the header and
+  // each row grow or lose cells at the end when the tiers with spend change
+  if (!box._head) box._head = el("div", "row head");
+  var head = box._head, cellCount = order.length + 2;
+  setCount(head, cellCount, function () { return quiet(el("div")); });
+  putKid(head, 0, "", "stream");
+  order.forEach(function (t, i) { putKid(head, 1 + i, "num", t); }); // plain headers, as every table's: the color keys are the legend's alone
+  putKid(head, cellCount - 1, "num", "total");
+  var shown = rows.slice(0, n);
+  var byName = {}; shown.forEach(function (r) { byName[r.name] = r; });
+  syncRows(box, head, shown.map(function (r) { return r.name; }), function () {
+    return { node: el("div", "row") };
+  }, function (r, k) {
+    var row = byName[k];
+    setCount(r.node, cellCount, function () { return quiet(el("div")); });
+    putKid(r.node, 0, "name", k);
+    order.forEach(function (t, i) { // the stream's spend on the tier, in the panel's format
+      var c = row.byTier && cents(row.byTier[t]);
+      putKid(r.node, 1 + i, "num" + (c ? "" : " faint"), c ? fmt(c) : "-");
     });
-    row.appendChild(el("div", "num", fmt(tot)));
-    box.appendChild(row);
+    putKid(r.node, cellCount - 1, "num", fmt(row.cost));
   });
-  var sub = $("top-sub"); if (sub) setText(sub, rows.length ? "top " + Math.min(10, rows.length) + " of " + rows.length + " streams with spend" : "");
+  if (!box._none) box._none = el("div", "row faint", "no stream has spent anything yet");
+  if (!rows.length && box._none.parentNode !== box) box.appendChild(box._none);
+  if (rows.length && box._none.parentNode === box) box._none.remove();
   // the pie's legend in the header: each tier as the state legend draws an item, its square in
   // the tier's color, the name grey and the amount white, in the pie's order, no separators
   var ts = $("tier-sub");
   if (ts) {
-    ts.textContent = "";
-    var allT = 0; order.forEach(function (t) { allT += byTier[t]; });
-    var legend = nudge(byTier, order, sp.shown(allT), sp.unit);
-    order.forEach(function (t) {
-      var p = el("span"), sw = el("i", "sw"); sw.style.background = tierColor(t);
-      p.appendChild(sw); p.appendChild(el("span", "tn", t)); p.appendChild(el("span", "ta", fmt(legend[t]))); ts.appendChild(p);
-    });
-    if (!order.length) ts.textContent = "-";
+    if (!order.length) setText(quiet(ts), "-");
+    else {
+      if (ts._val != null) { ts.textContent = ""; ts._val = null; }
+      setCount(ts, order.length, function () {
+        var p = el("span"); p.appendChild(el("i", "sw")); p.appendChild(quiet(el("span", "tn"))); p.appendChild(quiet(el("span", "ta"))); return p;
+      });
+      order.forEach(function (t, i) {
+        var p = ts.children[i], bg = tierColor(t);
+        if (p.children[0].style.background !== bg) p.children[0].style.background = bg;
+        setText(p.children[1], t); setText(p.children[2], fmt(sp.shown(byTier[t])));
+      });
+    }
   }
-  if (!rows.length) box.appendChild(el("div", "row faint", "no stream has spent anything yet"));
+}
+
+function setCount(box, n, make) {
+  while (box.children.length < n) box.appendChild(make());
+  while (box.children.length > n) box.lastChild.remove();
+}
+
+// ---------- priority marks ----------
+// A card's priority by colour (docs/SPEC-SPRINT-DASHBOARD.md, "Priority"): one mark a card
+// whose level is not normal (where --json's priorities) and one a read waiting (reads_waiting),
+// in the ladder's order; a blocker bright red, a critical dark red, a card awaiting rework (fix,
+// the view's priorities.fix) purple right of the reds, a read the orange of the robot's shoes,
+// and every work card blue whatever its level (high, low). At most MARKS_MAX a level; the last
+// says how many more.
+var MARK_LEVELS = ["blocker", "critical", "critical (by weight, not yet ordered)", "fix", "high", "reader", "low"];
+var MARKS_MAX = 40;
+function priorityClass(level) {
+  if (level === "fix") return "p-fix"; // a card awaiting rework, purple
+  if (level.indexOf("critical") === 0) return "p-critical"; // a computed critical too, its title says so
+  return level === "blocker" || level === "reader" ? "p-" + level : "p-work";
+}
+function renderPriorityMarks(d) {
+  var box = $("priority-marks"); if (!box) return;
+  var marks = [];
+  MARK_LEVELS.forEach(function (l) {
+    var ids = l === "reader" ? [] : ((d.priorities || {})[l] || []).slice();
+    if (l === "reader") for (var i = 0; i < int(d.reads_waiting); i++) ids.push("a read waiting");
+    ids.slice(0, MARKS_MAX).forEach(function (id, i) {
+      var more = i === MARKS_MAX - 1 && ids.length > MARKS_MAX ? " (+" + (ids.length - MARKS_MAX) + " more)" : "";
+      marks.push([l, id + more]);
+    });
+  });
+  box.hidden = marks.length === 0;
+  setCount(box, marks.length, function () { return el("span", "mark"); });
+  marks.forEach(function (m, i) {
+    var k = box.children[i];
+    setClass(k, "mark " + priorityClass(m[0]));
+    setTitle(k, m[0] + ": " + m[1]);
+  });
+}
+
+function escHTML(s) { return String(s).replace(/[&<>"']/g, function (c) { return "&#" + c.charCodeAt(0) + ";"; }); }
+function digitsOf(n) { return String(Math.max(0, n)).length; }
+function makePill() { var p = el("span", "pill neutral"); p.appendChild(el("span", "dot")); p._t = quiet(el("span")); p.appendChild(p._t); return p; }
+function setPill(p, text, tone, title) { setText(p._t, text); setClass(p, "pill " + tone); setTitle(p, title || text); }
+function setOk(o, p, done) { setText(o, p === null ? "-" : p.toFixed(1) + "%"); setClass(o, "num" + (done ? "" : " zero")); }
+var STATUS_TONE = { up: "good", held: "warning", down: "critical" };
+
+// ---------- sections ----------
+function streamOrder(d) {
+  var work = d.tables.work || {}, keys = [], seen = {};
+  (d.streams || []).forEach(function (s) { if (work[s.Stream] && !seen[s.Stream]) { keys.push(s.Stream); seen[s.Stream] = 1; } });
+  Object.keys(work).sort().forEach(function (k) { if (!seen[k]) keys.push(k); });
+  return keys;
+}
+
+function putKid(box, i, cls, text) {
+  var c = box.children[i];
+  if (!c._quiet) quiet(c);
+  setText(c, text); setClass(c, cls);
+  return c;
+}
+
+function epochStart(d) {
+  var t = new Date(d.cleared || "");
+  return isNaN(t) || t.getUTCFullYear() < 2000 ? "the epoch began" : t.toISOString().slice(0, 10);
+}
+
+function readerSpendTitle(d, skip) {
+  var by = {}, sc = d.stream_costs || {};
+  Object.keys(sc).forEach(function (k) {
+    if (skip && skip[k]) return;
+    var rs = sc[k].readers || {};
+    Object.keys(rs).forEach(function (r) {
+      var b = by[r] || (by[r] = { usd: 0, hour: 0 });
+      b.usd += parseFloat(rs[r].usd) || 0; b.hour += parseFloat(rs[r].hour_usd) || 0;
+    });
+  });
+  var names = Object.keys(by).filter(function (r) { return by[r].usd > 0; });
+  names.sort(function (a, b) { return by[b].usd - by[a].usd || (a < b ? -1 : 1); });
+  return names.map(function (r) { return r + " " + money(cents(by[r].usd)) + " (" + money(cents(by[r].hour)) + " last hour)"; }).join("\n");
+}
+
+function nameList(v) { return (v && v.length) ? v.join(", ") : "-"; }
+function renderLanes(d) {
+  var box = $("lanes"), lanes = Array.isArray(d.lanes) ? d.lanes.slice() : [];
+  lanes.sort(function (a, b) { return String(a.machine).localeCompare(String(b.machine)) || String(a.kind).localeCompare(String(b.kind)); });
+  if (!lanes.length) {
+    if (!box._empty) {
+      box._map = null; box._head = null; box.textContent = "";
+      var e = el("div", "empty");
+      e.innerHTML = "No lanes in the sprint data. This panel fills itself when <code>where --json --cards</code> carries <code>lanes</code>.";
+      box.appendChild(e); box._empty = true;
+    }
+    setText($("lanes-sub"), "");
+    return;
+  }
+  if (box._empty) { box.textContent = ""; box._empty = false; }
+  if (!box._head) { box._head = headRow([["machine"], ["kind"], ["width", "num"], ["held"], ["waiting"]]); }
+  var byKey = {};
+  lanes.forEach(function (l) { byKey[l.machine + "/" + l.kind] = l; });
+  syncRows(box, box._head, lanes.map(function (l) { return l.machine + "/" + l.kind; }), function () {
+    var r = { node: el("div", "row") };
+    r.machine = el("div", "name"); r.kind = el("div"); r.width = numCell(); r.held = el("div"); r.waiting = el("div");
+    [r.machine, r.kind, r.width, r.held, r.waiting].forEach(function (c) { r.node.appendChild(c); });
+    return r;
+  }, function (r, k) {
+    var l = byKey[k];
+    setText(r.machine, l.machine); setText(r.kind, l.kind); setNum(r.width, int(l.width));
+    setText(r.held, nameList(l.held)); setText(r.waiting, nameList(l.waiting));
+  });
+  setText($("lanes-sub"), lanes.length + (lanes.length === 1 ? " lane" : " lanes"));
+}
+
+function renderMerge(d) {
+  var m = d.merge_row || {};
+  var mins = function (n, suffix) { return n == null ? "-" : n + "m" + (suffix || ""); };
+  var count = function (n) { return n == null ? "-" : String(n); };
+  [["mr-merging", count(m.merging)], ["mr-review", count(m.review)], ["mr-landed", count(m.landed_per_30m)],
+   ["mr-oldest", mins(m.oldest_merging_min)],
+   ["mr-drift", m.base_lacks == null ? "-" : "base lacks " + m.base_lacks + " · dev lacks " + m.dev_lacks],
+   ["mr-sync", mins(m.sync_minutes, " ago")], ["mr-promoted", mins(m.promotion_minutes, " ago")]].forEach(function (f) {
+    var e = $(f[0]); e._quiet = true; setText(e, f[1]);
+  });
+  var g = $("mr-gate");
+  if (!g._pill) { g._pill = makePill(); g.appendChild(g._pill); }
+  var gate = m.base_gate || "-", tone = gate === "red" ? "critical" : gate === "green" ? "good" : "neutral";
+  setPill(g._pill, gate + (m.failing_test ? " · " + m.failing_test : ""), tone,
+    gate === "-" ? "the base's gate is not known" : "the base's gate is " + gate + (m.failing_test ? ": " + m.failing_test : ""));
 }
 
 function render(d) {
+  renderPriorityMarks(d);
   flashCount = 0;
   var s = renderStreams(d);
   renderOverall(s.sum, s.all);
@@ -741,6 +975,8 @@ function render(d) {
   var ft = renderFleet(d);
   renderFriends(d);
   renderProviders(d);
+  renderLanes(d);
+  renderMerge(d);
   if (SHOW_ALL) renderReaders(d);
   renderHero(d, s, ft);
   fitTables();
@@ -765,6 +1001,7 @@ function accept(j) {
   if (isNaN(at) || at <= shownAt) return;
   shownAt = at;
   if ("throughput" in j) { throughput = j.throughput == null ? null : j.throughput; throughputMinutes = j.throughputMinutes || 0; }
+  renderRelease(j);
   try { render(d); } catch (e) { console.error(e); }
   setLive(new Date(at));
 }
@@ -777,7 +1014,7 @@ function poll() {
   inFlight++;
   var ctl = typeof AbortController === "function" ? new AbortController() : null;
   var kill = ctl && setTimeout(function () { ctl.abort(); }, FETCH_TIMEOUT_MS);
-  fetch("/api/sprint", { cache: "no-store", signal: ctl ? ctl.signal : undefined }).then(function (r) {
+  fetch("/api/sprint" + RELEASE_Q, { cache: "no-store", signal: ctl ? ctl.signal : undefined }).then(function (r) {
     if (!r.ok) throw new Error("HTTP " + r.status);
     return r.json();
   }).then(accept).catch(function () {
@@ -801,7 +1038,7 @@ function dropStream() {
 function connectStream() {
   if (typeof EventSource !== "function" || stream) return;
   var es;
-  try { es = new EventSource("/events"); } catch (e) { return; }
+  try { es = new EventSource("/events" + RELEASE_Q); } catch (e) { return; }
   stream = es; streamHeard = Date.now();
   es.addEventListener("open", function () { if (stream === es) { streamHeard = Date.now(); stopPoll(); } });
   es.addEventListener("sprint", function (ev) {
@@ -889,24 +1126,6 @@ function pollLandings() {
   });
 }
 window.addEventListener("resize", function () { if (landLast) drawLandings(landLast); });
-$("landings-panel").addEventListener("click", function (e) { if (landLast && e.target.classList.contains("fold")) setTimeout(function () { drawLandings(landLast); }, 0); });
+if ($("landings-panel")) $("landings-panel").addEventListener("click", function (e) { if (landLast && e.target.classList.contains("fold")) setTimeout(function () { drawLandings(landLast); }, 0); });
 pollLandings();
 setInterval(pollLandings, LAND_POLL_MS);
-// nudge(raw, order, total, unit): share `total` (in cents, a whole number of `unit`s) among the
-// tiers in proportion to their raw cents, by largest remainder, so the parts add up to the total
-// shown; a tier with any spend keeps at least one unit (Glenn 2026-10-04 ~4:33 PM: "I know it's
-// approx. but you get it").
-function nudge(raw, order, total, unit) {
-  var sum = 0, out = {}, units = Math.round(total / unit), used = 0, rem = [];
-  order.forEach(function (t) { sum += raw[t] || 0; });
-  order.forEach(function (t) {
-    var exact = sum ? (raw[t] || 0) * units / sum : 0, f = Math.floor(exact);
-    if ((raw[t] || 0) > 0 && f === 0) f = 1;
-    out[t] = f; used += f; rem.push([exact - Math.floor(exact), t]);
-  });
-  rem.sort(function (a, b) { return b[0] - a[0]; });
-  for (var i = 0; used < units && i < rem.length; i++) { if ((raw[rem[i][1]] || 0) > 0) { out[rem[i][1]]++; used++; } }
-  while (used > units) { var big = order.reduce(function (a, b) { return out[a] >= out[b] ? a : b; }); out[big]--; used--; }
-  order.forEach(function (t) { out[t] *= unit; });
-  return out;
-}

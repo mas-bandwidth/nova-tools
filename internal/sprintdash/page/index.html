@@ -6,8 +6,8 @@
 <title>nova-sprint</title>
 <!-- Nunito 800 for the title, served beside the page (OFL 1.1, OFL.txt; the same file nova-tools embeds,
      docs/ASSET-PROVENANCE.md), preloaded and font-display: block, so no fallback face paints first -->
-<link rel="preload" as="font" type="font/woff2" crossorigin href="/nunito-800.woff2">
-<style>@font-face { font-family: "Nunito"; font-style: normal; font-weight: 800; font-display: block; src: url("/nunito-800.woff2") format("woff2"); }</style>
+<link rel="preload" as="font" type="font/woff2" crossorigin="anonymous" href="nunito-800.woff2" />
+<style>@font-face { font-family: "Nunito"; font-style: normal; font-weight: 800; font-display: block; src: url("nunito-800.woff2") format("woff2"); }</style>
 <!--FAVICON-->
 <script>try{localStorage.removeItem("sprint-theme")}catch(e){}</script>
 <style>
@@ -25,14 +25,16 @@
   --text-3: #6b727d;
   --text-4: #30353d;
   --track: #262a31;
-  /* the six card states */
+  /* the seven card states */
   --s-waiting: #4a4f58;
   --s-ready: #7d8490;
   --s-working: #3d9bff;  /* brighter, to sit with the reader orange (Glenn 2026-10-06) */
+  --s-fix: #8b5cf6;
   --s-review: #fb8321;   /* review is the reader orange, the colour of a read card (Glenn 2026-10-06) */
   --s-merging: #d55181;  /* merging takes the pink review had */
   --s-landed: #199e70;
   /* a row's working cells by level (SPEC.md): a read card orange, blocker and critical red */
+  --p-fix: var(--s-fix);
   --s-read: #fb8321;
   --s-blocker: #ff1a1a;
   --s-critical: #ff1a1a;
@@ -66,9 +68,11 @@
   --s-waiting: #c3c7cd;
   --s-ready: #9aa0a9;
   --s-working: #2f8cf0;  /* light: brighter blue */
+  --s-fix: #7c3aed;
   --s-review: #f0892e;   /* light: review orange */
   --s-merging: #e87ba4;  /* light: merging pink */
   --s-landed: #1baf7a;
+  --p-fix: var(--s-fix);
   --s-read: #f0892e;
   --s-blocker: #ff1a1a;
   --s-critical: #ff1a1a;
@@ -200,8 +204,32 @@ button.toggle:hover { color: var(--text); border-color: var(--border-strong); }
 .fb { color: var(--text-2); }
 .waiting { background: var(--s-waiting); } .ready { background: var(--s-ready); }
 .working { background: var(--s-working); } .review { background: var(--s-review); }
+.fix { background: var(--s-fix); }
+.p-fix { background: var(--p-fix); }
+.p-blocker { background: var(--s-blocker); } .p-critical { background: var(--s-critical); } .p-reader { background: var(--s-read); }
 .merging { background: var(--s-merging); } .landed { background: var(--s-landed); }
 .seg-read { background: var(--s-read); } .seg-blocker { background: var(--s-blocker); } .seg-critical { background: var(--s-critical); }
+
+.priority-marks { display: flex; gap: .25rem; flex-wrap: wrap; margin-top: 1rem; }
+.mark { width: .5rem; height: .5rem; border-radius: 1px; }
+.p-work { background: var(--p-work); }
+
+
+.win { color: var(--text-3); font-size: .8em; white-space: nowrap; }
+.panel-head .archived { background: none; border: 0; padding: 0; font: inherit; font-size: 1.625rem; cursor: pointer; text-decoration: underline dotted; }
+.release { display: inline-flex; align-items: center; gap: 0.25rem; height: 3rem; padding: 0 0.25rem; border: 1px solid var(--border); border-radius: 0.75rem; font-size: 1.5rem; }
+.release[hidden] { display: none; }
+.release a { padding: 0 0.75rem; border-radius: 0.5rem; line-height: 2.25rem; color: var(--text-3); text-decoration: none; font-family: var(--mono); }
+.release a:hover { color: var(--text-2); }
+.release a.on { color: var(--text); background: var(--neutral-tint); }
+.merge-facts { display: flex; flex-wrap: wrap; gap: 1.5rem 4rem; padding: 0.5rem 3rem 2.5rem; }
+.merge-facts .label { display: block; color: var(--text-2); font-size: 1.5rem; }
+.merge-facts .num { font-family: var(--mono); font-size: 2rem; }
+.lanes .row { grid-template-columns: minmax(10rem, 1fr) minmax(6rem, .6fr) 6rem minmax(10rem, 1.4fr) minmax(10rem, 1.4fr); }
+:root { --p-blocker: #ff1a1a; --p-critical: #9b1c1c; --p-reader: #fb8321; --p-work: var(--s-working); }
+.p-blocker { background: var(--p-blocker); }
+.p-critical { background: var(--p-critical); }
+.p-reader { background: var(--p-reader); }
 
 /* panels */
 .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 1.5rem; min-width: 0; overflow: hidden; }
@@ -327,9 +355,9 @@ footer a:hover { color: var(--text); }
    between the counts. 40 px gutters. Rows grouped by status: no rule between rows, a 1 px
    rule (the panel's border colour) between groups. */
 .streams .row { --pad: 2rem; --gap: 2.5rem; --S: 9.75rem; column-gap: var(--gap); padding: 0 var(--pad);
-  grid-template-columns: var(--name-w) var(--status-w) repeat(5, minmax(5.625rem, 1fr)) 4rem minmax(5.625rem, 1fr) minmax(7.5rem, 1.25fr); }
-.streams .row > :nth-child(8) { grid-column: span 2; justify-self: end; }
-.streams .row.head > :nth-child(8) { text-align: center; }  /* width set by app.js to the n / total cell's */
+  grid-template-columns: var(--name-w) var(--status-w) repeat(6, minmax(5.625rem, 1fr)) 4rem minmax(5.625rem, 1fr) minmax(7.5rem, 1.25fr); }
+.streams .row > :nth-child(9) { grid-column: span 2; justify-self: end; }
+.streams .row.head > :nth-child(9) { text-align: center; }  /* width set by app.js to the n / total cell's */
 .streams .row > :nth-child(2) { justify-self: end; }
 .streams .row:not(.head):not(.total) { border-bottom: 0; }
 .streams .row.group-start { border-top: 1px solid var(--border); }
@@ -350,8 +378,8 @@ footer a:hover { color: var(--text); }
 .panel.compact .row { --pad: 1.5rem; --gap: 1.5rem; --S: 3.5rem; column-gap: var(--gap); padding: 0 var(--pad); }
 .panel.compact .panel-head, .panel.compact .empty { padding-left: 1.5rem; padding-right: 1.5rem; }
 .streams.compact .row { grid-template-columns: var(--name-w) var(--status-w) minmax(10.25rem, 1fr); }
-.streams.compact .row > :nth-child(8) { grid-column: auto; }
-.streams.compact .row > :nth-child(n+3):nth-child(-n+7), .streams.compact .row > :nth-child(9) { display: none; }
+.streams.compact .row > :nth-child(9) { grid-column: auto; }
+.streams.compact .row > :nth-child(n+3):nth-child(-n+8), .streams.compact .row > :nth-child(10) { display: none; }
 .streams.compact .pill > span:last-child { display: none; }
 .fleet.compact .row, .friends.compact .row { grid-template-columns: var(--name-w) var(--status-w) minmax(7rem, 1fr) minmax(5.375rem, 1fr); }
 .fleet.compact .row > :nth-child(5), .friends.compact .row > :nth-child(5) { padding-left: 0; }
@@ -396,6 +424,7 @@ footer a:hover { color: var(--text); }
     <div class="meta">
       <span class="chip">coordinator <b id="coord">-</b></span>
       <span class="chip">epoch <b id="epoch">-</b></span>
+      <nav class="release" id="release" aria-label="release" hidden></nav>
       <span class="chip" id="machine-chip">machine <b id="machine">-</b></span>
     </div>
   </div>
@@ -420,6 +449,7 @@ footer a:hover { color: var(--text); }
     <div class="label">Cost</div>
     <div class="big" id="cost">-</div>
     <div class="sub" id="cost-per">&nbsp;</div>
+    <div class="sub" id="cost-unreconciled">&nbsp;</div>
   </div>
   <div class="tile">
     <div class="label">In flight</div>
@@ -435,7 +465,7 @@ footer a:hover { color: var(--text); }
 
 <!-- Spend row (Glenn 2026-10-04 10:15 AM): a square pie of cards by tier under Landed and ETA, as wide as the two of them,
      and beside it, filling the same height, the ten most expensive work streams with their cost, cost per landed card,
-     counts by state and tiers. The tier counts come from `where --json` (`tiers`, `tables.work[s].tiers`) once the
+     counts by state and tiers. The tier counts come from `where —json` (`tiers`, `tables.work[s].tiers`) once the
      next nova-sprint build serves them; until then the pie says so. -->
 <section class="panel spend">
   <div class="panel-head"><h2>Cost breakdown</h2><span class="legend" id="tier-sub"></span></div>
@@ -451,25 +481,45 @@ footer a:hover { color: var(--text); }
     <div class="legend" id="legend"></div>
   </div>
   <div class="cells thick" id="overall"></div>
+  <div id="priority-marks" class="priority-marks" aria-label="Card priorities"></div>
 </section>
+<section class="panel merge" id="merge-row">
+  <div class="panel-head"><h2>Merge</h2></div>
+  <div class="merge-facts">
+    <div><span class="label">merging</span><span class="num" id="mr-merging">-</span></div>
+    <div><span class="label">review</span><span class="num" id="mr-review">-</span></div>
+    <div><span class="label">landed / 30m</span><span class="num" id="mr-landed">-</span></div>
+    <div><span class="label">oldest merging</span><span class="num" id="mr-oldest">-</span></div>
+    <div><span class="label">base gate</span><span id="mr-gate"></span></div>
+    <div><span class="label">drift</span><span class="num" id="mr-drift">-</span></div>
+    <div><span class="label">since sync</span><span class="num" id="mr-sync">-</span></div>
+    <div><span class="label">since promotion</span><span class="num" id="mr-promoted">-</span></div>
+  </div>
+</section>
+
 <section class="panel streams">
-  <div class="panel-head"><h2>Work</h2><span class="muted" id="streams-sub"></span></div>
-  <div class="scroll"><div class="rows" id="streams"></div></div>
+  <div class="panel-head"><h2>Work</h2><span class="muted" id="streams-sub"></span><button type="button" class="muted archived" id="streams-archived" hidden></button></div>
+  <div class="scroll"><div class="rows" id="streams"><div class="row head"><div>stream</div><div>status</div><div class="num">waiting</div><div class="num">ready</div><div class="num">working</div><div class="num">review</div><div class="num">fix</div><div class="num">merging</div><div class="frac">landed</div><div class="num">cost</div></div></div></div>
 </section>
 
 <section class="panel fleet">
   <div class="panel-head"><h2>Fleet</h2><span class="muted" id="fleet-head"></span></div>
-  <div class="scroll"><div class="rows" id="fleet"></div></div>
+  <div class="scroll"><div class="rows" id="fleet"><div class="row head"><div>machine</div><div>status</div><div class="num">ready</div><div>working</div><div class="frac"><span class="alt">working</span></div><div class="num">done</div><div class="num">ok%</div><div class="num">load</div></div></div></div>
 </section>
 
 <section class="panel friends">
   <div class="panel-head"><h2>Friends</h2><span class="muted" id="friends-sub"></span></div>
-  <div class="scroll"><div class="rows" id="friends"></div></div>
+  <div class="scroll"><div class="rows" id="friends"><div class="row head"><div>friend</div><div>status</div><div class="num">ready</div><div>working</div><div class="frac"><span class="alt">working</span></div><div class="num">done</div><div class="num">ok%</div><div class="num">load</div></div></div></div>
 </section>
 
 <section class="panel providers" id="providers-panel" hidden>
   <div class="panel-head"><h2>Providers</h2><span class="muted" id="providers-sub"></span></div>
   <div class="scroll"><div class="rows" id="providers"></div></div>
+</section>
+
+<section class="panel lanes">
+  <div class="panel-head"><h2>Lanes</h2><span class="muted" id="lanes-sub"></span></div>
+  <div class="scroll"><div class="rows" id="lanes"><div class="row head"><div>machine</div><div>kind</div><div class="num">width</div><div>held</div><div>waiting</div></div></div></div>
 </section>
 
 <section class="panel readers" id="readers-panel" hidden>

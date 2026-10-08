@@ -147,7 +147,8 @@ func TestTheDashboardShowsOnlyTheCurrentReleasesStreams(t *testing.T) {
 	assert.Contains(t, html, `<nav class="release" id="release" aria-label="release" hidden></nav>`)
 	assert.Contains(t, js, `fetch("/api/sprint" + RELEASE_Q`)
 	assert.Contains(t, js, `new EventSource("/events" + RELEASE_Q)`)
-	assert.NotContains(t, html, `data-theme="light"`)
+	assert.Contains(t, html, `<html lang="en" data-theme="dark">`)
+	assert.NotContains(t, html, `id="theme"`)
 
 	// v1.0.0 done: v1.1.0 is the current release
 	r.advance(2 * r.s.Every)
