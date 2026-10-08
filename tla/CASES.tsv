@@ -494,3 +494,7 @@ MCStopReturnStaleTick.cfg	MCStopReturnStaleTick.tla	invariant	NoStaleTickStop	ig
 MCStopReturnStalePart.cfg	MCStopReturnStalePart.tla	invariant	NoStaleTickPart	ignore-terminal	stopreturn	required	-
 MCWakeCursor.cfg	MCWakeCursor.tla	pass	-	ignore-terminal	wakecursor	required	-
 MCWakeCursorBrokenRearm.cfg	MCWakeCursor.tla	invariant	NoSkipped	ignore-terminal	wakecursor	required	-
+MCOneShotPresent.cfg	MCOneShotPresent.tla	pass	-	ignore-terminal	oneshotpresent	required	-
+MCOneShotPresentBrokenSupersede.cfg	MCOneShotPresent.tla	invariant	UnacceptedRequestOwed	ignore-terminal	oneshotpresent	required	-
+MCOneShotPresentBrokenRedeliver.cfg	MCOneShotPresent.tla	invariant	AcceptedOnce	ignore-terminal	oneshotpresent	required	-
+MCOneShotPresentWitness.cfg	MCOneShotPresent.tla	invariant	ReachAcceptedThenRestartWitness	ignore-terminal	oneshotpresent	required	-

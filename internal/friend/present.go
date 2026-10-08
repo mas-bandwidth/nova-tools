@@ -213,7 +213,8 @@ func (l *loop) presentOwed(now time.Time) bool {
 // reason, said on the record and once to the seat on the bus, and, withTurn, one PRESENT turn
 // carrying her live queue, the seat, the skipped line and the newest coordinator note (acked as
 // any turn's message when it ends at exit 0). In one-shot mode there is no batch session to
-// tell: the backlog is superseded alone, and the lanes hand her cards. A store that does not
+// tell: status is superseded, but unacted ordinary requests stay owed to an explicit lane
+// session (tla/OneShotPresent.tla, Present). A store that does not
 // answer leaves the present due, tried again the next step.
 func (l *loop) startPresent(now time.Time, withTurn bool) {
 	d, b := l.d, l.b
@@ -279,6 +280,19 @@ func (l *loop) startPresent(now time.Time, withTurn bool) {
 		return cmp.Or(cmp.Compare(len(aTime), len(bTime)), strings.Compare(aTime, bTime),
 			cmp.Compare(len(aSeq), len(bSeq)), strings.Compare(aSeq, bSeq))
 	})
+	var requests []bus.Entry
+	if !withTurn {
+		compact := make([]bus.Entry, 0, len(backlog))
+		for _, e := range backlog {
+			m := e.Message()
+			if e.Stage != bus.Acted && m.Kind == bus.KindRequest && !IsPresentRequest(d.Friend, m) && !isDeal(m) && !isChallenge(m) {
+				requests = append(requests, e)
+			} else {
+				compact = append(compact, e)
+			}
+		}
+		backlog = compact
+	}
 	seat := l.seat(now)
 	plan := PlanPresent(d.Friend, seat, backlog, storeNow, d.m.Window)
 	if !withTurn && plan.Note != nil {
@@ -288,10 +302,32 @@ func (l *loop) startPresent(now time.Time, withTurn bool) {
 		plan.Skipped.Notes++
 		plan.Note = nil
 	}
+	if !withTurn && l.owedMessage != nil && !l.owedMessage.running && slices.ContainsFunc(l.owedMessage.entries, func(id string) bool {
+		return slices.Contains(plan.Superseded, id)
+	}) {
+		// An unread mixed turn cannot retry text the present superseded. Its
+		// retained requests are rebuilt below; a newer notice takes precedence.
+		if l.notice == nil {
+			l.notice = l.owedMessage.notice
+		}
+		l.owedMessage, l.messageRetry, l.messageSaid, l.messageTries = nil, time.Time{}, "", 0
+	}
 	l.busy, l.retry, l.deferrals, l.deferSaid = nil, time.Time{}, 0, time.Time{}
 	l.hand, l.presentCarry, l.presentDue, l.dealt = nil, nil, false, nil
 	for e := range seen {
 		delete(l.inHand, e)
+	}
+	for _, e := range requests {
+		l.inHand[e.Entry] = true
+		owned := l.owedMessage != nil && slices.Contains(l.owedMessage.entries, e.Entry)
+		if l.lanes != nil {
+			for _, ln := range l.lanes.lanes {
+				owned = owned || ln.t != nil && slices.Contains(ln.t.entries, e.Entry)
+			}
+		}
+		if !owned {
+			l.hand = append(l.hand, e)
+		}
 	}
 	l.presentAt = storeNow
 	for _, e := range plan.Fresh {

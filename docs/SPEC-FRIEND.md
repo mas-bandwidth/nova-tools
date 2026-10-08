@@ -845,6 +845,16 @@ so a lost stream ack cannot make it an instruction twice. The carried note is ac
 the turn ends at exit 0, as any turn's message; a present turn
 that fails is owed again after `RecheckEvery`, carrying the same note.
 
+In one-shot mode there is no batch session to carry the newest note, so that status note
+is superseded too. An ordinary `kind=request` message not yet acted on stays pending and
+in the daemon's hand across present/restart until an explicit lane session accepts its turn.
+Deals, challenges and self-addressed present controls keep their existing compaction rules,
+regardless of kind. An already acted request is compacted, so a lost stream ack cannot
+produce a second accepted turn. A deferred unread turn containing compacted status is
+rebuilt with only its retained requests; an already running native turn keeps its sole
+request ownership and finishes untouched. Batch present semantics are unchanged. The bounded model
+is `tla/OneShotPresent.tla`.
+
 When an outbox report's card has left her row, the daemon refuses its finish and names the
 current holder from the server's existing `GET /api/view/cards` document (`Daemon.Holders`,
 the command's holder-view parser): one bounded view for every old report in that outbox pass. An unavailable or
