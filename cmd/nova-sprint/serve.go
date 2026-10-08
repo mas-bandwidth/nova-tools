@@ -92,7 +92,7 @@ func workerVerb(argv []string) (as string, words int, why string) {
 		// machine and the worker, and nothing more; the server never waits (--wait asks again
 		// from the worker's side)
 		rest := argv[2:]
-		if len(rest) != 5 || !slices.Contains(sprint.LaneKinds, rest[0]) || rest[1] != "--machine" || !sprint.ValidID(rest[2]) || rest[3] != "--as" || !sprint.ValidID(rest[4]) {
+		if len(rest) != 5 || !slices.Contains(sprint.LaneKinds, rest[0]) || rest[1] != "--machine" || !sprint.ValidID(rest[2]) || rest[3] != "--as" || !sprint.ValidLaneWho(rest[4]) {
 			return "", 0, "a lane's verb sent to the server is `lane " + argv[1] + " <kind> --machine <m> --as <worker>` and nothing more, the kind one of " + strings.Join(sprint.LaneKinds, ", ")
 		}
 		return rest[4], 2, ""
