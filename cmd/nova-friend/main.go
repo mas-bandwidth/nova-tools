@@ -1371,7 +1371,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	admitLaunch := func(ctx context.Context) bool { return admitMachineLaunch(ctx, &machine, name, w.sprintAsk(server)) }
 	owedStopReturns := func() int { return 0 }
 	d := &friend.Daemon{
-		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
+		Friend: name, Harness: c.Str("harness"), Dir: dir, StateDir: state, Width: c.Int("width"),
 		MachineStopped: func() bool { m := machine.Load(); return m != nil && m.state == friend.MachineStoppedWord },
 		MachinePaused:  func() bool { m := machine.Load(); return m != nil && m.state == "PAUSED" },
 		MachineKnown:   func() bool { return machineFresh(machine.Load()) },

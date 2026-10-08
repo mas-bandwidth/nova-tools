@@ -253,41 +253,55 @@ func remoteRef(gd, ref string) string {
 
 // endCard is the lane done with card: the friend's REPORT.md, when there, is the finish
 // (friend sync reads it); else the lane writes one naming how the run ended and sends the
-// failed finish to the sprint server. Either way the card is no longer started. It answers
-// the record's words.
+// failed finish to the sprint server. The durable Started claim is cleared only
+// after the coordinator's finish note is journaled. It answers the record's words.
 func (l *loop) endCard(lane int, card Card, end LaneEnd, now time.Time) string {
 	d, s := l.d, l.lanes
-	delete(s.state.Started, filepath.Base(card.Outbox))
-	defer l.saveLanes(now)
+	job := filepath.Base(card.Outbox)
 	mark := ""
-	if err := endOwnedLaneMark(d.Dir, filepath.Base(card.Outbox), l.laneWho(lane)); err != nil {
+	if err := endOwnedLaneMark(d.Dir, job, l.laneWho(lane)); err != nil {
 		mark = fmt.Sprintf(" mark_error=%q", oneLine(err.Error(), 300)) // its other lanes end by her row alone
 	}
+	words := "finish=report" + mark
 	if exists(card.Report()) {
-		return "finish=report" + mark
+		// The report was already written by the worker. The outbox pass owns
+		// canonical finish; this path still owes the coordinator its note.
+	} else {
+		head, branch := PushedHead(d.Dir, card)
+		report := EndReport(d.Friend, lane, card, end, head, branch)
+		words = "finish=failed" + mark
+		if head != "" {
+			words += " head=" + head
+		}
+		if err := os.MkdirAll(card.Outbox, 0o755); err != nil {
+			s.recoveryPending = true
+			return words + fmt.Sprintf(" report_error=%q", err.Error())
+		}
+		if err := atomicfile.WriteFile(card.Report(), []byte(report), 0o644); err != nil {
+			s.recoveryPending = true
+			return words + fmt.Sprintf(" report_error=%q", err.Error())
+		}
+		if d.Finish == nil {
+			words += " sent=sync" // friend sync finishes it from the report just written
+		} else {
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), FinishWait)
+			err := d.Finish(ctx, FinishArgv(d.Friend, card, report, head, branch))
+			cancel()
+			if err != nil {
+				words += fmt.Sprintf(" sent=sync finish_error=%q", oneLine(err.Error(), 300))
+			} else {
+				words += " sent=server"
+			}
+		}
 	}
-	head, branch := PushedHead(d.Dir, card)
-	report := EndReport(d.Friend, lane, card, end, head, branch)
-	words := "finish=failed"
-	if head != "" {
-		words += " head=" + head
+	if err := l.finishNote(card, end.Wall, now); err != nil {
+		s.recoveryPending = true
+		d.Record(now.UTC().Format(time.RFC3339) + " finish note remains owed for " + job + ": " + oneLine(err.Error(), 300))
+		return words + " notice=owed"
 	}
-	words += mark
-	if err := os.MkdirAll(card.Outbox, 0o755); err != nil {
-		return words + fmt.Sprintf(" report_error=%q", err.Error())
-	}
-	if err := atomicfile.WriteFile(card.Report(), []byte(report), 0o644); err != nil {
-		return words + fmt.Sprintf(" report_error=%q", err.Error())
-	}
-	if d.Finish == nil {
-		return words + " sent=sync" // friend sync finishes it from the report just written
-	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), FinishWait)
-	defer cancel()
-	if err := d.Finish(ctx, FinishArgv(d.Friend, card, report, head, branch)); err != nil {
-		return words + fmt.Sprintf(" sent=sync finish_error=%q", oneLine(err.Error(), 300))
-	}
-	return words + " sent=server"
+	delete(s.state.Started, job)
+	l.saveLanes(now)
+	return words
 }
 
 // FinishWait bounds a lane's finish to the sprint server; one not answered is left to

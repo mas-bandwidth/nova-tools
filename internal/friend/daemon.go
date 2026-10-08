@@ -93,6 +93,7 @@ const (
 // bus's Fake, a fake harness and its own clock.
 type Daemon struct {
 	Friend, Harness, Dir string
+	StateDir             string // the daemon's durable files, including owed finish notes
 	Width                int
 	Store                bus.Store
 	Deliver              Deliverer
@@ -568,6 +569,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		l.capWatch(now)
 		l.stampProgress(now)
 		l.takeResults(now)
+		l.sendFinishNotes(now)
 		if d.Mailbox != nil {
 			// off the loop: a move sends the old conversation's unread deliveries again, and the
 			// beat never waits for it

@@ -156,6 +156,13 @@ func (l *loop) stopPersistedStarted(now time.Time) {
 		if l.stopOwedFor(job, st) {
 			continue
 		}
+		if (exists(st.Card.Report()) || exists(st.Card.Result())) && l.stopRunQuiescent(job, st) {
+			// A completed, quiescent run may have retained Started only
+			// because its finish note could not yet be journaled. Settle
+			// that result under STOP; do not turn it into a cancellation.
+			l.endCard(st.Lane, st.Card, LaneEnd{Restart: now, Started: st.At}, now)
+			continue
+		}
 		l.oweStopReturn(StopReturn{Lane: st.Lane, Job: job, Row: "friend." + l.d.Friend, Card: st.Card.ID, Gen: st.Card.Gen(), Epoch: st.Card.Epoch(), Pid: st.Pid, Exit: -1, At: now})
 	}
 }

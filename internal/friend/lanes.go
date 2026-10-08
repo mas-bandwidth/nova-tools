@@ -19,7 +19,6 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/procgroup"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 )
@@ -1181,7 +1180,6 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	if exists(card.Result()) || exists(card.Report()) {
 		end.NoReport = true
 		line += " card=done " + l.endCard(ln.n, card, end, now)
-		l.finishNote(ln, card, now.Sub(t.started), now)
 		ln.card, ln.attempts = nil, 0
 		d.Record(line)
 		return
@@ -1237,7 +1235,6 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		return
 	}
 	d.Record(line + fmt.Sprintf(" card=set_aside turn=%d/%d reason=%q ", ln.attempts, CardTurns, why) + l.endCard(ln.n, card, end, now))
-	l.finishNote(ln, card, now.Sub(t.started), now)
 	job := filepath.Base(card.Outbox)
 	s.given[job] = true
 	s.state.GivenUp = append(s.state.GivenUp, job)
@@ -1824,33 +1821,4 @@ func (l *loop) capStep(r LaneRules, ln *lane, now time.Time) {
 	}
 	l.d.Record(fmt.Sprintf("%s TOKEN CAP lane=%d card=%s: %d tokens of %d; lane stopped", now.UTC().Format(time.RFC3339), ln.n, ln.card.ID, spent.Total(), r.TokenCap))
 	ln.t.cancel()
-}
-
-// finishNote publishes the card's cost on its REPORT.md and RESULT.md and sends the bus note
-// to the coordinator, at each finish; off when the parity is not wired (Rules nil).
-func (l *loop) finishNote(ln *lane, card Card, wall time.Duration, now time.Time) {
-	d := l.d
-	if d.Rules == nil {
-		return
-	}
-	spent := LaneTokens{Tokens: cardcost.None()}
-	if cur, ok := l.tokens(ln.session); ok && ln.baseOK {
-		spent = cur.Sub(ln.base)
-	}
-	var rp RoutePrice
-	if d.Route != nil {
-		rp = d.Route()
-	}
-	if d.Tokens != nil {
-		if err := PublishCost(card.Outbox, spent, rp, d.Model); err != nil {
-			d.Record(fmt.Sprintf("%s cost: %s: %s", now.UTC().Format(time.RFC3339), card.ID, oneLine(err.Error(), 300)))
-		}
-	}
-	verdict := ""
-	if raw, err := os.ReadFile(card.Report()); err == nil {
-		verdict, _ = reportLine(string(raw), "Verdict")
-	}
-	cost := CostOf(spent.Tokens, rp, d.Model)
-	subject, body := FinishNote(d.Friend, filepath.Base(card.Outbox), verdict, cost, wall)
-	l.tell(subject, body, now)
 }
