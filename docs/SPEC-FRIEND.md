@@ -2686,3 +2686,22 @@ the message stays pending, never given up, the session reads broken with the
 reason until a turn succeeds, and the detail tells the friend to start a session
 without a preset or read the bus with `nova-bus recv` ("A turn the session
 cannot take").
+
+## Friend card lifecycle (tla/FriendCard.tla)
+
+The friend's card states and transitions, modelled as a TLA+ module. The state
+per card: dealt, delivered, started, finished, returned, takenBack. Actions for
+the friend (answer, start, report, die), the daemon (deliver, failDelivery), and
+the tick (deal, takeBack).
+
+**Invariants:**
+- A card is working only after a start receipt (cardState = "started" implies cardSince > 0)
+- A finished card must have a notice (cardState = "finished" implies cardNotice)
+- A takenBack card must have had a notice or been returned
+
+**Liveness:**
+- Every dealt card eventually gets started or taken back
+- Every started card eventually reports or is taken back
+
+The model and its reversed witnesses are in tla/FriendCard.tla, tested with
+MCFriendCard.cfg on a Linux bench.
