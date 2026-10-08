@@ -67,13 +67,33 @@ func all(rules ...func(a argv) string) func(a argv) string {
 
 // redisLogin is nova-redis's login flags (cmd/nova-redis/main.go, loginFlags: --addr has
 // no default and is required).
-var redisLogin = []string{"addr", "user", "password-env"}
+var redisLogin = []string{"addr", "redis", "user", "password-env"}
 
 var realVerbs = map[string]realVerb{
-	"nova-redis acl check": {values: redisLogin, rule: needs("addr")},
-	"nova-redis acl apply": {values: append(slices.Clone(redisLogin), "password-env-for"), bools: []string{"dry-run"}, rule: needs("addr")},
-	"nova-redis fn check":  {values: redisLogin, rule: needs("addr")},
-	"nova-redis fn load":   {values: redisLogin, rule: needs("addr")},
+	"nova-redis acl check": {values: redisLogin, rule: func(a argv) string {
+		if a.flags["redis"] != "" || a.flags["addr"] != "" {
+			return ""
+		}
+		return "--redis is required"
+	}},
+	"nova-redis acl apply": {values: append(slices.Clone(redisLogin), "password-env-for"), bools: []string{"dry-run"}, rule: func(a argv) string {
+		if a.flags["redis"] != "" || a.flags["addr"] != "" {
+			return ""
+		}
+		return "--redis is required"
+	}},
+	"nova-redis fn check": {values: redisLogin, rule: func(a argv) string {
+		if a.flags["redis"] != "" || a.flags["addr"] != "" {
+			return ""
+		}
+		return "--redis is required"
+	}},
+	"nova-redis fn load": {values: redisLogin, rule: func(a argv) string {
+		if a.flags["redis"] != "" || a.flags["addr"] != "" {
+			return ""
+		}
+		return "--redis is required"
+	}},
 	// cmd/nova-redis/serve.go: --bind, --port and --dir required, --dir absolute.
 	"nova-redis serve": {values: []string{"bind", "port", "dir", "users", "secrets", "as", "key", "sops", "secret"}, bools: []string{"dry-run"},
 		rule: all(needs("bind", "port", "dir"), func(a argv) string {
@@ -163,6 +183,7 @@ var realVerbs = map[string]realVerb{
 			return ""
 		})},
 	// cmd/nova-sprint/pushproof.go, cmdSeatPush: no words; --sent and --harness are one at a time.
+	"nova-sprint seat check": {values: []string{"redis", "actor", "op", "max", "epoch"}, bools: []string{"json"}, rule: needs("actor", "redis")},
 	"nova-sprint seat push": {values: []string{"redis", "actor", "op", "max", "epoch", "harness", "target", "session", "sent", "failed"}, bools: []string{"json"},
 		rule: all(needs("actor", "redis"), func(a argv) string {
 			if a.flags["failed"] != "" && a.flags["sent"] == "" {
@@ -338,7 +359,7 @@ func TestDoctorFakeShellRefusesWhatTheRealToolRefuses(t *testing.T) {
 		"nova-friend ping --as ada --redis a:1":                                        "--to is required",
 		"nova-friend install --as bob --dir /home/bob":                                 "--harness is required",
 		"nova-friend install --as bob --harness claude --dir /home/bob --redis a:1":    "--config-dir is required",
-		"nova-redis fn check":                                                          "--addr is required",
+		"nova-redis fn check":                                                          "--redis is required",
 		"nova-redis serve --bind 127.0.0.1 --port 6390 --dir ~/nova/stores/redis":      "not absolute",
 		"nova-config apply --check --redis a:1":                                        "--as is required",
 		"nova-redis serve --bind 127.0.0.1 --port 6390 --dir /store":                   "--secrets is required",

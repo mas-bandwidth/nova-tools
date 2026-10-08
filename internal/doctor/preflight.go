@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -19,8 +20,6 @@ import (
 
 var (
 	schemaSentence = regexp.MustCompile(`schema config is at version (\d+) and this binary carries (\d+)`)
-	schemaFact     = regexp.MustCompile(`(?:^|\s)schema=(\d+)`)
-	binaryFact     = regexp.MustCompile(`(?:^|\s)binary=(\d+)`)
 )
 
 // migrationOwed reports a store schema older than the binary that read it. The next
@@ -32,26 +31,47 @@ func migrationOwed(out, said string) (have, want int, ok bool) {
 		want, _ = strconv.Atoi(m[2])
 		return have, want, want > have
 	}
-	sm, bm := schemaFact.FindStringSubmatch(text), binaryFact.FindStringSubmatch(text)
-	if sm == nil || bm == nil {
-		return 0, 0, false
-	}
-	have, _ = strconv.Atoi(sm[1])
-	want, _ = strconv.Atoi(bm[1])
-	return have, want, want > have
+	return 0, 0, false
 }
 
-// emptyConfigFix previews the seat profile from named secret metadata, without
-// recording a login or installing the seat (docs/SPEC-DOCTOR.md, "Coordinator preflight").
+// emptyConfigFix names a recorded login's secret sources (docs/SPEC-DOCTOR.md,
+// "Coordinator preflight"); the doctor only prints this writing remedy.
 func (r *jobRun) emptyConfigFix() string {
-	actor := r.applyActor()
-	dsn := r.env.Getenv("NOVA_PG_DSN")
-	pass := r.env.Getenv("NOVA_PG_PASSWORD_ENV")
-	if actor == "" || dsn == "" || pass == "" {
-		return r.again(" --as <actor>")
+	l := r.in.RedisLogin
+	actor, dsn, pass := r.applyActor(), r.env.Getenv("NOVA_PG_DSN"), r.env.Getenv("NOVA_PG_PASSWORD_ENV")
+	if actor == "" || dsn == "" || pass == "" || l.Missing() != "" {
+		return r.again(" --as <actor> --redis-secrets <dir> --redis-seat <seat> --redis-key <file> --redis-sops <path>")
 	}
-	return fmt.Sprintf("%s --dry-run --config-seat %s --config-dsn %s --config-password-env %s",
-		r.seatInstall(), oneline.ShellWord(actor), oneline.ShellWord(dsn), oneline.ShellWord(pass))
+	return fmt.Sprintf("nova-config login --store %s --as %s --key %s --sops %s --secret %s --dsn %s --actor %s", oneline.ShellWord(l.Store), oneline.ShellWord(l.As), oneline.ShellWord(l.Key), oneline.ShellWord(l.Sops), oneline.ShellWord(pass), oneline.ShellWord(dsn), oneline.ShellWord(actor))
+}
+
+// migrateFix probes ownership without changing the schema (docs/SPEC-DOCTOR.md,
+// "Coordinator preflight"). The owner role is retained; no password is printed.
+func (r *jobRun) migrateFix(ctx context.Context, status string) string {
+	args := []string{"migrate", "--dry-run"}
+	c := r.exec(ctx, "nova-config", args...)
+	for _, line := range strings.Split(c.out, "\n") {
+		if !strings.HasPrefix(line, "MIGRATE NOT-OWNED ") {
+			continue
+		}
+		owner := lineField(line, "owner")
+		dsn := lineField(status, "pg")
+		if dsn == "" {
+			dsn = r.env.Getenv("NOVA_PG_DSN")
+		}
+		if !strings.Contains(dsn, "://") {
+			dsn = "postgres://" + dsn
+		}
+		u, err := url.Parse(dsn)
+		if err == nil && u.Host != "" && owner != "" {
+			u.User = url.User(owner)
+			u.RawQuery = ""
+			u.Fragment = ""
+			return "nova-config migrate --pg " + oneline.ShellWord(u.String())
+		}
+		return "nova-config migrate --pg " + oneline.ShellWord("postgres://"+owner+"@<host>:<port>/<db>")
+	}
+	return "nova-config migrate"
 }
 
 func (r *jobRun) actor() string {
@@ -62,13 +82,61 @@ func (r *jobRun) actor() string {
 }
 
 func (r *jobRun) seatInstall() string {
-	return fmt.Sprintf("nova-sprint seat install --harness grok --target %s --actor %s --redis %s",
-		oneline.ShellWord(r.home("session")), oneline.ShellWord(r.actor()), oneline.ShellWord(r.redisAddr()))
+	harness, dir := r.in.Harness, r.in.Dir
+	if harness == "" {
+		harness = "<harness>"
+	}
+	if dir == "" {
+		dir = "<session dir>"
+	}
+	return fmt.Sprintf("nova-sprint seat install --harness %s --target %s --actor %s --redis %s", oneline.ShellWord(harness), oneline.ShellWord(dir), oneline.ShellWord(r.actor()), oneline.ShellWord(r.redisAddr()))
 }
 
-func (r *jobRun) inboxPush() string {
-	return fmt.Sprintf("nova-sprint inbox --wait --push seat --actor %s --redis %s",
-		oneline.ShellWord(r.actor()), oneline.ShellWord(r.redisAddr()))
+// seat agreement and installed machinery precede proof (docs/SPEC-DOCTOR.md,
+// "Coordinator preflight"); native remedies are preserved.
+func stepSeatAgreement(ctx context.Context, r *jobRun) Result {
+	c := r.exec(ctx, "nova-sprint", "seat", "--actor", r.actor(), "--redis", r.redisAddr())
+	if c.code == -1 {
+		return notRun("nova-sprint", c)
+	}
+	if strings.Contains(c.out+" "+c.said, "DRIFT") {
+		return Result{Status: Fail, Evidence: firstLine(c.out + " " + c.said), Fix: fmt.Sprintf("nova-sprint seat --repair --reason 'doctor detects seat drift' --actor %s --redis %s", oneline.ShellWord(r.actor()), oneline.ShellWord(r.redisAddr()))}
+	}
+	return Result{Status: OK, Evidence: firstLine(c.out)}
+}
+
+func stepSeatService(ctx context.Context, r *jobRun) Result {
+	c := r.exec(ctx, "nova-sprint", "seat", "check", "--actor", r.actor(), "--redis", r.redisAddr())
+	if c.code == -1 {
+		return notRun("nova-sprint", c)
+	}
+	seen := false
+	for _, line := range strings.Split(c.out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 || fields[0] != "MACHINERY" {
+			continue
+		}
+		switch fields[1] {
+		case "server", "store", "loop", "dashboard", "bus", "inbox", "versions":
+		default:
+			continue // capacity, progress, push proof and the summary have their own steps
+		}
+		seen = true
+		if strings.Contains(line, " DOWN") {
+			return Result{Status: Fail, Evidence: line, Fix: remedy(line, r.seatInstall())}
+		}
+	}
+	if !seen {
+		return Result{Status: Fail, Evidence: "seat check printed no installed machinery", Fix: r.seatInstall()}
+	}
+	return Result{Status: OK, Evidence: strings.TrimSpace(c.out)}
+}
+
+func (r *jobRun) pendingPushFix(ctx context.Context) string {
+	c := r.exec(ctx, "nova-sprint", "seat", "push", "--actor", r.actor(), "--redis", r.redisAddr())
+	fix := remedy(c.out+" "+c.said, r.seatInstall())
+	fix, _, _ = strings.Cut(fix, "; then,")
+	return fix
 }
 
 func (r *jobRun) viewCoordinator() string {
@@ -132,7 +200,7 @@ func stepPushRoundtrip(ctx context.Context, r *jobRun) Result {
 	}
 	var status pushStatus
 	if err := json.Unmarshal([]byte(push.out), &status); err != nil {
-		return Result{Status: Fail, Evidence: "nova-sprint seat push --json printed no push status: " + err.Error(), Fix: r.inboxPush()}
+		return Result{Status: Fail, Evidence: "nova-sprint seat push --json printed no push status: " + err.Error(), Fix: r.pendingPushFix(ctx)}
 	}
 	if seatGeneration(seat.out) == 0 || !status.Recorded {
 		return Result{Status: Fail, Evidence: "the seat has no generation or push target", Fix: r.seatInstall()}
@@ -149,7 +217,7 @@ func stepPushRoundtrip(ctx context.Context, r *jobRun) Result {
 	if status.Why != "" {
 		ev += "; " + status.Why
 	}
-	return Result{Status: Fail, Evidence: ev, Fix: r.inboxPush()}
+	return Result{Status: Fail, Evidence: ev, Fix: r.pendingPushFix(ctx)}
 }
 
 // coordView is the slice of `nova-sprint view coordinator --all --json` the preflight reads.
@@ -163,10 +231,11 @@ type coordView struct {
 }
 
 type coordRow struct {
-	K  string `json:"k"`
-	St string `json:"st"`
-	W  int    `json:"w"`
-	Wd int    `json:"wd"`
+	K   string `json:"k"`
+	St  string `json:"st"`
+	W   int    `json:"w"`
+	Wd  int    `json:"wd"`
+	Rep string `json:"rep"`
 }
 
 type workerView struct {
@@ -244,6 +313,20 @@ func stepFriendCapacity(ctx context.Context, r *jobRun) Result {
 	var missing string
 	warn := false
 	for _, row := range v.Rows {
+		if strings.HasPrefix(row.K, "m:") {
+			ids, wc, err := r.observedRunning(ctx, strings.TrimPrefix(row.K, "m:"))
+			if wc.code == -1 {
+				return notRun("nova-sprint", wc)
+			}
+			if err != nil {
+				return Result{Status: Fail, Evidence: err.Error(), Fix: r.viewCoordinator()}
+			}
+			parts = append(parts, fmt.Sprintf("fleet %s state=%s width=%d running=%s working=%d report=%s", row.K, row.St, row.Wd, runningWord(ids), len(ids), row.Rep))
+			if reducedCapacity(row.St) || row.Rep == "never" {
+				warn = true
+			}
+			continue
+		}
 		if !strings.HasPrefix(row.K, "f:") {
 			continue
 		}

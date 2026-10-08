@@ -95,7 +95,7 @@ var jobSteps = map[string][]string{
 	"worker": {"redis-reachable", "redis-login", "redis-functions", "binaries", "self", "swarm-binary"},
 	"coordinator": {"redis-reachable", "redis-login", "store-login", "config-schema", "config-applied",
 		"redis-acl", "redis-functions", "binaries", "self",
-		"push-roundtrip", "friend-capacity", "runtime-progress", "release-blockers", "friends"},
+		"seat-agreement", "seat-service", "push-roundtrip", "friend-capacity", "runtime-progress", "release-blockers", "friends"},
 }
 
 // jobTools are the nova tools each job needs on PATH.
@@ -127,6 +127,8 @@ func init() {
 		{"message-delivered", SessionStage, stepMessageDelivered},
 		{"session-receipt", SessionStage, stepSessionReceipt},
 		{"card-completion", SessionStage, stepCardCompletion},
+		{"seat-agreement", Supervisor, stepSeatAgreement},
+		{"seat-service", Supervisor, stepSeatService},
 		{"push-roundtrip", SessionStage, stepPushRoundtrip},
 		{"friend-capacity", SessionStage, stepFriendCapacity},
 		{"runtime-progress", SessionStage, stepRuntimeProgress},
@@ -462,7 +464,7 @@ func stepRedisReachable(ctx context.Context, r *jobRun) Result {
 // aclCheck is `nova-redis acl check`: exit 0 the users are as rendered, 1 the store
 // answered and they differ (or it refused a read), 2 it did not answer or refused the login.
 func (r *jobRun) aclCheck(ctx context.Context) call {
-	return r.exec(ctx, "nova-redis", "acl", "check", "--addr", r.redisAddr())
+	return r.exec(ctx, "nova-redis", "acl", "check", "--redis", r.redisAddr())
 }
 
 func stepRedisLogin(ctx context.Context, r *jobRun) Result {
@@ -492,7 +494,7 @@ func stepRedisACL(ctx context.Context, r *jobRun) Result {
 	if ev == "" {
 		ev = c.said
 	}
-	return Result{Status: Fail, Evidence: "nova-redis acl check: " + ev, Fix: "nova-redis acl apply --addr " + oneline.ShellWord(r.redisAddr())}
+	return Result{Status: Fail, Evidence: "nova-redis acl check: " + ev, Fix: "nova-redis acl apply --redis " + oneline.ShellWord(r.redisAddr())}
 }
 
 // lineWith is the first line of out that starts with prefix, or "" when none does.
@@ -506,7 +508,7 @@ func lineWith(out, prefix string) string {
 }
 
 func stepRedisFunctions(ctx context.Context, r *jobRun) Result {
-	c := r.exec(ctx, "nova-redis", "fn", "check", "--addr", r.redisAddr())
+	c := r.exec(ctx, "nova-redis", "fn", "check", "--redis", r.redisAddr())
 	switch c.code {
 	case -1:
 		return notRun("nova-redis", c)
@@ -514,7 +516,7 @@ func stepRedisFunctions(ctx context.Context, r *jobRun) Result {
 		return Result{Status: OK, Evidence: firstLine(c.out)}
 	}
 	return Result{Status: Fail, Evidence: "nova-redis fn check: " + c.said,
-		Fix: "nova-redis fn load --addr " + oneline.ShellWord(r.redisAddr())}
+		Fix: "nova-redis fn load --redis " + oneline.ShellWord(r.redisAddr())}
 }
 
 func stepStoreLogin(ctx context.Context, r *jobRun) Result {
@@ -538,7 +540,7 @@ func stepConfigSchema(ctx context.Context, r *jobRun) Result {
 		return notRun("nova-config", c)
 	}
 	if have, want, owed := migrationOwed(c.out, c.said); owed {
-		return Result{Status: Fail, Evidence: fmt.Sprintf("schema %d is behind binary %d; migrate before changing the binary", have, want), Fix: "nova-config migrate"}
+		return Result{Status: Fail, Evidence: fmt.Sprintf("schema %d is behind binary %d; migrate before changing the binary", have, want), Fix: r.migrateFix(ctx, c.out)}
 	}
 	if c.code == 0 {
 		return Result{Status: OK, Evidence: firstLine(c.out)}
