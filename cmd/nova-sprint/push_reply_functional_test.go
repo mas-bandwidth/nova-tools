@@ -29,7 +29,12 @@ func pushReplyStore(t *testing.T, actor string, socket bool) (*app, *store.Store
 	var extra []string
 	var sock string
 	if socket {
-		sock = filepath.Join(t.TempDir(), "emma's canary.sock")
+		// Redis limits Unix socket paths to 107 bytes. The functional runner's
+		// TMPDIR is intentionally long, so use a short, unique socket directory.
+		dir, err := os.MkdirTemp("/tmp", "nova-push-")
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = os.RemoveAll(dir) })
+		sock = filepath.Join(dir, "emma's canary.sock")
 		extra = []string{"--unixsocket", sock}
 	}
 	addr := testutil.Start(t, extra...)

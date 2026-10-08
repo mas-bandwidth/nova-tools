@@ -153,6 +153,7 @@ coordinator's ping loop").
 ```text
 $ nova-friend install --as bob --harness opencode --dir ./bob --dry-run
 INSTALL OK label=com.nova.friend-bob plist=./home/Library/LaunchAgents/com.nova.friend-bob.plist launchd_log=./home/Library/Logs/nova-friend-bob.log dry_run=true
+INSTALL PLAN command="write ./bob/opencode.json permission.external_directory../bob/**=allow"
 INSTALL PLAN command="write ./home/Library/LaunchAgents/com.nova.friend-bob.plist"
 INSTALL PLAN command="launchctl bootout gui/501/com.nova.friend-bob"
 INSTALL PLAN command="launchctl bootstrap gui/501 ./home/Library/LaunchAgents/com.nova.friend-bob.plist"
