@@ -208,7 +208,10 @@ moved, or not the session her nova-config row names: docs/SPEC-FRIEND.md, "A
 gone session target") her row reads `target-invalid`, not `down`, because the
 remedy is hers (`nova-friend rebind`) and not a wait. It is not `up`, so
 nothing is dealt to her; `held` comes first; a beat without the flag clears it
-(`TestAGoneTargetReadsTargetInvalidOnHerRow`). Her beat also answers her row's
+(`TestAGoneTargetReadsTargetInvalidOnHerRow`). A rebind that changes a session
+already set on her roster (friend sync) drops that session proof, so the old
+answer is not evidence and her row is not up on it before a check through the
+new session (`TestAReboundSessionDropsTheOldProofUntilANewCheck`). Her beat also answers her row's
 `session` as `row_session=<id>`, beside `row_mode` and `row_width`. A
 friend held or down with a reason shows it in her status cell, `down (opus
 rate limited, until 6:00 PM)`: `friend down <friend> [--reason <text>]

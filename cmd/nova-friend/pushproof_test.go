@@ -76,7 +76,12 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 		require.NotEmpty(t, downs)
 		assert.Contains(t, downs[0], "push unproven: session check r4nd0m")
 		w = r.world()
-		w.exec = func(context.Context, string, string, []string, string) (string, int, error) {
+		w.exec = func(_ context.Context, _, prog string, args []string, _ string) (string, int, error) {
+			// install records the session on the nova-config friend row before the
+			// delivery check; that call is not the dsh preset refusal.
+			if prog == "nova-config" && len(args) >= 2 && args[0] == "friend" && args[1] == "set" {
+				return "CONFIG SET kind=friend name=bob rev=2 changed=session\n", 0, nil
+			}
 			return `dsh: session "session-z" runs under agent preset "minimal", which the one-shot runner does not compose` + "\n", 1, nil
 		}
 		cli := cliOf(w)

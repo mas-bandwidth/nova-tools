@@ -228,10 +228,14 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		return nil, nil, nil, err
 	}
 	want := map[string]FriendSpec{}
+	rebound := map[string]string{} // a session that was already set and changed: the old proof is not evidence
 	rosterChanged := false
 	for _, s := range specs {
 		want[s.Name] = s
 		e, had := r[s.Name]
+		if had && e.Session != "" && e.Session != s.Session {
+			rebound[s.Name] = s.Session
+		}
 		switch {
 		case !had:
 			added = append(added, s.Name)
@@ -268,7 +272,37 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 			return added, removed, updated, err
 		}
 	}
+	for _, n := range slices.Sorted(maps.Keys(rebound)) {
+		if err := st.dropReboundProof(ctx, kv, n, rebound[n]); err != nil {
+			return added, removed, updated, err
+		}
+	}
 	return added, removed, updated, nil
+}
+
+// dropReboundProof clears the session proof on a friend's beat after her roster
+// session changed (nova-friend rebind, carried by friend sync). The old answer
+// is not evidence for the new target, so her row is not up before a check
+// through that session. A record that cannot be read holds no proof.
+func (st *Store) dropReboundProof(ctx context.Context, kv KV, friend, session string) error {
+	raw, ok, err := kv.GetKey(ctx, friendBeatKey(friend))
+	if err != nil || !ok {
+		return err
+	}
+	var rec friendBeatRecord
+	if json.Unmarshal([]byte(raw), &rec) != nil {
+		return nil
+	}
+	rec.Pong = time.Time{}
+	rec.Asked = nil
+	rec.NoProof = ""
+	rec.Beat.Proof = time.Time{}
+	rec.Session = session
+	out, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	return kv.SetKey(ctx, friendBeatKey(friend), string(out))
 }
 
 // FriendBeat writes one beat of the friend at the store's clock, to the
@@ -290,13 +324,15 @@ func (st *Store) FriendBeatReport(ctx context.Context, friend string, rep sprint
 // friendBeatRecord is a friend's beat as kept: the beat; her session's last proof, the
 // server's time of the last answer that named a check her daemon asked (sprint.ProveBeat;
 // zero: none), which the friends' rule and the coordinator's pass read; the checks still
-// answerable; and the last beat with no proof, and why. A reader of the beat alone reads
-// the record as a sprint.Beat, its Proof the record's pong.
+// answerable; and the last beat with no proof, and why. Session is the roster
+// session that proof belongs to: a rebind to another session drops it. A reader
+// of the beat alone reads the record as a sprint.Beat, its Proof the record's pong.
 type friendBeatRecord struct {
 	sprint.Beat
 	Pong    time.Time           `json:"pong,omitzero"`
 	Asked   []sprint.AskedCheck `json:"asked,omitempty"`
 	NoProof string              `json:"no_proof,omitempty"`
+	Session string              `json:"session,omitempty"`
 	// Target is her daemon's word that the session it names is gone (friend beat
 	// --target-invalid), nil while it is not: her row reads TargetInvalid. A beat
 	// that does not say it clears the last one.
@@ -378,8 +414,16 @@ func (st *Store) FriendBeatFull(ctx context.Context, friend string, rep sprint.F
 	if load != nil {
 		b.Load, b.How = *load, sprint.HowGiven
 	}
-	rec := friendBeatRecord{Beat: b, Pong: prev.Pong, NoProof: prev.NoProof, Target: gone}
-	asked, proved, why := sprint.ProveBeat(prev.Asked, w, now)
+	// A proof recorded for another session is not evidence after a rebind.
+	// An empty recorded session is a beat from before this field, and keeps
+	// its proof so a deploy does not put the fleet down.
+	rosterSession := r[friend].Session
+	pong, noProof, askedPrev := prev.Pong, prev.NoProof, prev.Asked
+	if prev.Session != "" && prev.Session != rosterSession {
+		pong, noProof, askedPrev = time.Time{}, "", nil
+	}
+	rec := friendBeatRecord{Beat: b, Pong: pong, NoProof: noProof, Target: gone, Session: rosterSession}
+	asked, proved, why := sprint.ProveBeat(askedPrev, w, now)
 	rec.Asked = asked
 	if proved {
 		rec.Pong, rec.NoProof = now, ""
