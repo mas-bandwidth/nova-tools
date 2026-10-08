@@ -508,17 +508,17 @@ import (
  "time"
 )
 func TestBubble(t *testing.T) {
- time.Sleep(time.Second)
+ time.Sleep(time.Minute)
  virtual.Test(t, func(t *testing.T) {
-  time.Sleep(time.Second)
-  <-time.After(time.Second)
-  ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+  time.Sleep(time.Minute)
+  <-time.After(time.Minute)
+  ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
   defer cancel()
   <-ctx.Done()
  })
- time.Sleep(time.Second)
+ time.Sleep(time.Minute)
 }
-func helperOutsideBubble() { time.Sleep(time.Second) }
+func helperOutsideBubble() { time.Sleep(time.Minute) }
 `
 
 	scan := func(rel, src string) []wallClockWait {
