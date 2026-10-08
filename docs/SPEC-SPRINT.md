@@ -3797,6 +3797,25 @@ primary of it left on the table has landed. A stopped stream stays stopped
 until it resumes. accept closes the open card judgments of the primaries it
 accepts.
 
+A stream whose stop sentinel has landed is not given another card in silence.
+A card admitted after that stop reopens the stream: add places a new sentinel
+`<stream>-stop-<n>` that needs the new card and every other open card of the
+stream, the stream's state is `working`, and the step says `STREAM REOPENED
+<stream> stop=<id>`. An add that names its own sentinel reopens on that
+sentinel and does not place a second one. A landed stream with no stop still
+comes back `waiting`.
+
+A stream never refuses a landing it dealt. The merge step of a stream marked
+`landed` still records a queued card that is merging in work. When the lander's
+report does not go through after the push, the loop line names the store's
+reason and the timeline is marked `pushed-unreported <sha>`. The next land
+records that card through the merge step before any new merge, and does not
+merge it again.
+
+`where --json` and `streams` say `closed` when the control card says landed and
+a card of the stream is still open, and `landed` when none is. A STREAM line
+ends with `state=`.
+
 `since` is the clock time the state last changed. The merge step is mechanical
 and is given its facts by the caller (what merged, what conflicted, ci result);
 it never decides. Causes of a stop: a conflict on a card the lander could not
@@ -4199,15 +4218,21 @@ itself is detached while they work), its batch branch cut from the base's tip, i
 merged, remapped, resolved and checked as above, and its tree gated ONCE as a whole, the
 tree tests included, instead of once a head; only when that one gate is red is each head
 gated alone again from the base, so the red head is blamed with the finding above. The
-base's own gate and its cure stay serial, in priority order, before the merges fan out,
-so the stream that meets a red base first is the first in that order, as before; every
+base's own gate and its cure stay serial for one base commit, in priority order for
+streams sharing its repository and base. Different bases can gate in parallel, so a
+blocked gate on one does not hold another; every
 fetch and every write of the clone's shared refs is one at a time. In the second phase the
-green batches land one at a time in priority order: a batch cut from the tip the base
+green batches land one at a time in priority order. If an earlier batch gate is still
+waiting after `LandDeadline`, that batch is refused for this pass without blaming a card
+or counting a red base, and a ready later stream can land. A batch cut from the tip the base
 still has is pushed with no new gate; one whose base moved (a batch before it in the pass
 landed, or a push from outside) is merged again onto the new tip in its worktree, the same
 merges and checks and no gate per head, and pushed with no new gate when the files it
 changes and the files landed since it was cut are disjoint and the same heads merged (a
 clean merge of disjoint files), else gated once on the combined tree and pushed when green.
+`LandDeadline` abandonment applies to preparation in the first phase. A combined-tree
+gate in the serial landing phase runs under its command budget; the land loop raises its
+stuck judgment at `LandDeadline` while that gate continues.
 A red combined gate refuses the batch for this pass (`LAND REFUSED ... fails it merged onto
 <base> as this pass moved it (stream <s>, <ids>, on <files>)`), records no fact, stops no
 stream, and the next pass merges the batch onto the new tip, where the real finding is the
@@ -6717,7 +6742,8 @@ on that cycle, or `LAND IDLE queued=<n> step=<stage> since=<age>` while one is
 still running (`step=-` and `since=0s` when nothing is in flight). A cycle with
 cards queued whose landing has not finished within 10 minutes (`LandDeadline`)
 raises one judgment, `an operation was stuck`, naming the stage and the process
-it waits on. The landing is not stopped.
+it waits on. The landing continues; a gate still holding an earlier batch at that bound
+is abandoned for this pass so ready later streams can land.
 
 With `server switch <binary> [--rollback]` the coordinator or an install switches the server's
 binary file on disk, keeping the previous binary (`<target>.prev`). With `--rollback`, if a

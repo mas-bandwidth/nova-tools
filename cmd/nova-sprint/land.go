@@ -25,8 +25,10 @@ package main
 // the head and attempt land built, at the epoch land read (landStep; the cards
 // are looked for wherever they stand, so a card accepted or ranked ahead of them
 // since changes nothing);
-// a batch pushed and not reported is left in the base and recovered by running
-// land again (Recovers). Only a batch pushed and reported has its cards' branches
+// a batch pushed and not reported is left in the base, the loop line names the
+// store's reason, and the timeline is marked pushed-unreported <sha>. The next
+// land records that mark through the merge step before any new merge (Recovers).
+// Only a batch pushed and reported has its cards' branches
 // tagged for the cleanup, which deletes them from origin outside every batch
 // (landprune.go).
 
@@ -463,9 +465,13 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 		baseGateCache: a.baseGateCache, baseGateFails: a.baseGateFails, cureTried: map[string]bool{}, parallel: *parallel}
 	l.locks()
 	defer l.release()
+	ctx := a.landCtx
+	if ctx == nil {
+		ctx = context.Background() // a direct land command has no loop caller
+	}
 	if *check != "" && !*dry {
 		a.serial.Lock()
-		l.gate, l.gateNote = a.landGate(context.Background(), st)
+		l.gate, l.gateNote = a.landGate(ctx, st)
 		a.serial.Unlock()
 	}
 	if *repoDir != "" {
@@ -473,7 +479,6 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 			l.repoDir = abs
 		}
 	}
-	ctx := context.Background()
 	a.serial.Lock()
 	s, err := st.Load(ctx, []string{sprint.Work, sprint.Merge, sprint.Fleet}, nil)
 	a.serial.Unlock()
@@ -500,9 +505,16 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	// first, then the most cards behind, then stream order; a named stream that is no stream
 	// keeps its place last
 	order = sprint.LandOrder(s, order)
+	// a card already pushed and not reported is recorded before any new merge
+	var recordFailed bool
+	s, recordFailed = l.recordPushed(ctx, s, order)
+	if s == nil {
+		return l.report(true, nil, stdout, stderr) // no pass can run without a canonical snapshot
+	}
+	order = stillQueued(s, order)
 	// the pass: every stream's batch merged beside the others', then the green ones landed
 	// one at a time in this order (landpass.go; tla/LandPass.tla)
-	failed := l.pass(ctx, s, order)
+	failed := l.pass(ctx, s, order) || recordFailed
 	if !l.dry {
 		l.pruneWorktrees(ctx)
 	}
@@ -871,6 +883,9 @@ func (l *lander) baseRecheck(ctx context.Context, s *sprint.Snapshot) {
 		}
 	}
 	for _, at := range sites {
+		if ctx.Err() != nil {
+			return
+		}
 		sha, why := l.baseTip(ctx, at.repo, at.base)
 		if why != "" {
 			l.baseNotes = append(l.baseNotes, "the base "+at.base+" was not re-checked: "+why)
@@ -884,6 +899,13 @@ func (l *lander) baseRecheck(ctx context.Context, s *sprint.Snapshot) {
 			dir, _ := l.clone(ctx, at.repo)
 			l.gatesBase(at.base)
 			red = l.treeGate(ctx, dir, true)
+		}
+		if ctx.Err() != nil {
+			return // an interrupted re-check is no evidence about the base
+		}
+		if red == benchGateUnavailableWhy {
+			l.baseNotes = append(l.baseNotes, "the base "+at.base+" was not re-checked: "+red)
+			continue
 		}
 		if red != "" {
 			f := l.baseGateFails[sha]
@@ -1022,8 +1044,14 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 		since(&b.Times.Report, start)
 	}
 	if code := stepExit(res, err); code != 0 || !movedExactly(res.Moved, ids) {
-		b.Status, b.Reason = "failed", "the batch was pushed to "+b.Base+" at "+b.Tip+" and NOT reported ("+stepWhy(res, err)+
-			"); "+againRemedy(stream)
+		why := stepWhy(res, err)
+		if b.Tip != "" && b.Tip != "-" {
+			if err := l.markPushed(stream, b.Tip, pins); err != nil {
+				why += "; the timeline was not marked (" + oneline.Err(err) + ")"
+			}
+		}
+		b.Status = "failed"
+		b.Reason = sprint.ReportRefusedReason(b.Base, b.Tip, why) + "; " + againRemedy(stream)
 		l.keep(b)
 		return false
 	}
@@ -1041,6 +1069,210 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 	// its diffs are scored after the whole pass (landscore.go): a score never holds a landing
 	l.toScore = append(l.toScore, scoreJob{at: len(l.out) - 1, stream: stream, pins: pins})
 	return true
+}
+
+// recordPushed reports cards already marked pushed-unreported, through the merge
+// step only, before this pass merges anything. A mark that is still queued after
+// that is hidden in this snapshot so the pass does not merge it again; the store
+// keeps it for the next land. A dry run hides the same cards and writes nothing.
+func (l *lander) recordPushed(ctx context.Context, s *sprint.Snapshot, order []string) (*sprint.Snapshot, bool) {
+	if l == nil || s == nil {
+		return s, false
+	}
+	if l.dry {
+		l.hidePushed(s, order)
+		return s, false
+	}
+	if l.st == nil || l.a == nil {
+		return s, false
+	}
+	// A returned or reworked card cannot inherit a receipt from its old head.
+	// Clear such receipts before choosing batches to recover.
+	for _, stream := range order {
+		if len(sprint.ClearObsoletePushedUnreported(s, stream).Units) == 0 {
+			continue
+		}
+		epoch := l.epoch
+		step := store.Step{Verb: "land", Load: []string{sprint.Work, sprint.Merge}, Epoch: &epoch, Actor: l.c.actor,
+			Plan: func(fresh *sprint.Snapshot) sprint.Plan { return sprint.ClearObsoletePushedUnreported(fresh, stream) }}
+		l.a.serial.Lock()
+		res, runErr := l.st.Run(ctx, step)
+		var fresh *sprint.Snapshot
+		var loadErr error
+		if runErr == nil && len(res.Refused) == 0 {
+			fresh, loadErr = l.st.Load(ctx, []string{sprint.Work, sprint.Merge, sprint.Fleet}, nil)
+		}
+		l.a.serial.Unlock()
+		if runErr != nil || len(res.Refused) != 0 {
+			l.keep(landBatch{Stream: stream, Status: "failed", Reason: "obsolete pushed receipt could not be cleared: " + stepWhy(res, runErr)})
+			return nil, true
+		}
+		if loadErr != nil || fresh == nil {
+			why := firstLine("", loadErr)
+			if why == "" {
+				why = "the store returned no snapshot"
+			}
+			l.keep(landBatch{Stream: stream, Status: "failed", Reason: "obsolete pushed receipt was cleared but its result could not be read: " + why})
+			return nil, true
+		}
+		s = fresh
+	}
+	type pushed struct {
+		stream string
+		pins   []landCard
+		sha    string
+	}
+	var batches []pushed
+	stuck := false
+	for _, stream := range order {
+		ids := sprint.PushedUnreportedIDs(s, stream)
+		if len(ids) == 0 {
+			continue
+		}
+		pins := l.pinsOf(s, ids)
+		if len(pins) == 0 {
+			sha := sprint.PushedUnreportedSHA(s, ids[0])
+			l.keep(landBatch{Stream: stream, Status: "failed", IDs: ids, Cards: len(ids), Tip: sha,
+				Reason: sprint.ReportRefusedReason("-", sha, "the marked card is not merging") + "; " + againRemedy(stream)})
+			stuck = true
+			continue
+		}
+		batches = append(batches, pushed{stream: stream, pins: pins, sha: sprint.PushedUnreportedSHA(s, ids[0])})
+	}
+	if len(batches) == 0 {
+		l.hidePushed(s, order)
+		return s, stuck
+	}
+	failed := stuck
+	for _, b := range batches {
+		ids := make([]string, len(b.pins))
+		for i, c := range b.pins {
+			ids[i] = c.id
+		}
+		lb := landBatch{Stream: b.stream, Base: b.pins[0].base, Tip: b.sha, Repo: b.pins[0].repo, Cards: len(ids), IDs: ids}
+		res, err := l.step(sprint.MergeReq{Stream: b.stream, Batch: len(ids), Who: l.c.actor}, b.pins)
+		if code := stepExit(res, err); code != 0 || !movedExactly(res.Moved, ids) {
+			lb.Status = "failed"
+			lb.Reason = sprint.ReportRefusedReason(lb.Base, b.sha, stepWhy(res, err)) + "; " + againRemedy(b.stream)
+			l.keep(lb)
+			failed = true
+			continue
+		}
+		lb.Status = "ok"
+		if dir, why := l.clone(ctx, b.pins[0].repo); why == "" {
+			lb.Dir = dir
+			l.tag(ctx, &lb, b.pins)
+		} else {
+			lb.Prune = &landPrune{Why: why}
+		}
+		l.keep(lb)
+	}
+	l.a.serial.Lock()
+	fresh, err := l.st.Load(ctx, []string{sprint.Work, sprint.Merge, sprint.Fleet}, nil)
+	l.a.serial.Unlock()
+	if err != nil || fresh == nil {
+		l.hidePushed(s, order)
+		return s, failed
+	}
+	l.hidePushed(fresh, order)
+	return fresh, failed
+}
+
+// stillQueued keeps a stream whose queue still holds a card, and a name that is
+// no stream (the pass refuses that). A stream just recorded empty is left out,
+// so the pass does not say nothing is queued after the record.
+func stillQueued(s *sprint.Snapshot, order []string) []string {
+	if s == nil {
+		return order
+	}
+	var keep []string
+	for _, name := range order {
+		if s.StreamCtl(name) == nil || len(landQueue(s, name)) > 0 {
+			keep = append(keep, name)
+		}
+	}
+	return keep
+}
+
+// pinsOf is the pinned cards of ids that are still merging, read from the
+// snapshot, so a record of a pushed batch builds no git.
+func (l *lander) pinsOf(s *sprint.Snapshot, ids []string) []landCard {
+	if s == nil || s.Work == nil {
+		return nil
+	}
+	var out []landCard
+	for _, id := range ids {
+		pr := s.Work.Placed(id)
+		if pr == nil || pr.Col != sprint.Merging {
+			continue
+		}
+		cb := swarm.ReadCardBase([]byte(pr.F("brief")))
+		base := cb.Ref
+		if base == "" {
+			base = l.base
+		}
+		out = append(out, landCard{
+			id: id, head: pr.F("head"), attempt: pr.F("attempt"),
+			repo: cb.Repo, base: base, primary: pr, brief: pr.F("brief"),
+		})
+	}
+	return out
+}
+
+// hidePushed takes still-queued marked cards out of this snapshot's merge queue.
+// The store is unchanged. The pass then does not merge them again.
+func (l *lander) hidePushed(s *sprint.Snapshot, order []string) {
+	if s == nil || s.Merge == nil {
+		return
+	}
+	for _, stream := range order {
+		for _, id := range sprint.PushedUnreportedIDs(s, stream) {
+			m := s.Merge.Placed(id)
+			if m == nil {
+				continue
+			}
+			cp := *m
+			cp.Col = ""
+			if m.Fields != nil {
+				cp.Fields = make(map[string]string, len(m.Fields))
+				for k, v := range m.Fields {
+					cp.Fields[k] = v
+				}
+			}
+			s.Merge.Put(&cp)
+		}
+	}
+}
+
+// markPushed writes pushed-unreported <sha> on the batch's cards and on the timeline.
+func (l *lander) markPushed(stream, sha string, pins []landCard) error {
+	if l == nil || l.dry || l.st == nil || l.a == nil || sha == "" || len(pins) == 0 {
+		return nil
+	}
+	marked := make([]sprint.PushedPin, len(pins))
+	for i, c := range pins {
+		marked[i] = sprint.PushedPin{ID: c.id, Head: c.head, Attempt: c.attempt}
+	}
+	epoch := l.epoch
+	step := store.Step{
+		Verb:  "land",
+		Load:  []string{sprint.Work, sprint.Merge},
+		Epoch: &epoch,
+		Actor: l.c.actor,
+		Plan: func(s *sprint.Snapshot) sprint.Plan {
+			return sprint.MarkPushedUnreported(s, stream, sha, marked)
+		},
+	}
+	l.a.serial.Lock()
+	defer l.a.serial.Unlock()
+	res, err := l.st.Run(context.Background(), step)
+	if err != nil {
+		return err
+	}
+	if len(res.Refused) > 0 {
+		return fmt.Errorf("%s", stepWhy(res, nil))
+	}
+	return nil
 }
 
 // movedExactly says the step's moved lines hold the landings of ids, each exactly once
@@ -1256,12 +1488,9 @@ func (l *lander) cut(ctx context.Context, dir, stream string, cards []landCard, 
 	l.stage("merge", "git merge")
 	start = time.Now()
 	defer since(&t.Merge, start)
-	if _, err := l.git(ctx, dir, "switch", "--no-track", "--force-create", "land/"+stream, "refs/remotes/origin/"+base); err != nil {
-		return landCut{}, "the base " + base + " could not be cut from origin in " + dir + ": " + firstLine("", err)
-	}
-	baseSha, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
-	if err != nil {
-		return landCut{}, "the base " + base + " has no tip in " + dir + ": " + firstLine("", err)
+	baseSha, why := l.cutBranch(ctx, dir, stream, base)
+	if why != "" {
+		return landCut{}, why
 	}
 	merged, first, env, why := l.gateBase(ctx, dir, stream, cards, baseSha)
 	switch {
@@ -1271,6 +1500,24 @@ func (l *lander) cut(ctx context.Context, dir, stream string, cards []landCard, 
 		return landCut{baseSha: baseSha}, why
 	}
 	return landCut{baseSha: baseSha, merged: merged, first: first}, ""
+}
+
+// cutBranch pins the fetched base before changing branches: a push can move the
+// remote-tracking ref while another stream cuts. A same-branch -C can also move
+// HEAD without replacing the old branch's index and worktree; reset makes the
+// branch's three views agree before any card head is merged.
+func (l *lander) cutBranch(ctx context.Context, dir, stream, base string) (string, string) {
+	sha, err := l.git(ctx, dir, "rev-parse", "--verify", "refs/remotes/origin/"+base+"^{commit}")
+	if err != nil {
+		return "", "the base " + base + " has no tip in " + dir + ": " + firstLine("", err)
+	}
+	if _, err := l.git(ctx, dir, "switch", "--no-track", "--force-create", "land/"+stream, sha); err != nil {
+		return "", "the base " + base + " could not be cut from origin in " + dir + ": " + firstLine("", err)
+	}
+	if _, err := l.git(ctx, dir, "reset", "--hard", sha); err != nil {
+		return "", "the branch " + stream + " could not be reset to the base " + base + " in " + dir + ": " + firstLine("", err)
+	}
+	return sha, ""
 }
 
 // mergeCards merges the cards' heads onto the batch branch cut (cut), from the first after
@@ -1322,23 +1569,32 @@ func (l *lander) mergeCards(ctx context.Context, dir, stream string, cards []lan
 	return merged, failed, ""
 }
 
-// gateBase is the build's gate of the base's tip, serial across the pass's streams (the
-// pass's gateMu: the base is gated once a commit and its record has one writer): "" and
+// gateBase is the build's gate of the base's tip, serial for the same commit across the
+// pass's streams (the pass's baseGate lock: a commit is gated once): "" and
 // first = 0 when the base is green; else its cure looked for among the batch's cards
 // (cureBase), the cure merged and gated alone on the batch branch, merged = its id and
 // first = 1 so the build goes on after it; why is the base's refusal with no cure, env a
 // failure that is not a card's.
 func (l *lander) gateBase(ctx context.Context, dir, stream string, cards []landCard, baseSha string) (merged []string, first int, env, why string) {
 	s := l.locks()
-	s.gateMu.Lock()
-	defer s.gateMu.Unlock()
+	gate := s.baseGate(baseSha)
+	gate.Lock()
+	defer gate.Unlock()
 	base := cards[0].base
 	l.baseStop, l.baseCount, l.baseWhy = false, false, ""
 	was := 0
+	s.gateMu.Lock()
 	if f := l.baseGateFails[baseSha]; f != nil {
 		was = f.n
 	}
+	s.gateMu.Unlock()
 	red, stop := l.treeGateBase(ctx, dir, baseSha, base)
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err.Error(), "" // no cure or base failure for an abandoned gate
+	}
+	if red == benchGateUnavailableWhy {
+		return nil, 0, red, "" // no cure search or red-base retry for a missing bench
+	}
 	if red == "" {
 		return nil, 0, "", ""
 	}
@@ -1351,8 +1607,10 @@ func (l *lander) gateBase(ctx context.Context, dir, stream string, cards []landC
 	if cured < 0 {
 		// counted when the gate ran red here (or this process's record stops the stream); a
 		// refusal inside a retry's wait, or with the rule off, is not
+		s.gateMu.Lock()
 		f := l.baseGateFails[baseSha]
 		l.baseStop, l.baseCount, l.baseWhy = stop, stop || f != nil && f.n != was, red
+		s.gateMu.Unlock()
 		return nil, 0, "", "the base " + base + " fails the tree gate at its tip, so no head is merged onto it; fix the base, then run land again: " + red
 	}
 	cure := cards[cured]
