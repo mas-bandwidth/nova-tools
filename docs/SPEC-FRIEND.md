@@ -1385,8 +1385,9 @@ her current chat. Every harness that names a session has the same shape.
   <me>`; a row that cannot be written refuses the rebind, nothing changed),
   writes the friend's push proof down on the bus (`rebound from <old> to
   <new>`: nova-bus refuses her as deaf). Friend sync of that new session
-  drops the old session proof on her sprint beat, so her row is not up on
-  the old answer before a check through the new session. Rebind records the new target in
+  drops every presence signal of the old session (the beat's proof, the
+  friend-health session pong, and a finish), so her row is not up, and not
+  eligible for new work, before a check through the new session. Rebind records the new target in
   `<state>/target.json` with every session it replaced `retired`, rewrites
   `--session` in the plist and boots the agent out and in. The daemon then
   starts on a fresh push proof, a SESSION CHECK round trip through the new
