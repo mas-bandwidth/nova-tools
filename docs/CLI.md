@@ -1455,6 +1455,7 @@ usage:
   nova-friend pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]
   nova-friend wait-pong --from <friend> --nonce <n> [--timeout <d>] [--redis <addr>]
   nova-friend watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]
+  nova-friend whoami --as <me> --dir <d> [--state-dir <d>]
   nova-friend status --as <me> --dir <d> [--state-dir <d>]
   nova-friend refuse-go --name go|gofmt
   nova-friend resume --as <me> [--dir <d>] [--state-dir <d>] [--dry-run]
@@ -1687,6 +1688,21 @@ flags:
   --timeout <duration>  how long to wait before WATCH NONE, a Go duration (1s, 10m); 0 is for ever
 exit codes: 0 a wake came: WATCH OK; 1 WATCH NONE, --timeout ran out; 2 could not run (a flag, a name the roster lacks, a store that did not answer, a cursor file that cannot be read or saved).
 effect: inspection: reads, writes nothing: the cursor file in the state directory is rewritten
+```
+
+`nova-friend whoami -h`:
+
+```
+usage: nova-friend whoami [flags]
+from `nova-friend help`:
+  nova-friend whoami --as <me> --dir <d> [--state-dir <d>]
+flags:
+  --as <string>  your name (required)
+  --dir <string>  your working directory, where the queue file lives (required)
+  --json  print the result as one JSON object instead of lines
+  --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
+exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+effect: inspection: reads, writes nothing
 ```
 
 `nova-friend status -h`:
