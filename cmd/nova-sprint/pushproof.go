@@ -248,7 +248,7 @@ func pushNonce() string {
 // it prints the record and whether the seat is live.
 func (a *app) cmdSeatPush(args []string, stdout, stderr io.Writer) int {
 	const name = "seat push"
-	fs, c := a.verbSetup("seat")
+	fs, c := a.verbSetup(name)
 	harness := fs.String("harness", "", "the harness the AI holding the seat runs in: its adapter delivers each push into the session (a harness with no deliver command, claude, gets the folder adapter: each push a file in --target)")
 	target := fs.String("target", "", "with --harness, the session's directory, where the adapter delivers (for the folder adapter, the directory the session watches, which must be there)")
 	session := fs.String("session", "", "with --harness, the session's id, for a harness that names one (default: the adapter's newest in --target)")
@@ -359,7 +359,7 @@ func (a *app) sayPush(rec sprint.PushRecord, ok bool, now time.Time, asJSON bool
 // counts, and once.
 func (a *app) cmdSeatPong(args []string, stdout, stderr io.Writer) int {
 	const name = "seat pong"
-	fs, c := a.verbSetup("seat")
+	fs, c := a.verbSetup(name)
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) != 1 {
 		return refuse(stderr, name, "wants one word, the nonce read from the delivered check; run: nova-sprint seat pong <nonce> --actor <name>")

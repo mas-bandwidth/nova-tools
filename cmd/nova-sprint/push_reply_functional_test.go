@@ -88,7 +88,7 @@ func TestPushProofReplyIgnoresTheRecipientsWrongDefaultStore(t *testing.T) {
 			var src inboxSource = source
 			if tc.server {
 				producer.serveAddr = address
-				server := httptest.NewServer(producer)
+				server := httptest.NewServer(localHandler{producer})
 				t.Cleanup(server.Close)
 				client := newApp(func(string) string { return "" })
 				t.Cleanup(client.close)
