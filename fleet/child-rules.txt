@@ -7,7 +7,7 @@
 
 [worktree] Work only in the staged checkout JOB.md names; do not clone.
 [own-branch] Commit on the checkout's own branch, as usual; touch no other branch.
-[gocache] Export a private GOCACHE (the path this card names) and GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command.
+[gocache] GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it. Never export or choose a cold cache of your own.
 [no-go-clean] Never `go clean`, and never clean a shared cache.
 [no-redis-server] NEVER start a redis-server on this machine.
 [no-kill] Never kill a process you did not start.
@@ -24,7 +24,7 @@
 [cite] Cite the model or the design section from every function that implements a rule.
 [only-named-files] Touch only the files this card names; a fix that needs another file goes into your report as a proposed diff, not a commit.
 [minimal-diff] Keep the diff minimal: every added line traceable to one sentence of this card.
-[commit-trailer] Commit messages end with `Co-Authored-By: Claude <your model> <noreply@anthropic.com>`.
+[commit-trailer] Every commit message ends with the line `By: your own name`, naming the worker who does this attempt and never a model; below it a Claude worker adds its true Co-Authored-By trailer (Claude, its model, the noreply@anthropic.com address), and any other worker adds no Co-Authored-By.
 [pr-line] PR bodies end with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
 [never-merge] Finish as JOB.md says, with `gh pr create` against the base this card names; never merge.
 [pr-diffstat] The PR body states the diff stat and what was deleted.

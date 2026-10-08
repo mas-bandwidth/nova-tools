@@ -19,12 +19,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// persistedNotPublished requires the split every append and receipt reports:
-// durable here (persisted=true) and not published there (published=false).
-func persistedNotPublished(t *testing.T, persisted, published bool, msgAndArgs ...any) {
+// persistedDurable requires the persistence half of the split every append and
+// receipt reports: durable here (persisted=true). The tool prints the remote
+// half, published=false, beside it, and the CLI test pins that line.
+func persistedDurable(t *testing.T, persisted bool, msgAndArgs ...any) {
 	t.Helper()
 	require.True(t, persisted, msgAndArgs...)
-	require.False(t, published, msgAndArgs...)
 }
 
 func TestAppendKeepsExactProseAndReportsPersistenceSeparately(t *testing.T) {
@@ -37,13 +37,12 @@ func TestAppendKeepsExactProseAndReportsPersistenceSeparately(t *testing.T) {
 	res, err := Append(store, "sess-1", "e-1", prose, "bench-a/session-7#L3", now, "manual")
 	require.NoError(t, err, "Append")
 	require.True(t, res.Persisted, "Append must report persisted=true once the note is fsync-durable, got %+v", res)
-	require.False(t, res.Published, "local persistence must not imply remote publication, got %+v", res)
 	got, err := EntryText(store, "sess-1", "e-1")
 	require.NoError(t, err, "EntryText")
 	require.Equal(t, prose, got, "prose mangled")
 	rc, err := Receipt(store, "sess-1", "e-1")
 	require.NoError(t, err, "Receipt")
-	persistedNotPublished(t, rc.Persisted, rc.Published, "receipt must repeat persisted=true published=false, got %+v", rc)
+	persistedDurable(t, rc.Persisted, "receipt must repeat persisted=true, got %+v", rc)
 	require.True(t, rc.Stamp.Equal(now), "receipt stamp = %v, want the real clock stamp %v", rc.Stamp, now)
 }
 
@@ -60,7 +59,7 @@ func TestDuplicateAppendIsIdempotentAndConflictingEntryRefused(t *testing.T) {
 	require.True(t, dup.Duplicate, "retry must report duplicate=true, got %+v", dup)
 	_, err = Append(store, "s", "e", "DIFFERENT words", "src", now, "never")
 	require.Error(t, err, "same entry id with different prose must be refused, not duplicated")
-	rows, _, err := Index(store, "", 0)
+	rows, _, _, err := Index(store, "")
 	require.NoError(t, err, "Index")
 	require.Len(t, rows, 1, "duplicate retry left more than one index row")
 }
@@ -77,10 +76,10 @@ func TestInterruptedAppendRecoversAndPreservesOtherWriters(t *testing.T) {
 	testkit.WriteFile(t, filepath.Join(store, "entries", "s", ".mine.json.tmp-deadbeef"), "{partial")
 	res, err := Append(store, "s", "mine", "my note after the crash", "src", now, "never")
 	require.NoError(t, err, "retry after interruption must succeed")
-	persistedNotPublished(t, res.Persisted, res.Published, "recovered append must report persisted=true published=false, got %+v", res)
+	persistedDurable(t, res.Persisted, "recovered append must report persisted=true, got %+v", res)
 	got, _ := EntryText(store, "s", "other")
 	require.Equal(t, "other writer's note", got, "other writer's entry mangled")
-	rows, _, err := Index(store, "", 0)
+	rows, _, _, err := Index(store, "")
 	require.NoError(t, err, "Index")
 	require.Len(t, rows, 2, "partial tmp must never index")
 }
@@ -93,7 +92,7 @@ func TestOfflineAppendSucceedsWithPublicationPending(t *testing.T) {
 	require.NoError(t, Open(store, "s", "src", now, "deferred"), "Open")
 	res, err := Append(store, "s", "e", "offline note", "", now, "deferred")
 	require.NoError(t, err, "offline append must succeed locally")
-	persistedNotPublished(t, res.Persisted, res.Published, "offline append is durable-but-unpublished: persisted=true published=false, got %+v", res)
+	persistedDurable(t, res.Persisted, "offline append is durable: persisted=true, got %+v", res)
 }
 
 func TestOpenConcurrentRecordsAndAlternateHeaders(t *testing.T) {
@@ -115,7 +114,7 @@ func TestOpenConcurrentRecordsAndAlternateHeaders(t *testing.T) {
 	got, err := EntryText(store, "alpha", "e")
 	require.NoError(t, err, "EntryText after header rewrite")
 	require.Equal(t, "note in alpha", got, "entry mangled")
-	rows, total, err := Index(store, "", 0)
+	rows, _, total, err := Index(store, "")
 	require.NoError(t, err, "Index")
 	require.Equal(t, 2, total, "want 2 across both concurrent records")
 	require.Len(t, rows, 2, "want 2 across both concurrent records")
@@ -187,13 +186,13 @@ func TestCorruptStampRejectedByReaders(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid stamp", "Receipt error must mention invalid stamp, got %v", err)
 
 	// Index scoped to session must refuse with corruption error.
-	_, _, err = Index(store, "s", 0)
+	_, _, _, err = Index(store, "s")
 	require.Error(t, err, "Index scoped to session must reject invalid stamp")
 	require.Contains(t, err.Error(), "is corrupt", "Index error must report corruption, got %v", err)
 	require.Contains(t, err.Error(), "invalid stamp", "Index error must mention invalid stamp, got %v", err)
 
 	// Index over all sessions must also refuse.
-	_, _, err = Index(store, "", 0)
+	_, _, _, err = Index(store, "")
 	require.Error(t, err, "Index over all sessions must reject invalid stamp")
 	require.Contains(t, err.Error(), "is corrupt", "Index error must report corruption, got %v", err)
 	require.Contains(t, err.Error(), "invalid stamp", "Index error must mention invalid stamp, got %v", err)

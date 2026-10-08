@@ -69,7 +69,7 @@ func TestFleetSyncFollowsTheInventoryOnTheStore(t *testing.T) {
 		require.Equal(t, want, code, "%v: exit %d, want %d\n%s%s", args, code, want, out.String(), errb.String())
 		return out.String()
 	}
-	rows := func() map[string]map[string]string {
+	rows := func() map[string]map[string]any {
 		t.Helper()
 		var w whereView
 		require.NoError(t, json.Unmarshal([]byte(run(0, "where", "--json")), &w))
@@ -124,7 +124,17 @@ func TestFleetSyncFollowsTheInventoryOnTheStore(t *testing.T) {
 	got = rows()
 	held := 0
 	for _, col := range []string{"ready", "working"} {
-		n, _ := strconv.Atoi(got["m1"][col])
+		var n int
+		switch v := got["m1"][col].(type) {
+		case string: // a display cell's text
+			var err error
+			n, err = strconv.Atoi(v)
+			require.NoError(t, err, "m1's %s cell: %v", col, got["m1"])
+		case float64: // a count, as JSON numbers decode
+			n = int(v)
+		default:
+			require.Failf(t, "m1's cell is no count", "%s is %T: %v", col, v, got["m1"])
+		}
 		held += n
 	}
 	assert.Equal(t, sprint.DealAhead*6, held, "the synced width is 6: %v", got["m1"])

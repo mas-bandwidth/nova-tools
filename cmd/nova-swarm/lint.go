@@ -774,7 +774,7 @@ func cmdLint(args []string, stdout, stderr io.Writer, getenv func(string) string
 	// this card is meant to have a header even though it has none.
 	typed := f.fs.Bool("typed", false, "require the typed header (KIND, PATHS, TEST, PAUSED and DEPENDS-ON lines) even on a card that has none")
 	// `--trust <file>` IS A FIXTURE UNTIL `nova-pulse trust` EXISTS. The per-kind state is
-	// T06a's other half and lives in the lane that owns internal/pulse; the file this flag
+	// T06a's other half and lives in the lane that owns the pulse package; the file this flag
 	// reads is in the exact shape that verb's listing prints, so the day it ships, its own
 	// stdout is what is handed here. With no --trust there is no state, and `paused` is not
 	// checked rather than guessed at.
@@ -1052,8 +1052,13 @@ func cmdLint(args []string, stdout, stderr io.Writer, getenv func(string) string
 	// THE CEILING IS NEVER A SILENT BOUND. A card writer learned of the 12000-byte cap by
 	// hitting it: a card at 11k looked exactly like a card at 2k. Every lint says how big
 	// this card is and what the cap is, on the OK line and, below, on the drift path.
+	_, inst, hasInst := swarm.ResolveInstructionKind(raw)
 	if len(drifts) == 0 {
-		fmt.Fprintf(stdout, "LINT OK card=%s checks=%d bytes=%d cap=%d\n", oneline.Field(name), cardLintChecks, len(raw), cardMaxBytes)
+		if hasInst {
+			fmt.Fprintf(stdout, "LINT OK card=%s checks=%d bytes=%d cap=%d instruction=%s\n", oneline.Field(name), cardLintChecks, len(raw), cardMaxBytes, oneline.Field(inst))
+		} else {
+			fmt.Fprintf(stdout, "LINT OK card=%s checks=%d bytes=%d cap=%d\n", oneline.Field(name), cardLintChecks, len(raw), cardMaxBytes)
+		}
 		for _, fd := range notes {
 			note(fd)
 		}
@@ -1068,10 +1073,18 @@ func cmdLint(args []string, stdout, stderr io.Writer, getenv func(string) string
 		// The remedy rides on the same line. `nova-swarm help` promises one
 		// more line naming the remedy of every listing; a rule token and a quoted line
 		// without it cost a card writer a guess per drift.
-		fmt.Fprintf(stdout, "LINT DRIFT card=%s %s: %d: %s remedy=%s\n",
-			oneline.Field(name), oneline.Field(fd.check), fd.line,
-			oneline.Escape(oneline.Cap(fd.excerpt, oneline.TailBytes)),
-			oneline.Escape(remedy(fd.check)))
+		if hasInst {
+			fmt.Fprintf(stdout, "LINT DRIFT card=%s %s: %d: %s remedy=%s instruction=%s\n",
+				oneline.Field(name), oneline.Field(fd.check), fd.line,
+				oneline.Escape(oneline.Cap(fd.excerpt, oneline.TailBytes)),
+				oneline.Escape(remedy(fd.check)),
+				oneline.Field(inst))
+		} else {
+			fmt.Fprintf(stdout, "LINT DRIFT card=%s %s: %d: %s remedy=%s\n",
+				oneline.Field(name), oneline.Field(fd.check), fd.line,
+				oneline.Escape(oneline.Cap(fd.excerpt, oneline.TailBytes)),
+				oneline.Escape(remedy(fd.check)))
+		}
 	}
 	if more {
 		fmt.Fprintf(stdout, "LINT MORE card=%s findings=%d remedy=nova-swarm lint --card %s --max 0\n",

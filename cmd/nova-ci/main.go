@@ -10,12 +10,14 @@
 package main
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bench"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
@@ -37,25 +39,28 @@ usage, in any Go module (no state, no store):
   nova-ci version     which build this is: <version> <goos>/<goarch> <go version>
   nova-ci slowtests [--budget <seconds> | --package-budget <s>] [--test-budget <s>]
                     [--allowlist <file>] [--sleeps <file>] [--enforce]
-                    [--load <n> --cpus <n>] [--example] [--json] [--max <n>]
+                    [--load <n> --cpus <n>] [--example] [--allow-empty] [--json] [--max <n>]
                       (inspection) read newline-delimited ` + "`go test -json`" + `
                       TestEvents on stdin (or the built-in example stream with
                       --example) and print one CI-SLOW line per package whose
                       total elapsed time is over its budget (--budget, whole
                       seconds, default 60; --package-budget replaces it) and
                       per top-level test over --test-budget, then one CI-LOAD
-                      line. The allowlist (internal/pkg<TAB>test<TAB>seconds<TAB>
-                      <measured>s@<where>, where is run<id> or a bench, - in
-                      the test column for a package's own row) raises one
-                      package's or test's budget. One row, tab-separated:
+                      line. The allowlist (row shape:
+                      internal/pkg<TAB>test<TAB>seconds<TAB><measured>s@<where>,
+                      where is run<id> or a bench, - in the test column for a
+                      package's own row; bound: budget sits between its
+                      measurement and three times it, the 3x headroom ceiling)
+                      raises one package's or test's budget. One row,
+                      tab-separated:
                       internal/ci/slowtests	TestA	4.5	3s@run1
                       The host's load average (the
                       larger of its 1- and 5-minute figures, over its CPUs;
                       --load and --cpus give them by hand) is printed and never
                       read by the verdict. The times are a measurement: a
                       CI-SLOW line fails the run only with --enforce (the
-                      nightly reference leg). A test skipped with the SLEEPS
-                      marker and not on --sleeps (internal/pkg<TAB>test<TAB>where) is a
+                      nightly reference leg). A test skipped with the marker "SLEEPS:"
+                      and not on --sleeps (internal/pkg<TAB>test<TAB>where) is a
                       CI-SLEEPS line and fails the run on every leg. A package
                       go test served from its test cache reports a package
                       elapsed near zero, so a cached run never trips a package
@@ -65,9 +70,6 @@ usage, in any Go module (no state, no store):
                       and one CI-SLOW MORE shown=<n> total=<n> line naming the
                       flag that prints the rest; --max 0 prints every finding.
                       --json prints the same verdict as one JSON object.
-                      --max prints at most that many finding lines, then one
-                      CI-SLOW MORE shown=<n> total=<n> line naming the flag
-                      that prints the rest; --max 0 prints every finding.
   nova-ci functional <package-dir>...
                       (inspection) print the packages among these that hold
                       functional tests (a _test.go built only under the
@@ -99,6 +101,15 @@ usage, in a nova-tools checkout (this repository's own CI steps):
                       (local write; needs a nova-tools checkout) scaffold a new
                       verb of an existing tool: command, test, fixture and make
                       target; --dry-run lists the files and writes nothing
+  nova-ci bench run --host <h> [--fallback <h>] --dir <tree> [--root <dir>] [--cache <dir>] [--with-git] -- <go command>
+                      (delivery: writes only its own run directory on the bench)
+                      copy the tree, .git left out unless --with-git, to a fresh
+                      run directory on the Linux bench --host (--fallback when it
+                      does not answer), run the command in it under nice -n 19
+                      with GOCACHE, GOFLAGS=-mod=readonly and NOVA_TEST_NO_HOST=1,
+                      stream its output, then remove that directory and nothing
+                      else. One CI BENCH line on stderr ends the run.
+                      example: nova-ci bench run --host <bench> --dir . -- go vet ./cmd/nova-ci/
   nova-ci github receipt --from-runner --redis <addr> --repo owner/name
                     --sha <40hex> --run-id <n> --workflow <name>
                     --conclusion success|failure|cancelled [--pr <n>] [--at <rfc3339>]
@@ -113,9 +124,10 @@ usage, in a nova-tools checkout (this repository's own CI steps):
 
 exit codes: 0 done, 1 the verb said no (slowtests, local, github receipt), 2 usage or could not run; by verb:
   slowtests: 0 inside budget, or CI-SLOW lines without --enforce (a
-    measurement); 1 a CI-SLEEPS line, or a CI-SLOW line under --enforce
-    (the check said no); 2 the invocation could not run (bad flag,
-    unreadable stdin)
+    measurement), or an empty stream with --allow-empty; 1 a CI-SLEEPS
+    line, a truncated package (started and never ended), a CI-SLOW line
+    under --enforce, or an empty stream without --allow-empty (the check
+    said no); 2 the invocation could not run (bad flag, unreadable stdin)
   local: 0 green; 1 a red test, a package that did not build, or a
     CI-SLEEPS line; 2 a step that could not run, or usage
   functional: 0 the selection printed (packages=0 included); 2 a flag, or
@@ -124,6 +136,9 @@ exit codes: 0 done, 1 the verb said no (slowtests, local, github receipt), 2 usa
     checkout, a bad name, or a file already there
   new-verb: 0 the files written (or listed, with --dry-run); 2 usage, not a
     checkout, a bad name, a tool with no func main, or a file already there
+  bench run: the command's own exit status; 2 also usage, or a run
+    that never reached the command (no bench answered, the copy failed),
+    told apart by its REFUSED line and the missing CI BENCH exit=<n>
   github receipt: 0 written (or checked, with --dry-run); 1 the store
     refused the write or could not confirm it; 2 usage or a refused field
   version: 0 printed; 2 an argument given
@@ -132,11 +147,29 @@ example:
   nova-ci help
   nova-ci slowtests --example --budget 60 --load 4 --cpus 16
   nova-ci slowtests --example --budget 120 --load 4 --cpus 16
+
+slowtests judges timing, not test success; with set -o pipefail the pipeline's exit carries go test -timeout 600s's.
 `
 
 // verbs is every verb in the order the banner lists them: what a refusal for a
 // missing or unknown verb names.
-const verbs = "slowtests, functional, local, new-rule, new-verb, github receipt, version, help"
+const verbs = "slowtests, functional, local, new-rule, new-verb, bench run, github receipt, version, help"
+
+// helpListsVerb reports whether tool's help already lists verb, so new-verb
+// refuses a name that would stand for two verbs. nova-ci's list is the verbs
+// constant; another tool's help is not this banner, so this reports false for
+// it (docs/STANDARD.md section 3).
+func helpListsVerb(tool, verb string) bool {
+	if tool != "nova-ci" {
+		return false
+	}
+	for _, listed := range strings.Split(verbs, ", ") {
+		if listed == verb {
+			return true
+		}
+	}
+	return false
+}
 
 // verbEffect is what running a verb does beyond printing, the last line of its -h, in
 // internal/tool's words (inspection, local write or delivery; docs/STANDARD.md section 2).
@@ -147,6 +180,7 @@ var verbEffect = map[string]tool.Effect{
 	"local":          "local write: runs this checkout's unit tests, writing only a temp dir",
 	"new-rule":       tool.LocalWrite,
 	"new-verb":       tool.LocalWrite,
+	"bench run":      benchEffect,
 	"github receipt": "delivery: writes one row of a CI run to a Redis store",
 }
 
@@ -235,6 +269,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 		return cmdNewRule(args[1:], stdout, stderr)
 	case "new-verb":
 		return cmdNewVerb(args[1:], stdout, stderr)
+	case "bench":
+		return cmdBench(context.Background(), args[1:], stdin, stdout, stderr, bench.Exec{})
 	case "github":
 		return cmdGitHub(args[1:], stdout, stderr, os.Getenv)
 	case "help", "-h", "--help":

@@ -106,7 +106,7 @@ func renderPrimary(l Line, fromCol, toCol string, moved bool, by string) string 
 		}
 		return fmt.Sprintf("%s is ready again %s", id, by)
 	case string(Working):
-		if fromCol == string(Review) {
+		if fromCol == string(Review) || fromCol == string(Merging) || l.Verb == "redo" {
 			return fmt.Sprintf("%s reworked %s: attempt %s", id, by, l.Set["attempt"])
 		}
 		return fmt.Sprintf("%s is being worked: attempt %s dealt", id, l.Set["attempt"])
@@ -149,6 +149,8 @@ func renderWork(l Line, fromRow, fromCol, toRow, toCol string, moved bool, by st
 		return s
 	case toCol == DoneFailed:
 		return fmt.Sprintf("%s finished attempt %s: FAILED", fromRow, a)
+	case toCol == DoneDefect:
+		return fmt.Sprintf("%s finished attempt %s: HOLD on a brief defect (%s)", fromRow, a, l.Set[FieldBriefDefect])
 	case toCol == string(Ready) && fromCol == Withdrawn:
 		return fmt.Sprintf("attempt %s redealt to %s (generation %d%s)", a, toRow, l.Gen, redealOf(l))
 	case toCol == string(Ready) && fromRow != toRow && strings.Contains(l.Verb, "level"):
@@ -169,6 +171,10 @@ func renderRead(l Line, toRow, toCol string, moved bool, by string) string {
 		// read --return: not a read, the card back in asked on its row; the
 		// reason is the inbox note's
 		return fmt.Sprintf("%s returned its read of attempt %s with no verdict", reader, a)
+	case l.Removed && l.Set["retired_by"] == RetiredByRefused:
+		// a read its reader could not launch: not a read, asked of another reader
+		id := strings.TrimSuffix(l.Card, ".g1")
+		return fmt.Sprintf("%s refused to launch its read of attempt %s (not a read)", id[strings.LastIndex(id, ".")+1:], a)
 	case l.Removed && l.Set["retired_by"] == "returned":
 		// a returned read another reader took: the retirement's words, as a
 		// work card taken back says them
@@ -367,6 +373,8 @@ func Timeline(lines []Line, id string) []Line {
 			continue // the merge card's line says merged and landed
 		case l.Note == nil && l.Table == Merge && l.From == "" && !l.Removed:
 			continue // queued at the accept, which says so
+		case l.Note == nil && l.Table == Merge && strings.HasSuffix(l.To, ":"+string(Returned)) && l.Verb == "redo":
+			continue // the redo merge return is suppressed
 		case l.Note == nil && l.From == l.To && !l.Removed && len(l.Text) == 0 && l.Set["score"] == "":
 			continue // a field set in passing (a stamp, the readers asked): the lines around it say what happened
 		}

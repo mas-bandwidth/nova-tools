@@ -45,7 +45,11 @@ func TestTheIdleAlarmNamesTheRootsOnceAnEpisode(t *testing.T) {
 	// two more behind a sentinel never released
 	h.must(AddStep(sprint.AddReq{Stream: "s3", IDs: []string{"gate"}, Sentinel: true, Held: true}))
 	h.must(AddStep(sprint.AddReq{Stream: "s3", IDs: []string{"g1", "g2"}}))
-	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"root", "held-one"}}, Reason: "re-cut"}))
+	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"held-one"}}, Reason: "re-cut"}))
+	// root has dependants, so drop refuses it: its dropped record is seeded and
+	// the resolve opens the blocked judgments
+	seedDroppedNeedWhy(h, "root", "re-cut")
+	h.must(ResolveStep(sprint.ResolveReq{}))
 	h.startMachine()
 	h.machine()
 	assert.Empty(t, h.notesTo(sprint.NIdle), "under the window: nothing yet")

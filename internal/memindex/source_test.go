@@ -61,3 +61,70 @@ func TestBuildRefusesAMarkdownSymlinkLeaf(t *testing.T) {
 		assert.Equal(t, []string{"a.md"}, c.Files, "the regular file beside the link is still indexed")
 	})
 }
+
+// TestBuildNeverOpensANamedPipe: a FIFO named pipe.md passes the .md suffix
+// test and, without the walk-time type check, fs.ReadFile opens it and blocks
+// forever with no writer — every verb that builds the index hangs
+// (security#76 finding 2, re-filed from security#58 finding 2). The walk
+// refuses it as not a regular file before any open; the wrapper's Open for
+// pipe.md fails the test, so a regression to opening it cannot slip through.
+func TestBuildNeverOpensANamedPipe(t *testing.T) {
+	t.Parallel()
+
+	mapped := fstest.MapFS{
+		"a.md":    &fstest.MapFile{Data: []byte("# a page\n\nbody one\n")},
+		"pipe.md": &fstest.MapFile{Data: []byte("never read\n"), Mode: fs.ModeNamedPipe},
+	}
+	opened := false
+	fsys := openingFS{FS: mapped, onOpen: func(name string) {
+		if name == "pipe.md" {
+			opened = true
+		}
+	}}
+	_, err := Build(fsys, nil)
+	require.Error(t, err, "Build over a corpus holding a named pipe: err %v", err)
+	require.False(t, opened, "pipe.md was opened; the walk should refuse it before any open")
+	assert.Contains(t, err.Error(), "pipe.md", "the refusal names the file: %v", err)
+	assert.Contains(t, err.Error(), "not a regular file", "the refusal names the defect: %v", err)
+}
+
+// openingFS wraps an fs.FS and tells its onOpen about every file opened.
+type openingFS struct {
+	fs.FS
+	onOpen func(name string)
+}
+
+func (o openingFS) Open(name string) (fs.File, error) {
+	if o.onOpen != nil {
+		o.onOpen(name)
+	}
+	return o.FS.Open(name)
+}
+
+// TestBuildRefusesAFileOverTheByteCap pins the per-file read cap: Build read
+// each .md whole, so one planted 40 MB file drove peak RSS past 2 GB on every
+// indexing verb. A file one byte over MaxFileBytes is refused with an error
+// naming the file and the cap; a file of exactly MaxFileBytes still builds
+// (security#76 finding 3).
+func TestBuildRefusesAFileOverTheByteCap(t *testing.T) {
+	t.Parallel()
+	// Paragraphs of MinTerms-clearing words, padded to an exact size.
+	page := func(n int) []byte {
+		b := []byte(strings.Repeat("alpha beta gamma delta epsilon\n\n", n/32+1))
+		return b[:n]
+	}
+	t.Run("one byte over the cap is refused, naming the file and the cap", func(t *testing.T) {
+		t.Parallel()
+		c, err := Build(fstest.MapFS{"a.md": {Data: page(MaxFileBytes + 1)}}, nil)
+		require.Error(t, err, "before the cap the whole file was read: no error")
+		assert.ErrorContains(t, err, "a.md")
+		assert.ErrorContains(t, err, "8388608")
+		assert.Nil(t, c, "a refused build returns no corpus")
+	})
+	t.Run("exactly the cap builds", func(t *testing.T) {
+		t.Parallel()
+		c, err := Build(fstest.MapFS{"a.md": {Data: page(MaxFileBytes)}}, nil)
+		require.NoError(t, err)
+		assert.Equal(t, int64(MaxFileBytes), c.Bytes)
+	})
+}

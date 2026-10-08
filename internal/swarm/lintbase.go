@@ -15,18 +15,17 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
-	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 )
 
 // THE BASE CHECKS: FIVE RULES A CODING CARD IS HELD TO BEFORE IT IS DEALT (#2636, #3083).
 //
-// The first four are each one class of the 2026-09-22 sprint's failed cards (rowan-new
+// The first four are each one class of the 2026-09-22 sprint's failed cards (a friend's
 // reports/failed-cards-2026-09-22.md), and each needs evidence the card text alone
 // does not hold, so they run only under `nova-swarm lint --base-check`:
 //
 //	paths-at-base  every PATHS entry resolves at the card's base-sha, or is a new
-//	               `_test` file, or (on a repair card) at its PR-HEAD. Class 9: card-nx-f19 named internal/decide/entry.go,
-//	               which does not exist at its base, and ABSTAINed out-of-scope.
+//	               `_test` file, or (on a repair card) at its PR-HEAD. Class 9: card-nx-f19 named example.com/decide/entry.go,
+//	               a placeholder under a foreign root that does not exist at its base, and ABSTAINed out-of-scope.
 //	no-push-steps  no STEP runs `git push` or `gh`. Class 8: 39 nx-r and holdfix
 //	               repair cards asked the wall, which holds no credential by design,
 //	               to push and to post the REPAIR comment. The harvest pushes.
@@ -62,7 +61,9 @@ type FleetLegs map[string]bool
 type KindP95 map[string]int
 
 // CardBaseRemedies is what each base token wants, in the table shape of
-// CardHeaderRemedies, so `nova-swarm lint --rules` prints them beside the rest.
+// CardHeaderRemedies, so `nova-swarm lint --rules` prints them beside the rest. The brief
+// tokens nova-sprint add holds a card brief to at its BASE tip (lintpaths.go) are beside
+// them in BriefBaseRemedies; add runs paths-at-base and donewhen-test-name there too.
 var CardBaseRemedies = map[string]string{
 	"paths-at-base":      "every PATHS entry names a file, directory or glob that exists at the card's base-sha (or is a new `_test` file); cut the card from the tree at that sha, not from the issue's words, and hand the lint a repository holding the sha with `--repo <dir>`",
 	"no-push-steps":      "a card ends at a local commit: no STEP runs `git push` or `gh`, because the wall holds no credential and the member pushes the card's commit at its finish; say `no gh, no push` in RULES, never as a STEP command",
@@ -586,24 +587,7 @@ func pathsMissingAt(repo, sha string, entries []string) ([]string, error) {
 			files = append(files, f)
 		}
 	}
-	var miss []string
-	for _, e := range entries {
-		e = strings.TrimPrefix(strings.TrimSuffix(e, "/"), "./")
-		if newTestFile(e) {
-			continue
-		}
-		found := false
-		for _, f := range files {
-			if f == e || strings.HasPrefix(f, e+"/") || hygiene.MatchGlob(e, f) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			miss = append(miss, e)
-		}
-	}
-	return miss, nil
+	return entriesMissing(files, entries), nil
 }
 
 // newTestFile is a literal path whose base name is a test file: `x_test.go`,
@@ -698,7 +682,7 @@ func ReadFleetLegs(p string) (FleetLegs, error) {
 	return out, nil
 }
 
-// ReadKindP95 reads `<kind> <seconds>` rows, tab or space separated; `1526s` is
+// ReadKindP95 reads `<kind> <seconds>` rows, tab or whitespace separated; `1526s` is
 // allowed. Blank lines and `#` comments are skipped, and so is a first row whose
 // seconds are not a number (a header). Any later such row is an error: a table
 // that silently dropped a kind would turn a measured bound into a MISSING one.

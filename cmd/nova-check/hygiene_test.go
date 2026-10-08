@@ -155,7 +155,7 @@ func TestHygieneVerbExitsOneAndNamesTheFinding(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD", "--identity", "Rowan <rowan@example.com>", "--paths", "sign/**"}, &out, &errb)
 	require.EqualValues(t, 1, code, "exit %d, want 1\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
-	require.Contains(t, out.String(), "HYGIENE FINDING reason=stray-file at=sign/RESULT.md", "stdout = %q, want the finding named", out.String())
+	require.Contains(t, errb.String(), "HYGIENE FINDING reason=stray-file at=sign/RESULT.md", "stderr = %q, want the finding named", errb.String())
 	require.True(t, strings.Contains(errb.String(), "HYGIENE FAILED "), "stderr = %q, want the FAILED verdict line", errb.String())
 	require.True(t, strings.Contains(errb.String(), "findings=1"), "stderr = %q, want the FAILED verdict line", errb.String())
 }
@@ -233,7 +233,7 @@ func TestHygieneVerbNeverPrintsTheKey(t *testing.T) {
 	require.EqualValues(t, 1, code, "exit %d, want 1\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
 	// The finding must be there: a verb that printed nothing at all would pass the
 	// search below and have proved nothing.
-	require.Contains(t, out.String(), "HYGIENE FINDING reason=secret at=sign/sign.go:3", "stdout = %q, want the secret named by path and line", out.String())
+	require.Contains(t, errb.String(), "HYGIENE FINDING reason=secret at=sign/sign.go:3", "stderr = %q, want the secret named by path and line", errb.String())
 	for name, stream := range map[string]string{"stdout": out.String(), "stderr": errb.String()} {
 		require.NotContains(t, stream, key, "the matched text reached %s: %q", name, stream)
 	}
@@ -264,9 +264,9 @@ func hygManyFindings(t *testing.T) string {
 
 // hygMore pulls the two halves of the MORE line apart: the total it stands for, and
 // the remedy that is meant to print it.
-func hygMore(t *testing.T, stdout string) (total int, remedy string) {
+func hygMore(t *testing.T, stream string) (total int, remedy string) {
 	t.Helper()
-	for _, line := range strings.Split(stdout, "\n") {
+	for _, line := range strings.Split(stream, "\n") {
 		if !strings.HasPrefix(line, "HYGIENE MORE ") {
 			continue
 		}
@@ -278,7 +278,7 @@ func hygMore(t *testing.T, stdout string) (total int, remedy string) {
 		require.NoError(t, err, "the MORE line's total is not a number: %q", line)
 		return total, cmd
 	}
-	require.FailNow(t, "fatal prerequisite", "no HYGIENE MORE line in:\n%s", stdout)
+	require.FailNow(t, "fatal prerequisite", "no HYGIENE MORE line in:\n%s", stream)
 	return 0, ""
 }
 
@@ -294,7 +294,7 @@ func TestHygieneMoreCommandRunsAsPrinted(t *testing.T) {
 	code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD",
 		"--identity", "Emma <emma@mas-bandwidth.com>", "--paths", "sign/**", "--kind", "fix-red", "--max", "2"}, &out, &errb)
 	require.EqualValues(t, 1, code, "exit %d, want 1\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
-	total, remedy := hygMore(t, out.String())
+	total, remedy := hygMore(t, errb.String())
 	args, err := hygFields(remedy)
 	require.NoError(t, err, "the remedy %q cannot be split into arguments: %v", remedy, err)
 	require.True(t, len(args) != 0, "the remedy does not start with `nova-check hygiene`: %q", remedy)
@@ -307,11 +307,11 @@ func TestHygieneMoreCommandRunsAsPrinted(t *testing.T) {
 	// The whole point of the remedy: it prints the rest, and the rest is what the
 	// capped run said it was. A remedy missing --paths or --kind would run and answer
 	// a DIFFERENT question, which is the same failure one step quieter.
-	first := strings.Count(out.String(), "HYGIENE FINDING ")
-	all := strings.Count(out2.String(), "HYGIENE FINDING ")
+	first := strings.Count(errb.String(), "HYGIENE FINDING ")
+	all := strings.Count(errb2.String(), "HYGIENE FINDING ")
 	require.Greater(t, all, first, "the remedy printed %d findings, the capped run printed %d: it is not the command that shows the rest", all, first)
 	require.EqualValues(t, total, all, "the remedy printed %d findings and the MORE line stood for %d: the remedy is not the same run with the cap lifted\n  %s", all, total, remedy)
-	require.NotContains(t, out2.String(), "HYGIENE MORE ", "the remedy is still capped:\n%s", out2.String())
+	require.NotContains(t, errb2.String(), "HYGIENE MORE ", "the remedy is still capped:\n%s", errb2.String())
 }
 
 // #1805: the help and the command reference told a reader to write the email inside a
@@ -331,7 +331,7 @@ func TestHygieneRefusesAnEmailInAngleBrackets(t *testing.T) {
 		"--identity", "Rowan <<rowan@example.com>>"}, &out, &errb)
 	require.EqualValues(t, 2, code, "exit %d, want 2: a malformed identity must be refused, never silently matched against nobody\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
 	require.Contains(t, errb.String(), "Name <email>", "stderr = %q, want the refusal to spell the form it wants", errb.String())
-	require.NotContains(t, out.String(), "HYGIENE FINDING", "a malformed identity produced findings about the branch: %q", out.String())
+	require.NotContains(t, errb.String(), "HYGIENE FINDING", "a malformed identity produced findings about the branch: %q", errb.String())
 }
 
 // #1805, the other half: neither the help nor the command reference may teach the
@@ -402,7 +402,7 @@ func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
 	// The steps are cut here rather than with onboarding.Steps: every hygiene
 	// command carries `<email>` quoted in `--identity`, and the shared parser
 	// does not run a line holding `>` even quoted. Splitting, running and
-	// comparing stay the shared ones -- SplitShell, runDocumented, Compare --
+	// comparing stay the shared ones -- SplitShell, runDocumented, CompareTranscript --
 	// so this pins the same promise the harness keeps.
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	require.NoError(t, err)
@@ -439,7 +439,7 @@ func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
 		}
 		refused := true
 		for _, line := range s.Want {
-			if !strings.HasPrefix(line, "nova-check hygiene REFUSED: ") {
+			if !strings.HasPrefix(line, "HYGIENE REFUSED: ") {
 				refused = false
 				break
 			}
@@ -454,8 +454,8 @@ func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
 		if !assert.NoError(t, err, "the documented command\n  %s\ncould not be run: %v", s.Line, err) {
 			continue
 		}
-		for _, p := range onboarding.Compare(s, res, nil) {
-			assert.Fail(t, "check failed", p)
+		for _, p := range onboarding.CompareTranscript([]onboarding.Step{s}, []onboarding.Result{res}, nil) {
+			assert.Fail(t, "check failed", p.Error())
 		}
 	}
 }

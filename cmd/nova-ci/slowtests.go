@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	_ "embed"
 	"flag"
@@ -104,10 +105,13 @@ var exampleEvents string
 
 // cmdSlowtests reads the events, sums them against the budgets, and prints one
 // CI-SLOW line per package or test over its budget (or the single CI-SLOW OK
-// line), one CI-SLEEPS line per unledgered SLEEPS skip, and the CI-LOAD line.
-// Exit 1 on a CI-SLEEPS line on every leg, and on a CI-SLOW line only with
-// --enforce; 0 otherwise. A malformed line or an unusable flag is a refusal,
-// and one run names every problem with the flags and the files they name.
+// line), one CI-SLEEPS line per unledgered SLEEPS skip, one `truncated: <pkg>
+// started and never ended` line per package with a start event and no
+// package-level terminal event, and the CI-LOAD line. Exit 1 on a CI-SLEEPS
+// line or a truncated package on every leg, and on a CI-SLOW line only with
+// --enforce; 0 otherwise.
+// A malformed line or an unusable flag is a refusal, and one run names every
+// problem with the flags and the files they name.
 func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("slowtests", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -115,12 +119,13 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	budget := fs.Int("budget", 60, "whole seconds a package's tests may take before it is over budget")
 	packageBudget := fs.Float64("package-budget", 0, "seconds a package's tests may take; replaces --budget when set")
 	testBudget := fs.Float64("test-budget", 0, "seconds one top-level test may take; 0 judges packages only")
-	allowlist := fs.String("allowlist", "", "pkg<TAB>test<TAB>seconds<TAB><measured>s@<where> rows that raise one package's or one test's budget")
-	sleeps := fs.String("sleeps", "", "pkg<TAB>test<TAB>where rows: the tests already skipped with the SLEEPS marker")
+	allowlist := fs.String("allowlist", "", "pkg<TAB>test<TAB>seconds<TAB><measured>s@<where> rows (bound: between measurement and 3x it) that raise one package's or one test's budget")
+	sleeps := fs.String("sleeps", "", "pkg<TAB>test<TAB>where rows: the tests already skipped with the marker \"SLEEPS:\"")
 	enforce := fs.Bool("enforce", false, "fail the run on a CI-SLOW line (the nightly reference leg only); without it the times are printed and only a CI-SLEEPS line fails")
 	loadFlag := fs.Float64("load", -1, "the host's load average, instead of reading it")
 	cpusFlag := fs.Int("cpus", 0, "the host's logical CPUs, instead of runtime.NumCPU")
 	example := fs.Bool("example", false, "read the built-in six-event example stream instead of stdin: a first run with no Go module")
+	allowEmpty := fs.Bool("allow-empty", false, "answer OK when the count of packages read is 0; without it an empty stream is FAILED")
 	asJSON := fs.Bool("json", false, "print the verdict, or the refusal, as one JSON object {result, facts, items} on stdout instead of lines")
 	maxFlag := fs.Int("max", bounded.Default, "finding lines to print before one MORE line stands for the rest; 0 prints all")
 	if err := verbflag.Parse(fs, args); err != nil {
@@ -148,7 +153,7 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		budgets.Package = *packageBudget
 	}
 	var err error
-	if budgets.Rows, err = readRows(*allowlist, slowtests.ParseAllowlist); err != nil {
+	if budgets.Rows, err = readAllowlist(*allowlist); err != nil {
 		problems = append(problems, "--allowlist "+oneline.Err(err))
 	}
 	if budgets.Sleeps, err = readRows(*sleeps, slowtests.ParseSleeps); err != nil {
@@ -183,8 +188,29 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		ledger = "the SLEEPS ledger (no --sleeps given)"
 	}
 	lines, code := slowtests.Verdict(report, load, *enforce, ledger)
+	// The count of packages read (Verb.Looks is not on this tree; the verb
+	// applies the same rule): an empty stream is FAILED, and --allow-empty is
+	// the way out. The built-in --example stream is not this check
+	// (docs/STANDARD.md section 2, exit codes tell the truth). A package that
+	// started and never ended is a truncated finding, not an empty stream.
+	empty := report.Packages == 0 && len(report.Truncated) == 0 && !*example && !*allowEmpty
+	if empty {
+		code = 1
+		for i, line := range lines {
+			if strings.HasPrefix(line, "CI-SLOW OK ") {
+				lines[i] = "CI-SLOW FAILED packages=0 slowest=none: looked at nothing; run: nova-ci slowtests --allow-empty"
+			}
+		}
+	}
 	if *asJSON {
-		return verdictJSON(report, load, *enforce, code, *maxFlag).Render(stdout, true)
+		o := verdictJSON(report, load, *enforce, code, *maxFlag)
+		if empty {
+			o.Status = tool.Failed
+			o.Exit = 1
+			o.Why = append(o.Why, "looked at nothing: packages=0")
+			o.Remedy = "nova-ci slowtests --allow-empty"
+		}
+		return o.Render(stdout, true)
 	}
 	for _, line := range capSlowLines(lines, *maxFlag) {
 		fmt.Fprintln(stdout, line)
@@ -249,6 +275,61 @@ func nonFinite(fs *flag.FlagSet) []string {
 	return bad
 }
 
+// readAllowlist parses the allowlist file, reporting every bad row in one refusal
+// with its 1-based line number.
+func readAllowlist(path string) ([]slowtests.Row, error) {
+	if path == "" {
+		return nil, nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }() // ignored: a read-only file
+
+	sc := bufio.NewScanner(f)
+	var errs []string
+	var rows []slowtests.Row
+	seen := map[string]int{}
+	lineNum := 0
+
+	for sc.Scan() {
+		lineNum++
+		raw := sc.Text()
+		text := strings.TrimSpace(raw)
+		if text == "" || strings.HasPrefix(text, "#") {
+			continue
+		}
+		input := strings.Repeat("\n", lineNum-1) + raw + "\n"
+		parsed, parseErr := slowtests.ParseAllowlist(strings.NewReader(input))
+		if parseErr != nil {
+			errs = append(errs, parseErr.Error())
+			continue
+		}
+		if len(parsed) > 0 {
+			r := parsed[0]
+			key := r.Package + "\t" + r.Test
+			testCol := r.Test
+			if testCol == "" {
+				testCol = "-"
+			}
+			if first, dup := seen[key]; dup {
+				errs = append(errs, fmt.Sprintf("line %d: %s %s is already on line %d", lineNum, r.Package, testCol, first))
+				continue
+			}
+			seen[key] = lineNum
+			rows = append(rows, r)
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("%s: %s", path, strings.Join(errs, "; "))
+	}
+	return rows, nil
+}
+
 // readRows parses the file a ledger flag names; an empty name is no rows.
 func readRows[R any](path string, parse func(io.Reader) ([]R, error)) ([]R, error) {
 	if path == "" {
@@ -294,6 +375,9 @@ func verdictJSON(r slowtests.Report, load slowtests.Load, enforce bool, code int
 		if enforce && len(r.Over)+len(r.OverTests) > 0 {
 			o.Why = append(o.Why, fmt.Sprintf("%d CI-SLOW finding(s) under --enforce", len(r.Over)+len(r.OverTests)))
 		}
+		if len(r.Truncated) > 0 {
+			o.Why = append(o.Why, fmt.Sprintf("%d package(s) started and never ended", len(r.Truncated)))
+		}
 	}
 	slowest := "none"
 	if r.Slowest.Name != "" {
@@ -318,6 +402,9 @@ func verdictJSON(r slowtests.Report, load slowtests.Load, enforce bool, code int
 	}
 	for _, s := range r.Sleepers {
 		o.Item("sleeps", "test", s.Name, "package", s.Package)
+	}
+	for _, pkg := range r.Truncated {
+		o.ItemText("truncated", "truncated: "+oneline.Field(pkg)+" started and never ended")
 	}
 	if max > 0 {
 		tally := bounded.NewTally(max)

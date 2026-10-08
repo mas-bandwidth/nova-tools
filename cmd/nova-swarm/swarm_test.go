@@ -1,9 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -25,75 +22,6 @@ import (
 //
 // CONTRIBUTING.md: test code is code. No test here reaches outside t.TempDir(), none
 // touches the network, and none matches a process by its command line.
-
-// bench is one pool, one worker description, one key file and a fake harness on PATH.
-type bench struct {
-	t        *testing.T
-	dir      string
-	pool     string
-	binary   string
-	worker   string
-	keyFile  string
-	path     string
-	extraEnv []string
-	// THE LAUNCH SEAM (docs/SPEC-SANDBOX.md, "the two callers"): every job runs inside
-	// nova-sandbox, so every bench knows where that binary is. `sandbox` is the REAL one,
-	// built from this repository, which has a wall on darwin and refuses elsewhere;
-	// `fakeSandbox` is the stand-in that records its argv and enforces nothing, so the
-	// seam itself is testable on a platform whose body is not built.
-	sandbox     string
-	fakeSandbox string
-}
-
-const fakeKey = "sk-fake-0123456789-not-a-key"
-
-func newBench(t *testing.T) *bench {
-	t.Helper()
-	dir := t.TempDir()
-	b := &bench{t: t, dir: dir, pool: filepath.Join(dir, "pool")}
-	t.Cleanup(func() { reapLeftoverSupervise(b) })
-	require.NoError(t, os.MkdirAll(b.pool, 0o755))
-	write(t, filepath.Join(b.pool, "identity.tsv"), "owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
-	// The three binaries are built ONCE for the whole package, not once per bench. Thirty
-	// benches building them each saturated the machine, and a dispatcher that cannot start
-	// a child inside its deadline turns a contract test into a race: three tests that kill
-	// a worker went red under the load and green on their own (2026-09-11).
-	b.binary, b.path = builtBinaries(t)
-	b.sandbox, b.fakeSandbox = builtSandbox, builtFakeSandbox
-
-	home := filepath.Join(dir, "worker-home")
-	require.NoError(t, os.MkdirAll(home, 0o755))
-	write(t, filepath.Join(home, "AGENTS.md"), "the worker's own self, copied one way into every slot\n")
-
-	b.keyFile = filepath.Join(dir, "key")
-	write(t, b.keyFile, "FAKE_KEY="+fakeKey+"\na second line nothing may read\n")
-	require.NoError(t, os.Chmod(b.keyFile, 0o600))
-
-	b.worker = filepath.Join(dir, "worker.json")
-	desc := map[string]any{
-		"name": "fake-1", "provider": "fake", "model": "fake-model",
-		"env_var": "FAKE_KEY", "key_file": b.keyFile, "usage": "opencode",
-		"harness": "fake-harness", "worker_dir": home, "deadline": "30s",
-		// The invocation a real harness needs: its subcommand, the model this description
-		// names, and the prompt FILE last (D1, 2026-09-11).
-		"harness_args": []string{"run", "--model", "{model}", "--", "{prompt}"},
-		"board":        "mas-bandwidth/schema#876",
-	}
-	raw, _ := json.MarshalIndent(desc, "", "  ")
-	write(t, b.worker, string(raw))
-	return b
-}
-
-// builtBinaries hands every bench the two files the package builds once: the tool's own
-// path, and a PATH whose first entry holds the fake harness. The build itself happens in
-// buildShared, which TestMain runs before any test, so no test's own elapsed time carries
-// the compile (the studio bench charged it to TestBenchProbeOK).
-func builtBinaries(t *testing.T) (string, string) {
-	t.Helper()
-	err := buildShared()
-	require.NoError(t, err, "building the binaries these tests run: %v", err)
-	return builtTool, builtPath
-}
 
 // buildShared builds every binary and fixture the whole package shares: the two nova-swarm
 // builds, the fake harness, the fake sqlite3, the real sandbox and its stand-in, and a
@@ -186,7 +114,7 @@ func TestMain(m *testing.M) {
 	if os.Getenv("NOVA_SWARM_PROVIDER_BACKOFF") == "" {
 		_ = os.Setenv("NOVA_SWARM_PROVIDER_BACKOFF", "0s")
 	}
-	if err := buildShared(); err != nil {
+	if err := prebuild(); err != nil {
 		fmt.Fprintf(os.Stderr, "building the binaries these tests run: %v\n", err)
 		os.Exit(1)
 	}
@@ -279,66 +207,9 @@ func write(t *testing.T, path, body string) {
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 }
 
-// swarm runs the built binary, which is what a stranger meets at a shell prompt. It fails
-// the test on a binary that would not run at all, so it belongs to the TEST GOROUTINE:
-// anything running beside the test calls swarmTry and hands the answer back.
-func (b *bench) swarm(args ...string) (exit int, stdout, stderr string) {
-	b.t.Helper()
-	exit, stdout, stderr, err := b.swarmTry(args...)
-	if err != nil {
-		b.t.Fatalf("running nova-swarm %s: %v", strings.Join(args, " "), err)
-	}
-	return exit, stdout, stderr
-}
-
-// swarmTry is swarm with the failure RETURNED rather than reported: t.Fatalf from a
-// goroutine other than the test's own ends that goroutine and not the test, and after
-// t.TempDir has been cleaned it panics (#122). Every caller off the test goroutine uses
-// this one and the test goroutine does the asserting.
-func (b *bench) swarmTry(args ...string) (exit int, stdout, stderr string, err error) {
-	cmd := exec.Command(b.binary, args...)
-	cmd.Dir = b.dir
-	cmd.Env = append([]string{"PATH=" + b.path, "Path=" + b.path, "HOME=" + b.dir}, b.extraEnv...)
-	if runtime.GOOS == "windows" {
-		for _, k := range []string{"SystemRoot", "SYSTEMROOT", "SystemDrive", "PATHEXT", "TEMP", "TMP", "COMSPEC"} {
-			if v := os.Getenv(k); v != "" {
-				cmd.Env = append(cmd.Env, k+"="+v)
-			}
-		}
-	}
-	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	var exitErr *exec.ExitError
-	switch runErr := cmd.Run(); {
-	case runErr == nil:
-	case errors.As(runErr, &exitErr):
-		exit = exitErr.ExitCode()
-	default:
-		err = runErr
-	}
-	return exit, out.String(), errb.String(), err
-}
-
 func mustContain(t *testing.T, what, body, want string) {
 	t.Helper()
 	assert.Contains(t, body, want, "%s does not contain %q:\n%s", what, want, body)
 }
 
 // ---------------------------------------------------------------------------------------
-
-// grepTree reports the first file under dir holding needle, or "".
-func grepTree(t *testing.T, dir, needle string) string {
-	t.Helper()
-	found := ""
-	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || found != "" {
-			return nil
-		}
-		raw, err := os.ReadFile(path)
-		if err == nil && bytes.Contains(raw, []byte(needle)) {
-			found = path
-		}
-		return nil
-	})
-	return found
-}

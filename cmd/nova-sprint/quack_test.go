@@ -63,7 +63,7 @@ func TestQuackCutsStampedCardsThatAlternateTiersAndPassTheLint(t *testing.T) {
 			m, why := cardhdr.ReadModel(brief)
 			assert.Empty(t, why, id)
 			assert.Equal(t, tier, m.Tier, "%s takes the tiers in turn", id)
-			for _, want := range []string{"quacks/" + id + ".txt", "REPO: " + repo, "BASE: dev", "`quack: " + id + "`"} {
+			for _, want := range []string{"quacks/" + id + ".txt", "REPO: " + repo, "BASE: sprint/quack", "`quack: " + id + "`"} {
 				assert.Contains(t, brief, want, id)
 			}
 			assert.Empty(t, swarm.LintCardChildWith([]byte(brief), rs), "%s passes the repository's card lint", id)

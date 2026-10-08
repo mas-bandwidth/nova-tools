@@ -76,6 +76,7 @@ type PullRow struct {
 	Width   string `json:"width"`
 	Done    string `json:"done"`
 	OKPct   string `json:"okpct"`
+	Tokens  string `json:"tokens,omitempty"`
 	Load    string `json:"load,omitempty"`
 }
 
@@ -115,7 +116,7 @@ func pullView(c *sprintCopy, kind, name string) (PullView, bool) {
 	v := PullView{At: c.At, Kind: kind, Name: name, Cards: []PullCard{}, Judgments: []PullJudgment{},
 		Sprint: SprintLine{Landed: c.Landed, All: c.All, Held: c.Held, ETA: etaOf(c.Summary), Machine: strings.TrimPrefix(c.Machine, "machine: ")},
 		Row: PullRow{Status: cells["status"], Ready: cells["ready"], Working: cells["working"], Width: cells["width"],
-			Done: cells["done"], OKPct: cells["okpct"], Load: cells["load"]}}
+			Done: cells["done"], OKPct: cells["okpct"], Tokens: cells["tokens"], Load: cells["load"]}}
 	mine := map[string]bool{}
 	for _, card := range c.Cards {
 		if card.Member == member {
@@ -284,10 +285,11 @@ func (s *Server) servePull(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.URL.Path {
 	case "/healthz":
-		s.send(w, "text/plain; charset=utf-8", []byte("ok\n"))
+		s.healthz(w)
 		return
 	case "/events":
-		s.events(w, r, func(*sprintCopy) ([]byte, bool) { return s.Snapshot(), true })
+		rel := r.URL.Query().Get("release")
+		s.events(w, r, func(*sprintCopy) ([]byte, bool) { return s.SnapshotOf(rel), true })
 		return
 	}
 	s.Refresh()
@@ -301,7 +303,7 @@ func (s *Server) servePull(w http.ResponseWriter, r *http.Request) {
 	h.Set("Sprint-At", c.At.Format(time.RFC3339))
 	path := r.URL.Path
 	if path == "/api/sprint" {
-		s.send(w, "application/json", s.Snapshot())
+		s.send(w, "application/json", s.SnapshotOf(r.URL.Query().Get("release")))
 		return
 	}
 	rest, api := strings.CutPrefix(path, "/api/")

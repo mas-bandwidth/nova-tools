@@ -110,7 +110,7 @@ func ReadProvider(kind, name, path string, _ *Rules) *Source {
 	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
 
 	// A `grok usage` export is JSON, not CSV: the xAI parser reads both shapes, chosen by
-	// the first non-space byte. The JSON shape is the documented `grok usage` object
+	// the first non-whitespace byte. The JSON shape is the documented `grok usage` object
 	// (a sessionId and a turns array) and folds to the same rows the CSV shape produces.
 	if trimmed := strings.TrimSpace(text); trimmed != "" && (trimmed[0] == '{' || trimmed[0] == '[') {
 		return readXaiJSON(kind, path, text, s)
@@ -177,12 +177,12 @@ func ReadProvider(kind, name, path string, _ *Rules) *Source {
 	var reports []Type
 	for i, col := range header {
 		col = strings.TrimSpace(col)
-		switch {
-		case col == sh.stamp:
+		switch col {
+		case sh.stamp:
 			stampCol = i
-		case col == sh.date:
+		case sh.date:
 			dateCol = i
-		case col == sh.model:
+		case sh.model:
 			modelCol = i
 		default:
 			t, ok := sh.columns[col]
@@ -276,12 +276,6 @@ type XaiUsageNotFileError struct {
 
 func (e *XaiUsageNotFileError) Error() string {
 	return "the path is not one file; --provider xai wants one usage.json path and does not scan a directory"
-}
-
-// ReadXaiUsageFile reads the one path --provider xai was given. A missing path
-// is *XaiUsageMissingError. A directory is *XaiUsageNotFileError.
-func ReadXaiUsageFile(path string) ([]byte, error) {
-	return readXaiUsageFile(path)
 }
 
 func readProviderSource(kind, path string) ([]byte, error) {

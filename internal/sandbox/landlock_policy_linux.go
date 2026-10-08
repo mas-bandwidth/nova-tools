@@ -64,8 +64,13 @@ func LandlockPolicyText(p *Policy) (string, error) {
 	for _, r := range p.ReadsNoExec {
 		fmt.Fprintf(&b, "read-noexec=%s\n", r)
 	}
+	// A write outside the job dir, its tmp and the cwd carries no REMOVE rights, and says so.
 	for _, w := range writePaths(p) {
-		fmt.Fprintf(&b, "write=%s\n", w)
+		if p.DeletesIn(w) {
+			fmt.Fprintf(&b, "write=%s\n", w)
+		} else {
+			fmt.Fprintf(&b, "write-nodelete=%s\n", w)
+		}
 	}
 	// The two writable device files of the roots table. They are FILES, so they
 	// are their own grant, not a recursive write beneath a directory.
@@ -77,4 +82,13 @@ func LandlockPolicyText(p *Policy) (string, error) {
 	}
 	fmt.Fprintf(&b, "gpu=%s\n", string(p.GPUMode))
 	return b.String(), nil
+}
+
+// writeRuleMask is the mask one write-set directory gets: the whole handled set, REMOVE_FILE
+// and REMOVE_DIR included, under every --write root (Policy.DeletesIn is true for each;
+// docs/SPEC-SANDBOX.md, "deletes-in-every-write-root"). Landlock checks a remove right on
+// the PARENT of the entry removed or renamed away, so a write root without them could be
+// created in and never removed from.
+func writeRuleMask(_ *Policy, _ string, abi int) uint64 {
+	return writeSubset(abi)
 }

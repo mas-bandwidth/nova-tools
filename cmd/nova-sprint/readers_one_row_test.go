@@ -48,10 +48,10 @@ func TestWhereReadersTableIsOneRowTheSumOfAllReaders(t *testing.T) {
 		assert.Equal(t, "-", row[sprint.FieldWidth], "%s is named for no fleet row: no width", rd)
 		var line []string
 		for _, c := range cols {
-			n, err := strconv.Atoi(row[c])
+			n, err := strconv.Atoi(cellText(row[c]))
 			require.NoError(t, err, "%s %s", rd, c)
 			sums[c] += n
-			line = append(line, row[c])
+			line = append(line, cellText(row[c]))
 		}
 		seen[strings.Join(line, ",")] = true
 	}
@@ -63,13 +63,14 @@ func TestWhereReadersTableIsOneRowTheSumOfAllReaders(t *testing.T) {
 	block := tableOf(ta.ok("where --all"), "readers")
 	lines := strings.Split(strings.TrimRight(block, "\n"), "\n")
 	require.Len(t, lines, 3, "header, rule, one row; no footer:\n%s", block)
-	assert.Equal(t, []string{"readers", "asked", "reading", "width", "ok", "broken"}, cells(lines[0]))
+	assert.Equal(t, []string{"readers", "asked", "reading", "width", "ok", "broken", "tiers"}, cells(lines[0]))
 	assert.True(t, strings.HasPrefix(lines[1], "--"), "the rule: %q", lines[1])
 	want := []string{allRow}
 	for _, c := range cols {
 		want = append(want, strconv.Itoa(sums[c]))
 	}
 	want = slices.Insert(want, 3, "-")
+	want = append(want, "default")
 	assert.Equal(t, want, cells(lines[2]))
 	for _, rd := range []string{"reader-a", "reader-b", "reader-c"} {
 		assert.NotContains(t, block, rd, "no per-reader row")
@@ -136,12 +137,12 @@ func TestWhereMergeTableIsOneRowTheSumsAndTheWorstCIAndState(t *testing.T) {
 	for _, st := range []string{"s1", "s2", "s3"} {
 		row, ok := merge[st]
 		require.True(t, ok, "--json has %s's row: %v", st, merge)
-		line := []string{row[sprint.CI], row[sprint.StateCol]}
+		line := []string{cellText(row[sprint.CI]), cellText(row[sprint.StateCol])}
 		for _, c := range cols {
-			n, err := strconv.Atoi(row[c])
+			n, err := strconv.Atoi(cellText(row[c]))
 			require.NoError(t, err, "%s %s", st, c)
 			sums[c] += n
-			line = append(line, row[c])
+			line = append(line, cellText(row[c]))
 		}
 		seen[strings.Join(line, ",")] = true
 	}

@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -133,4 +136,44 @@ func TestTheCommandReferenceReceiptRefusalsAreWhatTheToolPrints(t *testing.T) {
 	for _, p := range onboarding.CompareTranscript(steps, got, nil) {
 		t.Error(p)
 	}
+}
+
+// TestReceiptReportsAStoreCloseFailureAndKeepsTheWriteResult: a store whose
+// close fails after the XADD was confirmed still exits 0 with the receipt
+// line on stdout, and the verb names the close failure on stderr.
+func TestReceiptReportsAStoreCloseFailureAndKeepsTheWriteResult(t *testing.T) {
+	t.Parallel()
+	open := func(ctx context.Context, addr string) (*store.Store, error) {
+		st, err := store.Open(ctx, addr)
+		if err != nil {
+			return nil, err
+		}
+		st.Client().AddHook(closeAfterAckHook{client: st.Client()})
+		return st, nil
+	}
+	var out, errb bytes.Buffer
+	code := cmdReceipt(context.Background(), receiptArgs()[1:], &out, &errb, noEnv, open)
+	assert.Equal(t, 0, code, "stderr %q", errb.String())
+	assert.Contains(t, out.String(), "CI RECEIPT mas-bandwidth/nova-tools sha="+receiptSHA)
+	assert.Contains(t, errb.String(), "CI RECEIPT NOTE closing the store failed")
+}
+
+// closeAfterAckHook answers the XADD with an entry id and no socket, then
+// closes the client, so the verb's own close reports redis's closed-client error.
+type closeAfterAckHook struct{ client *redis.Client }
+
+func (closeAfterAckHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h closeAfterAckHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if c, ok := cmd.(*redis.StringCmd); ok {
+			c.SetVal("1-0")
+		}
+		_ = h.client.Close() // ignored: the hook forces the later close to fail
+		return nil
+	}
+}
+
+func (closeAfterAckHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
 }

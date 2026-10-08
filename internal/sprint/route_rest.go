@@ -304,7 +304,7 @@ type routeEnd struct {
 // A take that ended with its member down keeps no record and is not counted.
 func routeEnds(fleet *Table) map[string][]routeEnd {
 	out := map[string][]routeEnd{}
-	for _, c := range fleet.Column(Ready, Working, DoneOK, DoneFailed, Withdrawn) {
+	for _, c := range fleet.Column(Ready, Working, DoneOK, DoneFailed, DoneDefect, Withdrawn) {
 		takes, numbers := ProviderTakes(c)
 		for i, t := range takes {
 			at, err := time.Parse(time.RFC3339, t.Finished)
@@ -424,13 +424,14 @@ func (s *Snapshot) resting(route string) (RouteRest, bool) {
 // cardRest is the rest that holds, at s.Now, the route a ready work card was dealt on: the
 // rests a dealing step settled (withRests) when it has them, else its provider's property
 // (the provider its model line names), so a take, which loads no routes, reads one property
-// and no more. ok is false for a pinned card and for a route that serves. The take reads no
+// and no more. ok is false for a pinned card, a friend's card and a route that serves. The take reads no
 // route's own rest (rule 3's): only the tick writes one, and the same plan withdraws every
 // ready card on that route (restWithdrawals), so no ready card is ever on one; a provider's
 // rest is also written between ticks, by the balance poll.
 func cardRest(s *Snapshot, c *Card) (RouteRest, bool) {
 	route := c.F(FieldRoute)
-	if route == "" || route == RoutePin {
+	// a friend's card is on her own model, never a fleet route's: no route's rest is hers
+	if route == "" || route == RoutePin || IsFriendRow(c.Row) {
 		return RouteRest{}, false
 	}
 	if s.rests != nil {
@@ -453,6 +454,9 @@ func cardRest(s *Snapshot, c *Card) (RouteRest, bool) {
 func restWithdrawals(s *Snapshot, who string) []Unit {
 	var out []Unit
 	for _, c := range s.Fleet.Column(Ready) {
+		if isRead(c) {
+			continue // a read card is its reader's: the read-card deal draws a read off a resting route
+		}
 		if rest, ok := cardRest(s, c); ok {
 			out = append(out, withdrawCard(s, c, false, NRestWithdrawn, who, "taken back: its route "+c.F(FieldRoute)+" rests ("+rest.Said()+")"))
 		}

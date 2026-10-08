@@ -2,7 +2,9 @@ package sprint
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 )
@@ -40,8 +42,24 @@ type MergeReq struct {
 	// rule): the base failed its tree gate at its tip three times, and this is the error. The
 	// stream stops with the judgment NBaseRed; no card moves.
 	BaseRed string `json:",omitempty"`
-	Note    string
-	Who     string
+	// BaseRefused is a landing refused because the base failed its tree gate at its tip (the
+	// lander ran the gate and it was red), this the finding, Base the base's branch: the
+	// refusal is counted on the stream's control card per base (FieldBaseGateRefused), across
+	// passes and processes, and the BaseGateStops-th stops the stream with the judgment NBaseRed
+	// naming the base, the gate and the first refusal. No card moves.
+	BaseRefused string `json:",omitempty"`
+	Base        string `json:",omitempty"`
+	// MissingBase is a land whose base branch is gone: the merge step raises one
+	// judgment naming every unlanded card on that base and the rebase line that
+	// fixes them (rebase.go). No card moves.
+	MissingBase string `json:",omitempty"`
+	// DeadBase is the base the batch's cards (Cards) name, which the lander's fetch found
+	// not on origin (docs/SPEC-SPRINT.md section 7, a dead base): each card is marked
+	// (FieldDeadBase) and one judgment NDeadBase is raised for it; the stream is not
+	// stopped and no card moves.
+	DeadBase string `json:",omitempty"`
+	Note     string
+	Who      string
 	// Resolved is, by card, what its landing did beyond merging its head (docs/SPEC-SPRINT.md
 	// section 7: the generated ledgers regenerated at the merge); written on its merge card
 	// as it lands, its note on the card's timeline.
@@ -87,6 +105,234 @@ func landedRefusals(s *Snapshot, stream string, pins []LandedPin) []Refusal {
 	return out
 }
 
+// The base-gate count on a stream's control card (docs/SPEC-SPRINT.md section 8,
+// land-base-gate-stops-stream): how many landings in a row were refused on the base's tree
+// gate, the base they were refused on, and when the first was. A pass that merges, any other
+// stop, a stop on the base and a resume clear it.
+const (
+	FieldBaseGateRefused = "base_gate_refused"
+	FieldBaseGateBase    = "base_gate_base"
+	FieldBaseGateFirst   = "base_gate_first"
+)
+
+var baseGateCount = []string{FieldBaseGateRefused, FieldBaseGateBase, FieldBaseGateFirst}
+
+// BaseGateStops is the refusals on one base that stop its stream: the first failure of its
+// tree gate and one at each retry (BaseGateRetries).
+var BaseGateStops = len(BaseGateRetries) + 1
+
+// baseGateStep counts a refusal on the base's gate on the stream's control card, and stops
+// the stream with the judgment NBaseRed at the BaseGateStops-th, or at once on BaseRed. A
+// count on another base starts again at one.
+func baseGateStep(p Plan, s *Snapshot, ctl *Card, r MergeReq) Plan {
+	n, first := 1, stamp(s.Now)
+	if m := ctl.Int(FieldBaseGateRefused); m > 0 && ctl.F(FieldBaseGateBase) == r.Base {
+		n = m + 1
+		if f := ctl.F(FieldBaseGateFirst); f != "" {
+			first = f
+		}
+	}
+	if r.BaseRed == "" && n < BaseGateStops {
+		set := map[string]string{FieldBaseGateRefused: itoa(n), FieldBaseGateBase: r.Base, FieldBaseGateFirst: first}
+		p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set))},
+			Moved: fmt.Sprintf("stream %s: the base %s refused at its tree gate (%d of %d)", r.Stream, r.Base, n, BaseGateStops)})
+		return p
+	}
+	// the base, not a card: the stream stops with the error, every card where it is
+	what := r.BaseRed
+	if what == "" {
+		what = r.BaseRefused
+	}
+	if r.Base != "" {
+		at, _ := time.Parse(time.RFC3339, first)
+		what = fmt.Sprintf("the base %s fails its tree gate, refused %d times, first refused at %s: %s", r.Base, n, at.UTC().Format("15:04:05 MST"), what)
+	}
+	set := map[string]string{"state": StreamStopped, "since": stamp(s.Now), "cause": "base"}
+	j := judgment(NBaseRed, r.Stream, s.Now, 0)
+	j.StreamLevel, j.Who, j.What = true, r.Who, cutText(what, MaxCardTextBytes)
+	p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, append([]string{"card", "other"}, baseGateCount...)...))}, Notes: []Note{j},
+		Moved: "stream " + r.Stream + " stopped: the base fails its tree gate"})
+	return p
+}
+
+// missingBaseStep raises the one judgment of a land whose base branch is gone:
+// every unlanded card on that base, and the rebase line that fixes them
+// (rebase.go). No card moves and the stream is not stopped: the cards are still
+// landable once their brief names a base that exists.
+func missingBaseStep(p Plan, s *Snapshot, r MergeReq) Plan {
+	cards := MissingBaseCards(s, r.MissingBase)
+	j := MissingBaseJudgment(r.MissingBase, cards)
+	j.Who, j.At = r.Who, s.Now
+	if len(cards) == 0 {
+		return p
+	}
+	p.Notes = append(p.Notes, j)
+	return p
+}
+
+// A dead base (docs/SPEC-SPRINT.md section 7, a dead base). On 2026-10-04 a merging
+// card named a branch that was then deleted from origin. The lander tried that branch
+// 203 times, every 6 seconds, and the stream held behind the card for half an hour. A
+// base the lander's fetch finds not on origin is one fact: the card is marked with the
+// base (FieldDeadBase) and one judgment NDeadBase is raised for it, its stream is not
+// stopped, and the land pass skips the card (DeadBaseHeld) until the judgment is
+// answered or the base is re-pointed (CardBase), then tries it once.
+
+// NDeadBase is the judgment of a merging card whose BASE is not on origin.
+const NDeadBase = "a merging card names a base not on origin"
+
+// FieldDeadBase is the base a merging card names that the lander found not on origin, on
+// the primary; FieldBaseSet is the last re-point of its BASE (CardBase): old -> new, when,
+// by whom.
+const (
+	FieldDeadBase = "dead_base"
+	FieldBaseSet  = "base_set"
+)
+
+func init() {
+	// the re-point is the judgment's words (DeadBaseWhy); ack answers it, and the next land
+	// pass tries the card once more
+	Decisions[NDeadBase] = []string{"look at the card", "return", "drop", "ack"}
+}
+
+// DeadBaseWhy is the one sentence of a dead base, the lander's refusal and the judgment's.
+func DeadBaseWhy(id, base string) string {
+	return "card " + id + " names BASE " + base + ", which is not on origin"
+}
+
+// deadBaseOpen is the open judgments of a dead base on the card.
+func deadBaseOpen(s *Snapshot, id string) []Open {
+	var out []Open
+	for _, o := range s.Open {
+		if o.Note.Type == NDeadBase && o.Subject() == id {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// DeadBaseHeld says the land pass skips the card: it is marked dead on the base it names
+// now, and that judgment is open. A re-pointed base or an answered judgment arms it again.
+func DeadBaseHeld(s *Snapshot, c *Card, base string) bool {
+	return c != nil && base != "" && c.F(FieldDeadBase) == base && len(deadBaseOpen(s, c.ID)) > 0
+}
+
+// deadBaseStep marks each card of the batch dead on its base and raises one judgment for
+// it. A card held already (a replay, or a second lander) writes nothing: one fact, once.
+func deadBaseStep(p Plan, s *Snapshot, r MergeReq) Plan {
+	if len(r.Cards) == 0 {
+		p.refuse(r.Stream, "a dead base names its cards; nothing was changed")
+		return p
+	}
+	for _, id := range r.Cards {
+		pr, m := s.Work.Placed(id), s.Merge.Placed(id)
+		switch {
+		case pr == nil || pr.Row != r.Stream || pr.Col != Merging || m == nil || m.Row != r.Stream || m.Col != Queued:
+			p.refuse(id, "not merging in stream "+r.Stream+" (it is "+placeWord(orEmpty(pr, id))+")")
+			continue
+		case DeadBaseHeld(s, pr, r.DeadBase):
+			continue
+		}
+		why := DeadBaseWhy(id, r.DeadBase)
+		j := judgment(NDeadBase, r.Stream, s.Now, 0, id)
+		j.Who, j.Card = r.Who, id
+		j.What = cutText(why+"; re-point it: nova-sprint card base "+id+" <a branch on origin>; or ack this and the lander tries it once more", MaxCardTextBytes)
+		p.Units = append(p.Units, Unit{Key: id, Stream: r.Stream, Changes: []Change{change(Work, setEntry(pr, map[string]string{FieldDeadBase: r.DeadBase}))},
+			Notes: []Note{j}, Moved: why + "; held from landing"})
+	}
+	return p
+}
+
+// baseRefRE is a branch name's shape: what git's check-ref-format accepts for the branches
+// a card's BASE may name. Glob and revision characters are refused, so `card base <id> "*"`
+// never stands in for the advertised branch it is not (the reader's finding, attempt 4).
+var baseRefRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_./-]*$`)
+
+// ValidBase says base is a branch name a lander could cut: the shape above and the
+// component rules git adds (no "..", "//", a trailing "/", ".lock" or ".").
+func ValidBase(base string) bool {
+	return len(base) <= 200 && baseRefRE.MatchString(base) && !strings.Contains(base, "..") &&
+		!strings.Contains(base, "//") && !strings.HasSuffix(base, "/") &&
+		!strings.HasSuffix(base, ".lock") && !strings.HasSuffix(base, ".")
+}
+
+// CardBaseReq re-points a merging card's BASE (nova-sprint card base). OnOrigin is the
+// caller's fact, one git ls-remote, that the branch is on the card's origin.
+type CardBaseReq struct {
+	ID, Base string
+	OnOrigin bool
+	Who      string
+}
+
+// CardBase re-points a merging card's BASE: its brief's BASE: line names the new branch,
+// its dead-base mark is cleared and its dead-base judgment answered, and one log line names
+// the base before and after. The work, its head, its attempt and its reads are kept, and the
+// card stays where it is in the merge queue: the next land pass tries it once against the
+// new base. A branch not on origin is refused, nothing changed (docs/SPEC-SPRINT.md section
+// 7, a dead base).
+func CardBase(s *Snapshot, r CardBaseReq) Plan {
+	var p Plan
+	p.on(s)
+	if why := notCoordinator(s, r.Who, "card base"); why != "" {
+		p.refuse(r.ID, strings.Replace(why, "answers a judgment, which is", "is", 1))
+		return p
+	}
+	c := s.Work.Placed(r.ID)
+	var why string
+	switch {
+	case c == nil:
+		why = r.ID + " is no card on the table"
+	case c.Col != Merging:
+		why = r.ID + " is " + c.Col + ": card base re-points a merging card; a card before merging takes a new brief (nova-sprint brief)"
+	case !ValidBase(r.Base):
+		why = "'" + r.Base + "' is not a branch name"
+	case !r.OnOrigin:
+		why = r.Base + " is not a branch on origin; push the branch or name one origin holds; run: nova-sprint card base " + r.ID + " <a branch on origin>"
+	}
+	if why != "" {
+		p.refuse(r.ID, why+"; nothing was changed")
+		return p
+	}
+	brief, old, ok := repointBase(c.F("brief"), r.Base)
+	switch {
+	case !ok:
+		why = r.ID + "'s brief names no BASE: line; land gives it one (--base)"
+	case old == r.Base:
+		why = r.ID + " names BASE " + r.Base + " already"
+	}
+	if why != "" {
+		p.refuse(r.ID, why+"; nothing was changed")
+		return p
+	}
+	moved := fmt.Sprintf("%s BASE %s -> %s", c.ID, old, r.Base)
+	set := map[string]string{"brief": brief, FieldBaseSet: fmt.Sprintf("%s -> %s %s by %s", old, r.Base, stamp(s.Now), orDash(r.Who))}
+	u := Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, set, FieldDeadBase))}, Moved: moved}
+	if open := deadBaseOpen(s, c.ID); len(open) > 0 {
+		u.Closes = open
+		u.Notes = append(u.Notes, decided(open[0], "card base: "+moved, r.Who, s.Now, c.ID))
+	}
+	p.Units = append(p.Units, u)
+	return p
+}
+
+// repointBase is the brief with its first BASE: line naming base (a pin, @<sha>, of the old
+// base dropped with it), and the base it named; false when it names none.
+func repointBase(brief, base string) (string, string, bool) {
+	lines := strings.SplitAfter(brief, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "BASE:") {
+			continue
+		}
+		old, _, _ := strings.Cut(strings.TrimSpace(strings.TrimPrefix(trimmed, "BASE:")), "@")
+		indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+		end := line[len(strings.TrimRight(line, "\r\n")):]
+		lines[i] = indent + "BASE: " + base + end
+		return strings.Join(lines, ""), strings.TrimSpace(old), true
+	}
+	return brief, "", false
+}
+
 // streamDone says every primary of the stream on the table has landed, given
 // the ones about to land, and at least one has.
 func streamDone(s *Snapshot, stream string, landing int) bool {
@@ -129,9 +375,12 @@ func span(ids []string) string {
 	return ids[0] + " .. " + ids[len(ids)-1]
 }
 
-// MergeStep merges the head of the stream's queue, in work order, as one
+// MergeStep merges eligible cards by priority, preserving dependencies, as one
 // batch; or, given a fact that stops the stream, stops it and tells the
-// coordinator why. A stopped stream moves only after resume.
+// coordinator why. A stopped stream moves only after resume. A conflict fact
+// on the card's own head (RefusalWay) stops nothing: the card is reworked at
+// the tip, or returned for the widen rule, and the stream goes on
+// (landRefused).
 func MergeStep(s *Snapshot, r MergeReq) Plan { return Lawful(mergeStep(s, r)) }
 
 func mergeStep(s *Snapshot, r MergeReq) Plan {
@@ -151,14 +400,14 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		p.refuse(r.Stream, "landed")
 		return p
 	}
-	if r.BaseRed != "" {
-		// the base, not a card: the stream stops with the error, every card where it is
-		set := map[string]string{"state": StreamStopped, "since": stamp(s.Now), "cause": "base"}
-		j := judgment(NBaseRed, r.Stream, s.Now, 0)
-		j.StreamLevel, j.Who, j.What = true, r.Who, cutText(r.BaseRed, MaxCardTextBytes)
-		p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, "card", "other"))}, Notes: []Note{j},
-			Moved: "stream " + r.Stream + " stopped: the base fails its tree gate"})
-		return p
+	if r.DeadBase != "" {
+		return deadBaseStep(p, s, r)
+	}
+	if r.BaseRed != "" || r.BaseRefused != "" {
+		return baseGateStep(p, s, ctl, r)
+	}
+	if r.MissingBase != "" {
+		return missingBaseStep(p, s, r)
 	}
 	// A stuck card is a barrier: the step never passes an earlier stuck card.
 	queued := s.Merge.Cell(r.Stream, Queued)
@@ -171,10 +420,14 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		}
 		queued = before
 	}
+	beforePriority := len(queued)
+	queued = MergePriorityOrder(s, queued)
 	now := stamp(s.Now)
 	if len(queued) == 0 {
 		why := "nothing queued in stream " + r.Stream + "; nothing was changed"
-		if len(s.Merge.Cell(r.Stream, Stuck)) > 0 {
+		if beforePriority > 0 {
+			why = "no queued card has its prerequisites satisfied in stream " + r.Stream + "; nothing was changed; land its prerequisites first"
+		} else if len(s.Merge.Cell(r.Stream, Stuck)) > 0 {
 			why = "nothing queued before the stuck card of stream " + r.Stream + "; resume it first; nothing was changed"
 		}
 		p.refuse(r.Stream, why)
@@ -209,8 +462,14 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		}
 	}
 	var ids []string
+	landing := map[string]bool{}
 	for _, c := range batch {
+		if needs := WaitsFor(s, s.Work.Card(c.ID), landing); len(needs) > 0 {
+			p.refuse(c.ID, "the batch omits prerequisites "+strings.Join(needs, ", ")+"; nothing was changed; run: nova-sprint merge --stream "+r.Stream)
+			return p
+		}
 		ids = append(ids, c.ID)
+		landing[c.ID] = true
 	}
 	ctlSet := map[string]string{}
 	var notes []Note
@@ -237,7 +496,7 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		ctlSet["state"], ctlSet["since"], ctlSet["cause"] = StreamStopped, now, cause
 		j := judgment(typ, r.Stream, s.Now, before, primaries...)
 		j.StreamLevel, j.Who, j.What = true, r.Who, r.Note
-		return Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, ctlSet, unset...))}, Notes: append(notes, j)}
+		return Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, ctlSet, append(unset, baseGateCount...)...))}, Notes: append(notes, j)}
 	}
 	switch {
 	case r.Conflict != "":
@@ -250,6 +509,19 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 			return p
 		}
 		pr := s.Work.Placed(r.Conflict)
+		if way := RefusalWay(r.ConflictKind, r.Note); way != "" {
+			// a refusal of the card's own head never stops the stream: the card is reworked at
+			// the tip, or returned for the widen rule, and the stream lands on (redo.go)
+			if pr == nil || pr.Col != Merging {
+				p.refuse(r.Conflict, "queued in merge but not merging in work ("+placeWord(orEmpty(pr, r.Conflict))+"); run: nova-sprint check")
+				return p
+			}
+			p.Units = append(p.Units, landRefused(s, r, way, state, ctl, ctlSet, notes, pr, m))
+			break
+		}
+		// the lander's own failure (a generated ledger it could not resolve, a head that is no
+		// commit or that origin does not hold, a conflict it did not place): a mind's, the
+		// stream stopped
 		ctlSet["card"] = r.Conflict
 		if r.ConflictKind != "" {
 			ctlSet[FieldConflictKind] = r.ConflictKind
@@ -375,7 +647,8 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		for i, c := range landing {
 			u := Unit{Key: c.ID, Stream: r.Stream}
 			if i == 0 {
-				u.Changes = append(u.Changes, change(Merge, setEntry(ctl, ctlSet)))
+				// a pass that merges: the base passed its gate, and its count starts again
+				u.Changes = append(u.Changes, change(Merge, setEntry(ctl, ctlSet, baseGateCount...)))
 				u.Notes = notes
 			}
 			merged := map[string]string{"merged": now}
@@ -465,7 +738,7 @@ func Resume(s *Snapshot, r ResumeReq) Plan {
 	if r.Did != "" {
 		set["did"] = r.Did
 	}
-	u := Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, "cause", "card", "other", FieldConflictKind, FieldConflictPaths))},
+	u := Unit{Key: ctl.ID, Stream: r.Stream, Changes: []Change{change(Merge, setEntry(ctl, set, append([]string{"cause", "card", "other", FieldConflictKind, FieldConflictPaths}, baseGateCount...)...))},
 		Moved: fmt.Sprintf("stream %s stopped -> %s; %d stuck -> queued", r.Stream, state, len(stuck))}
 	if state == StreamLanded {
 		n := happened(NStreamLanded, r.Stream, s.Now)

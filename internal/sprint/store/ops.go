@@ -191,6 +191,11 @@ func (st *Store) heldState(ctx context.Context, s *sprint.Snapshot, pending *OpR
 	return h, nil
 }
 
+// pendingWhy is the hold of every primary while an operation is half done.
+func pendingWhy(f Fence) string {
+	return "operation " + f.Pending.ID + " (" + f.Pending.Verb + ") is pending: the tables are a partial state of it; run: nova-sprint repair"
+}
+
 // Held is what holds one primary now: the no-stall rule's answer for it.
 func (st *Store) Held(ctx context.Context, id string) (sprint.Hold, error) {
 	st, err := st.pin(ctx)
@@ -202,7 +207,7 @@ func (st *Store) Held(ctx context.Context, id string) (sprint.Hold, error) {
 		return sprint.Hold{}, err
 	}
 	if f.Pending != nil {
-		return sprint.Hold{ID: id, Place: id, Why: "operation " + f.Pending.ID + " (" + f.Pending.Verb + ") is pending: the tables are a partial state of it; run: nova-sprint repair"}, nil
+		return sprint.Hold{ID: id, Place: id, Why: pendingWhy(f)}, nil
 	}
 	s, err := st.Load(ctx, All, func(s *sprint.Snapshot) map[string][]string {
 		return map[string][]string{sprint.Work: append(sprint.ResolveExtras(s), id)}
@@ -235,7 +240,12 @@ func (st *Store) SyncMirrors(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// a stream's landed cost, from its control card, for the work table's cost column
+	// a stream's landed cost, from its control card, for the work table's cost column:
+	// since the last tidy of the streams, less its base (stats tidy, sprint.StreamCostSince)
+	bases, err := st.streamBases(ctx)
+	if err != nil {
+		return err
+	}
 	costs := map[string]string{}
 	for _, shape := range shapes {
 		if shape.Name != st.Names.Table(sprint.Merge) {
@@ -256,6 +266,9 @@ func (st *Store) SyncMirrors(ctx context.Context) error {
 		for _, row := range shape.Rows {
 			ctl, _ := rs.Member(st.sid(sprint.CtlID(row.Key)))
 			costs[row.Key] = ctl.Fields[sprint.FieldCost]
+			if b, ok := bases[row.Key]; ok {
+				costs[row.Key] = sprint.StreamCostSince(costs[row.Key], b)
+			}
 			want := map[string]string{
 				sprint.CI:       dash(ctl.Fields["ci"]),
 				sprint.StateCol: dash(sprint.StreamStateText(ctl.Fields)),
@@ -400,12 +413,12 @@ func (st *Store) machineGroups(ctx context.Context, m Machine, hb Heartbeat) ([]
 			out = append(out, group("machine:silent", sprint.NMachineSilent,
 				fmt.Sprintf("the machine is RUNNING and nothing has ticked for %ds: a twin ticks only by hand", int(gap/time.Second)),
 				sprint.Command{Decision: "tick by hand", Lines: []string{"nova-sprint tick"}},
-				sprint.Command{Decision: "stop the machine", Lines: []string{"nova-sprint stop"}}))
+				sprint.Command{Decision: "stop the machine", Lines: []string{"nova-sprint stop --reason 'the machine is not ticking' --until 1h"}}))
 		default:
 			out = append(out, group("machine:silent", sprint.NMachineSilent,
 				fmt.Sprintf("the machine is RUNNING and nothing has ticked for %ds: its run loop is not running", int(gap/time.Second)),
 				sprint.Command{Decision: "run the loop", Lines: []string{"nova-sprint run"}},
-				sprint.Command{Decision: "stop the machine", Lines: []string{"nova-sprint stop"}}))
+				sprint.Command{Decision: "stop the machine", Lines: []string{"nova-sprint stop --reason 'the machine is not ticking' --until 1h"}}))
 		}
 		if hb.Failures >= 3 && hb.Error != "" {
 			out = append(out, group("machine:failing", sprint.NTickFailing,
@@ -498,7 +511,8 @@ func (st *Store) inboxUpTo(ctx context.Context, upto string) ([]sprint.Note, err
 	}
 }
 
-// StreamClocks is every stream's state, since and progress.
+// StreamClocks is every stream's state, since and progress, and its protected-branch
+// mark, all from the one readset of the control cards.
 func (st *Store) StreamClocks(ctx context.Context) ([]sprint.StreamClock, error) {
 	st, err := st.pin(ctx)
 	if err != nil {
@@ -546,8 +560,8 @@ func (st *Store) StreamClocks(ctx context.Context) ([]sprint.StreamClock, error)
 		if since.After(p) {
 			p = since
 		}
-		out = append(out, sprint.StreamClock{Stream: r.Key, State: sprint.StreamStateText(ctl.Fields), Since: since, Progress: p, Empty: onTable[r.Key] == 0,
-			Held: waiting[r.Key] > 0 && moving[r.Key] == 0 || ctl.Fields[sprint.FieldHeld] != "", Reason: ctl.Fields[sprint.FieldHeldReason], Quiet: parseStamp(ctl.Fields[sprint.FieldStaleReview])})
+		out = append(out, sprint.StreamClock{Stream: r.Key, Release: ctl.Fields[sprint.FieldRelease], State: sprint.StreamStateText(ctl.Fields), Since: since, Progress: p, Empty: onTable[r.Key] == 0,
+			Held: waiting[r.Key] > 0 && moving[r.Key] == 0 || ctl.Fields[sprint.FieldHeld] != "", Reason: ctl.Fields[sprint.FieldHeldReason], Quiet: parseStamp(ctl.Fields[sprint.FieldStaleReview]), Promotion: ctl.Fields[sprint.FieldLandProtected]})
 	}
 	return out, nil
 }

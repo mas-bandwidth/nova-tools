@@ -22,7 +22,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -30,7 +29,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/fuse"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -126,10 +124,6 @@ func hintFor(name string) string {
 	}
 	return ""
 }
-
-// maxRemedy is the second half of the one MORE line this binary prints. A cap with no
-// remedy is censorship; a cap with one is an index.
-const maxRemedy = "--max <n> raises the ceiling, --max 0 lists every quarantine"
 
 // refuse is what an unusable invocation costs: one line, `nova-fuse[ <verb>] REFUSED:
 // <what was wrong>; run: nova-fuse help`, naming the door to the usage rather than
@@ -418,7 +412,36 @@ func cmdLift(rest []string, stdout, stderr io.Writer, inv invocation) int {
 // rescind is announced, because a quarantine that vanishes silently is a decision nobody
 // can audit. A dry run makes every check and writes nothing.
 func liftQuarantine(box, surface string, dry bool, stdout, stderr io.Writer, wd string) int {
-	b, readErr := fuse.ReadBox(boxFile(wd, box))
+	// One cross-process read-modify-write: the read, the lift and the write all
+	// happen under the box's lock, so a lockdown blown while this run holds its
+	// read is in the box this run publishes (tla/FuseBox.tla, LockdownMonotone;
+	// fuse.MutateBox). A dry run takes no lock and writes nothing.
+	var (
+		removed map[string]fuse.Fuse
+		readErr error
+		listed  string
+	)
+	err := fuse.MutateBox(boxFile(wd, box), !dry, func(b fuse.Box, rerr error) (fuse.Box, bool, error) {
+		readErr = rerr
+		if rerr != nil {
+			return b, false, nil
+		}
+		removed = b.LiftQuarantine(surface)
+		if len(removed) == 0 {
+			// A typo must never read as a lift: name what is quarantined so the
+			// mismatch is visible at a glance.
+			listed = "none"
+			if names := b.Surfaces(); len(names) > 0 {
+				shown := make([]string, 0, len(names))
+				for _, n := range names {
+					shown = append(shown, oneline.Escape(n))
+				}
+				listed = strings.Join(shown, ", ")
+			}
+			return b, false, nil
+		}
+		return b, true, nil
+	})
 	if readErr != nil {
 		// Refuse, the mirror of quarantine's refusal to narrow: while the box is
 		// unreadable every fuse is treated as blown, and nothing provable can be lifted
@@ -426,27 +449,12 @@ func liftQuarantine(box, surface string, dry bool, stdout, stderr io.Writer, wd 
 		fmt.Fprintf(stderr, "nova-fuse lift quarantine REFUSED: %s -- while the box cannot be read every fuse is treated as BLOWN; nothing provable can be lifted from it; %s; run: nova-fuse help\n", oneline.Err(readErr), oneline.Escape(remedy(readErr, box)))
 		return 2
 	}
-
-	removed := b.LiftQuarantine(surface)
 	if len(removed) == 0 {
-		// A typo must never read as a lift: name what is quarantined so the mismatch is
-		// visible at a glance, and exit 1 so no caller mistakes this for success.
-		listed := "none"
-		if names := b.Surfaces(); len(names) > 0 {
-			shown := make([]string, 0, len(names))
-			for _, n := range names {
-				shown = append(shown, oneline.Escape(n))
-			}
-			listed = strings.Join(shown, ", ")
-		}
 		fmt.Fprintf(stderr, "LIFT FAILED quarantine=%s: nothing to lift; not quarantined (quarantined now: %s)\n",
 			oneline.Field(fuse.Surface(surface)), listed)
 		return 1
 	}
-
-	// A dry run is this run's own plan: the same write, checked and not made, so it
-	// refuses exactly where the write would.
-	if err := writeOrPlan(dry, wd, box, b); err != nil {
+	if err != nil {
 		fmt.Fprintf(stderr, "LIFT FAILED quarantine=%s: could not write box: %s (the box was not replaced, so the quarantine still stands)\n",
 			oneline.Field(fuse.Surface(surface)), oneline.Err(err))
 		return 1
@@ -485,109 +493,6 @@ func liftQuarantine(box, surface string, dry bool, stdout, stderr io.Writer, wd 
 	return 0
 }
 
-// cmdStatus reports. It exits 0 whenever the box was readable, blown or not, because
-// answering the question is the job, and 2 when it could not read, because then it did
-// not answer at all. Never gate on the exit code of status; check is the gate.
-func cmdStatus(rest []string, stdout, stderr io.Writer, inv invocation) int {
-	var max int
-	box, positional, ok, parsed := parseBoxWith("status", rest, stderr, inv.getenv, func(fs *flag.FlagSet) {
-		fs.IntVar(&max, "max", bounded.Default, "quarantine lines to list before one MORE line stands for the rest; 0 lists all")
-	})
-	if !parsed {
-		return 2
-	}
-	if len(positional) > 0 {
-		refuse(stderr, " status", fmt.Sprintf("unexpected argument %q", positional[0]))
-		ok = false
-	}
-	if max < 0 {
-		// Zero already means "all", so a negative ceiling is a typo with two readings.
-		fmt.Fprintf(stderr, "nova-fuse status REFUSED: --max must be a line ceiling of zero or more (got %d); 0 lists them all; run: nova-fuse help\n", max)
-		ok = false
-	}
-	if !ok {
-		return 2
-	}
-
-	b, err := fuse.ReadBox(boxFile(inv.wd, box))
-	if err != nil {
-		fmt.Fprintf(stderr, "nova-fuse status REFUSED: %s -- a box that cannot be read is treated as BLOWN, never as clear; %s; run: nova-fuse help\n", oneline.Err(err), oneline.Escape(remedy(err, box)))
-		return 2
-	}
-
-	names := b.Surfaces()
-	if b.Lockdown != nil {
-		fmt.Fprintf(stdout, "STATUS OK lockdown=blown since=%s quarantines=%d: %s\n",
-			since(*b.Lockdown), len(names), why(*b.Lockdown))
-	} else {
-		fmt.Fprintf(stdout, "STATUS OK lockdown=clear quarantines=%d\n", len(names))
-	}
-	// The count is never capped and the listing always is. quarantines= above is the truth
-	// about the box; the lines below are a sample of it in the box's own order, and the
-	// MORE line says how big the sample was, on a verb whose job is to be glanced at.
-	list := bounded.Capped(stdout, max, "STATUS", "quarantine", maxRemedy)
-	for _, n := range names {
-		f := b.Quarantine[n]
-		list.Line(fmt.Sprintf("STATUS OK quarantine=%s since=%s: %s", oneline.Field(n), since(f), why(f)))
-	}
-	list.More()
-	return 0
-}
-
-// cmdCheck gates. Every ingestion path calls it, and only exit 0 is permission: 1 means
-// a fuse is positively blown, 2 means it could not be proven clear.
-func cmdCheck(rest []string, stdout, stderr io.Writer, inv invocation) int {
-	box, positional, ok, parsed := parseBox("check", rest, stderr, inv.getenv)
-	if !parsed {
-		return 2
-	}
-	if len(positional) > 1 {
-		refuse(stderr, " check", fmt.Sprintf("takes at most one surface, got %q too", positional[1]))
-		ok = false
-	}
-	surface := ""
-	if len(positional) == 1 {
-		if fuse.Surface(positional[0]) == "" {
-			refuse(stderr, " check", "surface must not be blank; omit it to check lockdown only")
-			ok = false
-		}
-		surface = positional[0]
-	}
-	if !ok {
-		return 2
-	}
-
-	b, err := fuse.ReadBox(boxFile(inv.wd, box))
-	if err != nil {
-		// Fail closed, and say which fact this is: "could not be read" is not "a fuse is
-		// blown", and a claim must never outrun the measurement. Both refuse.
-		fmt.Fprintf(stderr, "nova-fuse check REFUSED: %s -- cannot prove no fuse is blown, so treating every fuse as BLOWN, never as clear; %s; run: nova-fuse help\n", oneline.Err(err), oneline.Escape(remedy(err, box)))
-		return 2
-	}
-
-	if b.Lockdown != nil {
-		fmt.Fprintf(stderr, "FUSE FAILED lockdown since=%s: %s (hard: all untrusted reads and surface-driven acts stop, authored outbound continues; replaced only in a live conversation with the person you work with)\n",
-			since(*b.Lockdown), why(*b.Lockdown))
-		return 1
-	}
-
-	if name, f, ok := b.Quarantined(surface); ok {
-		fmt.Fprintf(stderr, "FUSE FAILED quarantine=%s since=%s: %s (soft: yours to lift when the surface is safe again: %s)\n",
-			oneline.Field(name), since(f), why(f), oneline.Escape(liftRemedy(box, fuse.Surface(name))))
-		return 1
-	}
-
-	if surface == "" {
-		// Name what was verified and what was not. A bare check has proven only that there
-		// is no lockdown; it has checked no quarantine at all, and a caller that reads
-		// "clear" as "this surface is clear" leaves reads reaching the wire ungated.
-		fmt.Fprintln(stdout, "FUSE OK lockdown=clear (no surface named; no quarantine checked)")
-		return 0
-	}
-	fmt.Fprintf(stdout, "FUSE OK lockdown=clear quarantine=clear surface=%s\n", oneline.Field(fuse.Surface(surface)))
-	return 0
-}
-
 // cmdLockdown stops everything. It is the one command that must work even when the fuse
 // box is already broken: a fuse you cannot blow is not a fuse.
 func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time, inv invocation) int {
@@ -612,51 +517,84 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time, inv inv
 		return 2
 	}
 
-	b, readErr := fuse.ReadBox(boxFile(inv.wd, box))
+	// One cross-process read-modify-write: the read, the blow and the write all
+	// happen under the box's lock, so a quarantine or a lift running at the same
+	// time reads this lockdown before it publishes and the lockdown survives it
+	// (tla/FuseBox.tla, LockdownMonotone; fuse.MutateBox). Before this, a soft
+	// writer holding a read of a clear box published its older snapshot over a
+	// lockdown blown and verified in between, and both runs reported success. A
+	// dry run takes no lock and writes nothing.
+	var standing *fuse.Fuse
+	wantsBlow := false
 	what := "blow the lockdown in the box there"
-	switch {
-	case dry && errors.Is(readErr, fuse.ErrNoBox):
-		what = "make a box there holding a blown lockdown"
-		b = fuse.Box{Quarantine: map[string]fuse.Fuse{}}
-	case dry && readErr != nil:
-		what = "keep the unreadable box's bytes beside it and replace it with a blown lockdown"
-		b = fuse.Box{Quarantine: map[string]fuse.Fuse{}}
-	case dry:
-	case errors.Is(readErr, fuse.ErrNoBox):
-		// A fuse you cannot blow is not a fuse: with no box there, the lockdown makes
-		// one. Nothing is less blocked than before, since no box already refused.
-		b = fuse.Box{Quarantine: map[string]fuse.Fuse{}}
-	case readErr != nil:
-		// Proceed anyway, and this direction is safe to argue precisely: before, an
-		// unreadable box made every caller refuse; after, a recorded lockdown makes every
-		// caller refuse. Nothing is less blocked than it was, and the box becomes readable
-		// again. The refusing direction is not symmetric: cmdQuarantine refuses for the
-		// mirror-image reason.
-		b = fuse.Box{Quarantine: map[string]fuse.Fuse{}}
-		dst, perr := fuse.PreserveUnreadable(boxFile(inv.wd, box))
-		if perr != nil {
-			fmt.Fprintf(stderr, "LOCKDOWN NOTE box was unreadable (%s) and its bytes could NOT be preserved (%s); blowing lockdown anyway\n", oneline.Err(readErr), oneline.Err(perr))
-		} else {
-			fmt.Fprintf(stderr, "LOCKDOWN NOTE box was unreadable (%s); its bytes are kept at %s -- any quarantine it recorded is NOT carried forward, and lockdown blocks everything, so nothing is less blocked than before\n", oneline.Err(readErr), oneline.Escape(dst))
+	err := fuse.MutateBox(boxFile(inv.wd, box), !dry, func(b fuse.Box, readErr error) (fuse.Box, bool, error) {
+		switch {
+		case dry && errors.Is(readErr, fuse.ErrNoBox):
+			what = "make a box there holding a blown lockdown"
+			b = fuse.Box{Quarantine: map[string]fuse.Fuse{}}
+		case dry && readErr != nil:
+			what = "keep the unreadable box's bytes beside it and replace it with a blown lockdown"
+			b = fuse.Box{Quarantine: map[string]fuse.Fuse{}}
+		case dry:
+		case errors.Is(readErr, fuse.ErrNoBox):
+			// A fuse you cannot blow is not a fuse: with no box there, the lockdown makes
+			// one. Nothing is less blocked than before, since no box already refused.
+			b = fuse.Box{Quarantine: map[string]fuse.Fuse{}}
+		case readErr != nil:
+			// Proceed anyway, and this direction is safe to argue precisely: before, an
+			// unreadable box made every caller refuse; after, a recorded lockdown makes every
+			// caller refuse. Nothing is less blocked than it was, and the box becomes readable
+			// again. The refusing direction is not symmetric: cmdQuarantine refuses for the
+			// mirror-image reason.
+			b = fuse.Box{Quarantine: map[string]fuse.Fuse{}}
+			dst, perr := fuse.PreserveUnreadable(boxFile(inv.wd, box))
+			if perr != nil {
+				fmt.Fprintf(stderr, "LOCKDOWN NOTE box was unreadable (%s) and its bytes could NOT be preserved (%s); blowing lockdown anyway\n", oneline.Err(readErr), oneline.Err(perr))
+			} else {
+				fmt.Fprintf(stderr, "LOCKDOWN NOTE box was unreadable (%s); its bytes are kept at %s -- any quarantine it recorded is NOT carried forward, and lockdown blocks everything, so nothing is less blocked than before\n", oneline.Err(readErr), oneline.Escape(dst))
+			}
 		}
-	}
 
-	// A lockdown already standing is the state this verb seeks, and the first time
-	// and why of the blow are audit facts, unrecoverable once overwritten
-	// (security#74 finding 1): the box is kept as it stands, never rewritten,
-	// and the run says so. FuseBox.tla's Lockdown(b) over an already-blown box
-	// leaves lock TRUE and keeps the quarantines -- idempotent -- and this is
-	// that action at the box's finest grain, the stamp and the reason. The exit
-	// stays 0 because the state sought holds. A dry run prints the same line: by
-	// not writing it keeps the record too.
-	if standing := b.Lockdown; standing != nil {
+		// A lockdown already standing is the state this verb seeks, and the first time
+		// and why of the blow are audit facts, unrecoverable once overwritten
+		// (security#74 finding 1): the box is kept as it stands, never rewritten,
+		// and the run says so. FuseBox.tla's Lockdown(b) over an already-blown box
+		// leaves lock TRUE and keeps the quarantines -- idempotent -- and this is
+		// that action at the box's finest grain, the stamp and the reason. The exit
+		// stays 0 because the state sought holds. A dry run prints the same line: by
+		// not writing it keeps the record too.
+		if s := b.Lockdown; s != nil {
+			standing = s
+			return b, false, nil
+		}
+
+		b.Lockdown = &fuse.Fuse{At: stamp(now), Reason: reason}
+		wantsBlow = true
+		return b, true, nil
+	})
+	if standing != nil {
 		fmt.Fprintf(stdout, "LOCKDOWN OK already=blown since=%s: %s (standing record kept; the new reason was not recorded: %s)\n",
 			since(*standing), why(*standing), oneline.Escape(reason))
 		return 0
 	}
-
-	b.Lockdown = &fuse.Fuse{At: stamp(now), Reason: reason}
-	if err := writeOrPlan(dry, inv.wd, box, b); err != nil {
+	// The box's lock refused to be taken -- another writer holds it, the wait timed
+	// out -- and this is the one mutation that answers that by blowing anyway: a
+	// fuse you cannot blow is not a fuse (fuse.BoxLockUntaken, note 3). WriteBox
+	// publishes by temp-file + rename, so the blow is still atomic -- what it loses
+	// is the serialization, and that loss is said on the NOTE line rather than
+	// kept silent under an exit 0.
+	if err != nil && wantsBlow && fuse.BoxLockUntaken(err) {
+		fmt.Fprintf(stderr, "LOCKDOWN NOTE could not take the box's lock (%s): blowing the lockdown anyway, unserialized -- a quarantine landing at the same moment may still be overwritten by this one, or this one by it\n", oneline.Err(err))
+		next, rerr := fuse.ReadBox(boxFile(inv.wd, box))
+		if rerr != nil {
+			// The same reading the closure gives an unreadable box: a fresh one
+			// holding the lockdown, and nothing is less blocked than before.
+			next = fuse.Box{Quarantine: map[string]fuse.Fuse{}}
+		}
+		next.Lockdown = &fuse.Fuse{At: stamp(now), Reason: reason}
+		err = fuse.WriteBox(boxFile(inv.wd, box), next)
+	}
+	if err != nil {
 		fmt.Fprintf(stderr, "LOCKDOWN FAILED could not write box: %s (the write is temp-file + rename, so a failure cannot leave it torn; stop by hand and tell the person you work with now)\n", oneline.Err(err))
 		return 1
 	}
@@ -698,7 +636,37 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time, inv i
 		return 2
 	}
 
-	b, readErr := fuse.ReadBox(boxFile(inv.wd, box))
+	// One cross-process read-modify-write: the read, the entry and the write all
+	// happen under the box's lock, so this run never publishes a snapshot older
+	// than a lockdown blown while it held its read (tla/FuseBox.tla,
+	// LockdownMonotone; fuse.MutateBox), and two quarantines of one box both land
+	// instead of one erasing the other. A dry run takes no lock and writes nothing.
+	var (
+		readErr     error
+		standingKey string
+		standing    fuse.Fuse
+	)
+	err := fuse.MutateBox(boxFile(inv.wd, box), !dry, func(b fuse.Box, rerr error) (fuse.Box, bool, error) {
+		readErr = rerr
+		if rerr != nil {
+			return b, false, nil
+		}
+		// The same rule as lockdown's, per surface: a quarantine already standing on
+		// this surface -- under any fold-equivalent spelling, the way Quarantined
+		// matches -- is the state sought, so the first time and why are kept and the
+		// run says so instead of rewriting them (security#74 finding 1). FuseBox.tla's
+		// Quarantine(b, s) unions {s} into a set that may already hold it -- idempotent
+		// -- and this is that action at the entry's finest grain, the stamp and the
+		// reason. The line names the STORED spelling, the one entry whose at and
+		// reason it quotes. The exit stays 0; the state sought holds. A dry run
+		// prints the same line: by not writing it keeps the record too.
+		if name, s, ok := b.Quarantined(string(surface)); ok {
+			standingKey, standing = name, s
+			return b, false, nil
+		}
+		b.Quarantine[surface] = fuse.Fuse{At: stamp(now), Reason: reason}
+		return b, true, nil
+	})
 	if errors.Is(readErr, fuse.ErrNoBox) {
 		// Refuse, for the same reason as an unreadable box: with no box there every
 		// surface is refused, and a new box holding only this quarantine would clear
@@ -710,27 +678,18 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time, inv i
 		// Refuse: this is the asymmetry with lockdown, not an inconsistency with it. An
 		// unreadable box blocks every surface; replacing it with a fresh box holding only
 		// this one quarantine would unblock everything else, so the safety-shaped action
-		// would fail open. Under doubt, no.
-		fmt.Fprintf(stderr, "nova-fuse quarantine REFUSED: %s -- refusing to narrow an unreadable box: while unreadable it already blocks EVERY surface, and a fresh box holding only this one quarantine would UNBLOCK the rest; blow lockdown instead (`lockdown --box %s \"<reason>\"`), or repair the box by hand with the person you work with; run: nova-fuse help\n", oneline.Err(readErr), oneline.Escape(box))
+		// would fail open. Under doubt, no. The remedy quotes the box through boxRemedy,
+		// the same single-quoting seam as the init refusal above, so a path holding shell
+		// metacharacters stays data in the pasted command (security#74 finding 9).
+		fmt.Fprintf(stderr, "nova-fuse quarantine REFUSED: %s -- refusing to narrow an unreadable box: while unreadable it already blocks EVERY surface, and a fresh box holding only this one quarantine would UNBLOCK the rest; blow lockdown instead (`%s`), or repair the box by hand with the person you work with; run: nova-fuse help\n", oneline.Err(readErr), oneline.Escape(boxRemedy("lockdown", box)+` "<reason>"`))
 		return 2
 	}
-	// The same rule as lockdown's, per surface: a quarantine already standing on
-	// this surface -- under any fold-equivalent spelling, the way Quarantined
-	// matches -- is the state sought, so the first time and why are kept and the
-	// run says so instead of rewriting them (security#74 finding 1). FuseBox.tla's
-	// Quarantine(b, s) unions {s} into a set that may already hold it -- idempotent
-	// -- and this is that action at the entry's finest grain, the stamp and the
-	// reason. The line names the STORED spelling, the one entry whose at and
-	// reason it quotes. The exit stays 0; the state sought holds. A dry run
-	// prints the same line: by not writing it keeps the record too.
-	if name, standing, ok := b.Quarantined(string(surface)); ok {
+	if standingKey != "" {
 		fmt.Fprintf(stdout, "QUARANTINE OK %s already=quarantined since=%s: %s (standing record kept; the new reason was not recorded: %s)\n",
-			oneline.Field(name), since(standing), why(standing), oneline.Escape(reason))
+			oneline.Field(standingKey), since(standing), why(standing), oneline.Escape(reason))
 		return 0
 	}
-
-	b.Quarantine[surface] = fuse.Fuse{At: stamp(now), Reason: reason}
-	if err := writeOrPlan(dry, inv.wd, box, b); err != nil {
+	if err != nil {
 		fmt.Fprintf(stderr, "QUARANTINE FAILED %s: could not write box: %s (the box was not replaced; stop reading that surface by hand and tell the person you work with)\n", oneline.Field(surface), oneline.Err(err))
 		return 1
 	}
@@ -754,59 +713,6 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time, inv i
 
 	fmt.Fprintf(stdout, "QUARANTINE OK %s since=%s: %s (verified by re-reading the box; soft: yours to lift when the surface is safe again; tell the person you work with now)\n",
 		oneline.Field(surface), since(landed), oneline.Escape(reason))
-	return 0
-}
-
-// cmdInit makes an empty box where none is. It is the one way a box comes into being
-// clear, and it never replaces a box: a box already at the path, blown or not, readable
-// or not, is left as it is and the run exits 1, because replacing a box is the lockdown
-// reset this tool does not have.
-//
-// tla/FuseBox.tla is the model of the box these verbs act on: its invariants are
-// that the gate answers only from a box it read and from every --box named, that
-// only a lift, init or a hand-edit makes a surface clear, that init never
-// replaces a box and that a lockdown always blows (MCFuseBox*.cfg, five reversed
-// witnesses).
-func cmdInit(rest []string, stdout, stderr io.Writer, inv invocation) int {
-	box, positional, ok, parsed, dry := parseWrite("init", rest, stderr, inv.getenv)
-	if !parsed {
-		return 2
-	}
-	if len(positional) > 0 {
-		refuse(stderr, " init", fmt.Sprintf("unexpected argument %q", positional[0]))
-		ok = false
-	}
-	if !ok {
-		return 2
-	}
-	exists := func() int {
-		fmt.Fprintf(stderr, "INIT FAILED box=%s: something is already there, and init never replaces a box (a blown lockdown is replaced only in a live conversation with the person you work with); read it with %s\n", oneline.Field(box), oneline.Escape(boxRemedy("status", box)))
-		return 1
-	}
-	// A dry run is this run's own plan: the creation's every check, refusing where
-	// it would, and nothing written.
-	create := fuse.CreateBox
-	if dry {
-		create = fuse.PlanCreateBox
-	}
-	if err := create(boxFile(inv.wd, box)); err != nil {
-		if errors.Is(err, fs.ErrExist) {
-			return exists()
-		}
-		fmt.Fprintf(stderr, "INIT FAILED box=%s: could not make the box: %s\n", oneline.Field(box), oneline.Err(err))
-		return 1
-	}
-	if dry {
-		fmt.Fprintf(stdout, "INIT OK box=%s dry_run=true: nothing written; a real run would make an empty box there\n", oneline.Field(box))
-		return 0
-	}
-	// Re-read. The exit code of a remedy is not evidence the remedy worked.
-	after, err := fuse.ReadBox(boxFile(inv.wd, box))
-	if err != nil || after.Lockdown != nil || len(after.Quarantine) != 0 {
-		fmt.Fprintf(stderr, "INIT FAILED box=%s: made but unverifiable (%s): do not trust it; tell the person you work with\n", oneline.Field(box), oneline.Err(err))
-		return 1
-	}
-	fmt.Fprintf(stdout, "INIT OK box=%s: an empty box, no fuse blown (verified by re-reading the box)\n", oneline.Field(box))
 	return 0
 }
 
@@ -878,14 +784,4 @@ func keepableReason(raw string) string {
 		return folded
 	}
 	return oneline.Escape(strings.TrimSpace(raw))
-}
-
-// writeOrPlan writes the box, or for a dry run makes every check the write
-// would and writes nothing, returning the error the write would.
-func writeOrPlan(dry bool, wd, box string, b fuse.Box) error {
-	box = boxFile(wd, box)
-	if dry {
-		return fuse.PlanWriteBox(box)
-	}
-	return fuse.WriteBox(box, b)
 }

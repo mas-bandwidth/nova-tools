@@ -1,17 +1,51 @@
-# container-runtime.yml: rootless, daemonless podman on a Linux runner, so the
+# container-runtime.yml: rootless, daemonless podman on every bench, so the
 # functional tier runs in a container that owns every process, port, System V
-# shared memory segment and temp file the run makes.
+# shared memory segment and temp file the run makes. Containers on the fleet are
+# podman's.
 #
 #   ansible-playbook -i fleet/inventory.container-runtime.example.ini fleet/container-runtime.yml --check --diff
 #   ansible-playbook -i fleet/inventory.container-runtime.example.ini fleet/container-runtime.yml
 #
 # Copy the example inventory, put your runners in it, and run the play from a
 # control node through a pipe (| cat): ansible needs blocking stdio. The play
-# connects as the runner user; container_runtime_user names another. The last
-# tasks probe the runtime: they fail the play when a limit a run relies on is
-# not enforced.
-- name: rootless podman for the functional tier
+# connects as the runner user; container_runtime_user names another. A Linux
+# bench (apt on Debian family, dnf on Red Hat family) gets the role's Linux
+# tasks and a probe of the runtime that fails the play when a limit a run relies
+# on is not enforced; a macOS bench gets podman from brew and a podman machine
+# sized from its row (tasks/darwin.yml). Either records `podman --version` in
+# ~/.config/nova/podman on the bench.
+- name: the benches by operating system
   hosts: functional_runners
   gather_facts: true
+  tags: [always]
+  tasks:
+    - name: group by system
+      ansible.builtin.group_by:
+        key: "container_runtime_{{ ansible_facts['system'] | lower }}"
+      changed_when: false
+
+- name: rootless podman for the functional tier (Linux)
+  hosts: container_runtime_linux
+  gather_facts: false
   roles:
     - container-runtime
+  post_tasks:
+    - name: the podman version recorded on the bench
+      ansible.builtin.include_role:
+        name: container-runtime
+        tasks_from: record.yml
+
+- name: podman and a podman machine (macOS)
+  hosts: container_runtime_darwin
+  gather_facts: false
+  tasks:
+    - name: the macOS tasks of the container-runtime role
+      ansible.builtin.include_role:
+        name: container-runtime
+        tasks_from: darwin.yml
+    - name: the podman version recorded on the bench
+      ansible.builtin.include_role:
+        name: container-runtime
+        tasks_from: record.yml
+      vars:
+        container_runtime_podman_bin: "{{ container_runtime_brew | dirname }}/podman"

@@ -45,6 +45,7 @@ func tierWorld(t *testing.T) *world {
 		rt.Deadline = 600 // seconds, as the route row holds it
 		w.s.Routes = append(w.s.Routes, rt)
 	}
+	readersReadEveryTier(w) // a fleet row reads flash unless it says more (fleetReadsFlashOnly)
 	w.must(Add(w.s, AddReq{Stream: "s1", IDs: []string{"s1-1"}}))
 	w.must(Add(w.s, AddReq{Stream: "s1", IDs: []string{"s1-2"}, Brief: proBrief}))
 	// on pro, as the machine's escalation leaves it: every card's first deal is on flash
@@ -82,15 +83,14 @@ func TestAFlashCardIsAcceptedOnOneReadAndAProCardOnTwo(t *testing.T) {
 			w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{tc.id}}}))
 			pr := w.s.Work.Card(tc.id)
 			assert.Equal(t, tc.reads, ReadsNeeded(pr))
+			// a card's reads are asked together: every read it needs in the one ask
 			reads := liveReadsAt(w.s, pr, 1)
 			require.Len(t, reads, tc.reads, "%s, a %s card, asked of %d readers", tc.id, tc.tier, tc.reads)
-			for _, rc := range reads {
+			for i, rc := range reads {
 				assert.Equal(t, tc.tier, rc.F(FieldTier), "%s is drawn from its card's tier", rc.ID)
 				assert.Equal(t, tc.tier, routeTier(w.s, rc.F(FieldRoute)), "%s runs on a %s route, not %q", rc.ID, tc.tier, rc.F(FieldRoute))
-			}
-			for i, rc := range reads {
-				w.must(Read(w.s, ReadReq{As: rc.Row, Verdict: "ok", Sel: Sel{IDs: []string{rc.ID}}}))
-				last := i == len(reads)-1
+				w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: "ok", Sel: Sel{IDs: []string{rc.ID}}}))
+				last := i == tc.reads-1
 				assert.Equal(t, last, acceptable(w.s, w.s.Work.Card(tc.id)), "after %d of %d oks", i+1, tc.reads)
 				if !last {
 					p := Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{tc.id}}})
@@ -99,8 +99,11 @@ func TestAFlashCardIsAcceptedOnOneReadAndAProCardOnTwo(t *testing.T) {
 					assert.NotContains(t, openTypes(w, tc.id), NReadyToAccept, "ready to accept on %d of %d oks", i+1, tc.reads)
 				}
 			}
-			assert.Contains(t, openTypes(w, tc.id), NReadyToAccept)
-			w.must(Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{tc.id}}}))
+			// the tick's to accept, no judgment (2026-10-06)
+			assert.NotContains(t, openTypes(w, tc.id), NReadyToAccept)
+			p, _ := TickAccept(w.s, TickReq{})
+			require.Len(t, p.Units, 1, "the tick accepts %s on %d oks", tc.id, tc.reads)
+			w.must(p)
 			assert.Equal(t, Merging, w.s.Work.Card(tc.id).Col)
 			assert.Len(t, Split(w.s.Work.Card(tc.id).F("readers")), tc.reads, "the readers it was accepted on")
 			w.clean("accepted on " + tc.tier + " reads")
@@ -118,7 +121,7 @@ func TestABounceOnAFlashCardsOneReadReworksAsToday(t *testing.T) {
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	first := liveReadsAt(w.s, w.s.Work.Card("s1-1"), 1)
 	require.Len(t, first, 1)
-	w.must(Read(w.s, ReadReq{As: first[0].Row, Verdict: "broken", Finding: "f.go:1: the empty case", Sel: Sel{IDs: []string{first[0].ID}}}))
+	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: first[0].Row, Verdict: "broken", Finding: "f.go:1: the empty case", Sel: Sel{IDs: []string{first[0].ID}}}))
 	assert.Equal(t, NReadBroken, openTypes(w, "s1-1"))
 	assert.False(t, acceptable(w.s, w.s.Work.Card("s1-1")))
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-1"}}, Fix: "handle the empty case"}))
@@ -145,7 +148,7 @@ func TestAFlashCardReworkedToProIsReadTwiceOnPro(t *testing.T) {
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	first := liveReadsAt(w.s, w.s.Work.Card("s1-1"), 1)
 	require.Len(t, first, 1)
-	w.must(Read(w.s, ReadReq{As: first[0].Row, Verdict: "broken", Finding: "f.go:1: too hard for flash", Sel: Sel{IDs: []string{first[0].ID}}}))
+	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: first[0].Row, Verdict: "broken", Finding: "f.go:1: too hard for flash", Sel: Sel{IDs: []string{first[0].ID}}}))
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-1"}}, Fix: "again, on pro", Tier: "pro"}))
 	wc := w.s.Fleet.Placed(w.s.Work.Card("s1-1").F("work"))
 	require.NotNil(t, wc)
@@ -153,7 +156,7 @@ func TestAFlashCardReworkedToProIsReadTwiceOnPro(t *testing.T) {
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{wc.ID}}, Gens: gensOf(w.s, wc.ID), Head: "h2"}))
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	again := liveReadsAt(w.s, w.s.Work.Card("s1-1"), 2)
-	require.Len(t, again, 2, "a pro card's two reads")
+	require.Len(t, again, 2, "a pro card's two reads, asked together")
 	for _, rc := range again {
 		assert.Equal(t, "pro", routeTier(w.s, rc.F(FieldRoute)), rc.ID)
 	}
@@ -201,7 +204,7 @@ func readersWith(w *world, up, away []string) {
 func begunReads(t *testing.T) *world {
 	t.Helper()
 	w := tierWorld(t)
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}}))
+	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}})) // a card's reads are asked together: the pro card's two in this ask
 	for id, readers := range map[string][]string{"s1-1": {"reader-a"}, "s1-2": {"reader-b", "reader-c"}} {
 		got := readerNames(liveReadsAt(w.s, w.s.Work.Card(id), 1))
 		require.ElementsMatch(t, readers, got, "%s asked of %v", id, got)

@@ -130,9 +130,11 @@ type VolatileField struct {
 // green" means the same in every binary. Growing it is a reading, not a call
 // site's decision -- which is what the refusal below is for.
 //
-// The seven entries are the ones docs/SPEC-TOOLWORK.md names:
-// `at=`, `took=`, `created=`, a temporary directory, a fresh sha, a name a
-// recorded fixture carries, and the stamp on a `branch=` nova-secrets seals on.
+// The entries are the ones docs/SPEC-TOOLWORK.md names:
+// `at=`, `took=`, `created=`, a temporary directory, a message's `id=`, a fresh
+// sha, a name a recorded fixture carries, the stamp on a `branch=` nova-secrets
+// seals on, and the commit a finding's `at=` names in a repository the run
+// built.
 //
 // FIVE OF THE SIX ARE TOKEN-ANCHORED, and the sixth says why it is not. A norm
 // that names a field replaces only a whitespace-delimited token spelled
@@ -245,6 +247,23 @@ var Volatile = []VolatileField{
 				As:    "branch=<the seal branch this run stamped>",
 				field: "branch",
 				valid: isStampedBranch,
+			}
+		},
+	},
+	{
+		Name: "commit",
+		What: "at= (a commit a finding names, in a repository this run built)",
+		// nova-check hygiene names the commit a finding is about as `at=<sha>:`,
+		// and the repository a reader builds to follow the document commits at
+		// their own instant, so the sha is theirs. Named on `at=` and anchored
+		// to hex and the colon, so the `at=<path>:` of a path finding and the
+		// instant the `at` entry covers are compared as written.
+		norm: func(Field) Norm {
+			return Norm{
+				Name:  "at= (a commit a finding names)",
+				Re:    regexp.MustCompile(`^at=[0-9a-f]{7,40}:$`),
+				As:    "at=<a commit this run made>:",
+				field: "at",
 			}
 		},
 	},

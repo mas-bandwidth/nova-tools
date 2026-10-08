@@ -59,16 +59,28 @@ func ShowLine(k *Kind, row Row) string {
 // HistoryLine is one change: `HISTORY id=<n> kind=<k> name=<n> op=<add|set|remove>
 // actor=<a> at=<rfc3339>` then, for a set, each changed field as
 // `<field>=<before>><after>`; for an add every field's value; for a remove
-// every field's last value.
+// every field's last value. A write that recorded a reason names it as
+// `reason=<why>` after at=, before the fields, and one that recorded none
+// prints no reason at all.
 func HistoryLine(c Change) string {
-	return fmt.Sprintf("HISTORY id=%d kind=%s name=%s op=%s actor=%s at=%s", c.ID, Value(c.Kind), Value(c.Name), Value(c.Op), Value(c.Actor), Value(c.At)) + changeFields(c)
+	return fmt.Sprintf("HISTORY id=%d kind=%s name=%s op=%s actor=%s at=%s", c.ID, Value(c.Kind), Value(c.Name), Value(c.Op), Value(c.Actor), Value(c.At)) + reasonField(c) + changeFields(c)
 }
 
 // PlanLine is the change a dry run would record (Plan): `CONFIG DRY-RUN
 // op=<add|set|remove> kind=<k> name=<n> actor=<a> wrote=nothing` then the
-// fields as HistoryLine prints them.
+// fields as HistoryLine prints them, and the reason it would record.
 func PlanLine(c Change) string {
-	return "CONFIG DRY-RUN op=" + Value(c.Op) + " kind=" + Value(c.Kind) + " name=" + Value(c.Name) + " actor=" + Value(c.Actor) + " wrote=nothing" + changeFields(c)
+	return "CONFIG DRY-RUN op=" + Value(c.Op) + " kind=" + Value(c.Kind) + " name=" + Value(c.Name) + " actor=" + Value(c.Actor) + " wrote=nothing" + reasonField(c) + changeFields(c)
+}
+
+// reasonField is the reason a write recorded, and nothing when it recorded
+// none: it is optional metadata, so a history row without one is what it was
+// before the reason existed.
+func reasonField(c Change) string {
+	if c.Reason == "" {
+		return ""
+	}
+	return " reason=" + Value(c.Reason)
 }
 
 // changeFields is a change's fields: every value of an add's after and a

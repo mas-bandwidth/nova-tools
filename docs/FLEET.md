@@ -15,6 +15,7 @@ run would do.
 | `fleet/tools.yml` | the build `nova_version` of the checkout `nova_source` in `~/.local/bin`, the build fact, the retired tools gone, the schema migrated, the function library loaded; the pinned TLC jar on the record machines | every machine; the build on the machine running the play; migrate and `fn load` on `store_deployer`; the jar on `tla` (`--tags tla` runs that alone) |
 | `fleet/redis.yml` | the store's ACL users, rendered from the library and the key families | the render on the machine running the play; check and apply on `store_deployer` |
 | `fleet/loops.yml` | one launchd or systemd unit per loop record, none for a record that is gone | every machine |
+| `fleet/container-runtime.yml` | rootless podman, the fleet's container runtime, and its version recorded in `~/.config/nova/podman` | every bench: Linux (apt on Ubuntu and Debian, dnf on Fedora) and macOS (brew, and a podman machine) |
 
 ## An adopter's path
 
@@ -84,6 +85,15 @@ tier of the card it reads, the tier its work was dealt on (flash when line 1
 names none), at that tier's rolling index, and
 the packet hands the reader its model, budget and deadline; a reader started
 with `--model`, `--tokens` and `--deadline` runs its reads on those instead.
+A loop record runs a verb its program must still have: a release that retires
+the verb leaves the unit exiting at every start (`sprint-table-live` ran
+`nova-sprint table` that way until 2026-10-04). The loop kind asks each nova
+program in a record's argv `help <verb>` (`internal/config/loop.go`: exit 2
+naming verbs is a verb gone; a program not installed where nova-config runs
+judges nothing): `CheckLoopVerb` is the refusal of an enabled record whose
+verb is gone (enforced by `loop add` and `loop set`), and `DeadLoops` the line
+for each in `status`, with its `nova-config loop remove <name>`.
+
 Both loops name the identity every child commits under, `--identity
 <owner>,<name>,<email>`, in their argv, so no file is written into a pool by
 hand; a loop without it reads the pool's `identity.tsv`.
@@ -118,14 +128,25 @@ nova-config loop add sprint-dashboard --machine bench-a --argv '["env","NOVA_SPR
 It exits 3 when a new build is installed under it, and its unit starts the new one;
 `curl -s 127.0.0.1:7390/healthz` prints `ok`.
 
+The public page is served from files on one fleet machine: Caddy's `file_server`
+serves `/var/www/sprint/site` with no reverse proxy, and one puller refreshes those files
+from the dashboard server about once a second, so the number of viewers never reaches that
+server. Whether the page holds a front-page load (2,000 requests per second for ten minutes
+from a distant bench machine with zero errors, the server's own p99 under 50 ms, the dashboard
+server seeing only the puller, the far vantage's p99 recorded beside it) is v1.0.0's acceptance
+record [acceptance/v1.0.0/public-dashboard-load.md](acceptance/v1.0.0/public-dashboard-load.md),
+with the raw numbers and the kernel settings it was measured under.
+
 A friend's working directory, how her jobs arrive and are reported, and how
 their clones are removed once done, is docs/FRIENDS.md. The friends are
 nova-config's friend rows: `nova-sprint friend sync --actor ada`
 copies their names into the sprint's friends table, and each friend says it is
-there by beating from its own machinery, beside its harness, every second
-(`sprint.FriendBeatEvery`; `where` shows it `up` while its last beat is under
-15 s old, `down` after 15 s without one, with working 0, and `held` while
-`nova-sprint friend down <friend>` holds it; not a member's window and misses). The same sync
+there only by evidence from her own session: a wake ping her session answered
+within 10 minutes, or a card of hers finished within 30 (`where` shows `up` on
+it, `down` without it, with working 0, and `held` while `nova-sprint friend
+down <friend>` holds it; docs/SPEC-FRIEND.md, "Presence is her session's
+evidence"). Her daemon's beat, every second (`sprint.FriendBeatEvery`), is
+recorded and never makes her up. The same sync
 reads each friend's working directory, `<root>/<friend>-working` (`--root
 <dir>`, else `HOME`, so it runs on the machine that holds them), and writes her
 job cards, which `where` counts as the fleet's columns but load: `ready`,
@@ -136,17 +157,9 @@ starts and writes `outbox/<job>/REPORT.md` when done, with a `Verdict:` line
 (any word but HOLD, FAIL, FAILED or BROKEN is ok; no line is ok). A brief to a
 friend says so. The sync reads and never writes a friend's directory; run it
 after a job is delivered or collected, or every minute from the coordinator's
-loop. On any harness the wrapper that starts the friend adds one line before
-it, with `NOVA_SPRINT_SERVER` (the run loop's loopback address) or
-`NOVA_SPRINT_REDIS` set for the friend:
-
-```
-while :; do nova-sprint friend beat friend-a >/dev/null 2>&1; sleep 1; done &
-trap 'kill $!' EXIT
-```
-
-so the beat stops when the friend's harness does, and the friend is down 15 s
-later (`sprint.FriendDownAfter`; docs/SPEC-SPRINT.md section 1).
+loop. No loop beats for a friend: the shell beat loops a wrapper once started
+beside her harness are retired with no replacement (docs/FRIENDS.md, "The beat loops
+are retired, with no replacement").
 
 The inventory reads the store `NOVA_SPRINT_REDIS` names (or `--redis`); export
 it, and `NOVA_MACHINE` when the machine running the play is a row, before the
@@ -158,6 +171,40 @@ A run limited with `--limit` names `localhost` too (`--limit
 bench-a,localhost`): the build in `tools.yml` and the render in `redis.yml`
 run on the machine running the play, and without it they are skipped with "no
 hosts matched".
+
+## The coordinator machine's units, installed by verbs
+
+The plays above install the benches. The coordinator's machine runs nine more units a sprint needs,
+and each is written and loaded by a verb of the tool it runs, never by hand (card
+every-unit-installed-by-a-verb): a launchd agent on macOS and a systemd user unit on Linux, kept alive
+and started again at login, that runs the verb itself by the tool's absolute path, with no
+`nova-secrets exec`, shell or single-instance wrapper around it and no secret in it.
+
+| unit | the verb that installs it | what it runs |
+|---|---|---|
+| the sprint's store | `nova-redis install store` | `nova-redis serve` on 6380, its data in `~/nova-bench/redis/store` |
+| the friends' bus | `nova-redis install bus` | `nova-redis serve` on 6381, its data in `~/nova-bench/redis/bus` |
+| the sprint's server | `nova-sprint install server --listen <address:port>` | `nova-sprint run --listen` |
+| the machine's member | `nova-sprint install member --as <m> --server <address:port>` | `nova-swarm member` |
+| the seat's push loop | `nova-sprint install seat-push` | `nova-sprint inbox --wait --push seat` |
+| the friend sync loop | `nova-sprint install friend-sync --every 15s` | `nova-sprint friend sync --every` |
+| the live table | `nova-sprint install table --out <file>` | `nova-sprint where --watch` |
+| the disk guard | `nova-swarm install disk-guard` | `nova-swarm disk-guard`, one pass every 15 minutes |
+| the mirrors' refresh | `nova-swarm install mirror-refresh` (owed) | `nova-swarm mirror`, one pass every minute |
+
+serve writes redis-server's configuration from its flags (binding, port, store directory under the
+bench root, persistence) and reads its password in its own process from the secret its unit names;
+the server, the push loop and the table open the store with the seat login (`nova-sprint seat login`). Two secrets are not read that way yet: the server's decision loop (`run --decide`) reads its
+API key from its environment, and the member hands its children the providers' keys `--pass` names
+from its environment; a unit carries neither, so until those verbs read a login as the store's does,
+the service's environment has to give them. `nova-sprint units --check` names each of the nine installed, missing or different, so a
+machine a stranger set up is checked against what a sprint needs; a unit written by hand around a
+wrapper reads as different. `nova-swarm install disk-guard` writes that unit in the swarm
+binary, and the unit runs `nova-swarm disk-guard` itself. The unit text the sprint and redis
+verbs share lives in `internal/units`, which a worker's binary may import. `nova-swarm install mirror-refresh` stays owed: the mirror verb `nova-swarm mirror` is written, its
+unit is not, and `units --check` says the unit is owed rather than telling a stranger to run it. Until
+that unit is written, a mirror refresh is not installed from here. The play's disk-guard row above is the
+fleet's copy of the same pass.
 
 ## A fixture inventory
 
@@ -261,13 +308,44 @@ it has; a user the store lacks is created only with the password in the seat's
 secret `nova_redis_user_password_keys` names, and the run refuses when it
 names none. `docs/CLI.md` ("The store's ACL") has the verbs' lines.
 
+## Containers are podman
+
+The fleet's container runtime is podman, rootless and daemonless, on every
+bench; `tools/functionalrun` runs the functional tier in it and takes podman
+when it is on `PATH`, docker only when podman is not (it names the one it used
+on stderr: `functionalrun: container runtime: podman (<path>)`). Docker is
+never installed by a play. `fleet/container-runtime.yml` is the mechanism
+(`fleet/roles/container-runtime/README.md`):
+
+- Linux: the distribution's `podman`, `uidmap` (`shadow-utils` on Fedora) and
+  `slirp4netns`, with the other rootless helpers, through apt or dnf; a
+  `/etc/subuid` and `/etc/subgid` row, linger and cgroup v2 delegation for the
+  bench's login; then a probe container proves the limits a run relies on.
+- macOS: `brew install podman` and `podman machine init --now`, sized from the
+  row's `slots` (two CPUs and 4 GiB per slot, at least 2 and 4 GiB); an
+  existing machine is started, never resized. A bench with no brew stops the
+  play with that said: the play does not install brew.
+- Every bench: `podman --version` is written to `~/.config/nova/podman` and
+  printed as `PODMAN host=<m> podman version <v> recorded=<path>`.
+
+A hand-installed podman is a stopgap: run the play, which finds the packages
+present and changes nothing but what is missing. `--check --diff` after a real
+run reads no change.
+
+```
+ansible-playbook -i ./nova-inventory fleet/container-runtime.yml --check --diff </dev/null 2>&1 | cat
+ansible-playbook -i ./nova-inventory fleet/container-runtime.yml </dev/null 2>&1 | cat
+```
+
+The inventory's group is `functional_runners` (`fleet/inventory.container-runtime.example.ini`).
+
 ## loops.yml
 
 One unit per record of `nova_loops`, from the record's fields and the host's
 layout: the command is the record's `argv`, word for word (a bare program is the installed
 tool, `~/` the login's home) behind `nova-secrets exec --as <seat> --only
 <keys> --require=<key>...` when the record names keys; its output goes to the
-record's log under the fleet row's `loops_dir` (migration 0027 seeds it to
+record's log under the fleet row's `loops_dir` (migration 0033 seeds it to
 `~/nova-bench/loops`), which the play creates (on darwin, launchd agents log under the user's home,
 `~/Library/Logs/nova-loop-<name>.log`, because launchd cannot open log files on
 network volumes such as `/Volumes/nova`). Every unit
@@ -279,6 +357,15 @@ rewrite Postgres: remove that old assignment from the loop row with
 `nova-config loop set <loop> --argv '<argv>' --as <actor>`, then apply the loop
 kind. The endpoint remains effective from the unit environment during that
 cleanup.
+
+A sprint unit reads the API keys it needs in its own process. `nova-sprint run --keys <NAME,...>`
+(recorded as `keys.json` beside the seat login) names the decision key and each provider key the
+run loop reads; `nova-swarm member --pass <NAME,...>` names the keys a child may be handed, read
+from the seat (`NOVA_SEAT`, or the file `NOVA_SWARM_KEYS` names) when the environment does not
+already hold them. The child is handed the decision key, when pass names it, and the one provider
+key its route needs, never the whole set. A named secret that cannot be read refuses at start,
+naming the name and the remedy. The unit's environment does not carry the values, so those loops
+need no `nova-secrets exec` wrapper for `JEV_API_KEY` or a provider key.
 
 - darwin: `com.nova.loop.<name>.plist` (`templates/nova-loop.plist.j2`) in
   `~/Library/LaunchAgents` (GUI domain) or `/Library/LaunchDaemons` (system,
@@ -293,6 +380,11 @@ cleanup.
   one is a oneshot service started by `nova-loop-<name>.timer`
   (`templates/nova-loop.timer.j2`, `OnUnitActiveSec` the record's `every`). A
   record with `enabled: false` is written, stopped and disabled.
+
+A unit's command can be wrapped in `nova-config loop run <name> -- <command>`, the
+single-instance lock a bash `nova-loop` wrapper once gave (docs/SPEC-CONFIG.md, "loop run"): a
+second copy exits 3, and `--metrics <dir>` writes the restart count node_exporter reads. The plays
+do not wrap the units in it yet.
 
 Every unit the play writes carries its mark (`written by fleet/loops.yml from
 the loop record <name>`). A marked unit that no record on the machine names,
@@ -358,8 +450,12 @@ per-machine artifact the fleet writes, and what removes it, when:
 A process works in a path when its working directory or a file it holds open
 lies under it (lsof on darwin, `/proc/<pid>/cwd` and `/proc/<pid>/fd` on Linux):
 a `git push` or a `make` run inside a land clone names no path on its argument
-line, and keeps the clone all the same. A run that cannot read the open files
-removes nothing that needs them and ends `INCOMPLETE`.
+line, and keeps the clone all the same. A launch agent's PATH leaves out
+`/usr/sbin`, where macOS keeps lsof, so the guard takes lsof from PATH, else
+from `/usr/sbin/lsof`, `/usr/bin/lsof`, `/sbin/lsof` or `/bin/lsof`, and says
+once at its start, on a `NOTE` line, which it took off PATH or that it found
+none. A run that cannot read the open files removes nothing that needs them
+and ends `INCOMPLETE`.
 
 Each run prints one line per action (`REMOVED`, `TRIMMED`, `CLEANED`,
 `ROTATED`, with `freed=<bytes>`, or `KEPT` with why), a `DISK-GUARD WARN` line

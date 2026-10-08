@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -41,22 +42,27 @@ func TestDashboardCoverServesEachListenerAndRefusesWhenOneCannotStart(t *testing
 		assert.Contains(t, out.String(), "DASHBOARD pull routes on http://127.0.0.1:", out.String())
 	})
 	t.Run("a listener that cannot start closes the others and refuses", func(t *testing.T) {
-		// the first address is one this test opens and releases, so it is free and
-		// known; the second is held open, so serveDashboard's second Listen fails
-		free, err := net.Listen("tcp", "127.0.0.1:0")
-		require.NoError(t, err)
-		first := free.Addr().String()
-		// ignored: the address is released so the listener under test can take it
-		_ = free.Close()
+		// the first address is an ephemeral port, so it starts; the second is held
+		// open, so serveDashboard's second Listen fails. The listener the first one
+		// was given is kept, so its closing is read off the listener itself and no
+		// port is ever released and taken again (another parallel test may take it)
 		held, err := net.Listen("tcp", "127.0.0.1:0")
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			// ignored: the test's own listener at its end
 			_ = held.Close()
 		})
+		var opened []net.Listener
+		a := &app{dashListen: func(network, addr string) (net.Listener, error) {
+			ln, err := net.Listen(network, addr)
+			if err == nil {
+				opened = append(opened, ln)
+			}
+			return ln, err
+		}}
 		var out bytes.Buffer
-		servers, err := (&app{}).serveDashboard([]listener{
-			{flag: "--listen", addr: first, h: http.NewServeMux(), says: "DASHBOARD listening on http://%s/\n"},
+		servers, err := a.serveDashboard([]listener{
+			{flag: "--listen", addr: "127.0.0.1:0", h: http.NewServeMux(), says: "DASHBOARD listening on http://%s/\n"},
 			{flag: "--pull", addr: held.Addr().String(), h: http.NewServeMux(), says: "DASHBOARD pull routes on http://%s/\n"},
 		}, &out)
 		require.Error(t, err)
@@ -64,11 +70,15 @@ func TestDashboardCoverServesEachListenerAndRefusesWhenOneCannotStart(t *testing
 		assert.Empty(t, out.String(), "a listener that cannot start is refused before anything is said")
 		assert.Contains(t, err.Error(), "--pull "+held.Addr().String(), err.Error())
 		assert.Contains(t, err.Error(), "address already in use", err.Error())
-		// the listener already open was closed again: its address is free to take
-		again, err := net.Listen("tcp", first)
-		require.NoError(t, err, "the listener opened before the failed one is closed again")
-		// ignored: the test's own listener at its end
-		_ = again.Close()
+		// the listener already open was closed again: its Accept says it is closed
+		// (the deadline turns a listener left open into a timeout, never a hang)
+		require.Len(t, opened, 1, "the first listener opened and the second refused")
+		tcp, ok := opened[0].(*net.TCPListener)
+		require.True(t, ok, "the first listener is TCP")
+		// ignored: a closed listener refuses its deadline as well; Accept says which it is
+		_ = tcp.SetDeadline(time.Now())
+		_, err = tcp.Accept()
+		require.ErrorIs(t, err, net.ErrClosed, "the listener opened before the failed one is closed again")
 	})
 }
 

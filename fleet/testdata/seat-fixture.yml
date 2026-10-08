@@ -1,0 +1,10 @@
+# The fixture the seat play's functional test runs for real: the machine
+# running the test, named localhost, is the store and the coordinator, so the
+# seat play runs on it. The test hands the play a home of its own, a store
+# twin in place of Redis, a launchctl that starts the agents of that home and
+# nothing else, and a nova-secrets that opens nothing; it runs the play with
+# --tags seat, so nothing is built, installed, loaded or migrated.
+machines:
+  localhost: {user: nova, seat: seat-local, slots: 1}
+fleet: {store: localhost, coordinator: localhost, redis_port: 6380, pg_dsn: postgres://nova_config@localhost:5432/nova, loops_dir: "~/nova-bench/loops"}
+loops: {}

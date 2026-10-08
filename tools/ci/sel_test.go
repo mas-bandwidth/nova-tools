@@ -63,7 +63,7 @@ func (f *selFake) answer(c cmdSpec) (string, int, error) {
 		return "", 0, fmt.Errorf("selFake: no reply for %q", key)
 	}
 	if c.Stderr != nil {
-		io.WriteString(c.Stderr, r.err)
+		_, _ = io.WriteString(c.Stderr, r.err)
 	}
 	return r.out, r.code, nil
 }
@@ -811,21 +811,23 @@ func TestFetchAncestryReadsStoredParentHeaders(t *testing.T) {
 
 // The promotion branch is optional: dev is the integration branch, and
 // sprint/foundation exists only while a promotion is in flight. A --promotion
-// fetch of a branch origin does not have says so and exits 0 (nothing to
-// read); the classtests rule then excuses nothing, which is the safe side.
+// fetch of a branch origin does not have deletes a retained tracking ref, says
+// so and exits 0 (nothing to read); the classtests rule then excuses nothing,
+// which is the safe side.
 // Any other ls-remote failure, and a plain (non-promotion) fetch of a missing
 // branch, stay red.
 func TestFetchAncestryPromotionSaysSoWhenTheBranchIsAbsent(t *testing.T) {
 	t.Parallel()
 	f := newSelFake(map[string]selReply{
-		ancestryParents:   {out: "tree abc123\nparent def456\nparent fed789\n\nsubject\n"},
-		ancestryLsRemote:  {code: 2},
+		ancestryParents:  {out: "tree abc123\nparent def456\nparent fed789\n\nsubject\n"},
+		ancestryLsRemote: {code: 2},
+		"git update-ref -d refs/remotes/origin/sprint/foundation": {},
 		ancestryShallow:   {out: "true\n"},
 		ancestryFetchUnsh: {err: ancestryAbsentErr, code: 128},
 	})
 	code, out, errb := selRun(func(e env, a []string) int { return fetchAncestryVerb(e, a, f.host()) }, "", map[string]string{"GITHUB_EVENT_NAME": "push"}, "--promotion", "sprint/foundation")
-	if code != 0 || out != "origin has no branch sprint/foundation: no promotion to read\n" || errb != "" || f.called("git fetch") {
-		t.Errorf("absent branch: exit %d, stdout %q, stderr %q, calls %v; want 0, the saying, and no fetch", code, out, errb, f.calls)
+	if code != 0 || out != "origin has no branch sprint/foundation: no promotion to read\n" || errb != "" || f.called("git fetch") || !f.called("git update-ref -d refs/remotes/origin/sprint/foundation") {
+		t.Errorf("absent branch: exit %d, stdout %q, stderr %q, calls %v; want 0, the saying, the stale ref deleted and no fetch", code, out, errb, f.calls)
 	}
 	// ls-remote failing for another reason (the network) is not "absent".
 	f = newSelFake(map[string]selReply{ancestryParents: {out: "tree abc123\nparent def456\nparent fed789\n\nsubject\n"}, ancestryLsRemote: {err: "fatal: unable to access\n", code: 128}})

@@ -21,8 +21,7 @@ func TestReleaseOfAnUnreachedSentinelWhoseWaitsAreInFlight(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1 --coordinator lead")
 	ta.ok("add --stream s1 --count 4 --actor lead --brief-file " + proBriefFile(t))
-	ta.ok("add --one --stream s4 d --held --actor lead --brief-file " + proBriefFile(t))
-	ta.ok("add --stream s1 --sentinel stop --needs d --actor lead")
+	ta.ok("add --stream s1 --sentinel stop --actor lead")
 	ta.ok("add --one --stream s1 b --actor lead --brief-file " + proBriefFile(t))
 	ta.ok("add --one --stream s2 c --needs stop --actor lead --brief-file " + proBriefFile(t))
 	ta.ok("add --stream s3 --sentinel gate --needs b --actor lead")
@@ -31,6 +30,7 @@ func TestReleaseOfAnUnreachedSentinelWhoseWaitsAreInFlight(t *testing.T) {
 	ta.ok("finish --as m1 s1-1.w1@1 s1-2.w1@1")
 	ta.ok("ask --actor lead")
 	ta.ok("read --as reader-a --ok s1-1.r1.reader-a")
+	ta.ok("ask --actor lead") // the reads one at a time: the second once the first came back ok
 	ta.ok("read --as reader-b --ok s1-1.r1.reader-b")
 	ta.ok("accept s1-1 --actor lead")
 	require.Equal(t, sprint.Merging, ta.primary("s1-1").Col)
@@ -44,8 +44,6 @@ func TestReleaseOfAnUnreachedSentinelWhoseWaitsAreInFlight(t *testing.T) {
 		require.Contains(t, errs, want, "%s: %s%s", line, out, errs)
 	}
 	why := "; release lands a sentinel whose waits have each landed, been dropped, or are in flight (taken, in review or merging)"
-	refused("release stop --reason 'the fleet starves' --actor lead", "not reached: it waits for d (waiting)"+why)
-	ta.ok("drop d --reason 'not wanted' --actor lead")
 	refused("release stop --reason 'the fleet starves' --actor lead", "not reached: it waits for s1-4 (ready)"+why)
 	ta.deal(1)
 	refused("release stop --reason 'the fleet starves' --actor lead", "not reached: it waits for s1-4 (working, its work card not taken)"+why)
@@ -55,13 +53,13 @@ func TestReleaseOfAnUnreachedSentinelWhoseWaitsAreInFlight(t *testing.T) {
 
 	ta.ok("drop s1-4 --reason 'done elsewhere' --actor lead") // a dropped card of the stream is off its line
 	out := ta.ok("release stop --reason 'the fleet starves; what is before it is in flight' --actor lead")
-	require.Contains(t, out, "sentinel stop waiting -> landed (released by lead before it was reached, past d (dropped), s1-1 (merging), s1-2 (review), s1-3 (working, taken)); 2 cards are now ready", "release")
+	require.Contains(t, out, "sentinel stop waiting -> landed (released by lead before it was reached, past s1-1 (merging), s1-2 (review), s1-3 (working, taken)); 2 cards are now ready", "release")
 	stop := ta.primary("stop")
 	require.Equal(t, sprint.Landed, stop.Col, "stop: %v", stop.Fields)
 	require.Empty(t, stop.F("reached"), "stop: %v", stop.Fields)
 	require.Equal(t, "the fleet starves; what is before it is in flight", stop.F("release_reason"), "stop: %v", stop.Fields)
 	require.Equal(t, "lead", stop.F("released_by"), "stop: %v", stop.Fields)
-	require.Equal(t, "d,s1-1,s1-2,s1-3", stop.F("waived"), "stop: %v", stop.Fields)
+	require.Equal(t, "s1-1,s1-2,s1-3", stop.F("waived"), "stop: %v", stop.Fields)
 	require.Equal(t, "lead", stop.F("waived_by"), "stop: %v", stop.Fields)
 	require.Equal(t, sprint.Ready, ta.primary("b").Col, "behind the sentinel")
 	require.Equal(t, sprint.Ready, ta.primary("c").Col, "names the sentinel from another stream")

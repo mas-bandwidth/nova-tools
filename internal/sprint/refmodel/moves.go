@@ -211,6 +211,10 @@ func planMoves(duty string, s *sprint.Snapshot, p sprint.Plan) []Move {
 	for _, r := range p.Rows {
 		out = append(out, Move{Duty: duty, Kind: KindRow, Table: r.Table, Card: r.Row})
 	}
+	// a unit that moves no card and is keyed by a property the plan writes is that
+	// property's own unit (the status transitions' record, sprint.PropStatusSeen): its
+	// words are the property move's, as the store says it moved them
+	propWords := map[string]string{}
 	for _, u := range p.Units {
 		first := len(out)
 		for _, c := range u.Changes {
@@ -223,12 +227,14 @@ func planMoves(duty string, s *sprint.Snapshot, p sprint.Plan) []Move {
 		}
 		if len(out) > first {
 			out[first].Words = u.Moved
+		} else if u.Moved != "" {
+			propWords[u.Key] = u.Moved
 		}
 		out = appendNotes(out, duty, u.Notes...)
 		out = appendCloses(out, duty, u.Closes...)
 	}
 	for _, pw := range p.Props {
-		out = append(out, Move{Duty: duty, Kind: KindProp, Table: pw.Table, Card: pw.Name, Set: []string{pw.Name + "=" + pw.Value}})
+		out = append(out, Move{Duty: duty, Kind: KindProp, Table: pw.Table, Card: pw.Name, Set: []string{pw.Name + "=" + pw.Value}, Words: propWords[pw.Name]})
 	}
 	out = appendNotes(out, duty, p.Notes...)
 	out = appendCloses(out, duty, p.Closes...)
@@ -354,6 +360,7 @@ func noteAttrs(n sprint.Note) []string {
 	add("needs", strings.Join(slices.Sorted(slices.Values(n.Needs)), ","))
 	add("other", n.Other)
 	add("other_stream", n.OtherStream)
+	add("tier", n.Tier)
 	if !n.Review.IsZero() {
 		add("review", n.Review.UTC().Format(time.RFC3339))
 	}

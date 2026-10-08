@@ -289,24 +289,24 @@ func pull(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	// to wonder which half happened.
 	body, err := os.ReadFile(o.changelog)
 	if err != nil {
-		fmt.Fprintf(errs, "PULL FAIL version=%s changelog=%s: cannot read it: %s (the artifacts are deleted; mark the section by hand)\n",
+		fmt.Fprintf(errs, "PULL FAILED version=%s changelog=%s: cannot read it: %s (the artifacts are deleted; mark the section by hand)\n",
 			field(o.version), field(o.changelog), oneErr(err))
 		return 1
 	}
 	marked, err := MarkPulled(string(body), o.version, PulledNote(deps.Now(), o.reason))
 	if err != nil {
-		fmt.Fprintf(errs, "PULL FAIL version=%s changelog=%s: %s (the artifacts are deleted; mark the section by hand)\n",
+		fmt.Fprintf(errs, "PULL FAILED version=%s changelog=%s: %s (the artifacts are deleted; mark the section by hand)\n",
 			field(o.version), field(o.changelog), oneErr(err))
 		return 1
 	}
 	if err := writeNoFollow("pull", o.changelog, []byte(marked), 0o644); err != nil {
-		fmt.Fprintf(errs, "PULL FAIL version=%s changelog=%s: cannot write it: %s (the artifacts are deleted; mark the section by hand)\n",
+		fmt.Fprintf(errs, "PULL FAILED version=%s changelog=%s: cannot write it: %s (the artifacts are deleted; mark the section by hand)\n",
 			field(o.version), field(o.changelog), oneErr(err))
 		return 1
 	}
 	w, result, code := out, "OK", 0
 	if refused > 0 {
-		w, result, code = errs, "FAIL", 1
+		w, result, code = errs, "FAILED", 1
 	}
 	fmt.Fprintf(w, "RELEASE PULL %s version=%s machines=%d pulled=%d refused=%d local=%d dry-run=no\n",
 		result, field(o.version), len(machines), pulled, refused, deleted)

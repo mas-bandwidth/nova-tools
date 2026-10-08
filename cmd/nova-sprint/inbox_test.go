@@ -177,6 +177,9 @@ func (ta *testApp) toMerging(streams ...string) {
 	ta.ok("ask --limit 100")
 	ta.ok("read --as reader-a --ok --limit 100")
 	ta.ok("read --as reader-b --ok --limit 100")
+	// both reads of each card were asked together, so both readers' oks come back in one
+	// step each: no judgment (the tick accepts; here, STOPPED, the stuck-case verb does),
+	// and the red is j3
 	ta.ok("accept --read-ok")
 }
 
@@ -222,6 +225,9 @@ func TestEveryJudgmentPrintsItsDecisionsAsCommands(t *testing.T) {
 	ta.ok("read --as reader-a --broken --finding 'line 3: the empty case is not handled' s2-2.r1.reader-a")
 	ta.ok("read --as reader-a --ok --limit 100")
 	ta.ok("read --as reader-b --ok --limit 100")
+	// both reads of each card were asked together, so both readers' oks come back in one
+	// step each: no judgment (the tick accepts; here, STOPPED, the stuck-case verb does),
+	// and the red is j3
 	ta.ok("accept --read-ok")
 	ta.a.sleep(time.Second)
 	ta.ok("merge --stream s1 --red --suspect s1-2")
@@ -250,7 +256,7 @@ JUDGMENT N2   a reader found it broken  alias=j2  stream=s2  size=1  waited=1m1s
     nova-sprint ask s2-2 --another
   drop:
     nova-sprint drop s2-2 --reason '<why>'
-JUDGMENT N3   stream stopped: stream branch red  alias=j4  stream=s1  size=3  waited=1m0s  due=HH:MM:SS  (s1-1,s1-2,s1-3)
+JUDGMENT N3   stream stopped: stream branch red  alias=j3  stream=s1  size=3  waited=1m0s  due=HH:MM:SS  (s1-1,s1-2,s1-3)
   suspects: s1-2 (of the batch of 3)
   take the suspect off and resume:
     nova-sprint return s1-2 --reason 'suspect of the red batch' --answers N3

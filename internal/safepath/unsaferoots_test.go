@@ -31,7 +31,9 @@ func TestRemoveUnderRootsRefusesAnUnsafeRoot(t *testing.T) {
 		}
 		parent, err := os.MkdirTemp(home, "safepath-unsafe-root-")
 		require.NoError(t, err, "could not make a directory under the home: %v", err)
-		t.Cleanup(func() { os.RemoveAll(parent) })
+		t.Cleanup(func() {
+			_ = os.RemoveAll(parent) // ignored: cleanup of temporary test directory
+		})
 		victim := filepath.Join(parent, "victim")
 		mustWrite(t, filepath.Join(victim, "keep"), "x")
 
@@ -163,7 +165,9 @@ func caseInsensitiveVolume(t *testing.T, dir string) bool {
 	t.Helper()
 	probe := filepath.Join(dir, "CaseProbe")
 	require.NoError(t, os.WriteFile(probe, []byte("x"), 0o644))
-	defer os.Remove(probe)
+	defer func() {
+		_ = os.Remove(probe) // ignored: cleanup of test probe file
+	}()
 	_, err := os.Stat(filepath.Join(dir, "caseprobe"))
 	return err == nil
 }
@@ -213,7 +217,9 @@ func TestRemoveUnderRootsIdentifiesTheHomeByIdentityNotBySpelling(t *testing.T) 
 		victim := filepath.Join(victimRoot, "victim")
 		mustWrite(t, filepath.Join(victim, "keep"), "x")
 		require.NoError(t, os.Chmod(locked, 0o000))
-		t.Cleanup(func() { os.Chmod(locked, 0o755) })
+		t.Cleanup(func() {
+			_ = os.Chmod(locked, 0o755) // ignored: restoring permissions on test fixture
+		})
 		policy := Policy{UserHomeDir: func() (string, error) { return hidden, nil }}
 
 		err := policy.RemoveUnderRoots(victim, victimRoot)

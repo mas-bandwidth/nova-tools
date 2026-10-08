@@ -29,21 +29,38 @@ var familyModel = map[string]string{
 	"grok": "fake/grok-scripted", "deepseek": "fake/deepseek-scripted", "plain": "fake/fake-model",
 }
 
-// scriptFor is the scripted child of a family: its own under
-// internal/cardcontract/testdata/scripted, else plain's.
+var (
+	scriptedOnce sync.Once
+	scriptedDir  string
+	scriptedErr  error
+)
+
+// scriptFor is the scripted child of a family: the Go test binary of
+// internal/cardcontract/testdata/scripted/child placed under the family's name,
+// plain's for a family with none. It is built once for the package, beside the
+// other shared binaries, and the OpenAI profile requires its own.
 func scriptFor(t *testing.T, family string) string {
 	t.Helper()
-	dir := filepath.Join("..", "..", "internal", "cardcontract", "testdata", "scripted")
-	b, err := os.ReadFile(filepath.Join(dir, family+".sh"))
-	if family == "openai" {
-		require.NoError(t, err, "the OpenAI profile requires its own scripted child under %s", dir)
-		return string(b)
+	scriptedOnce.Do(func() {
+		scriptedDir = filepath.Join(builtDir, "scripted")
+		if scriptedErr = os.MkdirAll(scriptedDir, 0o755); scriptedErr != nil {
+			return
+		}
+		var bin string
+		if bin, scriptedErr = build(scriptedDir, "child", "./internal/cardcontract/testdata/scripted/child"); scriptedErr != nil {
+			return
+		}
+		for _, name := range []string{"claude", "openai", "plain"} {
+			if scriptedErr = testbin.PlaceCopy(bin, filepath.Join(scriptedDir, name+exeSuffix())); scriptedErr != nil {
+				return
+			}
+		}
+	})
+	require.NoError(t, scriptedErr, "building the scripted children")
+	if family == "claude" || family == "openai" || family == "plain" {
+		return filepath.Join(scriptedDir, family+exeSuffix())
 	}
-	if os.IsNotExist(err) {
-		b, err = os.ReadFile(filepath.Join(dir, "plain.sh"))
-	}
-	require.NoError(t, err, "no scripted child for %s or plain under %s", family, dir)
-	return string(b)
+	return filepath.Join(scriptedDir, "plain"+exeSuffix())
 }
 
 // TestTheScriptedChildEndToEnd is the harness every profile passes
@@ -144,21 +161,20 @@ func scriptedChild(t *testing.T, family string, walled bool) {
 	dir := t.TempDir()
 	origin := filepath.Join(dir, "origin.git")
 	seed := filepath.Join(dir, "seed")
-	runGit(t, "", "init", "-q", "-b", "main", "--", seed)
+	runGit(t, "", "init", "-q", "-b", driveBase, "--", seed)
 	write(t, filepath.Join(seed, "f"), "base\n")
 	gitAs(t, seed, "add", "f")
 	gitAs(t, seed, "commit", "-q", "-m", "base")
 	runGit(t, "", "clone", "-q", "--bare", "--", seed, origin)
 
-	harness := filepath.Join(dir, "child.sh")
-	require.NoError(t, testbin.WriteExecutable(harness, []byte(scriptFor(t, family)), 0o755))
+	harness := scriptFor(t, family)
 	gh := filepath.Join(dir, "gh")
 	require.NoError(t, testbin.WriteExecutable(gh, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > '"+dir+"/gh.args'\ncat > '"+dir+"/gh.body'\necho https://example.com/o/n/pull/42\n"), 0o755))
 
 	first, rest, _ := strings.Cut(memberCard, "\n")
-	brief := first + "\nbase-repo: " + origin + "\nBASE: main\n" + rest
+	brief := first + "\nbase-repo: " + origin + "\nBASE: " + driveBase + "\n" + rest
 	d := &memberDrive{t: t, addr: "mem:" + filepath.Join(dir, "sprint.twin"), bin: bin}
-	d.must("init", "--members", "m1:1")
+	d.init("--members", "m1:1")
 	d.must("add", "--stream", "a", "--one", "--count", "1", "--brief", brief)
 	d.must("start")
 
@@ -247,7 +263,7 @@ func scriptedChild(t *testing.T, family string, walled bool) {
 		return
 	}
 	require.NoError(t, err, "the member opened the pull request")
-	assert.Equal(t, []string{"pr", "create", "--repo", origin, "--head", "sprint/a-1.w1.g1.e0", "--title", "The change", "--body-file", "-", "--base", "main"},
+	assert.Equal(t, []string{"pr", "create", "--repo", origin, "--head", "sprint/a-1.w1.g1.e0", "--title", "The change", "--body-file", "-", "--base", driveBase},
 		strings.Split(strings.TrimSpace(string(args)), "\n"))
 	body, err := os.ReadFile(filepath.Join(dir, "gh.body"))
 	require.NoError(t, err)

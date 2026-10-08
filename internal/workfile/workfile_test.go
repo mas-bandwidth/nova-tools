@@ -96,7 +96,7 @@ func TestTheReaderRefusesWhatTheWriterWouldNotWrite(t *testing.T) {
 		{"evaluating", `:locked true`, `:locked #.true`, "byte="},
 		{"bad enum", `:state :open`, `:state :Open`, "outside [a-z-]"},
 		{"wrong kind", `:author ""`, `:author 5`, ":author wants a string"},
-		{"format", `(work-tree "v1"`, `(work-tree "v2"`, `format "v2"`},
+		{"format", `(work-tree "v1"`, `(work-tree "v2"`, `version v2 is not read`},
 		{"repos order", `(repo "o/a"`, `(repo "o/c"`, "out of order or repeated"},
 		{"origin", `:origin :internal`, `:origin :elsewhere`, ":origin wants"},
 		{"boolean", `:archived true`, `:archived yes`, ":archived wants true or false"},
@@ -132,6 +132,31 @@ func TestTheReaderRefusesWhatTheWriterWouldNotWrite(t *testing.T) {
 		_, err := workfile.Decode("t.lisp", data, workfile.Limits(len(data)-1))
 		require.ErrorContains(t, err, "--max-bytes", "a file past the byte bound was read: %v", err)
 	})
+}
+
+// brokenShapes is one issue with three shape problems at once: no :node-id,
+// :state a string, and :author an integer (SPEC-WORK-V1 section 1.2).
+// Each URL is workfile.Web joined with a path, so this file's literals name no host.
+const brokenShapes = `(work-tree "v1" :source "github" :org "acme" :fetched "2026-10-02T12:00:00Z"
+ :repos ((repo "acme/widgets" :url "` + workfile.Web + `acme/widgets"
+          :archived false :issues ((issue 1 :url "` + workfile.Web + `acme/widgets/issues/1"
+           :title "t" :state "closed" :state-reason :completed
+           :origin :external :author 5
+           :author-association :none :created "c" :updated "u" :closed "x"
+           :locked false :lock-reason () :labels () :assignees ()
+           :milestone () :body "" :comments () :references () :linked-prs ())))))
+`
+
+// TestTheReaderNamesEveryProblemInOneRun (SPEC-WORK-V1 section 1.2): a tree
+// file with several shape problems is refused once, and the error names every
+// problem, not only the first.
+func TestTheReaderNamesEveryProblemInOneRun(t *testing.T) {
+	t.Parallel()
+	_, err := workfile.Decode("t.lisp", []byte(brokenShapes), workfile.Limits(len(brokenShapes)+1))
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "has no :node-id")
+	assert.ErrorContains(t, err, ":state wants a keyword or ()")
+	assert.ErrorContains(t, err, ":author wants a string")
 }
 
 // TestTheReaderRefusesANonCanonicalNumberSpelling (SPEC-WORK-V1 section
@@ -365,4 +390,48 @@ func TestDecodeRefusesANullSourceReferenceCarryingARepoOrURL(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, bytes.Equal(canonical, again))
 	})
+}
+
+// TestEncodeRefusesANumberDecodeWouldRefuse pins security#82 finding 3:
+// Encode accepts the same positive-integer bound decoder.num enforces, so a
+// tree with an issue, reference or linked-PR number above 2^31 is refused
+// instead of encoding bytes that cannot read back.
+func TestEncodeRefusesANumberDecodeWouldRefuse(t *testing.T) {
+	t.Parallel()
+	base := func(issue int) *workfile.Tree {
+		return &workfile.Tree{Source: "github", Org: "o", Fetched: "2026-01-01T00:00:00Z", Repos: []workfile.Repo{{
+			Name: "o/a", URL: workfile.Web + "o/a",
+			Issues: []workfile.Issue{{Number: issue, URL: workfile.IssueURL("o/a", issue), NodeID: "I_1", Title: "", State: "OPEN", Origin: "internal", AuthorAssociation: "OWNER"}},
+		}}}
+	}
+	for _, n := range []int{2147483648, 2147483649} {
+		data, err := workfile.Encode(base(n))
+		if n == 2147483648 {
+			require.NoError(t, err)
+			back, err := workfile.Decode("x", data, workfile.Limits(len(data)))
+			require.NoError(t, err)
+			require.Len(t, back.Repos, 1)
+			require.Len(t, back.Repos[0].Issues, 1)
+			assert.Equal(t, n, back.Repos[0].Issues[0].Number)
+			continue
+		}
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "2147483649")
+		assert.Contains(t, err.Error(), "above")
+	}
+
+	linked := base(1)
+	linked.Repos[0].Issues[0].LinkedPRs = []workfile.LinkedPR{{Repo: "o/a", Number: 2147483648, URL: "u", State: "MERGED"}}
+	data, err := workfile.Encode(linked)
+	require.NoError(t, err)
+	back, err := workfile.Decode("x", data, workfile.Limits(len(data)))
+	require.NoError(t, err)
+	require.Len(t, back.Repos[0].Issues[0].LinkedPRs, 1)
+	assert.Equal(t, 2147483648, back.Repos[0].Issues[0].LinkedPRs[0].Number)
+
+	linked.Repos[0].Issues[0].LinkedPRs[0].Number = 2147483649
+	_, err = workfile.Encode(linked)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "2147483649")
+	assert.Contains(t, err.Error(), "above")
 }

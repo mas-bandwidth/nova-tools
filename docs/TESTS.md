@@ -56,12 +56,38 @@ those two apart is the whole value of writing the line down.
 The `nova-secrets` fixture invokes `nova-check` in its child-command examples;
 those steps need that binary on PATH.
 
+### tests-reexec-guard-everywhere
+
+A test binary that runs itself (`os.Executable()` or `os.Args[0]`) with words it does not answer runs the whole suite again in the child, which reaches the same test, which runs the binary again: 289 processes deep on one machine in one afternoon. Every `cmd/<tool>` whose tests run their own binary calls `testbin.Enter(tool, handled)` from an `init` in `cmd/<tool>/reexec_test.go` (`cmd/nova-sprint` from its `TestMain`), and a start of the binary is one of three things:
+
+- **the suite**: a `go test` run, a child a test started with `-test.run`, or CLI words typed by hand with no test binary above;
+- **handled**: CLI words the package's own dispatch answers (a helper process, a marked CLI child), which that dispatch runs and exits;
+- **refused**, exit 3 and one line ending `refusing to recurse`: CLI words from a test binary nothing in the package answers, or a chain of test binaries `testbin.MaxDepth` deep. `testbin.DepthEnv(tool)` counts the starts of one tool, so a chain of one tool's binaries is never counted against another's.
+
+`TestEveryReexecOfTheTestBinaryHasTheGuard` (`internal/ci/reexec_guard_class_test.go`, docs/SPEC-CI.md) refuses a `_test.go` under `cmd/` that runs its own binary in a package with no such call, naming the file and the line. The guard itself is proved by `TestDecideRunsTheSuiteHandlesItsOwnWordsOrRefuses` and `TestEnterRefusesARecursionAndAChainTooDeepInAChild` (`internal/testbin`).
+
+### The CL shards fit two minutes
+
+A CI shard of the CL tier is cancelled at two minutes (`timeout-minutes: 2` in `.github/workflows/ci.yml`), and the Makefile's `test` target stops a package at 110 s (`GOTEST_TIMEOUT`). The cap stays; the tests fit it. A unit test takes under a minute, ideally far under, and a CL package takes at most 60 s.
+
+`internal/ci/testdata/shard-walls.tsv` records each CL package's wall: the package-level `Elapsed` of `go test -json` on the last green run that ran it uncached, with where it was measured (`@run<id>` for the GitHub Actions run whose log holds it, `@local` for a local run on a bench machine, one package at a time) and the runner class that measured it, read from the run's job that logged the package (`self-hosted` for the fleet's own runners, else the hosted label, `macos-latest` or `ubuntu-latest`; `-` where it is not known), since one run's jobs mix classes. `TestEveryCLPackageFitsItsShardWall` (`internal/ci/shard_walls_test.go`) refuses a row over 60 s, a live package with tests and no row, and a row for a package the tree no longer holds; `TestTheShardWallRuleRefusesGrowthAndGaps` holds the rule's reversed witnesses. A package that grows past 60 s is made to fit, or its slow tests move behind the `slow` build tag, which `.github/workflows/nightly-slow.yml` runs; then its row records the wall it has. A row is never raised past the cap.
+
+TODO: the ledger's walls are typed numbers that the test checks and never measures; a measured wall (each CL package timed on a named runner class, compared with its row) is owed.
+
+The ledger ratchet (`TestClassRuleLedgersOnlyShrinkAgainstMergeBase`, `internal/ci/ledger_ratchet_test.go`) reads the merge base once: one `git ls-tree -r -z` over `internal/ci/testdata` and the two slowtests ledgers, and one `git cat-file --batch` over the `.txt` files it names (`readMergeBase`). It used to start two git processes per file, some 1,200 a run; on a self-hosted runner's reused workspace that was 1m37s to 1m42s and a cancelled shard on every pull request. `TestTheLedgerTestReadsTheBaseOnce` counts the git processes through a fake runner and allows two; `TestTheSinglePassReadsWhatTheTwoCallPathRead` holds the single pass to `ListAtCommit`'s answer, path by path, on a fixture repository, and to the same shard list and findings.
+
 ## nova-bus
 
 Run by `cmd/nova-bus/firstrun_test.go` on a throwaway redis-server whose
 `friends` set names ada and bob (what `nova-config apply` writes for two friend
-rows), its address in `NOVA_BUS_REDIS`, so the lines read as a reader types them.
-The sitting is the loop: ada sends bob one message; bob peeks (new, not yet
+rows), each with a proven inbox push on `bus2:push` (what each one's friend
+daemon writes when its session answers the SESSION CHECK; without it every send
+and recv is refused as deaf), its address in `NOVA_BUS_REDIS`, so the lines
+read as a reader types them.
+The sitting is the loop: bob first waits on his own empty stream and, nothing
+coming within the second he gave it, is told `WAIT NONE` at exit 1 (the wait
+took nothing; the arm on an empty stream is the cursor `0-0`); ada sends bob one
+message; bob peeks (new, not yet
 delivered), receives it through `--exec` (the header line and the body go to the
 command, acked when it exits 0), acks an id that is not pending (false, exit 0: ack is idempotent), reads the
 log, and lists the names. The run-owned values are the message's `id=` (a ULID
@@ -72,15 +98,19 @@ write says `login=none`: on the fleet's store the identity is the login user and
 ### First run
 
 ```text
+$ nova-bus wait --as bob --timeout 1s
+WAIT ARMED after=0-0
+! WAIT NONE after=0-0 waited=1s
+
 $ nova-bus send --as ada --to bob --subject hello --body "are you there?"
 SEND OK id=01M42BA18Y1K3SE57HE26SY8T0 to=bob cc=- at=2026-10-04T02:18:54Z bytes=14 sha256=cf97adc337983a14daab1089bf14c6ab50e658f0136517e0048407e786b6e745 login=none
 
 $ nova-bus peek --as bob
 PEEK OK pending=0 new=1
-PEEK MESSAGE state=new id=01M42BA18Y1K3SE57HE26SY8T0 from=ada at=2026-10-04T02:18:54Z subject=hello
+PEEK MESSAGE state=new id=01M42BA18Y1K3SE57HE26SY8T0 from=ada at=2026-10-04T02:18:54Z subject="hello"
 
 $ nova-bus recv --as bob --exec true
-RECV OK id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z login=none acked=true exec_exit=0 subject=hello
+RECV OK id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z login=none acked=true exec_exit=0 subject="hello"
 
 $ nova-bus ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
 ACK OK acked=0 asked=1 login=none
@@ -88,12 +118,12 @@ ACK ID id=01ARZ3NDEKTSV4RRFFQ69G5FAV acked=false
 
 $ nova-bus log --max 5
 LOG OK total=1
-LOG MESSAGE id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z subject=hello
+LOG MESSAGE id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z subject="hello"
 
 $ nova-bus names
-NAMES OK count=2
-NAMES NAME name=ada
-NAMES NAME name=bob
+NAMES OK count=2 proven=2
+NAMES NAME name=ada push=proven age=0s harness=claude
+NAMES NAME name=bob push=proven age=0s harness=claude
 ```
 
 ## nova-friend
@@ -109,6 +139,14 @@ with `pong` (one note to ada, and the pong file under the home directory,
 stream; `status` says no daemon has run as bob (exit 1). `./` is a directory of the test's own, and so are the
 home directory and the uid the plan names. The run-owned values are the
 message `id=` (a ULID from the store's time), `at=`, and `took=`.
+
+`serve`, the coordinator's ping loop, is not a step of this sitting: it runs
+until a signal, so the banner has no example of it to run here. What it prints
+is pinned in `cmd/nova-friend/serve_test.go` on the in-memory store with an
+injected clock: `SERVE OK friends= every= down_after=` once (with `dry_run=true`
+and nothing sent under `--dry-run`), then one `SERVE UP` or `SERVE DOWN` line
+per state change, and `SERVE STOP interrupted` at a signal (docs/CLI.md, "The
+coordinator's ping loop").
 
 ### First run
 
@@ -168,7 +206,7 @@ PROBE OK backend=sandbox-exec abi=- steps=5 passed=5 net=nopromise gpu=none
 
 $ HOME=/path/to/pool/jobs/j1/home nova-sandbox --read /path/to/pool/ref --write /path/to/pool/jobs/j1 -- /bin/sh -c 'echo hello > report.md; cat /path/to/.config/anthropic/env'
 SANDBOX NOTE dropped from the child's environment: GPG_AGENT_INFO SSH_AGENT_PID SSH_AUTH_SOCK; an agent socket speaks for a key the wall denies
-SANDBOX OK backend=sandbox-exec abi=- read=1 read-noexec=0 write=1 net=nopromise cwd=/path/to/pool/jobs/j1 cwdb64=L3BhdGgvdG8vcG9vbC9qb2JzL2ox ancestors=11 cmd=sh gpu=none
+SANDBOX OK backend=sandbox-exec abi=- read=1 read-noexec=0 write=1 net=nopromise cwd=/path/to/pool/jobs/j1 cwdb64=L3BhdGgvdG8vcG9vbC9qb2JzL2ox ancestors=11 cmd=sh gpu=none deletes=/path/to/pool/jobs/j1
 cat: /path/to/.config/anthropic/env: Operation not permitted
 SANDBOX DONE exit=1 cmd=sh
 ```
@@ -244,12 +282,12 @@ Fixture: `cmd/nova-check/testdata/example-self`.
 ```
 $ nova-check quickstart --dir ./self
 QUICKSTART RUN dir=./self checks=2: links, then nocode
-LINKS OK files=4 links=3 excluded=0
-NOCODE OK files=5 clean deny-list=floor-list
+LINKS OK dir=./self files=4 links=3 excluded=0 broken=0
+NOCODE OK dir=./self files=5 deny-list=floor-list findings=0
 QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (kernel wants a size budget, attest a manifest of what a full boot reads, floors a derived copy and its source, corpus a ledger of protected lines: nova-check help)
 
 $ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
-KERNEL OK bytes=771 budget=4000
+KERNEL OK file=./self/docs/SEED-CORE.md bytes=771 budget=4000 findings=0
 ```
 
 The included `example-self` fixture has `SEED-CORE.md` but no `SEED.md`, so it
@@ -265,13 +303,13 @@ that also strays outside the card's paths.
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**"
-HYGIENE OK base=main head=card paths=sign/** findings=0
+HYGIENE OK repo=. base=main head=card paths=sign/** findings=0
 
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**" --max 2
-HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
-HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS: sign/**
+HYGIENE FAILED repo=. base=main head=card paths=sign/** findings=4
+HYGIENE FINDING reason=identity at=0a19082d2973 why="author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity"
+HYGIENE FINDING reason=out-of-path at=elsewhere.go why="this path matches none of the card's declared PATHS: sign/**"
 HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
-HYGIENE FAILED base=main head=card paths=sign/** findings=4
 ```
 
 The `MORE` line is the same run with the cap lifted, quoted so it can be pasted
@@ -280,11 +318,11 @@ back — it is the command that prints the rest, and it carries the
 
 ```
 $ nova-check hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
-HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
-HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS: sign/**
-HYGIENE FINDING reason=out-of-path at=elsewhere/x.go: this path matches none of the card's declared PATHS: sign/**
-HYGIENE FINDING reason=stray-file at=sign/RESULT.md: an added file matching the stray list's RESULT.md
-HYGIENE FAILED base=main head=card paths=sign/** findings=4
+HYGIENE FAILED repo=. base=main head=card paths=sign/** findings=4
+HYGIENE FINDING reason=identity at=0a19082d2973 why="author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity"
+HYGIENE FINDING reason=out-of-path at=elsewhere.go why="this path matches none of the card's declared PATHS: sign/**"
+HYGIENE FINDING reason=out-of-path at=elsewhere/x.go why="this path matches none of the card's declared PATHS: sign/**"
+HYGIENE FINDING reason=stray-file at=sign/RESULT.md why="an added file matching the stray list's RESULT.md"
 ```
 
 `--identity` takes one pair of angle brackets. A second pair is refused rather
@@ -292,7 +330,7 @@ than matched against nobody:
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <<ada@example.com>>"
-nova-check hygiene REFUSED: --identity "Ada <<ada@example.com>>": the email carries an angle bracket; want `Name <email>`, one pair; run: nova-check help
+HYGIENE REFUSED: --identity "Ada <<ada@example.com>>": the email carries an angle bracket; want `Name <email>`, one pair; run: nova-check help
 ```
 
 `--kind` is a card kind the toolchain declares, and there is no default one. One
@@ -300,7 +338,7 @@ it does not hold is refused by name rather than left to unlock nothing:
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --kind fix-with-red-test
-nova-check hygiene REFUSED: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
+HYGIENE REFUSED: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
 ```
 
 ## nova-self-talk
@@ -612,7 +650,7 @@ TOKENS SOURCE label=claude:bench kind=claude path=./transcripts reports=input,ou
 TOKENS SOURCE label=bus:emma kind=bus path=bus/from-emma reports=input,output day_basis=utc files=1 unreadable=0 messages=- dup=- noid=- nousage=- unparsed=0 comments=1 redated=0 superseded=0 rows=1
 TOKENS SOURCE label=bus:rowan kind=bus path=bus/from-rowan reports=- day_basis=utc files=0 unreadable=0 messages=- dup=- noid=- nousage=- unparsed=0 comments=0 redated=0 superseded=0 rows=0
 TOKENS TOUCHED label=bus:emma day=2026-09-11 repos=schema,serialize
-TOKENS DAY date=2026-09-11 rows=3 models=2 repos=2 turns=3 unknown=0.0% other=0.0% rough=0 dashes=6 nonutc=0 sources=bus:emma,claude:bench written=true
+TOKENS DAY day=2026-09-11 rows=3 models=2 repos=2 turns=3 unknown=0.0% other=0.0% rough=0 dashes=6 nonutc=0 sources=bus:emma,claude:bench written=true
 TOKENS OK days=1 rows=3 sources=3 unreadable=0 unparsed=0 mixed=0 conflict=0 shrank=0 partial=0 quiet=0
 TOKENS NOTE nothing was wrong; nova-tokens check --out ./out is the gate
 
@@ -682,12 +720,12 @@ Postgres and a throwaway Redis.
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=32 applied=32
+CONFIG MIGRATE file=try.json from=0 to=36 applied=36
 
-$ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
+$ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --actor a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
 
-$ nova-config machine set m1 --width 6 --as a1 --file try.json
+$ nova-config machine set m1 --width 6 --actor a1 --file try.json
 CONFIG SET kind=machine name=m1 rev=2 changed=width
 
 $ nova-config machine list --file try.json
@@ -734,7 +772,7 @@ APPEND OK session=s1 entry=e1 source=bench-a/session-7#L3 persisted=true publish
 
 $ nova-cairn index --store ./cairns
 INDEX OK sessions=1 entries=1
-INDEX SESSION session=s1 entries=1
+INDEX SESSION session=s1 publish=manual opened=2026-09-17T12:00:00Z entries=1
 INDEX ENTRY session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-a/session-7#L3
 
 $ nova-cairn receipt --store ./cairns --session s1 --entry e1
@@ -836,6 +874,31 @@ of a gate on its own. The gate decision's calibration records (base run, and
 base not run) are `internal/decide/testdata/gate-calibration-*.jsonl`. The
 brief's op id ends in the hex of the schema and the card, so a reworded schema
 or card changes it and this transcript names the change.
+
+## nova-local
+
+Fixture: `cmd/nova-local/testdata/`: the worker directory (`home/`) and the
+placeholder key file (`local.key`). `cmd/nova-local/firstrun_test.go` runs each
+`$` line from a checkout root in one sitting against a fake ollama daemon that
+has `gemma4:12b` in the shared store of the AI root `/ai`, a box at load 14.2
+with 61 GiB free of 128, and a clock the warm-up advances by three seconds; no
+engine, network or real time is used. `./gemma.json` is a file in the test's
+own directory.
+
+### First run
+
+```text
+$ nova-local status
+STATUS OK engines=1 answering=1 loaded=0 models=1 mem_used=71940702208 mem_free=65498251264 mem_total=137438953472 wired_cap=unset load1=14.20
+STATUS ENGINE name=ollama state=up base=http://127.0.0.1:11434/v1 loaded=0 advertised=1 store=/ai/shared/models/ollama shared=yes
+
+$ nova-local serve --engine ollama --model gemma4:12b --num-ctx 32768 --seed 7
+SERVE OK engine=ollama model=gemma4:12b serve_as=gemma4-32k digest=sha256:c0e0c3e5b4a1 num_ctx=32768 keep_alive=30m temperature=0 seed=7 created=yes load=3s mem_used=71940702208 mem_free=65498251264 mem_total=137438953472 wired_cap=unset load1=14.20 engines=1 store=/ai/shared/models/ollama shared=yes
+
+$ nova-local worker --engine ollama --model gemma4-32k --out ./gemma.json --name gemma --harness opencode --harness-args run,--model,ollama/{model},--,{prompt} --worker-dir $PWD/cmd/nova-local/testdata/home --key-file $PWD/cmd/nova-local/testdata/local.key --env-var OLLAMA_API_KEY --usage opencode --deadline 20m
+WORKER OK engine=ollama model=gemma4-32k out=./gemma.json workers=1 provider=ollama harness=opencode deadline=20m base=http://127.0.0.1:11434/v1
+WORKER NOTE run it one worker at a time (--workers 1): an engine is a queue, and two workers interleave it
+```
 
 ## nova-redis
 
@@ -986,8 +1049,9 @@ nothing is ticking between commands in a twin: tick by hand: nova-sprint tick
 
 $ nova-sprint tick
 MOVED presence: m1 up
+MOVED presence: status seen: m1 up
 TABLES rows changed: work=0 readers=0 merge=0 fleet=1
-TICK OK state=RUNNING idle=no moved=1 notes=2
+TICK OK state=RUNNING idle=no moved=2 notes=2
 0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint tick
@@ -999,16 +1063,17 @@ TICK OK state=RUNNING idle=no moved=1 notes=1
 $ nova-sprint take --as m1 --epoch 0
 MOVED s1-1.w1 fleet ready -> working member=m1 gen=1
 PACKET s1-1.w1 attempt=1 gen=1 epoch=0
+  tier: flash
   branch: sprint/s1-1.w1.g1.e0
   base: the stream's base
   notes: none
   report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/s1-1.w1.g1.e0 --head <commit> --report '<what you did>' [--failed]
-TAKE OK moved=1 refused=0 notes=0 op=take-t23-1
+TAKE OK moved=1 refused=0 notes=0 op=take-t27-1
 0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --report done
 MOVED s1-1.w1 working -> done ok; s1-1 working -> review
-FINISH OK moved=1 refused=0 notes=1 op=finish-t24-1
+FINISH OK moved=1 refused=0 notes=1 op=finish-t28-1
 0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint tick
@@ -1020,12 +1085,12 @@ TICK OK state=RUNNING idle=no moved=2 notes=0
 
 $ nova-sprint read --as reader-a --begin --epoch 0
 MOVED s1-1.r1.reader-a asked -> reading
-READ OK moved=1 refused=0 notes=0 op=read-t27-1
+READ OK moved=1 refused=0 notes=0 op=read-t31-1
 0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint read --as reader-a --ok --epoch 0
 MOVED s1-1.r1.reader-a reading -> ok
-READ OK moved=1 refused=0 notes=0 op=read-t28-1
+READ OK moved=1 refused=0 notes=0 op=read-t32-1
 0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint tick
@@ -1037,7 +1102,7 @@ TICK OK state=RUNNING idle=no moved=2 notes=2
 
 $ nova-sprint merge --stream s1 --batch 1
 MOVED s1-1 merging -> landed
-MERGE OK moved=1 refused=0 notes=2 op=merge-t32-1
+MERGE OK moved=1 refused=0 notes=2 op=merge-t36-1
 0/1 0.0% -> ETA -  machine: running
 ```
 
@@ -1083,8 +1148,9 @@ nothing is ticking between commands in a twin: tick by hand: nova-sprint tick
 
 $ nova-sprint tick
 MOVED presence: m1 up
+MOVED presence: status seen: m1 up
 TABLES rows changed: work=0 readers=0 merge=0 fleet=1
-TICK OK state=RUNNING idle=no moved=1 notes=2
+TICK OK state=RUNNING idle=no moved=2 notes=2
 0/2 0.0% -> ETA -  machine: running
 
 $ nova-sprint tick
@@ -1098,22 +1164,24 @@ $ nova-sprint take --as m1 --max 2 --epoch 0
 MOVED s1-1.w1 fleet ready -> working member=m1 gen=1
 MOVED s1-2.w1 fleet ready -> working member=m1 gen=1
 PACKET s1-1.w1 attempt=1 gen=1 epoch=0
+  tier: flash
   branch: sprint/s1-1.w1.g1.e0
   base: the stream's base
   notes: none
   report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/s1-1.w1.g1.e0 --head <commit> --report '<what you did>' [--failed]
 PACKET s1-2.w1 attempt=1 gen=1 epoch=0
+  tier: flash
   branch: sprint/s1-2.w1.g1.e0
   base: the stream's base
   notes: none
   report it: nova-sprint finish --as m1 s1-2.w1@1 --epoch 0 --branch sprint/s1-2.w1.g1.e0 --head <commit> --report '<what you did>' [--failed]
-TAKE OK moved=2 refused=0 notes=0 op=take-t23-1
+TAKE OK moved=2 refused=0 notes=0 op=take-t27-1
 0/2 0.0% -> ETA -  machine: running
 
 $ nova-sprint finish --as m1 s1-1.w1@1 s1-2.w1@1 --epoch 0 --failed --report 'the tests went red'
 MOVED s1-1.w1 working -> done failed; s1-1 working -> review
 MOVED s1-2.w1 working -> done failed; s1-2 working -> review
-FINISH OK moved=2 refused=0 notes=1 op=finish-t24-1
+FINISH OK moved=2 refused=0 notes=1 op=finish-t28-1
 0/2 0.0% -> ETA -  machine: running
 
 $ nova-sprint tick
@@ -1125,14 +1193,14 @@ TICK OK state=RUNNING idle=no moved=2 notes=0
 
 $ nova-sprint answer --backend fixed --answers ./cmd/nova-sprint/testdata/judgment-answers.json --record ./judgment.jsonl
 judgment        card  kind    verb    p     act     why
-finish-t24-1.1  s1-1  failed  rework  0.91  listed  no decide_judgment_bar is set, so nothing is applied; at a bar at or under 0.91 it would apply: nova-sprint rework s1-1 --one
-finish-t24-1.1  s1-2  failed  rework  0.91  listed  no decide_judgment_bar is set, so nothing is applied; at a bar at or under 0.91 it would apply: nova-sprint rework s1-2 --one
+finish-t28-1.1  s1-1  failed  rework  0.91  listed  no decide_judgment_bar is set, so nothing is applied; at a bar at or under 0.91 it would apply: nova-sprint rework s1-1 --one
+finish-t28-1.1  s1-2  failed  rework  0.91  listed  no decide_judgment_bar is set, so nothing is applied; at a bar at or under 0.91 it would apply: nova-sprint rework s1-2 --one
 ANSWER OK rows=2 applied=0 would_apply=0 listed=2 refused=0 failed=0 left=0 outcomes=0 bar=- record=./judgment.jsonl; run: nova-sprint inbox
 
 $ nova-sprint answer --bar 0.8 --backend fixed --answers ./cmd/nova-sprint/testdata/judgment-answers.json --record ./judgment.jsonl
 judgment        card  kind    verb    p     act      why
-finish-t24-1.1  s1-1  failed  rework  0.91  applied  nova-sprint rework s1-1 --one --op decide.finish-t24-1.1_s1-1
-finish-t24-1.1  s1-2  failed  rework  0.91  applied  nova-sprint rework s1-2 --one --op decide.finish-t24-1.1_s1-2
+finish-t28-1.1  s1-1  failed  rework  0.91  applied  nova-sprint rework s1-1 --one --op decide.finish-t28-1.1_s1-1
+finish-t28-1.1  s1-2  failed  rework  0.91  applied  nova-sprint rework s1-2 --one --op decide.finish-t28-1.1_s1-2
 ANSWER OK rows=2 applied=2 would_apply=0 listed=0 refused=0 failed=0 left=0 outcomes=0 bar=0.80 record=./judgment.jsonl; run: nova-sprint inbox
 ```
 
@@ -1199,3 +1267,16 @@ LINT OK file=./cards/finding-internal-bus-send.md
 $ nova-card lint --card ./cards/finding-cmd-nova-bus-main.md
 LINT OK file=./cards/finding-cmd-nova-bus-main.md
 ```
+
+## One-shot lanes at parity (internal/friend/lane_parity_test.go, cmd/nova-friend/lane_parity_test.go)
+
+`TestOpencodeLanesDoWhatTheRunnerStopgapsDid` has one subtest per behaviour the two runner scripts had (card filter, row
+rules, take back, generation job names, width under load, token cap, provider stop, cost line, tokens from opencode's
+database, route row, go shims, bus note); `TestLanesTakeBackACardOutsideTheRowsTiersAndRunOnlyTheRest`,
+`TestLanesAreHeldToTheLoadWidthWhileTheLoadIsHigh`, `TestACardOverTheTokenCapIsHeldAndItsCostPublished`,
+`TestAFinishedCardPublishesItsCostOrWhyNot`, `TestAProviderFailureHoldsTheFriendDownUntilAPersonClearsIt`,
+`TestAProviderFailureStopsEveryLaneUnderWayAndKeepsItsCard` and `TestAPauseMarkerNotWrittenIsNotAResume` run them through
+the lane rig on its fake clock (synctest, no socket, no wall-clock sleep), the take-back's fake server refusing a
+coordinator verb as the real one does; `TestResumeClearsTheLanesPauseAPersonBringsUp` and
+`TestRefuseGoRefusesWithTheWayToABench` run the two new verbs, and `TestRunBeatsDownWhileTheLanesArePausedUntilAPersonResumes`
+the daemon's down beat while the pause stands.

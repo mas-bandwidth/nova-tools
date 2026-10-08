@@ -83,6 +83,15 @@ type Input struct {
 	NetDeny     bool
 	NetListen   bool
 	NetAllow    []string // host:port the profile opens back up by name
+	// NetPorts is the TCP ports a --net-deny wall opens outbound, to any host, with the
+	// name resolver: a lane's wall profile (profile.go) names 443 and 22. Only with
+	// NetDeny; the darwin profile grants them, and on linux they are not granted (Landlock
+	// here handles no port rule), so there the denial is whole: fail closed.
+	NetPorts []int
+	// Deny is the paths no write of this wall may reach (a lane's wall profile: the
+	// coordinator's self). Every --write, the --cwd, the --tmp and HOME is refused when it
+	// is inside one or holds one, so the wall denies them by having no grant there.
+	Deny        []string
 	GPU         string   // --gpu none|metal; empty means none
 	Argv        []string // the command and its arguments, everything after --
 	Home        string   // the HOME value the child receives
@@ -99,20 +108,26 @@ type Policy struct {
 	Reads       []string // resolved, read-only, recursive; carries EXECUTE
 	ReadsNoExec []string // resolved, read-only, recursive, and NOT executable
 	Writes      []string // resolved, read+write, recursive; the first is load-bearing
-	OptRoots    []string // the platform's optional roots that EXIST on this machine
-	PathDirs    []string // existing directories from PATH granted file-read-metadata
-	Cwd         string
-	Tmp         string
-	Home        string
-	Name        string
-	NetDeny     bool
-	NetListen   bool
-	NetAllow    []string // host:port the profile opens back up by name
-	GPUMode     GPUMode
-	MaxProcs    int      // the tree's process cap, set by Build; 0 on a hand-built policy is unbounded
-	MaxMem      int64    // the tree's resident-memory cap in bytes, set by Build; 0 is unbounded
-	Command     string   // the resolved absolute path of the executable
-	Argv        []string // Command followed by its arguments, verbatim
+	// LinkSpellings is the caller's cleaned absolute spelling of a --read, --read-noexec or
+	// --write whose resolved path differs from it (rule 5): following a symlink needs read
+	// on the link itself, which the resolved READn/WRITEn grants do not name.
+	LinkSpellings []string
+	OptRoots      []string // the platform's optional roots that EXIST on this machine
+	PathDirs      []string // existing directories from PATH granted file-read-metadata
+	Cwd           string
+	Tmp           string
+	Home          string
+	Name          string
+	NetDeny       bool
+	NetListen     bool
+	NetAllow      []string // host:port the profile opens back up by name
+	NetPorts      []int    // TCP ports a --net-deny wall opens outbound (Input.NetPorts)
+	Deny          []string // resolved paths no write reaches (Input.Deny)
+	GPUMode       GPUMode
+	MaxProcs      int      // the tree's process cap, set by Build; 0 on a hand-built policy is unbounded
+	MaxMem        int64    // the tree's resident-memory cap in bytes, set by Build; 0 is unbounded
+	Command       string   // the resolved absolute path of the executable
+	Argv          []string // Command followed by its arguments, verbatim
 
 	// Available is an optional seam for tests checking refusal when the backend is absent.
 	// When nil, package Available() is called.
@@ -406,6 +421,36 @@ func insideAny(path string, dirs []string) bool {
 	return slices.ContainsFunc(dirs, func(d string) bool { return Inside(path, d) })
 }
 
+// DeletesIn reports whether the wall lets the command delete beneath dir: unlink, rmdir
+// and rename-away. Every --write root qualifies, the data home included: what the command
+// may create there it may remove, and a database commits by unlinking its rollback journal.
+// The temp directory and the working directory are inside the write set, so they qualify
+// by lying under a --write. A path outside every --write does not (docs/SPEC-SANDBOX.md,
+// "deletes-in-every-write-root").
+func (p *Policy) DeletesIn(dir string) bool {
+	if p == nil || dir == "" || len(p.Writes) == 0 {
+		return false
+	}
+	return insideAny(dir, p.Writes)
+}
+
+// DeleteRoots is the --write roots the wall lets the command delete beneath, in the order
+// they were given: the set the SANDBOX OK line names on deletes= (docs/SPEC-SANDBOX.md,
+// "deletes-in-every-write-root"). It is read off DeletesIn, so the line says what the
+// rule grants and not what a second list believes it grants.
+func (p *Policy) DeleteRoots() []string {
+	if p == nil {
+		return nil
+	}
+	roots := make([]string, 0, len(p.Writes))
+	for _, w := range p.Writes {
+		if p.DeletesIn(w) {
+			roots = append(roots, w)
+		}
+	}
+	return roots
+}
+
 // sbplMetacharacters are the characters a path may not carry ON DARWIN. The ancestor
 // literals of the darwin profile put a path INTO the profile text (the -D parameters do
 // not), so a path holding a quote, a backslash or a paren could rewrite the policy — and a
@@ -450,6 +495,23 @@ func badPathTextFor(goos, path string) string {
 		}
 	}
 	return ""
+}
+
+// noteSpelling records the caller's cleaned absolute spelling of a granted path when it is not
+// the resolved path (rule 5), so DarwinProfile can grant read on the link itself: following a
+// symlink needs read on the link, and the READn/WRITEn grants name only the resolved
+// directory (security#67 finding 1). The spelling goes into the profile text, so it is
+// checked with badPathText like any other path that does.
+func (p *Policy) noteSpelling(bad []Refusal, reason, flag, raw, resolved string) []Refusal {
+	spelling := filepath.Clean(raw)
+	if spelling == resolved || slices.Contains(p.LinkSpellings, spelling) {
+		return bad
+	}
+	if text := badPathText(spelling); text != "" {
+		return append(bad, refuse(reason, "%s %s %s", flag, spelling, text))
+	}
+	p.LinkSpellings = append(p.LinkSpellings, spelling)
+	return bad
 }
 
 // resolvePath validates one caller path as absolute and existing, with symlinks resolved. A
@@ -595,6 +657,19 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 		}
 		p.NetAllow = append(p.NetAllow, net.JoinHostPort(host, port))
 	}
+	if len(in.NetPorts) > 0 && !in.NetDeny {
+		bad = append(bad, refuse("bad_net", "TCP ports %v were named without --net-deny: the ports are what a denied network opens, and an open network has nothing to open", in.NetPorts))
+	}
+	for _, port := range in.NetPorts {
+		if port < 1 || port > 65535 {
+			bad = append(bad, refuse("bad_net", "TCP port %d is no port: it wants 1 to 65535", port))
+			continue
+		}
+		p.NetPorts = append(p.NetPorts, port)
+	}
+	for _, raw := range in.Deny {
+		p.Deny = append(p.Deny, denyPath(raw))
+	}
 
 	if len(in.Argv) == 0 {
 		bad = append(bad, refuse("no_command", "nothing after --; usage: nova-sandbox --read <dir>... --write <dir>... -- <command> <args...>"))
@@ -610,6 +685,7 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 			continue
 		}
 		p.Reads = append(p.Reads, got)
+		bad = p.noteSpelling(bad, "bad_read", "--read", raw, got)
 	}
 	for _, raw := range in.ReadsNoExec {
 		got, r := resolvePath("bad_read", "--read-noexec", raw)
@@ -618,6 +694,7 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 			continue
 		}
 		p.ReadsNoExec = append(p.ReadsNoExec, got)
+		bad = p.noteSpelling(bad, "bad_read", "--read-noexec", raw, got)
 	}
 	for _, raw := range in.Writes {
 		got, r := resolvePath("bad_write", "--write", raw)
@@ -626,6 +703,7 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 			continue
 		}
 		p.Writes = append(p.Writes, got)
+		bad = p.noteSpelling(bad, "bad_write", "--write", raw, got)
 	}
 	// A path given to both lists is a refusal naming both flags, never a silent merge
 	// The caller asked for two different things about one directory.
@@ -728,6 +806,11 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 			}
 		}
 	}
+	// The deny list (buds-in-the-wall-r.w5): no write may reach a denied path, from
+	// above it or from inside it. The wall grants writing only where it is told to, so a
+	// denied path no grant covers is denied on both bodies; this is the refusal that keeps
+	// a grant from covering one.
+	bad = append(bad, deniedWrites(p)...)
 	if len(bad) > 0 {
 		return nil, bad
 	}
@@ -754,6 +837,40 @@ func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 	}
 	p.PathDirs = PathDirectoriesWith(lookIn, p.Reads, p.Writes, p.OptRoots, homes)
 	return p, nil
+}
+
+// denyPath is a denied path as the checks compare it: resolved through its symlinks
+// when it is there, else made absolute and clean. A denied path that is not on this
+// machine is still compared by its name, so a write cannot be granted above it before it
+// is made.
+func denyPath(raw string) string {
+	if got, err := filepath.EvalSymlinks(raw); err == nil {
+		raw = got
+	}
+	if abs, err := filepath.Abs(raw); err == nil {
+		raw = abs
+	}
+	return filepath.Clean(raw)
+}
+
+// deniedWrites is a refusal for every write of p (each --write, the --cwd, the --tmp and
+// HOME) that is a denied path, lies inside one, or holds one.
+func deniedWrites(p *Policy) []Refusal {
+	var bad []Refusal
+	writes := append([]string{}, p.Writes...)
+	for _, extra := range []string{p.Cwd, p.Tmp, p.Home} {
+		if extra != "" && !slices.Contains(writes, extra) {
+			writes = append(writes, extra)
+		}
+	}
+	for _, d := range p.Deny {
+		for _, w := range writes {
+			if Inside(w, d) || Inside(d, w) {
+				bad = append(bad, refuse("denied_write", "%s is a write of this wall and %s is denied to it (the profile's deny list): no write may be a denied path, lie inside one or hold one", w, d))
+			}
+		}
+	}
+	return bad
 }
 
 // PathDirectoriesWith extracts existing directories from lookIn (PATH) that are not already
@@ -1014,9 +1131,12 @@ func (p *Policy) Over(u Usage) (string, bool) {
 }
 
 // Watch counts the tree on every tick (every second when tick is nil) and, the first time
-// it is past a cap, calls kill and stops. It returns stop, which ends the watch and
-// answers the runaway line, or "" when the tree never passed a cap. A count that fails is
-// skipped: a watch that cannot look must not kill what it cannot see.
+// it is past a cap, calls kill and stops. It returns stop, which ends the watch with one
+// last count and answers the runaway line, or "" when the tree never passed a cap. The
+// last count is for a tree whose leader exited between two ticks and left its children:
+// a fork bomb refused by RLIMIT_NPROC ends its own shell, and the children are still the
+// group. A count that fails is skipped: a watch that cannot look must not kill what it
+// cannot see.
 func (p *Policy) Watch(tick <-chan time.Time, usage func() (Usage, error), kill func()) (stop func() string) {
 	release := func() {}
 	if tick == nil {
@@ -1052,7 +1172,20 @@ func (p *Policy) watch(tick <-chan time.Time, usage func() (Usage, error), kill 
 	}()
 	var once sync.Once
 	return func() string {
-		once.Do(func() { close(quit); wg.Wait(); release() })
+		once.Do(func() {
+			close(quit)
+			wg.Wait()
+			release()
+			if line != "" {
+				return
+			}
+			if u, err := usage(); err == nil {
+				if l, hit := p.Over(u); hit {
+					line = l
+					kill()
+				}
+			}
+		})
 		return line
 	}
 }

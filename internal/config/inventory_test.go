@@ -32,7 +32,7 @@ func snapshot(loops map[string]View) *Snapshot {
 			"bench-alpha": {"user": "user-a", "seat": "seat-a", "slots": "64", "runners": "1"},
 			"bench-beta":  {"user": "user-b", "seat": "seat-b", "slots": "40", "runners": "0"},
 		},
-		Fleet: View{"store": "bench-beta", "coordinator": "bench-alpha", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"},
+		Fleet: View{"store": "bench-beta", "coordinator": "bench-alpha", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova", "loops_dir": "~/nova-bench/loops"},
 		Loops: loops,
 		Beats: map[string]*Beat{"bench-beta": {OS: "linux", Arch: "amd64"}},
 		Revs:  map[string]int64{KindMachine: 3, KindFleet: 2},
@@ -182,7 +182,7 @@ func TestBuildInventoryOmitsEmptyValues(t *testing.T) {
 // A fleet with declared endpoints and no machines has every group present.
 func TestBuildInventoryOfAnEmptyStore(t *testing.T) {
 	t.Parallel()
-	inv, err := BuildInventory(&Snapshot{Fleet: View{"redis_port": "6380", "pg_dsn": "postgres://user@localhost:5432/nova"}}, "")
+	inv, err := BuildInventory(&Snapshot{Fleet: View{"redis_port": "6380", "pg_dsn": "postgres://user@localhost:5432/nova", "loops_dir": "~/nova-bench/loops"}}, "")
 	require.NoError(t, err)
 	raw, err := inv.JSON()
 	require.NoError(t, err)
@@ -215,7 +215,7 @@ func TestLoadFixtureIsTheAppliedStateOfTheSameRows(t *testing.T) {
 machines:
   bench-alpha: {user: user-a, seat: seat-a, slots: 4, runners: 1, os: darwin, arch: arm64}
   bench-beta: {user: user-b, seat: seat-b, slots: 2}
-fleet: {store: bench-beta, coordinator: bench-alpha, redis_port: 6380, pg_dsn: postgres://nova_config@localhost:5432/nova}
+fleet: {store: bench-beta, coordinator: bench-alpha, redis_port: 6380, pg_dsn: postgres://nova_config@localhost:5432/nova, loops_dir: "~/nova-bench/loops"}
 loops:
   member-beta: {machine: bench-beta, argv: [nova-swarm, member], seat: seat-b, keys: [Z_KEY, A_KEY], keepalive: true}
   tick: {machine: bench-alpha, argv: ["~/bin/tick", "--once"], every: 30, enabled: false}
@@ -225,7 +225,7 @@ loops:
 	assert.Equal(t, View{"user": "user-a", "seat": "seat-a", "slots": "4", "runners": "1", "tla": "false"}, snap.Machines["bench-alpha"])
 	assert.Equal(t, &Beat{OS: "darwin", Arch: "arm64"}, snap.Beats["bench-alpha"])
 	assert.NotContains(t, snap.Beats, "bench-beta")
-	assert.Equal(t, View{"store": "bench-beta", "coordinator": "bench-alpha", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"}, snap.Fleet)
+	assert.Equal(t, View{"store": "bench-beta", "coordinator": "bench-alpha", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova", "loops_dir": "~/nova-bench/loops"}, snap.Fleet)
 	assert.Equal(t, View{
 		"name": "member-beta", "machine": "bench-beta", "argv": `["nova-swarm","member"]`, "seat": "seat-b",
 		"keys": "A_KEY,Z_KEY", "every": "0", "keepalive": "true", "enabled": "true",
@@ -255,17 +255,42 @@ loops:
 }
 
 // A fixture that is not the fixture's shape is refused in one line naming
-// what it wants, with the YAML reader's words quoted, never its newlines.
+// what it wants, with the YAML reader's line and never its Go type.
 func TestAFixtureOfTheWrongShapeIsRefusedInOneLine(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join(t.TempDir(), "fx.yml")
-	require.NoError(t, os.WriteFile(path, []byte("- one\n- two\n"), 0o600))
-	_, err := LoadFixture(path)
-	require.Error(t, err)
-	msg := err.Error()
-	assert.NotContains(t, msg, "\n")
-	assert.Contains(t, msg, "is not the fixture's shape: \"yaml: unmarshal errors: line 1: cannot unmarshal !!seq into config.fixture\"")
-	assert.Contains(t, msg, "want a mapping with machines")
+	cases := []struct {
+		name string
+		doc  string
+		want string
+	}{
+		{"root is a list", "- one\n- two\n", "line 1: the document is a map with machines, fleet and loops, got a list"},
+		{"machines is a list", "machines:\n  - one\n  - two\n", "line 2: machines is a map of name to machine, got a list"},
+		{"machine is text", "machines:\n  m1: five\n", "line 2: a machine is a map of user, seat, slots, runners, tla, os and arch, got text"},
+		{"machine field is text", "machines:\n  m1: {slots: soon}\n", "line 2: a number is wanted, got text"},
+		{"fleet is text", "fleet: five\n", "line 1: fleet is a map of store, coordinator, redis_port, pg_dsn and loops_dir, got text"},
+		{"loops is a list", "loops:\n  - one\n", "line 2: loops is a map of name to loop, got a list"},
+		{"loop is text", "loops:\n  l1: five\n", "line 2: a loop is a map of machine, argv, seat, keys, every, keepalive and enabled, got text"},
+		{"unknown field", "machines: {}\nfleet: {}\nbogus: 1\n", "line 3: bogus is not a fixture field; want machines, fleet or loops"},
+		{"machine unknown field", "machines:\n  m1: {bogus: 1}\n", "line 2: bogus is not a fixture field; want user, seat, slots, runners, tla, os or arch"},
+		{"two problems at once", "machines:\n  - one\nfleet: five\n", "line 2: machines is a map of name to machine, got a list; line 3: fleet is a map of store, coordinator, redis_port, pg_dsn and loops_dir, got text"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "fx.yml")
+			require.NoError(t, os.WriteFile(path, []byte(tc.doc), 0o600))
+			_, err := LoadFixture(path)
+			require.Error(t, err)
+			msg := err.Error()
+			assert.NotContains(t, msg, "\n")
+			assert.Contains(t, msg, "is not the fixture's shape: "+tc.want)
+			assert.NotContains(t, msg, "map[string]")
+			assert.NotContains(t, msg, "struct {")
+			assert.NotContains(t, msg, "yaml:")
+		})
+	}
+	_, err := LoadFixture(filepath.Join(t.TempDir(), "absent.yml"))
+	assert.ErrorContains(t, err, "--fixture")
 }
 
 // A machine row's tla fact is the inventory's tla group and its nova_tla
@@ -285,7 +310,7 @@ func TestTLAMachinesAreTheTLAGroup(t *testing.T) {
 	assert.Equal(t, false, inv.Meta.Hostvars["bench-alpha"]["nova_tla"], "a view with no tla key")
 
 	path := filepath.Join(t.TempDir(), "fx.yml")
-	require.NoError(t, os.WriteFile(path, []byte("machines:\n  bench-alpha: {user: u, seat: s, slots: 1, tla: true}\n  bench-beta: {user: u, seat: s, slots: 1}\nfleet: {redis_port: 6380, pg_dsn: postgres://u@localhost:5432/nova}\n"), 0o600))
+	require.NoError(t, os.WriteFile(path, []byte("machines:\n  bench-alpha: {user: u, seat: s, slots: 1, tla: true}\n  bench-beta: {user: u, seat: s, slots: 1}\nfleet: {redis_port: 6380, pg_dsn: postgres://u@localhost:5432/nova, loops_dir: \"~/nova-bench/loops\"}\n"), 0o600))
 	snap, err := LoadFixture(path)
 	require.NoError(t, err)
 	assert.Equal(t, "true", snap.Machines["bench-alpha"]["tla"])
@@ -293,7 +318,7 @@ func TestTLAMachinesAreTheTLAGroup(t *testing.T) {
 	inv, err = BuildInventory(snap, "")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"bench-alpha"}, inv.TLA.Hosts)
-	empty, err := BuildInventory(&Snapshot{Fleet: View{"redis_port": "6380", "pg_dsn": "postgres://user@localhost:5432/nova"}}, "")
+	empty, err := BuildInventory(&Snapshot{Fleet: View{"redis_port": "6380", "pg_dsn": "postgres://user@localhost:5432/nova", "loops_dir": "~/nova-bench/loops"}}, "")
 	require.NoError(t, err)
 	assert.Equal(t, []string{}, empty.TLA.Hosts, "an empty group is [], never null")
 }

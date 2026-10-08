@@ -34,6 +34,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"sort"
@@ -60,7 +61,11 @@ import (
 // denialStat is the one question here that IS about the local machine — whether a denied
 // path is a directory — and it is a seam so the tests answer it the same way everywhere.
 // Without it they were asserting that the machine reading them has an `/opt`.
-var denialStat = os.Stat
+var denialStat statFunc = os.Stat
+
+// statFunc answers whether a path is a directory; printDenied and remedyDir take it as a
+// parameter, and denialStat is the production default a run passes.
+type statFunc func(string) (fs.FileInfo, error)
 
 // maxDenied is how many SANDBOX DENIED lines a run prints before one line stands for the
 // rest — rule 16's shape for a list. A command that died on its first syscall can trip
@@ -177,7 +182,7 @@ func outsideTheWall(denied []deniedPath, allowed []string) []deniedPath {
 //
 // The remedy names a DIRECTORY, because that is what the flags take: the path itself when
 // it is one, and its parent when it is a file.
-func printDenied(stderr io.Writer, denied []deniedPath, max int) {
+func printDenied(stderr io.Writer, denied []deniedPath, max int, stat statFunc) {
 	if len(denied) == 0 {
 		return
 	}
@@ -198,7 +203,7 @@ func printDenied(stderr io.Writer, denied []deniedPath, max int) {
 		}
 		fmt.Fprintf(stderr, "SANDBOX DENIED path=%s op=%s remedy=%s\n",
 			oneline.Field(d.Path), oneline.Field(d.Op),
-			oneline.Quote(flag+" "+remedyDir(d.Path)))
+			oneline.Quote(flag+" "+remedyDir(stat, d.Path)))
 	}
 	if rest := len(denied) - len(shown); rest > 0 {
 		fmt.Fprintf(stderr, "SANDBOX NOTE and %d more denied paths; the lines above are the first %d, and one --read of a shared parent usually answers several\n", rest, len(shown))
@@ -220,8 +225,8 @@ func insidePosix(p, dir string) bool {
 // remedyDir is the directory a flag would name for this path: the path when it is a
 // directory, its parent when it is a file, and its parent when it is neither — a path that
 // was denied may not exist, and the parent is the flag a caller can actually pass.
-func remedyDir(p string) string {
-	if fi, err := denialStat(p); err == nil && fi.IsDir() {
+func remedyDir(stat statFunc, p string) string {
+	if fi, err := stat(p); err == nil && fi.IsDir() {
 		return p
 	}
 	dir := path.Dir(p)

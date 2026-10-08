@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testgit"
 )
 
 // These tests exec whole programs -- the fake runner this package builds
@@ -30,7 +32,7 @@ func baseRepo(t *testing.T) (dir, sha string) {
 	git := func(args ...string) string {
 		t.Helper()
 		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		cmd.Env = testgit.Environ("GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "git %v: %v\n%s", args, err, out)
 		return strings.TrimSpace(string(out))
@@ -39,7 +41,7 @@ func baseRepo(t *testing.T) (dir, sha string) {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "internal", "decide"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "internal", "decide", "decide.go"), []byte("package decide\n"), 0o644))
 	git("add", ".")
-	git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base")
+	git("commit", "-q", "-m", "base")
 	return dir, git("rev-parse", "HEAD")
 }
 
@@ -49,10 +51,11 @@ func TestLintPathsResolveAtBase(t *testing.T) {
 	repo, sha := baseRepo(t)
 	bc := fullEvidence(repo)
 
-	// nx-f19: `PATHS: internal/decide/entry.go`, a file that does not exist at base.
-	fs := findingsFor(LintCardBase(baseCard(map[string]string{"base-sha": sha, "PATHS": "internal/decide/entry.go"}), bc), "paths-at-base")
+	// nx-f19: `PATHS: example.com/decide/entry.go`, a placeholder under a foreign
+	// root that does not exist at base.
+	fs := findingsFor(LintCardBase(baseCard(map[string]string{"base-sha": sha, "PATHS": "example.com/decide/entry.go"}), bc), "paths-at-base")
 	require.Len(t, fs, 1, "a PATHS file absent at base-sha is refused by name and sha, got %v", fs)
-	require.Contains(t, fs[0].Excerpt, "internal/decide/entry.go", "a PATHS file absent at base-sha is refused by name and sha, got %v", fs)
+	require.Contains(t, fs[0].Excerpt, "example.com/decide/entry.go", "a PATHS file absent at base-sha is refused by name and sha, got %v", fs)
 	require.Contains(t, fs[0].Excerpt, sha[:12], "a PATHS file absent at base-sha is refused by name and sha, got %v", fs)
 	require.Equal(t, 6, fs[0].Line, "the finding sits on the PATHS: line (6), got %d", fs[0].Line)
 
@@ -217,9 +220,9 @@ func addCommit(t *testing.T, dir, rel string) string {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, filepath.Dir(rel)), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, rel), []byte("package x\n"), 0o644))
 	var sha string
-	for _, args := range [][]string{{"add", "."}, {"-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "pr"}, {"rev-parse", "HEAD"}} {
+	for _, args := range [][]string{{"add", "."}, {"commit", "-q", "-m", "pr"}, {"rev-parse", "HEAD"}} {
 		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		cmd.Env = testgit.Environ("GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "git %v: %v\n%s", args, err, out)
 		sha = strings.TrimSpace(string(out))
@@ -242,9 +245,9 @@ func commitFileAt(t *testing.T, dir, rel, body string) string {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, filepath.Dir(rel)), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, rel), []byte(body), 0o644))
 	var sha string
-	for _, args := range [][]string{{"add", "."}, {"-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "tests"}, {"rev-parse", "HEAD"}} {
+	for _, args := range [][]string{{"add", "."}, {"commit", "-q", "-m", "tests"}, {"rev-parse", "HEAD"}} {
 		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		cmd.Env = testgit.Environ("GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "git %v: %v\n%s", args, err, out)
 		sha = strings.TrimSpace(string(out))

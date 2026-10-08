@@ -38,6 +38,9 @@ type Backend interface {
 	// stays in the table, its cells and its folds, and is not drawn (a friend's fleet row,
 	// sprint.FriendRow, in the stored view).
 	RowsHide(ctx context.Context, table string, rows []string) error
+	// RowsShow draws hidden rows again, as the table layer's row show does: an
+	// archived stream's rows of the work and merge tables (stream unarchive).
+	RowsShow(ctx context.Context, table string, rows []string) error
 	// RowsDel removes rows, with the cards placed in them (a row absent is
 	// skipped): the readers table's reader remove, which first refuses a row
 	// that holds a card (docs/SPEC-SPRINT.md section 6), and stream remove,
@@ -212,6 +215,18 @@ type OpRecord struct {
 	// Health is a friend's health observed (store/friends.go): its commit
 	// writes it as her friend-health record.
 	Health *sprint.FriendHealthWrite `json:"health,omitempty"`
+	// HealthClear is the friends whose friend-health record its commit removes
+	// (friend health --clear; the stall ladder's release).
+	HealthClear []string `json:"health_clear,omitempty"`
+	// CloseTimers is the ids of the timers this step closes (store/timers.go):
+	// its commit deletes only these ids from the timer record, read inside
+	// the same commit, so a timer set or cancelled while the step ran is not
+	// lost.
+	CloseTimers []string `json:"close_timers,omitempty"`
+	// Timers is the timer record the step leaves (store/timers.go): its
+	// commit writes it, so the timers it raised are closed in the same step
+	// as their judgment.
+	Timers *sprint.Timers `json:"timers,omitempty"`
 }
 
 // Tables is the stored table names of the record's manifests, in order.

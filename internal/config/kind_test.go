@@ -84,8 +84,8 @@ func TestTheMachineRowIsTheDeclaredFactsSomethingReads(t *testing.T) {
 }
 
 // TestTheFriendRowIsWhatSomeoneDecidesForHer: Glenn 2026-09-27, "anything
-// that a friend would just know, is runtime redis data". Four fields:
-// slots, tiers, roles and width (2026-10-02, the jobs she works at once); no
+// that a friend would just know, is runtime redis data". Her slots, tiers,
+// roles, width, mode, config_dir, token cap and optional work restriction; no
 // machine, harness, logins, wake or note; and no coordinator role, which is
 // the sprint row's.
 func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
@@ -93,7 +93,7 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 
 	friend, _ := Lookup(KindFriend)
 	scopedGot97 := strings.Join(friend.FieldNames(), ",")
-	require.Equal(t, "slots,tiers,roles,width,mode", scopedGot97, "friend fields %s, want slots,tiers,roles,width,mode", scopedGot97)
+	require.Equal(t, "slots,tiers,roles,width,mode,config_dir,token_cap,streams,kinds", scopedGot97, "friend fields %s, want slots,tiers,roles,width,mode,config_dir,token_cap,streams,kinds", scopedGot97)
 	for _, f := range friend.Fields {
 		scopedWant102 := f.Name == "slots" || f.Name == "tiers"
 		assert.Equal(t, scopedWant102, f.Required, "--%s required=%v, want %v", f.Name, f.Required, scopedWant102)
@@ -261,7 +261,7 @@ func TestTheFleetIsOneRowOfEndpointsAndMachineRefs(t *testing.T) {
 	require.True(t, fleet.Singleton, assertionMsg144...)
 	require.Equal(t, "fleet", fleet.Table, assertionMsg144...)
 	scopedGot169 := strings.Join(fleet.FieldNames(), ",")
-	require.Equal(t, "store,coordinator,redis_port,pg_dsn,bus", scopedGot169, "fleet fields %s", scopedGot169)
+	require.Equal(t, "store,coordinator,redis_port,pg_dsn,bus,loops_dir", scopedGot169, "fleet fields %s", scopedGot169)
 	for _, name := range []string{"store", "coordinator"} {
 		f, ok := fleet.Field(name)
 		require.True(t, ok)
@@ -276,13 +276,14 @@ func TestTheFleetIsOneRowOfEndpointsAndMachineRefs(t *testing.T) {
 			assert.False(t, f.Required, assertionMsg158...)
 		}()
 	}
-	row, err := fleet.NewRow(KindFleet, map[string]string{"store": "hulk"})
+	row, err := fleet.NewRow(KindFleet, map[string]string{"store": "hulk", "loops_dir": "~/nova-bench/loops"})
 	assertionMsg153 := []any{"fleet row %+v %v", row.Fields, err}
 	require.NoError(t, err, assertionMsg153...)
 	require.Equal(t, "hulk", row.Fields["store"], assertionMsg153...)
 	require.Equal(t, "", row.Fields["coordinator"], assertionMsg153...)
 	require.Empty(t, row.Fields["redis_port"], assertionMsg153...)
 	require.Equal(t, "", row.Fields["pg_dsn"], assertionMsg153...)
+	require.Equal(t, "~/nova-bench/loops", row.Fields["loops_dir"], assertionMsg153...)
 	{
 		_, err := fleet.NewRow(KindFleet, map[string]string{"store": "Hulk"})
 		assertionMsg156 := []any{"a ref that is not a name: %v", err}
@@ -300,19 +301,19 @@ func TestTheFleetIsOneRowOfEndpointsAndMachineRefs(t *testing.T) {
 		raw  map[string]string
 		want string
 	}{
-		{"zero port", map[string]string{"redis_port": "0"}, "1 through 65535"},
-		{"empty port", map[string]string{"redis_port": ""}, "non-negative integer"},
-		{"large port", map[string]string{"redis_port": "65536"}, "1 through 65535"},
-		{"malformed dsn", map[string]string{"pg_dsn": "not a URI"}, "password-free postgres://"},
-		{"password in userinfo", map[string]string{"pg_dsn": "postgres://user:do-not-print@localhost:5432/nova"}, "carries a password"},
-		{"password in query", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print"}, "carries a password"},
-		{"encoded mixed-case password key", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?%70aSsWoRd=do-not-print"}, "carries a password"},
-		{"semicolon query", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print;sslmode=disable"}, "valid URI query"},
-		{"invalid query escape", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print%zz"}, "valid URI query"},
-		{"zero Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:0/nova"}, "TCP port from 1 through 65535"},
-		{"large Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:65536/nova"}, "TCP port from 1 through 65535"},
-		{"empty Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:/nova"}, "TCP port from 1 through 65535"},
-		{"nonnumeric Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:do-not-print/nova"}, "password-free postgres://"},
+		{"zero port", map[string]string{"redis_port": "0", "loops_dir": "~/nova-bench/loops"}, "1 through 65535"},
+		{"empty port", map[string]string{"redis_port": "", "loops_dir": "~/nova-bench/loops"}, "non-negative integer"},
+		{"large port", map[string]string{"redis_port": "65536", "loops_dir": "~/nova-bench/loops"}, "1 through 65535"},
+		{"malformed dsn", map[string]string{"pg_dsn": "not a URI", "loops_dir": "~/nova-bench/loops"}, "password-free postgres://"},
+		{"password in userinfo", map[string]string{"pg_dsn": "postgres://user:do-not-print@localhost:5432/nova", "loops_dir": "~/nova-bench/loops"}, "carries a password"},
+		{"password in query", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print", "loops_dir": "~/nova-bench/loops"}, "carries a password"},
+		{"encoded mixed-case password key", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?%70aSsWoRd=do-not-print", "loops_dir": "~/nova-bench/loops"}, "carries a password"},
+		{"semicolon query", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print;sslmode=disable", "loops_dir": "~/nova-bench/loops"}, "valid URI query"},
+		{"invalid query escape", map[string]string{"pg_dsn": "postgres://user@localhost:5432/nova?password=do-not-print%zz", "loops_dir": "~/nova-bench/loops"}, "valid URI query"},
+		{"zero Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:0/nova", "loops_dir": "~/nova-bench/loops"}, "TCP port from 1 through 65535"},
+		{"large Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:65536/nova", "loops_dir": "~/nova-bench/loops"}, "TCP port from 1 through 65535"},
+		{"empty Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:/nova", "loops_dir": "~/nova-bench/loops"}, "TCP port from 1 through 65535"},
+		{"nonnumeric Postgres port", map[string]string{"pg_dsn": "postgres://user@localhost:do-not-print/nova", "loops_dir": "~/nova-bench/loops"}, "password-free postgres://"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -321,11 +322,11 @@ func TestTheFleetIsOneRowOfEndpointsAndMachineRefs(t *testing.T) {
 			assert.NotContains(t, err.Error(), "do-not-print")
 		})
 	}
-	row, err = fleet.NewRow(KindFleet, map[string]string{"redis_port": "6380", "pg_dsn": "postgres://user@localhost:5432/nova"})
+	row, err = fleet.NewRow(KindFleet, map[string]string{"redis_port": "6380", "pg_dsn": "postgres://user@localhost:5432/nova", "loops_dir": "~/nova-bench/loops"})
 	require.NoError(t, err)
 	assert.Equal(t, "6380", row.Fields["redis_port"])
 	assert.Equal(t, "postgres://user@localhost:5432/nova", row.Fields["pg_dsn"])
-	_, err = fleet.NewRow(KindFleet, map[string]string{"pg_dsn": "postgres://user@localhost/nova?sslmode=require&application_name=nova%3Bconfig"})
+	_, err = fleet.NewRow(KindFleet, map[string]string{"pg_dsn": "postgres://user@localhost/nova?sslmode=require&application_name=nova%3Bconfig", "loops_dir": "~/nova-bench/loops"})
 	assert.NoError(t, err, "an omitted port and a percent-encoded query value are valid")
 }
 
@@ -584,4 +585,174 @@ func TestCheckFleetRefusesASpacePaddedPasswordKey(t *testing.T) {
 	row = Row{Name: KindFleet, Fields: map[string]string{"pg_dsn": "postgres://cfgu@db.invalid:5432/nova"}}
 	err = fleet.Check(row)
 	require.NoError(t, err)
+}
+
+// noLibrary is the RedisApplier with Prepare answered: miniredis has no
+// FUNCTION command, and the fleet and loop writes apply makes are plain SET,
+// SADD and HSET that need no library.
+type noLibrary struct{ *RedisApplier }
+
+func (noLibrary) Prepare(context.Context) error { return nil }
+
+// TestLoopLogIsTheFleetRowsDirectory: a loop's log path is the fleet row's
+// loops_dir and its name, so the value migration 0033 seeds reproduces
+// today's literal, another directory changes it, and a row that carries no
+// directory is refused by the kind's Check with a remedy naming the set that
+// declares one. apply writes that path into the loop's hash, on a first
+// apply and on a later one of the loop kind alone.
+func TestLoopLogIsTheFleetRowsDirectory(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	fleet, _ := Lookup(KindFleet)
+	machine, _ := Lookup(KindMachine)
+	loop, _ := Lookup(KindLoop)
+
+	assert.Equal(t, "~/nova-bench/loops/member-m1.log", LoopLog("~/nova-bench/loops", "member-m1"), "the seeded value reproduces today's string for a name")
+	assert.Equal(t, "/var/loops/tick.log", LoopLog("/var/loops", "tick"), "another directory changes it")
+	for _, raw := range []map[string]string{{}, {"loops_dir": ""}, {"loops_dir": "   "}} {
+		_, err := fleet.NewRow(KindFleet, raw)
+		require.Error(t, err, "a row carrying %q", raw["loops_dir"])
+		assert.ErrorContains(t, err, "--loops_dir wants a non-empty directory path")
+		assert.ErrorContains(t, err, "nova-config fleet set --loops_dir")
+	}
+	assert.NoError(t, fleet.Check(Row{Name: KindFleet, Fields: map[string]string{"loops_dir": "/valid/path"}}))
+
+	// A fleet row as migration 0033 seeds it, one machine and one loop on
+	// it, applied into a store that holds none of them yet. The in-memory
+	// store carries the seed the migration writes, and no code default does.
+	st := NewMem()
+	seeded, _, err := st.Get(ctx, KindFleet, KindFleet)
+	require.NoError(t, err)
+	assert.Equal(t, "~/nova-bench/loops", seeded.Fields["loops_dir"], "NewMem carries the seed")
+	field, _ := fleet.Field("loops_dir")
+	assert.Empty(t, field.Default, "loops_dir has no code default")
+	all, err := Migrations()
+	require.NoError(t, err)
+	var seed string
+	for _, mg := range all {
+		if mg.Version == 33 {
+			seed = mg.SQL
+		}
+	}
+	assert.Contains(t, seed, "loops_dir text NOT NULL DEFAULT '~/nova-bench/loops'", "migration 0033 seeds the value NewMem carries")
+	m1, err := machine.NewRow("m1", map[string]string{"user": "u", "seat": "s", "slots": "4"})
+	require.NoError(t, err)
+	_, err = st.Insert(ctx, KindMachine, m1, "t")
+	require.NoError(t, err)
+	_, _, err = st.Update(ctx, KindFleet, KindFleet, map[string]string{"redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"}, "t")
+	require.NoError(t, err)
+	l1, err := loop.NewRow("member-m1", map[string]string{"machine": "m1", "argv": `["/bin/member"]`, "keepalive": "true"})
+	require.NoError(t, err)
+	_, err = st.Insert(ctx, KindLoop, l1, "t")
+	require.NoError(t, err)
+
+	applier, c, _ := coverStore(t)
+	a := noLibrary{applier}
+	_, err = Apply(ctx, st, a, KindFleet, "t", false, func(Op) {})
+	require.NoError(t, err)
+	_, err = Apply(ctx, st, a, KindLoop, "t", false, func(Op) {})
+	require.NoError(t, err)
+	assert.Equal(t, "~/nova-bench/loops/member-m1.log", c.HGet(ctx, LoopKey("member-m1"), "log").Val(), "the first apply writes the seeded path")
+
+	// A later run that applies the loop kind alone takes the directory from
+	// the store's fleet row: the rewritten hash keeps the same log.
+	_, _, err = st.Update(ctx, KindLoop, "member-m1", map[string]string{"every": "60", "keepalive": "false"}, "t")
+	require.NoError(t, err)
+	_, err = Apply(ctx, st, noLibrary{&RedisApplier{Client: c}}, KindLoop, "t", false, func(Op) {})
+	require.NoError(t, err)
+	assert.Equal(t, "60", c.HGet(ctx, LoopKey("member-m1"), "every").Val(), "the loop kind alone wrote the row again")
+	assert.Equal(t, "~/nova-bench/loops/member-m1.log", c.HGet(ctx, LoopKey("member-m1"), "log").Val(), "the store's fleet row is the directory")
+}
+
+// TestLoopApplyAloneTakesTheStoresDirectory: apply of the loop kind alone,
+// into a Redis that holds no applied fleet row, writes the log path the
+// store's fleet row decides, and a store whose fleet row carries no directory
+// is refused with the set that declares one, writing no hash.
+func TestLoopApplyAloneTakesTheStoresDirectory(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	machine, _ := Lookup(KindMachine)
+	loop, _ := Lookup(KindLoop)
+	store := func(loopsDir string) *Mem {
+		st := NewMem()
+		m1, err := machine.NewRow("m1", map[string]string{"user": "u", "seat": "s", "slots": "4"})
+		require.NoError(t, err)
+		_, err = st.Insert(ctx, KindMachine, m1, "t")
+		require.NoError(t, err)
+		// The fleet row carries the directory given; "" is a row that carries
+		// none, which no write through the kind's Check can leave.
+		st.rows[KindFleet][KindFleet].Fields["loops_dir"] = loopsDir
+		l1, err := loop.NewRow("member-m1", map[string]string{"machine": "m1", "argv": `["/bin/member"]`, "keepalive": "true"})
+		require.NoError(t, err)
+		_, err = st.Insert(ctx, KindLoop, l1, "t")
+		require.NoError(t, err)
+		return st
+	}
+
+	applier, c, _ := coverStore(t)
+	_, err := Apply(ctx, store("~/nova-bench/loops"), noLibrary{applier}, KindLoop, "t", false, func(Op) {})
+	require.NoError(t, err)
+	assert.Equal(t, "~/nova-bench/loops/member-m1.log", c.HGet(ctx, LoopKey("member-m1"), "log").Val(), "the store's fleet row is the directory when Redis holds no applied fleet row")
+
+	applier, c, _ = coverStore(t)
+	_, err = Apply(ctx, store(""), noLibrary{applier}, KindLoop, "t", false, func(Op) {})
+	require.ErrorIs(t, err, ErrInvalid)
+	assert.ErrorContains(t, err, "run: nova-config fleet set --loops_dir <path>")
+	assert.Zero(t, c.Exists(ctx, LoopKey("member-m1")).Val(), "a refused apply writes no hash")
+}
+
+// A friend's token cap defaults to 6000000, and 0 is no cap rather than the default.
+func TestAFriendsTokenCapDefaultsToSixMillionAndZeroIsNone(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, int64(6000000), FriendTokenCap(Row{}))
+	assert.Equal(t, int64(6000000), FriendTokenCap(Row{Fields: map[string]string{}}))
+	assert.Equal(t, int64(0), FriendTokenCap(Row{Fields: map[string]string{"token_cap": "0"}}))
+	assert.Equal(t, int64(100), FriendTokenCap(Row{Fields: map[string]string{"token_cap": "100"}}))
+	assert.Equal(t, int64(6000000), FriendTokenCap(Row{Fields: map[string]string{"token_cap": "-1"}}))
+	assert.Equal(t, int64(6000000), FriendTokenCap(Row{Fields: map[string]string{"token_cap": "nope"}}))
+	friend, ok := Lookup(KindFriend)
+	require.True(t, ok)
+	row, err := friend.NewRow("amy", map[string]string{"slots": "1", "tiers": "flash"})
+	require.NoError(t, err)
+	assert.Equal(t, "6000000", row.Fields["token_cap"], "add with no token_cap stores the default")
+	row, err = friend.NewRow("amy", map[string]string{"slots": "1", "tiers": "flash", "token_cap": "0"})
+	require.NoError(t, err)
+	assert.Equal(t, "0", row.Fields["token_cap"], "an explicit 0 is stored, and is no cap")
+	_, err = friend.NewRow("amy", map[string]string{"slots": "1", "tiers": "flash", "token_cap": "-1"})
+	require.Error(t, err)
+}
+
+// A friend row's config_dir is optional, and absolute when set: CLAUDE_CONFIG_DIR
+// is read as given, never expanded.
+func TestAFriendRowsConfigDirIsAbsoluteWhenSet(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ dir, want string }{
+		{"", ""},
+		{"/accounts/heavy-a", ""},
+		{"~/accounts/heavy-a", "want --config_dir <an absolute path>"},
+		{"accounts", "want --config_dir <an absolute path>"},
+	} {
+		t.Run(tc.dir, func(t *testing.T) {
+			t.Parallel()
+			err := checkFriend(Row{Name: "amy", Fields: map[string]string{"config_dir": tc.dir}})
+			if tc.want == "" {
+				assert.NoError(t, err)
+			} else {
+				assert.ErrorContains(t, err, tc.want)
+			}
+		})
+	}
+}
+
+// A friend row's streams restriction is a comma list of globs the matcher reads: a
+// pattern it cannot parse is refused with the field named.
+func TestFriendStreamRestrictionRejectsMalformedGlob(t *testing.T) {
+	t.Parallel()
+	friend, ok := Lookup(KindFriend)
+	require.True(t, ok)
+	err := friend.Check(Row{Name: "friend-a", Fields: map[string]string{"width": "1", "streams": "["}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid stream glob")
 }

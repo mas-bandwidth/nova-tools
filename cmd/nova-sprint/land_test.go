@@ -40,6 +40,9 @@ func newLandRig(t *testing.T) *landRig {
 	r.git("", "clone", "-q", r.remote, r.worker)
 	r.commit("README", "base\n", "base")
 	r.git(r.worker, "push", "-q", "origin", "HEAD:refs/heads/main")
+	// a fetch, not the push, writes the worker's remote-tracking refs: a push updates
+	// them only as a side effect, and r.head starts each card from refs/remotes/origin
+	r.git(r.worker, "fetch", "-q", "origin")
 	r.git("", "clone", "-q", r.remote, r.clone)
 	r.a.gitEnv = r.env
 	r.a.landRoot = func() (string, error) { return filepath.Join(r.dir, "land"), nil }
@@ -100,6 +103,19 @@ func (r *landRig) queued(heads map[string]string, order ...string) {
 	r.ok("read --as reader-a --ok --limit 100")
 	r.ok("read --as reader-b --ok --limit 100")
 	r.ok("accept --read-ok")
+	r.markProtected()
+}
+
+// markProtected marks every stream on the table to land on the protected branches of
+// every repository (docs/SPEC-SPRINT.md section 7), as a promotion stream is: the rig's
+// origin has one branch, main, and its cards land there.
+func (ta *testApp) markProtected() {
+	ta.t.Helper()
+	st, err := ta.a.store(common{redis: "mem:0", actor: "tester"})
+	require.NoError(ta.t, err)
+	s, err := st.Load(context.Background(), []string{sprint.Work, sprint.Merge}, nil)
+	require.NoError(ta.t, err)
+	ta.ok("stream set " + strings.Join(s.Streams(), " ") + " --land-protected " + sprint.LandProtectedAny)
 }
 
 // places is each card's place in the work table and the merge table.
@@ -179,18 +195,22 @@ func TestLandFetchesTheBaseAndTheBatchsHeadsAndNoOtherBranch(t *testing.T) {
 	r.clean()
 }
 
-// A head that does not merge ends its batch: the cards before it land, it is
-// reported with the merge step's conflict fact carrying git's words, and the
-// card behind it stays queued.
-
-func TestLandStopsAtAHeadThatDoesNotMerge(t *testing.T) {
+// A head that does not merge is the card's own refusal and stops nothing (the owner,
+// 2026-10-06: "There should be no manual step you need to remember to do. Just a
+// notification."): the cards before it land, it is reported with the merge step's conflict
+// fact carrying git's words, which reworks it at the tip, its finished head the base its next
+// attempt is staged from, and the card behind it lands in the same pass; the seat is told
+// once. A head origin does not hold is the lander's failure, not the card's: the stream stops
+// for a mind, and the card behind it stays queued.
+func TestAConflictingCardIsReworkedAndTheStreamLandsOn(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, why string
 		second    func(r *landRig) string
+		stops     bool
 	}{
-		{"a conflicting head", "does not merge", func(r *landRig) string { return r.head("s1-2", "main", "s1-1.txt", "other\n") }},
-		{"a missing head", "is missing", func(*landRig) string { return strings.Repeat("ab", 20) }},
+		{"a conflicting head", "does not merge", func(r *landRig) string { return r.head("s1-2", "main", "s1-1.txt", "other\n") }, false},
+		{"a missing head", "is missing", func(*landRig) string { return strings.Repeat("ab", 20) }, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -199,14 +219,31 @@ func TestLandStopsAtAHeadThatDoesNotMerge(t *testing.T) {
 			heads := map[string]string{"s1-1": r.head("s1-1", "main", "s1-1.txt", "one\n"), "s1-2": tc.second(r), "s1-3": r.head("s1-3", "main", "s1-3.txt", "three\n")}
 			r.queued(heads, "s1-1", "s1-2", "s1-3")
 			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
-			assert.Equal(t, 1, code)
+			assert.Equal(t, 1, code, "a refusal is reported")
 			assert.Contains(t, out, "LAND OK stream=s1 cards=1 base=main")
 			assert.Contains(t, errs, "LAND REFUSED stream=s1 cards=1 base=- tip=- ids=s1-2 fact=conflict reason=the head "+heads["s1-2"]+" of s1-2 "+tc.why)
-			assert.Contains(t, errs, "LAND DONE batches=1 cards=1 refused=1")
-			assert.Equal(t, []string{"land s1-1 (sprint stream s1)", "base"}, r.mainLog())
-			assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "merging/stuck", "s1-3": "merging/queued"}, r.places("s1-1", "s1-2", "s1-3"))
-			assert.Equal(t, "stopped conflict", r.streamState("s1"))
-			assert.Contains(t, r.ok("inbox"), "stream stopped: conflict on a card")
+			inbox := r.ok("inbox")
+			if tc.stops {
+				assert.Contains(t, errs, "LAND DONE batches=1 cards=1 refused=1")
+				assert.Equal(t, []string{"land s1-1 (sprint stream s1)", "base"}, r.mainLog())
+				assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "merging/stuck", "s1-3": "merging/queued"}, r.places("s1-1", "s1-2", "s1-3"))
+				assert.Equal(t, "stopped conflict", r.streamState("s1"))
+				assert.Contains(t, inbox, sprint.NConflict)
+				r.clean()
+				return
+			}
+			assert.Contains(t, errs, "NOTE the card is reworked at the tip and stream s1 goes on; the seat is told")
+			assert.Contains(t, errs, "LAND DONE batches=2 cards=2 refused=1")
+			assert.Equal(t, []string{"land s1-3 (sprint stream s1)", "land s1-1 (sprint stream s1)", "base"}, r.mainLog(), "s1-3 lands in the same pass")
+			assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "ready/returned", "s1-3": "landed/merged"}, r.places("s1-1", "s1-2", "s1-3"))
+			assert.Equal(t, "waiting", r.streamState("s1"), "no stop: its one open card is reworked")
+			var v cardView
+			r.json("card s1-2", &v)
+			// staging starts the next attempt from the refused head, carried onto the tip
+			assert.Equal(t, sprint.Base{Attempt: 1, Head: heads["s1-2"]}, sprint.BaseOf(v.Work))
+			assert.Contains(t, v.Primary.F("fix"), "the landing refused this head: the head "+heads["s1-2"]+" of s1-2 "+tc.why)
+			assert.NotContains(t, inbox, sprint.NConflict)
+			assert.Equal(t, 1, strings.Count(inbox, sprint.NLandRefused), "one notice: %s", inbox)
 			r.clean()
 		})
 	}
@@ -280,6 +317,7 @@ func TestLandReportsItsCardsWhenAnotherIsQueuedAheadUnderThePush(t *testing.T) {
 		r.ok("accept --read-ok")
 	}
 	accept("s1-2", "s1-3")
+	r.markProtected()
 	once := false
 	r.a.beforePush = func(int) {
 		if !once {
@@ -385,6 +423,8 @@ func TestLandTwoStreamsAsTheirOwnBatches(t *testing.T) {
 		require.NoError(t, os.WriteFile(path, []byte(passingBrief("REPO: "+r.remote+"\nBASE: "+base+"\n\nWrite "+id+".txt.")), 0o600))
 		return path
 	}
+	r.promotionStream("s1") // its cards are cut on main, which the promotion stream alone takes
+	r.promotionStream("s2")
 	r.ok("add --stream s1 --brief-file " + brief("a", "main") + " --brief-file " + brief("b", "main"))
 	r.ok("add --stream s2 --brief-file " + brief("c", "main") + " --brief-file " + brief("d", "alt"))
 	heads := map[string]string{}
@@ -464,6 +504,7 @@ func TestLandReviewClonesOfTwoRepositoriesNeverShareADirectory(t *testing.T) {
 	briefs := t.TempDir()
 	path := filepath.Join(briefs, "a.md")
 	require.NoError(t, os.WriteFile(path, []byte(passingBrief("REPO: "+r.remote+"\nBASE: main\n\nWrite a.txt.")), 0o600))
+	r.promotionStream("s1") // the card is cut on main, which the promotion stream alone takes
 	r.ok("add --stream s1 a --one --brief-file " + path)
 	r.queued(map[string]string{"a": r.head("a", "main", "a.txt", "a\n")}, "a")
 	before, otherBefore := r.git(r.remote, "rev-parse", "main"), r.git(other, "rev-parse", "main")
@@ -610,6 +651,7 @@ func TestLandHoldsEveryPushURLToTheRepository(t *testing.T) {
 			briefs := t.TempDir()
 			path := filepath.Join(briefs, "a.md")
 			require.NoError(t, os.WriteFile(path, []byte(passingBrief("REPO: "+r.remote+"\nBASE: main\n\nWrite a.txt.")), 0o600))
+			r.promotionStream("s1") // the card is cut on main, which the promotion stream alone takes
 			r.ok("add --stream s1 a --one --brief-file " + path)
 			r.queued(map[string]string{"a": r.head("a", "main", "a.txt", "a\n")}, "a")
 			before, otherBefore := r.git(r.remote, "rev-parse", "main"), r.git(other, "rev-parse", "main")
@@ -640,7 +682,7 @@ func TestLandChecksNewFilesAgainstTheTypedHeader(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			r := newLandRig(t)
-			brief := writeNeedsBrief(t, t.TempDir(), "a", "RESULT: a\nPATHS: a.txt\n"+tc.scope, "")
+			brief := writeNeedsBrief(t, t.TempDir(), "a", "RESULT: a tier: flash\nPATHS: a.txt\n"+tc.scope, "")
 			r.ok("add --stream s1 a --one --brief-file " + brief)
 			head := r.head("a", "main", tc.file, "added\n")
 			r.queued(map[string]string{"a": head}, "a")
@@ -653,7 +695,7 @@ func TestLandChecksNewFilesAgainstTheTypedHeader(t *testing.T) {
 			} else {
 				assert.Equal(t, 1, code, out+errs)
 				assert.Contains(t, errs, "it changes files outside its PATHS (E12): "+tc.file)
-				assert.Equal(t, map[string]string{"a": "merging/stuck"}, r.places("a"))
+				assert.Equal(t, map[string]string{"a": "review/returned"}, r.places("a"))
 				assert.Equal(t, before, r.git(r.remote, "rev-parse", "main"))
 			}
 			r.clean()
@@ -669,10 +711,11 @@ func TestLandChecksNewFilesAgainstTheTypedHeader(t *testing.T) {
 func TestLandEndsTheBatchAtACardThatFailsTheMechanicalChecks(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, file, text, why string
+		name, file, text, why, place string
 	}{
-		{"a file outside its PATHS", "other.txt", "other\n", "fails the lander's checks: it changes files outside its PATHS (E12): other.txt"},
-		{"a stranded fragment", "doc.md", "the box holds\nThe box is full.\n", `fails the lander's checks: doc.md:2 leaves a sentence fragment: "the box holds" is followed by a new sentence, "The box is full." (E4)`},
+		// files outside its PATHS go back to review for the widen rule; any other check reworks it
+		{"a file outside its PATHS", "other.txt", "other\n", "fails the lander's checks: it changes files outside its PATHS (E12): other.txt", "review/returned"},
+		{"a stranded fragment", "doc.md", "the box holds\nThe box is full.\n", `fails the lander's checks: doc.md:2 leaves a sentence fragment: "the box holds" is followed by a new sentence, "The box is full." (E4)`, "ready/returned"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -688,7 +731,7 @@ func TestLandEndsTheBatchAtACardThatFailsTheMechanicalChecks(t *testing.T) {
 				if id == "c2" {
 					paths += ", doc.md"
 				}
-				briefs += " --brief-file " + writeNeedsBrief(t, dir, id, "Fix "+id+".\nPATHS: "+paths, "")
+				briefs += " --brief-file " + writeNeedsBrief(t, dir, id, "Fix "+id+". tier: flash\nPATHS: "+paths, "")
 			}
 			r.ok("add --stream s1" + briefs)
 			heads := map[string]string{"c1": r.head("c1", "main", "c1.txt", "one\n"), "c2": r.head("c2", "main", tc.file, tc.text), "c3": r.head("c3", "main", "c3.txt", "three\n")}
@@ -697,9 +740,36 @@ func TestLandEndsTheBatchAtACardThatFailsTheMechanicalChecks(t *testing.T) {
 			assert.Equal(t, 1, code, out+errs)
 			assert.Contains(t, out, "LAND OK stream=s1 cards=1 base=main")
 			assert.Contains(t, errs, "LAND REFUSED stream=s1 cards=1 base=- tip=- ids=c2 fact=conflict reason=the head "+heads["c2"]+" of c2 "+tc.why)
-			assert.Equal(t, []string{"land c1 (sprint stream s1)", "the doc", "base"}, r.mainLog())
-			assert.Equal(t, map[string]string{"c1": "landed/merged", "c2": "merging/stuck", "c3": "merging/queued"}, r.places("c1", "c2", "c3"))
+			// the stream goes on: c3 lands in the same pass
+			assert.Equal(t, []string{"land c3 (sprint stream s1)", "land c1 (sprint stream s1)", "the doc", "base"}, r.mainLog())
+			assert.Equal(t, map[string]string{"c1": "landed/merged", "c2": tc.place, "c3": "landed/merged"}, r.places("c1", "c2", "c3"))
 			r.clean()
 		})
 	}
+}
+
+// A card based on a protected branch (dev, main) is refused at land, dry run and land
+// alike, before any git, in a stream not marked for its repository, with the mark as
+// the remedy; once marked, the stream lands (docs/SPEC-SPRINT.md section 7).
+func TestLandRefusesAProtectedBaseUntilTheStreamIsMarked(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.ok("add --stream s1 --count 1 --one")
+	r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n")}, "s1-1")
+	r.ok("stream set s1 --land-protected default")
+	before := r.git(r.remote, "rev-parse", "main")
+	why := "reason=card s1-1 lands on main, a protected branch of its repository (it names no REPO: line), and stream s1 is not marked to land on it"
+	for _, land := range []string{"land --repo-dir " + r.clone + " --base main --dry-run", "land --repo-dir " + r.clone + " --base main"} {
+		code, out, errs := r.do(land)
+		assert.Equal(t, 1, code, land)
+		assert.Contains(t, out+errs, "LAND REFUSED stream=s1 cards=1 base=main tip=- ids=s1-1 ", land)
+		assert.Contains(t, out+errs, why, land)
+		assert.Contains(t, out+errs, "; run: nova-sprint stream set s1 --land-protected any; or mark it the promotion stream, for every repository: nova-sprint stream set s1 --promotion\n", land)
+	}
+	assert.Equal(t, before, r.git(r.remote, "rev-parse", "main"), "nothing was pushed")
+	assert.Equal(t, map[string]string{"s1-1": "merging/queued"}, r.places("s1-1"), "nothing was recorded")
+
+	r.ok("stream set s1 --land-protected any")
+	assert.Contains(t, r.ok("land --repo-dir "+r.clone+" --base main"), "LAND OK stream=s1 cards=1 base=main")
+	assert.Equal(t, []string{"land s1-1 (sprint stream s1)", "base"}, r.mainLog())
 }

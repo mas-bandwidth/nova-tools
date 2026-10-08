@@ -80,7 +80,7 @@ func sameDir(a, b string) bool {
 // case-sensitive APFS image mounted under the folding `/Volumes`, `dirFoldsCase(<mnt>)`
 // answered true while a file written inside the volume said false, and `LoadWorker` then
 // REFUSED a sound `<mnt>/Worker-1/.key` -- and read the other way, a folding volume under a
-// case-sensitive parent would admit a folded slot. Both eyes of #159 found it (Stella, comment
+// case-sensitive parent would admit a folded slot. Both eyes of #159 found it (a friend, comment
 // 5648066751; the Fable read, comment 5648102050). The question is about CHILDREN of dir, so it
 // is put to dir: one probe file written there and asked for again in another case.
 //

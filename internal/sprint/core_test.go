@@ -15,6 +15,7 @@ func TestLifecycleIsTheSpecTable(t *testing.T) {
 	legal := map[[2]State]bool{
 		{Waiting, Ready}: true, {Ready, Working}: true, {Working, Review}: true, {Working, Ready}: true,
 		{Review, Merging}: true, {Review, Working}: true, {Review, Ready}: true, {Merging, Review}: true, {Merging, Landed}: true,
+		{Merging, Working}: true, {Merging, Ready}: true,
 		{Waiting, Landed}: true, {Ready, Waiting}: true, // a sentinel released; a sentinel inserted in front
 	}
 	for _, a := range States {
@@ -78,20 +79,25 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 	require.Len(t, ask.Units, 3, "ask dealt %d primaries, want the 3 that came back ok (failed work is not read)", len(ask.Units))
 	for _, id := range []string{"s1-1", "s1-2", "s1-3"} {
 		reads := readsAt(w.s, w.s.Work.Card(id), 1)
-		require.Len(t, reads, 2, "%s asked of %d readers: %v", id, len(reads), reads)
-		require.NotEqual(t, reads[0].F("reader"), reads[1].F("reader"), "%s asked of %d readers: %v", id, len(reads), reads)
+		require.Len(t, reads, 2, "%s asked of %d readers: %v (a card's reads are asked together)", id, len(reads), reads)
 	}
 	w.clean("ask")
 
 	// One reader's ok is never enough.
 	first := readsAt(w.s, w.s.Work.Card("s1-1"), 1)
-	w.must(Read(w.s, ReadReq{As: first[0].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{first[0].ID}}}))
+	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: first[0].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{first[0].ID}}}))
 	acc := Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{"s1-1"}}})
 	require.Empty(t, acc.Units, "accept with one ok: %+v", acc)
 	require.Len(t, acc.Refused, 1, "accept with one ok: %+v", acc)
 	require.Contains(t, acc.Refused[0].Why, "two different readers", "accept with one ok: %+v", acc)
-	w.must(Read(w.s, ReadReq{As: first[1].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{first[1].ID}}}))
-	require.Len(t, w.notesOf(NReadyToAccept), 1, "ready-to-accept notes: %d", len(w.notesOf(NReadyToAccept)))
+	// the second read was asked with the first, of a different reader
+	first = readsAt(w.s, w.s.Work.Card("s1-1"), 1)
+	require.Len(t, first, 2)
+	require.NotEqual(t, first[0].F("reader"), first[1].F("reader"))
+	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: first[1].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{first[1].ID}}}))
+	// the tick's to accept, no judgment (2026-10-06); the coordinator's accept takes it too
+	require.Empty(t, w.notesOf(NReadyToAccept), "ready-to-accept notes: %d", len(w.notesOf(NReadyToAccept)))
+	require.True(t, tickTakes(w, "s1-1"), "the tick accepts s1-1 on its two oks")
 	w.must(Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	require.Equal(t, Merging, w.state("s1-1"), "accept: work %s", w.state("s1-1"))
 	require.Equal(t, Queued, w.s.Merge.Placed("s1-1").Col, "accept: work %s", w.state("s1-1"))
@@ -100,7 +106,7 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 
 	// A broken read, rework with the finding; the fixed work is asked of two different readers again.
 	second := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
-	w.must(Read(w.s, ReadReq{As: second[0].F("reader"), Verdict: "broken", Finding: "line 1: off by one", Sel: Sel{IDs: []string{second[0].ID}}}))
+	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: second[0].F("reader"), Verdict: "broken", Finding: "line 1: off by one", Sel: Sel{IDs: []string{second[0].ID}}}))
 	require.Len(t, w.openOn("s1-2"), 1, "a broken read is not an open judgment")
 	score := w.s.Work.Card("s1-2").Score
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-2"}}, Fix: "off by one"}))
@@ -117,8 +123,7 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 	w.must(Finish(w.s, FinishReq{As: member, Sel: Sel{IDs: []string{card}}, Gens: gensOf(w.s, card)}))
 	w.must(Ask(w.s, AskReq{})) // the machine's ask: round the readers
 	again := readsAt(w.s, w.s.Work.Card("s1-2"), 2)
-	require.Len(t, again, 2, "fixed work not asked of two different readers: %v", again)
-	require.NotEqual(t, again[0].F("reader"), again[1].F("reader"), "fixed work not asked of two different readers: %v", again)
+	require.Len(t, again, 2, "fixed work not asked both its reads together: %v", again)
 	w.clean("fixed work returned")
 
 	// Merge the one accepted primary; the stream is not landed until all are.
@@ -247,9 +252,7 @@ func accepted(w *world, ids ...string) {
 	}
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: ids}}))
 	for _, id := range ids {
-		for _, rc := range readsAt(w.s, w.s.Work.Card(id), w.s.Work.Card(id).Int("attempt")) {
-			w.must(Read(w.s, ReadReq{As: rc.F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{rc.ID}}}))
-		}
+		readOK(w, id) // every read it needs, asked together
 	}
 	w.must(Accept(w.s, AcceptReq{Sel: Sel{IDs: ids}}))
 }
@@ -280,17 +283,21 @@ func TestDropTakesItsCardsAndBlocksWhatNeedsIt(t *testing.T) {
 	w.must(Add(w.s, AddReq{Stream: "s1", IDs: []string{"later"}, Needs: []string{"s1-1"}}))
 	require.Equal(t, Waiting, w.state("later"), "a primary with needs is %s", w.state("later"))
 	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1"}}}))
-	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "obsolete"}))
-	require.Equal(t, "", w.state("s1-1"), "drop left cards behind")
-	require.Equal(t, "dropped", w.s.Work.Card("s1-1").F("outcome"), "drop left cards behind")
-	require.Nil(t, w.s.Fleet.Placed("s1-1.w1"), "drop left cards behind")
-	require.Len(t, w.notesOf(NBlocked), 1, "the waiting primary is not reported blocked")
-	require.Len(t, w.openOn("later"), 1, "the waiting primary is not reported blocked")
+	p := Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "obsolete"})
+	require.Len(t, p.Refused, 1, "a needed card dropped without cascade: %+v", p)
+	require.Equal(t, "s1-1", p.Refused[0].Key, "a needed card dropped without cascade: %+v", p)
+	require.Contains(t, p.Refused[0].Why, "later", "the refusal names the dependant: %+v", p)
+	require.Equal(t, Working, w.state("s1-1"), "the refusal left the card: %s", w.state("s1-1"))
+	require.Empty(t, w.notesOf(NBlocked), "the refusal wrote a blocked note")
+	// cascade drops the dependant too, with no blocked note
+	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "obsolete", Cascade: true}))
+	require.Equal(t, "", w.state("s1-1"), "cascade left cards behind")
+	require.Equal(t, "", w.state("later"), "cascade left the dependant behind")
+	require.Equal(t, "dropped", w.s.Work.Card("s1-1").F("outcome"), "cascade left cards behind")
+	require.Equal(t, "dropped", w.s.Work.Card("later").F("outcome"), "cascade left cards behind")
+	require.Empty(t, w.notesOf(NBlocked), "cascade wrote a blocked note")
 	w.clean("dropped")
-	// resolve does not report it twice
-	w.must(Resolve(w.s, ResolveReq{}))
-	require.Len(t, w.notesOf(NBlocked), 1, "blocked reported again")
-	p := Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "x"})
+	p = Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "x"})
 	require.Len(t, p.Refused, 1, "dropped twice: %+v", p)
 }
 

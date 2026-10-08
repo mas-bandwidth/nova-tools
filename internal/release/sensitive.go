@@ -12,7 +12,7 @@ import (
 // stops being a diff somebody can revert and starts being binaries on every
 // bench in the fleet, so the ranges that touch the parts of this estate a
 // mistake cannot be taken back from -- the secret store, the sandbox that holds
-// a worker, the image every bench boots -- are not cut on the judgement of
+// a worker and the text of its wall, the image every bench boots -- are not cut on the judgement of
 // whoever is at the keyboard.
 // They are cut after he has read them, and the read is NAMED on the command
 // line so the receipt says who vouched for it.
@@ -34,6 +34,8 @@ var SensitivePaths = []string{
 	"infra/image/",
 	"internal/sandbox/",
 	"internal/secrets/",
+	"profiles/",
+	"tools/sandboxcheck/",
 }
 
 // SensitiveShape is the list in one phrase, for the help and for a refusal that

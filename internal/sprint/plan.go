@@ -47,9 +47,23 @@ type Refusal struct {
 // the table layer's row verb, not by a batch.
 type RowAdd struct{ Table, Row string }
 
+// PlaceAgain is a record on no cell the step puts back into a cell before its
+// manifests, as the table layer's cell add does: a batch never places a
+// removed member (a stream's control card a stream remove took off comes
+// back when a card is added under its name). It bumps the record's revision.
+// Said is the NOTE line the step prints for it.
+type PlaceAgain struct {
+	Table, Row, Col, ID string
+	Score               float64
+	Said                string
+}
+
 // Plan is what a step does: its units, in order, and the cards it refused.
 type Plan struct {
-	Rows    []RowAdd
+	Rows []RowAdd
+	// Places are the records the step puts back on a cell, after its rows and
+	// before its manifests (PlaceAgain).
+	Places  []PlaceAgain
 	Units   []Unit
 	Refused []Refusal
 	// Notes the step writes with no unit (a fleet member going down with no
@@ -76,6 +90,17 @@ type Plan struct {
 	// Health is a friend's health observed (ObserveFriend): the step's commit
 	// writes it as her record.
 	Health *FriendHealthWrite
+	// HealthClear is the friends whose observation the step's commit removes (friend
+	// health --clear, ClearFriendHealth; the stall ladder's release, TickFriendStall), so
+	// her status is her session's evidence alone (FriendStatus).
+	HealthClear []string
+	// Timers is the timer record the step leaves (TimerNotes): the timers it
+	// raised are closed in the same commit as their judgment.
+	Timers *Timers
+	// CloseTimers is the ids of the timers this step closes: its commit
+	// deletes only these ids from the timer record, read inside the same commit,
+	// so a timer set or cancelled while the step ran is not lost.
+	CloseTimers []string
 	// Stop is the cause the binding stops the machine with as the step commits: the
 	// tick's deal when every provider is out of credit (FundsCause words); "" is none.
 	Stop string
@@ -467,6 +492,9 @@ func PlanRows(p Plan) map[string][]string {
 	}
 	for _, r := range p.Rows {
 		add(r.Table, r.Row)
+	}
+	for _, pl := range p.Places {
+		add(pl.Table, pl.Row)
 	}
 	for _, u := range p.Units {
 		for _, c := range u.Changes {

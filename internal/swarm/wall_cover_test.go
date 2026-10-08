@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testgit"
 )
 
 // Unit coverage for wall.go's capture and commit-count seam, untagged and store-free: each
@@ -16,10 +18,13 @@ import (
 // plain files. WallCommits and wallBaseRef take the repository's own remote refs as their
 // input; no Redis, no host.
 
-// coverGit runs one git command in dir and requires success.
+// coverGit runs one git command in dir and requires success, under the hosted runner's
+// git config (testgit.NoGlobalConfig), so a machine's own identity cannot hide a commit
+// that names none, and with the shared test identity (testgit.Environ).
 func coverGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = testgit.Environ(testgit.NoGlobalConfig(t)...)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "git %s: %s", strings.Join(args, " "), out)
 	return strings.TrimSpace(string(out))
@@ -30,8 +35,6 @@ func coverInitRepo(t *testing.T, dir, branch string) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	coverGit(t, dir, "init", "-b", branch, ".")
-	coverGit(t, dir, "config", "user.email", "test@example.invalid")
-	coverGit(t, dir, "config", "user.name", "test")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "f.txt"), []byte(branch+"\n"), 0o644))
 	coverGit(t, dir, "add", "-A")
 	coverGit(t, dir, "commit", "-q", "-m", "init")

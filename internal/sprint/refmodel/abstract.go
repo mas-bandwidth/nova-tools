@@ -47,10 +47,14 @@ func Abstract(o Observed) State {
 	a.StreamLast, _ = s.Work.Prop(sprint.PropStreamIndex)
 	a.AskStreamLast, _ = s.Readers.Prop(sprint.PropAskStreamIndex)
 	a.AcceptStreamLast, _ = s.Work.Prop(sprint.PropAcceptStreamIndex)
+	if v, ok := s.Work.Prop(sprint.PropAttempts); ok {
+		a.Cap, _ = sprint.ParseAttempts(v)
+	}
 	for _, st := range s.Work.Rows() {
 		x := Stream{State: SWaiting}
 		if ctl := s.StreamCtl(st); ctl != nil {
 			x.State = ctl.F("state")
+			x.Cap = ctl.Int(sprint.FieldAttempts)
 			if x.State == SStopped {
 				x.Cause = ctl.F("cause")
 			}
@@ -73,6 +77,11 @@ func Abstract(o Observed) State {
 		p.Head = headAttempt(c.F("head"))
 		p.CI, p.CIHead = c.F("ci"), headAttempt(c.F("ci_head"))
 		p.ReturnedAt = c.Int(sprint.FieldReturnedAttempt)
+		p.Finder, p.FindingAttempt = c.F(sprint.FieldFindingReader), c.Int(sprint.FieldFindingAttempt)
+		p.BriefAt = c.Int(sprint.FieldBriefAttempt)
+		if f := c.F("finding"); strings.HasPrefix(f, sprint.LandRefusedFinding) {
+			p.Refused = strings.TrimPrefix(f, sprint.LandRefusedFinding)
+		}
 		a.Primaries[id] = p
 	}
 	// A primary ready or waiting whose card at its attempt field is done
@@ -84,7 +93,7 @@ func Abstract(o Observed) State {
 			continue
 		}
 		c := s.Fleet.Card(WC(id, p.Attempt))
-		if c != nil && c.Placed() && (c.Col == sprint.DoneOK || c.Col == sprint.DoneFailed) {
+		if c != nil && c.Placed() && (c.Col == sprint.DoneOK || c.Col == sprint.DoneFailed || c.Col == sprint.DoneDefect) {
 			p.Attempt++
 			a.Primaries[id] = p
 		}
@@ -98,8 +107,8 @@ func Abstract(o Observed) State {
 			Redeals: c.Int("redeals"), TakeEnded: c.F(sprint.FieldTakeEnded) != "", Refusers: sprint.StagingRefusers(c)}
 		if c.Placed() {
 			w.Place, w.Member = c.Col, c.Row
-			if c.Col == sprint.DoneOK || c.Col == sprint.DoneFailed {
-				w.Place = sprint.Done // the member's ok and failed cells are the done column's parts
+			if c.Col == sprint.DoneOK || c.Col == sprint.DoneFailed || c.Col == sprint.DoneDefect {
+				w.Place = sprint.Done // the member's ok, failed and defect cells are the done column's parts
 			}
 		}
 		switch c.F("ok") {
@@ -118,7 +127,7 @@ func Abstract(o Observed) State {
 		if c.F("kind") != "read" {
 			continue
 		}
-		r := ReadCard{Primary: c.F("primary"), Attempt: c.Int("attempt"), Reader: c.F("reader"), Place: Retired, Verdict: c.F("verdict")}
+		r := ReadCard{Primary: c.F("primary"), Attempt: c.Int("attempt"), Reader: c.F("reader"), Place: Retired, Verdict: c.F("verdict"), Finder: c.F(sprint.FieldFinderRead) != ""}
 		if c.Placed() {
 			r.Place = c.Col
 		}
@@ -164,7 +173,9 @@ func headAttempt(h string) int {
 // subject.
 func judgment(o sprint.Open) (Judgment, bool) {
 	t := strings.TrimSuffix(o.Note.Type, sprint.NRepeatSuffix)
-	if t == sprint.NOverdue {
+	if t == sprint.NOverdue || t == sprint.NStatus {
+		// a status transition's judgment is the members' status, which the model compares
+		// itself (sprint.StatusTransitions): no judgment of the model's own
 		return Judgment{}, false
 	}
 	j := Judgment{Type: JudgmentType(t), Subject: o.Subject()}
@@ -176,6 +187,7 @@ func judgment(o sprint.Open) (Judgment, bool) {
 
 var types = map[string]string{
 	sprint.NWorkFailed:      JFailed,
+	sprint.NBriefDefect:     JFailed, // the brief's failed work: the model names no brief defect
 	sprint.NReadBroken:      JBroken,
 	sprint.NReadsExhausted:  JReads,
 	sprint.NStranded:        JStranded,
@@ -193,6 +205,7 @@ var types = map[string]string{
 	sprint.NNoMember:        JNoMember,
 	sprint.NCannotAsk:       JCannotAsk,
 	sprint.NBound:           JBound,
+	sprint.NBriefWrong:      JBriefWrong,
 }
 
 // JudgmentType is the model's name of an engine judgment type; a type the

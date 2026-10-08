@@ -480,7 +480,8 @@ writes.
 `profiles --swarm-root <dir>` is a measurement over a swarm root: one
 `PROFILES MODEL` line per model (card count, median `tokens_out`, overshoot
 cards whose output exceeded their own card budget line) and one `PROFILES OK`
-line, exit 0 whenever it ran. `session --claude-session <jsonl>` prints one
+line, exit 0 whenever it ran. The overshoot ledger is advisory because both
+inputs (usage.tsv and PROMPT.md) are child-writable files. `session --claude-session <jsonl>` prints one
 `SESSION` line (the weighted fresh-input equivalent and average context) and,
 with `--out`, folds the window's turns into the day file as one row per model
 the transcript names, beside retained rows; a transcript that names no model
@@ -532,7 +533,7 @@ TOKENS SUPERSEDED label=bus:<name> note=<id> by=<id> day=<d>
 TOKENS CONFLICT label=bus:<name> day=<d> notes=<id,id,…>: competing reports; send a correction whose subject carries supersedes=<id>
 TOKENS TOUCHED label=bus:<name> day=<d> repos=<list>
 TOKENS MIXED date=<d> model=<model> repo=<repo> bases=<utc,zone>: two day bases on one row; declare one export for that day
-TOKENS DAY date=<d> rows=<n> models=<n> repos=<n> turns=<n|-> unknown=<pct>% other=<pct>% rough=<n> dashes=<n> nonutc=<n> sources=<labels> written=<true|false>
+TOKENS DAY day=<d> rows=<n> models=<n> repos=<n> turns=<n|-> unknown=<pct>% other=<pct>% rough=<n> dashes=<n> nonutc=<n> sources=<labels> written=<true|false>
 TOKENS SHRANK date=<d> type=<type> file=<n> now=<n|-> written=<true|false>: a source went quiet; --allow-shrink writes it anyway
 TOKENS QUIET label=<label> day=<d>: a declared source has zero samples for an explicitly selected existing day
 TOKENS PARTIAL date=<d> model=<model> repo=<repo> sources=<labels> folded=<labels> written=<true|false>: this fold declared only some of the sources that wrote the row; declare every source in the file's sources= line, or fold this day into its own --out
@@ -1313,7 +1314,7 @@ pin all three by executing them.
    `<out>/fold.lock` (the same flock the earlier binaries took; tla/FileLock.tla),
    elsewhere an exclusive create of a sibling file; a bounded jittered wait,
    exit 2 naming the holder's pid. Tests: demanded test 8's lock half.
-3. **`internal/tokens/message.go`**: the one message shape every source
+3. **The message record**: the one message shape every source
    produces, with each of the five types either a count or absent, the
    source's `reports` set and the day basis, and the fold function over a
    stream of them: dedup by id, day from stamp, attribution, each type

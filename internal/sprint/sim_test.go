@@ -41,6 +41,16 @@ func (w *world) do(p Plan) Plan {
 			tb.SetRows(append(tb.Rows(), ra.Row))
 		}
 	}
+	// a record put back on a cell, as the table layer's cell add does
+	for _, pl := range p.Places {
+		c := w.s.T(pl.Table).Card(pl.ID)
+		require.NotNil(w.t, c, "%s: place %s: no record", pl.Table, pl.ID)
+		require.False(w.t, c.Placed(), "%s: place %s: placed at %s:%s", pl.Table, pl.ID, c.Row, c.Col)
+		require.True(w.t, w.s.T(pl.Table).HasRow(pl.Row), "%s: place %s: no row %s", pl.Table, pl.ID, pl.Row)
+		c.Row, c.Col, c.Score = pl.Row, pl.Col, pl.Score
+		c.Rev++
+		w.s.T(pl.Table).cells, w.s.T(pl.Table).byPrimary = nil, nil
+	}
 	for _, u := range p.Units {
 		for _, c := range u.Changes {
 			w.entry(c)
@@ -197,4 +207,22 @@ func (w *world) openOn(subject string) []Open {
 		}
 	}
 	return out
+}
+
+// seedDroppedNeed marks a primary's record dropped off the table without a
+// drop step: the state the verbs now refuse to make (add refuses a dropped
+// need, and drop refuses a needed card without Cascade), kept for the
+// recovery and waiver rules that must still read a stored dropped record
+// (docs/SPEC-SPRINT.md section 11). A resolve after it opens the blocked
+// judgment.
+func (w *world) seedDroppedNeed(id string) {
+	w.t.Helper()
+	c := w.s.Work.Card(id)
+	if c == nil {
+		return
+	}
+	c.Row, c.Col = "", ""
+	c.Fields["outcome"] = "dropped"
+	c.Rev++
+	w.s.Work.Put(c)
 }

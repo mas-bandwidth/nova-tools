@@ -265,8 +265,9 @@ func getKeys(ctx context.Context, kv KV, names []string) ([]string, []bool, erro
 }
 
 // SyncFleet brings every display cell of the fleet up to date, reading the
-// control cards: each member's status (derived: held, up or down), width, load (the
-// highest measured load of the last LoadWindow while its beat is fresh); done
+// control cards: each member's status (adopting while the tick holds it to adopt, else held, up or down; sprint.FleetRowStatus), width, load (the
+// highest measured load of the last LoadWindow while its beat is fresh, with its open
+// file descriptors beside it over the warn bound, sprint.LoadText); done
 // and ok% are the table's own formulas. A store that keeps no beats shows the
 // control card's status and no load. It is what a step's mirrors run. It says whether it wrote.
 func (st *Store) SyncFleet(ctx context.Context) (bool, error) {
@@ -306,7 +307,7 @@ func (st *Store) SyncFleet(ctx context.Context) (bool, error) {
 		want := map[string]string{sprint.Status: dash(ctl.F("status")), sprint.Load: "", sprint.FieldWidth: sprint.WidthText(ctl)}
 		if beats != nil {
 			b := beats[row.Key]
-			want[sprint.Status], want[sprint.Load] = sprint.MemberStatus(ctl, b, now), sprint.LoadText(b, now)
+			want[sprint.Status], want[sprint.Load] = sprint.FleetRowStatus(ctl, b, now), sprint.LoadText(b, now)
 		}
 		status[row.Key] = want[sprint.Status]
 		if d := rowDiff(row, want); len(d) > 0 {
@@ -343,7 +344,29 @@ func (st *Store) fleetBeats(ctx context.Context, shapes []ntable.Table) (ntable.
 		members = append(members, r.Key)
 	}
 	beats, err := st.Beats(ctx, members)
-	return shape, beats, err
+	if err != nil {
+		return shape, beats, err
+	}
+	// each friend's own beat under her name, beside the machines' (the friend stall reads
+	// her session activity there, sprint.TickFriendStall): a friend's beat is kept by her
+	// name, not her row
+	for _, row := range members {
+		f, ok := sprint.FriendOfRow(row)
+		if !ok {
+			continue
+		}
+		b, err := st.FriendBeatOf(ctx, f)
+		if err != nil {
+			return shape, beats, err
+		}
+		if b.Friend != nil {
+			if beats == nil {
+				beats = map[string]sprint.Beat{}
+			}
+			beats[f] = b
+		}
+	}
+	return shape, beats, nil
 }
 
 // freshOf is the members that are alive at now (fewer than MissedBeatsDown
@@ -361,7 +384,7 @@ func freshOf(shape ntable.Table, beats map[string]sprint.Beat, now time.Time) []
 
 // showFleet is the tick's own pass over the fleet's display cells, from the
 // row texts and the beats alone, reading no control card: the load of each
-// member, and its status up or down by its beat. A member shown held stays
+// member (with its open files over the warn bound, sprint.LoadText), and its status up or down by its beat. A member shown held stays
 // held: a hold is set and released only by a verb, whose step brings every
 // cell up to date (SyncFleet). It says whether it wrote.
 func (st *Store) showFleet(ctx context.Context, shape ntable.Table, beats map[string]sprint.Beat, now time.Time) (bool, error) {
@@ -444,7 +467,7 @@ func statusRank(status string) int {
 	switch status {
 	case sprint.Up:
 		return 0
-	case sprint.Held:
+	case sprint.Held, sprint.Adopting:
 		return 1
 	case sprint.Down:
 		return 2
@@ -452,9 +475,9 @@ func statusRank(status string) int {
 	return 3
 }
 
-// FleetOrder is the fleet's rows by name, then stably by status: up, held,
-// down, anything else last. status is each row's status cell. The friends
-// table is ordered by it too (FriendRows): one order for both.
+// FleetOrder is the fleet's rows by name, then stably by status: up, held
+// (adopting with it), down, anything else last. status is each row's status
+// cell. The friends table is ordered by it too (FriendRows): one order for both.
 func FleetOrder(rows []string, status map[string]string) []string {
 	out := slices.Clone(rows)
 	slices.Sort(out)
@@ -486,4 +509,41 @@ func (st *Store) orderFleet(ctx context.Context, shape ntable.Table, status map[
 		return false, nil
 	}
 	return true, ro.RowsOrder(ctx, shape.Name, want)
+}
+
+// friendFinishKey is when a card of the friend's last finished, working to
+// done (FriendFinished): the evidence of her session that a finish is
+// (sprint.FriendEvidence), beside her beat, which is none.
+func friendFinishKey(friend string) string { return "friend-finish:" + friend }
+
+// FriendFinished records that a card of the friend's finished at, working to
+// done, from a report her session wrote (friend sync's collect): her row reads
+// up on it for sprint.FriendFinishWindow. An older finish than the record's
+// writes nothing, and a beat never writes it.
+func (st *Store) FriendFinished(ctx context.Context, friend string, at time.Time) error {
+	kv, err := st.rootKV()
+	if err != nil {
+		return err
+	}
+	at = at.UTC().Truncate(time.Second)
+	if prev, err := st.FriendFinishedAt(ctx, friend); err != nil || !at.After(prev) {
+		return err
+	}
+	return kv.SetKey(ctx, friendFinishKey(friend), at.Format(time.RFC3339))
+}
+
+// FriendFinishedAt is when a card of the friend's last finished, zero when
+// none has or the record cannot be read.
+func (st *Store) FriendFinishedAt(ctx context.Context, friend string) (time.Time, error) {
+	kv, err := st.rootKV()
+	if err != nil {
+		return time.Time{}, err
+	}
+	raw, ok, err := kv.GetKey(ctx, friendFinishKey(friend))
+	if err != nil || !ok {
+		return time.Time{}, err
+	}
+	// ignored: an unreadable record is no finish, which the next finish replaces
+	at, _ := time.Parse(time.RFC3339, raw)
+	return at, nil
 }

@@ -54,13 +54,6 @@ func (h *harness) a2Named(id string) []string {
 	return out
 }
 
-// a2Silent fails when the inbox names id: the gap is closed.
-func (h *harness) a2Silent(id, when string) {
-	h.t.Helper()
-	got := h.a2Named(id)
-	require.Empty(h.t, got, "%s: the inbox names %s (the gap is closed?): %v", when, id, got)
-}
-
 // a2Stale is the stream-stale lines the inbox shows: the one backstop left,
 // which names no card.
 func (h *harness) a2Stale() []string {
@@ -186,7 +179,8 @@ func TestAudit2ClosedAckedStrandedPrimaryIsSilentForEver(t *testing.T) {
 	h.a2Names("s1-1", "failed work, its ack refused, ten hours")
 }
 
-// GAP A3 (the ack family, ready to accept). Two ok reads, the judgment
+// GAP A3 (the ack family, ready to accept). Two ok reads of a primary the
+// pump holds (its CI red at its head, acknowledged), the judgment
 // acknowledged: nothing writes it again; only accept moves the primary.
 func TestAudit2ClosedAckedReadyToAcceptIsSilentForEver(t *testing.T) {
 	t.Parallel()
@@ -194,6 +188,7 @@ func TestAudit2ClosedAckedReadyToAcceptIsSilentForEver(t *testing.T) {
 	h.setup(1)
 	h.a2ToReview("s1-1", false)
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	h.heldByRedCI("s1-1")
 	h.nReadAll("s1-1", "ok")
 	h.a2AckRefused(sprint.NReadyToAccept)
 	h.readInbox()
@@ -209,10 +204,9 @@ func TestAudit2ClosedAckedReadsExhaustedIsSilentForEver(t *testing.T) {
 	h := newHarness(t)
 	h.setup(1)
 	h.a2ToReview("s1-1", false)
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
-	rc := h.snap().Readers.Of("s1-1")
-	h.must(ReadStep(sprint.ReadReq{As: rc[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
-	h.must(ReadStep(sprint.ReadReq{As: rc[1].Row, Verdict: "broken", Finding: "x:1", Sel: sprint.Sel{IDs: []string{rc[1].ID}}}))
+	rc := h.pairAsked("s1-1")
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc[1].Row, Verdict: "broken", Finding: "x:1", Sel: sprint.Sel{IDs: []string{rc[1].ID}}}))
 	h.a2AckRefused(sprint.NReadBroken)
 	h.readInbox()
 	h.startMachine()
@@ -513,24 +507,30 @@ func TestAudit2ClosedReminderDecisionsHaveNoCommands(t *testing.T) {
 // primary was returned: the only free reader is that one, whose card id
 // exists (retired), so the create is refused by the table layer on every
 // plan and the verb ends "the sprint kept changing ... run it again", which
-// can never succeed.
+// can never succeed. Now the slow reader's card, retired by the accept with no
+// verdict, leaves it askable once more under the second identity (ReadCardForAsk):
+// --another asks it there, a create of a new record; the next --another, with no
+// reader left, is refused naming reader add.
 func TestAudit2ClosedAskAnotherHitsARetiredCard(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t) // readers a, b, c
 	h.setup(1)
 	h.a2ToReview("s1-1", false)
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
-	rc := h.snap().Readers.Of("s1-1")
-	h.must(ReadStep(sprint.ReadReq{As: rc[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
+	rc := h.pairAsked("s1-1")
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
 	for _, c := range h.snap().Readers.Of("s1-1") {
 		if c.Col == sprint.Asked && c.ID != rc[1].ID {
-			h.must(ReadStep(sprint.ReadReq{As: c.Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{c.ID}}}))
+			h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: c.Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{c.ID}}}))
 		}
 	}
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	h.must(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "look again"}))
 	res := h.run(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
+	require.Empty(t, res.Refused, "ask --another of the slow reader, under .g1: %+v", res)
+	require.Equal(t, 1, res.Attempts, "ask --another: %+v", res)
+	require.NotNil(t, h.snap().Readers.Placed(sprint.ReadCardSecondID("s1-1", 1, rc[1].Row)), "asked again of %s, under .g1", rc[1].Row)
+	res = h.run(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
 	require.Len(t, res.Refused, 1, "ask --another: %+v", res)
 	require.Contains(t, res.Refused[0].Why, "no read card at attempt", "ask --another: %+v", res)
 	require.Contains(t, res.Refused[0].Why, "reader add", "ask --another: %+v", res)
@@ -591,8 +591,9 @@ func TestNoStoredIDReachesTheCoordinator(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 6}))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"stop"}, Sentinel: true}))
 	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"w"}, Needs: []string{"s1-6"}}))
-	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-6"}}, Reason: "gone"})) // w is blocked
-	h.a2ToReview("s1-1", true)                                                               // work failed
+	seedDroppedNeed(h, "s1-6")
+	h.must(ResolveStep(sprint.ResolveReq{}))
+	h.a2ToReview("s1-1", true) // work failed
 	h.a2ToReview("s1-2", false)
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}}))
 	h.nReadAll("s1-2", "broken") // a broken read
@@ -622,9 +623,7 @@ func TestTheTickAsksNoReaderWhoAlreadyReadTheAttempt(t *testing.T) {
 	h.setup(1)
 	h.a2ToReview("s1-1", false)
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
-	for _, c := range h.snap().Readers.Of("s1-1") {
-		h.must(ReadStep(sprint.ReadReq{As: c.Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{c.ID}}}))
-	}
+	h.readAllOK("s1-1")
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	h.must(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "look again"}))
 	h.startMachine()

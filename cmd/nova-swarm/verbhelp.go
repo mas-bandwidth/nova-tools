@@ -48,7 +48,10 @@ var verbExit = map[string]string{
   the other, or one cannot be read (the DOCTOR line says which)`,
 	"disk-guard": `exit codes: 0 DISK-GUARD OK, everything it looked at done (a KEPT line is a refusal
   it means); 1 DISK-GUARD INCOMPLETE, something could not be read or removed (each on its NOTE
-  line); 2 could not run: a bad flag`,
+  line); 3 DISK-GUARD STOP, free disk under --stop-floor (stop the loops); 2 could not
+  run: a bad flag`,
+	"mirror": `exit codes: 0 every repository refreshed (MIRROR OK each); 1 a repository failed (MIRROR FAILED
+  names it and the cause; the others are still refreshed); 2 could not run: a missing flag or a bad name`,
 	"slots release": `exit codes: 0 the leases named are freed; 2 a lease's holder still runs (SLOTS
   KEPT; --force frees it), a missing flag or a store that cannot be read`,
 }
@@ -58,6 +61,11 @@ var verbExit = map[string]string{
 // flags so a cold reader still finds them (docs/STANDARD.md section 3, ONBOARDING point 6).
 // The banner keeps what member, lint and disk-guard are, and names the verb's -h for the rest.
 var verbDetail = map[string]string{
+	"version":    "prints this build's identity: the version, the commit it was built from and the time it was stamped.",
+	"mirror":     "keeps the bench's bare mirrors fresh: each --repos name is cloned from <base>/<name>.git into <dir>/<name>.git when absent, then every head and every pull-request head is fetched into it, so a card's git clone --reference finds the repository. It never prunes objects (the disk guard sweeps a mirror's temporary packs) and one repository's failure never stops the others; --every keeps refreshing until stopped.",
+	"profile":    "reads the timeline.tsv of every job the glob names and prints one PROFILE line per job and one mean summary, so a slow card shows where its time went.",
+	"slots init": "creates the slot store for an owner: the machine's capacity and the owner's share of it, which slots take then leases from.",
+	"slots list": "prints the store's slots: each owner's capacity and share, and every lease held, with its label and when it expires.",
 	"member": `run this machine as a sprint member; --server is the address of nova-sprint run --listen.
 Each tick beats, reads the queue, reports ended children and takes cards to the fleet row's width.
 A reader uses its machine's width; --width overrides it. This machine opens no store.
@@ -76,6 +84,7 @@ Each finish is judged ok, failed or reaped (docs/SPEC-CARD-CONTRACT.md).
 --identity names the pool's commit identity; otherwise the pool's identity.tsv supplies it.
 Completed launches leave no checkout; each pool keeps its newest five failed launches.
 No card starts below --disk-floor GiB free (default 10); --stage-wall bounds staging (default 120s).
+--max-load refuses a local child above the configured one-minute host load; --warn-load warns at its threshold through that bound.
 The shared Go build cache is held under --gocache-limit GiB (default 20), never an entry used in the last two hours.
 A staging refusal reports why so the sprint can deal the card to another member.`,
 	"lint": `a bare --card holds the card to nova-swarm's own card contract, the shape native runs, the same for every adopter: the RESULT line first and written last, numbered STEPs entering the repository, a test and its command, a deadline, the files named, scratch under a named root; --rules lists every check; an adopter's own rules go in --child-rules-file
@@ -101,6 +110,23 @@ var verbEffect = map[string]string{
 	"slots list":   "inspection: reads, writes nothing",
 	"native":       "delivery: runs the card's harness, which calls the model's provider, and writes the job directory under --root",
 	"member":       "delivery: joins a sprint's fleet through --server, runs its cards as native children, pushes their commits and opens their pull requests",
+}
+
+// verbExample is one worked invocation per verb, printed on the verb's -h as an `example:`
+// line, for a verb whose help text carries none of its own.
+var verbExample = map[string]string{
+	"version":       "nova-swarm version",
+	"doctor":        "nova-swarm doctor",
+	"lint":          "nova-swarm lint --card card.md --child-rules",
+	"profile":       "nova-swarm profile --jobs 'jobs/*'",
+	"slots":         "nova-swarm slots list --store /srv/slots",
+	"slots init":    "nova-swarm slots init --store /srv/slots --owner ada --capacity 8 --share 4",
+	"slots list":    "nova-swarm slots list --store /srv/slots",
+	"slots release": "nova-swarm slots release --store /srv/slots --owner ada --label card1",
+	"slots take":    "nova-swarm slots take --store /srv/slots --owner ada --n 1 --for 30m --label card1",
+	"template":      "nova-swarm template --name card",
+	"verify":        "nova-swarm verify --result RESULT.md --contract 'RESULT: done' --label card1",
+	"worker check":  "nova-swarm worker check worker.json",
 }
 
 // commonExit is the codes of every other verb.
@@ -132,7 +158,11 @@ func recoverHelp(out io.Writer, code *int) {
 	var b strings.Builder
 	verbflag.Print(&b, "nova-swarm", usage, h.FS, strings.Split(verbExits(name), "\n")...)
 	*code = 0
-	help := verbflag.Insert(b.String(), verbHelpLines(name))
+	lines := verbHelpLines(name)
+	if e, ok := verbExample[name]; ok && !strings.Contains("\n"+lines+b.String(), "\nexample:") {
+		lines += "example: " + e + "\n"
+	}
+	help := verbflag.Insert(b.String(), lines)
 	if e, ok := verbEffect[name]; ok {
 		help += "effect: " + e + "\n"
 	}

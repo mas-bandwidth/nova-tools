@@ -77,6 +77,7 @@ func newSealFixture(t *testing.T, decryptOut string) *sealFixture {
 		"for last; do :; done\n" +
 		"if [ \"$last\" != \"/dev/stdin\" ]; then exit 100; fi\n" +
 		"pwd -P > \"$ARGS.cwd\"\n" +
+		"cp .sops.yaml \"$ARGS.cfg\" 2>/dev/null\n" +
 		"cat > \"$STDIN\"\n" +
 		"echo \"ENC[marker]\"\n"
 	f.sopsPath = f.writeScript(t, "sops", sopsBody)
@@ -145,9 +146,13 @@ func TestSealPipedValueLandsInEncryptStdinNotArgv(t *testing.T) {
 	assert.Contains(t, argv, "--filename-override", "encrypt did not use --filename-override rowan.yaml:\n%s", argv)
 	assert.Contains(t, argv, "rowan.yaml", "encrypt did not use --filename-override rowan.yaml:\n%s", argv)
 	assert.True(t, strings.HasSuffix(strings.TrimSpace(argv), "/dev/stdin"), "encrypt argv must end with the /dev/stdin file argument (real sops exits 100 without it):\n%s", argv)
-	wantCwd, _ := filepath.EvalSymlinks(f.storeDir)
-	got := strings.TrimSpace(readMaybe(t, f.sopsArgs+".cwd"))
-	assert.Equal(t, wantCwd, got, "encrypt ran in %q, want the store %q (sops finds .sops.yaml from its cwd)", got, wantCwd)
+	// sops finds .sops.yaml from its cwd. The fixture's rule predates the mark, so the
+	// config it found there is the store's with the mark admitted to rowan.yaml's rule,
+	// and that is the .sops.yaml the commit carries beside the file.
+	wantCfg := "creation_rules:\n  - path_regex: ^rowan\\.yaml$\n    unencrypted_regex: ^NOVA_SECRETS_WRITTEN_BY$\n    age: age1abc\n"
+	gotCfg := readMaybe(t, f.sopsArgs+".cfg")
+	assert.Equal(t, wantCfg, gotCfg, "encrypt did not find the store's rule with the mark admitted in its cwd")
+	assert.Contains(t, readMaybe(t, f.gitArgs), "add\n.sops.yaml\n", "the rule that admits the mark was not committed beside the file")
 	assert.NotContains(t, line, "newsecretvalue", "value leaked into the OK line: %s", line)
 	assert.Contains(t, line, "SEAL OK", "unexpected OK line: %s", line)
 	assert.Contains(t, line, "name=TARGET", "unexpected OK line: %s", line)
@@ -368,7 +373,7 @@ func TestSealEncryptTakesValueOnStdin(t *testing.T) {
 
 	const value = "newsecretvalue"
 	plaintext := []byte("TARGET: " + value + "\n")
-	out, err := sealEncrypt(run, "sops", "/nonexistent/rowan.key", "/the/store", "rowan.yaml", plaintext)
+	out, _, err := sealEncrypt(run, "sops", "/nonexistent/rowan.key", "/the/store", "rowan.yaml", "seal", plaintext)
 	require.NoError(t, err, "sealEncrypt: %v", err)
 	assert.Contains(t, gotStdin, "TARGET: "+value, "encrypt stdin missing the pasted value; got:\n%s", gotStdin)
 	n := strings.Count(gotStdin, "TARGET:")
@@ -411,4 +416,48 @@ func gitCErr(t *testing.T, dir string, args ...string) (string, error) {
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0")
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
+}
+
+// The read of 2026-10-07: `seal 1.2.<80 digits>` passed as a mark in the clear, because
+// markVersionPattern capped nothing but the rc suffix, so an arbitrary value could ride
+// under the mark key. Each version component is capped at four digits; an oversized one is
+// no mark, and the gate reads the cleartext under the mark key as a plain value. Each row
+// is a probe and, for a refusal, the line it must print.
+func TestGateRefusesAnOversizedMarkVersion(t *testing.T) {
+	t.Parallel()
+
+	long := strings.Repeat("9", 80)
+	cases := []struct {
+		name string
+		val  string
+		ok   bool
+	}{
+		{"a release tag", "seal v1.2.3-rc1", true},
+		{"a numeric release", "seat add 1.2.3", true},
+		{"dev", "seal dev", true},
+		{"an eighty-digit patch", "seal 1.2." + long, false},
+		{"a five-digit component", "seal 12345.2.3", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.ok, isSeatMark(c.val), "isSeatMark(%q)", c.val)
+			dir := gateStart(t)
+			base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+			body := strings.Replace(gateSealedFile(), gateMarkLine, SeatMarkKey+": "+c.val+"\n", 1)
+			head := gateCommit(t, dir, map[string]string{
+				".sops.yaml": gateSops(gateRuleWith("rowan.yaml", "^NOVA_SECRETS_WRITTEN_BY$")),
+				"rowan.yaml": body,
+			})
+			line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
+			if c.ok {
+				assert.Equal(t, 0, code, line)
+				assert.Equal(t, "GATE APPROVE files=2 machines=-", line)
+				return
+			}
+			assert.Equal(t, 1, code, line)
+			assert.True(t, strings.HasPrefix(line,
+				"GATE FAILED rule=1 check=2 file=rowan.yaml: key NOVA_SECRETS_WRITTEN_BY is a plain value, not encrypted"), line)
+		})
+	}
 }

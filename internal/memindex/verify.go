@@ -236,9 +236,14 @@ func Coverage(fsys fs.FS, globA, globB string) ([]Finding, error) {
 	bSet := map[string]bool{}
 	linked := map[string]bool{}
 	for _, b := range bFiles {
-		raw, err := fs.ReadFile(fsys, b)
+		raw, err := readCapped(fsys, b)
 		if err != nil {
 			return nil, err
+		}
+		// The concatenation is bounded like a Build: each file by readCapped,
+		// the whole by MaxCorpusBytes (security#76 finding 3).
+		if bContent.Len()+len(raw) > MaxCorpusBytes {
+			return nil, fmt.Errorf("coverage side %s passes the %d-byte corpus cap at %s", globB, MaxCorpusBytes, b)
 		}
 		bContent.WriteString(string(raw))
 		bContent.WriteByte('\n')
@@ -268,7 +273,7 @@ func Coverage(fsys fs.FS, globA, globB string) ([]Finding, error) {
 	}
 	// Backward: every relative .md link in B resolves.
 	for _, b := range bFiles {
-		raw, err := fs.ReadFile(fsys, b)
+		raw, err := readCapped(fsys, b)
 		if err != nil {
 			return nil, err
 		}
@@ -315,7 +320,7 @@ func Wikilinks(fsys fs.FS, c *Corpus) ([]Finding, error) {
 	}
 	unresolved := map[string][]string{} // stem -> referencing files
 	for _, f := range c.Files {
-		raw, err := fs.ReadFile(fsys, f)
+		raw, err := readCapped(fsys, f)
 		if err != nil {
 			return nil, err
 		}
@@ -371,7 +376,7 @@ func FrontmatterPresent(fsys fs.FS, glob string, exempt []string) ([]Finding, er
 		if skip {
 			continue
 		}
-		raw, err := fs.ReadFile(fsys, f)
+		raw, err := readCapped(fsys, f)
 		if err != nil {
 			return nil, err
 		}

@@ -3,6 +3,9 @@ package sandbox
 import (
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/profiles"
@@ -87,6 +90,16 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 		writes = append(writes, fmt.Sprintf("(allow network-outbound (subpath (param %q)))", name))
 		params = append(params, name+"="+w)
 	}
+	// The caller's own spelling of a granted path, and each symlink component of it, is
+	// granted as a literal on the LINK, as the template does for /etc /tmp /var
+	// (docs/SPEC-SANDBOX.md rule 5; security#67 finding 1). A literal reads the link and
+	// lists nothing: the contents stay behind the READn/WRITEn grants.
+	for _, l := range linkLiterals(p.LinkSpellings) {
+		if bad := badPathText(l); bad != "" {
+			return "", nil, fmt.Errorf("link spelling %s %s", l, bad)
+		}
+		reads = append(reads, fmt.Sprintf("(allow file-read* (literal %q))", l))
+	}
 	// The template names (param "HOME") unconditionally, so HOME is always passed. Build
 	// has already refused a HOME outside every --write, so this grants nothing
 	// the WRITEn grants did not already grant: it is the profile stating the requirement.
@@ -123,6 +136,17 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 	// "localhost:PORT" admits both a 127.0.0.1 and a ::1 listener on that port, and a
 	// numeric host here (`(remote ip "127.0.0.1:PORT")`) is the same compile abort under a
 	// different message (`host must be * or localhost in network address`).
+	// A lane's wall (LaneProfile): a denied network with its TCP ports opened outbound to
+	// any host, and the name resolver with them, since a port reached by name needs it.
+	// SBPL has no host filter but localhost and *, so the grant is the port, never the
+	// host; measured on darwin 27.2 with sandbox-exec -p: curl to github.com:443 answered
+	// 200 and to example.com:80 failed to connect (rc=7).
+	if p.NetDeny && len(p.NetPorts) > 0 {
+		lines = append(lines, `(allow network-outbound (literal "/private/var/run/mDNSResponder"))`)
+		for _, port := range p.NetPorts {
+			lines = append(lines, fmt.Sprintf(`(allow network-outbound (remote tcp "*:%d"))`, port))
+		}
+	}
 	for _, hp := range p.NetAllow {
 		_, port, err := net.SplitHostPort(hp)
 		if err != nil {
@@ -174,8 +198,131 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 	// device grant here: the minimum Metal mechanisms are still unmeasured, so
 	// the profile stays closed and the GPU probe classifies the outcome.
 	text = out.String()
+	// Deletes in every --write root ("deletes-in-every-write-root"): the template's
+	// file-write* grant on each --write includes unlink, and no later rule takes it back.
 	if p.GPUMode == GPUMetal {
 		text += ";; gpu=metal requested: no mach-lookup or device grant added; Metal stays denied until measured\n"
 	}
 	return text, params, nil
+}
+
+// ProfileFriend is the wall profile a nova-friend lane takes when its friend row names
+// none (docs/SPEC-SANDBOX.md, buds-in-the-wall-r.w5).
+const ProfileFriend = "friend"
+
+// LaneProfiles is every wall profile a lane may name; any other name is refused.
+var LaneProfiles = []string{ProfileFriend}
+
+// The deny list of a lane's wall is the coordinator's self: the paths no lane's write
+// reaches whatever else its profile grants (her repository at home and on a shared
+// volume, and with them their memory/, identity/ and MEMORY-*.md). It is configuration,
+// never a name in this code: the friend's `run --deny-self` (LaneProfile.Deny), and a
+// lane profile with none is refused, never run with nothing denied. A path starting ~/
+// is under the HOME the profile is built with.
+
+// LaneNetPorts is the network a lane's wall opens: TCP 443 (github.com, and the
+// harness's own provider) and 22 (the bench hosts over ssh), to any host on darwin,
+// where SBPL has no host filter, and to none on linux, where Landlock here has no port
+// rule (Input.NetPorts).
+var LaneNetPorts = []int{443, 22}
+
+// LaneProfile is the wall a nova-friend lane's children run inside: writes only to the
+// friend's working directory, her job directories and her config directory
+// (CLAUDE_CONFIG_DIR), never to a Deny path, and the network LaneNetPorts.
+type LaneProfile struct {
+	Name      string   // one of LaneProfiles; "" is ProfileFriend
+	Work      string   // the friend's working directory
+	Jobs      []string // her job directories outside Work
+	ConfigDir string   // her CLAUDE_CONFIG_DIR, and the HOME of the wall; "" is Work
+	Reads     []string // what the harness reads beyond the system roots and its own directory
+	Deny      []string // the coordinator's self, never written; at least one
+	Home      string   // the HOME the Deny paths starting ~/ are under
+}
+
+// DeniedWrites is deny with ~/ made home.
+func DeniedWrites(home string, deny []string) []string {
+	var out []string
+	for _, d := range deny {
+		if rest, ok := strings.CutPrefix(d, "~/"); ok {
+			if home == "" {
+				continue // no home, so no path under it: the absolute ones still stand
+			}
+			d = filepath.Join(home, rest)
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
+// Input is the wall's input for one command (argv) run in cwd: the profile's writes, its
+// deny list, its network and HOME. A profile that is not a LaneProfiles name, that has
+// no working directory, or that denies nothing, is refused.
+func (lp LaneProfile) Input(cwd string, argv []string) (Input, error) {
+	name := lp.Name
+	if name == "" {
+		name = ProfileFriend
+	}
+	if !slices.Contains(LaneProfiles, name) {
+		return Input{}, fmt.Errorf("no wall profile %q; the profiles are %s", name, strings.Join(LaneProfiles, ", "))
+	}
+	if lp.Work == "" {
+		return Input{}, fmt.Errorf("the %s profile wants the friend's working directory", name)
+	}
+	deny := DeniedWrites(lp.Home, lp.Deny)
+	if len(deny) == 0 {
+		return Input{}, fmt.Errorf("the %s profile denies nothing: name the coordinator's self (nova-friend run --deny-self), a lane never runs with nothing denied", name)
+	}
+	home := lp.ConfigDir
+	if home == "" {
+		home = lp.Work
+	}
+	writes := []string{lp.Work}
+	for _, w := range append(append([]string{}, lp.Jobs...), lp.ConfigDir) {
+		if w != "" && !slices.Contains(writes, w) {
+			writes = append(writes, w)
+		}
+	}
+	in := Input{
+		Reads:    lp.Reads,
+		Writes:   writes,
+		NetDeny:  true,
+		NetPorts: LaneNetPorts,
+		Deny:     deny,
+		Home:     home,
+		Argv:     argv,
+	}
+	// the command runs where it was started when that is inside the wall, else in Work
+	if cwd != "" && slices.ContainsFunc(writes, func(w string) bool { return Inside(resolved(cwd), resolved(w)) }) {
+		in.Cwd = cwd
+	}
+	return in, nil
+}
+
+// resolved is path through its symlinks, or as it is when they do not resolve.
+func resolved(path string) string {
+	if got, err := filepath.EvalSymlinks(path); err == nil {
+		return got
+	}
+	return path
+}
+
+// linkLiterals is each spelling and every symlink among its proper ancestors, once and in
+// order (docs/SPEC-SANDBOX.md rule 5). A spelling that differs from its resolved path is a
+// link or goes through one, so the spelling itself is always granted.
+func linkLiterals(spellings []string) []string {
+	var out []string
+	add := func(l string) {
+		if !slices.Contains(out, l) {
+			out = append(out, l)
+		}
+	}
+	for _, s := range spellings {
+		for d := filepath.Dir(s); d != s && filepath.Dir(d) != d; d = filepath.Dir(d) {
+			if fi, err := os.Lstat(d); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+				add(d)
+			}
+		}
+		add(s)
+	}
+	return out
 }

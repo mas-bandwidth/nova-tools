@@ -121,7 +121,6 @@ func movedBenchSetup(t *testing.T) *movedBench {
 	}
 	specScript(t, b.fakeDir, "git", strings.ReplaceAll(movedFakeGit, "@FX@", b.fx))
 	specScript(t, b.fakeDir, "go", strings.ReplaceAll(movedFakeGo, "@FX@", b.fx))
-	t.Setenv("PATH", b.fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return b
 }
 
@@ -174,6 +173,9 @@ func (b *movedBench) movedFile(t *testing.T, text string) {
 func (b *movedBench) run(t *testing.T, env Environment, args ...string) (int, string, string) {
 	t.Helper()
 	var out, errs strings.Builder
+	// The fake git and go come first on the PATH of the children this call
+	// starts, and of nothing else.
+	env.Env = append(os.Environ(), "PATH="+b.fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	c := Run("nova-version", args, "test", &out, &errs, env)
 	return c, out.String(), errs.String()
 }
@@ -198,6 +200,8 @@ func (b *movedBench) gitUnexpected() bool {
 // and every word the note announces was parsed off a help a built binary
 // printed -- the flag a hand list would name is announced nowhere.
 func TestIssue2288(t *testing.T) {
+	t.Parallel()
+
 	b := movedBenchSetup(t)
 	b.rev(t, "aaaa1", map[string]string{
 		"nova-secrets": "nova-secrets seat --file <path> [--max <n>]\nnova-secrets version (or --version)\nnova-secrets help\n",
@@ -243,6 +247,8 @@ func TestIssue2288(t *testing.T) {
 // the kind of flag a hand-written list would name, appears in neither help and
 // is announced nowhere.
 func TestMovedReadsTheBuildNeverAList(t *testing.T) {
+	t.Parallel()
+
 	b := movedBenchSetup(t)
 	b.rev(t, "aaaa1", map[string]string{
 		"nova-secrets": "nova-secrets seat --file <path> [--max <n>]\nnova-secrets version (or --version)\nnova-secrets help\n",
@@ -278,6 +284,8 @@ func TestMovedReadsTheBuildNeverAList(t *testing.T) {
 // added; only a statement -- in a commit message or a MOVED file -- makes it a
 // rename.
 func TestMovedNeverInfersARename(t *testing.T) {
+	t.Parallel()
+
 	b := movedBenchSetup(t)
 	b.rev(t, "aaaa1", map[string]string{
 		"nova-old": "nova-old fetch --file <path>\nnova-old version (or --version)\nnova-old help\n",
@@ -331,6 +339,8 @@ func TestMovedNeverInfersARename(t *testing.T) {
 // zeros, exit 0 -- a refusal would send a reader to repair a build that moved
 // nothing.
 func TestMovedEmptyDiffIsNotARefusal(t *testing.T) {
+	t.Parallel()
+
 	b := movedBenchSetup(t)
 	seatHelp := "nova-bus seat --file <path>\nnova-bus version (or --version)\nnova-bus help\n"
 	b.rev(t, "aaaa1", map[string]string{"nova-bus": seatHelp})
@@ -358,6 +368,8 @@ func TestMovedEmptyDiffIsNotARefusal(t *testing.T) {
 // missing revision is refused with the git fetch that would bring it, and no
 // build is started.
 func TestMovedIsBoundedByTheClock(t *testing.T) {
+	t.Parallel()
+
 	b := movedBenchSetup(t)
 	b.rev(t, "aaaa1", map[string]string{
 		"nova-bus": "nova-bus seat --file <path>\nnova-bus version (or --version)\nnova-bus help\n",

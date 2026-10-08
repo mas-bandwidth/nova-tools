@@ -85,6 +85,7 @@ func TestPresenceTakesAMemberDownAndDealsItsCards(t *testing.T) {
 		"prop fleet deal_index=4", // every placement moves the deal's counter, by two past the member down (errata 3 amendment 5)
 		"move fleet s1-1.w1 m1:working>m2:ready",
 		"move fleet s1-3.w1 m1:ready>m2:ready",
+		"prop fleet status_seen=m1=down,0,-,-,0,- m2=up,0,-,-,0,-", // the first sight of each member, recorded as the presence part leaves it: no judgment
 		"notice fleet member down []")
 	byCard := map[string]refmodel.Move{}
 	for _, m := range got {
@@ -110,6 +111,7 @@ func TestPresenceBringsAMemberUpWhenItBeatsAndLevelsTheQueues(t *testing.T) {
 		"set fleet ctl-m2 since=2030-01-02T03:04:05Z,status=up",
 		"prop fleet deal_index=2", // the levelling moves the deal's counter too
 		"move fleet s1-3.w1 m1:ready>m2:ready",
+		"prop fleet status_seen=m1=up,0,-,-,0,- m2=up,0,-,-,0,-", // the first sight of each member, recorded as the presence part leaves it: no judgment
 		"notice fleet member up []")
 }
 
@@ -117,7 +119,13 @@ func TestPresenceLeavesAMemberThatBeatsAlone(t *testing.T) {
 	t.Parallel()
 	w := sprintOf(t, "m1", "m2")
 	w.add(t, "s1", 2)
-	expect(t, refmodel.PresenceMoves(w.snapshot(w.fresh()), later(0)))
+	// the first sight of the members is their status recorded, and nothing else
+	seen := "m1=up,0,-,-,0,- m2=up,0,-,-,0,-"
+	expect(t, refmodel.PresenceMoves(w.snapshot(w.fresh()), later(0)), "prop fleet status_seen="+seen)
+	// once recorded, a member that beats and holds its status is left alone
+	recorded := w.snapshot(w.fresh())
+	recorded.Tables.Fleet.SetProps(map[string]string{sprint.PropStatusSeen: seen})
+	expect(t, refmodel.PresenceMoves(recorded, later(0)))
 	// nothing read of the beats at all: the duty does nothing
 	snap := w.snapshot(nil)
 	snap.Beats = nil
@@ -144,8 +152,15 @@ func TestResolveRaisesABlockedJudgmentOnceForADroppedNeed(t *testing.T) {
 	w := sprintOf(t, "m1")
 	w.add(t, "s1", 1)
 	w.addOne(t, "s1", "s1-2", "s1-1")
-	w.must(t, sprint.Drop(w.s, sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "not wanted", Who: coordinator}))
-	// dropping told the coordinator already; the judgment is open, so the tick writes none again
+	// seed s1-1 dropped off the table, the state the drop verb now refuses to
+	// make while s1-2 needs it (docs/SPEC-SPRINT.md section 11)
+	c := w.s.Work.Card("s1-1")
+	c.Row, c.Col = "", ""
+	c.Fields["outcome"] = "dropped"
+	c.Rev++
+	w.s.Work.Put(c)
+	// the resolve opens the blocked judgment; the tick writes none again
+	w.must(t, sprint.Resolve(w.s, sprint.ResolveReq{Who: sprint.MachineActor}))
 	expect(t, refmodel.ResolveMoves(w.snapshot(w.fresh()), later(0)))
 	// with the judgment closed, the tick raises it
 	snap := w.snapshot(w.fresh())
@@ -297,7 +312,7 @@ func TestLevelMovesTheNewestFromTheLongestRoundTheFleet(t *testing.T) {
 	assert.Contains(t, got[1].Set, "member=m2", "a card dealt again is the next generation, of its new member: %v", got[1].Set)
 }
 
-func TestAskAsksTwoReadersOfAPrimaryInReview(t *testing.T) {
+func TestAskAsksTheReadersOfAPrimaryInReview(t *testing.T) {
 	t.Parallel()
 	w := sprintOf(t, "m1")
 	w.add(t, "s1", 2)
@@ -308,6 +323,7 @@ func TestAskAsksTwoReadersOfAPrimaryInReview(t *testing.T) {
 	w.take(t, "s1-2")
 	w.finish(t, "s1-2", true) // failed work is not read
 	got := refmodel.AskMoves(w.snapshot(w.fresh()), later(0))
+	// both reads at once (reads together, the interim rule of 2026-10-06)
 	expect(t, got,
 		"set work s1-1 asked=reader-a,reader-b",
 		"prop readers ask_index=2",
@@ -421,7 +437,7 @@ func TestDeadlinesJudgeAReadCardNotBegun(t *testing.T) {
 	w := sprintOf(t, "m1")
 	w.add(t, "s1", 1)
 	w.drive(t, "s1-1", sprint.Review)
-	w.ask(t, "s1-1")
+	w.ask(t, "s1-1") // two reads outstanding: both asked at once (reads together, the interim rule)
 	snap := w.snapshot(nil)
 	expect(t, refmodel.DeadlineMoves(snap, later(30*time.Minute)))
 	got := refmodel.DeadlineMoves(snap, later(30*time.Minute+time.Second))
@@ -582,8 +598,8 @@ func TestEveryPartOfTheTickIsADutyAndEveryDutyIsNamedInOrder(t *testing.T) {
 	for _, p := range sprint.TickParts {
 		assert.True(t, names[p.Name], "the tick's part %s is no duty: Decide would leave it out", p.Name)
 	}
-	want := []string{refmodel.DutyLevel, refmodel.DutyLevelReads, refmodel.DutyResolve, refmodel.DutyDeal, refmodel.DutyAccept, refmodel.DutyAsk, refmodel.DutyResume,
-		refmodel.DutyStrangers, refmodel.DutyPresence, refmodel.DutyCheck, refmodel.DutyDeadlines, refmodel.DutyOverdue, refmodel.DutyDone, refmodel.DutyRemind}
+	want := []string{refmodel.DutyLevel, refmodel.DutyLevelReads, refmodel.DutyResolve, refmodel.DutyCapDeal, refmodel.DutyDeal, refmodel.DutyRebalance, refmodel.DutyAccept, refmodel.DutyAsk, refmodel.DutyResume,
+		refmodel.DutyStrangers, refmodel.DutyPresence, refmodel.DutyFriendStall, refmodel.DutyCheck, refmodel.DutyDeadlines, refmodel.DutyOverdue, refmodel.DutyDone, refmodel.DutyRemind}
 	var got []string
 	for _, d := range refmodel.Duties {
 		got = append(got, d.Name)

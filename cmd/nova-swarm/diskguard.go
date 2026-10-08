@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -86,7 +87,7 @@ type guard struct {
 	roots, caches, modCaches   []string
 	logDir, landDir, mirrorDir string
 	cacheMax, modMax, logMax   int64
-	floor                      int64
+	floor, stopFloor           int64
 	logKeep                    int
 	poolIdle, cloneAge         time.Duration
 	now                        time.Time
@@ -97,6 +98,7 @@ type guard struct {
 	cleanMod                   func(dir string) error
 	dirty                      func(dir string) (bool, error)
 	out                        io.Writer
+	start                      []string // said once before any rule: what the run lacks or found off PATH
 	freed                      int64
 	failed                     int
 	list                       []string // the process list, read once a run
@@ -215,30 +217,53 @@ func holding(open []string, paths ...string) string {
 	return ""
 }
 
-// run is one pass of every rule, then the floor and the closing line: exit 0, or 1 when
-// something could not be done (each said on its NOTE line).
+// run is one pass of every rule, then the floors and the closing line: exit 0, 3 under the
+// stop floor, or 1 when something could not be done (each said on its NOTE line).
 func (g *guard) run() int {
+	for _, line := range g.start {
+		g.say(line)
+	}
 	g.logs()
 	g.buildCaches()
 	g.modules()
 	g.pools()
 	g.landClones()
 	g.mirrors()
-	free := uint64(0)
-	for i, p := range append([]string{g.home}, g.roots...) {
+	// The floors read every volume this pass reads, the home volume and each --root, never
+	// the home volume alone: a root under the stop floor stops the loops, and the free the
+	// closing line reports is the tightest volume read. A volume whose free could not be
+	// read is no reading of zero: it fails on its NOTE line, and its run reaches the
+	// INCOMPLETE line, never STOP.
+	var free uint64
+	freeRead, freeFailed, stop := false, false, false
+	for _, p := range append([]string{g.home}, g.roots...) {
 		n, err := g.free(p)
 		if err != nil {
 			if !os.IsNotExist(err) {
+				freeFailed = true
 				g.fail(fmt.Sprintf("the free disk on the volume of %s could not be read (%s)", oneline.Field(p), oneline.Err(err)))
 			}
 			continue
 		}
-		if i == 0 {
-			free = n
+		if !freeRead || n < free {
+			free, freeRead = n, true
 		}
 		if g.floor > 0 && n < uint64(g.floor) {
 			g.say(fmt.Sprintf("DISK-GUARD WARN free=%d floor=%d on the volume of %s: members there start no card; run: df -h %s, and read what this log removed and kept", n, g.floor, oneline.Field(p), oneline.Field(p)))
 		}
+		if g.stopFloor > 0 && n < uint64(g.stopFloor) {
+			stop = true
+		}
+	}
+	// A volume that could not be read reaches the closing line: the run does not stop on
+	// the readings it has while one volume is unknown.
+	if freeFailed {
+		fmt.Fprintf(g.out, "DISK-GUARD INCOMPLETE freed=%d free=%d failed=%d\n", g.freed, free, g.failed)
+		return 1
+	}
+	if stop {
+		fmt.Fprintf(g.out, "DISK-GUARD STOP freed=%d free=%d floor=%d: the volume is under the stop floor; run: stop the loops on this machine, then free disk\n", g.freed, free, g.stopFloor)
+		return 3
 	}
 	// the closing line is written here, beside the exit it explains (law #2573): numbers
 	// only, so it needs neither say's escape nor its dry-run wording
@@ -783,6 +808,7 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 	mirror := f.fs.String("mirrors", "~/nova-bench/mirror", "the `dir` of the bench's mirrors, whose temporary packs older than an hour are removed (default ~/nova-bench/mirror)")
 	dry := f.fs.Bool("dry-run", false, "judge every rule and print each line with WOULD-REMOVE, WOULD-TRIM, WOULD-CLEAN or WOULD-ROTATE, removing and rotating nothing")
 	floor := f.fs.Int("disk-floor", guardFloorGiB, "the free `GiB` under which the run warns, the members' own floor (default 10; 0 warns never)")
+	stopFloor := f.fs.Int("stop-floor", 0, "the free `GiB` under which the run ends DISK-GUARD STOP with exit 3, for the loop row to stop the loops (default 0: never)")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -793,6 +819,9 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 		if c.v < 1 {
 			f.add(fmt.Sprintf("--%s is at least 1, got %d: a limit of nothing would remove everything every run", oneline.Field(c.name), c.v))
 		}
+	}
+	if *stopFloor < 0 {
+		f.add(fmt.Sprintf("--stop-floor is 0 or more GiB, got %d", *stopFloor))
 	}
 	if *floor < 0 {
 		f.add(fmt.Sprintf("--disk-floor is 0 or more GiB, got %d", *floor))
@@ -821,9 +850,16 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 	}
 	g := &guard{
 		cacheMax: int64(*cacheGB) * gib, modMax: int64(*modGB) * gib, logMax: int64(*logMB) << 20, logKeep: *logKeep,
-		floor: int64(*floor) * gib, poolIdle: *poolIdle, cloneAge: *cloneAge, now: time.Now(), home: home,
+		floor: int64(*floor) * gib, stopFloor: int64(*stopFloor) * gib, poolIdle: *poolIdle, cloneAge: *cloneAge, now: time.Now(), home: home,
 		logDir: tilde(*logs), mirrorDir: tilde(*mirror), roots: guardRoots(roots, scans, tilde),
 		dry: *dry, procs: processList, held: heldPaths, free: diskFree, cleanMod: cleanModCache, dirty: landDirty, out: stdout,
+	}
+	if runtime.GOOS != "linux" {
+		lsof, note := findLsof(exec.LookPath, lsofAt, isExecutable)
+		g.held = func() ([]string, error) { return lsofHeld(lsof) }
+		if note != "" {
+			g.start = append(g.start, note)
+		}
 	}
 	if *land != "" {
 		g.landDir = tilde(*land)
@@ -918,12 +954,42 @@ func processList() ([]string, error) {
 // heldPaths is every path a process other than this one holds, its working directory and
 // its open files, links resolved by the kernel: on Linux from /proc (lsof is not on every
 // machine), elsewhere from lsof's -F listing (about a second and a half on a desktop with
-// 750 processes).
+// 750 processes), the lsof findLsof finds.
 func heldPaths() ([]string, error) {
 	if runtime.GOOS == "linux" {
 		return procPaths("/proc", os.Getpid())
 	}
-	cmd, cancel := subproc.CommandFor(context.Background(), time.Minute, "lsof", "-n", "-P", "-w", "-F", "pn")
+	lsof, _ := findLsof(exec.LookPath, lsofAt, isExecutable)
+	return lsofHeld(lsof)
+}
+
+// lsofAt is where lsof is installed when it is not on PATH: macOS ships it in /usr/sbin,
+// which a launch agent's PATH (/usr/bin:/bin by default) leaves out, and a run that could
+// not find it read no open file and freed nothing that needed one (found
+// 2026-10-04).
+var lsofAt = []string{"/usr/sbin/lsof", "/usr/bin/lsof", "/sbin/lsof", "/bin/lsof"}
+
+// findLsof is the lsof the guard runs: PATH's, else the first of at that is an executable
+// file, else "". note is the line the run says once at its start: nothing when PATH has
+// it, the path taken when PATH did not, and what the run cannot do when there is none.
+func findLsof(look func(string) (string, error), at []string, executable func(string) bool) (path, note string) {
+	if p, err := look("lsof"); err == nil {
+		return p, ""
+	}
+	for _, p := range at {
+		if executable(p) {
+			return p, "NOTE lsof is not on PATH; the open files of live processes are read with " + p
+		}
+	}
+	return "", "NOTE lsof is not on PATH nor at " + strings.Join(at, ", ") + ": the open files of live processes cannot be read, so nothing a live process may hold is removed this run; install lsof or put its directory on the loop's PATH"
+}
+
+// lsofHeld is heldPaths read with the lsof at path; "" is the lsof findLsof did not find.
+func lsofHeld(lsof string) ([]string, error) {
+	if lsof == "" {
+		return nil, fmt.Errorf("lsof is not on PATH nor at %s", strings.Join(lsofAt, ", "))
+	}
+	cmd, cancel := subproc.CommandFor(context.Background(), time.Minute, lsof, "-n", "-P", "-w", "-F", "pn")
 	defer cancel()
 	b, err := cmd.Output()
 	if err != nil {

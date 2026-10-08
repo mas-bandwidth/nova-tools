@@ -9,6 +9,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -17,10 +18,13 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/card"
 	"github.com/mas-bandwidth/nova-tools/internal/cardgen"
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
@@ -32,8 +36,8 @@ const usage = `nova-card: writes a directory of pre-linted briefs from a ledger,
 
 how it works: a source is read from a checkout of the target repository (a ratchet ledger of
 internal/ci, a findings TSV, a tool's rendered help); the planner cuts one card per file with
-its PATHS, TEST and tier computed from the row, puts cards that edit one ledger in alternating
-waves, and holds every brief to the lint nova-sprint add runs before the directory is written.
+its PATHS, TEST and tier computed from the row, plans every ledger in one wave with no
+dependency, and holds every brief to the lint nova-sprint add runs before the directory is written.
 State: none; the directory, its manifest.tsv and the one CARDS OK line are the whole result.
 
 the flow, three lines:
@@ -42,32 +46,38 @@ the flow, three lines:
   nova-sprint where
 
 usage:
-  nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--dry-run]
-  nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--dry-run]
-  nova-card generate --from help --tool <name> [--tool <name>...] --out <dir> [--bin-dir <dir>] (--repo-dir <dir> | --repo --base --sha) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--dry-run]
-  nova-card lint --card <file> [--card <file>...]
-  nova-card lint --card ./cards/finding-cmd-nova-bus-main.md
+  nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--name <n>...] [--dropped <id>...] [--dry-run]
+  nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
+  nova-card generate --from help --tool <name> [--tool <name>...] --out <dir> [--bin-dir <dir>] (--repo-dir <dir> | --repo --base --sha) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
+  nova-card lint --card <file> [--card <file>...] [--name <n>...] [--dropped <id>...]
   nova-card template
   nova-card version
   nova-card help [<verb>]
 
 generate reads the repository, the branch and the base sha from --repo-dir (its origin URL,
 its branch, its HEAD); --repo, --base and --sha each override one, and all three together
-need no checkout. With a checkout every PATHS entry is checked to exist at it, so a card never
+need no checkout. A card's PATHS are computed from its START line, never typed: every directory
+a START file lives in, as its Go files and its tests (<dir>/*.go, <dir>/*_test.go), and the docs
+the card names. With a checkout every PATHS entry is checked to exist at it, so a card never
 names a path the add would reject. The ledgers: ` + "`nova-card generate -h`" + ` lists them.
-A ledger card is flash and a findings or help card is pro unless --tier says otherwise.
-Cards of one ordinary ledger alternate waves (odd rows wave 1, even rows wave 2 depending on
-their neighbours) because adjacent deletions conflict at land; a generated ledger
-(docs/SPEC-SPRINT.md section 7) gets one wave and no dependency. Wave 1 cards of one ledger
-share its path, so the add wants --allow-shared-paths; the CARDS line says so.
+A ledger card is flash and a findings or help card is pro unless --tier says otherwise; a card
+whose PATHS name TLA+ model work (a .tla module, an MC config under tla/) is frontier, as
+nova-sprint add tiers it, and --tier flash or pro on such a card is a red line
+(check=model-tier). The TLC run records tla/RUNS.tsv and tla/CASES.tsv alone are no model.
+A ledger plan is one wave with no dependency chain: the lander resolves a ledger conflict as
+the union of removals, so adjacent deletions of one file no longer conflict at land
+(docs/SPEC-SPRINT.md section 7). Every card is wave 1 and shares the ledger's path with no
+need between them, so the add wants --allow-shared-paths; the CARDS line says so.
 lint holds a brief to the lint nova-sprint add runs (the model lines, the child rules under the
 default rule set, a tree card's steps), and past the add to the typed header and the template's
-unfilled <...> lines, which the add does not read, one LINT DRIFT line each; generate holds every
-brief the same before it writes. A sprint initialised with --rules holds a brief to that file at
+unfilled <...> lines, which the add does not read, one LINT DRIFT line each; and to the card
+checks: a tier on line 1, a TEST whose package PATHS names, no name --name gives outside
+double-quoted words, no card --dropped gives. generate holds every brief the same before it
+writes. A sprint initialised with --rules holds a brief to that file at
 the add. template prints nova-swarm's card template, the shape every generated brief has.
 
 what it prints:
-  CARDS OK dir=<dir> cards=<n> waves=<k> tier=<t> [shared-paths=yes]   then manifest.tsv in <dir> (--dry-run: the manifest on stdout, dry-run=yes)
+  CARDS OK dir=<dir> cards=<n> waves=<k> tier=<t> [frontier=<n>] [shared-paths=yes]   then manifest.tsv in <dir> (--dry-run: the manifest on stdout, dry-run=yes)
   CARDS NOTE <what was skipped: a row the ledger did not read, a tool with no help>
   LINT DRIFT card=<id> check=<check> line=<n>: <excerpt>              and nothing is written
   LINT OK file=<file>
@@ -141,6 +151,30 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 	return refuse(stderr, "", fmt.Sprintf("unknown verb %q; one of %s", args[0], strings.Join(verbs, ", ")))
 }
 
+// lintFlags adds --name and --dropped to fs, the card checks' inputs from outside the
+// brief (card.Options; the tree holds no deployment name), and returns their reader.
+func lintFlags(fs *flag.FlagSet) func() card.Options {
+	var names, dropped multi
+	fs.Var(&names, "name", "a person, friend or machine `name` no brief may carry outside double-quoted words; repeat or comma separate for more")
+	fs.Var(&dropped, "dropped", "the `id` of a card dropped off the table, which no brief may name; repeat or comma separate for more")
+	return func() card.Options {
+		return card.Options{Names: splitList(names), Dropped: splitList(dropped)}
+	}
+}
+
+// splitList is a repeatable flag's values, each split on commas, blanks dropped.
+func splitList(m multi) []string {
+	var out []string
+	for _, v := range m {
+		for _, f := range strings.Split(v, ",") {
+			if f = strings.TrimSpace(f); f != "" {
+				out = append(out, f)
+			}
+		}
+	}
+	return out
+}
+
 // multi is a repeatable string flag.
 type multi []string
 
@@ -151,6 +185,7 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("lint")
 	var cards multi
 	fs.Var(&cards, "card", "a brief `file` to hold to the add's lint; repeat for more")
+	opts := lintFlags(fs)
 	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, "lint", verbflag.Explain(fs, err))
 	}
@@ -164,7 +199,7 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, "lint", "cannot read "+file+": "+err.Error())
 		}
 		id := strings.TrimSuffix(filepath.Base(file), ".md")
-		findings := cardgen.Lint(id, string(raw))
+		findings := card.Lint(id, string(raw), opts())
 		for _, f := range findings {
 			fmt.Fprintln(stdout, oneline.Escape(f.String()))
 		}
@@ -198,6 +233,7 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 	minutes := fs.Int("minutes", 0, "the Deadline line's `minutes` (default: 45 flash, 60 pro)")
 	maxCards := fs.Int("max", 0, "write at most this many cards, in source order; 0 is all")
 	dryRun := fs.Bool("dry-run", false, "plan and lint, print the manifest and the CARDS line, and write nothing")
+	opts := lintFlags(fs)
 	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, "generate", verbflag.Explain(fs, err))
 	}
@@ -287,26 +323,40 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 	// render, lint, and check the paths against the checkout: nothing is written while
 	// one brief is red
 	briefs := make([]string, len(plan.Cards))
-	red := 0
+	red, frontier := 0, 0
 	for i := range plan.Cards {
 		c := &plan.Cards[i]
+		c.Paths = card.Paths(h, *c) // computed from the START line, never typed (docs/SPEC-CARD-CONTRACT.md section 6)
 		if *repoDir != "" {
 			cardgen.NewTestFile(c, func(glob string) bool { return existsAt(*repoDir, glob) })
 		}
+		// a card whose PATHS name TLA+ model work is tiered frontier, as nova-sprint add
+		// tiers it (sprint.ModelTier; docs/SPEC-SPRINT.md, the card decides its model): the
+		// source's tier gives way, and a --tier below it is a red line with the add's reason
+		model := len(sprint.ModelPaths(c.Paths)) > 0
+		if model && *tier == "" {
+			c.Tier = cardhdr.RouteFrontier
+			frontier++
+		}
 		briefs[i] = cardgen.Render(h, *c)
-		for _, f := range cardgen.Lint(c.ID, briefs[i]) {
+		if _, _, why := sprint.ModelTier(briefs[i]); model && why != "" {
+			fmt.Fprintln(stdout, oneline.Escape(cardgen.LintFinding{ID: c.ID, Check: "model-tier", Line: 1, Excerpt: why + "; or generate without --tier " + *tier}.String()))
+			red++
+		}
+		for _, f := range card.Lint(c.ID, briefs[i], opts()) {
 			fmt.Fprintln(stdout, oneline.Escape(f.String()))
 			red++
 		}
 		if *repoDir != "" {
 			for _, p := range c.Paths {
-				if !existsAt(*repoDir, p) && !c.Creates(p) {
+				if !existsAt(*repoDir, p) && !card.Answered(*c, p) {
 					fmt.Fprintln(stdout, oneline.Escape(cardgen.LintFinding{ID: c.ID, Check: "paths-at-base", Line: 6, Excerpt: "PATHS entry " + p + " names nothing in " + *repoDir}.String()))
 					red++
 				}
 			}
 		}
 	}
+	plan.Shared = card.Shared(plan.Cards)
 	if red > 0 {
 		fmt.Fprintf(stderr, "nova-card generate FAILED: %d red line(s) above; nothing written to %s\n", red, oneline.Field(*out))
 		return 1
@@ -316,7 +366,7 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "CARDS NOTE skipped %s\n", oneline.Escape(n))
 		}
 		fmt.Fprint(stdout, cardgen.Manifest(plan))
-		fmt.Fprintln(stdout, cardgen.OKLine(*out, plan)+" dry-run=yes (nothing written)")
+		fmt.Fprintln(stdout, cardgen.OKLine(*out, plan)+frontierWord(frontier)+" dry-run=yes (nothing written)")
 		return 0
 	}
 	if err := os.MkdirAll(*out, 0o755); err != nil {
@@ -336,7 +386,7 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 	for _, n := range notes {
 		fmt.Fprintf(stdout, "CARDS NOTE skipped %s\n", oneline.Escape(n))
 	}
-	line := cardgen.OKLine(*out, plan)
+	line := cardgen.OKLine(*out, plan) + frontierWord(frontier)
 	if plan.Shared {
 		line += " shared-paths=yes (add with --allow-shared-paths)"
 	}
@@ -345,6 +395,15 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 }
 
 var shaRE = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// frontierWord is the CARDS OK line's count of the cards generate tiered frontier because
+// their PATHS name TLA+ model work; "" when none.
+func frontierWord(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" frontier=%d", n)
+}
 
 // readCheckout fills the header's empty fields from a checkout: the repository from
 // origin's URL, the branch from HEAD's name, the sha from HEAD.

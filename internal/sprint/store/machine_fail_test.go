@@ -51,7 +51,7 @@ func TestCRTickFailsAtEveryCallAndRecovers(t *testing.T) {
 		// every due move happened: w resolved and dealt, s3 resumed, rv asked, s1 dealt
 		assert.NotEqual(t, sprint.Waiting, s.StateOf("w"), "%s: w still waiting after recovery", where)
 		assert.NotEqual(t, string(sprint.StreamStopped), s.StreamCtl("s3").F("state"), "%s: s3 still stopped after recovery", where)
-		assert.Len(t, s.Readers.Of("rv"), 2, "%s: rv asked of %d", where, len(s.Readers.Of("rv")))
+		assert.Len(t, s.Readers.Of("rv"), 2, "%s: rv asked of %d (both reads together)", where, len(s.Readers.Of("rv")))
 		n := h.written(sprint.NResumed)
 		assert.Equal(t, 1, n, "%s: resumed written %d", where, n)
 		notes, _, _ := h.m.NotesSince(h.ctx, "", 100000)

@@ -209,7 +209,14 @@ func CheckInvariant3(storeDir string, sopsCfg *SopsConfig, files []string) (fail
 
 		fileUnsealed := false
 		for _, k := range keys {
-			if unencRe != nil && unencRe.MatchString(k.Name) {
+			if k.Name == SeatMarkKey && k.Clear && !isSeatMark(k.Value) {
+				fileUnsealed = true
+				failures = append(failures, CheckFailure{
+					Kind:   "unsealed",
+					File:   file,
+					Reason: fmt.Sprintf("unencrypted key %s holds a value that is not a verb's mark", k.Name),
+				})
+			} else if k.Name == SeatMarkKey || (unencRe != nil && unencRe.MatchString(k.Name)) {
 				clearCount++
 			} else if k.Clear {
 				fileUnsealed = true

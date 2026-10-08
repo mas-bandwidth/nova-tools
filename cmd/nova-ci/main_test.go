@@ -101,7 +101,7 @@ func TestAFlagMistakeNamesWhatTheVerbTakes(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"slowtests", "--budgt", "3"}, "nova-ci slowtests REFUSED: unknown flag --budgt; the flags of slowtests are --allowlist, --budget, --cpus, --enforce, --example, --json, --load, --max, --package-budget, --sleeps, --test-budget; did you mean --budget?; run: nova-ci slowtests -h\n"},
+		{[]string{"slowtests", "--budgt", "3"}, "nova-ci slowtests REFUSED: unknown flag --budgt; the flags of slowtests are --allow-empty, --allowlist, --budget, --cpus, --enforce, --example, --json, --load, --max, --package-budget, --sleeps, --test-budget; did you mean --budget?; run: nova-ci slowtests -h\n"},
 		{[]string{"slowtests", "--budget", "abc"}, `nova-ci slowtests REFUSED: invalid value for --budget: it wants a whole number (whole seconds a package's tests may take before it is over budget); run: nova-ci slowtests -h` + "\n"},
 		{[]string{"slowtests", "--load", "x"}, `nova-ci slowtests REFUSED: invalid value for --load: it wants a number (the host's load average, instead of reading it); run: nova-ci slowtests -h` + "\n"},
 		{[]string{"slowtests", "--enforce=maybe"}, "nova-ci slowtests REFUSED: invalid value for --enforce: it wants true or false (fail the run on a CI-SLOW line (the nightly reference leg only); without it the times are printed and only a CI-SLEEPS line fails); run: nova-ci slowtests -h\n"},
@@ -177,18 +177,123 @@ type terminalInfo struct{ os.FileInfo }
 func (terminalInfo) Mode() os.FileMode { return os.ModeDevice | os.ModeCharDevice }
 
 // The null device is a character device and not a terminal: slowtests reads
-// it as the documented empty stream (OK, packages=0), never as a terminal.
+// it as an empty stream (FAILED, packages=0, --allow-empty is the way out),
+// never as a terminal.
 func TestSlowtestsReadsTheNullDeviceAsAnEmptyStream(t *testing.T) {
 	t.Parallel()
 
 	null, err := os.Open(os.DevNull)
 	require.NoError(t, err)
-	defer null.Close()
+	defer func() { _ = null.Close() }() // ignored: /dev/null close on read-only file
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2"}, null, &stdout, &stderr)
-	assert.Equal(t, 0, code, "stderr %q", stderr.String())
+	assert.Equal(t, 1, code, "stderr %q", stderr.String())
 	assert.Empty(t, stderr.String())
-	assert.Equal(t, "CI-SLOW OK packages=0 slowest=none\n"+loadLine1of2, stdout.String())
+	assert.Equal(t, "CI-SLOW FAILED packages=0 slowest=none: looked at nothing; run: nova-ci slowtests --allow-empty\n"+loadLine1of2, stdout.String())
+}
+
+// TestEmptyStdinIsFailedUnlessAllowEmpty pins that an empty go test -json
+// stream (the count of packages read is 0) is FAILED and names --allow-empty
+// as the way out, and that --allow-empty and the built-in --example stream
+// stay a pass (docs/STANDARD.md section 2, exit codes tell the truth).
+func TestEmptyStdinIsFailedUnlessAllowEmpty(t *testing.T) {
+	t.Parallel()
+
+	code, stdout, stderr := runCI(t, []string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2"}, "")
+	assert.Equal(t, 1, code, "empty stdin: exit %d stderr %q, want 1", code, stderr)
+	assert.Empty(t, stderr)
+	assert.Equal(t, "CI-SLOW FAILED packages=0 slowest=none: looked at nothing; run: nova-ci slowtests --allow-empty\n"+loadLine1of2, stdout)
+
+	code, stdout, stderr = runCI(t, []string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2", "--allow-empty"}, "")
+	assert.Equal(t, 0, code, "--allow-empty: exit %d stderr %q, want 0", code, stderr)
+	assert.Empty(t, stderr)
+	assert.Equal(t, "CI-SLOW OK packages=0 slowest=none\n"+loadLine1of2, stdout)
+
+	code, stdout, stderr = runCI(t, []string{"slowtests", "--example", "--budget", "120", "--load", "1", "--cpus", "2"}, "")
+	assert.Equal(t, 0, code, "--example: exit %d stderr %q, want 0", code, stderr)
+	assert.Contains(t, stdout, "CI-SLOW OK packages=2")
+
+	code, stdout, stderr = runCI(t, []string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2", "--json"}, "")
+	assert.Equal(t, 1, code, "--json empty: exit %d stderr %q, want 1", code, stderr)
+	assert.Contains(t, stdout, `"status":"failed"`)
+	assert.Contains(t, stdout, `"packages":0`)
+	assert.Contains(t, stdout, "--allow-empty")
+}
+
+// TestNewVerbRefusesAVerbHelpAlreadyLists pins that new-verb refuses a verb
+// nova-ci help already lists, naming it, on the dry run and on the real run,
+// and still plans a name the help does not list (docs/STANDARD.md section 3).
+// The tree is a scratch checkout, so a run that failed to refuse writes there
+// and not into the repository.
+func TestNewVerbRefusesAVerbHelpAlreadyLists(t *testing.T) {
+	t.Parallel()
+	tree := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(tree, "go.mod"), []byte("module example.com/m\n"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(tree, "cmd", "nova-ci"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(tree, "cmd", "nova-ci", "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644))
+
+	for _, verb := range []string{"slowtests", "help"} {
+		t.Run(verb, func(t *testing.T) {
+			t.Parallel()
+			for _, args := range [][]string{
+				{"new-verb", "--dry-run", "--root", tree, "nova-ci", verb},
+				{"new-verb", "--root", tree, "nova-ci", verb},
+			} {
+				code, stdout, stderr := runCI(t, args, "")
+				assert.Equal(t, 2, code, "%v: exit %d stdout %q stderr %q, want 2", args, code, stdout, stderr)
+				assert.NotContains(t, stdout, "would write", "%v: the refusal printed a plan", args)
+				assert.Contains(t, stderr, "nova-ci new-verb REFUSED:", "%v: stderr %q", args, stderr)
+				assert.Contains(t, stderr, `"`+verb+`" is already a verb nova-ci help lists`, "%v: stderr %q", args, stderr)
+			}
+		})
+	}
+	code, stdout, stderr := runCI(t, []string{"new-verb", "--dry-run", "--root", tree, "nova-ci", "probe"}, "")
+	assert.Equal(t, 0, code, "probe: exit %d stderr %q, want 0", code, stderr)
+	assert.Contains(t, stdout, "would write cmd/nova-ci/probe.go", "probe: stdout %q", stdout)
+}
+
+// TestSlowtestsNamesAPackageThatStartedAndNeverEnded pins that a stream cut
+// after a package start is the finding `truncated: <pkg> started and never ended`
+// and not an empty stream, on the lines and under --json. A complete stream
+// stays a clean run (docs/SPEC-CI.md, "The per-package test time budget").
+func TestSlowtestsNamesAPackageThatStartedAndNeverEnded(t *testing.T) {
+	t.Parallel()
+
+	cut := `{"Action":"start","Package":"example.com/p"}` + "\n"
+	code, stdout, stderr := runCI(t, []string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2"}, cut)
+	assert.Equal(t, 1, code, "cut: exit %d stderr %q, want 1", code, stderr)
+	assert.Empty(t, stderr)
+	assert.Contains(t, stdout, "truncated: example.com/p started and never ended")
+	assert.NotContains(t, stdout, "CI-SLOW OK")
+	assert.NotContains(t, stdout, "looked at nothing")
+
+	code, stdout, stderr = runCI(t, []string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2", "--json"}, cut)
+	assert.Equal(t, 1, code, "--json cut: exit %d stderr %q, want 1", code, stderr)
+	assert.Contains(t, stdout, "started and never ended")
+	assert.NotContains(t, stdout, "looked at nothing")
+
+	complete := `{"Action":"start","Package":"example.com/p"}
+{"Action":"pass","Package":"example.com/p","Elapsed":0.1}
+`
+	code, stdout, stderr = runCI(t, []string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2"}, complete)
+	assert.Equal(t, 0, code, "complete: exit %d stderr %q, want 0", code, stderr)
+	assert.NotContains(t, stdout, "truncated:")
+	assert.Contains(t, stdout, "CI-SLOW OK")
+}
+
+// The banner's slowtests exit row names the truncated package among the
+// causes of exit 1, so the code's exit 1 and the banner agree (a cold reader
+// found the row listing only CI-SLEEPS, CI-SLOW under --enforce and an empty
+// stream while the code also returned 1 for a package that started and never
+// ended). `slowtests -h` quotes the same row through exitTable.
+func TestUsageBannerNamesATruncatedPackage(t *testing.T) {
+	t.Parallel()
+
+	for _, args := range [][]string{{"help"}, {"slowtests", "-h"}} {
+		code, stdout, stderr := runCI(t, args, "")
+		require.Equal(t, 0, code, "%v: exit %d stderr %q, want 0", args, code, stderr)
+		assert.Contains(t, stdout, "a truncated package (started and never ended)", "%v: the exit row does not name the truncated package:\n%s", args, stdout)
+	}
 }
 
 // A float flag that is not a finite number (NaN, +Inf, -Inf) is refused
@@ -308,9 +413,9 @@ func TestSlowtestsOverBudgetExitsOneOnlyUnderEnforce(t *testing.T) {
 // A line that is not a TestEvent is a refusal on stderr at exit 2 with no OK
 // line, naming its line: text, and JSON
 // that is not a TestEvent (null, a number, an array, an object with no Action),
-// so neither a truncated pipe nor some other JSON reads as a clean run. The
+// so JSON that is not a TestEvent does not read as a clean run. The
 // bookkeeping events (start, run, output, build-output) carry an Action and
-// pass.
+// pass. A package with a start and no terminal event is a truncated finding.
 func TestSlowtestsMalformedLineRefuses(t *testing.T) {
 	t.Parallel()
 
@@ -377,6 +482,50 @@ func TestSlowtestsUnitTierBudgetsReadTheAllowlist(t *testing.T) {
 	code, _, stderr = runCI(t, []string{"slowtests", "--package-budget", "2", "--allowlist", filepath.Join(t.TempDir(), "absent")}, "")
 	assert.Equal(t, 2, code, "a missing allowlist: exit %d stderr %q, want a refusal naming --allowlist", code, stderr)
 	assert.Contains(t, stderr, "--allowlist", "a missing allowlist: exit %d stderr %q, want a refusal naming --allowlist", code, stderr)
+}
+
+// TestSlowtestsAllowlistReportsAllBadRowsInOneRefusal pins that slowtests reports
+// every bad row of the allowlist file in one refusal with its line number, and that
+// help slowtests states the allowlist row shape and the bound.
+func TestSlowtestsAllowlistReportsAllBadRowsInOneRefusal(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	allow := filepath.Join(dir, "allow.txt")
+	content := "internal/ci\tTestA\t999\t1s@run1\n" +
+		"bad row without tabs\n"
+	require.NoError(t, os.WriteFile(allow, []byte(content), 0o644))
+
+	code, stdout, stderr := runCI(t, []string{"slowtests", "--allowlist", allow}, "")
+	assert.Equal(t, 2, code, "bad allowlist: exit %d stderr %q, want a refusal", code, stderr)
+	assert.Empty(t, stdout, "stdout = %q, want empty", stdout)
+	assert.Contains(t, stderr, "nova-ci slowtests REFUSED: ")
+	assert.Contains(t, stderr, "line 1")
+	assert.Contains(t, stderr, "line 2")
+	assert.Contains(t, stderr, "run: nova-ci slowtests -h")
+	assert.Equal(t, 1, strings.Count(stderr, "\n"), "want exactly one refusal line, got %q", stderr)
+
+	// help slowtests must state the row shape and the bound.
+	code, helpOut, _ := runCI(t, []string{"help", "slowtests"}, "")
+	require.Equal(t, 0, code)
+	assert.Contains(t, helpOut, "pkg<TAB>test<TAB>seconds<TAB><measured>s@<where>")
+	assert.Contains(t, helpOut, "bound")
+}
+
+// TestHelpSlowtestsQuotesTheSleepsMarker pins the marker the code matches
+// (internal/ci/slowtests.SleepsMarker, "SLEEPS:") in help slowtests and in the
+// verb's line of nova-ci help. A cold reader otherwise guesses the skip text
+// (docs/STANDARD.md section 3, help says what the input wants).
+func TestHelpSlowtestsQuotesTheSleepsMarker(t *testing.T) {
+	t.Parallel()
+
+	code, helpVerb, stderr := runCI(t, []string{"help", "slowtests"}, "")
+	require.Equal(t, 0, code, "help slowtests: %s", stderr)
+	assert.Contains(t, helpVerb, `"SLEEPS:"`, "help slowtests = %q, want the marker the code matches quoted", helpVerb)
+
+	code, banner, stderr := runCI(t, []string{"help"}, "")
+	require.Equal(t, 0, code, "help: %s", stderr)
+	assert.Contains(t, banner, `A test skipped with the marker "SLEEPS:"`, "the verb's line = %q, want the marker quoted", banner)
 }
 
 // PROBES 1, 5 and 6 of the #4413 ruling at the verb, with the load and CPUs
@@ -504,6 +653,34 @@ func TestFunctionalRefusesWhatItCannotRun(t *testing.T) {
 			assert.Contains(t, stderr, w, "%s: stderr %q lacks %q", tc.name, stderr, w)
 		}
 	}
+}
+
+// TestFunctionalPrintsPathsAcceptedByGoTest pins that `nova-ci functional ./...`
+// prints package paths in the form `go test -timeout 600s` accepts (./internal/x/),
+// and a test runs the printed line's paths through `go list` in a temp module.
+func TestFunctionalPrintsPathsAcceptedByGoTest(t *testing.T) {
+	t.Parallel()
+
+	bin := buildCLI(t)
+	dir := t.TempDir()
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/testmod\n\ngo 1.24\n"), 0o644))
+
+	pkgDir := filepath.Join(dir, "internal", "x")
+	require.NoError(t, os.MkdirAll(pkgDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "x.go"), []byte("package x\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "x_test.go"), []byte("//go:build functional\n\npackage x\n\nimport \"testing\"\n\nfunc TestX(t *testing.T) {}\n"), 0o644))
+
+	out := runIn(t, dir, bin, "functional", "./...")
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	require.Len(t, lines, 2, "output = %q, want paths on line 1 and run pattern on line 2", out)
+
+	paths := strings.Fields(lines[0])
+	require.Equal(t, []string{"./internal/x/"}, paths)
+	assert.Equal(t, "^(TestX)$", lines[1])
+
+	listOut := runIn(t, dir, "go", append([]string{"list"}, paths...)...)
+	assert.Contains(t, listOut, "example.com/testmod/internal/x")
 }
 
 // --max bounds the finding lines slowtests prints: at most --max CI-SLOW lines,

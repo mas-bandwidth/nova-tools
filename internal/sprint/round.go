@@ -150,27 +150,50 @@ func (r *round) scan(ok func(string) bool) string {
 // moves it past each (moved), in order. With every room unbounded (readers
 // named for no fleet row) the order is by load, the least loaded first.
 func (r *round) pickByRoom(k int, free []string, room map[string]readerRoom) []string {
+	// Workaround (the coordinator, 2026-10-06 7:40 PM ET; the owner: "fix it now, to work around it"): pick
+	// from the free readers themselves, never from the round's name index, which did not
+	// hold every reader up and left asks at one pick with six readers free. The index order
+	// still breaks ties, each scan starting past the name the one before took, as the
+	// reference model's NextReaders does. Read cards replace this path next.
 	var out []string
-	at := r.start()
-	n := len(r.order)
+	order := r.inIndexOrder(free)
+	at, n := 0, len(order)
 	for len(out) < k {
 		pick := -1
 		for i := 0; i < n; i++ {
 			j := (at + i) % n
-			x := r.order[j]
-			if !contains(free, x) || contains(out, x) || room[x].free <= 0 {
+			x := order[j]
+			if contains(out, x) || room[x].free <= 0 {
 				continue
 			}
-			if pick < 0 || room[x].share() > room[r.order[pick]].share() {
+			if pick < 0 || room[x].share() > room[order[pick]].share() {
 				pick = j
 			}
 		}
 		if pick < 0 {
 			break
 		}
-		out = append(out, r.order[pick])
-		room[r.order[pick]] = room[r.order[pick]].after(1)
+		out = append(out, order[pick])
+		room[order[pick]] = room[order[pick]].after(1)
 		at = pick + 1
+	}
+	return out
+}
+
+// inIndexOrder is names in the round's index order from its start, then the
+// names the index does not hold, in the order given.
+func (r *round) inIndexOrder(names []string) []string {
+	var out []string
+	n := len(r.order)
+	for i := 0; i < n; i++ {
+		if x := r.order[(r.start()+i)%n]; contains(names, x) && !contains(out, x) {
+			out = append(out, x)
+		}
+	}
+	for _, x := range names {
+		if !contains(out, x) {
+			out = append(out, x)
+		}
 	}
 	return out
 }

@@ -262,12 +262,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 		helpIfAsked(args[1:], "check")
 		return checkVerb(args[1:], stdout, stderr)
 	case "run":
-		return runVerb(args[1:], stdin, stdout, stderr, env)
+		return prodRunSeams().runVerb(args[1:], stdin, stdout, stderr, env)
 	case "reap":
 		return reapVerb(args[1:], stdout, stderr)
 	case "worktree":
 		helpIfAsked(args[1:], "worktree")
-		return worktreeVerb(args[1:], stdout, stderr, env)
+		return prodWorktreeSeams().worktreeVerb(args[1:], stdout, stderr, env)
 	case "egress":
 		if len(args) > 1 {
 			if egressVerbs[args[1]] {
@@ -275,7 +275,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 			}
 			helpIfAsked(args[1:2], "egress")
 		}
-		return egressVerb(args[1:], stderr)
+		return prodEgressSeams().egressVerb(args[1:], stderr)
 	case "policy":
 		helpIfAsked(args[1:], "policy")
 		return policyVerb(args[1:], stdout, stderr, env)
@@ -530,9 +530,11 @@ func execVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []st
 		// read= and read-noexec= are TWO counts because they are two grants: a --read
 		// root carries EXECUTE and a --read-noexec root does not, so a log that folded
 		// them into one number could not say what a run was allowed to run.
-		fmt.Fprintf(stderr, "SANDBOX OK backend=%s abi=%s%s read=%d read-noexec=%d write=%d net=%s cwd=%s cwdb64=%s ancestors=%d cmd=%s gpu=%s\n",
+		// deletes= names the --write roots the wall lets the command delete beneath, so a
+		// log says where an unlink was allowed and not only how many roots were written.
+		fmt.Fprintf(stderr, "SANDBOX OK backend=%s abi=%s%s read=%d read-noexec=%d write=%d net=%s cwd=%s cwdb64=%s ancestors=%d cmd=%s gpu=%s deletes=%s\n",
 			oneline.Field(sandbox.Backend), oneline.Field(sandbox.ABI()), used, len(p.Reads), len(p.ReadsNoExec), len(p.Writes),
-			oneline.Field(p.Net()), oneline.Field(p.Cwd), base64.RawURLEncoding.EncodeToString([]byte(p.Cwd)), p.AncestorCount(), oneline.Field(p.CmdName()), oneline.Field(string(p.GPUMode)))
+			oneline.Field(p.Net()), oneline.Field(p.Cwd), base64.RawURLEncoding.EncodeToString([]byte(p.Cwd)), p.AncestorCount(), oneline.Field(p.CmdName()), oneline.Field(string(p.GPUMode)), deletesField(p))
 		if flusher, ok := stderr.(interface{ Sync() error }); ok {
 			// ignored: a flush of stderr before the exec; a stream that cannot sync has nothing to lose that a later write would not also lose
 			_ = flusher.Sync()

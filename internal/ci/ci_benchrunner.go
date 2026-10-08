@@ -40,8 +40,10 @@ import (
 // BenchRunnerAllowPath is the allow file, relative to internal/ci.
 const BenchRunnerAllowPath = "testdata/bench-runners.allow"
 
-// benchRunnerSkipDirs are read against themselves: the runner and the guard.
-var benchRunnerSkipDirs = []string{"internal/testguard/"}
+// benchRunnerSkipDirs are read against themselves: the runner (internal/bench,
+// the one bench runner now, as the benchsh package was before #4327 deleted it)
+// and the guard.
+var benchRunnerSkipDirs = []string{"internal/bench/", "internal/testguard/"}
 
 // BenchRunnerSite is one ssh exec site: its file (slash, from the repo root)
 // and its function key (Recv.Name or Name).

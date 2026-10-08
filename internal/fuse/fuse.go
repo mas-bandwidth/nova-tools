@@ -15,27 +15,43 @@ WHAT IS ACTUALLY DECIDED HERE, and why each one is not arbitrary:
     caller must treat an error as BLOWN; ErrNoBox tells them apart, so a refusal
     can name the right remedy (CreateBox for the first, a hand repair for the
     second). Lstat refuses a link or non-regular path before open; SameFile then
-    proves the opened descriptor is the file that was inspected. errors.Is with
-    fs.ErrNotExist distinguishes absent from unreadable; it does not say which
-    part of the path is missing, and it does not need to, since both answers
-    refuse. A box comes into being by
+    proves the opened descriptor is the file that was inspected. The read is
+    limited to 1 MiB and refuses a file that reaches the limit: a box is only a
+    few lines, and an unbounded read lets a directory writer exhaust memory.
+    errors.Is with fs.ErrNotExist distinguishes absent from unreadable; it does
+    not say which part of the path is missing, and it does not need to, since
+    both answers refuse. A box comes into being by
     CreateBox, which never replaces one, or by a write verb on a box that was read.
 
  2. MALFORMED IS UNREADABLE. A JSON array, a bare string, a truncated file, a
-    lockdown whose value is not an object -- every one fails the unmarshal and comes
+    lockdown whose value is not an object -- every one fails the decode and comes
     back as CANNOT TELL, which every caller must treat as BLOWN. A bare JSON null
-    fails no unmarshal -- a struct ignores it with no error -- so the read
-    unmarshals through a pointer and refuses the nil it leaves behind: a
-    wrong-shaped value is CANNOT TELL, never the VERIFIED CLEAR a normalised
-    empty map would make of it. Reaching the
+    fails no decode -- a struct ignores it with no error -- so the read requires a
+    JSON OBJECT at the top level before it decodes anything, and names the kind it
+    found instead: a null, an array, a string, a number or a boolean is refused,
+    because a wrong-shaped value is CANNOT TELL, never the VERIFIED CLEAR a
+    normalised empty map would make of it. Its remedy is a hand restoration, not
+    init: init is the remedy for a path with no box and never replaces one. An
+    UNKNOWN top-level member is refused too, which is the policy for a gate: a key
+    the reader does not know is a key it cannot account for, and answering CLEAR
+    over a box someone meant to block with it is the fail-open this package exists
+    to prevent. `"quarantine": null` stays deliberately supported -- a box a person
+    hand-edits into that shape is a readable empty box. Reaching the
     fail-closed answer by a crash deep inside a caller is not a design; this is.
 
- 3. THE WRITE IS TEMP-FILE + RENAME. The file whose corruption means PERMANENT
-    LOCKDOWN must never be left torn: a truncating write can leave half a file if
-    the process dies, and a half file is an unreadable box that only a person can
-    clear, by hand, live. Rename within one directory is atomic, so a reader sees
-    the old box or the new one and never a fragment. Two copies of the tool blowing
-    fuses at once lose one WRITE, but neither can produce a corrupt box.
+ 3. THE WRITE IS TEMP-FILE + RENAME, PUBLISHED UNDER THE BOX'S LOCK. The file
+    whose corruption means PERMANENT LOCKDOWN must never be left torn: a
+    truncating write can leave half a file if the process dies, and a half file
+    is an unreadable box that only a person can clear, by hand, live. Rename
+    within one directory is atomic, so a reader sees the old box or the new one
+    and never a fragment. A box mutation (MutateBox) holds the lock file beside
+    the box -- <box>.lock, internal/filelock -- across its read, its change and
+    its publish, so two copies of the tool blowing fuses at once land BOTH
+    writes, and neither can produce a corrupt box. The one deliberate exception
+    is a lockdown whose lock cannot be taken: it blows unserialized rather than
+    not at all -- a fuse you cannot blow is not a fuse -- and cmd/nova-fuse says
+    so on a NOTE line (BoxLockUntaken tells that failure from a box that cannot
+    be written at all).
 
  4. SURFACE NAMES ARE MATCHED NORMALIZED, AND THAT CUTS BOTH WAYS. Raw string
     comparison lets `quarantine Discord` then `check discord` answer CLEAR -- a
@@ -71,6 +87,7 @@ WHAT IS ACTUALLY DECIDED HERE, and why each one is not arbitrary:
 package fuse
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -84,6 +101,7 @@ import (
 	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/internal/filelock"
 )
 
 // UnreadableSuffix names where the bytes of an unreadable box are kept when a lockdown has
@@ -201,6 +219,9 @@ func (b Box) Surfaces() []string {
 // (CreateBox). See note 1.
 var ErrNoBox = errors.New("no box")
 
+// maxBoxBytes bounds the bytes ReadBox accepts (docs/SPEC.md, nova-fuse: The box).
+const maxBoxBytes = 1 << 20
+
 // ReadBox returns the fuse box, or the reason it could not be read. See note 1.
 //
 // A nil error means the box was read, and an empty Box then means VERIFIED CLEAR. A
@@ -234,24 +255,118 @@ func ReadBox(path string) (Box, error) {
 	if !os.SameFile(info, opened) {
 		return Box{}, fmt.Errorf("%s changed while it was opened; use the real fuse box file path", path)
 	}
-	data, err := io.ReadAll(f)
+	data, err := io.ReadAll(io.LimitReader(f, maxBoxBytes))
 	if err != nil {
 		return Box{}, fmt.Errorf("cannot read %s: %w", path, err)
 	}
-	var b *Box
-	if err := json.Unmarshal(data, &b); err != nil {
+	if len(data) == maxBoxBytes {
+		return Box{}, fmt.Errorf("%s reached the %d-byte fuse box limit", path, maxBoxBytes)
+	}
+	var b Box
+	// The top level is required to be the object a box is, before any decoding: a
+	// null, an array, a string, a number or a boolean decodes into a Box with no
+	// error -- a null leaves it zero -- and a zero box reads as VERIFIED CLEAR, a
+	// fail-open in a safety control reached by one hand-edited byte (note 2).
+	if kind, object, found := topLevelKind(data); found {
+		if !object {
+			return Box{}, fmt.Errorf("%s is not a box: top level is %s; %s", path, kind, restoreBoxRemedy)
+		}
+		if err := rejectDuplicateBoxMembers(data); err != nil {
+			return Box{}, fmt.Errorf("%s is not readable JSON: %w", path, err)
+		}
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	// A box is an object with the two members SPEC.md names, and an unknown member
+	// is refused: a gate that quietly ignored a key it does not know would answer
+	// CLEAR over a box a hand or another tool meant to block with it. The safe
+	// reading for a gate is to refuse, and the refusal is CANNOT TELL like every
+	// other shape (note 2).
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&b); err != nil {
 		return Box{}, fmt.Errorf("%s is not readable JSON: %w", path, err)
 	}
-	if b == nil {
-		// A bare JSON null unmarshals into the pointer with no error, but note 2
-		// says a shape that is not an object is unreadable; answered as the zero
-		// box it would read as VERIFIED CLEAR once the map below is normalised.
-		return Box{}, fmt.Errorf("%s is a JSON null, not a fuse box object", path)
+	if _, err := dec.Token(); err != io.EOF {
+		// A decode stops at the end of the first value, so without this a box with
+		// anything after it would read as the value before the trailing bytes.
+		return Box{}, fmt.Errorf("%s is not readable JSON: data follows the box object", path)
 	}
 	if b.Quarantine == nil {
 		b.Quarantine = map[string]Fuse{}
 	}
-	return *b, nil
+	return b, nil
+}
+
+// rejectDuplicateBoxMembers walks the top-level object before struct decoding. JSON field
+// matching is case-insensitive, so spelling aliases of either box member are duplicates
+// too; note 2 treats an ambiguous hand-edited box as unreadable, never clear.
+func rejectDuplicateBoxMembers(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if _, err := dec.Token(); err != nil { // ReadBox already established the opening object token.
+		return err
+	}
+	seen := make(map[string]struct{}, 2)
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := tok.(string)
+		if !ok {
+			return errors.New("top-level box member name is not a string")
+		}
+		canonical := ""
+		switch {
+		case strings.EqualFold(key, "lockdown"):
+			canonical = "lockdown"
+		case strings.EqualFold(key, "quarantine"):
+			canonical = "quarantine"
+		}
+		if canonical != "" {
+			if _, exists := seen[canonical]; exists {
+				return fmt.Errorf("duplicate top-level member %q", key)
+			}
+			seen[canonical] = struct{}{}
+		}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return err
+		}
+	}
+	_, err := dec.Token() // Consume the object's closing brace.
+	return err
+}
+
+// restoreBoxRemedy is the remedy for a box whose top level is not an object. It
+// is a hand restoration, not `nova-fuse init --box <path>`: init is the remedy for
+// a path where no box is, and it never replaces a box, so naming it here would
+// send the reader to a verb that refuses and leave the bytes that need restoring
+// where they are. A lockdown is replaced only in a live conversation with the
+// person you work with.
+const restoreBoxRemedy = "restore the box file by hand with the person you work with (nova-fuse init makes a box only where none is, so it will not replace this one)"
+
+// topLevelKind names the JSON value at the top of data and answers whether it is
+// the object a box is. found is false when data holds no JSON value at all, which
+// the decode answers with its own error (a truncated file, an empty file).
+func topLevelKind(data []byte) (kind string, object, found bool) {
+	tok, err := json.NewDecoder(bytes.NewReader(data)).Token()
+	if err != nil {
+		return "", false, false
+	}
+	switch v := tok.(type) {
+	case json.Delim:
+		if v == '{' {
+			return "an object", true, true
+		}
+		return "an array", false, true
+	case nil:
+		return "null", false, true
+	case bool:
+		return "a boolean", false, true
+	case string:
+		return "a string", false, true
+	default:
+		return "a number", false, true
+	}
 }
 
 // CreateBox makes an empty box at path, only where nothing is: it NEVER replaces a
@@ -269,13 +384,24 @@ func WriteBox(path string, b Box) error {
 	return writeBox(path, b)
 }
 
+// BoxLockUntaken reports whether a box mutation failed because the box's LOCK
+// could not be taken -- another writer holds it, the wait timed out, or only
+// askers stood in the way (internal/filelock's ErrHeld, ErrTimeout and ErrBusy;
+// MutateBox returns that failure verbatim). It tells "the box is being mutated
+// elsewhere right now" from "this box cannot be written here at all", and the
+// difference is a policy, not a detail: a lockdown answers the first by blowing
+// unserialized and saying so (a fuse you cannot blow is not a fuse), while every
+// other failure stays a failed blow. See note 3.
+func BoxLockUntaken(err error) bool {
+	return errors.Is(err, filelock.ErrHeld) ||
+		errors.Is(err, filelock.ErrTimeout) ||
+		errors.Is(err, filelock.ErrBusy)
+}
+
 // PlanCreateBox is CreateBox with nothing written: every check the creation
 // makes (the parent as MkdirAll would make it, no symlink parent, a directory
 // this process can create in, nothing at the path), and the same error.
 func PlanCreateBox(path string) error { return planBox(path, atomicfile.NoReplace()) }
-
-// PlanWriteBox is WriteBox with nothing written, refusing where WriteBox would.
-func PlanWriteBox(path string) error { return planBox(path) }
 
 func planBox(path string, opts ...atomicfile.Option) error {
 	target := path

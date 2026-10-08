@@ -19,9 +19,11 @@ import (
 
 // propSamples is how many snapshots the property tests read, and deepSamples
 // how many the ones that do more than decide once read: the tests of a
-// clone's hold on its own state and of the planners run one by one.
+// clone's hold on its own state and of the planners run one by one. The
+// scenarios' samples come first and the walks fill the rest: 1016 keeps the
+// walks' thousand-odd as they were before the rebalance's scenario (16 samples).
 const (
-	propSamples = 1000
+	propSamples = 1016
 	deepSamples = 250
 )
 
@@ -47,6 +49,8 @@ func dump(s refmodel.Snapshot) string {
 	}
 	j, _ := json.Marshal(s.Goals)
 	fmt.Fprintf(&b, "goals %s\n", j)
+	j, _ = json.Marshal(s.Friends)
+	fmt.Fprintf(&b, "friends %s\n", j)
 	t := s.Tables
 	fmt.Fprintf(&b, "tables now=%s epoch=%d cleared=%s coordinator=%q actor=%q\n", t.Now.Format(time.RFC3339Nano), t.Epoch, t.Cleared.Format(time.RFC3339Nano), t.Coordinator, t.Actor)
 	for _, tb := range []*sprint.Table{t.Work, t.Readers, t.Merge, t.Fleet} {
@@ -212,7 +216,7 @@ func TestThePlannersDoNotModifyWhatTheyRead(t *testing.T) {
 		c.Tables.Now = s.now
 		before := dump(c)
 		for _, p := range sprint.TickParts {
-			plan, _ := p.Fn(c.Tables, sprint.TickReq{Who: sprint.MachineActor, Beats: c.Beats})
+			plan, _ := p.Fn(c.Tables, sprint.TickReq{Who: sprint.MachineActor, Beats: c.Beats, Friends: c.Friends})
 			sprint.Applied(c.Tables, plan)
 			if after := dump(c); after != before {
 				require.Failf(t, "assertion failed", "snapshot %d: the tick's part %s changed what it read:\n%s", i, p.Name, firstDifference(before, after))

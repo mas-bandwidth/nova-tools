@@ -14,29 +14,29 @@ import (
 )
 
 func TestProcessesAreBoundedAndRawSurvivesFailure(t *testing.T) {
+	t.Parallel()
+
 	// Each case carries its own timeout because they measure two different
 	// things. The hang needs a timeout SHORT enough to fire; the others need one
 	// long enough that starting a race-instrumented child on a loaded box is not
 	// mistaken for a hang -- at 100ms for all four, the exit-3 case read
 	// "timeout" on a busy machine and the assertion it was making was lost.
+	// None asserts the clock: a child that is not bounded never returns and the
+	// test's own deadline fails it, so the reason is the event
+	// (internal/ci/testdata/fixed-waits-allowlist.txt: assert the event, not the clock).
 	for _, tc := range []struct {
 		cmd, want string
 		timeout   time.Duration
-		bound     time.Duration
 	}{
-		{command(t, "fail"), "exit 3", 5 * time.Second, 6 * time.Second},
-		{command(t, "huge"), "output", 5 * time.Second, 6 * time.Second},
-		{command(t, "hang"), "timeout", 20 * time.Millisecond, time.Second + killGrace},
-		{"nova-version-no-such-binary", "not_found", 5 * time.Second, time.Second},
+		{command(t, "fail"), "exit 3", 5 * time.Second},
+		{command(t, "huge"), "output", 5 * time.Second},
+		{command(t, "hang"), "timeout", 20 * time.Millisecond},
+		{"nova-version-no-such-binary", "not_found", 5 * time.Second},
 	} {
 		a, _ := argv(tc.cmd)
-		start := time.Now()
 		r := Installed(context.Background(), Entry{Kind: "tool", Installed: a}, tc.timeout, true)
 		if r.Reason != tc.want {
 			require.EqualValuesf(t, tc.want, r.Reason, "%s: %+v", tc.want, r)
-		}
-		if took := time.Since(start); took > tc.bound {
-			require.LessOrEqualf(t, took, tc.bound, "%s: %s is past the %s bound", tc.want, took, tc.bound)
 		}
 		if tc.want == "exit 3" && r.Raw != "v9.9.9" {
 			require.Fail(t, fmt.Sprintln(r))
@@ -47,13 +47,15 @@ func TestProcessesAreBoundedAndRawSurvivesFailure(t *testing.T) {
 		require.EqualValues(t, "1.2.3", r.Version, r)
 	}
 	a, _ = argv(command(t, "args", ";", "&&", "|", "$(x)", "`x`", "*"))
-	p := process(context.Background(), a, nil, ChildCap)
+	p := process(context.Background(), nil, a, nil, ChildCap)
 	if p.Stdout != ";|&&|||$(x)|`x`|*" {
 		require.EqualValuesf(t, ";|&&|||$(x)|`x`|*", p.Stdout, "shell interpretation: %+v", p)
 	}
 }
 
 func TestHealthyCommandWithLingeringGrandchildStillReads(t *testing.T) {
+	t.Parallel()
+
 	e := Entry{Name: "x", Kind: "tool", Installed: mustArgv(t, command(t, "linger", base64.StdEncoding.EncodeToString([]byte("x 1.2.3\n")), "100ms"))}
 	r := Installed(context.Background(), e, 5*time.Second, false)
 	if !r.Known() || r.Version != "1.2.3" {
@@ -67,12 +69,15 @@ func TestSnapshotLockWaitsForBudget(t *testing.T) {
 	unlock, err := lockSnapshot(context.Background(), path)
 	require.NoError(t, err)
 	defer unlock()
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
-	defer cancel()
+	// The budget has ended before the second writer asks: the lock is held, so
+	// the wait ends on the budget and reports busy. No clock is read.
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
 	release, err := lockSnapshot(ctx, path)
 	if release != nil {
 		release()
 	}
 	require.Error(t, err, "two snapshot writers acquired lock")
-	require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
+	require.ErrorContains(t, err, "snapshot is busy")
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
 }

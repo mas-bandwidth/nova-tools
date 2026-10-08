@@ -13,11 +13,11 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 )
 
-// readRig is a sprint whose two readers, reader-m1 (named for the member m1,
-// width 2) and reader-x (named for no row), each hold two asked reads: the
-// first two pro cards' pairs fill reader-m1 to its width, and the third pro
-// card, which needs two different readers, waits for reader-m1's room (the
-// ask gives a reader at width nothing; reader-x, unbounded, has room).
+// readRig is a sprint whose two readers are reader-m1 (named for the member m1,
+// width 2) and reader-x (named for no row): three pro cards' reads are asked
+// together, one of each reader, so two cards fill reader-m1 to its width, two
+// asked, while the third card's reads wait for reader-m1's room (the ask gives a
+// reader at width nothing).
 func readRig(t *testing.T) *serverRig {
 	t.Helper()
 	r := newServerRig(t,
@@ -42,8 +42,11 @@ func readRig(t *testing.T) *serverRig {
 	r.queue("reader-x")
 	r.boss("nova-sprint tick")
 	r.boss("nova-sprint tick")
+	// a card's reads are asked together, one of each reader: the first two cards fill
+	// reader-m1 to its width, 2, and the third card's two reads wait for reader-m1's room
+	// (the ask gives a reader at width nothing, and asks a card's reads together or not yet)
 	require.Len(t, r.queue("reader-m1")["asked"], 2, "reader-m1 is at its width, 2")
-	require.Len(t, r.queue("reader-x")["asked"], 2, "the third pro card waits for a second reader with room")
+	require.Len(t, r.queue("reader-x")["asked"], 2, "the third pro card's reads wait for reader-m1's room")
 	return r
 }
 

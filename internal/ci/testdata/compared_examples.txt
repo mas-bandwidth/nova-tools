@@ -29,8 +29,8 @@ cmd/nova-table/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: no
 cmd/nova-table/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-table show demo
 cmd/nova-table/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-table render demo
 cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config migrate --file try.json
-cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
-cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config machine set m1 --width 6 --as a1 --file try.json
+cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --actor a1 --file try.json
+cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config machine set m1 --width 6 --actor a1 --file try.json
 cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config machine list --file try.json
 cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config machine history m1 --file try.json
 cmd/nova-secrets/seat_inject_functional_test.go:TestTheHelpExampleIsWhatSeatInjectPrints example: nova-secrets seat inject --store ./secrets --as bo --from ada --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --no-pr
@@ -105,6 +105,7 @@ cmd/nova-decide/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: n
 cmd/nova-card/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-card generate --from findings --file ./cmd/nova-card/testdata/findings.tsv --repo example/repo --base dev --sha 0123456789abcdef0123456789abcdef01234567 --out ./cards
 cmd/nova-card/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-card lint --card ./cards/finding-internal-bus-send.md
 cmd/nova-card/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-card lint --card ./cards/finding-cmd-nova-bus-main.md
+cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus wait --as bob --timeout 1s
 cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus send --as ada --to bob --subject hello --body "are you there?"
 cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus peek --as bob
 cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus recv --as bob --exec true
@@ -117,3 +118,12 @@ cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: n
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend status --as bob --dir ./bob
+cmd/nova-friend/main_test.go:TestHostHelpExampleIsWhatTheToolPrints example: nova-friend host --as bob --harness aider --dir ./bob --dry-run -- aider
+cmd/nova-friend/watch_test.go:TestWatchHelpExampleIsWhatTheToolPrints example: nova-friend watch --as ada --timeout 10m
+cmd/nova-check/cli_examples_test.go:TestCLIExamplesMatchWhatTheToolPrints $ nova-check dogfood record --tool nova-check --verb links --by Ada --ok \
+cmd/nova-check/cli_examples_test.go:TestCLIExamplesMatchWhatTheToolPrints $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --kind fix-with-red-test
+cmd/nova-check/cli_examples_test.go:TestCLIExamplesMatchWhatTheToolPrints $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**"
+cmd/nova-check/cli_examples_test.go:TestCLIExamplesMatchWhatTheToolPrints $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**" --max 2
+cmd/nova-local/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-local status
+cmd/nova-local/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-local serve --engine ollama --model gemma4:12b --num-ctx 32768 --seed 7
+cmd/nova-local/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-local worker --engine ollama --model gemma4-32k --out ./gemma.json --name gemma --harness opencode --harness-args run,--model,ollama/{model},--,{prompt} --worker-dir $PWD/cmd/nova-local/testdata/home --key-file $PWD/cmd/nova-local/testdata/local.key --env-var OLLAMA_API_KEY --usage opencode --deadline 20m

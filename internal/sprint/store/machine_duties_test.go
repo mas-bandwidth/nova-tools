@@ -304,7 +304,7 @@ func TestCROneReaderThenTwo(t *testing.T) {
 	require.Equal(t, 0, got, "still open %d", got)
 	s := h.snap()
 	for _, c := range s.Work.Column(sprint.Review) {
-		require.Len(t, s.Readers.Of(c.ID), 2, "%s asked of %d", c.ID, len(s.Readers.Of(c.ID)))
+		require.Len(t, s.Readers.Of(c.ID), 2, "%s asked of %d (both reads together)", c.ID, len(s.Readers.Of(c.ID)))
 	}
 }
 

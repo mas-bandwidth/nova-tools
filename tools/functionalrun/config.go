@@ -83,7 +83,7 @@ func parseRun(args []string) (runConfig, error) {
 	fs.StringVar(&c.gocache, "gocache-volume", "", "")
 	fs.StringVar(&c.gomod, "gomod-volume", "", "")
 	fs.BoolVar(&c.freshGocache, "fresh-gocache", false, "")
-	fs.StringVar(&c.podman, "podman", "podman", "")
+	fs.StringVar(&c.podman, "podman", "", "")
 	if err := fs.Parse(args); err != nil {
 		return c, err
 	}
@@ -96,7 +96,7 @@ func parseRun(args []string) (runConfig, error) {
 			return c, fmt.Errorf("flag %q after the packages; flags come first", p)
 		}
 		if !packageRE.MatchString(p) || slices.Contains(strings.Split(p, "/"), "..") {
-			return c, fmt.Errorf("package %q is not a package directory of the source tree: ./ then path segments of letters, digits, _ . and -, an optional trailing /..., and no ..", p)
+			return c, fmt.Errorf("package %q is not a package directory of the source tree (use . followed by path segments of letters, digits, underscore, period and hyphen, an optional trailing /..., and no ..)", p)
 		}
 	}
 	if c.deadline < minDeadline {
@@ -168,7 +168,7 @@ func parseReap(args []string) (reapConfig, error) {
 	var c reapConfig
 	fs.DurationVar(&c.grace, "grace", 30*time.Second, "")
 	fs.BoolVar(&c.dryRun, "dry-run", false, "")
-	fs.StringVar(&c.podman, "podman", "podman", "")
+	fs.StringVar(&c.podman, "podman", "", "")
 	if err := fs.Parse(args); err != nil {
 		return c, err
 	}

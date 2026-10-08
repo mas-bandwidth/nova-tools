@@ -17,8 +17,14 @@ import (
 // THE SEQUENCE A FRIEND RUNS THROUGH THIS TOOL: snapshot the binaries in a bin
 // directory to record what they report, then report on the hand-written
 // manifest of installed commands. The stubs are shell scripts, so this file is
-// unix-only.
+// unix-only. The manifest names each stub by its path under the test's own
+// t.TempDir instead of a bare name the child would find on PATH: a path is a
+// per-test seam, where t.Setenv on PATH would change the process under every
+// other test (the serial-tests ledger,
+// internal/ci/testdata/serial-tests_allowlist.txt, names the seam).
 func TestFriendSequenceSnapshotReport(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "bin")
 	{
@@ -34,12 +40,11 @@ func TestFriendSequenceSnapshotReport(t *testing.T) {
 	}
 	stub("nova-bus", "nova-bus v0.15.0 darwin/arm64 go1.26.0")
 	stub("nova-check", "nova-check v0.15.0 darwin/arm64 go1.26.0")
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	manifest := filepath.Join(dir, "versions.tsv")
 	body := update.Header + "\n" +
-		"nova-bus\ttool\tnova-bus version\t-\t-\trowan\n" +
-		"nova-check\ttool\tnova-check version\t-\t-\trowan\n"
+		"nova-bus\ttool\t" + filepath.Join(bin, "nova-bus") + " version\t-\t-\trowan\n" +
+		"nova-check\ttool\t" + filepath.Join(bin, "nova-check") + " version\t-\t-\trowan\n"
 	{
 		err := os.WriteFile(manifest, []byte(body), 0o644)
 		require.NoError(t, err, err)

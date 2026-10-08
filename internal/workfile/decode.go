@@ -20,7 +20,8 @@ func Limits(maxBytes int) worklang.Limits {
 // Decode reads a tree file through internal/worklang (nothing is evaluated)
 // and refuses, naming the path and the key, any record that is not exactly
 // the shape Encode writes: a missing, repeated or unknown key, a value of the
-// wrong kind, an issue whose URL is not the one its path gives.
+// wrong kind, an issue whose URL is not the one its path gives. Every such
+// problem of the file is named in the one error (SPEC-WORK-V1 section 1.2).
 func Decode(file string, data []byte, lim worklang.Limits) (*Tree, error) {
 	top, err := worklang.Read(file, data, lim)
 	if err != nil {
@@ -31,18 +32,41 @@ func Decode(file string, data []byte, lim worklang.Limits) (*Tree, error) {
 		}
 		return nil, err
 	}
-	d := decoder{file: file}
+	d := &decoder{file: file}
 	return d.tree(top)
 }
 
-type decoder struct{ file string }
+// decoder collects every shape problem of one tree (SPEC-WORK-V1 section
+// 1.2). A structural break stops that one record; the rest of the file is
+// still read, and Decode returns every problem together.
+type decoder struct {
+	file  string
+	probs []error
+}
 
-func (d decoder) errf(at, format string, a ...any) error {
-	return fmt.Errorf("workfile: file=%s %s: %s", d.file, at, fmt.Sprintf(format, a...))
+func (d *decoder) errf(at, format string, a ...any) error {
+	err := fmt.Errorf("workfile: file=%s %s: %s", d.file, at, fmt.Sprintf(format, a...))
+	d.probs = append(d.probs, err)
+	return err
+}
+
+// fail records a problem for finish to report with the others and goes on;
+// a caller that needs the error itself uses errf.
+func (d *decoder) fail(at, format string, a ...any) {
+	_ = d.errf(at, format, a...) // ignored: errf appended it to d.probs; finish reports every problem together
+}
+
+// finish returns the tree when nothing was wrong, or every problem found,
+// together (SPEC-WORK-V1 section 1.2).
+func (d *decoder) finish(t *Tree) (*Tree, error) {
+	if len(d.probs) == 0 {
+		return t, nil
+	}
+	return nil, errors.Join(d.probs...)
 }
 
 // record reads (head <id?> :key value ...) with exactly the keys given.
-func (d decoder) record(at string, f worklang.Form, head string, withID bool, keys []string) (worklang.Form, map[string]worklang.Form, error) {
+func (d *decoder) record(at string, f worklang.Form, head string, withID bool, keys []string) (worklang.Form, map[string]worklang.Form, error) {
 	var id worklang.Form
 	if f.Kind != worklang.List || len(f.List) == 0 || f.List[0].Kind != worklang.Symbol || f.List[0].Value != head {
 		return id, nil, d.errf(at, "want a (%s ...) record", head)
@@ -58,7 +82,7 @@ func (d decoder) record(at string, f worklang.Form, head string, withID bool, ke
 	return id, m, err
 }
 
-func (d decoder) pairs(at, head string, rest []worklang.Form, keys []string) (map[string]worklang.Form, error) {
+func (d *decoder) pairs(at, head string, rest []worklang.Form, keys []string) (map[string]worklang.Form, error) {
 	want := map[string]bool{}
 	for _, k := range keys {
 		want[k] = true
@@ -70,25 +94,28 @@ func (d decoder) pairs(at, head string, rest []worklang.Form, keys []string) (ma
 			return nil, d.errf(at, "(%s) holds a value where a key belongs, at byte=%d", head, k.Offset)
 		}
 		if !want[k.Value] {
-			return nil, d.errf(at, "(%s) holds the unknown key :%s", head, k.Value)
+			d.fail(at, "(%s) holds the unknown key :%s", head, k.Value)
+			continue
 		}
 		if _, dup := m[k.Value]; dup {
-			return nil, d.errf(at, "(%s) holds :%s twice", head, k.Value)
+			d.fail(at, "(%s) holds :%s twice", head, k.Value)
+			continue
 		}
 		if i+1 >= len(rest) {
-			return nil, d.errf(at, "(%s) :%s has no value", head, k.Value)
+			d.fail(at, "(%s) :%s has no value", head, k.Value)
+			continue
 		}
 		m[k.Value] = rest[i+1]
 	}
 	for _, k := range keys {
 		if _, ok := m[k]; !ok {
-			return nil, d.errf(at, "(%s) has no :%s", head, k)
+			d.fail(at, "(%s) has no :%s", head, k)
 		}
 	}
 	return m, nil
 }
 
-func (d decoder) str(at, key string, f worklang.Form) (string, error) {
+func (d *decoder) str(at, key string, f worklang.Form) (string, error) {
 	if f.Kind != worklang.String {
 		return "", d.errf(at, ":%s wants a string", key)
 	}
@@ -100,15 +127,15 @@ func (d decoder) str(at, key string, f worklang.Form) (string, error) {
 // file, so the SHA-256 names the tree): the form's source span is the
 // number's spelling, so a leading '+' or leading zeros, which the worklang
 // integer reader takes, is refused here.
-func (d decoder) num(at, key string, f worklang.Form) (int, error) {
-	if f.Kind != worklang.Integer || f.Int <= 0 || f.Int > 1<<31 ||
+func (d *decoder) num(at, key string, f worklang.Form) (int, error) {
+	if f.Kind != worklang.Integer || f.Int <= 0 || f.Int > maxNumber ||
 		f.End-f.Offset != len(strconv.Itoa(int(f.Int))) {
 		return 0, d.errf(at, ":%s wants a positive integer written canonically", key)
 	}
 	return int(f.Int), nil
 }
 
-func (d decoder) boolean(at, key string, f worklang.Form) (bool, error) {
+func (d *decoder) boolean(at, key string, f worklang.Form) (bool, error) {
 	if f.Kind == worklang.Symbol && (f.Value == "true" || f.Value == "false") {
 		return f.Value == "true", nil
 	}
@@ -116,7 +143,7 @@ func (d decoder) boolean(at, key string, f worklang.Form) (bool, error) {
 }
 
 // enum reads a keyword back into GitHub's spelling, and () as null.
-func (d decoder) enum(at, key string, f worklang.Form) (string, error) {
+func (d *decoder) enum(at, key string, f worklang.Form) (string, error) {
 	if f.Kind == worklang.List && len(f.List) == 0 {
 		return "", nil
 	}
@@ -130,261 +157,342 @@ func (d decoder) enum(at, key string, f worklang.Form) (string, error) {
 	return v, nil
 }
 
-func (d decoder) list(at, key string, f worklang.Form) ([]worklang.Form, error) {
+func (d *decoder) list(at, key string, f worklang.Form) ([]worklang.Form, error) {
 	if f.Kind != worklang.List {
 		return nil, d.errf(at, ":%s wants a list", key)
 	}
 	return f.List, nil
 }
 
-func (d decoder) strs(at, key string, f worklang.Form) ([]string, error) {
+func (d *decoder) strs(at, key string, f worklang.Form) ([]string, error) {
 	xs, err := d.list(at, key, f)
 	if err != nil {
 		return nil, err
 	}
 	var out []string
+	bad := false
 	for _, x := range xs {
 		s, err := d.str(at, key, x)
 		if err != nil {
-			return nil, err
+			bad = true
+			continue
 		}
 		out = append(out, s)
+	}
+	if bad {
+		// Each wrong element is already named. The caller skips the list.
+		return nil, errors.New("workfile: a list holds a value of the wrong kind")
 	}
 	return out, nil
 }
 
-func (d decoder) tree(f worklang.Form) (*Tree, error) {
-	id, m, err := d.record("(root)", f, "work-tree", true, []string{"source", "org", "fetched", "repos"})
+func (d *decoder) takeStr(at, key string, m map[string]worklang.Form) (string, bool) {
+	f, ok := m[key]
+	if !ok {
+		return "", false
+	}
+	s, err := d.str(at, key, f)
 	if err != nil {
-		return nil, err
+		return "", false
 	}
-	if id.Kind != worklang.String || id.Value != Format {
-		return nil, d.errf("(root)", "format %q, this reader reads %q", id.Value, Format)
-	}
-	t := &Tree{}
-	if t.Source, err = d.str("(root)", "source", m["source"]); err != nil {
-		return nil, err
-	}
-	if t.Org, err = d.str("(root)", "org", m["org"]); err != nil {
-		return nil, err
-	}
-	if t.Fetched, err = d.str("(root)", "fetched", m["fetched"]); err != nil {
-		return nil, err
-	}
-	repos, err := d.list("(root)", "repos", m["repos"])
-	if err != nil {
-		return nil, err
-	}
-	for i, rf := range repos {
-		r, err := d.repo(rf)
-		if err != nil {
-			return nil, err
-		}
-		if i > 0 && r.Name <= t.Repos[i-1].Name {
-			return nil, d.errf("repos/"+r.Name, "out of order or repeated")
-		}
-		t.Repos = append(t.Repos, r)
-	}
-	return t, nil
+	return s, true
 }
 
-func (d decoder) repo(f worklang.Form) (Repo, error) {
-	id, m, err := d.record("repos", f, "repo", true, []string{"url", "archived", "issues"})
-	if err != nil {
-		return Repo{}, err
+// wrongVersion is a tree form's version when it is a string this build does
+// not read; the version is read before the root's keys, which the version
+// itself defines (SPEC-WORK-V1 section 1.2).
+func wrongVersion(f worklang.Form) (string, bool) {
+	if f.Kind != worklang.List || len(f.List) < 2 || f.List[0].Kind != worklang.Symbol || f.List[0].Value != "work-tree" {
+		return "", false
+	}
+	v := f.List[1]
+	if v.Kind != worklang.String || v.Value == Format {
+		return "", false
+	}
+	return v.Value, true
+}
+
+func (d *decoder) tree(f worklang.Form) (*Tree, error) {
+	if v, wrong := wrongVersion(f); wrong {
+		// The version defines the keys, so a file of a version this build
+		// does not read is refused by its version, not by one of another
+		// version's missing keys (SPEC-WORK-V1 section 1.2).
+		d.fail("(root)", "version %s is not read; this build reads %s", v, Format)
+		return d.finish(nil)
+	}
+	id, m, _ := d.record("(root)", f, "work-tree", true, []string{"source", "org", "fetched", "repos"})
+	if m == nil {
+		return d.finish(nil)
+	}
+	if id.Kind != worklang.String || id.Value != Format {
+		d.fail("(root)", "format %q, this reader reads %q", id.Value, Format)
+	}
+	t := &Tree{}
+	if s, ok := d.takeStr("(root)", "source", m); ok {
+		t.Source = s
+	}
+	if s, ok := d.takeStr("(root)", "org", m); ok {
+		t.Org = s
+	}
+	if s, ok := d.takeStr("(root)", "fetched", m); ok {
+		t.Fetched = s
+	}
+	if reposForm, ok := m["repos"]; ok {
+		if repos, err := d.list("(root)", "repos", reposForm); err == nil {
+			for _, rf := range repos {
+				r, bad := d.repo(rf)
+				if bad {
+					continue
+				}
+				if len(t.Repos) > 0 && r.Name <= t.Repos[len(t.Repos)-1].Name {
+					d.fail("repos/"+r.Name, "out of order or repeated")
+				}
+				t.Repos = append(t.Repos, r)
+			}
+		}
+	}
+	return d.finish(t)
+}
+
+func (d *decoder) repo(f worklang.Form) (Repo, bool) {
+	id, m, _ := d.record("repos", f, "repo", true, []string{"url", "archived", "issues"})
+	if m == nil {
+		return Repo{}, true
 	}
 	if id.Kind != worklang.String {
-		return Repo{}, d.errf("repos", "a repo's identity is its owner/name string")
+		d.fail("repos", "a repo's identity is its owner/name string")
+		return Repo{}, true
 	}
 	r := Repo{Name: id.Value}
 	at := "repos/" + r.Name
-	if r.URL, err = d.str(at, "url", m["url"]); err != nil {
-		return r, err
+	if s, ok := d.takeStr(at, "url", m); ok {
+		r.URL = s
 	}
-	if r.Archived, err = d.boolean(at, "archived", m["archived"]); err != nil {
-		return r, err
-	}
-	issues, err := d.list(at, "issues", m["issues"])
-	if err != nil {
-		return r, err
-	}
-	for i, isf := range issues {
-		is, err := d.issue(r.Name, isf)
-		if err != nil {
-			return r, err
+	if archived, ok := m["archived"]; ok {
+		if v, err := d.boolean(at, "archived", archived); err == nil {
+			r.Archived = v
 		}
-		if i > 0 && is.Number <= r.Issues[i-1].Number {
-			return r, d.errf(Path(r.Name, is.Number), "out of order or repeated")
-		}
-		r.Issues = append(r.Issues, is)
 	}
-	return r, nil
+	if issuesForm, ok := m["issues"]; ok {
+		if issues, err := d.list(at, "issues", issuesForm); err == nil {
+			for _, isf := range issues {
+				is, bad := d.issue(r.Name, isf)
+				if bad {
+					continue
+				}
+				if len(r.Issues) > 0 && is.Number <= r.Issues[len(r.Issues)-1].Number {
+					d.fail(Path(r.Name, is.Number), "out of order or repeated")
+				}
+				r.Issues = append(r.Issues, is)
+			}
+		}
+	}
+	return r, false
 }
 
 var issueKeys = []string{"url", "node-id", "title", "state", "state-reason", "origin", "author", "author-association",
 	"created", "updated", "closed", "locked", "lock-reason", "labels", "assignees", "milestone", "body",
 	"comments", "references", "linked-prs"}
 
-func (d decoder) issue(repo string, f worklang.Form) (Issue, error) {
-	id, m, err := d.record("repos/"+repo+"/issues", f, "issue", true, issueKeys)
-	if err != nil {
-		return Issue{}, err
+func (d *decoder) issue(repo string, f worklang.Form) (Issue, bool) {
+	id, m, _ := d.record("repos/"+repo+"/issues", f, "issue", true, issueKeys)
+	if m == nil {
+		return Issue{}, true
 	}
-	n, err := d.num("repos/"+repo+"/issues", "number", id)
-	if err != nil {
-		return Issue{}, err
+	n, numErr := d.num("repos/"+repo+"/issues", "number", id)
+	at := "repos/" + repo + "/issues"
+	if numErr == nil {
+		at = Path(repo, n)
 	}
-	at := Path(repo, n)
 	is := Issue{Number: n}
 	for _, s := range []struct {
 		key string
 		dst *string
 	}{{"url", &is.URL}, {"node-id", &is.NodeID}, {"title", &is.Title}, {"author", &is.Author},
 		{"created", &is.Created}, {"updated", &is.Updated}, {"closed", &is.Closed}, {"body", &is.Body}} {
-		if *s.dst, err = d.str(at, s.key, m[s.key]); err != nil {
-			return is, err
+		if v, ok := d.takeStr(at, s.key, m); ok {
+			*s.dst = v
 		}
 	}
 	for _, s := range []struct {
 		key string
 		dst *string
 	}{{"state", &is.State}, {"state-reason", &is.StateReason}, {"author-association", &is.AuthorAssociation}, {"lock-reason", &is.LockReason}} {
-		if *s.dst, err = d.enum(at, s.key, m[s.key]); err != nil {
-			return is, err
-		}
-	}
-	if o := m["origin"]; o.Kind == worklang.Keyword && (o.Value == "internal" || o.Value == "external") {
-		is.Origin = o.Value
-	} else {
-		return is, d.errf(at, ":origin wants :internal or :external")
-	}
-	if want := IssueURL(repo, n); is.URL != want {
-		return is, d.errf(at, ":url %q is not the URL its path gives, %q", is.URL, want)
-	}
-	if is.Locked, err = d.boolean(at, "locked", m["locked"]); err != nil {
-		return is, err
-	}
-	if is.Labels, err = d.strs(at, "labels", m["labels"]); err != nil {
-		return is, err
-	}
-	if is.Assignees, err = d.strs(at, "assignees", m["assignees"]); err != nil {
-		return is, err
-	}
-	if !sort.StringsAreSorted(is.Labels) || !sort.StringsAreSorted(is.Assignees) {
-		return is, d.errf(at, ":labels and :assignees must be sorted")
-	}
-	ms, err := d.list(at, "milestone", m["milestone"])
-	if err != nil {
-		return is, err
-	}
-	if len(ms) > 0 {
-		mm, err := d.pairs(at, "milestone", ms, []string{"number", "title"})
-		if err != nil {
-			return is, err
-		}
-		is.Milestone = &Milestone{}
-		if is.Milestone.Number, err = d.num(at, "milestone :number", mm["number"]); err != nil {
-			return is, err
-		}
-		if is.Milestone.Title, err = d.str(at, "milestone :title", mm["title"]); err != nil {
-			return is, err
-		}
-	}
-	cs, err := d.list(at, "comments", m["comments"])
-	if err != nil {
-		return is, err
-	}
-	seen := map[string]bool{}
-	for _, cf := range cs {
-		cid, cm, err := d.record(at+"/comments", cf, "comment", true, []string{"url", "author", "author-association", "created", "updated", "body"})
-		if err != nil {
-			return is, err
-		}
-		c := Comment{}
-		if c.ID, err = d.str(at+"/comments", "id", cid); err != nil {
-			return is, err
-		}
-		if seen[c.ID] {
-			return is, d.errf(at+"/comments/"+c.ID, "the comment id is repeated")
-		}
-		seen[c.ID] = true
-		cat := at + "/comments/" + c.ID
-		for _, s := range []struct {
-			key string
-			dst *string
-		}{{"url", &c.URL}, {"author", &c.Author}, {"created", &c.Created}, {"updated", &c.Updated}, {"body", &c.Body}} {
-			if *s.dst, err = d.str(cat, s.key, cm[s.key]); err != nil {
-				return is, err
+		if fv, ok := m[s.key]; ok {
+			if v, err := d.enum(at, s.key, fv); err == nil {
+				*s.dst = v
 			}
 		}
-		if c.AuthorAssociation, err = d.enum(cat, "author-association", cm["author-association"]); err != nil {
-			return is, err
-		}
-		is.Comments = append(is.Comments, c)
 	}
-	rs, err := d.list(at, "references", m["references"])
-	if err != nil {
-		return is, err
-	}
-	for _, rf := range rs {
-		_, rm, err := d.record(at+"/references", rf, "ref", false, []string{"kind", "repo", "number", "url", "actor", "at", "will-close"})
-		if err != nil {
-			return is, err
+	if o, ok := m["origin"]; ok {
+		if o.Kind == worklang.Keyword && (o.Value == "internal" || o.Value == "external") {
+			is.Origin = o.Value
+		} else {
+			d.fail(at, ":origin wants :internal or :external")
 		}
-		r := Reference{}
-		rat := at + "/references"
-		for _, s := range []struct {
-			key string
-			dst *string
-		}{{"kind", &r.Kind}, {"repo", &r.Repo}, {"url", &r.URL}, {"actor", &r.Actor}, {"at", &r.At}} {
-			if *s.dst, err = d.str(rat, s.key, rm[s.key]); err != nil {
-				return is, err
+	}
+	if numErr == nil {
+		if fv, ok := m["url"]; ok && fv.Kind == worklang.String {
+			if want := IssueURL(repo, n); is.URL != want {
+				d.fail(at, ":url %q is not the URL its path gives, %q", is.URL, want)
 			}
 		}
-		if r.Kind == "" && (r.Repo != "" || r.URL != "") {
-			return is, d.errf(rat, ":kind \"\" wants :repo \"\" and :url \"\"")
-		}
-		if r.Number, err = d.refNumber(rat, r.Kind, rm["number"]); err != nil {
-			return is, err
-		}
-		if r.WillClose, err = d.boolean(rat, "will-close", rm["will-close"]); err != nil {
-			return is, err
-		}
-		is.References = append(is.References, r)
 	}
-	ps, err := d.list(at, "linked-prs", m["linked-prs"])
-	if err != nil {
-		return is, err
+	if fv, ok := m["locked"]; ok {
+		if v, err := d.boolean(at, "locked", fv); err == nil {
+			is.Locked = v
+		}
 	}
-	for _, pf := range ps {
-		_, pm, err := d.record(at+"/linked-prs", pf, "pr", false, []string{"repo", "number", "url", "state"})
-		if err != nil {
-			return is, err
+	labelsOK, assigneesOK := false, false
+	if fv, ok := m["labels"]; ok {
+		if v, err := d.strs(at, "labels", fv); err == nil {
+			is.Labels = v
+			labelsOK = true
 		}
-		l := LinkedPR{}
-		pat := at + "/linked-prs"
-		if l.Repo, err = d.str(pat, "repo", pm["repo"]); err != nil {
-			return is, err
-		}
-		if l.Number, err = d.num(pat, "number", pm["number"]); err != nil {
-			return is, err
-		}
-		if l.URL, err = d.str(pat, "url", pm["url"]); err != nil {
-			return is, err
-		}
-		if l.State, err = d.enum(pat, "state", pm["state"]); err != nil {
-			return is, err
-		}
-		is.LinkedPRs = append(is.LinkedPRs, l)
 	}
-	return is, nil
+	if fv, ok := m["assignees"]; ok {
+		if v, err := d.strs(at, "assignees", fv); err == nil {
+			is.Assignees = v
+			assigneesOK = true
+		}
+	}
+	if labelsOK && assigneesOK && (!sort.StringsAreSorted(is.Labels) || !sort.StringsAreSorted(is.Assignees)) {
+		d.fail(at, ":labels and :assignees must be sorted")
+	}
+	if fv, ok := m["milestone"]; ok {
+		if ms, err := d.list(at, "milestone", fv); err == nil && len(ms) > 0 {
+			mm, _ := d.pairs(at, "milestone", ms, []string{"number", "title"})
+			if mm != nil {
+				is.Milestone = &Milestone{}
+				if n, ok := mm["number"]; ok {
+					is.Milestone.Number, _ = d.num(at, "milestone :number", n)
+				}
+				if title, ok := mm["title"]; ok {
+					is.Milestone.Title, _ = d.str(at, "milestone :title", title)
+				}
+			}
+		}
+	}
+	if fv, ok := m["comments"]; ok {
+		if cs, err := d.list(at, "comments", fv); err == nil {
+			seen := map[string]bool{}
+			for _, cf := range cs {
+				cid, cm, _ := d.record(at+"/comments", cf, "comment", true, []string{"url", "author", "author-association", "created", "updated", "body"})
+				if cm == nil {
+					continue
+				}
+				c := Comment{}
+				idStr, idErr := d.str(at+"/comments", "id", cid)
+				if idErr != nil {
+					continue
+				}
+				c.ID = idStr
+				if seen[c.ID] {
+					d.fail(at+"/comments/"+c.ID, "the comment id is repeated")
+					continue
+				}
+				seen[c.ID] = true
+				cat := at + "/comments/" + c.ID
+				if v, ok := d.takeStr(cat, "url", cm); ok {
+					c.URL = v
+				}
+				if v, ok := d.takeStr(cat, "author", cm); ok {
+					c.Author = v
+				}
+				if v, ok := d.takeStr(cat, "created", cm); ok {
+					c.Created = v
+				}
+				if v, ok := d.takeStr(cat, "updated", cm); ok {
+					c.Updated = v
+				}
+				if v, ok := d.takeStr(cat, "body", cm); ok {
+					c.Body = v
+				}
+				if assoc, ok := cm["author-association"]; ok {
+					c.AuthorAssociation, _ = d.enum(cat, "author-association", assoc)
+				}
+				is.Comments = append(is.Comments, c)
+			}
+		}
+	}
+	if fv, ok := m["references"]; ok {
+		if rs, err := d.list(at, "references", fv); err == nil {
+			for _, rf := range rs {
+				_, rm, _ := d.record(at+"/references", rf, "ref", false, []string{"kind", "repo", "number", "url", "actor", "at", "will-close"})
+				if rm == nil {
+					continue
+				}
+				r := Reference{}
+				rat := at + "/references"
+				kindOK := false
+				if v, ok := d.takeStr(rat, "kind", rm); ok {
+					r.Kind = v
+					kindOK = true
+				}
+				repoOK := false
+				if v, ok := d.takeStr(rat, "repo", rm); ok {
+					r.Repo = v
+					repoOK = true
+				}
+				urlOK := false
+				if v, ok := d.takeStr(rat, "url", rm); ok {
+					r.URL = v
+					urlOK = true
+				}
+				if v, ok := d.takeStr(rat, "actor", rm); ok {
+					r.Actor = v
+				}
+				if v, ok := d.takeStr(rat, "at", rm); ok {
+					r.At = v
+				}
+				if kindOK && r.Kind == "" && ((repoOK && r.Repo != "") || (urlOK && r.URL != "")) {
+					d.fail(rat, ":kind \"\" wants :repo \"\" and :url \"\"")
+				}
+				if kindOK {
+					if num, ok := rm["number"]; ok {
+						r.Number, _ = d.refNumber(rat, r.Kind, num)
+					}
+				}
+				if wc, ok := rm["will-close"]; ok {
+					r.WillClose, _ = d.boolean(rat, "will-close", wc)
+				}
+				is.References = append(is.References, r)
+			}
+		}
+	}
+	if fv, ok := m["linked-prs"]; ok {
+		if ps, err := d.list(at, "linked-prs", fv); err == nil {
+			for _, pf := range ps {
+				_, pm, _ := d.record(at+"/linked-prs", pf, "pr", false, []string{"repo", "number", "url", "state"})
+				if pm == nil {
+					continue
+				}
+				l := LinkedPR{}
+				pat := at + "/linked-prs"
+				if v, ok := d.takeStr(pat, "repo", pm); ok {
+					l.Repo = v
+				}
+				if num, ok := pm["number"]; ok {
+					l.Number, _ = d.num(pat, "number", num)
+				}
+				if v, ok := d.takeStr(pat, "url", pm); ok {
+					l.URL = v
+				}
+				if st, ok := pm["state"]; ok {
+					l.State, _ = d.enum(pat, "state", st)
+				}
+				is.LinkedPRs = append(is.LinkedPRs, l)
+			}
+		}
+	}
+	return is, numErr != nil
 }
 
 // refNumber reads a reference's :number: positive for a reference with a
 // source, 0 for one whose source GitHub does not show this login (a
 // private repository's issue), which carries :kind "" (SPEC-WORK-V1
 // section 1.3).
-func (d decoder) refNumber(at, kind string, f worklang.Form) (int, error) {
+func (d *decoder) refNumber(at, kind string, f worklang.Form) (int, error) {
 	if kind == "" {
 		if f.Kind != worklang.Integer || f.Int != 0 {
 			return 0, d.errf(at, "a reference with no source wants :number 0")

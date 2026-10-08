@@ -141,7 +141,11 @@ func (st *Store) Packets(ctx context.Context, cards []*sprint.Card) ([]sprint.Pa
 		if w != "" {
 			wc = ft[w]
 		}
-		out = append(out, sprint.PacketOf(st.Names.Prefix, st.epoch, c, pt[p], ec, wc))
+		pk := sprint.PacketOf(st.Names.Prefix, st.epoch, c, pt[p], ec, wc)
+		if pk.Tier == "" {
+			pk.Tier = sprint.DealtTier(c, pt[p]) // every packet names its tier, a route or none
+		}
+		out = append(out, pk)
 	}
 	return out, nil
 }
@@ -158,10 +162,25 @@ type CardInfo struct {
 	// Needs is each need with its state; NeededBy the primaries that need it.
 	Needs    []sprint.NeedState
 	NeededBy []string
+	// Hold is what holds the primary now (CardHeld only; nil when it could not be told),
+	// and Column the work table's placed cards, as the one read saw them: the place in line.
+	Hold   *sprint.Hold
+	Column []*sprint.Card
 }
 
 // CardOf reads a primary and every card of it by identity.
 func (st *Store) CardOf(ctx context.Context, id string) (CardInfo, error) {
+	return st.cardOf(ctx, id, false)
+}
+
+// CardHeld is CardOf with what holds the primary and the work table's column, from the
+// one read of the tables the card's needs, its place in line and its hold all share: the
+// work table is read whole once, never again for each of them.
+func (st *Store) CardHeld(ctx context.Context, id string) (CardInfo, error) {
+	return st.cardOf(ctx, id, true)
+}
+
+func (st *Store) cardOf(ctx context.Context, id string, held bool) (CardInfo, error) {
 	var v CardInfo
 	st, err := st.pin(ctx)
 	if err != nil {
@@ -176,13 +195,33 @@ func (st *Store) CardOf(ctx context.Context, id string) (CardInfo, error) {
 		return v, nil
 	}
 	v.Primary = card(m)
-	s, err := st.Load(ctx, []string{sprint.Work}, func(*sprint.Snapshot) map[string][]string {
-		return map[string][]string{sprint.Work: append([]string{id}, sprint.Split(v.Primary.F("needs"))...)}
+	tables := []string{sprint.Work}
+	if held {
+		// a fence that cannot be read tells no hold, as Held's error did the card
+		if f, err := st.B.ReadFence(ctx); err == nil && f.Pending != nil {
+			v.Hold = &sprint.Hold{ID: id, Place: id, Why: pendingWhy(f)}
+		} else if err == nil {
+			tables = All
+		}
+	}
+	s, err := st.Load(ctx, tables, func(s *sprint.Snapshot) map[string][]string {
+		want := append([]string{id}, sprint.Split(v.Primary.F("needs"))...)
+		if len(tables) > 1 {
+			want = append(want, sprint.ResolveExtras(s)...)
+		}
+		return map[string][]string{sprint.Work: want}
 	})
 	if err != nil {
 		return v, err
 	}
 	v.Needs, v.NeededBy = sprint.NeedsOf(s, id)
+	v.Column = s.Work.Column(sprint.States...)
+	if len(tables) > 1 {
+		if hs, err := st.heldState(ctx, s, nil); err == nil {
+			hd := sprint.Holder(hs, s.Now, id)
+			v.Hold = &hd
+		}
+	}
 	attempts := v.Primary.Int("attempt")
 	if attempts > 0 {
 		var ids []string
@@ -206,6 +245,29 @@ func (st *Store) CardOf(ctx context.Context, id string) (CardInfo, error) {
 			if v.Reads, err = st.records(ctx, sprint.Readers, ids); err != nil {
 				return v, err
 			}
+		}
+		// the read cards on the fleet table (a friend's, and a member's while read cards are
+		// on: sprint read_cards.go), one per reader per attempt, on its row
+		fleet, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Fleet)})
+		if err != nil {
+			return v, err
+		}
+		ids = nil
+		for k := 1; k <= attempts; k++ {
+			for _, r := range fleet[0].Rows {
+				name := r.Key
+				if f, ok := sprint.FriendOfRow(r.Key); ok {
+					name = f
+				}
+				ids = append(ids, sprint.ReadCardID(id, k, name))
+			}
+		}
+		if len(ids) > 0 {
+			reads, err := st.records(ctx, sprint.Fleet, ids)
+			if err != nil {
+				return v, err
+			}
+			v.Reads = append(v.Reads, reads...)
 		}
 	}
 	ms, err := st.records(ctx, sprint.Merge, []string{id})

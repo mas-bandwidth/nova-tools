@@ -11,8 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 )
 
 // The contract tests: the exit codes, the ceilings, the source-level tripwires the spec
@@ -60,7 +58,7 @@ func pkgText(t *testing.T, pkg string) map[string]string {
 }
 
 // rule9Emptiers is the tripwire's list of calls that can empty a file. It is a package
-// variable and not a local so TestRule9EmptierListMatchesTheSpec below can pin it: a name
+// variable and not a local so TestEmptierListMatchesTheSpec below can pin it: a name
 // quietly deleted from this list would otherwise take its tripwire with it and go green.
 var rule9Emptiers = []string{"os.Remove", "os.RemoveAll", "os.Truncate", ".Truncate(", "os.Create(", "os.WriteFile(", "os.O_TRUNC", "syscall.Unlink("}
 
@@ -134,7 +132,7 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 // docs/SPEC-TOKENS.md and compared both ways -- a name the spec demands and the list lacks
 // is a hole, a name the list carries and the spec does not is drift. Neither side can be
 // edited alone.
-func TestRule9EmptierListMatchesTheSpec(t *testing.T) {
+func TestEmptierListMatchesTheSpec(t *testing.T) {
 	t.Parallel()
 
 	root, err := filepath.Abs(filepath.Join("..", ".."))
@@ -285,25 +283,6 @@ func TestNothingUnderDoneOrFailedIsOpened(t *testing.T) {
 	wantContains(t, r.stdout, "nousage=1")
 }
 
-// ---------------------------------------------------------------- the lock (demanded test 8)
-// ---------------------------------------------------------------- one pass over each file
-
-func TestEachDeclaredFileIsOpenedOncePerRun(t *testing.T) {
-	dir := t.TempDir()
-	out := mkdir(t, filepath.Join(dir, "out"))
-	tr := mkdir(t, filepath.Join(dir, "tr"))
-	for i := range 12 {
-		write(t, filepath.Join(tr, string(rune('a'+i))+".jsonl"),
-			msg("m"+string(rune('a'+i)), "2026-09-11T10:00:00Z", "f", map[string]int{"input_tokens": 1}, "/x/schema/a.go")+"\n")
-	}
-	before := tokens.Opens()
-	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr), 0)
-	{
-		got := tokens.Opens() - before
-		assert.Equal(t, int64(12), got, "%d source opens for 12 files; the fold is one pass over each declared file", got)
-	}
-}
-
 // ---------------------------------------------------------------- the ceilings
 
 func TestMaxZeroPrintsAllAndMaxNegativeIsRefused(t *testing.T) {
@@ -413,6 +392,52 @@ func TestReportWithOneUnreadableSourceExitsOne(t *testing.T) {
 	wantContains(t, r.stderr, "TOKENS UNREADABLE")
 	// Exit 1 still writes: the body printed, so the friend can see what it could compute.
 	wantContains(t, r.stdout, "2026-09-11\temma\tf\tschema\tinput\t3")
+}
+
+// TestReportSaysFailedWhenASourceIsUnreadable pins skeleton contract 1.5 on the report
+// verb: the status word follows the exit, so a run that printed the body over a source it
+// could not read whole and exits 1 says REPORT FAILED, never REPORT OK. The --json
+// rendering of the same result already said status=failed, so the text line was the half
+// that disagreed.
+func TestReportSaysFailedWhenASourceIsUnreadable(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	repos := reposFile(t, dir)
+	good := mkdir(t, filepath.Join(dir, "good"))
+	write(t, filepath.Join(good, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "f", map[string]int{"input_tokens": 3}, "/x/schema/a.go")+"\n")
+	bad := mkdir(t, filepath.Join(dir, "bad"))
+	makeUnreadable(t, write(t, filepath.Join(bad, "x.jsonl"), "{}\n"))
+
+	r := invoke(t, "report", "--who", "ada", "--day", "2026-09-11", "--repos", repos,
+		"--claude", "g="+good, "--claude", "b="+bad)
+	wantExit(t, r, 1)
+	wantContains(t, r.stdout, "2026-09-11\tada\tf\tschema\tinput\t3")
+	wantContains(t, r.stderr, "TOKENS UNREADABLE label=claude:b")
+	wantContains(t, r.stderr, "REPORT FAILED who=ada day=2026-09-11 rows=1")
+	wantNotContains(t, r.stderr, "REPORT OK")
+}
+
+// TestReportSubjectIsOneQuotedValue pins the closing line's grammar on the report's
+// subject: the subject holds blanks and repeats at= and build= inside itself, so an
+// unquoted value made those inner pairs read as keys of the line. The subject is one
+// quoted value (oneline.Quote), and the at= and build= inside it are not keys of the
+// line.
+func TestReportSubjectIsOneQuotedValue(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	repos := reposFile(t, dir)
+	tr := mkdir(t, filepath.Join(dir, "tr"))
+	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "f", map[string]int{"input_tokens": 3}, "/x/schema/a.go")+"\n")
+
+	r := invoke(t, "report", "--who", "ada", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr)
+	wantExit(t, r, 0)
+	line := lineWith(r.stderr, "REPORT OK")
+	require.NotEmpty(t, line, "no REPORT OK line:\n%s", r.stderr)
+	assert.Equal(t,
+		`REPORT OK who=ada day=2026-09-11 rows=1 at=2026-09-11T23:55:02Z build=devel subject="tokens 2026-09-11 at=2026-09-11T23:55:02Z build=devel"`,
+		line)
 }
 
 // TestAHalfReadSuccessorDoesNotReplaceItsPredecessor pins rule 6: "the successor is

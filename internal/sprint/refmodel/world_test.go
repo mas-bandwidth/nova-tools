@@ -72,7 +72,7 @@ func (w *world) apply(p sprint.Plan) error {
 	for _, pw := range p.Props {
 		tb := w.s.T(pw.Table)
 		props := map[string]string{}
-		for _, n := range []string{sprint.PropDealIndex, sprint.PropAskIndex} {
+		for _, n := range []string{sprint.PropDealIndex, sprint.PropAskIndex, sprint.PropStatusSeen} {
 			if v, ok := tb.Prop(n); ok {
 				props[n] = v
 			}

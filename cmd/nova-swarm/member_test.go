@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
@@ -39,6 +40,112 @@ func TestReadResultTakesTheHeadFromRevAndTheReportFromOneLine(t *testing.T) {
 	head, _, report := readResult(p)
 	require.Equal(t, "0a1b2c3d", head, "readResult = (%q, %q), want (0a1b2c3d, landed the member loop)", head, report)
 	require.Equal(t, "landed the member loop", report, "readResult = (%q, %q), want (0a1b2c3d, landed the member loop)", head, report)
+}
+
+// TestAnEndedChildRecoversEverySpendRowWhenTheFinalLineIsMissing pins the durable
+// per-attempt receipt as the accounting source when native dies after collect but
+// before its final NATIVE spend= summary reaches the member.
+func TestAnEndedChildRecoversEverySpendRowWhenTheFinalLineIsMissing(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	job := filepath.Join(dir, "job")
+	write(t, filepath.Join(dir, "c1.native.log"), "NATIVE INCOMPLETE label=c1 rc=-1 wall=4.00s harness=opencode budget=unmetered\n")
+	write(t, filepath.Join(job, "usage.tsv"), strings.Join([]string{
+		"job\tattempt\tstarted\tended\tend\trc\tprovider\tmodel\ttokens_in\ttokens_out\tcache_write\tcache_read\treasoning\tusd",
+		"c1\t1\t2026-10-04T10:00:00Z\t2026-10-04T10:00:01Z\tfailed\t1\topenrouter\tmodel\t10\t2\t-\t-\t-\t0.10",
+		"c1\t2\t2026-10-04T10:00:01Z\t2026-10-04T10:00:03Z\tfailed\t1\topenrouter\tmodel\t20\t4\t-\t-\t-\t0",
+	}, "\n")+"\n")
+	done := make(chan struct{})
+	close(done)
+	c := &nativeChild{card: "c1", logPath: filepath.Join(dir, "c1.native.log"), job: job, done: done}
+	r := c.Result()
+	assert.Contains(t, r.Usage, "input=30", "both retry rows contribute input tokens")
+	assert.Contains(t, r.Usage, "output=6", "both retry rows contribute output tokens")
+	assert.Contains(t, r.Usage, "model=openrouter/model")
+	assert.Contains(t, r.Usage, "actual_usd=0.1 actual_by=harness", "reported zero on the second row is known, not absent")
+}
+
+// TestAnExplicitZeroSpendSurvivesAInterruptedNativeSummary pins the distinction
+// between an actual zero and a missing cost in the durable receipt fallback.
+func TestAnExplicitZeroSpendSurvivesAInterruptedNativeSummary(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	job := filepath.Join(dir, "job")
+	write(t, filepath.Join(job, "usage.tsv"), "job\tattempt\tstarted\tended\tend\trc\tprovider\tmodel\ttokens_in\ttokens_out\tcache_write\tcache_read\treasoning\tusd\n"+
+		"c1\t1\t2026-10-04T10:00:00Z\t2026-10-04T10:00:01Z\tfailed\t1\topenrouter\tmodel\t10\t2\t-\t-\t-\t0\n")
+	done := make(chan struct{})
+	close(done)
+	c := &nativeChild{card: "c1", logPath: filepath.Join(dir, "absent.native.log"), job: job, done: done}
+	r := c.Result()
+	assert.Contains(t, r.Usage, "actual_usd=0 actual_by=harness")
+}
+
+// TestAPartialNativeSpendIsReconciledToTheReceipt protects against an interrupted
+// final line that contains spend= but only some of the durable totals.
+func TestAPartialNativeSpendIsReconciledToTheReceipt(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	job := filepath.Join(dir, "job")
+	write(t, filepath.Join(dir, "c1.native.log"), "NATIVE INCOMPLETE label=c1 rc=-1 wall=4.00s harness=opencode budget=unmetered spend=input:999\n")
+	write(t, filepath.Join(job, "usage.tsv"), strings.Join([]string{
+		"job\tattempt\tstarted\tended\tend\trc\tprovider\tmodel\ttokens_in\ttokens_out\tcache_write\tcache_read\treasoning\tusd",
+		"c1\t1\t2026-10-04T10:00:00Z\t2026-10-04T10:00:01Z\tfailed\t1\topenrouter\tmodel\t10\t2\t-\t-\t-\t0.10",
+	}, "\n")+"\n")
+	done := make(chan struct{})
+	close(done)
+	c := &nativeChild{card: "c1", logPath: filepath.Join(dir, "c1.native.log"), job: job, done: done}
+	r := c.Result()
+	assert.Contains(t, r.Usage, "input=10", "the receipt replaces an incomplete spend summary")
+	assert.Contains(t, r.Usage, "output=2")
+	assert.Contains(t, r.Usage, "actual_usd=0.1 actual_by=harness")
+}
+
+func TestUnknownRetryCostDoesNotKeepPartialNativePrice(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	job := filepath.Join(dir, "job")
+	write(t, filepath.Join(dir, "c1.native.log"), "NATIVE INCOMPLETE label=c1 rc=-1 wall=4.00s harness=opencode budget=unmetered spend=input:30,output:6,cost:0.10,model:openrouter/model\n")
+	write(t, filepath.Join(job, "usage.tsv"), strings.Join([]string{
+		"job\tattempt\tstarted\tended\tend\trc\tprovider\tmodel\ttokens_in\ttokens_out\tcache_write\tcache_read\treasoning\tusd",
+		"c1\t1\t2026-10-04T10:00:00Z\t2026-10-04T10:00:01Z\tfailed\t1\topenrouter\tmodel\t10\t2\t-\t-\t-\t0.10",
+		"c1\t2\t2026-10-04T10:00:01Z\t2026-10-04T10:00:03Z\tfailed\t1\topenrouter\tmodel\t20\t4\t-\t-\t-\t-",
+	}, "\n")+"\n")
+	done := make(chan struct{})
+	close(done)
+	c := &nativeChild{card: "c1", logPath: filepath.Join(dir, "c1.native.log"), job: job, done: done}
+	r := c.Result()
+	assert.NotContains(t, r.Usage, "actual_usd=", "one priced retry cannot stand in for an unknown retry")
+	assert.Contains(t, r.Usage, "input=30")
+}
+
+func TestMalformedReceiptSpendIsReportedUnreconciled(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	job := filepath.Join(dir, "job")
+	write(t, filepath.Join(job, "usage.tsv"), "job\tattempt\tstarted\tended\tend\trc\tprovider\tmodel\ttokens_in\ttokens_out\tcache_write\tcache_read\treasoning\tusd\n"+
+		"c1\t1\t2026-10-04T10:00:00Z\t2026-10-04T10:00:01Z\tfailed\t1\topenrouter\tmodel\t10\t2\t-\t-\t-\tnot-money\n")
+	done := make(chan struct{})
+	close(done)
+	c := &nativeChild{card: "c1", logPath: filepath.Join(dir, "absent.native.log"), job: job, done: done}
+	r := c.Result()
+	assert.Contains(t, r.Usage, "usage_source_error=receipt-unreadable")
+	assert.NotContains(t, r.Usage, "actual_usd=", "malformed spend is not priced")
+}
+
+// TestAUnreadableSpendReceiptStaysUnpricedAndVisible pins the error path: a malformed
+// durable receipt cannot silently turn the launch into a measured zero.
+func TestAUnreadableSpendReceiptStaysUnpricedAndVisible(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	job := filepath.Join(dir, "job")
+	write(t, filepath.Join(job, "usage.tsv"), "job\tattempt\nshort\trow\n")
+	done := make(chan struct{})
+	close(done)
+	c := &nativeChild{card: "c1", logPath: filepath.Join(dir, "absent.native.log"), job: job, done: done}
+	r := c.Result()
+	assert.Contains(t, r.Usage, "usage_source_error=receipt-unreadable")
+	assert.Contains(t, r.Report, "usage receipt unreadable")
+	assert.NotContains(t, r.Usage, "actual_usd=0 ", "an unreadable receipt is not zero cost")
 }
 
 // TestReadResultOneLineHeadingIsCaseInsensitive pins the section's name.
@@ -414,6 +521,91 @@ func markerRunner(t *testing.T) (r *nativeRunner, slots, marker string) {
 	return r, slots, marker
 }
 
+// TestLocalChildIsRefusedAboveTheLoadBound pins SPEC-FRIEND's local child load
+// gate: a fake one-minute reading above the configured bound names both values
+// and prevents the executable, slot and card from being created.
+func TestLocalChildIsRefusedAboveTheLoadBound(t *testing.T) {
+	t.Parallel()
+	r, slots, marker := markerRunner(t)
+	r.maxLoad = 32
+	r.warnLoad = 28
+	r.load = hostload.Source{Load1: func() (float64, bool) { return 35, true }}
+	p := member.Packet{Card: "c1", Kind: "work", Gen: 1, Attempt: 1, Epoch: 7, Branch: "work/c1"}
+
+	child, err := r.Start(p)
+	if child != nil {
+		<-child.(*nativeChild).done // reap an unexpectedly started fixture before asserting refusal
+	}
+	require.Error(t, err)
+	require.Nil(t, child)
+	assert.Contains(t, err.Error(), "load 35.00")
+	assert.Contains(t, err.Error(), "bound 32.00")
+	for _, path := range []string{marker, filepath.Join(slots, launchName(p)), filepath.Join(slots, launchName(p)+".card.md")} {
+		_, statErr := os.Stat(path)
+		assert.True(t, os.IsNotExist(statErr), "%s exists after a refused launch: %v", path, statErr)
+	}
+}
+
+// TestLocalChildWarnsNearTheLoadBound pins the configured near threshold: a
+// fake load at that threshold warns with the load and bound, then still starts.
+func TestLocalChildWarnsNearTheLoadBound(t *testing.T) {
+	t.Parallel()
+	r, _, marker := markerRunner(t)
+	r.maxLoad = 32
+	r.warnLoad = 28
+	r.load = hostload.Source{Load1: func() (float64, bool) { return 28, true }}
+	p := member.Packet{Card: "c1", Kind: "work", Gen: 1, Attempt: 1, Epoch: 7, Branch: "work/c1"}
+
+	child, err := r.Start(p)
+	require.NoError(t, err)
+	<-child.(*nativeChild).done
+	require.FileExists(t, marker)
+	warning := r.stderr.(*bytes.Buffer).String()
+	assert.Contains(t, warning, "load 28.00")
+	assert.Contains(t, warning, "bound 32.00")
+}
+
+// TestLocalChildStartsAtTheBoundOrWithoutAReading pins the two non-refusal
+// edges in SPEC-FRIEND: the maximum itself is admitted, and an unavailable
+// reading preserves the member's existing launch behavior.
+func TestLocalChildStartsAtTheBoundOrWithoutAReading(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		load func() (float64, bool)
+	}{
+		{name: "exactly at maximum", load: func() (float64, bool) { return 32, true }},
+		{name: "reading unavailable", load: func() (float64, bool) { return 0, false }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r, _, marker := markerRunner(t)
+			r.maxLoad = 32
+			r.load = hostload.Source{Load1: tc.load}
+			p := member.Packet{Card: "c1", Kind: "work", Gen: 1, Attempt: 1, Epoch: 7, Branch: "work/c1"}
+
+			child, err := r.Start(p)
+			require.NoError(t, err)
+			<-child.(*nativeChild).done
+			require.FileExists(t, marker)
+		})
+	}
+}
+
+// TestLocalChildAdmissionLeavesExistingDefaultsUnchanged pins that default 0
+// maxLoad preserves existing admission behavior even under high load.
+func TestLocalChildAdmissionLeavesExistingDefaultsUnchanged(t *testing.T) {
+	t.Parallel()
+	r, _, marker := markerRunner(t)
+	r.load = hostload.Source{Load1: func() (float64, bool) { return 999, true }}
+	p := member.Packet{Card: "c1", Kind: "work", Gen: 1, Attempt: 1, Epoch: 7, Branch: "work/c1"}
+
+	child, err := r.Start(p)
+	require.NoError(t, err)
+	<-child.(*nativeChild).done
+	require.FileExists(t, marker)
+}
+
 // TestALiveChildIsAdoptedNotRunTwice pins the restart path: a launch whose
 // pid file names a live process is adopted, not started again. The pid file
 // here names this test's own process; Start starts nothing (no marker, no slot
@@ -427,6 +619,11 @@ func TestALiveChildIsAdoptedNotRunTwice(t *testing.T) {
 	pidPath := filepath.Join(slots, name+".pid")
 	self := strconv.Itoa(os.Getpid()) + "\n"
 	write(t, pidPath, self)
+	r.maxLoad = 32
+	r.load = hostload.Source{Load1: func() (float64, bool) {
+		require.Fail(t, "the load was read while adopting an existing child")
+		return 35, true
+	}}
 	// Removing the `if pid := livePID(pidPath); pid > 0 {` adoption branch in
 	// nativeRunner.Start makes this fail: a second child is started over the
 	// first (the slot and card file appear, the pid file is overwritten).
@@ -552,6 +749,34 @@ func TestMemberRefusesBothOnceAndNonPositiveTicksNamesBothPins(t *testing.T) {
 	require.Contains(t, errb.String(), "give --ticks 1 or more, or leave it out to run until stopped")
 }
 
+// TestMemberRefusesNonFiniteLoadThresholds pins that a configured guard cannot
+// be silently disabled by NaN or infinity; the refusal names the finite value it wants.
+func TestMemberRefusesNonFiniteLoadThresholds(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "maximum NaN", args: []string{"--max-load", "NaN"}, want: "--max-load is the finite maximum one-minute host load"},
+		{name: "maximum infinity", args: []string{"--max-load", "+Inf"}, want: "--max-load is the finite maximum one-minute host load"},
+		{name: "warning NaN", args: []string{"--max-load", "32", "--warn-load", "NaN"}, want: "--warn-load is the finite one-minute host load"},
+		{name: "warning infinity", args: []string{"--max-load", "32", "--warn-load", "+Inf"}, want: "--warn-load is the finite one-minute host load"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			args := append(memberFull(root), tc.args...)
+			var out, errb bytes.Buffer
+			code := cmdMember(args[1:], &out, &errb, noServer)
+			require.Equal(t, 2, code, "stderr %q", errb.String())
+			assert.Contains(t, errb.String(), tc.want)
+			_, statErr := os.Stat(filepath.Join(root, "slots"))
+			assert.True(t, os.IsNotExist(statErr), "invalid load threshold made slots: %v", statErr)
+		})
+	}
+}
+
 // TestMemberAcceptsPositiveTicks pins that valid positive --ticks runs for the
 // specified tick count and terminates cleanly.
 func TestMemberAcceptsPositiveTicks(t *testing.T) {
@@ -606,4 +831,16 @@ func TestAPidFileThatCannotBeWrittenIsNamed(t *testing.T) {
 	assert.Contains(t, said, "nova-swarm member: NOTE card c1 runs as pid ")
 	assert.Contains(t, said, "could not be written")
 	assert.Equal(t, 1, strings.Count(said, "\n"), "one line: %q", said)
+}
+
+// A reader nova-swarm builds carries the script read (docs/SPEC-SPRINT.md, the script
+// read): memberConfig sets Config.ScriptVerify for a reader, so a script card's head is
+// read by the program that made it, and leaves it nil for a worker, whose reads are its
+// models' alone.
+func TestAReaderBuiltByNovaSwarmHasScriptVerify(t *testing.T) {
+	t.Parallel()
+	reader := memberConfig("r1", 0, true, nil, nil, t.TempDir(), false)
+	assert.NotNil(t, reader.ScriptVerify, "a reader reads a script card by its program")
+	worker := memberConfig("m1", 0, false, nil, nil, t.TempDir(), false)
+	assert.Nil(t, worker.ScriptVerify, "a worker does not read script cards")
 }

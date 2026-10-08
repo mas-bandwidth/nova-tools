@@ -37,8 +37,10 @@ func bigSprint(t *testing.T) *testApp {
 		ta.ok(fmt.Sprintf("add --stream w%d --sentinel gate%d --held --actor lead", i, i))
 		ta.ok(fmt.Sprintf("add --stream w%d --count 499 --actor lead", i))
 	}
-	ta.ok("add --stream done --count 350 --actor lead")
-	ta.ok("add --stream f --count 150 --actor lead")
+	// done keeps one card not landed, so no tick archives it (stream archive) and its 350
+	// landed cards stay in the headline
+	ta.ok("add --stream done --count 351 --actor lead")
+	ta.ok("add --stream f --count 149 --actor lead")
 	ta.ok("start --actor lead")
 	ta.mu.Lock()
 	ta.now = ta.now.Add(2 * time.Hour)
@@ -52,7 +54,7 @@ func bigSprint(t *testing.T) *testApp {
 	require.NoError(t, err)
 	now := ta.a.now()
 	var ms []ntable.BatchMemberEntry
-	for i, c := range snap.Work.Cell("done", sprint.Ready) {
+	for i, c := range snap.Work.Cell("done", sprint.Ready)[:350] {
 		at := now.Add(-2 * time.Hour).Add(time.Duration(i+1) * 20 * time.Second)
 		ms = append(ms, ntable.BatchMemberEntry{ID: c.ID, Expect: &ntable.MemberExpect{Revision: fmt.Sprint(c.Rev)},
 			Move: &ntable.MemberMoveOp{Row: c.Row, Col: sprint.Landed}, Set: map[string]string{"landed": at.UTC().Format(time.RFC3339)}})

@@ -36,5 +36,5 @@ func TestAnExitOneVerdictCarriesNoDoor(t *testing.T) {
 
 	code, _, stderr = dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--no-such-flag")
 	require.EqualValues(t, 2, code, "unknown flag: exit %d, want exactly 2; stderr: %s", code, stderr)
-	require.True(t, strings.HasSuffix(strings.TrimRight(stderr, "\n"), "run: nova-check help"), "an exit-2 invocation refusal lost the door:\n%s", stderr)
+	require.True(t, strings.HasSuffix(strings.TrimRight(stderr, "\n"), "run: nova-check dogfood gate -h"), "an exit-2 invocation refusal lost the door:\n%s", stderr)
 }

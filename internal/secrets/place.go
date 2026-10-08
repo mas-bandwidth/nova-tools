@@ -64,6 +64,12 @@ type PlaceInput struct {
 	// version probe and the ssh delivery all run through it. Tests set a strict fake so
 	// place's refusals run with no real sops and no host reached.
 	Exec execCommand
+
+	// Guard replaces the process-wide host guard for the ssh delivery. A test passes
+	// testguard.NewGuard(true) so it can assert the seam refuses without setting
+	// NOVA_TEST_NO_HOST in the process environment, which would race every parallel
+	// test. Nil uses testguard's process-wide default, the production path.
+	Guard *testguard.Guard
 }
 
 func (in PlaceInput) exec() execCommand {
@@ -176,9 +182,11 @@ func decryptSnapshotWithRemoval(run execCommand, sopsPath, keyPath, file string,
 	return out, nil
 }
 
-// ReadFleetMachines parses the tab-separated fleet registry: name, ssh target, home, and
-// the optional fourth column the pulse fleet file carries. Blank lines and `#` comments are
-// skipped; a line with fewer than two fields, or an empty name or target, is refused.
+// ReadFleetMachines parses the place machine table: name, ssh target, home, and the
+// optional fourth column the pulse fleet file carries. It refuses the gate registry's
+// seven-column format rather than treating os/arch as a home path (SPEC-SECRETS "place").
+// Blank lines and `#` comments are skipped; a line with fewer than two fields, more than
+// four fields, or an empty name or target is refused.
 func ReadFleetMachines(path string) (map[string]FleetMachine, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -193,6 +201,9 @@ func ReadFleetMachines(path string) (map[string]FleetMachine, error) {
 		fields := strings.Split(line, "\t")
 		if len(fields) < 2 {
 			return nil, fmt.Errorf("line %d wants at least 2 tab-separated fields name, ssh target, got %d", n+1, len(fields))
+		}
+		if len(fields) > 4 {
+			return nil, fmt.Errorf("place machines file line %d wants 2 to 4 tab-separated fields name, ssh target, home, optional note; got %d (the gate registry has 7 fields)", n+1, len(fields))
 		}
 		m := FleetMachine{Name: strings.TrimSpace(fields[0]), Target: strings.TrimSpace(fields[1])}
 		if len(fields) >= 3 {
@@ -297,7 +308,7 @@ func RunPlace(in PlaceInput) (string, error) {
 	}
 
 	if err := sec.Use(func(value string) error {
-		return sshPlaceSecret(run, in.SSH, machine.Target, remotePath, value)
+		return sshPlaceSecret(run, in.Guard, in.SSH, machine.Target, remotePath, value)
 	}); err != nil {
 		return "", err
 	}
@@ -400,10 +411,18 @@ func RunPlaced(in PlacedInput) (string, []string, error) {
 
 // sshPlaceSecret writes value to remotePath over ssh with mode 0600. The value travels on
 // stdin; the remote path is the only caller text in the command, shell-quoted.
-func sshPlaceSecret(run execCommand, sshPath, target, remotePath, value string) error {
+//
+// guard is the host seam. Nil uses testguard's process-wide default, which production
+// arms from the environment; a test injects its own guard so it can run under t.Parallel
+// without setting the variable in the process environment.
+func sshPlaceSecret(run execCommand, guard *testguard.Guard, sshPath, target, remotePath, value string) error {
 	remoteCmd := fmt.Sprintf("umask 077 && set -e && mkdir -p \"$(dirname %s)\" && cat > %s && chmod 600 %s",
 		shSingleQuote(remotePath), shSingleQuote(remotePath), shSingleQuote(remotePath))
-	testguard.RefuseHosts(sshPath, target, remoteCmd)
+	if guard == nil {
+		testguard.RefuseHosts(sshPath, target, remoteCmd)
+	} else {
+		guard.RefuseHosts(sshPath, target, remoteCmd)
+	}
 	_, err := runOr(run)(bytes.NewReader([]byte(value)), nil, "", sshPath, target, remoteCmd)
 	if err != nil {
 		// The remote transcript is withheld; it can carry a command's own output and this

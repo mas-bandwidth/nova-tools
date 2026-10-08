@@ -15,7 +15,7 @@ unchanged and is not restated. Related: [SPEC-SECRETS.md](SPEC-SECRETS.md)
 ## The verbs
 
 ```
-nova-redis serve  --bind <addr>[,<addr>...] --port <port> --dir <store-dir>
+nova-redis serve  --bind <addr>[,<addr>...] --port <port> --dir <store-dir> [--users <name>[,<name>...]]
 nova-redis spill  --addr <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name> --ttl <duration> --value <text>
 nova-redis recall --addr <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name>
 nova-redis fn load  --addr <host:port> [--user <name>] [--password-env <NAME>]
@@ -62,7 +62,10 @@ nova-redis help
   spill. Each scratch verb is one round trip.
 - `acl render` prints the build's users and opens no store; `acl check` and
   `acl apply` need `--addr`, and read or set the store's live users against
-  what this build renders.
+  what this build renders. `acl apply` writes through the store's ACL file
+  with `ACL SAVE`, so on a store `serve` runs the users survive a restart; a
+  store with no ACL file gets `saved=no-acl-file` and a NOTE that they will
+  not.
 - `version` and `help`, the two every binary in this family carries.
 
 ## Bind, auth and persistence
@@ -78,13 +81,23 @@ a restart on the same `--dir` replays every key.
 or a hostname, is refused before anything starts. The password is read from
 `NOVA_REDIS_PASSWORD`, which `nova-secrets exec` fills; it is written into the
 config `redis-server` reads on stdin (`redis-server -`), dropped from the
-child's environment, and never written to a file. The config is the fleet
+child's environment, never written to a file, and never printed. The config is the fleet
 store's rules, one config owned by `nova-redis`: `dir` is `--dir`, absolute,
 created 0700 when missing and never defaulted; `appendonly yes` with
 `appendfsync everysec`, so a crash loses at most one second; `save 60 1`, an
 RDB snapshot as the second copy; `maxmemory-policy noeviction`, so a full
 instance refuses a write rather than drop a key; and no TTL policy, so store
-keys do not expire. A SIGTERM to `serve` is a clean stop: `redis-server`
+keys do not expire. The ACL users live in `<store-dir>/users.acl`, mode 0600,
+named in the config as `aclfile`: `acl apply`'s `ACL SAVE` writes them there and
+a restart loads them. redis-server ignores `requirepass` once an ACL file is
+named and would bring the default user up with no password, so before each
+launch `serve` writes the file back (a temporary file renamed over it, mode
+0600) with every line as the store saved it and the default user on the
+password's SHA-256 (`user default on sanitize-payload #<sha256> ~* &* +@all`);
+the password itself is in no file. `--users` names the users the file must
+hold, and a file lacking one is refused (exit 2) before anything is written or
+launched. A unit that runs `serve` on its `--dir` carries the file with no
+flag of its own; `--users` joins its serve line once `acl apply` has set them. A SIGTERM to `serve` is a clean stop: `redis-server`
 fsyncs the AOF, saves and exits 0. A bench runs it as
 
 ```
@@ -105,6 +118,9 @@ nova-secrets exec --only NOVA_REDIS_PASSWORD -- nova-redis serve --bind 127.0.0.
    fleet Redis; the unit tests use fakes, and the functional tests (the
    restart, the connection failures) run a throwaway `redis-server` on
    loopback in the test's temp dir.
+6. The store's ACL users survive a restart: they live in `<store-dir>/users.acl`
+   (0600), the default user on the password's hash, and a store whose file lacks
+   a user `--users` names does not start.
 
 ## Tests this spec demands
 
@@ -132,3 +148,5 @@ an injected clock, `cmd/nova-redis/serve_test.go` proves 6, 7 and 8, and
 15. `TestFnFailuresNameTheStateAndTheRemedy` — a failure of either `fn` verb is one `FAILED` line naming the store's state and the remedy for its cause.
 16. `TestEveryVerbLogsInAsTheUserItIsGiven` — every verb that dials a store logs in as the `--user` it is given.
 17. `TestFnVerbsOnARedisServer` — `fn load` and `fn check` against a real `redis-server`.
+18. `TestAclUsersSurviveARestart` — users set by `acl apply` (saved to the ACL file) still log in after `serve` restarts on the same `--dir`, the default user still wants the password, the file is 0600 and holds no password, and a restart whose file lacks a `--users` user is refused (`cmd/nova-redis/acl_restart_test.go` with the launch faked; `cmd/nova-redis/acl_restart_functional_test.go` on a real `redis-server`).
+19. `TestServePrintsNoSecretOnAnyPath` — every line `serve` prints, on stdout or stderr, on every path (the dry-run plan, START and STOP, each refusal, a missing `redis-server`, a failed launch), is free of the password it was given; the START receipt names the addresses, the store directory, the ACL file and its user count, and nothing more (`cmd/nova-redis/serve_test.go`). A test fixture password holds one of `!#%@^` in every six bytes, so no temp directory or program path can carry a fragment of it and read as a leak.

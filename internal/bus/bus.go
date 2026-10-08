@@ -82,6 +82,10 @@ type Message struct {
 	Kind    string // one of Kinds; "" is status
 	At      time.Time
 	Body    string
+	// Token is the caller's word for this one logical send, the same on
+	// every retry of it (token.go); it is the sender's, never on the entry.
+	// Empty is a send with none: every call a new message.
+	Token string
 }
 
 // The kinds of a message (SPEC-BUS.md, the kind of a message): the bus's own
@@ -166,13 +170,18 @@ type Entry struct {
 	Stream string
 	Entry  string
 	Fields map[string]string
+	// Stage is the message's receipt state as recv found it, before its
+	// delivered stamp ("" none; stages.go): acted on a message the claim hands
+	// in again after a turn acted on it. Only recv sets it.
+	Stage string
 }
 
 // Message is the entry's message.
 func (e Entry) Message() Message { return Parse(e.Fields) }
 
 // Store is the few Redis commands the bus uses, each one round trip. The
-// bus never deletes: no command here removes an entry, a group or a key.
+// bus never deletes: no command here removes an entry, a group or a key
+// (a token's record expires: AddOnce).
 type Store interface {
 	// Roster is the known names (nova-config's friend and machine rows, the
 	// sets `friends` and `machines`) and the server's time (TIME), in one trip.
@@ -185,6 +194,14 @@ type Store interface {
 	// mark (HSET, or HDEL when it clears), in one MULTI/EXEC: the entry and its
 	// marks are on all of them or on none.
 	AddAll(ctx context.Context, streams []string, fields map[string]string, marks ...Mark) error
+	// AddOnce is AddAll under a send's token, in one atomic step (a script):
+	// when key holds a record it writes nothing and answers that record and
+	// found; else it sets key to record, expiring after keep, and appends
+	// the entry and makes the marks as AddAll does. The record's key is the
+	// one key the bus writes that the store removes, by its expiry.
+	AddOnce(ctx context.Context, key, record string, keep time.Duration, streams []string, fields map[string]string, marks ...Mark) (prior string, found bool, err error)
+	// Sent is the record at key (GET), and whether there is one.
+	Sent(ctx context.Context, key string) (record string, found bool, err error)
 	// Unmark clears fields of the hash at key (HDEL) and says how many were there.
 	Unmark(ctx context.Context, key string, fields ...string) (int64, error)
 	// Marks is the whole hash at each key, in one trip (a pipeline of HGETALL);
@@ -219,6 +236,43 @@ type Store interface {
 	// Get is the named entries of the stream, in one trip (a pipeline of XRANGE
 	// id id); an id that is not there is left out.
 	Get(ctx context.Context, stream string, entries []string) ([]Entry, error)
+	// Forward moves each id's receipt on the hash at key to state at the
+	// store's time (TIME), by the rule Forward keeps: only forward, and only
+	// delivered starts one; it answers each id's state before, "" for none, in
+	// one atomic step (a script). It is the one writer of a receipt.
+	Forward(ctx context.Context, key, state string, ids ...string) ([]string, error)
+}
+
+// Waiter is the two reads a wait makes over a Store that also holds them: the
+// Redis store does; a Store without them cannot wait (SPEC-BUS.md, the verbs:
+// wait).
+type Waiter interface {
+	// Tail is the stream's last entry id and whether the stream is there at
+	// all (XINFO STREAM's last-generated-id, "0-0" for an empty one): the
+	// cursor a wait arms at when the caller gives none (SPEC-BUS.md, the
+	// verbs: wait).
+	Tail(ctx context.Context, stream string) (last string, exists bool, err error)
+	// BlockRead hands up to count entries of the stream lying past the id
+	// after (XREAD), waiting up to block for one when block is above zero (0
+	// is for ever), else answering at once. It never touches the consumer
+	// group, so what it hands out is still a later recv's to deliver and ack
+	// (SPEC-BUS.md, the verbs: wait).
+	BlockRead(ctx context.Context, stream, after string, block time.Duration, count int) ([]Entry, error)
+}
+
+// Waiter is the Store's wait reads, or the refusal of a Store that has none.
+func (b *Bus) Waiter() (Waiter, error) {
+	st := b.Store
+	if h, ok := st.(*hearing); ok {
+		// A wait takes nothing, as peek takes nothing: the hearing check guards
+		// the sends and recvs that move messages, so the wait reads the store under it.
+		st = h.Store
+	}
+	w, ok := st.(Waiter)
+	if !ok {
+		return nil, errors.New("this store cannot wait")
+	}
+	return w, nil
 }
 
 // Bus is the rules over a Store.
@@ -226,6 +280,16 @@ type Bus struct {
 	Store Store
 	// Rand fills a ULID's random half; crypto/rand when nil.
 	Rand func([]byte) (int, error)
+	// TokenLife is how long a retry under a send's token answers the
+	// original message (DefaultTokenLife when zero); TokenCleanup is when the
+	// store drops the token's record (DefaultTokenCleanup when zero, never
+	// before the life ends). token.go.
+	TokenLife, TokenCleanup time.Duration
+	// OnStampError hears a delivered receipt recv stamps that the store did
+	// not write; the recv goes on, and the message stays in Overdue until a
+	// later stamp lands. Nil drops it, the overdue alarm standing for it
+	// (stages.go).
+	OnStampError func(err error)
 }
 
 // Refusal is a reason a verb could not run as asked: the input, not the store.
@@ -244,6 +308,18 @@ func (r *Refusal) Error() string { return strings.Join(r.Problems, "; ") }
 // transaction marks it on bus2:owed:<friend> for each friend it names but the
 // sender, and a message from a friend naming another (re) is her receipt of
 // that one, cleared in the same transaction.
+//
+// A message naming another (re) is the sender's act on it: its receipt on
+// bus2:receipt:<sender> moves to acted in the same transaction, when the
+// sender was delivered it (stages.go).
+//
+// A message with a Token is sent once under it (token.go): the record of the
+// token is written in the same step, and a send that finds it writes nothing
+// and answers the message it names, id and at, so a caller whose response was
+// lost after the write committed retries with the same token and the same
+// arguments and gets the original. The same token with other arguments, or
+// past its life, is refused. Without a token a lost response retried is a
+// second message.
 func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 	m, now, friends, err := b.check(ctx, m)
 	if err != nil {
@@ -257,6 +333,9 @@ func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 		streams = append(streams, StreamOf(n))
 	}
 	streams = append(streams, LogKey)
+	if m.Token != "" {
+		return b.sendOnce(ctx, m, now, streams, owe(m, friends))
+	}
 	if err := b.Store.AddAll(ctx, streams, m.Fields(), owe(m, friends)...); err != nil {
 		return Message{}, err
 	}
@@ -298,6 +377,9 @@ func (b *Bus) check(ctx context.Context, m Message) (Message, time.Time, []strin
 	if strings.TrimSpace(m.Subject) == "" {
 		problems = append(problems, "the subject is empty; it wants one line saying what the message is")
 	}
+	if p := CheckToken(m.Token); p != "" {
+		problems = append(problems, p)
+	}
 	if len(problems) > 0 {
 		return Message{}, time.Time{}, nil, &Refusal{problems}
 	}
@@ -330,6 +412,9 @@ func (b *Bus) Recv(ctx context.Context, as string, block time.Duration) (e Entry
 }
 
 // RecvKinds is Recv for the messages whose kind is one of kinds (none: any).
+// The message it hands out is stamped delivered on the recipient's receipts,
+// one trip more, and carries the receipt it found (Entry.Stage): acted on one
+// the claim hands in again after a turn acted on it (stages.go).
 // A message the filter skips is handed back to the group at once (Store.Release),
 // neither acked nor held, so a reader that asks for all gets it next; the skip
 // costs one round trip per message skipped, and one more to release a run of
@@ -372,7 +457,7 @@ func (b *Bus) RecvKinds(ctx context.Context, as string, block time.Duration, kin
 			break
 		}
 		if len(FilterKinds(got, kinds)) > 0 {
-			return got[0], true, release()
+			return b.delivered(ctx, as, got[0]), true, release()
 		}
 		skipped = append(skipped, got[0].Entry)
 	}
@@ -385,12 +470,19 @@ func (b *Bus) RecvKinds(ctx context.Context, as string, block time.Duration, kin
 			return Entry{}, false, err
 		}
 		if len(FilterKinds(got, kinds)) > 0 {
-			return got[0], true, nil
+			return b.delivered(ctx, as, got[0]), true, nil
 		}
 		if err := b.Store.Release(ctx, stream, as, got[0].Entry); err != nil {
 			return Entry{}, false, err
 		}
 	}
+}
+
+// delivered stamps e delivered for as and answers it with the receipt found.
+// (tla/Bus2Receipts.tla: RRecv)
+func (b *Bus) delivered(ctx context.Context, as string, e Entry) Entry {
+	e.Stage = b.stamp(ctx, as, Delivered, e.Message().ID)
+	return e
 }
 
 // AckEntry acks one entry the recipient was handed (XACK); acking it again
@@ -494,10 +586,133 @@ func (b *Bus) Peek(ctx context.Context, as string) (pending, fresh []Entry, err 
 // logLimit bounds one read of the log; the caller caps what it shows.
 const logLimit = 10000
 
+// WaitMax bounds the message lines one wait prints (SPEC-BUS.md, the verbs:
+// wait); the entries past them stay for the next run.
+const WaitMax = 5
+
+// WaitRead bounds the entries one blocking read of a wait takes: one batch
+// holds the skipped and the counted of one burst, and the decision over it
+// is one pure function (SPEC-BUS.md, the verbs: wait).
+const WaitRead = 100
+
+// WaitPick is the wait's decision over one batch of entries, a pure function
+// (SPEC-BUS.md, the verbs: wait): the first WaitMax entries not from me whose
+// subject starts with none of skips (matched without case), in order, and the
+// cursor past every entry the walk saw -- a skipped entry moves it -- so a
+// caller that re-arms with it misses nothing between runs. The walk stops at
+// the WaitMax-th entry that counts, and the entries after it stay for the
+// next run.
+func WaitPick(entries []Entry, me string, skips []string) (kept []Entry, after string) {
+	prefixes := make([]string, len(skips))
+	for i, s := range skips {
+		prefixes[i] = strings.ToLower(s)
+	}
+	for _, e := range entries {
+		m := e.Message()
+		if m.From == me || hasPrefix(m.Subject, prefixes) {
+			after = e.Entry // a skipped entry moves the cursor and is not printed
+			continue
+		}
+		kept = append(kept, e)
+		if len(kept) == WaitMax {
+			return kept, e.Entry
+		}
+		after = e.Entry
+	}
+	return kept, after
+}
+
+// hasPrefix is whether the subject starts with one of the prefixes, without
+// case.
+func hasPrefix(subject string, prefixes []string) bool {
+	s := strings.ToLower(subject)
+	for _, p := range prefixes {
+		if p != "" && strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// WaitArm is the cursor a wait on as starts from: after when given (the
+// stream's tail is not read), else the stream's last entry id read once
+// ("0-0" when the stream is not there). A name the roster does not hold is
+// refused, never given a stream to wait on (SPEC-BUS.md, the semantics), as
+// recv refuses one.
+func (b *Bus) WaitArm(ctx context.Context, as, after string) (string, error) {
+	if p := CheckName(as); p != "" {
+		return "", &Refusal{[]string{p}}
+	}
+	names, _, err := b.Store.Roster(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !slices.Contains(names, as) {
+		return "", &Refusal{[]string{unknown(as)}}
+	}
+	if after != "" {
+		return after, nil
+	}
+	w, err := b.Waiter()
+	if err != nil {
+		return "", err
+	}
+	tail, exists, err := w.Tail(ctx, StreamOf(as))
+	if err != nil {
+		return "", err
+	}
+	if !exists || tail == "" {
+		return "0-0", nil
+	}
+	return tail, nil
+}
+
 // Log is the log's messages from the entry id from ("-" for its start),
-// oldest first, up to logLimit of them.
+// oldest first, up to logLimit of them. A reader that always passes "-"
+// sees only the oldest window, so once the log is longer than logLimit a
+// fresh entry is past the cap on every read. Arm at LogCursor and read
+// with LogForward.
 func (b *Bus) Log(ctx context.Context, from string) ([]Entry, error) {
 	return b.Store.Range(ctx, LogKey, from, "+", logLimit)
+}
+
+// LogCursor is the log's tail, the cursor a reader arms at so LogForward
+// returns only entries appended after it. An empty log arms at "0-0", the
+// id before any entry. The store's Tail is the same read a wait arms with.
+func (b *Bus) LogCursor(ctx context.Context) (string, error) {
+	w, err := b.Waiter()
+	if err != nil {
+		return "", err
+	}
+	tail, exists, err := w.Tail(ctx, LogKey)
+	if err != nil {
+		return "", err
+	}
+	if !exists || tail == "" {
+		return "0-0", nil
+	}
+	return tail, nil
+}
+
+// LogForward is one bounded window of the log strictly after cursor, oldest
+// first, at most logLimit entries. cursor is an entry id ("0-0" before any).
+// next is the last entry read, or cursor when the window is empty, so the
+// caller advances as it consumes and a fresh entry is not hidden behind the
+// oldest logLimit. more is set when the window is full and a further read
+// from next may hold more.
+func (b *Bus) LogForward(ctx context.Context, cursor string) (es []Entry, next string, more bool, err error) {
+	if cursor == "" {
+		cursor = "0-0"
+	}
+	cursor = strings.TrimPrefix(cursor, "(")
+	es, err = b.Log(ctx, "("+cursor)
+	if err != nil {
+		return nil, cursor, false, err
+	}
+	if len(es) == 0 {
+		return nil, cursor, false, nil
+	}
+	return es, es[len(es)-1].Entry, len(es) == logLimit, nil
 }
 
 // IDAt is the first entry id a stream could hold at t (<ms>-0): the floor of

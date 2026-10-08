@@ -404,43 +404,68 @@ func Finish(s State, m, c string, gen int, ok bool) (State, error) {
 
 // ------------------------------------------------------------------ readers
 
-// Ask is SprintTables.tla Ask(p) (line 375): a primary in review whose work
-// did not fail, with no read card on the table, is dealt to two different
-// readers: the next two round the readers (NextReaders), the rolling index
-// moved past them; reworked work is asked the same way, at its new attempt,
-// with no reader of an earlier attempt preferred and none skipped for it.
-// It closes stranded in review (spec section 6).
-func Ask(s State, p string, two []string) (State, error) {
+// Ask is SprintTables.tla Ask(p) (line 375) with the reads asked one at a
+// time and by room (spec section 6; tla/ReadsByRoom.tla): a primary in
+// review whose work did not fail is dealt the reads it wants now
+// (ReadsWanted: its first read alone while none stands, the second once the
+// first came back ok, none while one is outstanding or found it broken) to
+// the readers AskChoice names: the finder first on a rework's next attempt,
+// out of turn, the rolling index not moved for it; else the least loaded
+// readers (NextReaders, the engine's room for readers with no width), the
+// index moved past them. Reworked work is asked the same way, at its new
+// attempt, with no reader of an earlier attempt preferred, the finder aside,
+// and none skipped for it. Its pair is the readers of the reads that stand.
+// It closes stranded in review.
+func Ask(s State, p string, readers []string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
 	}
-	if !s.InWork(p, Review) || s.Failed(p) || len(s.LiveReadsOf(p)) > 0 {
-		return s, refuse("%s is not a primary in review lacking reads", p)
+	want := s.ReadsWanted(p)
+	if !s.InWork(p, Review) || s.Failed(p) || want == 0 {
+		return s, refuse("%s is not a primary in review wanting a read", p)
 	}
 	if len(s.Readers) < 2 {
 		return s, refuse("fewer than two readers")
 	}
-	if len(two) != 2 || two[0] == two[1] {
-		return s, badChoice("%s asked of %v, not two different readers", p, two)
-	}
 	pr := s.Primaries[p]
-	sorted := addSorted(nil, two...)
-	next := s.NextReaders(p, 2)
-	if Join(sorted) != Join(addSorted(nil, next...)) {
-		return s, badChoice("%s asked of %v, not the next two readers round the readers, %v (past %q)", p, two, next, s.AskLast)
+	live := 0
+	for _, r := range s.Readers {
+		if _, ok := s.AskID(p, pr.Attempt, r); !ok {
+			live++
+		}
+	}
+	if len(s.Readers)-live < 2-len(s.LiveReadsOf(p)) {
+		return s, refuse("fewer than two readers free for %s", p)
+	}
+	sorted := addSorted(nil, readers...)
+	next, finder := s.AskChoice(p)
+	if len(readers) != want || Join(sorted) != Join(addSorted(nil, next...)) {
+		return s, badChoice("%s asked of %v, not the next %d round the readers, %v (past %q)", p, readers, want, next, s.AskLast)
 	}
 	n := s.Clone()
 	order := addSorted(nil, s.Readers...)
-	n.AskLast = roundPast(order, roundPast(order, s.AskLast, next[0]), next[1])
+	for i, r := range next {
+		if finder && i == 0 { // the finder's read is out of turn: the index does not move for it
+			if n.Reserved[r] > 0 {
+				n.Reserved[r]-- // placed now: its load counts it from here
+			}
+			continue
+		}
+		n.AskLast = roundPast(order, n.AskLast, r)
+	}
 	n.AskStreamLast = roundPast(s.streamOrder(pr.Stream), s.AskStreamLast, pr.Stream) // the ask's stream index moves past it
-	for _, r := range two {
-		id := RC(p, pr.Attempt, r)
+	for _, r := range readers {
+		id, _ := s.AskID(p, pr.Attempt, r)
 		if _, made := n.Reads[id]; made {
 			return s, badChoice("%s cut a second time (NoCardLostOrTwice)", id)
 		}
-		n.Reads[id] = ReadCard{Primary: p, Attempt: pr.Attempt, Reader: r, Place: Asked}
+		n.Reads[id] = ReadCard{Primary: p, Attempt: pr.Attempt, Reader: r, Place: Asked, Finder: finder && r == next[0]}
 	}
-	n.setPrimary(p, func(x *Primary) { x.Pair = sorted })
+	var pair []string
+	for _, id := range n.LiveReadsOf(p) {
+		pair = append(pair, n.Reads[id].Reader)
+	}
+	n.setPrimary(p, func(x *Primary) { x.Pair = addSorted(nil, pair...) })
 	delete(n.Open, Judgment{JStranded, p})
 	return n, nil
 }
@@ -461,14 +486,14 @@ func AskAnother(s State, p, r string) (State, error) {
 	pr := s.Primaries[p]
 	free := 0
 	for _, x := range s.Readers {
-		if _, made := s.Reads[RC(p, pr.Attempt, x)]; !made {
+		if _, ok := s.AskID(p, pr.Attempt, x); ok {
 			free++
 		}
 	}
 	if free == 0 {
 		return s, refuse("every reader has read %s at attempt %d", p, pr.Attempt)
 	}
-	id := RC(p, pr.Attempt, r)
+	id, _ := s.AskID(p, pr.Attempt, r)
 	if !slices.Contains(s.Readers, r) {
 		return s, badChoice("%s is not a reader", r)
 	}
@@ -504,8 +529,9 @@ func ReadStart(s State, r, c string) (State, error) {
 // broken judgment; the read that leaves the reads exhausted opens reads
 // exhausted (G3). A report on a card still asked is the begin and the report
 // in one step, and the read that completes two different readers' ok at the
-// head opens ready to accept while the machine is STOPPED (a RUNNING
-// machine's pump accepts it): both the spec's (section 6), not the model's.
+// head opens ready to accept only for a primary the pump holds (AcceptHeld);
+// the tick accepts the rest, RUNNING or STOPPED (at the first pump after
+// start): both the spec's (section 6), not the model's.
 func Read(s State, r, c string, ok bool) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -526,8 +552,7 @@ func Read(s State, r, c string, ok bool) (State, error) {
 	if !ok {
 		n.open(JBroken, p)
 	} else if before < 2 {
-		// a RUNNING machine's pump accepts it unless it holds it: "accept is
-		// mechanical"
+		// the tick's pump accepts it unless it holds it: "accept is mechanical"
 		n.acceptNote(p)
 	}
 	n.exhaust(p)
@@ -539,8 +564,8 @@ func Read(s State, r, c string, ok bool) (State, error) {
 // and no open judgment is a judgment: reads exhausted when it was asked at its
 // attempt, else stranded in review. Stranded is the spec's, not the model's.
 func (n *State) exhaust(p string) {
-	if !n.InWork(p, Review) || len(n.OutOf(p)) > 0 || n.Acceptable(p) || n.OpenOn(p) {
-		return
+	if !n.InWork(p, Review) || len(n.OutOf(p)) > 0 || n.Acceptable(p) || n.OpenOn(p) || n.ReadsWanted(p) > 0 {
+		return // a read wanted is the ask's (sequential reads), nothing to judge
 	}
 	if n.AskedNow(p) {
 		n.open(JReads, p)
@@ -618,12 +643,30 @@ func Rework(s State, p, m string) (State, error) {
 		w.Place = Gone
 		n.Work[bound] = w
 	}
+	// the reader who found it broken checks the fix (sprint.Rework, FieldFindingReader):
+	// the first broken read at the attempt in the model's reader list order (the
+	// readers table's row order, sprint.finderOf), never in name order (LiveReadsOf
+	// is sorted by id, so by reader name)
+	pr := n.Primaries[p]
+	pr.Finder, pr.FindingAttempt = "", pr.Attempt
+	broken := map[string]bool{}
 	for _, id := range n.LiveReadsOf(p) {
 		rc := n.Reads[id]
+		if rc.Place == Broken && rc.Attempt == pr.Attempt {
+			broken[rc.Reader] = true
+		}
 		rc.Place = Retired
 		n.Reads[id] = rc
 	}
-	pr := n.Primaries[p]
+	for _, r := range n.Readers {
+		if broken[r] {
+			pr.Finder = r
+			break
+		}
+	}
+	if len(broken) > 0 {
+		pr.Refused = "" // its broken reads' finding replaces the landing's (sprint.Rework)
+	}
 	pr.Attempt++
 	if len(up) > 0 {
 		if m != choice {
@@ -650,16 +693,24 @@ func Rework(s State, p, m string) (State, error) {
 // Drop is SprintTables.tla Drop(p) (line 478): off the table. Its
 // unfinished work card is withdrawn, its outstanding read cards retire, its
 // merge place goes (the returned place too, spec section 7); work last. A
-// waiting primary that needs it is blocked. Every judgment on it closes. A
-// sprint it finishes, by dropping the last open card, is found done by the
-// tick's judgment tickDone: with nothing open and a card dropped, the sprint
-// is done.
+// waiting primary that needs it makes the drop refused, naming the
+// dependants: the real Drop without Cascade refuses for that card, and this
+// model matches it (docs/SPEC-SPRINT.md section 11). Every judgment on it
+// closes. A sprint it finishes, by dropping the last open card, is found done
+// by the tick's judgment tickDone: with nothing open and a card dropped, the
+// sprint is done.
 func Drop(s State, p string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
 	}
 	if !s.Placedp(p) || s.InWork(p, Landed) {
 		return s, refuse("%s is not an open primary on the table", p)
+	}
+	for _, q := range Keys(s.Primaries) {
+		qp := s.Primaries[q]
+		if qp.State == Waiting && slices.Contains(qp.Needs, p) {
+			return s, refuse("%s is needed by %s; drop them too with --cascade", p, q)
+		}
 	}
 	n := s.Clone()
 	st := n.Primaries[p].Stream
@@ -876,6 +927,65 @@ func MergeStop(s State, stream string, batch int, p, cause, q string) (State, er
 	n.Merge[p] = MergeCard{Place: Stuck, Need: q}
 	n.Streams[stream] = Stream{State: SStopped, Cause: cause}
 	n.open(note, StreamSubject(stream))
+	return n, nil
+}
+
+// MergeRefused is a conflict fact on card p of the batch (the first n queued), the landing's
+// refusal of its head the way way (sprint.RefusalWay, sprint's landRefused). A way the lander
+// could not place ("") is its own failure and stops the stream (MergeStop). Any other is the
+// card's own and never stops the stream: the card leaves merge, returned at its attempt, every
+// judgment on it closing, and the stream's state follows (G4). Files outside its PATHS
+// (RefusedPaths) go back to review under returned to review, for the widen rule; at its
+// brief's bound (AtBriefBound) the card goes back to review with the bound's judgment; else its
+// read cards retire and its next attempt waits ready, the way its finding.
+func MergeRefused(s State, stream string, batch int, p, way string) (State, error) {
+	if way == "" {
+		return MergeStop(s, stream, batch, p, CConflict, "")
+	}
+	if err := free(s); err != nil {
+		return s, err
+	}
+	if s.Streams[stream].State != SMerging {
+		return s, refuse("stream %s is not merging", stream)
+	}
+	queued := s.MergeCell(stream, Queued)
+	batch = min(batch, len(queued))
+	if !slices.Contains(queued[:batch], p) {
+		return s, refuse("%s is not in the batch %v", p, queued[:batch])
+	}
+	if !s.InWork(p, Merging) {
+		return s, refuse("%s is not merging", p)
+	}
+	n := s.Clone()
+	n.Merge[p] = MergeCard{Place: Returned}
+	x := n.Streams[stream]
+	x.State = n.streamAfter(stream, x.State, nil, nil)
+	n.Streams[stream] = x
+	n.closeOn(p)
+	pr := n.Primaries[p]
+	pr.ReturnedAt = pr.Attempt
+	switch {
+	case way == RefusedPaths:
+		pr.State = Review
+		n.Primaries[p] = pr
+		n.open(JReturned, p)
+		return n, nil
+	case s.AtBriefBound(p, way):
+		pr.State = Review
+		n.Primaries[p] = pr
+		n.open(JBriefWrong, p)
+		n.acceptNote(p)
+		return n, nil
+	}
+	for _, id := range n.LiveReadsOf(p) {
+		rc := n.Reads[id]
+		rc.Place = Retired
+		n.Reads[id] = rc
+	}
+	pr.Finder, pr.FindingAttempt, pr.Refused = "", pr.Attempt, way
+	pr.Attempt++
+	pr.State = Ready
+	n.Primaries[p] = pr
 	return n, nil
 }
 
@@ -1180,7 +1290,7 @@ func (n *State) levelReads() {
 		mean := floorDiv(total, len(rs))
 		var asked []string
 		for _, id := range Keys(n.Reads) {
-			if c := n.Reads[id]; c.Reader == hi && c.Place == Asked {
+			if c := n.Reads[id]; c.Reader == hi && c.Place == Asked && !c.Finder { // a finder's read is placed on purpose
 				asked = append(asked, id)
 			}
 		}
@@ -1199,7 +1309,7 @@ func (n *State) levelReads() {
 				if x == hi {
 					continue
 				}
-				if _, made := n.Reads[RC(c.Primary, c.Attempt, x)]; made {
+				if _, ok := n.AskID(c.Primary, c.Attempt, x); !ok {
 					continue
 				}
 				if n.ReaderLoad(x) < mean {
@@ -1216,9 +1326,10 @@ func (n *State) levelReads() {
 			if to == "" {
 				continue
 			}
+			id, _ := n.AskID(c.Primary, c.Attempt, to)
 			c.Place = Retired
 			n.Reads[asked[i]] = c
-			n.Reads[RC(c.Primary, c.Attempt, to)] = ReadCard{Primary: c.Primary, Attempt: c.Attempt, Reader: to, Place: Asked}
+			n.Reads[id] = ReadCard{Primary: c.Primary, Attempt: c.Attempt, Reader: to, Place: Asked}
 			n.AskLast = roundPast(sorted(n.Readers), n.AskLast, to)
 			moved = true
 		}

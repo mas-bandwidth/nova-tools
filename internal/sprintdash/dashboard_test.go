@@ -179,6 +179,54 @@ func TestDashboardThroughput(t *testing.T) {
 	assert.InDelta(t, 0, v["throughputMinutes"], 0)
 }
 
+// An archive moves landed cards off the headline (landed falls by them, archived_landed
+// rises by them) and lands nothing: the throughput's samples are the epoch's landed cards,
+// so it is no fall that starts them again.
+func TestDashboardThroughputHoldsAcrossAnArchive(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	landed, archived := 100, 0
+	r.next = func() ([]byte, error) {
+		return []byte(fmt.Sprintf(`{"at":"2026-10-02T19:00:00Z","landed":%d,"archived_landed":%d,"all":100,"summary":"x","tables":{"work":{}}}`, landed, archived)), nil
+	}
+	r.api()
+	r.advance(10 * time.Minute)
+	landed = 110
+	assert.InDelta(t, 60, r.api()["throughput"], 0)
+	r.advance(10 * time.Minute)
+	landed, archived = 20, 100 // 100 landed cards archived, 10 more landed
+	v := r.api()
+	assert.InDelta(t, 60, v["throughput"], 0, "20 cards in 20 minutes, the archive's 100 not a fall")
+	assert.InDelta(t, 20, v["throughputMinutes"], 0)
+}
+
+// A sprint done (where --json's done) carries the epoch's landed cards in landed, the archived
+// ones included, beside archived_landed: the sample is landed alone then, so the finish is no
+// spike, and an add after it (done no more, landed the table's again) no fall that restarts
+// the samples.
+func TestDashboardThroughputHoldsAcrossDoneAndBack(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	landed, archived, done := 90, 10, false
+	r.next = func() ([]byte, error) {
+		return []byte(fmt.Sprintf(`{"at":"2026-10-02T19:00:00Z","landed":%d,"archived_landed":%d,"done":%t,"all":100,"summary":"x","tables":{"work":{}}}`, landed, archived, done)), nil
+	}
+	r.api()
+	r.advance(10 * time.Minute)
+	landed = 95 // 105 in the epoch
+	assert.InDelta(t, 30, r.api()["throughput"], 0, "5 cards in 10 minutes")
+	r.advance(10 * time.Minute)
+	landed, archived, done = 110, 110, true // done: the tick archived all; landed is the epoch's 110
+	v := r.api()
+	assert.InDelta(t, 30, v["throughput"], 0, "10 cards in 20 minutes: the finish is no spike")
+	assert.InDelta(t, 20, v["throughputMinutes"], 0)
+	r.advance(10 * time.Minute)
+	landed, archived, done = 0, 110, false // an add: done no more, the table's landed again
+	v = r.api()
+	assert.InDelta(t, 20, v["throughput"], 0, "10 cards in 30 minutes: the add is no fall")
+	assert.InDelta(t, 30, v["throughputMinutes"], 0, "the samples are not restarted")
+}
+
 // The read-time summary is one line a minute.
 func TestDashboardLogsAReadSummaryAMinute(t *testing.T) {
 	t.Parallel()

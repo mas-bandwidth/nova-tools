@@ -3,30 +3,35 @@
 // to every recipient's stream and to the log in one transaction; a recipient
 // receives through its consumer group, so a message is pending until it is
 // acked and a reader that died before acking is handed it again. The verbs
-// are send, peek, recv, ack, log and names; the dispatch, the banner, the
-// help, the version verb, the refusals and the output envelope are
+// are wait, send, peek, recv, ack, receipts, overdue, log and names; the dispatch, the banner,
+// the help, the version verb, the refusals and the output envelope are
 // internal/tool's, and the rules are internal/bus's.
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/netip"
 	"os"
 	"os/exec"
 	"os/signal"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
@@ -56,9 +61,10 @@ const ExecBudget = bus.ClaimAfter
 const ForeverBlock = 30 * time.Second
 
 // world is what the tool reaches outside itself: the environment, the store
-// it opens for an address, the command --exec runs, and the signals a loop
-// stops on. main passes the real one; a test passes its own over
-// internal/bus's Fake, so no test opens a socket.
+// it opens for an address, the command --exec runs, the signals a loop
+// stops on, the clock a wait reads and the wake file it watches. main passes
+// the real one; a test passes its own over internal/bus's Fake, so no test
+// opens a socket or waits real time.
 type world struct {
 	getenv func(string) string
 	// open dials the store and says which user it logged in as ("" when the
@@ -70,10 +76,19 @@ type world struct {
 	// fleetBus reads the applied fleet row's bus address from the sprint store
 	// at addr ("" when the row has none).
 	fleetBus func(ctx context.Context, addr string) (string, error)
+	// now is the clock a wait reads: the real one, or a test's.
+	now func() time.Time
+	// fileSize is a wake file's end when a wait arms (0 when the file is not
+	// there): the offset a later line must lie past.
+	fileSize func(path string) (int64, error)
+	// fileLine reads a wake file from an offset, answering its first line
+	// past it and the offset past everything read ("" when nothing new).
+	fileLine func(path string, from int64) (line string, end int64, err error)
 }
 
 func realWorld() world {
-	w := world{getenv: os.Getenv, run: runShell,
+	w := world{getenv: os.Getenv, run: runShell, now: time.Now,
+		fileSize: realFileSize, fileLine: realFileLine,
 		lookup: func(ctx context.Context, host string) ([]netip.Addr, error) {
 			return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 		},
@@ -158,15 +173,57 @@ func busTool(w world) *tool.Tool {
 		Stamp: version,
 		How: `the loop: send --as <me> --to <friend> --subject <s> --body <text> sends;
 recv --as <me> --forever --exec '<deliver-into-session>' takes each message in, acked on exit 0;
-ack --as <me> --id <id> acks by hand after a plain recv; names: nova-config friend and machine rows.
+ack --as <me> --id <id> acks by hand; send and recv refuse a deaf name (no push proven in 10m).
 one stream per recipient (bus2:to:<name>) under a consumer group, one log (bus2:log); all or none.
-first run: a Redis naming ada and bob at --redis (else ` + RedisEnv + `); loopback or tailnet only.`,
-		ExitTable: "0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed), 2 could not run (a flag, an input, a store that did not answer).",
-		Words:     []string{"NONE"},
+first run: a Redis at --redis (else NOVA_BUS_REDIS, else fleet:bus); loopback/tailnet only.`,
+		ExitTable: "0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).",
+		Words:     []string{"NONE", "WAKE", "ARMED", "MESSAGE", "OVERDUE"},
 		Verbs: []tool.Verb{
 			{
+				Name:    "wait",
+				Usage:   "wait [--as <me>] [--after <id>] [--timeout <duration>] [--skip-subject <prefix,...>] [--wake-file <path>] [--redis <addr>]",
+				Example: "wait --as bob --timeout 1s",
+				Effect:  tool.Inspection,
+				ExitTable: "0 the wait ended: WAIT OK, entries that counted, or WAIT WAKE, a line on the wake file; 1 WAIT NONE, the timeout ran out; " +
+					"2 could not run (a flag, an input, a store that did not answer).",
+				Detail: `Prints WAIT ARMED after=<id> first: the cursor the wait starts past, --after <id> when given (a stream
+entry id, <ms>-<seq>), else the stream's last id read once at start, 0-0 when the stream is empty.
+Re-arm the next run with the id WAIT OK or WAIT NONE printed, and nothing between two runs is missed.
+The wait takes nothing: it reads your stream past the cursor with XREAD, never the consumer group,
+so a later recv still delivers and acks what it saw. It ends on the first entries past the cursor
+that are not from you and whose subject starts with none of --skip-subject's prefixes (matched
+without case; default PING,PONG): one WAIT MESSAGE id=<id> from=<name> subject=<s> bytes=<n> line
+each, at most 5, then WAIT OK after=<last id seen> at exit 0. Skipped entries move the cursor and
+are not printed. --wake-file <path> also ends the wait when a line is appended to the file after the
+start (a harness's deliver adapter appends one per message): WAIT WAKE file=<path> line=<first line>
+at exit 0. Past --timeout <duration> (a Go duration; 0, the default, is for ever) it is WAIT NONE
+after=<cursor> waited=<duration> on standard error at exit 1. --json prints one object when the
+wait ends: {"status":"ok","word":"OK|NONE|WAKE","after":<id>,"messages":[{"id":<id>,"from":<name>,
+"subject":<s>,"bytes":<n>}],"wake":{"file":<path>,"line":<text>}} (messages is empty and wake left
+out when they hold nothing; the ARMED line is the text form's). Exit 2 when a flag is wrong, the
+name is not on the roster, or the store does not answer.
+example: nova-bus wait --as bob --timeout 1s`,
+				Flags: func(f *tool.Flags) {
+					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
+					f.String("after", "", "the stream entry id <ms>-<seq> to wait past; default: the stream's last id read once at start, as WAIT ARMED prints it")
+					f.Duration("timeout", 0, "how long to wait before WAIT NONE, a Go duration (1s, 2m); 0 is for ever")
+					f.String("skip-subject", "PING,PONG", "subjects starting with one of these prefixes, comma-separated, are skipped; matched without case")
+					f.String("wake-file", "", "a file whose lines, appended after the start, also end the wait (one line per message)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
+					f.Check(func(c *tool.Call) {
+						if v := c.Str("after"); v != "" && !streamID(v) {
+							c.Problem(fmt.Sprintf("--after wants a stream entry id, <ms>-<seq> as WAIT ARMED and WAIT OK print it; %q is not one", v))
+						}
+						if c.Dur("timeout") < 0 {
+							c.Problem("--timeout wants a duration of at least 0, 0 for ever (a negative wait is no wait)")
+						}
+					})
+				},
+				Run: w.wait,
+			},
+			{
 				Name:    "send",
-				Usage:   "send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--kind <k>] [--redis <addr>] [--dry-run]",
+				Usage:   "send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--kind <k>] [--token <t>] [--timeout <duration>] [--redis <addr>] [--dry-run]",
 				Example: `send --as ada --to bob --subject hello --body "are you there?"`,
 				Effect:  tool.Delivery + ": one entry on every recipient's stream and the log, in one transaction",
 				DryRun:  true,
@@ -175,8 +232,17 @@ message's for ever, and the byte count and digest are the body's as the store ho
 can check a --stdin or shell-built body arrived whole (a shell's $(cat f) drops the trailing newline).
 You are the user the connection logged in as (NOVA_SPRINT_REDIS_USER): --as may name it or be left
 out, and another name is refused. With no login (a store with no users) --as is your word for who you
-are, and the line says login=none. --dry-run checks the message as send does (every problem named) and prints the
-line with no id, writing nothing.`,
+are, and the line says login=none. The sender and every recipient must be heard: a name whose friend
+daemon proved its inbox push (a SESSION CHECK carried in by its harness's deliver adapter and answered
+by the session) under ten minutes ago; any other is refused with deaf: <name> has no proven push since
+<age> and the remedy, and nothing is written (nova-bus names shows each name's push). --dry-run checks
+the message as send does (every problem named) and prints the line with no id, writing nothing.
+--token <t> makes the send safe to retry: the same token and the same arguments within --token-life
+(default 24h) print the first send's SEND OK line again (its id and at) and write nothing, so a send
+whose answer was lost after the store took it is retried without a second message; the same token with
+other arguments, or past its life, is refused naming the message that went. The store drops a token at
+--token-cleanup (default 168h, never before its life ends). Without --token every send is a new message.
+Delivery to a reader is still at least once: a reader may be handed one message twice, by its id.`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the sender: the login user when there is one (then it may be left out)")
 					f.Required("to", "the recipients, comma-separated names")
@@ -186,10 +252,18 @@ line with no id, writing nothing.`,
 					f.Bool("stdin", false, "read the message's text from stdin")
 					f.String("re", "", "the id of the message this one answers")
 					f.String("kind", bus.KindStatus, "the kind of message, one of "+strings.Join(bus.Kinds, ", ")+": what a reader filters on")
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					f.String("token", "", "your word for this one send, the same on every retry of it (letters, digits, . _ : -; at most 128 bytes)")
+					f.Duration("token-life", bus.DefaultTokenLife, "how long a retry under --token answers the first send")
+					f.Duration("token-cleanup", bus.DefaultTokenCleanup, "when the store drops the token (never before its life ends)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
+					callTimeoutFlag(f)
 					f.Check(func(c *tool.Call) {
+						refuseNonPositiveTimeout(c)
 						if c.Given("body") == c.Given("stdin") {
 							c.Problem("the body comes from exactly one of --body <text> or --stdin")
+						}
+						if c.Dur("token-life") <= 0 || c.Dur("token-cleanup") <= 0 {
+							c.Problem("--token-life and --token-cleanup want a duration above zero")
 						}
 					})
 				},
@@ -197,7 +271,7 @@ line with no id, writing nothing.`,
 			},
 			{
 				Name:    "peek",
-				Usage:   "peek [--as <me>] [--kind <k>[,<k>]] [--redis <addr>]",
+				Usage:   "peek [--as <me>] [--kind <k>[,<k>]] [--timeout <duration>] [--redis <addr>]",
 				Example: "peek --as bob",
 				Effect:  tool.Inspection,
 				Detail: `Prints PEEK OK pending=<n> new=<n>, then one PEEK MESSAGE state=<pending|new> id=<id> from=<name>
@@ -206,19 +280,22 @@ line with no id, writing nothing.`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
 					f.String("kind", "", "only these kinds, comma-separated, of "+strings.Join(bus.Kinds, ", ")+" (default: every kind)")
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
+					callTimeoutFlag(f)
+					f.Check(refuseNonPositiveTimeout)
 				},
 				Run: w.peek,
 			},
 			{
 				Name:    "recv",
-				Usage:   "recv [--as <me>] [--kind <k>[,<k>]] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec <command>] [--redis <addr>] [--dry-run]",
+				Usage:   "recv [--as <me>] [--kind <k>[,<k>]] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec <command>] [--timeout <duration>] [--redis <addr>] [--dry-run]",
 				Example: "recv --as bob --exec true",
 				Effect:  tool.Delivery + ": moves one message to pending; with --exec it runs the command and acks on exit 0",
 				DryRun:  true,
 				Detail: `Prints one message: a line RECV OK id=<id> from=<name> to=<names> cc=<names> re=<id> [kind=<k>] at=<RFC3339>
 subject=<s> (login=none when the connection has no login user), a blank line, the body; or RECV
-NONE at exit 1 when nothing waits. You are the login user, as in send. The oldest message a
+NONE at exit 1 when nothing waits. You are the login user, as in send, and must be heard as there: a
+recv for a name with no proven push is refused (deaf: <name> ...). The oldest message a
 reader lost (delivered, not acked, idle fifteen minutes) comes first, else the oldest new one; the
 reader keeps it for fifteen minutes. --exec '<command>' runs the command with that same text on its stdin and
 acks the message when it exits 0 (the line adds acked=true exec_exit=0); a non-zero exit leaves
@@ -240,8 +317,10 @@ before kinds existed.`,
 					f.Bool("ack", false, "ack each message after printing it (a plain recv leaves it pending)")
 					f.Bool("forever", false, "loop over every message, delivering each with --exec, until a signal")
 					f.String("exec", "", "a shell command run with each message on its stdin; exit 0 acks the message")
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
+					callTimeoutFlag(f)
 					f.Check(func(c *tool.Call) {
+						refuseNonPositiveTimeout(c)
 						if c.Bool("forever") && c.Str("exec") == "" {
 							c.Problem("--forever wants --exec <command>: a loop that acks nothing would hand out the same message for ever")
 						}
@@ -263,7 +342,7 @@ before kinds existed.`,
 			},
 			{
 				Name:    "ack",
-				Usage:   "ack [--as <me>] --id <id,...> [--redis <addr>] [--dry-run]",
+				Usage:   "ack [--as <me>] --id <id,...> [--timeout <duration>] [--redis <addr>] [--dry-run]",
 				Example: "ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV",
 				Effect:  tool.Delivery + ": acks the messages on your stream",
 				DryRun:  true,
@@ -274,13 +353,63 @@ user, as in send. --dry-run acks nothing: acked= says which ids are pending for 
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
 					f.Required("id", "the message ids, comma-separated, as recv printed them")
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
+					callTimeoutFlag(f)
+					f.Check(refuseNonPositiveTimeout)
 				},
 				Run: w.ack,
 			},
 			{
+				Name:   "receipts",
+				Usage:  "receipts [--as <me>] [--id <id,...>] [--max <n>] [--timeout <duration>] [--redis <addr>]",
+				Effect: tool.Inspection,
+				Detail: `Prints RECEIPTS OK count=<n>, then one RECEIPTS RECEIPT id=<id> state=<delivered|read|acted|none>
+age=<duration> line per message: how far each message to you has come, and how long it has stood
+there by the store's clock. A receipt moves only forward: delivered when a reader took the message
+off your stream (recv), read when the friend daemon handed the turn carrying it to your session
+and the session took it, acted when that turn ended at exit 0 or you sent a message naming it
+(--re). --id <id,...> names the messages (none: no receipt, age=-); without it, every receipt you
+hold, oldest first. You are the login user, as in send.
+example: nova-bus receipts --as bob`,
+				Flags: func(f *tool.Flags) {
+					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
+					f.String("id", "", "the message ids, comma-separated, as recv printed them (default: every receipt you hold)")
+					f.Max()
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
+					callTimeoutFlag(f)
+					f.Check(refuseNonPositiveTimeout)
+				},
+				Run: w.receipts,
+			},
+			{
+				Name:      "overdue",
+				Usage:     "overdue [--older <duration>] [--max <n>] [--timeout <duration>] [--redis <addr>]",
+				Effect:    tool.Inspection,
+				ExitTable: "0 OVERDUE OK, nothing short of delivered past --older; 1 BUS OVERDUE, one or more; 2 could not run (a flag, a store that did not answer).",
+				Detail: `The alarm the coordinator's loop and the seat check run. Looks at every known name's stream and
+lists each message still short of delivered (new, never taken by a reader, or pending with no
+delivered receipt) sent longer ago than --older (a Go duration, default 10m), by the store's clock.
+Prints OVERDUE OK count=0 older=<d> at exit 0 when there is none; else OVERDUE OVERDUE count=<n>
+older=<d>, then one OVERDUE MESSAGE name=<recipient> id=<id> state=<new|pending> from=<name>
+age=<duration> subject=<s> line each, oldest first, at exit 1. A message acked is never listed.
+example: nova-bus overdue --older 10m`,
+				Flags: func(f *tool.Flags) {
+					f.Duration("older", 10*time.Minute, "how long a message may wait short of delivered before it is overdue, a Go duration (10m, 1h)")
+					f.Max()
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
+					callTimeoutFlag(f)
+					f.Check(func(c *tool.Call) {
+						refuseNonPositiveTimeout(c)
+						if c.Dur("older") < 0 {
+							c.Problem("--older wants a duration of at least 0 (0 lists every message short of delivered)")
+						}
+					})
+				},
+				Run: w.overdue,
+			},
+			{
 				Name:    "log",
-				Usage:   "log [--bodies] [--max <n>] [--redis <addr>]",
+				Usage:   "log [--bodies] [--max <n>] [--timeout <duration>] [--redis <addr>]",
 				Example: "log --max 5",
 				Effect:  tool.Inspection,
 				Detail: `Prints LOG OK total=<n>, then one LOG MESSAGE id=<id> from=<name> to=<names> cc=<names> re=<id>
@@ -288,18 +417,26 @@ user, as in send. --dry-run acks nothing: acked= says which ids are pending for 
 				Flags: func(f *tool.Flags) {
 					f.Bool("bodies", false, "print each message's body as well")
 					f.Max()
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
+					callTimeoutFlag(f)
+					f.Check(refuseNonPositiveTimeout)
 				},
 				Run: w.log,
 			},
 			{
 				Name:    "names",
-				Usage:   "names [--redis <addr>]",
+				Usage:   "names [--timeout <duration>] [--redis <addr>]",
 				Example: "names",
 				Effect:  tool.Inspection,
-				Detail:  "Prints NAMES OK count=<n>, then one NAMES NAME name=<name> line per known name: nova-config's friend and machine rows.",
+				Detail: `Prints NAMES OK count=<n> proven=<n>, then one NAMES NAME name=<name> push=<state> age=<age>
+harness=<h> line per known name (nova-config's friend and machine rows). push is proven (its friend
+daemon proved and renewed its inbox push under ten minutes ago: send and recv take it), stale (the
+daemon stopped renewing), down (its session did not answer the daemon's SESSION CHECK) or none (no
+daemon ever recorded one); age is how long ago the daemon wrote it, never when there is none.`,
 				Flags: func(f *tool.Flags) {
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
+					callTimeoutFlag(f)
+					f.Check(refuseNonPositiveTimeout)
 				},
 				Run: w.names,
 			},
@@ -307,11 +444,26 @@ user, as in send. --dry-run acks nothing: acked= says which ids are pending for 
 	}
 }
 
+// callTimeoutFlag is --timeout on a verb whose calls do not park: how long one
+// Redis call may take (SPEC-BUS.md, the deadlines). wait's own --timeout is
+// how long the wait parks, and is not this flag.
+func callTimeoutFlag(f *tool.Flags) {
+	f.Duration("timeout", bus.CallTimeout, "how long one call to Redis may take before it is refused as unanswered; a blocking read gets this, its block, and "+bus.BlockMargin.String()+" more")
+}
+
+func refuseNonPositiveTimeout(c *tool.Call) {
+	if c.Dur("timeout") <= 0 {
+		c.Problem("--timeout must be above zero: a call with no deadline can wait for ever on a store that does not answer")
+	}
+}
+
 // bus opens the store named by --redis for a verb, or says why not: an
 // empty address is a usage refusal, an address off loopback and the tailnet
 // is one (bus.CheckAddr, before any dial), and a store that did not answer
-// is one too (exit 2, the banner's table), in redisconn's one line.
-func (w world) bus(c *tool.Call) (*bus.Bus, string, func(), *tool.Out) {
+// is one too (exit 2, the banner's table), in redisconn's one line. timeout
+// is the deadline of one call (SPEC-BUS.md, the deadlines); a blocking read
+// gets its block and the margin more on top of it.
+func (w world) bus(c *tool.Call, timeout time.Duration) (*bus.Bus, string, func(), *tool.Out) {
 	ctx, cancel := context.WithTimeout(context.Background(), redisconn.OpenTimeout)
 	defer cancel()
 	addr, refused := w.address(ctx, c)
@@ -325,7 +477,15 @@ func (w world) bus(c *tool.Call) (*bus.Bus, string, func(), *tool.Out) {
 	if err != nil {
 		return nil, "", nil, tool.Refuse(err.Error())
 	}
-	return &bus.Bus{Store: st}, login, closeStore, nil
+	if timeout <= 0 {
+		closeStore()
+		return nil, "", nil, tool.Refuse("--timeout must be above zero: a call with no deadline can wait for ever on a store that does not answer")
+	}
+	if r, ok := st.(bus.Redis); ok {
+		r.Timeout = timeout
+		st = r
+	}
+	return &bus.Bus{Store: bus.Hearing(st)}, login, closeStore, nil
 }
 
 // identity is who the verb acts as: the user the connection logged in as,
@@ -386,7 +546,7 @@ func (w world) send(c *tool.Call) *tool.Out {
 		}
 		body = string(raw)
 	}
-	b, login, closeStore, refused := w.bus(c)
+	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
 	if refused != nil {
 		return refused
 	}
@@ -397,11 +557,20 @@ func (w world) send(c *tool.Call) *tool.Out {
 	}
 	draft := bus.Message{
 		From: as, To: names(c.Str("to")), CC: names(c.Str("cc")),
-		Subject: c.Str("subject"), Re: c.Str("re"), Kind: c.Str("kind"), Body: body,
+		Subject: c.Str("subject"), Re: c.Str("re"), Kind: c.Str("kind"), Body: body, Token: c.Str("token"),
 	}
+	b.TokenLife, b.TokenCleanup = c.Dur("token-life"), c.Dur("token-cleanup")
 	send := b.Send
 	if c.DryRun() {
-		send = b.Check // the message as it would be sent, with no id: nothing is written
+		// the message as it would be sent, with no id: nothing is written, and the
+		// push gate the write would meet is asked for by name
+		send = func(ctx context.Context, m bus.Message) (bus.Message, error) {
+			m, err := b.Check(ctx, m)
+			if err != nil {
+				return m, err
+			}
+			return m, b.Heard(ctx, slices.Concat([]string{m.From}, m.To, m.CC)...)
+		}
 	}
 	m, err := send(context.Background(), draft)
 	if err != nil {
@@ -456,7 +625,7 @@ func text(m bus.Message, login string) string {
 }
 
 func (w world) recv(c *tool.Call) *tool.Out {
-	b, login, closeStore, refused := w.bus(c)
+	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
 	if refused != nil {
 		return refused
 	}
@@ -471,7 +640,11 @@ func (w world) recv(c *tool.Call) *tool.Out {
 	}
 	if c.DryRun() {
 		// what waits, read only: the next delivered is a pending one held past fifteen
-		// minutes when there is one, else the oldest new one
+		// minutes when there is one, else the oldest new one; a deaf name is refused
+		// as the recv itself would be
+		if err := b.Heard(context.Background(), as); err != nil {
+			return answer(err)
+		}
 		pending, fresh, err := b.Peek(context.Background(), as)
 		if err != nil {
 			return answer(err)
@@ -572,7 +745,7 @@ func (w world) recv(c *tool.Call) *tool.Out {
 }
 
 func (w world) ack(c *tool.Call) *tool.Out {
-	b, login, closeStore, refused := w.bus(c)
+	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
 	if refused != nil {
 		return refused
 	}
@@ -604,7 +777,7 @@ func (w world) ack(c *tool.Call) *tool.Out {
 }
 
 func (w world) peek(c *tool.Call) *tool.Out {
-	b, login, closeStore, refused := w.bus(c)
+	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
 	if refused != nil {
 		return refused
 	}
@@ -636,7 +809,7 @@ func (w world) peek(c *tool.Call) *tool.Out {
 }
 
 func (w world) log(c *tool.Call) *tool.Out {
-	b, _, closeStore, refused := w.bus(c)
+	b, _, closeStore, refused := w.bus(c, c.Dur("timeout"))
 	if refused != nil {
 		return refused
 	}
@@ -658,7 +831,7 @@ func (w world) log(c *tool.Call) *tool.Out {
 }
 
 func (w world) names(c *tool.Call) *tool.Out {
-	b, _, closeStore, refused := w.bus(c)
+	b, _, closeStore, refused := w.bus(c, c.Dur("timeout"))
 	if refused != nil {
 		return refused
 	}
@@ -667,9 +840,76 @@ func (w world) names(c *tool.Call) *tool.Out {
 	if err != nil {
 		return answer(err)
 	}
+	proofs, now, err := b.PushProofs(context.Background(), got...)
+	if err != nil {
+		return answer(err)
+	}
+	proven := 0
+	for _, p := range proofs {
+		if p.State(now) == bus.PushProven {
+			proven++
+		}
+	}
+	o := tool.Done().Fact("count", len(got)).Fact("proven", proven)
+	for _, p := range proofs {
+		harness := p.Harness
+		if harness == "" {
+			harness = "-"
+		}
+		o.Item("name", "name", p.Name, "push", p.State(now), "age", p.AgeWord(now), "harness", harness)
+	}
+	return o
+}
+
+// receipts is as's receipts: the named ids', or every one held (SPEC-BUS.md,
+// message-receipts).
+func (w world) receipts(c *tool.Call) *tool.Out {
+	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
+	if refused != nil {
+		return refused
+	}
+	defer closeStore()
+	as, refused := identity(c, login)
+	if refused != nil {
+		return refused
+	}
+	got, now, err := b.Stages(context.Background(), as, names(c.Str("id"))...)
+	if err != nil {
+		return answer(err)
+	}
 	o := tool.Done().Fact("count", len(got))
-	for _, n := range got {
-		o.Item("name", "name", n)
+	for _, s := range got {
+		state, age := s.State, "-"
+		if state == "" {
+			state = "none"
+		} else {
+			age = s.Age(now).Round(time.Second).String()
+		}
+		o.Item("receipt", "id", s.ID, "state", state, "age", age)
+	}
+	return loginFact(o, login)
+}
+
+// overdue is every message on every stream still short of delivered past
+// --older: OVERDUE at exit 1 when there is one (SPEC-BUS.md, message-receipts).
+func (w world) overdue(c *tool.Call) *tool.Out {
+	b, _, closeStore, refused := w.bus(c, c.Dur("timeout"))
+	if refused != nil {
+		return refused
+	}
+	defer closeStore()
+	older := c.Dur("older")
+	late, _, err := b.Overdue(context.Background(), older)
+	if err != nil {
+		return answer(err)
+	}
+	o := tool.Done()
+	if len(late) > 0 {
+		o = tool.Fail().As("OVERDUE")
+	}
+	o.Fact("count", len(late)).Fact("older", older.String())
+	for _, l := range late {
+		o.Item("message", "name", l.Name, "id", l.ID, "state", l.State, "from", l.From, "age", l.Age.Round(time.Second).String(), "subject", tool.Text(l.Subject))
 	}
 	return o
 }
@@ -693,4 +933,227 @@ func (w world) address(ctx context.Context, c *tool.Call) (string, *tool.Out) {
 		return "", tool.Refuse("--redis is required: " + RedisEnv + " is unset and the fleet's bus row is empty; set it once: nova-config fleet set --bus <host:port> --as <you>, then nova-config apply")
 	}
 	return addr, nil
+}
+
+// The wait verb: the wake a harness runs beside a session, made general for
+// any AI on the bus (docs/SPEC-BUS.md, the verbs: wait). A wait takes
+// nothing: it reads the recipient's stream past a cursor with XREAD, never
+// the consumer group, so a later recv still delivers and acks what the wait
+// saw, and its cursor is the only state, the caller's to hold between runs.
+// The decision over one batch is bus.WaitPick, a pure function; the blocking
+// read is the store's; the clock and the wake file are the world's, so no
+// test opens a socket or waits real time.
+
+// WaitTick is how long one blocking read of a wait with a --wake-file is: the
+// file is looked at once a tick, so a line appended to it is returned within
+// one. A wait with neither a wake file nor a timeout parks on one read that
+// never runs out (docs/SPEC-BUS.md, the verbs: wait).
+const WaitTick = time.Second
+
+// wakeLineMax bounds one read of a wake file: a harness appends one line a
+// message, and one line a reader can use is far under this.
+const wakeLineMax = 64 << 10
+
+// waitMessage is one message of a wait's JSON, the fields the help names.
+type waitMessage struct {
+	ID      string `json:"id"`
+	From    string `json:"from"`
+	Subject string `json:"subject"`
+	Bytes   int    `json:"bytes"`
+}
+
+// waitWake is the wake of a wait's JSON.
+type waitWake struct {
+	File string `json:"file"`
+	Line string `json:"line"`
+}
+
+// waitJSON is the --json rendering of one wait: one object, printed when the
+// wait ends (the ARMED line is the text form's). The subject and the wake
+// line are oneline-escaped, so nothing they hold can reorder the line a
+// reader reads.
+type waitJSON struct {
+	Status   string        `json:"status"`
+	Word     string        `json:"word"`
+	After    string        `json:"after"`
+	Messages []waitMessage `json:"messages"`
+	Wake     *waitWake     `json:"wake,omitempty"`
+}
+
+// realFileSize is a wake file's end when the wait arms: 0 when the file is
+// not there yet, so its first line, whenever it appears, is past the start.
+func realFileSize(path string) (int64, error) {
+	st, err := os.Stat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return st.Size(), nil
+}
+
+// realFileLine reads a wake file from an offset, answering its first line
+// past the offset and the offset just past that line's newline: "" and the
+// same offset when no newline is there yet (a fragment is not a line). A
+// file that is not there is no wake yet, never an error.
+func realFileLine(path string, from int64) (string, int64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", from, nil
+		}
+		return "", 0, err
+	}
+	defer f.Close() // ignored: read-only, nothing to flush
+	if _, err := f.Seek(from, io.SeekStart); err != nil {
+		return "", 0, err
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, wakeLineMax))
+	if err != nil {
+		return "", 0, err
+	}
+	if i := bytes.IndexByte(raw, '\n'); i >= 0 {
+		return string(raw[:i]), from + int64(i) + 1, nil
+	}
+	return "", from, nil
+}
+
+// streamID is whether s is a stream entry id (<ms>-<seq>, both numbers): the
+// cursor a wait re-arms with, as WAIT ARMED and WAIT OK print it.
+func streamID(s string) bool {
+	ms, seq, ok := strings.Cut(s, "-")
+	if !ok {
+		return false
+	}
+	_, errMS := strconv.ParseUint(ms, 10, 64)
+	_, errSeq := strconv.ParseUint(seq, 10, 64)
+	return errMS == nil && errSeq == nil
+}
+
+// waitLine prints one wait line on stdout: the verb prints as it goes (the
+// ARMED line first, so a caller that re-arms with that id misses nothing
+// between two runs), as recv --forever prints each message.
+func waitLine(c *tool.Call, o *tool.Out) {
+	o.Verb = "wait"
+	o.Render(c.Stdout, false)
+}
+
+// waitObject prints the wait's one JSON object and stands for its exit.
+func waitObject(c *tool.Call, v waitJSON, exit int) *tool.Out {
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return tool.Refuse("the wait's result is no JSON: " + err.Error())
+	}
+	fmt.Fprintf(c.Stdout, "%s", b.String())
+	return tool.Exit(exit)
+}
+
+// wait is the verb: it arms, prints WAIT ARMED, and returns on the first
+// entries past the cursor that count, on a wake line, or at the timeout
+// (docs/SPEC-BUS.md, the verbs: wait).
+func (w world) wait(c *tool.Call) *tool.Out {
+	// wait's --timeout is how long the wait parks (0 is for ever), not the
+	// call bound. Non-blocking reads use CallTimeout; a blocking XREAD carries
+	// its block and the margin more (SPEC-BUS.md, the deadlines).
+	b, login, closeStore, refused := w.bus(c, bus.CallTimeout)
+	if refused != nil {
+		return refused
+	}
+	defer closeStore()
+	as, refused := identity(c, login)
+	if refused != nil {
+		return refused
+	}
+	ctx := context.Background()
+	cursor, err := b.WaitArm(ctx, as, c.Str("after"))
+	if err != nil {
+		return answer(err)
+	}
+	waiter, err := b.Waiter()
+	if err != nil {
+		return answer(err)
+	}
+	jsonOut := c.Bool("json")
+	if !jsonOut {
+		waitLine(c, tool.Done().As("ARMED").Fact("after", cursor))
+	}
+	wakePath := c.Str("wake-file")
+	var offset int64
+	if wakePath != "" {
+		size, err := w.fileSize(wakePath)
+		if err != nil {
+			return tool.Refuse("the wake file cannot be read: " + err.Error())
+		}
+		offset = size
+	}
+	// --skip-subject is a comma list of prefixes, empty words dropped; the
+	// match without case is WaitPick's, the one place the rule lives
+	// (docs/SPEC-BUS.md, the verbs: wait).
+	skips := names(c.Str("skip-subject"))
+	start := w.now()
+	timeout := c.Dur("timeout")
+	for {
+		if wakePath != "" {
+			text, end, err := w.fileLine(wakePath, offset)
+			if err != nil {
+				return tool.Refuse("the wake file cannot be read: " + err.Error())
+			}
+			offset = end
+			if text != "" {
+				if jsonOut {
+					return waitObject(c, waitJSON{Status: "ok", Word: "WAKE", After: cursor,
+						Messages: []waitMessage{}, Wake: &waitWake{File: wakePath, Line: oneline.Escape(text)}}, 0)
+				}
+				waitLine(c, tool.Done().As("WAKE").Fact("file", wakePath).Fact("line", tool.Text(text)))
+				return tool.Exit(0)
+			}
+		}
+		block := time.Duration(0) // park for ever: nothing else is watched
+		if wakePath != "" {
+			block = WaitTick // the file is looked at once a tick
+		}
+		if timeout > 0 {
+			left := timeout - w.now().Sub(start)
+			if left <= 0 {
+				if jsonOut {
+					return waitObject(c, waitJSON{Status: "ok", Word: "NONE", After: cursor, Messages: []waitMessage{}}, 1)
+				}
+				o := tool.Fail().As("NONE").Fact("after", cursor).Fact("waited", timeout.String())
+				o.Verb = "wait"
+				o.Render(c.Stderr, false)
+				return tool.Exit(1)
+			}
+			if block == 0 || left < block {
+				block = left
+			}
+		}
+		got, err := waiter.BlockRead(ctx, bus.StreamOf(as), cursor, block, bus.WaitRead)
+		if err != nil {
+			return answer(err)
+		}
+		kept, after := bus.WaitPick(got, as, skips)
+		if after != "" {
+			cursor = after
+		}
+		if len(kept) == 0 {
+			continue // a skipped entry moved the cursor; the wait goes on
+		}
+		if jsonOut {
+			msgs := make([]waitMessage, 0, len(kept))
+			for _, e := range kept {
+				m := e.Message()
+				msgs = append(msgs, waitMessage{ID: m.ID, From: m.From, Subject: oneline.Escape(m.Subject), Bytes: len(m.Body)})
+			}
+			return waitObject(c, waitJSON{Status: "ok", Word: "OK", After: cursor, Messages: msgs}, 0)
+		}
+		for _, e := range kept {
+			m := e.Message()
+			waitLine(c, tool.Done().As("MESSAGE").Fact("id", m.ID).Fact("from", m.From).Fact("subject", m.Subject).Fact("bytes", len(m.Body)))
+		}
+		waitLine(c, tool.Done().Fact("after", cursor))
+		return tool.Exit(0)
+	}
 }

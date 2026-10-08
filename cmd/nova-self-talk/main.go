@@ -4,6 +4,7 @@
 // from neutral words, which the first class cannot see. It is an advisory
 // instrument, not a wall: whether to date a finding, cut it, relocate it, or
 // keep it is the writer's judgment, never the tool's.
+// Finding match and text are capped at oneline.TailBytes in both line and JSON renderings.
 //
 // Exit 0 no findings, 1 any finding, 2 could not run. Every file is named by
 // the caller; nothing is skipped by default and no basename is special by
@@ -44,8 +45,9 @@ usage:
   nova-self-talk help [<verb>]                 this text, or one verb's help
 
 The first word is a verb only when it is scan, shapes, example, version or help; anything
-else is the first file, so a file named like a verb is given as ./scan. Flags come before
-files; use -- before a file whose name begins with a dash.
+else is the first file, so a file named like a verb is given as ./scan. Flags may stand
+before, between or after the files; -- ends the flags, for a file whose name begins with
+a dash.
 
 Two disjoint classes.
 
@@ -134,15 +136,18 @@ const (
 // newline included. It returns package constants only, which is why printing
 // its result is safe.
 func hintFor(kind string) string {
-	switch kind {
-	case "files":
-		return "  " + filesHint + "\n"
-	case "unread":
-		return "  " + unreadHint + "\n"
-	case "basename":
-		return "  " + baseHint + "\n"
+	if h, ok := hints[kind]; ok {
+		return "  " + h + "\n"
 	}
 	return ""
+}
+
+// hints is the one hint each kind of refusal carries; hintFor indents it and
+// adds the newline.
+var hints = map[string]string{
+	"files":    filesHint,
+	"unread":   unreadHint,
+	"basename": baseHint,
 }
 
 // verbs are the words that are a verb in first position; anything else is a file.

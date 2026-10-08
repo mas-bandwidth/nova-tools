@@ -10,19 +10,19 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
 	const verb = "apply"
 	fs := verbflag.New(verb)
-	c := writeStoreFlags(fs)
+	c := seatStoreFlags(fs)
 	redisFlag := fs.String("redis", "", "the Redis `host:port` to write (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address)")
 	as := actorFlag(fs)
 	kind := fs.String("kind", "", "one `kind` to apply ("+strings.Join(config.KindNames(), ", ")+"); every kind, in order, when unset")
 	check := fs.Bool("check", false, "the same as --dry-run")
 	dry := fs.Bool("dry-run", false, "print the ADD, SET and REMOVE lines (CHECK ...) and write nothing; it still reads the store and Redis")
+	moveSeat := fs.Bool("move-seat", false, "write the sprint row's coordinator over a live seat that differs (the owner's word); without it apply holds the live seat, writes every other field and prints one APPLY HELD line")
 	asJSON := jsonFlag(fs)
 	if code, ok := parse(fs, args, stderr, verb); !ok {
 		return code
@@ -44,20 +44,12 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	if c.seat != nil {
 		seatVal = *c.seat
 	}
-	if !*check {
-		var err error
-		actor, err = actorName(*as, d.getenv, seatVal)
-		if err != nil {
-			problems = append(problems, err.Error())
-		}
-	} else if *as != "" {
-		actor = *as
-	} else if v := d.getenv(envActor); v != "" {
-		actor = v
-	} else if seatVal != "" {
-		actor = seatVal
-	} else if getenv := d.getenv; getenv != nil && getenv(seatcred.SeatEnv) != "" {
-		actor = getenv(seatcred.SeatEnv)
+	// The dry run takes the real run's checks: both resolve the actor the
+	// write is recorded under, so a missing one refuses before either runs
+	// (docs/STANDARD.md, "A verb that writes has a dry run").
+	actor, err := actorName(*as, d.getenv, seatVal)
+	if err != nil {
+		problems = append(problems, err.Error())
 	}
 	dsn, err := c.dsn(d.getenv)
 	if err != nil {
@@ -74,7 +66,7 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }() // ignored: every reply the verb needs is already read, so a close error changes nothing
 	if code, stale := behindSchema(ctx, st, stderr, verb, c); stale {
 		return code
 	}
@@ -94,7 +86,7 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer rs.Close()
+	defer func() { _ = rs.Close() }() // ignored: every reply the verb needs is already read, so a close error changes nothing
 	word := "APPLY"
 	if *check {
 		word = "CHECK"
@@ -103,12 +95,16 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	o.Verb = verb
 	for _, kn := range kinds {
 		start := d.now()
-		res, err := config.Apply(ctx, st, rs, kn, actor, *check, func(op config.Op) {
+		applyKind := config.Apply
+		if *moveSeat {
+			applyKind = config.ApplyMovingSeat
+		}
+		res, err := applyKind(ctx, st, rs, kn, actor, *check, func(op config.Op) {
 			if *asJSON {
 				o.Item("op", "kind", kn, "op", op.Op, "name", op.Name, "changed", op.Changed)
 				return
 			}
-			fmt.Fprintln(stdout, config.OpLine(word, kn, op))
+			fmt.Fprintln(stdout, config.SaidLine(word, kn, op)) // a held seat's line said whole
 		})
 		if err != nil {
 			if config.IsConflict(err) {
@@ -126,8 +122,15 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 		}
 		fmt.Fprintf(stdout, "CONFIG APPLY kind=%s add=%d set=%d remove=%d rev=%d ms=%d\n", kn, res.Add, res.Set, res.Remove, res.Rev, d.now().Sub(start).Milliseconds())
 	}
+	note := actorAliasNote(fs)
+	if note != "" {
+		o.Note(note)
+	}
 	if *asJSON {
 		return emit(stdout, o)
+	}
+	if note != "" {
+		printNotes(stdout, []string{note})
 	}
 	return 0
 }

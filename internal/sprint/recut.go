@@ -86,6 +86,9 @@ func Recut(s *Snapshot, r RecutReq) Plan {
 		brief, rules = r.Brief, r.Rules
 	}
 	tier := cmp.Or(r.Tier, c.F(FieldTier))
+	if _, why := PriorityOfBrief(brief); why != "" {
+		return refuse(why) // a PRIORITY line naming no level is never recut at the card's (priority.go)
+	}
 	if m, _ := cardhdr.ReadModel(brief); m.Pin != "" && r.Tier != "" {
 		return refuse("the brief pins model " + m.Pin + ", which it runs on whatever its tier")
 	}
@@ -105,15 +108,30 @@ func Recut(s *Snapshot, r RecutReq) Plan {
 	}
 	p = Add(s, AddReq{Stream: c.Row, IDs: []string{nw}, Needs: needs, Brief: brief, Rules: rules, Before: c.ID, Held: IsHeld(c),
 		Replaces: []string{c.ID}, Who: r.Who})
-	if len(p.Refused) > 0 || tier == "" {
+	// the card's own level goes to the twin as its tier does (priority.go): a hand-set or a
+	// seeded level is the card's, not the brief's, unless a new brief names its own
+	level := c.F(FieldPriority)
+	if own, _ := PriorityOfBrief(brief); own != "" && r.Brief != "" { // why was refused above
+		level = ""
+	}
+	if len(p.Refused) > 0 || (tier == "" && level == "") {
 		return p
 	}
 	for i := range p.Units {
 		u := &p.Units[i]
 		for j, ch := range u.Changes {
 			if ch.Table == Work && ch.Entry.ID == nw && ch.Entry.Create != nil {
-				u.Changes[j].Entry.Set[FieldTier] = tier
-				u.Moved += "; tier " + tier
+				if u.Changes[j].Entry.Set == nil {
+					u.Changes[j].Entry.Set = map[string]string{}
+				}
+				if tier != "" {
+					u.Changes[j].Entry.Set[FieldTier] = tier
+					u.Moved += "; tier " + tier
+				}
+				if level != "" {
+					u.Changes[j].Entry.Set[FieldPriority] = level
+					u.Moved += "; priority " + level
+				}
 			}
 		}
 	}

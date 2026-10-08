@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -148,8 +151,11 @@ func msg(id, stamp, model string, usage map[string]int, paths ...string) string 
 	return fmt.Sprintf(`{"type":"assistant","timestamp":%q,"message":{%s"model":%q,"usage":%s%s}}`, stamp, idField, model, u, content)
 }
 
-// fakeSqlite3 puts a stub sqlite3 on PATH whose answers come from the three files named,
-// and which records every invocation's argv into a log the test reads.
+// fakeSqlite3 puts a stub sqlite3 on the child's PATH whose answers come from the three
+// files named, and which records every invocation's argv into a log the test reads. It
+// returns that log's path and the environment (PATH and the stub's mode) the run under
+// test needs; the caller hands the environment to runToolChild, so the stub is on the
+// child's PATH rather than this test process's, which its parallel neighbours share.
 //
 // The three answers are what `sqlite3 -json` prints: a JSON array of row objects keyed by
 // the SELECT's own aliases. The shape they describe is OpenCode's REAL schema, read off
@@ -159,14 +165,14 @@ func msg(id, stamp, model string, usage map[string]int, paths ...string) string 
 // which is where `providerID`, `modelID`, `tokens.input`, `tokens.cache.write`,
 // `path.cwd` and a tool part's `state.input.*` live. A fake that answered bare columns
 // would be a fixture only this code could read.
-func fakeSqlite3(t *testing.T, sessions, messages, parts string) (logPath string) {
+func fakeSqlite3(t *testing.T, sessions, messages, parts string) (logPath string, env []string) {
 	t.Helper()
 	answers := mkdir(t, filepath.Join(t.TempDir(), "answers"))
 	write(t, filepath.Join(answers, "sessions"), sessions)
 	write(t, filepath.Join(answers, "messages"), messages)
 	write(t, filepath.Join(answers, "parts"), parts)
-	fakeSqlite3OnPath(t, answers)
-	return filepath.Join(answers, fakeArgvLog)
+	env = fakeSqlite3OnPath(t, answers)
+	return filepath.Join(answers, fakeArgvLog), env
 }
 
 // The fake sqlite3 is THIS TEST BINARY under another name, re-entered through TestMain.
@@ -188,9 +194,10 @@ const (
 var fakeModes = map[string]func() int{}
 
 // fakeSqlite3OnPath places the test binary (by link, a copy only where a link is not
-// possible) at <tmp>/bin/sqlite3[.exe], puts that directory
-// first on PATH, and hands the placed program its mode through the environment.
-func fakeSqlite3OnPath(t *testing.T, mode string) {
+// possible) at <tmp>/bin/sqlite3[.exe], and returns the environment that puts that
+// directory first on a child's PATH and hands the placed program its mode. The caller
+// passes it to runToolChild; this process's PATH is never touched.
+func fakeSqlite3OnPath(t *testing.T, mode string) (env []string) {
 	t.Helper()
 	self, err := os.Executable()
 	require.NoError(t, err)
@@ -203,8 +210,68 @@ func fakeSqlite3OnPath(t *testing.T, mode string) {
 		err := testbin.Place(self, filepath.Join(bin, name))
 		require.NoError(t, err)
 	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv(fakeSqlite3Env, mode)
+	return []string{
+		"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		fakeSqlite3Env + "=" + mode,
+	}
+}
+
+// childTestEnv marks a test re-entered as a child of this binary. A test that needs a
+// process-wide resource t.Parallel forbids in a shared process -- the environment, or the
+// package's own opened-file counter -- runs its body in a child with only itself selected,
+// so the resource is that process's alone. The parent execs; the child asserts.
+const childTestEnv = "NOVA_TOKENS_CHILD_TEST"
+
+// childEnv is this process's environment with testbin's re-exec depth counter dropped, so
+// a child test binary starts a fresh chain. Without it the child starts one deep and the
+// fake sqlite3 it starts is the third test binary, which testbin.MaxDepth refuses.
+func childEnv(extra ...string) []string {
+	depth := testbin.DepthEnv("nova-tokens")
+	out := make([]string, 0, len(os.Environ())+len(extra))
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, depth+"=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, extra...)
+}
+
+// reenterTest runs this test function again in a child of this binary, with only it
+// selected (`-test.run`), so its body may set the environment or read the process-wide
+// counter without racing a parallel neighbour. The child's failure fails this test.
+func reenterTest(t *testing.T, name string) {
+	t.Helper()
+	self, err := os.Executable()
+	require.NoError(t, err)
+	cmd := exec.Command(self, "-test.run=^"+name+"$", "-test.count=1")
+	cmd.Env = childEnv(childTestEnv + "=1")
+	cmd.WaitDelay = 2 * time.Second
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "the re-entered %s failed:\n%s", name, out)
+}
+
+// runToolChild runs this test binary as nova-tokens itself in a child process, so a test
+// can give the tool its own working directory (cmd.Dir) and environment (cmd.Env) without
+// changing either for the process its parallel neighbours share. The child's clock is
+// foldStamp, the one invoke injects, so the two render the same at= stamps.
+func runToolChild(t *testing.T, dir string, env []string, args ...string) result {
+	t.Helper()
+	self, err := os.Executable()
+	require.NoError(t, err)
+	cmd := exec.Command(self, args...)
+	cmd.Dir = dir
+	cmd.Env = childEnv(append([]string{asToolEnv + "=1"}, env...)...)
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	err = cmd.Run()
+	exit := 0
+	if ee, ok := err.(*exec.ExitError); ok {
+		exit = ee.ExitCode()
+	} else if err != nil {
+		require.FailNow(t, "running nova-tokens in a child: %v", err)
+	}
+	return result{exit: exit, stdout: out.String(), stderr: errb.String()}
 }
 
 // TestMain is the fake's other half: with the mode set in the environment this binary is
@@ -212,12 +279,16 @@ func fakeSqlite3OnPath(t *testing.T, mode string) {
 //
 // With asToolEnv set it is nova-tokens itself, on the process's real stdout and stderr, so
 // a test can see what a library writes to os.Stderr behind run's injected streams (#3463).
+// That check comes first: a tool run hands its own environment to the sqlite3 it spawns, so
+// its environment names the fake too; clearing the tool marker before run() leaves the fake
+// for the sqlite3 child, and one dispatch serves both.
 func TestMain(m *testing.M) {
+	if os.Getenv(asToolEnv) != "" {
+		_ = os.Unsetenv(asToolEnv)
+		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, foldStamp))
+	}
 	if mode := os.Getenv(fakeSqlite3Env); mode != "" {
 		os.Exit(fakeSqlite3Main(mode, os.Args[1:], os.Stdout))
-	}
-	if os.Getenv(asToolEnv) != "" {
-		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, foldStamp))
 	}
 	os.Exit(m.Run())
 }
@@ -233,7 +304,8 @@ func fakeSqlite3Main(mode string, args []string, stdout io.Writer) int {
 		return 1
 	}
 	fmt.Fprintln(f, strings.Join(args, " "))
-	f.Close()
+	// ignored: the argv line is written unbuffered, and a lost record fails the test that reads the log back
+	_ = f.Close()
 	if len(args) == 0 {
 		return 0
 	}
@@ -262,7 +334,10 @@ func fakeSqlite3Main(mode string, args []string, stdout io.Writer) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	stdout.Write(raw)
+	if _, err := stdout.Write(raw); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
 	return 0
 }
 
@@ -346,7 +421,7 @@ func busDir(t *testing.T, dir string, names ...string) string {
 	t.Helper()
 	var ps []string
 	for _, n := range names {
-		ps = append(ps, fmt.Sprintf(`{"name":%q,"lane":"from-%s","git_email":"%s@example.com"}`, strings.Title(n), n, n))
+		ps = append(ps, fmt.Sprintf(`{"name":%q,"lane":"from-%s","git_email":"%s@example.com"}`, cases.Title(language.Und, cases.NoLower).String(n), n, n))
 	}
 	write(t, filepath.Join(dir, "participants.json"), "{\"participants\":["+strings.Join(ps, ",")+"]}\n")
 	return dir
@@ -355,7 +430,7 @@ func busDir(t *testing.T, dir string, names ...string) string {
 // busNote writes one note into a lane and returns its id.
 func busNote(t *testing.T, bus, lane, file, id, subject, date, body string) string {
 	t.Helper()
-	header := fmt.Sprintf("From: %s\nTo: Rowan\nDate: %s\nId: %s\nSubject: %s\n\n", strings.Title(lane), date, id, subject)
+	header := fmt.Sprintf("From: %s\nTo: Rowan\nDate: %s\nId: %s\nSubject: %s\n\n", cases.Title(language.Und, cases.NoLower).String(lane), date, id, subject)
 	write(t, filepath.Join(bus, "from-"+lane, file), header+body)
 	return id
 }

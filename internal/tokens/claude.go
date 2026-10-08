@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
+	"path"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -90,15 +91,57 @@ var usageKeys = map[string]Type{
 // itself rather than a model being paid for.
 const syntheticModel = "<synthetic>"
 
+// ClaudeBound is the ceiling and the excludes one --claude tree is walked under: at most
+// MaxFiles transcript files, with every path matching an Exclude glob (or lying under one)
+// left out. The zero value reads the whole tree, the behavior before the bound existed.
+// DefaultMaxClaudeFiles is the ceiling the tool states in its help.
+//
+// The largest plausible state is 3,000 transcript files a day (docs/SPEC-TOKENS.md rule
+// 11), so the 20,000-file default sits far above a real tree and still stops the very
+// large cost a temporary tree included by mistake produced for a cold reader.
+type ClaudeBound struct {
+	MaxFiles int
+	Exclude  []string
+}
+
+// DefaultMaxClaudeFiles is the ceiling one --claude tree starts under.
+const DefaultMaxClaudeFiles = 20000
+
+// excludedBy is the one --exclude rule, the same one nova-memory's rootFlags.excluded
+// keeps: a path equal to a glob, a path under a glob's directory, or a path.Match hit
+// (path.Match, not filepath.Match, because tree paths are slash-separated on every OS).
+func excludedBy(globs []string, p string) bool {
+	for _, g := range globs {
+		if p == g || strings.HasPrefix(p, g+"/") {
+			return true
+		}
+		if ok, _ := path.Match(g, p); ok {
+			return true
+		}
+	}
+	return false
+}
+
 // ReadClaude walks a transcript tree and returns its stream and its accounting.
 //
 // Every message carries no unit, which the fold writes as `-`: a transcript names a repo,
 // never a piece of work. The tree is read through the caller's fs.FS, rooted at dir
 // (os.DirFS(dir) in main, fstest.MapFS in a test), and dir is the path the report names.
-func ReadClaude(label, dir string, fsys fs.FS, rules *Rules) *Source {
+//
+// The walk runs to completion BEFORE the first file is opened, so a tree over MaxFiles is
+// refused with the totals it found and not one byte of it is read (SPEC-TOKENS rule 11:
+// the state is bounded, and a source is a claim that the report covers it). An Exclude
+// glob is the remedy for the temporary tree that made the tree overrun.
+func ReadClaude(label, dir string, fsys fs.FS, rules *Rules, bounds ...ClaudeBound) *Source {
 	s := &Source{Label: Label(KindClaude, label), Kind: KindClaude, Path: dir, Reports: ClaudeTypes, Basis: UTC}
 
+	bound := ClaudeBound{}
+	if len(bounds) > 0 {
+		bound = bounds[0]
+	}
+
 	var files []string
+	var bytesFound int64
 	walkErr := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if p == "." {
@@ -107,12 +150,21 @@ func ReadClaude(label, dir string, fsys fs.FS, rules *Rules) *Source {
 			s.unreadable(filepath.Join(dir, p), err.Error())
 			return nil
 		}
+		if p != "." && excludedBy(bound.Exclude, p) {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
 		if d.IsDir() {
 			return nil
 		}
 		for _, suf := range claudeSuffixes {
 			if strings.HasSuffix(p, suf) {
 				files = append(files, p)
+				if fi, err := d.Info(); err == nil {
+					bytesFound += fi.Size()
+				}
 				return nil
 			}
 		}
@@ -124,6 +176,11 @@ func ReadClaude(label, dir string, fsys fs.FS, rules *Rules) *Source {
 	}
 	sort.Strings(files)
 
+	if bound.MaxFiles > 0 && len(files) > bound.MaxFiles {
+		s.unreadable(dir, fmt.Sprintf("the tree holds %d transcript files and %d bytes, over the --max-files ceiling of %d; run: raise --max-files or pass --exclude <glob> to keep a temporary tree out", len(files), bytesFound, bound.MaxFiles))
+		return s
+	}
+
 	for _, name := range files {
 		path := filepath.Join(dir, name)
 		s.Stat.Files++
@@ -134,6 +191,7 @@ func ReadClaude(label, dir string, fsys fs.FS, rules *Rules) *Source {
 		}
 		prev := ""
 		bad := 0
+		firstBad := 0
 		n := 0
 		sc := bufio.NewScanner(f)
 		sc.Buffer(make([]byte, 0, 256*1024), 16*1024*1024)
@@ -146,6 +204,9 @@ func ReadClaude(label, dir string, fsys fs.FS, rules *Rules) *Source {
 			var line claudeLine
 			if err := json.Unmarshal([]byte(text), &line); err != nil {
 				bad++
+				if firstBad == 0 {
+					firstBad = n
+				}
 				continue
 			}
 			if line.Message == nil || line.Message.Usage == nil {
@@ -183,7 +244,7 @@ func ReadClaude(label, dir string, fsys fs.FS, rules *Rules) *Source {
 			continue
 		}
 		if bad > 0 {
-			s.unreadable(path, fmt.Sprintf("badline=%d: lines that are not JSON; the rest of the file was read", bad))
+			s.unreadableAt(path, firstBad, fmt.Sprintf("badline=%d: lines that are not JSON; the rest of the file was read", bad))
 		}
 	}
 	s.Collapse()
@@ -193,8 +254,14 @@ func ReadClaude(label, dir string, fsys fs.FS, rules *Rules) *Source {
 // unreadable records a source this run could not read: counted, printed on its own line,
 // and the reason the run exits 1.
 func (s *Source) unreadable(path, why string) {
+	s.unreadableAt(path, 0, why)
+}
+
+// unreadableAt is unreadable for a failure at a known line -- a line that is not JSON --
+// so the refusal and the ONE remedy line can name the line to inspect or remove.
+func (s *Source) unreadableAt(path string, line int, why string) {
 	s.Stat.Unreadable++
-	s.Unreadables = append(s.Unreadables, Unreadable{Label: s.Label, Path: path, Why: why})
+	s.Unreadables = append(s.Unreadables, Unreadable{Label: s.Label, Path: path, Line: line, Why: why})
 }
 
 // DayOfStamp is the UTC day of an RFC 3339 stamp. The stamp is PARSED and converted,

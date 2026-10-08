@@ -21,9 +21,10 @@ func TestStartAndStopSayTheStateBeforeAndAfter(t *testing.T) {
 	out := ta.ok("where")
 	require.Contains(t, out, "SPRINT TABLE  coordinator coordinator\n\nSTOPPED\n\n", "where")
 	require.NotContains(t, out, "machine:", "where")
-	out = ta.ok("stop")
+	out = ta.ok("stop --reason r --until 9999h")
 	require.Contains(t, out, "STOP OK before=STOPPED after=STOPPED unchanged: the machine is STOPPED already", "stop when stopped")
-	require.Contains(t, out, "\nSTOPPED  0/3 0.0%", "stop when stopped")
+	require.Contains(t, out, "\nSTOPPED by coordinator: r, back by ", "stop when stopped")
+	require.Contains(t, out, "  0/3 0.0%", "stop when stopped")
 	require.NotContains(t, out, "-> ETA", "stop when stopped")
 	out = ta.ok("start")
 	require.Contains(t, out, "START OK before=STOPPED after=RUNNING changed", "start")
@@ -32,7 +33,7 @@ func TestStartAndStopSayTheStateBeforeAndAfter(t *testing.T) {
 	require.Contains(t, ta.ok("start"), "unchanged: the machine is RUNNING already", "start when running")
 	out = ta.ok("tick")
 	require.Contains(t, out, "MOVED deal: s1-1 work ready -> working", "tick")
-	require.Contains(t, out, "TICK OK state=RUNNING idle=no moved=3", "tick")
+	require.Contains(t, out, "TICK OK state=RUNNING idle=no moved=4", "tick") // three deals and the status record's first sight of m1
 	ta.a.sleep(store.MachineSilence + time.Second)
 	out = ta.ok("inbox")
 	require.Contains(t, out, "machine: running (tick late 16s)\n", "inbox with a late tick: running, never STOPPED")
@@ -41,7 +42,7 @@ func TestStartAndStopSayTheStateBeforeAndAfter(t *testing.T) {
 	require.Contains(t, out, "0/3 0.0% -> ETA -  machine: running (tick late 16s)\n", "a verb's line with a late tick")
 	require.NotContains(t, out, "(no tick", "a verb's line with no tick")
 	require.NotContains(t, out, "STOPPED", "a verb's line with a late tick")
-	ta.ok("stop")
+	ta.ok("stop --reason r --until 9999h")
 	require.Contains(t, ta.ok("tick"), "TICK OK state=STOPPED nothing done", "a tick while stopped")
 }
 

@@ -47,7 +47,7 @@ Where each field of this cut sits:
 | --- | --- |
 | machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
-| friend (decided for her) | `slots`, `tiers`, `roles`, `width`, `mode` |
+| friend (decided for her) | `slots`, `tiers`, `roles`, `width`, `mode`, `config_dir`, `token_cap`, `streams`, `kinds` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar`, `decide_attempt_no_result`, `decide_attempt_nothing_to_do`, `decide_grade`, `decide_gate_flaky`, `decide_gate_preexisting`, `decide_judgment_bar`, `decide_brief_bar`, `answer_rules_off` |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
 | route (decided per way to run a tier) | `tier`, `provider`, `model`, `harness`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
@@ -199,10 +199,13 @@ row's.
 | `redis_port` | nullable int (no default) | | the inventory and plays: explicit Redis TCP port, 1 through 65535; unset until declared | `fleet:redis_port` |
 | `pg_dsn` | text | | the inventory and tools play: the explicit password-free Postgres URI; empty until set, never derived from `store` | `fleet:pg_dsn` |
 | `bus` | text | | nova-bus: the bus store's address, host:port, read from the applied key when `NOVA_BUS_REDIS` is unset so no friend types it (SPEC-BUS.md, the config); empty until set | `fleet:bus` |
+| `loops_dir` | text | | the inventory and plays: the directory where loop logs are written; seeded to `~/nova-bench/loops` | `fleet:loops_dir` |
 
 The kind's `Check` bounds `redis_port` and accepts only a password-free
 `postgres://user@host[:port]/database` URI for a nonempty `pg_dsn`. A refusal
-never reproduces a password from the input.
+never reproduces a password from the input. `loops_dir` must be non-empty: a
+store write checks the row it would leave, which carries every field, so a
+fleet that has declared no directory is refused until one is.
 Fleet apply and inventory refuse either endpoint unset, naming one
 `nova-config fleet set --redis_port <port> --pg_dsn <dsn>` command. Migration 0014 (`0014_fleet_endpoints.sql`)
 leaves the port NULL and the DSN empty. Full apply checks both before writing
@@ -221,6 +224,17 @@ configuration. Who coordinates is not her field either: it is the sprint's.
 | `roles` | list: builder, may-hold, reader | | the deal and the routing: what she may hold | `friend:<f>:roles` (`ns_friend_roles`) |
 | `width` | int, at least 1, default 8 | | nova-sprint friend sync: the jobs she works at once, her friends-table width (the owner, 2026-10-02: "6/1 seems a bit wrong -- need to setup width for friends? Start at 8 for each?") | `friend:<f>:desired` width |
 | `mode` | enum: batch, one-shot; default batch | | nova-sprint friend sync, onto her friends row; her beat answers it (`row_mode=`), and nova-friend run delivers by it: batch, every waiting message as one turn, or one-shot, `width` lanes each its own session, one card a turn (docs/SPEC-FRIEND.md, one-shot lanes). Migration 0030 gives every row before it batch | `friend:<f>:desired` mode |
+| `config_dir` | text, an absolute path; unset (NULL) by default, and `--config_dir ''` clears it | | nova-friend run, for a claude friend in one-shot mode: the directory each lane runs `claude -p` with as `CLAUDE_CONFIG_DIR`, her account's login and settings (docs/SPEC-FRIEND.md, one-shot lanes); her beat answers it as `row_config_dir=`. A claude row in one-shot mode without one runs no lane: nova-friend refuses it on the record with the remedy (the row names no harness, so the refusal is the daemon's). Migration 0034 adds the column; every row before it has none | `friend:<f>:desired` config_dir |
+| `token_cap` | int, at least 0, default 6000000 | | nova-sprint friend sync, onto her friends row; her beat answers it as `row_token_cap=`, and a one-shot lane holds a card when the card's tokens (input, cached input, output and reasoning) reach it (docs/SPEC-FRIEND.md, friend-token-cap-bb.w2). 0 is no cap. Migration 0035 adds the column; every row before it is 6000000 | `friend:<f>:desired` token_cap |
+| `streams` | text, comma-separated glob patterns; empty by default | | nova-sprint friend sync, onto her friends row: the deal hands her only a card whose stream matches one of these patterns, and `add` and `brief` refuse a card naming her whose stream matches none; an empty list is any stream. Migration 0036 adds the column; every row before it is empty | `friend:<f>:desired` streams |
+| `kinds` | list of card KIND values; empty by default | | nova-sprint friend sync, onto her friends row: the deal hands her only a card whose `KIND:` is one of these, and `add` and `brief` refuse a card naming her whose `KIND:` is none of them; an empty list is any kind. Migration 0036 adds the column; every row before it is empty | `friend:<f>:desired` kinds |
+
+A friend row may restrict the work the sprint deals her: `streams` is a
+comma-separated list of glob patterns over stream names, and `kinds` is a
+comma-separated list of card `KIND:` values. Each empty list is no restriction,
+today's behavior; `nova-sprint friend sync` carries both into her friends
+record, `add` and `brief` refuse a named friend card outside her restriction
+with the restriction named, and the tick's deal hands her none.
 
 **`sprint`** (`config.sprint`, singleton): the one row of sprint-global
 facts.
@@ -268,10 +282,32 @@ Migration 0013 had made a loop's width a field its command ran with;
 migration 0017 removed the field, took `--width` out of every member argv that
 carried one and removed the second reader rows (`reader-<m>-2`), one reader
 per machine.
-The log path is derived from the name, `~/nova-bench/loops/<name>.log`
-(`LoopLog`), and is never typed. A machine a loop names cannot be removed
+The log path is derived from the fleet row's `loops_dir` and the name, `<loops_dir>/<name>.log`
+(`LoopLog`), and is never typed. Apply takes the directory from the store's
+fleet row, so a loop apply needs no fleet apply before it, and refuses a
+fleet row that carries none, naming `nova-config fleet set --loops_dir <path>`.
+A machine a loop names cannot be removed
 (`machine m1 is the --machine of loop member-m1`); `machine show <m>` names
 the machine's loops (`loops=<a,b>`, `-` for none).
+
+**`loop run`**: `nova-config loop run <name> [--run-dir <dir>] [--metrics <dir>] [-- <command> ...]`
+is a loop's single-instance wrapper, the Go verb in place of the bash `nova-loop` a coordinator's
+own `fleet/loops.yml` installed (docs/COORDINATOR-TOOLS.md). It takes `<run-dir>/<name>.lock`
+(default `~/nova-bench/run`) with internal/filelock, the kernel's lock (tla/FileLock.tla): a second
+copy is refused with exit 3 and runs nothing, and a lock whose holder died is free, since the kernel
+released it. Under the lock it counts the start in `<run-dir>/<name>.starts` and, with `--metrics`,
+writes `nova_loop_<name>.prom` there (`nova_loop_starts_total` and `nova_loop_last_start_seconds`,
+each labelled `loop="<name>"`) for node_exporter's textfile collector. Then it runs the command,
+passes SIGINT and SIGTERM on to it, holds the lock until it ends, and exits with the command's exit
+code, or `128+N` when a signal ended it. The lock lives in this process, so the command's life is
+tied to it: on linux a wrapper killed outright ends the command with it (the kernel's
+parent-death signal, `Pdeathsig`), and the restarted unit's second copy never runs beside a
+command the first still owns. The command is what follows `--` (the unit's own, with its
+`nova-secrets exec` prefix; no store is opened), else the row's `argv` read from the store: a
+disabled row, a row with `keys` (its secrets open through the prefix the plays add, which the row
+does not carry) and a row with no command are
+refused with exit 1, a name with no row too. The pieces are `config.LoopRunArgv`,
+`config.NextLoopStarts` and `config.LoopMetrics` (internal/config/looprun.go).
 
 **`route`** (`config.routes`): one way to run a model tier, the provider
 and model a card of that tier runs on, its token and dollar budgets and deadline. A
@@ -318,6 +354,57 @@ The kind's `Check`: `provider` is one word with no slash or blank, `model`
 is not empty and has no blank, and `deadline` is above 0; `long_context`
 above 0 comes with both long prices, and a long price with a threshold;
 `price_as_of` is a date; `usd`, when set, is above 0; a route that is disabled has a note. A route names no row of another kind.
+
+### route prices
+
+A price row is read from the provider's published list, never typed and left: a
+flash route priced by hand at a tenth of the list's input price kept the
+dashboard showing under half the real spend for days.
+`nova-config route prices --refresh [--provider <p>] [--from <path>] [--dry-run] --as <name>`
+reads the list and sets each enabled route's `price_input`, `price_cache_read`,
+`price_cache_write`, `price_output` and `price_request` from it, with
+`price_as_of` today (UTC) and `price_source` the list's URL
+(`internal/config/prices.go`, `PlanPriceRefresh`).
+
+- The lists: `openrouter` rows read OpenRouter's public models endpoint
+  (`GET https://openrouter.ai/api/v1/models`, no key; USD per token, written per
+  million exactly). OpenCode publishes no list, so `opencode` rows are priced from
+  OpenRouter's, the verb prints
+  `NOTE route=<r> provider=opencode: priced from openrouter's list, assumed until opencode publishes its own`
+  for each, and the row's note is left as it is. A provider with no list is
+  refused at usage.
+- A route's model is matched by its id on the list, else by the one id whose last
+  part is the model's (an OpenCode model named without its vendor); none, or two,
+  is `PRICES MISSING` and nothing is set. A field the list does not carry is left
+  as it is; a request fee of 0 is no fee.
+- A price that moved past 2x either way since the row's last read (`PriceJump`) is
+  never set silently: it is left as it is, the line is
+  `JUDGMENT route=<r> <field> moved past 2x: have <old>, the list says <new>; a price that moves that far is never set silently; decide: nova-config route set <r> --<field> <new> --price_source <url> --price_as_of <date>`,
+  and the verb exits 1 after writing the rest. A row with no price takes the list's.
+- A field whose stored price differs from the list by more than 10 percent of the
+  list's (`PriceStale`) is stale: the row is named
+  `STALE route=<r> <field>: have <old>, the list says <new>`, and the refresh is
+  what clears it.
+- Lines: `PRICES SET route=<r> list=<id> changed=<field>:<old>-><new>,... rev=<n>`,
+  `PRICES DRY-RUN` (with `--dry-run`, nothing written), `PRICES SAME` (nothing to
+  write; no revision), `PRICES MISSING`, then
+  `CONFIG PRICES source=<url> as_of=<date> routes=<n> set=<n> same=<n> missing=<n> judgments=<n> stale=<n>`.
+  `--from <path>` reads a copy of the list saved from its URL, which the rows still
+  name as their source. Exit 0, 1 on a judgment, 2 when the list or the store could
+  not be read.
+- The machine runs it daily as a loop row, then applies:
+  `nova-config loop add route-prices --machine <coordinator machine> --argv '["nova-config","route","prices","--refresh","--as","<coordinator>"]' --every 86400 --as <coordinator>`
+  followed by `nova-config apply --kind route` (the row is the fleet's, added by
+  its coordinator; the apply carries the prices to the sprint). The row passes no
+  `--provider`: the default refreshes every provider with a list, so the `opencode`
+  rows, priced from OpenRouter's until OpenCode publishes its own, are refreshed
+  with the rest (the first cut of this row named `--provider openrouter` and never
+  refreshed them; a reader found it 2026-10-06).
+- Follow-up cards, outside this verb: the run before `nova-sprint funded <provider>`
+  (`cmd/nova-sprint/verbs.go`, `cmdFunded`) should refresh the provider's list
+  first, and `nova-sprint routes` (`cmd/nova-sprint/reads.go`, `cmdRoutes`, and
+  `internal/sprint/route.go`, `RouteStats`) should mark a route whose price differs
+  from the list by more than 10 percent as stale.
 
 ### The note
 
@@ -411,8 +498,9 @@ config.machines          (name PK, "user", seat, slots, runners,
                           default)
 config.fleet             (name PK = 'fleet', store -> machines.name,
                           coordinator -> machines.name, redis_port, pg_dsn,
-                          created_at, updated_at;
-                          the one row inserted by the migration)
+                          loops_dir, created_at, updated_at;
+                          the one row inserted by the migration; loops_dir
+                          added by 0033, text NOT NULL DEFAULT '~/nova-bench/loops')
 config.friends           (name PK, slots, tiers, roles, created_at, updated_at;
                           width added by 0018, integer NOT NULL DEFAULT 8, which fills every row there
                           CHECK (width >= 1))
@@ -542,7 +630,8 @@ else the fleet's coordinator machine (`fleet:coordinator`, written a moment
 before) as the default charge; neither is a refusal naming `nova-config
 fleet set --coordinator <machine>`. Her width, when it differs, is a plain
 `HSET friend:<f>:desired width <n>`, a field no function reads or writes, and
-her mode the same way, `HSET friend:<f>:desired mode <m>`.
+her mode and config_dir the same way, `HSET friend:<f>:desired mode <m>` and
+`HSET friend:<f>:desired config_dir <dir>` (`""` when unset).
 `ns_friend_roles(f, roles)` when the
 roles differ (the actor must hold the coordinator role in Redis, or nobody
 does yet and this row makes the first): the roles written are the row's
@@ -553,10 +642,30 @@ registry member, the desired and roles hashes are removed in one
 transaction, with a `config-remove` receipt in `cap:log`; her beat, logins
 and wake path stay, they are hers.
 
-**sprint:** a plain `SET sprint:<field>` for each field (`sprint:coordinator <friend>`), `DEL` when empty.
-Never removed. The handover is `nova-config sprint set --coordinator
-<friend> --as <friend>` then `apply`: the sprint kind's own revision moves and
-the friend kind's plan is two `SET ... changed=roles`, the new coordinator's first.
+Her token cap is `HSET friend:<f>:desired token_cap <n>` the same way (6000000 when the row names none, 0 for no cap).
+
+**sprint:** a plain `SET sprint:<field>` for each field (`sprint:coordinator
+<friend>`), `DEL` when empty — except the seat: the coordinator is written
+only when `sprint:coordinator` is absent (a first apply) or already equal to
+the row. When the live value differs, apply writes every other sprint field,
+leaves `sprint:coordinator` as it is, and the library reports one
+`APPLY HELD kind=sprint field=coordinator live=<a> row=<b>: the seat moves by
+nova-sprint's seat verb or nova-config apply --kind sprint --move-seat; run
+nova-config sprint set --coordinator <a> to make the row agree` line and exits
+0. A configuration publish never moves the seat unless the owner names the move:
+`nova-config apply --move-seat` (`ApplyMovingSeat`) writes the differing
+coordinator. Otherwise the seat moves by nova-sprint's seat verb. `nova-config
+apply` prints every op through `SaidLine`, so the held line is printed whole,
+as the library says it (on `--dry-run` too). `--json` emits `op=held` with
+`name` equal to that line. When the only difference is the coordinator, the
+plan still reports `SET` `changed=coordinator`, the set count includes it,
+and the write stores the live value; the revision stamp advances, so
+`status` reads in sync while the row's coordinator still disagrees with
+Redis. The held line is the signal. Never removed. The handover of the row
+is `nova-config sprint set --coordinator <friend> --as <friend>`; `apply`
+holds `sprint:coordinator` and still writes the friend roles from the row.
+The Redis key moves by the seat verb, or by `ApplyMovingSeat`. The friend
+kind's plan is two `SET ... changed=roles`, the new coordinator's first.
 
 **loop:** the hash `loop:<l>` with every field of the row, `name`, `log`
 (the derived path), `rev` and `at`, written whole in one transaction with
@@ -635,18 +744,86 @@ anywhere connects with none (a throwaway database trusts).
 `--seat <name>` (env `NOVA_SEAT`) supplies the PostgreSQL DSN and the name
 of the password environment variable from the seat's profile row in
 `seats.tsv` (`$XDG_CONFIG_HOME/nova-config/seats.tsv`, else
-`~/.config/nova-config/seats.tsv`), exclusive with `--file`. Writes accept
+`~/.config/nova-config/seats.tsv`), exclusive with `--file`. Writes and reads
+(`<kind> list|show`, `machine width`, `machine self --check`, `status`) accept
 `--seat <name>` so that commands like `nova-config machine set m1 --width 8 --seat <name>`
-need no explicit DSN or secrets wrapper; an unknown seat is a one-line
-refusal naming the known seats.
+or `nova-config tier list --seat <name>` need no explicit DSN or secrets
+wrapper; `machine add` and `loop add` take `NOVA_SEAT` alone, their rows'
+own `--seat` being a field. An unknown seat is a one-line refusal naming the
+known seats. `nova-sprint seat install --config-seat <name> --config-dsn <dsn> --config-password-env <NAME>` writes the row (in place of the seat's row,
+every other line kept, mode 0600, read back as nova-config reads it before it
+replaces the file; docs/SPEC-SPRINT.md, "Handing over the seat").
+
+When `NOVA_PG_PASSWORD_ENV` is not given and the row's password variable is
+not set (a coordinator typing the verb bare, with no `nova-secrets exec`
+around it), the password is read in this process from the nova-secrets seat
+the machine's store login names (`nova-sprint seat login`:
+`$XDG_CONFIG_HOME/nova-sprint/login.json`, else
+`~/.config/nova-sprint/login.json`; its store, seat, key and sops), under the
+row's variable name as the key, through the same `secrets.ReadLogin` path, and
+is never printed or put in an environment. The row's variable set wins over
+that read; `NOVA_PG_PASSWORD_ENV` given wins over the row's variable and the
+store login is not read for it, so a coordinator that carries its own password
+needs no store login. No store login, or a seat that does not hold the key, is
+a refusal naming the seat, the file and the remedy (`nova-sprint seat login`,
+or `nova-secrets seal --as <seat> --name <NAME>`), and no store is opened
+(`cmd/nova-config/seat_secret.go`,
+`TestSeatOnAReadVerbReadsThePasswordThroughTheStoreLogin`,
+`TestSeatPasswordEnvStillWinsOverTheSeatRow`).
 
 `--redis <addr>` is the flag, else `NOVA_SPRINT_REDIS`, else
 `NOVA_REDIS_ADDR`, else the selected seat's address; the Redis login is the
 one `internal/nsprint/store.Open` makes. `machine
 list` and `machine show` take the same flag for the live facts but stop at
 the environment: with none named they print the declared fields alone and
-open no store. `--as` is the flag, else `NOVA_FRIEND`, else the seat name,
-required on every write.
+open no store. `--as` is the flag, else `NOVA_FRIEND`, else the friend recorded by
+`nova-config login`, else the seat name, required on every write.
+
+### The store login
+
+(the owner, 2026-10-05: "We need to get away from these one shot shell scripts";
+card config-login-built-in, which replaces the wrapper that ran every
+nova-config verb under `nova-secrets exec` with `NOVA_PG_DSN` and
+`NOVA_PG_PASSWORD_ENV` set.)
+
+The tool's own login to PostgreSQL is a setting of nova-config, never a wrapper:
+
+```
+nova-config login --store <secrets dir> --as <seat> --key <keyfile> --secret <NAME> --dsn <dsn without password> --friend <actor> [--sops <path>]
+nova-config login --check
+nova-config logout
+```
+
+`login` records the DSN with no password, the actor, and where the password is
+in nova-secrets (store, seat, key, sops, the secret's NAME; never the password)
+in `$XDG_CONFIG_HOME/nova-config/login.json`, else
+`~/.config/nova-config/login.json`, mode 0600, written whole by a rename. The
+paths are recorded absolute and `--sops` left off is the `sops` on `PATH`. A
+login is recorded only when its secret resolves, and a `--dsn` that carries a
+password is refused without recording and without quoting it.
+
+Every verb after it opens PostgreSQL as follows. The DSN is `--pg`, else
+`NOVA_PG_DSN`, else the recorded DSN. The password is the environment's when
+`NOVA_PG_PASSWORD_ENV` is set (the variable it names), which wins, including
+when the address is the recorded DSN; else, when the DSN is `--pg` or
+`NOVA_PG_DSN`, the variable `NOVA_PG_PASSWORD` when that is set, and the
+recorded secret is not read; else the recorded secret, read in the verb's own
+process through `secrets.ReadLogin` (internal/secrets/login.go), the path
+`nova-secrets exec` takes (`OpenSeatFile`), and put into the connection in
+memory. It is never printed, never written, and never in the process's
+environment, so no child of the verb inherits it. `--as`, else `NOVA_FRIEND`,
+else the recorded friend, is the actor. `--file` and `--seat` are unchanged
+and do not read the recorded secret.
+
+A recorded secret that does not resolve, or a login file that is not a whole
+login, is a refusal naming the file and the remedy (`nova-config login
+--check`, then `login` again or `logout`), and the verb opens no store.
+`login --check` prints the recorded login, which environment source would win
+(`dsn-wins=env:…`, `password-wins=env:…`, `friend-wins=env:…`), and
+`resolves=yes|no` (exit 1 on no). The password is never shown. `logout`
+removes the file (`was=recorded|none`). The code is `cmd/nova-config/login.go`;
+`TestABareVerbConnectsWithTheRecordedLogin` measures it on the fake store with
+a fake secrets reader.
 
 ## Deliberately not configuration
 

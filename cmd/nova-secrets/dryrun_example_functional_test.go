@@ -54,8 +54,10 @@ func newExampleHome(t *testing.T, plain string) exampleHome {
 	require.NoError(t, os.MkdirAll(filepath.Join(store, ".git"), 0o755))
 	for name, body := range map[string]string{
 		"recovery.pub": exRecovery + "\n",
-		".sops.yaml": "creation_rules:\n  - path_regex: ^worker\\.yaml$\n    age: " + exWorker + "," + exRecovery +
-			"\n  - path_regex: ^lead\\.yaml$\n    age: " + exLead + "," + exRecovery + "\n",
+		// Rules as seat add writes them, the mark admitted: a store past its first re-seal,
+		// so the plan has no rule line (SPEC-SECRETS "gate", the mark).
+		".sops.yaml": "creation_rules:\n  - path_regex: ^worker\\.yaml$\n    unencrypted_regex: ^NOVA_SECRETS_WRITTEN_BY$\n    age: " + exWorker + "," + exRecovery +
+			"\n  - path_regex: ^lead\\.yaml$\n    unencrypted_regex: ^NOVA_SECRETS_WRITTEN_BY$\n    age: " + exLead + "," + exRecovery + "\n",
 		// What sops writes: a sealed value, then the recipients it sealed to.
 		"worker.yaml": "API_KEY: ENC[AES256_GCM,data:x,iv:a,tag:b,type:str]\nsops:\n    age:\n        - recipient: " + exWorker + "\n        - recipient: " + exRecovery + "\n",
 		"lead.yaml":   "API_KEY: ENC[AES256_GCM,data:y,iv:a,tag:b,type:str]\nsops:\n    age:\n        - recipient: " + exLead + "\n        - recipient: " + exRecovery + "\n",

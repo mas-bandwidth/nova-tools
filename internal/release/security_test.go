@@ -139,6 +139,12 @@ func TestSensitiveClassifiesByPrefixAndNothingElse(t *testing.T) {
 		{"internal/release/cut.go", false},
 		{"a/internal/secrets/x.go", false},
 		{"infra/images/x", false},
+		// The darwin wall's own text and the check that measures it (the security read of
+		// 2026-10-06: a trustd grant in profiles/ shipped unclassified).
+		{"profiles/darwin.sb.tmpl", true},
+		{"tools/sandboxcheck/main.go", true},
+		{"tools/sandboxchecker/main.go", false},
+		{"internal/profiles/x.go", false},
 	} {
 		got := Sensitive([]string{tc.path})
 		if (len(got) == 1) != tc.hit {
@@ -734,7 +740,7 @@ func TestPullHoldsItsEdgeFences(t *testing.T) {
 		}
 	})
 
-	// -- fence 4: the receipt says PULL FAIL … the artifacts are deleted;
+	// -- fence 4: the receipt says PULL FAILED … the artifacts are deleted;
 	// mark the section by hand.
 	t.Run("changelog-cannot-write", func(t *testing.T) {
 		out, s, changelog := pulled(t, "v0.16.0")
@@ -754,7 +760,7 @@ func TestPullHoldsItsEdgeFences(t *testing.T) {
 				assert.True(t, os.IsNotExist(err), "%s is still here: %v", name, err)
 			}
 		}
-		if !strings.Contains(e.String(), "PULL FAIL") || !strings.Contains(e.String(), "the artifacts are deleted; mark the section by hand") {
+		if !strings.Contains(e.String(), "PULL FAILED") || !strings.Contains(e.String(), "the artifacts are deleted; mark the section by hand") {
 			require.FailNowf(t, "", "stderr does not carry the remedy:\n%s", e.String())
 		}
 		if code != 1 {

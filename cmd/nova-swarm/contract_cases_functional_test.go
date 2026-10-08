@@ -42,7 +42,7 @@ func newCaseEnv(t *testing.T, remote bool) *caseEnv {
 	e := &caseEnv{dir: dir, origin: filepath.Join(dir, "origin.git"), logs: filepath.Join(dir, "logs")}
 	require.NoError(t, os.MkdirAll(e.logs, 0o755))
 	seed := filepath.Join(dir, "seed")
-	runGit(t, "", "init", "-q", "-b", "main", "--", seed)
+	runGit(t, "", "init", "-q", "-b", driveBase, "--", seed)
 	write(t, filepath.Join(seed, "f"), "base\n")
 	gitAs(t, seed, "add", "f")
 	gitAs(t, seed, "commit", "-q", "-m", "base")
@@ -67,7 +67,7 @@ func (e *caseEnv) brief() string {
 		return e.briefOverride
 	}
 	first, rest, _ := strings.Cut(memberCard, "\n")
-	return first + "\nbase-repo: " + e.repoURL + "\nBASE: main\n" + rest
+	return first + "\nbase-repo: " + e.repoURL + "\nBASE: " + driveBase + "\n" + rest
 }
 
 // script is the child: its stderr goes to the case's log.
@@ -121,7 +121,7 @@ func (e *caseEnv) sprintRunUntil(t *testing.T, harness, model string, bound time
 	ctx, cancel := context.WithTimeout(context.Background(), bound)
 	defer cancel()
 	d := &memberDrive{t: t, addr: "mem:" + filepath.Join(e.dir, "sprint.twin"), bin: bin}
-	d.must("init", "--members", "m1:1")
+	d.init("--members", "m1:1")
 	d.must("add", "--stream", "a", "--one", "--count", "1", "--brief", e.brief())
 	d.must("start")
 	e.member(t)
@@ -170,16 +170,16 @@ func (e *caseEnv) directRun(t *testing.T, p member.Packet, harness, model string
 	return r, push, fin, why
 }
 
-// landedOnMain lands a commit on origin's main after pushedWork (in its clone), as another card
-// landing moves a stream's base, and returns main's new tip.
+// landedOnMain lands a commit on origin's driveBase after pushedWork (in its clone), as another card
+// landing moves a stream's base, and returns its new tip.
 func landedOnMain(t *testing.T, e *caseEnv) string {
 	t.Helper()
 	w := filepath.Join(e.dir, "w")
-	gitAs(t, w, "switch", "-q", "-C", "main", "origin/main")
+	gitAs(t, w, "switch", "-q", "-C", driveBase, "origin/"+driveBase)
 	write(t, filepath.Join(w, "g"), "landed since\n")
 	gitAs(t, w, "add", "g")
 	gitAs(t, w, "commit", "-q", "-m", "landed since")
-	runGit(t, w, "push", "-q", "origin", "main")
+	runGit(t, w, "push", "-q", "origin", driveBase)
 	return gitAs(t, w, "rev-parse", "HEAD")
 }
 
@@ -280,7 +280,7 @@ func TestAReadIsAReview(t *testing.T) {
 			h1 := pushedWork(t, e)
 			h := e.script(t, `gh pr diff >&2; `+tc.cmd+` >&2`)
 			p := member.Packet{Card: "a-1.r1", Kind: "read", As: "m1", Primary: "a-1", Stream: "a", Attempt: 1, Epoch: 1,
-				Brief: e.brief(), WorkBranch: "sprint/a-1.w1", Head: h1, WorkBase: "main"}
+				Brief: e.brief(), WorkBranch: "sprint/a-1.w1", Head: h1, WorkBase: driveBase}
 			r, _, _, _ := e.directRun(t, p, h, "anthropic/claude-x")
 			assert.Equal(t, tc.verdict, r.Verdict)
 			assert.Equal(t, tc.report, r.Report)
@@ -350,7 +350,7 @@ func TestAReworkAfterTheBaseMovedIsStagedAtANewCarryOnItsTip(t *testing.T) {
 			require.NotNil(t, m, e.log())
 			assert.NotEqual(t, h1, m[1], "the rework is not staged at attempt one's head")
 			assert.Equal(t, tip, m[2], "the staged commit is one carry on the base's new tip")
-			assert.Equal(t, "staged="+m[1][:12]+" tip="+tip[:12]+" of main carry=carried attempt=1 prev="+h1[:12], r.Carry, "native's STAGE CARRY line")
+			assert.Equal(t, "staged="+m[1][:12]+" tip="+tip[:12]+" of "+driveBase+" carry=carried attempt=1 prev="+h1[:12], r.Carry, "native's STAGE CARRY line")
 			assert.Equal(t, tc.fin, fin, "push %+v: %s", push, why)
 			assert.Contains(t, why, tc.why)
 		})
@@ -361,7 +361,7 @@ func TestAReworkAfterTheBaseMovedIsStagedAtANewCarryOnItsTip(t *testing.T) {
 	landedOnMain(t, e)
 	h := e.script(t, `echo "READ STAGED $(git -C repo rev-parse HEAD)" >&2`)
 	read := member.Packet{Card: "a-1.r2", Kind: "read", As: "r1", Primary: "a-1", Stream: "a", Attempt: 2, Gen: 1, Epoch: 1,
-		Brief: e.brief(), Head: h1, WorkBranch: "sprint/a-1.w1", WorkBase: "main"}
+		Brief: e.brief(), Head: h1, WorkBranch: "sprint/a-1.w1", WorkBase: driveBase}
 	r, _, _, _ := e.directRun(t, read, h, "anthropic/claude-x")
 	assert.Contains(t, e.log(), "READ STAGED "+h1, "a read at attempt two is staged at the head it reads")
 	assert.Empty(t, r.Carry)
@@ -460,7 +460,7 @@ func TestAClaudeReadersReviewAloneIsItsVerdict(t *testing.T) {
 			e := newCaseEnv(t, false)
 			bin := builtSprint(t)
 			d := &memberDrive{t: t, addr: "mem:" + filepath.Join(e.dir, "sprint.twin"), bin: bin}
-			d.must("init", "--members", "m1:1", "--readers", "reader-a,reader-b") // a flash card is read once, by reader-a, the first round the readers
+			d.init("--members", "m1:1", "--readers", "reader-a,reader-b") // a flash card is read once, by reader-a, the first round the readers
 			d.must("add", "--stream", "a", "--one", "--count", "1", "--brief", e.brief())
 			d.must("start")
 			e.member(t)

@@ -8,10 +8,10 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 )
 
-// The coordinator's edits of a STOPPED sprint's primaries that have not
-// started: brief replaces a primary's
-// brief, move takes primaries to another stream. Each is a pure plan of a
-// snapshot, refused on a RUNNING machine and for a card that has started.
+// The coordinator's edits of primaries: brief replaces a primary's brief in place, on a
+// RUNNING machine as on a STOPPED one, for a card waiting, ready or in review (one an
+// attempt was dealt for opens its next attempt); move takes primaries that have not started
+// to another stream, on a STOPPED sprint only. Each is a pure plan of a snapshot.
 
 // stoppedOnly is the refusal of an edit on a RUNNING machine.
 func stoppedOnly(what string) string {
@@ -37,11 +37,22 @@ func unstarted(s *Snapshot, id, keeps string) string {
 	return ""
 }
 
-// BriefReq replaces the brief of a primary that has not started.
+// BriefCard is one primary's new brief (brief <id>, or one file of brief --dir).
+type BriefCard struct {
+	ID, Brief string
+	Rules     string   // the held rules file the new brief is held to by reference (FieldRules), "" when it carries its own
+	Needs     []string // the new brief's needs, as add reads its DEPENDS-ON: line (briefNeeds): a change to that line alone is taken in any state
+}
+
+// BriefReq replaces the briefs of primaries that have not started: one card
+// (brief <id>; Cards, or the ID and Brief fields) or one per file of a
+// directory (brief --dir, Cards). Tier, with no brief, re-tiers the card ID names.
 type BriefReq struct {
+	Cards          []BriefCard
 	ID, Brief, Who string
-	Rules          string   // the held rules file the new brief is held to by reference (FieldRules), "" when it carries its own
-	Needs          []string // the new brief's needs, as add reads its DEPENDS-ON: line (briefNeeds): a change to that line alone is taken in any state
+	Rules          string   // the held rules file, when Cards is empty and Brief is set
+	Needs          []string // the new brief's needs, when Cards is empty and Brief is set
+	Answers        []string // the judgments the edit answers (--answers): each must be one it closes
 	// Tier, with no Brief, re-tiers the card (nova-sprint brief --tier): the tier every
 	// later deal of the card draws its route from, written on the primary as FieldTier
 	// as rework --tier writes it; taken in any state, on a RUNNING machine and for a card
@@ -49,63 +60,220 @@ type BriefReq struct {
 	Tier string
 }
 
-// Brief replaces a primary's brief (nova-sprint brief): on a STOPPED machine
-// only, for a primary waiting or ready with no work card dealt. The card keeps
-// its id, stream, score and needs; the command line holds the brief to the
-// card lint, and the store to its bound, as add's.
+// Brief replaces primaries' briefs in place (nova-sprint brief; docs/SPEC-SPRINT.md,
+// the brief verb): each a primary waiting, ready or in review, on a RUNNING machine
+// as on a STOPPED one; a card working, merging or landed keeps its brief. A running
+// machine's pump holds a card a queued change names until the change drains
+// (store.Step's Pump), so the brief is in place before the card can be dealt. The
+// card keeps its id, stream, score and needs; one an attempt was dealt for opens its
+// next attempt (briefInPlace): a brief correction is never a twin (the owner,
+// 2026-10-06: "We gotta stop doing this twin shit. it's waste."). The command line
+// holds the brief to the card lint, and the store to its bound, as add's. A card
+// refused, or named twice, is named; the step applies all or none.
 func Brief(s *Snapshot, r BriefReq) Plan {
 	var p Plan
 	p.on(s)
 	if r.Tier != "" {
 		return briefTier(s, p, r)
 	}
-	if c := s.Work.Placed(r.ID); c != nil && !IsSentinel(c) && dependsOnly(c.F("brief"), r.Brief) {
-		return briefDepends(s, p, c, r)
+	cards := r.Cards
+	if len(cards) == 0 {
+		cards = []BriefCard{{ID: r.ID, Brief: r.Brief, Rules: r.Rules, Needs: r.Needs}}
 	}
-	// a card dealt is refused with what changes it instead, before the machine's
-	// state: stopping the machine would not let its brief be replaced
-	why := unstarted(s, r.ID, "its brief")
-	c := s.Work.Placed(r.ID)
-	if why != "" && c != nil && !IsSentinel(c) {
-		why += "; " + briefStarted(c)
+	seen, orphans := map[string]bool{}, map[string]bool{}
+	for _, b := range cards {
+		if seen[b.ID] {
+			p.refuse(b.ID, b.ID+" is named twice; nothing was changed")
+			continue
+		}
+		c := s.Work.Placed(b.ID)
+		// a DEPENDS-ON line alone is taken in any state, the machine running or the card dealt
+		if c != nil && !IsSentinel(c) && dependsOnly(c.F("brief"), b.Brief) {
+			seen[b.ID] = true
+			p = briefDepends(s, p, c, b.Brief, b.Needs)
+			continue
+		}
+		// a card working, merging or landed is refused with what changes it instead:
+		// stopping the machine would not let its brief be replaced. A card waiting, ready
+		// or in review takes one on a RUNNING machine as on a STOPPED one.
+		why := briefKept(s, b.ID)
+		if why != "" && c != nil && !IsSentinel(c) {
+			why += "; " + briefStarted(c)
+		}
+		if why == "" && c.Int("attempt") > 0 && sameLines(c.F("brief"), b.Brief) {
+			// the bound counts attempts under one brief: the same brief again, or one only
+			// re-spaced or reordered, would reset it with nothing changed
+			why = fmt.Sprintf("the new brief is the one %s ran attempt %d under: the bound counts attempts under one brief, so an edit changes it; nothing was changed", b.ID, c.Int("attempt"))
+		}
+		if why != "" {
+			p.refuse(b.ID, why)
+			continue
+		}
+		seen[b.ID] = true
+		// a brief that carries its own rules names none; a grade was of the brief replaced; a
+		// replaced brief is no longer the one its brief decision was asked over, so the card
+		// names that decision no more
+		// the brief's bound counts attempts from here (brief_bound.go)
+		set, unset := map[string]string{"brief": b.Brief, FieldBriefAttempt: c.F("attempt")}, []string{FieldGrade, FieldBriefOp, FieldBriefRecord}
+		if b.Rules != "" {
+			set[FieldRules] = b.Rules
+		} else {
+			unset = append(unset, FieldRules)
+		}
+		if who := WhoOfBrief(b.Brief); who != "" {
+			set[FieldWho] = who // the new brief's WHO line names its worker (friend_deal.go)
+		} else {
+			unset = append(unset, FieldWho)
+		}
+		// the new brief's BENCH line names its bench (bench_deal.go): a brief step reads no
+		// fleet table, so the members it names are add's to hold
+		bench, benchWhy := BenchOfBrief(b.Brief)
+		if benchWhy != "" {
+			p.refuse(b.ID, benchWhy)
+			continue
+		}
+		if len(bench) > 0 {
+			set[FieldBench] = strings.Join(bench, ",")
+		} else {
+			unset = append(unset, FieldBench)
+		}
+		if c.Int("attempt") > 0 {
+			u, orphan := briefInPlace(s, c, b.Brief, set, unset, r.Who)
+			if orphan {
+				orphans[c.ID] = true
+			}
+			p.Units = append(p.Units, u)
+			continue
+		}
+		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, set, unset...))},
+			Moved: fmt.Sprintf("%s brief replaced (%d bytes) stream=%s %s", c.ID, len(b.Brief), c.Row, c.Col)})
 	}
-	if why == "" && s.Running {
-		why = stoppedOnly("a brief is replaced")
+	if len(orphans) > 0 {
+		settle(&p, s, r.Who, orphans, nil)
 	}
-	if why != "" {
-		p.refuse(r.ID, why)
-		return p
+	answered(&p, s, r.Answers, r.Who)
+	return Lawful(p)
+}
+
+// briefKept is why a primary keeps its brief: "" for a primary waiting, ready or in
+// review; a card working, merging or landed keeps it.
+func briefKept(s *Snapshot, id string) string {
+	c := s.Work.Placed(id)
+	switch {
+	case c == nil:
+		return "no primary " + id + " on the work table; nothing was changed"
+	case IsSentinel(c):
+		return id + " is a sentinel, not a primary; nothing was changed"
+	case c.Col != Waiting && c.Col != Ready && c.Col != Review:
+		return fmt.Sprintf("%s is %s: a card working, merging or landed keeps its brief; nothing was changed", id, c.Col)
 	}
-	// a brief that carries its own rules names none; a grade was of the brief replaced; a
-	// replaced brief is no longer the one its brief decision was asked over, so the card
-	// names that decision no more
-	// the brief's bound counts attempts from here (brief_bound.go)
-	set, unset := map[string]string{"brief": r.Brief, FieldBriefAttempt: c.F("attempt")}, []string{FieldGrade, FieldBriefOp, FieldBriefRecord}
-	if r.Rules != "" {
-		set[FieldRules] = r.Rules
+	return ""
+}
+
+// briefInPlace is a brief edited in place on a primary an attempt was dealt for: it
+// keeps its id, and the edit opens its next attempt. A card in review goes to ready,
+// its read cards retired, the attempt's finding kept in its findings and the judgments
+// on it closed, as a rework's (an orphan merge card taken off as a rework takes it,
+// orphan true); a ready or waiting card's withdrawn work card is retired, so the deal
+// cuts the next attempt instead of dealing the last again. The next attempt is staged
+// from the last pushed head, as a rework's (BaseOf over the card's attempts); the bound
+// is reset, since it counts attempts under one brief (FieldBriefAttempt, in set); the
+// rework's fix is the old brief's and is dropped; and the record, the next attempt's
+// why, says who edited it, at which attempt, and what changed (briefChange).
+func briefInPlace(s *Snapshot, c *Card, brief string, set map[string]string, unset []string, who string) (u Unit, orphan bool) {
+	if c.F(FieldBriefDefect) != "" {
+		reworkPriority(s, c, set)
+		unset = append(unset, FieldBriefDefect)
+	}
+	n := c.Int("attempt")
+	said := fmt.Sprintf("brief edited in place by %s at attempt %d: %s", orDash(who), n, briefChange(c.F("brief"), brief))
+	set["why"] = cutText(said, MaxCardTextBytes)
+	unset = append(unset, "fix", "finding", FieldFindingAttempt)
+	var changes []Change
+	retire := func(table string, x *Card) {
+		changes = append(changes, change(table, removeEntry(x, map[string]string{"retired": stamp(s.Now), "retired_by": "brief"})))
+	}
+	if s.Fleet != nil {
+		if wc := s.Fleet.Placed(WorkCardID(c.ID, n)); wc != nil && wc.Col == Withdrawn {
+			retire(Fleet, wc)
+		}
+	}
+	to := c.Col
+	if c.Col == Review {
+		to = Ready
+		if s.Readers != nil {
+			for _, rc := range s.Readers.Of(c.ID) {
+				retire(Readers, rc)
+			}
+		}
+		// a friend's read on her fleet row too: left, it keeps her room and closes against
+		// the attempt the edit replaced (FriendReadClose)
+		for _, rc := range openFriendReads(s, c.ID) {
+			retire(Fleet, rc)
+		}
+		found := reworkGiven(s, c)["finding"]
+		if found == "" {
+			found = ownFix(s, c)
+		}
+		if lines := findingsOf(c, n, found); len(lines) > 0 {
+			set[FieldFindings] = findingsLine(lines)
+		}
+		changes = append(changes, change(Work, moveEntry(c, c.Row, Ready, set, append(unset, "result", "readers", FieldPassedHead)...)))
+		if m := orphanMerge(s, c); m != nil {
+			changes = append(changes, change(Merge, moveEntry(m, c.Row, Returned, nil, "need_card", "need_stream")))
+			orphan = true
+		}
 	} else {
-		unset = append(unset, FieldRules)
+		changes = append(changes, change(Work, setEntry(c, set, unset...)))
 	}
-	if who := WhoOfBrief(r.Brief); who != "" {
-		set[FieldWho] = who // the new brief's WHO line names its worker (friend_deal.go)
-	} else {
-		unset = append(unset, FieldWho)
+	u = Unit{Key: c.ID, Stream: c.Row, Changes: changes, Closes: closesFor(s.Open, ReworkResolves, c.ID),
+		Moved: fmt.Sprintf("%s %s; %s -> %s, attempt %d next, from its last pushed head; %d cards retired", c.ID, said, c.Col, to, n+1, len(changes)-1)}
+	if orphan {
+		u.Moved += "; its orphan merge card off " + s.Merge.Placed(c.ID).Col
 	}
-	// the new brief's BENCH line names its bench (bench_deal.go): a brief step reads no
-	// fleet table, so the members it names are add's to hold
-	bench, benchWhy := BenchOfBrief(r.Brief)
-	if benchWhy != "" {
-		p.refuse(r.ID, benchWhy)
-		return p
+	return u, orphan
+}
+
+// briefChange is what changed from one brief to the next, line by line: each line of the
+// old one the new one lacks ("- "), then each line the new one adds ("+ "), blank lines and
+// the lines' indent left out, each line cut short, the whole cut to a record's line; an edit
+// with no changed line is refused before it (sameLines).
+func briefChange(old, brief string) string {
+	var out []string
+	for _, l := range linesNotIn(old, brief) {
+		out = append(out, "- "+cutText(l, 160))
 	}
-	if len(bench) > 0 {
-		set[FieldBench] = strings.Join(bench, ",")
-	} else {
-		unset = append(unset, FieldBench)
+	for _, l := range linesNotIn(brief, old) {
+		out = append(out, "+ "+cutText(l, 160))
 	}
-	p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, set, unset...))},
-		Moved: fmt.Sprintf("%s brief replaced (%d bytes) stream=%s %s", c.ID, len(r.Brief), c.Row, c.Col)})
-	return p
+	return cutText(strings.Join(out, " | "), 1024)
+}
+
+// sameLines says two briefs hold the same lines, trimmed, blank lines left out, in any
+// order: no line changed.
+func sameLines(old, brief string) bool {
+	return len(linesNotIn(old, brief)) == 0 && len(linesNotIn(brief, old)) == 0
+}
+
+// linesNotIn is the lines of a, trimmed, that b does not hold, each counted as often as b
+// holds it; no blank line.
+func linesNotIn(a, b string) []string {
+	have := map[string]int{}
+	for _, l := range strings.Split(b, "\n") {
+		have[strings.TrimSpace(l)]++
+	}
+	var out []string
+	for _, l := range strings.Split(a, "\n") {
+		t := strings.TrimSpace(l)
+		if have[t] > 0 {
+			have[t]--
+			continue
+		}
+		if t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // briefTier is a card re-tiered (nova-sprint brief <id> --tier <t>; the owner, 2026-10-04:
@@ -144,24 +312,21 @@ func briefTier(s *Snapshot, p Plan, r BriefReq) Plan {
 	return p
 }
 
-// briefStarted is the remedy of a brief refused for a card dealt: what changes
-// its work instead, by the lifecycle's moves (lifecycle.go, Moves). A rework's
-// --fix is the next attempt's change, carried beside the brief, and rework
-// takes a card in review only; drop takes any open card off the table, and the
-// new brief is then a new card.
+// briefStarted is the remedy of a brief refused for a card working, merging or
+// landed: what changes its work instead, by the lifecycle's moves (lifecycle.go,
+// Moves). Once the card is in review the brief is edited in place, its next attempt;
+// drop takes any open card off the table, and the new brief is then a new card.
 func briefStarted(c *Card) string {
 	readd := "nova-sprint add --stream " + c.Row + " <new id> --brief-file <path>"
 	drop := "nova-sprint drop " + c.ID + " --reason '<why>', then " + readd
-	rework := "nova-sprint rework " + c.ID + " --fix '<what changes>'"
+	brief := "nova-sprint brief " + c.ID + " --brief-file <path> (in place, its next attempt)"
 	switch c.Col {
-	case Review:
-		return "run: " + rework + " (the next attempt's fix), or " + drop
 	case Merging:
-		return "run: nova-sprint return " + c.ID + " --reason '<why>', then " + rework + " (the next attempt's fix), or " + drop
+		return "run: nova-sprint return " + c.ID + " --reason '<why>', then " + brief + ", or " + drop
 	case Landed:
 		return "run: " + readd + " for the change"
 	case Working:
-		return "run: " + drop + ", or once it finishes (review), " + rework + " (the next attempt's fix)"
+		return "run: " + drop + ", or once it finishes (review), " + brief
 	}
 	return "run: " + drop
 }
@@ -170,8 +335,14 @@ func briefStarted(c *Card) string {
 // in review), with the command that does what was wanted by its state: a card
 // still working is reworked once it finishes, or dropped now; one never dealt
 // has its brief replaced; one dealt and not finished is dropped and added again;
-// one landed is a new card. "" for a primary in review.
+// one landed is a new card; one in review that ended on a brief defect is re-cut, never
+// reworked: a rework deals the brief as cut again (docs/SPEC-SPRINT.md section 1, a brief
+// defect), so it is dropped, then its re-cut brief added. "" for any other primary in review.
 func reworkWhy(c *Card) string {
+	if c.Placed() && c.Col == Review && c.F(FieldBriefDefect) != "" {
+		return "it ended on a brief defect (" + c.F(FieldBriefDefect) + "): a rework deals the same brief again; re-cut the brief: nova-sprint drop " + c.ID +
+			" --reason 'a brief defect: re-cut', then nova-sprint add --stream " + c.Row + " '<new id>' --brief-file '<the re-cut brief>'"
+	}
 	why := inState(c, Review)
 	if why == "" || !c.Placed() {
 		return why
@@ -297,8 +468,8 @@ func dependsOnly(old, brief string) bool {
 // takes no need that has not landed (the deal would run it first: ready ->
 // waiting is only a sentinel's effect, lifecycle.go). The brief decision and
 // the grade were over the same task and stay.
-func briefDepends(s *Snapshot, p Plan, c *Card, r BriefReq) Plan {
-	for _, n := range r.Needs {
+func briefDepends(s *Snapshot, p Plan, c *Card, brief string, needs []string) Plan {
+	for _, n := range needs {
 		nc := s.Work.Card(n)
 		switch {
 		case n == c.ID:
@@ -312,13 +483,13 @@ func briefDepends(s *Snapshot, p Plan, c *Card, r BriefReq) Plan {
 			return p
 		}
 	}
-	set, unset := map[string]string{"brief": r.Brief}, []string(nil)
-	if len(r.Needs) > 0 {
-		set["needs"] = strings.Join(r.Needs, ",")
+	set, unset := map[string]string{"brief": brief}, []string(nil)
+	if len(needs) > 0 {
+		set["needs"] = strings.Join(needs, ",")
 	} else {
 		unset = append(unset, "needs")
 	}
 	p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, set, unset...))},
-		Moved: fmt.Sprintf("%s DEPENDS-ON replaced: needs %s (%d bytes) stream=%s %s", c.ID, orDash(set["needs"]), len(r.Brief), c.Row, c.Col)})
+		Moved: fmt.Sprintf("%s DEPENDS-ON replaced: needs %s (%d bytes) stream=%s %s", c.ID, orDash(set["needs"]), len(brief), c.Row, c.Col)})
 	return p
 }

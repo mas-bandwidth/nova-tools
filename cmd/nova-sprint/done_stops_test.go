@@ -88,7 +88,8 @@ func TestADoneSprintStopsItsMachineAndTellsTheCoordinator(t *testing.T) {
 
 	// Work added: STOPPED, no longer done.
 	out = ta.ok("add --stream s2 --count 1 --one")
-	require.Contains(t, out, "\nSTOPPED  9/10 90.0%", "an add after the done:\n%s\nview %q", out, ta.viewLine())
+	// s2 is back on the table (the add holds a card not landed in it), s1 and s3 stay archived
+	require.Contains(t, out, "\nSTOPPED  3/4 75.0%", "an add after the done:\n%s\nview %q", out, ta.viewLine())
 	require.Equal(t, "STOPPED", ta.viewLine(), "an add after the done:\n%s\nview %q", out, ta.viewLine())
 	require.Contains(t, ta.ok("tick"), "TICK OK state=STOPPED nothing done", "the machine ran after an add")
 	// Started: it lands the card and stops again.

@@ -12,12 +12,15 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
+	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/internal/tlc"
 )
 
 // Row is one entry of a source: the file (or package directory) the work lives in,
@@ -222,13 +225,14 @@ type Plan struct {
 const MaxPaths = 8
 
 // PlanLedger groups a ledger's rows by file (one card per file, in ledger order),
-// computes each card's PATHS and TEST, and assigns waves: on an ordinary ledger
-// adjacent cards delete adjacent lines of one file and would conflict at land, so
-// odd cards are wave 1, even cards wave 2 depending on their wave-1 neighbours;
-// on a generated ledger (docs/SPEC-SPRINT.md section 7) every card is wave 1 with
-// no dependency, because land regenerates the ledger at the merged tree. prefix
-// opens every id; tier "" takes the ledger's own; max keeps the first max cards (0 is
-// all), cut before the waves are assigned so no kept card needs a cut one.
+// computes each card's PATHS and TEST, and plans one wave with no dependency for
+// every ledger: the lander resolves a ledger conflict as the union of removals, so
+// adjacent deletions of one file no longer conflict (docs/SPEC-CARD-CONTRACT.md
+// section 6, generated cards). Every card shares the ledger's path and none needs
+// another, so Shared tells the add it wants --allow-shared-paths; a generated
+// ledger (docs/SPEC-SPRINT.md section 7) plans the same. prefix opens every id;
+// tier "" takes the ledger's own; max keeps the first max cards (0 is all), cut
+// before the plan is rendered so no kept card needs a cut one.
 func PlanLedger(l Ledger, rows []Row, prefix, tier string, max int) Plan {
 	if tier == "" {
 		tier = l.Tier
@@ -256,27 +260,12 @@ func PlanLedger(l Ledger, rows []Row, prefix, tier string, max int) Plan {
 		c.Task = ledgerTask(l, *c)
 	}
 	p := Plan{Cards: cards, Tier: tier, Waves: 1}
-	if l.Generated || len(cards) < 2 {
-		for i := range p.Cards {
-			p.Cards[i].Wave = 1
-		}
-		p.Shared = len(cards) > 1
-		return p
-	}
-	p.Waves = 2
 	for i := range p.Cards {
-		if i%2 == 0 {
-			p.Cards[i].Wave = 1
-			continue
-		}
-		p.Cards[i].Wave = 2
-		p.Cards[i].Deps = append(p.Cards[i].Deps, p.Cards[i-1].ID)
-		if i+1 < len(p.Cards) {
-			p.Cards[i].Deps = append(p.Cards[i].Deps, p.Cards[i+1].ID)
-		}
+		p.Cards[i].Wave = 1
 	}
-	// two wave-1 cards share the ledger and neither needs the other: the add says so
-	p.Shared = len(cards) > 2
+	// every card is wave 1 and names the ledger in PATHS, and none needs another:
+	// two cards make the add want --allow-shared-paths
+	p.Shared = len(cards) > 1
 	return p
 }
 
@@ -625,6 +614,66 @@ func PlanHelp(tool, help, test, prefix, tier string) Card {
 	}
 }
 
+// ClassRed is a base red on one class of the tree's class suite, as the lander's base
+// gate found it (internal/sprint land_class.go; docs/SPEC-SPRINT.md section 7, the base's
+// class gate): the class, the run that went red, the test that pins it ("pkg TestX", ""
+// when the class is a run with no test, gofmt and vet), the files the run's output names,
+// and the finding on one line.
+type ClassRed struct {
+	Class   string
+	Run     string
+	Test    string
+	Files   []string
+	Finding string
+}
+
+// PlanClassRed is the fix-red card the generator stamps for a base red on one class:
+// its id is fix-red-<class>-<base> (one card per class and base, so the lander's judgment
+// and a hand generation name the same card), its PATHS the files the finding names with
+// their package's tests, and its TEST the class test. A class that is a run with no test
+// (gofmt, vet) gets the class test the card writes in internal/ci, ClassTestName: fix-red
+// is a gated kind, and its red and green is a test.
+func PlanClassRed(r ClassRed, base, tier string) Card {
+	if tier == "" {
+		tier = "pro"
+	}
+	var paths []string
+	for _, f := range r.Files {
+		paths = append(paths, f)
+		if strings.HasSuffix(f, ".go") {
+			paths = append(paths, path.Dir(f)+"/*_test.go")
+		}
+	}
+	file := "internal/ci"
+	if len(r.Files) > 0 {
+		file = r.Files[0]
+	}
+	test, gate := r.Test, "the test "+testName(r.Test)+" is red before and green after"
+	if test == "" {
+		test = "internal/ci " + ClassTestName(r.Class)
+		gate = "no class test runs `" + r.Run + "` yet: write " + ClassTestName(r.Class) + " in internal/ci first (unless internal/ci holds it already), the run over the tree, red while it fails or prints, so it is red before the fix and green after"
+	}
+	if pkg := testPackage(test); pkg != "" {
+		paths = append(paths, pkg+"/*_test.go")
+	}
+	return Card{
+		ID:    "fix-red-" + Slug(r.Class) + "-" + Slug(base),
+		File:  file,
+		Paths: MergePaths(paths),
+		Test:  test,
+		Tier:  tier,
+		Wave:  1,
+		Kind:  "fix-red",
+		Task:  fmt.Sprintf("The base %s is red on its class %s, so the lander lands nothing onto it until a head that cures it lands first. The run `%s` says: %s. Fix each finding at its cause in the files it names; %s. A ledger that only shrinks is not raised to make it pass.", base, r.Class, r.Run, strings.TrimSuffix(r.Finding, "."), gate) + draftRule,
+	}
+}
+
+// ClassTestName is the internal/ci test a class with no test of its own is pinned by:
+// TestTheTreePasses then the class in upper camel case (gofmt: TestTheTreePassesGofmt).
+func ClassTestName(class string) string {
+	return "TestTheTreePasses" + strings.TrimPrefix(findingTestName(class), "TestFinding")
+}
+
 // Header is what every brief of one generation shares.
 type Header struct {
 	Repo    string // owner/name
@@ -632,6 +681,25 @@ type Header struct {
 	Sha     string // the base sha, 40 hex
 	Minutes int    // the deadline; 0 takes the tier's default
 }
+
+// Attribution is the line every brief carries about its commit's By: trailer. A brief
+// never names its author: the deal may hand any card, a pinned one too, to any worker, a
+// friend or a fleet machine, so the worker who does the attempt names itself, and the WHO
+// line stays a preference, never an author (the coordinator's rule: a commit names the
+// worker who did the work, never a model and never someone who did not). A model name is
+// never a By:. Only a Claude worker writes a Co-Authored-By trailer, its true one; the
+// line spells no fill-in template of it, which a worker of another model completes with
+// its own model's name. internal/card refuses a brief that writes By: and a configured
+// name (check author-name).
+const Attribution = "ATTRIBUTION: By: your own name, the worker who does this attempt, on its own line at the end of every commit message; a model name is never a By:, and this brief names no author: its WHO line, if any, is a preference for who is dealt the card, never the name to sign. Below the By: line, a Claude worker adds its true Co-Authored-By trailer (Claude, its model, the noreply@anthropic.com address); any other worker adds no Co-Authored-By.\n"
+
+// AsARead is the brief's AS A READ section, the text a reader of the work is given
+// (sprint.FriendReadBrief carries it through the next heading): a By: trailer is judged
+// only for being present and true, and the scope of the change is its PATHS line as
+// AlwaysInPathsRule widens it. The sentence stays out of THE TASK: add's paths-cover-named
+// check would otherwise refuse every generated brief for naming tla/RUNS.tsv, tla/CASES.tsv
+// and internal/docs/catalog.go.
+const AsARead = "AS A READ\nA By: trailer is judged only for being present and true: it names the worker who pushed the branch under read, whoever was preferred for the card. A trailer naming another friend than a WHO line or an earlier brief expected is no finding, and attribution alone never decides a verdict; read the change against the task, its test and its PATHS.\nThe scope of this change is its PATHS line. " + AlwaysInPathsRule + "\n"
 
 // Deadline is the minutes a tier gets when the header names none.
 func Deadline(tier string) int {
@@ -641,10 +709,31 @@ func Deadline(tier string) int {
 	return 45
 }
 
+// modelGate is what a card whose PATHS reach tla/ adds to its STEP 4 gate: the model is run
+// in the gate, by the tree's own tool on a TLC bench, and the RUNS.tsv it writes is committed
+// with the change, because the lander refuses a head that edits a model or a configuration
+// without a current record for each case it touches (internal/sprint/land_records.go;
+// tla/README.md, "Refreshing the records after a model edit").
+const modelGate = "The PATHS reach tla/, so the gate also runs the model: on a Linux TLC bench (java, the pinned jar at /opt/tla/tla2tools.jar; never a working machine), for each group g that `go run ./tools/tlacheck groups --root . --stale` lists (the groups of the cases your edit touched), run `make tlc TLC_JAR=/opt/tla/tla2tools.jar TLC_OUT=$JOB/scratch/tlc-$g TLC_GROUP=$g`, then `go run ./tools/tlacheck merge --root . --keep tla/RUNS.tsv --out tla/RUNS.tsv $JOB/scratch/tlc-*/RUNS.tsv`, until the groups command prints []; commit tla/RUNS.tsv with the change, never a row written by hand. The lander refuses a head that edits tla/*.tla or tla/*.cfg without a current RUNS.tsv row for each case it touches, naming the case."
+
+// touchesModels says a card's PATHS reach a model or a configuration under tla/.
+func touchesModels(paths []string) bool {
+	for _, f := range []string{"tla/M.tla", "tla/MCM.cfg"} {
+		if slices.ContainsFunc(paths, func(g string) bool { return hygiene.MatchGlob(g, f) }) {
+			return true
+		}
+	}
+	return slices.ContainsFunc(paths, func(g string) bool {
+		return path.Dir(g) == "tla" && (path.Ext(g) == ".tla" || path.Ext(g) == ".cfg")
+	})
+}
+
 // Render writes one brief: the header lines nova-sprint add reads, the paragraph
 // every card of the night carried, the rules verbatim from the card template, the
-// task, and the steps. It is the card template's shape with the <...> filled, so
-// it passes the add's lint and nova-swarm lint --card --child-rules by construction.
+// ATTRIBUTION line, the task, the steps, and the AS A READ section a reader is given
+// (AsARead, which carries AlwaysInPathsRule).
+// It is the card template's shape with the <...> filled, so it passes the add's lint
+// and nova-swarm lint --card --child-rules by construction.
 func Render(h Header, c Card) string {
 	minutes := h.Minutes
 	if minutes == 0 {
@@ -669,31 +758,41 @@ func Render(h Header, c Card) string {
 	if pkg != "internal/ci" && !strings.HasPrefix(pkg, "internal/ci") {
 		gate += " ./internal/ci/"
 	}
+	paths, model := c.Paths, ""
+	if touchesModels(paths) {
+		model = " " + modelGate
+		if !slices.ContainsFunc(paths, func(g string) bool { return hygiene.MatchGlob(g, "tla/"+tlc.RunsFile) }) {
+			paths = append(slices.Clip(paths), "tla/"+tlc.RunsFile)
+		}
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "RESULT: %s sha=%s tier: %s\n", c.ID, sha12, c.Tier)
 	fmt.Fprintf(&b, "REPO: %s\n", h.Repo)
 	fmt.Fprintf(&b, "BASE: %s\n", h.Base)
 	fmt.Fprintf(&b, "KIND: %s\n", c.Kind)
 	fmt.Fprintf(&b, "DEPENDS-ON: %s\n", deps)
-	fmt.Fprintf(&b, "PATHS: %s\n", strings.Join(c.Paths, ", "))
+	fmt.Fprintf(&b, "PATHS: %s\n", strings.Join(paths, ", "))
 	if len(c.New) > 0 {
 		fmt.Fprintf(&b, "NEW: %s\n", strings.Join(c.New, ", "))
 	}
 	fmt.Fprintf(&b, "TEST: %s\n", c.Test)
 	fmt.Fprintf(&b, "START: %s, %s\n", c.File, pkg)
 	fmt.Fprintf(&b, "STOP: the test %s is red before the change and green after it, and the STEP 4 gate passes\n", testName(c.Test))
-	fmt.Fprintf(&b, "Deadline: finish within %d minutes.\n", minutes)
+	// docs/SPEC-CARD-CONTRACT.md: the deadline is a bound; past it is the coordinator's judgment.
+	fmt.Fprintf(&b, "Deadline: finish within %d minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.\n", minutes)
 	fmt.Fprintf(&b, "You are a child of the coordinator: one task, one staged checkout, one branch, unattended. This card is the whole task. Read $JOB/JOB.md first. Start at the current BASE tip; admission inspected exact base %s. Verify the defect still exists before editing; if already fixed report not-done with exact evidence rather than duplicate work. One change, one test that is red before and green after.\n", h.Sha)
 	b.WriteString("Libraries considered: the Go standard library and testify, already in the tree; the package's own seams and helpers; no new dependency, and no helper over thirty lines without first searching the package for one.\n\n")
 	b.WriteString(swarm.ChildRulesParagraph())
 	b.WriteString("\n")
+	b.WriteString(Attribution + "\n")
 	fmt.Fprintf(&b, "THE TASK. %s The work lives in %s; the files this card may touch are its PATHS line and no other, in the staged checkout JOB.md names, on the card's own branch, from BASE %s.\n\n", c.Task, c.File, h.Base)
-	b.WriteString("STEP 1. Enter the staged checkout JOB.md names with cd $JOB/repo && git log --oneline -1, no clone; work only on its own branch. Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it. Scratch belongs under $JOB/scratch.\n")
+	b.WriteString("STEP 1. Enter the staged checkout JOB.md names with cd $JOB/repo && git log --oneline -1, no clone; work only on its own branch. Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; " + swarm.GoCacheLine + " Scratch belongs under $JOB/scratch.\n")
 	fmt.Fprintf(&b, "STEP 2. Make it red first, as the task says, with the test %s: run %s -run %s and keep the failing line as evidence.\n", testName(c.Test), gate, testName(c.Test))
 	b.WriteString("STEP 3. Make it pass in the files this card names, and only those. Commit the draft on your own branch as soon as the test is green, before any further probe; a later commit may refine it. A change any other file needs goes in the report as a proposed diff, never a commit.\n")
-	fmt.Fprintf(&b, "STEP 4. Run the gate: %s and read the last line of each. Run gofmt -l on every changed Go file; it must print nothing.\n", gate)
+	fmt.Fprintf(&b, "STEP 4. Run the gate: %s and read the last line of each. Run gofmt -l on every changed Go file; it must print nothing.%s %s\n", gate, model, swarm.GateNamesWhoseFile)
 	fmt.Fprintf(&b, "STEP 5. Commit on your own branch with the trailer. Nothing reaches the forge from inside the wall: in the job the git shim records a push, the pull request is the finish JOB.md names (STEP 6), and the member makes both, against %s, from outside the wall when the card finishes. The pull request body states the diff stat, what was deleted, the tests with what each pins, and what was not done.\n", h.Base)
-	b.WriteString("STEP 6. End as JOB.md says (docs/SPEC-CARD-CONTRACT.md): where JOB.md ends the card with its pull request, that is the end and there is nothing else to write, the gate's lines in the pull request body; where it asks for RESULT.md, write it in JOB.md's shape (head, branch, verdict, gate, output, report).\n")
+	b.WriteString("STEP 6. End as JOB.md says (docs/SPEC-CARD-CONTRACT.md): where JOB.md ends the card with its pull request, that is the end and there is nothing else to write, the gate's lines in the pull request body; where it asks for RESULT.md, write it in JOB.md's shape (head, branch, verdict, gate, output, report). For a friend's REPORT.md (docs/FRIENDS.md), first line exactly Verdict: LAND|HOLD|FAIL, second line exactly Head: <40-hex>; for HOLD and FAIL omit Head: and leave line 2 blank.\n")
+	b.WriteString("\n" + AsARead)
 	return b.String()
 }
 

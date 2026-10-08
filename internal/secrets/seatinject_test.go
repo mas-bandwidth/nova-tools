@@ -133,8 +133,13 @@ func TestSeatInjectReSealsNamedValuesIntoAnExistingSeat(t *testing.T) {
 	assert.Contains(t, air, "recipient: "+pubAir, "air.yaml is not sealed to the seat and the recovery key:\n%s", air)
 	assert.Contains(t, air, "recipient: "+pubRecovery, "air.yaml is not sealed to the seat and the recovery key:\n%s", air)
 	assert.NotContains(t, air, "recipient: "+pubRowan, "air.yaml became readable by the source seat:\n%s", air)
+	// The grant is not this verb's to change: .sops.yaml is the same rules with the same
+	// recipients, and the only edit is the mark admitted to air.yaml's rule, which predates it.
 	got := f.read(t, ".sops.yaml")
-	assert.Equal(t, cfgBefore, got, "inject edited .sops.yaml; the grant is not this verb's to change:\n%s", got)
+	wantCfg, changed, err := seatMarkRule([]byte(cfgBefore), "air.yaml")
+	require.NoError(t, err)
+	require.True(t, changed, "the fixture's rule already admits the mark")
+	assert.Equal(t, string(wantCfg), got, "inject edited .sops.yaml beyond admitting the mark; the grant is not this verb's to change:\n%s", got)
 
 	git := readMaybe(t, f.gitArgs)
 	for _, want := range []string{"checkout\n-b\nseal/air-NOVA_REDIS_BENCH_PASSWORD-20260927-013000", "add\nair.yaml", "commit\n-m\ninject NOVA_REDIS_BENCH_PASSWORD into air.yaml from rowan", "checkout\n-f\nmain"} {
@@ -162,7 +167,7 @@ func TestSeatInjectAddsANewNameAndKeepsTheClearOnes(t *testing.T) {
 	line, err := RunSeatInject(f.options("EXTRA_KEY,NOVA_REDIS_BENCH_PASSWORD", true))
 	require.NoError(t, err, "RunSeatInject: %v", err)
 	stdin := readMaybe(t, f.sopsStdin)
-	want := "SPACE_HOST: space.example\nGH_TOKEN: 'ghp_current'\nNOVA_REDIS_BENCH_PASSWORD: 'redis_new'\nEXTRA_KEY: 'extra_new'\n"
+	want := "SPACE_HOST: space.example\nGH_TOKEN: 'ghp_current'\nNOVA_REDIS_BENCH_PASSWORD: 'redis_new'\nEXTRA_KEY: 'extra_new'\nNOVA_SECRETS_WRITTEN_BY: seat inject dev\n"
 	assert.Equal(t, want, stdin, "encrypt stdin:\n got %q\nwant %q", stdin, want)
 	assert.Contains(t, line, "names=2", "OK line does not count both names or name the branch by them: %s", line)
 	assert.Contains(t, line, "branch=seal/air-EXTRA_KEY+NOVA_REDIS_BENCH_PASSWORD-", "OK line does not count both names or name the branch by them: %s", line)

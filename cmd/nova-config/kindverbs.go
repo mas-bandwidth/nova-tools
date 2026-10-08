@@ -30,6 +30,10 @@ func runKind(ctx context.Context, k *config.Kind, args []string, stdout, stderr 
 		want = "set, show or history"
 	case k.Name == config.KindMachine:
 		want = "add, set, remove, list, show, history, width or self"
+	case k.Name == config.KindRoute:
+		want = "add, set, remove, list, show, history or prices"
+	case k.Name == config.KindLoop:
+		want = "add, set, remove, list, show, history or run"
 	}
 	if len(args) == 0 {
 		return refuse(stderr, k.Name, "want "+want)
@@ -41,6 +45,12 @@ func runKind(ctx context.Context, k *config.Kind, args []string, stdout, stderr 
 		case "width":
 			return runMachineWidth(ctx, args[1:], stdout, stderr, d)
 		}
+	}
+	if k.Name == config.KindRoute && args[0] == "prices" {
+		return runRoutePricesTool(ctx, args[1:], stdout, stderr, d)
+	}
+	if k.Name == config.KindLoop && args[0] == "run" {
+		return runLoopRun(ctx, args[1:], stdout, stderr, d)
 	}
 	if k.Singleton {
 		switch args[0] {
@@ -113,9 +123,10 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	if add && (k.Name == config.KindMachine || k.Name == config.KindLoop) {
 		c = storeFlags(fs)
 	} else {
-		c = writeStoreFlags(fs)
+		c = seatStoreFlags(fs)
 	}
 	as := actorFlag(fs)
+	reason := fs.String("reason", "", "why this change is made: one `line`, recorded in the history row beside the actor and the time; empty (the default) records none")
 	dry := fs.Bool("dry-run", false, "print the change the write would record (CONFIG DRY-RUN, from the same checks) and write nothing; it still reads the store")
 	asJSON := jsonFlag(fs)
 	values := map[string]*string{}
@@ -152,6 +163,10 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	if err != nil {
 		problems = append(problems, err.Error())
 	}
+	reasonText := strings.TrimSpace(*reason)
+	if strings.ContainsAny(reasonText, "\n\r") {
+		problems = append(problems, "--reason: want one line")
+	}
 	var row config.Row
 	var changes map[string]string
 	if add {
@@ -177,7 +192,7 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }() // ignored: every reply the verb needs is already read, so a close error changes nothing
 	if laterKind(k) {
 		if code, stale := behindSchema(ctx, st, stderr, verb, c); stale {
 			return code
@@ -192,10 +207,18 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 			next = toolName + " " + k.Name + " show"
 		}
 	}
+	if k.Name == config.KindLoop && d.probe != nil {
+		if err := checkLoopVerb(ctx, st, add, row, changes, d.probe); err != nil {
+			return refuse(stderr, verb, err.Error())
+		}
+	}
 	var notes []string
 	if add && k.Name == config.KindMachine && row.Fields["width"] == "" {
 		// width is set apart from slots and is the default when unset: say so where a newcomer meets it
-		notes = append(notes, fmt.Sprintf("machine=%s width=default: a sprint member at half its cores, as nova-sprint fleet sync reads them from its beat; its width is set apart from its slots; run: %s machine set %s --width <n> (0: no member) --as %s%s", config.Value(name), toolName, name, actor, c.again()))
+		notes = append(notes, fmt.Sprintf("machine=%s width=default: a sprint member at half its cores, as nova-sprint fleet sync reads them from its beat; its width is set apart from its slots; run: %s machine set %s --width <n> (0: no member) --actor %s%s", config.Value(name), toolName, name, actor, c.again()))
+	}
+	if note := actorAliasNote(fs); note != "" {
+		notes = append(notes, note)
 	}
 	var id int64
 	var changed []string
@@ -205,8 +228,12 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 			return storeErr(stderr, verb, err, writeRemedy(k, add, name, err, next)+c.again())
 		}
 		plan.Actor = actor
+		plan.Reason = reasonText
 		if *asJSON {
 			o := tool.Done().Fact("dry_run", true).Fact("op", plan.Op).Fact("kind", k.Name).Fact("name", name).Fact("before", plan.Before).Fact("after", plan.After)
+			if plan.Reason != "" {
+				o.Fact("reason", plan.Reason)
+			}
 			o.Verb, o.Notes = verb, notes
 			return emit(stdout, o)
 		}
@@ -215,11 +242,11 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		return 0
 	}
 	if add {
-		if id, err = st.Insert(ctx, k.Name, row, actor); err != nil {
+		if id, err = st.Insert(config.WithReason(ctx, reasonText), k.Name, row, actor); err != nil {
 			return storeErr(stderr, verb, err, writeRemedy(k, add, name, err, next)+c.again())
 		}
 	} else {
-		if _, id, err = st.Update(ctx, k.Name, name, changes, actor); err != nil {
+		if _, id, err = st.Update(config.WithReason(ctx, reasonText), k.Name, name, changes, actor); err != nil {
 			return storeErr(stderr, verb, err, writeRemedy(k, add, name, err, next)+c.again())
 		}
 		changed = slices.Sorted(maps.Keys(changes))
@@ -239,6 +266,21 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	}
 	printNotes(stdout, notes)
 	return 0
+}
+
+// checkLoopVerb refuses a loop whose verb is gone (config.CheckLoopVerb), the
+// row as the write leaves it: an add's own, a set's changes over the stored
+// row. A set of a row not there passes here; its update refuses it.
+func checkLoopVerb(ctx context.Context, st pgStore, add bool, row config.Row, changes map[string]string, probe config.VerbProbe) error {
+	if !add {
+		cur, found, err := st.Get(ctx, config.KindLoop, row.Name)
+		if err != nil || !found {
+			return err
+		}
+		row = config.Row{Name: cur.Name, Fields: maps.Clone(cur.Fields)}
+		maps.Copy(row.Fields, changes)
+	}
+	return config.CheckLoopVerb(ctx, row, probe)
 }
 
 // writeRemedy is the command an add or set refusal names: for a ref naming
@@ -279,11 +321,47 @@ func refRemedy(k *config.Kind) string {
 	return toolName + " " + ref + " list"
 }
 
+// removeRemedy is the command a remove refusal names: a route a tier still
+// lists is taken out by that tier's set, the remaining routes read from the
+// store and filled in, so the next turn is a paste and not a search
+// (docs/STANDARD.md, section 3, point 2). Every other refusal keeps next.
+func removeRemedy(ctx context.Context, st pgStore, k *config.Kind, name, again, next string) string {
+	if k.Name != config.KindRoute {
+		return next
+	}
+	tiers, err := st.List(ctx, config.KindTier)
+	if err != nil {
+		return next
+	}
+	for _, tier := range tiers {
+		var rest []string
+		found := false
+		for _, r := range strings.Split(tier.Fields["routes"], ",") {
+			switch {
+			case r == name:
+				found = true
+			case r != "":
+				rest = append(rest, r)
+			}
+		}
+		if !found {
+			continue
+		}
+		value := strings.Join(rest, ",")
+		if value == "" {
+			value = "''" // an empty --routes: the shell word the flag takes
+		}
+		return toolName + " " + config.KindTier + " set " + tier.Name + " --routes " + value + again
+	}
+	return next
+}
+
 func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, stderr io.Writer, d deps) int {
 	verb := k.Name + " remove"
 	fs := verbflag.New(verb)
-	c := writeStoreFlags(fs)
+	c := seatStoreFlags(fs)
 	as := actorFlag(fs)
+	reason := fs.String("reason", "", "why this change is made: one `line`, recorded in the history row beside the actor and the time; empty (the default) records none")
 	dry := fs.Bool("dry-run", false, "print the change the remove would record (CONFIG DRY-RUN, from the same checks) and write nothing; it still reads the store")
 	asJSON := jsonFlag(fs)
 	name, rest := nameAndRest(k, args)
@@ -311,6 +389,10 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 	if err != nil {
 		problems = append(problems, err.Error())
 	}
+	reasonText := strings.TrimSpace(*reason)
+	if strings.ContainsAny(reasonText, "\n\r") {
+		problems = append(problems, "--reason: want one line")
+	}
 	if len(problems) > 0 {
 		return refuse(stderr, verb, strings.Join(problems, "; "))
 	}
@@ -318,7 +400,7 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }() // ignored: every reply the verb needs is already read, so a close error changes nothing
 	if laterKind(k) {
 		if code, stale := behindSchema(ctx, st, stderr, verb, c); stale {
 			return code
@@ -330,24 +412,38 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 			return storeErr(stderr, verb, err, toolName+" "+k.Name+" list"+c.again())
 		}
 		plan.Actor = actor
+		plan.Reason = reasonText
 		if *asJSON {
 			o := tool.Done().Fact("dry_run", true).Fact("op", plan.Op).Fact("kind", k.Name).Fact("name", name).Fact("before", plan.Before)
+			if plan.Reason != "" {
+				o.Fact("reason", plan.Reason)
+			}
 			o.Verb = verb
 			return emit(stdout, o)
 		}
 		fmt.Fprintln(stdout, config.PlanLine(plan))
 		return 0
 	}
-	id, err := st.Delete(ctx, k.Name, name, actor)
+	id, err := st.Delete(config.WithReason(ctx, reasonText), k.Name, name, actor)
 	if err != nil {
-		return storeErr(stderr, verb, err, toolName+" "+k.Name+" list"+c.again())
+		next := toolName + " " + k.Name + " list" + c.again()
+		if errors.Is(err, config.ErrReferenced) {
+			next = removeRemedy(ctx, st, k, name, c.again(), next)
+		}
+		return storeErr(stderr, verb, err, next)
 	}
 	if *asJSON {
 		o := tool.Done().Fact("op", config.OpRemove).Fact("kind", k.Name).Fact("name", name).Fact("rev", id)
+		if note := actorAliasNote(fs); note != "" {
+			o.Note(note)
+		}
 		o.Verb = verb
 		return emit(stdout, o)
 	}
 	fmt.Fprintf(stdout, "CONFIG REMOVE kind=%s name=%s rev=%d\n", k.Name, config.Value(name), id)
+	if note := actorAliasNote(fs); note != "" {
+		printNotes(stdout, []string{note})
+	}
 	return 0
 }
 
@@ -372,7 +468,7 @@ func beats(ctx context.Context, addr string, names []string, d deps) (map[string
 	if err != nil {
 		return nil, err
 	}
-	defer rs.Close()
+	defer func() { _ = rs.Close() }() // ignored: every reply the verb needs is already read, so a close error changes nothing
 	return rs.Beats(ctx, names)
 }
 
@@ -410,7 +506,7 @@ func liveFields(bs map[string]*config.Beat, name string) []any {
 func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, stderr io.Writer, d deps) int {
 	verb := k.Name + " list"
 	fs := verbflag.New(verb)
-	c := storeFlags(fs)
+	c := seatStoreFlags(fs)
 	redisFlag := liveFlag(fs, k)
 	asJSON := jsonFlag(fs)
 	if code, ok := parse(fs, args, stderr, verb); !ok {
@@ -427,7 +523,7 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }() // ignored: every reply the verb needs is already read, so a close error changes nothing
 	if laterKind(k) {
 		if code, stale := behindSchema(ctx, st, stderr, verb, c); stale {
 			return code
@@ -465,7 +561,7 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 func runKindRead(ctx context.Context, k *config.Kind, which string, args []string, stdout, stderr io.Writer, d deps) int {
 	verb := k.Name + " " + which
 	fs := verbflag.New(verb)
-	c := storeFlags(fs)
+	c := seatStoreFlags(fs)
 	var redisFlag *string
 	if which == "show" {
 		redisFlag = liveFlag(fs, k)
@@ -498,7 +594,7 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }() // ignored: every reply the verb needs is already read, so a close error changes nothing
 	if laterKind(k) {
 		if code, stale := behindSchema(ctx, st, stderr, verb, c); stale {
 			return code

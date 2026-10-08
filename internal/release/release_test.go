@@ -304,7 +304,7 @@ func greenRuns() []CheckRun {
 
 func cutDeps(t *testing.T, f Forge) Deps {
 	t.Helper()
-	return Deps{Forge: f, Now: func() time.Time { return at(t) }}
+	return Deps{Forge: f, Now: func() time.Time { return at(t) }, Spend: noSpend()}
 }
 
 // ---------------------------------------------------------------------------
@@ -1039,7 +1039,7 @@ func TestInstallRefusesAToolPathThatIsADirectoryAndMovesNothingAside(t *testing.
 			return "", fmt.Errorf("absent")
 		}})
 	require.NotZero(t, code, "install must fail when tool path is a directory: out=%s errs=%s", o.String(), e.String())
-	require.Contains(t, e.String(), "INSTALL FAIL")
+	require.Contains(t, e.String(), "INSTALL FAILED")
 	require.Contains(t, e.String(), "not a regular file")
 
 	info, err := os.Lstat(target)
@@ -2613,4 +2613,61 @@ func TestReadSumsRefusesAnArtifactNameTheRemoteShellWouldReadAsSyntax(t *testing
 		names = append(names, a.Name)
 	}
 	assert.Equal(t, []string{"nova-bus", "nova-update.exe", "nova_tool+1.2"}, names)
+}
+
+// TestInstallFileRefusesBytesThatAreNotTheVerifiedSum pins security#72 finding
+// 8: the bytes staged into --bin are the bytes whose sha256 the build recorded,
+// not whatever the artifact directory holds after VerifyArtifacts passed. The
+// source is swapped, so a symlink or a rewritten file is refused and no
+// temporary is left behind.
+func TestInstallFileRefusesBytesThatAreNotTheVerifiedSum(t *testing.T) {
+	t.Parallel()
+	sumOf := func(b []byte) string {
+		s := sha256.Sum256(b)
+		return hex.EncodeToString(s[:])
+	}
+	leftovers := func(t *testing.T, bin string) []string {
+		t.Helper()
+		ents, err := os.ReadDir(bin)
+		require.NoError(t, err)
+		var names []string
+		for _, e := range ents {
+			names = append(names, e.Name())
+		}
+		return names
+	}
+
+	t.Run("changed bytes", func(t *testing.T) {
+		t.Parallel()
+		art, bin := t.TempDir(), t.TempDir()
+		src := filepath.Join(art, "nova-bus")
+		require.NoError(t, os.WriteFile(src, []byte("substituted"), 0o755))
+		_, err := stageArtifact(bin, "nova-bus", src, sumOf([]byte("verified")))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "nova-bus")
+		assert.Contains(t, err.Error(), "does not match")
+		assert.Empty(t, leftovers(t, bin))
+	})
+
+	t.Run("matching bytes", func(t *testing.T) {
+		t.Parallel()
+		art, bin := t.TempDir(), t.TempDir()
+		src := filepath.Join(art, "nova-bus")
+		require.NoError(t, os.WriteFile(src, []byte("verified"), 0o755))
+		tmp, err := stageArtifact(bin, "nova-bus", src, sumOf([]byte("verified")))
+		require.NoError(t, err)
+		got, err := os.ReadFile(tmp)
+		require.NoError(t, err)
+		assert.Equal(t, "verified", string(got))
+	})
+
+	t.Run("symlink source", func(t *testing.T) {
+		t.Parallel()
+		art, bin := t.TempDir(), t.TempDir()
+		link, _ := plantSymlink(t, art, "nova-bus", "verified")
+		_, err := stageArtifact(bin, "nova-bus", link, sumOf([]byte("verified")))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not a regular file")
+		assert.Empty(t, leftovers(t, bin))
+	})
 }

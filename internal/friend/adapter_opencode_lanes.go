@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
@@ -28,8 +29,9 @@ type LaneHarness interface {
 	OpenSession(ctx context.Context, seed string) (session string, err error)
 	// DeliverTo pushes text into session as one turn and blocks until it
 	// ends: its exit, and a permission the harness refused without asking,
-	// read from the turn's output (empty when none). A provider's refusal is
-	// ProviderRefused, as Deliver answers it.
+	// read from the turn's output (empty when none). A rate limit is
+	// RateLimited and out of funds OutOfFunds (ProviderLimit); a provider's
+	// refusal is ProviderRefused, as Deliver answers it.
 	DeliverTo(ctx context.Context, session, text string) (LaneTurn, error)
 }
 
@@ -37,6 +39,14 @@ type LaneHarness interface {
 type LaneTurn struct {
 	Exit     int
 	Rejected string // the line of the output where the harness refused a permission, if any
+	// Windows is the subscription windows' use the harness reported in the turn
+	// (a Claude Code run's rate_limit_event lines, ReadRateLimitEvents); nil when
+	// it reported none. The lanes are paced by it (pacing.go).
+	Windows []WindowUse
+	// FirstError is the first line of the turn's output that says an error
+	// (HarnessFirstError), "" when none does: a run that exits 0 with no report
+	// is a harness fault said with it (lanes.go, faultTurn).
+	FirstError string
 }
 
 // permissionRejected is a line of a turn's output where a tool call was
@@ -140,7 +150,7 @@ func (o *OpenCode) allow() {
 var opening sync.Mutex
 
 // OpenSession runs the seed as the first turn of a new session in Dir
-// (`opencode run --dir <dir> <seed>`, no --session) and answers the session
+// (`opencode run <seed>` in Dir, no --session) and answers the session
 // that appeared in the listing of Dir, the newest the listing before it did
 // not hold. The lanes' directories are allowed in the project config first.
 func (o *OpenCode) OpenSession(ctx context.Context, seed string) (string, error) {
@@ -151,11 +161,18 @@ func (o *OpenCode) OpenSession(ctx context.Context, seed string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	out, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"run", "--dir", o.Dir, seed}, "")
+	out, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"run", seed}, "")
 	if o.Out != nil && out != "" {
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
-	if exit, err = refused("(new)", out, exit, err); err != nil {
+	if exit != 0 && err == nil {
+		if limit := laneLimit("(new)", out); limit != nil {
+			return "", limit // a limit or out of funds: the lanes' governor answers it, not the open's retry alone
+		}
+	}
+	exit, err = refused("(new)", out, exit, err)
+	o.turns.saw("(new)", exit, err)
+	if err != nil {
 		return "", err
 	}
 	if exit != 0 {
@@ -193,13 +210,204 @@ func (o *OpenCode) sessions(ctx context.Context) ([]session, error) {
 }
 
 // DeliverTo is one card's turn in a lane's session: `opencode run --session
-// <id> --dir <dir> <text>`, its output read for a refused permission.
+// <id> <text>` in Dir, its output read for a refused permission, and its
+// tail for a rate limit or out of funds (ProviderLimit, whatever the exit:
+// the lanes heed it only when the card has no RESULT.md) before a provider's
+// refusal of the session.
+//
+// A lane's turn runs in the card's job directory, the one its context carries
+// (WithLaneDir), so a path the model reads relative is read inside the job;
+// with none it runs in Dir.
 func (o *OpenCode) DeliverTo(ctx context.Context, id, text string) (LaneTurn, error) {
 	o.allow()
-	out, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"run", "--session", id, "--dir", o.Dir, text}, "")
+	out, exit, err := o.Run(ctx, LaneDirOf(ctx, o.Dir), o.program(), []string{"run", "--session", id, text}, "")
 	if o.Out != nil && out != "" {
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
+	if err == nil {
+		if limit := laneLimit(id, out); limit != nil {
+			o.turns.saw(id, exit, limit)
+			return LaneTurn{Exit: exit, Rejected: PermissionRejection(out), FirstError: HarnessFirstError(out)}, limit
+		}
+	}
 	exit, err = refused(id, out, exit, err)
+	o.turns.saw(id, exit, err)
+	return LaneTurn{Exit: exit, Rejected: PermissionRejection(out), FirstError: HarnessFirstError(out)}, err
+}
+
+// RunRead is one read as a one-shot of the friend's opencode: `opencode run
+// [--model <model>] <prompt>` in Dir, a session of its own that no listing is read for, so reads
+// never queue behind the lanes' session opens. Its output is read as a lane turn's is.
+func (o *OpenCode) RunRead(ctx context.Context, model, prompt string) (LaneTurn, error) {
+	o.allow()
+	args := []string{"run"}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+	out, exit, err := o.Run(ctx, o.Dir, o.program(), append(args, prompt), "")
+	if o.Out != nil && out != "" {
+		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
+	}
+	if err == nil {
+		if limit := ProviderLimit("(read)", out); limit != nil {
+			return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, limit
+		}
+	}
+	exit, err = refused("(read)", out, exit, err)
 	return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, err
+}
+
+// laneLimit is a lane turn's limit: a rate limit or out of funds
+// (ProviderLimit), else the harness's own limit with its reset beside it
+// ("Insufficient AI Credits ... will refresh in 3 hours", ReadLimit), which
+// is UsageLimited until that reset, as a Claude lane's rejected
+// rate_limit_event is: the lanes stop taking until it, no guessed time.
+func laneLimit(session, out string) error {
+	if limit := ProviderLimit(session, out); limit != nil {
+		return limit
+	}
+	if lim, found := ReadLimit(stripANSI(out), time.Now()); found && lim.Limited {
+		return UsageLimited{Session: session, Reason: lim.Reason, Until: lim.Until}
+	}
+	return nil
+}
+
+// OpenCodePriced is an OpenCode friend's lanes with every run priced from
+// opencode's own session record (docs/SPEC-FRIEND.md, the Claude lanes, the
+// OpenCode lane): after each turn `opencode export <session>` is read, and
+// the run's cost is what the session's assistant messages gained since the
+// last read (each message's cost is opencode's own figure), said on the
+// record as one line per run. The daemon wraps the friend's OpenCode in it;
+// a bare OpenCode runs no export. A card's turn is capped by its tokens, read
+// from the same record (tokencap.go).
+type OpenCodePriced struct {
+	*OpenCode
+
+	// Friend is the friend's name, as a capped card's report says it.
+	Friend string
+	// TokenCap is the friend row's per-card token cap as the daemon last read
+	// it (TokenCapOf; 0 none); nil is DefaultTokenCap.
+	TokenCap func() int64
+	// Tick is the clock a running turn's usage is polled on (every TokenPoll);
+	// a real ticker when nil.
+	Tick func(time.Duration) (<-chan time.Time, func())
+
+	mu    sync.Mutex
+	seen  map[string]float64 // each session's cost when last read
+	cost  float64
+	runs  int       // the runs priced so far
+	until time.Time // the reset of the last run's usage limit; zero when it ran unlimited
+	cards cardRuns  // each card's tokens over its finished turns
+}
+
+// Spent is the cost of every run priced so far, in US dollars.
+func (p *OpenCodePriced) Spent() float64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.cost
+}
+
+// SpendLine is every run's cost so far and, when the last run stopped at a
+// usage limit, its reset: `spend: harness=opencode runs=<n> cost_usd=<sum>
+// [limited_until=<t>]`. An API friend has no five-hour or weekly window to
+// read; her limit is what the run said (Spender).
+func (p *OpenCodePriced) SpendLine() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.runs == 0 {
+		return ""
+	}
+	line := fmt.Sprintf("spend: harness=opencode runs=%d cost_usd=%.4f", p.runs, p.cost)
+	if !p.until.IsZero() {
+		line += " limited_until=" + p.until.UTC().Format(time.RFC3339)
+	}
+	return line
+}
+
+// OpenSession is OpenCode's, then the first run priced.
+func (p *OpenCodePriced) OpenSession(ctx context.Context, seed string) (string, error) {
+	id, err := p.OpenCode.OpenSession(ctx, seed)
+	if err == nil {
+		p.price(ctx, id)
+	}
+	return id, err
+}
+
+// DeliverTo is OpenCode's under the card's token cap (deliverCapped), then the
+// run priced, whatever it answered.
+func (p *OpenCodePriced) DeliverTo(ctx context.Context, id, text string) (LaneTurn, error) {
+	lt, err := p.deliverCapped(ctx, id, text)
+	var limited UsageLimited
+	p.mu.Lock()
+	p.until = time.Time{}
+	if errors.As(err, &limited) {
+		p.until = limited.Until
+	}
+	p.mu.Unlock()
+	p.price(ctx, id)
+	return lt, err
+}
+
+// openCodeExport is the part of `opencode export <session>` a price reads.
+type openCodeExport struct {
+	Messages []struct {
+		Info struct {
+			Role string  `json:"role"`
+			Cost float64 `json:"cost"`
+		} `json:"info"`
+	} `json:"messages"`
+}
+
+// SessionCost is the cost of a session from its export: the sum of its
+// assistant messages' costs. The export may be preceded by a line of its
+// own (opencode says what it exports on stderr); the JSON starts at the
+// first '{'.
+func SessionCost(export string) (float64, error) {
+	at := strings.IndexByte(export, '{')
+	if at < 0 {
+		return 0, fmt.Errorf("opencode export: no JSON object in %q", oneLine(export, 120))
+	}
+	var e openCodeExport
+	if err := json.NewDecoder(strings.NewReader(export[at:])).Decode(&e); err != nil {
+		return 0, fmt.Errorf("opencode export: %v", err)
+	}
+	cost := 0.0
+	for _, m := range e.Messages {
+		if m.Info.Role == "assistant" {
+			cost += m.Info.Cost
+		}
+	}
+	return cost, nil
+}
+
+// price reads the session's record and says the run's cost on the record;
+// a record that cannot be read is said there, and the turn stands.
+func (p *OpenCodePriced) price(ctx context.Context, id string) {
+	out, exit, err := p.Run(ctx, p.Dir, p.program(), []string{"export", id}, "")
+	if err == nil && exit != 0 {
+		err = fmt.Errorf("exited %d: %s", exit, oneLine(out, 200))
+	}
+	var now float64
+	if err == nil {
+		now, err = SessionCost(out)
+	}
+	if err != nil {
+		if p.Out != nil {
+			fmt.Fprintf(p.Out, "opencode: session=%s cost=- (its record was not read: %v)\n", id, err)
+		}
+		return
+	}
+	p.mu.Lock()
+	if p.seen == nil {
+		p.seen = map[string]float64{}
+	}
+	p.runs++
+	run := max(now-p.seen[id], 0)
+	p.seen[id] = now
+	p.cost += run
+	total := p.cost
+	p.mu.Unlock()
+	if p.Out != nil {
+		fmt.Fprintf(p.Out, "opencode: session=%s cost=$%.4f total=$%.4f\n", id, run, total)
+	}
 }

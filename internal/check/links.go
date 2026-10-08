@@ -191,6 +191,17 @@ func checkFileLinks(root, mdPath string, exclude []string) (checked int, broken 
 		return 0, []BrokenLink{{File: relFile, Reason: fmt.Sprintf("unreadable (%v)", readCause(err))}}
 	}
 
+	// Resolve the root the same way a target is resolved, before the prefix
+	// test. On macOS the temp root is under /tmp or /var, each a symlink
+	// (/tmp -> /private/tmp, /var -> /private/var), so a resolved target never
+	// has the unresolved root as a prefix. A directory symlink that stays
+	// inside the tree must not look like an escape. If the root cannot be
+	// resolved, the unresolved root is kept.
+	realRoot, rootErr := filepath.EvalSymlinks(root)
+	if rootErr != nil {
+		realRoot = root
+	}
+
 	// Fences use fenceRE, the same CommonMark rule the ledger parser uses: the
 	// opening run records its character and length, and only a run of the SAME
 	// character, at least as long and carrying nothing after it, closes it.
@@ -226,8 +237,23 @@ func checkFileLinks(root, mdPath string, exclude []string) (checked int, broken 
 			}
 			checked++
 			if reason == "" {
-				if _, statErr := os.Stat(resolved); statErr != nil {
-					reason = "does not exist"
+				// The lexical check in resolveTarget rejects targets that leave
+				// root with "..", but an intermediate directory symlink could
+				// still escape the tree. Compare the resolved target to the
+				// resolved root (as attest does in attest.go:120-123). A
+				// non-existent target keeps "does not exist".
+				realPath, evalErr := filepath.EvalSymlinks(resolved)
+				if evalErr != nil {
+					if errors.Is(evalErr, fs.ErrNotExist) || os.IsNotExist(evalErr) {
+						reason = "does not exist"
+					}
+				} else if realPath != realRoot && !strings.HasPrefix(realPath, realRoot+string(filepath.Separator)) {
+					reason = "escapes the tree through a symlink; cannot survive the repo travelling alone"
+				}
+				if reason == "" {
+					if _, statErr := os.Stat(resolved); statErr != nil {
+						reason = "does not exist"
+					}
 				}
 			}
 			if reason != "" {
@@ -266,12 +292,13 @@ func extractLinkTargets(line string) []string {
 	if strings.IndexByte(line, '[') < 0 {
 		return nil
 	}
+	bracketMatches := matchingBracketCloses(line)
 	var targets []string
 	for i := 0; i < len(line); i++ {
 		if line[i] != '[' {
 			continue
 		}
-		textEnd := matchBrackets(line, i)
+		textEnd := bracketMatches[i] - 1
 		if textEnd < 0 || textEnd+1 >= len(line) || line[textEnd+1] != '(' {
 			continue
 		}
@@ -284,22 +311,26 @@ func extractLinkTargets(line string) []string {
 	return targets
 }
 
-// matchBrackets returns the index of the ']' closing the '[' at open,
-// tracking nesting, or -1 if it never closes on this line.
-func matchBrackets(line string, open int) int {
-	depth := 0
-	for i := open; i < len(line); i++ {
+// matchingBracketCloses records each '[' match in one pass, as links specifies
+// for its nested inline-link text (docs/SPEC.md:422-484). A stored index is
+// one-based so zero means that the '[' is unclosed; backslashes do not change
+// the scanner's existing bracket behavior.
+func matchingBracketCloses(line string) []int {
+	matches := make([]int, len(line))
+	stack := make([]int, 0)
+	for i := 0; i < len(line); i++ {
 		switch line[i] {
 		case '[':
-			depth++
+			stack = append(stack, i)
 		case ']':
-			depth--
-			if depth == 0 {
-				return i
+			if n := len(stack); n > 0 {
+				open := stack[n-1]
+				stack = stack[:n-1]
+				matches[open] = i + 1
 			}
 		}
 	}
-	return -1
+	return matches
 }
 
 // parseDestination parses a parenthesized link destination at the start of

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store/storetest"
 )
 
 // A busy sprint is read whole once: the first tick reads the four tables,
@@ -46,7 +47,7 @@ func TestATickReadsTheSprintOnce(t *testing.T) {
 		}
 		h.work("m1")
 		h.work("m2")
-		h.readAll()
+		h.readOutstanding() // the next tick asks the next reads
 		h.landAll("s1")
 	}
 	require.NotZero(t, caught, "no tick caught a table up from its change stream: the world's writes were not read")
@@ -143,7 +144,7 @@ func TestATwinReadCutShortLeavesNoTableHalfRead(t *testing.T) {
 	h.startMachine()
 	h.machine()
 	h.work("m1")
-	h.readAll()
+	h.readOutstanding() // the next tick asks the next reads
 	failed := false
 	h.m.Fail = func(point string) error {
 		if point == "readset t-merge" && !failed {
@@ -162,7 +163,7 @@ func TestATwinReadCutShortLeavesNoTableHalfRead(t *testing.T) {
 	fresh, at, err := h.st.Fenced(h.ctx, All, tickExtras, nil)
 	require.NoError(t, err, "fresh read: %v at %d, twin at %d", err, at, gen.Gen)
 	require.Equal(t, gen.Gen, at, "fresh read: %v at %d, twin at %d", err, at, gen.Gen)
-	d := TwinDiff(snap, fresh)
+	d := storetest.TwinDiff(snap, fresh)
 	require.Empty(t, d, "the twin after a cut read: %s", d)
 	require.NotEmpty(t, snap.Merge.Cards(), "the merge table is empty: the check shows nothing")
 }
@@ -236,7 +237,11 @@ func TestATicksPartsTripsArePinned(t *testing.T) {
 	// its acquire, one apply for each table it writes, its release; the ask
 	// also catches the readers table up from its change stream; the readers'
 	// beats and holds are read once by the tick, before its parts (first read)
-	want := map[string]int64{"work/drain": 9, "readers/ask": 10} // one more each since 2026-10-04: the seat record (the seat's generation), read with the coordinator
+	// one more each since 2026-10-04: the seat record (the seat's generation),
+	// read with the coordinator. The ask writes its forty primaries in steps of
+	// AskBatch (tick_ask.go), each a fenced step of its own: the first step's
+	// 10 trips, and 9 for each step after it (its readers caught up already)
+	want := map[string]int64{"work/drain": 9, "readers/ask": 10 + 9*(40/AskBatch-1)}
 	require.Equal(t, fmt.Sprint(want), fmt.Sprint(got), "the busy tick's parts made %v round trips, want %v: %s", got, want, busy.TimesLine())
 }
 

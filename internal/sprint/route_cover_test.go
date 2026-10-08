@@ -256,9 +256,10 @@ func TestRouteCoverRouteStats(t *testing.T) {
 }
 
 // The tier a card's reads are asked at is never weaker than the writer's (nova-tools#5096
-// item 27): a heavy card is read on heavy, a frontier card, which no route serves, on
-// heavy as well and never on pro, and a read tier set for the stream or the sprint raises a
-// flash or pro card's reads and lowers none.
+// item 27), but for the interim rule (the owner, 2026-10-06 7:41 PM ET: "let pro do it"):
+// a heavy read collapses to pro, so a heavy card, a frontier card (read on heavy, which
+// no route serves) and a read tier raised to heavy are read on pro; a read tier set for
+// the stream or the sprint raises a flash or pro card's reads and lowers none.
 func TestReadTierOfIsNeverWeakerThanTheWriter(t *testing.T) {
 	t.Parallel()
 	card := func(brief string) *Card {
@@ -269,12 +270,12 @@ func TestReadTierOfIsNeverWeakerThanTheWriter(t *testing.T) {
 	}{
 		{"a flash card", "", "", "flash"},
 		{"a pro card", "tier: pro", "", "pro"},
-		{"a heavy card", "tier: heavy", "", "heavy"},
-		{"a heavy card, a flash setting does not lower it", "tier: heavy", "flash", "heavy"},
-		{"a heavy card, a pro setting does not lower it", "tier: heavy", "pro", "heavy"},
-		{"a frontier card, never on pro", "tier: frontier", "", "heavy"},
-		{"a frontier card, a lower setting does not lower it", "tier: frontier", "flash", "heavy"},
-		{"a pro card raised by the sprint", "tier: pro", "heavy", "heavy"},
+		{"a heavy card, on pro (the interim rule)", "tier: heavy", "", "pro"},
+		{"a heavy card, a flash setting does not lower it", "tier: heavy", "flash", "pro"},
+		{"a heavy card, a pro setting", "tier: heavy", "pro", "pro"},
+		{"a frontier card, on heavy, on pro (the interim rule)", "tier: frontier", "", "pro"},
+		{"a frontier card, a lower setting does not lower it below pro", "tier: frontier", "flash", "pro"},
+		{"a pro card raised by the sprint to heavy, on pro (the interim rule)", "tier: pro", "heavy", "pro"},
 		{"a flash card raised by the sprint", "", "pro", "pro"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

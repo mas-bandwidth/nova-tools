@@ -12,9 +12,10 @@ import (
 // Reworked work is asked round the readers, the readers of its earlier attempt
 // not preferred (the owner, 2026-10-01: "yes on the decision."): with one of
 // them holding a read it has begun and another reader idle, the machine's tick
-// asks the next two round the readers, and a second tick right after moves
-// nothing but the drain (errata 3 amendment 12). Asking the earlier pair again
-// put a second read on the busy reader, and the next tick's level moved it.
+// asks the next two round the readers, both together (reads are asked together,
+// sprint.ReadsWanted), and a second tick right after moves nothing but the drain
+// (errata 3 amendment 12). Asking the earlier pair again put a second read on
+// the busy reader, and the next tick's level moved it.
 func TestReworkedWorkIsAskedRoundTheReaders(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -27,19 +28,22 @@ func TestReworkedWorkIsAskedRoundTheReaders(t *testing.T) {
 	}
 	// attempt 1 of s1-1 is read by reader-a and reader-b: one ok, one broken, reworked
 	first := ask("s1-1")
-	require.Len(t, first, 2)
-	h.must(ReadStep(sprint.ReadReq{As: first[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{first[0].ID}}}))
-	h.must(ReadStep(sprint.ReadReq{As: first[1].Row, Verdict: "broken", Finding: "f:1", Sel: sprint.Sel{IDs: []string{first[1].ID}}}))
+	require.Len(t, first, 2, "both reads together")
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: first[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{first[0].ID}}}))
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: first[1].Row, Verdict: "broken", Finding: "f:1", Sel: sprint.Sel{IDs: []string{first[1].ID}}}))
 	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "fix"}))
 	pair := []string{first[0].Row, first[1].Row}
 	require.ElementsMatch(t, []string{"reader-a", "reader-b"}, pair)
-	// s1-2 is asked of reader-c and reader-a: reader-a begins its read and holds it,
-	// reader-c reads ok and is idle
-	for _, rc := range ask("s1-2") {
+	// s1-2 is asked of reader-c, who reads ok and is idle, and of reader-a, who
+	// begins its read and holds it
+	second := ask("s1-2")
+	require.Len(t, second, 2, "both reads together")
+	require.ElementsMatch(t, []string{"reader-c", "reader-a"}, []string{second[0].Row, second[1].Row}, "round the readers, past reader-b")
+	for _, rc := range second {
 		if rc.Row == "reader-a" {
 			h.must(ReadStep(sprint.ReadReq{As: rc.Row, Begin: true, Sel: sprint.Sel{IDs: []string{rc.ID}}}))
 		} else {
-			h.must(ReadStep(sprint.ReadReq{As: rc.Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
+			h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
 		}
 	}
 	h.finishAttempt("s1-1", false, "h2")
@@ -49,7 +53,7 @@ func TestReworkedWorkIsAskedRoundTheReaders(t *testing.T) {
 	for _, rc := range readsAt(h.snap(), h.snap().Work.Card("s1-1")) {
 		who = append(who, rc.Row)
 	}
-	assert.ElementsMatch(t, []string{"reader-b", "reader-c"}, who, "attempt 2 asked of the next two round the readers")
+	assert.ElementsMatch(t, []string{"reader-b", "reader-c"}, who, "attempt 2 asked both its reads of the next readers round the readers, never the busy reader-a")
 	res := h.machine()
 	for _, p := range res.Parts {
 		if p.Name != sprint.PartDrain {

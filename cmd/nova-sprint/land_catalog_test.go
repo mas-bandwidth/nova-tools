@@ -75,13 +75,14 @@ func packageCard(r *landRig, id, dir string, catalog, agents string) string {
 // PATHS names only the package. Two such cards in one batch both land, the map family
 // regenerates once, and the catalog is the union of both sides' rows, the tip's first,
 // told on the card's timeline and the land log's line. An edit of an existing catalog
-// row, or a map change from a card that adds no directory, is still E12.
+// row, or a map change from a card that adds no directory, lands too: the catalog and
+// every AGENTS.md map are inside every card's PATHS (cardgen.AlwaysInPathsRule).
 func TestLandExemptsTheCatalogRowAndMapOfANewPackage(t *testing.T) {
 	t.Parallel()
 	t.Run("a card adding a package with its catalog row and map lands", func(t *testing.T) {
 		t.Parallel()
 		r := catalogRig(t, filepath.Join(t.TempDir(), "runs"))
-		brief := writeNeedsBrief(t, t.TempDir(), "s1-1", "Fix s1-1.\nPATHS: internal/newpkg/newpkg.go", "")
+		brief := writeNeedsBrief(t, t.TempDir(), "s1-1", "Fix s1-1. tier: flash\nPATHS: internal/newpkg/newpkg.go", "")
 		r.ok("add --stream s1 s1-1 --one --brief-file " + brief)
 		head := packageCard(r, "s1-1", "newpkg", withCatalogRow("internal/newpkg"), mapOf("internal/docs", "internal/newpkg"))
 		r.queued(map[string]string{"s1-1": head}, "s1-1")
@@ -99,8 +100,8 @@ func TestLandExemptsTheCatalogRowAndMapOfANewPackage(t *testing.T) {
 		count := filepath.Join(t.TempDir(), "runs")
 		r := catalogRig(t, count)
 		dir := t.TempDir()
-		b1 := writeNeedsBrief(t, dir, "s1-1", "Fix s1-1.\nPATHS: internal/newpkg/newpkg.go", "")
-		b2 := writeNeedsBrief(t, dir, "s1-2", "Fix s1-2.\nPATHS: internal/otherpkg/otherpkg.go", "")
+		b1 := writeNeedsBrief(t, dir, "s1-1", "Fix s1-1. tier: flash\nPATHS: internal/newpkg/newpkg.go", "")
+		b2 := writeNeedsBrief(t, dir, "s1-2", "Fix s1-2. tier: flash\nPATHS: internal/otherpkg/otherpkg.go", "")
 		r.ok("add --stream s1 --brief-file " + b1 + " --brief-file " + b2)
 		heads := map[string]string{
 			"s1-1": packageCard(r, "s1-1", "newpkg", withCatalogRow("internal/newpkg"), mapOf("internal/docs", "internal/newpkg")),
@@ -125,39 +126,180 @@ func TestLandExemptsTheCatalogRowAndMapOfANewPackage(t *testing.T) {
 		assert.Contains(t, mapText, "internal/otherpkg")
 		r.clean()
 	})
-	t.Run("an edit of an existing catalog row is still E12", func(t *testing.T) {
+	t.Run("an edit of an existing catalog row lands by rule", func(t *testing.T) {
 		t.Parallel()
 		r := catalogRig(t, filepath.Join(t.TempDir(), "runs"))
-		brief := writeNeedsBrief(t, t.TempDir(), "s1-1", "Fix s1-1.\nPATHS: internal/newpkg/newpkg.go", "")
+		brief := writeNeedsBrief(t, t.TempDir(), "s1-1", "Fix s1-1. tier: flash\nPATHS: internal/newpkg/newpkg.go", "")
 		r.ok("add --stream s1 s1-1 --one --brief-file " + brief)
 		edited := strings.Replace(withCatalogRow("internal/newpkg"), `"docs"`, `"edited"`, 1)
 		head := packageCard(r, "s1-1", "newpkg", edited, mapOf("internal/docs", "internal/newpkg"))
 		r.queued(map[string]string{"s1-1": head}, "s1-1")
-		before := r.git(r.remote, "rev-parse", "main")
 		code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
-		assert.Equal(t, 1, code, out+errs)
-		assert.Contains(t, errs, "it changes files outside its PATHS (E12): internal/docs/catalog.go")
-		assert.NotContains(t, errs, "AGENTS.md")
-		assert.Equal(t, map[string]string{"s1-1": "merging/stuck"}, r.places("s1-1"))
-		assert.Equal(t, before, r.git(r.remote, "rev-parse", "main"))
+		assert.Equal(t, 0, code, out+errs)
+		assert.NotContains(t, errs, "(E12)")
+		assert.Equal(t, map[string]string{"s1-1": "landed/merged"}, r.places("s1-1"))
+		assert.Contains(t, r.git(r.remote, "show", "main:internal/docs/catalog.go"), `"edited"`)
 		r.clean()
 	})
-	t.Run("a map change without a new directory is still E12", func(t *testing.T) {
+	t.Run("a map change without a new directory lands by rule", func(t *testing.T) {
 		t.Parallel()
 		r := catalogRig(t, filepath.Join(t.TempDir(), "runs"))
-		brief := writeNeedsBrief(t, t.TempDir(), "s1-1", "Fix s1-1.\nPATHS: internal/docs/docs.go", "")
+		brief := writeNeedsBrief(t, t.TempDir(), "s1-1", "Fix s1-1. tier: flash\nPATHS: internal/docs/docs.go", "")
 		r.ok("add --stream s1 s1-1 --one --brief-file " + brief)
 		head := r.card("s1-1", map[string]string{
 			"internal/docs/docs.go": "package docs // touched\n",
 			"AGENTS.md":             mapOf("internal/docs", "touched"),
 		})
 		r.queued(map[string]string{"s1-1": head}, "s1-1")
-		before := r.git(r.remote, "rev-parse", "main")
 		code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
-		assert.Equal(t, 1, code, out+errs)
-		assert.Contains(t, errs, "it changes files outside its PATHS (E12): AGENTS.md")
-		assert.Equal(t, map[string]string{"s1-1": "merging/stuck"}, r.places("s1-1"))
-		assert.Equal(t, before, r.git(r.remote, "rev-parse", "main"))
+		assert.Equal(t, 0, code, out+errs)
+		assert.NotContains(t, errs, "(E12)")
+		assert.Equal(t, map[string]string{"s1-1": "landed/merged"}, r.places("s1-1"))
 		r.clean()
 	})
+}
+
+// purposeRow is a catalog row naming dir with purpose, as a card that adds it writes it.
+func purposeRow(dir, purpose string) string {
+	return "\tE(\"" + dir + "\", \"" + purpose + "\", \"go test ./internal/docs\", \"go test ./internal/docs\"),\n"
+}
+
+// fakeStrictMapRun is the agents map's update run as tools/agentsmap's is: the map is each
+// catalog row's directory and purpose, one a line, and a catalog that names a directory
+// twice is refused with nothing written ("catalog names <dir> twice"). Each run counts
+// itself in the file count names.
+func fakeStrictMapRun(count string) string {
+	return "echo run >> " + strconv.Quote(count) + "\n" +
+		`d=$(awk -F'"' '/E\(/ { print $2 }' internal/docs/catalog.go | sort | uniq -d)` + "\n" +
+		`if [ -n "$d" ]; then echo "agentsmap: catalog names $d twice" >&2; exit 1; fi` + "\n" +
+		`awk -F'"' '/E\(/ { print $2 " " $4 }' internal/docs/catalog.go > AGENTS.md`
+}
+
+// mapRows is the map fakeStrictMapRun writes for the rows, each "dir purpose".
+func mapRows(rows ...string) string { return strings.Join(rows, "\n") + "\n" }
+
+// Two cards that each add the same catalogued directory, each regenerating the map at its
+// own base, land in one batch with the directory's row once (the tip's) and the map
+// regenerated from it: when their rows conflict, the catalog's union keeps one row a
+// directory; when they merge cleanly at two places, the lander drops the card's repeat of a
+// row the tip holds and regenerates the map on the merge commit, said as "map regenerated"
+// (docs/SPEC-SPRINT.md section 7, the generated ledgers). Before, the union named the
+// directory twice and the map's generator refused it ("catalog names docs/dogfood twice"),
+// and a clean merge left the map stale for the tree gate.
+func TestTheLanderRegeneratesTheMapWhenStale(t *testing.T) {
+	t.Parallel()
+	land := func(t *testing.T, base, map0 string, cards map[string][2]string) (*landRig, string, string) {
+		t.Helper()
+		count := filepath.Join(t.TempDir(), "runs")
+		r := catalogRig(t, count)
+		r.a.ledgers[0].run = []string{"sh", "-c", fakeStrictMapRun(count)}
+		r.git(r.worker, "switch", "-q", "--detach", "origin/main")
+		r.files("the spread catalog", map[string]string{"internal/docs/catalog.go": base, "AGENTS.md": map0})
+		r.git(r.worker, "push", "-q", "origin", "HEAD:refs/heads/main")
+		r.git(r.worker, "fetch", "-q", "origin")
+		dir := t.TempDir()
+		b1 := writeNeedsBrief(t, dir, "s1-1", "Fix s1-1. tier: flash\nPATHS: docs/dogfood/a.md", "")
+		b2 := writeNeedsBrief(t, dir, "s1-2", "Fix s1-2. tier: flash\nPATHS: docs/dogfood/b.md", "")
+		r.ok("add --stream s1 --brief-file " + b1 + " --brief-file " + b2)
+		heads := map[string]string{}
+		for id, f := range map[string]string{"s1-1": "a", "s1-2": "b"} {
+			heads[id] = r.card(id, map[string]string{
+				"docs/dogfood/" + f + ".md": "# " + f + "\n",
+				"internal/docs/catalog.go":  cards[id][0],
+				"AGENTS.md":                 cards[id][1],
+			})
+		}
+		r.queued(heads, "s1-1", "s1-2")
+		code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+		assert.Equal(t, 0, code, out+errs)
+		assert.Contains(t, out, "LAND OK stream=s1 cards=2 base=main")
+		assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "landed/merged"}, r.places("s1-1", "s1-2"))
+		assert.Equal(t, "# b", r.git(r.remote, "show", "main:docs/dogfood/b.md"))
+		return r, out, count
+	}
+	once := func(t *testing.T, r *landRig) {
+		t.Helper()
+		cat := r.git(r.remote, "show", "main:internal/docs/catalog.go")
+		assert.Equal(t, 1, strings.Count(cat, `"docs/dogfood"`), "the catalog names docs/dogfood once:\n%s", cat)
+		assert.Contains(t, cat, purposeRow("docs/dogfood", "first"), "the tip's row is kept")
+		agents := r.git(r.remote, "show", "main:AGENTS.md")
+		assert.Equal(t, 1, strings.Count(agents, "docs/dogfood"), "AGENTS.md names docs/dogfood once:\n%s", agents)
+		assert.Contains(t, agents, "docs/dogfood first")
+	}
+	t.Run("rows that conflict at one place land with the directory once", func(t *testing.T) {
+		t.Parallel()
+		base := catalogBase
+		with := func(p string) string { return strings.Replace(base, "}\n", purposeRow("docs/dogfood", p)+"}\n", 1) }
+		r, _, _ := land(t, base, mapRows("internal/docs docs"), map[string][2]string{
+			"s1-1": {with("first"), mapRows("internal/docs docs", "docs/dogfood first")},
+			"s1-2": {with("second"), mapRows("internal/docs docs", "docs/dogfood second")},
+		})
+		once(t, r)
+	})
+	t.Run("rows that merge cleanly at two places land with the map regenerated", func(t *testing.T) {
+		t.Parallel()
+		head := "package docs\n\nvar DefaultCatalog = []Entry{\n"
+		rows := purposeRow("internal/docs", "docs") + purposeRow("internal/x1", "x1") + purposeRow("internal/x2", "x2") + purposeRow("internal/x3", "x3")
+		base := head + rows + "}\n"
+		mrows := []string{"internal/docs docs", "internal/x1 x1", "internal/x2 x2", "internal/x3 x3"}
+		r, out, count := land(t, base, mapRows(mrows...), map[string][2]string{
+			"s1-1": {head + purposeRow("docs/dogfood", "first") + rows + "}\n", mapRows(append([]string{"docs/dogfood first"}, mrows...)...)},
+			"s1-2": {head + rows + purposeRow("docs/dogfood", "second") + "}\n", mapRows(append(mrows, "docs/dogfood second")...)},
+		})
+		once(t, r)
+		assert.Contains(t, out, "map regenerated")
+		assert.Contains(t, r.ok("card s1-2"), "map regenerated", "the regeneration is on the card's timeline")
+		got, err := os.ReadFile(count)
+		require.NoError(t, err)
+		assert.Equal(t, 1, strings.Count(string(got), "run"), "the map is regenerated once, at the merge both sides changed it")
+	})
+}
+
+// A remap that fails after the map family wrote (its listing, its staging or its amend
+// into the merge commit) undoes what it wrote, as a failed run does: the clone is left as
+// the merge left it, clean, so a --repo-dir clone is not refused as dirty by the next land
+// (docs/SPEC-SPRINT.md section 7, the generated ledgers). Here a pre-commit hook refuses
+// the amend.
+func TestAFailedRemapLeavesTheCloneClean(t *testing.T) {
+	t.Parallel()
+	count := filepath.Join(t.TempDir(), "runs")
+	r := catalogRig(t, count)
+	r.a.ledgers[0].run = []string{"sh", "-c", fakeStrictMapRun(count)}
+	head := "package docs\n\nvar DefaultCatalog = []Entry{\n"
+	rows := purposeRow("internal/docs", "docs") + purposeRow("internal/x1", "x1") + purposeRow("internal/x2", "x2") + purposeRow("internal/x3", "x3")
+	mrows := []string{"internal/docs docs", "internal/x1 x1", "internal/x2 x2", "internal/x3 x3"}
+	r.git(r.worker, "switch", "-q", "--detach", "origin/main")
+	r.files("the spread catalog", map[string]string{"internal/docs/catalog.go": head + rows + "}\n", "AGENTS.md": mapRows(mrows...)})
+	r.git(r.worker, "push", "-q", "origin", "HEAD:refs/heads/main")
+	r.git(r.worker, "fetch", "-q", "origin")
+	dir := t.TempDir()
+	b1 := writeNeedsBrief(t, dir, "s1-1", "Fix s1-1. tier: flash\nPATHS: docs/dogfood/a.md", "")
+	b2 := writeNeedsBrief(t, dir, "s1-2", "Fix s1-2. tier: flash\nPATHS: docs/dogfood/b.md", "")
+	r.ok("add --stream s1 --brief-file " + b1 + " --brief-file " + b2)
+	cards := map[string][2]string{
+		"s1-1": {head + purposeRow("docs/dogfood", "first") + rows + "}\n", mapRows(append([]string{"docs/dogfood first"}, mrows...)...)},
+		"s1-2": {head + rows + purposeRow("docs/dogfood", "second") + "}\n", mapRows(append(mrows, "docs/dogfood second")...)},
+	}
+	heads := map[string]string{}
+	for id, f := range map[string]string{"s1-1": "a", "s1-2": "b"} {
+		heads[id] = r.card(id, map[string]string{
+			"docs/dogfood/" + f + ".md": "# " + f + "\n",
+			"internal/docs/catalog.go":  cards[id][0],
+			"AGENTS.md":                 cards[id][1],
+		})
+	}
+	r.queued(heads, "s1-1", "s1-2")
+	hook := filepath.Join(r.clone, ".git", "hooks", "pre-commit")
+	require.NoError(t, os.MkdirAll(filepath.Dir(hook), 0o755))
+	require.NoError(t, os.WriteFile(hook, []byte("#!/bin/sh\necho the amend is refused by the test >&2\nexit 1\n"), 0o755))
+	code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+	require.NotEqual(t, 0, code, out+errs)
+	assert.Contains(t, out+errs, "could not be amended with its regenerated map")
+	assert.Empty(t, r.git(r.clone, "status", "--porcelain", "--untracked-files=all"), "the clone is clean after the failed remap")
+
+	require.NoError(t, os.Remove(hook))
+	code, out, errs = r.do("land --repo-dir " + r.clone + " --base main")
+	assert.Equal(t, 0, code, out+errs)
+	assert.Contains(t, out, "LAND OK stream=s1 cards=2 base=main", "the next land is not refused as dirty")
+	assert.Contains(t, out, "map regenerated")
 }

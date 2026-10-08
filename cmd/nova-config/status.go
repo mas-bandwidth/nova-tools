@@ -16,7 +16,7 @@ import (
 func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
 	const verb = "status"
 	fs := verbflag.New(verb)
-	c := storeFlags(fs)
+	c := seatStoreFlags(fs)
 	redisFlag := fs.String("redis", "", "the Redis `host:port` apply writes (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address); without one, status reads the store alone")
 	asJSON := jsonFlag(fs)
 	if code, ok := parse(fs, args, stderr, verb); !ok {
@@ -33,7 +33,7 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }() // ignored: every reply the verb needs is already read, so a close error changes nothing
 	schema, err := st.Version(ctx)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -51,6 +51,7 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 			emit(stdout, o)
 		} else {
 			fmt.Fprintln(stdout, line)
+			printNotes(stdout, o.Notes)
 		}
 		if code != 0 {
 			return refused(stderr, verb, why, next)
@@ -68,6 +69,13 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 	counts, err := st.Counts(ctx)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
+	}
+	if d.probe != nil {
+		loops, err := st.List(ctx, config.KindLoop)
+		if err != nil {
+			return refuse(stderr, verb, err.Error())
+		}
+		o.Notes = config.DeadLoops(ctx, loops, d.probe)
 	}
 	revs := map[string]int64{}
 	for _, k := range config.Kinds {
@@ -94,7 +102,7 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer rs.Close()
+	defer func() { _ = rs.Close() }() // ignored: every reply the verb needs is already read, so a close error changes nothing
 	line += " redis=" + config.Value(addr)
 	o.Fact("redis", addr)
 	behind := 0

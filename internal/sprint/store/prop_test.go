@@ -98,8 +98,6 @@ func stallWhy(d string) string {
 // interrupt (a stall judgment, written by the next tick) must hold it.
 var knownStalls = map[string]string{}
 
-const findingF3 = "FINDING-F3: the overdue decision act prints ack for every judgment; an ack of the one judgment that holds a primary (ready to accept, stranded in review, reads exhausted, sentinel reached) leaves it with nothing open"
-
 var propCutPoints = []string{"release", "apply p-work before", "apply p-merge before", "apply p-readers before", "apply p-fleet before"}
 
 // genProp is the random sprint of a seed: 2 to 4 streams, 5 to 40
@@ -393,7 +391,7 @@ func (r *propRun) act(a pAct) {
 			if a.F {
 				v = "broken"
 			}
-			r.run(fmt.Sprintf("nova-sprint read %s --as %s --verdict %s --finding f:1", c.ID, reader, v), ReadStep(sprint.ReadReq{As: reader, Verdict: v, Finding: "f:1", Sel: sprint.Sel{IDs: []string{c.ID}}, Who: reader}))
+			r.run(fmt.Sprintf("nova-sprint read %s --as %s --verdict %s --finding f:1", c.ID, reader, v), ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: reader, Verdict: v, Finding: "f:1", Sel: sprint.Sel{IDs: []string{c.ID}}, Who: reader}))
 		}
 	case "merge":
 		r.merge(stream, a.B, a.C, a.F)
@@ -606,7 +604,7 @@ func (r *propRun) decide(v InboxView, g sprint.Group, choice int, progress bool)
 	if progress {
 		var act []string
 		for _, d := range ds {
-			if !idle[d] && !(d == "ack" && g.Type == sprint.NStalled) {
+			if !idle[d] && (d != "ack" || g.Type != sprint.NStalled) {
 				act = append(act, d)
 			}
 		}
@@ -739,8 +737,14 @@ func (r *propRun) decide(v InboxView, g sprint.Group, choice int, progress bool)
 		drop(members, notes)
 	case d == "return":
 		ret(members, notes)
-	case d == "look" || d == "ack":
+	case d == "look" || d == "ack" || d == "keep":
 		ack()
+	case d == "raise":
+		// the stream's read tier rises to the tier the judgment proposes (readtier.go)
+		_, rest, _ := strings.Cut(g.What, " to ")
+		tier, _, _ := strings.Cut(rest, "?")
+		r.run("nova-sprint stream set "+g.Stream+" --read-tier "+tier+" --reason 'the readers disagreed' --answers "+strings.Join(notes, ","),
+			SetStep(sprint.SetReq{Streams: []string{g.Stream}, ReadTier: tier, Reason: "the readers disagreed", Answers: notes, Who: "coord"}))
 	case d == "repair":
 		r.say("nova-sprint repair")
 		if _, err := r.st.Repair(r.ctx); err != nil {
@@ -794,7 +798,7 @@ func (r *propRun) check(i int, a pAct) *propFail {
 		r.stats["actions ending with an operation pending"]++
 	}
 	for _, e := range r.errs {
-		if !(r.cutUsed || pending || busy(e)) {
+		if !r.cutUsed && !pending && !busy(e) {
 			return fail("error", "%v", e)
 		}
 	}

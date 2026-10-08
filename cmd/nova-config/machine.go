@@ -30,7 +30,7 @@ const exitCannotRead = 3
 func runMachineSelf(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
 	const verb = "machine self"
 	fs := verbflag.New(verb)
-	c := storeFlags(fs)
+	c := seatStoreFlags(fs)
 	check := fs.Bool("check", false, "read the machine rows and exit 2 when this machine's name is none of them (exit 3 when the rows cannot be read); without it no store is opened")
 	asJSON := jsonFlag(fs)
 	if code, ok := parse(fs, args, stderr, verb); !ok {
@@ -41,8 +41,7 @@ func runMachineSelf(ctx context.Context, args []string, stdout, stderr io.Writer
 	}
 	// cannotRead is the exit 3 line: the name or the rows could not be read.
 	cannotRead := func(what, next string) int {
-		fmt.Fprintf(stderr, "%s %s REFUSED: %s; run: %s\n", toolName, verb, plain(what), next)
-		return exitCannotRead
+		return refuseLine(stderr, verb, plain(what)+"; run: "+next, exitCannotRead)
 	}
 	name, _, err := config.SelfName(ctx, config.SelfSource{Getenv: d.getenv, Hostname: d.hostname, Tailscale: d.tailscale})
 	if err != nil {
@@ -58,14 +57,13 @@ func runMachineSelf(ctx context.Context, args []string, stdout, stderr io.Writer
 		if err != nil {
 			return cannotRead("the config cannot be read: "+err.Error(), helpFor(verb))
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }() // ignored: every reply the verb needs is already read, so a close error changes nothing
 		_, found, err := st.Get(ctx, config.KindMachine, name)
 		if err != nil {
 			return cannotRead("the config cannot be read: "+err.Error(), helpFor(verb))
 		}
 		if !found {
-			fmt.Fprintf(stderr, "%s %s REFUSED: %q is no machine row; run: %s machine add %s --user <login> --seat <seat> --slots <n> --width <n> --as <name>%s\n", toolName, verb, name, toolName, name, c.again())
-			return 2
+			return refuseLine(stderr, verb, fmt.Sprintf("%q is no machine row; run: %s machine add %s --user <login> --seat <seat> --slots <n> --width <n> --actor <name>%s", name, toolName, name, c.again()), 2)
 		}
 	}
 	if *asJSON {
@@ -103,7 +101,7 @@ func machineLoops(ctx context.Context, st config.Store, machine string) ([]strin
 func runMachineWidth(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
 	const verb = "machine width"
 	fs := verbflag.New(verb)
-	c := storeFlags(fs)
+	c := seatStoreFlags(fs)
 	asJSON := jsonFlag(fs)
 	name, rest := nameAndRest(mustMachine(), args)
 	if code, ok := parse(fs, rest, stderr, verb); !ok {
@@ -125,7 +123,7 @@ func runMachineWidth(ctx context.Context, args []string, stdout, stderr io.Write
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }() // ignored: every reply the verb needs is already read, so a close error changes nothing
 	ws, err := config.Widths(ctx, st)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())

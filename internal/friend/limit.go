@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"math"
 	"regexp"
 	"slices"
 	"strconv"
@@ -15,8 +14,8 @@ import (
 )
 
 // A harness at its usage limit or out of credits is down until its reset,
-// woken after it, and its measured usage rides on its beat (SPEC-FRIEND.md,
-// a harness at its limit). The finding of 2026-10-04: a friend's harness
+// and woken after it (docs/SPEC-FRIEND.md, a harness at its limit; the
+// friend's side in docs/SPEC-SPRINT.md, friend down). The finding of 2026-10-04: a friend's harness
 // stopped on "Insufficient AI Credits ... will refresh 6:52 PM" while her row
 // read up with six working cards, and four Claude accounts ran out of their
 // weekly usage unseen.
@@ -37,16 +36,6 @@ type Usage struct {
 	FiveHour, SevenDay             float64
 	FiveHourResets, SevenDayResets time.Time
 	At                             time.Time
-}
-
-// BeatFlags is the usage as the beat's flags, each window in whole percent,
-// so pacing reads it; none when nothing was measured.
-func (u Usage) BeatFlags() []string {
-	if u.At.IsZero() {
-		return nil
-	}
-	pct := func(f float64) string { return strconv.Itoa(int(math.Round(f * 100))) }
-	return []string{"--five-hour", pct(u.FiveHour), "--seven-day", pct(u.SevenDay)}
 }
 
 // Limit is what a command's output says of the harness's limit: Limited,
@@ -92,7 +81,8 @@ type rateLimitEvent struct {
 // ReadLimit reads a command's output at now for the harness's limit: the
 // last rate_limit_event anywhere in it (Claude Code), else a limit line in
 // its tail with the reset beside it (a clock time, today or else tomorrow
-// in now's zone; "in N hours"; an epoch after "limit reached|"). found is
+// in now's zone or the zone it names, on the date it names; "in N hours";
+// an epoch after "limit reached|"; resetOfText). found is
 // whether the output said anything of the limit at all. A provider's
 // transient rate_limit_error is no limit (ProviderRefusal passes it).
 func ReadLimit(out string, now time.Time) (lim Limit, found bool) {
@@ -116,7 +106,7 @@ func ReadLimit(out string, now time.Time) (lim Limit, found bool) {
 		if !limitWords.MatchString(line) {
 			continue
 		}
-		if until, ok := resetOf(line, now); ok && until.After(now) {
+		if until, ok := resetOfText(stripANSI(line), now); ok {
 			lim = Limit{Limited: true, Until: until, Reason: oneLine(line, 200)}
 			found = true
 		}
@@ -228,18 +218,37 @@ type Limits struct {
 	Nonce func() string // six random characters when nil
 	Down  func(until time.Time, reason string)
 	Up    func(nonce string)
+	// Unread is the judgment when a limit's text names no reset this reads: the
+	// friend is held for Rest and the text goes to the coordinator, once until
+	// a wake is answered, so the reset is set by a person (friend down --until)
+	// and not guessed again each Rest (usage-limit-reset-read-from-the-message-b.w1).
+	Unread func(text string)
+	// Harness is the harness whose own wording a failed turn is read in
+	// (ParseLimit), and Rest how long it is down when the text names no
+	// reset (DefaultLimitWait when zero): --limit-rest.
+	Harness string
+	Rest    time.Duration
 	// AllowOverage is the owner's word that this friend may spend paid
 	// overage; without it a harness on overage reads down.
 	AllowOverage bool
+	// Pacing is the row's pacing (the fraction of each subscription window the
+	// sprint may spend), read at each batch turn; nil, or out of (0, 1], is
+	// DefaultPacing. Every output's rate_limit_event feeds the pacer, and a batch
+	// turn while a window is at the pacing is Deferred until it resets
+	// (pacing.go).
+	Pacing func() float64
 
 	mu       sync.Mutex
+	beatMu   sync.Mutex // a down beat's look and its send, against a wake ending the limit (BeatOrDown, gated.Deliver)
+	pace     Pacer
 	limited  bool
 	until    time.Time
 	reason   string
-	episodes int // limits seen, so a turn knows it hit one
+	kind     string // KindLimit or KindCredits while limited; empty when the text gave none
+	episodes int    // limits seen, so a turn knows it hit one
 	waking   string
 	answered bool
-	usage    Usage
+	judged   bool // Unread said for this hold; cleared when a wake is answered
 }
 
 // Limited is the limit now: until when and why, and whether there is one.
@@ -249,32 +258,52 @@ func (l *Limits) Limited() (until time.Time, reason string, limited bool) {
 	return l.until, l.reason, l.limited
 }
 
-// Usage is the last measured usage, for the beat (Usage.BeatFlags).
-func (l *Limits) Usage() Usage {
+// Kind is what the limit is, KindLimit or KindCredits, while there is one.
+func (l *Limits) Kind() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.usage
+	return l.kind
 }
+
+// limitKindOf is a limit line's kind: credits when it says so, else a limit.
+func limitKindOf(line string) string {
+	if limitCredits.MatchString(line) {
+		return KindCredits
+	}
+	return KindLimit
+}
+
+var limitCredits = regexp.MustCompile(`(?i)credits?|balance|billing|payment`)
 
 // Watch is run reading every command's output for a limit and, while a wake
 // is open, for its nonce.
 func (l *Limits) Watch(run Exec) Exec {
 	return func(ctx context.Context, dir, name string, args []string, stdin string) (string, int, error) {
 		out, exit, err := run(ctx, dir, name, args, stdin)
-		l.see(out)
+		l.see(out, exit != 0 || err != nil)
 		return out, exit, err
 	}
 }
 
-func (l *Limits) see(out string) {
+func (l *Limits) see(out string, failed bool) {
 	now := l.Now()
 	lim, found := ReadLimit(out, now)
+	uses := ReadRateLimitEvents(out, now)
+	kind, named := "", true
+	if !strings.Contains(out, `"rate_limit_event"`) && failed {
+		// the harness's own wording of a failed turn, with its kind and a default reset
+		// when it names none; a successful turn that only talks of limits is no limit
+		if hit, ok := ParseLimit(l.Harness, out, now, l.Rest); ok {
+			lim, found, kind, named = Limit{Limited: true, Until: hit.Until, Reason: hit.Reason}, true, hit.Kind, hit.Named
+		}
+	}
+	if found && lim.Limited && kind == "" {
+		kind = limitKindOf(lim.Reason)
+	}
 	l.mu.Lock()
+	l.pace.Observe(uses)
 	if l.waking != "" && strings.Contains(out, l.waking) {
 		l.answered = true
-	}
-	if found && !lim.Usage.At.IsZero() {
-		l.usage = lim.Usage
 	}
 	if found && lim.Overage && !l.AllowOverage && !lim.Limited {
 		lim.Limited = true
@@ -284,13 +313,151 @@ func (l *Limits) see(out string) {
 		l.mu.Unlock()
 		return
 	}
-	l.limited, l.until, l.reason, l.waking, l.answered = true, lim.Until, lim.Reason, "", false
+	l.limited, l.until, l.reason, l.kind, l.waking, l.answered = true, lim.Until, lim.Reason, kind, "", false
 	l.episodes++
+	judge := !named && !l.judged
+	if judge {
+		l.judged = true
+	}
 	l.mu.Unlock()
 	if l.Down != nil {
 		l.Down(lim.Until, lim.Reason)
 	}
+	if judge && l.Unread != nil {
+		l.Unread(lim.Reason)
+	}
 }
+
+// Refuse is a credit or quota refusal a caller read where this harness's own
+// wording parse (ParseLimit) and the limit tail found none: the daemon's
+// per-harness table in cmd/nova-friend/limit.go reads a lane's evidence and
+// hands the hit here (docs/SPEC-FRIEND.md, every harness's credit and quota
+// refusal). It takes the same state and hooks see takes for a limit a
+// harness's own wording names: the friend is down until the refusal's until,
+// her turns and beats are held, Down says it to the sprint once, and status
+// reads session=limited limit_kind=kind limit_until=until. A refusal equal to
+// the one that already holds her is not a second down.
+func (l *Limits) Refuse(kind, reason string, until time.Time) {
+	l.mu.Lock()
+	if l.limited && l.kind == kind && l.reason == reason {
+		l.mu.Unlock()
+		return
+	}
+	l.limited, l.until, l.reason, l.kind, l.waking, l.answered = true, until, reason, kind, "", false
+	l.episodes++
+	l.mu.Unlock()
+	if l.Down != nil {
+		l.Down(until, reason)
+	}
+}
+
+// WindowUse is the subscription windows' use as the harness last reported
+// it in any command's output ("5h 62% 7d 31%"), empty when none is live.
+func (l *Limits) WindowUse() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.pace.Use(l.Now())
+}
+
+// pacedOut is why a batch turn at now is held by the pacing, empty when it
+// is not: a batch turn is one lane, so it is held when the pacer allows none.
+func (l *Limits) pacedOut(now time.Time) string {
+	pacing := DefaultPacing
+	if l.Pacing != nil {
+		pacing = PacingOf(l.Pacing())
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.pace.held(now, pacing)
+}
+
+// Beat is beat held back while the harness is at its limit: no beat goes
+// to the sprint server, so her row reads down, from the turn that hit the
+// limit until a wake after the reset answers its nonce (Gate). A reset that
+// passes with no answer (the wake never reached a session, say) keeps her
+// down: only the session's answer brings her up, never a process seen or not
+// seen in the process table (HarnessWatch is advisory).
+func (l *Limits) Beat(beat func(ctx context.Context) error) func(ctx context.Context) error {
+	return func(ctx context.Context) error {
+		if until, reason, limited := l.Limited(); limited {
+			return fmt.Errorf("not beating: the harness is at its limit until %s, then until a wake is answered: %s", until.UTC().Format(time.RFC3339), reason)
+		}
+		return beat(ctx)
+	}
+}
+
+// BeatOrDown is beat while the harness answers, and down while it is at its limit
+// (limits-mean-down-w-r5.w1~15): her beat says down with the until and the reason
+// (nova-sprint friend beat --until --reason), so her row reads down and why rather
+// than going silent, until a wake after the reset is answered. A nil down holds the
+// beat back as Beat does; a down the sprint server refuses is an error, and her row
+// reads down by the lapse as before.
+func (l *Limits) BeatOrDown(beat func(ctx context.Context) error, down func(ctx context.Context, until time.Time, reason string) error) func(ctx context.Context) error {
+	if down == nil {
+		return l.Beat(beat)
+	}
+	return func(ctx context.Context) error {
+		// the look and the down beat are one step against the wake's answer ending the
+		// limit, so no down beat is sent after she is up again
+		l.beatMu.Lock()
+		until, reason, limited := l.Limited()
+		if !limited {
+			l.beatMu.Unlock()
+			return beat(ctx)
+		}
+		defer l.beatMu.Unlock()
+		if err := down(ctx, until, "harness limit: "+reason); err != nil {
+			return fmt.Errorf("beating down until %s: %w", until.UTC().Format(time.RFC3339), err)
+		}
+		return nil
+	}
+}
+
+// LimitDownText is what the seat is told when friend's harness hits its
+// limit: the subject, and a body with the line that shows why and until when
+// on her row (nova-sprint friend down --reason --until).
+func LimitDownText(friend string, until time.Time, reason string) (subject, body string) {
+	subject = fmt.Sprintf("friend %s down: her harness is at its limit until %s", friend, until.UTC().Format(time.RFC3339))
+	body = fmt.Sprintf("%s: %s\nHer daemon beats down with that reset and reason and delivers nothing until a wake after the reset is answered; every message stays pending. To show why on her row: nova-sprint friend down %s --reason %s --until %s\n",
+		subject, reason, friend, shellQuote("harness limit: "+reason), until.UTC().Format(time.RFC3339))
+	return subject, body
+}
+
+// LimitUnreadText is the one judgment the coordinator is told when friend's
+// harness refused at its limit with a text that names no reset this reads:
+// the text, the rest she is held for, and the line that sets the true reset.
+func LimitUnreadText(friend string, rest time.Duration, text string) (subject, body string) {
+	if rest <= 0 {
+		rest = DefaultLimitWait
+	}
+	subject = fmt.Sprintf("friend %s held: her harness is at its limit and its message names no reset I can read", friend)
+	body = fmt.Sprintf("%s: %q\nHer daemon holds her and tries a wake every %s until one is answered; this is said once until then. A judgment: read the reset from the text and set it (nova-sprint friend down %s --reason %s --until <RFC3339>), and add the text to internal/friend/testdata/limits.tsv so the next one is read.\n",
+		subject, text, rest, friend, shellQuote("harness limit: "+text))
+	return subject, body
+}
+
+// LimitAlikeText is the one judgment the coordinator is told when three lanes
+// in a row ended with the same first error line and none names a limit or a
+// credit or quota refusal the daemon's table knows (cmd/nova-friend/limit.go,
+// RefusalWatch): the line, so the wording is added or the cause is found,
+// never a silent fourth retry.
+func LimitAlikeText(friend, line string) (subject, body string) {
+	subject = fmt.Sprintf("friend %s: her lanes are failing alike", friend)
+	body = fmt.Sprintf("%s: %q\nThree lanes in a row ended with that first error line and none names a limit or a credit wording I know. Her daemon holds it to this one judgment, never a silent fourth retry. Read the line, fix the cause or add its wording to cmd/nova-friend/limit.go, then let her go on: nova-sprint friend up %s\n",
+		subject, line, friend)
+	return subject, body
+}
+
+// LimitUpText is what the seat is told when friend's session answered the
+// wake after the reset.
+func LimitUpText(friend string) (subject, body string) {
+	subject = fmt.Sprintf("friend %s back: her harness answered the wake after its reset", friend)
+	body = fmt.Sprintf("%s\nHer daemon beats and delivers again. If you held her with friend down: nova-sprint friend up %s\n", subject, friend)
+	return subject, body
+}
+
+// shellQuote is s in single quotes for a line to paste.
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 // WakeText is the turn that wakes a session after its reset: one word back,
 // the nonce, so only a session that ran this turn answers it.
@@ -303,12 +470,40 @@ func WakeText(nonce string) string {
 // counted toward nothing); the first after the reset is a wake turn
 // (WakeText) whose output must carry its nonce, a fresh one each try, before
 // the message goes in; a turn that hits a limit is Deferred too. A passive
-// d is d.
+// d is d. A LaneHarness stays one (gatedLanes): its batch Deliver is held,
+// and its lanes are not.
 func (l *Limits) Gate(d Deliverer) Deliverer {
 	if _, passive := d.(interface{ Passive() }); passive {
 		return d
 	}
-	return &gated{l: l, d: d}
+	g := &gated{l: l, d: d}
+	if lh, ok := d.(LaneHarness); ok {
+		return &gatedLanes{gated: g, lh: lh}
+	}
+	return g
+}
+
+// gatedLanes is a LaneHarness under the gate: Deliver, the batch turn and
+// the session check, is gated's; OpenSession and DeliverTo, the one-shot
+// lanes, go straight to the harness, and their output is still read for a
+// limit (Watch is under the harness, not here), so a lane turn that hits
+// one sends the friend Down all the same. They are exempt because a lane has
+// no deferral: lanes.go counts an error from a lane turn toward CardTurns and
+// sets the card aside at the last, and retries a failed open after
+// LaneOpenRetry, so a Deferred lane turn would give up her card while she
+// waits out the reset. Holding the lanes while she is down is owed to the
+// lanes' loop (a deferral that keeps the card in hand), not to this gate.
+type gatedLanes struct {
+	*gated
+	lh LaneHarness
+}
+
+func (g *gatedLanes) OpenSession(ctx context.Context, seed string) (string, error) {
+	return g.lh.OpenSession(ctx, seed)
+}
+
+func (g *gatedLanes) DeliverTo(ctx context.Context, session, text string) (LaneTurn, error) {
+	return g.lh.DeliverTo(ctx, session, text)
 }
 
 type gated struct {
@@ -332,13 +527,15 @@ func (g *gated) Deliver(ctx context.Context, text string) (int, error) {
 		episodes := l.episodes
 		l.mu.Unlock()
 		exit, err := g.d.Deliver(ctx, WakeText(nonce))
+		l.beatMu.Lock() // a down beat in flight lands before the limit ends (BeatOrDown)
 		l.mu.Lock()
 		again, answered := l.episodes != episodes, l.answered && exit == 0 && err == nil
 		if answered && !again {
-			l.limited, l.waking = false, ""
+			l.limited, l.waking, l.judged = false, "", false
 		}
 		until, reason = l.until, l.reason
 		l.mu.Unlock()
+		l.beatMu.Unlock()
 		if again {
 			return 0, Deferred{Reason: fmt.Sprintf("the wake hit the limit again; down until %s: %s", until.Format(time.RFC3339), reason)}
 		}
@@ -348,6 +545,9 @@ func (g *gated) Deliver(ctx context.Context, text string) (int, error) {
 		if l.Up != nil {
 			l.Up(nonce)
 		}
+	}
+	if why := l.pacedOut(now); why != "" {
+		return 0, Deferred{Reason: why}
 	}
 	l.mu.Lock()
 	episodes := l.episodes

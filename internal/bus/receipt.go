@@ -15,16 +15,19 @@ const OwedPrefix = "bus2:owed:"
 func OwedOf(name string) string { return OwedPrefix + name }
 
 // Mark is one write to a hash inside a send's transaction: HSET Key Field
-// Value, or HDEL Key Field when Clear.
+// Value, or HDEL Key Field when Clear, or, when Forward, the receipt of Field
+// moved to the state Value by the rule Forward keeps (stages.go).
 type Mark struct {
 	Key, Field, Value string
-	Clear             bool
+	Clear, Forward    bool
 }
 
 // owe is the marks a send makes: the message owed a receipt by every friend
 // it names (to and cc) but the sender, and, when the sender is a friend and
 // the message answers another (re), her receipt of that one. A message to a
-// machine is owed nothing: no session of a machine says it read one.
+// machine is owed nothing: no session of a machine says it read one. A
+// message answering another is also the sender's act on it: its receipt
+// moves to acted (stages.go, message-receipts).
 func owe(m Message, friends []string) []Mark {
 	var marks []Mark
 	at := m.At.UTC().Format(time.RFC3339)
@@ -35,6 +38,9 @@ func owe(m Message, friends []string) []Mark {
 	}
 	if m.Re != "" && slices.Contains(friends, m.From) {
 		marks = append(marks, Mark{Key: OwedOf(m.From), Field: m.Re, Clear: true})
+	}
+	if m.Re != "" {
+		marks = append(marks, Mark{Key: StagesOf(m.From), Field: m.Re, Value: Acted, Forward: true})
 	}
 	return marks
 }

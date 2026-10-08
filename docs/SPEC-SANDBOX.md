@@ -103,6 +103,12 @@ The test requirements are listed under **Tests this spec demands**.
    absent root would refuse on the majority of machines. A `--read` or
    `--write` the caller typed is a different thing — it is a claim about this
    job — and an absent one is still a refusal.
+   Because following a symlink needs read on the link itself, a `--read`,
+   `--read-noexec` or `--write` the caller spelled through a symlink also records that
+   cleaned spelling (`Policy.LinkSpellings`), and the darwin profile grants
+   `(allow file-read* (literal "<spelling>"))` for it and for each symlink component of
+   it, as the template does for `/etc`, `/tmp` and `/var` (security#67 finding 1); a path
+   spelled as its resolved form adds nothing.
 6. **The secret is never inside either list.** The caller reads its credential
    file **before** the wrap and passes the value by environment: the key is
    read as data, never sourced, never an argument.
@@ -405,6 +411,55 @@ The test requirements are listed under **Tests this spec demands**.
     cache environment variables; `nova-sandbox` derives no cache path from task
     text, creates no default cache, and supplies no cache environment variable.
 
+### deletes-in-every-write-root — deletes in every --write root
+
+A program inside the wall may delete any file under any `--write` root, the data
+home included: what it may create there it may remove. A database that keeps its
+file in the data home commits a transaction by unlinking its rollback journal, and
+a wall that withholds the remove rights there fails that commit and leaves the
+journal behind. The job directory, its tmp and the working directory are already
+inside the write set (the tmp and the cwd are required to be), and so is every
+other `--write` the caller named: a data home, a cache, a config directory.
+`Policy.DeletesIn` is true for a path inside any `--write` and false outside them.
+A directory that is not a `--write` still cannot be written or deleted.
+The `SANDBOX OK` line names the roots deletes are allowed in on `deletes=`, read
+off `Policy.DeleteRoots` (the `--write` roots for which `DeletesIn` is true, in the
+order given), so a log says where an unlink was allowed and not only how many roots
+were written.
+
+- **Linux.** Every `--write` gets the whole write mask, including `REMOVE_FILE`
+  and `REMOVE_DIR` (`writeRuleMask`). Landlock checks a remove right on the parent
+  of the entry removed or renamed away. The `policy` verb prints each such
+  directory as `write=`.
+- **macOS.** The profile's `file-write*` grant on each `--write` includes unlink.
+  No later rule takes it back. Whether `file-write*` covers rename-away has not
+  been measured.
+- **Checked by.** `TestTheWallAllowsDeletesInEveryWriteRoot`, linux: under the
+  wall, a second `--write` (the data home) and a third (a cache), neither of them
+  the cwd or the tmp, each let the command create a file and unlink it.
+  `TestASqliteCommitInTheDataHomeUnlinksItsJournal`, linux: a database opened in
+  the data home commits a transaction and the rollback journal is gone.
+  `TestDeletesInEveryWriteRoot` is the same answer with no wall.
+  `TestTheWallsLineNamesTheRootsDeletesAreAllowedIn`, linux: the fleet's
+  member wall (job dir as cwd, data home as HOME, tmp, cache) through the real
+  tool removes a file created in `$HOME/opencode`, and `deletes=` names all four
+  roots in order; `TestTheDeletesFieldNamesEveryWriteRoot` pins the field's
+  rendering.
+  `TestAChildDeletesItsJournalInItsDataHomeOnLinux` and
+  `TestAChildDeletesItsJournalInItsDataHomeOnMacOS` (`cmd/nova-swarm`): under the
+  wall a native run builds (`nativeSandboxArgv`, the real tool, the child's
+  environment), the child unlinks `$HOME/opencode/opencode.db-journal` in its data
+  home and a file in its temp folder, and a `sqlite3` commit in rollback-journal
+  mode there succeeds and leaves no journal: the `unlink(...opencode.db-journal) =
+  -1 EACCES` that stopped every fleet lane from 2026-10-05.
+  `TestTheWallRefusesDeletesOutsideTheJob`, linux: a directory that is not a
+  `--write` still refuses `rm -rf`, `rm` and `mv`, and the files stay.
+  `TestAStepsGitCommitInsideItsWallSucceeds`, linux: a step's wall lets `git
+  commit` in the checkout succeed, and an `rm` in a further `--write` succeeds
+  too. `TestEveryWriteRootCarriesRemoveRights` checks the masks, the printed
+  ruleset and the profile (`internal/sandbox/delete_outside_test.go`,
+  `internal/sandbox/wall_deletes_test.go`).
+
 ## The verbs
 
 ```
@@ -465,20 +520,46 @@ The wall bounds the process count and the resident memory of the tree it runs, s
 runaway command cannot take the machine (289 test processes ran unbounded under one
 `go test`). Defaults: **256 processes** and **8 GiB**.
 
-- **The tree is a process group.** When the command's stdin is not a terminal, the wall
-  starts it as the leader of a process group of its own; the group is counted and the
-  group is killed by its id, never by a pattern. A terminal stdin keeps the caller's
-  group (a child in a background group is stopped by SIGTTIN when it reads the keyboard)
-  and has no caps. A process that leaves the group (`setsid`) leaves the count; the
-  Landlock and seatbelt walls still bound what it can touch.
-- **The count.** Every second the tool counts the live processes of the group (zombies
-  are dead and not counted) and sums their resident bytes: `/proc` on linux, no fork;
-  one `ps -A -o pgid=,rss=,stat=` on macOS. A count that fails is skipped.
+- **The tree is counted by parent pid, never made a group.** Rule 12 stands: the bare
+  form creates no process group of its own, whatever its stdin, and the tree stays in the
+  caller's group so that the caller's group kill at its deadline reaches all of it (the
+  caps card once gave a non-terminal run a group of its own, and a supervisor's group
+  kill then killed only the tool while the walled tree ran on: the security read of
+  2026-10-06). The tree is the command and its live descendants, found by parent pid at
+  every count, plus any process already seen in the tree that has since been reparented
+  to pid 1 and is still in the caller's group. On linux the tool is a child subreaper
+  (`PR_SET_CHILD_SUBREAPER`), so an orphan is reparented to the tool and stays in the
+  tree; the tool collects those orphans' zombies at each count. On macOS there is no
+  subreaper: **any process orphaned between two counts was never seen and escapes the
+  count** (measured: a leader alive for 4 s whose 300 `sh -c "sleep &"` grandchildren were
+  orphaned between counts ran uncounted, exit 0), as one that calls `setsid` does on both
+  platforms. What reaches such a process is rule 12: it is still in the caller's group,
+  and the caller's group kill at its deadline ends it. The Landlock and seatbelt walls
+  bound what any of them can touch. Once the command's own pid is reaped it is no longer
+  the top of the tree, so a reused pid is never counted or killed. Only the `run` verb makes a group of
+  its own (its rule 4), because there the tool is the supervisor.
+- **The count.** Every second the tool counts the tree's live processes (zombies are dead
+  and not counted) and sums their resident bytes: `/proc` on linux, no fork; one
+  `ps -A -o pid=,ppid=,pgid=,rss=,stat=` on macOS. A count that fails is skipped. The tree
+  is counted once more when the command exits: a leader that exits between two counts (a
+  fork bomb refused by `RLIMIT_NPROC` ends its own shell) leaves its children in the tree
+  (on linux all of them, the tool being their subreaper; on macOS only those a count had
+  already seen), and past a cap they are killed like a tree seen on a tick. A count is read
+  against the top it was taken under, so a reap that lands between a listing and its
+  reading drops none of the children it listed.
 - **Past a cap.** More processes than the cap, or more resident bytes than the cap: the
-  tool sends SIGKILL to the group, waits (bounded) until no live process of it remains,
-  prints `SANDBOX RUNAWAY runaway: <n> processes (cap <c>); the process group was killed`
-  (or `runaway: <n> bytes of memory (cap <c>)`) and exits **137**. Signals the tool
-  receives (SIGINT, SIGTERM) go to the whole group.
+  tool **freezes** the tree, then kills it, always **by pid** (never by pattern, and never
+  to `-pgid`: the group is the caller's). Freeze: SIGSTOP to every member, re-listed until
+  no member is new or still running (a stopped parent forks nothing, and its children stay
+  its descendants); a kill from one listing missed the children forked after it, which
+  outlived their killed parent as orphans (the second read of 2026-10-06: 35-39 of a
+  forking loop alive after "killed"). Kill: SIGKILL to every member, repeated until a count
+  finds none (bounded). It prints `SANDBOX RUNAWAY runaway: <n> processes (cap <c>); the
+  process tree was killed` (or `runaway: <n> bytes of memory (cap <c>)`) **only when that
+  final count is 0**; otherwise the line ends `the process tree was sent SIGKILL and <k> of
+  its processes are still running` (or `... and could not be counted after`). It exits
+  **137** either way. Signals the
+  tool receives (SIGINT, SIGTERM) go to the child, as rule 12 says.
 - **Linux, as well.** `RLIMIT_NPROC` is per user, not per tree, so it is a floor under the
   line and not the line: while the child is forked it is set to the machine's task total
   plus twice the cap, so a bomb is stopped between two counts, and the tool's own limit is
@@ -488,9 +569,15 @@ runaway command cannot take the machine (289 test processes ran unbounded under 
   enforced where the tool can count); the bare form carries the defaults. The flags on the
   bare form are owed in `cmd/nova-sandbox/main.go`, which this card does not edit.
 - **Checked by** `TestWallCapsAForkBomb` (a shell loop that forks until refused, itself
-  capped at 1,000, ends `runaway: <n> processes` with `n` over 256 and no live process of
-  its group), `TestWallCapsLeaveANormalRunAlone` and `TestPolicyOverNamesTheCapPast`
-  (`cmd/nova-sandbox/nproc_cap_test.go`).
+  capped at 1,000, run by the tool in a group of the test's making, ends `runaway: <n>
+  processes` with `n` over 256 and no live process of that group),
+  `TestWallCapsATreeWhoseLeaderExits`, `TestWallCapsLeaveANormalRunAlone` and
+  `TestPolicyOverNamesTheCapPast` (`cmd/nova-sandbox/nproc_cap_test.go`), the tree's
+  membership by `TestTree*` (`internal/sandbox/tree_test.go`), and rule 12's group by
+  `TestTheBareFormKeepsTheCallersGroup` (`cmd/nova-sandbox/reap_darwin_test.go`, default
+  build) and `TestAForkedChildIsReapedWithTheCallersGroup` (its functional twin), and the
+  freeze by `TestARunawayIsFrozenBeforeItIsKilled` (darwin, functional: a loop forking 1,500
+  sleeps leaves no live process in the caller's group the moment the tool exits).
 
 ## The run verb — a disposable place, on darwin
 
@@ -1151,7 +1238,7 @@ which go to stdout; under `--json` the one object is all a verb prints, on
 stdout. A wrapped command's stdout is its own and the tool writes nothing there.
 
 ```
-SANDBOX OK backend=<sandbox-exec|landlock> abi=<n|-> [used=<n>] read=<n> read-noexec=<n> write=<n> net=<denied|nopromise> cwd=<dir> cwdb64=<base64url> ancestors=<n> cmd=<name> gpu=<none|metal>
+SANDBOX OK backend=<sandbox-exec|landlock> abi=<n|-> [used=<n>] read=<n> read-noexec=<n> write=<n> net=<denied|nopromise> cwd=<dir> cwdb64=<base64url> ancestors=<n> cmd=<name> gpu=<none|metal> deletes=<dir[,dir...]|->
 SANDBOX NOTE <the one remedy or gap line>   (always before the command starts)
 SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|landlock_abi_unknown|bad_read|bad_write|bad_cwd|bad_net|bad_gpu|bad_size|bad_timeout|home_outside|no_name|no_container|no_command|bad_flag|not_found|not_executable|volume_exists|volume_failed|unknown_verb>: <text>
 SANDBOX STEP name=<container|look|create|delete|denials|list> state=<start|done> [ms=<n>]
@@ -1200,6 +1287,12 @@ task text carries quoted rules. The `cwd=<dir>` slot is a one-line field
 rendered through `internal/oneline` like every other path, so a directory whose
 path holds a blank reaches a reader escaped; a consumer that compares it with a
 path it holds decodes that field first.
+
+**`deletes=` names the roots a delete is allowed in**: every `--write` root the
+wall carries the remove rights on (`Policy.DeleteRoots`), in the order given, each
+rendered through `oneline.Field` and joined by `,`, with a `,` inside a path
+escaped as `\x2c` so the list splits back into its roots; `-` when there are none
+("deletes-in-every-write-root").
 
 **`SANDBOX OK` names the cwd twice.** `cwd=<dir>` is the readable rendering of
 the working directory through `oneline.Field`, for the operator;
@@ -1368,6 +1461,45 @@ runs. Two exemptions, both of them "a caller that adds one back has
 done so in its own argv": a directory the caller named in its own `--read` or
 `--write`, and a home that lies inside the caller's own lists, which is what the
 job's data home always is.
+
+### buds-in-the-wall-r.w5 — the lane profile, and the deny list
+
+A nova-friend lane's children run inside a **wall profile** (`LaneProfile`,
+`internal/sandbox/profile.go`; docs/SPEC-FRIEND.md has the lane side). The
+one profile is `friend` (`LaneProfiles`; any other name is refused):
+
+| | |
+|---|---|
+| writes | the friend's working directory, her job directories outside it, her config directory (`CLAUDE_CONFIG_DIR`), and nothing else |
+| `HOME` | the config directory, else the working directory |
+| reads | the roots, the harness's own directory, and what the caller names |
+| denied | `LaneProfile.Deny`: the coordinator's self as configuration names it (`nova-friend run --deny-self`, e.g. `~/<coordinator>-working/<self>` and its copy on a shared volume), with their `memory/`, `identity/` and `MEMORY-*.md`; `~/` is the profile's HOME; a profile that denies nothing is refused |
+| network | `--net-deny`, with `LaneNetPorts` (TCP 443 and 22) opened outbound |
+
+**The deny list is a field of the input** (`Input.Deny`). Both bodies grant
+writing only where they are told to, so a denied path no grant covers is
+denied by having no grant; `Build` refuses, `reason=denied_write`, every
+`--write`, `--cwd`, `--tmp` and `HOME` that is a denied path, lies inside one
+or holds one, so no grant can cover one. A denied path is resolved through
+its symlinks when it is there and compared by name when it is not, with the
+same `Inside` as every other question here. It is a deny of named paths: a
+clone of the self under a granted directory is not one of them. The paths are
+configuration, never names in the code (the `generality` rule,
+docs/SPEC-CI.md), and the profile fails closed: `LaneProfile.Input` refuses
+one whose deny list is empty.
+
+**The network is ports, not hosts.** `Input.NetPorts` is allowed only with
+`--net-deny`, and each port is 1 to 65535 (`reason=bad_net`). On darwin the
+profile grants, under `--net-deny`, the name resolver and `(allow
+network-outbound (remote tcp "*:<port>"))` per port: SBPL filters a remote
+host only as `localhost` or `*`, so 443 is open to every host, github.com and
+the harness's provider among them (measured on darwin 27.2 with
+`sandbox-exec -p`: github.com:443 answered 200, example.com:80 did not
+connect, rc=7). On linux Landlock is handled here with no port rule, so the
+ports are not granted and the denial is whole: fail closed, and a lane on a
+linux machine reaches no TCP host. Holding a lane to github.com and the
+benches by host is the egress verbs' kind of wall (nftables, by address),
+not this one's.
 
 ## macOS — `sandbox-exec` with a generated profile
 

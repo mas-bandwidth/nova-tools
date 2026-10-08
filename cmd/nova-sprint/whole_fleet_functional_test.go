@@ -21,6 +21,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store/storetest"
 )
 
 // lockedBuffer is a buffer the loop writes to while the test runs.
@@ -140,7 +141,7 @@ func TestTheWholeFleetMovesInOneTickOnTheStore(t *testing.T) {
 	loop := newApp(func(k string) string { return env[k] })
 	defer loop.close()
 	loop.checkTwin = func(twin, fresh *sprint.Snapshot) error {
-		if d := store.TwinDiff(twin, fresh); d != "" {
+		if d := storetest.TwinDiff(twin, fresh); d != "" {
 			return errors.New(d)
 		}
 		return nil

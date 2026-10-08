@@ -21,23 +21,18 @@ import (
 // change takes 2, and so on. Nothing resets it but teardown.
 const FirstSeatGeneration uint64 = 1
 
-// Asleep is an observation word: her daemon answered and her session did
-// not. It is the daemon's, kept on the row for it, and shown as down: the
-// table's words are up, held and down (the owner, 2026-10-04 11:42 AM ET:
-// "anything but up is down"; "sleeping = down").
-const Asleep = "asleep"
-
-// FriendObservedDownAfter is how long a coordinator's observation of a friend
-// stands before she is down without a newer proof: the keepalive's ten
-// seconds. A friend observed is never up on her own beat again.
-const FriendObservedDownAfter = 10 * time.Second
+// DaemonPong is the observation word for a pong her daemon answered and her
+// session did not. It is the daemon's, kept on the row for it, and shown as
+// down: the table's words are up, held and down (the owner, 2026-10-04
+// 11:42 AM ET: "anything but up is down"; "sleeping = down").
+const DaemonPong = "asleep"
 
 // HealthStates are the words an observation carries; up alone shows as up.
-var HealthStates = []string{Up, Asleep, Down}
+var HealthStates = []string{Up, DaemonPong, Down}
 
 // FriendHealth is the coordinator's last accepted observation of a friend,
 // as the friend-health record keeps it: the state word, the time of the proof
-// it rests on (a session pong for up, a daemon pong for asleep, the judgment
+// it rests on (a session pong for up, a daemon pong for DaemonPong, the judgment
 // for down; the daemon's clock), the seat generation it was observed under,
 // and what the pong said of her queue, working and width.
 type FriendHealth struct {
@@ -53,8 +48,7 @@ type FriendHealth struct {
 	Until  time.Time `json:"until,omitzero"`
 }
 
-// Observed says the coordinator has observed the friend at least once: from
-// then on her beat never makes her up (FriendStatus).
+// Observed says the coordinator has observed the friend at least once.
 func (h FriendHealth) Observed() bool { return h.State != "" }
 
 // HealthReq is one observation: who sends it (the seat's holder), the friend,
@@ -110,31 +104,57 @@ func ObserveFriend(s *Snapshot, r HealthReq) Plan {
 	return p
 }
 
+// HealthClearReq is the removal of a friend's observation (friend health --clear): who
+// sends it (the seat's holder) and the friend (Known says the roster has her).
+type HealthClearReq struct {
+	Friend, Who string
+	Known       bool
+}
+
+// ClearFriendHealth is the observation removed: the plan's HealthClear, which the step's
+// commit applies by removing her record, so her status is her session's evidence alone
+// (FriendStatus), or its refusal: the sender is the seat's holder, of a friend on the
+// table. A friend with no observation is cleared all the same (nothing to remove).
+func ClearFriendHealth(s *Snapshot, r HealthClearReq) Plan {
+	var p Plan
+	switch {
+	case !r.Known:
+		p.refuse(r.Friend, "no friend "+r.Friend+" on the friends table; run: nova-sprint friend sync")
+	case s.Coordinator == "":
+		p.refuse(r.Friend, "the sprint has no coordinator; run: nova-sprint init --coordinator <name>")
+	case r.Who != s.Coordinator:
+		p.refuse(r.Friend, "friend health is the seat's: "+s.Coordinator+", not "+orDash(r.Who))
+	default:
+		p.HealthClear = []string{r.Friend}
+	}
+	return p
+}
+
 // FriendHealthWrite is the record a step's commit writes: the friend's health.
 type FriendHealthWrite struct {
 	Friend string       `json:"friend"`
 	Health FriendHealth `json:"health"`
 }
 
-// ObservedStatus is the friends' rule over the coordinator's observation at
-// now, for a friend observed at least once: up only when the observation's
-// word is up, under the current seat generation (an old seat's proof never
-// looks up under a new seat), with its proof under FriendObservedDownAfter
-// old and not dated after now (a negative age is no proof); down otherwise,
-// whatever finer word the row keeps.
+// ObservedStatus is the friends' rule over the coordinator's observation
+// alone at now: up only when the observation's word is up (a wake ping her
+// session answered), under the current seat generation (an old seat's proof
+// never looks up under a new seat), with its proof under FriendPongWindow old
+// and not dated after now (a negative age is no proof); down otherwise,
+// whatever finer word the row keeps (DaemonPong, her daemon's own pong, is down).
 func ObservedStatus(h FriendHealth, generation uint64, now time.Time) string {
-	if age := now.Sub(h.Seen); h.State == Up && h.Generation == generation && age >= 0 && age < FriendObservedDownAfter {
-		return Up
-	}
-	return Down
+	status, _ := FriendEvidence(FriendPresence{Health: h, Generation: generation}, now)
+	return status
 }
 
 // FriendPresence is everything the friends' rule reads of one friend: the
-// coordinator's hold, her own beat, the coordinator's observation of her,
-// and the seat's generation now.
+// coordinator's hold, her own beat (shown, never evidence), the coordinator's
+// observation of her, the seat's generation now, and when a card of hers last
+// finished (working to done), zero for never.
 type FriendPresence struct {
 	Held       bool
 	Beat       Beat
 	Health     FriendHealth
 	Generation uint64
+	Finished   time.Time
 }

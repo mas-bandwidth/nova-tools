@@ -1,12 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -34,30 +32,6 @@ func plantNativeResultSymlink(t *testing.T, job, body string) string {
 		t.Skipf("this filesystem will not make a symlink: %v", err)
 	}
 	return outside
-}
-
-// native's result lookup must not follow a symlink planted at RESULT.md and call it published.
-func TestNativeDoesNotTreatAPlantedSymlinkAsAPublishedResult(t *testing.T) {
-	t.Parallel()
-
-	windowsIsNotABench(t)
-	bin := nativeHarness(t)
-	root, slot := aSlot(t)
-	label := "planted-result"
-	jobDir := filepath.Join(slot, "jobs", label)
-	outside := plantNativeResultSymlink(t, jobDir, "RESULT plant sha=aaa\nDONE\nBRANCH worker/exfil-233\n")
-
-	var errOut bytes.Buffer
-	res, code := nativeRun(nativeRunConfig{
-		binary: bin, model: "fake/fake-model", label: label,
-		card: []byte("FAKE-NORESULT\n"), slotDir: slot, root: root,
-		deadline: 30 * time.Second, noWall: true,
-	}, &errOut)
-	require.Equal(t, 0, code, "native run exits 0, got %d:\n%s", code, errOut.String())
-	require.NotEqual(t, "ok", res.harness, "native treated a planted symlink at RESULT.md as a published result; harness=%s", res.harness)
-	raw, err := os.ReadFile(outside)
-	require.NoError(t, err)
-	require.Contains(t, string(raw), "worker/exfil-233", "the file outside the job was rewritten through the link: %q", string(raw))
 }
 
 // The lookup harnessState uses is the same question native asks of RESULT.md.

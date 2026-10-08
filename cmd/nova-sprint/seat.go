@@ -3,15 +3,22 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
+	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
@@ -67,11 +74,22 @@ func (a *app) cmdCoordinator(args []string, stdout, stderr io.Writer) int {
 	if why := sprint.NotSeat(holder, req); why != "" {
 		return refuse(stderr, "coordinator", why)
 	}
+	// the seat goes only to a session the push loop has reached (pushproof.go)
+	if why, err := pushGate(ctx, st, req.To, a.now()); err != nil {
+		return a.readFailed("coordinator", err, stderr)
+	} else if why != "" {
+		return refuse(stderr, "coordinator", why)
+	}
 	how := "given"
 	if req.Take {
 		how = "taken approved_by=" + oneline.Field(req.ApprovedBy)
 	}
 	said := fmt.Sprintf("holder=%s from=%s by=%s %s", oneline.Field(req.To), oneline.Field(holder), oneline.Field(c.actor), how)
+	if push, err := pushSaid(ctx, st, req.To, a.now()); err != nil {
+		return a.readFailed("coordinator", err, stderr)
+	} else if push != "" {
+		said += " " + push
+	}
 	if *dry {
 		fmt.Fprintf(stdout, "COORDINATOR DRY-RUN %s; nothing was changed\n", said)
 		return 0
@@ -128,6 +146,7 @@ type handoverView struct {
 	At        time.Time       `json:"at"`
 	Seat      seatView        `json:"seat"`
 	Owner     string          `json:"owner,omitempty"`
+	Server    *serverView     `json:"server,omitempty"`
 	Machine   string          `json:"machine"`
 	Summary   string          `json:"summary"`
 	Streams   []streamCounts  `json:"streams"`
@@ -148,6 +167,13 @@ type seatView struct {
 	Generation uint64             `json:"generation"`
 	Since      *time.Time         `json:"since,omitempty"`
 	Last       *sprint.SeatChange `json:"last,omitempty"`
+}
+
+// serverView is the actor the server runs as, by its record, and when it is
+// not the seat's holder, the line of its unit to change (sprint.SeatDrift).
+type serverView struct {
+	Actor  string `json:"actor"`
+	Change string `json:"change,omitempty"`
 }
 
 type streamCounts struct {
@@ -188,7 +214,7 @@ const handoverDecisions = 10
 // decisionVerbs are the coordinator's decisions handover shows from the log,
 // beside the seat's own changes and the holds (their notes), by the verb of the
 // step that wrote the line: rework only with a fix.
-var decisionVerbs = []string{"release", "drop", "rework"}
+var decisionVerbs = []string{"release", "drop", "rework", "redo"}
 
 // handover reads what the next seat needs and renders it: the holder and since
 // when, the machine and the progress, each stream's counts, the sentinels held
@@ -210,11 +236,22 @@ func (a *app) handover(ctx context.Context, st *store.Store) (handoverView, stri
 	if h.Owner, err = a.owner(ctx, st); err != nil {
 		return h, "", err
 	}
+	server, err := st.ServerActor(ctx)
+	if err != nil {
+		return h, "", err
+	}
+	if server != "" {
+		holder := h.Seat.Holder
+		if v.Seat != nil {
+			holder = v.Seat.Holder // the record's: the key follows it
+		}
+		h.Server = &serverView{Actor: server, Change: sprint.SeatDrift(holder, holder, server)}
+	}
 	for _, s := range sortedKeys(v.Tables[sprint.Work]) {
 		sc := streamCounts{Stream: s, Counts: map[string]int{}}
 		for _, col := range sprint.States {
 			var n int
-			_, _ = fmt.Sscan(v.Tables[sprint.Work][s][string(col)], &n) // ignored: a cell that is no number counts 0
+			_, _ = fmt.Sscan(cellText(v.Tables[sprint.Work][s][string(col)]), &n) // ignored: a cell that is no number counts 0
 			sc.Counts[string(col)] = n
 		}
 		h.Streams = append(h.Streams, sc)
@@ -275,7 +312,7 @@ func (a *app) handover(ctx context.Context, st *store.Store) (handoverView, stri
 	}
 	h.Decisions = h.Decisions[max(0, len(h.Decisions)-handoverDecisions):]
 	for _, m := range sortedKeys(v.Tables[sprint.Fleet]) {
-		status := v.Tables[sprint.Fleet][m][sprint.Status]
+		status := cellText(v.Tables[sprint.Fleet][m][sprint.Status])
 		switch status {
 		case sprint.Held:
 			h.Members = append(h.Members, memberView{Member: m, Status: status, By: heldBy[m]})
@@ -307,7 +344,7 @@ func decisionOf(l sprint.Line) (decisionView, bool) {
 		}
 		return decisionView{At: l.At, Verb: n.Type, What: n.What, By: n.Who}, true
 	}
-	if l.Kind != sprint.LineMove || !slices.Contains(decisionVerbs, l.Verb) || (l.Verb == "rework" && l.Text["fix"] == "") {
+	if l.Kind != sprint.LineMove || !slices.Contains(decisionVerbs, l.Verb) || ((l.Verb == "rework" || l.Verb == "redo") && l.Text["fix"] == "") {
 		return decisionView{}, false
 	}
 	if l.Table != sprint.Work {
@@ -318,7 +355,7 @@ func decisionOf(l sprint.Line) (decisionView, bool) {
 		what = sprint.Preview(l.Cards, ",")
 	}
 	reason := l.Text["reason"]
-	if l.Verb == "rework" {
+	if l.Verb == "rework" || l.Verb == "redo" {
 		reason = l.Text["fix"]
 	}
 	return decisionView{At: l.At, Verb: l.Verb, What: what, By: l.Actor, Reason: reason}, true
@@ -343,6 +380,9 @@ func (a *app) handoverText(h handoverView) string {
 		}
 	}
 	line("%s", head)
+	if h.Server != nil && h.Server.Change != "" {
+		line("SERVER %s", h.Server.Change)
+	}
 	line("%s", strings.TrimSpace(h.Machine+"  progress "+h.Summary))
 	for _, s := range h.Streams {
 		var cs []string
@@ -528,21 +568,387 @@ func (p *pushTarget) follow(holder string, first bool, stdout, stderr io.Writer)
 }
 
 // cmdSeat is the seat as the friends' daemons read it every second: the
-// holder, the epoch and the seat's generation, from three keys and no table
-// (store.SeatState), so the keepalive loop never serializes the board.
+// holder, the epoch and the seat's generation, from the seat's keys and no
+// table (store.SeatState), so the keepalive loop never serializes the board.
+// The line goes on to name the seat record's holder (record=, once the seat has
+// moved since init) and the actor the server runs as (server=, while its
+// record is fresh), and exits 1 naming the drift when the key, the record and
+// the server's actor disagree; --repair (the record's holder or the owner,
+// --reason) writes the key from the record, logged with who and why
+// (seat-key-follows-record.w2).
 func (a *app) cmdSeat(args []string, stdout, stderr io.Writer) int {
+	// seat login and seat logout are the seat's store login, kept on this machine and
+	// never in the store (storelogin.go); seat push and seat pong are the seat's push
+	// proof (pushproof.go)
+	if len(args) > 0 {
+		switch args[0] {
+		case "login":
+			return a.cmdSeatLogin(args[1:], stdout, stderr)
+		case "logout":
+			return a.cmdSeatLogout(args[1:], stdout, stderr)
+		case "push":
+			return a.cmdSeatPush(args[1:], stdout, stderr)
+		case "pong":
+			return a.cmdSeatPong(args[1:], stdout, stderr)
+		}
+	}
 	fs, c := a.verbSetup("seat")
+	repair := fs.Bool("repair", false, "write the coordinator key from the seat's record when they differ: the record's holder or the owner, with --reason; logged with who and why")
+	reason := fs.String("reason", "", "with --repair, why the key is repaired, recorded in the log (required)")
 	if pos, err := parse(fs, args); err != nil || len(pos) > 0 {
 		return refuse(stderr, "seat", argErr("takes no words ", err, pos...))
+	}
+	if *reason != "" && !*repair {
+		return refuse(stderr, "seat", "--reason goes with --repair")
 	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "seat", err.Error())
 	}
-	s, err := st.SeatState(context.Background())
+	ctx := context.Background()
+	if *repair {
+		return a.seatRepair(ctx, st, *c, *reason, stdout, stderr)
+	}
+	s, err := st.SeatCheck(ctx)
 	if err != nil {
 		return a.readFailed("seat", err, stderr)
 	}
-	sayOK(stdout, c.json, "seat", fmt.Sprintf("SEAT holder=%s epoch=%d generation=%d", orDashStr(s.Holder, "-"), s.Epoch, s.Generation), map[string]any{"holder": s.Holder, "epoch": s.Epoch, "generation": s.Generation})
+	line := fmt.Sprintf("SEAT holder=%s epoch=%d generation=%d", orDashStr(s.Holder, "-"), s.Epoch, s.Generation)
+	if s.Record != "" || s.Server != "" {
+		line += fmt.Sprintf(" record=%s server=%s", oneline.Field(orDashStr(s.Record, s.Holder)), oneline.Field(orDashStr(s.Server, "-")))
+	}
+	facts := map[string]any{"holder": s.Holder, "epoch": s.Epoch, "generation": s.Generation, "record": s.Record, "server": s.Server}
+	if s.Drift == "" {
+		sayOK(stdout, c.json, "seat", line, facts)
+		return 0
+	}
+	if c.json {
+		facts["drift"], facts["status"], facts["exit"] = s.Drift, "drift", 1
+		b, _ := json.Marshal(facts) // ignored: strings and numbers always encode
+		fmt.Fprintln(stdout, string(b))
+		return 1
+	}
+	fmt.Fprintln(stdout, line+" DRIFT "+oneline.Escape(s.Drift))
+	return 1
+}
+
+// seatRepair is seat --repair: the coordinator key written from the seat's
+// record by its holder or the owner, the log's line saying who and why.
+func (a *app) seatRepair(ctx context.Context, st *store.Store, c common, reason string, stdout, stderr io.Writer) int {
+	if c.actor == "" {
+		return refuse(stderr, "seat", "--repair wants --actor <name> (or NOVA_SPRINT_ACTOR): the record's holder or the owner; nothing was changed")
+	}
+	owner, err := a.owner(ctx, st)
+	if err != nil {
+		return a.readFailed("seat", err, stderr)
+	}
+	was, err := st.B.Coordinator(ctx)
+	if err != nil {
+		return a.readFailed("seat", err, stderr)
+	}
+	step, why, err := st.SeatRepairStep(ctx, sprint.SeatRepairReq{Who: c.actor, Reason: reason, Owner: owner})
+	if err != nil {
+		return a.readFailed("seat", err, stderr)
+	}
+	if why != "" {
+		return refuse(stderr, "seat", why)
+	}
+	step.CallerOp = c.op
+	res, err := st.Run(ctx, step)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s seat: %s\n", prog, oneline.Escape(err.Error()))
+		return 1
+	}
+	if len(res.Refused) > 0 {
+		return refuse(stderr, "seat", res.Refused[0].Why)
+	}
+	s, err := st.SeatCheck(ctx)
+	if err != nil {
+		return a.readFailed("seat", err, stderr)
+	}
+	sayOK(stdout, c.json, "seat", fmt.Sprintf("SEAT REPAIRED key=%s was=%s by=%s", oneline.Field(s.Holder), oneline.Field(orDashStr(was, "-")), oneline.Field(c.actor)),
+		map[string]any{"holder": s.Holder, "was": was, "by": c.actor, "op": res.Op, "drift": s.Drift})
+	if s.Drift != "" {
+		fmt.Fprintln(stdout, "DRIFT "+oneline.Escape(s.Drift))
+	}
 	return 0
+}
+
+// cellText is a where view's cell as the text it was printed as; "" for a row field that
+// is no string.
+func cellText(cell any) string {
+	s, _ := cell.(string)
+	return s
+}
+
+// The seat's record (coordinator-config-through-the-seat; the owner, 2026-10-05: every
+// step the coordinator did by hand is a missing instruction): what seat install learned
+// of this machine's seat that a cold coordinator's environment does not hold, beside the
+// store login (storelogin.go). It names the sprint's server, which seat check measures
+// when NOVA_SPRINT_SERVER is not set, and the nova-config seat whose row seat install
+// wrote into nova-config's seats.tsv, which nova-config --seat and seat check read. It
+// holds no secret: the row names the variable of the password, and nova-config reads
+// that password through the store login's nova-secrets seat.
+
+// seatRecordFile is the record's name, in the store login's directory.
+const seatRecordFile = "seat.json"
+
+// configTool is the tool whose seats.tsv seat install writes the config seat's row into.
+const configTool = "nova-config"
+
+type seatRecord struct {
+	Server     string `json:"server,omitempty"`
+	ConfigSeat string `json:"config_seat,omitempty"`
+}
+
+// seatRecordPath is the record's file, beside the store login's.
+func (a *app) seatRecordPath() (string, error) {
+	loginFile := a.loginFile
+	if loginFile == nil {
+		loginFile = a.defaultLoginFile
+	}
+	p, err := loginFile()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Dir(p), seatRecordFile), nil
+}
+
+// recordedSeat is the record seat install wrote; ok false when there is none, or the app
+// has the store login off (a test's app, as recordedLogin).
+func (a *app) recordedSeat() (seatRecord, bool, error) {
+	if a.loginFile == nil {
+		return seatRecord{}, false, nil
+	}
+	path, err := a.seatRecordPath()
+	if err != nil {
+		return seatRecord{}, false, err
+	}
+	b, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return seatRecord{}, false, nil
+	}
+	if err != nil {
+		return seatRecord{}, false, fmt.Errorf("the seat record %s is unreadable: %v; run: nova-sprint seat install", path, err)
+	}
+	var r seatRecord
+	if err := json.Unmarshal(b, &r); err != nil {
+		return seatRecord{}, false, fmt.Errorf("the seat record %s is not a seat record: %v; run: nova-sprint seat install", path, err)
+	}
+	return r, true, nil
+}
+
+// seatServer is the sprint's server the seat's record names, "" when none.
+func (a *app) seatServer() string {
+	r, ok, err := a.recordedSeat()
+	if err != nil || !ok { // ignored: an unreadable record is the seat check's config line, DOWN with its remedy (withConfigSeat)
+		return ""
+	}
+	return r.Server
+}
+
+// configSeatFlags are seat install's flags for the nova-config seat profile.
+type configSeatFlags struct{ seat, dsn, passwordEnv *string }
+
+func addConfigSeatFlags(fs flagSet) configSeatFlags {
+	return configSeatFlags{
+		seat:        fs.String("config-seat", "", "the `name` of the nova-config seat profile written into "+configTool+"'s "+seatcred.ProfileFile+" (nova-config --seat <name> reads it); wants --config-dsn and --config-password-env"),
+		dsn:         fs.String("config-dsn", "", "the config store's PostgreSQL `dsn`, postgres://user@host:port/db with no password"),
+		passwordEnv: fs.String("config-password-env", "", "the `NAME` of the config store's password: the variable nova-config reads it from, else the key of the store login's nova-secrets seat (nova-sprint seat login) it is read from in process"),
+	}
+}
+
+// profile is the row the flags name, ok false when they name none; a half-named or bad
+// row is refused, quoting no password.
+func (f configSeatFlags) profile() (seatcred.ConfigProfile, bool, error) {
+	p := seatcred.ConfigProfile{Name: strings.TrimSpace(*f.seat), DSN: strings.TrimSpace(*f.dsn), PasswordEnv: strings.TrimSpace(*f.passwordEnv)}
+	if p.Name+p.DSN+p.PasswordEnv == "" {
+		return p, false, nil
+	}
+	var missing []string
+	for _, m := range []struct{ v, flag string }{{p.Name, "--config-seat <name>"}, {p.DSN, "--config-dsn <dsn>"}, {p.PasswordEnv, "--config-password-env <NAME>"}} {
+		if m.v == "" {
+			missing = append(missing, m.flag)
+		}
+	}
+	if len(missing) > 0 {
+		return p, false, errors.New("the nova-config seat profile wants " + strings.Join(missing, ", ") + "; nothing was written")
+	}
+	if !secrets.IsValidAsName(p.Name) {
+		return p, false, errors.New("--config-seat " + oneline.Field(p.Name) + " must match [A-Za-z0-9_-]+; nothing was written")
+	}
+	if !envName.MatchString(p.PasswordEnv) {
+		return p, false, errors.New("--config-password-env must name a variable, [A-Z_][A-Z0-9_]*; nothing was written")
+	}
+	if strings.ContainsAny(p.DSN, "\t\n") {
+		return p, false, errors.New("--config-dsn holds a tab or a newline; nothing was written")
+	}
+	if _, err := config.ResolveDSN(p.DSN, func(string) string { return "" }); err != nil {
+		return p, false, fmt.Errorf("--config-dsn: %v; nothing was written", err) // ResolveDSN's refusals quote no password
+	}
+	return p, true, nil
+}
+
+var envName = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+
+// configProfilePath is nova-config's seats.tsv, where nova-config --seat reads it.
+func (a *app) configProfilePath() (string, error) {
+	return seatcred.ProfilePath(configTool, func(k string) string {
+		if k == "HOME" {
+			if h, err := a.home(); err == nil {
+				return h
+			}
+		}
+		return a.getenv(k)
+	})
+}
+
+// writeConfigProfile writes p's row into the seats.tsv at path in place of the seat's row
+// there, keeping every other line, for its user alone and whole or not at all; the file
+// is read back as nova-config reads it before it replaces the old one.
+func writeConfigProfile(path string, p seatcred.ConfigProfile) error {
+	row := p.Name + "\t" + p.DSN + "\t" + p.PasswordEnv
+	var lines []string
+	b, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	placed := false
+	for _, l := range strings.Split(strings.TrimRight(string(b), "\n"), "\n") {
+		name, _, _ := strings.Cut(strings.TrimSpace(l), "\t")
+		switch {
+		case l == "" && len(b) == 0:
+			continue
+		case name == p.Name && !strings.HasPrefix(strings.TrimSpace(l), "#"):
+			if !placed {
+				lines, placed = append(lines, row), true
+			}
+		default:
+			lines = append(lines, l)
+		}
+	}
+	if !placed {
+		lines = append(lines, row)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), ".seats-*.tsv")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer func() { _ = os.Remove(tmp) }() // ignored: gone after the rename; a failed write leaves nothing behind
+	_, werr := f.WriteString(strings.Join(lines, "\n") + "\n")
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		return werr
+	}
+	if err := os.Chmod(tmp, 0o600); err != nil {
+		return err
+	}
+	if got, err := seatcred.LoadConfigProfile(tmp, p.Name); err != nil || got != p {
+		return fmt.Errorf("the row written does not read back as nova-config reads it: %v", err)
+	}
+	return os.Rename(tmp, path)
+}
+
+// installSeat is seat install's part beyond the unit: the nova-config seat profile and
+// the seat's record. server is the server the unit was given, "" for none.
+func (a *app) installSeat(f configSeatFlags, server string, dry bool, stdout io.Writer) error {
+	p, named, err := f.profile()
+	if err != nil {
+		return err
+	}
+	if !named && server == "" {
+		return nil
+	}
+	recPath, err := a.seatRecordPath()
+	if err != nil {
+		return fmt.Errorf("the seat record has no place: %v", err)
+	}
+	rec, _, err := a.recordedSeat()
+	if err != nil && !dry {
+		return err
+	}
+	if server != "" {
+		rec.Server = server
+	}
+	var profPath string
+	if named {
+		if profPath, err = a.configProfilePath(); err != nil {
+			return err
+		}
+		rec.ConfigSeat = p.Name
+	}
+	said := fmt.Sprintf("seat=%s dsn=%s password-env=%s profile=%s", oneline.Field(rec.ConfigSeat), oneline.Field(p.DSN), oneline.Field(p.PasswordEnv), oneline.Field(profPath))
+	if dry {
+		if named {
+			fmt.Fprintf(stdout, "SEAT CONFIG DRY-RUN %s; nothing was written\n", said)
+		}
+		fmt.Fprintf(stdout, "SEAT RECORD DRY-RUN file=%s server=%s; nothing was written\n", oneline.Field(recPath), oneline.Field(orDashStr(rec.Server, "-")))
+		return nil
+	}
+	if named {
+		if err := writeConfigProfile(profPath, p); err != nil {
+			return fmt.Errorf("the nova-config seat profile %s was not written: %v", profPath, err)
+		}
+	}
+	b, _ := json.MarshalIndent(rec, "", "  ") // ignored: a struct of strings always encodes
+	if err := writePrivate(recPath, append(b, '\n')); err != nil {
+		return fmt.Errorf("the seat record %s was not written: %v", recPath, err)
+	}
+	if named {
+		fmt.Fprintf(stdout, "SEAT CONFIG OK %s server=%s%s\n", said, oneline.Field(orDashStr(rec.Server, "-")), a.configPasswordNote(p))
+	}
+	fmt.Fprintf(stdout, "SEAT RECORD OK file=%s server=%s config-seat=%s\n", oneline.Field(recPath), oneline.Field(orDashStr(rec.Server, "-")), oneline.Field(orDashStr(rec.ConfigSeat, "-")))
+	return nil
+}
+
+// configPasswordNote says where nova-config --seat will find the config seat's
+// password: the environment, the store login's nova-secrets seat (read here and
+// dropped), or nowhere yet, with the remedy.
+func (a *app) configPasswordNote(p seatcred.ConfigProfile) string {
+	if a.getenv(p.PasswordEnv) != "" {
+		return " password=env"
+	}
+	l, ok, err := a.recordedLogin()
+	if err != nil || !ok {
+		return " password=unresolved NOTE no store login names a nova-secrets seat to read " + p.PasswordEnv + " from; run: nova-sprint seat login"
+	}
+	sl := l.secrets()
+	sl.Name = p.PasswordEnv
+	if s, err := a.secretReader()(sl); err != nil || !s.Loaded() || s.Empty() {
+		return " password=unresolved NOTE seat " + oneline.Field(l.As) + " of " + oneline.Field(l.Store) + " holds no " + p.PasswordEnv + "; seal it with nova-secrets seal --as " + oneline.Field(l.As) + " --name " + p.PasswordEnv
+	}
+	return " password=secrets"
+}
+
+// withConfigSeat adds the config seat's line to the seat check when the seat's record
+// names one: OK with the row nova-config --seat reads, else DOWN with the remedy.
+func (a *app) withConfigSeat(r sprint.SeatCheckReport) sprint.SeatCheckReport {
+	rec, ok, err := a.recordedSeat()
+	if (!ok && err == nil) || (ok && rec.ConfigSeat == "") {
+		return r
+	}
+	l := sprint.SeatCheckLine{Thing: "config"}
+	if err != nil {
+		l.Facts, l.Remedy = []string{"why=" + strconv.Quote(err.Error())}, "nova-sprint seat install"
+	} else if path, perr := a.configProfilePath(); perr != nil {
+		l.Facts, l.Remedy = []string{"seat=" + oneline.Field(rec.ConfigSeat), "why=" + strconv.Quote(perr.Error())}, "nova-sprint seat install"
+	} else if p, perr := seatcred.LoadConfigProfile(path, rec.ConfigSeat); perr != nil {
+		l.Facts = []string{"seat=" + oneline.Field(rec.ConfigSeat), "profile=" + oneline.Field(path), "why=" + strconv.Quote(perr.Error())}
+		l.Remedy = "nova-sprint seat install --config-seat " + rec.ConfigSeat + " --config-dsn <dsn> --config-password-env <NAME>"
+	} else {
+		l.Up = true
+		l.Facts = []string{"seat=" + oneline.Field(p.Name), "dsn=" + oneline.Field(p.DSN), "password-env=" + oneline.Field(orDashStr(p.PasswordEnv, "-")), "profile=" + oneline.Field(path)}
+	}
+	r.Lines = append(r.Lines, l)
+	if !l.Up {
+		r.Down++
+		r.ExitCode = 1
+	}
+	return r
 }

@@ -37,7 +37,10 @@ import (
 //     verb that gave it (recordAnswer), have their outcome attached when their card lands,
 //     is dropped or bounces again (answerOutcomes; SPEC-NOVA-DECIDE section 13);
 //   - every routine judgment as it is raised is answered in shadow through the lane's backend,
-//     recorded in judgment-shadow.jsonl and never applied (shadowRound; jev-shadow-judgments.w1).
+//     recorded in judgment-shadow.jsonl and never applied (shadowRound; jev-shadow-judgments.w1);
+//   - every card in review is read in shadow through the lane's backend over its brief and diff,
+//     recorded in read-shadow.jsonl, never counted as a read, and given the readers' outcome when
+//     its card lands or a later read finds it broken (shadowReadRound; jev-shadow-heavy-read.w1).
 
 // DecideEvery is how often the decide lane runs a round.
 const DecideEvery = 5 * time.Second
@@ -56,6 +59,9 @@ type decideLane struct {
 	backend decide.Backend
 	now     func() time.Time
 	wait    time.Duration
+	// diffOf is the diff of a card in review as the workers' head left it; nil reads nothing
+	// in shadow (the run loop holds no checkout to take one from).
+	diffOf func(ctx context.Context, c *sprint.Card) (string, error)
 
 	mu     sync.Mutex
 	queued []decide.Decision
@@ -65,6 +71,8 @@ type decideLane struct {
 	graded    map[string]bool // cards graded this process; a card whose ask failed is asked again the next round
 	watched   map[string]bool // primaries with a decision on them, read placed or not (a drop unplaces them)
 	answering map[string]bool // cards with a judgment answer whose outcome is not attached: read placed or not
+	readSeen  map[string]bool // card@head pairs shadow-read this process; a failed ask is asked again the next round
+	readOpen  map[string]bool // cards with a shadow read whose outcome is not attached: read placed or not
 	loaded    bool
 	said      string // the last failure said, said once until it changes
 }
@@ -72,7 +80,7 @@ type decideLane struct {
 // newDecideLane is the lane over dir, grading through b (nil grades nothing), each grade's
 // answer bounded by wait (GradeWait in the run loop).
 func newDecideLane(dir string, b decide.Backend, now func() time.Time, wait time.Duration) *decideLane {
-	return &decideLane{dir: dir, backend: b, now: now, wait: wait, attached: map[string]bool{}, shadowed: map[string]bool{}, graded: map[string]bool{}, watched: map[string]bool{}, answering: map[string]bool{}}
+	return &decideLane{dir: dir, backend: b, now: now, wait: wait, attached: map[string]bool{}, shadowed: map[string]bool{}, graded: map[string]bool{}, watched: map[string]bool{}, answering: map[string]bool{}, readSeen: map[string]bool{}, readOpen: map[string]bool{}}
 }
 
 func (l *decideLane) record(decision string) string {
@@ -190,6 +198,8 @@ func (a *app) decideRound(ctx context.Context, addr string, stdout io.Writer) {
 	answered, np := l.answerOutcomes(s)
 	attached += answered
 	problems = append(problems, np...)
+	read, rp := l.shadowReadRound(ctx, s)
+	problems = append(problems, rp...)
 	got, gp := l.grade(ctx, grades)
 	problems = append(problems, gp...)
 	written := 0
@@ -208,10 +218,13 @@ func (a *app) decideRound(ctx context.Context, addr string, stdout io.Writer) {
 		written = len(res.Moved)
 	}
 	l.watch(s)
-	if recorded+attached+len(got)+shadowed > 0 {
+	if recorded+attached+len(got)+shadowed+read > 0 {
 		fmt.Fprintf(stdout, "%s DECIDE recorded=%d graded=%d written=%d attached=%d", at, recorded, len(got), written, attached)
 		if shadowed > 0 {
 			fmt.Fprintf(stdout, " shadowed=%d", shadowed)
+		}
+		if read > 0 {
+			fmt.Fprintf(stdout, " shadow_read=%d", read)
 		}
 		fmt.Fprintln(stdout)
 	}
@@ -277,6 +290,68 @@ func (a *app) shadowRound(ctx context.Context, addr string) (int, []string) {
 	return n, problems
 }
 
+// shadowReadRound reads in shadow each card in review not yet read at its head (decide.ShadowReadAsk),
+// at most GradeWidth a round, and attaches the readers' outcome (decide.ShadowReadOutcome) to each
+// shadow read whose card has one: how many it recorded, and why each failure failed. A shadow read is
+// never a read: nothing is applied or written on the work table. With no backend or no diff source
+// nothing is asked; outcomes are still attached.
+func (l *decideLane) shadowReadRound(ctx context.Context, s *sprint.Snapshot) (int, []string) {
+	var problems []string
+	n := 0
+	if l.backend != nil && l.diffOf != nil {
+		for _, c := range s.Work.Column(sprint.Review) {
+			key := c.ID + "@" + c.F("head")
+			if !c.Placed() || sprint.IsSentinel(c) || c.F("brief") == "" || l.readSeen[key] || n+len(problems) >= GradeWidth {
+				continue
+			}
+			l.readSeen[key] = true
+			diff, err := l.diffOf(ctx, c)
+			if err == nil {
+				err = os.MkdirAll(l.dir, 0o755)
+			}
+			if err != nil {
+				problems = append(problems, fmt.Sprintf("%s not shadow-read: %v", c.ID, err))
+				delete(l.readSeen, key)
+				continue
+			}
+			actx, cancel := context.WithTimeout(ctx, l.wait)
+			_, existing, err := decide.ShadowReadAsk(actx, l.backend, c.ID, c.F("brief"), diff, c.Int("broken_reads"), l.record(decide.ShadowReadName), l.now())
+			cancel()
+			switch {
+			case err != nil:
+				problems = append(problems, fmt.Sprintf("%s not shadow-read: %v", c.ID, err))
+				delete(l.readSeen, key) // asked again on the next round
+			case !existing:
+				n++
+			}
+		}
+	}
+	ds, err := decide.Load(l.record(decide.ShadowReadName))
+	if err != nil {
+		return n, append(problems, "the shadow reads: "+err.Error())
+	}
+	open := map[string]bool{}
+	for _, d := range ds {
+		if d.Outcome != nil {
+			continue
+		}
+		card := d.Inputs["card"]
+		label, note := decide.ShadowReadOutcome(d, markOf(s.Work.Card(card)))
+		if label == "" {
+			open[card] = true
+			continue
+		}
+		if _, _, err := decide.Attach(l.record(decide.ShadowReadName), decide.Outcome{ID: d.ID, Label: label, Note: card + ": " + note, At: l.now().UTC().Format(time.RFC3339)}); err != nil {
+			problems = append(problems, fmt.Sprintf("the outcome of %s: %v", d.ID, err))
+			open[card] = true
+		}
+	}
+	l.mu.Lock()
+	l.readOpen = open
+	l.mu.Unlock()
+	return n, problems
+}
+
 // verbsOf is the verbs a judgment's printed decisions make, each once.
 func verbsOf(decisions []string) []string {
 	var out []string
@@ -315,6 +390,7 @@ func (a *app) decideSnapshot(ctx context.Context, addr string) (*sprint.Snapshot
 	watching := maps.Clone(a.decide.watched)
 	a.decide.mu.Lock()
 	maps.Copy(watching, a.decide.answering)
+	maps.Copy(watching, a.decide.readOpen)
 	a.decide.mu.Unlock()
 	watched := slices.Sorted(maps.Keys(watching))
 	return st.Load(ctx, []string{sprint.Work}, func(*sprint.Snapshot) map[string][]string {

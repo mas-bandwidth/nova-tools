@@ -30,7 +30,7 @@ func TestSpellingCLIRefusesNegativeFailMax(t *testing.T) {
 	dir := t.TempDir()
 	code, _, stderr := runSpelling(t, "--dir", dir, "--max", "-1")
 	require.EqualValues(t, 2, code, "exit code = %d, want 2", code)
-	assert.Contains(t, stderr, "--max must be a line ceiling of zero or more", "stderr = %q", stderr)
+	assert.Contains(t, stderr, "--max must be zero or more", "stderr = %q", stderr)
 }
 
 func TestSpellingCLICleanPass(t *testing.T) {

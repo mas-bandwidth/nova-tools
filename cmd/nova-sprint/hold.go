@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -19,8 +21,11 @@ a name held takes no new cards; what is dealt and not begun is handed back now
 (a member's ready cards dealt round the fleet, a reader's reads asked and not
 begun asked of another, a stream's ready work cards withdrawn); what is begun
 finishes, or with --return is handed back now too (a member's working cards
-dealt round the fleet, a reader's reads begun asked of another, a friend's and
-a stream's working cards withdrawn to ready). Its status reads held, the reason
+dealt round the fleet, a reader's reads begun asked of another, a stream's
+working cards withdrawn to ready). A held friend keeps no begun card, with
+--return or without: every card she has begun goes back to ready, and a started
+one with a push carries its pushed head to the next taker; her ready cards not
+begun wait on her row, or with --return go back too. Its status reads held, the reason
 beside it (where --json --cards: holds; handover), and the hold is a line
 of the log.
 unhold <name>... [--reason <text>] releases it: a member that beats is up at
@@ -39,16 +44,19 @@ func (a *app) cmdHold(release bool, args []string, stdout, stderr io.Writer) int
 	reason := fs.String("reason", "", "why, in words: shown beside the held status and kept in the log; a hold wants one")
 	ret := false
 	if !release {
-		fs.BoolVar(&ret, "return", false, "hand back the work begun now too: a member's working cards dealt round the fleet, a reader's reads begun asked of another, a friend's and a stream's working cards withdrawn to ready (default: what is begun finishes)")
+		fs.BoolVar(&ret, "return", false, "hand back the work begun now too: a member's working cards dealt round the fleet, a reader's reads begun asked of another, a stream's working cards withdrawn to ready (default: what is begun finishes, but a held friend keeps no begun card either way)")
 	}
 	dry := fs.Bool("dry-run", false, "check the names and the reason, print what would be held or released, and write nothing")
+	var repo listFlag
+	fs.Var(&repo, "repo", "also hold or release the streams recording this repository (owner/name), comma separated or repeated; needs --expect <n>, the number of streams it selects")
+	expect := fs.Int("expect", 0, "with --repo: the number of streams it selects, as nova-sprint streams --repo <owner/name> printed it")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
 	var probs []string
-	if len(pos) == 0 {
-		probs = append(probs, "wants at least one name: a fleet member, a reader, a friend or a stream")
+	if len(pos) == 0 && len(repo) == 0 {
+		probs = append(probs, "wants at least one name: a fleet member, a reader, a friend or a stream (or --repo <owner/name> with --expect)")
 	}
 	for _, n := range pos {
 		if !sprint.ValidID(n) {
@@ -58,16 +66,36 @@ func (a *app) cmdHold(release bool, args []string, stdout, stderr io.Writer) int
 	if !release && strings.TrimSpace(*reason) == "" {
 		probs = append(probs, "--reason <text> is required: why it is held, shown beside its held status and kept in the log")
 	}
+	if len(repo) > 0 && *expect == 0 {
+		probs = append(probs, "--repo wants --expect <n>, the number of streams it selects; run: nova-sprint streams --repo "+repo[0]+" to read it")
+	}
 	if len(probs) > 0 {
 		return refuse(stderr, name, strings.Join(probs, "; "))
 	}
-	if *dry {
+	if *dry && len(repo) == 0 {
 		fmt.Fprintf(stdout, "%s DRY-RUN names=%s return=%t; nothing was written\n", strings.ToUpper(name), strings.Join(pos, ","), ret)
 		return 0
 	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, name, err.Error())
+	}
+	if len(repo) > 0 {
+		streams, err := a.repoStreams(context.Background(), st, repo)
+		if err != nil {
+			return a.readFailed(name, err, stderr)
+		}
+		if len(streams) == 0 {
+			return refuse(stderr, name, "no stream records "+strings.Join(repo, ",")+" (read them with nova-sprint streams)")
+		}
+		if *expect != len(streams) {
+			return refuse(stderr, name, fmt.Sprintf("--expect %d was printed for another set: the repository selects %d stream(s) (%s)", *expect, len(streams), strings.Join(streams, ",")))
+		}
+		pos = append(pos, streams...)
+	}
+	if *dry {
+		fmt.Fprintf(stdout, "%s DRY-RUN names=%s return=%t; nothing was written\n", strings.ToUpper(name), strings.Join(pos, ","), ret)
+		return 0
 	}
 	return a.runHold(name, "", *c, st, sprint.HoldReq{Names: pos, Release: release, Return: ret, Reason: *reason, Who: c.actor}, nil, stdout, stderr)
 }
@@ -82,6 +110,23 @@ func (a *app) runHold(verbName, stepVerb string, c common, st *store.Store, r sp
 	r, err := st.HoldReqOf(ctx, r)
 	if err != nil {
 		return a.readFailed(verbName, err, stderr)
+	}
+	// a held friend keeps no card: her started ones are read as friend down reads them, so
+	// the hold takes them too and carries each push's head to the next taker
+	if !r.Release {
+		for _, n := range r.Names {
+			if !slices.Contains(r.Friends, n) || (r.Kind != "" && r.Kind != sprint.HoldFriend) {
+				continue
+			}
+			started, err := a.friendStarted(ctx, st, n)
+			if err != nil {
+				return a.readFailed(verbName, err, stderr)
+			}
+			if r.Started == nil {
+				r.Started = map[string]string{}
+			}
+			maps.Copy(r.Started, started)
+		}
 	}
 	step := store.HoldStep(r)
 	if stepVerb != "" {

@@ -53,7 +53,7 @@ func TestFleetUpOnAMemberThatNeverBeatTouchesNothing(t *testing.T) {
 // cardsOf is the work cards a member holds in the view: ready and working.
 func cardsOf(w whereView, member string) int {
 	row := w.Tables["fleet"][member]
-	ready, _ := strconv.Atoi(row["ready"])
-	working, _ := strconv.Atoi(row["working"])
+	ready, _ := strconv.Atoi(cellText(row["ready"]))
+	working, _ := strconv.Atoi(cellText(row["working"]))
 	return ready + working
 }

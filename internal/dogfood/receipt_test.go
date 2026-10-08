@@ -11,6 +11,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/readregular"
 )
 
 func fixedReceipt() Receipt {
@@ -201,4 +203,24 @@ func TestReadReceiptsAcceptsAnEmptyDirectory(t *testing.T) {
 	require.NoError(t, err, "ReadReceipts: %v", err)
 	require.Empty(t, got, "empty directory read as %+v %+v", got, failures)
 	require.Empty(t, failures, "empty directory read as %+v %+v", got, failures)
+}
+
+// TestReadReceiptsRejectsOversizeFile pins that ReadReceipts records an unreadable failure
+// when a receipt file exceeds the size cap (security#77 finding 3).
+func TestReadReceiptsRejectsOversizeFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	largePath := filepath.Join(dir, "large.json")
+	f, err := os.Create(largePath)
+	require.NoError(t, err)
+	require.NoError(t, f.Truncate(readregular.DefaultMax+1))
+	require.NoError(t, f.Close())
+
+	got, failures, err := ReadReceipts(dir)
+	require.NoError(t, err, "ReadReceipts: %v", err)
+	require.Empty(t, got, "oversize file read as good receipt")
+	require.Len(t, failures, 1, "failures %+v, want 1 failure for oversize file", failures)
+	assert.Equal(t, largePath, failures[0].Subject)
+	assert.Contains(t, failures[0].Reason, "exceeds limit")
 }

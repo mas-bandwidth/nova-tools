@@ -77,11 +77,19 @@ func (h *harness) nWork(ids ...string) {
 // readAll reports every outstanding read card of the primary with the verdict.
 func (h *harness) nReadAll(id, verdict string) {
 	h.t.Helper()
-	s := h.snap()
-	for _, rc := range s.Readers.Of(id) {
-		if rc.Col == sprint.Asked || rc.Col == sprint.Reading {
-			h.nDo(ReadStep(sprint.ReadReq{As: rc.Row, Verdict: verdict, Finding: "f:1", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
+	for {
+		s := h.snap()
+		for _, rc := range s.Readers.Of(id) {
+			if rc.Col == sprint.Asked || rc.Col == sprint.Reading {
+				h.nDo(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: verdict, Finding: "f:1", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
+			}
 		}
+		// a read still wanted (one taken back) is asked again here (reads are asked together)
+		s = h.snap()
+		if pr := s.Work.Card(id); verdict != "ok" || pr.Col != sprint.Review || sprint.ReadsWanted(s, pr) == 0 {
+			return
+		}
+		h.nDo(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}}))
 	}
 }
 
@@ -151,7 +159,7 @@ func TestStampsOnEveryPath(t *testing.T) {
 		require.NotEmpty(t, c.F("dealt"), "level moved %s without a new dealt: %q", c.ID, c.F("dealt"))
 	}
 	require.NotEqual(t, 0, moved, "level moved nothing")
-	// read cards: ask, ask --another, report from asked, rework re-ask
+	// read cards: ask (both reads together), ask --another (a third), report from asked, rework re-ask
 	h.nDo(TakeStep(sprint.TakeReq{As: wc4.Row, Sel: sprint.Sel{IDs: []string{wc4.ID}}, Gens: map[string]int{wc4.ID: wc4.Int("gen")}}))
 	h.nDo(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{wc4.ID}}, Gens: map[string]int{wc4.ID: wc4.Int("gen")}}))
 	h.nDo(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
@@ -165,7 +173,7 @@ func TestStampsOnEveryPath(t *testing.T) {
 		}
 	}
 	h.nDo(ReadStep(sprint.ReadReq{As: rcs[0].Row, Begin: true, Sel: sprint.Sel{IDs: []string{rcs[0].ID}}}))
-	h.nDo(ReadStep(sprint.ReadReq{As: rcs[1].Row, Verdict: "broken", Finding: "x:1", Sel: sprint.Sel{IDs: []string{rcs[1].ID}}}))
+	h.nDo(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rcs[1].Row, Verdict: "broken", Finding: "x:1", Sel: sprint.Sel{IDs: []string{rcs[1].ID}}}))
 	s = h.snap()
 	for _, id := range []string{rcs[0].ID, rcs[1].ID} {
 		require.NotEmpty(t, s.Readers.Card(id).F("begun"), "%s: no begun", id)
@@ -189,7 +197,7 @@ func TestStampsOnEveryPath(t *testing.T) {
 			}
 		}
 	}
-	require.Equal(t, 2, again, "re-asked %d", again)
+	require.Equal(t, 2, again, "re-asked %d (both reads together)", again)
 }
 
 // ---- H2 -------------------------------------------------------------------
@@ -200,6 +208,11 @@ func TestReadyToAcceptOncePerAttempt(t *testing.T) {
 	h.setup(3)
 	h.nWork("s1-1", "s1-2", "s1-3")
 	h.nDo(AskStep(sprint.AskReq{}))
+	// held by the pump (CI red at the head, acknowledged): ready to accept is for those
+	// alone; one nothing holds is the tick's to accept
+	for _, id := range []string{"s1-1", "s1-2", "s1-3"} {
+		h.heldByRedCI(id)
+	}
 	// s1-1: two oks, then a third reader broken
 	h.nReadAll("s1-1", "ok")
 	if n := len(h.nAllNotes(sprint.NReadyToAccept)); n != 1 || len(h.nOpenOf(sprint.NReadyToAccept, "s1-1")) != 1 {
@@ -216,11 +229,13 @@ func TestReadyToAcceptOncePerAttempt(t *testing.T) {
 	require.Empty(t, h.judgmentsOn("s1-1"), "accept left open: %v", h.judgmentsOn("s1-1"))
 	h.nDo(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "look again"}))
 	t.Logf("s1-1 returned to review, open judgments: %v (ready to accept notes total %d)", h.judgmentsOn("s1-1"), len(h.nAllNotes(sprint.NReadyToAccept)))
-	// s1-2: ok, broken, another, ok -> one; rework closes; new attempt: one more
-	s := h.snap()
-	rcs := s.Readers.Of("s1-2")
-	h.nDo(ReadStep(sprint.ReadReq{As: rcs[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rcs[0].ID}}}))
-	h.nDo(ReadStep(sprint.ReadReq{As: rcs[1].Row, Verdict: "broken", Finding: "b:1", Sel: sprint.Sel{IDs: []string{rcs[1].ID}}}))
+	// s1-2: ok, broken, another, ok -> one; rework closes; new attempt: one more (both its
+	// reads asked together)
+	both := h.outstanding("s1-2")
+	require.Len(t, both, 2, "s1-2 asked both reads together")
+	first, second := both[0], both[1]
+	h.nDo(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: first.Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{first.ID}}}))
+	h.nDo(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: second.Row, Verdict: "broken", Finding: "b:1", Sel: sprint.Sel{IDs: []string{second.ID}}}))
 	require.Empty(t, h.nOpenOf(sprint.NReadyToAccept, "s1-2"), "ready to accept on one ok")
 	h.nDo(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}, Another: true}))
 	h.nReadAll("s1-2", "ok")
@@ -229,11 +244,12 @@ func TestReadyToAcceptOncePerAttempt(t *testing.T) {
 	}
 	h.nDo(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}, Fix: "again"}))
 	require.Empty(t, h.nOpenOf(sprint.NReadyToAccept, "s1-2"), "rework left ready to accept open")
-	s = h.snap()
+	s := h.snap()
 	w := s.Fleet.Card("s1-2.w2")
 	h.nDo(TakeStep(sprint.TakeReq{As: w.Row, Sel: sprint.Sel{IDs: []string{w.ID}}, Gens: map[string]int{w.ID: 1}}))
 	h.nDo(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{w.ID}}, Gens: map[string]int{w.ID: 1}}))
 	h.nDo(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}})) // the machine's ask: the finish asks no reader
+	h.heldByRedCI("s1-2")                                                 // a new head: held again
 	h.nReadAll("s1-2", "ok")
 	var on2 int
 	for _, n := range h.nAllNotes(sprint.NReadyToAccept) {
@@ -255,9 +271,11 @@ func TestAddOnDroppedNeedAndWaive(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(2)
-	h.nDo(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "gone"}))
-	// a need dropped and one not landed
+	// a need dropped and one not landed: the add comes first, since admission
+	// now refuses a need that names a dropped card
 	h.nDo(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"b"}, Needs: []string{"s1-1", "s1-2"}}))
+	seedDroppedNeed(h, "s1-1")
+	h.nDoR(ResolveStep(sprint.ResolveReq{}))
 	require.Equal(t, sprint.Waiting, h.state("b"), "b %s, blocked %d", h.state("b"), len(h.nOpenOf(sprint.NBlocked, "b")))
 	require.Len(t, h.nOpenOf(sprint.NBlocked, "b"), 1, "b %s, blocked %d", h.state("b"), len(h.nOpenOf(sprint.NBlocked, "b")))
 	id := h.nOpenOf(sprint.NBlocked, "b")[0].Note.ID
@@ -268,11 +286,11 @@ func TestAddOnDroppedNeedAndWaive(t *testing.T) {
 	h.nToMerging("s1-2")
 	h.nLandStream("s1")
 	require.Equal(t, sprint.Ready, h.state("b"), "b after s1-2 landed (s1-1 waived): %s", h.state("b"))
-	// resolve on an add naming a dropped need: blocked only once
-	h.nDo(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"c"}, Needs: []string{"s1-1"}}))
-	h.nDoR(ResolveStep(sprint.ResolveReq{}))
-	n := len(h.nOpenOf(sprint.NBlocked, "c"))
-	require.Equal(t, 1, n, "c blocked %d times after resolve", n)
+	// add refuses a need that names a dropped card
+	res := h.nDoR(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"c"}, Needs: []string{"s1-1"}}))
+	require.Empty(t, res.Moved, "add on a dropped need: %+v", res)
+	require.Len(t, res.Refused, 1, "add on a dropped need: %+v", res)
+	require.Contains(t, res.Refused[0].Why, "dropped", "add on a dropped need: %+v", res)
 }
 
 // A plan whose landing unit the lifecycle refuses still lends its landing to

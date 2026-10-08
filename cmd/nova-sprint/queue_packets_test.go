@@ -64,6 +64,7 @@ func askedRig(t *testing.T, n int) *serverRig {
 	r.queue("r") // a reader's queue is its beat: a reader that never beat is asked nothing
 	r.boss("nova-sprint tick")
 	r.boss("nova-sprint tick")
+	// a card's reads are asked together: every card's two at once, so r holds them all
 	require.Len(t, r.queue("r")["asked"], n)
 	return r
 }
@@ -247,4 +248,44 @@ func TestAServerRefusesAQueueFlagItDoesNotKnowInTheWordsAMemberReads(t *testing.
 	res := r.one("queue", "--as", "m1", "--json", "--nosuch", "8")
 	assert.Equal(t, 2, res.Code)
 	assert.Contains(t, res.Stderr, "unknown flag --nosuch", "an old server says `unknown flag --packets`")
+}
+
+// TestEveryPacketAVerbHandsNamesItsTier: the packets take and queue hand a member name the
+// tier the card is on, on a store with no route where no deal draws one onto the work card
+// (dealt-packet-carries-the-tier.w1; sprint.DealtTier): its brief's line 1 here, pro. Every
+// verb that prints a packet prints it, in its text form as in --json (.w2: a runner reading
+// the text found no tier line).
+func TestEveryPacketAVerbHandsNamesItsTier(t *testing.T) {
+	t.Parallel()
+	r, working := workedRig(t, 2, 2)
+	text := r.one("queue", "--as", "m")
+	require.Equal(t, 0, text.Code, text.Stderr)
+	assert.Equal(t, 4, strings.Count(text.Stdout, "PACKET "), text.Stdout)
+	assert.Equal(t, 4, strings.Count(text.Stdout, "\n  tier: pro\n"), "every packet the text queue prints names its tier: %s", text.Stdout)
+	q := r.queueWith("--as", "m", "--json")
+	require.Len(t, q.packeted(), 4)
+	for _, c := range q.Cards {
+		var p struct{ Tier string }
+		require.NoError(t, json.Unmarshal(c.Packet, &p))
+		assert.Equal(t, "pro", p.Tier, "the queue's packet of %s", c.ID)
+	}
+	// m is at its width: each finish makes room for one take of a ready card
+	finish := func(card string) {
+		res := r.one("finish", "--as", "m", card, "--epoch", "0", "--report", "done", "--head", "0123456789abcdef0123456789abcdef01234567")
+		require.Equal(t, 0, res.Code, res.Stderr)
+	}
+	finish(working[0])
+	text = r.one("take", "--as", "m", "--limit", "1", "--epoch", "0")
+	require.Equal(t, 0, text.Code, text.Stderr)
+	assert.Equal(t, 1, strings.Count(text.Stdout, "PACKET "), text.Stdout)
+	assert.Contains(t, text.Stdout, "\n  tier: pro\n", "the packet the text take prints names its tier")
+	finish(working[1])
+	res := r.one("take", "--as", "m", "--limit", "1", "--epoch", "0", "--json")
+	require.Equal(t, 0, res.Code, res.Stderr)
+	var out struct{ Packets []struct{ Card, Tier string } }
+	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &out), res.Stdout)
+	require.Len(t, out.Packets, 1)
+	for _, p := range out.Packets {
+		assert.Equal(t, "pro", p.Tier, "the take's packet of %s", p.Card)
+	}
 }

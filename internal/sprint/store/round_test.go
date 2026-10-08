@@ -44,7 +44,7 @@ func TestTheRollingIndexesSurviveAStopAndAStart(t *testing.T) {
 	want := []string{"m1", "m2", "m3", "m1"}
 	require.True(t, slices.Equal(got, want), "deals %v, want %v: the index goes on past m2 after the restart", got, want)
 
-	// the ask: s1-1 and s1-2 in review, asked one at a time across a restart
+	// the ask: s1-1 and s1-2 in review, each asked both its reads together, across a restart
 	for _, id := range []string{"s1-1", "s1-2"} {
 		c := h.snap().Fleet.Card(sprint.WorkCardID(id, 1))
 		h.must(TakeStep(sprint.TakeReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}}))

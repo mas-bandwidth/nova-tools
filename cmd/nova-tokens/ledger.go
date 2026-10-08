@@ -131,7 +131,8 @@ func cmdLedger(args []string, stdout, stderr io.Writer) int {
 	var ls record.LedgerStore
 	if !*dryRun {
 		ls = record.DialLedger(*addr, seatUser, password)
-		defer ls.Close()
+		// ignored: a deferred close of a store whose batch was applied in one answered round trip: the close holds nothing the answer has not already reported
+		defer func() { _ = ls.Close() }()
 	}
 	days, rows, bad := 0, 0, 0
 	type dayResult struct {

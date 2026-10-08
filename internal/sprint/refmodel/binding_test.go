@@ -99,6 +99,9 @@ func loadSample(tb testing.TB, s sample) *loaded {
 		l.apply(stored, placed)
 		l.apply(stored, kept)
 		l.apply(stored, removed)
+		if v, ok := tab.Prop(sprint.PropStatusSeen); ok {
+			l.props(stored, map[string]string{sprint.PropStatusSeen: v})
+		}
 	}
 	l.judgments(t)
 	_, l.inbox, _ = l.m.Tails(l.ctx)
@@ -120,6 +123,15 @@ func (l *loaded) apply(table string, members []ntable.BatchMemberEntry) {
 	_, err := l.m.Apply(l.ctx, ntable.BatchManifest{Schema: 1, Table: table, Epoch: "0", ExpectedTableRevision: strconv.FormatUint(l.m.Revision(table), 10),
 		OperationID: fmt.Sprintf("load-%d", l.ops), Actor: "load", Members: members})
 	require.NoError(l.tb, err, "load %s: %v", table, err)
+}
+
+// props writes the table's properties, in one manifest of their own.
+func (l *loaded) props(table string, props map[string]string) {
+	l.tb.Helper()
+	l.ops++
+	_, err := l.m.Apply(l.ctx, ntable.BatchManifest{Schema: 1, Table: table, Epoch: "0", ExpectedTableRevision: strconv.FormatUint(l.m.Revision(table), 10),
+		OperationID: fmt.Sprintf("load-%d", l.ops), Actor: "load", Props: props})
+	require.NoError(l.tb, err, "load %s properties: %v", table, err)
 }
 
 // judgments writes the open judgments and the acknowledged conditions as one
@@ -160,7 +172,7 @@ func (l *loaded) judgments(t *sprint.Snapshot) {
 func (l *loaded) run(s sample, part string) (store.Result, int) {
 	l.tb.Helper()
 	m := store.Machine{Spans: s.snap.Stopped}
-	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: s.snap.Beats}
+	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: s.snap.Beats, Friends: s.snap.Friends}
 	due := 0
 	for _, p := range sprint.TickParts {
 		if p.Name == part {
@@ -212,7 +224,7 @@ func TestTheStoreWritesWhatTheReferenceDecides(t *testing.T) {
 		}
 	}
 	for _, part := range sprint.TickParts {
-		assert.GreaterOrEqual(t, withMoves[part.Name], minSamplesWithMoves, "the part %s had moves on %d samples, fewer than %d: the store was not compared on it", part.Name, withMoves[part.Name], minSamplesWithMoves)
+		assert.GreaterOrEqual(t, withMoves[part.Name], floorOf(part.Name), "the part %s had moves on %d samples, fewer than %d: the store was not compared on it", part.Name, withMoves[part.Name], floorOf(part.Name))
 	}
 	assert.GreaterOrEqual(t, len(compared), bindingMin, "%d samples were compared, fewer than %d", len(compared), bindingMin)
 	assert.GreaterOrEqual(t, filtered, minSamplesWithFilter, "the store's filter changed a plan on %d of the parts compared, fewer than %d: it is not seen at work", filtered, minSamplesWithFilter)
@@ -231,7 +243,7 @@ func appliedMatters(s sample) map[string]bool {
 	tabs := c.Tables
 	tabs.Now = s.now
 	m := store.Machine{Spans: c.Stopped}
-	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: c.Beats}
+	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: c.Beats, Friends: c.Friends}
 	out := map[string]bool{}
 	if !c.Running {
 		return out

@@ -34,7 +34,8 @@ func TestHelpFirstRunLinesProveTheWall(t *testing.T) {
 	// firstRunWant is what the two walled lines print. A line opening `! ` is
 	// standard error. The probe's paths (the pid-named control file, this test
 	// binary) and the wrapped run's working directory and its depth are this run's
-	// own, and are the only values not compared.
+	// own, and are the only values not compared; the one delete root (deletes=,
+	// docs/SPEC-SANDBOX.md) is the --write root, compared as the block's /tmp/trial.
 	firstRunWant := map[string][]string{
 		firstRunBlock[2]: {
 			"PROBE STEP name=write_outside_control expect=allow got=allow path=-",
@@ -44,7 +45,7 @@ func TestHelpFirstRunLinesProveTheWall(t *testing.T) {
 			"PROBE OK backend=sandbox-exec abi=- steps=4 passed=4 net=nopromise gpu=none",
 		},
 		firstRunBlock[3]: {
-			"! SANDBOX OK backend=sandbox-exec abi=- read=0 read-noexec=0 write=1 net=nopromise cwd=- cwdb64=- ancestors=- cmd=sh gpu=none",
+			"! SANDBOX OK backend=sandbox-exec abi=- read=0 read-noexec=0 write=1 net=nopromise cwd=- cwdb64=- ancestors=- cmd=sh gpu=none deletes=/tmp/trial",
 		},
 	}
 
@@ -74,6 +75,7 @@ func TestHelpFirstRunLinesProveTheWall(t *testing.T) {
 		elide("the run's working directory", `cwd=\S+`, "cwd=-"),
 		elide("the run's working directory, base64", `cwdb64=\S+`, "cwdb64=-"),
 		elide("the working directory's depth", `ancestors=\d+`, "ancestors=-"),
+		onboarding.Path("/tmp/trial", trial),
 	}
 	for _, line := range firstRunBlock[1:] {
 		local := strings.ReplaceAll(line, "/tmp/trial", trial)

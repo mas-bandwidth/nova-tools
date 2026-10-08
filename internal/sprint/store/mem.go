@@ -675,6 +675,29 @@ func (m *Mem) RowsHide(_ context.Context, table string, rows []string) error {
 	return nil
 }
 
+// RowsShow draws hidden rows of the table again, as the table layer's row show
+// does, under RowsAdd's epoch check; a row the table does not have is skipped.
+func (m *Mem) RowsShow(_ context.Context, table string, rows []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Calls["rowsshow"]++
+	t, err := m.table(table)
+	if err != nil {
+		return err
+	}
+	if err := m.writeEpoch(t); err != nil {
+		return err
+	}
+	ep := t.at(m.active(t))
+	for _, r := range rows {
+		delete(ep.hidden, r)
+	}
+	t.rev++
+	t.wrote[m.active(t)] = true
+	t.changes = append(t.changes, memChange{epoch: m.active(t), before: t.rev - 1, after: t.rev, verb: "rows_show"})
+	return nil
+}
+
 // RowsDel removes rows and unplaces the cards in them, as the table layer's row
 // delete does, under RowsAdd's epoch check.
 func (m *Mem) RowsDel(_ context.Context, table string, rows []string) error {
@@ -1032,6 +1055,10 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 			}
 			m.kv[keyCoordinator], m.kv[keySeat] = op.Seat.Holder, rec
 		}
+		// a clear first, so an observation written by the same commit stands
+		for _, f := range op.HealthClear {
+			delete(m.kv, friendHealthKey(f))
+		}
 		if op.Health != nil {
 			rec, err := json.Marshal(op.Health.Health)
 			if err != nil {
@@ -1041,6 +1068,41 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 				m.kv = map[string]string{}
 			}
 			m.kv[friendHealthKey(op.Health.Friend)] = string(rec)
+		}
+		if len(op.CloseTimers) > 0 {
+			if m.kv == nil {
+				m.kv = map[string]string{}
+			}
+			if raw := m.kv[keyTimers]; raw != "" {
+				var ts sprint.Timers
+				if err := json.Unmarshal([]byte(raw), &ts); err == nil {
+					closing := map[string]bool{}
+					for _, id := range op.CloseTimers {
+						closing[id] = true
+					}
+					var rem []sprint.Timer
+					for _, tm := range ts.Open {
+						if !closing[tm.ID] {
+							rem = append(rem, tm)
+						}
+					}
+					ts.Open = rem
+					rec, err := json.Marshal(ts)
+					if err != nil {
+						return err
+					}
+					m.kv[keyTimers] = string(rec)
+				}
+			}
+		} else if op.Timers != nil {
+			rec, err := json.Marshal(op.Timers)
+			if err != nil {
+				return err
+			}
+			if m.kv == nil {
+				m.kv = map[string]string{}
+			}
+			m.kv[keyTimers] = string(rec)
 		}
 	}
 	l.fence = nil
@@ -1237,6 +1299,9 @@ func (m *Mem) Coordinator(context.Context) (string, error) {
 	return m.kv[keyCoordinator], nil
 }
 
+// SetCoordinator writes the coordinator key: init's alone (Store.InitSeat);
+// the seat's steps write it in Release with the record. Mem keeps no expiring
+// keys: the server's record stays until written again, judged by its time.
 func (m *Mem) SetCoordinator(_ context.Context, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

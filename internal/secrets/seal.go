@@ -35,6 +35,24 @@ var errSeatFileAbsent = errors.New("a new seat is given its first values by seat
 // instead of a shell script Windows cannot execute.
 type execCommand func(stdin io.Reader, env []string, dir, name string, args ...string) ([]byte, error)
 
+// stderrCarrier is a helper child's error that also carries the stderr the child wrote, so
+// a verb can name the class of a failure without the seam's signature growing a return. The
+// real runner returns a childError; a test's fake over the same seam returns its own.
+type stderrCarrier interface{ Stderr() string }
+
+// childError is a helper child's failure with the stderr it wrote. The transcript is kept
+// rather than passed through, so a verb names the class of the failure (a wrong key's, for
+// one) and never echoes a value the transcript might hold (STEP 3, "wrong key").
+type childError struct {
+	err    error
+	stderr string
+}
+
+func (e *childError) Error() string  { return e.err.Error() }
+func (e *childError) Unwrap() error  { return e.err }
+func (e *childError) ExitCode() int  { return exitCodeOf(e.err, 1) }
+func (e *childError) Stderr() string { return e.stderr }
+
 func realExecCommand(stdin io.Reader, env []string, dir, name string, args ...string) ([]byte, error) {
 	// The deadline is the kind of the program named: git, gh, sops and the rest each have
 	// their own default (subproc.KindOf).
@@ -47,7 +65,10 @@ func realExecCommand(stdin io.Reader, env []string, dir, name string, args ...st
 	cmd.Stdout = &out
 	cmd.Stderr = &errBuf
 	err := cmd.Run()
-	return out.Bytes(), err
+	if err != nil {
+		return out.Bytes(), &childError{err: err, stderr: errBuf.String()}
+	}
+	return out.Bytes(), nil
 }
 
 // say writes one progress line; never a value, only step names and public facts.
@@ -194,10 +215,11 @@ func RunSeal(opts SealOptions) (line string, err error) {
 	plaintext := sealApply(existing, opts.Name, value)
 
 	opts.say("encrypting to the seat's recipients")
-	ciphertext, err := sealEncrypt(run, opts.SopsPath, opts.KeyPath, opts.StoreDir, seatFile, plaintext)
+	ciphertext, rules, err := sealEncrypt(run, opts.SopsPath, opts.KeyPath, opts.StoreDir, seatFile, "seal", plaintext)
 	if err != nil {
 		return "", err
 	}
+	carry.rules = rules
 
 	prNum, merged, err := carry.carry(ciphertext)
 	if err != nil {
@@ -240,7 +262,8 @@ type sealCarry struct {
 	storeDir string
 	gitPath  string
 	ghPath   string
-	seatFile string // the one file the commit touches
+	seatFile string // the seat file the commit touches
+	rules    []byte // .sops.yaml as it is to be committed beside it, or nil to leave it alone
 	branch   string // seal/<seat>-<NAMES>-<stamp>
 	message  string // the commit message
 	title    string // the pull request title
@@ -306,6 +329,15 @@ func (c sealCarry) carry(ciphertext []byte) (prNum string, merged bool, err erro
 	}
 	if err := sealGit(c.run, c.storeDir, c.gitPath, "add", c.seatFile); err != nil {
 		return "", false, err
+	}
+	// The rule that admits the mark, in the same commit, so the gate reviews it with the file.
+	if c.rules != nil {
+		if err := atomicWriteFile(filepath.Join(c.storeDir, ".sops.yaml"), c.rules, 0644); err != nil {
+			return "", false, err
+		}
+		if err := sealGit(c.run, c.storeDir, c.gitPath, "add", ".sops.yaml"); err != nil {
+			return "", false, err
+		}
 	}
 	if err := sealGit(c.run, c.storeDir, c.gitPath, "commit", "-m", c.message); err != nil {
 		return "", false, err
@@ -423,6 +455,10 @@ func (c sealCarry) preflight() (home string, err error) {
 func (c sealCarry) planLines(token, home string) []string {
 	lines := []string{fmt.Sprintf("SECRETS %s PLAN git store=%s from=%s branch=%s commit=%s",
 		token, oneline.Field(c.storeDir), oneline.Field(home), oneline.Field(c.branch), oneline.Quote(c.message))}
+	if _, changed, err := seatMarkRuleIn(c.storeDir, c.seatFile); err == nil && changed {
+		lines = append(lines, fmt.Sprintf("SECRETS %s PLAN rule .sops.yaml rule for %s gains unencrypted_regex %s in the same commit: the mark is read in the clear",
+			token, oneline.Field(c.seatFile), seatMarkRegex))
+	}
 	if c.noPR {
 		return append(lines, fmt.Sprintf("SECRETS %s PLAN push none (--no-pr): no push, no gh call; the store returns to %s",
 			token, oneline.Field(home)))
@@ -521,7 +557,7 @@ func readSealValue(opts SealOptions) (string, error) {
 		return "", fmt.Errorf("empty value: refusing to seal nothing; paste a value on stdin or at the terminal")
 	}
 	if strings.ContainsAny(value, "\r\n") {
-		return "", fmt.Errorf("value is multi-line; a file-shaped secret is not an environment variable.\n  generate it where it is used: this store holds no file-shaped secrets.")
+		return "", fmt.Errorf("value is multi-line; a file-shaped secret is not an environment variable; generate it where it is used: this store holds no file-shaped secrets")
 	}
 	if strings.Contains(value, "\x00") {
 		return "", fmt.Errorf("value contains a NUL byte")
@@ -600,6 +636,11 @@ func sealDecrypt(run execCommand, sopsPath, keyPath, filePath string) ([]byte, e
 
 	out, err := run(nil, sealSopsEnv(keyPath, tmpDir), "", sopsPath, "-d", filePath)
 	if err != nil {
+		// The class sops's stderr names, when the seam carried it; the transcript is
+		// never echoed (STEP 3, "wrong key").
+		if cause := sopsDecryptFailure(keyPath, filePath, childStderr(err)); cause != "" {
+			return nil, fmt.Errorf("sops failed: %s", cause)
+		}
 		return nil, fmt.Errorf("sops failed: exit %d (transcript withheld: run 'sops -d %s' to inspect)", exitCodeOf(err, 1), filePath)
 	}
 	return out, nil
@@ -613,20 +654,104 @@ func sealDecrypt(run execCommand, sopsPath, keyPath, filePath string) ([]byte, e
 // "no file specified"), and it finds .sops.yaml from its working directory, whose
 // path_regex rules are relative to the store. So the child runs inside the store and
 // the verb works from any directory the caller happens to be in.
-func sealEncrypt(run execCommand, sopsPath, keyPath, storeDir, seatFile string, plaintext []byte) ([]byte, error) {
+//
+// Every seat file a verb writes goes through here, and here the verb's mark is put into the
+// plaintext (sealMarked), so no verb can write a seat file the gate cannot tell from a hand
+// seal (SPEC-SECRETS "gate", the mark; tla/SecretsSeat.tla on sprint/md-secrets-h.w1.g1.e15,
+// the MCSecretsSeatReachHandSeal config).
+//
+// The mark is read in the clear, so the rule must admit it. A rule that does not (one written
+// before the mark existed) is given `^NOVA_SECRETS_WRITTEN_BY$` (seatMarkRule): sops is run
+// against that config, from a copy in the isolation directory, and the updated .sops.yaml is
+// answered as rules for the caller to write and commit beside the seat file, so the store's
+// gate reviews the rule change in the same pull request. rules is nil when the rule already
+// admits the mark.
+func sealEncrypt(run execCommand, sopsPath, keyPath, storeDir, seatFile, verb string, plaintext []byte) (out, rules []byte, err error) {
+	plaintext = sealMarked(plaintext, verb)
+	updated, changed, err := seatMarkRuleIn(storeDir, seatFile)
+	if err != nil {
+		return nil, nil, err
+	}
 	tmpDir, err := os.MkdirTemp("", "nova-secrets-seal-*")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create temporary isolation directory: %w", err)
+		return nil, nil, fmt.Errorf("failed to create temporary isolation directory: %w", err)
 	}
 	defer func() { _ = safepath.RemoveUnder(os.TempDir(), tmpDir) }() // ignored: the temporary directory may already be gone
 
-	out, err := run(bytes.NewReader(plaintext), sealSopsEnv(keyPath, tmpDir), storeDir, sopsPath,
+	dir := storeDir
+	if changed {
+		// sops finds .sops.yaml from its working directory and matches path_regex against
+		// the --filename-override name, so a copy beside nothing else picks the same rule.
+		if err := os.WriteFile(filepath.Join(tmpDir, ".sops.yaml"), updated, 0o600); err != nil {
+			return nil, nil, fmt.Errorf("failed to write the rule that admits the mark: %w", err)
+		}
+		dir, rules = tmpDir, updated
+	}
+	out, err = run(bytes.NewReader(plaintext), sealSopsEnv(keyPath, tmpDir), dir, sopsPath,
 		"-e", "--filename-override", seatFile, "--input-type", "yaml", "--output-type", "yaml", "/dev/stdin")
 	if err != nil {
 		exitCode := exitCodeOf(err, 1)
-		return nil, fmt.Errorf("sops encrypt failed: exit %d (transcript withheld; the value is on stdin only); the usual cause is a recipient in the .sops.yaml rule for %s that is not an age1… public key, such as keygen's <recovery key> placeholder left in; the same call with --dry-run lists the recipients", exitCode, seatFile)
+		return nil, nil, fmt.Errorf("sops encrypt failed: exit %d (transcript withheld; the value is on stdin only); the usual cause is a recipient in the .sops.yaml rule for %s that is not an age1… public key, such as keygen's <recovery key> placeholder left in; the same call with --dry-run lists the recipients", exitCode, seatFile)
 	}
-	return out, nil
+	return out, rules, nil
+}
+
+// SeatMarkKey is the root key every verb-written seat file carries in the clear. A rule that
+// lists it in `unencrypted_regex` keeps sops from sealing it, and the gate reads it.
+const SeatMarkKey = "NOVA_SECRETS_WRITTEN_BY"
+
+// seatMarkValue is the only value the mark may hold in the clear: the verb that wrote the
+// file and the tool's version. Any other cleartext under the mark key is a plain value,
+// refused by the gate, check and seat inject whatever the rule's unencrypted_regex says
+// (SPEC-SECRETS "gate", the mark).
+var seatMarkValue = regexp.MustCompile(`^(seal|seat add|seat inject) ` + markVersionPattern + `$`)
+
+// markVersionPattern is a release tag or "dev", and nothing a value could ride in: a
+// shape check alone let 256 bits of hex pass as a version, an unbounded suffix did the
+// same after a tag (the second and third reads of 2026-10-06), and an unbounded numeric
+// component let eighty digits ride in the clear (the read of 2026-10-07). Each component
+// is capped at four digits, the most a real release tag holds.
+const markVersionPattern = `(dev|v?\d{1,4}\.\d{1,4}\.\d{1,4}(-rc\d{1,3})?)`
+
+// markVersion is MarkVersion when it is a version the gate reads as one, and "dev"
+// otherwise: a verb never writes a mark its own gate refuses.
+func markVersion() string {
+	if regexp.MustCompile(`^` + markVersionPattern + `$`).MatchString(MarkVersion) {
+		return MarkVersion
+	}
+	return "dev"
+}
+
+// isSeatMark reports whether val, as it stands after the key's colon, is a verb's mark. A
+// value in matching quotes is read inside them: sops may quote what it writes.
+func isSeatMark(val string) bool {
+	val = strings.TrimSpace(val)
+	if n := len(val); n >= 2 && (val[0] == '"' || val[0] == '\'') && val[n-1] == val[0] {
+		val = val[1 : n-1]
+	}
+	return seatMarkValue.MatchString(val)
+}
+
+// MarkVersion is the tool version the mark names; the command sets it from its build stamp.
+var MarkVersion = "dev"
+
+// sealMarked returns plaintext with its one mark line for verb ("seal", "seat add" or
+// "seat inject"): an older mark is dropped, so a re-seal states the verb that wrote it now.
+// A mark is not a signature; the spec says what it catches and what it does not
+// (SPEC-SECRETS "gate").
+func sealMarked(plaintext []byte, verb string) []byte {
+	var b strings.Builder
+	for _, line := range strings.SplitAfter(string(plaintext), "\n") {
+		if strings.HasPrefix(line, SeatMarkKey+":") {
+			continue
+		}
+		b.WriteString(line)
+	}
+	out := b.String()
+	if out != "" && !strings.HasSuffix(out, "\n") {
+		out += "\n"
+	}
+	return []byte(out + SeatMarkKey + ": " + verb + " " + markVersion() + "\n")
 }
 
 // sealApply drops any existing --name line and appends the new one.

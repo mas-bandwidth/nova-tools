@@ -171,15 +171,16 @@ names the `Stage:` path and the reason.
 
 **The WHO line** (the owner, 2026-10-03: "Could we try expressing the work left for
 nova-tools-1.1.0 into cards, and doing it via the sprint, but doing parts on friends where we
-would normally do friend work."). A header line `WHO: friend` makes the card a friend's, dealt to
-any friend up with room; `WHO: friend <name>` deals it to that friend, her name a row of the
-sprint's friends table. A card with no WHO line is a machine's and is framed as this page says;
-a friend's card is never framed or staged: the sprint delivers it to her inbox as
-`inbox/<card>/BRIEF.md` and finishes it from her `outbox/<card>/REPORT.md` (docs/SPEC-SPRINT.md
-section 1, a friend's card; docs/FRIENDS.md, a sprint card). `cardhdr.ReadWho` is the one parser:
-the key in any case, under line 1 and above the first blank line; `nova-sprint add` and `brief`
-refuse any other value, and a name the friends table lacks (`TestReadWhoReadsAFriendOrNone`,
-`TestAddHoldsTheWhoLineToTheFriendsTable`).
+would normally do friend work."; 2026-10-04: pins only by choice). `WHO: friend` prefers any
+friend whose class covers the tier. `WHO: friend <name>` prefers that friend while she is up
+with room, then another covering friend, then the fleet. `WHO: only friend <name>` waits for
+that friend alone. A card with no WHO line, or `WHO: -`, is offered to covering friends and
+then framed for the fleet as this page says. A card placed on a friend is never framed or
+staged: the sprint delivers it to her inbox as `inbox/<card>/BRIEF.md` and finishes it from
+her `outbox/<card>/REPORT.md` (docs/SPEC-SPRINT.md section 1, a friend's card; docs/FRIENDS.md,
+a sprint card). `cardhdr.ReadWho` is the one parser: the key in any case, under line 1 and
+above the first blank line; `nova-sprint add` and `brief` refuse any other value, and a name
+the friends table lacks (`TestReadWhoReadsAFriendOrNone`, `TestAddHoldsTheWhoLineToTheFriendsTable`).
 
 ## 3. The result shape
 
@@ -243,6 +244,20 @@ finding naming none, so the rule is one predicate consulted at the review (the s
 hand-back (the member) and at the record (the store); refused, the read stays the reader's to
 report or hand back (`TestAuthoritativeBrokenReadFindingBoundary`). A file is any name with an
 extension, `a.go` too; `e.g.` and `i.e.` are not, since a dot follows.
+
+### script-cards-self-verify.w1: a script read's finding
+
+A read of a script card that a script reader found identical to its program's output reports `verdict: ok`
+with a `report:` line beginning `script read: ` (what was run, at which start commit, against which
+head, and the bytes compared). A script reader that found a difference reports nothing of its own: it
+reads the card as a model reader and gives that read's verdict (docs/SPEC-SPRINT.md section 6, the script read).
+
+A read card dealt to a friend (docs/SPEC-SPRINT.md section 6, "A read is a consumer card")
+is a card of hers: its BRIEF.md (sprint `ReadCardBrief`) says what a read is, the head to check
+out, how to read it and how to finish, and its end is outbox/<job>/REPORT.md whose first line is
+`Verdict: LAND` (an ok read) or `Verdict: HOLD` (a broken read, each defect on a line naming the
+file, line or rule it breaks); a read commits nothing and pushes nothing. A read card dealt to a
+member is run as a reader's read is, its verdict reported with `read --as <member>`.
 
 ## 4. The finish
 
@@ -373,6 +388,53 @@ an allowed family. The member keeps the forge credentials for its own push and p
 request after the push, as itself, from the card's branch into the base ref, with the title and
 the body, and the finish's report carries its address.
 
+### recut-widen-r.w1: a HOLD proposes the PATHS it lacked
+
+A child that holds because its card's PATHS are too narrow says which globs it needs on one
+line of its report or result body: `PATHS-PROPOSED: <glob>[,<glob>...]`, each a path or a glob
+relative to the repository root, never climbing out with `..`, each naming a file at the card's
+base or one its pushed head creates. A path may be followed by the writer's reason: the reader
+takes each comma-separated item's path up to its first whitespace, dash or semicolon, reads the
+rest as prose, and refuses an item with no path before its prose, printing that item. The child
+still pushes what it did and reports its head.
+The member keeps that line at the end of the finish's report, inside the 500-byte cut
+(`member.CarryProposed`), and friend sync keeps it on a friend's HOLD, with the HOLD's `Head`
+when it is origin's tip of the card's branch; so the line is on the card, and `nova-sprint brief
+<id> --widen` reads it there, each item's path read before its prose, and widens the card
+in place, the same id (docs/SPEC-SPRINT.md section 2). The widened brief carries a header line
+`CARRY: <id> attempt <n> head=<sha>`, and the member stages the card's next attempt at that
+head as it stages a rework at its last pushed head (`member.Carried`), as does a friend's brief
+(`TestBriefWidenKeepsTheId`).
+
+### What admission verifies
+
+`nova-sprint add`, `brief` and `recut` check a brief that names `PATHS:`, `REPO:` and `BASE:`
+against the BASE tip of that repository before the brief is admitted
+(`sprint.PathsAdmission`, `cmd/nova-sprint/add.go`). The tree is the lander's clone, fetched
+shallow into `refs/nova-add/<base>` (or the commit `BASE:` pins), cached per tip for the call.
+A literal PATHS entry must be a file or a directory there. A glob must match at least one file.
+A new `*_test` file, and an entry a `NEW:` line names, may be absent. A brief whose header
+carries `CARRY: <id> attempt <n> head=<sha>` skips that existence check (a widen's new path
+may exist only at the carried head) and still checks identifiers. Every `func`, `type` or
+`verb` that `STOP:` or `START:` names in the same clause as a repository path, and a `TEST:`
+name the tree already holds, must occur inside a file PATHS covers, found by a plain grep of
+the tree. Markdown code-span delimiters are not part of the name or the path
+(`func` then a backticked `cmdBrief`, or a backticked `sprint.cmdBrief`, is `cmdBrief`).
+A qualified name is its last component (`type sprint.AdmissionTree` is `AdmissionTree`),
+not the package, which may sit in a PATHS file while the name does not. A dotted file
+name (`file.go`) is not a qualified name. A `TEST:` name the tree does not hold is the
+new red test and is not a miss. A brief that fails is refused with one line per miss, and
+the line names the nearest file that holds the identifier, so the author fixes PATHS in
+one edit. A tip that cannot be read is one `MISSING` line, not a pass. A named `REPO:`
+that no clone can be made of is that same `MISSING` line, not a pass. A brief with no
+PATHS, or that omits REPO, or that omits BASE, is not read against a tree.
+
+A worker HOLD after admission whose words are `PATHS do not hold` is a brief defect at that
+first finish, not at the fourth attempt (`sprint.BriefDefectOf`). The defect carries the
+worker's proposed PATHS, from `PATHS-PROPOSED:` or a `PATHS:` line of the report, as the
+one-line fix. A report that only proposes PATHS, without those words, stays the worker's
+failed work.
+
 ## 5. Profiles
 
 A profile is keyed by model family, derived from the model id the member runs the child on:
@@ -413,12 +475,19 @@ push to land.
 A profile is done when it passes the harness every profile passes: `TestEveryProfileKeepsTheContract`
 (the shims answer every verb form the profile claims) and `TestTheScriptedChildEndToEnd`, the
 scripted child of section 1 layer 5, which runs once per family in `cardcontract.Families`
-with `internal/cardcontract/testdata/scripted/<family>.sh` as the harness (`plain.sh` for a
-family with none): write the script the family's models follow (how they clone, branch,
+with the Go test binary `internal/cardcontract/testdata/scripted/child` placed as `<family>` as the
+harness (`plain` for a family with none): add the steps the family's models follow (how they clone, branch,
 commit, push and finish), and the test asserts the member pushed the child's commit to the
 card's branch on origin and, when the child ran `gh pr create`, opened the pull request with
 its title and body. Run it with `go test -tags functional -run TestTheScriptedChildEndToEnd
 ./cmd/nova-swarm/`; it needs no store and no network.
+
+A friend's card is staged by her own daemon, not by native: for each held work card whose
+brief it writes, `nova-friend run` clones the card's `REPO` at its `BASE` on the card's branch
+into `jobs/<job>/repo`, from a mirror it keeps per repository, and writes `jobs/<job>/JOB.md` in
+this shape (`friend.JobText`: the checkout, the branch and its push, the outbox report and the
+finish); a repository her account cannot reach is a judgment to the coordinator
+(docs/SPEC-FRIEND.md, "The daemon stages every job it writes").
 
 The card template (`nova-swarm template --name card`) ends with STEP 6, "End as JOB.md says":
 under a profile whose JOB.md ends the card with its pull request, there is nothing else to write;
@@ -443,19 +512,74 @@ with no clock and no store). What it holds:
   past that), `NEW:` for a test file the card creates in a package that has
   none, `TEST:` and the `Deadline:` line; the RULES paragraph of the general
   child rules (`swarm.ChildRulesParagraph`, the paragraph the card template
-  carries); the task from the source's template with the rows substituted; and
-  the template's steps.
-- The PATHS of a ledger card are the row's file, its package's test files and
-  the ledger. With a checkout, every entry is checked to exist in it.
-- Waves: cards of one ordinary ledger alternate (odd wave 1, even wave 2
-  depending on their wave 1 neighbours), because adjacent deletions of one file
-  conflict at land; a generated ledger (SPEC-SPRINT.md section 7) gets one wave
-  and no dependency.
+  carries); the `ATTRIBUTION:` line (`cardgen.Attribution`); the task from the
+  source's template with the rows substituted; the template's steps; and the
+  `AS A READ` section (`cardgen.AsARead`), the text a reader of the work is given.
+- No brief names its author. A commit names the worker who did the work, and the
+  deal may hand any card, a pinned one too, to any worker, a friend or a fleet
+  machine, so the brief cannot know who that is: its `ATTRIBUTION:` line reads
+  `By: your own name, the worker who does this attempt`, says a model name is
+  never a `By:`, and that a Claude worker adds its true `Co-Authored-By` trailer
+  while any other worker adds none; a `WHO:` line stays a preference for who is
+  dealt the card, never the name to sign. Neither the line nor the held rules
+  (`fleet/child-rules.txt`, rule `commit-trailer`) spell a fill-in Claude trailer,
+  which a worker of another model completes with its own model's name. Its
+  `AS A READ` section says a `By:` trailer is judged only for being present and
+  true (the worker who pushed the branch under read), and attribution alone never
+  decides a verdict. It also says the scope of the change is its `PATHS` line and
+  carries `cardgen.AlwaysInPathsRule`, so a reader holds a test or a ledger the
+  line does not name inside the change. Briefs stamped `By: <friend>` from a WHO pin sent readers to
+  fail landed-quality heads for that line alone, because another worker had done
+  the work, and landed heads signed with the name of a friend who never ran them.
+- A card's PATHS are computed from the START line its brief carries, never
+  typed (`card.Paths`, over `card.PackagePaths`): every directory a START file
+  lives in, as its Go files and its tests (`<dir>/*.go`, `<dir>/*_test.go`),
+  and the docs the card names, as themselves. START is the card's file and the
+  package of its test, so a ledger card's PATHS are the row's file's package,
+  the class test's package and the ledger; a findings card's, the file's
+  package and its test's package; a help card's, `cmd/<tool>` and
+  `docs/CLI.md`. A package is the unit a change lives in: a typed file list
+  one file short holds the card at land (E12). Files a change must touch to
+  keep the tree green are always inside PATHS, whatever the brief names: every
+  `*_test.go`, every file under a `testdata/` directory, `tla/RUNS.tsv` and
+  `tla/CASES.tsv`, `internal/docs/catalog.go`, and every `AGENTS.md` map; any
+  other file outside PATHS is still out of scope (`cardgen.AlwaysInPathsRule`;
+  SPEC-SPRINT.md section 7, always inside PATHS): the lander's E12
+  (`sprint.LandScope`) and the readers (`sprint.FilesOutsidePaths`) hold every
+  card to that sentence, and every generated brief carries it in its AS A READ
+  section. Two cards that share an entry and neither needs the other set
+  `shared-paths=yes`. With a checkout, every entry is checked to exist in it;
+  a package's `*.go` is not answered by a test file the card creates.
+- Waves: a ledger plan is one wave with no dependency chain. The lander resolves
+  a ledger conflict as the union of removals, so adjacent deletions of one file
+  no longer conflict at land; every card's `DEPENDS-ON:` is `-`, and every card
+  shares the ledger's path with no need between them, so the CARDS line says
+  `shared-paths=yes`.
 - Every brief is held to the lint `nova-sprint add` runs (the model lines, the
   child rules under the default rule set, a tree card's steps), and past the add
   to the typed header and the template's placeholders, which the add does not
   read, before the directory is written; one red brief and nothing is written.
   A sprint initialised with `--rules` holds a brief to that file at the add.
+  Every brief is held as well to the card checks (`card.Checks`), which
+  `nova-sprint add` runs too: a card brief names its tier on line 1
+  (`tier-line`) and a TEST whose package is a directory its PATHS names
+  (`test-outside-paths`); no brief carries a name `--name` gives outside
+  double-quoted words (the owner's, quoted), its own id or its `WHO:` line
+  (`personal-name`), nor the id of a card `--dropped` gives (`dropped-card`),
+  nor `By:` followed by such a name, quoted or not, `friend.<name>` included
+  (`author-name`; `Co-Authored-By:` is no `By:`;
+  `TestABriefNamesNoFriendAsAuthor`).
+  The tree holds no name of the deployment (internal/ci TestGeneralityText),
+  so the names come from the caller: `--name` to nova-card, the store's
+  coordinator, owner and friends table to the add.
+- A card whose PATHS reach a model or a configuration under `tla/` runs the
+  model in its own gate: its STEP 4 adds, on a Linux TLC bench, `make tlc` for
+  each group `tlacheck groups --stale` lists (the groups of the cases the edit
+  touched) and `tlacheck merge --keep tla/RUNS.tsv` of what they wrote, and its
+  PATHS line carries `tla/RUNS.tsv` so the record is committed with the change
+  (`cardgen.modelGate`). The lander refuses a head that edits `tla/*.tla` or
+  `tla/*.cfg` without a current record for each case it touches, naming the case
+  (SPEC-SPRINT.md section 7, the run records).
   The output is the directory, its `manifest.tsv` (id, file, test, wave, deps)
   and one `CARDS OK dir= cards= waves= tier=` line.
 

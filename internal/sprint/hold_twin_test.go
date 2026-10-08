@@ -34,7 +34,7 @@ var holdT0 = time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 
 // friendsBrief is a friend's card's brief: its WHO line names who.
 func friendsBrief(who string) string {
-	return "c: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: " + who + "\n\nThe task."
+	return "c: a friend's card tier: pro\nREPO: mas-bandwidth/nova-tools\nWHO: " + who + "\n\nThe task."
 }
 
 func newHoldRig(t *testing.T, s1, f1 int) *holdRig {
@@ -49,7 +49,7 @@ func newHoldRig(t *testing.T, s1, f1 int) *holdRig {
 	require.NoError(t, r.st.Init(r.ctx))
 	require.NoError(t, m.RowsAdd(r.ctx, "t-readers", []string{"reader-a", "reader-b", "reader-c"}))
 	require.NoError(t, m.SetCoordinator(r.ctx, "coordinator"))
-	_, _, _, err := r.st.SyncFriends(r.ctx, []store.FriendSpec{{Name: "amy", Width: 2}, {Name: "bob", Width: 2}})
+	_, _, _, err := r.st.SyncFriends(r.ctx, []store.FriendSpec{{Name: "amy", Width: 2, Class: "pro"}, {Name: "bob", Width: 2, Class: "pro"}})
 	require.NoError(t, err)
 	r.beat()
 	r.must(store.FleetStep(sprint.FleetReq{Op: "up", Member: "m1", Width: 2}))
@@ -65,7 +65,8 @@ func newHoldRig(t *testing.T, s1, f1 int) *holdRig {
 	return r
 }
 
-// beat is one beat of every member, reader and friend: each of them is there.
+// beat is one beat of every member, reader and friend, and a wake ping each friend's
+// session answered (a friend's beat is no evidence): each of them is there.
 func (r *holdRig) beat() {
 	r.t.Helper()
 	require.NoError(r.t, r.st.BeatReaders(r.ctx))
@@ -76,6 +77,8 @@ func (r *holdRig) beat() {
 	}
 	for _, f := range []string{"amy", "bob"} {
 		_, err := r.st.FriendBeat(r.ctx, f)
+		require.NoError(r.t, err)
+		_, _, _, err = r.st.FriendHealth(r.ctx, f, "coordinator", sprint.FriendHealth{State: sprint.Up, Seen: r.st.Now(), Generation: sprint.FirstSeatGeneration}, "")
 		require.NoError(r.t, err)
 	}
 }
@@ -263,6 +266,7 @@ func TestHoldTakesNoNewCardsAndUnholdResumesForMembersFriendsAndStreams(t *testi
 		t.Parallel()
 		r := newHoldRig(t, 0, 2)
 		r.tick()
+		r.startFriends()
 		s := r.snap()
 		amy := onRow(s, sprint.FriendRow("amy"), "f1", sprint.Working)
 		require.Len(t, amy, 1, "a card for any friend goes to the one with the most free width, the first by name among equals")
@@ -271,10 +275,10 @@ func TestHoldTakesNoNewCardsAndUnholdResumesForMembersFriendsAndStreams(t *testi
 		hv, ok := r.heldView("amy")
 		require.True(t, ok)
 		assert.Equal(t, "out of credits", hv.Reason)
-		r.must(store.AddStep(sprint.AddReq{Stream: "f1", Cards: []sprint.CardAdd{{ID: "f1-9", Brief: friendsBrief("friend amy")}}}))
+		r.must(store.AddStep(sprint.AddReq{Stream: "f1", Cards: []sprint.CardAdd{{ID: "f1-9", Brief: friendsBrief("only friend amy")}}}))
 		r.tick()
 		s = r.snap()
-		assert.Equal(t, amy, onRow(s, sprint.FriendRow("amy"), "f1", sprint.Working), "a held friend keeps her cards to finish and is dealt no new one")
+		assert.Empty(t, onRow(s, sprint.FriendRow("amy"), "f1", sprint.Ready, sprint.Working), "a held friend keeps no begun card and is dealt no new one")
 		assert.Equal(t, sprint.Ready, s.StateOf("f1-9"), "her card waits ready while she is held")
 
 		r.hold(sprint.HoldReq{Names: []string{"amy"}, Release: true, Reason: "credits back"})
@@ -339,6 +343,9 @@ func TestHoldAndUnholdServeMembersReadersFriendsAndStreams(t *testing.T) {
 	s = r.snap()
 	wc := s.Fleet.Card(s.Work.Card(pr).F("work"))
 	r.must(store.FinishStep(sprint.FinishReq{As: "m2", Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: wc.Int("gen")}, Who: "m2"}))
+	// Amy and bob are pro, so each is asked a flash read while she has room
+	// (docs/SPEC-SPRINT.md). Hold them so this read stays on a reader.
+	r.hold(sprint.HoldReq{Names: []string{"amy", "bob"}, Reason: "the flash read stays with a reader"})
 	r.tick()
 	reads := r.snap().Readers.Of(pr)
 	require.Len(t, reads, 1, "a flash card is read once")

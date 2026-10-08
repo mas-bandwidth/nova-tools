@@ -187,7 +187,7 @@ func TestOneShotLanesHandOneCardPerTurnEachInItsOwnSession(t *testing.T) {
 		assert.Equal(t, "daemon-pong: daemon-pong n1", got[0])
 		assert.True(t, strings.HasPrefix(got[1], "friend bob: card c2 not finished after 2 turns (lane "+c2Lane+"): the harness refused a permission: Permission to read /elsewhere was auto-rejected"), got[1])
 		assert.Equal(t, map[int]string{1: "ses_1", 2: "ses_2"}, state.Sessions, "each lane keeps its session")
-		assert.Equal(t, []string{"c2"}, state.GivenUp)
+		assert.Equal(t, []string{"c2~15"}, state.GivenUp)
 		records := strings.Join(r.records, "\n")
 		assert.Equal(t, 2, strings.Count(records, " card=done"), records)
 		assert.Contains(t, records, "lane="+c2Lane+" session=ses_"+c2Lane+` subject="card c2" messages=0`)
@@ -264,11 +264,250 @@ func TestNextCardIsTheFirstQueuedDeliveredUnfinishedCard(t *testing.T) {
 	t.Parallel()
 	dir := cardDirFixture(t, [][2]string{{"a", "done"}, {"b", "queued"}, {"c", "queued"}}, []string{"a", "b", "c"}, []string{"b"})
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox", "c~9"), 0o755))
-	c, found, err := NextCard(dir, func(string) bool { return false })
+	c, found, err := NextCard(dir, func(Card) bool { return false })
 	require.NoError(t, err)
 	require.True(t, found)
 	assert.Equal(t, Card{ID: "c", Brief: filepath.Join(dir, "inbox", "c~15", "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", "c~15")}, c, "epoch 15 over 9")
-	_, found, err = NextCard(dir, func(id string) bool { return id == "c" })
+	_, found, err = NextCard(dir, func(c Card) bool { return c.ID == "c" })
 	require.NoError(t, err)
 	assert.False(t, found)
+}
+
+// docs/FRIENDS.md: a redealt job belongs to its generation; progress names only its epoch.
+func TestLanesRunACardDealtAgainAtItsGeneration(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, task, want string
+		doneOld          bool
+	}{
+		{"redealt", `{"id":"c","state":"queued","gen":2,"job":"c~15.g2"}`, "c~15.g2", true},
+		{"generation without job", `{"id":"c","state":"queued","gen":2}`, "c~15.g2", true},
+		{"legacy", `{"id":"c","state":"queued"}`, "c~15", false},
+		{"missing generation", `{"id":"c","state":"queued","gen":3}`, "", false},
+		{"mismatched job", `{"id":"c","state":"queued","gen":2,"job":"c~15"}`, "", false},
+		{"unsafe job", `{"id":"c","state":"queued","gen":2,"job":"../c~15.g2"}`, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := cardDirFixture(t, nil, []string{"c"}, nil)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[`+tc.task+`]}`), 0o600))
+			job := filepath.Join(dir, "inbox", "c~15.g2")
+			require.NoError(t, os.MkdirAll(job, 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(job, "BRIEF.md"), []byte("new generation"), 0o600))
+			if tc.doneOld {
+				old := filepath.Join(dir, "outbox", "c~15")
+				require.NoError(t, os.MkdirAll(old, 0o755))
+				require.NoError(t, os.WriteFile(filepath.Join(old, "RESULT.md"), []byte("done"), 0o600))
+			}
+			c, found, err := NextCard(dir, func(Card) bool { return false })
+			require.NoError(t, err)
+			require.Equal(t, tc.want != "", found)
+			if !found {
+				return
+			}
+			assert.Equal(t, filepath.Join(dir, "inbox", tc.want, "BRIEF.md"), c.Brief)
+			assert.Equal(t, filepath.Join(dir, "outbox", tc.want), c.Outbox)
+			assert.Equal(t, "15", c.Epoch())
+			assert.Equal(t, [][]string{{"progress", "--as", "friend.friend-a", "c", "--epoch", "15"}}, ProgressArgv("friend-a", []Card{c}))
+		})
+	}
+}
+
+// docs/FRIENDS.md: before the first clear, StoredID omits the zero epoch.
+func TestLanesUseGenerationJobsBeforeTheFirstClear(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	job := filepath.Join(dir, "inbox", "c.w1.g2")
+	require.NoError(t, os.MkdirAll(job, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(job, "BRIEF.md"), []byte("work"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"c.w1","gen":2,"job":"c.w1.g2"}]}`), 0o600))
+	c, found, err := NextCard(dir, func(Card) bool { return false })
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, filepath.Join(job, "BRIEF.md"), c.Brief)
+	assert.Equal(t, "0", c.Epoch())
+	assert.Equal(t, [][]string{{"progress", "--as", "friend.friend-a", "c.w1", "--epoch", "0"}}, ProgressArgv("friend-a", []Card{c}))
+}
+
+// The queue's recorded job wins over newer-looking stale directories. A missing
+// brief for that assignment is never repaired by taking another generation or epoch.
+func TestNextCardReadsCardAtHerGeneration(t *testing.T) {
+	t.Parallel()
+	dir := cardDirFixture(t, nil, []string{"c"}, nil)
+	queue := filepath.Join(dir, "inbox", "QUEUE.json")
+	require.NoError(t, os.WriteFile(queue, []byte(`{"tasks":[{"id":"c","state":"queued","gen":2,"job":"c~15.g2"}]}`), 0o600))
+	for _, job := range []string{"c~15.g2", "c~16.g2", "c~15.g3"} {
+		in := filepath.Join(dir, "inbox", job)
+		require.NoError(t, os.MkdirAll(in, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(in, "BRIEF.md"), []byte(job), 0o600))
+	}
+	c, found, err := NextCard(dir, func(Card) bool { return false })
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, Card{ID: "c", Brief: filepath.Join(dir, "inbox", "c~15.g2", "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", "c~15.g2")}, c)
+	assert.Equal(t, "15", c.Epoch())
+	assert.Equal(t, [][]string{{"progress", "--as", "friend.friend-a", "c", "--epoch", "15"}}, ProgressArgv("friend-a", []Card{c}))
+	require.NoError(t, os.Remove(c.Brief))
+	_, found, err = NextCard(dir, func(Card) bool { return false })
+	require.NoError(t, err)
+	assert.False(t, found, "the missing assignment cannot fall back to generation 1, generation 3 or epoch 16")
+
+	// Older producers also wrote a bare task list without generation or job.
+	require.NoError(t, os.WriteFile(queue, []byte(`[{"id":"c","state":"queued"}]`), 0o600))
+	c, found, err = NextCard(dir, func(Card) bool { return false })
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, filepath.Join(dir, "inbox", "c~15", "BRIEF.md"), c.Brief)
+	assert.Equal(t, filepath.Join(dir, "outbox", "c~15"), c.Outbox)
+}
+
+// docs/FRIENDS.md: giving up an older assignment never suppresses a new generation.
+func TestLanesRetryANewGenerationAfterGivingUpTheOldJob(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, nil, nil, nil)
+		job := filepath.Join(dir, "inbox", "c1~15.g2")
+		require.NoError(t, os.MkdirAll(job, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(job, "BRIEF.md"), []byte("work"), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"c1","state":"queued","gen":2,"job":"c1~15.g2"}]}`), 0o600))
+		// each turn ends in a refused permission, an attempt that counts (a run that exits 0 with no
+		// report is a harness fault and counts none: lane_path_test.go)
+		h := &lanesHarness{dir: dir, active: map[string]int{}, reject: map[string]string{"c1": "Permission to read /elsewhere was auto-rejected"}}
+		r, state := laneRig(t, h, 2)
+		*state = LaneState{GivenUp: []string{"c1", "c1~15"}}
+		r.run(t, 12)
+		turns, _, _ := h.got()
+		assert.Len(t, turns, CardTurns, "a fresh assignment is tried, by only one lane")
+		assert.Contains(t, state.GivenUp, "c1~15.g2", "the new set-aside record names the job")
+	})
+}
+
+// claudeRig is the daemon rig over a claude harness in one-shot mode at
+// width 1, its runs answered by run (no process), its lane state in memory.
+func claudeRig(t *testing.T, dir, configDir string, run Exec) (*rig, *LaneState) {
+	r := newRig(t)
+	state := &LaneState{}
+	r.d.Deliver = &Claude{Stub: Stub{Harness: "claude"}, Friend: "bob", Dir: dir, Run: run, ConfigDir: func() string { return configDir }}
+	r.d.Harness, r.passive, r.d.Dir = "claude", true, dir
+	r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
+	r.d.Row = func() (string, int) { return ModeOneShot, 1 }
+	r.d.Coordinator = "ada"
+	r.d.LoadLanes = func() (LaneState, error) { return *state, nil }
+	r.d.SaveLanes = func(s LaneState) error { *state = s; return nil }
+	return r, state
+}
+
+// A claude lane is a process per card: no session opened, the brief the
+// prompt, the result read from the outbox. A card whose run wrote REPORT.md
+// and RESULT.md is done; one whose run exited 0 and wrote nothing is a
+// harness fault, never a failed attempt: kept in the lane's hand and run
+// again, never set aside, and the third alike marks her row down once with
+// one judgment to the seat (the-lane-hands-the-brief-by-absolute-path-bb;
+// lane_path_test.go). A bus message rides with no card: it waits, pending.
+func TestAClaudeLaneRunsEachCardAsAProcessAndReadsItsOutbox(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}, {"c2", "queued"}}, []string{"c1", "c2"}, nil)
+		var mu sync.Mutex
+		var prompts []string
+		run := func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			prompts = append(prompts, args[3])
+			if args[3] == "RESULT: c1\n" {
+				out := filepath.Join(dir, "outbox", "c1~15")
+				if err := os.MkdirAll(out, 0o755); err != nil {
+					return "", 0, err
+				}
+				for f, text := range map[string]string{"REPORT.md": "Verdict: LAND\n", "RESULT.md": "RESULT: c1\n"} {
+					if err := os.WriteFile(filepath.Join(out, f), []byte(text), 0o644); err != nil {
+						return "", 0, err
+					}
+				}
+			}
+			return "the card is done", 0, nil
+		}
+		r, state := claudeRig(t, dir, "/accounts/heavy-a", run)
+		r.send(t, "ada", "hello", "no card carries this")
+		r.run(t, 20)
+
+		mu.Lock()
+		assert.Equal(t, []string{"RESULT: c1\n", "RESULT: c2\n", "RESULT: c2\n", "RESULT: c2\n"}, prompts, "one run per card turn, the brief its prompt; the third fault holds the lane")
+		mu.Unlock()
+		assert.Empty(t, state.Sessions, "no session is opened")
+		assert.Empty(t, state.GivenUp, "a harness fault never sets the card aside")
+		records := strings.Join(r.records, "\n")
+		assert.Equal(t, 1, strings.Count(records, " card=done"), records)
+		assert.Contains(t, records, `error="claude -p exited 0 and `+filepath.Join(dir, "outbox", "c2~15")+` holds no REPORT.md and no RESULT.md" card=kept turn=0/2 reason="harness-fault: no report; first error: the harness printed no error line"`)
+		assert.NotContains(t, records, "card=again")
+		assert.NotContains(t, records, "card=set_aside")
+		got := r.adaGot(t)
+		require.Len(t, got, 1, "one judgment, not one per card")
+		assert.True(t, strings.HasPrefix(got[0], "friend bob down until "), got[0])
+		pending, fresh, err := r.bus.Peek(context.Background(), "bob")
+		require.NoError(t, err)
+		assert.Empty(t, pending)
+		assert.Len(t, fresh, 1, "the message is never taken")
+		assert.Equal(t, ModeOneShot, r.last().Mode)
+	})
+}
+
+// A claude lane's card run is a lane's: its context is marked (LaneContext),
+// so the harness's process runs inside the lane wall (Wall.Exec) and never
+// outside it.
+func TestAClaudeLaneCardRunsUnderALaneContext(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
+		var mu sync.Mutex
+		var inLane []bool
+		run := func(ctx context.Context, _, _ string, _ []string, _ string) (string, int, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			inLane = append(inLane, InLane(ctx))
+			out := filepath.Join(dir, "outbox", "c1~15")
+			if err := os.MkdirAll(out, 0o755); err != nil {
+				return "", 0, err
+			}
+			for _, f := range []string{"REPORT.md", "RESULT.md"} {
+				if err := os.WriteFile(filepath.Join(out, f), []byte("done\n"), 0o644); err != nil {
+					return "", 0, err
+				}
+			}
+			return "", 0, nil
+		}
+		r, _ := claudeRig(t, dir, "/accounts/heavy-a", run)
+		r.run(t, 10)
+		mu.Lock()
+		defer mu.Unlock()
+		assert.Equal(t, []bool{true}, inLane, "the one card run was a lane's")
+	})
+}
+
+// A claude row in one-shot mode with no config_dir is refused: the refusal
+// and its remedy said once on the record, no card run, the daemon in batch
+// (passive: nothing delivered).
+func TestAClaudeRowInOneShotModeWithoutConfigDirIsRefused(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
+		ran := 0
+		r, _ := claudeRig(t, dir, "", func(context.Context, string, string, []string, string) (string, int, error) {
+			ran++
+			return "", 0, nil
+		})
+		r.run(t, 6)
+		assert.Zero(t, ran, "no card runs")
+		records := strings.Join(r.records, "\n")
+		assert.Equal(t, 1, strings.Count(records, "mode: one-shot REFUSED: friend bob is a claude friend in one-shot mode with no config_dir"), records)
+		assert.Contains(t, records, "run: nova-config friend set bob --config_dir <her account's absolute config directory>")
+		assert.Equal(t, ModeBatch, r.last().Mode)
+	})
+}
+
+// RowConfigDir reads row_config_dir= off the beat's answer, empty when absent.
+func TestRowConfigDirIsReadOffTheBeat(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "/accounts/heavy-a", RowConfigDir("FRIEND-BEAT OK bob at=x row_mode=one-shot row_width=8 row_config_dir=/accounts/heavy-a"))
+	assert.Empty(t, RowConfigDir("FRIEND-BEAT OK bob at=x row_mode=one-shot row_width=8"))
 }

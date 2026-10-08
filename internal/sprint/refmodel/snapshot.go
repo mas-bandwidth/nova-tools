@@ -35,6 +35,10 @@ type Snapshot struct {
 	// Untold is the unknown machines that beat and whom the coordinator was
 	// not told of yet.
 	Untold []string
+	// Friends is the friends' seats as the roster has them (name, width, status,
+	// class): whom the cap deal and the deal give a friend's card. nil is none
+	// read, and no friend is dealt a card; the friend stall reads her fleet row.
+	Friends []sprint.FriendSeat
 }
 
 // Clone is a copy of the snapshot that shares nothing with it, so what is done
@@ -48,6 +52,7 @@ func (s Snapshot) Clone() Snapshot {
 	c.Beats = cloneBeats(s.Beats)
 	c.Goals = sprint.Goals{People: slices.Clone(s.Goals.People), Noted: maps.Clone(s.Goals.Noted)}
 	c.Untold = slices.Clone(s.Untold)
+	c.Friends = slices.Clone(s.Friends)
 	return c
 }
 
@@ -71,7 +76,7 @@ func (s Snapshot) stopped() func(from, to time.Time) time.Duration {
 
 // tickReq is what the tick is given beside its tables.
 func (s Snapshot) tickReq() sprint.TickReq {
-	return sprint.TickReq{Who: sprint.MachineActor, Stopped: s.stopped(), Beats: s.Beats}
+	return sprint.TickReq{Who: sprint.MachineActor, Stopped: s.stopped(), Beats: s.Beats, Friends: s.Friends}
 }
 
 func cloneTables(s *sprint.Snapshot) *sprint.Snapshot {
@@ -91,6 +96,11 @@ func cloneTable(t *sprint.Table) *sprint.Table {
 	c := sprint.NewTable(t.Name)
 	c.Epoch, c.Revision = t.Epoch, t.Revision
 	c.SetRows(slices.Clone(t.Rows()))
+	if v, ok := t.Prop(sprint.PropStatusSeen); ok {
+		// the one property the model carries: the status transitions' record, which the
+		// presence duty reads to decide a transition and its judgment as the tick does
+		c.SetProps(map[string]string{sprint.PropStatusSeen: v})
+	}
 	for row, texts := range t.Texts {
 		c.Texts[row] = maps.Clone(texts)
 	}

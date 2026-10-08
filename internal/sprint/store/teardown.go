@@ -21,9 +21,17 @@ import (
 // progress and the callers' results. Each epoch has its own.
 var sprintKeys = []string{keyFence, keyGen, keyInbox, keyLog, keyNotes, keyOpen, keyCursor, keyProgress, keyDone, keyQueue, keyAliases, keyAnswered}
 
-// machineKeys are the machine's records and the people's goals: one for the
+// machineKeys are the machine's records, the people's goals and the timers: one for the
 // whole sprint, under its prefix, never per epoch, so a clear keeps them.
-var machineKeys = []string{keyMachine, keyHeartbeat, keyStuck, keyCoordinator, keyGoals, keyStrangers, keyTickEnd, keyRules, keyFriends, keyDropDebt, keySeat, keyOwner, keyWhere}
+var machineKeys = []string{keyMachine, keyHeartbeat, keyStuck, keyCoordinator, keyGoals, keyTimers, keyStrangers, keyTickEnd, keyRules, keyFriends, keyDropDebt, keySeat, keyOwner, keyWhere, KeySeatPushers, keyStats}
+
+// KeySeatPushers is the names whose seat has a push record (SeatPushKey), a
+// JSON list the writer of a record adds its name to (cmd/nova-sprint
+// pushproof.go), so teardown deletes each record by name.
+const KeySeatPushers = "seat-pushers"
+
+// SeatPushKey is name's push record (sprint.PushRecord), a key of the sprint's.
+func SeatPushKey(name string) string { return "seat-push:" + name }
 
 // residueSuffixes are the keys of a table the table layer's drop keeps: its
 // revision, definition record and change log; and its operation records,
@@ -46,6 +54,10 @@ type Epochs struct {
 	// Friends is every friend of the roster: each may have a beat record and a health record
 	// (friends.go).
 	Friends []string
+	// Pushers is every name with a seat push record (KeySeatPushers).
+	Pushers []string
+	// StatsArchives is every stats tidy's archive record (StatsRecord.Archives).
+	StatsArchives []string
 }
 
 // TeardownKeys is every key a deployment leaves after its tables are dropped
@@ -100,7 +112,13 @@ func TeardownKeys(names sprint.Names, ids map[string][]string, epochs Epochs) []
 		keys = append(keys, names.Key(readerBeatKey(r)), names.Key(readerAwayKey(r)))
 	}
 	for _, f := range epochs.Friends {
-		keys = append(keys, names.Key(friendBeatKey(f)), names.Key(friendHealthKey(f)))
+		keys = append(keys, names.Key(friendBeatKey(f)), names.Key(friendHealthKey(f)), names.Key(friendFinishKey(f)))
+	}
+	for _, p := range epochs.Pushers {
+		keys = append(keys, names.Key(SeatPushKey(p)))
+	}
+	for _, a := range epochs.StatsArchives {
+		keys = append(keys, names.Key(a))
 	}
 	return append(keys, names.EpochKey())
 }
@@ -171,6 +189,10 @@ func (st *Store) Teardown(ctx context.Context) (int, error) {
 	}
 	epochs.Beating = slices.Sorted(maps.Keys(beating))
 	epochs.Readers = slices.Sorted(maps.Keys(reading))
+	_ = st.getJSON(ctx, KeySeatPushers, &epochs.Pushers) // ignored: an unreadable list leaves its records, as a missing one does
+	var stats StatsRecord
+	_ = st.getJSON(ctx, keyStats, &stats) // ignored: an unreadable record leaves its archives, as a missing one does
+	epochs.StatsArchives = stats.Archives
 	epochs.Friends = st.friendNames(ctx)
 	_ = st.B.ViewDelete(ctx, st.Names.View())
 	for _, t := range All {

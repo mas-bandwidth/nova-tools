@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/units"
 )
 
 // seat install (docs/SPEC-SPRINT.md, "Handing over the seat"; the owner, 2026-10-04:
@@ -20,10 +22,10 @@ import (
 // directory of its own and loads nothing.
 
 // SeatLabel is the push loop's launchd label; its plist is SeatLabel.plist.
-const SeatLabel = "nova-sprint.seat-push"
+const SeatLabel = units.SeatLabel
 
 // SeatService is the push loop's systemd user unit.
-const SeatService = "nova-sprint-seat-push.service"
+const SeatService = units.SeatService
 
 // SeatUnit is the push loop as a service: the binary, the store it reads (Redis, an
 // address; else Server, the sprint's server), and the file its lines go to (launchd;

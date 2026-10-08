@@ -83,7 +83,7 @@ func TestCardTellsTheStory(t *testing.T) {
 	ta.deal(1)
 	ta.ok("take --as m1 s1-1.w2@1")
 	ta.ok("finish --as m1 s1-1.w2@1 --head h2 --report 'handled; tests green'")
-	ta.ok("ask")
+	ta.ok("ask") // the pair: a card's reads are asked together
 	ta.ok("read --as reader-a --ok s1-1.r2.reader-a --finding 'the empty case is tested'")
 	ta.ok("read --as reader-b --ok s1-1.r2.reader-b --finding 'fine'")
 	ta.ok("accept s1-1")
@@ -96,7 +96,7 @@ func TestCardTellsTheStory(t *testing.T) {
 		"  attempt 2, because attempt 1 failed\n",
 		`s1-1 reworked by coordinator: attempt 2; answers "work came back failed"`,
 		`m1 finished attempt 2: ok, head h2. "handled; tests green"`,
-		"reader-a and reader-b asked to read attempt 2 by coordinator",
+		"reader-a and reader-b asked to read attempt 2 by coordinator", // reads asked together: one ask
 		`reader-a read attempt 2: ok. "the empty case is tested"`,
 		"merged into s1 and landed by coordinator",
 		"attempt 1, report by m1 (failed):\n    the tests went red",

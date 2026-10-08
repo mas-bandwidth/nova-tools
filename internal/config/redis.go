@@ -19,7 +19,8 @@ import (
 // nova-sprint verbs wrote by hand until now, through the same Redis
 // Functions (internal/nsprint/fn/lua: capacity.lua's ns_capacity_desired
 // for slots and tiers, friend_roles.lua's ns_friend_roles for roles), and her
-// width and delivery mode, plain fields of friend:<f>:desired no function touches. Her
+// width, delivery mode, config_dir, token_cap and the optional streams and
+// kinds work restriction, plain fields of friend:<f>:desired no function touches. Her
 // logins and wake path are what she would just know: her own presence
 // writes them, apply never touches friends:login or friend:<f>:wakepath. A
 // machine's ceiling goes through ns_capacity_machine; its registry row has
@@ -231,7 +232,7 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 	roles := make([]*redis.StringCmd, len(names))
 	beats := make([]*redis.StringCmd, len(names))
 	for i, f := range names {
-		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width", "mode")
+		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers", "width", "mode", "config_dir", "token_cap", "streams", "kinds")
 		roles[i] = pipe.HGet(ctx, "friend:"+f+":roles", "roles")
 		beats[i] = pipe.HGet(ctx, FriendBeatKey(f), "host")
 	}
@@ -255,6 +256,13 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 			"roles": sortedList(roles[i].Val()),
 			"width": intText(str(d, 2)),
 			"mode":  str(d, 3),
+			// her claude lanes' CLAUDE_CONFIG_DIR, "" when unset
+			"config_dir": str(d, 4),
+			// her per-card token cap; a missing field reads as 0, and apply writes the row's
+			"token_cap": intText(str(d, 5)),
+			// her optional work restriction, "" for none
+			"streams": str(d, 6),
+			"kinds":   str(d, 7),
 		}
 	}
 	return views, revValue(rev), nil
@@ -390,8 +398,8 @@ func tiersArg(tiers string) string {
 
 // writeFriend applies one friend row: her slots and tiers through
 // ns_capacity_desired, charged to the machine her beat reports or the fleet's
-// coordinator machine, then her width, delivery mode and roles
-// (docs/SPEC-CONFIG.md, "friend").
+// coordinator machine, then her width, delivery mode, config directory,
+// token cap, work restriction and roles (docs/SPEC-CONFIG.md, "friend").
 func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, actor, idem string) error {
 	f := row.Name
 	// 1. slots and tiers, registering the friend (ns_capacity_desired),
@@ -432,8 +440,12 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	// both in one round trip, after slots registered her.
 	writeWidth := prev == nil || prev["width"] != row.Fields["width"]
 	writeMode := prev == nil || prev["mode"] != row.Fields["mode"]
+	writeConfigDir := prev == nil || prev["config_dir"] != row.Fields["config_dir"]
+	writeTokenCap := prev == nil || prev["token_cap"] != row.Fields["token_cap"]
+	writeStreams := prev == nil || prev["streams"] != row.Fields["streams"]
+	writeKinds := prev == nil || prev["kinds"] != row.Fields["kinds"]
 	writeRoles := prev == nil && row.Fields["roles"] != "" || prev != nil && prev["roles"] != row.Fields["roles"]
-	if !writeWidth && !writeMode && !writeRoles {
+	if !writeWidth && !writeMode && !writeConfigDir && !writeTokenCap && !writeStreams && !writeKinds && !writeRoles {
 		return nil
 	}
 	pipe := a.Client.Pipeline()
@@ -444,6 +456,18 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	if writeMode { // her delivery mode, a plain field beside width (nova-friend run reads it through friend beat)
 		pipe.HSet(ctx, "friend:"+f+":desired", "mode", row.Fields["mode"])
 	}
+	if writeConfigDir { // her claude lanes' CLAUDE_CONFIG_DIR, a plain field beside mode; "" when unset
+		pipe.HSet(ctx, "friend:"+f+":desired", "config_dir", row.Fields["config_dir"])
+	}
+	if writeTokenCap { // her per-card token cap, a plain field beside config_dir; 0 is no cap
+		pipe.HSet(ctx, "friend:"+f+":desired", "token_cap", row.Fields["token_cap"])
+	}
+	if writeStreams { // her optional stream restriction, plain desired fields beside the cap
+		pipe.HSet(ctx, "friend:"+f+":desired", "streams", row.Fields["streams"])
+	}
+	if writeKinds { // her optional KIND restriction, a plain field beside streams
+		pipe.HSet(ctx, "friend:"+f+":desired", "kinds", row.Fields["kinds"])
+	}
 	if writeRoles {
 		roles = pipe.FCall(ctx, "ns_friend_roles", nil, f, row.Fields["roles"], actor, idem)
 	}
@@ -451,7 +475,7 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	// carries (its refusal, or the connection's, which every command of the
 	// pipe carries) is read below with the roles call's words.
 	if err := redisconn.Exec(ctx, pipe); err != nil && (roles == nil || roles.Err() == nil) {
-		return fmt.Errorf("redis: friend %s width: %w", f, err)
+		return fmt.Errorf("redis: friend %s desired fields: %w", f, err)
 	}
 	if roles != nil {
 		reply, err := roles.Result()
@@ -714,11 +738,11 @@ type hashKind struct {
 	kind  string
 	set   string
 	key   func(string) string
-	extra func(name string) []any // derived fields beside the row's; nil for none
+	extra func(row Row) []any // derived fields beside the row's, which the kind's Derive adds; nil for none
 }
 
 var hashKinds = map[string]hashKind{
-	KindLoop:  {kind: KindLoop, set: LoopsKey, key: LoopKey, extra: func(n string) []any { return []any{"log", LoopLog(n)} }},
+	KindLoop:  {kind: KindLoop, set: LoopsKey, key: LoopKey, extra: func(r Row) []any { return []any{"log", r.Fields["log"]} }},
 	KindRoute: {kind: KindRoute, set: RoutesKey, key: RouteKey},
 	KindTier:  {kind: KindTier, set: TiersKey, key: TierKey},
 }
@@ -781,7 +805,7 @@ func (a *RedisApplier) writeHash(ctx context.Context, h hashKind, row Row, idem 
 	rev, _ := strings.CutPrefix(idem, "config:"+h.kind+":")
 	fields := []any{"name", row.Name, "rev", rev, "at", strconv.FormatInt(a.now(), 10)}
 	if h.extra != nil {
-		fields = append(fields, h.extra(row.Name)...)
+		fields = append(fields, h.extra(row)...)
 	}
 	for _, f := range k.Fields {
 		fields = append(fields, f.Name, row.Fields[f.Name])

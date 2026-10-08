@@ -135,13 +135,17 @@ func TestMalformedIsUnreadable(t *testing.T) {
 	t.Parallel()
 
 	for name, content := range map[string]string{
-		"a JSON array":              `[]`,
-		"a bare string":             `"lockdown"`,
-		"a number":                  `7`,
-		"truncated":                 `{"lockdown":{"at":"x"`,
-		"empty file":                ``,
-		"lockdown is not an object": `{"lockdown":"blown","quarantine":{}}`,
-		"quarantine is not a map":   `{"lockdown":null,"quarantine":[1,2]}`,
+		"a JSON array":                `[]`,
+		"a bare string":               `"lockdown"`,
+		"a number":                    `7`,
+		"a bare null":                 `null`,
+		"a boolean":                   `true`,
+		"truncated":                   `{"lockdown":{"at":"x"`,
+		"empty file":                  ``,
+		"lockdown is not an object":   `{"lockdown":"blown","quarantine":{}}`,
+		"quarantine is not a map":     `{"lockdown":null,"quarantine":[1,2]}`,
+		"an unknown top-level member": `{"lockdown":null,"quarantine":{},"defuse":true}`,
+		"data after the box object":   `{"lockdown":null,"quarantine":{}} {"lockdown":null}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := boxIn(t)
@@ -150,6 +154,38 @@ func TestMalformedIsUnreadable(t *testing.T) {
 			assert.Error(t, err, "%s must be unreadable, but it parsed", name)
 		})
 	}
+}
+
+// TestReadBoxRefusesAMisspelledKeyADuplicateKeyAndAWholeBoxNull pins strict top-level
+// decoding: unknown members, duplicate fields (including case aliases), non-object
+// boxes, and trailing bytes cannot turn an ambiguous fuse file into VERIFIED CLEAR.
+func TestReadBoxRefusesAMisspelledKeyADuplicateKeyAndAWholeBoxNull(t *testing.T) {
+	t.Parallel()
+
+	for name, content := range map[string]string{
+		"misspelled lockdown":  `{"lockdwn":{"at":"t","reason":"r"},"quarantine":{}}`,
+		"duplicate lockdown":   `{"lockdown":{"at":"t","reason":"r"},"quarantine":{},"lockdown":null}`,
+		"case alias duplicate": `{"lockdown":{"at":"t","reason":"r"},"quarantine":{},"LOCKDOWN":null}`,
+		"whole box null":       `null`,
+		"trailing data":        `{"lockdown":null,"quarantine":{}} garbage`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			path := boxIn(t)
+			write(t, path, content)
+			_, err := ReadBox(path)
+			assert.Error(t, err, "%s must be unreadable, but it parsed", name)
+		})
+	}
+
+	t.Run("single correct lockdown blows", func(t *testing.T) {
+		t.Parallel()
+		path := boxIn(t)
+		write(t, path, `{"lockdown":{"at":"t","reason":"r"},"quarantine":{}}`)
+		b, err := ReadBox(path)
+		require.NoError(t, err, "one correct lockdown field is valid: %v", err)
+		require.NotNil(t, b.Lockdown, "one correct lockdown field must remain readable as blown")
+	})
 }
 
 // TestNullQuarantineStillYieldsAUsableMap: `{"lockdown":null,"quarantine":null}` is a box

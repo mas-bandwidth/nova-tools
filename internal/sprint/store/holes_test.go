@@ -209,7 +209,7 @@ func (h *harness) play(members []string, streams ...string) {
 	for _, m := range members {
 		h.work(m)
 	}
-	h.readAll()
+	h.readOutstanding() // the next tick asks the next reads
 	for _, st := range streams {
 		h.landAll(st)
 	}
@@ -276,7 +276,7 @@ func holesRun(x *holeTick, n int, lapse bool, after func(round int, res TickResu
 		if lapse && round == 2 {
 			h.liveMembers("m2")
 			h.work("m2")
-			h.readAll()
+			h.readOutstanding()
 			h.tick(pastDown)
 			continue
 		}
@@ -408,7 +408,7 @@ func TestG1AReadsPlacementNeverDependsOnAFleetRow(t *testing.T) {
 	h.must(FleetStep(sprint.FleetReq{Op: "hold", Member: "m2"}))
 	res := x.tick()
 	n = len(h.table().Readers.Column(sprint.Asked))
-	require.EqualValues(t, 4, n, "with no member up %d reads are asked, want 4, in %v", n, res.Order)
+	require.EqualValues(t, 4, n, "with no member up %d reads are asked, want 4 (each card's two, together), in %v", n, res.Order)
 	require.LessOrEqual(t, len(res.Order), 12, "with no member up %d reads are asked, want 4, in %v", n, res.Order)
 }
 

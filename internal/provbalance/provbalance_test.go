@@ -85,3 +85,38 @@ func TestAnUnreadableBalanceIsUnknownAndSaysWhy(t *testing.T) {
 		})
 	}
 }
+
+// The usage read: openrouter's key endpoint answers the UTC day's usage, read through the
+// seat's key and never said; a provider with no endpoint, no key, an error status or an
+// answer without usage_daily is unknown with why.
+func TestReadUsageIsTheProvidersCountOfTheDay(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := &fake{status: 200, body: `{"data":{"label":"sk-or-v1-abc...","usage":1250.5,"usage_daily":11.25,"usage_weekly":80}}`}
+	rd := ReadUsage(ctx, f, "openrouter", "2026-10-05", env(fakeKey))
+	require.True(t, rd.Known, "%+v", rd)
+	assert.Equal(t, "2026-10-05", rd.Day)
+	assert.InDelta(t, 11.25, rd.Used, 1e-9)
+	require.Len(t, f.seen, 1)
+	assert.Equal(t, OpenRouterKeyURL, f.seen[0].URL.String())
+	assert.Equal(t, "Bearer "+fakeKey, f.seen[0].Header.Get("Authorization"))
+
+	for name, c := range map[string]struct {
+		rt       http.RoundTripper
+		provider string
+		key      string
+		says     string
+	}{
+		"no endpoint":   {&fake{status: 200, body: "{}"}, "opencode", fakeKey, "publishes no balance endpoint"},
+		"unknown":       {&fake{status: 200, body: "{}"}, "acme", fakeKey, "no usage endpoint is known for provider acme"},
+		"no key":        {&fake{status: 200, body: "{}"}, "openrouter", "", "OPENROUTER_API_KEY is not in this environment"},
+		"refused":       {&fake{status: 401, body: "{}"}, "openrouter", fakeKey, "answered 401"},
+		"no daily":      {&fake{status: 200, body: `{"data":{"usage":3}}`}, "openrouter", fakeKey, "no data.usage_daily"},
+		"no connection": {&fake{err: errors.New("dial tcp: refused")}, "openrouter", fakeKey, "failed"},
+	} {
+		rd := ReadUsage(ctx, c.rt, c.provider, "2026-10-05", env(c.key))
+		assert.False(t, rd.Known, "%s: %+v", name, rd)
+		assert.Contains(t, rd.Note, c.says, name)
+		assert.NotContains(t, rd.Note, fakeKey, "%s: the key is never said", name)
+	}
+}

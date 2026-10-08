@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"math/big"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -42,6 +43,77 @@ func costRecord(s *Snapshot, usage, route, model string, onlyEnabled bool, from,
 		return u.Priced("", cardcost.Prices{}).String()
 	}
 	return u.Priced(r.Name, r.Prices).String()
+}
+
+// A read is priced as work is (the owner, 2026-10-05: "do we have the cost for readers
+// properly calculated yet in nova sprint?"): by the route its ask drew, the read card's
+// own route row, never by a route found again from the model its harness reported. A
+// read card with a route is a routed read: its verdict (read --ok or --broken) carries
+// the run's usage or is refused (ReadUsageMissing), so no routed reader can leave its
+// read unpriced by saying nothing. A usage with no token count (a fleet harness that
+// reported none) is permissive in what we read: the verdict is kept, its record says
+// unpriced=no-tokens and the stream counts it (TierCosts.ReadsNoTokens). A subscription reader (a bud's claude -p on its own plan, which bills
+// no dollar per token) says so in its usage, billing=subscription: its tokens are kept,
+// with no dollar figure, and its cost is shown as tokens (CostTokens).
+const (
+	// UsageSubscription is the usage word a subscription reader adds to its --usage.
+	UsageSubscription = "billing=subscription"
+	// WhySubscription is a subscription run's unpriced word: its tokens, no dollars.
+	WhySubscription = "subscription"
+	// CostTokens is the cost a COST line shows for a subscription run: its tokens.
+	CostTokens = "tokens"
+)
+
+// subscriptionUsage says the usage is a subscription reader's (UsageSubscription).
+func subscriptionUsage(u cardcost.Usage) bool { return slices.Contains(u.Extra, UsageSubscription) }
+
+// routedRead says the read card was drawn a route at its ask: what prices it.
+func routedRead(c *Card) bool {
+	r := c.F(FieldRoute)
+	return r != "" && r != RoutePin
+}
+
+// readCostRecord is a read run's usage record at its end (costRecord): a routed read
+// priced by its card's route, a subscription reader's tokens kept with no dollar figure
+// (its harness's notional cost dropped, for its plan bills none), and a read with no
+// route by an enabled route of the provider/model its harness reported, as before.
+func readCostRecord(s *Snapshot, c *Card, usage, from, began string) string {
+	u := cardcost.ParseUsage(usage)
+	if subscriptionUsage(u) {
+		u = u.Timed(from, began, s.Now)
+		u.Actual, u.ActualBy = "", ""
+		u.Unpriced = WhySubscription
+		if !u.Tokens.Reported() {
+			u.Unpriced = cardcost.WhyNoTokens
+		}
+		return u.String()
+	}
+	if routedRead(c) {
+		return costRecord(s, usage, c.F(FieldRoute), c.F(FieldModel), false, from, began)
+	}
+	return costRecord(s, usage, "", "", true, from, began)
+}
+
+// ReadUsageMissing is why a read's verdict on the read card c is refused for its usage:
+// a routed read with no --usage at all, which leaves nothing to price it by; "" otherwise.
+// A usage with no token count is taken, never refused: a verdict is never lost for its
+// harness's accounting (readCostRecord records it unpriced=no-tokens). Its remedy is the
+// verdict again with the harness's own token report.
+func ReadUsageMissing(c *Card, usage string, verdict string) string {
+	if !routedRead(c) || strings.TrimSpace(usage) != "" {
+		return ""
+	}
+	return fmt.Sprintf("a read on route %s is priced as work is, from the run's tokens, and this verdict has no --usage: run nova-sprint read --as %s --%s %s ... --usage '<the harness's own token report: input=<n> cache_read=<n> cache_write=<n> output=<n> model=<provider/model>>'; a subscription reader adds %s to its usage",
+		c.F(FieldRoute), c.F("reader"), cmp.Or(verdict, "ok"), c.ID, UsageSubscription)
+}
+
+// CostWord is the cost a COST line shows for a record: which of the dollar figures it
+// holds (Usage.Present), or tokens for a subscription run.
+func CostWord(u cardcost.Usage) string {
+	if u.Unpriced == WhySubscription {
+		return CostTokens
+	}
+	return u.Present()
 }
 
 // priceRoute is the route whose price sheet prices a run: the route of that name when
@@ -115,12 +187,19 @@ type Consumer struct {
 	At      string         `json:"at"`  // when it ended
 	Key     string         `json:"key"` // the card and its run: one record per key, set once
 	Usage   cardcost.Usage `json:"usage"`
+	// Cap and Overrun are a capped take's lane cap and its wall past it (lane_cap.go), ""
+	// for a take no cap ended.
+	Cap     string `json:"cap,omitempty"`
+	Overrun string `json:"overrun,omitempty"`
 }
 
 // line is the record as the primary keeps it: the consumer's words, then its usage.
 func (c Consumer) line() string {
 	w := []string{"kind=" + c.Kind, "card=" + c.Card, "attempt=" + itoa(c.Attempt), "take=" + itoa(c.Take), "gen=" + itoa(c.Gen),
 		"who=" + orDash(c.Who), "on_route=" + orDash(c.Route), "on_model=" + orDash(c.Model), "on_tier=" + orDash(c.Tier), "end=" + orDash(strings.ReplaceAll(c.End, " ", "-")), "at=" + orDash(c.At)}
+	if c.Cap != "" {
+		w = append(w, "lane_cap="+c.Cap, "lane_overrun="+orDash(c.Overrun))
+	}
 	return strings.Join(w, " ") + " " + c.Usage.String()
 }
 
@@ -159,6 +238,10 @@ func parseConsumer(key, line string) Consumer {
 			c.End = strings.ReplaceAll(undash(v), "-", " ")
 		case "at":
 			c.At = undash(v)
+		case "lane_cap":
+			c.Cap = undash(v)
+		case "lane_overrun":
+			c.Overrun = undash(v)
 		default:
 			rest = append(rest, w)
 		}
@@ -218,7 +301,11 @@ func readConsumer(s *Snapshot, c *Card, run int, end, rec string) Consumer {
 	if run > 0 {
 		key = c.ID + "#r" + itoa(run)
 	}
-	return Consumer{Kind: "read", Card: c.ID, Attempt: c.Int("attempt"), Take: run, Who: c.F("reader"), Route: u.Route, Model: u.Model,
+	model := u.Model
+	if !subscriptionUsage(u) {
+		model = cmp.Or(u.Model, c.F(FieldModel)) // a routed read ran its route's model
+	}
+	return Consumer{Kind: "read", Card: c.ID, Attempt: c.Int("attempt"), Take: run, Who: c.F("reader"), Route: u.Route, Model: model,
 		Tier: c.F(FieldTier), End: end, At: stamp(s.Now), Key: key, Usage: u}
 }
 
@@ -277,7 +364,7 @@ func (v CardCostView) CostLines() []string {
 		}
 		out = append(out, fmt.Sprintf("COST kind=%s card=%s attempt=%d%s who=%s route=%s model=%s tier=%s end=%s %s wait=%s run=%s predicted_usd=%s actual_usd=%s actual_by=%s cost=%s",
 			c.Kind, c.Card, c.Attempt, take, orDash(c.Who), orDash(cmp.Or(c.Route, u.Route)), orDash(c.Model), orDash(c.Tier), strings.ReplaceAll(c.End, " ", "-"),
-			tokenWords(u.Tokens), seconds(u.Wait), seconds(u.Run), orDash(u.Predicted), orDash(u.Actual), orDash(actualBy), u.Present()))
+			tokenWords(u.Tokens), seconds(u.Wait), seconds(u.Run), orDash(u.Predicted), orDash(u.Actual), orDash(actualBy), CostWord(u)))
 	}
 	t := v.Total
 	cut := ""

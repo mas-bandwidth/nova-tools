@@ -13,6 +13,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store/storetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -148,13 +149,33 @@ func (h *harness) through(ids ...string) {
 		h.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}}))
 	}
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: ids}}))
-	s = h.snap()
 	for _, id := range ids {
-		for _, rc := range s.Readers.Of(id) {
-			h.must(ReadStep(sprint.ReadReq{As: rc.F("reader"), Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
-		}
+		h.readAllOK(id)
 	}
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: ids}}))
+}
+
+// readAllOK has every outstanding read of the primary say ok and, while it wants
+// another (its reads are asked one at a time, sprint.ReadsWanted), asks it and
+// has that one say ok too.
+func (h *harness) readAllOK(id string) {
+	h.t.Helper()
+	for {
+		s := h.snap()
+		for _, rc := range s.Readers.Of(id) {
+			if rc.Col == sprint.Asked || rc.Col == sprint.Reading {
+				h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc.F("reader"), Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
+			}
+		}
+		s = h.snap()
+		pr := s.Work.Card(id)
+		if pr == nil || pr.Col != sprint.Review || sprint.ReadsWanted(s, pr) == 0 {
+			return
+		}
+		if res := h.run(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}})); len(res.Refused) > 0 {
+			return
+		}
+	}
 }
 
 func TestTheLifeOfAStreamThroughTheStore(t *testing.T) {
@@ -573,7 +594,7 @@ func TestAckWritesOneDecidedNote(t *testing.T) {
 // checkTwin is every harness's CheckTwin: the twin a part planned on is the
 // state a fresh read of the same generation gives.
 func checkTwin(twin, fresh *sprint.Snapshot) error {
-	if d := TwinDiff(twin, fresh); d != "" {
+	if d := storetest.TwinDiff(twin, fresh); d != "" {
 		return errors.New(d)
 	}
 	return nil

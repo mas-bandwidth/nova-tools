@@ -48,7 +48,7 @@ func TestNothingToDoAtAHeadAReaderPassedIsBackInReview(t *testing.T) {
 			for _, rd := range []string{"reader-a", "reader-b", "reader-c"} {
 				asked = append(asked, ta.askedOf(rd)...)
 			}
-			assert.Len(t, asked, 2, "two readers asked at the new attempt: %v", asked)
+			assert.Len(t, asked, 2, "both reads asked together at the new attempt: %v", asked)
 			for _, id := range asked {
 				assert.Contains(t, id, "s1-1.r2.", "read at attempt 2")
 			}

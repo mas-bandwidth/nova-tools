@@ -3,9 +3,11 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -31,6 +33,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -72,6 +75,8 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	passFlag := fs.String("pass", "", "the `NAME,...` of secrets in this environment a child is handed (the loop record's nova-secrets keys); a harness that reads its provider key from the environment needs it")
 	stageWall := newSecondsFlag(fs, "stage-wall", swarm.DefaultStageTimeout, "the bound on staging each card's checkout, a `duration` or whole seconds, handed to native as --stage-timeout: a slow machine under load names a longer one in its loop row's argv (default 120s)")
 	diskFloor := fs.Int("disk-floor", 10, "the free `GiB` the slots' volume keeps: below it no card starts (default 10; 0 checks nothing)")
+	maxLoad := fs.Float64("max-load", 0, "the maximum one-minute host `load` at which a local child starts (default 0: no load gate)")
+	warnLoad := fs.Float64("warn-load", 0, "the one-minute host `load` at which a local child start warns, at or below --max-load (default 0: no warning)")
 	gocacheGiB := fs.Int("gocache-limit", int(gocache.Limit/gib), "the `GiB` the shared Go build cache is held under by the cleaner, oldest unused entries removed down to 80% of it, never one used in the last two hours (default 20; a busy machine holds its working set with more)")
 	identity := fs.String("identity", "", "the pool identity every child commits under, `owner,name,email` (default: the pool's identity.tsv)")
 	server := fs.String("server", "", "required: the sprint server's `address:port`, which nova-sprint run --listen started on the coordinator's machine; every sprint verb goes there and this machine opens no store")
@@ -130,6 +135,15 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if *diskFloor < 0 {
 		f.add("--disk-floor is the free GiB the slots' volume must keep for the member to start a card: 0 or more (0 checks nothing; default 10)")
 	}
+	if math.IsNaN(*maxLoad) || math.IsInf(*maxLoad, 0) || *maxLoad < 0 {
+		f.add("--max-load is the finite maximum one-minute host load at which a local child starts: 0 or more (0 checks nothing)")
+	}
+	if math.IsNaN(*warnLoad) || math.IsInf(*warnLoad, 0) || *warnLoad < 0 {
+		f.add("--warn-load is the finite one-minute host load at which a local child start warns: 0 or more (0 disables the warning)")
+	}
+	if *warnLoad > 0 && (*maxLoad == 0 || *warnLoad > *maxLoad) {
+		f.add("--warn-load requires --max-load and is at or below it")
+	}
 	if *gocacheGiB < 1 {
 		f.add("--gocache-limit is the GiB the shared Go build cache is held under: 1 or more (default 20)")
 	}
@@ -164,6 +178,13 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if why := yieldRefusal(yield.Supported, runtime.GOOS); why != "" {
 		return refuse(stderr, " member", why)
 	}
+	// a name --pass lists that this environment does not hold is read here, in
+	// this process, before any directory is made (keys.go)
+	held, extra, err := prepareMemberKeys(pass, os.Getenv)
+	if err != nil {
+		return refuse(stderr, " member", err.Error())
+	}
+	pass = append(pass, extra...)
 	if *slots == "" {
 		*slots = filepath.Join(*root, "slots")
 	}
@@ -184,15 +205,16 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		send = sprintwire.Client{Addr: *server}.Do
 	}
 	sp := &sprintwire.Worker{Send: send, Failed: sprintFailureOutput}
-	// a member hands native the decide key when its environment holds it (the loop row's
-	// nova-secrets keys): a reader's native asks the decide read with it, a worker's the
-	// gate decision of a red gate, and neither hands it to the child (nativedecide.go,
-	// nativegate.go, nativeChildEnv)
+	// a member hands native the decide key when its environment holds it, or when
+	// --pass named it and this process read it (keys.go): a reader's native asks the
+	// decide read with it, a worker's the gate decision of a red gate, and neither
+	// hands it to the harness (nativedecide.go, nativegate.go, nativeChildEnv)
 	nativePass := append(append([]string{}, pass...), decide.JevSecret)
 	rn := &nativeRunner{
 		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, stageWall: stageWall.d, tokens: *tokensWord, auth: *auth, config: *config,
-		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: nativePass, identity: *identity,
+		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: nativePass, held: held, identity: *identity,
+		load: hostload.Local(), maxLoad: *maxLoad, warnLoad: *warnLoad,
 		cacheLimit: int64(*gocacheGiB) * gib,
 	}
 	// a work card's commit is pushed by the member, outside the wall, at its
@@ -219,7 +241,12 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if *diskFloor > 0 {
 		room = diskRoom(*slots, *diskFloor, diskFree)
 	}
-	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader, Meter: meter, Room: room, Sleep: time.Sleep, Background: true, Attempt: workAttempt(*reader, os.Getenv)}, sp, rn, pu, stdout) // Sleep: harness starts StartGap apart
+	cfg := memberConfig(*as, *width, *reader, meter, room, *root, *noWall)
+	cfg.Sleep = time.Sleep // harness starts StartGap apart
+	// the attempt decision reads the decision key in this process when --pass names
+	// it and the environment does not hold it (keys.go)
+	cfg.Attempt = workAttempt(*reader, rn.getenv)
+	m := member.New(cfg, sp, rn, pu, stdout)
 	kind := "member"
 	if *reader {
 		kind = "reader"
@@ -247,12 +274,29 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	term := make(chan os.Signal, 1)
 	signal.Notify(term, syscall.SIGTERM)
 	defer signal.Stop(term)
-	n, replaced := memberLoop(m, loopRun{every: every.d, limit: loopTicks(*once, ticksGiven, *ticks), stamp: func() string { return binstamp.Of(self) }, term: term, deadline: deadline.d}, stdout, stderr)
+	keep := mirrorKeeping(os.Getenv(mirrorsEnv), *root, rn.goBuildCache(), stdout, stderr)
+	if keep != nil {
+		rn.benchHome, _ = os.UserHomeDir()
+	}
+	n, replaced := memberLoop(m, loopRun{keep: keep, every: every.d, limit: loopTicks(*once, ticksGiven, *ticks), stamp: func() string { return binstamp.Of(self) }, term: term, deadline: deadline.d}, stdout, stderr)
 	if replaced {
 		return exitReplaced
 	}
 	fmt.Fprintf(stdout, "MEMBER OK as=%s ticks=%d running=%d\n", oneline.Field(*as), n, m.Running())
 	return 0
+}
+
+// memberConfig is the member.Config nova-swarm runs a member or a reader with. A reader's
+// ScriptVerify reads a script card's head out of the bench mirror and runs its program in
+// the member's wall, so a script card whose head is its program's output needs no model
+// read (docs/SPEC-SPRINT.md, the script read); a worker's is nil. cmdMember sets Sleep,
+// so its pass loop's clock stays where the push table names it.
+func memberConfig(as string, width int, reader bool, meter *hostload.Sampler, room func() (bool, string), root string, noWall bool) member.Config {
+	cfg := member.Config{As: as, Width: width, Reader: reader, Meter: meter, Room: room, Background: true, Attempt: workAttempt(reader, os.Getenv)}
+	if reader {
+		cfg.ScriptVerify = scriptVerify(root, "", noWall)
+	}
+	return cfg
 }
 
 // exitReplaced is member's exit when its binary was replaced under it: not 0, so
@@ -284,6 +328,7 @@ type loopRun struct {
 	deadline time.Duration
 	now      func() time.Time
 	after    func(time.Duration) <-chan time.Time
+	keep     func(time.Time) // refreshes the bench mirrors before a pass (mirrorKeeping); nil: none
 }
 
 // memberLoop ticks m every lr.every (lr.limit > 0: at most limit ticks) and returns the
@@ -372,6 +417,9 @@ func memberLoop(m *member.Member, lr loopRun, stdout, stderr io.Writer) (n int, 
 			return n, draining == "replaced"
 		}
 		n++
+		if lr.keep != nil {
+			lr.keep(now())
+		}
 		acted, err := m.Tick(now())
 		if err != nil {
 			fmt.Fprintf(stderr, "nova-swarm member: tick %d: %s\n", n, oneline.Escape(err.Error()))
@@ -428,6 +476,10 @@ type nativeRunner struct {
 	env                                            []string                     // added to this process's environment: none in production, a test's
 	lookPath                                       func(string) (string, error) // resolves a headless harness on PATH (harnessFor); nil is exec.LookPath, a test's its own
 	pass                                           []string                     // the secret names handed to native (--pass, the worker's secret)
+	held                                           map[string]secrets.Secret    // secrets read in this process; nil when the environment already held every name
+	benchHome                                      string                       // the home whose nova-bench/mirror a card's clone step borrows (mirrorKeeping); "": the card keeps $HOME
+	load                                           hostload.Source
+	maxLoad, warnLoad                              float64
 
 	// launches started and not yet ended; failed ones ended and kept (slotclean.go). mu
 	// guards both: the member's pass tags a launch ended while the cleaner prunes. tagged
@@ -504,6 +556,18 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 		r.started(name)
 		return c, nil
 	}
+	// SPEC-FRIEND "The local child load gate": the configured raw one-minute load
+	// decides admission immediately before a new local child is created.
+	if r.maxLoad > 0 && r.load.Load1 != nil {
+		if load, ok := r.load.Load1(); ok {
+			if load > r.maxLoad {
+				return nil, fmt.Errorf("local child refused: one-minute load %.2f is above configured bound %.2f", load, r.maxLoad)
+			}
+			if r.warnLoad > 0 && load >= r.warnLoad && r.stderr != nil {
+				fmt.Fprintf(r.stderr, "nova-swarm member: WARNING local child %s starts at one-minute load %.2f, near configured bound %.2f\n", oneline.Field(p.Card), load, r.maxLoad)
+			}
+		}
+	}
 	if err := safepath.RemoveUnder(r.slots, slot); err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
@@ -515,7 +579,7 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 		return nil, err
 	}
 	cardPath := filepath.Join(r.slots, name+".card.md")
-	if err := os.WriteFile(cardPath, []byte(card), 0o644); err != nil {
+	if err := os.WriteFile(cardPath, []byte(swarm.PointCardAtMirrors(card, r.benchHome)), 0o644); err != nil {
 		return nil, err
 	}
 	model, tokens, deadline, err := r.route(p)
@@ -557,7 +621,7 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	// ends it), released when the wait returns.
 	ctx, release := context.WithCancel(context.Background())
 	cmd := subproc.Long(ctx, r.self, args...)
-	cmd.Env = childEnviron(append(os.Environ(), r.env...), r.pass)
+	cmd.Env = r.childEnv(model)
 	logf, err := os.Create(logPath)
 	if err != nil {
 		release()
@@ -704,6 +768,80 @@ type nativeChild struct {
 	result                      member.Result
 }
 
+// noUsageReported is the usage of a launch whose harness reported no token and left no
+// receipt: a record with nothing in it, its source named, so the member's --usage is
+// never absent (docs/SPEC-SWARM.md, the member's read verdict).
+var noUsageReported = func() string {
+	u := cardcost.NoUsage()
+	u.Extra = []string{"usage_source=none"}
+	return u.String()
+}()
+
+// receiptSpend is this launch's durable per-attempt usage rows read back
+// (member.ReceiptUsage; docs/SPEC-SPRINT.md, "What a card cost"). The job directory is
+// unique to one card generation or read attempt, so rows from another attempt cannot enter
+// the consumer's cost. Native writes these rows before it prints its final summary; they
+// recover accounting when that summary is cut off.
+func receiptSpend(job string) (cardcost.Usage, bool, error) { return member.ReceiptUsage(job) }
+
+// mergeReceiptSpend keeps native's final timing and budget words while filling the per-call
+// usage fields from the durable receipt written before that summary (docs/SPEC-SPRINT.md,
+// "What a card cost").
+func mergeReceiptSpend(line string, recovered cardcost.Usage) string {
+	u := cardcost.ParseUsage(line)
+	mergeCount := func(old, receipt int64) int64 {
+		if receipt >= 0 {
+			return receipt
+		}
+		return old
+	}
+	u.Tokens = cardcost.Tokens{
+		Input:      mergeCount(u.Tokens.Input, recovered.Tokens.Input),
+		CacheRead:  mergeCount(u.Tokens.CacheRead, recovered.Tokens.CacheRead),
+		CacheWrite: mergeCount(u.Tokens.CacheWrite, recovered.Tokens.CacheWrite),
+		Output:     mergeCount(u.Tokens.Output, recovered.Tokens.Output),
+		Reasoning:  mergeCount(u.Tokens.Reasoning, recovered.Tokens.Reasoning),
+		Requests:   mergeCount(u.Tokens.Requests, recovered.Tokens.Requests),
+		MaxPrompt:  mergeCount(u.Tokens.MaxPrompt, recovered.Tokens.MaxPrompt),
+	}
+	if recovered.Model != "" {
+		u.Model = recovered.Model
+	}
+	// The receipt is authoritative when the summary is absent or disagrees. Its
+	// empty actual is unknown, and must clear any partial summary price.
+	u.Actual, u.ActualBy = recovered.Actual, recovered.ActualBy
+	return u.String()
+}
+
+// spendMatchesReceipt is whether a native summary carries the per-call totals that the
+// durable receipt rows independently report. A disagreement marks a truncated summary.
+func spendMatchesReceipt(summary string, recovered cardcost.Usage) bool {
+	u := cardcost.ParseSpend(summary)
+	counts := [][2]int64{
+		{u.Tokens.Input, recovered.Tokens.Input}, {u.Tokens.CacheRead, recovered.Tokens.CacheRead},
+		{u.Tokens.CacheWrite, recovered.Tokens.CacheWrite}, {u.Tokens.Output, recovered.Tokens.Output},
+		{u.Tokens.Reasoning, recovered.Tokens.Reasoning},
+	}
+	for _, pair := range counts {
+		if pair[1] >= 0 && pair[0] != pair[1] {
+			return false
+		}
+	}
+	if recovered.Model != "" && u.Model != recovered.Model {
+		return false
+	}
+	if recovered.Actual != "" {
+		a, aok := cardcost.Sum(u.Actual, "0")
+		b, bok := cardcost.Sum(recovered.Actual, "0")
+		if !aok || !bok || a != b {
+			return false
+		}
+	} else if u.Actual != "" {
+		return false
+	}
+	return true
+}
+
 // Wait is closed when the child has ended (member.Waiter).
 func (c *nativeChild) Wait() <-chan struct{} { return c.done }
 
@@ -819,7 +957,8 @@ var (
 func (c *nativeChild) Result() member.Result {
 	c.once.Do(func() {
 		ran := false
-		var end, usage, provider, refused, budget, gate, gateTests, carry string
+		var end, usage, provider, refused, budget, gate, gateTests, carry, usageError, nativeSpendLine string
+		nativeHasSpend := false
 		if b, err := os.ReadFile(c.logPath); err == nil {
 			carry = cardcontract.ParseCarryLine(b)
 			if m := nativeGateLine.FindSubmatch(b); m != nil {
@@ -854,10 +993,30 @@ func (c *nativeChild) Result() member.Result {
 				u.Wall, u.Budget = string(m[1]), string(m[2])
 				usage = u.String()
 			}
+			if s := nativeSpend.FindSubmatch(b); s != nil {
+				nativeHasSpend = true
+				nativeSpendLine = string(s[1])
+			}
 			end = nativeEnd(b)
 			provider = providerReason(b)
 			if m := nativeBudgetWhy.FindSubmatch(b); m != nil && (end == member.EndBudget || end == member.EndUnverifiable) {
 				budget = strings.TrimSpace(string(m[1]))
+			}
+		}
+		if c.job != "" {
+			// collect writes usage.tsv before report prints spend= on the final NATIVE
+			// line; a native process stopped between those writes still has a durable
+			// per-attempt receipt for this generation. The file is also the fallback when
+			// native's final log is absent altogether.
+			recovered, found, receiptErr := receiptSpend(c.job)
+			if receiptErr != nil {
+				usageError = receiptErr.Error()
+			} else if found && (usage == "" || !nativeHasSpend || !spendMatchesReceipt(nativeSpendLine, recovered)) {
+				if usage == "" {
+					usage = recovered.String()
+				} else {
+					usage = mergeReceiptSpend(usage, recovered)
+				}
 			}
 		}
 		path := newestResult(c.results)
@@ -898,6 +1057,21 @@ func (c *nativeChild) Result() member.Result {
 			} else {
 				report = "the child ended without a result (see " + c.logPath + ")"
 			}
+		}
+		if usageError != "" {
+			// Keep the missing receipt visible in the stored cost record and the finish
+			// words; never turn an unreadable snapshot into a measured zero.
+			u := cardcost.ParseUsage(usage)
+			u.Extra = append(u.Extra, "usage_source_error=receipt-unreadable")
+			usage = u.String()
+			report = oneline.Cap(report+"; usage receipt unreadable: "+oneline.Escape(usageError), 300)
+		}
+		if usage == "" {
+			// the harness reported nothing and left no receipt: the finish or the read
+			// still carries --usage, saying so (noUsageReported), so a routed read's
+			// verdict is kept and recorded unpriced=no-tokens, never refused for a
+			// missing --usage (docs/SPEC-SPRINT.md, "Reads are priced like work")
+			usage = noUsageReported
 		}
 		if verdict == "not-done" && gate == member.GateGreen {
 			// the child's gate was red only on failures the gate decision classed flaky, and
@@ -1099,4 +1273,113 @@ func (l *lockedWriter) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return fmt.Fprint(l.w, string(p))
+}
+
+// mirrorsEnv names the repositories (a `url,...` list) a member keeps a bare mirror of under
+// ~/nova-bench/mirror, fetched at start and after landings, with the shared build cache
+// warmed at each one's HEAD branch tip. An environment word and not a flag: a unit's
+// environment is where a bench's repositories are named, and the usage line stays as it is.
+const mirrorsEnv = "NOVA_SWARM_MIRRORS"
+
+// mirrorEvery is the least time between two refreshes of a member's mirrors: a landing the
+// member sees is fetched at the next pass past it.
+const mirrorEvery = time.Minute
+
+// mirrorKeeping is the member's warm mirrors (docs/SPEC-SWARM.md, the warm clones and caches
+// card): keep, which a pass calls with the time, starts a refresh of every mirror in the
+// background when none runs and mirrorEvery has passed (the first call, at start, always),
+// A card's clone step reaches the mirrors by the path the card names (PointCardAtMirrors),
+// never by an environment word: the harness's environment is rebuilt, and its HOME is the
+// slot's. A refresh that fails is a NOTE and never stops a pass: staging reads the mirror
+// it finds, and a cold cache costs time only.
+func mirrorKeeping(urls, root, gocache string, stdout, stderr io.Writer) (keep func(time.Time)) {
+	home, err := os.UserHomeDir()
+	if urls == "" || err != nil {
+		return nil
+	}
+	var keepers []swarm.MirrorKeeper
+	for _, u := range splitNames(urls) {
+		name := strings.TrimSuffix(filepath.Base(strings.TrimSuffix(u, "/")), ".git")
+		keepers = append(keepers, swarm.MirrorKeeper{Origin: u, Mirror: swarm.MirrorPath(home, name), WarmDir: filepath.Join(root, "cache", "warm", name), GoCache: gocache})
+	}
+	var busy atomic.Bool
+	var last time.Time
+	return func(now time.Time) {
+		if !last.IsZero() && now.Sub(last) < mirrorEvery || !busy.CompareAndSwap(false, true) {
+			return
+		}
+		last = now
+		go func() {
+			defer busy.Store(false)
+			for _, k := range keepers {
+				res, err := k.Refresh(context.Background())
+				switch {
+				case err != nil:
+					fmt.Fprintf(stderr, "nova-swarm member: NOTE mirror %s: %s\n", oneline.Field(k.Mirror), oneline.Escape(err.Error()))
+				case res.Created || res.Moved:
+					fmt.Fprintf(stdout, "MIRROR %s created=%t tip=%s\n", oneline.Field(k.Mirror), res.Created, oneline.Field(res.Tip))
+				}
+			}
+		}()
+	}
+}
+
+// scriptVerify is a reader's member.Config.ScriptVerify (docs/SPEC-SPRINT.md, the script
+// read): a read of a script card is asked first of a ScriptVerifier that checks the head
+// out of the bench mirror of the card's repository, runs the card's program in the same
+// wall the member runs its script steps in, and compares the program's diff with the
+// head's. The verifier is built per packet because the mirror is the card's repository's;
+// the checkouts sit under root, the reader's own work dir. sandbox names the wall binary
+// ("" resolves nova-sandbox on PATH) and noWall runs the program unconfined, as the
+// member's own --no-wall does for its children.
+func scriptVerify(root, sandbox string, noWall bool) func(member.Packet, cardhdr.Class) (bool, string) {
+	base := filepath.Join(root, "script-read")
+	return func(p member.Packet, class cardhdr.Class) (ok bool, why string) {
+		repo := swarm.ReadCardBase([]byte(p.Brief)).Repo
+		home, _ := os.UserHomeDir()
+		mirror := swarm.FindBenchMirror(home, repo)
+		if mirror == "" {
+			return false, "no bench mirror for " + repo
+		}
+		if err := os.MkdirAll(base, 0o700); err != nil {
+			return false, "the script read's work dir " + base + ": " + err.Error()
+		}
+		v := member.ScriptVerifier{Mirror: mirror, Temp: base, Run: scriptRun(base, sandbox, noWall)}
+		return v.Verify(p, class)
+	}
+}
+
+// scriptRun runs a script card's program in the member's wall (step.go's cardtree.Wall):
+// the checkout and a private temp its only writes, the network denied, the toolchain and
+// the checkout's borrowed objects readable, all under ctx (the card's deadline). It is the
+// one place the script read starts a process, so a test can hand Verify a fake instead.
+func scriptRun(base, sandbox string, noWall bool) func(context.Context, string, []string) error {
+	return func(ctx context.Context, dir string, argv []string) error {
+		wall, why := stepWall(sandbox, noWall)
+		if why != "" {
+			return errors.New(why)
+		}
+		work, err := os.MkdirTemp(base, "wall-")
+		if err != nil {
+			return err
+		}
+		defer func() { _ = safepath.RemoveUnder(base, work) }() // ignored: the work dir is this read's own, under the reader's work dir the pool sweeps
+		bin, tmp := filepath.Join(work, "bin"), filepath.Join(work, "tmp")
+		for _, d := range []string{bin, tmp} {
+			if err := os.MkdirAll(d, 0o755); err != nil {
+				return err
+			}
+		}
+		wall.Tmp = tmp
+		if wall.Bin != "" {
+			wall.Read = stepReads(dir, bin, benchPasswdHome())
+		}
+		run := argv
+		if wall.Bin != "" {
+			run = append([]string{wall.Bin}, wall.Argv(dir, argv)...)
+		}
+		cmd := subproc.Context(ctx, run[0], run[1:]...)
+		cmd.Dir, cmd.Env = dir, wall.Env(os.Environ())
+		return cmd.Run()
+	}
 }

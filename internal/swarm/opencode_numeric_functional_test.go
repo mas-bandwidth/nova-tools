@@ -16,7 +16,9 @@ import (
 )
 
 func TestOpenCodeInvalidNumericUsageIsAReadFailure(t *testing.T) {
-	fakeSQLite3(t)
+	t.Parallel()
+
+	r := fakeReader(fakeSQLite3(t))
 	max := strconv.Itoa(int(^uint(0) >> 1))
 	for _, tc := range []struct{ name, rows string }{
 		{"negative", "private-provider\tm\t-1\t0\t\t\t\t\n"},
@@ -29,7 +31,7 @@ func TestOpenCodeInvalidNumericUsageIsAReadFailure(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
 			writeDB(t, home, tc.rows)
-			u, err := ReadProviderUsage(UsageOpenCode, home)
+			u, err := r.read(home)
 			require.Error(t, err, "corrupt source must fail instead of producing observed usage: %+v", u)
 			require.False(t, u.Observed, "a failed source must return no observed partial map: %+v", u)
 			require.Empty(t, u.Values, "a failed source must return no observed partial map: %+v", u)
@@ -42,12 +44,14 @@ func TestOpenCodeInvalidNumericUsageIsAReadFailure(t *testing.T) {
 }
 
 func TestOpenCodeNumericBoundsPreserveZeroAndAbsence(t *testing.T) {
-	fakeSQLite3(t)
+	t.Parallel()
+
+	r := fakeReader(fakeSQLite3(t))
 	max := strconv.Itoa(int(^uint(0) >> 1))
 	home := t.TempDir()
 	writeDB(t, home, "p\tm\t"+max+"\t0\t\t-\t\t\n")
 
-	u, err := ReadProviderUsage(UsageOpenCode, home)
+	u, err := r.read(home)
 	require.NoError(t, err, "host integer boundary is valid: %v", err)
 	require.True(t, u.Observed, "a numeric row is observed")
 	total, _, _ := u.Sum()

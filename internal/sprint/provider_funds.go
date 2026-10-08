@@ -323,3 +323,31 @@ func Funded(s *Snapshot, r FundedReq) Plan {
 	p.Units = append(p.Units, Unit{Key: r.Provider, Moved: "provider " + r.Provider + " funded: " + routes + " serve again"})
 	return p
 }
+
+// friendsKeepRunning is the machine's stop for funds only when no subscription friend is up:
+// while one is up with room to take work, an out-of-credit fleet rests its paid routes
+// (each provider's own judgment stays) and the machine keeps dealing to friends and
+// landing, so the all-out judgment and the stop are dropped (the owner, 2026-10-04: "the
+// machine can continue sending work to friends. So it's just a WRONG error message.").
+func friendsKeepRunning(conds []cond, stop string, friends []FriendSeat) ([]cond, string) {
+	if stop == "" || !AnyFriendUp(friends) {
+		return conds, stop
+	}
+	out := conds[:0:0]
+	for _, c := range conds {
+		if c.typ != NAllOutOfCredit {
+			out = append(out, c)
+		}
+	}
+	return out, ""
+}
+
+// AnyFriendUp says a friend on the roster is up with a width over zero.
+func AnyFriendUp(friends []FriendSeat) bool {
+	for _, f := range friends {
+		if f.Status == Up && f.Width > 0 {
+			return true
+		}
+	}
+	return false
+}

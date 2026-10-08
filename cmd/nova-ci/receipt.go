@@ -99,7 +99,11 @@ func cmdReceipt(ctx context.Context, args []string, stdout, stderr io.Writer, ge
 	if err != nil {
 		return refuse(stderr, where, oneline.Err(err))
 	}
-	defer st.Close()
+	defer func() {
+		if err := st.Close(); err != nil {
+			fmt.Fprintf(stderr, "CI RECEIPT NOTE closing the store failed: %s; the exit code above is the write's own result\n", oneline.Err(err))
+		}
+	}()
 	id, err := cireceipt.Write(ctx, st.Client(), r)
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-ci github receipt FAILED: %s; receipt write could not be confirmed: fix the store or the bench seat and rerun ci-ok\n", oneline.Err(err))

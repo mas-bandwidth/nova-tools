@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -74,8 +75,8 @@ type AnsibleInventory struct {
 
 // InventoryLoop is one loop record as a host variable: the loop kind's
 // fields, typed (docs/FLEET.md, "Loops"). Log is the view's log, which the
-// loop kind derives from the name (~/nova-bench/loops/<name>.log) and never
-// takes typed.
+// loop kind derives from the fleet's loops_dir and the name
+// (<loops_dir>/<name>.log) and never takes typed.
 type InventoryLoop struct {
 	Name      string   `json:"name"`
 	Argv      []string `json:"argv"`
@@ -355,35 +356,54 @@ func (inv *AnsibleInventory) HostJSON(name string) ([]byte, error) {
 
 // fixture is the file LoadFixture reads (YAML, or JSON, which YAML reads):
 // the applied state written by hand, for the plays' tests and for trying the
-// plays with no store (docs/FLEET.md, "A fixture inventory").
+// plays with no store (docs/FLEET.md, "A fixture inventory"). Its rows are
+// named types, not anonymous structs, so a refusal can say in words what a
+// field wants instead of printing the Go type the YAML reader names.
 type fixture struct {
-	Machines map[string]struct {
-		User    string `yaml:"user"`
-		Seat    string `yaml:"seat"`
-		Slots   int    `yaml:"slots"`
-		Runners int    `yaml:"runners"`
-		TLA     bool   `yaml:"tla"`
-		// OS and Arch stand in for the machine's beat.
-		OS   string `yaml:"os"`
-		Arch string `yaml:"arch"`
-	} `yaml:"machines"`
-	Fleet struct {
-		Store       string `yaml:"store"`
-		Coordinator string `yaml:"coordinator"`
-		RedisPort   *int   `yaml:"redis_port"`
-		PGDSN       string `yaml:"pg_dsn"`
-	} `yaml:"fleet"`
+	Machines fixtureMachines `yaml:"machines"`
+	Fleet    fixtureFleet    `yaml:"fleet"`
 	// Loops is a pointer so a fixture without the key is a fleet whose
 	// loops were never applied, and `loops: {}` one that runs none.
-	Loops *map[string]struct {
-		Machine   string   `yaml:"machine"`
-		Argv      []string `yaml:"argv"`
-		Seat      string   `yaml:"seat"`
-		Keys      []string `yaml:"keys"`
-		Every     int      `yaml:"every"`
-		Keepalive bool     `yaml:"keepalive"`
-		Enabled   *bool    `yaml:"enabled"`
-	} `yaml:"loops"`
+	Loops *fixtureLoops `yaml:"loops"`
+}
+
+// fixtureMachines is the fixture's machines block: a map of machine name to
+// the row the inventory reads.
+type fixtureMachines map[string]fixtureMachine
+
+// fixtureMachine is one machine the fixture names; OS and Arch stand in for
+// the machine's beat.
+type fixtureMachine struct {
+	User    string `yaml:"user"`
+	Seat    string `yaml:"seat"`
+	Slots   int    `yaml:"slots"`
+	Runners int    `yaml:"runners"`
+	TLA     bool   `yaml:"tla"`
+	OS      string `yaml:"os"`
+	Arch    string `yaml:"arch"`
+}
+
+// fixtureFleet is the fixture's one fleet row.
+type fixtureFleet struct {
+	Store       string `yaml:"store"`
+	Coordinator string `yaml:"coordinator"`
+	RedisPort   *int   `yaml:"redis_port"`
+	PGDSN       string `yaml:"pg_dsn"`
+	LoopsDir    string `yaml:"loops_dir"`
+}
+
+// fixtureLoops is the fixture's loops block: a map of loop name to loop.
+type fixtureLoops map[string]fixtureLoop
+
+// fixtureLoop is one loop the fixture names: the loop kind's fields.
+type fixtureLoop struct {
+	Machine   string   `yaml:"machine"`
+	Argv      []string `yaml:"argv"`
+	Seat      string   `yaml:"seat"`
+	Keys      []string `yaml:"keys"`
+	Every     int      `yaml:"every"`
+	Keepalive bool     `yaml:"keepalive"`
+	Enabled   *bool    `yaml:"enabled"`
 }
 
 // MaxFixtureBytes bounds a fixture file, read whole before it is parsed.
@@ -408,7 +428,7 @@ func LoadFixture(path string) (*Snapshot, error) {
 	dec := yaml.NewDecoder(strings.NewReader(string(raw)))
 	dec.KnownFields(true)
 	if err := dec.Decode(&f); err != nil {
-		return nil, fmt.Errorf("--fixture %s is not the fixture's shape: %s; want a mapping with machines (each user, seat, slots, runners, tla, os, arch), fleet (store, coordinator) and loops (docs/FLEET.md, \"A fixture inventory\"; fleet/testdata/inventory-fixture.yml is one)", path, oneline.Quote(strings.Join(strings.Fields(err.Error()), " ")))
+		return nil, fmt.Errorf("--fixture %s is not the fixture's shape: %s; want a mapping with machines (each user, seat, slots, runners, tla, os, arch), fleet (store, coordinator) and loops (docs/FLEET.md, \"A fixture inventory\"; fleet/testdata/inventory-fixture.yml is one)", path, fixtureShapeError(err))
 	}
 	snap := &Snapshot{Machines: map[string]View{}, Beats: map[string]*Beat{}, Revs: map[string]int64{}}
 	for m, r := range f.Machines {
@@ -424,7 +444,7 @@ func LoadFixture(path string) (*Snapshot, error) {
 	if f.Fleet.RedisPort != nil {
 		redisPort = strconv.Itoa(*f.Fleet.RedisPort)
 	}
-	snap.Fleet = View{"store": f.Fleet.Store, "coordinator": f.Fleet.Coordinator, "redis_port": redisPort, "pg_dsn": f.Fleet.PGDSN}
+	snap.Fleet = View{"store": f.Fleet.Store, "coordinator": f.Fleet.Coordinator, "redis_port": redisPort, "pg_dsn": f.Fleet.PGDSN, "loops_dir": f.Fleet.LoopsDir}
 	snap.Revs[KindMachine], snap.Revs[KindFleet] = 1, 1
 	if f.Loops != nil {
 		snap.Loops = map[string]View{}
@@ -441,9 +461,106 @@ func LoadFixture(path string) (*Snapshot, error) {
 				"name": n, "machine": l.Machine, "argv": string(argv), "seat": l.Seat,
 				"keys": strings.Join(keys, ","), "every": strconv.Itoa(l.Every),
 				"keepalive": strconv.FormatBool(l.Keepalive),
-				"enabled":   strconv.FormatBool(enabled), "log": LoopLog(n),
+				"enabled":   strconv.FormatBool(enabled), "log": LoopLog(f.Fleet.LoopsDir, n),
 			}
 		}
 	}
 	return snap, nil
+}
+
+// fixtureShapeWords names, in words, the shape each fixture field reads: what
+// the field is, so a refusal never prints the Go type the YAML reader names
+// (docs/STANDARD.md, section 3, point 2: a refusal says what the input
+// wants).
+var fixtureShapeWords = map[string]string{
+	"config.fixture":         "the document is a map with machines, fleet and loops",
+	"config.fixtureMachines": "machines is a map of name to machine",
+	"config.fixtureMachine":  "a machine is a map of user, seat, slots, runners, tla, os and arch",
+	"config.fixtureFleet":    "fleet is a map of store, coordinator, redis_port, pg_dsn and loops_dir",
+	"config.fixtureLoops":    "loops is a map of name to loop",
+	"config.fixtureLoop":     "a loop is a map of machine, argv, seat, keys, every, keepalive and enabled",
+	"int":                    "a number is wanted",
+	"*int":                   "a number is wanted",
+	"string":                 "text is wanted",
+	"bool":                   "true or false is wanted",
+	"*bool":                  "true or false is wanted",
+	"[]string":               "a list of text is wanted",
+}
+
+// fixtureFields names the fields each fixture type reads, so an unknown
+// field's refusal says what that block wants.
+var fixtureFields = map[string]string{
+	"config.fixture":        "machines, fleet or loops",
+	"config.fixtureMachine": "user, seat, slots, runners, tla, os or arch",
+	"config.fixtureFleet":   "store, coordinator, redis_port, pg_dsn or loops_dir",
+	"config.fixtureLoop":    "machine, argv, seat, keys, every, keepalive or enabled",
+}
+
+// fixtureShapeError is the YAML reader's refusal in the fixture's own words:
+// every problem's line, what the fixture wants there, and what it got. A
+// refusal that is not a type error (a syntax error) is passed through, on one
+// line and quoted, because its own words are all there is to say.
+func fixtureShapeError(err error) string {
+	var te *yaml.TypeError
+	if !errors.As(err, &te) {
+		return oneline.Quote(strings.Join(strings.Fields(err.Error()), " "))
+	}
+	problems := make([]string, 0, len(te.Errors))
+	for _, e := range te.Errors {
+		problems = append(problems, fixtureShapeLine(e))
+	}
+	return strings.Join(problems, "; ")
+}
+
+// fixtureShapeLine rewrites one yaml.TypeError line without its Go type:
+// "line 2: cannot unmarshal !!seq into map[string]struct{...}" becomes
+// "line 2: machines is a map of name to machine, got a list", and an unknown
+// field's "... not found in type config.fixture" becomes the field names the
+// fixture does read.
+func fixtureShapeLine(line string) string {
+	where, rest, ok := strings.Cut(line, ": ")
+	if !ok {
+		return line
+	}
+	if _, tag, found := strings.Cut(rest, "cannot unmarshal "); found {
+		tag, gotType, ok := strings.Cut(tag, " into ")
+		if !ok {
+			return where + ": " + rest
+		}
+		yamlTag, _, _ := strings.Cut(tag, " ")
+		wants, known := fixtureShapeWords[gotType]
+		if !known {
+			wants = "another shape is wanted"
+		}
+		return where + ": " + wants + ", got " + fixtureGot(yamlTag)
+	}
+	if name, found := strings.CutPrefix(rest, "field "); found {
+		if field, gotType, ok := strings.Cut(name, " not found in type "); ok {
+			fields, known := fixtureFields[gotType]
+			if !known {
+				fields = "machines, fleet or loops"
+			}
+			return where + ": " + field + " is not a fixture field; want " + fields
+		}
+	}
+	return where + ": " + rest
+}
+
+// fixtureGot is the YAML value's shape in words, from its tag.
+func fixtureGot(tag string) string {
+	switch tag {
+	case "!!seq":
+		return "a list"
+	case "!!map":
+		return "a map"
+	case "!!str":
+		return "text"
+	case "!!int":
+		return "a number"
+	case "!!bool":
+		return "true or false"
+	case "!!null":
+		return "nothing"
+	}
+	return "the wrong shape"
 }

@@ -120,7 +120,7 @@ var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // THE FAR SIDE PARSES A POSIX COMMAND LINE, on windows as everywhere else.
 // docs/BENCH-WINDOWS.md names the windows bench's ssh shell as Git Bash
 // (`C:\Program Files\Git\bin\bash.exe`), or native OpenSSH with Bash in
-// sshd_config, and internal/pulse/fleetstandard.go's windows checks are POSIX
+// sshd_config, and the windows checks in pulse/fleetstandard.go at 39e472aa0 are POSIX
 // shell that reach for `powershell.exe -NoProfile -Command '...'` only for the
 // questions only PowerShell can answer. In that shell a backslash is an ESCAPE:
 // `C:\Users\nova` arrives as `C:Usersnova`, silently, and the machine then
@@ -668,7 +668,7 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	}
 	w, result, code := out, "OK", 0
 	if refused > 0 {
-		w, result, code = errs, "FAIL", 1
+		w, result, code = errs, "FAILED", 1
 	}
 	certified := "yes"
 	if o.noCertify {

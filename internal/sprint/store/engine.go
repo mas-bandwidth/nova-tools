@@ -82,6 +82,10 @@ type Store struct {
 	// IdleAlarm says the tick watches for an idle fleet and pushes the coordinator one note
 	// of why an episode (run --idle-alarm, on by default there; sprint.TickIdle).
 	IdleAlarm bool
+	// WakeFriend, when set (run and tick), sends a stalled friend her wake turn as the
+	// friend stall part of the tick climbs her ladder to rung 1 or 2 (sprint.TickFriendStall,
+	// a bus message pushed to her daemon); nil sends nothing and the rung climbs the same.
+	WakeFriend func(friend string, rung int, d time.Duration) error
 	// Stats is what the store's reads cost (stats.go); nil is made on the
 	// first tick. Its pinned copies share it.
 	Stats *Stats
@@ -148,6 +152,11 @@ type Step struct {
 	// tables plans on it while the fence is at its generation, instead of
 	// reading them, and applies its receipts to it when it commits.
 	Twin *Twin
+	// heldTwin is a twin the step's caller holds for it: the drain a step
+	// runs before itself on a STOPPED machine's queue reads and writes through
+	// the twin the step took (stepTwin), which it cannot take again, and does
+	// not read the four tables whole for want of it.
+	heldTwin *Twin
 	// Routes says the step deals (or asks what the next deal does): it plans
 	// with the model tiers' routes (routes.go, sprint.Snapshot.Routes), read
 	// before its first read of the tables, never between that read and its
@@ -171,9 +180,20 @@ type Step struct {
 	// within a tick).
 	Readers      bool
 	ReaderStates map[string]string
+	// Friends says the step consults the friends roster (finish, for friendNext
+	// delivery mode): it plans with the friend seats (sprint.Snapshot.Friends).
+	Friends bool
 	// DrainMax, above zero, is the most entries of the queue's head a drain
 	// takes: the pump's second drain takes only what its first requeued.
 	DrainMax int
+	// Tries, above zero and below the store's Attempts, is the plans this step
+	// makes before it gives up on a fence other writers keep moving: the tick's
+	// ask writes in small steps of AskTries each (tick_ask.go).
+	Tries int
+	// Until, when set, is the time past which the step plans no further try:
+	// a try begun before it finishes, and a step past it gives up as a step
+	// whose tries are spent does (the tick's ask's budget, tick_ask.go).
+	Until time.Time
 }
 
 // ArgsOf is a request's arguments in one canonical form: a digest of its JSON
@@ -364,7 +384,25 @@ func (st *Store) fencedRead(ctx context.Context, tables []string, extras func(*s
 		}
 		return snap, f.Gen, f2, nil
 	}
-	return nil, 0, Fence{}, fmt.Errorf("the sprint is busy: other operations kept the fence moving, %d reads in %s; nothing was changed; run the verb again", r.tries, r.slept().Round(time.Millisecond))
+	return nil, 0, Fence{}, &FenceBusyError{Reads: r.tries, Slept: r.slept()}
+}
+
+// FenceBusyError is a fenced read given up because other operations kept the
+// fence moving through every one of its tries: nothing was changed, and the
+// same read again may pass. A tick tries itself again on it (TickBusyRetries).
+type FenceBusyError struct {
+	Reads int           // the fence's reads
+	Slept time.Duration // the time slept between them
+}
+
+func (e *FenceBusyError) Error() string {
+	return fmt.Sprintf("the sprint is busy: other operations kept the fence moving, %d reads in %s; nothing was changed; run the verb again", e.Reads, e.Slept.Round(time.Millisecond))
+}
+
+// IsFenceBusy says err is, or wraps, a FenceBusyError.
+func IsFenceBusy(err error) bool {
+	var b *FenceBusyError
+	return errors.As(err, &b)
 }
 
 // callerOpWord holds a caller's --op to one word: letters, digits, '_' and
@@ -413,6 +451,10 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		family = strings.ReplaceAll(step.Verb, " ", "-") + "-" + st.newID()
 	}
 	rowsAdded := false
+	// placed says the step's places (sprint.Plan.Places) were made, and came is
+	// their NOTE lines: the plan after them places nothing, and says them still
+	placed, placeErr := false, error(nil)
+	var came []string
 	drains := 0
 	plans := st.retry(ctx)
 	// a twin the step does not leave as the state it committed is dropped:
@@ -455,7 +497,14 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			return res, err
 		}
 	}
-	for res.Attempts < st.attempts() {
+	tries := st.attempts()
+	if step.Tries > 0 && step.Tries < tries {
+		tries = step.Tries
+	}
+	for res.Attempts < tries {
+		if res.Attempts > 0 && !step.Until.IsZero() && !st.now().Before(step.Until) {
+			break
+		}
 		res.Attempts++
 		if wantLock && lock == nil && !locked {
 			if lock, err = st.takeLock(ctx, step, family); err != nil {
@@ -508,7 +557,9 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			// MaxDrains (a world that keeps queueing) the step plans on the
 			// queued view and queues on top, as while RUNNING.
 			drains++
-			dr, err := st.Run(ctx, DrainStep())
+			drain := DrainStep()
+			drain.heldTwin = tw
+			dr, err := st.Run(ctx, drain)
 			if err != nil {
 				return res, fmt.Errorf("draining the work table's queue: %w", err)
 			}
@@ -537,6 +588,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 				// change still finds the card where it expects it
 				held = sprint.QueuedCards(q)
 				snap.Held = held
+				snap = withQueuedPromotion(snap, q)
 			default:
 				// A step other than the pump plans on the work table as the
 				// pump will leave it: its changes queue after the ones before
@@ -557,6 +609,13 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			if err := st.readerStatesInto(ctx, snap); err != nil {
 				return res, err
 			}
+		}
+		if step.Friends {
+			seats, err := st.FriendSeats(ctx, snap.Now)
+			if err != nil {
+				return res, err
+			}
+			snap.Friends = seats
 		}
 		// Every plan is held to the lifecycle here, whatever step built it.
 		plan := sprint.Applied(snap, step.Plan(snap))
@@ -589,6 +648,9 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		res.Refused = plan.Refused
 		res.Moved = nil
 		res.Said = plan.Said
+		if len(came) > 0 {
+			res.Said = append(slices.Clone(came), plan.Said...)
+		}
 		for _, u := range plan.Units {
 			if u.Moved != "" {
 				res.Moved = append(res.Moved, u.Moved)
@@ -624,7 +686,34 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			res.Attempts--
 			continue
 		}
-		if len(op.Manifests) == 0 && len(op.Notes)+len(op.Decided)+len(op.Closes)+len(op.Updates)+len(op.Queue)+op.Drain == 0 && op.Health == nil {
+		// A record on no cell is put back by the table layer's cell add, after
+		// the rows and before the manifests (a batch never places a removed
+		// member), and the step is planned again on the table it left. A place
+		// still owed after that is refused whole: the record is on no cell.
+		if len(plan.Places) > 0 && len(plan.Units) > 0 {
+			if placed {
+				why := "placing " + plan.Places[0].ID + " on its cell again did not hold"
+				if placeErr != nil {
+					why += ": " + placeErr.Error()
+				}
+				// the rows (and any place that held) are on the table by now; the
+				// step's own record is not written
+				return refuseWhole(res, plan, why+"; the stream's rows are on the table and its control card is not; no card was added; run it again")
+			}
+			placed = true
+			for _, pl := range plan.Places {
+				// a place another writer made first is refused here and found
+				// made by the plan after it
+				if err := st.B.Place(ctx, st.Names.Table(pl.Table), pl.Row, pl.Col, st.sid(pl.ID), pl.Score); err != nil {
+					placeErr = err
+					continue
+				}
+				came = append(came, pl.Said)
+			}
+			res.Attempts--
+			continue
+		}
+		if len(op.Manifests) == 0 && len(op.Notes)+len(op.Decided)+len(op.Closes)+len(op.Updates)+len(op.Queue)+op.Drain == 0 && op.Health == nil && len(op.HealthClear) == 0 && len(op.CloseTimers) == 0 && op.Timers == nil {
 			res.Moved = nil
 			return st.after(ctx, step, res)
 		}
@@ -739,6 +828,32 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		res.Refused = append(res.Refused, sprint.Refusal{Key: k, Why: fmt.Sprintf("the sprint kept changing under this step (%d attempts); run it again", res.Attempts)})
 	}
 	return res, nil
+}
+
+// withQueuedPromotion is a pump part's snapshot with the promotion queued
+// after the pump's drain shown on its work table: promoted, while the machine
+// runs, queues its properties for the next tick's pump and closes "dev is
+// behind" at once, so a part between the two judges dev against the queued
+// promotion (sprint.Promotion) and does not raise "dev is behind" again on the
+// landings it covered. Only the promotion's properties are shown, which no
+// pump part writes; the table is a copy, and the twin's is left as read.
+func withQueuedPromotion(s *sprint.Snapshot, q []sprint.QueuedChange) *sprint.Snapshot {
+	props := map[string]string{}
+	for _, x := range q {
+		if x.Prop != nil && x.Prop.Table == sprint.Work && (x.Prop.Name == sprint.PropPromotedAt || x.Prop.Name == sprint.PropPromotedSha) {
+			props[x.Prop.Name] = x.Prop.Value
+		}
+	}
+	if len(props) == 0 || s.Work == nil {
+		return s
+	}
+	all := s.Work.Props()
+	maps.Copy(all, props)
+	w := *s.Work
+	w.SetProps(all)
+	n := *s
+	n.Work = &w
+	return &n
 }
 
 // MaxDrains bounds the drains a step makes of a STOPPED machine's queue
@@ -1228,7 +1343,7 @@ func hasChanges(e ntable.BatchMemberEntry) bool {
 // entries, each expecting the revision the one before it leaves; then the
 // notifications and the answers.
 func (st *Store) operation(verb, actor, id string, plan sprint.Plan, snap *sprint.Snapshot) (OpRecord, error) {
-	op := OpRecord{ID: id, Verb: verb, At: snap.Now, Seat: plan.Seat, Health: plan.Health}
+	op := OpRecord{ID: id, Verb: verb, At: snap.Now, Seat: plan.Seat, Health: plan.Health, HealthClear: plan.HealthClear, Timers: plan.Timers, CloseTimers: plan.CloseTimers}
 	entries := map[string][]ntable.BatchMemberEntry{}
 	seen := map[entryKey]int{} // index+1 in entries[table]
 	cause := map[entryKey]string{}
@@ -1331,7 +1446,7 @@ func (st *Store) operation(verb, actor, id string, plan sprint.Plan, snap *sprin
 			return m
 		}
 		flush := func() {
-			if len(cur) == 0 && !(first && props[t] != nil) {
+			if len(cur) == 0 && (!first || props[t] == nil) {
 				return
 			}
 			if cur == nil {

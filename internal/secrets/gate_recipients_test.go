@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,7 +36,8 @@ func gateSealedFor(seatKey string) string {
 		"            -----BEGIN AGE ENCRYPTED FILE-----\n" +
 		"    lastmodified: \"2026-09-18T00:00:00Z\"\n" +
 		"    mac: ENC[AES256_GCM,data:aaaaaaaa,iv:bbbbbbbb,tag:cccccccc,type:str]\n" +
-		"GH_TOKEN: ENC[AES256_GCM,data:xyz,iv:abc,tag:def,type:str]\n"
+		"GH_TOKEN: ENC[AES256_GCM,data:xyz,iv:abc,tag:def,type:str]\n" +
+		gateMarkLine
 }
 
 // gateMachines writes a machines registry: name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes
@@ -78,9 +80,9 @@ func TestGateRefusesANewRecipientForASeatTheRegistryDoesNotName(t *testing.T) {
 	machines := gateMachines(t, gateRow("air", "swarm-air"), gateRow("hulk", "swarm-hulk"))
 
 	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head, MachinesPath: machines})
-	require.Equal(t, 2, code, "RunGate code = %d, want 2 (line=%q)", code, line)
-	require.Contains(t, line, "GATE REFUSE rule=1", "RunGate line = %q, want REFUSE naming rule=1 and air.yaml", line)
-	require.Contains(t, line, "air.yaml", "RunGate line = %q, want REFUSE naming rule=1 and air.yaml", line)
+	require.Equal(t, 1, code, "RunGate code = %d, want 1 (line=%q)", code, line)
+	require.Contains(t, line, "GATE FAILED rule=1", "RunGate line = %q, want FAILED naming rule=1 and air.yaml", line)
+	require.Contains(t, line, "air.yaml", "RunGate line = %q, want FAILED naming rule=1 and air.yaml", line)
 	require.NotContains(t, line, gateNewSeatKey, "RunGate line = %q, must name the seat, not the key", line)
 }
 
@@ -140,6 +142,16 @@ func TestGateWithoutAMachinesRegistrySaysTheRuleDidNotRun(t *testing.T) {
 	require.Contains(t, line, "machines=-", "RunGate line = %q, want it to say machines=- (no registry read)", line)
 }
 
+func TestGateReadsTheNamedCommitsWithoutAWorkingCopySopsFile(t *testing.T) {
+	t.Parallel()
+
+	dir := gateStart(t)
+	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: base})
+	require.Equal(t, 0, code, "RunGate = (%q, %d), want approval for an empty commit diff", line, code)
+	require.Contains(t, line, "GATE APPROVE files=0", "RunGate line = %q, want the empty diff", line)
+}
+
 func TestGateRefusesAnUnreadableMachinesRegistry(t *testing.T) {
 	t.Parallel()
 
@@ -152,7 +164,7 @@ func TestGateRefusesAnUnreadableMachinesRegistry(t *testing.T) {
 
 	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head, MachinesPath: filepath.Join(dir, "no-such.tsv")})
 	require.Equal(t, 2, code, "RunGate code = %d, want 2 (line=%q)", code, line)
-	require.Contains(t, line, "GATE REFUSE", "RunGate line = %q, want a refusal", line)
+	require.Contains(t, line, "SECRETS GATE REFUSED", "RunGate line = %q, want the could-not-run refusal", line)
 }
 
 // Keep what exists: a seat file that was in the store must still be there. Removing one is
@@ -169,9 +181,9 @@ func TestGateRefusesARemovedSeatFile(t *testing.T) {
 	head := gateRemove(t, dir, "rowan.yaml")
 
 	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
-	require.Equal(t, 2, code, "RunGate code = %d, want 2 (line=%q)", code, line)
-	require.Contains(t, line, "GATE REFUSE", "RunGate line = %q, want REFUSE naming rowan.yaml", line)
-	require.Contains(t, line, "rowan.yaml", "RunGate line = %q, want REFUSE naming rowan.yaml", line)
+	require.Equal(t, 1, code, "RunGate code = %d, want 1 (line=%q)", code, line)
+	require.Contains(t, line, "GATE FAILED", "RunGate line = %q, want FAILED naming rowan.yaml", line)
+	require.Contains(t, line, "rowan.yaml", "RunGate line = %q, want FAILED naming rowan.yaml", line)
 }
 
 // The registry is read WHOLE and validated whole, as internal/fleet demands: a malformed
@@ -189,7 +201,80 @@ func TestGateRefusesAMalformedMachinesRegistry(t *testing.T) {
 
 	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head, MachinesPath: machines})
 	require.Equal(t, 2, code, "RunGate code = %d, want 2 (line=%q)", code, line)
-	require.Contains(t, line, "GATE REFUSE", "RunGate line = %q, want a refusal", line)
+	require.Contains(t, line, "SECRETS GATE REFUSED", "RunGate line = %q, want the could-not-run refusal", line)
+}
+
+func TestGateMachinesRefusesPlaceTableFormat(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "machines.tsv")
+	require.NoError(t, os.WriteFile(path, []byte("node\tnode\t/home/node\t-\n"), 0o600))
+
+	_, err := gateFleetSeats(path)
+	require.Error(t, err, "gate must refuse the place machine table")
+	require.Contains(t, err.Error(), "wants 7 tab-separated fields", "refusal = %q", err)
+}
+
+func TestGateCollectsEveryIndependentSeatFinding(t *testing.T) {
+	t.Parallel()
+
+	dir := gateStart(t)
+	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+	head := gateCommit(t, dir, map[string]string{
+		".sops.yaml": gateSops(
+			gateRule("alpha.yaml", gateSeatKey, gateRecoveryKey),
+			gateRule("beta.yaml", gateSeatKey, gateRecoveryKey),
+		),
+		"alpha.yaml": strings.TrimSuffix(gateSealedFor(gateSeatKey), gateMarkLine) + "TOKEN: synthetic-alpha\nSECOND_TOKEN: synthetic-alpha-two\n",
+		"beta.yaml":  strings.TrimSuffix(gateSealedFor(gateSeatKey), gateMarkLine) + "TOKEN: synthetic-beta\n",
+	})
+
+	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
+	require.Equal(t, 1, code, "RunGate code = %d, want 1 (line=%q)", code, line)
+	assert.Contains(t, line, "alpha.yaml", "refusal = %q, want the first finding", line)
+	assert.Contains(t, line, "beta.yaml", "refusal = %q, want every independent finding", line)
+	assert.Contains(t, line, "SECOND_TOKEN", "refusal = %q, want every plaintext key in alpha.yaml", line)
+	assert.Contains(t, line, "was not written", "refusal = %q, want the independent mark finding", line)
+	assert.NotContains(t, line, "synthetic-alpha", "refusal must name findings without exposing values")
+	assert.NotContains(t, line, "synthetic-beta", "refusal must name findings without exposing values")
+}
+
+func TestGateCollectsIndependentInputProblems(t *testing.T) {
+	t.Parallel()
+
+	dir := gateStart(t)
+	gateCommit(t, dir, map[string]string{
+		".sops.yaml": gateSops(gateRule("seat.yaml", gateSeatKey, gateRecoveryKey)),
+	})
+	machines := gateMachines(t, "malformed place-table row")
+	line, code := RunGate(GateInput{
+		StoreDir: dir, Base: "missing-base", Head: "missing-head", MachinesPath: machines,
+	})
+	require.Equal(t, 2, code, "RunGate code = %d, want 2 (line=%q)", code, line)
+	require.Contains(t, line, "--base", "refusal = %q, want the base problem", line)
+	require.Contains(t, line, "--head", "refusal = %q, want the head problem", line)
+	require.Contains(t, line, "machines", "refusal = %q, want the registry problem", line)
+
+	line, code = RunGate(GateInput{StoreDir: dir, Head: "HEAD", MachinesPath: machines})
+	require.Equal(t, 2, code, "RunGate with a missing base = (%q, %d), want refusal", line, code)
+	require.Contains(t, line, "missing --base", "refusal = %q, want the missing base", line)
+	require.Contains(t, line, "machines", "refusal = %q, want the independent registry problem", line)
+}
+
+func TestGateCollectsIndependentHeadInputProblems(t *testing.T) {
+	t.Parallel()
+
+	dir := gateStart(t)
+	gateCommit(t, dir, map[string]string{
+		".sops.yaml": gateSops(gateRule("seat.yaml", gateSeatKey, gateRecoveryKey)),
+	})
+	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+	require.NoError(t, os.Remove(filepath.Join(dir, "recovery.pub")))
+	head := gateCommit(t, dir, map[string]string{".sops.yaml": "creation_rules: [\n"})
+	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
+	require.Equal(t, 1, code, "RunGate code = %d, want 1 (line=%q)", code, line)
+	require.Contains(t, line, "recovery.pub", "refusal = %q, want the recovery input problem", line)
+	require.Contains(t, line, ".sops.yaml", "refusal = %q, want the rule input problem", line)
 }
 
 // A machine that carries no seat says `-`; that is an answer, not a seat name, and a rule
@@ -206,5 +291,5 @@ func TestGateDoesNotTreatADashAsASeatName(t *testing.T) {
 	machines := gateMachines(t, gateRow("mini", "-"))
 
 	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head, MachinesPath: machines})
-	require.Equal(t, 2, code, "RunGate code = %d, want 2 (line=%q)", code, line)
+	require.Equal(t, 1, code, "RunGate code = %d, want 1 (line=%q)", code, line)
 }

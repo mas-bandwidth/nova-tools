@@ -20,6 +20,7 @@ func printPacket(w io.Writer, p sprint.Packet) {
 		}
 	}
 	fmt.Fprintf(w, "PACKET %s attempt=%d gen=%d epoch=%d\n", oneline.Escape(p.Card), p.Attempt, p.Gen, p.Epoch)
+	kv("tier", p.Tier) // every packet names its tier (sprint.DealtTier), in text as in --json
 	if p.Kind == "work" {
 		kv("branch", p.Branch)
 		kv("base", orDashStr(p.Base, "the stream's base"))
@@ -50,8 +51,14 @@ func printPacket(w io.Writer, p sprint.Packet) {
 	for _, n := range p.Notes {
 		para("note", n)
 	}
+	if p.Kind != "work" {
+		fmt.Fprintln(w, "  attribution: the By: line, the Co-Authored-By trailer and the model or harness named are never a finding and never decide a verdict")
+	}
 	if p.Kind == "work" {
 		fmt.Fprintf(w, "  report it: nova-sprint finish --as %s %s@%d --epoch %d --branch %s --head <commit> --report '<what you did>' [--failed]\n", p.As, p.Card, p.Gen, p.Epoch, p.Branch)
+	} else if sprint.IsFriendRow(p.As) {
+		// a read asked of a friend is on her fleet row: her outbox returns it, or the read verb
+		fmt.Fprintf(w, "  report it: %s\n", sprint.FriendReadOutboxLine(p.As, p.Card, p.Epoch))
 	} else {
 		fmt.Fprintf(w, "  report it: nova-sprint read --as %s (--ok | --broken) %s --epoch %d --finding '<file:line, and what to change>'\n", p.As, p.Card, p.Epoch)
 	}

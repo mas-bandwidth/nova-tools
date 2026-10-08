@@ -15,8 +15,10 @@ import (
 )
 
 // quackBase is the test repository's branch quack cards start from and merge
-// to when --base names none.
-const quackBase = "dev"
+// to when --base names none: its sprint branch, since every stream lands on the sprint
+// branch and promotion alone reaches dev (docs/SPEC-SPRINT.md section 7, the sprint
+// branch); a quack cut on dev is refused as add refuses it.
+const quackBase = "sprint/quack"
 
 // cmdQuack cuts quack cards, the sprint's end-to-end test cards, into a
 // running store (docs/SPEC-SPRINT.md section 11, quack): count cards per
@@ -104,7 +106,7 @@ func (a *app) cmdQuack(args []string, stdout, stderr io.Writer) int {
 				// the members hold no rules file for the repository: the card carries its own
 				brief = quackBrief(id, s, ts[(i-1)%len(ts)], *repo, *base, cs.rules)
 			}
-			card := sprint.CardAdd{ID: id, File: id, Brief: brief, Rules: cardRules(brief, rs).held}
+			card := sprint.CardAdd{ID: id, File: id, Brief: brief, Rules: cardRules(brief, rs).held, Base: swarm.ReadCardBase([]byte(brief)).Ref, Repo: swarm.ReadCardBase([]byte(brief)).Named}
 			r.Cards = append(r.Cards, card)
 			all = append(all, card)
 		}
@@ -131,7 +133,7 @@ func (a *app) cmdQuack(args []string, stdout, stderr io.Writer) int {
 	if len(problems) > 0 {
 		return refuse(stderr, "quack", strings.Join(problems, "; "))
 	}
-	if code := lintBriefFiles(all, rs, c.max, stderr); code != 0 {
+	if code := lintBriefFiles("add", all, rs, c.max, stderr); code != 0 {
 		return code
 	}
 	step := store.AddEachStep(reqs)

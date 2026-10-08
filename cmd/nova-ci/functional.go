@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/functional"
@@ -54,9 +55,24 @@ func cmdFunctional(args []string, stdout, stderr io.Writer) int {
 	}
 	dirs = make([]string, 0, len(pkgs))
 	for _, p := range pkgs {
-		dirs = append(dirs, p.Dir)
+		dirs = append(dirs, packagePath(p.Dir))
 	}
 	fmt.Fprintln(stdout, strings.Join(dirs, " "))
 	fmt.Fprintln(stdout, functional.RunPattern(pkgs))
 	return 0
+}
+
+// packagePath returns dir in the form `go test -timeout 600s` accepts (./internal/x/).
+func packagePath(dir string) string {
+	d := filepath.ToSlash(filepath.Clean(dir))
+	if d == "." {
+		return "./"
+	}
+	if !strings.HasPrefix(d, "./") && !strings.HasPrefix(d, "../") && !strings.HasPrefix(d, "/") {
+		d = "./" + d
+	}
+	if !strings.HasSuffix(d, "/") {
+		d += "/"
+	}
+	return d
 }

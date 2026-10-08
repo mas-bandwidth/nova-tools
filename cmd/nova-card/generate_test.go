@@ -71,7 +71,8 @@ func TestMaxLeavesNoNeedOnACutCard(t *testing.T) {
 	ledger := cardgen.Ledgers["serial-tests"]
 	for rel, text := range map[string]string{
 		"cmd/a/a_test.go": "package main\n", "cmd/b/b_test.go": "package main\n", "cmd/c/c_test.go": "package main\n",
-		ledger.File: "cmd/a/a_test.go:TestA serial: t.Setenv\ncmd/b/b_test.go:TestB serial: t.Chdir\ncmd/c/c_test.go:TestC serial: os.Setenv\n",
+		"internal/ci/ci_test.go": "package ci\n", // the class test's package, a START package of every ledger card
+		ledger.File:              "cmd/a/a_test.go:TestA serial: t.Setenv\ncmd/b/b_test.go:TestB serial: t.Chdir\ncmd/c/c_test.go:TestC serial: os.Setenv\n",
 	} {
 		p := filepath.Join(repo, filepath.FromSlash(rel))
 		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
@@ -79,8 +80,8 @@ func TestMaxLeavesNoNeedOnACutCard(t *testing.T) {
 	}
 	exit, stdout, stderr := runCard("generate", "--from", "ledger", "--ledger", "serial-tests", "--repo-dir", repo, "--repo", "o/r", "--base", "dev", "--sha", strings.Repeat("ab", 20), "--out", filepath.Join(t.TempDir(), "cards"), "--max", "2", "--dry-run")
 	require.Equal(t, 0, exit, stderr)
-	assert.Contains(t, stdout, "cards=2 waves=2 tier=flash dry-run=yes")
-	assert.Contains(t, stdout, "serial-tests-cmd-b-b\tcmd/b/b_test.go\tinternal/ci TestEveryTestOpensWithTParallel\t2\tserial-tests-cmd-a-a\n")
+	assert.Contains(t, stdout, "cards=2 waves=1 tier=flash dry-run=yes")
+	assert.Contains(t, stdout, "serial-tests-cmd-b-b\tcmd/b/b_test.go\tinternal/ci TestEveryTestOpensWithTParallel\t1\t-\n")
 	assert.NotContains(t, stdout, "serial-tests-cmd-c-c", "the cut card is named nowhere")
 }
 
@@ -146,7 +147,7 @@ func TestAPackageWithNoTestFileIsGeneratedWithItsNEWLine(t *testing.T) {
 	require.Equal(t, 0, exit, "stdout: %s\nstderr: %s", stdout, stderr)
 	brief, err := os.ReadFile(filepath.Join(out, "finding-internal-none-x.md"))
 	require.NoError(t, err)
-	assert.Contains(t, string(brief), "\nPATHS: internal/none/x.go, internal/none/*_test.go\nNEW: internal/none/x_test.go\n")
+	assert.Contains(t, string(brief), "\nPATHS: internal/none/*.go, internal/none/*_test.go\nNEW: internal/none/x_test.go\n")
 }
 
 // The banner names every verb on a usage line, and every generate line names the
@@ -172,4 +173,86 @@ func TestTheBannerNamesEveryVerbAndTheGenerateFlags(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 3, lines, "one usage line per source")
+}
+
+// generate holds every brief to the card checks nova-sprint add runs before it leaves:
+// a name --name gives, carried in from a source row, is a red line and nothing is
+// written; lint holds a brief that names a --dropped card the same.
+func TestGenerateRefusesABriefWithTheCardChecksFinding(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	findings := filepath.Join(dir, "f.tsv")
+	require.NoError(t, os.WriteFile(findings, []byte("internal/bus/send.go:1\tthe receipt ada filed is lost\tkeep it\tinternal/bus TestX\n"), 0o644))
+	out := filepath.Join(dir, "cards")
+	args := []string{"generate", "--from", "findings", "--file", findings, "--repo", "o/r", "--base", "dev", "--sha", strings.Repeat("ab", 20), "--out", out}
+	exit, stdout, stderr := runCard(append(args, "--name", "bench7,ada")...)
+	assert.Equal(t, 1, exit, stderr)
+	assert.Contains(t, stdout, "LINT DRIFT card=finding-internal-bus-send check=personal-name")
+	assert.NoDirExists(t, out)
+	exit, stdout, stderr = runCard(args...)
+	require.Equal(t, 0, exit, "stdout: %s\nstderr: %s", stdout, stderr)
+	brief := filepath.Join(out, "finding-internal-bus-send.md")
+	assert.FileExists(t, brief)
+	exit, stdout, _ = runCard("lint", "--card", brief, "--dropped", "old-card.w1")
+	assert.Equal(t, 0, exit, stdout)
+	raw, err := os.ReadFile(brief)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(brief, append(raw, []byte("Carry old-card.w1 over.\n")...), 0o644))
+	exit, stdout, _ = runCard("lint", "--card", brief, "--dropped", "old-card.w1")
+	assert.Equal(t, 1, exit)
+	assert.Contains(t, stdout, "check=dropped-card")
+}
+
+// A card whose PATHS name TLA+ model work is generated frontier, as nova-sprint add tiers it
+// (sprint.ModelTier; docs/SPEC-SPRINT.md, the card decides its model): the source's own tier
+// gives way, a card on the run records alone keeps it, and an explicit --tier below frontier
+// is a red line naming the reason, nothing written.
+func TestAGeneratedCardThatWritesAModelIsTieredFrontier(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	findings := filepath.Join(dir, "f.tsv")
+	require.NoError(t, os.WriteFile(findings, []byte(
+		"tla/Lease.tla:3\tthe lease can be held twice\tadd the invariant\tinternal/x TestX\n"+
+			"tla/RUNS.tsv:1\tthe run record has no date\tadd the date\tinternal/x TestY\n"), 0o644))
+	out := filepath.Join(dir, "cards")
+	args := []string{"generate", "--from", "findings", "--file", findings, "--repo", "o/r", "--base", "dev", "--sha", strings.Repeat("ab", 20), "--out", out}
+	exit, stdout, stderr := runCard(args...)
+	require.Equal(t, 0, exit, "stdout: %s\nstderr: %s", stdout, stderr)
+	assert.Contains(t, stdout, "cards=2 waves=1 tier=pro frontier=1")
+	raw, err := os.ReadFile(filepath.Join(out, "finding-tla-lease-tla.md"))
+	require.NoError(t, err)
+	line1, _, _ := strings.Cut(string(raw), "\n")
+	assert.True(t, strings.HasSuffix(line1, " tier: frontier"), line1)
+	raw, err = os.ReadFile(filepath.Join(out, "finding-tla-runs-tsv.md"))
+	require.NoError(t, err)
+	line1, _, _ = strings.Cut(string(raw), "\n")
+	assert.True(t, strings.HasSuffix(line1, " tier: pro"), "run records alone are no model: %s", line1)
+
+	out2 := filepath.Join(dir, "cards2")
+	exit, stdout, _ = runCard(append(args[:len(args)-1], out2, "--tier", "pro")...)
+	assert.Equal(t, 1, exit, stdout)
+	assert.Contains(t, stdout, "LINT DRIFT card=finding-tla-lease-tla check=model-tier line=1: PATHS name TLA+ model work (tla/Lease.tla)")
+	assert.Contains(t, stdout, "line 1 names tier pro")
+	assert.NotContains(t, stdout, "card=finding-tla-runs-tsv check=model-tier")
+	assert.NoDirExists(t, out2)
+}
+
+// TestTheUsageBannerPrintsEachExampleOnce verifies that each example line appears
+// exactly once in the help output for the generate command.
+func TestTheUsageBannerPrintsEachExampleOnce(t *testing.T) {
+	t.Parallel()
+	// Get the main help output
+	_, banner, _ := runCard("help")
+
+	// Check that concrete example paths appear exactly once in the example block
+	exampleLines := []string{
+		"./cmd/nova-card/testdata/findings.tsv",
+		"./cards/finding-internal-bus-send.md",
+		"./cards/finding-cmd-nova-bus-main.md",
+	}
+
+	for _, line := range exampleLines {
+		count := strings.Count(banner, line)
+		assert.Equal(t, 1, count, "example line should appear exactly once, found %d times: %s", count, line)
+	}
 }

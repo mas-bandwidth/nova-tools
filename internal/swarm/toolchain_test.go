@@ -2,6 +2,7 @@ package swarm
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -27,6 +28,8 @@ import (
 // The test builds that shape under a temporary prefix, so it asserts the resolver on every
 // platform and never the machine it happens to run on.
 func TestToolchainVersionDirReadsTheVersionOffTheLauncher(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("the versioned-prefix roots are a darwin shape and the launcher is a symlink")
 	}
@@ -34,12 +37,13 @@ func TestToolchainVersionDirReadsTheVersionOffTheLauncher(t *testing.T) {
 	real := filepath.Join(prefix, "1.27.1", "libexec", "bin")
 	require.NoError(t, os.MkdirAll(real, 0o755))
 	require.NoError(t, testbin.WriteExecutable(filepath.Join(real, "go"), []byte("#!/bin/sh\nexit 0\n"), 0o755))
-	// The launcher on PATH is a symlink into the tree, the way brew links one.
+	// The launcher on PATH is a symlink into the tree, the way brew links one. The lookup
+	// is the resolver's own parameter (the serial-tests ledger's way off: "a field on the
+	// value under test"), so the test's PATH is an argument and the process's PATH stands.
 	binDir := t.TempDir()
 	require.NoError(t, os.Symlink(filepath.Join(real, "go"), filepath.Join(binDir, "go")))
-	t.Setenv("PATH", binDir)
 
-	got, ok := toolchainVersionDir(prefix, "go")
+	got, ok := toolchainVersionDir(prefix, "go", lookInDir(binDir))
 	require.True(t, ok, "the launcher at %s resolved to no versioned directory under %s", filepath.Join(binDir, "go"), prefix)
 	// The prefix as the resolver reports it: on a Mac a temp dir is under /var, a symlink
 	// to /private/var, and both sides are resolved before they are compared.
@@ -52,13 +56,23 @@ func TestToolchainVersionDirReadsTheVersionOffTheLauncher(t *testing.T) {
 	// must not drag a Cellar path that is not there onto the argv, which rule 5 refuses.
 	other := t.TempDir()
 	require.NoError(t, testbin.WriteExecutable(filepath.Join(other, "go"), []byte("#!/bin/sh\nexit 0\n"), 0o755))
-	t.Setenv("PATH", other)
-	got, ok = toolchainVersionDir(prefix, "go")
+	got, ok = toolchainVersionDir(prefix, "go", lookInDir(other))
 	assert.False(t, ok, "a go outside the prefix named the root %s; the versioned entry is brew's copy and only brew's", got)
 	// AND A TOOL THAT IS NOT INSTALLED AT ALL names nothing, rather than a prefix.
-	t.Setenv("PATH", t.TempDir())
-	got, ok = toolchainVersionDir(prefix, "dotnet")
+	got, ok = toolchainVersionDir(prefix, "dotnet", lookInDir(t.TempDir()))
 	assert.False(t, ok, "a tool that is not on PATH named the root %s", got)
+}
+
+// lookInDir is the test's own PATH: a lookup that answers with dir's copy of the tool, or
+// with exec.ErrNotFound the way exec.LookPath answers for a PATH that holds no such name.
+func lookInDir(dir string) func(string) (string, error) {
+	return func(tool string) (string, error) {
+		path := filepath.Join(dir, tool)
+		if _, err := os.Stat(path); err != nil {
+			return "", exec.ErrNotFound
+		}
+		return path, nil
+	}
 }
 
 // TestToolchainRootsAreOneListPerOS holds the shape the wall depends on, on every platform:

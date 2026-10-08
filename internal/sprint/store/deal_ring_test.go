@@ -119,7 +119,7 @@ func dealRingOwnersRun(t *testing.T, h *harness) {
 		t.Logf("tick %d: %s", i+1, r)
 		deals = append(deals, r.deals...)
 		next = takeOne(h, next)
-		h.readAll()
+		h.readOutstanding() // the next tick asks the next reads
 		h.tick(time.Second)
 	}
 	want := append(append([]string(nil), ringMembers...), ringMembers...)
@@ -156,14 +156,14 @@ func dealRingAcrossTicks(t *testing.T, h *harness) {
 		for _, m := range r.deals {
 			h.work(m)
 		}
-		h.readAll()
+		h.readOutstanding() // both reads asked this tick come back ok
 		h.tick(time.Second)
 	}
 	want := append(append([]string(nil), ringMembers...), ringMembers...)
 	require.True(t, slices.Equal(deals, want), "deals across ticks %v, want %v: each tick's deal starts past the member the last one dealt to", deals, want)
 	readers := []string{"reader-a", "reader-b", "reader-c"}
 	for i, a := range asks {
-		w := []string{readers[(2*i)%3], readers[(2*i+1)%3]}
+		w := []string{readers[(2*i)%3], readers[(2*i+1)%3]} // two reads an ask: both together
 		require.True(t, slices.Equal(a, w), "ask %d of %v asked %v, want %v: each tick's ask starts past the reader the last one asked", i+1, asks, a, w)
 	}
 	require.GreaterOrEqual(t, len(asks), 2*len(ringMembers)-1, "asks %v: want one a tick", asks)
@@ -266,7 +266,7 @@ func dealRingWithFailures(t *testing.T, h *harness) {
 		for _, m := range ringMembers {
 			workFailing(h, m, failFirst)
 		}
-		h.readAll()
+		h.readOutstanding() // the next tick asks the next reads
 		h.tick(time.Second)
 		if first, _ := attemptsBy(h); sum(first) == 32 {
 			break

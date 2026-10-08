@@ -24,9 +24,10 @@ import (
 //
 // The far side's shell is Emma's decision, not a guess: docs/BENCH-WINDOWS.md
 // names it as Git Bash (`C:\Program Files\Git\bin\bash.exe`), or native
-// OpenSSH with Bash in sshd_config, and internal/pulse/fleetstandard.go's
-// windows probes are POSIX shell that reach for `powershell.exe -NoProfile
-// -Command '...'` only for the Windows-specific questions. So the far side
+// OpenSSH with Bash in sshd_config, and the windows probes in
+// pulse/fleetstandard.go at 39e472aa0 are POSIX shell that reach for
+// `powershell.exe -NoProfile -Command '...'` only for the Windows-specific
+// questions. So the far side
 // parses a POSIX command line -- which is exactly why a backslash may not
 // reach it: in that shell `C:\Users\nova` is `C:Usersnova`, silently, and the
 // machine then refuses about a path nobody typed.
@@ -414,7 +415,7 @@ func TestAWindowsBuildDoesNotClaimToHaveRunItsOwnArtifacts(t *testing.T) {
 // being replaced is frequently nova-update.exe replacing itself: `adopt` runs
 // the release's own nova-update.exe on the bench and that process is holding
 // its own image open. A plain rename over it fails there with a sharing
-// violation, which on this side reads as INSTALL FAIL for a release that is
+// violation, which on this side reads as INSTALL FAILED for a release that is
 // perfectly good.
 //
 // Windows DOES allow the running file to be renamed ASIDE -- the handle

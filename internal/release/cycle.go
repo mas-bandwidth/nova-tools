@@ -201,7 +201,7 @@ func cycle(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			if err != nil {
 				reason = oneLine("", err)
 			}
-			fmt.Fprintf(errs, "CYCLE FAIL step=%s version=%s reason=%s log=%s\n", step, field(o.version), field(reason), field(log))
+			fmt.Fprintf(errs, "CYCLE FAILED step=%s version=%s reason=%s log=%s\n", step, field(o.version), field(reason), field(log))
 		}
 		return output, got, ok
 	}

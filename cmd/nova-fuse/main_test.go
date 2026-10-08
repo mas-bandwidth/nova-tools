@@ -14,10 +14,12 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -307,6 +309,24 @@ func TestQuarantineRefusesToNarrowAnUnreadableBox(t *testing.T) {
 	assert.Equal(t, before, readRaw(t, box), "the corrupt bytes are evidence; they stay put")
 }
 
+// TestQuarantineRefusalQuotesAHostileBoxPathInItsLockdownRemedy pins security#74
+// finding 9: the unreadable-box refusal's lockdown remedy must single-quote the box
+// (through boxRemedy, the same seam its sibling uses), so a path holding shell
+// metacharacters stays data in the pasted command and never becomes commands.
+func TestQuarantineRefusalQuotesAHostileBoxPathInItsLockdownRemedy(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	box := filepath.Join(dir, "box; touch x")
+	writeRaw(t, box, "{corrupt")
+
+	code, _, errOut := capture(t, []string{"quarantine", "--box", box, "s", "r"}, nowish())
+	assert.Equal(t, 2, code, "exit = %d, want 2", code)
+	assert.Contains(t, errOut, `lockdown --box '`+box+`'`, "the remedy must single-quote the hostile path: %q", errOut)
+	assert.NotContains(t, errOut, `lockdown --box `+box, "the bare unquoted span runs the path's metacharacters when pasted: %q", errOut)
+	assert.NoFileExists(t, filepath.Join(dir, "x"), "nothing the refusal suggests may touch the filesystem beside the box")
+}
+
 // TestLiftQuarantineRefusesOnAnUnreadableBox: nothing provable can be lifted from a box
 // that cannot be read.
 func TestLiftQuarantineRefusesOnAnUnreadableBox(t *testing.T) {
@@ -569,8 +589,67 @@ func TestTheWriteLeavesNoLitter(t *testing.T) {
 	for _, e := range entries {
 		names = append(names, e.Name())
 	}
-	require.Len(t, entries, 1, "temp files must not survive the rename, dir holds %v", names)
-	assert.Equal(t, "fuses.json", entries[0].Name(), "temp files must not survive the rename, dir holds %v", names)
+	require.Len(t, entries, 2, "temp files must not survive the rename, dir holds %v", names)
+	assert.Equal(t, []string{"fuses.json", "fuses.json" + fuse.LockSuffix}, names,
+		"the box and the lock its mutations hold are all that stays; dir holds %v", names)
+
+	// A dry run makes every check the write would and writes nothing -- so it takes no
+	// lock and must leave no lock file behind either.
+	dry := t.TempDir()
+	dryBox := filepath.Join(dry, "fuses.json")
+	writeRaw(t, dryBox, `{"lockdown":null,"quarantine":{"discord":{"at":"2026-01-01T00:00:00Z","reason":"r"}}}`)
+	mustRun(t, []string{"lockdown", "--box", dryBox, "--dry-run", "a"}, now)
+	mustRun(t, []string{"quarantine", "--box", dryBox, "--dry-run", "zulip", "b"}, now)
+	mustRun(t, []string{"lift", "quarantine", "--box", dryBox, "--dry-run", "discord"}, now)
+	dEntries, err := os.ReadDir(dry)
+	require.NoError(t, err)
+	var dNames []string
+	for _, e := range dEntries {
+		dNames = append(dNames, e.Name())
+	}
+	assert.Equal(t, []string{"fuses.json"}, dNames,
+		"a dry run writes nothing and creates no lock file; dir holds %v", dNames)
+}
+
+// TestConcurrentQuarantinesAllLandWhenTheyAnnounceOK is the lost-update pin (security#74
+// finding 3): a burst of parallel `quarantine` runs against one box must not lose a fuse
+// it announced. Before the box's read-modify-write was serialized, two writers could each
+// read the box before either renamed over it: the loser printed QUARANTINE OK ... verified
+// by re-reading the box and exited 0, yet its entry was gone from the final box. Every run
+// that returned 0 must find its surface in the box afterwards, however the 16 writers
+// interleave. No sleep and no wall-clock bound here: the wait is the work itself.
+func TestConcurrentQuarantinesAllLandWhenTheyAnnounceOK(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	now := nowish()
+	const writers = 16
+
+	var wg sync.WaitGroup
+	codes := make([]int, writers)
+	for i := range codes {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			surface := fmt.Sprintf("surf-%d", i)
+			code, _, _ := capture(t, []string{"quarantine", "--box", box, surface, "a burst of parallel blows"}, now)
+			codes[i] = code
+		}(i)
+	}
+	wg.Wait()
+
+	after, err := fuse.ReadBox(box)
+	require.NoError(t, err, "the box must be readable after the burst")
+	for i, code := range codes {
+		surface := fmt.Sprintf("surf-%d", i)
+		if code != 0 {
+			continue // a run that did not announce OK owes nothing to the box; it said why on its own streams
+		}
+		_, _, present := after.Quarantined(surface)
+		assert.True(t, present,
+			"run %d exited 0 announcing quarantine=%s, yet %s is missing from the final box (surfaces: %v)",
+			i, surface, surface, after.Surfaces())
+	}
 }
 
 func TestPathEchoesTheBoxFlag(t *testing.T) {
@@ -667,7 +746,7 @@ func TestInitMakesAnEmptyBoxOnceAndNeverReplacesOne(t *testing.T) {
 		assert.Equal(t, before, got, "init replaced %q with %q", before, got)
 	}
 	entries, _ := os.ReadDir(filepath.Dir(box))
-	assert.Len(t, entries, 1, "init left litter beside the box: %v", entries)
+	assert.Len(t, entries, 2, "init left litter beside the box (the box and the lock the mutations before it hold are all that stays): %v", entries)
 
 	for _, args := range [][]string{{"init"}, {"init", "--box", box, "extra"}} {
 		code, _, _ := capture(t, args, nowish())
@@ -1681,4 +1760,98 @@ func TestLockdownOnParentSymlinkedBoxRefuses(t *testing.T) {
 	after, err := os.ReadFile(realBox)
 	require.NoError(t, err, "ReadFile failed")
 	require.Equal(t, string(before), string(after), "target bytes changed:\nbefore: %s\nafter: %s", before, after)
+}
+
+// TestCheckRefusesTheSpellingStatusDisplaysForABlownSurface pins that check
+// fails closed when given the exact oneline.Field-escaped spelling printed by status
+// (e.g. spaced\x20name for a blown surface "spaced name"), rather than failing open
+// with FUSE OK because the literal backslash text matches nothing. (security#74 finding 2)
+func TestCheckRefusesTheSpellingStatusDisplaysForABlownSurface(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	now := nowish()
+	mustRun(t, []string{"quarantine", "--box", box, "spaced name", "testing status spelling"}, now)
+
+	code, out, _ := capture(t, []string{"status", "--box", box}, now)
+	require.Equal(t, 0, code, "status must exit 0")
+
+	var token string
+	for _, line := range strings.Split(out, "\n") {
+		for _, field := range strings.Fields(line) {
+			if strings.HasPrefix(field, "quarantine=") {
+				token = strings.TrimPrefix(field, "quarantine=")
+				break
+			}
+		}
+		if token != "" {
+			break
+		}
+	}
+	require.NotEmpty(t, token, "status output must report a quarantine token: %q", out)
+	require.Equal(t, `spaced\x20name`, token, "status output must escape space as \\x20")
+
+	// Check with that exact token: must exit 1 and report FUSE FAILED
+	code, _, errOut := capture(t, []string{"check", "--box", box, token}, now)
+	assert.Equal(t, 1, code, "check with displayed spelling must exit 1, got %d", code)
+	assert.Contains(t, errOut, "FUSE FAILED", "stderr must report FUSE FAILED: %q", errOut)
+	assert.Contains(t, errOut, `quarantine=spaced\x20name`, "stderr must report quarantine token: %q", errOut)
+
+	// Check with an unrelated surface still exits 0
+	code, out, _ = capture(t, []string{"check", "--box", box, "unrelated"}, now)
+	assert.Equal(t, 0, code, "check with unrelated surface must exit 0, got %d", code)
+	assert.Contains(t, out, "FUSE OK", "stdout must report FUSE OK: %q", out)
+
+	// Also check that equals sign escaped as \x3d is refused when quarantined
+	mustRun(t, []string{"quarantine", "--box", box, "surface=with=equals", "testing equals"}, now)
+	code, _, errOut = capture(t, []string{"check", "--box", box, `surface\x3dwith\x3dequals`}, now)
+	assert.Equal(t, 1, code, "check with \\x3d must exit 1, got %d", code)
+	assert.Contains(t, errOut, "FUSE FAILED", "stderr must report FUSE FAILED: %q", errOut)
+}
+
+// TestCheckRefusesTheSpellingStatusDisplaysForARawByteKey pins that \xNN with NN >= 0x80
+// decodes to the raw byte, as oneline.Field emits it for invalid UTF-8, so fuse.Surface
+// folds it to the same U+FFFD a stored key holds and check refuses rather than failing open.
+func TestCheckRefusesTheSpellingStatusDisplaysForARawByteKey(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	now := nowish()
+	writeRaw(t, box, `{"lockdown":null,"quarantine":{"a\ufffdb":{"at":"2026-01-01T00:00:00Z","reason":"hand edited"}}}`)
+
+	code, _, errOut := capture(t, []string{"check", "--box", box, `a\xffb`}, now)
+	assert.Equal(t, 1, code, "check with a raw-byte escape must exit 1, got %d", code)
+	assert.Contains(t, errOut, "FUSE FAILED", "stderr must report FUSE FAILED: %q", errOut)
+
+	code, out, _ := capture(t, []string{"check", "--box", box, "unrelated"}, now)
+	assert.Equal(t, 0, code, "check with unrelated surface must exit 0, got %d", code)
+	assert.Contains(t, out, "FUSE OK", "stdout must report FUSE OK: %q", out)
+}
+
+func TestUnescapeField(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"", ""},
+		{"simple", "simple"},
+		{`spaced\x20name`, "spaced name"},
+		{`equal\x3dsign`, "equal=sign"},
+		{`non\u00a0breaking`, "non\u00a0breaking"},
+		{`line\u2028separator`, "line\u2028separator"},
+		{`incomplete\x`, `incomplete\x`},
+		{`incomplete\x1`, `incomplete\x1`},
+		{`invalid\xgg`, `invalid\xgg`},
+		{`incomplete\u123`, `incomplete\u123`},
+		{`invalid\uzz00`, `invalid\uzz00`},
+		{`a\xffb`, "a\xffb"},
+		{`a\x80\xc3`, "a\x80\xc3"},
+		{"raw\xffbyte\\x20kept", "raw\xffbyte kept"},
+		{`\xc3\xa9`, "\u00e9"},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, unescapeField(tc.in), "unescapeField(%q)", tc.in)
+	}
 }

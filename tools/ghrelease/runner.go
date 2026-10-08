@@ -88,7 +88,7 @@ func (r osRunner) Stream(c command, stdout, stderr io.Writer) int {
 	b.Cmd.Stdout, b.Cmd.Stderr = stdout, stderr
 	rc, why := finish(b, b.Cmd.Run())
 	if why != "" {
-		io.WriteString(stderr, why+"\n")
+		_, _ = io.WriteString(stderr, why+"\n") // ignored: the exit code is the report
 	}
 	return rc
 }

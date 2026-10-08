@@ -107,6 +107,7 @@ type viewRow struct {
 	Wd  int    `json:"wd"`            // the row's width
 	F30 int    `json:"f30"`           // finished in the last 30m
 	Rep string `json:"rep,omitempty"` // how long since its last beat; "never"
+	Run string `json:"run,omitempty"` // a friend's live lane that kept a judgment quiet: "running 32m of 90m"
 }
 
 // coordCounts are the sprint's counts, always carried: the work table's primaries by state,
@@ -124,22 +125,48 @@ type coordCounts struct {
 	Width   int `json:"width"` // the up machines' width
 	Busy    int `json:"busy"`  // the cards working on up machines
 	J       int `json:"j"`     // the open judgments
+	// Rules is the cards a rule answered in the last hour (sprint.RuleAnsweredWithin): the
+	// judgments the coordinator did not have to answer.
+	Rules int `json:"rules"`
+	// Suppressed is the judgments the tick's lane check kept from rising since the epoch
+	// began (store.Heartbeat.Suppressed), and By its three causes beside it: the coordinator
+	// turns the checks saved.
+	Suppressed int           `json:"suppressed"`
+	By         suppressedWhy `json:"by"`
+}
+
+// suppressedWhy is the suppressed count by cause: a friend's lane live inside its cap (a
+// lateness, a stall, finishes none), readers busy (readers behind), a read tier question the
+// rule answered.
+type suppressedWhy struct {
+	Lane    int `json:"lane"`
+	Readers int `json:"readers"`
+	Tier    int `json:"tier"`
 }
 
 // coordinatorView is view coordinator's document, schema 1.
 type coordinatorView struct {
-	View   string      `json:"view"`
-	Schema int         `json:"schema"`
-	Sum    string      `json:"sum"`
-	At     time.Time   `json:"at"`
-	Epoch  uint64      `json:"epoch"`
-	Seat   string      `json:"seat,omitempty"`
-	Cursor string      `json:"cursor"`
-	N      coordCounts `json:"n"`
-	Items  []viewItem  `json:"items"`
-	Rows   []viewRow   `json:"rows,omitempty"`
-	Same   int         `json:"same,omitempty"` // with --since: items left out, unchanged
-	Gone   int         `json:"gone,omitempty"` // with --since: items the cursor's read showed that stand no more
+	View   string    `json:"view"`
+	Schema int       `json:"schema"`
+	Sum    string    `json:"sum"`
+	At     time.Time `json:"at"`
+	Epoch  uint64    `json:"epoch"`
+	Seat   string    `json:"seat,omitempty"`
+	Push   string    `json:"push,omitempty"` // the holder's push: adapter=<a> proven=<RFC3339|->
+	// Fleet and Friends are the work switches, carried only when off (nova-sprint set
+	// --fleet off, --friends off): the deal hands that side no work card.
+	Fleet   string `json:"fleet,omitempty"`
+	Friends string `json:"friends,omitempty"`
+	// FleetTiers and FriendsTiers are the tiers each side may take, carried only when set
+	// (nova-sprint set --fleet-tiers, --friends-tiers); absent is all.
+	FleetTiers   []string    `json:"fleet_tiers,omitempty"`
+	FriendsTiers []string    `json:"friends_tiers,omitempty"`
+	Cursor       string      `json:"cursor"`
+	N            coordCounts `json:"n"`
+	Items        []viewItem  `json:"items"`
+	Rows         []viewRow   `json:"rows,omitempty"`
+	Same         int         `json:"same,omitempty"` // with --since: items left out, unchanged
+	Gone         int         `json:"gone,omitempty"` // with --since: items the cursor's read showed that stand no more
 }
 
 // workerCard is one of a worker's cards.
@@ -178,6 +205,7 @@ type workerView struct {
 	Kind   string       `json:"kind"` // member or friend
 	Cursor string       `json:"cursor"`
 	Next   string       `json:"next,omitempty"`
+	Quiet  []string     `json:"quiet,omitempty"` // a QUIET line per machine quiet now (fleet quiet)
 	Cards  []workerCard `json:"cards"`
 	Wait   []waitCard   `json:"wait,omitempty"`
 	NWait  int          `json:"nwait,omitempty"` // every result not landed, when more than are listed
@@ -273,7 +301,15 @@ func (a *app) cmdViewWorker(args []string, stdout, stderr io.Writer) int {
 func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (coordinatorView, error) {
 	now := a.now()
 	v := coordinatorView{View: "coordinator", Schema: viewSchema, At: now.UTC().Truncate(time.Second), Items: []viewItem{}}
-	st, err := st.Pinned(ctx)
+	// the holder's push, read where seat push writes it: the store as given, never an epoch's
+	holder, err := st.B.Coordinator(ctx)
+	if err != nil {
+		return v, err
+	}
+	if v.Push, err = pushSaid(ctx, st, holder, now); err != nil {
+		return v, err
+	}
+	st, err = st.Pinned(ctx)
 	if err != nil {
 		return v, err
 	}
@@ -298,7 +334,8 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 	if v.Seat, err = st.B.Coordinator(ctx); err != nil {
 		return v, err
 	}
-	machine, _, merr := st.Machine(ctx) // a store that keeps no machine record: the machine's alarm is not drawn
+
+	machine, hb, merr := st.Machine(ctx) // a store that keeps no machine record: the machine's alarm is not drawn
 	within := func(stamp string) bool {
 		t, err := time.Parse(time.RFC3339, stamp)
 		return err == nil && !t.Before(now.Add(-viewWindow)) && !t.After(now)
@@ -334,6 +371,19 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 		}
 	}
 	n.Held = sprint.HeldBack(s)
+	for _, k := range sprint.RuleAnsweredWithin(append(s.Work.Cards(), s.Fleet.Cards()...), now, time.Hour) {
+		n.Rules += k
+	}
+	runs := map[string]string{} // friend: her live lane as the last tick's lane check read it
+	if sup := hb.Suppressed; merr == nil && sup.Epoch == v.Epoch {
+		// a count of an earlier epoch is not this one's: the first tick after a clear starts it again
+		n.Suppressed, n.By = sup.N, suppressedWhy{Lane: sup.Lane, Readers: sup.Readers, Tier: sup.Tier}
+		for _, q := range hb.Quiet {
+			if q.Friend != "" && runs[q.Friend] == "" {
+				runs[q.Friend] = q.Run
+			}
+		}
+	}
 	finished := func(row string) int {
 		f := 0
 		for _, c := range append(s.Fleet.Cell(row, sprint.DoneOK), s.Fleet.Cell(row, sprint.DoneFailed)...) {
@@ -421,11 +471,11 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 			since = now.Sub(f.Beat)
 			rep = ageWord(since)
 		}
-		rows = append(rows, viewRow{K: "f:" + f.Name, St: f.Status, R: r, W: w, Wd: f.Width, F30: finished(row), Rep: rep})
+		rows = append(rows, viewRow{K: "f:" + f.Name, St: f.Status, R: r, W: w, Wd: f.Width, F30: finished(row), Rep: rep, Run: runs[f.Name]})
 		if r+w == 0 {
 			continue
 		}
-		why := ""
+		why, kind := "", "friend stale"
 		switch {
 		case f.Status == sprint.Down:
 			why = "is down"
@@ -436,11 +486,19 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 			why = "has never reported"
 		case since > viewStaleReport:
 			why = "has not reported for " + rep
+		case f.Status == sprint.Up && !f.Active.IsZero() && now.Sub(friendLastWork(s, f)) > s.FriendIdleAfter():
+			// her daemon answers (she beats) and nothing of hers moves: the finding of
+			// 2026-10-04, a friend idle for two hours while the table said up with 8 working.
+			// It reads the newest evidence of her work (sprint.FriendWorked, and her cards'
+			// moves), never her daemon's walk alone: on 2026-10-06 that walk read 3d while
+			// she reported hourly
+			kind = "friend idle"
+			why = "has a daemon that answers and no evidence of work for " + ageWord(now.Sub(friendLastWork(s, f))) + " (no session write, session proof or answer, finish, report or card move)"
 		}
 		if why == "" {
 			continue
 		}
-		v.Items = append(v.Items, viewItem{K: "f:" + f.Name, T: itemFriend, W: "friend stale", B: r + w,
+		v.Items = append(v.Items, viewItem{K: "f:" + f.Name, T: itemFriend, W: kind, B: r + w,
 			S:    fmt.Sprintf("%s %s and holds %d ready, %d working", f.Name, why, r, w),
 			Next: "nova-sprint friend take " + f.Name + " --all-unstarted --reason '" + f.Name + " " + strings.ReplaceAll(why, "'", "") + "'", age: since})
 	}
@@ -476,7 +534,17 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 		v.Items = append(v.Items, viewItem{K: "a:stopped", T: itemAlarm, W: "machine stopped", B: n.All - n.Landed, S: what + ") with " + strconv.Itoa(n.All-n.Landed) + " cards not landed",
 			Next: "nova-sprint start", age: now.Sub(machine.Since)})
 	}
-	if running && n.Width > 0 && 2*n.Busy < n.Width {
+	if s.FleetOff() {
+		v.Fleet = sprint.SwitchOff
+	}
+	if s.FriendsOff() {
+		v.Friends = sprint.SwitchOff
+	}
+	if s.Work != nil {
+		props := s.Work.Props()
+		v.FleetTiers, v.FriendsTiers = sprint.SideTiers(props, sprint.PropFleetTiers), sprint.SideTiers(props, sprint.PropFriendsTiers)
+	}
+	if running && n.Width > 0 && 2*n.Busy < n.Width && !s.FleetOff() { // off: the machines are dealt nothing
 		next := "nova-sprint where --all"
 		if n.Ready < n.Width {
 			next = release("nova-sprint needs --roots")
@@ -645,9 +713,16 @@ func coordinatorSum(v coordinatorView, known bool, m store.Machine) string {
 	default:
 		state = "STOPPED"
 	}
-	return fmt.Sprintf("seat=%s machine=%s j=%d(max %d behind) alarms=%d asks=%d sentinels=%d friends=%d machines=%d | landed %d/%d +%d/30m | ready %d wait %d work %d review %d merge %d | busy %d/%d",
+	sum := fmt.Sprintf("seat=%s machine=%s j=%d(max %d behind) alarms=%d asks=%d sentinels=%d friends=%d machines=%d | landed %d/%d +%d/30m | ready %d wait %d work %d review %d merge %d | busy %d/%d | rules %d/h | suppressed %d (lane %d readers %d tier %d)",
 		cmp.Or(v.Seat, "-"), state, n.J, behind, types[itemAlarm], types[itemRequest], types[itemSentinel], types[itemFriend], types[itemMachine],
-		n.Landed, n.All, n.L30, n.Ready, n.Waiting, n.Working, n.Review, n.Merging, n.Busy, n.Width)
+		n.Landed, n.All, n.L30, n.Ready, n.Waiting, n.Working, n.Review, n.Merging, n.Busy, n.Width, n.Rules, n.Suppressed, n.By.Lane, n.By.Readers, n.By.Tier)
+	if v.Push != "" {
+		sum += " | push " + v.Push
+	}
+	if line := switchesLine(v.Fleet, v.Friends, v.FleetTiers, v.FriendsTiers); line != "" {
+		sum += " | " + line
+	}
+	return sum
 }
 
 // coordinatorText is the view in at most viewTextLines lines: the summary, then an item a
@@ -770,6 +845,13 @@ func (a *app) workerView(ctx context.Context, st *store.Store, as string) (worke
 	if len(mine) > 0 {
 		v.Next = workerNext(v, mine[0], ps[0])
 	}
+	// every machine quiet now, for every member and friend: run no go build or test there
+	// (docs/SPEC-SPRINT.md section 5, fleet-quiet-machine-b.w7)
+	shapes, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Fleet)})
+	if err != nil {
+		return v, false, err
+	}
+	v.Quiet = sprint.QuietLines(shapes[0].Props, now)
 
 	// my results not landed: the cards finished ok whose primaries wait in review or merging
 	done, err := st.ReadCells(ctx, sprint.Fleet, row, sprint.DoneOK)
@@ -821,6 +903,9 @@ func (a *app) workerView(ctx context.Context, st *store.Store, as string) (worke
 func workerNext(v workerView, c *sprint.Card, p sprint.Packet) string {
 	at := c.ID + "@" + strconv.Itoa(p.Gen) + " --epoch " + strconv.FormatUint(v.Epoch, 10)
 	switch {
+	case v.Kind == "friend" && p.Kind == "read":
+		// a read on her row is returned, never finished (sprint.FriendReadOutboxLine)
+		return "read " + c.ID + ": write ~/" + v.As + "-working/outbox/" + friendJobOf(p) + "/REPORT.md with Verdict: LAND, or Verdict: HOLD and a line naming the file:line or rule and what to change"
 	case v.Kind == "friend" && c.Col == sprint.Working:
 		return "finish " + c.ID + ": push to " + p.Branch + ", then write ~/" + v.As + "-working/outbox/" + friendJobOf(p) + "/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>"
 	case v.Kind == "friend":
@@ -839,6 +924,9 @@ func workerText(v workerView) string {
 	line("VIEW worker " + v.Sum)
 	if v.Next != "" {
 		line("NEXT " + v.Next)
+	}
+	for _, q := range v.Quiet {
+		line(q)
 	}
 	for _, c := range v.Cards {
 		l := "CARD " + c.ID + " " + c.St + " att=" + strconv.Itoa(c.Att) + " base=" + cmp.Or(c.Base, "-") + " paths=" + cmp.Or(strings.Join(c.Paths, ","), "-")
@@ -1112,4 +1200,22 @@ func viewJSON(w io.Writer, v any) {
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	_ = enc.Encode(v) // ignored: a view of strings, numbers and times always encodes, and stdout is the caller's
+}
+
+// friendLastWork is the newest evidence of the friend's work (sprint.FriendWorked over her
+// row and what her beat and the store's records say) or of a card of hers moving
+// (sprint.FriendCardMoved): what the idle item measures.
+func friendLastWork(s *sprint.Snapshot, f store.FriendRow) time.Time {
+	w := sprint.FriendWork{Active: f.Active, Proof: f.Proof, Finished: f.Finished}
+	if f.Health != nil && f.Health.State == sprint.Up {
+		w.Answered = f.Health.Seen
+	}
+	if f.Report != nil && len(f.Report.Running) > 0 {
+		w.Running = f.Beat
+	}
+	at, _ := sprint.FriendWorked(s, f.Name, w)
+	if moved := sprint.FriendCardMoved(s, f.Name); moved.After(at) {
+		at = moved
+	}
+	return at
 }

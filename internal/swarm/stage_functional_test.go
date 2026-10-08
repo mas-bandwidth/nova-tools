@@ -14,6 +14,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testgit"
 )
 
 // These tests exec whole programs -- the fake runner this package builds
@@ -141,6 +143,8 @@ func TestStageCardTimesOutAndWritesResult(t *testing.T) {
 // TestStageUsesTheBenchMirrorAndTimesOut tests that staging uses the bench mirror,
 // fails on a clone that would go to GitHub without a mirror, and times out when exceeding deadline.
 func TestStageUsesTheBenchMirrorAndTimesOut(t *testing.T) {
+	t.Parallel()
+
 	t.Run("borrows the bench mirror", TestStageCardBorrowsTheMirror)
 	t.Run("fails without bench mirror", TestStageCardFailsWithoutMirror)
 	t.Run("times out and writes result", TestStageCardTimesOutAndWritesResult)
@@ -160,8 +164,8 @@ func testStageHungCloneEndsAtTheTimeout(t *testing.T) {
 	bin := filepath.Join(root, "bin")
 	require.NoError(t, os.MkdirAll(bin, 0o755))
 	fake := "#!/bin/sh\nsleep 60 &\nwait\n"
-	require.NoError(t, testbin.WriteExecutable(filepath.Join(bin, "git"), []byte(fake), 0o755))
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	fakeGit := filepath.Join(bin, "git")
+	require.NoError(t, testbin.WriteExecutable(fakeGit, []byte(fake), 0o755))
 	jobDir := filepath.Join(root, "jobs", "card-1")
 	require.NoError(t, os.MkdirAll(jobDir, 0o755))
 	card := []byte("base-repo: https://example.com/mas-bandwidth/repo.git\nbase-sha: 09fbedc9052145b20677501a1dbcb5f5ba9c87d4\n")
@@ -182,6 +186,16 @@ func testStageHungCloneEndsAtTheTimeout(t *testing.T) {
 			BenchHome: filepath.Join(root, "home"),
 			BenchName: "hulk",
 			Timeout:   1 * time.Second,
+			// The staging seam names the hung git in place of the process's PATH
+			// (the serial-tests ledger's way off: a field on the value under
+			// test), and keeps every promise stageGit makes: the group, the
+			// cancel, the wait delay.
+			git: func(ctx context.Context, args ...string) *exec.Cmd {
+				cmd := stageGit(ctx, args...)
+				cmd.Path = fakeGit
+				cmd.Args = append([]string{fakeGit}, args...)
+				return cmd
+			},
 		})
 		done <- stageOutcome{res: res, err: err}
 	}()
@@ -205,7 +219,7 @@ func execCmd(t *testing.T, dir, name string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = testgit.Environ("GIT_TERMINAL_PROMPT=0")
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s %s in %s: %v\n%s", name, strings.Join(args, " "), dir, err, string(out))
 	return string(out)

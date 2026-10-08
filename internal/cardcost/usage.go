@@ -2,6 +2,7 @@ package cardcost
 
 import (
 	"cmp"
+	"math/big"
 	"slices"
 	"strconv"
 	"strings"
@@ -321,6 +322,52 @@ func (t Total) Add(u Usage) Total {
 		sum(&t.Charged, charged)
 		t.ChargedOf++
 	}
+	return t
+}
+
+// Repriced is the total with one of its records priced again: was is the record as the
+// total counted it, now the same record with its prediction made again (Priced). Its
+// tokens, times and actual cost are the same, so only the predicted and charged sums and
+// their counts move, each exactly; a total that holds records past its card's list (the
+// cut) keeps them this way, where a sum over the list would lose them. A sum that would
+// go below zero, which a total that counted was cannot, is left as it is.
+func (t Total) Repriced(was, now Usage) Total {
+	valid := func(v string) bool { _, err := amount(v); return err == nil }
+	charged := func(u Usage) string {
+		if valid(u.Actual) {
+			return u.Actual
+		}
+		return u.Predicted
+	}
+	shift := func(sum *string, of *int, from, to string) {
+		r := new(big.Rat)
+		if *sum != "" {
+			v, err := amount(*sum)
+			// ignored: a sum that does not read is left as it is, as Add leaves one
+			if err != nil {
+				return
+			}
+			r.Set(v)
+		}
+		n := *of
+		if v, err := amount(from); err == nil {
+			r.Sub(r, v)
+			n--
+		}
+		if v, err := amount(to); err == nil {
+			r.Add(r, v)
+			n++
+		}
+		if r.Sign() < 0 || n < 0 {
+			return // ignored: a total that never counted was is left as it is
+		}
+		*sum, *of = Text(r), n
+		if n == 0 {
+			*sum = ""
+		}
+	}
+	shift(&t.Predicted, &t.PredOf, was.Predicted, now.Predicted)
+	shift(&t.Charged, &t.ChargedOf, charged(was), charged(now))
 	return t
 }
 

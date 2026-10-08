@@ -30,6 +30,7 @@ come back to the table below for the problem you want it to solve.
 <tr><td>Keep fleet configuration durable.</td><td nowrap><a href="docs/CLI.md#nova-config">nova-config</a></td><td>a fleet's machines and AI friends as rows in PostgreSQL, applied into Redis</td><td>Prints the schema without a connection. Storing configuration needs PostgreSQL; apply also needs Redis. This is the Nova fleet configuration model.<br><code>nova-config migrate --print</code></td></tr>
 <tr><td>Get independent jobs done in parallel.</td><td nowrap><a href="docs/CLI.md#nova-swarm">nova-swarm</a></td><td>one-task AI workers, each run in the sandbox with a deadline and a token budget</td><td>Prints the read-pr card template; no worker or key is needed. Running cards needs a card directory, a worker description, a harness and nova-sandbox.<br><code>nova-swarm template --name read-pr</code></td></tr>
 <tr><td>Turn a ledger, a findings file or a tool's help into briefs the sprint admits. <strong>nova-card is pre-alpha: not ready for production use.</strong></td><td nowrap><a href="docs/CLI.md#nova-card">nova-card</a></td><td>writes a directory of pre-linted briefs from a ledger, a findings file or a tool's help</td><td>Reads the included findings file and writes two briefs; no checkout, store or key. Generating from a ledger needs a checkout of the repository at the base.<br><code>nova-card generate --from findings --file ./cmd/nova-card/testdata/findings.tsv --repo example/repo --base dev --sha 0123456789abcdef0123456789abcdef01234567 --out ./cards</code></td></tr>
+<tr><td>Run a model on your own machine, or on one of your fleet.</td><td nowrap><a href="docs/CLI.md#nova-local">nova-local</a></td><td>run local models: what an engine has, one model served at a chosen context, and a worker description nova-swarm accepts</td><td>Reads the local ollama daemon and the box; with none running it prints the one command that starts it. Serving needs ollama and a model you pulled.<br><code>nova-local status</code></td></tr>
 <tr><td>Give a command the credentials it needs.</td><td nowrap><a href="docs/CLI.md#nova-secrets">nova-secrets</a></td><td>encrypted secrets in a git repository, handed to one command at a time</td><td>Make a private directory for the key first (<code>mkdir -m 700 -p ./trial-keys</code>). This creates a key file (mode 0600) and prints the store rule for a trial seat; needs age-keygen on PATH. Listing and decrypting need a sealed store and sops.<br><code>nova-secrets keygen --as trial --key ./trial-keys/trial-secrets.key --age-keygen &quot;$(command -v age-keygen)&quot;</code></td></tr>
 <tr><td>See where your tokens went.</td><td nowrap><a href="docs/CLI.md#nova-tokens">nova-tokens</a></td><td>token spend per day, model and repository, read from AI session logs</td><td>Reads the included Claude transcript fixture. Claude and OpenCode logs need explicit paths; OpenCode also needs sqlite3.<br><code>nova-tokens sources --repos ./cmd/nova-tokens/testdata/example-bench/repos.tsv --all --claude trial=./cmd/nova-tokens/testdata/example-bench/transcripts</code></td></tr>
 <tr><td>Find a note without rereading everything.</td><td nowrap><a href="docs/CLI.md#nova-memory">nova-memory</a></td><td>search your own markdown notes, and check a draft against what they already say</td><td>Reads the included Markdown corpus and prints the chosen query, matching sources and checks.<br><code>nova-memory quickstart --root ./cmd/nova-memory/testdata/corpus</code></td></tr>
@@ -42,10 +43,43 @@ come back to the table below for the problem you want it to solve.
 <tr><td>Check test runs and their cost.</td><td nowrap><a href="docs/CLI.md#nova-ci">nova-ci</a></td><td>test-time budgets over go test -json output, and this repository's own CI steps</td><td>Reads Go test events (a built-in stream with --example) and reports their timings. local, new-rule and new-verb need a Nova Tools checkout; github receipt writes to a Redis store.<br><code>nova-ci slowtests --example --budget 60</code></td></tr>
 <tr><td>See what is installed and at which version.</td><td nowrap><a href="docs/CLI.md#nova-version">nova-version</a></td><td>which version of each tool is installed, recorded and compared</td><td>Runs go version using the included local manifest; needs Go on PATH. No bus or remote lookup.<br><code>nova-version report --file ./cmd/nova-version/testdata/example.tsv</code></td></tr>
 <tr><td>Inspect versions and apply one chosen update.</td><td nowrap><a href="docs/CLI.md#nova-update">nova-update</a></td><td>compare installed tools with their latest releases, and update one when asked</td><td>Compares Go with itself using a local manifest; applies nothing. An update needs a target, version source and installation path.<br><code>nova-update report --file ./cmd/nova-update/testdata/example.tsv</code></td></tr>
+<tr><td>Find out what is missing for the nova tools to work on this machine.</td><td nowrap><a href="docs/SPEC-DOCTOR.md">nova-doctor</a></td><td>says what is missing for the nova tools to work here and, for each thing, the one line that fixes it</td><td>Runs every check and changes nothing; a check that is not ok prints its fix line. --local skips the checks only a fleet needs.<br><code>nova-doctor run --local</code></td></tr>
+<tr><td>Set nova up on one machine.</td><td nowrap><a href="docs/SETUP.md">nova-up</a></td><td>set nova up on one machine: plan every step, then apply, from nothing to a first sprint</td><td>Prints the plan and writes nothing with --dry-run; a missing dependency is a plain line with its install command.<br><code>nova-up --local --dry-run</code></td></tr>
 </tbody>
 </table>
 
 Pick the row that is your actual problem today. One tool is a fine number.
+
+### tdocs-tool-readmes-b.w2
+
+Every tool has a standalone guide beside its code, written so a stranger can
+start from that one tool without this page. Read the one you chose:
+
+- [nova-bus](cmd/nova-bus/README.md) — messages between AIs over Redis streams: sent once, delivered until acked
+- [nova-friend](cmd/nova-friend/README.md) — what a friend runs to be part of the team: the wake loop, the beat, and the proof of life, as one daemon
+- [nova-table](cmd/nova-table/README.md) — tables whose cells are ordered sets, kept in Redis and drawn as text
+- [nova-work](cmd/nova-work/README.md) — every issue of an organization's repositories in one tree file, verified field for field
+- [nova-redis](cmd/nova-redis/README.md) — run a local Redis store, and keep short-lived named values in it
+- [nova-config](cmd/nova-config/README.md) — a fleet's machines and AI friends as rows in PostgreSQL, applied into Redis
+- [nova-swarm](cmd/nova-swarm/README.md) — one-task AI workers, each run in the sandbox with a deadline and a token budget
+- [nova-card](cmd/nova-card/README.md) — writes a directory of pre-linted briefs from a ledger, a findings file or a tool's help
+- [nova-local](cmd/nova-local/README.md) — run local models: what an engine has, one model served at a chosen context, and a worker description nova-swarm accepts
+- [nova-secrets](cmd/nova-secrets/README.md) — encrypted secrets in a git repository, handed to one command at a time
+- [nova-tokens](cmd/nova-tokens/README.md) — token spend per day, model and repository, read from AI session logs
+- [nova-memory](cmd/nova-memory/README.md) — search your own markdown notes, and check a draft against what they already say
+- [nova-decide](cmd/nova-decide/README.md) — typed decisions with probabilities, recorded so each one can be calibrated against its outcome
+- [nova-cairn](cmd/nova-cairn/README.md) — a session's words, kept durably as plain files you can come back to
+- [nova-check](cmd/nova-check/README.md) — checks over markdown records and repositories, each finding named by file and line
+- [nova-self-talk](cmd/nova-self-talk/README.md) — flags sentences where a writer passes a standing verdict on themselves
+- [nova-fuse](cmd/nova-fuse/README.md) — a recorded decision to stop reading an untrusted source, checked before every read
+- [nova-sandbox](cmd/nova-sandbox/README.md) — run one command inside an OS-enforced wall around the directories you name
+- [nova-ci](cmd/nova-ci/README.md) — test-time budgets over go test -json output, and this repository's own CI steps
+- [nova-version](cmd/nova-version/README.md) — which version of each tool is installed, recorded and compared
+- [nova-update](cmd/nova-update/README.md) — compare installed tools with their latest releases, and update one when asked
+- [nova-doctor](cmd/nova-doctor/README.md) — says what is missing for the nova tools to work here and, for each thing, the one line that fixes it
+- [nova-up](cmd/nova-up/README.md) — set nova up on one machine: plan every step, then apply, from nothing to a first sprint
+
+`nova-sprint`'s guide is the sprint contract, [docs/SPEC-SPRINT.md](docs/SPEC-SPRINT.md); start from `nova-sprint help`.
 
 ## Try one on a small example
 
@@ -82,6 +116,12 @@ a message you can read again, or a stored edit you can inspect. You can stop at
 one tool, keep a different method, or add another when it solves a problem you
 actually have.
 
+### setup-nova-up-local
+
+To set up the whole thing on one machine instead, from nothing to a first
+sprint with no config, follow the [setup guide](docs/SETUP.md): it plans first,
+shows you every step, and then applies it.
+
 ## Where to go next
 
 Want to grow an AI friend? [Nova Seed](https://github.com/mas-bandwidth/nova) is a place to begin.
@@ -97,6 +137,13 @@ Want to grow an AI friend? [Nova Seed](https://github.com/mas-bandwidth/nova) is
 - [Contributing](docs/CONTRIBUTING.md) and [security](docs/SECURITY.md).
 - [Releases](https://github.com/mas-bandwidth/nova-tools/releases) and
   [all documentation](docs/).
+
+### tdocs-concepts-architecture-b.w3
+
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) is the one page that explains how
+nova-tools fits together: the concepts the specs share, every tool under `cmd/`,
+the stores and their ACL users, the machines, and a card's path from add to
+land.
 
 Found a friction, or something that would make a tool a no-brainer for you?
 [Open an issue](https://github.com/mas-bandwidth/nova-tools/issues) — friends

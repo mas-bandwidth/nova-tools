@@ -58,7 +58,7 @@ func TestTheStoryTellsEveryReadersFinding(t *testing.T) {
 	ta.ok("tick")
 	ta.ok("take --as m1")
 	ta.ok("finish --as m1 s1-1.w2@1 --report two")
-	ta.ok("tick")
+	ta.ok("tick") // both reads asked together
 	ta.ok("read --as reader-a --ok --finding 'looks fine'")
 	ta.ok("read --as reader-b --ok --finding 'looks fine'")
 	story := ta.ok("card s1-1")

@@ -30,7 +30,7 @@ func inventoryHarness(t *testing.T, n int) *harness {
 		h.redis.views[config.KindMachine][fmt.Sprintf("bench-%02d", i)] = config.View{"user": "user-a", "seat": "seat-a", "slots": "8", "runners": "0"}
 	}
 	h.redis.revs[config.KindMachine] = 1
-	h.redis.views[config.KindFleet] = map[string]config.View{config.KindFleet: {"redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"}}
+	h.redis.views[config.KindFleet] = map[string]config.View{config.KindFleet: {"redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova", "loops_dir": "~/nova-bench/loops"}}
 	return h
 }
 
@@ -56,7 +56,7 @@ func TestInventoryPrintsTheAppliedState(t *testing.T) {
 	t.Parallel()
 	h := inventoryHarness(t, 2)
 	h.env["NOVA_MACHINE"] = "bench-01"
-	h.redis.views[config.KindFleet] = map[string]config.View{config.KindFleet: {"store": "bench-02", "coordinator": "bench-01", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"}}
+	h.redis.views[config.KindFleet] = map[string]config.View{config.KindFleet: {"store": "bench-02", "coordinator": "bench-01", "redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova", "loops_dir": "~/nova-bench/loops"}}
 	h.redis.views["loop"] = map[string]config.View{"member-02": {
 		"name": "member-02", "machine": "bench-02", "argv": `["nova-swarm","member"]`, "seat": "seat-a", "keys": "API_KEY",
 		"every": "0", "keepalive": "true", "enabled": "true", "log": "~/nova-bench/loops/member-02.log",
@@ -102,6 +102,24 @@ func TestInventoryFromTheFixtureOpensNoStore(t *testing.T) {
 		assert.Contains(t, inv.Meta.Hostvars[m], "nova_loops", m)
 	}
 	assert.Equal(t, 0, h.redis.opens+h.opens)
+}
+
+// A fixture whose machines are a list is refused in the fixture's own words,
+// with the line, never the Go type the YAML reader names (docs/STANDARD.md,
+// section 3, point 2: a refusal says what the input wants).
+func TestInventoryRefusesAFixtureWithAGoType(t *testing.T) {
+	t.Parallel()
+	h := newHarness()
+	path := filepath.Join(t.TempDir(), "fx.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("machines:\n  - one\n  - two\n"), 0o600))
+	code, out, errs := h.run(t, "inventory", "--fixture", path, "--list")
+	assert.Equal(t, 2, code)
+	assert.Empty(t, out)
+	assert.Contains(t, errs, "machines is a map of name to machine, got a list")
+	assert.NotContains(t, errs, "map[string]")
+	assert.NotContains(t, errs, "struct {")
+	assert.NotContains(t, errs, "yaml:")
+	assert.Zero(t, h.redis.opens+h.opens, "a fixture opens no store")
 }
 
 func TestInventoryRefusesMissingPortBeforeRewritingALegacyMember(t *testing.T) {
@@ -288,7 +306,7 @@ func TestInventoryHelpAndDocsReachAWorkingRun(t *testing.T) {
 	for _, w := range []string{
 		"--list", "--host", "--redis", "--fixture", "--timeout",
 		"NOVA_SPRINT_REDIS", "NOVA_MACHINE",
-		"first run", "nova-config inventory --fixture fleet/testdata/inventory-fixture.yml",
+		"first run", "nova-config inventory --example > inv.yml; nova-config inventory --fixture inv.yml",
 		"-i wants an executable", "column one", "ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --list", "a failed inventory is an empty inventory", "unparsed_is_failed = True",
 		"_meta.hostvars", "ansible never calls --host", "the default when neither --list nor --host is given",
 		"store_deployer", "nova_loops", "nova_os", "nova_redis_port", "nova_redis_addr", "nova_pg_dsn", "never Postgres",

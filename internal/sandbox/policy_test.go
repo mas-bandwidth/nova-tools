@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -554,6 +555,39 @@ func TestDarwinProfileGrantsTheXcodeSelectLink(t *testing.T) {
 	assert.NotContains(t, grants, `(subpath "/var/db")`, "the profile grants a subpath on /var/db; the grant is the xcode_select_link literal, not the directory")
 }
 
+// TestDarwinProfileGrantsTheCallersSymlinkSpellingOfAGrantedPath: following a symlink needs
+// read on the link itself, and the READn/WRITEn grants name only the resolved directory, so
+// `--read /x/rlink -- cat /x/rlink/data.txt` was "Operation not permitted" while /x/r/data.txt
+// read (security#67 finding 1; docs/SPEC-SANDBOX.md rule 5). The profile must carry a literal
+// read grant naming the caller's spelling; a plain path emits none beyond the template's own.
+func TestDarwinProfileGrantsTheCallersSymlinkSpellingOfAGrantedPath(t *testing.T) {
+	t.Parallel()
+
+	needUnixPaths(t)
+	write, read, home, _ := scratch(t)
+	link := filepath.Join(filepath.Dir(read), "rlink")
+	require.NoError(t, os.Symlink(read, link))
+	wlink := filepath.Join(filepath.Dir(read), "wlink")
+	require.NoError(t, os.Symlink(write, wlink))
+
+	p, bad := Build(Input{Reads: []string{link}, Writes: []string{wlink}, Home: home, Argv: []string{anExecutable(t)}})
+	require.Empty(t, bad, "refused: %v", bad)
+	require.Equal(t, []string{read}, p.Reads, "the policy must still hold the resolved directory")
+	text, _, err := DarwinProfile(p)
+	require.NoError(t, err)
+	grants := grantLines(text)
+	for _, spelling := range []string{link, wlink} {
+		assert.Contains(t, grants, fmt.Sprintf("(allow file-read* (literal %q))", spelling), "no literal read grant for the caller's spelling %s", spelling)
+	}
+
+	plain, bad := Build(in(t, write, read, home, anExecutable(t)))
+	require.Empty(t, bad, "refused: %v", bad)
+	assert.Empty(t, plain.LinkSpellings, "a path spelled as its resolved form needs no extra literal")
+	ptext, _, err := DarwinProfile(plain)
+	require.NoError(t, err)
+	assert.NotContains(t, grantLines(ptext), fmt.Sprintf("(literal %q)", link))
+}
+
 // TestAncestorsGetMetadataOnly: the ancestor literals grant stat, never data. Every proper
 // ancestor of every --read, --write, --cwd and --tmp path gets one
 // (allow file-read-metadata (literal "<dir>")), so the harness's walk up from its cwd (lstat
@@ -681,4 +715,30 @@ func TestMachLookupIsNarrowed(t *testing.T) {
 	} {
 		assert.Contains(t, text, name, "the measured mach-lookup set is missing %s", name)
 	}
+}
+
+// DeletesIn is every --write root, the data home included: what a command may
+// create there it may remove. A path outside every --write is not
+// (docs/SPEC-SANDBOX.md, "deletes-in-every-write-root").
+func TestDeletesInEveryWriteRoot(t *testing.T) {
+	t.Parallel()
+	dir := func() string {
+		t.Helper()
+		got, err := filepath.EvalSymlinks(t.TempDir())
+		require.NoError(t, err)
+		return got
+	}
+	job, data, cache, outside := dir(), dir(), dir(), dir()
+	tmp := filepath.Join(job, ".nova-sandbox-tmp")
+	p := &Policy{Writes: []string{job, data, cache}, Cwd: job, Tmp: tmp, Home: data}
+	assert.True(t, p.DeletesIn(job), "the job dir")
+	assert.True(t, p.DeletesIn(data), "the data home is a --write")
+	assert.True(t, p.DeletesIn(cache), "a cache passed as --write")
+	assert.True(t, p.DeletesIn(filepath.Join(data, "app", "state.db")), "a file beneath the data home")
+	assert.True(t, p.DeletesIn(tmp), "the tmp is under a --write")
+	assert.False(t, p.DeletesIn(outside), "a path outside every --write")
+	assert.False(t, p.DeletesIn(""), "an empty path")
+	assert.False(t, (&Policy{}).DeletesIn(job), "a policy with no --write")
+	assert.Equal(t, []string{job, data, cache}, p.DeleteRoots(), "the roots SANDBOX OK names on deletes=")
+	assert.Empty(t, (&Policy{}).DeleteRoots())
 }

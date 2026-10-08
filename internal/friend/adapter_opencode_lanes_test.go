@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -79,7 +80,7 @@ func TestOpenCodeOpensALaneSessionAndDeliversIntoIt(t *testing.T) {
 	id, err := o.OpenSession(context.Background(), "You are bob.")
 	require.NoError(t, err)
 	assert.Equal(t, "new", id, "the session the listing gained, not the newest")
-	assert.Equal(t, []string{dir, "opencode", "run", "--dir", dir, "You are bob."}, calls[1], "a run with no --session opens one")
+	assert.Equal(t, []string{dir, "opencode", "run", "You are bob."}, calls[1], "a run with no --session opens one")
 	raw, err := os.ReadFile(filepath.Join(dir, OpenCodeConfig))
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"/Users/x/bob-working/**": "allow"`)
@@ -87,7 +88,7 @@ func TestOpenCodeOpensALaneSessionAndDeliversIntoIt(t *testing.T) {
 
 	lt, err := o.DeliverTo(context.Background(), "new", "one card this turn, card c1")
 	require.NoError(t, err)
-	assert.Equal(t, []string{dir, "opencode", "run", "--session", "new", "--dir", dir, "one card this turn, card c1"}, calls[len(calls)-1])
+	assert.Equal(t, []string{dir, "opencode", "run", "--session", "new", "one card this turn, card c1"}, calls[len(calls)-1])
 	assert.Equal(t, "**Blocked:** Permission to read `/Users/x/bob-working/jobs` was rejected", lt.Rejected)
 	lt, err = o.DeliverTo(context.Background(), "new", "another")
 	require.NoError(t, err)
@@ -102,4 +103,85 @@ func TestOpenCodeOpensALaneSessionAndDeliversIntoIt(t *testing.T) {
 	_, err = (&OpenCode{Dir: dir, Run: refusing}).OpenSession(context.Background(), "seed")
 	var refused ProviderRefused
 	assert.ErrorAs(t, err, &refused, "a provider refusing the seed is said as such")
+}
+
+// A read is one run in its own session with the model of its tier, no listing read.
+func TestOpenCodeRunsAReadAsOneShotWithTheTiersModel(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	var calls [][]string
+	run := func(_ context.Context, d, name string, args []string, _ string) (string, int, error) {
+		calls = append(calls, append([]string{d, name}, args...))
+		return "done\n", 0, nil
+	}
+	o := &OpenCode{Dir: dir, Run: run}
+	lt, err := o.RunRead(context.Background(), "prov/m", "do the read")
+	require.NoError(t, err)
+	assert.Zero(t, lt.Exit)
+	assert.Equal(t, [][]string{{dir, "opencode", "run", "--model", "prov/m", "do the read"}}, calls)
+	_, err = o.RunRead(context.Background(), "", "again")
+	require.NoError(t, err)
+	assert.Equal(t, []string{dir, "opencode", "run", "again"}, calls[1])
+}
+
+// An OpenCode API friend's lanes are priced from opencode's own session record
+// (docs/SPEC-FRIEND.md, the Claude lanes, the OpenCode lane): after each run
+// `opencode export <session>` is read and the run's cost is what the session's
+// assistant messages gained, one record line per run; a limit line with its
+// reset beside it is UsageLimited until that reset, as a Claude lane's is.
+func TestAnOpenCodeLanePricesEveryRunFromItsSessionRecordAndPausesAtItsLimit(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	costs := map[string][]string{} // each session's assistant messages' costs, as its record holds them
+	lists, turn := 0, ""
+	var exports []string
+	run := func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
+		switch args[0] {
+		case "session":
+			lists++
+			if lists == 1 {
+				return "[]", 0, nil
+			}
+			return `[{"id":"ses_a","directory":"` + dir + `","updated":20}]`, 0, nil
+		case "export":
+			exports = append(exports, args[1])
+			msgs := []string{`{"info":{"role":"user","cost":0},"parts":[]}`}
+			for _, c := range costs[args[1]] {
+				msgs = append(msgs, `{"info":{"role":"assistant","cost":`+c+`,"tokens":{"input":10,"output":2}},"parts":[]}`)
+			}
+			return "Exporting session: " + args[1] + "\n" + `{"info":{"id":"` + args[1] + `"},"messages":[` + strings.Join(msgs, ",") + "]}\n", 0, nil
+		}
+		costs["ses_a"] = append(costs["ses_a"], turn)
+		if turn == "limit" {
+			costs["ses_a"] = costs["ses_a"][:len(costs["ses_a"])-1]
+			return "Error: Insufficient AI Credits. Your credits will refresh in 3 hours\n", 1, nil
+		}
+		return "done\n", 0, nil
+	}
+	var out strings.Builder
+	p := &OpenCodePriced{OpenCode: &OpenCode{Dir: dir, Run: run, Out: &out}}
+	var lanes LaneHarness = p
+	turn = "0.0100"
+	id, err := lanes.OpenSession(t.Context(), "You are freddy.")
+	require.NoError(t, err)
+	require.Equal(t, "ses_a", id)
+	turn = "0.0250"
+	_, err = lanes.DeliverTo(t.Context(), id, "card c1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"ses_a", "ses_a"}, exports, "every run is priced from its session's record")
+	assert.InDelta(t, 0.035, p.Spent(), 1e-9)
+	assert.Contains(t, out.String(), "opencode: session=ses_a cost=$0.0100 total=$0.0100\n")
+	assert.Contains(t, out.String(), "opencode: session=ses_a cost=$0.0250 total=$0.0350\n", "a run's cost is what its session gained")
+
+	turn = "limit"
+	before := time.Now()
+	_, err = lanes.DeliverTo(t.Context(), id, "card c2")
+	var limited UsageLimited
+	require.ErrorAs(t, err, &limited, "a limit with its reset is a pause until it, not out of funds")
+	assert.Equal(t, "ses_a", limited.Session)
+	assert.WithinDuration(t, before.Add(3*time.Hour), limited.Until, time.Minute)
+	assert.Contains(t, out.String(), "opencode: session=ses_a cost=$0.0000 total=$0.0350\n", "a limited run is priced too")
+	var spender Spender = p
+	assert.Equal(t, "spend: harness=opencode runs=3 cost_usd=0.0350 limited_until="+limited.Until.UTC().Format(time.RFC3339), spender.SpendLine(), "the daemon's beat says what the lanes cost and the limit they stopped at")
+	assert.Empty(t, (&OpenCodePriced{OpenCode: &OpenCode{Dir: dir, Run: run}}).SpendLine(), "no run, nothing to say")
 }

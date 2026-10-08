@@ -561,6 +561,53 @@ func TestDiskGuardWithoutTheOpenPathsRemovesNothingThatNeedsThem(t *testing.T) {
 	assert.Contains(t, out.String(), "DISK-GUARD INCOMPLETE freed=0 free=107374182400 failed=1\n")
 }
 
+// A launch agent's PATH leaves out /usr/sbin, where macOS keeps lsof: the guard looks for
+// lsof on PATH, then at its standard paths, and says once at its start which it took, or
+// that it has none and what that costs the run.
+func TestDiskGuardFindsLsofOffPathAndSaysSoOnce(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	missing, there := filepath.Join(dir, "sbin", "lsof"), filepath.Join(dir, "usr", "sbin", "lsof")
+	dgFile(t, there, 10, dgNow)
+	require.NoError(t, os.Chmod(there, 0o755))
+	notOnPath := func(string) (string, error) { return "", errors.New("executable file not found in $PATH") }
+
+	path, note := findLsof(func(string) (string, error) { return "/opt/bin/lsof", nil }, []string{there}, isExecutable)
+	assert.Equal(t, "/opt/bin/lsof", path, "PATH's lsof is taken first")
+	assert.Empty(t, note, "nothing to say when PATH has it")
+
+	path, note = findLsof(notOnPath, []string{missing, there}, isExecutable)
+	assert.Equal(t, there, path, "off PATH, the first standard path that holds an executable lsof")
+	assert.Equal(t, "NOTE lsof is not on PATH; the open files of live processes are read with "+there, note)
+
+	plain := filepath.Join(dir, "plain", "lsof")
+	dgFile(t, plain, 10, dgNow)
+	require.NoError(t, os.Chmod(plain, 0o644))
+	path, note = findLsof(notOnPath, []string{missing, plain}, isExecutable)
+	assert.Empty(t, path, "a file that cannot be run is no lsof")
+	assert.Contains(t, note, "NOTE lsof is not on PATH nor at "+missing+", "+plain+": the open files of live processes cannot be read")
+
+	held, err := lsofHeld("")
+	assert.Nil(t, held)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "lsof is not on PATH nor at /usr/sbin/lsof")
+
+	g, out := dgGuard(t)
+	g.start = []string{note}
+	g.held = func() ([]string, error) { return lsofHeld("") }
+	land := t.TempDir()
+	clone := filepath.Join(land, "github.com-o-r-0123456789abcdef")
+	dgFile(t, filepath.Join(clone, "main.go"), 100, dgNow.Add(-48*time.Hour))
+	dgAge(t, clone, dgNow.Add(-48*time.Hour))
+	g.landDir = land
+	assert.Equal(t, 1, g.run())
+	assert.DirExists(t, clone, "without lsof nothing a live process may hold is removed")
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	require.NotEmpty(t, lines)
+	assert.Equal(t, note, lines[0], "the run says what it lacks before any rule")
+	assert.Equal(t, 1, strings.Count(out.String(), "NOTE lsof is not on PATH"), "and says it once")
+}
+
 // lsofPaths reads lsof's -F pn listing: every absolute name, the guard's own pid's left out.
 func TestDiskGuardLsofPathsLeavesOutItsOwnFiles(t *testing.T) {
 	t.Parallel()
@@ -588,4 +635,68 @@ func TestDiskGuardProcPathsReadsCwdAndOpenFiles(t *testing.T) {
 	assert.ElementsMatch(t, []string{"/home/u/land/c1", "/home/u/land/c1/.git/index.lock"}, got)
 	_, err = procPaths(filepath.Join(proc, "missing"), 42)
 	assert.Error(t, err, "an unreadable /proc is no empty list")
+}
+
+// The stop floor reads the data volume's free. A volume whose free could not be read is
+// no reading of zero: it must not fake a stop. The failure is said on its NOTE line and
+// the closing line is DISK-GUARD INCOMPLETE, never DISK-GUARD STOP (the reader's finding,
+// diskguard.go's free stays zero when the home volume could not be read).
+func TestDiskGuardDoesNotStopOnAnUnreadVolume(t *testing.T) {
+	t.Parallel()
+	g, out := dgGuard(t)
+	g.home = filepath.Join(t.TempDir(), "data")
+	g.stopFloor = 200 * gib
+	g.free = func(p string) (uint64, error) {
+		if p == g.home {
+			return 0, errors.New("permission denied")
+		}
+		return 300 * gib, nil
+	}
+	assert.Equal(t, 1, g.run(), "an unread volume is reported, not read as zero")
+	assert.Contains(t, out.String(), "DISK-GUARD INCOMPLETE")
+	assert.NotContains(t, out.String(), "DISK-GUARD STOP")
+}
+
+// The stop floor reads every volume this pass reads, the home volume and each --root, not
+// the home volume alone: a root under the stop floor stops the loops whatever the home
+// volume reads (the reader's finding, diskguard.go stored the free of index 0, the home
+// volume, so a root under the floor never stopped).
+func TestDiskGuardStopsOnARootUnderTheStopFloor(t *testing.T) {
+	t.Parallel()
+	g, out := dgGuard(t)
+	root := t.TempDir()
+	g.roots = []string{root}
+	g.stopFloor = 200 * gib
+	g.free = func(p string) (uint64, error) {
+		if p == root {
+			return 150 * gib, nil
+		}
+		return 300 * gib, nil
+	}
+	assert.Equal(t, 3, g.run(), "a root under the stop floor stops the loops")
+	assert.Contains(t, out.String(), "DISK-GUARD STOP ")
+	assert.Contains(t, out.String(), "free=161061273600")
+	assert.NotContains(t, out.String(), "DISK-GUARD OK")
+}
+
+// A volume that could not be read reaches the closing line: the run never stops on the
+// readings it has while one volume is unknown, even when another volume is under the stop
+// floor (the reader's finding, diskguard.go returned STOP before the INCOMPLETE line, so
+// an unread root lost to a low home reading).
+func TestDiskGuardDoesNotStopWhenAVolumeCouldNotBeRead(t *testing.T) {
+	t.Parallel()
+	g, out := dgGuard(t)
+	root := filepath.Join(t.TempDir(), "data")
+	g.roots = []string{root}
+	g.stopFloor = 200 * gib
+	g.free = func(p string) (uint64, error) {
+		if p == root {
+			return 0, errors.New("permission denied")
+		}
+		return 10 * gib, nil // the home volume is under the stop floor
+	}
+	assert.Equal(t, 1, g.run(), "an unread root is reported, not read as a low home volume")
+	assert.Contains(t, out.String(), "could not be read (permission denied)")
+	assert.Contains(t, out.String(), "DISK-GUARD INCOMPLETE")
+	assert.NotContains(t, out.String(), "DISK-GUARD STOP")
 }

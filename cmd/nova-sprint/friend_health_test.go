@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -85,7 +87,7 @@ func TestFriendHealthIsTheSeatsAndFencedByItsGeneration(t *testing.T) {
 	assert.Equal(t, 1, code, errs)
 	assert.Contains(t, errs, "after the server's clock", "a proof dated after the server's clock is refused")
 
-	ta.a.sleep(sprint.FriendObservedDownAfter + time.Second)
+	ta.a.sleep(sprint.FriendPongWindow + time.Second)
 	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| down", "ten seconds without a newer proof")
 	ta.ok("friend beat amy")
 	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| down", "her own beat never makes an observed friend up again")
@@ -130,7 +132,7 @@ func TestTheFriendsTableShowsUpHeldOrDownWithTheReason(t *testing.T) {
 	frame = tableOf(ta.frame(), sprint.Friends)
 	assert.Contains(t, frame, "held (resting her, until "+ta.a.clock12(back, ta.now)+")", frame)
 	ta.json("where", &w)
-	assert.True(t, strings.HasPrefix(w.Tables[sprint.Friends]["amy"]["status"], sprint.Held+" ("), "where --json carries the cell as printed")
+	assert.True(t, strings.HasPrefix(cellText(w.Tables[sprint.Friends]["amy"]["status"]), sprint.Held+" ("), "where --json carries the cell as printed")
 	ta.ok("friend up amy")
 	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| down", "the hold lifted, the observation (down) stands")
 	ta.a.sleep(time.Second)
@@ -138,12 +140,27 @@ func TestTheFriendsTableShowsUpHeldOrDownWithTheReason(t *testing.T) {
 	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| up")
 }
 
-// A friend-card delivery wakes the friend: one bus message from the coordinator to her
-// per card delivered, naming the card and its inbox path; a send that fails never fails
-// the delivery, is said on sync's line and written on the card's story.
-func TestFriendSyncWakesTheFriendWithOneBusMessagePerDelivery(t *testing.T) {
+// A one-shot friend's delivery wakes her once per card: one bus message from the
+// coordinator, naming the card and its inbox path. A send that fails never fails
+// the delivery, is said on sync's line and written on the card's story. Batch mode
+// is TestFriendSyncWakesOncePerPassInBatchMode.
+func TestFriendSyncWakesOneShotFriendWithOneBusMessagePerDelivery(t *testing.T) {
 	t.Parallel()
+	oneShot := func(ta *testApp) {
+		read := ta.a.friends
+		ta.a.friends = func(ctx context.Context, pg string) ([]config.Row, error) {
+			rows, err := read(ctx, pg)
+			for i := range rows {
+				if rows[i].Fields == nil {
+					rows[i].Fields = map[string]string{}
+				}
+				rows[i].Fields["mode"] = config.FriendModeOneShot
+			}
+			return rows, err
+		}
+	}
 	ta, root := friendCardApp(t, "friend amy", "amy")
+	oneShot(ta)
 	ta.ok("tick")
 	ta.ok("friend sync --root " + root)
 	ta.mu.Lock()
@@ -164,7 +181,10 @@ func TestFriendSyncWakesTheFriendWithOneBusMessagePerDelivery(t *testing.T) {
 
 	// the bus is down: the delivery stands, sync says so, and the card's story has it
 	ta2, root2 := friendCardApp(t, "friend amy", "amy")
-	ta2.a.bus = func(_ context.Context, _ bus.Message) error { return errors.New("dial tcp: connection refused") }
+	oneShot(ta2)
+	ta2.a.bus = func(_ context.Context, _ bus.Message, _ func(string)) error {
+		return errors.New("dial tcp: connection refused")
+	}
 	ta2.ok("tick")
 	out := ta2.ok("friend sync --root " + root2)
 	assert.Contains(t, out, "FRIEND-CARD DELIVERED friend=amy card=s1-1.w1")
@@ -176,4 +196,86 @@ func TestFriendSyncWakesTheFriendWithOneBusMessagePerDelivery(t *testing.T) {
 	assert.True(t, strings.Contains(story, "nova-bus send --as coordinator --to amy"), story)
 	ta.clean()
 	ta2.clean()
+}
+
+// friend sync's bus message goes through friend.Courier, its result watched: a store that
+// refuses the server's login is one alarm, raised at the first failed send as one
+// FRIEND-CARD BUS-ALARM line on sync's output and named in the note on the card's story,
+// and cleared at the next send that succeeds (docs/SPEC-FRIEND.md, fr-delivery-receipts.w1).
+// The store is bus's fake behind the app's dial (busOpen): no socket.
+func TestFriendSyncSaysTheBusStoresAlarmAndTheNextSendClearsIt(t *testing.T) {
+	t.Parallel()
+	ta, root := friendCardApp(t, "friend amy", "amy")
+	env := ta.a.getenv
+	ta.a.getenv = func(k string) string {
+		return map[string]string{busRedisEnv: "bus.test:6379", busUserEnv: "sprint"}[k] + env(k)
+	}
+	fake := bustest.NewFake(time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC), "coordinator", "amy")
+	fake.Friends = []string{"amy"}
+	fake.Fail = errors.New("WRONGPASS invalid username-password pair or user is disabled.")
+	var dialed []string
+	ta.a.busOpen = func(_ context.Context, addr, user string) (*bus.Bus, func(), error) {
+		dialed = append(dialed, addr+" as "+user)
+		return &bus.Bus{Store: fake}, func() {}, nil
+	}
+	ta.a.bus = ta.a.sendBus
+	ta.ok("tick")
+	out := ta.ok("friend sync --root " + root)
+	assert.Contains(t, out, "FRIEND-CARD DELIVERED friend=amy card=s1-1.w1")
+	assert.Contains(t, out, "FRIEND-CARD BUS-ALARM bus store bus.test:6379 refuses the login of user sprint: login refused (WRONGPASS)")
+	_, alarm, _ := strings.Cut(out, "FRIEND-CARD BUS-ALARM")
+	alarm, _, _ = strings.Cut(alarm, "\n")
+	assert.NotContains(t, alarm, "invalid username-password", "the alarm carries the store's refusal word, never the rest of its text")
+	assert.Contains(t, out, "the bus store's alarm is raised: FRIEND-CARD BUS-ALARM", "the note names the alarm")
+	assert.Equal(t, 1, strings.Count(out, "BUS-ALARM bus store"), "raised once")
+
+	var said []string
+	say := func(line string) { said = append(said, line) }
+	m := bus.Message{From: "coordinator", To: []string{"amy"}, Subject: "card c2 dealt", Body: "hello"}
+	require.Error(t, ta.a.sendBus(context.Background(), m, say))
+	assert.Empty(t, said, "a second failure counts in the raised alarm and says nothing new")
+
+	fake.Fail = nil
+	require.NoError(t, ta.a.sendBus(context.Background(), m, say))
+	require.Len(t, said, 1)
+	assert.Contains(t, said[0], "FRIEND-CARD BUS-ALARM bus store bus.test:6379 answers user sprint again: 2 sends failed (auth)")
+	assert.Equal(t, 1, fake.Len(bus.StreamOf("amy")), "the message reached her stream once the store answered")
+	assert.Equal(t, []string{"bus.test:6379 as sprint", "bus.test:6379 as sprint", "bus.test:6379 as sprint", "bus.test:6379 as sprint"}, dialed, "one connection per send, and one before the deal's to name her (enrollBus)")
+}
+
+// friend health --clear removes the coordinator's observation of a friend, so her status is
+// her session's evidence alone: with the observation gone she is up only on a card of hers
+// finished, and her beat never brings her up. --dry-run says what stood and writes nothing;
+// the seat's holder alone clears; an observation's flag beside --clear is refused.
+func TestFriendHealthClearLeavesHerOnHerSessionsEvidenceAlone(t *testing.T) {
+	t.Parallel()
+	ta, _ := friendApp(t, "amy")
+	ta.ok("friend sync --root " + t.TempDir())
+	ta.ok("friend health amy --state up --seen " + ta.now.UTC().Format(time.RFC3339) + " --generation 1")
+	ta.a.sleep(sprint.FriendPongWindow + time.Second)
+	ta.ok("friend beat amy")
+	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| down", "observed: her own beat never brings her up")
+
+	assert.Equal(t, "FRIEND-HEALTH DRY-RUN amy clear was=up; nothing was changed\n", ta.dry("friend health amy --clear --dry-run"))
+	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| down", "a dry run removes nothing")
+
+	code, _, errs := ta.do("friend health amy --clear --actor stella")
+	assert.Equal(t, 2, code, errs)
+	assert.Contains(t, errs, "friend health is the coordinator's alone: coordinator, not stella")
+	code, _, errs = ta.do("friend health amy --clear --state up")
+	assert.Equal(t, 2, code, errs)
+	assert.Contains(t, errs, "--clear removes her observation and takes no observation's flag")
+
+	assert.Equal(t, "FRIEND-HEALTH OK amy cleared=true was=up status=down\n", ta.ok("friend health amy --clear"))
+	ta.ok("friend beat amy")
+	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| down", "her beat is no evidence once the observation is gone")
+	var w whereView
+	ta.json("where", &w)
+	assert.Equal(t, sprint.Down, w.Tables[sprint.Friends]["amy"]["status"])
+
+	assert.Equal(t, "FRIEND-HEALTH OK amy cleared=true was=none status=down\n", ta.ok("friend health amy --clear"), "a friend with no observation clears all the same")
+
+	code, _, errs = ta.do("friend health nobody --clear")
+	assert.Equal(t, 1, code, errs)
+	assert.Contains(t, errs, "no friend nobody on the friends table")
 }

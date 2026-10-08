@@ -31,6 +31,7 @@ func TestAReturnedReadAskedAgainInPlaceRunsOnAnotherRoute(t *testing.T) {
 	h.work("m1")
 	h.work("m2")
 	h.machine()
+	// the tick asked the pair together (reads are asked together, sprint.ReadsWanted)
 	var back *sprint.Card
 	for _, rc := range readsAt(h.snap(), h.snap().Work.Card("s1-1")) {
 		if rc.F(sprint.FieldRoute) == "pro-b" {
@@ -65,6 +66,7 @@ func TestAReturnedReadTakenToAnotherReaderRunsOnAnotherRoute(t *testing.T) {
 	h.work("m1")
 	h.work("m2")
 	h.machine()
+	// the tick asked the pair together (reads are asked together, sprint.ReadsWanted)
 	var back *sprint.Card
 	for _, rc := range readsAt(h.snap(), h.snap().Work.Card("s1-1")) {
 		if rc.F(sprint.FieldRoute) == "pro-b" {
@@ -130,7 +132,7 @@ func TestTheLevelMovesAReadAtMostOnce(t *testing.T) {
 				}
 			case 1:
 				for _, rc := range s.Readers.Cell(rd, sprint.Reading) {
-					h.must(ReadStep(sprint.ReadReq{As: rd, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
+					h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rd, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
 				}
 			}
 		}

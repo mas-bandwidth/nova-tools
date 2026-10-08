@@ -1,7 +1,7 @@
 ----------------------------- MODULE SprintRules -----------------------------
 \* The machine feeds itself (the coordinator, for the owner, 2026-10-04 at 1:36 PM: "I want this
 \* sort of oh no fleet is idle, do judgement, release more cards thing -- i want this
-\* more automated."). Five small state machines of nova-sprint, each its own Part, each
+\* more automated."). Six small state machines of nova-sprint, each its own Part, each
 \* checked alone; docs/SPEC-SPRINT.md section 2 ("A card replaced by its twin") and
 \* section 8 ("Answered by rule", and the idle alarm in section 14), internal/sprint
 \* twins.go, rules.go and idle.go, cmd/nova-sprint landgo.go (the base gate).
@@ -17,6 +17,11 @@
 \*   verb, an outside event: Stamp, and Silence as the stamp ages past the window), the one
 \*   wait a generation, the hold of a card whose holder never stamped (the default: wait
 \*   only), and the return and redeal of one whose holder stamped and went silent.
+\* Part "reads": one card's attempts under a reader's broken reads (rules.go, ruleReadBroken):
+\*   the rule reworks it with the finding as the fix, on the same tier; a finding that names
+\*   a file outside PATHS twins it with PATHS widened by that file, its attempts on the new
+\*   brief from the first; a card at its brief's bound (the same finding twice, or Cap
+\*   attempts on one brief) is a mind's, never the rule's.
 \* Part "gate": the lander's base tree gate on one base commit: red or green each time
 \*   it is gated; the third failure stops the stream.
 \* Part "idle": the fleet idle or working each tick; the alarm once an episode after
@@ -38,6 +43,9 @@
 \*                (the rule before the stamp existed): NeverStampedNeverReturned
 \*   "stopfirst"  the base gate stops the stream on its first failure: BaseStopsOnThird
 \*   "everytick"  the idle alarm is pushed every tick of an episode: AlarmOncePerEpisode
+\*   "nobound"    the read-broken rule reworks a card at its brief's bound: ReadAnswersBounded
+\*   "twinall"    the read-broken rule twins a card whose finding names no file outside
+\*                PATHS: TwinsWiden
 
 EXTENDS Integers, FiniteSets
 
@@ -50,19 +58,26 @@ TwinIds == {"o", "t", "d1", "d2"}
 Waiters == {"d1", "d2"}
 Cols == {"absent", "waiting", "open", "landed", "dropped"}
 
+\* -- reads: the files a finding may name outside the card's first PATHS, and findings
+\* inside them (or naming no file)
+RdFiles == {"f1", "f2"}
+RdFindings == RdFiles \cup {"in1", "in2"}
+
 \* -- every part's variables
 VARIABLES col, need, blocked, twin,               \* twins
           tier, fails, st, attempts, envFails,     \* rules
           gen, waited, progress, late, waits, lst, stamped, badReturn, \* late
+          rdst, rdatt, rdlast, rdfind, rdpaths, rdtwins, rdtotal, \* reads
           gfails, stopped,                         \* gate
           idle, since, said, alarms, clk, nalarm, nclear \* idle
 
 twinVars == <<col, need, blocked, twin>>
 ruleVars == <<tier, fails, st, attempts, envFails>>
 lateVars == <<gen, waited, progress, late, waits, lst, stamped, badReturn>>
+rdVars == <<rdst, rdatt, rdlast, rdfind, rdpaths, rdtwins, rdtotal>>
 gateVars == <<gfails, stopped>>
 idleVars == <<idle, since, said, alarms, clk, nalarm, nclear>>
-vars == <<twinVars, ruleVars, lateVars, gateVars, idleVars>>
+vars == <<twinVars, ruleVars, lateVars, rdVars, gateVars, idleVars>>
 
 TypeOK ==
   /\ col \in [TwinIds -> Cols]
@@ -82,6 +97,13 @@ TypeOK ==
   /\ lst \in {"working", "withdrawn"}
   /\ stamped \in BOOLEAN
   /\ badReturn \in BOOLEAN
+  /\ rdst \in {"working", "broken", "bound", "done", "judged"}
+  /\ rdatt \in Nat
+  /\ rdlast \in RdFindings \cup {None}
+  /\ rdfind \in RdFindings \cup {None}
+  /\ rdpaths \subseteq RdFiles
+  /\ rdtwins \in Nat
+  /\ rdtotal \in Nat
   /\ gfails \in 0..3
   /\ stopped \in BOOLEAN
   /\ idle \in BOOLEAN
@@ -98,6 +120,8 @@ Init ==
   /\ tier = 1 /\ fails = 0 /\ st = "working" /\ attempts = 0 /\ envFails = 0
   /\ gen = 0 /\ waited = -1 /\ progress = FALSE /\ late = FALSE /\ waits = 0 /\ lst = "working"
   /\ stamped = FALSE /\ badReturn = FALSE
+  /\ rdst = "working" /\ rdatt = 1 /\ rdlast = None /\ rdfind = None /\ rdpaths = {}
+  /\ rdtwins = 0 /\ rdtotal = 0
   /\ gfails = 0 /\ stopped = FALSE
   /\ idle = FALSE /\ since = -1 /\ said = FALSE /\ alarms = 0 /\ clk = 0 /\ nalarm = 0 /\ nclear = 0
 
@@ -341,17 +365,73 @@ AlarmOncePerEpisode == alarms <= 1
 ClearFollowsAlarm == nclear <= nalarm
 
 -----------------------------------------------------------------------------
+\* Part "reads": one card's attempts under a reader's broken reads (internal/sprint rules.go,
+\* ruleReadBroken; brief_bound.go, AtBriefBound; steps_review.go, Read).
+
+\* the finding names a file outside the card's PATHS
+RdOutside(f) == f \in RdFiles /\ f \notin rdpaths
+
+\* the card's brief is at its bound for finding f: the same finding as the attempt before, or
+\* Cap attempts on one brief
+RdAtBound(f) == f = rdlast \/ rdatt >= Cap
+
+\* the outside: a reader finds the attempt broken with finding f (Read writes the brief's
+\* bound judgment instead at the bound), or the attempt lands
+RdReadBroken(f) ==
+  /\ rdst = "working"
+  /\ rdfind' = f
+  /\ rdst' = IF RdAtBound(f) /\ Broken # "nobound" THEN "bound" ELSE "broken"
+  /\ UNCHANGED <<rdatt, rdlast, rdpaths, rdtwins, rdtotal>>
+RdLands ==
+  /\ rdst = "working"
+  /\ rdst' = "done"
+  /\ UNCHANGED <<rdatt, rdlast, rdfind, rdpaths, rdtwins, rdtotal>>
+
+\* the rule: a finding naming a file outside PATHS twins the card with PATHS widened by it,
+\* attempts on the new brief from the first; any other finding is the fix of a rework on the
+\* same tier
+RuleReadBroken ==
+  /\ rdst = "broken"
+  /\ IF RdOutside(rdfind) \/ Broken = "twinall"
+       THEN /\ rdpaths' = rdpaths \cup ({rdfind} \cap RdFiles)
+            /\ rdatt' = 1 /\ rdlast' = None /\ rdtwins' = rdtwins + 1
+       ELSE /\ rdatt' = rdatt + 1 /\ rdlast' = rdfind
+            /\ UNCHANGED <<rdpaths, rdtwins>>
+  /\ rdst' = "working" /\ rdtotal' = rdtotal + 1
+  /\ UNCHANGED rdfind
+
+\* a card at its brief's bound is answered by a mind (brief or drop), never by rule
+RdMind ==
+  /\ rdst = "bound"
+  /\ rdst' = "judged"
+  /\ UNCHANGED <<rdatt, rdlast, rdfind, rdpaths, rdtwins, rdtotal>>
+
+RdNext == RdLands \/ RuleReadBroken \/ RdMind \/ \E f \in RdFindings : RdReadBroken(f)
+
+\* The rule's answers never loop: under Cap attempts a brief, and a twin only for a file
+\* that widens PATHS.
+ReadAnswersBounded == rdtotal <= Cap * (Cardinality(RdFiles) + 1)
+
+\* Every twin widens PATHS by a file.
+TwinsWiden == rdtwins <= Cardinality(rdpaths)
+
+\* Every broken read is answered: by rule below the bound, by a mind at it.
+ReadAnswered == (rdst \in {"broken", "bound"}) ~> (rdst \notin {"broken", "bound"})
+
+-----------------------------------------------------------------------------
 
 Next ==
-  \/ Part = "twins" /\ TwinNext /\ UNCHANGED <<ruleVars, lateVars, gateVars, idleVars>>
-  \/ Part = "rules" /\ RuleNext /\ UNCHANGED <<twinVars, lateVars, gateVars, idleVars>>
-  \/ Part = "late" /\ LateNext /\ UNCHANGED <<twinVars, ruleVars, gateVars, idleVars>>
-  \/ Part = "gate" /\ GateNext /\ UNCHANGED <<twinVars, ruleVars, lateVars, idleVars>>
-  \/ Part = "idle" /\ IdleNext /\ UNCHANGED <<twinVars, ruleVars, lateVars, gateVars>>
+  \/ Part = "twins" /\ TwinNext /\ UNCHANGED <<ruleVars, lateVars, rdVars, gateVars, idleVars>>
+  \/ Part = "rules" /\ RuleNext /\ UNCHANGED <<twinVars, lateVars, rdVars, gateVars, idleVars>>
+  \/ Part = "late" /\ LateNext /\ UNCHANGED <<twinVars, ruleVars, rdVars, gateVars, idleVars>>
+  \/ Part = "reads" /\ RdNext /\ UNCHANGED <<twinVars, ruleVars, lateVars, gateVars, idleVars>>
+  \/ Part = "gate" /\ GateNext /\ UNCHANGED <<twinVars, ruleVars, lateVars, rdVars, idleVars>>
+  \/ Part = "idle" /\ IdleNext /\ UNCHANGED <<twinVars, ruleVars, lateVars, rdVars, gateVars>>
 
 \* The rules and a mind act when they may; the outside is unfair.
 Fairness ==
-  /\ WF_vars(Part = "rules" /\ (RuleFailed \/ RuleBound \/ Mind) /\ UNCHANGED <<twinVars, lateVars, gateVars, idleVars>>)
+  /\ WF_vars(Part = "rules" /\ (RuleFailed \/ RuleBound \/ Mind) /\ UNCHANGED <<twinVars, lateVars, rdVars, gateVars, idleVars>>)
+  /\ WF_vars(Part = "reads" /\ (RuleReadBroken \/ RdMind) /\ UNCHANGED <<twinVars, ruleVars, lateVars, gateVars, idleVars>>)
 
 Spec == Init /\ [][Next]_vars /\ Fairness
 

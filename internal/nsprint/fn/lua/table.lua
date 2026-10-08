@@ -466,15 +466,24 @@ do
       if table.concat(hidden, ',') ~= (h.hidden or '') or (h.visible and h.visible ~= '0' and h.visible ~= '1') then return nil, T.refuse('DEFINITION') end
     end
     local cfg = T.config(h)
+    -- The view family is reserved like the table family: a member prefix or
+    -- an epoch key inside it would interleave with the hashes and the SET that
+    -- ns_view_set/state/del own (security#78 finding 5).
     if not T.word(cfg.member_prefix) or string.sub(cfg.member_prefix, -1) ~= ':' or
         (string.sub(cfg.member_prefix, 1, 6) == 'table:' and cfg.member_prefix ~= 'table::member:') or
+        T.viewfamily(cfg.member_prefix) or
         not T.word(cfg.epoch_field) or
         (cfg.epoch_key ~= '' and (not T.word(cfg.epoch_key) or cfg.epoch_key == 'tables' or
-        string.sub(cfg.epoch_key, 1, 6) == 'table:' or
+        string.sub(cfg.epoch_key, 1, 6) == 'table:' or T.viewfamily(cfg.epoch_key) or
         string.sub(cfg.epoch_key, 1, #cfg.member_prefix) == cfg.member_prefix)) then
       return nil, T.refuse('CONFIG')
     end
     return cols
+  end
+  -- T.viewfamily(key): whether key is the 'views' SET or a 'view:<name>'
+  -- hash, the keys the view functions own (security#78 finding 5).
+  function T.viewfamily(key)
+    return key == 'views' or string.sub(key, 1, 5) == 'view:'
   end
   function T.prefix(name, epoch)
     return 'table:' .. name .. (epoch == '0' and '' or ':' .. epoch)
@@ -636,6 +645,13 @@ do
   function T.memberkey(d, id) return d.cfg.member_prefix .. id end
   function T.member(d, id)
     if not T.word(id) then return nil, nil, T.refuse('MEMBER', 'a member id is a nonempty string without control characters') end
+    -- a member id over the batch's member-id bound is refused before any read,
+    -- naming the bound and the count found, never the id (docs/SPEC-NOVA-TABLE.md,
+    -- the bounds of the batch section; the single-call paths hold it too).
+    do
+      local lim = T.over('member_id_bytes', #id, '')
+      if lim then return nil, nil, lim end
+    end
     local mkey = T.memberkey(d, id)
     local flat = redis.pcall('HGETALL', mkey)
     if type(flat) == 'table' and flat.err then
@@ -855,6 +871,13 @@ do
     local h = {}
     for _, k in ipairs({'label', 'exclude', 'owner'}) do
       if spec[k] and type(spec[k]) ~= 'string' then return nil, T.refuse('ROW', row) end
+      -- a label, exclude or owner over the batch's field-value bound is refused
+      -- before the row is written, naming the bound and the count found
+      -- (docs/SPEC-NOVA-TABLE.md, the bounds of the batch section).
+      if spec[k] then
+        local lim = T.over('field_value_bytes', #spec[k], row)
+        if lim then return nil, lim end
+      end
       if spec[k] and spec[k] ~= '' then h[k] = spec[k] end
     end
     if spec.binds and type(spec.binds) ~= 'table' then return nil, T.refuse('BINDKEY', row) end
@@ -863,8 +886,9 @@ do
       if not c then return nil, T.refuse('NOCOL', row, col) end
       if c.noset then return nil, T.refuse('TEXT', row, col) end
       if not T.word(key) then return nil, T.refuse('BINDKEY', row, col) end
-      -- Reserve the entire table namespace, including future epochs/metadata.
-      if key == 'tables' or string.sub(key, 1, 6) == 'table:' then return nil, T.refuse('OWNEDALIAS', row, col, key) end
+      -- Reserve the entire table namespace, including future epochs/metadata,
+      -- and the view family (security#78 finding 5).
+      if key == 'tables' or string.sub(key, 1, 6) == 'table:' or T.viewfamily(key) then return nil, T.refuse('OWNEDALIAS', row, col, key) end
       h['key:' .. col] = key
     end
     return h
@@ -1219,6 +1243,13 @@ do
       local c = T.col(d, col)
       if not c then return nil, T.refuse('NOCOL', row, col) end
       if c.projection ~= 'text' then return nil, T.refuse('NOTTEXT', row, col) end
+      -- a text value over the batch's field-value bound is refused before the
+      -- payload is staged, naming the bound and the count found (docs/
+      -- SPEC-NOVA-TABLE.md, the bounds of the batch section).
+      do
+        local lim = T.over('field_value_bytes', #value, row)
+        if lim then return nil, lim end
+      end
     end
     local columns = T.sortedkeys(values)
     for _, col in ipairs(columns) do
@@ -1646,6 +1677,15 @@ do
   -- Validate every referenced table and every command before publishing the view.
   redis.register_function('ns_view_set', function(keys, args)
     if #args ~= 4 or not T.name(args[1]) then return T.refuse('ARGS', 'view_set') end
+    -- a title or summary over the batch's field-value bound is refused before
+    -- the view is written, naming the bound and the count found (docs/
+    -- SPEC-NOVA-TABLE.md, the bounds of the batch section).
+    do
+      local lim = T.over('field_value_bytes', #args[3], '')
+      if lim then return lim end
+      lim = T.over('field_value_bytes', #args[4], '')
+      if lim then return lim end
+    end
     local names = {}
     for name in string.gmatch(args[2], '[^,]+') do
       local d, err = T.def(name)
@@ -2635,13 +2675,23 @@ do
           T.rethrow(score)
         end
         if not score then return T.refuse('DRIFT', r, c, id) end
-        if not idx then
-          index_ids = {}
-          for _, e in ipairs(members_list) do index_ids[#index_ids + 1] = e.id end
-          idx = T.place_index(d, index_ids)
+        -- A placed member the batch only guards (nothing created, moved,
+        -- removed, set or unset) is answered from its own record and the one
+        -- cell the record names (the ZSCORE above): no whole-table place index,
+        -- so a guard batch costs its members', not rows x columns (security#78
+        -- finding 4; docs/SPEC-NOVA-TABLE.md, "Cost of a batch"). The index is
+        -- kept for a member the batch writes, and for an unplaced member, whose
+        -- reverse check needs every cell.
+        local writes = entry.create or entry.move or entry.remove or next(entry.set or {}) or next(entry.unset or {})
+        if writes then
+          if not idx then
+            index_ids = {}
+            for _, e in ipairs(members_list) do index_ids[#index_ids + 1] = e.id end
+            idx = T.place_index(d, index_ids)
+          end
+          local drift = T.index_drift(idx, id, current_place)
+          if drift then return drift end
         end
-        local drift = T.index_drift(idx, id, current_place)
-        if drift then return drift end
         member_places[id] = current_place
         member_scores[id] = tonumber(score)
         member_score_text[id] = score

@@ -1,23 +1,56 @@
 package main
 
 import (
-	"go/parser"
-	"go/token"
+	"encoding/json"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// loadPackagesWithJSON loads packages using go list -json to avoid conflicts with -f flag.
+func loadPackagesWithJSON(t *testing.T, dir string, tests bool) []goListPackage {
+	t.Helper()
+	args := []string{"list", "-json"}
+	if tests {
+		args = append(args, "./...")
+	} else {
+		args = append(args, ".")
+	}
+	cmd := exec.Command("go", args...)
+	cmd.Dir = dir
+	cmd.Env = goenv.Clean(os.Environ())
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "failed to run go list in %s: %s", dir, string(output))
+
+	var packages []goListPackage
+	decoder := json.NewDecoder(strings.NewReader(string(output)))
+	for decoder.More() {
+		var p goListPackage
+		err := decoder.Decode(&p)
+		require.NoError(t, err, "failed to decode go list output in %s: %v", dir, err)
+		packages = append(packages, p)
+	}
+	require.NotEmpty(t, packages, "no package loaded from %s", dir)
+	return packages
+}
+
+type goListPackage struct {
+	Name    string   `json:"Name"`
+	Dir     string   `json:"Dir"`
+	Imports []string `json:"Imports"`
+}
 
 // Test 16: TestNoKeychainAndNoCryptoDependency
 func TestNoKeychainAndNoCryptoDependency(t *testing.T) {
 	t.Parallel()
 	pkgs := []string{"cmd/nova-secrets", "internal/secrets"}
-	fset := token.NewFileSet()
 
 	forbiddenImports := []string{
 		"filippo.io/age",
@@ -38,16 +71,12 @@ func TestNoKeychainAndNoCryptoDependency(t *testing.T) {
 			}
 		}
 
-		pkgsMap, err := parser.ParseDir(fset, dir, nil, parser.ImportsOnly)
-		require.NoError(t, err, "failed to parse package in %s: %v", dir, err)
+		loaded := loadPackagesWithJSON(t, dir, true)
 
-		for _, p := range pkgsMap {
-			for fileName, f := range p.Files {
-				for _, imp := range f.Imports {
-					pathVal := strings.Trim(imp.Path.Value, `"`)
-					for _, forb := range forbiddenImports {
-						assert.NotContains(t, pathVal, forb, "%s imports %s; forbidden cryptography or keychain dependency", fileName, pathVal)
-					}
+		for _, lp := range loaded {
+			for _, imp := range lp.Imports {
+				for _, forb := range forbiddenImports {
+					assert.NotContains(t, imp, forb, "%s imports %s; forbidden cryptography or keychain dependency", lp.Name, imp)
 				}
 			}
 		}

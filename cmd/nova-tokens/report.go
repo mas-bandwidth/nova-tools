@@ -63,7 +63,8 @@ func cmdReportStore(s *sink, addr, user, passwordEnv, month, by string, max int,
 	if err != nil {
 		return failed(err)
 	}
-	defer ls.Close()
+	// ignored: a deferred close on a read-only store: every read already carried its answer to the printed report
+	defer func() { _ = ls.Close() }()
 	totals, indexed, missing, err := ls.LedgerReport(context.Background(), month, by)
 	if err != nil {
 		return failed(err)
@@ -161,7 +162,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdReportStore(s, *redisAddr, *redisUser, *passwordEnv, *monthFlag, *byFlag, *max, stderr)
 	}
 	if *monthFlag != "" {
-		return (&refusals{token: "REPORT", s: s, list: []string{"--month is the store's month report; it wants --redis <host:port>"}}).print(stderr)
+		return (&refusals{token: "REPORT", s: s, list: []problem{{why: "--month is the store's month report; it wants --redis <host:port>"}}}).print(stderr)
 	}
 	r := &refusals{token: "REPORT", s: s}
 	r.required("who", *who, wantsWho)
@@ -334,40 +335,49 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fmt.Fprintln(s.err(), s.line("TOKENS", "AVG-ALL", "", "day", *day, "tokens", allTokens,
 		"usd", usdCell(allUsd, allPriced), "usd_per_mtok", usdPerMtokCell(allUsd, allPricedTokens, allPriced),
 		"unpriced", allTokens-allPricedTokens))
-	// The OK line is the grammar's, field for field (SPEC-TOKENS' TOKENS SOURCE section):
-	// what says the day is short is the TOKENS UNREADABLE / TOKENS UNPARSED lines above it,
-	// the TOKENS NOTE, and exit 1. Under --dry-run --note was not written, and the line
-	// says so.
+	// The closing line is the grammar's, field for field (SPEC-TOKENS' TOKENS SOURCE
+	// section): what says the day is short is the TOKENS UNREADABLE / TOKENS UNPARSED
+	// lines above it, the TOKENS NOTE, and exit 1. Under --dry-run --note was not
+	// written, and the line says so. The subject is one quoted value (oneline.Quote):
+	// it holds blanks and repeats at= and build= inside itself, and unquoted those
+	// inner pairs read as keys of the line.
 	subject := tokens.Subject(*day, stamp(now), buildVersion(), sorted)
-	fmt.Fprintf(s.err(), "REPORT OK who=%s day=%s rows=%d at=%s build=%s%s subject=%s\n",
-		oneline.Field(*who), oneline.Field(*day), lines, oneline.Field(stamp(now)),
-		oneline.Field(buildVersion()), s.dryRunFields(*dryRun, "note", *notePath), oneline.Escape(subject))
 	s.fact("at", stamp(now))
 	s.fact("build", buildVersion())
 	s.fact("subject", tool.Text(subject))
 	// Rule 3, and the exit table: "a declared source with an unreadable file" is exit 1,
 	// and a line that did not parse is the same wall under fold. The body still printed and
 	// --note still landed -- exit 1 still writes -- but a friend about to paste this onto
-	// the bus is told it does not cover what it claims.
+	// the bus is told it does not cover what it claims. The status word follows the exit
+	// (skeleton contract 1.5), so that run says FAILED: a report that printed the body
+	// over a source it could not read whole said REPORT OK and exited 1, while --json
+	// already said status=failed.
 	if unreadable > 0 || unparsed > 0 {
+		fmt.Fprintf(s.err(), "REPORT FAILED who=%s day=%s rows=%d at=%s build=%s%s subject=%s\n",
+			oneline.Field(*who), oneline.Field(*day), lines, oneline.Field(stamp(now)),
+			oneline.Field(buildVersion()), s.dryRunFields(*dryRun, "note", *notePath), oneline.Quote(subject))
 		return s.done(1, *max)
 	}
+	fmt.Fprintf(s.err(), "REPORT OK who=%s day=%s rows=%d at=%s build=%s%s subject=%s\n",
+		oneline.Field(*who), oneline.Field(*day), lines, oneline.Field(stamp(now)),
+		oneline.Field(buildVersion()), s.dryRunFields(*dryRun, "note", *notePath), oneline.Quote(subject))
 	return s.done(0, *max)
 }
 
-// usdCell is a cost as a field: the dollars, or - when no source reported one.
-func usdCell(micro int64, priced bool) string {
+// usdCell is a cost as a field: the dollars, or - when no source reported one. The cost
+// type carries that same value into --json as null for the dash.
+func usdCell(micro int64, priced bool) cost {
 	if !priced {
-		return tokens.Dash
+		return cost(tokens.Dash)
 	}
-	return tokens.Usd(micro)
+	return cost(tokens.Usd(micro))
 }
 
 // usdPerMtokCell is the blended rate as a field: - when no source reported a cost, or the
-// model had no tokens to divide by.
-func usdPerMtokCell(micro, n int64, priced bool) string {
+// model had no tokens to divide by. The cost type makes that same dash null in --json.
+func usdPerMtokCell(micro, n int64, priced bool) cost {
 	if !priced {
-		return tokens.Dash
+		return cost(tokens.Dash)
 	}
-	return tokens.UsdPerMtok(micro, n)
+	return cost(tokens.UsdPerMtok(micro, n))
 }

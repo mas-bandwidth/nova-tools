@@ -15,7 +15,9 @@ import (
 //     --actor says.
 //   - report: an outside actor's report (merge, ci), anyone's who names it.
 //   - machine: the run loop's (tick, run), recorded as the machine.
-//   - read: changes nothing and needs no actor.
+//   - read: changes nothing and needs no actor; seat --repair alone writes,
+//     the coordinator key from the seat's record, and wants an actor, the
+//     record's holder or the owner (sprint.NotSeatRepair).
 //   - seat: coordinator <name>, the seat moved: given by its holder or the
 //     sprint's owner, or taken by the one taking it with the owner's name
 //     (sprint.NotSeat); the verb judges who may, and the step again.
@@ -34,20 +36,23 @@ const (
 var verbClasses = map[string]string{
 	"init": classCoordinator, "add": classCoordinator, "quack": classCoordinator, "release": classCoordinator, "resolve": classCoordinator,
 	"start": classCoordinator, "stop": classCoordinator, "ask": classCoordinator, "accept": classCoordinator,
-	"rework": classCoordinator, "return": classCoordinator, "drop": classCoordinator, "rank": classCoordinator, "relink": classCoordinator, "recut": classCoordinator, "brief": classCoordinator, "move": classCoordinator,
+	"rework": classCoordinator, "return": classCoordinator, "redo": classCoordinator, "drop": classCoordinator, "unpin": classCoordinator, "priority": classCoordinator, "rank": classCoordinator, "relink": classCoordinator, "recut": classCoordinator, "brief": classCoordinator, "move": classCoordinator,
 	"resume": classCoordinator, "land": classCoordinator, "fleet up": classCoordinator, "fleet down": classCoordinator, "hold": classCoordinator, "unhold": classCoordinator,
-	"fleet level": classCoordinator, "fleet sync": classCoordinator, "friend sync": classCoordinator, "friend down": classCoordinator, "friend up": classCoordinator, "friend take": classCoordinator, "friend level": classCoordinator, "friend health": classCoordinator, "reader add": classCoordinator, "reader away": classCoordinator, "reader up": classCoordinator, "reader remove": classCoordinator, "reader retire": classCoordinator, "stream remove": classCoordinator, "stream set": classCoordinator, "set": classCoordinator, "promoted": classCoordinator, "funded": classCoordinator, "wait": classCoordinator,
-	"ack": classCoordinator, "answer": classCoordinator, "clear": classCoordinator, "teardown": classCoordinator, "repair": classCoordinator,
+	"fleet level": classCoordinator, "fleet quiet": classCoordinator, "fleet sync": classCoordinator, "friend sync": classCoordinator, "friend reconcile": classCoordinator, "friend down": classCoordinator, "friend up": classCoordinator, "friend take": classCoordinator, "friend give": classCoordinator, "friend level": classCoordinator, "friend health": classCoordinator, "reader add": classCoordinator, "reader set": classCoordinator, "reader away": classCoordinator, "reader up": classCoordinator, "reader remove": classCoordinator, "reader retire": classCoordinator, "stream remove": classCoordinator, "stream set": classCoordinator, "set": classCoordinator, "promoted": classCoordinator, "funded": classCoordinator, "cost reconcile": classCoordinator, "cost reprice": classCoordinator, "wait": classCoordinator,
+	"merge-window open": classCoordinator,
+	"ack":               classCoordinator, "answer": classCoordinator, "clear": classCoordinator, "teardown": classCoordinator, "repair": classCoordinator,
 	"goal set": classCoordinator, "goal drop": classCoordinator, "play": classCoordinator,
 
-	"take": classWorker, "finish": classWorker, "progress": classWorker, "read": classWorker, "fleet beat": classWorker, "friend beat": classWorker,
+	"take": classWorker, "finish": classWorker, "progress": classWorker, "read": classWorker, "fleet beat": classWorker, "friend beat": classWorker, "lane take": classWorker, "lane give": classWorker,
+	// remind is any actor's: it sets a timer for itself or for another (--for).
+	"remind": classWorker,
 
 	"merge": classReport, "ci": classReport,
 
-	"tick": classMachine, "run": classMachine, "friend clean": classMachine, "seat install": classMachine, "seat uninstall": classMachine,
+	"tick": classMachine, "run": classMachine, "friend clean": classMachine, "seat install": classMachine, "seat uninstall": classMachine, "selftest land": classMachine, "server switch": classMachine,
 
-	"queue": classRead, "inbox": classRead, "card": classRead, "log": classRead, "check": classRead, "where": classRead, "watch": classRead, "dashboard": classRead, "routes": classRead, "rules": classRead, "stats": classRead,
-	"goal show": classRead, "handover": classRead, "seat": classRead,
+	"queue": classRead, "inbox": classRead, "card": classRead, "log": classRead, "check": classRead, "where": classRead, "watch": classRead, "dashboard": classRead, "routes": classRead, "rules": classRead, "stats": classRead, "bases": classRead,
+	"goal show": classRead, "handover": classRead, "seat": classRead, "lane list": classRead, "fsck seat": classRead,
 
 	"coordinator": classSeat,
 }
@@ -79,7 +84,24 @@ func coordinatorOnly(ctx context.Context, st *store.Store, c common) (string, er
 	if verbClasses[c.verb] != classCoordinator {
 		return "", nil
 	}
-	return coordinatorsAlone(ctx, st, c)
+	why, err := coordinatorsAlone(ctx, st, c)
+	if err != nil || why != "" {
+		return why, err
+	}
+	return seatPushed(ctx, st)
+}
+
+// seatPushed is why the coordinator's verb may not run while the seat has no
+// live push proof (docs/SPEC-SPRINT.md, "The push proof"; pushproof.go): ""
+// is may. The first init, on a store with no coordinator, only names the
+// seat, and the push loop follows a seat that has a holder: every verb after
+// it, init again included, waits for the holder's proof.
+func seatPushed(ctx context.Context, st *store.Store) (string, error) {
+	seat, err := st.B.Coordinator(ctx)
+	if err != nil || seat == "" {
+		return "", err
+	}
+	return pushGate(ctx, st, seat, st.Now())
 }
 
 // coordinatorsAlone is why the actor may not do what is the coordinator's

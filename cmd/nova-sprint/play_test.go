@@ -61,8 +61,10 @@ func TestPlayWithACoordinatorLandsEveryStream(t *testing.T) {
 		if ta.tickDone() { // the machine: every mechanical move
 			var w whereView
 			ta.json("where", &w)
-			require.EqualValues(t, 45, w.Landed, "done with %d landed of %d", w.Landed, w.All)
-			require.EqualValues(t, 45, w.All, "done with %d landed of %d", w.Landed, w.All)
+			// the epoch's: the tick archives each stream as its last card lands
+			landed, all := epochCounts(w)
+			require.EqualValues(t, 45, landed, "done with %d landed of %d", landed, all)
+			require.EqualValues(t, 45, all, "done with %d landed of %d", landed, all)
 			return
 		}
 		out := ta.ok(fmt.Sprintf("play --seed %d --ticks 1 --every 1s --fail 0.1 --broken 0.05 --stuck 0.1 --cross 0 --batch 10 --take 20 --reads 20", round))
@@ -75,14 +77,16 @@ func TestPlayWithACoordinatorLandsEveryStream(t *testing.T) {
 		if strings.Contains(out, "every stream has landed") {
 			var w whereView
 			ta.json("where", &w)
-			require.EqualValues(t, 45, w.Landed, "landed %d of %d", w.Landed, w.All)
-			require.EqualValues(t, 45, w.All, "landed %d of %d", w.Landed, w.All)
+			// the epoch's: the tick archives each stream as its last card lands
+			landed, all := epochCounts(w)
+			require.EqualValues(t, 45, landed, "landed %d of %d", landed, all)
+			require.EqualValues(t, 45, all, "landed %d of %d", landed, all)
 			return
 		}
 		ta.coordinate()
 		ta.clean()
 	}
-	t.Fatalf("not landed after 300 rounds: %s", ta.ok("where"))
+	t.Fatalf("not landed after 300 rounds: %s\n%s\n%s", ta.ok("where"), ta.ok("inbox"), ta.ok("card s3-5"))
 }
 
 func TestPlaySaysWhatWaitsForTheCoordinator(t *testing.T) {

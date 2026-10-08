@@ -20,12 +20,17 @@ func defaultClient() *http.Client {
 		if len(via) > 3 {
 			return fmt.Errorf("redirect limit")
 		}
+		if req.URL.Scheme != "https" || (len(via) > 0 && req.URL.Host != via[0].URL.Host) {
+			return fmt.Errorf("redirect refused")
+		}
 		return nil
 	}}
 }
 
-// Latest reads only the declared endpoint, without credentials or persistent cache.
-func Latest(ctx context.Context, e Entry, timeout time.Duration, client *http.Client) Read {
+// latestIn reads only the declared endpoint, without credentials or persistent
+// cache, with the environment a local: locator's child gets; nil inherits this
+// process's own.
+func latestIn(ctx context.Context, childEnv []string, e Entry, timeout time.Duration, client *http.Client) Read {
 	r := Read{Source: e.Latest, Remedy: "check the declared latest source or ask again when it answers"}
 	if ctx.Err() != nil {
 		r.Reason = "budget"
@@ -37,7 +42,7 @@ func Latest(ctx context.Context, e Entry, timeout time.Duration, client *http.Cl
 	scheme, loc, _ := strings.Cut(e.Latest, ":")
 	if scheme == "local" {
 		a, _ := argv(loc)
-		p := process(child, a, nil, ChildCap)
+		p := process(child, childEnv, a, nil, ChildCap)
 		raw := p.Stdout
 		if raw == "" {
 			raw = p.Stderr

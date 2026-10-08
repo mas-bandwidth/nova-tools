@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/netip"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,7 +22,7 @@ var start = time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
 // clock, no seat. exec is what --exec's command does with the text it is
 // handed; signals is the loop's context, which a test cancels.
 type rig struct {
-	store   *bus.Fake
+	store   *bustest.Fake
 	env     map[string]string
 	exec    func(stdin string) int
 	execIn  []string
@@ -30,10 +32,57 @@ type rig struct {
 	login   string // the user the store logs in as; "" is a store with no users
 	fleet   string // the applied fleet row's bus, read when nothing names the store
 	fleetAt []string
+	names   []string  // the names newRig keeps heard
+	clock   time.Time // the store's clock as advance moved it (each trip adds a second more)
+	now     time.Time // the wait verbs' clock; the fake store's block moves it, never real time
+	wake    []string  // the wake-file reader's answers, one per look: "" is nothing new
 }
 
+// newRig is the rig with every name heard: each has a proven inbox push,
+// as its friend daemon writes it (bus.PushKey). deafRig is the rig before
+// any daemon has proven one.
 func newRig(names ...string) *rig {
-	return &rig{store: bus.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379"}}
+	r := deafRig(names...)
+	r.names = names
+	r.prove(start, true, names...)
+	return r
+}
+
+func deafRig(names ...string) *rig {
+	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379"}, clock: start, now: start}
+}
+
+// prove writes each name's push proof at the instant at, up or down, as the
+// friend daemon does, without a trip that moves the fake's clock.
+func (r *rig) prove(at time.Time, up bool, names ...string) {
+	for _, n := range names {
+		p := bus.PushProof{Name: n, Harness: "claude", Nonce: "n-" + n, Proven: at, Up: up, At: at}
+		if !up {
+			p.Reason = "no session answer"
+		}
+		raw, err := json.Marshal(p)
+		if err != nil {
+			panic(err)
+		}
+		if err := r.store.AddAll(context.Background(), nil, nil, bus.Mark{Key: bus.PushKey, Field: n, Value: string(raw)}); err != nil {
+			panic(err)
+		}
+	}
+}
+
+// advance moves the store's clock by d while every daemon of newRig keeps
+// renewing its proof, so only the idle time of the messages grows.
+func (r *rig) advance(d time.Duration) {
+	r.store.Advance(d)
+	r.clock = r.clock.Add(d)
+	r.prove(r.clock, true, r.names...)
+}
+
+// wireClock wires the fake store's block to the rig's wait clock: a block
+// that finds nothing past its cursor waits its duration out on r.now, so a
+// test's timeout runs on no real time.
+func (r *rig) wireClock() {
+	r.store.Sleep = func(d time.Duration) { r.now = r.now.Add(d) }
 }
 
 func (r *rig) world() world {
@@ -71,6 +120,16 @@ func (r *rig) world() world {
 				"far.test":   {netip.AddrFrom4([4]byte{203, 0, 113, 9})}, // the internet
 				"lan.test":   {netip.AddrFrom4([4]byte{10, 0, 0, 5})},    // a private network that is not the tailnet
 			}[host], nil
+		},
+		now:      func() time.Time { return r.now },
+		fileSize: func(string) (int64, error) { return 0, nil },
+		fileLine: func(_ string, from int64) (string, int64, error) {
+			if len(r.wake) == 0 {
+				return "", from, nil
+			}
+			line := r.wake[0]
+			r.wake = r.wake[1:]
+			return line, from + int64(len(line)) + 1, nil
 		},
 	}
 }
@@ -187,7 +246,7 @@ func TestRecvExecAcksOnZeroAndKeepsThePendingMessageOnFailure(t *testing.T) {
 
 	r.exec = func(string) int { return 0 }
 	cli.Do(t, "recv", "--as", "bob", "--exec", "deliver").Exit(1).Err("RECV NONE", "nothing for bob")
-	r.store.Advance(bus.ClaimAfter)
+	r.advance(bus.ClaimAfter)
 	cli.Do(t, "recv", "--as", "bob", "--exec", "deliver").Exit(0).Out("RECV OK id="+mid, "acked=true exec_exit=0")
 	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=0 new=0")
 }
@@ -212,7 +271,7 @@ func TestRecvForeverWantsExecAndStopsOnASignal(t *testing.T) {
 
 	r.cancel = nil
 	r.exec = func(string) int { return 1 }
-	r.store.Advance(bus.ClaimAfter)
+	r.advance(bus.ClaimAfter)
 	cli.Do(t, "recv", "--as", "bob", "--forever", "--exec", "deliver").Exit(1).Err("RECV FAILED id=", "exec_exit=1: --exec exited 1")
 	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=1 new=1")
 }
@@ -394,12 +453,12 @@ func TestRecvTakesABacklogInOrderWithMaxAllAndAck(t *testing.T) {
 		}
 		return 0
 	}
-	r.store.Advance(bus.ClaimAfter) // one and two are claimable again
+	r.advance(bus.ClaimAfter) // one and two are claimable again
 	cli.Do(t, "recv", "--as", "bob", "--all", "--exec", "deliver").Exit(1).Out("RECV OK id="+ids[0], "RECV OK id="+ids[1], "acked=true exec_exit=0").Err("RECV FAILED id=" + ids[4] + " exec_exit=7")
 	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=1 new=0", "id="+ids[4])
 	r.exec = nil
 	cli.Do(t, "recv", "--as", "bob", "--all", "--exec", "deliver").Exit(1).Err("RECV NONE", "nothing for bob")
-	r.store.Advance(bus.ClaimAfter)
+	r.advance(bus.ClaimAfter)
 	cli.Do(t, "recv", "--as", "bob", "--all", "--json", "--ack").Exit(0).Out(`"subject":"five"`, `"acked":true`)
 	cli.Do(t, "recv", "--as", "bob", "--all").Exit(1).Err("RECV NONE: nothing for bob")
 
@@ -411,4 +470,49 @@ func TestRecvTakesABacklogInOrderWithMaxAllAndAck(t *testing.T) {
 	} {
 		cli.Do(t, c...).Exit(2).Err("RECV REFUSED")
 	}
+}
+
+// receipts says how far each message has come and how long it stood there;
+// overdue lists what is still short of delivered past --older and exits 1
+// (SPEC-BUS.md, message-receipts).
+func TestReceiptsAndOverdueSayWhereEachMessageIs(t *testing.T) {
+	t.Parallel()
+	r := newRig("ada", "bob")
+	cli := r.cli()
+	mid := id(t, cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", "first", "--body", "x").Stdout)
+	cli.Do(t, "overdue").Exit(0).Out("OVERDUE OK count=0 older=10m0s")
+	r.advance(11 * time.Minute)
+	cli.Do(t, "overdue").Exit(1).Err("OVERDUE OVERDUE count=1 older=10m0s",
+		"OVERDUE MESSAGE name=bob id="+mid+" state=new from=ada age=11m")
+	cli.Do(t, "overdue", "--older", "1h").Exit(0).Out("OVERDUE OK count=0 older=1h0m0s")
+	cli.Do(t, "overdue", "--json").Exit(1).Out(`"word":"OVERDUE"`, `"id":"`+mid+`"`)
+	cli.Do(t, "receipts", "--as", "bob", "--id", mid).Exit(0).Out("RECEIPTS OK count=1", "RECEIPTS RECEIPT id="+mid+" state=none age=-")
+
+	cli.OK(t, "recv", "--as", "bob")
+	cli.Do(t, "overdue").Exit(0).Out("OVERDUE OK count=0")
+	r.advance(time.Minute)
+	cli.Do(t, "receipts", "--as", "bob").Exit(0).Out("RECEIPTS OK count=1 login=none", "RECEIPTS RECEIPT id="+mid+" state=delivered age=1m")
+	cli.OK(t, "send", "--as", "bob", "--to", "ada", "--re", mid, "--subject", "re first", "--body", "done")
+	cli.Do(t, "receipts", "--as", "bob", "--id", mid).Exit(0).Out("state=acted")
+	cli.Do(t, "overdue", "--older", "-1s").Exit(2).Err("--older wants a duration of at least 0")
+}
+
+func TestTopLevelHelpNamesTheSameRedisAddressPrecedenceAsHelpSend(t *testing.T) {
+	t.Parallel()
+	r := newRig("ada", "bob")
+	cli := r.cli()
+
+	// Capture help output
+	topHelp := cli.Do(t, "help").Exit(0).Stdout
+	sendHelp := cli.Do(t, "help", "send").Exit(0).Stdout
+
+	// The precedence string that should appear in the flag help
+	// The tool reads: --redis flag default (NOVA_BUS_REDIS), else NOVA_SPRINT_REDIS, else fleet:bus
+	const precedence = "NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus"
+
+	// Top-level help should mention NOVA_BUS_REDIS
+	assert.Contains(t, topHelp, "NOVA_BUS_REDIS", "top-level help should mention NOVA_BUS_REDIS")
+
+	// Help send should contain the full precedence
+	assert.Contains(t, sendHelp, precedence, "help send should name the full Redis address precedence")
 }

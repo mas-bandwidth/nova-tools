@@ -25,7 +25,16 @@ nova-bus on 2026-10-04, when the git bus was removed.
   (the sets `friends` and `machines`).
 - `send` writes the entry to every recipient's stream (to and cc) and to
   `bus2:log` in one `MULTI`/`EXEC`: a message is on every stream or on none.
-- Nothing is ever deleted by the tool. Trimming is a later decision.
+- One hash `bus2:push`, field `<name>`, value the name's inbox push proof as
+  JSON (`harness`, `nonce`, `proven`, `up`, `reason`, `at`), written by the
+  friend daemon and read by `send`, `recv` and `names` (below,
+  bus-requires-inbox-push-proof).
+- One string key per sender and send token, `bus2:sent:<from>:<token>`, holding
+  the token's record as JSON (`fingerprint`, `id`, `at`), written in the
+  send's own atomic step and expiring at the token's cleanup (below,
+  a-lost-send-response-is-safe-to-retry.w1).
+- Nothing is ever deleted by the tool. Trimming is a later decision. The one
+  key the store removes is a token's record, by its own expiry.
 - The keys keep the `bus2:` prefix (`bus2:to:<name>`, `bus2:log`, and
   `bus2:keepalive:<name>`, the coordinator keepalive), and the consumer keeps its
   `nova-bus2` name, although the tool is nova-bus: the fleet's store already holds
@@ -35,7 +44,13 @@ nova-bus on 2026-10-04, when the git bus was removed.
 
 ## The semantics
 
-At-least-once delivery. A message delivered to a recipient is pending until
+At-least-once delivery, said plainly: a reader may be handed one message
+more than once (a reader that died before its ack, a skipped kind handed
+back), and tells a second delivery by the message's `id`; the bus never
+promises exactly once to a consumer. What it does promise since
+a-lost-send-response-is-safe-to-retry.w1 is the other end: a send carrying a
+token makes one logical message however often it is retried (below).
+A message delivered to a recipient is pending until
 that recipient acks it, and its reader keeps it for fifteen minutes (`ClaimAfter`,
 the budget one `--exec` delivery gets: longer than the longest delivery any
 reader makes, nova-friend's ten minute turn and the kill that ends it, so a
@@ -56,6 +71,8 @@ pending that a dead reader held; only a delivered message is acked; once acked,
 acked; and, with crashes bounded, every sent message is acked by every recipient
 it names.
 
+A reader waits on its stream with `BLOCK`, never on a clock: a message is pushed to whoever blocks on its stream (`recv --forever`, the friend's daemon). Every loop that reads the bus, and every other loop of the tree that waits on a clock, is a row of docs/SPEC-SPRINT.md, section 8, "Push, not poll", with its mechanism and, for a timer poll, the card that makes it a blocking read; `TestEveryTimerLoopIsNamedInThePushTable` fails on a timer loop with no row.
+
 ## The verbs
 
 `nova-bus help` opens with the loop a harness runs, three lines. Every verb
@@ -68,7 +85,11 @@ takes `--json`; `log` takes `--max`.
   sender's check that a file arrived whole without asking the receiver. A body's
   trailing newline is the body's and is kept by send, the store, log and recv. Refuses, naming every problem at once: an unknown name (with the
   nova-config line that adds one), a bad name, an empty body, a body over 1
-  MiB, an empty subject, a body from both or neither source.
+  MiB, an empty subject, a body from both or neither source. Then, the message
+  being whole, a sender or recipient with no proven inbox push, one `deaf:`
+  line each, writing nothing (bus-requires-inbox-push-proof, below).
+  `--token <t> [--token-life <d>] [--token-cleanup <d>]` makes the send safe
+  to retry (a-lost-send-response-is-safe-to-retry.w1, below).
 - `recv [--as <me>] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec
   <command>]` prints one message (a `RECV OK` line with id, from, to, cc, re, at and subject, a blank
   line, the body) and exits 0, or `RECV NONE` at exit 1 when nothing waits.
@@ -82,19 +103,107 @@ takes `--json`; `log` takes `--max`.
   waiting for messages, needs `--exec`, and stops on SIGINT or SIGTERM (a message being
   delivered stays pending) or at the first command that fails. The push into a
   harness is `nova-bus recv --as <me> --forever --exec '<deliver-into-session>'`
-  beside the session.
+  beside the session. A recipient with no proven inbox push is refused
+  (`deaf:`), `--dry-run` and `--forever` alike; a loop whose proof goes stale
+  stops at its next read with that refusal.
+- `wait` is the wake a harness runs beside a session, general for any AI on
+  the bus. Its flags are `--as <me>`, `--after <id>`, `--timeout <duration>`,
+  `--skip-subject <prefix,...>`, `--wake-file <path>`, `--redis <addr>` and
+  `--json`. It takes nothing: it reads the recipient's stream past a cursor
+  (XREAD, never the consumer group), so a later recv still delivers and acks
+  what it saw. The cursor is `--after <id>`, else the stream's last id read
+  once at start (`Tail`, `0-0` when the stream is not there); the verb prints
+  `WAIT ARMED after=<id>` first, so a caller that re-arms with that id misses
+  nothing between two runs. It returns on the first entries past the cursor
+  that are not from the waiter and whose subject starts with none of the
+  `--skip-subject` prefixes (matched without case; default `PING,PONG`): one
+  `WAIT MESSAGE id=<id> from=<name> subject=<s> bytes=<n>` line each, up to
+  `WaitMax` (5), then `WAIT OK after=<last id seen>` at exit 0. Skipped
+  entries move the cursor and are not printed. `--wake-file <path>` also
+  returns when a line is appended to the file after the start (a harness's
+  deliver adapter appends one per message): `WAIT WAKE file=<path> line=<text>`
+  at exit 0, the text being the first line, escaped. Past `--timeout` (0, the
+  default, is for ever) it is `WAIT NONE after=<cursor> waited=<duration>` on
+  standard error at exit 1. `--json` is one object:
+  `{"status":"ok","word":"OK|NONE|WAKE","after":..,"messages":[...],"wake":{...}}`
+  where each message is `{"id":..,"from":..,"subject":..,"bytes":..}` and wake
+  is `{"file":..,"line":..}`. The decision over one batch (which entries
+  count, the cursor) is `WaitPick`, a pure function; the blocking read is the
+  store's (`BlockRead`), and the clock and the wake file are the command's
+  world, so every test runs on no real time. A wait with a wake file reads it
+  once a `WaitTick`; with neither a wake file nor a timeout it parks on one
+  blocking read that never runs out.
 - `ack [--as <me>] --id <id,...>` prints `ACK OK acked=<n> asked=<n>` and one
   `ACK ID id= acked=true|false` line per id.
 - `peek [--as <me>]` prints `PEEK OK pending=<n> new=<n>` and one `PEEK MESSAGE
   state= id= from= at= subject=` line per message. Writes nothing, makes no
   group.
 - `log [--bodies] [--max <n>]` reads `bus2:log`, oldest first. Writes nothing.
-- `names` lists the known names.
+- `names` prints `NAMES OK count=<n> proven=<n>` and one line per known name:
+  `NAMES NAME name= push=<proven|stale|down|none> age=<age|never> harness=<h>`.
 - `version`, `help`, `help <verb>`.
 
 Exit codes: 0 done; 1 the verb ran and said no (recv: nothing waiting; recv
-`--exec`: the command failed); 2 could not run (a flag, an input, a store that
-did not answer).
+`--exec`: the command failed; wait: nothing came before `--timeout`); 2 could
+not run (a flag, an input, a store that did not answer).
+
+### a-lost-send-response-is-safe-to-retry.w1: a send under a token is one message
+
+The finding (a review of the bus, item 4): a send made a fresh id and appended with
+`XADD *` on every call, and answered nothing useful when the transaction's
+response failed, so a sender whose write committed and whose answer was lost
+(a cut connection, a deadline on the way home) could only send again, and
+that made a second logical message on every stream.
+
+So a send may carry a **token**: the caller's word for one logical send, the
+same on every retry of it (`send --token <t>`, `Message.Token`; letters,
+digits, `.`, `_`, `:` and `-`, at most 128 bytes; the token is the sender's
+and is not on the entry). The send's **fingerprint** is the SHA-256 of its
+arguments as the check normalised them: from, to and cc (sorted, each once),
+subject, re, kind (spelled out) and body, each length-prefixed. The send
+writes, in one atomic step (`AddOnce`: a script, which Redis runs alone), the
+token's record at `bus2:sent:<from>:<token>` (`SET ... PX <cleanup>`) with the
+entries on every stream and the receipt marks, unless the record is already
+there, when it writes nothing and answers the record. Then:
+
+- **the same arguments within the token's life**: the answer is the original
+  message, its `id` and `at`, so `SEND OK` prints the first send's line again,
+  byte for byte. One logical message per recipient, one owed receipt per
+  friend: a retry after the recipient's session gave its receipt marks
+  nothing owed again.
+- **other arguments under the same token**: refused, naming the message that
+  went (`the token "<t>" already sent <id> at <at> with other arguments`),
+  writing nothing.
+- **past the token's life, before its cleanup**: refused the same way
+  (`past its life of <d>: the message went, and is not sent again`), never
+  sent again.
+- **after the cleanup**: the store has dropped the record, and the token is
+  new: a send under it is a new message.
+
+The settings: the life, `Bus.TokenLife` (`--token-life`, default
+`DefaultTokenLife`, 24 h), and the cleanup, `Bus.TokenCleanup`
+(`--token-cleanup`, default `DefaultTokenCleanup`, 7 days, never before the
+life ends: a record is kept as long as a retry under it is honoured). The
+cleanup is the key's expiry; nothing sweeps.
+
+The record lives in the store, never in the process: a sender that restarts
+retries and gets the original. A token's record is its sender's: another
+sender's same word is another key. The push gate (below) refuses a message
+to a deaf name, but a retry whose record is there writes nothing and answers
+the original whoever is deaf now (one `GET` more, only when the gate refuses).
+A send without a token is the send as before: every call a new message, and a
+lost response retried is a second one. A write that failed before it
+committed left no record, and its retry is the first send.
+
+The machine is `tla/BusSendOnce.tla`: a sender that retries after lost
+answers, a store that writes record and message in one step, the life and
+the cleanup; its invariants say one message per token while the record
+lives, a retry's answer is the original, and a changed argument is never
+written. Its TLC instances (the passing one, and reversed witnesses for a
+check apart from the write, a retry that makes a new id, a store that drops
+the record inside the life, and an answer without the fingerprint) were
+measured on a bench and land with their rows in the TLC catalog in a change
+of their own; until then the module is the spec and is not run by the gate.
 
 ### bus-message-kinds.w1: the kind of a message
 
@@ -111,6 +220,59 @@ it is claimed with the filter's read and handed back at once (`XCLAIM ...
 IDLE` of `ClaimAfter`, `JUSTID`), so the next `recv` without the filter, or
 with another, gets it in its order; a skip costs a round trip, and a run of
 skipped claimed messages one more to hand them back.
+
+### bus-requires-inbox-push-proof: a name is on the bus only while something proven can hear it
+
+The finding of 2026-10-05: "nova-bus is useless if the friend using it is deaf and is
+not listening to messages sent back." A note sat forty minutes unread while
+neither the sender nor the coordinator had a push into its session, and the
+bus took every message. So the push is mandatory and enforced: `nova-bus
+send --as <me>` and `recv --as <me>` refuse until `<me>` has a proven inbox
+push younger than ten minutes (`bus.PushFresh`), and `send --to <x>` (and
+`--cc`) refuses a recipient without one, in one line each, all at once,
+writing nothing:
+
+```
+deaf: <x> has no proven push since <age|never>: <why>; the remedy: <x> runs its friend daemon with a
+deliver adapter for its harness (nova-friend install --as <x> --harness <h> --dir <d>) and its session
+answers the daemon's SESSION CHECK, which records the proof; nova-bus names shows every name's push
+```
+
+The proof is the friend daemon's SESSION CHECK round trip (SPEC-FRIEND.md,
+presence): a check carrying a fresh nonce goes into the session through the
+harness's deliver adapter, and the session's own pong carrying that nonce
+comes back on the bus. The daemon writes the proof on `bus2:push` from the
+presence it saves (`friend.PushProver`, set as the SessionCheck's `Save`):
+
+- **up** when the session answered, with the harness and the nonce it rests
+  on; renewed every minute (`friend.PushRenewEvery`) while the presence stays
+  up, so a live daemon's proof never reads stale;
+- **down** at once when the presence goes down (a check unanswered within
+  `SessionBound`, or a daemon that has not yet been answered), with the reason;
+- **down** always for a passive harness (no deliver command: the check goes on
+  the stream and nothing pushes into the session), whatever its pongs say.
+
+Its `at` is the store's time (`TIME`), and freshness is read against the
+store's time too. `names` reads each name's state: `proven` (up, under ten
+minutes), `stale` (its daemon stopped renewing: a dead daemon reads deaf
+within ten minutes), `down`, `none` (no daemon ever wrote one). The gate is
+`bus.Hearing`, the Store nova-bus opens: a message's write (`AddAll` with
+streams) is refused unless its sender and every recipient are heard at its
+`at`, after `Send` has named the message's own problems; a recv's group
+(`EnsureGroup`) is refused unless the recipient is heard; one `HGETALL` each.
+The friend daemon's own sends (its SESSION CHECK on a passive stream, its
+`daemon-pong`, its pong verb) go through the bare store: the proof is theirs
+to make. `peek`, `ack` and `log` are not gated, so a deaf name can still look
+and clean up.
+
+What the proof does not say, plainly: between two checks (ten minutes quiet,
+then the five-minute bound) a session that stopped hearing still reads up, so
+deafness is seen within `SessionQuiet + SessionBound` of the last answer, and
+within ten minutes of a daemon that died. A name with no friend daemon (a
+machine row, a coordinator seat run without one) has no way to a proof and is
+refused until it runs one. The ACL cannot stop a friend writing another's
+field of `bus2:push`, as it cannot stop her reading another's stream; the tool
+is the boundary (the ACL per friend, below).
 
 ### fr-delivery-receipts.w1: receipts, and the send alarm
 
@@ -146,7 +308,59 @@ caller's `Raise`, never over the bus that is failing.
 
 The ACL line below gains `~bus2:owed:*` and `+hset +hdel +hgetall` for a
 store with users: a sender marks the recipients' hashes, as it writes their
-streams.
+streams. message-receipts adds `~bus2:receipt:*` and `+hget`: a send naming
+a message stamps the sender's own receipts, and recv its own.
+
+### message-receipts: delivered, read, acted; overdue; a redelivered id is dropped
+
+A message is pending or acked on its stream, and that alone cannot tell a
+message that reached the friend daemon from one the session read or one it
+acted on. Every message therefore has a receipt per recipient that moves
+only forward: `delivered` (the recipient's reader took it off its stream:
+`recv`, which the daemon runs), `read` (the turn carrying it started: the
+daemon marks it when the session took the turn, its first output, or when a
+turn that ran ended non-zero), `acted` (the turn ended at exit 0, or the
+recipient sent a message whose `re` is its id). The receipts are one hash
+per recipient beside its stream, `bus2:receipt:<name>`, field the message
+id, value the state and the store's time it was reached in Unix seconds
+(`acted 1791288000`). Only the bus writes it, through one rule
+(`internal/bus/stages.go`, `Forward`) that the store runs as one script
+(`redis.go`, `forwardLua`) and both fakes call: a receipt moves only
+forward, and only `delivered` starts one, so a message is never read or
+acted before it was delivered. `recv` stamps `delivered` (one trip more)
+and hands the reader the state it found (`Entry.Stage`); a stamp the store
+refuses never fails the recv (`Bus.OnStampError` hears it, and the message
+stays overdue). A send naming a message (`re`) stamps it `acted` for the
+sender in the send's own transaction, or its token's script, so a send
+stays two trips. The daemon stamps `read` and `acted` (`Bus.Stamp`).
+
+`nova-bus receipts --as <name> [--id <id,...>]` prints each message's
+state and age by the store's clock (`none` for an id with no receipt).
+`nova-bus overdue [--older <d>]` (default 10m) is the alarm the
+coordinator's loop and the seat check run: every message on every known
+name's stream still short of delivered (new, or pending with no receipt)
+sent longer ago than `<d>`, oldest first, and exit 1 when there is one. An
+acked message is never listed. It reads the roster, peeks each stream, and
+reads every receipts hash in one pipeline.
+
+Delivery stays at least once (a claim after `ClaimAfter` hands a message in
+again); the take is idempotent. The friend daemon remembers the ids it
+pushed into a turn that ended acted (the newest `ActedKept`, 4096), and a
+second delivery of one, or of any message whose receipt `recv` found
+`acted`, is dropped with one record line, `duplicate dropped id=<id>`, and
+acked, never pushed in twice. The receipt covers a restarted daemon, which
+remembers nothing; the memory covers an `acted` stamp the store did not
+write. Both lost at once (the stamp refused, then the daemon restarted
+before its ack landed) pushes the message in once more.
+
+The model is `tla/Bus2Receipts.tla`, `ReceiptSpec`, which extends
+`tla/Bus2.tla` (so Bus2's own cases read the machine unchanged): the receipt
+states over the delivery machine, the daemon's take, turn, ack, a lost ack and a crash,
+with `ReceiptNeverMovesBack`, `ActedImpliesDelivered` and `NoIdActedTwice`
+(`MCBus2Receipts`), and two reversed witnesses: a take that pushes a
+redelivered id (`MCBus2BrokenPushDup`, `NoIdActedTwice`) and a recv that
+writes `delivered` over the receipt (`MCBus2BrokenBackStamp`,
+`ReceiptNeverMovesBack`).
 
 ## The identity
 
@@ -170,12 +384,14 @@ INFO` on Redis 8 answers):
 | Verb | Commands | Keys |
 | --- | --- | --- |
 | every verb | `HELLO` (the login), `PING` (redisconn's probe) | none |
-| send | `SMEMBERS`, `TIME`, `MULTI`, `XADD`, `HSET`, `HDEL`, `EXEC` | `friends`, `machines` (read); `bus2:to:<every recipient>` and `bus2:log` (XADD: read-write by its key flag); `bus2:owed:<every friend recipient>`, and the sender's own when it answers (re) |
-| recv | `SMEMBERS`, `XGROUP CREATE`, `XAUTOCLAIM`, `XREADGROUP`, `XACK` | `friends`, `machines`; `bus2:to:<f>` |
+| send | `SMEMBERS`, `TIME`, `HGETALL`, `MULTI`, `XADD`, `HSET`, `HDEL`, `EXEC`; with a token `EVALSHA` (and `EVAL` the first time), the script's `GET`, `SET`, `XADD`, `HSET`, `HDEL`, and `GET` when the push gate refuses a retry | `friends`, `machines` (read); `bus2:push` (read); `bus2:to:<every recipient>` and `bus2:log` (XADD: read-write by its key flag); `bus2:owed:<every friend recipient>`, and the sender's own when it answers (re); `bus2:receipt:<f>` when it answers (re: `EVAL` in the transaction, `TIME`, `HGET`, `HSET`); `bus2:sent:<f>:*` with a token |
+| recv | `SMEMBERS`, `TIME`, `HGETALL`, `XGROUP CREATE`, `XAUTOCLAIM`, `XREADGROUP`, `XACK`; `EVALSHA` (and `EVAL` the first time), the script's `TIME`, `HGET`, `HSET` | `friends`, `machines`; `bus2:push` (read); `bus2:to:<f>`; `bus2:receipt:<f>` |
+| wait | `SMEMBERS`, `XINFO STREAM`, `XREAD` | `friends`, `machines`; `bus2:to:<f>` |
 | ack | `XINFO GROUPS`, `XPENDING`, `XRANGE`, `XACK`, `HDEL` | `bus2:to:<f>`, `bus2:owed:<f>` |
 | peek | `XINFO GROUPS`, `XPENDING`, `XRANGE` | `bus2:to:<f>` |
 | log | `XRANGE` | `bus2:log` |
-| names | `SMEMBERS`, `TIME` | `friends`, `machines` |
+| names | `SMEMBERS`, `TIME`, `HGETALL` | `friends`, `machines`, `bus2:push` |
+| the friend daemon's push proof | `SMEMBERS`, `TIME`, `MULTI`, `HSET`, `EXEC` | `friends`, `machines`; `bus2:push` |
 
 The wrinkle, said plainly: a sender writes other friends' streams. `send` fans
 the message out from the client, one `XADD` per recipient stream inside the
@@ -190,10 +406,18 @@ it keeps every other key family (the sprint's, the config's) out of reach.
 The least set per friend, one line:
 
 ```
-ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~friends ~machines resetchannels
+ACL SETUSER <f> on >(password) ~bus2:to:* ~bus2:log ~bus2:owed:* ~bus2:receipt:* ~bus2:push ~bus2:sent:<f>:* ~friends ~machines resetchannels
   +hello +ping +smembers +time +multi +exec +xadd +xgroup|create +xreadgroup
-  +xautoclaim +xack +xpending +xinfo|groups +xrange +hset +hdel +hgetall
+  +xautoclaim +xack +xpending +xinfo|groups +xinfo|stream +xread +xrange +hset +hdel +hget +hgetall
+  +eval +evalsha (~bus2:sent:<f>:* +get +set)
 ```
+
+The selector in parentheses is there because a root `+set` would reach every
+key the user has (a friend could `SET friends x` and wipe the roster, or
+`SET bus2:log x` and destroy the log), and the token's record is the only key
+a send ever gets or sets: Redis 7 checks each command a script runs, so the
+script's `GET` and `SET` pass on the selector, on the sender's own records
+only, while `EVAL`'s declared keys pass on the root.
 
 If the fan-out moved into the store (a Redis function running `XADD` for the
 caller, which Redis runs under the caller's own ACL, so it buys nothing; or a
@@ -222,6 +446,52 @@ its machine rows; no new kind or field was needed.
 
 ## Round trips
 
-send: two (the roster and `TIME` in one pipeline, then the transaction). recv:
-four (the roster, the group, the claim, the read). ack: five (group, pending,
+send: two (the roster and `TIME` in one pipeline, then the transaction, or
+with a token the script; a third, `EVAL`, the first time a connection's server
+has not the script, and a `GET` when the push gate refuses a retry). recv:
+five (the roster, the group, the claim, the read, the delivered stamp). wait: two to arm (the
+roster, the stream's tail), then one `XREAD` per block (one parked read when
+nothing else is watched). ack: five (group, pending,
 the entries, `XACK`, the receipt's `HDEL`). peek: up to four. log: one. names: one.
+
+## The deadlines
+
+The finding (2026-10-04, one timeout on a host whose load average was 35) was
+read against the base tip first. The client already set a bound on every network
+step, in `internal/redisconn/open.go`: `OpenTimeout`, `DialTimeout`, `WriteTimeout`,
+`ReadTimeout` and `PoolTimeout`, 5 s each; a command that blocks gets its block
+plus 10 s (go-redis); `MaxRetries` is -1, so nothing was retried. What was missing
+was a bound of the bus's own and the words for it: a call that ran out surfaced
+as a bare `i/o timeout`, there was no `--timeout` on the verbs that do not park,
+and a transient stall on a read ended the verb at once.
+
+The rule, in `internal/bus/redis.go` (`Redis.call`):
+
+- Every store call runs under a context deadline of `Timeout` (`--timeout`, default
+  `CallTimeout`, 5 s). A blocking `Read` (recv, including `recv --forever`'s
+  `BLOCK` of `ForeverBlock`, 30 s) and a blocking `BlockRead` whose block is
+  above zero get that plus the block plus `BlockMargin`, a fixed 10 s.
+  `BlockRead` with block 0 is the wait that asked to park for ever: it keeps
+  the caller's context and sets no bus deadline, because one would end that wait.
+- `wait`'s own `--timeout` stays how long the wait parks (0 is for ever). It is
+  not the call bound. The wait's non-blocking reads (the roster, the stream's
+  tail) use `CallTimeout`.
+- A call that runs out is refused with
+  `redis did not answer within <d> at <host:port>: the host may be overloaded (load average), try again`.
+  The line names the address and nothing of the login.
+- One retry, for a read that changes nothing: `Members` (names), `Marks`, `Pending`,
+  `Group`, `Range`, `Get` (peek, log) and `Sent`, `Tail`. Never a send (`AddAll`,
+  `AddOnce`), a `Forward`, an `Ack`, an `Unmark`, a `Release`, a `Claim`, a `Read`
+  or a `BlockRead`: a second try of those could act twice or hand an entry out
+  twice. A caller whose own context ended is not retried.
+- `--timeout` must be above zero on the verbs that take it: a call with no
+  deadline is the defect.
+
+Worst case for a retried read is two deadlines (10 s at the default); for a send, one (5 s).
+A blocking read's worst case is one deadline of `Timeout` plus the block plus `BlockMargin`.
+
+Measured with a stalled in-process store (`internal/bus/timeout_test.go`, a pipe
+that reads and never answers, no port): `Roster` at `Timeout` 20 ms sent its pipeline (two SMEMBERS) twice and
+refused in the words above; `AddAll` and `Ack` sent once; a blocking `Read` of 10 ms with a 20 ms
+margin and 20 ms timeout refused at 50 ms (20 + 10 + 20) having sent XREADGROUP once. The tests
+assert counts and the refusal, never elapsed time. A cancelled caller is not that refusal and is not retried.

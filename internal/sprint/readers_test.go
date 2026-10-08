@@ -49,6 +49,7 @@ func TestTheAskAsksReadersUpOnly(t *testing.T) {
 	toReview(w, "s1-1", "s1-2")
 	w.s.ReaderStates = map[string]string{"reader-a": ReaderAway, "reader-b": ReaderUp, "reader-c": ReaderUp}
 	w.must(Ask(w.s, AskReq{}))
+	// each card's two reads asked together, of the readers up alone
 	for _, id := range []string{"s1-1", "s1-2"} {
 		assert.ElementsMatch(t, []string{"reader-b", "reader-c"}, readerNames(readsAt(w.s, w.s.Work.Card(id), 1)), id)
 	}
@@ -70,8 +71,8 @@ func TestAReadAskedOfAReaderThatIsNotUpIsTakenBackAndAskedAgain(t *testing.T) {
 	w.must(Ask(w.s, AskReq{}))
 	pr := w.s.Work.Card("s1-1")
 	asked := readerNames(readsAt(w.s, pr, 1))
-	require.Len(t, asked, 2)
-	gone := asked[0]
+	require.Len(t, asked, 2, "both reads asked together")
+	gone, kept := asked[0], asked[1]
 	w.s.ReaderStates = map[string]string{"reader-a": ReaderUp, "reader-b": ReaderUp, "reader-c": ReaderUp, "reader-d": ReaderUp, gone: ReaderAway}
 	// the tick asks it again: no ask --another, the attempt stays, one unit
 	plan, due := TickAsk(w.s, TickReq{})
@@ -82,6 +83,7 @@ func TestAReadAskedOfAReaderThatIsNotUpIsTakenBackAndAskedAgain(t *testing.T) {
 	now := readerNames(readsAt(w.s, pr, 1))
 	assert.Len(t, now, 2)
 	assert.NotContains(t, now, gone, "the read returned from the reader that is not up")
+	assert.Contains(t, now, kept, "the read of the reader up stays")
 	assert.Equal(t, 1, pr.Int("attempt"), "no turn is spent: the attempt stays")
 	old := w.s.Readers.Card(ReadCardID("s1-1", 1, gone))
 	require.NotNil(t, old)

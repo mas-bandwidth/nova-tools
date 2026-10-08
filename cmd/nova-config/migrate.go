@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -20,6 +21,7 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 	fs := verbflag.New(verb)
 	c := storeFlags(fs)
 	print := fs.Bool("print", false, "list the migrations this binary carries and connect to nothing")
+	max := fs.Int("max", bounded.Default, "SQL lines to print under each MIGRATION line before one MORE line stands for the rest; 0 prints each migration whole")
 	dry := fs.Bool("dry-run", false, "read the ledger (config.schema_migrations) and print every migration applied, pending (migrate applies it) or missing (below the greatest recorded, which migrate will not apply), and every table of schema config the role does not own, applying none; exit 0 when migrate would apply (ready=yes), 1 when it would refuse (ready=no)")
 	asJSON := jsonFlag(fs)
 	if code, ok := parse(fs, args, stderr, verb); !ok {
@@ -37,12 +39,23 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 			o := tool.Done().Fact("print", len(all))
 			o.Verb = verb
 			for _, m := range all {
-				o.Item("migration", "version", m.Version, "file", m.Name, "lines", strings.Count(m.SQL, "\n"))
+				sql := migrationLines(m.SQL)
+				shown := shownSQL(sql, *max)
+				o.Item("migration", "version", m.Version, "file", m.Name, "lines", len(sql),
+					"sql", strings.Join(shown, "\n"), "sql_shown", len(shown), "sql_lines", len(sql))
 			}
 			return emit(stdout, o)
 		}
 		for _, m := range all {
-			fmt.Fprintf(stdout, "MIGRATION version=%d file=%s lines=%d\n", m.Version, config.Value(m.Name), strings.Count(m.SQL, "\n"))
+			sql := migrationLines(m.SQL)
+			shown := shownSQL(sql, *max)
+			fmt.Fprintf(stdout, "MIGRATION version=%d file=%s lines=%d\n", m.Version, config.Value(m.Name), len(sql))
+			for _, line := range shown {
+				fmt.Fprintln(stdout, line)
+			}
+			if len(shown) < len(sql) {
+				fmt.Fprintln(stdout, bounded.MoreLine("MIGRATE", "sql", len(shown), len(sql), tool.MaxRemedy))
+			}
 		}
 		fmt.Fprintf(stdout, "CONFIG MIGRATE print=%d pg=-\n", len(all))
 		return 0
@@ -55,7 +68,7 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }() // ignored: every reply the verb needs is already read, so a close error changes nothing
 	key, value := where(dsn)
 	have, err := st.Version(ctx)
 	if err != nil {
@@ -83,6 +96,23 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 	}
 	fmt.Fprintf(stdout, "CONFIG MIGRATE %s=%s from=%d to=%d applied=%d\n", key, config.Value(value), from, to, len(applied))
 	return 0
+}
+
+// migrationLines is a migration's SQL as the lines a reader sees: one entry
+// per line, the file's trailing newline ended rather than counting an empty
+// last line, so lines= names the same count migrate has always printed.
+func migrationLines(sql string) []string {
+	return strings.Split(strings.TrimSuffix(sql, "\n"), "\n")
+}
+
+// shownSQL is the first max lines of a migration's SQL (all of it when max is
+// zero or negative), the cut internal/bounded's MORE line stands for
+// (docs/STANDARD.md, section 2, "Output is bounded and keeps its totals").
+func shownSQL(sql []string, max int) []string {
+	if max <= 0 || len(sql) <= max {
+		return sql
+	}
+	return sql[:max]
 }
 
 // migrateDryRun is migrate --dry-run: the ledger read, every migration this

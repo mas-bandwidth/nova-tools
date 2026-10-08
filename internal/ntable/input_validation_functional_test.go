@@ -5,8 +5,10 @@ package ntable_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand/v2"
+	"strings"
 	"testing"
 	"unicode/utf8"
 
@@ -105,6 +107,135 @@ func inputRefusal(cmd *redis.Cmd) error {
 	return nil
 }
 
+// The single-call write paths bound the stored text the batch path already
+// bounds (docs/SPEC-NOVA-TABLE.md, "Manifest, identity and bounds": the
+// bounds table; table.lua T.limits holds the same numbers): a row set's text
+// value, a row add's label, exclude or owner, and a view's title or summary
+// over the field value bound, and a member id over the member id bound, are
+// refused LIMIT naming the bound and the count with the store untouched, and
+// exactly at the bound each call succeeds. The title carries the view path's
+// call at the bound; a summary at the bound would have to name a count column
+// that long, and the summary's own at-the-bound column ("a") succeeds beside
+// it.
+func TestStoreRefusesOverlongRowTextLabelTitleAndMemberIDs(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cases := []struct {
+		name   string
+		limit  string // the limit's name as refused
+		bound  int
+		member string // the member the refusal names, "" for none
+		at     func(c *redis.Client, n int) error
+		over   func(c *redis.Client, n int) error
+	}{
+		{"row set value", "field value bytes", ntable.LimitFieldValueBytes, "r",
+			func(c *redis.Client, n int) error {
+				_, err := ntable.RowSet(ctx, c, "t", "r", map[string]string{"status": strings.Repeat("v", n)})
+				return err
+			},
+			func(c *redis.Client, n int) error {
+				_, err := ntable.RowSet(ctx, c, "t", "r", map[string]string{"status": strings.Repeat("w", n)})
+				return err
+			}},
+		{"row add label", "field value bytes", ntable.LimitFieldValueBytes, "r3",
+			func(c *redis.Client, n int) error {
+				_, err := ntable.RowAdd(ctx, c, "t", "r2", ntable.RowSpec{Label: strings.Repeat("v", n)})
+				return err
+			},
+			func(c *redis.Client, n int) error {
+				_, err := ntable.RowAdd(ctx, c, "t", "r3", ntable.RowSpec{Label: strings.Repeat("w", n)})
+				return err
+			}},
+		{"row add exclude", "field value bytes", ntable.LimitFieldValueBytes, "r5",
+			func(c *redis.Client, n int) error {
+				_, err := ntable.RowAdd(ctx, c, "t", "r4", ntable.RowSpec{Exclude: strings.Repeat("v", n)})
+				return err
+			},
+			func(c *redis.Client, n int) error {
+				_, err := ntable.RowAdd(ctx, c, "t", "r5", ntable.RowSpec{Exclude: strings.Repeat("w", n)})
+				return err
+			}},
+		{"row add owner", "field value bytes", ntable.LimitFieldValueBytes, "r7",
+			func(c *redis.Client, n int) error {
+				_, err := ntable.RowAdd(ctx, c, "t", "r6", ntable.RowSpec{Owner: strings.Repeat("v", n)})
+				return err
+			},
+			func(c *redis.Client, n int) error {
+				_, err := ntable.RowAdd(ctx, c, "t", "r7", ntable.RowSpec{Owner: strings.Repeat("w", n)})
+				return err
+			}},
+		{"view set title", "field value bytes", ntable.LimitFieldValueBytes, "",
+			func(c *redis.Client, n int) error {
+				return ntable.ViewSet(ctx, c, ntable.View{Name: "v", Tables: []string{"t"}, Title: strings.Repeat("v", n), Summary: "a"})
+			},
+			func(c *redis.Client, n int) error {
+				return ntable.ViewSet(ctx, c, ntable.View{Name: "v", Tables: []string{"t"}, Title: strings.Repeat("w", n), Summary: "a"})
+			}},
+		{"view set summary", "field value bytes", ntable.LimitFieldValueBytes, "",
+			func(c *redis.Client, n int) error {
+				return ntable.ViewSet(ctx, c, ntable.View{Name: "v", Tables: []string{"t"}, Title: "T", Summary: "a"})
+			},
+			func(c *redis.Client, n int) error {
+				return ntable.ViewSet(ctx, c, ntable.View{Name: "v", Tables: []string{"t"}, Title: "T", Summary: strings.Repeat("w", n)})
+			}},
+		{"member id", "member id bytes", ntable.LimitMemberIDBytes, "",
+			func(c *redis.Client, n int) error {
+				_, err := ntable.CellAdd(ctx, c, "t", "r", "a", strings.Repeat("v", n), 1)
+				return err
+			},
+			func(c *redis.Client, n int) error {
+				_, err := ntable.CellAdd(ctx, c, "t", "r", "a", strings.Repeat("w", n), 1)
+				return err
+			}},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, c := live(t)
+			cols, err := ntable.ParseColumns("status:text:none,a")
+			require.NoError(t, err)
+			newTable(t, c, ntable.Table{Name: "t", Columns: cols})
+			_, err = ntable.RowAdd(ctx, c, "t", "r", ntable.RowSpec{})
+			require.NoError(t, err)
+			require.NoError(t, tc.at(c, tc.bound), "exactly at the bound refused")
+			before := storeImage(t, c)
+			err = tc.over(c, tc.bound+1)
+			var le *ntable.LimitError
+			require.ErrorAs(t, err, &le, "one byte over the bound accepted: %v", err)
+			require.ErrorIs(t, err, ntable.ErrLimit, "one byte over the bound: %v", err)
+			assert.Equal(t, tc.limit, le.Name, "refusal %v", err)
+			assert.Equal(t, tc.bound, le.Bound, "refusal %v", err)
+			assert.Equal(t, tc.bound+1, le.Observed, "refusal %v", err)
+			assert.Equal(t, tc.member, le.Member, "refusal %v", err)
+			assert.False(t, le.AtLeast, "refusal %v", err)
+			assert.Equal(t, before, storeImage(t, c), "a refused over-bound call changed the store")
+		})
+	}
+}
+
+// A summary exactly at the field value bound passes the length check: it is
+// refused SUMMARY (it names no count column), not LIMIT, while one byte over
+// is refused LIMIT before the column is looked up.
+func TestViewSetSummaryAtFieldValueBoundIsNotALimitRefusal(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	_, c := live(t)
+	cols, err := ntable.ParseColumns("status:text:none,a")
+	require.NoError(t, err)
+	newTable(t, c, ntable.Table{Name: "t", Columns: cols})
+	set := func(n int) error {
+		return ntable.ViewSet(ctx, c, ntable.View{Name: "v", Tables: []string{"t"}, Title: "T", Summary: strings.Repeat("w", n)})
+	}
+	var le *ntable.LimitError
+	err = set(ntable.LimitFieldValueBytes)
+	require.Error(t, err, "a summary naming no count column was accepted")
+	require.False(t, errors.As(err, &le), "a summary exactly at the bound was refused LIMIT: %v", err)
+	err = set(ntable.LimitFieldValueBytes + 1)
+	require.ErrorAs(t, err, &le, "a summary one byte over the bound was not refused LIMIT: %v", err)
+	assert.Equal(t, ntable.LimitFieldValueBytes+1, le.Observed)
+}
+
 // The raw writer and Go API must agree on arbitrary bytes and valid Unicode;
 // the independent oracle is the standard UTF-8 decoder plus the ASCII rule.
 func TestRawAndGoRowKeysAgreeOnBytes(t *testing.T) {
@@ -141,4 +272,51 @@ func TestRawAndGoRowKeysAgreeOnBytes(t *testing.T) {
 			require.Equal(t, "ROW", got[1], "invalid %q did not refuse cleanly: %v", key, got)
 		}
 	}
+}
+
+// The view family (the 'views' SET and every 'view:<name>' hash that
+// ns_view_set/state/del own) is reserved like the table family: a member
+// prefix or an epoch key inside it is a CONFIG refusal at create, and no
+// definition is written (security#78 finding 5).
+func TestCreateRefusesAMemberPrefixOrEpochKeyInTheViewFamily(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, prefix, epochKey string }{
+		{"member-prefix view:", "view:", ""},
+		{"member-prefix view:x:", "view:x:", ""},
+		{"epoch-key views", "", "views"},
+		{"epoch-key view:today", "", "view:today"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, c := live(t)
+			ctx := context.Background()
+			cols, _ := ntable.ParseColumns("done")
+			err := ntable.Create(ctx, c, ntable.Table{Name: "t", Columns: cols, MemberPrefix: tc.prefix, EpochKey: tc.epochKey}, now)
+			var r *ntable.Refusal
+			require.ErrorAs(t, err, &r)
+			assert.Equal(t, "CONFIG", r.Code)
+			n, err := c.Exists(ctx, ntable.DefKey("t")).Result()
+			require.NoError(t, err)
+			assert.Zero(t, n, "a refused create wrote a definition")
+		})
+	}
+	t.Run("a binding into the view family", func(t *testing.T) {
+		t.Parallel()
+		_, c := live(t)
+		ctx := context.Background()
+		cols, _ := ntable.ParseColumns("a")
+		require.NoError(t, ntable.Create(ctx, c, ntable.Table{Name: "t", Columns: cols}, now))
+		for _, key := range []string{"views", "view:today"} {
+			_, err := ntable.RowAdd(ctx, c, "t", "r", ntable.RowSpec{Binds: map[string]string{"a": key}})
+			var r *ntable.Refusal
+			require.ErrorAs(t, err, &r, "a binding to %s", key)
+			assert.Equal(t, "OWNEDALIAS", r.Code, "a binding to %s", key)
+		}
+	})
+	t.Run("a plain member prefix still creates", func(t *testing.T) {
+		t.Parallel()
+		_, c := live(t)
+		cols, _ := ntable.ParseColumns("done")
+		require.NoError(t, ntable.Create(context.Background(), c, ntable.Table{Name: "t", Columns: cols, MemberPrefix: "job:member:"}, now))
+	})
 }

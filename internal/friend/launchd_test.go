@@ -3,6 +3,8 @@ package friend
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -105,6 +107,133 @@ func TestInstallBootsOutThenBootstrapsAndIsTheSameTwice(t *testing.T) {
 	assert.Equal(t, []string{a.PlistPath()}, removed)
 }
 
+// A binary under /Volumes is on the removable-volume wall: launchd starts it
+// and it does nothing (docs/SPEC-FRIEND.md). Install copies it under the home
+// and the plist names the copy, or refuses and writes nothing.
+func TestInstallRefusesOrCopiesABinaryOnARemovableVolume(t *testing.T) {
+	t.Parallel()
+	const src = "/Volumes/disk/bin/nova-friend"
+
+	t.Run("copies into the home and the plist names the copy", func(t *testing.T) {
+		t.Parallel()
+		home := t.TempDir()
+		a := agent()
+		a.Home, a.Binary, a.LaunchdLog = home, src, filepath.Join(home, "launchd.log")
+		var copied []string
+		a.Copy = func(from, to string) error {
+			copied = append(copied, from+" -> "+to)
+			return nil
+		}
+		files := map[string]string{}
+		path, commands, err := Install(context.Background(), a, 501, recordCtl(nil), recordWrite(files), func() {})
+		require.NoError(t, err)
+		dst := InstalledBinary(home)
+		assert.Equal(t, []string{src + " -> " + dst}, copied)
+		assert.Equal(t, a.PlistPath(), path)
+		assert.Contains(t, files[path], "<string>"+dst+"</string>")
+		assert.NotContains(t, files[path], "/Volumes/")
+		assert.Equal(t, []string{"launchctl bootout gui/501/com.nova.friend-bob", "launchctl bootstrap gui/501 " + path}, commands)
+	})
+
+	t.Run("refuses when the copy fails and writes nothing", func(t *testing.T) {
+		t.Parallel()
+		home := t.TempDir()
+		a := agent()
+		a.Home, a.Binary, a.LaunchdLog = home, src, filepath.Join(home, "launchd.log")
+		a.Copy = func(string, string) error { return errors.New("disk full") }
+		wrote, launched := false, false
+		_, commands, err := Install(context.Background(), a, 501,
+			func(context.Context, ...string) (string, error) { launched = true; return "", nil },
+			func(string, []byte) error { wrote = true; return nil }, func() {})
+		require.ErrorIs(t, err, ErrBinaryOnRemovableVolume)
+		assert.ErrorContains(t, err, "disk full")
+		assert.False(t, wrote)
+		assert.False(t, launched)
+		assert.Empty(t, commands)
+		assert.NoFileExists(t, filepath.Join(home, "launchd.log"))
+	})
+
+	t.Run("refuses when no copy is offered", func(t *testing.T) {
+		t.Parallel()
+		home := t.TempDir()
+		a := agent()
+		a.Home, a.Binary, a.LaunchdLog = home, src, filepath.Join(home, "launchd.log")
+		wrote := false
+		_, commands, err := Install(context.Background(), a, 501, recordCtl(nil), func(string, []byte) error { wrote = true; return nil }, func() {})
+		require.ErrorIs(t, err, ErrBinaryOnRemovableVolume)
+		assert.ErrorContains(t, err, InstalledBinary(home))
+		assert.False(t, wrote)
+		assert.Empty(t, commands)
+	})
+
+	t.Run("refuses when the home is on a removable volume", func(t *testing.T) {
+		t.Parallel()
+		a := agent()
+		a.Home, a.Binary = "/Volumes/disk/home", src
+		a.LaunchdLog = filepath.Join(t.TempDir(), "launchd.log")
+		called, wrote := false, false
+		a.Copy = func(string, string) error { called = true; return nil }
+		_, commands, err := Install(context.Background(), a, 501, recordCtl(nil), func(string, []byte) error { wrote = true; return nil }, func() {})
+		require.ErrorIs(t, err, ErrBinaryOnRemovableVolume)
+		assert.False(t, called, "a copy onto the same wall is not a remedy")
+		assert.False(t, wrote)
+		assert.Empty(t, commands)
+	})
+
+	t.Run("a path that leaves the volume is not copied", func(t *testing.T) {
+		t.Parallel()
+		home := t.TempDir()
+		a := agent()
+		a.Home, a.LaunchdLog = home, filepath.Join(home, "launchd.log")
+		a.Binary = "/Volumes/disk/../../opt/bin/nova-friend"
+		called := false
+		a.Copy = func(string, string) error { called = true; return errors.New("copied") }
+		files := map[string]string{}
+		_, _, err := Install(context.Background(), a, 501, recordCtl(nil), recordWrite(files), func() {})
+		require.NoError(t, err)
+		assert.False(t, called)
+		assert.Contains(t, files[a.PlistPath()], "<string>/opt/bin/nova-friend</string>")
+		assert.NotContains(t, files[a.PlistPath()], "/Volumes/")
+	})
+}
+
+func recordCtl(ran *[]string) Launchctl {
+	return func(_ context.Context, args ...string) (string, error) {
+		if ran != nil {
+			*ran = append(*ran, strings.Join(args, " "))
+		}
+		return "", nil
+	}
+}
+
+func recordWrite(files map[string]string) func(string, []byte) error {
+	return func(path string, data []byte) error { files[path] = string(data); return nil }
+}
+
+// CopyExecutable is what install uses when the binary is on /Volumes. It is
+// pinned on a temp directory, never on a live install.
+func TestCopyExecutableKeepsTheModeAndLeavesTheOldFileOnFailure(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	require.NoError(t, os.WriteFile(src, []byte("#!/bin/sh\necho hi\n"), 0o644))
+	dst := filepath.Join(dir, "sub", "nova-friend")
+	require.NoError(t, os.MkdirAll(filepath.Dir(dst), 0o755))
+	require.NoError(t, os.WriteFile(dst, []byte("old"), 0o644))
+	require.NoError(t, CopyExecutable(src, dst))
+	got, err := os.ReadFile(dst)
+	require.NoError(t, err)
+	assert.Equal(t, "#!/bin/sh\necho hi\n", string(got))
+	st, err := os.Stat(dst)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o755), st.Mode().Perm()&0o755)
+	require.Error(t, CopyExecutable(filepath.Join(dir, "missing"), dst))
+	got, err = os.ReadFile(dst)
+	require.NoError(t, err)
+	assert.Equal(t, "#!/bin/sh\necho hi\n", string(got), "a failed copy leaves the previous binary")
+	require.ErrorContains(t, CopyExecutable(dir, filepath.Join(dir, "nope")), "is not a file")
+}
+
 // With --secrets the agent's command is nova-secrets exec around the daemon:
 // the store and key under the home directory, the seat's identity, the tool
 // and sops by absolute path, exactly the named secrets (--only) and every
@@ -125,4 +254,42 @@ func TestThePlistWrapsTheDaemonInNovaSecretsExecForItsSecrets(t *testing.T) {
 	assert.Less(t, strings.Index(p, "<string>--</string>"), strings.Index(p, "<string>run</string>"), "the daemon comes after the --")
 	a.Secrets = nil
 	assert.Equal(t, "/opt/nova/bin/nova-friend", a.Args()[0], "no secrets, no wrap")
+}
+
+// Notification installation has its own label and carries its safe mode and policy;
+// it never boots out the ordinary daemon (SPEC-FRIEND.md, notifications).
+func TestNotificationsAgentKeepsPolicyAndSeparateLabel(t *testing.T) {
+	t.Parallel()
+	a := agent()
+	normal := a.Label()
+	a.NotificationsOnly = true
+	a.NotifyKinds = "request,blocker,report"
+	a.NotifyWindow = NotificationWindow
+	assert.NotEqual(t, normal, a.Label())
+	assert.Contains(t, a.Args(), "--notifications-only")
+	assert.Contains(t, a.Args(), "--notify-kinds")
+	assert.Contains(t, a.Args(), a.NotifyKinds)
+	assert.Contains(t, a.Args(), "--notify-window")
+	assert.Contains(t, a.Plist(), a.Label())
+	assert.NotContains(t, a.Plist(), "<string>"+normal+"</string>")
+}
+
+// Each notification artifact has an immutable path of its own; a source change never
+// overwrites either the native daemon or a previous notification version.
+func TestNotificationBinaryPlanIsContentAddressedAndNativeBinaryIsSeparate(t *testing.T) {
+	t.Parallel()
+	a := agent()
+	a.Home = t.TempDir()
+	a.Binary = filepath.Join(t.TempDir(), "source")
+	a.NotificationsOnly = true
+	require.NoError(t, os.WriteFile(a.Binary, []byte("first executable"), 0o755))
+	first, copy, err := a.BinaryPlan()
+	require.NoError(t, err)
+	assert.True(t, copy)
+	assert.NotEqual(t, InstalledBinary(a.Home), first)
+	require.NoError(t, os.WriteFile(a.Binary, []byte("second executable"), 0o755))
+	second, _, err := a.BinaryPlan()
+	require.NoError(t, err)
+	assert.NotEqual(t, first, second)
+	assert.Contains(t, first, filepath.Join(a.Home, ".nova-friend", "notifications", "bin"))
 }

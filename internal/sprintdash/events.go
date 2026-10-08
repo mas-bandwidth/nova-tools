@@ -20,21 +20,26 @@ const KeepaliveDefault = 15 * time.Second
 // the last read began reads, so the stream's cadence is the ticker's, never two of them.
 const tickSlack = 10
 
-// Run reads the sprint on each tick while an /events client is connected, so each new
-// copy is pushed as it is read; it returns when ctx is done. tick is the clock's ticker
+// Run reads the sprint on each tick, whoever is looking, so the copy is never older than
+// a tick and each new one is pushed to the /events clients as it is read, then checks the
+// copy's freshness (Tick); it returns when ctx is done. While it runs it is the one
+// reader: a request (Refresh) answers from the copy and never reads. tick is the clock's ticker
 // (time.Ticker's channel, every Every); a test hands it a channel of its own.
 func (s *Server) Run(ctx context.Context, tick <-chan time.Time) {
+	s.mu.Lock()
+	s.polling = true // the poller is the one reader: requests answer from the copy
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.polling = false
+		s.mu.Unlock()
+	}()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick:
-			s.mu.Lock()
-			watched := s.streams > 0
-			s.mu.Unlock()
-			if watched {
-				s.refresh(s.Every - s.Every/tickSlack)
-			}
+			s.Tick()
 		}
 	}
 }
@@ -51,14 +56,6 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, view func(*sprin
 	rc := http.NewResponseController(w)
 	// ignored: a writer with no deadline to lift (a test's recorder) streams the same
 	_ = rc.SetWriteDeadline(time.Time{})
-	s.mu.Lock()
-	s.streams++
-	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		s.streams--
-		s.mu.Unlock()
-	}()
 	s.Refresh()
 	every := s.Keepalive
 	if every <= 0 {

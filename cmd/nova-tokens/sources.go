@@ -21,7 +21,7 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 	day := fs.String("day", "", "one UTC day to inspect as YYYY-MM-DD")
 	all := fs.Bool("all", false, "inspect every day named by the sources")
 	max := fs.Int("max", bounded.Default, "maximum rows to print; 0 prints all")
-	unattributed := fs.Bool("unattributed", false, "list seen paths that matched no repo rule")
+	unattributed := fs.Bool("unattributed", false, "list seen paths that matched no repo rule, with the mentions each got (one per message that touched it)")
 	var sf sourceFlags
 	sf.declare(fs, true)
 	s, code, ok := start(fs, args, "SOURCES", stdout, stderr)
@@ -98,13 +98,13 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// The listing that says WHICH paths `other` is made of. Without it a person reads
 	// `other=81%` on a day line and has nowhere to go but grep; with it the top stems ARE
 	// the rules the file is missing, written in the shape a rule matches.
-	unattributedField := tokens.Dash
+	unattributedField := count(tokens.Dash)
 	if *unattributed {
 		for _, u := range rules.Unattributed() {
-			stems.Line(s.line("SOURCES", "UNATTRIBUTED", "", "stem", u.Stem, "tokens", u.Count))
+			stems.Line(s.line("SOURCES", "UNATTRIBUTED", "", "stem", u.Stem, "mentions", u.Count))
 		}
 		stems.More()
-		unattributedField = strconv.Itoa(rules.TotalUnattributed())
+		unattributedField = count(strconv.Itoa(rules.TotalUnattributed()))
 	}
 	counts := []any{"sources", len(sources), "files", files, "messages", messages, "unreadable", unreadable.Total(),
 		"unparsed", unparsed.Total(), "rows", rows, "unattributed", unattributedField}

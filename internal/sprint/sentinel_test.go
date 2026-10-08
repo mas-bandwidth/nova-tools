@@ -183,7 +183,8 @@ func TestADroppedNeedOfASentinel(t *testing.T) {
 	open := w.openOn("stop")
 	require.Empty(t, open, "a card before the stop dropped: open %+v, waits %v", open, WaitsFor(w.s, w.s.Work.Card("stop"), nil))
 	require.Equal(t, "x", strings.Join(WaitsFor(w.s, w.s.Work.Card("stop"), nil), ","), "a card before the stop dropped: open %+v, waits %v", open, WaitsFor(w.s, w.s.Work.Card("stop"), nil))
-	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"x"}}, Reason: "obsolete"}))
+	w.seedDroppedNeed("x")
+	w.must(Resolve(w.s, ResolveReq{}))
 	blocked := w.openOn("stop")
 	require.Len(t, blocked, 1, "blocked: %+v", blocked)
 	require.Equal(t, NBlocked, blocked[0].Note.Type, "blocked: %+v", blocked)
@@ -201,7 +202,7 @@ func TestADroppedNeedOfASentinel(t *testing.T) {
 	w.must(tickDone(w.s, TickReq{}))
 	done := w.notesOf(NSprintDone)
 	require.Len(t, done, 1, "the sprint is done: %+v", done)
-	require.Equal(t, "2 landed, 2 dropped", done[0].What, "the sprint is done: %+v", done)
+	require.Equal(t, "2 landed, 1 dropped", done[0].What, "the sprint is done: %+v", done)
 	w.clean("released")
 }
 
@@ -295,9 +296,7 @@ func TestASentinelInsertedInLine(t *testing.T) {
 	w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 	w.must(Ask(w.s, AskReq{}))
-	for _, rc := range readsAt(w.s, w.s.Work.Card("s1-4"), 1) {
-		w.must(Read(w.s, ReadReq{As: rc.F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{rc.ID}}}))
-	}
+	readOK(w, "s1-4")
 	w.must(Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{"s1-4"}}}))
 	p = mergeOne(w, "s1")
 	require.Len(t, notesIn(p, NSentinelReached), 1, "not reached when s1-4 landed")
@@ -311,4 +310,63 @@ func TestASentinelInsertedInLine(t *testing.T) {
 	p = Add(w.s, AddReq{Stream: "s1", IDs: []string{"x"}, Sentinel: true, After: "s1-5"})
 	require.Len(t, p.Refused, 1, "no room: %+v", p)
 	require.Contains(t, p.Refused[0].Why, "no score lies between", "no room: %+v", p)
+}
+
+// sentinel set (SentinelSet; docs/SPEC-SPRINT.md section 16): a sentinel set to needs that
+// have all landed is reached in the same step, with its judgment; one reached that is set to
+// a need not landed is reached no more, and its reached judgment is answered. Its id, stream
+// and score never change.
+func TestSentinelSetReachesAndUnreaches(t *testing.T) {
+	t.Parallel()
+	w := setup(t, 2)
+	w.must(Lawful(Add(w.s, AddReq{Stream: "s2", IDs: []string{"a", "b"}})))
+	w.must(Lawful(Add(w.s, AddReq{Stream: "rel", IDs: []string{"stop"}, Sentinel: true, Needs: []string{"s1-1", "a"}})))
+	stop := w.s.Work.Card("stop")
+	row, score := stop.Row, stop.Score
+	accepted(w, "s1-1")
+	mergeOne(w, "s1")
+	require.Empty(t, stop.F("reached"), "stop still waits for a")
+
+	p := w.must(SentinelSet(w.s, SentinelSetReq{ID: "stop", Needs: []string{"s1-1"}, Who: w.s.Coordinator}))
+	require.Equal(t, "s1-1", stop.F("needs"))
+	require.NotEmpty(t, stop.F("reached"), "set to a need landed: reached")
+	require.Len(t, notesIn(p, NSentinelReached), 1, "the reached judgment: %+v", p)
+	require.Equal(t, []string{"sentinel stop needs s1-1,a -> s1-1; reached"}, movedOf(p))
+
+	p = w.must(SentinelSet(w.s, SentinelSetReq{ID: "stop", Needs: []string{"s1-1", "b"}, Who: w.s.Coordinator}))
+	require.Empty(t, stop.F("reached"), "set to a need not landed: reached no more")
+	require.Len(t, p.Units[0].Closes, 1, "the reached judgment is answered: %+v", p)
+	require.Equal(t, NSentinelReached, p.Units[0].Closes[0].Note.Type)
+	require.Equal(t, row, stop.Row)
+	require.Equal(t, score, stop.Score)
+	require.Equal(t, Waiting, stop.Col)
+
+	for _, tc := range []struct {
+		needs []string
+		who   string
+		why   string
+	}{
+		{nil, w.s.Coordinator, "released, not emptied"},
+		{[]string{"s1-1", "b"}, w.s.Coordinator, "stop needs s1-1,b already"},
+		{[]string{"b", "b"}, w.s.Coordinator, "b is named twice"},
+		{[]string{"stop"}, w.s.Coordinator, "a sentinel does not need itself"},
+		{[]string{"x", "y"}, w.s.Coordinator, "not a card on the table: x (no card), y (no card)"},
+		{[]string{"b"}, "intruder", "the coordinator's alone"},
+	} {
+		p := SentinelSet(w.s, SentinelSetReq{ID: "stop", Needs: tc.needs, Who: tc.who})
+		require.Empty(t, p.Units, "%v by %s: %+v", tc.needs, tc.who, p)
+		require.Len(t, p.Refused, 1, "%v by %s: %+v", tc.needs, tc.who, p)
+		require.Contains(t, p.Refused[0].Why, tc.why, "%v by %s", tc.needs, tc.who)
+	}
+	p = SentinelSet(w.s, SentinelSetReq{ID: "a", Needs: []string{"b"}, Who: w.s.Coordinator})
+	require.Len(t, p.Refused, 1, "a primary: %+v", p)
+	require.Contains(t, p.Refused[0].Why, "a is no sentinel")
+}
+
+func movedOf(p Plan) []string {
+	var out []string
+	for _, u := range p.Units {
+		out = append(out, u.Moved)
+	}
+	return out
 }

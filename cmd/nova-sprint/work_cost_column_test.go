@@ -1,12 +1,16 @@
 package main
 
 import (
+	"cmp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // The work table's cost column (the owner, 2026-10-01: "can you please add a final
@@ -17,8 +21,8 @@ import (
 // streams. internal/sprint/cost.go and steps_merge.go; internal/ntable moneyFold.
 
 // landStream plays the stream's n cards to landed: dealt, taken and finished on m1
-// (each with its usage, "" for none), read ok by reader-a and reader-b (each with its
-// usage), accepted, merged and drained by the tick.
+// (each with its usage, "" for none), read ok by the readers asked, reader-a and reader-b
+// (each with its usage), accepted, merged and drained by the tick.
 func (ta *testApp) landStream(stream string, work []string, readA, readB []string, mergeOp ...string) {
 	ta.t.Helper()
 	ta.ok("tick")
@@ -31,18 +35,23 @@ func (ta *testApp) landStream(stream string, work []string, readA, readB []strin
 		}
 		ta.ok(line)
 	}
+	// a card's reads are asked together: every read it needs in one ask (a pro card's two, a
+	// flash card's one), reader-a's read with readA's usage and reader-b's with readB's
 	ta.ok("ask")
 	for i := range work {
 		id := stream + "-" + strconv.Itoa(i+1)
-		for _, rd := range []struct {
-			who   string
-			usage string
-		}{{"reader-a", readA[i]}, {"reader-b", readB[i]}} {
-			line := "read --as " + rd.who + " --ok " + id + ".r1." + rd.who
-			if rd.usage != "" {
-				line += " --usage '" + rd.usage + "'"
+		require.True(ta.t, slices.Contains(ta.askedOf("reader-a"), id+".r1.reader-a") || slices.Contains(ta.askedOf("reader-b"), id+".r1.reader-b"), "%s is asked its reads", id)
+	}
+	for who, usages := range map[string][]string{"reader-a": readA, "reader-b": readB} {
+		for i := range work {
+			id := stream + "-" + strconv.Itoa(i+1)
+			if !slices.Contains(ta.askedOf(who), id+".r1."+who) {
+				continue
 			}
-			ta.ok(line)
+			// a read with no cost is a subscription reader's: its tokens, no dollar (a
+			// routed read with no usage is refused, sprint.ReadUsageMissing)
+			usage := cmp.Or(usages[i], "input=1 "+sprint.UsageSubscription)
+			ta.ok("read --as " + who + " --ok " + id + ".r1." + who + " --usage '" + usage + "'")
 		}
 	}
 	ta.ok("accept --stream " + stream)
@@ -56,22 +65,31 @@ func (ta *testApp) landStream(stream string, work []string, readA, readB []strin
 	ta.ok("tick")
 }
 
-// costCells are the work table's cost cells by row, and the footer's under "".
+// costCells are the work table's cost cells by row, and the footer's under "". A stream
+// the tick archived as its last card landed is brought back first, so its row is drawn.
 func (ta *testApp) costCells() map[string]string {
 	ta.t.Helper()
+	var v whereView
+	ta.json("where", &v)
+	if v.Archived != nil {
+		ta.ok("stream unarchive " + strings.Join(v.Archived.Streams, " "))
+	}
 	out := map[string]string{}
 	lines := strings.Split(ta.ok("where"), "\n")
-	in := false
+	in, at := false, -1
 	for _, l := range lines {
 		f := strings.Split(l, "|")
 		switch {
 		case strings.HasPrefix(l, "work "):
 			in = true
-			require.Equal(ta.t, "cost", strings.TrimSpace(f[len(f)-1]), "cost is the work table's last column")
+			// cost, then per landed, are the work table's last columns
+			require.Equal(ta.t, "per landed", strings.TrimSpace(f[len(f)-1]), "per landed is the work table's last column")
+			at = len(f) - 2
+			require.Equal(ta.t, "cost", strings.TrimSpace(f[at]), "cost is the column before it")
 		case in && strings.TrimSpace(l) == "":
 			return out
-		case in && len(f) > 1 && !strings.HasPrefix(l, "-"):
-			out[strings.TrimSpace(f[0])] = strings.TrimSpace(f[len(f)-1])
+		case in && len(f) > at && !strings.HasPrefix(l, "-"):
+			out[strings.TrimSpace(f[0])] = strings.TrimSpace(f[at])
 		}
 	}
 	return out
@@ -82,6 +100,7 @@ func TestTheWorkTableCostColumnIsEachStreamsLandedCostAndTheTotal(t *testing.T) 
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1:8")
 	ta.m.SetRoutes(costRoutes())
+	ta.readersReadPro() // a fleet row reads flash unless it says more (sprint fleetReadsFlashOnly)
 	ta.ok("add --stream s1 --count 2 --brief-file " + proBriefFile(t))
 	ta.ok("add --stream s2 --count 2 --brief-file " + proBriefFile(t))
 	ta.ok("add --stream s3 --count 1 --one --brief-file " + proBriefFile(t))
@@ -119,7 +138,7 @@ func TestTheWorkTableCostColumnIsEachStreamsLandedCostAndTheTotal(t *testing.T) 
 	assert.Equal(t, "$0.03", cells[""])
 
 	// clear empties it with the tables
-	ta.ok("stop")
+	ta.ok("stop --reason r --until 9999h")
 	ta.ok("clear --confirm sprint")
 	for row, cell := range ta.costCells() {
 		assert.NotContains(t, cell, "$", "after clear, row %q", row)

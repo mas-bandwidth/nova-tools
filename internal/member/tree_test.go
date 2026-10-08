@@ -50,6 +50,11 @@ func treeRig(t *testing.T, pu Pusher, r Result) *rig {
 	return g
 }
 
+// treeFinish is treeFinishWith for the tests' member, which has no clone.
+func treeFinish(p Packet, r Result) Result {
+	return treeFinishWith(p, r, acceptFullSha(p.Branch))
+}
+
 func TestAFlatCardLintsAndRunsAsBefore(t *testing.T) {
 	t.Parallel()
 	r := Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: fullSha, Report: "done", Body: "step 2: broken - not a tree card"}

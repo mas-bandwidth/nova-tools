@@ -12,6 +12,7 @@ package friend
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -32,6 +33,19 @@ const (
 	Challenged = "challenged" // a ping was pushed in; no pong yet
 	Deaf       = "deaf"       // challenged for a window with no pong
 )
+
+// The idle watch: what the daemon knows of a session holding cards
+// (docs/SPEC-FRIEND.md, idle wake).
+const (
+	Awake = "awake" // a write within IdleAfter, or no card held
+	Woken = "woken" // idle for IdleAfter holding cards; one wake turn given
+	Noted = "noted" // idle IdleAfter more after the wake; the coordinator told once
+)
+
+// DefaultIdleAfter is how long a session holding cards may write nothing before
+// its daemon wakes it, and again before the coordinator is told (the friend row's
+// idle setting, ten minutes when the row says none).
+const DefaultIdleAfter = 10 * time.Minute
 
 // Push is text the daemon owes the session as a turn: the ping (with the
 // pong line to run), or a word about the coordinator.
@@ -58,13 +72,18 @@ type Machine struct {
 	Asked     time.Time // when it was pushed in
 	LastPong  time.Time // when the session last answered a current nonce
 	Pongs     int       // session pongs seen, in all
+
+	Idle      string    // Awake, Woken or Noted
+	IdleSince time.Time // when the idle measure starts, if no write is newer: the start, or when a card was first held
+	WokenAt   time.Time // when the wake turn was given, while Woken or Noted
+	WokenSeen time.Time // the newest write the wake was given on; a newer one answers it
 }
 
 // Start is the daemon's state as it comes up at now: connected, with the
 // start standing in for the last ping (a coordinator that never pings is
 // silent one window after the start), and nothing asked of the session.
 func Start(now time.Time) *Machine {
-	return &Machine{Window: Window, Connection: Connected, LastPing: now, Challenge: Quiet}
+	return &Machine{Window: Window, Connection: Connected, LastPing: now, Challenge: Quiet, Idle: Awake, IdleSince: now}
 }
 
 // Ping is a ping arriving at now from seat (held since since) with nonce:
@@ -111,10 +130,64 @@ func (m *Machine) Tick(now time.Time) []Push {
 	return out
 }
 
+// IdleStep is the idle watch at now, with active the session's newest write
+// (zero: none known), cards the cards she holds and after the idle setting
+// (docs/SPEC-FRIEND.md, idle wake): holding no card is awake, and the measure
+// starts again when one is held; a write newer than the one the wake was given
+// on is awake again; awake with no write for after is one wake turn; woken for
+// after with no write is one note to the coordinator; noted says nothing more
+// until a write or no card ends it.
+func (m *Machine) IdleStep(now, active time.Time, cards int, after time.Duration) (wake, note bool) {
+	if cards == 0 {
+		m.Idle, m.IdleSince = Awake, now
+		return false, false
+	}
+	if m.Idle != Awake && active.After(m.WokenSeen) {
+		m.Idle = Awake
+	}
+	since := m.IdleSince
+	if active.After(since) {
+		since = active
+	}
+	switch {
+	case m.Idle == Awake && now.Sub(since) >= after:
+		m.Idle, m.WokenAt, m.WokenSeen = Woken, now, active
+		return true, false
+	case m.Idle == Woken && now.Sub(m.WokenAt) >= after:
+		m.Idle = Noted
+		return false, true
+	}
+	return false, false
+}
+
 // pingText is the ping as the session reads it: the nonce, the seat, and
 // the one line to run, so a small model gets it right.
 func PingText(seat string, since time.Time, nonce string) string {
 	return fmt.Sprintf("PING %s\nseat=%s since=%s\nAnswer first, before anything else, with one command: nova-friend pong --as <you> --nonce %s --queue <tasks queued> --working <tasks working> --width <your width>\nThen go on with what you were doing.", nonce, seat, since.UTC().Format(time.RFC3339), nonce)
+}
+
+// WakeMark marks a ping as a wake check (nova-friend ping --wake): a line of
+// its own in the ping's body.
+const WakeMark = "wake=1"
+
+// WakePingText is a wake check as the coordinator sends it: the ping, and
+// WakeMark. The daemon answers it at once as any ping and, the session being
+// free, pushes the pong line in as its own turn, so the session is asked
+// even with no message waiting (docs/SPEC-FRIEND.md, session-pong.w1;
+// tla/Friend.tla, WakeTurn).
+func WakePingText(seat string, since time.Time, nonce string) string {
+	return PingText(seat, since, nonce) + "\n" + WakeMark
+}
+
+// IsWake says whether a ping's text asks for a wake check: one of its lines
+// is WakeMark (docs/SPEC-FRIEND.md, session-pong.w1).
+func IsWake(text string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		if strings.TrimSpace(line) == WakeMark {
+			return true
+		}
+	}
+	return false
 }
 
 // PongLine is the session pong as it travels on the bus: pong <nonce>

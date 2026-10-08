@@ -326,13 +326,11 @@ func TestOpenIsBounded(t *testing.T) {
 			defer cancel()
 			start := time.Now()
 			conn, err := open(ctx, Options{Addr: storeAddr}, nothing, dial)
-			took := time.Now().Sub(start)
+			took := time.Since(start)
 			if err == nil || conn != nil {
 				require.FailNowf(t, "", "%s: Open = %v, %v; want an error", c.name, conn, err)
 			}
-			if took != c.after {
-				assert.EqualValues(t, c.after, took, "%s: Open returned after %v; want %v", c.name, took, c.after)
-			}
+			assert.EqualValues(t, c.after, took, "%s: Open returned after %v; want %v", c.name, took, c.after)
 			if got := Classify(err); got != c.class {
 				assert.EqualValues(t, c.class, got, "%s: class %v; want %v (%v)", c.name, got, c.class, err)
 			}
@@ -342,9 +340,8 @@ func TestOpenIsBounded(t *testing.T) {
 			// A dial that was under way when the caller stopped waiting ends
 			// at the dial's own bound, and is the only one.
 			silent.settled()
-			if took := time.Now().Sub(start); took > DialTimeout {
-				assert.LessOrEqual(t, took, DialTimeout, "%s: the dial ended after %v; want it within %v", c.name, took, DialTimeout)
-			}
+			took = time.Since(start)
+			assert.LessOrEqual(t, took, DialTimeout, "%s: the dial ended after %v; want it within %v", c.name, took, DialTimeout)
 			if n := dialed(); n > 1 {
 				assert.LessOrEqual(t, n, 1, "%s: %d dials; want at most one", c.name, n)
 			}
@@ -420,10 +417,8 @@ func TestCommandsAreBounded(t *testing.T) {
 			defer cancel()
 			start := time.Now()
 			err = conn.Client().Get(ctx, "key").Err()
-			took := time.Now().Sub(start)
-			if took != c.after {
-				assert.EqualValues(t, c.after, took, "%s: the command returned after %v; want %v", c.name, took, c.after)
-			}
+			took := time.Since(start)
+			assert.EqualValues(t, c.after, took, "%s: the command returned after %v; want %v", c.name, took, c.after)
 			if got := Classify(err); got != Unreachable {
 				assert.EqualValues(t, Unreachable, got, "%s: %v is %v; want %v", c.name, err, got, Unreachable)
 			}

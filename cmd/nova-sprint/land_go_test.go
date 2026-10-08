@@ -13,9 +13,9 @@ import (
 )
 
 // withEnv replaces a variable the environment holds and adds one it does not, the rest
-// in place; gateRuns is the build and the vet, then the tree tests the clone holds when
-// asked; treeTested is a document or a test file; gateWhy is one line of the run, how it
-// ended and its output.
+// in place; gateRuns is the build, gofmt, the vet and the functional-tag vet, then the
+// analyzer classes and the tree tests the clone holds when asked; treeTested is a document
+// or a test file; gateWhy is one line of the run, how it ended and its output.
 func TestTreeGateWords(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, []string{"GOFLAGS=-mod=readonly", "PATH=/bin", "NOVA_CI_UPDATE=1"},
@@ -27,10 +27,21 @@ func TestTreeGateWords(t *testing.T) {
 	assert.Equal(t, "GOFLAGS=-tags=custom -mod=readonly", readonlyGoFlags([]string{"GOFLAGS=-tags=custom -mod=mod"}))
 	assert.Equal(t, "GOFLAGS=-tags=custom -count=1 -mod=readonly",
 		readonlyGoFlags([]string{"GOFLAGS=-tags=custom", "PATH=/bin", "GOFLAGS=-count=1 -mod=vendor"}))
-	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}}, gateRuns(false, []string{"internal/docs"}))
-	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}}, gateRuns(true, nil))
-	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}, {"go", "test", "./internal/docs/", "./internal/ci/"}},
-		gateRuns(true, []string{"internal/docs", "internal/ci"}))
+	basics := [][]string{
+		{"go", "build", "./..."},
+		{"gofmt", "-l", "."},
+		{"go", "vet", "./..."},
+		{"go", "vet", "-tags", "functional", "./..."},
+	}
+	assert.Equal(t, basics, gateRuns(false, []string{"internal/docs"}))
+	assert.Equal(t, basics, gateRuns(true, nil))
+	runs := gateRuns(true, []string{"internal/docs", "internal/ci"})
+	assert.Equal(t, basics, runs[:4])
+	require.Len(t, runs, 8)
+	for i, test := range []string{"^TestStaticcheckFindings$", "^TestUncheckedErrors$", "^TestDeadCode$"} {
+		assert.Equal(t, []string{"go", "test", "-tags", "functional", "-count=1", "-timeout", "600s", "-run", test, "./internal/ci/"}, runs[i+4])
+	}
+	assert.Equal(t, []string{"go", "test", "-count=1", "-timeout", "600s", "./internal/docs/", "./internal/ci/"}, runs[7])
 	for p, want := range map[string]bool{
 		"docs/CLI.md":            true,
 		"a/b_test.go":            true,
@@ -109,13 +120,13 @@ func TestLandGatesEveryTipOfTheBatchBranch(t *testing.T) {
 		{"a build failure", nil, map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"}, map[string]string{"bad.go": buildRed},
 			"fails the tree gate: go build ./...: exit status 1: # example.com/m | ./bad.go:3:14: syntax error:", ""},
 		{"a document the tree tests refuse", nil, map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"}, map[string]string{"NOTES.md": "BAD\n"},
-			"fails the tree gate: go test ./internal/docs/: exit status 1: ", ""},
+			"fails the tree gate: go test -count=1 -timeout 600s ./internal/docs/: exit status 1: ", ""},
 		{"a Go file the tree tests refuse", nil, map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"}, map[string]string{"forbidden.go": "package main\n\nfunc forbidden() {}\n"},
-			"fails the tree gate: go test ./internal/docs/: exit status 1: ", ""},
+			"fails the tree gate: go test -count=1 -timeout 600s ./internal/docs/: exit status 1: ", ""},
 		{"a plain file the tree tests would refuse is not tested", nil, map[string]string{"forbidden.txt": "plain\n"}, map[string]string{"notes.txt": "more plain\n"},
 			"", ""},
 		{"a red base refuses the batch", map[string]string{"bad.go": vetRed}, map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"}, map[string]string{"NOTES.md": "still fine\n"},
-			"", "reason=the base main fails the tree gate at its tip, so no head is merged onto it; fix the base, then run land again: go vet ./...: exit status 1: bad.go:5:26: fmt.Printf format %d"},
+			"", "reason=the base main fails the tree gate at its tip, so no head is merged onto it; fix the base, then run land again: the base main at"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -137,13 +148,14 @@ func TestLandGatesEveryTipOfTheBatchBranch(t *testing.T) {
 				assert.Equal(t, 1, code, out+errs)
 				assert.Contains(t, errs, "LAND REFUSED stream=s1 cards=2 base=main tip=- ids=s1-1..s1-2 ")
 				assert.Contains(t, errs, tc.base_red)
+				assert.Contains(t, errs, "is red on its class vet; fix-red card fix-red-vet-main (TEST: internal/ci TestTheTreePassesVet); go vet ./...: exit status 1: bad.go:5:26: fmt.Printf format %d")
 				assert.Equal(t, before, r.git(r.remote, "rev-parse", "main"), "nothing was pushed")
 				assert.Equal(t, map[string]string{"s1-1": "merging/queued", "s1-2": "merging/queued"}, r.places("s1-1", "s1-2"), "no card is blamed")
 			case tc.why != "":
 				assert.Equal(t, 1, code, out+errs)
 				assert.Contains(t, errs, "LAND REFUSED stream=s1 cards=1 base=- tip=- ids=s1-2 fact=conflict reason=the head "+heads["s1-2"]+" of s1-2 "+tc.why)
 				assert.Equal(t, []string{"land s1-1 (sprint stream s1)", "the module", "base"}, r.mainLog())
-				assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "merging/stuck"}, r.places("s1-1", "s1-2"))
+				assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "ready/returned"}, r.places("s1-1", "s1-2"))
 				assert.Equal(t, "", r.git(r.remote, "ls-tree", "main", "bad.go"), "the red head is off the batch branch")
 				assert.Empty(t, r.git(r.clone, "status", "--porcelain", "--untracked-files=all"), "the clone is clean")
 			default:
@@ -155,6 +167,33 @@ func TestLandGatesEveryTipOfTheBatchBranch(t *testing.T) {
 			r.clean()
 		})
 	}
+}
+
+// A red base and a queued head whose tree passes the gate the base fails: the lander gates
+// the candidate's tree, not only the base's, lands that head first as the base fix, naming
+// it in the landing note, and the batch goes on after it (sprint.FindBaseCure; 2026-10-05
+// 7:30 PM, the fix card refused because the base it fixed was red).
+func TestTheLanderLandsTheBaseFixFirst(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.git(r.worker, "switch", "-q", "--detach", "origin/main")
+	r.files("the module", goModule)
+	r.files("the base's change", map[string]string{"bad.go": vetRed})
+	r.git(r.worker, "push", "-q", "origin", "HEAD:refs/heads/main")
+	r.git(r.worker, "fetch", "-q", "origin")
+	r.ok("add --stream s1 --count 2")
+	heads := map[string]string{"s1-1": r.card("s1-1", map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"}),
+		"s1-2": r.card("s1-2", map[string]string{"bad.go": "package main\n\nfunc bad() {}\n"})}
+	r.queued(heads, "s1-1", "s1-2")
+	code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+	require.Equal(t, 0, code, out+errs)
+	assert.Contains(t, out, "LAND OK stream=s1 cards=2 base=main")
+	assert.Contains(t, out+errs, "s1-2 landed first as the base fix")
+	log := r.mainLog()
+	require.GreaterOrEqual(t, len(log), 2)
+	assert.Equal(t, []string{"land s1-1 (sprint stream s1)", "land s1-2 (sprint stream s1)"}, log[:2], "the fix lands first, then the casualty on the green base")
+	assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "landed/merged"}, r.places("s1-1", "s1-2"))
+	r.clean()
 }
 
 // The base gate's green result is cached by base commit SHA: once gated, the same commit

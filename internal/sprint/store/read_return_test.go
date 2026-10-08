@@ -21,6 +21,8 @@ func (h *harness) asked1(n int) {
 	h.machine()
 	h.work("m1")
 	h.work("m2")
+	// the tick asks each card both its reads at once (reads are asked together,
+	// sprint.ReadsWanted)
 	h.machine()
 }
 
@@ -84,7 +86,7 @@ func TestAReadReturnedIsAskedOfAnotherReaderAtTheSameAttempt(t *testing.T) {
 	assert.Zero(t, h.written(sprint.NReadBroken))
 	h.clean("returned and asked again")
 	// a report against the returned card is refused, naming the return
-	res := h.run(ReadStep(sprint.ReadReq{As: from, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: from}))
+	res := h.run(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: from, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: from}))
 	require.NotEmpty(t, res.Refused)
 	assert.Contains(t, strings.Join(refusedText(res), " "), "returned")
 }
@@ -175,12 +177,15 @@ func TestAReturnedReadWhoseNextReaderGoesAwayIsAskedOrJudgedNeverSilent(t *testi
 		}
 	}
 	asked := readersOf()
-	assert.NotContains(t, asked, "reader-a", "a reader whose returned read another reader took is not asked again at the attempt")
-	// asked again of two readers up, or the primary's "cannot ask" judgment
-	// is open: a read left on reader-c, away, with nothing said is the silence
-	if slices.Contains(asked, "reader-c") || len(asked) < 2 {
-		assert.NotEmpty(t, h.openOf(sprint.NCannotAsk), "a read that cannot be asked again is a judgment: %v", asked)
-	}
+	assert.NotContains(t, asked, "reader-c", "the away read is taken back: %v", asked)
+	// reader-b's read stands, outstanding (reads are asked one at a time); it comes back ok,
+	// and the second read is asked of reader-a under the second identity: its returned
+	// read, which reader-c took, has no verdict and spends no reader (the interim rule,
+	// ReadCardForAsk). A read left on reader-c, away, with nothing said is the silence
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: "reader-b", Verdict: "ok", Sel: sprint.Sel{IDs: []string{"s1-1.r1.reader-b"}}, Who: "reader-b"}))
+	h.machine()
+	assert.NotNil(t, h.snap().Readers.Placed(sprint.ReadCardSecondID("s1-1", 1, "reader-a")), "asked again of reader-a, under .g1: %v", readersOf())
+	assert.Empty(t, h.openOf(sprint.NCannotAsk))
 }
 
 // Only a read still asked or reading can be returned: a read reported ok, or
@@ -193,7 +198,7 @@ func TestAReturnOfAReadAlreadyReportedIsRefused(t *testing.T) {
 			h := newHarness(t)
 			h.asked1(1)
 			rc := h.snap().Readers.Of("s1-1")[0]
-			h.must(ReadStep(sprint.ReadReq{As: rc.Row, Verdict: verdict, Finding: "f:1", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: rc.Row}))
+			h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: verdict, Finding: "f:1", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: rc.Row}))
 			res := h.run(ReadStep(sprint.ReadReq{As: rc.Row, Return: true, Reason: "late", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: rc.Row}))
 			require.NotEmpty(t, res.Refused)
 			c := h.snap().Readers.Placed(rc.ID)
@@ -207,7 +212,8 @@ func TestAReturnOfAReadAlreadyReportedIsRefused(t *testing.T) {
 // The stranding of 2026-10-01: every reader's launch failed and each returned
 // every read with no verdict. A return is not a read, so the readers stay
 // eligible: the reads go to the reader still free, then back to the readers
-// that returned them, in place, and no "cannot ask" judgment is raised; the
+// that returned them, under the second identity (a read retired without a verdict
+// leaves its reader askable once more, ReadCardForAsk), and no "cannot ask" judgment is raised; the
 // primary stays at its attempt with nothing spent, and once the readers can
 // launch their oks accept it (tla/DirtyTick.tla, JudgedOnlyAfterTheBound;
 // before, the returned cards were retired and counted as reads, and the
@@ -251,16 +257,16 @@ func TestReadsEveryReaderReturnsAreNeverStranded(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, third)
-	// the next two have no free reader: asked again of the readers that
-	// returned them, in place
+	// the next two have no reader free with no card: asked again of the readers that
+	// returned before them, once more each, under the second identity
 	ret(pair[1])
 	ret(third)
 	s := h.snap()
-	for _, r := range []string{pair[1], third} {
-		c := s.Readers.Placed(sprint.ReadCardID("s1-1", 1, r))
-		require.NotNil(t, c, "%s is asked again", r)
+	for _, r := range []string{pair[0], pair[1]} {
+		c := s.Readers.Placed(sprint.ReadCardSecondID("s1-1", 1, r))
+		require.NotNil(t, c, "%s is asked again, under .g1", r)
 		assert.Equal(t, sprint.Asked, c.Col, r)
-		assert.Empty(t, c.F(sprint.FieldReturned), "%s: asked again, the stamp cleared", r)
+		assert.Empty(t, c.F(sprint.FieldReturned), "%s: asked again, no return stamp", r)
 	}
 	assert.Empty(t, h.openOf(sprint.NCannotAsk), "never stranded in review")
 	pr := s.Work.Card("s1-1")
@@ -271,9 +277,9 @@ func TestReadsEveryReaderReturnsAreNeverStranded(t *testing.T) {
 	assert.Len(t, h.returnNotes(), 3)
 	h.clean("every reader returned")
 	// the fault fixed: both readers read it, and the tick accepts
-	for _, r := range []string{pair[1], third} {
-		id := sprint.ReadCardID("s1-1", 1, r)
-		h.must(ReadStep(sprint.ReadReq{As: r, Verdict: "ok", Finding: "clean", Sel: sprint.Sel{IDs: []string{id}}, Who: r}))
+	for _, r := range []string{pair[0], pair[1]} {
+		id := sprint.ReadCardSecondID("s1-1", 1, r)
+		h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: r, Verdict: "ok", Finding: "clean", Sel: sprint.Sel{IDs: []string{id}}, Who: r}))
 	}
 	h.machine()
 	assert.Equal(t, sprint.Merging, h.snap().Work.Card("s1-1").Col)
@@ -283,7 +289,9 @@ func TestReadsEveryReaderReturnsAreNeverStranded(t *testing.T) {
 // The re-ask is bounded (tla/DirtyTick.tla, ReasksBounded, StrandingIsJudged,
 // JudgedOnlyAfterTheBound): a reader that can never launch, with no other reader
 // free, is asked its returned read again in place MaxReadReasks times; the next
-// return is counted as a read, the card retired, and the tick raises "cannot ask"
+// return is counted as a read, the card retired; its reader is asked once more under
+// the second identity (a read retired without a verdict spends no reader,
+// ReadCardForAsk), bounded the same, and past that the tick raises "cannot ask"
 // for the coordinator, instead of the read coming back every few seconds for ever
 // with no judgment (the reader's finding on #5019).
 func TestAReadReturnedPastItsReasksIsJudgedNotAskedAgain(t *testing.T) {
@@ -294,7 +302,7 @@ func TestAReadReturnedPastItsReasksIsJudgedNotAskedAgain(t *testing.T) {
 	id := sprint.ReadCardID("s1-1", 1, "reader-a")
 	require.NotNil(t, h.snap().Readers.Placed(id), "asked of reader-a and reader-b")
 	runs := 0
-	ret := func() {
+	retOf := func(id string) {
 		h.t.Helper()
 		runs++
 		h.must(ReadStep(sprint.ReadReq{As: "reader-a", Begin: true, Sel: sprint.Sel{IDs: []string{id}}, Who: "reader-a"}))
@@ -302,6 +310,7 @@ func TestAReadReturnedPastItsReasksIsJudgedNotAskedAgain(t *testing.T) {
 			Sel: sprint.Sel{IDs: []string{id}}, Who: "reader-a"}))
 		h.machine()
 	}
+	ret := func() { h.t.Helper(); retOf(id) }
 	for i := 1; i <= sprint.MaxReadReasks; i++ {
 		ret()
 		c := h.snap().Readers.Placed(id)
@@ -312,12 +321,25 @@ func TestAReadReturnedPastItsReasksIsJudgedNotAskedAgain(t *testing.T) {
 	}
 	ret()
 	assert.Nil(t, h.snap().Readers.Placed(id), "the return past the bound is counted: the card is retired")
+	// retired with no verdict: reader-a is asked once more, under .g1, bounded the same
+	g1 := sprint.ReadCardSecondID("s1-1", 1, "reader-a")
+	require.NotNil(t, h.snap().Readers.Placed(g1), "asked once more of reader-a, under .g1")
+	assert.Empty(t, h.openOf(sprint.NCannotAsk), "no judgment while the second identity's re-asks last")
+	for i := 0; i <= sprint.MaxReadReasks; i++ {
+		retOf(g1)
+	}
+	assert.Nil(t, h.snap().Readers.Placed(g1), "the second identity's return past the bound: retired")
+	// reader-b's read, outstanding, is read ok, and the second read is wanted of a
+	// reader who has not read the attempt: none
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: "reader-b", Verdict: "ok", Sel: sprint.Sel{IDs: []string{sprint.ReadCardID("s1-1", 1, "reader-b")}}, Who: "reader-b"}))
+	h.machine()
 	open := h.openOf(sprint.NCannotAsk)
 	require.Len(t, open, 1, "the coordinator is told: cannot ask")
 	assert.Contains(t, open[0].Note.What, "needs 1 different readers and 0 is free")
-	assert.Len(t, h.returnNotes(), sprint.MaxReadReasks+1)
+	assert.Len(t, h.returnNotes(), 2*(sprint.MaxReadReasks+1))
 	h.machine()
 	assert.Nil(t, h.snap().Readers.Placed(id), "never asked of reader-a again at the attempt")
+	assert.Nil(t, h.snap().Readers.Placed(g1), "nor under .g1")
 	assert.Len(t, h.openOf(sprint.NCannotAsk), 1, "one judgment, not one a tick")
 	// every returned run keeps its own cost record on the one card (cost.go,
 	// FieldReadTake): two re-asks, three returned runs, three records, all in the
@@ -377,8 +399,9 @@ func TestAReturnedReadWhoseReaderGoesAwayIsJudgedAtOnce(t *testing.T) {
 // returned its read for ever. Read counts each return itself: six rounds of begin
 // and return by the one reader up end at the bound, the card retired after the
 // MaxReadReasks+1th return with that many cost records, every later begin
-// refused, and the coordinator told (fewer than two readers up; "cannot ask" once
-// a second reader is up and none is free).
+// refused, and the coordinator told (fewer than two readers up); with a second reader
+// up again, reader-a is asked once more under .g1 (a read retired without a verdict
+// spends no reader, ReadCardForAsk), never stranded.
 func TestAReturnCountsItselfWhileFewerThanTwoReadersAreUp(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -407,8 +430,11 @@ func TestAReturnCountsItselfWhileFewerThanTwoReadersAreUp(t *testing.T) {
 	assert.Empty(t, f[sprint.FieldReadTake+fmt.Sprint(sprint.MaxReadReasks+2)], "the cost records stop at the bound")
 	assert.NotEmpty(t, h.openOf(sprint.NFewReaders), "the coordinator is told while fewer than two are up")
 	require.NoError(t, h.st.SetReaderAway(h.ctx, "reader-b", false, "coordinator"))
+	// reader-b's read, outstanding, comes back ok: the second read is asked of reader-a, under .g1
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: "reader-b", Verdict: "ok", Sel: sprint.Sel{IDs: []string{sprint.ReadCardID("s1-1", 1, "reader-b")}}, Who: "reader-b"}))
 	h.machine()
-	assert.NotEmpty(t, h.openOf(sprint.NCannotAsk), "two up, none free: cannot ask")
+	assert.NotNil(t, h.snap().Readers.Placed(sprint.ReadCardSecondID("s1-1", 1, "reader-a")), "two up: reader-a asked once more, under .g1")
+	assert.Empty(t, h.openOf(sprint.NCannotAsk), "asked, not judged")
 	h.clean("bounded with one reader up")
 }
 

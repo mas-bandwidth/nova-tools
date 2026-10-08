@@ -78,7 +78,7 @@ func tell(run []sprint.Line) []storyLine {
 	for _, l := range run {
 		if l.Note == nil {
 			moved = true
-			if l.Table == sprint.Fleet && (strings.HasSuffix(l.To, ":"+sprint.DoneOK) || strings.HasSuffix(l.To, ":"+sprint.DoneFailed)) {
+			if l.Table == sprint.Fleet && (strings.HasSuffix(l.To, ":"+sprint.DoneOK) || strings.HasSuffix(l.To, ":"+sprint.DoneFailed) || strings.HasSuffix(l.To, ":"+sprint.DoneDefect)) {
 				finished = true
 			}
 		}
@@ -208,7 +208,7 @@ func lineAttempt(l sprint.Line) int {
 		return l.Note.Attempt
 	}
 	n := 0
-	fmt.Sscan(attemptOf(l), &n)
+	fmt.Sscan(attemptOf(l), &n) // ignored: an attempt that does not parse reads as 0, which the story shows as no attempt
 	return n
 }
 
@@ -371,6 +371,8 @@ func outcome(l sprint.Line) string {
 	switch {
 	case l.Note == nil && l.Table == sprint.Fleet && strings.HasSuffix(l.To, ":"+sprint.DoneFailed):
 		return "attempt " + a + " failed"
+	case l.Note == nil && l.Table == sprint.Fleet && strings.HasSuffix(l.To, ":"+sprint.DoneDefect):
+		return "attempt " + a + " held on a brief defect"
 	case l.Note == nil && l.Table == sprint.Readers && strings.HasSuffix(l.To, ":"+sprint.Broken):
 		reader, _, _ := strings.Cut(l.To, ":")
 		return reader + " found attempt " + a + " broken"
@@ -410,6 +412,17 @@ func (a *app) nowLines(v store.CardInfo, held *sprint.Hold) []string {
 			s := "needs " + n.ID + " (" + n.State + ")"
 			if n.Waived {
 				s += ", waived"
+			}
+			if rel := p.F(sprint.FieldRelinked); rel != "" {
+				parts := strings.SplitN(rel, " -> ", 2)
+				if len(parts) == 2 {
+					f := strings.Fields(parts[1])
+					if len(f) > 0 && f[0] == n.ID {
+						s += ", relinked: " + rel
+					}
+				} else {
+					s += ", relinked: " + rel
+				}
 			}
 			out = append(out, s)
 		}

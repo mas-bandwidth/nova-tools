@@ -83,6 +83,7 @@ func seqBatch(h *harness, tick, n int) {
 // the stream of each card, and the readers asked of each primary.
 type seqPart struct {
 	parts   int
+	ids     []string
 	members []string
 	streams []string
 	readers [][]string
@@ -105,6 +106,7 @@ func (o *seqPart) add(moved []string) {
 	for _, line := range moved {
 		id, _, _ := strings.Cut(line, " ")
 		st, _, _ := strings.Cut(id, "-")
+		o.ids = append(o.ids, id)
 		if _, m, ok := strings.Cut(line, " member="); ok {
 			m, _, _ = strings.Cut(m, " ")
 			o.members = append(o.members, m)
@@ -215,15 +217,17 @@ const streamsRoom = 8 * sprint.DealAhead * 2
 // seqRun is what the streams run did, a tick at a time.
 type seqRun struct {
 	deal, ask, accept                []seqPart
-	dealCounts, askCounts, accCounts []map[string]int    // what each step could take, by stream, before it
-	props                            []map[string]uint64 // every index after the tick and its accept
+	dealCounts, askCounts, accCounts []map[string]int      // what each step could take, by stream, before it
+	had                              []map[string][]string // before each tick, the readers who read each primary wanting a read at its attempt
+	props                            []map[string]uint64   // every index after the tick and its accept
 }
 
 // streamsRun is eight machines of width 2 (room DealAhead x 2 x 8 = 32 a tick)
-// and three streams of 60 ready: each tick deals 32, asks two readers of every primary finished
-// the tick before, and after the tick the readers report ok, the coordinator
-// accepts every primary read, and every member works its cards. What each
-// step could take is read before it, for the expected sequences.
+// and three streams of 60 ready: each tick deals 32, asks two readers of every
+// primary that wants reads (both the tick after it finished: reads are asked
+// together, sprint.ReadsWanted), and after the tick the readers report ok, the
+// coordinator accepts every primary read twice, and every member works its cards. What each step could take is
+// read before it, for the expected sequences.
 func streamsRun(t *testing.T, h *harness, ticks int) seqRun {
 	seqFleet(h, 2)
 	for _, st := range seqStreams {
@@ -232,23 +236,27 @@ func streamsRun(t *testing.T, h *harness, ticks int) seqRun {
 	var r seqRun
 	for i := 1; i <= ticks; i++ {
 		s := h.snap()
-		ready, review := map[string]int{}, map[string]int{}
+		ready, review, had := map[string]int{}, map[string]int{}, map[string][]string{}
 		for _, st := range seqStreams {
 			ready[st] = len(s.Work.Cell(st, sprint.Ready))
 			for _, c := range s.Work.Cell(st, sprint.Review) {
-				if c.F("asked") == "" {
+				if sprint.ReadsWanted(s, c) > 0 {
 					review[st]++
+					had[c.ID] = []string{}
+					for _, rc := range s.Readers.Of(c.ID) {
+						had[c.ID] = append(had[c.ID], rc.Row)
+					}
 				}
 			}
 		}
 		res := h.machine()
-		r.dealCounts, r.askCounts = append(r.dealCounts, ready), append(r.askCounts, review)
+		r.dealCounts, r.askCounts, r.had = append(r.dealCounts, ready), append(r.askCounts, review), append(r.had, had)
 		r.deal, r.ask = append(r.deal, seqMoves(res, "deal")), append(r.ask, seqMoves(res, "ask"))
-		h.readAll()
+		h.readOutstanding() // both reads of each primary asked this tick come back ok
 		acc := map[string]int{}
 		for _, st := range seqStreams {
 			for _, c := range h.snap().Work.Cell(st, sprint.Review) {
-				if c.F("asked") != "" {
+				if len(sprint.Split(c.F("asked"))) >= 2 { // read twice: acceptable
 					acc[st]++
 				}
 			}
@@ -295,9 +303,14 @@ func dealStreamsAcrossTicks(t *testing.T, h *harness) {
 }
 
 // askAcrossTicks: the ask's reader index (ask_index) and its stream index
-// (stream_index_ask) go on from tick to tick: each primary asked of the next
-// two readers the counter names, the counter up by two a primary; the
-// primaries in stream turns from the stream the ask's counter names.
+// (stream_index_ask) go on from tick to tick: each primary asked both its reads
+// together (sprint.ReadsWanted), each of the reader with the most room (the
+// readers here are named for no fleet row, so the least loaded: every read of
+// the tick before is read, and the loads start even) that has not read its
+// attempt, the first pick's tie going to the first from the counter and the
+// second's to the first past the first pick, the counter moved past each and the
+// ones passed over; the primaries in stream turns from the stream the ask's
+// counter names.
 func askAcrossTicks(t *testing.T, h *harness) {
 	r := streamsRun(t, h, 4)
 	var readers, streams uint64
@@ -312,16 +325,49 @@ func askAcrossTicks(t *testing.T, h *harness) {
 		streams = next
 		got := r.props[i]["stream ask"]
 		require.Equal(t, streams, got, "tick %d: stream_index_ask %d, want %d", i+1, got, streams)
-		for j, pair := range r.ask[i].readers {
-			w := seqRound(seqReaders, readers, 2)
-			require.True(t, slices.Equal(pair, w), "tick %d, primary %d: asked of %v, want %v: the next two readers from the counter %d", i+1, j+1, pair, w, readers)
-			readers += 2
+		load := map[string]int{}
+		nr := uint64(len(seqReaders))
+		for j, one := range r.ask[i].readers {
+			// two of the readers who have not read the primary's attempt, each the least
+			// loaded, the first pick's tie the first from the counter and the second's the
+			// first past the first pick; the counter moved past each and the ones passed
+			// over (round.pickByRoom, round.moved)
+			id := r.ask[i].ids[j]
+			var order []string
+			for k := uint64(0); k < nr; k++ {
+				if rd := seqReaders[(readers+k)%nr]; !slices.Contains(r.had[i][id], rd) {
+					order = append(order, rd)
+				}
+			}
+			var w []string
+			for at := 0; len(w) < 2; {
+				pick := -1
+				for x := range order {
+					k := (at + x) % len(order)
+					if !slices.Contains(w, order[k]) && (pick < 0 || load[order[k]] < load[order[pick]]) {
+						pick = k
+					}
+				}
+				if pick < 0 {
+					break
+				}
+				w = append(w, order[pick])
+				load[order[pick]]++
+				at = pick + 1
+			}
+			from := readers
+			for _, rd := range w {
+				at := uint64(slices.Index(seqReaders, rd))
+				readers += (at-readers%nr+nr)%nr + 1
+			}
+			require.True(t, slices.Equal(one, w), "tick %d, primary %d (%s, read by %v): asked of %v, want %v: the next readers from the counter %d", i+1, j+1, id, r.had[i][id], one, w, from)
+			asked += len(one)
 		}
-		asked += len(r.ask[i].readers)
 		got = r.props[i]["ask"]
-		require.Equal(t, readers, got, "tick %d: ask_index %d, want %d, two a primary asked", i+1, got, readers)
+		require.Equal(t, readers, got, "tick %d: ask_index %d, want %d, one a primary asked", i+1, got, readers)
 	}
-	require.Equal(t, 3*streamsRoom, asked, "%d primaries asked in four ticks, want %d: the three ticks after the first each ask the %d finished", asked, 3*streamsRoom, streamsRoom)
+	// the three ticks after the first each ask the 32 finished both their reads
+	require.Equal(t, 6*streamsRoom, asked, "%d reads asked in four ticks, want %d", asked, 6*streamsRoom)
 }
 
 // acceptAcrossTicks: the accept's stream index (stream_index_accept) goes on
@@ -343,7 +389,7 @@ func acceptAcrossTicks(t *testing.T, h *harness) {
 		require.Equal(t, counter, got, "accept %d: stream_index_accept %d, want %d", i+1, got, counter)
 		accepted += len(r.accept[i].streams)
 	}
-	require.Equal(t, 3*streamsRoom, accepted, "%d accepted, want %d", accepted, 3*streamsRoom)
+	require.Equal(t, 3*streamsRoom, accepted, "%d accepted, want %d: read twice in the tick after each finished, both reads together", accepted, 3*streamsRoom)
 }
 
 func TestTheDealsStreamIndexContinuesAcrossTicks(t *testing.T) {
