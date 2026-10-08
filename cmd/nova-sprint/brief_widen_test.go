@@ -31,7 +31,7 @@ func TestBriefWidenKeepsTheId(t *testing.T) {
 	r.commit("a.go", "package a\n", "a.go at the base")
 	r.git(r.worker, "push", "-q", "origin", "HEAD:refs/heads/main")
 	r.git(r.worker, "fetch", "-q", "origin")
-	brief := writeBrief(t, "fix the empty case, tier: pro\nREPO: "+r.remote+"\nBASE: main\nPATHS: a.go\nTEST: none a fixture of brief --widen")
+	brief := writeBrief(t, "fix the empty case, tier: pro\nbase-repo: "+r.remote+"\nBASE: main\nPATHS: a.go\nTEST: none a fixture of brief --widen")
 	// held runs one card of stream s to a held finish: its attempt pushed b.go, a file the
 	// base has not, and the report says report
 	held := func(s, report string) (id, head string) {
@@ -145,7 +145,7 @@ func TestAWidenReadsThePathBeforeTheProse(t *testing.T) {
 	r.commit("cmd/nova-sprint/pushproof.go", "package main\n", "a hyphenated path at the base")
 	r.git(r.worker, "push", "-q", "origin", "HEAD:refs/heads/main")
 	r.git(r.worker, "fetch", "-q", "origin")
-	brief := writeBrief(t, "fix the empty case, tier: pro\nREPO: "+r.remote+"\nBASE: main\nPATHS: a.go\nTEST: none a fixture of brief --widen")
+	brief := writeBrief(t, "fix the empty case, tier: pro\nbase-repo: "+r.remote+"\nBASE: main\nPATHS: a.go\nTEST: none a fixture of brief --widen")
 	held := func(s, report string) (id, head string) {
 		id = s + "-1"
 		r.promotionStream(s)
