@@ -23,7 +23,7 @@ candidate source description, not an install or publication instruction.
 STOP cancellation/return, adoption migration, friend redeal, bus push advice,
 Claude folder proof, and the OpenCode adapter are selected in the assembly
 branch. Their combined behavior still needs review and Linux gates. Final
-friend runner, read settlement, native adapters, Emma, and lander revisions
+friend runner, read settlement, native adapters, delegated close, and lander revisions
 remain pending imports. The present full functional tier is red; certification,
 paired tools and sprint installation, dev ancestry, dogfood and release
 publication are still required. No fleet reinstall, Redis function load, or
