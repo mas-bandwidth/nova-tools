@@ -954,7 +954,7 @@ func RowSet(ctx context.Context, c redis.Cmdable, name, key string, texts map[st
 	// the payload is built (docs/SPEC-NOVA-TABLE.md, Manifest, identity and
 	// bounds).
 	for _, text := range texts {
-		if err := over(limitNameFieldValue, LimitFieldValueBytes, len(text), ""); err != nil {
+		if err := over(limitNameFieldValue, LimitFieldValueBytes, len(text), key); err != nil {
 			return 0, (operation{table: name, row: key}).beforeSending(err)
 		}
 	}
@@ -1088,7 +1088,7 @@ func RowAdd(ctx context.Context, c redis.Cmdable, name, key string, spec RowSpec
 	// the payload is built (docs/SPEC-NOVA-TABLE.md, Manifest, identity and
 	// bounds).
 	for _, text := range []string{spec.Label, spec.Exclude, spec.Owner} {
-		if err := over(limitNameFieldValue, LimitFieldValueBytes, len(text), ""); err != nil {
+		if err := over(limitNameFieldValue, LimitFieldValueBytes, len(text), key); err != nil {
 			return Row{}, o.beforeSending(err)
 		}
 	}
