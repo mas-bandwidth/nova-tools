@@ -23,7 +23,7 @@ import (
 )
 
 // deadCodeLedgerPath is the shrink-only per-package ledger of unreachable functions
-// across the codebase from cmd/ production roots (nova-tools#4902).
+// across the codebase from production roots, cmd/ and tools/tlacheck (nova-tools#4902).
 //
 // Maintainer directive (2026-09-30, contraction phase):
 // "dead code to zero with a class test holding it".
@@ -80,10 +80,11 @@ func deadcodeToolBinary(t *testing.T, ctx context.Context) string {
 	return bin
 }
 
-// runDeadcode runs deadcode on ./cmd/... roots for targetOS using the host tool binary.
+// runDeadcode runs deadcode on command roots and the TLC runner invoked by the
+// Makefile and the TLC workflow, for targetOS, using the host tool binary.
 func runDeadcode(t *testing.T, ctx context.Context, bin, root, targetOS string) ([]deadcodePackage, error) {
 	t.Helper()
-	cmd := exec.CommandContext(ctx, bin, "-json", "./cmd/...")
+	cmd := exec.CommandContext(ctx, bin, "-json", "./cmd/...", "./tools/tlacheck")
 	cmd.Dir = root
 	cmd.Env = append(goenv.Clean(os.Environ()), "GOOS="+targetOS)
 	cmd.WaitDelay = 5 * time.Second
@@ -171,7 +172,7 @@ func TestDeadCode(t *testing.T) {
 				sample = sample[:5]
 			}
 			problems = append(problems, fmt.Sprintf(
-				"%s: %d unreachable functions not listed in ledger (e.g. %s);\n  remedy: %s;\n  reproduce: GOOS=linux go tool deadcode ./cmd/... (or GOOS=darwin, windows)",
+				"%s: %d unreachable functions not listed in ledger (e.g. %s);\n  remedy: %s;\n  reproduce: GOOS=linux go tool deadcode ./cmd/... ./tools/tlacheck (or GOOS=darwin, windows)",
 				pkg, measured[pkg], strings.Join(sample, ", "), deadCodeRemedy))
 		}
 		for _, row := range res.Over {
@@ -181,7 +182,7 @@ func TestDeadCode(t *testing.T) {
 				sample = sample[:5]
 			}
 			problems = append(problems, fmt.Sprintf(
-				"%s: %d unreachable functions, over ledger count of %d (e.g. %s);\n  remedy: %s;\n  reproduce: GOOS=linux go tool deadcode ./cmd/... (or GOOS=darwin, windows)",
+				"%s: %d unreachable functions, over ledger count of %d (e.g. %s);\n  remedy: %s;\n  reproduce: GOOS=linux go tool deadcode ./cmd/... ./tools/tlacheck (or GOOS=darwin, windows)",
 				row.Key, row.Measured, row.Listed, strings.Join(sample, ", "), deadCodeRemedy))
 		}
 		for _, row := range res.Lowered {
