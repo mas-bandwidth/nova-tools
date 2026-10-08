@@ -773,3 +773,28 @@ func TestLandRefusesAProtectedBaseUntilTheStreamIsMarked(t *testing.T) {
 	assert.Contains(t, r.ok("land --repo-dir "+r.clone+" --base main"), "LAND OK stream=s1 cards=1 base=main")
 	assert.Equal(t, []string{"land s1-1 (sprint stream s1)", "base"}, r.mainLog())
 }
+
+// TestABehindStreamLandsAsOneBatchInWorkOrder verifies that when a stream has more cards
+// than fit in one batch (a behind stream), the lander merges all members into the batch
+// branch in work order, parks any conflicting head but continues with remaining members,
+// and lands as one batch. The stream is "behind" when its queue has more cards than
+// batchOf() returns (more than one batch worth waiting).
+func TestABehindStreamLandsAsOneBatchInWorkOrder(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.ok("add --stream s1 --count 4")
+	heads := map[string]string{}
+	for _, id := range []string{"s1-1", "s1-2", "s1-3", "s1-4"} {
+		heads[id] = r.head(id, "main", id+".txt", id+"\n")
+	}
+	r.queued(heads, "s1-1", "s1-2", "s1-3", "s1-4")
+	// With 4 cards and batchOf returning 1 (all same repo/base), the stream is behind
+	// (4 > 1). The lander should merge all in work order and land as one batch.
+	out := r.ok("land --repo-dir " + r.clone + " --base main --check 'test -f s1-4.txt'")
+	tip := r.git(r.remote, "rev-parse", "main")
+	assert.Contains(t, out, "LAND OK stream=s1 cards=4 base=main tip="+tip+" ids=s1-1..s1-4")
+	assert.Contains(t, out, "LAND DONE batches=1 cards=4 refused=0")
+	assert.Equal(t, []string{"land s1-4 (sprint stream s1)", "land s1-3 (sprint stream s1)", "land s1-2 (sprint stream s1)", "land s1-1 (sprint stream s1)", "base"}, r.mainLog())
+	assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "landed/merged", "s1-3": "landed/merged", "s1-4": "landed/merged"}, r.places("s1-1", "s1-2", "s1-3", "s1-4"))
+	r.clean()
+}
