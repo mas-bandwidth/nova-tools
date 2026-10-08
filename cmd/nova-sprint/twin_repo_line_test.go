@@ -149,3 +149,32 @@ func TestAModelBriefWithAPathsFirstLineKeepsItsPaths(t *testing.T) {
 	assert.NotContains(t, c.F("brief"), "tier: frontier",
 		"the tier writer did not append the tier to the PATHS line:\n%s", c.F("brief"))
 }
+
+// A REPO value that only looks like the card template is no repository. Only the template
+// itself -- a brief whose line 1 is one of the template's own unfilled lines -- is left to
+// add's unfilled-lines note; a brief whose line 1 is filled is a card, and the first REPO:
+// line, the value the friend's staging reads, must be exactly owner/name. A template line
+// later in the brief never exempts a different first value (card.Checks, unfilledRepo; the
+// review of attempt 4).
+func TestTheAdmissionLintRefusesATemplateLookingRepoValue(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, repo, value string }{
+		{"the template's own fill-in", "<owner>/<name>", "<owner>/<name>"},
+		{"a first value before a later template line", "garbage\nREPO: <owner>/<name>", "garbage"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ta := newTestApp(t)
+			ta.ok("init --readers reader-a,reader-b --members m1")
+			brief := "RESULT: c sha=0123456789ab tier: pro\n" +
+				"REPO: " + tc.repo + "\n" +
+				"BASE: sprint/mechanical-2026-10-02\n" +
+				"\nTHE TASK. A free task with a repository."
+			code, out, errs := ta.do("add --stream s1 --count 1 --one --brief-file " + writeBrief(t, brief))
+			require.Equal(t, 2, code, "REPO %q: exit %d\n%s%s", tc.value, code, out, errs)
+			assert.Contains(t, errs, "check=repo-line", "REPO %q: the lint names the check:\n%s", tc.value, errs)
+			assert.Contains(t, errs, tc.value, "REPO %q: the lint names the value it read:\n%s", tc.value, errs)
+			assert.False(t, ta.placed("s1-1"), "REPO %q: nothing was written", tc.value)
+		})
+	}
+}

@@ -2350,9 +2350,11 @@ and it is the coordinator's decision, receipted.
   I would like that to go to frontier models."): a card whose PATHS name model work (a
   `.tla` module anywhere, an MC config or the directory itself under a `tla/` directory,
   or a glob that matches one: `sprint.ModelPaths`) is admitted by `add` with `tier:
-  frontier` written on the card's own line -- its `RESULT:` line when the brief carries
-  one, else line 1 when line 1 is the card's title, never a header line (`PATHS:`, `REPO:`,
-  `BASE:`, `TEST:`, ...) -- when that line names no tier (its
+  frontier` written on its `RESULT:` line when the brief carries one -- and when the brief
+  carries none, with the brief unchanged and the card's own tier field carrying frontier
+  (`steps_work.go`), because the tier writer stamps only a `RESULT:` line and never a title
+  or a header (`PATHS:`, `REPO:`, `BASE:`, `TEST:`, ...). That happens when the brief names
+  no tier (its
   unit says `tiered frontier: PATHS name TLA+ model work (<entries>)`), as written when it
   names frontier, and refused, with that reason and what to write, when it names a lower
   tier (`sprint.ModelTier`); `nova-card generate` tiers its cards the same, the source's

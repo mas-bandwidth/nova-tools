@@ -33,23 +33,24 @@ func TestTieredBriefNeverStampsAHeaderLine(t *testing.T) {
 	}
 }
 
-// The card's own line is stamped: its RESULT line when the brief carries one, else its
-// title (the card decides its model; docs/SPEC-SPRINT.md).
-func TestTieredBriefStampsTheResultLineElseTheTitle(t *testing.T) {
+// The tier is stamped on the card's RESULT line and nowhere else: a title and a header are
+// read as written, and a RESULT line that already names a tier is not given a second word
+// (brief_tier.go; docs/SPEC-CARD-CONTRACT.md section 6, the RESULT line carries the tier).
+func TestTieredBriefStampsOnlyTheResultLine(t *testing.T) {
 	t.Parallel()
 	result := "RESULT: c sha=0123456789ab\nREPO: mas-bandwidth/nova-tools\n\nThe task."
 	assert.Equal(t,
 		"RESULT: c sha=0123456789ab tier: frontier\nREPO: mas-bandwidth/nova-tools\n\nThe task.",
 		tieredBrief(result, "frontier"))
 	title := "c: a lease model\nREPO: mas-bandwidth/nova-tools\n\nThe task."
-	assert.Equal(t,
-		"c: a lease model tier: frontier\nREPO: mas-bandwidth/nova-tools\n\nThe task.",
-		tieredBrief(title, "frontier"))
+	assert.Equal(t, title, tieredBrief(title, "frontier"), "a title is never stamped")
+	pinned := "RESULT: c sha=0123456789ab tier: pro\nREPO: mas-bandwidth/nova-tools\n\nThe task."
+	assert.Equal(t, pinned, tieredBrief(pinned, "frontier"), "a RESULT line that names a tier is not stamped again")
 }
 
-// A model brief whose first line is a header carries no card's own line, so the tier writer
-// leaves it as written and says nothing: the missing tier is the card checks' to refuse, and
-// the PATHS line is never rewritten (brief_tier.go).
+// A model brief whose first line is a header carries no RESULT line, so the tier writer
+// leaves it as written and says the words the add's unit carries: the card's own tier field
+// carries frontier and the add persists it (brief_tier.go, steps_work.go).
 func TestAModelBriefWithALeadingHeaderIsGivenBackAsItIs(t *testing.T) {
 	t.Parallel()
 	brief := "PATHS: tla/Lease.tla,internal/x/*.go\n" +
@@ -59,6 +60,6 @@ func TestAModelBriefWithALeadingHeaderIsGivenBackAsItIs(t *testing.T) {
 		"\nTHE TASK. Fix the lease model."
 	out, said, why := ModelTier(brief)
 	assert.Equal(t, brief, out, "the leading PATHS line is not rewritten")
-	assert.Empty(t, said)
+	assert.Equal(t, "tiered frontier: PATHS name TLA+ model work (tla/Lease.tla)", said)
 	assert.Empty(t, why)
 }

@@ -266,17 +266,30 @@ func headerLine(brief, key string) int {
 	return 1
 }
 
-// unfilledRepo reports whether a brief's REPO: line is an unfilled line of the card
-// template (swarm.UnfilledTemplateLines): a template is not yet a card, and add answers it
-// with the unfilled-lines note (cmd/nova-sprint, sayok.go), so the repo-line check leaves it
-// to that rather than refuse the template the help hands a writer.
+// unfilledRepo reports whether a brief is the card template itself and its first REPO: line
+// -- the value the staging reads (cardhdr.Value) -- is one of the template's own unfilled
+// lines (swarm.UnfilledTemplateLines): a template is not yet a card, and add answers it with
+// the unfilled-lines note (cmd/nova-sprint, sayok.go), so the repo-line check leaves the
+// template the help hands a writer to that. A brief whose line 1 is filled is a card, not
+// the template, and its first REPO: value must be an owner/name; a later template line never
+// exempts a different value, because the staging reads the first.
 func unfilledRepo(brief string) bool {
+	unfilled := map[int]bool{}
 	for _, f := range swarm.UnfilledTemplateLines(brief) {
-		if strings.HasPrefix(strings.TrimSpace(f.Excerpt), "REPO:") {
-			return true
+		unfilled[f.Line] = true
+	}
+	return unfilled[1] && unfilled[repoLine(brief)]
+}
+
+// repoLine is the 1-based line of the first REPO: line cardhdr.Value reads, 0 when the
+// brief names none.
+func repoLine(brief string) int {
+	for i, l := range strings.Split(brief, "\n") {
+		if k, _, ok := cardhdr.KeyValue(l); ok && k == "REPO" {
+			return i + 1
 		}
 	}
-	return false
+	return 0
 }
 
 var quotedRE = regexp.MustCompile(`"[^"]*"|“[^”]*”`)
