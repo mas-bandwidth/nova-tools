@@ -21,24 +21,15 @@ process.stdout.write(JSON.stringify({ cost: txt('cost'), per: doc.getElementById
   unreconciled: txt('cost-unreconciled'), landed: txt('landed'), all: txt('all'), eta: txt('eta') }));
 `
 
-// The cost tile shows the reads as their own number beside the work (reads are priced like
-// work; the owner, 2026-10-05: "do we have the cost for readers properly calculated yet in
-// nova sprint?"), over one scope, the streams on the table, as the total counts them, the
-// readers' tooltip too: an archived stream's spend is on its archived line (the owner,
-// 2026-10-06: "I really don't think we have 2.8k cards post-archive..."). The providers'
-// unreconciled spend is the epoch's (sprint.UnreconciledSpend), so it is never added into the
-// tile: it has its own line, its scope named.
+// The cost tile shows its recorded total and only the amount per landed card below it.
 func TestTheCostTileShowsReadsBesideWork(t *testing.T) {
 	t.Parallel()
 	res := drawCostTile(t, nil)
-	assert.Equal(t, "$3.00", res.Cost, "the complete cost holds work and reads of the streams on the table, and no unreconciled spend")
-	assert.Contains(t, res.Per, "$2.00 work · $1.00 reads", "the reads beside the work, the archived stream's left out")
-	assert.Contains(t, res.Per, "$1.00 reads (33%)", "and their share of work and reads together")
-	assert.Equal(t, "reader-a $0.88 ($0.13 last hour)\nreader-b $0.13 ($0.00 last hour)", res.Title,
-		"the tooltip names each reader's spend over the streams on the table, most first; a subscription reader has no dollars")
-	assert.Contains(t, res.Per, "2 runs unpriced", "the runs unpriced of the tile's scope")
-	assert.Equal(t, "$0.40 unreconciled since 2026-10-03", res.Unreconciled,
-		"the unreconciled spend on its own line, its scope the epoch's, never in the tile")
+	assert.Equal(t, "$3.00", res.Cost, "the total includes recorded work and reads")
+	assert.Regexp(t, `^\$[0-9]+\.[0-9]{2} per card$`, res.Per)
+	assert.Empty(t, res.Title)
+	assert.Empty(t, res.Unreconciled)
+	assert.NotContains(t, string(file("index.html")), `id="cost-unreconciled"`)
 }
 
 // A sprint done (where --json's done: every stream archived by the tick) reads the same on the
@@ -52,8 +43,8 @@ func TestTheHeroOfASprintDoneIsTheEpochs(t *testing.T) {
 	})
 	assert.Equal(t, [3]string{"9", "9", "done"}, [3]string{res.Landed, res.All, res.Eta})
 	assert.Equal(t, "$4.50", res.Cost, "the epoch's cost: the table's and the archived streams'")
-	assert.Contains(t, res.Per, "$3.00 work · $1.50 reads")
-	assert.Equal(t, "reader-a $0.88 ($0.13 last hour)\nreader-b $0.63 ($0.00 last hour)", res.Title, "the tooltip over the same scope")
+	assert.Equal(t, "$0.50 per card", res.Per)
+	assert.Empty(t, res.Title)
 }
 
 // costTile is the cost tile and the hero as app.js draws them.

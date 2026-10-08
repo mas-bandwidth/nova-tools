@@ -24,6 +24,7 @@ const (
 	StatusFile = "status.json"
 	PongFile   = "pong.json"
 	LogFile    = "deliver.log"
+	WatchFile  = "watch.json"
 	QueueFile  = "inbox/QUEUE.json"
 )
 
@@ -56,6 +57,8 @@ type Status struct {
 	Beats          int       `json:"beats"`
 	LastBeat       time.Time `json:"last_beat"`
 	BeatError      string    `json:"beat_error,omitempty"`
+	Envelope       int       `json:"envelope"`       // messages the last envelope carried (docs/SPEC-FRIEND.md, the loop)
+	EnvelopeBytes  int       `json:"envelope_bytes"` // its text's size: at most the deliverer's text limit, the first message always in
 	// Push is the push proof this run (PushProved, or PushUnproven while the
 	// session has not answered its check: nothing is delivered), PushNonce the
 	// check's nonce and PushSince when the daemon started waiting, while unproven;
@@ -249,6 +252,28 @@ func WritePong(stateDir string, p Pong) error { return write(pongPath(stateDir),
 func ReadPong(stateDir string) (p Pong, found bool, err error) {
 	found, err = read(pongPath(stateDir), &p)
 	return p, found, err
+}
+
+// Watch is the cursor of the coordinator's watch (docs/SPEC-FRIEND.md, Watch):
+// the last stream entry id it has seen and the wake file's offset it has read
+// to, so the next run misses nothing and takes no flag.
+type Watch struct {
+	After      string `json:"after"`
+	WakeOffset int64  `json:"wake_offset"`
+}
+
+// WatchPath is the cursor file in the state directory.
+func WatchPath(stateDir string) string { return filepath.Join(stateDir, WatchFile) }
+
+// WriteWatch saves the cursor atomically (write a temporary file, rename it
+// over the old), so a run killed in the middle leaves the old cursor whole.
+func WriteWatch(stateDir string, w Watch) error { return write(WatchPath(stateDir), w) }
+
+// ReadWatch is the cursor the last run saved; found is false when none ever
+// has.
+func ReadWatch(stateDir string) (w Watch, found bool, err error) {
+	found, err = read(WatchPath(stateDir), &w)
+	return w, found, err
 }
 
 // ReadQueue is the queue file's counts; a file that is not there counts

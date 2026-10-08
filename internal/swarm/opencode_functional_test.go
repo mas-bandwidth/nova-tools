@@ -23,14 +23,16 @@ import (
 // A database with usage rows is read: the five token types summed across the messages, the
 // model the provider named, and a dash for every field the provider did not report.
 func TestTheOpenCodeSourceSumsTheMessageRows(t *testing.T) {
-	fakeSQLite3(t)
+	t.Parallel()
+
+	r := fakeReader(fakeSQLite3(t))
 	dataHome := t.TempDir()
 	// providerID, modelID, input, output, cache write, cache read, reasoning -- a NULL
 	// column prints as the empty string, which is what the provider not reporting it looks
 	// like on the wire.
 	writeDB(t, dataHome, "deepseek\tdeepseek-chat\t100\t50\t\t\t\t\ndeepseek\tdeepseek-chat\t7\t3\t\t20\t\t\n")
 
-	usage, err := ReadProviderUsage(UsageOpenCode, dataHome)
+	usage, err := r.read(dataHome)
 	require.NoError(t, err, "a readable database is not an error: %v", err)
 	require.True(t, usage.Observed, "a database with message rows has been observed")
 	for _, c := range []struct{ column, want string }{
@@ -57,8 +59,10 @@ func TestTheOpenCodeSourceSumsTheMessageRows(t *testing.T) {
 // nothing, which rule 13 keeps apart from a source that FAILS to read. The first leaves the
 // budget unable to fire and the deadline to end the job; the second ends the job.
 func TestAnAbsentOpenCodeDatabaseIsNotAnError(t *testing.T) {
-	fakeSQLite3(t)
-	usage, err := ReadProviderUsage(UsageOpenCode, t.TempDir())
+	t.Parallel()
+
+	r := fakeReader(fakeSQLite3(t))
+	usage, err := r.read(t.TempDir())
 	require.NoError(t, err, "a database the harness has not written yet is not an error: %v", err)
 	assert.False(t, usage.Observed, "nothing was observed, and the reader says so")
 	assert.Empty(t, usage.Values, "nothing was observed, so there are no values: %v", usage.Values)
@@ -67,11 +71,13 @@ func TestAnAbsentOpenCodeDatabaseIsNotAnError(t *testing.T) {
 // A SOURCE THAT FAILS TO READ IS AN ERROR, so rule 13's third sample ends the job RUN
 // BUDGET-UNVERIFIABLE rather than reporting a budget nobody can see.
 func TestAnUnreadableOpenCodeDatabaseIsAnError(t *testing.T) {
-	fakeSQLite3(t)
+	t.Parallel()
+
+	r := fakeReader(fakeSQLite3(t))
 	dataHome := t.TempDir()
 	path := writeDB(t, dataHome, "not a database\n")
 
-	usage, err := ReadProviderUsage(UsageOpenCode, dataHome)
+	usage, err := r.read(dataHome)
 	require.Error(t, err, "a database that cannot be read is an error, got %+v", usage)
 	assert.Contains(t, err.Error(), path, "the refusal names the database: %v", err)
 }
@@ -85,12 +91,14 @@ func TestAnUnreadableOpenCodeDatabaseIsAnError(t *testing.T) {
 // with a RESULT wrote an all-dash usage row: the database was there, one directory over,
 // and the reader never opened it. Both spellings must answer, primary first.
 func TestOpenCodeSourceFindsTheLocalShareStore(t *testing.T) {
-	fakeSQLite3(t)
+	t.Parallel()
+
+	r := fakeReader(fakeSQLite3(t))
 	dataHome := t.TempDir()
 	fallback := filepath.Join(dataHome, ".local", "share", "opencode", "opencode.db")
 	writeDBAt(t, fallback, "deepseek\tdeepseek-chat\t100\t50\t\t\t\t\n")
 
-	usage, err := ReadProviderUsage(UsageOpenCode, dataHome)
+	usage, err := r.read(dataHome)
 	require.NoError(t, err, "a store under the data home's .local/share is readable: %v", err)
 	require.True(t, usage.Observed, "a store with message rows has been observed")
 	got := usage.Values["tokens_in"]
@@ -106,7 +114,9 @@ func TestOpenCodeSourceFindsTheLocalShareStore(t *testing.T) {
 // `database is locked`. The read is retried until the flush lands rather than recording a
 // dash for tokens the harness did spend.
 func TestOpenCodeSourceWaitsOutAWriteAheadLog(t *testing.T) {
-	fakeSQLite3(t)
+	t.Parallel()
+
+	r := fakeReader(fakeSQLite3(t))
 	dataHome := t.TempDir()
 	db := writeDB(t, dataHome, "deepseek\tdeepseek-chat\t100\t50\t\t\t\t\n")
 	wal := db + "-wal"
@@ -116,7 +126,7 @@ func TestOpenCodeSourceWaitsOutAWriteAheadLog(t *testing.T) {
 	// database. The test turns on no clock of its own.
 	require.NoError(t, os.WriteFile(wal+fakeFlushMarker, nil, 0o644))
 
-	usage, err := ReadProviderUsage(UsageOpenCode, dataHome)
+	usage, err := r.read(dataHome)
 	require.NoError(t, err, "the read waits out the flush instead of failing: %v", err)
 	got := usage.Values["tokens_in"]
 	assert.Equal(t, "100", got, "tokens_in is %q, want 100 read after the -wal was flushed", got)
@@ -133,8 +143,14 @@ func fakeSQLite3(t *testing.T) string {
 	cmd.Env = goenv.Clean(os.Environ())
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "building the fake sqlite3: %v\n%s", err, out)
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return dir
+	return bin
+}
+
+// fakeReader is the reader under test with the fake's own path as its lookup: the
+// per-test seam the serial-tests ledger names ("a field on the value under test"), in
+// place of putting the fake on the process's PATH with t.Setenv.
+func fakeReader(fake string) openCodeReader {
+	return openCodeReader{lookPath: func(string) (string, error) { return fake, nil }}
 }
 
 // writeDBAt writes the lines a real `sqlite3 -tabs` would print to an explicit path, so a

@@ -668,9 +668,51 @@ func (b *Bus) WaitArm(ctx context.Context, as, after string) (string, error) {
 }
 
 // Log is the log's messages from the entry id from ("-" for its start),
-// oldest first, up to logLimit of them.
+// oldest first, up to logLimit of them. A reader that always passes "-"
+// sees only the oldest window, so once the log is longer than logLimit a
+// fresh entry is past the cap on every read. Arm at LogCursor and read
+// with LogForward.
 func (b *Bus) Log(ctx context.Context, from string) ([]Entry, error) {
 	return b.Store.Range(ctx, LogKey, from, "+", logLimit)
+}
+
+// LogCursor is the log's tail, the cursor a reader arms at so LogForward
+// returns only entries appended after it. An empty log arms at "0-0", the
+// id before any entry. The store's Tail is the same read a wait arms with.
+func (b *Bus) LogCursor(ctx context.Context) (string, error) {
+	w, err := b.Waiter()
+	if err != nil {
+		return "", err
+	}
+	tail, exists, err := w.Tail(ctx, LogKey)
+	if err != nil {
+		return "", err
+	}
+	if !exists || tail == "" {
+		return "0-0", nil
+	}
+	return tail, nil
+}
+
+// LogForward is one bounded window of the log strictly after cursor, oldest
+// first, at most logLimit entries. cursor is an entry id ("0-0" before any).
+// next is the last entry read, or cursor when the window is empty, so the
+// caller advances as it consumes and a fresh entry is not hidden behind the
+// oldest logLimit. more is set when the window is full and a further read
+// from next may hold more.
+func (b *Bus) LogForward(ctx context.Context, cursor string) (es []Entry, next string, more bool, err error) {
+	if cursor == "" {
+		cursor = "0-0"
+	}
+	cursor = strings.TrimPrefix(cursor, "(")
+	es, err = b.Log(ctx, "("+cursor)
+	if err != nil {
+		return nil, cursor, false, err
+	}
+	if len(es) == 0 {
+		return nil, cursor, false, nil
+	}
+	return es, es[len(es)-1].Entry, len(es) == logLimit, nil
 }
 
 // IDAt is the first entry id a stream could hold at t (<ms>-0): the floor of

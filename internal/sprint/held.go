@@ -8,29 +8,16 @@ import (
 	"time"
 )
 
-// The no-stall rule: every primary
-// that has not landed and is on the table is held by something that will move
-// it or tell the coordinator about it. Exactly what holds it is one of:
-//
-//	(a) an outside actor, before its deadline: a live work card in an up
-//	    member's ready or working cell; a read card asked or reading; its
-//	    merge card queued in a stream that merges;
-//	(b) the next tick: a part of the tick, called on the state, moves it or
-//	    writes a judgment naming it;
-//	(c) an open judgment names it (or its stream, when the stream is stopped
-//	    or it is merging there), or the coordinator acknowledged the tick's
-//	    judgment that names it;
-//	(d) it waits on something that is itself held, followed through the chain
-//	    (a need not landed, a sentinel not released, a place in the ready
-//	    queues); a chain that ends in nothing, or in a cycle, holds nothing;
-//	(e) the machine is STOPPED and the next tick would move it: (b), and what
-//	    is visible is that the sprint is stopped.
-//
-// Anything else is stalled, and so is a judgment past its due time that no
-// tick marks overdue, a stopped stream with no open judgment, and an
-// operation pending past its grace that a tick since has not finished. The
-// tick's check part writes one judgment for each stall ("stalled"), so a stall
-// the design missed raises its own interrupt.
+// The no-stall rule: every primary not landed and on the table is held by
+// something that will move it or tell the coordinator about it. What holds it
+// is one of: (a) an outside actor before its deadline; (b) the next tick; (c)
+// an open judgment or the coordinator's acknowledgement; (d) another wait,
+// followed through the chain (the one wait below); (e) the machine STOPPED,
+// which the next tick would move. Anything else is stalled, and so are a
+// judgment past its due time no tick marks, a stopped stream with no open
+// judgment, and an operation pending past its grace. The tick's check part
+// writes one judgment for each stall ("stalled"), so a stall the design missed
+// raises its own interrupt.
 
 // The holders, as Holder names them.
 const (
@@ -44,6 +31,37 @@ const (
 
 // NStalled is the judgment of a stall: something nothing holds.
 const NStalled = "stalled"
+
+// The one wait (docs/SPEC-ISA.md): a held card waits for release, a sentinel
+// for its line, and the wave behind it for the release through its card operand.
+const (
+	WaitOnCards   = "card"
+	WaitOnLine    = "line"
+	WaitOnRelease = "release"
+)
+
+// CardWait is one card's wait operand and why.
+type CardWait struct {
+	Card    string   `json:"card"`
+	Operand string   `json:"operand"`
+	On      []string `json:"on,omitempty"`
+	Why     string   `json:"why"`
+}
+
+// WaitOf is the one reading of why a card is not moving: release, its line, or
+// the cards it names and its place in line.
+func WaitOf(s *Snapshot, c *Card) CardWait {
+	switch {
+	case c == nil:
+		return CardWait{}
+	case IsHeld(c):
+		return CardWait{Card: c.ID, Operand: WaitOnRelease, On: WaitsFor(s, c, nil), Why: "the coordinator's release, and the cards it names"}
+	case IsSentinel(c):
+		return CardWait{Card: c.ID, Operand: WaitOnLine, On: WaitsFor(s, c, nil), Why: "the line before it, and the coordinator's release"}
+	default:
+		return CardWait{Card: c.ID, Operand: WaitOnCards, On: WaitsFor(s, c, nil), Why: "the cards it names and its place in line"}
+	}
+}
 
 // PendingOp is the operation the sprint's fence holds, as the no-stall rule
 // reads it.
@@ -485,7 +503,7 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 	s := c.s
 	switch pr.Col {
 	case Waiting:
-		w := WaitsFor(s, pr, nil)
+		w := WaitOf(s, pr).On
 		if len(w) == 0 {
 			if IsSentinel(pr) && pr.F("reached") != "" {
 				return "reached, and no judgment is open on it", "", false
@@ -545,12 +563,17 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 			name, _ := FriendCard(pr)
 			if wc := s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
 				if from, _ := FriendOfRow(wc.F(FieldTakenFrom)); from != "" && from == name {
-					return "waits for only friend " + name + ", and it was taken back from her: unpin it (nova-sprint unpin), brief it for another friend, or drop it", "", true
+					return "waits for only friend " + name + ", and it was taken back from her: give it back to her (nova-sprint friend give), unpin it (nova-sprint unpin), brief it for another friend, or drop it", "", true
 				}
 			}
 			return "waits for only friend " + name, "", true
 		}
-		up := s.UpMembers()
+		// a quiet member has no free place for it until its quiet ends (fleet_quiet.go)
+		all := s.UpMembers()
+		up := notQuiet(s, all)
+		if quiet := quietWhy(s, all); quiet != "" && len(up) == 0 {
+			return "waits for a member up that is not quiet (" + quiet + "): the deal resumes by itself at that time", "", true
+		}
 		if b := Bench(pr); len(b) > 0 && len(onlyBench(up, b)) == 0 {
 			// a bench card waits for a member of its bench up (bench_deal.go): no placement
 			// deals it to another member, so what holds it is its bench's beat and hold
@@ -587,7 +610,7 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 	case Review:
 		switch {
 		case acceptable(s, pr):
-			return "acceptable (" + readersWord(ReadsNeeded(pr)) + " said ok at its head), and no judgment is open on it", "", false
+			return "acceptable (" + readersWord(ReadsNeededIn(s, pr)) + " said ok at its head), and no judgment is open on it", "", false
 		case pr.F("result") == "failed":
 			return "its work came back failed, and no judgment is open on it", "", false
 		}
@@ -648,12 +671,10 @@ func (c *held) overdueUnmarked() []Finding {
 			continue
 		}
 		past := false
-		if !n.Review.IsZero() && n.ReviewSet.IsZero() {
-			past = s.Now.After(n.Review)
-		} else if !n.Review.IsZero() {
-			// a wait counts running time from when it was set
-			d, ok := c.running(stamp(n.ReviewSet))
-			past = ok && d >= n.Review.Sub(n.ReviewSet)
+		if !n.Review.IsZero() {
+			// A wait counts running time from when it was set, by the tree's
+			// one clock comparison (stopped.go DueNow; docs/SPEC-SPRINT.md, "Timers").
+			past = DueNow(s.Now, n.Review, n.ReviewSet, c.req.Stopped)
 		} else if d, ok := c.running(stamp(n.At)); ok {
 			past = d > DeadlineJudgment
 		}
@@ -681,6 +702,9 @@ func (c *held) decisions(pr *Card) []string {
 			out = append(out, "fleet down "+wc.Row)
 		}
 		out = append(out, "drop")
+	case pr.Col == Review && pr.F(FieldBriefDefect) != "":
+		// a brief defect is re-cut, never reworked (docs/SPEC-SPRINT.md section 1, a brief defect)
+		out = []string{DecisionRecut, "drop"}
 	case pr.Col == Review && acceptable(c.s, pr):
 		out = []string{"accept", "rework", "drop"}
 	case pr.Col == Review && pr.F("result") == "failed":

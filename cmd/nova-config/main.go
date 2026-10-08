@@ -24,6 +24,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	stdflag "flag"
@@ -78,20 +79,22 @@ usage:
   nova-config kinds [--json]
   nova-config migrate [--pg <dsn> | --file <path>] [--print] [--dry-run] [--json]
   nova-config status [--pg <dsn> | --file <path>] [--redis <addr>] [--json]
-  nova-config apply [--pg <dsn> | --file <path>] [--redis <addr>] [--as <name>]
+  nova-config apply [--pg <dsn> | --file <path>] [--redis <addr>] [--actor <name>]
                     [--kind <kind>] [--dry-run] [--json]
   nova-config inventory [--redis <addr> | --fixture <file>] [--list | --host <name>]
-                        [--timeout <duration>]
-  nova-config <kind> add <name> --<field> <value> ... --as <name> [--dry-run] [--json]
-  nova-config <kind> set <name> --<field> <value> ... --as <name> [--dry-run] [--json]
-  nova-config <kind> remove <name> --as <name> [--dry-run] [--json]
+                        [--timeout <duration>] [--example]
+  nova-config <kind> add <name> --<field> <value> ... --actor <name> [--dry-run] [--json]
+  nova-config <kind> set <name> --<field> <value> ... --actor <name> [--dry-run] [--json]
+  nova-config <kind> remove <name> --actor <name> [--dry-run] [--json]
   nova-config <kind> list [--json]
   nova-config <kind> show <name> [--json]
   nova-config <kind> history <name> [--json]
   nova-config machine width <name> [--json]
   nova-config machine self [--check] [--json]
+  nova-config loop run <name> [--run-dir <dir>] [--metrics <dir>] [-- <command> ...]
+                    the loop's command under its one lock: a second copy exits 3
   nova-config login --store <dir> --as <seat> --key <file> --secret <NAME>
-                    --dsn <dsn> --friend <actor> [--sops <path>]
+                    --dsn <dsn> --actor <name> [--sops <path>]
                     records the DSN and where the password is; never the password
   nova-config login --check
                     prints that login and whether the secret resolves
@@ -113,13 +116,13 @@ nova-secrets seat nova-sprint seat login names), or the login nova-config login 
 (the DSN and friend; the password is read in this process from nova-secrets,
 never recorded and never put in an environment). --pg, NOVA_PG_DSN and
 NOVA_PG_PASSWORD_ENV still win when given. --redis is host:port
-(NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address). --as is
+(NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address). --actor is
 the name a write is recorded under (NOVA_FRIEND, the recorded friend, or the
-seat name).
+seat name); its old spelling --as works for one release.
 Lose Redis: run nova-config apply.
 
 Fleet apply and inventory require explicit redis_port and pg_dsn; set both
-with nova-config fleet set --redis_port <port> --pg_dsn <dsn> --as <actor>.
+with nova-config fleet set --redis_port <port> --pg_dsn <dsn> --actor <name>.
 
 exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run:
 ready=no, nothing attempted), 2 could not run (usage, or a store that did not answer);
@@ -133,8 +136,8 @@ machine self: 2 not a row, 3 unreadable
 const usageExamples = `
 example:
   nova-config migrate --file try.json
-  nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
-  nova-config machine set m1 --width 6 --as a1 --file try.json
+  nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --actor a1 --file try.json
+  nova-config machine set m1 --width 6 --actor a1 --file try.json
   nova-config machine list --file try.json
   nova-config machine history m1 --file try.json
 `
@@ -253,6 +256,8 @@ type deps struct {
 	// loop add and set refuse, and status names, a loop whose verb is gone. Nil
 	// asks nothing.
 	probe config.VerbProbe
+	// runLoop runs loop run's command (startLoop); nil runs none.
+	runLoop runLoop
 }
 
 type redisApplier struct {
@@ -282,10 +287,60 @@ func realDeps() deps {
 		hostname:  os.Hostname,
 		tailscale: config.TailscaleStatus,
 		probe:     config.HelpProbe,
+		runLoop:   startLoop,
 	}
 }
 
-func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
+// run is the entry: a verb asked for --json goes through runJSON, so a refusal
+// is the one object on stdout (jsonRefusals); every other run prints the
+// refusal to stderr (docs/STANDARD.md, "One output structure, two renderings").
+func run(args []string, stdout, stderr io.Writer, d deps) int {
+	if verbflag.BoolAsked(args, "json") {
+		return runJSON(args, stdout, stderr, d)
+	}
+	return dispatch(args, stdout, stderr, d)
+}
+
+// runJSON runs a verb that asked for --json: a refusal the verb recorded is
+// rendered as the one object on stdout at the exit the refusal carried, and a
+// result the verb rendered itself (a FAILED status, help) is left as it stands.
+func runJSON(args []string, stdout, stderr io.Writer, d deps) int {
+	j := &jsonRefusals{}
+	w := &written{w: stdout}
+	code := dispatch(args, w, j, d)
+	if code == 0 || w.n > 0 {
+		// ignored: the result is already on stdout, so a note that did not reach stderr changes nothing
+		_, _ = stderr.Write(j.said.Bytes())
+		return code
+	}
+	j.out.Exit = code
+	if j.out.Status == "" {
+		j.out.Status = tool.Refused
+	}
+	for _, line := range strings.Split(strings.TrimSpace(j.said.String()), "\n") {
+		if line != "" {
+			j.out.Notes = append(j.out.Notes, line)
+		}
+	}
+	j.out.Render(stdout, true)
+	return code
+}
+
+// written counts what a verb wrote to stdout: runJSON leaves a result the verb
+// rendered itself alone, and renders only a refusal nothing else printed.
+type written struct {
+	w io.Writer
+	n int
+}
+
+func (c *written) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += n
+	return n, err
+}
+
+// dispatch is the verb walk, with every stream the caller handed in.
+func dispatch(args []string, stdout, stderr io.Writer, d deps) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
 	// before anything is dialed or written (the CLI style's rule (b)),
 	// with the verb's effect and worked example (verbExtra).
@@ -345,16 +400,46 @@ func refuse(stderr io.Writer, verb, what string) int {
 	if strings.Contains(what, "; run: ") {
 		next = "" // the reason names its own next command (a --file migrate has not made)
 	}
-	fmt.Fprintf(stderr, "%s REFUSED: %s%s\n", strings.TrimSpace(toolName+" "+verb), plain(what), next)
-	return 2
+	return refuseLine(stderr, verb, plain(what)+next, 2)
 }
 
 // refused is the exit 1 line: the verb ran and the store or Redis said no.
 // next names the command that resolves it.
 func refused(stderr io.Writer, verb, what, next string) int {
-	fmt.Fprintf(stderr, "%s %s REFUSED: %s; run: %s\n", toolName, verb, plain(what), next)
-	return 1
+	return refuseLine(stderr, verb, plain(what)+"; run: "+next, 1)
 }
+
+// refuseLine is one refusal whose text is already the part after "REFUSED: ":
+// it prints on stderr, or, under --json, becomes the one result object every
+// verb's --json is (jsonRefusals; docs/STANDARD.md, "One output structure, two
+// renderings"). code is the run's exit.
+func refuseLine(stderr io.Writer, verb, line string, code int) int {
+	if j, ok := stderr.(*jsonRefusals); ok {
+		why, remedy := line, ""
+		if i := strings.LastIndex(line, "; run: "); i >= 0 {
+			why, remedy = line[:i], line[i+len("; run: "):]
+		}
+		j.out.Verb = verb
+		j.out.Status = tool.Refused
+		j.out.Exit = code
+		j.out.Why = append(j.out.Why, why)
+		if j.out.Remedy == "" {
+			j.out.Remedy = remedy
+		}
+		return code
+	}
+	fmt.Fprintf(stderr, "%s REFUSED: %s\n", strings.TrimSpace(toolName+" "+verb), line)
+	return code
+}
+
+// jsonRefusals stands in for stderr while a verb asked for --json runs: the
+// refusals go into out, and anything else written to stderr into said.
+type jsonRefusals struct {
+	out  tool.Out
+	said bytes.Buffer
+}
+
+func (j *jsonRefusals) Write(p []byte) (int, error) { return j.said.Write(p) }
 
 // helpFor is the door a usage refusal names: the verb's own help, else the
 // tool's.
@@ -555,9 +640,29 @@ func where(dsn string) (key, value string) {
 	return "pg", config.Redact(dsn)
 }
 
-// actorFlag adds --as.
+// actorFlag adds --actor, the one name the family gives the name a write is
+// recorded under (docs/STANDARD.md, section 2, "One shape across the set").
+// --as is the old spelling, bound to the same value and kept for one release;
+// actorAliasNote says when a run spelled it.
 func actorFlag(fs *stdflag.FlagSet) *string {
-	return fs.String("as", "", "the `name` a write is recorded under in the history (env NOVA_FRIEND)")
+	actor := fs.String("actor", "", "the `name` a write is recorded under in the history (env NOVA_FRIEND)")
+	fs.StringVar(actor, "as", "", "the old spelling of --actor, kept for one release; it sets the same `name`")
+	return actor
+}
+
+// actorAliasNote is the NOTE a run owes when it spelled the actor --as, the
+// old name of --actor: the spelling works for one release and says so.
+func actorAliasNote(fs *stdflag.FlagSet) string {
+	alias := false
+	fs.Visit(func(f *stdflag.Flag) {
+		if f.Name == "as" {
+			alias = true
+		}
+	})
+	if alias {
+		return "--as is --actor"
+	}
+	return ""
 }
 
 // jsonFlag adds --json.
@@ -589,7 +694,7 @@ func liveRedisAddress(flagValue string, getenv func(string) string) string {
 	return ""
 }
 
-// actorName resolves --as: the flag, else NOVA_FRIEND, else the seat name.
+// actorName resolves --actor: the flag, else NOVA_FRIEND, else the seat name.
 func actorName(flagValue string, getenv func(string) string, seatValues ...string) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil
@@ -609,7 +714,7 @@ func actorName(flagValue string, getenv func(string) string, seatValues ...strin
 			return v, nil
 		}
 	}
-	return "", fmt.Errorf("--as is required: the name the write is recorded under (or %s)", envActor)
+	return "", fmt.Errorf("--actor is required: the name the write is recorded under (or %s)", envActor)
 }
 
 // --- kinds ------------------------------------------------------------------

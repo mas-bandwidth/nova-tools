@@ -50,6 +50,73 @@ func mixedHarness(t *testing.T) *harness {
 	return h
 }
 
+// migrate --print prints each migration's SQL under its MIGRATION line,
+// bounded by --max with a MORE line when a migration is cut, so a reader
+// reads the schema instead of a line count (docs/STANDARD.md, section 2,
+// "Output is bounded and keeps its totals").
+func TestMigratePrintPrintsEachMigrationsSQLBoundedByMax(t *testing.T) {
+	t.Parallel()
+
+	all, err := config.Migrations()
+	require.NoError(t, err)
+	require.NotEmpty(t, all)
+	sql := strings.Split(strings.TrimSuffix(all[0].SQL, "\n"), "\n")
+	require.Greater(t, len(sql), 2, "the first migration is too short to cut")
+
+	t.Run("text", func(t *testing.T) {
+		t.Parallel()
+		for _, tc := range []struct {
+			name  string
+			max   string
+			shown int
+		}{
+			{"a ceiling cuts and names the rest", "2", 2},
+			{"zero prints the migration whole", "0", len(sql)},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				h := newHarness()
+				code, out, errs := h.run(t, "migrate", "--print", "--max", tc.max)
+				require.Equal(t, 0, code, "stdout %q stderr %q", out, errs)
+				assert.Empty(t, errs)
+				lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+				require.Greater(t, len(lines), tc.shown)
+				assert.True(t, strings.HasPrefix(lines[0], fmt.Sprintf("MIGRATION version=1 file=0001_schema.sql lines=%d", len(sql))), lines[0])
+				for i := 0; i < tc.shown; i++ {
+					assert.Equal(t, sql[i], lines[1+i], "SQL line %d", i+1)
+				}
+				maybeMore := lines[1+tc.shown]
+				if tc.shown < len(sql) {
+					assert.True(t, strings.HasPrefix(maybeMore, fmt.Sprintf("MIGRATE MORE kind=sql shown=%d total=%d", tc.shown, len(sql))), maybeMore)
+				} else {
+					assert.False(t, strings.HasPrefix(maybeMore, "MIGRATE MORE"), maybeMore)
+				}
+				assert.True(t, strings.HasSuffix(out, fmt.Sprintf("CONFIG MIGRATE print=%d pg=-\n", currentSchema())), out)
+			})
+		}
+	})
+
+	t.Run("json", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness()
+		code, out, errs := h.run(t, "migrate", "--print", "--max", "2", "--json")
+		require.Equal(t, 0, code, "stdout %q stderr %q", out, errs)
+		assert.Empty(t, errs)
+		var result struct {
+			Items []struct {
+				Kind   string         `json:"kind"`
+				Fields map[string]any `json:"fields"`
+			} `json:"items"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &result))
+		require.Len(t, result.Items, currentSchema())
+		fields := result.Items[0].Fields
+		assert.EqualValues(t, 2, fields["sql_shown"])
+		assert.EqualValues(t, len(sql), fields["sql_lines"])
+		assert.Equal(t, strings.Join(sql[:2], "\n"), fields["sql"])
+	})
+}
+
 func TestMigrateRefusesBeforeApplyingWhenTheRoleDoesNotOwnTheTables(t *testing.T) {
 	t.Parallel()
 

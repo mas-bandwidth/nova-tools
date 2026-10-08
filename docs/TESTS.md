@@ -282,12 +282,12 @@ Fixture: `cmd/nova-check/testdata/example-self`.
 ```
 $ nova-check quickstart --dir ./self
 QUICKSTART RUN dir=./self checks=2: links, then nocode
-LINKS OK files=4 links=3 excluded=0
-NOCODE OK files=5 clean deny-list=floor-list
+LINKS OK dir=./self files=4 links=3 excluded=0 broken=0
+NOCODE OK dir=./self files=5 deny-list=floor-list findings=0
 QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (kernel wants a size budget, attest a manifest of what a full boot reads, floors a derived copy and its source, corpus a ledger of protected lines: nova-check help)
 
 $ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
-KERNEL OK bytes=771 budget=4000
+KERNEL OK file=./self/docs/SEED-CORE.md bytes=771 budget=4000 findings=0
 ```
 
 The included `example-self` fixture has `SEED-CORE.md` but no `SEED.md`, so it
@@ -303,13 +303,13 @@ that also strays outside the card's paths.
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**"
-HYGIENE OK base=main head=card paths=sign/** findings=0
+HYGIENE OK repo=. base=main head=card paths=sign/** findings=0
 
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**" --max 2
-HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
-HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS: sign/**
+HYGIENE FAILED repo=. base=main head=card paths=sign/** findings=4
+HYGIENE FINDING reason=identity at=0a19082d2973 why="author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity"
+HYGIENE FINDING reason=out-of-path at=elsewhere.go why="this path matches none of the card's declared PATHS: sign/**"
 HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
-HYGIENE FAILED base=main head=card paths=sign/** findings=4
 ```
 
 The `MORE` line is the same run with the cap lifted, quoted so it can be pasted
@@ -318,11 +318,11 @@ back — it is the command that prints the rest, and it carries the
 
 ```
 $ nova-check hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
-HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
-HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS: sign/**
-HYGIENE FINDING reason=out-of-path at=elsewhere/x.go: this path matches none of the card's declared PATHS: sign/**
-HYGIENE FINDING reason=stray-file at=sign/RESULT.md: an added file matching the stray list's RESULT.md
-HYGIENE FAILED base=main head=card paths=sign/** findings=4
+HYGIENE FAILED repo=. base=main head=card paths=sign/** findings=4
+HYGIENE FINDING reason=identity at=0a19082d2973 why="author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity"
+HYGIENE FINDING reason=out-of-path at=elsewhere.go why="this path matches none of the card's declared PATHS: sign/**"
+HYGIENE FINDING reason=out-of-path at=elsewhere/x.go why="this path matches none of the card's declared PATHS: sign/**"
+HYGIENE FINDING reason=stray-file at=sign/RESULT.md why="an added file matching the stray list's RESULT.md"
 ```
 
 `--identity` takes one pair of angle brackets. A second pair is refused rather
@@ -330,7 +330,7 @@ than matched against nobody:
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <<ada@example.com>>"
-nova-check hygiene REFUSED: --identity "Ada <<ada@example.com>>": the email carries an angle bracket; want `Name <email>`, one pair; run: nova-check help
+HYGIENE REFUSED: --identity "Ada <<ada@example.com>>": the email carries an angle bracket; want `Name <email>`, one pair; run: nova-check help
 ```
 
 `--kind` is a card kind the toolchain declares, and there is no default one. One
@@ -338,7 +338,7 @@ it does not hold is refused by name rather than left to unlock nothing:
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --kind fix-with-red-test
-nova-check hygiene REFUSED: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
+HYGIENE REFUSED: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
 ```
 
 ## nova-self-talk
@@ -650,7 +650,7 @@ TOKENS SOURCE label=claude:bench kind=claude path=./transcripts reports=input,ou
 TOKENS SOURCE label=bus:emma kind=bus path=bus/from-emma reports=input,output day_basis=utc files=1 unreadable=0 messages=- dup=- noid=- nousage=- unparsed=0 comments=1 redated=0 superseded=0 rows=1
 TOKENS SOURCE label=bus:rowan kind=bus path=bus/from-rowan reports=- day_basis=utc files=0 unreadable=0 messages=- dup=- noid=- nousage=- unparsed=0 comments=0 redated=0 superseded=0 rows=0
 TOKENS TOUCHED label=bus:emma day=2026-09-11 repos=schema,serialize
-TOKENS DAY date=2026-09-11 rows=3 models=2 repos=2 turns=3 unknown=0.0% other=0.0% rough=0 dashes=6 nonutc=0 sources=bus:emma,claude:bench written=true
+TOKENS DAY day=2026-09-11 rows=3 models=2 repos=2 turns=3 unknown=0.0% other=0.0% rough=0 dashes=6 nonutc=0 sources=bus:emma,claude:bench written=true
 TOKENS OK days=1 rows=3 sources=3 unreadable=0 unparsed=0 mixed=0 conflict=0 shrank=0 partial=0 quiet=0
 TOKENS NOTE nothing was wrong; nova-tokens check --out ./out is the gate
 
@@ -720,12 +720,12 @@ Postgres and a throwaway Redis.
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=35 applied=35
+CONFIG MIGRATE file=try.json from=0 to=36 applied=36
 
-$ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
+$ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --actor a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
 
-$ nova-config machine set m1 --width 6 --as a1 --file try.json
+$ nova-config machine set m1 --width 6 --actor a1 --file try.json
 CONFIG SET kind=machine name=m1 rev=2 changed=width
 
 $ nova-config machine list --file try.json
@@ -772,7 +772,7 @@ APPEND OK session=s1 entry=e1 source=bench-a/session-7#L3 persisted=true publish
 
 $ nova-cairn index --store ./cairns
 INDEX OK sessions=1 entries=1
-INDEX SESSION session=s1 entries=1
+INDEX SESSION session=s1 publish=manual opened=2026-09-17T12:00:00Z entries=1
 INDEX ENTRY session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-a/session-7#L3
 
 $ nova-cairn receipt --store ./cairns --session s1 --entry e1
@@ -1068,12 +1068,12 @@ PACKET s1-1.w1 attempt=1 gen=1 epoch=0
   base: the stream's base
   notes: none
   report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/s1-1.w1.g1.e0 --head <commit> --report '<what you did>' [--failed]
-TAKE OK moved=1 refused=0 notes=0 op=take-t25-1
+TAKE OK moved=1 refused=0 notes=0 op=take-t27-1
 0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --report done
 MOVED s1-1.w1 working -> done ok; s1-1 working -> review
-FINISH OK moved=1 refused=0 notes=1 op=finish-t26-1
+FINISH OK moved=1 refused=0 notes=1 op=finish-t28-1
 0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint tick
@@ -1085,12 +1085,12 @@ TICK OK state=RUNNING idle=no moved=2 notes=0
 
 $ nova-sprint read --as reader-a --begin --epoch 0
 MOVED s1-1.r1.reader-a asked -> reading
-READ OK moved=1 refused=0 notes=0 op=read-t29-1
+READ OK moved=1 refused=0 notes=0 op=read-t31-1
 0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint read --as reader-a --ok --epoch 0
 MOVED s1-1.r1.reader-a reading -> ok
-READ OK moved=1 refused=0 notes=0 op=read-t30-1
+READ OK moved=1 refused=0 notes=0 op=read-t32-1
 0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint tick
@@ -1102,7 +1102,7 @@ TICK OK state=RUNNING idle=no moved=2 notes=2
 
 $ nova-sprint merge --stream s1 --batch 1
 MOVED s1-1 merging -> landed
-MERGE OK moved=1 refused=0 notes=2 op=merge-t34-1
+MERGE OK moved=1 refused=0 notes=2 op=merge-t36-1
 0/1 0.0% -> ETA -  machine: running
 ```
 
@@ -1175,13 +1175,13 @@ PACKET s1-2.w1 attempt=1 gen=1 epoch=0
   base: the stream's base
   notes: none
   report it: nova-sprint finish --as m1 s1-2.w1@1 --epoch 0 --branch sprint/s1-2.w1.g1.e0 --head <commit> --report '<what you did>' [--failed]
-TAKE OK moved=2 refused=0 notes=0 op=take-t25-1
+TAKE OK moved=2 refused=0 notes=0 op=take-t27-1
 0/2 0.0% -> ETA -  machine: running
 
 $ nova-sprint finish --as m1 s1-1.w1@1 s1-2.w1@1 --epoch 0 --failed --report 'the tests went red'
 MOVED s1-1.w1 working -> done failed; s1-1 working -> review
 MOVED s1-2.w1 working -> done failed; s1-2 working -> review
-FINISH OK moved=2 refused=0 notes=1 op=finish-t26-1
+FINISH OK moved=2 refused=0 notes=1 op=finish-t28-1
 0/2 0.0% -> ETA -  machine: running
 
 $ nova-sprint tick
@@ -1193,14 +1193,14 @@ TICK OK state=RUNNING idle=no moved=2 notes=0
 
 $ nova-sprint answer --backend fixed --answers ./cmd/nova-sprint/testdata/judgment-answers.json --record ./judgment.jsonl
 judgment        card  kind    verb    p     act     why
-finish-t26-1.1  s1-1  failed  rework  0.91  listed  no decide_judgment_bar is set, so nothing is applied; at a bar at or under 0.91 it would apply: nova-sprint rework s1-1 --one
-finish-t26-1.1  s1-2  failed  rework  0.91  listed  no decide_judgment_bar is set, so nothing is applied; at a bar at or under 0.91 it would apply: nova-sprint rework s1-2 --one
+finish-t28-1.1  s1-1  failed  rework  0.91  listed  no decide_judgment_bar is set, so nothing is applied; at a bar at or under 0.91 it would apply: nova-sprint rework s1-1 --one
+finish-t28-1.1  s1-2  failed  rework  0.91  listed  no decide_judgment_bar is set, so nothing is applied; at a bar at or under 0.91 it would apply: nova-sprint rework s1-2 --one
 ANSWER OK rows=2 applied=0 would_apply=0 listed=2 refused=0 failed=0 left=0 outcomes=0 bar=- record=./judgment.jsonl; run: nova-sprint inbox
 
 $ nova-sprint answer --bar 0.8 --backend fixed --answers ./cmd/nova-sprint/testdata/judgment-answers.json --record ./judgment.jsonl
 judgment        card  kind    verb    p     act      why
-finish-t26-1.1  s1-1  failed  rework  0.91  applied  nova-sprint rework s1-1 --one --op decide.finish-t26-1.1_s1-1
-finish-t26-1.1  s1-2  failed  rework  0.91  applied  nova-sprint rework s1-2 --one --op decide.finish-t26-1.1_s1-2
+finish-t28-1.1  s1-1  failed  rework  0.91  applied  nova-sprint rework s1-1 --one --op decide.finish-t28-1.1_s1-1
+finish-t28-1.1  s1-2  failed  rework  0.91  applied  nova-sprint rework s1-2 --one --op decide.finish-t28-1.1_s1-2
 ANSWER OK rows=2 applied=2 would_apply=0 listed=0 refused=0 failed=0 left=0 outcomes=0 bar=0.80 record=./judgment.jsonl; run: nova-sprint inbox
 ```
 

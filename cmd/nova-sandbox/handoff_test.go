@@ -169,6 +169,8 @@ func (d *deletingVolumes) Delete(string) error {
 // the OUT line is printed before the DONE line, and the command's own status is
 // what the verb returns.
 func TestRunCopiesTheArtifactsOutBeforeTheVolumeIsDeleted(t *testing.T) {
+	t.Parallel()
+
 	mount := t.TempDir()
 	if r, err := filepath.EvalSymlinks(mount); err == nil {
 		mount = r
@@ -176,13 +178,12 @@ func TestRunCopiesTheArtifactsOutBeforeTheVolumeIsDeleted(t *testing.T) {
 	out := t.TempDir()
 	vols := &deletingVolumes{mount: mount}
 
-	oldVols, oldExec, oldSigs := runVolumes, runExec, runSignals
-	t.Cleanup(func() { runVolumes, runExec, runSignals = oldVols, oldExec, oldSigs })
-	runVolumes = vols
-	runSignals = func() (<-chan os.Signal, func()) { return make(chan os.Signal), func() {} }
+	rs := prodRunSeams()
+	rs.Volumes = vols
+	rs.Signals = func() (<-chan os.Signal, func()) { return make(chan os.Signal), func() {} }
 	// The "command": it writes the card's receipt and its bundle on the volume,
 	// which is what a real card's last steps do.
-	runExec = func(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error) {
+	rs.Exec = func(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error) {
 		writeOn(t, filepath.Join(mount, "work"), "RESULT.md", "RESULT card1 sha=abc\nDONE\n")
 		writeOn(t, filepath.Join(mount, "work"), "repo.bundle", "PACK\n")
 		done := make(chan int, 1)
@@ -192,7 +193,7 @@ func TestRunCopiesTheArtifactsOutBeforeTheVolumeIsDeleted(t *testing.T) {
 
 	args := append([]string{"--name", "card1", "--size", "64m", "--out", out, "--"}, shellOf(t)...)
 	var stdout, stderr bytes.Buffer
-	code := runDisposable(parseRun(args), 0, nil, &stdout, &stderr, []string{"PATH=" + os.Getenv("PATH")})
+	code := rs.runDisposable(parseRun(args), 0, nil, &stdout, &stderr, []string{"PATH=" + os.Getenv("PATH")})
 	errOut := stderr.String()
 	require.Equal(t, 0, code, "exit = %d, want the command's own 0\n%s", code, errOut)
 	require.Contains(t, errOut, "SANDBOX OUT name=card1 files=2 bytes=31", "the OUT receipt is not there or does not count what left:\n%s", errOut)
@@ -211,17 +212,18 @@ func TestRunCopiesTheArtifactsOutBeforeTheVolumeIsDeleted(t *testing.T) {
 // refusal: a zero exit would tell the caller the artifacts are in --out when
 // they are not. The volume is still deleted.
 func TestRunRefusesWhenTheHandoffFailsAfterACleanCommand(t *testing.T) {
+	t.Parallel()
+
 	mount := t.TempDir()
 	if r, err := filepath.EvalSymlinks(mount); err == nil {
 		mount = r
 	}
 	out := t.TempDir()
 	vols := &deletingVolumes{mount: mount}
-	oldVols, oldExec, oldSigs := runVolumes, runExec, runSignals
-	t.Cleanup(func() { runVolumes, runExec, runSignals = oldVols, oldExec, oldSigs })
-	runVolumes = vols
-	runSignals = func() (<-chan os.Signal, func()) { return make(chan os.Signal), func() {} }
-	runExec = func(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error) {
+	rs := prodRunSeams()
+	rs.Volumes = vols
+	rs.Signals = func() (<-chan os.Signal, func()) { return make(chan os.Signal), func() {} }
+	rs.Exec = func(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error) {
 		done := make(chan int, 1)
 		done <- 0
 		return startedRun{done: done, kill: func(syscall.Signal) {}, pid: 4242}, nil
@@ -230,7 +232,7 @@ func TestRunRefusesWhenTheHandoffFailsAfterACleanCommand(t *testing.T) {
 	args := append([]string{"--name", "card1", "--size", "64m", "--out", out,
 		"--artifact", "RESULT.md", "--"}, shellOf(t)...)
 	var stdout, stderr bytes.Buffer
-	code := runDisposable(parseRun(args), 0, nil, &stdout, &stderr, []string{"PATH=" + os.Getenv("PATH")})
+	code := rs.runDisposable(parseRun(args), 0, nil, &stdout, &stderr, []string{"PATH=" + os.Getenv("PATH")})
 	errOut := stderr.String()
 	require.Equal(t, sandbox.ExitRefused, code, "exit = %d, want %d: a clean command whose artifacts did not leave is not a clean run\n%s",
 		code, sandbox.ExitRefused, errOut)

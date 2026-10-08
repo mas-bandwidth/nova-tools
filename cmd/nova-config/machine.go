@@ -41,8 +41,7 @@ func runMachineSelf(ctx context.Context, args []string, stdout, stderr io.Writer
 	}
 	// cannotRead is the exit 3 line: the name or the rows could not be read.
 	cannotRead := func(what, next string) int {
-		fmt.Fprintf(stderr, "%s %s REFUSED: %s; run: %s\n", toolName, verb, plain(what), next)
-		return exitCannotRead
+		return refuseLine(stderr, verb, plain(what)+"; run: "+next, exitCannotRead)
 	}
 	name, _, err := config.SelfName(ctx, config.SelfSource{Getenv: d.getenv, Hostname: d.hostname, Tailscale: d.tailscale})
 	if err != nil {
@@ -64,8 +63,7 @@ func runMachineSelf(ctx context.Context, args []string, stdout, stderr io.Writer
 			return cannotRead("the config cannot be read: "+err.Error(), helpFor(verb))
 		}
 		if !found {
-			fmt.Fprintf(stderr, "%s %s REFUSED: %q is no machine row; run: %s machine add %s --user <login> --seat <seat> --slots <n> --width <n> --as <name>%s\n", toolName, verb, name, toolName, name, c.again())
-			return 2
+			return refuseLine(stderr, verb, fmt.Sprintf("%q is no machine row; run: %s machine add %s --user <login> --seat <seat> --slots <n> --width <n> --actor <name>%s", name, toolName, name, c.again()), 2)
 		}
 	}
 	if *asJSON {

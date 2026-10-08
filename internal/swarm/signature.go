@@ -11,7 +11,7 @@ import (
 // run's own capture, `harness-output.log`, holds a mechanical failure — the Go toolchain not
 // available, no packages named, the harness fence auto-rejecting a path, a permission denied
 // — the verdict the card printed was not earned, and reading it sends a coordinator to the
-// model for a fault the machine made (Glenn, 2026-09-16: reads on Space printed APPROVE
+// model for a fault the machine made (the owner, 2026-09-16: reads on a machine printed APPROVE
 // while their go test tail said toolchain not available). Such a verdict is scored
 // ABSTAIN reason=signature sig="<signature>" class=<toolchain|packages|fence|permission>,
 // never done.

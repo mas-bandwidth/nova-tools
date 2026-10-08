@@ -85,6 +85,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"relink":            "relink s1-1 s1-2",
 		"sentinel set":      "sentinel set s1-stop --needs s1-2",
 		"recut":             "recut s1-1 --tier heavy",
+		"twin":              "twin s1-1",
 		"brief":             "brief s1-1 --brief b",
 		"move":              "move s1-2 --stream s2",
 		"resume":            "resume --stream s1",
@@ -94,11 +95,13 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"hold":              "hold m2 --reason r",
 		"unhold":            "unhold m2",
 		"fleet level":       "fleet level",
+		"fleet quiet":       "fleet quiet m1 --for 1m --reason r",
 		"fleet sync":        "fleet sync",
 		"friend sync":       "friend sync",
 		"friend down":       "friend down friend-a",
 		"friend up":         "friend up friend-a",
 		"friend take":       "friend take friend-a s1-1",
+		"friend give":       "friend give friend-a s1-1",
 		"friend level":      "friend level",
 		"friend health":     "friend health friend-a --state up --seen 2026-10-04T15:00:00Z --generation 1",
 		"reader add":        "reader add reader-d",
@@ -132,6 +135,8 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		// the friends' directories are read only after the store refuses the intruder
 		"friend reconcile": "friend reconcile friend-a",
 		"collect":          "collect",
+		"card base":        "card base s1-1 main",
+		"rebase":           "rebase --from a --to b",
 	}
 	for _, v := range verbs {
 		if verbClasses[v.name] != classCoordinator {

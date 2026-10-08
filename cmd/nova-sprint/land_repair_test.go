@@ -48,7 +48,7 @@ func TestLandRepairsAStrayBackquoteOnItsMergeAndSaysSo(t *testing.T) {
 				assert.Equal(t, 1, code, out+errs)
 				assert.Contains(t, errs, "LAND REFUSED stream=s1 cards=1 base=- tip=- ids=c1 fact=conflict reason=the head "+heads["c1"]+" of c1 "+tc.why)
 				assert.Equal(t, []string{"the doc", "base"}, r.mainLog())
-				assert.Equal(t, map[string]string{"c1": "merging/stuck"}, r.places("c1"))
+				assert.Equal(t, map[string]string{"c1": "ready/returned"}, r.places("c1"))
 				r.clean()
 				return
 			}

@@ -96,7 +96,7 @@ func TestProviderHandbackLeavesTheCardsOwnEndsAlone(t *testing.T) {
 	_, ok = ProviderHandback(ProviderExit{Tail: []byte(unknownErrorTail), Job: t.TempDir(), RC: 0, Wall: 80 * time.Second, Route: "zen/glm-5", Routes: routes})
 	require.False(t, ok, "a clean exit was handed back")
 	var early strings.Builder
-	early.WriteString("$ git grep UnknownError\ninternal/pulse/replay.go: UnknownError err_fb35c63e\n")
+	early.WriteString("$ git grep UnknownError\npulse/replay.go at 39e472aa0: UnknownError err_fb35c63e\n")
 	for i := 0; i < 40; i++ {
 		early.WriteString("STEP working on the card\n")
 	}

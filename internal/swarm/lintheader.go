@@ -41,7 +41,7 @@ import (
 // refuses that finding for a tier flash brief and prints it as a note for tier pro, or
 // no tier, so a flash child with no stopping condition cannot read past its budget.
 //
-// THREE READERS, ONE GRAMMAR. `cut` renders the lines, `internal/pulse/cardheader.go`
+// THREE READERS, ONE GRAMMAR. `cut` renders the lines, `pulse/cardheader.go`
 // reads them at the gate (T03, PR #1721 at f927bccc), and the lint checks them on the
 // bench before a token is spent. A lint that accepted a line the gate refuses would
 // send a card out to die at `accept`; a lint that refused a line the gate reads would
@@ -61,19 +61,19 @@ import (
 //     <package> <TestName>`, the name matching `^Test[A-Za-z0-9_]*$` (cardheader.go:89-108);
 //   - KIND, PATHS and TEST are the three a gated card must carry (cardheader.go:138-150).
 //
-// THE PARSER IS CITED; THE VALIDATOR IS CALLED. `internal/pulse` still does not carry
-// `cardheader.go` on `dev` -- T03/#1721 is open -- so the block's SHAPE above is the
-// parser's rules written out, cited line by line. But `hygiene.ValidatePaths` (T02) HAS
+// THE PARSER IS CITED; THE VALIDATOR IS CALLED. The retired pulse package's
+// `cardheader.go` at f927bccc never landed on `dev` -- T03/#1721 is open -- so the
+// block's SHAPE above is the parser's rules written out, cited line by line. But `hygiene.ValidatePaths` (T02) HAS
 // landed, and `validGlobs` below is now a call to it rather than a second copy of the
 // PATHS: rule. The copy it replaces had drifted in both directions inside a day (#1853,
-// Emma's item-4 dogfood), which is the whole argument for calling a validator instead of
+// a friend's item-4 dogfood), which is the whole argument for calling a validator instead of
 // restating one. When `cardheader.go` lands, the shape rules above should go the same
-// way, with the class test that the two agree in the lane that owns `internal/pulse`.
+// way, with the class test that the two agree.
 //
 // KIND: IS THE NAME SET, NOT A SECOND TABLE (#1853). `hygiene.KindDeclared` reads
 // internal/hygiene/kinds.txt, which is the names `cut` and `nova-check hygiene`
 // already refuse. The gate table (steps, control, reject tokens) was previously in
-// internal/pulse/kinds.go (SPEC-TOOLWORK.md §5 rule 3). The instruction kind is a
+// pulse/kinds.go at f927bccc (SPEC-TOOLWORK.md §5 rule 3). The instruction kind is a
 // column of the one list (docs/SPEC-ISA.md): the KIND: line already names the work,
 // and the column names the instruction. A second name list here would be the same
 // mistake `validGlobs` just undid.
@@ -124,7 +124,7 @@ type TrustState map[string]string
 //
 // THE BLOCK IS EVERY KEY LINE, NOT EVERY UPPER-CASE KEY LINE. This was
 // `^([A-Z][A-Z-]*):`, and the two lines every card the darwin launchers stage MUST carry
-// are lower case: `~/rowan-working/rowan-tools/bin/launchers/*-native-darwin.sh:30-31`
+// are lower case: `~/<person>-working/<person>-tools/bin/launchers/*-native-darwin.sh:30-31`
 // read `base-repo:` and `base-sha:` out of the card's first 40 lines with a
 // case-sensitive `sed`, and refuse to launch without both. So on every one of the 59
 // cards of the 2026-09-22 sprint set those two lines ENDED the header block, and
@@ -164,7 +164,7 @@ type headerField struct {
 // cardHeaderBlock reads the typed header the way the gate's parser reads it, stops where
 // it stops (cardheader.go:63-76), and returns what it had to ignore.
 //
-// THE BLOCK'S END STAYS THE GATE'S; WHAT IT SWALLOWED DOES NOT (#1854, Emma's item-4
+// THE BLOCK'S END STAYS THE GATE'S; WHAT IT SWALLOWED DOES NOT (#1854, a friend's item-4
 // dogfood). The block ending at the first line that is not `KEY: value` is the parser's
 // own rule and moving it here would be worse than the defect: a lint that read a header
 // the gate will not read passes a card that dies at `accept`. What was wrong is that a
@@ -483,8 +483,8 @@ func lintCardHeader(raw []byte, trust TrustState, required bool, instructionOf f
 //	TRUST OK kinds=<n> trial=<n> trusted=<n> paused=<n>
 //
 // THE VERB DOES NOT EXIST YET. `nova-pulse trust` is the other half of T06a and belongs
-// to the lane that owns `internal/pulse`; until it lands, the bench hands `lint --card`
-// a fixture in exactly this shape with `--trust <file>`, and the day the verb ships its
+// to the retired pulse package; until it lands, the bench hands `lint --card` a fixture
+// in exactly this shape with `--trust <file>`, and the day the verb ships its
 // own stdout is the fixture. Lines that are not TRUST rows, and the TRUST OK summary,
 // are read past, so a whole listing can be saved to a file and handed over unedited.
 func ReadTrustFixture(path string) (TrustState, error) {

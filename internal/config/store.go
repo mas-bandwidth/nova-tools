@@ -53,7 +53,31 @@ type Change struct {
 	Before map[string]string
 	After  map[string]string
 	Actor  string
+	// Reason is why the write was made, the --reason its verb gave ("" when
+	// none): the issue's "every config change recording --reason in its
+	// history" (nova-tools#5101). It is metadata of the write, not a row
+	// field, so it is kept apart from Before and After: PostgreSQL carries
+	// it in the history row's own JSON (historyReasonKey, pg.go), Mem in this
+	// field, and History hands it back whole either way.
+	Reason string
 	At     string // RFC 3339 UTC
+}
+
+// reasonKey is the context key that carries --reason from a verb to the store
+// record: one request's metadata, so it travels with the context rather than
+// as another argument of every Store write.
+type reasonKey struct{}
+
+// WithReason returns ctx carrying reason as the reason of the writes made with
+// it; "" is no reason.
+func WithReason(ctx context.Context, reason string) context.Context {
+	return context.WithValue(ctx, reasonKey{}, reason)
+}
+
+// ReasonFrom is the reason WithReason put on ctx, "" when none.
+func ReasonFrom(ctx context.Context) string {
+	reason, _ := ctx.Value(reasonKey{}).(string)
+	return reason
 }
 
 // The three operations a history row records.
@@ -271,8 +295,8 @@ func NewMem() *Mem {
 
 func (m *Mem) stamp() string { return m.Now().UTC().Format(time.RFC3339) }
 
-func (m *Mem) record(kind, name, op string, before, after map[string]string, actor string) int64 {
-	c := Change{ID: int64(len(m.history) + 1), Kind: kind, Name: name, Op: op, Before: before, After: after, Actor: actor, At: m.stamp()}
+func (m *Mem) record(kind, name, op string, before, after map[string]string, actor, reason string) int64 {
+	c := Change{ID: int64(len(m.history) + 1), Kind: kind, Name: name, Op: op, Before: before, After: after, Actor: actor, Reason: reason, At: m.stamp()}
 	m.history = append(m.history, c)
 	return c.ID
 }
@@ -317,7 +341,7 @@ func (m *Mem) Insert(ctx context.Context, kind string, row Row, actor string) (i
 	r := row.Clone()
 	r.CreatedAt, r.UpdatedAt = m.stamp(), m.stamp()
 	m.rows[kind][row.Name] = r
-	return m.record(kind, row.Name, OpAdd, nil, r.Clone().Fields, actor), nil
+	return m.record(kind, row.Name, OpAdd, nil, r.Clone().Fields, actor, ReasonFrom(ctx)), nil
 }
 
 func (m *Mem) Update(ctx context.Context, kind, name string, changes map[string]string, actor string) (Row, int64, error) {
@@ -340,7 +364,7 @@ func (m *Mem) Update(ctx context.Context, kind, name string, changes map[string]
 	defer m.mu.Unlock()
 	next.UpdatedAt = m.stamp()
 	m.rows[kind][name] = next
-	return next.Clone(), m.record(kind, name, OpSet, cur.Clone().Fields, next.Clone().Fields, actor), nil
+	return next.Clone(), m.record(kind, name, OpSet, cur.Clone().Fields, next.Clone().Fields, actor, ReasonFrom(ctx)), nil
 }
 
 func (m *Mem) Delete(ctx context.Context, kind, name string, actor string) (int64, error) {
@@ -356,7 +380,7 @@ func (m *Mem) Delete(ctx context.Context, kind, name string, actor string) (int6
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.rows[kind], name)
-	return m.record(kind, name, OpRemove, cur.Clone().Fields, nil, actor), nil
+	return m.record(kind, name, OpRemove, cur.Clone().Fields, nil, actor, ReasonFrom(ctx)), nil
 }
 
 func (m *Mem) History(_ context.Context, kind, name string) ([]Change, error) {

@@ -8,9 +8,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 )
 
-// releaseHoldWords tells release apart from the holds on a member, a reader,
-// and a friend (docs/SPEC-SPRINT.md: release is the sentinel and held-card step).
-const releaseHoldWords = `release acts on a sentinel or a held card. It does not release a held member, reader, friend or stream:
+// releaseHoldWords distinguishes a card's release operand from the holds on a
+// member, a reader and a friend (docs/SPEC-ISA.md, the one wait kind).
+const releaseHoldWords = `release resolves a wait on a release: a sentinel or a held card. It does not release a held member, reader, friend or stream:
   unhold <name>... releases any of them (one verb for the four)
   fleet up <member> releases a held member
   reader up <reader> releases a held reader
@@ -67,6 +67,7 @@ var verbEffect = map[string]string{
 	"seat uninstall":    "local write: unloads the push loop's unit and removes its file from --dir; --dry-run names the unit and unloads and removes nothing",
 	"machinery":         "inspection: checks server, store, loop, beats, readers, dashboard, installed versions, merge queue, writes nothing",
 	"needs":             "inspection: reads the waiting cards, writes nothing",
+	"streams":           "inspection: reads the work and merge tables once and prints each stream with the repositories and bases its cards record, its release, its open and landed counts, and with --cards every card's id, state, tier, title and needs; writes nothing",
 	"held":              "inspection: reads the held cards of the table, writes nothing",
 	"sentinels":         "inspection: reads the sentinels and what each waits on, writes nothing",
 	"sentinel set":      "local write: replaces the sentinel's needs in the sprint's store, keeping its id, stream, score and log",
@@ -75,9 +76,11 @@ var verbEffect = map[string]string{
 	"view worker":       "inspection: reads the worker's cards, their packets and its results not landed, writes nothing",
 	"seat":              "inspection: reads the seat (holder, epoch, generation), writes nothing",
 	"rules":             "inspection: reads the rules the tick answers by and why the fleet is idle, writes nothing",
+	"remind":            "store write: writes one timer to the sprint's timer record, which the tick of a RUNNING machine raises as one judgment of kind \"timer\" addressed to its actor at its due time, once (--list reads the open timers, --cancel takes one off); --dry-run writes nothing",
 	"relink":            "local write: re-points what waited on the old cards to their twin in the sprint's store and answers their blocked judgments; --dry-run writes nothing",
 	"friend cards":      "inspection: reads the cards held on the friend's row, their packets and briefs, writes nothing",
 	"friend take":       "local write: takes the named cards back from the friend in the sprint's store; --dry-run writes nothing",
+	"friend give":       "local write: clears the friend's take-back mark on the named cards in the sprint's store",
 	"friend level":      "local write: moves queued cards between the friends' rows in the sprint's store; --dry-run writes nothing",
 	"friend health":     "local write: records the coordinator's observation of the friend in the sprint's store, or removes it with --clear; --dry-run writes nothing",
 	"reader retire":     "local write: retires the named readers in the sprint's store; a read it is reading is taken back at the next tick and asked of a reader up with no card at that attempt, and it stays when none can take it; --dry-run writes nothing",
@@ -183,7 +186,7 @@ const briefExampleCard = "RESULT: <label> sha=<sha12>\n" +
 	"BASE: <branch>\n" +
 	"The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).\n" +
 	"You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.\n" +
-	"Deadline: finish within <n> minutes.\n" +
+	"Deadline: finish within <n> minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.\n" +
 	"\n" +
 	"RULES.\n" +
 	"Work only in the job directory this card names.\n" +
@@ -220,6 +223,8 @@ func verbProse(name string) string {
 		return friendVerbWords(name)
 	case "friend take":
 		return friendTakeWords
+	case "friend give":
+		return friendGiveWords
 	case "friend cards":
 		return friendCardsWords
 	case "friend level":

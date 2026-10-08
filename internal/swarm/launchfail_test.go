@@ -1,7 +1,6 @@
 package swarm
 
 import (
-	"os"
 	"testing"
 	"time"
 
@@ -47,14 +46,17 @@ func TestLaunchGraceDefaultAndOverride(t *testing.T) {
 }
 
 // TestProviderRetryDelayBands: 5-20s after the first fast failure, 30-60s after the second.
+// The pin is the value under test's own parameter (the serial-tests ledger's way off), so
+// the bands are asked with no pin -- "" -- and the process's environment stands.
 func TestProviderRetryDelayBands(t *testing.T) {
-	require.NoError(t, os.Unsetenv("NOVA_SWARM_PROVIDER_BACKOFF"))
+	t.Parallel()
+
 	for _, c := range []struct {
 		failed int
 		lo, hi time.Duration
 	}{{1, 5 * time.Second, 20 * time.Second}, {2, 30 * time.Second, 60 * time.Second}} {
 		for i := 0; i < 50; i++ {
-			got := ProviderRetryDelay(c.failed)
+			got := providerRetryDelay(c.failed, "")
 			require.GreaterOrEqual(t, got, c.lo, "the delay after failure %d is %s, want within [%s,%s]", c.failed, got, c.lo, c.hi)
 			require.LessOrEqual(t, got, c.hi, "the delay after failure %d is %s, want within [%s,%s]", c.failed, got, c.lo, c.hi)
 		}

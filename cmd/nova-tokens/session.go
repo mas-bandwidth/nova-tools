@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -24,29 +25,29 @@ import (
 )
 
 // mkdirAllRefuses is the refusal os.MkdirAll(path) would give before it makes anything:
-// path, or the nearest ancestor it would stop at, exists and is no directory. It walks
-// the path the way MkdirAll does (trailing separators, then the parent's prefix), so the
-// error is MkdirAll's own, word for word. What only making the directory can find (a
-// parent that is read-only) is not known without making it.
-func mkdirAllRefuses(path string) error {
-	if fi, err := os.Stat(path); err == nil {
+// path, or the nearest ancestor that exists, is not a directory. wouldMkdir says whether
+// MkdirAll would have made the directory, so a dry run reports the plan. What only making
+// the directory can find (a read-only parent) is not known without making it, and a stat
+// that cannot see is no refusal.
+func mkdirAllRefuses(path string) (wouldMkdir bool, err error) {
+	if fi, statErr := os.Stat(path); statErr == nil {
 		if fi.IsDir() {
-			return nil
+			return false, nil
 		}
-		return &os.PathError{Op: "mkdir", Path: path, Err: syscall.ENOTDIR}
+		return false, &os.PathError{Op: "mkdir", Path: path, Err: syscall.ENOTDIR}
 	}
-	i := len(path)
-	for i > 0 && os.IsPathSeparator(path[i-1]) {
-		i--
+	for p := filepath.Dir(path); ; p = filepath.Dir(p) {
+		fi, statErr := os.Stat(p)
+		if statErr == nil {
+			if fi.IsDir() {
+				return true, nil
+			}
+			return false, &os.PathError{Op: "mkdir", Path: p, Err: syscall.ENOTDIR}
+		}
+		if p == filepath.Dir(p) {
+			return true, nil
+		}
 	}
-	j := i
-	for j > 0 && !os.IsPathSeparator(path[j-1]) {
-		j--
-	}
-	if j > 1 {
-		return mkdirAllRefuses(path[:j-1])
-	}
-	return nil
 }
 
 func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
@@ -108,8 +109,13 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// every other fold merges: this run recomputes the rows its own source wrote and keeps
 	// every other row exactly as it is. A dry run reads the day files and writes nothing.
 	mkdir := func() error { return os.MkdirAll(*out, 0o755) }
+	wouldMkdir := false
 	if *dryRun {
-		mkdir = func() error { return mkdirAllRefuses(*out) }
+		mkdir = func() error {
+			var err error
+			wouldMkdir, err = mkdirAllRefuses(*out)
+			return err
+		}
 	}
 	if err := mkdir(); err != nil {
 		return refuseVerb(s, "TOKENS", fmt.Sprintf("cannot open --out: %s", oneline.Err(err)))
@@ -191,7 +197,7 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		kv := []any{"day", d, "written", written, "rows", len(rows), "retained", retained, "model", strings.Join(booked, ","), "weighted", part.Weighted(w)}
 		if *dryRun {
-			kv = append(kv, "dry_run", true)
+			kv = append(kv, "dry_run", true, "would_mkdir", wouldMkdir)
 		}
 		fmt.Fprintln(s.out(), s.line("TOKENS", "DAY", "", kv...))
 	}

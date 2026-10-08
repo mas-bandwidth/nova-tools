@@ -38,7 +38,9 @@ func retierTakeBacks(s *Snapshot, seats []FriendSeat, who string, started map[st
 					continue
 				}
 				tier := s.DealTier(pr)
-				if friendTakes(f, tier) {
+				// her row's own tiers: the friends' tiers setting (set --friends-tiers) deals
+				// her nothing new outside it and takes nothing back
+				if slices.Contains(friendTiers(f), tier) {
 					continue
 				}
 				if name, ok := FriendCard(pr); ok && name == f.Name && pr.F(FieldBriefAttempt) != "" {

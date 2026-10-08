@@ -46,8 +46,8 @@ const namedPathMetaRunes = "*?{}<>$%[|…"
 // reads at startup IS the mechanism, so a path in that text that does not exist is not a
 // typo, it is a dead end that costs a friend a search.
 //
-// The hurt: `cmd/nova-pulse/fleet_verbs.go:6` and `internal/pulse/fleetstandard.go:6` both
-// named `scripts/bench-standard.sh`. The file was under `tools/` and had been
+// The hurt: `cmd/nova-pulse/fleet_verbs.go:6` and `pulse/fleetstandard.go at
+// 39e472aa0:6` both named `scripts/bench-standard.sh`. The file was under `tools/` and had been
 // since it moved; a friend following either comment finds nothing, and neither the
 // compiler nor any test had an opinion, because a path inside a comment or a string is
 // just text to Go.

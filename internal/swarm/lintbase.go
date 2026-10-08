@@ -19,13 +19,13 @@ import (
 
 // THE BASE CHECKS: FIVE RULES A CODING CARD IS HELD TO BEFORE IT IS DEALT (#2636, #3083).
 //
-// The first four are each one class of the 2026-09-22 sprint's failed cards (rowan-new
+// The first four are each one class of the 2026-09-22 sprint's failed cards (a friend's
 // reports/failed-cards-2026-09-22.md), and each needs evidence the card text alone
 // does not hold, so they run only under `nova-swarm lint --base-check`:
 //
 //	paths-at-base  every PATHS entry resolves at the card's base-sha, or is a new
-//	               `_test` file, or (on a repair card) at its PR-HEAD. Class 9: card-nx-f19 named internal/decide/entry.go,
-//	               which does not exist at its base, and ABSTAINed out-of-scope.
+//	               `_test` file, or (on a repair card) at its PR-HEAD. Class 9: card-nx-f19 named example.com/decide/entry.go,
+//	               a placeholder under a foreign root that does not exist at its base, and ABSTAINed out-of-scope.
 //	no-push-steps  no STEP runs `git push` or `gh`. Class 8: 39 nx-r and holdfix
 //	               repair cards asked the wall, which holds no credential by design,
 //	               to push and to post the REPAIR comment. The harvest pushes.
@@ -682,7 +682,7 @@ func ReadFleetLegs(p string) (FleetLegs, error) {
 	return out, nil
 }
 
-// ReadKindP95 reads `<kind> <seconds>` rows, tab or space separated; `1526s` is
+// ReadKindP95 reads `<kind> <seconds>` rows, tab or whitespace separated; `1526s` is
 // allowed. Blank lines and `#` comments are skipped, and so is a first row whose
 // seconds are not a number (a header). Any later such row is an error: a table
 // that silently dropped a kind would turn a measured bound into a MISSING one.

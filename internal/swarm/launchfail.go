@@ -60,7 +60,16 @@ func ProviderLaunchFailure(raw []byte) (ref string, ok bool) {
 // that died on one provider wobble from retrying in lockstep. NOVA_SWARM_PROVIDER_BACKOFF
 // pins the delay for a test.
 var ProviderRetryDelay = func(failed int) time.Duration {
-	if v := strings.TrimSpace(os.Getenv("NOVA_SWARM_PROVIDER_BACKOFF")); v != "" {
+	return providerRetryDelay(failed, os.Getenv("NOVA_SWARM_PROVIDER_BACKOFF"))
+}
+
+// providerRetryDelay is the wait itself with the pin as a parameter: the production
+// binding hands it the environment's NOVA_SWARM_PROVIDER_BACKOFF, and a test hands it the
+// pin it means -- "" for the bands themselves. The pin is a parameter on the value under
+// test, the per-test seam the serial-tests ledger names, in place of an os.Unsetenv that
+// changes the whole process under every other test.
+func providerRetryDelay(failed int, pin string) time.Duration {
+	if v := strings.TrimSpace(pin); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
 			return d
 		}

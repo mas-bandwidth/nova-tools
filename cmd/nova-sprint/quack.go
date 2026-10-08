@@ -106,7 +106,7 @@ func (a *app) cmdQuack(args []string, stdout, stderr io.Writer) int {
 				// the members hold no rules file for the repository: the card carries its own
 				brief = quackBrief(id, s, ts[(i-1)%len(ts)], *repo, *base, cs.rules)
 			}
-			card := sprint.CardAdd{ID: id, File: id, Brief: brief, Rules: cardRules(brief, rs).held, Base: swarm.ReadCardBase([]byte(brief)).Ref}
+			card := sprint.CardAdd{ID: id, File: id, Brief: brief, Rules: cardRules(brief, rs).held, Base: swarm.ReadCardBase([]byte(brief)).Ref, Repo: swarm.ReadCardBase([]byte(brief)).Named}
 			r.Cards = append(r.Cards, card)
 			all = append(all, card)
 		}

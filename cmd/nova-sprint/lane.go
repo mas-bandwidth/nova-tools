@@ -52,8 +52,8 @@ func laneArgs(name string, fs flagSet, args []string, stderr io.Writer, machine,
 	if !sprint.ValidID(*machine) {
 		why = append(why, "--machine wants the machine the run is on (letters, digits, _ and -)")
 	}
-	if !sprint.ValidID(*as) {
-		why = append(why, "--as wants the worker asking (letters, digits, _ and -)")
+	if !sprint.ValidLaneWho(*as) {
+		why = append(why, "--as wants the worker asking (letters, digits, _ and -, or two such joined by one /, as the lander's lander/<stream>)")
 	}
 	if len(why) > 0 {
 		return "", refuse(stderr, name, strings.Join(why, "; "))

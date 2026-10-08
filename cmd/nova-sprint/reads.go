@@ -597,8 +597,17 @@ type whereView struct {
 	// FleetWork and FriendsWork are the work switches (nova-sprint set --fleet, --friends;
 	// sprint.PropFleet, sprint.PropFriends): on or off, always carried, so the dashboard greys
 	// a side that is off. Off, the deal hands that side no work card; reads flow.
-	FleetWork   string     `json:"fleet_work"`
-	FriendsWork string     `json:"friends_work"`
+	FleetWork   string `json:"fleet_work"`
+	FriendsWork string `json:"friends_work"`
+	// FleetTiers and FriendsTiers are the tiers each side may take (nova-sprint set
+	// --fleet-tiers, --friends-tiers; sprint.PropFleetTiers, sprint.PropFriendsTiers):
+	// "all", the default, or the list, always carried.
+	FleetTiers   any `json:"fleet_tiers"`
+	FriendsTiers any `json:"friends_tiers"`
+	// ReadsNeeded is the reads every card in review needs (nova-sprint set --reads;
+	// sprint.PropReadsNeeded): the count while one is set, else "default" (each card's own
+	// rule), always carried.
+	ReadsNeeded any        `json:"reads_needed"`
 	Goals       []goalView `json:"goals,omitempty"`
 	// Seat is the seat's last change (coordinator <name>): who gave or took
 	// it, when and why; absent while the seat has not moved since init.
@@ -647,6 +656,11 @@ type whereView struct {
 	// when that window began (sprint.ReadsWindowOf), from the tick's where record; zero before
 	// the first tick of an epoch.
 	ReadsWindow sprint.ReadsWindowView `json:"reads_window"`
+	// ReadCards is the epoch's read cards ready, working and done, and each fleet and friends
+	// row of tables carries its cards by level and its reads (rowCardFields), from the tick's
+	// where record (sprint.RowCardCounts).
+	ReadCards sprint.ReadCardCounts `json:"read_cards"`
+	Fix       int                   `json:"fix,omitempty"`
 	// Priorities is every open primary whose level is not normal, by level, and
 	// StreamPriorities each stream's default level that is not normal, from the tick's where
 	// record (sprint.PriorityCounts, sprint.StreamPriorities); absent when every card is normal.
@@ -754,6 +768,7 @@ type dealtCard struct {
 	Since    time.Time `json:"since,omitzero"`
 	Deadline time.Time `json:"deadline,omitzero"`
 	Branch   string    `json:"branch"`
+	Priority string    `json:"priority,omitempty"`
 	Tier     string    `json:"tier,omitempty"` // the tier its route was drawn from (sprint.FieldTier)
 }
 
@@ -851,7 +866,7 @@ func dealtView(d store.Dealt, prefix string, epoch uint64) ([]dealtCard, []judgm
 			continue
 		}
 		v := dealtCard{ID: c.ID, Primary: c.F(sprint.PrimaryField), Stream: c.F("stream"), Member: c.Row, State: c.Col,
-			Branch: cmp.Or(c.F("branch"), sprint.BranchOf(prefix, epoch, c.ID, c.Int("gen"))), Tier: c.F(sprint.FieldTier)}
+			Branch: cmp.Or(c.F("branch"), sprint.BranchOf(prefix, epoch, c.ID, c.Int("gen"))), Tier: c.F(sprint.FieldTier), Priority: queuePriority(c)}
 		own := "dealt"
 		if c.Col == string(sprint.Working) {
 			own = "taken"
@@ -1165,6 +1180,7 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	v.Backup = sprint.BackupOf(int(working), int(review), int(merging))
 	v.ReadsWaiting, v.Priorities, v.StreamPriorities = facts.ReadsWaiting, facts.Priorities, facts.StreamPriorities
 	v.ReadsWindow = facts.ReadsWindow
+	v.ReadCards = facts.ReadCards
 	v.Width = upWidth(shapes[3])
 	v.Buffer = fmt.Sprintf("%d/%d", v.Ready, 2*v.Width)
 	v.Low = v.Ready < int64(v.Width)
@@ -1192,10 +1208,17 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		v.Machine = st.MachineLineOf(facts.Machine, facts.Heartbeat)
 	}
 	v.FleetWork, v.FriendsWork = sprint.SwitchWord(shapes[0].Props, sprint.PropFleet), sprint.SwitchWord(shapes[0].Props, sprint.PropFriends)
+	fleetTiers, friendsTiers := sprint.SideTiers(shapes[0].Props, sprint.PropFleetTiers), sprint.SideTiers(shapes[0].Props, sprint.PropFriendsTiers)
+	v.FleetTiers, v.FriendsTiers = tiersJSON(fleetTiers), tiersJSON(friendsTiers)
 	var b strings.Builder
 	b.WriteString(a.seatTitle(v.Coordinator, v.Seat, now) + "\n\n" + whereHeader(v.Summary, v.Machine) + "\n")
-	if line := switchesLine(v.FleetWork, v.FriendsWork); line != "" {
+	if line := switchesLine(v.FleetWork, v.FriendsWork, fleetTiers, friendsTiers); line != "" {
 		b.WriteString(line + "\n")
+	}
+	v.ReadsNeeded = sprint.ReadTierDefault
+	if n, ok := sprint.ReadsSetting(shapes[0].Props); ok {
+		v.ReadsNeeded = n
+		fmt.Fprintf(&b, "reads: %d\n", n)
 	}
 	// the five heaviest cards, the ones the most wait on, under the summary: the tick's where
 	// record carries them (weight.go; store.WhereRecord)
@@ -1236,6 +1259,9 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 			cells := map[string]any{}
 			for j, col := range t.Columns {
 				cells[col.Name] = ntable.CellText(t.Columns, r, j)
+			}
+			if logical == sprint.Fleet {
+				rowCardFields(cells, facts.RowCards[r.Key])
 			}
 			rows[r.Key] = cells
 		}
@@ -1314,6 +1340,15 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		}
 		v.Tables[sprint.Friends][r.Key] = cells
 	}
+	for _, f := range friends {
+		if cells := v.Tables[sprint.Friends][f.Name]; cells != nil {
+			n := facts.RowCards[sprint.FriendRow(f.Name)]
+			if f.Status == sprint.Down {
+				n = map[string]int{"reads_ready": n["reads_ready"]} // down, she works nothing
+			}
+			rowCardFields(cells, n)
+		}
+	}
 	// the table layer draws it as it draws the fleet: header, rule, rows, rule,
 	// the folded footer; with no friend the header, its rule and the footer
 	parts[sprint.Friends] = ntable.Render(ft, ntable.RenderOpts{Title: sprint.Friends})
@@ -1350,6 +1385,24 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		}
 	}
 	v.Releases = sprint.WhereReleasesCountCardsLeft(clocks, streamLeft)
+	for stream, cols := range facts.FixStates {
+		row := v.Tables[sprint.Work][stream]
+		if row == nil {
+			continue
+		}
+		n := 0
+		for col, count := range cols {
+			existing, _ := strconv.Atoi(fmt.Sprint(row[col])) // ignored: absent column is zero
+			count = min(count, existing)
+			row[col] = strconv.Itoa(existing - count)
+			n += count
+		}
+		if n > 0 {
+			row["fix"] = strconv.Itoa(n)
+			v.Fix += n
+		}
+	}
+
 	return v, b.String(), nil
 }
 
@@ -1406,6 +1459,15 @@ func perLandedColumn(t ntable.Table, streams map[string]sprint.TierCosts) ntable
 	}
 	t.Rows = rows
 	return t
+}
+
+// rowCardFields writes on a row of tables its fleet row's counts (sprint.RowCardFields): its
+// working cards by level, highest first, summing to its working, and its reads ready; each
+// "0" when it has none, a count cell's text as every cell of tables is.
+func rowCardFields(cells map[string]any, n map[string]int) {
+	for _, k := range sprint.RowCardFields {
+		cells[k] = strconv.Itoa(n[k])
+	}
 }
 
 // splitFriendRows is the fleet table without the friends' rows (sprint.FriendRow), and
@@ -1468,7 +1530,8 @@ func (a *app) friendsTable(friends []store.FriendRow, now time.Time) ntable.Tabl
 		cells[at[sprint.DoneOK]].Count = int64(f.OK)
 		cells[at[sprint.DoneFailed]].Count = int64(f.Failed)
 		t.Rows = append(t.Rows, ntable.Row{Key: f.Name, Cells: cells,
-			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.Status: a.statusCell(f, now), sprint.Active: activeCell(f, now)}})
+			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.Status: a.statusCell(f, now), sprint.Active: activeCell(f, now),
+				sprint.Tokens: sprint.FriendTokensCell(f.Tokens, f.Charged, f.Billing)}})
 	}
 	return t
 }
@@ -1698,17 +1761,36 @@ func fleetText(t ntable.Table) string {
 // and the progress line, with no machine text, when it is running; a RUNNING
 // machine whose last tick is late keeps the progress line, the machine's
 // "running (tick late 16s)" after it. Nothing else follows any of them.
-// switchesLine is the work switches that are off, one line ("fleet: off", "friends: off"),
-// or "" while both are on (where; view coordinator's summary).
-func switchesLine(fleet, friends string) string {
-	var off []string
-	if fleet == sprint.SwitchOff {
-		off = append(off, "fleet: off")
+// switchesLine is the sides' settings that are not their defaults, one line: while every
+// tier is open to both sides, the work switches that are off ("fleet: off", "friends: off"),
+// nothing while both are on; while a side's tiers are set, both sides, each its switch and
+// its tiers ("fleet: on, tiers flash  friends: on, tiers all").
+func switchesLine(fleet, friends string, fleetTiers, friendsTiers []string) string {
+	if fleetTiers == nil && friendsTiers == nil {
+		var off []string
+		if fleet == sprint.SwitchOff {
+			off = append(off, "fleet: off")
+		}
+		if friends == sprint.SwitchOff {
+			off = append(off, "friends: off")
+		}
+		return strings.Join(off, "  ")
 	}
-	if friends == sprint.SwitchOff {
-		off = append(off, "friends: off")
+	side := func(name, sw string, tiers []string) string {
+		if sw != sprint.SwitchOff {
+			sw = sprint.SwitchOn
+		}
+		return name + ": " + sw + ", tiers " + cmp.Or(strings.Join(tiers, ","), sprint.TiersAll)
 	}
-	return strings.Join(off, "  ")
+	return side("fleet", fleet, fleetTiers) + "  " + side("friends", friends, friendsTiers)
+}
+
+// tiersJSON is a side's tiers as where --json carries them: "all", or the list.
+func tiersJSON(tiers []string) any {
+	if tiers == nil {
+		return sprint.TiersAll
+	}
+	return tiers
 }
 
 func whereHeader(summary, machine string) string {
@@ -2055,9 +2137,12 @@ func groupText(g sprint.Group, now time.Time, opened bool) string {
 // cardView is everything about one primary.
 type cardView struct {
 	Primary *sprint.Card `json:"primary"`
-	Tier    string       `json:"tier"`            // the tier it is on (sprint.CardTiers)
-	Ceiling string       `json:"ceiling"`         // the highest the machine escalates it to
-	Grade   string       `json:"grade,omitempty"` // nova-decide's grade, as the card holds it (sprint.FieldGrade)
+	// Column is the live table placement, as linePlace reads it, never the
+	// legacy place:work field (docs/SPEC-SPRINT.md section 11).
+	Column  string `json:"column"`
+	Tier    string `json:"tier"`            // the tier it is on (sprint.CardTiers)
+	Ceiling string `json:"ceiling"`         // the highest the machine escalates it to
+	Grade   string `json:"grade,omitempty"` // nova-decide's grade, as the card holds it (sprint.FieldGrade)
 	// Who is the worker its brief's WHO line names (sprint.FieldWho): friend for any
 	// friend, friend.<name> for one; absent on a machine's card.
 	Who string `json:"who,omitempty"`
@@ -2147,7 +2232,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		}
 		tier, ceiling := sprint.CardTiers(v.Primary)
 		level, source := sprint.CardPriority(v.Primary)
-		b, _ := json.Marshal(cardView{Primary: v.Primary, Tier: tier, Ceiling: ceiling, Grade: v.Primary.F(sprint.FieldGrade), Who: v.Primary.F(sprint.FieldWho), Priority: level, PrioritySource: source, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
+		b, _ := json.Marshal(cardView{Primary: v.Primary, Column: v.Primary.Col, Tier: tier, Ceiling: ceiling, Grade: v.Primary.F(sprint.FieldGrade), Who: v.Primary.F(sprint.FieldWho), Priority: level, PrioritySource: source, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
 			Cost: sprint.CardCostOf(v.Primary), Timeline: events, Texts: texts})
 		fmt.Fprintln(stdout, string(b))
 		return 0
@@ -2452,8 +2537,10 @@ func printBrief(stdout, stderr io.Writer, id, brief string, asJSON bool) int {
 // that; the comfort list of 2026-10-03, item 8: a child's loop of card calls timed
 // out against the store).
 type primaryRow struct {
-	ID     string            `json:"id"`
-	Stream string            `json:"stream"`
+	ID     string `json:"id"`
+	Stream string `json:"stream"`
+	Column string `json:"column"`
+	// State is a deprecated alias of Column for one release (SPEC-SPRINT section 11).
 	State  string            `json:"state"`
 	Score  float64           `json:"score"`
 	Fields map[string]string `json:"fields"`
@@ -2475,7 +2562,7 @@ func rowsView(s *sprint.Snapshot, gone *archivedView) []primaryRow {
 				fields[k] = v
 			}
 		}
-		rows = append(rows, primaryRow{ID: c.ID, Stream: c.Row, State: c.Col, Score: c.Score, Fields: fields})
+		rows = append(rows, primaryRow{ID: c.ID, Stream: c.Row, Column: c.Col, State: c.Col, Score: c.Score, Fields: fields})
 	}
 	slices.SortStableFunc(rows, func(a, b primaryRow) int {
 		return cmp.Or(cmp.Compare(a.Stream, b.Stream), cmp.Compare(a.Score, b.Score), cmp.Compare(a.ID, b.ID))

@@ -17,12 +17,18 @@ import (
 // verb `nova-sprint release check` runs the registry and writes nothing.
 
 // ReleaseFacts is everything a check may read: the clock, the store's log and
-// the sprint's dealt bound. Later checks add the git facts to this interface;
-// the unit tests fake it with a struct, and the verb binds it to the store.
+// the sprint's dealt bound, and the acceptance sentinel's facts
+// (releasecheck_acceptance.go). The unit tests fake it with a struct, and the
+// verb binds it to the store.
 type ReleaseFacts interface {
 	Now() time.Time
 	Log() []Line
 	DealtMax() time.Duration
+	Acceptance() Acceptance
+	// MergeWindow and MergeP90 are the merge queue's own bars, bound by the
+	// verb's --window and --merge-p90 (releasecheck_p90.go).
+	MergeWindow() time.Duration
+	MergeP90() time.Duration
 }
 
 // ReleaseResult is one check's answer.
@@ -53,6 +59,13 @@ type ReleaseCheck struct {
 // of stream sprint-v1-release adds its check here and its bar to the spec.
 var ReleaseChecks = []ReleaseCheck{
 	{CheckNoStuckFriend, "no friend was stuck at any moment of the last " + StuckWindow.String(), NoStuckFriend},
+	{CheckCardsSettled, "every card of the stream is landed or dropped with a reason: none is ready, waiting, working, review or merging", CardsSettled},
+	{CheckBaseGateGreen, "the tree gate is green on the base at the stream's last landing: the unit class and the functional class of the packages the cards name, plus ./internal/docs and ./internal/ci", BaseGateGreen},
+	{CheckTwoOKReads, "every landed card has the ok reads its tier needs at its final head, one for a flash card and two different readers for a heavier one, none accepted on the coordinator's word alone", TwoOKReads},
+	{CheckProseTrue, "the stream's spec sections and help text are true to the code: nova-check links and nocode clean, present tense, no names of people or machines", ProseTrue},
+	{CheckLandingsPromoted, "the stream's landings are in dev, or a promotion carrying them is queued since its last landing", LandingsPromoted},
+	{CheckNoOpenJudgment, "no open judgment names the stream: no stale, no brief-defect, no conflict, no returned-to-review", NoOpenJudgment},
+	{CheckMergeQueueP90, "the p90 of the time each card spent merging over the last " + MergeQueueWindowDefault.String() + " is under " + MergeQueueP90Default.String(), MergeQueueP90},
 }
 
 // ReleaseReport is the verb's result value: the lines are rendered from it and

@@ -156,10 +156,11 @@ func friendReadTier(s *Snapshot, pr *Card) string {
 // friendAtOrAbove says the friend may be asked a read of tier: one of her tiers
 // (friendTiers) is tier or above it on capLadder (docs/SPEC-SPRINT.md, a read
 // asked of any unit with room at or above the read tier). A frontier friend
-// takes a flash, pro, heavy or frontier read; a flash friend takes a flash read.
-func friendAtOrAbove(f FriendSeat, tier string) bool {
+// takes a flash, pro, heavy or frontier read; a flash friend takes a flash read. A tier the
+// friends' tiers leave out (FriendsTake, set --friends-tiers) no friend reads.
+func friendAtOrAbove(s *Snapshot, f FriendSeat, tier string) bool {
 	want := slices.Index(capLadder, tier)
-	if want < 0 {
+	if want < 0 || !s.FriendsTake(tier) {
 		return false
 	}
 	for _, t := range friendTiers(f) {

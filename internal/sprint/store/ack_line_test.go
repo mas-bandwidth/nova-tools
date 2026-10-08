@@ -19,7 +19,8 @@ func TestTheDecidedLineTheStoreWritesForAnAckNamesItsSubjects(t *testing.T) {
 		h.setup(2)
 		h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"waiter"}, Needs: []string{"s1-1", "s1-2"}}))
 		if typ == sprint.NBlocked {
-			h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "obsolete"}))
+			seedDroppedNeed(h, "s1-1")
+			h.must(ResolveStep(sprint.ResolveReq{}))
 		} else {
 			seedMissingNeeds(h, "waiter", "first.bad")
 			h.must(ResolveStep(sprint.ResolveReq{}))

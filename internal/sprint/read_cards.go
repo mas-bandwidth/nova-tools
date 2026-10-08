@@ -96,6 +96,56 @@ func rowWorking(s *Snapshot, row string) (work, reads int) {
 	return work, reads
 }
 
+// ReadCardCounts is the epoch's read cards on the fleet table: ready, working, and done (ok
+// or failed), where --json's read_cards.
+type ReadCardCounts struct {
+	Ready   int `json:"ready"`
+	Working int `json:"working"`
+	Done    int `json:"done"`
+}
+
+// RowCardFields is the fields of a row's counts (RowCardCounts), highest level first.
+var RowCardFields = []string{"blocker_working", "critical_working", "fix_working", "high_working", "reads_working", "normal_working", "low_working", "reads_ready"}
+
+// RowCardCounts is each fleet row's cards as the dashboard's segmented bar draws them,
+// highest on the left: its working cards by level, a read card as reads whatever level it
+// inherits and a work card at the level its deal wrote (QueuePriority), the fields
+// <level>_working summing to its working (RowCardFields); and reads_ready, the read cards
+// among its ready. A row with none is absent. all is the epoch's read cards.
+func RowCardCounts(s *Snapshot) (rows map[string]map[string]int, all ReadCardCounts) {
+	rows = map[string]map[string]int{}
+	if s == nil || s.Fleet == nil {
+		return rows, all
+	}
+	for _, row := range s.Fleet.Rows() {
+		n := map[string]int{}
+		for _, c := range s.Fleet.Cell(row, Working) {
+			level := PriorityLadder[priorityRank(QueuePriority(c))]
+			if isRead(c) {
+				level, all.Working = "reads", all.Working+1
+			}
+			n[level+"_working"]++
+		}
+		for _, c := range s.Fleet.Cell(row, Ready) {
+			if isRead(c) {
+				n["reads_ready"]++
+				all.Ready++
+			}
+		}
+		for _, col := range []string{DoneOK, DoneFailed} {
+			for _, c := range s.Fleet.Cell(row, col) {
+				if isRead(c) {
+					all.Done++
+				}
+			}
+		}
+		if len(n) > 0 {
+			rows[row] = n
+		}
+	}
+	return rows, all
+}
+
 // halfLoad is a load counted in slots with a read at half a slot, rounded up: the room a
 // work card needs is whole.
 func halfLoad(work, reads int) int { return work + (reads+1)/2 }
@@ -116,8 +166,8 @@ type readUnit struct {
 const RoleReader = "reader"
 
 // readUnitsOf is every unit up that may be dealt a read: the friends dealable (friendDealable)
-// whose roles name reader first, as a friend is dealt a card before a paid route is drawn,
-// then the members up whose reader row is neither held nor retired, in row order.
+// whose roles name reader, then the members up whose reader row is neither held nor
+// retired, in row order; the ask orders them together (readCardsAsk).
 func readUnitsOf(s *Snapshot, seats []FriendSeat) []readUnit {
 	var out []readUnit
 	for _, f := range seats {
@@ -194,14 +244,20 @@ func readerCardsAt(cards []*Card, primary string, attempt int, reader string) []
 }
 
 // readSpent says the reader holds or closed a read card of the attempt: one placed, or one
-// retired with a verdict or by itself (spentBy). It is never dealt that read again.
-func readSpent(cards []*Card) bool {
+// retired with a verdict or by itself (spentBy). It is never dealt that read again. A read
+// card the machine withdrew (FriendTake for a friend's hold or stall) is history and spends
+// nothing; one the seat or her runner handed back (friend take, FriendTakeReq.Spends) is
+// withdrawn with retired_by returned and spends her.
+func readSpent(cards []*Card) bool { return readSpender(cards) != nil }
+
+// readSpender is the first card that spends its reader (readSpent), nil for none.
+func readSpender(cards []*Card) *Card {
 	for _, c := range cards {
-		if c.Placed() || c.F("verdict") != "" || slices.Contains(spentBy, c.F("retired_by")) {
-			return true
+		if c.Placed() && c.Col != Withdrawn || c.F("verdict") != "" || slices.Contains(spentBy, c.F("retired_by")) {
+			return c
 		}
 	}
-	return false
+	return nil
 }
 
 // MaxReadGen is the most generations of one reader's read card at one attempt: the plain
@@ -270,38 +326,91 @@ func ReadCardExtras(s *Snapshot) []string {
 // row serves it, readerServesTier) and the two of a read: it did not work the attempt, and
 // it holds no read card of the attempt and closed none (readSpent).
 //
-// below says the unit may read it only by the interim rule (the owner, 2026-10-06 7:11 PM
-// ET "let flash read pro", 7:41 PM "let pro do it"): it is one tier below the read's tier,
-// never two; the deal prefers a unit at or above the tier while one has room.
-func mayReadCard(s *Snapshot, u readUnit, pr *Card, attempt int, worker string, cards []*Card) (ok, below bool) {
+// A unit one tier below the read's tier may read it too, by the interim rule (the owner,
+// 2026-10-06 7:11 PM ET "let flash read pro", 7:41 PM "let pro do it"), never two below;
+// the deal orders the units that may by tier distance (readTierDistance).
+func mayReadCard(s *Snapshot, u readUnit, pr *Card, attempt int, worker string, cards []*Card) bool {
+	return readRefusal(s, u, pr, attempt, worker, cards) == ""
+}
+
+// readRefusal is the clause of mayReadCard that refuses the unit the read, "" when none
+// does: worker, spent, no id, friends' set, friend tier, reader row (a readers-table read
+// of the attempt), fleet set, reader tier.
+func readRefusal(s *Snapshot, u readUnit, pr *Card, attempt int, worker string, cards []*Card) string {
 	mine := readerCardsAt(cards, pr.ID, attempt, u.name)
-	if u.name == worker || readSpent(mine) || readCardIDFor(mine, pr.ID, attempt, u.name) == "" {
-		return false, false
+	switch {
+	case u.name == worker:
+		return "worker"
+	case readSpent(mine):
+		c := readSpender(mine)
+		return "spent(" + c.ID[strings.LastIndex(c.ID, ".")+1:] + " col=" + c.Col + " verdict=" + c.F("verdict") + " retired_by=" + c.F("retired_by") + " head=" + c.F("head") + ")"
+	case readCardIDFor(mine, pr.ID, attempt, u.name) == "":
+		return "no id"
 	}
 	if u.friend {
 		// a friend reads her tier or any below it, as her reads always did: a heavy friend
 		// reads a flash and a pro card (friendAtOrAbove)
 		t := friendReadTier(s, pr)
-		if friendAtOrAbove(u.seat, t) {
-			return true, false
+		if !s.FriendsTake(t) {
+			return "friends' set" // the friends' tiers leave the read out (set --friends-tiers)
 		}
-		b := tierBelow(t)
-		return b != "" && friendAtOrAbove(u.seat, b), true
+		if b := tierBelow(t); friendAtOrAbove(s, u.seat, t) || b != "" && friendAtOrAbove(s, u.seat, b) {
+			return "" // inside the set: b too (friendAtOrAbove)
+		}
+		return "friend tier"
 	}
 	// a machine whose reader row holds a read of the attempt on the readers table (asked
 	// the old way, before read cards were on) reads it there, never twice
 	rd := ReaderPrefix + u.name
 	for _, id := range ReadCardIDs(pr.ID, attempt, rd) {
 		if c := s.Readers.Card(id); c.Placed() || c != nil && c.F("verdict") != "" {
-			return false, false
+			return "reader row"
 		}
 	}
 	t := s.readTierOf(pr)
-	if s.readerServesTier(rd, t) {
-		return true, false
+	if !s.FleetTakes(t) {
+		return "fleet set" // the fleet's tiers leave the read out (set --fleet-tiers)
 	}
-	b := tierBelow(t)
-	return b != "" && s.readerServesTier(rd, b), true
+	if b := tierBelow(t); s.readerServesTier(rd, t) || b != "" && s.FleetTakes(b) && s.readerServesTier(rd, b) {
+		return "" // inside the set: b too
+	}
+	return "reader tier"
+}
+
+// readTierDistance is how far below or above the read's tier the unit reads, the cheaper
+// first, measured against the tier before readTierOf lowers it (friendReadTier) for every
+// unit: 0 at the read's own tier, 1 one tier below (mayReadCard's interim rule), 1+k at k
+// tiers above, and after every tier above, len(capLadder)+k at k tiers below, as a member
+// reads a card whose route tier readTierOf lowered (a frontier or heavy card is drawn on
+// pro). A friend reads at the nearest of her tiers (friendTiers); a member at the tier its
+// read is drawn on, readTierOf's or the one below it when its reader row serves only that.
+func readTierDistance(s *Snapshot, u readUnit, pr *Card) int {
+	want := slices.Index(capLadder, friendReadTier(s, pr))
+	gap := func(at int) int {
+		switch {
+		case want < 0 || at < 0:
+			return 2*len(capLadder) + 1
+		case at == want:
+			return 0
+		case at == want-1:
+			return 1
+		case at > want:
+			return 1 + at - want
+		}
+		return len(capLadder) + want - at
+	}
+	if !u.friend {
+		e := s.readTierOf(pr)
+		if !s.readerServesTier(ReaderPrefix+u.name, e) {
+			e = tierBelow(e)
+		}
+		return gap(slices.Index(capLadder, e))
+	}
+	best := gap(-1)
+	for _, x := range friendTiers(u.seat) {
+		best = min(best, gap(slices.Index(capLadder, x)))
+	}
+	return best
 }
 
 // tierBelow is the tier one below t on the ladder (flash, pro, heavy, frontier), "" for
@@ -336,7 +445,7 @@ func readCardsStanding(s *Snapshot, pr *Card, idx map[string][]*Card) (standing 
 }
 
 // readCardsWanted is how many read cards the deal cuts for the primary now: every read its
-// attempt still needs (ReadsNeeded less the reads that stand), at once; none once a read
+// attempt still needs (ReadsNeededIn less the reads that stand), at once; none once a read
 // found it broken (its judgment and the rework follow), none for failed work; over a fleet
 // read index (fleetReadIndex), nil to read the table.
 func readCardsWanted(s *Snapshot, pr *Card, idx map[string][]*Card) int {
@@ -347,7 +456,7 @@ func readCardsWanted(s *Snapshot, pr *Card, idx map[string][]*Card) int {
 	if broken {
 		return 0
 	}
-	return max(0, ReadsNeeded(pr)-standing)
+	return max(0, ReadsNeededIn(s, pr)-standing)
 }
 
 // readCardsWaiting is every primary in review that wants read cards now, by the level of
@@ -402,11 +511,36 @@ func readCardsTakeBack(s *Snapshot) map[string][]Change {
 
 // readCardsAsk is the read-card ask: the cards it takes back (readCardsTakeBack), then for
 // every primary that wants reads (readCardsWaiting) every read it wants, at once, each to a
-// different unit that may read it (mayReadCard) with half a slot free, the friends first,
-// then the unit with the most idle lanes, then the most room, then by name. waits is why
+// different unit that may read it (mayReadCard) with half a slot free, the cheapest first:
+// a unit with an idle lane before every unit with none (a read waits in a ready queue only
+// when every reader that may take it is busy), then by tier distance (readTierDistance: the
+// read's own tier, one tier below, then the tiers above, nearest first), then the most idle
+// lanes, then the most room, then by name; friends and members alike. waits is why
 // each primary that wants more reads than it was dealt waits. With ri nil the reads draw
 // no route (the deal's dry run: what the reads would take).
 func readCardsAsk(s *Snapshot, seats []FriendSeat, ri routeIndexes) (p Plan, waits map[string]string) {
+	return readCardsAskWhy(s, seats, ri, nil)
+}
+
+// ReadCardsWhy is tick --shadow's account of the read-card ask (readCardsAsk): first the
+// units it deals reads to, each with its half slots and idle lanes, and the reader friends
+// it leaves out; then a line per primary that waits, its read tier, the reads it wants, why
+// it waits and each unit not dealt it with the clause that refuses it (readRefusal), or
+// half<=0 for one at its room as the ask reached the primary. Nothing with read cards off.
+func ReadCardsWhy(s *Snapshot, seats []FriendSeat) []string {
+	if !s.ReadCardsOn() {
+		return nil
+	}
+	if seats == nil {
+		seats = withoutDirs(s.Friends)
+	}
+	var why []string
+	readCardsAskWhy(s, seats, nil, &why)
+	return why
+}
+
+// readCardsAskWhy is readCardsAsk, and with why non-nil, ReadCardsWhy's lines.
+func readCardsAskWhy(s *Snapshot, seats []FriendSeat, ri routeIndexes, why *[]string) (p Plan, waits map[string]string) {
 	waits = map[string]string{}
 	if s == nil || s.Work == nil || s.Fleet == nil {
 		return p, waits
@@ -431,6 +565,18 @@ func readCardsAsk(s *Snapshot, seats []FriendSeat, ri routeIndexes) (p Plan, wai
 	}
 	units := readUnitsOf(view, seats)
 	idx := fleetReadIndex(view)
+	if why != nil {
+		var us, out []string
+		for _, u := range units {
+			us = append(us, u.name+" half="+itoa(u.half)+" idle="+itoa(u.idle))
+		}
+		for _, f := range seats {
+			if slices.Contains(f.Roles, RoleReader) && !friendCanRead(view, f) {
+				out = append(out, f.Name+" ("+f.Status+")")
+			}
+		}
+		*why = append(*why, "units: "+strings.Join(us, ", ")+"; reader friends not dealable: "+strings.Join(out, ", "))
+	}
 	declared := map[string]bool{}
 	done := map[string]bool{}
 	for _, pr := range readCardsWaiting(view, idx) {
@@ -440,11 +586,11 @@ func readCardsAsk(s *Snapshot, seats []FriendSeat, ri routeIndexes) (p Plan, wai
 		worker := attemptUnit(view, pr.ID, attempt)
 		cards := idx[pr.ID]
 		var may []int
-		below := map[int]bool{}
+		dist := map[int]int{}
 		for i, u := range units {
-			if ok, b := mayReadCard(view, u, pr, attempt, worker, cards); ok {
+			if mayReadCard(view, u, pr, attempt, worker, cards) {
 				may = append(may, i)
-				below[i] = b
+				dist[i] = readTierDistance(view, u, pr)
 			}
 		}
 		var room []int
@@ -456,17 +602,15 @@ func readCardsAsk(s *Snapshot, seats []FriendSeat, ri routeIndexes) (p Plan, wai
 		slices.SortStableFunc(room, func(a, b int) int {
 			x, y := units[a], units[b]
 			switch {
-			case below[a] != below[b]:
-				// a reader at or above the tier first; one tier below only for the rest
-				if below[b] {
+			case (x.idle > 0) != (y.idle > 0):
+				// an idle lane first: a read is stacked on a busy reader only when every
+				// reader that may take it is busy
+				if x.idle > 0 {
 					return -1
 				}
 				return 1
-			case x.friend != y.friend:
-				if x.friend {
-					return -1
-				}
-				return 1
+			case dist[a] != dist[b]:
+				return dist[a] - dist[b]
 			case max(x.idle, 0) != max(y.idle, 0):
 				return max(y.idle, 0) - max(x.idle, 0)
 			case x.half != y.half:
@@ -483,6 +627,19 @@ func readCardsAsk(s *Snapshot, seats []FriendSeat, ri routeIndexes) (p Plan, wai
 				waits[pr.ID] = "no reader up may read it: no friend whose tiers reach its read tier, and no member whose reader row serves its tier, besides its own worker"
 			default:
 				waits[pr.ID] = "every reader up who may read it is at its room"
+			}
+			if why != nil {
+				var refused []string
+				for i, un := range units {
+					r := readRefusal(view, un, pr, attempt, worker, cards)
+					if r == "" && un.half <= 0 {
+						r = "half<=0"
+					}
+					if r != "" && !slices.Contains(picked, i) {
+						refused = append(refused, un.name+"="+r)
+					}
+				}
+				*why = append(*why, pr.ID+" tier="+friendReadTier(view, pr)+" wants="+itoa(want)+" waits: "+waits[pr.ID]+"; refused: "+strings.Join(refused, ", "))
 			}
 		}
 		if len(picked) == 0 {

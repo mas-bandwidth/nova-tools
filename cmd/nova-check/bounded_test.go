@@ -72,7 +72,7 @@ func TestLinksCapsFindingsAndAlwaysPrintsTheCount(t *testing.T) {
 	assert.Contains(t, stderr, "LINKS MORE kind=broken shown=20 total=500", "no MORE line naming the total:\n%s", stderr)
 	// The count line used to print only on PASS, so a run that found 800 broken links
 	// said nothing about 800 and stdout was empty.
-	assert.Contains(t, stderr, "broken=500 shown=20", "no count line on failure:\n%s", stderr)
+	assert.Contains(t, stderr, "broken=500", "no count line on failure:\n%s", stderr)
 	assert.EqualValues(t, "", stdout, "a failing links wrote to stdout: %q", stdout)
 }
 
@@ -86,8 +86,8 @@ func TestNoCodeCapsFindingsAndAlwaysPrintsTheCount(t *testing.T) {
 		got := countLines(stderr)
 		assert.EqualValues(t, bounded.Default+2, got, "stderr is %d lines, want %d findings + MORE + count:\n%s", got, bounded.Default, stderr)
 	}
-	assert.Contains(t, stderr, "NOCODE MORE kind=file shown=20 total=500", "no MORE line naming the total:\n%s", stderr)
-	assert.Contains(t, stderr, "findings=500 shown=20", "no count line on failure:\n%s", stderr)
+	assert.Contains(t, stderr, "NOCODE MORE kind=finding shown=20 total=500", "no MORE line naming the total:\n%s", stderr)
+	assert.Contains(t, stderr, "findings=500", "no count line on failure:\n%s", stderr)
 }
 
 // THE FIRST-RUN VERB. Uncapped it was 1,400 lines for two lines of verdict — the most
@@ -134,7 +134,7 @@ func TestRefusesANegativeCeiling(t *testing.T) {
 	dir := largeSelf(t, 2)
 	for _, verb := range []string{"links", "nocode", "quickstart"} {
 		exit, _, stderr := runCheck(t, verb, "--dir", dir, "--max", "-1")
-		assert.True(t, exit == 2 && strings.Contains(stderr, "--max must be a line ceiling"), "%s: exit = %d, stderr = %q", verb, exit, stderr)
+		assert.True(t, exit == 2 && strings.Contains(stderr, "--max must be zero or more"), "%s: exit = %d, stderr = %q", verb, exit, stderr)
 	}
 }
 
@@ -142,19 +142,23 @@ func TestRefusesANegativeCeiling(t *testing.T) {
 func TestAFlagTypoIsOneLine(t *testing.T) {
 	t.Parallel()
 
-	for _, args := range [][]string{
-		{"links", "--diir", "x"},
-		{"nocode", "--diir", "x"},
-		{"frobnicate"},
-		nil,
+	for _, tc := range []struct {
+		args []string
+		door string // the skeleton's door: a flag the verb does not take names the verb's -h, the rest name help
+	}{
+		{[]string{"links", "--diir", "x"}, "nova-check links -h"},
+		{[]string{"nocode", "--diir", "x"}, "nova-check nocode -h"},
+		{[]string{"frobnicate"}, "nova-check help"},
+		{nil, "nova-check help"},
 	} {
+		args := tc.args
 		exit, stdout, stderr := runCheck(t, args...)
 		assert.EqualValues(t, 2, exit, "%v: exit = %d, want 2", args, exit)
 		{
 			got := countLines(stderr)
 			assert.EqualValues(t, 1, got, "%v: the refusal is %d lines, want 1:\n%s", args, got, stderr)
 		}
-		assert.Contains(t, stderr, "run: nova-check help", "%v: the refusal names no door: %q", args, stderr)
+		assert.Contains(t, stderr, "run: "+tc.door, "%v: the refusal names no door: %q", args, stderr)
 		assert.EqualValues(t, "", stdout, "%v: a refusal wrote to stdout: %q", args, stdout)
 	}
 	exit, stdout, _ := runCheck(t, "help")

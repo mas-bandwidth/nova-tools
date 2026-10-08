@@ -41,7 +41,7 @@ func TestAFriendRowHoldsItsTiersUnlessTheCardIsPinnedToHer(t *testing.T) {
 				tier := DealtTier(wc, pr)
 				require.NotEmpty(t, tier, "the packet of %s names a tier", wc.ID)
 				pinned := strings.TrimPrefix(pr.F(FieldWho), "only.") == row
-				assert.True(t, friendTakes(f, tier) || pinned, "%s (%s) holds %s on %s, not pinned to her", f.Name, f.Class, pr.ID, tier)
+				assert.True(t, friendTakes(w.s, f, tier) || pinned, "%s (%s) holds %s on %s, not pinned to her", f.Name, f.Class, pr.ID, tier)
 				held[pr.ID] = f.Name + " " + tier
 			}
 		}

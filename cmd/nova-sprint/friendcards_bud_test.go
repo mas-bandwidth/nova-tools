@@ -75,7 +75,7 @@ func TestADealToABudIsDeliveredOnTheBus(t *testing.T) {
 	m := e.Message()
 	assert.Equal(t, "coordinator", m.From)
 	assert.Equal(t, []string{"bud-a"}, m.To)
-	assert.Contains(t, m.Subject, "card s1-1.w1 dealt")
+	assert.Equal(t, "cards dealt: 1 (s1-1.w1)", m.Subject)
 
 	// a name the roster already holds is not added again, and no name is no name
 	added, err := (&bus.Bus{Store: store}).Enroll(context.Background(), "bud-a", "bob")
