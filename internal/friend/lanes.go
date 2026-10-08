@@ -405,9 +405,14 @@ func (l *loop) laneStep(now time.Time, width int) {
 		}
 		for i, r := range s.state.StopReturns {
 			// a run the stop cancelled before this daemon started is gone with it: its
-			// stop-return is owed first, never a FAIL (StopReturnsSurviveRestart)
+			// stop-return is owed first, never a FAIL (StopReturnsSurviveRestart); a taken
+			// record is the past, and the card's later run under the same job name is a
+			// started one like any other
+			if !r.Owed() {
+				continue
+			}
 			delete(s.state.Started, r.Job)
-			if r.Owed() && !r.Ended {
+			if !r.Ended {
 				s.state.StopReturns[i].Ended, s.state.StopReturns[i].Exit = true, -1
 			}
 		}
@@ -480,6 +485,9 @@ func (l *loop) laneStep(now time.Time, width int) {
 			continue
 		}
 		if ln.card == nil {
+			if d.machineStopped() {
+				continue // the word read right before the take, before any claim (NoLaunchAfterStop)
+			}
 			asking = ln.n
 			c, found, err := d.nextCard(held)
 			if err != nil {
@@ -527,7 +535,10 @@ func (l *loop) laneStep(now time.Time, width int) {
 			l.saveLanes(now)
 		}
 		if d.machineStopped() {
-			continue // the word read again right before the start (NoLaunchAfterStop)
+			// the word turned between the claim and the start: the card is given up, owed
+			// its stop-return, never held with no turn (NoLaunchAfterStop)
+			l.releaseHeld(ln, now)
+			continue
 		}
 		if perCard { // the brief alone: no message, pong or notice rides with it
 			t, c, dir := &turn{subjects: fmt.Sprintf("%q", "card "+ln.card.ID)}, ln.job.Card, ln.job.Dir

@@ -6395,25 +6395,36 @@ harness group with its own grace, killed after `StopGrace` 60 s; the job
 directory and the log are kept), reports, recovers and takes nothing, and once
 a stopped child has ended hands its card back with `stop-return --as <its row>
 <card>@<gen> --epoch <epoch> --reason "owned process stopped"`, never a
-finish; a refusal is said and tried again next pass. A friend's daemon
-(internal/friend/stop.go) cancels every lane turn and read under way the same
-way (the process group signalled, the card kept in the job directory), records
-each stop-return owed in its lane state on disk before anything is sent
-(`LaneState.StopReturns`: lane, job, card@gen, epoch, exit, when, the answer),
-sends each once its run has ended, and a daemon restarted mid-stop sends what
-it owes first and never finishes such a card as a run gone; its beat carries
-the count still owed (`friend beat --stop-returns <n>`), which `start` waits
-on. No lane, turn or read begins while STOPPED (the word is read right before
-each start, not only at the pass's head), and no work nudge goes into a
-session (no idle wake, no oldest-card urging; messages, pings and the present
-still do). RUNNING again lifts the refusal and nothing restarts by itself: the
+finish, whatever the word says by then; a refusal is said once while its text
+stands and tried again after `StopReturnRetry` (a minute), and its beat
+carries the count still owed (`fleet beat --stop-returns <n>`). A member
+restarted mid-stop finds its old children gone: every queue card working under
+its row with no child of its own is handed back at once (the queue is the
+record on disk). A friend's daemon (internal/friend/stop.go) cancels every
+lane turn and read under way the same way (the process group signalled, the
+card kept in the job directory; a read keeps the generation and epoch it was
+begun at, which the queue's refresh no longer lists), records each stop-return
+owed in its lane state on disk before anything is sent
+(`LaneState.StopReturns`: lane, job, card@gen, epoch, exit, when, the answer,
+the retry), sends each once its run has ended with the same retry and the
+refusal said once, and a daemon restarted mid-stop sends what it owes first
+and never finishes such a card as a run gone (a taken record is the past: a
+later run under the same job name is a started one like any other); its beat
+carries the count still owed (`friend beat --stop-returns <n>`), which `start`
+waits on. No lane, turn or read begins while STOPPED: the word is read right
+before the take, before any claim, and again before the start, and a card
+taken when it turns between the two is given up the same way (owed, out of
+Started, its lane mark removed). No work nudge goes into a session (no idle
+wake, no oldest-card urging); the message lanes go on, STOPPED or not: a turn
+of messages, a ping, the present carry communications and proofs, not work.
+RUNNING again lifts the refusal and nothing restarts by itself: the
 queue carries each returned card at its new generation and the lanes take it
 as any card. The model is tla/StopCancels.tla (NoLaneWhileStopped,
 NoLaunchAfterStop, NoFinishOfACancelledCard, EveryLaneReturnsOnStop,
 StopReturnsSurviveRestart, NoNudgeWhileStopped), its witnesses the findings of
 2026-10-08: the native stop that let every lane run on, a launch after the
-stop arrived, a restart that turned a cancelled card into a FAIL, and a wake
-nudge sent while STOPPED.
+stop arrived, a restart that turned a cancelled card into a FAIL, a wake
+nudge sent while STOPPED, and a cancelled lane finishing its card.
 
 The machine stops itself when the sprint is done (section 8): the tick's last
 part, done, says so to the coordinator and, in the same step, sets the record

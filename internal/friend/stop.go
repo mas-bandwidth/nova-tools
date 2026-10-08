@@ -35,7 +35,14 @@ import (
 //     each start, not only at the step's head), and no work nudge goes into the session
 //     (NoNudgeWhileStopped: no idle wake, no dealt-card urging; messages, pings and the
 //     present still do);
-//   - the beat carries the count of stop-returns still owed (friend beat --stop-returns).
+//   - the beat carries the count of stop-returns still owed (friend beat --stop-returns);
+//   - a refused stop-return is tried again after StopReturnRetry, its refusal said once
+//     while its text stands (no verb and no line a second);
+//   - a lane that took a card and had not launched it when the word turned (the window
+//     between the claim and the start) gives the card up the same way: owed, its lane mark
+//     removed, never a run gone;
+//   - the message lanes (a bus delivery with no card: a turn of messages, a ping, the
+//     present) go on while STOPPED: they carry communications and proofs, not work.
 //
 // RUNNING again lifts the refusal; nothing restarts by itself: the queue carries each card
 // again at its new generation and the lanes take it as any card. The model is
@@ -51,6 +58,10 @@ const MachineStoppedWord = "STOPPED"
 // StopReturnsKept bounds the stop-returns the lane state keeps once sent: the record of the
 // acks, newest last.
 const StopReturnsKept = 200
+
+// StopReturnRetry is how long a refused stop-return waits before it is sent again: the
+// store's verb may be absent, and the lane step runs every second.
+const StopReturnRetry = StatusErrorEvery
 
 // StopReturn is one card the machine's stop took out of a lane: the evidence (the lane, the
 // job, the card at its generation, the epoch, the process's end) and the stop-return owed
@@ -68,6 +79,10 @@ type StopReturn struct {
 	At     time.Time `json:"at"`              // when the stop cancelled it
 	Tries  int       `json:"tries,omitempty"` // stop-returns sent and refused
 	Result string    `json:"result,omitempty"`
+	// NextTry is when a refused stop-return is sent again (StopReturnRetry), and Refusal
+	// the refusal last said for it, said once while its text stands.
+	NextTry time.Time `json:"next_try,omitzero"`
+	Refusal string    `json:"refusal,omitempty"`
 }
 
 // Owed says the stop-return has not been taken by the server.
@@ -123,6 +138,10 @@ func (l *loop) stopStep(now time.Time) bool {
 	}
 	if stopped {
 		for _, ln := range s.lanes {
+			if ln.card != nil && ln.t == nil {
+				l.releaseHeld(ln, now) // taken, not launched: given up the same way
+				continue
+			}
 			t := ln.t
 			if t == nil || !t.running || t.byStop || ln.card == nil {
 				continue
@@ -192,7 +211,7 @@ func (l *loop) returnOwed(now time.Time) {
 	changed := false
 	for i := range s.state.StopReturns {
 		r := &s.state.StopReturns[i]
-		if !r.Owed() || !r.Ended {
+		if !r.Owed() || !r.Ended || now.Before(r.NextTry) {
 			continue
 		}
 		argv := StopReturnArgv(r.Row, r.Card, r.Gen, r.Epoch)
@@ -208,10 +227,14 @@ func (l *loop) returnOwed(now time.Time) {
 		changed = true
 		if err != nil {
 			r.Tries++
-			d.Record(fmt.Sprintf("%s stop-return refused lane=%d card=%s@%d epoch=%s pid=%d exit=%d try=%d: %s; tried again next step", at, r.Lane, r.Card, r.Gen, r.Epoch, r.Pid, r.Exit, r.Tries, oneLine(err.Error(), 300)))
+			r.NextTry = now.Add(StopReturnRetry)
+			if text := oneLine(err.Error(), 300); r.Refusal != text {
+				r.Refusal = text
+				d.Record(fmt.Sprintf("%s stop-return refused lane=%d card=%s@%d epoch=%s pid=%d exit=%d try=%d: %s; tried again every %s while it stands", at, r.Lane, r.Card, r.Gen, r.Epoch, r.Pid, r.Exit, r.Tries, text, StopReturnRetry))
+			}
 			continue
 		}
-		r.Result = "ok " + at
+		r.Result, r.Refusal, r.NextTry = "ok "+at, "", time.Time{}
 		d.Record(fmt.Sprintf("%s stop-return OK lane=%d card=%s@%d epoch=%s pid=%d exit=%d: handed back to %s by the machine's stop", at, r.Lane, r.Card, r.Gen, r.Epoch, r.Pid, r.Exit, r.Row))
 	}
 	if changed {
@@ -238,9 +261,13 @@ func (l *loop) stopReads(now time.Time) {
 			continue
 		}
 		s.stopped[id] = true
-		var r AskedRead
-		if i := slices.IndexFunc(s.asked, func(a AskedRead) bool { return a.ID == id }); i >= 0 {
-			r = s.asked[i]
+		// the read as it was begun (readSet.active): the queue's refresh lists it begun, not
+		// asked, once the begin landed, so the asked list no longer names its generation
+		r, known := s.active[id]
+		if !known {
+			if i := slices.IndexFunc(s.asked, func(a AskedRead) bool { return a.ID == id }); i >= 0 {
+				r = s.asked[i]
+			}
 		}
 		l.oweStopReturn(StopReturn{Job: "read:" + id, Row: ReaderOf(d.Friend), Card: id, Gen: r.Gen, Epoch: r.Epoch, Exit: -1, At: now})
 		cancel()
@@ -264,6 +291,23 @@ func (l *loop) stopReadDone(r readResult, now time.Time) {
 	d.Record(fmt.Sprintf("%s read %s: cancelled by the machine's stop, exit %d; no verdict recorded", now.UTC().Format(time.RFC3339), r.read.ID, exit))
 	l.saveLanes(now)
 	l.returnOwed(now)
+}
+
+// releaseHeld is a lane holding a card it has not launched when the word is STOPPED (the
+// window between the claim and the start): the card is given up as a cancelled one is,
+// with no run to end: owed with Ended set, out of Started, its lane mark removed.
+func (l *loop) releaseHeld(ln *lane, now time.Time) {
+	d := l.d
+	at := now.UTC().Format(time.RFC3339)
+	job := filepath.Base(ln.card.Outbox)
+	l.oweStopReturn(StopReturn{Lane: ln.n, Job: job, Row: "friend." + d.Friend, Card: ln.card.ID, Gen: ln.card.Gen(), Epoch: ln.card.Epoch(), Exit: -1, Ended: true, At: now})
+	delete(l.lanes.state.Started, job)
+	if err := os.Remove(laneMarkPath(d.Dir, job)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		d.Record(fmt.Sprintf("%s lane %d: card %s: its lane mark could not be removed: %s", at, ln.n, ln.card.ID, oneLine(err.Error(), 300)))
+	}
+	d.Record(fmt.Sprintf("%s lane %d: card %s@%d taken and not launched when the machine stopped: given up, stop-return owed", at, ln.n, ln.card.ID, ln.card.Gen()))
+	ln.card, ln.attempts, ln.job = nil, 0, LaneJob{}
+	l.saveLanes(now)
 }
 
 // stopReturnCtx is the context a stop-return is sent under when the loop's own has ended: the

@@ -150,9 +150,10 @@ func TestStoppedCancelsEveryLaneAndHandsEachCardBackWithStopReturn(t *testing.T)
 	})
 }
 
-// A refused stop-return is owed on, tried again each step, said each time, and counted on
-// the beat; the server taking it ends the debt.
-func TestARefusedStopReturnStaysOwedAndIsTriedAgain(t *testing.T) {
+// A refused stop-return stays owed, is tried again after StopReturnRetry (never a verb a
+// second), its refusal said once while its text stands, and is counted on the beat; the
+// server taking it ends the debt.
+func TestARefusedStopReturnStaysOwedAndIsTriedAgainAfterTheRetry(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
@@ -163,24 +164,137 @@ func TestARefusedStopReturnStaysOwedAndIsTriedAgain(t *testing.T) {
 		r.mu.Lock()
 		r.refuse = assert.AnError
 		r.mu.Unlock()
-		var owedWhileRefused int
+		var owedWhileRefused, sentWhileRefused int
 		r.at[12] = func() { r.set(true) }
-		r.at[30] = func() {
-			owedWhileRefused = r.d.OwedStopReturns()
+		r.at[50] = func() {
+			owedWhileRefused, sentWhileRefused = r.d.OwedStopReturns(), len(r.sent())
 			r.mu.Lock()
 			r.refuse = nil
 			r.mu.Unlock()
 		}
-		r.run(t, 50)
+		r.run(t, 140) // the steps are BeatEvery (1 s) apart: 140 s, two retries at most
 		records := strings.Join(r.records, "\n")
 		assert.Equal(t, 1, owedWhileRefused, "owed while refused: the beat says so")
+		assert.Equal(t, 1, sentWhileRefused, "one verb in the 38 s after the refusal, not one a second")
 		assert.Equal(t, 0, r.d.OwedStopReturns(), "taken: nothing owed")
-		assert.GreaterOrEqual(t, len(r.sent()), 2, "tried again after the refusal")
-		assert.Regexp(t, `stop-return refused lane=\d card=c1@1 epoch=15 pid=0 exit=-1 try=1: `, records)
+		assert.LessOrEqual(t, len(r.sent()), 3, "a retry a minute: %v", r.sent())
+		assert.Equal(t, 1, strings.Count(records, "stop-return refused lane="), "the refusal said once while its text stands: %s", records)
+		assert.Regexp(t, `stop-return refused lane=\d card=c1@1 epoch=15 pid=0 exit=-1 try=1: .*; tried again every 1m0s while it stands`, records)
 		assert.Regexp(t, `stop-return OK lane=\d card=c1@1`, records)
 		require.Len(t, state.StopReturns, 1)
 		assert.False(t, state.StopReturns[0].Owed())
 		assert.GreaterOrEqual(t, state.StopReturns[0].Tries, 1)
+		assert.Empty(t, state.StopReturns[0].Refusal, "the refusal is cleared by the OK")
+	})
+}
+
+// armOnOpenHarness arms the test's machine word when a lane's session opens: from the next
+// step the word is read once by stopStep, once before the take and once before the start,
+// so a word that turns on the third read turns between the claim and the start.
+type armOnOpenHarness struct {
+	*lanesHarness
+	arm func()
+}
+
+func (h *armOnOpenHarness) OpenSession(ctx context.Context, seed string) (string, error) {
+	id, err := h.lanesHarness.OpenSession(ctx, seed)
+	h.arm()
+	return id, err
+}
+
+// NoLaunchAfterStop at the take: the word turning between a lane's claim of a card and its
+// start (the two reads of MachineStopped in one step) gives the card up at once: owed a
+// stop-return, out of Started, its lane mark removed, so it is never a card held with no turn
+// and never a run gone after a restart.
+func TestAWordTurningBetweenTheClaimAndTheStartGivesTheCardUp(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
+		lh := &lanesHarness{dir: dir, finish: map[string]bool{"c1": true}, active: map[string]int{}}
+		var mu sync.Mutex
+		reads, armed := 0, false
+		h := &armOnOpenHarness{lanesHarness: lh, arm: func() { mu.Lock(); armed = true; mu.Unlock() }}
+		r, state := newStopRig(t, lh, 1)
+		r.d.Deliver = h
+		r.d.MachineStopped = func() bool {
+			mu.Lock()
+			defer mu.Unlock()
+			if !armed {
+				return false
+			}
+			reads++
+			return reads >= 3 // stopStep, the read before the take, then the read before the start
+		}
+		r.run(t, 30)
+		records := strings.Join(r.records, "\n")
+		turns, _, _ := lh.got()
+		assert.Empty(t, turns, "no turn began: the word turned before the start: %s", records)
+		assert.Regexp(t, `lane 1: card c1@1 taken and not launched when the machine stopped: given up, stop-return owed`, records)
+		assert.Equal(t, []string{"stop-return --as friend.bob c1@1 --epoch 15 --reason owned process stopped"}, r.sent())
+		assert.Empty(t, state.Started, "not a started card")
+		assert.NotContains(t, records, "run is gone")
+		_, err := os.Stat(laneMarkPath(dir, "c1~15"))
+		assert.True(t, os.IsNotExist(err), "the lane mark is removed: a lane may run it again once the machine runs")
+	})
+}
+
+// The load replay forgets only owed records: a taken stop-return is the past, and the card's
+// later run under the same job name that a restart finds begun is a run gone, FAILed as any.
+func TestATakenStopReturnDoesNotHideALaterRunGone(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "working"}}, []string{"c1"}, nil)
+		lh := &lanesHarness{dir: dir, finish: map[string]bool{}, active: map[string]int{}}
+		r, state := newStopRig(t, lh, 1)
+		r.set(true)
+		card := Card{ID: "c1", Brief: filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", "c1~15")}
+		*state = LaneState{
+			Sessions:    map[int]string{1: "ses_old"},
+			Started:     map[string]Started{"c1~15": {Lane: 1, Card: card, At: t0.Add(-time.Hour)}},
+			StopReturns: []StopReturn{{Lane: 1, Job: "c1~15", Row: "friend.bob", Card: "c1", Gen: 1, Epoch: "15", Exit: -1, Ended: true, At: t0.Add(-2 * time.Hour), Result: "ok earlier"}},
+		}
+		r.run(t, 10)
+		records := strings.Join(r.records, "\n")
+		assert.Empty(t, r.sent(), "the taken record is not sent again")
+		assert.Contains(t, records, "its run is gone", "the later run begun under the same job name is a run gone")
+		assert.FileExists(t, filepath.Join(dir, "outbox", "c1~15", "REPORT.md"))
+	})
+}
+
+// A read begun is listed by the queue's refresh as begun, not asked, so the asked list no
+// longer names its generation: the stop still hands it back with the generation and epoch it
+// was begun at.
+func TestStopAfterAQueueRefreshStillHandsBackTheReadWithItsGen(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, nil, nil, nil)
+		h := &readHarness{lanesHarness: &lanesHarness{dir: dir, active: map[string]int{}}, rblock: make(chan struct{})}
+		sp := &readSprint{queue: `{"epoch":"15","cards":[{"id":"a.w1","col":"asked","gen":3,"packet":{"tier":"pro","head":"aaa","work_branch":"sprint/a","attempt":1,"brief":"REPO: o/r\nBASE: main\n","report":"Verdict: LAND"}}]}`}
+		r := readRig(t, h, sp, 1)
+		var mu sync.Mutex
+		stopped := false
+		r.d.MachineStopped = func() bool { mu.Lock(); defer mu.Unlock(); return stopped }
+		r.d.StopReturn = func(_ context.Context, argv []string) error { _, err := sp.ask(context.Background(), argv); return err }
+		// the read is begun by step 3; the queue is asked again every ReadAskEvery and lists it
+		// begun; the word turns well after that
+		r.at[int(ReadAskEvery/BeatEvery)+6] = func() { mu.Lock(); stopped = true; mu.Unlock() }
+		r.run(t, int(ReadAskEvery/BeatEvery)+20)
+		records := strings.Join(r.records, "\n")
+		begun := sp.verbs("--begin")
+		require.Len(t, begun, 1, "the read was begun once")
+		var returns [][]string
+		sp.mu.Lock()
+		for _, a := range sp.argvs {
+			if a[0] == "stop-return" {
+				returns = append(returns, a)
+			}
+		}
+		sp.mu.Unlock()
+		require.Len(t, returns, 1, "one stop-return for the read: %s", records)
+		assert.Equal(t, []string{"stop-return", "--as", "reader-bob", "a.w1@3", "--epoch", "15", "--reason", "owned process stopped"}, returns[0])
+		assert.Regexp(t, `read a.w1@3 cancelled by stop`, records)
+		assert.Empty(t, sp.verbs("--ok"))
+		assert.Empty(t, sp.verbs("--return"), "no return verdict for a read the stop took")
 	})
 }
 

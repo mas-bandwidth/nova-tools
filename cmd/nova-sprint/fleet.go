@@ -128,6 +128,8 @@ type beatReport struct {
 	How    string          `json:"how"`
 	Cores  int             `json:"cores"`
 	Files  *hostload.Files `json:"files,omitempty"`
+	// StopReturns is how many stop-returns the member's lanes still owe (section 14).
+	StopReturns int `json:"stop_returns,omitempty"`
 }
 
 // fdBound is one of fleet beat's open-files bounds: the flag's count when given, else the
@@ -154,6 +156,7 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("fleet beat")
 	load := fs.String("load", "", "the load as a percent of all the machine's cores, instead of measuring it (a test's, or another meter's)")
 	cores := fs.Int("cores", 0, "the machine's logical cores the beat reports, instead of this machine's own (a test's, or another meter's); a member with the default width takes half")
+	stopReturns := fs.Int("stop-returns", 0, "how many stop-returns the member's lanes still owe after the machine's stop (section 14): start waits for zero")
 	fdWarn := fs.Int("fd-warn", 0, fmt.Sprintf("the machine's open file descriptors above which the beat says warn and lists the top holders (else NOVA_FD_WARN, else %d)", hostload.FilesWarnDefault))
 	fdAlarm := fs.Int("fd-alarm", 0, fmt.Sprintf("the machine's open file descriptors above which the beat says alarm and the tick writes one judgment of the member (else NOVA_FD_ALARM, else %d)", hostload.FilesAlarmDefault))
 	pos, err := parse(fs, args)
@@ -210,7 +213,10 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "fleet beat", err.Error())
 	}
-	b, err := st.Beat(context.Background(), pos[0], nil, src)
+	if *stopReturns < 0 {
+		return refuse(stderr, "fleet beat", "--stop-returns wants a whole number of at least 0")
+	}
+	b, err := st.BeatOwing(context.Background(), pos[0], nil, src, *stopReturns)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s fleet beat: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
@@ -221,13 +227,16 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 	}
 	files := b.Meter.Files
 	if c.json {
-		out, _ := json.Marshal(beatReport{Member: pos[0], At: b.At, Load: b.Load, Last: last, How: b.How, Cores: b.Cores, Files: files})
+		out, _ := json.Marshal(beatReport{Member: pos[0], At: b.At, Load: b.Load, Last: last, How: b.How, Cores: b.Cores, Files: files, StopReturns: b.StopReturns})
 		fmt.Fprintln(stdout, string(out))
 		return 0
 	}
 	fmt.Fprintf(stdout, "FLEET-BEAT OK %s at=%s load=%.1f%% last=%.1f%% how=%s cores=%d", pos[0], b.At.Format(time.RFC3339), b.Load, last, b.How, b.Cores)
 	if files != nil {
 		fmt.Fprintf(stdout, " fds=%d fds-max=%d fds-level=%s", files.Open, files.Max, files.Level())
+	}
+	if b.StopReturns > 0 {
+		fmt.Fprintf(stdout, " stop_returns=%d", b.StopReturns)
 	}
 	fmt.Fprintln(stdout)
 	if files != nil && files.Level() != hostload.LevelOK {

@@ -144,9 +144,11 @@ func TestStoppedTakesAndRecoversNothing(t *testing.T) {
 	assert.Equal(t, 0, m.Running())
 }
 
-// A stop-return the server refuses is said and tried again next pass; the lane stays held
-// until the server takes it, and the card is never finished meanwhile.
-func TestARefusedStopReturnIsTriedAgain(t *testing.T) {
+// A stop-return the server refuses is said once while its text stands and tried again after
+// StopReturnRetry, whatever the word: the machine RUNNING again between the refusal and the
+// retry (start by hand, or a store that counted only the friends' owed returns) still hands
+// the card back and frees the lane, and the card is never finished meanwhile.
+func TestARefusedStopReturnIsTriedAgainWhateverTheWord(t *testing.T) {
 	t.Parallel()
 	m, s, r, out := stopRig(Config{As: "m", Width: 1})
 	p := pk("c1")
@@ -156,20 +158,115 @@ func TestARefusedStopReturnIsTriedAgain(t *testing.T) {
 	require.NoError(t, err)
 	c := r.child("c1")
 	s.set("queue", 0, queueWith(t, "STOPPED", 7, working("c1", 1, &p)))
-	s.set("stop-return", 2, "nova-sprint stop-return: the machine is RUNNING")
-	c.end(Result{OK: false})
-	for range 2 {
-		_, err = m.Tick(time.Unix(10, 0))
+	s.set("stop-return", 2, "nova-sprint stop-return: unknown verb")
+	c.end(Result{OK: true, Head: "abc"})
+	for i := range 3 {
+		_, err = m.Tick(time.Unix(10+int64(i), 0))
 		require.NoError(t, err)
 	}
-	assert.Len(t, s.lines("stop-return"), 2, "one try per pass while refused")
+	assert.Len(t, s.lines("stop-return"), 1, "one try, then StopReturnRetry: no verb a pass")
+	assert.Equal(t, 1, strings.Count(out.String(), "STOP-RETURN refused card=c1 gen=1 pid=4000 exit=2: nova-sprint stop-return: unknown verb; tried again in 1m0s"), "the refusal is said once while its text stands: %s", out.String())
 	assert.Equal(t, 1, m.Running(), "the lane is held until the server takes the return")
-	assert.Contains(t, out.String(), "STOP-RETURN refused card=c1 gen=1 pid=4000 exit=2: nova-sprint stop-return: the machine is RUNNING; tried again next pass")
+	assert.Equal(t, 1, m.OwedStopReturns(), "owed: the beat carries it")
+
+	// RUNNING again, the card still working at our claim: the return still goes
+	s.set("queue", 0, queueWith(t, "RUNNING", 7, working("c1", 1, &p)))
+	s.set("take", 0, takeJSON(t))
+	_, err = m.Tick(time.Unix(30, 0))
+	require.NoError(t, err)
+	assert.Len(t, s.lines("stop-return"), 1, "not yet: the retry waits out StopReturnRetry")
+	assert.Empty(t, s.lines("finish"), "a cancelled card is never finished, RUNNING or not (the endEnded guard)")
 	s.set("stop-return", 0, "STOP-RETURN OK c1@1 -> ready gen=2")
+	_, err = m.Tick(time.Unix(0, 0).Add(StopReturnRetry + 11*time.Second))
+	require.NoError(t, err)
+	assert.Len(t, s.lines("stop-return"), 2, "tried again after StopReturnRetry, RUNNING")
+	assert.Equal(t, 0, m.Running(), "the lane frees once the server takes the return")
+	assert.Equal(t, 0, m.OwedStopReturns())
+	assert.Empty(t, s.lines("finish"))
+	assert.Contains(t, out.String(), "STOP-RETURN OK card=c1 gen=1 epoch=7 pid=4000")
+}
+
+// The endEnded guard, red without it: a child the stop cancelled ends with a result after
+// the machine runs again; the result is nobody's, the card is handed back, never finished.
+func TestACancelledChildEndingUnderRunningIsHandedBackNotFinished(t *testing.T) {
+	t.Parallel()
+	m, s, r, out := stopRig(Config{As: "m", Width: 1})
+	p := pk("c1")
+	s.set("queue", 0, queueWith(t, "RUNNING", 7, ready("c1")))
+	s.set("take", 0, takeJSON(t, p))
+	_, err := m.Tick(time.Unix(0, 0))
+	require.NoError(t, err)
+	c := r.child("c1")
+	s.set("queue", 0, queueWith(t, "STOPPED", 7, working("c1", 1, &p)))
+	_, err = m.Tick(time.Unix(10, 0))
+	require.NoError(t, err)
+	require.Equal(t, 1, c.stops())
+	// RUNNING again while the child still runs; then it ends with a good result
+	s.set("queue", 0, queueWith(t, "RUNNING", 7, working("c1", 1, &p)))
+	s.set("take", 0, takeJSON(t))
 	_, err = m.Tick(time.Unix(20, 0))
 	require.NoError(t, err)
+	c.end(Result{OK: true, Head: "abc"})
+	for range 2 {
+		_, err = m.Tick(time.Unix(30, 0))
+		require.NoError(t, err)
+	}
+	assert.Empty(t, s.lines("finish"), "the cancelled run's result is nobody's: %s", out.String())
+	assert.Equal(t, []string{"stop-return --as m c1@1 --epoch 7 --reason owned process stopped"}, s.lines("stop-return"))
 	assert.Equal(t, 0, m.Running())
+}
+
+// RUNNING again and the claim moved (the store dealt the card at a new generation after
+// its own return, or dropped it): nothing is left to return, the launch is reaped.
+func TestACancelledLaunchWhoseClaimMovedIsReaped(t *testing.T) {
+	t.Parallel()
+	m, s, r, out := stopRig(Config{As: "m", Width: 1})
+	p := pk("c1")
+	s.set("queue", 0, queueWith(t, "RUNNING", 7, ready("c1")))
+	s.set("take", 0, takeJSON(t, p))
+	_, err := m.Tick(time.Unix(0, 0))
+	require.NoError(t, err)
+	s.set("queue", 0, queueWith(t, "STOPPED", 7, working("c1", 1, &p)))
+	_, err = m.Tick(time.Unix(10, 0))
+	require.NoError(t, err)
+	r.child("c1").end(Result{OK: false})
+	p2 := p
+	p2.Gen = 2
+	s.set("queue", 0, queueWith(t, "RUNNING", 7, working("c1", 2, &p2)))
+	s.set("take", 0, takeJSON(t))
+	_, err = m.Tick(time.Unix(20, 0))
+	require.NoError(t, err)
+	assert.Empty(t, s.lines("stop-return"))
 	assert.Empty(t, s.lines("finish"))
+	assert.Equal(t, 0, m.Running())
+	assert.Contains(t, out.String(), "c1: cancelled by stop, and the claim moved under it (gen 1 epoch 7); nothing to return")
+}
+
+// A member restarted mid-stop (its old children gone with it): every queue card working
+// under its row with no child of ours is handed back at once, and nothing is recovered.
+func TestAMemberRestartedMidStopHandsBackItsWorkingCards(t *testing.T) {
+	t.Parallel()
+	m, s, r, out := stopRig(Config{As: "m", Width: 4})
+	p := pk("c2")
+	p.Gen = 3
+	s.set("queue", 0, queueWith(t, "STOPPED", 7, ready("c1"), working("c2", 3, &p)))
+	s.set("take", 0, takeJSON(t, pk("c1")))
+	_, err := m.Tick(time.Unix(0, 0))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"stop-return --as m c2@3 --epoch 7 --reason owned process stopped"}, s.lines("stop-return"))
+	assert.Empty(t, s.lines("take"))
+	assert.Empty(t, r.started(), "no recovery launch while STOPPED")
+	assert.Contains(t, out.String(), "STOP-RETURN OK card=c2 gen=3 epoch=7 pid=0: handed back to m ready by the machine's stop (no child of this member runs it")
+	// a refusal is tried again after StopReturnRetry, not every pass
+	s.set("stop-return", 2, "the machine is RUNNING")
+	for i := range 3 {
+		_, err = m.Tick(time.Unix(1+int64(i), 0))
+		require.NoError(t, err)
+	}
+	assert.Len(t, s.lines("stop-return"), 2)
+	_, err = m.Tick(time.Unix(0, 0).Add(StopReturnRetry + 5*time.Second))
+	require.NoError(t, err)
+	assert.Len(t, s.lines("stop-return"), 3)
 }
 
 // A server before the word (no machine field) changes nothing: the member runs as it did.

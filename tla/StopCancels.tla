@@ -21,10 +21,20 @@
                         daemon restarted mid-stop finishes the cancelled card as
                         a run gone (lane_end.go endStarted) instead of returning it
      NudgeGate        = FALSE: the idle wake and the oldest-card urging go into the
-                        session while STOPPED (be686, 16:45Z) *)
+                        session while STOPPED (be686, 16:45Z)
+     FinishCancelled  = TRUE: a lane told to stop finishes its card when its child
+                        ends (the finish path not guarded on the cancel)
+   Each witness breaks the invariant its case names; two break a second one as
+   well, by the same mechanism: GateBeforeStart = FALSE also breaks
+   NoLaneWhileStopped (the lane launched after the stop runs while STOPPED), and
+   PersistOwed = FALSE also breaks EveryLaneReturnsOnStop (the return forgotten
+   never comes). The model trusts the store for what the worker cannot see:
+   Return needs STOPPED and StartMachine needs nothing owed; the worker's own
+   hand-back every pass, whatever the word, is internal/member machineStop and
+   internal/friend returnOwed, tested as traces. *)
 EXTENDS Naturals, FiniteSets
 
-CONSTANTS Lanes, Cards, None, CancelOnStop, GateBeforeStart, PersistOwed, NudgeGate
+CONSTANTS Lanes, Cards, None, CancelOnStop, GateBeforeStart, PersistOwed, NudgeGate, FinishCancelled
 
 VARIABLES machine,   \* "RUNNING" or "STOPPED"
           lane,      \* each lane: "idle", "running" (a child spends), "cancelled" (told to stop, not yet ended)
@@ -36,9 +46,10 @@ VARIABLES machine,   \* "RUNNING" or "STOPPED"
           cancelled, \* every card the stop ever cancelled
           badStart,  \* a lane started while STOPPED
           badNudge,  \* a work nudge went into the session while STOPPED
-          lostOwed   \* a stop-return owed was dropped by a restart
+          lostOwed,  \* a stop-return owed was dropped by a restart
+          badFinish  \* a card the stop took was finished by the run it took it from
 
-vars == <<machine, lane, card, queue, owed, returned, finished, cancelled, badStart, badNudge, lostOwed>>
+vars == <<machine, lane, card, queue, owed, returned, finished, cancelled, badStart, badNudge, lostOwed, badFinish>>
 
 TypeOK == /\ machine \in {"RUNNING", "STOPPED"}
           /\ lane \in [Lanes -> {"idle", "running", "cancelled"}]
@@ -46,13 +57,14 @@ TypeOK == /\ machine \in {"RUNNING", "STOPPED"}
           /\ queue \subseteq Cards /\ owed \subseteq Cards /\ returned \subseteq Cards
           /\ finished \subseteq Cards /\ cancelled \subseteq Cards
           /\ badStart \in BOOLEAN /\ badNudge \in BOOLEAN /\ lostOwed \in BOOLEAN
+          /\ badFinish \in BOOLEAN
 
 Init == /\ machine = "RUNNING"
         /\ lane = [l \in Lanes |-> "idle"]
         /\ card = [l \in Lanes |-> None]
         /\ queue = Cards
         /\ owed = {} /\ returned = {} /\ finished = {} /\ cancelled = {}
-        /\ badStart = FALSE /\ badNudge = FALSE /\ lostOwed = FALSE
+        /\ badStart = FALSE /\ badNudge = FALSE /\ lostOwed = FALSE /\ badFinish = FALSE
 
 InHand == {card[l] : l \in Lanes} \ {None}
 
@@ -65,7 +77,7 @@ Start(l, c) == /\ lane[l] = "idle" /\ c \in queue /\ c \notin InHand
                /\ card' = [card EXCEPT ![l] = c]
                /\ queue' = queue \ {c}
                /\ badStart' = (badStart \/ machine = "STOPPED")
-               /\ UNCHANGED <<machine, owed, returned, finished, cancelled, badNudge, lostOwed>>
+               /\ UNCHANGED <<machine, owed, returned, finished, cancelled, badNudge, lostOwed, badFinish>>
 
 (* The machine stops. The worker's next pass reads STOPPED and tells every running
    child to stop, its card owed a stop-return (CancelOnStop); the witness lets the
@@ -77,14 +89,16 @@ Stop == /\ machine = "RUNNING"
                 /\ owed' = owed \cup {card[l] : l \in {k \in Lanes : lane[k] = "running"}}
                 /\ cancelled' = cancelled \cup {card[l] : l \in {k \in Lanes : lane[k] = "running"}}
            ELSE UNCHANGED <<lane, owed, cancelled>>
-        /\ UNCHANGED <<card, queue, returned, finished, badStart, badNudge, lostOwed>>
+        /\ UNCHANGED <<card, queue, returned, finished, badStart, badNudge, lostOwed, badFinish>>
 
 (* A child ends. A cancelled lane's card stays owed (the return goes once the process
-   is dead); a running lane's card is finished, which while STOPPED is the finding. *)
+   is dead) and is finished by no one (the finding when FinishCancelled); a running
+   lane's card is finished. *)
 End(l) == /\ lane[l] \in {"running", "cancelled"}
           /\ lane' = [lane EXCEPT ![l] = "idle"]
           /\ card' = [card EXCEPT ![l] = None]
-          /\ finished' = IF lane[l] = "running" THEN finished \cup {card[l]} ELSE finished
+          /\ finished' = IF lane[l] = "running" \/ FinishCancelled THEN finished \cup {card[l]} ELSE finished
+          /\ badFinish' = (badFinish \/ (lane[l] = "cancelled" /\ FinishCancelled))
           /\ UNCHANGED <<machine, queue, owed, returned, cancelled, badStart, badNudge, lostOwed>>
 
 (* The stop-return: sent only after the process is dead (the card is in no lane),
@@ -94,7 +108,7 @@ Return(c) == /\ c \in owed /\ c \notin InHand /\ machine = "STOPPED"
              /\ owed' = owed \ {c}
              /\ returned' = returned \cup {c}
              /\ queue' = queue \cup {c}
-             /\ UNCHANGED <<machine, lane, card, finished, cancelled, badStart, badNudge, lostOwed>>
+             /\ UNCHANGED <<machine, lane, card, finished, cancelled, badStart, badNudge, lostOwed, badFinish>>
 
 (* The daemon restarts mid-stop: every child is gone. What it owed is read back from
    its lane state (PersistOwed) and sent first; the witness forgets it and finishes
@@ -104,22 +118,23 @@ Restart == /\ machine = "STOPPED"
            /\ lane' = [l \in Lanes |-> "idle"]
            /\ card' = [l \in Lanes |-> None]
            /\ IF PersistOwed
-              THEN UNCHANGED <<owed, finished, lostOwed>>
+              THEN UNCHANGED <<owed, finished, lostOwed, badFinish>>
               ELSE /\ finished' = finished \cup owed
                    /\ owed' = {}
                    /\ lostOwed' = TRUE
+                   /\ badFinish' = (badFinish \/ owed # {})
            /\ UNCHANGED <<machine, queue, returned, cancelled, badStart, badNudge>>
 
 (* A work nudge (the idle wake, the oldest-card urging) into the session: gated on
    the word (NudgeGate); the witness nudges while STOPPED. *)
 Nudge == /\ (machine = "RUNNING" \/ ~NudgeGate)
          /\ badNudge' = (badNudge \/ machine = "STOPPED")
-         /\ UNCHANGED <<machine, lane, card, queue, owed, returned, finished, cancelled, badStart, lostOwed>>
+         /\ UNCHANGED <<machine, lane, card, queue, owed, returned, finished, cancelled, badStart, lostOwed, badFinish>>
 
 (* start: the store refuses it while a stop-return is owed (the store's rule). *)
 StartMachine == /\ machine = "STOPPED" /\ owed = {}
                 /\ machine' = "RUNNING"
-                /\ UNCHANGED <<lane, card, queue, owed, returned, finished, cancelled, badStart, badNudge, lostOwed>>
+                /\ UNCHANGED <<lane, card, queue, owed, returned, finished, cancelled, badStart, badNudge, lostOwed, badFinish>>
 
 Done == /\ finished \cup returned = Cards /\ queue = {} /\ InHand = {} /\ UNCHANGED vars
 
@@ -141,14 +156,14 @@ NoLaneWhileStopped == machine = "STOPPED" => \A l \in Lanes : lane[l] # "running
 (* No lane launches after the stop arrived: the word is read right before each start. *)
 NoLaunchAfterStop == ~badStart
 
-(* A card the stop took is never finished by the run it took it from: while its
-   stop-return is owed it is finished by no one; once returned, the store deals it
-   again at a new generation and that run may finish it. (TLC's first trace of a
-   stronger reading, cancelled \cap finished = {}, was Start, Stop, End, Return,
-   StartMachine, Start, End: the legitimate second run, checked against the code
-   on 2026-10-08: member endEnded skips a stopped launch and the daemon's stopDone
-   returns before any finish, so no cancelled run finishes.) *)
-NoFinishOfACancelledCard == owed \cap finished = {}
+(* A card the stop took is never finished by the run it took it from: a cancelled
+   lane's end adds nothing to finished, and a restart turns nothing owed into a
+   finish. (The first reading, cancelled and finished disjoint, failed on the
+   legitimate second run: Start, Stop, End, Return, StartMachine, Start, End; the
+   second, owed and finished disjoint, no witness could break: both checked
+   against the code on 2026-10-08, member endEnded skipping a stopped launch and
+   the daemon's stopDone returning before any finish. The flag names the act.) *)
+NoFinishOfACancelledCard == ~badFinish
 
 (* Every card the stop took comes back to its owner's queue by stop-return. *)
 EveryLaneReturnsOnStop == \A c \in Cards : (c \in cancelled) ~> (c \in returned)

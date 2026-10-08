@@ -227,10 +227,11 @@ type readSet struct {
 	askedAt time.Time
 	cancel  map[string]context.CancelFunc // each read under way: the machine's stop ends it (stop.go)
 	stopped map[string]bool               // reads the stop cancelled: no verdict, a stop-return
+	active  map[string]AskedRead          // each read under way as it was begun: its generation and epoch, which the queue's refresh no longer lists
 }
 
 func newReadSet() *readSet {
-	return &readSet{results: make(chan readResult, 64), running: map[string]bool{}, begun: map[string]bool{}, cancel: map[string]context.CancelFunc{}, stopped: map[string]bool{}}
+	return &readSet{results: make(chan readResult, 64), running: map[string]bool{}, begun: map[string]bool{}, cancel: map[string]context.CancelFunc{}, stopped: map[string]bool{}, active: map[string]AskedRead{}}
 }
 
 func (d *Daemon) readSlots() int {
@@ -314,7 +315,7 @@ func (l *loop) startRead(r AskedRead, now time.Time) {
 	model := d.readModel(r.Packet.Tier)
 	d.Record(fmt.Sprintf("%s read %s: begun tier=%s model=%s", now.UTC().Format(time.RFC3339), r.ID, dash(r.Packet.Tier), dash(model)))
 	rctx, cancel := context.WithCancel(l.ctx)
-	s.cancel[r.ID] = cancel
+	s.cancel[r.ID], s.active[r.ID] = cancel, r
 	go func() {
 		defer cancel()
 		res := readResult{read: r, model: model, dir: dir, start: now}
@@ -348,6 +349,7 @@ func (l *loop) readDone(r readResult, now time.Time) {
 	delete(s.running, r.read.ID)
 	delete(s.begun, r.read.ID) // the next ask says whether it is asked again; the one in hand is stale
 	delete(s.cancel, r.read.ID)
+	delete(s.active, r.read.ID)
 	s.asked = slices.DeleteFunc(s.asked, func(a AskedRead) bool { return a.ID == r.read.ID })
 	if s.stopped[r.read.ID] {
 		delete(s.stopped, r.read.ID)
