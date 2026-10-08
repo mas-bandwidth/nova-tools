@@ -133,7 +133,6 @@ func TestFixPageConstants(t *testing.T) {
 	assert.Contains(t, js, `FLOW.forEach`, "Work headers and cells follow the flow order")
 	assert.Contains(t, js, `var STATES = ["landed", "merging", "fix", "review", "working", "ready", "waiting"];`)
 	assert.Contains(t, js, `var FLOW = ["waiting", "ready", "working", "review", "fix", "merging", "landed"];`)
-	assert.Contains(t, js, `if (level === "fix") return "p-fix";`)
 }
 
 // fixDriver draws a copy with app.js on the scroll test's DOM shim and reads back the state

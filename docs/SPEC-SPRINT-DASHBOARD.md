@@ -184,15 +184,6 @@ from the owner edits one line here and nothing else moves.
 ## Friends (title "Friends"): same eight-column shape as the live Fleet table, including load (friend, status, ready, working track and fraction, done, ok%, load; headers lowercase); honest empty
   state until the JSON carries tables.friends.
 
-## Lanes (the card dash-lanes-panel.w2, 2026-10-04; the owner's line is owed)
-- The page shows a lanes panel: one row per machine's lane of a kind, the friends or machines
-  that hold it, and those that wait, read from `nova-sprint where --json --cards` (the `lanes`
-  array, verb-lane-take-give). Names are in the order the sprint records them; an empty `lanes`
-  shows an honest empty state, as Friends does.
-- Columns: machine | kind | width | held | waiting (headers exactly so, all lowercase); width alone
-  is a number (right-aligned), the others names. The row's five columns sit beside each other at
-  every width, never stacked and never scrolled.
-
 ## Footer: one link, "https://github.com/mas-bandwidth/nova-sprint", matching the live page.
 
 ## Responsive (change what is shown, never squeeze; no horizontal scroll at any width; 16 px gutters on a phone)
@@ -300,7 +291,7 @@ Glenn, 2026-10-04 ~6:03 PM ET: "once per-second updates are a hard requirement."
   list; the legend keeps both words. The order stays blocker, critical, fix (purple), reads
   (orange), working (blue).
 
-## Requested removals (2026-10-08)
+### Requested removals (2026-10-08)
 
 The live page has no priority-square strip under All cards by state, Merge panel,
 Lanes panel, archived-stream summary or show/hide control, or tiers suffix on Fleet.
