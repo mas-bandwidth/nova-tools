@@ -22,8 +22,11 @@ an enabled maximum and cannot exceed it; near is configured, never inferred.
 ## The pattern in one sentence
 
 One daemon per friend, started by launchd and never by the model, parks on the
-friend's nova-bus stream and, whenever the session is free, pushes every
-message waiting into the running session as one turn; it beats to the sprint
+friend's nova-bus stream. On a session start or a delivery after a thirty-minute gap,
+the present comes first and the backlog never does: one PRESENT turn carries her live
+queue, the seat, the newest coordinator note and the counts superseded. After that,
+whenever the session is free, it pushes current messages into the session as one turn;
+it beats to the sprint
 server while that loop runs and its session answers, and only then; it answers
 the coordinator's ping at once and never makes a turn of it, and the session's
 own answer to a nonce is the only thing that makes the friend up (Presence,
@@ -570,6 +573,14 @@ The table's status cell shows reason and until for a hold and an observation onl
 (`internal/sprint/store/friends.go`, `friendRows`); a down beat's pair is on her
 report and in why she is down.
 
+### Every harness's credit and quota refusal (cmd/nova-friend/limit.go)
+
+A harness that refuses for credits or quota marks the friend down whatever harness it is, not only the ones whose wording is already known. One table holds each harness's provider 402 and the wordings the harness prints itself, every harness the daemon runs: claude, codex, opencode, grok, antigravity, dsh and gemini, credits before quota so a line that says both is the balance. A lane's evidence is read from the four places it leaves it -- the lane's stdout, its stderr, the harness log it writes and the REPORT.md it leaves (`LaneText`, `ReadRefusal`) -- and the first line that matches a row is the reason. The antigravity and gemini rows are their real refusals ("Insufficient AI Credits. Your credits will refresh 6:52 PM." and "Your prepayment credits are depleted."). The lane step (`cmd/nova-friend/main.go`) reads each failed lane's output and the runner log beside her working directory and hands a hit the harness's own wording did not name to the daemon's own limit path (`friend.Limits.Refuse`), so it takes the same hold, status and seat line as a limit the harness names itself.
+
+On a match the daemon sends `nova-sprint friend down <friend> --reason 'no credits: <harness>: <first line>' --until <now + the row's credit_retry, default 24h>` through its existing sprint call (`DownArgv`), so every begun card is handed back, the status says `session=limited limit_kind=<kind> limit_until=<t>` and the seat is told once as a judgment. The daemon keeps beating; at the until it tries one lane, and a second refusal is a new down.
+
+A refusal the table does not know is never silently retried: three lanes in a row that end with the same first error line surface to the seat as one judgment, `lanes failing alike: <line>` (`RefusalWatch`, `AlikeLanes`, `friend.LimitAlikeText`), and a different line starts the count again. `TestEveryHarnessCreditRefusalMarksTheFriendDown`, `TestALaneErrorThatIsNotARefusalChangesNothing` and `TestThreeAlikeLanesSurfaceOneJudgmentAndNoDown` pin the table, a non-refusal and the judgment.
+
 ### The harness check (internal/friend/alive.go)
 
 Presence is the session's check (above); this one says whether the harness
@@ -681,6 +692,77 @@ stream (the session's own blocking read does), peeking so a ping is still
 answered by the daemon at once, beating, and recording a push it cannot
 deliver; so the tool is honest, and the beat and the daemon pong are real
 for it.
+
+### daemon-delivers-the-present-on-start-b.w1: the present comes first, the backlog never does (internal/friend/present.go)
+
+The finding of 2026-10-06 (the owner: "when somebody starts up, you need to tell them to skip to
+present... this should be automatic"): a session that started (a new chat, a restart, a
+harness relaunch, a wake after hours) was handed the backlog its stream had kept (one daemon
+showed deferred=892 deliveries), read old deals, old pings and old coordinator notes as
+current, worked cards that had been taken back, and answered nonces that had expired; the
+coordinator was telling friends by hand to ignore the backlog.
+
+The present is owed on a session start and after any gap longer than the stale bound:
+
+- the daemon's start (a restart, `nova-friend install` again, a new `--session` id), once the
+  first beat has said her row's mode;
+- a new session id while it runs (`Daemon.Session`, read each step; the `run` verb reads
+  the configured `--session`, or the mailbox's current conversation when that adapter follows
+  a new one);
+- a first delivery after `StaleAfter` (30 minutes) with no turn taken: a message waiting, a
+  brief written, or a deferred turn;
+- her own request: a message from her to herself with the subject `present`
+  (`nova-bus send --as <me> --to <me> --subject present --body present`).
+
+The present is one turn, and nothing older is ever delivered. Every message waiting on her
+stream is taken off it (the hand, a deferred turn's, every pending entry from the previous
+run even before its claim window opens, and a finite snapshot of fresh entries) and planned
+(`PlanPresent`): the newest message from the seat that is no deal and no ping is carried; a
+PING inside the challenge window (`Window`, three minutes, by the store's clock) is answered
+by the daemon as any ping; everything else is acked with the reason `superseded by the present at <time>`. The turn says, in order: the pong line while a challenge is open, the
+daemon's word about the coordinator, `nova-friend: PRESENT at <time>. You are <friend>; the seat is <seat>.`, her live queue (each card on her row as the server last said it, its column
+and its `inbox/<job>/BRIEF.md`; before the server has answered, `inbox/QUEUE.json`'s queued
+and working tasks), one line `Skipped: <n> deals, <n> pings, <n> notes, all superseded by the present at <time>.` (a deal is `card <id> dealt: ...`; a ping is a PING or a SESSION CHECK; a
+note is anything else; her own request counts as nothing), then the newest coordinator note as
+the session reads it under the seat's authority, or `No note from the coordinator is waiting.`
+An unknown seat carries no coordinator note; an old ping or configured coordinator name
+cannot grant instruction authority. Every entry acquired before a store read or clock error
+stays in hand for the retry, so the failed snapshot cannot leave old entries for later replay.
+The snapshot preserves the delivery receipt; a note already stamped acted is superseded,
+so a lost stream ack cannot make it an instruction twice. The carried note is acked when
+the turn ends at exit 0, as any turn's message; a present turn
+that fails is owed again after `RecheckEvery`, carrying the same note.
+
+When an outbox report's card has left her row, the daemon refuses its finish and names the
+current holder from the server's existing `GET /api/view/cards` document (`Daemon.Holders`,
+the command's holder-view parser): one bounded view for every old report in that outbox pass. An unavailable or
+malformed view keeps the explicit unknown-holder remedy and says the error; it never guesses
+from an old running list. The production command wires this source through its injectable
+world (`TestRunNamesTheCurrentHolderWhenItRefusesAnOldReport`).
+
+The acks are on the record (`present at <time>: skipped ... acked=<n> reason="superseded by the present at <time>" queue=<n> note=<id>|none`) and on the bus log: one status message to
+the seat, `friend <f>: present at <time>: skipped <n> deals, <n> pings, <n> notes`, naming
+the reason and the first 64 ids superseded. An ack that fails is said on the record, and each
+entry it covered is superseded again when the claim hands it in (`superseded id=<id> subject=<s>: superseded by the present at <time>`), never delivered. The match is by the
+stream entry, never by the message's `at`, which is to the second: a message sent in the same
+second after the present is delivered as it comes. Outside a present, a PING read past the
+challenge window is dropped and acked, never answered (`ping <nonce> dropped: sent <at>, past the 3m0s challenge window; not answered`). If the store's clock cannot be read, the
+nonce is withheld for a present retry and never answered on an assumed age. The receipts the session owes for the superseded
+messages (`bus2:owed:<friend>`) are not cleared: only the session gives a receipt
+(docs/SPEC-BUS.md), so the friends table's undelivered count keeps them until a session acks
+them by id.
+
+In one-shot mode there is no batch session to tell: the backlog is superseded and said the same
+way, including the newest note, with no turn, and the lanes hand her cards. A harness with no deliver command reads her
+stream itself and is owed no present.
+
+The model is `tla/Delivery.tla` (MCDelivery: three messages, the clock to three, a stale bound
+of two and a window of one). `GapCarriesThePresent`: a delivery after a gap carries the present
+and no superseded message; `NoSupersededDelivered`; `NoStaleNonceAnswered`. Its reversed
+witnesses, each caught by one invariant: `nopresent` (a start delivers the backlog as a batch),
+`reclaim` (a superseded message the claim hands in again is delivered), `answerstale` (a ping
+past the window is answered). The tests are `TestAStartedSessionGetsThePresentAndNeverTheBacklog`
+and the other tests of internal/friend/present_test.go.
 
 ### friend-idle-wake-r.w2: idle wake
 
@@ -1135,8 +1217,7 @@ read or filesystem access runs on the sender's path. Status writes run on a
 separate worker with a single pending snapshot, so a stalled filesystem cannot
 stop beats. The status file carries the actual successful beat count, last
 success and current transport error. Unknown report fields, including an empty
-running list, preserve the server's last known facts. Jobs bytes/free space
-remain absent until their space measurement is implemented.
+running list, preserve the server's last known facts. Job sizes and free disk space are not reported.
 
 The up rule is `FriendEvidence`, shared by every server view: held wins; an
 explicit harness limit or pause is down; otherwise up requires a daemon beat
@@ -1883,6 +1964,10 @@ whoever wrote the brief:
   on her row, ready and not working, or a read, is said once while it stands
   (`outbox: left outbox/<job>/REPORT.md: <why>`) and left; the next pass reads
   it again, so a verdict she writes later is finished then.
+- A report on a card that is no longer hers (taken back, dealt to another) is
+  refused at finish, never sent, with the line naming who holds it now:
+  `refused: card <c> is not on her row, no longer hers; <friend> holds it now`
+  when the beat's running list names the friend whose lane runs it, else `...; no row the daemon reads says who holds it now (nova-sprint view coordinator does)` (`NotHers`, internal/friend/outbox.go).
 
 The model is `internal/friend/tla/OutboxFinish.tla` (TLC on a Linux bench, two
 cards, one of them staged by another hand: 324 distinct states,
@@ -1922,6 +2007,60 @@ alone (friend sync before collect), breaks `Collected` (a report written in anot
 friend's tree is never finished); `MCCollectBrokenNoTip.cfg`, a LAND finished at its
 Head unread, breaks `LandOnTip` in 6 states. The test is
 `TestTheDaemonFinishesADeadLaneAndALandOnlyAtOriginsTip`.
+
+### the-fix-is-the-first-line-of-the-next-brief.w1 — a reworked brief opens with the fix (internal/friend/rework.go)
+
+The night of 2026-10-05, lint-pkg-tlc-tbb came back five times, sec-rocketnet-server-dos-zhi
+four and presence-from-session-only five, each with the same finding. A rework puts its fix on
+the packet (`rework --fix`, or the broken reads' finding: internal/sprint/steps_review.go), and
+the server's brief says it as a `The coordinator asks:` line under the start, over a long card
+whose own STOP is the whole card's; the next lane read the card and never reached the fix.
+
+- The daemon writes a reworked card's BRIEF.md (`ReworkedBrief`, in `SyncInbox`) with the fix
+  first. The lines after STATUS are, in order: `THE ONE THING LEFT: <the fix>`; `The reader found: <finding>` (with no reader's finding, `no reader's finding; <why the attempt exists>`);
+  `The carried work: attempt <n>'s head <sha>, carried onto <branch> ...` (off the start line;
+  `nothing carried: ...` when no attempt pushed); `How it is checked: ...`, which names the key
+  words its report is grepped for. Then the rest of the server's prelude (the working
+  directory, the start, why), and the card with its STOP the fix alone, before RULES and the
+  task. The fix and the finding are said once. A brief with no fix, and one already reworked,
+  are written as the server sent them; the STATUS line, REPO and BASE are unchanged, so the
+  packet staging reads (`PacketOf`) is the same.
+- The key words of a fix (`FixKeyWords`) are its distinct words of four or more letters, digits
+  or underscores, lower case, the empty ones left out, the first eight. A report addresses the
+  fix (`FixAddressed`) when it names at least half of them, rounded up, anywhere, in any case; a
+  fix with none is addressed.
+- The outbox pass reads the fix of the job's BRIEF.md (the brief the lane read; else the
+  server's), in either form. A `LAND` whose report does not address it is finished as a HOLD:
+  `--failed`, a full sha head kept, the report `friend <name> HOLD: held by the daemon: the report says LAND and does not address THE ONE THING LEFT (<fix>); the key words it does not name: ...` and the report after it; the record line says `(Verdict LAND, held by the daemon: ...)`. Her REPORT.md stays as she wrote it. So a lane that never reached the first line is
+  sent back by the daemon, not round the readers to find the same thing again.
+- Friend sync (cmd/nova-sprint) is the other writer of her BRIEF.md and the other finisher of
+  her reports (docs/FRIENDS.md, the inbox/outbox standard), and it runs the same code
+  (the-fix-is-the-first-line-of-the-next-brief.w2): `friendBrief` is `ReworkedBrief` of the
+  server's form, so whichever of the two writes a reworked card's brief first (each writes
+  only when none is there), it opens with the fix; and `friendFinish`, the one finish of
+  friend sync, friend reconcile and collect, reads a LAND by the daemon's check
+  (`UnaddressedLand`, the fix of `friendBrief`, the same brief the inbox holds): one that does
+  not address the fix is finished as a HOLD, `--failed` with a head that is origin's tip of
+  her branch kept, the report `friend <name> HOLD: held by friend sync: the report says LAND and does not address THE ONE THING LEFT (<fix>); ...`. So the hold is a rule, not a race
+  the daemon has to win. `friendCollect` is that finish for friend sync and for the run loop's
+  reconcile.
+
+The model is `internal/friend/tla/OutboxFinish.tla`, extended: a reworked card's report
+addresses its fix or not, and `NoUnaddressedLand` (a reworked card lands only from a report
+that addresses its fix) holds with `Finished`. Friend sync is in it as a second writer of the
+brief (`Deliver`, whichever hand comes first, never over one there) and a second finisher
+(`SyncFinish`, the server taking the first finish), and `FixFirst` (a reworked card's brief
+opens with its fix, whoever wrote it) holds too (TLC on a Linux bench, two cards, one
+reworked: 1764 distinct states, no error). The reversed witnesses:
+`MCOutboxFinishBrokenUnaddressedLand.cfg`, the daemon before w1, breaks `NoUnaddressedLand` (she
+writes a LAND that does not address the fix, the daemon asks and lands it);
+`MCOutboxFinishBrokenSyncLands.cfg`, friend sync before w2, breaks it the other way (friend
+sync finishes the same LAND before the daemon's pass); `MCOutboxFinishBrokenSyncBrief.cfg`,
+friend sync before w2, breaks `FixFirst` (it writes the server's form before the daemon). The
+tests are `TestAReworkedBriefOpensWithTheFix`, `TestFixAddressedReadsTheKeyWords`,
+`TestFriendSyncWritesTheReworkedBriefAndHoldsAnUnaddressedLand` (friend sync against a reworked
+card: the brief's form and the HOLD) and
+`TestFriendFinishHoldsAnUnaddressedLandAndLandsAnAddressedOne`.
 
 ### one-lane-per-card.w1 — one live lane per card (internal/friend/one_lane.go)
 

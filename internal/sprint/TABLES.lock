@@ -155,6 +155,14 @@
 # within 10 minutes or a card of hers finished within 30 (sprint.FriendPongWindow,
 # sprint.FriendFinishWindow, sprint.FriendStatus), else down; a beat is never evidence,
 # and the 15 s beat rule above is gone. No column changed, so the lines below are unchanged.
+# Change, 2026-10-07, asked by the owner's card friends-tokens-column: each friend
+# card's RESULT.md carries `usage: in=<n> out=<n> cache=<n>`. The store sums it
+# per friend, and the friends table gets a "tokens" column in a compact form
+# (1.2M), after active. A friend whose nova-config row bills per call (the billing
+# field the cost card is adding) shows dollars to the cent, rounded up; until that
+# field is set, every friend is a subscription. Held by TestSprintTablesAreLocked
+# and TestFriendTokensSumPerFriendFromTheResultUsage.
+#
 # Change, 2026-10-05, a hidden fleet column, asked by Glenn in words: "trust but VERIFY"; "I
 # want to trust the ok%"; "Mechanical. You know the drill."; "Are they actually doing the
 # work that is shown in the friend table? Really?"; "i don't want dollar amounts for friends.
@@ -205,6 +213,7 @@ friends.done sum(ok+failed) sum shown
 friends.okpct pct(ok/ok+failed) pooled shown label=ok%
 friends.status text none shown
 friends.active text none shown
+friends.tokens text sum shown
 friends.ok count sum hidden
 friends.failed count sum hidden
 view work friends fleet

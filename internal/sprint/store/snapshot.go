@@ -24,11 +24,14 @@ import (
 // A verified snapshot of the store (docs/SPEC-SPRINT.md, store-snapshot-verb):
 // the store is asked for a snapshot (BGSAVE, waited for), the RDB is copied
 // into a directory with its SHA-256 beside it, the copy is loaded into a twin
-// and its counts compared with the store's at the save, and the copies beyond
-// the keep count are pruned. A snapshot that fails either check is removed and
-// the older ones stay: the directory holds only verified snapshots. A restore
-// drill loads a file into a twin and reports its counts; it never opens the
-// live store.
+// and its counts compared with the store's at the save, and, when the source
+// can say its sprint state and the twin can load the dump's (RestoreLevel), the
+// two states compared part for part (SemanticRestore); the copies beyond the
+// keep count are pruned. A snapshot that fails any check is removed and the
+// older ones stay: the directory holds only verified snapshots, each with the
+// level it was verified at. A restore drill checks a file's integrity and
+// reports its counts; it never opens the live store, has no source to compare
+// with, and is never a semantic restore.
 
 // SnapshotCounts is what a snapshot holds that a twin can count. A count of -1
 // is unknown (the loader or the source cannot say) and is not compared.
@@ -64,7 +67,11 @@ type SnapshotTaken struct {
 	SHA256 string         `json:"sha256"`
 	Bytes  int            `json:"bytes"`
 	Counts SnapshotCounts `json:"counts"`
-	Pruned []string       `json:"pruned,omitempty"`
+	// Restore is the level the copy was verified at: RestoreSemantic, its
+	// sprint state compared with the store's, or RestoreIntegrity, the file
+	// alone (the RDB's header, version and checksum).
+	Restore string   `json:"restore"`
+	Pruned  []string `json:"pruned,omitempty"`
 }
 
 const (
@@ -88,6 +95,13 @@ func (s *Snapshotter) Take(ctx context.Context) (SnapshotTaken, error) {
 	rdb, live, err := s.Source.Save(ctx)
 	if err != nil {
 		return out, fmt.Errorf("the store gave no snapshot: %w", err)
+	}
+	level := RestoreLevel(s.Source, s.Twin)
+	var state SprintState
+	if level == RestoreSemantic {
+		if state, err = s.Source.(StateSource).State(ctx); err != nil {
+			return out, fmt.Errorf("the store's sprint state at the save cannot be read: %w", err)
+		}
 	}
 	name, err := s.name()
 	if err != nil {
@@ -122,7 +136,12 @@ func (s *Snapshotter) Take(ctx context.Context) (SnapshotTaken, error) {
 	if why := countsDiffer(live, got); why != "" {
 		return fail(fmt.Errorf("the copy %s loaded with other counts than the store held at the save (%s); the snapshot was removed", name, why))
 	}
-	out = SnapshotTaken{File: path, SHA256: hexsum, Bytes: len(rdb), Counts: got}
+	if level == RestoreSemantic {
+		if err := SemanticRestore(ctx, state, s.Twin.(StateTwin), copied); err != nil {
+			return fail(fmt.Errorf("the copy %s does not restore the sprint the store held at the save: %v; the snapshot was removed", name, err))
+		}
+	}
+	out = SnapshotTaken{File: path, SHA256: hexsum, Bytes: len(rdb), Counts: got, Restore: level}
 	if out.Pruned, err = s.prune(); err != nil {
 		return out, err
 	}
@@ -205,7 +224,8 @@ func (s *Snapshotter) prune() ([]string, error) {
 
 // RestoreDrill loads a snapshot file into a twin and returns its counts and
 // SHA-256. The file's checksum beside it, when there is one, must match; the
-// live store is never named.
+// live store is never named. It proves integrity (RestoreIntegrity) and no
+// more: with no source there is no sprint state to compare the file's with.
 func RestoreDrill(file string, twin SnapshotTwin) (SnapshotCounts, string, error) {
 	b, err := os.ReadFile(file)
 	if err != nil {
@@ -240,9 +260,14 @@ func SnapshotEvery(ctx context.Context, take func(context.Context) error, wait f
 	}
 }
 
-// RDBTwin is the loader of a real RDB: it checks what a twin can check without
-// a server: the REDIS magic and version, and the CRC-64 the file ends with. It
-// counts no keys and no cards (-1): the card-level load is owed.
+// RDBTwin is the integrity check of a real RDB (RestoreIntegrity): what can be
+// checked without a server, the REDIS magic and version and the CRC-64 the file
+// ends with. It counts no keys and no cards (-1, not compared) and reads nothing
+// of the sprint, so a dump that lost records passes it with a valid checksum.
+// The semantic restore of an RDB loads it into an isolated Redis with this
+// build's function library and compares ReadState with the source's: the bench
+// test TestARedisDumpRestoresTheSprintOnAnIsolatedRedis
+// (restore_functional_test.go), with a server of its own.
 type RDBTwin struct{}
 
 var redisCRC = crc64.MakeTable(0x95ac9329ac4bc9b5)
@@ -270,8 +295,12 @@ func (RDBTwin) Load(rdb []byte) (SnapshotCounts, error) {
 }
 
 // MemSource is the in-memory store as a snapshot source: its document
-// (Mem.Snapshot) stands for the RDB, and its counts are the store's own.
-type MemSource struct{ M *Mem }
+// (Mem.Snapshot) stands for the RDB, and its counts and its sprint state (under
+// Names) are the store's own.
+type MemSource struct {
+	M     *Mem
+	Names sprint.Names
+}
 
 // Save is the store's document and the counts it holds.
 func (s MemSource) Save(context.Context) ([]byte, SnapshotCounts, error) {
@@ -279,17 +308,18 @@ func (s MemSource) Save(context.Context) ([]byte, SnapshotCounts, error) {
 	if err != nil {
 		return nil, SnapshotCounts{Keys: -1, Cards: -1}, err
 	}
-	c, err := MemTwin{}.Load(doc)
+	c, err := MemTwin{Names: s.Names}.Load(doc)
 	return doc, c, err
 }
 
 // MemTwin loads a Mem document into a fresh Mem, as the twin the document is
-// proved on, and counts its tables and the cards of the work table.
-type MemTwin struct{}
+// proved on, and counts its tables and the cards of the work table (under
+// Names); LoadState reads its sprint state.
+type MemTwin struct{ Names sprint.Names }
 
 // Load restores the document into a new Mem (a document of another version is
 // refused) and counts it.
-func (MemTwin) Load(doc []byte) (SnapshotCounts, error) {
+func (t MemTwin) Load(doc []byte) (SnapshotCounts, error) {
 	if err := NewMem().Restore(doc); err != nil {
 		return SnapshotCounts{Keys: -1, Cards: -1}, err
 	}
@@ -298,8 +328,8 @@ func (MemTwin) Load(doc []byte) (SnapshotCounts, error) {
 		return SnapshotCounts{Keys: -1, Cards: -1}, err
 	}
 	c := SnapshotCounts{Keys: len(d.Tables)}
-	if t := d.Tables[sprint.Work]; t != nil {
-		c.Cards = len(t.Members)
+	if w := d.Tables[t.Names.Table(sprint.Work)]; w != nil {
+		c.Cards = len(w.Members)
 	}
 	return c, nil
 }

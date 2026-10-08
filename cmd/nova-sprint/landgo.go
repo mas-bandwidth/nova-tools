@@ -32,6 +32,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
@@ -44,7 +45,9 @@ const landGoBudget = 15 * time.Minute
 var treeTests = []string{"internal/docs", "internal/ci"}
 
 // goRun runs one go command (run) in the clone, in the lander's environment with
-// GOFLAGS=-mod=readonly (caller flags preserved) and set (NAME=value each); its combined output.
+// GOFLAGS=-mod=readonly (caller flags preserved), GOCACHE set explicitly to the one build
+// cache every run of this process shares (goCache), and set (NAME=value each); its combined
+// output.
 func (l *lander) goRun(ctx context.Context, dir string, run []string, set ...string) (string, error) {
 	b := subproc.Prepare(ctx, landGoBudget, run[0], run[1:]...)
 	defer b.Cancel()
@@ -55,9 +58,44 @@ func (l *lander) goRun(ctx context.Context, dir string, run []string, set ...str
 	if env == nil {
 		env = os.Environ()
 	}
-	b.Cmd.Dir, b.Cmd.Env = dir, withEnv(env, append([]string{readonlyGoFlags(env)}, set...)...)
+	with := []string{readonlyGoFlags(env)}
+	if cache := l.goCache(ctx, env); cache != "" {
+		with = append(with, "GOCACHE="+cache)
+	}
+	b.Cmd.Dir, b.Cmd.Env = dir, withEnv(env, append(with, set...)...)
 	out, err := b.Cmd.CombinedOutput()
 	return string(out), b.Wrap(strings.Join(run, " "), err)
+}
+
+// goCache is the build cache the lander's go runs share, set explicitly on each so the
+// gates of the streams merging at once (landpass.go) compile a package once: the GOCACHE
+// env names, else the one the toolchain resolves (`go env GOCACHE`: the machine's shared
+// cache where its go env names one, asked once a process), else a cache under the land
+// root (<root>/cache/go-build, the swarm's own name for it). "" when none can be named.
+func (l *lander) goCache(ctx context.Context, env []string) string {
+	for _, e := range env {
+		if v, ok := strings.CutPrefix(e, "GOCACHE="); ok && v != "" {
+			return v
+		}
+	}
+	if l.a == nil {
+		return ""
+	}
+	l.a.goCacheOnce.Do(func() {
+		b := subproc.Prepare(ctx, time.Minute, "go", "env", "GOCACHE")
+		defer b.Cancel()
+		b.Cmd.Env = env
+		if out, err := b.Cmd.Output(); err == nil {
+			l.a.goCachePath = strings.TrimSpace(string(out))
+		}
+		if l.a.goCachePath == "" || l.a.goCachePath == "off" {
+			l.a.goCachePath = ""
+			if root, err := l.a.landRoot(); err == nil {
+				l.a.goCachePath = swarm.GoBuildCacheDir(root)
+			}
+		}
+	})
+	return l.a.goCachePath
 }
 
 // readonlyGoFlags returns GOFLAGS=... with -mod=readonly set, preserving any other
@@ -222,6 +260,11 @@ func (l *lander) offRules(ctx context.Context) []string {
 	if l.rulesOff != nil || l.st == nil {
 		return l.rulesOff
 	}
+	if l.a != nil {
+		// a store read, under the server's line of control as every other read of land's
+		l.a.serial.Lock()
+		defer l.a.serial.Unlock()
+	}
 	off, err := l.st.RulesOff(ctx)
 	if err != nil {
 		return nil
@@ -252,6 +295,9 @@ func treePackages(dir string) []string {
 func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
 		return ""
+	}
+	if l.a != nil && l.a.gateRan != nil {
+		l.a.gateRan(dir, tests)
 	}
 	runs := gateRuns(tests, treePackages(dir))
 	hosts, inLoop := l.gateBenches(ctx)

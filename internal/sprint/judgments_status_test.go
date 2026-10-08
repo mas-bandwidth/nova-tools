@@ -31,7 +31,8 @@ type transitionRig struct {
 	mu  sync.Mutex
 	now time.Time
 	// member says m1 beats with every tick
-	member bool
+	member        bool
+	friendBeating bool
 }
 
 var transitionT0 = time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
@@ -86,6 +87,10 @@ func (r *transitionRig) tick(d time.Duration) {
 	r.now = r.now.Add(d)
 	r.mu.Unlock()
 	r.beat()
+	if r.friendBeating {
+		_, err := r.st.FriendBeatReport(r.ctx, "amy", sprint.FriendReport{}, nil)
+		require.NoError(r.t, err)
+	}
 	_, err := r.st.Tick(r.ctx)
 	require.NoError(r.t, err)
 }
@@ -93,6 +98,7 @@ func (r *transitionRig) tick(d time.Duration) {
 // daemon is amy's daemon's beat: the build it runs, its start, and the present it sent.
 func (r *transitionRig) daemon(build string, started, present time.Time) {
 	r.t.Helper()
+	r.friendBeating = true
 	_, err := r.st.FriendBeatReport(r.ctx, "amy", sprint.FriendReport{Build: build, Started: started, Present: present}, nil)
 	require.NoError(r.t, err)
 }
@@ -170,11 +176,11 @@ func TestAFriendComingUpPushesTheFourStepsToTheSeat(t *testing.T) {
 	n := notes[0]
 	assert.Equal(t, sprint.Judgment, n.Kind, "a judgment, pushed to the seat inbox as every judgment is")
 	at := r.st.Now().UTC().Format(time.RFC3339)
-	assert.Equal(t, "friend amy is up (was down) at "+at+", transition 1, on session pong 0s ago; bring her up in four steps: "+
+	assert.Equal(t, "friend amy is up (was down) at "+at+", transition 1, on daemon up, session pong 0s ago; bring her up in four steps: "+
 		"1 update: her daemon runs "+current+", the current build is "+current+": an unstamped build cannot be compared; run: nova-update, then launchctl kickstart -k gui/$(id -u)/com.nova.friend-amy (to do); "+
-		"2 check: daemon beating (0s ago), her daemon started at "+start.Format(time.RFC3339)+" and has beat since; no harness check reported, presence session pong 0s ago; run: nova-friend check amy and read its CHECK DAEMON, CHECK HARNESS and presence lines (to do); "+
+		"2 check: daemon beating (0s ago), her daemon started at "+start.Format(time.RFC3339)+" and has beat since; no harness check reported, presence daemon up, session pong 0s ago; run: nova-friend check amy and read its CHECK DAEMON, CHECK HARNESS and presence lines (to do); "+
 		"3 snap to present: her daemon sent the present on its start at "+start.Format(time.RFC3339)+" (done); "+
-		"4 into the sprint: not held, evidence session pong 0s ago, no take within 10m0s; run: nova-sprint where, and nova-friend ping --as coordinator --to amy --wake (to do)",
+		"4 into the sprint: not held, evidence daemon up, session pong 0s ago, no take within 10m0s; run: nova-sprint where, and nova-friend ping --as coordinator --to amy --wake (to do)",
 		n.What)
 	assert.Equal(t, []string{"ack", "wait"}, n.Decisions, "the verbs are in the text; ack or wait answers it")
 	assert.Equal(t, []string{row}, n.Primaries)
@@ -216,6 +222,7 @@ func TestATransitionRaisesExactlyOneJudgment(t *testing.T) {
 	r := newTransitionRig(t)
 	row := sprint.FriendRow("amy")
 	r.tick(time.Second)
+	r.daemon("", r.st.Now(), time.Time{})
 	r.answered()
 	for range 10 {
 		r.tick(15 * time.Second)

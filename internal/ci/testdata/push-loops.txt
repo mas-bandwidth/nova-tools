@@ -36,6 +36,7 @@ cmd/nova-sprint/run.go app.runLoop sprint server tick
 cmd/nova-sprint/landloop.go app.landLoop land loop
 cmd/nova-sprint/decidelane.go app.decideLoop decide loop
 cmd/nova-sprint/balance.go app.balanceLoop provider balance
+cmd/nova-sprint/gc.go app.gcLoop machinery gc
 cmd/nova-sprint/promote.go app.cmdPromote promote
 
 # displays
@@ -85,3 +86,4 @@ internal/tablemodel/redis.go StartServer waits and retries
 internal/tokens/lock_poll_other.go takeFold waits and retries
 internal/update/snapshot_lock_windows.go lockSnapshot waits and retries
 internal/update/snapshot_unix.go lockSnapshot waits and retries
+internal/friend/heartbeat.go	Heartbeat	friend beat

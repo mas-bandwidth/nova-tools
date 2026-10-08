@@ -42,11 +42,11 @@ func TestAFriendIsUpOnTheSessionProofHerBeatCarries(t *testing.T) {
 	}
 	word, why := FriendEvidence(FriendPresence{Beat: Beat{At: now.Add(-time.Second), Proof: now.Add(-3 * time.Minute)}}, now)
 	assert.Equal(t, Up, word)
-	assert.Equal(t, "session proof 3m0s ago", why)
+	assert.Equal(t, "daemon up, session proof 3m0s ago", why)
 	_, why = FriendEvidence(FriendPresence{Beat: Beat{At: now.Add(-time.Second), Proof: now.Add(-20 * time.Minute)}}, now)
-	assert.Contains(t, why, "no session proof on her beat within 15m0s (last 20m0s ago)")
+	assert.Contains(t, why, "daemon up, session deaf 20m0s")
 	_, why = FriendEvidence(FriendPresence{Beat: Beat{At: now.Add(-time.Minute), Proof: now.Add(-2 * time.Minute)}}, now)
-	assert.Contains(t, why, "(last 2m0s ago, her beat stopped 1m0s ago)")
+	assert.Contains(t, why, "daemon not beating (last beat 1m0s ago), session proof 2m0s ago")
 	// the friend beat record keeps the proof under "pong"; the beat read from it carries it
 	var b Beat
 	require.NoError(t, json.Unmarshal([]byte(`{"at":"2026-10-05T21:59:59Z","pong":"2026-10-05T21:55:00Z"}`), &b))

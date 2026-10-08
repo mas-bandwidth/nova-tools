@@ -401,7 +401,8 @@ function fleetLike(box, table, withLoad) {
     box._head = pageHead(box.id);
     box._total = el("div", "row total");
     box._total._c = [el("div", "", "Total"), el("div"), quiet(numCell()), el("div"), el("div"), quiet(numCell()), quiet(numCell())];
-    if (withLoad) box._total._c.push(el("div"));
+    // one more than the shared cells: the fleet's load, the friends' tokens
+    box._total._c.push(el("div"));
     box._total._c.forEach(function (c) { box._total.appendChild(c); });
   }
   var t = { ready: 0, done: 0, ok: 0, up: 0, held: 0, down: 0 };
@@ -417,6 +418,7 @@ function fleetLike(box, table, withLoad) {
     r.wf = quiet(r.wf); r.ready = quiet(numCell()); r.done = quiet(numCell()); r.ok = quiet(numCell());
     [r.name, r.pill, r.ready, r.track, r.wf, r.done, r.ok].forEach(function (c) { r.node.appendChild(c); });
     if (withLoad) { r.load = quiet(numCell()); r.node.appendChild(r.load); }
+    else { r.tokens = quiet(numCell()); r.node.appendChild(r.tokens); }
     return r;
   }, function (r, k) {
     var m = table[k], working = int(m.working), width = int(m.width), done = int(m.done);
@@ -431,6 +433,7 @@ function fleetLike(box, table, withLoad) {
     setNum(r.ready, int(m.ready)); setNum(r.done, done);
     setOk(r.ok, pct(okv), done);
     if (r.load) { var lp = pct(m.load); setText(r.load, lp === null ? "-" : lp.toFixed(1) + "%"); setClass(r.load, "num" + (lp === null ? " zero" : "")); }
+    if (r.tokens) setText(r.tokens, m.tokens || "0");
   }, box._total);
   var c = box._total._c;
   setNum(c[2], t.ready);

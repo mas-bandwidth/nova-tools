@@ -70,7 +70,7 @@ func newLivenessRig(t *testing.T, listing string) *livenessRig {
 	}
 	r.sc.Deliver = r.sc.Gate(r.session)
 	r.direct = &bus.Bus{Store: r.store}
-	r.d = &Daemon{Friend: "zhi", Harness: "dsh", Dir: "/w/zhi", Now: clock, Record: record,
+	r.d = &Daemon{Friend: "zhi", Harness: "dsh", Dir: "/w/zhi", Now: clock, Record: record, noPresent: true,
 		Beat: func(ctx context.Context, _ time.Time) error {
 			return r.sc.Beat(func(context.Context) error { r.mu.Lock(); r.sprint++; r.mu.Unlock(); return nil })(ctx)
 		},

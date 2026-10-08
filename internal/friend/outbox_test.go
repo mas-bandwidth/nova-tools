@@ -77,7 +77,7 @@ func TestTheDaemonFinishesAReportItDidNotStage(t *testing.T) {
 	}
 	assert.Equal(t, 1, count("outbox: left outbox/silent.w1~15/REPORT.md: it has no Verdict line"), "a report with no verdict is noted once: %v", r.records)
 	assert.Equal(t, 1, count("outbox: left outbox/ready.w1~15/REPORT.md: card ready.w1 is ready on her row, not working"), "%v", r.records)
-	assert.Equal(t, 1, count("outbox: left outbox/gone.w1~15/REPORT.md: card gone.w1 is not on her row"), "%v", r.records)
+	assert.Equal(t, 1, count("outbox: left outbox/gone.w1~15/REPORT.md: refused: card gone.w1 is not on her row, no longer hers; no row the daemon reads says who holds it now (nova-sprint view coordinator does)"), "%v", r.records)
 	assert.Equal(t, 0, count("not-a-job"), "a directory no card names is not hers to finish")
 	assert.Equal(t, 4, count("outbox: finished card "), "one line per finish: %v", r.records)
 

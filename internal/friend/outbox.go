@@ -24,7 +24,9 @@ import (
 // reads every job in her outbox whose name parses to a card (<work>~<epoch>[.g<gen>],
 // ParseJob) and finishes it when that card is working on her row, whoever wrote its brief:
 // LAND with a full sha Head finishes with that head, HOLD and FAIL (any other verdict too)
-// finish --failed with the report's first 600 characters. A report with no Verdict line,
+// finish --failed with the report's first 600 characters; a LAND whose report does not
+// carry the key words of its brief's fix (THE ONE THING LEFT, rework.go) is a HOLD by the
+// daemon, finished --failed with its head kept and the words that say why. A report with no Verdict line,
 // and a job whose card is not working on her row, are noted once and left. The model is
 // internal/friend/tla/OutboxFinish.tla (docs/SPEC-FRIEND.md, the daemon reads every outbox
 // job).
@@ -32,6 +34,9 @@ import (
 // OutboxRetry is how long a finish the server did not answer, or refused, waits before it
 // is sent again; the report stays where it is, and friend sync may finish it first.
 const OutboxRetry = time.Minute
+
+// HoldersBudget bounds the current ownership view asked for an old report.
+const HoldersBudget = 10 * time.Second
 
 // ReportCap bounds the REPORT.md the daemon reads (friend sync's own cap): a verdict, a head
 // and 600 characters need far less, and a larger report is noted and never read whole.
@@ -195,6 +200,23 @@ func (l *loop) outboxStep(now time.Time) {
 			return
 		}
 	}
+	// Ask for every holder together, only when an old report needs a refusal.
+	// Hundreds of old reports cost one view, not one server trip per report.
+	owners, ownersRead, ownersError := d.Running, false, ""
+	refusal := func(card, job string) string {
+		if d.Holders != nil && !ownersRead {
+			ownersRead = true
+			ctx, cancel := context.WithTimeout(l.ctx, HoldersBudget)
+			held, err := d.Holders(ctx)
+			cancel()
+			owners = func() map[string]string { return held }
+			if err != nil {
+				owners = nil // an old running list cannot stand in for a failed current view
+				ownersError = "; the holder view could not be read: " + oneLine(err.Error(), 200)
+			}
+		}
+		return NotHers(card, job, d.Friend, owners) + ownersError
+	}
 	for _, e := range entries {
 		job := e.Name()
 		id, epoch, gen, ok := ParseJob(job)
@@ -218,7 +240,7 @@ func (l *loop) outboxStep(now time.Time) {
 		}
 		switch {
 		case h == nil:
-			note(job, "card "+id+" is not on her row")
+			note(job, refusal(id, job))
 			continue
 		case h.Col != "working":
 			note(job, "card "+id+" is "+dash(h.Col)+" on her row, not working")
@@ -236,6 +258,13 @@ func (l *loop) outboxStep(now time.Time) {
 			continue
 		}
 		card := Card{ID: id, Brief: filepath.Join(d.Dir, "inbox", job, "BRIEF.md"), Outbox: filepath.Join(outbox, job)}
+		written := verdict
+		if verdict == "LAND" {
+			// a LAND that does not address its brief's first line is a HOLD (rework.go)
+			if held := unaddressed(HeldByDaemon, report, jobFix(card.Brief, h.Brief)); held != "" {
+				verdict, report, written = "HOLD", held+"\n\n"+report, "LAND, "+held
+			}
+		}
 		branch := h.Branch
 		if branch == "" {
 			_, branch = PushedHead(d.Dir, card)
@@ -263,7 +292,7 @@ func (l *loop) outboxStep(now time.Time) {
 				words += " head=" + head
 			}
 		}
-		d.Record(fmt.Sprintf("%s outbox: finished card %s from outbox/%s/REPORT.md (Verdict %s, %s on her row): %s sent=server", at, id, job, verdict, h.Col, words))
+		d.Record(fmt.Sprintf("%s outbox: finished card %s from outbox/%s/REPORT.md (Verdict %s, %s on her row): %s sent=server", at, id, job, written, h.Col, words))
 	}
 }
 
@@ -406,4 +435,21 @@ func (l *loop) deadLanes(outbox string, running map[string]bool, at string) bool
 		d.Record(fmt.Sprintf("%s outbox: dead lane %s: the runner ended it with no report (%s); wrote outbox/%s/REPORT.md Verdict FAIL", at, job, oneLine(end, 300), job))
 	}
 	return wrote
+}
+
+// NotHers is the refusal of a report on a card that is no longer hers: never finished, with
+// the line naming who holds it now, as the beat's running list says (a card id or job to the
+// friend whose lane runs it), else that no row the daemon reads names one.
+func NotHers(card, job, friend string, running func() map[string]string) string {
+	holder := ""
+	if running != nil {
+		r := running()
+		holder = cmp.Or(r[card], r[job])
+	}
+	switch {
+	case holder != "" && holder != friend:
+		return "refused: card " + card + " is not on her row, no longer hers; " + holder + " holds it now"
+	default:
+		return "refused: card " + card + " is not on her row, no longer hers; no row the daemon reads says who holds it now (nova-sprint view coordinator does)"
+	}
 }

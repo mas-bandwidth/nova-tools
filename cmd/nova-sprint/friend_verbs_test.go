@@ -82,10 +82,14 @@ func TestFriendBeatTakesHerCountsAndLoadAsFleetBeatTakesALoad(t *testing.T) {
 	assert.Equal(t, 8, f.Width, "her width is the roster's, not her word")
 	assert.Equal(t, sprint.Up, f.Status, "on her session's pong, never on the beat")
 
-	// a beat with none reports none: the last one's counts are not kept
+	// A liveness beat preserves the last known work report.
 	ta.beatUp("amy")
 	f = whereFriends(ta)["amy"]
-	assert.Nil(t, f.Report)
+	require.NotNil(t, f.Report)
+	assert.Equal(t, 2, *f.Report.Working)
+	assert.Equal(t, 3, *f.Report.Queue)
+	assert.Equal(t, 4, *f.Report.Width)
+	assert.Equal(t, []string{"s1-1.w1", "s1-2.w1"}, f.Report.Running)
 	assert.Zero(t, f.Load)
 
 	for _, bad := range []string{"--working -1", "--queue x", "--width 0", "--load lots"} {
@@ -264,7 +268,7 @@ func TestABareTimeOrAnUnaskedNonceNeverProves(t *testing.T) {
 	ta.step(sprint.BeatDeadline + time.Second)
 	f := whereFriends(ta)["amy"]
 	assert.Equal(t, sprint.Down, f.Status, "her beats stopped, so her proof stopped with them")
-	assert.Contains(t, f.Evidence, "her beat stopped")
+	assert.Contains(t, f.Evidence, "daemon not beating")
 	ta.ok("friend beat amy")
 	assert.Equal(t, sprint.Up, whereFriends(ta)["amy"].Status, "beating again, within fifteen minutes of the answer")
 	ta.step(sprint.FriendProofLive)

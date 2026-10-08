@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -90,7 +91,15 @@ func TestTheDaemonBeatsEverySecondWhateverTheSessionSays(t *testing.T) {
 	answer := func() time.Time { // the session runs the pong line of the newest check it was given
 		got := app.got()
 		require.NotEmpty(t, got, "a session check went into the session")
-		nonce := fmt.Sprintf("b%d", len(got))
+		var nonce string
+		for i := len(got) - 1; i >= 0; i-- {
+			line, _, _ := strings.Cut(got[i], "\n")
+			if n, ok := strings.CutPrefix(line, SessionCheckPrefix); ok {
+				nonce = n
+				break
+			}
+		}
+		require.NotEmpty(t, nonce, "answer the latest delivered check, not a startup note")
 		_, err := direct.Send(context.Background(), bus.Message{From: "bob", To: []string{"ada"}, Subject: PongSubject, Body: PongLine(nonce, 0, 1, 2) + "\n"})
 		require.NoError(t, err)
 		return clock()
