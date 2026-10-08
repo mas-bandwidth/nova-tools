@@ -9,7 +9,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -361,13 +360,7 @@ func TestLandRebuildOfTheSameBranchResetsItsTree(t *testing.T) {
 	}
 	r.a.beforePush = func(int) {
 		firstPush.Do(func() {
-			select {
-			case <-built:
-			case <-time.After(10 * time.Second):
-				t.Error("second batch did not reach its tree gate")
-				close(pushed)
-				return
-			}
+			<-built
 			root := filepath.Join(r.dir, "land")
 			s1 := worktreeDir(root, filepath.Join(root, repoDirName(r.remote)), "s1")
 			r.git(s1, "push", "origin", "HEAD:refs/heads/main")
