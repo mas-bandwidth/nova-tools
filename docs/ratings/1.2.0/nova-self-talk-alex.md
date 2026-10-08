@@ -1,6 +1,6 @@
 # nova-self-talk READ and USE rating, nova-tools 1.2.0
 
-Rater: Alex, a friend worker on a re-rate card
+Rater: xiaomi/mimo-v2.6-pro in opencode, a sprint worker on a friend's re-rate card
 Build: 7acb90e18a76
 READ: 8/10
 USE: 8/10
