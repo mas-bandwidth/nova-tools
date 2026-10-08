@@ -1107,16 +1107,19 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// the runner log are read, and a hit the harness's own wording did not name is handed to
 	// the same limit path (fl.Refuse); three lanes failing alike with a wording no row knows
 	// is one judgment (RefusalWatch). The harness's own wording is read first, so a hit both
-	// readers know is one down. A failed lane's output is the model's answer with the harness's
-	// stderr after it (friend.RealExec): it is handed as Stderr, never Stdout, and only its last
-	// RefusalTail bytes are read, so the model's stdout is never a source the reader reads.
+	// readers know is one down. A failed lane's answer is the model's stdout with the harness's
+	// stderr after it (friend.RealExec): the stderr is caught apart while the lane runs
+	// (friend.WithStderrCapture) and only it is handed as Stderr, so the model's stdout -- a
+	// brief, a report or a page it quoted -- is never read for a refusal.
 	rw := &RefusalWatch{Harness: c.Str("harness"), Now: w.now}
 	limitWatch := fl.Watch(walled)
 	watched := func(ctx context.Context, d, prog string, args []string, stdin string) (string, int, error) {
+		var harnessErr strings.Builder
+		ctx = friend.WithStderrCapture(ctx, &harnessErr)
 		out, exit, err := limitWatch(ctx, d, prog, args, stdin)
 		if exit != 0 || err != nil {
 			if _, _, alreadyHeld := fl.Limited(); !alreadyHeld {
-				rw.Observe(LaneText{Stderr: out, Log: friend.RunnerLog(dir)}, exit)
+				rw.Observe(LaneText{Stderr: harnessErr.String(), Log: friend.RunnerLog(dir)}, exit)
 			}
 		}
 		return out, exit, err

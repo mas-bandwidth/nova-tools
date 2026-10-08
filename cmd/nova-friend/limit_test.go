@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/friend"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -234,4 +238,38 @@ func TestARefusalResetsTheAlikeCount(t *testing.T) {
 	w.Observe(LaneText{Stderr: line + "\n"}, 1)
 	assert.Zero(t, judged, "two alike after a refusal are not three in a row")
 	assert.Equal(t, 1, down)
+}
+
+// TestTheHarnessStderrIsCapturedApartFromTheModelsStdout: RealExec's answer joins
+// the model's stdout and the harness's stderr, but a lane's stderr is caught on its
+// own while the lane runs (friend.WithStderrCapture), so the credit-refusal reader
+// takes the harness's channel and never the model's words, even on a lane that
+// failed. The joined answer is read too, to show the words there would match: the
+// separated capture is what keeps them from the reader.
+func TestTheHarnessStderrIsCapturedApartFromTheModelsStdout(t *testing.T) {
+	t.Parallel()
+
+	lane := filepath.Join(t.TempDir(), "lane")
+	script := "#!/bin/sh\n" +
+		"printf 'Error: 402 payment required\\n'\n" +
+		"printf 'Error: the language server exited\\n' >&2\n" +
+		"exit 1\n"
+	require.NoError(t, testbin.WriteExecutable(lane, []byte(script), 0o755))
+
+	var harnessErr strings.Builder
+	ctx := friend.WithStderrCapture(context.Background(), &harnessErr)
+	out, exit, err := friend.RealExec(ctx, t.TempDir(), lane, nil, "")
+	require.NoError(t, err, "a failed lane is no error to RealExec")
+	require.Equal(t, 1, exit)
+	require.Contains(t, out, "Error: 402 payment required", "the joined answer carries the model's stdout")
+	require.Contains(t, out, "Error: the language server exited", "the joined answer carries the harness's stderr")
+
+	assert.Contains(t, harnessErr.String(), "Error: the language server exited", "the capture carries the harness's stderr")
+	assert.NotContains(t, harnessErr.String(), "Error: 402 payment required", "the capture never carries the model's stdout")
+
+	now := time.Date(2026, 10, 7, 16, 19, 0, 0, time.UTC)
+	_, ok := ReadRefusal("dsh", LaneText{Stderr: harnessErr.String()}, exit, 0, now)
+	assert.False(t, ok, "the model's words on stdout are no refusal when the capture is read")
+	_, ok = ReadRefusal("dsh", LaneText{Stderr: out}, exit, 0, now)
+	assert.True(t, ok, "the same words in the joined answer would match; the capture is why they no longer reach the reader")
 }

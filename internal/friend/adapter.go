@@ -98,6 +98,26 @@ func WithOutputTail(ctx context.Context, tail func([]byte)) context.Context {
 	return context.WithValue(ctx, tailKey{}, tail)
 }
 
+// stderrKey carries, in a delivery's context, the writer the command's stderr is kept
+// in, apart from its stdout (WithStderrCapture).
+type stderrKey struct{}
+
+// WithStderrCapture is ctx carrying w, handed every write the command a delivery runs
+// prints to stderr and no write it prints to stdout. RealExec joins the two in the
+// string it answers, because the adapters read a provider's refusal from the join; a
+// reader of the harness's own credit refusal takes w instead, so the model's stdout --
+// a brief, a report or a page it quoted -- is never evidence of a refusal. w is
+// written from the command's copy goroutine and read once RealExec has returned.
+func WithStderrCapture(ctx context.Context, w io.Writer) context.Context {
+	return context.WithValue(ctx, stderrKey{}, w)
+}
+
+// CapturedStderr is the stderr writer ctx carries, nil when it carries none.
+func CapturedStderr(ctx context.Context) io.Writer {
+	w, _ := ctx.Value(stderrKey{}).(io.Writer)
+	return w
+}
+
 // Printed is p, printed by the command a delivery runs, said to ctx's watch and tail: what
 // RealExec does with each write, for a harness that runs no command through it.
 func Printed(ctx context.Context, p []byte) {
@@ -112,11 +132,13 @@ func Printed(ctx context.Context, p []byte) {
 	}
 }
 
-// seenWriter is a Builder that says each write to the context's watch and tail.
+// seenWriter is a Builder that says each write to the context's watch and tail, and
+// hands it to the context's separate stderr capture when it is the command's stderr.
 type seenWriter struct {
-	b    strings.Builder
-	seen func()
-	tail func([]byte)
+	b       strings.Builder
+	seen    func()
+	tail    func([]byte)
+	capture io.Writer // the context's stderr capture (CapturedStderr), set on the stderr writer alone
 }
 
 func (w *seenWriter) Write(p []byte) (int, error) {
@@ -126,6 +148,9 @@ func (w *seenWriter) Write(p []byte) (int, error) {
 	if len(p) > 0 && w.tail != nil {
 		w.tail(p)
 	}
+	if len(p) > 0 && w.capture != nil {
+		_, _ = w.capture.Write(p) // ignored: the capture is the caller's own sink, and its failure fails nothing
+	}
 	return w.b.Write(p)
 }
 
@@ -134,12 +159,14 @@ func (w *seenWriter) Write(p []byte) (int, error) {
 // turn that prints keeps running however long it takes, and the daemon
 // stops one silent past its SilentStop by cancelling ctx (the finding of
 // 2026-10-04: a fixed ten-minute cap killed real work mid-turn). Every write
-// to stdout or stderr is said to the watch in ctx (WithOutputSeen). The
-// command is its own session leader (Setsid), and on a cancel the whole
-// group is signalled, SIGTERM then SIGKILL after KillDelay: a harness that
-// forks (opencode run does) leaves no orphan behind a stop. On a nonzero
-// exit the output carries the head of stderr after stdout: a harness says
-// why it refused there (dsh does).
+// to stdout or stderr is said to the watch in ctx (WithOutputSeen), and every
+// write to stderr is handed the context's separate capture (WithStderrCapture)
+// apart from stdout. The command is its own session leader (Setsid), and on a
+// cancel the whole group is signalled, SIGTERM then SIGKILL after KillDelay: a
+// harness that forks (opencode run does) leaves no orphan behind a stop. On a
+// nonzero exit the output carries the head of stderr after stdout: a harness
+// says why it refused there (dsh does), while a reader that must not see the
+// model's stdout takes the separated stderr the capture kept.
 func RealExec(ctx context.Context, dir, name string, args []string, stdin string) (string, int, error) {
 	return realExec(ctx, KillDelay, dir, name, args, stdin)
 }
@@ -153,6 +180,7 @@ func realExec(ctx context.Context, killDelay time.Duration, dir, name string, ar
 		cmd.Stdin = strings.NewReader(stdin)
 	} // else /dev/null: a headless opencode run with stdin left open hangs at init (measured 2026-10-04)
 	out, stderr := &seenWriter{seen: seen, tail: tail}, &seenWriter{seen: seen, tail: tail}
+	stderr.capture = CapturedStderr(ctx) // the harness's own channel, kept apart from the model's stdout
 	cmd.Stdout = out
 	cmd.Stderr = stderr
 	ownGroup(cmd)
