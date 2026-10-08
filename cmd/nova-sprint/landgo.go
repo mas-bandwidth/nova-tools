@@ -156,16 +156,24 @@ func treeTested(p string) bool {
 	return strings.HasSuffix(p, ".go") || strings.HasSuffix(p, ".md") || strings.Contains(p, "testdata/")
 }
 
-// gateRuns is the tree gate's runs, in order: the build and the vet of the module, then
-// the tree tests (have: the ones the clone holds) when tests is asked.
+// gateRuns is the base class suite, limited to packages the clone holds.
 func gateRuns(tests bool, have []string) [][]string {
-	runs := [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}}
-	if tests && len(have) > 0 {
-		run := []string{"go", "test"}
-		for _, p := range have {
-			run = append(run, "./"+p+"/")
+	var runs [][]string
+	for _, class := range sprint.BaseClasses {
+		if class.Name == "class-tests" {
+			if tests && len(have) > 0 {
+				run := slices.Clone(class.Run)
+				for _, p := range have {
+					run = append(run, "./"+p+"/")
+				}
+				runs = append(runs, run)
+			}
+			continue
 		}
-		runs = append(runs, run)
+		if len(class.Needs) > 0 && (!tests || slices.ContainsFunc(class.Needs, func(p string) bool { return !slices.Contains(have, p) })) {
+			continue
+		}
+		runs = append(runs, slices.Clone(class.Run))
 	}
 	return runs
 }
@@ -371,11 +379,20 @@ func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 	}()
 	for _, run := range runs {
 		l.stage("gate", strings.Join(run, " "))
-		if out, err := l.goRun(ctx, dir, run); err != nil {
+		out, err := l.goRun(ctx, dir, run)
+		if err = gateRunError(run, out, err); err != nil {
 			return gateWhy(run, err, out)
 		}
 	}
 	return ""
+}
+
+// gateRunError treats a formatter listing as a red class even when gofmt exits zero.
+func gateRunError(run []string, out string, err error) error {
+	if err == nil && len(run) > 0 && run[0] == "gofmt" && strings.TrimSpace(out) != "" {
+		return fmt.Errorf("gofmt listed files that need formatting")
+	}
+	return err
 }
 
 // benchGate runs the gate's runs on a bench: the first host of the ring whose Go lane is
@@ -553,7 +570,11 @@ func gateScript(runs [][]string) string {
 		for i, w := range run {
 			words[i] = bench.Quote(w)
 		}
-		parts = append(parts, "echo "+bench.Quote(gateMark+strings.Join(run, " ")), strings.Join(words, " "))
+		command := strings.Join(words, " ")
+		if len(run) > 0 && run[0] == "gofmt" {
+			command = "gate_format=$(" + command + "); printf '%s\\n' \"$gate_format\"; test -z \"$gate_format\""
+		}
+		parts = append(parts, "echo "+bench.Quote(gateMark+strings.Join(run, " ")), command)
 	}
 	return strings.Join(parts, "; ")
 }
