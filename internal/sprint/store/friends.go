@@ -255,8 +255,9 @@ func (st *Store) FriendBeat(ctx context.Context, friend string) (sprint.Beat, er
 
 // FriendBeatReport is FriendBeat with what her machinery reports of her work
 // (sprint.FriendReport: the cards she is running, which friend take and friend
-// down keep with her, and her own counts) and her load (nil: none), kept on the
-// beat until the next replaces it.
+// down keep with her, and her own counts) and her load (nil: none). A running
+// list, a working count or a queue count this beat does not name stays as the
+// store has it; naming the list, including an empty one, replaces it.
 func (st *Store) FriendBeatReport(ctx context.Context, friend string, rep sprint.FriendReport, load *float64) (sprint.Beat, error) {
 	b, _, err := st.FriendBeatProof(ctx, friend, rep, load, sprint.BeatWords{})
 	return b, err
@@ -276,10 +277,43 @@ type friendBeatRecord struct {
 
 // BeatProof is what one beat's proof words came to: proved (her session answered a check
 // her daemon asked) or why it proved nothing, and the proof the record keeps after it.
+// Set is which of running, working and queue this beat named, comma joined in that
+// order, or "-" when it named none (FRIEND-BEAT OK <friend> ... set=<Set>). A field absent
+// from Set was left as the store had it.
 type BeatProof struct {
 	Proved  bool
 	NoProof string
 	Proof   time.Time
+	Set     string
+}
+
+// friendBeatReport lays this beat's report over the last one. A nil running list
+// and a nil working or queue count are absent: they stay, and a count left off is
+// never written as zero. A running list the beat names, including an empty one,
+// replaces the list. The other fields are this beat's own, as before (a beat that
+// does not say down withdraws the down word).
+func friendBeatReport(prev *sprint.FriendReport, rep sprint.FriendReport) (sprint.FriendReport, string) {
+	out := rep
+	var named []string
+	if rep.Running != nil {
+		named = append(named, "running")
+	} else if prev != nil {
+		out.Running = append([]string(nil), prev.Running...)
+	}
+	if rep.Working != nil {
+		named = append(named, "working")
+	} else if prev != nil {
+		out.Working = prev.Working
+	}
+	if rep.Queue != nil {
+		named = append(named, "queue")
+	} else if prev != nil {
+		out.Queue = prev.Queue
+	}
+	if len(named) == 0 {
+		return out, "-"
+	}
+	return out, strings.Join(named, ",")
 }
 
 // FriendBeatProof is FriendBeatReport with the beat's proof words (sprint.BeatWords: the
@@ -301,9 +335,10 @@ func (st *Store) FriendBeatProof(ctx context.Context, friend string, rep sprint.
 	} else if len(oks) == 1 && oks[0] {
 		_ = json.Unmarshal([]byte(vals[0]), &prev) // ignored: an unreadable record holds no check and no proof
 	}
+	rep, set := friendBeatReport(prev.Beat.Friend, rep)
 	b := sprint.Beat{At: now}
 	if len(rep.Running) > 0 || rep.Working != nil || rep.Queue != nil || rep.Width != nil || !rep.Active.IsZero() {
-		b.Friend = &rep // a beat that reports nothing carries no report
+		b.Friend = &rep // a beat that still reports nothing carries no report
 	}
 	if rep.Build != "" || !rep.Started.IsZero() || !rep.Present.IsZero() {
 		b.Friend = &rep // her daemon's own facts are a report (sprint.StatusTransitions reads them)
@@ -330,7 +365,7 @@ func (st *Store) FriendBeatProof(ctx context.Context, friend string, rep sprint.
 		return b, BeatProof{}, err
 	}
 	b.Proof = rec.Pong
-	return b, BeatProof{Proved: proved, NoProof: why, Proof: rec.Pong}, kv.SetKey(ctx, friendBeatKey(friend), string(out))
+	return b, BeatProof{Proved: proved, NoProof: why, Proof: rec.Pong, Set: set}, kv.SetKey(ctx, friendBeatKey(friend), string(out))
 }
 
 // SetFriendHeld holds the friend (friend down, with why and until when the
