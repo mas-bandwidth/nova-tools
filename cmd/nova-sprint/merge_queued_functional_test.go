@@ -61,7 +61,7 @@ func TestAMergeBeforeThePumpOnTheStore(t *testing.T) {
 	run("tick")
 	out = run("where")
 	require.Contains(t, out, "DONE", "after the pump:\n%s", out)
-	require.Contains(t, out, "|      2", "after the pump:\n%s", out)
+	require.Contains(t, out, "1 archived stream, 2 cards landed", "after the pump:\n%s", out)
 	out = run("check")
 	require.Contains(t, out, "CHECK OK violations=0", "check after the pump:\n%s", out)
 }
