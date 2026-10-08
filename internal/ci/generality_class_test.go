@@ -583,9 +583,9 @@ func TestGeneralityTokenExtraction(t *testing.T) {
 	}
 }
 
-// TestGeneralitySpaceHasNoSyntaxException: the machine name counts wherever
+// TestGeneralityMachineNameHasNoSyntaxException: the machine name counts wherever
 // it appears in Go syntax, as an identifier, a struct tag or a string.
-func TestGeneralitySpaceHasNoSyntaxException(t *testing.T) {
+func TestGeneralityMachineNameHasNoSyntaxException(t *testing.T) {
 	t.Parallel()
 
 	backtick := string(rune(96))

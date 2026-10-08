@@ -40,7 +40,8 @@ func TestBackupWritesRestoresComparesAndScansATwinStore(t *testing.T) {
 	code, out, errs := twinProcess(t, file, "nova-sprint backup --file "+dest)
 	require.Equal(t, 0, code, "backup: exit %d\n%s%s", code, out, errs)
 	assert.Contains(t, out, "BACKUP OK file="+dest)
-	assert.Contains(t, out, "restored=twin compared=document+counts secrets=none")
+	assert.Contains(t, out, "restore=semantic compared=state+document+counts secrets=none")
+	assert.NotContains(t, out, "not a semantic restore")
 	got, err := os.ReadFile(dest)
 	require.NoError(t, err)
 	want, err := os.ReadFile(file)
@@ -137,4 +138,32 @@ func TestBackupDryRunVerifiesAndWritesNothing(t *testing.T) {
 	assert.Contains(t, out, "nothing was written")
 	_, err := os.Stat(dest)
 	assert.True(t, os.IsNotExist(err), "dry run writes no file")
+}
+
+// rdbSource hands out an RDB whose header and version are good and whose
+// checksum is off (a zero trailer, a store with rdbchecksum no): what a Redis
+// gives the verb, with the counts it cannot say.
+type rdbSource struct{}
+
+func (rdbSource) Save(context.Context) ([]byte, store.SnapshotCounts, error) {
+	return append([]byte("REDIS0011\xfa\x09redis-ver\x057.2.0\xff"), 0, 0, 0, 0, 0, 0, 0, 0), store.SnapshotCounts{Keys: -1, Cards: -1}, nil
+}
+
+// A backup the verb can check only by its header and checksum (a Redis's RDB,
+// store.RDBTwin) says so: restore=integrity, never semantic, on the line of a
+// backup and of a dry run, and the snapshot drill says the same of a file.
+func TestABackupCheckedByItsChecksumIsNeverASemanticRestore(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "b.rdb")
+	for _, dry := range []bool{true, false} {
+		var out bytes.Buffer
+		require.NoError(t, runBackup(context.Background(), rdbSource{}, store.RDBTwin{}, dest, dry, &out))
+		assert.Contains(t, out.String(), "restore=integrity compared=header+checksum secrets=none; integrity only, not a semantic restore")
+		assert.NotContains(t, out.String(), "restore=semantic")
+	}
+	code, out, errs := twinProcess(t, filepath.Join(dir, "sprint.twin"), "nova-sprint snapshot --restore-drill "+dest)
+	require.Equal(t, 0, code, "%s%s", out, errs)
+	assert.Contains(t, out, "SNAPSHOT DRILL OK file="+dest)
+	assert.Contains(t, out, "restore=integrity; integrity only, not a semantic restore")
 }

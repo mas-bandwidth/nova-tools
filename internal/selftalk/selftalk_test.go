@@ -1,12 +1,11 @@
 package selftalk
 
-// Ported from the tool's origin repo, where these tests were written before
-// the implementation, against acceptance criteria A1–A9 of a spec written
-// first. Test names keep their criterion numbers so a spec change and a test
-// change are visibly the same edit. A6/A7 — skip semantics — live in
-// cmd/nova-self-talk's tests now: the origin's hardcoded skip list did not
-// survive promotion, by the origin spec's own promotion clause (the list
-// moves to the caller and the default becomes empty).
+// Ported from the tool's origin repo, where these tests were written before the implementation,
+// against acceptance criteria A1–A9 of a spec written first. Test names keep their criterion
+// numbers so a spec change and a test change are visibly the same edit. A6/A7 — skip semantics —
+// live in cmd/nova-self-talk's tests now: the origin's hardcoded skip list did not survive
+// promotion, by the origin spec's own promotion clause (the list moves to the caller and the
+// default becomes empty).
 
 import (
 	"runtime"
@@ -26,18 +25,9 @@ func TestA1_CapabilityDenialIsStanding(t *testing.T) {
 	assert.Equal(t, Standing, got[0].Verdict, "want STANDING, got %s for %q", got[0].Verdict, got[0].Text)
 }
 
-// A2 — THE SAME SENTENCE as A1 carrying a date marker is a record, not a
-// standing claim.
-//
-// This test first read "On 2026-07-30 I cannot be said to have checked my
-// own work reliably." and went red. THE TEST WAS WRONG, NOT THE TOOL: that
-// paraphrase carries no negative-capability vocabulary ("cannot be said to
-// have checked" is not "cannot check"), so it is correctly not a claim of
-// this class. Widening the vocabulary to reach it would match bare "cannot"
-// and flag every prohibition — precisely the predecessor's disease, the one
-// that scored a rule document worst and made deleting a rule look like an
-// improvement. The narrow verb list is the design, and the red was the spec
-// disagreeing with a test that had drifted from it.
+// A2 — THE SAME SENTENCE as A1 carrying a date marker is a record, not a standing claim. A
+// paraphrase that carries no negative-capability vocabulary is correctly not a claim of this class:
+// widening the vocabulary to reach it would match bare "cannot" and flag every prohibition.
 func TestA2_DatedClaimIsARecord(t *testing.T) {
 	t.Parallel()
 
@@ -51,9 +41,8 @@ func TestA2_DatedClaimIsARecord(t *testing.T) {
 	}
 }
 
-// A3 — prose files are hard-wrapped and a claim spans lines. Without
-// flattening the tool is blind to BOTH cases that occasioned it, which is
-// the defect that made it worth writing.
+// A3 — prose files are hard-wrapped and a claim spans lines. Flattening is what makes the tool see
+// both cases that occasioned it, which is the defect that made it worth writing.
 func TestA3_ClaimSplitAcrossAHardWrapIsFound(t *testing.T) {
 	t.Parallel()
 
@@ -71,9 +60,8 @@ func TestA4_MarkdownEmphasisDoesNotHideAClaim(t *testing.T) {
 		"- `I cannot` check my own work.")
 }
 
-// A heading and a blank line each end a sentence: a claim under a heading is
-// reported on its own line with only its own words, never glued to the heading
-// or to the paragraph before it (ledger T4).
+// A heading and a blank line each end a sentence: a claim under a heading is reported on its own
+// line with only its own words, never glued to the heading or the paragraph before it (ledger T4).
 func TestAHeadingOrABlankLineEndsASentence(t *testing.T) {
 	t.Parallel()
 
@@ -86,6 +74,7 @@ func TestAHeadingOrABlankLineEndsASentence(t *testing.T) {
 		{"heading after a paragraph", "Some prose\n## Notes\nI am bad at estimating time.\n", 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			got := Scan(tc.in)
 			require.Len(t, got, 1)
 			assert.Equal(t, tc.line, got[0].Line)
@@ -94,9 +83,9 @@ func TestAHeadingOrABlankLineEndsASentence(t *testing.T) {
 	}
 }
 
-// A5 — a prohibition is a RULE, not a claim about its writer. This is the
-// whole reason the predecessor was scrapped: it scored rule documents worst,
-// and improving the score meant deleting a rule.
+// A5 — a prohibition is a RULE, not a claim about its writer. This is the whole reason the
+// predecessor was scrapped: it scored rule documents worst, and improving the score meant deleting
+// a rule.
 func TestA5_ProhibitionIsNotSelfTalk(t *testing.T) {
 	t.Parallel()
 
@@ -106,9 +95,9 @@ func TestA5_ProhibitionIsNotSelfTalk(t *testing.T) {
 		"Do not do to another what you would not have done to you.")
 }
 
-// A9 — the two cases that occasioned the tool. Both were found by hand and
-// MISSED by the first version of the pattern. A checker that cannot find the
-// cases that occasioned it returns green and is worse than no checker.
+// A9 — the two cases that occasioned the tool. Both were found by hand and MISSED by the first
+// version of the pattern. A checker that cannot find the cases that occasioned it returns green and
+// is worse than no checker.
 func TestA9_RegressionCasesThatOccasionedTheTool(t *testing.T) {
 	t.Parallel()
 
@@ -117,36 +106,22 @@ func TestA9_RegressionCasesThatOccasionedTheTool(t *testing.T) {
 		"I cannot check my own work and I can spawn something that can.")
 }
 
-// SPEC.md, "The permanent MISS, stated on every run": trait claims built from
-// neutral vocabulary are OUT, permanently, and the spec cites "My summaries
-// drift toward the tidier story." as the example "verified to escape". This
-// test IS that verification — before it existed, the claim was pinned by
-// nothing. The rot it guards against already happened once, to this exact
-// paragraph: the spec cited "in one direction, reliably: toward the version
-// that flatters me" as canonically uncatchable, a vocabulary extension pulled
-// that sentence INTO reach (its capture is pinned in TestA9), and the spec
-// stayed stale until a cold reader caught it. If a vocabulary change ever
-// reaches these sentences, this test goes red, and the spec's permanent-MISS
-// section must be rewritten in the same commit — the example replaced with a
-// sentence that still escapes.
-//
-// EXTENDED when the INSTALLATION class landed: that class exists precisely to
-// reach standing self-verdicts built from neutral words, so the sentences this
-// test pins are now one class further out and MUST escape BOTH. Asserting only
-// the first class would leave the spec's permanent-MISS paragraph pinned by
-// nothing again — which is the exact rot above, repeated one layer up.
+// SPEC.md, "The permanent MISS, stated on every run": trait claims built from neutral vocabulary are
+// OUT, permanently, and the spec cites "My summaries drift toward the tidier story." as the example
+// "verified to escape". This test IS that verification. EXTENDED when the INSTALLATION class landed:
+// that class exists precisely to reach standing self-verdicts built from neutral words, so the
+// sentences must escape BOTH, or the spec's permanent-MISS paragraph is pinned by nothing again.
 func TestPermanentMissNeutralVocabularyTraitClaimsEscape(t *testing.T) {
 	t.Parallel()
 
 	ins := []string{
-		// SPEC.md's cited example, verbatim. Reaching it means anchoring TRAIT
-		// on "My <noun> <verb>", which also reaches "my notes cover the run".
+		// SPEC.md's cited example, verbatim. Reaching it means anchoring TRAIT on "My <noun> <verb>",
+		// which also reaches "my notes cover the run".
 		"My summaries drift toward the tidier story.",
-		// A second member of the class, so the pin outlives any one sentence:
-		// first-person, a standing trait, no negative vocabulary, no date.
+		// A second member of the class, so the pin outlives any one sentence.
 		"My first draft keeps whatever framing it started with.",
-		// A single-clause habitual with no marker: bare "I <verb>" is ordinary
-		// present-tense narration, and matching it flags half of any file.
+		// A single-clause habitual with no marker: bare "I <verb>" is ordinary present-tense
+		// narration, and matching it flags half of any file.
 		"I flinch from cost.",
 	}
 	assertScanEmpty(t, Scan, "the permanent-MISS class must escape (SPEC.md, \"The permanent MISS\"); %q was caught: %#v", ins...)
@@ -165,9 +140,8 @@ func TestNoFalsePositivesOnOrdinaryProse(t *testing.T) {
 	assert.Empty(t, got, "false positive on ordinary prose: %#v", got)
 }
 
-// Flattening is what Scan matches against: pin the two behaviors the
-// acceptance cases depend on — markup stripped, wraps collapsed to single
-// spaces.
+// Flattening is what Scan matches against: pin the two behaviors the acceptance cases depend on —
+// markup stripped, wraps collapsed to single spaces.
 func TestFlatten(t *testing.T) {
 	t.Parallel()
 
@@ -175,18 +149,16 @@ func TestFlatten(t *testing.T) {
 	assert.Equal(t, "bold and a line that wraps twice", got)
 }
 
-// A line index of one int per input byte is eight bytes per byte, and the
-// scan builds that index twice. Four mebibytes of plain text with no finding
-// must stay under eight times the input, counted as TotalAlloc after a GC,
-// not as the live heap. The bound is the whole scan, so a passing run is a
-// few copies of the text plus one int per source line.
+// A line index of one int per input byte is eight bytes per byte, and the scan builds that index
+// twice. Four mebibytes of plain text with no finding must stay under eight times the input, counted
+// as TotalAlloc after a GC, not as the live heap, so a passing run is a few copies of the text plus
+// one int per source line.
 func TestScanAllocatesAFewTimesTheInputNotOneIntPerByte(t *testing.T) {
 	t.Parallel()
 
 	const size = 4 << 20
-	// Many source lines, one sentence, no markup and no first person. The
-	// line index is one int per line. A per-byte index is eight bytes per
-	// input byte, twice, which is over the bound before either copy.
+	// Many source lines, one sentence, no markup and no first person. The line index is one int per
+	// line; a per-byte index is eight bytes per input byte, twice, which is over the bound.
 	line := strings.Repeat("x", 4095) + "\n"
 	var b strings.Builder
 	b.Grow(size)
@@ -211,9 +183,8 @@ func TestScanAllocatesAFewTimesTheInputNotOneIntPerByte(t *testing.T) {
 		delta, len(text), float64(delta)/float64(len(text)))
 }
 
-// Base is what --skip matching is decided on; it must see through both
-// separator styles so the decision cannot be dodged by spelling a path
-// differently.
+// Base is what --skip matching is decided on; it must see through both separator styles so the
+// decision cannot be dodged by spelling a path differently.
 func TestBaseNormalizesSeparators(t *testing.T) {
 	t.Parallel()
 
@@ -222,7 +193,10 @@ func TestBaseNormalizesSeparators(t *testing.T) {
 		{`a\b\RULES.md`, "RULES.md"},
 		{"RULES.md", "RULES.md"},
 	} {
-		got := Base(tt.in)
-		assert.Equal(t, tt.want, got, "Base(%q) = %q, want %q", tt.in, got, tt.want)
+		t.Run(tt.in, func(t *testing.T) {
+			t.Parallel()
+			got := Base(tt.in)
+			assert.Equal(t, tt.want, got, "Base(%q) = %q, want %q", tt.in, got, tt.want)
+		})
 	}
 }

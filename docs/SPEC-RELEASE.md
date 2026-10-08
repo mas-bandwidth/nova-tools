@@ -602,6 +602,27 @@ refuses on any fail. With no stream named there is no acceptance to check, so
 each passes and says so. Test:
 `TestReleaseCheckRunsTheAcceptanceSentinelsSixChecks`.
 
+### release-check-merge-queue-p90-b.w7
+
+`merge-queue-p90` is the merge queue's age check, source: the owner,
+2026-10-04, "We cannot let merges get behind like this." Over the last window
+(`--window`, default 24 h) it takes the p90, by the nearest rank
+(`sprint.PercentileNearestRank`, tested on its own over known lists; an empty
+list has no percentile and the check is then ok saying n=0), of the time each
+card spent in merging. The merging time is read from the store's log, never
+from the merge table's stamps: a work-table move into the `merging` column
+opens a spell, and a move out of it, to landed or to any other column, or the
+card leaving the table, closes it. A card still merging counts with its age
+now, and a card counts when any of its merging overlapped the window, so a
+card left in the queue before the window and still there is not hidden by it.
+The bar is `--merge-p90`, default 30 minutes: the stream merges in batches and
+one card's merge is a push and a green gate, so a longer wait is the queue and
+not the card. The check fails when the p90 is over the bar and the evidence
+prints the p90, the number of cards and the oldest card still merging, naming
+`nova-sprint where --all` and `nova-sprint log --card <id>` to look at; under
+the bar it passes with the same numbers. Test:
+`TestReleaseCheckFailsWhenTheMergeQueueAgeP90IsOverTheBar`.
+
 
 ## 17. Adopting one machine
 

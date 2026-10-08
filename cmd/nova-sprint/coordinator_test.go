@@ -94,6 +94,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"hold":              "hold m2 --reason r",
 		"unhold":            "unhold m2",
 		"fleet level":       "fleet level",
+		"fleet quiet":       "fleet quiet m1 --for 1m --reason r",
 		"fleet sync":        "fleet sync",
 		"friend sync":       "friend sync",
 		"friend down":       "friend down friend-a",

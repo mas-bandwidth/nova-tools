@@ -12,7 +12,7 @@ import (
 
 // TestXaiUsageJSONShapeParses pins the second accepted shape for --provider xai: a
 // `grok usage` export is JSON, not CSV, and the parser folds its turns into the same rows
-// the CSV shape produces. The fixture is a synthetic, sanitized turn.
+// the CSV shape produces.
 func TestXaiUsageJSONShapeParses(t *testing.T) {
 	t.Parallel()
 
@@ -70,13 +70,8 @@ func TestXaiUsageJSONShapeParses(t *testing.T) {
 }
 
 // TestXaiUsageJSONShapeParsesMissingKeysNotZero pins the issue's exact rule:
-// a field the turn did not carry is absent, not zero. The fixture omits
-// `cacheCreationTokens` and `reasoningTokens`; the parser must report 3 of
-// the 5 token types (every present field is a Measure; every absent field
-// has Counts.has[type] == false), and CacheWrite / Reasoning must NOT be
-// counted as 0 -- which a refactor that folds "missing is zero" would.
-// Without this guard a future change could re-introduce the failure mode
-// nova-tools #450 was filed about.
+// a field the turn did not carry is absent, not zero. Without this guard a future
+// change could re-introduce the failure mode nova-tools #450 was filed about.
 func TestXaiUsageJSONShapeParsesMissingKeysNotZero(t *testing.T) {
 	t.Parallel()
 

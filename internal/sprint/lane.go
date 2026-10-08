@@ -3,6 +3,7 @@ package sprint
 import (
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -85,6 +86,17 @@ type LaneAnswer struct {
 	Released []string `json:"released,omitempty"`
 }
 
+// ValidLaneWho says who may hold or wait on a lane: a ValidID (a worker), or two joined by
+// one / (a holder and its part: the lander's gate of a stream, lander/<stream>, or of the
+// base re-check, lander/base; docs/SPEC-SPRINT.md section 7).
+func ValidLaneWho(who string) bool {
+	holder, part, two := strings.Cut(who, "/")
+	if !two {
+		return ValidID(who)
+	}
+	return ValidID(holder) && ValidID(part)
+}
+
 // LaneWidth is the lanes of a kind per machine from the work table's property value:
 // a whole number from 1, else LaneWidthDefault (none set, default, or unreadable).
 func LaneWidth(v string, set bool) int {
@@ -119,13 +131,19 @@ func (ls Lanes) Take(machine, who string, width int, now time.Time) (Lanes, Lane
 }
 
 // Give is who's give of its lane, or of its place in the queue, on machine at now: the
-// lanes after, with the queue's head granted into the room it made.
+// lanes after, with the queue's head granted into the room it made. Only who's own hold
+// and own place go, found by its exact name: another holder's lane and another waiter's
+// place are never given back by it (the parallel lander's forks hold under their own
+// names, lander/<stream>, so the first fork to finish frees no sibling's bench).
 func (ls Lanes) Give(machine, who string, width int, now time.Time) (Lanes, LaneAnswer) {
 	l, released := ls[machine].expire(now)
-	n := len(l.Holders) + len(l.Queue)
-	l.Holders = slices.DeleteFunc(l.Holders, func(h LaneHold) bool { return h.Who == who })
-	l.Queue = slices.DeleteFunc(l.Queue, func(w LaneWait) bool { return w.Who == who })
-	gave := len(l.Holders)+len(l.Queue) < n
+	gave := false
+	if i := l.hold(who); i >= 0 {
+		l.Holders, gave = slices.Delete(l.Holders, i, i+1), true
+	}
+	if i := l.wait(who); i >= 0 {
+		l.Queue, gave = slices.Delete(l.Queue, i, i+1), true
+	}
 	l = l.grant(width, now)
 	return ls.with(machine, l), LaneAnswer{Held: len(l.Holders), Width: width, Gave: gave, Released: released}
 }

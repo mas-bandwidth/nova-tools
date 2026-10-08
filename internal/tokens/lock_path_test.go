@@ -31,7 +31,6 @@ func TestFoldLockSymlinkPreservesTarget(t *testing.T) {
 			if release != nil {
 				release()
 			}
-			t.Logf("TakeFoldLock err=%v", err)
 			assert.Error(t, err, "expected symlink refusal before touching target")
 			raw, readErr := os.ReadFile(target)
 			if missing {
