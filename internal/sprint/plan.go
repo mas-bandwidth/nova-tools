@@ -317,10 +317,11 @@ func answered(p *Plan, s *Snapshot, ids []string, who string) {
 }
 
 // decided is the answer to a judgment that stays open (a stopped stream's,
-// until it resumes): recorded, not closed.
+// until it resumes): recorded, not closed, with the wait from its raise to now
+// (Note.Waited; docs/SPEC-SPRINT.md, judgment-answer-latencyb-t-bb.w1).
 func decided(o Open, what, who string, now time.Time, primaries ...string) Note {
 	return Note{Kind: Decided, Type: o.Note.Type, Stream: o.Note.Stream, Answers: o.Note.ID, What: what, Who: who, At: now,
-		Primaries: primaries, Count: len(primaries)}
+		Primaries: primaries, Count: len(primaries), Waited: max(now.Sub(o.Note.At), 0)}
 }
 
 // setStream is the stream's control card changed by a step, carried by the
