@@ -1268,7 +1268,7 @@ func (l *loop) turnEnded() {
 
 func (l *loop) deliverBatch(t *turn) func(context.Context) result {
 	return func(ctx context.Context) result {
-		exit, err := l.d.Deliver.Deliver(ctx, t.text)
+		exit, err := l.d.Deliver.Deliver(WithDeliveryIDs(ctx, t.entries), t.text)
 		return result{t, exit, err}
 	}
 }

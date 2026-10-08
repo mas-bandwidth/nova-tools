@@ -65,9 +65,9 @@ type AntigravityDelivery struct {
 }
 
 var (
-	busRecvIDRegex = regexp.MustCompile(`(?:RECV OK id=|=== message \d+ of \d+: id=|\[\d+/\d+\]\s+)([0-9A-Za-z_-]+)`)
-	busResentRegex = regexp.MustCompile(`re-sent:\s+([0-9A-Za-z_-]+)\s+was delivered`)
-	busNonceRegex  = regexp.MustCompile(`(?:SESSION CHECK|PING)\s+([0-9A-Za-z_-]+)`)
+	busRecvIDRegex = regexp.MustCompile(`(?m)^(?:RECV OK id=|=== message \d+ of \d+: id=|\[\d+/\d+\]\s+)([0-9A-Za-z_-]+)`)
+	busResentRegex = regexp.MustCompile(`(?m)^re-sent:\s+([0-9A-Za-z_-]+)\s+was delivered`)
+	busNonceRegex  = regexp.MustCompile(`(?m)^(?:SESSION CHECK|PING)\s+([0-9A-Za-z_-]+)`)
 	busPongRegex   = regexp.MustCompile(`--nonce\s+([0-9A-Za-z_-]+)`)
 )
 
@@ -93,9 +93,6 @@ func extractDeliveryIDs(text string) []string {
 	for _, m := range busPongRegex.FindAllStringSubmatch(text, -1) {
 		add(m[1])
 	}
-	if len(ids) == 0 {
-		add(antigravityHash(text))
-	}
 	return ids
 }
 
@@ -105,28 +102,28 @@ func antigravityHash(text string) string {
 	return hex.EncodeToString(h[:])
 }
 
-// matchesIDs checks whether delivery d overlaps with any incoming bus entry ID.
-func (d *AntigravityDelivery) matchesIDs(incomingIDs []string) bool {
-	if len(d.BusIDs) > 0 && len(incomingIDs) > 0 {
-		for _, inID := range incomingIDs {
-			if slices.Contains(d.BusIDs, inID) {
-				return true
-			}
+// coversAll checks whether delivery d contains every ID in incomingIDs.
+func (d *AntigravityDelivery) coversAll(incomingIDs []string) bool {
+	if len(incomingIDs) == 0 || len(d.BusIDs) == 0 {
+		return false
+	}
+	for _, inID := range incomingIDs {
+		if !slices.Contains(d.BusIDs, inID) {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
-// matches checks if delivery d matches text either by stable bus IDs, durable hash, or text content.
-func (d *AntigravityDelivery) matches(text string, incomingIDs []string) bool {
-	if d.matchesIDs(incomingIDs) {
-		return true
+// overlapsAny checks whether delivery d contains at least one ID in incomingIDs.
+func (d *AntigravityDelivery) overlapsAny(incomingIDs []string) bool {
+	if len(incomingIDs) == 0 || len(d.BusIDs) == 0 {
+		return false
 	}
-	if d.Hash != "" && d.Hash == antigravityHash(text) {
-		return true
-	}
-	if d.Text != "" && d.Text == text {
-		return true
+	for _, inID := range incomingIDs {
+		if slices.Contains(d.BusIDs, inID) {
+			return true
+		}
 	}
 	return false
 }
@@ -425,7 +422,7 @@ func (a *Antigravity) Follow(ctx context.Context, now time.Time) {
 		return
 	}
 	for _, d := range owed {
-		if _, err := a.send(ctx, srv, to, ResentLine(d)+d.Text); err != nil {
+		if _, err := a.send(ctx, srv, to, ResentLine(d)+d.Text, d.BusIDs); err != nil {
 			a.say("antigravity: message %s not sent again into conversation %s: %s; sent again at the next look", dash(d.ID), to, oneLine(err.Error(), 300))
 			return
 		}
@@ -446,46 +443,72 @@ func (a *Antigravity) Follow(ctx context.Context, now time.Time) {
 // antigravityMailbox is conversation c's mailbox, under the home.
 // reconcile checks if an existing delivery for session and text is already pending, landed,
 // or consumed. It reconciles without duplicate send, or holds an ambiguous/pending send visibly.
-func (a *Antigravity) reconcile(session, text string) (reconciled bool, exit int, err error) {
+func (a *Antigravity) reconcile(session, text string, incomingIDs []string) (reconciled bool, exit int, err error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	l := a.load()
 	mailbox := antigravityMailbox(session)
 	inBox, _ := a.mailbox(mailbox)
-	incomingIDs := extractDeliveryIDs(text)
 	for i := len(l.Deliveries) - 1; i >= 0; i-- {
 		d := &l.Deliveries[i]
-		if d.Conversation != session || !d.matches(text, incomingIDs) {
+		if d.Conversation != session {
 			continue
 		}
-		// Case 1: Already consumed by conversation
-		if !d.ReadAt.IsZero() || d.State == DeliveryConsumed {
-			a.say("antigravity: message %s already consumed by conversation %s; reconciled without duplicate send", dash(d.ID), session)
-			return true, 0, nil
+
+		hasHashMatch := (d.Hash != "" && d.Hash == antigravityHash(text))
+		hasFullCoverage := len(incomingIDs) > 0 && d.coversAll(incomingIDs)
+		hasPartialOverlap := len(incomingIDs) > 0 && d.overlapsAny(incomingIDs)
+
+		if !hasHashMatch && !hasFullCoverage && !hasPartialOverlap {
+			continue
 		}
-		// Case 2: Already landed in mailbox
-		if d.ID != "" && slices.Contains(inBox, d.ID) {
-			a.say("antigravity: message %s already in the mailbox of conversation %s from prior accepted send; reconciled without duplicate send", d.ID, session)
-			return true, 0, nil
-		}
-		// Case 3: Pending or uncertain send
-		if d.ID == "" {
+
+		// Case 1: Pending or uncertain send
+		if d.ID == "" || d.State == DeliveryPending || d.State == DeliveryUncertain {
 			ids := a.untracked(session)
 			if len(ids) > 0 {
 				d.ID = ids[0]
 				d.State = DeliveryLanded
 				_ = a.save()
 				a.say("antigravity: message %s in the mailbox of conversation %s (reconciled late landing)", d.ID, session)
+				if hasHashMatch || hasFullCoverage {
+					return true, 0, nil
+				}
+				// Landed, but only partial overlap with incoming turn: cannot acknowledge new unseen IDs.
+				continue
+			}
+
+			// File has not landed yet.
+			// If full coverage or hash match: hold visibly rather than duplicate send.
+			if hasHashMatch || hasFullCoverage {
+				desc := d.Hash
+				if len(d.BusIDs) > 0 {
+					desc = strings.Join(d.BusIDs, ",")
+				}
+				a.say("antigravity: delivery for conversation %s is pending/uncertain (%s); holding send visibly rather than duplicate send", session, desc)
+				exit, err := a.refuse(session, fmt.Sprintf("message delivery for conversation %s is already pending/uncertain; waiting for mailbox receipt rather than duplicate send", session))
+				return true, exit, err
+			}
+
+			// Partial overlap with in-flight pending/uncertain delivery:
+			// Full incoming batch contains some IDs that are pending/uncertain in-flight, AND some new IDs.
+			// Holding visibly prevents duplicate sends of in-flight messages and prevents premature ACK of new messages.
+			a.say("antigravity: delivery for conversation %s partially overlaps pending/uncertain delivery %s; holding send visibly", session, d.Hash)
+			exit, err := a.refuse(session, fmt.Sprintf("incoming messages partially overlap pending/uncertain delivery for conversation %s; waiting for in-flight receipt", session))
+			return true, exit, err
+		}
+
+		// Case 2: Already consumed or landed delivery
+		// Full coverage is required before returning exit 0 (acknowledgment).
+		if hasHashMatch || hasFullCoverage {
+			if !d.ReadAt.IsZero() || d.State == DeliveryConsumed {
+				a.say("antigravity: message %s already consumed by conversation %s; reconciled without duplicate send", dash(d.ID), session)
 				return true, 0, nil
 			}
-			// File not yet in mailbox: hold ambiguous send visibly, do not send again
-			desc := d.Hash
-			if len(d.BusIDs) > 0 {
-				desc = strings.Join(d.BusIDs, ",")
+			if d.State == DeliveryLanded || (d.ID != "" && slices.Contains(inBox, d.ID)) {
+				a.say("antigravity: message %s already in the mailbox of conversation %s from prior accepted send; reconciled without duplicate send", dash(d.ID), session)
+				return true, 0, nil
 			}
-			a.say("antigravity: delivery for conversation %s is pending/uncertain (%s); holding send visibly rather than duplicate send", session, desc)
-			exit, err := a.refuse(session, fmt.Sprintf("message delivery for conversation %s is already pending/uncertain; waiting for mailbox receipt rather than duplicate send", session))
-			return true, exit, err
 		}
 	}
 	return false, 0, nil
