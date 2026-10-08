@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -45,161 +46,158 @@ func (h *harness) up(friend string) {
 	require.NoError(h.t, err)
 }
 
-// A friend's delivery mode (batch or one-shot) is respected by the store's tick dealing on
-// its twin (docs/SPEC-SPRINT.md section 1, "A friend's card"): in batch mode she fills up to width
-// working and ready behind (DealAhead times width); in one-shot mode she gets one card at a time
-// and the next only after a finish.
+// The twin tick gives batch friends their ready backlog, while one-shot friends
+// share their configured physical width without a backlog (SPEC-SPRINT section 1).
 func TestTwinStoreDealingRespectsFriendDeliveryMode(t *testing.T) {
 	t.Parallel()
-	h := newHarness(t)
-	// amy is batch mode (width 2), bob is one-shot mode (width 2, mode: one-shot)
-	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{
-		{Name: "amy", Width: 2, Mode: "batch", Class: "flash"},
-		{Name: "bob", Width: 2, Mode: "one-shot", Class: "flash"},
-	})
-	require.NoError(t, err)
-	h.up("amy")
-	h.up("bob")
+	for _, width := range []int{1, 2, 3} {
+		t.Run(fmt.Sprintf("one-shot width %d", width), func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{
+				{Name: "amy", Width: 2, Mode: "batch", Class: "flash"},
+				{Name: "bob", Width: width, Mode: "one-shot", Class: "flash"},
+			})
+			require.NoError(t, err)
+			h.up("amy")
+			h.up("bob")
+			var cards []sprint.CardAdd
+			for _, owner := range []struct {
+				name  string
+				count int
+			}{{"amy", 4}, {"bob", width + 2}} {
+				for i := 1; i <= owner.count; i++ {
+					cards = append(cards, sprint.CardAdd{ID: fmt.Sprintf("%s-%d", owner.name, i),
+						Brief: "c: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: only friend " + owner.name + "\n\nThe task."})
+				}
+			}
+			h.must(AddStep(sprint.AddReq{Stream: "s1", Cards: cards}))
+			h.startMachine()
+			h.machine()
+			h.start("amy", 2)
+			h.start("bob", width)
+			amy, bob := sprint.FriendRow("amy"), sprint.FriendRow("bob")
+			snap := h.snap()
+			assert.Equal(t, 2, snap.Fleet.Count(amy, sprint.Working))
+			assert.Equal(t, 2, snap.Fleet.Count(amy, sprint.Ready), "batch keeps a backlog")
+			assert.Equal(t, width, snap.Fleet.Count(bob, sprint.Working))
+			assert.Zero(t, snap.Fleet.Count(bob, sprint.Ready), "one-shot has no backlog beyond its width")
+			waiting := fmt.Sprintf("bob-%d", width+1)
+			assert.Equal(t, sprint.Ready, snap.StateOf(waiting))
+			h.machine()
+			assert.Equal(t, width, h.snap().Fleet.Count(bob, sprint.Working), "a full row accepts no extra card")
+			assert.Zero(t, h.snap().Fleet.Count(bob, sprint.Ready))
 
-	brief := func(who string) string {
-		return "c: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: " + who + "\n\nThe task."
+			h.must(FinishStep(sprint.FinishReq{As: bob, Sel: sprint.Sel{IDs: []string{"bob-1.w1"}},
+				Gens: map[string]int{"bob-1.w1": 1}, Head: "abc"}))
+			assert.Equal(t, width-1, h.snap().Fleet.Count(bob, sprint.Working), "already-started siblings are preserved")
+			h.machine()
+			h.start("bob", 1)
+			snap = h.snap()
+			assert.Equal(t, width, snap.Fleet.Count(bob, sprint.Working), "the next tick refills the free lane")
+			assert.Zero(t, snap.Fleet.Count(bob, sprint.Ready))
+			assert.Equal(t, sprint.Working, snap.StateOf(waiting))
+			assert.Equal(t, sprint.Ready, snap.StateOf(fmt.Sprintf("bob-%d", width+2)))
+		})
 	}
-	h.must(AddStep(sprint.AddReq{Stream: "s1", Cards: []sprint.CardAdd{
-		{ID: "s1-1", Brief: brief("only friend amy")},
-		{ID: "s1-2", Brief: brief("only friend amy")},
-		{ID: "s1-3", Brief: brief("only friend amy")},
-		{ID: "s1-4", Brief: brief("only friend amy")},
-		{ID: "s1-5", Brief: brief("only friend bob")},
-		{ID: "s1-6", Brief: brief("only friend bob")},
-		{ID: "s1-7", Brief: brief("only friend bob")},
-	}}))
-
-	h.startMachine()
-	h.machine()
-	h.start("amy", 2) // each starts what her lanes hold: dealt ready, working once started
-	h.start("bob", 1)
-
-	snap := h.snap()
-	amyRow := sprint.FriendRow("amy")
-	bobRow := sprint.FriendRow("bob")
-
-	// Amy (batch mode): 2 working, 2 ready behind
-	assert.Equal(t, 2, snap.Fleet.Count(amyRow, sprint.Working))
-	assert.Equal(t, 2, snap.Fleet.Count(amyRow, sprint.Ready))
-
-	// Bob (one-shot mode): 1 working, 0 ready behind, s1-6 and s1-7 wait ready on work table
-	assert.Equal(t, 1, snap.Fleet.Count(bobRow, sprint.Working))
-	assert.Equal(t, 0, snap.Fleet.Count(bobRow, sprint.Ready))
-	assert.Equal(t, sprint.Ready, snap.StateOf("s1-6"))
-	assert.Equal(t, sprint.Ready, snap.StateOf("s1-7"))
-
-	// Another tick without finish: bob still holds 1 card
-	h.machine()
-	snap = h.snap()
-	assert.Equal(t, 1, snap.Fleet.Count(bobRow, sprint.Working))
-	assert.Equal(t, 0, snap.Fleet.Count(bobRow, sprint.Ready))
-
-	// Bob finishes his card: finish step moves it out of working
-	h.must(FinishStep(sprint.FinishReq{
-		As: bobRow, Sel: sprint.Sel{IDs: []string{"s1-5.w1"}},
-		Gens: map[string]int{"s1-5.w1": 1}, Head: "abc",
-	}))
-	snap = h.snap()
-	assert.Equal(t, 0, snap.Fleet.Count(bobRow, sprint.Working), "no ready card auto-advances for one-shot friend")
-
-	// Next tick deals the next card to bob, and he starts it
-	h.machine()
-	h.start("bob", 1)
-	snap = h.snap()
-	assert.Equal(t, 1, snap.Fleet.Count(bobRow, sprint.Working))
-	assert.Equal(t, 0, snap.Fleet.Count(bobRow, sprint.Ready))
-	assert.Equal(t, sprint.Working, snap.StateOf("s1-6"))
-	assert.Equal(t, sprint.Ready, snap.StateOf("s1-7"))
 }
 
-// A friend's row switching from batch to one-shot mode through config sync preserves already-started
-// work but gates queued promotion until shared work/read occupancy reaches zero (friendNext).
-// A batch row width 2 has 2 Working + 2 Ready; switch it to one-shot through config sync;
-// finish the first Working card: this finish must NOT start a Ready card while the other
-// Working card remains active. Only when the last active card finishes does the oldest Ready
-// card advance into Working.
-func TestTwinStoreConfigSyncToOneShotGatesQueuedPromotionUntilOccupancyReachesZero(t *testing.T) {
+// A config switch retains started work and native reads. Finishes promote one
+// queued card only below the configured shared physical cap (SPEC-SPRINT section 1).
+func TestTwinStoreConfigSyncToOneShotGatesQueuedPromotionUntilConfiguredCapacityIsAvailable(t *testing.T) {
 	t.Parallel()
-	h := newHarness(t)
-	// Amy begins in batch mode with width 2
-	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{
-		{Name: "amy", Width: 2, Mode: "batch", Class: "flash"},
-	})
-	require.NoError(t, err)
-	h.up("amy")
-
-	brief := func(who string) string {
-		return "c: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: " + who + "\n\nThe task."
+	for _, tc := range []struct {
+		name                                                 string
+		width                                                int
+		read                                                 bool
+		firstWorking, firstReady, secondWorking, secondReady int
+	}{
+		{"width one waits for the last work", 1, false, 1, 2, 1, 1},
+		{"width two refills beside active work", 2, false, 2, 1, 2, 0},
+		{"read above width one holds promotion", 1, true, 2, 2, 1, 2},
+		{"read at width two holds promotion", 2, true, 2, 2, 2, 1},
+		{"width three refills beside work and read", 3, true, 3, 1, 3, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			batchWidth := 2
+			if tc.read {
+				h = inReview(t, 1)
+				batchWidth = 3
+				for _, reader := range []string{"reader-a", "reader-b", "reader-c"} {
+					require.NoError(t, h.st.SetReaderAway(h.ctx, reader, true, "coordinator"))
+				}
+			}
+			_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: batchWidth, Mode: "batch", Class: "flash,pro"}})
+			require.NoError(t, err)
+			h.up("amy")
+			row := sprint.FriendRow("amy")
+			readID := sprint.ReadCardID("s1-1", 1, "amy")
+			if tc.read {
+				h.machine()
+				require.NotNil(t, h.snap().Fleet.Card(readID), "a genuine review reserves a native read")
+				require.Equal(t, sprint.Working, h.snap().Fleet.Card(readID).Col)
+			}
+			var cards []sprint.CardAdd
+			for i := 1; i <= 4; i++ {
+				cards = append(cards, sprint.CardAdd{ID: fmt.Sprintf("s2-%d", i),
+					Brief: "c: a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: only friend amy\n\nThe task."})
+			}
+			h.must(AddStep(sprint.AddReq{Stream: "s2", Cards: cards}))
+			if !tc.read {
+				h.startMachine()
+			}
+			h.machine()
+			h.start("amy", 2)
+			active := 2
+			if tc.read {
+				active++
+			}
+			require.Equal(t, active, h.snap().Fleet.Count(row, sprint.Working))
+			require.Equal(t, 2, h.snap().Fleet.Count(row, sprint.Ready))
+			_, _, updated, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: tc.width, Mode: "one-shot", Class: "flash,pro"}})
+			require.NoError(t, err)
+			assert.Equal(t, []string{"amy"}, updated)
+			assert.Equal(t, active, h.snap().Fleet.Count(row, sprint.Working), "mode/width changes retain every started reservation")
+			finish := func(id string) {
+				t.Helper()
+				h.must(FinishStep(sprint.FinishReq{As: row, Sel: sprint.Sel{IDs: []string{id}}, Gens: map[string]int{id: 1}, Head: "abc"}))
+			}
+			finish("s2-1.w1")
+			snap := h.snap()
+			assert.Equal(t, tc.firstWorking, snap.Fleet.Count(row, sprint.Working))
+			assert.Equal(t, tc.firstReady, snap.Fleet.Count(row, sprint.Ready))
+			assert.Equal(t, sprint.Working, snap.Fleet.Card("s2-2.w1").Col, "the other started work survives")
+			if tc.read {
+				assert.Equal(t, sprint.Working, snap.Fleet.Card(readID).Col, "the native read still consumes a slot")
+			}
+			ready := snap.Fleet.Cell(row, sprint.Ready)
+			require.NotEmpty(t, ready)
+			res := h.run(TakeStep(sprint.TakeReq{As: row, Sel: sprint.Sel{IDs: []string{ready[0].ID}}, Gens: map[string]int{ready[0].ID: 1}}))
+			require.Len(t, res.Refused, 1, "a row at or above its physical cap cannot take another job")
+			assert.Equal(t, tc.firstWorking, h.snap().Fleet.Count(row, sprint.Working))
+			finish("s2-2.w1")
+			snap = h.snap()
+			assert.Equal(t, tc.secondWorking, snap.Fleet.Count(row, sprint.Working))
+			assert.Equal(t, tc.secondReady, snap.Fleet.Count(row, sprint.Ready))
+			reads := 0
+			if tc.read {
+				reads = 1
+				assert.Equal(t, sprint.Working, snap.Fleet.Card(readID).Col, "finishing work cannot erase a read reservation")
+				if tc.width == 1 {
+					assert.Equal(t, sprint.Ready, snap.Fleet.Card("s2-3.w1").Col, "the sole read holds both queued work cards")
+					h.friendRead("amy", "s1-1", "Verdict: LAND\n")
+					h.start("amy", 1)
+					reads = 0
+				}
+			}
+			assert.Equal(t, sprint.Working, h.snap().Fleet.Card("s2-3.w1").Col)
+			finish("s2-3.w1")
+			snap = h.snap()
+			assert.Equal(t, 1+reads, snap.Fleet.Count(row, sprint.Working))
+			assert.Zero(t, snap.Fleet.Count(row, sprint.Ready), "the final queued work advances when a physical slot is free")
+			assert.Equal(t, sprint.Working, snap.Fleet.Card("s2-4.w1").Col)
+		})
 	}
-	h.must(AddStep(sprint.AddReq{Stream: "s1", Cards: []sprint.CardAdd{
-		{ID: "s1-1", Brief: brief("only friend amy")},
-		{ID: "s1-2", Brief: brief("only friend amy")},
-		{ID: "s1-3", Brief: brief("only friend amy")},
-		{ID: "s1-4", Brief: brief("only friend amy")},
-	}}))
-
-	h.startMachine()
-	h.machine()
-	h.start("amy", 2) // she starts what her lanes hold
-
-	snap := h.snap()
-	amyRow := sprint.FriendRow("amy")
-
-	// Amy has 2 working, 2 ready behind
-	assert.Equal(t, 2, snap.Fleet.Count(amyRow, sprint.Working))
-	assert.Equal(t, 2, snap.Fleet.Count(amyRow, sprint.Ready))
-	assert.Equal(t, sprint.Working, snap.StateOf("s1-1"))
-	assert.Equal(t, sprint.Working, snap.StateOf("s1-2"))
-
-	// Switch amy to one-shot mode through config sync
-	_, _, updated, err := h.st.SyncFriends(h.ctx, []FriendSpec{
-		{Name: "amy", Width: 2, Mode: "one-shot", Class: "flash"},
-	})
-	require.NoError(t, err)
-	assert.Equal(t, []string{"amy"}, updated)
-
-	// Finish the first Working card (s1-1.w1)
-	h.must(FinishStep(sprint.FinishReq{
-		As: amyRow, Sel: sprint.Sel{IDs: []string{"s1-1.w1"}},
-		Gens: map[string]int{"s1-1.w1": 1}, Head: "abc",
-	}))
-
-	snap = h.snap()
-	// Already-started work is preserved (s1-2.w1 still working)
-	// but queued promotion is gated: s1-3.w1 does NOT start into working!
-	assert.Equal(t, 1, snap.Fleet.Count(amyRow, sprint.Working), "only the remaining started card is working")
-	assert.Equal(t, 2, snap.Fleet.Count(amyRow, sprint.Ready), "both ready cards stay ready while an active job remains")
-	assert.Equal(t, sprint.Working, snap.Fleet.Card("s1-2.w1").Col)
-	assert.Equal(t, sprint.Ready, snap.Fleet.Card("s1-3.w1").Col)
-	assert.Equal(t, sprint.Ready, snap.Fleet.Card("s1-4.w1").Col)
-
-	// Finish the second Working card (s1-2.w1)
-	h.must(FinishStep(sprint.FinishReq{
-		As: amyRow, Sel: sprint.Sel{IDs: []string{"s1-2.w1"}},
-		Gens: map[string]int{"s1-2.w1": 1}, Head: "def",
-	}))
-
-	snap = h.snap()
-	// Shared occupancy reached zero, so the oldest ready card (s1-3.w1) is promoted into working!
-	// And s1-4.w1 remains ready (one-shot: one card at a time).
-	assert.Equal(t, 1, snap.Fleet.Count(amyRow, sprint.Working), "promoted exactly one card into working")
-	assert.Equal(t, 1, snap.Fleet.Count(amyRow, sprint.Ready), "remaining card stays ready")
-	assert.Equal(t, sprint.Working, snap.Fleet.Card("s1-3.w1").Col)
-	assert.Equal(t, sprint.Ready, snap.Fleet.Card("s1-4.w1").Col)
-
-	// Finish the third card (s1-3.w1)
-	h.must(FinishStep(sprint.FinishReq{
-		As: amyRow, Sel: sprint.Sel{IDs: []string{"s1-3.w1"}},
-		Gens: map[string]int{"s1-3.w1": 1}, Head: "ghi",
-	}))
-
-	snap = h.snap()
-	assert.Equal(t, 1, snap.Fleet.Count(amyRow, sprint.Working))
-	assert.Equal(t, 0, snap.Fleet.Count(amyRow, sprint.Ready))
-	assert.Equal(t, sprint.Working, snap.Fleet.Card("s1-4.w1").Col)
 }
