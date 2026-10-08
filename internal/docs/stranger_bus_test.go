@@ -99,19 +99,27 @@ func strangerBusHostProblems(transcript string) []string {
 	return problems
 }
 
-// strangerBusReadLogRecords are the earlier records under docs/stranger/ a run's
-// Setup read log may speak of. The run reads README and help first, and anything
-// else only after a stumble, named with the stumble it answered, so a record the
-// Setup claims to have read must be named there (the reader's finding: "the two
-// earlier records in docs/stranger/" named no file).
-var strangerBusReadLogRecords = []string{
-	"docs/stranger/friend-fake-harness.md",
-	"docs/stranger/three-card-sprint.md",
+// strangerBusReadLogRecord is an earlier record under docs/stranger/ a run's
+// Setup read log may speak of, with the stumble it followed. The run reads
+// README and help first, and anything else only after a stumble, named with the
+// stumble it answered, so a record the Setup claims to have read must be named
+// there with the stumble that sent the run to it (the reader's finding: "the
+// two earlier records in docs/stranger/" named no file, and a bare name still
+// did not say which stumble each followed).
+type strangerBusReadLogRecord struct {
+	path    string
+	stumble string
+}
+
+var strangerBusReadLogRecords = []strangerBusReadLogRecord{
+	{"docs/stranger/friend-fake-harness.md", "stumble 1"},
+	{"docs/stranger/three-card-sprint.md", "stumble 2"},
 }
 
 // strangerBusReadLogProblems is every earlier record the Setup read log speaks
-// of without naming. A Setup that names no earlier record has no problem; one
-// that does must name each record and the stumble it followed.
+// of without naming, or names without tying it to the stumble it followed. A
+// Setup that names no earlier record has no problem; one that does must name
+// each record and the stumble after which it was read.
 func strangerBusReadLogProblems(setup []string) []string {
 	text := strings.Join(setup, "\n")
 	var problems []string
@@ -119,8 +127,12 @@ func strangerBusReadLogProblems(setup []string) []string {
 		return problems
 	}
 	for _, record := range strangerBusReadLogRecords {
-		if !strings.Contains(text, record) {
-			problems = append(problems, "the Setup read log speaks of earlier records without naming "+record)
+		if !strings.Contains(text, record.path) {
+			problems = append(problems, "the Setup read log speaks of earlier records without naming "+record.path)
+			continue
+		}
+		if !strings.Contains(text, record.path+" after "+record.stumble) {
+			problems = append(problems, "the Setup read log names "+record.path+" without tying it to "+record.stumble)
 		}
 	}
 	return problems
@@ -150,6 +162,8 @@ func TestStrangerRunBusTwoNamesIsRecorded(t *testing.T) {
 		"empty card":      {strings.Replace(good, "- card: a-card", "- card: ", 1), `stumble "1. one" has no proposed card line`},
 		"no host command": {strings.Replace(good, "$ podman --cgroup-manager=cgroupfs run -d --rm --name trial image sleep 1\ncontainer\n", "", 1), "the transcript does not show the host-side command `podman --cgroup-manager=cgroupfs run -d`"},
 		"unnamed record":  {strings.Replace(good, "bench\n", "bench\nthe two earlier records in docs/stranger/ name the same walls\n", 1), "the Setup read log speaks of earlier records without naming docs/stranger/friend-fake-harness.md"},
+		"no association":  {strings.Replace(good, "bench\n", "bench\nthe two earlier records in docs/stranger/ name the same walls: docs/stranger/friend-fake-harness.md and docs/stranger/three-card-sprint.md\n", 1), "the Setup read log names docs/stranger/friend-fake-harness.md without tying it to stumble 1"},
+		"swapped":         {strings.Replace(good, "bench\n", "bench\nthe two earlier records in docs/stranger/ name the same walls: docs/stranger/friend-fake-harness.md after stumble 2 and docs/stranger/three-card-sprint.md after stumble 1\n", 1), "the Setup read log names docs/stranger/three-card-sprint.md without tying it to stumble 2"},
 	} {
 		transcript := strings.Join(strangerBusSectionBodies(c.text)["Transcript"], "\n")
 		setup := strangerBusSectionBodies(c.text)["Setup"]
@@ -176,8 +190,9 @@ func TestStrangerRunBusTwoNamesIsRecorded(t *testing.T) {
 	// The correction this attempt carries: the Setup read log names every read
 	// past README and help with the stumble it followed. A claim that two
 	// earlier records under docs/stranger/ were read must name
-	// docs/stranger/friend-fake-harness.md and docs/stranger/three-card-sprint.md
-	// and the stumble each followed, instead of the bare "earlier records" the
-	// reader found.
+	// docs/stranger/friend-fake-harness.md after stumble 1 and
+	// docs/stranger/three-card-sprint.md after stumble 2, instead of the bare
+	// "earlier records" the reader found or a bare pair of names that says
+	// nothing about which stumble each followed.
 	require.Empty(t, strangerBusReadLogProblems(strangerBusSectionBodies(text)["Setup"]), "%s", strangerBusPath)
 }
