@@ -492,8 +492,10 @@
 #   daemons (and any agent whose process is a nova-sprint or a nova-swarm
 #   member) is booted out, a member draining on the SIGTERM, and launchd is
 #   waited on to hold none of them (nova_member_stop_timeout and 30 s more);
-#   ps then shows no nova-sprint and no nova-swarm member left, waited on
-#   for nova_seat_quiet seconds: nothing migrates while one runs;
+#   the processes the window stopped are then waited on by pid (nova-sprint
+#   window, its bound nova_seat_quiet seconds), and nothing else: a process
+#   that merely runs the binary is listed OTHER and ignored, because the
+#   binary is replaced by rename and a running process keeps its inode;
 #   the configuration store is migrated (the candidate's nova-config
 #   migrate), the library loaded (its nova-redis fn load), the tools
 #   installed (its nova-update release install, fresh inodes);
@@ -620,32 +622,30 @@
               # the non-zero exit is the answer it waits for, never a failure
               failed_when: seat_held.rc == 0
 
-            - name: "window: ps shows no nova-sprint and no nova-swarm member (through live)"
-              ansible.builtin.command: { argv: "{{ seat_live }}" }
-              environment: "{{ seat_env }}"
+            - name: "window: the agents the window stopped exit, and nothing else is waited on"
+              ansible.builtin.command:
+                argv: >-
+                  {{ [nova_bin_dir ~ '/nova-sprint', 'window', '--bin-dir', nova_bin_dir, '--window', nova_seat_quiet ~ 's']
+                     + (seat_stopped | selectattr('pid', 'gt', 0) | map(attribute='pid') | map('string')
+                        | zip(seat_stopped | selectattr('pid', 'gt', 0) | map(attribute='label')) | map('join', ':')
+                        | map('regex_replace', '^', '--stopped=') | list) }}
               register: seat_quiet
-              until: >-
-                seat_quiet.stdout is match('[{]') and
-                ((seat_quiet.stdout | from_json).processes | selectattr('holds') | list | length) == 0
-              retries: "{{ (nova_seat_quiet | int / 2) | round(0, 'ceil') | int }}"
-              delay: 2
               changed_when: false
               # ignored: read by the assert below, which names the step
               failed_when: false
 
-            - name: "window: nothing old runs"
+            - name: "window: no agent the window stopped still runs"
               ansible.builtin.assert:
-                that: seat_quiet.stdout is match('[{]') and seat_runs | length == 0
+                that: seat_quiet.rc == 0
                 fail_msg: >-
-                  ADOPT REFUSED step=window host={{ inventory_hostname }}: these still run after {{ nova_seat_quiet }} s, so nothing
-                  was migrated: {{ seat_runs | join('; ') or 'the manifest was not read' }}
+                  ADOPT REFUSED step=window host={{ inventory_hostname }}: {{ seat_quiet.stderr | default('') | trim }}
+                  {{ seat_quiet.stdout | default('') | trim }}; nothing was migrated
                 quiet: true
-              vars:
-                seat_runs: >-
-                  {{ ((seat_quiet.stdout | from_json).processes if seat_quiet.stdout is match('[{]') else [])
-                     | selectattr('holds') | map(attribute='pid') | map('string')
-                     | zip(((seat_quiet.stdout | from_json).processes if seat_quiet.stdout is match('[{]') else [])
-                           | selectattr('holds') | map(attribute='args')) | map('join', ' ') | list }}
+
+            - name: "window: the others it ignored, and the verdict"
+              ansible.builtin.debug: { msg: "ADOPT {{ item }}" }
+              loop: "{{ seat_quiet.stdout_lines | default([]) }}"
+              when: seat_quiet.rc == 0
 
             - name: "window: the configuration store is migrated (the candidate's nova-config)"
               ansible.builtin.command:

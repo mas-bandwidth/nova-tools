@@ -168,6 +168,7 @@ func init() {
 		{"clear", "--confirm sprint", "clear --confirm sprint", (*app).cmdClear},
 		{"teardown", "--confirm sprint", "teardown --confirm sprint", (*app).cmdTeardown},
 		{"live", "[--bin-dir <dir>] [--dashboard <link>]... [--json]", "live --json", (*app).cmdLive},
+		{"window", "--bin-dir <dir> [--stopped <pid>:<label>]... [--window <duration>] [--every <duration>]", "window --bin-dir ~/.local/bin --window 60s", (*app).cmdWindow},
 		{"adopt", "<version|path> --source <checkout> --inventory <file> --reason <text> [--limit <host>] [--receipts <dir>] [--dry-run]", "adopt v1.2.0-dev.0123abc --source . --inventory ./nova-inventory --reason 'the dashboard fix' --dry-run", (*app).cmdAdoptPlay},
 		{"server switch", "[<binary>] [--rollback] [--window <duration>] [--target <path>] [--tick-deadline <duration>]", "server switch /path/to/binary --rollback", (*app).cmdServerSwitch},
 		// last: its example moves the seat, and every coordinator verb's example before it is the holder's

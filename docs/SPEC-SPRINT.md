@@ -4664,6 +4664,7 @@ The mechanisms: a **blocking read** waits in the store until the thing arrives (
 | table and where displays | sprint to a terminal (nova-table watch, where --watch) | timer poll | --every (1 s) | a display pull: a person's terminal, no party waits on it |
 | samplers and watchdogs | one machine to itself (host load, a card's live sample, the slot cleaner, the wall's process count, a job lease's heartbeat, the idle watch, the store round trip) | not a channel | 1 s to 30 s each | a measurement or a lease of one machine; no message or card moves |
 | waits and retries | one machine to itself (a process gone, a lock, a file steady, a server up, a push or open retried, a tick given up stopping) | not a channel | bounded by its caller | a wait on the machine's own state, or a backoff; no message or card moves |
+| adoption window | the seat's adopt to the processes it stopped | not a channel | --window (nova_seat_quiet, default 60 s), the table read every second until each stopped agent is gone | a wait on the machine's own stopped processes; no message or card moves |
 | nova-wake | bus to the coordinator (nova-wake serve) | removed | - | retired with the tool (fleet/retired-tools.txt); its binary is gone, so a unit that still names it restarts for ever: the loops play retires the unit (nova_retire_units) |
 
 The cards this audit cut, each one row of the table turned from a timer poll into a push; each one's DONE-WHEN is its row's mechanism changed here and its ledger line gone:
@@ -5490,6 +5491,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | goal | `set`, `show`, `drop`: each person's goal and route, pushed by the tick (section 15) |
 | selftest land | lands a canned card on a scratch clone with this binary; green on a good binary, red on a broken lander |
 | live | the manifest of this host, read-only: the installed build, the store's function library against it, the dashboard links and every nova launchd agent, stale or not (section 14, "Adopting a build"); `--json` |
+| window | the adoption window's wait: `--bin-dir <dir> [--stopped <pid>:<label>]... [--window <duration>] [--every <duration>]`: waits only for the agents the adopt stopped, each by its pid from launchd, until it has exited or the bound (`--window`, default 60s) passes; a process of the bin directory's nova-sprint the adopt did not stop is printed `OTHER <pid> <argv>` and ignored, and every stopped agent gone says `WINDOW OK stopped=<n> waited=<s>s others=<n>`; refuses (exit 1) naming each stopped agent still running by pid and label, and nothing else (section 14, "Adopting a build"); `--json` |
 | adopt | `<version\|path> --source <checkout> --inventory <file> --reason <text>`: the seat adopts the build through the tools play, one ADOPT line per step, a half move refused naming the step (section 14, "Adopting a build"); `--limit`, `--dry-run` |
 | server switch | `<binary> [--rollback]`: switches the server binary on disk, keeping the previous binary; with `--rollback`, rolls back if a land fails within the window; `--rollback` alone restores the previous binary |
 | clear | stops the sprint and clears all work in it: a new epoch (section 13); `--confirm sprint` |
@@ -6570,10 +6572,16 @@ the new library. In order:
    agent but the friend daemons, and every agent whose process is this bin directory's
    nova-sprint or a nova-swarm member whatever its plist runs first, is booted out (a member
    drains on the SIGTERM) and launchd is waited on to hold none of them
-   (`nova_member_stop_timeout` and 30 s more).
-3. ps (through `live`'s `processes`) shows no nova-sprint and no nova-swarm member of the bin
-   directory left, waited on for `nova_seat_quiet` seconds: nothing migrates while one runs (a
-   person's `nova-sprint` command counts; the window refuses with their pids and arguments).
+   (`nova_member_stop_timeout` and 30 s more); each stopped agent's pid, read from the
+   pre-window manifest, is the whole of what the window then waits on.
+3. The processes the window stopped are waited on by pid (`nova-sprint window`, its bound
+   `nova_seat_quiet` seconds, the verb's `--window`): each agent booted out must exit, and only
+   it. A process of the bin directory's nova-sprint that the adopt did not stop is somebody
+   else's work (the dashboard's one-second poll, a person's `where`, `card`, `inbox` or
+   `finish`): it is printed as `OTHER <pid> <argv>` and ignored, because the binary is replaced
+   by rename and a running process keeps its inode. Only a stopped agent still running at the
+   bound refuses, named by pid and label and nothing else, and a window whose every stopped
+   agent has exited says `WINDOW OK stopped=<n> waited=<s>s others=<n>`.
 4. The configuration store is migrated (the candidate's `nova-config migrate`), the library
    loaded (its `nova-redis fn load`), and the tools installed (its `nova-update release
    install`, fresh inodes); the build fact is written. Every other machine installs in the
@@ -6625,7 +6633,10 @@ did (the tools put back, the library read back, the agents started again) and na
 before it rolled back, not done. No flag runs a step alone: the play calls `nova-sprint server
 switch` only with `--dry-run` (the candidate's shadow tick), loads the library with `nova-redis
 fn load`, and moves the server with `nova-update release install` and launchctl bootout and
-bootstrap. Tested with fakes
+bootstrap. The window's wait is `nova-sprint window`, run with each stopped agent's
+`--stopped <pid>:<label>` and the bound; it is the only thing that decides whether the old
+processes are gone, so a process of the binary the adopt did not stop (the dashboard's poll, a
+person's verb) is listed `OTHER` and never refuses. Tested with fakes
 (`TestLiveShowsWhatIsInstalled`, `TestAdoptRunsThePlayAndRefusesAHalfMove`), the play with
 `--syntax-check` and `--check` on the fixtures, and the seat's part of the play run for real, in
 the order an adoption meets it, on a coordinator fixture with its own home, launchctl, store,

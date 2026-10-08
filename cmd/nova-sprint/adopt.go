@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +39,12 @@ func init() {
 	// it builds over ssh, switches binaries on disk and pushes to the fleet:
 	// it runs where it is typed or scheduled, never on the server
 	notServed = append(notServed, "adopt")
+	// the window reads this host's process table for the seat play: the seat
+	// runs it where the agents ran, and the server serves it to nobody
+	verbClasses["window"] = classRead
+	notServed = append(notServed, "window")
+	verbExit["window"] = "exit codes: 0 every agent the adopt stopped exited within --window (a process of the seat's binary the adopt did not stop is printed as OTHER and ignored), 1 an agent the adopt stopped still runs at the bound (the refusal names it by pid and label; nothing was migrated), 2 usage"
+	verbEffect["window"] = "reads only: the seat's process table (ps) until each agent the adopt stopped has exited, or --window passes; the other processes of the seat's nova-sprint are printed as OTHER and ignored"
 }
 
 // adoptRunner runs one command and returns its combined output: exec in
@@ -525,4 +532,139 @@ func (a *app) cmdAdopt(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// cmdWindow is the adoption window's wait (docs/SPEC-SPRINT.md, "Adopting a
+// build"; internal/sprint/adopt_window.go): the seat play boots out the old
+// server, the member and every other loaded nova agent but the friends, then
+// runs this verb with each stopped agent as --stopped <pid>:<label>. It reads
+// the seat's process table and waits for those pids alone, until each has
+// exited or --window passes. A process of the seat's own nova-sprint that the
+// adopt did not stop is somebody else's work (the dashboard's poll, a
+// person's verb): it is printed as OTHER <pid> <argv> and ignored, because
+// the binary is replaced by rename and a running process keeps its inode.
+// Only an agent the adopt itself stopped refuses, named by pid and label.
+func (a *app) cmdWindow(args []string, stdout, stderr io.Writer) int {
+	const name = "window"
+	fs, c := a.verbSetup(name)
+	binDir := fs.String("bin-dir", "", "the bin directory whose nova-sprint is the seat's binary (default: ~/.local/bin)")
+	var stopped stringList
+	fs.Var(&stopped, "stopped", "an agent the adopt stopped, <pid>:<label> (repeatable)")
+	bound := fs.Duration("window", sprint.DefaultAdoptWindow, "how long each stopped agent gets to exit before the window refuses")
+	every := fs.Duration("every", sprint.DefaultAdoptWindowEvery, "how often the process table is read while waiting")
+	pos, err := parse(fs, args)
+	if err != nil || len(pos) > 0 {
+		return refuse(stderr, name, argErr("takes no words ", err, pos...))
+	}
+	agents, err := windowAgents(stopped)
+	if err != nil {
+		return refuse(stderr, name, oneline.Err(err))
+	}
+	if strings.TrimSpace(*binDir) == "" {
+		*binDir = filepath.Join(a.getenv("HOME"), ".local", "bin")
+	}
+	sweeper := windowSweeper{binDir: *binDir, stopped: map[int]bool{}, run: execAdoptRunner}
+	for _, ag := range agents {
+		sweeper.stopped[ag.PID] = true
+	}
+	now := a.now
+	if now == nil {
+		now = time.Now
+	}
+	ctx := context.Background()
+	res, err := sprint.WaitAdoptWindow(sprint.AdoptWindowOptions{
+		Stopped: agents, Bound: *bound, Every: *every, Now: now,
+		Sweep: func() ([]sprint.AdoptWindowProcess, error) { return sweeper.sweep(ctx) },
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "%s window: %s; run: nova-sprint live\n", prog, oneline.Err(err))
+		return 1
+	}
+	if c.json {
+		b, _ := json.Marshal(res) // ignored: a struct of numbers, strings and slices always encodes
+		fmt.Fprintln(stdout, string(b))
+		if res.OK() {
+			return 0
+		}
+		return 1
+	}
+	if !res.OK() {
+		fmt.Fprintf(stderr, "%s window REFUSED: %s; run: nova-sprint live\n", prog, oneline.Escape(res.Refusal()))
+		return 1
+	}
+	for _, l := range res.OtherLines() {
+		fmt.Fprintln(stdout, oneline.Escape(l))
+	}
+	fmt.Fprintln(stdout, res.Line())
+	return 0
+}
+
+// windowAgents parses the repeated --stopped <pid>:<label> flags: the agents
+// the adopt stopped, as the pre-window manifest read their pids.
+func windowAgents(specs []string) ([]sprint.AdoptWindowAgent, error) {
+	var out []sprint.AdoptWindowAgent
+	for _, s := range specs {
+		pid, label, ok := strings.Cut(s, ":")
+		if !ok {
+			return nil, fmt.Errorf("--stopped wants <pid>:<label>, not %q", s)
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(pid))
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf("--stopped %q: the pid is not a positive number", s)
+		}
+		label = strings.TrimSpace(label)
+		if label == "" {
+			return nil, fmt.Errorf("--stopped %d: the label is empty", n)
+		}
+		out = append(out, sprint.AdoptWindowAgent{PID: n, Label: label})
+	}
+	return out, nil
+}
+
+// windowSweeper reads the seat's process table for the window: every process
+// of this bin directory's nova-sprint (the binary, a bare name found on PATH
+// and a link followed, as live reads it), and every process whose pid is an
+// agent the adopt stopped, whatever it runs.
+type windowSweeper struct {
+	binDir  string
+	stopped map[int]bool
+	run     adoptRunner
+}
+
+func (s windowSweeper) sweep(ctx context.Context) ([]sprint.AdoptWindowProcess, error) {
+	out, err := s.run(ctx, "ps", "-A", "-o", "pid=,args=")
+	if err != nil {
+		return nil, err
+	}
+	bin := s.binDir
+	if b, err := filepath.EvalSymlinks(bin); err == nil {
+		bin = b
+	}
+	self := os.Getpid()
+	procs := []sprint.AdoptWindowProcess{}
+	for _, l := range strings.Split(out, "\n") {
+		f := strings.Fields(l)
+		if len(f) < 2 {
+			continue
+		}
+		pid, err := strconv.Atoi(f[0])
+		if err != nil || pid == self {
+			continue
+		}
+		path := f[1]
+		if !strings.Contains(path, "/") {
+			if found, err := exec.LookPath(path); err == nil {
+				path = found
+			}
+		}
+		if resolved, err := filepath.EvalSymlinks(path); err == nil {
+			path = resolved
+		}
+		mine := filepath.Dir(path) == bin && filepath.Base(path) == "nova-sprint"
+		if !mine && !s.stopped[pid] {
+			continue
+		}
+		procs = append(procs, sprint.AdoptWindowProcess{PID: pid, Args: strings.Join(f[1:], " "), Mine: mine})
+	}
+	return procs, nil
 }
