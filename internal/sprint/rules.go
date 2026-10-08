@@ -37,7 +37,8 @@ const (
 	RuleReadLate    = "read-late"    // a read past its deadline: taken back and asked of another reader, once an attempt (judgment_rules.go)
 	// RulePaths: a failed attempt whose report proposes PATHS (PATHS-PROPOSED): its widened
 	// twin, or one judgment with the twin's command when a proposed file is shared
-	// (paths_proposed.go). Not in RuleNames: nova-config's answer_rules_off enum
+	// (paths_proposed.go). A stream marked land-protected widens those PATHS in place at
+	// finish instead, the same id (hold_fix.go). Not in RuleNames: nova-config's answer_rules_off enum
 	// (config.AnswerRules, held equal to RuleNames) does not name it yet, so only run
 	// --answer-rules=false turns it off.
 	RulePaths = "paths"
@@ -295,6 +296,9 @@ func ruleFailed(s *Snapshot, a *RuleAnswer) {
 		return // a harness fault, or a HOLD with findings: the failure is the fix (harness_fault.go)
 	case mindCard(pr) != "":
 		left(a, mindCard(pr))
+		return
+	case strings.HasPrefix(a.open.Note.What, holdFixRefused):
+		left(a, "hold fix was not applied: a mind's, and the same brief is not dealt again")
 		return
 	case holdsFor(s, pr) != "":
 		ruleHoldNeed(s, a, pr, holdsFor(s, pr))

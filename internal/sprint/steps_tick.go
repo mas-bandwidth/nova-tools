@@ -311,6 +311,7 @@ var TickEnd = []TickPartDef{
 // --idle-alarm), the idle alarm (TickIdle) after the overdue part, before the done part.
 // With neither the end is TickEnd's alone, as before them. The widen rule's part (widen.go)
 // runs before the rule rework, which reworks nothing the widen rule leaves to a mind.
+// A HOLD that names a hold-fix line is applied at finish (hold_fix.go), not in this part.
 func TickEndWith(rules, idle bool) []TickPartDef {
 	out := append([]TickPartDef(nil), TickEnd[:2]...)
 	if rules {

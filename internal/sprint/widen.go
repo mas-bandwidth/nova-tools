@@ -190,8 +190,8 @@ func widenAnswers(s *Snapshot, r TickReq) []widenAnswer {
 			if pr.F("result") != "failed" || wc == nil || !isHold(wc.F("report")) || !strings.Contains(wc.F("report"), cardhdr.KeyPaths) {
 				continue
 			}
-			if _, ok := heldProposal(s, pr); ok || holdsFor(s, pr) != "" {
-				continue // a PATHS-PROPOSED line is the paths rule's, a HOLD for a card the hold-need rule's
+			if _, ok := heldProposal(s, pr); ok || holdsFor(s, pr) != "" || strings.HasPrefix(o.Note.What, holdFixRefused) {
+				continue // a PATHS-PROPOSED line is the paths rule's or finish's (hold_fix.go), a HOLD for a card the hold-need rule's; a refused hold fix stands
 			}
 			a.text, a.from = wc.F("report"), "its HOLD"
 		} else {
