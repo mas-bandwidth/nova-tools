@@ -133,7 +133,6 @@ func TestFixPageConstants(t *testing.T) {
 	assert.Contains(t, js, `FLOW.forEach`, "Work headers and cells follow the flow order")
 	assert.Contains(t, js, `var STATES = ["landed", "merging", "fix", "review", "working", "ready", "waiting"];`)
 	assert.Contains(t, js, `var FLOW = ["waiting", "ready", "working", "review", "fix", "merging", "landed"];`)
-	assert.Contains(t, js, `if (level === "fix") return "p-fix";`)
 }
 
 // fixDriver draws a copy with app.js on the scroll test's DOM shim and reads back the state
@@ -155,7 +154,6 @@ process.stdout.write(JSON.stringify({
   amy: row('friends', 'amy').children[3].children.map(cls),
   friendsTotal: total('friends').children[3].textContent,
   inflight: doc.getElementById('inflight-sub').title,
-  marks: kids('priority-marks').map(k => cls(k).replace('mark ', '') + ' ' + k.title),
 }));
 `
 
@@ -190,8 +188,8 @@ func TestFixPageDrawsFixBetweenReviewAndMerging(t *testing.T) {
 	require.NoError(t, cmd.Run(), "node runner failed: %s", errBuf.String())
 	require.Empty(t, errBuf.String(), "app.js threw while drawing")
 	var res struct {
-		Legend, Bar, CI, WorkTotal, Bench, Amy, Marks []string
-		BenchTitle, FriendsTotal, Inflight            string
+		Legend, Bar, CI, WorkTotal, Bench, Amy []string
+		BenchTitle, FriendsTotal, Inflight     string
 	}
 	require.NoError(t, json.Unmarshal(outBuf.Bytes(), &res), outBuf.String())
 
@@ -212,7 +210,6 @@ func TestFixPageDrawsFixBetweenReviewAndMerging(t *testing.T) {
 	assert.Equal(t, []string{"p-fix", "", "", "", "", "", "", ""}, res.Amy, "amy's second attempt is her purple cell")
 	assert.Equal(t, "1 fix", res.FriendsTotal, "the fix figure under the bars")
 	assert.Equal(t, "2 working (1 fix), 0 review, 1 merging", res.Inflight)
-	assert.Equal(t, []string{"p-blocker blocker: ci-09", "p-fix fix: ci-03"}, res.Marks, "the fix mark purple, after the reds")
 }
 
 // New servers state the priority; legacy attempt inference must not override it.

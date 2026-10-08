@@ -210,22 +210,15 @@ button.toggle:hover { color: var(--text); border-color: var(--border-strong); }
 .merging { background: var(--s-merging); } .landed { background: var(--s-landed); }
 .seg-read { background: var(--s-read); } .seg-blocker { background: var(--s-blocker); } .seg-critical { background: var(--s-critical); }
 
-.priority-marks { display: flex; gap: .25rem; flex-wrap: wrap; margin-top: 1rem; }
-.mark { width: .5rem; height: .5rem; border-radius: 1px; }
 .p-work { background: var(--p-work); }
 
 
 .win { color: var(--text-3); font-size: .8em; white-space: nowrap; }
-.panel-head .archived { background: none; border: 0; padding: 0; font: inherit; font-size: 1.625rem; cursor: pointer; text-decoration: underline dotted; }
 .release { display: inline-flex; align-items: center; gap: 0.25rem; height: 3rem; padding: 0 0.25rem; border: 1px solid var(--border); border-radius: 0.75rem; font-size: 1.5rem; }
 .release[hidden] { display: none; }
 .release a { padding: 0 0.75rem; border-radius: 0.5rem; line-height: 2.25rem; color: var(--text-3); text-decoration: none; font-family: var(--mono); }
 .release a:hover { color: var(--text-2); }
 .release a.on { color: var(--text); background: var(--neutral-tint); }
-.merge-facts { display: flex; flex-wrap: wrap; gap: 1.5rem 4rem; padding: 0.5rem 3rem 2.5rem; }
-.merge-facts .label { display: block; color: var(--text-2); font-size: 1.5rem; }
-.merge-facts .num { font-family: var(--mono); font-size: 2rem; }
-.lanes .row { grid-template-columns: minmax(10rem, 1fr) minmax(6rem, .6fr) 6rem minmax(10rem, 1.4fr) minmax(10rem, 1.4fr); }
 :root { --p-blocker: #ff1a1a; --p-critical: #9b1c1c; --p-reader: #fb8321; --p-work: var(--s-working); }
 .p-blocker { background: var(--p-blocker); }
 .p-critical { background: var(--p-critical); }
@@ -480,24 +473,10 @@ footer a:hover { color: var(--text); }
     <div class="legend" id="legend"></div>
   </div>
   <div class="cells thick" id="overall"></div>
-  <div id="priority-marks" class="priority-marks" aria-label="Card priorities"></div>
-</section>
-<section class="panel merge" id="merge-row">
-  <div class="panel-head"><h2>Merge</h2></div>
-  <div class="merge-facts">
-    <div><span class="label">merging</span><span class="num" id="mr-merging">-</span></div>
-    <div><span class="label">review</span><span class="num" id="mr-review">-</span></div>
-    <div><span class="label">landed / 30m</span><span class="num" id="mr-landed">-</span></div>
-    <div><span class="label">oldest merging</span><span class="num" id="mr-oldest">-</span></div>
-    <div><span class="label">base gate</span><span id="mr-gate"></span></div>
-    <div><span class="label">drift</span><span class="num" id="mr-drift">-</span></div>
-    <div><span class="label">since sync</span><span class="num" id="mr-sync">-</span></div>
-    <div><span class="label">since promotion</span><span class="num" id="mr-promoted">-</span></div>
-  </div>
 </section>
 
 <section class="panel streams">
-  <div class="panel-head"><h2>Work</h2><span class="muted" id="streams-sub"></span><button type="button" class="muted archived" id="streams-archived" hidden></button></div>
+  <div class="panel-head"><h2>Work</h2><span class="muted" id="streams-sub"></span></div>
   <div class="scroll"><div class="rows" id="streams"><div class="row head"><div>stream</div><div>status</div><div class="num">waiting</div><div class="num">ready</div><div class="num">working</div><div class="num">review</div><div class="num">fix</div><div class="num">merging</div><div class="frac">landed</div><div class="num">cost</div></div></div></div>
 </section>
 
@@ -516,10 +495,6 @@ footer a:hover { color: var(--text); }
   <div class="scroll"><div class="rows" id="providers"></div></div>
 </section>
 
-<section class="panel lanes">
-  <div class="panel-head"><h2>Lanes</h2><span class="muted" id="lanes-sub"></span></div>
-  <div class="scroll"><div class="rows" id="lanes"><div class="row head"><div>machine</div><div>kind</div><div class="num">width</div><div>held</div><div>waiting</div></div></div></div>
-</section>
 
 <section class="panel readers" id="readers-panel" hidden>
   <div class="panel-head"><h2>Readers and merge</h2><span class="muted" id="readers-sub"></span></div>
