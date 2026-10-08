@@ -382,9 +382,9 @@
             seat_kept: "{{ seat_bin_files.files | map(attribute='path') | map('basename') | list }}"
           when: seat_cand != ''
 
-        - name: "seat: the window opens when the install replaces a tool or the library is not the installed build's"
+        - name: "seat: the window opens for changed tools, a changed library or a pending schema migration"
           ansible.builtin.set_fact:
-            seat_window: "{{ seat_cand != '' and ((seat_replaces | default([])) | length > 0 or not seat_was.library.match) }}"
+            seat_window: "{{ seat_cand != '' and ((seat_replaces | default([])) | length > 0 or not seat_was.library.match or ((seat_migrate_dry.stdout | from_json).facts.pending | int) > 0) }}"
 
         - name: "seat: this adoption keeps the nova-redis of before (its library is the one on the store)"
           ansible.builtin.set_fact:
