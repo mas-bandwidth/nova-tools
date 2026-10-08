@@ -517,3 +517,7 @@ MCFriendReadyTakeOneShot.cfg	MCFriendReadyTake.tla	pass	-	ignore-terminal	friend
 MCFriendReadyTakeOneShotRefillWitness.cfg	MCFriendReadyTake.tla	invariant	OneShotRefillWitness	ignore-terminal	friendreadytake	required	-
 MCSprintPause.cfg	MCSprintPause.tla	pass	-	ignore-terminal	sprintpause	required	-
 MCSprintPauseReachable.cfg	MCSprintPause.tla	invariant	ReachPausedFinishThenResumeWitness	ignore-terminal	sprintpause	required	-
+MCOneShotPresent.cfg	MCOneShotPresent.tla	pass	-	ignore-terminal	oneshotpresent	required	-
+MCOneShotPresentBrokenSupersede.cfg	MCOneShotPresent.tla	invariant	UnacceptedRequestOwed	ignore-terminal	oneshotpresent	required	-
+MCOneShotPresentBrokenRedeliver.cfg	MCOneShotPresent.tla	invariant	AcceptedOnce	ignore-terminal	oneshotpresent	required	-
+MCOneShotPresentWitness.cfg	MCOneShotPresent.tla	invariant	ReachAcceptedThenRestartWitness	ignore-terminal	oneshotpresent	required	-
