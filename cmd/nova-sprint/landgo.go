@@ -860,6 +860,9 @@ func (l *lander) cureBase(ctx context.Context, dir, stream string, cards []landC
 		},
 	})
 	l.conflictKind, l.conflictPaths = "", nil // a try's conflict is no card's stop
+	if err := ctx.Err(); err != nil {
+		return -1, err.Error() // an abandoned gate proves no head unable to cure the base
+	}
 	if benchUnavailable {
 		return -1, benchGateUnavailableWhy // leave every head eligible for a later cure search
 	}

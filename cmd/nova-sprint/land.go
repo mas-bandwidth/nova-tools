@@ -505,6 +505,9 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	// a card already pushed and not reported is recorded before any new merge
 	var recordFailed bool
 	s, recordFailed = l.recordPushed(ctx, s, order)
+	if s == nil {
+		return l.report(true, nil, stdout, stderr) // no pass can run without a canonical snapshot
+	}
 	order = stillQueued(s, order)
 	// the pass: every stream's batch merged beside the others', then the green ones landed
 	// one at a time in this order (landpass.go; tla/LandPass.tla)
@@ -1084,15 +1087,26 @@ func (l *lander) recordPushed(ctx context.Context, s *sprint.Snapshot, order []s
 		step := store.Step{Verb: "land", Load: []string{sprint.Work, sprint.Merge}, Epoch: &epoch, Actor: l.c.actor,
 			Plan: func(fresh *sprint.Snapshot) sprint.Plan { return sprint.ClearObsoletePushedUnreported(fresh, stream) }}
 		l.a.serial.Lock()
-		res, err := l.st.Run(ctx, step)
-		if err == nil && len(res.Refused) == 0 {
-			s, err = l.st.Load(ctx, []string{sprint.Work, sprint.Merge, sprint.Fleet}, nil)
+		res, runErr := l.st.Run(ctx, step)
+		var fresh *sprint.Snapshot
+		var loadErr error
+		if runErr == nil && len(res.Refused) == 0 {
+			fresh, loadErr = l.st.Load(ctx, []string{sprint.Work, sprint.Merge, sprint.Fleet}, nil)
 		}
 		l.a.serial.Unlock()
-		if err != nil || len(res.Refused) != 0 || s == nil {
-			l.keep(landBatch{Stream: stream, Status: "failed", Reason: "obsolete pushed receipt could not be cleared: " + stepWhy(res, err)})
-			return s, true
+		if runErr != nil || len(res.Refused) != 0 {
+			l.keep(landBatch{Stream: stream, Status: "failed", Reason: "obsolete pushed receipt could not be cleared: " + stepWhy(res, runErr)})
+			return nil, true
 		}
+		if loadErr != nil || fresh == nil {
+			why := firstLine("", loadErr)
+			if why == "" {
+				why = "the store returned no snapshot"
+			}
+			l.keep(landBatch{Stream: stream, Status: "failed", Reason: "obsolete pushed receipt was cleared but its result could not be read: " + why})
+			return nil, true
+		}
+		s = fresh
 	}
 	type pushed struct {
 		stream string

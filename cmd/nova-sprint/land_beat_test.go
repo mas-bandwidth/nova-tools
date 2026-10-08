@@ -409,6 +409,63 @@ func TestUnavailableBenchLeavesTheBaseGateRetryOpen(t *testing.T) {
 	r.clean()
 }
 
+// Canceling a cure gate leaves that head eligible when the base is tried again.
+func TestCanceledCureGateDoesNotRememberTheHeadAsRed(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.git(r.worker, "switch", "-q", "--detach", "origin/main")
+	r.files("the module", goModule)
+	r.files("the red base", map[string]string{"bad.go": buildRed})
+	r.git(r.worker, "push", "-q", "origin", "HEAD:refs/heads/main")
+	r.git(r.worker, "fetch", "-q", "origin")
+	r.ok("add --stream s1 --count 1 --one")
+	head := r.card("s1-1", map[string]string{"bad.go": ""})
+	r.queued(map[string]string{"s1-1": head}, "s1-1")
+	r.git(r.clone, "fetch", "-q", "origin", "+refs/heads/main:refs/remotes/origin/main", head)
+	r.git(r.clone, "switch", "-q", "--no-track", "--force-create", "land/s1", "refs/remotes/origin/main")
+	baseSha := r.git(r.clone, "rev-parse", "HEAD")
+	r.ok("fleet beat vision --load 1 --cores 8")
+	r.ok("fleet up vision")
+	var w whereView
+	r.json("where", &w)
+	for name, row := range w.Tables["fleet"] {
+		if name != "vision" && row["status"] == sprint.Up {
+			r.ok("fleet down " + name)
+		}
+	}
+	st, err := r.a.store(common{redis: "mem:0", actor: "tester"})
+	require.NoError(t, err)
+	l := &lander{a: r.a, st: st, gateKey: "s1", base: "main", prose: map[string][]string{}, diffs: map[string]string{}, scope: map[string][]string{}}
+	s, err := st.Load(t.Context(), []string{sprint.Work, sprint.Merge, sprint.Fleet}, nil)
+	require.NoError(t, err)
+	cards, ok := l.openStream(s, "s1")
+	require.True(t, ok)
+	ctx, cancel := context.WithCancel(t.Context())
+	b := r.a.landState()
+	b.mu.Lock()
+	b.flight = &landFlight{}
+	b.hostName = func() (string, error) { return "coordinator.local", nil }
+	b.gateBench = func(context.Context, string, string, [][]string, bool) (string, int, error) {
+		cancel()
+		return "", 0, bench.ErrNoBench
+	}
+	b.mu.Unlock()
+	cured, env := l.cureBase(ctx, r.clone, "s1", cards, baseSha, "red base")
+	assert.Equal(t, -1, cured)
+	assert.ErrorIs(t, ctx.Err(), context.Canceled)
+	assert.NotEmpty(t, env)
+	assert.Empty(t, l.cureTried, "the canceled candidate remains eligible")
+	b.mu.Lock()
+	b.gateBench = func(context.Context, string, string, [][]string, bool) (string, int, error) {
+		return "", 0, nil
+	}
+	b.mu.Unlock()
+	cured, env = l.cureBase(t.Context(), r.clone, "s1", cards, baseSha, "red base")
+	assert.Equal(t, 0, cured, "the same head can cure the base on retry")
+	assert.Empty(t, env)
+	r.clean()
+}
+
 // The bench gate is one shell line: each run named, then run, the first red ending it
 // with its status; the finding names that run, read off the line's own output.
 func TestTheBenchGateScriptStopsAtTheFirstRedRun(t *testing.T) {
