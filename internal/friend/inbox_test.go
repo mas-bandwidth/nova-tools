@@ -49,6 +49,14 @@ func inboxJob(t *testing.T, dir, job, brief string) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", job, "BRIEF.md"), []byte(brief), 0o644))
 }
 
+// withTierLine is a brief with the tier line friend sync writes after its STATUS line
+// (sprint.FriendTierLine's shape): the model a delivered brief names, the one source of truth
+// a lane runs and a finish checks, beside the packet's.
+func withTierLine(brief, tier, model string) string {
+	status, rest, _ := strings.Cut(brief, "\n")
+	return status + "\ntier: " + tier + " model: " + model + "\n" + rest
+}
+
 func briefOf(t *testing.T, dir, job string) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(dir, "inbox", job, "BRIEF.md"))
@@ -373,6 +381,7 @@ func TestTheHeldPacketsModelReachesTheLane(t *testing.T) {
 	dir := r.d.Dir
 	c := workCard("modelled.w1", "working")
 	c.Tier, c.Model = "pro", "prov/m"
+	c.Brief = withTierLine(c.Brief, c.Tier, c.Model) // the delivered brief names it
 	inboxJob(t, dir, c.Job, c.Brief)
 	row := &twinRow{}
 	row.set(c)

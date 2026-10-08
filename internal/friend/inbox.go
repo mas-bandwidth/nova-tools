@@ -43,9 +43,11 @@ type HeldCard struct {
 	Kind   string `json:"kind,omitempty"`
 	Branch string `json:"branch,omitempty"`
 	Tier   string `json:"tier,omitempty"`
-	// Model is the model her row names for the card's tier (the packet's, written by the
-	// deal): the lane launches her harness on it (WithModel) and the finish checks her
-	// report names it (ModelMismatch). Empty when her row names none.
+	// Model is the model her row named for the card's tier when the server answered (the
+	// packet's, written by the deal). It is not what a lane runs on nor what a finish checks:
+	// her row may change the model between the deal and the delivery, so the delivered
+	// BRIEF.md is the one source of truth (briefModel, nextCard, outboxStep). Empty when her
+	// row named none.
 	Model   string `json:"model,omitempty"`
 	Stream  string `json:"stream,omitempty"`
 	Attempt int    `json:"attempt,omitempty"`
@@ -374,6 +376,34 @@ func (l *loop) inboxStep(now time.Time) {
 	l.outboxStep(now)                       // every report in her outbox against the row just read
 }
 
+// briefModel is the model the delivered BRIEF.md at path names for the card's tier: the
+// "tier: <tier> model: <model>" line of its prelude, as friend sync writes it
+// (sprint.FriendTierLine). "" when it names none, and ok once the brief was read. The
+// delivered brief is the one source of truth for the model a card runs on: her row may
+// change a model between the deal and the delivery, and the lane runs, and the finish
+// checks, the one she was told. The card's own body, after the first blank line, never
+// speaks for it.
+func briefModel(path string) (model string, ok bool) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		if l == "" {
+			break // the prelude ends at the first blank line; the card's own body is after it
+		}
+		rest, found := strings.CutPrefix(l, "tier: ")
+		if !found {
+			continue
+		}
+		if _, m, has := strings.Cut(rest, " model: "); has {
+			return strings.TrimSpace(m), true
+		}
+		return "", true
+	}
+	return "", true
+}
+
 // nextCard is the next card a free lane is handed: while the server has said what is on
 // her row, the first held card delivered and not done (its BRIEF.md there, no RESULT.md or
 // REPORT.md in its outbox, not marked done in her queue file) and not skipped, in the
@@ -394,7 +424,11 @@ func (d *Daemon) nextCard(skip func(Card) bool) (Card, bool, error) {
 		done := slices.ContainsFunc(q.Tasks, func(t Task) bool {
 			return t.ID == h.Card && t.State == "done" && (t.Job == "" || t.Job == h.Job)
 		})
-		c := Card{ID: h.Card, Brief: filepath.Join(d.Dir, "inbox", h.Job, "BRIEF.md"), Outbox: filepath.Join(d.Dir, "outbox", h.Job), Tier: h.Tier, Model: h.Model}
+		brief := filepath.Join(d.Dir, "inbox", h.Job, "BRIEF.md")
+		// the model the delivered brief names, never the packet's: her row may have changed
+		// it between the deal and the delivery
+		model, _ := briefModel(brief)
+		c := Card{ID: h.Card, Brief: brief, Outbox: filepath.Join(d.Dir, "outbox", h.Job), Tier: h.Tier, Model: model}
 		if done || skip(c) || !exists(c.Brief) || exists(c.Result()) || exists(c.Report()) || d.stageOwed(h) {
 			continue
 		}
