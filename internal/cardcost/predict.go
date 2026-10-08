@@ -138,3 +138,47 @@ func Predict(t Tokens, p Prices) Prediction {
 	}
 	return Prediction{USD: Text(sum), Long: long}
 }
+
+// BytesPerToken is the prompt estimate: four bytes of the prompt sent stand for
+// one input token, rounded up. It is an estimate, marked on the usage record,
+// never a token count the harness reported.
+const BytesPerToken int64 = 4
+
+// EstimatePrompt prices the prompt bytes at the sheet's input price (the long
+// input price when the estimated tokens cross the sheet's long-context threshold).
+// Output, cache and the per-request fee are not guessed. A sheet with no input
+// price, or no sheet, gives no prediction.
+func EstimatePrompt(nbytes int64, p Prices) Prediction {
+	if nbytes <= 0 {
+		return Prediction{Why: WhyNoTokens}
+	}
+	if !p.Priced() {
+		return Prediction{Why: WhyNoSheet}
+	}
+	tokens := nbytes / BytesPerToken
+	if nbytes%BytesPerToken != 0 {
+		tokens++
+	}
+	price := p.Input
+	long := false
+	if p.LongContext > 0 && tokens > p.LongContext {
+		price = p.InputLong
+		long = true
+	}
+	if price == "" {
+		return Prediction{Long: long, Why: WhyNoPrice + "input"}
+	}
+	r, err := Decimal(price)
+	if err != nil {
+		return Prediction{Long: long, Why: WhyBadPrice + "input"}
+	}
+	sum := new(big.Rat).Quo(new(big.Rat).Mul(big.NewRat(tokens, 1), r), million)
+	if p.GatewayPercent != "" {
+		gw, err := Decimal(p.GatewayPercent)
+		if err != nil {
+			return Prediction{Long: long, Why: WhyBadPrice + "gateway"}
+		}
+		sum.Mul(sum, new(big.Rat).Add(big.NewRat(1, 1), new(big.Rat).Quo(gw, big.NewRat(100, 1))))
+	}
+	return Prediction{USD: Text(sum), Long: long}
+}
