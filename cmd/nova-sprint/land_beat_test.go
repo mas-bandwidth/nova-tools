@@ -197,17 +197,22 @@ func TestTheLandLoopBeatsAndRaisesAStuckLanding(t *testing.T) {
 	for range 2 {
 		require.False(t, nudge(), "the loop ended while the gate was held\n%s", out.String())
 	}
-	close(release)
 
-	tooLong := false
+	// the landing past the deadline is refused with its gate abandoned (the judgment's cancel
+	// ends the hung gate: release is closed only once that refusal is printed, so the fake
+	// never answers green by the release while its context is already cancelled); the next
+	// landing lands on the bench. The loop's cycles are the wait, no clock: the test's own
+	// context ends it when the landing never finishes
+	tooLong, released := false, false
 	for {
 		if nudge() {
 			break
 		}
 		text := out.String()
-		// the landing past the deadline is refused with its gate abandoned; the next one
-		// lands on the bench. The loop's cycles are the wait, no clock: the test's own
-		// context ends it when the landing never finishes
+		if !released && strings.Contains(text, "LAND REFUSED") {
+			close(release)
+			released = true
+		}
 		if strings.Contains(text, "LAND FAILED") ||
 			(strings.Contains(text, "LAND OK") && strings.Contains(text, "bench=vision")) {
 			cancel()
@@ -219,6 +224,9 @@ func TestTheLandLoopBeatsAndRaisesAStuckLanding(t *testing.T) {
 			cancel()
 			break
 		}
+	}
+	if !released {
+		close(release)
 	}
 	select {
 	case <-loopDone:

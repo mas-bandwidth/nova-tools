@@ -28,7 +28,10 @@ func TestReviewLandDoesNotPushALaterStreamStoppedDuringTheFirstBatch(t *testing.
 		}
 	}
 
-	code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+	// the streams merged one at a time, so s1's push, where the stop is written, comes before
+	// s2's landing reads the queue (with parallel merges each lands as its gate finishes;
+	// landpass.go)
+	code, out, errs := r.do("land --land-parallel 1 --repo-dir " + r.clone + " --base main")
 
 	assert.Equal(t, 1, code, "the stopped stream is refused before push: %s%s", out, errs)
 	assert.Equal(t, 1, pushes, "only the first stream reaches a push")
