@@ -22,6 +22,7 @@ import (
 // worktree it gated (after the @ of the worktree's name) and the first run's words.
 type gateCall struct {
 	host, stream, argv string
+	n                  int // the gate's place among the pass's gates: 0 is the base's
 }
 
 // hungGateRig is a land rig under the land loop with a fake bench, a fake clock and a fake
@@ -113,7 +114,7 @@ func newHungGateRig(t *testing.T, streams int, benches []string, hang string) *h
 		stream := dir[strings.LastIndex(dir, "@")+1:]
 		r.callsMu.Lock()
 		n := len(r.calls)
-		r.calls = append(r.calls, gateCall{host: host, stream: stream, argv: strings.Join(runs[0], " ")})
+		r.calls = append(r.calls, gateCall{host: host, stream: stream, argv: strings.Join(runs[0], " "), n: n})
 		hangThis := stream == hang && n > 0 && !r.hung // the first gate of the pass is the base's: never hung
 		if hangThis {
 			r.hung = true
@@ -276,9 +277,9 @@ func TestThreeGreenStreamsLandWhileAFourthsGateHangsAndItIsRegatedOnTheNextBench
 	require.True(t, landed, "the three green streams did not land while the fourth's gate hung\n%s", r.out.String())
 	calls, cause := r.gates()
 	assert.Nil(t, cause, "the hung gate is still hung while the others land: %+v", calls)
-	var s4 []gateCall
+	var s4 []gateCall // the hung stream's own gates: never the pass's first, the base's
 	for _, c := range calls {
-		if c.stream == "s4" {
+		if c.stream == "s4" && c.n > 0 {
 			s4 = append(s4, c)
 		}
 	}
@@ -300,7 +301,7 @@ func TestThreeGreenStreamsLandWhileAFourthsGateHangsAndItIsRegatedOnTheNextBench
 	assert.True(t, errors.Is(cause, errGateBound), "the hung gate's context ended with the bound as its cause: %v", cause)
 	s4 = s4[:0]
 	for _, c := range calls {
-		if c.stream == "s4" {
+		if c.stream == "s4" && c.n > 0 {
 			s4 = append(s4, c)
 		}
 	}

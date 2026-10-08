@@ -264,7 +264,9 @@ func TestTheLandLoopBeatsAndRaisesAStuckLanding(t *testing.T) {
 		}
 	}
 	assert.True(t, long, "an IDLE line while the gate ran past the deadline:\n%s", text)
-	assert.NotContains(t, text, "LAND DONE", "the loop does not reprint LAND DONE")
+	// the refused landing's stderr is kept whole, its summary with it, as every refusal's is;
+	// the landed one's summary is not reprinted
+	assert.NotContains(t, text[strings.Index(text, "LAND OK"):], "LAND DONE", "the loop does not reprint a landed round's LAND DONE")
 	r.clean()
 }
 

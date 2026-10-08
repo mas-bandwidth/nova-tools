@@ -432,7 +432,9 @@ func TestLandTwoStreamsAsTheirOwnBatches(t *testing.T) {
 		heads[id] = r.head(id, base, id+".txt", id+"\n")
 	}
 	r.queued(heads, "a", "b", "c", "d")
-	out := r.ok("land")
+	// the streams merged one at a time, so the batches land in the pass's order (with
+	// parallel merges each lands as its gate finishes; landpass.go)
+	out := r.ok("land --land-parallel 1")
 	kept := filepath.Join(r.dir, "land", repoDirName(r.remote))
 	assert.Contains(t, out, "LAND OK stream=s1 cards=2 base=main")
 	assert.Contains(t, out, "ids=a..b repo="+r.remote+" dir="+kept)
