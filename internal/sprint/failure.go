@@ -206,8 +206,8 @@ func liftSpent(pr *Card, tier string) bool {
 // waitLifts says a wait can lead somewhere for the primary pr at its redeal bound wc: the bound
 // was a provider failure, and when the rework is held, the provider's return has not yet lifted
 // a bound on its tier. A take that left no result, or a member down, is no cause a wait changes.
-func waitLifts(pr, wc *Card, held bool) bool {
-	return strings.HasPrefix(BoundClass(wc), cardhdr.EndProvider) && (!held || !liftSpent(pr, cardTierOf(pr)))
+func waitLifts(s *Snapshot, pr, wc *Card, held bool) bool {
+	return strings.HasPrefix(BoundClass(wc), cardhdr.EndProvider) && (!held || !liftSpent(pr, cardTierOf(s, pr)))
 }
 
 // reworkAtTheSameBound is the refusal of a rework of the primary pr at its redeal bound (wc, its
@@ -221,7 +221,7 @@ func waitLifts(pr, wc *Card, held bool) bool {
 // often other cards succeed, a card makes at most three attempts per tier of the ladder that end
 // at a bound.
 func reworkAtTheSameBound(s *Snapshot, pr, wc *Card, tier string) (why string, lift bool) {
-	on := cardTierOf(pr)
+	on := cardTierOf(s, pr)
 	at, rank := pr.Int("attempt"), slices.Index(reworkLadder, on)
 	above := reworkLadder[rank+1:]
 	drop := fmt.Sprintf("drop it (nova-sprint drop %s --reason <why>)", pr.ID)
@@ -240,7 +240,7 @@ func reworkAtTheSameBound(s *Snapshot, pr, wc *Card, tier string) (why string, l
 	if dealt := dealtAbove(on); len(dealt) > 0 {
 		offers = append([]string{"rework it with a fix and --tier " + strings.Join(dealt, " or ") + " (a tier above " + on + "; the ladder: " + strings.Join(reworkLadder, ", ") + ", and frontier is never dealt)"}, offers...)
 	}
-	if waitLifts(pr, wc, true) {
+	if waitLifts(s, pr, wc, true) {
 		offers = append(offers, "wait: a take on a provider its takes failed on that finishes ok (the provider back) lets one rework on "+on+", once")
 	} else if liftSpent(pr, on) {
 		offers[len(offers)-1] += " (the provider's return has lifted a bound on " + on + " once already)"
@@ -260,16 +260,16 @@ func dealtAbove(tier string) []string {
 // wc, held when reworkAtTheSameBound refuses a plain rework: a rework with a fix, or when held a
 // rework on a tier above where the ladder deals one; drop; and wait only where it can lead
 // somewhere (waitLifts).
-func boundDecisions(pr, wc *Card, held bool) []string {
+func boundDecisions(s *Snapshot, pr, wc *Card, held bool) []string {
 	d := []string{"rework with a fix"}
 	if held {
 		d = nil
-		if len(dealtAbove(cardTierOf(pr))) > 0 {
+		if len(dealtAbove(cardTierOf(s, pr))) > 0 {
 			d = append(d, ReworkOnAHigherTier)
 		}
 	}
 	d = append(d, "drop")
-	if waitLifts(pr, wc, held) {
+	if waitLifts(s, pr, wc, held) {
 		d = append(d, "wait")
 	}
 	return d

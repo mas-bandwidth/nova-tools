@@ -184,7 +184,7 @@ func startLanes(w *world, seats ...FriendSeat) {
 			continue
 		}
 		row := FriendRow(f.Name)
-		_, width := friendRoom(f)
+		_, width := friendRoom(nil, f)
 		ready := append([]*Card(nil), w.s.Fleet.Cell(row, Ready)...)
 		SortCards(ready)
 		seats[i].Running = nil

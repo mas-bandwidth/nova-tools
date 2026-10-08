@@ -79,7 +79,7 @@ func Rebalance(s *Snapshot, seats []FriendSeat, who string) Plan {
 		if friendDealable(s, f) {
 			g := f
 			g.ReadsFirst = 0
-			_, width := friendRoom(g)
+			_, width := friendRoom(s, g)
 			add(&rebalanceUnit{name: f.Name, row: FriendRow(f.Name), friend: true, seat: f, width: width})
 		}
 	}

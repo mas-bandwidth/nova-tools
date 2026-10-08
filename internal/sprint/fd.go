@@ -61,9 +61,9 @@ func filesWhat(s *Snapshot, m string, f hostload.Files) string {
 		for i, t := range ts {
 			cards[i] = t.Card + " (" + t.Kind + ")"
 		}
-		what += fmt.Sprintf("; its cards that ended on a timeout in the last %s: %s", OverloadWindow, strings.Join(cards, ", "))
+		what += fmt.Sprintf("; its cards that ended on a timeout in the last %s: %s", s.PolicyDuration(PolicyOverloadWindow), strings.Join(cards, ", "))
 	} else {
-		what += fmt.Sprintf("; none of its cards ended on a timeout in the last %s", OverloadWindow)
+		what += fmt.Sprintf("; none of its cards ended on a timeout in the last %s", s.PolicyDuration(PolicyOverloadWindow))
 	}
 	return what
 }
