@@ -4230,6 +4230,9 @@ landed, or a push from outside) is merged again onto the new tip in its worktree
 merges and checks and no gate per head, and pushed with no new gate when the files it
 changes and the files landed since it was cut are disjoint and the same heads merged (a
 clean merge of disjoint files), else gated once on the combined tree and pushed when green.
+`LandDeadline` abandonment applies to preparation in the first phase. A combined-tree
+gate in the serial landing phase runs under its command budget; the land loop raises its
+stuck judgment at `LandDeadline` while that gate continues.
 A red combined gate refuses the batch for this pass (`LAND REFUSED ... fails it merged onto
 <base> as this pass moved it (stream <s>, <ids>, on <files>)`), records no fact, stops no
 stream, and the next pass merges the batch onto the new tip, where the real finding is the
