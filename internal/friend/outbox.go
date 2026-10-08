@@ -3,17 +3,21 @@ package friend
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 )
 
 // The daemon reads every outbox job (the night of 2026-10-05: a friend held eight
@@ -23,11 +27,14 @@ import (
 // working cards and finishes none"). Each reconcile that the server answered, the daemon
 // reads every job in her outbox whose name parses to a card (<work>~<epoch>[.g<gen>],
 // ParseJob) and finishes it when that card is working on her row, whoever wrote its brief:
-// LAND with a full sha Head finishes with that head, HOLD and FAIL (any other verdict too)
-// finish --failed with the report's first 600 characters; a LAND whose report does not
-// carry the key words of its brief's fix (THE ONE THING LEFT, rework.go) is a HOLD by the
-// daemon, finished --failed with its head kept and the words that say why. A report with no Verdict line,
-// and a job whose card is not working on her row, are noted once and left. The model is
+// LAND with a full sha Head finishes with that head, HOLD and FAIL finish --failed
+// with the report's first 600 characters; a LAND whose report does not carry the key
+// words of its brief's fix (THE ONE THING LEFT, rework.go) is a HOLD by the daemon,
+// finished --failed with its head kept and the words that say why. A report whose
+// verdict is not LAND, HOLD or FAIL (pending, or any other word) is not final: it is
+// left, and past the card's deadline it is collected as FAIL. A report with no
+// Verdict line, and a job whose card is not working on her row, are noted once and
+// left. The model is
 // internal/friend/tla/OutboxFinish.tla (docs/SPEC-FRIEND.md, the daemon reads every outbox
 // job).
 
@@ -47,11 +54,13 @@ const ReportChars = 600
 
 // outboxState is what the daemon keeps between its outbox passes: the jobs it finished
 // (never sent again, and never noted after their card leaves her row), the finishes the
-// server did not take and when, and the notes said while they stand.
+// server did not take and when, the notes said while they stand, and when a report that
+// was not final was first seen (a duration deadline runs from that pass).
 type outboxState struct {
 	finished map[string]bool
 	tried    map[string]time.Time
 	said     map[string]bool
+	opened   map[string]time.Time
 }
 
 // reportVerdict is a report's verdict (the first word of its first Verdict: line, upper
@@ -74,6 +83,46 @@ func reportVerdict(report string) (verdict, head string) {
 		}
 	}
 	return verdict, head
+}
+
+// Final reports whether a report's first and second lines are a final verdict
+// (docs/SPEC-FRIEND.md, the daemon reads every outbox job). ok is true only when
+// first is "Verdict: LAND", "Verdict: HOLD" or "Verdict: FAIL", in any case, and
+// second is "Head: <40-hex>" or "Head: -". why is the line that is not, so a
+// report that is not final can be named. The collector (outboxStep) calls it.
+func Final(first, second string) (ok bool, why string) {
+	first, second = strings.TrimSpace(first), strings.TrimSpace(second)
+	if !finalVerdict(first) {
+		return false, first
+	}
+	if !finalHead(second) {
+		return false, second
+	}
+	return true, ""
+}
+
+// finalVerdict is a first line that is exactly a LAND, HOLD or FAIL verdict.
+func finalVerdict(line string) bool {
+	key, val, ok := strings.Cut(line, ":")
+	if !ok || !strings.EqualFold(strings.TrimSpace(key), "verdict") {
+		return false
+	}
+	switch strings.ToUpper(strings.TrimSpace(val)) {
+	case "LAND", "HOLD", "FAIL":
+		return true
+	default:
+		return false
+	}
+}
+
+// finalHead is a second line that is a full sha head or a dash.
+func finalHead(line string) bool {
+	key, val, ok := strings.Cut(line, ":")
+	if !ok || !strings.EqualFold(strings.TrimSpace(key), "head") {
+		return false
+	}
+	val = strings.ToLower(strings.TrimSpace(val))
+	return val == "-" || fullSha.MatchString(val)
 }
 
 // reportKey is a report line's key, lower case, with its markdown trimmed ("" for a line
@@ -155,10 +204,103 @@ func readReport(outbox, job string) (string, bool, error) {
 	return string(raw), true, err
 }
 
+// reportFinalWithin is how long a report that is not final may stand when the brief
+// names no deadline: two hours, the unfinished bound a friend's card carries then
+// (sprint.DeadlineUnfinished).
+const reportFinalWithin = 2 * time.Hour
+
+// deadlineWithinRE is a DEADLINE value the brief writes as words: `finish within <n> <unit>`
+// or a bare `<n> <unit>` (cardhdr's deadline shape). A Go duration is read first.
+var deadlineWithinRE = regexp.MustCompile(`(?i)^(?:finish within\s+)?(\d+)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|h)$`)
+
+// cardDeadline is the brief's deadline (docs/SPEC-FRIEND.md, the daemon reads every
+// outbox job): an absolute time, or a duration. ok is false when the brief names none
+// the daemon can read; a duration runs from the first pass that saw the report.
+func cardDeadline(brief string) (at time.Time, within time.Duration, ok bool) {
+	val, found := cardhdr.Value(brief, "DEADLINE")
+	if !found {
+		return time.Time{}, 0, false
+	}
+	if t, err := time.Parse(time.RFC3339, val); err == nil {
+		return t, 0, true
+	}
+	if d, okd := deadlineWithin(val); okd {
+		return time.Time{}, d, true
+	}
+	return time.Time{}, 0, false
+}
+
+// deadlineWithin reads a duration deadline: a Go duration or `finish within <n> <unit>`.
+func deadlineWithin(v string) (time.Duration, bool) {
+	if d, err := time.ParseDuration(v); err == nil && d > 0 {
+		return d, true
+	}
+	m := deadlineWithinRE.FindStringSubmatch(strings.TrimSpace(v))
+	if m == nil {
+		return 0, false
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	unit := time.Second
+	switch strings.ToLower(m[2])[0] {
+	case 'm':
+		unit = time.Minute
+	case 'h':
+		unit = time.Hour
+	}
+	return time.Duration(n) * unit, true
+}
+
+// pastFinalDeadline says the card's deadline has passed for a report that is not final
+// (docs/SPEC-FRIEND.md, the daemon reads every outbox job). An absolute deadline is that
+// time. A duration, and the two hours used when the brief names none, runs from the
+// first pass that saw the report.
+func (l *loop) pastFinalDeadline(h *HeldCard, job string, now time.Time) bool {
+	at, within, ok := cardDeadline(h.Brief)
+	if ok && !at.IsZero() {
+		return !now.Before(at)
+	}
+	if !ok || within <= 0 {
+		within = reportFinalWithin
+	}
+	o := &l.d.outbox
+	if o.opened == nil {
+		o.opened = map[string]time.Time{}
+	}
+	first, seen := o.opened[job]
+	if !seen {
+		o.opened[job] = now
+		return false
+	}
+	return !now.Before(first.Add(within))
+}
+
+// firstTwo is a report's first line and its second, without a trailing carriage return.
+func firstTwo(report string) (first, second string) {
+	lines := strings.Split(report, "\n")
+	if len(lines) > 0 {
+		first = strings.TrimRight(lines[0], "\r")
+	}
+	if len(lines) > 1 {
+		second = strings.TrimRight(lines[1], "\r")
+	}
+	return first, second
+}
+
+// reportSHA is the sha256 of the report bytes the daemon collected, hex encoded.
+func reportSHA(report string) string {
+	sum := sha256.Sum256([]byte(report))
+	return hex.EncodeToString(sum[:])
+}
+
 // outboxStep is the daemon's outbox pass, after each reconcile the server answered: every
 // job in her outbox named <work>~<epoch>[.g<gen>] with a REPORT.md is finished when its card
-// is working on her row (a work card, never a read), the job no lane is running; the finish
-// is sent once, and one the server did not take is sent again after OutboxRetry. A report
+// is working on her row (a work card, never a read), the job no lane is running, and the
+// report is final (Final, or a verdict word already LAND, HOLD or FAIL). The finish is sent
+// once, and one the server did not take is sent again after OutboxRetry. A report that is
+// not final is left and noted once, and past the card's deadline collected as FAIL. A report
 // with no Verdict line, one that cannot be read, and a job whose card is not working on her
 // row are said once while they stand, and left.
 func (l *loop) outboxStep(now time.Time) {
@@ -169,6 +311,7 @@ func (l *loop) outboxStep(now time.Time) {
 	o := &d.outbox
 	if o.finished == nil {
 		o.finished, o.tried, o.said = map[string]bool{}, map[string]time.Time{}, map[string]bool{}
+		o.opened = map[string]time.Time{}
 	}
 	at := now.UTC().Format(time.RFC3339)
 	said := map[string]bool{}
@@ -250,9 +393,23 @@ func (l *loop) outboxStep(now time.Time) {
 			continue
 		}
 		verdict, head := reportVerdict(report)
-		if verdict == "" {
-			note(job, "it has no Verdict line")
-			continue
+		first, second := firstTwo(report)
+		final, _ := Final(first, second)
+		collected := report
+		// A verdict word that is not LAND, HOLD or FAIL is not final, pending
+		// included. Final is the strict shape a session writes; a report the
+		// daemon already reads as LAND, HOLD or FAIL is still collected.
+		if !final && verdict != "LAND" && verdict != "HOLD" && verdict != "FAIL" {
+			if verdict == "" {
+				note(job, "it has no Verdict line")
+				continue
+			}
+			if !l.pastFinalDeadline(h, job, now) {
+				note(job, "report not final yet: "+id+": "+oneLine(first, 200))
+				continue
+			}
+			report = "report never became final: first line " + oneLine(first, 300) + "\n"
+			verdict, head = "FAIL", ""
 		}
 		if t, ok := o.tried[job]; ok && now.Sub(t) < OutboxRetry {
 			continue
@@ -292,7 +449,7 @@ func (l *loop) outboxStep(now time.Time) {
 				words += " head=" + head
 			}
 		}
-		d.Record(fmt.Sprintf("%s outbox: finished card %s from outbox/%s/REPORT.md (Verdict %s, %s on her row): %s sent=server", at, id, job, written, h.Col, words))
+		d.Record(fmt.Sprintf("%s outbox: finished card %s from outbox/%s/REPORT.md (Verdict %s, %s on her row): %s sent=server sha256=%s", at, id, job, written, h.Col, words, reportSHA(collected)))
 	}
 }
 
