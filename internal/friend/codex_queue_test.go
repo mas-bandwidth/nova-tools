@@ -108,9 +108,11 @@ func (f *codexApp) texts() []string {
 
 func (f *codexApp) codex(record *strings.Builder) *Codex {
 	c := &Codex{Dir: "/w/stella", Session: "thread-1", Home: "/codex", Program: "codex", Run: f.run,
-		Held: func(string) bool { return true },
-		App:  func(context.Context) (CodexAppServer, error) { return f, nil },
-		Now:  func() time.Time { f.mu.Lock(); defer f.mu.Unlock(); return f.now }}
+		Held:    func(string) bool { return true },
+		Resolve: func(_, _, session string) (string, string, error) { return session, "/rollout", nil },
+		Receipt: func(string, string, string, int64) (bool, int64, error) { return true, 0, nil },
+		App:     func(context.Context) (CodexAppServer, error) { return f, nil },
+		Now:     func() time.Time { f.mu.Lock(); defer f.mu.Unlock(); return f.now }}
 	if record != nil {
 		c.Out = record
 	}
