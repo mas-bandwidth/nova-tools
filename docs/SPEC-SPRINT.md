@@ -864,7 +864,7 @@ the machine it runs on).
 
 **Collect** (the coordinator's stopgap `finish-loop.py`, 92 finishes on the night of
 2026-10-05: every 30 s it finished each report of a working card, searching every
-friend's outbox, and failed each lane that ended with no report; collect-is-a-verb-and-
+friend's outbox, and once failed each lane that ended with no report; collect-is-a-verb-and-
 the-daemons-duty.w1). `collect [<friend>...] [--dead-lanes] [--pg <dsn>] [--root <dir>]
 [--dry-run]` (the coordinator's; never run by the server) reads the work cards working
 on the named friends' rows (default every friend row of nova-config) and every friend's
@@ -882,12 +882,13 @@ that cannot be read, is left and said. With `--dead-lanes`, a card with no repor
 whose friend's runner log (`runner.log` in her working directory, else beside the
 directory it links to, never `<root>`'s own; its last 4 MiB) holds, as the job's last
 event, `END <job> ... report=no` with no `LIMIT` after its `START` (`sprint.RunnerEnded`:
-a run stopped at its usage limit is run again) is finished `--failed`, `friend <name> lane
-ended with no report: <the END line>`, so the card is dealt again. A finish taken moves
+a run stopped at its usage limit is run again) is a `harness-fault: no report`:
+the work card is returned through `FriendReturn` and its primary goes ready without a
+failed-work judgment. An explicit `HOLD` or `FAIL` report still finishes failed. A finish taken moves
 the card off working, so a report finished once is never finished twice (a card dealt
 again is another job, `.g<gen>`). One line per card, `COLLECT <card> LAND <head>`,
-`COLLECT <card> FAILED <reason>`, `COLLECT <card> REFUSED <why>` or `COLLECT <card> LEFT
-<why>`, then `COLLECT OK friends= working= landed= failed= refused= left=`, exit 0; a
+`COLLECT <card> FAILED <reason>`, `COLLECT <card> RETURNED <fault>`, `COLLECT <card> REFUSED <why>` or `COLLECT <card> LEFT
+<why>`, then `COLLECT OK friends= working= landed= failed= returned= refused= left=`, exit 0; a
 friend not on the roster, exit 1; a config that cannot be read, exit 3. `--dry-run`
 finishes nothing and reads no tip. The nova-friend daemon keeps the same rule for her own
 tree on every sync (docs/SPEC-FRIEND.md, the daemon reads every outbox job, and its dead
@@ -5551,7 +5552,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | unhold | `unhold <name>... [--reason <text>]`: releases the holds of the names (resolved as hold resolves them, all or none), the reason in its note (`released from a hold`): a member that beats is up at once and is dealt again, otherwise down until it beats; a reader's state is then its beat's and a friend's her session's evidence (a wake ping her session answered, or a card of hers finished, within its window); a stream's primaries are dealt again. `reader up` and `friend up` are its old words, for one release; `fleet up` still releases a member's hold and adds a member or sets a width |
 | merge-window open | `merge-window open --for <duration> --reason <text>`: landing pauses from now for the duration, the reason on every batch it pauses (section 7, the lander's pause); a store write of the merge table's properties `merge_window_until` and `merge_window_reason`, replacing a window open before; the coordinator's; refused whole, nothing written, for a duration that is none or not above zero, no reason, a reason over 8 KiB, or another actor |
 | friend sync | the friends table's rows made nova-config's friend rows (section 1); `--every <d>` loops as the seat each pass, and `friend sync install --every <d>` / `friend sync uninstall` put that loop in place as this machine's service ("Handing over the seat") |
-| collect | every friend's outbox report of a card working on a friend's row finished as her row, a LAND only at origin's tip, and with `--dead-lanes` a lane her runner ENDed with no report finished failed (section 1, collect): `collect [<friend>...] [--dead-lanes] [--root <dir>] [--dry-run]`; never run by the server |
+| collect | every friend's outbox report of a card working on a friend's row finished as her row, a LAND only at origin's tip, and with `--dead-lanes` a lane her runner ENDed with no report returned to ready as a harness fault without a failed finish (section 1, collect): `collect [<friend>...] [--dead-lanes] [--root <dir>] [--dry-run]`; never run by the server |
 | gc | the machinery's scratch reclaimed on the machine it runs on, or on `--machine`'s through the fleet runner (section 1, gc): `gc [--machine <m>] [--dry-run] [--max-age <d>] [--ai-root <dir>]`; job directories of finished or absent lanes, reader checkouts of recorded findings, lander worktrees and bench directories past `--max-age`, the go caches trimmed to their cap, never a path under no known scratch root or a clone with work that is nowhere else; one line per class and `GC OK freed=<bytes> volume=<use%>`; run by `run` on every machine hourly and on a volume at 80%; never run by the server |
 | friend reconcile | a friend's own account of her cards, `<friend>-working/inbox/QUEUE.json`, and her outbox compared with the cards working on her row, each collected, kept or returned to ready (section 1, friend reconcile): `friend reconcile <friend> [--root <dir>] [--dry-run]`; never run by the server |
 | friend give | the coordinator's undo of `friend take` (section 1, a friend's card taken back): `friend give <friend> <id>... [--reason <text>]`; on each card named (a primary or its work card), ready or waiting, its current attempt's work card loses `taken_from` her row, so the next deal may deal it to her again, a hard pin taken back from her included; the marks of other friends stay. A card not ready or waiting, or never taken back from her, and a friend not on the friends table are refused, one `REFUSED` line each, the rest given; each given says `MOVED <card> may be dealt to <friend> again (<reason>)` (default reason: given back by the coordinator) with a happened note, then `FRIEND-GIVE OK moved=<n> refused=<m>` (`FAILED`, exit 1, when any is refused) |

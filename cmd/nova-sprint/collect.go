@@ -21,8 +21,8 @@ import (
 // finish-loop.py finished 92 cards on the night of 2026-10-05; docs/SPEC-SPRINT.md section
 // 1, collect): every outbox/<job>/REPORT.md, in any friend's tree, whose job is a work card
 // working on a friend's row finishes that card as her row (sprint.Collect), and with
-// --dead-lanes a lane her runner ENDed with no report finishes failed so the card is dealt
-// again. A LAND finishes only at origin's tip of the card's branch (friendFinish); a finish
+// --dead-lanes a lane her runner ENDed with no report returns to ready without a failed
+// finish (FriendReturn). A LAND finishes only at origin's tip of the card's branch (friendFinish); a finish
 // leaves working, so a report finished once is never finished twice. Her nova-friend daemon
 // runs the same collection for her own tree on every sync (internal/friend outbox.go).
 
@@ -31,7 +31,7 @@ func init() {
 	// it reads the friends' working directories on the machine it is typed on
 	notServed = append(notServed, "collect")
 	verbExit["collect"] = "exit codes: 0 done (each card on its line, a refused or left one among them, read again by the next collect), 1 refused (a friend not on the roster), 2 usage or a store that did not answer, 3 the config could not be read or holds no friend row"
-	verbEffect["collect"] = "store write: finishes each working card of the friends' rows that a report in any friend's outbox (or, with --dead-lanes, her runner's END with no report) finishes, as her row; reads the friends' working directories and writes nothing there, and reads origin's tip (one git ls-remote) for each LAND; --dry-run writes nothing and reads no tip"
+	verbEffect["collect"] = "store write: finishes each working card with a report in any friend's outbox, or with --dead-lanes returns a no-report runner END to ready without a failed finish; reads the friends' working directories and writes nothing there, and reads origin's tip (one git ls-remote) for each LAND; --dry-run writes nothing and reads no tip"
 }
 
 // runnerLogCap bounds the runner log collect reads: its last runnerLogCap bytes.
@@ -73,7 +73,7 @@ func (a *app) cmdCollect(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup(name)
 	pg := fs.String("pg", "", "the config store, Postgres postgres://user@host:port/db with no password (else NOVA_PG_DSN), as friend sync reads the roster from it")
 	root := fs.String("root", "", "the directory the friends' working directories are under, <root>/<friend>-working (else HOME); collect reads every friend's outbox there and writes nothing in it")
-	dead := fs.Bool("dead-lanes", false, "also finish failed each working card with no report whose friend's runner ENDed its job with report=no (runner.log in her working directory or beside it), so the card is dealt again")
+	dead := fs.Bool("dead-lanes", false, "also return to ready each working card with no report whose friend's runner ENDed its job with report=no (runner.log in her working directory or beside it), without a failed finish")
 	dry := fs.Bool("dry-run", false, "print what would be finished; finish nothing and read no tip")
 	pos, err := parse(fs, args)
 	if err != nil {
@@ -168,12 +168,37 @@ func (a *app) cmdCollect(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, l)
 		}
 	}
-	finished, failed, refused, left := 0, 0, 0, 0
+	finished, failed, returned, refused, left := 0, 0, 0, 0, 0
 	for _, x := range sprint.Collect(cards, trees, *dead) {
 		p := packets[x.Friend+"/"+x.Card]
 		if x.Left != "" {
 			left++
 			say(fmt.Sprintf("COLLECT %s LEFT %s; the next collect reads it again", x.Card, oneline.Escape(x.Left)))
+			continue
+		}
+		if x.Dead {
+			if !*dry {
+				step := store.FriendReturnStep(sprint.FriendReturnReq{Friend: x.Friend, Who: c.actor,
+					Cards: []sprint.FriendReturnCard{{ID: p.Card, Gen: p.Gen, Why: x.Report}}})
+				if c.op != "" {
+					step.CallerOp = c.op + ".return." + step.Args
+				}
+				res, err := st.Run(ctx, step)
+				if err != nil {
+					return a.readFailed(name, err, stderr)
+				}
+				if len(res.Refused) > 0 {
+					refused++
+					say(fmt.Sprintf("COLLECT %s REFUSED %s; the next collect reads the fault again", x.Card, oneline.Escape(res.Refused[0].Why)))
+					continue
+				}
+			}
+			returned++
+			dryWord := ""
+			if *dry {
+				dryWord = " (dry run: not returned)"
+			}
+			say(fmt.Sprintf("COLLECT %s RETURNED %s%s", x.Card, oneline.Escape(oneline.Cap(x.Report, 300)), dryWord))
 			continue
 		}
 		row := sprint.FriendRow(x.Friend)
@@ -230,12 +255,12 @@ func (a *app) cmdCollect(args []string, stdout, stderr io.Writer) int {
 		finished++
 		say(fmt.Sprintf("COLLECT %s LAND %s%s", x.Card, r.Head, dryWord))
 	}
-	line := fmt.Sprintf("COLLECT OK friends=%d working=%d landed=%d failed=%d refused=%d left=%d", len(only), len(cards), finished, failed, refused, left)
+	line := fmt.Sprintf("COLLECT OK friends=%d working=%d landed=%d failed=%d returned=%d refused=%d left=%d", len(only), len(cards), finished, failed, returned, refused, left)
 	if *dry {
 		line += " (dry run: nothing was finished)"
 	}
 	sayOK(stdout, c.json, name, line, map[string]any{"friends": len(only), "working": len(cards), "landed": finished, "failed": failed,
-		"refused": refused, "left": left, "cards": orEmpty(said), "dry_run": *dry})
+		"returned": returned, "refused": refused, "left": left, "cards": orEmpty(said), "dry_run": *dry})
 	return 0
 }
 

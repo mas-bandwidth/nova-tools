@@ -13,8 +13,8 @@ import (
 // written ahead may sit in another friend's tree); LAND with a full sha Head finishes at
 // that head, HOLD, FAIL and any other verdict finish failed with the report's first
 // CollectReportChars characters; and, when dead lanes are asked, a job whose runner ENDed
-// with no report (`END <job> ... report=no`, its last word on the job) finishes failed, so
-// the card is dealt again. Nothing here reads a disk or a store: nova-sprint collect reads
+// with no report (`END <job> ... report=no`, its last word on the job) returns the
+// card to ready as a harness fault, without a failed finish. Nothing here reads a disk or a store: nova-sprint collect reads
 // the trees and the friends' rows, finishes what Collect says, and the card's leaving
 // working is what makes a second pass finish nothing (a job is its card's generation, so a
 // report finished once names no working card again).
@@ -38,8 +38,9 @@ type CollectTree struct {
 	Runner  string
 }
 
-// Collected is one card Collect finishes, or leaves. From is the friend whose outbox held
-// the report ("" for a dead lane). Left, when not empty, says why the card is not finished
+// Collected is one card Collect finishes, returns, or leaves. From is the friend whose outbox held
+// the report ("" for a dead lane). Dead means a no-report harness fault to return without
+// a failed finish. Left, when not empty, says why the card is not finished
 // this pass (a report with no Verdict line, or one that cannot be read): it is read again
 // on the next.
 type Collected struct {
@@ -86,8 +87,8 @@ func Collect(cards []CollectCard, trees []CollectTree, deadLanes bool) []Collect
 			continue
 		}
 		if end, dead := RunnerEnded(own.Runner, c.Job); dead {
-			out = append(out, Collected{CollectCard: c, Failed: true, Dead: true,
-				Report: "friend " + c.Friend + " lane ended with no report: " + collectChars(end, CollectReportChars)})
+			out = append(out, Collected{CollectCard: c, Dead: true,
+				Report: "harness-fault: no report; friend " + c.Friend + " lane ended: " + collectChars(end, CollectReportChars)})
 		}
 	}
 	return out
