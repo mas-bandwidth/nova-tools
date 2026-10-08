@@ -17,6 +17,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
 // gc is the verb that reclaims the machinery's scratch (sprint.GC is the rule;
@@ -29,7 +30,7 @@ func init() {
 	// it works on the directories of the machine it runs on (or the one --machine names)
 	notServed = append(notServed, "gc")
 	verbExit["gc"] = "exit codes: 0 GC OK, 1 a removal or a read failed (GC FAILED names each; the summary is GC INCOMPLETE) or --machine did not answer, 2 usage"
-	verbEffect["gc"] = "local write: removes, on this machine (or --machine's, through the fleet runner), the job directories of finished or absent lanes, reader checkouts of recorded findings, lander worktrees and bench directories past --max-age, and trims the go caches to their cap; never a path under no known scratch root, never a clone with work that is nowhere else; --dry-run removes nothing"
+	verbEffect["gc"] = "local write: removes, on this machine (or --machine's, through the fleet runner), the job directories of finished or absent lanes, a landed or dropped card's job directory after one hour whatever its git state (class landed), reader checkouts of recorded findings, lander worktrees and bench directories past --max-age, and trims the go caches to their cap; never a path under no known scratch root, never a clone with work that is nowhere else except a landed or dropped card's job; --dry-run removes nothing; --class landed runs only that class"
 }
 
 // gcRunner runs one line on a machine through the fleet runner: its exit status, and an
@@ -52,6 +53,7 @@ func (a *app) cmdGC(args []string, stdout, stderr io.Writer) int {
 	dry := fs.Bool("dry-run", false, "print every removal with the bytes it would free, and remove nothing")
 	aiRoot := fs.String("ai-root", "", "the AI root the working directories are under (else NOVA_AI_ROOT, else ~/ai, else the one the home's <name>-working links name); an absolute path")
 	maxAge := fs.String("max-age", "2d", "how old a bench directory, a lander worktree or a job no runner names is before it goes: days (2d) or a Go duration (36h)")
+	class := fs.String("class", "", "which class to run: empty is every class, including landed; landed is only the jobs of landed or dropped cards")
 	pos, err := parse(fs, args)
 	switch {
 	case err != nil:
@@ -66,13 +68,17 @@ func (a *app) cmdGC(args []string, stdout, stderr io.Writer) int {
 	if *aiRoot != "" && !filepath.IsAbs(*aiRoot) {
 		return refuse(stderr, name, "--ai-root wants an absolute path, got "+oneline.Escape(*aiRoot))
 	}
+	only := *class
+	if only != "" && only != sprint.GCLandedName {
+		return refuse(stderr, name, "--class wants landed or nothing, got "+oneline.Escape(only))
+	}
 	if m := *machine; m != "" && !gcIsLocal(m) {
 		if err := bench.CheckHost(m); err != nil {
 			return refuse(stderr, name, "--machine: "+err.Error())
 		}
 		return gcOn(context.Background(), gcRemote, m, *dry, *maxAge, *aiRoot, stdout, stderr)
 	}
-	res := a.gcLocal(*dry, age, *aiRoot)
+	res := a.gcLocal(*dry, age, *aiRoot, only)
 	if c.json {
 		facts := map[string]any{"freed": res.Freed, "volume": res.Volume, "failed": res.Failed, "dry_run": res.Dry, "classes": res.Classes, "lines": orEmpty(res.Detail)}
 		line := res.Lines()[len(res.Lines())-1]
@@ -153,7 +159,7 @@ func gcOn(ctx context.Context, run gcRunner, machine string, dry bool, maxAge, a
 // gcLocal is one pass on this machine: the home, the AI root (aiRoot, else NOVA_AI_ROOT,
 // else ~/ai, else the one the home's <name>-working links name: sprint.GCAIRoot), the
 // bench root (~/nova-bench) and land's clones.
-func (a *app) gcLocal(dry bool, age time.Duration, aiRoot string) sprint.GCResult {
+func (a *app) gcLocal(dry bool, age time.Duration, aiRoot, only string) sprint.GCResult {
 	home, ai := a.gcRoots(aiRoot)
 	benchRoot := ""
 	if home != "" {
@@ -164,13 +170,82 @@ func (a *app) gcLocal(dry bool, age time.Duration, aiRoot string) sprint.GCResul
 		land = ""
 	}
 	cl := &friendClean{}
-	return sprint.GC(sprint.GCReq{
+	req := sprint.GCReq{
 		Home: home, AIRoot: ai, BenchRoot: benchRoot, LandRoot: land,
 		MaxAge: age, Now: a.now(), Dry: dry,
 		Dirty:     cl.dirty,
 		Worktrees: func(clone string) []string { return gcWorktrees(clone, dry) },
 		Volume:    sprint.GCVolumeUse,
-	})
+	}
+	cards := a.cardsByID()
+	if only == sprint.GCLandedName {
+		return sprint.GCLanded(req, cards)
+	}
+	return sprint.AppendGC(sprint.GC(req), sprint.GCLanded(req, cards))
+}
+
+// cardsByID reads the sprint's cards when this process was given a store
+// (NOVA_SPRINT_REDIS or NOVA_REDIS_ADDR). No address is no read: gc says so
+// and removes no landed job, and a seat login is not opened from here. A store
+// that does not answer is the same. Placed cards come from the work and fleet
+// tables; a card that is not placed (a dropped one) is read when a job names it.
+func (a *app) cardsByID() func(string) *sprint.Card {
+	addr := firstEnv(a.getenv, "NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR")
+	if strings.TrimSpace(addr) == "" {
+		return nil
+	}
+	st, err := a.store(common{verb: "gc", redis: addr, actor: a.getenv("NOVA_SPRINT_ACTOR"), epoch: -1})
+	if err != nil {
+		return nil
+	}
+	return cardsFrom(st)
+}
+
+func cardsFrom(st *store.Store) func(string) *sprint.Card {
+	ctx := context.Background()
+	snap, err := st.Load(ctx, []string{sprint.Work, sprint.Fleet}, nil)
+	if err != nil || snap == nil {
+		return nil
+	}
+	by := map[string]*sprint.Card{}
+	for _, t := range []*sprint.Table{snap.Fleet, snap.Work} {
+		if t == nil {
+			continue
+		}
+		for _, c := range t.Cards() {
+			if c != nil && c.ID != "" {
+				by[c.ID] = c
+			}
+		}
+	}
+	missed := map[string]*sprint.Card{}
+	return func(id string) *sprint.Card {
+		if c, ok := by[id]; ok {
+			return c
+		}
+		if c, ok := missed[id]; ok {
+			return c
+		}
+		found := cardRecord(ctx, st, id)
+		missed[id] = found
+		return found
+	}
+}
+
+func cardRecord(ctx context.Context, st *store.Store, id string) *sprint.Card {
+	var found *sprint.Card
+	for _, logical := range []string{sprint.Fleet, sprint.Work} {
+		recs, err := st.Records(ctx, logical, []string{id})
+		if err != nil {
+			continue
+		}
+		for _, c := range recs {
+			if c != nil && c.ID == id {
+				found = c
+			}
+		}
+	}
+	return found
 }
 
 // gcRoots is this machine's home and the AI root as given (aiRoot, else NOVA_AI_ROOT,
@@ -290,7 +365,7 @@ func (a *app) gcLoop(ctx context.Context, stdout io.Writer) {
 		for _, run := range sprint.GCDue(ms, a.now()) {
 			var out bytes.Buffer
 			if run.Machine == local {
-				for _, l := range a.gcLocal(false, sprint.GCMaxAge, "").Lines() {
+				for _, l := range a.gcLocal(false, sprint.GCMaxAge, "", "").Lines() {
 					fmt.Fprintln(&out, l)
 				}
 			} else {

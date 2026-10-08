@@ -20,6 +20,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/gocache"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
@@ -56,7 +57,12 @@ import (
 //   - removes a mirror's leftover temporary packs (an aborted fetch's tmp_pack_*, .tmp-*)
 //     older than an hour when nothing may be fetching into it or working in it; never git
 //     prune, which can delete objects a clone borrowing the mirror is reading;
-//   - warns, under --disk-floor, on its own output, which is its loop log.
+//   - warns, under --disk-floor, on its own output, which is its loop log;
+//   - watches the machine's guarded volumes (the root disk and the volume the
+//     friends' directories sit on, or --volume, or the machine row's
+//     disk_volumes). Below a volume's floor it runs gc's class landed, then the
+//     caches, and says REFUSED with the free figure. Below its stop it holds
+//     this machine's deals, never the server's, and says one judgment.
 //
 // One line per action, with the bytes it freed; one line at the end. Nothing is removed
 // through a link, and nothing under /tmp: the guard looks only where it is told and where
@@ -106,6 +112,12 @@ type guard struct {
 	dry                        bool     // --dry-run: every rule judged, nothing removed or rotated
 	listRead, listFailed       bool
 	openRead, openFailed       bool
+	// volumes, when set, are the guarded volumes (sprint.GuardVolumes). Nil
+	// leaves the older floor and stop lines alone, which the tests pin.
+	host       string
+	volumes    []sprint.GuardedVolume
+	cards      func(string) *sprint.Card
+	landedExec bool // cards nil: nova-sprint gc --class landed, which can read the store
 }
 
 // say is one line of the run's output.
@@ -224,7 +236,9 @@ func (g *guard) run() int {
 		g.say(line)
 	}
 	g.logs()
+	act := g.guardVolumes()
 	g.buildCaches()
+	g.sayVolume(act)
 	g.modules()
 	g.pools()
 	g.landClones()
@@ -273,6 +287,81 @@ func (g *guard) run() int {
 	}
 	fmt.Fprintf(g.out, "DISK-GUARD OK freed=%d free=%d\n", g.freed, free)
 	return 0
+}
+
+// guardVolumes runs the landed removal when a guarded volume is under its
+// floor, before the caches. Nil volumes are the older pass, unchanged.
+func (g *guard) guardVolumes() sprint.VolumeAction {
+	if g.volumes == nil {
+		return sprint.VolumeAction{}
+	}
+	act := sprint.GuardVolumes(g.host, g.volumes)
+	if act.RunLanded {
+		g.runLanded()
+	}
+	return act
+}
+
+// sayVolume says the refusal, the one judgment, and each volume's free figure,
+// after the caches. A stop holds this machine's deals and never the server.
+func (g *guard) sayVolume(act sprint.VolumeAction) {
+	if g.volumes == nil {
+		return
+	}
+	if act.Refused != "" {
+		g.say(act.Refused)
+	}
+	if act.Judgment != "" {
+		line := act.Judgment
+		if g.dry {
+			line = "WOULD " + line
+		}
+		g.say(line)
+	}
+	if act.HoldDeals {
+		g.say("deals held on this machine, never the server")
+	}
+	for _, row := range act.Rows {
+		g.say(row)
+	}
+}
+
+// runLanded is gc's class landed. With no card lookup of its own it asks
+// nova-sprint, which reads the store; a test passes cards and stays in process.
+func (g *guard) runLanded() {
+	if g.cards != nil || !g.landedExec {
+		res := sprint.GCLanded(sprint.GCReq{
+			Home: g.home, Now: g.now, Dry: g.dry, Volume: sprint.GCVolumeUse,
+		}, g.cards)
+		for _, l := range res.Lines() {
+			fmt.Fprintln(g.out, l)
+		}
+		g.freed += res.Freed
+		g.failed += res.Failed
+		return
+	}
+	g.execClassLanded()
+}
+
+// execClassLanded runs nova-sprint gc --class landed. Its lines are already
+// one line each, so they are not escaped again.
+func (g *guard) execClassLanded() {
+	args := []string{"gc", "--class", sprint.GCLandedName}
+	if g.dry {
+		args = append(args, "--dry-run")
+	}
+	cmd, cancel := subproc.CommandFor(context.Background(), 10*time.Minute, "nova-sprint", args...)
+	defer cancel()
+	out, err := cmd.CombinedOutput()
+	text := strings.TrimSuffix(string(out), "\n")
+	if text != "" {
+		for _, l := range strings.Split(text, "\n") {
+			fmt.Fprintln(g.out, l)
+		}
+	}
+	if err != nil {
+		g.fail("nova-sprint gc --class landed did not finish: " + oneline.Err(err))
+	}
 }
 
 // ------------------------------------------------------------------------------- logs
@@ -807,6 +896,8 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 	cloneAge := f.fs.Duration("clone-age", guardCloneAge, "how long a land clone must be unused before it is removed, a `duration` (default 24h)")
 	mirror := f.fs.String("mirrors", "~/nova-bench/mirror", "the `dir` of the bench's mirrors, whose temporary packs older than an hour are removed (default ~/nova-bench/mirror)")
 	dry := f.fs.Bool("dry-run", false, "judge every rule and print each line with WOULD-REMOVE, WOULD-TRIM, WOULD-CLEAN or WOULD-ROTATE, removing and rotating nothing")
+	var volFlags []string
+	f.fs.Var(stringListValue{&volFlags}, "volume", "a guarded volume: `path`, path=floor, or path=floor:stop (200GB, 50GB); again for more (default: the machine row's disk_volumes, else the root disk and the volume of the friends' directories)")
 	floor := f.fs.Int("disk-floor", guardFloorGiB, "the free `GiB` under which the run warns, the members' own floor (default 10; 0 warns never)")
 	stopFloor := f.fs.Int("stop-floor", 0, "the free `GiB` under which the run ends DISK-GUARD STOP with exit 3, for the loop row to stop the loops (default 0: never)")
 	if !f.parse(args, stderr) {
@@ -880,7 +971,101 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 		g.caches = append(g.caches, matches...)
 	}
 	g.caches, g.modCaches = unique(g.caches), unique(g.modCaches)
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "localhost"
+	} else {
+		short, _, dotted := strings.Cut(host, ".")
+		if dotted {
+			host = short
+		}
+	}
+	vols, volErr := guardVolumeList(host, home, volFlags)
+	if volErr != nil {
+		return refuse(stderr, " disk-guard", volErr.Error())
+	}
+	g.host = host
+	g.volumes = g.fillVolumes(vols)
+	g.landedExec = true
 	return g.run()
+}
+
+// guardVolumeList is --volume when it is set, else the machine row's
+// disk_volumes, else the root disk and the volume of the friends' directories.
+// A row that names no disk_volumes, or a show that does not answer, is the default.
+func guardVolumeList(host, home string, flags []string) ([]sprint.GuardedVolume, error) {
+	if len(flags) > 0 {
+		return sprint.ParseDiskVolumes(strings.Join(flags, ","))
+	}
+	if shown := machineDiskVolumes(host); shown != "" {
+		vols, err := sprint.ParseDiskVolumes(shown)
+		if err == nil && len(vols) > 0 {
+			return vols, nil
+		}
+	}
+	return sprint.DefaultGuardVolumes(friendVolumePaths(home)), nil
+}
+
+// fillVolumes reads each volume's free space. A read that fails is that
+// volume's error, and the guard does not treat it as empty.
+func (g *guard) fillVolumes(vols []sprint.GuardedVolume) []sprint.GuardedVolume {
+	for i := range vols {
+		n, err := g.free(vols[i].Path)
+		if err != nil {
+			vols[i].Err = err
+			continue
+		}
+		vols[i].Free = n
+	}
+	return vols
+}
+
+// friendVolumePaths is where the friends' directories sit: NOVA_AI_ROOT, else
+// ~/ai, and each <home>/<name>-working.
+func friendVolumePaths(home string) []string {
+	ai := os.Getenv("NOVA_AI_ROOT")
+	if ai == "" && home != "" {
+		ai = filepath.Join(home, "ai")
+	}
+	var out []string
+	if ai != "" {
+		out = append(out, ai)
+	}
+	if home == "" {
+		return out
+	}
+	es, err := os.ReadDir(home)
+	if err != nil {
+		return out
+	}
+	for _, e := range es {
+		name := e.Name()
+		if strings.HasSuffix(name, "-working") && safepath.NameOK(name) {
+			out = append(out, filepath.Join(home, name))
+		}
+	}
+	return out
+}
+
+// machineDiskVolumes is the disk_volumes field of `nova-config machine show`,
+// when that line carries it. A missing field, a missing binary, or a show that
+// does not answer is empty, and the guard uses its default volumes.
+func machineDiskVolumes(host string) string {
+	cmd, cancel := subproc.CommandFor(context.Background(), 5*time.Second, "nova-config", "machine", "show", host)
+	defer cancel()
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		for _, f := range strings.Fields(line) {
+			rest, ok := strings.CutPrefix(f, "disk_volumes=")
+			if ok && rest != "" && rest != "-" {
+				return rest
+			}
+		}
+	}
+	return ""
 }
 
 // guardRoots is every --root, and every subdirectory of a --scan holding slots/, once.

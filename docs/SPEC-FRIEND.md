@@ -1522,6 +1522,12 @@ witnesses: `MCJobWorktreesBrokenAsync` (the prune on a goroutine, the first cut 
 breaks `NoLaneLosesItsCheckout` in 16 states as above, `MCJobWorktreesBrokenDropBranch` breaks
 `WorkKept`, and `MCJobWorktreesBrokenNoLimit` breaks `CapKept`. Jobs staged as clones before
 this change are never pruned (they are no worktree of a mirror) and are left to a hand.
+A landed or dropped card's job is a different removal (`sprint.PruneLanded`, docs/SPEC-SPRINT.md,
+gc's class `landed`). gc runs it on every friend's `jobs/` it can see, after one hour, and it
+removes the directory whole whatever its git state, which is what a landed one-shot job looks
+like once its branch is pruned. This prune pass does not call it: `pruneStep` still keeps the
+newest `FinishedJobsKept` worktrees and never a clone. The one-shot reap does not call it
+either. The directory both of those clean is the one `PruneLanded` takes.
 Not yet: the server's `friend cards` answer does not send `repo` and `base` (cmd/nova-sprint is
 outside this card's paths), so the brief's lines are read; a read's checkout at the head under
 read is not staged here.
