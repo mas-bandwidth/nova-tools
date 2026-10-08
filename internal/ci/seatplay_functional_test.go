@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -35,8 +34,8 @@ print) l=${2##*/}; [ -f "$S/$l.pid" ] && kill -0 "$(cat "$S/$l.pid")" 2>/dev/nul
   printf '\tstate = running\n\tpid = %%s\n' "$(cat "$S/$l.pid")"; exit 0;;
 bootout) l=${2##*/}; echo "bootout $l" >> "$L"; [ -f "$S/$l.pid" ] || exit 3; kill "$(cat "$S/$l.pid")" 2>/dev/null; rm -f "$S/$l.pid"; exit 0;;
 bootstrap) l=$(basename "$3" .plist); echo "bootstrap $l" >> "$L"; [ -f "$S/$l.fail" ] && exit 5; [ -f "$S/$l.pid" ] && exit 5
-  set -- $(/usr/bin/plutil -extract ProgramArguments xml1 -o - "$3" | sed -n 's:.*<string>\(.*\)</string>.*:\1:p')
-  nohup "$@" >/dev/null 2>&1 & echo $! > "$S/$l.pid"; exit 0;;
+  p=$(python3 -c 'import plistlib,subprocess,sys; d=plistlib.load(open(sys.argv[1],"rb")); p=subprocess.Popen(d["ProgramArguments"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); print(p.pid)' "$3") || exit 5
+  echo "$p" > "$S/$l.pid"; exit 0;;
 *) echo "unexpected $*" >> "$L"; exit 64;;
 esac
 `
@@ -187,7 +186,8 @@ done
 echo "RELEASE INSTALLED version=$v tools=$n skipped=$k"
 `
 
-// TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove runs the seat's part of
+// TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove runs check mode and then
+// the seat's part of
 // tools.yml for real (--tags seat: the candidate checks, the install, the
 // migration, the library and the seat play) on a coordinator fixture whose
 // home, launchd, store and friend are the test's own, in the order a real
@@ -207,14 +207,11 @@ echo "RELEASE INSTALLED version=$v tools=$n skipped=$k"
 //  6. a bootstrap that fails is bootstrapped again and refused naming it.
 func TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove(t *testing.T) {
 	t.Parallel()
-	if runtime.GOOS != "darwin" {
-		t.Skip("the fake launchctl reads plists with plutil, a darwin tool")
-	}
 	r := newFleetPlayRig(t, "seat-fixture.yml")
 	home := filepath.Join(r.dir, "seat-home")
 	bin := filepath.Join(home, ".local", "bin")
 	agents := filepath.Join(home, "Library", "LaunchAgents")
-	stage := filepath.Join(home, "nova-bench", "release", "v0.0.0-seat", runtime.GOOS+"-"+runtime.GOARCH)
+	stage := filepath.Join(home, "nova-bench", "release", "v0.0.0-seat", "darwin-arm64")
 	state := filepath.Join(r.dir, "launchd")
 	fdir := filepath.Join(r.dir, "friend")
 	redisState := filepath.Join(r.dir, "redis-loaded")
@@ -346,7 +343,7 @@ func TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove(t *testing.T) {
 
 	vars := []string{"--tags", "seat", "--limit", "localhost", "-e", "nova_home=" + home, "-e", "nova_version=v0.0.0-seat",
 		"-e", "nova_redis_addr=mem:" + twin, "-e", "nova_launchctl=" + launchctl, "-e", "nova_sops=/usr/bin/true",
-		"-e", "nova_member_stop_timeout=5", "-e", "nova_seat_beat_within=15", "-e", "nova_seat_friend_drain=60"}
+		"-e", "nova_os=darwin", "-e", "nova_arch=arm64", "-e", "nova_member_stop_timeout=5", "-e", "nova_seat_beat_within=15", "-e", "nova_seat_friend_drain=60"}
 	logs := func() string {
 		var all string
 		for _, f := range []string{filepath.Join(fdir, "log")} {
@@ -357,6 +354,14 @@ func TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove(t *testing.T) {
 		return all
 	}
 	logs()
+
+	// The same staged candidate completes the real Ansible check-mode play
+	// before the real-mode adoption opens its window below.
+	check, checkErr := r.playResult(t, "tools.yml", append(vars, "--check")...)
+	require.NoError(t, checkErr, "check-mode seat play:\n%s", check)
+	assert.Contains(t, check, "WOULD-WINDOW host=localhost")
+	assert.NotContains(t, check, "FAILED!")
+	assert.NotContains(t, check, "ADOPT REFUSED")
 
 	// 1. the whole sequence
 	first := r.play(t, "tools.yml", vars...)
