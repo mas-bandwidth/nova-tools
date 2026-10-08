@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -102,5 +103,73 @@ func TestLandAnotherBaseProgressesWhileFirstBaseGateWaits(t *testing.T) {
 	assert.Equal(t, 1, code, "the abandoned batch is refused for this pass: %s%s", out, errs)
 	assert.Equal(t, map[string]string{"s1-1": "merging/queued", "s2-1": "landed/merged"}, r.places("s1-1", "s2-1"))
 	assert.Nil(t, r.a.baseGateFails[mainBase], "canceled base gate is not counted as red")
+	r.clean()
+}
+
+// Once a red batch gate falls back to gating each head, cancellation of that
+// second gate is still a pass-level timeout, never a finding against the card.
+func TestLandFallbackGateDeadlineDoesNotBlameCard(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.git(r.worker, "switch", "-q", "--detach", "origin/main")
+	r.files("the module", goModule)
+	r.git(r.worker, "push", "-q", "origin", "HEAD:refs/heads/main")
+	r.git(r.worker, "fetch", "-q", "origin")
+	mainBase := r.git(r.remote, "rev-parse", "main")
+	r.promotionStream("s1")
+	brief := filepath.Join(t.TempDir(), "s1-1.md")
+	require.NoError(t, os.WriteFile(brief, []byte(passingBrief("REPO: "+r.remote+"\nBASE: main\n\nWrite s1-1.")), 0o600))
+	r.ok("add --stream s1 --one --brief-file " + brief)
+	head := r.head("s1-1", "main", "s1.go", "package main\n\nfunc s1() {}\n")
+	r.queued(map[string]string{"s1-1": head}, "s1-1")
+	deadline := make(chan time.Time, 1)
+	parentAfter := r.a.after
+	r.a.after = func(d time.Duration) <-chan time.Time {
+		if d == LandDeadline {
+			return deadline
+		}
+		return parentAfter(d)
+	}
+	var gates atomic.Int32
+	fallback := make(chan struct{})
+	b := r.a.landState()
+	b.mu.Lock()
+	b.gateBench = func(ctx context.Context, _, dir string, _ [][]string, _ bool) (string, int, error) {
+		if !strings.HasSuffix(dir, "@s1") {
+			return "", 0, nil
+		}
+		call := gates.Add(1)
+		if call == 1 {
+			return "", 0, nil // the base gate is green
+		}
+		if call == 2 {
+			return "batch gate red", 1, nil
+		}
+		if call == 3 {
+			close(fallback)
+		}
+		<-ctx.Done()
+		return "", 1, ctx.Err()
+	}
+	b.mu.Unlock()
+	done := make(chan struct{})
+	var code int
+	var out, errs string
+	go func() { code, out, errs = r.do("land"); close(done) }()
+	select {
+	case <-fallback:
+		deadline <- time.Now()
+	case <-t.Context().Done():
+		t.Fatal("fallback gate never began")
+	}
+	select {
+	case <-done:
+	case <-t.Context().Done():
+		t.Fatal("land did not finish after fallback gate deadline")
+	}
+	assert.Equal(t, 1, code, "%s%s", out, errs)
+	assert.Contains(t, out+errs, "gate of this batch exceeded", "timeout is a batch refusal")
+	assert.Equal(t, map[string]string{"s1-1": "merging/queued"}, r.places("s1-1"))
+	assert.Nil(t, r.a.baseGateFails[mainBase], "canceled fallback gate is not counted as red")
 	r.clean()
 }
