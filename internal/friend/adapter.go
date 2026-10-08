@@ -258,6 +258,9 @@ func realExec(ctx context.Context, killDelay time.Duration, dir, name string, ar
 		return out.b.String(), -1, errors.New("the delivery was stopped with its verified process group")
 	}
 	if errors.As(err, &exitErr) {
+		if groupUnverified {
+			return out.b.String() + Head(stderr.b.String(), OutputKept), exitErr.ExitCode(), err
+		}
 		return out.b.String() + Head(stderr.b.String(), OutputKept), exitErr.ExitCode(), nil
 	}
 	return out.b.String(), 0, err
