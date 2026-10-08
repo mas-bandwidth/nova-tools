@@ -216,3 +216,24 @@ runs that probe once per machine, each bounded by the check's own deadline. It n
 bench whose probe fails and the reason (unknown host key, no key or permission denied,
 timeout), with the one fix line above. It is fleet-only, so `nova-doctor --local` skips it
 and says which; run `nova-doctor` plain to include it.
+
+### dep-launchd-units-bc.w2: the service units
+
+Every long-running nova loop is a nova-config loop record installed as a unit: a launchd
+plist (`com.nova.loop.<name>.plist`) on darwin or a systemd user unit
+(`nova-loop-<name>.service`, with its timer for a loop that runs every n seconds) on linux,
+rendered from `fleet/templates` by `fleet/loops.yml` from the records the loop kind holds.
+The machine that runs a loop needs it: the coordinator's machine and every bench. A machine
+set up with `nova-up --local` needs only its one loop, `redis-local`, which `nova-up`
+installs itself and reads no `nova-config` for.
+
+For the fleet's units, `nova-config apply --kind loop` reads the loop records from the sprint
+store, and `ansible-playbook -i ./nova-inventory fleet/loops.yml` installs one unit per record.
+On a machine with no fleet store (`--local`), `nova-up` is ok and redis-local is handled by
+the redis step.
+
+The `units` check reads `nova-config inventory` for this machine's loop records and the
+service manager's directory (`~/Library/LaunchAgents`, or `~/.config/systemd/user`), and
+names a record with no unit, a unit with no record (a hand plist), and a unit whose command
+differs from its record. Under `--local` it is skipped; a machine whose sprint store is its
+own twin (`mem:`) runs no fleet and is `ok` with that said.
