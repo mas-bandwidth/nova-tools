@@ -176,6 +176,44 @@ func gateRuns(tests bool, have []string) [][]string {
 	return runs
 }
 
+// classifyGateOutput classifies gate output: red tree for test failures, bench
+// fault for infrastructure problems. Returns (isRed, kind, firstLine).
+func classifyGateOutput(out string) (isRed bool, kind string, what string) {
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return false, "", ""
+	}
+	lines := strings.Split(out, "\n")
+	first := strings.TrimSpace(lines[0])
+	
+	// FAIL lines are red tree
+	if strings.HasPrefix(out, "--- FAIL:") || strings.Contains(out, "FAIL\t") {
+		return true, "", ""
+	}
+	// git errors are bench faults
+	if strings.Contains(out, "exit status 128") || strings.Contains(out, "not a git repository") {
+		return false, "git", first
+	}
+	// disk/quota errors are bench faults
+	if strings.Contains(out, "ENOSPC") || strings.Contains(out, "disk quota exceeded") || strings.Contains(out, "no space left") {
+		return false, "disk", first
+	}
+	// missing go toolchain
+	if strings.Contains(out, "no such toolchain") || strings.Contains(out, "toolchain not found") {
+		return false, "toolchain", first
+	}
+	// ssh errors are bench faults
+	if strings.Contains(out, "exit status 255") {
+		return false, "ssh", first
+	}
+	// copy/incomplete are bench faults
+	if strings.Contains(out, "copy incomplete") || strings.Contains(out, "did not finish") {
+		return false, "copy", first
+	}
+	// Default: assume red tree for any other non-zero exit
+	return true, "", ""
+}
+
 // gateWhy is a red run as a finding, one line: the run, how it ended and its output.
 func gateWhy(run []string, err error, out string) string {
 	var lines []string
@@ -370,7 +408,7 @@ func (l *lander) benchGate(ctx context.Context, hosts []string, dir string, runs
 }
 
 // ringGate asks the ring for a lane and runs the gate there, stepping to the next slot
-// when a bench's stage is refused (benchGate).
+// when a bench's stage is refused or a bench fault is detected (benchGate).
 func (l *lander) ringGate(ctx context.Context, hosts []string, dir string, runs [][]string, tests bool, st *bench.MirrorStage) (string, bool) {
 	skips := l.stageSkips()
 	tried, said := map[string]bool{}, map[string]bool{}
@@ -401,6 +439,11 @@ func (l *lander) ringGate(ctx context.Context, hosts []string, dir string, runs 
 			skips.Fail(host, refused.Error())
 			continue
 		}
+		// Step to next slot on bench fault (GATE FAULT format)
+		if strings.HasPrefix(why, "GATE FAULT") {
+			l.copySaid(why)
+			continue
+		}
 		if ran {
 			l.gateRing, l.gateSlot = len(hosts), ringSlot(l.gateKey, len(hosts))
 		}
@@ -428,7 +471,13 @@ func (l *lander) gateOn(ctx context.Context, host, dir string, runs [][]string, 
 	if code == 0 {
 		return "", true, nil
 	}
-	return gateWhy(redRun(runs, out), fmt.Errorf("exit status %d on the bench %s", code, host), out), true, nil
+	// Classify the output: red tree vs bench fault
+	isRed, kind, what := classifyGateOutput(out)
+	if isRed {
+		return gateWhy(redRun(runs, out), fmt.Errorf("exit status %d on the bench %s", code, host), out), true, nil
+	}
+	// Bench fault: report with GATE FAULT format
+	return "GATE FAULT bench=" + host + " kind=" + kind + " what=" + oneline.Quote(what), true, nil
 }
 
 // copySaid says one stage line: the loop's idle line carries it as the step, and the

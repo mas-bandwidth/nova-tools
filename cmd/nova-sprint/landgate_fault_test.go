@@ -9,32 +9,36 @@ import (
 )
 
 // classifyOutput classifies lander gate output: red for test failures, bench
-// fault for infra problems.
+// fault for infra problems. This mirrors classifyGateOutput in landgo.go.
 func classifyOutput(out string) (red bool, faultKind string, what string) {
 	out = strings.TrimSpace(out)
 	if out == "" {
 		return false, "", ""
 	}
+	lines := strings.Split(out, "\n")
+	first := strings.TrimSpace(lines[0])
+	
 	// FAIL lines are red tree
 	if strings.HasPrefix(out, "--- FAIL:") || strings.Contains(out, "FAIL\t") {
 		return true, "", ""
 	}
 	// git errors are bench faults
 	if strings.Contains(out, "exit status 128") || strings.Contains(out, "not a git repository") {
-		return false, "git", strings.Split(out, "\n")[0]
+		return false, "git", first
 	}
 	// disk/quota errors are bench faults
 	if strings.Contains(out, "ENOSPC") || strings.Contains(out, "disk quota exceeded") || strings.Contains(out, "no space left") {
-		return false, "disk", strings.Split(out, "\n")[0]
+		return false, "disk", first
 	}
 	// ssh errors are bench faults
 	if strings.Contains(out, "exit status 255") {
-		return false, "ssh", strings.Split(out, "\n")[0]
+		return false, "ssh", first
 	}
 	// copy/incomplete are bench faults
 	if strings.Contains(out, "copy incomplete") || strings.Contains(out, "did not finish") {
-		return false, "copy", strings.Split(out, "\n")[0]
+		return false, "copy", first
 	}
+	// Default: assume red tree for any other non-zero exit
 	return true, "", ""
 }
 
