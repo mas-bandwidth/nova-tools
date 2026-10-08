@@ -70,8 +70,9 @@ func fakeSqlite3Sleeping(t *testing.T) (env []string) {
 	return fakeSqlite3OnPath(t, fakeSleepMode)
 }
 
+// rule 19: a subprocess past --timeout is unreadable and the fold goes on.
 // SLOW: 1.0 s on hetzner at dev 64b9bec48, a deadline/wedge/wall bound proved by waiting it out.
-func TestRule19ASubprocessPastTheTimeoutIsUnreadableAndTheFoldGoesOn(t *testing.T) {
+func TestASubprocessPastTheTimeoutIsUnreadableAndTheFoldGoesOn(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()

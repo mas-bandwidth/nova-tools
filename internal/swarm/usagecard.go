@@ -38,7 +38,7 @@ import (
 // FOR OLD READS, and it was checked before it was done: every reader of this file in this
 // repo maps its columns BY HEADER NAME and says so in terms -- `cmd/nova-tokens`'s
 // `readCardFile` ("mapping its columns by the header so the reader never depends on a fixed
-// index"), `internal/pulse`'s `parseProgressUsage` and `status`'s own index. A file written
+// index"), the pulse package's `parseProgressUsage` and `status`'s own index. A file written
 // before this change has thirteen columns and no `end`, and every one of those readers
 // answers the empty string for it, which is what an absence is.
 var CardUsageColumns = []string{

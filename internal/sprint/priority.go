@@ -9,7 +9,7 @@ import (
 )
 
 // A card's priority (docs/SPEC-SPRINT.md section 1, "Priority"; the owner, 2026-10-06): every
-// card carries one level of the ladder blocker, critical, high, reader, normal, low. A read card
+// card carries one level of the ladder blocker, critical, fix, high, reader, normal, low. A read card
 // is reader, or its primary's level when that is higher (ReadPriority), and never set by
 // hand: every deal places, level by level, the reads of a level and then its work
 // (reads_priority.go), and land takes the stream with the highest merging level first. A
@@ -19,7 +19,8 @@ import (
 // more cards behind it, weight.go) unless a level is set by hand. Low is dealt only to a lane
 // nothing higher can fill. The deal and the ask order their cards by the ladder, then stream
 // turns within a level (ladderOrder, readOrder); land orders the streams by their merging
-// sets' levels (LandOrder), each batch as it was. Owed with the reference model: the weight
+// sets' levels (LandOrder), then eligible cards inside a batch (MergePriorityOrder). Owed with
+// the reference model: the weight
 // within a level and the computed critical in the deal's and the ask's order. A blocker that
 // no row has room for evicts one running card (priority_evict.go, tla/Priority.tla).
 
@@ -27,6 +28,7 @@ import (
 const (
 	PriorityBlocker  = "blocker"
 	PriorityCritical = "critical"
+	PriorityFix      = "fix"
 	PriorityHigh     = "high"
 	PriorityReader   = "reader"
 	PriorityNormal   = "normal"
@@ -34,10 +36,10 @@ const (
 )
 
 // PriorityLadder is the levels, highest first.
-var PriorityLadder = []string{PriorityBlocker, PriorityCritical, PriorityHigh, PriorityReader, PriorityNormal, PriorityLow}
+var PriorityLadder = []string{PriorityBlocker, PriorityCritical, PriorityFix, PriorityHigh, PriorityReader, PriorityNormal, PriorityLow}
 
 // PrioritySettable is the levels a primary may be given (reader is a read card's alone).
-var PrioritySettable = []string{PriorityBlocker, PriorityCritical, PriorityHigh, PriorityNormal, PriorityLow}
+var PrioritySettable = []string{PriorityBlocker, PriorityCritical, PriorityFix, PriorityHigh, PriorityNormal, PriorityLow}
 
 // FieldPriority is a primary's priority as set (by its brief's PRIORITY line or its stream's
 // default at admission, or by the verb priority); absent is normal, or critical by weight.
@@ -61,7 +63,7 @@ const priorityLine = "PRIORITY:"
 
 // PriorityOfBrief is the level the brief's header line `PRIORITY: <level>` names, "" when its
 // header names none; why says a line that names no settable level, with the level found and
-// the six of the ladder (reader is a read card's alone). Add and Recut refuse a brief with why
+// the seven of the ladder (reader is a read card's alone). Add and Recut refuse a brief with why
 // set, so a misspelled level is never admitted at normal or the stream's default.
 func PriorityOfBrief(brief string) (level, why string) {
 	started := false
@@ -215,7 +217,7 @@ func relevelCards(s *Snapshot, c *Card, level string) []Change {
 }
 
 // readRank is the place on the ladder of the primary's read: the higher of reader and its
-// primary's own level (cardRank), so the reads of a blocker, critical or high primary go to
+// primary's own level (cardRank), so the reads of a blocker, critical, fix or high primary go to
 // the front of the read queue, and a normal or low primary's read is reader (the owner,
 // 2026-10-06: "that work stream jumps to the front of the reader and merge queue").
 func readRank(pr *Card) int { return min(cardRank(pr), priorityRank(PriorityReader)) }
@@ -438,4 +440,87 @@ func PriorityLine(counts map[string][]string, streams map[string]string) string 
 		return ""
 	}
 	return "priority: " + strings.Join(parts, "; ")
+}
+
+// reworkPriority applies the rework policy when a next attempt opens
+// (docs/SPEC-SPRINT.md, Priority). Explicit urgent levels and computed critical stay put.
+func reworkPriority(s *Snapshot, c *Card, set map[string]string) *Card {
+	level, _ := CardPriority(c)
+	if level != PriorityNormal && level != PriorityLow {
+		return c
+	}
+	next, _ := s.Work.Prop(PropReworkPriority)
+	if next == ReworkKeep {
+		return c
+	}
+	if next != PriorityHigh {
+		next = PriorityFix
+	}
+	set[FieldPriority] = next
+	return withField(c, FieldPriority, next)
+}
+
+// MergePriorityOrder orders eligible merge cards by priority without passing their
+// named or positional dependencies (docs/SPEC-SPRINT.md, Priority). Equal levels
+// retain work order; cards with unresolved dependencies are not eligible.
+func MergePriorityOrder(s *Snapshot, cards []*Card) []*Card {
+	pending := slices.Clone(cards)
+	landed := map[string]bool{}
+	out := make([]*Card, 0, len(cards))
+	for len(pending) > 0 {
+		best := -1
+		for i, c := range pending {
+			pr := s.Work.Card(c.ID)
+			if len(WaitsFor(s, pr, landed)) != 0 {
+				continue
+			}
+			if best < 0 || cardRank(pr) < cardRank(s.Work.Card(pending[best].ID)) {
+				best = i
+			}
+		}
+		if best < 0 {
+			return out
+		}
+		out = append(out, pending[best])
+		landed[pending[best].ID] = true
+		pending = slices.Delete(pending, best, best+1)
+	}
+	return out
+}
+
+// FixStateCounts is the dashboard's repair state, partitioned by original column.
+// Completed work waiting for a read remains review, even when its priority is fix.
+// Counts are captured by the tick, so the dashboard never scans cards per refresh.
+func FixStateCounts(s *Snapshot) map[string]map[string]int {
+	var counts map[string]map[string]int
+	if s == nil || s.Work == nil {
+		return counts
+	}
+	for _, col := range []string{Ready, Working, Review} {
+		for _, c := range s.Work.Column(col) {
+			level, _ := CardPriority(c)
+			if level == PriorityBlocker || level == PriorityCritical {
+				continue
+			}
+			repair := level == PriorityFix
+			if col == Review {
+				var work *Card
+				if s.Fleet != nil {
+					work = s.Fleet.Card(c.F("work"))
+				}
+				repair = work != nil && (work.Col == DoneFailed || work.Col == DoneDefect)
+			}
+			if !repair {
+				continue
+			}
+			if counts == nil {
+				counts = map[string]map[string]int{}
+			}
+			if counts[c.Row] == nil {
+				counts[c.Row] = map[string]int{}
+			}
+			counts[c.Row][col]++
+		}
+	}
+	return counts
 }

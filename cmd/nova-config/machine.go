@@ -63,7 +63,7 @@ func runMachineSelf(ctx context.Context, args []string, stdout, stderr io.Writer
 			return cannotRead("the config cannot be read: "+err.Error(), helpFor(verb))
 		}
 		if !found {
-			return refuseLine(stderr, verb, fmt.Sprintf("%q is no machine row; run: %s machine add %s --user <login> --seat <seat> --slots <n> --width <n> --as <name>%s", name, toolName, name, c.again()), 2)
+			return refuseLine(stderr, verb, fmt.Sprintf("%q is no machine row; run: %s machine add %s --user <login> --seat <seat> --slots <n> --width <n> --actor <name>%s", name, toolName, name, c.again()), 2)
 		}
 	}
 	if *asJSON {

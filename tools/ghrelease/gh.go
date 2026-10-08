@@ -67,9 +67,9 @@ func answerBody(out string) string {
 	return ""
 }
 
-// hasSpace reports whether s carries whitespace: the class that would split a
+// hasBlank reports whether s carries whitespace: the class that would split a
 // linker flag or a path.
-func hasSpace(s string) bool {
+func hasBlank(s string) bool {
 	return strings.IndexFunc(s, unicode.IsSpace) >= 0
 }
 

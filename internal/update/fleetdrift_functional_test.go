@@ -19,7 +19,6 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
-	"github.com/redis/go-redis/v9"
 
 	"github.com/stretchr/testify/require"
 )
@@ -32,16 +31,14 @@ import (
 // on PATH are traps that leave a mark if anything runs them.
 func TestReportStorePrintsOneDriftLineForTheStaleBench(t *testing.T) {
 	t.Parallel()
-	// The store is dialled without the process environment's seat, and any
-	// child the run starts (ssh, git, gh) is a trap that leaves a mark.
+	// Open is the constructor the report uses. Any child the run starts
+	// (ssh, git, gh) is a trap that leaves a mark.
 	var spawned atomic.Int32
 	trap := func(ctx context.Context, args []string, input io.Reader, cap int) ProcessResult {
 		spawned.Add(1)
 		return ProcessResult{Reason: "trapped " + strings.Join(args, " ")}
 	}
-	dial := func(ctx context.Context, addr string) (*store.Store, error) {
-		return store.New(redis.NewClient(&redis.Options{Addr: addr, DisableIdentity: true})), nil
-	}
+	dial := store.Open
 
 	mr := miniredis.RunT(t)
 	mr.SAdd("benches", "fresh", "stale", "quiet")

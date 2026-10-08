@@ -293,7 +293,7 @@ func loginTool(d deps) *tool.Tool {
 func loginVerb(d deps) tool.Verb {
 	return tool.Verb{
 		Name:      "login",
-		Usage:     "login --store <dir> --as <seat> --key <file> --secret <NAME> --dsn <dsn> --friend <actor> [--sops <path>]\nlogin --check",
+		Usage:     "login --store <dir> --as <seat> --key <file> --secret <NAME> --dsn <dsn> --actor <name> [--sops <path>]\nlogin --check",
 		Detail:    "records the DSN and where the password is; never the password",
 		Effect:    tool.LocalWrite,
 		ExitTable: "0 done, 1 refused (the verb ran and the secret did not resolve), 2 could not run (usage, or a store that did not answer)",
@@ -322,7 +322,8 @@ func loginFlags(f *tool.Flags) {
 	f.String("sops", "", "the sops binary; empty is the sops on PATH, recorded as its path")
 	f.String("secret", "", "the NAME of the password in the seat's file; never the password")
 	f.String("dsn", "", "the PostgreSQL `dsn` with no password, postgres://user@host:port/db")
-	f.String("friend", "", "the `actor` a bare write is recorded under when --as and NOVA_FRIEND are unset")
+	actor := f.String("actor", "", "the `name` a bare write is recorded under when --as and NOVA_FRIEND are unset")
+	f.StringVar(actor, "friend", "", "the old spelling of --actor, kept for one release; it sets the same `name`")
 	f.Bool("check", false, "record nothing: print the recorded login and whether its secret resolves (exit 1 when it does not); the password is never shown")
 }
 
@@ -343,8 +344,8 @@ func runLogin(c *tool.Call, d deps) *tool.Out {
 		sops := c.Str("sops")
 		secret := c.Str("secret")
 		dsnFlag := c.Str("dsn")
-		friend := c.Str("friend")
-		if store+as+key+sops+secret+dsnFlag+friend != "" {
+		actor := c.Str("actor")
+		if store+as+key+sops+secret+dsnFlag+actor != "" {
 			refuse(c.Stderr, verb, "--check records nothing and takes no other flag")
 			return tool.Exit(2)
 		}
@@ -352,7 +353,7 @@ func runLogin(c *tool.Call, d deps) *tool.Out {
 	}
 	l := loginRecord{
 		DSN:    strings.TrimSpace(c.Str("dsn")),
-		Friend: strings.TrimSpace(c.Str("friend")),
+		Friend: strings.TrimSpace(c.Str("actor")),
 		Store:  c.Str("store"),
 		As:     strings.TrimSpace(c.Str("as")),
 		Key:    c.Str("key"),
@@ -365,7 +366,7 @@ func runLogin(c *tool.Call, d deps) *tool.Out {
 		}
 	}
 	var missing []string
-	for _, f := range []struct{ v, flag string }{{l.DSN, "--dsn <dsn>"}, {l.Friend, "--friend <actor>"}} {
+	for _, f := range []struct{ v, flag string }{{l.DSN, "--dsn <dsn>"}, {l.Friend, "--actor <name>"}} {
 		if f.v == "" {
 			missing = append(missing, f.flag)
 		}
@@ -378,7 +379,7 @@ func runLogin(c *tool.Call, d deps) *tool.Out {
 		return tool.Exit(2)
 	}
 	if err := config.ValidateName(l.Friend); err != nil {
-		refuse(c.Stderr, verb, "--friend: "+err.Error())
+		refuse(c.Stderr, verb, "--actor: "+err.Error())
 		return tool.Exit(2)
 	}
 	for _, p := range []*string{&l.Store, &l.Key, &l.Sops} {
@@ -408,6 +409,9 @@ func runLogin(c *tool.Call, d deps) *tool.Out {
 		return tool.Exit(2)
 	}
 	fmt.Fprintf(c.Stdout, "LOGIN RECORDED file=%s %s resolves=yes\n", oneline.Field(path), l.line())
+	if c.Given("friend") {
+		fmt.Fprintln(c.Stdout, "NOTE --friend is --actor")
+	}
 	return tool.Exit(0)
 }
 
@@ -419,7 +423,7 @@ func loginCheck(path string, getenv func(string) string, stdout, stderr io.Write
 		return refuse(stderr, "login", err.Error())
 	}
 	if !ok {
-		return refuse(stderr, "login", "no login is recorded at "+path+"; run: nova-config login --store <dir> --as <seat> --key <file> --secret <NAME> --dsn <dsn> --friend <actor>")
+		return refuse(stderr, "login", "no login is recorded at "+path+"; run: nova-config login --store <dir> --as <seat> --key <file> --secret <NAME> --dsn <dsn> --actor <name>")
 	}
 	line := fmt.Sprintf("LOGIN file=%s %s%s", oneline.Field(path), l.line(), loginWins(getenv))
 	if _, err := readRecordedSecret(path, l); err != nil {

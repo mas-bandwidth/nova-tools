@@ -774,7 +774,7 @@ func cmdLint(args []string, stdout, stderr io.Writer, getenv func(string) string
 	// this card is meant to have a header even though it has none.
 	typed := f.fs.Bool("typed", false, "require the typed header (KIND, PATHS, TEST, PAUSED and DEPENDS-ON lines) even on a card that has none")
 	// `--trust <file>` IS A FIXTURE UNTIL `nova-pulse trust` EXISTS. The per-kind state is
-	// T06a's other half and lives in the lane that owns internal/pulse; the file this flag
+	// T06a's other half and lives in the lane that owns the pulse package; the file this flag
 	// reads is in the exact shape that verb's listing prints, so the day it ships, its own
 	// stdout is what is handed here. With no --trust there is no state, and `paused` is not
 	// checked rather than guessed at.

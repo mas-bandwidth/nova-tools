@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardgen"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 var header = cardgen.Header{Repo: "example/repo", Base: "dev", Sha: "0123456789abcdef0123456789abcdef01234567"}
@@ -118,7 +119,7 @@ func TestTestPackage(t *testing.T) {
 }
 
 // No generated brief names a friend as the author: it carries the ATTRIBUTION line
-// (By: your own name, the friend doing this work) and an AS A READ section that judges
+// (By: your own name, the worker who does this attempt) and an AS A READ section that judges
 // a By: trailer only for being present and true, and passes the checks with friends
 // configured. A brief that writes By: and a configured friend name, in any of the
 // shapes a generator stamped it, is refused with author-name; a Co-Authored-By trailer,
@@ -129,8 +130,8 @@ func TestABriefNamesNoFriendAsAuthor(t *testing.T) {
 	c := cardgen.PlanHelp("nova-x", "x\n", "TestExamples", "", "")
 	c.Paths = Paths(header, c)
 	brief := cardgen.Render(header, c)
-	assert.Contains(t, brief, "\nATTRIBUTION: By: your own name, the friend doing this work")
-	assert.Contains(t, brief, "\nAS A READ\nA By: trailer is judged only for being present and true: it names the friend who pushed")
+	assert.Contains(t, brief, "\nATTRIBUTION: By: your own name, the worker who does this attempt")
+	assert.Contains(t, brief, "\nAS A READ\nA By: trailer is judged only for being present and true: it names the worker who pushed")
 	assert.Empty(t, Lint(c.ID, brief, opts))
 	assert.Empty(t, Lint(c.ID, brief+"WHO: friend ada\n", opts), "WHO stays a preference line")
 
@@ -164,4 +165,36 @@ func TestABriefNamesNoFriendAsAuthor(t *testing.T) {
 	} {
 		assert.Empty(t, authors(brief+line+"\n"), line)
 	}
+}
+
+// The brief a worker is handed for a card pinned to a friend (the generated brief, its
+// WHO pin, and the held rules the member appends at stage time) signs the worker's own
+// name and nothing else: the deal may hand a pinned card to any worker, so the brief
+// carries no By: of the pinned friend, no fill-in Claude trailer a worker of another
+// model would complete with its own model's name, and says that a model name is never a
+// By:, that a Claude worker adds its true Co-Authored-By trailer and that any other
+// worker adds none (cardgen.Attribution, fleet/child-rules.txt commit-trailer).
+func TestAStagedBriefSignsTheWorkersOwnName(t *testing.T) {
+	t.Parallel()
+	opts := Options{Names: []string{"Ada", "bench7"}}
+	h := header
+	h.Repo = "mas-bandwidth/" + swarm.HomeRepo
+	c := cardgen.PlanHelp("nova-x", "x\n", "TestExamples", "", "")
+	c.Paths = Paths(h, c)
+	rules, err := swarm.HeldRules(swarm.OwnRulesName(cardgen.Render(h, c), ""))
+	require.NoError(t, err)
+	staged := swarm.StagedBrief(cardgen.Render(h, c)+"WHO: friend ada\n", rules)
+
+	assert.Contains(t, staged, "\nWHO: friend ada\n", "the pin is the deal's and stays")
+	assert.Empty(t, Lint(c.ID, staged, opts), "no line names the pinned friend as the author")
+	assert.NotContains(t, staged, "Claude <", "no fill-in Claude trailer: a worker of another model completes it with its own")
+	for _, want := range []string{
+		"By: your own name, the worker who does this attempt",
+		"a model name is never a By:",
+		"a Claude worker adds its true Co-Authored-By trailer",
+		"any other worker adds no Co-Authored-By",
+	} {
+		assert.Contains(t, staged, want)
+	}
+	assert.NotContains(t, staged, "the friend doing this work", "a fleet machine is dealt pinned cards too")
 }

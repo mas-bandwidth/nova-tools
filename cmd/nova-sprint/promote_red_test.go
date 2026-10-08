@@ -167,8 +167,10 @@ func TestARedPromotionCutsOneFixCardPerFailingTest(t *testing.T) {
 		assert.Equal(t, test, sprint.RedTestOf(brief))
 	}
 
-	// a later red pass of another promotion cuts no card a test already has open
+	// a later red pass of another promotion cuts no card a test already has open:
+	// the judged promotion is forgotten, as a fresh clone or a moved tip leaves it
 	p.judged = ""
+	s.cfg = nil
 	again, code := p.step(context.Background(), io.Discard, io.Discard)
 	require.Equal(t, 1, code)
 	require.NotNil(t, again.Judgment)

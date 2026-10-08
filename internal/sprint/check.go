@@ -166,7 +166,7 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 		out = append(out, diff(5, landed, merged, "work landed", "merge merged")...)
 	}
 	// 6. Nothing enters merging without ok reads from as many different readers
-	// at its head as it needs (ReadsNeeded: one for a flash card, two for a pro card).
+	// at its head as it needs (ReadsNeededIn: the count it was accepted on).
 	for _, c := range s.Work.Column(Merging, Landed) {
 		if IsSentinel(c) {
 			continue // never read
@@ -187,7 +187,7 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 				readers[name] = true
 			}
 		}
-		if len(readers) < ReadsNeeded(c) {
+		if len(readers) < ReadsNeededIn(s, c) {
 			out = append(out, Violation{6, fmt.Sprintf("%s is %s with ok reads at head %s from %d reader(s)", c.ID, c.Col, orDash(c.F("head")), len(readers))})
 		}
 	}

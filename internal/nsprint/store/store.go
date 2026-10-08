@@ -147,8 +147,6 @@ func openWith(ctx context.Context, addr string, sel *seatcred.Selection, tune fu
 	return &Store{client: client}, nil
 }
 
-func New(client *redis.Client) *Store { return &Store{client: client} }
-
 func (s *Store) Client() *redis.Client { return s.client }
 
 func (s *Store) Close() error {

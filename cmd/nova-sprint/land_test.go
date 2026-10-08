@@ -195,18 +195,22 @@ func TestLandFetchesTheBaseAndTheBatchsHeadsAndNoOtherBranch(t *testing.T) {
 	r.clean()
 }
 
-// A head that does not merge ends its batch: the cards before it land, it is
-// reported with the merge step's conflict fact carrying git's words, and the
-// card behind it stays queued.
-
-func TestLandStopsAtAHeadThatDoesNotMerge(t *testing.T) {
+// A head that does not merge is the card's own refusal and stops nothing (the owner,
+// 2026-10-06: "There should be no manual step you need to remember to do. Just a
+// notification."): the cards before it land, it is reported with the merge step's conflict
+// fact carrying git's words, which reworks it at the tip, its finished head the base its next
+// attempt is staged from, and the card behind it lands in the same pass; the seat is told
+// once. A head origin does not hold is the lander's failure, not the card's: the stream stops
+// for a mind, and the card behind it stays queued.
+func TestAConflictingCardIsReworkedAndTheStreamLandsOn(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, why string
 		second    func(r *landRig) string
+		stops     bool
 	}{
-		{"a conflicting head", "does not merge", func(r *landRig) string { return r.head("s1-2", "main", "s1-1.txt", "other\n") }},
-		{"a missing head", "is missing", func(*landRig) string { return strings.Repeat("ab", 20) }},
+		{"a conflicting head", "does not merge", func(r *landRig) string { return r.head("s1-2", "main", "s1-1.txt", "other\n") }, false},
+		{"a missing head", "is missing", func(*landRig) string { return strings.Repeat("ab", 20) }, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -215,14 +219,31 @@ func TestLandStopsAtAHeadThatDoesNotMerge(t *testing.T) {
 			heads := map[string]string{"s1-1": r.head("s1-1", "main", "s1-1.txt", "one\n"), "s1-2": tc.second(r), "s1-3": r.head("s1-3", "main", "s1-3.txt", "three\n")}
 			r.queued(heads, "s1-1", "s1-2", "s1-3")
 			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
-			assert.Equal(t, 1, code)
+			assert.Equal(t, 1, code, "a refusal is reported")
 			assert.Contains(t, out, "LAND OK stream=s1 cards=1 base=main")
 			assert.Contains(t, errs, "LAND REFUSED stream=s1 cards=1 base=- tip=- ids=s1-2 fact=conflict reason=the head "+heads["s1-2"]+" of s1-2 "+tc.why)
-			assert.Contains(t, errs, "LAND DONE batches=1 cards=1 refused=1")
-			assert.Equal(t, []string{"land s1-1 (sprint stream s1)", "base"}, r.mainLog())
-			assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "merging/stuck", "s1-3": "merging/queued"}, r.places("s1-1", "s1-2", "s1-3"))
-			assert.Equal(t, "stopped conflict", r.streamState("s1"))
-			assert.Contains(t, r.ok("inbox"), "stream stopped: conflict on a card")
+			inbox := r.ok("inbox")
+			if tc.stops {
+				assert.Contains(t, errs, "LAND DONE batches=1 cards=1 refused=1")
+				assert.Equal(t, []string{"land s1-1 (sprint stream s1)", "base"}, r.mainLog())
+				assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "merging/stuck", "s1-3": "merging/queued"}, r.places("s1-1", "s1-2", "s1-3"))
+				assert.Equal(t, "stopped conflict", r.streamState("s1"))
+				assert.Contains(t, inbox, sprint.NConflict)
+				r.clean()
+				return
+			}
+			assert.Contains(t, errs, "NOTE the card is reworked at the tip and stream s1 goes on; the seat is told")
+			assert.Contains(t, errs, "LAND DONE batches=2 cards=2 refused=1")
+			assert.Equal(t, []string{"land s1-3 (sprint stream s1)", "land s1-1 (sprint stream s1)", "base"}, r.mainLog(), "s1-3 lands in the same pass")
+			assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "ready/returned", "s1-3": "landed/merged"}, r.places("s1-1", "s1-2", "s1-3"))
+			assert.Equal(t, "waiting", r.streamState("s1"), "no stop: its one open card is reworked")
+			var v cardView
+			r.json("card s1-2", &v)
+			// staging starts the next attempt from the refused head, carried onto the tip
+			assert.Equal(t, sprint.Base{Attempt: 1, Head: heads["s1-2"]}, sprint.BaseOf(v.Work))
+			assert.Contains(t, v.Primary.F("fix"), "the landing refused this head: the head "+heads["s1-2"]+" of s1-2 "+tc.why)
+			assert.NotContains(t, inbox, sprint.NConflict)
+			assert.Equal(t, 1, strings.Count(inbox, sprint.NLandRefused), "one notice: %s", inbox)
 			r.clean()
 		})
 	}
@@ -674,7 +695,7 @@ func TestLandChecksNewFilesAgainstTheTypedHeader(t *testing.T) {
 			} else {
 				assert.Equal(t, 1, code, out+errs)
 				assert.Contains(t, errs, "it changes files outside its PATHS (E12): "+tc.file)
-				assert.Equal(t, map[string]string{"a": "merging/stuck"}, r.places("a"))
+				assert.Equal(t, map[string]string{"a": "review/returned"}, r.places("a"))
 				assert.Equal(t, before, r.git(r.remote, "rev-parse", "main"))
 			}
 			r.clean()
@@ -690,10 +711,11 @@ func TestLandChecksNewFilesAgainstTheTypedHeader(t *testing.T) {
 func TestLandEndsTheBatchAtACardThatFailsTheMechanicalChecks(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, file, text, why string
+		name, file, text, why, place string
 	}{
-		{"a file outside its PATHS", "other.txt", "other\n", "fails the lander's checks: it changes files outside its PATHS (E12): other.txt"},
-		{"a stranded fragment", "doc.md", "the box holds\nThe box is full.\n", `fails the lander's checks: doc.md:2 leaves a sentence fragment: "the box holds" is followed by a new sentence, "The box is full." (E4)`},
+		// files outside its PATHS go back to review for the widen rule; any other check reworks it
+		{"a file outside its PATHS", "other.txt", "other\n", "fails the lander's checks: it changes files outside its PATHS (E12): other.txt", "review/returned"},
+		{"a stranded fragment", "doc.md", "the box holds\nThe box is full.\n", `fails the lander's checks: doc.md:2 leaves a sentence fragment: "the box holds" is followed by a new sentence, "The box is full." (E4)`, "ready/returned"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -718,8 +740,9 @@ func TestLandEndsTheBatchAtACardThatFailsTheMechanicalChecks(t *testing.T) {
 			assert.Equal(t, 1, code, out+errs)
 			assert.Contains(t, out, "LAND OK stream=s1 cards=1 base=main")
 			assert.Contains(t, errs, "LAND REFUSED stream=s1 cards=1 base=- tip=- ids=c2 fact=conflict reason=the head "+heads["c2"]+" of c2 "+tc.why)
-			assert.Equal(t, []string{"land c1 (sprint stream s1)", "the doc", "base"}, r.mainLog())
-			assert.Equal(t, map[string]string{"c1": "landed/merged", "c2": "merging/stuck", "c3": "merging/queued"}, r.places("c1", "c2", "c3"))
+			// the stream goes on: c3 lands in the same pass
+			assert.Equal(t, []string{"land c3 (sprint stream s1)", "land c1 (sprint stream s1)", "the doc", "base"}, r.mainLog())
+			assert.Equal(t, map[string]string{"c1": "landed/merged", "c2": tc.place, "c3": "landed/merged"}, r.places("c1", "c2", "c3"))
 			r.clean()
 		})
 	}

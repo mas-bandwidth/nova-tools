@@ -174,6 +174,50 @@ func TestAFriendRunningAJobKeepsHerUnstartedCards(t *testing.T) {
 	assert.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col, "her started card stays working")
 }
 
+// The start-bound level honours a recipient's work restriction (her nova-config row's
+// streams and kinds, docs/SPEC-SPRINT.md section 1, a friend's card): a card dealt and not
+// started past the bound moves only to a friend whose restriction holds its primary, and a
+// restricted friend with an idle lane is not made its new home.
+func TestStartBoundLevellingSkipsARestrictedRecipient(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		stream  string
+		kind    string
+		streams []string
+		kinds   []string
+		want    string
+	}{
+		{name: "stream outside the recipient's restriction", stream: "s1", kind: "fix", streams: []string{"security*"}, want: "amy"},
+		{name: "kind outside the recipient's restriction", stream: "security-a", kind: "test", kinds: []string{"fix"}, want: "amy"},
+		{name: "within the recipient's restriction", stream: "security-a", kind: "fix", streams: []string{"security*"}, kinds: []string{"fix"}, want: "bob"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			w := newWorld(t, "reader-a", "reader-b")
+			w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1"}))
+			w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m2"}))
+			id := tc.stream + "-1"
+			brief := "c: a restricted level\nREPO: mas-bandwidth/nova-tools\nWHO: friend\nKIND: " + tc.kind + "\n\nThe task."
+			w.must(Add(w.s, AddReq{Stream: tc.stream, Cards: []CardAdd{{ID: id, Brief: brief}}}))
+			seats := func() []FriendSeat {
+				return []FriendSeat{
+					{Name: "amy", Width: 1, Status: Up, Class: "flash,pro"},
+					{Name: "bob", Width: 1, Status: Up, Class: "flash,pro", Streams: tc.streams, Kinds: tc.kinds},
+				}
+			}
+			w.must(func() Plan { p, _ := TickDeal(w.s, TickReq{Friends: seats()}); return p }())
+			require.Equal(t, FriendRow("amy"), w.s.Fleet.Card(id+".w1").Row, "the card is dealt to amy first")
+
+			w.s.Now = t0.Add(FriendStartMaxDefault + time.Minute)
+			p, _ := TickDeal(w.s, TickReq{Friends: seats()})
+			w.must(p)
+			assert.Equal(t, FriendRow(tc.want), w.s.Fleet.Card(id+".w1").Row, "the level honours the recipient's restriction")
+		})
+	}
+}
+
 // startLanes is each friend's start receipt for the oldest cards ready on her row, as many
 // as her lanes have free (her width less her working cards): her beat names them running,
 // and the tick's start moves take them into working (friendStartUnits).

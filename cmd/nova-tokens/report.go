@@ -364,19 +364,20 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	return s.done(0, *max)
 }
 
-// usdCell is a cost as a field: the dollars, or - when no source reported one.
-func usdCell(micro int64, priced bool) string {
+// usdCell is a cost as a field: the dollars, or - when no source reported one. The cost
+// type carries that same value into --json as null for the dash.
+func usdCell(micro int64, priced bool) cost {
 	if !priced {
-		return tokens.Dash
+		return cost(tokens.Dash)
 	}
-	return tokens.Usd(micro)
+	return cost(tokens.Usd(micro))
 }
 
 // usdPerMtokCell is the blended rate as a field: - when no source reported a cost, or the
-// model had no tokens to divide by.
-func usdPerMtokCell(micro, n int64, priced bool) string {
+// model had no tokens to divide by. The cost type makes that same dash null in --json.
+func usdPerMtokCell(micro, n int64, priced bool) cost {
 	if !priced {
-		return tokens.Dash
+		return cost(tokens.Dash)
 	}
-	return tokens.UsdPerMtok(micro, n)
+	return cost(tokens.UsdPerMtok(micro, n))
 }

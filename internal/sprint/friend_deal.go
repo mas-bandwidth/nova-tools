@@ -3,12 +3,14 @@ package sprint
 import (
 	"fmt"
 	"maps"
+	"path"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // A friend's card (the owner, 2026-10-03: "Could we try expressing the work left for
@@ -120,8 +122,14 @@ type FriendSeat struct {
 	Tiers  []string
 	// Roles is her nova-config row's roles: a read card is dealt only to a friend whose
 	// roles name reader (RoleReader, read_cards.go).
-	Roles   []string
-	Dir     string
+	Roles []string
+	Dir   string
+	// Streams and Kinds are her work restriction (her nova-config row's streams and
+	// kinds, carried by friend sync): the stream globs and card KIND values the deal
+	// may hand her; empty is no restriction (docs/SPEC-SPRINT.md section 1, a friend's
+	// card).
+	Streams []string
+	Kinds   []string
 	Running []string
 	// Why is why her Status is not up, as FriendDownWhy says it (held, or the session
 	// evidence she lacks), "" while she is up: the words a take refused for her names.
@@ -484,13 +492,13 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 		if !pinnedCard {
 			name = ""
 		}
-		if name != "" && (free[name] <= 0 || slices.Contains(left, name) || !friendTakes(s, seat[name], tier)) {
-			name = "" // the friend it names is not up with room, it has left her, or not her tier
+		if name != "" && (free[name] <= 0 || slices.Contains(left, name) || !friendTakes(s, seat[name], tier) || !friendRestrictionAllows(seat[name], c)) {
+			name = "" // the friend it names is not up with room, it has left her, not her tier, or outside her restriction
 		}
 		if name == "" && !OnlyFriend(c) {
 			var may []string
 			for _, f := range up {
-				if free[f] > 0 && !slices.Contains(left, f) && friendTakes(s, seat[f], tier) {
+				if free[f] > 0 && !slices.Contains(left, f) && friendTakes(s, seat[f], tier) && friendRestrictionAllows(seat[f], c) {
 					may = append(may, f)
 				}
 			}
@@ -502,7 +510,7 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 				// never the friend it was withdrawn from or taken back from
 				gone := withdrawnFrom(wc)
 				for _, f := range up {
-					if free[f] > 0 && !slices.Contains(gone, f) && friendTakes(s, seat[f], tier) {
+					if free[f] > 0 && !slices.Contains(gone, f) && friendTakes(s, seat[f], tier) && friendRestrictionAllows(seat[f], c) {
 						may = append(may, f)
 					}
 				}
@@ -510,7 +518,7 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 			}
 			name = preferredFriend(may, lanes, free)
 		}
-		if name == "" || slices.Contains(left, name) || free[name] <= 0 {
+		if name == "" || slices.Contains(left, name) || free[name] <= 0 || !friendRestrictionAllows(seat[name], c) {
 			continue // no friend it may go to is up with room: the fleet's, or (only) it waits ready
 		}
 		card := WorkCardID(c.ID, c.Int("attempt")+1)
@@ -676,7 +684,7 @@ func reclaimUnit(s *Snapshot, wc *Card, up []string, seat map[string]FriendSeat,
 	tier, left := s.DealTier(pr), friendsLeft(wc)
 	var may []string
 	for _, f := range up {
-		if lanes[f] > 0 && free[f] > 0 && !slices.Contains(left, f) && friendTakes(s, seat[f], tier) {
+		if lanes[f] > 0 && free[f] > 0 && !slices.Contains(left, f) && friendTakes(s, seat[f], tier) && friendRestrictionAllows(seat[f], pr) {
 			may = append(may, f)
 		}
 	}
@@ -725,12 +733,13 @@ func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
 }
 
 // friendWithFree is the up friend of one of the classes with the most free width in
-// free, the first by name among equals; "" when none has room. AttemptCapDeal passes
-// the free width it has left in this plan, decremented after each deal.
-func friendWithFree(seats []FriendSeat, free map[string]int, classes ...string) string {
+// free, the first by name among equals, whose work restriction the card c is within;
+// "" when none has room. AttemptCapDeal passes the free width it has left in this plan,
+// decremented after each deal.
+func friendWithFree(seats []FriendSeat, free map[string]int, c *Card, classes ...string) string {
 	var up []string
 	for _, f := range seats {
-		if f.Status == Up && slices.Contains(classes, f.Class) {
+		if f.Status == Up && slices.Contains(classes, f.Class) && friendRestrictionAllows(f, c) {
 			up = append(up, f.Name)
 		}
 	}
@@ -799,4 +808,53 @@ func friendRedealUnit(s *Snapshot, c, wc *Card, row string, set map[string]strin
 		change(Fleet, moveEntry(wc, row, Ready, set, unset...)),
 		change(Work, moveEntry(c, c.Row, Working, prim, "result")),
 	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s gen=%d %s (taken back, dealt again: friend sync delivers it to her inbox)", c.ID, c.Col, wc.ID, row, wc.Int("gen")+1, Ready)}
+}
+
+// FriendRestrictionWhy applies one friend's configured stream globs and KIND values to a
+// card's stream and kind: "" when the card is within the restriction (either list empty is
+// no restriction, Split reads the comma lists nova-config carries), else the sentence the
+// add, the brief and the deal refuse or skip with (docs/SPEC-SPRINT.md section 1, a
+// friend's card).
+func FriendRestrictionWhy(streams, kinds []string, stream, kind string) string {
+	if len(streams) > 0 {
+		matched := false
+		for _, glob := range streams {
+			if ok, err := path.Match(strings.TrimSpace(glob), stream); err == nil && ok {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return fmt.Sprintf("stream %q is outside this friend's streams restriction (%s)", stream, strings.Join(streams, ","))
+		}
+	}
+	if len(kinds) > 0 {
+		for _, allowed := range kinds {
+			if strings.TrimSpace(allowed) == kind {
+				return ""
+			}
+		}
+		return fmt.Sprintf("KIND %q is outside this friend's kinds restriction (%s)", kind, strings.Join(kinds, ","))
+	}
+	return ""
+}
+
+// friendRestrictionAllows says the deal may hand the card c to the seat: its stream and
+// KIND are within her configured restriction (FriendRestrictionWhy). A nil card is no
+// restriction to judge.
+func friendRestrictionAllows(seat FriendSeat, c *Card) bool {
+	if c == nil {
+		return true
+	}
+	return FriendRestrictionWhy(seat.Streams, seat.Kinds, c.F("stream"), BriefKind(c.F("brief"))) == ""
+}
+
+// BriefKind reads the task kind from a card brief's typed header (the KIND: line the card
+// lint reads): "" when it names none, and a KIND: line in the body grants nothing.
+func BriefKind(brief string) string {
+	value, ok := swarm.CardHeaderValue([]byte(brief), "KIND")
+	if !ok {
+		return ""
+	}
+	return value
 }
