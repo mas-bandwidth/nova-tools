@@ -28,6 +28,10 @@ const (
 	// PropFriendStallStep is the work table's property: the duration of each rung of
 	// the friend stall ladder.
 	PropFriendStallStep = "friend_stall_step"
+	// PropPinWait is the work table's property: the pin bound, how long a card come back
+	// to the friend its WHO line names waits for her while she is down, held or full
+	// before the deal waives the pin (friend_deal.go, OnlyFriend), a duration.
+	PropPinWait = "pin_wait"
 	// PropReadTier is the work table's property: the sprint's read tier.
 	PropReadTier = "read_tier"
 	// FieldReadTier is a stream's control card's field: the stream's read tier,
@@ -228,6 +232,26 @@ func (s *Snapshot) FriendStallStep() time.Duration {
 	return FriendStallStepDefault
 }
 
+// PinWaitDefault is the pin bound when the coordinator set none (the owner, 2026-10-07:
+// 58 ready cards pinned to friends down or out of credits sat for hours while the fleet
+// idled; a pin is a preference with a clock, never a hole).
+const PinWaitDefault = 30 * time.Minute
+
+// PinWait is the pin bound: how long a card come back to the friend its WHO line names
+// (ReworkPinned) waits ready for her while she is down, held or at her room before the deal
+// waives the pin and deals it as unpinned (friendDeal, pinHolds); the sprint's setting
+// (set --pin-wait), else PinWaitDefault.
+func (s *Snapshot) PinWait() time.Duration {
+	if s.Work != nil {
+		if v, ok := s.Work.Prop(PropPinWait); ok {
+			if d, err := time.ParseDuration(v); err == nil && d > 0 {
+				return d
+			}
+		}
+	}
+	return PinWaitDefault
+}
+
 // readTierSetting is the read tier set for the stream's reads: the stream's own,
 // else the sprint's, else "" (each card's own tier).
 func (s *Snapshot) readTierSetting(stream string) string {
@@ -269,6 +293,8 @@ type SetReq struct {
 	FriendIdle       string   `json:",omitempty"`
 	FriendStallAfter string   `json:",omitempty"`
 	FriendStallStep  string   `json:",omitempty"`
+	// PinWait is the pin bound (PropPinWait, set --pin-wait): a duration, or default.
+	PinWait string `json:",omitempty"`
 	// Reason, with Streams and ReadTier, is why the read tier is set, recorded on the
 	// stream's control card (FieldReadTierReason); Answers the judgments this answers.
 	Reason  string   `json:",omitempty"`
@@ -424,6 +450,11 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--friend-stall-step wants a duration above zero (5m, 10m), or "+ReadTierDefault+" for "+FriendStallStepDefault.String()+"; found "+r.FriendStallStep)
 		}
 	}
+	if r.PinWait != "" && r.PinWait != ReadTierDefault {
+		if d, err := time.ParseDuration(r.PinWait); err != nil || d <= 0 {
+			why = append(why, "--pin-wait wants a duration above zero (30m, 1h), or "+ReadTierDefault+" for "+PinWaitDefault.String()+"; found "+r.PinWait)
+		}
+	}
 	if r.ReadCards != "" {
 		if r.ReadCards != ReadCardsOnWord && r.ReadCards != "off" && r.ReadCards != ReadTierDefault {
 			why = append(why, "--read-cards wants on, off or "+ReadTierDefault+" (off); found "+r.ReadCards)
@@ -443,8 +474,8 @@ func Set(s *Snapshot, r SetReq) Plan {
 	if r.Base != "" && len(r.Streams) == 0 {
 		why = append(why, "--base is a stream's, not the sprint's: nova-sprint stream set <s> --base <branch>")
 	}
-	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && r.Base == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" && r.Fleet == "" && r.Friends == "" && len(sideTiers) == 0 && r.ReadCards == "" && r.Reads == "" {
-		why = append(why, "nothing to set: --read-tier, --read-cards, --reads, --prose, --base, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours, --fleet, --friends, --fleet-tiers, --friends-tiers or an --alarm-... threshold")
+	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && r.Base == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.PinWait == "" && r.DriftCommits == "" && r.DriftHours == "" && r.Fleet == "" && r.Friends == "" && len(sideTiers) == 0 && r.ReadCards == "" && r.Reads == "" {
+		why = append(why, "nothing to set: --read-tier, --read-cards, --reads, --prose, --base, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --pin-wait, --drift-commits, --drift-hours, --fleet, --friends, --fleet-tiers, --friends-tiers or an --alarm-... threshold")
 	}
 	if len(r.Streams) > 0 && r.GoLanes != "" {
 		why = append(why, "--go-lanes is the sprint's, not a stream's: nova-sprint set --go-lanes "+r.GoLanes)
@@ -463,6 +494,9 @@ func Set(s *Snapshot, r SetReq) Plan {
 	}
 	if len(r.Streams) > 0 && r.FriendStallStep != "" {
 		why = append(why, "--friend-stall-step is the sprint's, not a stream's: nova-sprint set --friend-stall-step "+r.FriendStallStep)
+	}
+	if len(r.Streams) > 0 && r.PinWait != "" {
+		why = append(why, "--pin-wait is the sprint's, not a stream's: nova-sprint set --pin-wait "+r.PinWait)
 	}
 	for _, st := range r.Streams {
 		if s.StreamCtl(st) == nil {
@@ -571,6 +605,7 @@ func Set(s *Snapshot, r SetReq) Plan {
 		{PropFriendIdle, r.FriendIdle},
 		{PropFriendStallAfter, r.FriendStallAfter},
 		{PropFriendStallStep, r.FriendStallStep},
+		{PropPinWait, r.PinWait},
 		{PropDriftCommits, r.DriftCommits},
 		{PropDriftHours, r.DriftHours},
 		{PropFleet, r.Fleet},
@@ -612,6 +647,8 @@ func orDefault(v, name string) string {
 		return fmt.Sprintf("default (%s)", FriendStallAfterDefault)
 	case name == PropFriendStallStep:
 		return fmt.Sprintf("default (%s)", FriendStallStepDefault)
+	case name == PropPinWait:
+		return fmt.Sprintf("default (%s)", PinWaitDefault)
 	case name == PropDriftCommits:
 		return fmt.Sprintf("default (%d commits)", DriftCommitsDefault)
 	case name == PropDriftHours:

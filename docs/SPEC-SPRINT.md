@@ -359,7 +359,8 @@ left for nova-tools-1.1.0 into cards, and doing it via the sprint, but doing
 parts on friends where we would normally do friend work."). WHO is a preference (docs/SPEC-CARD-CONTRACT.md, the WHO line; `cardhdr.ReadWho`
 is the one parser). A card with no WHO line, or `WHO: -`, is unpinned. `WHO: friend`
 is any friend. `WHO: friend <name>` prefers that friend while she is up with room.
-`WHO: only friend <name>` is the one hard pin and waits for her alone. `add` and
+`WHO: friend <name> only` (or the older spelling `WHO: only friend <name>`) is the one hard
+pin and waits for her alone, never waived (`sprint.HardPin`). `add` and
 `brief` refuse any other WHO value, a name that is no row of the friends table, and
 `WHO: friend` while the table has no row (exit 2, nothing written). A named friend's
 configured work restriction is held too: a card whose stream matches none of her
@@ -499,10 +500,54 @@ attempt: `TestOneDeadlineRuleForMembersAndFriends`), The machines' `deal` verb r
 offer again. A rework keeps the WHO pin (the owner, 2026-10-05: a rework of a friend's own
 rating, `WHO: friend <name>`, was dealt to another worker): a `WHO: friend <name>` card
 come back by a rework, a return or a redo (its `reworks` or `returns` counted;
-`sprint.ReworkPinned`) is the hard pin `OnlyFriend`, dealt only to her as on its first
+`sprint.ReworkPinned`) is `OnlyFriend`, dealt only to her as on its first
 deal, and while she is down, held or without room it waits ready, held as a hard pin is,
-dealt to no other friend and no machine (`TestAReworkKeepsTheWhoPin`); a take-back alone
+dealt to no other friend and no machine (`TestAReworkKeepsTheWhoPin`), **within the pin
+bound**. A take-back alone
 (`friend take`) counts neither, so a preference taken back from her is still offered on.
+
+**A pin is a preference with a clock, never a hole** (the owner, 2026-10-07 ~6:58 PM ET,
+after 58 ready cards pinned to friends who were down or out of credits had sat for hours
+while the fleet idled and the seat had unpinned them by hand: "This is a thing that we
+often get tripped over isn't it."; friend_deal.go, `pinHolds`, `pinUnable`; the model is
+owed in tla/WhoPreference.tla). A card come back to the friend its WHO line names waits
+ready for her while she is down, held or at her room (`full`) up to the pin bound, the
+sprint's setting `pin_wait` (`set --pin-wait <duration|default>`, 30 minutes by default,
+`sprint.PinWaitDefault`), counted from the first tick the deal found her so: the deal
+writes `pin_wait_since` on the primary once, with the line "`<id> waits ready for friend
+<name> (she is down): its pin is waived after 30m0s`". At the bound the pin is waived: the
+deal places the card as if it were unpinned, on the next friend of its tier (the friends'
+deal, `preferredFriend`), else by the machines' deal on the fleet, with one story line, a
+happened note (`a pin was waived at its bound`): "`pin to <friend> waived after <d>: she is
+<down|held|full>; dealt to <unit>`"; the primary records `pin_waived` (the stamp), the
+clock comes off, and the WHO line stays as her preference (`card <id>` prints
+`preferred=<name> waived=<time>` on its CARD OK line, `--json` `preferred` and `waived`;
+`where --json --rows` carries `pins`, each friend's `pinned`, `waived` and `only` counts
+over the primaries ready and working, `sprint.PinCounts`). A pin she can never honour (the
+card has left her by a take-back, her tiers or the friends' tiers do not hold its tier, its
+stream or KIND is outside her restriction) is waived at once, the reason in the line
+("`pin to amy waived: it has left her; dealt to friend.bob`"). The waiver stands until she
+takes the card: the next deal, and the next read (`friendReadAskOf`), go to her first
+while she is up with room, and a deal onto her row (the friends' deal, the reclaim) clears
+`pin_waived` and the clock, so the card come back to her again is hers within the bound;
+while she is still away a waived card flows on at once, told once. The rebalance
+(`rebalanceBack`) gives an unstarted waived card back to her the tick she is dealable with
+an idle lane, wherever it sits and whatever its holder's lanes, at its next generation with
+the waiver cleared; a card its holder started stays. The hard pin, `WHO: friend <name>
+only`, is never waived and runs no clock; the machines' `deal` verb refuses it and the
+unwaived come-back pin alike as a friend's card. A first deal of `WHO: friend <name>` is a
+preference with no clock, as it was: hers while she is up with room, else another friend's
+or the fleet's at once, with the pin-ignored judgment (`TestWhoIsAPreference`). Tests:
+`TestAPinnedCardWaitsForHerThenIsWaivedAtTheBound`,
+`TestAFullFriendRunsThePinClockAndALeftPinIsWaivedAtOnce`,
+`TestAWaivedPinFallsThroughToTheFleet`, `TestAnOnlyPinIsNeverWaived`,
+`TestThePreferredFriendGetsTheNextAttemptFirst`,
+`TestTheRebalanceMovesOnlyUnstartedWaivedCardsBack`, `TestPinCountsPerFriend`
+(internal/sprint/pin_clock_test.go). Not done here: a come-back pin sitting unstarted on her
+own row is left to her by the start bound, the take rule and the level (friend_start.go,
+judgment_rules.go), so the clock runs only while the card waits off her row; and a waived
+card off her row also carries the standing pin-ignored judgment of the coordinator's pass
+(coordinator_pass.go, `pinConds`) beside the one story line.
 
 **A friend's card is working once she starts it** (the owner, 2026-10-05: "They
 are not working unless work turns from working to done."; the friends table had
@@ -1259,7 +1304,7 @@ them. `TestRunReconcilesFriendsEveryTick`.
 are missing"; an add was refused for a brief whose header said `WHO: -`).
 `cardhdr.ReadWho` reads `WHO: -` as no WHO line: the card is a machine's,
 dealt to the fleet, and `add` and `brief` take it with no refusal. `WHO: friend`,
-`WHO: friend <name>` and `WHO: only friend <name>` read as the preference section
+`WHO: friend <name>` and `WHO: friend <name> only` (`WHO: only friend <name>`) read as the preference section
 says, and any other value (`WHO: - -`, `WHO: friend -`, `WHO: junk`) is refused
 (`TestWhoDashIsTheFleet`).
 
@@ -1393,7 +1438,10 @@ idle lanes, then the name. Each card moves at most once a tick, in the deal's or
 moves are bounded by the idle lanes. A started card, a read card, a hard pin, a pin honoured
 where it sits (its WHO names the friend it is on, or a model pin; a `WHO: friend` card on a
 friend's row goes to another friend, never a member), a bench card, a card of a
-held stream, a card a lane runs, and a card whose route rests never move. The card keeps its
+held stream, a card a lane runs, and a card whose route rests never move. Before that pass,
+an unstarted card whose pin the deal waived goes back to the friend its WHO line names the
+tick she is dealable with an idle lane (`rebalanceBack`; section 1, a pin is a preference
+with a clock). The card keeps its
 attempt and carries nothing (it never started); it moves at its next generation, so the old
 row's inbox job or queued job is stale and refused as any older generation is; onto a
 machine it draws a route of its tier, onto a friend its route comes off. No judgment is
@@ -5662,7 +5710,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | reader remove | takes readers off the readers table; refused (exit 1, nothing written) when a named reader is no row or holds a read card, asked, reading, ok or broken, naming the reader and its read cards |
 | reader retire | retires readers and keeps their history (the comfort list of 2026-10-03, item 6: `reader remove` refuses a reader that holds read cards, so the second readers could not be retired without losing the record): each named reader, a row of the readers table, is held away for good, its state `retired`: no read is asked of it and a read asked and not begun is asked of another at the next tick (as `reader away`); a read it is reading is taken back at the next tick and asked of a reader up with no card at that attempt, and it stays when none can take it, the few-readers judgment names it no more, its own `queue --as` writes no beat and answers `reader: false` (its loop stops as for a name with no row), while its row and its read cards stay on the table, counted on their cards and in `where`; `reader up` brings it back; a named reader with no row refuses the whole call, nothing written; `--dry-run` prints `READER-RETIRE DRY-RUN readers=<names>; nothing was changed` and writes nothing; `reader remove` is as it was |
 | stream set | `stream set <s>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--reason <why>] [--answers <note>]`: `--prose` sets the streams' prose globs, their control cards' `prose`, the files the lander does not read for a code span (section 7, the document repairs), `default` takes them off; `--attempts` sets the streams' attempt cap, their control cards' `attempts`, over the sprint's (section 2); `--reason` records why the read tier is set as `read_tier_reason`, and `--answers` answers the judgment `raise the read tier of the stream?`; the read tier of the streams named, their control cards' `read_tier`, over the sprint's (`set`), and their protected-branch mark, `land_protected` (section 7, the protected branches); `default` takes a stream's off; `--release <name>` records the release on each stream's control card, `default` or `none` takes it off; the coordinator's; refused whole, nothing written, for a stream that is no row, a tier that is not flash, pro or heavy, a mark that names no repository, or another actor |
-| set | `set [--read-tier <flash|pro|heavy|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>] [--friend-idle <duration|default>] [--attempts <n|default>] [--fleet <on|off>] [--friends <on|off>] [--fleet-tiers <tiers|all>] [--friends-tiers <tiers|all>] [--reads <0|1|2|default>]`: also `reads_needed` (the ok reads every card in review needs whatever its tier, 0 to 2, default each card's tier's rule; section 6), `fleet` and `friends` (the work switches, default on: off deals that side no work card, reads still flow; section 6, the interim rules), `fleet_tiers` and `friends_tiers` (the tiers each side may take, flash, pro, heavy, frontier comma separated, default all, which `all` sets again; an unknown tier is refused naming the four; section 5, the deal), `friend_idle` (how long a friend holding cards may show no file write before it is an alarm, default 20 minutes) and `attempts` (the attempt cap: how many attempts one brief may run before the card is the coordinator's as a brief defect; default 4; section 2); the sprint's settings, the work table's properties `read_tier` (every card's reads raised to it, never lowered), `dealt_max` (how long a work card may wait dealt and never taken before it is a judgment; default 3 times the take deadline, 6 hours), `go_lanes` (the Go lanes of every machine, section 18; default 1) and the backlog alarms' thresholds `alarm_review`, `alarm_merging`, `alarm_fleet` and `alarm_ready` (section 8, off by default); the coordinator's; refused whole, nothing written, for a tier that is not flash, pro or heavy, a bound that is not a duration above zero, a lane count under 1, a threshold its alarm does not take, nothing to set, or another actor; a clear starts the next epoch with none of them |
+| set | `set [--read-tier <flash|pro|heavy|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>] [--friend-idle <duration|default>] [--pin-wait <duration|default>] [--attempts <n|default>] [--fleet <on|off>] [--friends <on|off>] [--fleet-tiers <tiers|all>] [--friends-tiers <tiers|all>] [--reads <0|1|2|default>]`: also `pin_wait` (the pin bound: how long a card come back to the friend its WHO line names waits for her while she is down, held or full before the deal waives the pin; default 30 minutes; section 1, a pin is a preference with a clock), `reads_needed` (the ok reads every card in review needs whatever its tier, 0 to 2, default each card's tier's rule; section 6), `fleet` and `friends` (the work switches, default on: off deals that side no work card, reads still flow; section 6, the interim rules), `fleet_tiers` and `friends_tiers` (the tiers each side may take, flash, pro, heavy, frontier comma separated, default all, which `all` sets again; an unknown tier is refused naming the four; section 5, the deal), `friend_idle` (how long a friend holding cards may show no file write before it is an alarm, default 20 minutes) and `attempts` (the attempt cap: how many attempts one brief may run before the card is the coordinator's as a brief defect; default 4; section 2); the sprint's settings, the work table's properties `read_tier` (every card's reads raised to it, never lowered), `dealt_max` (how long a work card may wait dealt and never taken before it is a judgment; default 3 times the take deadline, 6 hours), `go_lanes` (the Go lanes of every machine, section 18; default 1) and the backlog alarms' thresholds `alarm_review`, `alarm_merging`, `alarm_fleet` and `alarm_ready` (section 8, off by default); the coordinator's; refused whole, nothing written, for a tier that is not flash, pro or heavy, a bound that is not a duration above zero, a lane count under 1, a threshold its alarm does not take, nothing to set, or another actor; a clear starts the next epoch with none of them |
 | stream remove | takes streams off the work and merge tables (the owner, 2026-10-01: "remove work streams a/b/c" / "you should have a verb to remove work streams" / "they should only succeed on a STOPPED sprint machine"): each stream's row of both tables, with the stream's control card, the one card `add` made for it, which the merge row's delete takes off the table (its record kept); refused (exit 1, nothing written) on a RUNNING machine (`nova-sprint stop` first), for a stream that is no row of either table, named, and for a stream that holds a card (a primary or a sentinel placed in any column of its work row, landed included, or a merge card in its merge row), naming how many of each and the remedy (`nova-sprint clear --confirm sprint`, or `drop`); all or none for the streams named. A clear keeps the streams and does not bring a removed one back. A removal is not a tombstone: `add --stream <s>` of a stream removed in this epoch adds its rows again and places its control card again, the record the removal kept, by the table layer's cell add before the step's manifests (a batch never places a removed member; `sprint.Plan.Places`, as a fleet member's control card rejoins), and prints `NOTE stream <s> was removed in this epoch and comes back: its control card is placed again`; after a clear the name is added fresh (`sprint.StreamRemove`, `sprint.RemovedStream`, `sprint.ComeBack`; the roadmap re-add of 2026-10-06 was refused for 384 of 844 cards under removed streams' names before this rule). `stream archive` stays the verb that takes landed streams off the table. Every open judgment and held condition (an alarm held, an overdue hold, a stale stream's) that names a removed stream is retired with it, closed with a decided note `retired: stream <s> was removed (stream remove), ...`, and the verb prints a `NOTE judgment <alias> <id> (<type>) retired: ...` line for each (the coordinator view of 2026-10-06 00:11 held six `stream stopped` judgments of removed streams, each next step refused "no such stream"). The tick, every RUNNING tick before its start part, retires with the same note any open judgment or held condition naming a stream that is a row of neither table (one open before this rule, or left by a remove whose retirement did not finish), and no tick part raises or rewrites a judgment or held condition for such a stream (`sprint.RetireStreams`, `sprint.TickRetireGone`, `sprint.ForTables`) |
 | stream archive | takes streams whose every card has landed off the work and merge tables and keeps their record (the owner, 2026-10-05 ~11:45 PM ET: "I would like you to remove all the already landed work streams"; 107 streams of landed cards crowded the table, and `stream remove` refuses them): each stream's rows of both tables are hidden (the table layer's row hide) and no card moves, so every landed card stays placed in its landed cell with its cost and its landing, and `where --json --rows --archived`, `stream_costs` and every record that reads the cards count them as before; the headline (the summary line, the frame's footers, the dashboard's hero, total row and cost) counts only the streams on the table, so the stream's cards leave it when it is archived, and `where --json` keeps its figures in `archived` and in `archived_cards` and `archived_landed` beside the headline (section 1, the summary line); runs on a RUNNING machine (no stop); refused (exit 1, nothing written) for a stream that is no row of either table and for one holding a card not landed (a primary or sentinel in any column of its work row but landed, a merge card queued or stuck), naming the cards; all or none for the streams named; archiving an archived stream changes nothing. The tick archives a stream itself (the archive part, after the end, every tick and on the tick that finds the sprint done) once its last card has landed and nothing waits behind it (no card of it in another column, no merge card queued or stuck, no queued change for its row), and writes one happened note, `streams archived`, naming each stream it archived once (information, addressed to no one); an archived stream that holds a card not landed again (an `add`) is drawn again by the next tick, RUNNING or STOPPED. A clear keeps an archived stream archived. where draws no archived row and prints one line under the work table, `N archived streams, M cards landed, $X (where --json --archived)`; `where --json` carries `archived` (`streams`, `cards`, `landed`, `cost`, the cost cells summed to the cent) and leaves the archived rows out of `tables` and `rows` but with `--archived` (`sprint.StreamArchive`, `store.ArchiveStreams`, `store.keepArchive`). The verb retires every open judgment and held condition that names a stream it archived, as `stream remove` does, a NOTE line each (`sprint.RetireStreams`); the tick's own archive retires nothing, so a judgment raised as the last card landed (a low score) stays open on the archived stream |
 | stream unarchive | draws archived streams' rows again (`stream unarchive <s>...`): refused for a stream that is no row or is not archived, all or none; the tick does not archive a stream brought back by hand again until it holds a card not landed and that card lands (the archive record, `archive`, keeps those streams) (`sprint.StreamUnarchive`, `store.UnarchiveStreams`) |

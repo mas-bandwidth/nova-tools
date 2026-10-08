@@ -53,7 +53,9 @@ func TickRebalance(s *Snapshot, r TickReq) (Plan, int) {
 // work, to a unit with an idle lane that may take it, one move a card, at most the idle
 // lanes. A card stays when it is a read, a sentinel's, of a held stream, a bench card, a
 // hard pin (OnlyFriend), a pin honoured where it sits (its WHO names the friend it is on, or
-// a model pin on a member; a WHO: friend card on a friend's row goes to no member), run by a lane (laneRunsIt), or its route rests. A friend may take
+// a model pin on a member; a WHO: friend card on a friend's row goes to no member), run by a lane (laneRunsIt), or its route rests. Before that,
+// an unstarted card whose pin the deal waived goes back to the friend its WHO line names the
+// tick she is here with an idle lane (rebalanceBack), wherever it sits. A friend may take
 // it when she is dealable, her tiers and the friends' set hold its tier (friendTakes) and it
 // has not left her (friendsLeft); a member up, while the fleet's work is on, when the fleet's
 // set holds its tier, a route of the tier serves it (routeOf) and it did not refuse it at
@@ -95,6 +97,14 @@ func Rebalance(s *Snapshot, seats []FriendSeat, who string) Plan {
 	if !idle {
 		return p
 	}
+	ri := routeIndexesOf(s)
+	declared := map[string]bool{}
+	// a waived pin first: back to her while she has an idle lane (rebalanceBack)
+	back := map[string]bool{}
+	for _, u := range rebalanceBack(s, seats, units, ri, declared, who, &p) {
+		p.Units = append(p.Units, u)
+		back[u.Key] = true
+	}
 	from, work := map[string]*rebalanceUnit{}, map[string]*Card{}
 	var prims []*Card
 	for _, g := range units {
@@ -103,7 +113,7 @@ func Rebalance(s *Snapshot, seats []FriendSeat, who string) Plan {
 		}
 		for _, wc := range s.Fleet.Cell(g.row, Ready) {
 			pr := s.Work.Placed(wc.F("primary"))
-			if wc.F("kind") != "work" || pr == nil || pr.Col != Working || pr.F("work") != wc.ID || IsSentinel(pr) ||
+			if wc.F("kind") != "work" || pr == nil || pr.Col != Working || pr.F("work") != wc.ID || IsSentinel(pr) || back[pr.ID] ||
 				OnlyFriend(pr) || StreamHeld(s, pr.Row) || len(Bench(pr)) > 0 || laneRunsIt(s, seats, pr, wc) != "" ||
 				wc.F(FieldRoute) == RoutePin {
 				continue
@@ -121,8 +131,6 @@ func Rebalance(s *Snapshot, seats []FriendSeat, who string) Plan {
 			prims = append(prims, pr)
 		}
 	}
-	ri := routeIndexesOf(s)
-	declared := map[string]bool{}
 	for _, pr := range ladderOrder(dealOrder(s, prims)) {
 		g, wc := from[pr.ID], work[pr.ID]
 		tier := s.DealTier(pr)
@@ -135,6 +143,81 @@ func Rebalance(s *Snapshot, seats []FriendSeat, who string) Plan {
 	}
 	ri.write(&p)
 	return p
+}
+
+// rebalanceBack is the waived pins given back (friend_deal.go, a pin is a preference with a
+// clock; docs/SPEC-SPRINT.md section 1, the rebalance): a work card dealt and not started
+// (ready on its row: a member has not taken it, a friend has not started it, friendStarted)
+// whose primary's pin the deal waived (FieldPinWaived) goes back to the friend its WHO line
+// names, wherever it sits and whatever its holder's lanes, the tick she is a unit here
+// (dealable) with an idle lane, her tiers and the friends' set hold its tier (friendTakes),
+// it has not left her (friendsLeft) and was not rebalanced off her row, within her
+// restriction; a started card stays where it runs, as do a sentinel's, a held stream's, a
+// bench card, a card a lane runs, a model pin and a card whose route rests. It is a
+// rebalance move (rebalanceMove: next generation, the old row named) with the waiver and the
+// clock cleared on the primary: her preference is honoured. One move a card, at most her
+// idle lanes, in the deal's order.
+func rebalanceBack(s *Snapshot, seats []FriendSeat, units []*rebalanceUnit, ri routeIndexes, declared map[string]bool, who string, p *Plan) []Unit {
+	byName := map[string]*rebalanceUnit{}
+	for _, u := range units {
+		if u.friend {
+			byName[u.name] = u
+		}
+	}
+	if len(byName) == 0 {
+		return nil
+	}
+	from, work := map[string]*rebalanceUnit{}, map[string]*Card{}
+	var prims []*Card
+	for _, g := range units {
+		for _, wc := range s.Fleet.Cell(g.row, Ready) {
+			pr := s.Work.Placed(wc.F("primary"))
+			if wc.F("kind") != "work" || pr == nil || pr.Col != Working || pr.F("work") != wc.ID || IsSentinel(pr) || !pinWaived(pr) ||
+				StreamHeld(s, pr.Row) || len(Bench(pr)) > 0 || laneRunsIt(s, seats, pr, wc) != "" || wc.F(FieldRoute) == RoutePin {
+				continue
+			}
+			name, ok := FriendCard(pr)
+			to := byName[name]
+			if !ok || name == "" || to == nil || to == g {
+				continue // unpinned, she is not here, or it sits on her row already
+			}
+			if g.friend && friendStarted(s, g.seat, wc) {
+				continue // a friend keeps the cards she started
+			}
+			if _, rests := cardRest(s, wc); rests {
+				continue // the deal withdraws it (restWithdrawals)
+			}
+			if !friendTakes(s, to.seat, s.DealTier(pr)) || slices.Contains(friendsLeft(wc), name) || !friendRestrictionAllows(to.seat, pr) ||
+				slices.Contains(Split(wc.F(FieldRebalancedFrom)), to.row) {
+				continue
+			}
+			from[pr.ID], work[pr.ID] = g, wc
+			prims = append(prims, pr)
+		}
+	}
+	var units2 []Unit
+	for _, pr := range ladderOrder(dealOrder(s, prims)) {
+		g, wc := from[pr.ID], work[pr.ID]
+		name, _ := FriendCard(pr)
+		to := byName[name]
+		if to.idle() <= 0 {
+			continue // her idle lanes are taken this tick
+		}
+		to.load++
+		u := rebalanceMove(s, p, declared, ri, g, to, pr, wc, s.DealTier(pr), who)
+		if e := workEntry(&u, pr.ID); e != nil {
+			e.Unset = append(e.Unset, unsetPresent(pr, []string{FieldPinWaived, FieldPinWaitSince})...)
+		} else {
+			u.Changes = append(u.Changes, change(Work, setEntry(pr, nil, FieldPinWaived, FieldPinWaitSince)))
+		}
+		why := fmt.Sprintf("its pin to %s, waived at %s, is honoured: she is up with an idle lane", name, pr.F(FieldPinWaived))
+		for i := range u.Notes {
+			u.Notes[i].What += " (" + why + ")"
+		}
+		u.Moved = fmt.Sprintf("rebalanced %s from %s back to %s gen=%d (%s)", wc.ID, g.row, to.row, wc.Int("gen")+1, why)
+		units2 = append(units2, u)
+	}
+	return units2
 }
 
 // rebalanceTo is the unit the card goes to, nil when none may take it (Rebalance).

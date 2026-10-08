@@ -673,6 +673,9 @@ type whereView struct {
 	// Friends is the friends table's rows with what each friend's last beat reported (her
 	// load and her own counts, friend beat), beside the table's counts, which are the sprint's.
 	Friends []store.FriendRow `json:"friends,omitempty"`
+	// Pins is each friend's pins among the primaries ready and working (sprint.PinCounts:
+	// pinned, waived, only), with --rows, which reads the work table's records.
+	Pins map[string]sprint.PinCount `json:"pins,omitempty"`
 	// Releases is the count of cards left per release across the streams (docs/SPEC-SPRINT.md section 11, where --release).
 	Releases map[string]int64 `json:"releases,omitempty"`
 	// StoreRTTP50MS and StoreRTTP99MS are the store round trip's p50 and p99 over the
@@ -1057,6 +1060,7 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 				gone = v.Archived
 			}
 			v.Rows = rowsView(s, gone)
+			v.Pins = sprint.PinCounts(s.Work)
 			v.MergeRow.OldestMergingMin = oldestMerging(v.At, s.Work.Column(string(sprint.Merging)))
 		}
 		if r.c.json {
@@ -2119,8 +2123,12 @@ type cardView struct {
 	Ceiling string `json:"ceiling"`         // the highest the machine escalates it to
 	Grade   string `json:"grade,omitempty"` // nova-decide's grade, as the card holds it (sprint.FieldGrade)
 	// Who is the worker its brief's WHO line names (sprint.FieldWho): friend for any
-	// friend, friend.<name> for one; absent on a machine's card.
-	Who string `json:"who,omitempty"`
+	// friend, friend.<name> for one; absent on a machine's card. Preferred and Waived are
+	// set when the deal has waived its pin (sprint.FieldPinWaived): the friend the WHO line
+	// still prefers, and when the pin was waived.
+	Who       string `json:"who,omitempty"`
+	Preferred string `json:"preferred,omitempty"`
+	Waived    string `json:"waived,omitempty"`
 	// Priority is its level on the ladder (sprint.CardPriority: blocker, critical, normal,
 	// low; a read card's is reader) and PrioritySource where it comes from (set, computed,
 	// default).
@@ -2207,7 +2215,11 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		}
 		tier, ceiling := sprint.CardTiers(v.Primary)
 		level, source := sprint.CardPriority(v.Primary)
-		b, _ := json.Marshal(cardView{Primary: v.Primary, Column: v.Primary.Col, Tier: tier, Ceiling: ceiling, Grade: v.Primary.F(sprint.FieldGrade), Who: v.Primary.F(sprint.FieldWho), Priority: level, PrioritySource: source, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
+		preferred, waived := "", v.Primary.F(sprint.FieldPinWaived)
+		if waived != "" {
+			preferred, _ = sprint.FriendCard(v.Primary)
+		}
+		b, _ := json.Marshal(cardView{Primary: v.Primary, Column: v.Primary.Col, Tier: tier, Ceiling: ceiling, Grade: v.Primary.F(sprint.FieldGrade), Who: v.Primary.F(sprint.FieldWho), Preferred: preferred, Waived: waived, Priority: level, PrioritySource: source, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
 			Cost: sprint.CardCostOf(v.Primary), Timeline: events, Texts: texts})
 		fmt.Fprintln(stdout, string(b))
 		return 0
@@ -2332,10 +2344,17 @@ func (a *app) cardsBulk(st *store.Store, stream string, stdout, stderr io.Writer
 }
 
 // whoWord is the CARD OK line's who of a friend's card (sprint.FieldWho: who=friend for
-// any friend, who=friend.<name> for one); nothing for a machine's card.
+// any friend, who=friend.<name> for one), with preferred=<name> waived=<time> when the deal
+// has waived its pin (sprint.FieldPinWaived: a pin is a preference with a clock, the WHO
+// line stays as her preference); nothing for a machine's card.
 func whoWord(pr *sprint.Card) string {
 	if w := pr.F(sprint.FieldWho); w != "" {
-		return " who=" + oneline.Field(w)
+		out := " who=" + oneline.Field(w)
+		if waived := pr.F(sprint.FieldPinWaived); waived != "" {
+			name, _ := sprint.FriendCard(pr)
+			out += " preferred=" + oneline.Field(name) + " waived=" + oneline.Field(waived)
+		}
+		return out
 	}
 	return ""
 }

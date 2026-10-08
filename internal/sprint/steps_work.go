@@ -945,12 +945,25 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 		if StreamHeld(s, c.Row) {
 			return "its stream " + c.Row + " is held by the coordinator (hold.go): nova-sprint unhold " + c.Row + " deals it again"
 		}
-		if OnlyFriend(c) {
+		if pinHolds(s, c) {
 			return friendCardWhy
 		}
 		return inState(c, Ready)
 	}
 	chosen := pick(&p, r.Sel, eligibleTurns(s.Work.Column(Ready), ready, streamRound(s, PropStreamIndex)), rowOf, ready, s.primaryCard)
+	// a card come back to the friend its pin names, dealt to a machine past her (pinHolds:
+	// the pin clock ran, or she can never take it): the unit waives the pin, one story line
+	waived := func(c *Card, u *Unit, m string) {
+		if !OnlyFriend(c) || HardPin(c) {
+			return
+		}
+		name, _ := FriendCard(c)
+		why, _ := pinUnableNow(s, c)
+		if why == "" {
+			why = "she did not take it"
+		}
+		pinWaiveUnit(s, c, u, name, why, m)
+	}
 	up := s.UpMembers()
 	if s.FleetOff() {
 		for _, c := range chosen {
@@ -1017,6 +1030,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 					p.refuse(c.ID, refused)
 					continue
 				}
+				waived(c, &u, m)
 				rr.moved(m)
 				moves[c.ID] = m
 				p.Units = append(p.Units, u)
@@ -1045,6 +1059,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 				p.refuse(c.ID, why)
 				continue
 			}
+			waived(c, &u, m)
 			rr.moved(m)
 			moves[c.ID] = m
 			p.Units = append(p.Units, u)
@@ -1064,6 +1079,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 			p.refuse(c.ID, why)
 			continue
 		}
+		waived(c, &u, m)
 		rr.moved(m)
 		moves[c.ID] = m
 		p.Units = append(p.Units, u)
@@ -1116,7 +1132,7 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 	set["attempt"], set["work"] = itoa(attempt), card
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
 		change(Fleet, createEntry(card, m, Ready, c.Score, fields)),
-		change(Work, moveEntry(c, c.Row, Working, set, append(unset, "result")...)),
+		change(Work, moveEntry(c, c.Row, Working, set, append(unset, "result", FieldPinWaitSince)...)),
 	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s (fleet ready)", c.ID, c.Col, card, m)}, ""
 }
 
@@ -1184,7 +1200,7 @@ func redeal(s *Snapshot, c, wc *Card, m string, q map[string]int, ri routeIndexe
 	primary["work"] = wc.ID
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
 		change(Fleet, moveEntry(wc, m, Ready, set, unset...)),
-		change(Work, moveEntry(c, c.Row, Working, primary, "result")),
+		change(Work, moveEntry(c, c.Row, Working, primary, "result", FieldPinWaitSince)),
 	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s gen=%d (fleet ready, dealt again)", c.ID, c.Col, wc.ID, m, wc.Int("gen")+1)}, ""
 }
 

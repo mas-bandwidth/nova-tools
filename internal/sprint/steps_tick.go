@@ -619,7 +619,8 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	up := s.UpMembers()
 	// Friends first: every ready card a friend may take, except a held stream
 	// (dealt nowhere) and a bench card (bench_deal.go keeps it for its bench).
-	// A hard pin that no friend takes stays out of the fleet below.
+	// A hard pin that no friend takes stays out of the fleet below, and so does a card
+	// come back to the friend its pin names within the pin bound (pinHolds).
 	var offer []*Card
 	for _, c := range s.Work.Column(Ready) {
 		if StreamHeld(s, c.Row) || IsSentinel(c) {
@@ -641,8 +642,8 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		if StreamHeld(s, c.Row) {
 			continue // its stream is held (hold.go): dealt to no machine and no friend until unhold
 		}
-		if friendPlaced[c.ID] || OnlyFriend(c) {
-			continue
+		if friendPlaced[c.ID] || pinHolds(s, c) {
+			continue // placed by the friends' deal, or waiting for the friend its pin names (the pin clock, friend_deal.go)
 		}
 		if wc := AtRedealBound(s, c); wc != nil {
 			cd := cond{typ: NBound, stream: c.Row, card: wc.ID, primaries: []string{c.ID}, what: boundWhat(wc, c.ID)}

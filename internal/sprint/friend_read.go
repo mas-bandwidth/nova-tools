@@ -415,6 +415,9 @@ func friendReadAskOf(s *Snapshot, seats []FriendSeat, dir string, cards []*Card)
 			}
 		}
 		name := preferredFriend(withRoom, lanes, free)
+		if pinned, ok := FriendCard(pr); ok && pinned != "" && slices.Contains(withRoom, pinned) {
+			name = pinned // her preference: the read goes to the friend its WHO line names first (friend_deal.go, a pin is a preference with a clock)
+		}
 		switch {
 		case name != "":
 			if err := askOneFriend(&p, s, pr, seats, name, dir, attempt, free, lanes, declared); err != nil {
