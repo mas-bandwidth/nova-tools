@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -98,6 +99,19 @@ func TestScriptFallbackRereadsAdmissionImmediatelyBeforeModelStart(t *testing.T)
 	m.start(p)
 	assert.Equal(t, int32(2), admits.Load())
 	assert.Empty(t, r.started(), "a script fallback must use a fresh claim admission")
+}
+
+func TestOldLaunchCleanupPreservesNewGenerationVerifierCancellation(t *testing.T) {
+	t.Parallel()
+	old := &verifyCancel{cancel: func() {}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	newEntry := &verifyCancel{cancel: cancel}
+	m := &Member{out: io.Discard, verifyCancels: map[string]*verifyCancel{"r1": newEntry}}
+	m.clearVerifyCancel("r1", old)
+	require.Same(t, newEntry, m.verifyCancels["r1"])
+	m.machineStop(queueOut{Machine: "STOPPED"}, nil, time.Now())
+	assert.ErrorIs(t, ctx.Err(), context.Canceled, "STOP must still cancel the new generation")
 }
 
 type proofStopChild struct {

@@ -535,10 +535,12 @@ type Member struct {
 	// final child start to register before cancelling that child in the pass.
 	stopPending   bool
 	stopVersion   uint64
-	verifyCancels map[string]context.CancelFunc
+	verifyCancels map[string]*verifyCancel
 	pushGate      chan struct{}
 	wake          chan struct{}
 }
+
+type verifyCancel struct{ cancel context.CancelFunc }
 
 // post is what a launch's long work found: its start (the child, or why there is none),
 // or its end (how the child ended and, for a work card, its push).
@@ -1357,14 +1359,13 @@ func (m *Member) start(p Packet) bool {
 		version := m.stopVersion
 		ctx, cancel := context.WithCancel(context.Background())
 		if m.verifyCancels == nil {
-			m.verifyCancels = make(map[string]context.CancelFunc)
+			m.verifyCancels = make(map[string]*verifyCancel)
 		}
-		m.verifyCancels[p.Card] = cancel
+		entry := &verifyCancel{cancel: cancel}
+		m.verifyCancels[p.Card] = entry
 		m.startMu.Unlock()
 		defer func() {
-			m.startMu.Lock()
-			delete(m.verifyCancels, p.Card)
-			m.startMu.Unlock()
+			m.clearVerifyCancel(p.Card, entry)
 			cancel()
 		}()
 		var ch Child
@@ -1411,6 +1412,16 @@ func (m *Member) start(p Packet) bool {
 	m.collect()
 	_, started := m.running[p.Card]
 	return started
+}
+
+// A STOP may return an old generation and admit a new one before the old
+// goroutine's deferred cleanup runs. Remove only this launch's registration.
+func (m *Member) clearVerifyCancel(card string, entry *verifyCancel) {
+	m.startMu.Lock()
+	if m.verifyCancels[card] == entry {
+		delete(m.verifyCancels, card)
+	}
+	m.startMu.Unlock()
 }
 
 // admitStart is called under startMu immediately before a verifier or child
@@ -1586,8 +1597,8 @@ func (m *Member) machineStop(q queueOut, byID map[string]queueCard, now time.Tim
 		}
 		m.stopPending = stopping
 		if stopping {
-			for _, cancel := range m.verifyCancels {
-				cancel()
+			for _, entry := range m.verifyCancels {
+				entry.cancel()
 			}
 		}
 		m.startMu.Unlock()
