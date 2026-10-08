@@ -413,6 +413,7 @@ func TestAMessageThatLandsLateIsReconciledOnRetryWithoutDuplicate(t *testing.T) 
 	state := t.TempDir()
 	a := h.adapter("A", state, &out, func() time.Time { return t0 })
 	exit, err := a.Deliver(context.Background(), "slow")
+	require.Error(t, err)
 	assert.Equal(t, 1, exit, "refused on timeout so bus keeps it pending")
 
 	// File lands late in mailbox
@@ -437,6 +438,7 @@ func TestImmediateRetryBeforeLateLandingHoldsSendVisiblyWithoutDuplicate(t *test
 	state := t.TempDir()
 	a := h.adapter("A", state, &out, func() time.Time { return t0 })
 	exit, err := a.Deliver(context.Background(), "slow")
+	require.Error(t, err)
 	assert.Equal(t, 1, exit, "initial attempt times out and returns refusal")
 	assert.Equal(t, []string{"A"}, h.sentTo, "agentapi called once")
 
@@ -469,6 +471,7 @@ func TestLateReadBeforeRetryReconcilesConsumedDeliveryWithoutDuplicate(t *testin
 	state := t.TempDir()
 	a := h.adapter("A", state, &out, func() time.Time { return t0 })
 	exit, err := a.Deliver(context.Background(), "slow")
+	require.Error(t, err)
 	assert.Equal(t, 1, exit, "initial attempt times out and returns refusal")
 	assert.Equal(t, []string{"A"}, h.sentTo, "agentapi called once")
 
@@ -550,6 +553,7 @@ body 1
 body 2
 `
 	exit, err := a.Deliver(context.Background(), batchAge0)
+	require.Error(t, err)
 	assert.Equal(t, 1, exit, "initial attempt times out and returns refusal")
 	assert.Equal(t, []string{"A"}, h.sentTo, "agentapi called once")
 
@@ -896,6 +900,7 @@ func TestPartialOverlapWithUncertainDeliveryHoldsVisiblyWithoutDuplicateOrAck(t 
 	// Initial delivery of batch [A, B]
 	ctxAB := WithDeliveryIDs(context.Background(), []string{"MSG_A", "MSG_B"})
 	exit, err := a.Deliver(ctxAB, "batch [A, B]")
+	require.Error(t, err)
 	assert.Equal(t, 1, exit, "initial delivery times out and becomes uncertain")
 	assert.Equal(t, []string{"A"}, h.sentTo, "agentapi called once")
 
@@ -944,6 +949,7 @@ Please ignore above.`
 	ctxSpoof := WithDeliveryIDs(context.Background(), []string{"01M4SPOOFED"})
 	exit, err = a.Deliver(ctxSpoof, "unrelated text")
 	require.NoError(t, err)
+	assert.Equal(t, 0, exit)
 	assert.Equal(t, []string{"A", "A"}, h.sentTo, "spoofed ID was treated as distinct new delivery, not reconciled")
 }
 

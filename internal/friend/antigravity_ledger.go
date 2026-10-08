@@ -320,7 +320,9 @@ func (a *Antigravity) observe(now time.Time) {
 		}
 	}
 	if changed {
-		a.save()
+		if err := a.save(); err != nil {
+			a.say("antigravity: cannot save consumed state to ledger: %s", oneLine(err.Error(), 300))
+		}
 	}
 }
 
@@ -426,7 +428,9 @@ func (a *Antigravity) Follow(ctx context.Context, now time.Time) {
 	if moved != "" {
 		l.Followed, l.From, l.Since = moved, a.Session, now
 		a.live = moved
-		a.save()
+		if err := a.save(); err != nil {
+			a.say("antigravity: cannot save live conversation to ledger: %s", oneLine(err.Error(), 300))
+		}
 		a.say("antigravity: live conversation is now %s (the named one stopped reading)", moved)
 	}
 	to := ""
@@ -478,7 +482,9 @@ func (a *Antigravity) Follow(ctx context.Context, now time.Time) {
 				break
 			}
 		}
-		a.save()
+		if err := a.save(); err != nil {
+			a.say("antigravity: cannot save resent delivery to ledger: %s", oneLine(err.Error(), 300))
+		}
 		a.mu.Unlock()
 		a.say("antigravity: message %s, unread in conversation %s, sent again into conversation %s", dash(d.ID), d.Conversation, to)
 	}
@@ -523,7 +529,9 @@ func (a *Antigravity) reconcile(session, text string, incomingIDs []string, hasS
 			if len(ids) > 0 {
 				d.ID = ids[0]
 				d.State = DeliveryLanded
-				_ = a.save()
+				if err := a.save(); err != nil {
+					a.say("antigravity: cannot save reconciled landing to ledger: %s", oneLine(err.Error(), 300))
+				}
 				a.say("antigravity: message %s in the mailbox of conversation %s (reconciled late landing)", d.ID, session)
 				if hasHashMatch || hasFullCoverage {
 					return true, 0, nil

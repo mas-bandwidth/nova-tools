@@ -325,7 +325,9 @@ func (a *Antigravity) send(ctx context.Context, srv antigravityServer, session, 
 	}
 
 	if _, err = a.agentapi(ctx, port, srv.token, "send-message", "--title="+AntigravityTitle, session, text); err != nil {
-		_ = a.markUncertain(session, hash)
+		if uerr := a.markUncertain(session, hash); uerr != nil {
+			a.say("antigravity: cannot mark delivery uncertain in ledger: %s", oneLine(uerr.Error(), 300))
+		}
 		var no AgentAPIRefusal
 		if errors.As(err, &no) {
 			return a.refuse(session, fmt.Sprintf("conversation %s: %s", session, err))
@@ -346,11 +348,15 @@ func (a *Antigravity) send(ctx context.Context, srv antigravityServer, session, 
 		}
 	}
 	if id == "" {
-		_ = a.markUncertain(session, hash)
+		if uerr := a.markUncertain(session, hash); uerr != nil {
+			a.say("antigravity: cannot mark delivery uncertain in ledger: %s", oneLine(uerr.Error(), 300))
+		}
 		a.say("antigravity: agentapi took a message for conversation %s and it is not in the mailbox after %s; kept as uncertain delivery, its id read when it lands", session, AntigravityLandBudget)
 		return a.refuse(session, fmt.Sprintf("agentapi took message for conversation %s but it did not appear in the mailbox after %s", session, AntigravityLandBudget))
 	}
-	_ = a.markLanded(session, hash, id)
+	if lerr := a.markLanded(session, hash, id); lerr != nil {
+		a.say("antigravity: cannot mark delivery landed in ledger: %s", oneLine(lerr.Error(), 300))
+	}
 	a.say("antigravity: message %s in the mailbox of conversation %s", id, session)
 	return 0, nil
 }
