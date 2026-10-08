@@ -2620,6 +2620,10 @@ her as a worker's verb and at `GET /api/friend/<friend>/cards`. The contract is 
 
 ### A worker's own view: the dashboard's pull routes
 
+| command | what it does |
+| --- | --- |
+| `dashboard [--listen <address:port>[,...] \| none] [--pull <address:port>[,...] \| none] [--logo <file>] [--every <duration>]` | Serves the page and its cached copy of `where --json`; one poller runs the read, back to back with `--every` as its floor, and every page is answered from the cache |
+
 `dashboard` serves the page on `--listen` (default `127.0.0.1:7390`) and, on listeners of
 their own, the pull routes on `--pull` (default `127.0.0.1:7395`; `none` for either serves
 nothing there): `curl -s http://<tailnet address>:7395/friend/<name>` is one friend's view

@@ -50,6 +50,20 @@ the reads' count, failures and read times. `--logo` names an image file
 served as the logo and the favicon; with none, the slot renders nothing.
 `/healthz` answers `ok`.
 
+The reads have one poller: the verb makes the first read before any listener opens, then
+one each `--every` (back to back when a read takes longer than `--every`, never two at
+once), and while it polls a page, a pull route or a stream reads the copy and never the
+sprint, however many are open. A failed read sets `ok` false and `error` to a short
+reason (`where exited <n>`, `the upstream dashboard did not answer`, `where JSON has no tables`); what the read itself printed goes to the dashboard's output only, never to the
+page. A read still running after a minute is marked failed (`the read timed out after 1m0s`) and the next read waits for it to end. `/api/sprint` also carries `attemptAt` and
+`readSeconds`, the last read's end and length, good or not, and `minInterval`, the
+seconds of `--every`. An svg `--logo` is drawn inline in the page's text colour and
+served as `/favicon.svg`, coloured for the light or dark theme; any other image is
+`/logo`, and the raster logo routes a page or bookmark may still name (`/favicon.png`,
+`/logo-icon.png`, `/logo-tile-192.png`, `/logo-tile-384.png`, `/logo.webp`, `/logo.png`)
+answer with the same file. The font's licence is `/OFL.txt`. Test:
+`TestDashboardServesWhatServerPyServedFromOnePoller` (internal/sprintdash).
+
 One freshness check: the served data's age is the time since its read (before any good
 read, since the dashboard started). Older than 2 s for 30 s raises the alarm: one line
 on the dashboard's output (`ALARM stale: ...`), once an episode; while it stands
