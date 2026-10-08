@@ -269,6 +269,42 @@ func PlanLedger(l Ledger, rows []Row, prefix, tier string, max int) Plan {
 	return p
 }
 
+// CommitInfo holds one commit's sha, summary and computed paths.
+type CommitInfo struct {
+	SHA     string
+	Summary string
+	Paths   []string
+	Test    string
+}
+
+// PlanCommits plans one card per commit in the given list. For each commit, the
+// PATHS are computed from the commit's changed files (each directory as a glob:
+// <dir>/*.go, <dir>/*_test.go), and the TEST includes all packages plus ./internal/ci/
+// for the gate. Cards are in commit order (oldest first) so a stream lands them that way.
+func PlanCommits(commits []CommitInfo, tier string) Plan {
+	if tier == "" {
+		tier = "pro"
+	}
+	var cards []Card
+	seen := map[string]int{}
+	for _, c := range commits {
+		id := uniqueID("commit-"+Slug(c.SHA[:12]), seen)
+		cards = append(cards, Card{
+			ID:   id,
+			File: c.SHA,
+			Paths: c.Paths,
+			Test:  c.Test,
+			Tier:  tier,
+			Wave:  1,
+			Kind:  "fix-red",
+			Task:  "Re-land commit " + c.SHA[:12] + ": " + c.Summary + " The work lives in the files this commit changed.",
+		})
+	}
+	p := Plan{Cards: cards, Tier: tier, Waves: 1}
+	p.Shared = len(cards) > 1
+	return p
+}
+
 // ledgerPaths is the PATHS of a card on file (a Go file, a package directory or a
 // bare name) that also edits ledger: the file, its package's test files, the ledger.
 // A name with no slash (a transcripts tool, a namedpaths word) adds no package glob.

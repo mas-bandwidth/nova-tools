@@ -31,14 +31,14 @@ import (
 
 const preAlpha = "nova-card is pre-alpha: not ready for production use."
 
-const usage = `nova-card: writes a directory of pre-linted briefs from a ledger, a findings file or a tool's help
+const usage = `nova-card: writes a directory of pre-linted briefs from a ledger, a findings file, a tool's help or a commit list
 ` + preAlpha + `
 
 how it works: a source is read from a checkout of the target repository (a ratchet ledger of
-internal/ci, a findings TSV, a tool's rendered help); the planner cuts one card per file with
-its PATHS, TEST and tier computed from the row, plans every ledger in one wave with no
-dependency, and holds every brief to the lint nova-sprint add runs before the directory is written.
-State: none; the directory, its manifest.tsv and the one CARDS OK line are the whole result.
+internal/ci, a findings TSV, a tool's rendered help, a list of commits); the planner cuts one card
+per file/commit with its PATHS, TEST and tier computed from the source, plans every source in one
+wave with no dependency, and holds every brief to the lint nova-sprint add runs before the directory
+is written. State: none; the directory, its manifest.tsv and the one CARDS OK line are the whole result.
 
 the flow, three lines:
   nova-card generate --from ledger --ledger serial-tests --repo-dir ./repo --out ./cards
@@ -49,6 +49,8 @@ usage:
   nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--name <n>...] [--dropped <id>...] [--dry-run]
   nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
   nova-card generate --from help --tool <name> [--tool <name>...] --out <dir> [--bin-dir <dir>] (--repo-dir <dir> | --repo --base --sha) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
+  nova-card generate --from commits --range <a>..<b> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
+  nova-card generate --from commits --commit-file <list> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
   nova-card lint --card <file> [--card <file>...] [--name <n>...] [--dropped <id>...]
   nova-card template
   nova-card version
@@ -223,6 +225,8 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 	var tools multi
 	fs.Var(&tools, "tool", "with --from help: a tool `name` whose help the card is about; repeat for more")
 	binDir := fs.String("bin-dir", "", "with --from help: the `dir` holding the tools' binaries (default: PATH)")
+	commitRange := fs.String("range", "", "with --from commits: a commit `range` in git syntax (a..b) or a single commit sha")
+	commitFile := fs.String("commit-file", "", "with --from commits: a `file` with one commit sha per line")
 	repoDir := fs.String("repo-dir", "", "a checkout `dir` of the target repository at the base: the source is read from it, the repository, branch and sha are read off it, and every PATHS entry is checked to exist in it")
 	repo := fs.String("repo", "", "the `owner/name` the REPO: line carries (default: --repo-dir's origin)")
 	base := fs.String("base", "", "the `branch` the BASE: line carries (default: --repo-dir's branch)")
@@ -309,8 +313,32 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 			}
 			plan.Cards = append(plan.Cards, cardgen.PlanHelp(tool, help, exampleTest(*repoDir, tool), *prefix, *tier))
 		}
+	case "commits":
+		if *commitRange == "" && *commitFile == "" {
+			return refuse(stderr, "generate", "--from commits wants --range <a>..<b> or --commit-file <list>")
+		}
+		if *repoDir == "" {
+			return refuse(stderr, "generate", "--from commits reads commits from --repo-dir <dir>, a checkout of the repository")
+		}
+		var commits []cardgen.CommitInfo
+		var err error
+		if *commitFile != "" {
+			commits, err = readCommitsFromFile(*repoDir, *commitFile)
+		} else {
+			commits, err = readCommits(*repoDir, *commitRange)
+		}
+		if err != nil {
+			return refuse(stderr, "generate", "cannot read commits: "+err.Error())
+		}
+		if len(commits) == 0 {
+			return refuse(stderr, "generate", "no commits found in range "+*commitRange)
+		}
+		if *maxCards > 0 && len(commits) > *maxCards {
+			commits = commits[:*maxCards]
+		}
+		plan = cardgen.PlanCommits(commits, *tier)
 	case "":
-		return refuse(stderr, "generate", "wants --from ledger|findings|help")
+		return refuse(stderr, "generate", "wants --from ledger|findings|help|commits")
 	default:
 		return refuse(stderr, "generate", fmt.Sprintf("--from %q; want ledger, findings or help", *from))
 	}
@@ -495,4 +523,147 @@ func renderedHelp(binDir, tool string) (string, error) {
 		return "", fmt.Errorf("`%s help` printed nothing: %v", bin, err)
 	}
 	return out.String(), nil
+}
+
+// commitInfo holds one commit's sha and summary.
+type commitInfo struct {
+	SHA     string
+	Summary string
+}
+
+// readCommits reads commits from a checkout in the given range.
+func readCommits(repoDir, rangeSpec string) ([]cardgen.CommitInfo, error) {
+	git := func(args ...string) (string, error) {
+		res, err := gitrun.Run(context.Background(), gitrun.Options{C: repoDir}, args...)
+		if err != nil {
+			return "", fmt.Errorf("git %s in %s: %s", strings.Join(args, " "), repoDir, strings.TrimSpace(cmp(string(res.Stderr), err.Error())))
+		}
+		return strings.TrimSpace(string(res.Stdout)), nil
+	}
+
+	out, err := git("log", "--pretty=format:%H %s", rangeSpec)
+	if err != nil {
+		return nil, err
+	}
+
+	var commits []cardgen.CommitInfo
+	for _, line := range strings.Split(out, "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		sha := parts[0]
+		summary := parts[1]
+
+		// Get changed files for this commit
+		filesOut, err := git("show", "--name-only", "--pretty=format:", sha)
+		if err != nil {
+			return nil, fmt.Errorf("cannot list files for commit %s: %v", sha, err)
+		}
+
+		// Compute paths from changed files
+		pathsMap := make(map[string]bool)
+		for _, f := range strings.Split(filesOut, "\n") {
+			f = strings.TrimSpace(f)
+			if f == "" {
+				continue
+			}
+			if strings.HasSuffix(f, ".go") {
+				dir := filepath.Dir(f)
+				pathsMap[dir+"/*.go"] = true
+				pathsMap[dir+"/*_test.go"] = true
+			} else if strings.Contains(f, "/") {
+				pathsMap[f] = true
+			}
+		}
+
+		// Add internal/ci/*_test.go to every commit's TEST
+		var paths []string
+		for p := range pathsMap {
+			paths = append(paths, p)
+		}
+		if len(paths) == 0 {
+			paths = []string{"internal/ci/*_test.go"}
+		}
+
+		commits = append(commits, cardgen.CommitInfo{
+			SHA:     sha,
+			Summary: summary,
+			Paths:   paths,
+			Test:    "internal/ci TestEveryTestOpensWithTParallel",
+		})
+	}
+
+	return commits, nil
+}
+
+// readCommitsFromFile reads commits from a file with one sha per line.
+func readCommitsFromFile(repoDir, file string) ([]cardgen.CommitInfo, error) {
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read %s: %v", file, err)
+	}
+
+	git := func(args ...string) (string, error) {
+		res, err := gitrun.Run(context.Background(), gitrun.Options{C: repoDir}, args...)
+		if err != nil {
+			return "", fmt.Errorf("git %s in %s: %s", strings.Join(args, " "), repoDir, strings.TrimSpace(cmp(string(res.Stderr), err.Error())))
+		}
+		return strings.TrimSpace(string(res.Stdout)), nil
+	}
+
+	var commits []cardgen.CommitInfo
+	for _, line := range strings.Split(string(raw), "\n") {
+		sha := strings.TrimSpace(line)
+		if sha == "" || strings.HasPrefix(sha, "#") {
+			continue
+		}
+		// Get commit summary
+		summary, err := git("log", "-1", "--pretty=format:%s", sha)
+		if err != nil {
+			return nil, fmt.Errorf("commit %s not found: %v", sha, err)
+		}
+
+		// Get changed files for this commit
+		filesOut, err := git("show", "--name-only", "--pretty=format:", sha)
+		if err != nil {
+			return nil, fmt.Errorf("cannot list files for commit %s: %v", sha, err)
+		}
+
+		// Compute paths from changed files
+		pathsMap := make(map[string]bool)
+		for _, f := range strings.Split(filesOut, "\n") {
+			f = strings.TrimSpace(f)
+			if f == "" {
+				continue
+			}
+			if strings.HasSuffix(f, ".go") {
+				dir := filepath.Dir(f)
+				pathsMap[dir+"/*.go"] = true
+				pathsMap[dir+"/*_test.go"] = true
+			} else if strings.Contains(f, "/") {
+				pathsMap[f] = true
+			}
+		}
+
+		var paths []string
+		for p := range pathsMap {
+			paths = append(paths, p)
+		}
+		if len(paths) == 0 {
+			paths = []string{"internal/ci/*_test.go"}
+		}
+
+		commits = append(commits, cardgen.CommitInfo{
+			SHA:     sha,
+			Summary: summary,
+			Paths:   paths,
+			Test:    "internal/ci TestEveryTestOpensWithTParallel",
+		})
+	}
+
+	return commits, nil
 }

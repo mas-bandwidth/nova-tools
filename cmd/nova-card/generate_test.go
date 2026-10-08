@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardgen"
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/mas-bandwidth/nova-tools/internal/testgit"
 )
 
 // fixtureCheckout is a one-commit repository on branch dev with an origin, the
@@ -24,7 +24,7 @@ func fixtureCheckout(t *testing.T, files map[string]string) (dir string, git fun
 	git = func(args ...string) string {
 		t.Helper()
 		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(goenv.Clean(os.Environ()), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
+		cmd.Env = testgit.Environ(testgit.NoGlobalConfig(t)...)
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "git %s: %s", strings.Join(args, " "), out)
 		return strings.TrimSpace(string(out))
@@ -172,7 +172,7 @@ func TestTheBannerNamesEveryVerbAndTheGenerateFlags(t *testing.T) {
 			assert.Contains(t, line, flag, "a generate usage line without %s", flag)
 		}
 	}
-	assert.Equal(t, 3, lines, "one usage line per source")
+	assert.Equal(t, 5, lines, "one usage line per source")
 }
 
 // generate holds every brief to the card checks nova-sprint add runs before it leaves:
@@ -254,5 +254,100 @@ func TestTheUsageBannerPrintsEachExampleOnce(t *testing.T) {
 	for _, line := range exampleLines {
 		count := strings.Count(banner, line)
 		assert.Equal(t, 1, count, "example line should appear exactly once, found %d times: %s", count, line)
+	}
+}
+
+// TestGenerateFromCommitsWritesOneRelandBriefPerCommit verifies that --from commits
+// generates one brief per commit in the given range, with PATHS computed from the
+// commit's changed files and TEST including the package plus ./internal/ci/.
+func TestGenerateFromCommitsWritesOneRelandBriefPerCommit(t *testing.T) {
+	t.Parallel()
+
+	// Create a fixture repo with multiple commits
+	repo := t.TempDir()
+	// Init repo with origin
+	cmd := exec.Command("git", "-C", repo, "init", "-q", "-b", "dev")
+	cmd.Env = testgit.Environ(testgit.NoGlobalConfig(t)...)
+	require.NoError(t, cmd.Run())
+	cmd = exec.Command("git", "-C", repo, "remote", "add", "origin", "git@example.com:example/repo.git")
+	cmd.Env = testgit.Environ(testgit.NoGlobalConfig(t)...)
+	require.NoError(t, cmd.Run())
+
+	// Commit 1: add cmd/a/a.go
+	aDir := filepath.Join(repo, "cmd", "a")
+	require.NoError(t, os.MkdirAll(aDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(aDir, "a.go"), []byte("package a\n"), 0o644))
+	cmd = exec.Command("git", "-C", repo, "add", ".")
+	cmd.Env = testgit.Environ(testgit.NoGlobalConfig(t)...)
+	require.NoError(t, cmd.Run())
+	cmd = exec.Command("git", "-C", repo, "commit", "-q", "-m", "add cmd/a/a.go")
+	cmd.Env = testgit.Environ(testgit.NoGlobalConfig(t)...)
+	require.NoError(t, cmd.Run())
+
+	// Commit 2: add cmd/b/b.go
+	bDir := filepath.Join(repo, "cmd", "b")
+	require.NoError(t, os.MkdirAll(bDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(bDir, "b.go"), []byte("package b\n"), 0o644))
+	cmd = exec.Command("git", "-C", repo, "add", ".")
+	cmd.Env = testgit.Environ(testgit.NoGlobalConfig(t)...)
+	require.NoError(t, cmd.Run())
+	cmd = exec.Command("git", "-C", repo, "commit", "-q", "-m", "add cmd/b/b.go")
+	cmd.Env = testgit.Environ(testgit.NoGlobalConfig(t)...)
+	require.NoError(t, cmd.Run())
+
+	// Setup internal/ci with a test file (needed for the test check) - this is setup, not a commit
+	ciDir := filepath.Join(repo, "internal", "ci")
+	require.NoError(t, os.MkdirAll(ciDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(ciDir, "ci_test.go"), []byte("package ci\n\nfunc TestEveryTestOpensWithTParallel(t *testing.T) {}\n"), 0o644))
+	cmd = exec.Command("git", "-C", repo, "add", ".")
+	cmd.Env = testgit.Environ(testgit.NoGlobalConfig(t)...)
+	require.NoError(t, cmd.Run())
+	cmd = exec.Command("git", "-C", repo, "commit", "-q", "-m", "setup internal/ci")
+	cmd.Env = testgit.Environ(testgit.NoGlobalConfig(t)...)
+	require.NoError(t, cmd.Run())
+
+	// Commit 3: add internal/c/c.go
+	cDir := filepath.Join(repo, "internal", "c")
+	require.NoError(t, os.MkdirAll(cDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(cDir, "c.go"), []byte("package c\n"), 0o644))
+	cmd = exec.Command("git", "-C", repo, "add", ".")
+	cmd.Env = testgit.Environ(testgit.NoGlobalConfig(t)...)
+	require.NoError(t, cmd.Run())
+	cmd = exec.Command("git", "-C", repo, "commit", "-q", "-m", "add internal/c/c.go")
+	cmd.Env = testgit.Environ(testgit.NoGlobalConfig(t)...)
+	require.NoError(t, cmd.Run())
+
+	// Get commit SHAs (get the 3 commit briefs, excluding the setup commit)
+	sha1Cmd := exec.Command("git", "-C", repo, "rev-parse", "HEAD~3")
+	sha1out, err := sha1Cmd.CombinedOutput()
+	require.NoError(t, err)
+	sha1 := strings.TrimSpace(string(sha1out))
+
+	sha3Cmd := exec.Command("git", "-C", repo, "rev-parse", "HEAD")
+	sha3out, err := sha3Cmd.CombinedOutput()
+	require.NoError(t, err)
+	sha3 := strings.TrimSpace(string(sha3out))
+
+	// Generate briefs from commits range
+	out := filepath.Join(t.TempDir(), "cards")
+	exit, stdout, stderr := runCard("generate", "--from", "commits", "--range", sha1+".."+sha3, "--repo-dir", repo, "--repo", "example/repo", "--base", "dev", "--sha", sha3, "--out", out)
+
+	require.Equal(t, 0, exit, "stdout: %s\nstderr: %s\n", stdout, stderr)
+	assert.Contains(t, stdout, "cards=3")
+
+	// Check that briefs were created
+	briefs, err := filepath.Glob(filepath.Join(out, "*.md"))
+	require.NoError(t, err)
+	assert.Equal(t, 3, len(briefs), "expected 3 briefs, got %d", len(briefs))
+
+	// Check that each brief has PATHS and TEST
+	for _, brief := range briefs {
+		raw, err := os.ReadFile(brief)
+		require.NoError(t, err)
+		brief := string(raw)
+		assert.Contains(t, brief, "PATHS:")
+		assert.Contains(t, brief, "TEST:")
+		assert.Contains(t, brief, "internal/ci")
+		assert.Contains(t, brief, "KIND: fix-red")
 	}
 }
