@@ -239,7 +239,7 @@ type Limits struct {
 	Pacing func() float64
 
 	mu       sync.Mutex
-	beatMu   sync.Mutex // a down beat's look and its send, against a wake ending the limit (BeatOrDown, gated.Deliver)
+	beatMu   sync.Mutex // a beat's look and its send, against a limit starting (see) or a wake ending it (BeatOrDown, gated.Deliver)
 	pace     Pacer
 	limited  bool
 	until    time.Time
@@ -300,6 +300,10 @@ func (l *Limits) see(out string, failed bool) {
 	if found && lim.Limited && kind == "" {
 		kind = limitKindOf(lim.Reason)
 	}
+	// a beat in flight lands before the limit starts: the daemon beats every step
+	// (every-friend-daemon-beats-every-second), so an up beat that looked before the
+	// limit is never sent after it (BeatOrDown)
+	l.beatMu.Lock()
 	l.mu.Lock()
 	l.pace.Observe(uses)
 	if l.waking != "" && strings.Contains(out, l.waking) {
@@ -311,6 +315,7 @@ func (l *Limits) see(out string, failed bool) {
 	}
 	if !found || !lim.Limited || (l.limited && l.until.Equal(lim.Until)) {
 		l.mu.Unlock()
+		l.beatMu.Unlock()
 		return
 	}
 	l.limited, l.until, l.reason, l.kind, l.waking, l.answered = true, lim.Until, lim.Reason, kind, "", false
@@ -320,6 +325,7 @@ func (l *Limits) see(out string, failed bool) {
 		l.judged = true
 	}
 	l.mu.Unlock()
+	l.beatMu.Unlock()
 	if l.Down != nil {
 		l.Down(lim.Until, lim.Reason)
 	}
@@ -397,15 +403,15 @@ func (l *Limits) BeatOrDown(beat func(ctx context.Context) error, down func(ctx 
 		return l.Beat(beat)
 	}
 	return func(ctx context.Context) error {
-		// the look and the down beat are one step against the wake's answer ending the
-		// limit, so no down beat is sent after she is up again
+		// the look and the beat are one step against a limit starting and the wake's
+		// answer ending it, so no up beat is sent after she is limited and no down beat
+		// after she is up again
 		l.beatMu.Lock()
+		defer l.beatMu.Unlock()
 		until, reason, limited := l.Limited()
 		if !limited {
-			l.beatMu.Unlock()
 			return beat(ctx)
 		}
-		defer l.beatMu.Unlock()
 		if err := down(ctx, until, "harness limit: "+reason); err != nil {
 			return fmt.Errorf("beating down until %s: %w", until.UTC().Format(time.RFC3339), err)
 		}

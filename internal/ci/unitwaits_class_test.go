@@ -162,6 +162,23 @@ func topLevelName(d ast.Decl) string {
 // scanWallClockWaits returns the direct wall-clock waits in one parsed file.
 func scanWallClockWaits(fset *token.FileSet, rel string, f *ast.File) []wallClockWait {
 	timeName, ctxName := importName(f, "time"), importName(f, "context")
+	// testing/synctest.Test runs its literal callback in a fake-time bubble.
+	// Only that callback is exempt: waits before/after it and in other functions
+	// still run on the wall clock. The imported package may have an alias.
+	bubbles := map[ast.Node]bool{}
+	syncName := importName(f, "testing/synctest")
+	ast.Inspect(f, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || syncName == "" || len(call.Args) != 2 {
+			return true
+		}
+		if pkg, name := selName(call.Fun); pkg == syncName && name == "Test" {
+			if literal, ok := call.Args[1].(*ast.FuncLit); ok {
+				bubbles[literal] = true
+			}
+		}
+		return true
+	})
 	var out []wallClockWait
 	for _, d := range f.Decls {
 		fn := topLevelName(d)
@@ -171,6 +188,9 @@ func scanWallClockWaits(fset *token.FileSet, rel string, f *ast.File) []wallCloc
 		waited := map[string]bool{}
 		calls := map[*ast.SelectorExpr]bool{}
 		ast.Inspect(d, func(n ast.Node) bool {
+			if bubbles[n] {
+				return false
+			}
 			switch x := n.(type) {
 			case *ast.CallExpr:
 				if sel, ok := x.Fun.(*ast.SelectorExpr); ok {
@@ -201,6 +221,9 @@ func scanWallClockWaits(fset *token.FileSet, rel string, f *ast.File) []wallCloc
 			return true
 		})
 		ast.Inspect(d, func(n ast.Node) bool {
+			if bubbles[n] {
+				return false
+			}
 			sel, ok := n.(*ast.SelectorExpr)
 			if !ok || timeName == "" {
 				return true
@@ -477,6 +500,27 @@ func TestThroughTheSeam(t *testing.T) {
 	c.Sleep(10 * time.Second)
 }
 `
+	const bubble = `package p
+import (
+ "context"
+ "testing"
+ virtual "testing/synctest"
+ "time"
+)
+func TestBubble(t *testing.T) {
+ time.Sleep(time.Minute)
+ virtual.Test(t, func(t *testing.T) {
+  time.Sleep(time.Minute)
+  <-time.After(time.Minute)
+  ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+  defer cancel()
+  <-ctx.Done()
+ })
+ time.Sleep(time.Minute)
+}
+func helperOutsideBubble() { time.Sleep(time.Minute) }
+`
+
 	scan := func(rel, src string) []wallClockWait {
 		t.Helper()
 		fset, f, err := parseSourceFile(rel, []byte(src), 0)
@@ -498,6 +542,11 @@ func TestThroughTheSeam(t *testing.T) {
 		"TestDeadlineWaited: a context deadline waited on (<-ctx.Done())",
 	}
 	assert.Equalf(t, strings.Join(want, "\n"), strings.Join(got, "\n"), "waits in the bare file:\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	fakeWaits := scan("cmd/p/bubble_test.go", bubble)
+	require.Len(t, fakeWaits, 3, "only the literal bubble runs on fake time")
+	assert.Equal(t, "TestBubble", fakeWaits[0].Func)
+	assert.Equal(t, "TestBubble", fakeWaits[1].Func)
+	assert.Equal(t, "helperOutsideBubble", fakeWaits[2].Func)
 	w := scan("cmd/p/seam_test.go", seam)
 	assert.Emptyf(t, w, "the same wait through a fake clock seam: %+v, want none", w)
 	w = scan("cmd/p/p_functional_test.go", "//go:build functional\n\n"+bare)
