@@ -145,6 +145,14 @@ func (st *Store) rootKV() (KV, error) {
 // else measured from src; the record's measuring state carries from beat to
 // beat. It works while the machine is RUNNING or STOPPED and touches no table.
 func (st *Store) Beat(ctx context.Context, member string, given *float64, src hostload.Source) (sprint.Beat, error) {
+	return st.BeatWithDisk(ctx, member, given, src, nil)
+}
+
+// BeatWithDisk is Beat with the volume's disk reading the member's counter
+// carries (sprint.Beat.Disk, disk.go): the beat's own measurement of the
+// volume its working directory lives on. A nil reading is a beat that measured
+// none, as before.
+func (st *Store) BeatWithDisk(ctx context.Context, member string, given *float64, src hostload.Source, disk *sprint.DiskReading) (sprint.Beat, error) {
 	if !sprint.ValidID(member) {
 		return sprint.Beat{}, fmt.Errorf("a member name wants letters, digits, _ and -: %s", member)
 	}
@@ -177,6 +185,7 @@ func (st *Store) Beat(ctx context.Context, member string, given *float64, src ho
 		}
 	}
 	b := sprint.NextBeat(prev, now, pct, how, meter)
+	b.Disk = disk
 	// the machine's logical cores: the source's when it names them (a meter's,
 	// or fleet beat --cores), else this process's machine
 	if b.Cores = src.NCPU; b.Cores <= 0 {
