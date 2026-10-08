@@ -286,7 +286,9 @@ func (l *loop) outboxStep(now time.Time) {
 		delete(o.tried, job)
 		o.finished[job] = true
 		words := "finish=ok head=" + head
-		if slices.Contains(argv, "--failed") {
+		if slices.Contains(argv, "--harness-fault") {
+			words = "return=harness-fault"
+		} else if slices.Contains(argv, "--failed") {
 			words = "finish=failed"
 			if fullSha.MatchString(head) {
 				words += " head=" + head
