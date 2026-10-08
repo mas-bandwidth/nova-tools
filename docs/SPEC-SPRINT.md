@@ -6633,6 +6633,23 @@ episode, a clear only after a note (tla/SprintRules.tla, `AlarmOncePerEpisode`,
 `ClearFollowsAlarm`; `TestTheIdleAlarmNamesTheRootsOnceAnEpisode`,
 `TestTheIdleTraceNamesACardAtItsBound`).
 
+**STOP assignment alerts.** Each tick observes canonical fleet Working and reader
+Reading assignments under the operation fence, including legacy STOP records
+without captured cancellation debt. While STOPPED, each owner with unresolved
+assignments receives one incident note addressed to the canonical coordinator:
+`execution unknown / needs evidence`. Canonical assignments, beats and persisted
+start entries do not prove a native worker is alive. The observer launches,
+returns and retires nothing; a supported owner cancellation acknowledgement or
+an independently verified coordinator action resolves an assignment. The row's
+incident marker and note commit through the existing journal, so interruption
+and lost replies retry without duplicate incidents. Owner-specific note titles
+preserve each owner's evidence through inbox grouping. Assignment clearing or
+ending the STOP condition produces one recovery note without concluding native
+execution stopped. The existing tick-end wake and `inbox --push seat` folder
+journal deliver the notes; files remain available to the native consumer across
+restarts. PAUSED work remains RUNNING for settlement and does not trigger STOP
+alerts (tla/SprintRules.tla, `AlarmOncePerEpisode`, `ClearFollowsAlarm`).
+
 ### The server
 
 The owner, 2026-10-01: "single threaded server, pipelined batches like redis." / "I think we

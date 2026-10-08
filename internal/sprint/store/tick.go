@@ -728,6 +728,12 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 		if err := st.keepWhere(ctx, m); err != nil {
 			return res, fmt.Errorf("where: %w", err)
 		}
+		if err := st.stoppedAssignments(ctx, &res); err != nil {
+			return res, err
+		}
+		if res.TickEnd, err = st.tickEnd(ctx); err != nil {
+			return res, err
+		}
 		now := st.now()
 		if now.Sub(hb.Alive()) < HeartbeatIdleEvery && !hb.Looked.IsZero() {
 			return res, nil
@@ -1107,7 +1113,7 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	// done part, once the tables are settled.
 	t.res.Order = append(t.res.Order, "end")
 	// the machine's own answers, when the loop gives them: the rule parts and the idle alarm
-	end := sprint.TickEndWith(t.req.AnswerRules, t.req.IdleAlarm)
+	end := sprint.TickEndWithStoppedAssignments(snap, t.req.AnswerRules, t.req.IdleAlarm)
 	if out := t.parts("", end); out != tickOn && out != tickDone {
 		return t.end(out, last, unfinished, seen)
 	}
@@ -2048,7 +2054,7 @@ func (st *Store) ShadowTick(ctx context.Context) (ShadowPlan, error) {
 			return out, err
 		}
 	}
-	if err := plan("", sprint.TickEndWith(st.AnswerRules, st.IdleAlarm)); err != nil {
+	if err := plan("", sprint.TickEndWithStoppedAssignments(snap, st.AnswerRules, st.IdleAlarm)); err != nil {
 		return out, err
 	}
 	out.Took = time.Since(began)
