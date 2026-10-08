@@ -597,12 +597,6 @@ func HasFormLine(brief string) bool {
 	return false
 }
 
-// HasForm says a brief carries a FORM: block that parses.
-func HasForm(brief string) bool {
-	_, err := ReadForm(brief)
-	return err == nil
-}
-
 // formRulePrefixes are the words a rule line starts with; a line after FORM: that starts
 // with one of them is a rule and must parse, and any other line ends the block.
 var formRulePrefixes = []string{"line ", "heading", "item", "each item", "count"}
@@ -772,13 +766,21 @@ const (
 // on the attempt is FormFail and the misses are the report.
 func DecideForm(prior int, f Form, report string) (FormOutcome, []FormMiss) {
 	misses := CheckForm(f, report)
+	return FormDecision(prior, misses), misses
+}
+
+// FormDecision is the outcome of the misses a finish found, with prior the form refusals
+// this attempt already spent: no miss passes, a miss refuses, and the miss that makes
+// FormMissesToFail on the attempt fails it. The finish uses it where the report could not
+// be read at all (the one miss is the unread file), DecideForm where it was checked.
+func FormDecision(prior int, misses []FormMiss) FormOutcome {
 	if len(misses) == 0 {
-		return FormPass, nil
+		return FormPass
 	}
 	if prior+1 >= FormMissesToFail {
-		return FormFail, misses
+		return FormFail
 	}
-	return FormRefuse, misses
+	return FormRefuse
 }
 
 // CheckForm checks report against every rule of the form, in the form's order, and returns
@@ -919,11 +921,6 @@ func formWordCount(text, noun string) int {
 		}
 	}
 	return n
-}
-
-// FormRuleKinds is every rule kind the grammar names, in the order the brief writes them.
-func FormRuleKinds() []string {
-	return slices.Clone([]string{"line1", "heading", "item", "each", "count"})
 }
 
 // FormRefusalText is the refusal a form miss prints: one line per miss, at most

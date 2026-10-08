@@ -2425,24 +2425,29 @@ func (a *app) formFinish(ctx context.Context, st *store.Store, ids []string, hea
 		if err != nil {
 			continue // no FORM: block: the finish is as it was
 		}
+		// the decision is swarm.DecideForm's (lintheader.go), the one form_test.go pins:
+		// prior misses on this attempt plus this one, and the third fails the attempt
+		prior := wc.Int(sprint.FormRefusalsField)
+		var out swarm.FormOutcome
 		var misses []swarm.FormMiss
 		body, err := a.formReportBlob(ctx, brief[wc.F("primary")], head, branch, f.Path)
 		if err != nil {
 			misses = []swarm.FormMiss{{Line: 0, Rule: "the named file", Found: sprint.HeadFileMiss(head, err)}}
+			out = swarm.FormDecision(prior, misses)
 		} else {
-			misses = swarm.CheckForm(f, string(body))
-		}
-		if len(misses) == 0 {
-			continue
+			out, misses = swarm.DecideForm(prior, f, string(body))
 		}
 		text := swarm.FormRefusalText(f.Path, misses)
-		if wc.Int(sprint.FormRefusalsField)+1 >= swarm.FormMissesToFail {
+		switch out {
+		case swarm.FormPass:
+			continue
+		case swarm.FormFail:
 			fail = true
 			failLines = append(failLines, text)
-			continue
+		default:
+			refuseIDs = append(refuseIDs, wc.ID)
+			lines = append(lines, text)
 		}
-		refuseIDs = append(refuseIDs, wc.ID)
-		lines = append(lines, text)
 	}
 	if fail {
 		// the third miss on the attempt: this finish FAILS it, the misses the report

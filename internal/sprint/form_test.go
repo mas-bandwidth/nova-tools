@@ -56,7 +56,6 @@ func TestParseFormReadsEveryRuleKind(t *testing.T) {
 	assert.Equal(t, "command", f.Rules[3].Noun)
 	assert.Equal(t, 1, f.Rules[4].Min)
 	assert.Equal(t, 3, f.Rules[4].Max)
-	assert.Equal(t, swarm.FormRuleKinds(), []string{"line1", "heading", "item", "each", "count"})
 }
 
 func TestParseFormRefusesWhatItCannotRead(t *testing.T) {
