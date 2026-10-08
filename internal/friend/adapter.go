@@ -108,20 +108,6 @@ func WithOutputTail(ctx context.Context, tail func([]byte)) context.Context {
 	return context.WithValue(ctx, tailKey{}, tail)
 }
 
-// Printed is p, printed by the command a delivery runs, said to ctx's watch and tail: what
-// RealExec does with each write, for a harness that runs no command through it.
-func Printed(ctx context.Context, p []byte) {
-	if len(p) == 0 {
-		return
-	}
-	if seen, _ := ctx.Value(outputKey{}).(func()); seen != nil {
-		seen()
-	}
-	if tail, _ := ctx.Value(tailKey{}).(func([]byte)); tail != nil {
-		tail(p)
-	}
-}
-
 // seenWriter is a Builder that says each write to the context's watch and tail.
 type seenWriter struct {
 	b    strings.Builder

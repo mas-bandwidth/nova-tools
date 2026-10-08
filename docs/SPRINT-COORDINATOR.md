@@ -971,7 +971,7 @@ Each is a place this runbook describes a workaround; the change that removes it 
   whose emptiest member refused the card at staging.
 - `nova-sprint handover` prints one `RULE` line, the waves rule; printing each rule of section 10 by number
   needs a card whose PATHS take in `cmd/nova-sprint/seat.go`, where the handover's rules are set
-  (`cmd/nova-sprint/handover_rules.go` holds the numbered sentences, kept equal to section 10 by its test).
+  (`cmd/nova-sprint/handover_rules.go` holds the numbered sentences, kept equal to section 10 by its test, which also renders them as the `R<n>.` lines).
 - After card every-unit-installed-by-a-verb: `nova-sprint install`, `uninstall` and `units --check` are in
   nova-sprint's verb table, and `nova-swarm install disk-guard` writes the disk-guard unit in the swarm
   binary (the shared unit text is `internal/units`, which a worker may import). `nova-swarm install mirror-refresh` and a

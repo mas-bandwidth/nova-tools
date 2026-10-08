@@ -141,9 +141,10 @@ type Daemon struct {
 	// read every step so a change takes effect without a restart; nil, or
 	// empty answers, deliver in batch at Width.
 	Row func() (mode string, width int)
-	// Pacing is the row's pacing as the daemon last read it (ParsePacing off its
-	// beat): the fraction of each subscription window the lanes may spend, read
-	// every step; nil, or out of (0, 1], is DefaultPacing (pacing.go).
+	// Pacing is the row's pacing as the daemon last read it: the fraction of each
+	// subscription window the lanes may spend, read every step; nil, or out of
+	// (0, 1], is DefaultPacing (pacing.go). No beat carries the row's pacing yet,
+	// so nova-friend leaves it nil.
 	Pacing func() float64
 	// LaneCaps is the row's wall cap of a lane's card by its tier as the daemon last read
 	// it (ParseLaneCaps off its beat), read every step; nil, or a tier it names none for,
@@ -350,11 +351,6 @@ func authored(seat string, m bus.Message) string {
 		return Text(m)
 	}
 	return Quoted(m)
-}
-
-// Batch is BatchFor with the seat unknown: every message quoted.
-func Batch(msgs []bus.Message, notice, pongCommand string) string {
-	return BatchFor("", msgs, notice, pongCommand)
 }
 
 // BatchFor is one turn's text: the pong line to run first while a challenge

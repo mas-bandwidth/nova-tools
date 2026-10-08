@@ -218,7 +218,7 @@ func AtBriefBound(c *Card, finding string, cap int) (BriefBound, bool) {
 // finding, asked with AttemptsCap), in a stream not held, is dealt as a friend card
 // (friend_deal.go) to the frontier or heavy-class friend up with room. Room is her free
 // width, width less the cards she already holds, counted across this plan the way
-// friendDeal counts free: each deal decrements it and the next card is picked again, the
+// friendDealPass counts free: each deal decrements it and the next card is picked again, the
 // most free first and the first by name among equals, so two capped cards cannot both
 // land on one friend whose width is 1. The card keeps its work and findings; its brief
 // gains the WHO line of the friend chosen by the fields the brief edit writes (FieldWho
@@ -241,7 +241,7 @@ func AttemptCapDeal(s *Snapshot, r TickReq) Plan {
 	}
 	for _, c := range s.Work.Column(Ready) {
 		if _, friend := FriendCard(c); friend || IsSentinel(c) || StreamHeld(s, c.Row) {
-			continue // a friend's card is friendDeal's, a sentinel never moves, a held stream is dealt nothing
+			continue // a friend's card is friendDealPass's, a sentinel never moves, a held stream is dealt nothing
 		}
 		if _, ok := AtBriefBound(c, "", s.AttemptsCap(c.Row)); !ok {
 			continue

@@ -18,6 +18,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
+	"github.com/mas-bandwidth/nova-tools/internal/friend/friendtest"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
@@ -53,8 +54,8 @@ type rig struct {
 	home         string
 	answered     map[string]bool // the session checks bob's fake session has answered
 	alive        friend.Aliver
-	deaf         bool          // bob's opencode session takes a turn and never runs the pong line
-	fs           *friend.MemFS // the harness settings' filesystem: bob's directory /w/bob
+	deaf         bool              // bob's opencode session takes a turn and never runs the pong line
+	fs           *friendtest.MemFS // the harness settings' filesystem: bob's directory /w/bob
 }
 
 type fakeAlive struct {
@@ -71,7 +72,7 @@ func (f fakeAlive) Alive(context.Context) friend.Liveness {
 
 func newRig(t *testing.T, names ...string) *rig {
 	t.Helper()
-	fs := friend.NewMemFS()
+	fs := friendtest.NewMemFS()
 	require.NoError(t, fs.MkdirAll("/w/bob", 0o755))
 	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379", "PATH": "/usr/bin:/bin"}, now: start, home: t.TempDir(), alive: fakeAlive{running: true, why: "the fake harness runs"}, fs: fs}
 }

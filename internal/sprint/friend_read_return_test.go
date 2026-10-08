@@ -7,7 +7,7 @@ import (
 )
 
 // friendReadAsked is a world with s1-1 in review at attempt 1 and its read asked of
-// friend amy on her fleet row (FriendReadAsk), and the read card's id.
+// friend amy on her fleet row (friendReadAsk), and the read card's id.
 func friendReadAsked(t *testing.T) (*world, string) {
 	t.Helper()
 	w := newWorld(t, "reader-a", "reader-b")

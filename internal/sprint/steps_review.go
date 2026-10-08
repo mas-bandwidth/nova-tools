@@ -440,7 +440,7 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		return p
 	}
 	// a read asked of a friend is on her fleet row, not the readers table
-	// (FriendReadAsk): the verb her packet prints closes it there
+	// (friendReadAsk): the verb her packet prints closes it there
 	for _, rd := range readers {
 		name, friend := FriendOfRow(rd)
 		member := !friend && s.Fleet != nil && s.Fleet.HasRow(rd) && (s.Readers == nil || !s.Readers.HasRow(rd))

@@ -237,7 +237,7 @@ type Store interface {
 	// id id); an id that is not there is left out.
 	Get(ctx context.Context, stream string, entries []string) ([]Entry, error)
 	// Forward moves each id's receipt on the hash at key to state at the
-	// store's time (TIME), by the rule Forward keeps: only forward, and only
+	// store's time (TIME), by the receipt rule (forwardLua): only forward, and only
 	// delivered starts one; it answers each id's state before, "" for none, in
 	// one atomic step (a script). It is the one writer of a receipt.
 	Forward(ctx context.Context, key, state string, ids ...string) ([]string, error)

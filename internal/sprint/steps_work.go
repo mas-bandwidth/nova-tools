@@ -1685,7 +1685,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 }
 
 // friendNext is a friend's own take: her finish moves the oldest ready card on her row
-// (the deal dealt it ready behind her working cards: friendDeal) into working in the
+// (the deal dealt it ready behind her working cards: friendDealPass) into working in the
 // same step, taken now, so she never waits for a tick between one card and the next
 // (the owner, 2026-10-04: "just like the fleet"). In one-shot mode (docs/SPEC-SPRINT.md
 // section 1, "A friend's card"), the next is only after the last finished: already-started

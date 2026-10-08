@@ -323,9 +323,9 @@ turn that ran ended non-zero), `acted` (the turn ended at exit 0, or the
 recipient sent a message whose `re` is its id). The receipts are one hash
 per recipient beside its stream, `bus2:receipt:<name>`, field the message
 id, value the state and the store's time it was reached in Unix seconds
-(`acted 1791288000`). Only the bus writes it, through one rule
-(`internal/bus/stages.go`, `Forward`) that the store runs as one script
-(`redis.go`, `forwardLua`) and both fakes call: a receipt moves only
+(`acted 1791288000`). Only the bus writes it, through one rule that the
+store runs as one script (`internal/bus/redis.go`, `forwardLua`) and both
+fakes keep in Go beside it (`forwardReceipt`): a receipt moves only
 forward, and only `delivered` starts one, so a message is never read or
 acted before it was delivered. `recv` stamps `delivered` (one trip more)
 and hands the reader the state it found (`Entry.Stage`); a stamp the store

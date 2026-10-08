@@ -34,7 +34,7 @@ type FriendLevelReq struct {
 	Started map[string]string
 	Who     string
 	Max     int
-	// Taken is the tick's friend deal's units (friendDeal): a ready card it moved into
+	// Taken is the tick's friend deal's units (friendDealPass): a ready card it moved into
 	// working on her start this tick does not move.
 	Taken []Unit `json:"-"`
 	// Moved is the cards the tick moved already (friendUnstartedLevel): none moves twice.

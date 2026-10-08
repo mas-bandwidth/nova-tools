@@ -50,6 +50,15 @@ func TestHandoverRulesAreTheRunbooks(t *testing.T) {
 	assert.Equal(t, doc, coordinatorRules, "cmd/nova-sprint/handover_rules.go and docs/SPRINT-COORDINATOR.md section 10 disagree")
 }
 
+// handoverRuleLines is each rule as its RULE line carries it: "R<n>. <sentence>".
+func handoverRuleLines() []string {
+	lines := make([]string, len(coordinatorRules))
+	for i, r := range coordinatorRules {
+		lines[i] = "R" + strconv.Itoa(i+1) + ". " + r
+	}
+	return lines
+}
+
 // Each rule is one RULE line of the handover, numbered as the runbook numbers it.
 func TestHandoverTextPrintsEachRuleByNumber(t *testing.T) {
 	t.Parallel()

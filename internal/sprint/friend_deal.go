@@ -170,7 +170,7 @@ type FriendSeat struct {
 // of them again (docs/SPEC-SPRINT.md section 1, friend-deal-idle-lanes-first.w1), with one
 // exception: a card withdrawn off a friend held or down that no other friend up may take
 // is dealt back to a friend the level moved it off (never the one it was withdrawn or
-// taken back from), rather than stranded ready (friendDeal, withdrawnFrom).
+// taken back from), rather than stranded ready (friendDealPass, withdrawnFrom).
 const FieldFriendsLeft = "friends_left"
 
 // friendTiers is the tiers the friend can do: her Tiers, else her class's.
@@ -391,7 +391,7 @@ func friendLoad(s *Snapshot, name string) int {
 	return s.Fleet.Count(row, Ready) + s.Fleet.Count(row, Working)
 }
 
-// friendDeal is the tick's friend deal (TickDeal), run before the machines' deal: friends
+// friendDealPass is the tick's friend deal (TickDeal), run before the machines' deal: friends
 // first (docs/SPEC-SPRINT.md, WHO preference; tla/WhoPreference.tla checks the selection,
 // not the room). It offers every ready card given (in the order given, the deal's stream
 // turns) to the friends up, each within her room, DealAhead times her width, as the
@@ -429,13 +429,9 @@ func friendLoad(s *Snapshot, name string) int {
 // unit (pinIgnoredNote): why she did not take it, and whose row holds the card.
 // The pass keeps that judgment (pinConds) until the card is back on her row or
 // leaves ready and working.
-func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, dealtWorking map[string]int) {
-	return friendDealPass(s, cards, seats, true)
-}
-
-// friendDealPass is friendDeal, with the reclaim of the fleet's dealt-ahead cards
-// (friendReclaim) when reclaim is set: a deal in passes (a pass of the cards above reads,
-// then the reads, then the rest) reclaims once, in its last pass, after the reads.
+// With reclaim set it also reclaims the fleet's dealt-ahead cards (friendReclaim): a deal in
+// passes (a pass of the cards above reads, then the reads, then the rest) reclaims once, in
+// its last pass, after the reads.
 func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool) (p Plan, dealt, dealtWorking map[string]int) {
 	free, lanes, seat := map[string]int{}, map[string]int{}, map[string]FriendSeat{}
 	dealt, dealtWorking = map[string]int{}, map[string]int{}
@@ -723,13 +719,6 @@ func friendEscalateUnit(s *Snapshot, c, prev *Card, card, row, tier string) Unit
 	u.Changes = append([]Change{change(Fleet, removeEntry(prev, map[string]string{"retired": stamp(s.Now), "retired_by": "escalation"}))}, u.Changes...)
 	u.Moved += fmt.Sprintf("; escalated %s -> %s: %s at its redeal bound", from, tier, prev.ID)
 	return u
-}
-
-// FriendDeal is the tick's friend deal alone (friendDeal), its plan without the counts
-// the level reads.
-func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
-	p, _, _ := friendDeal(s, cards, seats)
-	return p
 }
 
 // friendWithFree is the up friend of one of the classes with the most free width in

@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -99,7 +100,7 @@ func TestOpencodeLanesDoWhatTheRunnerStopgapsDid(t *testing.T) {
 			{"c1", 15, 5, "c1~15.g5"},
 			{"c1", 0, 1, "c1"},
 		} {
-			job := JobName(c.card, c.epoch, c.gen)
+			job := jobName(c.card, c.epoch, c.gen)
 			assert.Equal(t, c.want, job)
 			if c.epoch > 0 {
 				id, epoch, gen, ok := ParseJob(job)
@@ -699,4 +700,18 @@ func TestAPauseMarkerNotWrittenIsNotAResume(t *testing.T) {
 		assert.NotContains(t, records, "cleared by a person")
 		assert.Equal(t, heldAt, len(h.turnStarts()), "no turn after the hold: %s", records)
 	})
+}
+
+// jobName is the job directory friend sync names for a card dealt at epoch: <card>~<epoch>,
+// with .g<gen> after it from the second generation (friendJobOf); a card with no epoch is
+// its id alone.
+func jobName(card string, epoch uint64, gen int) string {
+	job := card
+	if epoch > 0 {
+		job += "~" + strconv.FormatUint(epoch, 10)
+	}
+	if gen > 1 {
+		job += ".g" + strconv.Itoa(gen)
+	}
+	return job
 }

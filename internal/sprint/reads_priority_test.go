@@ -326,3 +326,28 @@ func readersReadEveryTier(w *world) {
 		w.s.Readers.Texts[rd] = map[string]string{ReaderTiers: "flash,pro,heavy,frontier"}
 	}
 }
+
+// Backup is the snapshot's backup state (BackupOf over PipelineCounts).
+func Backup(s *Snapshot) string { return BackupOf(PipelineCounts(s)) }
+
+// PipelineCounts is the work table's primaries working, in review and merging, sentinels
+// aside, over the streams on the table.
+func PipelineCounts(s *Snapshot) (working, review, merging int) {
+	if s == nil || s.Work == nil {
+		return 0, 0, 0
+	}
+	for _, c := range s.Work.Column(Working, Review, Merging) {
+		if IsSentinel(c) {
+			continue
+		}
+		switch c.Col {
+		case Working:
+			working++
+		case Review:
+			review++
+		case Merging:
+			merging++
+		}
+	}
+	return working, review, merging
+}

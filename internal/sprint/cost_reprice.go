@@ -78,12 +78,6 @@ type RepriceReport struct {
 	Streams int `json:"streams"` // control cards rewritten
 }
 
-// Reprice is the reprice's step (RepriceOf).
-func Reprice(s *Snapshot, r RepriceReq) Plan {
-	p, _ := RepriceOf(s, r)
-	return p
-}
-
 // RepriceOf is the reprice's plan and its account (see above).
 func RepriceOf(s *Snapshot, r RepriceReq) (Plan, RepriceReport) {
 	var p Plan

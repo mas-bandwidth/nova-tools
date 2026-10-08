@@ -12,6 +12,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/units"
 )
 
 // install store and install bus write a unit that runs nova-redis serve itself, with
@@ -32,11 +33,11 @@ func TestInstallStoreAndBusWriteAUnitThatRunsServeWithItsLogin(t *testing.T) {
 			h.d.home = func() (string, error) { return home, nil }
 			h.d.executable = func() (string, error) { return "/opt/nova/bin/nova-redis", nil }
 			h.d.loadUnit = func(_, op, p string) error { calls = append(calls, op+" "+filepath.Base(p)); return nil }
-			units := sprint.UnitDir(goos, home, func(string) string { return "" })
+			unitDir := sprint.UnitDir(goos, home, func(string) string { return "" })
 			for _, tc := range []struct{ kind, port string }{{"store", "6380"}, {"bus", "6381"}} {
 				k, ok := sprint.UnitKindOf(tc.kind)
 				require.True(t, ok)
-				path := filepath.Join(units, k.File(goos))
+				path := filepath.Join(unitDir, k.File(goos))
 
 				code, out, errs := h.run(append([]string{"install", tc.kind, "--dry-run"}, login...)...)
 				require.Equal(t, 0, code, errs)
@@ -48,13 +49,13 @@ func TestInstallStoreAndBusWriteAUnitThatRunsServeWithItsLogin(t *testing.T) {
 				assert.Contains(t, out, "INSTALL "+strings.ToUpper(tc.kind)+" OK unit="+path+" written=true loaded=true")
 				b, err := os.ReadFile(path)
 				require.NoError(t, err)
-				args, err := sprint.UnitArgs(goos, b)
+				args, err := units.UnitArgs(goos, b)
 				require.NoError(t, err)
 				assert.Equal(t, append([]string{"/opt/nova/bin/nova-redis", "serve", "--bind", "127.0.0.1", "--port", tc.port,
 					"--dir", filepath.Join(home, "nova-bench", "redis", tc.kind)}, login...), args)
 				assert.NotContains(t, string(b), "nova-secrets")
 
-				states, err := sprint.CheckUnits(units, goos, []sprint.UnitKind{k})
+				states, err := sprint.CheckUnits(unitDir, goos, []sprint.UnitKind{k})
 				require.NoError(t, err)
 				assert.Equal(t, sprint.UnitInstalled, states[0].State, states[0].Why)
 

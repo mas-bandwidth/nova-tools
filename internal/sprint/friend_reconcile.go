@@ -151,7 +151,7 @@ type FriendReturnReq struct {
 // primary working on it, is retired off the table (its record kept, retired_by friend
 // reconcile, its return_reason the why), as rework retires a bound card, and its primary
 // moves working -> ready, as a member going down leaves one, with no failed-work judgment
-// and no redeal spent (the take was never the card's); the tick's friendDeal places it
+// and no redeal spent (the take was never the card's); the tick's friendDealPass places it
 // again at its next attempt. A friend's next attempt is a new work card, never this one
 // redealt, so the card leaves the table rather than wait withdrawn. One move line and one
 // happened note each, saying why. A card not working on her row, at another generation,

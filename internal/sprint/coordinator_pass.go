@@ -27,7 +27,7 @@ import (
 //   - an up friend has had an empty row for EmptyRowAfter while cards she could do sit
 //     ready in the pool or unstarted on another friend's row (emptyConds);
 //   - a named pin sits ready or working off its friend's row (pinConds). The deal writes
-//     that judgment on the unit that places the card on someone else (friendDeal); the
+//     that judgment on the unit that places the card on someone else (friendDealPass); the
 //     pass keeps it, and writes it when the card is there without that note.
 //
 // Raising again is a push: the judgment is rewritten in place with the latest facts and

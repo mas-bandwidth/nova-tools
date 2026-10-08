@@ -503,7 +503,7 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 		l.pruneWorktrees(ctx)
 	}
 	// the cleanup, after every stream and outside every batch: the land loop's own
-	// (landRound) when the loop runs this land, else once here, as the command ends
+	// (landAfter) when the loop runs this land, else once here, as the command ends
 	var pruned []pruneResult
 	if !a.landLazy && !l.dry {
 		pruned = a.flushPrune(ctx, true)

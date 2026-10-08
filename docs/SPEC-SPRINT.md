@@ -81,8 +81,9 @@ Each reader's spend (the owner, 2026-10-05, before funding a provider for reads:
 that you need to track spend on readers, can you do this before we start?"; the coordinator had
 answered with awk over `nova-sprint log`) is carried by the tick's where record: each stream's
 `stream_costs[<stream>].readers[<reader>]` in `where --json` (`reads`, `priced`, `usd` and
-`hour_usd` exact, `hour_priced`, `tokens`; `sprint.ReaderSpend`), summed over the streams by
-`sprint.ReaderSpendsOf` and over the readers by `sprint.ReaderSpendTotal`. Its cells
+`hour_usd` exact, `hour_priced`, `tokens`; `sprint.ReaderSpend`). The sums over the streams
+and over the readers that the readers table is to show are not drawn yet; their rule is written
+down in the test (`ReaderSpendsOf`, `ReaderSpendTotal`, internal/sprint readers_spend_test.go). Its cells
 (`ReaderSpend.Cells`, `sprint.ReaderSpendCols`) are `spend`, the sum of the reader's priced read
 records all time; `spend_1h`, the same over the last hour; `per_read`, that sum over its priced
 reads, never an average of averages; and `reads_priced`, how many. Dollars and cents rounded
@@ -335,7 +336,7 @@ the word, `seen`, `generation`, the counts, the reason and the until; `where
 [replayed=true]`, `--json` `{friend, state, seen, generation, queue, working,
 width, status, replayed}`.
 
-The table's word from an observation (`sprint.ObservedStatus`): `up` only when
+The table's word from an observation (`sprint.FriendEvidence`): `up` only when
 the observation says `up` (her session answered a wake ping), under the seat's
 generation now, with its proof under `FriendPongWindow` (10 minutes) old and
 not dated after now (a negative age is no proof); `down` otherwise, at exactly
@@ -471,7 +472,7 @@ that one judgment, and raises it when the card is already sitting off her row,
 until it is back on her row or leaves ready and working. A hard pin is not
 rotated and is not this judgment. A
 hard pin (`WHO: only friend <name>`) with no room waits ready, held by the
-no-stall rule as waiting for her (`sprint.TickDeal`, `sprint.FriendDeal`,
+no-stall rule as waiting for her (`sprint.TickDeal`, its friend deal,
 `sprint.OnlyFriend`); a card a friend takes is never held for want of a machine
 route of its tier (`TestAReadyCardGoesToAFriendWhenNoMachineRouteServesItsTier`).
 The tick reads the friends' records every tick while the roster has a friend.
@@ -702,7 +703,7 @@ pinned to its holder (`AttemptCapDeal`) is the one placement outside her tiers
 and stays (`TestEveryFriendDecisionReadsTheOneTierOfTheCard`).
 
 A read at any tier is asked of any unit with room at or above that tier, a
-fleet reader or a friend, by the one ask (`FriendReadAsk` before the machine's
+fleet reader or a friend, by the one ask (`friendReadAsk` before the machine's
 `Ask`). The tier a friend is matched on is the tier before a frontier card is
 collapsed onto the tier a route serves (`friendReadTier`): a frontier card, or
 a heavy card whose read tier is the one above, stays frontier, and only a
@@ -2149,7 +2150,7 @@ release's spend check (docs/SPEC-RELEASE.md section 18) sets the same records be
 provider's own count over the release's window, refusing a cut past 5%
 (`TestCostReconcileSetsEachProvidersDayBesideTheRecords`).
 
-**The reprice** (`internal/sprint/cost_reprice.go`, `sprint.Reprice`; the owner, 2026-10-05: "Is
+**The reprice** (`internal/sprint/cost_reprice.go`, `sprint.RepriceOf`; the owner, 2026-10-05: "Is
 it possible to fix historical prices for this sprint ... More accurate prices allow us to
 optimize better."). A record keeps its tokens by class with the route that priced it, so a route
 row's prices corrected after the fact are carried back: **`nova-sprint cost reprice [--route <r>]... [--since <RFC3339>] [--dry-run] [--json]`** runs one step in which every priced consumer
@@ -4816,7 +4817,7 @@ dev. The owner, 2026-10-05: "How can we ensure that you ALWAYS do the merging pr
 now on, vs. drifting and forgetting?" and "Prevention is better than cure". So every drift is
 a fact the machine raises (internal/sprint drift.go, `TickDrift`, in the deadlines part with
 the backlog alarms). Four judgments, judged on the facts the binding reads for the tick
-(`TickReq.Drift`, `sprint.DriftFacts`: `ReadDrift` over a clone with dev and the base
+(`TickReq.Drift`, `sprint.DriftFacts`: `ReadDrift`, the test's reader, over a clone with dev and the base
 fetched, through the tree's git runner, and the last gate run at the base):
 
 - **the base is ahead of dev past its drift** (`the base is ahead of dev past its drift`),
@@ -4859,8 +4860,9 @@ and a fake clock), the wait included.
 **Not yet live:** the store's tick (internal/sprint/store tick.go) does not yet set
 `TickReq.Drift`, and no `set` flag reaches `drift_commits` or `drift_hours` from the command
 line (cmd/nova-sprint), so on the running machine no drift judgment is raised until a
-follow-up card has the binding read `ReadDrift` beside the ticks (never in one: a fetch never
-holds a tick) and record the whole-tree gate's last run at the base.
+follow-up card has the binding read the facts beside the ticks (never in one: a fetch never
+holds a tick), with the test's `ReadDrift` (internal/sprint export_test.go) moved in as its
+reader, and record the whole-tree gate's last run at the base.
 
 ### Open files
 

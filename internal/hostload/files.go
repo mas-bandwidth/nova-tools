@@ -2,7 +2,6 @@ package hostload
 
 import (
 	"cmp"
-	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -154,66 +153,4 @@ func TopHolders(hs []Holder, n int) []Holder {
 		out = out[:n]
 	}
 	return out
-}
-
-// ParseFileNr is Linux's /proc/sys/fs/file-nr: the handles allocated, the unused (0
-// since 2.6) and the maximum.
-func ParseFileNr(s string) (open, limit int, ok bool) {
-	f := strings.Fields(s)
-	if len(f) < 3 {
-		return 0, 0, false
-	}
-	a, err1 := strconv.Atoi(f[0])
-	m, err2 := strconv.Atoi(f[2])
-	if err1 != nil || err2 != nil || a < 0 || m < 0 {
-		return 0, 0, false
-	}
-	return a, m, true
-}
-
-// ParseLsof is the holders in lsof's field output (`lsof -n -P -F pcLf`): for each
-// process a p line (its pid), c (its command) and L (its user), then an f line per open
-// file; only numbered descriptors count (cwd, txt, mem and the like are none). A process
-// with no numbered descriptor is no holder.
-func ParseLsof(s string) []Holder {
-	var out []Holder
-	var cur *Holder
-	flush := func() {
-		if cur != nil && cur.Open > 0 {
-			out = append(out, *cur)
-		}
-		cur = nil
-	}
-	for _, line := range strings.Split(s, "\n") {
-		if line == "" {
-			continue
-		}
-		v := line[1:]
-		switch line[0] {
-		case 'p':
-			flush()
-			if pid, err := strconv.Atoi(v); err == nil {
-				cur = &Holder{PID: pid}
-			}
-		case 'c':
-			if cur != nil {
-				cur.Command = v
-			}
-		case 'L':
-			if cur != nil {
-				cur.User = v
-			}
-		case 'f':
-			if _, err := strconv.Atoi(v); err == nil && cur != nil {
-				cur.Open++
-			}
-		}
-	}
-	flush()
-	return out
-}
-
-// HoldersTimedOut is the reason a holders' read that ran past HoldersTimeout gives.
-func HoldersTimedOut(tool string) error {
-	return fmt.Errorf("%s timed out after %s", tool, HoldersTimeout)
 }
