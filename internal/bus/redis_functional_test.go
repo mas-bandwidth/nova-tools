@@ -174,6 +174,10 @@ func TestRedisStoreKeepsThePushProof(t *testing.T) {
 	assert.Equal(t, sent.ID, e.Message().ID)
 	_, err = gated.Send(ctx, Message{From: "ada", To: []string{"m1"}, Subject: "s", Body: "x"})
 	assert.ErrorContains(t, err, "deaf: m1")
+	newest, err := b.LogNewest(ctx)
+	require.NoError(t, err)
+	require.Len(t, newest, 1, "XREVRANGE on the real log")
+	assert.Equal(t, sent.ID, newest[0].Message().ID)
 }
 
 // Enroll on the real commands: a friend row the roster misses is added to the

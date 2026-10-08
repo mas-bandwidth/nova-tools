@@ -138,7 +138,15 @@ takes `--json`; `log` takes `--max`.
 - `peek [--as <me>]` prints `PEEK OK pending=<n> new=<n>` and one `PEEK MESSAGE
   state= id= from= at= subject=` line per message. Writes nothing, makes no
   group.
-- `log [--bodies] [--max <n>]` reads `bus2:log`, oldest first. Writes nothing.
+- `log [--bodies] [--after <entry> | --newest] [--max <n>]` reads `bus2:log`,
+  oldest first, each line carrying `entry=<ms>-<seq>`, the message's place on
+  the log stream. One read holds at most `logLimit` (10000) messages, so on a
+  log longer than that the plain listing ends before today (the finding of
+  2026-10-08, issue #5450): `--after <entry>` lists the messages after that
+  entry, oldest first (`XRANGE (<entry> +`), and `--newest` lists the last
+  10000 newest first (`XREVRANGE + - COUNT`, `Store.Newest`, `Bus.LogNewest`),
+  so `--newest --max 5` is the latest five; the two together are refused.
+  Writes nothing.
 - `names` prints `NAMES OK count=<n> proven=<n>` and one line per known name:
   `NAMES NAME name= push=<proven|stale|down|none> age=<age|never> harness=<h>`.
 - `version`, `help`, `help <verb>`.
@@ -389,7 +397,7 @@ INFO` on Redis 8 answers):
 | wait | `SMEMBERS`, `XINFO STREAM`, `XREAD` | `friends`, `machines`; `bus2:to:<f>` |
 | ack | `XINFO GROUPS`, `XPENDING`, `XRANGE`, `XACK`, `HDEL` | `bus2:to:<f>`, `bus2:owed:<f>` |
 | peek | `XINFO GROUPS`, `XPENDING`, `XRANGE` | `bus2:to:<f>` |
-| log | `XRANGE` | `bus2:log` |
+| log | `XRANGE`; `XREVRANGE` under `--newest` | `bus2:log` |
 | names | `SMEMBERS`, `TIME`, `HGETALL` | `friends`, `machines`, `bus2:push` |
 | the friend daemon's push proof | `SMEMBERS`, `TIME`, `MULTI`, `HSET`, `EXEC` | `friends`, `machines`; `bus2:push` |
 
