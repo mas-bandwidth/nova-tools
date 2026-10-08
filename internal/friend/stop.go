@@ -1,0 +1,485 @@
+package friend
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/procgroup"
+)
+
+// The machine's stop cancels jobs (docs/SPEC-SPRINT.md section 14; the owner, 2026-10-08:
+// "official machine stop must cancel every active fleet or friend sprint job, preserve
+// progress, return work AND reads to their same owner ready pool automatically"). The
+// daemon reads the machine's word off its own beat's answer (`FRIEND-BEAT OK ...
+// machine=STOPPED`, ParseMachine; the owner's wiring hands it in as MachineStopped), and
+// while the word is STOPPED:
+//
+//   - every lane turn under way is cancelled (its process group signalled, as a provider
+//     failure's stopEvery does) and every read under way with it; the job directory, the
+//     branch and the lane's log are left as they are;
+//   - each cancelled card is owed a stop-return, recorded in the lane state on disk
+//     (LaneState.StopReturns: lane, job, card@gen, epoch, exit, when) before anything is
+//     sent, so a daemon restarted mid-stop finishes the stop-returns it owes before it
+//     starts anything (StopReturnsSurviveRestart);
+//   - once the turn has ended the card is handed back with
+//     `nova-sprint stop-return --as <row> <card>@<gen> --epoch <epoch> --reason "owned
+//     process stopped"` (the store's verb: the same card back to ready, a read to asked, at
+//     a new generation, idempotent on replay, refused for a worker that is not the owner or
+//     a stale generation); a refusal is said and tried again each step while owed;
+//   - no lane, turn or read begins (NoLaunchAfterStop: the word is read again right before
+//     each start, not only at the step's head), and no work nudge goes into the session
+//     (NoNudgeWhileStopped: no idle wake, no dealt-card urging; messages, pings and the
+//     present still do);
+//   - the beat carries the count of stop-returns still owed (friend beat --stop-returns);
+//   - a refused stop-return is tried again after StopReturnRetry, its refusal said once
+//     while its text stands (no verb and no line a second);
+//   - a lane that took a card and had not launched it when the word turned (the window
+//     between the claim and the start) gives the card up the same way: owed, its lane mark
+//     removed, never a run gone;
+//   - the message lanes (a bus delivery with no card: a turn of messages, a ping, the
+//     present) go on while STOPPED: they carry communications and proofs, not work.
+//
+// RUNNING again lifts the refusal; nothing restarts by itself: the queue carries each card
+// again at its new generation and the lanes take it as any card. The model is
+// tla/StopCancels.tla (NoLaneWhileStopped, EveryLaneReturnsOnStop, NoLaunchAfterStop,
+// StopReturnsSurviveRestart, NoNudgeWhileStopped).
+
+// StopReturnReason is the reason every stop-return names.
+const StopReturnReason = "owned process stopped"
+
+// MachineStoppedWord is the machine's state word that cancels jobs.
+const MachineStoppedWord = "STOPPED"
+
+var errMachineLaunchHeld = errors.New("machine word does not authorize a harness launch")
+
+// StopReturnsKept bounds the stop-returns the lane state keeps once sent: the record of the
+// acks, newest last.
+const StopReturnsKept = 200
+
+// StopReturnRetry is how long a refused stop-return waits before it is sent again: the
+// store's verb may be absent, and the lane step runs every second.
+const StopReturnRetry = StatusErrorEvery
+
+// StopReturn is one card the machine's stop took out of a lane: the evidence (the lane, the
+// job, the card at its generation, the epoch, the process's end) and the stop-return owed
+// for it, Result "" while it is owed and the server's answer once it took it.
+type StopReturn struct {
+	Lane   int       `json:"lane"`
+	Job    string    `json:"job"`
+	Row    string    `json:"row"`  // the owner row the return is sent as: friend.<name>, or the reader row
+	Card   string    `json:"card"` // the card id
+	Gen    int       `json:"gen"`
+	Epoch  string    `json:"epoch"`
+	Pid    int       `json:"pid,omitempty"`   // the process signalled, when the harness said it (0: its group, by the lane's context)
+	Exit   int       `json:"exit"`            // how the run ended; -1 while it has not
+	Ended  bool      `json:"ended"`           // the run has ended: the return may be sent
+	At     time.Time `json:"at"`              // when the stop cancelled it
+	Tries  int       `json:"tries,omitempty"` // stop-returns sent and refused
+	Result string    `json:"result,omitempty"`
+	// NextTry is when a refused stop-return is sent again (StopReturnRetry), and Refusal
+	// the refusal last said for it, said once while its text stands.
+	NextTry time.Time `json:"next_try,omitzero"`
+	Refusal string    `json:"refusal,omitempty"`
+}
+
+// Owed says the stop-return has not been taken by the server.
+func (s StopReturn) Owed() bool { return s.Result == "" }
+
+// StopReturnArgv is the store's verb for one stop-return, as the wire of 2026-10-08 says it.
+func StopReturnArgv(row, card string, gen int, epoch string) []string {
+	return []string{"stop-return", "--as", row, card + "@" + strconv.Itoa(gen), "--epoch", epoch, "--reason", StopReturnReason}
+}
+
+// ParseMachine reads the machine's word off a beat's answer (`machine=RUNNING` or
+// `machine=STOPPED`); ok false when the answer carries none (a server before the word).
+func ParseMachine(answer string) (state string, ok bool) {
+	for _, w := range strings.Fields(answer) {
+		if v, found := strings.CutPrefix(w, "machine="); found {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// machineStopped says the machine's word, as the owner last read it, is STOPPED.
+func (d *Daemon) machineStopped() bool {
+	return d.MachineStopped != nil && d.MachineStopped()
+}
+
+func (d *Daemon) machineKnown() bool {
+	return d.MachineKnown == nil || d.MachineKnown()
+}
+
+func (d *Daemon) machineMayLaunch() bool {
+	return d.machineKnown() && !d.machineStopped()
+}
+
+// owed counts the stop-returns not yet taken.
+func (s LaneState) owed() int {
+	n := 0
+	for _, r := range s.StopReturns {
+		if r.Owed() {
+			n++
+		}
+	}
+	return n
+}
+
+func (l *loop) stopOwedFor(job string, st Started) bool {
+	for _, r := range l.lanes.state.StopReturns {
+		if r.Owed() && r.Job == job && r.Card == st.Card.ID && r.Gen == st.Card.Gen() && r.Epoch == st.Card.Epoch() {
+			return true
+		}
+	}
+	return false
+}
+
+// stopPersistedStarted converts the previous daemon's cards to STOP debt
+// before startup recovery can judge an absent run as a failed card.
+func (l *loop) stopPersistedStarted(now time.Time) {
+	for job, st := range l.lanes.state.Started {
+		if l.stopOwedFor(job, st) {
+			continue
+		}
+		l.oweStopReturn(StopReturn{Lane: st.Lane, Job: job, Row: "friend." + l.d.Friend, Card: st.Card.ID, Gen: st.Card.Gen(), Epoch: st.Card.Epoch(), Pid: st.Pid, Exit: -1, At: now})
+	}
+}
+
+func (l *loop) clearTakenReadStops() {
+	for _, r := range l.lanes.state.StopReturns {
+		if !r.Owed() && strings.HasPrefix(r.Job, "read:") {
+			l.clearStoppedReadActive(r)
+		}
+	}
+}
+
+func (l *loop) stopRunQuiescent(job string, st Started) bool {
+	if !ProcessIdentitySupported || st.RunID == "" {
+		return false
+	}
+	for _, ln := range l.lanes.lanes {
+		if ln.card != nil && filepath.Base(ln.card.Outbox) == job && ln.t != nil && ln.t.running {
+			return false
+		}
+	}
+	receipt, err := readRunReceipt(l.d.Dir, job)
+	if errors.Is(err, os.ErrNotExist) {
+		return true // the gated harness cannot execute before RUN is durable
+	}
+	if err != nil || receipt.RunID != st.RunID || receipt.Identity == "" || l.d.ProcessIdentity == nil {
+		return false
+	}
+	if mark, ok := ReadLaneMark(l.d.Dir, job); ok && mark.RunID != "" && mark.RunID != st.RunID {
+		return false
+	}
+	current := l.d.ProcessIdentity(receipt.PID)
+	if current != "" && current != receipt.Identity {
+		return false // a reused PID is never authority over another process group
+	}
+	if !procgroup.GroupRunnable(receipt.PID) {
+		return true
+	}
+	anchorPath := runReceiptPath(l.d.Dir, job) + ".anchor"
+	if !procgroup.AnchorPinned(receipt.PID, anchorPath) {
+		return false // a leaderless live group needs its birth-verified pin
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	return procgroup.ReapVerified(ctx, receipt.PID, receipt.Identity, anchorPath, 100*time.Millisecond)
+}
+
+// settleStopDebts never treats a returned harness call as proof that its
+// descendants exited. The matching durable RUN and group state decide.
+func (l *loop) settleStopDebts(now time.Time) {
+	s := l.lanes
+	if l.d.SaveLanes == nil {
+		return
+	}
+	if err := l.d.SaveLanes(s.state); err != nil {
+		l.d.Record(now.UTC().Format(time.RFC3339) + " stop-return remains owed: lane state cannot be saved: " + oneLine(err.Error(), 300))
+		return // no process may be signalled or returned before the debt is durable
+	}
+	changed := false
+	for i := range s.state.StopReturns {
+		r := &s.state.StopReturns[i]
+		if !r.Owed() {
+			continue
+		}
+		if strings.HasPrefix(r.Job, "read:") {
+			proved := l.readStopDebtQuiescent(*r, now)
+			if r.Ended != proved {
+				r.Ended = proved
+				changed = true
+			}
+			continue
+		}
+		st, ok := s.state.Started[r.Job]
+		if !ok {
+			continue
+		}
+		if st.Card.ID != r.Card || st.Card.Gen() != r.Gen || st.Card.Epoch() != r.Epoch {
+			continue
+		}
+		if !l.stopRunQuiescent(r.Job, st) {
+			if r.Ended {
+				r.Ended = false
+				changed = true
+			}
+			continue
+		}
+		if !r.Ended {
+			r.Ended = true
+		}
+		delete(s.state.Started, r.Job)
+		if err := releaseOwnedLane(l.d.Dir, r.Job, st.Owner); err != nil {
+			l.d.Record(fmt.Sprintf("%s lane %d: card %s: lane mark release waits: %s", now.UTC().Format(time.RFC3339), r.Lane, r.Card, err))
+		}
+		changed = true
+	}
+	if changed {
+		l.saveLanes(now)
+	}
+}
+
+// stopStep is the lane step's stop part: STOPPED cancels every turn and read under way,
+// once each, records what it owes, and sends what it owes whose run has ended; it returns
+// whether the machine is STOPPED, so the step starts nothing. The word RUNNING lifts the
+// hold, said once, and what is still owed (a restart's) is sent all the same.
+func (l *loop) stopStep(now time.Time) bool {
+	d, s := l.d, l.lanes
+	at := now.UTC().Format(time.RFC3339)
+	stopped := d.machineStopped()
+	switch {
+	case stopped && !s.stopped:
+		s.stopped = true
+		d.Record(fmt.Sprintf("%s machine STOPPED: every lane and read under way is cancelled and handed back with stop-return; nothing starts until it runs again", at))
+	case d.machineKnown() && !stopped && s.stopped:
+		s.stopped = false
+		d.Record(fmt.Sprintf("%s machine RUNNING: the lanes take cards again, each at the generation the queue carries", at))
+	}
+	if stopped {
+		for _, ln := range s.lanes {
+			if ln.card != nil && ln.t == nil {
+				l.releaseHeld(ln, now) // taken, not launched: given up the same way
+				continue
+			}
+			t := ln.t
+			if t == nil || !t.running || t.byStop || ln.card == nil {
+				continue
+			}
+			job := filepath.Base(ln.card.Outbox)
+			if !l.oweStopReturn(StopReturn{Lane: ln.n, Job: job, Row: "friend." + d.Friend, Card: ln.card.ID, Gen: ln.card.Gen(), Epoch: ln.card.Epoch(), Exit: -1, At: now}) {
+				continue // do not cancel before the debt is durable
+			}
+			t.byStop = true
+			if t.cancel != nil {
+				t.cancel()
+			}
+			d.Record(fmt.Sprintf("%s lane %d: card %s@%d cancelled by stop: its process group is told to end; the job directory and the branch are kept; stop-return owed", at, ln.n, ln.card.ID, ln.card.Gen()))
+		}
+		l.stopReads(now)
+	}
+	l.settleStopDebts(now)
+	l.returnOwed(now)
+	return stopped
+}
+
+// oweStopReturn records a stop-return owed, in the lane state, before anything is sent.
+func (l *loop) oweStopReturn(r StopReturn) bool {
+	s := l.lanes
+	found := false
+	for i := range s.state.StopReturns {
+		if s.state.StopReturns[i].Job == r.Job && s.state.StopReturns[i].Owed() {
+			found = true
+			break
+		}
+	}
+	if !found {
+		s.state.StopReturns = append(s.state.StopReturns, r)
+	}
+	l.d.owed.Store(int64(s.state.owed()))
+	if l.d.SaveLanes == nil {
+		return false
+	}
+	if err := l.d.SaveLanes(s.state); err != nil {
+		l.d.Record(r.At.UTC().Format(time.RFC3339) + " stop-return remains owed: lane state cannot be saved: " + oneLine(err.Error(), 300))
+		return false
+	}
+	return true
+}
+
+// stopDone is a lane's turn ending after the stop cancelled it: the card leaves the lane's
+// hand, never finished, its lane mark released, and its stop-return is sent now that the run
+// has ended.
+func (l *loop) stopDone(ln *lane, t *turn, r laneResult, now time.Time) {
+	d, s := l.d, l.lanes
+	at := now.UTC().Format(time.RFC3339)
+	job := filepath.Base(ln.card.Outbox)
+	exit := r.turn.Exit
+	if r.err != nil && exit == 0 {
+		exit = -1
+	}
+	for i := range s.state.StopReturns {
+		if s.state.StopReturns[i].Job == job && s.state.StopReturns[i].Owed() {
+			s.state.StopReturns[i].Exit = exit
+		}
+	}
+	l.settleStopDebts(now)
+	d.Record(fmt.Sprintf("%s lane=%d session=%s subject=%s took=%s exit=%d card=cancelled reason=%q", at, ln.n, ln.session, t.subjects, now.Sub(t.started).Round(time.Millisecond), exit, "cancelled by the machine's stop; never finished"))
+	ln.card, ln.attempts, ln.job = nil, 0, LaneJob{}
+	l.saveLanes(now)
+	l.returnOwed(now)
+}
+
+// returnOwed sends every stop-return owed whose run has ended, one verb each, through the
+// daemon's StopReturn (else its Sprint); the server's answer is recorded on the record,
+// which is kept (StopReturnsKept) as the ack's evidence, and a refusal is tried again
+// next step.
+func (l *loop) returnOwed(now time.Time) {
+	d, s := l.d, l.lanes
+	at := now.UTC().Format(time.RFC3339)
+	ready := false
+	for _, r := range s.state.StopReturns {
+		if r.Owed() && r.Ended && !now.Before(r.NextTry) {
+			ready = true
+			break
+		}
+	}
+	if !ready {
+		d.owed.Store(int64(s.state.owed()))
+		return
+	}
+	if d.SaveLanes == nil {
+		return
+	}
+	if err := d.SaveLanes(s.state); err != nil {
+		d.Record(at + " stop-return remains owed: lane state cannot be saved: " + oneLine(err.Error(), 300))
+		return
+	}
+	before := slices.Clone(s.state.StopReturns)
+	changed := false
+	for i := range s.state.StopReturns {
+		r := &s.state.StopReturns[i]
+		if !r.Owed() || !r.Ended || now.Before(r.NextTry) {
+			continue
+		}
+		if _, hasStarted := s.state.Started[r.Job]; hasStarted {
+			continue // the native run has not been proven quiescent
+		}
+		argv := StopReturnArgv(r.Row, r.Card, r.Gen, r.Epoch)
+		var err error
+		switch {
+		case d.StopReturn != nil:
+			err = d.StopReturn(stopReturnCtx(l.ctx), argv)
+		case d.Sprint != nil:
+			_, err = d.Sprint(stopReturnCtx(l.ctx), argv)
+		default:
+			err = fmt.Errorf("this daemon sends no stop-return")
+		}
+		changed = true
+		if err != nil {
+			r.Tries++
+			r.NextTry = now.Add(StopReturnRetry)
+			if text := oneLine(err.Error(), 300); r.Refusal != text {
+				r.Refusal = text
+				d.Record(fmt.Sprintf("%s stop-return refused lane=%d card=%s@%d epoch=%s pid=%d exit=%d try=%d: %s; tried again every %s while it stands", at, r.Lane, r.Card, r.Gen, r.Epoch, r.Pid, r.Exit, r.Tries, text, StopReturnRetry))
+			}
+			continue
+		}
+		r.Result, r.Refusal, r.NextTry = "ok "+at, "", time.Time{}
+		d.Record(fmt.Sprintf("%s stop-return OK lane=%d card=%s@%d epoch=%s pid=%d exit=%d: handed back to %s by the machine's stop", at, r.Lane, r.Card, r.Gen, r.Epoch, r.Pid, r.Exit, r.Row))
+	}
+	if changed {
+		// the acks are kept, newest last; what is owed is never dropped
+		if n := len(s.state.StopReturns); n > StopReturnsKept {
+			kept := slices.DeleteFunc(slices.Clone(s.state.StopReturns[:n-StopReturnsKept]), func(r StopReturn) bool { return !r.Owed() })
+			s.state.StopReturns = append(kept, s.state.StopReturns[n-StopReturnsKept:]...)
+		}
+		if err := d.SaveLanes(s.state); err != nil {
+			s.state.StopReturns = before
+			d.Record(at + " stop-return acknowledgement remains owed: lane state cannot be saved: " + oneLine(err.Error(), 300))
+		} else {
+			for _, r := range s.state.StopReturns {
+				if !r.Owed() && strings.HasPrefix(r.Job, "read:") {
+					l.clearStoppedReadActive(r)
+				}
+			}
+		}
+	}
+	d.owed.Store(int64(s.state.owed()))
+}
+
+// OwedStopReturns is how many stop-returns the lanes owe now: the beat carries it.
+func (d *Daemon) OwedStopReturns() int { return int(d.owed.Load()) }
+
+// stopReads cancels every read under way, once each, and owes its stop-return as the
+// reader row's.
+func (l *loop) stopReads(now time.Time) {
+	d, s := l.d, l.reads
+	at := now.UTC().Format(time.RFC3339)
+	for id, cancel := range s.cancel {
+		if s.stopped[id] {
+			continue
+		}
+		s.stopped[id] = true
+		// the read as it was begun (readSet.active): the queue's refresh lists it begun, not
+		// asked, once the begin landed, so the asked list no longer names its generation
+		r, known := s.active[id]
+		if !known {
+			if i := slices.IndexFunc(s.asked, func(a AskedRead) bool { return a.ID == id }); i >= 0 {
+				r = s.asked[i]
+			}
+		}
+		if !l.oweStopReturn(StopReturn{Job: "read:" + id, Row: ReaderOf(d.Friend), Card: id, Gen: r.Gen, Epoch: r.Epoch, Exit: -1, At: now}) {
+			delete(s.stopped, id)
+			continue
+		}
+		cancel()
+		d.Record(fmt.Sprintf("%s read %s@%d cancelled by stop: its process group is told to end; stop-return owed", at, id, r.Gen))
+	}
+}
+
+// stopReadDone is a read ending after the stop cancelled it: no verdict and no return are
+// recorded; its stop-return is sent now that the run has ended.
+func (l *loop) stopReadDone(r readResult, now time.Time) {
+	d, s := l.d, l.lanes
+	exit := r.turn.Exit
+	if r.err != nil && exit == 0 {
+		exit = -1
+	}
+	quiescent := l.readStopQuiescent(r, now)
+	for i := range s.state.StopReturns {
+		if s.state.StopReturns[i].Job == "read:"+r.read.ID && s.state.StopReturns[i].Owed() {
+			s.state.StopReturns[i].Exit, s.state.StopReturns[i].Ended = exit, quiescent
+		}
+	}
+	d.Record(fmt.Sprintf("%s read %s: cancelled by the machine's stop, exit %d; no verdict recorded", now.UTC().Format(time.RFC3339), r.read.ID, exit))
+	l.saveLanes(now)
+	l.returnOwed(now)
+}
+
+// releaseHeld is a lane holding a card with no turn when the word is STOPPED.
+// A previous turn may have left descendants, so the durable run receipt must
+// prove group exit before the card is returned.
+func (l *loop) releaseHeld(ln *lane, now time.Time) {
+	d := l.d
+	at := now.UTC().Format(time.RFC3339)
+	job := filepath.Base(ln.card.Outbox)
+	if !l.oweStopReturn(StopReturn{Lane: ln.n, Job: job, Row: "friend." + d.Friend, Card: ln.card.ID, Gen: ln.card.Gen(), Epoch: ln.card.Epoch(), Exit: -1, At: now}) {
+		return
+	}
+	d.Record(fmt.Sprintf("%s lane %d: card %s@%d taken and not launched when the machine stopped: given up, stop-return owed", at, ln.n, ln.card.ID, ln.card.Gen()))
+	ln.card, ln.attempts, ln.job = nil, 0, LaneJob{}
+	l.settleStopDebts(now)
+}
+
+// stopReturnCtx is the context a stop-return is sent under when the loop's own has ended: the
+// ack is owed whatever stops the daemon.
+func stopReturnCtx(ctx context.Context) context.Context { return context.WithoutCancel(ctx) }

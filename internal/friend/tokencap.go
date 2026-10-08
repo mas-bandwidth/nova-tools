@@ -434,6 +434,9 @@ func (p *OpenCodePriced) deliverCapped(ctx context.Context, id, text string) (La
 	if p.Out != nil {
 		fmt.Fprintf(p.Out, "opencode: session=%s card=%s %s; its run is stopped, usage %s%s\n", id, card, e.Error(), at, reportWords(e, werr))
 	}
+	if lt.Exit == 0 {
+		lt.Exit = -1 // a cap may land before exec or on the final usage read; the card is held, not finished
+	}
 	return lt, e
 }
 

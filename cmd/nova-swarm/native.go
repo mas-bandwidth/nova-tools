@@ -31,6 +31,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/harness"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/procgroup"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -263,8 +264,12 @@ type nativeRunResult struct {
 // ran, because the deadline branch is the only one that calls nativeKillGroup.
 var (
 	nativeWatchIdle = swarm.WatchIdle
-	nativeReap      = swarm.Reap
-	nativeKillGroup = swarm.KillGroup
+	nativeReap      = func(pgid int, started, slot string, grace time.Duration) bool {
+		return !procgroup.ReapVerified(context.Background(), pgid, started, filepath.Join(slot, nativeAnchorReceiptName), grace)
+	}
+	nativeKillGroup = func(pgid int, started, slot string) {
+		procgroup.KillVerified(context.Background(), pgid, started, filepath.Join(slot, nativeAnchorReceiptName), swarm.TerminateGrace)
+	}
 	// nativeDeadline is the fourth event the wait can be told about. The
 	// deadline test arranged it with real time -- `--deadline 3s` and a 5 s bound on the
 	// WHOLE run, setup and teardown included -- and on hosted macOS that run took 6.08 s
@@ -284,11 +289,11 @@ var (
 // (ownChildGroup), so the group is signalled whole: a terminate, swarm.TerminateGrace, then
 // a kill. It returns "" when the group was already empty, else the group and how it ended,
 // <pgid>:reaped or <pgid>:alive (something outlived the kill), for the NATIVE line.
-func nativeEndLeftovers(pgid int, started string) string {
-	if !swarm.GroupAlive(pgid, started) {
+func nativeEndLeftovers(pgid int, started, slot string) string {
+	if !procgroup.GroupRunnable(pgid) {
 		return ""
 	}
-	if nativeReap(pgid, started, swarm.TerminateGrace) {
+	if nativeReap(pgid, started, slot, swarm.TerminateGrace) {
 		return strconv.Itoa(pgid) + ":alive"
 	}
 	return strconv.Itoa(pgid) + ":reaped"
@@ -1175,14 +1180,34 @@ func initRunState(p *nativePrepared, w *nativeWalled, errOut io.Writer) (*native
 }
 
 // start launches a child process attempt, establishing process groups and wait channels.
+const nativeGroupReceiptName = ".native-group"
+const nativeGroupQuiescedName = ".native-group-reaped"
+
+func writeNativeGroupReceipt(slot string, pid int, stamp string) error {
+	if pid <= 0 || stamp == "" {
+		return fmt.Errorf("the group has no birth identity")
+	}
+	return atomicfile.Write(filepath.Join(slot, nativeGroupReceiptName), []byte(strconv.Itoa(pid)+" "+stamp+"\n"), 0o600)
+}
+
 func start(s *nativeRunState, attempt int, errOut io.Writer) (*nativeStarted, nativeRunResult, int) {
 	if s.prep.cfg.onPhase != nil {
 		s.prep.cfg.onPhase("start")
 	}
+	// A previous attempt or invocation may have exited without proving its
+	// descendants gone. Never replace the only durable group identity while
+	// that group number still has runnable members.
+	if old := groupNumber(s.prep.cfg.slotDir); old > 0 && procgroup.GroupRunnable(old) {
+		refuseNative(errOut, "the previous native harness group is still running; keep its STOP debt")
+		return nil, nativeRunResult{}, 2
+	}
 	before := fileSize(s.outLog)
 	providerBefore := fileSize(filepath.Join(s.prep.dataHome, filepath.FromSlash(harnessLogFile)))
-	cmd := subproc.Long(s.runCtx, s.wal.runPath, s.wal.runArgv...)
-	ownChildGroup(cmd)
+	cmd, releaseGate, abortGate, gateErr := nativeGroupCommand(s.runCtx, s.wal.runPath, s.wal.runArgv...)
+	if gateErr != nil {
+		refuseNative(errOut, fmt.Sprintf("the child gate could not be made: %s", oneline.Escape(gateErr.Error())))
+		return nil, nativeRunResult{}, 2
+	}
 	cmd.Env = s.childEnv
 	cmd.Dir = s.prep.jobDir
 	cmd.Stdin = s.devNull
@@ -1190,18 +1215,48 @@ func start(s *nativeRunState, attempt int, errOut io.Writer) (*nativeStarted, na
 	cmd.Stderr = io.MultiWriter(s.capture, &s.wallOut)
 	attemptStart := time.Now()
 	if err := cmd.Start(); err != nil {
+		abortGate()
 		s.log.Close()
 		s.harnessOut.Close()
 		refuseNative(errOut, fmt.Sprintf("the child could not be started: %s", oneline.Escape(err.Error())))
 		return nil, nativeRunResult{}, 2
 	}
 	pgid := cmd.Process.Pid
+	started := swarm.StartStamp(pgid)
+	if err := writeNativeGroupReceipt(s.prep.cfg.slotDir, pgid, started); err != nil {
+		abortGate()
+		// ignored: the gate never released; kill is cleanup for a refused launch.
+		_ = cmd.Process.Kill()
+		// ignored: a gate-aborted child has no result to report.
+		_ = cmd.Wait()
+		refuseNative(errOut, fmt.Sprintf("the child group could not be recorded: %s", oneline.Escape(err.Error())))
+		return nil, nativeRunResult{}, 2
+	}
+	if err := startNativeAnchor(s.prep.cfg.slotDir, pgid); err != nil {
+		abortGate()
+		// ignored: the harness gate never released; kill is cleanup for refusal.
+		_ = cmd.Process.Kill()
+		// ignored: a gated harness has no result to report.
+		_ = cmd.Wait()
+		refuseNative(errOut, fmt.Sprintf("the child group anchor could not be recorded: %s", oneline.Escape(err.Error())))
+		return nil, nativeRunResult{}, 2
+	}
+	if err := releaseGate(); err != nil {
+		if !procgroup.ReapVerified(context.Background(), pgid, started, filepath.Join(s.prep.cfg.slotDir, nativeAnchorReceiptName), swarm.TerminateGrace) {
+			fmt.Fprintf(errOut, "NATIVE NOTE: a refused harness gate left a group whose exit is unproven; remedy: keep the slot and restart its member to complete STOP recovery\n")
+		}
+		// ignored: no successful gate release; kill is cleanup for refusal.
+		_ = cmd.Process.Kill()
+		// ignored: a gate-refused child has no result to report.
+		_ = cmd.Wait()
+		refuseNative(errOut, fmt.Sprintf("the child gate could not be released: %s", oneline.Escape(err.Error())))
+		return nil, nativeRunResult{}, 2
+	}
 	if s.wal.niced {
 		if err := lowerChildPriority(pgid); err != nil {
 			fmt.Fprintf(errOut, "NATIVE NOTE: the child's priority could not be lowered: %s\n", oneline.Err(err))
 		}
 	}
-	started := swarm.StartStamp(pgid)
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	deadline := nativeDeadline
@@ -1249,32 +1304,32 @@ func watch(s *nativeRunState, st *nativeStarted) *nativeWatched {
 				s.res.rc = 0
 			}
 		}
-		s.res.survivors = nativeEndLeftovers(st.pgid, st.started)
+		s.res.survivors = nativeEndLeftovers(st.pgid, st.started, s.prep.cfg.slotDir)
 	case <-st.deadlineC:
-		nativeKillGroup(st.pgid, st.started)
+		nativeKillGroup(st.pgid, st.started, s.prep.cfg.slotDir)
 		<-st.done
 		s.res.rc = -1
 	case end := <-st.idleC:
 		st.stopDeadline()
-		nativeReap(st.pgid, st.started, swarm.TerminateGrace)
+		nativeReap(st.pgid, st.started, s.prep.cfg.slotDir, swarm.TerminateGrace)
 		<-st.done
 		s.res.rc = -1
 		s.res.idled, s.res.idleEnd = true, end
 	case <-s.bodyStall:
 		st.stopDeadline()
-		nativeReap(st.pgid, st.started, swarm.TerminateGrace)
+		nativeReap(st.pgid, st.started, s.prep.cfg.slotDir, swarm.TerminateGrace)
 		<-st.done
 		s.res.rc = -1
 		s.res.lost = true
 	case <-s.termCh:
 		st.stopDeadline()
-		nativeReap(st.pgid, st.started, swarm.TerminateGrace)
+		nativeReap(st.pgid, st.started, s.prep.cfg.slotDir, swarm.TerminateGrace)
 		<-st.done
 		s.res.rc = -1
 		s.res.terminated = true
 	case word := <-s.sampler.Fired():
 		st.stopDeadline()
-		swarm.Reap(st.pgid, st.started, swarm.TerminateGrace)
+		nativeReap(st.pgid, st.started, s.prep.cfg.slotDir, swarm.TerminateGrace)
 		<-st.done
 		s.res.rc = -1
 		s.res.stopped = word
@@ -1326,6 +1381,13 @@ func collect(s *nativeRunState, st *nativeStarted, wat *nativeWatched, attempt i
 	}
 	if launchUsage.Observed {
 		s.launchSpends = append(s.launchSpends, launchSpend(launchUsage.Values))
+	}
+	// The normal-completion cleanup can fail closed when both the original
+	// leader and durable anchor are gone. Even a catalog/provider start error
+	// must not retry into this slot and overwrite that group's only receipt.
+	if procgroup.GroupRunnable(st.pgid) {
+		s.res.survivors = strconv.Itoa(st.pgid) + ":alive"
+		return &nativeCollected{retry: false}
 	}
 	if s.res.terminated {
 		return &nativeCollected{retry: false}

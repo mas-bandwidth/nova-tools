@@ -20,6 +20,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -472,7 +473,8 @@ func TestLaunchNameIsTheCardAtItsGenerationInItsEpoch(t *testing.T) {
 	got := launchName(member.Packet{Card: "c", Kind: "work", Gen: 2, Attempt: 1, Epoch: 7})
 	assert.Equal(t, "c.g2.e7", got, "work launch name = %q, want c.g2.e7", got)
 	got = launchName(member.Packet{Card: "r", Kind: "read", Gen: 0, Attempt: 1, Epoch: 7})
-	assert.Equal(t, "r.a1.e7", got, "read launch name = %q, want r.a1.e7", got)
+	assert.Equal(t, "r.a1.g1.e7", got, "read launch name = %q, want r.a1.g1.e7", got)
+	assert.True(t, launchDirRE.MatchString(got), "cleanup must recognize the read slot")
 	a, b := launchName(member.Packet{Card: "c", Kind: "work", Gen: 1, Epoch: 7}), launchName(member.Packet{Card: "c", Kind: "work", Gen: 2, Epoch: 7})
 	assert.NotEqual(t, a, b, "one card at two generations is one launch name %q", a)
 	a, b = launchName(member.Packet{Card: "c", Kind: "work", Gen: 1, Epoch: 7}), launchName(member.Packet{Card: "c", Kind: "work", Gen: 1, Epoch: 8})
@@ -617,7 +619,11 @@ func TestALiveChildIsAdoptedNotRunTwice(t *testing.T) {
 	p := member.Packet{Card: "c1", Kind: "work", Gen: 2, Attempt: 1, Epoch: 7, Branch: "work/c1"}
 	name := launchName(p)
 	pidPath := filepath.Join(slots, name+".pid")
-	self := strconv.Itoa(os.Getpid()) + "\n"
+	stamp := swarm.StartStamp(os.Getpid())
+	if stamp == "-" {
+		t.Skip("this host cannot verify native PID birth")
+	}
+	self := strconv.Itoa(os.Getpid()) + " " + stamp + "\n"
 	write(t, pidPath, self)
 	r.maxLoad = 32
 	r.load = hostload.Source{Load1: func() (float64, bool) {
@@ -638,6 +644,57 @@ func TestALiveChildIsAdoptedNotRunTwice(t *testing.T) {
 	}
 	_, err = os.Stat(marker)
 	require.True(t, os.IsNotExist(err), "the harness path ran: %v", err)
+}
+
+func TestStopProofNeedsNativeTerminalReceipt(t *testing.T) {
+	t.Parallel()
+	logPath := filepath.Join(t.TempDir(), "run.native.log")
+	c := &nativeChild{logPath: logPath, groupDir: filepath.Dir(logPath), done: make(chan struct{})}
+	close(c.done) // the native parent is gone; its harness may remain
+	assert.False(t, c.StopConfirmed())
+	write(t, logPath, "NATIVE BAD label=c1 rc=-1 harness=failed survivors=123:alive\n")
+	assert.False(t, c.StopConfirmed(), "a live survivor is not a reaped group")
+	write(t, logPath, "NATIVE BAD label=c1 rc=-1 harness=failed survivors=123:reaped\n")
+	require.NoError(t, writeNativeGroupReceipt(c.groupDir, 1<<30, "old-birth"))
+	assert.True(t, c.StopConfirmed())
+}
+
+func TestReusedPIDCannotBeAdopted(t *testing.T) {
+	t.Parallel()
+	if swarm.StartStamp(os.Getpid()) == "-" {
+		t.Skip("this host cannot verify native PID birth")
+	}
+	path := filepath.Join(t.TempDir(), "run.pid")
+	write(t, path, strconv.Itoa(os.Getpid())+" wrong-birth\n")
+	assert.Zero(t, livePID(path))
+}
+
+func TestLegacyLivePIDIsHeldWithoutAdoption(t *testing.T) {
+	t.Parallel()
+	r, slots, marker := markerRunner(t)
+	p := member.Packet{Card: "c1", Kind: "work", Gen: 1, Attempt: 1, Epoch: 7, Branch: "work/c1"}
+	write(t, filepath.Join(slots, launchName(p)+".pid"), strconv.Itoa(os.Getpid())+"\n")
+	_, err := r.Start(p)
+	require.ErrorContains(t, err, "without verifiable birth identity")
+	_, err = os.Stat(marker)
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestRestartReusesCompletedLaunchAndRefusesUnprovenOne(t *testing.T) {
+	t.Parallel()
+	r, slots, marker := markerRunner(t)
+	p := member.Packet{Card: "c1", Kind: "work", Gen: 1, Attempt: 1, Epoch: 7, Branch: "work/c1"}
+	name := launchName(p)
+	require.NoError(t, os.MkdirAll(filepath.Join(slots, name), 0o755))
+	_, err := r.Start(p)
+	require.ErrorContains(t, err, "prior process group is unproven")
+	write(t, filepath.Join(slots, name+".native.log"), "NATIVE OK label=c1 rc=0 harness=ok\n")
+	require.NoError(t, writeNativeGroupReceipt(filepath.Join(slots, name), 1<<30, "old-birth"))
+	child, err := r.Start(p)
+	require.NoError(t, err)
+	assert.True(t, child.Done())
+	_, err = os.Stat(marker)
+	assert.True(t, os.IsNotExist(err), "the same generation launched again")
 }
 
 // TestADeadPidFileIsIgnored pins the other half: a pid file that names a

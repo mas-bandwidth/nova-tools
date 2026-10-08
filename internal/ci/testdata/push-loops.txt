@@ -20,6 +20,9 @@ cmd/nova-friend/main.go world.waitPong wake ping pong wait
 # the fleet member and reader (cmd/nova-swarm member, internal/member)
 cmd/nova-swarm/member.go cmdMember member pass
 cmd/nova-swarm/member.go memberLoop member pass
+cmd/nova-swarm/member.go nativeRunner.RecoverStopped waits and retries
+internal/procgroup/anchor_unix.go waitGone waits and retries
+internal/procgroup/anchor_unix.go sendAnchorCommand waits and retries
 internal/member/member.go Member.BeatLoop member beat
 
 # the coordinator's inbox and wake (cmd/nova-sprint)
@@ -62,6 +65,7 @@ cmd/nova-friend/main.go realWorld waits and retries
 cmd/nova-friend/main.go world.install waits and retries
 cmd/nova-friend/main.go world.openUntil waits and retries
 cmd/nova-friend/wakeping.go world.pingInstall waits and retries
+internal/friend/adopt.go waitAdopted waits and retries
 cmd/nova-sprint/run.go app.awaitGivenUp waits and retries
 cmd/nova-sandbox/run.go runInVolume waits and retries
 cmd/nova-sandbox/runwin.go waitForWSBExit waits and retries

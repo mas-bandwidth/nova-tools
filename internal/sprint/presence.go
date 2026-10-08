@@ -86,6 +86,10 @@ type Beat struct {
 	// --pong: her session's answer to a SESSION CHECK, or its own bus message), zero
 	// when her beat carried none; the friend beat record keeps it under "pong".
 	Proof time.Time `json:"pong,omitzero"`
+	// StopReturns is how many stop-returns a member's lanes still owe after the machine's
+	// stop (fleet beat --stop-returns; docs/SPEC-SPRINT.md section 14, stop cancels jobs):
+	// start waits for zero. A friend's count is her report's (FriendReport.StopReturns).
+	StopReturns int `json:"stop_returns,omitempty"`
 }
 
 // FriendReport is what a friend's machinery reports with her beat, as a machine's beat
@@ -99,6 +103,10 @@ type FriendReport struct {
 	Working *int     `json:"working,omitempty"`
 	Queue   *int     `json:"queue,omitempty"`
 	Width   *int     `json:"width,omitempty"`
+	// StopReturns is how many stop-returns her lanes still owe after the machine's stop
+	// (friend beat --stop-returns; docs/SPEC-SPRINT.md section 14, stop cancels jobs):
+	// start waits for zero. Absent when not reported.
+	StopReturns *int `json:"stop_returns,omitempty"`
 	// Active is the newest write under her working directory and outbox as her daemon
 	// last walked them (friend beat --active), zero when it reported none: the signal that
 	// her session moves, which a daemon pong does not say (docs/SPEC-FRIEND.md, last

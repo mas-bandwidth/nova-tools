@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/binstamp"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
@@ -32,6 +33,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/procgroup"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
@@ -243,6 +245,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	}
 	cfg := memberConfig(*as, *width, *reader, meter, room, *root, *noWall)
 	cfg.Sleep = time.Sleep // harness starts StartGap apart
+	cfg.Admit = func(p member.Packet) error { return admitMemberLaunch(sp.Run, *as, p) }
 	// the attempt decision reads the decision key in this process when --pass names
 	// it and the environment does not hold it (keys.go)
 	cfg.Attempt = workAttempt(*reader, rn.getenv)
@@ -545,16 +548,27 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	logPath := filepath.Join(r.slots, name+".native.log")
 	pidPath := filepath.Join(r.slots, name+".pid")
 	job := filepath.Join(slot, "jobs", p.Card)
-	if pid := livePID(pidPath); pid > 0 {
-		c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{})}
+	if pid, stamp := nativePID(pidPath); pid > 0 {
+		proc, _ := os.FindProcess(pid) // ignored: a pid alive a moment ago; a nil proc makes Stop a no-op
+		c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, groupDir: slot, done: make(chan struct{}), proc: proc, procStamp: stamp}
 		go func() {
-			for processAlive(pid) {
+			for processAlive(pid) && swarm.StartStamp(pid) == c.procStamp {
 				time.Sleep(time.Second)
 			}
 			close(c.done)
 		}()
 		r.started(name)
 		return c, nil
+	}
+	// The terminal receipt is stronger than a stale PID file, which may now
+	// name an unrelated process. Reuse the completed result without launching.
+	if _, statErr := os.Stat(slot); statErr == nil && nativeComplete(logPath, slot) {
+		c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, groupDir: slot, done: make(chan struct{})}
+		close(c.done)
+		return c, nil
+	}
+	if pidFileMayBeLive(pidPath) {
+		return nil, fmt.Errorf("launch %s has a live PID without verifiable birth identity", name)
 	}
 	// SPEC-FRIEND "The local child load gate": the configured raw one-minute load
 	// decides admission immediately before a new local child is created.
@@ -567,6 +581,11 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 				fmt.Fprintf(r.stderr, "nova-swarm member: WARNING local child %s starts at one-minute load %.2f, near configured bound %.2f\n", oneline.Field(p.Card), load, r.maxLoad)
 			}
 		}
+	}
+	// A persisted slot belongs to this exact generation; refuse an unproven
+	// run rather than spawning this generation twice.
+	if _, statErr := os.Stat(slot); statErr == nil {
+		return nil, fmt.Errorf("launch %s has no completed native receipt; its prior process group is unproven", name)
 	}
 	if err := safepath.RemoveUnder(r.slots, slot); err != nil && !os.IsNotExist(err) {
 		return nil, err
@@ -635,12 +654,12 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 		logf.Close()
 		return nil, err
 	}
-	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0o644); err != nil && r.stderr != nil {
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)+" "+swarm.StartStamp(cmd.Process.Pid)+"\n"), 0o644); err != nil && r.stderr != nil {
 		// the child runs; only a restart's way back to it is lost, so the member says so and goes on
 		fmt.Fprintf(r.stderr, "nova-swarm member: NOTE card %s runs as pid %d, and its pid file %s could not be written (%s): a member restarted while it runs cannot find it and may launch the card a second time; let it end before restarting this member; run: ls -ld %s\n",
 			oneline.Field(p.Card), cmd.Process.Pid, oneline.Field(pidPath), oneline.Err(err), oneline.Field(r.slots))
 	}
-	c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{})}
+	c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, groupDir: slot, done: make(chan struct{}), proc: cmd.Process, procStamp: swarm.StartStamp(cmd.Process.Pid)}
 	go func() {
 		c.err = cmd.Wait()
 		release()
@@ -728,31 +747,79 @@ func (r *nativeRunner) harnessFor(p member.Packet) (string, error) {
 }
 
 // launchName is the name of one launch: the card at its generation (a read:
-// its attempt) in its epoch; a card dealt again is another launch.
+// its attempt and generation) in its epoch; a returned card gets a new slot.
 func launchName(p member.Packet) string {
 	// a path element, built by concatenation (the card id passed safepath.NameOK)
 	e := ".e" + strconv.FormatUint(p.Epoch, 10)
 	if p.Kind == "read" {
-		return p.Card + ".a" + strconv.Itoa(p.Attempt) + e
+		return p.Card + ".a" + strconv.Itoa(p.Attempt) + ".g" + strconv.Itoa(max(p.Gen, 1)) + e
 	}
 	return p.Card + ".g" + strconv.Itoa(p.Gen) + e
 }
 
 // livePID is the pid a pid file names when that process is alive, else 0.
-func livePID(path string) int {
+func livePID(path string) int { pid, _ := nativePID(path); return pid }
+
+// pidFileMayBeLive is only a cleanup guard. Legacy PID-only records cannot be
+// adopted or signalled safely, but their possible owner must not be deleted.
+func pidFileMayBeLive(path string) bool {
 	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	f := strings.Fields(string(b))
+	if len(f) == 0 {
+		return false
+	}
+	pid, err := strconv.Atoi(f[0])
+	return err == nil && pid > 0 && processAlive(pid)
+}
+
+// groupFileMayBeLive keeps a crashed native's slot while its harness group can
+// still run. Cleanup needs only a conservative hold, not signal authority.
+func groupFileMayBeLive(slot string) bool {
+	pid := groupNumber(slot)
+	return pid > 0 && groupRunnable(pid)
+}
+
+func groupNumber(slot string) int {
+	b, err := os.ReadFile(filepath.Join(slot, nativeGroupReceiptName))
 	if err != nil {
 		return 0
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
-	if err != nil || pid <= 0 || !processAlive(pid) {
+	f := strings.Fields(string(b))
+	if len(f) < 1 {
+		return 0
+	}
+	pid, err := strconv.Atoi(f[0])
+	if err != nil || pid <= 0 {
 		return 0
 	}
 	return pid
 }
 
+// nativePID returns only a live process bearing the birth stamp this launch recorded.
+func nativePID(path string) (int, string) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, ""
+	}
+	fields := strings.Fields(string(b))
+	if len(fields) != 2 || fields[1] == "-" {
+		return 0, "" // an old PID-only receipt cannot distinguish reuse
+	}
+	pid, err := strconv.Atoi(fields[0])
+	if err != nil || pid <= 0 || swarm.StartStamp(pid) != fields[1] || !processAlive(pid) {
+		return 0, ""
+	}
+	return pid, fields[1]
+}
+
 // processAlive is whether a signal 0 reaches the process.
 func processAlive(pid int) bool {
+	if processZombie(pid) {
+		return false
+	}
 	p, err := os.FindProcess(pid)
 	if err != nil {
 		return false
@@ -762,10 +829,143 @@ func processAlive(pid int) bool {
 
 type nativeChild struct {
 	card, logPath, results, job string
+	groupDir                    string
 	done                        chan struct{}
 	err                         error
 	once                        sync.Once
 	result                      member.Result
+	// proc is native's process: the machine's stop signals it (Stop), and native reaps its
+	// harness's group with its own grace (native_proc_unix.go, the SIGTERM branch of watch).
+	proc      *os.Process
+	procStamp string
+	stopOnce  sync.Once
+}
+
+// RecoverStopped finds the old native process for a STOPPED queue claim without
+// launching a replacement. An absent or unverifiable process still needs its
+// final native receipt before the member may hand the card back.
+func (r *nativeRunner) RecoverStopped(p member.Packet) member.Child {
+	name := launchName(p)
+	slot := filepath.Join(r.slots, name)
+	c := &nativeChild{card: p.Card, logPath: filepath.Join(r.slots, name+".native.log"), results: filepath.Join(r.resultsRoot, name), job: filepath.Join(slot, "jobs", p.Card), groupDir: slot, done: make(chan struct{})}
+	if pid, stamp := nativePID(filepath.Join(r.slots, name+".pid")); pid > 0 {
+		c.proc, _ = os.FindProcess(pid)
+		c.procStamp = stamp
+		go func() {
+			for processAlive(pid) && swarm.StartStamp(pid) == c.procStamp {
+				time.Sleep(time.Second)
+			}
+			close(c.done)
+		}()
+	} else {
+		close(c.done)
+	}
+	return c
+}
+
+// Stop is member.Stopper: native is told to stop (SIGTERM; where the system has no such
+// signal, killed), its working tree and log left as they are. The native process
+// reaps its harness group; killing only native would orphan that group.
+func (c *nativeChild) Stop() int {
+	pid := 0
+	if c.proc != nil && ((c.procStamp == "-" && !c.Done()) || (c.procStamp != "-" && swarm.StartStamp(c.proc.Pid) == c.procStamp)) {
+		pid = c.proc.Pid
+		// ignored: final exit is checked; a failed TERM reaches group escalation.
+		_ = c.proc.Signal(syscall.SIGTERM)
+	}
+	c.stopOnce.Do(func() { go c.stopGroupAfterGrace() })
+	return pid
+}
+
+// StopConfirmed requires native's terminal receipt, written after it reaped
+// the harness group. A killed or vanished parent without one leaves stop debt.
+func (c *nativeChild) StopConfirmed() bool {
+	return c.Done() && (nativeComplete(c.logPath, c.groupDir) || c.groupQuiesced())
+}
+
+const StopGrace = 6 * time.Second
+
+func (c *nativeChild) stopGroupAfterGrace() {
+	if c.proc != nil {
+		select {
+		case <-c.done:
+		case <-time.After(StopGrace):
+		}
+	}
+	if nativeComplete(c.logPath, c.groupDir) {
+		return
+	}
+	pid, stamp := c.groupIdentity()
+	if pid == 0 {
+		return
+	}
+	if c.groupPinned(pid, stamp) {
+		if !reapVerifiedGroup(pid, stamp, c.groupDir) {
+			return
+		}
+	} else if groupRunnable(pid) {
+		return // leader identity is gone; do not signal a possibly reused group
+	}
+	// ignored: a failed proof write keeps STOP debt owed; it cannot authorize return.
+	if err := atomicfile.Write(filepath.Join(c.groupDir, nativeGroupQuiescedName), []byte(strconv.Itoa(pid)+" "+stamp+"\n"), 0o600); err != nil {
+		// ignored: the missing durable marker keeps STOP debt owed.
+		return // without a durable marker, the member must keep stop debt
+	}
+	if c.proc != nil && !c.Done() && c.procStamp != "-" && swarm.StartStamp(c.proc.Pid) == c.procStamp {
+		// ignored: StopConfirmed still waits for native's actual exit.
+		_ = c.proc.Kill() // the group is now proven gone
+	}
+}
+
+// reapVerifiedGroup checks the leader's birth again before escalation. A group
+// number can be reused after its old group exits; that number alone grants no
+// authority to signal a new occupant.
+func (c *nativeChild) groupPinned(pid int, stamp string) bool {
+	return procgroup.Pinned(pid, stamp, filepath.Join(c.groupDir, nativeAnchorReceiptName))
+}
+
+func reapVerifiedGroup(pid int, stamp, slot string) bool {
+	return procgroup.ReapVerified(context.Background(), pid, stamp, filepath.Join(slot, nativeAnchorReceiptName), swarm.TerminateGrace)
+}
+
+func (c *nativeChild) groupIdentity() (int, string) {
+	b, err := os.ReadFile(filepath.Join(c.groupDir, nativeGroupReceiptName))
+	if err != nil {
+		return 0, ""
+	}
+	f := strings.Fields(string(b))
+	if len(f) != 2 || f[1] == "-" {
+		return 0, ""
+	}
+	pid, err := strconv.Atoi(f[0])
+	if err != nil || pid <= 0 {
+		return 0, ""
+	}
+	return pid, f[1]
+}
+
+func (c *nativeChild) groupQuiesced() bool {
+	pid, stamp := c.groupIdentity()
+	if pid == 0 || groupRunnable(pid) {
+		return false
+	}
+	b, err := os.ReadFile(filepath.Join(c.groupDir, nativeGroupQuiescedName))
+	return err == nil && strings.TrimSpace(string(b)) == strconv.Itoa(pid)+" "+stamp
+}
+
+func nativeComplete(logPath, groupDir string) bool {
+	b, err := os.ReadFile(logPath)
+	if err != nil {
+		return false
+	}
+	if nativeStageFail.Match(b) || nativeYieldRefused.Match(b) {
+		return true
+	} // no harness began
+	if !nativeRC.Match(b) || regexp.MustCompile(`\bsurvivors=\d+:alive\b`).Match(b) {
+		return false
+	}
+	pid := groupNumber(groupDir)
+	return pid > 0 && !groupRunnable(pid)
 }
 
 // noUsageReported is the usage of a launch whose harness reported no token and left no
@@ -866,6 +1066,7 @@ func (c *nativeChild) Printed() time.Time {
 }
 
 var _ member.Printer = (*nativeChild)(nil)
+var _ member.Stopper = (*nativeChild)(nil)
 
 var nativeRC = regexp.MustCompile(`\bNATIVE (\S+) .*\brc=(-?\d+)\b.*\bharness=(\S+)`)
 
@@ -1332,9 +1533,9 @@ func mirrorKeeping(urls, root, gocache string, stdout, stderr io.Writer) (keep f
 // the checkouts sit under root, the reader's own work dir. sandbox names the wall binary
 // ("" resolves nova-sandbox on PATH) and noWall runs the program unconfined, as the
 // member's own --no-wall does for its children.
-func scriptVerify(root, sandbox string, noWall bool) func(member.Packet, cardhdr.Class) (bool, string) {
+func scriptVerify(root, sandbox string, noWall bool) func(context.Context, member.Packet, cardhdr.Class) (bool, string) {
 	base := filepath.Join(root, "script-read")
-	return func(p member.Packet, class cardhdr.Class) (ok bool, why string) {
+	return func(ctx context.Context, p member.Packet, class cardhdr.Class) (ok bool, why string) {
 		repo := swarm.ReadCardBase([]byte(p.Brief)).Repo
 		home, _ := os.UserHomeDir()
 		mirror := swarm.FindBenchMirror(home, repo)
@@ -1345,7 +1546,7 @@ func scriptVerify(root, sandbox string, noWall bool) func(member.Packet, cardhdr
 			return false, "the script read's work dir " + base + ": " + err.Error()
 		}
 		v := member.ScriptVerifier{Mirror: mirror, Temp: base, Run: scriptRun(base, sandbox, noWall)}
-		return v.Verify(p, class)
+		return v.Verify(ctx, p, class)
 	}
 }
 

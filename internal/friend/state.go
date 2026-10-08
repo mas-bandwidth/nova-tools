@@ -28,6 +28,14 @@ const (
 	QueueFile  = "inbox/QUEUE.json"
 )
 
+// The width's source on the status file (Status.WidthSource): the friend row's
+// width as the beat answered it (nova-config's, the one max), or the run flag's
+// while no beat answer has carried a row width.
+const (
+	WidthFromRow  = "row"
+	WidthFromFlag = "flag"
+)
+
 // DaemonStale is how old the status file may be while the daemon counts
 // as up: it rewrites the file at least every StatusEvery.
 const (
@@ -67,6 +75,17 @@ type Status struct {
 	PushNonce string    `json:"push_nonce,omitempty"`
 	PushSince time.Time `json:"push_since,omitzero"`
 	ProofSent time.Time `json:"proof_sent,omitzero"`
+	// RowWidth is the width the friend row carried on the last beat answer
+	// (row_width=), 0 when none has, and WidthSource says which the daemon
+	// runs at: WidthFromRow, or WidthFromFlag while no beat answer has carried
+	// one (docs/SPEC-FRIEND.md, one-shot lanes: the width is nova-config's, read
+	// off the beat).
+	RowWidth    int    `json:"row_width"`
+	WidthSource string `json:"width_source,omitempty"`
+	// MissingEnv is the environment names the harness needs that are empty now
+	// (needs_env.go), comma-separated: while any is, the lanes hold and the beat
+	// says down "no key sealed: NAME"; empty when every name is set or none is needed.
+	MissingEnv string `json:"missing_env,omitempty"`
 	// HarnessSeen is what the harness check last read (HarnessRunning,
 	// HarnessNotSeen, or empty: cannot tell). Advisory: it
 	// never makes the friend down (alive.go, HarnessWatch).

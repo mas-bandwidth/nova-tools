@@ -109,6 +109,9 @@ var swarmAudit = audit.Config{
 		"l.Line",
 	},
 	Imports: []string{
+		// procgroup starts a fixed local sidecar and returns booleans/errors; it
+		// writes no CLI output. member/native print its errors through oneline.
+		`"github.com/mas-bandwidth/nova-tools/internal/procgroup"`,
 		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,
 		// their usage literals and lines of this package's own usage const, to the stdout run
 		// hands it; it never prints an argument, so nothing it writes can carry a newline in.

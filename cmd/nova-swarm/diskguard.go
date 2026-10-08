@@ -490,7 +490,7 @@ func (g *guard) sweep(slots string, entries []os.DirEntry) {
 		if !e.IsDir() || !launchDirRE.MatchString(name) || !safepath.NameOK(name) {
 			continue
 		}
-		if livePID(filepath.Join(slots, name+".pid")) > 0 {
+		if pidFileMayBeLive(filepath.Join(slots, name+".pid")) || groupFileMayBeLive(filepath.Join(slots, name)) {
 			continue
 		}
 		if at := lastActivity(slots, name); g.now.Sub(at) >= leftoverIdle {

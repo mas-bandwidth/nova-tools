@@ -461,6 +461,9 @@ func (s *SessionCheck) downBeat(now time.Time) (until time.Time, reason string) 
 // counts an answer only when it names a check this run asked (sprint.ProveBeat).
 type BeatWords struct {
 	Run, Check, Pong string
+	// StopReturns is how many stop-returns the lanes owe (stop.go, OwedStopReturns): the
+	// beat carries it (friend beat --stop-returns) while it is above zero.
+	StopReturns int
 }
 
 // Words is what the next beat says: the check asked and the check answered that

@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -175,6 +176,9 @@ func proofArgs(w friend.BeatWords) []string {
 	}
 	if len(args) > 0 && w.Run != "" {
 		args = append(args, "--run", w.Run)
+	}
+	if w.StopReturns > 0 {
+		args = append(args, "--stop-returns", strconv.Itoa(w.StopReturns))
 	}
 	return args
 }
@@ -384,6 +388,24 @@ func friendTool(w world) *tool.Tool {
 		f.Int("broken-after", friend.DefaultBrokenAfter, "turns in a row the provider refuses the same way before the session is broken")
 		f.Duration("limit-rest", friend.DefaultLimitWait, "how long the friend is down when its harness's usage limit or empty balance names no reset")
 		f.String("coordinator", "", "who is told of a broken session when no ping has named the seat")
+		f.String("needs-env", "", "environment names the harness needs, comma-separated (default: the provider's key for --model, e.g. INCEPTION_API_KEY); while one is empty the lanes hold and the beat says down \"no key sealed: NAME\"")
+		f.Check(func(c *tool.Call) {
+			if err := friend.CheckFolderRoute(c.Str("harness"), c.Str("session"), c.Str("adapter"), c.Str("delivery-dir")); err != nil {
+				c.Problem(err.Error())
+			}
+			if c.Bool("notifications-only") && c.Str("adapter") != "" {
+				c.Problem("--notifications-only uses the Codex app queue; omit --adapter folder for this separate receiver")
+			}
+			if c.Bool("notifications-only") && c.Str("harness") != "codex" {
+				c.Problem("--notifications-only wants --harness codex: queued notifications into the existing app")
+			}
+			if why := bus.CheckKinds(commaList(c.Str("notify-kinds"))...); why != "" {
+				c.Problem(why)
+			}
+			if c.Dur("notify-window") <= 0 {
+				c.Problem("--notify-window wants a positive duration")
+			}
+		})
 		stateDir(f)
 		redis(f)
 		f.Check(func(c *tool.Call) {
@@ -1337,9 +1359,26 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	var faultDown atomic.Pointer[faultHold]
 	stager := w.stager(dir)
+	// the machine's word, read off each beat's answer (friend.ParseMachine), and the
+	// stop-returns the lanes owe, carried on each beat (stop.go)
+	var machineStopped atomic.Bool
+	var machineKnown atomic.Bool
+	var machineAt atomic.Int64
+	owedStopReturns := func() int { return 0 }
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
-		Store: sc.DaemonStore(), Deliver: laneDeliver, Now: w.now, Pause: w.sleep,
+		MachineStopped: machineStopped.Load,
+		MachineKnown: func() bool {
+			age := time.Since(time.Unix(0, machineAt.Load()))
+			return machineKnown.Load() && age >= 0 && age <= 3*friend.BeatEvery
+		},
+		StopReturn: func(ctx context.Context, argv []string) error {
+			if w.finish == nil {
+				return errors.New("this world sends no stop-return")
+			}
+			return w.finish(ctx, server, argv)
+		},
+		Store: sc.DaemonStore(), Deliver: laneDeliver, Now: w.now, Pause: w.sleep, StepBeatForTests: w.stepBeat,
 		Sent: func() time.Time {
 			if at := sent.Load(); at != nil {
 				return *at
@@ -1379,6 +1418,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			words := sc.Words
 			up := func(ctx context.Context) error {
 				said := words()
+				said.StopReturns = owedStopReturns()
 				answer, err := w.beat(ctx, server, name, active, said)
 				if err == nil {
 					sc.Said(said)
@@ -1386,6 +1426,13 @@ func (w world) run(c *tool.Call) *tool.Out {
 						at := w.now()
 						sent.Store(&at) // the server took her session's answer as its proof
 					}
+				}
+				if st, ok := friend.ParseMachine(answer); err == nil && ok && (st == friend.MachineStoppedWord || st == "RUNNING") {
+					machineStopped.Store(st == friend.MachineStoppedWord)
+					machineAt.Store(time.Now().UnixNano())
+					machineKnown.Store(true)
+				} else {
+					machineKnown.Store(false) // a stale RUNNING word cannot authorize a launch
 				}
 				if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
 					rowMode, rowWidth = m, wd
@@ -1460,12 +1507,16 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			return rowMode, rowWidth
 		},
-		LoadLanes: func() (friend.LaneState, error) { return friend.ReadLanes(state) },
-		Sprint:    w.sprintAsk(server),
-		Rules:     rules,
-		Model:     c.Str("model"),
-		Load:      w.load1(),
-		LaneHold:  func() string { return friend.ReadPause(state) },
+		LoadLanes:       func() (friend.LaneState, error) { return friend.ReadLanes(state) },
+		Sprint:          w.sprintAsk(server),
+		Rules:           rules,
+		Model:           c.Str("model"),
+		NeedsEnv:        friend.NeedsEnvOf(c.Str("needs-env"), c.Str("model")),
+		Getenv:          w.getenv,
+		ProcessAlive:    friend.ProcessAlive,
+		ProcessIdentity: friend.ProcessIdentity,
+		Load:            w.load1(),
+		LaneHold:        func() string { return friend.ReadPause(state) },
 		LaneHoldDown: func(_ context.Context, message string) error {
 			return friend.WritePause(state, message, w.now()) // her next beat says her down with it
 		},
@@ -1534,6 +1585,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s --width %d --queue <tasks queued> --working <tasks working>", bin, name, nonce, state, c.Str("redis"), c.Int("width"))
 		},
 	}
+	owedStopReturns = d.OwedStopReturns
 	if w.holders != nil {
 		d.Holders = func(ctx context.Context) (map[string]string, error) { return w.holders(ctx, server) }
 	}
@@ -1702,7 +1754,8 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 		Friend: name, Harness: c.Str("harness"), Dir: c.Str("dir"), Session: c.Str("session"), StateDir: c.Str("state-dir"), Width: c.Int("width"),
 		Binary: bin, Copy: w.copy, Redis: c.Str("redis"), Server: c.Str("server"), Home: w.home, Path: w.getenv("PATH"), LaunchdLog: log,
 		Secrets: secretNames(c.Str("secrets")), Seat: c.Str("seat"),
-		Coordinator: c.Str("coordinator"), SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"),
+		Coordinator: c.Str("coordinator"), SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), NeedsEnv: c.Str("needs-env"),
+		NotificationsOnly: c.Bool("notifications-only"), NotifyKinds: c.Str("notify-kinds"), NotifyWindow: c.Dur("notify-window"),
 	}
 	if a.Harness == "claude" {
 		a.ConfigDir = c.Str("config-dir")

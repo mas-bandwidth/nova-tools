@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -112,6 +113,18 @@ type Daemon struct {
 	// while a delivery runs and the loop only peeks.
 	Pause  func(ctx context.Context, d time.Duration)
 	Record func(line string) // one line per delivery, to the daemon's log
+	// MachineStopped says the machine's word, as the owner last read it off the beat's
+	// answer (ParseMachine), is STOPPED: the lanes cancel what runs, owe and send
+	// stop-returns, and start nothing (stop.go). nil: never stopped.
+	MachineStopped func() bool
+	// MachineKnown is true only after a successful beat supplied a recognized
+	// machine word. Production launch admission closes while that word is unknown.
+	MachineKnown func() bool
+	// StopReturn sends one stop-return (StopReturnArgv) to the sprint server; nil sends it
+	// through Sprint.
+	StopReturn func(ctx context.Context, argv []string) error
+	// owed is how many stop-returns the lanes owe now (OwedStopReturns): the beat carries it.
+	owed atomic.Int64
 	// Pong is the session's recorded answer, read each step while a
 	// challenge is open (ReadPong over the state files).
 	Pong func() (Pong, bool, error)
@@ -182,6 +195,18 @@ type Daemon struct {
 	// her down with them until then (friend beat --until --reason). Nil: her lanes are
 	// held here alone.
 	FaultDown func(until time.Time, reason string)
+	// NeedsEnv is the environment names the harness needs (needs_env.go), read by Getenv
+	// (os.Getenv in run) every step: while one is empty her lanes open nothing and start
+	// nothing, and FaultDown says her down with NeedsEnvReason until the key appears.
+	NeedsEnv []string
+	Getenv   func(string) string
+	// ProcessAlive says whether the process pid is alive (adopt.go; run: the kernel's
+	// word, ProcessAlive); nil: no run is ever adopted, every started card is ended.
+	// WaitProcess waits until pid is no longer alive or ctx ends, answering whether it
+	// ended; nil: a poll every AdoptPoll on Pause.
+	ProcessAlive    func(pid int) bool
+	ProcessIdentity func(pid int) string
+	WaitProcess     func(ctx context.Context, pid int) bool
 	// Held is every card on her row as the sprint server says it (HeldVia: friend cards
 	// <friend>, else the worker view), asked once an InboxEvery; her inbox is reconciled with
 	// the answer (SyncInbox, inbox.go). Nil leaves her inbox to friend sync alone.
@@ -298,10 +323,12 @@ type turn struct {
 	stopped  bool      // the daemon stopped it: silent past SilentStop
 	capped   bool      // the daemon ended it: its card's wall reached its lane's cap (lane_cap.go)
 	held     bool      // the daemon ended it: a provider failure stopped every lane (lane_parity.go)
+	byStop   bool      // the daemon ended it: the machine's stop cancelled every lane (stop.go)
 	tail     *outputTail
 	stamped  time.Time // when the daemon last stamped progress on the turn's card (stampProgress)
 	subjects string
 	present  bool // the present turn (present.go)
+	adopted  bool // a run adopted from the daemon before: the lane waits on its process, nothing is pushed (adopt.go)
 }
 
 func (t *turn) messageIDs() []string {
@@ -435,6 +462,15 @@ type loop struct {
 	saidNoLanes  bool
 	dealt        []string        // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
 	wake         bool            // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
+	proven       bool            // this step's session push proof; cards start only while it holds
+	envMissing   []string        // required environment names empty this step
+	checkHanded  string          // push check carried by the last message turn
+	checkHandedAt time.Time
+	owedMessage  *turn           // a deferred message turn retained whole until delivery
+	messageRetry time.Time
+	messageSaid  string
+	messageTries int
+	messageSaidAt time.Time
 	saidRefusal  string          // the card runner's refusal last recorded, "" when it runs
 	tag          string          // this daemon's tag in its lanes' names on a lane mark (laneTag, one_lane.go)
 	following    atomic.Bool     // a Mailbox.Follow runs
@@ -501,6 +537,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		mode, width := l.row(now)
 		proven := l.proof(now)
+		l.proven = proven
+		l.envStep(now)
 		if d.Session != nil {
 			if s := d.Session(); s != l.session {
 				if l.session != "" {
@@ -520,15 +558,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		l.capWatch(now)
 		l.stampProgress(now)
-		select {
-		case r := <-l.results:
-			l.batchDone(r, now)
-		case r := <-l.lanes.results:
-			l.laneDone(r, now)
-		case r := <-l.reads.results:
-			l.readDone(r, now)
-		default:
-		}
+		l.takeResults(now)
 		if d.Mailbox != nil {
 			// off the loop: a move sends the old conversation's unread deliveries again, and the
 			// beat never waits for it
@@ -551,6 +581,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 		l.inboxStep(now) // before the lanes: a card written this step is handed this step
 		switch {
 		case l.broken:
+		case !proven && l.mode == ModeOneShot:
+			// the push rule for a lane friend: her sessions are her lanes', so the lanes open and
+			// hand the check's own pong line and the messages pending as message turns, the only
+			// way her proof can come; no card and no read goes in until it has (lanes.go)
+			l.laneStep(now, width)
+			d.status.Lanes = l.lanes.said(width)
 		case !proven: // the push rule: nothing goes into a session that has not answered
 		case l.mode == ModeOneShot:
 			if l.presentOwed(now) {
@@ -563,9 +599,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.startPresent(now, true)
 		case l.busy == nil && len(l.hand) > 0:
 			l.startBatch(now)
-		case l.busy == nil && len(l.dealt) > 0:
+		case l.busy == nil && len(l.dealt) > 0 && d.machineMayLaunch(): // NoNudgeWhileStopped
 			l.startDealt(now)
-		case l.busy == nil && l.wake && drained:
+		case l.busy == nil && l.wake && drained: // the nonce/pong control turn remains live during STOP
 			l.startWake(now)
 		case l.busy != nil && !l.busy.running && !l.retry.IsZero() && !now.Before(l.retry):
 			l.retry = time.Time{}
@@ -586,7 +622,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 				d.status.BeatError, d.status.Beats, d.status.LastBeat = "", d.status.Beats+1, now
 			}
 		}
-		if d.Activity != nil && l.mode == ModeBatch && !l.broken && l.busy == nil && proven {
+		if d.Activity != nil && l.mode == ModeBatch && !l.broken && l.busy == nil && proven && d.machineMayLaunch() { // no idle wake without a fresh RUNNING word
 			if d.walked.IsZero() || now.Sub(d.walked) >= IdleWalkEvery {
 				d.active, d.cards, d.walked = d.Activity(), d.held(), now
 			}
@@ -708,6 +744,14 @@ func (l *loop) row(now time.Time) (mode string, width int) {
 		width = 1
 	}
 	d.status.Width = width
+	// the status says where the width came from, so a row the beat never carried
+	// (the flag's width standing in) is read off the file, never guessed
+	d.status.RowWidth, d.status.WidthSource = 0, WidthFromFlag
+	if d.Row != nil {
+		if _, w := d.Row(); w > 0 {
+			d.status.RowWidth, d.status.WidthSource = w, WidthFromRow
+		}
+	}
 	if runner, ok := d.Deliver.(CardRunner); ok && mode == ModeOneShot {
 		// a lane per card process: refused, with its remedy, until it can run one
 		why := runner.Refusal()
@@ -729,6 +773,57 @@ func (l *loop) row(now time.Time) (mode string, width int) {
 		}
 	}
 	return mode, width
+}
+
+// envStep reads the needed environment names (Daemon.NeedsEnv) at now: while one is empty
+// the lanes hold (laneStep: no open, no turn), the status names it, her beat says her down
+// with the reason until NeedsEnvBeatAhead from now (sent again each step while it stands, so
+// it lapses once the key appears), and the seat is told once per change; the key appearing
+// is said once and lifts the hold on that step (needs_env.go).
+func (l *loop) envStep(now time.Time) {
+	d := l.d
+	if len(d.NeedsEnv) == 0 {
+		return
+	}
+	missing := MissingEnv(d.NeedsEnv, d.Getenv)
+	d.status.MissingEnv = strings.Join(missing, ",")
+	if len(missing) > 0 && d.FaultDown != nil {
+		d.FaultDown(now.Add(NeedsEnvBeatAhead), NeedsEnvReason(missing))
+	}
+	if slices.Equal(missing, l.envMissing) {
+		return
+	}
+	at := now.UTC().Format(time.RFC3339)
+	switch {
+	case len(missing) > 0:
+		d.Record(at + " lanes held: " + NeedsEnvReason(missing) + "; no lane opens or starts, and the beat says down with it, until the key is in the environment")
+		subject, body := NeedsEnvHoldText(d.Friend, missing, now)
+		l.tellKind(bus.KindBlocker, subject, body, now)
+	default:
+		d.Record(at + " key sealed: " + strings.Join(l.envMissing, ",") + " is in the environment; the lanes resume and the beat withdraws the down")
+	}
+	l.envMissing = missing
+}
+
+// takeResults takes every result that is ready this step: the batch turn's, each
+// lane's and each read's, until none waits. Taking one a step left a freed lane
+// idle a step per other lane that ended with it (eight lanes ending together
+// refilled over eight seconds), so every lane whose turn ended refills on the
+// step after it (tla/FriendLanes.tla, StepLeavesNoLaneBehind; the reversed
+// witness MCFriendLanesBrokenOneResultPerStep is the loop before this).
+func (l *loop) takeResults(now time.Time) {
+	for {
+		select {
+		case r := <-l.results:
+			l.batchDone(r, now)
+		case r := <-l.lanes.results:
+			l.laneDone(r, now)
+		case r := <-l.reads.results:
+			l.readDone(r, now)
+		default:
+			return
+		}
+	}
 }
 
 // turns is every turn running now: the batch turn and the lanes'.
@@ -1067,6 +1162,9 @@ func (l *loop) startBatch(now time.Time) {
 // watch is the silence watch on a running turn: a turn that prints is
 // working; one silent past SilentStop is stopped, said on the record.
 func (l *loop) watch(t *turn, now time.Time) {
+	if t.adopted {
+		return // a run adopted from the daemon before prints nothing here: the process is its own word (adopt.go)
+	}
 	if n := t.seen.Load(); n != t.seenN {
 		if t.seenN == 0 {
 			l.stampTurn(t, bus.Read) // the session took the turn: it printed

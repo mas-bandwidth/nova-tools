@@ -423,7 +423,7 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 		if beats == 3 {
 			cancel()
 		}
-		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=2", nil
+		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=2 machine=RUNNING", nil
 	}
 	dir := t.TempDir()
 	var out, errb strings.Builder
@@ -465,7 +465,7 @@ func TestRunReadsTheConfigDirOffTheBeat(t *testing.T) {
 				if beats == 3 {
 					cancel()
 				}
-				return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=2" + tc.answer, nil
+				return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=2 machine=RUNNING" + tc.answer, nil
 			}
 			var out, errb strings.Builder
 			code := run(append([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir()}, tc.flags...), strings.NewReader(""), &out, &errb, w)
@@ -498,7 +498,7 @@ func TestRunRefusesAClaudeOneShotRowWithoutAConfigDir(t *testing.T) {
 		if beats == 3 {
 			cancel()
 		}
-		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=2", nil
+		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=2 machine=RUNNING", nil
 	}
 	dir := t.TempDir()
 	var out, errb strings.Builder
@@ -568,7 +568,7 @@ func TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir(t *testing.T) {
 					if beats == 12 {
 						cancel()
 					}
-					return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1 row_config_dir=/accounts/heavy-a", nil
+					return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1 row_config_dir=/accounts/heavy-a machine=RUNNING", nil
 				}
 				var out, errb strings.Builder
 				code := run(append([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir, "--coordinator", "ada"}, tc.flags...), strings.NewReader(""), &out, &errb, w)
@@ -810,7 +810,7 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 			if beats == 12 {
 				cancel()
 			}
-			return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1", nil
+			return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1 machine=RUNNING", nil
 		}
 		var out, errb strings.Builder
 		code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
@@ -950,7 +950,7 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 		mu.Lock()
 		beats = append(beats, clock)
 		mu.Unlock()
-		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1", nil
+		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1 machine=RUNNING", nil
 	}
 	type downBeat struct {
 		at, until time.Time

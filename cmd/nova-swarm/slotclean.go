@@ -41,9 +41,8 @@ const keepFailed = 5
 // is newer than that.
 const leftoverIdle = 10 * time.Minute
 
-// launchDirRE is a launch's name (launchName): the card, then its generation (a read: its
-// attempt), then its epoch.
-var launchDirRE = regexp.MustCompile(`^[A-Za-z0-9._-]+\.[ga][0-9]+\.e[0-9]+$`)
+// launchDirRE accepts old read slots and read slots keyed by attempt and generation.
+var launchDirRE = regexp.MustCompile(`^[A-Za-z0-9._-]+(?:\.g[0-9]+|\.a[0-9]+(?:\.g[0-9]+)?)\.e[0-9]+$`)
 
 // Ended is the member done with a launch (member.Ender): it is tagged, and its directory is
 // removed by clean: an ok one's at once, a failed one's kept, the pool pruned to the newest
@@ -122,7 +121,7 @@ func (r *nativeRunner) removeEnded(name string) error {
 	r.mu.Lock()
 	live := r.live[name]
 	r.mu.Unlock()
-	if live {
+	if live || pidFileMayBeLive(filepath.Join(r.slots, name+".pid")) || groupFileMayBeLive(filepath.Join(r.slots, name)) {
 		return nil
 	}
 	return r.removeLaunch(name)
@@ -146,7 +145,7 @@ func (r *nativeRunner) prune(now time.Time) (removed, kept int) {
 		r.mu.Lock()
 		live, kept := r.live[name], r.kept[name]
 		r.mu.Unlock()
-		if live || livePID(filepath.Join(r.slots, name+".pid")) > 0 {
+		if live || pidFileMayBeLive(filepath.Join(r.slots, name+".pid")) || groupFileMayBeLive(filepath.Join(r.slots, name)) {
 			continue
 		}
 		at := lastActivity(r.slots, name)
@@ -191,7 +190,7 @@ func lastActivity(slots, name string) time.Time {
 // is removed. A directory already gone is nothing to remove.
 func (r *nativeRunner) removeLaunch(name string) error {
 	if !safepath.NameOK(name) || !launchDirRE.MatchString(name) {
-		return fmt.Errorf("%q is not a launch directory's name (<card>.g<n>.e<n> or <card>.a<n>.e<n>)", name)
+		return fmt.Errorf("%q is not a launch directory's name (<card>.g<n>.e<n> or <card>.a<n>.g<n>.e<n>)", name)
 	}
 	path := filepath.Join(r.slots, name)
 	fi, err := os.Lstat(path)

@@ -35,7 +35,7 @@ var activitySkip = map[string]bool{".git": true, ".cache": true, "node_modules":
 
 // activitySkipFile are the files her daemon writes, never her session: a job's lane mark,
 // refreshed every LaneMarkEvery while a lane runs (one_lane.go).
-var activitySkipFile = map[string]bool{LaneMarkFile: true}
+var activitySkipFile = map[string]bool{LaneMarkFile: true, LaneMarkFile + ".lock": true, "RUN": true}
 
 // ActivityRoots are the places the walk reads, in this order, under her working directory:
 // the outbox (her results), the inbox (the cards she was dealt), then the jobs and the

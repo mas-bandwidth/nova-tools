@@ -35,6 +35,8 @@ type Agent struct {
 	Coordinator string
 	SilentStop  time.Duration
 	BrokenAfter int
+	// NeedsEnv is the daemon's --needs-env, written only when set (needs_env.go).
+	NeedsEnv string
 	// ConfigDir is the friend's harness config directory (CLAUDE_CONFIG_DIR),
 	// the daemon's --config-dir, written only when set.
 	ConfigDir string
@@ -76,6 +78,9 @@ func (a Agent) Args() []string {
 	}
 	if a.Coordinator != "" {
 		args = append(args, "--coordinator", a.Coordinator)
+	}
+	if a.NeedsEnv != "" {
+		args = append(args, "--needs-env", a.NeedsEnv)
 	}
 	if a.ConfigDir != "" {
 		args = append(args, "--config-dir", a.ConfigDir)

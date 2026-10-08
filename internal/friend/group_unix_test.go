@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/procgroup"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,9 +33,18 @@ func TestAStoppedDeliveryIsStoppedWithItsWholeProcessGroup(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	ctx = WithOutputSeen(ctx, cancel)
+	job := "delivery~1"
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "jobs", job), 0o755))
+	groupPID := 0
+	ctx = WithProcessStarted(ctx, func(pid int) error {
+		groupPID = pid
+		return writeRunReceipt(dir, job, runReceipt{RunID: "run-1", PID: pid, Identity: ProcessIdentity(pid)})
+	})
+	ctx = WithProcessGroupAnchor(ctx, runReceiptPath(dir, job)+".anchor")
 	_, exit, err := realExec(ctx, 200*time.Millisecond, dir, "/bin/sh", []string{"-c", script}, "")
-	require.ErrorContains(t, err, "the delivery was stopped with its process group")
+	require.ErrorContains(t, err, "the delivery was stopped with its verified process group")
 	assert.NotEqual(t, 0, exit)
+	assert.False(t, procgroup.GroupRunnable(groupPID))
 	raw, err := os.ReadFile(pidFile)
 	require.NoError(t, err, "the grandchild had started")
 	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))

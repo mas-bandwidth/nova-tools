@@ -263,7 +263,7 @@ func (r *nativeRunner) removeOld(e oldEntry, now time.Time) (gone bool, freed in
 	r.mu.Lock()
 	live := r.live[e.launch]
 	r.mu.Unlock()
-	if live || livePID(filepath.Join(r.slots, e.launch+".pid")) > 0 || now.Sub(lastActivity(r.slots, e.launch)) < leftoverIdle {
+	if live || pidFileMayBeLive(filepath.Join(r.slots, e.launch+".pid")) || groupFileMayBeLive(filepath.Join(r.slots, e.launch)) || now.Sub(lastActivity(r.slots, e.launch)) < leftoverIdle {
 		return false, 0, nil
 	}
 	path := filepath.Join(e.root, e.name)

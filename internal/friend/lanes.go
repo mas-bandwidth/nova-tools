@@ -2,6 +2,8 @@ package friend
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
@@ -44,6 +47,9 @@ type LaneState struct {
 	Sessions map[int]string     `json:"sessions"`
 	GivenUp  []string           `json:"given_up,omitempty"`
 	Started  map[string]Started `json:"started,omitempty"`
+	// StopReturns is every card the machine's stop took out of a lane and the stop-return
+	// owed or taken for it (stop.go): a daemon starting up sends what is owed first.
+	StopReturns []StopReturn `json:"stop_returns,omitempty"`
 }
 
 // Card is one card a lane hands: its id (the queue file's), its brief, and
@@ -231,6 +237,7 @@ type lane struct {
 	job      LaneJob   // the card as the harness is handed it: every path absolute, the brief inline, the job directory
 }
 
+// laneSet is the one-shot lanes of a run, and what they share.
 type laneResult struct {
 	ln      *lane
 	open    bool
@@ -242,21 +249,27 @@ type laneResult struct {
 
 // laneSet is the daemon's lanes in one-shot mode.
 type laneSet struct {
-	lanes   []*lane
-	given   map[string]bool
-	state   LaneState
-	loaded  bool
-	results chan laneResult
-	refused map[string]string // each job a lane was refused, and who held it, said once while it stands
-	gov     LaneGovernor      // the live cap under rate limits, the hold when out of funds (ratelimit.go)
-	pace    Pacer             // the effective width under the subscription windows (pacing.go)
-	paced   int               // the paced width at the last step
-	width   int               // the row's width at the last step
-	now     time.Time         // the last step's clock
-	marked  bool              // the hold in force is the pause marker's (a person lifts it)
-	loaded1 bool              // lanes are held to the load width
-	took    map[string]bool
-	faults  FaultWatch // the row's harness faults: the third alike within ten minutes marks her down (lane_parity.go)
+	pidMu           sync.Mutex
+	pids            map[string]int // process ids the execs handed since the last step, by job (pidSink, pidStep)
+	adopt           []Started      // runs the daemon before left alive, to adopt once the lanes exist (endStarted, adoptRuns)
+	envHeld         bool           // the lanes hold for a missing environment name (envStep): said paused on the status
+	lanes           []*lane
+	stopped         bool // the machine's word is STOPPED (stopStep): said once each way
+	recoveryPending bool // persisted Started waits for a known machine word
+	given           map[string]bool
+	state           LaneState
+	loaded          bool
+	results         chan laneResult
+	refused         map[string]string // each job a lane was refused, and who held it, said once while it stands
+	gov             LaneGovernor      // the live cap under rate limits, the hold when out of funds (ratelimit.go)
+	pace            Pacer             // the effective width under the subscription windows (pacing.go)
+	paced           int               // the paced width at the last step
+	width           int               // the row's width at the last step
+	now             time.Time         // the last step's clock
+	marked          bool              // the hold in force is the pause marker's (a person lifts it)
+	loaded1         bool              // lanes are held to the load width
+	took            map[string]bool
+	faults          FaultWatch // the row's harness faults: the third alike within ten minutes marks her down (lane_parity.go)
 }
 
 func (s *laneSet) running() bool {
@@ -290,6 +303,8 @@ func (s *laneSet) said(width int) string {
 			w += ":capped"
 		case ln.n > paced:
 			w += ":paced"
+		case s.envHeld:
+			w += ":paused" // no key sealed (needs_env.go)
 		case s.gov.Held() != "":
 			w += ":held"
 		case s.gov.Paused(s.now):
@@ -368,6 +383,12 @@ func CardText(job LaneJob, n, width int, sendLine, pong, notice string, seat str
 // takes nothing new and hands back a card it holds between turns; while the
 // lanes back off from a rate limit, or are held out of funds, no lane starts
 // a turn or an open (ratelimit.go).
+func (l *loop) releaseUnlaunchedClaim(job, owner string, now time.Time) {
+	if err := releaseOwnedLane(l.d.Dir, job, owner); err != nil {
+		l.d.Record(fmt.Sprintf("%s card %s: unlaunched lane mark remains held: %s", now.UTC().Format(time.RFC3339), job, err))
+	}
+}
+
 func (l *loop) laneStep(now time.Time, width int) {
 	s := l.lanes
 	d := l.d
@@ -379,6 +400,8 @@ func (l *loop) laneStep(now time.Time, width int) {
 	rules := d.laneRules()
 	l.markerStep(now)
 	limit, paused := min(s.gov.Cap(width), s.paced), s.gov.Paused(now)
+	s.envHeld = len(l.envMissing) > 0
+	paused = paused || s.envHeld // no key sealed: no open, no turn (needs_env.go)
 	limit = l.loadLimit(rules, limit, now)
 	if !s.loaded {
 		s.loaded = true
@@ -396,17 +419,28 @@ func (l *loop) laneStep(now time.Time, width int) {
 		for _, id := range s.state.GivenUp {
 			s.given[id] = true
 		}
-		if len(s.state.Started) > 0 {
-			l.endStarted(now)
-		}
 		if s.state.Started == nil {
 			s.state.Started = map[string]Started{}
 		}
+		d.owed.Store(int64(s.state.owed()))
+		l.clearTakenReadStops() // finish cleanup after an ack saved just before a crash
+		s.recoveryPending = len(s.state.Started) > 0
 	}
+	if s.recoveryPending && d.machineKnown() {
+		if d.machineStopped() {
+			l.stopPersistedStarted(now)
+		} else {
+			l.endStarted(now)
+		}
+		s.recoveryPending = false
+	}
+	l.stopStep(now) // STOP retains session control turns while holding card work.
 	for len(s.lanes) < width {
 		n := len(s.lanes) + 1
 		s.lanes = append(s.lanes, &lane{n: n, session: s.state.Sessions[n]})
 	}
+	l.pidStep(now)
+	l.adoptRuns(now)
 	l.oneLaneStep(now)
 	lh, _ := d.Deliver.(LaneHarness)
 	runner, perCard := d.Deliver.(CardRunner)
@@ -463,15 +497,38 @@ func (l *loop) laneStep(now time.Time, width int) {
 			}(ln)
 			continue
 		}
+		if ln.card != nil && !d.machineMayLaunch() {
+			continue
+		}
 		if ln.card == nil {
+			if !d.machineMayLaunch() {
+				if !perCard && lh != nil {
+					l.messageTurn(ln, lh, width, now)
+				}
+				continue // the word read right before the take, before any claim
+			}
+			if l.owedMessage != nil && !perCard && lh != nil {
+				// The oldest message turn stays ahead of new cards and messages while
+				// its session cannot take it or its retry is still running.
+				l.messageTurn(ln, lh, width, now)
+				continue
+			}
 			asking = ln.n
-			c, found, err := d.nextCard(held)
-			if err != nil {
-				d.Record(now.UTC().Format(time.RFC3339) + " lanes: the queue file: " + err.Error())
-				return
+			var c Card
+			var found bool
+			if l.proven { // a card goes into a session only once the push is proven; a message turn is how it is
+				var err error
+				c, found, err = d.nextCard(held)
+				if err != nil {
+					d.Record(now.UTC().Format(time.RFC3339) + " lanes: the queue file: " + err.Error())
+					return
+				}
 			}
 			if !found {
-				continue // messages wait: they ride only with a card
+				if !perCard && lh != nil {
+					l.messageTurn(ln, lh, width, now) // what waits with no card to ride with goes in as a turn of its own
+				}
+				continue
 			}
 			// the card's job claimed before its first turn: a lane that claimed it first runs it alone
 			holder, err := ClaimLane(d.Dir, filepath.Base(c.Outbox), l.laneWho(ln.n), now)
@@ -499,7 +556,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 					s.refused[jobName] = why
 					d.Record(fmt.Sprintf("%s lane %d: card %s %s", now.UTC().Format(time.RFC3339), ln.n, c.ID, oneLine(why, 400)))
 				}
-				_ = os.Remove(laneMarkPath(d.Dir, jobName)) // ignored: the claim just made is this lane's; one left stands until stale
+				l.releaseUnlaunchedClaim(jobName, l.laneWho(ln.n), now)
 				continue
 			}
 			ln.card, ln.attempts, ln.marked, ln.job = &c, 0, now, job
@@ -507,20 +564,62 @@ func (l *loop) laneStep(now time.Time, width int) {
 			ln.cap = d.laneCap(ln.tier)
 			ln.capped = false
 			ln.base, ln.baseOK = l.tokens(ln.session)
-			s.state.Started[filepath.Base(c.Outbox)] = Started{Lane: ln.n, Card: c, At: now}
-			l.saveLanes(now)
+			var runID [16]byte
+			if _, err := rand.Read(runID[:]); err != nil {
+				l.releaseUnlaunchedClaim(filepath.Base(c.Outbox), l.laneWho(ln.n), now)
+				ln.card = nil
+				d.Record("lanes: cannot create run identity: " + err.Error())
+				continue
+			}
+			s.state.Started[filepath.Base(c.Outbox)] = Started{Lane: ln.n, Card: c, At: now, RunID: hex.EncodeToString(runID[:]), Owner: l.laneWho(ln.n)}
+			if d.SaveLanes == nil {
+				delete(s.state.Started, filepath.Base(c.Outbox))
+				l.releaseUnlaunchedClaim(filepath.Base(c.Outbox), l.laneWho(ln.n), now)
+				ln.card = nil
+				d.Record(fmt.Sprintf("%s lane %d: card %s not started: durable lane state unavailable", now.UTC().Format(time.RFC3339), ln.n, c.ID))
+				continue
+			}
+			if err := d.SaveLanes(s.state); err != nil {
+				delete(s.state.Started, filepath.Base(c.Outbox))
+				l.releaseUnlaunchedClaim(filepath.Base(c.Outbox), l.laneWho(ln.n), now)
+				ln.card = nil
+				d.Record(fmt.Sprintf("%s lane %d: card %s not started: lane state cannot be saved: %s", now.UTC().Format(time.RFC3339), ln.n, c.ID, oneLine(err.Error(), 300)))
+				continue
+			}
+			if err := bindRunLane(d.Dir, filepath.Base(c.Outbox), l.laneWho(ln.n), s.state.Started[filepath.Base(c.Outbox)].RunID, now); err != nil {
+				delete(s.state.Started, filepath.Base(c.Outbox))
+				if saveErr := d.SaveLanes(s.state); saveErr != nil {
+					d.Record("lanes: failed to save a rejected run identity: " + saveErr.Error())
+				}
+				l.releaseUnlaunchedClaim(filepath.Base(c.Outbox), l.laneWho(ln.n), now)
+				ln.card = nil
+				d.Record(fmt.Sprintf("%s lane %d: card %s not started: run identity cannot be bound to lane mark: %s", now.UTC().Format(time.RFC3339), ln.n, c.ID, oneLine(err.Error(), 300)))
+				continue
+			}
 		}
+		if !d.machineMayLaunch() {
+			// the word turned between the claim and the start: the card is given up, owed
+			// its stop-return, never held with no turn (NoLaunchAfterStop)
+			if d.machineStopped() {
+				l.releaseHeld(ln, now)
+			}
+			continue
+		}
+		started := l.pidSink(filepath.Base(ln.card.Outbox))
+		anchorPath := runReceiptPath(d.Dir, filepath.Base(ln.card.Outbox)) + ".anchor"
 		if perCard { // the brief alone: no message, pong or notice rides with it
 			t, c, dir := &turn{subjects: fmt.Sprintf("%q", "card "+ln.card.ID)}, ln.job.Card, ln.job.Dir
 			ln.t = t
 			l.startTurn(t, now, func(ctx context.Context) laneResult {
-				lt, err := runner.RunCard(WithLaneDir(LaneContext(ctx), dir), c)
+				lt, err := runner.RunCard(WithProcessGroupAnchor(WithProcessStarted(WithLaneDir(LaneContext(ctx), dir), started), anchorPath), c)
 				return laneResult{ln: ln, turn: lt, err: err, t: t}
 			})
 			continue
 		}
 		t := &turn{}
-		t.entries, t.msgs = l.take()
+		if l.owedMessage == nil && !l.messageInFlight() {
+			t.entries, t.msgs = l.take()
+		}
 		var subjects []string
 		for _, m := range t.msgs {
 			subjects = append(subjects, m.Subject)
@@ -536,10 +635,322 @@ func (l *loop) laneStep(now time.Time, width int) {
 		ln.t = t
 		dir := ln.job.Dir
 		l.startTurn(t, now, func(ctx context.Context) laneResult {
-			lt, err := lh.DeliverTo(WithLaneDir(LaneContext(ctx), dir), ln.session, t.text)
+			lt, err := lh.DeliverTo(WithProcessGroupAnchor(WithProcessStarted(WithLaneDir(LaneContext(ctx), dir), started), anchorPath), ln.session, t.text)
 			return laneResult{ln: ln, turn: lt, err: err, t: t}
 		})
 	}
+}
+
+// pidSink durably records the launched process before its startup gate opens.
+func (l *loop) pidSink(job string) func(pid int) error {
+	s := l.lanes
+	runID := s.state.Started[job].RunID
+	return func(pid int) error {
+		if !l.d.machineMayLaunch() {
+			return errMachineLaunchHeld
+		}
+		if !ProcessIdentitySupported {
+			return nil
+		}
+		if runID == "" || l.d.ProcessIdentity == nil {
+			return fmt.Errorf("run identity unavailable for %s", job)
+		}
+		identity := l.d.ProcessIdentity(pid)
+		if err := writeRunReceipt(l.d.Dir, job, runReceipt{RunID: runID, PID: pid, Identity: identity}); err != nil {
+			return err
+		}
+		s.pidMu.Lock()
+		defer s.pidMu.Unlock()
+		if s.pids == nil {
+			s.pids = map[string]int{}
+		}
+		s.pids[job] = pid
+		return nil
+	}
+}
+
+// pidStep writes every process id the execs handed since the last step on its card's
+// started mark and saves the lane state, so a daemon starting up finds the run to adopt.
+func (l *loop) pidStep(now time.Time) {
+	s := l.lanes
+	s.pidMu.Lock()
+	pids := s.pids
+	s.pids = nil
+	s.pidMu.Unlock()
+	if len(pids) == 0 {
+		return
+	}
+	changed := false
+	for job, pid := range pids {
+		if st, ok := s.state.Started[job]; ok && st.Pid != pid {
+			st.Pid = pid
+			s.state.Started[job] = st
+			changed = true
+		}
+	}
+	if changed {
+		l.saveLanes(now)
+	}
+}
+
+// adoptRuns gives each run the daemon before left alive (endStarted) to a free lane: its
+// own lane when free, else the first free one; a run with no free lane waits a step. The
+// lane holds the card and waits on the process (WaitProcess, else a poll on Pause every
+// AdoptPoll), and the card ends as any run's does when it exits (laneDone).
+func (l *loop) adoptRuns(now time.Time) {
+	s, d := l.lanes, l.d
+	if len(s.adopt) == 0 {
+		return
+	}
+	var waiting []Started
+	for _, st := range s.adopt {
+		jobName := filepath.Base(st.Card.Outbox)
+		receipt, receiptErr := readRunReceipt(d.Dir, jobName)
+		if receiptErr == nil && receipt.RunID != st.RunID {
+			if mark, ok := ReadLaneMark(d.Dir, jobName); ok && !mark.Ended && mark.RunID == receipt.RunID &&
+				d.ProcessIdentity != nil && receipt.Identity != "" &&
+				d.ProcessIdentity(receipt.PID) == receipt.Identity {
+				st.RunID, st.Pid, st.Owner = receipt.RunID, receipt.PID, mark.Who
+				s.state.Started[jobName] = st
+				l.saveLanes(now)
+				continue // a newer verified owner must settle its own run
+			}
+		}
+		if receiptErr == nil && receipt.RunID == st.RunID && d.ProcessIdentity != nil && d.ProcessIdentity(receipt.PID) == "" && ProcessGroupAlive(receipt.PID) {
+			waiting = append(waiting, st)
+			continue
+		}
+		if receiptErr != nil || receipt.RunID != st.RunID || d.ProcessIdentity == nil || d.ProcessIdentity(receipt.PID) != receipt.Identity {
+			l.endCard(st.Lane, st.Card, LaneEnd{Restart: now, Started: st.At}, now)
+			if !s.given[jobName] {
+				s.given[jobName] = true
+				s.state.GivenUp = append(s.state.GivenUp, jobName)
+			}
+			l.saveLanes(now)
+			continue
+		}
+		var ln *lane
+		if st.Lane >= 1 && st.Lane <= len(s.lanes) && s.lanes[st.Lane-1].t == nil && s.lanes[st.Lane-1].card == nil && !s.lanes[st.Lane-1].opening {
+			ln = s.lanes[st.Lane-1]
+		} else {
+			for _, cand := range s.lanes {
+				if cand.t == nil && cand.card == nil && !cand.opening {
+					ln = cand
+					break
+				}
+			}
+		}
+		if ln == nil {
+			waiting = append(waiting, st)
+			continue
+		}
+		holder, err := transferLane(d.Dir, jobName, st.RunID, l.laneWho(ln.n), now, d.ProcessIdentity, d.ProcessAlive)
+		if err != nil || holder != "" {
+			waiting = append(waiting, st)
+			d.Record(fmt.Sprintf("%s lane %d: card %s adoption waits for its lane mark: holder=%q error=%v", now.UTC().Format(time.RFC3339), ln.n, st.Card.ID, holder, err))
+			continue
+		}
+		card := st.Card
+		st.Owner = l.laneWho(ln.n)
+		s.state.Started[jobName] = st
+		l.saveLanes(now)
+		ln.card, ln.attempts, ln.marked = &card, 0, now
+		if job, err := LaneJobOf(d.Dir, card, filepath.Abs); err == nil {
+			ln.job = job
+		} else {
+			ln.job = LaneJob{Card: card}
+		}
+		ln.tier = d.cardTier(card)
+		ln.cap = d.laneCap(ln.tier)
+		ln.capped = false
+		pid := st.Pid
+		t := &turn{subjects: fmt.Sprintf("%q", "card "+card.ID+" (adopted)"), adopted: true}
+		ln.t = t
+		l.startTurn(t, now, func(ctx context.Context) laneResult {
+			wait := d.WaitProcess
+			if wait == nil {
+				wait = func(ctx context.Context, pid int) bool {
+					return waitAdopted(ctx, pid, func(pid int) bool {
+						current := d.ProcessIdentity(pid)
+						return current == receipt.Identity || current == "" && ProcessGroupAlive(pid)
+					}, d.Pause)
+				}
+			}
+			wait(ctx, pid)
+			return laneResult{ln: ln, turn: LaneTurn{Exit: 0}, t: t}
+		})
+		d.Record(fmt.Sprintf("%s lane %d: card %s adopted (pid %d): the lane waits on the run", now.UTC().Format(time.RFC3339), ln.n, card.ID, pid))
+	}
+	s.adopt = waiting
+}
+
+// MessageTurnEvery is how often the push check's pong line is handed again in a message
+// turn while the same check stands unanswered: the check's own cadence (SessionQuiet), so a
+// session that did not run the line is asked once a check period, never once a step.
+const MessageTurnEvery = SessionQuiet
+
+// messageInFlight is the one cardless turn a lane currently owns. Serializing
+// these turns keeps a retry's entries and mutable turn state in one lane and
+// lets an owed older turn finish before newer messages ride with a card.
+func (l *loop) messageInFlight() bool {
+	for _, ln := range l.lanes.lanes {
+		if ln.card == nil && ln.t != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// messageTurn hands a free lane what waits with no card to ride with, as one turn of its
+// own in the friend's directory: the pong line of an open challenge (a wake ping, which a
+// lane friend with no card could not answer before), the push check's pong line while the
+// push is unproven (the only way a one-shot friend's proof can come: her session is a
+// lane's), and the bus messages pending, oldest first; a notice alone never makes a turn.
+// It answers whether a turn started. The daemon writes no pong itself: the line goes in,
+// and the session's own run of it is the answer (docs/SPEC-FRIEND.md, one-shot lanes).
+func (l *loop) messageTurn(ln *lane, lh LaneHarness, width int, now time.Time) bool {
+	d := l.d
+	if l.messageInFlight() {
+		return false // another lane owns the turn until its result is taken
+	}
+	if l.wake && (d.m.Challenge == Quiet || d.PongCommand == nil) {
+		l.wake = false // answered already, or no line to hand: nothing owed
+	}
+	if l.owedMessage != nil {
+		// a turn the session could not take stays whole in the daemon's hand and goes in again
+		// after RecheckEvery, the same entries and text, before anything newer (messageDone)
+		if now.Before(l.messageRetry) {
+			return false
+		}
+		t := l.owedMessage
+		if t.running {
+			return false // the same pointer, text and entries must never run twice
+		}
+		ln.t = t
+		l.startTurn(t, now, func(ctx context.Context) laneResult {
+			lt, err := lh.DeliverTo(WithLaneDir(LaneContext(ctx), d.Dir), ln.session, t.text)
+			return laneResult{ln: ln, turn: lt, err: err, t: t}
+		})
+		return true
+	}
+	check, checkNonce := "", ""
+	if d.Proof != nil && d.PongCommand != nil {
+		if proven, nonce := d.Proof(); !proven && nonce != "" && (l.checkHanded != nonce || now.Sub(l.checkHandedAt) >= MessageTurnEvery) {
+			check, checkNonce = d.PongCommand(nonce), nonce
+		}
+	}
+	if len(l.hand) == 0 && !l.wake && check == "" {
+		return false
+	}
+	t := &turn{}
+	t.entries, t.msgs = l.take()
+	notice, pong := l.head()
+	t.notice = l.noticeTaken
+	var subjects []string
+	if pong != "" {
+		subjects = append(subjects, "wake "+d.m.Nonce)
+	}
+	if check != "" {
+		subjects = append(subjects, "push check "+checkNonce)
+		l.checkHanded, l.checkHandedAt = checkNonce, now
+	}
+	for _, m := range t.msgs {
+		subjects = append(subjects, m.Subject)
+	}
+	t.subjects = fmt.Sprintf("%q", strings.Join(subjects, " | "))
+	t.text = MessageText(d.Friend, ln.n, width, pong, check, notice, l.seat(now), t.msgs)
+	ln.t = t
+	l.startTurn(t, now, func(ctx context.Context) laneResult {
+		lt, err := lh.DeliverTo(WithLaneDir(LaneContext(ctx), d.Dir), ln.session, t.text)
+		return laneResult{ln: ln, turn: lt, err: err, t: t}
+	})
+	return true
+}
+
+// MessageText is a lane's turn with no card: the pong lines first (the challenge's, then
+// the push check's), the word about the coordinator, then the bus messages waiting, each
+// labelled by its sender's authority against seat; nothing else rides, and the turn ends
+// when they are read.
+func MessageText(friend string, n, width int, pong, check, notice, seat string, msgs []bus.Message) string {
+	var b strings.Builder
+	if pong != "" {
+		b.WriteString("Run this now, first, exactly as written: " + pong + "\n")
+	}
+	if check != "" {
+		b.WriteString("Run this now, exactly as written, then read on: " + check + "\n")
+	}
+	fmt.Fprintf(&b, "nova-friend: lane %d of %d of %s: no card this turn; what follows is for you, then stop.\n", n, width, friend)
+	if notice != "" {
+		b.WriteString("\nnova-friend: " + notice + "\n")
+	}
+	if len(msgs) > 0 {
+		b.WriteString("\n" + BatchFor(seat, msgs, "", ""))
+	}
+	return b.String()
+}
+
+// messageDone is a message turn's end (messageTurn): exit 0 acks its messages; a turn the
+// session could not take (Deferred: the harness unable to take a turn now; SessionRefused:
+// the session cannot take one at all) was never delivered, so it is neither a failure nor
+// an ack: the turn stays whole in the daemon's hand (owedMessage), handed again after
+// RecheckEvery, counted toward nothing and acked never until it succeeds, as a batch turn's
+// deferral is (batchDone); a provider's limit is the governor's (providerLimit); any other
+// end leaves the messages pending for the claim to hand in again (settle). The pong lines it
+// carried are answered by the session or not: the daemon reads nothing into that.
+func (l *loop) messageDone(r laneResult, now time.Time) {
+	d, s, ln, t := l.d, l.lanes, r.ln, r.t
+	line := fmt.Sprintf("%s lane=%d session=%s subject=%s messages=%d took=%s exit=%d", now.UTC().Format(time.RFC3339), ln.n, ln.session, t.subjects, len(t.entries), now.Sub(t.started).Round(time.Millisecond), r.turn.Exit)
+	if r.err != nil {
+		line += fmt.Sprintf(" error=%q", r.err.Error())
+	}
+	var deferred Deferred
+	if errors.As(r.err, &deferred) && !t.stopped && !t.held {
+		l.owedMessage, l.messageRetry = t, now.Add(RecheckEvery)
+		l.messageTries++
+		var refused SessionRefused
+		said := ""
+		switch {
+		case errors.As(r.err, &refused):
+			said = fmt.Sprintf(" session=refused reason=%q: %s; the turn stays in hand, handed again every %s until one succeeds, acked never before", oneLine(refused.Reason, 200), oneLine(refused.Detail, 400), RecheckEvery)
+		default:
+			said = fmt.Sprintf(" deferred: %s; the turn stays in hand, handed again every %s, counted toward nothing", oneLine(deferred.Reason, 300), RecheckEvery)
+		}
+		if said != l.messageSaid || now.Sub(l.messageSaidAt) >= DeferredSaidEvery {
+			l.messageSaid, l.messageSaidAt = said, now
+			d.Record(line + fmt.Sprintf(" tries=%d", l.messageTries) + said + " (said once per " + DeferredSaidEvery.String() + ")")
+		}
+		return
+	}
+	if l.owedMessage == t {
+		l.owedMessage, l.messageSaid, l.messageTries = nil, "", 0
+	}
+	if t.stopped {
+		line += fmt.Sprintf(" stopped=%q", "no output for "+l.silentStop.String())
+	}
+	if r.turn.Rejected != "" {
+		line += fmt.Sprintf(" rejected=%q", r.turn.Rejected)
+	}
+	var rate RateLimited
+	var funds OutOfFunds
+	var usage UsageLimited
+	if (errors.As(r.err, &rate) || errors.As(r.err, &funds) || errors.As(r.err, &usage)) && !t.stopped && !t.held {
+		for _, e := range t.entries {
+			delete(l.inHand, e) // pending: the claim hands them in again
+		}
+		if t.notice != nil {
+			l.owedAgain(t.notice, now)
+		}
+		d.Record(line + " messages=pending")
+		l.providerLimit(r.err, t.started, now)
+		return
+	}
+	ok := r.err == nil && r.turn.Exit == 0 && !t.stopped && !t.held
+	if ok {
+		s.gov.Clean(now)
+	}
+	line += l.settle(t, ok, r.err, now)
+	l.delivered = now
+	d.Record(line)
 }
 
 // laneDone is a lane's open or turn ending: a session kept, or a card done,
@@ -568,7 +979,47 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	t := r.t
 	t.running = false
 	ln.t = nil
+	if ln.card != nil && d.machineStopped() && !t.byStop {
+		job := filepath.Base(ln.card.Outbox)
+		l.oweStopReturn(StopReturn{Lane: ln.n, Job: job, Row: "friend." + d.Friend, Card: ln.card.ID, Gen: ln.card.Gen(), Epoch: ln.card.Epoch(), Exit: -1, At: now})
+		t.byStop = true
+	}
+	if t.byStop && ln.card != nil {
+		l.stopDone(ln, t, r, now) // cancelled by the machine's stop: never finished
+		return
+	}
+	if errors.Is(r.err, errMachineLaunchHeld) && ln.card != nil {
+		for _, e := range t.entries {
+			delete(l.inHand, e)
+		}
+		d.Record(fmt.Sprintf("%s lane %d: card %s kept without a harness launch until a fresh RUNNING word", at, ln.n, ln.card.ID))
+		return
+	}
+	if ln.card == nil {
+		l.messageDone(r, now) // a turn with no card: the messages and pong lines it carried
+		return
+	}
 	if ln.ended != "" {
+		if t.adopted {
+			job := filepath.Base(ln.card.Outbox)
+			st := s.state.Started[job]
+			m, markFound := ReadLaneMark(d.Dir, job)
+			if markFound && (m.Who != l.laneWho(ln.n) || m.RunID != st.RunID) {
+				// Another daemon owns the mark. Do not overwrite its newer
+				// Started state or its report while relinquishing this watcher.
+				d.Record(fmt.Sprintf("%s lane %d: card %s tracking relinquished to %s; persistent run state left for its owner", at, ln.n, ln.card.ID, m.Who))
+				ln.card, ln.attempts, ln.ended = nil, 0, ""
+				return
+			}
+			if l.ctx.Err() != nil {
+				d.Record(fmt.Sprintf("%s lane %d: card %s remains started for restart; daemon stopped before adopted group exit proof", at, ln.n, ln.card.ID))
+				ln.card, ln.attempts, ln.ended = nil, 0, ""
+				return
+			}
+			if err := endOtherMark(d.Dir, job, l.laneWho(ln.n), ln.ended); err != nil {
+				d.Record(fmt.Sprintf("%s lane %d: card %s: prior mark remains held: %s", at, ln.n, ln.card.ID, err))
+			}
+		}
 		// another lane finished the card: its messages go back pending, counted toward nothing
 		for _, e := range t.entries {
 			delete(l.inHand, e)
@@ -653,6 +1104,20 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		d.Record(line + fmt.Sprintf(" card=capped turn=%d/%d reason=%q ", ln.attempts, CardTurns, CappedWords(end.Capped, end.Tier, end.Overrun)) + l.endCard(ln.n, card, end, now))
 		s.given[job] = true
 		s.state.GivenUp = append(s.state.GivenUp, job)
+		l.saveLanes(now)
+		ln.card, ln.attempts = nil, 0
+		return
+	}
+	if t.adopted {
+		// an adopted run ended with no report: the card ends as a restart ends a gone run's,
+		// never handed again by this daemon (lane_end.go endStarted)
+		end.Err = "the run adopted after a daemon restart (pid " + fmt.Sprint(s.state.Started[filepath.Base(card.Outbox)].Pid) + ") ended with no report"
+		job := filepath.Base(card.Outbox)
+		d.Record(line + " card=ended reason=\"the adopted run ended with no report\" " + l.endCard(ln.n, card, end, now))
+		if !s.given[job] {
+			s.given[job] = true
+			s.state.GivenUp = append(s.state.GivenUp, job)
+		}
 		l.saveLanes(now)
 		ln.card, ln.attempts = nil, 0
 		return

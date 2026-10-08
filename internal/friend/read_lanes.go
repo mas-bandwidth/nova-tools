@@ -2,6 +2,8 @@ package friend
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +14,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/internal/procgroup"
 )
 
 // The friend's reader row (docs/SPEC-FRIEND.md, the reader row; the owner, 2026-10-05: "Make
@@ -75,6 +80,8 @@ type ReadPacket struct {
 type AskedRead struct {
 	ID     string
 	Epoch  string
+	Col    string
+	Gen    int // the read card's generation as the queue carries it (0: a queue before it); a stop-return names it
 	Packet ReadPacket
 }
 
@@ -86,6 +93,7 @@ func ParseReadQueue(out string) ([]AskedRead, error) {
 		Cards []struct {
 			ID     string     `json:"id"`
 			Col    string     `json:"col"`
+			Gen    int        `json:"gen"`
 			Packet ReadPacket `json:"packet"`
 		} `json:"cards"`
 	}
@@ -104,8 +112,8 @@ func ParseReadQueue(out string) ([]AskedRead, error) {
 	}
 	var asked []AskedRead
 	for _, c := range q.Cards {
-		if c.Col == "asked" {
-			asked = append(asked, AskedRead{ID: c.ID, Epoch: epoch, Packet: c.Packet})
+		if c.Col == "asked" || c.Col == "reading" {
+			asked = append(asked, AskedRead{ID: c.ID, Epoch: epoch, Col: c.Col, Gen: c.Gen, Packet: c.Packet})
 		}
 	}
 	return asked, nil
@@ -118,17 +126,36 @@ func ReadQueueArgv(friend string) []string {
 
 // ReadBeginArgv begins an asked read.
 func ReadBeginArgv(friend string, r AskedRead) []string {
-	return []string{"read", "--as", ReaderOf(friend), "--begin", r.ID, "--epoch", r.Epoch}
+	return []string{"read", "--as", ReaderOf(friend), "--begin", readSelector(r), "--epoch", r.Epoch, "--op", readOp(friend, r, "begin")}
 }
 
 // ReadVerdictArgv records a read's verdict (ok or broken) with its finding and usage.
 func ReadVerdictArgv(friend string, r AskedRead, verdict, finding, usage string) []string {
-	return []string{"read", "--as", ReaderOf(friend), "--" + verdict, r.ID, "--epoch", r.Epoch, "--finding", finding, "--usage", usage}
+	return []string{"read", "--as", ReaderOf(friend), "--" + verdict, readSelector(r), "--epoch", r.Epoch, "--finding", finding, "--usage", usage, "--op", readOp(friend, r, "verdict")}
 }
 
 // ReadReturnArgv returns a read that has no verdict, with why.
 func ReadReturnArgv(friend string, r AskedRead, reason, usage string) []string {
-	return []string{"read", "--as", ReaderOf(friend), "--return", r.ID, "--reason", reason, "--epoch", r.Epoch, "--usage", usage}
+	return []string{"read", "--as", ReaderOf(friend), "--return", readSelector(r), "--reason", reason, "--epoch", r.Epoch, "--usage", usage, "--op", readOp(friend, r, "return")}
+}
+
+func readSelector(r AskedRead) string { return r.ID + "@" + strconv.Itoa(max(r.Gen, 1)) }
+
+// Each phase has one replay token derived from the immutable queue lease.
+// The completed settlement freezes the verdict's remaining arguments.
+func readOp(friend string, r AskedRead, phase string) string {
+	sum := sha256.Sum256([]byte(ReaderOf(friend) + "\x00" + r.ID + "\x00" + r.Epoch + "\x00" + strconv.Itoa(max(r.Gen, 1)) + "\x00" + phase))
+	return "friend-read-" + hex.EncodeToString(sum[:16])
+}
+
+func readMovedOne(out string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 3 && fields[0] == "READ" && fields[1] == "OK" && fields[2] == "moved=1" {
+			return true
+		}
+	}
+	return false
 }
 
 var repoLine = regexp.MustCompile(`(?m)^REPO:\s*(\S+)`)
@@ -208,12 +235,13 @@ func ReadVerdict(result string) (verdict, finding string) {
 }
 
 type readResult struct {
-	read  AskedRead
-	model string
-	dir   string
-	start time.Time
-	turn  LaneTurn
-	err   error
+	read       AskedRead
+	model      string
+	dir        string
+	start      time.Time
+	turn       LaneTurn
+	err        error
+	gateCalled bool // the native process callback ran before harness execution
 }
 
 // readSet is the daemon's reads at once.
@@ -223,10 +251,125 @@ type readSet struct {
 	begun   map[string]bool // asked reads this daemon began: the queue shows them asked until the verdict lands
 	asked   []AskedRead
 	askedAt time.Time
+	cancel  map[string]context.CancelFunc // each read under way: the machine's stop ends it (stop.go)
+	stopped map[string]bool               // reads the stop cancelled: no verdict, a stop-return
+	active  map[string]AskedRead          // each read under way as it was begun: its generation and epoch, which the queue's refresh no longer lists
+	persist func(string, readSettlement) error
+}
+
+// A settlement is written before its RPC. A lost response or daemon exit must
+// never turn an already completed read into another model run.
+type readSettlement struct {
+	Read    AskedRead `json:"read"`
+	Verdict string    `json:"verdict,omitempty"`
+	Finding string    `json:"finding,omitempty"`
+	Reason  string    `json:"reason,omitempty"`
+	Usage   string    `json:"usage"`
+}
+
+const readSettlementFile = "SETTLEMENT.json"
+const readActiveFile = "ACTIVE.json"
+const readStopNoLaunchFile = "STOP-NO-LAUNCH.json"
+
+type readActive struct {
+	Read     AskedRead `json:"read"`
+	PID      int       `json:"pid"`
+	Identity string    `json:"identity"`
+}
+
+func readActivePath(dir string) string       { return filepath.Join(dir, readActiveFile) }
+func readAnchorPath(dir string) string       { return readActivePath(dir) + ".anchor" }
+func readStopNoLaunchPath(dir string) string { return filepath.Join(dir, readStopNoLaunchFile) }
+
+func saveReadStopNoLaunch(dir string, debt StopReturn) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	b, err := json.Marshal(debt)
+	if err != nil {
+		return err
+	}
+	return atomicfile.WriteFile(readStopNoLaunchPath(dir), b, 0o600)
+}
+
+func readStopNoLaunchMatches(dir string, debt StopReturn) bool {
+	b, err := os.ReadFile(readStopNoLaunchPath(dir))
+	if err != nil {
+		return false
+	}
+	var saved StopReturn
+	if json.Unmarshal(b, &saved) != nil {
+		return false
+	}
+	return saved.Card == debt.Card && saved.Row == debt.Row && saved.Epoch == debt.Epoch && max(saved.Gen, 1) == max(debt.Gen, 1)
+}
+
+func sameReadLease(a, b AskedRead) bool {
+	return a.ID == b.ID && a.Epoch == b.Epoch && max(a.Gen, 1) == max(b.Gen, 1) && a.Packet.Head == b.Packet.Head
+}
+
+func saveReadActive(dir string, a readActive) error {
+	if a.PID <= 0 || a.Identity == "" {
+		return errors.New("read process identity unavailable")
+	}
+	b, err := json.Marshal(a)
+	if err != nil {
+		return err
+	}
+	return atomicfile.WriteFile(readActivePath(dir), b, 0o600)
+}
+
+func loadReadActive(dir string) (readActive, bool, error) {
+	b, err := os.ReadFile(readActivePath(dir))
+	if os.IsNotExist(err) {
+		return readActive{}, false, nil
+	}
+	if err != nil {
+		return readActive{}, false, err
+	}
+	var a readActive
+	if err := json.Unmarshal(b, &a); err != nil {
+		return a, false, err
+	}
+	if a.Read.ID == "" || a.Read.Epoch == "" || a.PID <= 0 || a.Identity == "" {
+		return a, false, errors.New("incomplete active read identity")
+	}
+	return a, true, nil
+}
+
+func readSettlementPath(dir string) string { return filepath.Join(dir, readSettlementFile) }
+
+func saveReadSettlement(dir string, p readSettlement) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	b, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	return atomicfile.WriteFile(readSettlementPath(dir), b, 0o600)
+}
+
+func loadReadSettlement(dir string) (readSettlement, bool, error) {
+	b, err := os.ReadFile(readSettlementPath(dir))
+	if os.IsNotExist(err) {
+		return readSettlement{}, false, nil
+	}
+	if err != nil {
+		return readSettlement{}, false, err
+	}
+	var p readSettlement
+	if err := json.Unmarshal(b, &p); err != nil {
+		return p, false, err
+	}
+	if p.Read.ID == "" || p.Read.Epoch == "" || p.Usage == "" || (p.Verdict == "" && p.Reason == "") {
+		return p, false, errors.New("incomplete read settlement")
+	}
+	return p, true, nil
 }
 
 func newReadSet() *readSet {
-	return &readSet{results: make(chan readResult, 64), running: map[string]bool{}, begun: map[string]bool{}}
+	return &readSet{results: make(chan readResult, 64), running: map[string]bool{}, begun: map[string]bool{}, cancel: map[string]context.CancelFunc{}, stopped: map[string]bool{}, active: map[string]AskedRead{}, persist: saveReadSettlement}
 }
 
 func (d *Daemon) readSlots() int {
@@ -248,7 +391,7 @@ func (d *Daemon) readModel(tier string) string {
 // backing off from a rate limit nor held out of funds. It takes nothing from the card lanes.
 func (l *loop) readStep(now time.Time) {
 	d, s := l.d, l.reads
-	if d.Sprint == nil || d.readSlots() <= 0 {
+	if d.Sprint == nil {
 		return
 	}
 	at := now.UTC().Format(time.RFC3339)
@@ -260,20 +403,118 @@ func (l *loop) readStep(now time.Time) {
 			s.asked = nil
 		} else if s.asked, err = ParseReadQueue(out); err != nil {
 			d.Record(fmt.Sprintf("%s reads: %s", at, err))
+		} else {
+			l.retryReadSettlements(now)
 		}
 	}
-	if l.lanes.gov.Held() != "" || l.lanes.gov.Paused(now) {
+	// Settlement is independent of read slots and provider availability. In
+	// particular, a down key must not strand a result already produced.
+	settled := map[string]bool{}
+	for _, r := range s.asked {
+		if l.readStopOwns(r) {
+			continue // a STOP return owns this exact lease; never publish a verdict behind it
+		}
+		if s.running[r.ID] {
+			continue
+		}
+		dir := filepath.Join(d.Dir, "reads", r.ID)
+		quiescent := false
+		active, activeFound, activeErr := loadReadActive(dir)
+		if activeErr != nil {
+			d.Record(fmt.Sprintf("%s read %s: active identity held: %s", at, r.ID, activeErr))
+			continue
+		}
+		if activeFound {
+			if !sameReadLease(active.Read, r) {
+				d.Record(fmt.Sprintf("%s read %s: active identity differs from queue; held", at, r.ID))
+				continue
+			}
+			if !l.readGroupQuiescent(dir, active) {
+				d.Record(fmt.Sprintf("%s read %s: active process group still alive; held", at, r.ID))
+				continue
+			}
+			quiescent = true
+		}
+		p, found, err := loadReadSettlement(dir)
+		if err != nil {
+			d.Record(fmt.Sprintf("%s read %s: settlement held: %s", at, r.ID, err))
+			continue
+		}
+		if found && !sameReadLease(p.Read, r) {
+			d.Record(fmt.Sprintf("%s read %s: settlement identity differs from queue; held", at, r.ID))
+			continue
+		}
+		if !found && r.Col == "reading" && quiescent {
+			// A previous process may have exited after RESULT.md was written.
+			// Recover its exact verdict without running the model again.
+			if raw, err := os.ReadFile(filepath.Join(dir, "RESULT.md")); err == nil {
+				if verdict, finding := ReadVerdict(string(raw)); verdict != "" && readResultHead(string(raw)) == r.Packet.Head {
+					p = readSettlement{Read: r, Verdict: verdict, Finding: finding, Usage: "model=unknown wall=0s harness=" + d.Harness + " account=" + d.Friend}
+					if err = s.persist(dir, p); err != nil {
+						d.Record(fmt.Sprintf("%s read %s: settlement held: %s", at, r.ID, err))
+						continue
+					}
+					found = true
+				}
+			}
+		}
+		if found {
+			if activeFound && !l.clearReadActive(dir, r.ID, at) {
+				continue
+			}
+			l.sendReadSettlement(dir, p, now)
+			settled[r.ID] = true
+		} else if r.Col == "reading" && quiescent {
+			// The daemon owns no harness for this reading row. Return it so
+			// the coordinator can route the interrupted read again.
+			p = readSettlement{Read: r, Reason: "reader daemon stopped before a verdict was recorded", Usage: "model=unknown wall=0s harness=" + d.Harness + " account=" + d.Friend}
+			if err := s.persist(dir, p); err != nil {
+				d.Record(fmt.Sprintf("%s read %s: settlement held: %s", at, r.ID, err))
+				continue
+			}
+			if activeFound && !l.clearReadActive(dir, r.ID, at) {
+				continue
+			}
+			l.sendReadSettlement(dir, p, now)
+			settled[r.ID] = true
+		} else if r.Col == "reading" {
+			d.Record(fmt.Sprintf("%s read %s: no process exit proof or verdict; held", at, r.ID))
+		}
+	}
+	if d.readSlots() <= 0 || l.lanes.envHeld || l.lanes.gov.Held() != "" || l.lanes.gov.Paused(now) || !d.machineMayLaunch() {
 		return
 	}
+	occupied := len(s.running)
 	for _, r := range s.asked {
-		if len(s.running) >= d.readSlots() {
+		if r.Col == "reading" && !s.running[r.ID] && !settled[r.ID] {
+			occupied++
+		}
+	}
+	for _, r := range s.asked {
+		if r.Col != "asked" {
+			continue
+		}
+		if l.readStopOwns(r) {
+			continue
+		}
+		if settled[r.ID] {
+			continue
+		}
+		if occupied >= d.readSlots() {
 			return
 		}
-		if s.running[r.ID] || s.begun[r.ID] {
+		if s.running[r.ID] || s.begun[r.ID] || !d.machineMayLaunch() {
+			continue
+		}
+		dir := filepath.Join(d.Dir, "reads", r.ID)
+		if _, found, err := loadReadActive(dir); found || err != nil {
+			continue // a prior native group owns this path until its exit and debt are settled
+		}
+		if _, found, err := loadReadSettlement(dir); found || err != nil {
 			continue
 		}
 		out, err := d.Sprint(l.ctx, ReadBeginArgv(d.Friend, r))
-		if err != nil || !strings.Contains(out, "OK") {
+		if err != nil || !readMovedOne(out) {
 			why := out
 			if err != nil {
 				why = err.Error()
@@ -283,6 +524,7 @@ func (l *loop) readStep(now time.Time) {
 			continue
 		}
 		s.running[r.ID], s.begun[r.ID] = true, true
+		occupied++
 		l.startRead(r, now)
 	}
 	// a read the queue no longer asks is forgotten, so a read asked again is begun again
@@ -290,6 +532,89 @@ func (l *loop) readStep(now time.Time) {
 		if !s.running[id] && !containsRead(s.asked, id) {
 			delete(s.begun, id)
 		}
+	}
+}
+
+func (l *loop) readStopOwns(r AskedRead) bool {
+	for _, debt := range l.lanes.state.StopReturns {
+		if debt.Job == "read:"+r.ID && debt.Row == ReaderOf(l.d.Friend) && debt.Card == r.ID && debt.Epoch == r.Epoch && max(debt.Gen, 1) == max(r.Gen, 1) {
+			return true
+		}
+	}
+	return false
+}
+
+func (l *loop) clearReadActive(dir, id, at string) bool {
+	if err := os.Remove(readAnchorPath(dir)); err != nil && !os.IsNotExist(err) {
+		l.d.Record(fmt.Sprintf("%s read %s: anchor cleanup: %s", at, id, err))
+		return false
+	}
+	if err := os.Remove(readActivePath(dir)); err != nil && !os.IsNotExist(err) {
+		l.d.Record(fmt.Sprintf("%s read %s: active identity cleanup: %s", at, id, err))
+		return false
+	}
+	return true
+}
+
+// A response can be lost after the server commits and the queue omits the
+// read. Replay the durable, byte-identical argv under its stable operation;
+// the server's recorded result, not an absent queue row, acknowledges it.
+func (l *loop) retryReadSettlements(now time.Time) {
+	root := filepath.Join(l.d.Dir, "reads")
+	entries, err := os.ReadDir(root)
+	if os.IsNotExist(err) {
+		return
+	}
+	if err != nil {
+		l.d.Record("reads: settlement scan: " + err.Error())
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() || containsRead(l.reads.asked, e.Name()) {
+			continue
+		}
+		dir := filepath.Join(root, e.Name())
+		p, found, err := loadReadSettlement(dir)
+		if err != nil {
+			l.d.Record("read " + e.Name() + ": settlement held: " + err.Error())
+			continue
+		}
+		if !found || p.Read.ID != e.Name() || l.readStopOwns(p.Read) {
+			continue
+		}
+		a, active, err := loadReadActive(dir)
+		if err != nil {
+			continue
+		}
+		if active {
+			if !sameReadLease(a.Read, p.Read) || !l.readGroupQuiescent(dir, a) || !l.clearReadActive(dir, p.Read.ID, now.UTC().Format(time.RFC3339)) {
+				continue
+			}
+		}
+		l.sendReadSettlement(dir, p, now)
+	}
+}
+
+var readHeadLine = regexp.MustCompile(`(?m)^head:\s*(\S+)`)
+
+func readResultHead(raw string) string { return briefField(readHeadLine, raw) }
+
+func (l *loop) sendReadSettlement(dir string, p readSettlement, now time.Time) {
+	d := l.d
+	var argv []string
+	if p.Verdict != "" {
+		argv = ReadVerdictArgv(d.Friend, p.Read, p.Verdict, p.Finding, p.Usage)
+	} else {
+		argv = ReadReturnArgv(d.Friend, p.Read, p.Reason, p.Usage)
+	}
+	out, err := d.Sprint(l.ctx, argv)
+	d.Record(fmt.Sprintf("%s read %s: settlement: %s", now.UTC().Format(time.RFC3339), p.Read.ID, recorded(out, err)))
+	if err == nil && readMovedOne(out) {
+		if err := os.Remove(readSettlementPath(dir)); err != nil && !os.IsNotExist(err) {
+			d.Record(fmt.Sprintf("read %s: settlement cleanup: %s", p.Read.ID, err))
+		}
+		delete(l.reads.begun, p.Read.ID)
+		l.reads.askedAt = time.Time{} // re-read the canonical queue before another begin
 	}
 }
 
@@ -309,7 +634,10 @@ func (l *loop) startRead(r AskedRead, now time.Time) {
 	dir := filepath.Join(d.Dir, "reads", r.ID)
 	model := d.readModel(r.Packet.Tier)
 	d.Record(fmt.Sprintf("%s read %s: begun tier=%s model=%s", now.UTC().Format(time.RFC3339), r.ID, dash(r.Packet.Tier), dash(model)))
+	rctx, cancel := context.WithCancel(l.ctx)
+	s.cancel[r.ID], s.active[r.ID] = cancel, r
 	go func() {
+		defer cancel()
 		res := readResult{read: r, model: model, dir: dir, start: now}
 		defer func() { s.results <- res }()
 		_ = os.Remove(filepath.Join(dir, "RESULT.md")) // ignored: a result of an earlier attempt is not this read's
@@ -321,7 +649,12 @@ func (l *loop) startRead(r AskedRead, now time.Time) {
 				return
 			}
 		}
-		ctx, prompt := LaneContext(l.ctx), ReadPrompt(d.Friend, dir)
+		ctx, prompt := LaneContext(rctx), ReadPrompt(d.Friend, dir)
+		ctx = WithProcessGroupAnchor(ctx, readAnchorPath(dir))
+		ctx = WithProcessStarted(ctx, func(pid int) error {
+			res.gateCalled = true
+			return saveReadActive(dir, readActive{Read: r, PID: pid, Identity: ProcessIdentity(pid)})
+		})
 		switch h := d.Deliver.(type) {
 		case ReadHarness:
 			res.turn, res.err = h.RunRead(ctx, model, prompt)
@@ -340,7 +673,14 @@ func (l *loop) readDone(r readResult, now time.Time) {
 	d, s := l.d, l.reads
 	delete(s.running, r.read.ID)
 	delete(s.begun, r.read.ID) // the next ask says whether it is asked again; the one in hand is stale
+	delete(s.cancel, r.read.ID)
+	delete(s.active, r.read.ID)
 	s.asked = slices.DeleteFunc(s.asked, func(a AskedRead) bool { return a.ID == r.read.ID })
+	if s.stopped[r.read.ID] {
+		delete(s.stopped, r.read.ID)
+		l.stopReadDone(r, now) // cancelled by the machine's stop: no verdict, a stop-return
+		return
+	}
 	if l.ctx.Err() != nil {
 		d.Record(fmt.Sprintf("%s read %s: left begun: the daemon stopped", now.UTC().Format(time.RFC3339), r.read.ID))
 		return
@@ -349,9 +689,20 @@ func (l *loop) readDone(r readResult, now time.Time) {
 	usage := fmt.Sprintf("model=%s wall=%ds harness=%s account=%s", dash(r.model), int(now.Sub(r.start).Seconds()), d.Harness, d.Friend)
 	raw, _ := os.ReadFile(filepath.Join(r.dir, "RESULT.md"))
 	verdict, finding := ReadVerdict(string(raw))
+	if verdict != "" && readResultHead(string(raw)) != r.read.Packet.Head {
+		verdict = "" // a result for another head cannot close this read
+	}
+	p := readSettlement{Read: r.read, Usage: usage}
 	if verdict != "" {
-		out, err := d.Sprint(l.ctx, ReadVerdictArgv(d.Friend, r.read, verdict, finding, usage))
-		d.Record(fmt.Sprintf("%s read %s: verdict=%s wall=%s: %s", at, r.read.ID, verdict, now.Sub(r.start).Round(time.Second), recorded(out, err)))
+		p.Verdict, p.Finding = verdict, finding
+		if err := s.persist(r.dir, p); err != nil {
+			d.Record(fmt.Sprintf("%s read %s: settlement held: %s", at, r.read.ID, err))
+			return
+		}
+		if !l.readReadyToSettle(r.dir, r.read, at) {
+			return
+		}
+		l.sendReadSettlement(r.dir, p, now)
 		return
 	}
 	why := fmt.Sprintf("no verdict from the %s run (exit %d)", d.Harness, r.turn.Exit)
@@ -368,8 +719,121 @@ func (l *loop) readDone(r readResult, now time.Time) {
 		}
 		l.providerLimit(r.err, r.start, now)
 	}
-	out, err := d.Sprint(l.ctx, ReadReturnArgv(d.Friend, r.read, why, usage))
-	d.Record(fmt.Sprintf("%s read %s: returned: %s: %s", at, r.read.ID, oneLine(why, 200), recorded(out, err)))
+	p.Reason = why
+	if err := s.persist(r.dir, p); err != nil {
+		d.Record(fmt.Sprintf("%s read %s: settlement held: %s", at, r.read.ID, err))
+		return
+	}
+	if !l.readReadyToSettle(r.dir, r.read, at) {
+		return
+	}
+	l.sendReadSettlement(r.dir, p, now)
+}
+
+func (l *loop) readReadyToSettle(dir string, read AskedRead, at string) bool {
+	a, found, err := loadReadActive(dir)
+	if err != nil {
+		l.d.Record(fmt.Sprintf("%s read %s: active identity held: %s", at, read.ID, err))
+		return false
+	}
+	if !found {
+		return true
+	} // a harness without a native child
+	if !sameReadLease(a.Read, read) || procgroup.GroupRunnable(a.PID) {
+		l.d.Record(fmt.Sprintf("%s read %s: process group not quiescent; settlement held", at, read.ID))
+		return false
+	}
+	if err := os.Remove(readAnchorPath(dir)); err != nil && !os.IsNotExist(err) {
+		l.d.Record(fmt.Sprintf("%s read %s: anchor cleanup: %s", at, read.ID, err))
+		return false
+	}
+	if err := os.Remove(readActivePath(dir)); err != nil && !os.IsNotExist(err) {
+		l.d.Record(fmt.Sprintf("%s read %s: active identity cleanup: %s", at, read.ID, err))
+		return false
+	}
+	return true
+}
+
+// readStopQuiescent is the current turn's proof before stopReadDone may mark
+// its stop-return Ended. The native callback runs behind RealExec's launch
+// gate; an absent ACTIVE is an unspawned turn only when that callback never
+// ran. Keep ACTIVE until the stop-return acknowledgement is durable.
+func (l *loop) readStopQuiescent(r readResult, now time.Time) bool {
+	debt := StopReturn{Job: "read:" + r.read.ID, Row: ReaderOf(l.d.Friend), Card: r.read.ID, Gen: r.read.Gen, Epoch: r.read.Epoch}
+	if _, found, err := loadReadActive(r.dir); err != nil {
+		l.d.Record(fmt.Sprintf("%s read %s: stop identity held: %s", now.UTC().Format(time.RFC3339), r.read.ID, err))
+		return false
+	} else if !found {
+		if r.gateCalled {
+			return false
+		}
+		return saveReadStopNoLaunch(r.dir, debt) == nil
+	}
+	return l.readStopDebtQuiescent(debt, now)
+}
+
+// readStopDebtQuiescent is also called after restart. A durable debt alone
+// cannot prove the old harness exited: its matching ACTIVE must say which
+// kernel process group to verify, at this read's generation and epoch.
+func (l *loop) readStopDebtQuiescent(debt StopReturn, now time.Time) bool {
+	dir := filepath.Join(l.d.Dir, "reads", debt.Card)
+	a, found, err := loadReadActive(dir)
+	if err != nil || !found {
+		return err == nil && readStopNoLaunchMatches(dir, debt)
+	}
+	if debt.Row != ReaderOf(l.d.Friend) || a.Read.ID != debt.Card || a.Read.Epoch != debt.Epoch || max(a.Read.Gen, 1) != max(debt.Gen, 1) {
+		return false
+	}
+	return l.readGroupQuiescent(dir, a)
+}
+
+func (l *loop) readGroupQuiescent(dir string, a readActive) bool {
+	if current := ProcessIdentity(a.PID); current != "" && current != a.Identity {
+		return false // a reused leader is not authority over the saved read
+	}
+	if !procgroup.GroupRunnable(a.PID) {
+		return true
+	}
+	anchor := readAnchorPath(dir)
+	if !procgroup.AnchorPinned(a.PID, anchor) {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), time.Second)
+	defer cancel()
+	return procgroup.ReapVerified(ctx, a.PID, a.Identity, anchor, 100*time.Millisecond)
+}
+
+// clearStoppedReadActive runs only after stop.go has saved the server's ack.
+// The generation check prevents a late cleanup from erasing the next read.
+func (l *loop) clearStoppedReadActive(debt StopReturn) bool {
+	dir := filepath.Join(l.d.Dir, "reads", debt.Card)
+	a, found, err := loadReadActive(dir)
+	if err != nil {
+		return false
+	}
+	if found {
+		if a.Read.ID != debt.Card || a.Read.Epoch != debt.Epoch || max(a.Read.Gen, 1) != max(debt.Gen, 1) {
+			return false
+		}
+		if current := ProcessIdentity(a.PID); current != "" && current != a.Identity {
+			return false
+		}
+		if procgroup.GroupRunnable(a.PID) {
+			return false
+		}
+		if err := os.Remove(readAnchorPath(dir)); err != nil && !os.IsNotExist(err) {
+			return false
+		}
+		if err := os.Remove(readActivePath(dir)); err != nil && !os.IsNotExist(err) {
+			return false
+		}
+	}
+	if readStopNoLaunchMatches(dir, debt) {
+		if err := os.Remove(readStopNoLaunchPath(dir)); err != nil && !os.IsNotExist(err) {
+			return false
+		}
+	}
+	return true
 }
 
 func recorded(out string, err error) string {

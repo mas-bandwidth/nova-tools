@@ -300,6 +300,7 @@ var secretOpeners = map[string]any{
 	"internal/friend.ParsePing":                        friend.ParsePing,
 	"internal/friend.ParsePong":                        friend.ParsePong,
 	"internal/friend.ParseProfile":                     friend.ParseProfile,
+	"internal/friend.ParseMachine":                     friend.ParseMachine,
 	"internal/friend.ParseReadQueue":                   friend.ParseReadQueue,
 	"internal/friend.ParseReadSlots":                   friend.ParseReadSlots,
 	"internal/friend.ParseRow":                         friend.ParseRow,

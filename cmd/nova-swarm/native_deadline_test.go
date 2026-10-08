@@ -68,7 +68,7 @@ func TestNativeDeadlineControlALeaderOnlyKillLeavesTheGrandchild(t *testing.T) {
 	windowsIsNotABench(t)
 	realKill := nativeKillGroup
 	t.Cleanup(func() { nativeKillGroup = realKill })
-	nativeKillGroup = func(pgid int, started string) {
+	nativeKillGroup = func(pgid int, started, slot string) {
 		_ = syscall.Kill(pgid, syscall.SIGKILL) // the leader, not -pgid: the #779 defect
 	}
 	got := deadlineOnATree(t)

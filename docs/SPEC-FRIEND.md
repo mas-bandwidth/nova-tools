@@ -375,7 +375,13 @@ an ack: the turn stays in the daemon's hand, tried again every ten seconds,
 `RecheckEvery`, and counted toward nothing, so a chat open all day loses no
 message, and the record says so at the first deferral and once a minute after.
 While a turn runs: one peek, so a ping that lands during a long turn is still
-answered at once by the daemon; never a second turn. Then the worker's result;
+answered at once by the daemon; never a second turn. Then every result that is
+ready, the batch turn's, each lane's and each read's, until none waits
+(`takeResults`; one a step left a freed lane idle a step per other lane that
+ended with it, eight lanes ending together refilling over eight seconds, so the
+bound is the model's `StepLeavesNoLaneBehind`, tla/FriendLanes.tla, its reversed
+witness `MCFriendLanesBrokenOneResultPerStep.cfg` the loop before, and the trace
+`TestEveryFreedLaneRefillsOnTheSameStep`);
 one beat to the sprint server (`friend beat <friend>`, a plain beat: the queue,
 working and width flags are owed on the server's side); the pong file, while a
 challenge is open; the status file.
@@ -1515,7 +1521,17 @@ her sprint roster row, and her beat answers them (`FRIEND-BEAT OK ...
 row_mode=<mode> row_width=<n>`), so the daemon reads her row every second
 from the beat it already sends and a change takes effect without a restart
 (the change of mode waits for the other mode's turns to end). `run --mode`
-overrides the row, for a test.
+overrides the row, for a test. The status file says the width the daemon runs
+at and where it came from, `row_width` (the last beat answer's `row_width=`, 0
+while none has carried one) and `width_source` (`row`, or `flag` while the run
+flag's width stands in), so a width the beat never carried is read off the file
+and never mistaken for the row's (`TestStatusNamesTheWidthSource`). A width
+lowered on the beat is the lane limit on the next step: a lane beyond it
+finishes the turn under way and takes no other (`retired` on the status), and
+raised, every lane within it refills on the step after (tla/FriendLanes.tla:
+`StartsWithinWidth`, no lane starts beyond the step's width, its reversed witness
+`MCFriendLanesBrokenStartBeyondWidth.cfg`; `EveryCardEnds`;
+`TestAWidthChangeOnTheBeatAnswerIsTheLaneLimitOnTheNextStep`).
 
 In one-shot mode the daemon runs `width` lanes. Each lane is its own session
 of the friend in the same harness and directory, opened by the daemon when
@@ -1528,8 +1544,99 @@ epoch), not done (no `outbox/<id>~<epoch>/RESULT.md`), and not held by
 another lane or set aside, and hands it as one turn with three steps: do the
 card from its brief; write its `REPORT.md` and `RESULT.md`; send one bus line
 (the exact `nova-bus send` to the coordinator, printed in the turn). Bus
-messages ride only inside a card's turn, oldest first, with the pong line and
-the word about the coordinator; with no card to ride with they wait, pending.
+messages ride inside a card's turn, oldest first, with the pong line and the
+word about the coordinator; with no card to ride with they go into a free lane
+as a **message turn** of their own (`messageTurn`, `MessageText`): the pong
+line of an open challenge first (a wake ping; before this a lane friend between
+cards could not answer one, `TestALaneFriendWithNoCardAnswersAWakeInAMessageTurn`),
+then the push check's own pong line while the push is unproven, then the
+messages, each labelled by its sender's authority; a notice alone never makes a
+turn. Exit 0 acks the messages, any other end leaves them pending for the claim
+to hand in again, a provider's limit is the governor's (`messageDone`). The
+push rule for a lane friend follows from it: her session is a lane's, so while
+the push is unproven the lanes open their sessions and run message turns, and
+no card and no read goes in until the session has answered the check (the
+`!proven && one-shot` arm of the loop); the check's line is handed again on the
+check's cadence (`MessageTurnEvery`, `SessionQuiet`) while the same nonce stands,
+never once a step. The daemon writes no pong of its own: the line goes in, and
+the session's run of it (`nova-friend pong`, its bus message) is the only
+answer (`TestAOneShotFriendProvesHerPushFromALaneAndCardsWaitForIt`; the
+reversed witness `TestNoPongFromTheSessionLeavesThePushUnprovenAndNoCardRuns`:
+a session that never runs the line leaves the push unproven, no card runs, and
+nothing from the daemon is on the bus). The message turn runs in the friend's
+directory, not a job's. A message turn the session could not take (`Deferred`,
+the harness unable to take a turn now; `SessionRefused`, the session unable to
+take one at all) was never delivered, so it is neither a failure nor an ack:
+the turn stays whole in the daemon's hand, goes in again after `RecheckEvery`
+with the same messages, before anything newer, counted toward nothing and
+acked never until a turn succeeds, as a batch turn's deferral is; the record
+says it once per reason and once a minute after
+(`TestAMessageTurnTheSessionCannotTakeStaysOwedAndIsNeverAckedUnread`; the friend's
+cold read of #5474: no bus message is discarded unread). **The machine's STOP**
+(the sibling's stop-cancels-lanes: a STOPPED word cancels every card turn and
+read and starts no work) does not end message turns: they are the friend's
+comms and her proof, not work, so a stopped friend still answers a wake, takes
+her messages and proves her push; a card never goes in while STOPPED. The rule
+is the lanes model's (tla/FriendLanes.tla):
+`CheckTurn` hands the line while unproven, `Answer` is the session's and the
+only thing that sets `proven`; `CardsOnlyAfterProof` (a card in a lane's hand
+means the push is proven) and `ProvenOnlyBySession` (proven means the session
+answered) hold, and their reversed witnesses
+`MCFriendLanesBrokenCardBeforeProof.cfg` (cards dealt before the answer) and
+`MCFriendLanesBrokenDaemonPong.cfg` (the daemon's own pong counted as the proof)
+break them.
+
+**No key sealed is down, never a fake up** (internal/friend/needs_env.go; the
+owner, 2026-10-08: a friend whose key is not in the secrets store "must read
+truthfully DOWN with the reason 'no key sealed', never a fake up"). The daemon
+needs the names `run --needs-env NAME[,NAME]` gives, else the provider's key
+for `--model provider/model` (`ProviderKeyEnv`: `inception` ->
+`INCEPTION_API_KEY`, `deepseek` -> `DEEPSEEK_API_KEY`, and the table's others;
+a provider not in it needs the flag), and reads them from its environment every
+step (`envStep`). While one is empty: her lanes open nothing and start nothing
+(`paused`, `:paused` on the status's lanes), the status says `missing_env`, her
+beat says her down with `reason="no key sealed: NAME"` (`FaultDown`, `--until`
+`NeedsEnvBeatAhead` ahead, sent again each step so it lapses once the key
+appears), the record says it once and the seat is told one blocker; the key
+appearing is said once and the lanes open on that step. `install --needs-env`
+writes the flag into the agent. A wrap that refuses to start without the key
+(`nova-secrets exec --require`) is the launchd loop this replaces: the daemon
+starts, and says why it runs nothing. The model: `Key` toggles `keyed`,
+`NoStartWithoutKey` holds, `MCFriendLanesBrokenRunWithoutKey.cfg` breaks it.
+Tests: `TestAMissingProviderKeyBeatsDownNamedAndStartsNoLane`,
+`TestNeedsEnvIsTheFlagsElseTheProvidersKey`.
+
+**A daemon starting up adopts a run still alive** (internal/friend/adopt.go). A
+lane's run is its own process group, so a daemon killed, crashed or restarted
+leaves its runs working on; until 2026-10-08 the daemon that started up
+finished every card still marked started FAILED at once ("its run is gone"),
+over a run that was still working, and the stopgap runners had an `adopt` for
+exactly this. Before the child execs its harness, a launch gate requires a
+durable `RUN` receipt containing a fresh run ID, PID and native process birth
+identity. The run ID must match the durable `Started` card. A daemon starting
+up (`endStarted`) adopts only that matching live run, transferring the old
+daemon's fresh `LANE` mark atomically to its new lane before ordinary lane
+exclusion. A mismatched or reused PID is never adopted. The lane holds the card (`adoptRuns`: its own lane when free, else
+the first free one) and waits on the process (`WaitProcess`, else a poll every
+`AdoptPoll`), pushing nothing into it, the silence watch leaving it alone; the
+card ends as any run's does when its process group exits (her report the finish; an
+adopted run that ends with no report ends the card as a gone run's does, set
+aside). Only a run whose process is gone is ended as before. The model:
+`tla/LaneEnd.tla`, `Down` leaves a run alive or gone, `Restart` adopts the
+alive ones (`Adopts`), `AdoptedNotFailed` (a restart never writes a report over
+a run alive) holds with `NoOrphan`, `HersStands`, `RedealOnce` and `Finished`
+(TLC on a Linux bench, 1940 distinct states); the reversed witness
+`MCLaneEndBrokenFailAlive.cfg` (the daemon before: `Adopts = FALSE`) breaks it
+at the first restart over a live run. Tests:
+`TestARestartedDaemonAdoptsALiveLaneRunAndFinishesItsCard`,
+`TestAStartedCardWhoseRunIsGoneIsEndedAndARunsPidIsRecorded`,
+`TestAReusedPIDCannotAdoptAnotherRun`, and
+`TestRunCannotExecuteBeforeItsDurableIdentityReceipt`. A group whose leader
+has gone while members remain is held as unresolved, without adopting a
+different process or writing a failed finish. Not done: a
+daemon SIGKILLed loses no run to this, but a run it adopts and that outlives
+the card's cap is not capped by the adopting daemon (the cap is the turn's);
+
 The lane waits for the turn to end and looks for the card's `RESULT.md`:
 there, the card is done and the lane takes the next; a turn that exited 0 and
 left neither `RESULT.md` nor `REPORT.md` is a harness fault, the card kept with
@@ -1879,9 +1986,9 @@ writes it, and no network is asked. A card with a `REPORT.md` is not handed to
 a lane.
 
 A lane marks each card it begins as started in `lanes.json` (`started`, keyed
-by the job, `<id>~<epoch>[.g<gen>]`: its lane, the card and when) and clears it at the card's end. A daemon starting up
-finds every card still marked: the run that held it is gone with the daemon
-that ran it (exited, killed or crashed), so it ends each as above, the report's
+by the job, `<id>~<epoch>[.g<gen>]`: its lane, card, run ID and time) and clears it at the card's end. A daemon starting up
+checks the matching launch receipt and native process birth; when the run is
+gone it ends the card as above, the report's
 paragraph saying `the run is gone: the lane daemon started up at <t> and found
 the card begun at <t0> with no REPORT.md`, and sets the job aside (`given_up`, by
 job, as a set-aside card is) so it is not handed again. A daemon stopping leaves its running cards marked, for the next
@@ -1895,9 +2002,7 @@ run's end as before this card, breaks `NoOrphan` in 6 states.
 Not done here: the claude one-shot runner that marks a job started outside
 nova-friend (the runner that ran the six overnight runs) is not in this
 repository, and `take back`'s refusal of a card with a push is in
-internal/sprint; both are outside this card. A gone run is known by the
-daemon's restart alone: no process id is kept, so a harness that outlived its
-daemon is not checked.
+internal/sprint; both are outside this card.
 
 ### a-lane-is-capped-by-its-tier.w1 — a lane's wall time is capped by its card's tier (internal/friend/lane_cap.go)
 
@@ -2101,7 +2206,12 @@ for nothing. A card now has one live lane:
 - **The lane mark.** Before a card's first turn, a lane claims the card's job by
   writing `jobs/<job>/LANE` (`ClaimLane`). The write succeeds only where there is
   no mark yet, by an exclusive hard link, so of two lanes asking at once only one
-  wins. The mark reads `running: <friend> lane <n> (daemon <pid>.<run>) at <t>`.
+  wins. Stale takeovers, refreshes and recovery transfers serialize on a per-job
+  file lock. Once a turn is durably started, the mark reads
+  `running: <friend> lane <n> (daemon <pid>.<run>) at <t> run <run-id>`.
+  Its immutable run ID permits a second restart to transfer the same live run
+  even if the previous owner update was interrupted. A stale mark does not
+  admit a new run while its matching receipt still identifies a live group.
   The daemon tag tells apart two daemons on one working directory. The lane
   rewrites the mark every `LaneMarkEvery` (30 s) while it holds the card. A mark
   that has not been rewritten for `LaneMarkStale` (2 m 30 s) belongs to a lane

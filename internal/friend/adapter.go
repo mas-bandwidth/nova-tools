@@ -12,7 +12,10 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/procgroup"
 )
 
 // Harnesses are the harness names run and install take, in the order the
@@ -135,9 +138,10 @@ func (w *seenWriter) Write(p []byte) (int, error) {
 // stops one silent past its SilentStop by cancelling ctx (the finding of
 // 2026-10-04: a fixed ten-minute cap killed real work mid-turn). Every write
 // to stdout or stderr is said to the watch in ctx (WithOutputSeen). The
-// command is its own session leader (Setsid), and on a cancel the whole
-// group is signalled, SIGTERM then SIGKILL after KillDelay: a harness that
-// forks (opencode run does) leaves no orphan behind a stop. On a nonzero
+// command is its own process-group leader (Setpgid). A receipt-backed native
+// group is cancelled through its verified sidecar, which signals from inside
+// the group and proves every member exited. An unreceipted command can only
+// have its unreaped leader killed; descendants remain unverified. On a nonzero
 // exit the output carries the head of stderr after stdout: a harness says
 // why it refused there (dsh does).
 func RealExec(ctx context.Context, dir, name string, args []string, stdin string) (string, int, error) {
@@ -156,16 +160,104 @@ func realExec(ctx context.Context, killDelay time.Duration, dir, name string, ar
 	cmd.Stdout = out
 	cmd.Stderr = stderr
 	ownGroup(cmd)
+	started := processStarted(ctx)
+	anchorPath := processGroupAnchor(ctx)
+	leaderBirth := ""
+	var cancelBirth atomic.Value
+	cancelBirth.Store("")
+	cmd.Cancel = func() error {
+		birth := cancelBirth.Load().(string)
+		if anchorPath != "" && birth != "" {
+			stopCtx, cancel := context.WithTimeout(context.Background(), KillDelay+time.Second)
+			stopped := procgroup.ReapVerified(stopCtx, cmd.Process.Pid, birth, anchorPath, 100*time.Millisecond)
+			cancel()
+			if stopped || !procgroup.GroupRunnable(cmd.Process.Pid) {
+				return nil
+			}
+		}
+		// ignored: os.Process.Kill is synchronized with Wait, so a late
+		// cancellation cannot signal a recycled PID; a failed leader kill
+		// still leaves descendants unverified and is reported below.
+		// ignored: a failed leader kill does not prove group exit; return the unverified error.
+		_ = cmd.Process.Kill()
+		return errors.New("native process group exit is unverified")
+	}
+	if !ProcessIdentitySupported {
+		if started != nil || anchorPath != "" {
+			return "", 0, errors.New("native launch gate and process identity are unavailable on this platform")
+		}
+		anchorPath = ""
+	}
+	release, gateErr := gateProcess(cmd, started != nil)
+	if gateErr != nil {
+		return "", 0, gateErr
+	}
 	cmd.WaitDelay = killDelay // the pipes close this long after the group is signalled
-	err := cmd.Run()
-	if ctx.Err() != nil && cmd.Process != nil {
-		killGroup(cmd.Process.Pid) // the leader is dead by now; what it forked is not
+	groupUnverified := false
+	err := cmd.Start()
+	if err == nil {
+		if started != nil {
+			err = started(cmd.Process.Pid)
+		}
+		if err == nil && anchorPath != "" {
+			leaderBirth = ProcessIdentity(cmd.Process.Pid)
+			if leaderBirth == "" {
+				err = errors.New("native group leader has no birth identity")
+			} else {
+				cancelBirth.Store(leaderBirth)
+				err = procgroup.StartAnchor(cmd.Process.Pid, anchorPath)
+			}
+		}
+		if err == nil && ctx.Err() != nil {
+			err = ctx.Err() // the gated harness may not launch after cancellation
+		}
+		if releaseErr := release(err == nil); err == nil {
+			err = releaseErr
+		}
+		if err != nil {
+			// ignored: the launch error is returned; Wait and group proof decide cleanup.
+			_ = cmd.Process.Kill()
+			// ignored: the launch error is returned; group proof decides cleanup.
+			_ = cmd.Wait()
+			if leaderBirth != "" && anchorPath != "" {
+				stopCtx, cancel := context.WithTimeout(context.Background(), KillDelay+time.Second)
+				if !procgroup.ReapVerified(stopCtx, cmd.Process.Pid, leaderBirth, anchorPath, 100*time.Millisecond) {
+					err = fmt.Errorf("%w; native process group remains live", err)
+				}
+				cancel()
+			}
+			return "", 0, err
+		}
+		err = cmd.Wait()
+		if anchorPath != "" {
+			stopCtx, cancel := context.WithTimeout(context.Background(), KillDelay+time.Second)
+			if procgroup.GroupRunnable(cmd.Process.Pid) && !procgroup.ReapVerified(stopCtx, cmd.Process.Pid, leaderBirth, anchorPath, 100*time.Millisecond) {
+				groupUnverified = true
+			}
+			cancel()
+		}
+		if groupUnverified {
+			if err != nil {
+				err = fmt.Errorf("%w; native process group remains live", err)
+			} else {
+				err = errors.New("native process group remains live after harness exit")
+			}
+		}
+	} else {
+		// ignored: no child started, so the gate cannot release a harness.
+		_ = release(false)
 	}
 	var exitErr *exec.ExitError
+	if ctx.Err() != nil && anchorPath == "" {
+		return out.b.String(), -1, errors.New("the delivery was stopped; unreceipted descendants are unverified")
+	}
+	if ctx.Err() != nil && groupUnverified {
+		return out.b.String(), -1, err
+	}
+	if ctx.Err() != nil && anchorPath != "" && cmd.Process != nil {
+		return out.b.String(), -1, errors.New("the delivery was stopped with its verified process group")
+	}
 	if errors.As(err, &exitErr) {
-		if ctx.Err() != nil {
-			return out.b.String(), exitErr.ExitCode(), errors.New("the delivery was stopped with its process group")
-		}
 		return out.b.String() + Head(stderr.b.String(), OutputKept), exitErr.ExitCode(), nil
 	}
 	return out.b.String(), 0, err
