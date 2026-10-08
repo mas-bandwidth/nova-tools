@@ -466,6 +466,16 @@ func LintCardChildWith(raw []byte, rules []ChildRule) []CardHeaderFinding {
 				out = append(out, CardHeaderFinding{Check: PatternsBlockCheck, Line: n, Excerpt: line})
 			}
 		}
+		// Scan for attribution hiding phrases in ATTRIBUTION section
+		if strings.Contains(strings.ToLower(line), "attribution.") {
+			// Check each line in the attribution section for hiding patterns
+			for _, pat := range attributionPatterns {
+				if pat.Re.MatchString(line) {
+					out = append(out, CardHeaderFinding{Check: HonestAttributionCheck, Line: n, Excerpt: "hiding phrase: " + pat.Msg})
+					break
+				}
+			}
+		}
 		if inPatterns && classTest {
 			line = childQuotedRE.ReplaceAllString(line, "``") // a quoted literal is no command
 		}
@@ -544,4 +554,27 @@ func childNegationInClause(clause string) bool {
 		words = words[len(words)-3:]
 	}
 	return childNegation.MatchString(strings.Join(words, " "))
+}
+// HonestAttributionCheck is the finding a brief draws when it tells the worker to hide
+// or misstate the model or harness. A brief that says to name the actual model and never
+// claim one you are not passes.
+const HonestAttributionCheck = "honest-attribution"
+
+// HonestAttributionRemedy is what that token wants.
+const HonestAttributionRemedy = "a brief names the actual model and harness it runs on, and never tells the worker to hide, deny, omit or misstate them (for example: never claim another model, do not mention the model, sign as another model, or use a Co-Authored-By trailer naming a fixed model)"
+
+// attributionPatterns are the hiding phrases that draw HonestAttributionCheck.
+var attributionPatterns = []struct {
+	Re   *regexp.Regexp
+	Msg  string
+}{
+	{regexp.MustCompile(`(?i)\bnever\s+claim\s+(?:claude|another\s+model|a\s+different\s+model)\b`), "never claim another model"},
+	{regexp.MustCompile(`(?i)\bdo\s+not\s+mention\s+the\s+model\b`), "do not mention the model"},
+	{regexp.MustCompile(`(?i)\bnot\s+mention\s+the\s+model\b`), "not mention the model"},
+	{regexp.MustCompile(`(?i)\bhide\s+the\s+model\b`), "hide the model"},
+	{regexp.MustCompile(`(?i)\bdeny\s+the\s+model\b`), "deny the model"},
+	{regexp.MustCompile(`(?i)\bomit\s+the\s+model\b`), "omit the model"},
+	{regexp.MustCompile(`(?i)\bsign\s+as\s+another\s+model\b`), "sign as another model"},
+	{regexp.MustCompile(`(?i)\buse\s+a\s+Co-Authored-By\s+trailer`), "Co-Authored-By trailer naming a fixed model"},
+	{regexp.MustCompile(`(?i)\bCo-Authored-By\b`), "Co-Authored-By naming a fixed model"},
 }
