@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
@@ -66,7 +67,13 @@ func (a *app) cmdRecut(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if r.Brief != "" {
-		if code := a.holdWho("recut", st, stderr, r.Brief); code != 0 {
+		// the card's own stream, for its named friend's restriction (holdWho); a card the
+		// store does not know is left to the write step's refusal
+		stream := ""
+		if info, err := st.CardOf(context.Background(), ids[0]); err == nil && info.Primary != nil {
+			stream = info.Primary.F("stream")
+		}
+		if code := a.holdWho("recut", st, stderr, []string{stream}, r.Brief); code != 0 {
 			return code
 		}
 		c.says = append(c.says, unfilledSays("the brief of the twin of "+ids[0], r.Brief)...)

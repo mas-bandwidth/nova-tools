@@ -387,6 +387,7 @@ type HarnessWatch struct {
 	Every time.Duration
 	Now   func() time.Time
 
+	mu      sync.Mutex
 	d       *Daemon
 	beat    func(ctx context.Context, active time.Time) error
 	checked time.Time
@@ -413,12 +414,25 @@ func WatchHarness(d *Daemon, adapter Deliverer) *HarnessWatch {
 		t.sessionTurns().clock(func() time.Time { return w.Now() }) // the session's turns on the daemon's clock
 	}
 	d.Beat = w.Beat
+	d.HarnessStatus = w.Status
 	return w
 }
 
 // Seen is what the last check read: HarnessRunning, HarnessNotSeen, or
 // HarnessUnknown when the adapter cannot tell or nothing was asked yet.
-func (w *HarnessWatch) Seen() string { return seen(w.live) }
+func (w *HarnessWatch) Seen() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return seen(w.live)
+}
+
+// Status returns the last advisory observation without sharing the daemon's
+// mutable Status with the independent beat worker.
+func (w *HarnessWatch) Status() (string, string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return seen(w.live), w.live.Rule
+}
 
 func seen(l Liveness) string {
 	switch {
@@ -440,11 +454,13 @@ func (w *HarnessWatch) Beat(ctx context.Context, active time.Time) error {
 	}
 	if w.Alive != nil && (w.checked.IsZero() || now.Sub(w.checked) >= every) {
 		w.checked = now
-		w.live = w.Alive.Alive(ctx)
-		w.d.status.HarnessSeen, w.d.status.HarnessAlive = w.Seen(), w.live.Rule
-		if said := w.Seen() + " " + w.live.Rule; !w.told || said != w.said {
+		live := w.Alive.Alive(ctx)
+		w.mu.Lock()
+		w.live = live
+		w.mu.Unlock()
+		if said := seen(live) + " " + live.Rule; !w.told || said != w.said {
 			w.told, w.said = true, said
-			w.record(now, seenLine(w.live))
+			w.record(now, seenLine(live))
 		}
 	}
 	return w.beat(ctx, active)

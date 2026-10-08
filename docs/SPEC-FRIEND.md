@@ -21,6 +21,44 @@ an enabled maximum and cannot exceed it; near is configured, never inferred.
 
 ## The pattern in one sentence
 
+### Explicit watched-folder delivery for Codex
+
+A Codex session that watches an existing folder can run the native daemon with
+`--harness codex --session <real-session-id> --adapter folder --delivery-dir <existing-watched-folder>`.
+`install` persists those flags in the launchd agent; `run` and the delivery
+form of `check` choose the same route. The friend name, harness, session and
+working directory remain the native daemon's identities. Without `--adapter
+folder`, Codex retains its queue/exec-resume route.
+
+The folder route writes each complete native prompt atomically as
+`FRIEND-CHECK-<nonce>.md`, `FRIEND-WAKE-<nonce>.md`, or
+`FRIEND-PUSH-<UTC>-<random>.md`. It writes `<payload>.meta.json` first with
+`friend`, `harness`, `session`, `work_dir`, `delivery_dir`, `kind`, `nonce` when
+applicable, and the payload's `sha256`. A watcher forwards the literal prompt
+to the named live session. A file write proves only delivery to the folder:
+the native nonce is proven solely by `nova-friend pong` from that session.
+The daemon does not create the target folder, pong on behalf of the session,
+or delete unacknowledged files. A repeated check or wake with the same nonce
+and text reuses its file instead of adding another request.
+
+The folder watcher is a separate receiver owned by the Codex session. It must
+stay running or restart with that session, scan complete `.md` payloads after a
+restart, associate and verify their sidecars, forward each prompt into the
+actual named session once, and report its own termination. `nova-friend`
+cannot infer a live receiver merely from an existing directory; install's
+delivery check succeeds only after the real session sends the matching pong.
+Teams may use any receiver that meets this file contract. Its lifecycle and
+last receipt must be monitored alongside the daemon; a file creation or a
+watcher process alone is no proof of session presence.
+
+The generated session check includes `pong --dir <work-dir>`. When queue and
+working flags are omitted, `pong` reads that directory's `inbox/QUEUE.json`;
+when no directory is given, it preserves the previous pong's counts. An
+omitted width uses the daemon status width (then the previous pong's width),
+so answering a check without optional count flags cannot report an invented
+zero width. These counts accompany the proof note; the daemon's beat remains
+the sprint row's source of work and width.
+
 One daemon per friend, started by launchd and never by the model, parks on the
 friend's nova-bus stream. On a session start or a delivery after a thirty-minute gap,
 the present comes first and the backlog never does: one PRESENT turn carries her live
@@ -354,16 +392,82 @@ in `internal/sprint` and `cmd/nova-sprint`.
 
 Push, not poll (docs/SPEC-SPRINT.md, section 8, "Push, not poll", audited 2026-10-06): the daemon's read blocks on the stream (`XREADGROUP BLOCK`, one `BeatEvery`) only while the session is free; while a turn runs, in one-shot mode, and for a passive harness it reads without blocking or peeks and then pauses a `BeatEvery`, which is a timer poll, and card friend-bus-read-blocks makes it block in every mode. Her cards (`InboxEvery`) and her reader row (`ReadAskEvery`, 10 s) are asked of the server on the daemon's step, timer polls too, until friend-cards-pushed-on-the-bus and friend-reads-pushed-on-the-bus put them on her stream. The beat is a beat, and a delivery is a turn in her session. The class test `TestEveryTimerLoopIsNamedInThePushTable` holds every timer loop of the tree to that table.
 
-Each second: the clock is stepped; when the session is free, every message
-waiting is read off the stream (a ping is answered by the daemon at once and
-acked, never pushed in), and one turn is started with all of them, oldest
-first, at most 32 messages or 256 KiB (`MaxBatch`, `BatchBytes`; the rest is
-the next turn): one envelope listing each message's id, from and subject, with
-the message as `nova-bus recv` prints it, the pong line first while a challenge
-is open, and the daemon's latest word about the coordinator; a single message
-with nothing else is its `recv` text alone. The adapter blocks for the whole
-turn; exit 0 acks every message it carried, together (for Codex queue, exit 0 is the
-command accepting the input, not the turn ending). Any other exit leaves
+Each second: the clock is stepped; when the session is free (a turn has
+ended, or none ran), every available pending message is read off the stream
+without a message-count cap, and one turn is started with all of them: a message never waits
+behind a turn per older message.
+
+The base, before this change: the turn was already one turn for every message
+in hand (`Batch`), oldest first, at most 32 messages or 256 KiB (`MaxBatch`,
+`BatchBytes`; the rest the next turn), each under a rule
+`=== message <i> of <n>: id=<id> from=<f> subject="<s>" ===` and then the
+message as `nova-bus recv` prints it, with no time or age; the daemon's word
+about the coordinator was one slot, a newer word replacing the older with
+nothing on the record; and only `nova-friend pong --nonce` ended a challenge.
+The finding of 2026-10-04 (one message per turn, with turns of 2 to 10
+minutes, a notice delivered 30 minutes stale while newer messages queued
+behind it) is the form this rule forbids, not the base's rule.
+
+The change. The turn is one envelope (`Envelope`, a function of the pending
+list and a clock): the pong line first while a challenge is open, the daemon's
+latest word about the coordinator, the count, then each message oldest first as
+
+    [1/3] <id> from=<f> at=<RFC3339> age=<m>m subject=<s>
+    <body>
+
+where `age` is how long it has waited when the turn starts. The text is capped
+at the adapter's text limit (`TextLimit`: its own when it names one, else 256
+KiB, `BatchBytes`; the first message always goes in), the rest block included:
+a message goes in only while the `and <n> more` line for those after it still
+fits. The messages that do not fit are named under
+`and <n> more: nova-bus recv --as <me> --all`, one line each while the limit
+allows (the count line alone when it does not), stay pending, and are the next turn. A single message with nothing else
+is its `recv` text alone. Each message keeps its sender's authority label
+(`bus-authority-labels.w3`): the seat holder's message is plain, every other
+sender's metadata and body are quoted as data. The rest count includes every
+message read, including messages beyond the former 32-message hand cap.
+The envelope's size is on the status:
+`envelope` (status.json, and `envelope=` on `nova-friend status`) is how many
+messages the last envelope carried and `envelope_bytes` its text's size, at
+most the text limit unless the first message alone is larger; both are 0
+before the first envelope.
+
+A ping is never a turn: it is the daemon's, answered at once with
+`daemon-pong` and acked, never pushed in, so the session's turns are spent on
+work. A session proves itself by any bus line it sends after the ping (a real
+message counts; `nova-friend pong --nonce` still counts when a session runs
+it), which ends the challenge and with it the pong line at the head of its
+turns, while the daemon's own sends (`daemon-pong`, a word to the coordinator,
+a session check) prove nothing. Daemon-pong and session-check ids need no
+storage because their subjects exclude them. Other daemon sends are remembered
+only while a challenge is open, until the proof read passes their log line or
+a newer ping makes their store timestamp too old; ending the challenge clears
+the remainder. Keepalive traffic never accumulates proof ids.
+
+The supersede rule (`SupersededNotices`) acts on the daemon's own notices
+about the coordinator and nothing else: the words `coordinator silent` and
+`coordinator back` its machine says (`Machine.Tick`, `Machine.Ping`), each
+given an id (`notice-<unix ms>-<n>`) when said, which ride at the head of a
+turn (the batch envelope, or a lane's card), never a message on the stream,
+whoever sent it. Of those not yet in a turn only the newest is delivered; each
+older one is dropped, its record line
+`<RFC3339> notice=<id> subject="<s>" superseded=<newer id> dropped=true`. A
+`coordinator back` the session would not need, never having heard it was
+silent, still supersedes and is itself not said; a notice a failed turn hands
+back while a newer one is owed is the one dropped.
+
+The adapter blocks for the whole turn; exit 0 acks every message the envelope
+carried, together, and a failure acks none of them (for Codex queue, exit 0 is
+the command accepting the input, not the turn ending). The model is
+`tla/FriendEnvelope.tla` (TLC on a Linux bench, four messages, a cap
+of two, two failures): a turn takes the whole pending set up to the cap
+(`EnvelopeTakesAll`), no message is acked in a later turn than a younger one
+(`NoYoungerFirst`), only an accepted turn acks, and every message is acked in
+the end; a turn that takes the youngest first and one message per turn are its
+reversed witnesses. Its known gap, `MCFriendEnvelopeFailureReorders`: a failed
+turn's messages wait out their claim (`ClaimAfter`) and a younger message can
+go in and be acked first, so `NoYoungerFirst` holds only for messages no failed
+turn carried. Any other exit leaves
 them pending, handed in again when their claims open, and the third failure
 acks a message with `given_up=true` on the record, so a message the session
 cannot take never comes back for ever. A delivery the adapter defers,
@@ -574,6 +678,14 @@ refused the down beat and her row read down only by the lapse.
 The table's status cell shows reason and until for a hold and an observation only
 (`internal/sprint/store/friends.go`, `friendRows`); a down beat's pair is on her
 report and in why she is down.
+
+### Every harness's credit and quota refusal (cmd/nova-friend/limit.go)
+
+A harness that refuses for credits or quota marks the friend down whatever harness it is, not only the ones whose wording is already known. One table holds each harness's provider 402 and the wordings the harness prints itself, every harness the daemon runs: claude, codex, opencode, grok, antigravity, dsh and gemini, credits before quota so a line that says both is the balance. A lane's evidence is read from the four places it leaves it -- the lane's stdout, its stderr, the harness log it writes and the REPORT.md it leaves (`LaneText`, `ReadRefusal`) -- and the first line that matches a row is the reason. The antigravity and gemini rows are their real refusals ("Insufficient AI Credits. Your credits will refresh 6:52 PM." and "Your prepayment credits are depleted."). The lane step (`cmd/nova-friend/main.go`) reads each failed lane's output and the runner log beside her working directory and hands a hit the harness's own wording did not name to the daemon's own limit path (`friend.Limits.Refuse`), so it takes the same hold, status and seat line as a limit the harness names itself.
+
+On a match the daemon sends `nova-sprint friend down <friend> --reason 'no credits: <harness>: <first line>' --until <now + the row's credit_retry, default 24h>` through its existing sprint call (`DownArgv`), so every begun card is handed back, the status says `session=limited limit_kind=<kind> limit_until=<t>` and the seat is told once as a judgment. The daemon keeps beating; at the until it tries one lane, and a second refusal is a new down.
+
+A refusal the table does not know is never silently retried: three lanes in a row that end with the same first error line surface to the seat as one judgment, `lanes failing alike: <line>` (`RefusalWatch`, `AlikeLanes`, `friend.LimitAlikeText`), and a different line starts the count again. `TestEveryHarnessCreditRefusalMarksTheFriendDown`, `TestALaneErrorThatIsNotARefusalChangesNothing` and `TestThreeAlikeLanesSurfaceOneJudgmentAndNoDown` pin the table, a non-refusal and the judgment.
 
 ### The harness check (internal/friend/alive.go)
 
@@ -1114,6 +1226,73 @@ where the coordinator reads it (a sprint note, like the idle alarm); and
 the model (tla/Bus2.tla gaining the owed set, with a reversed witness for
 a daemon ack that clears it).
 
+## Notifications
+
+`run --notifications-only --harness codex` selects a delivery-only receiver before
+native startup. It invokes no sprint beat, proof, row, claim, inbox, lane, stage,
+prune, finish, progress or native status hook. Its journal and audit log live in
+`<state-dir>/notifications/`; its installed label is `com.nova.friend-notifications-<name>`.
+The ordinary daemon label and presence files are separate. Installation carries the
+mode and policy flags and runs no native harness-setting plan/write or push-proof check.
+Its executable is content-addressed under `~/.nova-friend/notifications/bin/<sha256>/nova-friend`;
+previous notification versions and the ordinary `~/.nova-friend/bin/nova-friend` are retained.
+Stopping it is label-specific: `launchctl bootout gui/<uid>/com.nova.friend-notifications-<name>`.
+The ordinary `uninstall --as <name>` targets the native label and is not the notification stop
+command. Stopping the notification label preserves its journal for recovery.
+
+One receiver owns the recipient group. A deployment hands that ownership over;
+status drains and an existing bridge remain until that coordinated handoff. Two
+same-group filtered receivers are not the final notification architecture.
+
+Requests and blockers retain their complete payload and are immediately eligible.
+Reports are included by default and are delivered in a bounded full-payload batch.
+Plain transport acknowledgments and routine status retain bus/audit handling and
+produce no model wake; `--notify-kinds` opts other kinds in. Requests and blockers
+cannot be filtered out. Genuine ping/wake controls remain separate from card noise.
+
+The server's `card <id> dealt: FRIEND-CARD|FRIEND-READ DELIVERED ...` status courtesies
+set one global ready-queue bit across all cards. Each receive pass reads at most
+32 entries. `--notify-window` (30 seconds) coalesces a burst across passes; one
+constant ready-queue wake asks the coordinator to read the canonical queue. It
+claims or executes nothing. Child-finish refill belongs to the existing dispatcher.
+
+The file-synced atomic journal holds one active immutable batch, at most one deferred
+nonurgent report or notice batch, and one ready bit. The app queue permits one unread notification batch
+each for urgent, report and opt-in notice input, plus one global ready wake. Distinct
+nonurgent reports and notices are backpressured and stay bus-pending; the receiver continues bounded passes
+so later blockers and requests can use the separate urgent capacity. No report payload
+is discarded to satisfy a queue bound.
+The state writer syncs the file, renames it, and attempts a parent-directory sync;
+its directory-sync errors are best effort. Recovery guarantees concern process
+crashes, not storage-media failure. `tla/FriendNotifications.tla` models that boundary;
+`tla/FriendNotificationsCapacity.tla` models distinct batch capacity and deferred-report
+urgent eligibility, with deliberate queue-bound and head-of-line failures:
+ready intent before ACK, accepted before settlement, one queued ready family, no lost
+urgent input and no native mutation. Its 100-card case uses 32-entry receive passes;
+negative controls skip durable intent, permit duplicate queue insertion, or mutate native state.
+Ready intent is saved before courtesy messages are acknowledged. Full batches are
+saved before enqueue; queue acceptance is saved before their stream acknowledgments.
+Accepted is not read or acted proof: acknowledgments leave the receipt at delivered.
+A failed enqueue never acknowledges the pending batch. One attempt per due pass
+backs off from ten seconds to at most a minute, with a bounded retry exponent;
+there is no tight retry loop or give-up acknowledgment. Recovery and long idle
+intervals retain eligible work instead of permanently suppressing it.
+
+Codex queue-only delivery opens no competing `exec resume`. A constant ready-wake
+family and an immutable message-id batch fingerprint suppress replay while the
+input remains unread in the app queue. If that queue cannot be read, notification
+enqueue defers. No old input is deleted. A queue that accepted an input and then
+consumed it before a crash preceding the journal's accepted commit can replay that
+input once: delivery is at least once, not exactly once. The stable marker makes
+that replay recognizable, and the dispatcher reconciles the canonical queue.
+
+`TestCodexNotificationsCoalesceBurstsWithoutLosingUrgentKinds` pins a 100-card burst
+across receive passes, full useful payloads and muted routine traffic.
+`TestNotificationOnlyNeverInvokesNativeMutationHooks` pins startup, failure and
+restart. Queue acceptance, bounded unread replay and new eligible work are pinned
+by `TestNotificationAcceptanceIsNotModelProcessingAndRestartDoesNotEnqueueAgain`
+and `TestCodexNotificationQueueStaysBoundedAndNewWorkAfterConsumptionCanWake`.
+
 ## The beat comes from the daemon
 
 A friend's beat is the daemon's alone: the loop above beats once a second
@@ -1482,7 +1661,9 @@ card from its brief; write its `REPORT.md` and `RESULT.md`; send one bus line
 messages ride only inside a card's turn, oldest first, with the pong line and
 the word about the coordinator; with no card to ride with they wait, pending.
 The lane waits for the turn to end and looks for the card's `RESULT.md`:
-there, the card is done and the lane takes the next; absent, the same card
+there, the card is done and the lane takes the next; a turn that exited 0 and
+left neither `RESULT.md` nor `REPORT.md` is a harness fault, the card kept with
+no turn counted (the lane's paths, below); otherwise absent, the same card
 is handed again once, and after `CardTurns` (two) turns without it the card
 is set aside (recorded in `lanes.json`, never handed again by this daemon),
 and the coordinator is told once on the bus, `friend <name>: card <id> not
@@ -1976,6 +2157,60 @@ friend's tree is never finished); `MCCollectBrokenNoTip.cfg`, a LAND finished at
 Head unread, breaks `LandOnTip` in 6 states. The test is
 `TestTheDaemonFinishesADeadLaneAndALandOnlyAtOriginsTip`.
 
+### the-fix-is-the-first-line-of-the-next-brief.w1 — a reworked brief opens with the fix (internal/friend/rework.go)
+
+The night of 2026-10-05, lint-pkg-tlc-tbb came back five times, sec-rocketnet-server-dos-zhi
+four and presence-from-session-only five, each with the same finding. A rework puts its fix on
+the packet (`rework --fix`, or the broken reads' finding: internal/sprint/steps_review.go), and
+the server's brief says it as a `The coordinator asks:` line under the start, over a long card
+whose own STOP is the whole card's; the next lane read the card and never reached the fix.
+
+- The daemon writes a reworked card's BRIEF.md (`ReworkedBrief`, in `SyncInbox`) with the fix
+  first. The lines after STATUS are, in order: `THE ONE THING LEFT: <the fix>`; `The reader found: <finding>` (with no reader's finding, `no reader's finding; <why the attempt exists>`);
+  `The carried work: attempt <n>'s head <sha>, carried onto <branch> ...` (off the start line;
+  `nothing carried: ...` when no attempt pushed); `How it is checked: ...`, which names the key
+  words its report is grepped for. Then the rest of the server's prelude (the working
+  directory, the start, why), and the card with its STOP the fix alone, before RULES and the
+  task. The fix and the finding are said once. A brief with no fix, and one already reworked,
+  are written as the server sent them; the STATUS line, REPO and BASE are unchanged, so the
+  packet staging reads (`PacketOf`) is the same.
+- The key words of a fix (`FixKeyWords`) are its distinct words of four or more letters, digits
+  or underscores, lower case, the empty ones left out, the first eight. A report addresses the
+  fix (`FixAddressed`) when it names at least half of them, rounded up, anywhere, in any case; a
+  fix with none is addressed.
+- The outbox pass reads the fix of the job's BRIEF.md (the brief the lane read; else the
+  server's), in either form. A `LAND` whose report does not address it is finished as a HOLD:
+  `--failed`, a full sha head kept, the report `friend <name> HOLD: held by the daemon: the report says LAND and does not address THE ONE THING LEFT (<fix>); the key words it does not name: ...` and the report after it; the record line says `(Verdict LAND, held by the daemon: ...)`. Her REPORT.md stays as she wrote it. So a lane that never reached the first line is
+  sent back by the daemon, not round the readers to find the same thing again.
+- Friend sync (cmd/nova-sprint) is the other writer of her BRIEF.md and the other finisher of
+  her reports (docs/FRIENDS.md, the inbox/outbox standard), and it runs the same code
+  (the-fix-is-the-first-line-of-the-next-brief.w2): `friendBrief` is `ReworkedBrief` of the
+  server's form, so whichever of the two writes a reworked card's brief first (each writes
+  only when none is there), it opens with the fix; and `friendFinish`, the one finish of
+  friend sync, friend reconcile and collect, reads a LAND by the daemon's check
+  (`UnaddressedLand`, the fix of `friendBrief`, the same brief the inbox holds): one that does
+  not address the fix is finished as a HOLD, `--failed` with a head that is origin's tip of
+  her branch kept, the report `friend <name> HOLD: held by friend sync: the report says LAND and does not address THE ONE THING LEFT (<fix>); ...`. So the hold is a rule, not a race
+  the daemon has to win. `friendCollect` is that finish for friend sync and for the run loop's
+  reconcile.
+
+The model is `internal/friend/tla/OutboxFinish.tla`, extended: a reworked card's report
+addresses its fix or not, and `NoUnaddressedLand` (a reworked card lands only from a report
+that addresses its fix) holds with `Finished`. Friend sync is in it as a second writer of the
+brief (`Deliver`, whichever hand comes first, never over one there) and a second finisher
+(`SyncFinish`, the server taking the first finish), and `FixFirst` (a reworked card's brief
+opens with its fix, whoever wrote it) holds too (TLC on a Linux bench, two cards, one
+reworked: 1764 distinct states, no error). The reversed witnesses:
+`MCOutboxFinishBrokenUnaddressedLand.cfg`, the daemon before w1, breaks `NoUnaddressedLand` (she
+writes a LAND that does not address the fix, the daemon asks and lands it);
+`MCOutboxFinishBrokenSyncLands.cfg`, friend sync before w2, breaks it the other way (friend
+sync finishes the same LAND before the daemon's pass); `MCOutboxFinishBrokenSyncBrief.cfg`,
+friend sync before w2, breaks `FixFirst` (it writes the server's form before the daemon). The
+tests are `TestAReworkedBriefOpensWithTheFix`, `TestFixAddressedReadsTheKeyWords`,
+`TestFriendSyncWritesTheReworkedBriefAndHoldsAnUnaddressedLand` (friend sync against a reworked
+card: the brief's form and the HOLD) and
+`TestFriendFinishHoldsAnUnaddressedLandAndLandsAnAddressedOne`.
+
 ### one-lane-per-card.w1 — one live lane per card (internal/friend/one_lane.go)
 
 On the night of 2026-10-05 the same card ran in two lanes at once more than once:
@@ -2077,6 +2312,58 @@ and the server runs only the workers' verbs), so a card outside her tiers waits 
 coordinator acts on the request (a served `friend give <friend> <card> --reason` would end that); the runner's raise
 (width 8 after a clean load for 10 minutes, with a config-row write) is the lane governor's measured raise, not
 ported; the invoice-effective price beside the card price is not ported.
+
+### the-lane-hands-the-brief-by-absolute-path-bb — the lane's paths are absolute; a no-report exit is a harness fault (internal/friend/lane_parity.go)
+
+On 2026-10-07, between 10:32 and 10:41 PM, five cards on a flash friend's row (opencode,
+`inception/mercury-2.5`) ended `exit 0 ... and wrote no report; first error: File not found:
+Volumes/nova/ai/<friend>/working/inbox/<card>/BRIEF.md`: the model dropped the path's leading slash,
+read it relative to the friend's working directory, found nothing and wrote no report (a relative
+write even left a stray `<working>/Volumes/nova/...` tree there), and every card failed for $0.00 and
+walked toward the brief-is-wrong bound. The owner: "We need to stop making mistakes with [her]. It
+needs to be mechanical and just work."
+
+- **Every path is absolute.** `nova-friend run` makes `--dir` absolute with `filepath.Abs` before
+  anything starts, and refuses (`RUN REFUSED lane path not absolute: <dir>: ...`) when it cannot.
+  A lane makes its card's job with `LaneJobOf`: the brief and the outbox through `filepath.Abs`, the
+  job directory `<dir>/jobs/<job>`; a path that cannot be made absolute is one line on the record,
+  `lane <n>: card <id> not started: REFUSED lane path not absolute: <path>: <why>`, said once while
+  it stands, and the lane does not start the card (its claim on the job is withdrawn).
+- **The harness runs in the job directory, with the brief inline.** The lane's turn names the job
+  directory as its working directory, every path absolute ("leading slash and all"), and carries
+  the brief's text whole after its three steps (`THE BRIEF (<path>): ... END OF THE BRIEF`,
+  `CardText`), so a model that reads a path relative still has the brief, and a relative write
+  lands inside the job. The harness's process runs there: the lane's context carries the directory
+  (`WithLaneDir`, `LaneDirOf`), and `opencode run --session <id>` and the claude card runner
+  (`claude -p`) run in it; any other run (a session open, a batch turn, a read) stays in the
+  friend's directory. A `REPORT.md` or `RESULT.md` written under the outbox's relative spelling
+  inside the job (`<job dir>/<outbox less its leading slash>/`) is moved into the outbox at the
+  turn's end (`RescueStray`, `stray=` on the record).
+- **A no-report exit is a harness fault.** A turn that ended on its own (not stopped, capped or
+  held), exited 0, refused no permission, raised no error but its outbox's lack (`NoReport`, the
+  card runner's), and left neither `RESULT.md` nor `REPORT.md` is `harness-fault: no report`, said
+  with the harness's first error line (`LaneTurn.FirstError`, `HarnessFirstError`: the first line of
+  the run's output that says an error, else the output's tail's, else `the harness printed no error
+  line`): `card=kept turn=<n>/2 reason="harness-fault: no report; first error: <line>"`. The card
+  stays in the lane's hand, its turn not counted toward `CardTurns`; no `REPORT.md` is written for
+  it and no failed finish goes to the sprint server, so the attempt does not advance and no reader
+  ever reads it as the worker's. The lane hands it again.
+- **Three alike in ten minutes mark her row down once.** The same fault `FaultRepeats` (3) times
+  within `FaultWithin` (10 minutes) on her row (`FaultWatch`) holds her lanes until `FaultDownFor`
+  (15 minutes) later (the lane governor's pause, `:paused` on the status), calls `Daemon.FaultDown`
+  with that until and the reason, so her beat says her down with them
+  (`friend beat <friend> --until <t> --reason "harness-fault: no report; first error: <line>"`,
+  the worker's verb, sent each beat until it passes, then withdrawn), and tells the seat one
+  judgment (`friend <name> down until <t>: <reason>`, a blocker), not one per card. A fault while
+  the down stands adds nothing; once it has passed the count starts again. The cards stay in the
+  lanes' hands and run again after it.
+
+Tests: `internal/friend/lane_path_test.go` (`TestARelativeBriefPathBecomesAbsoluteInTheCommandAndThePrompt`,
+`TestANoReportExitIsAHarnessFaultAndThreeMarkTheRowDownOnce`,
+`TestThreeFaultsInTenMinutesMarkTheRowDownOnceWithUntil`). Not done here: the sprint server has no rule
+of its own named harness-fault; the daemon's fault never reaches it as an attempt, and the down is
+the friend's own beat. A turn the harness ended with a refused permission keeps its own path (handed
+again, then set aside). No TLA+ module models the fault watch yet.
 
 ### friend-token-cap-bb.w2
 
@@ -2465,6 +2752,22 @@ coordinator's machine (`tmp/buswatch/watch.sh`) is retired by
 fg-adopt-friend-daemons; the verb replaces its wake file and message wakes. The
 script's backlog and idle alarms are not this verb's: they read a work
 server's tables and belong to the tool that serves them.
+
+## Reach
+
+`nova-friend reach` is the escalation ladder (`cmd/nova-friend/reach.go`, `tla/Reach.tla`). It gets a silent friend's attention and stops at the first proof. The state is the step (`bus`, `push`, `window`, then `ok` or `failed`), whether a proof has been seen, and the step's clock. Each side effect is an injected function: sending, pushing, typing, reading the clock, sleeping, and drawing a nonce. The model has no fairness on the proof, because a proof is a choice at the bound; forcing it would make the ladder unable to climb.
+
+The friend is `--to`. A verb other than the default takes no bare word, so the shape is the same as `ping`. This verb is `reach`. see also: nova-friend ping --wake is the coordinator's periodic wake check; reach is this escalation ladder.
+
+Each step has one `--step-timeout` budget (default 60s), including delivery and waiting for a proof: a pong for the nonce that step carries, or any other message from the friend. A daemon-pong is the daemon's own answer and is not a proof. A pong for another nonce, or a malformed pong, is not an ordinary-message proof. The step arms at the bus log's tail and each proof poll reads forward from that cursor, advancing it as entries are consumed (`Bus.LogCursor`, `Bus.LogForward` in `internal/bus/bus.go`). A read of the log from its start is capped at the oldest 10,000 entries, so a poll that started there would miss a fresh pong once the log held more than that (`TestReachProofPastTheLogCap`). The result line is first, then one line per step in the order it happened.
+
+1. **bus.** A bus message to the friend, subject `reach <nonce>` (never a PING, which is the daemon's own), body the nonce and the exact pong command. The line is `REACH STEP step=bus sent=<id> nonce=<n>`.
+2. **push.** The daemon pushes a real message into the session as a turn, never a PING. The daemon is up when its status file, read when the push begins, is newer than the stale bound (`DaemonStale`), the same rule `status` uses. No status file is "no daemon has run (no status file)". Down skips the step: `REACH NONE step=push waited=0s: daemon down: <reason>`. Up is `REACH STEP` and then the push.
+3. **window.** A tmux-hosted session is typed with send-keys only while the pane is idle (`internal/friend/adapter_tmux.go`). A GUI harness is the app's window, found by the bundle id the step looks up (`internal/friend/window.go`, `AppBundles`; these are lookup ids, not a measured survey of installed apps), the message typed into the composer and submitted (`window_darwin.go` on the platform that can hold the permission, `window_other.go` elsewhere). That needs the accessibility permission a person grants to this binary. The check is `AXIsProcessTrusted` and never `AXIsProcessTrustedWithOptions`, so the tool does not ask. When the permission is absent the step is refused: grant Accessibility to this binary in System Settings, Privacy and Security, Accessibility; nova-friend does not ask. A harness with no bundle, and not tmux, has no window; that is a skipped step, not a permission refusal.
+
+A proof ends the ladder: `REACH PROOF step=<s> after=<duration> by=<pong|message>` and `REACH OK friend=<f> step=<s>`. Exit 0 on that proof. No proof prints `REACH NONE step=<s> waited=<d>` and the ladder climbs. No proof after the steps from `--from` prints `REACH FAILED friend=<f> tried=<steps>`, Exit 1, and one note of that line on the coordinator's own stream. A skipped push counts as tried. Exit 2 when it could not run (a flag, a store that did not answer, or the window step without the accessibility permission); that refusal sends no failed note. `--from bus|push|window` starts partway up. `--dry-run` prints `REACH DRY-RUN` and one `REACH STEP` per planned step, and sends, pushes and types nothing. `--json` carries the same value: facts `friend`, `step` (on OK), `tried` (on FAILED), `from` and `step_timeout` (on a dry run), `dry_run`; items `STEP` (`step`, `sent`, `nonce`), `PROOF` (`step`, `after`, `by`), `NONE` (`step`, `waited`, text when skipped).
+
+example: nova-friend reach --as ada --to bob --dry-run
 
 ## Identity
 

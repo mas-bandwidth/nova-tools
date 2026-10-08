@@ -38,6 +38,10 @@ type ReaderLoad struct {
 	State   string
 }
 
+// Room says the reader had room for a read it did not begin: it reads under its width, or
+// its width is not known (0: no machine row bounds it).
+func (l ReaderLoad) Room() bool { return l.Width == 0 || l.Reading < l.Width }
+
 // Lags says the reader's loop lags its width: reads wait on it past the window, up, while
 // it reads below its width.
 func (l ReaderLoad) Lags() bool {
@@ -51,12 +55,39 @@ type ReadersLag struct {
 }
 
 // ReadersBehind is whether the readers are behind, and the facts: a read has sat asked and
-// not begun on a reader up for ReadersWindow or longer. A reader that is not up is taken
-// back by the ask, so its reads never count toward the window; it is named when it holds
-// reads, for reader up.
+// not begun for ReadersWindow or longer on a reader up with room for it (ReaderLoad.Room).
+// A reader that is not up is taken back by the ask, so its reads never count toward the
+// window; it is named when it holds reads, for reader up. A reader reading its whole width
+// is busy, not behind: reads waiting on it raise nothing (ReadersFull; on the night of
+// 2026-10-05 "the readers are behind" rose while every reader was busy).
 func ReadersBehind(s *Snapshot) (ReadersLag, bool) {
+	b, late, _ := readersLoad(s)
+	return b, late > 0
+}
+
+// ReadersFull is why the readers are not behind though reads wait past the window: every
+// reader up they wait on reads its whole width. ok is false when no read waits past the
+// window on a reader up, or one waits on a reader with room (the readers are behind).
+func ReadersFull(s *Snapshot) (string, bool) {
+	b, late, full := readersLoad(s)
+	if late > 0 || full == 0 {
+		return "", false
+	}
+	var busy []string
+	for _, l := range b.Readers {
+		if l.State == ReaderUp && l.Late > 0 {
+			busy = append(busy, fmt.Sprintf("%s reads %d of width %d", l.Reader, l.Reading, l.Width))
+		}
+	}
+	return fmt.Sprintf("%d reads asked past %s wait on readers reading their whole width (%s): busy, not behind", full, ReadersWindow, strings.Join(busy, "; ")), true
+}
+
+// readersLoad is the readers' loads and the reads asked and not begun past the window on
+// readers up: late on a reader with room, full on one reading its whole width. The loads
+// are the readers', with review's count, whenever a read waits past the window on one up.
+func readersLoad(s *Snapshot) (b ReadersLag, late, full int) {
 	if s.Readers == nil || s.Work == nil {
-		return ReadersLag{}, false
+		return ReadersLag{}, 0, 0
 	}
 	loads := map[string]*ReaderLoad{}
 	load := func(r string) *ReaderLoad {
@@ -75,7 +106,6 @@ func ReadersBehind(s *Snapshot) (ReadersLag, bool) {
 		loads[r] = l
 		return l
 	}
-	late := 0
 	for _, c := range s.Readers.Column(Asked, Reading) {
 		l := load(c.Row)
 		if c.Col == Reading {
@@ -84,22 +114,30 @@ func ReadersBehind(s *Snapshot) (ReadersLag, bool) {
 		}
 		if t, err := time.Parse(time.RFC3339, c.F("asked")); err == nil && s.Now.Sub(t) >= ReadersWindow {
 			l.Late++
-			if l.State == ReaderUp {
-				late++
-			}
 		}
 	}
-	if late == 0 {
-		return ReadersLag{}, false
+	// room is read once every read is counted: a reader's reads begun after its late one
+	// in the column still fill its width
+	for _, l := range loads {
+		switch {
+		case l.State != ReaderUp:
+		case l.Room():
+			late += l.Late
+		default:
+			full += l.Late
+		}
 	}
-	b := ReadersLag{Review: len(s.Work.Column(Review))}
+	if late+full == 0 {
+		return ReadersLag{}, 0, 0
+	}
+	b = ReadersLag{Review: len(s.Work.Column(Review))}
 	for _, l := range loads {
 		if l.Reading+l.Late > 0 {
 			b.Readers = append(b.Readers, *l)
 		}
 	}
 	sort.Slice(b.Readers, func(i, j int) bool { return b.Readers[i].Reader < b.Readers[j].Reader })
-	return b, true
+	return b, late, full
 }
 
 // What is the judgment's line: review, the readers' reading beside their widths, and what

@@ -181,6 +181,10 @@ func briefKept(s *Snapshot, id string) string {
 // rework's fix is the old brief's and is dropped; and the record, the next attempt's
 // why, says who edited it, at which attempt, and what changed (briefChange).
 func briefInPlace(s *Snapshot, c *Card, brief string, set map[string]string, unset []string, who string) (u Unit, orphan bool) {
+	if c.F(FieldBriefDefect) != "" {
+		reworkPriority(s, c, set)
+		unset = append(unset, FieldBriefDefect)
+	}
 	n := c.Int("attempt")
 	said := fmt.Sprintf("brief edited in place by %s at attempt %d: %s", orDash(who), n, briefChange(c.F("brief"), brief))
 	set["why"] = cutText(said, MaxCardTextBytes)

@@ -159,7 +159,7 @@ const cardLines = `a card's required lines (template --name card writes them; li
   line 1     RESULT: <label> sha=<sha12>
   REPO:      <owner>/<name>, the repository the member stages and land merges into (land --repo-dir stands in for a card naming none)
   BASE:      <branch>, the branch the work starts from and lands on (land --base stands in for a card naming none)
-  a bound    Deadline: finish within <n> minutes.
+  a bound    Deadline: finish within <n> minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.
   RULES.     every rule the coordinator gives a child, each quoted whole
   THE TASK.  what is wanted, the files or package it lives in, the worktree, branch and base
   STEP 1.    one line a step, numbered 1, 2, 3 with no gap; the last step writes RESULT.md, whose line 1 is this card's line 1

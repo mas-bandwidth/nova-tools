@@ -115,7 +115,7 @@ func trackLen(t *testing.T, track, trackW string) float64 {
 // left of the segmented bar is the same as the right exactly"). No browser is available, so the
 // page is rendered by app.js on the shim and the box model is resolved from index.html's own
 // rules, in rem (16 px each).
-func TestTheBarColumnHasEqualInsets(t *testing.T) {
+func TestTheLiveTrackKeepsItsSpanAndAlignment(t *testing.T) {
 	t.Parallel()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
@@ -184,15 +184,16 @@ func TestTheBarColumnHasEqualInsets(t *testing.T) {
 		require.Equal(t, 24, widest, "%s: the widest row", id)
 
 		// the bar column: the fourth track of the table's row
-		tracks := topLevel(cssDecl(t, css, "."+id+" .row", "grid-template-columns"))
+		tracks := topLevel(cssDecl(t, css, ".fleet .row, .friends .row", "grid-template-columns"))
 		require.GreaterOrEqual(t, len(tracks), 5, "%s: the row's grid", id)
-		colW := trackLen(t, tracks[3], tb.TrackW)
+		barTrack := strings.TrimSuffix(strings.TrimPrefix(tracks[3], "minmax(0, "), ")")
+		colW := trackLen(t, barTrack, tb.TrackW)
 
 		// every row's cells sit on the widest row's grid, so each starts at the same x
 		// (a row with no lanes has no cells and nothing to place)
 		var cellW float64
 		for _, r := range tb.Rows {
-			m := regexp.MustCompile(`^repeat\((\d+), ([\d.]+rem)\)$`).FindStringSubmatch(r.Cols)
+			m := regexp.MustCompile(`^repeat\((\d+), minmax\(0, ([\d.]+rem)\)\)$`).FindStringSubmatch(r.Cols)
 			require.NotNil(t, m, "%s %s: cell grid %q", id, r.Name, r.Cols)
 			assert.Equal(t, "24", m[1], "%s %s: every row's grid is the widest row's, so cells stay left-aligned at one x", id, r.Name)
 			cellW = remOf(t, m[2])
@@ -201,18 +202,19 @@ func TestTheBarColumnHasEqualInsets(t *testing.T) {
 
 		left := barMargin("left") + cellsPad("left")
 		right := colW - (left + cellsW)
-		assert.InDelta(t, left, right, 1.0/16/2, "%s: first cell %.4frem from the bar column's left edge, widest row's last cell %.4frem from its right edge (width 24 of %d rows)", id, left, right, len(tb.Rows))
+		assert.InDelta(t, 0.0, right, 1.0/16/2, "%s: first cell %.4frem from the bar column's left edge, widest row's last cell %.4frem from its right edge (width 24 of %d rows)", id, left, right, len(tb.Rows))
+		assert.InDelta(t, 30.75, cellsW, 1.0/16/2, "the live track spans sixteen original cells at any width")
 		assert.Greater(t, left, 0.0, "%s: the insets are real, not zero", id)
 
-		// nothing else moves: the count's box begins tw + 4rem and ends tw + 11.5rem after the
-		// first cell, as it did when the column was tw + .5rem with the slack on the right
+		// The live count box begins 4rem and ends 13.5rem after the final cell.
+		// Its fixed 10rem track keeps rows and the longer total aligned.
 		gapRem := remOf(t, cssDecl(t, css, ".fleet .row, .friends .row", "--gap"))
 		countW := trackLen(t, tracks[4], tb.TrackW)
 		fromFirstCell := (colW - left) + gapRem + countPad
 		assert.InDelta(t, cellsW+4.0, fromFirstCell, 1.0/16/2, "%s: the count's content began elsewhere", id)
-		assert.InDelta(t, cellsW+11.5, (colW-left)+gapRem+countW, 1.0/16/2, "%s: the count's column ended elsewhere", id)
+		assert.InDelta(t, cellsW+13.5, (colW-left)+gapRem+countW, 1.0/16/2, "%s: the count's column ended elsewhere", id)
 
 		// the head's "working" label stays where it was, .5rem into the column
-		assert.InDelta(t, 0.5, remOf(t, cssDecl(t, css, ".fleet .row.head > :nth-child(4), .friends .row.head > :nth-child(4)", "margin-left")), 1.0/16/2, "%s: the head label moved", id)
+		assert.InDelta(t, 0.5, remOf(t, cssDecl(t, css, ".fleet .row > :nth-child(4), .friends .row > :nth-child(4)", "margin-left")), 1.0/16/2, "%s: the head label moved", id)
 	}
 }

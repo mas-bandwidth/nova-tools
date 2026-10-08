@@ -575,3 +575,186 @@ func RoutePriceOf(routesJSON, provider, model string) RoutePrice {
 	}
 	return *found
 }
+
+// The lane hands the brief by absolute path (the-lane-hands-the-brief-by-absolute-path-bb; on
+// 2026-10-07 five lanes of a flash friend ended "File not found: Volumes/nova/ai/<friend>/working/
+// inbox/<card>/BRIEF.md": the model dropped the path's leading slash, read it relative to the
+// friend's working directory, found nothing, wrote no report, and even made a stray
+// <working>/Volumes/nova/... tree there). A lane runs its harness in the card's job directory,
+// names every path absolute, and hands the brief's text inline, so a model that reads a path
+// relative still has the brief and writes inside the job; a run that exits 0 with no report is a
+// harness fault, never the worker's failed attempt (docs/SPEC-FRIEND.md, the lane's paths).
+
+// LaneJob is a card as its lane hands it to the harness: the job directory the harness runs in,
+// the card with its brief and outbox absolute, and the brief's text, which the prompt carries.
+type LaneJob struct {
+	Dir   string // <friend dir>/jobs/<job>: the harness's working directory
+	Card  Card   // Brief and Outbox absolute
+	Brief string // the brief's text, inline in the prompt; "" when it is not read yet
+}
+
+// LaneJobOf is card c of the friend's working directory dir as its lane hands it: every path
+// made absolute by abs (filepath.Abs in the daemon), the job directory dir/jobs/<job>. A path
+// abs cannot make absolute is refused: the error is one REFUSED line naming the path, and the
+// lane does not start.
+func LaneJobOf(dir string, c Card, abs func(string) (string, error)) (LaneJob, error) {
+	if abs == nil {
+		abs = filepath.Abs
+	}
+	made := func(p string) (string, error) {
+		a, err := abs(p)
+		if err == nil && !filepath.IsAbs(a) {
+			err = errors.New("not absolute after filepath.Abs")
+		}
+		if err != nil {
+			return "", fmt.Errorf("REFUSED lane path not absolute: %s: %v; the lane does not start", p, err)
+		}
+		return filepath.Clean(a), nil
+	}
+	root, err := made(dir)
+	if err != nil {
+		return LaneJob{}, err
+	}
+	brief, err := made(c.Brief)
+	if err != nil {
+		return LaneJob{}, err
+	}
+	outbox, err := made(c.Outbox)
+	if err != nil {
+		return LaneJob{}, err
+	}
+	c.Brief, c.Outbox = brief, outbox
+	return LaneJob{Dir: filepath.Join(root, "jobs", filepath.Base(outbox)), Card: c}, nil
+}
+
+// laneDirKey marks a context with the working directory a lane's harness runs in.
+type laneDirKey struct{}
+
+// WithLaneDir is ctx carrying dir, the job directory the lane's harness runs in (LaneJob.Dir).
+func WithLaneDir(ctx context.Context, dir string) context.Context {
+	return context.WithValue(ctx, laneDirKey{}, dir)
+}
+
+// LaneDirOf is the job directory ctx carries, else def: a harness's run in a lane goes there.
+func LaneDirOf(ctx context.Context, def string) string {
+	if d, _ := ctx.Value(laneDirKey{}).(string); d != "" {
+		return d
+	}
+	return def
+}
+
+// HarnessFaultNoReport is the fault of a lane run that exited 0 and left no REPORT.md or
+// RESULT.md: the harness's, never the worker's failed attempt.
+const HarnessFaultNoReport = "harness-fault: no report"
+
+var harnessErrorLine = regexp.MustCompile(`(?i)\b(error|errors|not found|no such file|failed|failure|exception|denied|refused|cannot|could not)\b`)
+
+// HarnessFirstError is the first line of a harness's output that says an error, one line, at
+// most 200 bytes; "" when none does.
+func HarnessFirstError(out string) string {
+	for _, line := range strings.Split(stripANSI(out), "\n") {
+		if line = strings.TrimSpace(line); line != "" && harnessErrorLine.MatchString(line) {
+			return oneLine(line, 200)
+		}
+	}
+	return ""
+}
+
+// NoReport is a card runner's run that ended with its outbox holding neither REPORT.md nor
+// RESULT.md (the Claude lane's), its words as the run says them.
+type NoReport struct {
+	Run    string // the harness as the run names it, "claude -p"
+	Exit   int
+	Outbox string
+	Lacks  []string // the files the outbox lacks
+}
+
+func (e NoReport) Error() string {
+	return fmt.Sprintf("%s exited %d and %s holds no %s", e.Run, e.Exit, e.Outbox, strings.Join(e.Lacks, " and no "))
+}
+
+// FaultWords is a harness fault as the record and the row say it: the fault and the harness's
+// first error line ("the harness printed no error line" when it printed none).
+func FaultWords(fault, first string) string {
+	if first == "" {
+		first = "the harness printed no error line"
+	}
+	return fault + "; first error: " + oneLine(first, 200)
+}
+
+// The bound on a harness fault: the same fault FaultRepeats times within FaultWithin on one
+// row marks the row down for FaultDownFor, once, with one judgment to the seat.
+const (
+	FaultRepeats = 3
+	FaultWithin  = 10 * time.Minute
+	FaultDownFor = 15 * time.Minute
+)
+
+// FaultWatch counts one row's harness faults: the FaultRepeats-th of the same fault within
+// FaultWithin is one down until FaultDownFor later; a fault while that down stands adds
+// nothing, and the count starts again once it has passed. The zero value is ready; it reads no
+// clock of its own.
+type FaultWatch struct {
+	seen  map[string][]time.Time
+	until time.Time
+}
+
+// Observe adds one fault at now and answers the down the row is owed, once: until and true on
+// the FaultRepeats-th of that fault within FaultWithin.
+func (w *FaultWatch) Observe(fault string, now time.Time) (until time.Time, down bool) {
+	if now.Before(w.until) {
+		return time.Time{}, false // the row is down already: one down, not one per card
+	}
+	if w.seen == nil {
+		w.seen = map[string][]time.Time{}
+	}
+	var kept []time.Time
+	for _, at := range w.seen[fault] {
+		if now.Sub(at) < FaultWithin {
+			kept = append(kept, at)
+		}
+	}
+	kept = append(kept, now)
+	if len(kept) < FaultRepeats {
+		w.seen[fault] = kept
+		return time.Time{}, false
+	}
+	w.seen = nil
+	w.until = now.Add(FaultDownFor)
+	return w.until, true
+}
+
+// FaultDownText is the one judgment the seat is told when a row's lanes hit the same harness
+// fault FaultRepeats times within FaultWithin: the subject and the body, naming the reason the
+// row is down with and until when.
+func FaultDownText(friend, reason string, until time.Time) (subject, body string) {
+	subject = fmt.Sprintf("friend %s down until %s: %s", friend, until.UTC().Format(time.RFC3339), oneLine(reason, 120))
+	body = fmt.Sprintf("%s: her lanes hit the same harness fault %d times within %s: %s\nHer lanes are held and her beat says her down until then; the cards stay in her lanes' hands, no attempt counted, and run again after it. The fault is the machine's, never the worker's: find its cause.\n",
+		subject, FaultRepeats, FaultWithin, reason)
+	return subject, body
+}
+
+// RescueStray moves a report a run wrote under a relative spelling of the outbox (the job
+// directory joined with the outbox path less its leading slash: the stray tree of 2026-10-07)
+// into the outbox, REPORT.md and RESULT.md each when the outbox lacks it; it answers the files
+// moved.
+func RescueStray(job LaneJob) []string {
+	if job.Dir == "" || !filepath.IsAbs(job.Card.Outbox) {
+		return nil
+	}
+	stray := filepath.Join(job.Dir, strings.TrimLeft(job.Card.Outbox, string(filepath.Separator)))
+	var moved []string
+	for _, f := range []string{"REPORT.md", "RESULT.md"} {
+		from, to := filepath.Join(stray, f), filepath.Join(job.Card.Outbox, f)
+		if fi, err := os.Lstat(from); err != nil || !fi.Mode().IsRegular() || exists(to) {
+			continue
+		}
+		if err := os.MkdirAll(job.Card.Outbox, 0o755); err != nil {
+			continue
+		}
+		if err := os.Rename(from, to); err == nil {
+			moved = append(moved, to)
+		}
+	}
+	return moved
+}
