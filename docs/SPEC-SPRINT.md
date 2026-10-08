@@ -4096,7 +4096,7 @@ it marks the base red and can stop a stream. Bench infrastructure problems are
 **bench faults**: `exit status 128` from git, "not a git repository", ENOSPC,
 "disk quota exceeded", "no space left", a missing go toolchain, ssh exit 255, or
 a copy that did not finish. A bench fault is reported as `GATE FAULT
-bench=<member> kind=<git|disk|tmp|ssh|copy|toolchain> what=<first line>` and never
+bench=<member> kind=<git|disk|tmp|ssh|copy> what=<first line>` and never
 marks the base red. On a bench fault the gate steps to the next slot of the hash
 ring (landring.go) and runs again; after every ring member has faulted the landing
 is deferred one tick with `LAND DEFERRED stream=<s> faults=<n>`. A bench that
