@@ -158,20 +158,27 @@ func TestAFriendWritingWithinTheBoundKeepsHerUnstartedCards(t *testing.T) {
 	assert.Equal(t, FriendRow("bob"), w.s.Fleet.Card("s1-1.w1").Row, "no write within the bound: it moves")
 }
 
-// A friend running a job keeps her queue: a card she has not started stays on her row past
-// the start bound while a card she started is working there, though her beat names nothing.
-func TestAFriendRunningAJobKeepsHerUnstartedCards(t *testing.T) {
+// A friend running a job she has started does not keep the rest past the window. The
+// start-bound level skips her (a card she started is working), so the deal returns the
+// unstarted card to the pool. The same tick cannot place it again.
+func TestAFriendRunningAJobReturnsAnUnstartedCard(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("friend amy"), friendBrief("friend amy"))
 	seats := []FriendSeat{{Name: "amy", Width: 2, Status: Up, Class: "flash"}, {Name: "bob", Width: 1, Status: Up, Class: "flash"}}
 	w.must(func() Plan { p, _ := TickDeal(w.s, TickReq{Friends: seats}); return p }())
 	require.Equal(t, 2, w.s.Fleet.Count(FriendRow("amy"), Ready))
 	w.must(FriendStart(w.s, FriendStartReq{Friend: "amy", IDs: []string{"s1-1.w1"}, Gens: map[string]int{"s1-1.w1": 1}}))
-	w.s.Now = t0.Add(FriendStartMaxDefault + time.Hour)
+	w.s.Now = t0.Add(FriendStartWindowDefault + time.Hour)
 	p, _ := TickDeal(w.s, TickReq{Friends: seats})
 	w.must(p)
-	assert.Equal(t, FriendRow("amy"), w.s.Fleet.Card("s1-2.w1").Row, "she is running a job")
+	wc := w.s.Fleet.Card("s1-2.w1")
+	require.NotNil(t, wc)
+	assert.Equal(t, Withdrawn, wc.Col, "past the window it goes back to the pool")
+	assert.Equal(t, FriendRow("amy"), wc.Row)
+	assert.Equal(t, FriendRow("amy"), wc.F(FieldTakenFrom), "not dealt back to her, and not moved onto bob in this tick")
+	assert.Equal(t, Ready, w.s.StateOf("s1-2"), "its primary is back in the pool")
 	assert.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col, "her started card stays working")
+	assert.Equal(t, FriendRow("amy"), w.s.Fleet.Card("s1-1.w1").Row)
 }
 
 // The start-bound level honours a recipient's work restriction (her nova-config row's
