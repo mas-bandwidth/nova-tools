@@ -1796,31 +1796,16 @@ func orEmpty(c *Card, id string) *Card {
 	return c
 }
 
-// waitingNeeding is the waiting primaries that name id and are not dropping:
-// the dependants a drop without cascade refuses, read from every waiting
-// card's needs field (docs/SPEC-SPRINT.md section 11).
-func waitingNeeding(s *Snapshot, id string, dropping map[string]bool) []string {
-	var out []string
-	for _, w := range s.Work.Column(Waiting) {
-		if dropping[w.ID] {
-			continue
-		}
-		if contains(Split(w.F("needs")), id) {
-			out = append(out, w.ID)
-		}
-	}
-	return out
-}
-
 // DropReq is the coordinator taking primaries off the table.
 type DropReq struct {
 	Sel
 	Reason  string
 	Answers []string
 	// Cascade drops, with the cards the selection names, every waiting
-	// primary that needs one of them, and their dependants too. Without it a
-	// card a waiting primary still needs is refused, naming the dependants
-	// (docs/SPEC-SPRINT.md section 11).
+	// primary that needs one of them, and their dependants too. Without it the
+	// dropped id is detached from every waiting card that names it, at once
+	// and with one DETACHED line each (docs/SPEC-SPRINT.md section 11, "A need
+	// that is gone").
 	Cascade bool
 	Who     string
 }
@@ -1828,9 +1813,10 @@ type DropReq struct {
 // Drop takes open primaries off the table with the reason: their record,
 // outcome and reason are kept; their live work card, unread read cards and
 // merge place go with them. A waiting primary that needs one is a dependant:
-// without Cascade the drop is refused for that card, naming the dependants;
-// with it the dependants and their dependants go too (docs/SPEC-SPRINT.md
-// section 11).
+// without Cascade the dropped id is detached from its DEPENDS-ON line at once
+// (docs/SPEC-SPRINT.md section 11, "A need that is gone"), and the next tick's
+// drain moves it to ready when it waits for nothing else; with Cascade the
+// dependants and their dependants go too.
 func Drop(s *Snapshot, r DropReq) Plan {
 	var p Plan
 	var all []*Card
@@ -1850,6 +1836,7 @@ func Drop(s *Snapshot, r DropReq) Plan {
 	for _, c := range chosen {
 		dropping[c.ID] = true
 	}
+	var detached []Unit
 	if r.Cascade {
 		// Grow the set of dropping cards: every waiting primary that needs
 		// one of them goes too, and their dependants in turn (a cascade), so
@@ -1878,18 +1865,30 @@ func Drop(s *Snapshot, r DropReq) Plan {
 		}
 		chosen = kept
 	} else {
-		// Without Cascade a card another waiting primary still needs is
-		// refused for that card, naming the dependants, and nothing moves.
-		var kept []*Card
-		for _, c := range chosen {
-			if deps := waitingNeeding(s, c.ID, dropping); len(deps) > 0 {
-				p.refuse(c.ID, fmt.Sprintf("%s is needed by %s; drop them too with --cascade", c.ID, strings.Join(deps, ", ")))
-				dropping[c.ID] = false
+		// Without Cascade no card is refused for a dependant: every waiting
+		// primary that names a dropping id has that id detached from its
+		// needs at once, with one DETACHED line (docs/SPEC-SPRINT.md section
+		// 11, "A need that is gone"). The card is not moved here: the next
+		// tick's drain moves a card with nothing left to wait for to ready.
+		for _, w := range s.Work.Column(Waiting) {
+			if dropping[w.ID] {
 				continue
 			}
-			kept = append(kept, c)
+			var gone []string
+			for _, n := range Split(w.F("needs")) {
+				if dropping[n] {
+					gone = append(gone, n)
+				}
+			}
+			if len(gone) == 0 {
+				continue
+			}
+			_, set, unset, note := detachIDs(w, gone, s.Now)
+			detached = append(detached, Unit{Key: w.ID, Stream: w.Row,
+				Changes: []Change{change(Work, setEntry(w, set, unset...))},
+				Notes:   []Note{note},
+				Moved:   w.ID + " DETACHED need " + strings.Join(gone, ",")})
 		}
-		chosen = kept
 	}
 	for _, c := range chosen {
 		u := Unit{Key: c.ID, Stream: c.Row}
@@ -1913,6 +1912,7 @@ func Drop(s *Snapshot, r DropReq) Plan {
 		u.Moved = fmt.Sprintf("%s %s -> off the table (%s)", c.ID, c.Col, r.Reason)
 		p.Units = append(p.Units, u)
 	}
+	p.Units = append(p.Units, detached...)
 	// the weights the drop changes: every primary the dropped cards waited on (weight.go)
 	p.Units = append(p.Units, weighUnits(s, nil, dropping)...)
 	settle(&p, s, r.Who, dropping, dropping)

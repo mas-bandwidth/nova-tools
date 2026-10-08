@@ -170,8 +170,9 @@ func TestAChainOfSentinelsIsReleasedOneAtATime(t *testing.T) {
 }
 
 // H7: a card before a sentinel that is dropped is no longer before it: the
-// stop is reached with no judgment. A need the sentinel names that is
-// dropped blocks it like any waiting card; ack waives it, and it is reached.
+// stop is reached with no judgment. A need the sentinel names that is dropped
+// is detached like any waiting card's, and the stop is reached when nothing
+// else holds it.
 func TestADroppedNeedOfASentinel(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 2)
@@ -184,18 +185,14 @@ func TestADroppedNeedOfASentinel(t *testing.T) {
 	require.Empty(t, open, "a card before the stop dropped: open %+v, waits %v", open, WaitsFor(w.s, w.s.Work.Card("stop"), nil))
 	require.Equal(t, "x", strings.Join(WaitsFor(w.s, w.s.Work.Card("stop"), nil), ","), "a card before the stop dropped: open %+v, waits %v", open, WaitsFor(w.s, w.s.Work.Card("stop"), nil))
 	w.seedDroppedNeed("x")
-	w.must(Resolve(w.s, ResolveReq{}))
-	blocked := w.openOn("stop")
-	require.Len(t, blocked, 1, "blocked: %+v", blocked)
-	require.Equal(t, NBlocked, blocked[0].Note.Type, "blocked: %+v", blocked)
-	require.Empty(t, w.s.Work.Card("stop").F("reached"), "blocked: %+v", blocked)
-	p := w.must(Ack(w.s, AckReq{Notes: []string{blocked[0].Note.ID}, Reason: "not needed", Who: "coordinator"}))
+	p := w.must(Resolve(w.s, ResolveReq{}))
 	stop := w.s.Work.Card("stop")
-	require.Equal(t, "x", stop.F("waived"), "ack: %v", stop.Fields)
-	require.NotEmpty(t, stop.F("reached"), "ack: %v", stop.Fields)
-	require.Equal(t, Waiting, stop.Col, "ack: %v", stop.Fields)
-	require.Len(t, notesIn(p, NSentinelReached), 1, "ack: %v", stop.Fields)
-	w.clean("waived")
+	require.Equal(t, "", stop.F("needs"), "the dropped need is detached from the stop: %q", stop.F("needs"))
+	require.NotEmpty(t, stop.F("reached"), "the stop is reached once its only need is detached: %+v", stop.Fields)
+	require.Equal(t, Waiting, stop.Col, "the stop waits for the coordinator's release: %+v", stop.Fields)
+	require.Len(t, notesIn(p, NSentinelReached), 1, "the stop is reached: %+v", stop.Fields)
+	require.Len(t, w.notesOf(NNeedDetached), 1, "one detach story line: %+v", w.notesOf(NNeedDetached))
+	w.clean("detached")
 	tp, _ := TickDone(w.s, TickReq{})
 	require.True(t, tp.Empty(), "the sprint is done with a sentinel waiting: %+v", tp)
 	w.must(release(w, "done", "stop"))

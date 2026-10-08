@@ -91,22 +91,11 @@ func (n *State) tickDone() {
 	}
 }
 
-// tickResolve is T1: every stream's waiting cards in score order; a primary
-// whose needs are all met moves to ready; a sentinel is never moved and is
-// marked reached, its judgment opened; a dropped need is the blocked
-// judgment, once.
+// tickResolve is T1: every stream's waiting cards in score order; a named need
+// whose card is gone is detached from the card, and a primary whose needs are
+// all met moves to ready; a sentinel is never moved and is marked reached, its
+// judgment opened (docs/SPEC-SPRINT.md section 11, "A need that is gone").
 func (n *State) tickResolve() {
-	for _, st := range n.StreamNames() {
-		for _, p := range n.StreamOrder(st) {
-			pr := n.Primaries[p]
-			if pr.State != Waiting {
-				continue
-			}
-			if len(n.DroppedNeeds(p)) > 0 && !n.Open[Judgment{JBlocked, p}] {
-				n.open(JBlocked, p)
-			}
-		}
-	}
 	n.resolveAll()
 }
 

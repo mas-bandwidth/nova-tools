@@ -105,6 +105,13 @@ const (
 	NRepeatSuffix    = "; a second time for the same cause"
 )
 
+// NNeedDetached is a happened story line on a waiting card: a named need whose
+// card is gone (dropped, replaced, archived or never admitted) was detached
+// from its DEPENDS-ON line (docs/SPEC-SPRINT.md section 11, "A need that is
+// gone"). The blocked judgments above are retired: the drain detaches instead
+// of raising them.
+const NNeedDetached = "need detached"
+
 // Decisions open to each judgment type.
 var Decisions = map[string][]string{
 	NReadyToAccept:   {"accept", "rework", "drop"},

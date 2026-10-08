@@ -98,14 +98,19 @@ func TestAddRefusesACycle(t *testing.T) {
 	require.Len(t, p.Refused, 2, "a need of itself: %+v", p)
 }
 
-// H11: a dropped need acknowledged by the coordinator is waived, by whom and
-// when, and counts as satisfied: the primary moves to ready in the ack.
+// H11 (legacy): a dropped need acknowledged by the coordinator is waived, by
+// whom and when, and counts as satisfied: the primary moves to ready in the
+// ack. The drain no longer writes the blocked judgment (it detaches instead,
+// needs_detach_test.go, "A need that is gone"), so the judgment is seeded as a
+// record a store from before the change still holds.
 func TestAWaivedNeedIsSatisfied(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 1)
 	w.must(Add(w.s, AddReq{Stream: "s2", IDs: []string{"b"}, Needs: []string{"s1-1"}}))
 	w.seedDroppedNeed("s1-1")
-	w.must(Resolve(w.s, ResolveReq{}))
+	n := judgment(NBlocked, "s2", w.s.Now, 0, "b")
+	n.What, n.Who, n.Needs = "b needs s1-1, dropped", "coordinator", []string{"s1-1"}
+	w.note(n)
 	blocked := w.openOn("b")
 	require.Len(t, blocked, 1, "blocked: %v", blocked)
 	require.Equal(t, NBlocked, blocked[0].Note.Type, "blocked: %v", blocked)

@@ -167,6 +167,18 @@ func unmet(u Unit, pre *Snapshot, landing map[string]bool) string {
 			}
 			pc := pre.Work.Card(e.ID)
 			needs, waived = Split(pc.F("needs")), append(Split(pc.F("waived")), Split(e.Set["waived"])...)
+			// the entry that moves the card to ready may also write its needs
+			// off it: the drain detaches a gone need in the same entry
+			// (docs/SPEC-SPRINT.md section 11, "A need that is gone"), and it
+			// is the entry's own needs field the move leaves
+			if v, ok := e.Set["needs"]; ok {
+				needs = Split(v)
+			}
+			for _, name := range e.Unset {
+				if name == "needs" {
+					needs = nil
+				}
+			}
 			needs = append(needs, PositionWaits(pre, pc, landing)...)
 		default:
 			continue

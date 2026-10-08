@@ -428,11 +428,11 @@ func (s State) Placedp(p string) bool {
 }
 
 // NeedsMet is SprintTables.tla NeedsMet(p): every need has landed, or was
-// dropped and waived.
+// dropped (gone) and so detached, or waived.
 func (s State) NeedsMet(p string) bool {
 	pr := s.Primaries[p]
 	for _, q := range pr.Needs {
-		if !s.InWork(q, Landed) && !slices.Contains(pr.Waived, q) {
+		if !s.InWork(q, Landed) && !slices.Contains(pr.Waived, q) && s.Placedp(q) {
 			return false
 		}
 	}

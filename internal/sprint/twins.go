@@ -114,6 +114,12 @@ func relinked(s *Snapshot, olds []string, nw string, adding *Card, who, reason s
 			FieldRelinked: fmt.Sprintf("%s -> %s %s by %s", strings.Join(gone, ","), nw, stamp(s.Now), orDash(who))}
 		u := Unit{Key: d.ID, Stream: d.Row, Changes: []Change{change(Work, setEntry(d, set))},
 			Moved: fmt.Sprintf("%s needs %s -> %s", d.ID, strings.Join(gone, ","), nw)}
+		// the recut detaches the old id at once: one story line names the need
+		// it was replaced by (docs/SPEC-SPRINT.md section 11, "A need that is
+		// gone")
+		note := happened(NNeedDetached, d.Row, s.Now, d.ID)
+		note.What = d.ID + " detached need " + Preview(gone, ",") + " (replaced by " + nw + ")"
+		u.Notes = append(u.Notes, note)
 		for _, o := range s.Open {
 			if o.Subject() != d.ID || (o.Note.Type != NBlocked && o.Note.Type != NMissingNeed) {
 				continue

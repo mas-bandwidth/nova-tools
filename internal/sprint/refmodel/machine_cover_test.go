@@ -257,17 +257,15 @@ func TestMachineCoverTickResolve(t *testing.T) {
 			cells: map[string]string{"e1": Waiting},
 			open:  []Judgment{{JReached, "e1"}},
 		},
-		"a dropped need opens the blocked judgment once": {
+		"a dropped need is detached and the card is ready": {
 			s: func() State {
 				s := mcCard(mcSprint(), "s1", "d1", Off, 1)
 				s = mcCard(s, "s1", "p1", Waiting, 2, "d1")
 				s = mcCard(s, "s1", "d2", Off, 3)
 				s = mcCard(s, "s1", "p4", Waiting, 4, "d2")
-				s.Open[Judgment{JBlocked, "p1"}] = true
 				return s
 			}(),
-			cells: map[string]string{"p1": Waiting, "p4": Waiting},
-			open:  []Judgment{{JBlocked, "p1"}, {JBlocked, "p4"}},
+			cells: map[string]string{"p1": Ready, "p4": Ready},
 		},
 		"a card out of waiting is not resolved": {
 			s:     mcCard(mcSprint(), "s1", "p1", Review, 1),

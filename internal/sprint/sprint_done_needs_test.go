@@ -1,7 +1,6 @@
 package sprint
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -56,36 +55,24 @@ func TestAnEmptySprintIsNotDone(t *testing.T) {
 	require.True(t, p.Empty(), "an empty sprint is done: %+v", p)
 }
 
-// Acknowledging a blocked judgment waives only the needs it names; a need
-// dropped after it was written is its own judgment.
-func TestAckWaivesOnlyTheNeedsItsJudgmentNames(t *testing.T) {
+// A card with two dropped needs has both detached in one tick, named by one
+// story line; no blocked judgment is raised (docs/SPEC-SPRINT.md section 11,
+// "A need that is gone").
+func TestResolveDetachesEveryDroppedNeedOfOneCard(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 2)
 	w.must(Add(w.s, AddReq{Stream: "s2", IDs: []string{"b"}, Needs: []string{"s1-1", "s1-2"}}))
 	w.seedDroppedNeed("s1-1")
-	w.must(Resolve(w.s, ResolveReq{}))
 	w.seedDroppedNeed("s1-2")
 	w.must(Resolve(w.s, ResolveReq{}))
-	open := w.openOn("b")
-	require.Len(t, open, 2, "blocked judgments on b: %+v", open)
-	require.Equal(t, "s1-1|s1-2", strings.Join(open[0].Note.Needs, ",")+"|"+strings.Join(open[1].Note.Needs, ","), "blocked judgments on b: %+v", open)
-	// A resolve writes none again.
-	w.do(Resolve(w.s, ResolveReq{}))
-	require.Len(t, w.notesOf(NBlocked), 2, "blocked notes after resolve: %d", len(w.notesOf(NBlocked)))
-	w.must(Ack(w.s, AckReq{Notes: []string{open[0].Note.ID}, Reason: "fine"}))
-	b := w.s.Work.Card("b")
-	require.Equal(t, Waiting, b.Col, "the first ack: %s waived=%q", b.Col, b.F("waived"))
-	require.Equal(t, "s1-1", b.F("waived"), "the first ack: %s waived=%q", b.Col, b.F("waived"))
-	w.must(Ack(w.s, AckReq{Notes: []string{open[1].Note.ID}, Reason: "fine too"}))
-	b = w.s.Work.Card("b")
-	require.Equal(t, Ready, b.Col, "the second ack: %s waived=%q", b.Col, b.F("waived"))
-	require.Equal(t, "s1-1,s1-2", b.F("waived"), "the second ack: %s waived=%q", b.Col, b.F("waived"))
-	needs, _ := NeedsOf(w.s, "b")
-	require.Len(t, needs, 2, "needs of b: %+v", needs)
-	require.True(t, needs[0].Waived, "needs of b: %+v", needs)
-	require.True(t, needs[1].Waived, "needs of b: %+v", needs)
-	require.NotEmpty(t, needs[1].WaivedAt, "needs of b: %+v", needs)
-	w.clean("waived")
+	require.Equal(t, Ready, w.state("b"), "the drain readies b: %s", w.state("b"))
+	require.Equal(t, "", w.s.Work.Card("b").F("needs"), "both needs are off the card: %q", w.s.Work.Card("b").F("needs"))
+	notes := w.notesOf(NNeedDetached)
+	require.Len(t, notes, 1, "one story line for the card: %+v", notes)
+	require.Contains(t, notes[0].What, "s1-1", "the story names every detached need: %q", notes[0].What)
+	require.Contains(t, notes[0].What, "s1-2", "the story names every detached need: %q", notes[0].What)
+	require.Empty(t, w.openOn("b"), "no blocked judgment is raised: %+v", w.openOn("b"))
+	w.clean("detached")
 }
 
 // tickDone is the done part's plan alone.

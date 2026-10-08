@@ -194,39 +194,6 @@ func waive(s *Snapshot, id, who string, judgments []Note) (Change, []Note) {
 	return change(Work, setEntry(c, set)), nil
 }
 
-// blockedNote is the judgment that a waiting primary needs primaries dropped
-// off the table (gone): it names them, and acknowledging it waives those.
-func blockedNote(s *Snapshot, stream, id, who string, gone []string) Note {
-	n := judgment(NBlocked, stream, s.Now, 0, id)
-	n.What, n.Who, n.Needs = id+" needs "+Preview(gone, ",")+", dropped", who, gone
-	return n
-}
-
-// unblocked is the needs (gone) of a waiting primary that no open judgment
-// of this type names: a need dropped after the judgment was written is
-// its own judgment. A blocked judgment that names none names every one.
-func unblocked(open []Open, id string, gone []string, typ string) []string {
-	named := map[string]bool{}
-	for _, o := range open {
-		if o.Note.Type != typ || o.Subject() != id {
-			continue
-		}
-		if len(o.Note.Needs) == 0 {
-			return nil
-		}
-		for _, n := range o.Note.Needs {
-			named[n] = true
-		}
-	}
-	var out []string
-	for _, g := range gone {
-		if !named[g] {
-			out = append(out, g)
-		}
-	}
-	return out
-}
-
 // strandedNote is the judgment of a stranded primary: failed work is not
 // read, so asking is not a decision for it.
 func strandedNote(s *Snapshot, pr *Card, typ, why, who string) Note {

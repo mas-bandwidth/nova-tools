@@ -116,9 +116,6 @@ func Add(s State, a AddArgs, scores map[string]float64) (State, error) {
 			n.setPrimary(id, func(p *Primary) { p.Reached = true })
 			n.open(JReached, id)
 		}
-		if len(n.DroppedNeeds(id)) > 0 {
-			n.open(JBlocked, id)
-		}
 	}
 	return n, nil
 }
@@ -692,25 +689,18 @@ func Rework(s State, p, m string) (State, error) {
 
 // Drop is SprintTables.tla Drop(p) (line 478): off the table. Its
 // unfinished work card is withdrawn, its outstanding read cards retire, its
-// merge place goes (the returned place too, spec section 7); work last. A
-// waiting primary that needs it makes the drop refused, naming the
-// dependants: the real Drop without Cascade refuses for that card, and this
-// model matches it (docs/SPEC-SPRINT.md section 11). Every judgment on it
-// closes. A sprint it finishes, by dropping the last open card, is found done
-// by the tick's judgment tickDone: with nothing open and a card dropped, the
-// sprint is done.
+// merge place goes (the returned place too, spec section 7); work last. Every
+// waiting card that names it has the need detached at once, and no blocked
+// judgment is raised (docs/SPEC-SPRINT.md section 11, "A need that is gone").
+// Every judgment on it closes. A sprint it finishes, by dropping the last open
+// card, is found done by the tick's judgment tickDone: with nothing open and a
+// card dropped, the sprint is done.
 func Drop(s State, p string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
 	}
 	if !s.Placedp(p) || s.InWork(p, Landed) {
 		return s, refuse("%s is not an open primary on the table", p)
-	}
-	for _, q := range Keys(s.Primaries) {
-		qp := s.Primaries[q]
-		if qp.State == Waiting && slices.Contains(qp.Needs, p) {
-			return s, refuse("%s is needed by %s; drop them too with --cascade", p, q)
-		}
 	}
 	n := s.Clone()
 	st := n.Primaries[p].Stream
@@ -733,10 +723,26 @@ func Drop(s State, p string) (State, error) {
 	x := n.Streams[st]
 	x.State = n.streamAfter(st, x.State, nil, []string{p})
 	n.Streams[st] = x
+	// the dropped id is detached from every waiting dependant at once
+	// (docs/SPEC-SPRINT.md section 11, "A need that is gone"); no blocked
+	// judgment is raised
 	for _, q := range Keys(n.Primaries) {
 		qp := n.Primaries[q]
-		if qp.State == Waiting && slices.Contains(qp.Needs, p) && !slices.Contains(qp.Waived, p) {
-			n.open(JBlocked, q)
+		if qp.State != Waiting {
+			continue
+		}
+		var kept []string
+		detached := false
+		for _, need := range qp.Needs {
+			if need == p {
+				detached = true
+				continue
+			}
+			kept = append(kept, need)
+		}
+		if detached {
+			qp.Needs = kept
+			n.Primaries[q] = qp
 		}
 	}
 	n.closeOn(p)
@@ -875,13 +881,31 @@ func MergeGreen(s State, stream string, batch int) (State, error) {
 	return n, nil
 }
 
-// resolveAll moves every waiting primary whose needs are all met to ready,
-// and marks reached every sentinel whose needs are all met, opening its
+// resolveAll detaches from every waiting primary each named need whose card is
+// gone (docs/SPEC-SPRINT.md section 11, "A need that is gone"; the engine's
+// resolvePlan), then moves every waiting primary whose needs are all met to
+// ready, and marks reached every sentinel whose needs are all met, opening its
 // judgment (spec sections 7 and 16).
 func (n *State) resolveAll() {
 	for _, p := range Keys(n.Primaries) {
 		pr := n.Primaries[p]
-		if pr.State != Waiting || !n.NeedsMet(p) {
+		if pr.State != Waiting {
+			continue
+		}
+		var kept []string
+		detached := false
+		for _, q := range pr.Needs {
+			if n.Placedp(q) {
+				kept = append(kept, q)
+			} else {
+				detached = true
+			}
+		}
+		if detached {
+			pr.Needs = kept
+			n.Primaries[p] = pr
+		}
+		if !n.NeedsMet(p) {
 			continue
 		}
 		if pr.Kind == KindSentinel {

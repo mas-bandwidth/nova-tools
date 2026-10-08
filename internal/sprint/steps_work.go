@@ -590,9 +590,6 @@ func Add(s *Snapshot, r AddReq) Plan {
 			u.Moved += "; waits behind sentinel " + a.behind
 		}
 		u.Changes = append(head, change(Work, createEntry(a.id, r.Stream, col, a.score, fields)))
-		if gone := droppedNeeds(s, a.needs); len(gone) > 0 {
-			u.Notes = append(u.Notes, blockedNote(s, r.Stream, a.id, r.Who, gone))
-		}
 		head = nil
 		p.Units = append(p.Units, u)
 	}
@@ -769,6 +766,80 @@ func missingNeeds(s *Snapshot, needs []string) []string {
 	return out
 }
 
+// GoneNeed is why a named need is gone, "" when the card it names is on the
+// table and still to come (docs/SPEC-SPRINT.md section 11, "A need that is
+// gone"; tla/Needs.tla, Gone). A need is gone when its card was dropped,
+// replaced by its recut twin, archived, or never admitted at all (a typo, a
+// card never admitted). A landed need is satisfied by landing: WaitsFor leaves
+// it out, so it is not gone here.
+func GoneNeed(s *Snapshot, n string) string {
+	c := s.Work.Card(n)
+	switch {
+	case c == nil:
+		return "names no card"
+	case c.Placed():
+		return ""
+	case strings.HasPrefix(c.F("reason"), "replaced by "):
+		return c.F("reason")
+	case c.F("outcome") == "dropped":
+		return "dropped"
+	default:
+		return "off the table (" + orDash(c.F("outcome")) + ")"
+	}
+}
+
+// needsFields is the set and unset that write a waiting card's remaining
+// needs: the field unset when none is left.
+func needsFields(kept []string) (set map[string]string, unset []string) {
+	if len(kept) == 0 {
+		return nil, []string{"needs"}
+	}
+	return map[string]string{"needs": strings.Join(kept, ",")}, nil
+}
+
+// detachNote is the one story line a detach writes on the waiting card: the
+// needs it names and why each is gone.
+func detachNote(c *Card, gone, why []string, now time.Time) Note {
+	n := happened(NNeedDetached, c.Row, now, c.ID)
+	n.What = c.ID + " detached need " + Preview(gone, ",") + " (" + strings.Join(why, "; ") + ")"
+	return n
+}
+
+// detachIDs is the detach of the named gone ids from a waiting card: the
+// remaining needs, the fields that write them, and the story line (drop uses
+// it for the cards that name a dropping id).
+func detachIDs(c *Card, gone []string, now time.Time) (kept []string, set map[string]string, unset []string, note Note) {
+	var why []string
+	for _, n := range Split(c.F("needs")) {
+		if contains(gone, n) {
+			why = append(why, n+" dropped")
+		} else {
+			kept = append(kept, n)
+		}
+	}
+	set, unset = needsFields(kept)
+	return kept, set, unset, detachNote(c, gone, why, now)
+}
+
+// detachGone is detachIDs for the drain: every named need of the waiting card
+// whose card is gone, with its reason; ok is false when none is gone.
+func detachGone(s *Snapshot, c *Card) (kept []string, set map[string]string, unset []string, note Note, ok bool) {
+	var gone, why []string
+	for _, n := range Split(c.F("needs")) {
+		if w := GoneNeed(s, n); w != "" {
+			gone = append(gone, n)
+			why = append(why, n+" "+w)
+		} else {
+			kept = append(kept, n)
+		}
+	}
+	if len(gone) == 0 {
+		return Split(c.F("needs")), nil, nil, Note{}, false
+	}
+	set, unset = needsFields(kept)
+	return kept, set, unset, detachNote(c, gone, why, s.Now), true
+}
+
 func placeWord(c *Card) string {
 	if c.Placed() {
 		return c.Row + ":" + c.Col
@@ -823,82 +894,130 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 				p.Closes = append(p.Closes, o)
 			}
 		}
-		var waits, dropped, missing []string
-		for _, n := range WaitsFor(s, c, nil) {
-			if s.Work.Card(n) == nil {
-				missing = append(missing, n)
-			} else if len(droppedNeeds(s, []string{n})) > 0 {
-				dropped = append(dropped, n)
-			} else {
-				waits = append(waits, n)
-			}
+		// A named need whose card is gone is detached from the waiting card
+		// (docs/SPEC-SPRINT.md section 11, "A need that is gone"; tla/Needs.tla,
+		// TickDrain): the DEPENDS-ON view keeps the remaining needs only, and
+		// one story line names each detached need and why. The judgment "a
+		// primary is blocked on something dropped" is retired: nothing raises
+		// it.
+		kept, set, unset, note, detached := detachGone(s, c)
+		after := c
+		if detached {
+			after = withField(c, "needs", strings.Join(kept, ","))
 		}
-		if len(missing) > 0 {
-			if left := unblocked(bySubject[c.ID], c.ID, missing, NMissingNeed); len(left) > 0 {
-				n := judgment(NMissingNeed, c.Row, s.Now, 0, c.ID)
-				n.What, n.Who, n.Needs = c.ID+" needs "+Preview(left, ",")+", not on the table", r.Who, left
-				p.Notes = append(p.Notes, n)
-			}
-			if len(r.IDs) > 0 {
-				p.refuse(c.ID, "needs "+strings.Join(missing, ",")+", not on the table")
-			}
+		waits := WaitsFor(s, after, nil)
+		moved := c.ID + " detached " + strings.Join(Split(c.F("needs")), ",") + " -> " + strings.Join(kept, ",")
+		detachUnit := func() Unit {
+			return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, set, unset...))},
+				Notes: []Note{note}, Moved: moved}
 		}
-		if len(dropped) > 0 {
-			if left := unblocked(bySubject[c.ID], c.ID, dropped, NBlocked); len(left) > 0 {
-				p.Notes = append(p.Notes, blockedNote(s, c.Row, c.ID, r.Who, left))
-			}
-			if len(r.IDs) > 0 {
-				p.refuse(c.ID, "needs "+strings.Join(dropped, ",")+", which was dropped")
-			}
-			continue
-		}
-		if len(missing) > 0 {
-			continue
-		}
-		if len(waits) > 0 {
+		switch {
+		case len(waits) > 0:
 			if len(r.IDs) > 0 {
 				p.refuse(c.ID, "waits for "+strings.Join(waits, ","))
 			}
+			if detached {
+				p.Units = append(p.Units, detachUnit())
+			}
 			continue
-		}
-		if IsHeld(c) { // held, never reached or ready: the coordinator releases it
+		case IsHeld(c): // held, never reached or ready: the coordinator releases it
 			if len(r.IDs) > 0 {
 				p.refuse(c.ID, "held (add --held): the coordinator releases it: nova-sprint release "+c.ID+" --reason <text>")
 			}
+			if detached {
+				p.Units = append(p.Units, detachUnit())
+			}
 			continue
-		}
-		if IsSentinel(c) { // reached, never ready: the coordinator releases it
-			if c.F("reached") == "" && Reachable(s, c, nil) {
-				p.Units = append(p.Units, reachUnit(s, c, nil, r.Who))
-			} else if len(r.IDs) > 0 {
-				p.refuse(c.ID, "a reached sentinel: the coordinator releases it: nova-sprint release "+c.ID+" --reason <text>")
+		case IsSentinel(c): // reached, never ready: the coordinator releases it
+			switch {
+			case c.F("reached") != "":
+				if detached {
+					p.Units = append(p.Units, detachUnit())
+				} else if len(r.IDs) > 0 {
+					p.refuse(c.ID, "a reached sentinel: the coordinator releases it: nova-sprint release "+c.ID+" --reason <text>")
+				}
+			case Reachable(s, after, nil):
+				// reached in the same entry that writes the detached needs
+				fields := map[string]string{"reached": stamp(s.Now)}
+				maps.Copy(fields, set)
+				u := reachUnit(s, c, nil, r.Who)
+				u.Changes = []Change{change(Work, setEntry(c, fields, unset...))}
+				if detached {
+					u.Notes = append(u.Notes, note)
+				}
+				p.Units = append(p.Units, u)
+			default:
+				if len(r.IDs) > 0 {
+					p.refuse(c.ID, "a reached sentinel: the coordinator releases it: nova-sprint release "+c.ID+" --reason <text>")
+				} else if detached {
+					p.Units = append(p.Units, detachUnit())
+				}
 			}
 			continue
 		}
-		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, readyStamp(c, s.Now)))},
-			Moved: c.ID + " waiting -> ready"})
+		fields := readyStamp(c, s.Now)
+		maps.Copy(fields, set)
+		u := Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, fields, unset...))}}
+		if detached {
+			u.Notes = []Note{note}
+		}
+		u.Moved = c.ID + " waiting -> ready"
+		p.Units = append(p.Units, u)
 	}
 	return p
 }
 
 // resolveAfter is resolve as a trigger of a step that lands primaries
 // (landing, by id): every waiting primary whose needs have all landed, with
-// this step's, moves to ready in the same step; a sentinel is marked reached
-// instead, and waits for the coordinator's release.
+// this step's, moves to ready in the same step; a named need whose card is
+// gone is detached as the drain detaches it (docs/SPEC-SPRINT.md section 11,
+// "A need that is gone"); a sentinel is marked reached instead, and waits for
+// the coordinator's release.
 func resolveAfter(s *Snapshot, landing map[string]bool, who string) []Unit {
 	var out []Unit
 	for _, c := range s.Work.Column(Waiting) {
-		if landing[c.ID] || IsHeld(c) || len(WaitsFor(s, c, landing)) > 0 {
+		if landing[c.ID] || IsHeld(c) {
 			continue
 		}
-		if IsSentinel(c) {
-			if c.F("reached") == "" && Reachable(s, c, landing) {
-				out = append(out, reachUnit(s, c, landing, who))
+		kept, set, unset, note, detached := detachGone(s, c)
+		after := c
+		if detached {
+			after = withField(c, "needs", strings.Join(kept, ","))
+		}
+		moved := c.ID + " detached " + strings.Join(Split(c.F("needs")), ",") + " -> " + strings.Join(kept, ",")
+		detachUnit := func() Unit {
+			return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, set, unset...))},
+				Notes: []Note{note}, Moved: moved}
+		}
+		if len(WaitsFor(s, after, landing)) > 0 {
+			if detached {
+				out = append(out, detachUnit())
 			}
 			continue
 		}
-		out = append(out, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, readyStamp(c, s.Now)))},
-			Moved: c.ID + " waiting -> ready (its needs landed)"})
+		if IsSentinel(c) {
+			if c.F("reached") == "" && Reachable(s, after, landing) {
+				u := reachUnit(s, c, landing, who)
+				if detached {
+					fields := map[string]string{"reached": stamp(s.Now)}
+					maps.Copy(fields, set)
+					u.Changes = []Change{change(Work, setEntry(c, fields, unset...))}
+					u.Notes = append(u.Notes, note)
+				}
+				out = append(out, u)
+			} else if detached {
+				out = append(out, detachUnit())
+			}
+			continue
+		}
+		fields := readyStamp(c, s.Now)
+		maps.Copy(fields, set)
+		u := Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, fields, unset...))},
+			Moved: c.ID + " waiting -> ready (its needs landed)"}
+		if detached {
+			u.Notes = []Note{note}
+		}
+		out = append(out, u)
 	}
 	return out
 }

@@ -147,27 +147,24 @@ func TestResolveReadiesAWaitingPrimaryWhoseNeedsLanded(t *testing.T) {
 	assert.Equal(t, "s1-2 waiting -> ready", got[0].Words, "the words: %q", got[0].Words)
 }
 
-func TestResolveRaisesABlockedJudgmentOnceForADroppedNeed(t *testing.T) {
+func TestResolveDetachesADroppedNeedAndTheModelAgrees(t *testing.T) {
 	t.Parallel()
 	w := sprintOf(t, "m1")
 	w.add(t, "s1", 1)
 	w.addOne(t, "s1", "s1-2", "s1-1")
-	// seed s1-1 dropped off the table, the state the drop verb now refuses to
-	// make while s1-2 needs it (docs/SPEC-SPRINT.md section 11)
+	// seed s1-1 dropped off the table: the drain detaches it and readies the
+	// card, and the blocked judgment the old rule wrote is retired
+	// (docs/SPEC-SPRINT.md section 11, "A need that is gone")
 	c := w.s.Work.Card("s1-1")
 	c.Row, c.Col = "", ""
 	c.Fields["outcome"] = "dropped"
 	c.Rev++
 	w.s.Work.Put(c)
-	// the resolve opens the blocked judgment; the tick writes none again
 	w.must(t, sprint.Resolve(w.s, sprint.ResolveReq{Who: sprint.MachineActor}))
+	require.Equal(t, sprint.Ready, w.s.Work.Card("s1-2").Col, "the drain readies s1-2: %s", w.s.Work.Card("s1-2").Col)
+	require.Equal(t, "", w.s.Work.Card("s1-2").F("needs"), "the dropped need is detached: %q", w.s.Work.Card("s1-2").F("needs"))
+	require.Empty(t, openIDs(w, sprint.NBlocked), "the retired judgment is not written")
 	expect(t, refmodel.ResolveMoves(w.snapshot(w.fresh()), later(0)))
-	// with the judgment closed, the tick raises it
-	snap := w.snapshot(w.fresh())
-	snap.Tables = withoutJudgments(snap.Tables, sprint.NBlocked)
-	got := refmodel.ResolveMoves(snap, later(0))
-	expect(t, got, "open a primary is blocked on something dropped [s1-2]")
-	assert.Equal(t, []string{"count=1", "needs=s1-1", "who=machine"}, got[0].Attrs, "the blocked judgment names its need: %v", got[0].Attrs)
 }
 
 func TestResolveReachesASentinelWhoseNeedsLanded(t *testing.T) {
