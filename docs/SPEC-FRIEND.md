@@ -1741,14 +1741,15 @@ lane's run is its own process group, so a daemon killed, crashed or restarted
 leaves its runs working on; until 2026-10-08 the daemon that started up
 finished every card still marked started FAILED at once ("its run is gone"),
 over a run that was still working, and the stopgap runners had an `adopt` for
-exactly this. Now each card turn's process id is recorded on its started mark
-(`Started.Pid`, handed by the exec through the context, `WithProcessStarted`,
-written by the step, `pidStep`), and a daemon starting up (`endStarted`)
-adopts a run whose process is alive (`Daemon.ProcessAlive`, the kernel's word
-in `run`): the lane holds the card (`adoptRuns`: its own lane when free, else
+exactly this. Before the child execs its harness, a launch gate requires a
+durable `RUN` receipt containing a fresh run ID, PID and native process birth
+identity. The run ID must match the durable `Started` card. A daemon starting
+up (`endStarted`) adopts only that matching live run, transferring the old
+daemon's fresh `LANE` mark atomically to its new lane before ordinary lane
+exclusion. A mismatched or reused PID is never adopted. The lane holds the card (`adoptRuns`: its own lane when free, else
 the first free one) and waits on the process (`WaitProcess`, else a poll every
 `AdoptPoll`), pushing nothing into it, the silence watch leaving it alone; the
-card ends as any run's does when the process exits (her report the finish; an
+card ends as any run's does when its process group exits (her report the finish; an
 adopted run that ends with no report ends the card as a gone run's does, set
 aside). Only a run whose process is gone is ended as before. The model:
 `tla/LaneEnd.tla`, `Down` leaves a run alive or gone, `Restart` adopts the
@@ -1758,11 +1759,13 @@ a run alive) holds with `NoOrphan`, `HersStands`, `RedealOnce` and `Finished`
 `MCLaneEndBrokenFailAlive.cfg` (the daemon before: `Adopts = FALSE`) breaks it
 at the first restart over a live run. Tests:
 `TestARestartedDaemonAdoptsALiveLaneRunAndFinishesItsCard`,
-`TestAStartedCardWhoseRunIsGoneIsEndedAndARunsPidIsRecorded`. Not done: a
+`TestAStartedCardWhoseRunIsGoneIsEndedAndARunsPidIsRecorded`,
+`TestAReusedPIDCannotAdoptAnotherRun`, and
+`TestRunCannotExecuteBeforeItsDurableIdentityReceipt`. A group whose leader
+has gone while members remain is held as unresolved, without adopting a
+different process or writing a failed finish. Not done: a
 daemon SIGKILLed loses no run to this, but a run it adopts and that outlives
 the card's cap is not capped by the adopting daemon (the cap is the turn's);
-and `ProcessAlive` is a pid, so a pid reused by another process after a long
-outage reads alive until it ends (the daemon's restart is launchd's, seconds).
 
 The lane waits for the turn to end and looks for the card's `RESULT.md`:
 there, the card is done and the lane takes the next; a turn that exited 0 and
@@ -2111,9 +2114,9 @@ writes it, and no network is asked. A card with a `REPORT.md` is not handed to
 a lane.
 
 A lane marks each card it begins as started in `lanes.json` (`started`, keyed
-by the job, `<id>~<epoch>[.g<gen>]`: its lane, the card and when) and clears it at the card's end. A daemon starting up
-finds every card still marked: the run that held it is gone with the daemon
-that ran it (exited, killed or crashed), so it ends each as above, the report's
+by the job, `<id>~<epoch>[.g<gen>]`: its lane, card, run ID and time) and clears it at the card's end. A daemon starting up
+checks the matching launch receipt and native process birth; when the run is
+gone it ends the card as above, the report's
 paragraph saying `the run is gone: the lane daemon started up at <t> and found
 the card begun at <t0> with no REPORT.md`, and sets the job aside (`given_up`, by
 job, as a set-aside card is) so it is not handed again. A daemon stopping leaves its running cards marked, for the next
@@ -2127,9 +2130,7 @@ run's end as before this card, breaks `NoOrphan` in 6 states.
 Not done here: the claude one-shot runner that marks a job started outside
 nova-friend (the runner that ran the six overnight runs) is not in this
 repository, and `take back`'s refusal of a card with a push is in
-internal/sprint; both are outside this card. A gone run is known by the
-daemon's restart alone: no process id is kept, so a harness that outlived its
-daemon is not checked.
+internal/sprint; both are outside this card.
 
 ### a-lane-is-capped-by-its-tier.w1 — a lane's wall time is capped by its card's tier (internal/friend/lane_cap.go)
 
@@ -2326,7 +2327,8 @@ for nothing. A card now has one live lane:
 - **The lane mark.** Before a card's first turn, a lane claims the card's job by
   writing `jobs/<job>/LANE` (`ClaimLane`). The write succeeds only where there is
   no mark yet, by an exclusive hard link, so of two lanes asking at once only one
-  wins. The mark reads `running: <friend> lane <n> (daemon <pid>.<run>) at <t>`.
+  wins. Stale takeovers, refreshes and recovery transfers serialize on a per-job
+  file lock. The mark reads `running: <friend> lane <n> (daemon <pid>.<run>) at <t>`.
   The daemon tag tells apart two daemons on one working directory. The lane
   rewrites the mark every `LaneMarkEvery` (30 s) while it holds the card. A mark
   that has not been rewritten for `LaneMarkStale` (2 m 30 s) belongs to a lane

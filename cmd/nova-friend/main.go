@@ -1504,15 +1504,16 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			return rowMode, rowWidth
 		},
-		LoadLanes:    func() (friend.LaneState, error) { return friend.ReadLanes(state) },
-		Sprint:       w.sprintAsk(server),
-		Rules:        rules,
-		Model:        c.Str("model"),
-		NeedsEnv:     friend.NeedsEnvOf(c.Str("needs-env"), c.Str("model")),
-		Getenv:       w.getenv,
-		ProcessAlive: friend.ProcessAlive,
-		Load:         w.load1(),
-		LaneHold:     func() string { return friend.ReadPause(state) },
+		LoadLanes:       func() (friend.LaneState, error) { return friend.ReadLanes(state) },
+		Sprint:          w.sprintAsk(server),
+		Rules:           rules,
+		Model:           c.Str("model"),
+		NeedsEnv:        friend.NeedsEnvOf(c.Str("needs-env"), c.Str("model")),
+		Getenv:          w.getenv,
+		ProcessAlive:    friend.ProcessAlive,
+		ProcessIdentity: friend.ProcessIdentity,
+		Load:            w.load1(),
+		LaneHold:        func() string { return friend.ReadPause(state) },
 		LaneHoldDown: func(_ context.Context, message string) error {
 			return friend.WritePause(state, message, w.now()) // her next beat says her down with it
 		},

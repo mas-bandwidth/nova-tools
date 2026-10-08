@@ -36,6 +36,9 @@ type Started struct {
 	// Pid is the run's process, once the exec has started it (WithProcessStarted); 0
 	// before. A daemon starting up adopts a run whose process is alive (adopt.go).
 	Pid int `json:"pid,omitempty"`
+	// RunID binds a durable launch receipt to this particular card turn.
+	RunID string `json:"run_id,omitempty"`
+	Owner string `json:"owner,omitempty"`
 }
 
 // LaneEnd is how a card's last run in a lane ended, as its finish says it.
@@ -254,7 +257,7 @@ func (l *loop) endCard(lane int, card Card, end LaneEnd, now time.Time) string {
 	delete(s.state.Started, filepath.Base(card.Outbox))
 	defer l.saveLanes(now)
 	mark := ""
-	if err := endLaneMark(d.Dir, filepath.Base(card.Outbox), l.laneWho(lane)); err != nil {
+	if err := endOwnedLaneMark(d.Dir, filepath.Base(card.Outbox), l.laneWho(lane), now); err != nil {
 		mark = fmt.Sprintf(" mark_error=%q", oneLine(err.Error(), 300)) // its other lanes end by her row alone
 	}
 	if exists(card.Report()) {
@@ -293,11 +296,21 @@ const FinishWait = 10 * time.Second
 func (l *loop) endStarted(now time.Time) {
 	s, d := l.lanes, l.d
 	for job, st := range s.state.Started {
-		if st.Pid > 0 && d.ProcessAlive != nil && d.ProcessAlive(st.Pid) {
+		receipt, receiptErr := readRunReceipt(d.Dir, job)
+		if receiptErr == nil && st.RunID != "" && receipt.RunID == st.RunID &&
+			receipt.Identity != "" && d.ProcessIdentity != nil && d.ProcessIdentity(receipt.PID) == receipt.Identity {
+			st.Pid = receipt.PID
+			s.state.Started[job] = st
 			// the run is alive past the daemon that started it: adopted once the lanes exist
 			// (laneStep, adoptRuns), never finished failed over a run still working
 			s.adopt = append(s.adopt, st)
 			d.Record(fmt.Sprintf("%s lane %d: card %s was begun at %s by the daemon before, and its run (pid %d) is alive: adopted, the lane waits on it", now.UTC().Format(time.RFC3339), st.Lane, st.Card.ID, st.At.UTC().Format(time.RFC3339), st.Pid))
+			continue
+		}
+		if receiptErr == nil && st.RunID != "" && receipt.RunID == st.RunID && ProcessGroupAlive(receipt.PID) {
+			// The leader's identity is lost but its group may still contain work.
+			// Keep the card owed until the group goes, without adopting a PID reused by another process.
+			s.adopt = append(s.adopt, st)
 			continue
 		}
 		words := l.endCard(st.Lane, st.Card, LaneEnd{Restart: now, Started: st.At}, now)

@@ -2,6 +2,8 @@ package friend
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -519,7 +521,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 					s.refused[jobName] = why
 					d.Record(fmt.Sprintf("%s lane %d: card %s %s", now.UTC().Format(time.RFC3339), ln.n, c.ID, oneLine(why, 400)))
 				}
-				_ = os.Remove(laneMarkPath(d.Dir, jobName)) // ignored: the claim just made is this lane's; one left stands until stale
+				_ = releaseOwnedLane(d.Dir, jobName, l.laneWho(ln.n))
 				continue
 			}
 			ln.card, ln.attempts, ln.marked, ln.job = &c, 0, now, job
@@ -527,8 +529,26 @@ func (l *loop) laneStep(now time.Time, width int) {
 			ln.cap = d.laneCap(ln.tier)
 			ln.capped = false
 			ln.base, ln.baseOK = l.tokens(ln.session)
-			s.state.Started[filepath.Base(c.Outbox)] = Started{Lane: ln.n, Card: c, At: now}
-			l.saveLanes(now)
+			var runID [16]byte
+			if _, err := rand.Read(runID[:]); err != nil {
+				d.Record("lanes: cannot create run identity: " + err.Error())
+				continue
+			}
+			s.state.Started[filepath.Base(c.Outbox)] = Started{Lane: ln.n, Card: c, At: now, RunID: hex.EncodeToString(runID[:]), Owner: l.laneWho(ln.n)}
+			if d.SaveLanes == nil {
+				delete(s.state.Started, filepath.Base(c.Outbox))
+				_ = releaseOwnedLane(d.Dir, filepath.Base(c.Outbox), l.laneWho(ln.n))
+				ln.card = nil
+				d.Record(fmt.Sprintf("%s lane %d: card %s not started: durable lane state unavailable", now.UTC().Format(time.RFC3339), ln.n, c.ID))
+				continue
+			}
+			if err := d.SaveLanes(s.state); err != nil {
+				delete(s.state.Started, filepath.Base(c.Outbox))
+				_ = releaseOwnedLane(d.Dir, filepath.Base(c.Outbox), l.laneWho(ln.n))
+				ln.card = nil
+				d.Record(fmt.Sprintf("%s lane %d: card %s not started: lane state cannot be saved: %s", now.UTC().Format(time.RFC3339), ln.n, c.ID, oneLine(err.Error(), 300)))
+				continue
+			}
 		}
 		started := l.pidSink(filepath.Base(ln.card.Outbox))
 		if perCard { // the brief alone: no message, pong or notice rides with it
@@ -563,17 +583,28 @@ func (l *loop) laneStep(now time.Time, width int) {
 	}
 }
 
-// pidSink is what the exec calls with job's run's process id: kept until the step writes
-// it on the started mark (pidStep), off the loop's goroutine.
-func (l *loop) pidSink(job string) func(pid int) {
+// pidSink durably records the launched process before its startup gate opens.
+func (l *loop) pidSink(job string) func(pid int) error {
 	s := l.lanes
-	return func(pid int) {
+	runID := s.state.Started[job].RunID
+	return func(pid int) error {
+		if !ProcessIdentitySupported {
+			return nil
+		}
+		if runID == "" || l.d.ProcessIdentity == nil {
+			return fmt.Errorf("run identity unavailable for %s", job)
+		}
+		identity := l.d.ProcessIdentity(pid)
+		if err := writeRunReceipt(l.d.Dir, job, runReceipt{RunID: runID, PID: pid, Identity: identity}); err != nil {
+			return err
+		}
 		s.pidMu.Lock()
 		defer s.pidMu.Unlock()
 		if s.pids == nil {
 			s.pids = map[string]int{}
 		}
 		s.pids[job] = pid
+		return nil
 	}
 }
 
@@ -612,6 +643,21 @@ func (l *loop) adoptRuns(now time.Time) {
 	}
 	var waiting []Started
 	for _, st := range s.adopt {
+		jobName := filepath.Base(st.Card.Outbox)
+		receipt, receiptErr := readRunReceipt(d.Dir, jobName)
+		if receiptErr == nil && receipt.RunID == st.RunID && d.ProcessIdentity != nil && d.ProcessIdentity(receipt.PID) != receipt.Identity && ProcessGroupAlive(receipt.PID) {
+			waiting = append(waiting, st)
+			continue
+		}
+		if receiptErr != nil || receipt.RunID != st.RunID || d.ProcessIdentity == nil || d.ProcessIdentity(receipt.PID) != receipt.Identity {
+			l.endCard(st.Lane, st.Card, LaneEnd{Restart: now, Started: st.At}, now)
+			if !s.given[jobName] {
+				s.given[jobName] = true
+				s.state.GivenUp = append(s.state.GivenUp, jobName)
+			}
+			l.saveLanes(now)
+			continue
+		}
 		var ln *lane
 		if st.Lane >= 1 && st.Lane <= len(s.lanes) && s.lanes[st.Lane-1].t == nil && s.lanes[st.Lane-1].card == nil && !s.lanes[st.Lane-1].opening {
 			ln = s.lanes[st.Lane-1]
@@ -625,6 +671,12 @@ func (l *loop) adoptRuns(now time.Time) {
 		}
 		if ln == nil {
 			waiting = append(waiting, st)
+			continue
+		}
+		holder, err := transferLane(d.Dir, jobName, st.Owner, l.laneWho(ln.n), now)
+		if err != nil || holder != "" {
+			waiting = append(waiting, st)
+			d.Record(fmt.Sprintf("%s lane %d: card %s adoption waits for its lane mark: holder=%q error=%v", now.UTC().Format(time.RFC3339), ln.n, st.Card.ID, holder, err))
 			continue
 		}
 		card := st.Card
@@ -643,7 +695,9 @@ func (l *loop) adoptRuns(now time.Time) {
 		l.startTurn(t, now, func(ctx context.Context) laneResult {
 			wait := d.WaitProcess
 			if wait == nil {
-				wait = func(ctx context.Context, pid int) bool { return waitAdopted(ctx, pid, d.ProcessAlive, d.Pause) }
+				wait = func(ctx context.Context, pid int) bool {
+					return waitAdopted(ctx, pid, func(pid int) bool { return d.ProcessIdentity(pid) == receipt.Identity || ProcessGroupAlive(pid) }, d.Pause)
+				}
 			}
 			wait(ctx, pid)
 			return laneResult{ln: ln, turn: LaneTurn{Exit: 0}, t: t}

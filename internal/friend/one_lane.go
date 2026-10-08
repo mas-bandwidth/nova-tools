@@ -116,6 +116,11 @@ func ClaimLane(dir, job, who string, now time.Time) (holder string, err error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
 	}
+	return withLaneLock(path, func() (string, error) { return claimLaneLocked(dir, job, who, now) })
+}
+
+func claimLaneLocked(dir, job, who string, now time.Time) (holder string, err error) {
+	path := laneMarkPath(dir, job)
 	mark := []byte(LaneMarkRunning(who, now))
 	err = atomicfile.WriteFile(path, mark, 0o644, atomicfile.NoReplace())
 	if err == nil || !errors.Is(err, fs.ErrExist) {
@@ -128,17 +133,97 @@ func ClaimLane(dir, job, who string, now time.Time) (holder string, err error) {
 	return "", atomicfile.WriteFile(path, mark, 0o644)
 }
 
+// transferLane gives a verified surviving run's old mark to the new daemon.
+// A changed, ended, or foreign mark is never overwritten.
+func transferLane(dir, job, oldWho, newWho string, now time.Time) (string, error) {
+	path := laneMarkPath(dir, job)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	return withLaneLock(path, func() (string, error) {
+		m, ok := ReadLaneMark(dir, job)
+		if !ok || m.Ended || oldWho == "" || m.Who != oldWho {
+			return m.Who, nil
+		}
+		return "", atomicfile.WriteFile(path, []byte(LaneMarkRunning(newWho, now)), 0o644)
+	})
+}
+
+func refreshLane(dir, job, who string, now time.Time, write bool) (string, error) {
+	path := laneMarkPath(dir, job)
+	return withLaneLock(path, func() (string, error) {
+		m, ok := ReadLaneMark(dir, job)
+		if !ok {
+			return "", fmt.Errorf("lane mark missing")
+		}
+		if m.Ended || (m.Who != who && m.heldBy(who, now) != "") {
+			return m.Who, nil
+		}
+		if !write {
+			return "", nil
+		}
+		return "", atomicfile.WriteFile(path, []byte(LaneMarkRunning(who, now)), 0o644)
+	})
+}
+
 // endLaneMark writes "ended: card finished by <who>" on the job, unless its mark already
 // says it ended.
 func endLaneMark(dir, job, who string) error {
-	if m, ok := ReadLaneMark(dir, job); ok && m.Ended {
-		return nil
-	}
 	path := laneMarkPath(dir, job)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return atomicfile.WriteFile(path, []byte(LaneMarkEnded(who)), 0o644)
+	_, err := withLaneLock(path, func() (string, error) {
+		if m, ok := ReadLaneMark(dir, job); ok && m.Ended {
+			return "", nil
+		}
+		return "", atomicfile.WriteFile(path, []byte(LaneMarkEnded(who)), 0o644)
+	})
+	return err
+}
+
+// endOwnedLaneMark ends only this lane's mark. In particular, startup recovery
+// must not overwrite a newer claimant's running mark while failing an old run.
+func endOwnedLaneMark(dir, job, who string, now time.Time) error {
+	path := laneMarkPath(dir, job)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	_, err := withLaneLock(path, func() (string, error) {
+		m, ok := ReadLaneMark(dir, job)
+		if ok && (m.Ended || (m.Who != who && m.heldBy(who, now) != "")) {
+			return "", nil
+		}
+		return "", atomicfile.WriteFile(path, []byte(LaneMarkEnded(who)), 0o644)
+	})
+	return err
+}
+
+func endOtherMark(dir, job, oldWho, who string) error {
+	path := laneMarkPath(dir, job)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	_, err := withLaneLock(path, func() (string, error) {
+		m, ok := ReadLaneMark(dir, job)
+		if ok && (m.Ended || m.Who == who || m.Who != oldWho) {
+			return "", nil
+		}
+		return "", atomicfile.WriteFile(path, []byte(LaneMarkEnded(who)), 0o644)
+	})
+	return err
+}
+
+func releaseOwnedLane(dir, job, who string) error {
+	path := laneMarkPath(dir, job)
+	_, err := withLaneLock(path, func() (string, error) {
+		m, ok := ReadLaneMark(dir, job)
+		if !ok || m.Ended || m.Who != who {
+			return "", nil
+		}
+		return "", os.Remove(path)
+	})
+	return err
 }
 
 // daemonSeq tells the daemons of one process apart in their lanes' names.
@@ -210,8 +295,13 @@ func (l *loop) oneLaneStep(now time.Time) {
 		}
 		c, job := *ln.card, filepath.Base(ln.card.Outbox)
 		me := l.laneWho(ln.n)
-		if m, ok := ReadLaneMark(d.Dir, job); ok && m.Who != me && (m.Ended || m.heldBy(me, now) != "") {
-			l.endOtherLane(ln, m.Who, now)
+		holder, err := refreshLane(d.Dir, job, me, now, now.Sub(ln.marked) >= LaneMarkEvery)
+		if err != nil {
+			d.Record(fmt.Sprintf("%s lane %d: card %s: the lane mark cannot be checked: %s", now.UTC().Format(time.RFC3339), ln.n, c.ID, oneLine(err.Error(), 300)))
+			continue
+		}
+		if holder != "" {
+			l.endOtherLane(ln, holder, now)
 			continue
 		}
 		if who, gone := l.leftRow(c); gone {
@@ -219,9 +309,6 @@ func (l *loop) oneLaneStep(now time.Time) {
 			continue
 		}
 		if now.Sub(ln.marked) >= LaneMarkEvery {
-			if err := atomicfile.WriteFile(laneMarkPath(d.Dir, job), []byte(LaneMarkRunning(me, now)), 0o644); err != nil {
-				d.Record(fmt.Sprintf("%s lane %d: card %s: the lane mark cannot be refreshed: %s", now.UTC().Format(time.RFC3339), ln.n, c.ID, oneLine(err.Error(), 300)))
-			}
 			ln.marked = now
 		}
 	}
@@ -254,7 +341,8 @@ func (l *loop) endOtherLane(ln *lane, who string, now time.Time) {
 	d, c := l.d, *ln.card
 	ln.ended = who
 	words := ""
-	if err := endLaneMark(d.Dir, filepath.Base(c.Outbox), who); err != nil {
+	job := filepath.Base(c.Outbox)
+	if err := endOtherMark(d.Dir, job, l.laneWho(ln.n), who); err != nil {
 		words = fmt.Sprintf(" mark_error=%q", oneLine(err.Error(), 300))
 	}
 	if ln.t != nil && ln.t.cancel != nil {

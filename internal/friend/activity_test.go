@@ -88,6 +88,8 @@ func TestNewestWriteSkipsTheDirectoriesNoSessionWritesIn(t *testing.T) {
 		"jobs/j/repo/.git/index":   {ModTime: t0.Add(90 * time.Minute)},
 		"jobs/j/repo/main.go":      {ModTime: t0.Add(4 * time.Minute)},
 		"jobs/j/.cache/go-build/x": {ModTime: t0.Add(80 * time.Minute)},
+		"jobs/j/LANE.lock":         {ModTime: t0.Add(100 * time.Minute)},
+		"jobs/j/RUN":               {ModTime: t0.Add(110 * time.Minute)},
 	}
 	got := NewestWrite(fsys, []string{"jobs"}, func() time.Time { return t0 }, ActivityLimits{Files: 100, Time: time.Second})
 	assert.True(t, got.Equal(t0.Add(4*time.Minute)), "got %v", got)

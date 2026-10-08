@@ -92,7 +92,9 @@ func (h *lanesHarness) DeliverTo(ctx context.Context, session, text string) (Lan
 		}
 	}
 	if started := processStarted(ctx); started != nil && h.pid != 0 && id != "-" {
-		started(h.pid)
+		if err := started(h.pid); err != nil {
+			return LaneTurn{}, err
+		}
 	}
 	h.mu.Lock()
 	h.turns = append(h.turns, session+": "+id)

@@ -1,0 +1,112 @@
+//go:build unix
+
+package friend
+
+import (
+	"context"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestRunCannotExecuteBeforeItsDurableIdentityReceipt(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	job := "card~1"
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "jobs", job), 0o755))
+	marker := filepath.Join(dir, "executed")
+	entered, release := make(chan struct{}), make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		gate := WithProcessStarted(ctx, func(pid int) error {
+			close(entered)
+			<-release
+			return writeRunReceipt(dir, job, runReceipt{RunID: "run-1", PID: pid, Identity: ProcessIdentity(pid)})
+		})
+		_, _, err := RealExec(gate, dir, "/bin/sh", []string{"-c", "printf yes > executed; sleep 10"}, "")
+		done <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("launch callback did not start")
+	}
+	assert.NoFileExists(t, marker, "the child is still behind its launch gate")
+	close(release)
+	require.Eventually(t, func() bool { _, err := os.Stat(marker); return err == nil }, 5*time.Second, 10*time.Millisecond)
+	receipt, err := readRunReceipt(dir, job)
+	require.NoError(t, err)
+	assert.Equal(t, "run-1", receipt.RunID)
+	assert.Equal(t, ProcessIdentity(receipt.PID), receipt.Identity)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("gated process did not stop")
+	}
+}
+
+func TestRestartTransfersAFreshMarkForARealSurvivingProcess(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "working"}}, []string{"c1"}, nil)
+		cmd := exec.CommandContext(context.Background(), "/bin/sleep", "10")
+		ownGroup(cmd)
+		require.NoError(t, cmd.Start())
+		defer func() { killGroup(cmd.Process.Pid); _ = cmd.Wait() }()
+		identity := ProcessIdentity(cmd.Process.Pid)
+		require.NotEmpty(t, identity)
+		job, owner := "c1~15", "bob lane 1 (daemon previous)"
+		card := Card{ID: "c1", Brief: filepath.Join(dir, "inbox", job, "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", job)}
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "jobs", job), 0o755))
+		require.NoError(t, writeRunReceipt(dir, job, runReceipt{RunID: "real-run", PID: cmd.Process.Pid, Identity: identity}))
+		require.NoError(t, os.WriteFile(laneMarkPath(dir, job), []byte(LaneMarkRunning(owner, t0)), 0o644))
+		h := &lanesHarness{dir: dir, active: map[string]int{}}
+		r, state := laneRig(t, h, 1)
+		*state = LaneState{Sessions: map[int]string{1: "ses_1"}, Started: map[string]Started{job: {Lane: 1, Card: card, At: t0.Add(-time.Minute), RunID: "real-run", Owner: owner}}}
+		r.d.ProcessIdentity = ProcessIdentity
+		r.d.WaitProcess = func(ctx context.Context, _ int) bool { <-ctx.Done(); return false }
+		var mark LaneMark
+		r.at[3] = func() { mark, _ = ReadLaneMark(dir, job) }
+		r.run(t, 4)
+		assert.NotEqual(t, owner, mark.Who)
+		assert.False(t, mark.Ended)
+		assert.NoFileExists(t, card.Report(), "restart did not fail a working process")
+		assert.Equal(t, identity, ProcessIdentity(cmd.Process.Pid))
+	})
+}
+
+func TestStopVerifiedRunRefusesAReusedPID(t *testing.T) {
+	t.Parallel()
+	runCtx, runCancel := context.WithCancel(context.Background())
+	defer runCancel()
+	cmd := exec.CommandContext(runCtx, "/bin/sh", "-c", "sleep 10")
+	ownGroup(cmd)
+	require.NoError(t, cmd.Start())
+	defer func() { killGroup(cmd.Process.Pid); _ = cmd.Wait() }()
+	identity := ProcessIdentity(cmd.Process.Pid)
+	require.NotEmpty(t, identity)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	assert.False(t, StopVerifiedRun(ctx, cmd.Process.Pid, identity+"-old"))
+	assert.Equal(t, identity, ProcessIdentity(cmd.Process.Pid), "the unrelated live group was not signalled")
+}
+
+func TestAFailedReceiptNeverReleasesTheHarness(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "executed")
+	ctx := WithProcessStarted(context.Background(), func(int) error { return errors.New("receipt failed") })
+	_, _, err := RealExec(ctx, dir, "/bin/sh", []string{"-c", "printf yes > executed"}, "")
+	require.ErrorContains(t, err, "receipt failed")
+	assert.NoFileExists(t, marker)
+}
