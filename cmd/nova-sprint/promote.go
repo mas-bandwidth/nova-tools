@@ -61,11 +61,13 @@ func (a *app) promoteOnTick(ctx context.Context, stdout io.Writer) {
 // TestNoGhPrMergeSpellingInTheToolsGo refuses, and that test names this
 // mutation as the one admission. A failed check, or a failed merge-group run,
 // raises one judgment naming the check, decisions fix-and-recut and skip, with
-// the failing run's log tail and the record `promoted --failed`, which keeps the
-// failure visible, and cuts one fix card per failing test (promote_red.go); a
-// failed run on the base at the last promotion's merge does the same. A merge
-// records `promoted --sha` with the branch, the frozen tip, the cards that tip
-// carried and the evidence, so the store verifies in dev exactly those cards
+// the failing run's log tail and the record `promoted --failed --branch --tip`,
+// which the store keeps until a later promotion merges, and cuts one fix card
+// per failing test (promote_red.go); a failed run on the base at the last
+// promotion's merge does the same. A merge records `promoted --sha` with the
+// live branch and the frozen tip (`promote.tip`, not a later origin tip) and
+// not `--cards`: `--cards` would verify that list and skip the tip bound, so
+// the store verifies in dev only the cards that frozen tip carried
 // (docs/SPEC-SPRINT.md section 7, delivery milestones). Every forge call goes
 // through promoteForge (promote_forge.go).
 
@@ -106,9 +108,11 @@ type promoter struct {
 	// forge, when set, is the forge (a test). Nil is gh, through ghRun when
 	// that is set.
 	forge promoteForge
-	// recordFn, when set, records a merge in the sprint's store (the verb sets
-	// it). Nil prints the delivery record line for the coordinator to run.
-	recordFn func(ctx context.Context, sha string) error
+	// recordFn, when set, records a promotion in the sprint's store (the verb
+	// sets it): a merge, or a failure. Nil prints the delivery record line for
+	// the coordinator to run. The request names --branch and the frozen tip
+	// and not --cards, so tipCarried is the bound.
+	recordFn func(ctx context.Context, req sprint.PromotedReq) error
 	// gate, when set, is the tree gate (a test). Nil runs --check, or nothing
 	// when --check is empty.
 	gate func(ctx context.Context, dir, sha string) (string, error)
@@ -206,12 +210,13 @@ func (a *app) cmdPromote(args []string, stdout, stderr io.Writer) int {
 	}
 	if !*dry {
 		p.red = a.redCutter(*c)
-		p.recordFn = func(ctx context.Context, sha string) error {
+		p.recordFn = func(ctx context.Context, req sprint.PromotedReq) error {
 			st, err := a.store(*c)
 			if err != nil {
 				return err
 			}
-			if code := a.runStep("promoted", *c, st, store.PromotedStep(sprint.PromotedReq{Sha: sha, Who: c.actor}), stdout, stderr); code != 0 {
+			req.Who = c.actor
+			if code := a.runStep("promoted", *c, st, store.PromotedStep(req), stdout, stderr); code != 0 {
 				return fmt.Errorf("the store did not record it (exit %d)", code)
 			}
 			return nil
@@ -549,7 +554,9 @@ func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, s
 			o.Judgment = p.redJudgment(ctx, rRuns, "a check of the pull request failed", "the pull request of "+o.Branch, promoteDecisions, stderr)
 			fmt.Fprintf(stdout, "JUDGMENT promotion red branch=%s decisions=%s cards=%s open=%s\n%s\n", oneline.Field(o.Branch), strings.Join(o.Judgment.Decisions, ","),
 				oneline.Field(dashed(strings.Join(o.Judgment.Cards, ","))), oneline.Field(dashed(strings.Join(o.Judgment.Open, ","))), o.Judgment.Tail)
-			fmt.Fprintln(stdout, p.failedRecord(o, "a check of the pull request failed"))
+			if code := p.noteFailed(ctx, o, "a check of the pull request failed", number, stdout, stderr); code != 0 {
+				return o, code
+			}
 			return o, 1
 		}
 	}
@@ -565,7 +572,7 @@ func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, s
 		if err != nil {
 			logText = "the failing run's log could not be read: " + oneline.Err(err)
 		}
-		return p.judge(ctx, o, "merge-group failed", r.Name, logText, stdout)
+		return p.judge(ctx, o, "merge-group failed", r.Name, logText, number, stdout, stderr)
 	}
 	entry, err := f.QueueEntry(ctx, view.ID)
 	if err != nil {
@@ -580,7 +587,7 @@ func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, s
 		for _, c := range checks {
 			switch c.Bucket {
 			case "fail", "cancel":
-				return p.judge(ctx, o, "check failed", c.Name, "", stdout)
+				return p.judge(ctx, o, "check failed", c.Name, "", number, stdout, stderr)
 			case "pass", "skipping":
 			default:
 				pending = append(pending, c.Name)
@@ -653,7 +660,7 @@ func (p *promoter) wait(o promoteOutcome, number, what string, stdout io.Writer)
 // the check, once per branch. The clone remembers it (promote.judged), so a
 // later run does not raise it again; the promotion is cut afresh once the sprint
 // tip moves (the fix landed), the decision fix-and-recut.
-func (p *promoter) judge(ctx context.Context, o promoteOutcome, kind, check, logText string, stdout io.Writer) (promoteOutcome, int) {
+func (p *promoter) judge(ctx context.Context, o promoteOutcome, kind, check, logText, number string, stdout, stderr io.Writer) (promoteOutcome, int) {
 	if p.judged == o.Branch {
 		fmt.Fprintf(stdout, "PROMOTE WAIT branch=%s judgment=already\n", oneline.Field(o.Branch))
 		return o, 1
@@ -669,7 +676,9 @@ func (p *promoter) judge(ctx context.Context, o promoteOutcome, kind, check, log
 	if o.Judgment.Tail != "" {
 		fmt.Fprintln(stdout, o.Judgment.Tail)
 	}
-	fmt.Fprintln(stdout, p.failedRecord(o, "a "+kind+": "+check))
+	if code := p.noteFailed(ctx, o, "a "+kind+": "+check, number, stdout, stderr); code != 0 {
+		return o, code
+	}
 	return o, 1
 }
 
@@ -686,7 +695,8 @@ func (p *promoter) markJudged(ctx context.Context, branch string) {
 }
 
 // record records the merge: refs/promoted/last moves to it, so the next pass's
-// landed list starts after it, and the store records `promoted --sha`.
+// landed list starts after it, and the store records `promoted --sha` with the
+// live branch and the frozen tip.
 func (p *promoter) record(ctx context.Context, o promoteOutcome, number, sha string, stdout, stderr io.Writer) (promoteOutcome, int) {
 	if p.dry {
 		fmt.Fprintf(stdout, "PROMOTE DRY-RUN branch=%s pr=%s merged sha=%s\n", oneline.Field(o.Branch), number, sha)
@@ -697,12 +707,13 @@ func (p *promoter) record(ctx context.Context, o promoteOutcome, number, sha str
 		return o, p.fail(stderr, err)
 	}
 	o.Promoted = sha
+	req := p.deliveryReq(ctx, o, sha, "", number)
+	line := quoteLine(promotedWords(req))
 	if p.recordFn == nil {
-		// the coordinator types this line: branch, tip, target, cards and evidence,
-		// and it still begins promoted --sha so a reader of the old line finds it
-		fmt.Fprintln(stdout, p.recordLine(o, sha, number))
-	} else if err := p.recordFn(ctx, sha); err != nil {
-		return o, p.fail(stderr, fmt.Errorf("the merge %s was not recorded: %s; record it: nova-sprint promoted --sha %s", sha, oneline.Err(err), sha))
+		// the coordinator types this line; it still begins promoted --sha
+		fmt.Fprintln(stdout, line)
+	} else if err := p.recordFn(ctx, req); err != nil {
+		return o, p.fail(stderr, fmt.Errorf("the merge %s was not recorded: %s; record it: nova-sprint %s", sha, oneline.Err(err), line))
 	} else {
 		fmt.Fprintf(stdout, "PROMOTE RECORDED sha=%s\n", sha)
 	}
@@ -712,24 +723,22 @@ func (p *promoter) record(ctx context.Context, o promoteOutcome, number, sha str
 	return o, 0
 }
 
-// recordLine is the delivery record of a merged pass, as the coordinator types it.
-func (p *promoter) recordLine(o promoteOutcome, sha, number string) string {
-	words := []string{"promoted", "--sha", sha}
+// deliveryReq is the store call for one promotion. Branch is the live sprint
+// branch. Tip is the frozen tip the cut was taken from (promote.tip), never a
+// later origin tip: tipCarried then excludes a card landed after that freeze.
+// Cards is left empty on purpose. --cards would verify that list and skip the
+// tip bound (promotedCards).
+func (p *promoter) deliveryReq(ctx context.Context, o promoteOutcome, sha, failed, number string) sprint.PromotedReq {
 	branch := o.Live
 	if branch == "" {
 		branch = p.live
 	}
-	if branch != "" {
-		words = append(words, "--branch", branch)
+	tip := ""
+	if frozen, err := p.git(ctx, "config", "--local", "--get", "promote.tip"); err == nil {
+		tip = strings.TrimSpace(frozen)
 	}
-	if o.Tip != "" {
-		words = append(words, "--tip", o.Tip)
-	}
-	if p.base != "" {
-		words = append(words, "--target", p.base)
-	}
-	if len(o.Cards) > 0 {
-		words = append(words, "--cards", strings.Join(o.Cards, ","))
+	if tip == "" {
+		tip = o.Tip
 	}
 	var evidence []string
 	if number != "" {
@@ -741,32 +750,54 @@ func (p *promoter) recordLine(o promoteOutcome, sha, number string) string {
 	if o.Entry != "" {
 		evidence = append(evidence, "entry="+o.Entry)
 	}
-	if len(evidence) > 0 {
-		words = append(words, "--evidence", strings.Join(evidence, " "))
+	return sprint.PromotedReq{
+		Sha:      sha,
+		Failed:   failed,
+		Branch:   branch,
+		Tip:      tip,
+		Target:   p.base,
+		Evidence: strings.Join(evidence, " "),
 	}
-	return quoteLine(words)
 }
 
-// failedRecord is the delivery record of a promotion that did not merge.
-func (p *promoter) failedRecord(o promoteOutcome, why string) string {
-	words := []string{"promoted", "--failed", why}
-	branch := o.Live
-	if branch == "" {
-		branch = p.live
+// promotedWords is the delivery record as the coordinator types it. It names
+// no --cards: that list would skip the frozen-tip bound.
+func promotedWords(r sprint.PromotedReq) []string {
+	var words []string
+	if r.Failed != "" {
+		words = []string{"promoted", "--failed", r.Failed}
+	} else {
+		words = []string{"promoted", "--sha", r.Sha}
 	}
-	if branch != "" {
-		words = append(words, "--branch", branch)
+	if r.Branch != "" {
+		words = append(words, "--branch", r.Branch)
 	}
-	if o.Tip != "" {
-		words = append(words, "--tip", o.Tip)
+	if r.Tip != "" {
+		words = append(words, "--tip", r.Tip)
 	}
-	if p.base != "" {
-		words = append(words, "--target", p.base)
+	if r.Target != "" {
+		words = append(words, "--target", r.Target)
 	}
-	if o.Branch != "" {
-		words = append(words, "--evidence", "head="+o.Branch)
+	if r.Evidence != "" {
+		words = append(words, "--evidence", r.Evidence)
 	}
-	return quoteLine(words)
+	return words
+}
+
+// noteFailed prints the failed promotion and, when the verb records, writes it
+// in the store so it stays until a later promotion merges. A print with no
+// recordFn is the line the coordinator types. Nothing is verified.
+func (p *promoter) noteFailed(ctx context.Context, o promoteOutcome, why, number string, stdout, stderr io.Writer) int {
+	req := p.deliveryReq(ctx, o, "", why, number)
+	line := quoteLine(promotedWords(req))
+	fmt.Fprintln(stdout, line)
+	if p.recordFn == nil {
+		return 0
+	}
+	if err := p.recordFn(ctx, req); err != nil {
+		return p.fail(stderr, fmt.Errorf("the failed promotion was not recorded: %s; record it: nova-sprint %s", oneline.Err(err), line))
+	}
+	return 0
 }
 
 func (p *promoter) fail(stderr io.Writer, err error) int {
