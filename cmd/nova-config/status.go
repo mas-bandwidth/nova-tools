@@ -108,7 +108,7 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 	behind := 0
 	var judgments []string
 	for _, k := range config.Kinds {
-		_, applied, err := rs.Read(ctx, k.Name)
+		views, applied, err := rs.Read(ctx, k.Name)
 		if err != nil {
 			return refuse(stderr, verb, err.Error())
 		}
@@ -116,7 +116,7 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 		o.Fact(k.Name+"_applied", applied)
 		if applied != revs[k.Name] {
 			behind++
-			age, known, err := kindGapAge(ctx, st, k.Name, revs[k.Name], d.now())
+			age, known, err := kindGapAge(ctx, st, k.Name, applied, d.now(), redisNames(views))
 			if err != nil {
 				return refuse(stderr, verb, err.Error())
 			}

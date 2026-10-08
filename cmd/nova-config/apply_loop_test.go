@@ -163,6 +163,65 @@ func TestStatusReportsGapAgeAndJudgment(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(out, "JUDGMENT kind=machine"), "the judgment is one line, never also a NOTE: %q", out)
 }
 
+// TestStatusMultiRevisionGapAgesFromTheFirstUnappliedRevision is a gap of
+// more than one revision: the age is the first history row after the applied
+// revision, so a write one second ago does not hide a change from hours ago
+// or suppress the older-than-60s judgment.
+func TestStatusMultiRevisionGapAgesFromTheFirstUnappliedRevision(t *testing.T) {
+	t.Parallel()
+	h := newHarness()
+	base := time.Unix(1_700_000_000, 0).UTC()
+	ctx := context.Background()
+	h.store.Now = func() time.Time { return base.Add(-2 * time.Hour) }
+	insertMachines(t, h, 1)
+	h.store.Now = func() time.Time { return base.Add(-time.Second) }
+	_, _, err := h.store.Update(ctx, config.KindMachine, "m1", map[string]string{"slots": "2"}, "a1")
+	require.NoError(t, err)
+	h.env["NOVA_PG_DSN"] = dsn
+	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
+	code, out, _ := h.run(t, "status")
+	require.Equal(t, 1, code)
+	assert.Contains(t, out, "machine_rev=2")
+	assert.Contains(t, out, "machine_applied=0 machine_gap_age=7200s")
+	assert.NotContains(t, out, "machine_gap_age=1s")
+	assert.Contains(t, out, "JUDGMENT kind=machine store=2 applied=0 age=7200s")
+	assert.Equal(t, 1, strings.Count(out, "JUDGMENT kind=machine"), "the judgment is one line: %q", out)
+}
+
+// TestStatusRemovalGapAgesFromTheRemovedRowsHistory is a gap whose latest
+// write removes the row. List excludes it; the Redis copy still holds the
+// name. The age is the first history revision after the applied revision,
+// including that removed row, not unknown and not the recent removal.
+func TestStatusRemovalGapAgesFromTheRemovedRowsHistory(t *testing.T) {
+	t.Parallel()
+	h := newHarness()
+	base := time.Unix(1_700_000_000, 0).UTC()
+	ctx := context.Background()
+	h.store.Now = func() time.Time { return base.Add(-3 * time.Hour) }
+	insertMachines(t, h, 1)
+	h.redis.revs[config.KindMachine] = 1
+	h.redis.views[config.KindMachine] = map[string]config.View{"m1": {}}
+	h.store.Now = func() time.Time { return base.Add(-2 * time.Hour) }
+	_, _, err := h.store.Update(ctx, config.KindMachine, "m1", map[string]string{"slots": "2"}, "a1")
+	require.NoError(t, err)
+	h.store.Now = func() time.Time { return base.Add(-time.Second) }
+	_, err = h.store.Delete(ctx, config.KindMachine, "m1", "a1")
+	require.NoError(t, err)
+	rows, err := h.store.List(ctx, config.KindMachine)
+	require.NoError(t, err)
+	require.Empty(t, rows)
+	h.env["NOVA_PG_DSN"] = dsn
+	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
+	code, out, _ := h.run(t, "status")
+	require.Equal(t, 1, code)
+	assert.Contains(t, out, "machine_rev=3")
+	assert.Contains(t, out, "machine_applied=1 machine_gap_age=7200s")
+	assert.NotContains(t, out, "machine_gap_age=1s")
+	assert.NotContains(t, out, "machine_gap_age=unknown")
+	assert.Contains(t, out, "JUDGMENT kind=machine store=3 applied=1 age=7200s")
+	assert.Equal(t, 1, strings.Count(out, "JUDGMENT kind=machine"), "the judgment is one line: %q", out)
+}
+
 func TestApplyPassClosesExactlyTheRevsBetweenAppliedAndStore(t *testing.T) {
 	t.Parallel()
 
