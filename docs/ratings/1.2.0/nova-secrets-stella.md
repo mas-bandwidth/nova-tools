@@ -1,6 +1,6 @@
 # nova-secrets READ and USE rating, nova-tools 1.2.0
 
-Rater: Stella, gpt-5.6-terra (Codex harness)
+Rater: gpt-5.6-terra (Codex harness)
 Build: 4d6372b0556d
 READ: 7/10
 USE: 7/10
