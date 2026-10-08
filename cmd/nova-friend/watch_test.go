@@ -225,6 +225,9 @@ func TestWatchHelpExampleIsWhatTheToolPrints(t *testing.T) {
 		Args: []string{"watch", "--as", "ada", "--timeout", "10m"},
 		Want: []string{onboarding.StderrMarker + "WATCH NONE waited=10m0s"},
 	}
+	doc, err := os.ReadFile("../../docs/CLI.md")
+	require.NoError(t, err)
+	assert.Contains(t, string(doc), strings.TrimPrefix(step.Line, "$ "), "the executed command is also in the reference")
 	var out, errb strings.Builder
 	w := newRig(t, "ada", "bob").world()
 	code := run(step.Args, strings.NewReader(""), &out, &errb, w)
