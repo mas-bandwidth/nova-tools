@@ -91,6 +91,7 @@ type world struct {
 	lookPath  func(string) (string, error) // a program on PATH by absolute path, for the agent's secrets wrap
 	random    func() string
 	alive     friend.Aliver     // the harness check, when set (a test's fake harness); nil watches the adapter
+	checkGo   func(func())      // optional test scheduler for a fake-clock session check
 	launch    []string          // host: the launch command after "--"
 	settings  friend.SettingsFS // where a harness's own settings are read and written (install, check --settings)
 	argv      []string          // this run's arguments after the program's name: what the plist drift is read against
@@ -1290,6 +1291,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		Friend: name, Store: st, Now: w.now, Nonce: w.random, Record: record, Keep: keep,
 		Run:  fmt.Sprintf("r%d", w.now().Unix()), // this run, its generation: an answer proves only to the run that asked
 		Save: prover.Save(writePresence),
+		Go: w.checkGo,
 		Text: func(nonce string) string {
 			return friend.SessionCheckText(nonce, w.pongCommand(name, nonce, state, c.Str("redis"), dir), answerTo())
 		},
