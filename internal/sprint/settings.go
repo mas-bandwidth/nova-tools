@@ -63,6 +63,9 @@ const (
 	// "1" or "2"; absent or default, each card's own rule (ReadsNeeded). 0 asks no read:
 	// a primary whose work finished LAND at its head is accepted on its own work.
 	PropReadsNeeded = "reads_needed"
+	// PropReworkPriority controls priority on the next attempt: fix (default), high or keep.
+	PropReworkPriority = "rework_priority"
+	ReworkKeep         = "keep"
 	// TiersAll is the word of a side that may take every tier, the default.
 	TiersAll = "all"
 	// ReadTierDefault is the word that takes a read tier off: a stream's back to
@@ -262,6 +265,7 @@ func stronger(a, b string) string {
 // bound, read tier and attempt cap (brief_bound.go, AttemptsCap). An empty value
 // leaves that setting as it is; ReadTierDefault takes one off.
 type SetReq struct {
+	ReworkPriority   string   `json:",omitempty"`
 	Streams          []string `json:",omitempty"`
 	ReadTier         string   `json:",omitempty"`
 	DealtMax         string   `json:",omitempty"`
@@ -432,6 +436,14 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--read-cards is the sprint's, not a stream's: nova-sprint set --read-cards "+r.ReadCards)
 		}
 	}
+	if r.ReworkPriority != "" {
+		if !slices.Contains([]string{PriorityFix, PriorityHigh, ReworkKeep}, r.ReworkPriority) {
+			why = append(why, "--rework-priority wants fix, high or keep; found "+r.ReworkPriority)
+		}
+		if len(r.Streams) > 0 {
+			why = append(why, "--rework-priority is the sprint's, not a stream's: nova-sprint set --rework-priority "+r.ReworkPriority)
+		}
+	}
 	if r.Reads != "" {
 		if r.Reads != ReadTierDefault && !slices.Contains(readsWords, r.Reads) {
 			why = append(why, "--reads wants 0, 1, 2 or "+ReadTierDefault+" (one for a flash card, two above); found "+r.Reads)
@@ -443,8 +455,8 @@ func Set(s *Snapshot, r SetReq) Plan {
 	if r.Base != "" && len(r.Streams) == 0 {
 		why = append(why, "--base is a stream's, not the sprint's: nova-sprint stream set <s> --base <branch>")
 	}
-	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && r.Base == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" && r.Fleet == "" && r.Friends == "" && len(sideTiers) == 0 && r.ReadCards == "" && r.Reads == "" {
-		why = append(why, "nothing to set: --read-tier, --read-cards, --reads, --prose, --base, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours, --fleet, --friends, --fleet-tiers, --friends-tiers or an --alarm-... threshold")
+	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && r.Base == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" && r.Fleet == "" && r.Friends == "" && len(sideTiers) == 0 && r.ReadCards == "" && r.Reads == "" && r.ReworkPriority == "" {
+		why = append(why, "nothing to set: --rework-priority, --read-tier, --read-cards, --reads, --prose, --base, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours, --fleet, --friends, --fleet-tiers, --friends-tiers or an --alarm-... threshold")
 	}
 	if len(r.Streams) > 0 && r.GoLanes != "" {
 		why = append(why, "--go-lanes is the sprint's, not a stream's: nova-sprint set --go-lanes "+r.GoLanes)
@@ -579,6 +591,7 @@ func Set(s *Snapshot, r SetReq) Plan {
 		{PropFriendsTiers, sideTiers[PropFriendsTiers]},
 		{PropReadCards, r.ReadCards},
 		{PropReadsNeeded, r.Reads},
+		{PropReworkPriority, r.ReworkPriority},
 	}
 	for _, a := range alarmProps {
 		kvs = append(kvs, [2]string{a.prop, alarms[a.prop]})

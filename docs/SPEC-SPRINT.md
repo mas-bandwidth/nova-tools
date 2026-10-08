@@ -1458,7 +1458,7 @@ The owner, 2026-10-06, with 270 cards in review, 76 working and every reader nea
 am now convinced that reads need to become a type of card priority." "This will help balance
 reads vs. work from now on." Every card carries one level of the ladder, highest first:
 `blocker` ("this is the most important thing to do right now, stop everything, do this
-instead"), `critical` ("I need to do this right now"), `high` (the seat's usual urgent
+instead"), `critical` ("I need to do this right now"), `fix` (a next attempt that repairs work), `high` (the seat's usual urgent
 level), `reader` (every read card, or its primary's level when higher), `normal` (the
 default) and `low` (it fills only an idle lane).
 
@@ -1468,7 +1468,7 @@ default) and `low` (it fills only an idle lane).
   at admission (`add`), else its stream's default seeds it (a card's own line wins over its
   stream's), and the verb `priority` sets it afterwards. A `PRIORITY:` line that names no
   settable level (`PRIORITY: urgent`) is refused by `add` and `recut`, naming the level found
-  and the ladder's six, never taken as no line (`TestAMisspelledPriorityIsRefused`).
+  and the ladder's seven, never taken as no line (`TestAMisspelledPriorityIsRefused`).
   `critical` is also computed: a card
   with CriticalBehind (10) or more cards behind it (weight.go) is `critical` unless a level is
   set by hand; the computed `critical` is shown as `critical (by weight, not yet ordered)`
@@ -1478,7 +1478,15 @@ default) and `low` (it fills only an idle lane).
   ask's stream round, so it is owed with the model (below). A recut's twin keeps its card's
   level as it keeps its tier, the paths rule's twins included (the widen rule edits the card in place); a new
   brief that names its own `PRIORITY:` line gives the twin that (`TestARecutKeepsTheCardsPriority`).
-- **The verb.** `nova-sprint priority <id>... (--blocker|--critical|--high|--normal|--low)
+- **Rework priority.** `set --rework-priority fix|high|keep` controls the level of a
+  normal or low primary when its next attempt opens (default `fix`). Failed work,
+  broken reads, conflicts, harness faults and the seat's `rework` use the same policy;
+  a corrected brief marked as a brief defect uses it too. Existing high, fix, critical
+  and blocker levels stay unchanged. `keep` retains the card's level. The primary
+  and its newly dealt work carry the level, and subsequent reads inherit it.
+  Within a stream, landing selects eligible cards by priority, preserving named and
+  positional dependencies and the stuck-card barrier. Equal levels keep work order.
+- **The verb.** `nova-sprint priority <id>... (--blocker|--critical|--fix|--high|--normal|--low)
   --reason <text>` sets each primary named (the reason is required, as drop's is);
   `priority --stream <s> --<level> --reason <text>` sets, in one call, every card now in the
   stream, whatever its column and whatever level it had, its own included (the owner: "set
@@ -1499,7 +1507,7 @@ default) and `low` (it fills only an idle lane).
   (`TestPrioritySetsACardAndItsStream`, `TestAStreamsDefaultSeedsNewCards`,
   `TestPriorityRefusesAReadCard`).
 - **A read inherits its primary's level.** A read's level is the higher of `reader` and its
-  primary's own level (`sprint.ReadPriority`): the reads of a blocker, critical or high
+  primary's own level (`sprint.ReadPriority`): the reads of a blocker, critical, fix or high
   primary go to the front of the read queue (the owner, 2026-10-06: "that work stream jumps to
   the front of the reader and merge queue"; "work in review queues should be distributed
   according to priority too when you create consumer reader cards for it"); a normal or low

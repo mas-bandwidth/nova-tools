@@ -206,7 +206,7 @@ func span(ids []string) string {
 	return ids[0] + " .. " + ids[len(ids)-1]
 }
 
-// MergeStep merges the head of the stream's queue, in work order, as one
+// MergeStep merges eligible cards by priority, preserving dependencies, as one
 // batch; or, given a fact that stops the stream, stops it and tells the
 // coordinator why. A stopped stream moves only after resume. A conflict fact
 // on the card's own head (RefusalWay) stops nothing: the card is reworked at
@@ -248,10 +248,14 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		}
 		queued = before
 	}
+	beforePriority := len(queued)
+	queued = MergePriorityOrder(s, queued)
 	now := stamp(s.Now)
 	if len(queued) == 0 {
 		why := "nothing queued in stream " + r.Stream + "; nothing was changed"
-		if len(s.Merge.Cell(r.Stream, Stuck)) > 0 {
+		if beforePriority > 0 {
+			why = "no queued card has its prerequisites satisfied in stream " + r.Stream + "; nothing was changed; land its prerequisites first"
+		} else if len(s.Merge.Cell(r.Stream, Stuck)) > 0 {
 			why = "nothing queued before the stuck card of stream " + r.Stream + "; resume it first; nothing was changed"
 		}
 		p.refuse(r.Stream, why)
@@ -286,8 +290,14 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		}
 	}
 	var ids []string
+	landing := map[string]bool{}
 	for _, c := range batch {
+		if needs := WaitsFor(s, s.Work.Card(c.ID), landing); len(needs) > 0 {
+			p.refuse(c.ID, "the batch omits prerequisites "+strings.Join(needs, ", ")+"; nothing was changed; run: nova-sprint merge --stream "+r.Stream)
+			return p
+		}
 		ids = append(ids, c.ID)
+		landing[c.ID] = true
 	}
 	ctlSet := map[string]string{}
 	var notes []Note
