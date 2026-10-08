@@ -698,7 +698,7 @@ func TestVerbsRefuseABinaryBuiltFromOtherRunnerFiles(t *testing.T) {
 	}
 	for name, args := range verbs {
 		r := ok(name, args, 2)
-		if r.code != 2 || !strings.Contains(r.stderr, "built from other runner files than the ones under "+root) || !strings.Contains(r.stderr, "internal/tlc/run.go differ") || strings.Contains(r.stderr, "outcome.go") || !strings.Contains(r.stderr, "build tlacheck from this tree: go build -o /tmp/tlacheck ./tools/tlacheck") || r.stdout != "" && name != "run" {
+		if r.code != 2 || !strings.Contains(r.stderr, "built from other runner files than the ones under "+root) || !strings.Contains(r.stderr, "internal/tlc/run.go differ") || strings.Contains(r.stderr, "outcome.go") || !strings.Contains(r.stderr, "build tlacheck from this tree: go build -o /tmp/tlacheck ./cmd/tlacheck") || r.stdout != "" && name != "run" {
 			t.Errorf("%s: %+v", name, r)
 		}
 	}

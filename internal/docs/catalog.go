@@ -48,6 +48,7 @@ var DefaultCatalog = []Entry{
 	E("cmd/nova-up", "set nova up on one machine: plan every step, then apply, from nothing to a first sprint", "go test ./cmd/nova-up", "go test ./cmd/nova-up"),
 	E("cmd/nova-version", "build identity and version CLI", "go test ./cmd/nova-version", "go test ./cmd/nova-version"),
 	E("cmd/nova-work", "every issue of every repository of an organization in one tree file, imported read-only and verified field for field", "go test ./cmd/nova-work", "go test ./cmd/nova-work"),
+	E("cmd/tlacheck", "TLA+ model check CLI: run the declared cases, the table and member suites, the receipt replay and the finding witnesses", "go test ./cmd/tlacheck", "go test ./cmd/tlacheck"),
 
 	// internal/
 	E("internal/atomicfile", "atomic file write: standard-library rename beside the target", "go test ./internal/atomicfile", "go test ./internal/atomicfile"),
@@ -164,6 +165,5 @@ var DefaultCatalog = []Entry{
 	E("tools/sandboxcheck", "the darwin profile check of nova-sandbox: fills the profile template for a scratch write set and runs the first second of a job inside the wall, each denial beside a control outside it", "go test ./tools/sandboxcheck", "go run ./tools/sandboxcheck"),
 	E("tools/sessiontrace", "bounded shell trace replay against TableSession", "go test ./tools/sessiontrace", "go test ./tools/sessiontrace"),
 	E("tools/sprintsize", "nova-sprint's size run: the sprint at 10x its largest real size on a local store, each operation timed against its limit", "go vet ./tools/sprintsize", "go run ./tools/sprintsize --bin <nova-sprint>"),
-	E("tools/tlacheck", "TLA+ model check CLI: run the declared cases, the table and member suites, the receipt replay and the finding witnesses", "go test ./tools/tlacheck", "go test ./tools/tlacheck"),
 	E("tools/testmanifest", "exact named Go test manifest checker", "go test ./tools/testmanifest", "go test ./tools/testmanifest"),
 }

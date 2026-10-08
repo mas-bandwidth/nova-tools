@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: use the installed Go toolchain
         # The self-hosted runners carry Go; the runner and the checkers are Go
-        # (tools/tlacheck). The toolchain go.mod names wins when ~/sdk holds it,
+        # (cmd/tlacheck). The toolchain go.mod names wins when ~/sdk holds it,
         # else the newest under ~/sdk, else the bench's own Go on the path.
         shell: bash
         run: |
@@ -57,7 +57,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: use the installed Go toolchain
         # The self-hosted runners carry Go; the runner and the checkers are Go
-        # (tools/tlacheck). The toolchain go.mod names wins when ~/sdk holds it,
+        # (cmd/tlacheck). The toolchain go.mod names wins when ~/sdk holds it,
         # else the newest under ~/sdk, else the bench's own Go on the path.
         shell: bash
         run: |

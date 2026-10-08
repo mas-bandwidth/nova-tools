@@ -2791,7 +2791,7 @@ this rule having run on it, and a main run excuses it all the same.
 ### `tlc` — bounded model evidence
 
 `make tlc` runs one declared `TLC_GROUP` on a Linux bench, using explicit
-`TLC_JAR` and `TLC_OUT` paths; it is `tlacheck run` (tools/tlacheck, over
+`TLC_JAR` and `TLC_OUT` paths; it is `tlacheck run` (cmd/tlacheck, over
 internal/tlc). It downloads nothing, uses at most two TLC workers and two JVM
 processors, and caps the whole group at 110 seconds. Each case has an owned
 temporary state directory, and TLC runs in a private copy of the models under

@@ -192,7 +192,7 @@ TLC runs only on a bench. **The gated cases** are declared in `CASES.tsv` in fou
 for g in sprintevents sprintevents-land sprintevents-drop sprintevents-faults sprintevents-fleet sprintevents-lease \
          sprintevents-loops sprintevents-controls-a sprintevents-controls-b sprintevents-witnesses-a \
          sprintevents-witnesses-b sprintevents-goals sprintevents-goals-b sprintevents-repairs; do
-  go run ./tools/tlacheck run --root . --jar /path/to/tla2tools.jar --dir /tmp/tlc-$g --group $g
+  go run ./cmd/tlacheck run --root . --jar /path/to/tla2tools.jar --dir /tmp/tlc-$g --group $g
 done
 ```
 

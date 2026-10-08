@@ -92,19 +92,20 @@ func CheckRunner(root string) error {
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		return nil
 	}
+	built, err := CheckedSources()
+	if err != nil {
+		return err
+	}
 	var differ []string
 	for _, name := range CheckedFiles() {
-		built, err := sources.ReadFile(name)
-		if err != nil {
-			return err
-		}
+		path := RunnerDir + "/" + name
 		raw, err := os.ReadFile(filepath.Join(dir, name))
-		if err != nil || string(raw) != string(built) {
-			differ = append(differ, RunnerDir+"/"+name)
+		if err != nil || string(raw) != string(built[path]) {
+			differ = append(differ, path)
 		}
 	}
 	if len(differ) > 0 {
-		return fmt.Errorf("this tlacheck was built from other runner files than the ones under %s (%s differ); build tlacheck from this tree: go build -o /tmp/tlacheck ./tools/tlacheck", root, strings.Join(differ, ", "))
+		return fmt.Errorf("this tlacheck was built from other runner files than the ones under %s (%s differ); build tlacheck from this tree: go build -o /tmp/tlacheck ./cmd/tlacheck", root, strings.Join(differ, ", "))
 	}
 	return nil
 }

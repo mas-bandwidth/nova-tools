@@ -125,18 +125,18 @@ TLC_BUDGET ?= 110
 .PHONY: tlc tlc-full tlc-groups tlc-test
 tlc:
 	@test -n "$(TLC_JAR)" && test -n "$(TLC_OUT)" && test -n "$(TLC_GROUP)" || { echo 'make tlc: set TLC_JAR, TLC_OUT and TLC_GROUP' >&2; exit 2; }
-	$(GO) run ./tools/tlacheck run --root . --jar "$(TLC_JAR)" --dir "$(TLC_OUT)" --group "$(TLC_GROUP)" --timeout "$(TLC_BUDGET)s"
+	$(GO) run ./cmd/tlacheck run --root . --jar "$(TLC_JAR)" --dir "$(TLC_OUT)" --group "$(TLC_GROUP)" --timeout "$(TLC_BUDGET)s"
 
 tlc-full:
 	@test "$(origin TLC_BUDGET)" != "file" || { echo 'make tlc-full: supply TLC_BUDGET explicitly' >&2; exit 2; }
 	@test -n "$(TLC_JAR)" && test -n "$(TLC_OUT)" && test -n "$(TLC_GROUP)" || { echo 'make tlc-full: set TLC_JAR, TLC_OUT, TLC_GROUP and an explicit TLC_BUDGET' >&2; exit 2; }
-	$(GO) run ./tools/tlacheck run --root . --jar "$(TLC_JAR)" --dir "$(TLC_OUT)" --group "$(TLC_GROUP)" --timeout "$(TLC_BUDGET)s" --manual
+	$(GO) run ./cmd/tlacheck run --root . --jar "$(TLC_JAR)" --dir "$(TLC_OUT)" --group "$(TLC_GROUP)" --timeout "$(TLC_BUDGET)s" --manual
 
 tlc-test:
-	$(GO) test -count=1 ./internal/tlc ./internal/tablemodel ./tools/tlacheck
+	$(GO) test -count=1 ./internal/tlc ./internal/tablemodel ./cmd/tlacheck
 
 tlc-groups:
-	@$(GO) run ./tools/tlacheck groups --root .
+	@$(GO) run ./cmd/tlacheck groups --root .
 
 
 new-rule:

@@ -336,8 +336,8 @@ The server's `--land` merges each card whose reads passed (one for a flash card,
   `nova-ci local` runs the unit tier CI would run for the batch's diff; the last line finds the packages whose
   tests read a changed doc, each run by name with `go test -p 2 -count=1 ./<package>`. A red that is green on
   both parents is a merge interaction: stop and say so. A changed `.tla` needs its records refreshed on a
-  bench, never the coordinator's machine: `go run ./tools/tlacheck groups --stale` names the groups to run,
-  and `go run ./tools/tlacheck merge --out tla/RUNS.tsv --keep tla/RUNS.tsv <runs>...` joins the records.
+  bench, never the coordinator's machine: `go run ./cmd/tlacheck groups --stale` names the groups to run,
+  and `go run ./cmd/tlacheck merge --out tla/RUNS.tsv --keep tla/RUNS.tsv <runs>...` joins the records.
 - `git push origin lander/<date>`, then `gh pr create --base dev --title 'Batch: <heads>' --body-file <file>`,
   the body listing each head's sha, its reads, and the last line of each gate; `gh pr checks <number>
   --watch` follows CI. Every job has a 2-minute cap: a darwin leg canceled under load with every test passing

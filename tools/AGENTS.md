@@ -20,4 +20,3 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `sessiontrace/` | bounded shell trace replay against TableSession | `go test ./tools/sessiontrace` | `go test ./tools/sessiontrace` |
 | `sprintsize/` | nova-sprint's size run: the sprint at 10x its largest real size on a local store, each operation timed against its limit | `go vet ./tools/sprintsize` | `go run ./tools/sprintsize --bin <nova-sprint>` |
 | `testmanifest/` | exact named Go test manifest checker | `go test ./tools/testmanifest` | `go test ./tools/testmanifest` |
-| `tlacheck/` | TLA+ model check CLI: run the declared cases, the table and member suites, the receipt replay and the finding witnesses | `go test ./tools/tlacheck` | `go test ./tools/tlacheck` |

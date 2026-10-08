@@ -53,7 +53,7 @@ The TLA+ modules here are the specifications of the state machines this repo imp
 | `CairnStore.tla` | `MCCairnStore*` | the cairn store (internal/cairn, docs/SPEC-CAIRN.md): session records, atomic entry files as the source of truth, the append-only event log, index and coverage ledger, nested and flat shapes; Open starts or re-starts a session idempotently without touching another session, Append stores exact prose under a stable id with a clock stamp, retries succeed with Duplicate=true and no second entry, conflicting prose is refused and never overwrites, persistence is fsync-durable before reported, publication is separate and implies persistence, every logged entry is indexed or the coverage ledger names the gap, and an entry crashed between entry and log is reported as a gap rather than lost silently; three reversed witnesses (BrokenOverwrite breaks NoOverwrite, BrokenReportBeforeFsync breaks DurableBeforeReported, BrokenPublishedWithoutPersisted breaks PublishedImpliesPersisted) |
 | `ConfigApply.tla` | `MCConfigApply*` | `internal/config` apply (docs/SPEC-CONFIG.md, "History" and "Apply"): the store rows and one history row per change, the per-kind revision, Redis's views and `config:decl`'s stamps, the plan and the idempotency key `config:<kind>:<rev>`. Two machines and two friends. It proves a change has its history row, Redis equals the store after a completed apply, an ahead stamp is refused, a machine ceiling precedes a friend placed on it and a friend's removal is last among the ops, the stamp follows the ops, and a second apply of the same revision leaves that one copy; a crashed apply is completed by the next apply once crashes are exhausted and no earlier kind's stamp is ahead. Four reversed witnesses: a stamp before the ops, a friend written before its ceiling, a write with no history row, and an apply that writes over an ahead stamp |
 
-Runners. `tools/tlacheck` (Go, over `internal/tlc` and `internal/tablemodel`) runs the checks. Run it on a bench that has java and, for the replays, redis-server: neither belongs on a working machine. Every run is bounded by `--timeout` (a timeout is a failure, never a green), downloads nothing, and runs TLC in a private copy of the models under `--dir`, so the checkout never gains the error-trace files TLC writes beside a spec. The jar is `--jar`, or the environment variable `TLC_JAR`; java and redis-server are found on PATH, or named with `--java` and `--redis-server`, and the path found is echoed. `tlacheck help` and `tlacheck <verb> -h` say the rest.
+Runners. `cmd/tlacheck` (Go, over `internal/tlc` and `internal/tablemodel`) runs the checks. Run it on a bench that has java and, for the replays, redis-server: neither belongs on a working machine. Every run is bounded by `--timeout` (a timeout is a failure, never a green), downloads nothing, and runs TLC in a private copy of the models under `--dir`, so the checkout never gains the error-trace files TLC writes beside a spec. The jar is `--jar`, or the environment variable `TLC_JAR`; java and redis-server are found on PATH, or named with `--java` and `--redis-server`, and the path found is echoed. `tlacheck help` and `tlacheck <verb> -h` say the rest.
 
 | Verb | What it runs |
 |---|---|
@@ -67,14 +67,14 @@ Runners. `tools/tlacheck` (Go, over `internal/tlc` and `internal/tablemodel`) ru
 | `witnesses` | the table model's findings replayed against a pinned `table.lua` in a disposable Redis |
 
 ```sh
-go run ./tools/tlacheck groups --root .
-go run ./tools/tlacheck inputs --root . --case MCEpochMemberFixedPoint
-go run ./tools/tlacheck run --root . --jar /path/to/tla2tools.jar --dir /tmp/tlc-out --group tablefirstcontact
-go run ./tools/tlacheck table --root . --jar /path/to/tla2tools.jar --dir /tmp/table-results --mode all
-go run ./tools/tlacheck member --root . --jar /path/to/tla2tools.jar --dir /tmp/member-results
-go run ./tools/tlacheck replay --root . --jar /path/to/tla2tools.jar --dir /tmp/member-replay --source internal/nsprint/fn/lua/table.lua
+go run ./cmd/tlacheck groups --root .
+go run ./cmd/tlacheck inputs --root . --case MCEpochMemberFixedPoint
+go run ./cmd/tlacheck run --root . --jar /path/to/tla2tools.jar --dir /tmp/tlc-out --group tablefirstcontact
+go run ./cmd/tlacheck table --root . --jar /path/to/tla2tools.jar --dir /tmp/table-results --mode all
+go run ./cmd/tlacheck member --root . --jar /path/to/tla2tools.jar --dir /tmp/member-results
+go run ./cmd/tlacheck replay --root . --jar /path/to/tla2tools.jar --dir /tmp/member-replay --source internal/nsprint/fn/lua/table.lua
 git show f77458853af46fdbbafd6881a4b46006431f266f:internal/nsprint/fn/lua/table.lua > /tmp/table-pinned.lua
-go run ./tools/tlacheck witnesses /tmp/table-pinned.lua
+go run ./cmd/tlacheck witnesses /tmp/table-pinned.lua
 timeout 120 java -cp /path/to/tla2tools.jar tlc2.TLC -workers 8 -deadlock tla/MCCardMachine.tla
 timeout 120 java -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -deadlock tla/MCFirstConn.tla
 timeout 120 java -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -deadlock -config tla/MCFuseBox.cfg tla/MCFuseBox.tla
@@ -100,14 +100,14 @@ A record machine is a Linux bench of the fleet whose machine row says `tla=true`
 A record refresh is one command from the working machine, in the checkout of the change:
 
 ```sh
-go build -o /tmp/tlacheck ./tools/tlacheck
+go build -o /tmp/tlacheck ./cmd/tlacheck
 runs=$(mktemp -d)
 /tmp/tlacheck run --root . --dir "$runs" --bench any
 ```
 
 `--bench any` reads the machine rows (`nova-config machine list`, in the command's environment: `NOVA_PG_DSN`) and takes the record machine with the lowest load per CPU among those holding the pinned jar; `--bench <machine>` names one, whose rows are not read: the pinned jar at the path is the check. Without `--group` it runs every group `groups --stale` lists. It builds this tree's `tlacheck` for the bench, stages it with the top of `tla/` in `~/tla-runs/tlacheck-*` there, and runs each case of each group as its own bounded run (`--group <g> --shards <n> --shard <i>`, `n` the group's size), under `nice -n 15` with `--workers 2`, each after the bench's 1-minute load falls under `--load-below` (default 0.8 x its logical CPUs; it waits at most `--trough-wait`, default 30m, reading every `--trough-poll`, 15s). Each record is under the 110 s cap; a group's total is not one budget. The records come back under `--dir`, and when every case is as declared they are merged into `tla/RUNS.tsv` with `merge --keep`, so `groups --stale` prints `[]` after it; when one is not, nothing is merged and the logs are under `--dir`. The staged directory is removed when the run ends, and one a dead run left is removed by the next run after a day.
 
-A `models` card names its bench in its JOB.md with this sentence, the card builder filling in the record machine it chose (a row with `tla=true`) and the card's name: "Refresh the TLC records from this checkout with `go build -o /tmp/tlacheck ./tools/tlacheck && /tmp/tlacheck run --root . --dir /tmp/tlc-<card> --bench <machine>`; <machine> is a TLC record machine (its nova-config machine row says tla=true, and its pinned jar is at /opt/tla/tla2tools.jar), so never run TLC on this machine, and commit tla/RUNS.tsv only when the command ends with MERGE OK."
+A `models` card names its bench in its JOB.md with this sentence, the card builder filling in the record machine it chose (a row with `tla=true`) and the card's name: "Refresh the TLC records from this checkout with `go build -o /tmp/tlacheck ./cmd/tlacheck && /tmp/tlacheck run --root . --dir /tmp/tlc-<card> --bench <machine>`; <machine> is a TLC record machine (its nova-config machine row says tla=true, and its pinned jar is at /opt/tla/tla2tools.jar), so never run TLC on this machine, and commit tla/RUNS.tsv only when the command ends with MERGE OK."
 
 ### Refreshing the records after a model edit
 
@@ -118,7 +118,7 @@ The author of a model change refreshes only the records the change staled. Start
 ```sh
 git fetch origin
 git checkout origin/dev -- tla/RUNS.tsv
-go build -o /tmp/tlacheck ./tools/tlacheck
+go build -o /tmp/tlacheck ./cmd/tlacheck
 /tmp/tlacheck groups --root . --stale
 ```
 

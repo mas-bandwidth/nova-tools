@@ -58,11 +58,11 @@ ONE PLACE should be “at most one owned location per member within the chosen n
 Use the official [TLA+ tools v1.7.4 release](https://github.com/tlaplus/tlaplus/releases/tag/v1.7.4), `tla2tools.jar` SHA-1 `bee4a54f3ee3d4afc347c3240ec2d9e93b075104`. It identifies itself as TLC 2.19. The local run used OpenJDK 27, 2 TLC workers, a 2 GiB heap and no remote services. Java's local RMI listener may require the normal local-execution permission in a sandbox. The runner does not download anything.
 
 ```sh
-go run ./tools/tlacheck table --jar /path/to/tla2tools.jar --mode all --dir /tmp/table-model-results
-go run ./tools/tlacheck table --jar /path/to/tla2tools.jar --mode strict --dir /tmp/table-model-strict
+go run ./cmd/tlacheck table --jar /path/to/tla2tools.jar --mode all --dir /tmp/table-model-results
+go run ./cmd/tlacheck table --jar /path/to/tla2tools.jar --mode strict --dir /tmp/table-model-strict
 # Extract the exact pin in a nova-tools checkout, then replay locally:
 git show f77458853af46fdbbafd6881a4b46006431f266f:internal/nsprint/fn/lua/table.lua > /tmp/table-f7745885.lua
-go run ./tools/tlacheck witnesses /tmp/table-f7745885.lua
+go run ./cmd/tlacheck witnesses /tmp/table-f7745885.lua
 ```
 
 `all` means current-contract checks plus **five expected failures and one allowed cross-table scope control**, not all desired invariants passing. The entire TLC runner has a 120-second budget, including all cases; timeout is a failure, not success or an inconclusive green. `strict` is expected to fail today: exit 1, with a `TABLE FAIL` line naming the first finding the table code still has. A newly missing or changed counterexample fails witness mode so a repair requires updating the model and its disposition. Do not install the positive-only suite as proof that ONE PLACE is solved. CI integration into nova-tools is still owed with the implementation repair and its cross-repository source pin.

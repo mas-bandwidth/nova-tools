@@ -351,8 +351,8 @@ func TestACardThatTouchesAModelRunsItInItsGate(t *testing.T) {
 		brief := Render(header, c)
 		step := gateStep(brief)
 		assert.Contains(t, step, "make tlc TLC_JAR=/opt/tla/tla2tools.jar TLC_OUT=$JOB/scratch/tlc-$g TLC_GROUP=$g", paths)
-		assert.Contains(t, step, "go run ./tools/tlacheck groups --root . --stale", paths)
-		assert.Contains(t, step, "go run ./tools/tlacheck merge --root . --keep tla/RUNS.tsv --out tla/RUNS.tsv", paths)
+		assert.Contains(t, step, "go run ./cmd/tlacheck groups --root . --stale", paths)
+		assert.Contains(t, step, "go run ./cmd/tlacheck merge --root . --keep tla/RUNS.tsv --out tla/RUNS.tsv", paths)
 		assert.Contains(t, step, swarm.GateNamesWhoseFile, paths)
 		var line []string
 		for _, l := range strings.Split(brief, "\n") {

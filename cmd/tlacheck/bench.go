@@ -172,7 +172,7 @@ func runOnBench(e env, o benchOpts) int {
 		return refuseB("cannot create "+filepath.Dir(bin)+": "+err.Error(), tool+" run --dir <a directory you can write> ...")
 	}
 	if err := e.bench.build(ctx, o.root, probe.GOOS, probe.GOARCH, bin); err != nil {
-		return refuseB("tlacheck cannot be built for "+platform+": "+err.Error(), "go build ./tools/tlacheck")
+		return refuseB("tlacheck cannot be built for "+platform+": "+err.Error(), "go build ./cmd/tlacheck")
 	}
 	archive, files, err := stageArchive(o.root, bin)
 	if err != nil {
@@ -623,7 +623,7 @@ func parseMachineList(out string) []benchRow {
 func goBuild(ctx context.Context, root, goos, goarch, out string) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "go", "build", "-trimpath", "-o", out, "./tools/tlacheck")
+	cmd := exec.CommandContext(ctx, "go", "build", "-trimpath", "-o", out, "./cmd/tlacheck")
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH="+goarch, "CGO_ENABLED=0")
 	cmd.WaitDelay = 5 * time.Second
