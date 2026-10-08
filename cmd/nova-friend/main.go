@@ -1103,18 +1103,20 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// her harness's limit: every command's output read for it, her turns held while she is
 	// down and a wake after the reset (friend.Limits); its hooks are set once record is
 	fl := &friend.Limits{Now: w.now, Nonce: w.random, Harness: c.Str("harness"), Rest: c.Dur("limit-rest")}
-	// every harness's credit and quota refusal, one table (limit.go): each lane's output and
+	// every harness's credit and quota refusal, one table (limit.go): the harness's stderr and
 	// the runner log are read, and a hit the harness's own wording did not name is handed to
 	// the same limit path (fl.Refuse); three lanes failing alike with a wording no row knows
 	// is one judgment (RefusalWatch). The harness's own wording is read first, so a hit both
-	// readers know is one down.
+	// readers know is one down. A failed lane's output is the model's answer with the harness's
+	// stderr after it (friend.RealExec): it is handed as Stderr, never Stdout, and only its last
+	// RefusalTail bytes are read, so the model's stdout is never a source the reader reads.
 	rw := &RefusalWatch{Harness: c.Str("harness"), Now: w.now}
 	limitWatch := fl.Watch(walled)
 	watched := func(ctx context.Context, d, prog string, args []string, stdin string) (string, int, error) {
 		out, exit, err := limitWatch(ctx, d, prog, args, stdin)
 		if exit != 0 || err != nil {
 			if _, _, alreadyHeld := fl.Limited(); !alreadyHeld {
-				rw.Observe(LaneText{Stdout: out, Log: friend.RunnerLog(dir)})
+				rw.Observe(LaneText{Stderr: out, Log: friend.RunnerLog(dir)}, exit)
 			}
 		}
 		return out, exit, err
