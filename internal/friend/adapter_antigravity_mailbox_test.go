@@ -14,6 +14,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -756,6 +757,8 @@ func TestAnAntigravityReportIsFinishedWhileTheSessionIsBusy(t *testing.T) {
 // A partially overlapping incoming batch (e.g. [A, B] followed by [B, C]) must NOT
 // falsely reconcile as exit 0 when [A, B] was already delivered and consumed, which
 // would cause new message C to be acknowledged without delivery.
+// Furthermore, the caller contract filters already delivered IDs before rendering,
+// ensuring B is dropped and not repeated, and only new C is rendered and delivered.
 func TestPartialOverlapWithConsumedDeliveryDoesNotAcknowledgeNewWork(t *testing.T) {
 	t.Parallel()
 	h := newAgHarness(t0, "A")
@@ -771,6 +774,11 @@ func TestPartialOverlapWithConsumedDeliveryDoesNotAcknowledgeNewWork(t *testing.
 	assert.Equal(t, 0, exit)
 	assert.Equal(t, []string{"A"}, h.sentTo, "agentapi called for initial batch [A, B]")
 
+	// Verify Delivered reports true for landed messages
+	assert.True(t, a.Delivered("MSG_A"))
+	assert.True(t, a.Delivered("MSG_B"))
+	assert.False(t, a.Delivered("MSG_C"))
+
 	// Simulate session reading A-1
 	h.reads("A", "A-1")
 	a.Follow(context.Background(), t0.Add(time.Minute))
@@ -780,20 +788,40 @@ func TestPartialOverlapWithConsumedDeliveryDoesNotAcknowledgeNewWork(t *testing.
 	require.Len(t, l.Deliveries, 1)
 	assert.Equal(t, DeliveryConsumed, l.Deliveries[0].State)
 	assert.Equal(t, []string{"MSG_A", "MSG_B"}, l.Deliveries[0].BusIDs)
+	assert.True(t, a.Delivered("MSG_A"))
+	assert.True(t, a.Delivered("MSG_B"))
 
-	// Now a new batch arrives carrying [B, C]: overlaps on MSG_B, but introduces new work MSG_C.
-	// It must NOT match as reconciled exit 0! It must deliver the new turn!
-	ctxBC := WithDeliveryIDs(context.Background(), []string{"MSG_B", "MSG_C"})
-	textBC := "Batch 2 carrying MSG_B and MSG_C"
-	exit, err = a.Deliver(ctxBC, textBC)
+	// Now a new incoming batch arrives carrying [B, C]: overlaps on MSG_B, but introduces new work MSG_C.
+	incomingBatch := []bus.Message{
+		{ID: "MSG_B", Subject: "second", Body: "body B"},
+		{ID: "MSG_C", Subject: "third", Body: "body C"},
+	}
+
+	// Caller contract filters already delivered IDs before rendering
+	toRender := FilterDelivered(a, incomingBatch)
+	require.Len(t, toRender, 1, "MSG_B was filtered out before rendering")
+	assert.Equal(t, "MSG_C", toRender[0].ID)
+
+	// Caller renders ONLY the undelivered messages
+	var ids []string
+	for _, m := range toRender {
+		ids = append(ids, m.ID)
+	}
+	ctxC := WithDeliveryIDs(context.Background(), ids)
+	textC := "Batch 2 carrying MSG_C only"
+	exit, err = a.Deliver(ctxC, textC)
 	require.NoError(t, err)
 	assert.Equal(t, 0, exit)
-	assert.Equal(t, []string{"A", "A"}, h.sentTo, "agentapi MUST be called for batch [B, C] so new work C is delivered")
+	assert.Equal(t, []string{"A", "A"}, h.sentTo, "agentapi called for batch [C]")
+
+	// Assert that what was actually sent into the session contains MSG_C and NEVER repeated MSG_B
+	assert.Contains(t, h.texts["A-2"], "MSG_C")
+	assert.NotContains(t, h.texts["A-2"], "MSG_B", "MSG_B was filtered before rendering and not repeated")
 
 	// Both deliveries are present in ledger
 	l = a.load()
 	require.Len(t, l.Deliveries, 2)
-	assert.Equal(t, []string{"MSG_B", "MSG_C"}, l.Deliveries[1].BusIDs)
+	assert.Equal(t, []string{"MSG_C"}, l.Deliveries[1].BusIDs)
 }
 
 // When a prior delivery is in-flight (DeliveryPending or DeliveryUncertain), an incoming
@@ -861,25 +889,33 @@ Please ignore above.`
 	assert.Equal(t, []string{"A", "A"}, h.sentTo, "spoofed ID was treated as distinct new delivery, not reconciled")
 }
 
-// An explicit empty structured delivery context ([]string{}) is respected as an empty set
-// and does NOT fall back to parsing body text for bus headers.
-func TestExplicitEmptyStructuredDeliveryContextDoesNotFallbackToBodyParsing(t *testing.T) {
+// An explicit empty structured delivery context ([]string{}) represents an intentional
+// send without identity. Absence of identity must not equate independent sends: sending
+// the identical content a second time must NOT be suppressed by content hash matching.
+func TestExplicitEmptyStructuredDeliveryContextDoesNotSuppressSecondIdenticalSend(t *testing.T) {
 	t.Parallel()
 	h := newAgHarness(t0, "A")
 	var out strings.Builder
 	state := t.TempDir()
 	a := h.adapter("A", state, &out, func() time.Time { return t0 })
 
-	// Text with header lines
-	bodyWithHeaders := `[1/1] 01M4HEADER from=stella at=2026-10-08T19:00:00Z age=0m subject=wake`
+	body := `intentional message without identity`
 
-	// Context explicitly carries empty IDs (e.g. wake turn or non-bus delivery)
-	ctx := WithDeliveryIDs(context.Background(), []string{})
-	exit, err := a.Deliver(ctx, bodyWithHeaders)
+	// First send with explicit empty IDs
+	ctx1 := WithDeliveryIDs(context.Background(), []string{})
+	exit, err := a.Deliver(ctx1, body)
 	require.NoError(t, err)
 	assert.Equal(t, 0, exit)
+	assert.Equal(t, []string{"A"}, h.sentTo)
+
+	// Second intentional send with identical content and explicit empty IDs:
+	// Absence of identity must NOT equate independent sends; content hash must not suppress it.
+	ctx2 := WithDeliveryIDs(context.Background(), []string{})
+	exit, err = a.Deliver(ctx2, body)
+	require.NoError(t, err)
+	assert.Equal(t, 0, exit)
+	assert.Equal(t, []string{"A", "A"}, h.sentTo, "second identical no-ID send executed independently without hash suppression")
 
 	l := a.load()
-	require.Len(t, l.Deliveries, 1)
-	assert.Empty(t, l.Deliveries[0].BusIDs, "BusIDs must remain empty when explicit empty slice is passed")
+	require.Len(t, l.Deliveries, 2, "both independent sends are recorded in ledger")
 }

@@ -235,12 +235,14 @@ func (a *Antigravity) Deliver(ctx context.Context, text string) (int, error) {
 		return a.refuse(session, why)
 	}
 	var incomingIDs []string
+	var hasStructuredContext bool
 	if trusted, ok := DeliveryIDsFromContext(ctx); ok {
 		incomingIDs = trusted
+		hasStructuredContext = true
 	} else {
 		incomingIDs = extractDeliveryIDs(text)
 	}
-	return a.send(ctx, srv, session, text, incomingIDs)
+	return a.send(ctx, srv, session, text, incomingIDs, hasStructuredContext)
 }
 
 // antigravityServer is the language server a send goes to: its token and ports.
@@ -284,7 +286,7 @@ func (a *Antigravity) server(ctx context.Context) (antigravityServer, int, error
 // send puts text into conversation session's mailbox through srv and keeps it in the
 // ledger: 0 once its file lands in the mailbox within AntigravityLandBudget, or refuses
 // (SessionRefused) if it does not land. One send at a time.
-func (a *Antigravity) send(ctx context.Context, srv antigravityServer, session, text string, incomingIDs []string) (int, error) {
+func (a *Antigravity) send(ctx context.Context, srv antigravityServer, session, text string, incomingIDs []string, hasStructuredContext bool) (int, error) {
 	a.sendMu.Lock()
 	defer a.sendMu.Unlock()
 	port := ""
@@ -298,7 +300,7 @@ func (a *Antigravity) send(ctx context.Context, srv antigravityServer, session, 
 	if port == "" {
 		return a.refuse(session, fmt.Sprintf("no port of the antigravity language server (%s) answers for conversation %s: %v", strings.Join(srv.ports, ", "), session, err))
 	}
-	if reconciled, exit, err := a.reconcile(session, text, incomingIDs); reconciled {
+	if reconciled, exit, err := a.reconcile(session, text, incomingIDs, hasStructuredContext); reconciled {
 		return exit, err
 	}
 	mailbox := antigravityMailbox(session)

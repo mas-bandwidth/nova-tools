@@ -1106,7 +1106,7 @@ func (l *loop) read(now time.Time) bool {
 					break
 				}
 				delete(l.answered, e.Entry)
-			} else if l.acted[msg.ID] || e.Stage == bus.Acted {
+			} else if l.acted[msg.ID] || e.Stage == bus.Acted || l.isDelivered(msg.ID) {
 				// a second delivery of a message a turn acted on: dropped and acked, never pushed in twice
 				d.Record(fmt.Sprintf("%s duplicate dropped id=%s", now.UTC().Format(time.RFC3339), msg.ID))
 				if _, aerr := b.AckEntry(l.ctx, d.Friend, e.Entry); aerr != nil {
@@ -1279,7 +1279,39 @@ func (l *loop) deliverBatch(t *turn) func(context.Context) result {
 // not fit go back to the head of the hand, pending, and are the next turn.
 // The model is tla/FriendEnvelope.tla: EnvelopeTakesAll and
 // NoYoungerFirst.
+func (l *loop) isDelivered(id string) bool {
+	if l.acted[id] {
+		return true
+	}
+	var delivered bool
+	under(l.d.Deliver, func(d Deliverer) bool {
+		if f, ok := d.(DeliveredFilter); ok && f.Delivered(id) {
+			delivered = true
+			return true
+		}
+		return false
+	})
+	return delivered
+}
+
 func (l *loop) startBatch(now time.Time) {
+	var kept []bus.Entry
+	for _, e := range l.hand {
+		msg := e.Message()
+		if l.isDelivered(msg.ID) {
+			l.d.Record(fmt.Sprintf("%s duplicate dropped id=%s (already delivered)", now.UTC().Format(time.RFC3339), msg.ID))
+			delete(l.inHand, e.Entry)
+			if _, aerr := l.d.Store.Ack(l.ctx, bus.StreamOf(l.d.Friend), l.d.Friend, e.Entry); aerr != nil {
+				l.d.status.StoreError = aerr.Error()
+			}
+			continue
+		}
+		kept = append(kept, e)
+	}
+	l.hand = kept
+	if len(l.hand) == 0 {
+		return
+	}
 	t := &turn{}
 	var msgs []bus.Message
 	for _, e := range l.hand {

@@ -202,6 +202,19 @@ func (a *Antigravity) known(id string) bool {
 	return slices.ContainsFunc(a.load().Deliveries, func(d AntigravityDelivery) bool { return d.ID == id })
 }
 
+// Delivered reports whether the ledger holds bus message id in an already landed or consumed delivery.
+func (a *Antigravity) Delivered(id string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	l := a.load()
+	for _, d := range l.Deliveries {
+		if (d.State == DeliveryConsumed || d.State == DeliveryLanded || !d.ReadAt.IsZero()) && slices.Contains(d.BusIDs, id) {
+			return true
+		}
+	}
+	return false
+}
+
 // following is the conversation delivery was moved to, while the named session is the one
 // it was moved from; "" when none.
 func (a *Antigravity) following() string {
@@ -422,7 +435,7 @@ func (a *Antigravity) Follow(ctx context.Context, now time.Time) {
 		return
 	}
 	for _, d := range owed {
-		if _, err := a.send(ctx, srv, to, ResentLine(d)+d.Text, d.BusIDs); err != nil {
+		if _, err := a.send(ctx, srv, to, ResentLine(d)+d.Text, d.BusIDs, len(d.BusIDs) > 0); err != nil {
 			a.say("antigravity: message %s not sent again into conversation %s: %s; sent again at the next look", dash(d.ID), to, oneLine(err.Error(), 300))
 			return
 		}
@@ -443,23 +456,33 @@ func (a *Antigravity) Follow(ctx context.Context, now time.Time) {
 // antigravityMailbox is conversation c's mailbox, under the home.
 // reconcile checks if an existing delivery for session and text is already pending, landed,
 // or consumed. It reconciles without duplicate send, or holds an ambiguous/pending send visibly.
-func (a *Antigravity) reconcile(session, text string, incomingIDs []string) (reconciled bool, exit int, err error) {
+func (a *Antigravity) reconcile(session, text string, incomingIDs []string, hasStructuredContext bool) (reconciled bool, exit int, err error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	l := a.load()
 	mailbox := antigravityMailbox(session)
 	inBox, _ := a.mailbox(mailbox)
+
+	hasExplicitEmptyIDs := hasStructuredContext && len(incomingIDs) == 0
+
 	for i := len(l.Deliveries) - 1; i >= 0; i-- {
 		d := &l.Deliveries[i]
 		if d.Conversation != session {
 			continue
 		}
 
-		hasHashMatch := (d.Hash != "" && d.Hash == antigravityHash(text))
+		// When explicit empty structured IDs are present (absence of identity),
+		// content hash must NOT match an existing completed delivery to suppress a second
+		// intentional identical send.
+		hasHashMatch := (!hasExplicitEmptyIDs && d.Hash != "" && d.Hash == antigravityHash(text))
 		hasFullCoverage := len(incomingIDs) > 0 && d.coversAll(incomingIDs)
 		hasPartialOverlap := len(incomingIDs) > 0 && d.overlapsAny(incomingIDs)
 
-		if !hasHashMatch && !hasFullCoverage && !hasPartialOverlap {
+		// For pending/uncertain deliveries in-flight: if identical text is currently pending,
+		// hold visibly to prevent duplicate in-flight sends even if no IDs.
+		inFlightHashMatch := (d.Hash != "" && d.Hash == antigravityHash(text))
+
+		if !hasHashMatch && !hasFullCoverage && !hasPartialOverlap && !(inFlightHashMatch && (d.ID == "" || d.State == DeliveryPending || d.State == DeliveryUncertain)) {
 			continue
 		}
 
@@ -480,7 +503,7 @@ func (a *Antigravity) reconcile(session, text string, incomingIDs []string) (rec
 
 			// File has not landed yet.
 			// If full coverage or hash match: hold visibly rather than duplicate send.
-			if hasHashMatch || hasFullCoverage {
+			if hasHashMatch || hasFullCoverage || inFlightHashMatch {
 				desc := d.Hash
 				if len(d.BusIDs) > 0 {
 					desc = strings.Join(d.BusIDs, ",")
