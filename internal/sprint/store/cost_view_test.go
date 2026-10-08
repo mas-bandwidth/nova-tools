@@ -51,7 +51,7 @@ func TestTheWhereRecordCountsTiersAndCostsByTier(t *testing.T) {
 	costs := sprint.StreamTierCosts(h.snap())
 	s1 := costs["s1"]
 	assert.Equal(t, map[string]int{"flash": 1, "pro": 1}, s1.Tiers)
-	assert.Equal(t, "$4.00", s1.PerLanded, "one landed card that cost four dollars")
+	assert.Equal(t, sprint.CostUnknown, s1.PerLanded, "unpriced reads leave the landed card's cost incomplete")
 	assert.Equal(t, map[string]string{"flash": "$2.00", "pro": "$2.00"}, s1.CostByTier, "the spend split by the tier each attempt ran on, not the card's ceiling")
 	s2 := costs["s2"]
 	assert.Equal(t, map[string]int{"heavy": 1}, s2.Tiers)
@@ -64,5 +64,18 @@ func TestTheWhereRecordCountsTiersAndCostsByTier(t *testing.T) {
 	assert.Equal(t, s1, rec.Streams["s1"])
 	assert.Equal(t, "-", sprint.PerLandedOf("-", 0))
 	assert.Equal(t, "$0.34", sprint.PerLandedOf("$1.00", 3), "a cent rounded up")
+
+	// A streams tidy preserves the epoch's landed cards. Its old cost/count base
+	// must not replace the tick's priced-card headline with a smaller number.
+	require.NoError(t, h.st.putJSON(h.ctx, keyStats, StatsRecord{
+		Epoch:   h.st.epoch,
+		Streams: map[string]sprint.StreamBase{"s1": {Cost: "4", Landed: 1}},
+	}))
+	h.putWhere(WhereRecord{}) // force the tick to recalculate at the same table revision
+	require.NoError(t, h.st.keepWhere(h.ctx, h.machineRecord()))
+	postTidy, ok := h.whereRecord()
+	require.True(t, ok)
+	assert.Equal(t, s1.PerLanded, postTidy.Streams["s1"].PerLanded,
+		"tidy must not publish a cost over all landings in place of the priced-card figure")
 	h.clean("tiers and costs counted")
 }

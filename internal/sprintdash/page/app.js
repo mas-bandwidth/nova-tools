@@ -68,7 +68,7 @@ function el(tag, cls, text) {
 // (.fv) inside the node, so the tint hugs the digits, not the cell. A track
 // cell flashes only when it goes lit <-> unlit. The clock never flashes
 // (setLiveHTML does not use these helpers).
-["all", "all2", "pct", "eta", "eta-at", "cost", "cost-per", "cost-unreconciled", "inflight", "inflight-sub", "tput", "coord", "epoch", "machine",
+["all", "all2", "pct", "eta", "eta-at", "eta-basis", "cost", "cost-per", "cost-unreconciled", "inflight", "inflight-sub", "tput", "coord", "epoch", "machine",
  "streams-sub", "fleet-head", "friends-sub", "readers-sub"].forEach(function (id) { var e = document.getElementById(id); if (e) quiet(e); });
 function valEl(e) {
   if (!e._fv) {
@@ -296,16 +296,17 @@ function renderStreams(d) {
   });
   var rank = function (k) { return RANK[statusOf[k]] == null ? 3.5 : RANK[statusOf[k]]; };
   var keys = streamOrder(d).filter(function (k) { return showArchived || !arch[k]; }).sort(function (a, b) { return rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0); });
-  var sum = { cost: 0, totalCost: 0, workCost: 0, readCost: 0, unreconciled: 0, unpriced: 0 }, held = 0, landedStreams = 0, prevRank = null;
+  var sum = { cost: 0, totalCost: 0, workCost: 0, readCost: 0, unreconciled: 0, unpriced: 0, actual: 0, estimated: 0, tokens: 0, coverUnpriced: 0, coverRecords: 0, dropped: 0, coverageKnown: false }, held = 0, landedStreams = 0, prevRank = null;
   // the epoch's spend, every stream's, the archived ones' too: the cost tile's scope once the
   // sprint is done (where --json's done), when the table's streams are all archived
-  var epoch = { totalCost: 0, workCost: 0, readCost: 0, unpriced: 0 };
+  var epoch = { totalCost: 0, workCost: 0, readCost: 0, unpriced: 0, actual: 0, estimated: 0, tokens: 0, coverUnpriced: 0, coverRecords: 0, dropped: 0, coverageKnown: false };
   streamOrder(d).forEach(function (k) {
     var sc = (d.stream_costs || {})[k] || {};
     var tc = cents(sc.total_cost); if (tc) epoch.totalCost += tc;
     var wc = cents(sc.work_cost); if (wc) epoch.workCost += wc;
     var rc = cents(sc.read_cost); if (rc) epoch.readCost += rc;
     epoch.unpriced += int(sc.unpriced_runs);
+    addCoverage(epoch, sc);
   });
   sum.epoch = epoch;
   var digits = digitsOf(streamOrder(d).reduce(function (a, k) { return a + FLOW.reduce(function (b, st) { return b + int(work[k][st]); }, 0); }, 0));
@@ -333,6 +334,7 @@ function renderStreams(d) {
       var wc = cents(sc.work_cost); if (wc) sum.workCost += wc;
       var rc = cents(sc.read_cost); if (rc) sum.readCost += rc;
       sum.unpriced += int(sc.unpriced_runs);
+      addCoverage(sum, sc);
     }
     var status = statusOf[k];
     if (status === "held") held++;
@@ -581,35 +583,79 @@ function setMachine(line) {
   var box = $("overall"); if (box) box.classList.toggle("stopped", !running);
 }
 
+// addCoverage folds a stream's coverage (sprint.TierCosts.coverage) into the sums when the
+// frame carries it. A frame without it leaves the unreconciled line as it was.
+function addCoverage(sum, sc) {
+  var c = sc && sc.coverage;
+  if (!c) return;
+  sum.coverageKnown = true;
+  sum.actual += int(c.actual);
+  sum.estimated += int(c.estimated);
+  sum.tokens += int(c.tokens);
+  sum.coverUnpriced += int(c.unpriced);
+  sum.coverRecords += int(c.records);
+  sum.dropped += int((sc.dropped || {}).cards);
+}
+
+// etaBasis is the ETA tile's second sub-line. Held is apart from executing. The rate's
+// window and sample are drawn only when the frame carries eta; the split alone comes from
+// eta.work, or from held and the work table's counts when it does not. A card the page
+// draws at fix is executing: it is off the working count and still being worked.
+function etaBasis(d, s) {
+  var e = d.eta || {}, split;
+  if (e.work) {
+    var w = e.work;
+    split = int(w.held) + " held \u00b7 " + int(w.executing) + " executing \u00b7 " + int(w.queued) + " queued";
+  } else {
+    var held = int(d.held);
+    var executing = int(s.sum.working) + int(s.sum.fix) + int(s.sum.review) + int(s.sum.merging);
+    var queued = Math.max(int(s.sum.waiting) + int(s.sum.ready) - held, 0);
+    split = held + " held \u00b7 " + executing + " executing \u00b7 " + queued + " queued";
+  }
+  var r = e.rate || {};
+  if (r.window && r.window !== "none" && Number(r.per_hour) > 0) {
+    return Number(r.per_hour).toFixed(1) + "/h over " + r.window + " (" + int(r.landings) + " landings) \u00b7 " + split;
+  }
+  return split;
+}
+
 function renderHero(d, s) {
   var landed = int(d.landed), all = int(d.all);
   setText($("landed"), landed.toLocaleString("en-US")); setText($("all"), all.toLocaleString("en-US")); setText($("all2"), all.toLocaleString("en-US"));
   setText($("pct"), all ? (landed / all * 100).toFixed(1) + "%" : "-");
   var m = String(d.summary || "").match(/ETA\s+(\S+)/), at = new Date(d.at);
+  var done = (all && landed >= all) || / done$/.test(String(d.summary || ""));
   if (m) {
     setText($("eta"), etaText(m[1]));
     var ms = etaMs(m[1]);
     var etaAt = new Date(at.getTime() + ms);
     if (ms != null && !isNaN(at)) { etaAtLast = [etaAt, ms]; fitEtaAt(); } else { etaAtLast = null; setText($("eta-at"), "\u00a0"); }
-  } else if ((all && landed >= all) || / done$/.test(String(d.summary || ""))) { setText($("eta"), "done"); setText($("eta-at"), " "); }
+  } else if (done) { setText($("eta"), "done"); setText($("eta-at"), " "); }
   else { setText($("eta"), "-"); setText($("eta-at"), "not in the summary"); }
+  setText($("eta-basis"), done ? "\u00a0" : etaBasis(d, s));
   // the cost tile and its tooltip cover one scope (docs/SPEC-SPRINT.md, the summary line): the
   // streams on the table, or, the sprint done, the epoch's every stream, as the hero's count
-  // is. The cost is every recorded take and read of their cards in any column; the cost per
-  // card is that over the cards that landed
+  // is. The cost is every recorded take and read of their cards in any column. While a run of
+  // that scope is unpriced, the per-card phrase is unknown, never the recorded spend over
+  // every landed card.
   var c = d.done ? s.sum.epoch : s.sum, recorded = c.totalCost;
   setText($("cost"), money(recorded));
-  // the reads are their own number beside the work, with their share of the two:
-  // "$0.42 per card · $310 work · $96 reads (24%)"
+  // the reads are their own number beside the work, with their share of the two
   var both = c.workCost + c.readCost;
   var split = both ? money(c.workCost) + " work \u00b7 " + money(c.readCost) + " reads (" + Math.round(100 * c.readCost / both) + "%)" : "";
-  var per = landed ? money(Math.ceil(recorded / landed)) + " per card" : "";
+  var per = !landed ? "" : c.unpriced ? "per card unknown" : money(Math.ceil(recorded / landed)) + " per card";
   var unpriced = c.unpriced ? c.unpriced + " runs unpriced" : "";
   setHTML($("cost-per"), [per, split, unpriced].filter(Boolean).join(" \u00b7 ") || " ");
   setTitle($("cost-per"), readerSpendTitle(d, d.done ? null : archivedSet(d)));
   // what the providers counted beyond the records is the epoch's (sprint.UnreconciledSpend,
-  // every day since the epoch began), never added into the tile: its own line, its scope named
-  setText($("cost-unreconciled"), money(s.sum.unreconciled) + " unreconciled since " + epochStart(d));
+  // every day since the epoch began), never added into the tile: its own line, its scope named.
+  // Coverage is named on that line only when the frame's stream costs carry it.
+  var cover = "";
+  if (c.coverageKnown) {
+    cover = " \u00b7 " + int(c.actual) + " actual \u00b7 " + int(c.estimated) + " estimated \u00b7 " + int(c.tokens) + " tokens \u00b7 " + int(c.coverUnpriced) + " unpriced of " + int(c.coverRecords) + " records";
+    if (c.dropped) cover += " \u00b7 " + int(c.dropped) + " dropped";
+  }
+  setText($("cost-unreconciled"), money(s.sum.unreconciled) + " unreconciled since " + epochStart(d) + cover);
   setText($("inflight"), s.sum.working + (s.sum.fix || 0) + s.sum.review + s.sum.merging);
   inflightLast = s.sum; renderInflight(s.sum);
   // throughput: cards landed per hour over the last hour, from the server's samples
