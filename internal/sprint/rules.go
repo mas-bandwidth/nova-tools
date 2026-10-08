@@ -295,12 +295,13 @@ func ruleFailed(s *Snapshot, a *RuleAnswer) {
 	case holdsFor(s, pr) != "":
 		ruleHoldNeed(s, a, pr, holdsFor(s, pr))
 		return
-	case AtIdenticalFailure(s, pr) != nil:
-		left(a, "the second identical failure: the bound rule answers it")
+	}
+	if wc := AtIdenticalFailure(s, pr); wc != nil {
+		parkAnswer(a, pr, BoundClass(wc), "the second identical failure: the brief is wrong, not the worker; parked in fix")
 		return
 	}
-	if bb, ok := AtBriefBound(pr, brokenFindings(s, pr), s.AttemptsCap(pr.Row)); ok {
-		left(a, bb.String())
+	if bb, ok := AtBriefBound(pr, brokenFindings(s, pr), s.ReworkBound(pr.Row)); ok {
+		parkAnswer(a, pr, boundFinding(s, pr, bb), bb.String()+"; parked in fix")
 		return
 	}
 	if why := sameFailure(s, pr.F(FieldFailure)); why != "" {
@@ -336,8 +337,8 @@ func ruleBound(s *Snapshot, a *RuleAnswer) {
 		left(a, why)
 		return
 	}
-	if bb, ok := AtBriefBound(pr, "", s.AttemptsCap(pr.Row)); ok {
-		left(a, bb.String())
+	if bb, ok := AtBriefBound(pr, "", s.ReworkBound(pr.Row)); ok {
+		parkAnswer(a, pr, boundFinding(s, pr, bb), bb.String()+"; parked in fix")
 		return
 	}
 	wc := AtRedealBound(s, pr)
@@ -534,8 +535,7 @@ func ruleBrief(s *Snapshot, a *RuleAnswer) {
 	case pr.F(FieldBriefDefect) != "":
 		left(a, "a brief defect since "+pr.F(FieldBriefDefect)+": brief or drop, a mind's")
 	default:
-		a.Card = pr.ID
-		a.Act, a.Why = ActMark, "the brief is wrong, not the worker: marked a brief defect and held for a mind"
+		parkAnswer(a, pr, pr.F("finding"), "the brief is wrong, not the worker: parked in fix, held for a mind")
 	}
 }
 
@@ -728,15 +728,26 @@ func TickRuleLate(s *Snapshot, r TickReq) (Plan, int) {
 	return p, 0
 }
 
-// TickRuleBrief marks the brief defects: the card's mark, and the judgment's text.
+// TickRuleBrief parks the cards a rule answers ActPark (the brief's bound: one judgment per
+// card, its fix the BRIEF line) and marks the brief defects (ActMark).
 func TickRuleBrief(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
 	updated := map[string]bool{}
-	for _, a := range acting(s, r, ActMark) {
+	for _, a := range acting(s, r, ActMark, ActPark) {
 		pr := s.Work.Placed(a.Card)
-		p.Units = append(p.Units, Unit{Key: pr.ID, Stream: pr.Row,
-			Changes: []Change{change(Work, setEntry(pr, map[string]string{FieldBriefDefect: stamp(s.Now), FieldRuleAnswer: RuleBriefDefect + ": " + a.Act + " at " + stamp(s.Now)}))},
-			Moved:   pr.ID + " marked a brief defect by rule " + RuleBriefDefect})
+		set := map[string]string{FieldBriefDefect: stamp(s.Now), FieldRuleAnswer: RuleBriefDefect + ": " + a.Act + " at " + stamp(s.Now)}
+		if a.fix != "" {
+			// the card is parked in fix: the seat and its next reader read the BRIEF line
+			set[FieldFix] = a.fix
+		}
+		u := Unit{Key: pr.ID, Stream: pr.Row,
+			Changes: []Change{change(Work, setEntry(pr, set))},
+			Moved:   pr.ID + " " + a.Act + " by rule " + RuleBriefDefect}
+		if a.Act == ActPark && a.open.Note.Type != NBriefWrong {
+			// the finish's judgment is closed by the park: one judgment per card, the bound's
+			u.Closes = append(u.Closes, a.open)
+		}
+		p.Units = append(p.Units, u)
 		if n := a.open.Note; !updated[n.ID] && !strings.HasPrefix(n.What, "brief defect: ") {
 			updated[n.ID] = true
 			n.What = "brief defect: " + n.What
