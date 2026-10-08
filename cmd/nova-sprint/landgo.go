@@ -21,12 +21,17 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"time"
+	"weak"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bench"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -324,33 +329,165 @@ func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 
 // benchGate runs the gate's runs on a bench: the first host of the ring whose Go lane is
 // granted, the ring being hosts (the up benches in the fleet's order) started at the slot
-// the lander's gate key (the batch's stream) hashes to (benchRing), in one copy of the
-// clone (its .git too when the tree tests run: they read the history), the runs in order,
-// the first red ending it. ran is false when the gate did not run there (no lane before
-// ctx ended, the bench not answering, the copy failing): the caller runs it here, and that
-// bench's failure is nobody's finding. A gate that ran records the ring's size and the
-// slot for the batch's LAND line (gateRing, gateSlot).
+// the lander's gate key (the batch's stream) hashes to (benchRing), the tree staged there
+// from the bench's own mirror at the gated commit (gateStage, bench.StageLine), the runs in
+// order, the first red ending it. Before the ring is asked the commit is pushed to a
+// temporary ref on the remote the bench fetches (bench.GateRef), deleted after whatever the
+// gate did (bench.WithGateRef): only the sha crosses the tailnet, never the clone. Every
+// stage is said (copySaid): on the loop's idle line as the step ("gate copy <host> <n>MB
+// <t>s via mirror", "gate copy refused: <why>") and as a NOTE of the batch. A bench whose
+// stage is refused is left for the next slot of the ring; one refused twice in the pass is
+// passed over for the rest of it, said with the reason (bench.StageSkips). ran is false
+// when the gate did not run on a bench (the commit could not be pushed, no lane before ctx
+// ended, a bench not answering, every slot's stage refused): the caller runs it here, and
+// that is nobody's finding. A gate that ran records the ring's size and the slot for the
+// batch's LAND line (gateRing, gateSlot).
 func (l *lander) benchGate(ctx context.Context, hosts []string, dir string, runs [][]string, tests bool) (why string, ran bool) {
-	host, err := l.takeGateLane(ctx, benchRing(l.gateKey, hosts))
+	st, err := l.gateStage(ctx, dir)
 	if err != nil {
+		l.copySaid((&bench.StageError{Step: "the gated tree", Err: err}).Error())
 		return "", false
 	}
+	if st == nil { // a test's gateBench seam stands in for the bench and its stage
+		return l.ringGate(ctx, hosts, dir, runs, tests, nil)
+	}
+	gerr := bench.WithGateRef(ctx, landRefGit{l: l, dir: dir}, st.Sha, st.Ref, func() error {
+		why, ran = l.ringGate(ctx, hosts, dir, runs, tests, st)
+		return nil
+	})
+	if gerr != nil {
+		l.copySaid(gerr.Error())
+	}
+	return why, ran
+}
+
+// ringGate asks the ring for a lane and runs the gate there, stepping to the next slot
+// when a bench's stage is refused (benchGate).
+func (l *lander) ringGate(ctx context.Context, hosts []string, dir string, runs [][]string, tests bool, st *bench.MirrorStage) (string, bool) {
+	skips := l.stageSkips()
+	tried, said := map[string]bool{}, map[string]bool{}
+	for {
+		ring, notes := skips.Ring(benchRing(l.gateKey, hosts))
+		for _, n := range notes {
+			if !said[n] {
+				said[n] = true
+				l.copySaid(n)
+			}
+		}
+		var live []string
+		for _, h := range ring {
+			if !tried[h] {
+				live = append(live, h)
+			}
+		}
+		if len(live) == 0 {
+			return "", false
+		}
+		host, err := l.takeGateLane(ctx, live)
+		if err != nil {
+			return "", false
+		}
+		tried[host] = true
+		why, ran, refused := l.gateOn(ctx, host, dir, runs, tests, st)
+		if refused != nil {
+			skips.Fail(host, refused.Error())
+			continue
+		}
+		if ran {
+			l.gateRing, l.gateSlot = len(hosts), ringSlot(l.gateKey, len(hosts))
+		}
+		return why, ran
+	}
+}
+
+// gateOn runs the gate on host, whose Go lane the lander holds and gives back: the finding
+// ("" green) and ran, or the stage's refusal when the tree never reached the bench.
+func (l *lander) gateOn(ctx context.Context, host, dir string, runs [][]string, tests bool, st *bench.MirrorStage) (why string, ran bool, refused *bench.StageError) {
 	defer l.giveGateLane(host)
 	l.stage("gate", "bench "+host+" held by "+l.laneWho()+" ("+l.gateWhose()+"): "+strings.Join(runs[0], " "))
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(len(runs))*landGoBudget)
 	defer cancel()
 	start := l.clock()
-	out, code, err := l.runOnBench(ctx, host, dir, runs, tests)
+	out, code, err := l.runOnBench(ctx, host, dir, runs, tests, st)
 	wall := l.clock().Sub(start)
+	if errors.As(err, &refused) {
+		return "", false, refused
+	}
 	if err != nil || code == bench.NoAnswer {
-		return "", false
+		return "", false, nil
 	}
 	l.ranOnBench(host, wall)
-	l.gateRing, l.gateSlot = len(hosts), ringSlot(l.gateKey, len(hosts))
 	if code == 0 {
-		return "", true
+		return "", true, nil
 	}
-	return gateWhy(redRun(runs, out), fmt.Errorf("exit status %d on the bench %s", code, host), out), true
+	return gateWhy(redRun(runs, out), fmt.Errorf("exit status %d on the bench %s", code, host), out), true, nil
+}
+
+// copySaid says one stage line: the loop's idle line carries it as the step, and the
+// batch's report as a NOTE.
+func (l *lander) copySaid(line string) {
+	l.stage("gate "+line, "the tree gate's stage")
+	l.ledgerLog = append(l.ledgerLog, "tree gate: "+line)
+}
+
+// gateStage is the mirror stage of the tree at dir (bench.MirrorStage): its commit, the
+// temporary ref that commit is pushed to, the bench's mirror of the clone's repository and
+// the clone's remote. nil with no error when a test's gateBench seam stands in for the
+// bench. A tree whose files differ from its commit cannot be staged from a mirror: the
+// gate runs here instead, said.
+func (l *lander) gateStage(ctx context.Context, dir string) (*bench.MirrorStage, error) {
+	if l.a != nil && l.a.landState().gate() != nil {
+		return nil, nil
+	}
+	sha, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return nil, err
+	}
+	dirty, err := l.git(ctx, dir, "status", "--porcelain")
+	if err != nil {
+		return nil, err
+	}
+	if dirty != "" {
+		return nil, fmt.Errorf("the tree at %s holds changes its commit %s does not (%s); a bench stages a commit, so this gate runs here", dir, shortSha(sha), firstLine(dirty, nil))
+	}
+	remote, err := l.git(ctx, dir, "remote", "get-url", "origin")
+	if err != nil {
+		return nil, err
+	}
+	st := &bench.MirrorStage{Mirror: bench.MirrorDir(path.Base(strings.TrimRight(remote, "/"))), Remote: remote, Ref: bench.GateRef(l.gateKey, sha), Sha: sha}
+	return st, st.Validate()
+}
+
+// landRefGit pushes and deletes the gate's temporary ref from the clone at dir to its
+// origin (bench.RefGit).
+type landRefGit struct {
+	l   *lander
+	dir string
+}
+
+func (g landRefGit) Push(ctx context.Context, sha, ref string) error {
+	_, err := g.l.git(ctx, g.dir, "push", "--quiet", "--no-verify", "origin", sha+":"+ref)
+	return err
+}
+
+func (g landRefGit) Delete(ctx context.Context, ref string) error {
+	_, err := g.l.git(ctx, g.dir, "push", "--quiet", "--no-verify", "origin", ":"+ref)
+	return err
+}
+
+// stageSkipsOf is each land pass's record of the benches whose stage failed, by the pass's
+// shared locks (lander.locks): weak keys, each entry removed when its pass is collected.
+var stageSkipsOf sync.Map // weak.Pointer[landShared] -> *bench.StageSkips
+
+// stageSkips is this pass's record (stageSkipsOf).
+func (l *lander) stageSkips() *bench.StageSkips {
+	s := l.locks()
+	key := weak.Make(s)
+	v, loaded := stageSkipsOf.LoadOrStore(key, &bench.StageSkips{})
+	if !loaded {
+		runtime.AddCleanup(s, func(k weak.Pointer[landShared]) { stageSkipsOf.Delete(k) }, key)
+	}
+	return v.(*bench.StageSkips)
 }
 
 // gateMark starts the line a bench gate prints before each of its runs.
@@ -535,23 +672,34 @@ func (l *lander) gateWhose() string {
 	return "the lander's gate"
 }
 
-// runOnBench runs the gate's runs on host (gateScript) in a copy of dir, with its .git
-// when withGit: the output, the exit status, and err when the runs could not be reached
-// (bench.Run's error). A test's gateBench seam stands in for the bench.
-func (l *lander) runOnBench(ctx context.Context, host, dir string, runs [][]string, withGit bool) (string, int, error) {
+// runOnBench runs the gate's runs on host (gateScript) in the tree st stages from the
+// bench's mirror (never a copy of dir): the output, the exit status, and err when the runs
+// could not be reached (bench.Run's error; a *bench.StageError when the stage was refused).
+// The stage is said as it ends (copySaid). A test's gateBench seam stands in for the bench
+// and its stage: a *bench.StageError it returns is a refused stage.
+func (l *lander) runOnBench(ctx context.Context, host, dir string, runs [][]string, withGit bool, st *bench.MirrorStage) (string, int, error) {
 	if l.a != nil {
 		if gate := l.a.landState().gate(); gate != nil {
-			return gate(ctx, host, dir, runs, withGit)
+			out, code, err := gate(ctx, host, dir, runs, withGit)
+			var refused *bench.StageError
+			if errors.As(err, &refused) {
+				l.copySaid(refused.Error())
+			}
+			return out, code, err
 		}
+	}
+	if st == nil {
+		return "", 0, fmt.Errorf("no mirror stage for %s: the gate runs here", dir)
 	}
 	var buf bytes.Buffer
 	res, err := bench.Run(ctx, bench.Exec{}, bench.Options{
-		Hosts:   []string{host},
-		Dir:     dir,
-		WithGit: withGit,
-		Argv:    []string{"sh", "-c", gateScript(runs)},
-		Stdout:  &buf,
-		Stderr:  &buf,
+		Hosts:  []string{host},
+		Stage:  st,
+		Argv:   []string{"sh", "-c", gateScript(runs)},
+		Stdout: &buf,
+		Stderr: &buf,
+		Now:    l.clock,
+		Staged: func(s bench.Stage) { l.copySaid(s.Line()) },
 	})
 	return buf.String(), res.Code, err
 }
