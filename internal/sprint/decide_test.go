@@ -50,6 +50,6 @@ func TestDecideDueGradesAndLabelsEveryDecisionByTheCardsFate(t *testing.T) {
 func TestALandedScriptCardsTierIsScript(t *testing.T) {
 	t.Parallel()
 	script := "c: rename (s1) tier: flash\nPATHS: a.go\nSTEP 1. Rename.\nCOMMIT: rename\nPATHS: a.go\nVERDICT: ok\nSCRIPT: regex\n```\ns/old/new/ a.go\n```\nPOST: exit0 go vet ./...\n"
-	assert.Equal(t, decide.GradeScript, LandedTier(&Card{ID: "c", Fields: map[string]string{"brief": script}}))
-	assert.Equal(t, "flash", LandedTier(&Card{ID: "c", Fields: map[string]string{"brief": "c: x (s1) tier: pro\n", FieldTierNow: "flash"}}))
+	assert.Equal(t, decide.GradeScript, LandedTier(nil, &Card{ID: "c", Fields: map[string]string{"brief": script}}))
+	assert.Equal(t, "flash", LandedTier(nil, &Card{ID: "c", Fields: map[string]string{"brief": "c: x (s1) tier: pro\n", FieldTierNow: "flash"}}))
 }

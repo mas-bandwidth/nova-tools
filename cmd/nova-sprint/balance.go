@@ -7,6 +7,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/provbalance"
@@ -24,12 +25,12 @@ import (
 // balanceLoop polls until ctx is done, waiting on a.after between polls (its own clock: the
 // loop's sleep is the tick's pace).
 func (a *app) balanceLoop(ctx context.Context, st *store.Store, stdout io.Writer) {
-	fmt.Fprintf(stdout, "BALANCE every %s: each provider's balance is read through the seat's key and written to the fleet table\n", sprint.BalancePollEvery)
+	fmt.Fprintf(stdout, "BALANCE every %s: each provider's balance is read through the seat's key and written to the fleet table\n", balanceEvery(ctx, st))
 	for ctx.Err() == nil {
 		a.pollBalances(ctx, st, stdout)
 		select {
 		case <-ctx.Done():
-		case <-a.after(sprint.BalancePollEvery):
+		case <-a.after(balanceEvery(ctx, st)):
 		}
 	}
 }
@@ -71,4 +72,14 @@ func (a *app) pollBalances(ctx context.Context, st *store.Store, stdout io.Write
 		return
 	}
 	fmt.Fprintf(stdout, "%s BALANCE %s notes=%d\n", at, strings.Join(said, " "), res.Notes)
+}
+
+// balanceEvery is the time between two polls: nova-config's balance_poll_every, read before
+// each wait, else sprint.BalancePollEvery (policy.go).
+func balanceEvery(ctx context.Context, st *store.Store) time.Duration {
+	var policy sprint.PolicyValues
+	if st != nil {
+		policy, _ = st.Policy(ctx)
+	}
+	return (&sprint.Snapshot{Policy: policy}).PolicyDuration(sprint.PolicyBalancePollEvery)
 }

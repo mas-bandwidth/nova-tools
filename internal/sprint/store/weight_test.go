@@ -74,7 +74,7 @@ func TestACriticalCardStartsOnPro(t *testing.T) {
 	require.NotNil(t, wc)
 	assert.Equal(t, "pro-a", wc.F(sprint.FieldRoute), "a critical card draws a pro route")
 	assert.Equal(t, "pro", wc.F(sprint.FieldTier))
-	now, ceiling := sprint.CardTiers(h.snap().Work.Card("s1-1"))
+	now, ceiling := sprint.CardTiers(nil, h.snap().Work.Card("s1-1"))
 	assert.Equal(t, []string{"pro", "pro"}, []string{now, ceiling}, "never dealt below pro")
 	line := sprint.CriticalLine([]sprint.CriticalCard{{ID: "ftsync-t1-merge", Behind: 140, State: sprint.Working}})
 	assert.Equal(t, "critical: ftsync-t1-merge 140 behind, working", line)
