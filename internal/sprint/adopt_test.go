@@ -63,6 +63,9 @@ func (f *fakeAdopt) Ask(_ context.Context, j sprint.AdoptJudgment) error {
 	f.asked = append(f.asked, j)
 	return f.call("ask")
 }
+func (f *fakeAdopt) Migrate(context.Context, sprint.AdoptBuild) (string, error) {
+	return "role=nova_config from=35 to=36 applied=1", f.call("migrate")
+}
 func (f *fakeAdopt) KeepRollback(context.Context) ([]string, error) {
 	return []string{"/srv/nova-sprint.adopt-prev"}, f.call("keep")
 }
@@ -177,8 +180,9 @@ func TestAdoptionRunsWhenTheBaseMovesAndAsksOneJudgment(t *testing.T) {
 		r.f.calls = nil
 		p := r.pass()
 		require.Equal(t, sprint.AdoptWatching, p.Stage, p.Lines)
-		assert.Equal(t, []string{"keep", "switch", "machines",
+		assert.Equal(t, []string{"migrate", "keep", "switch", "machines",
 			"push m1", "version m1", "push m2", "version m2", "push m3-unfunded", "version m3-unfunded"}, r.f.calls)
+		assert.Contains(t, strings.Join(p.Lines, "\n"), "ADOPT MIGRATED tip=aaaaaaaaaaaa role=nova_config from=35 to=36 applied=1", "the schema is applied, as the owner, before the switch")
 		assert.Equal(t, "v-aaaaaaa", r.f.server)
 		for _, m := range r.f.machines {
 			assert.Equal(t, "v-aaaaaaa", r.f.versions[m], m)
@@ -223,6 +227,21 @@ func TestAdoptionRunsWhenTheBaseMovesAndAsksOneJudgment(t *testing.T) {
 		assert.Contains(t, p.Lines[0], "ADOPT ROLLED-BACK tip=aaaaaaaaaaaa")
 	})
 
+	t.Run("a schema the store does not take blocks before any copy is kept or switched", func(t *testing.T) {
+		t.Parallel()
+		r := newAdoptRig(t)
+		r.toJudgment()
+		_, err := sprint.AnswerAdoption(r.ctx, r.st, "aaaaaaaaaaaa", "yes", "")
+		require.NoError(t, err)
+		r.f.fail["migrate"] = errors.New("the store is at schema 35 and the build carries 36: role nova_admin cannot apply it")
+		r.f.calls = nil
+		p := r.pass()
+		assert.Equal(t, sprint.AdoptBlocked, p.Stage, p.Lines)
+		assert.Equal(t, []string{"migrate"}, r.f.calls, "nothing is kept aside or switched when the schema is not applied")
+		assert.Equal(t, "live", r.f.server, "the live build stays")
+		assert.Contains(t, strings.Join(p.Lines, "\n"), "ADOPT BLOCKED tip=aaaaaaaaaaaa at migrate: the store is at schema 35 and the build carries 36")
+	})
+
 	t.Run("a partial switch rolls the kept copies back before it blocks", func(t *testing.T) {
 		t.Parallel()
 		r := newAdoptRig(t)
@@ -233,7 +252,7 @@ func TestAdoptionRunsWhenTheBaseMovesAndAsksOneJudgment(t *testing.T) {
 		r.f.calls = nil
 		p := r.pass()
 		assert.Equal(t, sprint.AdoptBlocked, p.Stage, p.Lines)
-		assert.Equal(t, []string{"keep", "switch", "rollback"}, r.f.calls)
+		assert.Equal(t, []string{"migrate", "keep", "switch", "rollback"}, r.f.calls)
 		assert.Equal(t, "live", r.f.server, "a failed switch leaves the prior server build live")
 		assert.Contains(t, strings.Join(p.Lines, "\n"), "ADOPT BLOCKED tip=aaaaaaaaaaaa at switch: friend daemon did not replace")
 	})

@@ -305,3 +305,46 @@ func TestMigrateDryRunUsesTheAdvancingLedgerForReadiness(t *testing.T) {
 		})
 	}
 }
+
+// ownedWholeByAnother is the store as the fleet's was found on 2026-10-08:
+// nova_config owns schema config and every table in it, and migrate is run
+// as nova_admin (the seat's DSN). The refusal names nova_config as the role
+// that runs it and gives that command, never an ALTER OWNER: the store is
+// not misowned, the run is as the wrong role.
+func TestMigrateRefusalNamesTheOwningRoleAndItsCommand(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness()
+	h.env["NOVA_PG_DSN"] = "postgres://nova_admin@127.0.0.1:5432/nova"
+	h.store.version = currentSchema() - 1
+	o := config.Ownership{Role: "nova_admin", SchemaOwner: "nova_config", Create: false, Tables: map[string]string{}}
+	for tb := range mixedCatalog().Tables {
+		o.Tables[tb] = "nova_config"
+	}
+	h.store.Catalog = o
+
+	why := fmt.Sprintf("role nova_admin cannot apply migration %d and applied none: role nova_config owns schema config and every table in it, "+
+		"and only the owner alters and fills them, so nova_config runs this once", currentSchema())
+	remedy := "NOVA_PG_PASSWORD_ENV=NOVA_PG_CONFIG_PASSWORD nova-config migrate --pg postgres://nova_config@127.0.0.1:5432/nova " +
+		"(as nova_config, the owner, with its password in the variable NOVA_PG_CONFIG_PASSWORD names)"
+
+	code, out, errs := h.run(t, "migrate")
+	require.Equal(t, 1, code, "stdout %q stderr %q", out, errs)
+	assert.Equal(t, "", out)
+	assert.Equal(t, "nova-config migrate REFUSED: "+why+"; run: "+remedy+"\n", errs)
+	assert.NotContains(t, errs, "ALTER", "the owner runs migrate; nothing is re-owned")
+	assert.Equal(t, currentSchema()-1, h.store.version, "the refusal applied a migration")
+
+	code, out, errs = h.run(t, "migrate", "--dry-run")
+	require.Equal(t, 1, code, "dry-run ready=no: stdout %q stderr %q", out, errs)
+	assert.Contains(t, out, "MIGRATE WOULD-REFUSE "+why+"; run: "+remedy+"\n")
+	assert.Contains(t, out, "role=nova_admin ready=no")
+
+	// as the owner, the same store migrates
+	h.env["NOVA_PG_DSN"] = dsn
+	h.store.Catalog.Role = "nova_config"
+	h.store.Catalog.Create = true
+	code, out, errs = h.run(t, "migrate")
+	require.Equal(t, 0, code, "as the owner: stdout %q stderr %q", out, errs)
+	assert.Equal(t, fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=%d to=%d applied=1\n", currentSchema()-1, currentSchema()), out)
+}

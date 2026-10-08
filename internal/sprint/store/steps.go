@@ -355,6 +355,14 @@ func NoteStep(verb string, n sprint.Note) Step {
 	}}
 }
 
+// FriendSyncStateStep records the friend sync loop's standing failure, or its
+// clearing, on the fleet table (sprint.FriendSyncStateStep): what the tick's
+// one judgment of it is raised on and closed by.
+func FriendSyncStateStep(r sprint.FriendSyncStateReq) Step {
+	return Step{Args: ArgsOf(r), Verb: "friend sync", Load: tables(sprint.Fleet),
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.FriendSyncStateStep(s, r) }}
+}
+
 // UnpinStep drops stored WHO pins atomically with their audit notes. The fleet
 // table is loaded so a first attempt returned by friend take can be recognised.
 func UnpinStep(r sprint.UnpinReq) Step {

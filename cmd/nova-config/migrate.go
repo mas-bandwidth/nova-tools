@@ -79,11 +79,11 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 		return refuse(stderr, verb, err.Error())
 	}
 	if *dry {
-		return migrateDryRun(ctx, st, all, owners, stdout, stderr, key, value, *asJSON)
+		return migrateDryRun(ctx, st, all, owners, stdout, stderr, key, value, dsn, *asJSON)
 	}
 	gaps := config.MigrateGaps(owners, config.Pending(all, have))
 	if len(gaps) > 0 {
-		return refused(stderr, verb, ownershipWhy(owners.Role, config.Pending(all, have), gaps), ownershipRemedy(owners.Role, gaps))
+		return refused(stderr, verb, ownershipWhy(owners, config.Pending(all, have), gaps), ownershipRemedy(owners, gaps, dsn))
 	}
 	from, to, applied, err := st.Migrate(ctx)
 	if err != nil {
@@ -126,7 +126,7 @@ func shownSQL(sql []string, max int) []string {
 // refusal it would print. It exits 0 when migrate would apply (ready=yes)
 // and 1 when it would refuse (ready=no), so a play or script gating on the
 // dry run stops on it; nothing was attempted, so it prints no refusal line.
-func migrateDryRun(ctx context.Context, st pgStore, all []config.Migration, owners config.Ownership, stdout, stderr io.Writer, key, value string, asJSON bool) int {
+func migrateDryRun(ctx context.Context, st pgStore, all []config.Migration, owners config.Ownership, stdout, stderr io.Writer, key, value, dsn string, asJSON bool) int {
 	const verb = "migrate"
 	ledger, err := st.Applied(ctx)
 	if err != nil {
@@ -167,7 +167,7 @@ func migrateDryRun(ctx context.Context, st pgStore, all []config.Migration, owne
 	ready := "yes"
 	if len(gaps) > 0 {
 		ready = "no"
-		why, remedy := ownershipWhy(owners.Role, pending, gaps), ownershipRemedy(owners.Role, gaps)
+		why, remedy := ownershipWhy(owners, pending, gaps), ownershipRemedy(owners, gaps, dsn)
 		o.Status, o.Exit, o.Why, o.Remedy = tool.Failed, 1, []string{why}, remedy
 		lines = append(lines, "MIGRATE WOULD-REFUSE "+plain(why)+"; run: "+remedy)
 	}
@@ -195,8 +195,18 @@ func gapName(g config.Gap) string {
 }
 
 // ownershipWhy is why migrate refuses: the role, the migrations it cannot
-// apply, the rule, and each owner with what it holds.
-func ownershipWhy(role string, pending []config.Migration, gaps []config.Gap) string {
+// apply, the rule, and each owner with what it holds. When one other role
+// owns schema config whole (config.SoleOwner), it names that role as the one
+// that runs migrate: the store is not misowned, the run is as the wrong role.
+func ownershipWhy(o config.Ownership, pending []config.Migration, gaps []config.Gap) string {
+	which := fmt.Sprintf("migration %d", pending[0].Version)
+	if len(pending) > 1 {
+		which = fmt.Sprintf("migrations %d to %d", pending[0].Version, pending[len(pending)-1].Version)
+	}
+	if owner, ok := config.SoleOwner(o); ok {
+		return fmt.Sprintf("role %s cannot apply %s and applied none: role %s owns schema config and every table in it, and only the owner alters and fills them, so %s runs this once",
+			o.Role, which, owner, owner)
+	}
 	byOwner := map[string][]string{}
 	var owners []string
 	for _, g := range gaps {
@@ -209,20 +219,23 @@ func ownershipWhy(role string, pending []config.Migration, gaps []config.Gap) st
 	for i, o := range owners {
 		held[i] = o + " owns " + strings.Join(byOwner[o], ", ")
 	}
-	which := fmt.Sprintf("migration %d", pending[0].Version)
-	if len(pending) > 1 {
-		which = fmt.Sprintf("migrations %d to %d", pending[0].Version, pending[len(pending)-1].Version)
-	}
 	return fmt.Sprintf("role %s cannot apply %s and applied none: the role that runs migrate must own every table in schema config and be able to create in it, and %s, so a role with the owners' rights runs this once, in psql",
-		role, which, strings.Join(held, ", and "))
+		o.Role, which, strings.Join(held, ", and "))
 }
 
-// ownershipRemedy is the statements that close every gap, on one line:
-// printed for a person to run, never run by migrate.
-func ownershipRemedy(role string, gaps []config.Gap) string {
+// ownershipRemedy is what closes every gap, on one line, printed for a
+// person to run and never run by migrate: the same migrate as the owning
+// role when one role owns schema config whole (the --pg with that user, the
+// password from the variable NOVA_PG_PASSWORD_ENV names), else one ALTER
+// OWNER statement per gap (migrate changes no ownership).
+func ownershipRemedy(o config.Ownership, gaps []config.Gap, dsn string) string {
+	if owner, ok := config.SoleOwner(o); ok {
+		return oneline.Escape(fmt.Sprintf("NOVA_PG_PASSWORD_ENV=%s nova-config migrate --pg %s (as %s, the owner, with its password in the variable %s names)",
+			config.PasswordEnvFor(owner), config.MigrateAs(dsn, owner), owner, config.PasswordEnvFor(owner)))
+	}
 	lines := make([]string, len(gaps))
 	for i, g := range gaps {
-		lines[i] = g.Remedy(role)
+		lines[i] = g.Remedy(o.Role)
 	}
 	return oneline.Escape(strings.Join(lines, " "))
 }

@@ -405,7 +405,13 @@ side-branch build counts as behind). A pass moves it as far as it can and never 
    one JSON line): switch, yes or no. Answer it with
    `nova-sprint adopt --answer yes|no --judgment <tip12> --reason <text>`; an answer to any other tip is refused.
    Nothing else in the pipeline asks;
-5. on **yes**: the server binary and every `--daemon` are copied aside (`<path>.adopt-prev`), switched, and
+5. on **yes**: first the **migrate** (`ADOPT MIGRATED tip= role= as= from= to= applied=`): the build's own
+   `nova-config migrate` applies the build's schema to the config store (`--pg`, else `NOVA_PG_DSN`) before any
+   binary is switched, as the role that owns schema config, read from its own dry run and never assumed (the
+   owner's password from `NOVA_PG_<OWNER>_PASSWORD`, nova_config's from `NOVA_PG_CONFIG_PASSWORD`); a schema
+   left unapplied blocks the pass at `migrate` and nothing is copied aside or switched (on 2026-10-08 a build
+   carrying schema 36 was switched onto a store at 35, and the friend sync loop refused for 7h45m). Then the
+   server binary and every `--daemon` are copied aside (`<path>.adopt-prev`), switched, and
    the build's own `nova-update release adopt` runs once per `--machines` row, funded or not, each machine's
    `nova-sprint version` read back. A machine that misses is named (`ADOPT FLEET MISSED`) and pushed again on
    every later pass, after the build is adopted too, and across later tips (the record's `owed`) until it

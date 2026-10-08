@@ -258,6 +258,54 @@
             quiet: true
           when: seat_cand != ''
 
+        # The configuration store's migration runs in the window as the seat's
+        # DSN role (nova_pg_dsn). On 2026-10-08 a build carrying schema 36 ran
+        # against a store at 35 for 7h45m: the migrate had been attempted as a
+        # role that did not own schema config and was refused. The candidate's
+        # own dry run says, before the window opens and with nothing changed,
+        # whether the role the window migrates as can apply what is pending,
+        # and names the owner when it cannot; it reads only, so --check runs it
+        # too and says what the window would migrate.
+        - name: "server: the candidate's nova-config migrate --dry-run, as the role the window migrates as (read-only)"
+          ansible.builtin.command:
+            argv: >-
+              {{ [nova_bin_dir ~ '/nova-secrets', 'exec', '--store', nova_secrets_store, '--as', nova_seat,
+                  '--key', nova_secrets_key_dir ~ '/' ~ nova_seat ~ '.key', '--sops', nova_sops | default(''),
+                  '--only', nova_pg_password_key, '--require=' ~ nova_pg_password_key, '--',
+                  seat_cand ~ '/nova-config', 'migrate', '--dry-run', '--json', '--pg', nova_pg_dsn] }}
+          environment: { NOVA_PG_PASSWORD_ENV: "{{ nova_pg_password_key }}" }
+          register: seat_migrate_dry
+          changed_when: false
+          # ignored: read by the assert below, which names the step and the owner
+          failed_when: false
+          check_mode: false
+          when: seat_cand != ''
+
+        - name: "server: the window's role can apply the candidate's schema"
+          ansible.builtin.assert:
+            that:
+              - (seat_migrate_dry.stdout | default('') | trim) is match('[{]')
+              - ((seat_migrate_dry.stdout | default('{}') | from_json).facts | default({})).ready | default('') == 'yes'
+            fail_msg: >-
+              ADOPT REFUSED step=server host={{ inventory_hostname }}: the candidate's nova-config migrate would refuse as role
+              {{ ((seat_migrate_dry.stdout | default('{}') | from_json).facts | default({})).role | default('?') if (seat_migrate_dry.stdout | default('') | trim) is match('[{]') else '?' }}
+              ({{ (((seat_migrate_dry.stdout | default('{}') | from_json).result | default({})).why | default([]) | join('; ')) if (seat_migrate_dry.stdout | default('') | trim) is match('[{]') else (seat_migrate_dry.stderr | default('') | truncate(300)) }});
+              nothing was stopped, migrated, installed or loaded; run it as the owner first:
+              {{ (((seat_migrate_dry.stdout | default('{}') | from_json).result | default({})).remedy | default('nova-config migrate --dry-run')) if (seat_migrate_dry.stdout | default('') | trim) is match('[{]') else 'nova-config migrate --dry-run' }}
+            quiet: true
+          when: seat_cand != ''
+
+        - name: "server: what the window migrates (the same in --check: the dry run reads only)"
+          ansible.builtin.debug:
+            msg: >-
+              {{ 'WOULD-' if ansible_check_mode else '' }}MIGRATE host={{ inventory_hostname }}
+              role={{ ((seat_migrate_dry.stdout | from_json).facts | default({})).role | default('?') }}
+              from={{ ((seat_migrate_dry.stdout | from_json).facts | default({})).from | default('?') }}
+              to={{ ((seat_migrate_dry.stdout | from_json).facts | default({})).to | default('?') }}
+              pending={{ ((seat_migrate_dry.stdout | from_json).facts | default({})).pending | default('?') }}
+              ready={{ ((seat_migrate_dry.stdout | from_json).facts | default({})).ready | default('?') }}
+          when: seat_cand != ''
+
         - name: "friends: the candidate's nova-friend install --dry-run with each friend daemon's plist flags"
           ansible.builtin.command:
             argv: "{{ [seat_cand ~ '/nova-friend'] + item.install + ['--dry-run'] }}"

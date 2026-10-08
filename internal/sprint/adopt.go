@@ -109,8 +109,11 @@ type AdoptRecord struct {
 	Judgment *AdoptJudgment `json:"judgment,omitempty"`
 	// Answer is the coordinator's answer to the judgment: "yes" or "no",
 	// set by AnswerAdoption, read by the next pass.
-	Answer   string         `json:"answer,omitempty"`
-	Reason   string         `json:"reason,omitempty"`
+	Answer string `json:"answer,omitempty"`
+	Reason string `json:"reason,omitempty"`
+	// Migrated is the migrate stage's evidence line: the config store carries
+	// the build's schema, applied as the owning role, before the switch.
+	Migrated string         `json:"migrated,omitempty"`
 	Kept     []string       `json:"kept,omitempty"`
 	Switched time.Time      `json:"switched,omitzero"`
 	Machines []AdoptMachine `json:"machines,omitempty"`
@@ -175,6 +178,14 @@ type AdoptSteps interface {
 	ColdRead(ctx context.Context, card string) (AdoptRead, error)
 	// Ask surfaces the one judgment to the coordinator.
 	Ask(ctx context.Context, j AdoptJudgment) error
+	// Migrate applies the build's configuration schema to the config store
+	// before any binary is switched, as the role that owns the schema, and
+	// says so in one evidence line; an error (the schema not applied, the
+	// owner's password not at hand, the store not answering) blocks the
+	// adoption before the switch. On 2026-10-08 a build carrying schema 36
+	// was switched onto a store at 35 and the friend sync loop refused for
+	// 7h45m; the switch now waits on the migration.
+	Migrate(ctx context.Context, b AdoptBuild) (string, error)
 	// KeepRollback copies the live server and daemon binaries aside and
 	// names the copies.
 	KeepRollback(ctx context.Context) ([]string, error)
@@ -467,6 +478,14 @@ func (a *Adoption) Pass(ctx context.Context) (AdoptPass, error) {
 			p.Stage = r.Stage
 			return p, save()
 		}
+		// the store first: the build's schema is applied, as the owner, before
+		// any binary of the build runs against it
+		migrated, err := a.Steps.Migrate(ctx, r.Build)
+		if err != nil {
+			return block("migrate", err)
+		}
+		r.Migrated = migrated
+		p.say("ADOPT MIGRATED tip=%s %s: the config store carries the build's schema; nothing is switched yet", short(tip), migrated)
 		kept, err := a.Steps.KeepRollback(ctx)
 		if err != nil {
 			return block("rollback copies", err)

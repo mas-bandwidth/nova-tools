@@ -71,9 +71,15 @@ the `nova_read` role, when it exists, is granted read on every table.
 The role that runs migrate must own every table in schema config. Before it
 applies anything, migrate reads the owners from the catalog and, when another
 role owns a table and a migration is pending, refuses (exit 1) naming the
-role, each table with its owner, and the one-time remedy, one `ALTER TABLE
-config."<table>" OWNER TO "<role>";` per table, which a role with the owners'
-rights runs in psql; migrate never changes an owner itself. `migrate
+role, each table with its owner, and the one-time remedy: when one other role
+owns schema config and every table in it, the same `migrate` as that role
+(`NOVA_PG_PASSWORD_ENV=NOVA_PG_<OWNER>_PASSWORD nova-config migrate --pg
+postgres://<owner>@...`, nova_config's password under
+`NOVA_PG_CONFIG_PASSWORD`), since the store is not misowned and the run was as
+the wrong role (the fleet's case on 2026-10-08: nova_admin ran it, nova_config
+owned it); otherwise one `ALTER TABLE config."<table>" OWNER TO "<role>";` per
+table, which a role with the owners' rights runs in psql. migrate never
+changes an owner itself. `migrate
 --dry-run` adds the same finding to the ledger it prints: `MIGRATE NOT-OWNED`
 per table the role does not own, `MIGRATE WOULD-REFUSE` with that refusal
 when migrate would refuse, and `role=<role> ready=yes|no` on its summary; it

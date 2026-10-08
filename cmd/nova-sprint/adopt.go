@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/release"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -75,6 +76,7 @@ type adoptSteps struct {
 
 	repoDir, base   string   // the clone the base tip is read from, and the branch
 	serverBin       string   // the live server binary
+	pg              string   // the config store, as nova-config takes it: migrated before the switch
 	daemons         []string // the friends' daemon binaries
 	bench           string   // the bench the build runs on
 	benchSrc        string   // its clone
@@ -441,6 +443,7 @@ func (a *app) cmdAdopt(args []string, stdout, stderr io.Writer) int {
 	repoDir := fs.String("repo-dir", "", "a clone of the tools repository, whose origin's base branch is read")
 	base := fs.String("base", "", "the sprint base branch")
 	serverBin := fs.String("server-bin", a.getenv("NOVA_SPRINT_SERVER_BIN"), "the live server binary (else NOVA_SPRINT_SERVER_BIN)")
+	pg := fs.String("pg", a.getenv(config.EnvPG), "the config store, postgres://user@host:port/db with no password, as nova-config takes it (else NOVA_PG_DSN): the build's nova-config migrates it, as the role that owns schema config, before any binary is switched; the owner's password comes from the variable NOVA_PG_<OWNER>_PASSWORD (nova_config: NOVA_PG_CONFIG_PASSWORD)")
 	var daemons stringList
 	fs.Var(&daemons, "daemon", "a friend's daemon binary switched and rolled back with the server (repeatable)")
 	bench := fs.String("bench", "", "the bench the build runs on, over ssh; never this host")
@@ -496,7 +499,7 @@ func (a *app) cmdAdopt(args []string, stdout, stderr io.Writer) int {
 		steps = fake.(sprint.AdoptSteps)
 	} else {
 		var missing []string
-		for flag, v := range map[string]string{"repo-dir": *repoDir, "base": *base, "server-bin": *serverBin, "bench": *bench, "bench-src": *benchSrc, "bench-out": *benchOut, "out": *local, "release": *rel, "machines": *machinesFile} {
+		for flag, v := range map[string]string{"repo-dir": *repoDir, "base": *base, "server-bin": *serverBin, "bench": *bench, "bench-src": *benchSrc, "bench-out": *benchOut, "out": *local, "release": *rel, "machines": *machinesFile, "pg": *pg} {
 			if strings.TrimSpace(v) == "" {
 				missing = append(missing, "--"+flag)
 			}
@@ -507,7 +510,7 @@ func (a *app) cmdAdopt(args []string, stdout, stderr io.Writer) int {
 		if err := release.ValidVersion(*rel); err != nil {
 			return refuse(stderr, name, "--release: "+oneline.Err(err))
 		}
-		steps = &adoptSteps{a: a, c: *c, run: execAdoptRunner, out: stdout, repoDir: *repoDir, base: *base, serverBin: *serverBin,
+		steps = &adoptSteps{a: a, c: *c, run: execAdoptRunner, out: stdout, repoDir: *repoDir, base: *base, serverBin: *serverBin, pg: *pg,
 			daemons: []string(daemons), bench: *bench, benchSrc: *benchSrc, benchOut: *benchOut, local: *local, release: *rel,
 			machinesFile: *machinesFile, adoptArgs: strings.Fields(*adoptArgsFlag), stream: *stream, judgmentTo: *judgmentTo,
 			shadowDeadline: TickDeadline, platform: runtime.GOOS + "-" + runtime.GOARCH, versionMachines: map[string]string{}}
