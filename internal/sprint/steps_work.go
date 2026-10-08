@@ -1616,6 +1616,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			from, _ := CardTiers(pr)
 			why := fmt.Sprintf("escalated from %s to %s: attempts %d and %d failed the same way (%s) on %s", from, next, attempt-1, attempt, set[FieldFailure], from)
 			set[FieldTierNow], set["why"] = next, why
+			reworkPriority(s, pr, set)
 			delete(set, "result")
 			delete(set, FieldFailure)
 			delete(set, FieldFailureAt)

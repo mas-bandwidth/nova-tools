@@ -7,10 +7,12 @@
 // The server is a function of its requests and its clock: Read is how it reads the
 // sprint and Now is its clock, so a test drives it with no socket and no real time.
 // The server reads the sprint once per Every whoever is looking (Run, on a ticker the
-// caller hands it), and a request between two ticks answers from the copy. A read that
-// fails holds the last good copy: the page changes nothing and says nothing, and the
-// failure is a line on Log. One freshness check (fresh.go) raises an alarm when the
-// served data stays old; a puller (From) reads another dashboard's copy instead.
+// caller hands it: one poller, its reads back to back with Every as their floor), and
+// while Run polls a request only ever answers from the copy. A read that fails holds the
+// last good copy, marked ok false with a short reason (never the reader's own error
+// text, which goes to Log only), and a read that runs past ReadTimeout is marked so.
+// One freshness check (fresh.go) raises an alarm when the served data stays old; a
+// puller (From) reads another dashboard's copy instead.
 package sprintdash
 
 import (
@@ -21,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
+	htmlpkg "html"
 	"io"
 	"maps"
 	"mime"
@@ -49,7 +52,30 @@ const (
 	MinSpan = 10 * time.Minute
 	// LogEvery is the time between the read-time summary lines on Log.
 	LogEvery = time.Minute
+	// ReadTimeoutDefault is how long a read is waited on before it is marked failed.
+	ReadTimeoutDefault = time.Minute
 )
+
+// ReadError is a failed read in two parts: Why is served in /api/sprint's error, and
+// Detail (what the reader itself printed) goes to Log only, so nothing a read printed
+// reaches the page.
+type ReadError struct{ Why, Detail string }
+
+func (e *ReadError) Error() string {
+	if e.Detail == "" {
+		return e.Why
+	}
+	return e.Why + ": " + e.Detail
+}
+
+// readFailureWhy is the part of a failed read's error the page is shown.
+func readFailureWhy(err error) string {
+	var re *ReadError
+	if errors.As(err, &re) {
+		return re.Why
+	}
+	return err.Error()
+}
 
 // Server serves the page and the sprint's cached copy. Read, Now and Every are
 // required; the rest may be left zero.
@@ -77,10 +103,16 @@ type Server struct {
 	// StaleAfter and StaleFor are the freshness check's: the served data older than
 	// StaleAfter for StaleFor raises the alarm; zero is StaleAfterDefault, StaleForDefault.
 	StaleAfter, StaleFor time.Duration
+	// ReadTimeout is how long a read is waited on before it is marked failed; the next
+	// read still waits for it to end. Zero is ReadTimeoutDefault.
+	ReadTimeout time.Duration
 	// keepaliveTick is a test's keepalive ticker in place of the clock's; nil is the clock.
 	keepaliveTick func(time.Duration) (<-chan time.Time, func())
+	// readTimer is a test's read timeout in place of the clock's; nil is the clock.
+	readTimer func(time.Duration) (<-chan time.Time, func())
 
 	mu      sync.Mutex
+	polling bool // Run is the one reader: a request answers from the copy only
 	reading bool
 	began   time.Time // when the last read began; zero before the first
 	snap    snapshot
@@ -93,7 +125,8 @@ type Server struct {
 }
 
 // snapshot is /api/sprint's body: the page reads data, throughput,
-// throughputMinutes, build and the release fields; the rest says how the reads are going.
+// throughputMinutes, build and the release fields; the rest says how the reads are going:
+// attemptAt and readSeconds are the last read's, good or not, and minInterval is Every.
 // Data is the copy as the release shows it (release.go): release is the one shown,
 // current the one shown when none is asked, releases every label a stream carries, and
 // releaseStreams the streams shown (absent for all).
@@ -105,6 +138,9 @@ type snapshot struct {
 	Releases          []string        `json:"releases,omitempty"`
 	ReleaseStreams    []string        `json:"releaseStreams,omitempty"`
 	FetchedAt         *time.Time      `json:"fetchedAt"`
+	AttemptAt         *time.Time      `json:"attemptAt"`
+	ReadSeconds       *float64        `json:"readSeconds"`
+	MinInterval       float64         `json:"minInterval"`
 	Error             *string         `json:"error"`
 	Throughput        *float64        `json:"throughput"`
 	ThroughputMinutes float64         `json:"throughputMinutes"`
@@ -138,11 +174,26 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.send(w, "text/javascript; charset=utf-8", file("app.js"))
 	case "/nunito-800.woff2":
 		s.send(w, "font/woff2", file("nunito-800.woff2"))
+	case "/OFL.txt":
+		s.send(w, "text/plain; charset=utf-8", file("OFL.txt"))
 	case "/logo":
 		if body, err := s.logo(); err == nil {
 			s.send(w, logoType(s.Logo, body), body)
 		} else {
 			http.Error(w, "no logo", http.StatusNotFound)
+		}
+	case "/favicon.svg":
+		if vb, inner, ok := s.svgLogo(); ok {
+			s.send(w, "image/svg+xml", []byte(`<svg xmlns="`+svgNS+`" viewBox="`+vb+`" fill="currentColor">`+faviconStyle+inner+`</svg>`))
+		} else {
+			http.Error(w, "no svg logo", http.StatusNotFound)
+		}
+	case "/favicon.png", "/logo-icon.png", "/logo-tile-192.png", "/logo-tile-384.png", "/logo.webp", "/logo.png":
+		// the raster logo's routes a page or a bookmark may still name: each is the --logo file
+		if body, err := s.logo(); err == nil && !isSVG(s.Logo) {
+			s.send(w, logoType(s.Logo, body), body)
+		} else {
+			http.Error(w, "no raster logo", http.StatusNotFound)
 		}
 	case "/api/sprint":
 		s.Refresh()
@@ -173,8 +224,24 @@ func file(name string) []byte {
 }
 
 // Refresh reads the sprint when Every has passed since the last read began and no
-// read is running; otherwise the cached copy stands.
-func (s *Server) Refresh() { s.refresh(s.Every) }
+// read is running; otherwise the cached copy stands. While Run polls it reads nothing
+// once a read has begun: the poller is the one reader, and a request answers from the
+// copy (the verb makes the first read before it listens, so a page never reads).
+func (s *Server) Refresh() {
+	s.mu.Lock()
+	cacheOnly := s.polling && !s.began.IsZero()
+	s.mu.Unlock()
+	if !cacheOnly {
+		s.refresh(s.Every)
+	}
+}
+
+// readResult is one read's outcome.
+type readResult struct {
+	body []byte
+	up   *snapshot
+	err  error
+}
 
 // refresh reads the sprint when gap has passed since the last read began and no read is
 // running.
@@ -188,15 +255,40 @@ func (s *Server) refresh(gap time.Duration) {
 	s.reading, s.began = true, start
 	s.mu.Unlock()
 
-	body, up, err := s.read()
-	if err == nil {
-		err = sprintJSON(body)
+	done := make(chan readResult, 1)
+	go func() {
+		body, up, err := s.read()
+		if err == nil {
+			err = sprintJSON(body)
+		}
+		done <- readResult{body, up, err}
+	}()
+	timeout := orDefault(s.ReadTimeout, ReadTimeoutDefault)
+	expired, stop := s.timer(timeout)
+	defer stop()
+	var res readResult
+	select {
+	case res = <-done:
+	case <-expired:
+		s.mu.Lock()
+		s.record(start, s.Now(), nil, nil, &ReadError{Why: fmt.Sprintf("the read timed out after %s", timeout)})
+		s.mu.Unlock()
+		res = <-done // reads never overlap: the next one waits for this one to end
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.reading = false
-	s.record(start, s.Now(), body, up, err)
+	s.record(start, s.Now(), res.body, res.up, res.err)
+}
+
+// timer is the read timeout's: the clock's, or a test's (readTimer).
+func (s *Server) timer(d time.Duration) (<-chan time.Time, func()) {
+	if s.readTimer != nil {
+		return s.readTimer(d)
+	}
+	t := time.NewTimer(d)
+	return t.C, func() { t.Stop() }
 }
 
 // read is one read: the sprint, or a puller's upstream with the snapshot it came in.
@@ -227,10 +319,12 @@ func sprintJSON(body []byte) error {
 // one keeps the copy, and a new failure is logged once.
 func (s *Server) record(start, end time.Time, body []byte, up *snapshot, err error) {
 	took := end.Sub(start)
+	secs := float64(took.Milliseconds()) / 1000
+	s.snap.AttemptAt, s.snap.ReadSeconds = &end, &secs
 	if err != nil {
-		why := oneline.Escape(err.Error())
+		why := oneline.Escape(readFailureWhy(err))
 		if s.snap.OK || s.snap.Error == nil || *s.snap.Error != why {
-			s.logf(end, "read failed: %s; the page holds the last good copy", why)
+			s.logf(end, "read failed: %s; the page holds the last good copy", oneline.Escape(err.Error()))
 		}
 		s.snap.OK, s.snap.Error = false, &why
 	} else {
@@ -337,7 +431,7 @@ func (s *Server) SnapshotOf(release string) []byte {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	snap := s.snap
-	snap.Build, snap.Stale = build, s.fresh.alarmed
+	snap.Build, snap.Stale, snap.MinInterval = build, s.fresh.alarmed, s.Every.Seconds()
 	if len(snap.Data) > 0 {
 		v := viewOf(snap.Data, release)
 		v.Data = fixView(v.Data)
@@ -378,21 +472,63 @@ func (s *Server) logo() ([]byte, error) {
 	return os.ReadFile(s.Logo)
 }
 
-// logoType is the logo's media type: by its name's extension, else by its bytes.
+// logoType is the logo's media type: a raster image's own magic bytes decide first (a
+// webp named .png is image/webp), else its name's extension, else the bytes' own answer.
 func logoType(name string, body []byte) string {
+	if t := http.DetectContentType(body); strings.HasPrefix(t, "image/") {
+		return t
+	}
 	if t := mime.TypeByExtension(strings.ToLower(filepath.Ext(name))); strings.HasPrefix(t, "image/") {
 		return t
 	}
 	return http.DetectContentType(body)
 }
 
+// svgNS is the svg element's namespace, a name and never fetched.
+const svgNS = "http://www.w3.org/2000/svg"
+
+// faviconStyle colours an svg favicon for the browser's light or dark theme.
+const faviconStyle = `<style>svg{color:#121417}@media (prefers-color-scheme:dark){svg{color:#eef0f3}}</style>`
+
+var (
+	svgRe     = regexp.MustCompile(`(?is)<svg\b([^>]*)>(.*)</svg>`)
+	viewBoxRe = regexp.MustCompile(`viewBox\s*=\s*"([^"]+)"`)
+)
+
+func isSVG(name string) bool { return strings.EqualFold(filepath.Ext(name), ".svg") }
+
+// svgLogo is an svg logo's drawing, read now: its viewBox (escaped) and its inner
+// markup; false when the logo is no svg or has no <svg> element.
+func (s *Server) svgLogo() (viewBox, inner string, ok bool) {
+	if !isSVG(s.Logo) {
+		return "", "", false
+	}
+	body, err := s.logo()
+	if err != nil {
+		return "", "", false
+	}
+	m := svgRe.FindSubmatch(body)
+	if m == nil {
+		return "", "", false
+	}
+	viewBox = "0 0 32 32"
+	if v := viewBoxRe.FindSubmatch(m[1]); v != nil {
+		viewBox = string(v[1])
+	}
+	return htmlpkg.EscapeString(viewBox), string(m[2]), true
+}
+
 // index is the page with its script versioned by the build and the logo slot and
-// favicon filled when a logo is given and readable now.
+// favicon filled when a logo is given and readable now: an svg logo is drawn inline in
+// the page's text colour and is the favicon at /favicon.svg; any other image is /logo.
 func (s *Server) index() []byte {
 	build := s.Build()
 	html := strings.Replace(string(file("index.html")), `src="app.js"`, `src="app.js?v=`+build+`"`, 1)
 	slot, icon := "", ""
-	if _, err := s.logo(); err == nil {
+	if vb, inner, ok := s.svgLogo(); ok {
+		slot = `<svg id="logo" viewBox="` + vb + `" width="32" height="32" fill="currentColor" aria-hidden="true">` + inner + `</svg>`
+		icon = `<link rel="icon" type="image/svg+xml" href="/favicon.svg?v=` + build + `">`
+	} else if _, err := s.logo(); err == nil {
 		slot = `<img id="logo" class="logo-tile" src="/logo?v=` + build + `" alt="">`
 		icon = `<link rel="icon" href="/logo?v=` + build + `"><link rel="apple-touch-icon" href="/logo?v=` + build + `">`
 	}
@@ -437,6 +573,11 @@ type fixCard struct {
 // atFix is whether the card c, whose primary is listed at listed (where's priorities), is at fix.
 func (c fixCard) atFix(listed string) bool {
 	level := cmp.Or(c.Priority, listed)
+	// An explicit priority is authoritative once the server supports the ladder.
+	// In particular, keep/high rework policies must not become fix by attempt.
+	if c.Priority != "" {
+		return c.Priority == "fix"
+	}
 	if level == "fix" {
 		return true
 	}

@@ -638,6 +638,66 @@ func PlanHelp(tool, help, test, prefix, tier string) Card {
 	}
 }
 
+// ClassRed is a base red on one class of the tree's class suite, as the lander's base
+// gate found it (internal/sprint land_class.go; docs/SPEC-SPRINT.md section 7, the base's
+// class gate): the class, the run that went red, the test that pins it ("pkg TestX", ""
+// when the class is a run with no test, gofmt and vet), the files the run's output names,
+// and the finding on one line.
+type ClassRed struct {
+	Class   string
+	Run     string
+	Test    string
+	Files   []string
+	Finding string
+}
+
+// PlanClassRed is the fix-red card the generator stamps for a base red on one class:
+// its id is fix-red-<class>-<base> (one card per class and base, so the lander's judgment
+// and a hand generation name the same card), its PATHS the files the finding names with
+// their package's tests, and its TEST the class test. A class that is a run with no test
+// (gofmt, vet) gets the class test the card writes in internal/ci, ClassTestName: fix-red
+// is a gated kind, and its red and green is a test.
+func PlanClassRed(r ClassRed, base, tier string) Card {
+	if tier == "" {
+		tier = "pro"
+	}
+	var paths []string
+	for _, f := range r.Files {
+		paths = append(paths, f)
+		if strings.HasSuffix(f, ".go") {
+			paths = append(paths, path.Dir(f)+"/*_test.go")
+		}
+	}
+	file := "internal/ci"
+	if len(r.Files) > 0 {
+		file = r.Files[0]
+	}
+	test, gate := r.Test, "the test "+testName(r.Test)+" is red before and green after"
+	if test == "" {
+		test = "internal/ci " + ClassTestName(r.Class)
+		gate = "no class test runs `" + r.Run + "` yet: write " + ClassTestName(r.Class) + " in internal/ci first (unless internal/ci holds it already), the run over the tree, red while it fails or prints, so it is red before the fix and green after"
+	}
+	if pkg := testPackage(test); pkg != "" {
+		paths = append(paths, pkg+"/*_test.go")
+	}
+	return Card{
+		ID:    "fix-red-" + Slug(r.Class) + "-" + Slug(base),
+		File:  file,
+		Paths: MergePaths(paths),
+		Test:  test,
+		Tier:  tier,
+		Wave:  1,
+		Kind:  "fix-red",
+		Task:  fmt.Sprintf("The base %s is red on its class %s, so the lander lands nothing onto it until a head that cures it lands first. The run `%s` says: %s. Fix each finding at its cause in the files it names; %s. A ledger that only shrinks is not raised to make it pass.", base, r.Class, r.Run, strings.TrimSuffix(r.Finding, "."), gate) + draftRule,
+	}
+}
+
+// ClassTestName is the internal/ci test a class with no test of its own is pinned by:
+// TestTheTreePasses then the class in upper camel case (gofmt: TestTheTreePassesGofmt).
+func ClassTestName(class string) string {
+	return "TestTheTreePasses" + strings.TrimPrefix(findingTestName(class), "TestFinding")
+}
+
 // Header is what every brief of one generation shares.
 type Header struct {
 	Repo    string // owner/name

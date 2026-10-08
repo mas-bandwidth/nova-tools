@@ -54,12 +54,15 @@ line the inbox prints for it, filled in; `nova-sprint inbox --open <id>` shows t
 
   1. Run as a Monitor, from inside the session, the `monitor:` line it printed (each new file in the folder is
      one event: a judgment, or a `PROOF-<nonce>`):
-     `d=<folder>; s=$(ls -1 "$d"); while sleep 5; do n=$(ls -1 "$d"); [ -n "$n" ] && printf '%s\n' "$n" | grep -vxF "$s" | sed "s|^|$d/|"; s=$n; done`
+     `nova-sprint seat watch <folder>`. It prints existing complete files on startup and new files every second,
+     one path per flushed line; dot files and directories are skipped.
   2. Answer each `PROOF-<nonce>` the Monitor shows, at once: `nova-sprint seat pong <nonce> --actor $NOVA_SPRINT_ACTOR`.
 
   The push loop writes a new check every 10 minutes and the seat is down 15 minutes after the last answer;
-  `seat push` and `seat check` say `adapter=folder proven=<time>`, and a refusal carries both commands with the
-  nonce filled in.
+  `seat push` says `adapter=folder proven=<RFC3339>` when live; `seat check` says `proven=<age> ago` on OK
+  and `proven=-` on DOWN. A refusal carries both commands with literal `<nonce>` placeholders. The actual
+  nonce appears only in the folder's `PROOF-<nonce>` filename; `seat push --json` reports `proof=pending`
+  while a check awaits its answer and never exposes the nonce.
 - Not served, and run where typed with credentials of their own: `run`, `tick`, `land`, `play`, `fleet sync`,
   `friend sync`, and any verb given its own `--redis`. `fleet sync` and `friend sync` read the config store, so
   they run under one `nova-secrets exec` wrapper that names variables and never a value;

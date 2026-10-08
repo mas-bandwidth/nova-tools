@@ -21,6 +21,44 @@ an enabled maximum and cannot exceed it; near is configured, never inferred.
 
 ## The pattern in one sentence
 
+### Explicit watched-folder delivery for Codex
+
+A Codex session that watches an existing folder can run the native daemon with
+`--harness codex --session <real-session-id> --adapter folder --delivery-dir <existing-watched-folder>`.
+`install` persists those flags in the launchd agent; `run` and the delivery
+form of `check` choose the same route. The friend name, harness, session and
+working directory remain the native daemon's identities. Without `--adapter
+folder`, Codex retains its queue/exec-resume route.
+
+The folder route writes each complete native prompt atomically as
+`FRIEND-CHECK-<nonce>.md`, `FRIEND-WAKE-<nonce>.md`, or
+`FRIEND-PUSH-<UTC>-<random>.md`. It writes `<payload>.meta.json` first with
+`friend`, `harness`, `session`, `work_dir`, `delivery_dir`, `kind`, `nonce` when
+applicable, and the payload's `sha256`. A watcher forwards the literal prompt
+to the named live session. A file write proves only delivery to the folder:
+the native nonce is proven solely by `nova-friend pong` from that session.
+The daemon does not create the target folder, pong on behalf of the session,
+or delete unacknowledged files. A repeated check or wake with the same nonce
+and text reuses its file instead of adding another request.
+
+The folder watcher is a separate receiver owned by the Codex session. It must
+stay running or restart with that session, scan complete `.md` payloads after a
+restart, associate and verify their sidecars, forward each prompt into the
+actual named session once, and report its own termination. `nova-friend`
+cannot infer a live receiver merely from an existing directory; install's
+delivery check succeeds only after the real session sends the matching pong.
+Teams may use any receiver that meets this file contract. Its lifecycle and
+last receipt must be monitored alongside the daemon; a file creation or a
+watcher process alone is no proof of session presence.
+
+The generated session check includes `pong --dir <work-dir>`. When queue and
+working flags are omitted, `pong` reads that directory's `inbox/QUEUE.json`;
+when no directory is given, it preserves the previous pong's counts. An
+omitted width uses the daemon status width (then the previous pong's width),
+so answering a check without optional count flags cannot report an invented
+zero width. These counts accompany the proof note; the daemon's beat remains
+the sprint row's source of work and width.
+
 One daemon per friend, started by launchd and never by the model, parks on the
 friend's nova-bus stream. On a session start or a delivery after a thirty-minute gap,
 the present comes first and the backlog never does: one PRESENT turn carries her live
@@ -1186,6 +1224,73 @@ table's columns (cmd/nova-sprint/friends.go); the sprint server's
 where the coordinator reads it (a sprint note, like the idle alarm); and
 the model (tla/Bus2.tla gaining the owed set, with a reversed witness for
 a daemon ack that clears it).
+
+## Notifications
+
+`run --notifications-only --harness codex` selects a delivery-only receiver before
+native startup. It invokes no sprint beat, proof, row, claim, inbox, lane, stage,
+prune, finish, progress or native status hook. Its journal and audit log live in
+`<state-dir>/notifications/`; its installed label is `com.nova.friend-notifications-<name>`.
+The ordinary daemon label and presence files are separate. Installation carries the
+mode and policy flags and runs no native harness-setting plan/write or push-proof check.
+Its executable is content-addressed under `~/.nova-friend/notifications/bin/<sha256>/nova-friend`;
+previous notification versions and the ordinary `~/.nova-friend/bin/nova-friend` are retained.
+Stopping it is label-specific: `launchctl bootout gui/<uid>/com.nova.friend-notifications-<name>`.
+The ordinary `uninstall --as <name>` targets the native label and is not the notification stop
+command. Stopping the notification label preserves its journal for recovery.
+
+One receiver owns the recipient group. A deployment hands that ownership over;
+status drains and an existing bridge remain until that coordinated handoff. Two
+same-group filtered receivers are not the final notification architecture.
+
+Requests and blockers retain their complete payload and are immediately eligible.
+Reports are included by default and are delivered in a bounded full-payload batch.
+Plain transport acknowledgments and routine status retain bus/audit handling and
+produce no model wake; `--notify-kinds` opts other kinds in. Requests and blockers
+cannot be filtered out. Genuine ping/wake controls remain separate from card noise.
+
+The server's `card <id> dealt: FRIEND-CARD|FRIEND-READ DELIVERED ...` status courtesies
+set one global ready-queue bit across all cards. Each receive pass reads at most
+32 entries. `--notify-window` (30 seconds) coalesces a burst across passes; one
+constant ready-queue wake asks the coordinator to read the canonical queue. It
+claims or executes nothing. Child-finish refill belongs to the existing dispatcher.
+
+The file-synced atomic journal holds one active immutable batch, at most one deferred
+nonurgent report or notice batch, and one ready bit. The app queue permits one unread notification batch
+each for urgent, report and opt-in notice input, plus one global ready wake. Distinct
+nonurgent reports and notices are backpressured and stay bus-pending; the receiver continues bounded passes
+so later blockers and requests can use the separate urgent capacity. No report payload
+is discarded to satisfy a queue bound.
+The state writer syncs the file, renames it, and attempts a parent-directory sync;
+its directory-sync errors are best effort. Recovery guarantees concern process
+crashes, not storage-media failure. `tla/FriendNotifications.tla` models that boundary;
+`tla/FriendNotificationsCapacity.tla` models distinct batch capacity and deferred-report
+urgent eligibility, with deliberate queue-bound and head-of-line failures:
+ready intent before ACK, accepted before settlement, one queued ready family, no lost
+urgent input and no native mutation. Its 100-card case uses 32-entry receive passes;
+negative controls skip durable intent, permit duplicate queue insertion, or mutate native state.
+Ready intent is saved before courtesy messages are acknowledged. Full batches are
+saved before enqueue; queue acceptance is saved before their stream acknowledgments.
+Accepted is not read or acted proof: acknowledgments leave the receipt at delivered.
+A failed enqueue never acknowledges the pending batch. One attempt per due pass
+backs off from ten seconds to at most a minute, with a bounded retry exponent;
+there is no tight retry loop or give-up acknowledgment. Recovery and long idle
+intervals retain eligible work instead of permanently suppressing it.
+
+Codex queue-only delivery opens no competing `exec resume`. A constant ready-wake
+family and an immutable message-id batch fingerprint suppress replay while the
+input remains unread in the app queue. If that queue cannot be read, notification
+enqueue defers. No old input is deleted. A queue that accepted an input and then
+consumed it before a crash preceding the journal's accepted commit can replay that
+input once: delivery is at least once, not exactly once. The stable marker makes
+that replay recognizable, and the dispatcher reconciles the canonical queue.
+
+`TestCodexNotificationsCoalesceBurstsWithoutLosingUrgentKinds` pins a 100-card burst
+across receive passes, full useful payloads and muted routine traffic.
+`TestNotificationOnlyNeverInvokesNativeMutationHooks` pins startup, failure and
+restart. Queue acceptance, bounded unread replay and new eligible work are pinned
+by `TestNotificationAcceptanceIsNotModelProcessingAndRestartDoesNotEnqueueAgain`
+and `TestCodexNotificationQueueStaysBoundedAndNewWorkAfterConsumptionCanWake`.
 
 ## The beat comes from the daemon
 
@@ -2646,6 +2751,22 @@ coordinator's machine (`tmp/buswatch/watch.sh`) is retired by
 fg-adopt-friend-daemons; the verb replaces its wake file and message wakes. The
 script's backlog and idle alarms are not this verb's: they read a work
 server's tables and belong to the tool that serves them.
+
+## Reach
+
+`nova-friend reach` is the escalation ladder (`cmd/nova-friend/reach.go`, `tla/Reach.tla`). It gets a silent friend's attention and stops at the first proof. The state is the step (`bus`, `push`, `window`, then `ok` or `failed`), whether a proof has been seen, and the step's clock. Each side effect is an injected function: sending, pushing, typing, reading the clock, sleeping, and drawing a nonce. The model has no fairness on the proof, because a proof is a choice at the bound; forcing it would make the ladder unable to climb.
+
+The friend is `--to`. A verb other than the default takes no bare word, so the shape is the same as `ping`. This verb is `reach`. see also: nova-friend ping --wake is the coordinator's periodic wake check; reach is this escalation ladder.
+
+Each step has one `--step-timeout` budget (default 60s), including delivery and waiting for a proof: a pong for the nonce that step carries, or any other message from the friend. A daemon-pong is the daemon's own answer and is not a proof. A pong for another nonce, or a malformed pong, is not an ordinary-message proof. The step arms at the bus log's tail and each proof poll reads forward from that cursor, advancing it as entries are consumed (`Bus.LogCursor`, `Bus.LogForward` in `internal/bus/bus.go`). A read of the log from its start is capped at the oldest 10,000 entries, so a poll that started there would miss a fresh pong once the log held more than that (`TestReachProofPastTheLogCap`). The result line is first, then one line per step in the order it happened.
+
+1. **bus.** A bus message to the friend, subject `reach <nonce>` (never a PING, which is the daemon's own), body the nonce and the exact pong command. The line is `REACH STEP step=bus sent=<id> nonce=<n>`.
+2. **push.** The daemon pushes a real message into the session as a turn, never a PING. The daemon is up when its status file, read when the push begins, is newer than the stale bound (`DaemonStale`), the same rule `status` uses. No status file is "no daemon has run (no status file)". Down skips the step: `REACH NONE step=push waited=0s: daemon down: <reason>`. Up is `REACH STEP` and then the push.
+3. **window.** A tmux-hosted session is typed with send-keys only while the pane is idle (`internal/friend/adapter_tmux.go`). A GUI harness is the app's window, found by the bundle id the step looks up (`internal/friend/window.go`, `AppBundles`; these are lookup ids, not a measured survey of installed apps), the message typed into the composer and submitted (`window_darwin.go` on the platform that can hold the permission, `window_other.go` elsewhere). That needs the accessibility permission a person grants to this binary. The check is `AXIsProcessTrusted` and never `AXIsProcessTrustedWithOptions`, so the tool does not ask. When the permission is absent the step is refused: grant Accessibility to this binary in System Settings, Privacy and Security, Accessibility; nova-friend does not ask. A harness with no bundle, and not tmux, has no window; that is a skipped step, not a permission refusal.
+
+A proof ends the ladder: `REACH PROOF step=<s> after=<duration> by=<pong|message>` and `REACH OK friend=<f> step=<s>`. Exit 0 on that proof. No proof prints `REACH NONE step=<s> waited=<d>` and the ladder climbs. No proof after the steps from `--from` prints `REACH FAILED friend=<f> tried=<steps>`, Exit 1, and one note of that line on the coordinator's own stream. A skipped push counts as tried. Exit 2 when it could not run (a flag, a store that did not answer, or the window step without the accessibility permission); that refusal sends no failed note. `--from bus|push|window` starts partway up. `--dry-run` prints `REACH DRY-RUN` and one `REACH STEP` per planned step, and sends, pushes and types nothing. `--json` carries the same value: facts `friend`, `step` (on OK), `tried` (on FAILED), `from` and `step_timeout` (on a dry run), `dry_run`; items `STEP` (`step`, `sent`, `nonce`), `PROOF` (`step`, `after`, `by`), `NONE` (`step`, `waited`, text when skipped).
+
+example: nova-friend reach --as ada --to bob --dry-run
 
 ## Identity
 

@@ -1305,6 +1305,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			set[FieldWho] = WhoFriend
 		}
 		maps.Copy(set, one.Set)
+		c = reworkPriority(s, c, set)
 		// the head a reader passed: a next attempt that finds nothing to do at it goes back to
 		// review there, not to the coordinator as failed work (FieldPassedHead, Finish)
 		if len(okReaders(s, c)) > 0 && c.F("result") != "failed" {

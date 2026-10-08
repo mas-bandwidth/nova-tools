@@ -13,8 +13,8 @@ import (
 // (`<TOKEN> REFUSED[ k=v ...]: <why>; run: <remedy>`, docs/STANDARD.md,
 // "The status word leads every line", skeleton contract 1.1), it is on stderr
 // and nothing is on stdout. The walk is functional
-// (refusalgrammar_functional_test.go, with its ledger and its measure, which only
-// the walk uses); the judge below is proved in the unit tier.
+// (refusalgrammar_functional_test.go); the judge below is proved in the unit
+// tier.
 
 // refusalStatusWordRe finds a line's first status word: OK, REFUSED, FAILED, or
 // a MORE or NOTE continuation, at the line's start or after whitespace. It
