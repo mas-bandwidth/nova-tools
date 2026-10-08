@@ -206,7 +206,7 @@ func span(ids []string) string {
 	return ids[0] + " .. " + ids[len(ids)-1]
 }
 
-// MergeStep merges the head of the stream's queue, in work order, as one
+// MergeStep merges eligible cards by priority, preserving dependencies, as one
 // batch; or, given a fact that stops the stream, stops it and tells the
 // coordinator why. A stopped stream moves only after resume. A conflict fact
 // on the card's own head (RefusalWay) stops nothing: the card is reworked at
@@ -251,7 +251,10 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 	queued = MergePriorityOrder(s, queued)
 	now := stamp(s.Now)
 	if len(queued) == 0 {
-		why := "nothing eligible queued in stream " + r.Stream + "; nothing was changed"
+		why := "nothing queued in stream " + r.Stream + "; nothing was changed"
+		if s.Merge.Count(r.Stream, Queued) > 0 {
+			why = "no queued card has its prerequisites satisfied in stream " + r.Stream + "; nothing was changed; land its prerequisites first"
+		}
 		if len(s.Merge.Cell(r.Stream, Stuck)) > 0 {
 			why = "nothing queued before the stuck card of stream " + r.Stream + "; resume it first; nothing was changed"
 		}
