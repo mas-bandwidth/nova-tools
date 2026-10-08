@@ -76,7 +76,7 @@ DARWIN_TIMEOUT ?= 110s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-functional vet-slow vet-shippedsmoke vet-novadisk vet-laws vet-windows lint preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map new-rule new-verb
+.PHONY: help build fmt vet vet-functional vet-slow vet-shippedsmoke vet-novadisk vet-laws vet-windows lint preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map new-rule new-verb clidoc
 
 help:
 	@echo "make tlc         bounded Linux TLC group (TLC_JAR, TLC_OUT, TLC_GROUP)"
@@ -112,6 +112,7 @@ help:
 	@echo "make map         regenerate AGENTS.md and per-directory maps"
 	@echo "make new-rule    scaffold a class rule skeleton (ARGS=<name>)"
 	@echo "make new-verb    scaffold a CLI verb skeleton (ARGS='<tool> <verb>')"
+	@echo "make clidoc      regenerate CLI.md reference blocks from tool help"
 
 map:
 	$(GO) run ./tools/agentsmap
@@ -143,6 +144,10 @@ new-rule:
 
 new-verb:
 	$(GO) run ./tools/newverb $(ARGS)
+
+clidoc:
+	$(GO) build -o ./bin/ $(shell sed -n 's/^<!-- clidoc:begin \(nova-[a-z0-9-]*\) -->$$/\1/p' docs/CLI.md | sort -u | sed 's|^|./cmd/|') ./tools/clidoc
+	./bin/clidoc --bin ./bin
 
 
 build:

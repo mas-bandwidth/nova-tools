@@ -139,6 +139,7 @@ var DefaultCatalog = []Entry{
 
 	// docs/
 	E("docs/acceptance", "release acceptance records: one measured requirement per file, with the raw numbers", "go test ./internal/ci", "go test ./internal/ci -run TestAcceptanceRecordsAreWellFormed"),
+	E("docs/audit", "cold audit records of the codebase, one directory per auditor and date: numbered issues with file:line, evidence, a grade and a fix", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/dogfood", "dated dogfood records of the tools, one file per tool and run: every verb used cold, every finding graded", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/fixtures", "doc examples and test fixtures", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/nova-config", "nova-config guide: the permanent configuration and its apply into Redis", "go test ./internal/docs", "go test ./internal/docs"),
@@ -152,6 +153,7 @@ var DefaultCatalog = []Entry{
 	E("tools/analyzers", "vetlaw verb-law analyzers", "go test ./tools/analyzers/...", "make vet-laws"),
 	E("tools/benchstandard", "the Linux bench's acceptance witness: one DRIFT line per finding against the standard, STANDARD OK or STANDARD DRIFT, and --apply kills stray runner listeners and nothing else", "go test ./tools/benchstandard", "go run ./tools/benchstandard"),
 	E("tools/ci", "the verbs CI and the Makefile call: package selection and the shard deal, the test-step checks, the ancestry fetch, gofmt, the redis, postgres and sbcl installs, the lisp tier, the job aggregates, revert-on-red and the run reports; one runner for every process", "go test ./tools/ci", "go run ./tools/ci help"),
+	E("tools/clidoc", "CLI reference generator from tool help", "go test ./internal/docs", "make clidoc"),
 	E("tools/fardelay", "a store at a distance as a process: a loopback proxy that holds each write of its clients back by a fixed delay", "go test ./tools/fardelay", "go run ./tools/fardelay --target HOST:PORT --delay 64ms"),
 	E("tools/functionalrun", "the functional tier inside one container per run, and the reaper of its overdue containers", "go test ./tools/functionalrun", "make test-functional-container"),
 	E("tools/ghrelease", "the GitHub release verbs: the stamped ldflags, the build of every shipped tool per platform, the checksums over the shipped set, the stamp assertion, the certified gate and the draft-only upload", "go test ./tools/ghrelease", "go run ./tools/ghrelease help"),

@@ -656,6 +656,7 @@ type whereView struct {
 	// row of tables carries its cards by level and its reads (rowCardFields), from the tick's
 	// where record (sprint.RowCardCounts).
 	ReadCards sprint.ReadCardCounts `json:"read_cards"`
+	Fix       int                   `json:"fix,omitempty"`
 	// Priorities is every open primary whose level is not normal, by level, and
 	// StreamPriorities each stream's default level that is not normal, from the tick's where
 	// record (sprint.PriorityCounts, sprint.StreamPriorities); absent when every card is normal.
@@ -763,6 +764,7 @@ type dealtCard struct {
 	Since    time.Time `json:"since,omitzero"`
 	Deadline time.Time `json:"deadline,omitzero"`
 	Branch   string    `json:"branch"`
+	Priority string    `json:"priority,omitempty"`
 	Tier     string    `json:"tier,omitempty"` // the tier its route was drawn from (sprint.FieldTier)
 }
 
@@ -860,7 +862,7 @@ func dealtView(d store.Dealt, prefix string, epoch uint64) ([]dealtCard, []judgm
 			continue
 		}
 		v := dealtCard{ID: c.ID, Primary: c.F(sprint.PrimaryField), Stream: c.F("stream"), Member: c.Row, State: c.Col,
-			Branch: cmp.Or(c.F("branch"), sprint.BranchOf(prefix, epoch, c.ID, c.Int("gen"))), Tier: c.F(sprint.FieldTier)}
+			Branch: cmp.Or(c.F("branch"), sprint.BranchOf(prefix, epoch, c.ID, c.Int("gen"))), Tier: c.F(sprint.FieldTier), Priority: queuePriority(c)}
 		own := "dealt"
 		if c.Col == string(sprint.Working) {
 			own = "taken"
@@ -1378,6 +1380,24 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		}
 	}
 	v.Releases = sprint.WhereReleasesCountCardsLeft(clocks, streamLeft)
+	for stream, cols := range facts.FixStates {
+		row := v.Tables[sprint.Work][stream]
+		if row == nil {
+			continue
+		}
+		n := 0
+		for col, count := range cols {
+			existing, _ := strconv.Atoi(fmt.Sprint(row[col])) // ignored: absent column is zero
+			count = min(count, existing)
+			row[col] = strconv.Itoa(existing - count)
+			n += count
+		}
+		if n > 0 {
+			row["fix"] = strconv.Itoa(n)
+			v.Fix += n
+		}
+	}
+
 	return v, b.String(), nil
 }
 
@@ -1505,7 +1525,8 @@ func (a *app) friendsTable(friends []store.FriendRow, now time.Time) ntable.Tabl
 		cells[at[sprint.DoneOK]].Count = int64(f.OK)
 		cells[at[sprint.DoneFailed]].Count = int64(f.Failed)
 		t.Rows = append(t.Rows, ntable.Row{Key: f.Name, Cells: cells,
-			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.Status: a.statusCell(f, now), sprint.Active: activeCell(f, now)}})
+			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.Status: a.statusCell(f, now), sprint.Active: activeCell(f, now),
+				sprint.Tokens: sprint.FriendTokensCell(f.Tokens, f.Charged, f.Billing)}})
 	}
 	return t
 }
@@ -2111,9 +2132,12 @@ func groupText(g sprint.Group, now time.Time, opened bool) string {
 // cardView is everything about one primary.
 type cardView struct {
 	Primary *sprint.Card `json:"primary"`
-	Tier    string       `json:"tier"`            // the tier it is on (sprint.CardTiers)
-	Ceiling string       `json:"ceiling"`         // the highest the machine escalates it to
-	Grade   string       `json:"grade,omitempty"` // nova-decide's grade, as the card holds it (sprint.FieldGrade)
+	// Column is the live table placement, as linePlace reads it, never the
+	// legacy place:work field (docs/SPEC-SPRINT.md section 11).
+	Column  string `json:"column"`
+	Tier    string `json:"tier"`            // the tier it is on (sprint.CardTiers)
+	Ceiling string `json:"ceiling"`         // the highest the machine escalates it to
+	Grade   string `json:"grade,omitempty"` // nova-decide's grade, as the card holds it (sprint.FieldGrade)
 	// Who is the worker its brief's WHO line names (sprint.FieldWho): friend for any
 	// friend, friend.<name> for one; absent on a machine's card.
 	Who string `json:"who,omitempty"`
@@ -2203,7 +2227,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		}
 		tier, ceiling := sprint.CardTiers(v.Primary)
 		level, source := sprint.CardPriority(v.Primary)
-		b, _ := json.Marshal(cardView{Primary: v.Primary, Tier: tier, Ceiling: ceiling, Grade: v.Primary.F(sprint.FieldGrade), Who: v.Primary.F(sprint.FieldWho), Priority: level, PrioritySource: source, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
+		b, _ := json.Marshal(cardView{Primary: v.Primary, Column: v.Primary.Col, Tier: tier, Ceiling: ceiling, Grade: v.Primary.F(sprint.FieldGrade), Who: v.Primary.F(sprint.FieldWho), Priority: level, PrioritySource: source, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
 			Cost: sprint.CardCostOf(v.Primary), Timeline: events, Texts: texts})
 		fmt.Fprintln(stdout, string(b))
 		return 0
@@ -2508,8 +2532,10 @@ func printBrief(stdout, stderr io.Writer, id, brief string, asJSON bool) int {
 // that; the comfort list of 2026-10-03, item 8: a child's loop of card calls timed
 // out against the store).
 type primaryRow struct {
-	ID     string            `json:"id"`
-	Stream string            `json:"stream"`
+	ID     string `json:"id"`
+	Stream string `json:"stream"`
+	Column string `json:"column"`
+	// State is a deprecated alias of Column for one release (SPEC-SPRINT section 11).
 	State  string            `json:"state"`
 	Score  float64           `json:"score"`
 	Fields map[string]string `json:"fields"`
@@ -2531,7 +2557,7 @@ func rowsView(s *sprint.Snapshot, gone *archivedView) []primaryRow {
 				fields[k] = v
 			}
 		}
-		rows = append(rows, primaryRow{ID: c.ID, Stream: c.Row, State: c.Col, Score: c.Score, Fields: fields})
+		rows = append(rows, primaryRow{ID: c.ID, Stream: c.Row, Column: c.Col, State: c.Col, Score: c.Score, Fields: fields})
 	}
 	slices.SortStableFunc(rows, func(a, b primaryRow) int {
 		return cmp.Or(cmp.Compare(a.Stream, b.Stream), cmp.Compare(a.Score, b.Score), cmp.Compare(a.ID, b.ID))

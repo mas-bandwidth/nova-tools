@@ -421,8 +421,29 @@ func listRows(ctx context.Context, q queryer, kind string) ([]Row, error) {
 	return out, nil
 }
 
-// record appends the history row inside the write's transaction.
+// historyReasonKey is where a history row's own JSON carries the write's
+// reason: the after map (before, for a remove) holds it under this key and
+// History moves it back to Change.Reason and out of the map, so a reader never
+// sees it as a row field. The history columns are a migration's, and a new one
+// would move the schema count a first run's transcript pins, so the reason
+// rides in the schemaless JSON (internal/config/store.go, Change.Reason).
+const historyReasonKey = "reason"
+
+// record appends the history row inside the write's transaction. The reason
+// of the write is read from the context the verb put it on (WithReason), so
+// every existing caller keeps its signature.
 func record(ctx context.Context, tx *sql.Tx, kind, name, op string, before, after map[string]string, actor string) (int64, error) {
+	if reason := ReasonFrom(ctx); reason != "" {
+		// a copy, so the caller's row is not changed: the reason is the
+		// write's, not a field of the row
+		if after != nil {
+			after = maps.Clone(after)
+			after[historyReasonKey] = reason
+		} else if before != nil {
+			before = maps.Clone(before)
+			before[historyReasonKey] = reason
+		}
+	}
 	var b, a []byte
 	var err error
 	if before != nil {
@@ -617,6 +638,18 @@ func (p *PG) History(ctx context.Context, kind, name string) ([]Change, error) {
 			if err := json.Unmarshal([]byte(after.String), &c.After); err != nil {
 				return nil, fmt.Errorf("postgres: history %d after: %w", c.ID, err)
 			}
+		}
+		// the reason rides in the row JSON (record): hand it back as the
+		// write's, never as a row field
+		if v, ok := c.After[historyReasonKey]; ok {
+			c.Reason = v
+			delete(c.After, historyReasonKey)
+		}
+		if v, ok := c.Before[historyReasonKey]; ok {
+			if c.Reason == "" {
+				c.Reason = v
+			}
+			delete(c.Before, historyReasonKey)
 		}
 		c.At = at.UTC().Format(time.RFC3339)
 		out = append(out, c)

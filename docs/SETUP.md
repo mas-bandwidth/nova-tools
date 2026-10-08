@@ -100,6 +100,24 @@ zero. A disabled route is listed with its note and never checked; a route that w
 is named in the evidence, with the one fix line (seal the key, or `nova-sprint funded <provider> --reason '<the payment>'`). The check is one only a fleet needs, so
 `nova-doctor --local` skips it and a fleet run includes it.
 
+### dep-harnesses-b.w7: the friend harnesses
+
+Each friend row names a harness (`claude`, `opencode`, `codex`, or `grok`) and its mode; a
+Claude one-shot row also names `config_dir`. This is a hidden dependency because a friend
+cannot take a card when its harness binary or account directory is absent.
+
+Who needs it: every machine that runs cards with friends. `nova-up --local` does not install
+third-party harnesses or create their account directories. A person installs the harness on
+PATH and provisions each row with the nova-friend verb:
+
+```sh
+nova-friend install --as <friend> --harness <h> --dir <friend-dir> --config-dir <claude-config-dir>
+```
+
+The `harness` doctor check asks each row's harness for `--version` without running it against
+a model, and checks the version is supported and the Claude one-shot `config_dir` exists. A
+failure names the friend and the fix line runs `nova-friend install` with the needed paths.
+
 ### dep-go-sdk-b.w2: the Go toolchain
 
 The Go SDK is a dependency of a bench, and never of the coordinator's machine. A bench
@@ -171,3 +189,62 @@ naming the verb or the step above: install `sops`, set the missing variable, `ch
 `chmod 700` the key, `nova-secrets keygen`, the `git clone` of the store, or `nova-secrets seal --store <store> --as <seat> --name <NAME>` for a name the loops require and the store
 does not hold. The check is fleet-scoped: `nova-doctor --local` skips it with the other fleet
 checks and says which; run `nova-doctor` plain to see it.
+
+### dep-ssh-b.w8: ssh between the coordinator and the benches
+
+The coordinator and the fleet's members reach the benches by ssh: the land, the sandbox
+worktrees and the bench rule all start `ssh <bench>` on a machine that must answer without a
+prompt. A host key that is not known, no key the bench accepts, or a bench that does not
+answer is a hidden dependency: the card or the land stops with ssh's own error, and a person
+who did not set the fleet up cannot tell what is missing.
+
+Who needs it: any machine that reaches a bench (a fleet member, the coordinator's runs). A
+single-machine `nova-up --local` setup needs no ssh to another machine, so its `ssh` step
+makes this machine's side alone: it makes `~/.ssh` at mode `0700` and an empty `known_hosts`
+at mode `0600` when they are absent, and it copies no key. A person fills the rest by hand:
+
+```sh
+ssh-keyscan <bench> >> ~/.ssh/known_hosts   # one line per bench: the host key is known
+ssh-copy-id <bench>                        # this machine's public key reaches the bench
+```
+
+With both, `ssh -o BatchMode=yes -o ConnectTimeout=5 <bench> true` answers with no prompt.
+
+The `ssh` doctor check (`internal/doctor/check_ssh.go`) reads the inventory
+(`nova-config machine list`, with the seat loaded: `set -a; . ~/nova/seat.env; set +a`) and
+runs that probe once per machine, each bounded by the check's own deadline. It names every
+bench whose probe fails and the reason (unknown host key, no key or permission denied,
+timeout), with the one fix line above. It is fleet-only, so `nova-doctor --local` skips it
+and says which; run `nova-doctor` plain to include it.
+
+### sprint-dashboard-verb-r-b.w7: the sprint dashboard
+
+The sprint dashboard is `nova-sprint dashboard`, run as a loop record on the
+coordinator's machine, never a hand-written launchd or systemd unit. Add the record, apply
+it, and the fleet's loops play writes its unit:
+
+```
+nova-config loop add sprint-dashboard --machine <m> --argv '["env","NOVA_SPRINT_SERVER=127.0.0.1:6390","nova-sprint","dashboard","--logo","<home>/sprint-logo.svg"]' --keepalive true --as <name>
+```
+
+It serves the page on `127.0.0.1:7390` and reads the sprint once a second whether or not
+a page is open; `--logo` is optional. The contract is
+[SPEC-SPRINT-DASHBOARD.md](SPEC-SPRINT-DASHBOARD.md); the loop record and its play are in
+[FLEET.md](FLEET.md). `nova-doctor --check dashboard` says `ok` when the loop record's unit
+is installed and its loopback port answers, `warn` when no loop record runs the dashboard
+on this machine or a hand unit serves it, and `fail` when the unit is there and the port
+does not answer. It is a fleet check: `--local` skips it.
+
+### sprint-dashboard-verb-r-b.w8: the dashboard's loopback check and logo type
+
+`nova-doctor --check dashboard` fails, not passes, when the loop record runs
+`nova-sprint dashboard` but its `--listen` names no loopback address: the fix line names
+the loop record and a loopback address to add. The logo routes type the image by its magic
+bytes before its file name, so a WebP image named `logo.png` is served as `image/webp`.
+
+### sprint-dashboard-verb-r-b.w9: the dashboard fixes carried onto the current base
+
+The doctor check requires the loop record's dashboard to answer on loopback, and the
+logo routes detect raster content from its bytes before the file name. Tests:
+`TestDashboardCheck` (internal/doctor) and
+`TestDashboardServesWhatServerPyServedFromOnePoller` (internal/sprintdash).

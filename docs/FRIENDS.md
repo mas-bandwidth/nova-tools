@@ -128,6 +128,8 @@ nova-config apply --kind friend
 
 ## A sprint card
 
+Each sync pass sends a batch-mode friend (the default) at most one status wake for the cards it delivers, naming their count and up to ten card ids with the remaining count, her inbox directory and the sentence that starts the work. A friend whose store row says mode `one-shot` keeps one wake per card so her runner starts its lane. A pass that delivers no file sends no wake. The per-card inbox file is the record: a failed batch wake leaves every delivered file in place and is said and recorded once for the pass as `NFriendNotWoken`.
+
 A card of the sprint whose brief says `WHO: friend`, `WHO: friend <name>`, or
 `WHO: only friend <name>`, and a card with no WHO line whose tier a friend covers,
 is offered to a friend before the fleet (docs/SPEC-SPRINT.md section 1, a friend's card; the owner,
@@ -138,7 +140,7 @@ normally do friend work."). It arrives as a job like any other:
 `nova-sprint friend sync`. Its first line is the STATUS line:
 
 ```
-STATUS: nova-sprint card <card>, epoch <e>, attempt <n>; push your work to the branch sprint/<card>.g<gen>.e<e>; when done, write outbox/<card>/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>
+STATUS: nova-sprint card <card>, epoch <e>, attempt <n>; push your work to the branch sprint/<card>.g<gen>.e<e>; when done, write outbox/<card>/REPORT.md with first line exactly Verdict: LAND|HOLD|FAIL, second line exactly Head: <40-hex> (blank for HOLD and FAIL)
 ```
 
 then the working-directory line below, a later attempt's start (the current tip
@@ -163,10 +165,13 @@ asks:`), a blank line, and the card's brief. What a friend does with it:
 
    `LAND` is work ready for its reads and its landing; `HOLD` is work stopped
    for the coordinator's decision, `FAIL` work that could not be done; for
-   either, `Head:` may be left out, and the first paragraph says why. The
-   first `Verdict:` and `Head:` lines are read (markdown marks around them
-   are fine); the first paragraph that is neither of them nor a heading goes
-   onto the card, cut to 1 KiB.
+   either, `Head:` may be left out with line 2 blank, and the first paragraph
+   says why. The first line is exactly `Verdict: LAND|HOLD|FAIL`, and the
+   second exactly `Head: <40-hex>`. Reading stays lenient: the first
+   `Verdict:` and `Head:` lines are read wherever they sit (markdown marks
+   around them are fine). Headers outside the first two lines add a NOTE to
+   the card naming their line numbers. The first paragraph that is neither
+   of them nor a heading goes onto the card, cut to 1 KiB before the NOTE.
 
 The sync finishes the card on its next run after the report (the period of the
 loop that runs it: 15 s in the friend sync loop, below): `LAND` goes to review at
@@ -346,3 +351,5 @@ nova-friend install --as ada --harness opencode --dir ~/ada-working --server 127
    --wake --to-friends --every <d>` (installed with `ping-install`), which
    pings every friend the friends table holds up and tells the coordinator
    which sessions were deaf (docs/SPEC-FRIEND.md, "The wake ping loop").
+
+For new friends, see [FRIEND-ONBOARDING.md](FRIEND-ONBOARDING.md) for step-by-step guidance from joining to a first finished card.

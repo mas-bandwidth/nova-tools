@@ -14,24 +14,24 @@ import (
 // two of them disagreed on one character:
 //
 //   - `cut` writes and accepts `RESULT <label> sha=<sha12>` -- no colon
-//     (internal/pulse/cut.go, and the example at
+//     (pulse/cut.go at 27c9ffc66, and the example at
 //     that page, line 4);
 //   - `lint --card`'s `result-first` wanted `RESULT: ` -- with one
 //     (WORKER-CARDS.md practice 1, now in the nova-work-old repository, and docs/SPEC-SWARM.md:969,976);
 //   - `gather` compares line 1 to line 1 and imposes no prefix of its own, so it follows
-//     whichever the other two settle on (internal/pulse/harvest.go, classifyResult).
+//     whichever the other two settle on (pulse/harvest.go at 27c9ffc66, classifyResult).
 //
 // The cost of the disagreement: every card `cut` writes drew a `result-first` drift, and
 // six cards written by hand on 2026-09-19 each drew one for a colon.
 //
 // RULED: THE COLON FORM WINS (a friend, 2026-09-19, on the cold read of PR #1759;
 // docs/SPEC-TOOLWORK.md §5 rule 7). It is SPEC-SWARM's own law and it is what the
-// majority of writers already write -- `cut --kind` (internal/pulse/cutkind.go),
-// `internal/pulse/manager.go`. `RESULT: <label>
+// majority of writers already write -- `cut --kind` (pulse/cutkind.go at 27c9ffc66),
+// `pulse/manager.go at 27c9ffc66`. `RESULT: <label>
 // sha=<sha12>` is the form to WRITE.
 //
 // THE NO-COLON FORM IS ACCEPTED AS A STOPGAP, NOT AS A SECOND RULE. The one renderer
-// still on it is the plain `cut` template path (`internal/pulse/cut.go`), and the
+// still on it is the plain `cut` template path (`pulse/cut.go at 27c9ffc66`), and the
 // follow-up card named in rule 7 rewrites it and adds the class test
 // `every-writer-and-reader-agrees-on-the-result-line`. Until that card lands, refusing
 // the no-colon form would refuse cards a tool on dev writes today, so both are read --

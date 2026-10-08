@@ -70,7 +70,7 @@ func newLivenessRig(t *testing.T, listing string) *livenessRig {
 	}
 	r.sc.Deliver = r.sc.Gate(r.session)
 	r.direct = &bus.Bus{Store: r.store}
-	r.d = &Daemon{Friend: "zhi", Harness: "dsh", Dir: "/w/zhi", Now: clock, Record: record,
+	r.d = &Daemon{Friend: "zhi", Harness: "dsh", Dir: "/w/zhi", Now: clock, Record: record, noPresent: true,
 		Beat: func(ctx context.Context, _ time.Time) error {
 			return r.sc.Beat(func(context.Context) error { r.mu.Lock(); r.sprint++; r.mu.Unlock(); return nil })(ctx)
 		},
@@ -136,7 +136,7 @@ func TestAFriendWhoseSessionPongsIsUpWithNoHarnessProcess(t *testing.T) {
 		}
 		assert.Equal(t, steps, r.beats()-before, "every beat reached the sprint server")
 		assert.GreaterOrEqual(t, answered, 15, "a check every quiet spell, each answered")
-		assert.Equal(t, HarnessNotSeen, r.d.status.HarnessSeen, "the status says the app was not seen, and nothing more")
+		assert.Equal(t, HarnessNotSeen, r.w.Seen(), "the advisory observation says the app was not seen, and nothing more")
 		r.mu.Lock()
 		records := strings.Join(r.records, "\n")
 		r.mu.Unlock()
@@ -155,7 +155,7 @@ func TestAFriendWhoseSessionPongsIsUpWithNoHarnessProcess(t *testing.T) {
 		up, reason := r.sc.Present()
 		assert.False(t, up)
 		assert.Equal(t, NoSessionAnswer, reason)
-		assert.Equal(t, HarnessRunning, r.d.status.HarnessSeen, "the status says the app runs: advisory")
+		assert.Equal(t, HarnessRunning, r.w.Seen(), "the advisory observation says the app runs")
 	})
 }
 

@@ -18,7 +18,11 @@
 //     exactly the one it made. A host that does not answer (ssh's own exit
 //     255, or ssh not starting) is passed over for the fallback; a host that
 //     answers and refuses is the end of the run, never a reason to try another.
-//  2. copy: the tree into <run>/repo, .git left out unless WithGit.
+//  2. copy: the tree into <run>/repo, .git left out unless WithGit; or, with a
+//     Stage, the tree staged from the bench's own mirror at one commit
+//     (stage_mirror.go), so only the sha crosses the wire. Either way the
+//     run's Stage says what it did, and a refusal is a *StageError naming the
+//     step, its exit, its stderr's tail and the wall time.
 //  3. exec: cd <run>/repo, then the command under nice -n 19 with GOCACHE,
 //     GOFLAGS=-mod=readonly and NOVA_TEST_NO_HOST=1, its output streamed to the
 //     caller as it arrives. Its exit status is the run's.
@@ -85,8 +89,10 @@ type Options struct {
 	// Hosts are the benches in the order they are tried: the host, then the
 	// fallback. Only a host that does not answer moves the run to the next.
 	Hosts []string
-	// Dir is the local tree to copy.
+	// Dir is the local tree to copy; unread when Stage is set.
 	Dir string
+	// Stage, when set, stages the tree from the bench's mirror in place of the copy.
+	Stage *MirrorStage
 	// Root is the directory on the bench the run directory is made in, and
 	// Cache is GOCACHE there; each is relative to the login's home or
 	// absolute. Empty is the default.
@@ -98,6 +104,11 @@ type Options struct {
 	// Stdout and Stderr receive the command's output as it arrives; Notes
 	// receives the run's own lines (a host passed over).
 	Stdout, Stderr, Notes io.Writer
+	// Now is the run's clock, for the stage's wall time; nil is the wall's.
+	Now func() time.Time
+	// Staged, when set, is told the stage as it ends, refused or not, before the
+	// command runs: the lander's beat says it while the command runs.
+	Staged func(Stage)
 }
 
 // Result is what a run did.
@@ -109,6 +120,8 @@ type Result struct {
 	// Removed is whether the run directory was removed; RemoveErr says why not.
 	Removed   bool
 	RemoveErr error
+	// Stage is what the copy or the mirror stage did (Stage.Line).
+	Stage Stage
 }
 
 var (
@@ -164,7 +177,11 @@ func (o *Options) Validate() error {
 	if err := CheckPath("cache", o.Cache); err != nil {
 		bad = append(bad, err.Error())
 	}
-	if strings.TrimSpace(o.Dir) == "" {
+	if o.Stage != nil {
+		if err := o.Stage.Validate(); err != nil {
+			bad = append(bad, err.Error())
+		}
+	} else if strings.TrimSpace(o.Dir) == "" {
 		bad = append(bad, "no local tree named")
 	}
 	if len(o.Argv) == 0 || o.Argv[0] == "" {
@@ -239,9 +256,12 @@ func runIn(ctx context.Context, t Transport, o Options, host, dir string) (res R
 		res.RemoveErr = remove(context.WithoutCancel(ctx), t, host, dir)
 		res.Removed = res.RemoveErr == nil
 	}()
-	var copyErr bytes.Buffer
-	if err := t.Copy(ctx, host, o.Dir, dir+"/repo", o.WithGit, &copyErr); err != nil {
-		return res, fmt.Errorf("%s: copying %s to %s/repo: %v %s", host, o.Dir, dir, err, lastLine(copyErr.String()))
+	res.Stage = stage(ctx, t, o, host, dir+"/repo")
+	if o.Staged != nil {
+		o.Staged(res.Stage)
+	}
+	if res.Stage.Err != nil {
+		return res, res.Stage.Err
 	}
 	code, err := t.Shell(ctx, host, ExecLine(dir, o.Cache, o.Argv), o.Stdout, o.Stderr)
 	if err != nil {
@@ -249,6 +269,41 @@ func runIn(ctx context.Context, t Transport, o Options, host, dir string) (res R
 	}
 	res.Code = code
 	return res, nil
+}
+
+// sizedCopier is a transport whose copy says how many bytes it sent (Exec).
+type sizedCopier interface {
+	CopySized(ctx context.Context, host, src, dst string, withGit bool, stderr io.Writer) (int64, error)
+}
+
+// stage puts the tree at dst on host: the mirror stage when o.Stage is set, else the
+// transport's copy; what it did, its refusal a *StageError.
+func stage(ctx context.Context, t Transport, o Options, host, dst string) Stage {
+	now := o.Now
+	if now == nil {
+		now = time.Now
+	}
+	start := now()
+	st := Stage{Host: host, Via: "tar"}
+	var errb bytes.Buffer
+	var err error
+	code := 0
+	step := "copying " + o.Dir + " to " + dst
+	if o.Stage != nil {
+		st.Via, step = "mirror", "staging "+o.Stage.Sha[:12]+" from "+o.Stage.Mirror+" at "+dst
+		line := StageLine(*o.Stage, dst)
+		st.Bytes = int64(len(line))
+		code, err = t.Shell(ctx, host, line, io.Discard, &errb)
+	} else if sc, ok := t.(sizedCopier); ok {
+		st.Bytes, err = sc.CopySized(ctx, host, o.Dir, dst, o.WithGit, &errb)
+	} else {
+		err = t.Copy(ctx, host, o.Dir, dst, o.WithGit, &errb)
+	}
+	st.Wall = now().Sub(start)
+	if err != nil || code != 0 {
+		st.Err = &StageError{Host: host, Step: step, Code: code, Tail: tailLines(errb.String()), Wall: st.Wall, Err: err}
+	}
+	return st
 }
 
 func remove(ctx context.Context, t Transport, host, dir string) error {

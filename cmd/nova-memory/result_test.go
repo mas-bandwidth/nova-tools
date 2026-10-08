@@ -181,6 +181,31 @@ func TestTheRankFollowsFusedAndTheBannerSaysSo(t *testing.T) {
 	assert.Contains(t, usage, "so score= need not fall with rank")
 }
 
+// A fused list is ordered by fused=, and its native score is printed under the
+// name of the channel that produced it (bm25= or trigram=), never as one bare
+// score= a reader could take for the column the rank follows (M-4). The two
+// channels score on different scales, so a single score= column cannot order
+// the list; naming it for its channel removes the claim.
+func TestAFusedHitNamesItsNativeScoreColumnForItsChannel(t *testing.T) {
+	t.Parallel()
+
+	exit, stdout, stderr := runCLI(t, "", "search", "--root", corpus, "--channels", "bm25,trigram", "--k", "5", "glazing", "salt", "haze", "brass")
+	require.Equal(t, 0, exit, stderr)
+	hits, channels := 0, map[string]bool{}
+	for _, line := range strings.Split(stdout, "\n") {
+		if !strings.HasPrefix(line, "SEARCH HIT ") {
+			continue
+		}
+		hits++
+		chn := field(t, line, "score-channel")
+		channels[chn] = true
+		assert.Containsf(t, line, " "+chn+"=",
+			"the fused hit does not print its native score under the name of the channel that produced it (%s): %q", chn, line)
+	}
+	assert.Equal(t, 5, hits)
+	assert.Len(t, channels, 2, "the fixture query is meant to reach both channels")
+}
+
 // quickstart composes its three steps from argv it builds, and under --json each step's
 // own result must be a JSON object inside the one object quickstart prints. A word that
 // starts with a dash makes the search step's argv carry `--`, and a flag added after that

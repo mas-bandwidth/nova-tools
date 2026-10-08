@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -68,14 +67,8 @@ func profileSwarmRoot(root string, s *sink, stderr io.Writer, r *refusals) int {
 		r.add("--swarm-root is required; it wants the directory the swarm batches live under; refusing to guess")
 		return r.print(stderr)
 	}
-	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
-		if err != nil && os.IsNotExist(err) {
-			r.add("--swarm-root does not exist: " + root + "; it wants the directory the swarm batches live under")
-		} else if err != nil {
-			r.add("--swarm-root " + root + ": " + err.Error() + "; it wants the directory the swarm batches live under")
-		} else {
-			r.add("--swarm-root is not a directory: " + root + "; it wants the directory the swarm batches live under")
-		}
+	if why := notADir("swarm-root", root, "the directory the swarm batches live under"); why != "" {
+		r.add(why)
 		return r.print(stderr)
 	}
 	paths, err := filepath.Glob(filepath.Join(root, "*", "jobs", "*", "usage.tsv"))
@@ -87,19 +80,19 @@ func profileSwarmRoot(root string, s *sink, stderr io.Writer, r *refusals) int {
 
 	models := map[string]*profileModel{}
 	for _, p := range paths {
-		_, model, _, _, _, _, out, _, _, outKnown, _, ok := readCardFile(p)
-		if !ok || model == "" {
+		u := readCardFile(p)
+		if !u.ok || u.model == "" {
 			continue
 		}
-		m, seen := models[model]
+		m, seen := models[u.model]
 		if !seen {
 			m = &profileModel{}
-			models[model] = m
+			models[u.model] = m
 		}
 		m.cards++
-		if outKnown {
-			m.outs = append(m.outs, out)
-			if budget, have := parseCardBudget(filepath.Join(filepath.Dir(p), "PROMPT.md")); have && out > budget {
+		if u.outKnown {
+			m.outs = append(m.outs, u.out)
+			if budget, have := parseCardBudget(filepath.Join(filepath.Dir(p), "PROMPT.md")); have && u.out > budget {
 				m.overshoot++
 			}
 		}

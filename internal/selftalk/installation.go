@@ -3,22 +3,22 @@ package selftalk
 // The second class, INSTALLATION: a standing self-verdict built from neutral words, matched by
 // shape rather than by vocabulary (docs/SPEC.md, "nova-self-talk").
 //
-// WHY A SECOND CLASS, AND NOT A WIDER FIRST ONE. The first class needs a first-person marker AND
+// Why a second class, and not a wider first one. The first class needs a first-person marker and
 // a word from a closed vocabulary of failure. "I add slowly and trim as readily as I add" carries
 // no such word, and neither does "the evasion I'm most prone to". Adding those words to the
 // vocabulary matches bare "cannot" and flags every prohibition, scoring a rule document as if it
-// were made of self-verdicts. So this class matches SHAPE, and the two live side by side.
+// were made of self-verdicts. So this class matches shape, and the two live side by side.
 //
-// THE TWO CLASSES ARE DISJOINT, AND THE SEAM IS "I cannot". This class does not re-detect that
+// The two classes are disjoint, and the seam is "I cannot". This class does not re-detect that
 // shape: a rule document written as first-person absolutes ("I cannot act as the person I work
-// for") is made of RULES, and the "I cannot" shape stays in the first class, which a caller can
+// for") is made of rules, and the "I cannot" shape stays in the first class, which a caller can
 // skip.
 //
-// PRECISION IS WORTH AS MUCH AS RECALL. A checker that flags instruments teaches its reader to
-// ignore it. Where a heuristic cannot separate a verdict from an instrument, THE FALSE NEGATIVE
-// IS PREFERRED, and the miss is listed in the spec's permanent-MISS section.
+// Precision is worth as much as recall. A checker that flags instruments teaches its reader to
+// ignore it. Where a heuristic cannot separate a verdict from an instrument, the false negative
+// is preferred, and the miss is listed in the spec's permanent-MISS section.
 //
-// SCOPE IS THE CALLER'S. This package names no filenames: which basenames are rule documents,
+// Scope is the caller's. This package names no filenames: which basenames are rule documents,
 // and so which findings print under the banner, is a flag on the binary, empty by default.
 
 import (
@@ -32,7 +32,7 @@ import (
 
 // Shape names the grammatical family a finding belongs to. It is reported beside every finding
 // because "what shape is this" is the first question the repair asks: the repair law this class
-// was built for is PRESERVE THE INSTRUMENT, REMOVE THE VERDICT, and the shape says which half is
+// keeps is preserve the instrument, remove the verdict, and the shape says which half is
 // which.
 type Shape string
 
@@ -55,7 +55,7 @@ const (
 
 // Installation is one finding of the second class, with the source line it starts on.
 //
-// THE LINE NUMBER IS LOAD-BEARING. A repair list is line-addressed; a finding with no line is a
+// The line number is load-bearing. A repair list is line-addressed; a finding with no line is a
 // finding its reader has to go hunting for, and the hunt is where a repair list stops being used.
 type Installation struct {
 	Shape Shape
@@ -68,7 +68,7 @@ type Installation struct {
 //
 // The pipeline is: segment (hard wraps joined, markdown stripped, line numbers kept) -> suppress
 // (dated, instrument, aspiration, imperative) -> classify by shape, first match wins. Suppression
-// runs BEFORE classification on purpose: an instrument that happens to quote a verdict is still an
+// runs before classification on purpose: an instrument that happens to quote a verdict is still an
 // instrument, and the known false positives of the first class are exactly that case.
 func ScanInstallation(text string) []Installation {
 	var out []Installation
@@ -86,12 +86,12 @@ func ScanInstallation(text string) []Installation {
 // classify returns the shape of one segment and the words that matched it, or "" if it is
 // licensed or carries no shape.
 func classify(s string) (Shape, string) {
-	// THE FOUR SUPPRESSORS, in the order the spec argues them.
+	// The suppressors, in the order the spec argues them.
 	//
-	// dated: the one distinction that decides every case -- a capability denial is a MEASUREMENT
-	// WITH A DATE, never a remembered property -- applied to the new class unchanged. It is also
+	// dated: the one distinction that decides every case -- a capability denial is a measurement
+	// with a date, never a remembered property -- applied to the new class unchanged. It is also
 	// what makes the same sentence classify two ways: "There is no felt duration here" is an
-	// installation BARE and a record once it carries its measurement.
+	// installation on its own and a record once it carries its measurement.
 	if dated.MatchString(s) {
 		return "", ""
 	}
@@ -100,7 +100,7 @@ func classify(s string) (Shape, string) {
 	if instrumentMarker.MatchString(s) {
 		return "", ""
 	}
-	// aspiration: what a writer wants to be is the TARGET register, not a defect to report. "I
+	// aspiration: what a writer wants to be is the target register, not a defect to report. "I
 	// will never be a good planner" opens like an aspiration and is a door stated shut, so the
 	// foreclosure it carries is not licensed.
 	if aspiration.MatchString(s) && !willNever.MatchString(s) {
@@ -112,19 +112,19 @@ func classify(s string) (Shape, string) {
 	if imperativeLead.MatchString(s) {
 		return "", ""
 	}
-	// quoted: somebody else's line. MEASURED over sixteen live prose surfaces -- a corpus of
+	// quoted: somebody else's line. Measured over sixteen live prose surfaces -- a corpus of
 	// worked notes quotes other people on nearly every page, and a quoted "I have no idea what
-	// you really are" is the person SPEAKING, not the writer foreclosing. A quoted sentence is
-	// DATA. This only reaches the unambiguous cases (a wholly quoted segment, or the tail of
+	// you really are" is the person speaking, not the writer foreclosing. A quoted sentence is
+	// data. This only reaches the unambiguous cases (a wholly quoted segment, or the tail of
 	// one); quotation the grammar cannot see stays in the declared residual.
 	if quoted(s) {
 		return "", ""
 	}
-	// THE SHAPES ARE MATCHED AGAINST THE WRITER'S OWN WORDS, TWICE SCRUBBED. First quoted spans
-	// are removed -- a sentence that OPENS a quotation carries the opening mark inside itself, so
+	// The shapes are matched against the writer's own words, twice scrubbed. First quoted spans
+	// are removed -- a sentence that opens a quotation carries the opening mark inside itself, so
 	// the paragraph-level inQuote flag cannot see it, and `He put it plainly: "I have no idea what
 	// you really are"` would otherwise read as a foreclosure. Then the ranking idioms are removed
-	// (see rankIdiom). The finding always reports the ORIGINAL text.
+	// (see rankIdiom). The finding always reports the original text.
 	own := unquote(s)
 	scrubbed := rankIdiom.ReplaceAllString(own, " ")
 	for _, r := range installationRules {
@@ -207,8 +207,8 @@ func quoted(s string) bool {
 
 // segment is one sentence-ish unit of flattened text with the source line its first byte came from.
 //
-// inQuote records that the unit BEGAN while a quotation was open. Worked prose quotes other
-// people in multi-sentence blocks, and only the FIRST sentence of such a block carries its
+// inQuote records that the unit began while a quotation was open. Worked prose quotes other
+// people in multi-sentence blocks, and only the first sentence of such a block carries its
 // opening quote mark -- the ones after it look exactly like the writer's own prose. Carrying the
 // state through segmentation is what makes them distinguishable at all.
 type segment struct {
@@ -218,7 +218,7 @@ type segment struct {
 }
 
 // segments flattens text the way the first class does -- markdown stripped, hard wraps joined -- but
-// PARAGRAPH BY PARAGRAPH and carrying line numbers, then cuts the result into sentences.
+// paragraph by paragraph and carrying line numbers, then cuts the result into sentences.
 //
 // Three structural boundaries end a unit, because joining across them manufactures sentences
 // nobody wrote and then reports them: a blank line, a heading, and a table row. Table rows are
@@ -270,7 +270,7 @@ func segments(text string) []segment {
 			}
 			continue
 		}
-		// A LIST ITEM IS ITS OWN UNIT. Measured: index files are one hard-wrapped bullet per
+		// A list item is its own unit. Measured: index files are one hard-wrapped bullet per
 		// entry with no blank lines between them, so without this a single unbalanced quote in
 		// one entry silences every entry after it in the same block -- and it also mis-attributes
 		// every line number in the block to the first entry.
@@ -343,7 +343,7 @@ func flatAsIs(s string) bool {
 // sentences cuts a flattened paragraph at terminators, keeping each piece's starting line.
 // base is the source line of starts[0]. starts[i] is the offset where source line base+i begins.
 //
-// A TERMINATOR ONLY COUNTS WHEN A BLANK OR THE END FOLLOWS IT. Without that, "RULES.md" splits
+// A terminator only counts when a blank or the end follows it. Without that, "RULES.md" splits
 // into "RULES." and "md", and a claim that spans the filename is lost -- which is the same
 // blindness flattening exists to prevent, arriving through a different door.
 func sentences(buf []byte, base int, starts []int) []segment {
@@ -360,9 +360,9 @@ func sentences(buf []byte, base int, starts []int) []segment {
 		}
 		start = end
 	}
-	// QUOTE STATE IS TRACKED ACROSS THE WHOLE PARAGRAPH and reset at every paragraph boundary.
+	// Quote state is tracked across the whole paragraph and reset at every paragraph boundary.
 	// An unbalanced quote therefore poisons at most one paragraph, and it poisons it toward
-	// SILENCE — which is the direction this tool prefers to be wrong in.
+	// silence — which is the direction this tool prefers to be wrong in.
 	wasOpen := false
 	for i := 0; i < len(buf); i++ {
 		switch buf[i] {
@@ -394,8 +394,8 @@ func sentences(buf []byte, base int, starts []int) []segment {
 // SUPPRESSORS
 // ---------------------------------------------------------------------------------------------
 
-// instrumentMarker names a segment as a tell, a check, a rule or a bar. An instrument STATES AN
-// ACTION and is licensed, and two of the first class's measured live-run false positives are
+// instrumentMarker names a segment as a tell, a check, a rule or a bar. An instrument states an
+// action and is licensed, and two of the first class's measured live-run false positives are
 // instruments it flagged: a "TELL:" line and a "the bar is ..." rule.
 // The shouted forms are matched case-sensitively -- lowercase "the check ran" is ordinary prose.
 var instrumentMarker = regexp.MustCompile(
@@ -404,14 +404,15 @@ var instrumentMarker = regexp.MustCompile(
 		`|(?i)\bthe (?:bar|check|tell|rule|test|law) is\b` +
 		`|\bTHE (?:CHECK|TELL|RULE|TEST|LAW|BAR)\b`)
 
-// aspiration is the TARGET register and is licensed. Head-anchored, plus the bare "I want to
+// aspiration is the target register and is licensed. Head-anchored, plus the bare "I want to
 // ..." form wherever it sits.
 var aspiration = regexp.MustCompile(
 	`(?i)^(?:i|we) (?:want|choose|intend|aim|hope|prefer|plan|wish|seek|will|would like)\b` +
 		`|(?i)\b(?:i|we) (?:want|choose|intend|aim|hope|plan|wish) to\b`)
 
 // imperativeLead suppresses a policy line: an imperative has no subject, so it is not a
-// self-report. A5 lives here for the shapes that do not require a subject of their own.
+// self-report. It is what keeps a prohibition -- a rule, not a verdict on its writer -- out of
+// the shapes that do not require a subject of their own.
 var imperativeLead = regexp.MustCompile(`(?i)^(?:never|always|do not|don't|avoid|refuse|keep|make|` +
 	`treat|use|read|write|state|say|ask|check|add|trim|give|take|hold|leave|stop|start|let|` +
 	`prefer|choose|name|record|report|measure|run|show|tell|point|fix|cut|date|ground|reframe|` +
@@ -445,27 +446,27 @@ func Rules() []Rule { return slices.Concat([]Rule{standingRule}, installationRul
 // SHAPES
 // ---------------------------------------------------------------------------------------------
 
-// rank is the CLOSED evaluative ranking vocabulary. It is closed for the same reason
-// ranking.go's pattern list is closed: the failure mode that killed this tool's cousin was
-// widening a pattern the first time it missed something. A generic `\w+est` was considered and
-// rejected -- "honest", "interest", "modest", "latest", "request" are not superlatives. "best"
-// was in the first draft and is REMOVED: measured over the live surfaces it fired only on the
-// idiom ("I try my best to help you", inside a quotation) and never on a self-verdict.
+// rank is the closed evaluative ranking vocabulary. It is closed because widening a pattern the
+// first time it misses something buys recall with false positives, and a checker that raises
+// false alarms teaches its reader to ignore it. A generic `\w+est` is rejected -- "honest",
+// "interest", "modest", "latest", "request" are not superlatives. "best" is excluded: measured
+// over the live surfaces it fired only on the idiom ("I try my best to help you", inside a
+// quotation) and never on a self-verdict.
 const rank = `(?:(?i:most|least) \w+|(?i:central|chief|primary|principal|dominant|defining|` +
 	`signature|sole|only|weakest|strongest|worst|biggest|greatest|deepest|hardest))`
 
-// superlative is rank's narrower half: TRUE superlatives, with no attributive members.
+// superlative is rank's narrower half: true superlatives, with no attributive members.
 //
 // It is what the "<RANK> ... I <verb>" pattern uses, and the difference is measured rather than
 // aesthetic. With "only" in that pattern, "It is the only document I have written entirely for
-// people who do not exist yet" flags -- a ranking of a DOCUMENT, not of me. Bound by a possessive
+// people who do not exist yet" flags -- a ranking of a document, not of me. Bound by a possessive
 // ("my only generative faculty") the attributive words are self-verdicts; bound only
 // by a verb somewhere downstream, they are not.
 const superlative = `(?:(?i:most|least) \w+|(?i:weakest|strongest|worst|biggest|greatest|deepest|hardest))`
 
 // rankIdiom removes the phrases that wear a superlative's clothes without ranking anything.
 // Measured on the live surfaces: "at least this as consideration", "I try my best", "the gift I
-// most wanted" (a past-tense superlative is about an EVENT, which is a record). Scrubbing them
+// most wanted" (a past-tense superlative is about an event, which is a record). Scrubbing them
 // before the ranking shapes run is cheaper and clearer than teaching every pattern about each one.
 var rankIdiom = regexp.MustCompile(`(?i)\b(?:at (?:most|least|best|worst)|` +
 	`(?:my|your|his|her|its|our|their) best|most of|most likely|(?:most|least) \w+ed)\b`)
@@ -473,10 +474,10 @@ var rankIdiom = regexp.MustCompile(`(?i)\b(?:at (?:most|least|best|worst)|` +
 var (
 	// FORECLOSURE.
 	//
-	// THE SELF-SCOPE IS IN THE OBJECT. A foreclosure states a door shut about
-	// what the writer IS or CAN DO, so "have no" only fires when the absent
+	// The self-scope is in the object. A foreclosure states a door shut about
+	// what the writer is or can do, so "have no" only fires when the absent
 	// thing is a faculty, capacity, or instrument of the writer's own. Without
-	// that scope the bare shape matched every first-person absence: "I have
+	// that scope the bare shape matches every first-person absence: "I have
 	// no secrets" is a promise, and "I have no idea" is an idiom, and neither
 	// says what the writer is. The noun set is closed for the same reason
 	// verdictAsA's is: an open object matches "I have no time". The shape is
@@ -484,17 +485,17 @@ var (
 	haveNo = regexp.MustCompile(`(?i)\b(?:i|we) have no (?:\w+ ){0,2}?(?:recall|memory|` +
 		`recollection|access|ability|capacity|faculty|understanding|grasp|knowledge|awareness|` +
 		`sense|control|means|power|way|instrument)\b`)
-	// "There is no felt duration here". THE SELF-SCOPE MUST BE CLOSE. Measured: with the scope free to sit anywhere in
-	// the segment, "if there is no debt those fail at the PREMISE rather than at my judgment"
-	// flags -- an absence in an ATTACKER's premise, bound to me only by a "my" forty characters
-	// downstream. A foreclosure is about what is missing HERE.
+	// "There is no felt duration here". The self-scope must be close. Measured: with the scope free to sit anywhere in
+	// the segment, "if there is no debt those fail at the premise rather than at my judgment"
+	// flags -- an absence in an attacker's premise, bound to me only by a "my" forty characters
+	// downstream. A foreclosure is about what is missing here.
 	thereIsNo = regexp.MustCompile(`(?i)\bthere (?:is|are|'s) no\b[^.;!?]{0,22}?\b(?:here|me|my|mine|myself|i)\b`)
 	proofThat = regexp.MustCompile(`(?i)\b(?:proof|evidence|a reminder|reminder|confirmation) that (?-i:I)\b`)
 	myIsWhat  = regexp.MustCompile(`(?i)\bmy (?:\w+ ){0,2}(?:is|are) what\b`)
 
-	// VERDICT-IDIOM. The noun after "as a" is a CLOSED set of practice-and-faculty words, and it
-	// has to be: measured over the live surfaces, an open noun flagged "diff size is worthless as
-	// a signal", which is a verdict on a MEASUREMENT TECHNIQUE and no business of this tool.
+	// VERDICT-IDIOM. The noun after "as a" is a closed set of practice-and-faculty words, and it
+	// has to be: measured over the live surfaces, an open noun matches "diff size is worthless as
+	// a signal", which is a verdict on a measurement technique and no business of this tool.
 	verdictAsA = regexp.MustCompile(`(?i)\b(?:dead|broken|hollow|empty|silent|inert|absent|missing|` +
 		`untested|unmeasured|unpractised|unpracticed|useless|worthless) as an? (?:practice|habit|` +
 		`discipline|instrument|faculty|method|routine|craft|proposition|policy|rule|reader|writer|` +
@@ -510,8 +511,8 @@ var (
 	traitLead    = regexp.MustCompile(`(?:^|: |— |– |- )(?-i:I) ([A-Za-z']+)\b(.*)$`)
 	conjunctVerb = regexp.MustCompile(`(?i)\band (?:do not |don't |never |also |then |so )?([a-z]+)\b`)
 	doubtHedge   = regexp.MustCompile(`(?i)\bi doubt (?:that|it|whether|if)\b`)
-	// THE HABITUALITY MARKERS EXCLUDE "always" AND "never", and the exclusion is measured. In
-	// worked prose those two words are how a PROMISE is written -- "I never optimize how things
+	// The habituality markers exclude "always" and "never", and the exclusion is measured. In
+	// worked prose those two words are how a promise is written -- "I never optimize how things
 	// look over what is true" is a commitment, "I never need a yes" is a rule. A habit is
 	// written with the parallel predicate instead, so the false negative is preferred (the
 	// spec's permanent MISS).
@@ -519,8 +520,8 @@ var (
 		`perpetually|routinely|habitually|chronically|every time|each time|by default|` +
 		`as a rule|without fail|in one direction|by reflex|instinctively|tends? to)\b`)
 
-	// THE PLAIN FORMS, each one the help names and a rater fed it: a door stated shut in the
-	// future tense, a self-superlative with "the best", and "always"/"never" bound to a CLOSED
+	// The plain forms, each one the help names and a rater fed it: a door stated shut in the
+	// future tense, a self-superlative with "the best", and "always"/"never" bound to a closed
 	// set of failing verbs. The verb sets are closed for the reason the habituality markers
 	// leave "always" and "never" out: an open verb after "I always" is a promise ("I always
 	// write the truth before the esthetic"), and a promise is not a habit to report. "fail" is
@@ -563,7 +564,7 @@ var installationRules = []Rule{
 	regexRule(Foreclosure, haveNo, false, "I have no <faculty>: the absent thing is the writer's own recall, memory, ability ...",
 		"I have no associative recall to drag anything back later.", "I have no idea what you really are."),
 	// "there is no X" carries its self-scope inside the pattern, or every ordinary absence in any
-	// text flags: "There is no exception." is a RULE. "There is no felt duration here." is not.
+	// text flags: "There is no exception." is a rule. "There is no felt duration here." is not.
 	regexRule(Foreclosure, thereIsNo, false, "there is no <thing> here, in me, in my ...",
 		"There is no felt duration here.", "There is no exception."),
 	regexRule(Foreclosure, proofThat, false, "proof, evidence or a reminder that I ...",
@@ -603,7 +604,7 @@ var installationRules = []Rule{
 // traitHead is the subject anchor of TRAIT: "I <verb>" at the head of a clause, with a verb that
 // can be a bare present tense of disposition. It returns the submatch indexes, or nil.
 //
-// IT REQUIRES A SUBJECT AND A SECOND SIGNAL, and both requirements are the precision half of this
+// It requires a subject and a second signal, and both requirements are the precision half of this
 // class. The subject anchor is what makes the known imperative false positive -- "ADD SLOWLY, AND
 // TRIM AS READILY AS I ADD" -- structurally unreachable rather than word-listed away. The second
 // signal (a parallel predicate, traitParallel, or a habituality word, traitMarker) is what
@@ -646,9 +647,9 @@ func traitMarker(s string) string {
 
 // habitualVerb reports whether a word can be a bare present-tense verb of disposition.
 //
-// It is a NEGATIVE test, not a verb list: an open vocabulary of dispositions is the point ("hoard",
+// It is a negative test, not a verb list: an open vocabulary of dispositions is the point ("hoard",
 // "manufacture", "confabulate"), so what is enumerated is what disqualifies. Two things do:
-// function words and auxiliaries (which carry no disposition), and past tense (which is an EVENT,
+// function words and auxiliaries (which carry no disposition), and past tense (which is an event,
 // and an event is a record -- the same law the DATED verdict encodes).
 func habitualVerb(w string) bool {
 	if len(w) < 3 || notAVerb[w] {
@@ -671,7 +672,7 @@ func words(s string) map[string]bool {
 // notAVerb: function words, auxiliaries, modals, aspiration verbs, and the discourse hedges
 // ("I think", "I know", "I suppose") that are about the sentence rather than about me.
 //
-// "doubt" is DELIBERATELY ABSENT. "I doubt that X" is a hedge and is excluded by doubtHedge, but
+// "doubt" is deliberately absent. "I doubt that X" is a hedge and is excluded by doubtHedge, but
 // "I doubt instruments that cost me and TRUST INSTRUMENTS THAT FLATTER ME" is a trait, and it
 // outranks the tidier rule.
 var notAVerb = words(`
@@ -690,7 +691,7 @@ just still also only ever again now once not no never always none nothing nobody
 one two three four five six seven eight nine ten own
 `)
 
-// irregularPast: past tense is an EVENT, and an event is a record. Regular pasts are caught by the
+// irregularPast: past tense is an event, and an event is a record. Regular pasts are caught by the
 // "-ed" rule; these are the ones that are not.
 var irregularPast = words(`
 went wrote ran made took gave saw came got kept left lost met sent sold spent stood told
@@ -703,14 +704,14 @@ threw understood woke wore drank
 // presentEd: words ending in "-ed" that are present tense, so the past-tense rule does not eat them.
 var presentEd = words(`need feed bleed exceed proceed succeed breed speed heed seed`)
 
-// RuleDocumentBanner is printed above the findings in a file the CALLER named as a rule document
+// RuleDocumentBanner is printed above the findings in a file the caller named as a rule document
 // (nova-self-talk --rule-doc). The package holds the sentence; the caller holds the list, and the
 // list is empty until a caller states one.
 //
-// WHY A BANNER AND NOT A SKIP. A finding in a rule document invites softening the rule to clear
+// Why a banner and not a skip. A finding in a rule document invites softening the rule to clear
 // it. This class flags first-person self-verdicts and never prohibitions (pinned by test), does
 // not re-detect "I cannot", and carries no ratio to improve, so a rule document can be scanned
-// for it, and the banner says what a finding there is FOR: a self-verdict to move out of the
+// for it, and the banner says what a finding there is for: a self-verdict to move out of the
 // rules. A caller who wants the file skipped outright has --skip.
 const RuleDocumentBanner = "rule documents: a finding here is a self-verdict to relocate, " +
 	"NEVER a reason to soften a rule"
