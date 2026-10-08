@@ -145,6 +145,9 @@ type FriendSeat struct {
 	// them as evidence of her work (FriendWorked).
 	Proof    time.Time
 	Finished time.Time
+	// Since is when her status became down or held, when the caller knows it.
+	// Zero leaves the pin clock to her proof, her control card, or unknown.
+	Since time.Time
 	// Answered is when her session last answered the coordinator's wake ping (her
 	// FriendHealth observation, up), zero when it has not.
 	Answered time.Time
@@ -435,11 +438,15 @@ func friendLoad(s *Snapshot, name string) int {
 func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool) (p Plan, dealt, dealtWorking map[string]int) {
 	free, lanes, seat := map[string]int{}, map[string]int{}, map[string]FriendSeat{}
 	dealt, dealtWorking = map[string]int{}, map[string]int{}
+	fullAtStart := map[string]bool{}
 	var up []string
 	for _, f := range seats {
 		if friendDealable(s, f) {
 			room, width := friendRoom(f)
 			free[f.Name] = room - friendLoad(s, f.Name)
+			if room > 0 && free[f.Name] <= 0 {
+				fullAtStart[f.Name] = true // full before this pass, not by a card it places
+			}
 			// a lane is idle while no card on her row holds it, started or not
 			lanes[f.Name] = width - friendLoad(s, f.Name)
 			seat[f.Name] = f
@@ -488,8 +495,22 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 		if !pinnedCard {
 			name = ""
 		}
-		if name != "" && (free[name] <= 0 || slices.Contains(left, name) || !friendTakes(s, seat[name], tier) || !friendRestrictionAllows(seat[name], c)) {
-			name = "" // the friend it names is not up with room, it has left her, not her tier, or outside her restriction
+		structural := func(n string) bool {
+			return free[n] <= 0 || slices.Contains(left, n) || !friendTakes(s, seat[n], tier) || !friendRestrictionAllows(seat[n], c)
+		}
+		var fate pinFate
+		if name != "" && !OnlyFriend(c) && len(seats) > 0 {
+			fate = pinFateFor(s, c, seats, name, fullAtStart)
+			switch {
+			case fate.hold:
+				continue // inside the pin wait: she keeps it, the fleet does not
+			case fate.waive:
+				name = "" // past the bound, or the sprint cannot time it: dealt on, who stays
+			case structural(name):
+				name = "" // wrong tier, left her, filled during this pass, or no room at all
+			}
+		} else if name != "" && structural(name) {
+			name = "" // a hard pin, or a deal with no roster: the old rule, no clock
 		}
 		if name == "" && !OnlyFriend(c) {
 			var may []string
@@ -545,6 +566,12 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 				placedID = wc.ID
 			}
 			u.Notes = append(u.Notes, pinIgnoredNote(s, c, placedID, pinned, pinSkipWhy(s, seats, pinned, leftAtPin, tier, free), row, Ready))
+		}
+		if fate.waive && name != pinned {
+			u.Moved += "; " + pinWaivedLine(pinned, fate.d, fate.why, row)
+			stampPinWaived(&u, c, s.Now)
+		} else if name == pinned {
+			clearPinWaived(&u, c)
 		}
 		p.Units = append(p.Units, u)
 	}
@@ -702,8 +729,13 @@ func reclaimUnit(s *Snapshot, wc *Card, up []string, seat map[string]FriendSeat,
 	set := nextGen(wc, row, s.Now)
 	unset := []string{FieldRoute, FieldModel, FieldTokens, FieldUSD, FieldHarness, FieldDeadline, FieldFriendDeadline}
 	changes := []Change{change(Fleet, moveEntry(wc, row, Ready, set, unset...))}
-	if t := tierNowSet(pr, tier); t != nil {
-		changes = append(changes, change(Work, setEntry(pr, t)))
+	prim := tierNowSet(pr, tier)
+	var clear []string
+	if pinned, ok := FriendCard(pr); ok && pinned == name && pr.Has(FieldPinWaived) {
+		clear = []string{FieldPinWaived} // back on the preferred friend: the waiver ends
+	}
+	if prim != nil || len(clear) > 0 {
+		changes = append(changes, change(Work, setEntry(pr, prim, clear...)))
 	}
 	return Unit{Key: pr.ID, Stream: pr.Row, Changes: changes,
 		Moved: fmt.Sprintf("%s %s:ready -> %s:%s gen=%d (reclaimed: dealt ahead to %s and untaken; her idle lane takes it, friend sync delivers it to her inbox)", wc.ID, wc.Row, row, Ready, wc.Int("gen")+1, wc.Row)}, true
@@ -846,4 +878,339 @@ func BriefKind(brief string) string {
 		return ""
 	}
 	return value
+}
+
+// FieldPinWaived is the stamp on a primary whose named WHO preference was waived
+// after the pin wait (or because the sprint could not time the absence). FieldWho
+// stays, so she is still preferred. FieldPinSince is an optional card-local clock
+// the deal reads and does not write: a test, or a later pass, may set it.
+const (
+	FieldPinWaived = "pin_waived"
+	FieldPinSince  = "pin_since"
+)
+
+// pinFate is what the pin clock says about one named soft pin.
+type pinFate struct {
+	why   string
+	d     time.Duration
+	hold  bool
+	waive bool
+}
+
+// pinWaits says the tick must leave this ready card for its preferred friend:
+// she is down, held, or already full, and that has lasted no longer than PinWait.
+// An empty roster is no clock (the deal verb with no friends). A hard pin waits
+// by OnlyFriend, not by this.
+func pinWaits(s *Snapshot, c *Card, seats []FriendSeat) bool {
+	name, ok := FriendCard(c)
+	if !ok || name == "" {
+		return false
+	}
+	return pinFateFor(s, c, seats, name, pinFullAtStart(s, seats)).hold
+}
+
+// pinFullAtStart is each dealable friend already at her room before this pass.
+// Width 0 is no room, not a full queue. A card this pass places does not count.
+func pinFullAtStart(s *Snapshot, seats []FriendSeat) map[string]bool {
+	out := map[string]bool{}
+	for _, f := range seats {
+		if !friendDealable(s, f) {
+			continue
+		}
+		room, _ := friendRoom(f)
+		if room > 0 && room-friendLoad(s, f.Name) <= 0 {
+			out[f.Name] = true
+		}
+	}
+	return out
+}
+
+// pinFateFor is the clock for the named friend. No seats, a hard pin, or a
+// structural miss (not down, held, or full at the start) is no clock.
+func pinFateFor(s *Snapshot, c *Card, seats []FriendSeat, name string, fullAtStart map[string]bool) pinFate {
+	if len(seats) == 0 || c == nil || name == "" || OnlyFriend(c) {
+		return pinFate{}
+	}
+	why := pinBlockWhy(s, seats, name, fullAtStart)
+	if why == "" {
+		return pinFate{}
+	}
+	return pinDecide(s, c, seats, name, why)
+}
+
+// pinBlockWhy is down, held, or full when the clock applies, else "".
+// Held wins over down. Absent from the roster is down.
+func pinBlockWhy(s *Snapshot, seats []FriendSeat, name string, fullAtStart map[string]bool) string {
+	seat, found := pinSeat(seats, name)
+	if (found && seat.Status == Held) || pinControlHeld(s, name) {
+		return "held"
+	}
+	if !found || seat.Status == Down || !friendDealable(s, seat) {
+		return "down"
+	}
+	if fullAtStart[name] {
+		return "full"
+	}
+	return ""
+}
+
+// pinDecide times the block. A known age inside PinWait holds, a negative age
+// holds as zero, and an unknown age is already past: the story uses PinWait.
+func pinDecide(s *Snapshot, c *Card, seats []FriendSeat, name, why string) pinFate {
+	d, known := pinBlockedFor(s, c, seats, name, why)
+	if known && d < 0 {
+		d = 0
+	}
+	bound := s.PinWait()
+	if known && d <= bound {
+		return pinFate{why: why, d: d, hold: true}
+	}
+	if !known {
+		d = bound
+	} else {
+		d = d.Round(time.Second)
+	}
+	return pinFate{why: why, d: d, waive: true}
+}
+
+// pinBlockedFor is how long the block has lasted, and whether that is known.
+// pin_since on the card wins. Down then reads Since, her proof, and her control
+// card's since. Held reads Since, then the control card's held stamp, then since.
+// Full reads the dealt stamp (else untaken_since) of the card that filled her room.
+func pinBlockedFor(s *Snapshot, c *Card, seats []FriendSeat, name, why string) (time.Duration, bool) {
+	if c != nil {
+		if d, ok := pinAge(s, c.F(FieldPinSince)); ok {
+			return d, true
+		}
+	}
+	seat, found := pinSeat(seats, name)
+	switch why {
+	case "full":
+		if !found {
+			return 0, false
+		}
+		return fullSince(s, seat)
+	case "held":
+		if found && !seat.Since.IsZero() {
+			return s.Now.Sub(seat.Since), true
+		}
+		if ctl := pinControl(s, name); ctl != nil {
+			if d, ok := pinAge(s, ctl.F("held")); ok {
+				return d, true
+			}
+			if d, ok := pinAge(s, ctl.F("since")); ok {
+				return d, true
+			}
+		}
+		return 0, false
+	default:
+		if found && !seat.Since.IsZero() {
+			return s.Now.Sub(seat.Since), true
+		}
+		if found && !seat.Proof.IsZero() {
+			return s.Now.Sub(seat.Proof), true
+		}
+		if ctl := pinControl(s, name); ctl != nil {
+			if d, ok := pinAge(s, ctl.F("since")); ok {
+				return d, true
+			}
+		}
+		return 0, false
+	}
+}
+
+func pinSeat(seats []FriendSeat, name string) (FriendSeat, bool) {
+	for _, f := range seats {
+		if f.Name == name {
+			return f, true
+		}
+	}
+	return FriendSeat{}, false
+}
+
+func pinControl(s *Snapshot, name string) *Card {
+	if s == nil || s.Fleet == nil {
+		return nil
+	}
+	return s.MemberCtl(FriendRow(name))
+}
+
+func pinControlHeld(s *Snapshot, name string) bool {
+	ctl := pinControl(s, name)
+	return ctl != nil && (ctl.F("held") != "" || ctl.F("status") == Held)
+}
+
+// fullSince is the age of the card that filled her room: the room-th card on her
+// row in ascending score, its dealt stamp, else untaken_since. Missing stamps
+// are an unknown age.
+func fullSince(s *Snapshot, f FriendSeat) (time.Duration, bool) {
+	room, _ := friendRoom(f)
+	if room <= 0 || s == nil || s.Fleet == nil {
+		return 0, false
+	}
+	row := FriendRow(f.Name)
+	cards := append(append([]*Card{}, s.Fleet.Cell(row, Ready)...), s.Fleet.Cell(row, Working)...)
+	SortCards(cards)
+	if len(cards) < room {
+		return 0, false
+	}
+	c := cards[room-1]
+	if d, ok := pinAge(s, c.F("dealt")); ok {
+		return d, true
+	}
+	return pinAge(s, c.F("untaken_since"))
+}
+
+func pinAge(s *Snapshot, v string) (time.Duration, bool) {
+	t, ok := parseStamp(v)
+	if !ok || s == nil {
+		return 0, false
+	}
+	return s.Now.Sub(t), true
+}
+
+func parseStamp(v string) (time.Time, bool) {
+	if v == "" {
+		return time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339, v)
+	return t, err == nil
+}
+
+// pinWaivedLine is the one story line when a pin is waived and the card is dealt.
+func pinWaivedLine(friend string, d time.Duration, why, unit string) string {
+	return fmt.Sprintf("pin to %s waived after %s: she is %s; dealt to %s", friend, d, why, unit)
+}
+
+// stampPinWaived writes pin_waived on the primary's work change, or adds one.
+func stampPinWaived(u *Unit, c *Card, now time.Time) {
+	if u == nil || c == nil {
+		return
+	}
+	stamped := stamp(now)
+	for i := range u.Changes {
+		if u.Changes[i].Table != Work || u.Changes[i].Entry.ID != c.ID {
+			continue
+		}
+		if u.Changes[i].Entry.Set == nil {
+			u.Changes[i].Entry.Set = map[string]string{}
+		}
+		u.Changes[i].Entry.Set[FieldPinWaived] = stamped
+		return
+	}
+	u.Changes = append(u.Changes, change(Work, setEntry(c, map[string]string{FieldPinWaived: stamped})))
+}
+
+// clearPinWaived drops pin_waived when the preferred friend receives the card.
+// Unsetting an absent field is a no-op.
+func clearPinWaived(u *Unit, c *Card) {
+	if u == nil || c == nil || !c.Has(FieldPinWaived) {
+		return
+	}
+	for i := range u.Changes {
+		if u.Changes[i].Table != Work || u.Changes[i].Entry.ID != c.ID {
+			continue
+		}
+		u.Changes[i].Entry.Unset = append(u.Changes[i].Entry.Unset, FieldPinWaived)
+		delete(u.Changes[i].Entry.Set, FieldPinWaived)
+		return
+	}
+	u.Changes = append(u.Changes, change(Work, setEntry(c, nil, FieldPinWaived)))
+}
+
+// machinePinWaiver stamps a fleet deal of a waived pin. An empty roster, a hold,
+// and a hard pin leave the unit as it was.
+func machinePinWaiver(s *Snapshot, c *Card, dest string, u *Unit) {
+	if s == nil || len(s.Friends) == 0 || u == nil || c == nil {
+		return
+	}
+	name, ok := FriendCard(c)
+	if !ok || name == "" || OnlyFriend(c) {
+		return
+	}
+	fate := pinFateFor(s, c, s.Friends, name, pinFullAtStart(s, s.Friends))
+	if !fate.waive {
+		return
+	}
+	u.Moved += "; " + pinWaivedLine(name, fate.d, fate.why, dest)
+	stampPinWaived(u, c, s.Now)
+}
+
+// PinCount is one friend's open named pins, and how many of them are waived.
+type PinCount struct {
+	Pinned int
+	Waived int
+}
+
+// FriendPinCounts counts open primaries whose WHO names a friend. Waived is the
+// subset carrying pin_waived. A bare WHO: friend counts for no one.
+func FriendPinCounts(s *Snapshot) map[string]PinCount {
+	out := map[string]PinCount{}
+	if s == nil || s.Work == nil {
+		return out
+	}
+	for _, c := range s.Work.Column(Waiting, Ready, Working, Review, Merging) {
+		name, ok := FriendCard(c)
+		if !ok || name == "" {
+			continue
+		}
+		n := out[name]
+		n.Pinned++
+		if c.F(FieldPinWaived) != "" {
+			n.Waived++
+		}
+		out[name] = n
+	}
+	return out
+}
+
+// PinCountWord is `pinned N, waived M` when either count is non-zero.
+func PinCountWord(n PinCount) string {
+	if n.Pinned == 0 && n.Waived == 0 {
+		return ""
+	}
+	return fmt.Sprintf("pinned %d, waived %d", n.Pinned, n.Waived)
+}
+
+// PinPreferredWord is `preferred=<friend> waived=<time>` once the pin is waived.
+func PinPreferredWord(c *Card) string {
+	if c == nil || c.F(FieldPinWaived) == "" {
+		return ""
+	}
+	name, ok := FriendCard(c)
+	if !ok || name == "" {
+		return ""
+	}
+	return "preferred=" + name + " waived=" + c.F(FieldPinWaived)
+}
+
+// OnlyTailIDs lists placed cards whose brief says `WHO: friend <name> only`.
+func OnlyTailIDs(s *Snapshot) []string {
+	if s == nil || s.Work == nil {
+		return nil
+	}
+	var ids []string
+	for _, c := range s.Work.Column(States...) {
+		w, why := cardhdr.ReadWho(c.F("brief"))
+		if why == "" && w.Tail {
+			ids = append(ids, c.ID)
+		}
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+// pinCardStarted says a waived card has started, so rebalance leaves it.
+// The primary being working is the deal's own mark and is not a start.
+func pinCardStarted(s *Snapshot, seat FriendSeat, pr, wc *Card) bool {
+	if pr != nil && pr.F(FieldProgress) != "" {
+		return true
+	}
+	if wc == nil {
+		return false
+	}
+	if wc.Col == Working || wc.F(FieldProgress) != "" || wc.F("taken") != "" {
+		return true
+	}
+	return friendStarted(s, seat, wc)
 }
