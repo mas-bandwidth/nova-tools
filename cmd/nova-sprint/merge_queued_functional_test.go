@@ -20,7 +20,8 @@ import (
 // card at once; a merge in the same tick, before the pump, judges the work
 // table through the queued view (as every step but the pump plans), so it
 // lands the cards, and check is clean before and after the pump, which
-// lands them on the work table and finds the sprint done.
+// lands them on the work table, archives the landed stream and finds the
+// sprint done.
 func TestAMergeBeforeThePumpOnTheStore(t *testing.T) {
 	t.Parallel()
 	addr := testutil.Start(t)
@@ -61,7 +62,10 @@ func TestAMergeBeforeThePumpOnTheStore(t *testing.T) {
 	run("tick")
 	out = run("where")
 	require.Contains(t, out, "DONE", "after the pump:\n%s", out)
-	require.Contains(t, out, "|      2", "after the pump:\n%s", out)
+	// the tick archives a stream when its last card lands, and the headline counts
+	// only the streams on the table (stream archive; the owner, 2026-10-06): the two
+	// landed cards are on the archived line, not in the work rows
+	require.Contains(t, out, "1 archived stream, 2 cards landed", "after the pump:\n%s", out)
 	out = run("check")
 	require.Contains(t, out, "CHECK OK violations=0", "check after the pump:\n%s", out)
 }
