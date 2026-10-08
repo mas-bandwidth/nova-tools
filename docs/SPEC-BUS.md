@@ -141,7 +141,11 @@ takes `--json`; `log` takes `--max`.
   returned records advance it; partial final records and wake bytes arriving
   during a bus return remain unread. The caller saves the cursor after retaining
   the returned payload, so a crash before saving replays rather than skips it.
-  Without `--wake-after`, arming starts at the file's current end as before.
+  For initial migration, `--wake-after 0` explicitly replays from byte zero
+  and returns the native identity-bound cursor. A caller retains payloads and
+  deduplicates their durable identities before saving that cursor; unresolved
+  actions remain pending independently. Without `--wake-after`, arming starts
+  at the file's current end as before.
   Missing new files bind on creation; existing files must be regular and
   seekable. Replacement, disappearance, truncation below the offset and changed
   consumed bytes refuse visibly, without resetting. Reconcile and retain unread

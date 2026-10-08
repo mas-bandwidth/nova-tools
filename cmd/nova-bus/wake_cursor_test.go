@@ -171,3 +171,28 @@ func TestWaitWakeTimeoutKeepsPartialRecordCursor(t *testing.T) {
 	assert.Equal(t, "partial", v.Wake.Line)
 	assert.Equal(t, int64(8), *v.WakeOffset)
 }
+
+// The explicit zero seed is native migration, never a manufactured cursor.
+// Existing records, including the event preceding the first rearm, are shown.
+func TestWaitWakeZeroBootstrapKeepsRecordsBeforeFirstRearm(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "wake")
+	appendWake(t, path, "already-retained\npending-before-rearm\nfragment")
+	r := newRig("ada", "bob")
+	r.wireClock()
+	out := realWakeCLI(r).Do(t, "wait", "--as", "bob", "--wake-file", path, "--wake-after", "0", "--timeout", "1s", "--json").Exit(0)
+	var v waitJSON
+	require.NoError(t, json.Unmarshal([]byte(out.Stdout), &v))
+	require.NotNil(t, v.Wake)
+	assert.Equal(t, "already-retained", v.Wake.Line)
+	assert.Equal(t, int64(17), *v.WakeOffset)
+	c, err := parseWakeCursor(v.WakeAfter)
+	require.NoError(t, err)
+	assert.NotEmpty(t, c.Identity)
+	r = newRig("ada", "bob")
+	r.wireClock()
+	next := realWakeCLI(r).Do(t, "wait", "--as", "bob", "--after", v.After, "--wake-file", path, "--wake-after", v.WakeAfter, "--timeout", "1s", "--json").Exit(0)
+	require.NoError(t, json.Unmarshal([]byte(next.Stdout), &v))
+	assert.Equal(t, "pending-before-rearm", v.Wake.Line)
+	assert.Equal(t, int64(38), *v.WakeOffset)
+}

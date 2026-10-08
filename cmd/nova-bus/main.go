@@ -193,7 +193,9 @@ are not printed. --wake-file <path> also ends the wait when a line is appended t
 start (a harness's deliver adapter appends one per message). Save the returned wake-after cursor
 and re-arm with --wake-after <cursor> as well as --after <id>; wake-offset is the ending byte offset.
 The cursor binds file identity and consumed prefix; replacement, truncation or rewriting refuses
-with a reconciliation remedy. Without --wake-after the file starts at its current end. A missing
+with a reconciliation remedy. For initial migration, --wake-after 0 explicitly replays from byte zero. Retain the returned payload
+and deduplicate by its durable identity before saving the returned cursor. No replay is an LLM receipt.
+Without --wake-after the file starts at its current end. A missing
 new file binds when it first appears; pipes and other nonregular files are refused: WAIT WAKE file=<path> line=<first line>
 at exit 0. Past --timeout <duration> (a Go duration; 0, the default, is for ever) it is WAIT NONE
 after=<cursor> waited=<duration> on standard error at exit 1. --json prints one object when the
@@ -207,7 +209,7 @@ example: nova-bus wait --as bob --timeout 1s`,
 					f.String("after", "", "the stream entry id <ms>-<seq> to wait past; default: the stream's last id read once at start, as WAIT ARMED prints it")
 					f.Duration("timeout", 0, "how long to wait before WAIT NONE, a Go duration (1s, 2m); 0 is for ever")
 					f.String("skip-subject", "PING,PONG", "subjects starting with one of these prefixes, comma-separated, are skipped; matched without case")
-					f.String("wake-after", "", "the complete wake-after cursor returned by wait; requires --wake-file; preserves unread bytes across rearm and restart")
+					f.String("wake-after", "", "0 replays the file from byte zero; otherwise the complete wake-after cursor returned by wait; requires --wake-file; preserves unread bytes across rearm and restart")
 					f.String("wake-file", "", "a file whose lines, appended after the start, also end the wait (one line per message)")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
 					f.Check(func(c *tool.Call) {
@@ -218,7 +220,7 @@ example: nova-bus wait --as bob --timeout 1s`,
 							if c.Str("wake-file") == "" {
 								c.Problem("--wake-after wants --wake-file, the same append-only regular file")
 							}
-							if _, err := parseWakeCursor(v); err != nil {
+							if _, err := parseWakeCursor(v); err != nil && v != "0" {
 								c.Problem(err.Error())
 							}
 						}

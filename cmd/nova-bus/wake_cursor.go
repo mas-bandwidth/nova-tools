@@ -104,7 +104,7 @@ func wakeFileWithOpen(path string, c wakeCursor, open func(string) (*os.File, er
 func realWakeArm(path, token string) (wakeCursor, error) {
 	c := wakeCursor{Version: 1, Hash: fmt.Sprintf("%x", sha256.Sum256(nil))}
 	var err error
-	if token != "" {
+	if token != "" && token != "0" {
 		c, err = parseWakeCursor(token)
 		if err != nil {
 			return c, err
