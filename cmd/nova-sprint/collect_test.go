@@ -93,6 +93,8 @@ func TestCollectLeavesAStaleOrForeignHarnessFaultMarker(t *testing.T) {
 			}
 			withoutDead := ta.ok("collect --root " + root)
 			assert.Contains(t, withoutDead, "COLLECT s1-1.w1 LEFT", "a marker is checked even without --dead-lanes")
+			dry := ta.ok("collect --dead-lanes --dry-run --root " + root)
+			assert.Contains(t, dry, "COLLECT s1-1.w1 LEFT", "dry run uses the same runner evidence")
 			out := ta.ok("collect --dead-lanes --root " + root)
 			assert.Contains(t, out, "COLLECT s1-1.w1 LEFT")
 			assert.Contains(t, out, "returned=0")

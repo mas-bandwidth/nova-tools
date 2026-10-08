@@ -7,7 +7,8 @@
    working onto her row; her runner starts it; the run ENDs with a REPORT.md
    (no verdict yet, LAND or HOLD), written in her own tree or, written ahead,
    in another friend's; or it ENDs with none (a dead lane), or stops at a usage
-   limit and is run again. A LAND's Head is origin's tip of the card's branch
+   limit and is run again. A dead lane may also START again before collection;
+   its old no-report marker cannot return a now-running card. A LAND's Head is origin's tip of the card's branch
    or not yet (she pushes later). The card may be taken back. Each hand asks
    for the rows (a snapshot) and finishes from it; the server takes a finish
    only while the card is working on her row. A dead lane returns the same
@@ -46,7 +47,7 @@ Init == /\ col = [c \in Cards |-> "ready"]
 Deal(c) == /\ col[c] = "ready" /\ col' = [col EXCEPT ![c] = "working"]
            /\ UNCHANGED <<run, rep, tree, pushed, seen, taken, badLand, badDead>>
 
-Start(c) == /\ col[c] = "working" /\ run[c] \in {"idle", "limited"}
+Start(c) == /\ col[c] = "working" /\ run[c] \in {"idle", "limited", "dead"}
             /\ run' = [run EXCEPT ![c] = "running"]
             /\ UNCHANGED <<col, rep, tree, pushed, seen, taken, badLand, badDead>>
 
@@ -120,9 +121,9 @@ LandOnTip == ~badLand
 \* a dead lane returned only after END with no report, never at its limit or running
 DeadOnlyEnded == ~badDead
 
-\* a working card whose report says HOLD (in any tree), LAND on origin's tip, or whose run
-\* ENDed with none, is finished, or leaves her row
+\* a working card with HOLD or LAND on origin's tip leaves her row; a dead lane
+\* either returns or starts again, making its old no-report marker stale
 Collected == \A c \in Cards :
                (col[c] = "working" /\ (rep[c] = "hold" \/ (rep[c] = "land" /\ pushed[c]) \/ (rep[c] = "none" /\ run[c] = "dead")))
-                 ~> col[c] # "working"
+                 ~> (col[c] # "working" \/ (rep[c] = "none" /\ run[c] # "dead"))
 =============================================================================

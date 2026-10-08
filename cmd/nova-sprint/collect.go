@@ -177,28 +177,28 @@ func (a *app) cmdCollect(args []string, stdout, stderr io.Writer) int {
 			continue
 		}
 		if x.Dead {
-			if !*dry {
-				// The disk snapshot can predate a worker's final report or a new run.
-				// A report anywhere, or a runner no longer ENDed, wins this pass.
-				changed := false
-				for _, f := range roster {
-					report, why, _, err := friendReadReport(filepath.Join(*root, f+"-working"), x.Job)
-					if f == x.From && strings.Contains(report, "\nRunner-END: ") && strings.HasPrefix(report, "Verdict: HARNESS-FAULT\n") {
-						continue
-					}
-					if report != "" || why != "" || err != nil {
-						changed = true
-						break
-					}
-				}
-				if _, ended := sprint.RunnerEnded(runnerLog(*root, filepath.Join(*root, x.Friend+"-working")), x.Job); !ended {
-					changed = true
-				}
-				if changed {
-					left++
-					say(fmt.Sprintf("COLLECT %s LEFT a report or runner state changed; the next collect reads it again", x.Card))
+			// The disk snapshot can predate a worker's final report or a new run.
+			// A report anywhere, or a runner no longer ENDed, wins this pass.
+			changed := false
+			for _, f := range roster {
+				report, why, _, err := friendReadReport(filepath.Join(*root, f+"-working"), x.Job)
+				if f == x.From && strings.Contains(report, "\nRunner-END: ") && strings.HasPrefix(report, "Verdict: HARNESS-FAULT\n") {
 					continue
 				}
+				if report != "" || why != "" || err != nil {
+					changed = true
+					break
+				}
+			}
+			if _, ended := sprint.RunnerEnded(runnerLog(*root, filepath.Join(*root, x.Friend+"-working")), x.Job); !ended {
+				changed = true
+			}
+			if changed {
+				left++
+				say(fmt.Sprintf("COLLECT %s LEFT a report or runner state changed; the next collect reads it again", x.Card))
+				continue
+			}
+			if !*dry {
 				step := store.FriendReturnStep(sprint.FriendReturnReq{Friend: x.Friend, Who: c.actor, HarnessFault: true,
 					Cards: []sprint.FriendReturnCard{{ID: p.Card, Gen: p.Gen, Why: x.Report}}})
 				if c.op != "" {
