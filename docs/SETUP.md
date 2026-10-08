@@ -216,3 +216,39 @@ runs that probe once per machine, each bounded by the check's own deadline. It n
 bench whose probe fails and the reason (unknown host key, no key or permission denied,
 timeout), with the one fix line above. It is fleet-only, so `nova-doctor --local` skips it
 and says which; run `nova-doctor` plain to include it.
+
+### --job: one job's readiness
+
+To ask whether this machine is ready for one job, name the job:
+
+```
+nova-doctor --job local-notes
+nova-doctor --job friend --as bob --dir /Users/bob/work --config-dir /Users/bob/.claude-bob
+nova-doctor --job coordinator --as ada --json
+```
+
+The jobs are `local-notes`, `messaging`, `friend`, `worker` and `coordinator`. Each step is
+one dependency, checked in order (Redis reachable, the login, the config, the applied Redis
+state, the binaries and functions, the supervisor, the session), by the tool that owns it.
+The first step that fails is the one to fix; every step after it says `blocked`, and the last
+line is `DOCTOR job=<job> not-ready first_missing=<step> ... next: <command>`. Run that
+command, then the doctor again. Every line it prints is one the tool named accepts as printed. The friend
+job's session step is nova-friend's own verdict over `--since` (default 24h): `deaf` fails it,
+and its fix is the delivery check, `nova-friend check --as <friend> --harness <h> --dir <d>
+--redis <addr> --to <coordinator>`.
+
+A doctor local-store repair uses the Redis password login metadata, passed together as
+`--redis-secrets <dir> --redis-seat <seat> --redis-key <file> --redis-sops <path>
+--redis-secret <NAME>`. These are names and paths, never the password.
+`--redis-dir` chooses its absolute data directory; otherwise it uses
+`$HOME/nova/stores/redis`. An already injected `NOVA_REDIS_PASSWORD` needs no new metadata and is never
+printed. Missing metadata makes the doctor request these inputs
+before printing a launch command. Coordinator checks also supply their `--as` actor
+to `nova-config apply --check`; the dry run keeps the real write's actor requirement.
+
+`nova-doctor --job coordinator` is that walk for a new coordinator: Postgres and Redis,
+the secret source by name, schema before any binary switch, the seat's generation, a root
+bus answer and a sprint push answer, each friend's push beside a held friend's reduced
+capacity, width beside the jobs actually running, and the review and lander only as a
+runtime warning. `release check` staying red does not make this walk fail. The walk writes
+nothing; an empty config's first repair command records a login from a named secret source.

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // selfTimeout bounds one tool's `version` answer.
@@ -84,7 +85,7 @@ func checkSelf(ctx context.Context, env Env) Result {
 	slices.Sort(parts)
 	return Result{Status: Fail,
 		Evidence: fmt.Sprintf("the tools are not one release: %s differ from %s (%d tools)", strings.Join(parts, ", "), release, len(byVersion[release])),
-		Fix:      fmt.Sprintf("nova-update apply --file <manifest> %s --version %s", first, release)}
+		Fix:      fmt.Sprintf("nova-update apply --file <manifest> --version %s %s", oneline.ShellWord(release), oneline.ShellWord(first))}
 }
 
 // toolsOnPath maps each nova-* name to the executable PATH resolves it to.
