@@ -691,6 +691,10 @@ func (l *lander) merge(ctx context.Context, j *landJob) {
 		} else {
 			l.ledgerLog = nil // the second build logs the same resolutions
 			merged, failed, baseSha, _, why = l.build(ctx, dir, stream, j.cards, b.Times, true)
+			if why := gateWaitWhy(ctx); why != "" {
+				j.refuse(why)
+				return
+			}
 		}
 	}
 	if why != "" {
