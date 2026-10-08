@@ -1715,6 +1715,27 @@ answered) hold, and their reversed witnesses
 `MCFriendLanesBrokenCardBeforeProof.cfg` (cards dealt before the answer) and
 `MCFriendLanesBrokenDaemonPong.cfg` (the daemon's own pong counted as the proof)
 break them.
+
+**No key sealed is down, never a fake up** (internal/friend/needs_env.go; the
+owner, 2026-10-08: a friend whose key is not in the secrets store "must read
+truthfully DOWN with the reason 'no key sealed', never a fake up"). The daemon
+needs the names `run --needs-env NAME[,NAME]` gives, else the provider's key
+for `--model provider/model` (`ProviderKeyEnv`: `inception` ->
+`INCEPTION_API_KEY`, `deepseek` -> `DEEPSEEK_API_KEY`, and the table's others;
+a provider not in it needs the flag), and reads them from its environment every
+step (`envStep`). While one is empty: her lanes open nothing and start nothing
+(`paused`, `:paused` on the status's lanes), the status says `missing_env`, her
+beat says her down with `reason="no key sealed: NAME"` (`FaultDown`, `--until`
+`NeedsEnvBeatAhead` ahead, sent again each step so it lapses once the key
+appears), the record says it once and the seat is told one blocker; the key
+appearing is said once and the lanes open on that step. `install --needs-env`
+writes the flag into the agent. A wrap that refuses to start without the key
+(`nova-secrets exec --require`) is the launchd loop this replaces: the daemon
+starts, and says why it runs nothing. The model: `Key` toggles `keyed`,
+`NoStartWithoutKey` holds, `MCFriendLanesBrokenRunWithoutKey.cfg` breaks it.
+Tests: `TestAMissingProviderKeyBeatsDownNamedAndStartsNoLane`,
+`TestNeedsEnvIsTheFlagsElseTheProvidersKey`.
+
 The lane waits for the turn to end and looks for the card's `RESULT.md`:
 there, the card is done and the lane takes the next; a turn that exited 0 and
 left neither `RESULT.md` nor `REPORT.md` is a harness fault, the card kept with

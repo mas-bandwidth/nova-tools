@@ -242,6 +242,7 @@ type laneResult struct {
 
 // laneSet is the daemon's lanes in one-shot mode.
 type laneSet struct {
+	envHeld bool // the lanes hold for a missing environment name (envStep): said paused on the status
 	lanes   []*lane
 	given   map[string]bool
 	state   LaneState
@@ -290,6 +291,8 @@ func (s *laneSet) said(width int) string {
 			w += ":capped"
 		case ln.n > paced:
 			w += ":paced"
+		case s.envHeld:
+			w += ":paused" // no key sealed (needs_env.go)
 		case s.gov.Held() != "":
 			w += ":held"
 		case s.gov.Paused(s.now):
@@ -379,6 +382,8 @@ func (l *loop) laneStep(now time.Time, width int) {
 	rules := d.laneRules()
 	l.markerStep(now)
 	limit, paused := min(s.gov.Cap(width), s.paced), s.gov.Paused(now)
+	s.envHeld = len(l.envMissing) > 0
+	paused = paused || s.envHeld // no key sealed: no open, no turn (needs_env.go)
 	limit = l.loadLimit(rules, limit, now)
 	if !s.loaded {
 		s.loaded = true

@@ -391,6 +391,7 @@ func friendTool(w world) *tool.Tool {
 		f.String("notify-kinds", "request,blocker,report", "message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default")
 		f.Duration("notify-window", friend.NotificationWindow, "global card-delivery burst window and minimum wake interval; urgent messages bypass it")
 		f.String("coordinator", "", "who is told of a broken session when no ping has named the seat")
+		f.String("needs-env", "", "environment names the harness needs, comma-separated (default: the provider's key for --model, e.g. INCEPTION_API_KEY); while one is empty the lanes hold and the beat says down \"no key sealed: NAME\"")
 		f.Check(func(c *tool.Call) {
 			if err := friend.CheckFolderRoute(c.Str("harness"), c.Str("session"), c.Str("adapter"), c.Str("delivery-dir")); err != nil {
 				c.Problem(err.Error())
@@ -1507,6 +1508,8 @@ func (w world) run(c *tool.Call) *tool.Out {
 		Sprint:    w.sprintAsk(server),
 		Rules:     rules,
 		Model:     c.Str("model"),
+		NeedsEnv:  friend.NeedsEnvOf(c.Str("needs-env"), c.Str("model")),
+		Getenv:    w.getenv,
 		Load:      w.load1(),
 		LaneHold:  func() string { return friend.ReadPause(state) },
 		LaneHoldDown: func(_ context.Context, message string) error {
@@ -1745,7 +1748,7 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 		Friend: name, Harness: c.Str("harness"), Dir: c.Str("dir"), Session: c.Str("session"), Adapter: c.Str("adapter"), DeliveryDir: c.Str("delivery-dir"), StateDir: c.Str("state-dir"), Width: c.Int("width"),
 		Binary: bin, Copy: w.copy, Redis: c.Str("redis"), Server: c.Str("server"), Home: w.home, Path: w.getenv("PATH"), LaunchdLog: log,
 		Secrets: secretNames(c.Str("secrets")), Seat: c.Str("seat"),
-		Coordinator: c.Str("coordinator"), SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"),
+		Coordinator: c.Str("coordinator"), SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), NeedsEnv: c.Str("needs-env"),
 		NotificationsOnly: c.Bool("notifications-only"), NotifyKinds: c.Str("notify-kinds"), NotifyWindow: c.Dur("notify-window"),
 	}
 	if a.Harness == "claude" {
