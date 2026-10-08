@@ -69,6 +69,17 @@ func readRunReceipt(dir, job string) (runReceipt, error) {
 	return r, err
 }
 
+// runStillAlive rejects PID reuse: a different live leader is never evidence
+// for the old run. Only an absent leader leaves open the possibility that
+// members of its original group are still working.
+func runStillAlive(pid int, identity string) bool {
+	if identity == "" {
+		return false
+	}
+	current := ProcessIdentity(pid)
+	return current == identity || current == "" && ProcessGroupAlive(pid)
+}
+
 // AdoptPoll is how often an adopted run's process is looked at while the lane waits on it.
 const AdoptPoll = 5 * time.Second
 

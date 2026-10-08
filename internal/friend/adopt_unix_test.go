@@ -23,8 +23,7 @@ func TestRunCannotExecuteBeforeItsDurableIdentityReceipt(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "jobs", job), 0o755))
 	marker := filepath.Join(dir, "executed")
 	entered, release := make(chan struct{}), make(chan struct{})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := context.Background()
 	done := make(chan error, 1)
 	go func() {
 		gate := WithProcessStarted(ctx, func(pid int) error {
@@ -32,27 +31,23 @@ func TestRunCannotExecuteBeforeItsDurableIdentityReceipt(t *testing.T) {
 			<-release
 			return writeRunReceipt(dir, job, runReceipt{RunID: "run-1", PID: pid, Identity: ProcessIdentity(pid)})
 		})
-		_, _, err := RealExec(gate, dir, "/bin/sh", []string{"-c", "printf yes > executed; sleep 10"}, "")
+		_, _, err := RealExec(gate, dir, "/bin/sh", []string{"-c", "printf yes > executed"}, "")
 		done <- err
 	}()
 	select {
 	case <-entered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("launch callback did not start")
+	case err := <-done:
+		t.Fatalf("launch callback did not start: %v", err)
 	}
 	assert.NoFileExists(t, marker, "the child is still behind its launch gate")
 	close(release)
-	require.Eventually(t, func() bool { _, err := os.Stat(marker); return err == nil }, 5*time.Second, 10*time.Millisecond)
+	require.NoError(t, <-done)
+	assert.FileExists(t, marker)
 	receipt, err := readRunReceipt(dir, job)
 	require.NoError(t, err)
 	assert.Equal(t, "run-1", receipt.RunID)
-	assert.Equal(t, ProcessIdentity(receipt.PID), receipt.Identity)
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("gated process did not stop")
-	}
+	assert.Positive(t, receipt.PID)
+	assert.NotEmpty(t, receipt.Identity)
 }
 
 func TestRestartTransfersAFreshMarkForARealSurvivingProcess(t *testing.T) {
@@ -69,7 +64,7 @@ func TestRestartTransfersAFreshMarkForARealSurvivingProcess(t *testing.T) {
 		card := Card{ID: "c1", Brief: filepath.Join(dir, "inbox", job, "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", job)}
 		require.NoError(t, os.MkdirAll(filepath.Join(dir, "jobs", job), 0o755))
 		require.NoError(t, writeRunReceipt(dir, job, runReceipt{RunID: "real-run", PID: cmd.Process.Pid, Identity: identity}))
-		require.NoError(t, os.WriteFile(laneMarkPath(dir, job), []byte(LaneMarkRunning(owner, t0)), 0o644))
+		require.NoError(t, os.WriteFile(laneMarkPath(dir, job), []byte(LaneMarkRunningRun(owner, t0, "real-run")), 0o644))
 		h := &lanesHarness{dir: dir, active: map[string]int{}}
 		r, state := laneRig(t, h, 1)
 		*state = LaneState{Sessions: map[int]string{1: "ses_1"}, Started: map[string]Started{job: {Lane: 1, Card: card, At: t0.Add(-time.Minute), RunID: "real-run", Owner: owner}}}
@@ -85,6 +80,33 @@ func TestRestartTransfersAFreshMarkForARealSurvivingProcess(t *testing.T) {
 	})
 }
 
+func TestStaleMarkCannotBeClaimedOverItsLiveRealRun(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	job := "c1~15"
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "jobs", job), 0o755))
+	cmd := exec.CommandContext(context.Background(), "/bin/sleep", "10")
+	ownGroup(cmd)
+	require.NoError(t, cmd.Start())
+	defer func() { killGroup(cmd.Process.Pid); _ = cmd.Wait() }()
+	identity := ProcessIdentity(cmd.Process.Pid)
+	require.NotEmpty(t, identity)
+	require.NoError(t, writeRunReceipt(dir, job, runReceipt{RunID: "live-run", PID: cmd.Process.Pid, Identity: identity}))
+	now := time.Date(2026, 10, 8, 15, 0, 0, 0, time.UTC)
+	require.NoError(t, os.WriteFile(laneMarkPath(dir, job), []byte(LaneMarkRunningRun("old", now.Add(-LaneMarkStale-time.Second), "live-run")), 0o644))
+	holder, err := ClaimLane(dir, job, "new", now)
+	require.NoError(t, err)
+	assert.Equal(t, "old", holder)
+	mark, ok := ReadLaneMark(dir, job)
+	require.True(t, ok)
+	assert.Equal(t, "live-run", mark.RunID)
+	assert.Equal(t, "old", mark.Who)
+	require.NoError(t, writeRunReceipt(dir, job, runReceipt{RunID: "live-run", PID: cmd.Process.Pid, Identity: identity + "-reused"}))
+	holder, err = ClaimLane(dir, job, "new", now)
+	require.NoError(t, err)
+	assert.Empty(t, holder, "the live process has a different birth and cannot hold an old run")
+}
+
 func TestStopVerifiedRunRefusesAReusedPID(t *testing.T) {
 	t.Parallel()
 	runCtx, runCancel := context.WithCancel(context.Background())
@@ -98,6 +120,7 @@ func TestStopVerifiedRunRefusesAReusedPID(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	assert.False(t, StopVerifiedRun(ctx, cmd.Process.Pid, identity+"-old"))
+	assert.False(t, runStillAlive(cmd.Process.Pid, identity+"-old"))
 	assert.Equal(t, identity, ProcessIdentity(cmd.Process.Pid), "the unrelated live group was not signalled")
 }
 

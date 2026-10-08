@@ -297,6 +297,16 @@ func (l *loop) endStarted(now time.Time) {
 	s, d := l.lanes, l.d
 	for job, st := range s.state.Started {
 		receipt, receiptErr := readRunReceipt(d.Dir, job)
+		if mark, ok := ReadLaneMark(d.Dir, job); ok && !mark.Ended && mark.RunID != "" &&
+			mark.RunID != st.RunID && mark.heldBy("", now) != "" && receiptErr == nil &&
+			receipt.RunID == mark.RunID && d.ProcessIdentity != nil && d.ProcessIdentity(receipt.PID) == receipt.Identity {
+			// A newer verified run took this job. Preserve its binding instead
+			// of writing a failed report over a still-working card.
+			st.RunID, st.Pid, st.Owner = receipt.RunID, receipt.PID, mark.Who
+			s.state.Started[job] = st
+			d.Record(fmt.Sprintf("%s lane %d: card %s: older started state superseded by verified run %s", now.UTC().Format(time.RFC3339), st.Lane, st.Card.ID, receipt.RunID))
+			continue
+		}
 		if receiptErr == nil && st.RunID != "" && receipt.RunID == st.RunID &&
 			receipt.Identity != "" && d.ProcessIdentity != nil && d.ProcessIdentity(receipt.PID) == receipt.Identity {
 			st.Pid = receipt.PID
@@ -307,7 +317,7 @@ func (l *loop) endStarted(now time.Time) {
 			d.Record(fmt.Sprintf("%s lane %d: card %s was begun at %s by the daemon before, and its run (pid %d) is alive: adopted, the lane waits on it", now.UTC().Format(time.RFC3339), st.Lane, st.Card.ID, st.At.UTC().Format(time.RFC3339), st.Pid))
 			continue
 		}
-		if receiptErr == nil && st.RunID != "" && receipt.RunID == st.RunID && ProcessGroupAlive(receipt.PID) {
+		if receiptErr == nil && st.RunID != "" && receipt.RunID == st.RunID && d.ProcessIdentity != nil && d.ProcessIdentity(receipt.PID) == "" && ProcessGroupAlive(receipt.PID) {
 			// The leader's identity is lost but its group may still contain work.
 			// Keep the card owed until the group goes, without adopting a PID reused by another process.
 			s.adopt = append(s.adopt, st)

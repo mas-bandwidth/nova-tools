@@ -531,6 +531,8 @@ func (l *loop) laneStep(now time.Time, width int) {
 			ln.base, ln.baseOK = l.tokens(ln.session)
 			var runID [16]byte
 			if _, err := rand.Read(runID[:]); err != nil {
+				_ = releaseOwnedLane(d.Dir, filepath.Base(c.Outbox), l.laneWho(ln.n))
+				ln.card = nil
 				d.Record("lanes: cannot create run identity: " + err.Error())
 				continue
 			}
@@ -547,6 +549,14 @@ func (l *loop) laneStep(now time.Time, width int) {
 				_ = releaseOwnedLane(d.Dir, filepath.Base(c.Outbox), l.laneWho(ln.n))
 				ln.card = nil
 				d.Record(fmt.Sprintf("%s lane %d: card %s not started: lane state cannot be saved: %s", now.UTC().Format(time.RFC3339), ln.n, c.ID, oneLine(err.Error(), 300)))
+				continue
+			}
+			if err := bindRunLane(d.Dir, filepath.Base(c.Outbox), l.laneWho(ln.n), s.state.Started[filepath.Base(c.Outbox)].RunID, now); err != nil {
+				delete(s.state.Started, filepath.Base(c.Outbox))
+				_ = d.SaveLanes(s.state)
+				_ = releaseOwnedLane(d.Dir, filepath.Base(c.Outbox), l.laneWho(ln.n))
+				ln.card = nil
+				d.Record(fmt.Sprintf("%s lane %d: card %s not started: run identity cannot be bound to lane mark: %s", now.UTC().Format(time.RFC3339), ln.n, c.ID, oneLine(err.Error(), 300)))
 				continue
 			}
 		}
@@ -645,7 +655,17 @@ func (l *loop) adoptRuns(now time.Time) {
 	for _, st := range s.adopt {
 		jobName := filepath.Base(st.Card.Outbox)
 		receipt, receiptErr := readRunReceipt(d.Dir, jobName)
-		if receiptErr == nil && receipt.RunID == st.RunID && d.ProcessIdentity != nil && d.ProcessIdentity(receipt.PID) != receipt.Identity && ProcessGroupAlive(receipt.PID) {
+		if receiptErr == nil && receipt.RunID != st.RunID {
+			if mark, ok := ReadLaneMark(d.Dir, jobName); ok && !mark.Ended && mark.RunID == receipt.RunID &&
+				mark.heldBy("", now) != "" && d.ProcessIdentity != nil && receipt.Identity != "" &&
+				d.ProcessIdentity(receipt.PID) == receipt.Identity {
+				st.RunID, st.Pid, st.Owner = receipt.RunID, receipt.PID, mark.Who
+				s.state.Started[jobName] = st
+				l.saveLanes(now)
+				continue // a newer verified owner must settle its own run
+			}
+		}
+		if receiptErr == nil && receipt.RunID == st.RunID && d.ProcessIdentity != nil && d.ProcessIdentity(receipt.PID) == "" && ProcessGroupAlive(receipt.PID) {
 			waiting = append(waiting, st)
 			continue
 		}
@@ -673,13 +693,16 @@ func (l *loop) adoptRuns(now time.Time) {
 			waiting = append(waiting, st)
 			continue
 		}
-		holder, err := transferLane(d.Dir, jobName, st.Owner, l.laneWho(ln.n), now)
+		holder, err := transferLane(d.Dir, jobName, st.RunID, l.laneWho(ln.n), now)
 		if err != nil || holder != "" {
 			waiting = append(waiting, st)
 			d.Record(fmt.Sprintf("%s lane %d: card %s adoption waits for its lane mark: holder=%q error=%v", now.UTC().Format(time.RFC3339), ln.n, st.Card.ID, holder, err))
 			continue
 		}
 		card := st.Card
+		st.Owner = l.laneWho(ln.n)
+		s.state.Started[jobName] = st
+		l.saveLanes(now)
 		ln.card, ln.attempts, ln.marked = &card, 0, now
 		if job, err := LaneJobOf(d.Dir, card, filepath.Abs); err == nil {
 			ln.job = job
@@ -696,7 +719,10 @@ func (l *loop) adoptRuns(now time.Time) {
 			wait := d.WaitProcess
 			if wait == nil {
 				wait = func(ctx context.Context, pid int) bool {
-					return waitAdopted(ctx, pid, func(pid int) bool { return d.ProcessIdentity(pid) == receipt.Identity || ProcessGroupAlive(pid) }, d.Pause)
+					return waitAdopted(ctx, pid, func(pid int) bool {
+						current := d.ProcessIdentity(pid)
+						return current == receipt.Identity || current == "" && ProcessGroupAlive(pid)
+					}, d.Pause)
 				}
 			}
 			wait(ctx, pid)
@@ -887,6 +913,24 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		return
 	}
 	if ln.ended != "" {
+		if t.adopted {
+			job := filepath.Base(ln.card.Outbox)
+			st := s.state.Started[job]
+			m, markFound := ReadLaneMark(d.Dir, job)
+			if markFound && (m.Who != l.laneWho(ln.n) || m.RunID != st.RunID) {
+				// Another daemon owns the mark. Do not overwrite its newer
+				// Started state or its report while relinquishing this watcher.
+				d.Record(fmt.Sprintf("%s lane %d: card %s tracking relinquished to %s; persistent run state left for its owner", at, ln.n, ln.card.ID, m.Who))
+				ln.card, ln.attempts, ln.ended = nil, 0, ""
+				return
+			}
+			if l.ctx.Err() != nil {
+				d.Record(fmt.Sprintf("%s lane %d: card %s remains started for restart; daemon stopped before adopted group exit proof", at, ln.n, ln.card.ID))
+				ln.card, ln.attempts, ln.ended = nil, 0, ""
+				return
+			}
+			_ = endOtherMark(d.Dir, job, l.laneWho(ln.n), ln.ended)
+		}
 		// another lane finished the card: its messages go back pending, counted toward nothing
 		for _, e := range t.entries {
 			delete(l.inHand, e)
