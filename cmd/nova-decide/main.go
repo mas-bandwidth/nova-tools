@@ -49,22 +49,30 @@ func main() { os.Exit(decideTool(realWorld()).Main()) }
 const fixture = "./cmd/nova-decide/testdata/"
 
 func decideTool(w world) *tool.Tool {
+	decideExit := "0 done, the decision was recorded, never that the answer was yes; 1 an outcome conflicts with the one recorded, 2 could not run (a flag, an input, the backend, the record)."
+	plainExit := "0 done, 1 an outcome conflicts with the one recorded, 2 could not run (a flag, an input, the backend, the record)."
 	return &tool.Tool{
 		Name:  "nova-decide",
 		What:  "typed decisions with probabilities, recorded so each one can be calibrated against its outcome",
 		Stamp: version,
-		How: `noul: a yes-or-no question answered with a probability of yes; choice: one option.
-a decision is a named schema of choice or noul questions over a state; jev or fixed answers:
-schema {"name":"q","questions":{"ok":{"type":"noul","instructions":"It asks."}}}
-state R? fixed answers {"ok":{"noul":0.9}} print ASK OK id=f decision=q backend=fixed recorded=new
-ASK ANSWER question=ok type=noul value=yes p=yes:0.9; exit 0 means recorded, never approved.`,
-		ExitTable: "0 done, 1 an outcome conflicts with the one recorded, 2 could not run (a flag, an input, the backend, the record).",
+		How: `a choice picks one of named options and carries a probability per option;
+a noul is a yes/no over one statement and carries the probability that the statement is true.
+The setup writes ./schema.json, ./state.txt and ./answers.json, and a recorded ask prints:
+ASK OK id=card-1 decision=q backend=fixed tokens_in=0 tokens_out=0 recorded=new
+ASK ANSWER question=ok type=noul value=yes p=yes:0.9`,
+		ExitTable: `0 done, the decision was recorded, never that the answer was yes; 1 an outcome
+    conflicts with the one recorded; 2 could not run (a flag, an input, the backend, the record).`,
+		Setup: `
+  printf '%s\n' '{"name":"q","questions":{"ok":{"type":"noul","instructions":"It asks."}}}' > ./schema.json
+  printf '%s\n' 'R?' > ./state.txt
+  printf '%s\n' '{"ok":{"noul":0.9}}' > ./answers.json`,
 		Verbs: []tool.Verb{
 			{
-				Name:    "ask",
-				Usage:   "ask --schema <file> --state <file|-> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
-				Example: "ask --schema " + fixture + "schema.json --state " + fixture + "state.txt --backend fixed --answers " + fixture + "answers.json --record ./decisions.jsonl --op first",
-				Effect:  tool.Delivery + "; with --backend jev it sends the state to the backend, and it appends to --record",
+				Name:      "ask",
+				Usage:     "ask --schema <file> --state <file|-> --backend <jev|fixed>\n    [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				Example:   "ask --schema ./schema.json --state ./state.txt --backend fixed --answers ./answers.json --record ./decisions.jsonl --op card-1",
+				ExitTable: decideExit,
+				Effect:    tool.Delivery + "; with --backend jev it sends the state to the backend, and it appends to --record",
 				Detail: `A schema is {"name": <decision>, "questions": {<name>: {"type": "choice"|"noul",
 "instructions": <text>, "criteria": {<option>: <meaning>}}}}; criteria is for a choice only.
 Each answer prints as one ANSWER line: a choice's value and every option's p, a noul's p of yes.`,
@@ -78,13 +86,14 @@ Each answer prints as one ANSWER line: a choice's value and every option's p, a 
 				Run: w.ask,
 			},
 			{
-				Name:    "read",
-				Usage:   "read --card <file> --diff <file> [--rule <file>] --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
-				Example: "read --card " + fixture + "card.md --diff " + fixture + "card.diff --backend fixed --answers " + fixture + "read-answers.json --record ./decisions.jsonl --op card-1",
-				Effect:  tool.Delivery + "; with --backend jev it sends the card and diff to the backend, and it appends to --record",
+				Name:      "read",
+				Usage:     "read --card <file> --diff <file> [--rule <file>] --backend <jev|fixed>\n    [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				ExitTable: decideExit,
+				Effect:    tool.Delivery + "; with --backend jev it sends the card and diff to the backend, and it appends to --record",
 				Detail: `The read decision: a worker's diff against the card that asked for it, five questions:
 does_task, lines_changed, inside_paths and defect (nouls, p of yes) and verdict (LAND, BOUNCE
-or UNSURE). The state is the card, the rule when --rule names one, and the diff, nothing else.`,
+or UNSURE). The state is the card, the rule when --rule names one, and the diff, nothing else.
+Example, from a checkout root: nova-decide read --card ` + fixture + `card.md --diff ` + fixture + `card.diff --backend fixed --answers ` + fixture + `read-answers.json --record ./decisions.jsonl --op card-1`,
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
 					f.Required("card", "the card the worker was given, a file")
@@ -96,15 +105,16 @@ or UNSURE). The state is the card, the rule when --rule names one, and the diff,
 				Run: w.read,
 			},
 			{
-				Name:    "score",
-				Usage:   "score --card <file> --diff <file> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
-				Example: "score --card " + fixture + "card.md --diff " + fixture + "card.diff --backend fixed --answers " + fixture + "score-answers.json --record ./decisions.jsonl --op card-1@landed@0123456789ab",
-				Effect:  tool.Delivery + "; with --backend jev it sends the card and diff to the backend, and it appends to --record",
+				Name:      "score",
+				Usage:     "score --card <file> --diff <file> --backend <jev|fixed>\n    [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				ExitTable: decideExit,
+				Effect:    tool.Delivery + "; with --backend jev it sends the card and diff to the backend, and it appends to --record",
 				Detail: `The score decision: a landed diff against its card, the read's five questions and one noul
 per escalation class the reviews found (stranded_fragment, cut_citation, renamed_file_assumed,
 ledger_ceiling, comment_contradicts_code, test_weakened, record_made_claim, invented_reason,
 fenced_block_edit, asserted_data_cut, load_bearing_word_cut; outside_paths is 1 - inside_paths).
-The line names the top class and its p; nova-sprint land asks it as <card>@landed@<head>.`,
+The line names the top class and its p; nova-sprint land asks it as <card>@landed@<head>.
+Example, from a checkout root: nova-decide score --card ` + fixture + `card.md --diff ` + fixture + `card.diff --backend fixed --answers ` + fixture + `score-answers.json --record ./decisions.jsonl --op card-1@landed@0123456789ab`,
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
 					f.Required("card", "the card the worker was given, a file")
@@ -115,13 +125,14 @@ The line names the top class and its p; nova-sprint land asks it as <card>@lande
 				Run: w.score,
 			},
 			{
-				Name:    "attempt",
-				Usage:   "attempt --brief <file> [--result <file>] --reason <line> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
-				Example: "attempt --brief " + fixture + "card.md --result " + fixture + "result.md --reason \"verdict not-done: tests red in internal/decide\" --backend fixed --answers " + fixture + "attempt-answers.json --record ./decisions.jsonl --op c1@1",
-				Effect:  tool.Delivery + "; with --backend jev it sends the brief, result and reason to the backend, and it appends to --record",
+				Name:      "attempt",
+				Usage:     "attempt --brief <file> [--result <file>] --reason <line> --backend <jev|fixed>\n    [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				ExitTable: decideExit,
+				Effect:    tool.Delivery + "; with --backend jev it sends the brief, result and reason to the backend, and it appends to --record",
 				Detail: `The attempt decision: how a work take ended, one choice, class: done, nothing-to-do,
 wrong-scope, no-result, needs-pro or provider-failure, each with its p. The state is the brief,
-the child's RESULT.md (none when --result is not given) and the member's reason line.`,
+the child's RESULT.md (none when --result is not given) and the member's reason line.
+Example, from a checkout root: nova-decide attempt --brief ` + fixture + `card.md --result ` + fixture + `result.md --reason "verdict not-done: tests red in internal/decide" --backend fixed --answers ` + fixture + `attempt-answers.json --record ./decisions.jsonl --op c1@1`,
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
 					f.Required("brief", "the card's brief the worker was given, a file")
@@ -133,13 +144,14 @@ the child's RESULT.md (none when --result is not given) and the member's reason 
 				Run: w.attempt,
 			},
 			{
-				Name:    "grade",
-				Usage:   "grade --brief <file> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
-				Example: "grade --brief " + fixture + "card.md --backend fixed --answers " + fixture + "grade-answers.json --record ./decisions.jsonl --op c1@grade",
-				Effect:  tool.Delivery + "; with --backend jev it sends the brief to the backend, and it appends to --record",
+				Name:      "grade",
+				Usage:     "grade --brief <file> --backend <jev|fixed>\n    [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				ExitTable: decideExit,
+				Effect:    tool.Delivery + "; with --backend jev it sends the brief to the backend, and it appends to --record",
 				Detail: `The grade decision: a card's convergence before its first deal, one choice, grade: script
 (no model), flash or pro, each with its p. The state is the brief alone, or with --examples
-ten landed cards per class (flash, pro, heavy) ahead of it, picked by --seed outside --held-out.`,
+ten landed cards per class (flash, pro, heavy) ahead of it, picked by --seed outside --held-out.
+Example, from a checkout root: nova-decide grade --brief ` + fixture + `card.md --backend fixed --answers ` + fixture + `grade-answers.json --record ./decisions.jsonl --op c1@grade`,
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
 					f.Required("brief", "the card's brief, a file")
@@ -152,10 +164,10 @@ ten landed cards per class (flash, pro, heavy) ahead of it, picked by --seed out
 				Run: w.grade,
 			},
 			{
-				Name:    "gate",
-				Usage:   "gate --output <file> --card <file> [--diff <file>] [--base-red <test,...>] [--bars <flaky,pre-existing>] --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
-				Example: "gate --output " + fixture + "gate-output.txt --card " + fixture + "card.md --diff " + fixture + "card.diff --base-red TestPortInUse --backend fixed --answers " + fixture + "gate-answers.json --record ./decisions.jsonl --op c1@1@gate",
-				Effect:  tool.Delivery + "; with --backend jev it sends each failure, the card's PATHS and the diff's summary to the backend, and it appends to --record",
+				Name:      "gate",
+				Usage:     "gate --output <file> --card <file> [--diff <file>] [--base-red <test,...>]\n    [--bars <flaky,pre-existing>] --backend <jev|fixed>\n    [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				ExitTable: decideExit,
+				Effect:    tool.Delivery + "; with --backend jev it sends each failure, the card's PATHS and the diff's summary to the backend, and it appends to --record",
 				Detail: `The gate decision: a red gate's go test output, read failure by failure; each failing test
 is classed flaky, caused or pre-existing (one choice, class, with a p per class) over its first
 lines, whether it is red at the base (--base-red names those; without it the base is "not run"),
@@ -163,7 +175,8 @@ the gate's other failures, the card's PATHS and the diff's files. Each failure i
 <op>/<pkg>.<Test>; a build failure is caused, unasked. A failure goes flaky at or above the first
 --bars value (rerun it once), pre-existing at or above the second, else caused; an unset bar (the
 default) routes no failure. The gate's route is caused when one failure is, else flaky when one
-is, else pre-existing.`,
+is, else pre-existing.
+Example, from a checkout root: nova-decide gate --output ` + fixture + `gate-output.txt --card ` + fixture + `card.md --diff ` + fixture + `card.diff --base-red TestPortInUse --backend fixed --answers ` + fixture + `gate-answers.json --record ./decisions.jsonl --op c1@1@gate`,
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
 					f.Required("output", "the gate's output, a file of go test's output (plain or -v)")
@@ -182,10 +195,10 @@ is, else pre-existing.`,
 				Run: w.gate,
 			},
 			{
-				Name:    "brief",
-				Usage:   "brief --card <file|dir> --backend <jev|fixed> [--answers <file>] --record <file> [--width <n>] [--timeout <d>] [--max <n>] [--dry-run]",
-				Example: "brief --card " + fixture + "greet.md --backend fixed --answers " + fixture + "brief-answers.json --record ./decisions.jsonl",
-				Effect:  tool.Delivery + "; with --backend jev it sends each card to the backend, and it appends to --record",
+				Name:      "brief",
+				Usage:     "brief --card <file|dir> --backend <jev|fixed> [--answers <file>]\n    --record <file> [--width <n>] [--timeout <d>] [--max <n>] [--dry-run]",
+				ExitTable: decideExit,
+				Effect:    tool.Delivery + "; with --backend jev it sends each card to the backend, and it appends to --record",
 				Detail: `The brief decision: a card's text alone, as a flash child with no memory reads it, before
 the card is added. Six nouls (repo_branch, files_named, gate_stated, commit_stated,
 report_stated, one_thing), ambiguous_step (none, step-<n> or unnumbered), minutes, and
@@ -193,7 +206,8 @@ converges, p that the child lands it on its first attempt: a rank, uncalibrated.
 one deadline, a minute, as nova-sprint add's; --timeout bounds each card. A directory is
 its *.md files as nova-sprint add --brief-dir reads them (none below it), each card's id its
 file's name without .md; each decision's id is <card>@brief-<hex>. One BRIEF CARD item per card,
-in id order; a card the backend failed is named, the rest are recorded.`,
+in id order; a card the backend failed is named, the rest are recorded.
+Example, from a checkout root: nova-decide brief --card ` + fixture + `greet.md --backend fixed --answers ` + fixture + `brief-answers.json --record ./decisions.jsonl`,
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
 					f.Required("card", "a card file, or a directory of *.md card files (as add --brief-dir reads it)")
@@ -209,12 +223,13 @@ in id order; a card the backend failed is named, the rest are recorded.`,
 				Run: w.brief,
 			},
 			{
-				Name:    "outcome",
-				Usage:   "outcome --record <file> --id <decision-id> --label <word> [--note <text>] [--dry-run]",
-				Example: "outcome --record ./decisions.jsonl --id card-1 --label ok --note \"the review found nothing\"",
-				Effect:  tool.LocalWrite + ": appends one outcome line to --record",
-				Detail:  "The same label again changes nothing; another label for a labelled decision is exit 1.",
-				DryRun:  true,
+				Name:      "outcome",
+				Usage:     "outcome --record <file> --id <decision-id> --label <word> [--note <text>] [--dry-run]",
+				Example:   "outcome --record ./decisions.jsonl --id card-1 --label ok --note \"the review found nothing\"",
+				ExitTable: plainExit,
+				Effect:    tool.LocalWrite + ": appends one outcome line to --record",
+				Detail:    "The same label again changes nothing; another label for a labelled decision is exit 1.",
+				DryRun:    true,
 				Flags: func(f *tool.Flags) {
 					f.Required("record", "the record file the decision is in")
 					f.Required("id", "the decision's id, as ask or read printed it")
@@ -224,13 +239,14 @@ in id order; a card the backend failed is named, the rest are recorded.`,
 				Run: w.outcome,
 			},
 			{
-				Name:    "calibrate",
-				Usage:   "calibrate --record <file> --decision <name> --question <name[=option]> --positive <label,...> --negative <label,...> [--bars <p,...>]",
-				Example: "calibrate --record " + fixture + "record.jsonl --decision read --question defect --positive wrong --negative ok",
-				Effect:  tool.Inspection,
+				Name:      "calibrate",
+				Usage:     "calibrate --record <file> --decision <name> --question <name[=option]>\n    --positive <label,...> --negative <label,...> [--bars <p,...>]",
+				ExitTable: plainExit,
+				Effect:    tool.Inspection,
 				Detail: `Scores each labelled decision by the p its answer gave (a noul's yes, or a choice's
 named option: verdict=BOUNCE), and prints the AUC, one BAR line per --bars value (positives
-caught, negatives bounced), and the CATCH-ALL bar: the highest that still flags every positive.`,
+caught, negatives bounced), and the CATCH-ALL bar: the highest that still flags every positive.
+Example, from a checkout root: nova-decide calibrate --record ` + fixture + `record.jsonl --decision read --question defect --positive wrong --negative ok`,
 				Flags: func(f *tool.Flags) {
 					f.Required("record", "the record file")
 					f.Required("decision", "the decision's name, as its schema names it (read)")
@@ -247,10 +263,11 @@ caught, negatives bounced), and the CATCH-ALL bar: the highest that still flags 
 				Run: calibrate,
 			},
 			{
-				Name:   "import",
-				Usage:  "import --record <file> [--verdicts <glob>] [--judgments <dir> --log <file>] [--reports <glob>] [--dry-run]",
-				Effect: tool.LocalWrite + "; it appends to --record one labelled decision per item read, and leaves an item recorded before; --dry-run writes nothing",
-				DryRun: true,
+				Name:      "import",
+				Usage:     "import --record <file> [--verdicts <glob>]\n    [--judgments <dir> --log <file>] [--reports <glob>] [--dry-run]",
+				ExitTable: plainExit,
+				Effect:    tool.LocalWrite + "; it appends to --record one labelled decision per item read, and leaves an item recorded before; --dry-run writes nothing",
+				DryRun:    true,
 				Detail: `Loads finished decisions as labelled records, so they can be read, calibrated and trained on:
 --verdicts: heavy-read VERDICT.md files, the first word of the first line is the label (ACCEPT, REWORK, ...);
 --judgments with --log: a directory of judgment files (<judgment id>.md) labelled by the verb of the line a
@@ -276,9 +293,10 @@ An id comes from the source path and content, so a second import adds nothing. P
 				Run: w.importRecords,
 			},
 			{
-				Name:   "score-grades",
-				Usage:  "score-grades --record <file> --log <file> [--day <date>]",
-				Effect: tool.Inspection,
+				Name:      "score-grades",
+				Usage:     "score-grades --record <file> --log <file> [--day <date>]",
+				ExitTable: plainExit,
+				Effect:    tool.Inspection,
 				Detail: `Grades Jev's grades against the sprint log, for the grade decisions made in one UTC day
 (--day; default: the day before now). Each card is scored by its newest grade of the day against its
 cost records in a nova-sprint log --json export: GRADE lines are Jev's grade by the tier the card was
@@ -298,10 +316,11 @@ as no_log; a card never dealt to the fleet is left out. See docs/SPEC-NOVA-DECID
 				Run: w.scoreGrades,
 			},
 			{
-				Name:    "findings",
-				Usage:   "findings --record <file> [--since <time>] [--bar <p>] [--shadow <file> --real <file>] [--read-shadow <file> [--heavy <file>]]",
-				Example: "findings --record " + fixture + "record.jsonl --since 2026-10-01",
-				Effect:  tool.Inspection,
+				Name:      "findings",
+				Usage:     "findings --record <file> [--since <time>] [--bar <p>]\n    [--shadow <file> --real <file>] [--read-shadow <file> [--heavy <file>]]",
+				Example:   "findings --record ./decisions.jsonl --since 2026-10-01",
+				ExitTable: plainExit,
+				Effect:    tool.Inspection,
 				Detail: `Clusters the score decisions made since --since by every class each gives a p at or above
 --bar: one FINDING line per class (count, cards), most cards first; unnamed is p(defect) at or
 above the bar with no class there. A class that keeps coming back is a finder rule or class test owed. With --shadow (the
