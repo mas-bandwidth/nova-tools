@@ -1688,19 +1688,32 @@ func containsAny(s string, words []string) bool {
 }
 
 // runCheck runs --check in the clone: why "" when it passed or there is none, and its
-// output.
+// output. The check runs in its own process group so it is terminated with the server.
 func (l *lander) runCheck(ctx context.Context, dir string) (why, out string) {
 	if l.check == "" {
 		return "", ""
 	}
 	b := subproc.Prepare(ctx, landCheckBudget, "sh", "-c", l.check)
 	defer b.Cancel()
+	b.Cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	b.Cmd.Dir, b.Cmd.Env = dir, l.a.gitEnv
-	raw, err := b.Cmd.CombinedOutput()
-	if err = b.Wrap("check "+l.check, err); err != nil {
-		return "the check " + l.check + " failed: " + oneline.Err(err) + checkTail(string(raw)), string(raw)
+	var buf bytes.Buffer
+	b.Cmd.Stdout = &buf
+	b.Cmd.Stderr = &buf
+	if err := b.Cmd.Start(); err != nil {
+		return "the check " + l.check + " could not be started: " + oneline.Err(err), ""
 	}
-	return "", string(raw)
+	if root, err := l.a.landRoot(); err == nil {
+		gateFile := filepath.Join(root, ".gate_pid")
+		if err := os.WriteFile(gateFile, []byte(fmt.Sprintf("%d\n", b.Cmd.Process.Pid)), 0o600); err == nil {
+			defer os.Remove(gateFile)
+		}
+	}
+	err := b.Cmd.Wait()
+	if err = b.Wrap("check "+l.check, err); err != nil {
+		return "the check " + l.check + " failed: " + oneline.Err(err) + checkTail(buf.String()), buf.String()
+	}
+	return "", buf.String()
 }
 
 // checkTail is ": <the output's last line>", "" for no output.
