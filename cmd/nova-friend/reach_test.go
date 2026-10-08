@@ -421,17 +421,13 @@ func TestReachProofRequiresFreshFriendEvidence(t *testing.T) {
 				_, err := b.Send(context.Background(), m)
 				require.NoError(t, err)
 			}
-			es, err := b.Log(context.Background(), "-")
+			cursor, err := b.LogCursor(context.Background())
 			require.NoError(t, err)
-			seen := map[string]bool{}
-			for _, e := range es {
-				seen[e.Entry] = true
-			}
 			if tc.fresh {
 				_, err = b.Send(context.Background(), m)
 				require.NoError(t, err)
 			}
-			by, ok, err := reachProof(context.Background(), b, seen, "bob", "n1")
+			by, ok, err := reachProof(context.Background(), b, &cursor, "bob", "n1")
 			require.NoError(t, err)
 			assert.Equal(t, tc.want != "", ok)
 			assert.Equal(t, tc.want, by)
