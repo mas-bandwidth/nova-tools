@@ -363,7 +363,7 @@ func subscriptionFirst(names []string, seats map[string]FriendSeat, tier string)
 	}
 	subs := make([]string, 0, len(names))
 	for _, n := range names {
-		if seats[n].Billing == config.BillingSubscription {
+		if seats[n].Billing == config.FriendBillingSubscription {
 			subs = append(subs, n)
 		}
 	}
