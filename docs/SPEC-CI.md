@@ -2955,12 +2955,13 @@ the original failed measurement.
 
 ### `deadcode` — no unreachable functions from production roots
 
-**The rule.** Production reachability is analyzed by `deadcode` from the `cmd/` mains as roots (`./cmd/...`), without `-test` (code reached only by tests is the next contraction's target). The analysis runs across three operating systems (GOOS `linux`, `darwin`, `windows`) and holds the union of dead functions to a per-package shrink-only ledger.
+**The rule.** Production reachability is analyzed by `deadcode` from the `cmd/` mains and `tools/tlacheck` as roots (`./cmd/... ./tools/tlacheck`), without `-test` (code reached only by tests is the next contraction's target). The TLC runner is a production root because the Makefile and its workflow invoke it. The analysis runs across three operating systems (GOOS `linux`, `darwin`, `windows`) and holds the union of dead functions to a per-package shrink-only ledger.
 **The mistake it prevents.** Unused, unreachable functions and methods accumulating across the codebase; maintainer directive 2026-09-30 contraction phase ("dead code to zero with a class test holding it").
 **The test.** `TestDeadCode` (`internal/ci/dead_code_class_test.go`), with its allowlist mechanics witness `TestDeadCodeWitness`. Runs in the functional tier behind `//go:build functional`.
+**What the tree gate owes it.** The lander's tree gate does not run this test today, so a batch can land on a base the release check refuses; the gate's package list owes it `./internal/ci/` under `-tags functional` (card the-base-gate-runs-the-class-tests carries the gate change).
 **Its allowlist.** `internal/ci/testdata/dead_code_allowlist.txt`, the shrink-only per-package ledger (`<package> <count>`); `NOVA_CI_UPDATE=1 go test -tags functional -run '^TestDeadCode$' ./internal/ci/` lowers counts and drops zero-count rows (the rule is functional-tier only, so `NOVA_CI_UPDATE=1 make test PKGS=./internal/ci` never reaches it, and the functional container mounts the source read-only). The list refuses to grow or raise any count.
 **Its remedy line.** `remedy="delete the unreachable function(s) or wire them into cmd/...; the dead code ledger only shrinks and refuses to raise counts or add rows"`.
-**Its narrowings.** Analyzes static reachability from main executables in `cmd/...` without `-test` flags using `golang.org/x/tools/cmd/deadcode` across `linux`, `darwin`, and `windows`.
+**Its narrowings.** Analyzes static reachability from main executables in `cmd/...` and `tools/tlacheck` without `-test` flags using `golang.org/x/tools/cmd/deadcode` across `linux`, `darwin`, and `windows`.
 
 ### `staticcheck` — staticcheck's findings only fall
 
