@@ -1980,8 +1980,8 @@ outbox pass keeps the same rule for her own tree on every sync:
   row's existing `FaultWatch` hold.
 
 The model is `internal/friend/tla/Collect.tla`, both hands (the coordinator's verb over
-every tree, the daemon over hers) finishing from their snapshots against a server that
-takes a finish only while the card is working (TLC on a Linux bench, two cards: 53,651
+every tree, the daemon over hers) resolving reports or dead lanes from their snapshots
+against a server that acts only while the card is working (TLC on a Linux bench, two cards: 60,908
 distinct states; `FinishedOnce`, `LandOnTip`, `DeadOnlyEnded` and `Collected` hold). Its
 reversed witnesses: `MCCollectBrokenOwnTree.cfg`, the coordinator reading her own tree
 alone (friend sync before collect), breaks `Collected` (a report written in another
