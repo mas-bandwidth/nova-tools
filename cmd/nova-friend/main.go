@@ -938,7 +938,7 @@ exit 1 when no daemon ever ran as --as (no status file in the state directory).`
 				Detail: `Prints the contract the daemon last told her session (docs/SPEC-FRIEND.md, the session contract), as its state
 directory's ` + friend.ContractFile + ` holds it: the wake file and the exact monitor line, the pong line to answer a nonce with,
 the start stamp to run when a child begins a card (nova-sprint progress --as friend.<me> <card>@<gen> --epoch <n>), the
-finish form, the server and the epoch. On start and on reinstall the daemon pushes one message, subject "your contract", body that text, on the same path a card takes; every session check carries it until the session answers one, and a change of the wake path, the server or the epoch (the first epoch included) is pushed the same way. A check deferred because the session runs no monitor is pushed as a message that still carries the contract.`,
+finish form, the server and the epoch. On start and on reinstall the daemon attempts one message, subject "your contract", body that text; every session check carries it until the session answers one, and a change of the wake path, the server or the epoch (the first epoch included) is attempted the same way. Grok uses its card adapter directly: without a monitor, it returns deferred and the session receives nothing until its monitor starts.`,
 				ExitTable: "0 printed, 2 could not run (no daemon has written a contract in the state directory).",
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name")
@@ -1336,7 +1336,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 	}
 	if !perCard {
-		sct = w.newSessionContract(ctx, c, name, dir, state, postTo(sc.DaemonStore(), name), record, func(nonce string) string {
+		post := postTo(sc.DaemonStore(), name)
+		if c.Str("harness") == "grok" {
+			post = friend.SessionPost(deliver)
+		}
+		sct = w.newSessionContract(ctx, c, name, dir, state, post, record, func(nonce string) string {
 			if to := answerTo(); to != "" {
 				return pongLine(nonce) + " --to " + to
 			}

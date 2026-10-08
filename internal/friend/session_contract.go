@@ -20,19 +20,35 @@ import (
 // presence fell, the bus refused her as deaf, and the dashboard listed a working friend down.
 // The same day the sprint took hundreds of her cards back as "not started", because a card
 // counts as started only once it is stamped with `nova-sprint progress`, and no session had
-// ever been told so. Now the daemon tells the session everything the machine expects of it:
+// ever been told so. The daemon records everything the machine expects of the session:
 // the wake file and the monitor line, the pong line, the start stamp, the finish form. It is
-// carried by every session check until the session answers one, pushed as one message titled
+// carried by every session check until the session answers one, attempted as one message titled
 // "your contract" on the daemon's start and on a reinstall, and again whenever the wake path,
 // the server or the epoch changes (the first epoch included), written to <state>/CONTRACT.md,
 // and printed by `nova-friend contract --as <me>`. A check deferred because the session runs
-// no monitor is pushed as a message that still carries that contract.
+// no monitor is attempted through the adapter, which returns Deferred until a monitor runs.
 
 // ContractTitle heads the contract's message: the subject it is pushed under and its first line.
 const ContractTitle = "your contract"
 
 // ContractFile is the contract as the daemon last told it, in its state directory.
 const ContractFile = "CONTRACT.md"
+
+// SessionPost sends a contract or deferred check through the same harness adapter
+// that delivers cards (docs/SPEC-FRIEND.md, the session contract). A queued bus
+// message is not a delivery: in particular, Grok without a monitor defers.
+func SessionPost(d Deliverer) func(context.Context, string, string) error {
+	return func(ctx context.Context, subject, body string) error {
+		exit, err := d.Deliver(ctx, subject+"\n"+body)
+		if err != nil {
+			return err
+		}
+		if exit != 0 {
+			return fmt.Errorf("the session delivery exited %d", exit)
+		}
+		return nil
+	}
+}
 
 // NoMonitorChecks is how many session checks in a row may be deferred because the session
 // runs no monitor over its wake file before the daemon says the friend down with that reason.
@@ -355,12 +371,12 @@ func DeferredCheckOf(line string) (nonce, file string, ok bool) {
 func IsSessionAnswer(line string) bool { return strings.Contains(line, "presence: up: ") }
 
 // MonitorWatch is the daemon's answer to a session check deferred because the session runs no
-// monitor over its wake file: the check is pushed as a message on her stream ("answer <nonce>:
-// <pong line>", then the contract, Post) instead of being left in the log, and NoMonitorChecks
+// monitor over its wake file: the check is attempted through the harness adapter ("answer <nonce>:
+// <pong line>", then the contract, Post), and NoMonitorChecks
 // of them in a row with no answer is the friend down with the reason "session runs no monitor
 // over <file>" (Down), which her beat and her presence file say. Any answer from the session
-// clears it. A grok deliver with no monitor writes nothing, so this message is what the session
-// is pushed, and it carries the contract.
+// clears it. A Grok deliver with no monitor writes nothing. With no monitor the adapter
+// defers it, and the daemon records that failure instead of claiming receipt.
 type MonitorWatch struct {
 	Post func(ctx context.Context, subject, body string) error
 	Pong func(nonce string) string
@@ -407,11 +423,13 @@ func (m *MonitorWatch) Deferred(ctx context.Context, nonce, file string) {
 			body += "\n" + text
 		}
 	}
-	line := fmt.Sprintf("presence: session check %s pushed as a message: the session runs no monitor over %s (%d of %d unanswered)", nonce, file, n, NoMonitorChecks)
+	line := fmt.Sprintf("presence: session check %s attempted through the session adapter: the session runs no monitor over %s (%d of %d unanswered)", nonce, file, n, NoMonitorChecks)
 	if m.Post == nil {
 		line += "; no push path"
 	} else if err := m.Post(ctx, SessionCheckPrefix+nonce, body); err != nil {
-		line += "; the push failed: " + oneLine(err.Error(), 300)
+		line += "; delivery deferred or failed: " + oneLine(err.Error(), 300)
+	} else {
+		line += "; delivered"
 	}
 	m.record(line)
 	if n == NoMonitorChecks {

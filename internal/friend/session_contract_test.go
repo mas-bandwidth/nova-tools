@@ -2,6 +2,7 @@ package friend
 
 import (
 	"context"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +14,30 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// The daemon's SessionPost uses the card adapter itself. This tests the real
+// Grok adapter's wake-file effect, not acceptance by the daemon's bus store.
+func TestContractPostReachesOnlyAMonitoredGrokSession(t *testing.T) {
+	t.Parallel()
+	home, dir, wake, listing := grokHouse(t)
+	fe := &fakeExec{out: listing}
+	g := &Grok{Home: home, Dir: dir, Wake: wake, Run: fe.run}
+	post := SessionPost(g)
+	contract := bobContract(wake, "15")
+	teller := &ContractTeller{Push: post, Now: func() time.Time { return t0 }}
+	require.True(t, teller.Start(context.Background(), contract, ""))
+	got, err := os.ReadFile(wake)
+	require.NoError(t, err)
+	assert.Contains(t, string(got), WakeLine(ContractTitle+"\n"+contract.Text()))
+
+	fe.out = "94410 7509 grok\n"
+	require.ErrorContains(t, post(context.Background(), SessionCheckPrefix+"n7", "answer n7: pong"), "runs no monitor over "+wake)
+	unmonitored := &ContractTeller{Push: post, Now: func() time.Time { return t0 }}
+	assert.False(t, unmonitored.Start(context.Background(), contract, ""), "the daemon cannot count an unmonitored start as delivered")
+	after, err := os.ReadFile(wake)
+	require.NoError(t, err)
+	assert.Equal(t, got, after, "without the monitor, a queued message is not a received turn")
+}
 
 // contractSession is a harness's deliver command as the session check reaches it: every text it
 // is handed is kept, and while noMonitor is set it defers as the grok adapter does when the
@@ -251,7 +276,7 @@ func TestADeferredCheckIsPushedAsAMessage(t *testing.T) {
 	} {
 		assert.Contains(t, got[1][1], want, "the deferred message carries the contract")
 	}
-	assert.Contains(t, strings.Join(r.records, "\n"), "presence: session check n1 pushed as a message: the session runs no monitor over /h/bob.wake (1 of 3 unanswered)")
+	assert.Contains(t, strings.Join(r.records, "\n"), "presence: session check n1 attempted through the session adapter: the session runs no monitor over /h/bob.wake (1 of 3 unanswered)")
 
 	other := &MonitorWatch{Post: r.pushed.post}
 	other.Line(context.Background(), "2026-10-07T23:53:00Z presence: session check n2 deferred: deferred: a turn runs in friend-bob: its prompt is not shown; the bound runs")
@@ -287,7 +312,7 @@ func TestThreeUnansweredNoMonitorChecksAreDownWithTheExactReason(t *testing.T) {
 			assert.Contains(t, m[1], "Monitor: monitor `tail -n 0 -F /h/bob.wake`")
 		}
 	}
-	assert.Equal(t, 3, checks, "each deferred check was pushed as a message")
+	assert.Equal(t, 3, checks, "each deferred check was attempted")
 	assert.Contains(t, strings.Join(r.records, "\n"), "presence: down: session runs no monitor over /h/bob.wake")
 	assert.Equal(t, 3, carrying(r.session.got()), "every unanswered check carried the contract, its monitor line among it")
 

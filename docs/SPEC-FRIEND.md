@@ -1344,8 +1344,9 @@ monitor `tail -F <file>`" only in its own log, so her presence fell, the bus ref
 and the owner saw a working friend listed down with cards in her queue. The same day the sprint
 took hundreds of cards back from three friends ("has not started <card> past its bound: taken back
 and dealt again, never to her"), because a card counts as started only once it is stamped with
-`nova-sprint progress`, a contract no session had been told. Now the daemon tells the session
-everything the machine expects of it, the moment it changes.
+`nova-sprint progress`, a contract no session had been told. The daemon records the contract
+and attempts delivery when it starts or changes. A Grok session without a monitor cannot
+receive that attempt until its own session starts the monitor.
 
 The contract (`friend.Contract`, `Contract.Text`) is one message titled `your contract`:
 
@@ -1362,30 +1363,30 @@ The contract (`friend.Contract`, `Contract.Text`) is one message titled `your co
 
 How it is told (`friend.ContractTeller`, wired by `cmd/nova-friend/daemon.go`):
 
-- On the daemon's start, a restart and a reinstall alike, the daemon pushes one message on her
-  stream, subject `your contract`, body the contract's text, on the same path a card's deal takes
-  into her session (`postTo`, the daemon's own send). Every session check also carries it after
+- On the daemon's start, a restart and a reinstall alike, the daemon attempts one delivery,
+  subject `your contract`, body the contract's text. Grok uses its harness adapter
+  (`friend.SessionPost`), which reports a deferral if its monitor is absent. Other session harnesses
+  receive a message on the daemon's own stream. Every session check also carries it after
   the check's own lines (the first line stays `SESSION CHECK <nonce>`), the same delivery path the
   check takes, until the session answers one. The daemon's start reads the last run's
   `CONTRACT.md`; one whose wake path, server or epoch differs is said as a reinstall
   (`contract: reinstall: the wake path (<old> -> <new>) since the last run: ...`) and that start
-  pushes the new contract once, the same way.
+  attempts the new contract once, the same way.
 - Whenever the wake path, the server or the epoch changes while it runs (the epoch is read off
-  each answer of the cards on her row), the contract is pushed as one message on her stream, from
-  the daemon (subject `your contract`), the path a card's deal takes into her session, and the
+  each answer of the cards on her row), the contract is attempted by the same route, and the
   next check carries it again. The first epoch the server says, empty to a number, is a change
-  and is pushed the same way a later epoch change is; it is not a silent fill.
+  and is attempted the same way a later epoch change is; it is not a silent fill.
 - Every telling writes `<state-dir>/CONTRACT.md`, which `nova-friend contract --as <me>` prints
   (exit 2 when no daemon has written one). The verb is off the banner until docs/CLI.md is
   regenerated with it; it answers `-h` like any verb.
 
 A session check deferred because the session runs no monitor over its wake file
-(`friend.MonitorWatch`, reading the check's own record line, `DeferredCheckOf`) is pushed as a
-message on her stream, subject `SESSION CHECK <nonce>`, body `answer <nonce>: <pong line>` and
+(`friend.MonitorWatch`, reading the check's own record line, `DeferredCheckOf`) is attempted through
+the harness adapter, subject `SESSION CHECK <nonce>`, body `answer <nonce>: <pong line>` and
 then the contract (the wake file, the exact monitor command, the start stamp and the finish
-form). A grok deliver with no monitor writes nothing, so that pushed message is what still
-carries the contract; it is never left in the log alone (`presence: session check <nonce> pushed
-as a message: the session runs no monitor over <file> (<n> of 3 unanswered)`). After `NoMonitorChecks` (three) such checks in a row
+form). A Grok deliver with no monitor writes nothing and returns deferred. The daemon records
+that result, and the contract remains in `CONTRACT.md` and in the next session check. The open
+Grok session must start its monitor before a delivery can reach it. After `NoMonitorChecks` (three) such checks in a row
 with no answer, the friend is down with the reason `session runs no monitor over <file>`
 (`presence: down: ...`): her down beat and her presence file say those words, so the dashboard's
 reason is the true one. Any answer from the session, or any bus message she writes, starts the

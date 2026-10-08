@@ -32,8 +32,8 @@ func contractOf(c *tool.Call, name, dir string, pong func(nonce string) string) 
 }
 
 // newSessionContract starts the contract for a session friend: CONTRACT.md as the last run
-// wrote it says whether this start is a reinstall that changed it. post sends one message from
-// the daemon to her own stream, the path a card's deal takes into her session.
+// wrote it says whether this start is a reinstall that changed it. Grok's post uses the
+// harness adapter and reports a deferral as a deferral.
 func (w world) newSessionContract(ctx context.Context, c *tool.Call, name, dir, state string, post func(ctx context.Context, subject, body string) error, record func(string), pong func(nonce string) string) *sessionContract {
 	s := &sessionContract{
 		teller: &friend.ContractTeller{Push: post, Write: func(text string) error { return friend.WriteContract(state, text) }, Record: record, Now: w.now},
@@ -52,7 +52,7 @@ func (w world) newSessionContract(ctx context.Context, c *tool.Call, name, dir, 
 }
 
 // line reads one of the session check's record lines: an answer is the contract read and the
-// no-monitor count cleared; a check deferred for no monitor is pushed as a message.
+// no-monitor count cleared; a check deferred for no monitor is attempted through the adapter.
 func (s *sessionContract) line(ctx context.Context, line string) {
 	if s == nil {
 		return
@@ -81,9 +81,9 @@ func (s *sessionContract) checkText(check string) string {
 	return s.teller.CheckText(check)
 }
 
-// postTo is the daemon's message to her own stream through its own store (so the session check
-// never reads it as hers): the path every message, a card's deal among them, takes into her
-// session.
+// postTo sends the non-Grok contract to the daemon's own stream, as cards are
+// delivered there (docs/SPEC-FRIEND.md, the session contract). Grok has no
+// monitor in this path, so run wires its adapter directly instead.
 func postTo(st bus.Store, name string) func(ctx context.Context, subject, body string) error {
 	return func(ctx context.Context, subject, body string) error {
 		_, err := (&bus.Bus{Store: st}).Send(ctx, bus.Message{From: name, To: []string{name}, Subject: subject, Body: body})
