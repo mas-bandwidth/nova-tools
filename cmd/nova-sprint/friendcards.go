@@ -428,8 +428,8 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 		return 0, 0, err
 	}
 	defer func() {
-		if err == nil {
-			if finished > 0 {
+		if finished > 0 {
+			if err == nil {
 				// A collect can remove Working and promote Ready in this pass. The
 				// pre-collect row cannot certify the queue's current assignments.
 				var current []*sprint.Card
@@ -445,14 +445,17 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 					}
 					packets, err = st.Packets(ctx, active)
 				}
-				if err != nil {
-					// A stale certified snapshot must not outlive a successful
-					// finish when the final row could not be read.
-					err = errors.Join(err, uncertifyQueueFile(dir))
-				}
 			}
-			if err == nil {
-				err = writeQueueFile(dir, states, left, packets)
+			if err != nil {
+				// A stale certified snapshot must not outlive a successful
+				// finish when the pass cannot publish its final row.
+				err = errors.Join(err, uncertifyQueueFile(dir))
+			}
+		}
+		if err == nil {
+			err = writeQueueFile(dir, states, left, packets)
+			if err != nil && finished > 0 {
+				err = errors.Join(err, uncertifyQueueFile(dir))
 			}
 		}
 		// Files already delivered stand even if a later collect or the queue
