@@ -210,6 +210,69 @@ func TestABenchFaultStepsToTheNextSlotAndNeverMarksTheBaseRed(t *testing.T) {
 	require.NotNil(t, red.baseGateFails["2222222222222222222222222222222222222222"], "the red base is counted")
 }
 
+// The bench's own fault is never the tree's, however green the bench ran before it in the
+// pass (the re-read of PR 5443, H2: a disk fills during a pass): a green gate on a bench,
+// then a build-step quota fault on the same bench in the same pass, steps the gate on to the
+// next slot, marks the bench tmp, runs its disk-guard, and blames no card.
+func TestTheBenchsOwnFaultAfterAGreenGateStillStepsAndMarks(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	r := newFaultRig(t, ta)
+	ring := r.ring("s1")
+	bad, good := ring[0], ring[1]
+	dir := moduleDir(t)
+	first := r.lander("s1")
+	assert.Empty(t, first.treeGate(context.Background(), dir, true))
+	assert.Equal(t, []string{bad}, r.took(), "a green gate on the stream's slot")
+	require.True(t, first.locks().ranGreen(bad))
+
+	r.answer[bad] = func() (string, int, error) {
+		return "GATE RUN: go build ./...\nopen /tmp/go-build77/b001/_pkg_.a: disk quota exceeded", 1, nil
+	}
+	l := r.lander("s1")
+	l.shared = first.locks() // the same pass
+	why := l.treeGate(context.Background(), dir, true)
+	assert.Empty(t, why, "no card is blamed: the next slot's gate is green")
+	assert.Nil(t, l.deferral)
+	assert.Equal(t, []string{bad, good}, r.took(), "the fault stepped to the next slot")
+	assert.Equal(t, good, l.gateHost)
+	require.Len(t, l.gateFaults, 1)
+	assert.Equal(t, bench.Fault{Host: bad, Kind: bench.FaultTmp, What: "open /tmp/go-build77/b001/_pkg_.a: disk quota exceeded", Bench: true}, l.gateFaults[0])
+	var w whereView
+	r.json("where", &w)
+	assert.Equal(t, bench.FaultTmp, w.Tables[sprint.Fleet][bad][sprint.FieldBenchFault], "the bench is marked tmp")
+	r.mu.Lock()
+	assert.Equal(t, []string{bad}, r.guards, "its disk-guard ran at once")
+	r.mu.Unlock()
+}
+
+// The pass's one judgment says whose the faults likely are: when none is a bench's own
+// (each inside a test's output), likely the tree's, check the card; else no card is blamed.
+func TestTheFaultJudgmentSaysWhenTheFaultsAreLikelyTheTrees(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	r := newFaultRig(t, ta)
+	l := r.lander("s1")
+	l.locks().deferred([]bench.Fault{{Host: "vision", Kind: bench.FaultGit, What: "x_test.go:3: git ls-tree: exit status 128"}, {Host: "space", Kind: bench.FaultGit, What: "x_test.go:3: git ls-tree: exit status 128"}})
+	l.judgeFaults(context.Background())
+	inbox := r.ok("inbox")
+	assert.Contains(t, inbox, "likely the tree's, check the card", inbox)
+
+	assert.NotContains(t, inbox, "no card is blamed", inbox)
+
+	ta2 := newTestApp(t)
+	ta2.ok("init --readers reader-a,reader-b --members m1")
+	r2 := newFaultRig(t, ta2)
+	own := r2.lander("s2")
+	own.locks().deferred([]bench.Fault{{Host: "vision", Kind: bench.FaultDisk, What: "no space left on device", Bench: true}})
+	own.judgeFaults(context.Background())
+	inbox = r2.ok("inbox")
+	assert.Contains(t, inbox, "no card is blamed", inbox)
+	assert.NotContains(t, inbox, "likely the tree's", inbox)
+}
+
 // The faulted bench is marked on its fleet row for sprint.BenchFaultFor: where and its JSON
 // show it, the ring skips it for that time (the next gates ask only the other slot), and once
 // the bound has passed it is asked again.

@@ -4196,10 +4196,14 @@ that ends red on a bench is classified before it is reported:
   git's from a `go test` run, may be the test's own words (`internal/ci` prints its
   git errors as `git <args>: exit status 128: ...`; a test may quote `no space left on
   device`): it steps or defers that landing alone and marks no bench (the cold read
-  of PR 5443). And a fault on a bench that has run another gate green in this land
-  pass, at the fault or since it, is the tree's: the finding is red, the fault's line
-  at its head (`GATE FAULT ... (the bench ran another gate green this pass: the tree's
-  red, not the bench's): <the run's finding>`), and the head is blamed as above.
+  of PR 5443). And such a fault, one that is not the bench's own, on a bench that has
+  run another gate green in this land pass, at the fault or since it, is the tree's:
+  the finding is red, the fault's line at its head (`GATE FAULT ... (the bench ran
+  another gate green this pass: the tree's red, not the bench's): <the run's
+  finding>`), and the head is blamed as above. The bench's own fault is never the
+  tree's, however green the bench ran before it: a disk fills during a pass (the
+  quota of 2026-10-07), so it steps, marks the bench and blames no card (the re-read
+  of PR 5443).
 
 A fault is said as `GATE FAULT bench=<m> kind=<git|disk|tmp|ssh|copy|toolchain>
 what=<first line>`, on the loop's idle line as the step and under the batch's `LAND`
@@ -4220,7 +4224,9 @@ card blamed, the base not marked red and the stream not stopped; its cards stay
 queued and the next pass lands them. A base re-check deferred so says it in a NOTE
 and re-checks at the next pass. Each pass that deferred a gate raises ONE judgment to
 the seat, never one per stream: `an operation was stuck`, its text `every bench
-faulted: <kinds>; <n> tree gates deferred this pass ...` with each bench's fault; the
+faulted: <kinds>; <n> tree gates deferred this pass ...` with each bench's fault,
+ending `the base is not marked red and no card is blamed`, or, when none of the
+faults is a bench's own, `likely the tree's, check the card`; the
 same benches and kinds again raise none until a pass defers nothing
 (`landgate_fault_test.go`).
 

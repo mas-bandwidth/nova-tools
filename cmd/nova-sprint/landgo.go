@@ -398,9 +398,9 @@ func (l *lander) ringGateFaults(ctx context.Context, hosts []string, dir string,
 // ringGate asks the ring for a lane and runs the gate there, stepping to the next slot
 // when a bench's stage is refused or its run faulted (benchGate); faults is every slot's
 // fault when none was left to ask (a slot passed over this pass for its refused stages is
-// one), nil when the gate ran or was not run for any other reason. A slot that faulted and
-// has run another gate green since, in this pass, makes the fault the tree's: its red
-// finding, the fault's line attached (gateOn).
+// one), nil when the gate ran or was not run for any other reason. A slot whose fault was
+// not the bench's own and that has run another gate green since, in this pass, makes the
+// fault the tree's: its red finding, the fault's line attached (gateOn).
 func (l *lander) ringGate(ctx context.Context, hosts []string, dir string, runs [][]string, tests bool, st *bench.MirrorStage) (string, bool, []bench.Fault) {
 	skips := l.stageSkips()
 	tried, said := map[string]bool{}, map[string]bool{}
@@ -423,7 +423,7 @@ func (l *lander) ringGate(ctx context.Context, hosts []string, dir string, runs 
 		if len(live) == 0 {
 			// a slot that ran another gate green since it faulted here: the tree's red
 			for _, f := range faults {
-				if red := reds[f.Host]; red != "" && f.Kind != bench.FaultSSH && l.locks().ranGreen(f.Host) {
+				if red := reds[f.Host]; red != "" && !f.Bench && l.locks().ranGreen(f.Host) {
 					l.ranOnBench(f.Host, 0)
 					l.gateRing, l.gateSlot = len(hosts), ringSlot(l.gateKey, len(hosts))
 					return red, true, nil
@@ -432,7 +432,7 @@ func (l *lander) ringGate(ctx context.Context, hosts []string, dir string, runs 
 			// every slot faulted: this gate's, and those passed over this pass for theirs
 			for _, h := range benchRing(l.gateKey, hosts) {
 				if why, skip := skips.Skipped(h); skip && !tried[h] {
-					faults = append(faults, bench.Fault{Host: h, Kind: bench.FaultCopy, What: why})
+					faults = append(faults, bench.Fault{Host: h, Kind: bench.FaultCopy, What: why, Bench: true})
 				}
 			}
 			return "", false, faults
@@ -445,7 +445,7 @@ func (l *lander) ringGate(ctx context.Context, hosts []string, dir string, runs 
 		why, ran, refused, fault := l.gateOn(ctx, host, dir, runs, tests, st)
 		if refused != nil {
 			skips.Fail(host, refused.Error())
-			fault = &bench.Fault{Host: host, Kind: bench.FaultCopy, What: refused.Error()}
+			fault = &bench.Fault{Host: host, Kind: bench.FaultCopy, What: refused.Error(), Bench: true}
 		}
 		if fault != nil {
 			l.benchFaulted(ctx, *fault)
@@ -465,8 +465,10 @@ func (l *lander) ringGate(ctx context.Context, hosts []string, dir string, runs 
 // bench's fault when the run failed for the bench and not the tree (bench.ClassifyGate:
 // its git, its disk, its temporary directory, its ssh, its toolchain), which is no finding
 // (why is then the red finding the run would be, the fault's line attached, for ringGate).
-// A fault on a bench that has run another gate green in this pass is the tree's (its run
-// output, not ssh's exit): the bench works, so the finding is red, the fault's line in it.
+// A fault that is not the bench's own (Fault.Bench: a phrase inside a test's FAIL output,
+// git's from go test) on a bench that has run another gate green in this pass is the tree's:
+// the bench works, so the finding is red, the fault's line in it. The bench's own fault
+// (a disk filling during the pass) never is: it steps, is marked, and blames no card.
 func (l *lander) gateOn(ctx context.Context, host, dir string, runs [][]string, tests bool, st *bench.MirrorStage) (why string, ran bool, refused *bench.StageError, fault *bench.Fault) {
 	defer l.giveGateLane(host)
 	l.stage("gate", "bench "+host+" held by "+l.laneWho()+" ("+l.gateWhose()+"): "+strings.Join(runs[0], " "))
@@ -494,7 +496,7 @@ func (l *lander) gateOn(ctx context.Context, host, dir string, runs [][]string, 
 	red := gateWhy(redRun(runs, out), fmt.Errorf("exit status %d on the bench %s", code, host), out)
 	if f, ok := bench.ClassifyGate(host, code, out); ok {
 		red = f.Line() + " (the bench ran another gate green this pass: the tree's red, not the bench's): " + red
-		if f.Kind == bench.FaultSSH || !l.locks().ranGreen(host) {
+		if f.Bench || !l.locks().ranGreen(host) {
 			return red, false, nil, &f
 		}
 	}
@@ -527,13 +529,14 @@ func (l *lander) benchFaulted(ctx context.Context, f bench.Fault) {
 }
 
 // guardBench runs host's disk-guard loop at once (bench.DiskGuardLine), beside the landing
-// and bounded by bench.StepBudget: a test's guardBench seam stands in for the bench, and with
-// the gate's bench seam set and no guard seam nothing is run.
+// and bounded by bench.StepBudget: a test's guardBench seam stands in for the bench (run
+// inline), and with the gate's bench seam set and no guard seam nothing is run.
 func (l *lander) guardBench(host string) {
 	b := l.a.landState()
 	b.mu.Lock()
 	guard, seam := b.guardBench, b.gateBench
 	b.mu.Unlock()
+	seamed := guard != nil
 	if guard == nil {
 		if seam != nil || testguard.Refusing() {
 			return
@@ -543,11 +546,16 @@ func (l *lander) guardBench(host string) {
 			return err
 		}
 	}
-	go func() {
+	run := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), bench.StepBudget)
 		defer cancel()
 		_ = guard(ctx, host) // ignored: the loop runs on its own period whatever this kick did
-	}()
+	}
+	if seamed {
+		run() // a test's seam: at once, so the test reads what it did
+		return
+	}
+	go run()
 }
 
 // deferGate is a tree gate every bench of the ring faulted: the faults kept as the gate's
@@ -719,7 +727,7 @@ func (l *lander) gateBenches(ctx context.Context) (hosts []string, marked []benc
 		}
 		if f, ok := faulted[m]; ok {
 			// marked faulted on its row: skipped by the ring until the mark ends
-			marked = append(marked, bench.Fault{Host: m, Kind: f.Kind, What: "marked until " + f.Until.UTC().Format(time.RFC3339) + ": " + f.What})
+			marked = append(marked, bench.Fault{Host: m, Kind: f.Kind, What: "marked until " + f.Until.UTC().Format(time.RFC3339) + ": " + f.What, Bench: true})
 			continue
 		}
 		hosts = append(hosts, m)
@@ -1029,8 +1037,12 @@ func (l *lander) judgeFaults(ctx context.Context) {
 		return
 	}
 	var each []string
+	whose := "likely the tree's, check the card: no fault is a bench's own, each is inside a test's output, and no bench is marked"
 	for _, f := range faults {
 		each = append(each, f.Host+" "+f.Kind+": "+f.What)
+		if f.Bench {
+			whose = "the base is not marked red and no card is blamed"
+		}
 	}
 	note := sprint.Note{
 		Kind:        sprint.Judgment,
@@ -1038,8 +1050,8 @@ func (l *lander) judgeFaults(ctx context.Context) {
 		StreamLevel: true,
 		Who:         l.c.actor,
 		Decisions:   append([]string(nil), sprint.Decisions[sprint.NOpStuck]...),
-		What: fmt.Sprintf("every bench faulted: %s; %d tree gates deferred this pass, their landings tried again each tick (%s); the base is not marked red and no card is blamed",
-			faultKinds(faults), n, oneline.Cap(strings.Join(each, "; "), 1500)),
+		What: fmt.Sprintf("every bench faulted: %s; %d tree gates deferred this pass, their landings tried again each tick (%s); %s",
+			faultKinds(faults), n, oneline.Cap(strings.Join(each, "; "), 1500), whose),
 	}
 	l.a.serial.Lock()
 	res, err := l.st.Run(ctx, store.NoteStep("land", note))
