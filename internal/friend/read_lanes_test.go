@@ -3,6 +3,7 @@ package friend
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -10,6 +11,7 @@ import (
 	"sync"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,10 +24,11 @@ import (
 
 // readSprint is a sprint server that answers the reader's queue and records every verb.
 type readSprint struct {
-	mu    sync.Mutex
-	queue string
-	state map[string]string // card -> begun | done: what the server's columns say after each verb
-	argvs [][]string
+	mu          sync.Mutex
+	queue       string
+	state       map[string]string // card -> begun | done: what the server's columns say after each verb
+	argvs       [][]string
+	failVerdict string // before or after the canonical write, once
 }
 
 func (s *readSprint) ask(_ context.Context, argv []string) (string, error) {
@@ -33,6 +36,15 @@ func (s *readSprint) ask(_ context.Context, argv []string) (string, error) {
 	defer s.mu.Unlock()
 	s.argvs = append(s.argvs, argv)
 	switch argv[0] {
+	case "card":
+		var reads []map[string]any
+		for _, a := range s.argvs {
+			if len(a) > 4 && a[0] == "read" && (a[3] == "--ok" || a[3] == "--broken") && s.state[a[4]] == "done" {
+				reads = append(reads, map[string]any{"ID": a[4], "Col": strings.TrimPrefix(a[3], "--"), "Fields": map[string]string{"verdict": strings.TrimPrefix(a[3], "--"), "head": "aaa", "finding": flagValue(a, "--finding"), "usage": flagValue(a, "--usage")}})
+			}
+		}
+		b, _ := json.Marshal(map[string]any{"read_cards": reads})
+		return string(b), nil
 	case "queue":
 		var q struct {
 			Epoch string
@@ -45,23 +57,191 @@ func (s *readSprint) ask(_ context.Context, argv []string) (string, error) {
 			case "done":
 				continue
 			case "begun":
-				c["col"] = "begun"
+				c["col"] = "reading"
 			}
 			cards = append(cards, c)
 		}
 		raw, _ := json.Marshal(map[string]any{"epoch": q.Epoch, "cards": cards})
 		return string(raw), nil
 	case "read":
+		if argv[3] == "--ok" || argv[3] == "--broken" {
+			if s.failVerdict == "before" {
+				s.failVerdict = ""
+				return "", errors.New("rpc unavailable before commit")
+			}
+		}
 		if s.state == nil {
 			s.state = map[string]string{}
 		}
-		s.state[argv[4]] = map[string]string{"--begin": "begun"}[argv[3]]
+		id, _, _ := strings.Cut(argv[4], "@")
+		s.state[id] = map[string]string{"--begin": "begun"}[argv[3]]
 		if argv[3] != "--begin" {
-			s.state[argv[4]] = "done" // a verdict, or a return the fake does not ask again
+			s.state[id] = "done" // a verdict, or a return the fake does not ask again
+		}
+		if argv[3] != "--begin" && s.failVerdict == "after" {
+			s.failVerdict = ""
+			return "", errors.New("response lost after commit")
 		}
 		return "READ OK\n", nil
 	}
 	return "", nil
+}
+
+func TestReadVerdictRetriesAfterRPCFailureWithoutRunningAgain(t *testing.T) {
+	t.Parallel()
+	for _, failure := range []string{"before", "after"} {
+		t.Run(failure, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				dir := cardDirFixture(t, nil, nil, nil)
+				h := &readHarness{lanesHarness: &lanesHarness{dir: dir, active: map[string]int{}}, verdicts: map[string]string{"a.w1": okResult}}
+				sp := &readSprint{queue: askedQueue, failVerdict: failure}
+				r := readRig(t, h, sp, 1)
+				r.run(t, 30)
+				assert.Len(t, sp.verbs("--begin"), 2, "a and b begin once each")
+				assert.Len(t, h.prompts, 2, "a completed read never runs again")
+				oks := sp.verbs("--ok")
+				if failure == "before" {
+					require.Len(t, oks, 2)
+					assert.Equal(t, oks[0], oks[1], "finding, epoch and usage survive the failed RPC")
+				} else {
+					require.Len(t, oks, 1, "a lost response does not duplicate the verdict")
+					assert.NoFileExists(t, readSettlementPath(filepath.Join(dir, "reads", "a.w1")), "canonical card confirms the lost response")
+				}
+			})
+		})
+	}
+}
+
+func TestReadRecoversCompletedResultAfterDaemonCrash(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, nil, nil, nil)
+		readDir := filepath.Join(dir, "reads", "a.w1")
+		require.NoError(t, os.MkdirAll(readDir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(readDir, "RESULT.md"), []byte(okResult), 0o644))
+		require.NoError(t, saveReadActive(readDir, readActive{Read: AskedRead{ID: "a.w1", Epoch: "15", Col: "reading", Packet: ReadPacket{Head: "aaa"}}, PID: 2147483647, Identity: "exited process"}))
+		h := &readHarness{lanesHarness: &lanesHarness{dir: dir, active: map[string]int{}}}
+		sp := &readSprint{queue: askedQueue, state: map[string]string{"a.w1": "begun"}}
+		r := readRig(t, h, sp, 1)
+		r.run(t, 20)
+		for _, a := range sp.verbs("--begin") {
+			assert.NotEqual(t, "a.w1", a[4], "the reading result is settled without another begin")
+		}
+		for _, p := range h.prompts {
+			assert.NotContains(t, p, "/a.w1/READ.md", "the model is not run again")
+		}
+		require.Len(t, sp.verbs("--ok"), 1)
+		assert.Equal(t, "fine no findings", flagValue(sp.verbs("--ok")[0], "--finding"))
+	})
+}
+
+func TestReadReplaysDurableSettlementAfterDaemonCrash(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, nil, nil, nil)
+		readDir := filepath.Join(dir, "reads", "a.w1")
+		p := readSettlement{Read: AskedRead{ID: "a.w1", Epoch: "15", Col: "reading", Packet: ReadPacket{Head: "aaa"}}, Verdict: "ok", Finding: "exact finding", Usage: "model=m-pro wall=23s harness=fake account=bob"}
+		require.NoError(t, saveReadSettlement(readDir, p))
+		h := &readHarness{lanesHarness: &lanesHarness{dir: dir, active: map[string]int{}}}
+		sp := &readSprint{queue: askedQueue, state: map[string]string{"a.w1": "begun"}}
+		r := readRig(t, h, sp, 1)
+		r.run(t, 20)
+		for _, prompt := range h.prompts {
+			assert.NotContains(t, prompt, "/a.w1/READ.md", "a completed read is never rerun")
+		}
+		oks := sp.verbs("--ok")
+		require.Len(t, oks, 1)
+		assert.Equal(t, "exact finding", flagValue(oks[0], "--finding"))
+		assert.Equal(t, p.Usage, flagValue(oks[0], "--usage"))
+		assert.NoFileExists(t, readSettlementPath(readDir))
+	})
+}
+
+func TestRestartCannotReturnReadWithoutChildExitProof(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, nil, nil, nil)
+		h := &readHarness{lanesHarness: &lanesHarness{dir: dir, active: map[string]int{}}}
+		sp := &readSprint{queue: askedQueue, state: map[string]string{"a.w1": "begun"}}
+		r := readRig(t, h, sp, 1)
+		r.run(t, 20)
+		assert.Empty(t, sp.verbs("--return"), "missing active identity cannot prove an orphaned child exited")
+		assert.Empty(t, sp.verbs("--ok"))
+	})
+}
+
+func TestMissingKeyHoldsReadLaunch(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, nil, nil, nil)
+		h := &readHarness{lanesHarness: &lanesHarness{dir: dir, active: map[string]int{}}}
+		sp := &readSprint{queue: askedQueue}
+		r := readRig(t, h, sp, 1)
+		r.d.NeedsEnv = []string{"MISSING_READ_KEY"}
+		r.d.Getenv = func(string) string { return "" }
+		r.run(t, 20)
+		assert.Empty(t, sp.verbs("--begin"))
+		assert.Empty(t, h.prompts)
+	})
+}
+
+func TestReadResultForAnotherHeadCannotCloseTheRead(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, nil, nil, nil)
+		h := &readHarness{lanesHarness: &lanesHarness{dir: dir, active: map[string]int{}}, verdicts: map[string]string{"a.w1": strings.Replace(okResult, "head: aaa", "head: different", 1)}}
+		sp := &readSprint{queue: askedQueue}
+		r := readRig(t, h, sp, 1)
+		r.run(t, 20)
+		assert.Empty(t, sp.verbs("--ok"))
+		var returnedA bool
+		for _, a := range sp.verbs("--return") {
+			returnedA = returnedA || a[4] == "a.w1"
+		}
+		assert.True(t, returnedA, "the wrong-head result is returned without a verdict")
+	})
+}
+
+func TestLostResponseConfirmsNativeReadAgainstItsPrimary(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	p := readSettlement{Read: AskedRead{ID: "s1-1.r1.reader-bob", Epoch: "15", Packet: ReadPacket{Head: "aaa"}}, Verdict: "ok", Finding: "fine", Usage: "model=m-pro wall=2s"}
+	require.NoError(t, saveReadSettlement(dir, p))
+	l := &loop{ctx: context.Background(), d: &Daemon{Friend: "bob", Record: func(string) {}, Sprint: func(_ context.Context, argv []string) (string, error) {
+		assert.Equal(t, []string{"card", "s1-1", "--json"}, argv, "the native .reader suffix is not part of the primary")
+		return `{"read_cards":[{"ID":"s1-1.r1.reader-bob","Fields":{"head":"aaa","verdict":"ok","finding":"fine","usage":"model=m-pro wall=2s"}}]}`, nil
+	}}}
+	assert.True(t, l.confirmReadSettlement(dir, p, time.Now()))
+	assert.NoFileExists(t, readSettlementPath(dir))
+}
+
+func TestRecoveredReadKeepsExitProofUntilSettlementIsDurable(t *testing.T) {
+	t.Parallel()
+	dir := cardDirFixture(t, nil, nil, nil)
+	readDir := filepath.Join(dir, "reads", "a.w1")
+	require.NoError(t, os.MkdirAll(readDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(readDir, "RESULT.md"), []byte(okResult), 0o644))
+	require.NoError(t, saveReadActive(readDir, readActive{Read: AskedRead{ID: "a.w1", Epoch: "15", Col: "reading", Packet: ReadPacket{Head: "aaa"}}, PID: 2147483647, Identity: "exited process"}))
+	sp := &readSprint{queue: askedQueue, state: map[string]string{"a.w1": "begun"}}
+	d := &Daemon{Friend: "bob", Harness: "fake", Dir: dir, Sprint: sp.ask, ReadSlots: func() int { return 0 }, Record: func(string) {}}
+	s := newReadSet()
+	s.persist = func(string, readSettlement) error { return errors.New("disk write failed") }
+	first := &loop{ctx: context.Background(), d: d, reads: s, lanes: &laneSet{}}
+	first.readStep(time.Now())
+	assert.FileExists(t, readActivePath(readDir), "exit proof survives a failed settlement write")
+	assert.NoFileExists(t, readSettlementPath(readDir))
+	assert.Empty(t, sp.verbs("--return"), "a failed verdict save must not fall through to return")
+	assert.Empty(t, sp.verbs("--ok"))
+
+	restarted := &loop{ctx: context.Background(), d: d, reads: newReadSet(), lanes: &laneSet{}}
+	restarted.readStep(time.Now())
+	assert.NoFileExists(t, readActivePath(readDir))
+	assert.NoFileExists(t, readSettlementPath(readDir))
+	oks := sp.verbs("--ok")
+	require.Len(t, oks, 1)
+	assert.Equal(t, "fine no findings", flagValue(oks[0], "--finding"))
+	assert.Empty(t, sp.verbs("--return"))
 }
 
 func (s *readSprint) verbs(flag string) [][]string {
