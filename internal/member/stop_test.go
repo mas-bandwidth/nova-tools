@@ -2,6 +2,7 @@ package member
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -173,6 +174,41 @@ func TestStoppedParentExitKeepsReturnOwedUntilGroupProof(t *testing.T) {
 	_, err = m.Tick(time.Unix(11, 0))
 	require.NoError(t, err)
 	assert.Len(t, s.lines("stop-return"), 1)
+}
+
+func TestStopWaitsForInFlightStartAndCancelsItsChild(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	m, _, r, _ := stopRig(Config{As: "m", Width: 1, Background: true, Admit: func(Packet) error {
+		close(entered)
+		<-release
+		return nil
+	}})
+	p := pk("c1")
+	require.True(t, m.start(p))
+	<-entered
+	done := make(chan struct{})
+	go func() {
+		m.machineStop(queueOut{Machine: "STOPPED", Epoch: p.Epoch}, map[string]queueCard{"c1": working("c1", p.Gen, &p)}, time.Now())
+		close(done)
+	}()
+	close(release)
+	<-done // the package test timeout detects a broken start/STOP handshake
+	m.WaitLong()
+	require.NotNil(t, r.child("c1"))
+	assert.Equal(t, 1, r.child("c1").stops())
+	assert.Equal(t, 1, m.OwedStopReturns())
+}
+
+func TestAdmissionRefusalDuringStopReturnsWithoutStarting(t *testing.T) {
+	m, s, r, _ := stopRig(Config{As: "m", Width: 1, Admit: func(Packet) error { return fmt.Errorf("fresh queue says STOPPED") }})
+	p := pk("c1")
+	m.start(p)
+	assert.Empty(t, r.started())
+	s.set("stop-return", 0, "ok")
+	m.machineStop(queueOut{Machine: "STOPPED", Epoch: p.Epoch}, map[string]queueCard{"c1": working("c1", p.Gen, &p)}, time.Now())
+	assert.Len(t, s.lines("stop-return"), 1)
+	assert.Equal(t, 0, m.OwedStopReturns())
 }
 
 func TestReturnedReadBeginsAtQueuedGeneration(t *testing.T) {

@@ -373,6 +373,9 @@ type takeOut struct {
 // Config is one member's or reader's standing.
 type Config struct {
 	As string // the member's (reader's) name in the fleet (readers) table
+	// Admit rereads the live claim immediately before a delayed child starts.
+	// A failed or disconnected read refuses the launch. Nil is used by in-memory tests.
+	Admit func(Packet) error
 	// Width is an override of the most cards it runs at once, a twin's. A
 	// worker with none runs the width its fleet row names, read with its
 	// queue every tick (the fleet row is the truth): a member's own row, a
@@ -454,8 +457,11 @@ type launch struct {
 	// told to stop (stopPid, 0 when unknown), and once it has ended the card is handed back
 	// with stop-return, never finished; stopAt is when.
 	stopped bool
-	stopPid int
-	stopAt  time.Time
+	// admissionDenied means no child was created after the fresh queue refused
+	// a delayed launch. STOP may return this claim without process debt.
+	admissionDenied bool
+	stopPid         int
+	stopAt          time.Time
 }
 
 // Member is the loop's state: the children running, by card id.
@@ -521,22 +527,26 @@ type Member struct {
 	// the findings by card id; startMu puts the starts one after another, StartGap apart;
 	// pushGate bounds the pushes running at once (pushWidth); wake holds one word for the
 	// loop: something was posted or a child exited, so the next pass is due now (Wake).
-	postMu   sync.Mutex
-	posted   map[string]post
-	startMu  sync.Mutex
-	pushGate chan struct{}
-	wake     chan struct{}
+	postMu  sync.Mutex
+	posted  map[string]post
+	startMu sync.Mutex
+	// stopPending is written and read with startMu. A STOP pass waits for an
+	// in-flight start to register its child, then cancels it in the same pass.
+	stopPending bool
+	pushGate    chan struct{}
+	wake        chan struct{}
 }
 
 // post is what a launch's long work found: its start (the child, or why there is none),
 // or its end (how the child ended and, for a work card, its push).
 type post struct {
-	note     string // a line for the log: a script read that gave no verdict, its model read begun
-	child    Child
-	startErr error
-	res      *Result
-	push     *Push
-	decided  *decided
+	note         string // a line for the log: a script read that gave no verdict, its model read begun
+	child        Child
+	startErr     error
+	admissionErr bool
+	res          *Result
+	push         *Push
+	decided      *decided
 }
 
 // decided is a take's attempt decision as the finish carries it (Config.Attempt): its card
@@ -1341,10 +1351,25 @@ func (m *Member) start(p Packet) bool {
 	m.running[p.Card] = launch{busy: true, busyAt: m.clock(), gen: p.Gen, attempt: p.Attempt, epoch: p.Epoch, branch: p.Branch, packet: p, retried: m.stageRetried[p.Card]}
 	m.long(func() {
 		m.startMu.Lock()
+		defer m.startMu.Unlock()
 		m.staggerStart()
-		ch, note, err := m.scriptOrStart(p)
-		m.startMu.Unlock()
-		m.post(p.Card, post{child: ch, note: note, startErr: err})
+		var ch Child
+		var note string
+		var err error
+		admissionErr := false
+		if m.stopPending {
+			err = fmt.Errorf("machine STOPPED before child start")
+			admissionErr = true
+		} else {
+			if m.cfg.Admit != nil {
+				err = m.cfg.Admit(p)
+				admissionErr = err != nil
+			}
+			if err == nil {
+				ch, note, err = m.scriptOrStart(p)
+			}
+		}
+		m.post(p.Card, post{child: ch, note: note, startErr: err, admissionErr: admissionErr})
 	})
 	m.longWork()
 	if m.cfg.Background {
@@ -1410,6 +1435,14 @@ func (m *Member) collect() (acted int) {
 			fmt.Fprintf(m.out, "read %s: %s\n", card, po.note)
 		}
 		switch {
+		case po.admissionErr:
+			// This process did not start. Preserve the claim until the next
+			// queue: STOP returns it, while RUNNING retries from the queue.
+			l.child = unstartedChild{}
+			l.admissionDenied = true
+			m.running[card] = l
+			fmt.Fprintf(m.out, "start %s: %v\n", card, po.startErr)
+			continue
 		case po.startErr != nil:
 			p := l.packet
 			delete(m.running, card)
@@ -1499,6 +1532,16 @@ func (m *Member) OwedStopReturns() int {
 // (moved to a new generation, or gone) has nothing left to return and is reaped. It
 // returns how many cards it handed back.
 func (m *Member) machineStop(q queueOut, byID map[string]queueCard, now time.Time) (acted int) {
+	if q.Machine != "" {
+		m.startMu.Lock()
+		m.stopPending = q.Machine == "STOPPED"
+		m.startMu.Unlock()
+		// A start that held startMu before STOP has posted its child now. Collect
+		// it before cancellation so this pass cannot overlook the new process.
+		if m.stopPending {
+			acted += m.collect()
+		}
+	}
 	switch {
 	case q.Machine == "STOPPED":
 		if !m.stopped {
@@ -1523,7 +1566,11 @@ func (m *Member) machineStop(q queueOut, byID map[string]queueCard, now time.Tim
 			}
 			l.stopped, l.stopAt = true, now
 			m.running[id] = l
-			fmt.Fprintf(m.out, "LANE CANCELLED BY STOP card=%s gen=%d epoch=%d pid=%d: the child was told to stop; its working tree and log are kept\n", id, l.gen, l.epoch, l.stopPid)
+			if l.admissionDenied {
+				fmt.Fprintf(m.out, "LANE CANCELLED BY STOP card=%s gen=%d epoch=%d pid=0: launch admission refused before a child was created\n", id, l.gen, l.epoch)
+			} else {
+				fmt.Fprintf(m.out, "LANE CANCELLED BY STOP card=%s gen=%d epoch=%d pid=%d: the child was told to stop; its working tree and log are kept\n", id, l.gen, l.epoch, l.stopPid)
+			}
 		}
 		// A prior member may have died while its native child kept running.
 		for _, id := range slices.Sorted(maps.Keys(byID)) {
@@ -1553,6 +1600,13 @@ func (m *Member) machineStop(q queueOut, byID map[string]queueCard, now time.Tim
 					l.stopPid = s.Stop()
 				}
 				m.running[id] = l
+			}
+		}
+	}
+	if !m.stopped {
+		for id, l := range m.running {
+			if l.admissionDenied && !l.stopped {
+				delete(m.running, id) // the live queue can supply the current claim next pass
 			}
 		}
 	}
@@ -1857,7 +1911,7 @@ func (m *Member) endEnded(ids []string, byID map[string]queueCard) {
 	for _, id := range ids {
 		c := byID[id]
 		l, ours := m.running[id]
-		if !ours || l.busy || l.stopped || l.res != nil || l.spent || (c.Col != "working" && c.Col != "reading") || m.moved(l, c) || !l.child.Done() {
+		if !ours || l.busy || l.stopped || l.admissionDenied || l.res != nil || l.spent || (c.Col != "working" && c.Col != "reading") || m.moved(l, c) || !l.child.Done() {
 			continue
 		}
 		l.busy, l.busyAt = true, m.clock()
@@ -1906,7 +1960,7 @@ func (m *Member) endEndedLocal() {
 	var ends sync.WaitGroup
 	for _, id := range slices.Sorted(maps.Keys(m.running)) {
 		l, ours := m.running[id]
-		if !ours || l.busy || l.stopped || l.res != nil || l.spent || l.child == nil || !l.child.Done() || l.claimMoved || l.dropped {
+		if !ours || l.busy || l.stopped || l.admissionDenied || l.res != nil || l.spent || l.child == nil || !l.child.Done() || l.claimMoved || l.dropped {
 			continue
 		}
 		l.busy, l.busyAt = true, m.clock()
@@ -2279,6 +2333,14 @@ const ScriptReadPrefix = "script read: "
 
 // scriptChild is a read already ended: the script reader's own verdict, with no process.
 type scriptChild struct{ res Result }
+
+// unstartedChild is a local proof that admission refused before Runner.Start.
+// It carries no native process to reap or result to report.
+type unstartedChild struct{}
+
+func (unstartedChild) Done() bool          { return true }
+func (unstartedChild) Result() Result      { return Result{} }
+func (unstartedChild) StopConfirmed() bool { return true }
 
 func (c scriptChild) Done() bool     { return true }
 func (c scriptChild) Result() Result { return c.res }

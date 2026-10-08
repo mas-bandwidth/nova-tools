@@ -244,6 +244,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	}
 	cfg := memberConfig(*as, *width, *reader, meter, room, *root, *noWall)
 	cfg.Sleep = time.Sleep // harness starts StartGap apart
+	cfg.Admit = func(p member.Packet) error { return admitMemberLaunch(sp.Run, *as, p) }
 	// the attempt decision reads the decision key in this process when --pass names
 	// it and the environment does not hold it (keys.go)
 	cfg.Attempt = workAttempt(*reader, rn.getenv)

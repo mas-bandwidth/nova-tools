@@ -3,8 +3,8 @@
 package main
 
 import (
-	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -20,7 +20,7 @@ func groupRunnable(pgid int) bool {
 		if _, err := strconv.Atoi(e.Name()); err != nil {
 			continue
 		}
-		b, err := os.ReadFile(fmt.Sprintf("/proc/%s/stat", e.Name()))
+		b, err := os.ReadFile(filepath.Join("/proc", e.Name(), "stat"))
 		if os.IsNotExist(err) {
 			continue
 		}

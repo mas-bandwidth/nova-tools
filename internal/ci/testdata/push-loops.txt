@@ -22,6 +22,8 @@ cmd/nova-friend/main.go world.waitPong wake ping pong wait
 # the fleet member and reader (cmd/nova-swarm member, internal/member)
 cmd/nova-swarm/member.go cmdMember member pass
 cmd/nova-swarm/member.go memberLoop member pass
+cmd/nova-swarm/member.go nativeRunner.RecoverStopped waits and retries
+cmd/nova-swarm/member.go reapVerifiedGroup waits and retries
 internal/member/member.go Member.BeatLoop member beat
 
 # the coordinator's inbox and wake (cmd/nova-sprint)

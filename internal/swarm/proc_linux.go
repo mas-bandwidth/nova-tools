@@ -8,11 +8,14 @@ import (
 	"strings"
 )
 
-// StartStamp is the kernel's own start stamp for a pid: field 22 of /proc/<pid>/stat, the
-// process's start time in clock ticks since boot. It is what tells a live pid from a REUSED
-// one -- a slot file whose pid is alive under a different stamp is a different process
-// wearing an old number, and rule 17 quarantines it rather than adopting it.
+// StartStamp combines this boot's ID and the process's start tick (field 22
+// of /proc/<pid>/stat). A receipt from another boot cannot authorize a reused
+// PID even if its tick happens to match.
 func StartStamp(pid int) string {
+	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	if err != nil || strings.TrimSpace(string(boot)) == "" {
+		return "-"
+	}
 	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {
 		return "-"
@@ -29,5 +32,5 @@ func StartStamp(pid int) string {
 	if len(fields) < 20 {
 		return "-"
 	}
-	return fields[19]
+	return strings.TrimSpace(string(boot)) + ":" + fields[19]
 }

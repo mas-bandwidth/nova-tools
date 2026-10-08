@@ -68,8 +68,7 @@ func TestStopWillNotSignalReusedGroupNumber(t *testing.T) {
 	require.Eventually(t, func() bool { _, err := os.Stat(ready); return err == nil }, time.Second, 10*time.Millisecond)
 	c := &nativeChild{groupDir: dir, done: make(chan struct{})}
 	close(c.done)
-	c.Stop()
-	time.Sleep(100 * time.Millisecond)
+	c.stopGroupAfterGrace() // synchronous proof path; the mismatched birth must never signal
 	assert.True(t, swarm.GroupAlive(pid, ""), "a mismatched identity killed an unrelated group")
 	assert.False(t, c.StopConfirmed())
 }
