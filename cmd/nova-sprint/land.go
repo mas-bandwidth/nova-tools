@@ -31,6 +31,7 @@ package main
 // (landprune.go).
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -131,13 +132,24 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     holds a group (a GitHub repository's, asked through gh; a queue that
     cannot be read pauses as a held one). A paused batch is refused before any
     git and again just before its push: nothing is pushed or recorded, no
-    stream stops, and the cards land on a run after the pause ends.`) + "\n"
+    stream stops, and the cards land on a run after the pause ends.
+  nova-sprint land --stream s1
+    on a stream marked --land-protected, when origin is a forge and the base is
+    dev or main, pushes refs/heads/land/<stream> and opens a pull request into
+    that branch. The pull request's title and body name the batch's cards, their
+    heads and the readers who said ok, and auto-merge is enabled when the
+    repository allows it. The cards stay merging, the pull request's URL on
+    each, until a later land finds the pull request merged; only then are they
+    recorded landed. A failed push or a refused pull request is one judgment
+    naming the remote's words, and the cards stay merging. A failed read of a
+    pull request already open is not that judgment. A local path as origin
+    still pushes the base directly. A dry run opens no pull request.`) + "\n"
 }
 
 // landBatch is one batch's outcome, a line of output and an item of --json.
 type landBatch struct {
 	Stream string   `json:"stream"`
-	Status string   `json:"status"` // ok, refused, failed
+	Status string   `json:"status"` // ok, merging, refused, failed
 	Cards  int      `json:"cards"`
 	IDs    []string `json:"ids"`
 	Repo   string   `json:"repo,omitempty"`
@@ -501,8 +513,10 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	// keeps its place last
 	order = sprint.LandOrder(s, order)
 	// the pass: every stream's batch merged beside the others', then the green ones landed
-	// one at a time in this order (landpass.go; tla/LandPass.tla)
-	failed := l.pass(ctx, s, order)
+	// one at a time in this order (landpass.go; tla/LandPass.tla). A protected base is
+	// wired here, not in landpass.go: passStreams pushes land/<stream> and opens the
+	// pull request, and does not treat an open pull request as a move of the base.
+	failed := l.passStreams(ctx, s, order)
 	if !l.dry {
 		l.pruneWorktrees(ctx)
 	}
@@ -532,6 +546,8 @@ func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Wri
 		case "ok":
 			batches++
 			cards += b.Cards
+		case "merging":
+			// the pull request is open and the cards stay merging: not a landing, not a refusal
 		default:
 			refused++
 		}
@@ -567,7 +583,7 @@ func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Wri
 			fmt.Fprintf(stdout, "LAND CLEANED stream=%s dir=%s files=%d paths=%s\n", oneline.Field(b.Stream), oneline.Field(b.Dir), len(b.Cleaned), oneline.Field(strings.Join(b.Cleaned, ",")))
 		}
 		w := stdout
-		if b.Status != "ok" {
+		if b.Status != "ok" && b.Status != "merging" {
 			w = stderr
 		}
 		fmt.Fprintln(w, b.line())
@@ -583,6 +599,8 @@ func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Wri
 			fmt.Fprintf(w, "NOTE stream %s is not stopped: these cards are held from landing until their judgment is answered or their base re-pointed, and the rest of the stream lands; run: nova-sprint inbox\n", oneline.Field(b.Stream))
 		case b.Fact != "":
 			fmt.Fprintf(w, "NOTE the stream is stopped (%s); run: nova-sprint inbox\n", b.Fact)
+		case b.Status == "refused" && !l.dry && strings.HasPrefix(b.Reason, sprint.NLandProtectedRefused):
+			// the judgment names the remote's words; the cards stay merging
 		case b.Status == "refused" && !l.dry:
 			fmt.Fprintf(w, "NOTE nothing was pushed or reported for stream %s; its cards stay queued\n", oneline.Field(b.Stream))
 		}
@@ -2027,4 +2045,410 @@ func (l *lander) scopeOf(merged []string) []string {
 		}
 	}
 	return out
+}
+
+// landPRState is the pull request URL the batch's cards already carry. anySet is
+// true when one of them carries one; mismatch when they do not all carry the same URL.
+func landPRState(cards []landCard) (url string, anySet, mismatch bool) {
+	seen := false
+	for _, c := range cards {
+		u := ""
+		if c.primary != nil {
+			u = strings.TrimSpace(c.primary.F(sprint.FieldLandPR))
+		}
+		if u != "" {
+			anySet = true
+		}
+		if !seen {
+			url, seen = u, true
+			continue
+		}
+		if u != url {
+			mismatch = true
+		}
+	}
+	return url, anySet, mismatch
+}
+
+// protJob is one batch's protected land. It is not a field of landJob: landpass.go
+// is outside this wiring, and passStreams is what the land command runs.
+type protJob struct {
+	deferPR bool // origin is a forge and the base is protected: do not push the base
+	pollPR  bool // a pull request is already recorded: build nothing, poll in phase 2
+	onBase  bool // this batch put commits on the protected base (its pull request merged)
+}
+
+// protectPoll is the protected mark for a batch, before prepare. A forge origin of a
+// marked stream whose base is protected does not push that base. A pull request
+// already recorded is polled from the clone and is not cut or built again. Nil when
+// this batch pushes its base as landpass.go does, including a local path and a dry run.
+func (l *lander) protectPoll(ctx context.Context, s *sprint.Snapshot, j *landJob) *protJob {
+	if l.dry || j == nil {
+		return nil
+	}
+	if why, _ := l.placeWhy(j.stream, j.cards); why != "" {
+		return nil
+	}
+	b := &j.b
+	if why := l.pause(ctx, s, b.Repo, b.Base); why != "" {
+		return nil
+	}
+	clone, why := l.clone(ctx, b.Repo)
+	if why != "" || clone == "" {
+		return nil
+	}
+	origin, err := l.git(ctx, clone, "remote", "get-url", "origin")
+	if err != nil || !sprint.LandProtectedDefers(s, j.stream, b.Repo, b.Base, origin) {
+		return nil
+	}
+	_, anySet, mismatch := landPRState(j.cards)
+	if !anySet && !mismatch {
+		return &protJob{deferPR: true}
+	}
+	j.clone, b.Dir, j.dir = clone, clone, clone
+	return &protJob{deferPR: true, pollPR: true}
+}
+
+// passStreams is pass with the protected base guarded in this file. landpass.go's
+// pass still pushes a base directly; the land command calls this. A batch whose
+// pull request is open does not count as a move of that base, so a later batch is
+// not rebuilt onto a protected branch nothing has merged into.
+func (l *lander) passStreams(ctx context.Context, s *sprint.Snapshot, order []string) (failed bool) {
+	queues := map[string][]landCard{}
+	var streams []string
+	for _, name := range order {
+		if cards, ok := l.openStream(s, name); ok {
+			queues[name], streams = cards, append(streams, name)
+		}
+	}
+	var pushed []*landJob
+	for {
+		var jobs []*landJob
+		for _, name := range streams {
+			cards := queues[name]
+			if len(cards) == 0 {
+				continue
+			}
+			n := batchOf(cards)
+			ids := make([]string, n)
+			for i, c := range cards[:n] {
+				ids[i] = c.id
+			}
+			jobs = append(jobs, &landJob{stream: name, cards: cards[:n], ids: ids, f: l.fork(name),
+				b: landBatch{Stream: name, Status: "refused", Cards: n, IDs: ids, Repo: cards[0].repo, Base: cards[0].base, DryRun: l.dry}})
+		}
+		if len(jobs) == 0 {
+			return failed
+		}
+		marks := map[*landJob]*protJob{}
+		for _, j := range jobs {
+			m := l.protectPoll(ctx, s, j)
+			if m != nil && m.pollPR {
+				marks[j] = m
+				continue
+			}
+			l.prepare(ctx, s, j)
+			if m != nil && !j.done {
+				marks[j] = m
+			}
+		}
+		var polling []*landJob
+		for _, j := range jobs {
+			if m := marks[j]; m != nil && m.pollPR && !j.done {
+				j.done = true
+				polling = append(polling, j)
+			}
+		}
+		l.merges(ctx, jobs)
+		for _, j := range polling {
+			j.done = false
+		}
+		for _, j := range jobs {
+			if m := marks[j]; m != nil && m.deferPR && !j.done {
+				j.f.protectedLand(ctx, s, j, m)
+			} else if !j.done {
+				l.land(ctx, j, pushed)
+			}
+			l.take(j.f)
+			moved := j.b.Tip != "" && !l.dry
+			if m := marks[j]; m != nil {
+				moved = m.onBase && !l.dry
+			}
+			if moved {
+				pushed = append(pushed, j)
+			}
+			switch {
+			case !j.ok:
+				failed = true
+				queues[j.stream] = nil
+			case j.on:
+				queues[j.stream] = queues[j.stream][j.past:]
+			default:
+				queues[j.stream] = nil
+			}
+		}
+	}
+}
+
+// protectedLand is land's protected base: the batch's tip is pushed to
+// refs/heads/land/<stream> and a pull request into the protected branch opened,
+// or the one the cards already name polled; the cards are reported landed only
+// once that pull request has merged (docs/SPEC-SPRINT.md section 7). The job
+// ends as the pass's other jobs do: the cards the stream goes past, whether it
+// goes on, and whether the remote was heard.
+func (l *lander) protectedLand(ctx context.Context, s *sprint.Snapshot, j *landJob, m *protJob) {
+	b, stream := &j.b, j.stream
+	cards, tip := j.cards, j.tip
+	poll := m != nil && m.pollPR
+	if poll {
+		// a pull request already recorded is polled: the batch is not built or pushed again
+		tip = ""
+	} else {
+		b.Cards, b.IDs = len(j.merged), j.ids[:len(j.merged)]
+		cards = j.cards[:len(j.merged)]
+	}
+	done, on, ok := l.protectedDrive(ctx, s, j.dir, b, stream, cards, tip)
+	// only a merged pull request moved the protected base; an open one has not
+	if m != nil {
+		m.onBase = b.Status == "ok"
+	}
+	if ok && !poll && j.failed.id != "" && (b.Status == "merging" || on) {
+		if j.failed.emptyCommit {
+			j.ended(len(j.merged)+1, l.returnCard(stream, j.failed), true)
+			return
+		}
+		j.ended(len(j.merged)+1, l.conflict(stream, j.failed), true)
+		return
+	}
+	j.ended(done, on, ok)
+}
+
+// protectedDrive pushes the land branch and opens the pull request, or polls the one
+// the cards already name, and records what the remote did. The cards stay merging
+// until the pull request has merged. b is updated with the batch's line.
+func (l *lander) protectedDrive(ctx context.Context, s *sprint.Snapshot, dir string, b *landBatch, stream string, pins []landCard, tip string) (int, bool, bool) {
+	remote := forgeLandRemote{l: l, ctx: ctx, dir: dir}
+	req := sprint.LandProtectedReq{
+		Stream: stream, Repo: b.Repo, Base: b.Base, Tip: tip, Who: l.c.actor,
+		Cards: make([]sprint.LandProtectedCard, len(pins)),
+	}
+	for i, c := range pins {
+		req.Cards[i] = sprint.LandProtectedCard{ID: c.id, Head: c.head}
+	}
+	l.stage("push", "protected land")
+	start := time.Now()
+	out, err := sprint.LandProtectedDrive(l.withReaders(ctx, s), remote, req)
+	if b.Times != nil {
+		since(&b.Times.Push, start)
+	}
+	if err != nil {
+		b.Reason = "the protected land could not be asked: " + firstLine("", err)
+		l.keep(*b)
+		return 0, false, true
+	}
+	switch out.Kind {
+	case "landed":
+		if out.Fact.MergeSHA != "" {
+			b.Tip = out.Fact.MergeSHA
+		} else if tip != "" {
+			b.Tip = tip
+		}
+		if !l.landed(*b, stream, pins) {
+			return 0, false, false
+		}
+		b.Status = "ok"
+		return len(pins), true, true
+	case "opened", "waiting":
+		if out.Kind == "opened" {
+			res, err := l.recordProtected(stream, pins, out.Fact)
+			if code := stepExit(res, err); code != 0 || len(res.Refused) > 0 {
+				url := out.Fact.URL
+				if url == "" {
+					url = "the pull request"
+				}
+				b.Status, b.Reason = "failed", "the pull request "+url+" was opened and NOT recorded ("+stepWhy(res, err)+"); "+againRemedy(stream)
+				l.keep(*b)
+				return 0, false, false
+			}
+		}
+		b.Status = "merging"
+		switch {
+		case out.Fact.URL != "":
+			if tip != "" {
+				b.Tip = tip
+			}
+			b.Reason = "pull request " + out.Fact.URL + " is open; the cards stay merging until it merges"
+			if out.Fact.Poll != "" {
+				b.Reason += "; poll: " + out.Fact.Poll
+			}
+		case out.Fact.Refused != "":
+			// a waiting refusal has no pull request: keep the remote's words
+			b.Reason = sprint.NLandProtectedRefused + ": " + out.Fact.Refused
+		case out.Fact.Poll != "":
+			b.Reason = "the cards stay merging; poll: " + out.Fact.Poll
+		default:
+			b.Reason = "the cards stay merging"
+		}
+		l.keep(*b)
+		return 0, false, true
+	default:
+		if out.Fact.Refused == "" {
+			b.Reason = protectedRefusal(out.Plan)
+			if b.Reason == "" {
+				b.Reason = sprint.NLandProtectedRefused
+			}
+			l.keep(*b)
+			return 0, false, true
+		}
+		res, err := l.recordProtected(stream, pins, out.Fact)
+		b.Reason = sprint.NLandProtectedRefused + ": " + out.Fact.Refused
+		if code := stepExit(res, err); code != 0 || len(res.Refused) > 0 {
+			b.Reason += "; the judgment was not recorded (" + stepWhy(res, err) + ")"
+		}
+		l.keep(*b)
+		return 0, false, true
+	}
+}
+
+// recordProtected writes the plan for a fact the remote already gave, fenced to the
+// heads land read. It does not talk to the remote.
+func (l *lander) recordProtected(stream string, pins []landCard, fact sprint.LandProtectedFact) (store.Result, error) {
+	return l.stepWith(sprint.MergeReq{Stream: stream, Who: l.c.actor}, pins, func(s *sprint.Snapshot, r sprint.MergeReq) sprint.Plan {
+		if fact.Who == "" {
+			fact.Who = r.Who
+		}
+		return sprint.LandProtectedPlan(s, fact)
+	})
+}
+
+// protectedRefusal is a path refusal's words, the remote not yet asked.
+func protectedRefusal(p sprint.Plan) string {
+	var w []string
+	for _, r := range p.Refused {
+		if r.Why != "" {
+			w = append(w, r.Why)
+		}
+	}
+	return strings.Join(w, "; ")
+}
+
+// withReaders is s with the readers table loaded, so a pull request's body can name
+// the readers who said ok. s is unchanged. A load that fails leaves the body without them.
+func (l *lander) withReaders(ctx context.Context, s *sprint.Snapshot) *sprint.Snapshot {
+	if s == nil || s.Readers != nil || l.st == nil || l.a == nil {
+		return s
+	}
+	l.a.serial.Lock()
+	rs, err := l.st.Load(ctx, []string{sprint.Readers}, nil)
+	l.a.serial.Unlock()
+	if err != nil || rs == nil || rs.Readers == nil {
+		return s
+	}
+	cp := *s
+	cp.Readers = rs.Readers
+	return &cp
+}
+
+// forgeLandRemote is the forge gh and git the lander already runs. Push sends the
+// land branch. A pull request is opened with gh pr create. Auto-merge is one GraphQL
+// mutation, and a repository that refuses it leaves the pull request open.
+type forgeLandRemote struct {
+	l   *lander
+	ctx context.Context
+	dir string
+}
+
+func (f forgeLandRemote) Push(ref, sha string) error {
+	_, err := f.l.git(f.ctx, f.dir, "push", "--porcelain", "origin", sha+":"+ref)
+	return err
+}
+
+func (f forgeLandRemote) OpenPullRequest(base, head, title, body string) (string, error) {
+	out, err := f.l.gh(f.ctx, f.dir, "pr", "create", "--base", base, "--head", head, "--title", title, "--body", body)
+	if err != nil {
+		return "", err
+	}
+	url := pullRequestURL(out)
+	if url == "" {
+		return "", errors.New("gh pr create printed no pull request url")
+	}
+	return url, nil
+}
+
+func (f forgeLandRemote) EnableAutoMerge(url string) (bool, error) {
+	n, err := prNumber(url)
+	if err != nil {
+		return false, err
+	}
+	raw, err := f.l.gh(f.ctx, f.dir, "pr", "view", n, "--json", "id")
+	if err != nil {
+		return false, err
+	}
+	var v prJSON
+	if err := json.Unmarshal([]byte(raw), &v); err != nil || v.ID == "" {
+		return false, errors.New("the pull request id could not be read")
+	}
+	// one mutation. A repository that does not allow it returns an error, and the pull request stays open.
+	const query = "mutation enablePullRequestAutoMerge($id:ID!){enablePullRequestAutoMerge(input:{pullRequestId:$id,mergeMethod:MERGE}){pullRequest{id}}}"
+	_, err = f.l.gh(f.ctx, f.dir, "api", "graphql", "-f", "query="+query, "-f", "id="+v.ID)
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (f forgeLandRemote) PullRequestMerged(url string) (bool, string, error) {
+	n, err := prNumber(url)
+	if err != nil {
+		return false, "", err
+	}
+	raw, err := f.l.gh(f.ctx, f.dir, "pr", "view", n, "--json", "state,mergeCommit")
+	if err != nil {
+		return false, "", err
+	}
+	var v prJSON
+	if jerr := json.Unmarshal([]byte(raw), &v); jerr != nil {
+		return false, "", jerr
+	}
+	sha := mergedSHA(v)
+	return sha != "", sha, nil
+}
+
+// pullRequestURL is the pull request URL in gh's output, the last line that carries one.
+func pullRequestURL(out string) string {
+	url := ""
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "://") {
+			url = line
+		}
+	}
+	return url
+}
+
+// gh runs gh in dir and returns its trimmed stdout. An error carries gh's own words.
+func (l *lander) gh(ctx context.Context, dir string, args ...string) (string, error) {
+	b := subproc.Prepare(ctx, subproc.GHBudget, "gh", args...)
+	defer b.Cancel()
+	if dir != "" {
+		b.Cmd.Dir = dir
+	}
+	if l.a != nil && l.a.gitEnv != nil {
+		b.Cmd.Env = l.a.gitEnv
+	}
+	var stdout, stderr bytes.Buffer
+	b.Cmd.Stdout, b.Cmd.Stderr = &stdout, &stderr
+	err := b.Cmd.Run()
+	out := strings.TrimSpace(stdout.String())
+	if err = b.Wrap("gh", err); err != nil {
+		words := strings.TrimSpace(stderr.String())
+		if words == "" {
+			words = out
+		}
+		if len(args) == 0 {
+			return out, fmt.Errorf("gh: %s", oneline.Cap(strings.Join(strings.Fields(words), " "), 400))
+		}
+		return out, fmt.Errorf("gh %s: %s", args[0], oneline.Cap(strings.Join(strings.Fields(words), " "), 400))
+	}
+	return out, nil
 }
