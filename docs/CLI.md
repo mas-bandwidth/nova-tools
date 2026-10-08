@@ -2442,6 +2442,8 @@ nova-sprint seat install --harness <name> --target <dir> [--session <id>] [--ser
 nova-sprint seat check
 nova-sprint routes
 nova-sprint rules
+nova-sprint promoted (--sha <merge sha> | --failed <why>) [--branch <sprint branch>] [--tip <sha>] [--target <ref>] [--repo <owner/name>] [--evidence <text>] [--cards <id,...>] [--returned <id,...>] [--answers <note>] [--dry-run]
+nova-sprint installed <target> --sha <dev commit> --receipt <text> [--dry-run]
 nova-sprint funded <provider> --reason <text>
 nova-sprint cost reconcile [--dry-run] [--json]
 nova-sprint cost reprice [--route <r>]... [--since <RFC3339>] [--dry-run] [--json]
@@ -2655,7 +2657,7 @@ cut that is not ahead of `origin/dev`. It merges `origin/dev` into the cut witho
 If that merge conflicts, it raises one judgment naming the files, `JUDGMENT promote conflict ... files=<a,b>`, and stops; nothing is cut or pushed, and the tool resolves nothing. A clean
 cut is gated (`--check`), pushed, and its pull request opened. The verb waits on the pull
 request's checks, queues it once they pass, and watches the queue. When the queue merges it,
-the verb records `promoted --sha <merge>` in the store. A failed check or merge-group run
+the verb records `promoted --sha <merge> --branch <sprint branch> --tip <sha> --target <ref> --cards <ids> --evidence <text>` in the store, which verifies in dev only the cards that tip carried. A failed check or merge-group run prints `promoted --failed <why>` and
 raises one judgment naming the check, `JUDGMENT merge-group failed ... check=<name>`, with
 the failing log's tail. A pull request closed without a merge clears the promotion in
 flight with one judgment naming it, `JUDGMENT closed-pr ... pr=<n>`, and the next pass cuts
@@ -2665,6 +2667,10 @@ cleanup that fails is a refusal naming the keys that remain. Every step prints a
 Without `--once` the verb repeats every `--every`. `--dry-run` prints the cut it would make,
 or the promotion in flight, and writes, enqueues and records nothing. The contract is
 [SPEC-SPRINT.md section 11](SPEC-SPRINT.md), promote.
+
+### Delivery milestones
+
+A card is delivered in three records, kept apart. **Staged** is the land push: the batch is on the branch its stream lands on (`staged_repo`, `staged_ref`, `staged_commit`, `staged_evidence`), a sprint branch or a stream branch. **Verified in dev** is a promotion that merged (`verified`, `verified_repo`, `verified_ref`, `verified_commit`, `verified_from`, `verified_evidence`): `verified_commit` is the merged result on dev, a squash or a rebase included, and `verified_from` is the branch and tip it was promoted from. **Installed** is one receipt a target (`installed <target> --sha <dev commit> --receipt <text>`), written `installed.<target>` on each card a promotion verified at that commit or before it. A push to a stream branch is staged and is not verified in dev. `promoted --branch` without `--tip`, or a `--tip` no landing staged, verifies nothing; `--cards` names the cards. `promoted --failed <why>` records a promotion that did not merge and leaves it visible until a later promotion merges. `view coordinator` counts the three apart (`staged`, `dev`, `installed`).
 
 ### The fleet is idle
 
