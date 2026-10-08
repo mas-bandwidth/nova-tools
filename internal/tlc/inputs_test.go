@@ -334,3 +334,12 @@ func TestAModulesReferencesAreParsedOncePerText(t *testing.T) {
 	got = referencesParsedCount(texts["Leaf"])
 	assert.Equal(t, int64(1), got, "the text before the edit was parsed %d times, want the once it was", got)
 }
+
+// referencesParsedCount is how many times the text has been parsed by
+// cachedModuleReferences: 0 when it never was.
+func referencesParsedCount(text []byte) int64 {
+	if hit, ok := referencesCache.Load(sha256.Sum256(text)); ok {
+		return hit.(*referencesEntry).parsed.Load()
+	}
+	return 0
+}
