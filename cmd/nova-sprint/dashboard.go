@@ -76,11 +76,21 @@ func (a *app) cmdDashboard(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	redis := (verbArgs{fs: fs}).given("redis")
+<<<<<<< HEAD
+
+=======
 
 	// No store named, and this dashboard is not reading a server or a puller:
 	// that is a configuration refusal, one line on stderr, and nothing is served.
 	// A store that is named and then fails to answer is still served.
 	if from == "" && a.getenv(ServerEnv) == "" {
+<<<<<<< HEAD
+		if err := a.storeConfigured(*c); err != nil {
+			return refuse(stderr, "dashboard", err.Error())
+		}
+	}
+
+=======
 		if err := a.storeConfigured(*c); err != nil {
 			return refuse(stderr, "dashboard", err.Error())
 		}

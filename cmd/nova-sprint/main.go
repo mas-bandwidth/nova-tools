@@ -491,19 +491,30 @@ func (a *app) store(c common) (*store.Store, error) { return a.storeCtx(context.
 // storeCtx is store, its reads made in ctx: a command that can be interrupted
 // (where --watch) hands the context it ends with, so the interrupt cuts a
 // read short.
-func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
+// storeConfigured is the part of opening a store that names where it lives,
+// before any dial. A dashboard with no server and no puller refuses here, so a
+// missing store is one grammar line and the process exits, and a store that is
+// merely down is still served.
+func (a *app) storeConfigured(c common) error {
 	if a.getenv("NOVA_SPRINT_PREFIX") != "" {
-		return nil, errors.New("NOVA_SPRINT_PREFIX is set: " + noPrefix + "; unset it")
+		return errors.New("NOVA_SPRINT_PREFIX is set: " + noPrefix + "; unset it")
 	}
 	if strings.TrimSpace(c.redis) == "" {
 		if _, _, err := a.recordedLogin(); err != nil {
-			return nil, err // a seat login that cannot be read is refused as it is, never passed over
+			return err // a seat login that cannot be read is refused as it is, never passed over
 		}
 		// the twin is named here too, so a first run with no Redis is one turn away (tool ledger P9)
-		return nil, fmt.Errorf("--redis <addr> is required (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, or a login recorded by nova-sprint seat login); with no Redis, --redis mem:<file> runs it on the in-memory twin kept in that file (nova-sprint help, trying it without a Redis)")
+		return fmt.Errorf("--redis <addr> is required (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, or a login recorded by nova-sprint seat login); with no Redis, --redis mem:<file> runs it on the in-memory twin kept in that file (nova-sprint help, trying it without a Redis)")
 	}
 	if why := needsActor(c); why != "" {
-		return nil, errors.New(why)
+		return errors.New(why)
+	}
+	return nil
+}
+
+func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
+	if err := a.storeConfigured(c); err != nil {
+		return nil, err
 	}
 	names := sprint.Names{}
 	b, err := a.backend(ctx, c.redis, names)
