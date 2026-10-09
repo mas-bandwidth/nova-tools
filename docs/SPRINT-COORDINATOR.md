@@ -390,14 +390,16 @@ at the landed sha, with `NOVA_SPRINT_REDIS` naming the store for the inventory, 
    seat wrapper. Check: `nova-update version` on each machine; `nova-sprint where` shows the members up with
    loads; `nova-sprint check` prints each violated invariant, none when healthy. Then the re-add list (section 3), and the friends' loops on.
 
-### Adoption is the seat play
+### Adopting the seat build
 
-On 2026-10-04 and 05 the live server ran a side-branch build for a day while the base moved ahead, because
-every adoption was done by hand and waited on the coordinator remembering. An unattended pipeline for it was
-written and never wired into a verb or the tick; it was removed on 2026-10-07. A build is adopted by
-`nova-sprint adopt <version> --source <checkout> --inventory <file> --reason <text>` (the seat play,
-[SPEC-SPRINT.md](SPEC-SPRINT.md) section 14, "Adopting a build"), `--dry-run` first; nothing runs it when the
-base moves, so the coordinator runs it after a landing that changes the tools.
+`nova-sprint adopt <version|path> --source <checkout> --inventory <file> --reason <text>` runs the seat's
+`fleet/tools.yml` play. Use `--dry-run` to check the play without writing. The new build's live manifest,
+shadow tick and friend install checks run before the old server and member stop. The play then migrates the
+configuration store as its owning role, loads the function library, installs the tools and restarts the
+agents. A refusal after the window opens restores the previous tools and library and restarts the old agents;
+the configuration migration is not undone. The command names the failed step and what the rollback did.
+The tick does not invoke adoption. See [SPEC-SPRINT.md](SPEC-SPRINT.md), "Adopting a build", for the play's
+checks, receipts and exit codes.
 
 ## 8. The hourly habits
 
@@ -974,7 +976,7 @@ Each is a place this runbook describes a workaround; the change that removes it 
   whose emptiest member refused the card at staging.
 - `nova-sprint handover` prints one `RULE` line, the waves rule; printing each rule of section 10 by number
   needs a card whose PATHS take in `cmd/nova-sprint/seat.go`, where the handover's rules are set
-  (`cmd/nova-sprint/handover_rules.go` holds the numbered sentences, kept equal to section 10 by its test, which also renders them as the `R<n>.` lines).
+  (`cmd/nova-sprint/handover_rules.go` holds the numbered sentences, kept equal to section 10 by its test).
 - After card every-unit-installed-by-a-verb: `nova-sprint install`, `uninstall` and `units --check` are in
   nova-sprint's verb table, and `nova-swarm install disk-guard` writes the disk-guard unit in the swarm
   binary (the shared unit text is `internal/units`, which a worker may import). `nova-swarm install mirror-refresh` and a

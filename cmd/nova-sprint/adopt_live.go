@@ -24,6 +24,30 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
+// adoptRunner runs a live-manifest probe: exec in production, a fake in tests.
+type adoptRunner func(ctx context.Context, name string, args ...string) (string, error)
+
+func execAdoptRunner(ctx context.Context, name string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = time.Second
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	err := cmd.Run()
+	s := strings.TrimSpace(out.String())
+	if err != nil {
+		return s, fmt.Errorf("%s %s: %v: %s", name, strings.Join(args, " "), err, adoptLastLine(s))
+	}
+	return s, nil
+}
+
+func adoptLastLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.LastIndexByte(s, '\n'); i >= 0 {
+		s = s[i+1:]
+	}
+	return oneline.Escape(s)
+}
+
 // live is the manifest of a seat host (docs/SPEC-SPRINT.md, "Adopting a
 // build"): what is installed and what runs, read and never changed. The
 // adoption play (fleet/tools.yml, the seat play) reads it before and after

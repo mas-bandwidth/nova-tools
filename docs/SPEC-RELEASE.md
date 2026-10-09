@@ -557,13 +557,15 @@ for an unkept promise, not for evidence about something else: evidence that does
 *Tests: `TestTheGateRefusesAPromisedJourneyWithoutEvidence`, `TestThePromisedJourneysAreTheChaosSuitesSubtests`,
 `TestTheJourneyGateIsInTheReleaseSpec`.*
 
-## 15. The adoption after a landing is the seat play
+## 15. The seat adopts an approved build through its tools play
 
-The unattended adoption pipeline that stood here (a pass building on a bench, a canary and a shadow tick, a cold
-read, one judgment, then the switch, the push to every machine and a rollback on missed ticks) was never in a verb
-table and no tick called it; it was removed with its tests in the dead code sweep of 2026-10-07. A build is adopted
-by `nova-sprint adopt`, the seat play through ansible ([SPEC-SPRINT.md](SPEC-SPRINT.md) section 14, "Adopting a
-build"), which a person or the seat runs; nothing adopts a build when the sprint base moves.
+`nova-sprint adopt` runs `fleet/tools.yml` for the seat. Its checks precede the installation window; the
+configuration store migrates as its owning role, and a refusal in the window restores the previous tools
+and function library while leaving the migration in place. The command is not called by the sprint tick.
+The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), "Adopting a build"; the coordinator procedure is in
+[SPRINT-COORDINATOR.md](SPRINT-COORDINATOR.md), "Adopting the seat build".
+
+*Test: `TestAdoptRunsThePlayAndRefusesAHalfMove`.*
 
 ## 16. `release check` is the gate, and a release ships when it says OK
 

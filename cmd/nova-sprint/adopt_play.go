@@ -33,6 +33,7 @@ import (
 // refusal naming the step, and running it again finishes it (the play is
 // idempotent). The verb has no flag that runs a step alone.
 func init() {
+	notServed = append(notServed, "adopt")
 	verbClasses["adopt"] = classMachine
 	// it runs ansible against the fleet: it runs where it is typed or
 	// scheduled, never on the server
