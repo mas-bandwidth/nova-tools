@@ -1,5 +1,7 @@
 package sprint
 
+// The judgment interrupt and its seat delivery are modeled in tla/Judgments.tla.
+
 import (
 	"cmp"
 	"fmt"

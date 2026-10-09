@@ -194,6 +194,8 @@ func TestEveryStateMachineHasACurrentModel(t *testing.T) {
 	}
 }
 
+func TestTLAModelIsCurrentJudgments(t *testing.T) { t.Parallel(); requireModelCurrent(t, "judgments") }
+
 func TestTLACoverageRefusesAnOwedRowWithNoCard(t *testing.T) {
 	t.Parallel()
 	root := repoRoot(t)
