@@ -309,6 +309,69 @@ func TestAMessageTurnTheSessionCannotTakeStaysOwedAndIsNeverAckedUnread(t *testi
 	})
 }
 
+// An owed message turn is cleared from the daemon's hand immediately on take, so
+// multiple idle lanes never take the same turn pointer concurrently, preventing
+// data races and duplicate ACKs.
+func TestOwedMessageTurnClearedOnTakePreventsDuplicateDispatchAcrossLanes(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, nil, nil, nil)
+		h := &lanesHarness{dir: dir, finish: map[string]bool{}, active: map[string]int{}}
+		h.refuse = []error{
+			Deferred{Reason: "the app is busy"},
+		}
+		// 2 lanes configured; with no card queued, both are free to take message turns
+		r, _ := laneRig(t, h, 2)
+		r.send(t, "ada", "hello", "the message")
+		r.run(t, 25)
+		turns, _, _ := h.got()
+		// Turn 0: initial deferred turn (exit 1)
+		// Turn 1: retried turn after RecheckEvery (exit 0)
+		// Without clearing l.owedMessage on take, both lane 1 and lane 2 grab the same
+		// turn at step 12 simultaneously, producing 3 turns total and duplicate ACKs.
+		require.Len(t, turns, 2, "initial deferred turn, then exactly one retry turn: %v", turns)
+		assert.Equal(t, 1, r.last().Delivered, "the message is counted delivered exactly once")
+		records := strings.Join(r.records, "\n")
+		assert.Equal(t, 1, strings.Count(records, " acked=true"), "exactly one ACK sent for the turn: %s", records)
+	})
+}
+
+// A deferred message in owedMessage is given its turn before a queued card (FIFO),
+// rather than being starved indefinitely by incoming cards.
+func TestDeferredMessagePrioritizedBeforeQueuedCardsFIFO(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, nil, nil, nil)
+		h := &lanesHarness{dir: dir, finish: map[string]bool{"c1": true}, active: map[string]int{}}
+		h.refuse = []error{
+			Deferred{Reason: "the app is busy"},
+		}
+		r, _ := laneRig(t, h, 1)
+		hello := r.send(t, "ada", "hello", "the deferred message")
+		// At step 13, queue card c1 right before hello's RecheckEvery retry arrives at step 14
+		r.at[13] = func() {
+			raw, err := json.Marshal(Queue{Tasks: []Task{{ID: "c1", State: "queued"}}})
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), raw, 0o644))
+			require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox", "c1~15"), 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"), []byte("RESULT: c1\n"), 0o644))
+		}
+		r.run(t, 25)
+		turns, texts, _ := h.got()
+		// Turn 0: message turn (deferred)
+		// Turn 1: retried message turn (succeeded)
+		// Turn 2: card c1 turn
+		// Without prioritizing owedMessage before nextCard, card c1 runs at step 14 instead of
+		// the deferred message, starving the message indefinitely.
+		require.GreaterOrEqual(t, len(turns), 3, "deferred turn, retried message turn, then card turn: %v", turns)
+		assert.Equal(t, "ses_1: -", turns[0], "turn 0 is the initial message turn")
+		assert.Equal(t, "ses_1: -", turns[1], "turn 1 is the retried message turn, prioritized before card c1")
+		assert.Contains(t, texts[1], Text(hello), "turn 1 delivers the deferred message")
+		assert.Equal(t, "ses_1: c1", turns[2], "turn 2 is card c1, running after the owed message succeeded")
+		assert.Equal(t, 1, r.last().Delivered, "the message was delivered and acked")
+	})
+}
+
 // A one-shot friend's push is proved from a lane: while unproven, the lane opens its
 // session and hands the push check's own pong line as a message turn; the session's run of
 // it is the proof, and only then does a card go in. The daemon writes no pong for it.

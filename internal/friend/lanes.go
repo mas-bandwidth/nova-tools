@@ -464,6 +464,11 @@ func (l *loop) laneStep(now time.Time, width int) {
 			continue
 		}
 		if ln.card == nil {
+			if !perCard && lh != nil && l.owedMessage != nil && !now.Before(l.messageRetry) {
+				if l.messageTurn(ln, lh, width, now) {
+					continue
+				}
+			}
 			asking = ln.n
 			var c Card
 			var found bool
@@ -528,7 +533,9 @@ func (l *loop) laneStep(now time.Time, width int) {
 			continue
 		}
 		t := &turn{}
-		t.entries, t.msgs = l.take()
+		if l.owedMessage == nil {
+			t.entries, t.msgs = l.take()
+		}
 		var subjects []string
 		for _, m := range t.msgs {
 			subjects = append(subjects, m.Subject)
@@ -574,6 +581,7 @@ func (l *loop) messageTurn(ln *lane, lh LaneHarness, width int, now time.Time) b
 			return false
 		}
 		t := l.owedMessage
+		l.owedMessage = nil
 		ln.t = t
 		l.startTurn(t, now, func(ctx context.Context) laneResult {
 			lt, err := lh.DeliverTo(WithLaneDir(LaneContext(ctx), d.Dir), ln.session, t.text)
