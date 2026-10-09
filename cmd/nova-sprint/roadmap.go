@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -68,7 +69,8 @@ func roadmapsDir(record string) string { return filepath.Join(record, "roadmaps"
 // <dir>/roadmaps/<product>-<release>.sexp under their streams, the file read back and
 // counted, and then dropped in one step with the reason "deferred to release <name>". A card
 // named that is not waiting is refused, and nothing changes; --stream and --repo take only
-// the waiting cards and name the others they leave. --expect refuses a count that differs.
+// the waiting cards and name the others they leave. --expect refuses a count that differs,
+// and an explicit 0 is that count: the flag's default 0 means it was omitted.
 func (a *app) cmdDefer(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("defer")
 	release := fs.String("release", "", "the later release the cards are deferred to: a part of the roadmap's file name")
@@ -80,6 +82,9 @@ func (a *app) cmdDefer(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "defer", err.Error())
 	}
+	// Omitted --expect is the default 0 and is not a count. An explicit 0 is.
+	expectGiven := false
+	fs.Visit(func(f *flag.Flag) { expectGiven = expectGiven || f.Name == "expect" })
 	ways := 0
 	for _, given := range []bool{len(ids) > 0, *stream != "", *repo != ""} {
 		if given {
@@ -116,7 +121,7 @@ func (a *app) cmdDefer(args []string, stdout, stderr io.Writer) int {
 		return fail()
 	}
 	listed(stdout, "LEFT", left, c.max, "defer")
-	if *expect > 0 && len(chosen) != *expect {
+	if expectGiven && len(chosen) != *expect {
 		var found []string
 		for _, rc := range chosen {
 			found = append(found, rc.ID)
