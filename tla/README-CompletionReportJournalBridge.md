@@ -27,5 +27,8 @@ delivery, cost, retry timing, or arbitrary process identity. No fairness or
 eventual recovery is claimed when disk, server, or native group remains
 unavailable. Source trace bridge and executable gates remain separate work.
 
-The eight `MCCompletionReportJournalBridge*.cfg` cases are declarations only
-until their actual serialized TLC receipts are recorded in `RUNS.tsv`.
+All eight declared outcomes passed on Linux from exact registered source
+`b4c7fd944fa16f836c2e3d5cc86969c1ca8c188b`; the normal case explored 531 distinct
+states. Guard omissions and causal witness states produced their named
+invariant counterexamples. RUNS.tsv records the fresh fingerprints. This is
+bounded model evidence, not executable source, disk, native or server alignment.

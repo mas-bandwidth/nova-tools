@@ -22,7 +22,10 @@ same usage projection still require the final gate after restart.
 | Outbox | Started independently excludes report publication even when a cached holder row says Working. Server queue freshness/head/ancestry and verdict transport are outside this model. |
 | Crash, Restart, RejectUnsafeSettlement | Heap usageHeld can disappear at restart; durable Started and current final usage reject settlement again. |
 
-Twelve declared cases are registered and unmeasured: one normal, four guard
+All twelve declared outcomes passed on Linux from exact registered source
+`b4c7fd944fa16f836c2e3d5cc86969c1ca8c188b`; the normal case explored 1,496
+distinct states. These are bounded model measurements, not runtime alignment.
+The twelve cases include: one normal, four guard
 omissions, six safe reachability witnesses and one diagnostic full baseline
 bypass witness. The last uses both omitted source guards to reach releaseHeld,
 Started deletion, stop ACK/debt clear and outbox LAND. The normal case excludes
