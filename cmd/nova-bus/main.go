@@ -10,9 +10,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -29,7 +26,6 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
@@ -564,89 +560,6 @@ func names(csv string) []string {
 	return out
 }
 
-func (w world) send(c *tool.Call) *tool.Out {
-	body := c.Str("body")
-	if c.Bool("stdin") {
-		raw, err := io.ReadAll(io.LimitReader(c.Stdin, bus.MaxBody+1))
-		if err != nil {
-			return tool.Refuse("--stdin: " + err.Error())
-		}
-		if len(raw) > bus.MaxBody {
-			return tool.Refuse(fmt.Sprintf("the body on stdin is over 1 MiB; at most %d bytes", bus.MaxBody))
-		}
-		body = string(raw)
-	}
-	gated := w.requirePush(c)
-	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
-	if refused != nil {
-		return refused
-	}
-	defer closeStore()
-	as, refused := identity(c, login)
-	if refused != nil {
-		return refused
-	}
-	draft := bus.Message{
-		From: as, To: names(c.Str("to")), CC: names(c.Str("cc")),
-		Subject: c.Str("subject"), Re: c.Str("re"), Kind: c.Str("kind"), Body: body, Token: c.Str("token"),
-	}
-	b.TokenLife, b.TokenCleanup = c.Dur("token-life"), c.Dur("token-cleanup")
-	send := b.Send
-	if gated {
-		// --require-push: the gate, after the message's own problems are named and
-		// before anything is written
-		send = func(ctx context.Context, m bus.Message) (bus.Message, error) {
-			m, err := b.Check(ctx, m)
-			if err != nil {
-				return m, err
-			}
-			if err := b.Heard(ctx, slices.Concat([]string{m.From}, m.To, m.CC)...); err != nil {
-				return m, err
-			}
-			return b.Send(ctx, m)
-		}
-	}
-	if c.DryRun() {
-		// the message as it would be sent, with no id: nothing is written, and the
-		// push gate the write would meet is asked for by name
-		send = func(ctx context.Context, m bus.Message) (bus.Message, error) {
-			m, err := b.Check(ctx, m)
-			if err != nil || !gated {
-				return m, err
-			}
-			return m, b.Heard(ctx, slices.Concat([]string{m.From}, m.To, m.CC)...)
-		}
-	}
-	m, err := send(context.Background(), draft)
-	if err != nil {
-		return answer(err)
-	}
-	// the push proof is advice, never a gate: the message landed (or would), and a
-	// name nothing proven is pushing into is one NOTE each (SPEC-BUS.md,
-	// bus-requires-inbox-push-proof); a gated send proved every name already
-	var unheard []string
-	if !gated {
-		names := slices.Concat([]string{m.From}, m.To, m.CC)
-		if m.At.IsZero() {
-			// --dry-run: no message was stamped, so judge at the store's now
-			unheard, err = b.Unheard(context.Background(), names...)
-		} else {
-			unheard, err = b.UnheardAt(context.Background(), m.At, names...)
-		}
-		if err != nil {
-			return answer(err)
-		}
-	}
-	sum := sha256.Sum256([]byte(m.Body))
-	o := tool.Done().Fact("id", m.ID).Fact("to", strings.Join(m.To, ",")).Fact("cc", strings.Join(m.CC, ","))
-	o = loginFact(kindFact(o, m).Fact("at", m.At.Format(time.RFC3339)).
-		Fact("bytes", len(m.Body)).Fact("sha256", hex.EncodeToString(sum[:])), login)
-	for _, line := range unheard {
-		o.Note(line)
-	}
-	return o
-}
-
 // kindFact adds kind=<k> to a result when the message is not a status: a
 // message without the word is a status, so the common line is unchanged.
 func kindFact(o *tool.Out, m bus.Message) *tool.Out {
@@ -949,35 +862,6 @@ func (w world) names(c *tool.Call) *tool.Out {
 	return o
 }
 
-// receipts is as's receipts: the named ids', or every one held (SPEC-BUS.md,
-// message-receipts).
-func (w world) receipts(c *tool.Call) *tool.Out {
-	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
-	if refused != nil {
-		return refused
-	}
-	defer closeStore()
-	as, refused := identity(c, login)
-	if refused != nil {
-		return refused
-	}
-	got, now, err := b.Stages(context.Background(), as, names(c.Str("id"))...)
-	if err != nil {
-		return answer(err)
-	}
-	o := tool.Done().Fact("count", len(got))
-	for _, s := range got {
-		state, age := s.State, "-"
-		if state == "" {
-			state = "none"
-		} else {
-			age = s.Age(now).Round(time.Second).String()
-		}
-		o.Item("receipt", "id", s.ID, "state", state, "age", age)
-	}
-	return loginFact(o, login)
-}
-
 // overdue is every message on every stream still short of delivered past
 // --older: OVERDUE at exit 1 when there is one (SPEC-BUS.md, message-receipts).
 func (w world) overdue(c *tool.Call) *tool.Out {
@@ -1023,52 +907,9 @@ func (w world) address(ctx context.Context, c *tool.Call) (string, *tool.Out) {
 	return addr, nil
 }
 
-// The wait verb: the wake a harness runs beside a session, made general for
-// any AI on the bus (docs/SPEC-BUS.md, the verbs: wait). A wait takes
-// nothing: it reads the recipient's stream past a cursor with XREAD, never
-// the consumer group, so a later recv still delivers and acks what the wait
-// saw, and its cursor is the only state, the caller's to hold between runs.
-// The decision over one batch is bus.WaitPick, a pure function; the blocking
-// read is the store's; the clock and the wake file are the world's, so no
-// test opens a socket or waits real time.
-
-// WaitTick is how long one blocking read of a wait with a --wake-file is: the
-// file is looked at once a tick, so a line appended to it is returned within
-// one. A wait with neither a wake file nor a timeout parks on one read that
-// never runs out (docs/SPEC-BUS.md, the verbs: wait).
-const WaitTick = time.Second
-
 // wakeLineMax bounds one read of a wake file: a harness appends one line a
 // message, and one line a reader can use is far under this.
 const wakeLineMax = 64 << 10
-
-// waitMessage is one message of a wait's JSON, the fields the help names.
-type waitMessage struct {
-	ID      string `json:"id"`
-	From    string `json:"from"`
-	Subject string `json:"subject"`
-	Bytes   int    `json:"bytes"`
-}
-
-// waitWake is the wake of a wait's JSON.
-type waitWake struct {
-	File string `json:"file"`
-	Line string `json:"line"`
-}
-
-// waitJSON is the --json rendering of one wait: one object, printed when the
-// wait ends (the ARMED line is the text form's). The subject and the wake
-// line are oneline-escaped, so nothing they hold can reorder the line a
-// reader reads.
-type waitJSON struct {
-	Status     string        `json:"status"`
-	Word       string        `json:"word"`
-	After      string        `json:"after"`
-	Messages   []waitMessage `json:"messages"`
-	Wake       *waitWake     `json:"wake,omitempty"`
-	WakeAfter  string        `json:"wake_after,omitempty"`
-	WakeOffset *int64        `json:"wake_offset,omitempty"`
-}
 
 // streamID is whether s is a stream entry id (<ms>-<seq>, both numbers): the
 // cursor a wait re-arms with, as WAIT ARMED and WAIT OK print it.
@@ -1080,130 +921,4 @@ func streamID(s string) bool {
 	_, errMS := strconv.ParseUint(ms, 10, 64)
 	_, errSeq := strconv.ParseUint(seq, 10, 64)
 	return errMS == nil && errSeq == nil
-}
-
-// waitLine prints one wait line on stdout: the verb prints as it goes (the
-// ARMED line first, so a caller that re-arms with that id misses nothing
-// between two runs), as recv --forever prints each message.
-func waitLine(c *tool.Call, o *tool.Out) {
-	o.Verb = "wait"
-	o.Render(c.Stdout, false)
-}
-
-// waitObject prints the wait's one JSON object and stands for its exit.
-func waitObject(c *tool.Call, v waitJSON, exit int) *tool.Out {
-	var b strings.Builder
-	enc := json.NewEncoder(&b)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
-		return tool.Refuse("the wait's result is no JSON: " + err.Error())
-	}
-	fmt.Fprintf(c.Stdout, "%s", b.String())
-	return tool.Exit(exit)
-}
-
-// wait is the verb: it arms, prints WAIT ARMED, and returns on the first
-// entries past the cursor that count, on a wake line, or at the timeout
-// (docs/SPEC-BUS.md, the verbs: wait).
-func (w world) wait(c *tool.Call) *tool.Out {
-	// wait's --timeout is how long the wait parks (0 is for ever), not the
-	// call bound. Non-blocking reads use CallTimeout; a blocking XREAD carries
-	// its block and the margin more (SPEC-BUS.md, the deadlines).
-	b, login, closeStore, refused := w.bus(c, bus.CallTimeout)
-	if refused != nil {
-		return refused
-	}
-	defer closeStore()
-	as, refused := identity(c, login)
-	if refused != nil {
-		return refused
-	}
-	ctx := context.Background()
-	cursor, err := b.WaitArm(ctx, as, c.Str("after"))
-	if err != nil {
-		return answer(err)
-	}
-	waiter, err := b.Waiter()
-	if err != nil {
-		return answer(err)
-	}
-	jsonOut := c.Bool("json")
-	wakePath := c.Str("wake-file")
-	var wake wakeCursor
-	if wakePath != "" {
-		wake, err = w.wakeArm(wakePath, c.Str("wake-after"))
-		if err != nil {
-			return wakeRefusal(err)
-		}
-	}
-	if !jsonOut {
-		waitLine(c, wakeFacts(tool.Done().As("ARMED").Fact("after", cursor), wakePath, wake))
-	}
-	// --skip-subject is a comma list of prefixes, empty words dropped; the
-	// match without case is WaitPick's, the one place the rule lives
-	// (docs/SPEC-BUS.md, the verbs: wait).
-	skips := names(c.Str("skip-subject"))
-	start := w.now()
-	timeout := c.Dur("timeout")
-	for {
-		if wakePath != "" {
-			text, next, err := w.wakeLine(wakePath, wake)
-			if err != nil {
-				return wakeRefusal(err)
-			}
-			wake = next
-			if text != "" {
-				if jsonOut {
-					return waitObject(c, waitJSON{Status: "ok", Word: "WAKE", After: cursor,
-						Messages: []waitMessage{}, Wake: &waitWake{File: wakePath, Line: oneline.Escape(text)}, WakeAfter: wake.token(), WakeOffset: &wake.Offset}, 0)
-				}
-				waitLine(c, wakeFacts(tool.Done().As("WAKE").Fact("file", wakePath).Fact("line", tool.Text(text)), wakePath, wake))
-				return tool.Exit(0)
-			}
-		}
-		block := time.Duration(0) // park for ever: nothing else is watched
-		if wakePath != "" {
-			block = WaitTick // the file is looked at once a tick
-		}
-		if timeout > 0 {
-			left := timeout - w.now().Sub(start)
-			if left <= 0 {
-				if jsonOut {
-					return waitObject(c, waitJSON{Status: "ok", Word: "NONE", After: cursor, Messages: []waitMessage{}, WakeAfter: wakeToken(wakePath, wake), WakeOffset: wakeOffset(wakePath, wake)}, 1)
-				}
-				o := wakeFacts(tool.Fail().As("NONE").Fact("after", cursor).Fact("waited", timeout.String()), wakePath, wake)
-				o.Verb = "wait"
-				o.Render(c.Stderr, false)
-				return tool.Exit(1)
-			}
-			if block == 0 || left < block {
-				block = left
-			}
-		}
-		got, err := waiter.BlockRead(ctx, bus.StreamOf(as), cursor, block, bus.WaitRead)
-		if err != nil {
-			return answer(err)
-		}
-		kept, after := bus.WaitPick(got, as, skips)
-		if after != "" {
-			cursor = after
-		}
-		if len(kept) == 0 {
-			continue // a skipped entry moved the cursor; the wait goes on
-		}
-		if jsonOut {
-			msgs := make([]waitMessage, 0, len(kept))
-			for _, e := range kept {
-				m := e.Message()
-				msgs = append(msgs, waitMessage{ID: m.ID, From: m.From, Subject: oneline.Escape(m.Subject), Bytes: len(m.Body)})
-			}
-			return waitObject(c, waitJSON{Status: "ok", Word: "OK", After: cursor, Messages: msgs, WakeAfter: wakeToken(wakePath, wake), WakeOffset: wakeOffset(wakePath, wake)}, 0)
-		}
-		for _, e := range kept {
-			m := e.Message()
-			waitLine(c, tool.Done().As("MESSAGE").Fact("id", m.ID).Fact("from", m.From).Fact("subject", m.Subject).Fact("bytes", len(m.Body)))
-		}
-		waitLine(c, wakeFacts(tool.Done().Fact("after", cursor), wakePath, wake))
-		return tool.Exit(0)
-	}
 }
