@@ -2666,7 +2666,8 @@ an ordered Go plan. Inspection and `--dry-run` make no writes and run no native
 commands. `--apply` applies local initialization only: it never installs or loads
 a daemon, logs in, sends a provider turn, starts sprint work, or proves presence.
 The supported initializer scope is OpenCode configuration, Claude private auth
-inspection or explicit sealed setup-token selection, and DSH static headless
+inspection or explicit sealed setup-token selection, Codex native subscription
+profile inspection (SPEC-CODEX-SUBSCRIPTION-SETUP.md), and DSH static headless
 initialization. Other harnesses are refused;
 their existing settings commands continue independently.
 

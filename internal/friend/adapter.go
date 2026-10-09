@@ -188,6 +188,9 @@ func realExec(ctx context.Context, killDelay time.Duration, dir, name string, ar
 	}
 	cmd.Stdout = out
 	cmd.Stderr = stderr
+	if statusOnStderr, _ := ctx.Value(setupStderrOutputKey{}).(bool); statusOnStderr {
+		cmd.Stdout, cmd.Stderr = stderr, out
+	}
 	ownGroup(cmd)
 	started := processStarted(ctx)
 	anchorPath := processGroupAnchor(ctx)

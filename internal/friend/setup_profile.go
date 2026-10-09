@@ -173,6 +173,8 @@ func (p SetupProfile) Environment(path string) []string {
 	switch o.Harness {
 	case "opencode":
 		env = append(env, "OPENCODE_CONFIG="+filepath.Join(o.Dir, OpenCodeConfig), "OPENCODE_CONFIG_DIR="+o.ConfigDir)
+	case "codex":
+		env = append(env, "CODEX_HOME="+o.ConfigDir)
 	case "claude":
 		env = append(env, "CLAUDE_CONFIG_DIR="+o.ConfigDir)
 	case "dsh":

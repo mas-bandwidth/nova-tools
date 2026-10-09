@@ -82,6 +82,8 @@ func setupPlanner(opts friend.SetupOptions, fs friend.SettingsFS) (friend.SetupP
 	switch opts.Harness {
 	case "opencode":
 		return friend.PlanOpenCodeSetup(opts, fs)
+	case "codex":
+		return friend.PlanCodexSetup(opts, fs)
 	case "claude":
 		return friend.PlanClaudeSetup(opts, fs)
 	case "dsh":
@@ -91,7 +93,7 @@ func setupPlanner(opts friend.SetupOptions, fs friend.SettingsFS) (friend.SetupP
 }
 
 func setupUnsupported(harness string) error {
-	return fmt.Errorf("setup harness %q is unsupported; select opencode, claude or dsh after their initializer is available", harness)
+	return fmt.Errorf("setup harness %q is unsupported; select opencode, codex, claude or dsh after their initializer is available", harness)
 }
 
 func setupRemedy(out *tool.Out) *tool.Out { out.Remedy = "nova-friend setup -h"; return out }

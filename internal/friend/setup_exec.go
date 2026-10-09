@@ -21,6 +21,7 @@ import (
 type execEnvironmentKey struct{}
 type execOutputLimitKey struct{}
 type execSeparateOutputKey struct{}
+type setupStderrOutputKey struct{}
 
 const SetupOutputLimit = 4 << 20
 
@@ -172,7 +173,7 @@ func (r SetupRunner) native(ctx context.Context, step SetupStep, path string) ([
 	c := step.Command
 	for _, item := range c.Env {
 		name, value, _ := strings.Cut(item, "=")
-		if name == "HOME" || name == "CLAUDE_CONFIG_DIR" || name == "DSH_HOME" || name == "OPENCODE_CONFIG_DIR" {
+		if name == "HOME" || name == "CLAUDE_CONFIG_DIR" || name == "CODEX_HOME" || name == "DSH_HOME" || name == "OPENCODE_CONFIG_DIR" {
 			if err := setupPrivateRoot(r.FS, value); err != nil {
 				return nil, err
 			}
@@ -209,6 +210,7 @@ func (r SetupRunner) native(ctx context.Context, step SetupStep, path string) ([
 	ctx = context.WithValue(ctx, execEnvironmentKey{}, append([]string{}, c.Env...))
 	ctx = context.WithValue(ctx, execOutputLimitKey{}, SetupOutputLimit)
 	ctx = context.WithValue(ctx, execSeparateOutputKey{}, true)
+	ctx = context.WithValue(ctx, setupStderrOutputKey{}, c.StatusOnStderr)
 	ctx = WithProcessGroupAnchor(ctx, path+"."+receipt.RunID+".anchor")
 	ctx = WithProcessStarted(ctx, func(pid int) error {
 		receipt.PID, receipt.Identity = pid, r.Identity(pid)
@@ -254,7 +256,7 @@ func validateSetupCommand(c SetupCommand) error {
 	seen := map[string]bool{}
 	for _, item := range c.Env {
 		name, _, found := strings.Cut(item, "=")
-		allowed := name == "HOME" || name == "PATH" || name == "LANG" || name == "TMPDIR" || name == "XDG_CONFIG_HOME" || name == "XDG_CACHE_HOME" || name == "XDG_DATA_HOME" || name == "XDG_STATE_HOME" || name == "DSH_HOME" || name == "CLAUDE_CONFIG_DIR" || name == "OPENCODE_CONFIG_DIR" || name == "OPENCODE_CONFIG"
+		allowed := name == "HOME" || name == "PATH" || name == "LANG" || name == "TMPDIR" || name == "XDG_CONFIG_HOME" || name == "XDG_CACHE_HOME" || name == "XDG_DATA_HOME" || name == "XDG_STATE_HOME" || name == "CODEX_HOME" || name == "DSH_HOME" || name == "CLAUDE_CONFIG_DIR" || name == "OPENCODE_CONFIG_DIR" || name == "OPENCODE_CONFIG"
 		if !found || !allowed || seen[name] {
 			return errors.New("native setup environment contains an inherited credential, unsupported name or duplicate; use only explicit home/config/runtime paths")
 		}
