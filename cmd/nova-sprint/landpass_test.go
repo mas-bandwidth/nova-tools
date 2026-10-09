@@ -63,6 +63,27 @@ func TestNeedsGateIsTheDisjointFilesRule(t *testing.T) {
 	assert.False(t, gate)
 }
 
+// runBounded runs fn(i) for each i in 0..n-1 in goroutines, at most width at a time, and
+// returns when every one has returned; a width under one runs them one at a time.
+// It is the worker bound of phase 1 (--land-parallel), and only the test below calls it.
+func runBounded(width, n int, fn func(i int)) {
+	if width < 1 {
+		width = 1
+	}
+	sem := make(chan struct{}, width)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			fn(i)
+		}(i)
+	}
+	wg.Wait()
+}
+
 // runBounded runs its jobs at most width at a time and every one of them (the worker
 // bound of phase 1, --land-parallel). The bound is read as the jobs run: each job counts
 // itself in, and the first width jobs wait for each other before any counts out, so the

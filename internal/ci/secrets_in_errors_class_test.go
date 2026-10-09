@@ -291,7 +291,6 @@ var secretOpeners = map[string]any{
 	"internal/friend.NewestCodexSession":               friend.NewestCodexSession,
 	"internal/friend.NewestConversation":               friend.NewestConversation,
 	"internal/friend.NewestDSHSession":                 friend.NewestDSHSession,
-	"internal/friend.NewestSession":                    friend.NewestSession,
 	"internal/friend.ParseHeld":                        friend.ParseHeld,
 	"internal/friend.ParseJob":                         friend.ParseJob,
 	"internal/friend.ParseLaneCaps":                    friend.ParseLaneCaps,

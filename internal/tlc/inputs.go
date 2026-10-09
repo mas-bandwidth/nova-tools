@@ -239,15 +239,6 @@ func cachedModuleReferences(text []byte) []string {
 	return e.refs
 }
 
-// referencesParsedCount is how many times the text has been parsed by
-// cachedModuleReferences: 0 when it never was.
-func referencesParsedCount(text []byte) int64 {
-	if hit, ok := referencesCache.Load(sha256.Sum256(text)); ok {
-		return hit.(*referencesEntry).parsed.Load()
-	}
-	return 0
-}
-
 // ModuleReferences returns the names of the modules a module's text extends or
 // instantiates (`EXTENDS A, B`, `INSTANCE M`, `LOCAL INSTANCE M`,
 // `F(x) == INSTANCE M WITH ...`), each once, in order of appearance, at every

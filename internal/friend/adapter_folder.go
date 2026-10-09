@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/filelock"
@@ -179,13 +178,4 @@ func folderAtomic(dir, name, text string) (retErr error) {
 		return err
 	}
 	return os.Rename(tmp.Name(), filepath.Join(dir, name))
-}
-
-// NativeFolderFile identifies files the folder watcher may forward. It does
-// not itself prove that a session read or acted on their contents.
-func NativeFolderFile(name string) bool {
-	if !strings.HasSuffix(name, ".md") {
-		return false
-	}
-	return strings.HasPrefix(name, "FRIEND-CHECK-") || strings.HasPrefix(name, "FRIEND-WAKE-") || strings.HasPrefix(name, "FRIEND-PUSH-")
 }

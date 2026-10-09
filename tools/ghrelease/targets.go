@@ -18,8 +18,6 @@ var releaseTargets string
 // target is one shipped platform.
 type target struct{ goos, goarch string }
 
-func (t target) String() string { return t.goos + " " + t.goarch }
-
 // ext is the suffix a binary of the platform carries.
 func (t target) ext() string {
 	if t.goos == "windows" {

@@ -56,7 +56,7 @@ func TestAReaskedFriendReadClosesByItsOwnKey(t *testing.T) {
 	w2.must(FriendReadCloseChecked(w2.s, "amy", "s1-1", first2.ID, missingReport,
 		map[string]MissingBranch{first2.ID: {Named: named, Holds: holds}}))
 	dealReads(t, w2, seats2)
-	w2.must(FriendReadClose(w2.s, "amy", "s1-1", "Verdict: LAND\n"))
+	w2.must(FriendReadCloseChecked(w2.s, "amy", "s1-1", "", "Verdict: LAND\n", nil))
 	require.Equal(t, "ok", w2.s.Fleet.Card(first2.ID+".g1").F("verdict"))
 }
 

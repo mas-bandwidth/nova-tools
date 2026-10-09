@@ -478,21 +478,12 @@ func askOneFriend(p *Plan, s *Snapshot, pr *Card, seats []FriendSeat, name, dir 
 	return nil
 }
 
-// FriendReadClose applies one friend's read report to the read card on her
-// fleet row. LAND and HOLD retire that card (it is not moved to a fleet
-// column the fleet does not use, and not onto a readers column). HOLD with a
-// finding raises the same broken-read judgment Read raises. The readers table
-// gains no row.
-func FriendReadClose(s *Snapshot, name, primary, report string, generation ...int) Plan {
-	return FriendReadCloseChecked(s, name, primary, "", report, nil, generation...)
-}
-
-// FriendReadCloseChecked is FriendReadClose of the read card named (card, the packet's own
-// key: a re-asked read is a later identity of the plain one, ReadCardGenIDs; "" is the one of
-// her identities at the attempt that is placed), with the server's check of the read's branch
-// at its close (missing, as ReadReq.Missing): a broken report on a read whose branch origin
-// does not hold is retired with no verdict (read_missing.go). generation, when given, must be
-// the read card's live one (a stale report is refused).
+// FriendReadCloseChecked applies one friend's read report to the read card named (card, the
+// packet's own key: a re-asked read is a later identity of the plain one, ReadCardGenIDs; "" is
+// the one of her identities at the attempt that is placed), with the server's check of the
+// read's branch at its close (missing, as ReadReq.Missing): a broken report on a read whose
+// branch origin does not hold is retired with no verdict (read_missing.go). generation, when
+// given, must be the read card's live one (a stale report is refused).
 func FriendReadCloseChecked(s *Snapshot, name, primary, card, report string, missing map[string]MissingBranch, generation ...int) Plan {
 	var p Plan
 	pr := s.Work.Card(primary)

@@ -75,7 +75,7 @@ func TestReadAsFriendClosesAFriendRowRead(t *testing.T) {
 		a, id := friendReadAsked(t)
 		b, _ := friendReadAsked(t)
 		va := Read(a.s, ReadReq{Sel: Sel{IDs: []string{id}}, As: FriendRow("amy"), Verdict: "ok"})
-		vb := FriendReadClose(b.s, "amy", "s1-1", "Verdict: LAND\n")
+		vb := FriendReadCloseChecked(b.s, "amy", "s1-1", "", "Verdict: LAND\n", nil)
 		require.Len(t, va.Units, 1)
 		require.Len(t, vb.Units, 1)
 		require.Equal(t, vb.Units[0].Changes, va.Units[0].Changes)

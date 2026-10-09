@@ -98,7 +98,7 @@ func TestStoppedCancelsTheLaneAndHandsTheCardBackWithStopReturn(t *testing.T) {
 		require.NoError(t, err)
 	}
 	assert.Equal(t, 1, c.stops(), "the child is told to stop once")
-	assert.True(t, m.Stopped())
+	assert.True(t, m.stopped)
 	assert.Empty(t, s.lines("stop-return"), "no stop-return before the child has ended")
 	assert.Empty(t, s.lines("finish"), "nothing is finished under the stop")
 	assert.Contains(t, out.String(), "MEMBER STOP machine STOPPED: taking no card; 1 running lane(s) are cancelled")
@@ -121,7 +121,7 @@ func TestStoppedCancelsTheLaneAndHandsTheCardBackWithStopReturn(t *testing.T) {
 	s.set("take", 0, takeJSON(t, p2))
 	_, err = m.Tick(time.Unix(30, 0))
 	require.NoError(t, err)
-	assert.False(t, m.Stopped())
+	assert.False(t, m.stopped)
 	assert.Equal(t, 1, m.Running())
 	assert.Equal(t, []string{"c1", "c1"}, r.started(), "taken again at the queue's word")
 	assert.Contains(t, out.String(), "MEMBER START machine RUNNING: taking cards again")
@@ -286,7 +286,7 @@ func TestAQueueWithoutTheMachineWordRunsAsBefore(t *testing.T) {
 	s.set("take", 0, takeJSON(t, pk("c1")))
 	_, err := m.Tick(time.Unix(0, 0))
 	require.NoError(t, err)
-	assert.False(t, m.Stopped())
+	assert.False(t, m.stopped)
 	assert.Equal(t, []string{"c1"}, r.started())
 }
 

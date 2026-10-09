@@ -15,6 +15,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// checkedSources returns the bytes of CheckedFiles as they were when this
+// binary was built, by their path under the checkout root.
+func checkedSources() (map[string][]byte, error) {
+	out := map[string][]byte{}
+	for _, name := range CheckedFiles() {
+		raw, err := sources.ReadFile(name)
+		if err != nil {
+			return nil, err
+		}
+		out[RunnerDir+"/"+name] = raw
+	}
+	return out, nil
+}
+
 func TestEveryRunnerFileIsClassified(t *testing.T) {
 	t.Parallel()
 	entries, err := os.ReadDir(".")
@@ -43,7 +57,7 @@ func TestEveryRunnerFileIsClassified(t *testing.T) {
 
 func TestEmbeddedSourcesAreTheCheckedFiles(t *testing.T) {
 	t.Parallel()
-	files, err := CheckedSources()
+	files, err := checkedSources()
 	require.NoError(t, err)
 	runner, err := RunnerFiles()
 	require.NoError(t, err, "the fingerprint takes %d runner files, %d are result files (%v)", len(runner), len(ResultFiles), err)
@@ -73,7 +87,7 @@ func TestCheckRunnerComparesTheEmbeddedCheckedFilesWithTheRoot(t *testing.T) {
 	t.Parallel()
 	require.NoError(t, CheckRunner(t.TempDir()), "a root with no runner sources")
 	require.NoError(t, CheckRunner(filepath.Join("..", "..")), "this repository")
-	built, err := CheckedSources()
+	built, err := checkedSources()
 	require.NoError(t, err)
 	for _, tc := range []struct {
 		name, file, body, not string

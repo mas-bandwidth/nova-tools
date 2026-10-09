@@ -136,7 +136,7 @@ func TestAFriendWhoseSessionPongsIsUpWithNoHarnessProcess(t *testing.T) {
 		}
 		assert.Equal(t, steps, r.beats()-before, "every beat reached the sprint server")
 		assert.GreaterOrEqual(t, answered, 15, "a check every quiet spell, each answered")
-		assert.Equal(t, HarnessNotSeen, r.w.Seen(), "the advisory observation says the app was not seen, and nothing more")
+		assert.Equal(t, HarnessNotSeen, watchSeen(r.w), "the advisory observation says the app was not seen, and nothing more")
 		r.mu.Lock()
 		records := strings.Join(r.records, "\n")
 		r.mu.Unlock()
@@ -155,7 +155,7 @@ func TestAFriendWhoseSessionPongsIsUpWithNoHarnessProcess(t *testing.T) {
 		up, reason := r.sc.Present()
 		assert.False(t, up)
 		assert.Equal(t, NoSessionAnswer, reason)
-		assert.Equal(t, HarnessRunning, r.w.Seen(), "the advisory observation says the app runs")
+		assert.Equal(t, HarnessRunning, watchSeen(r.w), "the advisory observation says the app runs")
 	})
 }
 

@@ -315,16 +315,6 @@ func recordListing(out io.Writer, listing string) {
 	fmt.Fprintf(out, "opencode session list: not a JSON list; its first line: %q\n", Head(first, OutputKept))
 }
 
-// NewestSession picks the most recently updated session of dir from the
-// listing's JSON; an empty listing has none.
-func NewestSession(listing, dir string) (string, error) {
-	rows, err := decodeSessions(listing)
-	if err != nil {
-		return "", err
-	}
-	return newestOf(rows, dir)
-}
-
 // newestOf picks the most recently updated session of dir from decoded rows.
 func newestOf(rows []session, dir string) (string, error) {
 	best := session{}

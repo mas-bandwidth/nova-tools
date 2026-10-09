@@ -28,6 +28,16 @@ func (f *fakeExec) run(_ context.Context, dir, name string, args []string, _ str
 	return f.out, f.exit, nil
 }
 
+// NewestSession picks the most recently updated session of dir from the
+// listing's JSON; an empty listing has none.
+func NewestSession(listing, dir string) (string, error) {
+	rows, err := decodeSessions(listing)
+	if err != nil {
+		return "", err
+	}
+	return newestOf(rows, dir)
+}
+
 func TestOpenCodeDeliversIntoTheNewestSessionOfTheDirectory(t *testing.T) {
 	t.Parallel()
 	var turn strings.Builder

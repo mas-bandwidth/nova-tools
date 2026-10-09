@@ -146,6 +146,12 @@ type Options struct {
 	// not answer, a listener that failed. It may be called from any of the
 	// proxy's goroutines and never after Stop returns. Nil says nothing.
 	Logf func(format string, args ...any)
+	// Live counts the goroutines the proxy is running, the same number it
+	// updates: one to accept, and GoroutinesPerConn for each open connection,
+	// and 0 once Stop has returned. Nil means the proxy keeps the count
+	// privately. A test sets it before the proxy starts and reads the same
+	// number the proxy updates, from any goroutine.
+	Live *atomic.Int64
 }
 
 // Proxy is one running proxy: a listener, its target and its delay.
@@ -157,13 +163,14 @@ type Proxy struct {
 	dial   func(ctx context.Context, network, address string) (net.Conn, error)
 	logf   func(format string, args ...any)
 
-	slots  chan struct{} // one token per open connection; its capacity is the bound
-	stop   chan struct{} // closed by Stop
-	ctx    context.Context
-	cancel context.CancelFunc
-	end    sync.Once
-	wg     sync.WaitGroup // every goroutine the proxy started
-	live   atomic.Int64   // the goroutines running now
+	slots      chan struct{} // one token per open connection; its capacity is the bound
+	stop       chan struct{} // closed by Stop
+	ctx        context.Context
+	cancel     context.CancelFunc
+	end        sync.Once
+	wg         sync.WaitGroup // every goroutine the proxy started
+	live       atomic.Int64   // the goroutines running now
+	sharedLive *atomic.Int64  // Options.Live, when set; the same deltas as live
 
 	mu      sync.Mutex
 	stopped bool
@@ -210,15 +217,16 @@ func Serve(ln net.Listener, target string, delay time.Duration, opts Options) (*
 		bound = DefaultMaxConns
 	}
 	p := &Proxy{
-		ln:     ln,
-		target: target,
-		delay:  delay,
-		clock:  opts.Clock,
-		dial:   opts.Dial,
-		logf:   opts.Logf,
-		slots:  make(chan struct{}, bound),
-		stop:   make(chan struct{}),
-		ends:   map[uint64]func(){},
+		ln:         ln,
+		target:     target,
+		delay:      delay,
+		clock:      opts.Clock,
+		dial:       opts.Dial,
+		logf:       opts.Logf,
+		slots:      make(chan struct{}, bound),
+		stop:       make(chan struct{}),
+		ends:       map[uint64]func(){},
+		sharedLive: opts.Live,
 	}
 	if p.dial == nil {
 		p.dial = (&net.Dialer{}).DialContext
@@ -288,11 +296,6 @@ func (p *Proxy) Shortest() time.Duration {
 	return 0
 }
 
-// Live is how many goroutines the proxy is running now: at most
-// one to accept plus GoroutinesPerConn for each of MaxConns, and 0 once Stop
-// has returned.
-func (p *Proxy) Live() int { return int(p.live.Load()) }
-
 // Stop closes the listener and every connection and returns when every
 // goroutine the proxy started has returned. A second call only waits.
 func (p *Proxy) Stop() {
@@ -322,12 +325,20 @@ func (p *Proxy) Stop() {
 func (p *Proxy) spawn(conn *sync.WaitGroup, f func()) {
 	p.wg.Add(1)
 	p.live.Add(1)
+	if p.sharedLive != nil {
+		p.sharedLive.Add(1)
+	}
 	if conn != nil {
 		conn.Add(1)
 	}
 	go func() {
 		defer p.wg.Done()
-		defer p.live.Add(-1)
+		defer func() {
+			p.live.Add(-1)
+			if p.sharedLive != nil {
+				p.sharedLive.Add(-1)
+			}
+		}()
 		if conn != nil {
 			defer conn.Done()
 		}

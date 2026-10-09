@@ -67,20 +67,6 @@ func CheckedFiles() []string {
 	return append(append([]string{}, ResultFiles...), InputListFiles...)
 }
 
-// CheckedSources returns the bytes of CheckedFiles as they were when this
-// binary was built, by their path under the checkout root.
-func CheckedSources() (map[string][]byte, error) {
-	out := map[string][]byte{}
-	for _, name := range CheckedFiles() {
-		raw, err := sources.ReadFile(name)
-		if err != nil {
-			return nil, err
-		}
-		out[RunnerDir+"/"+name] = raw
-	}
-	return out, nil
-}
-
 // CheckRunner holds the result files and the input-list files this binary was
 // built from to the ones under root: a binary built from another checkout
 // computes fingerprints or input lists that the checkout does not, so its

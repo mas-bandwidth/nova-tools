@@ -6,11 +6,8 @@
 cmd/nova-sandbox 3
 cmd/nova-swarm 2
 internal/filelock 1
-internal/gitrun 1
 internal/ntable 11
-internal/pkgselect 16
 internal/secrets 1
-internal/sprint 2
 internal/swarm 39
 internal/testguard 1
 internal/tool 1

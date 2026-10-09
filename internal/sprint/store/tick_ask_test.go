@@ -244,7 +244,9 @@ func (h *harness) friendRead(name, primary, report string) {
 	card := sprint.ReadCardID(primary, h.snap().Work.Card(primary).Int("attempt"), name)
 	h.must(Step{Verb: "read", Named: true, Mirrors: true, Load: []string{sprint.Fleet, sprint.Work},
 		Extras: sprint.NamedExtras(sprint.Fleet, []string{card}), Actor: sprint.FriendRow(name), Epoch: &at,
-		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.FriendReadClose(s, name, primary, report) }})
+		Plan: func(s *sprint.Snapshot) sprint.Plan {
+			return sprint.FriendReadCloseChecked(s, name, primary, "", report, nil)
+		}})
 }
 
 // friendReadsOf is the friends' read cards placed for the primary, by friend.

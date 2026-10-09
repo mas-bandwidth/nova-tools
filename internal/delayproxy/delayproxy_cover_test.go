@@ -51,7 +51,7 @@ func TestDelayproxyCoverListen(t *testing.T) {
 			t.Cleanup(p.Stop)
 			assert.True(t, strings.HasPrefix(p.Addr(), "127.0.0.1:"), "Addr = %q; want the loopback address it was given", p.Addr())
 			assert.Zero(t, p.Writes(), "a new proxy counts %d writes; want none", p.Writes())
-			assert.Equal(t, 1, p.Live(), "Live = %d; want the accept loop alone", p.Live())
+			assert.Equal(t, 1, int(p.live.Load()), "live = %d; want the accept loop alone", p.live.Load())
 		})
 	}
 }

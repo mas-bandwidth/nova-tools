@@ -72,6 +72,22 @@ func call(t *testing.T, exec tlc.Executor, args ...string) result {
 
 const header = "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\n"
 
+// checkedSources is the runner files CheckRunner compares, read from this
+// module. The test binary is built from these files, so they are the bytes
+// the embed holds (internal/tlc TestEmbeddedSourcesAreTheCheckedFiles).
+func checkedSources(t *testing.T) map[string][]byte {
+	t.Helper()
+	out := map[string][]byte{}
+	for _, name := range tlc.CheckedFiles() {
+		raw, err := os.ReadFile(filepath.Join("..", "..", "internal", "tlc", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		out[tlc.RunnerDir+"/"+name] = raw
+	}
+	return out
+}
+
 // checkout writes a tla/ with three cases (a pass, an invariant counterexample
 // and an action counterexample) and returns its root and a jar.
 func checkout(t *testing.T) (root, jar string) {
@@ -663,10 +679,7 @@ func TestVerbsRefuseABinaryBuiltFromOtherRunnerFiles(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	built, err := tlc.CheckedSources()
-	if err != nil {
-		t.Fatal(err)
-	}
+	built := checkedSources(t)
 	for path, raw := range built {
 		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(path)), raw, 0o644); err != nil {
 			t.Fatal(err)

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -67,10 +68,62 @@ func spendStore(t *testing.T) *sprint.Snapshot {
 		{Kind: "work", Card: "s1-1", Key: "d", Route: "pro-or", End: "failed", At: before, Usage: cardcost.ParseUsage("input=10 actual_usd=50 actual_by=harness")},
 		{Kind: "read", Card: "s1-1.r2", Key: "e", Who: "alex", End: "ok", At: in, Usage: cardcost.ParseUsage("input=600 output=400 " + sprint.UsageSubscription)},
 	} {
-		sprint.RecordConsumer(pr, c)
+		recordConsumer(pr, c)
 	}
 	s.Work.Put(pr)
 	return s
+}
+
+// recordConsumer writes one consumer onto a primary the way a step does, for a
+// world built outside a step. The production writer is unexported.
+func recordConsumer(pr *sprint.Card, c sprint.Consumer) {
+	if pr.Fields == nil {
+		pr.Fields = map[string]string{}
+	}
+	key := sprint.FieldCostRecord + c.Key
+	if pr.Fields[key] != "" {
+		return
+	}
+	total := cardcost.ParseTotal(pr.Fields[sprint.FieldCostTotal])
+	pr.Fields[sprint.FieldCostTotal] = total.Add(c.Usage).String()
+	n := 0
+	for k := range pr.Fields {
+		if strings.HasPrefix(k, sprint.FieldCostRecord) && k != sprint.FieldCostTotal {
+			n++
+		}
+	}
+	if n >= sprint.MaxCostRecords {
+		cut, _ := strconv.Atoi(pr.Fields[sprint.FieldCostCut])
+		pr.Fields[sprint.FieldCostCut] = strconv.Itoa(cut + 1)
+		return
+	}
+	pr.Fields[key] = consumerLine(c)
+}
+
+func consumerLine(c sprint.Consumer) string {
+	orDash := func(s string) string {
+		if s == "" {
+			return "-"
+		}
+		return s
+	}
+	w := []string{
+		"kind=" + c.Kind,
+		"card=" + c.Card,
+		"attempt=" + strconv.Itoa(c.Attempt),
+		"take=" + strconv.Itoa(c.Take),
+		"gen=" + strconv.Itoa(c.Gen),
+		"who=" + orDash(c.Who),
+		"on_route=" + orDash(c.Route),
+		"on_model=" + orDash(c.Model),
+		"on_tier=" + orDash(c.Tier),
+		"end=" + orDash(strings.ReplaceAll(c.End, " ", "-")),
+		"at=" + orDash(c.At),
+	}
+	if c.Cap != "" {
+		w = append(w, "lane_cap="+c.Cap, "lane_overrun="+orDash(c.Overrun))
+	}
+	return strings.Join(w, " ") + " " + c.Usage.String()
 }
 
 // cutWithSpend runs a cut against the fake forge with the spend sources given.

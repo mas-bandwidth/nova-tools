@@ -113,6 +113,15 @@ func TestFolderDeliversExactNativeTextWithSidecarAndNonceDedup(t *testing.T) {
 	assert.FileExists(t, path)
 }
 
+// NativeFolderFile identifies files the folder watcher may forward. It does
+// not itself prove that a session read or acted on their contents.
+func NativeFolderFile(name string) bool {
+	if !strings.HasSuffix(name, ".md") {
+		return false
+	}
+	return strings.HasPrefix(name, "FRIEND-CHECK-") || strings.HasPrefix(name, "FRIEND-WAKE-") || strings.HasPrefix(name, "FRIEND-PUSH-")
+}
+
 func TestNativeFolderFileExcludesMetadata(t *testing.T) {
 	t.Parallel()
 	assert.True(t, NativeFolderFile("FRIEND-CHECK-n1.md"))

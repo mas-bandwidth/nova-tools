@@ -1452,9 +1452,6 @@ const StopReturnReason = "owned process stopped"
 // store's verb may be absent or the machine already RUNNING, and a verb a pass is a flood.
 const StopReturnRetry = time.Minute
 
-// Stopped says the last queue read said the machine is STOPPED.
-func (m *Member) Stopped() bool { return m.stopped }
-
 // OwedStopReturns is how many of this member's launches the stop cancelled whose card is
 // not yet handed back: the beat carries it (fleet beat --stop-returns), and start waits on
 // zero. A card the queue holds working under this row with no child of ours is owed too,

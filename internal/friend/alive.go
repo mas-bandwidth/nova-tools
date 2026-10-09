@@ -418,14 +418,6 @@ func WatchHarness(d *Daemon, adapter Deliverer) *HarnessWatch {
 	return w
 }
 
-// Seen is what the last check read: HarnessRunning, HarnessNotSeen, or
-// HarnessUnknown when the adapter cannot tell or nothing was asked yet.
-func (w *HarnessWatch) Seen() string {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return seen(w.live)
-}
-
 // Status returns the last advisory observation without sharing the daemon's
 // mutable Status with the independent beat worker.
 func (w *HarnessWatch) Status() (string, string) {

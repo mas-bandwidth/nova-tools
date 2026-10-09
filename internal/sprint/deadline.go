@@ -43,7 +43,8 @@ const (
 // The deal asks it for every card it deals or moves, and a plan is run more than once a
 // tick (the part's probe, then each attempt), so it is measured once a member for the
 // done-ok cell the fleet table holds (medianWalls), never once a card: a deal costs the
-// cards it deals, not those times the member's history (TestTheTickGateHoldsUnderLoad).
+// cards it deals, not those times the member's history
+// (TestTickDealMeasuresEachDoneOKCellOnce).
 //
 // A stats tidy carries the member's median through it (PropCarriedMedian): the carried
 // median and count stand while the live sample is smaller than the carried count.
@@ -60,15 +61,6 @@ func MemberMedianWall(s *Snapshot, member string) (median float64, n int) {
 // medianWalls is each member's median run wall as last measured, with the done-ok cell
 // it was measured over.
 var medianWalls = medianMemo{byMember: map[string]medianWall{}, measured: map[string]int{}}
-
-// MedianWallMeasures is how many times the member's median run wall has been measured
-// over a done-ok cell in this process: once a cell, so a deal over a snapshot measures
-// each member it deals to once however many cards it deals (TestTheTickGateHoldsUnderLoad).
-func MedianWallMeasures(member string) int {
-	medianWalls.mu.Lock()
-	defer medianWalls.mu.Unlock()
-	return medianWalls.measured[member]
-}
 
 // medianMemo is the members' median run walls, each held with the done-ok cell it was
 // measured over: the table builds a new cell when a card is put (Table.Put resets the

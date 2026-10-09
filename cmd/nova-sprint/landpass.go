@@ -691,26 +691,6 @@ func (l *lander) merges(jobs []*landJob, contexts map[*landJob]context.Context, 
 	wg.Wait()
 }
 
-// runBounded runs fn(i) for each i in 0..n-1 in goroutines, at most width at a time, and
-// returns when every one has returned; a width under one runs them one at a time.
-func runBounded(width, n int, fn func(i int)) {
-	if width < 1 {
-		width = 1
-	}
-	sem := make(chan struct{}, width)
-	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
-		sem <- struct{}{}
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			fn(i)
-		}(i)
-	}
-	wg.Wait()
-}
-
 // merge is one job's phase 1, in the stream's lander and worktree, beside the other
 // streams': the heads merged and checked onto the branch prepare cut (mergeCards), the
 // batch's tree gated once as a whole, its heads gated one by one only when that gate is
