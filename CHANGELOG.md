@@ -1,8 +1,20 @@
 # nova-tools changelog
 
-## v1.2.0 — unreleased
+## v1.2.0 — 2026-10-09
 
-- docs: `nova-secrets gate`'s exit contract matches the binary — a verdict prints `GATE FAILED` at exit 1, and a gate that could not run prints `SECRETS GATE REFUSED` at exit 2 (docs/CLI.md, docs/SPEC-SECRETS.md)
+This build improves sprint cancellation, code reviews, agent messaging and setup.
+
+- Cancelling work no longer leaves the merge queue waiting on cancelled jobs.
+- Stopping a sprint cancels active worker jobs and records which cards need to be returned.
+- Fixed a crash caused by workers reporting their status while their running jobs changed.
+- Reviews are scheduled in larger batches to reduce delays. Reviewers receive the correct branch, and missing branches trigger a new review request.
+- Review results are preserved when they arrive after a job times out. Reassigned cards get their own deadlines.
+- Codex can receive work through a watched folder. Claude has an optional hook that runs shell commands in the background so they do not hold up the session.
+- Message listeners remember their position across restarts and handle replaced message files.
+- Fixed worker-service reinstallation failures on macOS. OpenCode handles an empty session list correctly, and health checks detect stale daemon status.
+- Upgrades migrate the data store before switching binaries.
+- The dashboard highlights repair cards in purple and shows a simpler cost per card.
+- Updated command help and setup documentation, removed unused code, and added regression tests.
 
 ## v1.1.0 — 2026-10-08
 
