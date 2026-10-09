@@ -655,6 +655,10 @@ type whereView struct {
 	// tick's where record (sprint.ReadsWaiting).
 	Backup       string `json:"backup"`
 	ReadsWaiting int    `json:"reads_waiting"`
+	// ReadsWindow is the ok and broken verdicts over the last 30 minutes of running time and
+	// when that window began (sprint.ReadsWindowOf), from the tick's where record; zero before
+	// the first tick of an epoch.
+	ReadsWindow sprint.ReadsWindowView `json:"reads_window"`
 	// ReadCards is the epoch's read cards ready, working and done, and each fleet and friends
 	// row of tables carries its cards by level and its reads (rowCardFields), from the tick's
 	// where record (sprint.RowCardCounts).
@@ -1178,6 +1182,7 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	working, review, merging := pipelineCounts(shapes[0])
 	v.Backup = sprint.BackupOf(int(working), int(review), int(merging))
 	v.ReadsWaiting, v.Priorities, v.StreamPriorities = facts.ReadsWaiting, facts.Priorities, facts.StreamPriorities
+	v.ReadsWindow = facts.ReadsWindow
 	v.ReadCards = facts.ReadCards
 	v.Width = upWidth(shapes[3])
 	v.Buffer = fmt.Sprintf("%d/%d", v.Ready, 2*v.Width)

@@ -473,7 +473,7 @@ func TestRunReadsTheConfigDirOffTheBeat(t *testing.T) {
 			code := run(append([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir()}, tc.flags...), strings.NewReader(""), &out, &errb, w)
 			assert.Equal(t, 0, code, errb.String())
 			assert.NotContains(t, out.String(), "REFUSED")
-			assert.Contains(t, out.String(), "push proof: none owed: claude runs each card as a process of its own")
+			assert.Contains(t, out.String(), "push proof: owed by the folder: claude runs each card as a process of its own, so the session check goes in as")
 			assert.Contains(t, out.String(), "mode: one-shot, from batch (the friend row)")
 		})
 	}
@@ -1309,6 +1309,9 @@ func TestHostHelpExampleIsWhatTheToolPrints(t *testing.T) {
 		Args: []string{"host", "--as", "bob", "--harness", "aider", "--dir", "./bob", "--dry-run", "--", "aider"},
 		Want: []string{"HOST DRY-RUN session=friend-bob dir=./bob dry_run=true command=\"tmux new-session -d -s friend-bob -c ./bob -- aider\""},
 	}
+	doc, err := os.ReadFile("../../docs/CLI.md")
+	require.NoError(t, err)
+	assert.Contains(t, string(doc), strings.TrimPrefix(step.Line, "$ "), "the executed command is also in the reference")
 	var out, errb strings.Builder
 	w := newRig(t).world()
 	code := run(step.Args, strings.NewReader(""), &out, &errb, w)

@@ -1729,13 +1729,30 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 // already failed (docs/SPEC-SPRINT.md section 8, "A late report finishes the failed
 // attempt"; tla/SprintRules.tla, Part "answers", LateReportFinishes): c is done failed, and its primary is in review on it at its attempt, failed,
 // so no later attempt has started. Such a report finishes that attempt rather than be
-// refused, so the card does not go round again for work that is done.
+// refused, so the card does not go round again for work that is done. Only an attempt the
+// deadline failed takes one (deadlineFailed): an attempt its own worker failed was
+// reported already, and a finish for it again (a retry, a duplicate) is refused as before.
 func lateFinish(s *Snapshot, c *Card) bool {
 	if c == nil || !c.Placed() || c.Col != DoneFailed || c.F("kind") == "read" {
 		return false
 	}
+	if !deadlineFailed(c.F("report")) {
+		return false
+	}
 	pr := s.Work.Placed(c.F("primary"))
 	return pr != nil && pr.Col == Review && pr.F("work") == c.ID && pr.F("result") == "failed" && pr.Int("attempt") == c.Int("attempt")
+}
+
+// deadlineFailed says a work card's failed report is the attempt's end with no report from
+// its worker: the lane died or the runner ended it, the deadline passed, or no result came
+// back (HarnessFault's classes "lane died", "deadline" and "no result"). Any other failed
+// report, "red" or a HOLD, is the worker's own finish, and no later report answers it.
+func deadlineFailed(report string) bool {
+	switch HarnessFault(report) {
+	case "lane died", "deadline", "no result":
+		return true
+	}
+	return false
 }
 
 // lateFinishWhy is why a late report is refused: only a LAND with its head or a HOLD (a

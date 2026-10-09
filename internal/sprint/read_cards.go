@@ -449,7 +449,7 @@ func readCardsStanding(s *Snapshot, pr *Card, idx map[string][]*Card) (standing 
 // found it broken (its judgment and the rework follow), none for failed work; over a fleet
 // read index (fleetReadIndex), nil to read the table.
 func readCardsWanted(s *Snapshot, pr *Card, idx map[string][]*Card) int {
-	if pr == nil || pr.Col != Review || IsSentinel(pr) || pr.F("result") == "failed" {
+	if pr == nil || pr.Col != Review || IsSentinel(pr) || pr.F("result") == "failed" || readBranchMissingOpen(s, pr) {
 		return 0
 	}
 	standing, broken := readCardsStanding(s, pr, idx)
@@ -752,6 +752,7 @@ func readCardsAskPart(s *Snapshot, r TickReq, seats []FriendSeat) (Plan, int) {
 		conds = append(conds, readersBehindCond(s)...)
 	}
 	conds = append(conds, raiseReadTierConds(s)...)
+	conds = append(conds, readsWindowConds(s, r)...)
 	// a read no unit up may take is cannot ask, one judgment, open until a reader may
 	var refused []Refusal
 	for _, id := range slices.Sorted(maps.Keys(waits)) {
@@ -760,7 +761,7 @@ func readCardsAskPart(s *Snapshot, r TickReq, seats []FriendSeat) (Plan, int) {
 		}
 	}
 	conds = append(conds, cannotAskCond(s, refused)...)
-	due := notify(&p, s, conds, []string{NCannotAsk, NFewReaders, NReadersBehind, NRaiseReadTier}, r)
+	due := notify(&p, s, conds, []string{NCannotAsk, NFewReaders, NReadersBehind, NRaiseReadTier, NBrokenReadsOutrun, NReaderBreaks}, r)
 	return p, due + len(waits)
 }
 

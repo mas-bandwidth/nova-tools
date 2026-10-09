@@ -284,9 +284,9 @@ func TestNoTokenIsANewMessageEveryCall(t *testing.T) {
 	assert.Equal(t, 0, f.Records())
 }
 
-// A retry of a message whose recipient went deaf since it was sent still
-// answers the original: nothing is written, so the push gate has nothing to
-// guard. A first send to a deaf name is refused as ever.
+// A retry of a message whose recipient went unheard since it was sent still
+// answers the original, nothing written; and a first send to an unheard name
+// lands too, the proof being advice and never a gate.
 func TestARetryToANameThatWentDeafAnswersTheOriginal(t *testing.T) {
 	t.Parallel()
 	b, f := rig(t, "ada", "bob", "cy")
@@ -300,22 +300,23 @@ func TestARetryToANameThatWentDeafAnswersTheOriginal(t *testing.T) {
 		}
 	}
 	prove(true, "ada", "bob", "cy")
-	heard := &Bus{Store: Hearing(f), Rand: b.Rand}
 	f.Lose = errLost
-	_, err := heard.Send(ctx, tokened("t-deaf"))
+	_, err := b.Send(ctx, tokened("t-deaf"))
 	require.ErrorIs(t, err, errLost)
 	prove(false, "bob")
 
-	got, err := heard.Send(ctx, tokened("t-deaf"))
+	got, err := b.Send(ctx, tokened("t-deaf"))
 	require.NoError(t, err)
 	log, err := b.Log(ctx, "-")
 	require.NoError(t, err)
 	assert.Equal(t, log[0].Message().ID, got.ID)
 	one(t, f)
 
-	_, err = heard.Send(ctx, tokened("t-new"))
-	var r *Refusal
-	require.ErrorAs(t, err, &r)
-	assert.Contains(t, err.Error(), "deaf: bob")
-	one(t, f)
+	_, err = b.Send(ctx, tokened("t-new"))
+	require.NoError(t, err, "a first send to an unheard name lands")
+	assert.Equal(t, 2, f.Len(LogKey))
+	lines, err := b.Unheard(ctx, "ada", "bob")
+	require.NoError(t, err)
+	require.Len(t, lines, 1)
+	assert.Contains(t, lines[0], "push=down for bob")
 }

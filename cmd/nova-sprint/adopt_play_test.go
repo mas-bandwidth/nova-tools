@@ -51,6 +51,7 @@ ok: [seat-a] => (item=y) => {
 // a built release directory names the version and the release output.
 func TestAdoptRunsThePlayAndRefusesAHalfMove(t *testing.T) {
 	t.Parallel()
+	assert.Contains(t, notServed, "adopt", "the seat play must run locally, not through the sprint server")
 	src := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(src, "fleet"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(src, "fleet", "tools.yml"), []byte("[]\n"), 0o644))

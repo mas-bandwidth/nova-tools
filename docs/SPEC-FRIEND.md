@@ -224,7 +224,9 @@ Presence is therefore the session's, never the daemon's:
   one unanswered while the session spoke, silence for `SessionQuiet` plus
   `SessionBound` is down all the same. Until the session answers
   a check (or writes on the bus) the push is unproven and the daemon delivers
-  nothing into the session (The push proof, below).
+  nothing into the session (The push proof, below); nova-bus itself refuses
+  nothing on it, it says `push=<state>` as a NOTE beside a message
+  (SPEC-BUS.md, bus-requires-inbox-push-proof).
 - The daemon is the one that proves its session to the sprint server, by
   nonces only: the beat after a check goes in says it, `friend beat --check
   <nonce> --run <run>`, and the beat after the session answers it names it,
@@ -1386,15 +1388,48 @@ loop"; cmd/nova-sprint/friend_loop.go).
 A friend nothing pushes into is deaf, and the bus waits on her unread (the
 owner, 2026-10-05: "Your inbox MUST push to you."; "It must be mandatory and
 enforced"). So the push is proved before the daemon starts, never left to a
-log line:
+log line. The proof is the daemon's to make and the bus's to show: nova-bus
+`send` and `recv` never refuse a name on it (the owner, 2026-10-08, issue
+#5450: "it is important that we can talk to friends, if you can't that's
+totally a bug"); they print `push=<none|down|stale> for <name>` as a NOTE
+beside a message that landed or was read, and `names` shows every name's
+state (SPEC-BUS.md, bus-requires-inbox-push-proof).
 
 - `nova-friend install` and `run` refuse, before anything is written, loaded
   or delivered, a harness whose adapter has no deliver command (a `Stub`:
   every surveyed harness; not claude, which runs each card as a process of its
-  own, below, and owes neither this refusal nor the proof), exit 2, with the remedy `the adapter
+  own, below, and owes no refusal: its check goes in by the folder), exit 2, with the remedy `the adapter
   card: give internal/friend a deliver command for <harness> (NewDeliverer),
   or run the friend under a harness that has one: <the harnesses with one>`.
   `--dry-run` refuses it too.
+- A claude friend proves by the folder (`friend.FolderCheck`,
+  internal/friend/adapter_claude_folder.go; the owner, 2026-10-08: "why not,
+  can we fix the harness to do this?"). Claude Code has no command that puts
+  a turn into a running session, and her cards run as processes of their
+  own, so the daemon's SESSION CHECK is written as one file,
+  `<dir>/inbox/SESSION-CHECK-<nonce>`, holding the check's text (the pong
+  command: `nova-friend pong --as <me> --nonce <nonce> --state-dir <state>`);
+  the next check replaces it, so one stands at a time. The write holds no
+  turn of the session, so the check goes in in place (`friend.InPlace`,
+  `SessionCheck.ask`), never on the check scheduler: the file is on disk
+  before `ask` returns, and so before any beat says the check (the reader of
+  2026-10-08: a check said on the beat and written milliseconds later was an
+  ordering race). `run` and `install`
+  say so (`push proof: owed by the folder: ...`, and install's NOTE naming
+  the path). A live session watches that folder (a Monitor, as the seat's own
+  folder adapter has it: SPEC-SPRINT.md, "The push proof") and answers the
+  file it shows; the pong on the bus brings the presence up, the proof on
+  `bus2:push` follows with the nonce and `harness=claude`, and the next beat
+  carries `--check` and `--pong` as any session's does (`SessionCheck.Words`),
+  so the server records the session proof natively. Her beat is never held
+  back on the answer (`SessionCheck.BeatAlways`): with no live session
+  (per-card lanes only, mode batch) she answers nothing, reads down with the
+  check's nonce, and her cards' finishes stand for her at the server, as the
+  one-shot lanes have it below; nothing refuses a message to her on it
+  (SPEC-BUS.md, bus-requires-inbox-push-proof). Tests:
+  `TestAClaudeFriendsCheckGoesInByTheFolder` (internal/friend),
+  `TestAClaudeDaemonsCheckGoesInByTheFolderAndItsBeatCarriesThePong`
+  (cmd/nova-friend).
 - `run` never waits on the proof and never exits for want of it: the start
   check is a state (the finding of 2026-10-06: a session in long turns never
   answered inside five minutes, run exited 2, launchd restarted it into the
@@ -1720,10 +1755,12 @@ A claude lane's run is a lane's (`LaneContext`), so it runs inside the lane
 wall like every lane child, never outside it; the wall's `--config-dir` is
 `run --config-dir`, else the row's `config_dir` as the last beat answered it
 (`row_config_dir=`), else `CLAUDE_CONFIG_DIR`. A claude friend has no session
-to push into, so `run` owes no push proof and holds no beat for a session
-check: her presence is her cards finished (a finish within `FriendFinishWindow`),
-never her daemon's beat, and a card whose outbox lacks its result is the failure
-that shows.
+to push a turn into, so her session check goes in by the folder
+(`<dir>/inbox/SESSION-CHECK-<nonce>`, The push proof above) and `run` holds
+no beat for its answer: her presence at the server is her cards finished (a
+finish within `FriendFinishWindow`), never her daemon's beat, and a card whose
+outbox lacks its result is the failure that shows; a live session that answers
+the check adds the session proof on top.
 
 A claude friend's open session, where she keeps one (the desktop app or a
 terminal), is reached through its own blocking read; the lanes above are
@@ -2524,8 +2561,8 @@ the check's clock minus `--since`.
 the log file, the bus store, the directory listing) so the verdict is a function and the tests use fakes:
 
 1. Daemon: the launchd agent (`loaded`, `not-loaded`, `none`) and its pid, the status file's freshness
-   (`ok` within `DaemonStale`, `stale`, `none`), connection, challenge, the session pong's age, presence
-   and its seen age.
+   (`ok` only while younger than `DaemonStale`, `stale`, `none`), connection, challenge, the session pong's age, presence
+   and its seen age. A stale status makes presence down even when the presence file still says up.
 2. Harness: the route (`push`, `mailbox` for antigravity, `queue` for codex, or `passive` for a harness nothing pushes into; dsh is `push`, each
    delivery a headless turn) and, from the daemon's log, the deliveries (`exit=`
    lines) and deferrals stamped at or after the window start; a line with no stamp is outside every
@@ -2546,10 +2583,11 @@ the log file, the bus store, the directory listing) so the verdict is a function
    delivery in the window failed. One failure among successes is not broken.
 2. `deaf` when a delivery in the window succeeded (`delivered > failed`) and no session pong aged
    within the window and no real message in the window came back.
-3. `silent` when no delivery was due in the window (`delivered == 0`, no deferral, an empty inbox),
+3. `down` when daemon status is stale, even if a later presence or pong file is fresh.
+4. `silent` when no delivery was due in the window (`delivered == 0`, no deferral, an empty inbox),
    nothing came back, and the friend is not down.
-4. `down` by presence: presence down, no agent, or an agent not loaded with no status.
-5. `ok` otherwise.
+5. `down` by presence: presence down, no agent, or an agent not loaded with no status.
+6. `ok` otherwise.
 
 **`--shown`** is what a consumer shows of each friend, `{"<friend>":{"state":"up|asleep|down","working":<n>}}`
 (a consumer passes its own table through it; the tool reads no consumer). A friend is claimed alive

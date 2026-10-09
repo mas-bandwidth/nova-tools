@@ -1460,6 +1460,7 @@ coordinator PING at once (daemon-pong); presence is the session's word on the bu
 state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.json.
 
 usage:
+  nova-friend hook --harness claude
   nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]
   nova-friend beat --as <me> [--server <addr>]
   nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
@@ -1493,6 +1494,19 @@ example:
   nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
   nova-friend watch --as ada --timeout 10m
   nova-friend status --as bob --dir ./bob
+```
+
+`nova-friend hook -h`:
+
+```
+usage: nova-friend hook [flags]
+from `nova-friend help`:
+  nova-friend hook --harness claude
+flags:
+  --harness <string>  claude: the harness whose PreToolUse JSON is on stdin (required)
+  --json  print the result as one JSON object instead of lines
+exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+effect: inspection: reads, writes nothing: reads one PreToolUse JSON event from stdin and prints only Claude hook protocol JSON
 ```
 
 `nova-friend run -h`:
@@ -2876,10 +2890,6 @@ window opened is said with what the rollback did and names those steps rolled ba
 command again finishes it), or when `--source` holds no
 `fleet/tools.yml`; 2 usage. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 14,
 "Adopting a build".
-
-The adoption pipeline (`(*app).cmdAdopt`, `cmd/nova-sprint/adopt.go`; the runbook is
-[SPRINT-COORDINATOR.md](SPRINT-COORDINATOR.md) section 7, "Adoption is a pipeline") is in no
-verb table and the tick does not call its pass.
 
 ### Exit codes
 

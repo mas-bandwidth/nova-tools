@@ -5,20 +5,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"sync"
 	"time"
 )
 
 // PushKey is the hash of every name's inbox push proof: one field per name,
 // its value the PushProof as JSON (SPEC-BUS.md, bus-requires-inbox-push-proof).
-// A name is on the bus only while something proven can hear it: the friend
-// daemon writes the proof when its session answers a SESSION CHECK carried in
-// by the harness's deliver adapter, renews it while the session stays up, and
-// writes it down when a check goes unanswered; send and recv read it.
+// The proof is the seat's liveness rule, and advice to a sender: the friend
+// daemon writes it when its session answers a SESSION CHECK carried in by
+// the harness's deliver adapter, renews it while the session stays up, and
+// writes it down when a check goes unanswered; names shows it, and send and
+// recv say it as a NOTE beside a message that landed or was read, never as a
+// refusal.
 const PushKey = "bus2:push"
 
-// PushFresh is how young a proof must be for its name to be heard: a daemon
-// that stopped renewing is a push nobody has proven for this long.
+// PushFresh is how young a proof must be for its name to read as heard: a
+// daemon that stopped renewing is a push nobody has proven for this long.
 const PushFresh = 10 * time.Minute
 
 // PushProof is one name's proof that its inbox pushes into its session: the
@@ -73,8 +74,28 @@ func (p PushProof) AgeWord(now time.Time) string {
 	return p.Age(now).String()
 }
 
+// Unheard is the advisory line for name at now, "" when its proof is proven:
+// the NOTE send and recv print beside their result (SPEC-BUS.md,
+// bus-requires-inbox-push-proof). It never refuses: a message to an unheard
+// name lands and waits on its stream; the line says what the proof's state
+// is and what would prove one, so a sender knows nothing is pushing it in.
+func (p PushProof) Unheard(now time.Time) string {
+	var why string
+	switch p.State(now) {
+	case PushProven:
+		return ""
+	case PushNone:
+		why = "no daemon has recorded one"
+	case PushDown:
+		why = fmt.Sprintf("its daemon holds no answered SESSION CHECK from the session (%s)", p.Reason)
+	case PushStale:
+		why = fmt.Sprintf("its daemon (%s) last renewed it %s ago, past %s", p.Harness, p.Age(now), PushFresh)
+	}
+	return fmt.Sprintf("push=%s for %s: no proven push since %s: %s; a message to %s waits on its stream until something reads it (nova-bus recv --as %s); the proof: %s runs its friend daemon (nova-friend install --as %s --harness <h> --dir <d>) and its session answers the daemon's SESSION CHECK; nova-bus names shows every name's push", p.State(now), p.Name, p.AgeWord(now), why, p.Name, p.Name, p.Name, p.Name)
+}
+
 // Deaf is why name is not heard at now, "" when its proof is proven: the
-// sender's refusal, with the remedy, so a sender never talks into a void.
+// refusal of nova-bus's --require-push, with the remedy.
 func (p PushProof) Deaf(now time.Time) string {
 	var why string
 	switch p.State(now) {
@@ -121,12 +142,6 @@ func (b *Bus) PushProofs(ctx context.Context, names ...string) ([]PushProof, tim
 	return proofs, now, err
 }
 
-// ProofsOf is each name's proof, in the order asked, in one trip (HGETALL on PushKey)
-// and with no roster trip: what nova-bus's advisory gate reads, judged at a time it has.
-func (b *Bus) ProofsOf(ctx context.Context, names ...string) ([]PushProof, error) {
-	return b.proofs(ctx, names)
-}
-
 // proofs is each name's proof, in the order asked, in one trip (HGETALL on
 // PushKey). A name with none, or whose value is no proof, has the zero
 // proof: PushNone.
@@ -147,147 +162,66 @@ func (b *Bus) proofs(ctx context.Context, names []string) ([]PushProof, error) {
 	return out, nil
 }
 
-// deaf is one line for every name of names (deduplicated, in order) that is
-// not heard at now, in one trip: all at once, as the bus names its problems.
-func deaf(ctx context.Context, st Store, now time.Time, names ...string) ([]string, error) {
+// Unheard is one advisory line for every name of names (deduplicated, in
+// order) that is not heard at the store's now, in one trip after the roster's
+// (one HGETALL): what send prints as SEND NOTE after its message landed and
+// recv as RECV NOTE beside what it read. It is advice, never a gate: the
+// push proof is the seat's liveness rule (names, the coordinator's view),
+// and a message is never refused on it (the finding of 2026-10-08, issue
+// #5450: a claude friend and a machine with no daemon could never be
+// written to or read as).
+func (b *Bus) Unheard(ctx context.Context, names ...string) ([]string, error) {
+	_, now, err := b.Store.Roster(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return b.UnheardAt(ctx, now, names...)
+}
+
+// UnheardAt is Unheard judged at at, with no roster trip: send's, judged at
+// the store's time its message was stamped with (one HGETALL after the write).
+func (b *Bus) UnheardAt(ctx context.Context, at time.Time, names ...string) ([]string, error) {
+	return b.unheardAt(ctx, at, PushProof.Unheard, names...)
+}
+
+// Heard refuses every name of names (deduplicated, in order) that is not
+// heard at the store's now, one deaf line each: the gate nova-bus's
+// --require-push puts in front of a send or a recv, before anything is
+// written or read. It is the exception, asked for by flag; the bus itself
+// never refuses on a proof.
+func (b *Bus) Heard(ctx context.Context, names ...string) error {
+	_, now, err := b.Store.Roster(ctx)
+	if err != nil {
+		return err
+	}
+	problems, err := b.unheardAt(ctx, now, PushProof.Deaf, names...)
+	if err != nil {
+		return err
+	}
+	if len(problems) > 0 {
+		return &Refusal{problems}
+	}
+	return nil
+}
+
+// unheardAt is line(proof, at) for every name of names (deduplicated, in
+// order) whose proof is not proven at at, in one trip (one HGETALL).
+func (b *Bus) unheardAt(ctx context.Context, at time.Time, line func(PushProof, time.Time) string, names ...string) ([]string, error) {
 	var uniq []string
 	for _, n := range names {
 		if !slices.Contains(uniq, n) {
 			uniq = append(uniq, n)
 		}
 	}
-	proofs, err := (&Bus{Store: st}).proofs(ctx, uniq)
+	proofs, err := b.proofs(ctx, uniq)
 	if err != nil {
 		return nil, err
 	}
-	var problems []string
+	var lines []string
 	for _, p := range proofs {
-		if d := p.Deaf(now); d != "" {
-			problems = append(problems, d)
+		if l := line(p, at); l != "" {
+			lines = append(lines, l)
 		}
 	}
-	return problems, nil
-}
-
-// Heard refuses every name of names that is not heard, one deaf line each:
-// what a verb that writes nothing (send's and recv's --dry-run) checks
-// before it answers.
-func (b *Bus) Heard(ctx context.Context, names ...string) error {
-	_, now, err := b.Store.Roster(ctx)
-	if err != nil {
-		return err
-	}
-	problems, err := deaf(ctx, b.Store, now, names...)
-	if err != nil {
-		return err
-	}
-	if len(problems) > 0 {
-		return &Refusal{problems}
-	}
-	return nil
-}
-
-// Hearing is st with the push gate in front of it: what nova-bus opens, so
-// send and recv refuse a name nothing proven can hear (SPEC-BUS.md,
-// bus-requires-inbox-push-proof). A message (AddAll with streams) is refused
-// (AddOnce too, but a retry whose token has a record answers it, writing
-// nothing) unless its sender and every recipient are heard at its at, the store's
-// time Send stamped it with, after Send has named the message's own
-// problems; a recv (EnsureGroup, the recipient's group) is refused unless
-// the recipient is heard at the store's time of the roster it was checked
-// against. Each costs one HGETALL. Every other command passes through, so a
-// deaf name can still peek, ack and read the log. The friend daemon's own
-// sends (its SESSION CHECK, its daemon-pong) go through the bare store: the
-// proof is theirs to make.
-func Hearing(st Store) Store { return &hearing{Store: st} }
-
-type hearing struct {
-	Store
-	mu  sync.Mutex
-	now time.Time // the store's time at the last roster trip
-}
-
-func (h *hearing) seen(now time.Time) {
-	h.mu.Lock()
-	h.now = now
-	h.mu.Unlock()
-}
-
-func (h *hearing) Roster(ctx context.Context) ([]string, time.Time, error) {
-	names, now, err := h.Store.Roster(ctx)
-	if err == nil {
-		h.seen(now)
-	}
-	return names, now, err
-}
-
-func (h *hearing) Members(ctx context.Context) ([]string, []string, time.Time, error) {
-	friends, machines, now, err := h.Store.Members(ctx)
-	if err == nil {
-		h.seen(now)
-	}
-	return friends, machines, now, err
-}
-
-func (h *hearing) AddAll(ctx context.Context, streams []string, fields map[string]string, marks ...Mark) error {
-	if err := h.gate(ctx, streams, fields); err != nil {
-		return err
-	}
-	return h.Store.AddAll(ctx, streams, fields, marks...)
-}
-
-// AddOnce is gated as AddAll, but for a retry: a token whose record is there
-// writes nothing, so its answer is the original whoever is deaf now (one GET
-// more, only when the gate refuses).
-func (h *hearing) AddOnce(ctx context.Context, key, record string, keep time.Duration, streams []string, fields map[string]string, marks ...Mark) (string, bool, error) {
-	if err := h.gate(ctx, streams, fields); err != nil {
-		if prior, found, gerr := h.Store.Sent(ctx, key); gerr == nil && found {
-			return prior, true, nil
-		}
-		return "", false, err
-	}
-	return h.Store.AddOnce(ctx, key, record, keep, streams, fields, marks...)
-}
-
-// gate refuses a message (a write with streams) whose sender or a recipient
-// is not heard at its at.
-func (h *hearing) gate(ctx context.Context, streams []string, fields map[string]string) error {
-	if len(streams) == 0 {
-		return nil
-	}
-	at, err := time.Parse(time.RFC3339, fields["at"])
-	if err != nil {
-		h.mu.Lock()
-		at = h.now // a message with no at is judged at the last time the store gave
-		h.mu.Unlock()
-	}
-	problems, err := deaf(ctx, h.Store, at, slices.Concat([]string{fields["from"]}, list(fields["to"]), list(fields["cc"]))...)
-	if err != nil {
-		return err
-	}
-	if len(problems) > 0 {
-		return &Refusal{problems}
-	}
-	return nil
-}
-
-func (h *hearing) EnsureGroup(ctx context.Context, stream, group string) error {
-	h.mu.Lock()
-	now := h.now
-	h.mu.Unlock()
-	if now.IsZero() {
-		_, t, err := h.Roster(ctx)
-		if err != nil {
-			return err
-		}
-		now = t
-	}
-	problems, err := deaf(ctx, h.Store, now, group)
-	if err != nil {
-		return err
-	}
-	if len(problems) > 0 {
-		return &Refusal{problems}
-	}
-	return h.Store.EnsureGroup(ctx, stream, group)
+	return lines, nil
 }

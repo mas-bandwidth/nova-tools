@@ -105,6 +105,31 @@ func TestOpenCodeOpensALaneSessionAndDeliversIntoIt(t *testing.T) {
 	assert.ErrorAs(t, err, &refused, "a provider refusing the seed is said as such")
 }
 
+// A wall refusal happens before OpenCode can list or open a native session. Say
+// its bounded reason and the missing-deny remedy without copying wall output,
+// which can contain private paths, into the daemon's record.
+func TestOpenCodeSessionOpenNamesWallRefusalWithoutEchoingOutput(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, output, want string
+	}{
+		{"missing deny", "WALL REFUSED reason=bad_profile the friend profile denies nothing: private-path /private/x\n", "nova-friend run --deny-self"},
+		{"other wall refusal", "WALL REFUSED reason=bad_net private-path /private/x\n", "friend wall refused reason=bad_net"},
+		{"not a wall refusal", "private-path /private/x\n", "opencode session list exited 125"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			o := &OpenCode{Dir: t.TempDir(), Run: func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
+				assert.Equal(t, []string{"session", "list", "--format", "json"}, args)
+				return tc.output, 125, nil
+			}}
+			_, err := o.OpenSession(t.Context(), "seed")
+			require.ErrorContains(t, err, tc.want)
+			assert.NotContains(t, err.Error(), "/private/x")
+		})
+	}
+}
+
 // A read is one run in its own session with the model of its tier, no listing read.
 func TestOpenCodeRunsAReadAsOneShotWithTheTiersModel(t *testing.T) {
 	t.Parallel()
