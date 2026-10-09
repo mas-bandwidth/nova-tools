@@ -1,8 +1,54 @@
 # nova-tools changelog
 
-## v1.2.0 — unreleased
+## v1.2.0 — 2026-10-09
 
-- docs: `nova-secrets gate`'s exit contract matches the binary — a verdict prints `GATE FAILED` at exit 1, and a gate that could not run prints `SECRETS GATE REFUSED` at exit 2 (docs/CLI.md, docs/SPEC-SECRETS.md)
+This release is cut under a certification waiver; certification repair is the first follow-up. The waiver does not establish full release certification.
+
+Source: `dev` at `9ff68178845f4ac681921388bb36e764ce5dd134`. This includes the frozen sprint base `13ec74bbe2`, with 32 merged pull requests since v1.1.0, followed by the deletion-ledger correction, canonical dead-code cleanup and deadline-fixture correction in #5517, and the member heartbeat race fix in #5518.
+
+v1.2.0 focuses on reliable cancellation, review progress, session delivery and clearer failure reports. It also reduces unreachable code and updates the command documentation.
+
+### Sprint and landing
+
+- Lander pass slots, stream chains and per-commit gate waits observe cancellation, so cancelled jobs release their wait slots instead of wedging a pass. (#5516)
+- STOP cancels worker lanes, records owned-work returns after process termination, replays owed returns and suppresses nudges while stopped. The coordinator receives one alert per unresolved stopped-assignment episode. (#5472, #5499)
+- The member heartbeat reads an atomic count of owed stop returns instead of traversing the running-job map while the tick updates it. This removes a concurrent map read/write that can terminate the worker. A regression test checks the count during cancellation and after the stopped job is released. (#5518)
+- Late reports preserve LAND or HOLD outcomes when the attempt failed because its deadline expired. Already failed reports are not applied again; rules handle broken reads and harness faults. (#5477, #5478)
+- A primary card remains held through its read card's deadline. A read that cannot be assigned produces a coordinator judgment. (#5473)
+- Read packets identify the branch containing the work. Missing branches trigger another read request, and the coordinator is alerted when broken reads outnumber successful reads. (#5467)
+- Redeal deadlines use each friend's own deal time, and withdrawn work no longer leaves never-taken judgments open. (#5447)
+- Review scheduling batches twenty ready read requests per fenced tick to address review starvation. (#5502)
+
+### Session delivery and messaging
+
+- Codex gains a native folder delivery adapter with an independent friend heartbeat and deterministic session-check tests. (#5449)
+- Claude gains an opt-in asynchronous Bash hook protocol through `nova-friend hook --harness claude`. (#5501)
+- An empty OpenCode session list means no session is available, rather than a broken harness. Error strings exclude captured command output. (#5457)
+- Worker lanes pass briefs by absolute path, supply the friend's directory to `claude -p` through `--add-dir`, and rescue stray reports only when they are regular files. (#5442)
+- Bus push proof is advisory by default. Callers can require it with `--require-push` or `NOVA_BUS_REQUIRE_PUSH=1`. (#5453, #5464)
+- Wake-file listeners preserve their cursor across restarts, detect file replacement before reading records, and support explicit replay from byte zero for listener migration.
+- Friend installation waits for launchd to release an unloaded service label before loading it again. (#5470)
+- Friend health checks account for stale daemon status, and OpenCode session-list refusals explain the lane boundary. (#5498)
+
+### Configuration and diagnostics
+
+- Adoption migrates the store as its owner before switching binaries. Owner connection strings no longer depend on regex backreferences, and a friend-sync failure produces one coordinator judgment. (#5446)
+- PostgreSQL discovery recognizes version 18 installations in the functional-test fixture and CI installer. A stalled sprint drive reports the coordinator's captured inbox judgments and recent play output, preserving the evidence needed to diagnose a refusal. (#5514)
+
+### Code quality and regression coverage
+
+- Dead-code detection treats tool mains as roots and reports go list errors, and the stitched adoption and final cleanup remove unreachable functions from internal/. (#5504, #5500, #5517)
+- The final cleanup preserves regression checks for median-history caching and delay-proxy goroutine cleanup. Deleted-test declarations match the composition, and the deadline fixture explicitly expresses its existing ten-minute value in seconds. (#5517)
+- Changelog wording uses generic roles and stale deletion entries are removed. (#5500, #5505)
+- Refusal-grammar and tool-answer walk helpers move to the functional tier, with smaller staticcheck and dead-code ledgers. The read-branch test uses a single slice append. (#5448, #5513)
+- Obsolete `BusCursor` models of the removed Git bus are removed. (#5463)
+
+### Dashboard and documentation
+
+- The dashboard shows repair work with fix priority and purple indicators, keeps its cost subtitle to the per-card amount, and removes unrequested panels and labels. (#5441, #5454, #5456)
+- Generated CLI documentation includes the friend hook and watch banner. Adoption helpers are deduplicated, and onboarding checks cover dry-run behavior. (#5506, #5471)
+- Tool READMEs cite tested output and verified test examples. (#5460)
+- The changelog preserves release ordering, and the secrets-gate documentation matches the binary: `GATE FAILED` exits 1; `SECRETS GATE REFUSED` exits 2 when the gate cannot run. (#5466)
 
 ## v1.1.0 — 2026-10-08
 
