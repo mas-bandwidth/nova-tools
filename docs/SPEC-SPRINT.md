@@ -1451,96 +1451,77 @@ time goes, from the medians of `all`. A card whose path skips a stamping step
 go through the steps above) has no sample for the stages that need it.
 (`TestStageTimesGiveMedianAndP90PerStage`).
 
-### Priority: reads are a card priority (reads-are-a-card-priority-b)
+### Priority: FIX and READER are fixed roles (reads-are-a-card-priority-b)
 
-The owner, 2026-10-06, with 270 cards in review, 76 working and every reader near idle: "I
-am now convinced that reads need to become a type of card priority." "This will help balance
-reads vs. work from now on." Every card carries one level of the ladder, highest first:
-`blocker` ("this is the most important thing to do right now, stop everything, do this
-instead"), `critical` ("I need to do this right now"), `fix` (a next attempt that repairs work), `high` (the seat's usual urgent
-level), `reader` (every read card, or its primary's level when higher), `normal` (the
-default) and `low` (it fills only an idle lane).
+Priority orders eligible work and read consumers through deal, queue packet selection,
+`take`, review, and merge. Its effective ladder, highest first, is `fix`, `blocker`,
+`critical`, `high`, `reader`, `normal`, `low`. FIX and READER are fixed consumer roles:
+FIX is purple and READER is orange. A read always has the READER role; its producer's
+ordinary urgency is a secondary order among reads. A repair always has the FIX role; its
+producer's ordinary urgency is a secondary order among FIX work and FIX merge peers.
+`blocker` is the most urgent ordinary work level below FIX. It does not cancel or interrupt
+an occupied slot: it waits for the next eligible free slot. Reclaiming a lower-priority
+occupied friend or fleet slot is deferred to v1.3.
 
-- **Where a level comes from.** A read card is `reader` or its primary's higher level
-  (below), never set by hand. A primary is
-  `normal` unless a level is set on it: its brief's header line `PRIORITY: <level>` seeds it
-  at admission (`add`), else its stream's default seeds it (a card's own line wins over its
-  stream's), and the verb `priority` sets it afterwards. A `PRIORITY:` line that names no
-  settable level (`PRIORITY: urgent`) is refused by `add` and `recut`, naming the level found
-  and the ladder's seven, never taken as no line (`TestAMisspelledPriorityIsRefused`).
-  `critical` is also computed: a card
-  with CriticalBehind (10) or more cards behind it (weight.go) is `critical` unless a level is
-  set by hand; the computed `critical` is shown as `critical (by weight, not yet ordered)`
-  (on `where`, in `--json`'s `priorities` under that key, and on the dashboard's dark red
-  mark with those words in its title) and orders nothing yet: placing it on the ladder made
-  the slow differential tier (`make test-slow`) disagree with the reference model on the
-  ask's stream round, so it is owed with the model (below). A recut's twin keeps its card's
-  level as it keeps its tier, the paths rule's twins included (the widen rule edits the card in place); a new
-  brief that names its own `PRIORITY:` line gives the twin that (`TestARecutKeepsTheCardsPriority`).
-- **Rework priority.** `set --rework-priority fix|high|keep` controls the level of a
-  normal or low primary when its next attempt opens (default `fix`). Failed work,
-  broken reads, conflicts, harness faults that open a new attempt, and the seat's
-  `rework` use the same policy; a corrected brief marked as a brief defect uses it
-  too. A friend's no-report runner fault returns the same attempt at a fresh generation,
-  so it does not change priority. Existing high, fix, critical
-  and blocker levels stay unchanged. `keep` retains the card's level. The primary
-  and its newly dealt work carry the level, and subsequent reads inherit it.
-  Within a stream, landing selects eligible cards by priority, preserving named and
-  positional dependencies and the stuck-card barrier. Equal levels keep work order.
-- **The verb.** `nova-sprint priority <id>... (--blocker|--critical|--fix|--high|--normal|--low)
-  --reason <text>` sets each primary named (the reason is required, as drop's is);
-  `priority --stream <s> --<level> --reason <text>` sets, in one call, every card now in the
-  stream, whatever its column and whatever level it had, its own included (the owner: "set
-  priority on stream just means one verb call sets priority for all cards in the stream"),
-  and the stream's default, which seeds the cards added to the stream later (a later card's
-  own PRIORITY line wins); a held stream is set all the same and the output says it is held
-  and that none of its cards is dealt until `unhold`; `priority <id>...` prints each card's
-  level and its source (`set`, `computed`, `default`, `read`). Every change is a `priority
-  set` note on the card's timeline (`log --card`) with the actor and the reason, and the
-  default's change a `stream priority set` note on the stream's (`log --stream`). A
-  set is refused on a read card, "a read card's priority is its primary's, or reader when that is lower; set its primary:
-  nova-sprint priority <primary> --<level>", and on a work card the same way. A card's level
-  shows on `card` (`priority=` on the CARD OK line; `priority` and `priority_source` in
-  `--json`), on `queue` (`priority=` beside each card: a read card's `reader`, a work card's
-  as its deal wrote it), and on `where`, beside the critical list (`priority: blocker s1-4;
-  low s2-1, s2-2 (+3); stream defaults s2 low`; in `--json` `priorities` by level,
-  `stream_priorities`, and each work row's `priority`, the stream's default)
+- **Where priority comes from.** A primary's level comes from its brief's `PRIORITY:` line,
+  else its stream's default, else `normal`; a brief line overrides the stream default.
+  `priority <id>... --<level>` changes a primary, and `priority --stream <s> --<level>`
+  changes every primary in the stream and its default for future additions. `fix`,
+  `blocker`, `critical`, `high`, `normal`, and `low` are settable; READER belongs only to
+  read consumers. A new FIX brief or stream default with no prior ordinary urgency uses
+  `normal` as its secondary urgency. A computed critical (CriticalBehind or more cards
+  behind) remains display-only as `critical (by weight, not yet ordered)`; it does not
+  change selection order. A recut twin preserves the primary's priority fields along with
+  its tier unless its new brief sets a priority (`TestARecutKeepsTheCardsPriority`).
+- **Fixed roles and producer urgency.** A work consumer inherits its primary's current
+  priority when created or returned to a queue. A read consumer always has priority
+  `reader`; `producer_priority` stores the primary's ordinary urgency and orders reads
+  within that role. When a primary enters FIX, the source's ordinary urgency is retained in
+  `producer_priority`; the primary retains FIX through review and merge, while each read
+  consumer keeps the READER role and carries the primary's ordinary urgency separately.
+  Reprioritizing a FIX primary changes only that secondary urgency, not its role. Updating a
+  primary refreshes its queued consumers atomically; an active lease retains the priority
+  metadata it started with until it returns to a queue. `queue --json` reports the role in
+  `priority` and non-normal secondary urgency in `producer_priority`.
+- **Rework priority.** Every repair attempt opens with the FIX role, including failed work,
+  broken reads, conflicts, harness faults that open a new attempt, explicit `rework`, and a
+  corrected brief marked as a brief defect. It retains the primary's ordinary producer
+  urgency separately. A friend's no-report runner fault returns the same attempt at a fresh
+  generation, so it does not open FIX. New `set --rework-priority` requests accept only
+  `fix`; requests for legacy `high` or `keep` are refused with the FIX remedy. Existing
+  stored `high` or `keep` settings still schedule the next repair as FIX. Stream defaults
+  seed later ordinary cards and do not lower the FIX role of a repair. Within a stream,
+  landing respects priority while preserving named and positional dependencies and the
+  stuck-card barrier.
+- **The deal and the queues.** Tier, route, bench, hold, dependency, capacity, and other
+  eligibility rules are checked before priority. Eligible FIX work goes first, then
+  blocker, critical, and high work; then READER consumers; then normal and low work. Within
+  FIX and READER, producer urgency orders peers; otherwise existing stream turns, member
+  offsets, and work order keep ties stable. Friends share their width between work and
+  reads, so urgent work may use a slot before a read, while reads use their READER role
+  ahead of normal and low work. A friend with an eligible read waiting is held from work at
+  READER or below until the read is placed or no qualified reader can take it. Fleet reader
+  cards on member rows share member work width; only legacy reads assigned through the
+  readers table use separate reader room. The same order governs queue packets and automatic
+  next-card selection; member takes respect available half-slots and skip an item that does
+  not fit rather than forcing reads ahead of higher-priority work. Priority never bypasses
+  eligibility or preempts a running lease.
+- **The landing order.** `land` orders streams by the highest effective priority among
+  merging primaries. When streams tie at FIX, the best producer urgency among their merging
+  FIX primaries breaks the tie; then the stream with the most cards behind any merging card
+  goes first, followed by stable stream order. Eligible cards inside a stream follow
+  effective priority, then producer urgency among FIX peers, without passing dependencies
+  or the stuck-card barrier; equal priority and urgency retain existing work order.
+  `promote` moves landed history as one, so it has no order to take (`sprint.LandOrder`,
+  `TestLandTakesTheHighestPriorityStreamFirst`).
+- **Showing priority.** `priority` reports the primary's effective level and source;
+  `card` and `where` expose the primary level and stream defaults. Queue consumers report
+  their fixed role and, where it is not normal, their producer urgency. Setting a level is
+  refused on a read or work consumer; change the primary, and its queued consumers inherit
+  the update. Every change records the actor and reason on the primary or stream timeline
   (`TestPrioritySetsACardAndItsStream`, `TestAStreamsDefaultSeedsNewCards`,
-  `TestPriorityRefusesAReadCard`).
-- **A read inherits its primary's level.** A read's level is the higher of `reader` and its
-  primary's own level (`sprint.ReadPriority`): the reads of a blocker, critical, fix or high
-  primary go to the front of the read queue (the owner, 2026-10-06: "that work stream jumps to
-  the front of the reader and merge queue"; "work in review queues should be distributed
-  according to priority too when you create consumer reader cards for it"); a normal or low
-  primary's read is `reader`. The read card the ask creates carries the inherited level when it
-  is above reader (`priority` on the card, shown by `queue`); `priority <read card>` prints it
-  with the source `read:inherited-from-<primary>` and still refuses a set, pointing at the
-  primary (`TestAHighPrimarysReadIsAskedAndDealtFirst`).
-- **The deal.** Every deal goes down the ladder level by level, in one plan: at each level a
-  friend is asked the reads of that level she may take first, then dealt the work cards of
-  that level in the room the reads leave; at one level a read goes before work, so a high
-  primary's read comes before high work, and the `reader` reads come between high and normal
-  work. A friend is dealt no work card of a level while a read she may take of that level or
-  above waits. Her reads and her work count against one width: her room is DealAhead times
-  her width, less every card on her row, ready or working, reads included
-  (`friendDealByLadder`, `friendReadsFirst`; the deal's reclaim of the fleet's cards runs once,
-  in the normal pass). The machines' deal offers its ready cards in the ladder's order, so a
-  low card fills only a lane no other ready card can. A fleet reader's room is its own, never
-  a work lane: a fleet read waits behind no work card, and the readers' ask places it in the
-  same tick. The ask, the friends' and the machines', asks the reads in the order of their
-  inherited levels (`TestReadsOutrankNormalWork`, `TestAFriendsRoomGoesToReadsFirst`,
-  `TestLowFillsOnlyAnIdleLane`, `TestTheLadderOrdersTheDealAndTheAsk`).
-- **The landing order.** `land` takes the streams by priority: a stream's level is the highest
-  level of any card in its merging set (never its default, never its oldest card), the higher
-  stream first, then the one with the most cards behind any merging card, then stream order;
-  inside a stream the batch stays as it is, oldest first (the owner, 2026-10-06: "a normal
-  stream with one critical card merging goes ahead of a high stream whose merging cards are
-  all high"; `sprint.LandOrder`, `TestLandTakesTheHighestPriorityStreamFirst`). `promote`
-  moves the landed history as one, so it has no order to take.
-- **Order within a level** is the modelled one: stream turns for the deal and the ask, work
-  order for the friends' ask (tla/SprintTables.tla; `TestEngineAgreesWithTheReferenceModel`).
-  Owed with the reference model: the weight (the cards behind) within a level for the deal and
-  the ask, the computed `critical` in their order, and preemption by a blocker (its own card).
+  `TestPriorityRefusesAReadCard`, `TestQueuedWorkPriorityChangesTheNextTake`,
+  `TestQueuedReadAndWorkCompeteByInheritedLevel`).
 - **The backup state.** The work table's three counts over the streams on the table name the
   pipeline's backup: `reads` while review exceeds working, `merges` while merging exceeds
   review and working together (it names the further bottleneck when both hold), `none` else
@@ -2320,16 +2301,21 @@ except by the coordinator.
 ## 4. Order
 
 A score is given once, at admission. Work cards, read cards and the merge place
-copy it. No move changes it. A reworked primary therefore sits ahead of the
-primaries admitted after it. Only `rank` changes a score, every copy with it,
-and it is the coordinator's decision, receipted.
+copy it; moving or reworking a card does not change its score. Priority is a
+separate ordering layer: its effective role or level and, for FIX and READER,
+producer urgency are considered before the existing score and stable work order
+(section 1, "Priority"). A reworked card keeps its admission score and enters
+the FIX role; score does not override priority. Only `rank` changes a score and
+its copies, as the coordinator's receipted decision.
 
 ## 5. The fleet
 
-- The deal's order is the priority ladder (section 1, "Priority"): a friend's cards above
-  reader, then her reads, then normal and low work in the room the reads leave, against her one
-  width; the machines' ready cards in the ladder's order, stream turns within a level, so a
-  low card fills only a lane no other ready card can.
+- The deal's order is the priority ladder (section 1, "Priority"): eligible FIX,
+  blocker, critical and high work precede READER consumers; READER consumers precede
+  normal and low work. A friend's work and reads share one width, so role order decides
+  which uses her next slot. The machines' ready cards use the same ladder, with stream
+  turns and stable work order within equal priorities, so a low card fills only a lane
+  no higher-priority ready card can use.
 - A member is a fleet machine with a width: the most work cards it runs at
   once (its child cap; `init --members m1:64` or `fleet up m1 --width 64`;
   default 64; `fleet up m1 --width 0` drains it: its width cell is `0`, so no
@@ -3523,10 +3509,12 @@ the table its work cards are dealt on, and the readers table asks nothing new
 (`sprint/read_cards.go`). The review is unchanged: a primary still goes through review, its
 reads close as `read --ok|--broken` closes them, and it leaves review only by the rules above.
 
-- **The deal deals the reads, first.** The tick's deal (`TickDeal`, `withReadCards`) deals
-  every read a primary in review still needs AT ONCE, before any work card of the same deal
-  (blocker and critical work included: placing the reads within the ladder, after the work
-  above reader, is owed):
+- **The deal places reads at READER priority.** The tick's deal (`TickDeal`, `withReadCards`)
+  places eligible FIX, blocker, critical and high work before READER consumers, then places
+  the reads a primary in review still needs before normal and low work. Reads of the same
+  role are ordered by their producer's ordinary urgency. Work and read consumers share a
+  friend's room; read cards on fleet member rows share their member's width. Only legacy
+  reads assigned through the readers table use separate reader room:
   ReadsNeeded (one for a flash card, two for a pro or heavy card) less the reads that stand at
   its attempt (a read card placed, one retired with its verdict at the primary's head, and a
   readers-table read asked the old way and begun). None while a read stands broken (its
@@ -3535,8 +3523,8 @@ reads close as `read --ok|--broken` closes them, and it leaves review only by th
   that cuts it, as a work card is cut and dealt in one step: in ready on a member's row, in
   working on a friend's row while she has a lane free. It carries `head`, `branch` and `start`
   (the attempt's work head, its branch, the commit the attempt started from), `tier`, the
-  primary's tier (`readTierOf`; a friend's, `friendReadTier`), `priority` when its inherited
-  level is above reader (`ReadPriority`), `read_card` (1: a read card, not a read asked the
+  primary's tier (`readTierOf`; a friend's, `friendReadTier`), `priority=reader` and its
+  producer's ordinary urgency (`producer_priority`), `read_card` (1: a read card, not a read asked the
   old way), and on a member's row the route drawn from its tier's index as
   it stands (a read moves no index; the work cards move it) and the decide bars on a flash
   card's first read (`decideFields`).
@@ -3565,7 +3553,8 @@ reads close as `read --ok|--broken` closes them, and it leaves review only by th
   work cards and half its reads, rounded up (`halfLoad`), in the deal's room (`memberLoads`,
   `widthRoom`, `friendLoad`), so a member of width 8, holding DealAhead (2) widths, holds 16 work
   cards or 32 reads or any mix. The take holds the width in half slots (a read one, a work card
-  two) and takes the reads first; the member's own lanes count the same (`member.halves`): a
+  two) and follows priority order among items that fit, skipping an item that does not fit;
+  the member's own lanes count the same (`member.halves`): a
   member of width 1 runs two reads at once.
 - **The member runs a read card.** A read card in a member's fleet queue is taken with its work
   and run by the same loop as a read: its packet is a read's (`Kind: read`, the head, the work
@@ -5565,9 +5554,9 @@ command that loads it.
 | stats tidy | starts the statistics afresh and keeps the work (the owner, 2026-10-06: "can you please clear the sets of done consumer cards for all friends and fleet", "I would like a semi-fresh start to stats now"; named tidy the same day, "reset sounds too aggressive"): `stats tidy (--friends \| --fleet \| --routes \| --streams \| --all)... --reason <text> [--dry-run]`, the coordinator's; see Statistics, below |
 | read | a reader records ok or broken with the finding; `--as <reader>`, `--begin`; `--usage <text>` (what the read spent) is kept on the read card, timed and priced by the read card's route (section 2, What a card cost); a verdict on a routed read with no `--usage` at all is refused, the remedy named; one whose usage reports no token is kept and recorded `unpriced=no-tokens` (section 2, Reads are priced like work) |
 | accept | review -> merging and into merge queued; refused without the ok reads it needs (one reader for a flash card, two different readers for a pro card); named ids all or nothing, a selection moves the eligible. The tick makes this move itself for every primary whose reads are all ok and nothing holds (section 6), so the verb is for a held primary and a stuck case: `accept --read-ok` with nothing eligible says `nothing waits: the tick accepts` |
-| rework | delegates the next attempt at once with a fix (the member stages it at the tip of the card's base branch, the last pushed attempt's work carried on top where it applies cleanly, docs/SPEC-CARD-CONTRACT.md, where a rework starts), and writes on that attempt's work card `fix`, `finding` (its broken reads' findings, each once) and `why` (how the attempt before ended: failed with its report, finished and found broken, or sent back), and on the primary `finding_reader`, the reader whose finding it sends back, who checks the fix (section 6), each cut to MaxCardTextBytes with a trailing `...` and never refused for its size, and kept on the primary too for a rework that deals later; its packet carries them to the child's JOB.md and `card` prints per attempt; ready when no member is up; a primary at its redeal bound (ready, its work card withdrawn) is reworked too, with `--fix`, its withdrawn card taken off and its bound's class written as the primary's record of its failed work; `--tier`: at a redeal bound it never names a lower tier, and when the attempt before also ended at its bound on the card's tier the rework is refused unless it names a tier above (flash, pro, heavy, frontier) or the provider its takes failed on is back, which lifts it once per tier per card; the refusal is one line naming that attempt, the class and the tiers above (section 5, the bound holds across attempts); without `--fix` each primary's fix is the finding of its broken read, else the report of its failed work, and a primary with neither is refused by name; a rework of several cards (`--group`) writes on each card its own finding, the finding of the read that put it in the group, never the group's first, and a `--fix` given once is every card's fix as written, beside its own finding (on 2026-10-05 a grouped `a reader found it broken` answered with the first card's finding as the `--fix` of all three told every next attempt to fix another card's defect; `TestAGroupReworkGivesEachCardItsOwnFinding`); `--tier <flash|pro|heavy|frontier>` writes the tier on the primary (`tier`), and this attempt's deal and every later deal and read of the card draw from it over its brief's line 1, so a flash card that failed twice is reworked on pro, the same card and brief; it pins the card: the tier is its ceiling too and the machine never escalates it (section 5, flash first); a word that names no tier is usage (exit 2), and a card whose brief pins a model is refused by name, since it runs on its pin whatever its tier; one id while the inbox holds a judgment group of several naming it is refused unless `--one`: `the inbox holds a group of <n> for this card; answer the group; run: nova-sprint rework --group <id> --expect <n>; or say --one` (`TestReworkAndDropRefuseOneCardOfAGroupWithoutOne`; the group is read from the open notes alone, `store.OpenGroups`, never the whole inbox: `TestOpenGroupsAreTheInboxsJudgmentGroupsFromTheOpenNotesAlone`) Its read cards are retired with the attempt it replaces, the readers table's and a friend's open read on her fleet row alike, so none keeps her room or closes against that attempt (`TestAFriendsOpenReadIsRetiredByBriefAndByRework`). |
+| rework | delegates the next attempt at once with the FIX role, retaining the primary's producer urgency (section 1), and a fix explanation (the member stages it at the tip of the card's base branch, the last pushed attempt's work carried on top where it applies cleanly, docs/SPEC-CARD-CONTRACT.md, where a rework starts), and writes on that attempt's work card `fix`, `finding` (its broken reads' findings, each once) and `why` (how the attempt before ended: failed with its report, finished and found broken, or sent back), and on the primary `finding_reader`, the reader whose finding it sends back, who checks the fix (section 6), each cut to MaxCardTextBytes with a trailing `...` and never refused for its size, and kept on the primary too for a rework that deals later; its packet carries them to the child's JOB.md and `card` prints per attempt; ready when no member is up; a primary at its redeal bound (ready, its work card withdrawn) is reworked too, with `--fix`, its withdrawn card taken off and its bound's class written as the primary's record of its failed work; `--tier`: at a redeal bound it never names a lower tier, and when the attempt before also ended at its bound on the card's tier the rework is refused unless it names a tier above (flash, pro, heavy, frontier) or the provider its takes failed on is back, which lifts it once per tier per card; the refusal is one line naming that attempt, the class and the tiers above (section 5, the bound holds across attempts); without `--fix` each primary's fix is the finding of its broken read, else the report of its failed work, and a primary with neither is refused by name; a rework of several cards (`--group`) writes on each card its own finding, the finding of the read that put it in the group, never the group's first, and a `--fix` given once is every card's fix as written, beside its own finding (on 2026-10-05 a grouped `a reader found it broken` answered with the first card's finding as the `--fix` of all three told every next attempt to fix another card's defect; `TestAGroupReworkGivesEachCardItsOwnFinding`); `--tier <flash|pro|heavy|frontier>` writes the tier on the primary (`tier`), and this attempt's deal and every later deal and read of the card draw from it over its brief's line 1, so a flash card that failed twice is reworked on pro, the same card and brief; it pins the card: the tier is its ceiling too and the machine never escalates it (section 5, flash first); a word that names no tier is usage (exit 2), and a card whose brief pins a model is refused by name, since it runs on its pin whatever its tier; one id while the inbox holds a judgment group of several naming it is refused unless `--one`: `the inbox holds a group of <n> for this card; answer the group; run: nova-sprint rework --group <id> --expect <n>; or say --one` (`TestReworkAndDropRefuseOneCardOfAGroupWithoutOne`; the group is read from the open notes alone, `store.OpenGroups`, never the whole inbox: `TestOpenGroupsAreTheInboxsJudgmentGroupsFromTheOpenNotesAlone`) Its read cards are retired with the attempt it replaces, the readers table's and a friend's open read on her fleet row alike, so none keeps her room or closes against that attempt (`TestAFriendsOpenReadIsRetiredByBriefAndByRework`). |
 | return | merging -> review, off the merge queue |
-| redo | atomically executes return, rework with fix "redo the same change on the current tip", and resumes the stopped stream in one step with one history line; refused when the card is not in a conflict |
+| redo | atomically executes return, rework with fix "redo the same change on the current tip" in the FIX role, retaining producer urgency (section 1), and resumes the stopped stream in one step with one history line; refused when the card is not in a conflict |
 | drop | off the table with the reason; one id while the inbox holds a judgment group of several naming it is refused unless `--one`, as rework's is; refused for a card another card still needs, naming the dependants (`s1-1 is needed by b; drop them too with --cascade`), unless `--cascade` drops the dependants and their dependants in the same plan with the same reason; `--repo <owner/name>...` selects the cards of the streams recording those repositories (the same one-snapshot read as `streams --repo`; a mixed stream is selected by each), and with it `--expect <n>` is required, the number of streams selected as `streams --repo` printed them, so what the call removes is read before it runs |
 | rank | changes a score and every copy: `--score <n>` (the first id's; the rest follow it), `--first` (ahead of every primary), or `--before <id>` (in line in front of a primary of the cards' own stream, in the order named, placed as `add --before` places cards: between the card before the anchor and the anchor, the line never renumbered; a card of another stream, the anchor itself, or no primary refuses the whole step, nothing written) |
 | brief | replaces the brief of a primary in place (the owner, 2026-10-01: "What other things should you be able to do to mutate a stopped sprint" / "Are there other verbs you need as you work with sprints?" / "I don't want you manually hopping in and working around it and doing manual stuff."; 2026-10-04: "what is manual? what needs new verbs in nova-sprint?"; 2026-10-06: "We gotta stop doing this twin shit. it's waste."): `brief <id> (--brief <text> \| --brief-file <path>) [--rules <file>] [--answers <notes>]`, `brief --dir <dir> [--rules <file>]`, `brief --group <id> [--expect <n>] (--brief-file <path> \| --dir <dir>) [--answers <notes>]`, or `brief <id> --widen [--repo-dir <clone>]` (section 2, recut-widen-r.w1); the new brief is held to the card lint and the size bound as `add --brief` holds one (the same function, refused exit 2, nothing written, with the lint's own lines); on a RUNNING machine as on a STOPPED one: on a RUNNING machine the change queues for the next tick's pump like every coordinator verb's, and the pump deals no card a queued change names before the change drains, so the card is dealt with its new brief. A primary waiting, ready or in review takes one, and keeps its id: a correction is never a twin. A card no attempt was dealt for (attempt 0) has its brief replaced. A card an attempt was dealt for opens its next attempt (`sprint.briefInPlace`): from review it goes to ready, its read cards retired (the readers table's, and a friend's open read on her fleet row, which would otherwise keep her room and close against the replaced attempt), the attempt's finding kept in its `findings`, and the judgments on it closed, as a rework's (a failed attempt waiting on a judgment, or at its bound); a ready or waiting card's withdrawn work card is retired, so the deal cuts the next attempt instead of dealing the last again; the next attempt is staged from the last pushed head where the work applies, as a rework's (`sprint.BaseOf` over the card's attempts, or the brief's `CARRY:` line when none pushed ok); its bound is reset, since the bound counts attempts under one brief (`brief_attempt` is the attempt at the edit); a rework's `fix` was for the old brief and is dropped; and the record (its MOVED line, which `card <id>` tells) and the next attempt's `why` say `<id> brief edited in place by <actor> at attempt <n>: <what changed>`, what changed the old brief's lines the new one lacks (`- <line>`) and the lines it adds (`+ <line>`), joined by ` \| `. A read of the primary is not asked again at the carried head because the brief changed. The same brief again on a card an attempt was dealt for, or one with no changed line (its lines only re-spaced, reordered or blank lines added, compared trimmed), is refused, nothing written: it would reset the bound with nothing changed. Refused (exit 1, nothing written) for a card that is no primary, and for a card working, merging or landed, which keeps its brief, its state named, whatever the machine's state, with what changes it instead: once it finishes (review), `brief` in place (from merging after a `return`); from any open state a `drop` and the new brief added as a new card; once landed, a new card (`TestBriefEditsACardInReviewInPlace`, `TestBriefRetiresItsReadsAndCarriesThePushedHead`, `TestAFriendsOpenReadIsRetiredByBriefAndByRework`, `TestBriefRefusesAWorkingOrMergingCard`). `--answers` names the judgments the edit answers, each one it closes, as every verb's. `--group <id>` (or its alias) acts on the members of the inbox group, refused when `--expect` is not its size now, as every `--group` verb's: a group of one takes `--brief` or `--brief-file`, a group of several takes `--dir` holding one `<id>.md` for each member and no other, and one brief for several is refused naming `--dir`. The inbox prints the brief decision in the form the verb takes: `brief <id> --brief-file '<the corrected brief>'` for one card, `brief --group <id> --expect <n> --dir '<a directory of the corrected briefs, <id>.md a card>' --answers <notes>` for several, each running as printed with its placeholder filled (`TestBriefGroupAnswersTheBoundJudgment`, `TestInboxPrintsTheBriefDecisionTheVerbRuns`). `--dir` replaces one brief per `*.md` file of the directory, in byte order of file name, read as `add --brief-dir` reads them, the card the file's base name without `.md` (refused naming the file when not one; not with an id, `--brief` or `--brief-file`); every brief is held to the bound and the lint before anything is written, one failing file refusing the whole call naming it with its findings, exit 2; one step replaces them all or none, a card refused or named twice refusing the call, exit 1, and its `BRIEF OK moved=<n>` is the count replaced, one MOVED line per card. The card keeps its id, stream, score and needs; before this verb the coordinator dropped the card and added it again, or re-cut it as a twin, which changed its id and place (`sprint.Brief`). A brief that differs from the card's in its `DEPENDS-ON:` line alone is taken in any state, on a RUNNING machine (applied by the next tick, as every work-table change is while it runs) and for a card dealt (it applies to the next attempt), and the card's needs become the line's, read as `add` reads it: re-pointing a card's needs after a drop is no change of its task (the comfort list of 2026-10-03, item 2); each need is a primary on the table and not the card itself, and a ready card takes no need that has not landed (the deal would run it first), each refused by name, nothing written; the brief decision and the grade stay (`sprint.Brief`, `briefDepends`); `brief <id> --tier <flash\|pro\|heavy\|frontier>` re-tiers the card instead (the owner, 2026-10-04: "If there are pro cards that are really heavy, then let's mark them as heavy"): the tier is pinned on the primary as `rework --tier` pins it (`tier`: every later deal and read draws from it, never escalated past it), taken in any state, on a RUNNING machine and for a card dealt, where it applies to the next attempt; refused for a card landed, a sentinel, a brief that pins a model, a word that is no class, and the tier it is pinned to already; not with --brief, --brief-file, --dir, --rules, --widen or --group (`sprint.Brief`, `briefTier`) |
@@ -5606,7 +5595,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | reader remove | takes readers off the readers table; refused (exit 1, nothing written) when a named reader is no row or holds a read card, asked, reading, ok or broken, naming the reader and its read cards |
 | reader retire | retires readers and keeps their history (the comfort list of 2026-10-03, item 6: `reader remove` refuses a reader that holds read cards, so the second readers could not be retired without losing the record): each named reader, a row of the readers table, is held away for good, its state `retired`: no read is asked of it and a read asked and not begun is asked of another at the next tick (as `reader away`); a read it is reading is taken back at the next tick and asked of a reader up with no card at that attempt, and it stays when none can take it, the few-readers judgment names it no more, its own `queue --as` writes no beat and answers `reader: false` (its loop stops as for a name with no row), while its row and its read cards stay on the table, counted on their cards and in `where`; `reader up` brings it back; a named reader with no row refuses the whole call, nothing written; `--dry-run` prints `READER-RETIRE DRY-RUN readers=<names>; nothing was changed` and writes nothing; `reader remove` is as it was |
 | stream set | `stream set <s>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--reason <why>] [--answers <note>]`: `--prose` sets the streams' prose globs, their control cards' `prose`, the files the lander does not read for a code span (section 7, the document repairs), `default` takes them off; `--attempts` sets the streams' attempt cap, their control cards' `attempts`, over the sprint's (section 2); `--reason` records why the read tier is set as `read_tier_reason`, and `--answers` answers the judgment `raise the read tier of the stream?`; the read tier of the streams named, their control cards' `read_tier`, over the sprint's (`set`), and their protected-branch mark, `land_protected` (section 7, the protected branches); `default` takes a stream's off; `--release <name>` records the release on each stream's control card, `default` or `none` takes it off; the coordinator's; refused whole, nothing written, for a stream that is no row, a tier that is not flash, pro or heavy, a mark that names no repository, or another actor |
-| set | `set [--read-tier <flash|pro|heavy|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>] [--friend-idle <duration|default>] [--attempts <n|default>] [--fleet <on|off>] [--friends <on|off>] [--fleet-tiers <tiers|all>] [--friends-tiers <tiers|all>] [--reads <0|1|2|default>]`: also `reads_needed` (the ok reads every card in review needs whatever its tier, 0 to 2, default each card's tier's rule; section 6), `fleet` and `friends` (the work switches, default on: off deals that side no work card, reads still flow; section 6, the interim rules), `fleet_tiers` and `friends_tiers` (the tiers each side may take, flash, pro, heavy, frontier comma separated, default all, which `all` sets again; an unknown tier is refused naming the four; section 5, the deal), `friend_idle` (how long a friend holding cards may show no file write before it is an alarm, default 20 minutes) and `attempts` (the attempt cap: how many attempts one brief may run before the card is the coordinator's as a brief defect; default 4; section 2); the sprint's settings, the work table's properties `read_tier` (every card's reads raised to it, never lowered), `dealt_max` (how long a work card may wait dealt and never taken before it is a judgment; default 3 times the take deadline, 6 hours), `go_lanes` (the Go lanes of every machine, section 18; default 1) and the backlog alarms' thresholds `alarm_review`, `alarm_merging`, `alarm_fleet` and `alarm_ready` (section 8, off by default); the coordinator's; refused whole, nothing written, for a tier that is not flash, pro or heavy, a bound that is not a duration above zero, a lane count under 1, a threshold its alarm does not take, nothing to set, or another actor; a clear starts the next epoch with none of them |
+| set | `set [--rework-priority <fix>] [--read-tier <flash|pro|heavy|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>] [--friend-idle <duration|default>] [--attempts <n|default>] [--fleet <on|off>] [--friends <on|off>] [--fleet-tiers <tiers|all>] [--friends-tiers <tiers|all>] [--reads <0|1|2|default>]`: `rework_priority` makes every new repair FIX; only `fix` is accepted for new requests, while legacy stored `high` and `keep` values still schedule FIX (section 1); also `reads_needed` (the ok reads every card in review needs whatever its tier, 0 to 2, default each card's tier's rule; section 6), `fleet` and `friends` (the work switches, default on: off deals that side no work card, reads still flow; section 6, the interim rules), `fleet_tiers` and `friends_tiers` (the tiers each side may take, flash, pro, heavy, frontier comma separated, default all, which `all` sets again; an unknown tier is refused naming the four; section 5, the deal), `friend_idle` (how long a friend holding cards may show no file write before it is an alarm, default 20 minutes) and `attempts` (the attempt cap: how many attempts one brief may run before the card is the coordinator's as a brief defect; default 4; section 2); the sprint's settings, the work table's properties `read_tier` (every card's reads raised to it, never lowered), `dealt_max` (how long a work card may wait dealt and never taken before it is a judgment; default 3 times the take deadline, 6 hours), `go_lanes` (the Go lanes of every machine, section 18; default 1) and the backlog alarms' thresholds `alarm_review`, `alarm_merging`, `alarm_fleet` and `alarm_ready` (section 8, off by default); the coordinator's; refused whole, nothing written, for a tier that is not flash, pro or heavy, a bound that is not a duration above zero, a lane count under 1, a threshold its alarm does not take, nothing to set, or another actor; a clear starts the next epoch with none of them |
 | stream remove | takes streams off the work and merge tables (the owner, 2026-10-01: "remove work streams a/b/c" / "you should have a verb to remove work streams" / "they should only succeed on a STOPPED sprint machine"): each stream's row of both tables, with the stream's control card, the one card `add` made for it, which the merge row's delete takes off the table (its record kept); refused (exit 1, nothing written) on a RUNNING machine (`nova-sprint stop` first), for a stream that is no row of either table, named, and for a stream that holds a card (a primary or a sentinel placed in any column of its work row, landed included, or a merge card in its merge row), naming how many of each and the remedy (`nova-sprint clear --confirm sprint`, or `drop`); all or none for the streams named. A clear keeps the streams and does not bring a removed one back. A removal is not a tombstone: `add --stream <s>` of a stream removed in this epoch adds its rows again and places its control card again, the record the removal kept, by the table layer's cell add before the step's manifests (a batch never places a removed member; `sprint.Plan.Places`, as a fleet member's control card rejoins), and prints `NOTE stream <s> was removed in this epoch and comes back: its control card is placed again`; after a clear the name is added fresh (`sprint.StreamRemove`, `sprint.RemovedStream`, `sprint.ComeBack`; the roadmap re-add of 2026-10-06 was refused for 384 of 844 cards under removed streams' names before this rule). `stream archive` stays the verb that takes landed streams off the table. Every open judgment and held condition (an alarm held, an overdue hold, a stale stream's) that names a removed stream is retired with it, closed with a decided note `retired: stream <s> was removed (stream remove), ...`, and the verb prints a `NOTE judgment <alias> <id> (<type>) retired: ...` line for each (the coordinator view of 2026-10-06 00:11 held six `stream stopped` judgments of removed streams, each next step refused "no such stream"). The tick, every RUNNING tick before its start part, retires with the same note any open judgment or held condition naming a stream that is a row of neither table (one open before this rule, or left by a remove whose retirement did not finish), and no tick part raises or rewrites a judgment or held condition for such a stream (`sprint.RetireStreams`, `sprint.TickRetireGone`, `sprint.ForTables`) |
 | stream archive | takes streams whose every card has landed off the work and merge tables and keeps their record (the owner, 2026-10-05 ~11:45 PM ET: "I would like you to remove all the already landed work streams"; 107 streams of landed cards crowded the table, and `stream remove` refuses them): each stream's rows of both tables are hidden (the table layer's row hide) and no card moves, so every landed card stays placed in its landed cell with its cost and its landing, and `where --json --rows --archived`, `stream_costs` and every record that reads the cards count them as before; the headline (the summary line, the frame's footers, the dashboard's hero, total row and cost) counts only the streams on the table, so the stream's cards leave it when it is archived, and `where --json` keeps its figures in `archived` and in `archived_cards` and `archived_landed` beside the headline (section 1, the summary line); runs on a RUNNING machine (no stop); refused (exit 1, nothing written) for a stream that is no row of either table and for one holding a card not landed (a primary or sentinel in any column of its work row but landed, a merge card queued or stuck), naming the cards; all or none for the streams named; archiving an archived stream changes nothing. The tick archives a stream itself (the archive part, after the end, every tick and on the tick that finds the sprint done) once its last card has landed and nothing waits behind it (no card of it in another column, no merge card queued or stuck, no queued change for its row), and writes one happened note, `streams archived`, naming each stream it archived once (information, addressed to no one); an archived stream that holds a card not landed again (an `add`) is drawn again by the next tick, RUNNING or STOPPED. A clear keeps an archived stream archived. where draws no archived row and prints one line under the work table, `N archived streams, M cards landed, $X (where --json --archived)`; `where --json` carries `archived` (`streams`, `cards`, `landed`, `cost`, the cost cells summed to the cent) and leaves the archived rows out of `tables` and `rows` but with `--archived` (`sprint.StreamArchive`, `store.ArchiveStreams`, `store.keepArchive`). The verb retires every open judgment and held condition that names a stream it archived, as `stream remove` does, a NOTE line each (`sprint.RetireStreams`); the tick's own archive retires nothing, so a judgment raised as the last card landed (a low score) stays open on the archived stream |
 | stream unarchive | draws archived streams' rows again (`stream unarchive <s>...`): refused for a stream that is no row or is not archived, all or none; the tick does not archive a stream brought back by hand again until it holds a card not landed and that card lands (the archive record, `archive`, keeps those streams) (`sprint.StreamUnarchive`, `store.UnarchiveStreams`) |
