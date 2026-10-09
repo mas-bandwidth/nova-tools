@@ -1570,16 +1570,20 @@ func (l *lander) mergeCards(ctx context.Context, dir, stream string, cards []lan
 }
 
 // gateBase is the build's gate of the base's tip, serial for the same commit across the
-// pass's streams (the pass's baseGate lock: a commit is gated once): "" and
+// pass's streams (the pass's per-commit gate, acquireGate: a commit is gated once, and the
+// wait for it ends with the job's context): "" and
 // first = 0 when the base is green; else its cure looked for among the batch's cards
 // (cureBase), the cure merged and gated alone on the batch branch, merged = its id and
 // first = 1 so the build goes on after it; why is the base's refusal with no cure, env a
 // failure that is not a card's.
 func (l *lander) gateBase(ctx context.Context, dir, stream string, cards []landCard, baseSha string) (merged []string, first int, env, why string) {
 	s := l.locks()
-	gate := s.baseGate(baseSha)
-	gate.Lock()
-	defer gate.Unlock()
+	l.beforeWait(stream, "gate")
+	release, ok := s.acquireGate(ctx, baseSha)
+	if !ok {
+		return nil, 0, ctx.Err().Error(), "" // abandoned while waiting for another stream's gate of this commit
+	}
+	defer release()
 	base := cards[0].base
 	l.baseStop, l.baseCount, l.baseWhy = false, false, ""
 	was := 0

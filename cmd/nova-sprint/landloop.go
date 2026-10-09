@@ -28,7 +28,9 @@ const LandEvery = 2 * time.Second
 
 // LandDeadline is how long a landing may run before the loop raises one judgment
 // naming the stage it is in. The pass also abandons an earlier batch gate at
-// this bound so a ready later stream can land; the landing continues. A hand
+// this bound so a ready later stream can land, and a batch still waiting for a
+// slot, the chain or another stream's gate of its base commit leaves that wait
+// at the bound (landpass.go merges, acquireGate); the landing continues. A hand
 // land of two cards finished in under eight minutes; each gate run still has
 // its own landGoBudget.
 const LandDeadline = 10 * time.Minute

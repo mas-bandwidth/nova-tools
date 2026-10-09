@@ -19,7 +19,10 @@ package main
 //
 // PHASE 2, THE LANDING, SERIAL. The green batches land onto the base one at a time in
 // priority order. A gate that passes LandDeadline is abandoned for this pass, so it cannot
-// hold ready lower-priority streams forever. A batch cut from the tip the base still has is pushed as before,
+// hold ready lower-priority streams forever; a job abandoned while it waits for a slot, the
+// chain or another stream's gate of its base commit leaves that wait at once (merges,
+// acquireGate), so an abandonment always takes effect and a ready stream behind k stuck
+// ones waits at most k x LandDeadline. A batch cut from the tip the base still has is pushed as before,
 // with no new gate. When the base moved (a batch before it in this pass landed, or a push
 // from outside), the batch is merged again onto the new tip in its worktree, the same merges
 // and checks and no gate per head: when the files it changes and the files landed since
@@ -72,9 +75,10 @@ type landShared struct {
 	fetchMu sync.Mutex
 	// gateMu guards the baseGateCache, baseGateFails and cureTried maps and baseGates.
 	gateMu sync.Mutex
-	// baseGates keeps a gate and its cure single-writer for each base commit.
-	// A different base can be checked while one gate waits on a bench.
-	baseGates map[string]*sync.Mutex
+	// baseGates keeps a gate and its cure single-writer for each base commit: a one-slot
+	// channel per commit, so the wait for it watches the job's context (acquireGate). A
+	// different base can be checked while one gate waits on a bench.
+	baseGates map[string]chan struct{}
 	// checkMu serializes a red --check's gate decision, which appends to one record.
 	checkMu sync.Mutex
 	// treesMu guards pruned and used.
@@ -93,16 +97,29 @@ func (l *lander) locks() *landShared {
 	return l.shared
 }
 
-func (s *landShared) baseGate(sha string) *sync.Mutex {
+func (s *landShared) baseGate(sha string) chan struct{} {
 	s.gateMu.Lock()
 	defer s.gateMu.Unlock()
 	if s.baseGates == nil {
-		s.baseGates = map[string]*sync.Mutex{}
+		s.baseGates = map[string]chan struct{}{}
 	}
 	if s.baseGates[sha] == nil {
-		s.baseGates[sha] = &sync.Mutex{}
+		s.baseGates[sha] = make(chan struct{}, 1)
 	}
 	return s.baseGates[sha]
+}
+
+// acquireGate takes the base commit's gate for the caller, or returns false when ctx ends
+// first (the pass abandoned the job at LandDeadline): a job waiting behind another
+// stream's gate of the same commit is never held past its own bound. release puts it back.
+func (s *landShared) acquireGate(ctx context.Context, sha string) (release func(), ok bool) {
+	gate := s.baseGate(sha)
+	select {
+	case gate <- struct{}{}:
+		return func() { <-gate }, true
+	case <-ctx.Done():
+		return nil, false
+	}
 }
 
 // fetched runs one git fetch (or another write of the clone's shared refs) under the pass's
@@ -600,8 +617,23 @@ func (l *lander) pruneWorktrees(ctx context.Context) {
 	}
 }
 
+// beforeWait runs the test seam, when set, just before a job waits for the chain, a slot or
+// another stream's gate of its base commit (what: chain, slot, gate).
+func (l *lander) beforeWait(stream, what string) {
+	if l.a != nil && l.a.beforeWait != nil {
+		l.a.beforeWait(stream, what)
+	}
+}
+
 // merges is phase 1: every job not yet ended merged in its own worktree, up to parallel at
-// a time (runBounded), each in its own lander.
+// a time, each in its own lander. Every wait a job makes before its work (the chain of
+// same-repository/base cuts, the width slot, and in gateBase the per-commit gate) watches
+// the job's context: when the pass abandons the job at LandDeadline while it waits behind
+// another stream (a lower-priority holder stuck on a bench took the only slot), the job
+// gives up its place at once, refused for this pass with its cards still queued, and the
+// pass goes on to the holder, whose own bound starts when the pass reaches it. Before the
+// fix (2026-10-09) those waits were plain and the pass hung for ever on a job it had
+// cancelled to no effect. A job that leaves the chain releases the stream behind it.
 func (l *lander) merges(jobs []*landJob, contexts map[*landJob]context.Context, finished chan<- *landJob) {
 	var todo []*landJob
 	for _, j := range jobs {
@@ -623,14 +655,33 @@ func (l *lander) merges(jobs []*landJob, contexts map[*landJob]context.Context, 
 		wg.Add(1)
 		go func(j *landJob, wait <-chan struct{}, cutDone chan<- struct{}) {
 			defer wg.Done()
-			if wait != nil {
-				<-wait // same repository/base cuts in priority order
-			}
-			sem <- struct{}{}
-			defer func() { <-sem }()
+			var cutOnce sync.Once
+			cutIsDone := func() { cutOnce.Do(func() { close(cutDone) }) }
+			defer cutIsDone()
 			ctx := contexts[j]
+			abandoned := func() {
+				j.refuse(gateWaitWhy(ctx))
+				finished <- j
+			}
+			if wait != nil {
+				l.beforeWait(j.stream, "chain")
+				select {
+				case <-wait: // same repository/base cuts in priority order
+				case <-ctx.Done():
+					abandoned()
+					return
+				}
+			}
+			l.beforeWait(j.stream, "slot")
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				abandoned()
+				return
+			}
+			defer func() { <-sem }()
 			j.f.prepareCut(ctx, j)
-			close(cutDone)
+			cutIsDone()
 			if !j.done {
 				j.f.merge(ctx, j)
 			}
