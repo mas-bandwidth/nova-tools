@@ -80,7 +80,15 @@ func TestEnrollmentTransportCancellationReapsResistantFakeDescendants(t *testing
 	go func() {
 		done <- codexEnrollmentTransport(ctx, terminal, "/bin/sh", []string{"-c", script}, time.Minute, receiptRoot)
 	}()
-	require.Eventually(t, func() bool { _, err := os.Stat(pidPath); return err == nil }, 30*time.Second, 10*time.Millisecond, "fake child must publish its own marker before cancellation")
+	require.Eventually(t, func() bool {
+		raw, err := os.ReadFile(pidPath)
+		if err != nil {
+			return false
+		}
+		var pid int
+		_, err = fmt.Sscan(string(raw), &pid)
+		return err == nil && pid > 0
+	}, 30*time.Second, 10*time.Millisecond, "fake child must publish its own marker before cancellation")
 	cancel()
 	var err error
 	select {
