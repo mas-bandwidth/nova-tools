@@ -49,7 +49,27 @@ func TestSeatInstallVerbWritesLoadsAndRemovesTheUnit(t *testing.T) {
 	}
 	unit := filepath.Join(home, "Library", "LaunchAgents", sprint.SeatLabel+".plist")
 
-	code, out, errs := do("seat", "install", "--dry-run")
+	// no recorded login and no shell user: refused, nothing written
+	refuseDir := t.TempDir()
+	loginPath := filepath.Join(home, ".config", "nova-sprint", "login.json")
+	code, out, errs := do("seat", "install", "--dir", refuseDir)
+	require.Equal(t, 2, code, errs)
+	assert.Empty(t, out)
+	assert.Contains(t, errs, "no seat login is recorded at "+loginPath+"; run: nova-sprint seat login --store <dir> --as <seat> --key <file> --secret <NAME> --user <name> --redis <addr>")
+	assert.NoFileExists(t, filepath.Join(refuseDir, sprint.SeatUnitFile(a.seatOS())))
+	assert.Empty(t, calls)
+
+	// a shell user with no recorded login is unitLogin's sentence, and still writes nothing
+	env["NOVA_SPRINT_REDIS_USER"] = "coordinator"
+	code, out, errs = do("seat", "install", "--dir", refuseDir)
+	require.Equal(t, 2, code, errs)
+	assert.Empty(t, out)
+	assert.Contains(t, errs, "the unit carries no password, and the store 127.0.0.1:6381 is logged in to here as coordinator from this shell's environment: record the login the unit reads in its own process, run: nova-sprint seat login --redis 127.0.0.1:6381 --user coordinator --store <dir> --as <seat> --key <file> --secret <NAME>")
+	assert.NoFileExists(t, filepath.Join(refuseDir, sprint.SeatUnitFile(a.seatOS())))
+	delete(env, "NOVA_SPRINT_REDIS_USER")
+	recordSeatLogin(t, a, "127.0.0.1:6381")
+
+	code, out, errs = do("seat", "install", "--dry-run")
 	require.Equal(t, 0, code, errs)
 	assert.Contains(t, out, "SEAT INSTALL DRY-RUN unit="+unit)
 	assert.Contains(t, out, "<string>--push</string>\n\t\t<string>seat</string>\n\t\t<string>--redis</string>\n\t\t<string>127.0.0.1:6381</string>")
@@ -62,6 +82,10 @@ func TestSeatInstallVerbWritesLoadsAndRemovesTheUnit(t *testing.T) {
 	assert.Contains(t, out, "SEAT INSTALL OK unit="+unit+" written=true loaded=true")
 	assert.Contains(t, out, "runs: /opt/nova/bin/nova-sprint inbox --wait --push seat --redis 127.0.0.1:6381")
 	assert.FileExists(t, unit)
+	body, err := os.ReadFile(unit)
+	require.NoError(t, err)
+	assert.NotContains(t, string(body), "NOVA_SPRINT_REDIS_USER")
+	assert.NotContains(t, string(body), "PW")
 	assert.Equal(t, []string{"darwin load " + unit}, calls)
 	// the push target is recorded with it: the push loop reaches the session through it
 	assert.Contains(t, out, "push: opencode into "+session)
@@ -89,7 +113,9 @@ func TestSeatInstallVerbWritesLoadsAndRemovesTheUnit(t *testing.T) {
 	assert.NoFileExists(t, unit)
 	assert.Equal(t, []string{"darwin load " + unit, "darwin unload " + unit}, calls)
 
-	// the sprint's server, when the verb is given no --redis of its own
+	// the sprint's server, when the verb is given no --redis of its own: a server
+	// unit does not dial Redis, so it installs with no recorded login
+	a.loginFile = nil
 	env["NOVA_SPRINT_SERVER"] = "127.0.0.1:7480"
 	dir := t.TempDir()
 	a.goos = "linux"
@@ -99,6 +125,7 @@ func TestSeatInstallVerbWritesLoadsAndRemovesTheUnit(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(b), `Environment="NOVA_SPRINT_SERVER=127.0.0.1:7480"`)
 	assert.NotContains(t, string(b), "--redis", out)
+	assert.NotContains(t, string(b), "NOVA_SPRINT_REDIS_USER")
 	require.Len(t, asked, 1, "the push target goes to the server")
 	assert.Equal(t, []string{"seat", "--actor", "rowan", "push", "--actor", "rowan", "--harness", "opencode", "--target", session}, asked[0])
 
@@ -110,4 +137,16 @@ func TestSeatInstallVerbWritesLoadsAndRemovesTheUnit(t *testing.T) {
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errs, "nova-sprint seat install REFUSED: ")
 	assert.Equal(t, before, len(calls))
+}
+
+// recordSeatLogin records a login for addr. A Redis seat unit is installed only
+// when that login matches. The file names the secret and holds no value.
+func recordSeatLogin(t *testing.T, a *app, addr string) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "login.json")
+	b, err := json.Marshal(storeLogin{Redis: addr, User: "coordinator", Store: dir, As: "studio", Key: filepath.Join(dir, "k"), Sops: "/usr/bin/sops", Secret: "PW"})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, append(b, '\n'), 0o600))
+	a.loginFile = func() (string, error) { return path, nil }
 }

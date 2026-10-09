@@ -103,6 +103,15 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 		}
 		u.Log = filepath.Join(home, "Library", "Logs", "nova-sprint-seat-push.log")
 	}
+	// A Redis unit dials in its own process. Its file carries no user and no secret
+	// (SeatUnit.env), so with no login recorded for that address it crash-loops on
+	// NOAUTH. A twin is refused by the unit text, which names it. A server unit does
+	// not dial Redis and is installed as it is.
+	if u.Redis != "" && !isTwin(u.Redis) {
+		if why := a.redisUnitLogin(u.Redis); why != "" {
+			return refuse(stderr, name, why+"; nothing was written")
+		}
+	}
 	text, err := u.Text()
 	if err != nil {
 		return refuse(stderr, name, err.Error()+"; nothing was written")
@@ -152,6 +161,31 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "  push: %s into %s; the seat is live once the session answers the push check with nova-sprint seat pong (seat push shows it)\n", oneline.Field(push.Harness), oneline.Field(push.Target))
 	fmt.Fprint(stdout, seat.String())
 	return 0
+}
+
+// redisUnitLogin is why a Redis seat unit is not installed, "" when a recorded
+// login matches addr. A shell user with no matching login is unitLogin's sentence.
+// No shell user is seat login --check's sentence. Nothing here is copied into the unit.
+func (a *app) redisUnitLogin(addr string) string {
+	if why := a.unitLogin(addr); why != "" {
+		return why
+	}
+	l, ok, err := a.recordedLogin()
+	if err != nil {
+		return err.Error()
+	}
+	if ok && l.Redis == addr {
+		return ""
+	}
+	file := a.loginFile
+	if file == nil {
+		file = a.defaultLoginFile
+	}
+	path, err := file()
+	if err != nil {
+		return err.Error()
+	}
+	return noSeatLogin(path)
 }
 
 // recordPushTarget writes the push record seat install was given, on the sprint's
