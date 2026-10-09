@@ -37,6 +37,10 @@ type Agent struct {
 	BrokenAfter int
 	// NeedsEnv is the daemon's --needs-env, written only when set (needs_env.go).
 	NeedsEnv string
+	// DenySelf persists the coordinator roots excluded by each lane's wall.
+	DenySelf     []string
+	SetupProfile string
+	Environment  map[string]string // public selected native profile environment, never credentials
 	// ConfigDir is the friend's harness config directory (CLAUDE_CONFIG_DIR),
 	// the daemon's --config-dir, written only when set.
 	ConfigDir string
@@ -82,6 +86,12 @@ func (a Agent) Args() []string {
 	if a.NeedsEnv != "" {
 		args = append(args, "--needs-env", a.NeedsEnv)
 	}
+	if len(a.DenySelf) > 0 {
+		args = append(args, "--deny-self", strings.Join(a.DenySelf, ","))
+	}
+	if a.SetupProfile != "" {
+		args = append(args, "--setup-profile", a.SetupProfile)
+	}
 	if a.ConfigDir != "" {
 		args = append(args, "--config-dir", a.ConfigDir)
 	}
@@ -116,10 +126,24 @@ func (a Agent) Plist() string {
 	b.WriteString(`  </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>HOME</key><string>` + esc(a.Home) + `</string>
-    <key>PATH</key><string>` + esc(a.Path) + `</string>
-  </dict>
-  <key>WorkingDirectory</key><string>` + esc(a.Home) + `</string>
+`)
+	environment := map[string]string{"HOME": a.Home, "PATH": a.Path}
+	for name, value := range a.Environment {
+		environment[name] = value
+	}
+	keys := []string{"HOME", "PATH"}
+	var extra []string
+	for name := range environment {
+		if name != "HOME" && name != "PATH" {
+			extra = append(extra, name)
+		}
+	}
+	slices.Sort(extra)
+	for _, name := range append(keys, extra...) {
+		b.WriteString("    <key>" + esc(name) + "</key><string>" + esc(environment[name]) + "</string>\n")
+	}
+	b.WriteString(`  </dict>
+  <key>WorkingDirectory</key><string>` + esc(environment["HOME"]) + `</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>5</integer>
@@ -372,7 +396,20 @@ func daemonPart(args []string) []string {
 // secrets wrap by its names and seat, then the daemon's own flags, --redis
 // and --server left to the install line that gave them.
 func (a Agent) Said() string {
-	said := fmt.Sprintf("nova-friend run --as %s --harness %s --dir %s --width %d, with --redis and --server as given here", a.Friend, a.Harness, a.Dir, a.Width)
+	said := fmt.Sprintf("nova-friend run --as %s --harness %s --dir %s --width %d", a.Friend, a.Harness, a.Dir, a.Width)
+	if a.NeedsEnv != "" {
+		said += " --needs-env " + a.NeedsEnv
+	}
+	if len(a.DenySelf) > 0 {
+		said += " --deny-self " + strings.Join(a.DenySelf, ",")
+	}
+	if a.SetupProfile != "" {
+		said += " --setup-profile " + a.SetupProfile
+		if a.StateDir != "" {
+			said += " --state-dir " + a.StateDir
+		}
+	}
+	said += ", with --redis and --server as given here"
 	if len(a.Secrets) == 0 {
 		return said
 	}

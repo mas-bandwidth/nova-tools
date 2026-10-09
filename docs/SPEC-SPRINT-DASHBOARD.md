@@ -211,5 +211,5 @@ This specification is locked. No line changes without his words, quoted here wit
 - 2026-10-08, the owner requested the current release page keep only total and per-card cost in the headline,
   a single all-cards bar, and the Work, Fleet and Friends panels. The extra cost accounting prose and
   unreconciled line, second marks row, visible Merge panel, archived-stream summary control, and Lanes panel
-  are removed. Purple fix remains in the bar, Work column and fleet/friend tracks. The hidden `?all=1`
+  are removed. Purple fix remains in the bar, Work column and Fleet and Friends tracks. The hidden `?all=1`
   diagnostic readers and merge panel remains unchanged.

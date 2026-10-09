@@ -90,27 +90,41 @@ func AllowDirs(dir string, paths []string) (bool, error) {
 	case err != nil:
 		return false, err
 	default:
-		if err := json.Unmarshal(raw, &cfg); err != nil {
-			return false, fmt.Errorf("%s is not a JSON object, so the lanes' directories cannot be allowed in it: %v", path, err)
+		cfg, err = parseOpenCodeConfig(string(raw), path)
+		if err != nil {
+			return false, err
 		}
 	}
-	perm, _ := cfg["permission"].(map[string]any)
-	if perm == nil {
+	perm, exists := cfg["permission"].(map[string]any)
+	if _, present := cfg["permission"]; present && !exists {
+		return false, fmt.Errorf("%s: permission must be a JSON object; keep the existing rule and fix it explicitly", path)
+	}
+	if !exists {
 		perm = map[string]any{}
 	}
-	if s, ok := perm["external_directory"].(string); ok && s == "allow" {
-		return false, nil // every directory is allowed already
+	if s, ok := perm["external_directory"].(string); ok {
+		if s == "allow" {
+			return false, nil // every directory is allowed already
+		}
+		return false, fmt.Errorf("%s: permission.external_directory is a non-allow scalar; keep the existing rule and fix it explicitly", path)
 	}
-	allowed, _ := perm["external_directory"].(map[string]any)
-	if allowed == nil {
+	allowed, mapOK := perm["external_directory"].(map[string]any)
+	if value, present := perm["external_directory"]; present && (!mapOK || value == nil) {
+		return false, fmt.Errorf("%s: permission.external_directory must be an object or allow; keep the existing rule and fix it explicitly", path)
+	}
+	if !mapOK {
 		allowed = map[string]any{}
 	}
 	changed := false
 	for _, p := range paths {
 		pattern := strings.TrimRight(p, "/") + "/**"
-		if allowed[pattern] != "allow" {
-			allowed[pattern], changed = "allow", true
+		if value, present := allowed[pattern]; present {
+			if rule, ok := value.(string); !ok || rule != "allow" {
+				return false, fmt.Errorf("%s: permission.external_directory has an explicit rule for %s; keep it and fix it explicitly", path, pattern)
+			}
+			continue
 		}
+		allowed[pattern], changed = "allow", true
 	}
 	if !changed {
 		return false, nil
@@ -120,7 +134,7 @@ func AllowDirs(dir string, paths []string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return true, atomicfile.WriteFile(path, append(out, '\n'), 0o644)
+	return true, atomicfile.WriteFile(path, append(out, '\n'), 0o600)
 }
 
 // lanePaths is the friend's directory as every path a tool call may name it

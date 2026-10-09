@@ -117,12 +117,16 @@ func Printed(ctx context.Context, p []byte) {
 
 // seenWriter is a Builder that says each write to the context's watch and tail.
 type seenWriter struct {
-	b    strings.Builder
-	seen func()
-	tail func([]byte)
+	b     strings.Builder
+	seen  func()
+	tail  func([]byte)
+	limit int
 }
 
 func (w *seenWriter) Write(p []byte) (int, error) {
+	if w.limit > 0 && w.b.Len()+len(p) > w.limit {
+		return 0, errors.New("native output exceeds the explicit byte limit")
+	}
 	if len(p) > 0 && w.seen != nil {
 		w.seen()
 	}
@@ -153,10 +157,14 @@ func realExec(ctx context.Context, killDelay time.Duration, dir, name string, ar
 	tail, _ := ctx.Value(tailKey{}).(func([]byte))
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
+	if env, ok := ctx.Value(execEnvironmentKey{}).([]string); ok {
+		cmd.Env = env
+	}
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	} // else /dev/null: a headless opencode run with stdin left open hangs at init (measured 2026-10-04)
-	out, stderr := &seenWriter{seen: seen, tail: tail}, &seenWriter{seen: seen, tail: tail}
+	limit, _ := ctx.Value(execOutputLimitKey{}).(int)
+	out, stderr := &seenWriter{seen: seen, tail: tail, limit: limit}, &seenWriter{seen: seen, tail: tail, limit: limit}
 	cmd.Stdout = out
 	cmd.Stderr = stderr
 	ownGroup(cmd)
@@ -260,6 +268,9 @@ func realExec(ctx context.Context, killDelay time.Duration, dir, name string, ar
 	if errors.As(err, &exitErr) {
 		if groupUnverified {
 			return out.b.String() + Head(stderr.b.String(), OutputKept), exitErr.ExitCode(), err
+		}
+		if separate, _ := ctx.Value(execSeparateOutputKey{}).(bool); separate {
+			return out.b.String(), exitErr.ExitCode(), nil
 		}
 		return out.b.String() + Head(stderr.b.String(), OutputKept), exitErr.ExitCode(), nil
 	}

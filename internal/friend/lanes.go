@@ -1665,13 +1665,14 @@ const WallVerb = "wall"
 // Wall is the wall every child of a lane runs inside: the wall profile its friend row
 // names (sandbox.LaneProfile), over the friend's directories.
 type Wall struct {
-	Profile   string   // the row's profile; "" is sandbox.ProfileFriend
-	Self      []string // the program that runs the wall verb, and its arguments before the verb: this nova-friend
-	Dir       string   // the friend's working directory
-	ConfigDir string   // her CLAUDE_CONFIG_DIR; "" none
-	Jobs      []string // her job directories outside Dir
-	Reads     []string // what her harness reads beyond the system roots and its own directory
-	Deny      []string // the coordinator's self, never written inside the wall (sandbox.LaneProfile.Deny)
+	Profile      string   // the row's profile; "" is sandbox.ProfileFriend
+	Self         []string // the program that runs the wall verb, and its arguments before the verb: this nova-friend
+	Dir          string   // the friend's working directory
+	ConfigDir    string   // her CLAUDE_CONFIG_DIR; "" none
+	Jobs         []string // her job directories outside Dir
+	Reads        []string // what her harness reads beyond the system roots and its own directory
+	Deny         []string // the coordinator's self, never written inside the wall (sandbox.LaneProfile.Deny)
+	SetupProfile string   // the completed owned harness home/config selection
 }
 
 // Args is the wall verb and its flags, up to and with the "--" the command follows.
@@ -1686,6 +1687,9 @@ func (w Wall) Args() []string {
 	}
 	if w.ConfigDir != "" {
 		args = append(args, "--config-dir", w.ConfigDir)
+	}
+	if w.SetupProfile != "" {
+		args = append(args, "--setup-profile", w.SetupProfile)
 	}
 	for _, j := range w.Jobs {
 		args = append(args, "--job", j)
@@ -1730,6 +1734,7 @@ func RunWall(args, env []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	profile := fs.String("profile", sandbox.ProfileFriend, "the wall profile: "+strings.Join(sandbox.LaneProfiles, ", "))
 	dir := fs.String("dir", "", "the friend's working directory")
 	configDir := fs.String("config-dir", "", "the friend's CLAUDE_CONFIG_DIR, and the HOME inside the wall")
+	setupProfile := fs.String("setup-profile", "", "the completed public setup selection; the owned native home/config paths remain writable inside the wall")
 	var jobs, reads, deny listFlag
 	fs.Var(&deny, "deny", "a path no write inside the wall reaches, the coordinator's self; ~/ is under HOME (repeatable, at least one)")
 	fs.Var(&jobs, "job", "a job directory outside --dir, writable inside the wall (repeatable)")
@@ -1755,6 +1760,20 @@ func RunWall(args, env []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	}
 	cwd, _ := os.Getwd() // ignored: no cwd is the profile's working directory
 	lp := sandbox.LaneProfile{Name: *profile, Work: *dir, Jobs: jobs, ConfigDir: *configDir, Reads: reads, Deny: deny, Home: home}
+	var selected *SetupProfile
+	if *setupProfile != "" {
+		binding, err := ReadSetupProfile(OSFS{}, *setupProfile)
+		if err != nil {
+			return refused("setup_profile", err.Error())
+		}
+		if binding.Selection.Dir != *dir || !slices.Equal([]string(deny), binding.Selection.DenySelf) {
+			return refused("setup_profile", "wall working directory/exclusions differ from the owned setup selection; use its exact wall roots")
+		}
+		selected = &binding
+		lp.Home = binding.Selection.Home
+		lp.ConfigDir = binding.Selection.Home
+		lp.Jobs = append(append([]string{}, lp.Jobs...), binding.Selection.ConfigDir)
+	}
 	in, err := lp.Input(cwd, fs.Args())
 	if err != nil {
 		return refused("bad_profile", err.Error())
@@ -1769,8 +1788,25 @@ func RunWall(args, env []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		return code
 	}
 	child := append(sandbox.ChildEnv(env, p.Tmp), "HOME="+p.Home)
-	if *configDir != "" {
+	if *configDir != "" && (selected == nil || selected.Selection.Harness == "claude") {
 		child = append(child, "CLAUDE_CONFIG_DIR="+*configDir)
+	}
+	if selected != nil {
+		public := setupEnvMap(selected.Environment(""))
+		var bound []string
+		for _, item := range child {
+			name, _, _ := strings.Cut(item, "=")
+			if _, override := public[name]; override && name != "PATH" {
+				continue
+			}
+			bound = append(bound, item)
+		}
+		for name, value := range public {
+			if name != "PATH" {
+				bound = append(bound, name+"="+value)
+			}
+		}
+		child = bound
 	}
 	code, err := sandbox.Run(p, child, stdin, stdout, stderr, nil)
 	if err != nil {

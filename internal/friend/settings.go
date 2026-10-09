@@ -33,8 +33,9 @@ const (
 
 // Entry is what a path is, the path itself and never what a symlink names.
 type Entry struct {
-	Kind   string // KindDir, KindFile, KindSymlink or KindMissing
-	Target string // a symlink's target
+	Kind   string      // KindDir, KindFile, KindSymlink or KindMissing
+	Target string      // a symlink's target
+	Mode   fs.FileMode // the entry's own mode; missing entries have zero
 }
 
 // SettingsFS is the filesystem the settings are read and written through:
@@ -58,11 +59,11 @@ func (OSFS) Lstat(p string) (Entry, error) {
 		return Entry{}, err
 	case info.Mode()&fs.ModeSymlink != 0:
 		target, err := os.Readlink(p)
-		return Entry{Kind: KindSymlink, Target: target}, err
+		return Entry{Kind: KindSymlink, Target: target, Mode: info.Mode()}, err
 	case info.IsDir():
-		return Entry{Kind: KindDir}, nil
+		return Entry{Kind: KindDir, Mode: info.Mode()}, nil
 	}
-	return Entry{Kind: KindFile}, nil
+	return Entry{Kind: KindFile, Mode: info.Mode()}, nil
 }
 
 func (OSFS) ReadFile(p string) ([]byte, error) { return os.ReadFile(p) }
@@ -83,6 +84,7 @@ type memNode struct {
 	kind   string
 	data   []byte
 	target string
+	mode   fs.FileMode
 }
 
 // NewMemFS is an empty twin holding only the root.
@@ -93,7 +95,7 @@ func (m *MemFS) Symlink(target, p string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// ignored: a test fixture; mkdirAll fails only on a non-directory parent the test itself planted
-	_ = m.mkdirAll(path.Dir(path.Clean(p)))
+	_ = m.mkdirAll(path.Dir(path.Clean(p)), 0755)
 	m.nodes[path.Clean(p)] = memNode{kind: KindSymlink, target: target}
 }
 
@@ -104,7 +106,7 @@ func (m *MemFS) Lstat(p string) (Entry, error) {
 	if !ok {
 		return Entry{Kind: KindMissing}, nil
 	}
-	return Entry{Kind: n.kind, Target: n.target}, nil
+	return Entry{Kind: n.kind, Target: n.target, Mode: n.mode}, nil
 }
 
 func (m *MemFS) ReadFile(p string) ([]byte, error) {
@@ -120,7 +122,7 @@ func (m *MemFS) ReadFile(p string) ([]byte, error) {
 	return slices.Clone(n.data), nil
 }
 
-func (m *MemFS) WriteFile(p string, data []byte, _ fs.FileMode) error {
+func (m *MemFS) WriteFile(p string, data []byte, perm fs.FileMode) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	p = path.Clean(p)
@@ -130,27 +132,27 @@ func (m *MemFS) WriteFile(p string, data []byte, _ fs.FileMode) error {
 	if n, ok := m.nodes[p]; ok && n.kind == KindDir {
 		return &fs.PathError{Op: "write", Path: p, Err: errors.New("is a directory")}
 	}
-	m.nodes[p] = memNode{kind: KindFile, data: slices.Clone(data)}
+	m.nodes[p] = memNode{kind: KindFile, data: slices.Clone(data), mode: perm}
 	return nil
 }
 
-func (m *MemFS) MkdirAll(p string, _ fs.FileMode) error {
+func (m *MemFS) MkdirAll(p string, perm fs.FileMode) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.mkdirAll(path.Clean(p))
+	return m.mkdirAll(path.Clean(p), perm)
 }
 
-func (m *MemFS) mkdirAll(p string) error {
+func (m *MemFS) mkdirAll(p string, perm fs.FileMode) error {
 	if n, ok := m.nodes[p]; ok {
 		if n.kind != KindDir {
 			return &fs.PathError{Op: "mkdir", Path: p, Err: fmt.Errorf("is a %s", n.kind)}
 		}
 		return nil
 	}
-	if err := m.mkdirAll(path.Dir(p)); err != nil {
+	if err := m.mkdirAll(path.Dir(p), perm); err != nil {
 		return err
 	}
-	m.nodes[p] = memNode{kind: KindDir}
+	m.nodes[p] = memNode{kind: KindDir, mode: perm}
 	return nil
 }
 

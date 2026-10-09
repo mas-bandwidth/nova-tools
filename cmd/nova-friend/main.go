@@ -65,38 +65,41 @@ const OpenRetryMax = 30 * time.Second
 // a test its own over internal/bus's Fake, a fake harness and its own
 // clock, so no test opens a socket or reads the real time.
 type world struct {
-	getenv    func(string) string
-	open      func(ctx context.Context, addr string) (bus.Store, func(), error)
-	exec      friend.Exec
-	wall      func(wl friend.Wall, run friend.Exec) friend.Exec                                                                      // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
-	beat      func(ctx context.Context, server, friend string, active time.Time, proof friend.BeatWords) (answer string, err error)  // the FRIEND-BEAT line, which carries the friend's row
-	beatDown  func(ctx context.Context, server, friend string, active, until time.Time, reason string, proof friend.BeatWords) error // her beat while she is down (friend beat --until --reason); nil holds the beat back
-	progress  func(ctx context.Context, server string, argv []string) error                                                          // one progress verb to the sprint server (friend.ProgressArgv)
-	finish    func(ctx context.Context, server string, argv []string) error                                                          // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
-	down      func(ctx context.Context, server string, argv []string) error                                                          // one down verb to the sprint server (DownArgv: a credit refusal's friend down --reason --until); nil names none (a test's)
-	sqlite    friend.Exec                                                                                                            // reads opencode's database (the sqlite3 CLI); nil reads none: no card cost, no token cap
-	cards     func(ctx context.Context, server string, argv []string) (string, error)                                                // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
-	friends   func(ctx context.Context, server string) (rows []friend.WakeRow, seat string, err error)                               // the friends table and the seat's holder, from the sprint server's coordinator view (GET /api/view/coordinator?all=1)
-	holders   func(ctx context.Context, server string) (map[string]string, error)                                                    // current card holders from GET /api/view/cards; nil in a world that reads none
-	view      func(ctx context.Context, server, friend string) (string, error)                                                       // the sprint server's worker view of her (GET /api/view/worker), while friend cards is refused; nil reads none
-	stage     func(dir string) *friend.Stager                                                                                        // stages a held card's job under her working directory and prunes the finished ones (friend.Stager, with the daemon's git credentials); nil stages none (a test's)
-	tip       func(ctx context.Context, repo, branch string) (string, error)                                                         // origin's tip of a card's branch (friend.Stager.Tip, one git ls-remote): a report's LAND finishes only there; nil reads none (a test's)
-	launchctl friend.Launchctl
-	now       func() time.Time
-	sleep     func(ctx context.Context, d time.Duration)
-	signals   func(ctx context.Context) (context.Context, context.CancelFunc)
-	uid       int
-	home      string
-	binary    func() (string, error)
-	copy      friend.CopyFile              // places a removable-volume binary under home; nil refuses it
-	lookPath  func(string) (string, error) // a program on PATH by absolute path, for the agent's secrets wrap
-	random    func() string
-	alive     friend.Aliver     // the harness check, when set (a test's fake harness); nil watches the adapter
-	checkGo   func(func())      // optional test scheduler for a fake-clock session check
-	launch    []string          // host: the launch command after "--"
-	settings  friend.SettingsFS // where a harness's own settings are read and written (install, check --settings)
-	argv      []string          // this run's arguments after the program's name: what the plist drift is read against
-	wake      *wakeFS           // watch: the wake file's reads; nil reads the disk
+	getenv       func(string) string
+	open         func(ctx context.Context, addr string) (bus.Store, func(), error)
+	exec         friend.Exec
+	wall         func(wl friend.Wall, run friend.Exec) friend.Exec                                                                      // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
+	beat         func(ctx context.Context, server, friend string, active time.Time, proof friend.BeatWords) (answer string, err error)  // the FRIEND-BEAT line, which carries the friend's row
+	beatDown     func(ctx context.Context, server, friend string, active, until time.Time, reason string, proof friend.BeatWords) error // her beat while she is down (friend beat --until --reason); nil holds the beat back
+	progress     func(ctx context.Context, server string, argv []string) error                                                          // one progress verb to the sprint server (friend.ProgressArgv)
+	finish       func(ctx context.Context, server string, argv []string) error                                                          // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
+	down         func(ctx context.Context, server string, argv []string) error                                                          // one down verb to the sprint server (DownArgv: a credit refusal's friend down --reason --until); nil names none (a test's)
+	sqlite       friend.Exec                                                                                                            // reads opencode's database (the sqlite3 CLI); nil reads none: no card cost, no token cap
+	cards        func(ctx context.Context, server string, argv []string) (string, error)                                                // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
+	friends      func(ctx context.Context, server string) (rows []friend.WakeRow, seat string, err error)                               // the friends table and the seat's holder, from the sprint server's coordinator view (GET /api/view/coordinator?all=1)
+	holders      func(ctx context.Context, server string) (map[string]string, error)                                                    // current card holders from GET /api/view/cards; nil in a world that reads none
+	view         func(ctx context.Context, server, friend string) (string, error)                                                       // the sprint server's worker view of her (GET /api/view/worker), while friend cards is refused; nil reads none
+	stage        func(dir string) *friend.Stager                                                                                        // stages a held card's job under her working directory and prunes the finished ones (friend.Stager, with the daemon's git credentials); nil stages none (a test's)
+	tip          func(ctx context.Context, repo, branch string) (string, error)                                                         // origin's tip of a card's branch (friend.Stager.Tip, one git ls-remote): a report's LAND finishes only there; nil reads none (a test's)
+	launchctl    friend.Launchctl
+	now          func() time.Time
+	sleep        func(ctx context.Context, d time.Duration)
+	signals      func(ctx context.Context) (context.Context, context.CancelFunc)
+	uid          int
+	home         string
+	binary       func() (string, error)
+	copy         friend.CopyFile              // places a removable-volume binary under home; nil refuses it
+	lookPath     func(string) (string, error) // a program on PATH by absolute path, for the agent's secrets wrap
+	random       func() string
+	alive        friend.Aliver     // the harness check, when set (a test's fake harness); nil watches the adapter
+	checkGo      func(func())      // optional test scheduler for a fake-clock session check
+	launch       []string          // host: the launch command after "--"
+	settings     friend.SettingsFS // where a harness's own settings are read and written (install, check --settings)
+	setupPlanner friend.SetupPlanner
+	setupRunner  *friend.SetupRunner
+	setupProfile *friend.SetupProfile
+	argv         []string // this run's arguments after the program's name: what the plist drift is read against
+	wake         *wakeFS  // watch: the wake file's reads; nil reads the disk
 }
 
 // readPlist is the installed plist at path, empty when there is none or it
@@ -395,6 +398,7 @@ func friendTool(w world) *tool.Tool {
 		f.Duration("limit-rest", friend.DefaultLimitWait, "how long the friend is down when its harness's usage limit or empty balance names no reset")
 		f.String("coordinator", "", "who is told of a broken session when no ping has named the seat")
 		f.String("needs-env", "", "environment names the harness needs, comma-separated (default: the provider's key for --model, e.g. INCEPTION_API_KEY); while one is empty the lanes hold and the beat says down \"no key sealed: NAME\"")
+		f.String("setup-profile", "", "the completed versioned public setup PROFILE file; binds native home/config/model/secret names and wall roots")
 		stateDir(f)
 		redis(f)
 		f.Check(func(c *tool.Call) {
@@ -428,7 +432,7 @@ state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.
 			},
 			{
 				Name:    "run",
-				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]",
+				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--setup-profile <PROFILE>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]",
 				Example: "", // a daemon: the example block has no line that runs for ever
 				Effect:  tool.Delivery + ": the daemon; messages go into the session, beats and pongs go out, until a signal",
 				DryRun:  true,
@@ -565,9 +569,10 @@ example: nova-friend beat --as bob --server 127.0.0.1:6390`,
 				},
 				Run: w.beatVerb,
 			},
+			w.setupVerb(),
 			{
 				Name:    "install",
-				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
+				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--setup-profile <PROFILE>] [--deny-self <d,...>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
 				Example: "install --as bob --harness opencode --dir ./bob --dry-run",
 				Effect:  tool.LocalWrite + ": writes the harness's settings and the launchd agent com.nova.friend-<me>, and loads it",
 				Detail: `First writes the settings the friend's harness needs in its own config (docs/SPEC-FRIEND.md, Harness
@@ -611,6 +616,7 @@ is refused at exit 2 with its remedy and the agent booted out again. A harness w
 					f.String("secrets", "", "the names of the secrets the session needs, comma-separated (never values); wraps the daemon in nova-secrets exec")
 					f.String("seat", "", "the machine's nova-secrets seat the secrets are opened as (nova-config machine show <self>: seat); wanted with --secrets")
 					f.String("launchd-log", "", "launchd's stdout and stderr file (default: ~/Library/Logs/nova-friend-<me>.log)")
+					f.String("deny-self", w.getenv("NOVA_FRIEND_DENY_SELF"), "the explicit coordinator roots excluded by the lane wall, comma-separated; persists in the agent")
 					f.Duration("within", friend.DefaultCheckWithin, "how long the delivery check after loading waits for the session's pong")
 					settingFlags(f)
 					f.Check(func(c *tool.Call) {
@@ -1055,6 +1061,10 @@ func (w world) openUntil(ctx context.Context, addr string, record func(string)) 
 }
 
 func (w world) run(c *tool.Call) *tool.Out {
+	var profileErr error
+	if w, profileErr = w.withSetupProfile(c, false); profileErr != nil {
+		return tool.Refuse(profileErr.Error())
+	}
 	addr := c.Want("redis", "the bus store's Redis address, host:port (or "+RedisEnv+")")
 	if o := c.Refused(); o != nil {
 		return o
@@ -1075,6 +1085,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 	var rowTokenCap atomic.Int64            // her row's per-card token cap as her beat last answered; DefaultTokenCap until it says, 0 none
 	rowTokenCap.Store(friend.DefaultTokenCap)
 	wall := friend.Wall{Dir: dir, Jobs: commaList(c.Str("wall-jobs")), Reads: commaList(c.Str("wall-reads")), Deny: commaList(c.Str("deny-self"))}
+	if w.setupProfile != nil {
+		wall.SetupProfile = c.Str("setup-profile")
+		wall.Deny = slices.Clone(w.setupProfile.Selection.DenySelf)
+	}
 	if bin, err := w.binary(); err == nil {
 		wall.Self = []string{bin}
 	} // else no Self: a lane's child is refused, never run outside the wall
@@ -1084,7 +1098,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 		}
 		wl := wall
 		// the wall's config directory: --config-dir, else her row's config_dir, else CLAUDE_CONFIG_DIR
-		if wl.ConfigDir = c.Str("config-dir"); wl.ConfigDir == "" {
+		if w.setupProfile != nil {
+			wl.ConfigDir = w.setupProfile.Selection.ConfigDir
+			prog, args = w.setupProfileCommand(prog, args)
+		} else if wl.ConfigDir = c.Str("config-dir"); wl.ConfigDir == "" {
 			if d := rowConfigDir.Load(); d != nil && *d != "" {
 				wl.ConfigDir = *d
 			} else {
@@ -1210,6 +1227,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 		cl.Friend, cl.Now = name, w.now // every run's cost and limit on the record, its reset read on her clock
 		cl.TokenCap = func() int64 { return rowTokenCap.Load() }
 		cl.ConfigDir = func() string {
+			if w.setupProfile != nil {
+				return w.setupProfile.Selection.ConfigDir
+			}
 			if d := c.Str("config-dir"); d != "" {
 				return d // the override
 			}
@@ -1492,7 +1512,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			// a provider failure paused her lanes: her beat says her down with its exact
 			// message until a person clears the marker (nova-friend resume; friend.PauseBeat)
 			if marker := friend.ReadPause(state); marker != "" {
-				until, reason := friend.PauseBeat(marker, c.Str("model"), w.now())
+				until, reason := friend.PauseBeat(marker, w.selectedModel(c), w.now())
 				return down(ctx, until, reason)
 			}
 			// her lanes hit the same harness fault three times in ten minutes: her beat says
@@ -1514,8 +1534,8 @@ func (w world) run(c *tool.Call) *tool.Out {
 		LoadLanes:       func() (friend.LaneState, error) { return friend.ReadLanes(state) },
 		Sprint:          w.sprintAsk(server),
 		Rules:           rules,
-		Model:           c.Str("model"),
-		NeedsEnv:        friend.NeedsEnvOf(c.Str("needs-env"), c.Str("model")),
+		Model:           w.selectedModel(c),
+		NeedsEnv:        w.selectedNeedsEnv(c),
 		Getenv:          w.getenv,
 		ProcessAlive:    friend.ProcessAlive,
 		ProcessIdentity: friend.ProcessIdentity,
@@ -1597,13 +1617,13 @@ func (w world) run(c *tool.Call) *tool.Out {
 		d.Proof = sc.Proof // nothing goes into the session until it answers its check
 	}
 	if c.Str("harness") == "opencode" {
-		db := c.Str("db")
+		db := w.selectedOpenCodeDB(c)
 		if w.sqlite != nil {
 			d.Tokens = func(ctx context.Context, session string) (friend.LaneTokens, error) {
 				return friend.TokensFromOpenCode(ctx, w.sqlite, db, session)
 			}
 		}
-		d.Route = w.route(server, c.Str("model"))
+		d.Route = w.route(server, w.selectedModel(c))
 	}
 	watch := friend.WatchHarness(d, deliver)
 	if w.alive != nil {
@@ -1758,12 +1778,35 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 		Friend: name, Harness: c.Str("harness"), Dir: c.Str("dir"), Session: c.Str("session"), StateDir: c.Str("state-dir"), Width: c.Int("width"),
 		Binary: bin, Copy: w.copy, Redis: c.Str("redis"), Server: c.Str("server"), Home: w.home, Path: w.getenv("PATH"), LaunchdLog: log,
 		Secrets: secretNames(c.Str("secrets")), Seat: c.Str("seat"),
-		Coordinator: c.Str("coordinator"), SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), NeedsEnv: c.Str("needs-env"),
+		Coordinator: c.Str("coordinator"), SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), NeedsEnv: strings.Join(friend.NeedsEnvOf(c.Str("needs-env"), c.Str("model")), ","),
+		DenySelf: commaList(c.Str("deny-self")),
 	}
 	if a.Harness == "claude" {
 		a.ConfigDir = c.Str("config-dir")
 	}
+	if w.setupProfile != nil {
+		o := w.setupProfile.Selection
+		if a.StateDir == "" {
+			a.StateDir = friend.DefaultStateDir(w.home, a.Friend)
+		}
+		a.ConfigDir = o.ConfigDir
+		a.DenySelf = slices.Clone(o.DenySelf)
+		a.NeedsEnv = o.KeyEnv
+		a.Secrets = slices.Clone(o.SecretNames)
+		a.Seat = o.Seat
+		a.SetupProfile = c.Str("setup-profile")
+		a.Environment = map[string]string{}
+		for _, item := range w.setupProfile.Environment(a.Path) {
+			name, value, _ := strings.Cut(item, "=")
+			a.Environment[name] = value
+		}
+	}
 	if len(a.Secrets) > 0 {
+		for _, name := range friend.NeedsEnvOf(a.NeedsEnv, "") {
+			if !slices.Contains(a.Secrets, name) {
+				return friend.Agent{}, fmt.Errorf("--secrets omits required %s; add its name to --secrets or select an explicit matching --needs-env", name)
+			}
+		}
 		for _, p := range []struct {
 			name string
 			to   *string
@@ -1779,6 +1822,10 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 }
 
 func (w world) install(c *tool.Call) *tool.Out {
+	var profileErr error
+	if w, profileErr = w.withSetupProfile(c, true); profileErr != nil {
+		return tool.Refuse(profileErr.Error())
+	}
 	dry := c.DryRun()
 	c.Want("redis", "the bus store's Redis address, host:port (or "+RedisEnv+"), written into the agent")
 	if o := c.Refused(); o != nil {
@@ -1898,6 +1945,12 @@ func undriven(harness, dir, undone string) *tool.Out {
 func (w world) harnessSettings(c *tool.Call) friend.HarnessSettings {
 	h := friend.HarnessSettings{Harness: c.Str("harness"), Friend: c.Str("as"), Dir: c.Str("dir"), Home: w.home, StateDir: c.Str("state-dir"),
 		ConfigDir: c.Str("config-dir"), Model: c.Str("model"), CodexHome: w.getenv("CODEX_HOME"), DSHHome: w.getenv("DSH_HOME"), FS: w.settings}
+	if w.setupProfile != nil {
+		h.Home = w.setupProfile.Selection.Home
+		h.ConfigDir = w.setupProfile.Selection.ConfigDir
+		h.Model = w.setupProfile.Selection.Model
+		h.DSHHome = w.setupProfile.Selection.ConfigDir
+	}
 	if h.Harness == "grok" {
 		h.Wake = c.Str("session") // for grok, --session names the wake file
 	}

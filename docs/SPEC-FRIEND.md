@@ -2650,6 +2650,53 @@ and independently verify its control turn.
 (`check` with no `--harness`) does not yet carry settings drift: run
 `--settings` per friend.
 
+## Harness setup (internal/friend/setup.go)
+
+`nova-friend setup` inspects an explicit harness/profile/config root and prints
+an ordered Go plan. Inspection and `--dry-run` make no writes and run no native
+commands. `--apply` applies local initialization only: it never installs or loads
+a daemon, logs in, sends a provider turn, starts sprint work, or proves presence.
+The supported initializer scope is OpenCode configuration, Claude private auth
+inspection, and DSH static headless initialization. Other harnesses are refused;
+their existing settings commands continue independently.
+
+The friend, working directory, private native home, config root, profile, installed
+native executable and coordinator roots (`--deny-self`) are explicit. A route
+needs explicit provider/model metadata and a sealed key name/seat reference;
+`--profile-only` explicitly initializes without selecting a model/provider. Claude
+and DSH initialization use profile-only mode and refuse route inputs they cannot
+configure. OpenCode records `{env:NAME}` references and preserves unrelated keys.
+Credential values are never setup inputs, process arguments or stored receipts.
+Subscription auth inspection reports local authentication separately from paid
+entitlement, provider access and native control proof.
+
+Truth lives in the selected config files. One ownership record under
+`<config-root>/.nova-friend-setup` binds that root to the friend, harness, profile,
+working directory and private home; the home contains a reference to that owner.
+Different owners, nonempty unowned roots and roots with permissions beyond the
+owner are refused. Kernel file locks on both roots, acquired in sorted order,
+serialize apply. Existing account files are never adopted or copied.
+Each native step has a complete environment, empty stdin, a deadline no longer
+than two minutes, and output bounded to four MiB per stream. Native output is
+validated in memory and is never rendered or persisted. Before execution is
+released, an atomic receipt binds a unique run ID and command hash to the native
+PID and birth identity; the verified group anchor owns cleanup. A live or
+unverified group prevents advancement or a duplicate initializer on restart.
+Failed receipt writes, native execution, validation or cleanup prevent the next
+step. Re-running inspects current files and preserves existing profiles; it does
+not blindly skip work from a previous receipt.
+
+Only the last successful local step publishes a versioned public `PROFILE`.
+Installation remains a separate verb. `install` and `run --setup-profile` recheck
+its owner, roots and selected configuration before activation, then bind the same
+private HOME, XDG and harness config paths to daemon and lane children. Deployment
+paths for the plist, log and nova-secrets store remain under the operator's home.
+Profile-only setup has no selected model route and is refused for activation.
+The agent persists coordinator roots and required environment names derived from
+the selected model or `--needs-env`. A secrets wrapper must include every required
+name; omission is refused rather than silently widening access. Credential values
+are supplied by nova-secrets only to those named runtime variables.
+
 ## The coordinator's ping (cmd/nova-friend serve; internal/friend/keepalive.go)
 
 The server side of the connection, as the owner designed it: the coordinator
