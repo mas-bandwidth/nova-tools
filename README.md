@@ -50,7 +50,7 @@ come back to the table below for the problem you want it to solve.
 
 Pick the row that is your actual problem today. One tool is a fine number.
 
-### tdocs-tool-readmes-b.w2
+### tdocs-tool-readmes-bb
 
 Every tool has a standalone guide beside its code, written so a stranger can
 start from that one tool without this page. Read the one you chose:

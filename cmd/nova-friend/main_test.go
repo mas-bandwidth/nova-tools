@@ -310,7 +310,7 @@ func TestInstallWritesThePlistBootsOutAndBootstrapsAndUninstallUndoesIt(t *testi
 	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--session", "ses_1").Exit(0).
 		Out("INSTALL OK label=com.nova.friend-bob plist="+plist, `INSTALL RAN command="launchctl bootout gui/501/com.nova.friend-bob"`, `INSTALL RAN command="launchctl bootstrap gui/501 `+plist+`"`,
 			"INSTALL NOTE check: CHECK OK harness=opencode took=", "NOTE check it: nova-friend status --as bob --dir /w/bob")
-	assert.Equal(t, []string{"bootout gui/501/com.nova.friend-bob", "bootstrap gui/501 " + plist}, r.launchctl)
+	assert.Equal(t, []string{"bootout gui/501/com.nova.friend-bob", "print gui/501/com.nova.friend-bob", "bootstrap gui/501 " + plist}, r.launchctl)
 	raw, err := os.ReadFile(plist)
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), "<string>--session</string>\n    <string>ses_1</string>")
@@ -355,7 +355,7 @@ func TestInstallVerbRefusesOrCopiesABinaryOnARemovableVolume(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), "<string>"+dst+"</string>")
 	assert.NotContains(t, string(raw), "/Volumes/")
-	assert.Equal(t, []string{"bootout gui/501/com.nova.friend-bob", "bootstrap gui/501 " + plist}, r.launchctl)
+	assert.Equal(t, []string{"bootout gui/501/com.nova.friend-bob", "print gui/501/com.nova.friend-bob", "bootstrap gui/501 " + plist}, r.launchctl)
 
 	refused := newRig(t, "ada", "bob")
 	refused.copy = func(string, string) error { return errors.New("disk full") }
@@ -1309,6 +1309,9 @@ func TestHostHelpExampleIsWhatTheToolPrints(t *testing.T) {
 		Args: []string{"host", "--as", "bob", "--harness", "aider", "--dir", "./bob", "--dry-run", "--", "aider"},
 		Want: []string{"HOST DRY-RUN session=friend-bob dir=./bob dry_run=true command=\"tmux new-session -d -s friend-bob -c ./bob -- aider\""},
 	}
+	doc, err := os.ReadFile("../../docs/CLI.md")
+	require.NoError(t, err)
+	assert.Contains(t, string(doc), strings.TrimPrefix(step.Line, "$ "), "the executed command is also in the reference")
 	var out, errb strings.Builder
 	w := newRig(t).world()
 	code := run(step.Args, strings.NewReader(""), &out, &errb, w)
