@@ -1,0 +1,3 @@
+-------------- MODULE MCCompletionReportJournalBridge --------------
+EXTENDS CompletionReportJournalBridge
+=====================================================================
