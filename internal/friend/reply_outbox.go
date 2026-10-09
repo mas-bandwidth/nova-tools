@@ -335,15 +335,17 @@ func (d *Daemon) SendNativeReplies(ctx context.Context, b *bus.Bus, now time.Tim
 		return
 	}
 	if _, err := d.nativeBrokerRoot(); err != nil {
+		d.Record(now.UTC().Format(time.RFC3339) + " native reply: broker unavailable: " + oneLine(err.Error(), 200))
 		return
 	}
 	dir := filepath.Join(d.Dir, "outbox", NativeReplyDir)
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
+		// ignored: the native spool is absent until the first reply is queued.
 		return
 	}
 	if err != nil {
-		d.Record(now.UTC().Format(time.RFC3339) + " native reply: cannot read outbox")
+		d.Record(now.UTC().Format(time.RFC3339) + " native reply: cannot read outbox: " + oneLine(err.Error(), 200))
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, nativeReplyBudget)

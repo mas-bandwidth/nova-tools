@@ -846,7 +846,7 @@ removes its plist.`,
 			{
 				Name:    "local-pong",
 				Usage:   "local-pong --as <me> --dir <friend-dir> --session <native-session> --nonce <n> --capability <turn-capability> [--queue <n>] [--working <n>] [--width <n>] [--dry-run]",
-				Example: "local-pong --as bob --dir /work/bob --session ses_123 --nonce abc123 --capability <turn-capability>",
+				Example: "local-pong --as bob --dir /work/bob --session ses_123 --nonce abc123 --capability aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --dry-run",
 				Effect:  tool.LocalWrite + ": queues one owner-only native challenge answer; the daemon validates and sends its bus pong",
 				DryRun:  true,
 				Detail: `Run the exact scoped command carried by a native OpenCode control turn.
@@ -893,7 +893,7 @@ the line it would send; nothing is sent and no pong file is written.`,
 			{
 				Name:    "reply",
 				Usage:   "reply --as <me> --dir <friend-dir> --session <native-session> --re <request-id> --capability <turn-capability> --subject <line> --body <text> [--dry-run]",
-				Example: "reply --as bob --dir /work/bob --session ses_123 --re 01M4F39QAT9N7621G6XKC3R9AA --capability <turn-capability> --subject 'Review answer' --body 'Reviewed'",
+				Example: "reply --as bob --dir /work/bob --session ses_123 --re 01M4F39QAT9N7621G6XKC3R9AA --capability aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --subject 'Review answer' --body 'Reviewed' --dry-run",
 				Effect:  tool.LocalWrite + ": queues one owner-only reply envelope in the friend's outbox; the daemon validates and sends it",
 				DryRun:  true,
 				Detail: `Run from the native OpenCode turn that received a typed request. The turn supplies
