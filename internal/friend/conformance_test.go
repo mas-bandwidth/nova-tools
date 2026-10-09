@@ -198,7 +198,14 @@ var harnessRigs = map[string]func(t *testing.T, s *fakeSession, dir string) Deli
 				if slices.Contains(args, "send-message") {
 					// the server writes the message into the mailbox; the session takes it and marks it read
 					text := args[len(args)-1]
-					home[mailbox+"/m1.json"] = &fstest.MapFile{Data: []byte(`{"renderDetails":{"messageTitle":"` + AntigravityTitle + `"}}`)}
+					data, _ := json.Marshal(map[string]any{
+						"id": "m1",
+						"renderDetails": map[string]string{
+							"messageTitle": AntigravityTitle,
+						},
+						"content": text,
+					})
+					home[mailbox+"/m1.json"] = &fstest.MapFile{Data: data}
 					home[mailbox+"/read.json"] = &fstest.MapFile{Data: []byte(`{"m1":true}`)}
 					s.act(text)
 				}
