@@ -1588,6 +1588,16 @@ func (w world) run(c *tool.Call) *tool.Out {
 		}
 		d.Route = w.route(server, c.Str("model"))
 	}
+	if c.Str("harness") == "dsh" {
+		sessionsRoot := ""
+		if dsh, ok := deliver.(*friend.DSH); ok && dsh.Sessions != "" {
+			sessionsRoot = dsh.Sessions
+		}
+		d.Tokens = func(ctx context.Context, session string) (friend.LaneTokens, error) {
+			return friend.TokensFromDSH(ctx, w.exec, sessionsRoot, dir, session)
+		}
+		d.Route = w.route(server, c.Str("model"))
+	}
 	watch := friend.WatchHarness(d, deliver)
 	if w.alive != nil {
 		watch.Alive = w.alive
