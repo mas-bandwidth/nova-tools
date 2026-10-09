@@ -118,7 +118,7 @@ func PlanSetup(opts SetupOptions, fs SettingsFS, planner SetupPlanner) (SetupPla
 	if opts.ProfileOnly && (opts.Model != "" || opts.Provider != "" || opts.KeyEnv != "" || opts.Package != "" || opts.BaseURL != "" || opts.Seat != "" || len(opts.SecretNames) > 0 || opts.ContextLimit != 0 || opts.OutputLimit != 0) {
 		problems = append(problems, errors.New("--profile-only does not select a model, provider, credential or route; remove route inputs or configure an explicit route"))
 	}
-	if !opts.ProfileOnly {
+	if !opts.ProfileOnly && !dshExplicitAccountRoute(opts) {
 		required := ProviderKeyEnv(opts.Model)
 		if required != "" {
 			if opts.KeyEnv != "" && opts.KeyEnv != required {

@@ -27,6 +27,9 @@ func PlanDSHSetup(o SetupOptions, fs SettingsFS) (SetupPlan, error) {
 	if fs == nil {
 		fs = OSFS{}
 	}
+	if !o.ProfileOnly {
+		return PlanDSHAccountSetup(o, fs)
+	}
 	if o.Harness != "dsh" || !o.ProfileOnly || o.Profile != "headless" {
 		return plan, errors.New("dsh setup requires the headless profile and profile-only scope; run: nova-friend setup -h")
 	}
@@ -106,27 +109,8 @@ func PlanDSHSetup(o SetupOptions, fs SettingsFS) (SetupPlan, error) {
 		return []SetupFact{dshSetupHash("default-config", []byte(out.Stdout))}, nil
 	})
 	command("headless-profile-schema", []string{"--profile", "headless", "--dump-config-schema"}, func(out SetupOutput) ([]SetupFact, error) {
-		if err := dshSetupOutput(out); err != nil {
+		if err := dshSetupValidateSchema(out); err != nil {
 			return nil, err
-		}
-		object, err := dshSetupObject([]byte(out.Stdout))
-		if err != nil {
-			return nil, errors.New("dsh native schema is not an unambiguous JSON object; inspect the native installation, then run: nova-friend setup -h")
-		}
-		meta, err := dshSetupObject(object["x-cordis"])
-		var profileName string
-		if err != nil || string(meta["complete"]) != "true" || json.Unmarshal(meta["profile"], &profileName) != nil || profileName != "headless" {
-			return nil, errors.New("dsh native schema is incomplete; inspect the native installation, then run: nova-friend setup -h")
-		}
-		var diagnostics []map[string]json.RawMessage
-		if len(meta["diagnostics"]) == 0 || string(meta["diagnostics"]) == "null" || json.Unmarshal(meta["diagnostics"], &diagnostics) != nil {
-			return nil, errors.New("dsh native schema diagnostics are malformed; inspect the native installation, then run: nova-friend setup -h")
-		}
-		for _, diagnostic := range diagnostics {
-			var level, message string
-			if json.Unmarshal(diagnostic["level"], &level) != nil || level != "warning" || string(diagnostic["message"]) == "null" || json.Unmarshal(diagnostic["message"], &message) != nil {
-				return nil, errors.New("dsh native schema has a diagnostic failure; inspect the native installation, then run: nova-friend setup -h")
-			}
 		}
 		facts, err := dshSetupProfile(fs, o.ConfigDir)
 		if err != nil {
@@ -288,6 +272,34 @@ func dshSetupObject(raw []byte) (map[string]json.RawMessage, error) {
 func dshSetupOutput(out SetupOutput) error {
 	if out.Err != nil || out.Exit != 0 || len(out.Stdout) > dshSetupOutputMax {
 		return errors.New("dsh native setup command failed or exceeded its output bound; inspect the native installation, then run: nova-friend setup -h")
+	}
+	return nil
+}
+
+// dshSetupValidateSchema checks native collection without booting the profile
+// (SPEC-FRIEND harness setup). Completion is not provider or account readiness.
+func dshSetupValidateSchema(out SetupOutput) error {
+	if err := dshSetupOutput(out); err != nil {
+		return err
+	}
+	object, err := dshSetupObject([]byte(out.Stdout))
+	if err != nil {
+		return errors.New("dsh native schema is not an unambiguous JSON object; inspect the native installation, then run: nova-friend setup -h")
+	}
+	meta, err := dshSetupObject(object["x-cordis"])
+	var profileName string
+	if err != nil || string(meta["complete"]) != "true" || json.Unmarshal(meta["profile"], &profileName) != nil || profileName != "headless" {
+		return errors.New("dsh native schema is incomplete; inspect the native installation, then run: nova-friend setup -h")
+	}
+	var diagnostics []map[string]json.RawMessage
+	if len(meta["diagnostics"]) == 0 || string(meta["diagnostics"]) == "null" || json.Unmarshal(meta["diagnostics"], &diagnostics) != nil {
+		return errors.New("dsh native schema diagnostics are malformed; inspect the native installation, then run: nova-friend setup -h")
+	}
+	for _, diagnostic := range diagnostics {
+		var level, message string
+		if json.Unmarshal(diagnostic["level"], &level) != nil || level != "warning" || string(diagnostic["message"]) == "null" || json.Unmarshal(diagnostic["message"], &message) != nil {
+			return errors.New("dsh native schema has a diagnostic failure; inspect the native installation, then run: nova-friend setup -h")
+		}
 	}
 	return nil
 }
