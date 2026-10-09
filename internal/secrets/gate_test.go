@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testgit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -24,6 +25,7 @@ var gateThirdKey = "age1" + strings.Repeat("q", 58)
 func gateGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = testgit.Environ()
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "git %v failed: %v, out: %s", args, err, out)
 	return string(out)
