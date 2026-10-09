@@ -378,6 +378,12 @@ func (l *lander) ownRefusal(stream string, f conflictCard) bool {
 // ends here (dryBatch).
 func (l *lander) prepare(ctx context.Context, s *sprint.Snapshot, j *landJob) {
 	b := &j.b
+	if !l.dry {
+		if why := l.pauseAdmission(ctx); why != "" {
+			j.refuse(why)
+			return
+		}
+	}
 	if why, also := l.placeWhy(j.stream, j.cards); why != "" {
 		b.Also = also
 		j.refuse(why)
@@ -388,6 +394,12 @@ func (l *lander) prepare(ctx context.Context, s *sprint.Snapshot, j *landJob) {
 	if why := l.pause(ctx, s, b.Repo, b.Base); why != "" {
 		j.refuse(why)
 		return
+	}
+	if !l.dry {
+		if why := l.landAdmission(ctx, j.stream, j.cards); why != "" {
+			j.refuse(why)
+			return
+		}
 	}
 	clone, why := l.clone(ctx, b.Repo)
 	if why != "" {

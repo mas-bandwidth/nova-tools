@@ -500,7 +500,9 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	// the bases that stopped streams, re-checked once each before the streams land
-	l.baseRecheck(ctx, s)
+	if l.dry || l.pauseAdmission(ctx) == "" {
+		l.baseRecheck(ctx, s)
+	}
 	// by priority (sprint.LandOrder): the stream whose merging set holds the highest level
 	// first, then the most cards behind, then stream order; a named stream that is no stream
 	// keeps its place last

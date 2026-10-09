@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -109,7 +110,7 @@ func TestStoppedCancelsTheLaneAndHandsTheCardBackWithStopReturn(t *testing.T) {
 	c.end(Result{OK: true, Head: "abc"})
 	_, err = m.Tick(time.Unix(20, 0))
 	require.NoError(t, err)
-	assert.Equal(t, []string{"stop-return --as m c1@1 --epoch 7 --reason owned process stopped"}, s.lines("stop-return"))
+	assert.Equal(t, []string{"stop-return --as m c1@1 --epoch 7 --reason owned process stopped" + " --op " + sprintwire.StopReturnOp("m", "c1", 1, "7")}, s.lines("stop-return"))
 	assert.Empty(t, s.lines("finish"), "a cancelled card is never finished (EveryLaneReturnsOnStop)")
 	assert.Equal(t, 0, m.Running(), "the lane is free once the card is handed back")
 	assert.Equal(t, []string{"c1:true"}, r.endedLaunches(), "the launch is ended for the runner, its tree kept (failed: a person may inspect it)")
@@ -259,7 +260,7 @@ func TestACancelledChildEndingUnderRunningIsHandedBackNotFinished(t *testing.T) 
 		require.NoError(t, err)
 	}
 	assert.Empty(t, s.lines("finish"), "the cancelled run's result is nobody's: %s", out.String())
-	assert.Equal(t, []string{"stop-return --as m c1@1 --epoch 7 --reason owned process stopped"}, s.lines("stop-return"))
+	assert.Equal(t, []string{"stop-return --as m c1@1 --epoch 7 --reason owned process stopped" + " --op " + sprintwire.StopReturnOp("m", "c1", 1, "7")}, s.lines("stop-return"))
 	assert.Equal(t, 0, m.Running())
 }
 
@@ -300,7 +301,7 @@ func TestAMemberRestartedMidStopHandsBackItsWorkingCards(t *testing.T) {
 	s.set("take", 0, takeJSON(t, pk("c1")))
 	_, err := m.Tick(time.Unix(0, 0))
 	require.NoError(t, err)
-	assert.Equal(t, []string{"stop-return --as m c2@3 --epoch 7 --reason owned process stopped"}, s.lines("stop-return"))
+	assert.Equal(t, []string{"stop-return --as m c2@3 --epoch 7 --reason owned process stopped" + " --op " + sprintwire.StopReturnOp("m", "c2", 3, "7")}, s.lines("stop-return"))
 	assert.Empty(t, s.lines("take"))
 	assert.Empty(t, r.started(), "no recovery launch while STOPPED")
 	assert.Contains(t, out.String(), "STOP-RETURN OK card=c2 gen=3 epoch=7 pid=0: handed back to m ready by the machine's stop (no child of this member runs it")
@@ -354,7 +355,7 @@ func TestAChildThatCannotBeStoppedIsHandedBackWhenItEnds(t *testing.T) {
 	g.r.child("c1").end(Result{OK: true, Head: "abc"})
 	_, err = g.tick(t)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"stop-return --as m c1@1 --epoch 7 --reason owned process stopped"}, g.s.lines("stop-return"))
+	assert.Equal(t, []string{"stop-return --as m c1@1 --epoch 7 --reason owned process stopped" + " --op " + sprintwire.StopReturnOp("m", "c1", 1, "7")}, g.s.lines("stop-return"))
 	assert.Empty(t, g.s.lines("finish"))
 }
 
@@ -386,7 +387,7 @@ func TestBeatAlwaysSendsStopReturnsFlagIncludingZero(t *testing.T) {
 	r.child("c1").end(Result{OK: true})
 	_, err = m.Tick(time.Unix(20, 0))
 	require.NoError(t, err)
-	assert.Equal(t, []string{"stop-return --as m c1@1 --epoch 7 --reason owned process stopped"}, s.lines("stop-return"))
+	assert.Equal(t, []string{"stop-return --as m c1@1 --epoch 7 --reason owned process stopped" + " --op " + sprintwire.StopReturnOp("m", "c1", 1, "7")}, s.lines("stop-return"))
 
 	// beat after hand-back: owed returns to 0
 	s.reset()
@@ -411,7 +412,7 @@ func TestAReaderMemberRestartedMidStopHandsBackItsReadingCards(t *testing.T) {
 	require.NoError(t, err)
 
 	// rd1 handed back at generation 1 (not attempt 3!), rd-zero never emitted
-	assert.Equal(t, []string{"stop-return --as reader.r1 rd1@1 --epoch 7 --reason owned process stopped"}, s.lines("stop-return"))
+	assert.Equal(t, []string{"stop-return --as reader.r1 rd1@1 --epoch 7 --reason owned process stopped" + " --op " + sprintwire.StopReturnOp("reader.r1", "rd1", 1, "7")}, s.lines("stop-return"))
 	assert.NotContains(t, strings.Join(s.lines("stop-return"), " "), "rd-zero@0")
 	assert.Contains(t, out.String(), "STOP-RETURN OK card=rd1 gen=1 epoch=7 pid=0: handed back to reader.r1 ready by the machine's stop")
 

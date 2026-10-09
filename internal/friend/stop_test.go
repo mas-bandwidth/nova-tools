@@ -10,6 +10,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -37,7 +38,7 @@ func TestParseMachineReadsTheWordOffTheBeatsAnswer(t *testing.T) {
 		assert.Equal(t, c.ok, ok, c.answer)
 		assert.Equal(t, c.state, st, c.answer)
 	}
-	assert.Equal(t, []string{"stop-return", "--as", "friend.bob", "c1@3", "--epoch", "15", "--reason", "owned process stopped"}, StopReturnArgv("friend.bob", "c1", 3, "15"))
+	assert.Equal(t, []string{"stop-return", "--as", "friend.bob", "c1@3", "--epoch", "15", "--reason", "owned process stopped", "--op", sprint.StopReturnOp("friend.bob", "c1", 3, "15")}, StopReturnArgv("friend.bob", "c1", 3, "15"))
 }
 
 // stopWordHarness blocks every card's first turn until its context ends (the stop's cancel),
@@ -131,8 +132,8 @@ func TestStoppedCancelsEveryLaneAndHandsEachCardBackWithStopReturn(t *testing.T)
 		assert.NotContains(t, underStop, "finish=", "a cancelled card is never finished (EveryLaneReturnsOnStop)")
 		assert.NotContains(t, underStop, "run is gone")
 		assert.ElementsMatch(t, []string{
-			"stop-return --as friend.bob c1@1 --epoch 15 --reason owned process stopped",
-			"stop-return --as friend.bob c2@1 --epoch 15 --reason owned process stopped",
+			"stop-return --as friend.bob c1@1 --epoch 15 --reason owned process stopped" + " --op " + sprint.StopReturnOp("friend.bob", "c1", 1, "15"),
+			"stop-return --as friend.bob c2@1 --epoch 15 --reason owned process stopped" + " --op " + sprint.StopReturnOp("friend.bob", "c2", 1, "15"),
 		}, r.sent(), "one stop-return each, after the run ended")
 		assert.Regexp(t, `stop-return OK lane=\d card=c1@1 epoch=15 pid=0 exit=-1: handed back to friend.bob`, records)
 		require.Len(t, state.StopReturns, 2, "the acks are recorded in the lane state")
@@ -230,7 +231,7 @@ func TestAWordTurningBetweenTheClaimAndTheStartGivesTheCardUp(t *testing.T) {
 		turns, _, _ := lh.got()
 		assert.Empty(t, turns, "no turn began: the word turned before the start: %s", records)
 		assert.Regexp(t, `lane 1: card c1@1 taken and not launched when the machine stopped: given up, stop-return owed`, records)
-		assert.Equal(t, []string{"stop-return --as friend.bob c1@1 --epoch 15 --reason owned process stopped"}, r.sent())
+		assert.Equal(t, []string{"stop-return --as friend.bob c1@1 --epoch 15 --reason owned process stopped" + " --op " + sprint.StopReturnOp("friend.bob", "c1", 1, "15")}, r.sent())
 		assert.Empty(t, state.Started, "not a started card")
 		assert.NotContains(t, records, "run is gone")
 		_, err := os.Stat(laneMarkPath(dir, "c1~15"))
@@ -291,7 +292,7 @@ func TestStopAfterAQueueRefreshStillHandsBackTheReadWithItsGen(t *testing.T) {
 		}
 		sp.mu.Unlock()
 		require.Len(t, returns, 1, "one stop-return for the read: %s", records)
-		assert.Equal(t, []string{"stop-return", "--as", "reader-bob", "a.w1@3", "--epoch", "15", "--reason", "owned process stopped"}, returns[0])
+		assert.Equal(t, []string{"stop-return", "--as", "reader-bob", "a.w1@3", "--epoch", "15", "--reason", "owned process stopped", "--op", sprint.StopReturnOp("reader-bob", "a.w1", 3, "15")}, returns[0])
 		assert.Regexp(t, `read a.w1@3 cancelled by stop`, records)
 		assert.Empty(t, sp.verbs("--ok"))
 		assert.Empty(t, sp.verbs("--return"), "no return verdict for a read the stop took")
@@ -337,7 +338,7 @@ func TestUnpopulatedReadCardWithUnknownGenWaitsForGenAndNeverEmitsCardAtZero(t *
 		mu.Lock()
 		defer mu.Unlock()
 		require.Len(t, returns, 1, "once gen is known, stop-return is sent")
-		assert.Equal(t, []string{"stop-return", "--as", "reader-bob", "r1@2", "--epoch", "15", "--reason", "owned process stopped"}, returns[0])
+		assert.Equal(t, []string{"stop-return", "--as", "reader-bob", "r1@2", "--epoch", "15", "--reason", "owned process stopped", "--op", sprint.StopReturnOp("reader-bob", "r1", 2, "15")}, returns[0])
 	})
 }
 
@@ -359,7 +360,7 @@ func TestAStopReturnOwedSurvivesTheDaemonsRestartAndIsSentFirst(t *testing.T) {
 		}
 		r.run(t, 10)
 		records := strings.Join(r.records, "\n")
-		assert.Equal(t, []string{"stop-return --as friend.bob c1@1 --epoch 15 --reason owned process stopped"}, r.sent())
+		assert.Equal(t, []string{"stop-return --as friend.bob c1@1 --epoch 15 --reason owned process stopped" + " --op " + sprint.StopReturnOp("friend.bob", "c1", 1, "15")}, r.sent())
 		assert.NotContains(t, records, "run is gone", "the stop's card is owed a return, never a FAIL")
 		assert.NoFileExists(t, filepath.Join(dir, "outbox", "c1~15", "REPORT.md"))
 		assert.Empty(t, state.Started)
@@ -448,4 +449,20 @@ func TestStopReadsFallsBackToReadSetEpochWhenReadEpochUnpopulated(t *testing.T) 
 	require.True(t, cancelled2, "read was cancelled")
 	require.Len(t, ls2.state.StopReturns, 1)
 	assert.Equal(t, "99", ls2.state.StopReturns[0].Epoch, "falls back to asked epoch")
+}
+
+func TestStopReturnOperationUsesTheEffectiveReaderGeneration(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, StopReturnArgv("reader-a", "r1", 0, "7"), StopReturnArgv("reader-a", "r1", 1, "7"))
+	assert.Nil(t, StopReturnArgv("friend-a", "c1", 0, "7"))
+	assert.Nil(t, StopReturnArgv("reader-a", "r1", -1, "7"))
+	original := sprint.StopReturnOp("friend-a", "c1", 1, "7")
+	for _, changed := range []string{
+		sprint.StopReturnOp("friend-b", "c1", 1, "7"),
+		sprint.StopReturnOp("friend-a", "c2", 1, "7"),
+		sprint.StopReturnOp("friend-a", "c1", 2, "7"),
+		sprint.StopReturnOp("friend-a", "c1", 1, "8"),
+	} {
+		assert.NotEqual(t, original, changed)
+	}
 }

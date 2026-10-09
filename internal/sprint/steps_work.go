@@ -1784,6 +1784,9 @@ func lateFinishWhy(c *Card, r FinishReq) string {
 // work is preserved, but queued promotion is gated until shared work/read occupancy on her
 // row reaches zero. A machine's finish does nothing of the kind: the member takes.
 func friendNext(s *Snapshot, c *Card, u *Unit, prior []Unit) {
+	if s.Paused {
+		return // SprintPause.tla Complete: settle this job while preserving queued claims
+	}
 	if !IsFriendRow(c.Row) {
 		return
 	}

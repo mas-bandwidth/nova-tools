@@ -88,7 +88,7 @@ var coordinatorRules = []string{
 	"No scripts: every coordinator need is a product verb, and a stopgap is named with the card that deletes it.",
 	"Every rule a coordinator needs is a receipt, refusal or doc the tools print, and the handbook is accepted only after another agent coordinates from it alone.",
 	"The main session never blocks: anything over about 15 seconds runs in the background and notifies, and the coordinator never waits on children or CI without a watcher armed.",
-	"The owner's phrases map to verbs: a new sprint is clear, adding work is add, start and stop, and pause and unpause are stop and start.",
+	"The owner's phrases map to verbs: a new sprint is clear, adding work is add, start and stop, and pause and unpause hold and resume admissions while current jobs finish; they never restart STOPPED.",
 	"Decide inside a layer, record each decision with its reason, and bring the owner only the shape and what touches the owner's world (credentials, machines, money).",
 	"Each design rule the owner states becomes a checked invariant the same day or is labelled unchecked, and results are reviewed against the owner's sentence, not a paraphrase.",
 	"Every number is checked against its source before it is quoted, and the primary datum is measured rather than a derived view.",

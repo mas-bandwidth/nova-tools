@@ -427,6 +427,8 @@ type Snapshot struct {
 	// pump accepts a primary with the ok reads it needs, so no step opens a "ready to
 	// accept" judgment for it ("accept is mechanical").
 	Running bool
+	// Paused holds automatic refill while completion settlement remains enabled.
+	Paused bool
 	// rests is the routes resting at Now, settled once by a step that deals
 	// (withRests, route_rest.go); nil is not yet settled.
 	rests map[string]RouteRest

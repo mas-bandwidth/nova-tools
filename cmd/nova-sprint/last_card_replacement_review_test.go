@@ -21,7 +21,9 @@ func TestTheLastCardLandsAfterReplacingItsReaskedReader(t *testing.T) {
 	r.deal(1)
 	send := func(line string) sprintwire.Result {
 		t.Helper()
-		return r.a.serveFrom(sprintwire.Request{Verbs: [][]string{split(line)}}, true).Results[0]
+		res := r.a.serveFrom(sprintwire.Request{Verbs: [][]string{split(line)}}, true).Results[0]
+		r.settle()
+		return res
 	}
 	for _, line := range []string{
 		"take --as m1 s1-1.w1@1 --epoch 0",

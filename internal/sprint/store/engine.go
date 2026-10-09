@@ -157,6 +157,13 @@ type Step struct {
 	// a late finish or verdict once STOP has committed. RequiresStopped is the
 	// complementary fence on an acknowledged stop-return.
 	StartsWork, ReportsWork, RequiresStopped bool
+	// ReplayStopped can return only acknowledgement/refusal lines after START,
+	// never a plan that changes current assignments (StopReturn.tla Return/ExplicitStart).
+	ReplayStopped func(*sprint.Snapshot) ([]string, []sprint.Refusal)
+	// HoldsOnPause skips an automatic assignment part without halting settlement.
+	HoldsOnPause bool
+	// RequiresUnpaused fences coordinator assignments without changing STOP policy.
+	RequiresUnpaused bool
 	// Twin, when set, is the tick's twin (twin.go): a step that loads the four
 	// tables plans on it while the fence is at its generation, instead of
 	// reading them, and applies its receipts to it when it commits.
@@ -358,7 +365,7 @@ func (st *Store) fenced(ctx context.Context, tables []string, extras func(*sprin
 	if err != nil {
 		return snap, Fence{Gen: gen}, err
 	}
-	snap.QueueLen, snap.Running = f2.Queued, f2.Running
+	snap.QueueLen, snap.Running, snap.Paused = f2.Queued, f2.Running, f2.Paused
 	f2.Gen = gen
 	return snap, f2, nil
 }
@@ -569,6 +576,13 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			res.Halted = true
 			return res, nil
 		}
+		if fence.Paused && step.HoldsOnPause {
+			return res, nil // SprintPause.tla: no automatic admission or claim replacement
+		}
+		if fence.Paused && (step.StartsWork || step.RequiresUnpaused) {
+			res.Refused = []sprint.Refusal{{Key: step.Verb, Why: "the machine is PAUSED: new jobs are held; run: nova-sprint unpause"}}
+			return res, nil
+		}
 		if step.StartsWork && fence.StopRevoked {
 			res.Refused = []sprint.Refusal{{Key: step.Verb, Why: "the machine is STOPPED: no new work or read may start"}}
 			return res, nil
@@ -577,7 +591,8 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			res.Refused = []sprint.Refusal{{Key: step.Verb, Why: "the machine is STOPPED: a late work or read report cannot finish"}}
 			return res, nil
 		}
-		if step.RequiresStopped && !fence.StopRevoked {
+		replayStopped := step.RequiresStopped && !fence.StopRevoked
+		if replayStopped && step.ReplayStopped == nil {
 			res.Refused = []sprint.Refusal{{Key: step.Verb, Why: "the machine has no halted run: stop-return follows cancellation during STOP"}}
 			return res, nil
 		}
@@ -648,6 +663,10 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			snap.Friends = seats
 		}
 		// Every plan is held to the lifecycle here, whatever step built it.
+		if replayStopped {
+			res.Said, res.Refused = step.ReplayStopped(snap)
+			return res, nil // durable receipt only: no acquire, writes or mirror cleanup
+		}
 		plan := sprint.Applied(snap, step.Plan(snap))
 		if len(held) > 0 {
 			plan = sprint.LeaveQueued(plan, held)

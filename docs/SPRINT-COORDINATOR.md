@@ -866,10 +866,10 @@ the coordinator never waits on children or CI without a watcher armed.**
     Done by: `nova-sprint inbox --wait --push seat`; `nova-sprint watch --wake --check 10m`.
 
 R81. **The owner's phrases map to verbs: a new sprint is clear, adding work is add, start and stop, and pause and
-unpause are stop and start.**
+unpause hold and resume admissions while current jobs finish; they never restart STOPPED.**
     Why: commands were ambiguous.
     Done by: `nova-sprint clear --confirm sprint`; `nova-sprint add --stream <s> --brief-dir <dir>`; `nova-sprint
-    start`; `nova-sprint stop --reason <text> --until <time>`.
+    start`; `nova-sprint stop --reason <text> --until <time>`; `nova-sprint pause`; `nova-sprint unpause`.
 
 R82. **Decide inside a layer, record each decision with its reason, and bring the owner only the shape and what
 touches the owner's world (credentials, machines, money).**

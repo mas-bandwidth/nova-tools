@@ -31,6 +31,7 @@ const (
 const (
 	Running = "RUNNING"
 	Stopped = "STOPPED"
+	Paused  = "PAUSED"
 )
 
 const (
@@ -84,9 +85,11 @@ type Span = sprint.Span
 // the total time STOPPED before the current span, and the STOPPED spans.
 // No record is STOPPED.
 type Machine struct {
-	State string    `json:"state"`
-	Since time.Time `json:"since"`
-	Who   string    `json:"who,omitempty"`
+	// Paused closes admissions while RUNNING jobs and reports continue (SprintPause.tla).
+	Paused bool      `json:"paused,omitempty"`
+	State  string    `json:"state"`
+	Since  time.Time `json:"since"`
+	Who    string    `json:"who,omitempty"`
 	// RunSeq identifies each explicit START, including two at the same clock
 	// reading. A delayed tick may stop only the run it observed.
 	RunSeq uint64 `json:"run_seq,omitempty"`
@@ -186,6 +189,9 @@ func (hb Heartbeat) Alive() time.Time {
 // Running says the state is RUNNING.
 func (m Machine) Running() bool { return m.State == Running }
 
+// Admitting is SprintPause.tla Admit: pause holds new jobs without stopping current jobs.
+func (m Machine) Admitting() bool { return m.Running() && !m.Paused }
+
 // stopRevoked includes older machine records written before StopIssued was
 // persisted, so a restarted binary still fences their stopped runs
 // (tla/StopReturn.tla Stop and Report).
@@ -195,6 +201,9 @@ func (m Machine) stopRevoked() bool {
 
 // StateWord is RUNNING or STOPPED.
 func (m Machine) StateWord() string {
+	if m.Running() && m.Paused {
+		return Paused
+	}
 	if m.Running() {
 		return Running
 	}
@@ -222,6 +231,8 @@ func (m Machine) StoppedTotal(now time.Time) time.Duration {
 // so the counts show, while it is RUNNING.
 func ViewState(m Machine) string {
 	switch {
+	case m.Running() && m.Paused:
+		return Paused
 	case m.Running():
 		return ""
 	case m.Done():
@@ -258,6 +269,9 @@ func (st *Store) putMachine(ctx context.Context, m Machine) error {
 // record's state; a late tick is never one. A silent loop, a failing tick and
 // moves due are the inbox's judgments.
 func MachineLine(now time.Time, m Machine, hb Heartbeat) string {
+	if m.Running() && m.Paused {
+		return "machine: PAUSED (new jobs held; in-flight jobs continue)"
+	}
 	if m.Done() {
 		return "machine: " + DoneState
 	}
@@ -360,7 +374,7 @@ func (st *Store) MachineLine(ctx context.Context) string {
 
 // MachineLineOf is MachineLine of the records read.
 func (st *Store) MachineLineOf(m Machine, hb Heartbeat) string {
-	if st.ByHand && m.Running() {
+	if st.ByHand && m.Admitting() {
 		return "machine: running"
 	}
 	return MachineLine(st.now(), m, hb)
@@ -1322,6 +1336,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		// the machine's state is read with the step's fence: STOPPED halts the
 		// tick before the part begins
 		step.Halts = true
+		step.HoldsOnPause = pauseHoldsPart(part.Name)
 		var r Result
 		var err error
 		var asked *askTally

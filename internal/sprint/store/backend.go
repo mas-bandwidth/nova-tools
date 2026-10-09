@@ -173,6 +173,8 @@ type Fence struct {
 	// of the work table's queue: while either holds, a step other than the
 	// pump queues its work-table changes (queue.go).
 	Running bool
+	// Paused is read atomically with the admission fence (SprintPause.tla).
+	Paused bool
 	// RunSeq identifies the explicit START whose state was read with this
 	// fence. An older tick part must not cross a STOP and restart.
 	RunSeq uint64

@@ -942,6 +942,7 @@ func (m *Mem) ReadFence(context.Context) (Fence, error) {
 		var mc Machine
 		if json.Unmarshal([]byte(raw), &mc) == nil {
 			f.Running = mc.Running()
+			f.Paused = mc.Running() && mc.Paused
 			f.RunSeq = mc.RunSeq
 			f.StopRevoked = mc.stopRevoked()
 			f.StopIssued = mc.StopIssued

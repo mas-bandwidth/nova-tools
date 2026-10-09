@@ -708,6 +708,8 @@ func coordinatorSum(v coordinatorView, known bool, m store.Machine) string {
 	case !known:
 	case m.Done():
 		state = "done"
+	case m.Running() && m.Paused:
+		state = "PAUSED"
 	case m.Running():
 		state = "running"
 	default:

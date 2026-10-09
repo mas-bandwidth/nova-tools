@@ -781,7 +781,10 @@ func (a *app) pace(ctx context.Context, st *store.Store, epoch uint64, cursor st
 // machineWords is the machine's part of the help.
 func machineWords() string {
 	return strings.TrimSpace(`
-The machine: nova-sprint start sets it RUNNING, nova-sprint stop --reason
+The machine: nova-sprint pause holds new work, reviews and landings; in-flight
+jobs finish and their reports settle. nova-sprint unpause resumes admissions
+without restarting STOPPED. Both are store writes; neither changes queued
+assignments or cancels a child. nova-sprint start sets it RUNNING, nova-sprint stop --reason
 <text> --until <time or duration> sets it STOPPED: where, inbox and the
 dashboard say "STOPPED by <actor>: <reason>, back by 2:04 PM". That time is
 display metadata; only an explicit start resumes after every owned working

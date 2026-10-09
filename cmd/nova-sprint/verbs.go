@@ -55,6 +55,8 @@ func init() {
 		{"release", "(<sentinel or held card>... | <selector> [--dry-run]) --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdReleaseSel},
 		{"resolve", "[<id>...] [--stream <s>] [--max <n>]", "resolve", (*app).cmdResolve},
 		{"start", "", "start", (*app).cmdMachineStart},
+		{"pause", "", "pause", (*app).cmdMachinePause},
+		{"unpause", "", "unpause", (*app).cmdMachineUnpause},
 		{"stop", "--reason <text> --until <time or duration>", "stop --reason 'the bench is rebooting' --until 30m", (*app).cmdMachineStop},
 		{"stop-return", "--as <owner-row> <card>@<gen>... --epoch <n> --reason <cancel acknowledgement> [--dry-run]", "stop-return --as friend-a s1-1.w1@1 --epoch 15 --reason 'owned process stopped'", (*app).cmdStopReturn},
 		{"run", "[--answer-rules=false] [--idle-alarm=false] [--listen <address:port>] [--land] [--decide <dir>]", "run", (*app).cmdRunGC},

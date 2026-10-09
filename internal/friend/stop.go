@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // The machine's stop cancels jobs (docs/SPEC-SPRINT.md section 14; the owner, 2026-10-08:
@@ -90,10 +92,15 @@ func (s StopReturn) Owed() bool { return s.Result == "" }
 
 // StopReturnArgv is the store's verb for one stop-return, as the wire of 2026-10-08 says it.
 func StopReturnArgv(row, card string, gen int, epoch string) []string {
+	// Reader cards predating an explicit gen begin as generation 1; negative
+	// generations and unnamed work generations remain invalid on replay.
+	if gen == 0 && strings.HasPrefix(row, "reader-") && row != "reader-" {
+		gen = 1
+	}
 	if gen <= 0 {
 		return nil
 	}
-	return []string{"stop-return", "--as", row, card + "@" + strconv.Itoa(gen), "--epoch", epoch, "--reason", StopReturnReason}
+	return []string{"stop-return", "--as", row, card + "@" + strconv.Itoa(gen), "--epoch", epoch, "--reason", StopReturnReason, "--op", sprint.StopReturnOp(row, card, gen, epoch)}
 }
 
 // ParseMachine reads the machine's word off a beat's answer (`machine=RUNNING` or

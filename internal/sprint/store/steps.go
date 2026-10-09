@@ -90,7 +90,7 @@ func ProgressStep(r sprint.ProgressReq) Step {
 
 // AskStep deals primaries in review to readers.
 func AskStep(r sprint.AskReq) Step {
-	return Step{Answers: r.Answers, Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "ask", Load: tables(sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet), Readers: true, Routes: true,
+	return Step{Answers: r.Answers, Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "ask", RequiresUnpaused: true, Load: tables(sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet), Readers: true, Routes: true,
 		// Every read card id each reader could get at the primaries' attempts,
 		// placed or retired: a reader who already has one is not free.
 		Extras: func(s *sprint.Snapshot) map[string][]string {
@@ -131,6 +131,10 @@ func StopReturnStep(r sprint.StopReturnReq) Step {
 		Extras: func(s *sprint.Snapshot) map[string][]string {
 			return map[string][]string{sprint.Fleet: r.IDs, sprint.Readers: r.IDs}
 		}, RequiresStopped: true, Mirrors: true,
+		ReplayStopped: func(s *sprint.Snapshot) ([]string, []sprint.Refusal) {
+			p := sprint.StopReturnReplay(s, r)
+			return p.Said, p.Refused
+		},
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.StopReturn(s, r) }}
 }
 

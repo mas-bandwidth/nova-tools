@@ -9,7 +9,8 @@ import (
 
 // stop-return is the worker's receipt after its owned child process stopped.
 // The store checks STOPPED, row, generation and current working state; the
-// receipt does not itself kill a process.
+// receipt does not itself kill a process. After START only a durable receipt
+// replays, without returning any current assignment.
 func (a *app) cmdStopReturn(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("stop-return")
 	as := fs.String("as", "", "the fleet member, friend.<name>, or reader row that owns these cards")

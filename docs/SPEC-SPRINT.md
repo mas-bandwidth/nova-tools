@@ -4497,7 +4497,8 @@ every round; a repository on no forge with a merge queue, a path or a bare clone
 and tests give a fake): a group held refuses the batch, `paused: the merge queue of <base>
 holds a group; ...`, and a queue that cannot be read refuses it too, naming why: an
 unreadable queue is not an empty one. The pause is checked before any git and again just
-before the push. A paused batch records nothing, pushes nothing and stops no stream; its
+before the push. A batch refused by this merge-window or forge hold records no
+landing result, pushes nothing and stops no stream; its
 cards stay queued and land on a run after the pause ends. A dry run reads the store only:
 it shows the window and asks no forge. An end that cannot be read pauses, naming it, until
 the window is opened again (`sprint.LandPause`, `sprint.MergeWindowOpen`).
@@ -6478,6 +6479,46 @@ before, and the sprint line.
 
 ## 14. The machine
 
+### Pause and unpause: admission only
+
+`nova-sprint pause` is a coordinator store write that sets the running machine's
+persisted `paused` flag. Its public word is PAUSED. It holds every new work job,
+review and landing; current work, reviews and landing batches continue to their
+ordinary completion, including pushes, verdicts and result settlement. Control
+communications, beats, pings, notifications and proofs continue. Pause does not
+cancel children, return or delete assignments, release reservations, replace
+claims, bump the epoch or advance the run generation. Queued work and read
+assignments stay where they are. Automatic refill, new reader begins, recovery
+launches, model fallback after a script review and later landing batches wait.
+The tick drains queued completion changes and accepts completed reviews, but
+holds assignment/reassignment, deadline returns, rework and automatic DONE.
+
+`nova-sprint unpause` removes that admission hold. Both verbs are idempotent,
+use the existing operation fence, and refuse STOPPED; unpause cannot restart a
+stopped machine or bypass its cancellation receipts. `start` on PAUSED keeps
+it paused. `stop` while PAUSED retains the existing hard-stop contract and clears
+the admission flag. The machine remains RUNNING internally while paused so its
+reports and completion queue continue. Its fence carries `paused` alongside the
+operation generation: a stale new take or read begin retries against PAUSED and
+refuses. An in-flight landing is not cancelled at its push or report gate; the
+next batch obtains a fresh, durable store admission after forge admission and
+before any new git work. This operation uses the existing pause fence and binds
+the ordered card heads, attempts, brief digests, repository, base and check.
+Its happened note records the accepted logical batch; it records no landing
+result and moves no card. A fresh preparation cannot reuse an earlier admission
+receipt, even with the same caller operation id. A batch already admitted may
+finish its push and result settlement while PAUSED.
+New native landing preparation is held under STOPPED too: stop cannot bypass a
+pause by enabling a manual land.
+
+The model is `tla/SprintPause.tla`: Pause and Unpause preserve
+queues, active claims, completed results, epoch and run generation; Admit is held
+while paused, Complete remains enabled, and Stop cannot be undone by Unpause.
+Its reachable witness requires a completion while paused with pending work,
+then an admission after unpause. Existing STOP cancellation and return proof
+remain modelled by StopReturn and StopCancels.
+
+
 The machine has two states, RUNNING and STOPPED, held in one record in the
 store; a new sprint is STOPPED. `start` sets RUNNING, `stop` sets STOPPED;
 setting the state it has changes nothing and says so; each change is a
@@ -6503,6 +6544,13 @@ the changed generation before it can commit. The store trusts the owner runner's
 cancellation acknowledgement; it does not kill or inspect that process itself.
 An explicit STOP before the first START also revokes work; the initial STOPPED
 setup state permits setup until that command is issued.
+Worker retries use a stable `--op` derived from the owner, card, cancelled
+wire generation and epoch. The existing caller-operation receipt binds the
+whole acknowledgement payload and replays after START without changing the
+current assignment. An older client without that id can only replay a matching
+same-owner `stopped_from_gen`/next-generation receipt and acknowledgement in the
+current epoch; it cannot return a live claim during RUNNING. Receipt replays
+stutter on `StopReturn.tla` Return/ExplicitStart and publish no new assignment.
 The machine records each active owner/card/generation as a stop debt under the
 same fence. `start` checks the returned card's same-owner, next-generation
 receipt against that durable debt, so moving or removing a card cannot erase

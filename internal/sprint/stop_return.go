@@ -3,6 +3,8 @@ package sprint
 import (
 	"fmt"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 )
 
 // StopReturnReq is an owner's receipt that the named children have stopped.
@@ -18,6 +20,22 @@ type StopReturnReq struct {
 // StopReturn releases acknowledged work and reads to their own row. The new
 // generation fences an old child's finish (and a read's late verdict).
 func StopReturn(s *Snapshot, r StopReturnReq) Plan {
+	return stopReturn(s, r, false)
+}
+
+// StopReturnReplay acknowledges only an already-durable same-owner return.
+// It cannot change a current assignment after START (StopReturn.tla Return/ExplicitStart).
+func StopReturnReplay(s *Snapshot, r StopReturnReq) Plan {
+	return stopReturn(s, r, true)
+}
+
+// StopReturnOp keeps retries on the existing immutable caller-operation path.
+// The reason is a payload, checked by that receipt, rather than part of identity.
+func StopReturnOp(row, card string, gen int, epoch string) string {
+	return sprintwire.StopReturnOp(row, card, gen, epoch)
+}
+
+func stopReturn(s *Snapshot, r StopReturnReq, replayOnly bool) Plan {
 	var p Plan
 	if strings.TrimSpace(r.Reason) == "" {
 		p.refuse("stop-return", "name the observed cancellation acknowledgement in --reason")
@@ -43,8 +61,12 @@ func StopReturn(s *Snapshot, r StopReturnReq) Plan {
 			p.refuse(id, "name the generation cancelled as <card>@<gen>")
 			continue
 		}
-		if c.Int("stopped_from_gen") == old && c.Int("gen") == old+1 && (c.Col == Ready || c.Col == Asked) {
+		if c.Int("stopped_from_gen") == old && c.Int("gen") == old+1 && (!replayOnly || c.F("stopped_reason") == cutText(r.Reason, MaxCardTextBytes)) {
 			p.Said = append(p.Said, id+" was returned already")
+			continue
+		}
+		if replayOnly {
+			p.refuse(id, "no matching durable STOP return receipt; a live assignment cannot be returned after START")
 			continue
 		}
 		live := max(c.Int("gen"), 1)

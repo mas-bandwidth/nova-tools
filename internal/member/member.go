@@ -40,6 +40,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
@@ -377,6 +378,9 @@ type Config struct {
 	// one): ok false starts none that tick, with why said once when it begins and once when
 	// it ends. nil asks nothing (docs/SPEC-SWARM.md, `member`, the disk floor).
 	Room func() (ok bool, why string)
+	// Admit rereads the machine and exact claim immediately before a delayed start
+	// (SprintPause.tla Admit); nil is an injected runner without a server.
+	Admit func(Packet) error
 	// Now is the clock the work pass's progress is read on (BeatLoop); nil is time.Now.
 	Now func() time.Time
 	// Meter is the machine's one-second CPU samples, taken by a goroutine of the caller
@@ -447,6 +451,7 @@ type launch struct {
 	// told to stop (stopPid, 0 when unknown), and once it has ended the card is handed back
 	// with stop-return, never finished; stopAt is when.
 	stopped bool
+	admissionDenied bool // no child was created; preserve its queued claim
 	stopPid int
 	stopAt  time.Time
 }
@@ -463,6 +468,9 @@ type Member struct {
 	// every lane was told to stop and nothing is taken, started or recovered until a
 	// queue says it runs again (machineStop; tla/StopCancels.tla).
 	stopped bool
+	paused bool // admission only; in-flight jobs and reports continue
+	admissionPaused atomic.Bool
+	admissionStopped atomic.Bool
 	// stopRetry is when each card's refused stop-return is tried again (StopReturnRetry),
 	// and stopRefused the refusal last said for it, said once while its text stands.
 	stopRetry   map[string]time.Time
@@ -532,6 +540,7 @@ type post struct {
 	note     string // a line for the log: a script read that gave no verdict, its model read begun
 	child    Child
 	startErr error
+	admissionErr bool
 	res      *Result
 	push     *Push
 	decided  *decided
@@ -912,9 +921,24 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		byID[c.ID] = c
 	}
 	sort.Strings(ids)
+	// A delayed start refused while paused stays held until the machine runs.
+	// machineStop then drops that hold so this pass can start the queue's same
+	// claim. The hold was ours at the pass's start, and that is not a finish:
+	// leaving it in wasOurs would skip the recovery.
+	released := map[string]bool{}
+	for id, l := range m.running {
+		if l.admissionDenied && !l.stopped {
+			released[id] = true
+		}
+	}
 	if acted += m.machineStop(q, byID, now); m.stopped {
 		m.spent.Fill = since()
 		return acted, nil
+	}
+	for id := range released {
+		if _, still := m.running[id]; !still {
+			delete(wasOurs, id)
+		}
 	}
 
 	// 1. Report every child that ended, one verb per card (each report is its
@@ -980,7 +1004,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		noAnswer("progress", out)
 	}
 	m.spent.Report += since()
-	if m.drain {
+	if m.drain || m.paused {
 		return acted, nil
 	}
 	// every card this tick would start is started, or, when Config.Room says no, finished as
@@ -1043,7 +1067,7 @@ func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet, 
 			if now.Before(l.retryAt) {
 				return false
 			}
-			if qPacket == nil {
+			if qPacket == nil || m.paused {
 				return false // suppress new starts from an unknown queue state
 			}
 			// the retry is owed once per card: it is remembered across a start that fails and
@@ -1312,6 +1336,9 @@ func (m *Member) recoverWorking(ids []string, byID map[string]queueCard, wasOurs
 
 // start runs a packet as a child, unless one is already running for it or width is full.
 func (m *Member) start(p Packet) bool {
+	if m.paused {
+		return false // SprintPause.tla: retain this claim until admissions resume
+	}
 	p = Carried(p)
 	if _, ok := m.running[p.Card]; ok {
 		fmt.Fprintf(m.out, "start %s: already running\n", p.Card)
@@ -1327,9 +1354,9 @@ func (m *Member) start(p Packet) bool {
 	m.long(func() {
 		m.startMu.Lock()
 		m.staggerStart()
-		ch, note, err := m.scriptOrStart(p)
+		ch, note, err, denied := m.scriptOrStart(p)
 		m.startMu.Unlock()
-		m.post(p.Card, post{child: ch, note: note, startErr: err})
+		m.post(p.Card, post{child: ch, note: note, startErr: err, admissionErr: denied})
 	})
 	m.longWork()
 	if m.cfg.Background {
@@ -1395,6 +1422,11 @@ func (m *Member) collect() (acted int) {
 			fmt.Fprintf(m.out, "read %s: %s\n", card, po.note)
 		}
 		switch {
+		case po.admissionErr:
+			l.child, l.admissionDenied = unstartedChild{}, true
+			m.running[card] = l
+			fmt.Fprintf(m.out, "start %s: %v; claim held until admission resumes\n", card, po.startErr)
+			continue
 		case po.startErr != nil:
 			p := l.packet
 			delete(m.running, card)
@@ -1479,6 +1511,11 @@ func (m *Member) OwedStopReturns() int {
 // (moved to a new generation, or gone) has nothing left to return and is reaped. It
 // returns how many cards it handed back.
 func (m *Member) machineStop(q queueOut, byID map[string]queueCard, now time.Time) (acted int) {
+	if q.Machine != "" {
+		m.paused = q.Machine == "PAUSED"
+		m.admissionPaused.Store(m.paused)
+		m.admissionStopped.Store(q.Machine == "STOPPED")
+	}
 	switch {
 	case q.Machine == "STOPPED":
 		if !m.stopped {
@@ -1488,7 +1525,11 @@ func (m *Member) machineStop(q queueOut, byID map[string]queueCard, now time.Tim
 	case q.Machine != "":
 		if m.stopped {
 			m.stopped = false
-			fmt.Fprintf(m.out, "MEMBER START machine %s: taking cards again\n", q.Machine)
+			if m.paused {
+				fmt.Fprintln(m.out, "MEMBER PAUSED: current jobs settle; new starts remain held")
+			} else {
+				fmt.Fprintf(m.out, "MEMBER START machine %s: taking cards again\n", q.Machine)
+			}
 		}
 	}
 	if m.stopped {
@@ -1522,6 +1563,13 @@ func (m *Member) machineStop(q queueOut, byID map[string]queueCard, now time.Tim
 			}
 			if m.stopReturn(id, gen, epoch, 0, now, "no child of this member runs it: the run is gone with the member that ran it") {
 				acted++
+			}
+		}
+	}
+	if !m.stopped && !m.paused {
+		for id, l := range m.running {
+			if l.admissionDenied && !l.stopped {
+				delete(m.running, id) // the live queue supplies the same claim for retry
 			}
 		}
 	}
@@ -1571,7 +1619,7 @@ func (m *Member) stopReturn(id string, gen int, epoch uint64, pid int, now time.
 	if at, ok := m.stopRetry[id]; ok && now.Before(at) {
 		return false
 	}
-	args := []string{"stop-return", "--as", m.cfg.As, fmt.Sprintf("%s@%d", id, gen), "--epoch", strconv.FormatUint(epoch, 10), "--reason", StopReturnReason}
+	args := []string{"stop-return", "--as", m.cfg.As, fmt.Sprintf("%s@%d", id, gen), "--epoch", strconv.FormatUint(epoch, 10), "--reason", StopReturnReason, "--op", sprintwire.StopReturnOp(m.cfg.As, id, gen, strconv.FormatUint(epoch, 10))}
 	code, out := m.run(args...)
 	if code != 0 {
 		m.stopRetry[id] = now.Add(StopReturnRetry)
@@ -1833,7 +1881,7 @@ func (m *Member) endEnded(ids []string, byID map[string]queueCard) {
 	for _, id := range ids {
 		c := byID[id]
 		l, ours := m.running[id]
-		if !ours || l.busy || l.stopped || l.res != nil || l.spent || (c.Col != "working" && c.Col != "reading") || m.moved(l, c) || !l.child.Done() {
+		if !ours || l.busy || l.stopped || l.admissionDenied || l.res != nil || l.spent || (c.Col != "working" && c.Col != "reading") || m.moved(l, c) || !l.child.Done() {
 			continue
 		}
 		l.busy, l.busyAt = true, m.clock()
@@ -1882,7 +1930,7 @@ func (m *Member) endEndedLocal() {
 	var ends sync.WaitGroup
 	for _, id := range slices.Sorted(maps.Keys(m.running)) {
 		l, ours := m.running[id]
-		if !ours || l.busy || l.stopped || l.res != nil || l.spent || l.child == nil || !l.child.Done() || l.claimMoved || l.dropped {
+		if !ours || l.busy || l.stopped || l.admissionDenied || l.res != nil || l.spent || l.child == nil || !l.child.Done() || l.claimMoved || l.dropped {
 			continue
 		}
 		l.busy, l.busyAt = true, m.clock()
@@ -2263,19 +2311,43 @@ func (c scriptChild) Result() Result { return c.res }
 // ScriptVerify first, and an ok answer is the read, ended with no child and no model
 // (docs/SPEC-SPRINT.md, the script read); any other answer is no verdict and the read is
 // started as a model child, the note saying why. Every other card is started as it is.
-func (m *Member) scriptOrStart(p Packet) (ch Child, note string, err error) {
+func (m *Member) scriptOrStart(p Packet) (ch Child, note string, err error, denied bool) {
 	if m.cfg.Reader && p.Kind == "read" && m.cfg.ScriptVerify != nil {
 		if c, why := cardhdr.ReadClass(p.Brief); why == "" && c.IsScript() {
+			if err = m.admitStart(p); err != nil {
+				return nil, "", err, true
+			}
 			ok, why := m.cfg.ScriptVerify(p, c)
 			if ok {
-				return scriptChild{Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Report: ScriptReadPrefix + oneLine(why)}}, "", nil
+				return scriptChild{Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Report: ScriptReadPrefix + oneLine(why)}}, "", nil, false
 			}
 			note = "script read gave no verdict (" + oneLine(why) + "); asked of a model"
 		}
 	}
+	// A script verdict already in flight settles during PAUSE; its fallback
+	// creates a new child and therefore needs fresh admission.
+	if err = m.admitStart(p); err != nil {
+		return nil, note, err, true
+	}
 	ch, err = m.runner.Start(p)
-	return ch, note, err
+	return ch, note, err, false
 }
+
+func (m *Member) admitStart(p Packet) error {
+	if m.admissionPaused.Load() || m.admissionStopped.Load() {
+		return fmt.Errorf("machine admission held before child start")
+	}
+	if m.cfg.Admit != nil {
+		return m.cfg.Admit(p)
+	}
+	return nil
+}
+
+// unstartedChild proves admission refused before the runner created a child.
+type unstartedChild struct{}
+
+func (unstartedChild) Done() bool { return true }
+func (unstartedChild) Result() Result { return Result{} }
 
 // DefaultScriptDeadline bounds a script run whose card names no deadline.
 const DefaultScriptDeadline = 30 * time.Minute

@@ -264,7 +264,7 @@ func (st *Store) twinRead(ctx context.Context, tw *Twin, load []string, extras f
 			tw.queue, tw.queueKnown = nil, false
 		}
 		tw.valid, tw.gen = true, f.Gen
-		snap.QueueLen, snap.Running = f2.Queued, f2.Running
+		snap.QueueLen, snap.Running, snap.Paused = f2.Queued, f2.Running, f2.Paused
 		f2.Gen = f.Gen
 		tw.last = snap
 		if st.CheckTwin != nil {
@@ -290,7 +290,7 @@ func (st *Store) checkTwin(ctx context.Context, snap *sprint.Snapshot, gen uint6
 		if fresh, err = chk.Load(ctx, load, extras); err != nil {
 			return err
 		}
-		fresh.QueueLen, fresh.Running = snap.QueueLen, snap.Running
+		fresh.QueueLen, fresh.Running, fresh.Paused = snap.QueueLen, snap.Running, snap.Paused
 	} else {
 		var at uint64
 		fresh, at, err = chk.Fenced(ctx, load, extras, nil)

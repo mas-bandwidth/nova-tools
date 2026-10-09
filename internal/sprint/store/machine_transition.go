@@ -17,6 +17,11 @@ import (
 // cannot commit afterward using its old read. A repeated STOP and a START also
 // re-read the machine under this lock, never overwriting a newer stop reason.
 func (st *Store) machineTransition(ctx context.Context, running bool, who, reason string, until time.Time) (before, after Machine, changed bool, err error) {
+	return st.machineTransitionWithPause(ctx, running, who, reason, until, nil)
+}
+
+// machineTransitionWithPause shares the operation fence for STOP and admission pause.
+func (st *Store) machineTransitionWithPause(ctx context.Context, running bool, who, reason string, until time.Time, paused *bool) (before, after Machine, changed bool, err error) {
 	pinned, err := st.pin(ctx)
 	if err != nil {
 		return before, after, false, err
@@ -42,7 +47,18 @@ func (st *Store) machineTransition(ctx context.Context, running bool, who, reaso
 		}
 		before, _, err = pinned.Machine(ctx)
 		if err == nil {
-			after, changed, err = pinned.machineRecord(ctx, before, s, running, who, reason, until)
+			if paused != nil {
+				after = before
+				if !before.Running() {
+					err = errors.New("the machine is STOPPED: pause and unpause cannot start it; run: nova-sprint start after settling STOP receipts")
+				} else if before.Paused != *paused {
+					after.Paused = *paused
+					err = pinned.putMachine(ctx, after)
+					changed = err == nil
+				}
+			} else {
+				after, changed, err = pinned.machineRecord(ctx, before, s, running, who, reason, until)
+			}
 		}
 		err = errors.Join(err, pinned.B.Release(context.WithoutCancel(ctx), lock, false))
 		if err != nil {
@@ -108,6 +124,7 @@ func (st *Store) machineRecord(ctx context.Context, before Machine, s *sprint.Sn
 			after.Spans = after.Spans[len(after.Spans)-MaxStopSpans:]
 		}
 		after.State = Stopped
+		after.Paused = false
 	}
 	after.Since, after.Who, after.Cause, after.Reason, after.Until = now, who, "", reason, until
 	return after, true, st.putMachine(ctx, after)
@@ -215,6 +232,7 @@ func (st *Store) stopWithCause(ctx context.Context, cause string, runSeq uint64)
 					after.Spans = after.Spans[len(after.Spans)-MaxStopSpans:]
 				}
 				after.State, after.Since, after.Who, after.Cause = Stopped, now, sprint.MachineActor, cause
+				after.Paused = false
 				err = pinned.putMachine(ctx, after)
 				changed = err == nil
 			}

@@ -449,6 +449,7 @@ func fenceOf(mget *redis.SliceCmd, llen *redis.IntCmd) (Fence, error) {
 		var m Machine
 		if json.Unmarshal([]byte(s), &m) == nil {
 			f.Running = m.Running()
+			f.Paused = m.Running() && m.Paused
 			f.RunSeq = m.RunSeq
 			f.StopRevoked = m.stopRevoked()
 			f.StopIssued = m.StopIssued

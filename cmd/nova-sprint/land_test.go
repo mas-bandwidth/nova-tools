@@ -14,6 +14,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
 // landRig is the sprint over the in-memory store beside a local bare git
@@ -47,6 +48,7 @@ func newLandRig(t *testing.T) *landRig {
 	r.a.gitEnv = r.env
 	r.a.landRoot = func() (string, error) { return filepath.Join(r.dir, "land"), nil }
 	r.ok("init --readers reader-a,reader-b --members m1")
+	r.ok("start") // New native landing work requires a running machine.
 	return r
 }
 
@@ -90,6 +92,7 @@ func (r *landRig) moveBase(base, file string) {
 func (r *landRig) queued(heads map[string]string, order ...string) {
 	r.t.Helper()
 	r.git(r.worker, "push", "-q", "origin", "refs/heads/sprint/*:refs/heads/sprint/*")
+	r.settle()
 	r.deal(len(order))
 	r.ok("take --as m1 --limit 100")
 	for _, id := range order {
@@ -103,6 +106,7 @@ func (r *landRig) queued(heads map[string]string, order ...string) {
 	r.ok("read --as reader-a --ok --limit 100")
 	r.ok("read --as reader-b --ok --limit 100")
 	r.ok("accept --read-ok")
+	r.settle()
 	r.markProtected()
 }
 
@@ -121,6 +125,7 @@ func (ta *testApp) markProtected() {
 // places is each card's place in the work table and the merge table.
 func (r *landRig) places(ids ...string) map[string]string {
 	r.t.Helper()
+	r.settle() // A running hand-twin settles the completed batch through its ordinary queue.
 	out := map[string]string{}
 	for _, id := range ids {
 		var v cardView
@@ -777,4 +782,24 @@ func TestLandRefusesAProtectedBaseUntilTheStreamIsMarked(t *testing.T) {
 	r.ok("stream set s1 --land-protected any")
 	assert.Contains(t, r.ok("land --repo-dir "+r.clone+" --base main"), "LAND OK stream=s1 cards=1 base=main")
 	assert.Equal(t, []string{"land s1-1 (sprint stream s1)", "base"}, r.mainLog())
+}
+
+// settle applies completed/added primary changes on the RUNNING hand-twin;
+// it admits no new job and is the production tick's ordinary drain part.
+func (r *landRig) settle() {
+	r.t.Helper()
+	st, err := r.a.store(common{redis: "mem:0", actor: "tester"})
+	require.NoError(r.t, err)
+	_, err = st.Run(context.Background(), store.DrainStep())
+	require.NoError(r.t, err)
+}
+
+// The running hand-twin has no background pump; each successful fixture
+// command settles its queued primary changes before the next observation.
+func (r *landRig) ok(line string) string {
+	r.t.Helper()
+	code, out, errs := r.testApp.do(line)
+	require.Equal(r.t, 0, code, "%s: %s%s", line, out, errs)
+	r.settle()
+	return out
 }
