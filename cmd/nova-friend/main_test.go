@@ -41,22 +41,22 @@ func TestMain(m *testing.M) {
 // rig is the tool over one fake store with ada and bob known, a fake
 // launchctl, a fixed home and clock: no socket, no real time, no launchd.
 type rig struct {
-	mu           sync.Mutex
-	store        *bustest.Fake
-	env          map[string]string
-	launchctl    []string
-	launchctlOut string
-	beats        []string // "server friend" for each beat the fake answered, in order
-	beatErr      error    // what the fake beat answers instead, when set
-	copy         friend.CopyFile
-	onPath       map[string]string // what lookPath finds, by name
-	now          time.Time
-	home         string
+	mu             sync.Mutex
+	store          *bustest.Fake
+	env            map[string]string
+	launchctl      []string
+	launchctlOut   string
+	beats          []string // "server friend" for each beat the fake answered, in order
+	beatErr        error    // what the fake beat answers instead, when set
+	copy           friend.CopyFile
+	onPath         map[string]string // what lookPath finds, by name
+	now            time.Time
+	home           string
 	answered       map[string]bool // the session checks bob's fake session has answered
 	answeredChecks map[string]bool // stream message IDs answerChecks has answered
-	alive        friend.Aliver
-	deaf         bool          // bob's opencode session takes a turn and never runs the pong line
-	fs           *friend.MemFS // the harness settings' filesystem: bob's directory /w/bob
+	alive          friend.Aliver
+	deaf           bool          // bob's opencode session takes a turn and never runs the pong line
+	fs             *friend.MemFS // the harness settings' filesystem: bob's directory /w/bob
 }
 
 type fakeAlive struct {

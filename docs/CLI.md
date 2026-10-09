@@ -1454,7 +1454,9 @@ usage:
   nova-friend ping --as <coordinator> (--to <friend> | --wake --to-friends [--every <d>] [--within <d>] [--never-wake <f,...>] [--server <addr>]) [--nonce <n>] [--since <RFC3339>] [--redis <addr>] [--dry-run]
   nova-friend ping-install --as <coordinator> --every <d> [--within <d>] [--never-wake <f,...>] [--server <addr>] [--redis <addr>] [--launchd-log <file>] [--dry-run]
   nova-friend ping-uninstall --as <coordinator> [--dry-run]
+  nova-friend local-pong --as <me> --dir <friend-dir> --session <native-session> --nonce <n> --capability <turn-capability> [--queue <n>] [--working <n>] [--width <n>] [--dry-run]
   nova-friend pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]
+  nova-friend reply --as <me> --dir <friend-dir> --session <native-session> --re <request-id> --capability <turn-capability> --subject <line> --body <text> [--dry-run]
   nova-friend wait-pong --from <friend> --nonce <n> [--timeout <d>] [--redis <addr>]
   nova-friend watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]
   nova-friend status --as <me> --dir <d> [--state-dir <d>]
@@ -1473,7 +1475,9 @@ example:
   nova-friend install --as bob --harness opencode --dir ./bob --dry-run
   nova-friend uninstall --as bob --dry-run
   nova-friend ping --as ada --to bob --nonce abc123
+  nova-friend local-pong --as bob --dir /work/bob --session ses_123 --nonce abc123 --capability <turn-capability>
   nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
+  nova-friend reply --as bob --dir /work/bob --session ses_123 --re 01M4F39QAT9N7621G6XKC3R9AA --capability <turn-capability> --subject 'Review answer' --body 'Reviewed'
   nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
   nova-friend status --as bob --dir ./bob
 ```
@@ -1721,6 +1725,27 @@ flags:
   --working <int>  tasks working, from your own task list
 exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: delivery: sends beyond this machine: the session's answer to a PING, one note on the bus to the coordinator, and the pong file
+```
+
+`nova-friend reply -h`:
+
+```
+usage: nova-friend reply [flags]
+from `nova-friend help`:
+  nova-friend reply --as <me> --dir <friend-dir> --session <native-session> --re <request-id> --capability <turn-capability> --subject <line> --body <text> [--dry-run]
+  nova-friend reply --as bob --dir /work/bob --session ses_123 --re 01M4F39QAT9N7621G6XKC3R9AA --capability <turn-capability> --subject 'Review answer' --body 'Reviewed'
+flags:
+  --as <string>  the native friend's name (required)
+  --body <string>  the reply text (required)
+  --capability <string>  the scoped capability carried by this native turn (required)
+  --dir <string>  the friend's real working directory (required)
+  --dry-run  print what the verb would write and write nothing
+  --json  print the result as one JSON object instead of lines
+  --re <string>  the typed request id carried by this native turn (required)
+  --session <string>  the session id carried by this native turn (required)
+  --subject <string>  one line describing the reply (required)
+exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+effect: local write: writes files on this machine: queues one owner-only reply envelope in the friend's outbox; the daemon validates and sends it
 ```
 
 `nova-friend watch -h`:
