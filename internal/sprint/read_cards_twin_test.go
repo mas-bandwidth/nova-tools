@@ -136,6 +136,10 @@ func (r *readCardsRig) readCards(primary string) []*sprint.Card {
 
 const proBrief = "c: the work (s1) tier: pro\nREPO: mas-bandwidth/nova-tools\n\nThe task.\n"
 
+// proBenchBrief pins only the reviewed primary to m1 so the reader friend cannot
+// become its worker; her reader role does not itself exclude her from work dealing.
+const proBenchBrief = "c: the work (s1) tier: pro\nREPO: mas-bandwidth/nova-tools\nBENCH: m1\n\nThe task.\n"
+
 // TestAReviewOpensNReadCardsAtOnceOnTheTwin: on the twin, the tick that brings a pro card to
 // review cuts both its reads at once, each a read card dealt to a member that did not work
 // it, on the pro route, in ready on the member's row; the readers table asks nothing; card
@@ -181,6 +185,46 @@ func (r *readCardsRig) read(c *sprint.Card, req sprint.ReadReq) store.Result {
 	r.t.Helper()
 	req.As, req.Sel = c.Row, sprint.Sel{IDs: []string{c.ID}}
 	return r.must(store.ReadStep(req))
+}
+
+// One-shot friends count reads and work together at their configured width. A read occupies
+// one full lane, queued work fills the remaining lane, and a later work card waits until the
+// read closes; a tick then refills the freed lane through the real Store.Run path.
+func TestOneShotFriendSharesConfiguredWidthWithReadCardsOn(t *testing.T) {
+	t.Parallel()
+	r := newReadCardsRig(t, "m1")
+	_, _, _, err := r.st.SyncFriends(r.ctx, []store.FriendSpec{{Name: "amy", Width: 2, Mode: "one-shot", Class: "pro", Roles: "reader"}})
+	require.NoError(t, err)
+	_, err = r.st.FriendBeat(r.ctx, "amy")
+	require.NoError(t, err)
+	_, _, _, err = r.st.FriendHealth(r.ctx, "amy", "coordinator", sprint.FriendHealth{State: sprint.Up, Seen: r.now, Generation: 1}, "")
+	require.NoError(t, err)
+
+	worker := r.toReview("s1-1", proBenchBrief)
+	require.Equal(t, "m1", worker, "BENCH keeps the reader friend from working the primary")
+	readID := sprint.ReadCardID("s1-1", 1, "amy")
+	read := r.rec(readID)
+	require.Equal(t, sprint.Working, read.Col, "the friend is the only eligible reader besides the primary's worker")
+
+	brief := "c: a friend's card (s1) tier: pro\nREPO: mas-bandwidth/nova-tools\nWHO: only friend amy\n\nThe task.\n"
+	r.must(store.AddStep(sprint.AddReq{Stream: "s1", Cards: []sprint.CardAdd{{ID: "s1-2", Brief: brief}}}))
+	r.tick()
+	workID := sprint.WorkCardID("s1-2", 1)
+	work := r.rec(workID)
+	require.Equal(t, sprint.FriendRow("amy"), work.Row)
+	require.Equal(t, sprint.Ready, work.Col)
+	r.must(store.FriendStartStep(sprint.FriendStartReq{Friend: "amy", IDs: []string{workID}, Gens: map[string]int{workID: work.Int("gen")}}))
+	require.Equal(t, 2, r.snap().Fleet.Count(sprint.FriendRow("amy"), sprint.Working), "one read and one work card fill width two")
+
+	r.must(store.AddStep(sprint.AddReq{Stream: "s1", Cards: []sprint.CardAdd{{ID: "s1-3", Brief: brief}}}))
+	r.tick()
+	require.Equal(t, sprint.Ready, r.snap().StateOf("s1-3"), "the full mixed row admits no third card")
+
+	r.read(read, sprint.ReadReq{Verdict: "ok", Finding: "clean", Who: "amy"})
+	r.tick()
+	require.Equal(t, sprint.FriendRow("amy"), r.snap().Fleet.Card(sprint.WorkCardID("s1-3", 1)).Row, "closing the read refills the freed physical lane")
+	require.Equal(t, 1, r.snap().Fleet.Count(sprint.FriendRow("amy"), sprint.Working))
+	require.Equal(t, 1, r.snap().Fleet.Count(sprint.FriendRow("amy"), sprint.Ready))
 }
 
 // TestAReadCardsVerdictClosesTheRead pins layer 3: a read card's verdict closes the read on

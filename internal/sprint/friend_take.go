@@ -151,7 +151,7 @@ func FriendTake(s *Snapshot, r FriendTakeReq) Plan {
 		}
 		return p
 	}
-	// her ready cards not taken, oldest first: each working card taken frees a lane one fills
+	// her ready cards not taken, priority then age: each working card taken frees a lane one fills
 	var next []*Card
 	for _, c := range mine {
 		// a held friend takes nothing into a lane her hold frees
@@ -159,6 +159,7 @@ func FriendTake(s *Snapshot, r FriendTakeReq) Plan {
 			next = append(next, c)
 		}
 	}
+	next = QueueAdmissionOrder(next, -1)
 	why := r.takenBackWhy()
 	for _, c := range take {
 		// the take, not the hold, keeps her from it; a card never taken from her has its whole

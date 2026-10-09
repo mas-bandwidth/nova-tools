@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -71,11 +73,56 @@ func askedRig(t *testing.T, n int) *serverRig {
 
 // queueCardOut is one card of a queue's answer, as a worker reads it.
 type queueCardOut struct {
-	ID      string          `json:"id"`
-	Col     string          `json:"col"`
-	Attempt int             `json:"attempt"`
-	Gen     int             `json:"gen"`
-	Packet  json.RawMessage `json:"packet"`
+	ID               string          `json:"id"`
+	Col              string          `json:"col"`
+	Attempt          int             `json:"attempt"`
+	Gen              int             `json:"gen"`
+	Packet           json.RawMessage `json:"packet"`
+	Priority         string          `json:"priority"`
+	ProducerPriority string          `json:"producer_priority"`
+}
+
+// This is the reader's actual admission input: only the first asked packet can launch
+// at width one. A pending primary update must reach that consumer before another tick.
+func TestPriorityChangeReordersAlreadyAskedPackets(t *testing.T) {
+	t.Parallel()
+	r := askedRig(t, 3)
+	before := r.queueWith("--as", "r", "--json", "--packets", "1")
+	ids := before.ids(sprint.Asked)
+	require.Len(t, ids, 3)
+	primary, _, _, ok := sprint.ParseReadCard(ids[2])
+	require.True(t, ok)
+	r.boss("nova-sprint priority " + primary + " --blocker --reason 'the next slot is urgent'")
+	after := r.queueWith("--as", "r", "--json", "--packets", "1")
+	assert.Equal(t, []string{ids[2]}, after.packeted(), "the later promoted read gets the launch packet")
+	assert.Equal(t, sprint.PriorityReader, after.Cards[0].Priority, "urgency does not change the read role")
+	assert.Equal(t, sprint.PriorityBlocker, after.Cards[0].ProducerPriority)
+	r.boss("nova-sprint priority " + primary + " --low --reason 'urgency ended'")
+	demoted := r.queueWith("--as", "r", "--json", "--packets", "1")
+	assert.Equal(t, []string{ids[0]}, demoted.packeted(), "demotion restores stable score order")
+	assert.Equal(t, ids, demoted.ids(sprint.Asked))
+	for _, c := range demoted.Cards {
+		assert.Equal(t, sprint.PriorityReader, c.Priority, "read floor holds even when the primary is low")
+	}
+}
+
+func TestPriorityChangeReordersTheNextFreeMemberSlot(t *testing.T) {
+	t.Parallel()
+	r, working := workedRig(t, 2, 2)
+	before := r.queueWith("--as", "m", "--json", "--packets", "0")
+	ready := before.ids(sprint.Ready)
+	require.Len(t, ready, 2)
+	primary, _, ok := sprint.ParseWorkCard(ready[1])
+	require.True(t, ok)
+	r.boss("nova-sprint priority " + primary + " --critical --reason 'the next slot is urgent'")
+	full := r.one("take", "--as", "m", "--limit", "1", "--epoch", "0", "--json")
+	require.Equal(t, 0, full.Code, full.Stderr)
+	assert.Empty(t, taken(t, full), "the active leases keep both lanes")
+	finished := r.one("finish", "--as", "m", working[0], "--epoch", "0", "--report", "done", "--head", "0123456789abcdef0123456789abcdef01234567")
+	require.Equal(t, 0, finished.Code, finished.Stderr)
+	next := r.one("take", "--as", "m", "--limit", "1", "--epoch", "0", "--json")
+	require.Equal(t, 0, next.Code, next.Stderr)
+	assert.Equal(t, []string{ready[1] + "@1"}, taken(t, next), "already-dealt critical work gets the next free slot without a tick")
 }
 
 // queueOut is a queue's answer: its bytes, its epoch and its cards.
@@ -288,4 +335,31 @@ func TestEveryPacketAVerbHandsNamesItsTier(t *testing.T) {
 	for _, p := range out.Packets {
 		assert.Equal(t, "pro", p.Tier, "the take's packet of %s", p.Card)
 	}
+}
+
+func TestQueueFirstPacketAndTakeKeepTheSameStreamTurn(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --members m1:2,m2:2")
+	ta.ok("add --stream a --count 2 --one")
+	ta.ok("add --stream b --count 2 --one")
+	st, err := ta.a.store(common{redis: "mem:0", actor: "tester"})
+	require.NoError(t, err)
+	dealt, err := st.Run(context.Background(), dealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"a-1", "a-2", "b-1", "b-2"}}}))
+	require.NoError(t, err)
+	require.Empty(t, dealt.Refused)
+	ta.a.serveAddr = "mem:0"
+	r := &serverRig{t: t, a: ta.a}
+	q := r.queueWith("--as", "m2", "--json", "--packets", "1")
+	require.Len(t, q.packeted(), 1)
+	require.Equal(t, "b-2.w1", q.packeted()[0], "member offset one begins on the second stream at equal urgency")
+	next := r.one("take", "--as", "m2", "--limit", "1", "--epoch", "0", "--json")
+	require.Equal(t, 0, next.Code, next.Stderr)
+	require.Equal(t, []string{q.packeted()[0] + "@1"}, taken(t, next), "the worker receives the packet it actually takes")
+	// In-flight work spends no queued turn: the next answer and take still agree.
+	q = r.queueWith("--as", "m2", "--json", "--packets", "1", "--have", "b-2.w1")
+	require.Equal(t, []string{"a-2.w1"}, q.packeted())
+	next = r.one("take", "--as", "m2", "--limit", "1", "--epoch", "0", "--json")
+	require.Equal(t, 0, next.Code, next.Stderr)
+	require.Equal(t, []string{q.packeted()[0] + "@1"}, taken(t, next))
 }

@@ -95,3 +95,39 @@ func TestRecutIsRefusedWholeWhenItChangesNothingOrCannotHold(t *testing.T) {
 	assert.True(t, w.s.Work.Card("old").Placed(), "old is where it was")
 	assert.Equal(t, "old", w.s.Work.Card("dep1").F("needs"))
 }
+
+// A recut preserves FIX producer urgency unless its new brief supplies a priority
+// (SPEC-SPRINT, Priority); the inherited urgency must reach the actual next take.
+func TestRecutPreservesFixProducerUrgencyThroughTake(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, tier, brief, level, urgency, take string
+	}{
+		{"tier keeps urgency", "heavy", "", PriorityFix, PriorityHigh, "s1-2b.w1"},
+		{"brief keeps urgency", "", friendBrief("only friend amy"), PriorityFix, PriorityHigh, "s1-2b.w1"},
+		{"ordinary override replaces role", "", "tier: flash\nPRIORITY: low\nWHO: only friend amy\n\nThe task.", PriorityLow, PriorityLow, "s1-1.w1"},
+		{"fix override starts normal urgency", "", "tier: flash\nPRIORITY: fix\nWHO: only friend amy\n\nThe task.", PriorityFix, PriorityNormal, "s1-1.w1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			w := friendWorld(t, friendBrief("only friend amy"), friendBrief("only friend amy"))
+			w.must(SetPriority(w.s, PriorityReq{IDs: []string{"s1-1"}, Level: PriorityFix, Reason: "earlier repair"}))
+			w.must(SetPriority(w.s, PriorityReq{IDs: []string{"s1-2"}, Level: PriorityHigh, Reason: "urgent producer"}))
+			w.must(SetPriority(w.s, PriorityReq{IDs: []string{"s1-2"}, Level: PriorityFix, Reason: "urgent repair"}))
+			w.must(Recut(w.s, RecutReq{ID: "s1-2", Tier: tc.tier, Brief: tc.brief}))
+			twin := w.s.Work.Placed("s1-2b")
+			require.NotNil(t, twin)
+			assert.Equal(t, tc.level, twin.F(FieldPriority))
+			assert.Equal(t, tc.urgency, ProducerPriority(twin))
+			seat := FriendSeat{Name: "amy", Width: 1, Status: Up, Class: "flash,pro,heavy"}
+			priorityDealWith(w, seat)
+			consumer := w.s.Fleet.Card("s1-2b.w1")
+			require.NotNil(t, consumer)
+			assert.Equal(t, tc.level, QueuePriority(consumer))
+			assert.Equal(t, tc.urgency, ProducerPriority(consumer))
+			p := Take(w.s, TakeReq{As: FriendRow(seat.Name)})
+			require.Len(t, p.Units, 1)
+			assert.Equal(t, tc.take, p.Units[0].Key, "producer urgency reaches admission")
+		})
+	}
+}

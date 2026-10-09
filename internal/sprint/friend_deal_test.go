@@ -218,12 +218,12 @@ func TestAFriendsRowIsNoMemberOfTheClearsShape(t *testing.T) {
 // on the friend row (docs/SPEC-SPRINT.md section 1, "A friend's card"). In batch mode
 // (the default) the machine deals up to the row's width
 // as today (DealAhead times width, working at her width and ready behind); in one-shot mode
-// it deals one card at a time and the next only after the last one finished.
+// it fills her configured width without leaving ready cards behind.
 func TestDealingRespectsAFriendDeliveryMode(t *testing.T) {
 	t.Parallel()
 	// Amy is batch (the default, width 2), Bob is one-shot (width 2, mode: one-shot).
 	// Amy with 4 cards waiting gets 2 working and 2 ready behind.
-	// Bob with 4 cards waiting gets 1 working and 0 ready; the other 3 wait on the work table.
+	// Bob with 4 cards waiting gets 2 working and 0 ready; the other 2 wait on the work table.
 	w := friendWorld(t,
 		friendBrief("only friend amy"), friendBrief("only friend amy"), friendBrief("only friend amy"), friendBrief("only friend amy"),
 		friendBrief("only friend bob"), friendBrief("only friend bob"), friendBrief("only friend bob"), friendBrief("only friend bob"),
@@ -239,56 +239,130 @@ func TestDealingRespectsAFriendDeliveryMode(t *testing.T) {
 	assert.Equal(t, 2, w.s.Fleet.Count(amy, Ready), "amy holds 2 ready behind (batch mode)")
 
 	bob := FriendRow("bob")
-	assert.Equal(t, 1, w.s.Fleet.Count(bob, Working), "bob gets exactly one card at a time in one-shot mode")
+	assert.Equal(t, 2, w.s.Fleet.Count(bob, Working), "bob fills his configured one-shot width")
 	assert.Equal(t, 0, w.s.Fleet.Count(bob, Ready), "bob holds no cards ready behind in one-shot mode")
-	assert.Equal(t, Ready, w.s.StateOf("s1-6"), "the 2nd card for bob waits ready on the work table")
 	assert.Equal(t, Ready, w.s.StateOf("s1-7"), "the 3rd card for bob waits ready on the work table")
 	assert.Equal(t, Ready, w.s.StateOf("s1-8"), "the 4th card for bob waits ready on the work table")
 
 	// A tick later without bob finishing: nothing more is dealt to bob
 	dealStarted(w, seats...)
-	assert.Equal(t, 1, w.s.Fleet.Count(bob, Working))
+	assert.Equal(t, 2, w.s.Fleet.Count(bob, Working))
 	assert.Equal(t, 0, w.s.Fleet.Count(bob, Ready))
-	assert.Equal(t, Ready, w.s.StateOf("s1-6"))
-
-	// Bob finishes his first card: finish moves it out of working; at finish 0 are working
-	// (no ready card auto-advances, unlike batch mode where friendNext takes the next)
-	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-5.w1"}}, As: bob, Gens: gensOf(w.s, "s1-5.w1"), Head: "abc"}))
-	assert.Equal(t, 0, w.s.Fleet.Count(bob, Working), "bob has no ready card to auto-advance at finish")
-
-	// The next deal/tick deals the next card to bob (and only one)
-	dealStarted(w, seats...)
-	assert.Equal(t, 1, w.s.Fleet.Count(bob, Working), "the next card is dealt after the last one finished")
-	assert.Equal(t, 0, w.s.Fleet.Count(bob, Ready))
-	assert.Equal(t, Working, w.s.StateOf("s1-6"))
 	assert.Equal(t, Ready, w.s.StateOf("s1-7"))
 
-	// Bob finishes the 2nd card, next deal gives the 3rd
-	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-6.w1"}}, As: bob, Gens: gensOf(w.s, "s1-6.w1"), Head: "def"}))
-	assert.Equal(t, 0, w.s.Fleet.Count(bob, Working))
+	// Bob finishes his first card; the third card is still on the work table.
+	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-5.w1"}}, As: bob, Gens: gensOf(w.s, "s1-5.w1"), Head: "abc"}))
+	assert.Equal(t, 1, w.s.Fleet.Count(bob, Working), "the other started card remains active")
+
+	// The next deal/tick leaves bob at configured width.
 	dealStarted(w, seats...)
-	assert.Equal(t, 1, w.s.Fleet.Count(bob, Working))
+	assert.Equal(t, 2, w.s.Fleet.Count(bob, Working), "the next card is dealt and started in the free slot")
+	assert.Equal(t, 0, w.s.Fleet.Count(bob, Ready))
 	assert.Equal(t, Working, w.s.StateOf("s1-7"))
 	assert.Equal(t, Ready, w.s.StateOf("s1-8"))
 
-	// WHO: friend (any friend) prefers friend with most room free:
-	// Amy (batch, width 2, load 0 => free 4) vs Bob (one-shot, load 0 => free 1)
+	// WHO: friend (any friend) prefers idle lanes first, then room, then name.
+	// Amy batch width 2 (lanes 2, room 4) and Bob one-shot width 2 (lanes 2, room 2)
+	// are dealt amy, bob, amy, bob, amy: each placed card holds a lane.
 	w2 := friendWorld(t, friendBrief("friend"), friendBrief("friend"), friendBrief("friend"), friendBrief("friend"), friendBrief("friend"))
 	dealStarted(w2,
 		FriendSeat{Name: "amy", Width: 2, Status: Up, Mode: config.FriendModeBatch, Class: "flash"},
 		FriendSeat{Name: "bob", Width: 2, Status: Up, Mode: config.FriendModeOneShot, Class: "flash"},
 	)
 	assert.Equal(t, 2, w2.s.Fleet.Count(amy, Working), "amy gets 2 working")
-	assert.Equal(t, 2, w2.s.Fleet.Count(amy, Ready), "amy gets 2 ready (fills her room 4)")
-	assert.Equal(t, 1, w2.s.Fleet.Count(bob, Working), "5th card goes to bob who has free room 1")
+	assert.Equal(t, 1, w2.s.Fleet.Count(amy, Ready), "amy gets 1 ready (idle lanes first, not her room 4)")
+	assert.Equal(t, 2, w2.s.Fleet.Count(bob, Working), "bob's idle lanes take two cards, both started")
 	assert.Equal(t, 0, w2.s.Fleet.Count(bob, Ready), "bob holds none ready")
 }
 
-// In one-shot mode, friendNext gates promotion of ready cards until shared work/read occupancy
-// on the friend's row reaches zero:
-// 1. If another working card remains active on her row, finishing one card does not promote a ready card.
-// 2. If an active frontier read card is on her row, finishing a work card does not promote a ready card.
-func TestFriendNextGatesQueuedPromotionWhenActiveWorkOrReadRemainsInOneShot(t *testing.T) {
+// The one-shot friend sorts first by name. Room still breaks every lanes tie before
+// name (preferredFriend: an idle lane, then free room, then the first by name), so
+// the counts match the unswapped seats above. A placed card holds a lane, started
+// or not (friendDeal: lanes is her width less friendLoad).
+//
+// Amy is one-shot width 2 (lanes 2, room 2) and Bob is batch width 2 (lanes 2,
+// room 4). Five WHO: friend cards, both idle:
+//
+//	1 bob  lanes tied at 2; bob's free 4 beats amy's 2
+//	2 amy  amy has 2 idle lanes, bob 1
+//	3 bob  lanes tied at 1; bob's free 3 beats amy's 1
+//	4 amy  amy has 1 idle lane, bob 0
+//	5 bob  lanes tied at 0, and amy has no free room, so only bob may take it
+//
+// Bob is dealt 3 and Amy 2. After each starts the cards her free lanes hold, the
+// batch friend is working 2 ready 1 and the one-shot friend is working 2 ready 0.
+func TestDealingRespectsAFriendDeliveryModeWhenTheOneShotFriendSortsFirst(t *testing.T) {
+	t.Parallel()
+	w := friendWorld(t, friendBrief("friend"), friendBrief("friend"), friendBrief("friend"), friendBrief("friend"), friendBrief("friend"))
+	dealStarted(w,
+		FriendSeat{Name: "amy", Width: 2, Status: Up, Mode: config.FriendModeOneShot, Class: "flash"},
+		FriendSeat{Name: "bob", Width: 2, Status: Up, Mode: config.FriendModeBatch, Class: "flash"},
+	)
+	amy := FriendRow("amy")
+	bob := FriendRow("bob")
+	assert.Equal(t, 2, w.s.Fleet.Count(amy, Working), "amy starts both cards her one-shot lanes were dealt")
+	assert.Equal(t, 0, w.s.Fleet.Count(amy, Ready), "amy holds none ready: room broke the tie, not her name")
+	assert.Equal(t, 2, w.s.Fleet.Count(bob, Working), "bob starts his width")
+	assert.Equal(t, 1, w.s.Fleet.Count(bob, Ready), "bob holds the third card ready; his batch room is 4")
+}
+
+// A read already holding a lane changes who receives the next work cards
+// (docs/SPEC-SPRINT.md friend-deal-idle-lanes-first; a lane is idle while no card
+// on her row holds it, friendDeal). putReads leaves one read working on amy.
+// Read cards are off, so friendLoad counts that card as one (ready + working)
+// and her idle lanes are her width less that load.
+//
+// The seats are the unswapped pair: amy batch width 2 (room 4) and bob one-shot
+// width 2 (room 2). With no read, lanes tie and amy's room takes the first card
+// (amy, bob, amy, bob, amy). The read leaves amy 1 idle lane and 3 free, bob 2 and 2:
+//
+//	1 bob  bob has more idle lanes (2 > 1), so the first card leaves amy
+//	2 amy  lanes tied at 1; amy's free 3 beats bob's 1
+//	3 bob  bob has the only idle lane
+//	4 amy  bob has no free room
+//	5 amy  amy still has one free
+//
+// Amy's read is already working, so she starts only one of her three work cards
+// (her width less what is working). Bob starts both of his.
+func TestAReadHoldingALaneChangesWhoReceivesTheNextWorkCards(t *testing.T) {
+	t.Parallel()
+	w := friendWorld(t, friendBrief("friend"), friendBrief("friend"), friendBrief("friend"), friendBrief("friend"), friendBrief("friend"))
+	putReads(w, "amy", 1)
+	amy := FriendRow("amy")
+	bob := FriendRow("bob")
+	require.Equal(t, 1, w.s.Fleet.Count(amy, Working), "the read is working on amy before the deal")
+
+	dealStarted(w,
+		FriendSeat{Name: "amy", Width: 2, Status: Up, Mode: config.FriendModeBatch, Class: "flash"},
+		FriendSeat{Name: "bob", Width: 2, Status: Up, Mode: config.FriendModeOneShot, Class: "flash"},
+	)
+
+	got := map[string][2]string{}
+	for _, id := range []string{"s1-1.w1", "s1-2.w1", "s1-3.w1", "s1-4.w1", "s1-5.w1"} {
+		c := w.s.Fleet.Card(id)
+		require.NotNil(t, c, id)
+		got[id] = [2]string{c.Row, c.Col}
+	}
+	assert.Equal(t, map[string][2]string{
+		"s1-1.w1": {bob, Working},
+		"s1-2.w1": {amy, Working},
+		"s1-3.w1": {bob, Working},
+		"s1-4.w1": {amy, Ready},
+		"s1-5.w1": {amy, Ready},
+	}, got)
+	rc := w.s.Fleet.Card(ReadCardID("read-0", 1, "amy"))
+	require.NotNil(t, rc)
+	assert.Equal(t, amy, rc.Row)
+	assert.Equal(t, Working, rc.Col, "the read stays on the lane it held")
+	assert.Equal(t, 2, w.s.Fleet.Count(bob, Working))
+	assert.Equal(t, 0, w.s.Fleet.Count(bob, Ready))
+	assert.Equal(t, 2, w.s.Fleet.Count(amy, Working), "one work card started, and the read")
+	assert.Equal(t, 2, w.s.Fleet.Count(amy, Ready))
+}
+
+// In one-shot mode, friendNext fills a newly free configured slot while counting shared
+// work/read occupancy. A full mixed row blocks further queued promotion.
+func TestFriendNextFillsConfiguredOneShotWidthAcrossWorkAndRead(t *testing.T) {
 	t.Parallel()
 	briefs := []string{
 		friendBrief("friend amy"),
@@ -308,8 +382,7 @@ func TestFriendNextGatesQueuedPromotionWhenActiveWorkOrReadRemainsInOneShot(t *t
 		{Name: "amy", Width: 2, Status: Up, Mode: config.FriendModeOneShot, Class: "flash,pro"},
 	}
 
-	// Finishing s1-1.w1 in one-shot mode: s1-2.w1 is still working, so occupancy is 1 > 0.
-	// Ready cards (s1-3.w1, s1-4.w1) must not advance!
+	// Finishing s1-1.w1 leaves one slot free, so the oldest ready card advances.
 	w.must(Finish(w.s, FinishReq{
 		Sel:     Sel{IDs: []string{"s1-1.w1"}},
 		As:      amy,
@@ -317,10 +390,10 @@ func TestFriendNextGatesQueuedPromotionWhenActiveWorkOrReadRemainsInOneShot(t *t
 		Head:    "abc",
 		Friends: seats,
 	}))
-	assert.Equal(t, 1, w.s.Fleet.Count(amy, Working), "only s1-2.w1 remains working")
-	assert.Equal(t, 2, w.s.Fleet.Count(amy, Ready), "queued promotion is gated while s1-2 is active")
+	assert.Equal(t, 2, w.s.Fleet.Count(amy, Working), "s1-3 fills the free configured slot")
+	assert.Equal(t, 1, w.s.Fleet.Count(amy, Ready), "one ready card remains after filling width")
 	assert.Equal(t, Working, w.s.Fleet.Card("s1-2.w1").Col)
-	assert.Equal(t, Ready, w.s.Fleet.Card("s1-3.w1").Col)
+	assert.Equal(t, Working, w.s.Fleet.Card("s1-3.w1").Col)
 	assert.Equal(t, Ready, w.s.Fleet.Card("s1-4.w1").Col)
 
 	// Now place an active frontier read card on amy's row to test shared work/read occupancy
@@ -334,8 +407,8 @@ func TestFriendNextGatesQueuedPromotionWhenActiveWorkOrReadRemainsInOneShot(t *t
 		},
 	})
 
-	// Finish s1-2.w1: although the work card finished, the read card is still working!
-	// Shared work/read occupancy is 1 > 0, so queued promotion remains gated.
+	// Finish s1-2.w1: read-1 and s1-3 now fill the configured width, so no further
+	// promotion is possible.
 	w.must(Finish(w.s, FinishReq{
 		Sel:     Sel{IDs: []string{"s1-2.w1"}},
 		As:      amy,
@@ -343,9 +416,9 @@ func TestFriendNextGatesQueuedPromotionWhenActiveWorkOrReadRemainsInOneShot(t *t
 		Head:    "def",
 		Friends: seats,
 	}))
-	assert.Equal(t, 1, w.s.Fleet.Count(amy, Working), "read-1 is still active")
-	assert.Equal(t, 2, w.s.Fleet.Count(amy, Ready), "queued promotion gated by active read card")
-	assert.Equal(t, Ready, w.s.Fleet.Card("s1-3.w1").Col)
+	assert.Equal(t, 2, w.s.Fleet.Count(amy, Working), "read-1 and s1-3.w1 are still active")
+	assert.Equal(t, 1, w.s.Fleet.Count(amy, Ready), "queued promotion gated by full mixed occupancy")
+	assert.Equal(t, Working, w.s.Fleet.Card("s1-3.w1").Col)
 
 	// Retire the read card (simulating friend read close)
 	rc := w.s.Fleet.Card("read-1")
@@ -495,9 +568,4 @@ func TestBriefKindReadsOnlyTheTypedHeader(t *testing.T) {
 func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
 	p, _, _ := friendDeal(s, cards, seats)
 	return p
-}
-
-// friendDeal is the tick's friend deal in one pass, reclaiming (friendDealPass).
-func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, dealtWorking map[string]int) {
-	return friendDealPass(s, cards, seats, true)
 }

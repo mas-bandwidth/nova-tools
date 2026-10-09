@@ -279,7 +279,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		for i, rd := range chosenReaders {
 			fields := map[string]string{"kind": "read", "primary": c.ID, "stream": c.Row, "reader": rd, "attempt": itoa(attempt), "head": c.F("head"), "asked": stamp(s.Now)}
-			priorityOnRead(fields, c) // its primary's level when above reader (priority.go)
+			priorityOnRead(fields, c) // READER role and producer urgency (priority.go)
 			if rd == finder {
 				fields[FieldFinderRead] = "1" // placed on purpose: the level leaves it where it is
 			}
@@ -605,6 +605,7 @@ func Read(s *Snapshot, r ReadReq) Plan {
 				continue
 			}
 			set[FieldReturned] = stamp(s.Now)
+			priorityOnRead(set, pr)
 			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"),
 				Changes: []Change{change(Readers, moveEntry(c, c.Row, Asked, set, "begun"))},
 				Moved:   c.ID + " " + c.Col + " -> asked (returned)", Notes: []Note{n}})

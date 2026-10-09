@@ -66,7 +66,7 @@ func TakeStep(r sprint.TakeReq) Step {
 	// a take for a friend's row reads the friends' seats: her status is FriendStatus, never
 	// a control card's (sprint's takeSeat)
 	friends := slices.ContainsFunc(sprint.Split(r.As), sprint.IsFriendRow)
-	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "take", Load: tables(sprint.Fleet), Extras: sprint.NamedExtras(sprint.Fleet, r.IDs), Friends: friends, StartsWork: true,
+	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "take", Load: tables(sprint.Work, sprint.Fleet), Extras: sprint.NamedExtras(sprint.Fleet, r.IDs), Friends: friends, StartsWork: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Take(s, r) }}
 }
 
@@ -127,7 +127,7 @@ func ReadStep(r sprint.ReadReq) Step {
 // StopReturnStep is an owner's acknowledgement after its process was cancelled.
 // It preserves the card's placement and attempt, returning it to that owner.
 func StopReturnStep(r sprint.StopReturnReq) Step {
-	return Step{Named: true, Args: ArgsOf(r), Verb: "stop-return", Load: tables(sprint.Fleet, sprint.Readers),
+	return Step{Named: true, Args: ArgsOf(r), Verb: "stop-return", Load: tables(sprint.Fleet, sprint.Readers, sprint.Work),
 		Extras: func(s *sprint.Snapshot) map[string][]string {
 			return map[string][]string{sprint.Fleet: r.IDs, sprint.Readers: r.IDs}
 		}, RequiresStopped: true, Mirrors: true,
@@ -381,9 +381,9 @@ func UnpinStep(r sprint.UnpinReq) Step {
 }
 
 // PriorityStep sets a card's priority, or every card of a stream's and the stream's default
-// (sprint.SetPriority): it reads the work table and the streams' control cards.
+// (sprint.SetPriority): queued work and reads inherit the change in the same commit.
 func PriorityStep(r sprint.PriorityReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "priority", Load: tables(sprint.Work, sprint.Merge),
+	return Step{Args: ArgsOf(r), Verb: "priority", Load: tables(sprint.Work, sprint.Merge, sprint.Fleet, sprint.Readers),
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.SetPriority(s, r) }}
 }
 

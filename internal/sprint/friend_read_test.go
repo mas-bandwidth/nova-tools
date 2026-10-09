@@ -123,9 +123,9 @@ func TestAFrontierCardsReadIsAskedAsAFriendCard(t *testing.T) {
 		seat.Mode = config.FriendModeOneShot
 		askReaders(t, w, []FriendSeat{seat})
 		require.Equal(t, Working, w.s.Fleet.Card(ReadCardID("s1-1", 1, "amy")).Col)
-		require.Nil(t, w.s.Fleet.Card(ReadCardID("s1-2", 1, "amy")), "one-shot friend holds no ready read cards")
+		require.Equal(t, Working, w.s.Fleet.Card(ReadCardID("s1-2", 1, "amy")).Col, "one-shot friend fills her configured width")
 		require.Nil(t, w.s.Fleet.Card(ReadCardID("s1-3", 1, "amy")))
-		require.NotNil(t, placedReaderRead(w, "s1-2"), "the rest go to a paid reader")
+		require.Nil(t, placedReaderRead(w, "s1-2"), "the second read fills the friend's configured width")
 		require.NotNil(t, placedReaderRead(w, "s1-3"))
 	})
 

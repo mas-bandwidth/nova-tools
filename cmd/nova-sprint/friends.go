@@ -80,8 +80,8 @@ WHO: only friend <name> waits for that friend alone. Other work, including
 cards with no WHO line, goes first to subscription friends whose tiers cover
 it, then to the fleet. Among eligible friends, most free room wins and name
 breaks ties. In batch mode her room is twice her width: she works at width and
-queues the rest. In one-shot mode she holds one card, and the next only after
-the last one finished. nova-sprint unpin <id>... --reason <text> removes an
+queues the rest. In one-shot mode her room is her configured width: one job per
+lane, and nothing queued beyond it. nova-sprint unpin <id>... --reason <text> removes an
 unstarted card's stored WHO choice without editing its brief; --stream <s>
 selects a stream, and --dry-run only previews it. Work assigned to a friend
 uses her fleet row friend.<name>; presence never takes it back. friend take

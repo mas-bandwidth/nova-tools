@@ -19,12 +19,14 @@ func TestFixPriorityOrdersDealAskAndMerge(t *testing.T) {
 	}
 	want := []*Card{cards[6], cards[5], cards[4], cards[3], cards[2], cards[1], cards[0]}
 	assert.Equal(t, want, ladderOrder(cards))
-	assert.Equal(t, []*Card{cards[6], cards[5], cards[4], cards[3], cards[0], cards[1], cards[2]}, readOrder(cards))
+	cards[4].Fields[FieldProducerPriority] = PriorityHigh
+	assert.Equal(t, []*Card{cards[6], cards[5], cards[3], cards[4], cards[1], cards[2], cards[0]}, readOrder(cards))
 	assert.Equal(t, want, MergePriorityOrder(w.s, cards))
-	assert.Equal(t, PriorityFix, ReadPriority(cards[4]))
+	assert.Equal(t, PriorityReader, ReadPriority(cards[4]))
 	fields := map[string]string{}
 	priorityOnRead(fields, cards[4])
-	assert.Equal(t, PriorityFix, fields[FieldPriority])
+	assert.Equal(t, PriorityReader, fields[FieldPriority])
+	assert.Equal(t, PriorityHigh, fields[FieldProducerPriority])
 	level, why := PriorityOfBrief("tier: pro\nPRIORITY: fix\n\nRepair the failure.")
 	assert.Empty(t, why)
 	assert.Equal(t, PriorityFix, level)
@@ -49,13 +51,13 @@ func TestReworkPriorityPolicyOnNextAttempt(t *testing.T) {
 		{"failed rule", "", "", PriorityFix, true},
 		{"seat rework", "", "", PriorityFix, false},
 		{"low", PriorityLow, "", PriorityFix, false},
-		{"high stays high", PriorityHigh, "", PriorityHigh, true},
-		{"critical stays critical", PriorityCritical, "", PriorityCritical, false},
-		{"blocker stays blocker", PriorityBlocker, "", PriorityBlocker, false},
+		{"high stays high", PriorityHigh, "", PriorityFix, true},
+		{"critical stays critical", PriorityCritical, "", PriorityFix, false},
+		{"blocker stays blocker", PriorityBlocker, "", PriorityFix, false},
 		{"fix stays fix", PriorityFix, PriorityHigh, PriorityFix, false},
-		{"high policy", "", PriorityHigh, PriorityHigh, true},
-		{"keep normal", "", ReworkKeep, PriorityNormal, true},
-		{"keep low", PriorityLow, ReworkKeep, PriorityLow, false},
+		{"high policy", "", PriorityHigh, PriorityFix, true},
+		{"keep normal", "", ReworkKeep, PriorityFix, true},
+		{"keep low", PriorityLow, ReworkKeep, PriorityFix, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -77,6 +79,11 @@ func TestReworkPriorityPolicyOnNextAttempt(t *testing.T) {
 			pr = w.s.Work.Card(pr.ID)
 			got, _ := CardPriority(pr)
 			assert.Equal(t, tc.want, got)
+			original := tc.level
+			if original == "" || original == PriorityFix {
+				original = PriorityNormal
+			}
+			assert.Equal(t, original, ProducerPriority(pr), "legacy settings cannot lower FIX or erase producer urgency")
 			if pr.Col == Working {
 				wc := w.s.Fleet.Card(pr.F("work"))
 				require.NotNil(t, wc)
@@ -93,10 +100,10 @@ func TestReworkPrioritySetting(t *testing.T) {
 			t.Parallel()
 			s := settingsSnapshot(nil)
 			p := Set(s, SetReq{ReworkPriority: value, Who: "coord"})
-			if value == "urgent" {
+			if value != PriorityFix {
 				require.NotEmpty(t, p.Refused)
 				assert.Empty(t, p.Props)
-				assert.Contains(t, p.Refused[0].Why, "fix, high or keep")
+				assert.Contains(t, p.Refused[0].Why, "use: nova-sprint set --rework-priority fix")
 			} else {
 				require.Empty(t, p.Refused)
 				require.Len(t, p.Props, 1)
@@ -207,7 +214,8 @@ func TestFixPrioritySurvivesRedoAndSubsequentRead(t *testing.T) {
 	reads := readsAt(w.s, w.s.Work.Card(pr.ID), pr.Int("attempt"))
 	require.NotEmpty(t, reads)
 	for _, rc := range reads {
-		assert.Equal(t, PriorityFix, QueuePriority(rc))
+		assert.Equal(t, PriorityReader, QueuePriority(rc))
+		assert.Equal(t, ProducerPriority(pr), ProducerPriority(rc))
 	}
 }
 

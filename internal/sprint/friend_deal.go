@@ -314,11 +314,11 @@ func laneRunsIt(s *Snapshot, seats []FriendSeat, c, wc *Card) string {
 }
 
 // friendRoom is the friend's room and her lanes: DealAhead times her width and her width
-// in batch mode, 1 and 1 in one-shot mode (docs/SPEC-SPRINT.md section 1, "A friend's card"),
+// in batch mode, her width and her width in one-shot mode (docs/SPEC-SPRINT.md section 1, "A friend's card"),
 // the room less what her reads take first in this deal (FriendSeat.ReadsFirst).
 func friendRoom(f FriendSeat) (room, width int) {
 	if f.Mode == config.FriendModeOneShot {
-		return 1 - f.ReadsFirst, 1
+		return f.Width - f.ReadsFirst, f.Width
 	}
 	return DealAhead*f.Width - f.ReadsFirst, f.Width
 }
@@ -379,13 +379,13 @@ func (s *Snapshot) Members() []string {
 // friendLoad is the cards a friend holds: ready and working on her row, her work cards and
 // her reads together. One width bounds her row (docs/SPEC-SPRINT.md section 1, a friend's
 // card; the owner's rule): her reads hold her lanes and her room as her work does, and a
-// one-shot friend holds one card at a time, read or work.
+// one-shot friend holds her configured width of cards, read or work.
 //
 // While read cards are on (read_cards.go) a read holds half a slot of her width, as a
 // member's does (halfLoad): her row holds her width of work or twice it of reads.
 func friendLoad(s *Snapshot, name string) int {
 	row := FriendRow(name)
-	if s.ReadCardsOn() {
+	if s.ReadCardsOn() && s.FriendMode(name) != config.FriendModeOneShot {
 		return halfLoad(rowLoad(s, row))
 	}
 	return s.Fleet.Count(row, Ready) + s.Fleet.Count(row, Working)
@@ -414,8 +414,8 @@ func friendLoad(s *Snapshot, name string) int {
 // attempt retired (friendEscalateUnit). A friend at or over her room is never
 // dealt. In batch mode (the default), a friend's room is DealAhead times her width and
 // her lanes are her width; in one-shot mode (docs/SPEC-SPRINT.md section 1, "A friend's
-// card"), a friend's room is 1 and her lanes are 1: she gets one card at a time, and the
-// next only after the last one finished. A lane of hers is idle while no card on her row
+// card"), her room and lanes are her configured width: one job per lane, with no ready
+// backlog beyond those lanes. A lane of hers is idle while no card on her row
 // holds it, started or not.
 // Each is its next attempt's work card, created on the friend's row at generation 1, ready
 // whatever her lanes, untaken and with no deadline running (docs/SPEC-SPRINT.md section 1,
@@ -429,10 +429,20 @@ func friendLoad(s *Snapshot, name string) int {
 // unit (pinIgnoredNote): why she did not take it, and whose row holds the card.
 // The pass keeps that judgment (pinConds) until the card is back on her row or
 // leaves ready and working.
-// With reclaim set it also reclaims the fleet's dealt-ahead cards (friendReclaim): a deal in
-// passes (a pass of the cards above reads, then the reads, then the rest) reclaims once, in
-// its last pass, after the reads.
-func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool) (p Plan, dealt, dealtWorking map[string]int) {
+func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, dealtWorking map[string]int) {
+	return friendDealPass(s, cards, seats, true)
+}
+
+// friendDealPass is friendDeal, with the reclaim of the fleet's dealt-ahead cards
+// (friendReclaim) when reclaim is set: a deal in passes (a pass of the cards above reads,
+// then the reads, then the rest) reclaims once, in its last pass, after the reads.
+func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool) (Plan, map[string]int, map[string]int) {
+	return friendDealPassObserved(s, cards, seats, reclaim, true)
+}
+
+// The urgent read-card prepass reserves capacity without moving observed start facts
+// earlier than the ordinary deal's observation phase.
+func friendDealPassObserved(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim, observe bool) (p Plan, dealt, dealtWorking map[string]int) {
 	free, lanes, seat := map[string]int{}, map[string]int{}, map[string]FriendSeat{}
 	dealt, dealtWorking = map[string]int{}, map[string]int{}
 	var up []string
@@ -452,10 +462,12 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 	// is working once she starts it), in batch mode and in one-shot mode alike
 	// and working on her row means started: a card her finish's next or a take-back's next
 	// moved there with no start of hers goes back ready (friendUnstartedWorking)
-	p.Units = append(p.Units, friendUnstartedWorking(s, seats)...)
-	starts, started := friendStartUnits(s, seats)
-	p.Units = append(p.Units, starts...)
-	maps.Copy(dealtWorking, started)
+	if observe {
+		p.Units = append(p.Units, friendUnstartedWorking(s, seats)...)
+		starts, started := friendStartUnits(s, seats)
+		p.Units = append(p.Units, starts...)
+		maps.Copy(dealtWorking, started)
+	}
 	members := s.UpMembers()
 	declared := map[string]bool{}
 	for _, c := range cards {
@@ -783,6 +795,7 @@ func friendRedealUnit(s *Snapshot, c, wc *Card, row string, set map[string]strin
 	maps.Copy(prim, set)
 	set, unset := nextGen(wc, row, s.Now), []string{"withdrawn", FieldTakenBack, FieldTakenFrom,
 		FieldRoute, FieldModel, FieldTokens, FieldUSD, FieldHarness, FieldDeadline}
+	maps.Copy(set, consumerPriorityFields(wc, c))
 	if left := friendsLeft(wc); len(left) > 0 {
 		set[FieldFriendsLeft] = strings.Join(left, ",") // the friend it was taken from, kept past the take
 	}

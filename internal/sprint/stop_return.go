@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 )
 
@@ -16,7 +17,9 @@ type StopReturnReq struct {
 }
 
 // StopReturn releases acknowledged work and reads to their own row. The new
-// generation fences an old child's finish (and a read's late verdict).
+// generation fences an old child's finish (and a read's late verdict). Queued
+// reentry refreshes role and urgency from the producer (SPEC-SPRINT, Priority;
+// tla/PriorityStopReturn.tla), while the active lease's metadata stays intact.
 func StopReturn(s *Snapshot, r StopReturnReq) Plan {
 	var p Plan
 	if strings.TrimSpace(r.Reason) == "" {
@@ -65,6 +68,9 @@ func StopReturn(s *Snapshot, r StopReturnReq) Plan {
 			"gen": itoa(old + 1), "stopped_from_gen": itoa(old),
 			"stopped_reason": cutText(r.Reason, MaxCardTextBytes),
 			"untaken_since":  stamp(s.Now),
+		}
+		if pr := s.Work.Placed(c.F(PrimaryField)); pr != nil {
+			maps.Copy(set, consumerPriorityFields(c, pr))
 		}
 		unset := []string{"taken", "begun", FieldStarted, FieldFriendDeadline}
 		if progress := c.F(FieldProgress); progress != "" {

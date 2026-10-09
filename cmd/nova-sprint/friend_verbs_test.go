@@ -131,12 +131,14 @@ func TestFriendLevelMovesAQueuedCardAndTheQueueFilesFollow(t *testing.T) {
 	ta.clean()
 }
 
-// friend level respects a friend's delivery mode: a one-shot friend has room 1, so only 1 card moves.
+// friend level respects a friend's delivery mode: a one-shot friend's room is her
+// configured width (friendRoom), not one card. Bob is width 2, so two cards fill
+// him and the card past that room stays.
 func TestFriendLevelRespectsOneShotDeliveryMode(t *testing.T) {
 	t.Parallel()
 	ta, cfg := friendApp(t)
 	ta.a.tip = func(_ context.Context, _, _ string) (string, error) { return "", nil }
-	_, err := cfg.Insert(context.Background(), config.KindFriend, config.Row{Name: "amy", Fields: map[string]string{"tiers": "flash", "width": "2", "mode": "batch"}}, "t")
+	_, err := cfg.Insert(context.Background(), config.KindFriend, config.Row{Name: "amy", Fields: map[string]string{"tiers": "flash", "width": "3", "mode": "batch"}}, "t")
 	require.NoError(t, err)
 	_, err = cfg.Insert(context.Background(), config.KindFriend, config.Row{Name: "bob", Fields: map[string]string{"tiers": "flash", "width": "2", "mode": "one-shot"}}, "t")
 	require.NoError(t, err)
@@ -146,7 +148,7 @@ func TestFriendLevelRespectsOneShotDeliveryMode(t *testing.T) {
 	ta.beatUp("amy")
 	ta.beatUp("bob")
 
-	for i := 1; i <= 4; i++ {
+	for i := 1; i <= 6; i++ {
 		id := fmt.Sprintf("s1-%d", i)
 		brief := filepath.Join(t.TempDir(), id+".md")
 		require.NoError(t, os.WriteFile(brief, []byte(passingBrief(id+": a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: friend")), 0o644))
@@ -155,23 +157,25 @@ func TestFriendLevelRespectsOneShotDeliveryMode(t *testing.T) {
 	ta.ok("start")
 
 	ta.ok("friend down bob")
-	ta.ok("tick") // amy (batch, width 2) fills her room of 4, all ready, and starts 2
-	ta.startFriend("amy", 2)
+	ta.ok("tick") // amy (batch, width 3) fills her room, DealAhead times 3, all ready
+	ta.startFriend("amy", 3) // her lanes are full, so the three ready behind them may move
 	ta.ok("friend sync --root " + root)
 
 	ta.ok("friend up bob")
 	ta.beatUp("bob")
 
 	out := ta.ok("friend level")
-	// bob has room 1 (one-shot mode), so only 1 card moves (even though bob's width is 2 and amy has 2 ready cards)
-	assert.Contains(t, out, "FRIEND-LEVEL OK moved=1")
+	// bob's room is his configured width, 2 (one-shot, no reads taken first). Two of
+	// amy's three ready cards move; the one past his room does not.
+	assert.Contains(t, out, "moved=2 to bob(2) from amy(2)")
+	assert.Contains(t, out, "FRIEND-LEVEL OK moved=2")
 	assert.Contains(t, ta.ok("friend level"), "FRIEND-LEVEL OK moved=0")
 
 	f := whereFriends(ta)
-	assert.Equal(t, 2, f["amy"].Working)
-	assert.Equal(t, 1, f["amy"].Ready)
+	assert.Equal(t, 3, f["amy"].Working)
+	assert.Equal(t, 1, f["amy"].Ready, "the card past bob's room stays")
 	assert.Equal(t, 0, f["bob"].Working, "ready on his row until he starts it")
-	assert.Equal(t, 1, f["bob"].Ready)
+	assert.Equal(t, 2, f["bob"].Ready, "filled to his configured width")
 	ta.clean()
 }
 

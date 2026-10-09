@@ -34,11 +34,17 @@ func init() {
 const friendCardsWords = "friend cards lists every card held on the friend's row, working then ready, each with its job (inbox/<job>), its column, branch, tier, attempt and generation, and with --json its BRIEF.md whole as friend sync writes it: her nova-friend daemon reads it every loop and writes each held card's brief that is not in her inbox, and retires a job whose card left her row. A card taken back from her (withdrawn) is not listed. It writes nothing. The server serves it to the friend herself on POST and on GET /api/friend/<friend>/cards.\n"
 
 // friendCardsOf is every card held on the friend's row with its packet and brief, in the
-// server's order: her working cards, then the ready ones dealt behind them.
+// server's order: her working recovery debt, then ready cards in admission order
+// (docs/SPEC-SPRINT.md, Priority). Queued copies carry the producer's current
+// role and urgency; an active lease keeps its original metadata.
 func friendCardsOf(ctx context.Context, st *store.Store, name string) ([]friend.HeldCard, error) {
 	cards, err := st.ReadCells(ctx, sprint.Fleet, sprint.FriendRow(name), sprint.Working, sprint.Ready)
 	if err != nil || len(cards) == 0 {
 		return []friend.HeldCard{}, err
+	}
+	readyAt := slices.IndexFunc(cards, func(c *sprint.Card) bool { return c.Col == sprint.Ready })
+	if readyAt >= 0 {
+		cards = append(cards[:readyAt:readyAt], sprint.QueueAdmissionOrder(cards[readyAt:], -1)...)
 	}
 	packets, err := st.Packets(ctx, cards)
 	if err != nil {

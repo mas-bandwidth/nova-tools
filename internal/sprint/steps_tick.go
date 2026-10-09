@@ -603,6 +603,72 @@ func TickResume(s *Snapshot, r TickReq) (Plan, int) {
 // a withdrawn card is dealt again at a new generation. With no member up and primaries waiting to be dealt, the
 // coordinator is told once (N3), and the judgment closes when a member is up.
 func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
+	if !s.ReadCardsOn() {
+		return tickDealPass(s, r, false, TickMaxDeal)
+	}
+	// Plan urgent work before the shared read-card reservation. Batch keeps the
+	// original guards and folds route indexes and repeated start receipts into one
+	// atomic deal, while each pass sees the capacity the previous pass consumed.
+	var refused []Refusal
+	var rounds []roundRecord
+	var due int
+	var stop string
+	left := TickMaxDeal
+	p := Batch(s, []func(*Snapshot) Plan{
+		func(cur *Snapshot) Plan {
+			q, _ := tickDealPass(cur, r, true, left)
+			for _, u := range q.Units {
+				for _, ch := range u.Changes {
+					if ch.Table != Fleet {
+						continue
+					}
+					row := ""
+					if ch.Entry.Create != nil {
+						row = ch.Entry.Create.Row
+					}
+					if ch.Entry.Move != nil {
+						row = ch.Entry.Move.Row
+					}
+					if row != "" && !IsFriendRow(row) {
+						left--
+					}
+				}
+			}
+			rounds = append(rounds, q.rounds...)
+			refused = append(refused, q.Refused...)
+			q.Refused = nil
+			return q
+		},
+		func(cur *Snapshot) Plan {
+			q, n := tickDealPass(cur, r, false, max(left, 0))
+			due, stop = n, q.Stop
+			rounds = append(rounds, q.rounds...)
+			refused = append(refused, q.Refused...)
+			q.Refused = nil
+			return q
+		},
+	})
+	// LeaveQueued may hold a primary after planning. Retain one original index
+	// guard and all per-unit moves so held units advance no route or stream turn.
+	indexes := map[string]int{}
+	for _, rr := range rounds {
+		key := rr.r.table + "\x00" + rr.r.name
+		if i, ok := indexes[key]; ok {
+			maps.Copy(p.rounds[i].moves, rr.moves)
+		} else {
+			indexes[key] = len(p.rounds)
+			p.rounds = append(p.rounds, roundRecord{rr.r, maps.Clone(rr.moves)})
+		}
+	}
+	rewriteRounds(&p)
+	p.Refused = append(p.Refused, refused...)
+	p.Stop = stop
+	return p, due
+}
+
+// urgentOnly shares all admission guards with the ordinary pass, but neither
+// reserves reads nor performs leveling and notification work.
+func tickDealPass(s *Snapshot, r TickReq, urgentOnly bool, dealLimit int) (Plan, int) {
 	// the routes resting now, and those the no-result rule rests in this tick (rule 3,
 	// route_rest.go): no card of this tick is drawn on one, and the new rests are written
 	// in its plan
@@ -612,9 +678,10 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		n.Friends = r.Friends // the friends a tier is served by (tierServed)
 		s = &n
 	}
-	// reads before work (reads are a card priority): while read cards are on, this deal
-	// deals the read cards first, and its work in the room they leave (read_cards.go)
-	s, reads := s.withReadCards(r.Friends)
+	var reads Plan
+	if !urgentOnly {
+		s, reads = s.withReadCards(r.Friends)
+	}
 	var p Plan
 	due := 0
 	var ready []*Card
@@ -626,7 +693,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	// A hard pin that no friend takes stays out of the fleet below.
 	var offer []*Card
 	for _, c := range s.Work.Column(Ready) {
-		if StreamHeld(s, c.Row) || IsSentinel(c) {
+		if StreamHeld(s, c.Row) || IsSentinel(c) || (urgentOnly && cardRank(c) >= priorityRank(PriorityReader)) {
 			continue
 		}
 		if b := Bench(c); len(b) > 0 {
@@ -636,12 +703,15 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	}
 	// the ladder (priority.go, reads_priority.go): the cards above reader, then the friends'
 	// reads, asked and placed in this plan, then normal and low work in the room they leave
-	fp, seats, dealt, dealtWorking := friendDealByLadder(s, dealOrder(s, offer), r.Friends)
+	fp, seats, dealt, dealtWorking := friendDealByLadder(s, ladderOrder(dealOrder(s, offer)), r.Friends, !urgentOnly)
 	friendPlaced := map[string]bool{}
 	for _, u := range fp.Units {
 		friendPlaced[u.Key] = true
 	}
 	for _, c := range s.Work.Column(Ready) {
+		if urgentOnly && cardRank(c) >= priorityRank(PriorityReader) {
+			continue
+		}
 		if StreamHeld(s, c.Row) {
 			continue // its stream is held (hold.go): dealt to no machine and no friend until unhold
 		}
@@ -793,7 +863,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	}
 	if len(up) > 0 {
 		room := widthRoom(s, up)
-		n := min(room, TickMaxDeal, len(ready))
+		n := min(room, dealLimit, len(ready))
 		due = min(room, len(ready)) - n
 		if n > 0 {
 			ids := make([]string, n)
@@ -804,6 +874,9 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		}
 	}
 	p.Rows, p.Units, p.Refused = append(p.Rows, fp.Rows...), append(p.Units, fp.Units...), append(p.Refused, fp.Refused...)
+	if urgentOnly {
+		return p, due
+	}
 	for _, row := range reads.Rows {
 		if !slices.Contains(p.Rows, row) {
 			p.Rows = append(p.Rows, row)

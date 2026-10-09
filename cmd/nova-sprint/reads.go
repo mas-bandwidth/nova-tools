@@ -246,9 +246,9 @@ type queueCard struct {
 	Gen     int     `json:"gen,omitempty"`
 	Head    string  `json:"head,omitempty"`
 	Score   float64 `json:"score"`
-	// Priority is the card's level (sprint.QueuePriority: a read card's reader, a work card's
-	// as its deal wrote it, a primary's own), printed beside it.
-	Priority string `json:"priority"`
+	// Priority is the card's inherited level (sprint.QueuePriority), printed beside it.
+	Priority         string `json:"priority"`
+	ProducerPriority string `json:"producer_priority,omitempty"`
 	// The stamps: a work card's dealt and taken, a read card's asked and begun.
 	Dealt string `json:"dealt,omitempty"`
 	Taken string `json:"taken,omitempty"`
@@ -309,7 +309,7 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 	add := func(table string, cs []*sprint.Card) {
 		for _, x := range cs {
 			cards = append(cards, queueCard{ID: x.ID, Table: table, Row: x.Row, Col: x.Col, Primary: x.F("primary"), Stream: x.F("stream"),
-				Attempt: x.Int("attempt"), Gen: x.Int("gen"), Head: x.F("head"), Score: x.Score, Priority: queuePriority(x),
+				Attempt: x.Int("attempt"), Gen: x.Int("gen"), Head: x.F("head"), Score: x.Score, Priority: queuePriority(x), ProducerPriority: queueProducerPriority(x),
 				Dealt: x.F("dealt"), Taken: x.F("taken"), Asked: x.F("asked"), Begun: x.F("begun"), kind: x.F("kind")})
 		}
 	}
@@ -346,14 +346,18 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 		}
 	} else {
 		var mine []*sprint.Card
+		offset := -1
 		for _, t := range []struct{ table, a, b string }{{sprint.Readers, sprint.Asked, sprint.Reading}, {sprint.Fleet, sprint.Ready, sprint.Working}} {
 			cols := []string{t.a, t.b}
 			if t.table == sprint.Fleet {
 				cols = append(cols, sprint.Ctl) // the member's control card: its width, read with its cards
 			}
-			cs, err := st.ReadCells(ctx, t.table, *as, cols...)
+			cs, turn, err := st.ReadQueueCells(ctx, t.table, *as, cols...)
 			if err != nil {
 				return a.readFailed("queue", err, stderr)
+			}
+			if t.table == sprint.Fleet {
+				offset = turn
 			}
 			var own []*sprint.Card
 			for _, x := range cs {
@@ -363,8 +367,21 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 				}
 				own = append(own, x)
 			}
-			add(t.table, own)
 			mine = append(mine, own...)
+		}
+		// Priority changes update queued copies atomically with their primary. Refine before
+		// selecting packets: a reader launches the first asked cards carrying those packets.
+		if isReader {
+			mine = sprint.QueueOrder(mine)
+		} else {
+			mine = sprint.QueueAdmissionOrder(mine, offset)
+		}
+		for _, x := range mine {
+			table := sprint.Fleet
+			if x.Col == sprint.Asked || x.Col == sprint.Reading {
+				table = sprint.Readers
+			}
+			add(table, []*sprint.Card{x})
 		}
 		// a reader runs at its machine's width: reader-<m>'s is m's fleet row's
 		// (sprint.ReaderMachine), read here as the member's own is above
@@ -2372,6 +2389,14 @@ func whoWord(pr *sprint.Card) string {
 func priorityWord(pr *sprint.Card) string {
 	l, _ := sprint.CardPriority(pr)
 	return " priority=" + l
+}
+
+// Normal producer urgency is the default, so omit it from bounded packet answers.
+func queueProducerPriority(c *sprint.Card) string {
+	if level := c.F(sprint.FieldProducerPriority); level != sprint.PriorityNormal {
+		return level
+	}
+	return ""
 }
 
 // queuePriority is a queue card's level: a primary's own (sprint.CardPriority), a work or a

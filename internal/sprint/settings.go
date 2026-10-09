@@ -63,7 +63,7 @@ const (
 	// "1" or "2"; absent or default, each card's own rule (ReadsNeeded). 0 asks no read:
 	// a primary whose work finished LAND at its head is accepted on its own work.
 	PropReadsNeeded = "reads_needed"
-	// PropReworkPriority controls priority on the next attempt: fix (default), high or keep.
+	// PropReworkPriority records FIX on the next attempt; legacy high/keep also schedule FIX.
 	PropReworkPriority = "rework_priority"
 	ReworkKeep         = "keep"
 	// TiersAll is the word of a side that may take every tier, the default.
@@ -437,8 +437,8 @@ func Set(s *Snapshot, r SetReq) Plan {
 		}
 	}
 	if r.ReworkPriority != "" {
-		if !slices.Contains([]string{PriorityFix, PriorityHigh, ReworkKeep}, r.ReworkPriority) {
-			why = append(why, "--rework-priority wants fix, high or keep; found "+r.ReworkPriority)
+		if r.ReworkPriority != PriorityFix {
+			why = append(why, "every repair has FIX priority; legacy high and keep settings also schedule FIX; use: nova-sprint set --rework-priority fix (found "+r.ReworkPriority+")")
 		}
 		if len(r.Streams) > 0 {
 			why = append(why, "--rework-priority is the sprint's, not a stream's: nova-sprint set --rework-priority "+r.ReworkPriority)

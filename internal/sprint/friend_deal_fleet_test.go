@@ -123,8 +123,8 @@ func TestAFlashFriendWithRoomIsDealtFleetFlashCards(t *testing.T) {
 }
 
 // One width bounds a friend's row, her reads and her work together (the owner's rule): a
-// friend at width 16 holding 10 work cards and 9 reads has no lane free and is dealt no
-// work, and a one-shot friend holding a read is dealt no work card.
+// friend at width 16 holding 10 work cards and 9 reads has no lane free. A one-shot friend
+// at width 4 holding one read can still take three work cards.
 func TestOneWidthHoldsHerWorkAndReads(t *testing.T) {
 	t.Parallel()
 	briefs := make([]string, 30)
@@ -145,14 +145,14 @@ func TestOneWidthHoldsHerWorkAndReads(t *testing.T) {
 	assert.Equal(t, 13, room-friendLoad(w.s, "amy"), "her room less work and reads")
 	assert.Equal(t, -3, width-friendLoad(w.s, "amy"), "her lanes: 16 less 19, none idle")
 
-	// the one-shot friend: a read on her row is her one card
+	// The one-shot friend: a read takes one configured lane, leaving three for work.
 	w2 := friendWorld(t, fleetBrief("flash"))
 	putReads(w2, "bee", 1)
 	dealWith(w2, FriendSeat{Name: "bee", Width: 4, Status: Up, Mode: config.FriendModeOneShot, Class: "flash", Tiers: []string{"flash"}})
-	assert.Zero(t, workOn(w2, FriendRow("bee")), "one card at a time, read or work")
+	assert.Equal(t, 1, workOn(w2, FriendRow("bee")), "one read leaves room for one work card")
 	wc := w2.s.Fleet.Card(WorkCardID("s1-1", 1))
 	require.NotNil(t, wc)
-	assert.Contains(t, []string{"m1", "m2"}, wc.Row, "the machines take it")
+	assert.Equal(t, FriendRow("bee"), wc.Row, "the one-shot friend's configured width has room")
 
 	// her read room is her room: with her row full of work she is asked no read
 	w3 := newWorld(t, "reader-a", "reader-b")

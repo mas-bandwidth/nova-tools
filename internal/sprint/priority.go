@@ -8,21 +8,20 @@ import (
 	"strings"
 )
 
-// A card's priority (docs/SPEC-SPRINT.md section 1, "Priority"; the owner, 2026-10-06): every
-// card carries one level of the ladder blocker, critical, fix, high, reader, normal, low. A read card
-// is reader, or its primary's level when that is higher (ReadPriority), and never set by
-// hand: every deal places, level by level, the reads of a level and then its work
-// (reads_priority.go), and land takes the stream with the highest merging level first. A
+// A card's priority (docs/SPEC-SPRINT.md section 1, "Priority"): every card carries one
+// effective level: blocker, critical, fix, high, reader, normal, low. A read card is always
+// reader (ReadPriority), with producer urgency ordering reads within its queue, never set by
+// hand. A deal places eligible urgent work before READER consumers, then normal and low work
+// (reads_priority.go); land takes the stream with the highest merging level first. A
 // primary is normal unless a level is set on it: by its brief's line `PRIORITY: <level>` at
 // admission, else by its stream's default at admission, or by the verb `priority`, each change
 // on its timeline with the actor and the reason. Critical is computed too (CriticalBehind or
 // more cards behind it, weight.go) unless a level is set by hand. Low is dealt only to a lane
 // nothing higher can fill. The deal and the ask order their cards by the ladder, then stream
 // turns within a level (ladderOrder, readOrder); land orders the streams by their merging
-// sets' levels (LandOrder), then eligible cards inside a batch (MergePriorityOrder). Owed with
-// the reference model: the weight
-// within a level and the computed critical in the deal's and the ask's order. Preemption by a
-// blocker is its own card.
+// sets' levels (LandOrder), then eligible cards inside a batch (MergePriorityOrder). Computed
+// critical remains display-only. An occupied slot is never preempted in v1.2; blocker slot
+// preemption is deferred to v1.3.
 
 // The priority ladder, highest first.
 const (
@@ -44,6 +43,37 @@ var PrioritySettable = []string{PriorityBlocker, PriorityCritical, PriorityFix, 
 // FieldPriority is a primary's priority as set (by its brief's PRIORITY line or its stream's
 // default at admission, or by the verb priority); absent is normal, or critical by weight.
 const FieldPriority = "priority"
+
+// FieldProducerPriority retains ordinary producer urgency within READ and FIX roles
+// without changing their effective priority (SPEC-SPRINT, Priority).
+const FieldProducerPriority = "producer_priority"
+
+// ProducerPriority preserves ordinary urgency through repairs and reads (SPEC-SPRINT,
+// Priority). Legacy fixed/read roles without that metadata have ordinary normal urgency.
+func ProducerPriority(c *Card) string {
+	if level := c.F(FieldProducerPriority); level != "" {
+		return PriorityLadder[priorityRank(level)]
+	}
+	level := c.F(FieldPriority)
+	if level == PriorityFix || level == PriorityReader {
+		return PriorityNormal
+	}
+	return PriorityLadder[priorityRank(level)]
+}
+
+// priorityFields applies a manual level without removing a FIX role (SPEC-SPRINT,
+// Priority). Entering FIX captures ordinary urgency; later changes update only urgency.
+func priorityFields(c *Card, level string) map[string]string {
+	set := map[string]string{FieldPriority: level}
+	if level == PriorityFix || c.F(FieldPriority) == PriorityFix {
+		set[FieldPriority] = PriorityFix
+		set[FieldProducerPriority] = level
+		if level == PriorityFix {
+			set[FieldProducerPriority] = ProducerPriority(c)
+		}
+	}
+	return set
+}
 
 // FieldPriorityDefault is a stream's control card's field: the level a card added to the
 // stream later is given when its brief names none; absent is normal.
@@ -90,7 +120,7 @@ func PriorityOfBrief(brief string) (level, why string) {
 }
 
 // CardPriority is the card's level and where it comes from: reader for a read card ("read";
-// its inherited level, the higher of reader and its primary's, is ReadPriority);
+// producer urgency orders within that role, ReadPriority);
 // its own set level ("set"); critical by its weight ("computed"); else normal ("default").
 func CardPriority(c *Card) (level, source string) {
 	if c == nil {
@@ -108,32 +138,92 @@ func CardPriority(c *Card) (level, source string) {
 	return PriorityNormal, "default"
 }
 
-// priorityOnWork writes the primary's level on the work card a deal creates for it, when it
-// is not normal, so a worker's queue shows it (queue) without reading the primary.
+// priorityOnWork writes the primary's explicit level on a new work card (SPEC-SPRINT,
+// Priority), when it is not normal. Computed critical remains display-only.
 func priorityOnWork(fields map[string]string, pr *Card) {
-	if l, _ := CardPriority(pr); l != PriorityNormal {
+	if l := PriorityLadder[cardRank(pr)]; l != PriorityNormal {
 		fields[FieldPriority] = l
+	}
+	if pr.F(FieldPriority) == PriorityFix || pr.F(FieldProducerPriority) != "" {
+		fields[FieldProducerPriority] = ProducerPriority(pr)
 	}
 }
 
-// QueuePriority is the level a queue shows beside a card: a read card's reader, a work card's
-// as its deal wrote it (priorityOnWork), else normal.
+// QueuePriority is a consumer's inherited level: seeded by its deal or ask, refreshed by
+// SetPriority while queued, and retained by its active lease; absent is reader or normal.
 func QueuePriority(c *Card) string {
-	if v := c.F(FieldPriority); v != "" {
-		return v // a work card's as its deal wrote it; a read card's inherited level (priorityOnRead)
-	}
-	if c.F("kind") == "read" {
+	if isRead(c) {
 		return PriorityReader
+	}
+	if v := c.F(FieldPriority); v != "" {
+		return v
 	}
 	return PriorityNormal
 }
 
-// priorityOnRead writes on a read card the ask creates its inherited level (ReadPriority) when
-// it is above reader, so a reader's queue shows it.
-func priorityOnRead(fields map[string]string, pr *Card) {
-	if l := ReadPriority(pr); l != PriorityReader {
-		fields[FieldPriority] = l
+// consumerPriority is the primary's explicit level for work and always reader for reads
+// when a consumer enters a queue (SPEC-SPRINT, Priority; PriorityFlow.tla Rank).
+func consumerPriority(c, pr *Card) string {
+	if isRead(c) {
+		return PriorityReader
 	}
+	return PriorityLadder[cardRank(pr)]
+}
+
+// consumerPriorityFields refreshes role and urgency whenever a consumer enters its queue
+// (SPEC-SPRINT, Priority). Active leases retain the metadata they took.
+func consumerPriorityFields(c, pr *Card) map[string]string {
+	set := map[string]string{FieldPriority: consumerPriority(c, pr)}
+	if isRead(c) || pr.F(FieldPriority) == PriorityFix || pr.F(FieldProducerPriority) != "" {
+		set[FieldProducerPriority] = ProducerPriority(pr)
+	}
+	return set
+}
+
+// QueueOrder refines an existing queue by its inherited priority (docs/SPEC-SPRINT.md,
+// Priority). SetPriority updates queued copies with their primary in one unit; reads win
+// ties with work, and otherwise the existing score or stream-turn order stands. Working
+// leases are never selected or cancelled here.
+func QueueOrder(cards []*Card) []*Card {
+	out := slices.Clone(cards)
+	slices.SortStableFunc(out, func(a, b *Card) int {
+		if d := priorityRank(QueuePriority(a)) - priorityRank(QueuePriority(b)); d != 0 {
+			return d
+		}
+		if isRead(a) && isRead(b) || QueuePriority(a) == PriorityFix {
+			return priorityRank(ProducerPriority(a)) - priorityRank(ProducerPriority(b))
+		}
+		if isRead(a) != isRead(b) {
+			if isRead(a) {
+				return -1
+			}
+			return 1
+		}
+		return 0
+	})
+	return out
+}
+
+// QueueAdmissionOrder is the queue packet and Take order: priority refines the
+// existing stream turns from the member's fleet-row offset. In-flight cards do
+// not spend a queued stream turn; they retain their order after the admission set.
+func QueueAdmissionOrder(cards []*Card, offset int) []*Card {
+	var ready, flight []*Card
+	for _, c := range cards {
+		if c.Col == Ready {
+			ready = append(ready, c)
+		} else {
+			flight = append(flight, c)
+		}
+	}
+	return append(QueueOrder(takeTurns(ready, offset)), flight...)
+}
+
+// priorityOnRead stamps the read role and its producer urgency for every ask or return
+// (SPEC-SPRINT, Priority). Urgency orders reads without changing their role.
+func priorityOnRead(fields map[string]string, pr *Card) {
+	fields[FieldPriority] = PriorityReader
+	fields[FieldProducerPriority] = ProducerPriority(pr)
 }
 
 // priorityRank is the level's place on the ladder, 0 the highest; an unknown level is normal's.
@@ -163,25 +253,23 @@ func cardRank(c *Card) int {
 // and ordering by weight within a level is owed with the model.
 func ladderOrder(cards []*Card) []*Card {
 	out := slices.Clone(cards)
-	sort.SliceStable(out, func(i, j int) bool { return cardRank(out[i]) < cardRank(out[j]) })
+	sort.SliceStable(out, func(i, j int) bool { return priorityLess(out[i], out[j]) })
 	return out
 }
 
-// readRank is the place on the ladder of the primary's read: the higher of reader and its
-// primary's own level (cardRank), so the reads of a blocker, critical, fix or high primary go to
-// the front of the read queue, and a normal or low primary's read is reader (the owner,
-// 2026-10-06: "that work stream jumps to the front of the reader and merge queue").
-func readRank(pr *Card) int { return min(cardRank(pr), priorityRank(PriorityReader)) }
+// readRank is every read's role rank on the admission ladder (SPEC-SPRINT, Priority).
+func readRank(_ *Card) int { return priorityRank(PriorityReader) }
 
-// ReadPriority is the level of a read of the primary (readRank): reader, or its primary's
-// when that is higher.
+// ReadPriority is always reader: producer urgency is a secondary read-queue order.
 func ReadPriority(pr *Card) string { return PriorityLadder[readRank(pr)] }
 
-// readOrder is the primaries in review by the level of their reads (readRank), highest
-// first, stable: equals keep the order given (the ask's stream turns, work order).
+// readOrder orders review by producer urgency within the READER queue (SPEC-SPRINT,
+// Priority), stable: equals keep the ask's stream turns and work order.
 func readOrder(cards []*Card) []*Card {
 	out := slices.Clone(cards)
-	sort.SliceStable(out, func(i, j int) bool { return readRank(out[i]) < readRank(out[j]) })
+	sort.SliceStable(out, func(i, j int) bool {
+		return priorityRank(ProducerPriority(out[i])) < priorityRank(ProducerPriority(out[j]))
+	})
 	return out
 }
 
@@ -191,14 +279,18 @@ func readOrder(cards []*Card) []*Card {
 // given; inside a stream the batch stays as it is (the owner, 2026-10-06: "a normal stream with
 // one critical card merging goes ahead of a high stream whose merging cards are all high").
 func LandOrder(s *Snapshot, streams []string) []string {
-	rank, weight := map[string]int{}, map[string]int{}
+	rank, urgency, weight := map[string]int{}, map[string]int{}, map[string]int{}
 	for _, st := range streams {
 		rank[st] = priorityRank(PriorityLow) + 1
+		urgency[st] = priorityRank(PriorityLow) + 1
 		if s == nil || s.Work == nil {
 			continue
 		}
 		for _, c := range s.Work.Cell(st, Merging) {
 			rank[st] = min(rank[st], cardRank(c))
+			if c.F(FieldPriority) == PriorityFix {
+				urgency[st] = min(urgency[st], priorityRank(ProducerPriority(c)))
+			}
 			weight[st] = max(weight[st], c.Int(FieldBehind))
 		}
 	}
@@ -207,6 +299,9 @@ func LandOrder(s *Snapshot, streams []string) []string {
 		a, b := out[i], out[j]
 		if rank[a] != rank[b] {
 			return rank[a] < rank[b]
+		}
+		if rank[a] == priorityRank(PriorityFix) && urgency[a] != urgency[b] {
+			return urgency[a] < urgency[b]
 		}
 		return weight[a] > weight[b]
 	})
@@ -285,13 +380,35 @@ func SetPriority(s *Snapshot, r PriorityReq) Plan {
 		}
 	}
 	seen := map[string]bool{}
+	queued := map[string][]Change{}
+	for _, table := range []string{Fleet, Readers} {
+		if s.T(table) == nil {
+			continue
+		}
+		col := Ready
+		if table == Readers {
+			col = Asked
+		}
+		for _, child := range s.T(table).Column(col) {
+			pr := &Card{Fields: priorityFields(s.Work.Card(child.F(PrimaryField)), r.Level)}
+			set := consumerPriorityFields(child, pr)
+			changed := false
+			for key, value := range set {
+				changed = changed || child.F(key) != value
+			}
+			if changed {
+				queued[child.F(PrimaryField)] = append(queued[child.F(PrimaryField)],
+					change(table, setEntry(child, set)))
+			}
+		}
+	}
 	for _, id := range ids {
 		if seen[id] {
 			continue
 		}
 		seen[id] = true
 		if pr, _, _, ok := ParseReadCard(id); ok {
-			p.refuse(id, "a read card's priority is its primary's, or reader when that is lower; set its primary: nova-sprint priority "+pr+" --"+r.Level)
+			p.refuse(id, "a read card always has reader priority; change its producer urgency on its primary: nova-sprint priority "+pr+" --"+r.Level)
 			continue
 		}
 		c := s.Work.Placed(id)
@@ -304,14 +421,26 @@ func SetPriority(s *Snapshot, r PriorityReq) Plan {
 			continue
 		}
 		was, _ := CardPriority(c)
-		if c.F(FieldPriority) == r.Level {
+		set := priorityFields(c, r.Level)
+		unchanged := true
+		for key, value := range set {
+			unchanged = unchanged && c.F(key) == value
+		}
+		if unchanged {
 			p.Said = append(p.Said, id+" priority "+r.Level+" already; no change")
+			if changes := queued[id]; len(changes) > 0 {
+				p.Units = append(p.Units, Unit{Key: id, Stream: c.Row, Changes: changes,
+					Moved: id + " queued cards inherit priority " + r.Level})
+			}
 			continue
 		}
 		n := happened(NPrioritySet, c.Row, s.Now, c.ID)
 		n.Who, n.What = r.Who, fmt.Sprintf("%s priority %s -> %s%s", c.ID, was, r.Level, why)
+		if set[FieldPriority] == PriorityFix {
+			n.What = fmt.Sprintf("%s priority %s -> fix; producer urgency %s -> %s%s", c.ID, was, ProducerPriority(c), set[FieldProducerPriority], why)
+		}
 		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row,
-			Changes: []Change{change(Work, setEntry(c, map[string]string{FieldPriority: r.Level}))}, Notes: []Note{n},
+			Changes: append([]Change{change(Work, setEntry(c, set))}, queued[id]...), Notes: []Note{n},
 			Moved: n.What})
 	}
 	return p
@@ -364,7 +493,7 @@ func StreamPriorities(s *Snapshot) map[string]string {
 // normal.
 func PriorityLine(counts map[string][]string, streams map[string]string) string {
 	var parts []string
-	ladder := slices.Insert(slices.Clone(PriorityLadder), 2, CriticalByWeight)
+	ladder := slices.Insert(slices.Clone(PriorityLadder), priorityRank(PriorityCritical)+1, CriticalByWeight)
 	for _, l := range ladder {
 		ids := counts[l]
 		if len(ids) == 0 {
@@ -390,22 +519,20 @@ func PriorityLine(counts map[string][]string, streams map[string]string) string 
 	return "priority: " + strings.Join(parts, "; ")
 }
 
-// reworkPriority applies the rework policy when a next attempt opens
-// (docs/SPEC-SPRINT.md, Priority). Explicit urgent levels and computed critical stay put.
+// reworkPriority gives every repair FIX while retaining ordinary producer urgency
+// (SPEC-SPRINT, Priority). Stored legacy high/keep settings also schedule FIX.
 func reworkPriority(s *Snapshot, c *Card, set map[string]string) *Card {
-	level, _ := CardPriority(c)
-	if level != PriorityNormal && level != PriorityLow {
-		return c
+	set[FieldPriority], set[FieldProducerPriority] = PriorityFix, ProducerPriority(c)
+	return withField(withField(c, FieldPriority, PriorityFix), FieldProducerPriority, set[FieldProducerPriority])
+}
+
+// priorityLess compares effective levels and producer urgency within FIX; ordinary ties
+// keep work order (SPEC-SPRINT, Priority).
+func priorityLess(a, b *Card) bool {
+	if cardRank(a) != cardRank(b) {
+		return cardRank(a) < cardRank(b)
 	}
-	next, _ := s.Work.Prop(PropReworkPriority)
-	if next == ReworkKeep {
-		return c
-	}
-	if next != PriorityHigh {
-		next = PriorityFix
-	}
-	set[FieldPriority] = next
-	return withField(c, FieldPriority, next)
+	return a.F(FieldPriority) == PriorityFix && priorityRank(ProducerPriority(a)) < priorityRank(ProducerPriority(b))
 }
 
 // MergePriorityOrder orders eligible merge cards by priority without passing their
@@ -422,7 +549,7 @@ func MergePriorityOrder(s *Snapshot, cards []*Card) []*Card {
 			if len(WaitsFor(s, pr, landed)) != 0 {
 				continue
 			}
-			if best < 0 || cardRank(pr) < cardRank(s.Work.Card(pending[best].ID)) {
+			if best < 0 || priorityLess(pr, s.Work.Card(pending[best].ID)) {
 				best = i
 			}
 		}

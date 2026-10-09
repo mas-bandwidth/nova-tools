@@ -108,8 +108,8 @@ func Recut(s *Snapshot, r RecutReq) Plan {
 	}
 	p = Add(s, AddReq{Stream: c.Row, IDs: []string{nw}, Needs: needs, Brief: brief, Rules: rules, Before: c.ID, Held: IsHeld(c),
 		Replaces: []string{c.ID}, Who: r.Who})
-	// the card's own level goes to the twin as its tier does (priority.go): a hand-set or a
-	// seeded level is the card's, not the brief's, unless a new brief names its own
+	// The card's level and producer urgency go to the twin as its tier does (priority.go,
+	// SPEC-SPRINT, Priority), unless a new brief names its own priority.
 	level := c.F(FieldPriority)
 	if own, _ := PriorityOfBrief(brief); own != "" && r.Brief != "" { // why was refused above
 		level = ""
@@ -130,6 +130,9 @@ func Recut(s *Snapshot, r RecutReq) Plan {
 				}
 				if level != "" {
 					u.Changes[j].Entry.Set[FieldPriority] = level
+					if urgency := c.F(FieldProducerPriority); urgency != "" {
+						u.Changes[j].Entry.Set[FieldProducerPriority] = urgency
+					}
 					u.Moved += "; priority " + level
 				}
 			}

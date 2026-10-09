@@ -15,13 +15,13 @@ func TestIdenticalFailureEscalationUsesReworkPriority(t *testing.T) {
 	for _, tc := range []struct{ name, level, policy, want string }{
 		{"default normal", "", "", PriorityFix},
 		{"default low", PriorityLow, "", PriorityFix},
-		{"high policy", "", PriorityHigh, PriorityHigh},
-		{"keep normal", "", ReworkKeep, PriorityNormal},
-		{"keep low", PriorityLow, ReworkKeep, PriorityLow},
-		{"high stays", PriorityHigh, "", PriorityHigh},
+		{"high policy", "", PriorityHigh, PriorityFix},
+		{"keep normal", "", ReworkKeep, PriorityFix},
+		{"keep low", PriorityLow, ReworkKeep, PriorityFix},
+		{"high stays", PriorityHigh, "", PriorityFix},
 		{"fix stays", PriorityFix, PriorityHigh, PriorityFix},
-		{"critical stays", PriorityCritical, "", PriorityCritical},
-		{"blocker stays", PriorityBlocker, "", PriorityBlocker},
+		{"critical stays", PriorityCritical, "", PriorityFix},
+		{"blocker stays", PriorityBlocker, "", PriorityFix},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -49,6 +49,12 @@ func TestIdenticalFailureEscalationUsesReworkPriority(t *testing.T) {
 			assert.Equal(t, cardhdr.RoutePro, pr.F(FieldTierNow))
 			level, _ := CardPriority(pr)
 			assert.Equal(t, tc.want, level)
+			// ProducerPriority: empty or fix is ordinary normal; low, high, critical, and blocker stay themselves.
+			ordinary := tc.level
+			if ordinary == "" || ordinary == PriorityFix {
+				ordinary = PriorityNormal
+			}
+			assert.Equal(t, ordinary, pr.F(FieldProducerPriority))
 			assert.Empty(t, pr.F("result"))
 		})
 	}

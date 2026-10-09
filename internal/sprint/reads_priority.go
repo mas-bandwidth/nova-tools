@@ -8,12 +8,13 @@ import (
 // with 270 cards in review, 76 working and every reader near idle: "I am now convinced that
 // reads need to become a type of card priority." "This will help balance reads vs. work from
 // now on."). A read card is at reader priority (priority.go), above normal and low work: every
-// deal asks and places the friends' reads before it deals any work card, in the same plan,
-// and deals work only in the room the reads leave; a friend is dealt a work card only when no
-// read she may take waits (friendDealByLadder, friendReadsFirst). A fleet reader's room is its own,
-// never a work lane, so a fleet read waits behind no work card; the readers' ask places them
-// in the same tick. Inside the reads the order is the modelled one (work order, the ask's
-// stream turns). The backup state (Backup) is exposed on where; the judgment at its edge is
+// deal places urgent work first, then reads, then normal and low work in the same plan;
+// at READER or below a friend receives work only when no read she may take waits
+// (friendDealByLadder, friendReadsFirst). In legacy readers-table mode, a fleet reader's
+// room is separate from work, so those reads wait behind no work card. Read cards on member
+// rows share member work width. The legacy readers' ask places reads in the same tick. Inside
+// the reads, the order is the modelled one (work order, the ask's stream turns). The backup
+// state (Backup) is exposed on where; the judgment at its edge is
 // card a-backup-transition-pushes-one-judgment-b's.
 
 // The backup states (Backup): reads when review exceeds working, merges when merging exceeds
@@ -84,7 +85,7 @@ func readAttempt(pr *Card) int {
 }
 
 // friendReadsFirst is the seats as the deal deals work to them, reads first: each friend's
-// ReadsFirst is the room her reads take before any work card, the reads placed on her in
+// ReadsFirst is the room her reads take before work at READER or below, the reads placed on her in
 // placed (the deal's own reads) and, while a read she may take still waits (waiting less the
 // primaries placed), the whole of her room, so the deal gives her no work card until no read
 // she may take waits. The seats given are not changed.
@@ -126,17 +127,16 @@ func friendReadsFirst(s *Snapshot, seats []FriendSeat, waiting []*Card, placed P
 }
 
 // friendDealByLadder is the tick's friend deal by the ladder (TickDeal): level by level,
-// highest first, the reads of that level (a read's level is the higher of reader and its
-// primary's, readRank) are asked of the friends first, then the work cards of that level are
-// dealt in the room the reads leave; at one level a read goes before work, so the reads of a
-// high primary come before high work and reader-level reads between high and normal work. A
+// highest first, reads at READER with producer urgency ordering within that role, then
+// work cards at the same level in the room reads leave. Urgent work comes before READER,
+// and normal and low work follow. A
 // friend with a read she may take still waiting at the level or above is dealt no work card of
 // the level (friendReadsFirst). The reclaim of the fleet's dealt-ahead cards runs once, in the
 // normal pass (friendDealPass). Its plan holds the passes in that order; a start receipt every
 // pass plans is the first's alone. out is the seats with the room each friend's reads took,
 // all of it while a read she may take still waits (FriendSeat.ReadsFirst), which the level
 // after the deal reads beside the work dealt (dealt).
-func friendDealByLadder(s *Snapshot, offer []*Card, seats []FriendSeat) (p Plan, out []FriendSeat, dealt, dealtWorking map[string]int) {
+func friendDealByLadder(s *Snapshot, offer []*Card, seats []FriendSeat, reclaim bool) (p Plan, out []FriendSeat, dealt, dealtWorking map[string]int) {
 	work := map[int][]*Card{}
 	for _, c := range offer {
 		work[cardRank(c)] = append(work[cardRank(c)], c)
@@ -173,7 +173,7 @@ func friendDealByLadder(s *Snapshot, offer []*Card, seats []FriendSeat) (p Plan,
 				}
 			}
 		}
-		if len(work[r]) == 0 && r != normal {
+		if len(work[r]) == 0 && (r != normal || !reclaim) {
 			continue
 		}
 		// a friend with a read she may take of this level or above still waiting takes no work
@@ -184,7 +184,7 @@ func friendDealByLadder(s *Snapshot, offer []*Card, seats []FriendSeat) (p Plan,
 			}
 		}
 		held := friendReadsFirst(s, cur, above, Plan{})
-		wp, wd, ww := friendDealPass(s, work[r], held, r == normal)
+		wp, wd, ww := friendDealPassObserved(s, work[r], held, reclaim && r == normal, reclaim)
 		parts = append(parts, wp)
 		for i := range cur {
 			cur[i].ReadsFirst += wd[cur[i].Name]

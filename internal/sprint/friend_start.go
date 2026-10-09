@@ -118,7 +118,9 @@ func friendUnstartedWorking(s *Snapshot, seats []FriendSeat) []Unit {
 			if c.F(FieldStarted) == "" {
 				unset = append(unset, "first_taken") // no friend has started it: its first take was no start
 			}
-			units = append(units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, row, Ready, map[string]string{"untaken_since": stamp(s.Now)}, unset...))},
+			set := consumerPriorityFields(c, s.Work.Card(c.F(PrimaryField)))
+			set["untaken_since"] = stamp(s.Now)
+			units = append(units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, row, Ready, set, unset...))},
 				Moved: fmt.Sprintf("%s %s:working -> ready (working with no start of hers: it waits ready until she starts it)", c.ID, row)})
 		}
 	}
