@@ -50,10 +50,8 @@ func TestAComputedCriticalIsShownNotYetOrdered(t *testing.T) {
 	assert.Equal(t, "priority: critical s1-3; critical (by weight, not yet ordered) s1-2", line)
 }
 
-// A read inherits its primary's level, the higher of reader and its primary's (the owner,
-// 2026-10-06: "that work stream jumps to the front of the reader and merge queue"): a high
-// primary's read is asked and dealt before high work and before a normal primary's older read,
-// and its read card carries the level a reader's queue shows.
+// A read keeps the reader role while producer urgency orders reads within that queue
+// (SPEC-SPRINT, Priority). Higher-priority work takes shared room before the reader role.
 func TestAHighPrimarysReadIsAskedAndDealtFirst(t *testing.T) {
 	t.Parallel()
 
@@ -66,11 +64,8 @@ func TestAHighPrimarysReadIsAskedAndDealtFirst(t *testing.T) {
 		}
 		tickDealAndAsk(t, w, amy)
 		reads := friendReads(w, "amy")
-		assert.Equal(t, []string{"s1-4"}, reads, "the high read first, before high work and the older normal reads")
-		assert.Len(t, friendNewWork(w, "amy"), 2, "then the high work in the room it leaves")
-		rc := w.s.Fleet.Card(ReadCardID("s1-4", 1, "amy"))
-		require.NotNil(t, rc)
-		assert.Equal(t, PriorityHigh, QueuePriority(rc), "the read card carries its primary's level")
+		assert.Empty(t, reads, "higher-priority work takes the shared room before the read role")
+		assert.Len(t, friendNewWork(w, "amy"), 3)
 	})
 
 	t.Run("the machines' ask", func(t *testing.T) {
@@ -84,7 +79,9 @@ func TestAHighPrimarysReadIsAskedAndDealtFirst(t *testing.T) {
 		askReaders(t, w, nil)
 		assert.NotNil(t, w.s.Readers.Card(ReadCardID("s1-2", 1, "reader-m1")), "the high primary's read takes the reader's one lane")
 		assert.Nil(t, w.s.Readers.Card(ReadCardID("s1-1", 1, "reader-m1")), "the older normal read waits")
-		assert.Equal(t, PriorityHigh, QueuePriority(w.s.Readers.Card(ReadCardID("s1-2", 1, "reader-m1"))))
+		rc := w.s.Readers.Card(ReadCardID("s1-2", 1, "reader-m1"))
+		assert.Equal(t, PriorityReader, QueuePriority(rc))
+		assert.Equal(t, PriorityHigh, rc.F(FieldProducerPriority))
 	})
 }
 

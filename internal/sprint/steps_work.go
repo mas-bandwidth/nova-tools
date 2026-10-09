@@ -1179,6 +1179,7 @@ func redeal(s *Snapshot, c, wc *Card, m string, q map[string]int, ri routeIndexe
 	}
 	q[m]++
 	set := nextGen(wc, m, s.Now)
+	maps.Copy(set, consumerPriorityFields(wc, c))
 	if wc.F(FieldTakeEnded) != "" {
 		set["redeals"] = itoa(wc.Int("redeals") + 1)
 	}
@@ -1352,18 +1353,9 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 	// the member's ready cards in stream turns (takeTurns), as the deal dealt
 	// them: a member holding DealAhead times its width takes its width of them
 	// from every stream alike, never one stream's lowest scores first. Its reads are taken
-	// before its work, a read being at reader priority (priority.go).
-	ready := takeTurns(s.Fleet.Cell(r.As, Ready), slices.Index(s.Members(), r.As))
+	// before work of the same priority (QueueOrder); a higher-priority work card goes first.
+	ready := QueueAdmissionOrder(s.Fleet.Cell(r.As, Ready), slices.Index(s.Members(), r.As))
 	if s.ReadCardsOn() {
-		slices.SortStableFunc(ready, func(a, b *Card) int {
-			if isRead(a) == isRead(b) {
-				return 0
-			}
-			if isRead(a) {
-				return -1
-			}
-			return 1
-		})
 		if halves && !byID {
 			// a take by count takes the cards that fit, in order: a work card that does not
 			// fit is passed over for the reads after it
@@ -1711,7 +1703,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 	return p
 }
 
-// friendNext is a friend's own take: her finish moves the oldest ready card on her row
+// friendNext is a friend's own take: her finish moves the highest-priority ready card on her row
 // (the deal dealt it ready behind her working cards: friendDeal) into working in the
 // same step, taken now, so she never waits for a tick between one card and the next
 // (the owner, 2026-10-04: "just like the fleet"). In one-shot mode (docs/SPEC-SPRINT.md
@@ -1740,6 +1732,7 @@ func friendNext(s *Snapshot, c *Card, u *Unit, prior []Unit) {
 		return
 	}
 	SortCards(ready)
+	ready = QueueAdmissionOrder(ready, -1)
 	next := ready[0]
 	set, unset := friendTaken(s, next, name)
 	u.Changes = append(u.Changes, change(Fleet, moveEntry(next, c.Row, Working, set, unset...)))
@@ -2253,6 +2246,7 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 				moves[c.ID] = m
 				q[m]++
 				set := nextGen(c, m, s.Now)
+				maps.Copy(set, consumerPriorityFields(c, s.Work.Card(c.F(PrimaryField))))
 				s.movedDeadline(m, c, set) // the new member's deadline (deadline.go)
 				if taken {
 					set["redeals"] = itoa(c.Int("redeals") + 1)

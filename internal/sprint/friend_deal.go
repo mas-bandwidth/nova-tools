@@ -428,7 +428,13 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 // friendDealPass is friendDeal, with the reclaim of the fleet's dealt-ahead cards
 // (friendReclaim) when reclaim is set: a deal in passes (a pass of the cards above reads,
 // then the reads, then the rest) reclaims once, in its last pass, after the reads.
-func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool) (p Plan, dealt, dealtWorking map[string]int) {
+func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool) (Plan, map[string]int, map[string]int) {
+	return friendDealPassObserved(s, cards, seats, reclaim, true)
+}
+
+// The urgent read-card prepass reserves capacity without moving observed start facts
+// earlier than the ordinary deal's observation phase.
+func friendDealPassObserved(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim, observe bool) (p Plan, dealt, dealtWorking map[string]int) {
 	free, lanes, seat := map[string]int{}, map[string]int{}, map[string]FriendSeat{}
 	dealt, dealtWorking = map[string]int{}, map[string]int{}
 	var up []string
@@ -448,10 +454,12 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 	// is working once she starts it), in batch mode and in one-shot mode alike
 	// and working on her row means started: a card her finish's next or a take-back's next
 	// moved there with no start of hers goes back ready (friendUnstartedWorking)
-	p.Units = append(p.Units, friendUnstartedWorking(s, seats)...)
-	starts, started := friendStartUnits(s, seats)
-	p.Units = append(p.Units, starts...)
-	maps.Copy(dealtWorking, started)
+	if observe {
+		p.Units = append(p.Units, friendUnstartedWorking(s, seats)...)
+		starts, started := friendStartUnits(s, seats)
+		p.Units = append(p.Units, starts...)
+		maps.Copy(dealtWorking, started)
+	}
 	members := s.UpMembers()
 	declared := map[string]bool{}
 	for _, c := range cards {
@@ -785,6 +793,7 @@ func friendRedealUnit(s *Snapshot, c, wc *Card, row string, set map[string]strin
 	maps.Copy(prim, set)
 	set, unset := nextGen(wc, row, s.Now), []string{"withdrawn", FieldTakenBack, FieldTakenFrom, FieldHarnessFault,
 		FieldRoute, FieldModel, FieldTokens, FieldUSD, FieldHarness, FieldDeadline}
+	maps.Copy(set, consumerPriorityFields(wc, c))
 	if left := friendsLeft(wc); len(left) > 0 {
 		set[FieldFriendsLeft] = strings.Join(left, ",") // the friend it was taken from, kept past the take
 	}

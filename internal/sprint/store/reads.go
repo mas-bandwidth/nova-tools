@@ -15,9 +15,17 @@ import (
 // shape, that row's cells, and a read set of what they hold. The cards come
 // column by column, in work order within each.
 func (st *Store) ReadCells(ctx context.Context, logical, row string, cols ...string) ([]*sprint.Card, error) {
+	cards, _, err := st.ReadQueueCells(ctx, logical, row, cols...)
+	return cards, err
+}
+
+// ReadQueueCells also returns the machine's stream-turn offset from the shape
+// already read. The packet selector and Take use the same roster, with no
+// additional exchange or record read. Non-machine rows have offset -1.
+func (st *Store) ReadQueueCells(ctx context.Context, logical, row string, cols ...string) ([]*sprint.Card, int, error) {
 	st, err := st.pin(ctx)
 	if err != nil {
-		return nil, err
+		return nil, -1, err
 	}
 	// The row's cells are read at one revision of the table: a write between
 	// the shape and the records (another step, a display cell) is read again,
@@ -26,25 +34,37 @@ func (st *Store) ReadCells(ctx context.Context, logical, row string, cols ...str
 	var last *movedError
 	r := st.retry(ctx)
 	for r.next(LoadTries) {
-		out, err := st.readCellsOnce(ctx, logical, row, cols...)
+		out, offset, err := st.readCellsOnce(ctx, logical, row, cols...)
 		var moved *movedError
 		if errors.As(err, &moved) {
 			last = moved
 			continue
 		}
-		return out, err
+		return out, offset, err
 	}
-	return nil, fmt.Errorf("the tables are busy: table %s kept changing while it was read, %d reads in %s; nothing was changed; run the verb again",
+	return nil, -1, fmt.Errorf("the tables are busy: table %s kept changing while it was read, %d reads in %s; nothing was changed; run the verb again",
 		last.table, r.tries, r.slept().Round(time.Millisecond))
 }
 
-func (st *Store) readCellsOnce(ctx context.Context, logical, row string, cols ...string) ([]*sprint.Card, error) {
+func (st *Store) readCellsOnce(ctx context.Context, logical, row string, cols ...string) ([]*sprint.Card, int, error) {
 	name := st.Names.Table(logical)
 	shapes, err := st.B.Shapes(ctx, []string{name})
 	if err != nil {
-		return nil, err
+		return nil, -1, err
 	}
 	shape := shapes[0]
+	offset, machine := -1, 0
+	if logical == sprint.Fleet {
+		for _, r := range shape.Rows {
+			if sprint.IsFriendRow(r.Key) {
+				continue
+			}
+			if r.Key == row {
+				offset = machine
+			}
+			machine++
+		}
+	}
 	var rows []ntable.Row
 	for _, r := range shape.Rows {
 		if r.Key == row {
@@ -52,24 +72,24 @@ func (st *Store) readCellsOnce(ctx context.Context, logical, row string, cols ..
 		}
 	}
 	if len(rows) == 0 {
-		return nil, nil
+		return nil, -1, nil
 	}
 	shape.Rows = rows
 	ids, err := st.B.CellIDs(ctx, []ntable.Table{shape})
 	if err != nil {
-		return nil, err
+		return nil, -1, err
 	}
 	t := sprint.NewTable(logical)
 	t.Revision = shape.Revision
 	t.SetRows([]string{row})
 	if err := st.readInto(ctx, t, ids[name], false); err != nil {
-		return nil, err
+		return nil, -1, err
 	}
 	var out []*sprint.Card
 	for _, col := range cols {
 		out = append(out, t.Cell(row, col)...)
 	}
-	return out, nil
+	return out, offset, nil
 }
 
 // CardIDs is the stored id of every card placed on a table (its logical name) at the

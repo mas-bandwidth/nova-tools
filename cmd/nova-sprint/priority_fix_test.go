@@ -15,10 +15,10 @@ func TestFixPriorityCLIAndReworkSetting(t *testing.T) {
 	ta.ok("priority s1-1 --fix --reason repair")
 	level, _ := ta.cardPriority("s1-1")
 	assert.Equal(t, sprint.PriorityFix, level)
-	for _, policy := range []string{"fix", "high", "keep"} {
-		assert.Contains(t, ta.ok("set --rework-priority "+policy), "rework-priority "+policy)
+	assert.Contains(t, ta.ok("set --rework-priority fix"), "rework-priority fix")
+	for _, policy := range []string{"high", "keep", "urgent"} {
+		code, _, why := ta.do("set --rework-priority " + policy)
+		assert.NotZero(t, code)
+		assert.Contains(t, why, "use: nova-sprint set --rework-priority fix")
 	}
-	code, _, why := ta.do("set --rework-priority urgent")
-	assert.NotZero(t, code)
-	assert.Contains(t, why, "fix, high or keep")
 }

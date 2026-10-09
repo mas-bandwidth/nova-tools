@@ -14,13 +14,13 @@ import (
 // the owner, 2026-10-06: "reads need to become a type of card"; "send out multiple consumer
 // cards in ||"; "Just remove the complexity. just deal it."). While the sprint's read_cards
 // setting is on (set --read-cards on), the tick's deal deals every read a primary in review
-// still needs AT ONCE, before its work cards, each a read card on the fleet table cut and
+// still needs AT ONCE, after urgent work and before normal or low work, each a read card on the fleet table cut and
 // dealt in one step to a different reader: a friend whose roles name reader and whose tiers
 // hold the read's tier, or a member up whose reader row (reader-<m>) is neither held nor
 // retired and serves the tier; never the attempt's own worker, never a reader that holds or
 // closed a read of the attempt (a read the machine took back spends nothing). A read holds
 // half a slot of its unit's one width (halfLoad). Its tier is its primary's, its level
-// inherited (ReadPriority). The review is unchanged: a read card's verdict closes the read on
+// READER, with producer urgency ordering reads within the queue (ReadPriority). The review is unchanged: a read card's verdict closes the read on
 // the primary as read --ok|--broken does (friendReadCloseUnit, readCardVerb), and the primary
 // leaves review only by the existing rules. The model is tla/ReadCards.tla. With the setting
 // off, the readers table's ask and the friends' read ask, as before; they retire next release.
@@ -107,7 +107,7 @@ type ReadCardCounts struct {
 }
 
 // RowCardFields is the fields of a row's counts (RowCardCounts), highest level first.
-var RowCardFields = []string{"blocker_working", "critical_working", "fix_working", "high_working", "reads_working", "normal_working", "low_working", "reads_ready"}
+var RowCardFields = []string{"fix_working", "blocker_working", "critical_working", "high_working", "reads_working", "normal_working", "low_working", "reads_ready"}
 
 // RowCardCounts is each fleet row's cards as the dashboard's segmented bar draws them,
 // highest on the left: its working cards by level, a read card as reads whatever level it
@@ -778,8 +778,7 @@ func readCardsWaitingCount(s *Snapshot) int {
 // read moves no index: the work cards of the deal move it), and the snapshot with those
 // cards placed and the cards it takes back off their rows, which the work of the same deal
 // is dealt on: every room the deal counts (memberLoads, widthRoom, friendLoad) holds the
-// reads first, at half a slot each (reads are a card priority: a read waits behind no
-// work card). With read cards off, nothing and the snapshot as it is.
+// reads at half a slot each, after the urgent work pass and before normal or low work. With read cards off, nothing and the snapshot as it is.
 func (s *Snapshot) withReadCards(seats []FriendSeat) (*Snapshot, Plan) {
 	if !s.ReadCardsOn() || s.Fleet == nil {
 		return s, Plan{}

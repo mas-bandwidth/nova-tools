@@ -381,9 +381,9 @@ func UnpinStep(r sprint.UnpinReq) Step {
 }
 
 // PriorityStep sets a card's priority, or every card of a stream's and the stream's default
-// (sprint.SetPriority): it reads the work table and the streams' control cards.
+// (sprint.SetPriority): queued work and reads inherit the change in the same commit.
 func PriorityStep(r sprint.PriorityReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "priority", Load: tables(sprint.Work, sprint.Merge),
+	return Step{Args: ArgsOf(r), Verb: "priority", Load: tables(sprint.Work, sprint.Merge, sprint.Fleet, sprint.Readers),
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.SetPriority(s, r) }}
 }
 
