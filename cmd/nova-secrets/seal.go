@@ -25,6 +25,7 @@ func runSealCLI(args []string, s streams) int {
 	stdinFlag := fs.Bool("stdin", false, "read the value from standard input instead of a hidden terminal prompt; never put it in an argument")
 	noPRFlag := fs.Bool("no-pr", false, noPRUse)
 	dryRunFlag := fs.Bool("dry-run", false, dryRunHelp)
+	resumeFlag := fs.String("resume", "", "finish pull request `N` that seal already pushed: do not read a value; wait for the gate, merge, pull and check")
 	if err := parseFlags(fs, args); err != nil {
 		return s.refuse("seal", 2, err)
 	}
@@ -46,6 +47,7 @@ func runSealCLI(args []string, s streams) int {
 		GitPath:         *gitFlag,
 		NoPR:            *noPRFlag,
 		DryRun:          *dryRunFlag,
+		Resume:          *resumeFlag,
 		UseStdin:        *stdinFlag,
 		Stdin:           s.stdin,
 		StdinIsTerminal: stdinIsTerminal,
