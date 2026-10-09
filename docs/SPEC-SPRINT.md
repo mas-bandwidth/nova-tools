@@ -6074,8 +6074,10 @@ runs it: it reads the dashboard where it is typed. Every age in it is at the sna
 The JSON is `view` `seat`, `schema` 1, `server` (the URL read), `fetchedAt`, `age` (at the
 read), `sum` (the snapshot's summary), `machine`; `friends` and `fleet`, a row each (`n`,
 `st`, `r` ready, `w` working, `wd` width; a friend's `beat`, how long before `fetchedAt` she
-last beat or `never`; a machine's `load`, present while its beat is fresh: the snapshot keeps
-no machine's beat time); `streams`, every stream with cards not all landed (`n`, `st` the
+last beat or `never`; a machine's `beat` the same when the snapshot carries `machines`
+(`name`, `beat` a time), `never` when that time is zero or the machine is not named, and
+empty when `machines` is absent; a machine's `load`, present while its beat is fresh);
+`streams`, every stream with cards not all landed (`n`, `st` the
 merge table's state or `held` while every card waits, and its `wait`, `ready`, `work`,
 `review`, `merge`, `landed` and `all`); `j`, the open judgments the snapshot carries (those
 naming a dealt card) by kind with counts; `ready` (the ready pool) and `width` (the up
@@ -6090,7 +6092,12 @@ level`), a reader with cards asked and none reading (`queue --as <reader>`), and
 holding cards whose last beat is older than 15 minutes or never came (`friend take <friend>
 --all-unstarted`). The text is `VIEW seat fetchedAt=<t> age=<a> server=<url>`, the summary,
 then a line a row, stream, the counts, a gate and `OUT <kind>: <line>; run: <next>`, and
-`out=<n> shown=<n>`.
+`out=<n> shown=<n>`. A machine line is `machine <n> <st> r=<r> w=<w> wd=<wd> load=<load> beat=<beat>`,
+and `beat` is `-` when the snapshot carried no `machines` array.
+
+`where --json` does not yet write `machines`. The fleet table's cells carry `load` and no beat
+time (the writer is `cmd/nova-sprint/reads.go`), so a dashboard's fleet rows have an empty
+`beat` until that array is in the snapshot.
 
 A snapshot older than 30 s at the read, a dashboard that does not answer or answers no
 snapshot of the sprint, and a `--dashboard` that is no address:port or http(s) URL are

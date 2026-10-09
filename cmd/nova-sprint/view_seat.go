@@ -60,12 +60,15 @@ var outRank = map[string]int{outStopped: 0, outLate: 1, outIdle: 2, outReader: 3
 
 // modelRow is a friend's or a machine's row as the snapshot carries it.
 type modelRow struct {
-	N    string `json:"n"`
-	St   string `json:"st"`
-	R    int    `json:"r"`
-	W    int    `json:"w"`
-	Wd   int    `json:"wd"`
-	Beat string `json:"beat,omitempty"` // a friend's: how long before fetchedAt she last beat, "never"
+	N  string `json:"n"`
+	St string `json:"st"`
+	R  int    `json:"r"`
+	W  int    `json:"w"`
+	Wd int    `json:"wd"`
+	// Beat is how long before fetchedAt the last beat came, or "never". A friend's always.
+	// A machine's is taken from the snapshot's machines array, and stays empty when that
+	// array is absent: where --json does not write it yet (cmd/nova-sprint/reads.go).
+	Beat string `json:"beat,omitempty"`
 	Load string `json:"load,omitempty"` // a machine's: its load, present while its beat is fresh
 }
 
@@ -185,6 +188,32 @@ func (a *app) modelGet(server string) ([]byte, error) {
 	return body, nil
 }
 
+// machineBeats is each machine's last beat from the snapshot's data.machines
+// (name, beat as a time), and whether that array was present. An absent array is
+// not "never": where --json does not write machines yet (cmd/nova-sprint/reads.go),
+// and a fleet row's beat stays empty rather than claiming a beat that was not shown.
+// A present array with a zero or missing time for a machine is never.
+func machineBeats(data json.RawMessage) (map[string]time.Time, bool) {
+	var box struct {
+		Machines json.RawMessage `json:"machines"`
+	}
+	if json.Unmarshal(data, &box) != nil || len(box.Machines) == 0 || string(box.Machines) == "null" {
+		return nil, false
+	}
+	var rows []struct {
+		Name string    `json:"name"`
+		Beat time.Time `json:"beat"`
+	}
+	if json.Unmarshal(box.Machines, &rows) != nil {
+		return nil, false
+	}
+	out := make(map[string]time.Time, len(rows))
+	for _, r := range rows {
+		out[r.Name] = r.Beat
+	}
+	return out, true
+}
+
 // modelOf is the seat's model of the snapshot, read at now: refused when the snapshot holds
 // no sprint or is older than modelMaxAge. A pure function of the bytes the page reads.
 func modelOf(body []byte, server string, now time.Time) (modelView, error) {
@@ -212,7 +241,9 @@ func modelOf(body []byte, server string, now time.Time) (modelView, error) {
 	num := func(table, row, col string) int { n, _ := strconv.Atoi(cell(table, row, col)); return n } // ignored: a cell that is no number counts 0
 	var out []modelOut
 
-	// the friends, with their beats; the machines of the fleet table
+	// the friends, with their beats; the machines of the fleet table, with the last
+	// beat the snapshot's machines array carries (absent: the row's beat stays empty)
+	machineBeat, haveMachines := machineBeats(snap.Data)
 	for _, f := range d.Friends {
 		beat := "never"
 		if !f.Beat.IsZero() {
@@ -227,6 +258,12 @@ func modelOf(body []byte, server string, now time.Time) (modelView, error) {
 	for _, m := range slices.Sorted(maps.Keys(d.Tables[sprint.Fleet])) {
 		r := modelRow{N: m, St: cell(sprint.Fleet, m, sprint.Status), R: num(sprint.Fleet, m, sprint.Ready), W: num(sprint.Fleet, m, sprint.Working), Load: cell(sprint.Fleet, m, sprint.Load)}
 		r.Wd, _ = strconv.Atoi(cell(sprint.Fleet, m, sprint.FieldWidth)) // ignored: a width that is no number counts 0
+		if haveMachines {
+			r.Beat = "never"
+			if t := machineBeat[m]; !t.IsZero() {
+				r.Beat = ageWord(at.Sub(t))
+			}
+		}
 		v.Fleet = append(v.Fleet, r)
 	}
 	for _, f := range v.Friends {
@@ -311,7 +348,7 @@ func modelText(v modelView) string {
 		fmt.Fprintf(&b, "friend %s %s r=%d w=%d wd=%d beat=%s\n", r.N, r.St, r.R, r.W, r.Wd, r.Beat)
 	}
 	for _, r := range v.Fleet {
-		fmt.Fprintf(&b, "machine %s %s r=%d w=%d wd=%d load=%s\n", r.N, cmp.Or(r.St, "-"), r.R, r.W, r.Wd, cmp.Or(r.Load, "-"))
+		fmt.Fprintf(&b, "machine %s %s r=%d w=%d wd=%d load=%s beat=%s\n", r.N, cmp.Or(r.St, "-"), r.R, r.W, r.Wd, cmp.Or(r.Load, "-"), cmp.Or(r.Beat, "-"))
 	}
 	for _, s := range v.Streams {
 		fmt.Fprintf(&b, "stream %s %s wait=%d ready=%d work=%d review=%d merge=%d landed=%d/%d\n", s.N, cmp.Or(s.St, "-"), s.Wait, s.Ready, s.Work, s.Review, s.Merge, s.Landed, s.All)

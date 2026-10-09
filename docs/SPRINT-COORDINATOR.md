@@ -21,7 +21,8 @@ nova-sprint view seat --dashboard <address:port | http(s) URL>
 
 It is one GET of the dashboard's `/api/sprint?release=all`, the snapshot the page draws, and nothing else,
 so the seat and the page never disagree: `fetchedAt`; every friend's row and every machine's (status,
-ready, working, width, a friend's last beat, a machine's load); the live streams with their column counts;
+ready, working, width, a friend's last beat, a machine's load, and a machine's last beat when
+the snapshot carries `machines`); the live streams with their column counts;
 the open judgments on the dealt cards by kind; the ready pool and the width; the gates (the heaviest open
 cards with the cards behind each, the streams held, the holds in force); and the five things most out of
 place, each one line with the command that answers it (`out`, and `nout` counting all of them). A snapshot

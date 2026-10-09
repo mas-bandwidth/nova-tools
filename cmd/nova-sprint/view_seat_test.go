@@ -171,7 +171,8 @@ func TestViewSeatNamesWhatIsOutOfPlace(t *testing.T) {
 	assert.Equal(t, map[string]int{"work failed": 2}, v.J)
 	assert.Equal(t, []modelGate{{G: "s2-stop", K: "card", B: 4, St: "waiting"}}, v.Gates)
 	assert.Equal(t, []string{"s1", "s2"}, []string{v.Streams[0].N, v.Streams[1].N}, "s3 has landed: no live stream")
-	assert.Equal(t, modelRow{N: "m1", St: "up", W: 1, Wd: 4, Load: "12.0%"}, v.Fleet[0])
+	assert.Equal(t, modelRow{N: "m1", St: "up", W: 1, Wd: 4, Load: "12.0%"}, v.Fleet[0], "no machines array: the fleet row does not invent a beat")
+	assert.Contains(t, modelText(v), "machine m1 up r=0 w=1 wd=4 load=12.0% beat=-\n")
 	assert.Equal(t, 6, v.NOut, "two idle friends, one of each other kind")
 	var kinds, nexts []string
 	for _, o := range v.Out {
@@ -196,6 +197,21 @@ func TestViewSeatNamesWhatIsOutOfPlace(t *testing.T) {
 	require.Len(t, v.Out, 4, "%+v", v.Out)
 	assert.Equal(t, outBeat, v.Out[3].K)
 	assert.Equal(t, "nova-sprint friend take bob --all-unstarted --reason 'bob has not beaten for 20m'", v.Out[3].Next)
+
+	// the snapshot's machines array is each fleet row's last beat, at fetchedAt
+	data["machines"] = []map[string]any{{"name": "m1", "beat": at.Add(-4 * time.Second)}, {"name": "gone"}}
+	body, err = json.Marshal(map[string]any{"ok": true, "data": data, "fetchedAt": at})
+	require.NoError(t, err)
+	v, err = modelOf(body, "http://dash.test/api/sprint?release=all", at)
+	require.NoError(t, err)
+	assert.Equal(t, "4s", v.Fleet[0].Beat)
+	assert.Contains(t, modelText(v), "load=12.0% beat=4s\n")
+	data["machines"] = []map[string]any{{"name": "m1"}}
+	body, err = json.Marshal(map[string]any{"ok": true, "data": data, "fetchedAt": at})
+	require.NoError(t, err)
+	v, err = modelOf(body, "http://dash.test/api/sprint?release=all", at)
+	require.NoError(t, err)
+	assert.Equal(t, "never", v.Fleet[0].Beat, "a machine the array names with no time has never beaten")
 
 	// a snapshot of no sprint is refused, naming the dashboard
 	_, err = modelOf([]byte(`{"ok":false,"data":null,"fetchedAt":null,"error":"where exited 1"}`), "http://dash.test/api/sprint?release=all", at)

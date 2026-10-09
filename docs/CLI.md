@@ -2719,7 +2719,8 @@ her as a worker's verb and at `GET /api/friend/<friend>/cards`. The contract is 
 `nova-sprint view seat [--json]` is the coordinator's whole model, read before every decision:
 one GET of the dashboard's `/api/sprint?release=all` (`--dashboard`, else
 `$NOVA_SPRINT_DASHBOARD`, else `127.0.0.1:7390`) and nothing else, so it and the page never
-disagree. It carries `fetchedAt`, every friend's and machine's row, the live streams' column
+disagree. It carries `fetchedAt`, every friend's and machine's row (a machine's last beat
+when the snapshot carries `machines`), the live streams' column
 counts, the judgments on the dealt cards by kind, the ready pool, the gates and the five
 things most out of place, each with its command (`out`, `nout`). A snapshot older than 30 s,
 or a dashboard that does not answer, is refused (exit 2) naming the dashboard:
