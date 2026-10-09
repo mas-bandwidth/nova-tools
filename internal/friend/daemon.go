@@ -535,7 +535,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if err := d.validateNativeControl(); err != nil {
 		return err
 	}
-	if err := d.legacyNativeAuthority(); err != nil {
+	if err := d.ValidateLegacyNativeAuthority(); err != nil {
 		return err
 	}
 	l := &loop{d: d, ctx: ctx, b: &bus.Bus{Store: d.Store}, silentStop: d.SilentStop, brokenAfter: d.BrokenAfter,

@@ -1294,10 +1294,13 @@ func (w world) run(c *tool.Call) *tool.Out {
 		if w.setupProfile != nil {
 			roots = append(roots, w.setupProfile.Selection.Home, w.setupProfile.Selection.ConfigDir)
 		}
-		authority := &friend.Daemon{Dir: dir, StateDir: state, Harness: c.Str("harness"), NativeBrokerDir: filepath.Join(friend.DefaultStateDir(w.home, name), "native-broker"), NativeControlDir: controlRoot, NativeControlBinding: func() (string, error) { return w.nativeControlDir(dir) }}
+		authority := &friend.Daemon{Friend: name, Dir: dir, StateDir: state, Harness: c.Str("harness"), NativeBrokerDir: filepath.Join(friend.DefaultStateDir(w.home, name), "native-broker"), NativeControlDir: controlRoot, NativeControlBinding: func() (string, error) { return w.nativeControlDir(dir) }}
 		if err := authority.ValidateNativeControlRoots(roots); err != nil {
 			return tool.Refuse(err.Error() + "; use private daemon state outside all native wall roots")
 		}
+		if err := authority.ValidateLegacyNativeAuthority(); err != nil {
+ return tool.Refuse(err.Error()+"; drain and reconcile legacy native authority before launch")
+ }
 		activeDaemon = authority // CLI preflight is native execution too; it uses this validated authority snapshot.
 	}
 

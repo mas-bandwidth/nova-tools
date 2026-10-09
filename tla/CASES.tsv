@@ -589,3 +589,4 @@ MCNativeControlAuthorityLegacy.cfg	MCNativeControlAuthority.tla	pass	-	ignore-te
 MCNativeControlAuthorityBrokenVisible.cfg	MCNativeControlAuthority.tla	invariant	NoSiblingCancellation	ignore-terminal	native-control-authority	required	-
 MCNativeControlAuthorityReachOwnerCleanup.cfg	MCNativeControlAuthority.tla	invariant	ReachDeniedThenOwnerCleanupWitness	ignore-terminal	native-control-authority	required	-
 MCNativeControlAuthorityBrokenReset.cfg	MCNativeControlAuthority.tla	invariant	NoOwnershipReset	ignore-terminal	native-control-authority	required	-
+MCNativeControlAuthorityReachStateMoveHeld.cfg	MCNativeControlAuthority.tla	invariant	ReachLiveStateMoveHeldWitness	ignore-terminal	native-control-authority	required	-

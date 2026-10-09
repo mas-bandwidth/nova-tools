@@ -19,6 +19,7 @@ type nativeControlBinding struct {
 	ID        nativeWorkID
 	Namespace string
 	Paths     []string
+	States []nativeControlStateBinding `json:",omitempty"`
 }
 type nativeControlIndex struct {
 	Version  int
@@ -180,6 +181,12 @@ func bindNativeWork(base, indexPath string, index *nativeControlIndex, canonical
 // the shared index must not let existing Started/read/settlement debt use a new
 // namespace. Missing proof in a nonempty state directory fails closed.
 func bindNativeControlState(state, root string) error {
+ return bindNativeControlStateForFriend(state,root, "")
+}
+
+func bindNativeControlStateForFriend(state, root, name string) error {
+ token := root+"\n"
+ if name != "" { token += name+"\n" }
 	path := filepath.Join(state, "CONTROL-BINDING")
 	if err := nativeControlNoSymlinkFile(path + ".lock"); err != nil {
 		return err
@@ -189,7 +196,7 @@ func bindNativeControlState(state, root string) error {
 			return "", err
 		}
 		if raw, err := os.ReadFile(path); err == nil {
-			if string(raw) != root+"\n" {
+			if string(raw) != token {
 				return "", errors.New("daemon control binding changed; preserve and reconcile its existing state")
 			}
 			return root, nil
@@ -205,7 +212,7 @@ func bindNativeControlState(state, root string) error {
 				return "", errors.New("daemon state lacks its known control binding; ownership held for reconciliation")
 			}
 		}
-		if err := atomicfile.WriteFile(path, []byte(root+"\n"), 0o600); err != nil {
+		if err := atomicfile.WriteFile(path, []byte(token), 0o600); err != nil {
 			return "", fmt.Errorf("native control state binding: %w", err)
 		}
 		return root, nil
@@ -247,6 +254,7 @@ func verifyNativeControlNamespaces(base string, index *nativeControlIndex) error
 			return errors.New("native control index has an invalid or repeated namespace")
 		}
 		expected[binding.Namespace] = true
+ if err := verifyNativeControlStates(filepath.Join(base,binding.Namespace),binding.States); err != nil { return err }
 	}
 	entries, err := os.ReadDir(base)
 	if err != nil {

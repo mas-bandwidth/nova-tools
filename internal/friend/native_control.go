@@ -72,7 +72,10 @@ func (d *Daemon) ValidateNativeControlRoots(roots []string) error {
 		}
 	}
 	if d.NativeControlBinding != nil && d.StateDir != "" {
-		if err := bindNativeControlState(d.StateDir, d.NativeControlDir); err != nil {
+		if err := bindNativeControlOwnerState(d.Friend, d.StateDir, d.NativeControlDir); err != nil {
+			return nativeControlHold{err}
+		}
+		if err := bindNativeControlStateForFriend(d.StateDir, d.NativeControlDir, d.Friend); err != nil {
 			return nativeControlHold{err}
 		}
 	}
@@ -90,10 +93,10 @@ func (d *Daemon) validateNativeControl() error {
 	return d.ValidateNativeControlRoots(roots)
 }
 
-// legacyNativeAuthority is a startup fence, not a migration. A sidecar reopens
+// ValidateLegacyNativeAuthority is a startup fence, not a migration. A sidecar reopens
 // its original FIFO pathname, so moving a live channel would lose cancellation.
 // Preserve its files and ownership until the old owner drains/reconciles them.
-func (d *Daemon) legacyNativeAuthority() error {
+func (d *Daemon) ValidateLegacyNativeAuthority() error {
 	if d.NativeControlDir == "" {
 		return nil
 	}
@@ -129,10 +132,16 @@ func (d *Daemon) legacyNativeAuthority() error {
 				}
 				continue
 			}
-			mark, claimed := ReadLaneMark(d.Dir, entry.Name())
-			if claimed && !mark.Ended {
-				return errors.New("legacy native lane claim remains; drain and reconcile it before launching")
+			laneInfo, laneErr := os.Lstat(laneMarkPath(d.Dir, entry.Name()))
+			if laneErr != nil && !errors.Is(laneErr, os.ErrNotExist) {
+				return errors.New("legacy native lane claim cannot be inspected; preserve and reconcile it before launching")
 			}
+            if laneErr == nil {
+                if !laneInfo.Mode().IsRegular() { return errors.New("legacy native lane claim is unreadable or malformed; preserve and reconcile it before launching") }
+                mark,claimed := ReadLaneMark(d.Dir,entry.Name())
+                if !claimed || mark.Who == "" { return errors.New("legacy native lane claim is unreadable or malformed; preserve and reconcile it before launching") }
+                if !mark.Ended { return errors.New("legacy native lane claim remains; drain and reconcile it before launching") }
+            }
 			if _, err := os.Lstat(runReceiptPath(d.Dir, entry.Name())); errors.Is(err, os.ErrNotExist) {
 				if _, anchorErr := os.Lstat(runReceiptPath(d.Dir, entry.Name()) + ".anchor"); errors.Is(anchorErr, os.ErrNotExist) {
 					continue

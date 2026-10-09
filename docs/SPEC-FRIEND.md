@@ -83,13 +83,21 @@ cannot hide older authority. It maps canonical paths and verified live
 physical aliases to one stable namespace. A changed device/inode at an existing
 path, missing namespace/index, corrupt binding, or lost known state proof holds
 launch for reconciliation. The friend-specific state also records its selected
-namespace, so losing an index cannot silently mint new ownership for saved debt.
+namespace and friend. The namespace index binds each friend to one physical
+state directory, mirrored by a private state record; missing, corrupt, replaced
+or unindexed state ownership holds. A different HOME or --state-dir cannot
+hide older Started/stop-return debt in a fresh empty directory. Two friends
+cannot use one durable state directory. A verified physical alias may reuse
+the same state; migrations require explicit reconciliation. Losing an index
+cannot silently mint new ownership for saved debt.
 Caller HOME changes and casefold/mount aliases do not select independent local
 claim authorities. This local account protocol does not establish cross-host
 NFS ownership or reconstruct arbitrary deletion of all durable records.
 
 The daemon checks all work, config, job and read grants before launch, including
-native CLI capability preflight. Physical containment uses filesystem identity
+native CLI capability preflight. Legacy ownership is inspected before that
+preflight and at startup; only an absent lane marker is absent authority, while
+a present malformed, unreadable or nonregular marker holds. Physical containment uses filesystem identity
 for existing roots in both directions; an unresolved caller grant refuses. The wall
 checks again against its completed policy, including HOME, temp, executable and
 system recursive reads. Both control and durable state roots are absolute,

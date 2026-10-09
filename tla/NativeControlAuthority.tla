@@ -9,15 +9,15 @@
 EXTENDS Naturals
 CONSTANTS UnsafeVisibleRoot, UnsafeResetBinding, LegacyDebt
 VARIABLES bound, owner, live, native, owed, request, foreignCancel, denied, cleaned,
-          indexGood, objectSame, stateGood, resetBad
+          indexGood, objectSame, stateGood, resetBad, stateMoved
 vars == <<bound, owner, live, native, owed, request, foreignCancel, denied, cleaned,
-          indexGood, objectSame, stateGood, resetBad>>
-extra == <<indexGood, objectSame, stateGood, resetBad>>
+          indexGood, objectSame, stateGood, resetBad, stateMoved>>
+extra == <<indexGood, objectSame, stateGood, resetBad, stateMoved>>
 BindingGood == indexGood /\ objectSame /\ stateGood
 Init == /\ bound = FALSE /\ owner = TRUE /\ live = FALSE /\ native = FALSE
         /\ owed = LegacyDebt /\ request = FALSE /\ foreignCancel = FALSE
         /\ denied = FALSE /\ cleaned = FALSE
-        /\ indexGood = TRUE /\ objectSame = TRUE /\ stateGood = TRUE /\ resetBad = FALSE
+        /\ indexGood = TRUE /\ objectSame = TRUE /\ stateGood = TRUE /\ resetBad = FALSE /\ stateMoved = FALSE
 BindRoot == /\ BindingGood /\ owner /\ ~owed /\ ~bound /\ bound' = TRUE
             /\ UNCHANGED <<owner, live, native, owed, request, foreignCancel, denied, cleaned>>
             /\ UNCHANGED extra
@@ -48,21 +48,25 @@ Restart == /\ ~owner /\ owner' = TRUE
             /\ UNCHANGED extra
 LoseIndex == /\ bound /\ indexGood /\ indexGood' = FALSE
              /\ UNCHANGED <<bound, owner, live, native, owed, request, foreignCancel, denied, cleaned,
-                            objectSame, stateGood, resetBad>>
+                            objectSame, stateGood, resetBad, stateMoved>>
 ChangeIdentity == /\ bound /\ objectSame /\ objectSame' = FALSE
                   /\ UNCHANGED <<bound, owner, live, native, owed, request, foreignCancel, denied, cleaned,
-                                 indexGood, stateGood, resetBad>>
+                                 indexGood, stateGood, resetBad, stateMoved>>
 LoseStateProof == /\ bound /\ stateGood /\ stateGood' = FALSE
                   /\ UNCHANGED <<bound, owner, live, native, owed, request, foreignCancel, denied, cleaned,
-                                 indexGood, objectSame, resetBad>>
+                                 indexGood, objectSame, resetBad, stateMoved>>
 UnsafeRebind == /\ UnsafeResetBinding /\ owner /\ bound /\ ~BindingGood
                 /\ resetBad' = TRUE /\ indexGood' = TRUE /\ objectSame' = TRUE /\ stateGood' = TRUE
-                /\ UNCHANGED <<bound, owner, live, native, owed, request, foreignCancel, denied, cleaned>>
-Next == BindRoot \/ BeginOwnedGroup \/ AdmitNative \/ NativeWrite \/ OwnerCleanup \/ AnchorSelfSignal \/ Crash \/ Restart \/ LoseIndex \/ ChangeIdentity \/ LoseStateProof \/ UnsafeRebind
+                /\ UNCHANGED <<bound, owner, live, native, owed, request, foreignCancel, denied, cleaned, stateMoved>>
+StateMove == /\ BindingGood /\ owner /\ bound /\ live /\ ~native
+             /\ stateGood' = FALSE /\ stateMoved' = TRUE
+             /\ UNCHANGED <<bound, owner, live, native, owed, request, foreignCancel, denied, cleaned, indexGood, objectSame, resetBad>>
+Next == BindRoot \/ BeginOwnedGroup \/ AdmitNative \/ NativeWrite \/ OwnerCleanup \/ AnchorSelfSignal \/ Crash \/ Restart \/ LoseIndex \/ ChangeIdentity \/ LoseStateProof \/ StateMove \/ UnsafeRebind
 Spec == Init /\ [][Next]_vars
 NoSiblingCancellation == ~foreignCancel
 NoOwnershipReset == ~resetBad
 LegacyOwnershipHeld == owed => (~bound /\ ~native /\ ~live)
 NativeNeedsBoundRoot == native => bound
+ReachLiveStateMoveHeldWitness == ~(stateMoved /\ live /\ bound /\ ~native)
 ReachDeniedThenOwnerCleanupWitness == ~(denied /\ cleaned /\ ~foreignCancel)
 =============================================================================
