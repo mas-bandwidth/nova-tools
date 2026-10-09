@@ -4,6 +4,241 @@
 
 - docs: `nova-secrets gate`'s exit contract matches the binary — a verdict prints `GATE FAILED` at exit 1, and a gate that could not run prints `SECRETS GATE REFUSED` at exit 2 (docs/CLI.md, docs/SPEC-SECRETS.md)
 
+## v1.1.0 — 2026-10-08
+
+Cut from 2e73c44df778b66adf141a67a0b3f6e30b43a0e8. 190 pull requests since v1.0.0.
+
+SHA256SUMS digest: 33869bd31f5fe008b9c9ca629f16d7698971d3ec41e9280a4fd06e2e8fc138cb
+
+Adopt this release with `--expect-sums 33869bd31f5fe008b9c9ca629f16d7698971d3ec41e9280a4fd06e2e8fc138cb`.
+
+Dogfood gate waived: land and expand (the owner's ruling, 2026-10-06): dogfood gate waived; the recovery journeys and the spend reconciliation are not yet run at this revision
+
+Recovery journeys incomplete, gate waived: land and expand (the owner's ruling, 2026-10-06): dogfood gate waived; the recovery journeys and the spend reconciliation are not yet run at this revision
+
+- TestEveryFriendFailureShowsWithinItsBound/harness closed: down within 1 minute: not-run (no --journeys evidence)
+- TestEveryFriendFailureShowsWithinItsBound/session silent: down within 15 minutes of bus silence: not-run (no --journeys evidence)
+- TestEveryFriendFailureShowsWithinItsBound/usage limit: down until the reset, woken after: not-run (no --journeys evidence)
+- TestEveryFriendFailureShowsWithinItsBound/bus credential revoked: an alarm on the first failed send: not-run (no --journeys evidence)
+- TestEveryFriendFailureShowsWithinItsBound/hold: no card left on him, his cards dealt elsewhere: not-run (no --journeys evidence)
+
+Spend gate waived: land and expand (the owner's ruling, 2026-10-06): dogfood gate waived; the recovery journeys and the spend reconciliation are not yet run at this revision (window 2026-09-28T00:00:00Z..2026-10-08T03:49:31Z)
+- unread: --spend-store <addr> names no sprint store, so the recorded spend cannot be read
+
+- #4561 CHANGELOG.md: the v1.0.0 section the cut wrote
+- #4548 1.0.1: self-talk reports source lines and explicit skipped runs
+- #4550 Make fuse lift remedies preserve shell arguments
+- #4553 ci: check hosted deals at the actual workflow shard counts
+- #4537 cairn: report the stored append timestamp on retry
+- #4551 fix(cairn): read flat records and refuse missing inputs
+- #4547 1.0.1: memory verify honors exclusions and counts findings
+- #4563 nogh: the no-gh shim's package lives in internal/ (nova-swarm's pass, 1)
+- #4507 ci: the two-minute cap reaches .yaml workflows and every make -timeout
+- #4564 release: repair release-upload draft lookup, require release notes, and witness fake
+- #4567 table: per-tick invariant check and stall row in watch (sprint pass, layer 1c)
+- #4571 ci: gate model evidence on bounded TLC records
+- #4573 docs: reject parked tool names across active documentation
+- #4566 nova-ci cost: one COST line per CI run from the forge's job listing
+- #4572 table: exercise epoch writers and receipt replay across fixed random seeds
+- #4522 tokens: pipeline month ledger writes and drop superfluous ping
+- #4570 check: add spelling verb with code-fence blanking (Rule 2/4 fold-in)
+  - members: #821
+- #4577 fix(tokens): validate lock paths before PID writes
+  - members: #4516
+- #4578 fix(ci): enforce the existing generality row ceiling on updates
+  - members: #4569
+- #4574 table: the epoch harness diffs the store image after every accepted action
+- #4576 fix(config): inspect every pipelined read result
+  - members: #4520
+- #4580 fuse: compose atomic writes and exclusive initialization
+  - members: #4515, #4528
+- #4581 fix(release): preserve literal Unix filename backslashes
+- #4579 docs(secrets): make first-run paths and fixture explicit
+- #4582 fix(swarm): keep batch on live card inputs and verify examples
+  - members: #3594, #4565, #4513, #4523
+- #4590 feat(table): implement atomic batch apply (ns_table_apply) and set read
+- #4590 test(table): add exhaustive receipt replay and dual-store batch tests
+- #4590 fix(table): pre-check key types before staged writes in ns_table_apply
+- #4583 test(bus): optimize test fixtures and drop redundant sleeps (13.2s -> 8.7s)
+- #4586 test(check): fixture caching, fast byte pre-checks, and golden repo template (9.9s -> 3.0s)
+- #4587 test(ci): reuse repoTree index, cache go list, and fast token pre-filters (7.2s -> 4.8s)
+- #4595 docs: complete the live tool roll call and generalize swarm guidance
+- #4590 fix(table): resolve Stella 5-point contract failures for table batch
+- #4589 table: validate random shell traces against TableSession
+- #4585 test(update): tighten test bounds and eliminate redundant binary builds (6.6s -> 4.7s)
+- #4590 feat(table): add batch property tests and receipt replay verification
+- #4596 test(version): inject version seam to parallelize version tests (#4339)
+- #4591 tla: the Python checkers and the TLC runner become Go
+- #4590 feat(table): implement atomic batch apply (ns_table_apply), CLI batch verb, property tests, and receipt replay
+- #4610 fix(table): exact-case path-aware raw validation, parallel witness, and isolated replay oracle
+- #4610 fix(table): reject raw null values across all schema paths and harden replay oracle
+- #4610 fix(table): apply Stella strict canonical schema patch
+- #4685 feat(ci): report run cost to ci:cost and ratchet spin ceiling (#4328)
+  - members: #4328
+- #4610 docs(swarm): restore card-pipeline phrasing in SPEC-SWARM.md
+- #4699 fix(dev): two tests red at dev's tip (SPEC-SWARM pipeline phrases; ns_table_ prefix literal)
+  - members: #4595
+- #4610 fix(table): commit batch via finish snapshot and harden manifest validation
+- #4701 revert: #4685 (ci cost step and spin ceiling)
+  - members: #4685
+- #4610 fix(table): batch commits through T.finish, the one commit path
+- #4610 fix(table): batch and read-set refusals name operation, member, state and a runnable next command
+- #4679 fix(table): bound staged row-rank writes for large tables (#4474)
+- #4669 test(ci): enforce TestNoWholeTreeGoTestInDocs class test (closes #4336)
+- #4610 fix(table): one set of bounds for the server, the Go validator and the spec
+- #4610 fix(table): the server is as strict as the Go validator, and the validator as the server
+- #4610 fix(table): a wrong-type key is a named WRONGTYPE refusal from every function
+- #4610 fix(table): nova-table batch prints what its documents say, and its documents say what it prints
+- #4610 test(table): the batch tests carry present-tense headers, plain names and assertions
+- #4610 fix(table): name the refusal of an object where a scalar belongs
+- #4602 feat(config): the inventory verb, an ansible dynamic inventory from the configuration store
+  - members: #820
+- #4610 test(table): the reader's round-four probes as tests; a drift names the cell to list
+- #4606 fix(swarm): resolve help stand-aside and workercheck flag residue in doctor (#4582)
+  - members: #4582
+- #4705 tla: a run record's fingerprint covers what its case reads
+- #4710 functional tests in a container: the image and the runtime role (layers 1 and 2)
+- #4711 functional tier in a container: make test-functional-container and its reaper (tools/functionalrun)
+- #4718 refactor(testguard): Guard seam and parallel tests
+- #4712 test(serial): convert internal/safepath to Policy seam and parallel execution
+- #4716 refactor(sandbox): availability seam and parallel tests
+- #4717 refactor(seatcred): Selection lookup seam and parallel tests
+- #4724 refactor(ci): SourceSeams seam and parallel test
+- #4610 feat(table): implement atomic batch apply (ns_table_apply) and set read (#4590)
+  - members: #4590
+- #4741 nova-sprint play --simulation: the six locked chances in one setting
+- #4742 nova-sprint where --watch: redraw in place, tables only
+- #4745 sprint: IndexOps(before, after) as pure Go, with its property test
+- #4738 test(fn): verify foundation facts F1 to F10 on the version the container runs (Redis 8.0.5)
+- #4743 sprint: events as pure Go: ParseEvent, and lines to rule keys
+- #4746 sprint: refmodel: today's scanning rules as pure functions over a snapshot
+- #4744 one Redis version, 8.10.2, on sprint/foundation
+- #4740 Redis: one version everywhere (8.10.2)
+- #4748 sprint: the shared types, partial snapshot, read plans and rule registry of version 2.1 (IT05)
+- #4747 sprint: the step builder: cut any set of entries into steps inside Layer 1's bounds
+- #4768 testredis: OnlyFCALL, a go-redis hook that fails a test on any write command other than FCALL (E7)
+- #4753 sprint: IT07, the fleet rules R1, R2, R6, R7
+  - members: #4748
+- #4751 sprint: IT09, the review rules R8, R9, R10
+  - members: #4748
+- #4750 sprint: IT11, the held rule R16 and the holder table
+- #4767 testredis: RoundTrips, a go-redis hook that counts round trips (E8)
+- #4754 sprint: IT06, the judgment and notice tables, and Answerable
+- #4752 sprint: IT08, the position rules R3, R4, R5, R15, R19
+- #4749 sprint: IT10, the time rules R11, R12, R13, R14, R17, R18, and the parked key
+  - members: #4754
+- #4769 testredis: Image and Diff, the whole-store image by SCAN, TYPE, content and expiry (E6)
+  - members: #4768
+- #4770 testredis: Far, a TCP proxy that delays each request, for tests at distance (E9)
+- #4775 tla: SetTable.tla, the Layer 1 model at contract revision 4
+- #4780 tla: SetTableLog.tla, the Layer 2 model, at Layer 1 revision 4
+- #4771 sprint: IT24, SprintEvents.tla, the model of the upper layers
+- #4779 tset: Layer 1, the table, at contract revision 4 (activation)
+- #4784 fn: fact F12, the Functions sandbox has no setmetatable at load time (E12)
+- #4766 sprint: IT12, the one write path: Go half and Lua skeleton
+- #4782 sprint: E10, the remove planner, pure Go
+- #4783 sprint: IT06 follow-up (R38), Printed and Answerable leave out what DROPPING refuses (H8)
+- #4786 sprint: IT10 follow-up (R38), R17's look closes, rearms and guards its inputs (H7, H14, H16, H17)
+- #4788 sprint: IT13 to IT16 and IT30, integrated on Layer 1 and IT12 (the stack)
+- #4796 sprint: the deal works every stream in parallel; card's needs as a preview (dogfood findings)
+- #4798 nova-sprint: no table prefix, ever; clear and teardown confirm the sprint's name; the STOPPED line
+- #4799 nova-sprint: the prefix refusals say why; the reminder header; sprintsize refuses to tear down an existing sprint
+- #4785 sprint: the owed tests R28 (needAll every-row loop) and R32 (step builder sizing sites)
+- #4787 docs: FOUNDATION-TESTING.md (E11), the tiers, the class tests and the four store helpers
+- #4801 sprint: IT08's reached judgment carries a cause J accepts (H13)
+- #4802 sprint: the view's summary line reads STOPPED, and nothing more, while the machine is stopped
+- #4789 sprint: IT18, the verb driver and the machine's verbs
+- #4804 nova-table: the refusal test names the present projection list
+- #4800 sprint: the deal's order pinned in the model, the comparison and the held count; inbox --open lists whole needs
+- #4792 sprint: IT17, the tick loop
+  - members: #4799
+- #4803 sprint: every rule's judgment note passes J: causes, and the three types J refused
+- #4805 sprint: the view hides a stream with no cards, as the spec says
+- #4781 tset: protect read caches and seal combined plans; the exact-line capability; S19 planned counts; the per-dispatch walk replaced
+- #4807 sprint: the real rules' steps apply on the twin: jopen reads, the set guard, the counter, the time writes, the version guard (the integration's gaps)
+- #4810 tset, ntable: a table property an entry can write in a step (prop, propguard, props)
+- #4811 sprint: a done sprint stops its machine and tells the coordinator (dogfood finding)
+- #4809 sprint: the deal goes round the fleet and the ask goes round the readers by a rolling index on each table (Glenn's rule)
+- #4814 sprint: the cycle check walks the gates' implicit needs; check reports a cycle (dogfood finding)
+- #4815 nova-table: watch prints no stale counter (owner's finding)
+- #4813 tset: Layer 1's lifecycle: define and teardown on a store, through the library, namespaces confined to {name}: (contract amendment)
+- #4817 tla: the deal's round invariant and its witness; the sprintevents records at the rolling index
+- #4818 sprint: presence brings every fresh member up in one tick, so the deal goes round the whole fleet (dogfood finding)
+- #4812 tset: Layer 2, the log, from the draft, at contract revision 1 with the decisions (the composed and sprint profiles load)
+- #4820 sprint: every placement of a card on a member goes through the rolling index: redeals, levelling, the withdrawn card (dogfood finding)
+- #4821 sprint: the simulation batches: one take, one finish, one read per machine per tick (Glenn's ruling)
+- #4822 sprint: a member is a fleet machine with a width; the deal fills to width in one step round the fleet (Glenn's ruling)
+- #4823 sprint: the fleet's width column totals (owner's finding)
+- #4825 sprint, nova-table: tables and rows always show, empty or not (owner's ruling)
+- #4826 sprint: the loop wakes on the log, not the clock (owner's finding: no 1 s gaps)
+- #4828 sprint: every row of every table moves every tick; stream turns for the deal, the ask and the accept; the move cap gone (owner's rule)
+  - members: #4823, #4825, #4826
+- #4830 sprint: the rolling indexes continue across plans on the store, pinned by exact sequences (dogfood finding, third pass)
+- #4831 tla: DirtyTick.tla, the model of the dirty-driven tick (the owner's shape, 2026-09-30)
+- #4832 sprint: verify member down redeals and levelling go round the fleet (E15)
+- #4846 sprint: three comforts for the coordinator (add --brief-file, no --epoch for its verbs, inbox --json judgments)
+- #4843 sprint: the tick-end wake, accept --read-ok and the done stop, on the present build (lifted from #4806)
+- #4847 nova-work v1: the tree, the layers, the tracer bullet (import dry-run of one repo, export, diff)
+- #4844 fleet: H0 machine self and width from nova-config; H1 fleet sync from the inventory
+- #4855 docs: delete ROADMAP.md (out of date; a roadmap is rendered from nova-work's tree, never written by hand)
+- #4852 card lint: every rule the coordinator gives a child; add lints every brief; template --name card
+- #4857 sprint: follow-ups from PR #4846 (inbox what/due/waited assertions, stale-epoch merge test, derive done from Machine.Done)
+- #4859 deprecated: delete the tools a living tool replaced; keep nova-work
+- #4841 swarm: nova-swarm member, the fleet member loop on the fleet table (the layer above the tick)
+- #4862 card lint: the exit-codes sentence is the banner's line again (fleet sync added its tail); the class test that holds them equal fired on foundation
+- #4866 Remove dead code: 66 packages with no living importer
+- #4865 Functional tier green: the whole-fleet test made deterministic, the webhook no-poll allowlist
+  - members: #4493, #4852
+- #4869 Tidy after the dead-code removal: go.mod, two stale models, stale references
+- #4875 Every tool's banner states its exit codes and every verb's -h shows them; nova-work --version
+  - members: #4866
+- #4876 Remove dead code, second pass: wake, jobs, lanes, pull pool, play, decide and events halves (-34,030 lines)
+- #4877 ci: the generality rule reads every living text file, not only .go
+- #4878 ci: the promotion skip covers the merge queue and the landed push (finishes #4871)
+  - members: #4871, #4853
+- #4879 Four bugs from a cold rating of the tools: lint exit, card template, quickstart verdict, session model
+- #4883 nova-secrets --dry-run (seal, place, seat inject); nova-update status and apply --dry-run
+- #4893 typedrec: the seal allowlist row follows the function (carry -> preflight, PR 4883)
+- #4881 worklang: keep the reader only; delete the work-set half and nova-tokens fold --units
+- #4882 comfort: nova-sprint mem twin and examples; nova-swarm card template and examples (first cold rating)
+- #4930 fuse: address coordinator review feedback on assertion ordering and messages
+- #4902 ci: dead code functional class test with 3-OS union and shrink-only ledger
+- #4964 card contract: the frame, the claude and plain shims, the finish judged in one place
+- #5090 nova-sprint: rework --tier raises the tier a card is dealt on
+- #5091 nova-sprint: fleet sync removes a member whose machine row is gone
+- #5094 nova-swarm: a budget-ended run says which budget and at what count
+- #5094 nova-swarm: a route's budget can be dollars, read from the harness's own cost
+- #5094 swarm: the fake sqlite fixtures carry the live read's cost column
+- #5111 ci: pkgselect maps a changed non-Go file to the packages whose tests read it
+- #5126 sprint: the friends table has the fleet's columns but load, from job cards friend sync reads
+- #5171 nova-sprint: the ETA goes dirty on add, release and drop
+- #5199 native: a launch the provider refused is a provider failure, never no-result
+- #5199 sprint: a provider's refusal rests every route of it, one judgment per provider
+- #5199 nova-sprint run: poll each provider's balance; a providers table in where --json
+  - members: #44189
+- #5199 sprint: a provider out of credit is excluded until its balance returns; all out stops the sprint
+- #5199 docs: a provider out of funds is never a mystery failure
+- #5199 sprint: one rest per provider; low on funds never stops the sprint; a refusal belongs to its launch's rest window
+- #5199 native: only a session refusal for credit is a provider failure by itself
+- #5199 docs: the two rests of a provider's funds, in the present tense
+- #5199 sprint: a refused take's rest ends only on funded or a payment seen
+- #5199 sprint: a payment over the read before it pinned; a card ready on a resting route is withdrawn, never taken
+  - members: #5205
+- #5205 sprint: the stop line says over zero and the refusal's balance; one withdrawal path with its reason noted; the take reads only the provider's rest
+- #5199 Merge PR #5205: A provider out of funds is never a mystery failure
+- #5205 nova-sprint: the bound composed with a provider's rest for its funds
+- #5327 Integration 2026-10-04: the day's PRs onto dev
+- #5330 Promote the sprint branch to dev: one base, gated green
+- #5397 sandbox, secrets: the bare form keeps the caller's group; a reseal passes the gate; the mark is pinned; profiles are sensitive
+- #5399 sprint: the tick accepts a primary whose reads are all ok and tells the seat; no hand step
+- #5400 sprint: a reader one tier below may take a read card, at or above first
+- #5402 dashboard: rows say how many of their cards are reads
+- #5403 sprint: fleet-tiers and friends-tiers settings say which tiers each side may take, default all
+- #5404 sprint: a read card goes to the cheapest reader that may take it
+- #5411 refmodel: no coverage floor for the old read path's level-reads step while read cards are on
+- #5407 sprint: tick --shadow says why each read waits
+- #5414 revert: land wait-replaces-sentinel-b (audited BAD; four base tests red)
+
 ## v1.1.0 — 2026-10-06
 
 Cut from the head of sprint/mechanical-2026-10-02, promoted to dev and main. The sprint's landings carry no pull request numbers: each lands as `land <card> (sprint stream <stream>)`, so the entries below name the card.

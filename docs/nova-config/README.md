@@ -71,15 +71,37 @@ the `nova_read` role, when it exists, is granted read on every table.
 The role that runs migrate must own every table in schema config. Before it
 applies anything, migrate reads the owners from the catalog and, when another
 role owns a table and a migration is pending, refuses (exit 1) naming the
-role, each table with its owner, and the one-time remedy, one `ALTER TABLE
-config."<table>" OWNER TO "<role>";` per table, which a role with the owners'
-rights runs in psql; migrate never changes an owner itself. `migrate
+role, each table with its owner, and the one-time remedy: when one other role
+owns schema config and every table in it, the same `migrate` as that role
+(`NOVA_PG_PASSWORD_ENV=NOVA_PG_<OWNER>_PASSWORD nova-config migrate --pg
+postgres://<owner>@...`, nova_config's password under
+`NOVA_PG_CONFIG_PASSWORD`), since the store is not misowned and the run was as
+the wrong role (the fleet's case on 2026-10-08: nova_admin ran it, nova_config
+owned it); otherwise one `ALTER TABLE config."<table>" OWNER TO "<role>";` per
+table, which a role with the owners' rights runs in psql. migrate never
+changes an owner itself. `migrate
 --dry-run` adds the same finding to the ledger it prints: `MIGRATE NOT-OWNED`
 per table the role does not own, `MIGRATE WOULD-REFUSE` with that refusal
 when migrate would refuse, and `role=<role> ready=yes|no` on its summary; it
 exits 0 when `ready=yes` and 1 when `ready=no`, so a play or script gating on
-it stops there (no refusal line: nothing was attempted). A `--file` store has
-no roles, so there the check is a no-op.
+it stops there (no refusal line: nothing was attempted). The summary also says
+`owner=<role>` when one role owns schema config and every table in it
+(whatever role is connected), `owner=mixed` when the tables have more than one
+owner and `owner=none` before the first migration makes the schema: the seat
+play (`fleet/tools.yml`) runs the dry run as the owner before its window and
+refuses a store not owned whole by that role, naming the tables. A `--file`
+store has no roles, so there the check is a no-op.
+
+`migrate --window` is the migrate of the seat play's stopped window: it
+refuses, applying nothing, while any other nova role's session holds the
+database (`pg_stat_activity`: a nova-sprint server or member still running
+would run under a migration it may not tolerate), naming each session (`role
+pid= app=`); the dry run prints one `MIGRATE SESSION` line per session and
+`sessions=<n>`, and refuses nothing. Without the flag migrate is as before
+(the bootstrap of a fresh store, a deployer that is not the coordinator).
+Migrations are forward-only: there is no down migration, `migrate` never
+undoes one, and the seat play's rollback keeps the schema and restarts the
+build of before on it.
 
 `status` is where things stand:
 

@@ -186,10 +186,15 @@ func Add(s *Snapshot, r AddReq) Plan {
 		p.Places = append(p.Places, pl)
 	}
 	var head []Change
+	reopen := false
 	switch {
 	case ctl == nil:
 		head = append(head, change(Merge, createEntry(CtlID(r.Stream), r.Stream, Ctl, 0,
 			map[string]string{"kind": "stream", "state": StreamWaiting, "since": stamp(s.Now)})))
+	case ctl.F("state") == StreamLanded && StopHasLanded(s, r.Stream):
+		// a card past a landed stop reopens the stream; no stop, and it comes back waiting
+		reopen = true
+		head = append(head, change(Merge, setEntry(ctl, map[string]string{"state": StreamWorking, "since": stamp(s.Now)})))
 	case ctl.F("state") == StreamLanded:
 		head = append(head, change(Merge, setEntry(ctl, map[string]string{"state": StreamWaiting, "since": stamp(s.Now)})))
 	}
@@ -619,6 +624,24 @@ func Add(s *Snapshot, r AddReq) Plan {
 	}
 	// More work: the sprint is not done. An add that only opens a stream
 	// admits no card, and leaves it done.
+	if reopen && admits(p) {
+		var stopID string
+		var admitted, extra []string
+		var got []float64
+		for _, a := range in {
+			extra = append(extra, a.id)
+			if !planCreates(p, a.id) {
+				continue
+			}
+			got = append(got, a.score)
+			if a.sent || a.gate {
+				stopID = a.id
+				continue
+			}
+			admitted = append(admitted, a.id)
+		}
+		p = reopenAdd(p, s, r.Stream, r.Who, stopID, admitted, got, extra)
+	}
 	if admits(p) {
 		for _, o := range s.Open {
 			if o.Note.Type == NSprintDone {
@@ -1207,11 +1230,12 @@ func named(sel Sel) bool { return len(sel.IDs) > 0 || sel.Only != nil }
 // name, or names and is not the card's live one.
 func liveGen(verb string, c *Card, gens map[string]int) string {
 	g, ok := gens[c.ID]
+	live := max(c.Int("gen"), 1) // legacy first read cards omit gen; their lease is g1
 	switch {
 	case !ok:
-		return fmt.Sprintf("names no generation; the live one is %d: %s %s@%d", c.Int("gen"), verb, c.ID, c.Int("gen"))
-	case g != c.Int("gen"):
-		return fmt.Sprintf("stale: generation %d is not the live one (%d): the card was dealt again to %s", g, c.Int("gen"), orDash(c.Row))
+		return fmt.Sprintf("names no generation; the live one is %d: %s %s@%d", live, verb, c.ID, live)
+	case g != live:
+		return fmt.Sprintf("stale: generation %d is not the live one (%d): the card was dealt again to %s", g, live, orDash(c.Row))
 	}
 	return ""
 }
@@ -1732,19 +1756,22 @@ func deadlineFailed(report string) bool {
 }
 
 // lateFinishWhy is why a late report is refused: only a LAND with its head or a HOLD (a
-// failed report the finish routes as failed work) finishes a failed attempt; a provider
-// failure, a take with no result, a staging refusal and a lane cap are the deadline's
-// failure again.
+// failed report that says the word) finishes a failed attempt. A FAIL, a provider failure, a
+// take with no result, a staging refusal and a lane cap are the deadline's failure again, and
+// the very report the attempt failed on already is a retry of the finish that failed it
+// (store.TestARestartOnADumpWithoutTheResultsCannotAnswerTheRetry), not a late report.
 func lateFinishWhy(c *Card, r FinishReq) string {
-	if !r.Failed || r.Decided != "" {
-		if r.Decided != "" {
-			return "failed already (" + placeWord(c) + "): a late report carries no attempt decision"
-		}
+	if r.Decided != "" {
+		return "failed already (" + placeWord(c) + "): a late report carries no attempt decision"
+	}
+	if !r.Failed {
 		return ""
 	}
-	_, capped := ParseLaneCap(r.Report)
-	if IsProviderFailure(r.Report) || IsNoResult(r.Report) || IsStagingRefusal(r.Report) || capped {
+	if !reportHolds(r.Report) {
 		return "not working (it is " + placeWord(c) + "): its attempt failed already, and this report is no LAND or HOLD"
+	}
+	if strings.TrimSpace(r.Report) == strings.TrimSpace(c.F("report")) {
+		return "not working (it is " + placeWord(c) + "): its attempt failed already on this same report"
 	}
 	return ""
 }

@@ -159,7 +159,7 @@ func TestTheSeatRefusesEveryVerbUntilThePushIsProven(t *testing.T) {
 	ta.refusedPushDown("add --stream s1 --count 2", "no push check has been delivered into "+name+"'s opencode session yet")
 
 	// the push loop delivers a check through the adapter, never a file
-	src := &storeSource{st: st}
+	src := &storeSource{st: st, redis: "mem:0"}
 	var said bytes.Buffer
 	ta.a.prove(ctx, src, name, false, &said)
 	nonce := nonceOf(t, session.last())
@@ -281,7 +281,7 @@ func TestASeatOnAFolderAdapterIsProvenByItsNonceAndRefusedWithout(t *testing.T) 
 	assert.Contains(t, errs, "; then, from inside the session, watch the folder with a Monitor: "+sprint.FolderWatch(folder)+" ; and answer the PROOF-<nonce> file it shows: nova-sprint seat pong <nonce> --actor "+name, errs)
 
 	// the push loop writes the check into the folder as PROOF-<nonce>
-	src := &storeSource{st: st}
+	src := &storeSource{st: st, redis: "mem:0"}
 	var said bytes.Buffer
 	ta.a.prove(ctx, src, name, false, &said)
 	proofs, err := filepath.Glob(filepath.Join(folder, "PROOF-*"))
@@ -290,7 +290,7 @@ func TestASeatOnAFolderAdapterIsProvenByItsNonceAndRefusedWithout(t *testing.T) 
 	nonce := strings.TrimPrefix(filepath.Base(proofs[0]), "PROOF-")
 	body, err := os.ReadFile(proofs[0])
 	require.NoError(t, err)
-	assert.Equal(t, sprint.PushCheckText(name, "<nonce>"), string(body), "the filename carries the nonce")
+	assert.Equal(t, sprint.PushCheckText("<nonce>", strings.ReplaceAll(sprint.PushPongCommand(name, nonce, "mem:0", ""), nonce, "<nonce>")), string(body), "the filename carries the nonce")
 	assert.Contains(t, said.String(), "PUSH CHECK name="+name+" proof=pending\n")
 	ta.refusedPushDown("add --stream s1 --count 2", "the push check went into "+name+"'s claude session and no pong carrying it came back")
 	_, _, errs = ta.do("add --stream s1 --count 2")
@@ -373,7 +373,7 @@ func TestTheNonceIsOnlyInTheFolder(t *testing.T) {
 	st, err := ta.a.store(common{redis: "mem:0", actor: name})
 	require.NoError(t, err)
 	var said bytes.Buffer
-	ta.a.prove(context.Background(), &storeSource{st: st}, name, false, &said)
+	ta.a.prove(context.Background(), &storeSource{st: st, redis: "mem:0"}, name, false, &said)
 	proofs, err := filepath.Glob(filepath.Join(folder, "PROOF-*"))
 	require.NoError(t, err)
 	require.Len(t, proofs, 1)

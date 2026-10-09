@@ -74,8 +74,8 @@ func (h *harness) friendsRead() []string {
 
 // A primary whose reads are all ok is accepted by the tick, with no judgment and
 // no hand step, whoever read it (a reader on the readers table, a friend on her
-// fleet row) and whether the machine was RUNNING or STOPPED when the last read
-// closed: STOPPED, the first tick after start accepts it. The record names the
+// fleet row) and whether the machine remains RUNNING or stops after the last
+// read closes: STOPPED, the first tick after start accepts it. The record names the
 // readers it was accepted on, as accept --read-ok's does, and accept --read-ok
 // after it finds nothing waiting. (Read cards, PR 5392, close through the
 // friend's close, friendReadCloseUnit, and stand as hers do: not yet landed here.)
@@ -96,9 +96,6 @@ func TestTheTickAcceptsAPrimaryWhoseReadsAreAllOk(t *testing.T) {
 					friends = h.friendsRead()
 				}
 				h.machine() // asks every primary its reads
-				if stopped {
-					h.stopMachine()
-				}
 				switch path {
 				case "reader table":
 					h.readAll()
@@ -111,6 +108,9 @@ func TestTheTickAcceptsAPrimaryWhoseReadsAreAllOk(t *testing.T) {
 							h.friendRead(f, id, "Verdict: LAND\n")
 						}
 					}
+				}
+				if stopped {
+					h.stopMachine()
 				}
 				require.Empty(t, h.openOf(sprint.NReadyToAccept), "the last ok read opened a ready to accept judgment")
 				if stopped {
@@ -198,7 +198,7 @@ func TestTheSeatIsToldWhatWasAcceptedNotAskedToAccept(t *testing.T) {
 }
 
 // The reference model and the engine agree, step by step, that the tick accepts
-// a primary whose reads are all ok with no hand step: read ok on a STOPPED
+// a primary whose reads are all ok with no hand step: STOP after read ok,
 // machine, no ready to accept opens in either (refmodel acceptNote, sprint's
 // reviewJudgment); started, the first tick moves it to merging in both
 // (refmodel tickAccept, sprint.TickAccept). A primary the pump holds (its CI red
@@ -228,7 +228,7 @@ func TestTheModelAndTheEngineAgreeTheTickAcceptsWithNoHandStep(t *testing.T) {
 		s := h.observe()
 		for _, id := range refmodel.Keys(s.Reads) {
 			if rc := s.Reads[id]; rc.Primary == p && (rc.Place == refmodel.Asked || rc.Place == refmodel.Reading) {
-				do(dAction{Kind: "read", Reader: rc.Reader, Card: id, OK: true})
+				do(dAction{Kind: "read", Reader: rc.Reader, Card: id, Gen: max(h.readGen[id], 1), OK: true})
 			}
 		}
 		require.True(t, h.observe().Acceptable(p), "%s: its reads all ok", p)
@@ -255,10 +255,10 @@ func TestTheModelAndTheEngineAgreeTheTickAcceptsWithNoHandStep(t *testing.T) {
 	do(dAction{Kind: "tick"}) // both asked their reads together
 	do(dAction{Kind: "ci", IDs: []string{"a2"}, OK: false, Run: 1})
 	do(dAction{Kind: "ack", Type: refmodel.JCI, Subject: "a2"})
-	do(dAction{Kind: "stop"})
 	readOK("a1")
 	readOK("a2")
-	open("a1", false, "read ok on a STOPPED machine")
+	do(dAction{Kind: "stop"})
+	open("a1", false, "STOP after read ok")
 	open("a2", true, "read ok, held by its CI red")
 	both("a1", refmodel.Review, "STOPPED")
 	do(dAction{Kind: "start"})

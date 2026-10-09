@@ -145,9 +145,18 @@ type Step struct {
 	// Halts, when set (a part of the tick), makes the step begin nothing when
 	// (tla/DirtyTickRead.tla, Begin and BeganRunning)
 	// the machine's state, read with its first fence, is STOPPED: its result
-	// says Halted, and it writes nothing (the stop's rule: the part in flight
-	// finishes, and no part begins after the flag says STOPPED).
+	// says Halted, and it writes nothing. TickRunSeq also refuses a retry in
+	// a later explicit START generation.
 	Halts bool
+	// TickRunSeq is the explicit START generation a tick saw before it built
+	// this part's request. A retry after STOP and START must not commit it in
+	// the new run, even though the machine is RUNNING again.
+	TickRunSeq *uint64
+	// StartsWork refuses a new worker lease after STOP, including an explicit
+	// take, a friend's start receipt, and a reader's begin. ReportsWork refuses
+	// a late finish or verdict once STOP has committed. RequiresStopped is the
+	// complementary fence on an acknowledged stop-return.
+	StartsWork, ReportsWork, RequiresStopped bool
 	// Twin, when set, is the tick's twin (twin.go): a step that loads the four
 	// tables plans on it while the fence is at its generation, instead of
 	// reading them, and applies its receipts to it when it commits.
@@ -271,6 +280,8 @@ type Result struct {
 	// Halted says a step that Halts found the machine STOPPED as it read the
 	// sprint, and began nothing.
 	Halted bool `json:"-"`
+	// StaleRun says a tick part read a different explicit START generation.
+	StaleRun bool `json:"-"`
 }
 
 // ErrUnknown is a write the store did not confirm: changed=unknown.
@@ -545,10 +556,29 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 				return r, err
 			}
 		}
+		if step.Halts && step.TickRunSeq != nil && fence.RunSeq != *step.TickRunSeq {
+			res.Moved, res.Op, res.Notes = nil, "", 0
+			res.Tables = nil
+			res.StaleRun = true
+			res.Halted = !fence.Running
+			return res, nil
+		}
 		if step.Halts && !fence.Running && res.Attempts == 1 {
 			// a part that began (its first read found the machine RUNNING)
 			// finishes: only its first read halts it
 			res.Halted = true
+			return res, nil
+		}
+		if step.StartsWork && fence.StopRevoked {
+			res.Refused = []sprint.Refusal{{Key: step.Verb, Why: "the machine is STOPPED: no new work or read may start"}}
+			return res, nil
+		}
+		if step.ReportsWork && fence.StopRevoked {
+			res.Refused = []sprint.Refusal{{Key: step.Verb, Why: "the machine is STOPPED: a late work or read report cannot finish"}}
+			return res, nil
+		}
+		if step.RequiresStopped && !fence.StopRevoked {
+			res.Refused = []sprint.Refusal{{Key: step.Verb, Why: "the machine has no halted run: stop-return follows cancellation during STOP"}}
 			return res, nil
 		}
 		if fence.Queued > 0 && !step.Pump && !fence.Running && drains < MaxDrains {
@@ -621,6 +651,18 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		plan := sprint.Applied(snap, step.Plan(snap))
 		if len(held) > 0 {
 			plan = sprint.LeaveQueued(plan, held)
+		}
+		if step.Verb != "stop-return" {
+			debt := fence.StopDebt
+			if fence.StopRevoked && !fence.StopIssued {
+				// A pre-upgrade STOP has no durable debt list. Its live leases
+				// remain protected until their owners return them.
+				debt = append(append([]StopLease(nil), debt...), activeStopLeases(snap)...)
+			}
+			if owed := stopDebtMutation(plan, debt); owed != nil {
+				why := fmt.Sprintf("STOP owns %s:%s@%d: cancel its child and run nova-sprint stop-return --as %s %s@%d --reason '<observed child exit>' before %s", owed.Row, owed.ID, owed.Gen, owed.Row, owed.ID, owed.Gen, step.Verb)
+				return refuseWhole(res, plan, why)
+			}
 		}
 		if step.Named && len(plan.Refused) > 0 && len(plan.Units)+len(plan.Notes)+len(plan.Closes)+len(plan.Rows) > 0 {
 			return allOrNone(res, plan), nil
@@ -828,6 +870,38 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		res.Refused = append(res.Refused, sprint.Refusal{Key: k, Why: fmt.Sprintf("the sprint kept changing under this step (%d attempts); run it again", res.Attempts)})
 	}
 	return res, nil
+}
+
+// stopDebtMutation holds every captured owner lease in place until its
+// stop-return receipt (tla/StopReturn.tla Return; SPEC-SPRINT section 14).
+// The fence carries the machine's debt from the same read as its generation,
+// so STOP and this check serialize with the final operation commit.
+func stopDebtMutation(plan sprint.Plan, debt []StopLease) *StopLease {
+	if len(debt) == 0 {
+		return nil
+	}
+	byCard := make(map[string]StopLease, len(debt))
+	for _, d := range debt {
+		byCard[d.Table+":"+d.ID] = d
+	}
+	for _, u := range plan.Units {
+		for _, c := range u.Changes {
+			if d, ok := byCard[c.Table+":"+c.Entry.ID]; ok {
+				return &d
+			}
+		}
+		for _, b := range u.Bumps {
+			if d, ok := byCard[b.Table+":"+b.ID]; ok {
+				return &d
+			}
+		}
+	}
+	for _, pl := range plan.Places {
+		if d, ok := byCard[pl.Table+":"+pl.ID]; ok {
+			return &d
+		}
+	}
+	return nil
 }
 
 // withQueuedPromotion is a pump part's snapshot with the promotion queued

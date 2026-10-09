@@ -6,8 +6,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -57,7 +59,7 @@ func SelectDeliverer(friendName, harness, dir, session, adapter, deliveryDir str
 	return NewDeliverer(harness, dir, session, run, out)
 }
 
-func (f *Folder) Deliver(ctx context.Context, text string) (int, error) {
+func (f *Folder) Deliver(ctx context.Context, text string) (exit int, retErr error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -69,7 +71,12 @@ func (f *Folder) Deliver(ctx context.Context, text string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("the folder adapter cannot reserve %q: %w", f.Dir, err)
 	}
-	defer lock.Unlock()
+	publishedPath := ""
+	defer func() {
+		retErr = folderReleaseResult(retErr, lock.Unlock(), publishedPath, f.Dir, func(path string, err error) {
+			slog.Error("folder delivery was written but its lock did not release cleanly; delivery stays acknowledged; inspect lock health", "path", path, "error", err)
+		})
+	}()
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -119,6 +126,7 @@ func (f *Folder) Deliver(ctx context.Context, text string) (int, error) {
 		if err != nil || string(priorMeta) != string(data)+"\n" {
 			return 0, fmt.Errorf("the folder adapter refused to reuse %s without matching session metadata", name)
 		}
+		publishedPath = path
 		return 0, nil // one unacknowledged request of this kind, nonce and session
 	} else if !os.IsNotExist(err) {
 		return 0, err
@@ -132,15 +140,35 @@ func (f *Folder) Deliver(ctx context.Context, text string) (int, error) {
 	if err := folderAtomic(f.Dir, name, text); err != nil {
 		return 0, err
 	}
+	publishedPath = path
 	return 0, nil
 }
 
-func folderAtomic(dir, name, text string) error {
+// A published file has already delivered the turn. A lock cleanup fault must
+// be reported, but cannot ask the daemon to retry a random-named turn.
+func folderReleaseResult(deliveryErr, unlockErr error, publishedPath, dir string, report func(string, error)) error {
+	if unlockErr == nil {
+		return deliveryErr
+	}
+	if publishedPath != "" {
+		report(publishedPath, unlockErr)
+		return deliveryErr
+	}
+	return errors.Join(deliveryErr, fmt.Errorf("the folder adapter cannot release %q: %w", dir, unlockErr))
+}
+
+func folderAtomic(dir, name, text string) (retErr error) {
 	tmp, err := os.CreateTemp(dir, ".friend-push-*")
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
+	defer func() {
+		if retErr != nil {
+			if err := os.Remove(tmp.Name()); err != nil && !os.IsNotExist(err) {
+				retErr = errors.Join(retErr, fmt.Errorf("remove the unfinished folder delivery %q: %w", tmp.Name(), err))
+			}
+		}
+	}()
 	if _, err = tmp.WriteString(text); err == nil {
 		err = tmp.Sync()
 	}

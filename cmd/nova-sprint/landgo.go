@@ -49,6 +49,8 @@ import (
 // the tree's own packages, or one update run (a build and two tests of one package).
 const landGoBudget = 15 * time.Minute
 
+const benchGateUnavailableWhy = "the configured remote bench did not run the tree gate; restore a bench and run land again"
+
 // treeTests are the packages that test the tree itself (its docs and its tests), run by
 // the gate when a head changes a .md or a _test.go file; one the clone lacks is not run.
 var treeTests = []string{"internal/docs", "internal/ci"}
@@ -212,6 +214,8 @@ type baseGateFail struct {
 // (nova-config's sprint row answer_rules_off), a red base is cached for its commit as a
 // green one is, as before the rule: every landing on it refused until the base moves.
 func (l *lander) treeGateBase(ctx context.Context, dir, baseSha string, branch ...string) (why string, stop bool) {
+	s := l.locks()
+	s.gateMu.Lock()
 	if l.baseGateCache == nil {
 		l.baseGateCache = map[string]string{}
 	}
@@ -219,17 +223,27 @@ func (l *lander) treeGateBase(ctx context.Context, dir, baseSha string, branch .
 		l.baseGateFails = map[string]*baseGateFail{}
 	}
 	if why, cached := l.baseGateCache[baseSha]; cached {
+		s.gateMu.Unlock()
 		return why, false
 	}
 	now := l.clock()
 	f := l.baseGateFails[baseSha]
 	switch {
 	case f != nil && f.n > len(sprint.BaseGateRetries):
+		s.gateMu.Unlock()
 		return f.why, true
 	case f != nil && now.Before(f.next):
+		s.gateMu.Unlock()
 		return f.said(), false
 	}
+	s.gateMu.Unlock()
 	why = l.treeGate(ctx, dir, true)
+	if err := ctx.Err(); err != nil {
+		return err.Error(), false // an abandoned gate never counts as a red base
+	}
+	if why == benchGateUnavailableWhy {
+		return why, false // infrastructure refusal is not a red base or a retry
+	}
 	if why != "" {
 		base := l.base
 		if len(branch) > 0 {
@@ -240,7 +254,10 @@ func (l *lander) treeGateBase(ctx context.Context, dir, baseSha string, branch .
 		}
 		why = sprint.ClassGateWhy(dir, base, baseSha, why)
 	}
-	if why == "" || slices.Contains(l.offRules(ctx), sprint.RuleBaseGate) {
+	off := why != "" && slices.Contains(l.offRules(ctx), sprint.RuleBaseGate)
+	s.gateMu.Lock()
+	defer s.gateMu.Unlock()
+	if why == "" || off {
 		l.baseGateCache[baseSha] = why
 		delete(l.baseGateFails, baseSha)
 		return why, false
@@ -319,18 +336,25 @@ func treePackages(dir string) []string {
 // is green or the clone has no module, else the finding (gateWhy). In the server's land
 // loop with a fleet member other than this machine up, the gate goes to the first such
 // member that grants its Go lane, asked in the ring's order from the slot the batch's
-// stream hashes to (benchRing, landring.go), as one bench run (benchGate); a bench that
-// cannot be reached runs it here instead, and never blames the card. Otherwise, and for a
-// land command on its own, it runs here (goRun). The ledgers' update runs stay here.
+// stream hashes to (benchRing, landring.go), as one bench run (benchGate). A configured
+// remote bench that cannot run the gate refuses it; it does not run Go on this machine.
+// A land command on its own, or a loop with no remote bench configured, runs here
+// (goRun). The ledgers' update runs stay here.
 func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
+	if err := ctx.Err(); err != nil {
+		return err.Error()
+	}
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
 		return ""
 	}
 	if l.a != nil && l.a.gateRan != nil {
 		l.a.gateRan(dir, tests)
 	}
+	if err := ctx.Err(); err != nil {
+		return err.Error()
+	}
 	runs := gateRuns(tests, treePackages(dir))
-	hosts, inLoop := l.gateBenches(ctx)
+	hosts, inLoop, remote := l.gateBenches(ctx)
 	// A test's gateBench seam stands in for the bench when no fleet member is up
 	// (the class-gate regression: a fake runner, no socket, no beat to keep fresh).
 	if len(hosts) == 0 && l.a != nil {
@@ -348,6 +372,10 @@ func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 		if why, ran := l.benchGate(ctx, hosts, dir, runs, tests); ran {
 			return why
 		}
+	}
+	if remote {
+		l.stage("gate", "remote bench unavailable")
+		return benchGateUnavailableWhy
 	}
 	start := l.clock()
 	defer func() {
@@ -576,13 +604,14 @@ func redRun(runs [][]string, out string) []string {
 }
 
 // gateBenches is the up fleet members other than this machine that bench.CheckHost
-// accepts, in the fleet's order, and inLoop when the land running is the server's land
+// accepts, in the fleet's order. remote says the loop has another fleet member configured,
+// even when it is down or the fleet could not be read. inLoop says land is the server's land
 // loop's. Only the loop sends the gate out: a land command on its own (a hand land, the
 // install walkthrough) keeps it in this process. A unit test under the host guard with no
 // bench seam keeps it here too, so a member brought up in a test is not sshed to.
-func (l *lander) gateBenches(ctx context.Context) (hosts []string, inLoop bool) {
+func (l *lander) gateBenches(ctx context.Context) (hosts []string, inLoop, remote bool) {
 	if l == nil || l.a == nil || l.st == nil {
-		return nil, false
+		return nil, false, false
 	}
 	b := l.a.landState()
 	b.mu.Lock()
@@ -590,15 +619,21 @@ func (l *lander) gateBenches(ctx context.Context) (hosts []string, inLoop bool) 
 	seam := b.gateBench
 	b.mu.Unlock()
 	if !inLoop || (testguard.Refusing() && seam == nil) {
-		return nil, inLoop
+		return nil, inLoop, false
 	}
 	l.a.serial.Lock()
 	s, err := l.st.Load(ctx, []string{sprint.Fleet}, nil)
 	l.a.serial.Unlock()
 	if err != nil || s == nil {
-		return nil, inLoop
+		return nil, inLoop, true
 	}
 	self := l.a.machineName()
+	for _, m := range s.Members() {
+		if self == "" || !strings.EqualFold(m, self) {
+			remote = true
+			break
+		}
+	}
 	for _, m := range s.UpMembers() {
 		if self != "" && strings.EqualFold(m, self) {
 			continue
@@ -608,7 +643,7 @@ func (l *lander) gateBenches(ctx context.Context) (hosts []string, inLoop bool) 
 		}
 		hosts = append(hosts, m)
 	}
-	return hosts, inLoop
+	return hosts, inLoop, remote
 }
 
 // takeGateLane asks hosts (a ring: benchRing's order) for a Go lane one host at a time
@@ -771,8 +806,14 @@ func (l *lander) gateCard(ctx context.Context, dir string, c landCard, before st
 		return "", "the files the merge of " + c.id + " changed could not be listed: " + firstLine("", err)
 	}
 	why := l.treeGate(ctx, dir, slices.ContainsFunc(strings.Split(changed, "\n"), treeTested))
+	if wait := gateWaitWhy(ctx); wait != "" {
+		return "", wait // cancellation says nothing about the card
+	}
 	if why == "" {
 		return "", ""
+	}
+	if why == benchGateUnavailableWhy {
+		return "", why // no card failed its gate
 	}
 	if _, err := l.git(ctx, dir, "reset", "-q", "--hard", before); err != nil {
 		return "", "the batch branch could not be reset after " + c.id + " failed the tree gate: " + firstLine("", err)
@@ -788,9 +829,12 @@ func (l *lander) gateCard(ctx context.Context, dir string, c landCard, before st
 // A head found no cure on this base is not tried on it again. env is a failure that is not a
 // card's.
 func (l *lander) cureBase(ctx context.Context, dir, stream string, cards []landCard, baseSha, why string) (cured int, env string) {
+	s := l.locks()
+	s.gateMu.Lock()
 	if l.cureTried == nil {
 		l.cureTried = map[string]bool{}
 	}
+	s.gateMu.Unlock()
 	tried := func(h sprint.CureHead) string { return baseSha + " " + h.ID + "@" + h.Head }
 	heads := make([]sprint.CureHead, len(cards))
 	at := map[string]int{}
@@ -798,6 +842,7 @@ func (l *lander) cureBase(ctx context.Context, dir, stream string, cards []landC
 		heads[i], at[c.id] = sprint.CureHead{ID: c.id, Head: c.head}, i
 	}
 	notes, repairs := map[string]string{}, map[string]string{}
+	benchUnavailable := false
 	cure, err := sprint.FindBaseCure(ctx, sprint.BaseCureReq{RepoDir: dir, Base: baseSha, Heads: heads, Env: l.a.gitEnv,
 		Merge: func(ctx context.Context, h sprint.CureHead) (string, string) {
 			c := cards[at[h.ID]]
@@ -812,13 +857,29 @@ func (l *lander) cureBase(ctx context.Context, dir, stream string, cards []landC
 			notes[h.ID] = note
 			return card, env
 		},
-		Gate:  func(ctx context.Context, dir string) string { return l.treeGate(ctx, dir, true) },
-		Tried: func(h sprint.CureHead) bool { return l.cureTried[tried(h)] },
+		Gate: func(ctx context.Context, dir string) string {
+			gate := l.treeGate(ctx, dir, true)
+			benchUnavailable = benchUnavailable || gate == benchGateUnavailableWhy
+			return gate
+		},
+		Tried: func(h sprint.CureHead) bool {
+			s.gateMu.Lock()
+			defer s.gateMu.Unlock()
+			return l.cureTried[tried(h)]
+		},
 	})
 	l.conflictKind, l.conflictPaths = "", nil // a try's conflict is no card's stop
+	if err := ctx.Err(); err != nil {
+		return -1, err.Error() // an abandoned gate proves no head unable to cure the base
+	}
+	if benchUnavailable {
+		return -1, benchGateUnavailableWhy // leave every head eligible for a later cure search
+	}
+	s.gateMu.Lock()
 	for _, t := range cure.Tried {
 		l.cureTried[tried(t.CureHead)] = true
 	}
+	s.gateMu.Unlock()
 	if err != nil {
 		return -1, "the search for a fix of the red base " + shortSha(baseSha) + " failed: " + oneline.Err(err)
 	}

@@ -57,6 +57,59 @@ func TestOpenCodeDeliversIntoTheNewestSessionOfTheDirectory(t *testing.T) {
 	assert.ErrorContains(t, err, "not a JSON list")
 }
 
+// A fresh opencode with no session yet prints nothing for `session list
+// --format json` (opencode 1.18.20 on a fresh install, 2026-10-08 17:20Z: zero
+// bytes), and the daemon read that as a broken harness. Empty or
+// whitespace-only is an empty list: a delivery with no session named says
+// there is no session to start one, a lane's open sees an empty listing before
+// its seed and the new session after; garbage stays a refusal that carries the
+// JSON error alone, and the listing's first line goes to the daemon's record,
+// never into the error (the harness's stdout can carry anything).
+func TestAnEmptyOpenCodeSessionListIsNoSessionNotABrokenHarness(t *testing.T) {
+	t.Parallel()
+	for _, listing := range []string{"", "\n", " \n\t\n"} {
+		rows, err := decodeSessions(listing)
+		require.NoError(t, err, "%q", listing)
+		assert.Empty(t, rows, "%q", listing)
+		_, err = NewestSession(listing, "/w/bob")
+		assert.EqualError(t, err, "no opencode session for /w/bob; start one there, or name one with --session", "%q", listing)
+
+		fe := &fakeExec{listing: listing}
+		d, err := NewDeliverer("opencode", "/w/bob", "", fe.run, nil)
+		require.NoError(t, err)
+		_, err = d.Deliver(context.Background(), "hello")
+		assert.ErrorContains(t, err, "no opencode session for /w/bob", "%q", listing)
+		assert.NotContains(t, err.Error(), "not a JSON list", "%q", listing)
+	}
+
+	dir := t.TempDir() // the open allows the lanes' directories in the project config there
+	lists := 0
+	run := func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
+		if args[0] == "session" {
+			lists++
+			if lists == 1 {
+				return "", 0, nil
+			}
+			return `[{"id":"first","directory":"` + dir + `","updated":5}]`, 0, nil
+		}
+		return "ready\n", 0, nil
+	}
+	id, err := (&OpenCode{Dir: dir, Run: run}).OpenSession(context.Background(), "You are bob.")
+	require.NoError(t, err)
+	assert.Equal(t, "first", id, "the lane's open seeds the first session of a fresh opencode")
+
+	_, err = decodeSessions("Error: no config found\nat main.ts:1\n")
+	assert.EqualError(t, err, `opencode session list: not a JSON list: invalid character 'E' looking for beginning of value`)
+	var record strings.Builder
+	fe := &fakeExec{listing: "garbage\n"}
+	d, err := NewDeliverer("opencode", "/w/bob", "", fe.run, &record)
+	require.NoError(t, err)
+	_, err = d.Deliver(context.Background(), "hello")
+	assert.ErrorContains(t, err, `not a JSON list`)
+	assert.NotContains(t, err.Error(), "garbage", "the listing's text never enters the error")
+	assert.Equal(t, "opencode session list: not a JSON list; its first line: \"garbage\"\n", record.String())
+}
+
 func TestAnUnknownHarnessIsNamed(t *testing.T) {
 	t.Parallel()
 	_, err := NewDeliverer("vim", "/w/bob", "", nil, nil)
