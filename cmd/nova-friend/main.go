@@ -302,6 +302,12 @@ func main() {
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int {
+	if len(args) > 0 && args[0] == "hook" {
+		if len(args) > 1 && (args[1] == "-h" || args[1] == "--help") {
+			return friendTool(w).Run(args, stdin, stdout, stderr)
+		}
+		return runClaudeHook(args[1:], stdin, stdout, stderr)
+	}
 	if len(args) > 0 && args[0] == friend.WallVerb {
 		// the lane's wall around one command: its argv follows "--", which the verb table
 		// does not carry, so it is dispatched here (internal/friend RunWall)
@@ -429,6 +435,16 @@ state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.
 		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).",
 		Words:     []string{"NONE", "FAIL", "DRIFT", "DRY-RUN"},
 		Verbs: []tool.Verb{
+			{
+				Name:   "hook",
+				Usage:  "hook --harness claude",
+				Effect: tool.Inspection + ": reads one PreToolUse JSON event from stdin and prints only Claude hook protocol JSON",
+				Detail: "An opt-in project hook for interactive Claude Code sessions (docs/CLAUDE-ASYNC-BASH-CANDIDATE.md). No settings are installed by this verb. Bash input is changed to run_in_background=true without approving the command; malformed input is denied.",
+				Flags: func(f *tool.Flags) {
+					f.Required("harness", "claude: the harness whose PreToolUse JSON is on stdin")
+				},
+				Run: func(*tool.Call) *tool.Out { return tool.Refuse("hook requires the raw PreToolUse entrypoint") },
+			},
 			{
 				Name:    "run",
 				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]",
