@@ -312,6 +312,9 @@ func sameReadLease(a, b AskedRead) bool {
 }
 
 func saveReadActive(dir string, a readActive) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
 	if (a.PID <= 0 || a.Identity == "") && !(a.LaunchHeld && a.PID == 0 && a.Identity == "") {
 		return errors.New("read process identity unavailable")
 	}
@@ -343,7 +346,7 @@ func loadReadActive(dir string) (readActive, bool, error) {
 func readSettlementPath(dir string) string { return filepath.Join(dir, readSettlementFile) }
 
 func saveReadSettlement(dir string, p readSettlement) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	b, err := json.Marshal(p)
@@ -736,6 +739,7 @@ func (l *loop) startRead(r AskedRead, now time.Time) {
 		ctx = WithProcessGroupAnchor(ctx, readAnchorPath(l.d.nativeReadDir(dir)))
 		ctx = WithProcessStarted(ctx, func(pid int) error {
 			res.gateCalled = true
+			if err := d.validateNativeControl(); err != nil { return err }
 			held := !d.admitLaunch(rctx)
 			if err := saveReadActive(l.d.nativeReadDir(dir), readActive{Read: r, PID: pid, Identity: ProcessIdentity(pid), LaunchHeld: held}); err != nil {
 				return errors.Join(errMachineLaunchHeld, err)

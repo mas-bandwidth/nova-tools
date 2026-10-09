@@ -1,26 +1,14 @@
 package friend
 
 import (
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/mas-bandwidth/nova-tools/internal/procgroup"
+	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 )
-
-// NativeControlDir keys shared claim/cleanup authority by canonical work, not
-// friend identity. Duplicate daemons and friends on one owned home therefore
-// use the same protected claim namespace (SPEC-FRIEND, Native control roots).
-func NativeControlDir(home, work string) (string, error) {
-	canonical, err := filepath.EvalSymlinks(work)
-	if err != nil || !filepath.IsAbs(canonical) || !filepath.IsAbs(home) {
-		return "", errors.New("native control needs an absolute real work directory and owner home")
-	}
-	key := sha256.Sum256([]byte(canonical))
-	return filepath.Join(home, ".nova-friend", "native-control", fmt.Sprintf("%x", key)), nil
-}
 
 // nativeRunDir is the base of daemon-owned work/control receipts. Legacy
 // injected daemons without a native control root retain their explicit layout;
@@ -53,8 +41,19 @@ func (d *Daemon) ValidateNativeControlRoots(roots []string) error {
 	if d.NativeControlDir == "" {
 		return nativeControlHold{errors.New("native control directory is not bound")}
 	}
-	for _, root := range []string{d.NativeControlDir, d.StateDir} {
-		if root == "" { continue }
+	if d.NativeControlBinding != nil {
+		bound, err := d.NativeControlBinding()
+		if err != nil || bound != d.NativeControlDir {
+			return nativeControlHold{errors.New("native control binding changed or cannot be verified; reconcile its durable ownership before launch")}
+		}
+	}
+	// The parent contains the shared durable index, so protect it as well as
+	// this namespace's receipts. Backend fixed reads apply to every wall.
+	roots = append(append([]string{}, roots...), (&sandbox.Policy{}).VisibleRoots()...)
+	for _, root := range []string{filepath.Dir(d.NativeControlDir), d.NativeControlDir, d.StateDir} {
+		if root == "" {
+			continue
+		}
 		// Check reach before provisioning: an unsafe request cannot create
 		// daemon-owned directories inside a native grant.
 		if err := nativeBrokerOutsideRoots(root, roots); err != nil {
@@ -65,6 +64,10 @@ func (d *Daemon) ValidateNativeControlRoots(roots []string) error {
 		if _, err := authority.nativeBrokerRoot(); err != nil {
 			return nativeControlHold{fmt.Errorf("native control directory: %w", err)}
 		}
+		if err := nativeControlOwnedPath(root, true); err != nil { return nativeControlHold{err} }
+	}
+	if d.NativeControlBinding != nil && d.StateDir != "" {
+		if err := bindNativeControlState(d.StateDir, d.NativeControlDir); err != nil { return nativeControlHold{err} }
 	}
 	return nil
 }
@@ -103,7 +106,9 @@ func (d *Daemon) legacyNativeAuthority() error {
 			return errors.New("legacy native authority cannot be inspected; preserve and reconcile it before launching")
 		}
 		for _, entry := range entries {
-			if entry.Type()&os.ModeSymlink != 0 { return errors.New("legacy native ownership contains a symlink; preserve and reconcile it before launching") }
+			if entry.Type()&os.ModeSymlink != 0 {
+				return errors.New("legacy native ownership contains a symlink; preserve and reconcile it before launching")
+			}
 			if !entry.IsDir() {
 				continue
 			}
@@ -122,7 +127,9 @@ func (d *Daemon) legacyNativeAuthority() error {
 				return errors.New("legacy native lane claim remains; drain and reconcile it before launching")
 			}
 			if _, err := os.Lstat(runReceiptPath(d.Dir, entry.Name())); errors.Is(err, os.ErrNotExist) {
-				if _, anchorErr := os.Lstat(runReceiptPath(d.Dir, entry.Name())+".anchor"); errors.Is(anchorErr, os.ErrNotExist) { continue }
+				if _, anchorErr := os.Lstat(runReceiptPath(d.Dir, entry.Name()) + ".anchor"); errors.Is(anchorErr, os.ErrNotExist) {
+					continue
+				}
 				return errors.New("legacy native anchor lacks a receipt; preserve and reconcile it before launching")
 			} else if err != nil {
 				return errors.New("legacy native anchor cannot be inspected; preserve it before launching")
@@ -139,8 +146,8 @@ func (d *Daemon) legacyNativeAuthority() error {
 // A refused authority root is an unlaunched reservation, not a provider failure.
 // The existing held-work and deferred-message paths retry it without spending
 // a work attempt or acknowledging unread requests.
-type nativeControlHold struct { cause error }
+type nativeControlHold struct{ cause error }
 
-func (e nativeControlHold) Error() string { return "native control isolation: " + e.cause.Error() }
+func (e nativeControlHold) Error() string        { return "native control isolation: " + e.cause.Error() }
 func (e nativeControlHold) Is(target error) bool { return target == errMachineLaunchHeld }
-func (e nativeControlHold) Unwrap() error { return Deferred{Reason: e.Error()} }
+func (e nativeControlHold) Unwrap() error        { return Deferred{Reason: e.Error()} }

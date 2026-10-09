@@ -1,3 +1,5 @@
+//go:build linux || darwin
+
 package main
 
 import (
@@ -16,7 +18,7 @@ func TestNativeControlDefaultStateIsPrivateAndLegacyOwnershipIsPreserved(t *test
 	w.wall = func(_ friend.Wall, e friend.Exec) friend.Exec { return e }
 	work := t.TempDir()
 	cli := cliOf(w)
-	cli.Do(t, "run", "--as", "worker", "--harness", "opencode", "--dir", work, "--dry-run").Exit(0).Out("state="+friend.DefaultStateDir(r.home, "worker"))
+	cli.Do(t, "run", "--as", "worker", "--harness", "opencode", "--dir", work, "--dry-run").Exit(0).Out("state=" + friend.DefaultStateDir(r.home, "worker"))
 	legacy := friend.StateDirIn(work)
 	require.NoError(t, friend.WriteLanes(legacy, friend.LaneState{Sessions: map[int]string{1: "existing-session"}}))
 	before, err := os.ReadFile(filepath.Join(legacy, friend.LanesFile))
@@ -25,4 +27,17 @@ func TestNativeControlDefaultStateIsPrivateAndLegacyOwnershipIsPreserved(t *test
 	after, err := os.ReadFile(filepath.Join(legacy, friend.LanesFile))
 	require.NoError(t, err)
 	require.Equal(t, before, after)
+}
+
+func TestNativeControlProductionResolverDoesNotSplitWithDifferentHOME(t *testing.T) {
+	t.Parallel()
+	account, work := t.TempDir(), t.TempDir()
+	resolver := func(dir string) (string, error) { return friend.NativeControlDir(account, dir) }
+	first := world{home: t.TempDir(), nativeControlRoot: resolver}
+	second := world{home: t.TempDir(), nativeControlRoot: resolver}
+	root, err := first.nativeControlDir(work)
+	require.NoError(t, err)
+	other, err := second.nativeControlDir(work)
+	require.NoError(t, err)
+	require.Equal(t, root, other)
 }

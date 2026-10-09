@@ -72,11 +72,18 @@ Native output remains under the working directory: briefs, published reports,
 results and local reply/pong envelopes are not process cleanup authority.
 Production walled work, read and control turns keep `RUN`, `LANE` and its lock,
 read `ACTIVE.json`, stop/no-launch proof, settlement replay records and anchor
-FIFOs in a private daemon-owned control namespace. It is keyed by the canonical
-working directory under the launcher's owned home, so duplicate daemons and
-friends sharing that work/home retain one claim authority even through path
-aliases. Distinct launcher homes must not independently manage one shared
-working directory; this namespace does not establish cross-home exclusion.
+FIFOs in a private daemon-owned control namespace. Production selects the
+trusted OS account home without an environment fallback: Linux reads the
+root-owned passwd UID row directly, Darwin uses its native account lookup,
+and unsupported lookup builds refuse. Cross-UID working directories refuse.
+The private, locked durable index maps canonical paths and verified live
+physical aliases to one stable namespace. A changed device/inode at an existing
+path, missing namespace/index, corrupt binding, or lost known state proof holds
+launch for reconciliation. The friend-specific state also records its selected
+namespace, so losing an index cannot silently mint new ownership for saved debt.
+Caller HOME changes and casefold/mount aliases do not select independent local
+claim authorities. This local account protocol does not establish cross-host
+NFS ownership or reconstruct arbitrary deletion of all durable records.
 
 The daemon checks all work, config, job and read grants before launch. The wall
 checks again against its completed policy, including HOME, temp, executable and
@@ -89,8 +96,8 @@ hold startup for reconciliation; a live FIFO cannot be moved because its sidecar
 reopens the original path. No migration, deletion or new proof occurs there.
 
 `tla/NativeControlAuthority.tla` models protected channel authority, owner crash
-and restart, and legacy holds. Its visible-root mutation reaches sibling
-cancellation; its reachable witness denies the sibling then completes genuine
+and restart, and legacy/index/identity holds. Its reset mutation reaches lost ownership,
+and its visible-root mutation reaches sibling cancellation; its reachable witness denies the sibling then completes genuine
 owner cleanup. `StopGroupAnchor.tla` separately models birth/inode checks and
 anchor self-signalling. The Linux production-wall probe executes an ordinary
 work write, denies a private receipt read and a direct sibling FIFO write, and

@@ -1804,8 +1804,8 @@ type Wall struct {
 	Reads        []string // what her harness reads beyond the system roots and its own directory
 	Deny         []string // the coordinator's self, never written inside the wall (sandbox.LaneProfile.Deny)
 	SetupProfile string   // the completed owned harness home/config selection
-	ControlDir string // private cleanup channels, never visible to the child
-	ControlState string // private durable daemon ownership
+	ControlDir   string   // private cleanup channels, never visible to the child
+	ControlState string   // private durable daemon ownership
 }
 
 // Args is the wall verb and its flags, up to and with the "--" the command follows.
@@ -1824,8 +1824,12 @@ func (w Wall) Args() []string {
 	if w.SetupProfile != "" {
 		args = append(args, "--setup-profile", w.SetupProfile)
 	}
-	if w.ControlDir != "" { args = append(args, "--control-dir", w.ControlDir) }
-	if w.ControlState != "" { args = append(args, "--control-state", w.ControlState) }
+	if w.ControlDir != "" {
+		args = append(args, "--control-dir", w.ControlDir)
+	}
+	if w.ControlState != "" {
+		args = append(args, "--control-state", w.ControlState)
+	}
 	for _, j := range w.Jobs {
 		args = append(args, "--job", j)
 	}

@@ -91,6 +91,7 @@ type world struct {
 	signals      func(ctx context.Context) (context.Context, context.CancelFunc)
 	uid          int
 	home         string
+	nativeControlRoot func(string) (string, error) // production: trusted account authority, never env HOME
 	binary       func() (string, error)
 	copy         friend.CopyFile              // places a removable-volume binary under home; nil refuses it
 	lookPath     func(string) (string, error) // a program on PATH by absolute path, for the agent's secrets wrap
@@ -235,7 +236,7 @@ func sprintHolders(ctx context.Context, server string) (map[string]string, error
 }
 
 func realWorld() world {
-	w := world{getenv: os.Getenv, exec: friend.RealExec, sqlite: friend.RealExec, wall: friend.Wall.Exec, now: time.Now, uid: os.Getuid(), home: os.Getenv("HOME"),
+	w := world{getenv: os.Getenv, exec: friend.RealExec, sqlite: friend.RealExec, wall: friend.Wall.Exec, now: time.Now, uid: os.Getuid(), home: os.Getenv("HOME"), nativeControlRoot: friend.NativeOwnerControlDir,
 		sleep: func(ctx context.Context, d time.Duration) {
 			select {
 			case <-ctx.Done():
@@ -358,6 +359,13 @@ func (w world) stateDir(c *tool.Call, dir string) string {
 		return s
 	}
 	return friend.FindStateDir(w.home, dir, c.Str("as"))
+}
+
+// nativeControlDir uses the production account binding even if HOME differs.
+// A fake world without that hook supplies its explicit temporary home.
+func (w world) nativeControlDir(dir string) (string, error) {
+	if w.nativeControlRoot != nil { return w.nativeControlRoot(dir) }
+	return friend.NativeControlDir(w.home, dir)
 }
 
 // daemonStateDir keeps production native authority outside every native work
@@ -1276,13 +1284,17 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	controlRoot := ""
 	if w.wall != nil {
-		controlRoot, err = friend.NativeControlDir(w.home, dir)
-		if err != nil { return tool.Refuse(err.Error()+"; use a real absolute --dir and owner home") }
+		controlRoot, err = w.nativeControlDir(dir)
+		if err != nil {
+			return tool.Refuse(err.Error() + "; use a real absolute --dir and owner home")
+		}
 		roots := append(append([]string{dir, wall.ConfigDir}, wall.Jobs...), wall.Reads...)
-		if w.setupProfile != nil { roots = append(roots, w.setupProfile.Selection.Home, w.setupProfile.Selection.ConfigDir) }
-		authority := &friend.Daemon{Dir: dir, StateDir: state, NativeControlDir: controlRoot}
+		if w.setupProfile != nil {
+			roots = append(roots, w.setupProfile.Selection.Home, w.setupProfile.Selection.ConfigDir)
+		}
+		authority := &friend.Daemon{Dir: dir, StateDir: state, NativeControlDir: controlRoot, NativeControlBinding: func() (string, error) { return w.nativeControlDir(dir) }}
 		if err := authority.ValidateNativeControlRoots(roots); err != nil {
-			return tool.Refuse(err.Error()+"; use private daemon state outside all native wall roots")
+			return tool.Refuse(err.Error() + "; use private daemon state outside all native wall roots")
 		}
 	}
 
@@ -1732,6 +1744,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	activeDaemon = d
 	if w.wall != nil {
 		d.NativeControlDir = controlRoot
+		d.NativeControlBinding = func() (string, error) { return w.nativeControlDir(dir) }
 		d.NativeControlRoots = func() []string {
 			roots := append(append([]string{dir}, wall.Jobs...), wall.Reads...)
 			if w.setupProfile != nil {
@@ -1739,9 +1752,13 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			config := c.Str("config-dir")
 			if config == "" {
-				if row := rowConfigDir.Load(); row != nil { config = *row }
+				if row := rowConfigDir.Load(); row != nil {
+					config = *row
+				}
 			}
-			if config == "" { config = w.getenv("CLAUDE_CONFIG_DIR") }
+			if config == "" {
+				config = w.getenv("CLAUDE_CONFIG_DIR")
+			}
 			return append(roots, config)
 		}
 	}
@@ -1951,7 +1968,9 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 		Coordinator: c.Str("coordinator"), SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), NeedsEnv: strings.Join(friend.NeedsEnvOf(c.Str("needs-env"), c.Str("model")), ","),
 		DenySelf: commaList(c.Str("deny-self")),
 	}
-	if a.StateDir == "" && w.wall != nil { a.StateDir = friend.DefaultStateDir(w.home, a.Friend) }
+	if a.StateDir == "" && w.wall != nil {
+		a.StateDir = friend.DefaultStateDir(w.home, a.Friend)
+	}
 	if a.Harness == "claude" {
 		a.ConfigDir = c.Str("config-dir")
 	}

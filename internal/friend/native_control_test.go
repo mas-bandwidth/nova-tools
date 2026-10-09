@@ -1,3 +1,5 @@
+//go:build linux || darwin
+
 package friend
 
 import (
@@ -22,10 +24,22 @@ func TestNativeControlRootStaysOutsideEveryWallGrant(t *testing.T) {
 			d := &Daemon{Dir: work, StateDir: state, NativeControlDir: filepath.Join(state, "native-control")}
 			require.NoError(t, d.ValidateNativeControlRoots([]string{work}))
 			allowed := filepath.Join(d.NativeControlDir, "visible")
-			if kind == "work" { allowed = work; d.NativeControlDir = filepath.Join(work, "authority") }
-			if kind == "parent" { allowed = base }
-			if kind == "symlink" { allowed = filepath.Join(base, "alias"); require.NoError(t, os.Symlink(state, allowed)) }
-			if kind == "state-symlink" { d.StateDir = filepath.Join(base, "state-alias"); require.NoError(t, os.Symlink(work, d.StateDir)); allowed = work }
+			if kind == "work" {
+				allowed = work
+				d.NativeControlDir = filepath.Join(work, "authority")
+			}
+			if kind == "parent" {
+				allowed = base
+			}
+			if kind == "symlink" {
+				allowed = filepath.Join(base, "alias")
+				require.NoError(t, os.Symlink(state, allowed))
+			}
+			if kind == "state-symlink" {
+				d.StateDir = filepath.Join(base, "state-alias")
+				require.NoError(t, os.Symlink(work, d.StateDir))
+				allowed = work
+			}
 			assert.Error(t, d.ValidateNativeControlRoots([]string{work, allowed}))
 		})
 	}
@@ -45,7 +59,7 @@ func TestNativeControlPrivateReadDebtStillOccupiesConfiguredWidth(t *testing.T) 
 	require.NoError(t, os.MkdirAll(work, 0700))
 	d := &Daemon{Dir: work, StateDir: state, NativeControlDir: filepath.Join(state, "native-control")}
 	require.NoError(t, d.validateNativeControl())
-	require.NoError(t, saveReadActive(d.nativeReadDir(filepath.Join(work, "reads", "r1")), readActive{Read: AskedRead{ID: "r1"}, LaunchHeld: true}))
+	require.NoError(t, saveReadActive(d.nativeReadDir(filepath.Join(work, "reads", "r1")), readActive{Read: AskedRead{ID: "r1", Epoch: "e1", Gen: 1}, LaunchHeld: true}))
 	l := &loop{d: d, lanes: &laneSet{}, reads: newReadSet()}
 	assert.False(t, l.childRoom(1), "private orphan read debt consumes one slot even if native work artifacts disappeared")
 	assert.True(t, l.childRoom(2))
@@ -65,7 +79,7 @@ func TestNativeControlLegacyDebtIsNotSilentlyMigrated(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "ses_legacy", lanes.Sessions[1], "fencing must preserve old session ownership")
 	require.NoError(t, os.Remove(filepath.Join(StateDirIn(work), LanesFile)))
-	require.NoError(t, saveReadActive(filepath.Join(work, "reads", "r1"), readActive{LaunchHeld: true, Read: AskedRead{ID: "r1"}}))
+	require.NoError(t, saveReadActive(filepath.Join(work, "reads", "r1"), readActive{LaunchHeld: true, Read: AskedRead{ID: "r1", Epoch: "e1", Gen: 1}}))
 	assert.ErrorContains(t, d.legacyNativeAuthority(), "legacy native read ownership")
 	a, found, err := loadReadActive(filepath.Join(work, "reads", "r1"))
 	require.NoError(t, err)
@@ -89,6 +103,7 @@ func TestNativeControlSharedWorkClaimIgnoresPublicNativeForgery(t *testing.T) {
 	base := t.TempDir()
 	home, work := filepath.Join(base, "owner"), filepath.Join(base, "work")
 	require.NoError(t, os.MkdirAll(work, 0700))
+	require.NoError(t, os.MkdirAll(home, 0700))
 	alias := filepath.Join(base, "alias")
 	require.NoError(t, os.Symlink(work, alias))
 	root, err := NativeControlDir(home, work)
