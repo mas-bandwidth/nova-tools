@@ -447,7 +447,7 @@ func (c sealCarry) awaitGate(prNum string, say func(string, ...interface{}), now
 			}
 			return fmt.Errorf("pull request #%s review query failed: %s; run: gh pr view %s", prNum, oneline.Err(err), prNum)
 		}
-		termErr, isApproved, waived := classifySealReview(view, prNum, c.sealedSHA, 0)
+		isApproved, waived, termErr := classifySealReview(view, prNum, c.sealedSHA, 0)
 		if termErr != nil {
 			say("%s", termErr.Error())
 			return termErr
@@ -1005,12 +1005,12 @@ type sealCheckItem struct {
 // already returned 0 on this commit and headRefOid is that commit: the Actions
 // check is then stale, and the caller prints the local gate verdict.
 // Anything still pending keeps polling. The wait is not capped at two minutes.
-func classifySealReview(raw, prNum, sealedSHA string, localGate int) (error, bool, bool) {
+func classifySealReview(raw, prNum, sealedSHA string, localGate int) (approved, waived bool, err error) {
 	trimmed := strings.TrimSpace(raw)
 	var view sealPRView
 	if strings.HasPrefix(trimmed, "{") {
 		if err := json.Unmarshal([]byte(trimmed), &view); err != nil {
-			return fmt.Errorf("pull request #%s review query response invalid: %s; run: gh pr view %s", prNum, oneline.Err(err), prNum), false, false
+			return false, false, fmt.Errorf("pull request #%s review query response invalid: %s; run: gh pr view %s", prNum, oneline.Err(err), prNum)
 		}
 	} else {
 		switch strings.ToUpper(trimmed) {
@@ -1037,10 +1037,10 @@ func classifySealReview(raw, prNum, sealedSHA string, localGate int) (error, boo
 	}
 
 	if strings.EqualFold(view.State, "CLOSED") {
-		return fmt.Errorf("pull request #%s was closed without merging; run: gh pr reopen %s", prNum, prNum), false, false
+		return false, false, fmt.Errorf("pull request #%s was closed without merging; run: gh pr reopen %s", prNum, prNum)
 	}
 	if strings.EqualFold(view.State, "MERGED") {
-		return fmt.Errorf("pull request #%s was merged elsewhere; run: git pull", prNum), false, false
+		return false, false, fmt.Errorf("pull request #%s was merged elsewhere; run: git pull", prNum)
 	}
 
 	// A failed seat-rule check is stale only for this commit, and only after the
@@ -1065,19 +1065,19 @@ func classifySealReview(raw, prNum, sealedSHA string, localGate int) (error, boo
 			if detail == "" {
 				detail = "conclusion=" + strings.ToLower(conc)
 			}
-			return fmt.Errorf("pull request #%s check %s failed: %s; run: gh pr checks %s", prNum, name, detail, prNum), false, false
+			return false, false, fmt.Errorf("pull request #%s check %s failed: %s; run: gh pr checks %s", prNum, name, detail, prNum)
 		}
 	}
 
 	if strings.EqualFold(view.ReviewDecision, "APPROVED") {
-		return nil, true, waived
+		return true, waived, nil
 	}
 
 	if strings.EqualFold(view.ReviewDecision, "CHANGES_REQUESTED") {
-		return fmt.Errorf("pull request #%s changes requested; run: gh pr view %s", prNum, prNum), false, false
+		return false, false, fmt.Errorf("pull request #%s changes requested; run: gh pr view %s", prNum, prNum)
 	}
 
-	return nil, false, false
+	return false, false, nil
 }
 
 // admitLocalGate runs the seat-rule gate on the commit just made, against the

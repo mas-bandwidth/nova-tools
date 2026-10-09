@@ -204,19 +204,19 @@ func TestClassifyDoesNotWaiveAFailedCheckWhenTheLocalGateFailed(t *testing.T) {
 	const sha = "1111111111111111111111111111111111111111"
 	raw := `{"state":"OPEN","reviewDecision":"APPROVED","headRefOid":"` + sha + `","statusCheckRollup":[{"name":"seat-rule","status":"COMPLETED","conclusion":"FAILURE"}]}`
 
-	err, approved, waived := classifySealReview(raw, "42", sha, 1)
+	approved, waived, err := classifySealReview(raw, "42", sha, 1)
 	require.Error(t, err, "a local gate failure must keep the failed check terminal")
 	assert.False(t, approved)
 	assert.False(t, waived)
 	assert.Contains(t, err.Error(), "seat-rule")
 
-	err, approved, waived = classifySealReview(raw, "42", sha, 0)
+	approved, waived, err = classifySealReview(raw, "42", sha, 0)
 	require.NoError(t, err, "a stale seat-rule check on this commit is not a refusal")
 	assert.True(t, approved)
 	assert.True(t, waived)
 
 	other := `{"state":"OPEN","reviewDecision":"APPROVED","headRefOid":"` + sha + `","statusCheckRollup":[{"name":"ci","status":"COMPLETED","conclusion":"FAILURE"}]}`
-	err, approved, waived = classifySealReview(other, "42", sha, 0)
+	approved, waived, err = classifySealReview(other, "42", sha, 0)
 	require.Error(t, err, "a failed check that is not seat-rule stays terminal")
 	assert.False(t, approved)
 	assert.False(t, waived)
