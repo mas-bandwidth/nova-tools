@@ -486,7 +486,22 @@ function sideWord(work, tiers) {
 }
 function setSideOff(sec, work) { if (sec) sec.classList.toggle("off", String(work || "on") === "off"); }
 
-// the machine pill: red when the machine line says every provider is out of credit (SPEC.md)
+// the machine pill: red when the machine line says every provider is out of credit (SPEC.md);
+// when the machine is STOPPED, the Updated dot turns red to match the badge
+var machineStopped = false;
+function liveDot() {
+  var live = $("live");
+  return live && ((live.querySelector && live.querySelector(".dot")) || (live.children && live.children[0]));
+}
+function updateLiveDot() {
+  var live = $("live");
+  if (!live || !live.classList) return;
+  var isOk = live.classList.contains("ok");
+  var stopped = isOk && machineStopped;
+  if (live.classList.toggle) live.classList.toggle("stopped", stopped);
+  var dot = liveDot();
+  if (dot && dot.classList && dot.classList.toggle) dot.classList.toggle("stopped", stopped);
+}
 function setMachine(line) {
   var text = String(line || "-").replace(/^machine:\s*/, "");
   // the human page shows RUNNING, STOPPED or STALE; tick lateness is the coordinator's view only (the owner 2026-10-04 2:55 PM)
@@ -501,6 +516,8 @@ function setMachine(line) {
   // the bar pulses only while the machine runs (the owner 2026-10-04 9:14 AM)
   var running = /^(running|STALE)\b/.test(text);
   var box = $("overall"); if (box) box.classList.toggle("stopped", !running);
+  machineStopped = stopped;
+  updateLiveDot();
 }
 
 // Providers (SPEC.md, the owner 8:03 and 8:18 AM): shown only when the store carries tables.providers
@@ -634,7 +651,9 @@ function renderRelease(j) {
   });
 }
 function setLive(since) {
-  setClass($("live"), "live ok");
+  setClass($("live"), "live ok" + (machineStopped ? " stopped" : ""));
+  var dot = liveDot();
+  if (dot && dot.classList && dot.classList.toggle) dot.classList.toggle("stopped", machineStopped);
   // the viewer's zone after the time, from the browser (SPEC.md, the owner 9:59 PM): EDT now, EST after the change
   // "10:00:02 PM EDT": the digits right-aligned in a fixed 8ch box (no jump from 9 to 10 o'clock),
   // then one ordinary (proportional) blank before PM and one before the zone. The browser's own time string
