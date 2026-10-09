@@ -144,6 +144,7 @@ func TestPinFullAndHeldUseTheClock(t *testing.T) {
 
 	w := friendWorld(t, friendBrief("friend amy"))
 	fill(w, 31*time.Minute)
+	w.s.Primary("s1-1").Fields[FieldPinSince] = stamp(w.s.Now.Add(-31 * time.Minute))
 	p := dealWith(w, amy, bob)
 	require.NotNil(t, w.s.Fleet.Card("s1-1.w1"))
 	assert.Equal(t, FriendRow("bob"), w.s.Fleet.Card("s1-1.w1").Row)
@@ -151,6 +152,7 @@ func TestPinFullAndHeldUseTheClock(t *testing.T) {
 
 	w = friendWorld(t, friendBrief("friend amy"))
 	fill(w, 10*time.Minute)
+	w.s.Primary("s1-1").Fields[FieldPinSince] = stamp(w.s.Now.Add(-10 * time.Minute))
 	p = dealWith(w, amy, bob)
 	assert.Equal(t, Ready, w.s.StateOf("s1-1"))
 	assert.Empty(t, pinStory(p))
@@ -241,4 +243,64 @@ func TestPinPreferredFriendIsAskedTheNextReadFirst(t *testing.T) {
 	w.must(p)
 	require.NotNil(t, w.s.Fleet.Card(ReadCardID("s1-1", 1, "amy")))
 	assert.Nil(t, w.s.Fleet.Card(ReadCardID("s1-1", 1, "bob")))
+}
+
+// The hole the reader found (a-pin-is-a-preference-with-a-clock-bb-tb.w1): a WHO pin come
+// back by a rework, a return or a redo is a preference with the clock too, never a hole.
+// ReworkPinned is a soft pin: the deal starts its clock (pin_since), waits inside the
+// bound, and waives it past the bound. TestAReworkKeepsTheWhoPin holds the other half:
+// inside the clock she keeps it, and the machines' deal leaves it.
+
+// pinWaitStory is the deal line that starts a come-back pin's clock, "" when no unit
+// wrote one.
+func pinWaitStory(p Plan) string {
+	for _, u := range p.Units {
+		if strings.Contains(u.Moved, "waits ready for friend ") {
+			return u.Moved
+		}
+	}
+	return ""
+}
+
+func TestAComeBackPinIsWaivedPastTheBound(t *testing.T) {
+	t.Parallel()
+	w := friendWorld(t, friendBrief("friend amy"))
+	w.s.Primary("s1-1").Fields["reworks"] = "1" // a rework, a return or a redo: ReworkPinned
+	amy := FriendSeat{Name: "amy", Width: 2, Status: Down, Class: "flash,pro", Proof: w.s.Now.Add(-31 * time.Minute)}
+	bob := FriendSeat{Name: "bob", Width: 2, Status: Up, Class: "flash,pro"}
+	p := dealWith(w, amy, bob)
+	wc := w.s.Fleet.Card("s1-1.w1")
+	require.NotNil(t, wc, "a come-back pin past the bound is dealt on, not a hole")
+	assert.Equal(t, FriendRow("bob"), wc.Row)
+	assert.Equal(t, stamp(w.s.Now), w.s.Primary("s1-1").F(FieldPinWaived))
+	assert.Equal(t, FriendRow("amy"), w.s.Primary("s1-1").F(FieldWho), "the WHO line stays as her preference")
+	assert.Contains(t, pinStory(p), "pin to amy waived after 31m0s: she is down; dealt to friend.bob")
+}
+
+func TestAComeBackPinStartsItsClockAndWaitsInsideTheBound(t *testing.T) {
+	t.Parallel()
+	w := friendWorld(t, friendBrief("friend amy"))
+	w.s.Primary("s1-1").Fields["reworks"] = "1"
+	amy := FriendSeat{Name: "amy", Width: 2, Status: Down, Class: "flash,pro"}
+	bob := FriendSeat{Name: "bob", Width: 2, Status: Up, Class: "flash,pro"}
+
+	// her absence is unknown: the deal starts the clock and keeps the card this tick
+	p := dealWith(w, amy, bob)
+	assert.Equal(t, Ready, w.s.StateOf("s1-1"))
+	assert.Nil(t, w.s.Fleet.Card("s1-1.w1"))
+	assert.Equal(t, stamp(w.s.Now), w.s.Primary("s1-1").F(FieldPinSince), "the clock starts on the card")
+	assert.Contains(t, pinWaitStory(p), "waits ready for friend amy")
+
+	// inside the bound from the started clock it still waits
+	p = dealWith(w, amy, bob)
+	assert.Equal(t, Ready, w.s.StateOf("s1-1"))
+	assert.Empty(t, pinStory(p))
+
+	// past the bound the started clock waives the pin: dealt on, WHO kept
+	w.s.Now = w.s.Now.Add(PinWaitDefault + time.Minute)
+	p = dealWith(w, amy, bob)
+	require.NotNil(t, w.s.Fleet.Card("s1-1.w1"))
+	assert.Equal(t, FriendRow("bob"), w.s.Fleet.Card("s1-1.w1").Row)
+	assert.Contains(t, pinStory(p), "pin to amy waived after 31m0s: she is down; dealt to friend.bob")
+	assert.Equal(t, FriendRow("amy"), w.s.Primary("s1-1").F(FieldWho), "the WHO line stays as her preference")
 }

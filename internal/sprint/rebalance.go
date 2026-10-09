@@ -233,7 +233,7 @@ func rebalanceMove(s *Snapshot, p *Plan, declared map[string]bool, ri routeIndex
 	changes := []Change{change(Fleet, moveEntry(wc, to.row, Ready, set, unset...))}
 	var clear []string
 	if name, ok := FriendCard(pr); ok && to.friend && name == to.name && pr.Has(FieldPinWaived) {
-		clear = []string{FieldPinWaived}
+		clear = []string{FieldPinWaived, FieldPinSince} // her preference honoured: the waiver and the clock end
 	}
 	if len(prim) > 0 || len(clear) > 0 {
 		changes = append(changes, change(Work, setEntry(pr, prim, clear...)))
