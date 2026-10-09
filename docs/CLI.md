@@ -1475,9 +1475,9 @@ example:
   nova-friend install --as bob --harness opencode --dir ./bob --dry-run
   nova-friend uninstall --as bob --dry-run
   nova-friend ping --as ada --to bob --nonce abc123
-  nova-friend local-pong --as bob --dir /work/bob --session ses_123 --nonce abc123 --capability <turn-capability>
+  nova-friend local-pong --as bob --dir /work/bob --session ses_123 --nonce abc123 --capability aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --dry-run
   nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
-  nova-friend reply --as bob --dir /work/bob --session ses_123 --re 01M4F39QAT9N7621G6XKC3R9AA --capability <turn-capability> --subject 'Review answer' --body 'Reviewed'
+  nova-friend reply --as bob --dir /work/bob --session ses_123 --re 01M4F39QAT9N7621G6XKC3R9AA --capability aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --subject 'Review answer' --body 'Reviewed' --dry-run
   nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
   nova-friend status --as bob --dir ./bob
 ```
@@ -1733,7 +1733,7 @@ effect: delivery: sends beyond this machine: the session's answer to a PING, one
 usage: nova-friend reply [flags]
 from `nova-friend help`:
   nova-friend reply --as <me> --dir <friend-dir> --session <native-session> --re <request-id> --capability <turn-capability> --subject <line> --body <text> [--dry-run]
-  nova-friend reply --as bob --dir /work/bob --session ses_123 --re 01M4F39QAT9N7621G6XKC3R9AA --capability <turn-capability> --subject 'Review answer' --body 'Reviewed'
+  nova-friend reply --as bob --dir /work/bob --session ses_123 --re 01M4F39QAT9N7621G6XKC3R9AA --capability aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --subject 'Review answer' --body 'Reviewed' --dry-run
 flags:
   --as <string>  the native friend's name (required)
   --body <string>  the reply text (required)
