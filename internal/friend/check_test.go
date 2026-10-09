@@ -13,7 +13,7 @@ import (
 func TestDecideVerdictPure(t *testing.T) {
 	t.Parallel()
 	const window = 24 * time.Hour
-	up := DaemonFacts{Friend: "bob", Presence: "up", Agent: "loaded", Status: "ok", PongAge: "-"}
+	up := DaemonFacts{SessionProof: "proven", SessionID: "session-a", Friend: "bob", Presence: "up", Agent: "loaded", Status: "ok", PongAge: "-"}
 	hf := func(delivered, failed int) HarnessFacts {
 		return HarnessFacts{Friend: "bob", Broken: "-", Reason: "-", Delivered: delivered, Failed: failed}
 	}
@@ -38,14 +38,14 @@ func TestDecideVerdictPure(t *testing.T) {
 		{"a pong outside the window does not answer", withPong(up, "25h0m0s"), hf(1, 0), bob, nil, VerdictDeaf, "deliveries succeed but no session pong or real message came back in the window"},
 		{"a pong in the window answers", withPong(up, "4s"), hf(1, 0), bob, nil, VerdictOK, "live"},
 		{"silent: no delivery was due", up, hf(0, 0), bob, nil, VerdictSilent, "no delivery was due and nothing came back in the window"},
-		{"down by presence", DaemonFacts{Friend: "bob", Presence: "down", Agent: "loaded", Status: "ok", PongAge: "-"}, hf(1, 0), BusFacts{RealSince: 2}, nil, VerdictDown, "down by presence"},
-		{"stale status cannot be live despite fresh presence", DaemonFacts{Friend: "bob", Presence: "up", Agent: "loaded", Status: "stale", PongAge: "4s"}, hf(1, 0), BusFacts{RealSince: 1}, nil, VerdictDown, "stale daemon status"},
+		{"down by presence", DaemonFacts{SessionProof: "proven", SessionID: "session-a", Friend: "bob", Presence: "down", Agent: "loaded", Status: "ok", PongAge: "-"}, hf(1, 0), BusFacts{RealSince: 2}, nil, VerdictDown, "down by presence"},
+		{"stale status cannot be live despite fresh presence", DaemonFacts{SessionProof: "proven", SessionID: "session-a", Friend: "bob", Presence: "up", Agent: "loaded", Status: "stale", PongAge: "4s"}, hf(1, 0), BusFacts{RealSince: 1}, nil, VerdictDown, "stale daemon status"},
 		{"shown up, broken: why leads with untrue", up, HarnessFacts{Friend: "bob", Broken: "2026-10-05T10:00:00Z", Reason: "quota"}, bob, claim, VerdictBroken, "untrue: shown up/2, session broken: quota"},
 		{"shown up, deaf: why leads with untrue", up, hf(2, 0), bob, claim, VerdictDeaf, "untrue: shown up/2, deliveries succeed but no session pong or real message came back in the window"},
 		{"shown up, silent: why leads with untrue", up, hf(0, 0), bob, claim, VerdictSilent, "untrue: shown up/2, no delivery was due and nothing came back in the window"},
-		{"shown up, down: why leads with untrue", DaemonFacts{Friend: "bob", Presence: "down", Agent: "none", PongAge: "-"}, hf(0, 0), bob, claim, VerdictDown, "untrue: shown up/2, down by presence"},
-		{"shown working, asleep: untrue", DaemonFacts{Friend: "bob", Presence: "asleep", Agent: "loaded", Status: "ok", PongAge: "4s"}, hf(1, 0), bob, &ShownEntry{State: "asleep", Working: 1}, VerdictUntrue, "shown asleep/1, facts say asleep"},
-		{"shown up, agent not loaded: untrue", DaemonFacts{Friend: "bob", Presence: "up", Agent: "not-loaded", Status: "ok", PongAge: "4s"}, hf(1, 0), bob, claim, VerdictUntrue, "shown up/2, facts say agent not-loaded"},
+		{"shown up, down: why leads with untrue", DaemonFacts{SessionProof: "proven", SessionID: "session-a", Friend: "bob", Presence: "down", Agent: "none", PongAge: "-"}, hf(0, 0), bob, claim, VerdictDown, "untrue: shown up/2, down by presence"},
+		{"shown working, asleep: untrue", DaemonFacts{SessionProof: "proven", SessionID: "session-a", Friend: "bob", Presence: "asleep", Agent: "loaded", Status: "ok", PongAge: "4s"}, hf(1, 0), bob, &ShownEntry{State: "asleep", Working: 1}, VerdictUntrue, "shown asleep/1, facts say asleep"},
+		{"shown up, agent not loaded: untrue", DaemonFacts{SessionProof: "proven", SessionID: "session-a", Friend: "bob", Presence: "up", Agent: "not-loaded", Status: "ok", PongAge: "4s"}, hf(1, 0), bob, claim, VerdictUntrue, "shown up/2, facts say agent not-loaded"},
 		{"shown up and live: ok", withPong(up, "3s"), hf(1, 0), BusFacts{RealSince: 1}, &ShownEntry{State: "up"}, VerdictOK, "live"},
 		{"shown asleep, nothing working: no claim", up, hf(0, 0), bob, &ShownEntry{State: "asleep"}, VerdictSilent, "no delivery was due and nothing came back in the window"},
 	}
@@ -178,7 +178,7 @@ func TestLineFormatting(t *testing.T) {
 		Connection: "connected", Challenge: "quiet", PongAge: "5s",
 		Presence: "up", SeenAge: "2s",
 	}
-	assert.Equal(t, "CHECK DAEMON friend=bob agent=loaded pid=123 status=ok connection=connected challenge=quiet pong_age=5s presence=up seen_age=2s proof=none proof_age=-", df.Line())
+	assert.Equal(t, "CHECK DAEMON friend=bob agent=loaded pid=123 status=ok connection=connected challenge=quiet pong_age=5s presence=up seen_age=2s proof=none proof_age=- session_id=- session_proof=- session_observed=- session_target=-", df.Line())
 	df.Proof, df.ProofAge = "pending", "4m0s"
 	assert.Contains(t, df.Line(), " proof=pending proof_age=4m0s", "a daemon waiting for its push proof says so")
 

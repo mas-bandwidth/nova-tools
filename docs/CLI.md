@@ -1471,7 +1471,7 @@ usage:
   nova-friend ping --as <coordinator> (--to <friend> | --wake --to-friends [--every <d>] [--within <d>] [--never-wake <f,...>] [--server <addr>]) [--nonce <n>] [--since <RFC3339>] [--redis <addr>] [--dry-run]
   nova-friend ping-install --as <coordinator> --every <d> [--within <d>] [--never-wake <f,...>] [--server <addr>] [--redis <addr>] [--launchd-log <file>] [--dry-run]
   nova-friend ping-uninstall --as <coordinator> [--dry-run]
-  nova-friend pong --as <me> --nonce <n> [--to <coordinator>] [--dir <work-dir>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]
+  nova-friend pong --as <me> --nonce <n> [--to <coordinator>] [--dir <work-dir>] [--queue <n>] [--working <n>] [--width <n>] [--session <id>] [--state-dir <d>] [--redis <addr>] [--dry-run]
   nova-friend wait-pong --from <friend> --nonce <n> [--timeout <d>] [--redis <addr>]
   nova-friend watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]
   nova-friend status --as <me> --dir <d> [--state-dir <d>]
@@ -1721,7 +1721,7 @@ effect: delivery: sends beyond this machine: one PING on the friend's stream, as
 ```
 usage: nova-friend pong [flags]
 from `nova-friend help`:
-  nova-friend pong --as <me> --nonce <n> [--to <coordinator>] [--dir <work-dir>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]
+  nova-friend pong --as <me> --nonce <n> [--to <coordinator>] [--dir <work-dir>] [--queue <n>] [--working <n>] [--width <n>] [--session <id>] [--state-dir <d>] [--redis <addr>] [--dry-run]
   nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
 flags:
   --as <string>  your name, the friend the daemon in --dir runs as (required)
@@ -1731,6 +1731,7 @@ flags:
   --nonce <string>  the nonce the PING carried (required)
   --queue <int>  tasks queued, from your own task list
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
+  --session <string>  the id of the conversation answering this nonce (default the harness runtime session id); never the daemon target assumed from its plist
   --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
   --to <string>  the coordinator (default: the seat the last ping named)
   --width <int>  your width, from the nova-config friend row
@@ -1863,8 +1864,8 @@ record); the queue file is under `--dir`, the friend's working directory. `wait-
 OK nonce= from= at= took= queue= working= width= daemon=` (whether the daemon
 pong came too), or `WAIT-PONG NONE` at exit 1. `status` prints `STATUS OK
 daemon=<up|down> ... connection= seat= challenge=<quiet|challenged|deaf>
-last_pong= queue= working= width= session=<ok|broken> held= inbox= missing=` (broken:
-`session_id= broken_at= reason=`; held, inbox and missing are the daemon's last reconcile of
+last_pong= queue= working= width= session=<ok|broken> session_id= session_target= session_observed= session_proof= held= inbox= missing=` (broken:
+`broken_at= reason=`; held, inbox and missing are the daemon's last reconcile of
 her inbox with her row, `-` until the sprint server has answered: SPEC-FRIEND.md, "The
 daemon writes every card she holds"), then `status= why= evidence= harness_seen=`, or
 `STATUS NONE` at exit 1 where no daemon ever ran. A friend is up on her session's
@@ -2036,7 +2037,7 @@ The health check: is each friend's row true. The friends are the arguments, else
 state directory under ~/.nova-friend (or --state-dir) or on the bus. Everything is judged over the --since
 window (default 24h): deliveries, deferrals, real messages and the session pong. Per friend, five lines in
 this order:
-CHECK DAEMON friend=<f> agent=<loaded|not-loaded|none> pid=<n|-> status=<ok|stale|none> connection=<..> challenge=<..> pong_age=<age|-> presence=<up|asleep|down> seen_age=<age|-> proof=<pending|sent|none> proof_age=<age|->
+CHECK DAEMON friend=<f> agent=<loaded|not-loaded|none> pid=<n|-> status=<ok|stale|none> connection=<..> challenge=<..> pong_age=<age|-> presence=<up|asleep|down> seen_age=<age|-> proof=<pending|sent|none> proof_age=<age|-> session_id=<id|-> session_proof=<proven|unproven|mismatch|-> session_observed=<id|-> session_target=<id|->
 CHECK HARNESS friend=<f> harness=<h> route=<push|mailbox|queue|passive> last=<RFC3339|-> last_exit=<n|-> failed_of_last20=<n> deferred=<n> broken=<RFC3339|-> reason=<line|-> session_live=<conversation|-> queued=<n|->
 CHECK BUS friend=<f> real_since=<n> last_real=<RFC3339|->   (real: not ping, pong, daemon-pong or keepalive)
 CHECK WORK friend=<f> inbox=<n> outbox=<n> newest_outbox=<name|-> newest_at=<RFC3339|->   (under the friend's directory)

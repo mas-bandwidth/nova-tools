@@ -36,11 +36,12 @@ import (
 // and the reason carries the one line the session runs. A wake path that
 // is not absolute is a refusal and nothing is written.
 type Grok struct {
-	Dir  string    // the friend's directory: the session's cwd
-	Wake string    // the wake file, when named; else the one the session's monitor tails
-	Run  Exec      // runs ps
-	Out  io.Writer // the daemon's record, when set
-	Home string    // the grok home, ~/.grok when empty
+	target sessionTarget
+	Dir    string    // the friend's directory: the session's cwd
+	Wake   string    // the wake file, when named; else the one the session's monitor tails
+	Run    Exec      // runs ps
+	Out    io.Writer // the daemon's record, when set
+	Home   string    // the grok home, ~/.grok when empty
 
 	// now and wait are the clock seam. Nil is the wall clock. Tests set both.
 	now  func() time.Time
@@ -90,6 +91,7 @@ func (g *Grok) Deliver(ctx context.Context, text string) (int, error) {
 		undo()
 		return 0, err
 	}
+	g.target.saw(wake)
 	f, err := os.OpenFile(wake, os.O_WRONLY|os.O_APPEND, 0)
 	if err != nil {
 		undo()
@@ -311,7 +313,7 @@ func (g *Grok) classify(ctx context.Context) (string, error, error) {
 	var file string
 	var wakeErr error
 	for _, dir := range dirs {
-		file, wakeErr = WakeOf(string(active), listing, dir, g.Wake)
+		file, wakeErr = WakeOf(string(active), listing, dir, g.target.get(g.Wake))
 		if wakeErr == nil || !errors.Is(wakeErr, ErrNoSession) {
 			break // found, or answered by the window that is open
 		}
