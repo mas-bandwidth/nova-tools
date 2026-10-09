@@ -88,7 +88,7 @@ func nativeControlIndexBase(home string) (string, bool, error) {
 		return "", false, errors.New("native control account home is not canonical")
 	}
 	base := filepath.Join(home, ".nova-friend", "native-control")
-	if err := nativeBrokerOutsideRoots(base, (&sandbox.Policy{}).VisibleRoots()); err != nil {
+	if err := nativeControlOutsideRoots(base, (&sandbox.Policy{}).VisibleRoots()); err != nil {
 		return "", false, err
 	}
 	if real, err := filepath.EvalSymlinks(home); err != nil || real != home {
