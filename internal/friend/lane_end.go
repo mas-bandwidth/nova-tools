@@ -50,16 +50,17 @@ type Started struct {
 
 // LaneEnd is how a card's last run in a lane ended, as its finish says it.
 type LaneEnd struct {
-	Exit     int
-	Err      string        // the harness's error, when the run did not end with an exit
-	Wall     time.Duration // the run's wall, its start to its end
-	Cap      string        // the cap that stopped it, when one did
-	Rejected string        // a permission the harness refused
-	Turns    int           // the turns the card had in the lane
-	Restart  time.Time     // not zero: the run was found gone by a daemon starting up at this time
-	Started  time.Time     // when the lane began the card
-	NoReport bool          // the run wrote RESULT.md and no REPORT.md
-	GiveUp   bool          // this completed lane exhausts the card's turns
+	Exit        int
+	Err         string        // the harness's error, when the run did not end with an exit
+	Wall        time.Duration // the run's wall, its start to its end
+	Cap         string        // the cap that stopped it, when one did
+	Rejected    string        // a permission the harness refused
+	Turns       int           // the turns the card had in the lane
+	Restart     time.Time     // not zero: the run was found gone by a daemon starting up at this time
+	Started     time.Time     // when the lane began the card
+	NoReport    bool          // the run wrote RESULT.md and no REPORT.md
+	UnknownExit bool          // RESULT survived but the original turn details did not
+	GiveUp      bool          // this completed lane exhausts the card's turns
 	// Capped is the card's wall cap by its tier when the lane ended the card at it
 	// (lane_cap.go), Tier that tier, Overrun the card's wall past the cap at its end, and
 	// Tail the last CapTailLines lines of the lane's output.
@@ -78,6 +79,8 @@ func (e LaneEnd) How() string {
 		fmt.Fprintf(&b, "the run is gone: the lane daemon started up at %s and found the card begun at %s with no REPORT.md (the daemon that ran it exited, was killed or crashed)",
 			e.Restart.UTC().Format(time.RFC3339), e.Started.UTC().Format(time.RFC3339))
 		return b.String()
+	case e.UnknownExit:
+		return "the native result survived restart; the run's exit and wall are unavailable"
 	case e.Capped > 0:
 		fmt.Fprintf(&b, "%s: the card's wall reached its tier's cap and the daemon ended the lane, exit %d", CappedWords(e.Capped, e.Tier, e.Overrun), e.Exit)
 	case e.Cap != "":
@@ -314,7 +317,11 @@ func (l *loop) endCard(lane int, card Card, end LaneEnd, now time.Time) string {
 		if d.Finish == nil {
 			words += " sent=sync" // friend sync finishes it from the report just written
 		} else {
-			ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), FinishWait)
+			base := context.WithoutCancel(l.ctx)
+			if l.completionPassContext != nil {
+				base = l.completionPassContext
+			}
+			ctx, cancel := context.WithTimeout(base, FinishWait)
 			err := d.Finish(ctx, FinishArgv(d.Friend, card, report, head, branch))
 			cancel()
 			if err != nil {
@@ -360,7 +367,7 @@ func recoveredEnd(st Started, now time.Time) LaneEnd {
 		return LaneEnd{Started: st.At}
 	}
 	if exists(st.Card.Result()) {
-		return LaneEnd{Started: st.At, NoReport: true, Err: "the native result survived restart; the run exit is unavailable"}
+		return LaneEnd{Started: st.At, NoReport: true, UnknownExit: true}
 	}
 	return LaneEnd{Restart: now, Started: st.At, GiveUp: true}
 }

@@ -494,6 +494,8 @@ type loop struct {
 	presentRetry  time.Time       // when a present whose turn failed is tried again
 	delivered     time.Time       // when the session last took a turn: the stale bound runs from it
 	session       string          // the session id as last read (Session)
+
+	completionPassContext context.Context // one shared deadline for retrying held lane completions
 }
 
 // Run is the loop until ctx ends. Each step: the clock; the friend's row

@@ -205,7 +205,11 @@ func (l *loop) stopRunQuiescent(job string, st Started) bool {
 	if !procgroup.AnchorPinned(receipt.PID, anchorPath) {
 		return false // a leaderless live group needs its birth-verified pin
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	base := context.Background()
+	if l.completionPassContext != nil {
+		base = l.completionPassContext
+	}
+	ctx, cancel := context.WithTimeout(base, time.Second)
 	defer cancel()
 	return procgroup.ReapVerified(ctx, receipt.PID, receipt.Identity, anchorPath, 100*time.Millisecond)
 }
@@ -214,7 +218,8 @@ func (l *loop) stopRunQuiescent(job string, st Started) bool {
 // descendants exited. The matching durable RUN and group state decide.
 func (l *loop) settleStopDebts(now time.Time) {
 	s := l.lanes
-	if l.d.SaveLanes == nil {
+	if l.d.SaveLanes == nil || s.stateUnknown {
+		// An unreadable lanes.json is not an empty STOP debt ledger.
 		return
 	}
 	if err := l.d.SaveLanes(s.state); err != nil {
@@ -312,6 +317,9 @@ func (l *loop) stopStep(now time.Time) bool {
 // oweStopReturn records a stop-return owed, in the lane state, before anything is sent.
 func (l *loop) oweStopReturn(r StopReturn) bool {
 	s := l.lanes
+	if s.stateUnknown {
+		return false // never overwrite an unreadable durable debt ledger
+	}
 	found := false
 	for i := range s.state.StopReturns {
 		if s.state.StopReturns[i].Job == r.Job && s.state.StopReturns[i].Owed() {

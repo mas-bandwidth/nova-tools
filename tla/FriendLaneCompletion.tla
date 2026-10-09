@@ -11,74 +11,78 @@ EXTENDS Naturals
 CONSTANTS SafeReport, SafeRelease, SafeReplay
 
 VARIABLES result, group, started, frozen, report, journal, slot, up,
-          stateFail, reportFail, restarted
+          stateFail, reportFail, restarted, stopped
 vars == <<result, group, started, frozen, report, journal, slot, up,
-          stateFail, reportFail, restarted>>
+          stateFail, reportFail, restarted, stopped>>
 
 Init == /\ result = FALSE /\ group = "live" /\ started = TRUE
         /\ frozen = "none" /\ report = "none" /\ journal = FALSE
         /\ slot = "held" /\ up = TRUE /\ stateFail = 0
-        /\ reportFail = 0 /\ restarted = FALSE
+        /\ reportFail = 0 /\ restarted = FALSE /\ stopped = FALSE
 
-NativeResult == /\ up /\ ~result
+NativeResult == /\ up /\ ~stopped /\ ~result
                 /\ result' = TRUE
                 /\ UNCHANGED <<group, started, frozen, report, journal,
-                                slot, up, stateFail, reportFail, restarted>>
+                                slot, up, stateFail, reportFail, restarted, stopped>>
 
 FreezeWriteFails == /\ up /\ result /\ frozen = "none" /\ stateFail = 0
                     /\ stateFail' = 1
                     /\ UNCHANGED <<result, group, started, frozen, report,
-                                    journal, slot, up, reportFail, restarted>>
+                                    journal, slot, up, reportFail, restarted, stopped>>
 
 Freeze == /\ up /\ result /\ started /\ frozen = "none"
           /\ frozen' = "exit7"
           /\ UNCHANGED <<result, group, started, report, journal, slot,
-                          up, stateFail, reportFail, restarted>>
+                          up, stateFail, reportFail, restarted, stopped>>
 
 GroupExits == /\ group = "live" /\ group' = "quiet"
               /\ UNCHANGED <<result, started, frozen, report, journal,
-                              slot, up, stateFail, reportFail, restarted>>
+                              slot, up, stateFail, reportFail, restarted, stopped>>
 
 ReportWriteFails == /\ up /\ frozen # "none" /\ group = "quiet"
                     /\ report = "none" /\ reportFail = 0
                     /\ reportFail' = 1
                     /\ UNCHANGED <<result, group, started, frozen, report,
-                                    journal, slot, up, stateFail, restarted>>
+                                    journal, slot, up, stateFail, restarted, stopped>>
 
 WriteReport == /\ up /\ frozen # "none" /\ report = "none"
                /\ (group = "quiet" \/ ~SafeReport)
                /\ report' = frozen
                /\ UNCHANGED <<result, group, started, frozen, journal,
-                               slot, up, stateFail, reportFail, restarted>>
+                               slot, up, stateFail, reportFail, restarted, stopped>>
 
 Journal == /\ up /\ report # "none" /\ ~journal
            /\ journal' = TRUE
            /\ UNCHANGED <<result, group, started, frozen, report, slot,
-                           up, stateFail, reportFail, restarted>>
+                           up, stateFail, reportFail, restarted, stopped>>
 
 ClearStarted == /\ up /\ started /\ (journal \/ ~SafeRelease)
                 /\ started' = FALSE
                 /\ UNCHANGED <<result, group, frozen, report, journal,
-                                slot, up, stateFail, reportFail, restarted>>
+                                slot, up, stateFail, reportFail, restarted, stopped>>
 
 ReleaseLane == /\ up /\ ~started /\ slot = "held"
                /\ slot' = "free"
                /\ UNCHANGED <<result, group, started, frozen, report,
-                               journal, up, stateFail, reportFail, restarted>>
+                               journal, up, stateFail, reportFail, restarted, stopped>>
 
 Crash == /\ up /\ up' = FALSE
          /\ UNCHANGED <<result, group, started, frozen, report, journal,
-                         slot, stateFail, reportFail, restarted>>
+                         slot, stateFail, reportFail, restarted, stopped>>
 
 Restart == /\ ~up /\ up' = TRUE /\ restarted' = TRUE
            /\ frozen' = IF ~SafeReplay /\ result /\ report = "none"
                          THEN "gone" ELSE frozen
            /\ UNCHANGED <<result, group, started, report, journal, slot,
-                           stateFail, reportFail>>
+                           stateFail, reportFail, stopped>>
+
+Stop == /\ up /\ ~stopped /\ stopped' = TRUE
+        /\ UNCHANGED <<result, group, started, frozen, report, journal,
+                        slot, up, stateFail, reportFail, restarted>>
 
 Next == \/ NativeResult \/ FreezeWriteFails \/ Freeze \/ GroupExits
         \/ ReportWriteFails \/ WriteReport \/ Journal \/ ClearStarted
-        \/ ReleaseLane \/ Crash \/ Restart
+        \/ ReleaseLane \/ Crash \/ Restart \/ Stop
 SafetySpec == Init /\ [][Next]_vars
 
 (* Bounded reachable recovery: state and REPORT writes each fail once; the
@@ -96,15 +100,24 @@ RetryNext == \/ NativeResult
              \/ Journal \/ ClearStarted \/ ReleaseLane
 RetrySpec == Init /\ [][RetryNext]_vars /\ WF_vars(RetryNext)
 
+(* A completed and quiescent native result remains completion after the
+   machine's STOP word. It is not turned into a stop-return on the live path. *)
+StopNext == \/ NativeResult \/ Freeze \/ GroupExits
+            \/ (frozen # "none" /\ group = "quiet" /\ Stop)
+            \/ (stopped /\ WriteReport)
+            \/ Journal \/ ClearStarted \/ ReleaseLane
+StopSpec == Init /\ [][StopNext]_vars /\ WF_vars(StopNext)
+
 TypeOK == /\ result \in BOOLEAN /\ group \in {"live", "quiet"}
           /\ started \in BOOLEAN /\ frozen \in {"none", "exit7", "gone"}
           /\ report \in {"none", "exit7", "gone"} /\ journal \in BOOLEAN
           /\ slot \in {"held", "free"} /\ up \in BOOLEAN
           /\ stateFail \in 0..1 /\ reportFail \in 0..1
-          /\ restarted \in BOOLEAN
+          /\ restarted \in BOOLEAN /\ stopped \in BOOLEAN
 NoLostCompletion == result => (started \/ (report # "none" /\ journal))
 ReportQuiescent == report = "none" \/ group = "quiet"
 ReportMatchesNative == report = "none" \/ report = "exit7"
 NoPrematureRelease == slot = "free" => (~started /\ report # "none" /\ journal)
 EventuallyReleased == <> (slot = "free" /\ journal)
+StoppedCompletionSettles == <> (stopped /\ slot = "free" /\ report = "exit7")
 =========================================================================

@@ -4,15 +4,90 @@ package friend
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/procgroup"
 	"github.com/stretchr/testify/require"
 )
+
+func TestFailedLaneStateReadCannotOverwriteDurableStarted(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "working"}}, []string{"c1"}, nil)
+		h := &lanesHarness{dir: dir, active: map[string]int{}}
+		r, _ := laneRig(t, h, 1)
+		stateDir := t.TempDir()
+		card := Card{ID: "c1", Outbox: filepath.Join(dir, "outbox", "c1~15")}
+		owed := LaneState{Started: map[string]Started{"c1~15": {Lane: 1, Card: card, At: t0.Add(-time.Minute)}}}
+		require.NoError(t, WriteLanes(stateDir, owed))
+		r.d.StateDir = stateDir
+		r.d.LoadLanes = func() (LaneState, error) { return LaneState{}, errors.New("lane state read refused") }
+		writes := 0
+		r.d.SaveLanes = func(s LaneState) error { writes++; return WriteLanes(stateDir, s) }
+		r.run(t, 4) // a control session may open while card admission is held
+		saved, err := ReadLanes(stateDir)
+		require.NoError(t, err)
+		require.Contains(t, saved.Started, "c1~15")
+		require.Zero(t, writes, "an incomplete in-memory placeholder must never replace durable claims")
+	})
+}
+
+func TestPendingLanePassBoundsSlowFinishAndRotatesDebt(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		now := time.Now()
+		dir, stateDir := t.TempDir(), t.TempDir()
+		state := LaneState{Started: map[string]Started{}}
+		lanes := make([]*lane, 16)
+		for i := range lanes {
+			job := fmt.Sprintf("c%02d~15", i)
+			card := Card{ID: fmt.Sprintf("c%02d", i), Outbox: filepath.Join(dir, "outbox", job)}
+			end := LaneEnd{Exit: 7, Started: now.Add(-time.Minute), Wall: time.Minute}
+			state.Started[job] = Started{Lane: i + 1, Card: card, At: end.Started, Ending: &end}
+			lanes[i] = &lane{n: i + 1, card: &card, pendingEnd: &end}
+		}
+		require.NoError(t, WriteLanes(stateDir, state))
+		calls := 0
+		d := &Daemon{Friend: "worker", Dir: dir, StateDir: stateDir, Record: func(string) {}, SaveLanes: func(s LaneState) error { return WriteLanes(stateDir, s) }, Finish: func(ctx context.Context, _ []string) error {
+			calls++
+			if calls == 1 {
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			return nil
+		}}
+		l := &loop{d: d, ctx: context.Background(), lanes: &laneSet{lanes: lanes, state: state, given: map[string]bool{}}}
+		finished := func() int {
+			n := 0
+			for _, ln := range lanes {
+				if ln.card == nil {
+					n++
+				}
+			}
+			return n
+		}
+		before := time.Now()
+		l.retryPendingLanes(now)
+		require.LessOrEqual(t, time.Since(before), PendingLanePassBudget)
+		require.Equal(t, 1, finished())
+		before = time.Now()
+		l.retryPendingLanes(now.Add(time.Second))
+		require.LessOrEqual(t, time.Since(before), PendingLanePassBudget)
+		require.Equal(t, 1+PendingLanePassLimit, finished(), "a slow first debt does not starve later lanes")
+		before = time.Now()
+		l.retryPendingLanes(now.Add(2 * time.Second))
+		require.LessOrEqual(t, time.Since(before), PendingLanePassBudget)
+		require.Equal(t, len(lanes), finished())
+		require.Empty(t, l.lanes.state.Started)
+	})
+}
 
 // A returned shell leader can leave a live descendant. No RESULT, REPORT,
 // continuation or capacity release is allowed until its matching RUN is gone.
@@ -94,4 +169,28 @@ func TestLaneCompletionWaitsForMatchingProcessGroup(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFirstCompletedLaneResultAfterStopSettlesItsReport(t *testing.T) {
+	t.Parallel()
+	dir, stateDir, job := t.TempDir(), t.TempDir(), "c2~15"
+	card := Card{ID: "c2", Outbox: filepath.Join(dir, "outbox", job)}
+	require.NoError(t, os.MkdirAll(card.Outbox, 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "jobs", job), 0o755))
+	require.NoError(t, os.WriteFile(card.Result(), []byte("RESULT: completed before STOP\n"), 0o644))
+	require.NoError(t, writeRunReceipt(dir, job, runReceipt{RunID: "run-2", PID: 9999999, Identity: "old-birth"}))
+	now := time.Now()
+	started := Started{Lane: 1, Card: card, At: now.Add(-time.Minute), RunID: "run-2", Pid: 9999999}
+	state := LaneState{Started: map[string]Started{job: started}}
+	require.NoError(t, WriteLanes(stateDir, state))
+	d := &Daemon{Friend: "worker", Dir: dir, StateDir: stateDir, Coordinator: "coordinator", Record: func(string) {}, Rules: func() LaneRules { return LaneRules{} }, MachineStopped: func() bool { return true }, ProcessIdentity: func(int) string { return "" }, SaveLanes: func(s LaneState) error { return WriteLanes(stateDir, s) }}
+	d.m = Start(now)
+	ln := &lane{n: 1, card: &card, session: "session", t: &turn{started: now.Add(-time.Second)}}
+	l := &loop{d: d, ctx: context.Background(), lanes: &laneSet{lanes: []*lane{ln}, state: state, given: map[string]bool{}}}
+	l.laneDone(laneResult{ln: ln, t: ln.t, turn: LaneTurn{Exit: 0}}, now)
+	require.Nil(t, ln.card)
+	require.Empty(t, l.lanes.state.StopReturns, "a completed quiescent result is not returned as cancelled work")
+	require.Empty(t, l.lanes.state.Started)
+	require.FileExists(t, card.Report())
+	require.FileExists(t, finishNoticePath(d, job))
 }

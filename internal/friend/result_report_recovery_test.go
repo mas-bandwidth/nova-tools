@@ -2,6 +2,7 @@ package friend
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,41 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestResultRecoveryDoesNotInventExitAfterFreezeWriteFailure(t *testing.T) {
+	t.Parallel()
+	dir, stateDir := laneEndFixture(t, "c2~15"), t.TempDir()
+	card := Card{ID: "c2", Brief: filepath.Join(dir, "inbox", "c2~15", "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", "c2~15")}
+	require.NoError(t, os.MkdirAll(card.Outbox, 0o755))
+	require.NoError(t, os.WriteFile(card.Result(), []byte("RESULT: native completion\n"), 0o644))
+	state := LaneState{Started: map[string]Started{"c2~15": {Lane: 1, Card: card, At: t0.Add(-time.Minute)}}}
+	require.NoError(t, WriteLanes(stateDir, state))
+	fail := true
+	d := &Daemon{Friend: "worker", Dir: dir, StateDir: stateDir, Record: func(string) {}, SaveLanes: func(s LaneState) error {
+		if fail {
+			fail = false
+			return errors.New("state write refused")
+		}
+		return WriteLanes(stateDir, s)
+	}}
+	l := &loop{d: d, ctx: context.Background(), lanes: &laneSet{state: state, given: map[string]bool{}}}
+	words := l.endCard(1, card, LaneEnd{Exit: 7, Wall: time.Minute, NoReport: true, Started: state.Started["c2~15"].At}, t0)
+	assert.Contains(t, words, "report_debt_error=")
+	assert.NoFileExists(t, card.Report())
+	saved, err := ReadLanes(stateDir)
+	require.NoError(t, err)
+	require.Nil(t, saved.Started["c2~15"].Ending)
+	restarted := &loop{d: d, ctx: context.Background(), lanes: &laneSet{state: saved, given: map[string]bool{}}}
+	restarted.endStarted(t0.Add(time.Minute))
+	raw, err := os.ReadFile(card.Report())
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "the run's exit and wall are unavailable")
+	assert.NotContains(t, string(raw), "exit 0")
+	assert.NotContains(t, string(raw), "wall 0s")
+	assert.NotContains(t, string(raw), "the run is gone")
+	assert.Empty(t, restarted.lanes.state.Started)
+	assert.Empty(t, restarted.lanes.state.GivenUp)
+}
 
 // TestResultCompletionSurvivesReportWriteFailureAndRestart pins the report
 // publication boundary: a durable native result must keep its completion debt

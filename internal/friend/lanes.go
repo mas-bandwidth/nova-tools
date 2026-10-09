@@ -259,6 +259,7 @@ type laneSet struct {
 	lanes           []*lane
 	stopped         bool // the machine's word is STOPPED (stopStep): said once each way
 	recoveryPending bool // persisted Started waits for a known machine word
+	pendingCursor   int  // next held completion retry starts at this lane
 	given           map[string]bool
 	state           LaneState
 	loaded          bool
@@ -1055,11 +1056,33 @@ func (l *loop) messageDone(r laneResult, now time.Time) {
 	d.Record(line)
 }
 
+// PendingLanePassBudget bounds one retry pass's process-group check and Finish
+// RPCs, while the rotating cursor keeps later held lanes reachable.
+const (
+	PendingLanePassBudget = 250 * time.Millisecond
+	PendingLanePassLimit  = 8
+)
+
 // retryPendingLanes keeps capacity occupied while a returned process group or
 // completed report still has durable work to settle. The original harness
 // result is processed once, after the matching group is proved quiescent.
 func (l *loop) retryPendingLanes(now time.Time) {
-	for _, ln := range l.lanes.lanes {
+	s := l.lanes
+	if l.ctx.Err() != nil || len(s.lanes) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(l.ctx, PendingLanePassBudget)
+	l.completionPassContext = ctx
+	defer func() { l.completionPassContext = nil; cancel() }()
+	start, tried := s.pendingCursor, 0
+	for scanned := 0; scanned < len(s.lanes) && tried < PendingLanePassLimit && ctx.Err() == nil; scanned++ {
+		i := (start + scanned) % len(s.lanes)
+		ln := s.lanes[i]
+		if ln.pendingResult == nil && ln.pendingEnd == nil {
+			continue
+		}
+		s.pendingCursor = (i + 1) % len(s.lanes)
+		tried++
 		if ln.pendingResult != nil {
 			r := *ln.pendingResult
 			l.laneDone(r, now)
@@ -1125,8 +1148,12 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	ln.t = nil
 	if ln.card != nil && d.machineStopped() && !t.byStop && ln.pendingResult == nil {
 		job := filepath.Base(ln.card.Outbox)
-		l.oweStopReturn(StopReturn{Lane: ln.n, Job: job, Row: "friend." + d.Friend, Card: ln.card.ID, Gen: ln.card.Gen(), Epoch: ln.card.Epoch(), Exit: -1, At: now})
-		t.byStop = true
+		st := s.state.Started[job]
+		completed := st.Ending != nil || exists(ln.card.Result()) || exists(ln.card.Report())
+		if !completed || !l.stopRunQuiescent(job, st) {
+			l.oweStopReturn(StopReturn{Lane: ln.n, Job: job, Row: "friend." + d.Friend, Card: ln.card.ID, Gen: ln.card.Gen(), Epoch: ln.card.Epoch(), Exit: -1, At: now})
+			t.byStop = true
+		}
 	}
 	if t.byStop && ln.card != nil {
 		l.stopDone(ln, t, r, now) // cancelled by the machine's stop: never finished
@@ -1486,7 +1513,9 @@ func (l *loop) markLaunchHeld(job string, now time.Time) {
 }
 
 func (l *loop) saveLanes(now time.Time) {
-	if l.d.SaveLanes == nil {
+	if l.d.SaveLanes == nil || l.lanes.stateUnknown {
+		// A failed LoadLanes left only an empty in-memory placeholder. Never
+		// replace the durable Started claims with that incomplete snapshot.
 		return
 	}
 	if err := l.d.SaveLanes(l.lanes.state); err != nil {
