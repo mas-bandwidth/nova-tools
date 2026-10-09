@@ -853,3 +853,8 @@ MCCompletionReportJournalBridgeDoneHeld.cfg	MCCompletionReportJournalBridge.tla	
 MCCompletionReportJournalBridgeLostReply.cfg	MCCompletionReportJournalBridge.tla	invariant	WitnessLostReplyJournalRetry	ignore-terminal	completion-report-journal-bridge	required	-
 MCCompletionReportJournalBridgeOutbox.cfg	MCCompletionReportJournalBridge.tla	invariant	WitnessNoCommitOutbox	ignore-terminal	completion-report-journal-bridge	required	-
 MCCompletionReportJournalBridgeSaveRetry.cfg	MCCompletionReportJournalBridge.tla	invariant	WitnessSavedClearRetry	ignore-terminal	completion-report-journal-bridge	required	-
+MCSprintEventsFriendRedeal.cfg	MCSprintEventsFriendRedealContract.tla	pass	-	ignore-terminal	friend-redeal-owner	required	-
+MCSprintEventsFriendRedealBroken.cfg	MCSprintEventsFriendRedealContract.tla	action	FriendNotLeft	ignore-terminal	friend-redeal-owner	required	-
+MCSprintEventsFriendRedealBaseline.cfg	MCSprintEventsFriendRedealContract.tla	pass	-	ignore-terminal	friend-redeal-owner	required	-
+MCFriendFileBeat.cfg	MCFriendFileBeat.tla	pass	-	ignore-terminal	friend-file-before-beat	required	-
+MCFriendFileBeatBrokenBeforeBeat.cfg	MCFriendFileBeat.tla	action	FileBeforeBeat	ignore-terminal	friend-file-before-beat	required	-
