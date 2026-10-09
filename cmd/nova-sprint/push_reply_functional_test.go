@@ -10,12 +10,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,20 +28,39 @@ import (
 // the subject; the harness adapter only captures the delivered challenge.
 func pushReplyStore(t *testing.T, actor string, socket bool) (*app, *store.Store, string) {
 	t.Helper()
-	var extra []string
-	var sock string
+	var addr string
+	var options *redis.Options
+	var exited chan struct{}
 	if socket {
-		sock = filepath.Join(t.TempDir(), "emma's canary.sock")
-		extra = []string{"--unixsocket", sock}
-	}
-	addr := testutil.Start(t, extra...)
-	options := &redis.Options{Addr: addr}
-	if socket {
+		bin := testutil.Program(t)
+		dir := t.TempDir()
+		sock := filepath.Join(dir, "emma's canary.sock")
+		cmd := subproc.Long(context.Background(), bin, "--port", "0", "--unixsocket", sock, "--unixsocketperm", "700", "--save", "", "--appendonly", "no", "--dir", dir)
+		require.NoError(t, cmd.Start())
+		exited = make(chan struct{})
+		go func() { _ = cmd.Wait(); close(exited) }()
+		t.Cleanup(func() {
+			_ = cmd.Process.Kill()
+			<-exited
+		})
 		addr = sock
 		options = &redis.Options{Network: "unix", Addr: sock}
+	} else {
+		addr = testutil.Start(t)
+		options = &redis.Options{Addr: addr}
 	}
 	admin := redis.NewClient(options)
 	t.Cleanup(func() { _ = admin.Close() })
+	if socket {
+		require.Eventually(t, func() bool {
+			select {
+			case <-exited:
+				return false
+			default:
+			}
+			return admin.Ping(context.Background()).Err() == nil
+		}, 10*time.Second, 20*time.Millisecond, "socket redis did not become ready")
+	}
 	require.NoError(t, fn.Load(context.Background(), admin))
 	a := newApp(func(k string) string {
 		return map[string]string{"NOVA_SPRINT_REDIS": addr, "NOVA_SPRINT_ACTOR": actor}[k]
