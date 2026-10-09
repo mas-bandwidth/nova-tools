@@ -10,12 +10,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,20 +29,56 @@ import (
 // the subject; the harness adapter only captures the delivered challenge.
 func pushReplyStore(t *testing.T, actor string, socket bool) (*app, *store.Store, string) {
 	t.Helper()
-	var extra []string
-	var sock string
+	var addr string
+	var options *redis.Options
+	var exited chan struct{}
 	if socket {
-		sock = filepath.Join(t.TempDir(), "emma's canary.sock")
-		extra = []string{"--unixsocket", sock}
-	}
-	addr := testutil.Start(t, extra...)
-	options := &redis.Options{Addr: addr}
-	if socket {
+		bin := testutil.Program(t)
+		dir := t.TempDir()
+		if len(dir)+len("/emma's canary.sock") >= 104 {
+			var created string
+			for _, base := range []string{"/tmp", "/var/tmp"} {
+				if d, err := os.MkdirTemp(base, "ns-sock-"); err == nil {
+					if len(d)+len("/emma's canary.sock") < 104 {
+						created = d
+						break
+					}
+					require.NoError(t, safepath.RemoveUnder(base, d))
+				}
+			}
+			require.NotEmpty(t, created, "could not create short temporary directory under 104 bytes")
+			dir = created
+			t.Cleanup(func() { assert.NoError(t, safepath.RemoveUnder(filepath.Dir(dir), dir)) })
+		}
+		sock := filepath.Join(dir, "emma's canary.sock")
+		require.Less(t, len(sock), 104, "temporary socket path exceeds 104 bytes")
+		cmd := subproc.Long(context.Background(), bin, "--port", "0", "--unixsocket", sock, "--unixsocketperm", "700", "--save", "", "--appendonly", "no", "--dir", dir)
+		require.NoError(t, testutil.Join(cmd))
+		require.NoError(t, cmd.Start())
+		exited = make(chan struct{})
+		go func() { _ = cmd.Wait(); close(exited) }()
+		t.Cleanup(func() {
+			_ = cmd.Process.Kill()
+			<-exited
+		})
 		addr = sock
 		options = &redis.Options{Network: "unix", Addr: sock}
+	} else {
+		addr = testutil.Start(t)
+		options = &redis.Options{Addr: addr}
 	}
 	admin := redis.NewClient(options)
 	t.Cleanup(func() { _ = admin.Close() })
+	if socket {
+		require.Eventually(t, func() bool {
+			select {
+			case <-exited:
+				return false
+			default:
+			}
+			return admin.Ping(context.Background()).Err() == nil
+		}, 10*time.Second, 20*time.Millisecond, "socket redis did not become ready")
+	}
 	require.NoError(t, fn.Load(context.Background(), admin))
 	a := newApp(func(k string) string {
 		return map[string]string{"NOVA_SPRINT_REDIS": addr, "NOVA_SPRINT_ACTOR": actor}[k]
