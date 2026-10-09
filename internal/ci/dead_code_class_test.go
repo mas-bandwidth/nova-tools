@@ -87,12 +87,14 @@ func deadcodeRoots(ctx context.Context, root, targetOS string) ([]string, error)
 	list.Dir = root
 	list.Env = append(goenv.Clean(os.Environ()), "GOOS="+targetOS)
 	list.WaitDelay = 5 * time.Second
-	out, err := list.Output()
-	if err != nil {
-		return nil, fmt.Errorf("listing tool mains for GOOS=%s: %w", targetOS, err)
+	var stdout, stderr bytes.Buffer
+	list.Stdout = &stdout
+	list.Stderr = &stderr
+	if err := list.Run(); err != nil {
+		return nil, fmt.Errorf("listing tool mains for GOOS=%s: %w\nstderr: %s", targetOS, err, stderr.String())
 	}
 	roots := []string{"./cmd/..."}
-	roots = append(roots, strings.Fields(string(out))...)
+	roots = append(roots, strings.Fields(stdout.String())...)
 	return roots, nil
 }
 
@@ -259,6 +261,29 @@ func TestDeadCodeIncludesToolMains(t *testing.T) {
 	assert.Contains(t, dead, "Dead")
 	assert.NotContains(t, dead, "Cmd", "cmd/app is a production root")
 	assert.NotContains(t, dead, "Tool", "tools/check is a production root")
+}
+
+// TestDeadcodeRootsReportsGoListStderr holds that a failed `go list` of the
+// tool mains surfaces the go command's own diagnostic, not a bare exit status.
+func TestDeadcodeRootsReportsGoListStderr(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod":               "module example.com/deadfixture\n\ngo 1.25\n",
+		"tools/broken/main.go": "package main\nfunc main() {\n",
+	}
+	for name, body := range files {
+		path := filepath.Join(root, name)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	_, err := deadcodeRoots(ctx, root, "linux")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "listing tool mains for GOOS=linux")
+	assert.Contains(t, err.Error(), "stderr:")
+	assert.Contains(t, err.Error(), "tools/broken/main.go", "the go list diagnostic names the broken file")
 }
 
 // deadCodeWitnessReporter records CheckCountedMode error output without failing the test runner.
