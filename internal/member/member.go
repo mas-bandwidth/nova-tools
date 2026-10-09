@@ -503,6 +503,11 @@ type Member struct {
 	// the long work in flight, for a bounded run's end (WaitLong)
 	longSince atomic.Int64
 	longs     sync.WaitGroup
+	// owedStopReturns is how many launches the stop cancelled whose card is not yet
+	// handed back. The beat reads it (OwedStopReturns) on its own goroutine, so it is
+	// not a range of m.running, which Tick writes. machineStop adds one when a launch
+	// is marked stopped; forget subtracts one when that launch is dropped.
+	owedStopReturns atomic.Int64
 
 	// lastStart is when this member last started a harness, for StartGap.
 	lastStart time.Time
@@ -1424,6 +1429,9 @@ func (m *Member) forget(id string, failed bool) {
 		if e, ok := m.runner.(Ender); ok {
 			e.Ended(l.packet, failed)
 		}
+		if l.stopped {
+			m.owedStopReturns.Add(-1)
+		}
 	}
 	delete(m.running, id)
 	delete(m.stageRetried, id)
@@ -1455,15 +1463,10 @@ const StopReturnRetry = time.Minute
 // OwedStopReturns is how many of this member's launches the stop cancelled whose card is
 // not yet handed back: the beat carries it (fleet beat --stop-returns), and start waits on
 // zero. A card the queue holds working under this row with no child of ours is owed too,
-// and returned at once (machineStop), so it is never counted here.
+// and returned at once (machineStop), so it is never counted here. The beat calls this on
+// its own goroutine, so the count is owedStopReturns and not a range of m.running.
 func (m *Member) OwedStopReturns() int {
-	n := 0
-	for _, l := range m.running {
-		if l.stopped {
-			n++
-		}
-	}
-	return n
+	return int(m.owedStopReturns.Load())
 }
 
 // machineStop is the pass's stop step. The cancel part runs while the word is STOPPED:
@@ -1500,6 +1503,7 @@ func (m *Member) machineStop(q queueOut, byID map[string]queueCard, now time.Tim
 			}
 			l.stopped, l.stopAt = true, now
 			m.running[id] = l
+			m.owedStopReturns.Add(1)
 			fmt.Fprintf(m.out, "LANE CANCELLED BY STOP card=%s gen=%d epoch=%d pid=%d: the child was told to stop; its working tree and log are kept\n", id, l.gen, l.epoch, l.stopPid)
 		}
 		// a card working under this row with no child of ours: its run is gone with the

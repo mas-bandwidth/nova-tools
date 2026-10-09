@@ -1,6 +1,7 @@
 package member
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"sync"
@@ -184,6 +185,52 @@ func TestARefusedStopReturnIsTriedAgainWhateverTheWord(t *testing.T) {
 	assert.Equal(t, 0, m.OwedStopReturns())
 	assert.Empty(t, s.lines("finish"))
 	assert.Contains(t, out.String(), "STOP-RETURN OK card=c1 gen=1 epoch=7 pid=4000")
+}
+
+// The beat reads OwedStopReturns on its own goroutine while Tick writes m.running: a child
+// is running, then the machine is STOPPED, so machineStop marks the launch stopped, and
+// once the child has ended the launch is forgotten. Ranging m.running from that read is a
+// concurrent map read and write. The count is an atomic, so the read does not range the map.
+func TestTheBeatReadsOwedStopReturnsWhileTickWritesRunning(t *testing.T) {
+	t.Parallel()
+	m, s, r, _ := stopRig(Config{As: "m", Width: 1})
+	p := pk("c1")
+	s.set("queue", 0, queueWith(t, "RUNNING", 7, ready("c1")))
+	s.set("take", 0, takeJSON(t, p))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for ctx.Err() == nil {
+			_ = m.OwedStopReturns()
+		}
+	}()
+
+	_, err := m.Tick(time.Unix(0, 0))
+	require.NoError(t, err)
+	require.Equal(t, 1, m.Running())
+
+	s.set("queue", 0, queueWith(t, "STOPPED", 7, working("c1", 1, &p)))
+	for range 2 {
+		_, err = m.Tick(time.Unix(10, 0))
+		require.NoError(t, err)
+	}
+	c := r.child("c1")
+	require.NotNil(t, c)
+	assert.Equal(t, 1, c.stops(), "machineStop wrote the launch stopped")
+	assert.Equal(t, 1, m.OwedStopReturns(), "owed while the stopped launch is still running")
+
+	c.end(Result{OK: true, Head: "abc"})
+	_, err = m.Tick(time.Unix(20, 0))
+	require.NoError(t, err)
+	assert.Equal(t, 0, m.Running())
+	assert.Equal(t, 0, m.OwedStopReturns(), "forgotten: nothing owed")
+
+	cancel()
+	wg.Wait()
 }
 
 // The endEnded guard, red without it: a child the stop cancelled ends with a result after
