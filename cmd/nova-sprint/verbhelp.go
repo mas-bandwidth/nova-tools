@@ -115,6 +115,13 @@ var verbEffect = map[string]string{
 	// card base (the base's 5a9340a155) writes through one store step too; its --dry-run is stepdry.go's
 	"card base": "local write: re-points the merging card's BASE to the branch in the sprint's store, after asking origin (a read) whether it holds that branch; --dry-run asks origin the same and plans the step, and --dry-run writes nothing",
 
+	// stop-return (the base's #5499) writes through one store step too; its --dry-run is stepdry.go's
+	"stop-return": "local write: returns the named stopped cards to the owner row that acknowledges the cancellation, keeping their placement and attempt, in the sprint's store; --dry-run writes nothing",
+
+	// seat push and seat pong (the base's #5477) write the seat's push record; each --dry-run is its own
+	"seat push": "store write: with --harness and --target, records the seat's push target (harness, target, session, adapter) in the sprint's store; with --sent, records the push loop's delivery of a check or its failure; with neither, prints the record and whether the seat is live and writes nothing; --dry-run checks the same and writes nothing",
+	"seat pong": "store write: proves the seat live by the nonce of the last check delivered, recording the proof in the sprint's store; --dry-run checks the nonce against the record and writes nothing",
+
 	// verbs that read and write nothing
 	"goal show": "inspection: reads the goals in the sprint's store, writes nothing",
 	"fsck seat": "inspection: reads the coordinator key, the seat record and the server's actor from the sprint's store and the sprint row's coordinator from nova-config's store, writes nothing",
