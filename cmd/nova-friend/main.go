@@ -1226,7 +1226,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 		// refusal naming the version, never an exit 1 on every delivery (the finding of 2026-10-06)
 		// (through the wall, outside the limit watch: a read of the CLI is no turn)
 		cctx, ccancel := context.WithTimeout(context.Background(), 30*time.Second)
-		err := (&friend.OpenCode{Dir: oc.Dir, Program: oc.Program, Run: walled}).CheckRun(cctx)
+		probe := &friend.OpenCode{Dir: oc.Dir, Program: oc.Program, Run: walled}
+		err := probe.CheckRun(cctx)
+		oc.Standalone = probe.Standalone // opencode 2.0.25+: the run keeps the sealed key in its own process
 		ccancel()
 		if err != nil {
 			return tool.Refuse(err.Error())

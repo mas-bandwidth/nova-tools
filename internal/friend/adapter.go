@@ -267,8 +267,25 @@ type OpenCode struct {
 	// the project config before a turn (AllowDirs), so a headless run never
 	// auto-rejects a tool call there. Nil: the config is left alone.
 	Allow []string
+	// Standalone passes --standalone to every run: opencode 2.0.25 and later run
+	// through a shared background server that never receives the environment the
+	// daemon was started with, so a sealed provider key (nova-secrets exec) reaches
+	// no provider ("Incorrect API key provided"); --standalone keeps the run in
+	// this process, with this environment. CheckRun sets it when the installed
+	// run lists the flag, so an older opencode is never handed it.
+	Standalone bool
 
 	turns SessionTurns // the session's last turns, its liveness (alive.go)
+}
+
+// runVerb is the run verb as this opencode takes it: `run`, and --standalone
+// when CheckRun found it (Standalone).
+func (o *OpenCode) runVerb(args ...string) []string {
+	verb := []string{"run"}
+	if o.Standalone {
+		verb = append(verb, "--standalone")
+	}
+	return append(verb, args...)
 }
 
 func (o *OpenCode) program() string {
@@ -351,7 +368,7 @@ func (o *OpenCode) Deliver(ctx context.Context, text string) (int, error) {
 			return 0, err
 		}
 	}
-	out, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"run", "--session", id, text}, "")
+	out, exit, err := o.Run(ctx, o.Dir, o.program(), o.runVerb("--session", id, text), "")
 	if o.Out != nil && out != "" {
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
@@ -396,6 +413,7 @@ func (o *OpenCode) CheckRun(ctx context.Context) error {
 	if len(listed) == 0 {
 		return nil
 	}
+	o.Standalone = listed["--standalone"]
 	var missing []string
 	for _, f := range OpenCodeRunFlags {
 		if !listed[f] {

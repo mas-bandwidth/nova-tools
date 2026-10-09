@@ -161,7 +161,7 @@ func (o *OpenCode) OpenSession(ctx context.Context, seed string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	out, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"run", seed}, "")
+	out, exit, err := o.Run(ctx, o.Dir, o.program(), o.runVerb(seed), "")
 	if o.Out != nil && out != "" {
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
@@ -228,7 +228,7 @@ var wallRefusalReason = regexp.MustCompile(`(?m)^WALL REFUSED reason=([a-z_]+)\b
 // with none it runs in Dir.
 func (o *OpenCode) DeliverTo(ctx context.Context, id, text string) (LaneTurn, error) {
 	o.allow()
-	out, exit, err := o.Run(ctx, LaneDirOf(ctx, o.Dir), o.program(), []string{"run", "--session", id, text}, "")
+	out, exit, err := o.Run(ctx, LaneDirOf(ctx, o.Dir), o.program(), o.runVerb("--session", id, text), "")
 	if o.Out != nil && out != "" {
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
@@ -248,7 +248,7 @@ func (o *OpenCode) DeliverTo(ctx context.Context, id, text string) (LaneTurn, er
 // never queue behind the lanes' session opens. Its output is read as a lane turn's is.
 func (o *OpenCode) RunRead(ctx context.Context, model, prompt string) (LaneTurn, error) {
 	o.allow()
-	args := []string{"run"}
+	args := o.runVerb()
 	if model != "" {
 		args = append(args, "--model", model)
 	}
