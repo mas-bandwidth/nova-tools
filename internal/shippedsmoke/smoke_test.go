@@ -134,7 +134,7 @@ func TestShipped(t *testing.T) {
 		// files=2 is the load-bearing half. `nocode` prints NOCODE OK and exits
 		// 0 for a tree it never opened, so exit 0 alone cannot tell a pass from
 		// a walk that scanned nothing.
-		require.Contains(t, out, "files=2 clean")
+		require.Contains(t, out, "files=2 deny-list=floor-list findings=0")
 	})
 
 	t.Run("a symlinked --dir is resolved, not passed over", func(t *testing.T) {
@@ -163,7 +163,7 @@ func TestShipped(t *testing.T) {
 		write(t, real, "a.md", "fine\n\n[gone](gone.md)\n")
 		out, rc := runBin(t, bin, "links", "--dir", linkTo(t, real))
 		require.Equal(t, 1, rc, "symlinked --dir: want exit 1: %s", out)
-		require.Contains(t, out, "a.md:3: gone.md (does not exist)", "symlinked --dir: the tree was not walked")
+		require.Contains(t, out, `LINKS BROKEN file=a.md line=3 target=gone.md reason="does not exist"`, "symlinked --dir: the tree was not walked")
 	})
 
 	t.Run("a tree that classified nothing says so", func(t *testing.T) {

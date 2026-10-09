@@ -23,7 +23,10 @@ type gcTree struct {
 }
 
 func newGCTree(t *testing.T) *gcTree {
-	base := t.TempDir()
+	// the walk resolves each root. EvalSymlinks before any join, so the fake
+	// Dirty and the path GC prints are the path the walk uses.
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	g := &gcTree{t: t, home: filepath.Join(base, "home"), ai: filepath.Join(base, "ai"),
 		now: time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)}
 	g.w = filepath.Join(g.ai, "buds", "b1", "working")
