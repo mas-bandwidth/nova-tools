@@ -53,6 +53,34 @@ resume. They use one job and at most two delivery attempts. Expected failing
 properties are individually named in `CASES.tsv`; unrelated errors fail the
 case.
 
+## Bounded diagnostic results
+
+All eight cases pass at source `13608eceb`. The pinned TLC jar runs on Linux
+with Java 21.0.12.1, a private Java temporary directory and the shared bench
+lock; the suite takes 7.222 seconds within its 20-second bound. `RUNS.tsv`
+contains eight current hash-bound rows. The ideal control explores 200
+distinct states and satisfies retry authorization, no native start while
+held, preservation of assignments by pause, active drain and stopped unpause
+refusal.
+
+| Case | Distinct states | Expected result |
+|---|---:|---|
+| Current deferred after pause | 130 | Exact delayed-start witness reached |
+| Missing retry check | 41 | `RetryDeliveryNeedsAuthority` violated |
+| Delivery-only gate | 49 | Queued-before-pause start witness reached |
+| Missing native guard | 49 | `NoNewNativeStartWhileHeld` violated |
+| Cached native permission | 71 | Read, pause, actual start witness reached |
+| Paused active drain | 70 | Active completion while paused reached |
+| Deferred resume | 113 | Paused deferred job starts after unpause |
+
+The current-path counterexample is `StageBrief`, `QueueStart`,
+`BeginDelivery`, `DeliveryDeferred`, `Pause`, `BeginDelivery`,
+`DeliveryAccepted`, `NativeStart`. The cached-read counterexample inserts
+`ReadNativePermit`, `Pause`, `NativeStart` after queue acceptance. These are
+model counterexamples over inspected source boundaries, not an observed
+native run. Logs are retained under
+`release-evidence-v1.2/recovery-20261008/deferred-start-model/run-01/`.
+
 ## Concrete trace bridge
 
 The source regression should record ordered events with one public attempt
