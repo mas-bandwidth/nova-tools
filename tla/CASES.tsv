@@ -551,3 +551,11 @@ MCCompletionBoundaryPartialOverwriteWitness.cfg	MCCompletionBoundary.tla	invaria
 MCCompletionBoundaryBatchBypassWitness.cfg	MCCompletionBoundary.tla	invariant	WitnessBatchDebtBypass	ignore-terminal	completionboundary	required	-
 MCCompletionBoundaryBrokenRelease.cfg	MCCompletionBoundary.tla	invariant	NoReleaseBeforeBarrier	ignore-terminal	completionboundary	required	-
 MCCompletionBoundaryBrokenBatchWork.cfg	MCCompletionBoundary.tla	invariant	NoBatchWorkWithOldDebt	ignore-terminal	completionboundary	required	-
+MCDeferredStart.cfg	MCDeferredStart.tla	pass	-	ignore-terminal	deferredstart	required	-
+MCDeferredStartCurrentDeferredWitness.cfg	MCDeferredStart.tla	invariant	WitnessDeferredAfterPause	ignore-terminal	deferredstart	required	-
+MCDeferredStartBrokenRetry.cfg	MCDeferredStart.tla	invariant	RetryDeliveryNeedsAuthority	ignore-terminal	deferredstart	required	-
+MCDeferredStartDeliveryOnlyWitness.cfg	MCDeferredStart.tla	invariant	WitnessQueuedAfterPause	ignore-terminal	deferredstart	required	-
+MCDeferredStartBrokenNative.cfg	MCDeferredStart.tla	invariant	NoNewNativeStartWhileHeld	ignore-terminal	deferredstart	required	-
+MCDeferredStartCachedPermitWitness.cfg	MCDeferredStart.tla	invariant	WitnessStaleNativePermit	ignore-terminal	deferredstart	required	-
+MCDeferredStartPausedDrainWitness.cfg	MCDeferredStart.tla	invariant	WitnessPausedDrain	ignore-terminal	deferredstart	required	-
+MCDeferredStartResumeDeferredWitness.cfg	MCDeferredStart.tla	invariant	WitnessUnpausedDeferredStart	ignore-terminal	deferredstart	required	-
