@@ -163,7 +163,7 @@ func TestShipped(t *testing.T) {
 		write(t, real, "a.md", "fine\n\n[gone](gone.md)\n")
 		out, rc := runBin(t, bin, "links", "--dir", linkTo(t, real))
 		require.Equal(t, 1, rc, "symlinked --dir: want exit 1: %s", out)
-		require.Contains(t, out, "a.md:3: gone.md (does not exist)", "symlinked --dir: the tree was not walked")
+		require.Contains(t, out, `LINKS BROKEN file=a.md line=3 target=gone.md reason="does not exist"`, "symlinked --dir: the tree was not walked")
 	})
 
 	t.Run("a tree that classified nothing says so", func(t *testing.T) {
