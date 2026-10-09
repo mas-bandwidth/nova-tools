@@ -1,0 +1,3 @@
+---------------- MODULE MCNativeOwnershipDebtBrokenRemovalSave ----------------
+EXTENDS NativeOwnershipDebt
+=============================================================================

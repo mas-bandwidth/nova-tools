@@ -1,0 +1,3 @@
+---------------- MODULE MCNativeCardStartBoundaryFreshRefusesAfterTake ----------------
+EXTENDS NativeCardStartBoundary
+=============================================================================

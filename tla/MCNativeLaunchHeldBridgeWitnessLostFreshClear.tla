@@ -1,0 +1,3 @@
+---------------- MODULE MCNativeLaunchHeldBridgeWitnessLostFreshClear ----------------
+EXTENDS NativeLaunchHeldBridge
+=============================================================================

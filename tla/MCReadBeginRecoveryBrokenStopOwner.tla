@@ -1,0 +1,3 @@
+---------------- MODULE MCReadBeginRecoveryBrokenStopOwner ----------------
+EXTENDS ReadBeginRecovery
+=============================================================================

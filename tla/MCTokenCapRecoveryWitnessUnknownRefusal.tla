@@ -1,0 +1,3 @@
+---------------- MODULE MCTokenCapRecoveryWitnessUnknownRefusal ----------------
+EXTENDS TokenCapRecovery
+=============================================================================

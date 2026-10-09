@@ -1,0 +1,3 @@
+---------------- MODULE MCReadBeginRecoveryWitnessEvidenceBlocksCleanup ----------------
+EXTENDS ReadBeginRecovery
+=============================================================================

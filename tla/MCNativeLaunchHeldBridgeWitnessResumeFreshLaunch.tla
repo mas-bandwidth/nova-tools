@@ -1,0 +1,3 @@
+---------------- MODULE MCNativeLaunchHeldBridgeWitnessResumeFreshLaunch ----------------
+EXTENDS NativeLaunchHeldBridge
+=============================================================================

@@ -1,0 +1,3 @@
+---------------- MODULE MCReadBeginRecoveryBrokenIntent ----------------
+EXTENDS ReadBeginRecovery
+=============================================================================

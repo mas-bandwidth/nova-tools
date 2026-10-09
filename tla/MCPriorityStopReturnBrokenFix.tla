@@ -1,0 +1,3 @@
+---------------- MODULE MCPriorityStopReturnBrokenFix ----------------
+EXTENDS PriorityStopReturn
+=============================================================================

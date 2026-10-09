@@ -1,0 +1,3 @@
+---------------- MODULE MCNativeCardStartBoundaryCrashRecovered ----------------
+EXTENDS NativeCardStartBoundary
+=============================================================================

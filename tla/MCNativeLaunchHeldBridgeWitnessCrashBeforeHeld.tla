@@ -1,0 +1,3 @@
+---------------- MODULE MCNativeLaunchHeldBridgeWitnessCrashBeforeHeld ----------------
+EXTENDS NativeLaunchHeldBridge
+=============================================================================

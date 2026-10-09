@@ -1,0 +1,3 @@
+---------------- MODULE MCPriorityStopReturnWitnessRead ----------------
+EXTENDS PriorityStopReturn
+=============================================================================

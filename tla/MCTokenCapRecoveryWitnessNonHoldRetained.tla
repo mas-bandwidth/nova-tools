@@ -1,0 +1,3 @@
+---------------- MODULE MCTokenCapRecoveryWitnessNonHoldRetained ----------------
+EXTENDS TokenCapRecovery
+=============================================================================

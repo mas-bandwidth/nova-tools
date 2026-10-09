@@ -1,0 +1,3 @@
+---------------- MODULE MCNativeCardStartBoundaryAckThenNoWork ----------------
+EXTENDS NativeCardStartBoundary
+=============================================================================

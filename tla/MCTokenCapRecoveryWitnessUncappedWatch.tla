@@ -1,0 +1,3 @@
+---------------- MODULE MCTokenCapRecoveryWitnessUncappedWatch ----------------
+EXTENDS TokenCapRecovery
+=============================================================================

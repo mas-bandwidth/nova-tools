@@ -1,0 +1,3 @@
+---------------- MODULE MCNativeCardStartBoundaryFreshAfterLost ----------------
+EXTENDS NativeCardStartBoundary
+=============================================================================

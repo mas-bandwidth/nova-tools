@@ -1,0 +1,3 @@
+---------------- MODULE MCPriorityStopReturnBrokenDemotion ----------------
+EXTENDS PriorityStopReturn
+=============================================================================

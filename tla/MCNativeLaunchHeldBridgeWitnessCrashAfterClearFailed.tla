@@ -1,0 +1,3 @@
+---------------- MODULE MCNativeLaunchHeldBridgeWitnessCrashAfterClearFailed ----------------
+EXTENDS NativeLaunchHeldBridge
+=============================================================================

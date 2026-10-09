@@ -1,0 +1,3 @@
+---------------- MODULE MCTokenCapRecoveryWitnessKnownZero ----------------
+EXTENDS TokenCapRecovery
+=============================================================================

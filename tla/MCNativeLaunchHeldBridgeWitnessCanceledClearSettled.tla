@@ -1,0 +1,3 @@
+---------------- MODULE MCNativeLaunchHeldBridgeWitnessCanceledClearSettled ----------------
+EXTENDS NativeLaunchHeldBridge
+=============================================================================

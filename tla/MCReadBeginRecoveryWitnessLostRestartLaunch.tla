@@ -1,0 +1,3 @@
+---------------- MODULE MCReadBeginRecoveryWitnessLostRestartLaunch ----------------
+EXTENDS ReadBeginRecovery
+=============================================================================

@@ -1,0 +1,3 @@
+---------------- MODULE MCNativeOwnershipDebtWitnessReleaseAfterProof ----------------
+EXTENDS NativeOwnershipDebt
+=============================================================================

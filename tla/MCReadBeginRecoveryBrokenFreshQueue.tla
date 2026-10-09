@@ -1,0 +1,3 @@
+---------------- MODULE MCReadBeginRecoveryBrokenFreshQueue ----------------
+EXTENDS ReadBeginRecovery
+=============================================================================

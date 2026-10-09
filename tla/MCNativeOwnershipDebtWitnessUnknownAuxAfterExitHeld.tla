@@ -1,0 +1,3 @@
+---------------- MODULE MCNativeOwnershipDebtWitnessUnknownAuxAfterExitHeld ----------------
+EXTENDS NativeOwnershipDebt
+=============================================================================

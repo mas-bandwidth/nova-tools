@@ -1,0 +1,3 @@
+---------------- MODULE MCTokenCapRecoveryWitnessLegacyRecoveryHold ----------------
+EXTENDS TokenCapRecovery
+=============================================================================

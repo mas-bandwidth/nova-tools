@@ -1,0 +1,3 @@
+---------------- MODULE MCReadBeginRecoveryBrokenCapacity ----------------
+EXTENDS ReadBeginRecovery
+=============================================================================

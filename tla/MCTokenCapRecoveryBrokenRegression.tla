@@ -1,0 +1,3 @@
+---------------- MODULE MCTokenCapRecoveryBrokenRegression ----------------
+EXTENDS TokenCapRecovery
+=============================================================================

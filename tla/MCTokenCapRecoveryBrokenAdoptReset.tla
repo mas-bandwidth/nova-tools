@@ -1,0 +1,3 @@
+---------------- MODULE MCTokenCapRecoveryBrokenAdoptReset ----------------
+EXTENDS TokenCapRecovery
+=============================================================================

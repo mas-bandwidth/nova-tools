@@ -1,0 +1,3 @@
+---------------- MODULE MCNativeLaunchHeldBridgeBrokenPriorQuiet ----------------
+EXTENDS NativeLaunchHeldBridge
+=============================================================================

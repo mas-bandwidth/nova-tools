@@ -1,0 +1,3 @@
+---------------- MODULE MCNativeLaunchHeldBridgeBrokenPauseClear ----------------
+EXTENDS NativeLaunchHeldBridge
+=============================================================================

@@ -1,0 +1,3 @@
+---------------- MODULE MCNativeOwnershipDebtWitnessReturnedLiveHeld ----------------
+EXTENDS NativeOwnershipDebt
+=============================================================================

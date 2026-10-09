@@ -1,0 +1,3 @@
+---------------- MODULE MCNativeLaunchHeldBridgeWitnessPauseAfterClearMayLaunch ----------------
+EXTENDS NativeLaunchHeldBridge
+=============================================================================

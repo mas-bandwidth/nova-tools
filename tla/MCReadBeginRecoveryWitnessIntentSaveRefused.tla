@@ -1,0 +1,3 @@
+---------------- MODULE MCReadBeginRecoveryWitnessIntentSaveRefused ----------------
+EXTENDS ReadBeginRecovery
+=============================================================================

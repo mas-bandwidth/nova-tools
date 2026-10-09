@@ -1,0 +1,3 @@
+---------------- MODULE MCTokenCapRecoveryWitnessMissingLiveDebt ----------------
+EXTENDS TokenCapRecovery
+=============================================================================

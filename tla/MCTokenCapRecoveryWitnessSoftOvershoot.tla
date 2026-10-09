@@ -1,0 +1,3 @@
+---------------- MODULE MCTokenCapRecoveryWitnessSoftOvershoot ----------------
+EXTENDS TokenCapRecovery
+=============================================================================

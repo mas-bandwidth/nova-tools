@@ -1,0 +1,3 @@
+---------------- MODULE MCNativeCardStartBoundaryBrokenAuxRelease ----------------
+EXTENDS NativeCardStartBoundary
+=============================================================================

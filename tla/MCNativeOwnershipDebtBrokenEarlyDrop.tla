@@ -1,0 +1,3 @@
+---------------- MODULE MCNativeOwnershipDebtBrokenEarlyDrop ----------------
+EXTENDS NativeOwnershipDebt
+=============================================================================

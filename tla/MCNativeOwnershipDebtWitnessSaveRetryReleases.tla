@@ -1,0 +1,3 @@
+---------------- MODULE MCNativeOwnershipDebtWitnessSaveRetryReleases ----------------
+EXTENDS NativeOwnershipDebt
+=============================================================================

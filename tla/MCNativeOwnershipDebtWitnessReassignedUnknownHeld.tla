@@ -1,0 +1,3 @@
+---------------- MODULE MCNativeOwnershipDebtWitnessReassignedUnknownHeld ----------------
+EXTENDS NativeOwnershipDebt
+=============================================================================

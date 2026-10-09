@@ -1,0 +1,3 @@
+---------------- MODULE MCTokenCapRecoveryWitnessRegressingHeld ----------------
+EXTENDS TokenCapRecovery
+=============================================================================

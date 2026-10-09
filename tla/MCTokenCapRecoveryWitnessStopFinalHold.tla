@@ -1,0 +1,3 @@
+---------------- MODULE MCTokenCapRecoveryWitnessStopFinalHold ----------------
+EXTENDS TokenCapRecovery
+=============================================================================

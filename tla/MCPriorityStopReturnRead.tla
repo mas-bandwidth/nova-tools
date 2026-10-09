@@ -1,0 +1,3 @@
+---------------- MODULE MCPriorityStopReturnRead ----------------
+EXTENDS PriorityStopReturn
+=============================================================================

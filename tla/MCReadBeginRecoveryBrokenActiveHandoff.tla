@@ -1,0 +1,3 @@
+---------------- MODULE MCReadBeginRecoveryBrokenActiveHandoff ----------------
+EXTENDS ReadBeginRecovery
+=============================================================================

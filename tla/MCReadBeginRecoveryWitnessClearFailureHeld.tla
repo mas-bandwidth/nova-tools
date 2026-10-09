@@ -1,0 +1,3 @@
+---------------- MODULE MCReadBeginRecoveryWitnessClearFailureHeld ----------------
+EXTENDS ReadBeginRecovery
+=============================================================================

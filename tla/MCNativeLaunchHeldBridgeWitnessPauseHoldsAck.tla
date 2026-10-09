@@ -1,0 +1,3 @@
+---------------- MODULE MCNativeLaunchHeldBridgeWitnessPauseHoldsAck ----------------
+EXTENDS NativeLaunchHeldBridge
+=============================================================================

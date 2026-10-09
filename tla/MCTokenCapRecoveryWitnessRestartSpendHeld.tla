@@ -1,0 +1,3 @@
+---------------- MODULE MCTokenCapRecoveryWitnessRestartSpendHeld ----------------
+EXTENDS TokenCapRecovery
+=============================================================================

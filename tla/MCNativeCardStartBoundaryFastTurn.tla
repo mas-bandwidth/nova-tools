@@ -1,0 +1,3 @@
+---------------- MODULE MCNativeCardStartBoundaryFastTurn ----------------
+EXTENDS NativeCardStartBoundary
+=============================================================================
