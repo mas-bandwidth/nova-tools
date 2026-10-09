@@ -258,6 +258,14 @@ deliver adapter for its harness (nova-friend install --as <x> --harness <h> --di
 answers the daemon's SESSION CHECK, which records the proof; nova-bus names shows every name's push
 ```
 
+Advisory until every harness proves (the owner, 2026-10-07: adopt wide ASAP; the
+seat's push proof is card the-seats-pushes-are-proven-before-the-sprint-moves-b):
+a claude harness proves no push yet, so the refusal would stop every send by or to
+the coordinator and every recv restart. Until then `send` and `recv` print `NOTE
+push=<none|stale|down> [age=<age>] for <name>` for each name not heard and go on;
+`--require-push`, or `NOVA_BUS_REQUIRE_PUSH=1`, refuses as above
+(`TestThePushGateIsAdvisoryUntilRequired`). `nova-bus names` is unchanged.
+
 The proof is the friend daemon's SESSION CHECK round trip (SPEC-FRIEND.md,
 presence): a check carrying a fresh nonce goes into the session through the
 harness's deliver adapter, and the session's own pong carrying that nonce

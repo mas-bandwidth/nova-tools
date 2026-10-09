@@ -22,6 +22,7 @@ import (
 func TestSendAndRecvRefuseUntilTheInboxPushIsProven(t *testing.T) {
 	t.Parallel()
 	r := deafRig("ada", "bob")
+	r.env[RequirePushEnv] = "1" // the gate refuses only when it is required (TestThePushGateIsAdvisoryUntilRequired)
 	cli := r.cli()
 	send := []string{"send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "x"}
 
@@ -68,4 +69,25 @@ func TestSendAndRecvRefuseUntilTheInboxPushIsProven(t *testing.T) {
 	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=1 new=0")
 	cli.Do(t, "ack", "--as", "bob", "--id", mid).Exit(0).Out("ACK OK acked=1")
 	cli.Do(t, "log").Exit(0).Out("LOG OK total=1")
+}
+
+// The owner, 2026-10-07: adopt wide ASAP; the seat's push proof is card
+// the-seats-pushes-are-proven-before-the-sprint-moves-b. Until every harness proves
+// its push, the gate is advisory: a send between two unproven names goes, with a
+// NOTE for each, and recv takes its message the same way; --require-push (or
+// NOVA_BUS_REQUIRE_PUSH=1) refuses it with the deaf line as before.
+func TestThePushGateIsAdvisoryUntilRequired(t *testing.T) {
+	t.Parallel()
+	r := deafRig("ada", "bob")
+	cli := r.cli()
+	send := []string{"send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "x"}
+
+	mid := id(t, cli.Do(t, send...).Exit(0).Out("SEND OK id=", "SEND NOTE push=none for ada", "SEND NOTE push=none for bob").Stdout)
+	cli.Do(t, "recv", "--as", "bob").Exit(0).Out("RECV OK id="+mid, "RECV NOTE push=none for bob")
+	assert.Equal(t, 1, r.store.Len(bus.LogKey), "the advisory send was written")
+
+	cli.Do(t, append(send, "--require-push")...).Exit(2).Err("SEND REFUSED",
+		"deaf: ada has no proven push since never: no daemon has recorded one", "deaf: bob has no proven push since never")
+	cli.Do(t, "recv", "--as", "bob", "--require-push").Exit(2).Err("RECV REFUSED", "deaf: bob has no proven push since never")
+	assert.Equal(t, 1, r.store.Len(bus.LogKey), "a required gate writes nothing")
 }
