@@ -293,7 +293,7 @@ func realExec(ctx context.Context, killDelay time.Duration, dir, name string, ar
 		}
 		return out.String(), exit, errors.Join(limitErr, err)
 	}
-	if ctx.Err() != nil && anchorPath == "" {
+	if ctx.Err() != nil && anchorPath == "" && cmd.Process != nil {
 		return out.String(), -1, errors.New("the delivery was stopped; unreceipted descendants are unverified")
 	}
 	if ctx.Err() != nil && groupUnverified {
