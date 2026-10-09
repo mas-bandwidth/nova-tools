@@ -1,10 +1,12 @@
 package friend
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -476,4 +478,101 @@ func TestOutboxFinishRetryRechecksCanonicalOwnership(t *testing.T) {
 	l.outboxStep(t0.Add(BeatEvery))
 	assert.Equal(t, 1, attempts, "a report cannot finish a card after it leaves her row")
 	assert.False(t, r.d.outbox.finished[card.Job])
+}
+
+// A fresh sprint delivers a bare epoch-zero job. Its report is finished only
+// after the current friend-cards row binds that exact job and generation.
+func TestEpochZeroOutboxFinishesOnlyTheCurrentExactJob(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, job string
+		gen       int
+	}{
+		{name: "first generation", job: "card.w1", gen: 1},
+		{name: "resumed generation", job: "card.w1.g2", gen: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			h := HeldCard{Card: "card.w1", Job: tc.job, Col: "working", Kind: "work", Gen: tc.gen, Epoch: 0}
+			r.d.heldCards = []HeldCard{h}
+			r.d.status.HeldFrom = FromCards
+			outboxReport(t, r.d.Dir, tc.job, "Verdict: FAIL\n\nThe native run completed.\n")
+			var sent [][]string
+			r.d.Finish = func(_ context.Context, argv []string) error {
+				sent = append(sent, append([]string(nil), argv...))
+				return nil
+			}
+			l := &loop{d: r.d, ctx: context.Background(), lanes: &laneSet{}}
+			l.outboxStep(t0)
+			require.Len(t, sent, 1)
+			assert.Equal(t, "card.w1@"+strconv.Itoa(tc.gen), sent[0][3])
+			assert.Equal(t, "0", flagValue(sent[0], "--epoch"))
+			assert.True(t, r.d.outbox.finished[tc.job])
+			l.outboxStep(t0.Add(BeatEvery))
+			assert.Len(t, sent, 1, "an acknowledged epoch-zero report is not replayed")
+		})
+	}
+}
+
+func TestEpochZeroOutboxNeverInfersAnOldOrUnverifiedJob(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, card, heldJob, reportJob, source string
+		epoch                                  uint64
+		gen                                    int
+		duplicate                              bool
+	}{
+		{name: "old epoch after clear", heldJob: "card.w1~1", reportJob: "card.w1", source: FromCards, epoch: 1},
+		{name: "old generation", heldJob: "card.w1.g2", reportJob: "card.w1", source: FromCards, gen: 2},
+		{name: "bare job with stale epoch metadata", heldJob: "card.w1", reportJob: "card.w1", source: FromCards, epoch: 1},
+		{name: "bare job with wrong generation metadata", heldJob: "card.w1", reportJob: "card.w1", source: FromCards, gen: 2},
+		{name: "bare job with mismatched card", card: "other.w1", heldJob: "card.w1", reportJob: "card.w1", source: FromCards},
+		{name: "noncanonical zero alias", heldJob: "card.w1", reportJob: "card.w1~0", source: FromCards},
+		{name: "malformed qualified current claim", card: "card.w1~bad", heldJob: "card.w1~bad", reportJob: "card.w1~bad", source: FromCards},
+		{name: "row came from fallback view", heldJob: "card.w1", reportJob: "card.w1", source: FromView},
+		{name: "no current row", reportJob: "card.w1", source: FromCards},
+		{name: "duplicate current claim", heldJob: "card.w1", reportJob: "card.w1", source: FromCards, duplicate: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			if tc.heldJob != "" {
+				gen := max(tc.gen, 1)
+				card := cmp.Or(tc.card, "card.w1")
+				r.d.heldCards = []HeldCard{{Card: card, Job: tc.heldJob, Col: "working", Kind: "work", Gen: gen, Epoch: tc.epoch}}
+				if tc.duplicate {
+					r.d.heldCards = append(r.d.heldCards, r.d.heldCards[0])
+				}
+			}
+			r.d.status.HeldFrom = tc.source
+			outboxReport(t, r.d.Dir, tc.reportJob, "Verdict: FAIL\n\nAn old report.\n")
+			calls := 0
+			r.d.Finish = func(context.Context, []string) error { calls++; return nil }
+			l := &loop{d: r.d, ctx: context.Background(), lanes: &laneSet{}}
+			l.outboxStep(t0)
+			assert.Zero(t, calls, "unbound reports cannot finish current work")
+		})
+	}
+}
+
+func TestEpochZeroDeadLaneReportCanFinishAfterVerifiedRunnerEnd(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.d.heldCards = []HeldCard{{Card: "card.w1", Job: "card.w1", Col: "working", Kind: "work", Gen: 1, Epoch: 0}}
+	r.d.status.HeldFrom = FromCards
+	require.NoError(t, os.MkdirAll(filepath.Join(r.d.Dir, "outbox"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(r.d.Dir, "runner.log"), []byte("t START card.w1 x\nt END card.w1 exit=0 report=no\n"), 0o600))
+	var sent [][]string
+	r.d.Finish = func(_ context.Context, argv []string) error {
+		sent = append(sent, append([]string(nil), argv...))
+		return nil
+	}
+	l := &loop{d: r.d, ctx: context.Background(), lanes: &laneSet{}}
+	l.outboxStep(t0)
+	require.Len(t, sent, 1)
+	assert.Equal(t, "card.w1@1", sent[0][3])
+	assert.Equal(t, "0", flagValue(sent[0], "--epoch"))
+	assert.Contains(t, sent[0], "--harness-fault")
+	assert.FileExists(t, filepath.Join(r.d.Dir, "outbox", "card.w1", "REPORT.md"))
 }

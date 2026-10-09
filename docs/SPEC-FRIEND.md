@@ -2005,7 +2005,8 @@ aside after `CardTurns`; that end is the card's finish (`lane_end.go`):
   card from the report the lane wrote.
 
 The card's generation and epoch are read off its job directory,
-`<id>~<epoch>[.g<gen>]` (nova-sprint `friendJobOf`; `ParseJob`); a lane hands
+`<id>~<epoch>[.g<gen>]` with `~0` omitted at epoch zero (nova-sprint
+`friendJobOf`; `Card.Gen` uses the known card id); a lane hands
 the generation the queue names (`cardDir`), and the finish names that
 generation, `<card>@<gen>`. The pushed head is the branch the brief's
 STATUS line names, read as `refs/remotes/origin/<branch>` (loose or packed,
@@ -2096,11 +2097,13 @@ raised "a friend holds working cards and finishes none". Now each reconcile
 the server answered (the inbox above) is followed by a pass over her outbox,
 whoever wrote the brief:
 
-- Every job in `outbox/` named `<work>~<epoch>[.g<gen>]` (`ParseJob`) with a
-  `REPORT.md` (a regular file, never followed through a symlink, at most
-  `ReportCap`, 64 KiB, friend sync's cap) is matched to her row by its job, or
-  by its card, epoch and generation. A job a lane is running is left to the
-  lane's end.
+- Every job in `outbox/` named `<work>~<epoch>[.g<gen>]` (with `~0` omitted)
+  and carrying a `REPORT.md` (a regular file, never followed through a symlink, at most
+  `ReportCap`, 64 KiB, friend sync's cap) is matched to her row by its exact
+  current job and card. A bare epoch-zero name is bound only by the current
+  `friend cards` answer, whose card and generation disambiguate a card id that
+  itself ends in `.g1`; a missing or fallback row never authorizes that finish.
+  A job a lane is running is left to the lane's end.
 - Its card working on her row, a work card: the report's verdict and head are
   read as friend sync reads them (the first `Verdict:` and `Head:` lines,
   markdown trimmed, the verdict upper case, the head lower case). `LAND` with a
@@ -2301,7 +2304,7 @@ nothing about a friend is in the code. Every one is off while `Daemon.Rules` is 
 |---|---|---|---|
 | card filter: a card of a tier outside the row's tiers is taken back; a card whose stream and id match none of the patterns is skipped | `row_tiers=flash`, `row_streams=security*,fp-sec*` / `--lane-tiers`, `--lane-streams` | `LaneRules.Judge` | `TestOpencodeLanesDoWhatTheRunnerStopgapsDid/the_card_filter` |
 | a dealt card outside the tiers that no lane began, no `jobs/<job>` exists for, and has no report is never run, and the coordinator is asked once, by a bus request, to take it back for the dealer with the exact verb (`nova-sprint friend take <friend> <card> --reason '<why>'`): the server serves no friend's take-back (below) | as above | `TakeBackNote`, `TakeArgv`, `loop.takeBack` | `.../take_back`, `TestLanesTakeBackACardOutsideTheRowsTiersAndRunOnlyTheRest` (its fake server refuses a coordinator verb as the real one does) |
-| job names carry the generation, `<card>~<epoch>` and `.g<gen>` past the first, as friend sync names the inbox directory; the lanes take a card's job from its inbox directory, which friend sync named, so `JobName` is the rule written down for the test, read back by the `ParseJob` the lanes use | | `JobName`, `ParseJob` | `.../the_job_name_carries_the_generation` |
+| job names carry the generation, `<card>~<epoch>` with `~0` omitted and `.g<gen>` past the first; the lanes use the known card id to read the suffix, and the outbox binds a bare epoch-zero name to the exact current `friend cards` answer | | `JobName`, `Card.Gen`, `ParseJob`, `Daemon.outboxJob` | `TestLanesUseGenerationJobsBeforeTheFirstClear`, `TestEpochZeroOutboxFinishesOnlyTheCurrentExactJob` |
 | at most the row's width at once, held to the load width (3) while the machine's one-minute load is above the bound; each change said once | `row_load_max=90`, `row_load_width=3` / `--load-max`, `--load-width` | `LaneRules.LaneWidthUnderLoad`, `Load1Of` | `.../width_under_load`, `TestLanesAreHeldToTheLoadWidthWhileTheLoadIsHigh` |
 | a per-card token cap: a HOLD `REPORT.md` naming the cap, tokens and turns, then the lane's turn is stopped | `row_token_cap=6000000` / `--token-cap` | `LaneRules.OverTokenCap`, `TokenCapReport`, `loop.capStep` | `.../the_token_cap`, `TestACardOverTheTokenCapIsHeldAndItsCostPublished` |
 | a provider failure stops every lane: each turn under way is ended (its process group signalled) and its card kept in its lane's hand, counted toward nothing, one line per lane stopped; it writes `PAUSED` in the state directory with the provider's exact message, and while it stands her beat says her down with it (`friend beat <friend> --until <now+1h> --reason "provider failure (<model>): <message>"`, a worker's verb the server serves, sent again each beat); nothing resumes until a person runs `nova-friend resume`, after which the kept cards run again and her next beat withdraws the down. A marker that cannot be written holds the lanes in that daemon until it restarts and is never read as a resume | out of funds always; `row_pause_on=any` / `--pause-on any` adds a rate limit | `LaneRules.ProviderStop`, `WritePause`, `ReadPause`, `ClearPause`, `PauseBeat`, `loop.holdDown`, `loop.stopEvery`, `loop.heldTurn`, `loop.markerStep` | `.../a_provider_failure_stops_every_lane`, `TestAProviderFailureStopsEveryLaneUnderWayAndKeepsItsCard`, `TestAProviderFailureHoldsTheFriendDownUntilAPersonClearsIt`, `TestAPauseMarkerNotWrittenIsNotAResume`, `TestRunBeatsDownWhileTheLanesArePausedUntilAPersonResumes`, `TestResumeClearsTheLanesPauseAPersonBringsUp` |

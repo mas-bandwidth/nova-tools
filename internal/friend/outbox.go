@@ -172,8 +172,41 @@ func readReport(outbox, job string) (string, bool, error) {
 	return string(raw), true, err
 }
 
+// currentEpochZeroJob binds an unsuffixed job to the exact current friend-cards answer.
+// Its id and generation cannot be inferred from the name alone: read card ids can end
+// in .g1 (docs/FRIENDS.md, generation-specific jobs).
+func (d *Daemon) currentEpochZeroJob(job string) (id string, gen int, ok bool) {
+	if d.status.HeldFrom != FromCards {
+		return "", 0, false
+	}
+	for _, h := range d.heldCards {
+		if h.Job == job && h.Epoch == 0 && h.Card != "" && JobName(h.Card, 0, max(h.Gen, 1)) == job {
+			if ok {
+				return "", 0, false // two current claims cannot disambiguate one report
+			}
+			id, gen, ok = h.Card, max(h.Gen, 1), true
+		}
+	}
+	return id, gen, ok
+}
+
+// outboxJob accepts only the server's canonical job spelling. A bare epoch-zero
+// name needs the current friend-cards row because its .g suffix may be part of
+// the card id; a qualified name still has to name its exact held job below.
+func (d *Daemon) outboxJob(job string) (id string, epoch, gen int, ok bool) {
+	id, epoch, gen, ok = ParseJob(job)
+	if ok {
+		return id, epoch, gen, JobName(id, uint64(epoch), gen) == job
+	}
+	if strings.Contains(job, "~") {
+		return "", 0, 0, false // a malformed qualified name is never an epoch-zero job
+	}
+	id, gen, ok = d.currentEpochZeroJob(job)
+	return id, 0, gen, ok
+}
+
 // outboxStep is the daemon's outbox pass, after each reconcile the server answered: every
-// job in her outbox named <work>~<epoch>[.g<gen>] with a REPORT.md is finished when its card
+// current job in her outbox with a REPORT.md is finished when its card
 // is working on her row (a work card, never a read), the job no lane is running; the finish
 // is sent once, and one the server did not take is retried with bounded backoff. A report
 // with no Verdict line, one that cannot be read, and a job whose card is not working on her
@@ -264,7 +297,7 @@ func (l *loop) outboxStep(now time.Time) {
 	}
 	for _, e := range entries {
 		job := e.Name()
-		id, epoch, gen, ok := ParseJob(job)
+		id, epoch, gen, ok := d.outboxJob(job)
 		if !e.IsDir() || !ok || !validJob(job) || o.finished[job] || running[job] {
 			continue
 		}
@@ -278,7 +311,7 @@ func (l *loop) outboxStep(now time.Time) {
 		}
 		var h *HeldCard
 		for i, c := range d.heldCards {
-			if c.Job == job || (c.Card == id && c.Epoch == uint64(epoch) && max(c.Gen, 1) == gen) {
+			if c.Job == job && c.Card == id && (epoch != 0 || c.Epoch == 0 && max(c.Gen, 1) == gen) {
 				h = &d.heldCards[i]
 				break
 			}
@@ -472,7 +505,7 @@ func (l *loop) deadLanes(outbox string, running map[string]bool, now time.Time) 
 		if _, ok, _ := readReport(outbox, job); ok {
 			continue
 		}
-		if _, _, _, ok := ParseJob(job); !ok {
+		if _, _, _, ok := d.outboxJob(job); !ok {
 			continue
 		}
 		if !read {

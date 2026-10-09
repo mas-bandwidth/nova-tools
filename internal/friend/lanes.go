@@ -70,12 +70,18 @@ func (c Card) Epoch() string {
 	return epoch
 }
 
-// Gen is the card's generation, its directory's .g<gen> (friend sync names a card dealt
-// again to the same friend <id>~<epoch>.g<gen>); 1 when it has none.
+// Gen is the card's generation, its directory's .g<gen> after its known card id and
+// optional epoch (docs/FRIENDS.md). A read card's id can itself end in .g1, so the
+// suffix is read relative to ID, not by splitting the directory name alone.
 func (c Card) Gen() int {
 	base := filepath.Base(c.Outbox)
-	if i := strings.LastIndex(base, ".g"); i >= 0 && strings.Contains(base[:i], "~") {
-		if n, err := strconv.Atoi(base[i+2:]); err == nil && n > 1 {
+	stem := c.ID
+	if _, rest, found := strings.Cut(base, "~"); found {
+		epoch, _, _ := strings.Cut(rest, ".g")
+		stem += "~" + epoch
+	}
+	if suffix, found := strings.CutPrefix(base, stem+".g"); found {
+		if n, err := strconv.Atoi(suffix); err == nil && n > 1 {
 			return n
 		}
 	}

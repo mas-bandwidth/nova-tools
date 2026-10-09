@@ -766,7 +766,23 @@ func TestLanesUseGenerationJobsBeforeTheFirstClear(t *testing.T) {
 	require.True(t, found)
 	assert.Equal(t, filepath.Join(job, "BRIEF.md"), c.Brief)
 	assert.Equal(t, "0", c.Epoch())
+	assert.Equal(t, 2, c.Gen(), "an epoch-zero resumed job keeps its generation")
 	assert.Equal(t, [][]string{{"progress", "--as", "friend.friend-a", "c.w1", "--epoch", "0"}}, ProgressArgv("friend-a", []Card{c}))
+}
+
+func TestCardGenerationUsesKnownIDWhenReadIDEndsInGenerationSuffix(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		id, job string
+		gen     int
+	}{
+		{id: "p.r1.reader.g1", job: "p.r1.reader.g1", gen: 1},
+		{id: "p.r1.reader.g1", job: "p.r1.reader.g1.g2", gen: 2},
+		{id: "p.r1.reader.g1", job: "p.r1.reader.g1~3.g2", gen: 2},
+	} {
+		c := Card{ID: tc.id, Outbox: filepath.Join(t.TempDir(), "outbox", tc.job)}
+		assert.Equal(t, tc.gen, c.Gen(), tc.job)
+	}
 }
 
 // The queue's recorded job wins over newer-looking stale directories. A missing
