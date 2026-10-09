@@ -62,7 +62,7 @@ func nativeControlReadLegacyLane(path string) ([]byte,error) {
  raw,err := io.ReadAll(io.LimitReader(f,4097))
  if err != nil || len(raw) > 4096 { return nil,errors.New("legacy lane read exceeds its bound") }
  after,err := f.Stat()
- if err != nil || after.Size() > 4096 { return nil,errors.New("legacy lane changed during its read") }
+ if err != nil || after.Size() != info.Size() || int64(len(raw)) != info.Size() || !after.ModTime().Equal(info.ModTime()) { return nil,errors.New("legacy lane changed during its read") }
  current,err := os.Lstat(path)
  if err != nil || !os.SameFile(info,current) { return nil,errors.New("legacy lane pathname changed during its read") }
  return raw,nil
