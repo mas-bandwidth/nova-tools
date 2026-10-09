@@ -1519,6 +1519,9 @@ func (m *Member) machineStop(q queueOut, byID map[string]queueCard, now time.Tim
 			if m.cfg.Reader {
 				gen = attempt
 			}
+			if g, handed := m.handedBack[id]; handed && g == gen {
+				continue
+			}
 			if m.stopReturn(id, gen, epoch, 0, now, "no child of this member runs it: the run is gone with the member that ran it") {
 				acted++
 			}

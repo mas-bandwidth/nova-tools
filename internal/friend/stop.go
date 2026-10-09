@@ -90,6 +90,9 @@ func (s StopReturn) Owed() bool { return s.Result == "" }
 
 // StopReturnArgv is the store's verb for one stop-return, as the wire of 2026-10-08 says it.
 func StopReturnArgv(row, card string, gen int, epoch string) []string {
+	if gen <= 0 {
+		return nil
+	}
 	return []string{"stop-return", "--as", row, card + "@" + strconv.Itoa(gen), "--epoch", epoch, "--reason", StopReturnReason}
 }
 
@@ -214,7 +217,17 @@ func (l *loop) returnOwed(now time.Time) {
 		if !r.Owed() || !r.Ended || now.Before(r.NextTry) {
 			continue
 		}
+		if r.Gen <= 0 {
+			if g := l.resolveStopReturnGen(r); g > 0 {
+				r.Gen = g
+			} else {
+				continue // a read card whose gen is unknown waits for its gen, never sends 0
+			}
+		}
 		argv := StopReturnArgv(r.Row, r.Card, r.Gen, r.Epoch)
+		if len(argv) == 0 {
+			continue
+		}
 		var err error
 		switch {
 		case d.StopReturn != nil:
@@ -248,6 +261,24 @@ func (l *loop) returnOwed(now time.Time) {
 	d.owed.Store(int64(s.state.owed()))
 }
 
+// resolveStopReturnGen attempts to resolve the card's generation if it was unpopulated (e.g. read card).
+func (l *loop) resolveStopReturnGen(r *StopReturn) int {
+	if r.Gen > 0 {
+		return r.Gen
+	}
+	if l.reads != nil {
+		if a, ok := l.reads.active[r.Card]; ok && a.Gen > 0 {
+			return a.Gen
+		}
+		for _, a := range l.reads.asked {
+			if a.ID == r.Card && a.Gen > 0 {
+				return a.Gen
+			}
+		}
+	}
+	return 0
+}
+
 // OwedStopReturns is how many stop-returns the lanes owe now: the beat carries it.
 func (d *Daemon) OwedStopReturns() int { return int(d.owed.Load()) }
 
@@ -269,7 +300,19 @@ func (l *loop) stopReads(now time.Time) {
 				r = s.asked[i]
 			}
 		}
-		l.oweStopReturn(StopReturn{Job: "read:" + id, Row: ReaderOf(d.Friend), Card: id, Gen: r.Gen, Epoch: r.Epoch, Exit: -1, At: now})
+		epoch := r.Epoch
+		if epoch == "" && s.epoch != "" {
+			epoch = s.epoch
+		}
+		if epoch == "" {
+			for _, a := range s.asked {
+				if a.Epoch != "" {
+					epoch = a.Epoch
+					break
+				}
+			}
+		}
+		l.oweStopReturn(StopReturn{Job: "read:" + id, Row: ReaderOf(d.Friend), Card: id, Gen: r.Gen, Epoch: epoch, Exit: -1, At: now})
 		cancel()
 		d.Record(fmt.Sprintf("%s read %s@%d cancelled by stop: its process group is told to end; stop-return owed", at, id, r.Gen))
 	}

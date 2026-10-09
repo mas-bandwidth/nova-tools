@@ -213,10 +213,15 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "fleet beat", err.Error())
 	}
-	if *stopReturns < 0 {
-		return refuse(stderr, "fleet beat", "--stop-returns wants a whole number of at least 0")
+	var owing *int
+	if set["stop-returns"] {
+		if *stopReturns < 0 {
+			return refuse(stderr, "fleet beat", "--stop-returns wants a whole number of at least 0")
+		}
+		v := *stopReturns
+		owing = &v
 	}
-	b, err := st.BeatOwing(context.Background(), pos[0], nil, src, *stopReturns)
+	b, err := st.BeatOwing(context.Background(), pos[0], nil, src, owing)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s fleet beat: %s\n", prog, oneline.Escape(err.Error()))
 		return 1

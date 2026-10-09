@@ -257,16 +257,25 @@ func TestAMemberRestartedMidStopHandsBackItsWorkingCards(t *testing.T) {
 	assert.Empty(t, s.lines("take"))
 	assert.Empty(t, r.started(), "no recovery launch while STOPPED")
 	assert.Contains(t, out.String(), "STOP-RETURN OK card=c2 gen=3 epoch=7 pid=0: handed back to m ready by the machine's stop (no child of this member runs it")
-	// a refusal is tried again after StopReturnRetry, not every pass
-	s.set("stop-return", 2, "the machine is RUNNING")
+	// c2 was handed back OK: the next pass does not send it again (handedBack check)
 	for i := range 3 {
 		_, err = m.Tick(time.Unix(1+int64(i), 0))
 		require.NoError(t, err)
 	}
-	assert.Len(t, s.lines("stop-return"), 2)
-	_, err = m.Tick(time.Unix(0, 0).Add(StopReturnRetry + 5*time.Second))
+	assert.Len(t, s.lines("stop-return"), 1, "c2 is not sent again once handed back")
+
+	// a new working card whose stop-return is refused is tried again after StopReturnRetry, not every pass
+	p3 := pk("c3")
+	s.set("queue", 0, queueWith(t, "STOPPED", 7, ready("c1"), working("c3", 1, &p3)))
+	s.set("stop-return", 2, "the machine is RUNNING")
+	for i := range 3 {
+		_, err = m.Tick(time.Unix(10+int64(i), 0))
+		require.NoError(t, err)
+	}
+	assert.Len(t, s.lines("stop-return"), 2, "c3 sent once, then waits for StopReturnRetry")
+	_, err = m.Tick(time.Unix(10, 0).Add(StopReturnRetry + 5*time.Second))
 	require.NoError(t, err)
-	assert.Len(t, s.lines("stop-return"), 3)
+	assert.Len(t, s.lines("stop-return"), 3, "c3 tried again after StopReturnRetry")
 }
 
 // A server before the word (no machine field) changes nothing: the member runs as it did.

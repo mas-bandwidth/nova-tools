@@ -298,6 +298,49 @@ func TestStopAfterAQueueRefreshStillHandsBackTheReadWithItsGen(t *testing.T) {
 	})
 }
 
+// A read card whose gen is unknown waits for its gen, never sends card@0.
+func TestUnpopulatedReadCardWithUnknownGenWaitsForGenAndNeverEmitsCardAtZero(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, nil, nil, nil)
+		h := &readHarness{lanesHarness: &lanesHarness{dir: dir, active: map[string]int{}}, rblock: make(chan struct{})}
+		sp := &readSprint{queue: `{"epoch":"15","cards":[]}`}
+		r, state := laneRig(t, h.lanesHarness, 1)
+		r.d.Deliver = h
+		r.d.Sprint = sp.ask
+		r.d.ReadSlots = func() int { return 1 }
+		r.d.ReadModel = func(tier string) string { return map[string]string{"pro": "m-pro", "flash": "m-flash"}[tier] }
+		var mu sync.Mutex
+		var returns [][]string
+		stopped := true
+		r.d.MachineStopped = func() bool { mu.Lock(); defer mu.Unlock(); return stopped }
+		r.d.StopReturn = func(_ context.Context, argv []string) error {
+			mu.Lock()
+			defer mu.Unlock()
+			returns = append(returns, argv)
+			return nil
+		}
+		*state = LaneState{
+			Sessions: map[int]string{1: "s1"},
+			StopReturns: []StopReturn{{
+				Job: "read:r1", Row: "reader-bob", Card: "r1", Gen: 0, Epoch: "15", Exit: -1, Ended: true, At: t0,
+			}},
+		}
+		r.run(t, 5)
+		mu.Lock()
+		assert.Empty(t, returns, "a read card with unknown gen never emits stop-return card@0")
+		mu.Unlock()
+
+		// Now reader queue returns r1 with Gen 2
+		sp.queue = `{"epoch":"15","cards":[{"id":"r1","col":"asked","gen":2,"packet":{"tier":"pro","head":"aaa","work_branch":"sprint/a","attempt":1,"brief":"REPO: o/r\nBASE: main\n","report":"Verdict: LAND"}}]}`
+		r.run(t, int(ReadAskEvery/BeatEvery)+5)
+		mu.Lock()
+		defer mu.Unlock()
+		require.Len(t, returns, 1, "once gen is known, stop-return is sent")
+		assert.Equal(t, []string{"stop-return", "--as", "reader-bob", "r1@2", "--epoch", "15", "--reason", "owned process stopped"}, returns[0])
+	})
+}
+
 // StopReturnsSurviveRestart: a daemon starting up with a stop-return owed in its lane state
 // (the stop cancelled the lane, the daemon died before the ack) sends it first, and never
 // finishes the card as a run gone.

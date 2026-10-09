@@ -225,6 +225,7 @@ type readSet struct {
 	begun   map[string]bool // asked reads this daemon began: the queue shows them asked until the verdict lands
 	asked   []AskedRead
 	askedAt time.Time
+	epoch   string                        // the latest epoch seen on the reader queue
 	cancel  map[string]context.CancelFunc // each read under way: the machine's stop ends it (stop.go)
 	stopped map[string]bool               // reads the stop cancelled: no verdict, a stop-return
 	active  map[string]AskedRead          // each read under way as it was begun: its generation and epoch, which the queue's refresh no longer lists
@@ -265,6 +266,8 @@ func (l *loop) readStep(now time.Time) {
 			s.asked = nil
 		} else if s.asked, err = ParseReadQueue(out); err != nil {
 			d.Record(fmt.Sprintf("%s reads: %s", at, err))
+		} else if len(s.asked) > 0 {
+			s.epoch = s.asked[0].Epoch
 		}
 	}
 	if l.lanes.gov.Held() != "" || l.lanes.gov.Paused(now) || d.machineStopped() {
