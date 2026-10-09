@@ -86,7 +86,7 @@ func TestEnrollmentTransportCancellationReapsResistantFakeDescendants(t *testing
 	select {
 	case err = <-done:
 	case <-time.After(30 * time.Second):
-		t.Fatal("transport cancellation did not finish verified cleanup")
+		require.FailNow(t, "transport cancellation did not finish verified cleanup")
 	}
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "trap")
@@ -102,7 +102,7 @@ func TestCodexEnrollmentTransportRefusesNonTerminalBeforeChild(t *testing.T) {
 	t.Parallel()
 	file, err := os.CreateTemp(t.TempDir(), "not-terminal")
 	require.NoError(t, err)
-	defer file.Close()
+	t.Cleanup(func() { require.NoError(t, file.Close()) })
 	marker := filepath.Join(t.TempDir(), "must-not-launch")
 	err = codexEnrollmentTransport(context.Background(), file, "/usr/bin/touch", []string{marker}, time.Minute, t.TempDir())
 	require.ErrorContains(t, err, "terminal")
