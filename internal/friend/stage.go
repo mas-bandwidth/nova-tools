@@ -630,10 +630,9 @@ func (l *loop) stageStep(cards []HeldCard, now time.Time) {
 			if r.sha != "" {
 				d.Record(fmt.Sprintf("%s stage: staged %s/%s/repo (%s at %s, %s, on %s) and its %s", at, JobsDir, r.p.Job, r.p.Repo, r.p.Base, r.sha, r.p.Branch, JobFile))
 			}
-			if line, ok := d.stageDealt[r.p.Job]; ok && l.mode == ModeBatch {
-				l.dealt = append(l.dealt, line)
-			}
-			delete(d.stageDealt, r.p.Job)
+			// The line stays in stageDealt until flushStageDealt has it in the
+			// ledger. Deleting it here, or only copying it in batch mode,
+			// loses the nudge before a restart can see JOB.md.
 		case errors.As(r.err, &ns):
 			d.stageRetry[r.p.Job] = now.Add(StageRetryEvery)
 			if !d.stageSaid[ns.key()] {
