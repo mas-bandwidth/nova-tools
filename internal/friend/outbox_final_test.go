@@ -28,6 +28,10 @@ func TestFinal(t *testing.T) {
 		{name: "hold", first: "Verdict: HOLD", second: "Head: -", ok: true},
 		{name: "fail", first: "verdict: fail", second: "Head: -", ok: true},
 		{name: "empty", first: "", second: "Head: -"},
+		// a parsed verdict does not bypass Final: a LAND whose second line is not
+		// a Head, and a verdict that is not on the first line, are not final.
+		{name: "bad head", first: "Verdict: LAND", second: "Head: pending", why: "Head: pending"},
+		{name: "later line", first: "the notes first", second: "Head: " + sha, why: "the notes first"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -88,4 +92,47 @@ func TestAReportThatIsNotFinalIsLeftUntilTheCardsDeadline(t *testing.T) {
 	outboxReport(t, r.d.Dir, pending.Job, "Verdict: LAND\nHead: "+sha+"\n\nlate.\n")
 	l.outboxStep(deadline.Add(time.Minute))
 	assert.Len(t, f.got(), 2, "a report that changes after collection is not collected again")
+}
+
+// A parsed LAND, HOLD or FAIL does not bypass Final: a verdict whose second line is
+// not a Head, and a verdict that is not the first line, are not final, are left before
+// the card's deadline, and are collected as FAIL past it
+// (docs/SPEC-FRIEND.md, the daemon reads every outbox job).
+func TestFinalGatesEveryReportAndTheDeadlineCollectsTheRest(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	f := &finishes{}
+	r.d.Finish = f.finish
+	const sha = "0123456789abcdef0123456789abcdef01234567"
+	deadline := t0.Add(time.Minute)
+	badHead := workCard("badhead.w1", "working")
+	badHead.Branch = "sprint/badhead.w1.g1.e15"
+	badHead.Brief += "DEADLINE: " + deadline.Format(time.RFC3339) + "\n"
+	laterLine := workCard("laterline.w1", "working")
+	laterLine.Branch = "sprint/laterline.w1.g1.e15"
+	laterLine.Brief += "DEADLINE: " + deadline.Format(time.RFC3339) + "\n"
+	r.d.heldCards = []HeldCard{badHead, laterLine}
+	outboxReport(t, r.d.Dir, badHead.Job, "Verdict: LAND\nHead: pending\n")
+	outboxReport(t, r.d.Dir, laterLine.Job, "the notes first\nHead: "+sha+"\nVerdict: LAND\n")
+	l := &loop{d: r.d, ctx: context.Background(), lanes: &laneSet{}}
+
+	l.outboxStep(t0)
+
+	assert.Empty(t, f.got(), "a LAND whose second line is not a Head, and a verdict not on the first line, are not final: %v", f.got())
+	assert.Contains(t, r.recordText(), "report not final yet: badhead.w1: Verdict: LAND")
+	assert.Contains(t, r.recordText(), "report not final yet: laterline.w1: the notes first")
+
+	l.outboxStep(deadline)
+
+	require.Len(t, f.got(), 2, "past the deadline each is collected as FAIL: %v", f.got())
+	assert.Equal(t, []string{
+		"finish", "--as", "friend.bob", "badhead.w1@1", "--epoch", "15", "--failed",
+		"--branch", "sprint/badhead.w1.g1.e15", "--report",
+		"friend bob FAIL: report never became final: first line Verdict: LAND",
+	}, f.got()[0])
+	assert.Equal(t, []string{
+		"finish", "--as", "friend.bob", "laterline.w1@1", "--epoch", "15", "--failed",
+		"--branch", "sprint/laterline.w1.g1.e15", "--report",
+		"friend bob FAIL: report never became final: first line the notes first",
+	}, f.got()[1])
 }
