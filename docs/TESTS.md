@@ -1318,3 +1318,9 @@ the lane rig on its fake clock (synctest, no socket, no wall-clock sleep), the t
 coordinator verb as the real one does; `TestResumeClearsTheLanesPauseAPersonBringsUp` and
 `TestRefuseGoRefusesWithTheWayToABench` run the two new verbs, and `TestRunBeatsDownWhileTheLanesArePausedUntilAPersonResumes`
 the daemon's down beat while the pause stands.
+
+## Joined fresh native replies (cmd/nova-friend/joined_reply_functional_test.go)
+
+`TestJoinedWallReplySurvivesLostRedisAnswerAndDaemonRestart` (`cmd/nova-friend/joined_reply_functional_test.go`, functional Linux tier) joins the production daemon, real wall/helper processes, production local reply CLI handlers and isolated real Redis. Direct helper TCP and daemon-private grant reads are permission-denied. An independent receiver verifies the complete correlated ordinary reply. A lost post-apply send response followed by a new daemon Run retains the durable attempt and reconciles the same reply without duplication; native control RUN/anchor receipts establish owned process-group cleanup. This proves the helper/handler boundary, not actual provider behavior, an installed artifact or configured fleet width.
+
+`TestJoinedFreshWorkspaceRepliesBeforeAnyCard` runs the same bridge from a work directory with no outbox or JOB fixture. Go initializes the local spool before issuing the first native pong and ordinary reply command; no card admission supplies that directory. This distinct regression guards the fresh-workspace lifecycle precondition rather than assuming an initialized workspace.

@@ -32,8 +32,25 @@ import (
 // production prompt supplies. The CLI branch invokes the production handlers,
 // including RunWall, in this test executable without building another binary.
 func init() {
-	if len(os.Args) < 3 || os.Args[1] != "--joined-reply-subprocess" {
+	// The suite, provider and local CLI are separate fixture roles: the real
+	// proof nests provider -> CLI. Each role has its own bounded reexec chain.
+	role := "nova-friend-joined-suite"
+	if len(os.Args) >= 3 && os.Args[1] == "--joined-reply-subprocess" {
+		switch os.Args[2] {
+		case "provider", "cli":
+			role = "nova-friend-joined-" + os.Args[2]
+		}
+	}
+	testbin.Enter(role, func(args []string, _ func(string) string) bool {
+		return len(args) >= 2 && args[0] == "--joined-reply-subprocess" &&
+			(args[1] == "provider" || args[1] == "cli")
+	})
+	if len(os.Args) < 2 || os.Args[1] != "--joined-reply-subprocess" {
 		return
+	}
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "missing fixture subprocess role")
+		os.Exit(2)
 	}
 	args := os.Args[2:]
 	switch args[0] {
