@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -31,14 +32,19 @@ func pushReplyStore(t *testing.T, actor string, socket bool) (*app, *store.Store
 	var addr string
 	var options *redis.Options
 	var exited chan struct{}
+	var logPath string
 	if socket {
 		bin := testutil.Program(t)
 		dir := t.TempDir()
 		sock := filepath.Join(dir, "emma's canary.sock")
+		logPath = filepath.Join(dir, "redis.log")
+		logFile, err := os.Create(logPath)
+		require.NoError(t, err)
 		cmd := subproc.Long(context.Background(), bin, "--port", "0", "--unixsocket", sock, "--unixsocketperm", "700", "--save", "", "--appendonly", "no", "--dir", dir)
+		cmd.Stdout, cmd.Stderr = logFile, logFile
 		require.NoError(t, cmd.Start())
 		exited = make(chan struct{})
-		go func() { _ = cmd.Wait(); close(exited) }()
+		go func() { _ = cmd.Wait(); _ = logFile.Close(); close(exited) }()
 		t.Cleanup(func() {
 			_ = cmd.Process.Kill()
 			<-exited
@@ -52,14 +58,19 @@ func pushReplyStore(t *testing.T, actor string, socket bool) (*app, *store.Store
 	admin := redis.NewClient(options)
 	t.Cleanup(func() { _ = admin.Close() })
 	if socket {
+		var lastErr error
 		require.Eventually(t, func() bool {
 			select {
 			case <-exited:
 				return false
 			default:
 			}
-			return admin.Ping(context.Background()).Err() == nil
-		}, 10*time.Second, 20*time.Millisecond, "socket redis did not become ready")
+			lastErr = admin.Ping(context.Background()).Err()
+			return lastErr == nil
+		}, 10*time.Second, 20*time.Millisecond, func() string {
+			body, _ := os.ReadFile(logPath)
+			return fmt.Sprintf("socket redis did not become ready: err=%v, out=%s", lastErr, string(body))
+		})
 	}
 	require.NoError(t, fn.Load(context.Background(), admin))
 	a := newApp(func(k string) string {
