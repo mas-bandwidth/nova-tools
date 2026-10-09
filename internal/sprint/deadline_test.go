@@ -3,6 +3,7 @@ package sprint
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -113,7 +114,7 @@ func TestTickDealMeasuresEachDoneOKCellOnce(t *testing.T) {
 	for _, m := range members {
 		w.must(FleetStep(w.s, FleetReq{Op: "up", Member: m}))
 	}
-	w.s.Routes = []Route{{Name: "flash-deal-once", Tier: "flash", Provider: "prov-deal-once", Model: "model-deal-once", Tokens: 1000, Deadline: 600, Enabled: true}}
+	w.s.Routes = []Route{{Name: "flash-deal-once", Tier: "flash", Provider: "prov-deal-once", Model: "model-deal-once", Tokens: 1000, Deadline: int(10 * time.Minute / time.Second), Enabled: true}}
 	for _, m := range members {
 		for i := 1; i <= 3; i++ {
 			w.s.Fleet.Put(&Card{ID: fmt.Sprintf("%s-h%d", m, i), Row: m, Col: DoneOK, Rev: 1,
