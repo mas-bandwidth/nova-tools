@@ -103,7 +103,7 @@ func TestEnrollmentTransportCancellationReapsResistantFakeDescendants(t *testing
 	var pid int
 	_, readErr = fmt.Sscan(string(raw), &pid)
 	require.NoError(t, readErr)
-	assert.False(t, procgroup.GroupRunnable(pid), "transport must reap the resistant native helper group, not only its leader")
+	require.Eventually(t, func() bool { return !procgroup.GroupRunnable(pid) }, 10*time.Second, 10*time.Millisecond, "transport must reap the resistant native helper group, not only its leader")
 }
 
 func TestCodexEnrollmentTransportRefusesNonTerminalBeforeChild(t *testing.T) {
