@@ -1443,9 +1443,11 @@ coordinator PING at once (daemon-pong); presence is the session's word on the bu
 state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.json.
 
 usage:
-  nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]
+  nova-friend hook --harness claude
+  nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--setup-profile <PROFILE>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]
   nova-friend beat --as <me> [--server <addr>]
-  nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
+  nova-friend setup --as <me> --harness <h> --dir <d> --config-dir <d> --home <d> --profile <p> --program <exe> --deny-self <d,...> [--profile-only | --provider <p> --model <m> --key-env NAME --secrets NAME --seat <seat>] [--apply] [--dry-run]
+  nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--setup-profile <PROFILE>] [--deny-self <d,...>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
   nova-friend uninstall --as <me> [--dry-run]
   nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--json]
   nova-friend host --as <me> --harness <h> --dir <d> [--prompt <regexp>] [--state-dir <d>] [--dry-run] [--json] -- <launch command...>
@@ -1467,6 +1469,7 @@ Every verb but run, serve takes --json: the same result as one JSON object on st
 exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 
 example:
+  nova-friend setup --as worker --harness opencode --dir /tmp/worker --config-dir /tmp/worker-config --home /tmp/worker-home --profile isolated --program /usr/local/bin/opencode --deny-self /tmp/coordinator --profile-only --dry-run
   nova-friend install --as bob --harness opencode --dir ./bob --dry-run
   nova-friend uninstall --as bob --dry-run
   nova-friend ping --as ada --to bob --nonce abc123
@@ -1475,12 +1478,25 @@ example:
   nova-friend status --as bob --dir ./bob
 ```
 
+`nova-friend hook -h`:
+
+```
+usage: nova-friend hook [flags]
+from `nova-friend help`:
+  nova-friend hook --harness claude
+flags:
+  --harness <string>  claude: the harness whose PreToolUse JSON is on stdin (required)
+  --json  print the result as one JSON object instead of lines
+exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+effect: inspection: reads, writes nothing: reads one PreToolUse JSON event from stdin and prints only Claude hook protocol JSON
+```
+
 `nova-friend run -h`:
 
 ```
 usage: nova-friend run [flags]
 from `nova-friend help`:
-  nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]
+  nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--setup-profile <PROFILE>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]
 flags:
   --as <string>  your name, a nova-config friend row (required)
   --broken-after <int>  turns in a row the provider refuses the same way before the session is broken
@@ -1498,12 +1514,14 @@ flags:
   --load-width <int>  the lanes that run while the load is above --load-max
   --mode <string>  override the friend row's delivery mode, batch or one-shot, for a test (default: the row's, read from each beat)
   --model <string>  the friend's model as provider/model, to price a card by the store's route row (default: none, cards are unpriced)
+  --needs-env <string>  environment names the harness needs, comma-separated (default: the provider's key for --model, e.g. INCEPTION_API_KEY); while one is empty the lanes hold and the beat says down "no key sealed: NAME"
   --pause-on <string>  funds or any: any holds the lanes and the friend down on a rate limit too (default: funds, a rate limit backs off)
   --profile <string>  the wall profile every lane child runs inside when the friend row names none (row_profile=): friend
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
   --refuse-go  put go and gofmt that refuse first on every lane's PATH, and GOROOT nowhere (default: the row's row_refuse_go)
   --server <string>  the sprint server, host:port (default: NOVA_SPRINT_SERVER, else 127.0.0.1:6390)
   --session <string>  the session to deliver into (default: the harness's newest session in --dir; harness tmux: the tmux session, default: the one host saved, else friend-<me>)
+  --setup-profile <string>  the completed versioned public setup PROFILE file; binds native home/config/model/secret names and wall roots
   --silent-stop <duration>  stop a turn that has printed nothing for this long; a turn that prints runs on
   --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
   --token-cap <int>  tokens one card may spend, all kinds, before its lane is stopped with a HOLD report; 0 none (default: the row's row_token_cap)
@@ -1529,18 +1547,52 @@ exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; stat
 effect: delivery: sends beyond this machine: one beat to the sprint server, the same beat the daemon's loop sends while its session is alive
 ```
 
+`nova-friend setup -h`:
+
+```
+usage: nova-friend setup [flags]
+from `nova-friend help`:
+  nova-friend setup --as <me> --harness <h> --dir <d> --config-dir <d> --home <d> --profile <p> --program <exe> --deny-self <d,...> [--profile-only | --provider <p> --model <m> --key-env NAME --secrets NAME --seat <seat>] [--apply] [--dry-run]
+  nova-friend setup --as worker --harness opencode --dir /tmp/worker --config-dir /tmp/worker-config --home /tmp/worker-home --profile isolated --program /usr/local/bin/opencode --deny-self /tmp/coordinator --profile-only --dry-run
+flags:
+  --apply  apply the inspected local setup plan; no daemon or provider work starts
+  --as <string>  the friend's name (required)
+  --base-url <string>  the explicit provider endpoint
+  --config-dir <string>  the absolute private harness config root (required)
+  --context-limit <int>  explicit provider model context limit in tokens; zero leaves it unspecified
+  --deny-self <string>  the absolute coordinator roots excluded from the lane wall, comma-separated (required)
+  --dir <string>  the absolute working directory (required)
+  --dry-run  print what the verb would write and write nothing
+  --harness <string>  the harness to initialize (required)
+  --home <string>  the absolute private native home (required)
+  --json  print the result as one JSON object instead of lines
+  --key-env <string>  the sealed credential's environment name, never its value
+  --model <string>  the explicit model ID
+  --output-limit <int>  explicit provider model output limit in tokens; zero leaves it unspecified
+  --package <string>  the explicit provider adapter package
+  --profile <string>  the explicitly selected profile (required)
+  --profile-only  initialize the explicit profile without choosing a model or provider
+  --program <string>  the absolute installed native executable (required)
+  --provider <string>  the explicit provider ID
+  --seat <string>  the nova-secrets seat holding those names
+  --secrets <string>  sealed variable names, comma-separated
+exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
+effect: local write: writes files on this machine: explicit --apply initializes local harness configuration; otherwise inspects and prints the plan
+```
+
 `nova-friend install -h`:
 
 ```
 usage: nova-friend install [flags]
 from `nova-friend help`:
-  nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
+  nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--setup-profile <PROFILE>] [--deny-self <d,...>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
   nova-friend install --as bob --harness opencode --dir ./bob --dry-run
 flags:
   --as <string>  your name, a nova-config friend row (required)
   --broken-after <int>  turns in a row the provider refuses the same way before the session is broken
   --config-dir <string>  harness claude: the friend's own config directory, made and named in the agent (default: CLAUDE_CONFIG_DIR)
   --coordinator <string>  who is told of a broken session when no ping has named the seat
+  --deny-self <string>  the explicit coordinator roots excluded by the lane wall, comma-separated; persists in the agent
   --dir <string>  the friend's working directory: the session's, and where the state files live (required)
   --dry-run  print what the verb would write and write nothing
   --harness <string>  the harness the session runs in: opencode, codex, claude, antigravity, dsh, gemini, grok, tmux, copilot, cursor, amp, goose, kiro, cline, aider, roo, windsurf, zed, warp (required)
@@ -1548,11 +1600,13 @@ flags:
   --launchd-log <string>  launchd's stdout and stderr file (default: ~/Library/Logs/nova-friend-<me>.log)
   --limit-rest <duration>  how long the friend is down when its harness's usage limit or empty balance names no reset
   --model <string>  harness opencode: the model, provider/model, written into <dir>/opencode.json (default: left as it is)
+  --needs-env <string>  environment names the harness needs, comma-separated (default: the provider's key for --model, e.g. INCEPTION_API_KEY); while one is empty the lanes hold and the beat says down "no key sealed: NAME"
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
   --seat <string>  the machine's nova-secrets seat the secrets are opened as (nova-config machine show <self>: seat); wanted with --secrets
   --secrets <string>  the names of the secrets the session needs, comma-separated (never values); wraps the daemon in nova-secrets exec
   --server <string>  the sprint server, host:port (default: NOVA_SPRINT_SERVER, else 127.0.0.1:6390)
   --session <string>  the session to deliver into (default: the harness's newest session in --dir; harness tmux: the tmux session, default: the one host saved, else friend-<me>)
+  --setup-profile <string>  the completed versioned public setup PROFILE file; binds native home/config/model/secret names and wall roots
   --silent-stop <duration>  stop a turn that has printed nothing for this long; a turn that prints runs on
   --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
   --width <int>  the friend's width, from the nova-config friend row; 0 is unknown
