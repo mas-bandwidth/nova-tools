@@ -2524,8 +2524,8 @@ the check's clock minus `--since`.
 the log file, the bus store, the directory listing) so the verdict is a function and the tests use fakes:
 
 1. Daemon: the launchd agent (`loaded`, `not-loaded`, `none`) and its pid, the status file's freshness
-   (`ok` within `DaemonStale`, `stale`, `none`), connection, challenge, the session pong's age, presence
-   and its seen age.
+   (`ok` only while younger than `DaemonStale`, `stale`, `none`), connection, challenge, the session pong's age, presence
+   and its seen age. A stale status makes presence down even when the presence file still says up.
 2. Harness: the route (`push`, `mailbox` for antigravity, `queue` for codex, or `passive` for a harness nothing pushes into; dsh is `push`, each
    delivery a headless turn) and, from the daemon's log, the deliveries (`exit=`
    lines) and deferrals stamped at or after the window start; a line with no stamp is outside every
@@ -2546,10 +2546,11 @@ the log file, the bus store, the directory listing) so the verdict is a function
    delivery in the window failed. One failure among successes is not broken.
 2. `deaf` when a delivery in the window succeeded (`delivered > failed`) and no session pong aged
    within the window and no real message in the window came back.
-3. `silent` when no delivery was due in the window (`delivered == 0`, no deferral, an empty inbox),
+3. `down` when daemon status is stale, even if a later presence or pong file is fresh.
+4. `silent` when no delivery was due in the window (`delivered == 0`, no deferral, an empty inbox),
    nothing came back, and the friend is not down.
-4. `down` by presence: presence down, no agent, or an agent not loaded with no status.
-5. `ok` otherwise.
+5. `down` by presence: presence down, no agent, or an agent not loaded with no status.
+6. `ok` otherwise.
 
 **`--shown`** is what a consumer shows of each friend, `{"<friend>":{"state":"up|asleep|down","working":<n>}}`
 (a consumer passes its own table through it; the tool reads no consumer). A friend is claimed alive
@@ -2715,6 +2716,18 @@ failed to bootstrap — launchd answered Input/output error on a plist that
 lints fine — where the daemon's own `install` already retries that
 bootstrap (`BootstrapTries`, internal/friend/launchd.go). No hand plist is
 written or kept for the beat: `install` covers it.
+
+`install` waits for launchd to release the label before it bootstraps (three
+of the seat's adopt runs of 2026-10-07 rolled back without it). After the bootout
+it asks `launchctl print gui/<uid>/<label>` every 250 ms (`ReleasePoll`) until
+launchd no longer finds the service, at most the plist's exit timeout (its
+`ExitTimeOut`, else launchd's default of 20 s: `ExitTimeout`), and only then
+bootstraps, still with `BootstrapTries` for an EIO or `37: Operation already
+in progress`. Without the wait, a daemon that takes about 5 s to exit made every
+one of the five bootstraps, one second apart, answer 37, and the adopt play
+rolled back. A label still held past the timeout is refused: `launchd still
+holds <gui/uid/label> <n>s after its bootout`, and nothing is bootstrapped
+(`TestInstallWaitsForLaunchdToReleaseTheLabelAfterTheBootout`).
 
 ## Watch (cmd/nova-friend watch; internal/friend/state.go)
 

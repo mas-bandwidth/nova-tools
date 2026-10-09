@@ -180,3 +180,39 @@ func checkReadmeLinks(t *testing.T, path, md string) {
 		}
 	}
 }
+
+// TestToolReadmeTranscriptsAreTheTestedOnes holds each README's first run to the
+// record it copies: a README whose ## First run links docs/TESTS.md, which each
+// tool's firstrun_test.go executes, shows only lines that record carries, so no
+// README shows output a test never produced.
+func TestToolReadmeTranscriptsAreTheTestedOnes(t *testing.T) {
+	t.Parallel()
+	root := testRoot(t)
+	raw, err := os.ReadFile(filepath.Join(root, "docs", "TESTS.md"))
+	require.NoError(t, err)
+	tested := map[string]bool{}
+	for _, l := range strings.Split(string(raw), "\n") {
+		tested[l] = true
+	}
+	readmes, err := filepath.Glob(filepath.Join(root, "cmd", "*", "README.md"))
+	require.NoError(t, err)
+	require.NotEmpty(t, readmes, "no cmd/*/README.md found")
+	for _, path := range readmes {
+		md, err := os.ReadFile(path)
+		require.NoError(t, err)
+		body, ok := mdSection(string(md), "First run")
+		if !ok || !strings.Contains(body, "docs/TESTS.md") {
+			continue
+		}
+		inFence := false
+		for _, l := range strings.Split(body, "\n") {
+			if strings.HasPrefix(l, "```") {
+				inFence = !inFence
+				continue
+			}
+			if inFence && strings.TrimSpace(l) != "" {
+				assert.True(t, tested[l], "%s: ## First run shows %q, which docs/TESTS.md does not carry; copy the tested line", path, l)
+			}
+		}
+	}
+}
