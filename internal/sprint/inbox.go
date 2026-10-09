@@ -47,6 +47,8 @@ func (c StreamClock) Stalled(now time.Time, stale time.Duration) bool {
 // judgments, the notifications since the cursor, the streams' clocks, and the
 // clock reading of the read. Overdue is computed here, so a dead coordinator
 // is visible to anyone who runs inbox.
+//
+// The judgment machine itself is tla/Judgments.tla.
 type InboxReq struct {
 	Now      time.Time
 	Open     []Open

@@ -194,6 +194,13 @@ func TestEveryStateMachineHasACurrentModel(t *testing.T) {
 	}
 }
 
+// The judgments row (tla/COVERAGE.tsv): current only with the model's own
+// cases, a reversed witness among them, and their current records.
+func TestTLAModelIsCurrentJudgments(t *testing.T) {
+	t.Parallel()
+	requireModelCurrent(t, "judgments")
+}
+
 func TestTLACoverageRefusesAnOwedRowWithNoCard(t *testing.T) {
 	t.Parallel()
 	root := repoRoot(t)
