@@ -435,6 +435,9 @@ func (c sealCarry) carry(ciphertext []byte) (prNum string, merged bool, err erro
 // (status in progress, or a startedAt), not from the pull request opening.
 // A remote failure is printed before it is returned.
 func (c sealCarry) awaitGate(prNum string, say func(string, ...interface{}), nowFn func() time.Time, sleepFn func(time.Duration)) error {
+	if sleepFn == nil {
+		sleepFn = time.Sleep
+	}
 	say("pull request #%s is open; waiting for the gate job to start", prNum)
 	var gateAt time.Time
 	lastSaid := nowFn()
