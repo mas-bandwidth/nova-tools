@@ -73,13 +73,11 @@ func TestTheClassGateReadsGofmtOutputLocallyAndOnTheBench(t *testing.T) {
 	for _, needsFormatting := range []bool{false, true} {
 		t.Run(map[bool]string{false: "clean", true: "formatting required"}[needsFormatting], func(t *testing.T) {
 			dir := t.TempDir()
-			bin := filepath.Join(dir, "bin")
-			require.NoError(t, os.Mkdir(bin, 0700))
-			body := "#!/bin/sh\nexit 0\n"
+			bin := gofmtCleanDir
 			if needsFormatting {
-				body = "#!/bin/sh\nprintf 'bad.go\\n'\n"
+				bin = gofmtFormattingRequiredDir
 			}
-			require.NoError(t, os.WriteFile(filepath.Join(bin, "gofmt"), []byte(body), 0700))
+			require.NotEmpty(t, bin, "gofmt fixture directory not initialized")
 			env := append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 			l := &lander{}
 			output, runErr := l.goRun(t.Context(), dir, []string{filepath.Join(bin, "gofmt"), "-l", "."})

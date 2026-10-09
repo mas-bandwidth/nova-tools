@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -46,6 +47,60 @@ const (
 	exitReexecRefuse = testbin.ExitRefuse
 )
 
+// Static gofmt fixture directories initialized in TestMain and cleaned up after
+// m.Run(). Each directory carries a "gofmt" executable: clean exits zero with
+// no output, and formatting-required exits zero printing a bad file. Written once
+// with testbin.WriteExecutable (holding syscall.ForkLock) so parallel tests never
+// race write descriptors against fork/exec, preventing Linux ETXTBSY ("text file busy").
+var (
+	gofmtCleanDir              string
+	gofmtFormattingRequiredDir string
+)
+
+func initGofmtFixtures() (func(), error) {
+	dir, err := os.MkdirTemp("", "nova-sprint-gofmt")
+	if err != nil {
+		return nil, err
+	}
+	cleanDir := filepath.Join(dir, "clean")
+	if err := os.Mkdir(cleanDir, 0700); err != nil {
+		if rmErr := os.RemoveAll(dir); rmErr != nil {
+			fmt.Fprintf(os.Stderr, "cmd/nova-sprint: gofmt fixture init cleanup %s: %v\n", dir, rmErr)
+		}
+		return nil, err
+	}
+	formattingRequiredDir := filepath.Join(dir, "formatting-required")
+	if err := os.Mkdir(formattingRequiredDir, 0700); err != nil {
+		if rmErr := os.RemoveAll(dir); rmErr != nil {
+			fmt.Fprintf(os.Stderr, "cmd/nova-sprint: gofmt fixture init cleanup %s: %v\n", dir, rmErr)
+		}
+		return nil, err
+	}
+	cleanBin := filepath.Join(cleanDir, "gofmt")
+	if err := testbin.WriteExecutable(cleanBin, []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		if rmErr := os.RemoveAll(dir); rmErr != nil {
+			fmt.Fprintf(os.Stderr, "cmd/nova-sprint: gofmt fixture init cleanup %s: %v\n", dir, rmErr)
+		}
+		return nil, err
+	}
+	dirtyBin := filepath.Join(formattingRequiredDir, "gofmt")
+	if err := testbin.WriteExecutable(dirtyBin, []byte("#!/bin/sh\nprintf 'bad.go\\n'\n"), 0700); err != nil {
+		if rmErr := os.RemoveAll(dir); rmErr != nil {
+			fmt.Fprintf(os.Stderr, "cmd/nova-sprint: gofmt fixture init cleanup %s: %v\n", dir, rmErr)
+		}
+		return nil, err
+	}
+	gofmtCleanDir = cleanDir
+	gofmtFormattingRequiredDir = formattingRequiredDir
+	return func() {
+		if rmErr := os.RemoveAll(dir); rmErr != nil {
+			fmt.Fprintf(os.Stderr, "cmd/nova-sprint: gofmt fixture cleanup %s: %v\n", dir, rmErr)
+		}
+		gofmtCleanDir = ""
+		gofmtFormattingRequiredDir = ""
+	}, nil
+}
+
 func TestMain(m *testing.M) {
 	// a test arms the push proof for the names it registers (pushproof.go)
 	pushArmedDefault = false
@@ -57,7 +112,13 @@ func TestMain(m *testing.M) {
 	}
 	// ignored: os.Setenv fails only on a name with '=' or NUL, and this is a constant
 	_ = os.Setenv(reexecCLIEnv, "1")
-	os.Exit(m.Run())
+	cleanupGofmt, err := initGofmtFixtures()
+	if err != nil {
+		panic(err)
+	}
+	code := m.Run()
+	cleanupGofmt()
+	os.Exit(code)
 }
 
 // runTestCLI is main, as a test binary's child runs it: on a twin only.
