@@ -378,7 +378,12 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 			}
 			if still++; n < total && still > 60 {
 				var b strings.Builder
-				for _, args := range [][]string{{"where"}, {"inbox"}, {"check"}} {
+				// the inbox as the coordinator goroutine saw it: its `inbox --read`
+				// moves the cursor, so a second inbox read here would show nothing
+				mu.Lock()
+				fmt.Fprintf(&b, "inbox (the coordinator's reads): %v\njudgments: %s\n", notesSeen, strings.Join(judgments, "; "))
+				mu.Unlock()
+				for _, args := range [][]string{{"where"}, {"check"}} {
 					var out, errb bytes.Buffer
 					code := coord.run(args, &out, &errb)
 					fmt.Fprintf(&b, "%v: %d\n%s%s\n", args, code, tail(out.String(), 60), errb.String())
@@ -390,7 +395,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	}()
 
 	began := time.Now()
-	var pout, perr bytes.Buffer
+	var pout, perr lockedBuffer // the play writes while the watchdog reads
 	played := make(chan int, 1)
 	go func() {
 		// a merge step's batch is a tenth of a stream (play's default of 100 at a thousand),
@@ -401,10 +406,10 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	case code = <-played:
 	case why := <-stalled:
 		cancel()
-		t.Fatalf("the sprint stalled: %s", why)
+		t.Fatalf("the sprint stalled: %s\nplay so far:\n%s%s", why, tail(pout.String(), 40), perr.String())
 	case <-ctx.Done():
 		cancel()
-		t.Fatalf("the sprint did not land in 12 minutes")
+		t.Fatalf("the sprint did not land in 12 minutes\nplay so far:\n%s%s", tail(pout.String(), 40), perr.String())
 	}
 	wall := time.Since(began)
 	// let the loop's last tick say the sprint is done, then stop it
