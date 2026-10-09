@@ -156,23 +156,21 @@ func TestAnswerDecideNeverAnswersAPaymentRefusal(t *testing.T) {
 	ta.group(sprint.NWorkFailed, "s1")
 }
 
-// A blocked card the decision acks is acked by the line the inbox prints, with the
-// decision's reason. Drop refuses a card a waiting card still needs
-// (docs/SPEC-SPRINT.md section 11), so no blocked judgment opens for the
-// decision to ack: the drop names the dependants and writes nothing, the
-// answer pass leaves the stopped machine alone, and the backend is asked
-// nothing. The ack of a blocked card itself is pinned at the store, where a
-// stored dropped record still opens the judgment.
+// Drop detaches the need and opens no blocked judgment. The waiter stays
+// waiting with nothing left to wait for, so a stopped machine still has a
+// move due. The answer pass leaves that and asks nothing.
 func TestAnswerDecideAcksABlockedCard(t *testing.T) {
 	t.Parallel()
 	ta, j, record := answering(t, always(decide.VerbAck, 0.88, "own", "need-dropped"))
 	ta.ok("add --stream s1 --count 1 --one")
 	ta.ok("add --stream s2 b --one --needs s1-1")
-	before := ta.applies()
-	code, out, errs := ta.do("drop s1-1 --reason obsolete")
-	require.Equal(t, 1, code, "drop of a needed card: %s%s", out, errs)
-	require.Contains(t, errs, "s1-1 is needed by b; drop them too with --cascade", "drop of a needed card: %s", errs)
-	require.Equal(t, before, ta.applies(), "a refused drop wrote")
+	out := ta.ok("drop s1-1 --reason obsolete")
+	assert.Contains(t, out, "DETACHED", "drop of a needed card: %s", out)
+	assert.Contains(t, out, "b", "drop of a needed card: %s", out)
+	assert.Contains(t, out, "s1-1", "drop of a needed card: %s", out)
+	for _, g := range ta.inboxGroups() {
+		assert.NotEqual(t, sprint.NBlocked, g.Type, "the drop opened a blocked judgment: %+v", g)
+	}
 	out = ta.ok("answer --bar 0.8 --record " + record)
 	assert.Contains(t, out, "ANSWER OK rows=1 ", "the answer with no open judgment: %s", out)
 	assert.Contains(t, out, "left=1", "the stopped machine is left alone: %s", out)

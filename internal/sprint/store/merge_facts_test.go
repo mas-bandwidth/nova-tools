@@ -123,8 +123,8 @@ func TestAddRefusesANeedThatDoesNotExist(t *testing.T) {
 	h.clean("added")
 }
 
-// Needs dropped at two times give one blocked note per waiting primary.
-func TestTwoDroppedNeedsGiveOneBlockedNote(t *testing.T) {
+// Two dropped needs detach in one resolve. The card is ready, and no blocked note opens.
+func TestTwoDroppedNeedsDetachInOneResolve(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(2)
@@ -132,17 +132,17 @@ func TestTwoDroppedNeedsGiveOneBlockedNote(t *testing.T) {
 	seedDroppedNeed(h, "s1-1")
 	seedDroppedNeed(h, "s1-2")
 	h.must(ResolveStep(sprint.ResolveReq{}))
-	notes, _, err := h.m.NotesSince(h.ctx, "", 1000)
-	require.NoError(t, err)
-	var blocked []sprint.Note
-	for _, n := range notes {
-		if n.Type == sprint.NBlocked {
-			blocked = append(blocked, n)
-		}
+	require.Equal(t, sprint.Ready, h.state("later"))
+	require.Empty(t, h.nOpenOf(sprint.NBlocked, "later"))
+	story := detachedStories(h, "later")
+	require.Len(t, story, 2, "story: %+v", story)
+	var what string
+	for _, n := range story {
+		what += n.What + "\n"
 	}
-	require.Len(t, blocked, 1, "blocked notes: %+v", blocked)
-	require.Contains(t, blocked[0].What, "s1-1", "blocked notes: %+v", blocked)
-	require.Contains(t, blocked[0].What, "s1-2", "blocked notes: %+v", blocked)
+	require.Contains(t, what, "s1-1")
+	require.Contains(t, what, "s1-2")
+	require.Contains(t, what, "dropped")
 	h.clean("dropped")
 }
 

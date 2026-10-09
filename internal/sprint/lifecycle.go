@@ -50,7 +50,7 @@ type Move struct {
 // Moves is the lifecycle: every legal move, and nothing else. Off the table
 // (drop) is legal from every open state and is not a state.
 var Moves = []Move{
-	{Waiting, Ready, "resolve", Mechanical, "everything it needs has landed"},
+	{Waiting, Ready, "resolve", Mechanical, "everything it needs has landed, was waived, or is gone"},
 	{Ready, Working, "deal", Mechanical, "a work card is cut and dealt"},
 	{Working, Review, "finish", Mechanical, "its work card finished, ok or failed"},
 	{Working, Ready, "fleet down", Mechanical, "its work card was withdrawn because no fleet member is up, or, still ready, because its route rests"},
@@ -83,11 +83,11 @@ func IsOpen(s State) bool {
 // ready, every unit that moves a primary in the work table moves it by a row
 // of Moves, and a primary leaves the table only from an open state. A primary
 // is admitted ready, or moves waiting -> ready, only when every one of its
-// needs has landed (before the step or in it) or was waived, judged against
-// the pre-state the plan was built on; a plan that carries none moves no
-// primary into ready. A unit that does not is refused, naming the move; it is
-// never applied. The store holds every plan to it before applying it,
-// whatever step built it.
+// needs has landed (before the step or in it), was waived, or is gone
+// (dropped, replaced, archived, or no card), judged against the pre-state the
+// plan was built on; a plan that carries none moves no primary into ready. A
+// unit that does not is refused, naming the move; it is never applied. The
+// store holds every plan to it before applying it, whatever step built it.
 //
 // It judges in two passes: first the lifecycle on every unit, then the needs
 // rule, against the landings of the units the lifecycle kept only: a landing
@@ -145,7 +145,10 @@ func fromCol(e ntable.BatchMemberEntry, pre *Snapshot) (string, bool) {
 }
 
 // unmet is why a unit admits a primary ready, or moves one waiting -> ready,
-// with a need that has not landed and was not waived; "" when it does not.
+// with a need that has not landed, was not waived, and is not gone; "" when
+// it does not. A gone need (no card, or off the table) satisfies a move the
+// drain already rewrote. A create is not that move: a missing name still
+// refuses admission to ready.
 func unmet(u Unit, pre *Snapshot, landing map[string]bool) string {
 	for _, c := range u.Changes {
 		e := c.Entry
@@ -176,6 +179,9 @@ func unmet(u Unit, pre *Snapshot, landing map[string]bool) string {
 			if contains(waived, n) || landing[n] || pre != nil && pre.StateOf(n) == Landed {
 				continue
 			}
+			if e.Move != nil && needGone(pre, n) {
+				continue
+			}
 			open = append(open, n)
 		}
 		if len(open) > 0 {
@@ -183,6 +189,17 @@ func unmet(u Unit, pre *Snapshot, landing map[string]bool) string {
 		}
 	}
 	return ""
+}
+
+// needGone says the pre-state has no placed card for n: it names nothing, or
+// the record is off the table (dropped, replaced, archived, or any other
+// outcome). A placed card that has not landed is still waited on.
+func needGone(pre *Snapshot, n string) bool {
+	if pre == nil {
+		return false
+	}
+	c := pre.Work.Card(n)
+	return c == nil || !c.Placed()
 }
 
 // waitingFrom says a work-table entry moves its card from waiting, by its

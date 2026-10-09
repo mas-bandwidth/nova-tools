@@ -221,11 +221,11 @@ func TestMachineCoverTickDone(t *testing.T) {
 	}
 }
 
-// TestMachineCoverTickResolve covers tickResolve (machine.go:98), T1: a
+// TestMachineCoverTickResolve covers tickResolve (machine.go), T1: a
 // waiting card whose needs all landed moves to ready; the guards are an
 // unmet need, which keeps the card waiting, a sentinel, which is marked
-// reached and never moved, a dropped need, which opens the blocked
-// judgment once, and a card that is not waiting, which is skipped.
+// reached and never moved, a dropped need, which is detached and the card
+// moves to ready, and a card that is not waiting, which is skipped.
 func TestMachineCoverTickResolve(t *testing.T) {
 	t.Parallel()
 	for name, tc := range map[string]struct {
@@ -257,7 +257,7 @@ func TestMachineCoverTickResolve(t *testing.T) {
 			cells: map[string]string{"e1": Waiting},
 			open:  []Judgment{{JReached, "e1"}},
 		},
-		"a dropped need opens the blocked judgment once": {
+		"a dropped need is detached and the card is ready": {
 			s: func() State {
 				s := mcCard(mcSprint(), "s1", "d1", Off, 1)
 				s = mcCard(s, "s1", "p1", Waiting, 2, "d1")
@@ -266,8 +266,9 @@ func TestMachineCoverTickResolve(t *testing.T) {
 				s.Open[Judgment{JBlocked, "p1"}] = true
 				return s
 			}(),
-			cells: map[string]string{"p1": Waiting, "p4": Waiting},
-			open:  []Judgment{{JBlocked, "p1"}, {JBlocked, "p4"}},
+			cells:  map[string]string{"p1": Ready, "p4": Ready},
+			open:   []Judgment{{JBlocked, "p1"}},
+			closed: []Judgment{{JBlocked, "p4"}},
 		},
 		"a card out of waiting is not resolved": {
 			s:     mcCard(mcSprint(), "s1", "p1", Review, 1),

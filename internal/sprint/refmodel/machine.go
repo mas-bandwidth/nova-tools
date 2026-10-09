@@ -91,23 +91,31 @@ func (n *State) tickDone() {
 	}
 }
 
-// tickResolve is T1: every stream's waiting cards in score order; a primary
-// whose needs are all met moves to ready; a sentinel is never moved and is
-// marked reached, its judgment opened; a dropped need is the blocked
-// judgment, once.
+// tickResolve is T1 (tla/Needs.tla Tick): every waiting card drops needs that
+// are gone, then a primary whose needs are all met moves to ready. A
+// sentinel is never moved. It is marked reached when it was reachable on the
+// needs it named before the detach. A dropped need is not a judgment.
 func (n *State) tickResolve() {
-	for _, st := range n.StreamNames() {
-		for _, p := range n.StreamOrder(st) {
-			pr := n.Primaries[p]
-			if pr.State != Waiting {
-				continue
-			}
-			if len(n.DroppedNeeds(p)) > 0 && !n.Open[Judgment{JBlocked, p}] {
-				n.open(JBlocked, p)
-			}
+	pre := map[string]bool{}
+	for _, p := range Keys(n.Primaries) {
+		pr := n.Primaries[p]
+		if pr.State == Waiting && pr.Kind == KindSentinel && n.Reachable(p) {
+			pre[p] = true
+		}
+	}
+	for _, p := range Keys(n.Primaries) {
+		if n.Primaries[p].State == Waiting {
+			n.detachGone(p)
 		}
 	}
 	n.resolveAll()
+	for p := range pre {
+		pr := n.Primaries[p]
+		if pr.State == Waiting && pr.Kind == KindSentinel && !pr.Reached && n.NeedsMet(p) {
+			n.setPrimary(p, func(x *Primary) { x.Reached = true })
+			n.open(JReached, p)
+		}
+	}
 }
 
 // tickResume is T7: a stream stopped only because a card needed another

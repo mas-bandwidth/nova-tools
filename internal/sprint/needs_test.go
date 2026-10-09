@@ -98,28 +98,21 @@ func TestAddRefusesACycle(t *testing.T) {
 	require.Len(t, p.Refused, 2, "a need of itself: %+v", p)
 }
 
-// H11: a dropped need acknowledged by the coordinator is waived, by whom and
-// when, and counts as satisfied: the primary moves to ready in the ack.
+// H11: a dropped need is detached by resolve. The card is ready, the field no
+// longer names it, and no blocked judgment opens.
 func TestAWaivedNeedIsSatisfied(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 1)
 	w.must(Add(w.s, AddReq{Stream: "s2", IDs: []string{"b"}, Needs: []string{"s1-1"}}))
 	w.seedDroppedNeed("s1-1")
-	w.must(Resolve(w.s, ResolveReq{}))
-	blocked := w.openOn("b")
-	require.Len(t, blocked, 1, "blocked: %v", blocked)
-	require.Equal(t, NBlocked, blocked[0].Note.Type, "blocked: %v", blocked)
-	p := w.must(Ack(w.s, AckReq{Notes: []string{blocked[0].Note.ID}, Reason: "not needed after all", Who: "coordinator"}))
+	p := w.must(Resolve(w.s, ResolveReq{}))
 	b := w.s.Work.Card("b")
-	require.Equal(t, Ready, b.Col, "ack: %s %v (%+v)", b.Col, b.Fields, p.Units)
-	require.Equal(t, "s1-1", b.F("waived"), "ack: %s %v (%+v)", b.Col, b.Fields, p.Units)
-	require.Equal(t, "coordinator", b.F("waived_by"), "ack: %s %v (%+v)", b.Col, b.Fields, p.Units)
-	require.Equal(t, stamp(w.s.Now), b.F("waived_at"), "ack: %s %v (%+v)", b.Col, b.Fields, p.Units)
+	require.Equal(t, Ready, b.Col, "resolve: %s %v (%+v)", b.Col, b.Fields, p.Units)
+	require.Empty(t, b.F("needs"), "resolve: %s %v (%+v)", b.Col, b.Fields, p.Units)
+	require.Empty(t, w.notesOf(NBlocked), "a dropped need opened a judgment")
 	lawful := Lawful(p)
-	require.Empty(t, lawful.Refused, "the lifecycle refuses the waived move: %+v", lawful.Refused)
-	w.clean("waived")
+	require.Empty(t, lawful.Refused, "the lifecycle refuses the detach: %+v", lawful.Refused)
+	w.clean("detached")
 	needs, _ := NeedsOf(w.s, "b")
-	require.Len(t, needs, 1, "NeedsOf: %+v", needs)
-	require.True(t, needs[0].Waived, "NeedsOf: %+v", needs)
-	require.Equal(t, "off the table (dropped)", needs[0].State, "NeedsOf: %+v", needs)
+	require.Empty(t, needs, "NeedsOf still names the dropped need: %+v", needs)
 }

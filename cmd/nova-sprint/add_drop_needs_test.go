@@ -9,9 +9,8 @@ import (
 
 // A need names a card that can still land. add refuses one that names a
 // dropped card, naming the id and its outcome, and one that names no record
-// at all, naming the id; drop refuses to take a card off the table while a
-// waiting card still needs it, naming the dependants, unless --cascade takes
-// the dependants and their dependants in the same plan.
+// at all, naming the id. drop of a card a waiting card needs detaches that
+// need in the same step. --cascade still drops the dependants with it.
 func TestAddRefusesAnUnknownNeedAndDropListsDependants(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
@@ -34,21 +33,26 @@ func TestAddRefusesAnUnknownNeedAndDropListsDependants(t *testing.T) {
 	ta.ok("add --stream s2 b --one --needs s1-2")
 	ta.ok("add --stream s2 c --one --needs b")
 
-	// Dropping s1-2 while b waits on it is refused for that card, naming the
-	// dependants, and nothing is written: s1-2 stays ready.
+	// Dropping s1-2 while b waits on it detaches that need. b stays waiting, and
+	// c still needs b.
 	before := ta.applies()
-	code, out, errs = ta.do("drop s1-2 --reason obsolete")
-	require.NotEqual(t, 0, code, "drop of a needed card: %s%s", out, errs)
-	assert.Contains(t, errs, "s1-2", "drop of a needed card: %s", errs)
-	assert.Contains(t, errs, "b", "drop of a needed card: %s", errs)
-	require.Equal(t, before, ta.applies(), "a refused drop wrote")
-	require.Contains(t, ta.ok("card --fields s1-2"), "place=s1:ready", "a refused drop moved s1-2")
+	out = ta.ok("drop s1-2 --reason obsolete")
+	assert.Contains(t, out, "DETACHED", "drop of a needed card: %s", out)
+	assert.Contains(t, out, "b", "drop of a needed card: %s", out)
+	assert.Contains(t, out, "s1-2", "drop of a needed card: %s", out)
+	require.Greater(t, ta.applies(), before, "the drop wrote")
+	require.Contains(t, ta.ok("card --fields s1-2"), "outcome=dropped")
+	require.Contains(t, ta.ok("card --fields b"), "place=s2:waiting")
+	require.NotContains(t, ta.ok("card --fields b"), "NEEDS s1-2")
+	require.Contains(t, ta.ok("card --fields c"), "NEEDS b")
 
-	// --cascade drops s1-2, b and c in one plan, one moved line each, and c
-	// ends off the table with outcome dropped.
-	out = ta.ok("drop s1-2 --reason obsolete --cascade")
-	for _, id := range []string{"s1-2", "b", "c"} {
+	// --cascade drops a fresh chain, the dependants with the card.
+	ta.ok("add --stream s3 d --one")
+	ta.ok("add --stream s3 e --one --needs d")
+	ta.ok("add --stream s3 f --one --needs e")
+	out = ta.ok("drop d --reason obsolete --cascade")
+	for _, id := range []string{"d", "e", "f"} {
 		assert.Contains(t, out, id, "cascade did not drop %s: %s", id, out)
 	}
-	require.Contains(t, ta.ok("card --fields c"), "outcome=dropped", "c after the cascade")
+	require.Contains(t, ta.ok("card --fields f"), "outcome=dropped", "f after the cascade")
 }

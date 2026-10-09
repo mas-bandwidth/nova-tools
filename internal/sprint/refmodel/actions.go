@@ -240,11 +240,11 @@ func (s State) inCycle(p string) bool {
 
 // ------------------------------------------------------------------ resolve
 
-// Resolve is SprintTables.tla Resolve(p) (line 288): waiting -> ready where
-// every need has landed or was waived. A sentinel never moves (spec section
-// 16). The blocked judgment for a dropped need is the spec's (section 8,
-// "Resolve ... a need that was dropped is a judgment, once"), not in the
-// model's Resolve.
+// Resolve is SprintTables.tla Resolve(p) (line 288) as tla/Needs.tla Tick
+// runs it for one card: a gone need (off the table, or no card) leaves the
+// wait set, and a waiting primary whose needs are then met moves to ready.
+// A sentinel never moves (spec section 16); it is marked reached when it
+// was reachable before the detach. A dropped need is not a judgment.
 func Resolve(s State, p string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -252,20 +252,48 @@ func Resolve(s State, p string) (State, error) {
 	if !s.InWork(p, Waiting) {
 		return s, refuse("%s is not waiting", p)
 	}
-	if len(s.DroppedNeeds(p)) > 0 && !s.Open[Judgment{JBlocked, p}] {
-		n := s.Clone()
-		n.open(JBlocked, p)
-		return n, nil
-	}
-	if s.Primaries[p].Kind == KindSentinel {
+	preReach := s.Primaries[p].Kind == KindSentinel && s.Reachable(p)
+	n := s.Clone()
+	changed := n.detachGone(p)
+	if n.Primaries[p].Kind == KindSentinel {
+		if n.NeedsMet(p) && (preReach || n.Reachable(p)) && !n.Primaries[p].Reached {
+			n.setPrimary(p, func(x *Primary) { x.Reached = true })
+			n.open(JReached, p)
+			return n, nil
+		}
+		if changed {
+			return n, nil
+		}
 		return s, refuse("%s is a sentinel: only release lands it", p)
 	}
-	if !s.NeedsMet(p) {
-		return s, refuse("%s needs %v", p, s.Primaries[p].Needs)
+	if n.NeedsMet(p) {
+		n.setPrimary(p, func(x *Primary) { x.State = Ready })
+		return n, nil
 	}
-	n := s.Clone()
-	n.setPrimary(p, func(x *Primary) { x.State = Ready })
-	return n, nil
+	if changed {
+		return n, nil
+	}
+	return s, refuse("%s needs %v", p, s.Primaries[p].Needs)
+}
+
+// detachGone strips needs that are off the table or name no card. A placed
+// card, landed or not, stays in the set, matching the Go field (a landed id
+// is kept; a live one is still waited on).
+func (n *State) detachGone(p string) bool {
+	pr := n.Primaries[p]
+	var keep []string
+	changed := false
+	for _, q := range pr.Needs {
+		if qp, ok := n.Primaries[q]; ok && qp.State != Off {
+			keep = append(keep, q)
+			continue
+		}
+		changed = true
+	}
+	if changed {
+		n.setPrimary(p, func(x *Primary) { x.Needs = keep })
+	}
+	return changed
 }
 
 // Waive is SprintTables.tla Waive(p, q) (line 298) for every dropped need of
@@ -692,10 +720,9 @@ func Rework(s State, p, m string) (State, error) {
 
 // Drop is SprintTables.tla Drop(p) (line 478): off the table. Its
 // unfinished work card is withdrawn, its outstanding read cards retire, its
-// merge place goes (the returned place too, spec section 7); work last. A
-// waiting primary that needs it makes the drop refused, naming the
-// dependants: the real Drop without Cascade refuses for that card, and this
-// model matches it (docs/SPEC-SPRINT.md section 11). Every judgment on it
+// merge place goes (the returned place too, spec section 7); work last.
+// Every waiting primary that names it is detached from it in this step and
+// stays waiting until Tick (tla/Needs.tla Drop). Every judgment on it
 // closes. A sprint it finishes, by dropping the last open card, is found done
 // by the tick's judgment tickDone: with nothing open and a card dropped, the
 // sprint is done.
@@ -706,13 +733,8 @@ func Drop(s State, p string) (State, error) {
 	if !s.Placedp(p) || s.InWork(p, Landed) {
 		return s, refuse("%s is not an open primary on the table", p)
 	}
-	for _, q := range Keys(s.Primaries) {
-		qp := s.Primaries[q]
-		if qp.State == Waiting && slices.Contains(qp.Needs, p) {
-			return s, refuse("%s is needed by %s; drop them too with --cascade", p, q)
-		}
-	}
 	n := s.Clone()
+	n.detachID(p)
 	st := n.Primaries[p].Stream
 	for _, id := range Keys(n.Work) {
 		// Unfinished, and a card withdrawn (already off the table in
@@ -733,15 +755,30 @@ func Drop(s State, p string) (State, error) {
 	x := n.Streams[st]
 	x.State = n.streamAfter(st, x.State, nil, []string{p})
 	n.Streams[st] = x
-	for _, q := range Keys(n.Primaries) {
-		qp := n.Primaries[q]
-		if qp.State == Waiting && slices.Contains(qp.Needs, p) && !slices.Contains(qp.Waived, p) {
-			n.open(JBlocked, q)
-		}
-	}
 	n.closeOn(p)
 	n.setPrimary(p, func(x *Primary) { x.State = Off })
 	return n, nil
+}
+
+// detachID removes id from every other waiting primary's needs. The waiter
+// stays waiting (tla/Needs.tla Drop).
+func (n *State) detachID(id string) {
+	for _, q := range Keys(n.Primaries) {
+		if q == id {
+			continue
+		}
+		qp := n.Primaries[q]
+		if qp.State != Waiting || !slices.Contains(qp.Needs, id) {
+			continue
+		}
+		var keep []string
+		for _, need := range qp.Needs {
+			if need != id {
+				keep = append(keep, need)
+			}
+		}
+		n.setPrimary(q, func(x *Primary) { x.Needs = keep })
+	}
 }
 
 // streamAfter is SprintTables.tla StreamAfter (G4) after the merge cells of

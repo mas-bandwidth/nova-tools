@@ -823,8 +823,8 @@ func ResolveExtras(s *Snapshot) []string {
 	return out
 }
 
-// Resolve moves waiting -> ready where every need has landed. A need that was
-// dropped or missing is a judgment for the coordinator, once.
+// Resolve moves waiting -> ready where every need has landed or is gone.
+// A gone need is detached (tla/Needs.tla, NoWaitOnGone), not judged.
 func Resolve(s *Snapshot, r ResolveReq) Plan { return Lawful(resolvePlan(s, r)) }
 
 func resolvePlan(s *Snapshot, r ResolveReq) Plan {
@@ -841,87 +841,237 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 	for _, c := range chosen {
 		// A missing prerequisite that now exists is no longer a missing-need
 		// judgment; it still has to land before the primary can move.
+		closed := false
 		for _, o := range bySubject[c.ID] {
 			if o.Note.Type == NMissingNeed && o.Subject() == c.ID && len(o.Note.Needs) > 0 && len(missingNeeds(s, o.Note.Needs)) == 0 {
 				p.Closes = append(p.Closes, o)
+				closed = true
 			}
 		}
-		var waits, dropped, missing []string
-		for _, n := range WaitsFor(s, c, nil) {
-			if s.Work.Card(n) == nil {
-				missing = append(missing, n)
-			} else if len(droppedNeeds(s, []string{n})) > 0 {
-				dropped = append(dropped, n)
-			} else {
-				waits = append(waits, n)
-			}
-		}
-		if len(missing) > 0 {
-			if left := unblocked(bySubject[c.ID], c.ID, missing, NMissingNeed); len(left) > 0 {
-				n := judgment(NMissingNeed, c.Row, s.Now, 0, c.ID)
-				n.What, n.Who, n.Needs = c.ID+" needs "+Preview(left, ",")+", not on the table", r.Who, left
-				p.Notes = append(p.Notes, n)
-			}
-			if len(r.IDs) > 0 {
-				p.refuse(c.ID, "needs "+strings.Join(missing, ",")+", not on the table")
-			}
-		}
-		if len(dropped) > 0 {
-			if left := unblocked(bySubject[c.ID], c.ID, dropped, NBlocked); len(left) > 0 {
-				p.Notes = append(p.Notes, blockedNote(s, c.Row, c.ID, r.Who, left))
-			}
-			if len(r.IDs) > 0 {
-				p.refuse(c.ID, "needs "+strings.Join(dropped, ",")+", which was dropped")
-			}
+		u, ok, why := waitingDrain(s, c, nil, r.Who, bySubject[c.ID], c.ID+" waiting -> ready")
+		if ok {
+			p.Units = append(p.Units, u)
 			continue
 		}
-		if len(missing) > 0 {
-			continue
+		// A named resolve that also writes is discarded whole by the store
+		// (a refusal beside a unit). A close is a write: do not refuse it.
+		if why != "" && len(r.IDs) > 0 && !closed {
+			p.refuse(c.ID, why)
 		}
-		if len(waits) > 0 {
-			if len(r.IDs) > 0 {
-				p.refuse(c.ID, "waits for "+strings.Join(waits, ","))
-			}
-			continue
-		}
-		if IsHeld(c) { // held, never reached or ready: the coordinator releases it
-			if len(r.IDs) > 0 {
-				p.refuse(c.ID, "held (add --held): the coordinator releases it: nova-sprint release "+c.ID+" --reason <text>")
-			}
-			continue
-		}
-		if IsSentinel(c) { // reached, never ready: the coordinator releases it
-			if c.F("reached") == "" && Reachable(s, c, nil) {
-				p.Units = append(p.Units, reachUnit(s, c, nil, r.Who))
-			} else if len(r.IDs) > 0 {
-				p.refuse(c.ID, "a reached sentinel: the coordinator releases it: nova-sprint release "+c.ID+" --reason <text>")
-			}
-			continue
-		}
-		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, readyStamp(c, s.Now)))},
-			Moved: c.ID + " waiting -> ready"})
 	}
 	return p
 }
 
 // resolveAfter is resolve as a trigger of a step that lands primaries
-// (landing, by id): every waiting primary whose needs have all landed, with
-// this step's, moves to ready in the same step; a sentinel is marked reached
-// instead, and waits for the coordinator's release.
+// (landing, by id): every waiting primary whose needs have all landed or
+// gone, with this step's, moves to ready in the same step; a sentinel is
+// marked reached instead, and waits for the coordinator's release. A need
+// that is gone is detached in the same step (tla/Needs.tla, NoWaitOnGone).
 func resolveAfter(s *Snapshot, landing map[string]bool, who string) []Unit {
+	by := map[string][]Open{}
+	for _, o := range s.Open {
+		by[o.Subject()] = append(by[o.Subject()], o)
+	}
 	var out []Unit
 	for _, c := range s.Work.Column(Waiting) {
-		if landing[c.ID] || IsHeld(c) || len(WaitsFor(s, c, landing)) > 0 {
+		if landing[c.ID] {
 			continue
 		}
-		if IsSentinel(c) {
-			if c.F("reached") == "" && Reachable(s, c, landing) {
-				out = append(out, reachUnit(s, c, landing, who))
+		u, ok, _ := waitingDrain(s, c, landing, who, by[c.ID], c.ID+" waiting -> ready (its needs landed)")
+		if ok {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+// goneNeeds is the needs c still waits on, the story of each need that is
+// gone, and the ones still live. A landed or landing id stays in the field
+// and is not live. A waived id stays and is not live. A need replaced by a
+// twin is swapped for that twin, which is classified in turn. Anything else
+// off the table, and a name that is no card, leaves the field. tla/Needs.tla
+// models the ids still waited on; this is the same classification.
+func goneNeeds(s *Snapshot, c *Card, landing map[string]bool) (next, lines, live []string) {
+	waived := map[string]bool{}
+	for _, n := range Split(c.F("waived")) {
+		waived[n] = true
+	}
+	seen := map[string]bool{}
+	var walk func(id string)
+	walk = func(id string) {
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		if waived[id] || landing[id] {
+			next = append(next, id)
+			return
+		}
+		card := s.Work.Card(id)
+		if card == nil {
+			lines = append(lines, "need "+id+" names no card; detached")
+			return
+		}
+		if card.Placed() {
+			next = append(next, id)
+			if s.StateOf(id) != Landed {
+				live = append(live, id)
 			}
+			return
+		}
+		if rest, ok := strings.CutPrefix(card.F("reason"), "replaced by "); ok {
+			twin := strings.TrimSpace(rest)
+			if i := strings.IndexAny(twin, " :"); i >= 0 {
+				twin = twin[:i]
+			}
+			lines = append(lines, "need "+id+" replaced by "+twin+"; detached")
+			if twin != "" {
+				walk(twin)
+			}
+			return
+		}
+		why := card.F("outcome")
+		if why == "" {
+			why = "off the table"
+		}
+		lines = append(lines, "need "+id+" "+why+"; detached")
+	}
+	for _, id := range Split(c.F("needs")) {
+		walk(id)
+	}
+	return next, lines, live
+}
+
+// waitingDrain is one waiting card's tick drain (tla/Needs.tla Tick and
+// NoWaitOnGone). words is the Moved line when the card leaves waiting. A
+// field-only detach says DETACHED. The card moves only when nothing live
+// remains and nothing holds it; a sentinel is marked reached instead. A unit
+// is returned without a refusal: the caller refuses a named resolve only
+// when this returns no unit.
+func waitingDrain(s *Snapshot, c *Card, landing map[string]bool, who string, open []Open, words string) (Unit, bool, string) {
+	named := Split(c.F("needs"))
+	next, lines, live := goneNeeds(s, c, landing)
+	var pos []string
+	waived := Split(c.F("waived"))
+	for _, n := range PositionWaits(s, c, landing) {
+		if contains(live, n) || contains(waived, n) || landing[n] || s.StateOf(n) == Landed {
 			continue
 		}
-		out = append(out, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, readyStamp(c, s.Now)))},
-			Moved: c.ID + " waiting -> ready (its needs landed)"})
+		pos = append(pos, n)
+	}
+	changed := !slices.Equal(next, named)
+	why := ""
+	switch {
+	case len(live) > 0 || len(pos) > 0:
+		why = "waits for " + strings.Join(append(append([]string{}, live...), pos...), ",")
+	case IsHeld(c):
+		why = "held (add --held): the coordinator releases it: nova-sprint release " + c.ID + " --reason <text>"
+	case IsSentinel(c):
+		if c.F("reached") != "" || !Reachable(s, c, landing) {
+			why = "a reached sentinel: the coordinator releases it: nova-sprint release " + c.ID + " --reason <text>"
+		}
+	}
+	move := why == "" && !IsHeld(c) && !IsSentinel(c)
+	reach := why == "" && IsSentinel(c) && c.F("reached") == "" && Reachable(s, c, landing)
+	closes := closesDetached(open, c.ID, next)
+	if !changed && !move && !reach && len(closes) == 0 {
+		return Unit{}, false, why
+	}
+	set := map[string]string{}
+	var unset []string
+	if changed {
+		if len(next) == 0 {
+			unset = append(unset, "needs")
+		} else {
+			set["needs"] = strings.Join(next, ",")
+		}
+	}
+	u := Unit{Key: c.ID, Stream: c.Row, Closes: closes}
+	switch {
+	case move:
+		if rs := readyStamp(c, s.Now); rs != nil {
+			for k, v := range rs {
+				set[k] = v
+			}
+		}
+		u.Changes = []Change{change(Work, moveEntry(c, c.Row, Ready, set, unset...))}
+		u.Moved = words
+	case reach:
+		set["reached"] = stamp(s.Now)
+		u.Changes = []Change{change(Work, setEntry(c, set, unset...))}
+		u.Notes = append(u.Notes, reachedNote(s, c, landing, 0, who))
+		u.Moved = "sentinel " + c.ID + " reached"
+	case changed:
+		u.Changes = []Change{change(Work, setEntry(c, set, unset...))}
+		u.Moved = "DETACHED " + c.ID + " " + strings.Join(lines, "; ")
+	}
+	for _, line := range lines {
+		n := happened("need detached", c.Row, s.Now, c.ID)
+		n.What, n.Who = line, who
+		u.Notes = append(u.Notes, n)
+	}
+	return u, true, ""
+}
+
+// closesDetached is the open blocked or missing judgments on id whose named
+// needs are all gone from the field that remains.
+func closesDetached(open []Open, id string, next []string) []Open {
+	var out []Open
+	for _, o := range open {
+		if o.Subject() != id || (o.Note.Type != NBlocked && o.Note.Type != NMissingNeed) || len(o.Note.Needs) == 0 {
+			continue
+		}
+		all := true
+		for _, n := range o.Note.Needs {
+			if contains(next, n) {
+				all = false
+				break
+			}
+		}
+		if all {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// detachDropped rewrites every waiting card that names a card this drop
+// takes, one unit per card, the final needs once. The card stays waiting.
+// tla/Needs.tla Drop removes the id at once and leaves the waiter waiting
+// until Tick.
+func detachDropped(s *Snapshot, dropping map[string]bool, who string) []Unit {
+	var out []Unit
+	for _, w := range s.Work.Column(Waiting) {
+		if dropping[w.ID] {
+			continue
+		}
+		var next, hit []string
+		for _, n := range Split(w.F("needs")) {
+			if dropping[n] {
+				hit = append(hit, n)
+				continue
+			}
+			next = append(next, n)
+		}
+		if len(hit) == 0 {
+			continue
+		}
+		set := map[string]string{}
+		var unset []string
+		if len(next) == 0 {
+			unset = []string{"needs"}
+		} else {
+			set["needs"] = strings.Join(next, ",")
+		}
+		u := Unit{Key: w.ID, Stream: w.Row, Changes: []Change{change(Work, setEntry(w, set, unset...))},
+			Moved:  "DETACHED " + w.ID + " need " + strings.Join(hit, ",") + " dropped",
+			Closes: closesDetached(s.Open, w.ID, next)}
+		for _, id := range hit {
+			n := happened("need detached", w.Row, s.Now, w.ID)
+			n.What, n.Who = "need "+id+" dropped; detached", who
+			u.Notes = append(u.Notes, n)
+		}
+		out = append(out, u)
 	}
 	return out
 }

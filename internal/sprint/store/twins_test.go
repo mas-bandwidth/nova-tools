@@ -66,21 +66,19 @@ func TestAddReplacesTakesOverEveryEdgeOfTheOldCard(t *testing.T) {
 }
 
 // The drop and add pair already made: the replace takes over the edges of a card dropped
-// before, and closes the blocked judgments its drop raised, answered "replaced by".
+// before. No blocked judgment was opened, and a card already off the table keeps its reason.
 func TestAddReplacesADroppedCardClosesItsBlockedJudgments(t *testing.T) {
 	t.Parallel()
 	h := twins(t)
-	// a stored dropped record: drop refuses a card a waiting card needs, so the
-	// record is seeded and the resolve opens the blocked judgments
+	// seeded off the table, and not resolved: the edges still name old, so the replace
+	// re-points them. An already-unplaced card is not dropped again.
 	seedDroppedNeedWhy(h, "old", "re-cut")
-	h.must(ResolveStep(sprint.ResolveReq{}))
-	require.Len(t, h.nOpenOf(sprint.NBlocked, ""), 3, "the drop blocks its three dependents")
+	require.Empty(t, h.nOpenOf(sprint.NBlocked, ""))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"old-tb"}, Replaces: []string{"old"}, Who: "tester"}))
-	assert.Empty(t, h.nOpenOf(sprint.NBlocked, ""), "the replace answers the blocked judgments")
+	assert.Empty(t, h.nOpenOf(sprint.NBlocked, ""), "the replace opens no blocked judgment")
 	s := h.snap()
 	assert.Equal(t, "re-cut", h.record("old").F("reason"), "a card dropped before keeps its reason")
 	assert.Equal(t, "old-tb,other", s.Work.Card("dep3").F("needs"))
-	assert.True(t, h.decidedWith("replaced by old-tb"), "the answer is recorded as a decided note")
 	h.clean("replaced after the drop")
 }
 
@@ -112,19 +110,16 @@ func TestAddReplacesIsRefusedWholeWhenItCannotHold(t *testing.T) {
 func TestRelinkRepairsTheEdgesOfADropAndAnAdd(t *testing.T) {
 	t.Parallel()
 	h := twins(t)
-	// a stored dropped record: drop refuses a card a waiting card needs, so the
-	// record is seeded and the resolve opens the blocked judgments
+	// seeded off the table, and not resolved: the edges still name old
 	seedDroppedNeedWhy(h, "old", "re-cut")
-	h.must(ResolveStep(sprint.ResolveReq{}))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"old-tb"}}))
-	require.Len(t, h.nOpenOf(sprint.NBlocked, ""), 3)
+	require.Empty(t, h.nOpenOf(sprint.NBlocked, ""))
 	res := h.must(RelinkStep(sprint.RelinkReq{Old: []string{"old"}, New: "old-tb", Who: "tester"}))
 	assert.Len(t, res.Moved, 3+1, "three dependents and the twin's weight: %v", res.Moved)
 	s := h.snap()
 	assert.Equal(t, "old-tb", s.Work.Card("dep1").F("needs"))
 	assert.Equal(t, "old-tb,other", s.Work.Card("dep3").F("needs"))
-	assert.Empty(t, h.nOpenOf(sprint.NBlocked, ""), "relink closes the pair's blocked judgments")
-	assert.True(t, h.decidedWith("replaced by old-tb"))
+	assert.Empty(t, h.nOpenOf(sprint.NBlocked, ""), "relink opens no blocked judgment")
 	assert.Equal(t, "3", s.Work.Card("old-tb").F(sprint.FieldBehind))
 	h.clean("relinked")
 	// once more: nothing needs old now
@@ -136,10 +131,9 @@ func TestRelinkRepairsTheEdgesOfADropAndAnAdd(t *testing.T) {
 func TestRelinkIsTheCoordinatorsAndRefusesWhatCannotHold(t *testing.T) {
 	t.Parallel()
 	h := twins(t)
-	// a stored dropped record: drop refuses a card a waiting card needs, so the
-	// record is seeded and the resolve opens the blocked judgments
+	// seeded off the table, and not resolved: the edges still name old, so the
+	// cycle is the relink's (old-tb needs dep2, and dep2 needs old)
 	seedDroppedNeedWhy(h, "old", "re-cut")
-	h.must(ResolveStep(sprint.ResolveReq{}))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"old-tb"}, Needs: []string{"dep2"}}))
 	for _, tc := range []struct {
 		name string
@@ -156,7 +150,7 @@ func TestRelinkIsTheCoordinatorsAndRefusesWhatCannotHold(t *testing.T) {
 		assert.Contains(t, res.Refused[0].Why, tc.why, tc.name)
 		assert.Empty(t, res.Moved, tc.name)
 	}
-	assert.Len(t, h.nOpenOf(sprint.NBlocked, ""), 3, "nothing was answered")
+	assert.Empty(t, h.nOpenOf(sprint.NBlocked, ""), "nothing was opened")
 	h.clean("refused")
 }
 

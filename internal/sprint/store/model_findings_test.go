@@ -74,8 +74,7 @@ func TestModelAckCannotSilenceACard(t *testing.T) {
 	h.clean("M1")
 }
 
-// M1, blocked: the ack waives the dropped need and the card moves to ready,
-// where the tick deals it: held, so not refused.
+// A dropped need is detached by resolve. The card is ready and no blocked judgment opens.
 func TestModelAckOfBlockedMovesTheCard(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -83,11 +82,8 @@ func TestModelAckOfBlockedMovesTheCard(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"late"}, Needs: []string{"s1-1"}}))
 	seedDroppedNeed(h, "s1-1")
 	h.must(ResolveStep(sprint.ResolveReq{}))
-	open := h.openOn("late")
-	require.Len(t, open, 1, "blocked: %+v", open)
-	require.Equal(t, string(sprint.NBlocked), open[0].Note.Type, "blocked: %+v", open)
-	h.must(AckStep(sprint.AckReq{Notes: []string{open[0].Note.ID}, Reason: "not needed"}))
-	require.Equal(t, sprint.Ready, h.state("late"), "late is %s after the waiver", h.state("late"))
+	require.Empty(t, h.openOf(sprint.NBlocked), "a dropped need opened a judgment")
+	require.Equal(t, sprint.Ready, h.state("late"), "late is %s after the detach", h.state("late"))
 	h.clean("M1 blocked")
 }
 
@@ -257,16 +253,20 @@ func TestAnAckOfSeveralIsAllOrNothing(t *testing.T) {
 	h := newHarness(t)
 	h.setup(1)
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"late"}, Needs: []string{"s1-1"}}))
-	seedDroppedNeed(h, "s1-1")
-	h.must(ResolveStep(sprint.ResolveReq{}))
-	open := h.openOn("late")
-	require.Len(t, open, 1, "blocked: %+v", open)
-	require.Equal(t, string(sprint.NBlocked), open[0].Note.Type, "blocked: %+v", open)
+	// late still needs the live card, so an ack of one real judgment beside a
+	// missing id is all or none and moves nothing
+	h.must(Step{Verb: "inject", Plan: func(s *sprint.Snapshot) sprint.Plan {
+		n := sprint.Note{Kind: sprint.Judgment, Type: sprint.NRepairSkipped, Stream: "s1", Primaries: []string{"late"},
+			Count: 1, At: s.Now, What: "injected", Decisions: append([]string(nil), sprint.Decisions[sprint.NRepairSkipped]...)}
+		return sprint.Plan{Notes: []sprint.Note{n}}
+	}})
+	open := h.openOf(sprint.NRepairSkipped)
+	require.Len(t, open, 1, "injected: %+v", open)
 	r := h.run(AckStep(sprint.AckReq{Notes: []string{open[0].Note.ID, "no-such-note"}, Reason: "not needed"}))
 	require.Len(t, r.Refused, 2, "a partial ack: %+v", r)
 	require.Empty(t, r.Moved, "a partial ack: %+v", r)
 	require.Contains(t, fmt.Sprint(r.Refused), "all or none", "a partial ack: %+v", r)
-	require.Len(t, h.openOn("late"), 1, "the refused ack closed the judgment or moved the card: %s %+v", h.state("late"), h.openOn("late"))
+	require.Len(t, h.openOf(sprint.NRepairSkipped), 1, "the refused ack closed the judgment or moved the card: %s %+v", h.state("late"), h.openOf(sprint.NRepairSkipped))
 	require.Equal(t, sprint.Waiting, h.state("late"), "the refused ack closed the judgment or moved the card: %s %+v", h.state("late"), h.openOn("late"))
 	h.clean("all or nothing")
 }
@@ -293,9 +293,8 @@ func TestAStalledJudgmentIsNeverAckable(t *testing.T) {
 	require.Contains(t, res.Refused[0].Why, "a condition the tick keeps; wait sets when it is shown again", "an ack of stalled: %+v", res)
 }
 
-// Waivers apply once per primary (reader finding 5): a sentinel with two
-// needs dropped at two times has two blocked judgments; one ack of both
-// waives both needs in one change and writes one "sentinel reached".
+// Two dropped needs of one sentinel detach in one resolve. It is reached once,
+// and no blocked judgment opens.
 func TestTwoBlockedJudgmentsOnOneSentinelWaiveOnce(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -303,50 +302,23 @@ func TestTwoBlockedJudgmentsOnOneSentinelWaiveOnce(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"a", "b"}}))
 	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"stop"}, Sentinel: true, Needs: []string{"a", "b"}}))
 	seedDroppedNeed(h, "a")
-	h.must(ResolveStep(sprint.ResolveReq{}))
 	seedDroppedNeed(h, "b")
 	h.must(ResolveStep(sprint.ResolveReq{}))
-	var ids []string
-	for _, o := range h.openOn("stop") {
-		if o.Note.Type == sprint.NBlocked {
-			ids = append(ids, o.Note.ID)
-		}
-	}
-	if len(ids) != 2 {
-		require.Failf(t, "", "blocked judgments on stop: %+v", h.openOn("stop"))
-	}
-	// the plan itself, before the engine's one-per-cause: one change of stop
-	// and one reached note
-	s, err := h.st.Load(h.ctx, All, tickExtras)
+	c := h.snap().Work.Card("stop")
+	require.Equal(t, sprint.Waiting, c.Col, "stop: %+v", c)
+	require.Empty(t, c.F("needs"), "stop: %+v", c)
+	require.NotEmpty(t, c.F("reached"), "stop: %+v", c)
+	require.Empty(t, h.openOf(sprint.NBlocked))
+	notes, _, err := h.m.NotesSince(h.ctx, "", 100000)
 	require.NoError(t, err)
-	s.Coordinator, s.Actor = "tester", "tester"
-	plan := sprint.Ack(s, sprint.AckReq{Notes: ids, Reason: "not needed", Who: "tester"})
-	changes, planned := 0, 0
-	for _, u := range plan.Units {
-		for _, c := range u.Changes {
-			if c.Entry.ID == "stop" {
-				changes++
-			}
-		}
-		for _, n := range u.Notes {
-			if n.Type == sprint.NSentinelReached {
-				planned++
-			}
-		}
-	}
-	require.Empty(t, plan.Refused, "the ack's plan: %d changes of stop, %d reached notes, refused %v", changes, planned, plan.Refused)
-	require.Equal(t, 1, changes, "the ack's plan: %d changes of stop, %d reached notes, refused %v", changes, planned, plan.Refused)
-	require.Equal(t, 1, planned, "the ack's plan: %d changes of stop, %d reached notes, refused %v", changes, planned, plan.Refused)
-	h.must(AckStep(sprint.AckReq{Notes: ids, Reason: "not needed"}))
-	notes, _, _ := h.m.NotesSince(h.ctx, "", 100000)
 	reached := 0
 	for _, n := range notes {
 		if n.Type == sprint.NSentinelReached {
 			reached++
 		}
 	}
-	require.Equal(t, 1, reached, "%d sentinel-reached notes after one ack of both", reached)
-	h.clean("waived once")
+	require.Equal(t, 1, reached, "%d sentinel-reached notes", reached)
+	h.clean("reached once")
 }
 
 // appendLine writes a line to the log as a writer outside the engine would.

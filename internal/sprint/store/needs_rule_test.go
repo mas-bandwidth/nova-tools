@@ -265,27 +265,24 @@ func TestReadyToAcceptOncePerAttempt(t *testing.T) {
 	require.Empty(t, h.nOpenOf(sprint.NReadyToAccept, "s1-3"), "drop left ready to accept open")
 }
 
-// ---- H3 + waived ----------------------------------------------------------
+// A dropped need leaves the field. The live one keeps the card waiting until it lands.
 
 func TestAddOnDroppedNeedAndWaive(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(2)
 	// a need dropped and one not landed: the add comes first, since admission
-	// now refuses a need that names a dropped card
+	// refuses a need that names a dropped card
 	h.nDo(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"b"}, Needs: []string{"s1-1", "s1-2"}}))
 	seedDroppedNeed(h, "s1-1")
 	h.nDoR(ResolveStep(sprint.ResolveReq{}))
-	require.Equal(t, sprint.Waiting, h.state("b"), "b %s, blocked %d", h.state("b"), len(h.nOpenOf(sprint.NBlocked, "b")))
-	require.Len(t, h.nOpenOf(sprint.NBlocked, "b"), 1, "b %s, blocked %d", h.state("b"), len(h.nOpenOf(sprint.NBlocked, "b")))
-	id := h.nOpenOf(sprint.NBlocked, "b")[0].Note.ID
-	h.nDo(AckStep(sprint.AckReq{Notes: []string{id}, Reason: "fine", Who: "tester"}))
 	b := h.snap().Work.Card("b")
-	require.Equal(t, sprint.Waiting, b.Col, "ack with another need open: %s waived=%q", b.Col, b.F("waived"))
-	require.Equal(t, "s1-1", b.F("waived"), "ack with another need open: %s waived=%q", b.Col, b.F("waived"))
+	require.Equal(t, sprint.Waiting, b.Col, "b is %s needs %q", b.Col, b.F("needs"))
+	require.Equal(t, "s1-2", b.F("needs"), "b is %s needs %q", b.Col, b.F("needs"))
+	require.Empty(t, h.nOpenOf(sprint.NBlocked, "b"), "a dropped need opened a judgment")
 	h.nToMerging("s1-2")
 	h.nLandStream("s1")
-	require.Equal(t, sprint.Ready, h.state("b"), "b after s1-2 landed (s1-1 waived): %s", h.state("b"))
+	require.Equal(t, sprint.Ready, h.state("b"), "b after s1-2 landed: %s", h.state("b"))
 	// add refuses a need that names a dropped card
 	res := h.nDoR(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"c"}, Needs: []string{"s1-1"}}))
 	require.Empty(t, res.Moved, "add on a dropped need: %+v", res)

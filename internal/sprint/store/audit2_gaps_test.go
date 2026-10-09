@@ -601,9 +601,8 @@ func TestNoStoredIDReachesTheCoordinator(t *testing.T) {
 	require.True(t, ok, "the later-epoch prerequisite must have a stored record")
 	require.Equal(t, "dropped", fields["outcome"], "the stored prerequisite must be dropped before resolve")
 	h.must(ResolveStep(sprint.ResolveReq{}))
-	blocked := h.a2Open(sprint.NBlocked)
-	require.Len(t, blocked, 1, "the dropped prerequisite has a judgment in the current epoch")
-	require.Equal(t, "w", blocked[0].Subject())
+	require.Equal(t, sprint.Ready, h.state("w"), "the dropped prerequisite detaches and w is ready")
+	require.Empty(t, h.a2Open(sprint.NBlocked))
 	h.a2ToReview("s1-1", true) // work failed
 	h.a2ToReview("s1-2", false)
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}}))
@@ -619,7 +618,7 @@ func TestNoStoredIDReachesTheCoordinator(t *testing.T) {
 	for _, g := range v.Groups {
 		types[g.Type] = true
 	}
-	for _, want := range []string{sprint.NWorkFailed, sprint.NReadBroken, sprint.NBlocked, sprint.NConflict, sprint.NCIRed} {
+	for _, want := range []string{sprint.NWorkFailed, sprint.NReadBroken, sprint.NConflict, sprint.NCIRed} {
 		require.True(t, types[want], "no %q group: %v", want, types)
 	}
 	noStoredIDs(t, v)

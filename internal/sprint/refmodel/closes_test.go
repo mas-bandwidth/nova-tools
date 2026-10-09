@@ -154,7 +154,7 @@ func TestOverdueClosesTheHoldWhenItsJudgmentCloses(t *testing.T) {
 	theClose(t, got, sprint.NOverdue, hold.Note.ID, "stream:")
 }
 
-func TestResolveClosesTheJudgmentForAMissingNeedWhenTheNeedIsOnTheTable(t *testing.T) {
+func TestResolveDetachesANeedThatNamesNoCard(t *testing.T) {
 	t.Parallel()
 	w := sprintOf(t, "m1")
 	w.add(t, "s1", 1)
@@ -163,12 +163,9 @@ func TestResolveClosesTheJudgmentForAMissingNeedWhenTheNeedIsOnTheTable(t *testi
 	c.Fields["needs"] = "s1-9" // a need that is not on the table
 	w.s.Work.Put(c)
 	w.applyPart(t, "resolve", 0)
-	ids := openIDs(w, sprint.NMissingNeed)
-	require.Len(t, ids, 1, "the fixture: %d judgments for a missing need", len(ids))
-	w.addOne(t, "s1", "s1-9") // it is there now, and has not landed
-	got := refmodel.ResolveMoves(w.snapshot(nil), later(0))
-	expect(t, got, "close a primary is blocked on something missing [s1-2]")
-	theClose(t, got, sprint.NMissingNeed, ids[0], "s1-2")
+	require.Empty(t, openIDs(w, sprint.NMissingNeed), "a missing need opened a judgment")
+	require.Equal(t, sprint.Ready, w.state("s1-2"), "s1-2 is %s", w.state("s1-2"))
+	expect(t, refmodel.ResolveMoves(w.snapshot(nil), later(0)))
 }
 
 func TestRemindClosesTheJudgmentForAFailingRouteWhenItIsReached(t *testing.T) {

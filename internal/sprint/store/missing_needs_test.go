@@ -2,9 +2,7 @@ package store
 
 import (
 	"fmt"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/stretchr/testify/require"
@@ -40,7 +38,7 @@ func TestAddRefusesDependentsOfAnUnadmittedID(t *testing.T) {
 }
 
 // Recreate already-persisted data from the old admission bug. Production
-// verbs no longer create it; recovery must still surface it to the coordinator.
+// verbs no longer create it. A resolve detaches a name that is no card.
 func seedMissingNeeds(h *harness, id, needs string) {
 	h.t.Helper()
 	h.m.mu.Lock()
@@ -53,12 +51,10 @@ func seedMissingNeeds(h *harness, id, needs string) {
 }
 
 // seedDroppedNeed marks a primary's record dropped off the table without a
-// drop step: the state the verbs now refuse to make (add refuses a dropped
-// need, and drop refuses a needed card without Cascade), kept for the
-// recovery and waiver rules that must still read a stored dropped record
-// (docs/SPEC-SPRINT.md section 11). A resolve after it opens the blocked
-// judgment. The log gets the removed line the engine would have written, so
-// the store's replay stays true.
+// drop step. Add still refuses a need that names a dropped card. A resolve
+// after it detaches the id from every waiting card that names it
+// (docs/SPEC-SPRINT.md section 11). The log gets the removed line the engine
+// would have written, so the store's replay stays true.
 func seedDroppedNeed(h *harness, id string) { seedDroppedNeedWhy(h, id, "") }
 
 // seedDroppedNeedWhy is seedDroppedNeed with the reason the record keeps.
@@ -89,9 +85,35 @@ func seedDroppedNeedWhy(h *harness, id, why string) {
 	h.m.AtEpoch(s.Epoch, false).(*Mem).appendLine(sprint.Line{Kind: sprint.LineMove, At: s.Now, Epoch: s.Epoch, Card: id, Table: sprint.Work, From: from, Removed: true, Verb: "drop", Actor: "tester"})
 }
 
-func TestStoredMissingNeedsHaveOneActionableJudgment(t *testing.T) {
+// detachedStories is the happened lines of a gone need, for one card when id is set.
+func detachedStories(h *harness, id string) []sprint.Note {
+	h.t.Helper()
+	all, _, err := h.m.NotesSince(h.ctx, "", 100000)
+	require.NoError(h.t, err)
+	var out []sprint.Note
+	for _, n := range all {
+		if n.Kind != sprint.Happened || n.Type != "need detached" {
+			continue
+		}
+		if id != "" && !noteNames(n, id) {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+func noteNames(n sprint.Note, id string) bool {
+	for _, p := range n.Primaries {
+		if p == id {
+			return true
+		}
+	}
+	return false
+}
+
+func TestStoredMissingNeedsDetach(t *testing.T) {
 	t.Parallel()
-	const missing = "a primary is blocked on something missing"
 	for _, sentinel := range []bool{false, true} {
 		for _, live := range []bool{false, true} {
 			t.Run(fmt.Sprintf("sentinel=%v/live=%v", sentinel, live), func(t *testing.T) {
@@ -103,102 +125,91 @@ func TestStoredMissingNeedsHaveOneActionableJudgment(t *testing.T) {
 					needs += ",s1-1"
 				}
 				seedMissingNeeds(h, "waiter", needs)
-				h.startMachine()
-				for i := 0; i < 3; i++ {
-					if i == 2 {
-						h.tick(time.Minute + time.Second)
-					}
-					h.machine()
-				}
-				notes := h.nOpenOf(missing, "waiter")
-				require.Len(t, notes, 1, "missing dependency is silent or repeated: %+v", notes)
-				require.Len(t, h.nAllNotes(missing), 1, "missing dependency is silent or repeated: %+v", notes)
-				n := notes[0].Note
-				require.Equal(t, "bad.id", strings.Join(n.Needs, ","), "not actionable: %+v", n)
-				require.Equal(t, "drop,ack", strings.Join(n.Decisions, ","), "not actionable: %+v", n)
-				require.Contains(t, n.What, "bad.id", "not actionable: %+v", n)
-				h.must(AckStep(sprint.AckReq{Notes: []string{n.ID}, Reason: "dependency not required", Who: "tester"}))
+				h.must(ResolveStep(sprint.ResolveReq{}))
+				require.Empty(t, h.nOpenOf(sprint.NMissingNeed, "waiter"))
+				story := detachedStories(h, "waiter")
+				require.Len(t, story, 1, "story: %+v", story)
+				require.Equal(t, "need bad.id names no card; detached", story[0].What)
 				c := h.snap().Work.Card("waiter")
-				require.Equal(t, "bad.id", c.F("waived"), "waiver not recorded: %+v", c)
-				require.Equal(t, "tester", c.F("waived_by"), "waiver not recorded: %+v", c)
-				require.NotEmpty(t, c.F("waived_at"), "waiver not recorded: %+v", c)
 				switch {
 				case live:
 					require.Equal(t, sprint.Waiting, c.Col, "live dependency bypassed: %+v", c)
+					require.Equal(t, "s1-1", c.F("needs"), "live dependency bypassed: %+v", c)
 					require.Empty(t, c.F("reached"), "live dependency bypassed: %+v", c)
 				case sentinel:
 					require.Equal(t, sprint.Waiting, c.Col, "sentinel not reached: %+v", c)
 					require.NotEmpty(t, c.F("reached"), "sentinel not reached: %+v", c)
+					require.Empty(t, c.F("needs"), "sentinel not reached: %+v", c)
 				default:
 					require.Equal(t, sprint.Ready, c.Col, "primary not ready: %+v", c)
+					require.Empty(t, c.F("needs"), "primary not ready: %+v", c)
 				}
-				h.machine()
-				require.Empty(t, h.nOpenOf(missing, "waiter"), "acknowledged missing need repeated")
-				require.Len(t, h.nAllNotes(missing), 1, "acknowledged missing need repeated")
-				h.clean("missing need acknowledged")
+				h.must(ResolveStep(sprint.ResolveReq{}))
+				require.Len(t, detachedStories(h, "waiter"), 1, "told again")
+				h.clean("missing need detached")
 			})
 		}
 	}
 }
 
-func TestMissingNeedWaiverDoesNotIncludeLaterMissingNeed(t *testing.T) {
+func TestTwoMissingNeedsDetachInOneResolve(t *testing.T) {
 	t.Parallel()
-	const missing = "a primary is blocked on something missing"
 	h := newHarness(t)
 	h.setup(1)
 	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"waiter"}, Needs: []string{"s1-1"}}))
-	seedMissingNeeds(h, "waiter", "bad.id")
-	h.startMachine()
-	h.machine()
-	notes := h.nOpenOf(missing, "waiter")
-	require.Len(t, notes, 1, "missing judgment: %+v", notes)
 	seedMissingNeeds(h, "waiter", "bad.id,later.bad")
-	h.must(AckStep(sprint.AckReq{Notes: []string{notes[0].Note.ID}, Reason: "only the first", Who: "tester"}))
-	c := h.snap().Work.Card("waiter")
-	require.Equal(t, "bad.id", c.F("waived"), "waived unreviewed need: %+v", c)
-	require.Equal(t, sprint.Waiting, c.Col, "waived unreviewed need: %+v", c)
-	h.machine()
-	notes = h.nOpenOf(missing, "waiter")
-	require.Len(t, notes, 1, "new missing need not raised: %+v", notes)
-	require.Equal(t, "later.bad", strings.Join(notes[0].Note.Needs, ","), "new missing need not raised: %+v", notes)
-	h.clean("later missing need remains judged")
+	h.must(ResolveStep(sprint.ResolveReq{}))
+	require.Equal(t, sprint.Ready, h.state("waiter"))
+	require.Empty(t, h.snap().Work.Card("waiter").F("needs"))
+	require.Empty(t, h.nOpenOf(sprint.NMissingNeed, "waiter"))
+	story := detachedStories(h, "waiter")
+	require.Len(t, story, 2, "story: %+v", story)
+	h.clean("two missing needs detached")
 }
 
-func TestRestoredMissingNeedIsNotWaivedAndItsJudgmentCloses(t *testing.T) {
+func TestAGoneNeedDetachesAndALiveOneStays(t *testing.T) {
 	t.Parallel()
-	for _, action := range []string{"ack", "resolve", "dropped"} {
+	for _, action := range []string{"missing-live", "missing-only", "dropped"} {
 		t.Run(action, func(t *testing.T) {
 			h := newHarness(t)
 			h.setup(1)
 			h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"waiter"}, Needs: []string{"s1-1"}}))
-			seedMissingNeeds(h, "waiter", "later")
-			h.must(ResolveStep(sprint.ResolveReq{}))
-			notes := h.nOpenOf(sprint.NMissingNeed, "waiter")
-			require.Len(t, notes, 1, "missing judgment: %+v", notes)
-			h.must(AddStep(sprint.AddReq{Stream: "s3", IDs: []string{"later"}}))
 			switch action {
-			case "ack":
-				h.must(AckStep(sprint.AckReq{Notes: []string{notes[0].Note.ID}, Reason: "it exists now"}))
-			case "resolve":
+			case "missing-live":
+				seedMissingNeeds(h, "waiter", "later,s1-1")
 				h.must(ResolveStep(sprint.ResolveReq{}))
+				c := h.snap().Work.Card("waiter")
+				require.Equal(t, sprint.Waiting, c.Col)
+				require.Equal(t, "s1-1", c.F("needs"))
+				require.Empty(t, h.nOpenOf(sprint.NMissingNeed, "waiter"))
+				story := detachedStories(h, "waiter")
+				require.Len(t, story, 1, "story: %+v", story)
+				require.Contains(t, story[0].What, "later")
+			case "missing-only":
+				seedMissingNeeds(h, "waiter", "later")
+				h.must(ResolveStep(sprint.ResolveReq{}))
+				require.Equal(t, sprint.Ready, h.state("waiter"))
+				require.Empty(t, h.snap().Work.Card("waiter").F("needs"))
+				require.Empty(t, h.nOpenOf(sprint.NMissingNeed, "waiter"))
 			case "dropped":
+				h.must(AddStep(sprint.AddReq{Stream: "s3", IDs: []string{"later"}}))
+				seedMissingNeeds(h, "waiter", "later")
 				seedDroppedNeed(h, "later")
 				h.must(ResolveStep(sprint.ResolveReq{}))
-				require.Len(t, h.nOpenOf(sprint.NBlocked, "waiter"), 1, "dropped need was hidden by former missing judgment")
+				require.Equal(t, sprint.Ready, h.state("waiter"))
+				require.Empty(t, h.nOpenOf(sprint.NBlocked, "waiter"))
+				story := detachedStories(h, "waiter")
+				require.Len(t, story, 1, "story: %+v", story)
+				require.Contains(t, story[0].What, "dropped")
 			}
-			c := h.snap().Work.Card("waiter")
-			if c.Col != sprint.Waiting || c.F("waived") != "" || len(h.nOpenOf(sprint.NMissingNeed, "waiter")) != 0 {
-				require.Failf(t, "", "wrong recovery: card=%+v notes=%+v", c, h.nOpenOf(sprint.NMissingNeed, "waiter"))
-			}
-			h.clean("dependency exists again")
+			h.clean("gone need detached")
 		})
 	}
 }
 
-// Every missing-need judgment is written in the one tick that finds it: a
-// tick has no bound on its notes but the step's (the owner's rule, never a
-// row at a time), and none is written twice.
-func TestMissingNeedJudgmentsAllInOneTick(t *testing.T) {
+// Every gone need of a waiting card is detached in the one resolve that finds
+// it, and a second resolve does not tell it again.
+func TestMissingNeedsDetachAllInOneResolve(t *testing.T) {
 	t.Parallel()
 	const n = 51
 	h := newHarness(t)
@@ -207,13 +218,14 @@ func TestMissingNeedJudgmentsAllInOneTick(t *testing.T) {
 	for i := 1; i <= n; i++ {
 		seedMissingNeeds(h, fmt.Sprintf("s2-%d", i), "bad.id")
 	}
-	h.startMachine()
-	h.machine()
-	got := len(h.nOpenOf(sprint.NMissingNeed, ""))
-	require.Equal(t, n, got, "first tick: %d", got)
-	h.machine()
-	h.machine()
-	got = len(h.nAllNotes(sprint.NMissingNeed))
-	require.Equal(t, n, got, "not written once each: %d", got)
-	h.clean("missing judgments drained")
+	h.must(ResolveStep(sprint.ResolveReq{}))
+	require.Empty(t, h.nOpenOf(sprint.NMissingNeed, ""))
+	require.Len(t, detachedStories(h, ""), n)
+	for i := 1; i <= n; i++ {
+		id := fmt.Sprintf("s2-%d", i)
+		require.Equal(t, sprint.Ready, h.state(id), "%s", id)
+	}
+	h.must(ResolveStep(sprint.ResolveReq{}))
+	require.Len(t, detachedStories(h, ""), n, "told again")
+	h.clean("missing needs detached")
 }

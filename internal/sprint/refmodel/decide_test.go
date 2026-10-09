@@ -152,22 +152,16 @@ func TestResolveRaisesABlockedJudgmentOnceForADroppedNeed(t *testing.T) {
 	w := sprintOf(t, "m1")
 	w.add(t, "s1", 1)
 	w.addOne(t, "s1", "s1-2", "s1-1")
-	// seed s1-1 dropped off the table, the state the drop verb now refuses to
-	// make while s1-2 needs it (docs/SPEC-SPRINT.md section 11)
+	// seed s1-1 dropped off the table. The resolve detaches it and readies
+	// s1-2; the next tick has nothing left to write.
 	c := w.s.Work.Card("s1-1")
 	c.Row, c.Col = "", ""
 	c.Fields["outcome"] = "dropped"
 	c.Rev++
 	w.s.Work.Put(c)
-	// the resolve opens the blocked judgment; the tick writes none again
 	w.must(t, sprint.Resolve(w.s, sprint.ResolveReq{Who: sprint.MachineActor}))
+	require.Equal(t, sprint.Ready, w.state("s1-2"), "s1-2 is %s", w.state("s1-2"))
 	expect(t, refmodel.ResolveMoves(w.snapshot(w.fresh()), later(0)))
-	// with the judgment closed, the tick raises it
-	snap := w.snapshot(w.fresh())
-	snap.Tables = withoutJudgments(snap.Tables, sprint.NBlocked)
-	got := refmodel.ResolveMoves(snap, later(0))
-	expect(t, got, "open a primary is blocked on something dropped [s1-2]")
-	assert.Equal(t, []string{"count=1", "needs=s1-1", "who=machine"}, got[0].Attrs, "the blocked judgment names its need: %v", got[0].Attrs)
 }
 
 func TestResolveReachesASentinelWhoseNeedsLanded(t *testing.T) {

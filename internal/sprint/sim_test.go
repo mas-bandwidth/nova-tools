@@ -210,11 +210,9 @@ func (w *world) openOn(subject string) []Open {
 }
 
 // seedDroppedNeed marks a primary's record dropped off the table without a
-// drop step: the state the verbs now refuse to make (add refuses a dropped
-// need, and drop refuses a needed card without Cascade), kept for the
-// recovery and waiver rules that must still read a stored dropped record
-// (docs/SPEC-SPRINT.md section 11). A resolve after it opens the blocked
-// judgment.
+// drop step. Add still refuses a need that names a dropped card. A resolve
+// after it detaches the id from every waiting card that names it
+// (docs/SPEC-SPRINT.md section 11).
 func (w *world) seedDroppedNeed(id string) {
 	w.t.Helper()
 	c := w.s.Work.Card(id)

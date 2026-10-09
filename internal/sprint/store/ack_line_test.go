@@ -18,13 +18,14 @@ func TestTheDecidedLineTheStoreWritesForAnAckNamesItsSubjects(t *testing.T) {
 		h := newHarness(t)
 		h.setup(2)
 		h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"waiter"}, Needs: []string{"s1-1", "s1-2"}}))
-		if typ == sprint.NBlocked {
-			seedDroppedNeed(h, "s1-1")
-			h.must(ResolveStep(sprint.ResolveReq{}))
-		} else {
-			seedMissingNeeds(h, "waiter", "first.bad")
-			h.must(ResolveStep(sprint.ResolveReq{}))
-		}
+		// The drain no longer opens these. A stored one is still acknowledged,
+		// and the waiter keeps its live needs, so the ack does not move it.
+		h.must(Step{Verb: "inject", Plan: func(s *sprint.Snapshot) sprint.Plan {
+			n := sprint.Note{Kind: sprint.Judgment, Type: typ, Stream: "s2", Primaries: []string{"waiter"},
+				Needs: []string{"s1-1"}, Count: 1, At: s.Now, What: "injected " + typ,
+				Decisions: append([]string(nil), sprint.Decisions[typ]...)}
+			return sprint.Plan{Notes: []sprint.Note{n}}
+		}})
 		open := h.nOpenOf(typ, "waiter")
 		if !assert.Len(t, open, 1, "%s: %d open judgments on the waiter", typ, len(open)) {
 			continue

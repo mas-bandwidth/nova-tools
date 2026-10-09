@@ -283,13 +283,23 @@ func TestDropTakesItsCardsAndBlocksWhatNeedsIt(t *testing.T) {
 	w.must(Add(w.s, AddReq{Stream: "s1", IDs: []string{"later"}, Needs: []string{"s1-1"}}))
 	require.Equal(t, Waiting, w.state("later"), "a primary with needs is %s", w.state("later"))
 	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1"}}}))
-	p := Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "obsolete"})
-	require.Len(t, p.Refused, 1, "a needed card dropped without cascade: %+v", p)
-	require.Equal(t, "s1-1", p.Refused[0].Key, "a needed card dropped without cascade: %+v", p)
-	require.Contains(t, p.Refused[0].Why, "later", "the refusal names the dependant: %+v", p)
-	require.Equal(t, Working, w.state("s1-1"), "the refusal left the card: %s", w.state("s1-1"))
-	require.Empty(t, w.notesOf(NBlocked), "the refusal wrote a blocked note")
+	p := w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "obsolete"}))
+	require.Equal(t, "", w.state("s1-1"), "the drop left the card: %s", w.state("s1-1"))
+	require.Equal(t, Waiting, w.state("later"), "the dependant was dropped with it: %s", w.state("later"))
+	require.Empty(t, w.s.Work.Card("later").F("needs"), "the need stayed: %q", w.s.Work.Card("later").F("needs"))
+	var detached bool
+	for _, u := range p.Units {
+		if u.Key == "later" && strings.Contains(u.Moved, "DETACHED") && strings.Contains(u.Moved, "dropped") {
+			detached = true
+		}
+	}
+	require.True(t, detached, "no detach line: %+v", p.Units)
+	require.Empty(t, w.notesOf(NBlocked), "the detach wrote a blocked note")
+	w.must(Resolve(w.s, ResolveReq{}))
+	require.Equal(t, Ready, w.state("later"), "later is %s", w.state("later"))
 	// cascade drops the dependant too, with no blocked note
+	w = setup(t, 2)
+	w.must(Add(w.s, AddReq{Stream: "s1", IDs: []string{"later"}, Needs: []string{"s1-1"}}))
 	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "obsolete", Cascade: true}))
 	require.Equal(t, "", w.state("s1-1"), "cascade left cards behind")
 	require.Equal(t, "", w.state("later"), "cascade left the dependant behind")

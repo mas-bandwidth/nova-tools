@@ -1833,30 +1833,14 @@ func orEmpty(c *Card, id string) *Card {
 	return c
 }
 
-// waitingNeeding is the waiting primaries that name id and are not dropping:
-// the dependants a drop without cascade refuses, read from every waiting
-// card's needs field (docs/SPEC-SPRINT.md section 11).
-func waitingNeeding(s *Snapshot, id string, dropping map[string]bool) []string {
-	var out []string
-	for _, w := range s.Work.Column(Waiting) {
-		if dropping[w.ID] {
-			continue
-		}
-		if contains(Split(w.F("needs")), id) {
-			out = append(out, w.ID)
-		}
-	}
-	return out
-}
-
 // DropReq is the coordinator taking primaries off the table.
 type DropReq struct {
 	Sel
 	Reason  string
 	Answers []string
 	// Cascade drops, with the cards the selection names, every waiting
-	// primary that needs one of them, and their dependants too. Without it a
-	// card a waiting primary still needs is refused, naming the dependants
+	// primary that needs one of them, and their dependants too. Without it
+	// each waiting card that names one is detached from it in this step
 	// (docs/SPEC-SPRINT.md section 11).
 	Cascade bool
 	Who     string
@@ -1864,10 +1848,10 @@ type DropReq struct {
 
 // Drop takes open primaries off the table with the reason: their record,
 // outcome and reason are kept; their live work card, unread read cards and
-// merge place go with them. A waiting primary that needs one is a dependant:
-// without Cascade the drop is refused for that card, naming the dependants;
-// with it the dependants and their dependants go too (docs/SPEC-SPRINT.md
-// section 11).
+// merge place go with them. A waiting primary that names one is detached
+// from it in this step, one line per card, and stays waiting until the next
+// resolve. With Cascade the dependants and their dependants go too
+// (docs/SPEC-SPRINT.md section 11).
 func Drop(s *Snapshot, r DropReq) Plan {
 	var p Plan
 	var all []*Card
@@ -1914,20 +1898,10 @@ func Drop(s *Snapshot, r DropReq) Plan {
 			}
 		}
 		chosen = kept
-	} else {
-		// Without Cascade a card another waiting primary still needs is
-		// refused for that card, naming the dependants, and nothing moves.
-		var kept []*Card
-		for _, c := range chosen {
-			if deps := waitingNeeding(s, c.ID, dropping); len(deps) > 0 {
-				p.refuse(c.ID, fmt.Sprintf("%s is needed by %s; drop them too with --cascade", c.ID, strings.Join(deps, ", ")))
-				dropping[c.ID] = false
-				continue
-			}
-			kept = append(kept, c)
-		}
-		chosen = kept
 	}
+	// Detach after cascade has grown the set, so a dependant that is itself
+	// dropping is taken off, not rewritten.
+	detach := detachDropped(s, dropping, r.Who)
 	for _, c := range chosen {
 		u := Unit{Key: c.ID, Stream: c.Row}
 		for _, fc := range s.Fleet.Of(c.ID) {
@@ -1951,9 +1925,10 @@ func Drop(s *Snapshot, r DropReq) Plan {
 		p.Units = append(p.Units, u)
 	}
 	// the weights the drop changes: every primary the dropped cards waited on (weight.go)
-	p.Units = append(p.Units, weighUnits(s, nil, dropping)...)
+	p.Units = append(append(detach, p.Units...), weighUnits(s, nil, dropping)...)
 	settle(&p, s, r.Who, dropping, dropping)
-	// Each stream counts its dropped primaries on its control card.
+	// Each stream counts its dropped primaries on its control card. A detach
+	// unit is not a drop: a stream with nothing leaving is left as it was.
 	for _, st := range unitStreams(p) {
 		k := 0
 		for _, u := range p.Units {
@@ -1961,11 +1936,21 @@ func Drop(s *Snapshot, r DropReq) Plan {
 				k++
 			}
 		}
+		if k == 0 {
+			continue
+		}
 		setStream(&p, s, st, map[string]string{"dropped": itoa(s.StreamCtl(st).Int("dropped") + k)})
 	}
 	// A sprint this drop finishes is found done by the tick's done part
 	// (TickDone), which says so and stops the machine.
 	answered(&p, s, r.Answers, r.Who)
+	units, bad := mergeCardChanges(p.Units)
+	if bad != "" {
+		var q Plan
+		q.refuse("", bad)
+		return q
+	}
+	p.Units = units
 	return Lawful(p)
 }
 

@@ -12,10 +12,8 @@ import (
 // The property test's finding of seed 7, its shortest sequence as a test; and
 // the step builder's rule for two changes of one card in one step.
 
-// Seed 7: the printed ack of a group of two blocked judgments on one primary
-// (it needs two cards, both dropped) failed: the ack changed the primary
-// twice in one step. It waives both needs at once, and the primary is ready.
-func TestAckOfTwoBlockedJudgmentsOnOnePrimaryWaivesBoth(t *testing.T) {
+// One dropped need leaves the other. The card stays waiting until that one is gone too.
+func TestOneDroppedNeedLeavesTheOtherUntilItTooIsGone(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
@@ -23,27 +21,13 @@ func TestAckOfTwoBlockedJudgmentsOnOnePrimaryWaivesBoth(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s3", IDs: []string{"p5"}, Needs: []string{"p3", "p4"}}))
 	seedDroppedNeed(h, "p3")
 	h.must(ResolveStep(sprint.ResolveReq{}))
+	require.Equal(t, sprint.Waiting, h.state("p5"), "p5 is %s", h.state("p5"))
+	require.Equal(t, "p4", h.snap().Work.Card("p5").F("needs"))
+	require.Empty(t, h.openOf(sprint.NBlocked))
 	seedDroppedNeed(h, "p4")
 	h.must(ResolveStep(sprint.ResolveReq{}))
-	var notes []string
-	for _, o := range h.openOf(sprint.NBlocked) {
-		notes = append(notes, o.Note.ID)
-	}
-	require.Len(t, notes, 2, "two blocked judgments: %v", notes)
-	var ack string
-	for _, c := range h.commandsOf(sprint.NBlocked) {
-		if c.Decision == "ack" {
-			ack = c.Lines[0]
-		}
-	}
-	require.Contains(t, ack, notes[0], "the printed ack does not name both: %q", ack)
-	require.Contains(t, ack, notes[1], "the printed ack does not name both: %q", ack)
-	h.must(AckStep(sprint.AckReq{Notes: notes, Reason: "none"}))
-	got := h.state("p5")
-	require.Equal(t, sprint.Ready, got, "p5 is %s", got)
-	w := h.snap().Work.Card("p5").F("waived")
-	require.True(t, w == "p3,p4" || w == "p4,p3", "waived %q", w)
-	h.clean("acked")
+	require.Equal(t, sprint.Ready, h.state("p5"), "p5 is %s", h.state("p5"))
+	h.clean("detached")
 }
 
 // A step whose plan changes one card twice: agreeing changes are one entry;

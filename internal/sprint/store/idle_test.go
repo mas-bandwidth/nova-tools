@@ -39,15 +39,15 @@ func TestTheIdleAlarmNamesTheRootsOnceAnEpisode(t *testing.T) {
 	h.setup(0)
 	// root is dropped: ten cards wait on it, the first three directly
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"root", "held-one"}}))
-	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"a", "b", "c"}, Needs: []string{"root"}}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"anchor"}, Held: true}))
+	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"a", "b", "c"}, Needs: []string{"root", "anchor"}}))
 	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"a1", "a2", "a3", "b1", "b2"}, Needs: []string{"a"}}))
 	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"c1", "c2"}, Needs: []string{"c"}}))
 	// two more behind a sentinel never released
 	h.must(AddStep(sprint.AddReq{Stream: "s3", IDs: []string{"gate"}, Sentinel: true, Held: true}))
 	h.must(AddStep(sprint.AddReq{Stream: "s3", IDs: []string{"g1", "g2"}}))
 	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"held-one"}}, Reason: "re-cut"}))
-	// root has dependants, so drop refuses it: its dropped record is seeded and
-	// the resolve opens the blocked judgments
+	// root is gone. The resolve detaches it, and the chain waits on the held anchor.
 	seedDroppedNeedWhy(h, "root", "re-cut")
 	h.must(ResolveStep(sprint.ResolveReq{}))
 	h.startMachine()
@@ -63,7 +63,8 @@ func TestTheIdleAlarmNamesTheRootsOnceAnEpisode(t *testing.T) {
 	n := notes[0]
 	assert.Equal(t, h.st.Actor, n.To, "addressed to the coordinator")
 	assert.True(t, strings.HasPrefix(n.What, "fleet 0/"), n.What)
-	assert.Contains(t, n.What, "10 behind 3 drop-blocked judgments (oldest 6m0s)")
+	assert.Contains(t, n.What, "11 behind anchor (held)")
+	assert.NotContains(t, n.What, "drop-blocked")
 	assert.Contains(t, n.What, "2 behind sentinel gate (held)")
 	for i := 0; i < 3; i++ {
 		h.tick(time.Minute)
@@ -71,7 +72,7 @@ func TestTheIdleAlarmNamesTheRootsOnceAnEpisode(t *testing.T) {
 	}
 	assert.Len(t, h.notesTo(sprint.NIdle), 1, "once an episode")
 	// the cards behind go: no card waits, the episode ends with a clear note
-	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"a", "b", "c", "a1", "a2", "a3", "b1", "b2", "c1", "c2", "g1", "g2", "gate"}}, Reason: "done with them"}))
+	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"anchor", "a", "b", "c", "a1", "a2", "a3", "b1", "b2", "c1", "c2", "g1", "g2", "gate"}}, Reason: "done with them"}))
 	h.machine()
 	clears := h.notesTo(sprint.NIdleCleared)
 	require.Len(t, clears, 1, "a clear note when it recovers")
