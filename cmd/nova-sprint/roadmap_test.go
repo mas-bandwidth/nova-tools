@@ -136,6 +136,47 @@ func TestDeferMovesWaitingCardsToTheRoadmapAndRestoreBringsOneBack(t *testing.T)
 	ta.clean()
 }
 
+// An explicit --expect 0 is a supplied count. The flag defaults to 0, and a
+// guard of *expect > 0 treated that zero as omitted: with one waiting card,
+// defer --stream --expect 0 wrote the roadmap and dropped the card. A supplied
+// count that differs, zero included, is refused before anything is written.
+// An omitted --expect still defers.
+func TestDeferExplicitExpectZeroRefusesBeforeWriting(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ta := newTestApp(t)
+	ta.ok("init --members m1,m2 --readers reader-a,reader-b,reader-c")
+	dir := t.TempDir()
+	record := filepath.Join(dir, "record")
+	brief := filepath.Join(dir, "later-1.md")
+	require.NoError(t, os.WriteFile(brief, []byte(passingBrief("REPO: example/nova-tools\n\nLater: the one waiting card.")), 0o600))
+	ta.ok("add --stream later later-1 --one --brief-file " + brief)
+	roadmap := filepath.Join(record, "roadmaps", "nova-tools-v2.sexp")
+
+	code, _, errs := ta.do("defer --release v2 --stream later --expect 0 --record " + record)
+	assert.Equal(t, 1, code, errs)
+	assert.Contains(t, errs, "1 waiting cards found, not 0")
+	assert.Contains(t, errs, "changed=no")
+	assert.NoFileExists(t, roadmap)
+
+	st, err := ta.a.store(common{redis: "mem:0", actor: "tester"})
+	require.NoError(t, err)
+	s, err := st.Load(ctx, []string{sprint.Work}, nil)
+	require.NoError(t, err)
+	c := s.Work.Placed("later-1")
+	require.NotNil(t, c, "the card is still on the table")
+	assert.Equal(t, sprint.Waiting, c.Col)
+
+	out := ta.ok("defer --release v2 --stream later --record " + record)
+	assert.Contains(t, out, "DEFER OK")
+	_, err = os.Stat(roadmap)
+	require.NoError(t, err, "an omitted --expect still writes the roadmap")
+	s, err = st.Load(ctx, []string{sprint.Work}, nil)
+	require.NoError(t, err)
+	assert.Nil(t, s.Work.Placed("later-1"), "an omitted --expect still drops the waiting card")
+	ta.clean()
+}
+
 // The roadmap's form reads back as it was written, every byte of a brief kept.
 func TestRoadmapFormReadsBack(t *testing.T) {
 	t.Parallel()
