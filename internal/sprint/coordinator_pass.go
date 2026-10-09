@@ -48,8 +48,8 @@ const (
 	// NFriendEmpty is an up friend whose row has been empty for EmptyRowAfter while
 	// cards she could do sit ready in the pool or unstarted on another friend's row.
 	NFriendEmpty = "an up friend has an empty row while cards wait"
-	// NPinIgnored is a named pin (WHO: friend <name>, not a hard pin) sitting ready
-	// or working off that friend's row.
+	// NPinIgnored is a named pin (WHO: friend <name> or only friend <name>) sitting
+	// ready or working off that friend's row.
 	NPinIgnored = "a pinned card was dealt away from its friend"
 	// NFriendRowEmpty is the clock for NFriendEmpty: an acknowledgement, not a
 	// judgment, written when an up friend's empty row and the cards she could do
@@ -480,13 +480,13 @@ func cardsWaitingFor(s *Snapshot, f FriendSeat, seats map[string]FriendSeat) []i
 	return out
 }
 
-// friendCouldTake says f may be given the primary: her tiers hold its tier, it
-// is not a hard pin to someone else, and the work card has not left her.
+// friendCouldTake says f may be given the primary: her tiers hold its tier, its
+// WHO line names no one else, and the work card has not left her.
 func friendCouldTake(s *Snapshot, f FriendSeat, pr, wc *Card) bool {
 	if pr == nil || !friendTakes(s, f, cardTierOf(pr)) {
 		return false
 	}
-	if name, ok := FriendCard(pr); ok && name != "" && name != f.Name && OnlyFriend(pr) {
+	if name := PinnedFriend(pr); name != "" && name != f.Name {
 		return false
 	}
 	return wc == nil || !slices.Contains(friendsLeft(wc), f.Name)
@@ -524,10 +524,10 @@ func emptyRowDecisions(name string, cards []idleWait) []string {
 }
 
 // pinConds is one condition for each named pin whose work card is ready or
-// working on a row that is not its friend's. A hard pin (OnlyFriend) waits for
-// her and is not one of these. The text is the one the deal wrote when it
-// rotated the card, when that judgment is already open, so a later pass does
-// not close it and open another.
+// working on a row that is not its friend's: the deal never places one there
+// (WhoIsHonored), so such a card was placed before the deal honored WHO, or by
+// hand. The text is the one already open, when that judgment is open, so a later
+// pass does not close it and open another.
 func pinConds(s *Snapshot, r TickReq) []cond {
 	if s.Fleet == nil || s.Work == nil {
 		return nil
@@ -562,8 +562,8 @@ func pinConds(s *Snapshot, r TickReq) []cond {
 				if pr == nil {
 					continue
 				}
-				pinned, ok := FriendCard(pr)
-				if !ok || pinned == "" || OnlyFriend(pr) || row == FriendRow(pinned) {
+				pinned := PinnedFriend(pr)
+				if pinned == "" || row == FriendRow(pinned) {
 					continue
 				}
 				seen[prID] = true
@@ -571,9 +571,8 @@ func pinConds(s *Snapshot, r TickReq) []cond {
 				if what == "" {
 					what = pinIgnoredWhat(wc.ID, pinned, pinSkipWhy(s, r.Friends, pinned, friendsLeft(wc), cardTierOf(pr), free), row, col)
 				}
-				holder, _ := FriendOfRow(row)
 				out = append(out, cond{typ: NPinIgnored, stream: pr.Row, card: wc.ID, primaries: []string{prID},
-					what: what, decisions: pinIgnoredDecisions(pinned, holder, wc.ID)})
+					what: what, decisions: pinIgnoredDecisions(pinned, wc.ID)})
 			}
 		}
 	}
@@ -620,22 +619,10 @@ func pinIgnoredWhat(cardID, pinned, why, row, col string) string {
 	return fmt.Sprintf("%s pinned to %s went to %s:%s: %s did not take it because %s", cardID, pinned, row, col, pinned, why)
 }
 
-// pinIgnoredDecisions offers friend take of the row that holds the card, when
-// that row is a friend's, or keep. ack and wait quiet it like the other pass
-// judgments.
-func pinIgnoredDecisions(pinned, holder, cardID string) []string {
-	ds := []string{"keep", "ack", "wait"}
-	if holder != "" {
-		ds = append([]string{"friend take " + holder + " " + cardID + " --reason pinned to " + pinned}, ds...)
-	}
-	return ds
-}
-
-// pinIgnoredNote is the judgment the deal writes on the unit that places a
-// named pin on someone else's row. The pass's pinConds keeps that same text.
-func pinIgnoredNote(s *Snapshot, primary *Card, cardID, pinned, why, row, col string) Note {
-	holder, _ := FriendOfRow(row)
-	return Note{Kind: Judgment, Type: NPinIgnored, Stream: primary.Row, Primaries: []string{primary.ID}, Count: 1,
-		Card: cardID, What: pinIgnoredWhat(cardID, pinned, why, row, col), Who: MachineActor, At: s.Now, Marked: true,
-		Decisions: pinIgnoredDecisions(pinned, holder, cardID)}
+// pinIgnoredDecisions offers friend take of the card onto the row of the friend
+// it names (a ready card, or one dealt and not taken, moves there; a taken one
+// is refused naming its lane), or keep. ack and wait quiet it like the other
+// pass judgments.
+func pinIgnoredDecisions(pinned, cardID string) []string {
+	return []string{"friend take " + pinned + " " + cardID + " --reason its WHO line names " + pinned, "keep", "ack", "wait"}
 }

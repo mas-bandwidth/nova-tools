@@ -497,3 +497,6 @@ MCStopCancelsBrokenLaunchAfterStop.cfg	MCStopCancels.tla	invariant	NoLaunchAfter
 MCStopCancelsBrokenForgetOnRestart.cfg	MCStopCancels.tla	invariant	StopReturnsSurviveRestart	ignore-terminal	stopcancels	required	-
 MCStopCancelsBrokenNudge.cfg	MCStopCancels.tla	invariant	NoNudgeWhileStopped	ignore-terminal	stopcancels	required	-
 MCStopCancelsBrokenFinishCancelled.cfg	MCStopCancels.tla	invariant	NoFinishOfACancelledCard	ignore-terminal	stopcancels	required	-
+MCDeal.cfg	MCDeal.tla	pass	-	ignore-terminal	deal	required	-
+MCDealBrokenFallback.cfg	MCDeal.tla	invariant	WhoIsHonored	ignore-terminal	deal	required	-
+MCDealBrokenTakeOnto.cfg	MCDeal.tla	invariant	WhoIsHonored	ignore-terminal	deal	required	-

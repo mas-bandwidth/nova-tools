@@ -182,7 +182,7 @@ type TickReq struct {
 	// with every tick while the roster has a friend (friendDealPass, before the residual
 	// fleet deal), with what her beat names running (FriendSeat.Running): the tick
 	// levels them after its deal (FriendLevel). nil is none: every card is the fleet's
-	// but a hard pin, which waits ready, and no friend is levelled.
+	// but one whose WHO line names a friend, which waits ready, and no friend is levelled.
 	Friends []FriendSeat
 	// AnswerRules says the tick answers the mechanical judgments by rule (rules.go; run
 	// --answer-rules); false leaves every judgment to the coordinator.
@@ -623,7 +623,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	up := s.UpMembers()
 	// Friends first: every ready card a friend may take, except a held stream
 	// (dealt nowhere) and a bench card (bench_deal.go keeps it for its bench).
-	// A hard pin that no friend takes stays out of the fleet below.
+	// A card whose WHO line names a friend stays out of the fleet below.
 	var offer []*Card
 	for _, c := range s.Work.Column(Ready) {
 		if StreamHeld(s, c.Row) || IsSentinel(c) {
@@ -645,7 +645,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		if StreamHeld(s, c.Row) {
 			continue // its stream is held (hold.go): dealt to no machine and no friend until unhold
 		}
-		if friendPlaced[c.ID] || OnlyFriend(c) {
+		if friendPlaced[c.ID] || PinnedFriend(c) != "" {
 			continue
 		}
 		if wc := AtRedealBound(s, c); wc != nil {
