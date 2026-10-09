@@ -529,6 +529,11 @@ type loop struct {
 // daemon's own words about the coordinator collapse to the latest and ride in
 // a turn that carries messages or a card, never alone.
 func (d *Daemon) Run(ctx context.Context) error {
+	if d.Harness == "opencode" && d.NativeReplyStore != nil {
+		if err := ensureNativeOutbox(OSFS{}, d.Dir); err != nil {
+			return fmt.Errorf("native outbox startup: %w", err)
+		}
+	}
 	l := &loop{d: d, ctx: ctx, b: &bus.Bus{Store: d.Store}, silentStop: d.SilentStop, brokenAfter: d.BrokenAfter,
 		answered: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, results: make(chan result, 1),
 		lanes: &laneSet{results: make(chan laneResult, 64), refused: map[string]string{}}, reads: newReadSet(), mode: ModeBatch, tag: laneTag()}

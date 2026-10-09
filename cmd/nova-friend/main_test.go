@@ -1194,17 +1194,18 @@ func TestTheDaemonsStateDirIsUnderItsDir(t *testing.T) {
 		assert.NoDirExists(t, friend.StateDirIn(dir))
 	})
 
-	t.Run("a directory that refuses it: the home directory's, said", func(t *testing.T) {
+	t.Run("a non-directory work root refuses native outbox startup", func(t *testing.T) {
 		t.Parallel()
 		r := newRig(t, "ada", "bob")
 		file := filepath.Join(t.TempDir(), "not-a-dir")
 		require.NoError(t, os.WriteFile(file, nil, 0o644))
-		out := runOnce(t, r, "--dir", file)
-		_, found, err := friend.ReadStatus(friend.DefaultStateDir(r.home, "bob"))
-		require.NoError(t, err)
-		assert.True(t, found)
-		assert.Contains(t, out, "state: "+friend.StateDirIn(file)+" refused (")
-		assert.Contains(t, out, "give --state-dir")
+		w := r.world()
+		var out, errb strings.Builder
+		code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--coordinator", "ada", "--dir", file},
+			strings.NewReader(""), &out, &errb, w)
+		assert.Equal(t, 1, code)
+		assert.Contains(t, errb.String(), "native outbox work root")
+		assert.NoDirExists(t, filepath.Join(file, "outbox"))
 	})
 }
 

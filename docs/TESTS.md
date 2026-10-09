@@ -162,6 +162,7 @@ $ nova-friend setup --as worker --harness opencode --dir /tmp/worker --config-di
 SETUP OK harness=opencode apply_requested=false applied=false dry_run=true
 SETUP STEP name=profile_owner kind=file path=/tmp/worker-config/.nova-friend-setup/OWNER want=explicit\x20friend/profile\x20ownership
 SETUP STEP name=native_home_owner kind=file path=/tmp/worker-home/.nova-friend-setup/PROFILE_ROOT want=reference\x20to\x20the\x20canonical\x20profile\x20owner
+SETUP STEP name=native-outbox kind=directory path=/tmp/worker/outbox want=real\x20friend\x20outbox\x20for\x20local\x20reply\x20and\x20pong
 SETUP STEP name=xdg-config-home kind=directory path=/tmp/worker-home/.config want=private\x20directory
 SETUP STEP name=xdg-data-home kind=directory path=/tmp/worker-home/.local/share want=private\x20directory
 SETUP STEP name=opencode-version kind=native path=- want=-

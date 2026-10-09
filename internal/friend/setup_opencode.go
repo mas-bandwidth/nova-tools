@@ -44,6 +44,25 @@ func PlanOpenCodeSetup(opts SetupOptions, fsys SettingsFS) (SetupPlan, error) {
 	if work.Kind != KindDir {
 		return plan, fmt.Errorf("OpenCode working directory %s must be a real directory", opts.Dir)
 	}
+	outbox := filepath.Join(opts.Dir, "outbox")
+	if err := SetupPath(fsys, outbox, true); err != nil {
+		return plan, err
+	}
+	entry, err := fsys.Lstat(outbox)
+	if err != nil {
+		return plan, err
+	}
+	if entry.Kind == KindMissing {
+		plan.Steps = append(plan.Steps, SetupStep{
+			Name: "native-outbox", Kind: "directory", Path: outbox, Want: "real friend outbox for local reply and pong",
+			Apply: func() ([]SetupFact, error) {
+				if err := ensureNativeOutbox(fsys, opts.Dir); err != nil {
+					return nil, err
+				}
+				return []SetupFact{{Name: "native-outbox", State: "ready", Detail: outbox}}, nil
+			},
+		})
+	}
 	plan.Facts = []SetupFact{
 		{Name: "home", State: "selected", Detail: opts.Home},
 		{Name: "config-dir", State: "selected", Detail: opts.ConfigDir},
