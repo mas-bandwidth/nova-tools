@@ -265,12 +265,14 @@ func TestDeadCodeIncludesToolMains(t *testing.T) {
 
 // TestDeadcodeRootsReportsGoListStderr holds that a failed `go list` of the
 // tool mains surfaces the go command's own diagnostic, not a bare exit status.
+// The fixture breaks go.mod, which go list itself parses; a syntax error in a
+// function body would not reach go list (it reads only the import block).
 func TestDeadcodeRootsReportsGoListStderr(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	files := map[string]string{
-		"go.mod":               "module example.com/deadfixture\n\ngo 1.25\n",
-		"tools/broken/main.go": "package main\nfunc main() {\n",
+		"go.mod":              "module example.com/deadfixture\n\ngo banana\n",
+		"tools/check/main.go": "package main\nfunc main() {}\n",
 	}
 	for name, body := range files {
 		path := filepath.Join(root, name)
@@ -283,7 +285,7 @@ func TestDeadcodeRootsReportsGoListStderr(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "listing tool mains for GOOS=linux")
 	assert.Contains(t, err.Error(), "stderr:")
-	assert.Contains(t, err.Error(), "tools/broken/main.go", "the go list diagnostic names the broken file")
+	assert.Contains(t, err.Error(), "go.mod", "the go list diagnostic names the broken go.mod")
 }
 
 // deadCodeWitnessReporter records CheckCountedMode error output without failing the test runner.
