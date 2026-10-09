@@ -80,6 +80,8 @@ MCTableSessionBrokenStale.cfg	MCTableSession.tla	invariant	NoFalseAlarm	ignore-t
 MCTableSessionBrokenTerm.cfg	MCTableSession.tla	invariant	NothingStartsAfterStop	ignore-terminal	tablesession	required	-
 MCTableSessionBrokenTermLive.cfg	MCTableSession.tla	temporal	TermEnds	ignore-terminal	tablesession	required	-
 MCSprintEvents.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents	required	-
+MCSprintEventsFriendRedeal.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents	required	-
+MCSprintEventsFriendRedealBroken.cfg	MCSprintEvents.tla	action	FriendNotLeft	ignore-terminal	sprintevents	required	-
 MCSprintEventsCursor.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents	required	-
 MCSprintEventsProbe.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents	required	-
 MCSprintEventsStop.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents	required	-
