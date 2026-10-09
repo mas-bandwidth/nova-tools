@@ -23,9 +23,8 @@ begun asked of another, a stream's ready work cards withdrawn); what is begun
 finishes, or with --return is handed back now too (a member's working cards
 dealt round the fleet, a reader's reads begun asked of another, a stream's
 working cards withdrawn to ready). A held friend keeps no begun card, with
---return or without: every card she has begun goes back to ready, and a started
-one with a push carries its pushed head to the next taker; her ready cards not
-begun wait on her row, or with --return go back too. Its status reads held, the reason
+--return or without: every card on her row goes back to ready, begun or not, and
+a started one with a push carries its pushed head to the next taker. Its status reads held, the reason
 beside it (where --json --cards: holds; handover), and the hold is a line
 of the log.
 unhold <name>... [--reason <text>] releases it: a member that beats is up at
