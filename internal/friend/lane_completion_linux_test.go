@@ -60,6 +60,74 @@ func TestMissingRunAfterRecordedLaunchRetainsLaneClaim(t *testing.T) {
 	require.True(t, l.stopRunQuiescent(job, st), "a missing RUN before launch remains an idle reservation")
 }
 
+func TestBatchRestartSettlesPriorOneShotCompletionWithoutLaunchingLane(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "working"}}, []string{"c1"}, nil)
+		h := &lanesHarness{dir: dir, active: map[string]int{}}
+		r, state := laneRig(t, h, 1)
+		r.d.Row = func() (string, int) { return ModeBatch, 1 }
+		r.d.StateDir = t.TempDir()
+		r.d.Rules = func() LaneRules { return LaneRules{} }
+		job := "c1~15"
+		card := Card{ID: "c1", Outbox: filepath.Join(dir, "outbox", job)}
+		require.NoError(t, os.MkdirAll(card.Outbox, 0o755))
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "jobs", job), 0o755))
+		require.NoError(t, os.WriteFile(card.Result(), []byte("RESULT: prior one-shot turn complete\n"), 0o644))
+		state.Started = map[string]Started{job: {Lane: 1, Card: card, At: t0.Add(-time.Minute), RunID: "old-run"}}
+		r.run(t, 4)
+		require.Empty(t, state.Started, "batch mode still settles the durable prior completion")
+		require.FileExists(t, card.Report())
+		require.Contains(t, fmt.Sprint(r.adaGot(t)), "bob card c1~15", "the completion note is durably sent by the native retry path")
+		turns, _, _ := h.got()
+		require.Empty(t, turns, "batch recovery must not start a one-shot turn")
+	})
+}
+
+func TestBatchRestartHoldsNewWorkWhilePriorOneShotGroupUnproved(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "working"}}, []string{"c1"}, nil)
+		h := &lanesHarness{dir: dir, active: map[string]int{}}
+		r, state := laneRig(t, h, 1)
+		r.d.Row = func() (string, int) { return ModeBatch, 1 }
+		job := "c1~15"
+		card := Card{ID: "c1", Outbox: filepath.Join(dir, "outbox", job)}
+		state.Started = map[string]Started{job: {Lane: 1, Card: card, At: t0.Add(-time.Minute), RunID: "old-run", Pid: 9999999}}
+		r.send(t, "ada", "new work", "do new batch work")
+		r.run(t, 4)
+		require.Contains(t, state.Started, job)
+		require.Empty(t, r.delivered, "unproved old capacity blocks new batch provider work")
+		turns, _, _ := h.got()
+		require.Empty(t, turns)
+	})
+}
+
+func TestAdoptedResultDoesNotInventOriginalExitOrWall(t *testing.T) {
+	t.Parallel()
+	dir, stateDir, job := t.TempDir(), t.TempDir(), "c1~15"
+	card := Card{ID: "c1", Outbox: filepath.Join(dir, "outbox", job)}
+	require.NoError(t, os.MkdirAll(card.Outbox, 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "jobs", job), 0o755))
+	require.NoError(t, os.WriteFile(card.Result(), []byte("RESULT: original run complete\n"), 0o644))
+	st := Started{Lane: 1, Card: card, At: time.Now().Add(-time.Minute), RunID: "old-run"}
+	state := LaneState{Started: map[string]Started{job: st}}
+	d := &Daemon{Friend: "worker", Dir: dir, StateDir: stateDir, Coordinator: "coordinator", Record: func(string) {}, Rules: func() LaneRules { return LaneRules{} }, ProcessIdentity: ProcessIdentity, SaveLanes: func(s LaneState) error { return WriteLanes(stateDir, s) }}
+	d.m = Start(time.Now())
+	turn := &turn{started: time.Now().Add(-time.Second), adopted: true}
+	ln := &lane{n: 1, card: &card, t: turn}
+	l := &loop{d: d, ctx: context.Background(), lanes: &laneSet{lanes: []*lane{ln}, state: state, given: map[string]bool{}}}
+	l.laneDone(laneResult{ln: ln, t: turn, turn: LaneTurn{Exit: 0}}, time.Now())
+	require.Nil(t, ln.card)
+	report, err := os.ReadFile(card.Report())
+	require.NoError(t, err)
+	require.Contains(t, string(report), "the run's exit and wall are unavailable")
+	require.NotContains(t, string(report), "exit 0")
+	note, err := os.ReadFile(finishNoticePath(d, job))
+	require.NoError(t, err)
+	require.Contains(t, string(note), "wall unknown")
+}
+
 func TestPendingLanePassBoundsSlowFinishAndRotatesDebt(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
@@ -114,13 +182,17 @@ func TestPendingLanePassBoundsSlowFinishAndRotatesDebt(t *testing.T) {
 // continuation or capacity release is allowed until its matching RUN is gone.
 func TestLaneCompletionWaitsForMatchingProcessGroup(t *testing.T) {
 	t.Parallel()
-	for _, result := range []bool{false, true} {
-		t.Run(map[bool]string{false: "continuation", true: "result"}[result], func(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		result  bool
+		stopped bool
+	}{{name: "continuation"}, {name: "result", result: true}, {name: "result-under-stop", result: true, stopped: true}} {
+		t.Run(tc.name, func(t *testing.T) {
 			dir, stateDir, job := t.TempDir(), t.TempDir(), "c1~15"
 			card := Card{ID: "c1", Outbox: filepath.Join(dir, "outbox", job)}
 			require.NoError(t, os.MkdirAll(card.Outbox, 0o755))
 			require.NoError(t, os.MkdirAll(filepath.Join(dir, "jobs", job), 0o755))
-			if result {
+			if tc.result {
 				require.NoError(t, os.WriteFile(card.Result(), []byte("RESULT: work complete\n"), 0o644))
 			}
 			anchorPath := runReceiptPath(dir, job) + ".anchor"
@@ -144,7 +216,7 @@ func TestLaneCompletionWaitsForMatchingProcessGroup(t *testing.T) {
 			defer func() {
 				if len(anchor) > 0 && procgroup.GroupRunnable(pid) {
 					require.NoError(t, os.WriteFile(anchorPath, anchor, 0o600))
-					cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+					cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 					defer cancel()
 					require.True(t, procgroup.ReapVerified(cleanupCtx, pid, "", anchorPath, 100*time.Millisecond))
 				}
@@ -156,7 +228,7 @@ func TestLaneCompletionWaitsForMatchingProcessGroup(t *testing.T) {
 			started := Started{Lane: 1, Card: card, At: time.Now().Add(-time.Minute), RunID: "run-1", Pid: pid}
 			state := LaneState{Started: map[string]Started{job: started}}
 			require.NoError(t, WriteLanes(stateDir, state))
-			d := &Daemon{Friend: "worker", Dir: dir, StateDir: stateDir, Coordinator: "coordinator", Record: func(string) {}, Rules: func() LaneRules { return LaneRules{} }, ProcessIdentity: ProcessIdentity, SaveLanes: func(s LaneState) error { return WriteLanes(stateDir, s) }}
+			d := &Daemon{Friend: "worker", Dir: dir, StateDir: stateDir, Coordinator: "coordinator", Record: func(string) {}, Rules: func() LaneRules { return LaneRules{} }, MachineStopped: func() bool { return tc.stopped }, ProcessIdentity: ProcessIdentity, SaveLanes: func(s LaneState) error { return WriteLanes(stateDir, s) }}
 			d.m = Start(time.Now())
 			ln := &lane{n: 1, card: &card, t: &turn{started: time.Now().Add(-time.Second)}, session: "session"}
 			l := &loop{d: d, ctx: context.Background(), lanes: &laneSet{lanes: []*lane{ln}, state: state, given: map[string]bool{}}}
@@ -166,17 +238,20 @@ func TestLaneCompletionWaitsForMatchingProcessGroup(t *testing.T) {
 			require.NotNil(t, ln.pendingResult, "the returned result is held")
 			require.Contains(t, l.lanes.state.Started, job)
 			require.NoFileExists(t, card.Report())
-			if result {
+			if tc.result {
 				require.NotNil(t, l.lanes.state.Started[job].Ending, "the native exit is frozen before a possible daemon restart")
 				require.NoFileExists(t, finishNoticePath(d, job))
 			}
+			if tc.stopped {
+				require.Empty(t, l.lanes.state.StopReturns, "completed work is held for group proof rather than returned")
+			}
 			require.NoError(t, os.WriteFile(anchorPath, anchor, 0o600))
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			require.True(t, procgroup.ReapVerified(cleanupCtx, pid, "", anchorPath, 100*time.Millisecond))
 			cancel()
 			l.retryPendingLanes(now.Add(time.Second))
 			require.Nil(t, ln.pendingResult)
-			if result {
+			if tc.result {
 				require.Nil(t, ln.card)
 				require.FileExists(t, card.Report())
 				raw, readErr := os.ReadFile(card.Report())

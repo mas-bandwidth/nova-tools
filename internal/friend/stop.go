@@ -300,6 +300,20 @@ func (l *loop) stopStep(now time.Time) bool {
 				continue
 			}
 			job := filepath.Base(ln.card.Outbox)
+			st := s.state.Started[job]
+			if st.Ending != nil || exists(ln.card.Result()) || exists(ln.card.Report()) {
+				// The artifact is already completed. Stop its remaining native
+				// group, then settle the report after quiescence; do not return
+				// the completed card as cancelled work.
+				if !t.completionStop {
+					t.completionStop = true
+					if t.cancel != nil {
+						t.cancel()
+					}
+					d.Record(fmt.Sprintf("%s lane %d: completed card %s@%d waits for native group exit under STOP", at, ln.n, ln.card.ID, ln.card.Gen()))
+				}
+				continue
+			}
 			if !l.oweStopReturn(StopReturn{Lane: ln.n, Job: job, Row: "friend." + d.Friend, Card: ln.card.ID, Gen: ln.card.Gen(), Epoch: ln.card.Epoch(), Exit: -1, At: now}) {
 				continue // do not cancel before the debt is durable
 			}

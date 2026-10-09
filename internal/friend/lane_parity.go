@@ -429,7 +429,11 @@ func FinishNote(friend, job, verdictLine, cost string, wall time.Duration) (subj
 		verdictLine = "no report"
 	}
 	subject = fmt.Sprintf("%s card %s: %s", friend, job, verdictLine)
-	body = fmt.Sprintf("%s one-shot lane finished %s: %s; cost %s; wall %s\n", friend, job, verdictLine, cost, wall.Round(time.Second))
+	wallText := wall.Round(time.Second).String()
+	if wall < 0 {
+		wallText = "unknown" // a restarted watcher cannot recover the original wall
+	}
+	body = fmt.Sprintf("%s one-shot lane finished %s: %s; cost %s; wall %s\n", friend, job, verdictLine, cost, wallText)
 	return subject, body
 }
 

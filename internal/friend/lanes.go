@@ -259,6 +259,7 @@ type laneSet struct {
 	lanes           []*lane
 	stopped         bool // the machine's word is STOPPED (stopStep): said once each way
 	recoveryPending bool // persisted Started waits for a known machine word
+	batchDebtSaid   bool // the batch row was told why provider work is held
 	pendingCursor   int  // next held completion retry starts at this lane
 	given           map[string]bool
 	state           LaneState
@@ -435,20 +436,10 @@ func (l *loop) releaseIdleReservation(ln *lane, now time.Time) bool {
 	return true
 }
 
-func (l *loop) laneStep(now time.Time, width int) {
-	s := l.lanes
-	d := l.d
-	s.width, s.now = width, now
-	for _, line := range s.gov.Step(now, width) {
-		d.Record(now.UTC().Format(time.RFC3339) + " " + line)
-	}
-	l.paceStep(now, width)
-	rules := d.laneRules()
-	l.markerStep(now)
-	limit, paused := min(s.gov.Cap(width), s.paced), s.gov.Paused(now)
-	s.envHeld = len(l.envMissing) > 0
-	paused = paused || s.envHeld // no key sealed: no open, no turn (needs_env.go)
-	limit = l.loadLimit(rules, limit, now)
+// recoverLaneState loads and settles durable one-shot debt before any new
+// admission. The batch path calls it without opening a lane or launching work.
+func (l *loop) recoverLaneState(now time.Time) {
+	s, d := l.lanes, l.d
 	if !s.loaded {
 		s.loaded = true
 		s.given = map[string]bool{}
@@ -474,6 +465,9 @@ func (l *loop) laneStep(now time.Time, width int) {
 		l.clearTakenReadStops() // finish cleanup after an ack saved just before a crash
 		s.recoveryPending = len(s.state.Started) > 0
 	}
+	if s.stateUnknown {
+		return // partial decoded fields are never replayed or saved
+	}
 	if s.recoveryPending && d.machineKnown() {
 		s.recoveryPending = false
 		if d.machineStopped() {
@@ -484,6 +478,77 @@ func (l *loop) laneStep(now time.Time, width int) {
 	}
 	l.retryPendingLanes(now)
 	l.stopStep(now) // STOP retains session control turns while holding card work.
+}
+
+// batchLaneRecovery settles a prior one-shot run after a row changes to
+// batch. It may watch a verified existing process, but never starts a new
+// one-shot harness turn or opens a lane session.
+func (l *loop) batchLaneRecovery(now time.Time, width int) {
+	s := l.lanes
+	s.width, s.now = width, now
+	l.recoverLaneState(now)
+	if s.stateUnknown {
+		return
+	}
+	for _, st := range s.state.Started {
+		for len(s.lanes) < st.Lane {
+			n := len(s.lanes) + 1
+			s.lanes = append(s.lanes, &lane{n: n, session: s.state.Sessions[n]})
+		}
+	}
+	for _, st := range s.adopt {
+		for len(s.lanes) < st.Lane {
+			n := len(s.lanes) + 1
+			s.lanes = append(s.lanes, &lane{n: n, session: s.state.Sessions[n]})
+		}
+	}
+	l.pidStep(now)
+	l.adoptRuns(now)
+	if l.batchLaneDebt() {
+		if !s.batchDebtSaid {
+			l.d.Record(now.UTC().Format(time.RFC3339) + " batch: prior one-shot claim or stop debt holds new provider work until durable settlement; an unlaunched reservation needs a one-shot row or STOP to return")
+			s.batchDebtSaid = true
+		}
+	} else {
+		s.batchDebtSaid = false
+	}
+}
+
+// batchLaneDebt holds new batch provider work until an earlier one-shot
+// claim or stop return is settled; outbox report reconciliation is separate.
+func (l *loop) batchLaneDebt() bool {
+	s := l.lanes
+	if !s.loaded || s.stateUnknown || len(s.state.Started) > 0 || len(s.adopt) > 0 {
+		return true
+	}
+	for _, r := range s.state.StopReturns {
+		if r.Owed() {
+			return true
+		}
+	}
+	for _, ln := range s.lanes {
+		if ln.card != nil || ln.pendingResult != nil || ln.pendingEnd != nil || ln.t != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (l *loop) laneStep(now time.Time, width int) {
+	s := l.lanes
+	d := l.d
+	s.width, s.now = width, now
+	for _, line := range s.gov.Step(now, width) {
+		d.Record(now.UTC().Format(time.RFC3339) + " " + line)
+	}
+	l.paceStep(now, width)
+	rules := d.laneRules()
+	l.markerStep(now)
+	limit, paused := min(s.gov.Cap(width), s.paced), s.gov.Paused(now)
+	s.envHeld = len(l.envMissing) > 0
+	paused = paused || s.envHeld // no key sealed: no open, no turn (needs_env.go)
+	limit = l.loadLimit(rules, limit, now)
+	l.recoverLaneState(now)
 	for len(s.lanes) < width {
 		n := len(s.lanes) + 1
 		s.lanes = append(s.lanes, &lane{n: n, session: s.state.Sessions[n]})
@@ -1150,16 +1215,20 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	t := r.t
 	t.running = false
 	ln.t = nil
-	if ln.card != nil && d.machineStopped() && !t.byStop && ln.pendingResult == nil {
+	if ln.card != nil && d.machineStopped() && !t.byStop {
 		job := filepath.Base(ln.card.Outbox)
 		st := s.state.Started[job]
 		completed := st.Ending != nil || exists(ln.card.Result()) || exists(ln.card.Report())
-		if !completed || !l.stopRunQuiescent(job, st) {
-			l.oweStopReturn(StopReturn{Lane: ln.n, Job: job, Row: "friend." + d.Friend, Card: ln.card.ID, Gen: ln.card.Gen(), Epoch: ln.card.Epoch(), Exit: -1, At: now})
+		if !completed {
+			if !l.oweStopReturn(StopReturn{Lane: ln.n, Job: job, Row: "friend." + d.Friend, Card: ln.card.ID, Gen: ln.card.Gen(), Epoch: ln.card.Epoch(), Exit: -1, At: now}) {
+				ln.pendingResult = &r // STOP debt must be durable before return
+				return
+			}
 			t.byStop = true
 		}
 	}
 	if t.byStop && ln.card != nil {
+		ln.pendingResult = nil
 		l.stopDone(ln, t, r, now) // cancelled by the machine's stop: never finished
 		return
 	}
@@ -1213,6 +1282,9 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	if st, ok := s.state.Started[job]; ok && st.RunID != "" && !l.stopRunQuiescent(job, st) {
 		if exists(ln.card.Result()) && !exists(ln.card.Report()) && st.Ending == nil {
 			end := LaneEnd{Exit: r.turn.Exit, Wall: r.doneAt.Sub(t.started), Rejected: r.turn.Rejected, Turns: ln.attempts + 1, Started: st.At, NoReport: true}
+			if t.adopted {
+				end.UnknownExit, end.Wall = true, -1
+			}
 			if r.err != nil {
 				end.Err = oneLine(r.err.Error(), 300)
 			}
@@ -1263,6 +1335,15 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	line += l.settle(t, ok, r.err, now)
 	card := *ln.card
 	end := LaneEnd{Exit: r.turn.Exit, Wall: r.doneAt.Sub(t.started), Rejected: r.turn.Rejected, Turns: ln.attempts + 1, Started: s.state.Started[filepath.Base(card.Outbox)].At}
+	if t.adopted {
+		// A watcher observes group exit, not the original harness exit or wall.
+		// Only a previously frozen Ending can supply those details.
+		if frozen := s.state.Started[filepath.Base(card.Outbox)].Ending; frozen != nil {
+			end = *frozen
+		} else {
+			end.UnknownExit, end.Wall = true, -1
+		}
+	}
 	if r.err != nil {
 		end.Err = oneLine(r.err.Error(), 300)
 	}

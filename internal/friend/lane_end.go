@@ -80,6 +80,9 @@ func (e LaneEnd) How() string {
 			e.Restart.UTC().Format(time.RFC3339), e.Started.UTC().Format(time.RFC3339))
 		return b.String()
 	case e.UnknownExit:
+		if e.Err != "" {
+			return e.Err + "; the run's exit and wall are unavailable"
+		}
 		return "the native result survived restart; the run's exit and wall are unavailable"
 	case e.Capped > 0:
 		fmt.Fprintf(&b, "%s: the card's wall reached its tier's cap and the daemon ended the lane, exit %d", CappedWords(e.Capped, e.Tier, e.Overrun), e.Exit)
@@ -364,10 +367,10 @@ func recoveredEnd(st Started, now time.Time) LaneEnd {
 		return *st.Ending
 	}
 	if exists(st.Card.Report()) {
-		return LaneEnd{Started: st.At}
+		return LaneEnd{Started: st.At, UnknownExit: true, Wall: -1}
 	}
 	if exists(st.Card.Result()) {
-		return LaneEnd{Started: st.At, NoReport: true, UnknownExit: true}
+		return LaneEnd{Started: st.At, NoReport: true, UnknownExit: true, Wall: -1}
 	}
 	return LaneEnd{Restart: now, Started: st.At, GiveUp: true}
 }

@@ -317,25 +317,26 @@ const IdleWalkEvery = time.Minute
 // turn is one delivery into the session: the messages it carries (acked
 // together at exit 0) and the daemon's word about the coordinator, if any.
 type turn struct {
-	entries  []string // the stream entries to ack
-	msgs     []bus.Message
-	notice   *Push
-	text     string
-	started  time.Time
-	running  bool // a Deliver is under way (false while a deferral waits)
-	cancel   context.CancelFunc
-	seen     *atomic.Int64 // outputs the command printed
-	seenN    int64
-	lastOut  time.Time // when the daemon last saw the turn print, or its start
-	stopped  bool      // the daemon stopped it: silent past SilentStop
-	capped   bool      // the daemon ended it: its card's wall reached its lane's cap (lane_cap.go)
-	held     bool      // the daemon ended it: a provider failure stopped every lane (lane_parity.go)
-	byStop   bool      // the daemon ended it: the machine's stop cancelled every lane (stop.go)
-	tail     *outputTail
-	stamped  time.Time // when the daemon last stamped progress on the turn's card (stampProgress)
-	subjects string
-	present  bool // the present turn (present.go)
-	adopted  bool // a run adopted from the daemon before: the lane waits on its process, nothing is pushed (adopt.go)
+	entries        []string // the stream entries to ack
+	msgs           []bus.Message
+	notice         *Push
+	text           string
+	started        time.Time
+	running        bool // a Deliver is under way (false while a deferral waits)
+	cancel         context.CancelFunc
+	seen           *atomic.Int64 // outputs the command printed
+	seenN          int64
+	lastOut        time.Time // when the daemon last saw the turn print, or its start
+	stopped        bool      // the daemon stopped it: silent past SilentStop
+	capped         bool      // the daemon ended it: its card's wall reached its lane's cap (lane_cap.go)
+	held           bool      // the daemon ended it: a provider failure stopped every lane (lane_parity.go)
+	byStop         bool      // the daemon ended it: the machine's stop cancelled every lane (stop.go)
+	completionStop bool      // STOP asked a completed native run to exit without returning its card
+	tail           *outputTail
+	stamped        time.Time // when the daemon last stamped progress on the turn's card (stampProgress)
+	subjects       string
+	present        bool // the present turn (present.go)
+	adopted        bool // a run adopted from the daemon before: the lane waits on its process, nothing is pushed (adopt.go)
 }
 
 func (t *turn) messageIDs() []string {
@@ -592,6 +593,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.mode = mode
 		}
 		d.status.Mode = l.mode
+		if l.mode == ModeBatch {
+			l.batchLaneRecovery(now, width)
+		}
 		l.inboxStep(now) // before the lanes: a card written this step is handed this step
 		switch {
 		case l.broken:
@@ -610,9 +614,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 			d.status.Lanes = l.lanes.said(width)
 		case (l.busy == nil || !l.busy.running) && l.presentOwed(now):
 			l.startPresent(now, true)
-		case l.busy == nil && len(l.hand) > 0:
+		case l.busy == nil && len(l.hand) > 0 && !l.batchLaneDebt():
 			l.startBatch(now)
-		case l.busy == nil && len(l.dealt) > 0 && d.machineMayLaunch(): // NoNudgeWhileStopped
+		case l.busy == nil && len(l.dealt) > 0 && d.machineMayLaunch() && !l.batchLaneDebt(): // NoNudgeWhileStopped
 			l.startDealt(now)
 		case l.busy == nil && l.wake && drained: // the nonce/pong control turn remains live during STOP
 			l.startWake(now)
@@ -635,7 +639,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 				d.status.BeatError, d.status.Beats, d.status.LastBeat = "", d.status.Beats+1, now
 			}
 		}
-		if d.Activity != nil && l.mode == ModeBatch && !l.broken && l.busy == nil && proven && d.machineMayLaunch() { // no idle wake without a fresh RUNNING word
+		if d.Activity != nil && l.mode == ModeBatch && !l.broken && l.busy == nil && proven && d.machineMayLaunch() && !l.batchLaneDebt() { // no idle wake without a fresh RUNNING word
 			if d.walked.IsZero() || now.Sub(d.walked) >= IdleWalkEvery {
 				d.active, d.cards, d.walked = d.Activity(), d.held(), now
 			}

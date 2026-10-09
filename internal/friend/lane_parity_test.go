@@ -344,6 +344,8 @@ func TestOpencodeLanesDoWhatTheRunnerStopgapsDid(t *testing.T) {
 		assert.Equal(t, "bob one-shot lane finished c1~15: LAND; cost $0.25 (opencode: $0.02); wall 1m35s\n", body)
 		subject, _ = FinishNote("bob", "c1~15", "", "unpriced", time.Second)
 		assert.Equal(t, "bob card c1~15: no report", subject)
+		_, body = FinishNote("bob", "c1~15", "FAIL", "unpriced", -1)
+		assert.Contains(t, body, "wall unknown")
 	})
 }
 
