@@ -97,6 +97,8 @@ type Forge interface {
 	// adopting host through the repository rather than through the machine
 	// whose bits are being checked against it.
 	TagMessage(ctx context.Context, repo, tag string) (string, error)
+	// DispatchWorkflow triggers a GitHub Actions workflow run on the named ref.
+	DispatchWorkflow(ctx context.Context, repo, workflow, ref string) error
 }
 
 // SSH is the edge to another machine: run a command there, or put a directory

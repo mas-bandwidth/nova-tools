@@ -60,6 +60,62 @@ func PullRequests(commits []Commit) []PR {
 	return prs
 }
 
+// certified is the release gate. A commit must have a green certification run
+// from certification.yml before a release can be cut. This is the same check
+// release.yml makes: the first job asks certification.yml to vouch for the commit.
+// Waivers (dogfood, journey, spend) never cover certification.
+func certified(runs []CheckRun, ref string) error {
+	var found bool
+	var inFlight bool
+	var failed bool
+	var success bool
+	var failConclusion string
+
+	for _, r := range runs {
+		if r.Name == "certification" || r.Name == "certification-ok" {
+			found = true
+			if r.Status != "completed" {
+				inFlight = true
+			} else if r.Conclusion == "success" {
+				success = true
+			} else {
+				failed = true
+				failConclusion = r.Conclusion
+			}
+		}
+	}
+	if !found {
+		cmd := fmt.Sprintf("gh workflow run certification.yml --ref %s", ref)
+		return refuse(fmt.Sprintf("certify it first: %s (or pass --dispatch-certification to dispatch and wait)", cmd),
+			"no certification run has vouched for this commit: run %s", cmd)
+	}
+	if failed && !success {
+		return refuse("fix the certification failure and cut again; a tag cannot be amended",
+			"certification.yml failed on this commit: %s", failConclusion)
+	}
+	if inFlight && !success {
+		return refuse("wait for certification to finish and cut again (or pass --dispatch-certification to wait)",
+			"certification.yml is still running on this commit")
+	}
+	return nil
+}
+
+func isCertificationFailure(runs []CheckRun) bool {
+	var hasFailure, hasSuccess, hasInFlight bool
+	for _, r := range runs {
+		if r.Name == "certification" || r.Name == "certification-ok" {
+			if r.Status != "completed" {
+				hasInFlight = true
+			} else if r.Conclusion == "success" {
+				hasSuccess = true
+			} else {
+				hasFailure = true
+			}
+		}
+	}
+	return hasFailure && !hasSuccess && !hasInFlight
+}
+
 // green is the gate. A tag is the one thing in this repository that cannot be
 // quietly amended and pushed again, so the evidence is read before it is
 // written: every check run on the commit must have COMPLETED, and completed
@@ -491,6 +547,42 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	if err != nil {
 		return refusal(errs, "CUT", fmt.Errorf("cannot read the checks on %s: %w (ask again when the forge answers)", sha, err))
 	}
+	// Certification must be green before a release can be cut.
+	// This is the same check release.yml makes, and waivers never cover certification.
+	certErr := certified(runs, o.from)
+	if certErr != nil {
+		if !o.dispatchCertification {
+			return refusal(errs, "CUT", certErr)
+		}
+		progress(errs, "dispatching certification.yml on %s", o.from)
+		if err := forge.DispatchWorkflow(ctx, o.repo, "certification.yml", o.from); err != nil {
+			return refusal(errs, "CUT", fmt.Errorf("cannot dispatch certification.yml: %w", err))
+		}
+		sleep := deps.Sleep
+		if sleep == nil {
+			sleep = func(d time.Duration) { time.Sleep(d) }
+		}
+		progress(errs, "waiting for certification to complete")
+		for {
+			select {
+			case <-ctx.Done():
+				return refusal(errs, "CUT", ctx.Err())
+			default:
+			}
+			sleep(100 * time.Millisecond)
+			runs, err = forge.CheckRuns(ctx, o.repo, sha)
+			if err != nil {
+				return refusal(errs, "CUT", fmt.Errorf("cannot read check runs: %w", err))
+			}
+			certErr = certified(runs, o.from)
+			if certErr == nil {
+				break
+			}
+			if isCertificationFailure(runs) {
+				return refusal(errs, "CUT", certErr)
+			}
+		}
+	}
 	if err := green(runs); err != nil {
 		return refusal(errs, "CUT", err)
 	}
@@ -561,7 +653,7 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	}
 	section := sectionWith(o.version, sha, previous, sumsDigest, dogfoodWaiver(gate, o.reason), journeys.section()+spend.Section, deps.Now(), prs)
 	if o.dryRun {
-		fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s journeys=%s spend=%s dry-run=yes\n",
+		fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s journeys=%s spend=%s dry-run=yes publish=workflow\n",
 			field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest), gate, journeys.State, spend.State)
 		fmt.Fprint(errs, section)
 		return 0
@@ -577,7 +669,7 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			field(o.version), field(sha), oneline.Err(err), field(o.changelog))
 		return 1
 	}
-	fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s journeys=%s spend=%s dry-run=no\n",
+	fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s journeys=%s spend=%s dry-run=no publish=workflow\n",
 		field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest), gate, journeys.State, spend.State)
 	return 0
 }
