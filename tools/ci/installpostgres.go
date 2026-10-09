@@ -13,8 +13,8 @@ const postgresInstallLock = "/tmp/nova-postgres-install.lock"
 // machine is searched; postgresBinGlob is tried after them, for any other
 // version.
 var postgresBinDirs = []string{
-	"/usr/lib/postgresql/16/bin", "/usr/lib/postgresql/17/bin", "/usr/lib/postgresql/15/bin", "/usr/lib/postgresql/14/bin",
-	"/opt/homebrew/opt/postgresql@16/bin", "/usr/local/opt/postgresql@16/bin", "/usr/pgsql-16/bin",
+	"/usr/lib/postgresql/18/bin", "/usr/lib/postgresql/16/bin", "/usr/lib/postgresql/17/bin", "/usr/lib/postgresql/15/bin", "/usr/lib/postgresql/14/bin",
+	"/opt/homebrew/opt/postgresql@18/bin", "/opt/homebrew/opt/postgresql@16/bin", "/usr/local/opt/postgresql@16/bin", "/usr/pgsql-18/bin", "/usr/pgsql-16/bin",
 }
 
 const postgresBinGlob = "/usr/lib/postgresql/*/bin"
