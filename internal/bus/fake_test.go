@@ -187,7 +187,7 @@ func (f *Fake) add(streams []string, fields map[string]string, marks []Mark) {
 			continue
 		}
 		if m.Forward {
-			next, moved := Forward(f.hashes[m.Key][m.Field], m.Value, f.now)
+			next, moved := forwardReceipt(f.hashes[m.Key][m.Field], m.Value, f.now)
 			if !moved {
 				continue
 			}
@@ -248,7 +248,7 @@ func (f *Fake) Forward(_ context.Context, key, state string, ids ...string) ([]s
 	for i, id := range ids {
 		cur := f.hashes[key][id]
 		prior[i], _, _ = strings.Cut(cur, " ")
-		if next, moved := Forward(cur, state, f.now); moved {
+		if next, moved := forwardReceipt(cur, state, f.now); moved {
 			if f.hashes == nil {
 				f.hashes = map[string]map[string]string{}
 			}
@@ -453,4 +453,18 @@ func inRange(id, from, to string) bool {
 		return false
 	}
 	return true
+}
+
+// forwardReceipt is the receipt rule of the store's script (forwardLua, redis.go):
+// the value a receipt holding cur moves to when state is asked at now, and
+// whether it moves. It moves only forward, and only delivered starts one: a
+// message is never read or acted before it is delivered.
+// (tla/Bus2Receipts.tla: ReceiptNeverMovesBack, ActedImpliesDelivered)
+func forwardReceipt(cur, state string, now time.Time) (string, bool) {
+	prior, _, _ := strings.Cut(cur, " ")
+	have, want := rank(prior), rank(state)
+	if want <= have || (have == 0 && want != 1) {
+		return cur, false
+	}
+	return state + " " + strconv.FormatInt(now.Unix(), 10), true
 }

@@ -13,7 +13,6 @@
 package main
 
 import (
-	"io"
 	"maps"
 	"os"
 	"slices"
@@ -34,14 +33,6 @@ type seams struct {
 }
 
 func main() { os.Exit(novaCheck(seams{}).Main()) }
-
-func run(args []string, stdout, stderr io.Writer) int {
-	return runWith(seams{}, args, stdout, stderr)
-}
-
-func runWith(s seams, args []string, stdout, stderr io.Writer) int {
-	return novaCheck(s).Run(args, os.Stdin, stdout, stderr)
-}
 
 // exitCodes is the one exit table of every verb (docs/STANDARD.md section 2).
 const exitCodes = "0 pass, 1 check failed, 2 could not run (bad invocation)"

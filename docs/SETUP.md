@@ -57,14 +57,14 @@ What `--local` never touches, and how each step decides it has nothing to do, is
 
 ### setup-nova-doctor-r-r5.w1: nova-doctor
 
-When anything is wrong, run `nova-doctor` first. It runs every check, prints one
+When anything is wrong, run `nova-doctor run` first. It runs every check, prints one
 `DOCTOR <check> ok|warn|fail <evidence> [fix: <line>]` line each, and gives the one fix
 line for each thing that is not ok. It changes nothing.
 
 ```
-nova-doctor            every check
-nova-doctor --local    skip the checks only a fleet needs, and say which
-nova-doctor --check self --json
+nova-doctor run                     every check
+nova-doctor run --local             skip the checks only a fleet needs, and say which
+nova-doctor run --check self --json
 ```
 
 Exit 0 is all ok, 1 a warn under `--strict`, 2 a fail. The first check, `self`, finds the
@@ -188,7 +188,7 @@ each row whose `seat` is this machine's) appears in the store's own listing
 naming the verb or the step above: install `sops`, set the missing variable, `chmod 600` or
 `chmod 700` the key, `nova-secrets keygen`, the `git clone` of the store, or `nova-secrets seal --store <store> --as <seat> --name <NAME>` for a name the loops require and the store
 does not hold. The check is fleet-scoped: `nova-doctor --local` skips it with the other fleet
-checks and says which; run `nova-doctor` plain to see it.
+checks and says which; run `nova-doctor run` without `--local` to see it.
 
 ### dep-ssh-b.w8: ssh between the coordinator and the benches
 
@@ -215,7 +215,7 @@ The `ssh` doctor check (`internal/doctor/check_ssh.go`) reads the inventory
 runs that probe once per machine, each bounded by the check's own deadline. It names every
 bench whose probe fails and the reason (unknown host key, no key or permission denied,
 timeout), with the one fix line above. It is fleet-only, so `nova-doctor --local` skips it
-and says which; run `nova-doctor` plain to include it.
+and says which; run `nova-doctor run` without `--local` to include it.
 
 ### sprint-dashboard-verb-r-b.w7: the sprint dashboard
 

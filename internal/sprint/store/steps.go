@@ -107,7 +107,7 @@ func AskStep(r sprint.AskReq) Step {
 
 // ReadStep is a reader recording its reads.
 func ReadStep(r sprint.ReadReq) Step {
-	// a read asked of a friend is a card on her fleet row (sprint.FriendReadAsk): the
+	// a read asked of a friend is a card on her fleet row (the sprint's friendReadAsk): the
 	// verb reads the fleet table and closes it as her outbox report does, and brings
 	// her row's display cells up to date
 	for _, rd := range sprint.Split(r.As) {

@@ -125,6 +125,19 @@ func TestLoopRunIsTheLoopsCommandUnderItsOneLock(t *testing.T) {
 		assert.Zero(t, h2.opens, "a command after -- opens no store")
 	})
 
+	t.Run("--dry-run prints the run's line and takes no lock, writes nothing and runs nothing", func(t *testing.T) {
+		fresh := filepath.Join(t.TempDir(), "run") // never made by a dry run
+		f := &fakeRunner{}
+		code, out, errs := runWith(loopRunDeps(h, f), "loop", "run", "refresh", "--run-dir", fresh, "--metrics", filepath.Join(fresh, "textfile"), "--dry-run")
+		assert.Equal(t, 0, code, errs)
+		assert.Equal(t, "LOOP RUN name=refresh starts=1 argv=[\"/bin/refresh\",\"--once\"] dry_run=true; no lock taken, nothing written or run\n", out)
+		assert.Empty(t, f.ran, "a dry run ran the command")
+		assert.NoDirExists(t, fresh, "a dry run made the run directory")
+		code, _, errs = runWith(loopRunDeps(h, f), "loop", "run", "off", "--run-dir", fresh, "--dry-run")
+		assert.Equal(t, 1, code, "a dry run refuses what the run refuses: %s", errs)
+		assert.Empty(t, f.ran)
+	})
+
 	t.Run("refusals", func(t *testing.T) {
 		for _, c := range []struct {
 			args []string
@@ -149,7 +162,8 @@ func TestLoopRunIsTheLoopsCommandUnderItsOneLock(t *testing.T) {
 	t.Run("its help states its effect and touches nothing", func(t *testing.T) {
 		code, out, errs := h.run(t, "loop", "run", "-h")
 		require.Equal(t, 0, code, errs)
-		assert.Contains(t, out, "effect: process: takes <run-dir>/<name>.lock")
+		assert.Contains(t, out, "effect: local write: takes <run-dir>/<name>.lock")
+		assert.Contains(t, out, "--dry-run")
 		assert.Contains(t, out, "--run-dir")
 		assert.Contains(t, out, "example: nova-config loop run sleeper --run-dir ./run -- sleep 1")
 	})

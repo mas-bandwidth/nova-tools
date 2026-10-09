@@ -75,6 +75,20 @@ func newTestApp(t *testing.T) *testApp {
 	return ta
 }
 
+// homeOfItsOwn gives the app a home under the test's temp: a verb that walks the
+// home reads that, never the machine's (gc --dry-run walks the bench root and every Go
+// build cache under it; on a bench that is millions of entries and a minute of a test).
+func (ta *testApp) homeOfItsOwn() {
+	home := ta.t.TempDir()
+	env := ta.a.getenv
+	ta.a.getenv = func(k string) string {
+		if k == "HOME" {
+			return home
+		}
+		return env(k)
+	}
+}
+
 // beat is one beat of every live member, at load 0.
 func (ta *testApp) beat() {
 	ta.mu.Lock()

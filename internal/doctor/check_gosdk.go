@@ -52,7 +52,7 @@ func checkGoSDK(ctx context.Context, env Env) Result {
 	want, exact, err := toolchainVersion(ctx, env, goPath)
 	if err != nil {
 		return Result{Status: Fail, Evidence: err.Error(),
-			Fix: "run nova-doctor in a checkout of this repository, whose go.mod names the bench's toolchain (" + doc + ")"}
+			Fix: "run nova-doctor run in a checkout of this repository, whose go.mod names the bench's toolchain (" + doc + ")"}
 	}
 	if !goMatches(got, want, exact) {
 		return Result{Status: Fail,

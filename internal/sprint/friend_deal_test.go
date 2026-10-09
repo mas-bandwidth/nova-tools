@@ -489,3 +489,15 @@ func TestBriefKindReadsOnlyTheTypedHeader(t *testing.T) {
 	assert.Equal(t, "fix-red", BriefKind("task\nREPO: mas-bandwidth/nova-tools\nKIND: fix-red\n\nThe work."))
 	assert.Empty(t, BriefKind("task\nREPO: mas-bandwidth/nova-tools\n\nThe work.\nKIND: fix-red"), "a KIND line in the body does not grant a restriction match")
 }
+
+// FriendDeal is the tick's friend deal alone (friendDeal), its plan without the counts
+// the level reads.
+func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
+	p, _, _ := friendDeal(s, cards, seats)
+	return p
+}
+
+// friendDeal is the tick's friend deal in one pass, reclaiming (friendDealPass).
+func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, dealtWorking map[string]int) {
+	return friendDealPass(s, cards, seats, true)
+}

@@ -136,15 +136,10 @@ func lessVersion(a, b []int) bool {
 	return false
 }
 
-// Section renders one changelog section. It is exported and pure so that the
-// shape of what a release says about itself is asserted by a test rather than
-// by reading a file somebody wrote by hand afterwards.
-func Section(version, sha, previous, sumsDigest, dogfoodWaiver string, when time.Time, prs []PR) string {
-	return sectionWith(version, sha, previous, sumsDigest, dogfoodWaiver, "", when, prs)
-}
-
-// sectionWith is Section with what the journey gate found, which is already in
-// the section's words (JourneyRecord.section).
+// sectionWith renders one changelog section, with what the journey gate found, which
+// is already in the section's words (JourneyRecord.section; "" when it found nothing to
+// say). It is pure so that the shape of what a release says about itself is asserted by
+// a test rather than by reading a file somebody wrote by hand afterwards.
 func sectionWith(version, sha, previous, sumsDigest, dogfoodWaiver, journeys string, when time.Time, prs []PR) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## %s — %s\n\n", version, when.UTC().Format("2006-01-02"))

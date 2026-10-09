@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,14 +21,15 @@ import (
 // docs/TESTS.md `### First run` transcript is RUN, line for line and in order,
 // through the one comparator (onboarding.CompareTranscript), and the usage
 // banner's `example:` block is that same sitting. The sitting is the canary
-// by hand with no daemon: a dry-run install, a ping as the coordinator, the
-// session's pong, the wait for it, the status of a directory no daemon has
-// run in, and a dry-run uninstall. It needs a store whose nova-config rows
+// by hand with no daemon: a dry-run install, a dry-run uninstall, a dry-run
+// host, a ping as the coordinator, the session's pong, the wait for it, and
+// the status of a directory no daemon has run in. It needs a store whose nova-config rows
 // name ada and bob, so it runs on a throwaway redis-server with those two
 // names in the `friends` set, its address in NOVA_BUS_REDIS, which changes
 // what the tool dials and nothing it prints. `./` is a directory of the
 // test's own, and the home directory and uid are the test's, so the plist
-// path reads as the document writes it. The run-owned values are the
+// path reads as the document writes it; bob's directory is made there first,
+// since install refuses a --dir that is not a real directory. The run-owned values are the
 // message ids, their at, and how long the wait took.
 
 func firstRunStore(t *testing.T) string {
@@ -44,6 +46,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	documentedExamples := []string{
 		"nova-friend install --as bob --harness opencode --dir ./bob --dry-run",
 		"nova-friend uninstall --as bob --dry-run",
+		"nova-friend host --as bob --harness aider --dir ./bob --dry-run -- aider",
 		"nova-friend ping --as ada --to bob --nonce abc123",
 		"nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4",
 		"nova-friend wait-pong --from bob --nonce abc123 --timeout 2s",
@@ -62,6 +65,10 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	require.Equal(t, strings.Join(documentedExamples, "\n"), strings.Join(commands, "\n"), "the transcript and the examples this test names are one list")
 
 	dir := t.TempDir()
+	// bob's directory is there, as it is for a friend being installed: install,
+	// --dry-run too, refuses a --dir that is not a real directory
+	// (friend.ErrNotRealDir) and never makes it.
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "bob"), 0o755))
 	w := realWorld()
 	addr := firstRunStore(t)
 	w.getenv = func(k string) string {

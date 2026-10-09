@@ -164,7 +164,7 @@ func checkProviders(ctx context.Context, env Env) Result {
 			notes = append(notes, "provider "+r.Provider+" has no known models endpoint; route "+r.Name+" is listed, not checked")
 			continue
 		case err != nil:
-			firstFix = orFix(firstFix, "check the network to "+r.Provider+", or run nova-doctor under the seat's secrets when the provider reads a sealed key (nova-secrets exec --only <NAME> -- nova-doctor)")
+			firstFix = orFix(firstFix, "check the network to "+r.Provider+", or run nova-doctor under the seat's secrets when the provider reads a sealed key (nova-secrets exec --only <NAME> -- nova-doctor run)")
 			problems = append(problems, "route "+r.Name+": provider "+r.Provider+" did not answer its models list: "+err.Error())
 			continue
 		}

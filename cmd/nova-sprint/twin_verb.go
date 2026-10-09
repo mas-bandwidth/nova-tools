@@ -63,7 +63,9 @@ func (a *app) cmdTwin(args []string, stdout, stderr io.Writer) int {
 	merging := v.Primary != nil && v.Primary.Placed() && v.Primary.Col == sprint.Merging
 	if merging {
 		// returned first: the step returns it (and says so), and the next makes the twin
-		if code := a.runStep("twin", *c, st, twinStep(r), stdout, stderr); code != 0 {
+		if code := a.runStep("twin", *c, st, twinStep(r), stdout, stderr); code != 0 || c.dry {
+			// --dry-run plans the return and stops: nothing was written, so the twin's own
+			// step would plan the same return again
 			return code
 		}
 		c.says = nil

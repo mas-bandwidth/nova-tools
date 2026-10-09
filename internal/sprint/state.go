@@ -88,12 +88,20 @@ type Table struct {
 	byPrimary map[string][]*Card
 	lines     map[string][]*Card // each row's cards not landed, in score order; built with cells
 	stops     map[string][]int   // each line's last sentinel at or before each place (lineStops); built with lines
+	// ids are every card's id, placed or kept, in id order: built on first use
+	// (sortedIDs) and kept by Put and Drop, so Cards and WithPrefix are a walk,
+	// never a sort of the whole table for each call (a step asks of every primary).
+	ids []string
 }
 
 // Put adds or replaces a card.
 func (t *Table) Put(c *Card) {
 	if c.Fields == nil {
 		c.Fields = map[string]string{}
+	}
+	if _, ok := t.cards[c.ID]; !ok && t.ids != nil {
+		i, _ := slices.BinarySearch(t.ids, c.ID)
+		t.ids = slices.Insert(t.ids, i, c.ID)
 	}
 	t.cards[c.ID] = c
 	t.cells, t.byPrimary = nil, nil
@@ -117,6 +125,10 @@ func (t *Table) Frozen() *Table {
 	maps.Copy(c.Texts, t.Texts)
 	c.rows = append([]string(nil), t.rows...)
 	c.cells, c.byPrimary, c.lines, c.stops = nil, nil, nil, nil
+	c.ids = nil
+	if len(t.ids) == len(t.cards) {
+		c.ids = slices.Clone(t.ids) // the same cards: their order kept, not sorted again
+	}
 	return &c
 }
 
@@ -127,6 +139,9 @@ func (t *Table) Drop(id string) {
 		return
 	}
 	delete(t.cards, id)
+	if i, ok := slices.BinarySearch(t.ids, id); ok {
+		t.ids = slices.Delete(t.ids, i, i+1)
+	}
 	t.cells, t.byPrimary = nil, nil
 }
 
@@ -235,12 +250,47 @@ func (t *Table) Cards() []*Card {
 	if t == nil {
 		return nil
 	}
-	out := make([]*Card, 0, len(t.cards))
-	for _, c := range t.cards {
-		out = append(out, c)
+	ids := t.sortedIDs()
+	out := make([]*Card, len(ids))
+	for i, id := range ids {
+		out[i] = t.cards[id]
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+// WithPrefix is the cards, placed or kept, whose id begins with prefix, in id
+// order: Cards filtered by the prefix, without walking the rest of the table.
+func (t *Table) WithPrefix(prefix string) []*Card {
+	if t == nil {
+		return nil
+	}
+	ids := t.sortedIDs()
+	i, _ := slices.BinarySearch(ids, prefix)
+	var out []*Card
+	for ; i < len(ids) && strings.HasPrefix(ids[i], prefix); i++ {
+		out = append(out, t.cards[ids[i]])
+	}
+	return out
+}
+
+// AnyWithPrefix says the table holds a card, placed or kept, whose id begins
+// with prefix: WithPrefix not empty, with nothing gathered.
+func (t *Table) AnyWithPrefix(prefix string) bool {
+	if t == nil {
+		return false
+	}
+	ids := t.sortedIDs()
+	i, _ := slices.BinarySearch(ids, prefix)
+	return i < len(ids) && strings.HasPrefix(ids[i], prefix)
+}
+
+// sortedIDs is every card's id in id order (ids), built once from the cards
+// when it is not yet built.
+func (t *Table) sortedIDs() []string {
+	if t.ids == nil || len(t.ids) != len(t.cards) {
+		t.ids = slices.Sorted(maps.Keys(t.cards))
+	}
+	return t.ids
 }
 
 // Placed is the card with the id if it has a place.

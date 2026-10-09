@@ -254,6 +254,7 @@ func (a *app) cmdSeatPush(args []string, stdout, stderr io.Writer) int {
 	session := fs.String("session", "", "with --harness, the session's id, for a harness that names one (default: the adapter's newest in --target)")
 	sent := fs.String("sent", "", "the push loop's report: the nonce of the check it delivered")
 	failed := fs.String("failed", "", "with --sent, why the delivery of the check failed")
+	dry := fs.Bool("dry-run", false, "check the flags and the record and print what would be recorded, and write nothing")
 	if pos, err := parse(fs, args); err != nil || len(pos) > 0 {
 		return refuse(stderr, name, argErr("takes no words ", err, pos...))
 	}
@@ -283,6 +284,10 @@ func (a *app) cmdSeatPush(args []string, stdout, stderr io.Writer) int {
 		if why != "" {
 			return refuse(stderr, name, why)
 		}
+		if *dry {
+			fmt.Fprintf(stdout, "SEAT PUSH DRY-RUN name=%s harness=%s target=%s adapter=%s; nothing was written\n", oneline.Field(next.Name), oneline.Field(next.Harness), oneline.Field(next.Target), oneline.Field(next.AdapterName()))
+			return 0
+		}
 		if err := writePush(ctx, st, next); err != nil {
 			return a.readFailed(name, err, stderr)
 		}
@@ -291,7 +296,12 @@ func (a *app) cmdSeatPush(args []string, stdout, stderr io.Writer) int {
 		if !ok {
 			return refuse(stderr, name, "no push target is recorded for "+c.actor+"; run: "+sprint.PushSetup(c.actor, rec, ok))
 		}
-		rec = sprint.PushSent(rec, *sent, *failed, now)
+		next := sprint.PushSent(rec, *sent, *failed, now)
+		if *dry {
+			fmt.Fprintf(stdout, "SEAT PUSH DRY-RUN name=%s sent=%s failed=%s; nothing was written\n", oneline.Field(next.Name), oneline.Field(*sent), oneline.Field(orDashStr(*failed, "-")))
+			return 0
+		}
+		rec = next
 		if err := writePush(ctx, st, rec); err != nil {
 			return a.readFailed(name, err, stderr)
 		}
@@ -360,6 +370,7 @@ func (a *app) sayPush(rec sprint.PushRecord, ok bool, now time.Time, asJSON bool
 func (a *app) cmdSeatPong(args []string, stdout, stderr io.Writer) int {
 	const name = "seat pong"
 	fs, c := a.verbSetup(name)
+	dry := fs.Bool("dry-run", false, "check the nonce against the seat's push record and say whether it would prove the seat, and write nothing")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) != 1 {
 		return refuse(stderr, name, "wants one word, the nonce read from the delivered check; run: nova-sprint seat pong <nonce> --actor <name>")
@@ -381,6 +392,10 @@ func (a *app) cmdSeatPong(args []string, stdout, stderr io.Writer) int {
 	next, why := sprint.PushPong(rec, ok, strings.TrimSpace(pos[0]), now)
 	if why != "" {
 		return refuse(stderr, name, why)
+	}
+	if *dry {
+		fmt.Fprintf(stdout, "SEAT PONG DRY-RUN name=%s would-prove=%s; nothing was written\n", oneline.Field(next.Name), next.Proven.UTC().Format(time.RFC3339))
+		return 0
 	}
 	if err := writePush(ctx, st, next); err != nil {
 		return a.readFailed(name, err, stderr)

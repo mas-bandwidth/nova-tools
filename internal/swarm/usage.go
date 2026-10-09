@@ -126,7 +126,7 @@ func (u ProviderUsage) add(columns []string) (sum int, seen int, partial bool) {
 func ReadProviderUsage(source, dataHome string) (ProviderUsage, error) {
 	switch source {
 	case UsageOpenCode:
-		return readOpenCodeUsage(dataHome)
+		return openCodeReader{}.read(dataHome)
 	case UsageNone, "":
 		return ProviderUsage{Values: map[string]string{}}, nil
 	default:

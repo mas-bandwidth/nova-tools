@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"sort"
 	"testing"
 	"time"
 
@@ -77,4 +78,58 @@ func TestTheReadersTableCarriesEachReadersSpend(t *testing.T) {
 	// between the two, and no take in either
 	assert.Equal(t, "$0.75", streams["s1"].ReadCost)
 	assert.Equal(t, "$2.13", streams["s2"].ReadCost, "0.125 + 2")
+}
+
+// plus is the two spends summed: the same reader's on two streams.
+func (r ReaderSpend) plus(o ReaderSpend) ReaderSpend {
+	out := ReaderSpend{Reads: r.Reads + o.Reads, Priced: r.Priced + o.Priced, HourPriced: r.HourPriced + o.HourPriced, Tokens: r.Tokens + o.Tokens}
+	out.USD, out.HourUSD = usdPlus(r.USD, o.USD), usdPlus(r.HourUSD, o.HourUSD)
+	return out
+}
+
+// usdPlus is two exact dollar figures summed, "" when neither is one: nothing priced stays
+// nothing priced, never $0.00.
+func usdPlus(a, b string) string {
+	if a == "" || b == "" {
+		return a + b
+	}
+	sum, _ := cardcost.Sum(a, b)
+	return sum
+}
+
+// ReaderSpendsOf is each reader's spend summed over the streams' where records
+// (TierCosts.Readers): what the readers table is to show, read off the tick's
+// record, never off the cards at where.
+func ReaderSpendsOf(streams map[string]TierCosts) map[string]ReaderSpend {
+	out := map[string]ReaderSpend{}
+	names := make([]string, 0, len(streams))
+	for st := range streams {
+		names = append(names, st)
+	}
+	sort.Strings(names) // the sums are exact; the order only keeps the walk the same
+	for _, st := range names {
+		for rd, sp := range streams[st].Readers {
+			out[rd] = out[rd].plus(sp)
+		}
+	}
+	return out
+}
+
+// ReaderSpendTotal is every reader's spend summed: the readers table's one row.
+func ReaderSpendTotal(spends map[string]ReaderSpend) ReaderSpend {
+	names := make([]string, 0, len(spends))
+	for rd := range spends {
+		names = append(names, rd)
+	}
+	sort.Strings(names)
+	var all ReaderSpend
+	for _, rd := range names {
+		all = all.plus(spends[rd])
+	}
+	return all
+}
+
+// ReaderSpends is each reader's spend over every primary of the work table, all streams.
+func ReaderSpends(s *Snapshot) map[string]ReaderSpend {
+	return ReaderSpendsOf(StreamTierCosts(s))
 }

@@ -74,6 +74,9 @@ func (s *Snapshot) decideFields(pr *Card, first bool) map[string]string {
 
 // readsAt is the primary's placed read cards at an attempt, in reader row order.
 func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
+	if !anyReadCardAt(s, pr, attempt) {
+		return nil
+	}
 	var out []*Card
 	for _, r := range s.Readers.Rows() {
 		for _, id := range ReadCardIDs(pr.ID, attempt, r) {
@@ -445,7 +448,7 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		return p
 	}
 	// a read asked of a friend is on her fleet row, not the readers table
-	// (FriendReadAsk): the verb her packet prints closes it there
+	// (friendReadAsk): the verb her packet prints closes it there
 	for _, rd := range readers {
 		name, friend := FriendOfRow(rd)
 		member := !friend && s.Fleet != nil && s.Fleet.HasRow(rd) && (s.Readers == nil || !s.Readers.HasRow(rd))

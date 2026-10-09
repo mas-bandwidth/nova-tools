@@ -133,21 +133,6 @@ func consumerProvider(routes map[string]string, c Consumer) string {
 	return p
 }
 
-// InternalSpendOn is the sprint's records of a provider on a UTC day (2006-01-02): every
-// consumer record on every primary of the work table that ended that day, at its charged
-// figure (the harness's cost, else the predicted one at the route's prices).
-func InternalSpendOn(s *Snapshot, provider, day string) float64 {
-	all, _ := internalSpendSplit(s, provider, day)
-	return all
-}
-
-// InternalReadSpendOn is the reads among InternalSpendOn's records: what the reads of that
-// provider and day cost, the read share of the records the provider's count is set beside.
-func InternalReadSpendOn(s *Snapshot, provider, day string) float64 {
-	_, reads := internalSpendSplit(s, provider, day)
-	return reads
-}
-
 // internalSpendSplit is InternalSpendOn's sum and the reads' part of it.
 func internalSpendSplit(s *Snapshot, provider, day string) (all, reads float64) {
 	if s.Work == nil {

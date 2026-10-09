@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,16 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
+
+// landRound is one round of the land loop run in line, as a test drives it: the landing
+// (landOnce, which says a failed round once while it holds), then, outside it, the cleanup
+// and the promote step when they are due (landAfter), as landCycle runs them around a
+// flight. more is further arguments of land. It returns land's exit code.
+func (a *app) landRound(ctx context.Context, addr string, more []string, stdout io.Writer) int {
+	code, idle := a.landOnce(ctx, addr, more, stdout)
+	a.landAfter(ctx, idle, stdout)
+	return code
+}
 
 // The server lands what the readers passed (run --land): a round lands every stream
 // with cards queued to merge, as the sprint's coordinator, and says so; a round with

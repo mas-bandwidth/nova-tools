@@ -493,7 +493,7 @@ refused by name, listing the kinds there are:
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --kind fix-with-red-test
-HYGIENE REFUSED: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
+HYGIENE REFUSED: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, ledger, read, probe, text, tone, report; run: nova-check help
 ```
 
 ```
@@ -1492,7 +1492,6 @@ example:
   nova-friend ping --as ada --to bob --nonce abc123
   nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
   nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
-  nova-friend watch --as ada --timeout 10m
   nova-friend status --as bob --dir ./bob
 ```
 
@@ -1562,10 +1561,11 @@ from `nova-friend help`:
 example: nova-friend beat --as bob --server 127.0.0.1:6390
 flags:
   --as <string>  your name, a nova-config friend row (required)
+  --dry-run  print what the verb would write and write nothing
   --json  print the result as one JSON object instead of lines
   --server <string>  the sprint server, host:port (default: NOVA_SPRINT_SERVER, else 127.0.0.1:6390)
 exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
-effect: delivery: sends beyond this machine: one beat to the sprint server, the same beat the daemon's loop sends while its session is alive
+effect: delivery: sends beyond this machine: one beat to the sprint server, the same beat the daemon's loop sends while its session is alive; --dry-run sends nothing
 ```
 
 `nova-friend install -h`:
@@ -1745,7 +1745,6 @@ effect: delivery: sends beyond this machine: the session's answer to a PING, one
 usage: nova-friend watch [flags]
 from `nova-friend help`:
   nova-friend watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]
-  nova-friend watch --as ada --timeout 10m
 example: nova-friend watch --as ada --timeout 10m
 flags:
   --as <string>  your name, the coordinator whose stream and wake file are watched (required)

@@ -1009,6 +1009,11 @@ const changePage = 64
 // none): any other write in the span makes the twin read the table whole.
 var twinVerbs = map[string]bool{"apply": true, "row_set": true, "rows_add": true, "row_add": true}
 
+// rowFlagVerbs are the table writes that change rows' flags and no record: a row
+// hide or show (stream archive) names none because it changed none, and the shape
+// read beside the catch-up carries the rows (as the Mem store's stream answers it).
+var rowFlagVerbs = map[string]bool{"rows_hide": true}
+
 // TableChanges reads the table's change stream from its newest event back to
 // the one that left revision from, and says the records the writes between
 // from and to named (twin.go). ok is false when the events do not chain from
@@ -1052,9 +1057,9 @@ func (r *Redis) TableChanges(ctx context.Context, table string, from, to uint64)
 			if ev.after != need {
 				return gap(fmt.Sprintf("the event before revision %d leaves revision %d", need, ev.after))
 			}
-			if ev.verb == "set" && orderOnly(ev.args) {
-				// the rows' order alone: no record changed, and the shape read beside the
-				// catch-up carries the order
+			if (ev.verb == "set" && orderOnly(ev.args)) || rowFlagVerbs[ev.verb] {
+				// the rows' order or their hidden flags alone: no record changed, and the
+				// shape read beside the catch-up carries the rows
 				if need = ev.before; need == from {
 					return ids, true, nil
 				}

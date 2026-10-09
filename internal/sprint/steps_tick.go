@@ -179,7 +179,7 @@ type TickReq struct {
 	// the done part's note counts from; zero is not known.
 	Started time.Time
 	// Friends is each friend the deal offers ready work first, read by the binding
-	// with every tick while the roster has a friend (friendDeal, before the residual
+	// with every tick while the roster has a friend (friendDealPass, before the residual
 	// fleet deal), with what her beat names running (FriendSeat.Running): the tick
 	// levels them after its deal (FriendLevel). nil is none: every card is the fleet's
 	// but a hard pin, which waits ready, and no friend is levelled.
@@ -849,7 +849,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 }
 
 // dealOrder is the one order the tick's deal offers ready cards in, to the friends
-// (friendDeal, friendReclaim) and to the machines alike (docs/SPEC-SPRINT.md section 1, a
+// (friendDealPass, friendReclaim) and to the machines alike (docs/SPEC-SPRINT.md section 1, a
 // friend's card): the stream turns from the deal's stream index (streamTurns), each
 // stream's cards in work order, the order tla/SprintTables.tla and the reference model
 // (refmodel) check. Each card then goes to the friend with the most idle lanes

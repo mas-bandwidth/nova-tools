@@ -43,8 +43,8 @@ come back to the table below for the problem you want it to solve.
 <tr><td>Check test runs and their cost.</td><td nowrap><a href="docs/CLI.md#nova-ci">nova-ci</a></td><td>test-time budgets over go test -json output, and this repository's own CI steps</td><td>Reads Go test events (a built-in stream with --example) and reports their timings. local, new-rule and new-verb need a Nova Tools checkout; github receipt writes to a Redis store.<br><code>nova-ci slowtests --example --budget 60</code></td></tr>
 <tr><td>See what is installed and at which version.</td><td nowrap><a href="docs/CLI.md#nova-version">nova-version</a></td><td>which version of each tool is installed, recorded and compared</td><td>Runs go version using the included local manifest; needs Go on PATH. No bus or remote lookup.<br><code>nova-version report --file ./cmd/nova-version/testdata/example.tsv</code></td></tr>
 <tr><td>Inspect versions and apply one chosen update.</td><td nowrap><a href="docs/CLI.md#nova-update">nova-update</a></td><td>compare installed tools with their latest releases, and update one when asked</td><td>Compares Go with itself using a local manifest; applies nothing. An update needs a target, version source and installation path.<br><code>nova-update report --file ./cmd/nova-update/testdata/example.tsv</code></td></tr>
-<tr><td>Find out what is missing for the nova tools to work on this machine.</td><td nowrap><a href="docs/SPEC-DOCTOR.md">nova-doctor</a></td><td>says what is missing for the nova tools to work here and, for each thing, the one line that fixes it</td><td>Runs every check and changes nothing; a check that is not ok prints its fix line. --local skips the checks only a fleet needs.<br><code>nova-doctor run --local</code></td></tr>
-<tr><td>Set nova up on one machine.</td><td nowrap><a href="docs/SETUP.md">nova-up</a></td><td>set nova up on one machine: plan every step, then apply, from nothing to a first sprint</td><td>Prints the plan and writes nothing with --dry-run; a missing dependency is a plain line with its install command.<br><code>nova-up --local --dry-run</code></td></tr>
+<tr><td>Find out what is missing for the nova tools to work on this machine.</td><td nowrap><a href="docs/SPEC-DOCTOR.md">nova-doctor</a></td><td>says what is missing for the nova tools to work, and the one line that fixes each</td><td>Runs every check and changes nothing; a check that is not ok prints its fix line. --local skips the checks only a fleet needs.<br><code>nova-doctor run --local</code></td></tr>
+<tr><td>Set nova up on one machine.</td><td nowrap><a href="docs/SETUP.md">nova-up</a></td><td>sets up nova on one machine, from nothing to a first sprint</td><td>Prints the plan and writes nothing with --dry-run; a missing dependency is a plain line with its install command.<br><code>nova-up --local --dry-run</code></td></tr>
 </tbody>
 </table>
 
@@ -76,8 +76,8 @@ start from that one tool without this page. Read the one you chose:
 - [nova-ci](cmd/nova-ci/README.md) — test-time budgets over go test -json output, and this repository's own CI steps
 - [nova-version](cmd/nova-version/README.md) — which version of each tool is installed, recorded and compared
 - [nova-update](cmd/nova-update/README.md) — compare installed tools with their latest releases, and update one when asked
-- [nova-doctor](cmd/nova-doctor/README.md) — says what is missing for the nova tools to work here and, for each thing, the one line that fixes it
-- [nova-up](cmd/nova-up/README.md) — set nova up on one machine: plan every step, then apply, from nothing to a first sprint
+- [nova-doctor](cmd/nova-doctor/README.md) — says what is missing for the nova tools to work, and the one line that fixes each
+- [nova-up](cmd/nova-up/README.md) — sets up nova on one machine, from nothing to a first sprint
 
 `nova-sprint`'s guide is the sprint contract, [docs/SPEC-SPRINT.md](docs/SPEC-SPRINT.md); start from `nova-sprint help`.
 

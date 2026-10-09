@@ -56,7 +56,7 @@ func init() {
 		{"resolve", "[<id>...] [--stream <s>] [--max <n>]", "resolve", (*app).cmdResolve},
 		{"start", "", "start", (*app).cmdMachineStart},
 		{"stop", "--reason <text> --until <time or duration>", "stop --reason 'the bench is rebooting' --until 30m", (*app).cmdMachineStop},
-		{"stop-return", "--as <owner-row> <card>@<gen>... --epoch <n> --reason <cancel acknowledgement>", "stop-return --as friend-a s1-1.w1@1 --epoch 15 --reason 'owned process stopped'", (*app).cmdStopReturn},
+		{"stop-return", "--as <owner-row> <card>@<gen>... --epoch <n> --reason <cancel acknowledgement> [--dry-run]", "stop-return --as friend-a s1-1.w1@1 --epoch 15 --reason 'owned process stopped'", (*app).cmdStopReturn},
 		{"run", "[--answer-rules=false] [--idle-alarm=false] [--listen <address:port>] [--land] [--decide <dir>]", "run", (*app).cmdRunGC},
 		{"tick", "[--answer-rules] [--idle-alarm] [--shadow]", "tick", (*app).cmdTick},
 		{"selftest land", "[--binary <path>] [--scratch-dir <dir>]", "selftest land", (*app).cmdSelftestLand},
@@ -163,8 +163,8 @@ func init() {
 		{"seat install", "--harness <name> --target <dir> [--session <id>] [--dir <dir>] [--log <file>] [--server <host:port>] [--config-seat <name> --config-dsn <dsn> --config-password-env <NAME>] [--dry-run]", "seat install --dry-run --redis 127.0.0.1:6381", (*app).cmdSeatInstall},
 		{"seat watch", "<dir> [--json]", "seat watch ./inbox", (*app).cmdSeatWatch},
 		{"seat uninstall", "[--dir <dir>]", "seat uninstall --dir ./no-unit-here", (*app).cmdSeatUninstall},
-		{"seat push", "[--harness <name> --target <dir> [--session <id>]] | --sent <nonce> [--failed <why>]", "seat push", (*app).cmdSeatPush},
-		{"seat pong", "<nonce>", "seat pong received-nonce", (*app).cmdSeatPong},
+		{"seat push", "[--harness <name> --target <dir> [--session <id>]] | --sent <nonce> [--failed <why>] [--dry-run]", "seat push", (*app).cmdSeatPush},
+		{"seat pong", "<nonce> [--dry-run]", "seat pong received-nonce", (*app).cmdSeatPong},
 		{"seat", "[--repair --reason <text>] | push [--harness <name> --target <dir> [--session <id>]] | pong <nonce>", "seat", (*app).cmdSeat},
 		{"fsck seat", "[--pg <host:port or postgres:// URI>]", "fsck seat", (*app).cmdFsckSeat},
 		{"routes", "", "routes", (*app).cmdRoutes},
@@ -636,6 +636,9 @@ func (a *app) verbSetup(name string) (flagSet, *common) {
 	fs := verbflag.New(name)
 	c := &common{verb: name}
 	c.register(fs, a.getenv)
+	if stepDryRun[name] {
+		fs.BoolVar(&c.dry, "dry-run", false, stepDryWords)
+	}
 	return fs, c
 }
 
@@ -776,6 +779,9 @@ func (a *app) runStep(verbName string, c common, st *store.Store, step store.Ste
 	if c.epoch >= 0 {
 		e := uint64(c.epoch)
 		step.Epoch = &e
+	}
+	if c.dry {
+		return a.planDry(verbName, c, st, step, stdout, stderr)
 	}
 	res, err := st.Run(ctx, step)
 	c.says = append(c.says, res.Said...) // what the step said beside its moves (sprint.Plan.Said)

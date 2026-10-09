@@ -222,17 +222,24 @@ func friendReadLive(s *Snapshot, pr *Card) (placed, okCards, broken []*Card) {
 	if s == nil || s.Fleet == nil || pr == nil {
 		return nil, nil, nil
 	}
-	return fleetReadLiveOf(s, pr, s.Fleet.Cards())
+	// only the cards whose id is a read of this attempt: the table is walked by
+	// id, never copied and sorted whole for each primary a step asks of
+	return fleetReadLiveOf(s, pr, s.Fleet.WithPrefix(attemptReadPrefix(pr)))
+}
+
+// attemptReadPrefix is the id prefix of every read card of the primary's attempt.
+func attemptReadPrefix(pr *Card) string {
+	attempt := pr.Int("attempt")
+	if attempt == 0 {
+		attempt = 1
+	}
+	return pr.ID + ".r" + itoa(attempt) + "."
 }
 
 // fleetReadLiveOf is friendReadLive over the fleet cards given (every card of the table,
 // or those of the primary a caller indexed once: fleetReadIndex).
 func fleetReadLiveOf(s *Snapshot, pr *Card, cards []*Card) (placed, okCards, broken []*Card) {
-	attempt := pr.Int("attempt")
-	if attempt == 0 {
-		attempt = 1
-	}
-	prefix := pr.ID + ".r" + itoa(attempt) + "."
+	prefix := attemptReadPrefix(pr)
 	for _, c := range cards {
 		if c == nil || c.F("kind") != "read" || !strings.HasPrefix(c.ID, prefix) || c.Col == Withdrawn {
 			continue
@@ -357,24 +364,17 @@ func seatDir(seats []FriendSeat, name, fallback string) string {
 	return fallback
 }
 
-// FriendReadAsk asks each read in review of a friend with room at or above its
-// read tier, the same chooser as friendDeal (preferredFriend: an idle lane,
-// then the most room, then by name), and decrements that free width as
-// friendDeal does (docs/SPEC-SPRINT.md, a read asked of any unit with room at
-// or above the read tier). dir is a working directory used when the seat names
-// none; empty writes no brief (friend sync writes it). A friend whose read of
-// the attempt was taken back is not asked it again; another friend is. A paid
-// reader is left the read when no such friend has room. When every such friend
-// is at her room and no paid reader has room, the read waits for a reader.
-func FriendReadAsk(s *Snapshot, seats []FriendSeat, dir string) (Plan, error) {
-	p, _, err := friendReadAsk(s, seats, dir)
-	return p, err
-}
-
-// friendReadAsk is FriendReadAsk with the primaries it left waiting: a friend
-// at or above the read tier is up who may read the attempt, every such friend
-// is at her room, and no paid reader has room. The tick's ask records those as
-// waiting for a reader and counts them due (friendAskPart).
+// friendReadAsk asks each read in review of a friend with room at or above its
+// read tier, the same chooser as the friend deal (preferredFriend: an idle lane,
+// then the most room, then by name), and decrements that free width as the deal
+// does (docs/SPEC-SPRINT.md, a read asked of any unit with room at or above the
+// read tier). dir is a working directory used when the seat names none; empty
+// writes no brief (friend sync writes it). A friend whose read of the attempt
+// was taken back is not asked it again; another friend is. A paid reader is left
+// the read when no such friend has room. It answers too the primaries it left
+// waiting: a friend at or above the read tier is up who may read the attempt,
+// every such friend is at her room, and no paid reader has room. The tick's ask
+// records those as waiting for a reader and counts them due (friendAskPart).
 func friendReadAsk(s *Snapshot, seats []FriendSeat, dir string) (p Plan, waits []*Card, err error) {
 	if s == nil || s.Work == nil || s.Fleet == nil {
 		return p, nil, nil

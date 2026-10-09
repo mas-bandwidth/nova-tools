@@ -215,6 +215,9 @@ func (s *Snapshot) refusedNoRoute(pr *Card) bool {
 	if len(s.freeReaders(pr, attempt))+len(returnedInTier(s, pr, attempt)) >= ReadsNeededIn(s, pr)-len(liveReadsAt(s, pr, attempt)) {
 		return false
 	}
+	if !anyReadCardAt(s, pr, attempt) {
+		return false
+	}
 	for _, rd := range s.Readers.Rows() {
 		for _, id := range ReadCardIDs(pr.ID, attempt, rd) {
 			if c := s.Readers.Card(id); c != nil && c.F("retired_by") == RetiredByRefused && NoRouteRefusal(c.F(FieldRefused)) {
@@ -354,6 +357,9 @@ func acceptable(s *Snapshot, pr *Card) bool {
 // placedReadsAt is the primary's placed read cards at an attempt,
 // checking both the plain identity and the second identity (.g1).
 func placedReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
+	if !anyReadCardAt(s, pr, attempt) {
+		return nil
+	}
 	var out []*Card
 	for _, r := range s.Readers.Rows() {
 		for _, id := range ReadCardIDs(pr.ID, attempt, r) {
@@ -364,6 +370,14 @@ func placedReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 		}
 	}
 	return out
+}
+
+// anyReadCardAt says the readers table holds a read card of the primary's attempt,
+// placed or kept: every one's id, plain or second, begins with ReadCardID(primary,
+// attempt, ""). Most primaries a step asks of have none, and are passed over without
+// building every reader's two identities.
+func anyReadCardAt(s *Snapshot, pr *Card, attempt int) bool {
+	return s.Readers.AnyWithPrefix(ReadCardID(pr.ID, attempt, ""))
 }
 
 // liveReadsAt is the primary's placed read cards at an attempt less the reads

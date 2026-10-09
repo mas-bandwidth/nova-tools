@@ -18,7 +18,7 @@ import (
 // again from its stored tokens at its route row's current prices (docs/SPEC-SPRINT.md,
 // "What a card cost", the reprice; the owner, 2026-10-05: "Is it possible to fix
 // historical prices for this sprint ... More accurate prices allow us to optimize
-// better."), in one step (sprint.Reprice): the records, each card's totals, each landed
+// better."), in one step (sprint.RepriceOf): the records, each card's totals, each landed
 // card's cost and its stream's sum. It prints per route the old sum, the new sum and the
 // records, and the records it left; --dry-run plans it on a read of the tables and writes
 // nothing.

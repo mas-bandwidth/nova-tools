@@ -29,7 +29,7 @@ import (
 // the verb's own tool.Tool.
 
 // loopRunEffect is what loop run -h states.
-const loopRunEffect = "process: takes <run-dir>/<name>.lock (a second copy exits 3), counts the start in <run-dir>/<name>.starts, writes the restart metrics to --metrics when given, then runs the loop's command (its row's argv, or the command after --) and exits with the command's exit code, 128+N when a signal ended it; it opens the store only when no command follows --"
+const loopRunEffect = "local write: takes <run-dir>/<name>.lock (a second copy exits 3), counts the start in <run-dir>/<name>.starts, writes the restart metrics to --metrics when given, then runs the loop's command (its row's argv, or the command after --) and exits with the command's exit code, 128+N when a signal ended it; it opens the store only when no command follows --; --dry-run reads the row and the start count, prints the LOOP RUN line it would print, and takes no lock, writes nothing and runs nothing"
 
 // loopRunMore is loop run's own help below the effect.
 const loopRunMore = "a unit runs it in place of the bash nova-loop: ExecStart=nova-config loop run <name> -- <the unit's command>; a lock whose holder died is taken (the kernel released it); the lock lives in this process, so a wrapper killed outright ends the command with it on linux (the kernel's parent-death signal) and a restarted unit never runs a second command beside the first; SIGINT and SIGTERM are passed to the command\nexit codes: the command's own, 128+N when a signal ended it; 1 the row is not runnable (missing, disabled, with secrets); 2 usage, or the command did not start; 3 another copy holds the lock\n"
@@ -124,6 +124,7 @@ func loopRunVerb(d deps, name string, command []string, dashed bool) tool.Verb {
 		Effect:    tool.Effect(loopRunEffect),
 		Detail:    loopRunMore + "example: " + toolExamples["loop run"],
 		ExitTable: "the command's own, 128+N when a signal ended it; 1 the row is not runnable (missing, disabled, with secrets); 2 usage, or the command did not start; 3 another copy holds the lock",
+		DryRun:    true,
 		Flags: func(f *tool.Flags) {
 			f.Prints()
 			c = storeFlags(f.FlagSet)
@@ -145,6 +146,7 @@ func loopRefused(why, next string) *tool.Out {
 
 // loopRunCall is loop run once the skeleton has parsed its flags.
 func loopRunCall(call *tool.Call, d deps, c conn, name string, command []string, dashed bool) *tool.Out {
+	dry := call.DryRun()
 	if name == "" {
 		return tool.Refuse("the name is required: loop run <name> [-- <command> ...]")
 	}
@@ -181,6 +183,14 @@ func loopRunCall(call *tool.Call, d deps, c conn, name string, command []string,
 		}
 	}
 	dir := homeTilde(call.Str("run-dir"), d.getenv)
+	if dry {
+		// the line the real run prints first, from the same row and count, and nothing taken, written or run
+		prev, _ := os.ReadFile(config.LoopStartsPath(dir, name)) // an absent or unreadable count starts again at 1
+		words, _ := json.Marshal(argv)                           // ignored: a slice of strings always encodes
+		fmt.Fprintf(call.Stdout, "LOOP RUN name=%s starts=%d argv=%s dry_run=true; no lock taken, nothing written or run\n",
+			name, config.NextLoopStarts(prev), config.Value(string(words)))
+		return tool.Exit(0)
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return tool.Refuse("the run directory: " + err.Error())
 	}

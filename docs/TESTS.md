@@ -132,11 +132,14 @@ Run by `cmd/nova-friend/firstrun_test.go` on a throwaway redis-server whose
 `friends` set names ada and bob (what `nova-config apply` writes for two friend
 rows), its address in `NOVA_BUS_REDIS`, so the lines read as a reader types
 them. The sitting is the canary by hand, with no daemon running: a dry-run
-install prints the plan for bob's agent; a dry-run uninstall the plan to undo
-it; ada, as the coordinator, pings bob with a nonce; bob's session answers
+install prints the plan for bob's agent, OpenCode's project config first; a
+dry-run uninstall the plan to undo it; a dry-run host the tmux line that would
+host bob's terminal harness; ada, as the coordinator, pings bob with a nonce; bob's session answers
 with `pong` (one note to ada, and the pong file under the home directory,
 `./home/.nova-friend/bob`); `wait-pong` finds it on the log from bob's own
-stream; `status` says no daemon has run as bob (exit 1). `./` is a directory of the test's own, and so are the
+stream; `status` says no daemon has run as bob (exit 1). `./` is a directory of the test's own, with bob's directory `./bob` made in it
+first (install, `--dry-run` too, refuses a `--dir` that is not a real
+directory and never makes one), and so are the
 home directory and the uid the plan names. The run-owned values are the
 message `id=` (a ULID from the store's time), `at=`, and `took=`.
 
@@ -148,11 +151,17 @@ and nothing sent under `--dry-run`), then one `SERVE UP` or `SERVE DOWN` line
 per state change, and `SERVE STOP interrupted` at a signal (docs/CLI.md, "The
 coordinator's ping loop").
 
+`watch`, the coordinator's wake, is not a step either: it waits for a message
+or a wake line that arrives after it starts, or for `--timeout`, so the banner
+has no example of it; its `-h` example is run on the in-memory store with an
+injected clock in `cmd/nova-friend/watch_test.go`.
+
 ### First run
 
 ```text
 $ nova-friend install --as bob --harness opencode --dir ./bob --dry-run
 INSTALL OK label=com.nova.friend-bob plist=./home/Library/LaunchAgents/com.nova.friend-bob.plist launchd_log=./home/Library/Logs/nova-friend-bob.log dry_run=true
+INSTALL PLAN command="write ./bob/opencode.json permission.external_directory../bob/**=allow"
 INSTALL PLAN command="write ./home/Library/LaunchAgents/com.nova.friend-bob.plist"
 INSTALL PLAN command="launchctl bootout gui/501/com.nova.friend-bob"
 INSTALL PLAN command="launchctl bootstrap gui/501 ./home/Library/LaunchAgents/com.nova.friend-bob.plist"
@@ -162,6 +171,9 @@ $ nova-friend uninstall --as bob --dry-run
 UNINSTALL OK label=com.nova.friend-bob plist=./home/Library/LaunchAgents/com.nova.friend-bob.plist dry_run=true
 UNINSTALL PLAN command="launchctl bootout gui/501/com.nova.friend-bob"
 UNINSTALL PLAN command="rm ./home/Library/LaunchAgents/com.nova.friend-bob.plist"
+
+$ nova-friend host --as bob --harness aider --dir ./bob --dry-run -- aider
+HOST DRY-RUN session=friend-bob dir=./bob dry_run=true command="tmux new-session -d -s friend-bob -c ./bob -- aider"
 
 $ nova-friend ping --as ada --to bob --nonce abc123
 PING OK nonce=abc123 id=01M42EJZ1D4JEFR6ESF1YJ3YJA to=bob at=2026-10-04T03:40:12Z
@@ -338,7 +350,7 @@ it does not hold is refused by name rather than left to unlock nothing:
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --kind fix-with-red-test
-HYGIENE REFUSED: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
+HYGIENE REFUSED: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, ledger, read, probe, text, tone, report; run: nova-check help
 ```
 
 ## nova-self-talk
@@ -1266,6 +1278,53 @@ LINT OK file=./cards/finding-internal-bus-send.md
 
 $ nova-card lint --card ./cards/finding-cmd-nova-bus-main.md
 LINT OK file=./cards/finding-cmd-nova-bus-main.md
+```
+
+## nova-up
+
+A linux login, typing from its home `/home/you`, with every program the setup
+runs on its PATH: the first run is the dry run, which plans every step on the
+machine as it is, prints one `UP <step>` line each, and writes nothing. Run by
+`cmd/nova-up/firstrun_test.go` over a machine whose programs answer only their
+version, so no step can apply.
+
+### First run
+
+```
+$ nova-up --local --dry-run --root ./nova-try
+UP OK root=/home/you/nova-try steps=9 changes=7 applied=0 dry_run=true
+UP NOTE dry run: nothing written; run it without --dry-run to apply
+UP platform ok linux: loops are systemd user units
+UP dirs create /home/you/nova-try: . stores keys logs smoke
+UP binaries ok 8 on PATH, each answering its version
+UP sprint create mem:/home/you/nova-try/stores/sprint.twin
+UP secrets create /home/you/nova-try/secrets seat=coordinator
+UP ssh create known_hosts missing; run `ssh-keyscan <bench> >> ~/.ssh/known_hosts` for each bench
+UP redis create 127.0.0.1:6390 loop=redis-local for nova-bus: unit create, passwords to seal=4, acl apply, fn load
+UP seat create /home/you/nova-try/seat.env seat=coordinator
+UP smoke create one card on /home/you/nova-try/smoke/sprint.twin beside the throwaway repository /home/you/nova-try/smoke/repo
+
+$ nova-up --dry-run --root ./nova-try
+! UP REFUSED: --local is required; it wants nothing after it: the mode that sets up this one machine with no config; run: nova-up help
+```
+
+## nova-doctor
+
+A login with no friend rows, `/home/you`: the harness check alone, as lines and
+as JSON, then a check name that is none. Each run reads and changes nothing. Run
+by `cmd/nova-doctor/firstrun_test.go`.
+
+### First run
+
+```
+$ nova-doctor run --check harness
+DOCTOR harness ok no friend rows at /home/you/.nova/friends
+
+$ nova-doctor run --check harness --json
+{"exit":0,"results":[{"check":"harness","dependency":"the friend harnesses","status":"ok","evidence":"no friend rows at /home/you/.nova/friends"}]}
+
+$ nova-doctor run --check nosuch
+! RUN REFUSED: no check named "nosuch"; the checks are dashboard, gosdk, harness, providers, secrets, self, ssh, tailnet; run: nova-doctor help
 ```
 
 ## One-shot lanes at parity (internal/friend/lane_parity_test.go, cmd/nova-friend/lane_parity_test.go)

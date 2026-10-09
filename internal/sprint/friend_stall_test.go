@@ -378,3 +378,15 @@ func TestFutureDatedEvidenceCountsAsNow(t *testing.T) {
 	assert.True(t, at.Equal(now))
 	assert.Equal(t, 1, futureEvidenceLogCount("amy", reportAt), "the same future report is not logged again")
 }
+
+// futureEvidenceLogCount is how many times friend f's evidence stamped at
+// stamped was logged for being after the server's clock. The stall ladder
+// logs each such stamp once.
+func futureEvidenceLogCount(friend string, stamped time.Time) int {
+	v, ok := futureEvidenceOnce.Load(futureEvidenceKey(friend, stamped))
+	if !ok {
+		return 0
+	}
+	n, _ := v.(int)
+	return n
+}

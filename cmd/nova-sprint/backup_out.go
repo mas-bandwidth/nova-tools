@@ -683,19 +683,53 @@ func dumpKeys(ctx context.Context, c redis.UniversalClient, names []string) ([]s
 // serverTwin is a throwaway redis-server on a unix socket in the work
 // directory, saving nothing, holding this build's function library.
 type serverTwin struct {
-	cmd   *exec.Cmd
-	c     *redis.Client
-	names sprint.Names
-	lib   string
+	cmd     *exec.Cmd
+	c       *redis.Client
+	names   sprint.Names
+	lib     string
+	sockDir string // a short private directory made for the socket, removed on Close; "" when the socket is in work
+}
+
+// twinSocketMax is below the shortest sockaddr_un path of the platforms this runs
+// on (104 bytes on macOS, 108 on Linux, one for the terminator), as
+// internal/tablemodel's maxSocketPath.
+const twinSocketMax = 100
+
+// twinSocket is where the throwaway's socket goes: in work when the path fits a
+// Unix socket, else in a fresh private directory (0700) under the temp
+// directory, else under /tmp; dir is that directory, for Close to remove, or ""
+// when the socket is in work. A work directory deep under a long TMPDIR (a CI
+// runner's) cannot hold a socket: redis-server refuses to bind it, and the
+// twin never answers.
+func twinSocket(work string) (sock, dir string, err error) {
+	if sock = filepath.Join(work, "twin.sock"); len(sock) <= twinSocketMax {
+		return sock, "", nil
+	}
+	for _, root := range []string{os.TempDir(), "/tmp"} {
+		if len(filepath.Join(root, "nsbXXXXXXXXXX", "twin.sock")) > twinSocketMax {
+			continue
+		}
+		if dir, err = os.MkdirTemp(root, "nsb"); err != nil {
+			continue
+		}
+		return filepath.Join(dir, "twin.sock"), dir, nil
+	}
+	return "", "", fmt.Errorf("the throwaway redis-server's socket %s is %d bytes and a Unix socket path holds at most %d, and no shorter private directory could be made (%v); set TMPDIR to a shorter directory", sock, len(sock), twinSocketMax, err)
 }
 
 func startServerTwin(ctx context.Context, bin, work string, names sprint.Names) (*serverTwin, error) {
-	sock := filepath.Join(work, "twin.sock")
+	sock, sockDir, err := twinSocket(work)
+	if err != nil {
+		return nil, err
+	}
 	cmd := subproc.Context(ctx, bin, "--port", "0", "--unixsocket", sock, "--unixsocketperm", "700", "--save", "", "--appendonly", "no", "--dir", work)
 	if err := cmd.Start(); err != nil {
+		if sockDir != "" {
+			_ = os.Remove(sockDir) // ignored: the empty directory this call made; Remove takes nothing else
+		}
 		return nil, fmt.Errorf("%s does not start: %v; run: nova-sprint backup --redis-server <the path of redis-server>", bin, err)
 	}
-	t := &serverTwin{cmd: cmd, names: names, c: redis.NewClient(&redis.Options{Network: "unix", Addr: sock})}
+	t := &serverTwin{cmd: cmd, names: names, sockDir: sockDir, c: redis.NewClient(&redis.Options{Network: "unix", Addr: sock})}
 	for i := 0; ; i++ {
 		if err := t.c.Ping(ctx).Err(); err == nil {
 			break
@@ -804,4 +838,8 @@ func (t *serverTwin) Close() {
 	_ = t.c.Close()          // ignored: the throwaway's client; the server goes next
 	_ = t.cmd.Process.Kill() // ignored: the throwaway saves nothing, and an exited one is already gone
 	_ = t.cmd.Wait()         // ignored: reaping the throwaway; its exit is the kill's
+	if t.sockDir != "" {
+		_ = os.Remove(filepath.Join(t.sockDir, "twin.sock")) // ignored: the socket, gone if the server removed it
+		_ = os.Remove(t.sockDir)                             // ignored: the directory made for it, empty; Remove takes nothing else
+	}
 }

@@ -81,8 +81,9 @@ Each reader's spend (the owner, 2026-10-05, before funding a provider for reads:
 that you need to track spend on readers, can you do this before we start?"; the coordinator had
 answered with awk over `nova-sprint log`) is carried by the tick's where record: each stream's
 `stream_costs[<stream>].readers[<reader>]` in `where --json` (`reads`, `priced`, `usd` and
-`hour_usd` exact, `hour_priced`, `tokens`; `sprint.ReaderSpend`), summed over the streams by
-`sprint.ReaderSpendsOf` and over the readers by `sprint.ReaderSpendTotal`. Its cells
+`hour_usd` exact, `hour_priced`, `tokens`; `sprint.ReaderSpend`). The sums over the streams
+and over the readers that the readers table is to show are not drawn yet; their rule is written
+down in the test (`ReaderSpendsOf`, `ReaderSpendTotal`, internal/sprint readers_spend_test.go). Its cells
 (`ReaderSpend.Cells`, `sprint.ReaderSpendCols`) are `spend`, the sum of the reader's priced read
 records all time; `spend_1h`, the same over the last hour; `per_read`, that sum over its priced
 reads, never an average of averages; and `reads_priced`, how many. Dollars and cents rounded
@@ -335,7 +336,7 @@ the word, `seen`, `generation`, the counts, the reason and the until; `where
 [replayed=true]`, `--json` `{friend, state, seen, generation, queue, working,
 width, status, replayed}`.
 
-The table's word from an observation (`sprint.ObservedStatus`): `up` only when
+The table's word from an observation (`sprint.FriendEvidence`): `up` only when
 the observation says `up` (her session answered a wake ping), under the seat's
 generation now, with its proof under `FriendPongWindow` (10 minutes) old and
 not dated after now (a negative age is no proof); `down` otherwise, at exactly
@@ -471,7 +472,7 @@ that one judgment, and raises it when the card is already sitting off her row,
 until it is back on her row or leaves ready and working. A hard pin is not
 rotated and is not this judgment. A
 hard pin (`WHO: only friend <name>`) with no room waits ready, held by the
-no-stall rule as waiting for her (`sprint.TickDeal`, `sprint.FriendDeal`,
+no-stall rule as waiting for her (`sprint.TickDeal`, its friend deal,
 `sprint.OnlyFriend`); a card a friend takes is never held for want of a machine
 route of its tier (`TestAReadyCardGoesToAFriendWhenNoMachineRouteServesItsTier`).
 The tick reads the friends' records every tick while the roster has a friend.
@@ -702,7 +703,7 @@ pinned to its holder (`AttemptCapDeal`) is the one placement outside her tiers
 and stays (`TestEveryFriendDecisionReadsTheOneTierOfTheCard`).
 
 A read at any tier is asked of any unit with room at or above that tier, a
-fleet reader or a friend, by the one ask (`FriendReadAsk` before the machine's
+fleet reader or a friend, by the one ask (`friendReadAsk` before the machine's
 `Ask`). The tier a friend is matched on is the tier before a frontier card is
 collapsed onto the tier a route serves (`friendReadTier`): a frontier card, or
 a heavy card whose read tier is the one above, stays frontier, and only a
@@ -2157,7 +2158,7 @@ release's spend check (docs/SPEC-RELEASE.md section 18) sets the same records be
 provider's own count over the release's window, refusing a cut past 5%
 (`TestCostReconcileSetsEachProvidersDayBesideTheRecords`).
 
-**The reprice** (`internal/sprint/cost_reprice.go`, `sprint.Reprice`; the owner, 2026-10-05: "Is
+**The reprice** (`internal/sprint/cost_reprice.go`, `sprint.RepriceOf`; the owner, 2026-10-05: "Is
 it possible to fix historical prices for this sprint ... More accurate prices allow us to
 optimize better."). A record keeps its tokens by class with the route that priced it, so a route
 row's prices corrected after the fact are carried back: **`nova-sprint cost reprice [--route <r>]... [--since <RFC3339>] [--dry-run] [--json]`** runs one step in which every priced consumer
@@ -4007,26 +4008,15 @@ naming no open judgment refuses the whole step, nothing written
 
 **Dev sync every cycle.** On 2026-10-04 the base and the development branch drifted for an
 afternoon while hundreds of cards landed on each; folding them took 105 conflicts and an evening
-(the owner: "promote every cycle or drift causes a big fuckup"). Each land cycle in which a sync
-is due (`sprint.DevSyncDue`: `sprint.DevSyncEveryLandings` landed since the last sync, counted
-from the store by `sprint.LandedSinceSync`; `sprint.DevSyncAge` since it with nothing landed, as
-dev moves on its own; none recorded; or a conflict open), the land round merges the development
-branch into the base in its clone (`sprint.LandCycleSync`, `sprint.RunDevSync`): fetched, the
-drift counted, merged on a detached base so no local branch ever holds an ungated merge; a clean
-merge goes through the round's own tree gate (`DevSyncReq.Check`, required: a sync with no gate
-refuses) and is pushed onto the base like a batch; a red gate or a refused push pushes nothing.
-The facts are recorded by one pure step, `sprint.DevSynced`, on the step's own snapshot (git runs
-once, outside the plan, which a retry runs again): the drift (commits each side lacks, the last
-sync and its sha) on the merge table's properties and on every stream's control card, the
-dashboard's merge row, and `sprint.DevDriftOf` reads it with the minutes since. A conflict stops
-every stream (cause `dev sync conflict`, its files in `conflict_paths`) with ONE judgment naming
-the files while they are few (`sprint.NDevSyncConflict`); each cycle tries again while it is open,
-bringing its text up to date and raising no second one; the cycle that finds the base holding dev
-(merged by hand, or cleanly) closes it and resumes only the streams it stopped; `sprint.CanLand`
-is false meanwhile (`TestTheBaseTakesTheDevelopmentBranchEveryCycle`, on the twin store and a twin
-repository; `TestADevSyncConflictStopsEveryStreamWithOneJudgment`). Owed, outside this card's
-paths: the call in the land round itself (`nova-sprint land`, before its first batch, with the
-round's tree gate as `Check`), and the drift on `where --json`.
+(the owner: "promote every cycle or drift causes a big fuckup"). The land round is to merge the
+development branch into the base each cycle in which a sync is due, push a clean merge through
+the round's own tree gate, and on a conflict stop every stream with one judgment naming the
+files. It is not built: a library for it (commit 901463230) was never called by the land round
+and went in the dead code sweep of 2026-10-07. What stands is the reader: the drift (commits
+each side lacks, the last sync and its sha) on the merge table's properties, which
+`sprint.DevDriftOf` reads with the minutes since for the dashboard's merge row and nothing
+writes yet (`TestDevDriftOfReadsTheMergeTablesProperties`). The promotion of dev
+(above) is what keeps the two together until then.
 
 **The lander's checks.** Each head `land` merges is checked by script, no model,
 before the batch's check runs (`internal/diffcheck`), the two checks the decide
@@ -4960,7 +4950,7 @@ dev. The owner, 2026-10-05: "How can we ensure that you ALWAYS do the merging pr
 now on, vs. drifting and forgetting?" and "Prevention is better than cure". So every drift is
 a fact the machine raises (internal/sprint drift.go, `TickDrift`, in the deadlines part with
 the backlog alarms). Four judgments, judged on the facts the binding reads for the tick
-(`TickReq.Drift`, `sprint.DriftFacts`: `ReadDrift` over a clone with dev and the base
+(`TickReq.Drift`, `sprint.DriftFacts`: `ReadDrift`, the test's reader, over a clone with dev and the base
 fetched, through the tree's git runner, and the last gate run at the base):
 
 - **the base is ahead of dev past its drift** (`the base is ahead of dev past its drift`),
@@ -5003,8 +4993,9 @@ and a fake clock), the wait included.
 **Not yet live:** the store's tick (internal/sprint/store tick.go) does not yet set
 `TickReq.Drift`, and no `set` flag reaches `drift_commits` or `drift_hours` from the command
 line (cmd/nova-sprint), so on the running machine no drift judgment is raised until a
-follow-up card has the binding read `ReadDrift` beside the ticks (never in one: a fetch never
-holds a tick) and record the whole-tree gate's last run at the base.
+follow-up card has the binding read the facts beside the ticks (never in one: a fetch never
+holds a tick), with the test's `ReadDrift` (internal/sprint export_test.go) moved in as its
+reader, and record the whole-tree gate's last run at the base.
 
 ### Open files
 
@@ -6223,7 +6214,7 @@ it):
 | token | holds |
 |---|---|
 | `paths-at-base` | every PATHS entry names a file, directory or glob at the base tip, or is a new `_test` file, or a `NEW:` line names it; the correction is the `NEW:` line with the missing entries |
-| `donewhen-test-name` | a `TEST:` line the brief has reads (`cardhdr.ParseTest`; `TEST: none <why>` passes), and its test is absent at the base tip in its package, so it can be red there; a brief with no `TEST:` line is held to one where the copy wrapper reads it |
+| `donewhen-test-name` | a `TEST:` line the brief has reads (`cardhdr.ParseTest`; `TEST: none <why>` passes), and its test is absent at the base tip in its package, so it can be red there; a brief with no `TEST:` line is held to one where the copy wrapper reads it; the one exception is a ledger card, a brief whose `KIND:` is `ledger` and whose `TEST:` package is under `internal/ci/`: its class test is green at the base by construction and its proof is the ledger shrinking, so a test that exists there passes (`swarm.LedgerKind`; docs/SPEC-CARD-CONTRACT.md section 6) |
 | `paths-cover-named` | every repository path `START:` names (split on commas outside parentheses, each entry's first word) is covered by PATHS or NEW (a directory by a file or glob inside it), unless the entry is marked `(read)`; and every path THE TASK paragraph names that is a file at the base tip, unless `(read)` follows it |
 | `paths-cover-test` | PATHS covers a `_test.go` file of the TEST package: its directory, a glob that matches a test file there, or a test file named; the correction adds `<pkg>/*_test.go` |
 | `paths-cover-testdata` | a `<dir>/*.go` entry, whose package has `<dir>/testdata` at the base tip, comes with an entry covering that testdata; the correction adds `<dir>/testdata/**` |

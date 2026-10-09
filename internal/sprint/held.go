@@ -237,7 +237,7 @@ func newHeld(h HeldState, now time.Time) *held {
 	sp, _ := s.withRests()
 	s = *sp
 	// the friends' deal is a part of the next tick too: it deals with the friends the
-	// snapshot holds (friendDeal), as the tick does
+	// snapshot holds (friendDealPass), as the tick does
 	c := &held{h: h, s: &s, req: TickReq{Who: MachineActor, Stopped: h.Stopped, Friends: s.Friends},
 		tick: map[string]string{}, tickStream: map[string]string{}, marks: map[string]bool{},
 		judged: map[string][]string{}, memo: map[string]Hold{}, on: map[string]bool{}}
@@ -567,7 +567,7 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 	case Ready:
 		if OnlyFriend(pr) {
 			// the one hard pin (WHO: only friend <name>) waits for her up below her room,
-			// DealAhead times her width (friendDeal), whose beats and widths are the friends'
+			// DealAhead times her width (friendDealPass), whose beats and widths are the friends'
 			// records, not the tables'; every other card a friend may take is the fleet's
 			// when no friend takes it (WHO is a preference)
 			name, _ := FriendCard(pr)
