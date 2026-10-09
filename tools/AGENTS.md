@@ -16,6 +16,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `newverb/` | CLI verb scaffolding CLI | `go test ./tools/newverb` | `go test ./tools/newverb` |
 | `notes20261002/` | the 2026-10-02 notes written into nova-config: the seed, as a Go program with the arguments and refusals of the script it replaced | `go test ./tools/notes20261002` | `go run ./tools/notes20261002 <args>` |
 | `preflight/` | the standard check before a card or a pull request: gofmt, go vet and the unit tests through make test-full | `go test ./tools/preflight` | `make preflight` |
+| `roadmap/` | ROADMAP.md generator from docs/roadmap.sexp | `go test ./internal/docs` | `make roadmap` |
 | `sandboxcheck/` | the darwin profile check of nova-sandbox: fills the profile template for a scratch write set and runs the first second of a job inside the wall, each denial beside a control outside it | `go test ./tools/sandboxcheck` | `go run ./tools/sandboxcheck` |
 | `sessiontrace/` | bounded shell trace replay against TableSession | `go test ./tools/sessiontrace` | `go test ./tools/sessiontrace` |
 | `sprintsize/` | nova-sprint's size run: the sprint at 10x its largest real size on a local store, each operation timed against its limit | `go vet ./tools/sprintsize` | `go run ./tools/sprintsize --bin <nova-sprint>` |
