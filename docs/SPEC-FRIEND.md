@@ -2355,7 +2355,7 @@ coordinator acts on the request (a served `friend give <friend> <card> --reason`
 (width 8 after a clean load for 10 minutes, with a config-row write) is the lane governor's measured raise, not
 ported; the invoice-effective price beside the card price is not ported.
 
-### the-lane-hands-the-brief-by-absolute-path-bb — the lane's paths are absolute; a no-report exit is a harness fault (internal/friend/lane_parity.go)
+### the-lane-hands-the-brief-by-absolute-path-bb.w2 — the lane's paths are absolute; a no-report exit is a harness fault (internal/friend/lane_parity.go)
 
 On 2026-10-07, between 10:32 and 10:41 PM, five cards on a flash friend's row (opencode,
 `inception/mercury-2.5`) ended `exit 0 ... and wrote no report; first error: File not found:

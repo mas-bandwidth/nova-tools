@@ -16,7 +16,7 @@ import (
 )
 
 // The lane hands the brief by absolute path, and a no-report exit is a harness fault
-// (the-lane-hands-the-brief-by-absolute-path-bb). On 2026-10-07 five lanes of a flash friend
+// (the-lane-hands-the-brief-by-absolute-path-bb.w2). On 2026-10-07 five lanes of a flash friend
 // ended "File not found: Volumes/nova/ai/<friend>/working/inbox/<card>/BRIEF.md": the model
 // dropped the leading slash, read the path relative to her working directory, wrote no report,
 // and every card walked toward the brief-is-wrong bound for $0.00.

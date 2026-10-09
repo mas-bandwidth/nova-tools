@@ -560,7 +560,7 @@ func RoutePriceOf(routesJSON, provider, model string) RoutePrice {
 	return *found
 }
 
-// The lane hands the brief by absolute path (the-lane-hands-the-brief-by-absolute-path-bb; on
+// The lane hands the brief by absolute path (the-lane-hands-the-brief-by-absolute-path-bb.w2; on
 // 2026-10-07 five lanes of a flash friend ended "File not found: Volumes/nova/ai/<friend>/working/
 // inbox/<card>/BRIEF.md": the model dropped the path's leading slash, read it relative to the
 // friend's working directory, found nothing, wrote no report, and even made a stray
