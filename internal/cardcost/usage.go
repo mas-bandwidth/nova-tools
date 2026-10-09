@@ -388,6 +388,29 @@ func SumUsage(us []Usage) Total {
 	return t
 }
 
+// SumChargedUsage is SumUsage's charged figure alone: a valid actual amount,
+// including zero, else a valid prediction. Stored decimals retain their full
+// precision; the exact sum is formatted once. Empty means no valid reported cost.
+func SumChargedUsage(us []Usage) string {
+	total := new(big.Rat)
+	reported := false
+	for _, u := range us {
+		v, err := amount(u.Actual)
+		if err != nil {
+			v, err = amount(u.Predicted)
+		}
+		if err != nil {
+			continue // an absent or invalid cost contributes nothing, as Total.Add
+		}
+		total.Add(total, v)
+		reported = true
+	}
+	if !reported {
+		return ""
+	}
+	return Text(total)
+}
+
 // String is the total as a producer card keeps it, one line of key=value words, a
 // count or time not reported left out.
 func (t Total) String() string {

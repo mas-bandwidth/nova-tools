@@ -783,7 +783,8 @@ type dealtCard struct {
 	Since    time.Time `json:"since,omitzero"`
 	Deadline time.Time `json:"deadline,omitzero"`
 	Branch   string    `json:"branch"`
-	Tier     string    `json:"tier,omitempty"` // the tier its route was drawn from (sprint.FieldTier)
+	Tier     string    `json:"tier,omitempty"`     // the tier its route was drawn from (sprint.FieldTier)
+	Priority string    `json:"priority,omitempty"` // stored child level; absent is normal
 }
 
 // mergingCard is a primary merging: its stream, the head its merge would land, its attempt.
@@ -880,7 +881,8 @@ func dealtView(d store.Dealt, prefix string, epoch uint64) ([]dealtCard, []judgm
 			continue
 		}
 		v := dealtCard{ID: c.ID, Primary: c.F(sprint.PrimaryField), Stream: c.F("stream"), Member: c.Row, State: c.Col,
-			Branch: cmp.Or(c.F("branch"), sprint.BranchOf(prefix, epoch, c.ID, c.Int("gen"))), Tier: c.F(sprint.FieldTier)}
+			Branch: cmp.Or(c.F("branch"), sprint.BranchOf(prefix, epoch, c.ID, c.Int("gen"))), Tier: c.F(sprint.FieldTier),
+			Priority: c.F(sprint.FieldPriority)}
 		own := "dealt"
 		if c.Col == string(sprint.Working) {
 			own = "taken"

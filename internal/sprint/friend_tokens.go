@@ -86,6 +86,18 @@ func FriendChargedFromCards(cards []*Card) string {
 	return cardcost.SumUsage(usages).Charged
 }
 
+// FriendTotalsFromCards folds the same token and charged-dollar figures as
+// FriendTokensFromCards and FriendChargedFromCards, parsing each usage once.
+func FriendTotalsFromCards(cards []*Card) (tokens int64, charged string) {
+	usages := make([]cardcost.Usage, 0, len(cards))
+	for _, c := range cards {
+		u := cardcost.ParseUsage(c.F(FieldUsage))
+		tokens += friendUsageTokens(u)
+		usages = append(usages, u)
+	}
+	return tokens, cardcost.SumChargedUsage(usages)
+}
+
 // friendUsageTokens is a usage record's tokens over the classes the friends table
 // sums: input, output, cache read and cache write, never reasoning or requests.
 func friendUsageTokens(u cardcost.Usage) int64 {

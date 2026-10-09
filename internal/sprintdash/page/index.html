@@ -26,8 +26,8 @@
   --s-waiting: #4a4f58;
   --s-ready: #7d8490;
   --s-working: #3987e5;
-  /* a card's priority by colour: a blocker bright red, a critical dark red, a read (reader) the
-     orange of the robot logo's shoes (logo-robot-384.png's modal shoe pixel), work blue */
+  /* read kind is orange even when its producer is urgent; fix is purple, blocker bright red,
+     critical dark red, and remaining work blue */
   --p-blocker: #ff1a1a;
   --p-critical: #9b1c1c;
   --p-reader: #fb8321;
@@ -161,6 +161,7 @@ img#logo.logo-tile { width: 6rem; height: 6rem; flex: none; }
 .working { background: var(--s-working); } .review { background: var(--s-review); }
 .merging { background: var(--s-merging); } .landed { background: var(--s-landed); }
 .fix { background: var(--s-fix); }
+.num.fix-count { color: var(--s-fix); }
 .p-blocker { background: var(--p-blocker); } .p-critical { background: var(--p-critical); }
 .p-reader { background: var(--p-reader); } .p-work { background: var(--p-work); }
 .p-fix { background: var(--p-fix); }

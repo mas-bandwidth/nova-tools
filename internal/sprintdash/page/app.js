@@ -200,21 +200,20 @@ function allocate(counts, total, n) {
 // VU meter track: exactly `slots` cells (the machine's width), on a grid of
 // `scale` columns (the widest member's width) so the cells line up down the
 // column; the lit cells first, the rest dark; nothing past the width. The lit cells run in the
-// priority ladder, highest on the left (docs/SPEC-SPRINT-DASHBOARD.md, "Fix"; the owner,
-// 2026-10-07: "to the left of read cards, and to the right of critical cards"): blocker,
-// critical, fix (purple), reads (one orange cell per two reads, a lone read a whole cell), then
-// the working blue; a row's counts are where's <level>_working and the view's fix.
-var TRACK_LEVELS = [["blocker_working", "p-blocker", "blocker"], ["critical_working", "p-critical", "critical"], ["fix", "p-fix", "fix"]];
+// The fixed priority ladder runs left to right. Read kind wins over inherited
+// producer priority; where's reads_working counts it separately. Work levels
+// high, normal and low share blue.
+var TRACK_LEVELS = [["fix", "p-fix", "fix"], ["blocker_working", "p-blocker", "blocker"],
+  ["critical_working", "p-critical", "critical"], ["high_working", "working", "high"],
+  ["reads_working", "p-reader", "reads"], ["normal_working", "working", "normal"],
+  ["low_working", "working", "low"]];
 function trackSegs(m) {
   var working = int(m.working), segs = [], words = [], cards = 0;
   TRACK_LEVELS.forEach(function (l) {
     var n = int(m[l[0]]); cards += n;
-    for (var j = 0; j < n; j++) segs.push(l[1]);
-    if (n) words.push(n + " " + l[2]);
+    for (var j = 0, cells = l[0] === "reads_working" ? Math.ceil(n / 2) : n; j < cells; j++) segs.push(l[1]);
+    if (n) words.push(n + " " + (l[0] === "reads_working" && n === 1 ? "read" : l[2]));
   });
-  var reads = int(m.reads_working); cards += reads;
-  for (var j = 0; j < Math.ceil(reads / 2); j++) segs.push("p-reader");
-  if (reads) words.push(reads + " read" + (reads === 1 ? "" : "s"));
   for (var k = cards; k < working; k++) segs.push("working");
   return { segs: segs, words: words };
 }
@@ -326,12 +325,12 @@ function renderStreams(d) {
     setPill(r.pill, status, tone, status + (s.State ? " · stream " + s.State + (s.Since ? " since " + clockShort(new Date(s.Since)) : "") : ""));
     var tags = []; if (int(m.stuck) > 0) tags.push(m.stuck + " stuck"); if (m.ci === "red") tags.push("ci red");
     setText(r.tag, tags.join(" · "));
-    FLOW.forEach(function (st) { if (st !== "landed") setNum(r.n[st], c[st]); });
+    FLOW.forEach(function (st) { if (st !== "landed") setNum(r.n[st], c[st], st === "fix" && c[st] ? "fix-count" : ""); });
     setHTML(r.n.landed, frac(c.landed, total, digits));
     setText(r.cost, ct === null ? "-" : money(ct)); setClass(r.cost, "num" + (ct === null ? " zero" : ""));
   }, box._total);
   var tc = box._total._c, all = 0;
-  FLOW.forEach(function (st, i) { all += sum[st]; if (st !== "landed") setNum(tc[2 + i], sum[st]); });
+  FLOW.forEach(function (st, i) { all += sum[st]; if (st !== "landed") setNum(tc[2 + i], sum[st], st === "fix" && sum[st] ? "fix-count" : ""); });
   setHTML(tc[LANDED_AT], frac(sum.landed, all, digits));
   setText(tc[COST_AT], money(sum.cost));
   setText($("streams-sub"), keys.length + " streams · " + landedStreams + " landed · " + held + " held");

@@ -68,7 +68,7 @@ func TestFixViewMarksACardAtTheFixLevel(t *testing.T) {
 }
 
 // While where prints no fix level, a card on its second or later attempt is at fix, and is
-// taken off the high list; a first attempt is not.
+// taken off the high list; only a working retry moves its Work row count into fix.
 func TestFixViewMarksASecondAttemptWhileTheFixLevelIsAbsent(t *testing.T) {
 	t.Parallel()
 	v := served(t, fixCopy(`{"high":["s1-2","s1-3"]}`,
@@ -82,9 +82,53 @@ func TestFixViewMarksASecondAttemptWhileTheFixLevelIsAbsent(t *testing.T) {
 	assert.Equal(t, "1", tableRow(v, "fleet", "m1")["fix"], "a row counts its fix cards working, not ready")
 	assert.NotContains(t, tableRow(v, "friends", "amy"), "fix")
 	w := workRow(v)
-	assert.Equal(t, "2", w["fix"])
-	assert.Equal(t, "1", w["working"])
+	assert.Equal(t, "1", w["fix"], "the ready retry is marked but does not take a working primary's count")
+	assert.Equal(t, "2", w["working"])
 	assert.Equal(t, map[string]any{"high": []any{"s1-3"}, "fix": []any{"s1-2", "s1-4"}}, v["priorities"])
+}
+
+// A real where row carries every priority count, including a zero fix_working.
+// Inferred rework moves the one high working cell to purple fix instead of
+// letting the zero erase its mark or displaying both colours for one card.
+func TestFixViewMovesAnInferredWorkingRetryOutOfItsOldLevel(t *testing.T) {
+	t.Parallel()
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(fixCopy(`{"high":["s1-2"]}`,
+		dealt("s1-2.w2", "s1-2", "m1", "working", `,"priority":"high"`)), &raw))
+	m1 := tableRow(raw, "fleet", "m1")
+	m1["fix_working"], m1["high_working"] = "0", "1"
+	body, err := json.Marshal(raw)
+	require.NoError(t, err)
+	v := served(t, body)
+	m1 = tableRow(v, "fleet", "m1")
+	assert.Equal(t, "1", m1["fix"])
+	assert.Equal(t, "0", m1["high_working"])
+	assert.Equal(t, "1", m1["working"])
+	assert.Equal(t, "1", workRow(v)["fix"])
+	assert.Equal(t, "0", workRow(v)["working"])
+}
+
+// A ready retry cannot subtract an unrelated working primary in the same
+// stream. Its card can carry the fix annotation without changing Work totals.
+func TestFixViewDoesNotMoveAReadyRetryFromWorking(t *testing.T) {
+	t.Parallel()
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(fixCopy(`{"high":["s1-2"]}`,
+		dealt("s1-2.w2", "s1-2", "m1", "ready", `,"priority":"high"`),
+		dealt("s1-3.w1", "s1-3", "m1", "working", "")), &raw))
+	w := workRow(raw)
+	w["working"], w["ready"] = "1", "1"
+	m1 := tableRow(raw, "fleet", "m1")
+	m1["fix_working"], m1["normal_working"] = "0", "1"
+	body, err := json.Marshal(raw)
+	require.NoError(t, err)
+	v := served(t, body)
+	assert.Equal(t, true, v["cards"].([]any)[0].(map[string]any)["fix"])
+	assert.NotContains(t, workRow(v), "fix")
+	assert.Equal(t, "1", workRow(v)["working"])
+	assert.Equal(t, "1", workRow(v)["ready"])
+	assert.NotContains(t, tableRow(v, "fleet", "m1"), "fix")
+	assert.Equal(t, "1", tableRow(v, "fleet", "m1")["normal_working"])
 }
 
 // A blocker or a critical keeps its red on any attempt: never at fix. A copy with no card at
@@ -100,6 +144,15 @@ func TestFixViewNeverMarksABlockerOrACritical(t *testing.T) {
 	plain := fixCopy("", dealt("s1-1.w1", "s1-1", "m1", "working", ""))
 	assert.Equal(t, string(plain), string(fixView(plain)))
 	assert.Equal(t, "not json", string(fixView(json.RawMessage("not json"))))
+}
+
+// A historical producer can still send a read with its producer's priority or a retry
+// attempt. Read kind wins: the view never turns that read into a purple fix card.
+func TestFixViewKeepsInheritedPriorityReadsOutOfFix(t *testing.T) {
+	t.Parallel()
+	body := fixCopy(`{"blocker":["s1-1"]}`,
+		dealt("s1-1.r2.reader-a", "s1-1", "friend.amy", "working", `,"kind":"read","priority":"fix","producer_priority":"blocker","attempt":2`))
+	assert.Equal(t, string(body), string(fixView(body)))
 }
 
 // Where's own counts win: a work row that prints its fix is left as printed (its columns leave
@@ -123,13 +176,15 @@ func TestFixViewTakesWheresOwnCounts(t *testing.T) {
 func TestFixPageConstants(t *testing.T) {
 	t.Parallel()
 	page, js := string(file("index.html")), string(file("app.js"))
-	for name, want := range map[string]string{"--s-fix": "#8b5cf6", "--p-fix": "var(--s-fix)"} {
+	for name, want := range map[string]string{"--s-fix": "#8b5cf6", "--p-fix": "var(--s-fix)", "--p-reader": "#fb8321"} {
 		m := regexp.MustCompile(regexp.QuoteMeta(name) + `:\s*([^;]+);`).FindStringSubmatch(page)
 		require.NotNil(t, m, "the page defines %s", name)
 		assert.Equal(t, want, strings.TrimSpace(m[1]), name)
 	}
 	assert.Contains(t, page, ".fix { background: var(--s-fix); }")
+	assert.Contains(t, page, ".num.fix-count { color: var(--s-fix); }")
 	assert.Contains(t, page, ".p-fix { background: var(--p-fix); }")
+	assert.Contains(t, page, ".p-reader { background: var(--p-reader); }")
 	assert.Contains(t, page, `<div class="num">review</div><div class="num">fix</div><div class="num">merging</div>`, "Work's fix column between review and merging")
 	assert.Contains(t, js, `var STATES = ["landed", "merging", "fix", "review", "working", "ready", "waiting"];`)
 	assert.Contains(t, js, `var FLOW = ["waiting", "ready", "working", "review", "fix", "merging", "landed"];`)
@@ -148,7 +203,9 @@ process.stdout.write(JSON.stringify({
   legend: kids('legend').map(i => i.textContent),
   bar: kids('overall').map(cls),
   ci: row('streams', 'ci').children.map(c => c.textContent),
+  ciClasses: row('streams', 'ci').children.map(cls),
   workTotal: total('streams').children.map(c => c.textContent),
+  workTotalClasses: total('streams').children.map(cls),
   bench: row('fleet', 'bench-a').children[3].children.map(cls),
   benchTitle: row('fleet', 'bench-a').children[3].title,
   amy: row('friends', 'amy').children[3].children.map(cls),
@@ -172,7 +229,7 @@ func TestFixPageDrawsFixBetweenReviewAndMerging(t *testing.T) {
 	var d map[string]any
 	require.NoError(t, json.Unmarshal(fixView(fixture(t)), &d))
 	bench := d["tables"].(map[string]any)["fleet"].(map[string]any)["bench-a"].(map[string]any)
-	for k, v := range map[string]string{"working": "9", "blocker_working": "1", "critical_working": "1", "fix": "2", "reads_working": "3", "high_working": "1", "normal_working": "2"} {
+	for k, v := range map[string]string{"working": "10", "blocker_working": "1", "critical_working": "1", "fix": "2", "reads_working": "3", "high_working": "1", "normal_working": "1", "low_working": "1"} {
 		bench[k] = v
 	}
 	d["priorities"].(map[string]any)["blocker"] = []string{"ci-09"}
@@ -188,8 +245,8 @@ func TestFixPageDrawsFixBetweenReviewAndMerging(t *testing.T) {
 	require.NoError(t, cmd.Run(), "node runner failed: %s", errBuf.String())
 	require.Empty(t, errBuf.String(), "app.js threw while drawing")
 	var res struct {
-		Legend, Bar, CI, WorkTotal, Bench, Amy []string
-		BenchTitle, FriendsTotal, Inflight     string
+		Legend, Bar, CI, CIClasses, WorkTotal, WorkTotalClasses, Bench, Amy []string
+		BenchTitle, FriendsTotal, Inflight                                  string
 	}
 	require.NoError(t, json.Unmarshal(outBuf.Bytes(), &res), outBuf.String())
 
@@ -204,9 +261,11 @@ func TestFixPageDrawsFixBetweenReviewAndMerging(t *testing.T) {
 	assert.Equal(t, []string{"ci", "working", "9", "1", "1", "0", "1", "1"}, res.CI[:8])
 	assert.Equal(t, "$2.15", res.CI[9])
 	assert.Equal(t, "1", res.WorkTotal[6], "the total row's fix")
-	assert.Equal(t, []string{"p-blocker", "p-critical", "p-fix", "p-fix", "p-reader", "p-reader", "working", "working", "", "", "", "", "", "", "", ""}, res.Bench,
-		"blocker, critical, fix, reads (two a cell), then the working blue")
-	assert.Equal(t, "9 working of 16: 1 blocker, 1 critical, 2 fix, 3 reads", res.BenchTitle)
+	assert.Contains(t, res.CIClasses[6], "fix-count", "a Work row's fix value is purple")
+	assert.Contains(t, res.WorkTotalClasses[6], "fix-count", "the Work total's fix is purple")
+	assert.Equal(t, []string{"p-fix", "p-fix", "p-blocker", "p-critical", "working", "p-reader", "p-reader", "working", "working", "", "", "", "", "", "", ""}, res.Bench,
+		"fix, blocker, critical, high, reads (two a cell), normal, low")
+	assert.Equal(t, "10 working of 16: 2 fix, 1 blocker, 1 critical, 1 high, 3 reads, 1 normal, 1 low", res.BenchTitle)
 	assert.Equal(t, []string{"p-fix", "", "", "", "", "", "", ""}, res.Amy, "amy's second attempt is her purple cell")
 	assert.Equal(t, "1 fix", res.FriendsTotal, "the fix figure under the bars")
 	assert.Equal(t, "2 working (1 fix), 0 review, 1 merging", res.Inflight)

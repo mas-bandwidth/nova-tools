@@ -128,13 +128,19 @@ from the owner edits one line here and nothing else moves.
   landed, merging, fix, review), a Work row's `fix` column, a fleet or friends row's track. The
   view (dashboard.go) marks the copy it serves: a dealt card is at fix when its level is `fix` (the fix
   level, card a-rework-is-priority-fix-bb), or, until where prints that level, when it is an attempt after
-  the first (its `attempt`, else its id's `.w<n>`) and not blocker or critical, which keep their red; such a
+  the first (its `attempt`, else its id's `.w<n>`) and not blocker or critical, which keep their red; a
+  `kind: read` card is never fix, whatever priority it inherited or attempt it carries. Such a work
   card carries `fix: true`; a fleet or friends row's `fix` is its fix cards working (where's `fix_working`
   once it prints one); a Work row's `fix` is its primaries at fix, taken off its `working`, where a primary
   sent out again sits (review -> working on rework), unless where prints the row's `fix` itself; the copy's
-  `fix` is the Work rows' summed; and `priorities.fix` lists those primaries, off high and low. A track's lit
-  cells run in the ladder, highest on the left: blocker (`--p-blocker`), critical (`--p-critical`), fix
-  (purple), reads (orange, one cell per two reads, a lone read a whole cell), then the working blue; the
+  `fix` is the Work rows' summed; and `priorities.fix` lists those primaries, off high and low. An inferred
+  working retry moves its fleet or friends count from its stored old level to fix even when where prints
+  `fix_working: 0`; a ready retry marks its card without removing an unrelated working primary. A track's lit
+  cells run in the fixed ladder, highest on the left: fix (purple), blocker (`--p-blocker`), critical
+  (`--p-critical`), high (blue), reader (orange, one cell per two reads, a lone read a whole cell), normal
+  (blue), low (blue). Read kind determines orange even when a read inherited its producer's blocker or
+  critical priority; the tooltip names each count and level. The all-cards bar and its legend group by
+  lifecycle state, while Fleet and Friends working tracks show the priority and kind colours. The
   Total row says "<n> fix" under the tracks when any row has one. The In flight tile counts a card at fix as
   working. Owed from where: a primary in review awaiting the coordinator's rework, and one parked on a brief
   defect, carry no dealt card, so the view cannot see them until where prints the Work row's `fix`.
@@ -159,7 +165,7 @@ from the owner edits one line here and nothing else moves.
 - Machine column capped, and the Status column takes part in the even spread like the numeric columns (as in Work
   streams); names never dimmed. Status pill: up (green), held (amber), down (red).
 - Working: a cell track, one cell per slot of the machine's width (nothing drawn beyond its width), cells 1.5x their current
-  width (~27 px wide, height unchanged) with a 4 px gap, so the Working column is about 1.5x as wide, lit by level for working (blocker, critical, fix purple, reads, then blue: the fix state), dark fill for free, aligned on one grid down
+  width (~27 px wide, height unchanged) with a 4 px gap, so the Working column is about 1.5x as wide, lit by level for working (fix purple, blocker, critical, high blue, reads orange, normal and low blue: the fix state), dark fill for free, aligned on one grid down
   the column; then the "n / width" figure right after the track. Gaps: Ready to track and track to figure equal and
   wide (double the first attempt, ~64 px); every column gutter ~56 px.
 - Cells: no steady pulse; a cell flashes once when it lights or unlights. No numeric column in Fleet ever flashes.
@@ -213,3 +219,12 @@ This specification is locked. No line changes without his words, quoted here wit
   unreconciled line, second marks row, visible Merge panel, archived-stream summary control, and Lanes panel
   are removed. Purple fix remains in the bar, Work column and Fleet and Friends tracks. The hidden `?all=1`
   diagnostic readers and merge panel remains unchanged.
+
+- 2026-10-08, the owner: "dashboard must update every 1 second, optimizing the slow bits".
+  The refresh reads current facts without recomputing the unused historical landing series or loading unrelated
+  primary rows. Its existing clock and live dot show the source freshness alarm and recovery.
+- 2026-10-08, the owner changed the priority and display rule: "EVERY read is orange in EVERY view" and
+  "FIX highest priority, purple, non-preemptive" with ladder `FIX, BLOCKER, CRITICAL, HIGH, READER,
+  NORMAL, LOW`. A read's kind determines its orange working-track mark even when an older card carries
+  inherited blocker or critical priority. Fix is first and purple; the work levels keep their distinct
+  priority order. The existing all-cards bar remains a lifecycle-state bar, and its legend names states.

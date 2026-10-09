@@ -16,6 +16,8 @@ import (
 // (sprint.RowCardCounts): a friend working a read and two work cards, a blocker and a
 // critical, has working 3 of which reads_working 1, blocker_working 1 and critical_working 1,
 // summing to working; m1 works nothing; read_cards counts the epoch's read cards.
+// Its producer is blocker; the read remains a read in the JSON regardless of how
+// the producer's urgency is recorded on the read card.
 func TestTheDashboardRowsSayHowManyAreReads(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
@@ -39,7 +41,7 @@ func TestTheDashboardRowsSayHowManyAreReads(t *testing.T) {
 	root := t.TempDir()
 	ta.ok("friend sync --root " + root) // roster only: fred is down, so m1 is dealt every card
 	dir := t.TempDir()
-	for id, head := range map[string]string{"s1-1": "", "s1-2": "PRIORITY: blocker\n", "s1-3": "PRIORITY: critical\n"} {
+	for id, head := range map[string]string{"s1-1": "PRIORITY: blocker\n", "s1-2": "PRIORITY: blocker\n", "s1-3": "PRIORITY: critical\n"} {
 		brief := passingBrief(id + ": a card (s1) tier: flash\n" + head + "REPO: mas-bandwidth/nova-tools\n\nHOW THIS CARD IS JUDGED\nit works\n")
 		require.NoError(t, os.WriteFile(filepath.Join(dir, id+".md"), []byte(brief), 0o644))
 	}
@@ -57,7 +59,7 @@ func TestTheDashboardRowsSayHowManyAreReads(t *testing.T) {
 	ta.ok("stop --reason test --until 90m") // a STOPPED tick deals nothing and counts the record
 	ta.ok("tick")                           // a take moves the fleet table alone: the record follows it
 	var v whereView
-	ta.json("where", &v)
+	ta.json("where --cards", &v)
 	fred := v.Tables[sprint.Friends]["fred"]
 	require.NotNil(t, fred)
 	require.Equal(t, "3", fred["working"])
@@ -68,6 +70,14 @@ func TestTheDashboardRowsSayHowManyAreReads(t *testing.T) {
 		require.Equal(t, "0", v.Tables[sprint.Fleet]["m1"][k], "m1 %s", k)
 	}
 	require.Equal(t, sprint.ReadCardCounts{Working: 1}, v.ReadCards)
+	var storedLevel bool
+	for _, c := range v.Cards {
+		if c.Primary == "s1-2" {
+			require.Equal(t, "blocker", c.Priority, "where exposes the work child's stored level for exact dashboard colouring")
+			storedLevel = true
+		}
+	}
+	require.True(t, storedLevel, "the active blocker work card is included alongside the separately counted read")
 }
 
 // withoutRowCards is a row of tables without its card counts (sprint.RowCardFields), for a

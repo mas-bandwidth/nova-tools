@@ -407,7 +407,8 @@ func (s *Server) index() []byte {
 // them purple. A dealt card is at fix when its level is fix (the fix level, card
 // a-rework-is-priority-fix-bb), or, until where prints that level, when it is an attempt after
 // the first (its attempt field, else its id's .w<n>) and not blocker or critical, which keep
-// their red. The marks: fix true on the card; a fleet or friends row's fix, its fix cards
+// their red. A read card remains a read even if it inherits an urgent level. The marks:
+// fix true on a work card; a fleet or friends row's fix, its fix cards
 // working (where's fix_working when it prints one); a work row's fix, its primaries at fix,
 // taken off its working, where a primary sent out again sits (lifecycle: review -> working on
 // rework), unless where prints the row's fix itself; priorities' fix list, those primaries,
@@ -432,10 +433,14 @@ type fixCard struct {
 	State    string `json:"state"`
 	Priority string `json:"priority"`
 	Attempt  int    `json:"attempt"`
+	Kind     string `json:"kind"`
 }
 
 // atFix is whether the card c, whose primary is listed at listed (where's priorities), is at fix.
 func (c fixCard) atFix(listed string) bool {
+	if c.Kind == "read" {
+		return false // a read remains orange, even with an inherited fix or urgent level
+	}
 	level := cmp.Or(c.Priority, listed)
 	if level == "fix" {
 		return true
@@ -501,7 +506,8 @@ func fixView(body json.RawMessage) json.RawMessage {
 	}
 
 	working := map[[2]string]int{}            // the fix cards working, by table and row
-	primaries := map[string]map[string]bool{} // the primaries at fix, by stream
+	from := map[[2]string]map[string]int{}    // their old level cells, moved to fix
+	primaries := map[string]map[string]bool{} // the working primaries at fix, by stream
 	fixIDs := slices.Clone(prio["fix"])
 	marked := false
 	for i, c := range read {
@@ -511,26 +517,43 @@ func fixView(body json.RawMessage) json.RawMessage {
 		}
 		marked = true
 		raw["fix"] = json.RawMessage("true")
-		if c.State == "working" {
-			if f, ok := strings.CutPrefix(c.Member, "friend."); ok {
-				working[[2]string{"friends", f}]++
-			} else {
-				working[[2]string{"fleet", c.Member}]++
-			}
-		}
 		p := cmp.Or(c.Primary, c.ID)
-		if primaries[c.Stream] == nil {
-			primaries[c.Stream] = map[string]bool{}
+		if c.State == "working" {
+			k := [2]string{"fleet", c.Member}
+			if f, ok := strings.CutPrefix(c.Member, "friend."); ok {
+				k = [2]string{"friends", f}
+			}
+			working[k]++
+			level := cmp.Or(c.Priority, listed[p], "normal")
+			if level != "fix" && !urgentLevel(level) {
+				if from[k] == nil {
+					from[k] = map[string]int{}
+				}
+				from[k][level+"_working"]++
+			}
+			if primaries[c.Stream] == nil {
+				primaries[c.Stream] = map[string]bool{}
+			}
+			primaries[c.Stream][p] = true
 		}
-		primaries[c.Stream][p] = true
 		if !slices.Contains(fixIDs, p) {
 			fixIDs = append(fixIDs, p)
 		}
 	}
 	for _, t := range []string{"fleet", "friends"} {
 		for name, row := range rows[t] {
+			k := [2]string{t, name}
 			if _, has := row["fix_working"]; has {
-				working[[2]string{t, name}] = cellCount(row["fix_working"])
+				n := cellCount(row["fix_working"])
+				for field, count := range from[k] {
+					moved := min(count, cellCount(row[field]))
+					if moved == 0 {
+						continue
+					}
+					row[field] = cellOf(row[field], cellCount(row[field])-moved)
+					n += moved
+				}
+				working[k] = n
 			}
 		}
 	}
