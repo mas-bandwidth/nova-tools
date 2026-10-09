@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -152,7 +154,7 @@ func archiveNonce() string {
 // --routes, and by --fleet or --friends, whose cards they count), the streams' bases and
 // the rows' plan; then the history-only finished cards leave the done cells of the
 // friends' or the machines' rows in one step (sprint.TidyDone; their records stay; each
-// tidied row's median run wall is carried, sprint.PropCarriedMedian); then the archive is
+// tidied row's median run wall is carried, sprint.PropCarriedMedians); then the archive is
 // written again with what moved and how the move ended, and the stats record names the
 // tidy. A move that fails leaves its archive, failed. Cards on any other cell, the work,
 // merge and readers tables, holds and judgments are untouched. A tidy within
@@ -234,6 +236,9 @@ func (st *Store) TidyStats(ctx context.Context, req TidyReq) (TidyResult, error)
 		}
 		res.Record.Rows = rows
 		res.count()
+		if res.Moved > 0 {
+			st.dropOldCarriedMedians(ctx)
+		}
 	}
 	res.Record.State = ArchiveDone
 	if err := st.putJSON(ctx, res.Archive, res.Record); err != nil {
@@ -275,3 +280,102 @@ func (res *TidyResult) count() {
 		res.Kept += len(r.Kept)
 	}
 }
+
+// dropOldCarriedMedians drops legacy per-row carried_median_<row> properties from the
+// fleet table so a live fleet table near the bound shrinks rather than grows (docs/SPEC-SPRINT.md
+// section 11).
+func (st *Store) dropOldCarriedMedians(ctx context.Context) {
+	fleetTable := st.Names.Table(sprint.Fleet)
+	b := st.B
+	if b == nil {
+		b = st.root
+	}
+	m := unwrapMem(b)
+	if m == nil && st.root != nil {
+		m = unwrapMem(st.root)
+	}
+	if m != nil {
+		m.mu.Lock()
+		if t := m.tables[fleetTable]; t != nil {
+			ep := t.at(st.epoch)
+			if ep != nil && ep.props != nil {
+				for k := range ep.props {
+					if strings.HasPrefix(k, "carried_median_") {
+						delete(ep.props, k)
+					}
+				}
+			}
+		}
+		m.mu.Unlock()
+	} else {
+		r := unwrapRedis(b)
+		if r == nil && st.root != nil {
+			r = unwrapRedis(st.root)
+		}
+		if r != nil {
+			propsKey := ntable.PropsKeyAt(fleetTable, st.epoch)
+			keys, err := r.C.HKeys(ctx, propsKey).Result()
+			if err == nil {
+				var toDel []string
+				for _, k := range keys {
+					if strings.HasPrefix(k, "carried_median_") {
+						toDel = append(toDel, k)
+					}
+				}
+				if len(toDel) > 0 {
+					_ = r.C.HDel(ctx, propsKey, toDel...).Err() // ignored: dropping old properties is best-effort cleanup
+				}
+			}
+		}
+	}
+	if st.tw != nil {
+		st.tw.mu.Lock()
+		if fl, ok := st.tw.tables[sprint.Fleet]; ok && fl != nil {
+			p := fl.Props()
+			changed := false
+			for k := range p {
+				if strings.HasPrefix(k, "carried_median_") {
+					delete(p, k)
+					changed = true
+				}
+			}
+			if changed {
+				fl.SetProps(p)
+			}
+		}
+		st.tw.mu.Unlock()
+	}
+}
+
+func unwrapMem(b Backend) *Mem {
+	for b != nil {
+		if m, ok := b.(*Mem); ok {
+			return m
+		}
+		if u, ok := b.(interface{ Unwrap() Backend }); ok {
+			b = u.Unwrap()
+		} else if w, ok := b.(interface{ RawBackend() Backend }); ok {
+			b = w.RawBackend()
+		} else {
+			break
+		}
+	}
+	return nil
+}
+
+func unwrapRedis(b Backend) *Redis {
+	for b != nil {
+		if r, ok := b.(*Redis); ok {
+			return r
+		}
+		if u, ok := b.(interface{ Unwrap() Backend }); ok {
+			b = u.Unwrap()
+		} else if w, ok := b.(interface{ RawBackend() Backend }); ok {
+			b = w.RawBackend()
+		} else {
+			break
+		}
+	}
+	return nil
+}
+

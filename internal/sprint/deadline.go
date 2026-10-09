@@ -46,8 +46,9 @@ const (
 // cards it deals, not those times the member's history
 // (TestTickDealMeasuresEachDoneOKCellOnce).
 //
-// A stats tidy carries the member's median through it (PropCarriedMedian): the carried
-// median and count stand while the live sample is smaller than the carried count.
+// A stats tidy carries the member's median through it (PropCarriedMedians, legacy
+// PropCarriedMedian): the carried median and count stand while the live sample is smaller
+// than the carried count.
 func MemberMedianWall(s *Snapshot, member string) (median float64, n int) {
 	if s.Fleet == nil {
 		return 0, 0

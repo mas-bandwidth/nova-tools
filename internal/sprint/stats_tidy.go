@@ -2,7 +2,9 @@ package sprint
 
 import (
 	"cmp"
+	"encoding/json"
 	"fmt"
+	"maps"
 	"math/big"
 	"slices"
 	"strconv"
@@ -132,7 +134,8 @@ func TidyKept(s *Snapshot, stopped func(from, to time.Time) time.Duration) map[s
 // TidyDone is the tidy of the done cells of the fleet rows its kinds name (friends: the
 // friends' rows, FriendRow; fleet: the machines'): each row with a finished card, in row
 // order, and the plan that takes the history-only cards off (TidyKept), one unit each,
-// their records kept, with each tidied row's median run wall carried (CarriedMedians).
+// their records kept, with each tidied row's median run wall carried in the fleet
+// table's unified carried_medians property (PropCarriedMedians, docs/SPEC-SPRINT.md section 11).
 func TidyDone(s *Snapshot, kinds []string, stopped func(from, to time.Time) time.Duration) ([]TidyRow, Plan) {
 	var rows []TidyRow
 	var p Plan
@@ -140,6 +143,21 @@ func TidyDone(s *Snapshot, kinds []string, stopped func(from, to time.Time) time
 		return nil, p
 	}
 	kept := TidyKept(s, stopped)
+	medians := map[string]string{}
+	if raw, had := s.Fleet.Prop(PropCarriedMedians); had && raw != "" {
+		if m := parseCarriedMedians(raw); m != nil {
+			maps.Copy(medians, m)
+		}
+	}
+	for k, v := range s.Fleet.Props() {
+		if rowName, found := strings.CutPrefix(k, "carried_median_"); found && v != "" {
+			if _, exists := medians[rowName]; !exists {
+				if _, _, ok := parseMedianValue(v); ok {
+					medians[rowName] = v
+				}
+			}
+		}
+	}
 	for _, row := range s.Fleet.Rows() {
 		if IsFriendRow(row) && !slices.Contains(kinds, TidyFriends) || !IsFriendRow(row) && !slices.Contains(kinds, TidyFleet) {
 			continue
@@ -160,9 +178,25 @@ func TidyDone(s *Snapshot, kinds []string, stopped func(from, to time.Time) time
 				Moved: fmt.Sprintf("%s done %s -> off the table (stats tidy: its record kept)", wc.ID, cell)})
 		}
 		if len(r.Moved) > 0 {
-			p.Props = append(p.Props, carryMedian(s, row)...)
+			var median float64
+			var n int
+			if f, ok := FriendOfRow(row); ok {
+				median, n = FriendMedianWall(s, f)
+			} else {
+				median, n = MemberMedianWall(s, row)
+			}
+			if n > 0 {
+				medians[row] = strconv.FormatFloat(median, 'f', -1, 64) + " " + strconv.Itoa(n)
+			}
 		}
 		rows = append(rows, r)
+	}
+	if len(p.Units) > 0 && len(medians) > 0 {
+		newVal := encodeCarriedMedians(medians)
+		was, had := s.Fleet.Prop(PropCarriedMedians)
+		if !had || was != newVal {
+			p.Props = append(p.Props, PropWrite{Table: Fleet, Name: PropCarriedMedians, Value: newVal, Was: was, WasAbsent: !had})
+		}
 	}
 	return rows, p
 }
@@ -175,43 +209,44 @@ func doneWord(col string) string {
 	return "ok"
 }
 
-// PropCarriedMedian is the fleet table's property holding a row's median run wall as a
-// tidy found it: "<seconds> <samples>". The deadline rules (MemberMedianWall,
-// FriendMedianWall) use it while the row's live ok sample is smaller than its count, and
-// drop it once the live sample is at least as large, so a tidy never changes a deadline.
+// PropCarriedMedians is the fleet table's property holding every row's carried median
+// run wall as an encoded JSON map of row to "<seconds> <samples>" (docs/SPEC-SPRINT.md
+// section 11, Statistics). The deadline rules (MemberMedianWall, FriendMedianWall) use
+// it while the row's live ok sample is smaller than its count, so a tidy never changes
+// a deadline.
+const PropCarriedMedians = "carried_medians"
+
+// PropCarriedMedian is the legacy per-row fleet table property ("carried_median_<row>"),
+// read for backward compatibility for one release.
 func PropCarriedMedian(row string) string { return "carried_median_" + row }
 
-// carryMedian is the property write that carries the row's median run wall through a tidy,
-// none when the row has no sample or carries the same already.
-func carryMedian(s *Snapshot, row string) []PropWrite {
-	var median float64
-	var n int
-	if f, ok := FriendOfRow(row); ok {
-		median, n = FriendMedianWall(s, f)
-	} else {
-		median, n = MemberMedianWall(s, row)
-	}
-	if n == 0 {
+// parseCarriedMedians parses the fleet table's carried_medians property (docs/SPEC-SPRINT.md
+// section 11, Statistics): an encoded JSON map of row to "<seconds> <samples>".
+func parseCarriedMedians(raw string) map[string]string {
+	if raw == "" {
 		return nil
 	}
-	v := strconv.FormatFloat(median, 'f', -1, 64) + " " + strconv.Itoa(n)
-	was, had := s.Fleet.Prop(PropCarriedMedian(row))
-	if had && was == v {
+	var m map[string]string
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
 		return nil
 	}
-	return []PropWrite{{Table: Fleet, Name: PropCarriedMedian(row), Value: v, Was: was, WasAbsent: !had}}
+	return m
 }
 
-// carriedMedian is the row's carried median run wall and its sample count; ok false when
-// none is carried or it does not read.
-func carriedMedian(s *Snapshot, row string) (median float64, n int, ok bool) {
-	if s.Fleet == nil {
-		return 0, 0, false
+// encodeCarriedMedians encodes the map of carried medians to JSON.
+func encodeCarriedMedians(m map[string]string) string {
+	if len(m) == 0 {
+		return ""
 	}
-	v, had := s.Fleet.Prop(PropCarriedMedian(row))
-	if !had {
-		return 0, 0, false
+	b, err := json.Marshal(m)
+	if err != nil {
+		return ""
 	}
+	return string(b)
+}
+
+// parseMedianValue parses "<seconds> <samples>".
+func parseMedianValue(v string) (median float64, n int, ok bool) {
 	m, c, found := strings.Cut(v, " ")
 	if !found {
 		return 0, 0, false
@@ -222,6 +257,29 @@ func carriedMedian(s *Snapshot, row string) (median float64, n int, ok bool) {
 		return 0, 0, false
 	}
 	return median, n, true
+}
+
+// carriedMedian is the row's carried median run wall and its sample count; ok false when
+// none is carried or it does not read. It reads the unified carried_medians property first,
+// falling back to the legacy per-row carried_median_<row> property for one release.
+func carriedMedian(s *Snapshot, row string) (median float64, n int, ok bool) {
+	if s.Fleet == nil {
+		return 0, 0, false
+	}
+	if raw, had := s.Fleet.Prop(PropCarriedMedians); had && raw != "" {
+		if m := parseCarriedMedians(raw); m != nil {
+			if v, found := m[row]; found {
+				if med, cnt, parsed := parseMedianValue(v); parsed {
+					return med, cnt, true
+				}
+			}
+		}
+	}
+	v, had := s.Fleet.Prop(PropCarriedMedian(row))
+	if !had || v == "" {
+		return 0, 0, false
+	}
+	return parseMedianValue(v)
 }
 
 // withCarried is the live median and count, or the row's carried ones while the live

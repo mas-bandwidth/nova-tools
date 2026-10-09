@@ -6292,12 +6292,15 @@ internal/sprint/stats_tidy.go):
   the cards kept and those finished since.
 - A tidy never changes a deadline: the deal's deadline is DeadlineK times the row's median
   run wall over its done-ok cell (`sprint.MemberMedianWall`, `sprint.FriendMedianWall`),
-  so a tidy that moves a row's cards writes the row's median and sample count as it found
-  them to the fleet table's property `carried_median_<row>` (`sprint.PropCarriedMedian`,
-  `<seconds> <samples>`), in the same step. The deadline rules use the carried median
-  while the row's live sample is smaller than the carried count, and the live one once it
-  is at least as large (`TestATidyKeepsTheDeadlineItsMedianGave`: a machine with a
-  20-minute median on a 30-minute route keeps its 60-minute deadline).
+  so a tidy that moves a row's cards writes the rows' medians and sample counts as it found
+  them to the fleet table's unified property `carried_medians` (`sprint.PropCarriedMedians`,
+  an encoded JSON map of row to `<seconds> <samples>`), in the same step, and drops legacy
+  per-row `carried_median_<row>` properties so a fleet table fits the property bound
+  (`LimitTableProps`). The legacy per-row properties are accepted on read for one release.
+  The deadline rules use the carried median while the row's live sample is smaller than
+  the carried count, and the live one once it is at least as large
+  (`TestATidyKeepsTheDeadlineItsMedianGave`: a machine with a 20-minute median on a 30-minute
+  route keeps its 60-minute deadline; `TestATidyOverAFleetOfMoreThanSixtyFourRowsSucceeds`).
 - The route counters (`sprint.RouteStats` at the tidy) are archived by `--routes`, and by
   `--fleet` and `--friends` too, since they count the fleet table's cards those take off;
   `stats --routes` counts from the last tidy of the routes when given no `--since`.
