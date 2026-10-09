@@ -22,18 +22,22 @@ func TestNativeControlBindingHoldsChangedIdentityAndLostKnownAuthority(t *testin
 			home, work := t.TempDir(), filepath.Join(t.TempDir(), "work")
 			require.NoError(t, os.Mkdir(work, 0700))
 			require.NoError(t, os.Chmod(home, 0700))
-	root, err := NativeControlDir(home, work)
+			root, err := NativeControlDir(home, work)
 			require.NoError(t, err)
 			index := filepath.Join(home, ".nova-friend", "native-control", "INDEX.json")
 			before, err := os.ReadFile(index)
 			require.NoError(t, err)
 			receipt := filepath.Join(root, "RUN")
-            require.NoError(t, os.WriteFile(receipt, []byte("preserved owned receipt"), 0600))
-            switch damage {
-            case "truncated-index": require.NoError(t, os.WriteFile(index, []byte(`{"Version":1,"Bindings":[]}`+"\n"), 0600))
-            case "unknown-member": require.NoError(t, os.WriteFile(index, []byte(strings.TrimSpace(string(before[:len(before)-2]))+`,"Unknown":true}`+"\n"), 0600))
-            case "duplicate-member": require.NoError(t, os.WriteFile(index, []byte(strings.Replace(string(before), `"Version":1`, `"Version":0,"Version":1`, 1)), 0600))
-            case "unexpected-entry": require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(root), "unindexed-debt"), []byte("owned"), 0600))
+			require.NoError(t, os.WriteFile(receipt, []byte("preserved owned receipt"), 0600))
+			switch damage {
+			case "truncated-index":
+				require.NoError(t, os.WriteFile(index, []byte(`{"Version":1,"Bindings":[]}`+"\n"), 0600))
+			case "unknown-member":
+				require.NoError(t, os.WriteFile(index, []byte(strings.TrimSpace(string(before[:len(before)-2]))+`,"Unknown":true}`+"\n"), 0600))
+			case "duplicate-member":
+				require.NoError(t, os.WriteFile(index, []byte(strings.Replace(string(before), `"Version":1`, `"Version":0,"Version":1`, 1)), 0600))
+			case "unexpected-entry":
+				require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(root), "unindexed-debt"), []byte("owned"), 0600))
 			case "replaced-work":
 				require.NoError(t, os.Rename(work, work+"-prior"))
 				require.NoError(t, os.Mkdir(work, 0700))
@@ -48,16 +52,16 @@ func TestNativeControlBindingHoldsChangedIdentityAndLostKnownAuthority(t *testin
 				require.NoError(t, os.Symlink(index+"-prior", index))
 			}
 			if damage == "truncated-index" {
-                // A new friend/state cannot use a syntactically valid empty
-                // index to hide a previous friend's still-owned authority.
-                work = t.TempDir()
-            }
-            _, err = NativeControlDir(home, work)
-            if damage != "missing-namespace" {
-                raw, readErr := os.ReadFile(receipt)
-                require.NoError(t, readErr)
-                assert.Equal(t, "preserved owned receipt", string(raw))
-            }
+				// A new friend/state cannot use a syntactically valid empty
+				// index to hide a previous friend's still-owned authority.
+				work = t.TempDir()
+			}
+			_, err = NativeControlDir(home, work)
+			if damage != "missing-namespace" {
+				raw, readErr := os.ReadFile(receipt)
+				require.NoError(t, readErr)
+				assert.Equal(t, "preserved owned receipt", string(raw))
+			}
 			assert.Error(t, err, "damaged durable authority must not select a replacement namespace")
 			if damage == "replaced-work" || damage == "missing-namespace" {
 				after, err := os.ReadFile(index)

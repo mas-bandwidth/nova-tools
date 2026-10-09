@@ -114,7 +114,9 @@ func nativeControlIndexBase(home string) (string, bool, error) {
 }
 
 func bindNativeWork(base, indexPath string, index *nativeControlIndex, canonical string, info os.FileInfo, id nativeWorkID) (string, error) {
-	if err := verifyNativeControlNamespaces(base, index); err != nil { return "", err }
+	if err := verifyNativeControlNamespaces(base, index); err != nil {
+		return "", err
+	}
 	match := -1
 	seen := map[string]bool{}
 	for n, binding := range index.Bindings {
@@ -223,26 +225,40 @@ func writeNativeControlIndex(path string, index *nativeControlIndex) error {
 // the standard encoder's bytes rejects unknown/duplicate members and trailing
 // values without a second parser (SPEC-FRIEND, Native control roots).
 func readNativeControlIndex(raw []byte, index *nativeControlIndex) error {
- if err := json.Unmarshal(raw, index); err != nil { return err }
- canonical, err := json.Marshal(index)
- if err != nil { return err }
- if !bytes.Equal(raw, append(canonical, '\n')) { return errors.New("native control index must retain its canonical machine-written representation") }
- return nil
+	if err := json.Unmarshal(raw, index); err != nil {
+		return err
+	}
+	canonical, err := json.Marshal(index)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(raw, append(canonical, '\n')) {
+		return errors.New("native control index must retain its canonical machine-written representation")
+	}
+	return nil
 }
 
 // Every durable namespace must remain reachable through exactly one index row.
 // A syntactically valid truncated index cannot abandon RUN/LANE/read debt.
 func verifyNativeControlNamespaces(base string, index *nativeControlIndex) error {
- expected := map[string]bool{"INDEX.json": true, "INDEX.json.lock": true}
- for _, binding := range index.Bindings {
-  if !nativeControlNamespace.MatchString(binding.Namespace) || expected[binding.Namespace] { return errors.New("native control index has an invalid or repeated namespace") }
-  expected[binding.Namespace] = true
- }
- entries, err := os.ReadDir(base)
- if err != nil { return err }
- for _, entry := range entries {
-  if !expected[entry.Name()] { return errors.New("native control contains unindexed authority; preserve and reconcile ownership before launch") }
-  if nativeControlNamespace.MatchString(entry.Name()) && (!entry.IsDir() || entry.Type()&os.ModeSymlink != 0) { return errors.New("native control namespace must remain a real directory") }
- }
- return nil
+	expected := map[string]bool{"INDEX.json": true, "INDEX.json.lock": true}
+	for _, binding := range index.Bindings {
+		if !nativeControlNamespace.MatchString(binding.Namespace) || expected[binding.Namespace] {
+			return errors.New("native control index has an invalid or repeated namespace")
+		}
+		expected[binding.Namespace] = true
+	}
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !expected[entry.Name()] {
+			return errors.New("native control contains unindexed authority; preserve and reconcile ownership before launch")
+		}
+		if nativeControlNamespace.MatchString(entry.Name()) && (!entry.IsDir() || entry.Type()&os.ModeSymlink != 0) {
+			return errors.New("native control namespace must remain a real directory")
+		}
+	}
+	return nil
 }

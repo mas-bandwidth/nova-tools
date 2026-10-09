@@ -43,7 +43,9 @@ func (d *Daemon) ValidateNativeControlRoots(roots []string) error {
 	}
 	if d.NativeControlBinding != nil {
 		bound, err := d.NativeControlBinding()
-		if err != nil { return nativeControlHold{fmt.Errorf("native control binding cannot be verified: %w", err)} }
+		if err != nil {
+			return nativeControlHold{fmt.Errorf("native control binding cannot be verified: %w", err)}
+		}
 		if bound != d.NativeControlDir {
 			return nativeControlHold{errors.New("native control binding changed or cannot be verified; reconcile its durable ownership before launch")}
 		}
@@ -161,16 +163,26 @@ func (e nativeControlHold) Unwrap() error        { return Deferred{Reason: e.Err
 // bind aliases. Only absent backend roots (which the backend also skips) may be
 // omitted; an unresolved caller grant cannot be treated as safely unrelated.
 func nativeControlOutsideRoots(root string, roots []string) error {
- if err := nativeBrokerOutsideRoots(root, roots); err != nil { return err }
- for _, allowed := range roots {
-  if allowed == "" { continue }
-  if _, err := os.Stat(allowed); err != nil {
-   optional := false
-   for _, backend := range (&sandbox.Policy{}).VisibleRoots() { optional = optional || backend == allowed }
-   if optional && errors.Is(err, os.ErrNotExist) { continue }
-   return fmt.Errorf("native control cannot resolve wall root %s: %w", allowed, err)
-  }
-  if sandbox.Inside(root, allowed) || sandbox.Inside(allowed, root) { return errors.New("native control physically overlaps a wall-visible root") }
- }
- return nil
+	if err := nativeBrokerOutsideRoots(root, roots); err != nil {
+		return err
+	}
+	for _, allowed := range roots {
+		if allowed == "" {
+			continue
+		}
+		if _, err := os.Stat(allowed); err != nil {
+			optional := false
+			for _, backend := range (&sandbox.Policy{}).VisibleRoots() {
+				optional = optional || backend == allowed
+			}
+			if optional && errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("native control cannot resolve wall root %s: %w", allowed, err)
+		}
+		if sandbox.Inside(root, allowed) || sandbox.Inside(allowed, root) {
+			return errors.New("native control physically overlaps a wall-visible root")
+		}
+	}
+	return nil
 }

@@ -3,10 +3,10 @@
 package main
 
 import (
-	"os"
 	"context"
-	"strings"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
@@ -48,29 +48,31 @@ func TestNativeControlProductionResolverDoesNotSplitWithDifferentHOME(t *testing
 // CLI capability inspection uses native code too, so its context must use the
 // same authority exclusion as later provider turns (SPEC-FRIEND control roots).
 func TestNativeControlOpenCodePreflightIsWalledBeforeFirstNativeExecution(t *testing.T) {
- t.Parallel()
- r := newRig(t, "sender", "worker")
- w := r.world()
- require.NoError(t, os.Chmod(r.home, 0700))
- work := t.TempDir()
- calls := 0
- w.wall = func(wall friend.Wall, next friend.Exec) friend.Exec {
-  return func(ctx context.Context, dir, prog string, args []string, stdin string) (string, int, error) {
-   calls++
-   require.True(t, friend.InLane(ctx), "preflight must not bypass the native wall")
-   require.NotEmpty(t, wall.ControlDir)
-   require.Equal(t, friend.DefaultStateDir(r.home, "worker"), wall.ControlState)
-   require.False(t, strings.HasPrefix(wall.ControlDir, work+string(os.PathSeparator)))
-   return next(ctx, dir, prog, args, stdin)
-  }
- }
- w.exec = func(_ context.Context, _ string, _ string, args []string, _ string) (string, int, error) {
-  if len(args) == 1 && args[0] == "--version" { return "synthetic-version", 0, nil }
-  require.Equal(t, []string{"run", "--help"}, args)
-  // Force the normal capability refusal after inspection; no provider or
-  // bus daemon starts in this fixture.
-  return "--synthetic-unrelated-flag", 0, nil
- }
- cliOf(w).Do(t, "run", "--as", "worker", "--harness", "opencode", "--dir", work).Exit(2).Err("synthetic-version")
- require.Equal(t, 2, calls)
+	t.Parallel()
+	r := newRig(t, "sender", "worker")
+	w := r.world()
+	require.NoError(t, os.Chmod(r.home, 0700))
+	work := t.TempDir()
+	calls := 0
+	w.wall = func(wall friend.Wall, next friend.Exec) friend.Exec {
+		return func(ctx context.Context, dir, prog string, args []string, stdin string) (string, int, error) {
+			calls++
+			require.True(t, friend.InLane(ctx), "preflight must not bypass the native wall")
+			require.NotEmpty(t, wall.ControlDir)
+			require.Equal(t, friend.DefaultStateDir(r.home, "worker"), wall.ControlState)
+			require.False(t, strings.HasPrefix(wall.ControlDir, work+string(os.PathSeparator)))
+			return next(ctx, dir, prog, args, stdin)
+		}
+	}
+	w.exec = func(_ context.Context, _ string, _ string, args []string, _ string) (string, int, error) {
+		if len(args) == 1 && args[0] == "--version" {
+			return "synthetic-version", 0, nil
+		}
+		require.Equal(t, []string{"run", "--help"}, args)
+		// Force the normal capability refusal after inspection; no provider or
+		// bus daemon starts in this fixture.
+		return "--synthetic-unrelated-flag", 0, nil
+	}
+	cliOf(w).Do(t, "run", "--as", "worker", "--harness", "opencode", "--dir", work).Exit(2).Err("synthetic-version")
+	require.Equal(t, 2, calls)
 }
