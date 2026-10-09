@@ -105,6 +105,31 @@ func TestDashboardListensOnPrivateAddressesOnly(t *testing.T) {
 	}
 }
 
+// A first read that fails is a refusal on stderr and the process exits. It does
+// not log that failure on stdout and it does not keep serving.
+func TestDashboardRefusesWhenTheFirstReadFails(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	done := make(chan struct{})
+	var code int
+	var out, errs string
+	go func() {
+		code, out, errs = ta.do("dashboard --listen 127.0.0.1:0 --pull none")
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("dashboard did not exit when the first read failed")
+	}
+	assert.Equal(t, 2, code, "%s%s", out, errs)
+	assert.Empty(t, out, "the read failure must not be on stdout: %s", out)
+	assert.Contains(t, errs, "nova-sprint dashboard REFUSED")
+	assert.Contains(t, errs, "; run: nova-sprint dashboard -h")
+	assert.Equal(t, 1, strings.Count(errs, "REFUSED"), "the why must not carry a second refusal: %s", errs)
+	assert.Equal(t, 1, strings.Count(errs, "\n"), "one line: %s", errs)
+}
+
 // Every refusal comes before any listener: exit 2, one line, nothing served.
 func TestDashboardRefusesBadUse(t *testing.T) {
 	t.Parallel()
