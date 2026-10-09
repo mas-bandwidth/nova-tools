@@ -2549,6 +2549,7 @@ nova-sprint rules
 nova-sprint funded <provider> --reason <text>
 nova-sprint cost reconcile [--dry-run] [--json]
 nova-sprint cost reprice [--route <r>]... [--since <RFC3339>] [--dry-run] [--json]
+nova-sprint cost reap --as <worker> --card <id> --primary <id> --stream <s> --kind work|read --gen <n> --attempt <n> --epoch <n> --reason claim-moved|dropped [--route <r>] [--model <m>] [--tier <t>] [--usage <text>]
 nova-sprint stats [--routes [--since <10m|RFC3339>]]
 nova-sprint stats tidy (--friends | --fleet | --routes | --streams | --all)... --reason <text> [--dry-run]
 nova-sprint play [--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]

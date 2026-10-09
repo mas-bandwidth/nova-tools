@@ -134,6 +134,7 @@ func init() {
 		{"funded", "<provider> --reason <text>", "funded opencode --reason 'paid $100 in the console'", (*app).cmdFunded},
 		{"cost reconcile", "[--dry-run] [--json]", "cost reconcile", (*app).cmdCostReconcile},
 		{"cost reprice", "[--route <r>]... [--since <RFC3339>] [--dry-run] [--json]", "cost reprice --since 2026-10-01T00:00:00Z --dry-run", (*app).cmdCostReprice},
+		{"cost reap", "--as <worker> --card <id> --primary <id> --stream <s> --kind work|read --gen <n> --attempt <n> --epoch <n> --reason claim-moved|dropped [--route <r>] [--model <m>] [--tier <t>] [--usage <text>]", "cost reap --as m1 --card nowhere.w1 --primary nowhere --stream nowhere --kind work --gen 1 --attempt 1 --reason claim-moved --usage input=1", (*app).cmdCostReap},
 		{"ci", "<id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci --epoch 0", (*app).cmdCI},
 		{"wait", "(<note>[,<note>]... | --group <id> [--expect <n>]) (--for <duration> | --until <RFC3339>)", "wait n1,n2 --for 3h", (*app).cmdWait},
 		{"remind", "(--in <duration> | --at <time>) --note <text> [--for <actor>] | --list | --cancel <id>", "remind --in 30m --note window-closes", (*app).cmdRemind},

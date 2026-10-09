@@ -173,6 +173,10 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 			}
 		}
 	}
+	// a primary that left the work table keeps a reaped launch on the stream
+	// control card. That spend is in the total and the tiers, not per_landed,
+	// and it is not the control card's landed sum.
+	addReapedControl(s, stream, &t, routes, byTier, workCost, readCost, &pricedWork, &pricedRead, &allCost, day)
 	if sum, ok := cardcost.Sum(landedCost...); ok && landed > 0 && len(landedCost) > 0 {
 		if total, err := amountOf(sum); err == nil && total != nil {
 			t.PerLanded = cardcost.Cents(total.Quo(total, big.NewRat(int64(landed), 1)))
@@ -271,6 +275,126 @@ func runTier(routes map[string]Route, c *Card, con Consumer) string {
 func attemptTier(c *Card) string {
 	m, _ := cardhdr.ReadModel(c.F("brief"))
 	return cmp.Or(c.F(FieldTierNow), c.F(FieldTier), m.Tier, "no tier")
+}
+
+// addReapedControl folds the stream control card's #reaped consumers into the
+// stream sums. When every listed consumer is a reaped launch, the card's charged
+// total is the spend, cut records included, so the tiers still meet the total.
+// Any other consumer on that card is left out: only the reaped launches move.
+func addReapedControl(s *Snapshot, stream string, t *TierCosts, routes map[string]Route, byTier map[string]*big.Rat, workCost, readCost *big.Rat, pricedWork, pricedRead *bool, allCost *[]string, day string) {
+	if s.Merge == nil {
+		return
+	}
+	ctl := s.StreamCtl(stream)
+	if ctl == nil {
+		return
+	}
+	view := CardCostOf(ctl)
+	if len(view.Consumers) == 0 && view.Total.Records == 0 {
+		return
+	}
+	onlyReaped := true
+	var reaped []Consumer
+	for _, con := range view.Consumers {
+		if strings.HasSuffix(con.Key, "#reaped") {
+			reaped = append(reaped, con)
+			continue
+		}
+		onlyReaped = false
+	}
+	if len(reaped) == 0 && !onlyReaped {
+		return
+	}
+	if len(reaped) == 0 {
+		if view.Total.Charged != "" {
+			*allCost = append(*allCost, view.Total.Charged)
+			if usd, err := amountOf(view.Total.Charged); err == nil && usd != nil {
+				addTier(byTier, "no tier", usd)
+				workCost.Add(workCost, usd)
+				*pricedWork = true
+			}
+		}
+		t.UnpricedRuns += view.Total.Records - view.Total.ChargedOf
+		return
+	}
+	if onlyReaped && view.Total.Charged != "" {
+		*allCost = append(*allCost, view.Total.Charged)
+	}
+	if onlyReaped {
+		t.UnpricedRuns += view.Total.Records - view.Total.ChargedOf
+	}
+	listed := new(big.Rat)
+	for _, con := range reaped {
+		if con.Kind == "read" && con.Usage.Unpriced == WhySubscription {
+			if onlyReaped {
+				t.UnpricedRuns--
+			}
+			t.ReadTokens += con.Usage.Tokens.Total()
+		}
+		if con.Kind == "read" && con.Usage.Unpriced == cardcost.WhyNoTokens {
+			t.ReadsNoTokens++
+		}
+		if con.Kind == "read" && strings.HasPrefix(con.At, day) {
+			addReadDay(t.ReadsToday, con)
+		}
+		if con.Kind == "read" {
+			rd := t.Readers[cmp.Or(con.Who, "-")]
+			rd.addRead(con, s.Now)
+			t.Readers[cmp.Or(con.Who, "-")] = rd
+		}
+		usd, err := amountOf(cmp.Or(con.Usage.Actual, con.Usage.Predicted))
+		if !onlyReaped && (err != nil || usd == nil) && !(con.Kind == "read" && con.Usage.Unpriced == WhySubscription) {
+			t.UnpricedRuns++
+		}
+		if err != nil || usd == nil {
+			continue
+		}
+		if !onlyReaped {
+			*allCost = append(*allCost, cmp.Or(con.Usage.Actual, con.Usage.Predicted))
+		}
+		byKind := workCost
+		if con.Kind == "read" {
+			byKind = readCost
+			*pricedRead = true
+		} else {
+			*pricedWork = true
+		}
+		byKind.Add(byKind, usd)
+		listed.Add(listed, usd)
+		addTier(byTier, reapedTier(routes, con), usd)
+	}
+	if !onlyReaped {
+		return
+	}
+	if all, err := amountOf(view.Total.Charged); err == nil && all != nil && all.Cmp(listed) > 0 {
+		tier := "no tier"
+		if len(reaped) > 0 {
+			tier = reapedTier(routes, reaped[len(reaped)-1])
+		}
+		addTier(byTier, tier, new(big.Rat).Sub(all, listed))
+	}
+}
+
+// reapedTier is the tier a reaped record is counted under when it has no card
+// left to read one from: its own tier, else its route's, else "no tier".
+func reapedTier(routes map[string]Route, con Consumer) string {
+	if con.Tier != "" {
+		return con.Tier
+	}
+	for _, name := range []string{con.Route, con.Usage.Route} {
+		if name == "" {
+			continue
+		}
+		if r, ok := routes[name]; ok && r.Tier != "" {
+			return r.Tier
+		}
+		for _, tier := range cardhdr.Routes {
+			if strings.HasPrefix(name, tier+"-") {
+				return tier
+			}
+		}
+	}
+	return "no tier"
 }
 
 // addTier adds usd to the tier's sum.

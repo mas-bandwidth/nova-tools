@@ -259,6 +259,13 @@ func CostReconcileStep(r sprint.CostReconcileReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.CostReconcile(s, r) }}
 }
 
+// CostReapStep records one reaped launch (sprint.CostReap). Prices is the route
+// sheet a member may read. The step does not report the card finished.
+func CostReapStep(r sprint.CostReapReq) Step {
+	return Step{Args: ArgsOf(r), Verb: "cost reap", Load: tables(sprint.Work, sprint.Merge), Mirrors: true, Prices: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.CostReap(s, r) }}
+}
+
 // FundedStep is the coordinator's word that a provider was paid: every rest of its funds
 // ends (sprint.Funded; nova-tools#5199).
 func FundedStep(r sprint.FundedReq) Step {

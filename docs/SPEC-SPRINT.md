@@ -2092,9 +2092,18 @@ per attempt to its job's `usage.tsv` before the summary line that carries the la
 spend; a launch stopped between the two still reports what the rows say
 (`member.ReceiptUsage`): every attempt's tokens summed, the model, and the harness's cost
 only when every attempt that reported tokens reported one. A launch the member reaps
-because its claim moved (the card redealt or dropped under it) reports nothing, and its
-spend reaches the dashboard only on the unreconciled line below; so does the record of a
-card that leaves the work table.
+because its claim moved, or because the card was dropped, collects the child's result
+before it discards the job (docs/SPEC-SWARM.md, "Every run's cost") and records that
+run as its own charge (`cost reap`): the consumer key ends in `#reaped`, the end is
+`reaped`, and the usage line carries `reap=claim-moved` or `reap=dropped` beside the
+recovery's `usage_source`. The charge is on the primary while that card is on the work
+table, so a later land copies it into the landed cost and `per_landed`; a primary
+already landed has its `cost` and the stream's landed sum set again from the new
+charged total. A primary that has left the work table keeps the charge on the stream's
+control card: it is in `total_cost` and the tier split, not in `per_landed`, and it
+does not change the control card's landed sum. A cleared epoch writes nothing into the
+new epoch; the receipt beside the native log is kept. The unreconciled line below stays
+the provider's aggregate gap and is never relabelled as this charge.
 
 **Reads are priced like work** (the owner, 2026-10-05: "do we have the cost for readers
 properly calculated yet in nova sprint?"; the store then held 3,939 read records and none

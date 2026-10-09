@@ -94,6 +94,13 @@ type Stopper interface {
 	Stop() (pid int)
 }
 
+// UsageKeeper keeps a launch's terminal usage where Ended cannot delete it.
+// Ended removes the job directory, usage.tsv with it, and keeps the native log,
+// so the receipt is that log's sibling.
+type UsageKeeper interface {
+	KeepUsage(usage string) error
+}
+
 // ProgressEvery is how often the member stamps progress on a card whose child prints: the
 // sprint's own number (internal/sprint ProgressEvery, inside its RuleProgressWindow of ten
 // minutes with room for a stamp that is late or lost; docs/SPEC-SPRINT.md section 8, the
@@ -835,13 +842,15 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				continue // a stopped launch is the stop's: handed back, never reported (machineStop)
 			}
 			if l.dropped && (l.res != nil || (l.child != nil && l.child.Done())) {
-				m.forget(id, false)
-				fmt.Fprintf(m.out, "%s %s: no longer in the queue (dropped or returned)\n", FinishReaped, id)
+				if m.priceReaped(id, "dropped", false, noAnswer) {
+					fmt.Fprintf(m.out, "%s %s: no longer in the queue (dropped or returned)\n", FinishReaped, id)
+				}
 				continue
 			}
 			if l.claimMoved && (l.res != nil || (l.child != nil && l.child.Done())) {
-				m.forget(id, false)
-				fmt.Fprintf(m.out, "%s %s: the claim moved\n", FinishReaped, id)
+				if m.priceReaped(id, "claim-moved", false, noAnswer) {
+					fmt.Fprintf(m.out, "%s %s: the claim moved\n", FinishReaped, id)
+				}
 				continue
 			}
 			if l.res == nil {
@@ -907,7 +916,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		byID[c.ID] = c
 	}
 	sort.Strings(ids)
-	if acted += m.machineStop(q, byID, now); m.stopped {
+	if acted += m.machineStop(q, byID, now, noAnswer); m.stopped {
 		m.spent.Fill = since()
 		return acted, nil
 	}
@@ -939,10 +948,12 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				m.running[id] = l
 				continue
 			}
-			epoch, gen, attempt := m.claim(c)
-			fmt.Fprintf(m.out, "%s %s: the claim moved (epoch %d gen %d attempt %d, now epoch %d gen %d attempt %d)\n", FinishReaped, id, l.epoch, l.gen, l.attempt, epoch, gen, attempt)
-			m.forget(id, false) // reaped: the result is nobody's
-			claimMoved[id] = true
+			// priced, then discarded: the result is nobody's, and the spend is still a run
+			if m.priceReaped(id, "claim-moved", false, noAnswer) {
+				epoch, gen, attempt := m.claim(c)
+				fmt.Fprintf(m.out, "%s %s: the claim moved (epoch %d gen %d attempt %d, now epoch %d gen %d attempt %d)\n", FinishReaped, id, l.epoch, l.gen, l.attempt, epoch, gen, attempt)
+				claimMoved[id] = true
+			}
 			continue
 		}
 		if c.Col != "working" && c.Col != "reading" {
@@ -963,8 +974,9 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	for id, l := range m.running {
 		if _, listed := byID[id]; !listed && !l.busy {
 			if l.child.Done() {
-				m.forget(id, false)
-				fmt.Fprintf(m.out, "%s %s: no longer in the queue (dropped or returned)\n", FinishReaped, id)
+				if m.priceReaped(id, "dropped", false, noAnswer) {
+					fmt.Fprintf(m.out, "%s %s: no longer in the queue (dropped or returned)\n", FinishReaped, id)
+				}
 			} else {
 				l.dropped = true
 				m.running[id] = l
@@ -1417,6 +1429,143 @@ func (m *Member) collect() (acted int) {
 	return acted
 }
 
+// withReapReason stamps why a run was priced apart from a finish. A line that
+// already says reap= is left as the recovery wrote it.
+func withReapReason(usage, reason string) string {
+	if strings.Contains(usage, "reap=") {
+		return usage
+	}
+	usage = strings.TrimSpace(usage)
+	if usage == "" {
+		return "reap=" + reason
+	}
+	return usage + " reap=" + reason
+}
+
+// keepUsage writes the terminal usage where Ended cannot delete it.
+func keepUsage(ch Child, usage string) error {
+	k, ok := ch.(UsageKeeper)
+	if !ok {
+		return nil
+	}
+	return k.KeepUsage(usage)
+}
+
+// priceReaped collects a reaped launch's usage and records it before the launch
+// is discarded. false means the record is still owed (the result is in flight,
+// the child has not ended, or the store did not answer): the launch stays.
+// A finish or a read is never issued for it.
+func (m *Member) priceReaped(id, reason string, failed bool, noAnswer func(string, []byte)) bool {
+	l, ours := m.running[id]
+	if !ours {
+		return true
+	}
+	if l.busy {
+		return false // a push or a result still holds the checkout
+	}
+	if l.res == nil {
+		if l.child == nil || !l.child.Done() {
+			if l.child == nil {
+				m.forget(id, failed)
+				return true
+			}
+			return false
+		}
+		if m.cfg.Background {
+			// Result is the recovery, and it is long. The claim is marked before
+			// the pass returns so a later pass cannot finish it.
+			if reason == "dropped" {
+				l.dropped = true
+			} else {
+				l.claimMoved = true
+			}
+			l.busy, l.busyAt = true, m.clock()
+			m.running[id] = l
+			child := l.child
+			m.long(func() {
+				r := child.Result()
+				r.Usage = withReapReason(r.Usage, reason)
+				_ = keepUsage(child, r.Usage)
+				m.post(id, post{res: &r})
+			})
+			m.longWork()
+			return false
+		}
+		r := l.child.Result()
+		r.Usage = withReapReason(r.Usage, reason)
+		l.res = &r
+	}
+	usage := withReapReason(l.res.Usage, reason)
+	l.res.Usage = usage
+	if reason == "dropped" {
+		l.dropped = true
+	} else {
+		l.claimMoved = true
+	}
+	m.running[id] = l
+	if err := keepUsage(l.child, usage); err != nil {
+		fmt.Fprintf(m.out, "NOTE usage receipt %s: %s\n", id, oneLine(err.Error()))
+	}
+	if m.sprint == nil {
+		m.forget(id, failed)
+		return true
+	}
+	code, out := m.run(m.reapArgs(l, reason, usage)...)
+	if code == 2 {
+		if noAnswer != nil {
+			noAnswer("cost reap "+id, out)
+		} else {
+			fmt.Fprintf(m.out, "NOTE cost reap %s: the store did not answer; the pass goes on, and it is tried again next pass: %s\n", id, oneLine(strings.TrimSpace(string(out))))
+		}
+		return false
+	}
+	if code != 0 {
+		fmt.Fprintf(m.out, "NOTE cost reap %s refused (exit %d): %s\n", id, code, oneLine(strings.TrimSpace(string(out))))
+	}
+	m.forget(id, failed)
+	return true
+}
+
+// reapArgs is `cost reap` for the launch's own claim: the generation and attempt
+// it was started at, not the card's live ones, and no finish.
+func (m *Member) reapArgs(l launch, reason, usage string) []string {
+	p := l.packet
+	as := p.As
+	if as == "" {
+		as = m.cfg.As
+	}
+	kind := p.Kind
+	if kind == "" {
+		kind = "work"
+	}
+	card := p.Card
+	gen, attempt, epoch := l.gen, l.attempt, l.epoch
+	if gen == 0 {
+		gen = p.Gen
+	}
+	if attempt == 0 {
+		attempt = p.Attempt
+	}
+	if epoch == 0 {
+		epoch = p.Epoch
+	}
+	args := []string{"cost", "reap", "--as", as, "--card", card, "--primary", p.Primary, "--stream", p.Stream, "--kind", kind,
+		"--gen", strconv.Itoa(gen), "--attempt", strconv.Itoa(attempt), "--epoch", strconv.FormatUint(epoch, 10), "--reason", reason}
+	if p.Route != "" {
+		args = append(args, "--route", p.Route)
+	}
+	if p.Model != "" {
+		args = append(args, "--model", p.Model)
+	}
+	if p.Tier != "" {
+		args = append(args, "--tier", p.Tier)
+	}
+	if usage != "" {
+		args = append(args, "--usage", usage)
+	}
+	return args
+}
+
 // forget drops a launch and what is remembered of its card, and tells a runner that is an
 // Ender the launch is done with (failed: a person may want to inspect it).
 func (m *Member) forget(id string, failed bool) {
@@ -1475,7 +1624,7 @@ func (m *Member) OwedStopReturns() int {
 // it stands; while RUNNING a stopped launch whose claim the queue no longer holds working
 // (moved to a new generation, or gone) has nothing left to return and is reaped. It
 // returns how many cards it handed back.
-func (m *Member) machineStop(q queueOut, byID map[string]queueCard, now time.Time) (acted int) {
+func (m *Member) machineStop(q queueOut, byID map[string]queueCard, now time.Time, noAnswer func(string, []byte)) (acted int) {
 	switch {
 	case q.Machine == "STOPPED":
 		if !m.stopped {
@@ -1530,9 +1679,14 @@ func (m *Member) machineStop(q queueOut, byID map[string]queueCard, now time.Tim
 		if !m.stopped {
 			if c, listed := byID[id]; !listed || (c.Col != "working" && c.Col != "reading") || m.moved(l, c) {
 				// RUNNING again and the claim is not ours to return: the store moved it (a
-				// new generation, a drop); the result is nobody's
-				fmt.Fprintf(m.out, "%s %s: cancelled by stop, and the claim moved under it (gen %d epoch %d); nothing to return\n", FinishReaped, id, l.gen, l.epoch)
-				m.forget(id, true)
+				// new generation, a drop); the result is nobody's, and the run is still priced
+				reason := "claim-moved"
+				if !listed || (c.Col != "working" && c.Col != "reading") {
+					reason = "dropped"
+				}
+				if m.priceReaped(id, reason, true, noAnswer) {
+					fmt.Fprintf(m.out, "%s %s: cancelled by stop, and the claim moved under it (gen %d epoch %d); nothing to return\n", FinishReaped, id, l.gen, l.epoch)
+				}
 				continue
 			}
 		}

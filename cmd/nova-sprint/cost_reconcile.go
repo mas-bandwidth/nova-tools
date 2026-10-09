@@ -126,3 +126,37 @@ func (a *app) cmdCostReconcile(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "COST RECONCILE %s providers=%d notes=%d\n", word, len(recs), notes)
 	return 0
 }
+
+// cmdCostReap is `cost reap`: one moved or dropped launch's usage, recorded as its
+// own per-run charge (sprint.CostReap). The member sends it before it discards the
+// job. It is a worker's verb, and it names the epoch the launch was handed at.
+func (a *app) cmdCostReap(args []string, stdout, stderr io.Writer) int {
+	const verb = "cost reap"
+	fs, c := a.verbSetup(verb)
+	as := fs.String("as", "", "the worker that ran the launch")
+	card := fs.String("card", "", "the work or read card")
+	primary := fs.String("primary", "", "the producer card the charge is kept on, while it is on the work table")
+	stream := fs.String("stream", "", "the stream, whose control card keeps the charge when the primary is gone")
+	kind := fs.String("kind", "", "work or read")
+	gen := fs.Int("gen", 0, "the generation the launch was started at")
+	attempt := fs.Int("attempt", 0, "the attempt the launch was started at")
+	reason := fs.String("reason", "", "claim-moved or dropped")
+	route := fs.String("route", "", "the route the launch ran")
+	model := fs.String("model", "", "provider/model")
+	tier := fs.String("tier", "", "the tier the route was drawn from")
+	usage := fs.String("usage", "", "what the run spent, one line, including reap=claim-moved or reap=dropped")
+	if pos, err := parse(fs, args); err != nil || len(pos) > 0 {
+		return refuse(stderr, verb, argErr("takes no words ", err, pos...))
+	}
+	c.orActor(*as)
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, verb, err.Error())
+	}
+	req := sprint.CostReapReq{Primary: *primary, Card: *card, Stream: *stream, Kind: *kind, Who: *as,
+		Route: *route, Model: *model, Tier: *tier, Usage: *usage, Reason: *reason, Gen: *gen, Attempt: *attempt}
+	if c.epoch >= 0 {
+		req.Epoch = uint64(c.epoch)
+	}
+	return a.runStep(verb, *c, st, store.CostReapStep(req), stdout, stderr)
+}

@@ -776,8 +776,15 @@ List the current unit tests with `go test -list . ./cmd/nova-swarm/`.
 ### Every run's cost
 
 A member reports usage when it collects a held launch's terminal result, with
-any result or none. A moved or dropped claim is reaped without this collection;
-its spend remains visible only through provider reconciliation. Durable
+any result or none. A moved or dropped claim is reaped only after that
+collection: the member calls the child's result, including the recovery below,
+before it discards the job, and records the spend as its own per-run charge
+(`cost reap`) with `reap=claim-moved` or `reap=dropped` beside the recovery's
+`usage_source`. That charge is in the stream total (`total_cost`), and in
+`per_landed` when the primary is landed or later lands. A dropped primary's
+charge is kept on the stream control card and counted in `total_cost`, not in
+`per_landed`. Provider reconciliation stays the aggregate gap and is not that
+charge. Durable
 per-attempt receipts recover a lost native summary. When measured usage is
 absent, generation ids from the native log and the launch's own
 `harness-output.log` recover complete OpenRouter request quotes through the

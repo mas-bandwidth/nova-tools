@@ -1309,6 +1309,16 @@ func (c *nativeChild) Result() member.Result {
 	return c.result
 }
 
+// KeepUsage writes the launch's terminal usage beside the native log. Ended
+// deletes the job directory and keeps that log, so a reaped run's receipt
+// survives the discard. An empty usage is not a receipt.
+func (c *nativeChild) KeepUsage(usage string) error {
+	if c.logPath == "" || strings.TrimSpace(usage) == "" {
+		return nil
+	}
+	return os.WriteFile(c.logPath+".usage", []byte(strings.TrimRight(usage, "\n")+"\n"), 0o644)
+}
+
 // frameOf is a launch's frame (docs/SPEC-CARD-CONTRACT.md layer 1): the repository and
 // base the brief's header names, the packet's branch and attempt, and the commit to stage:
 // a read's head under read, a later attempt's last pushed head of any earlier attempt

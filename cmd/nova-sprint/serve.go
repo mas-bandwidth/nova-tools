@@ -46,7 +46,7 @@ import (
 
 // workerVerb is the worker a verb of a batch acts as and how many words its
 // verb is, or why the server does not run it. A worker sends its own verbs only:
-// take, finish, read or queue, then --as and its name; or fleet beat, its name,
+// take, finish, progress, read, queue or cost reap, then --as and its name; or fleet beat, its name,
 // --load and a number, and nothing more; or friend beat, its name, and its report's flags each with its value (friendBeatReport); or friend cards, its name, and --json at most. The name is one worker, never a list.
 // No later word, wherever it stands, is a flag named as, redis or actor: the
 // server gives the store and the actor (serve puts them before the worker's
@@ -97,8 +97,29 @@ func workerVerb(argv []string) (as string, words int, why string) {
 		}
 		return rest[4], 2, ""
 	}
+	if len(argv) >= 2 && argv[0] == "cost" && argv[1] == "reap" {
+		// a reaped launch's usage: the worker names itself first, then the claim.
+		// The server gives the store and the actor (words == 2, as a lane verb does).
+		if len(argv) < 4 || argv[2] != "--as" {
+			return "", 0, "it does not begin `cost reap --as <worker>`: a worker's verb names its worker first"
+		}
+		as = argv[3]
+		if name, ok := sprint.FriendOfRow(as); !sprint.ValidID(as) && (!ok || !sprint.ValidID(name)) {
+			return "", 0, "a worker's verb names one worker (letters, digits, _ and -, or friend.<name>), found " + as
+		}
+		for _, w := range argv[4:] {
+			if !strings.HasPrefix(w, "-") {
+				continue
+			}
+			switch name, _, _ := strings.Cut(strings.TrimLeft(w, "-"), "="); name {
+			case "as", "redis", "actor":
+				return "", 0, "--" + name + " is not a worker's to give the server"
+			}
+		}
+		return as, 2, ""
+	}
 	if len(argv) == 0 || !slices.Contains([]string{"take", "finish", "progress", "read", "queue"}, argv[0]) {
-		return "", 0, "the server runs the workers' verbs only: take, finish, progress, read, queue, fleet beat, friend beat, friend cards, lane take, lane give"
+		return "", 0, "the server runs the workers' verbs only: take, finish, progress, read, queue, cost reap, fleet beat, friend beat, friend cards, lane take, lane give"
 	}
 	verb, rest := argv[0], argv[1:]
 	if len(rest) < 2 || rest[0] != "--as" {

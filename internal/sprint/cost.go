@@ -428,6 +428,139 @@ func seconds(n int64) string {
 // The work table's cost column shows the control card's (Cost; SyncMirrors).
 const FieldCost = "cost"
 
+// CostReapReq is one reaped launch: the claim it was started at, not the card's
+// live generation, and the usage collected before the job was discarded.
+type CostReapReq struct {
+	Primary, Card, Stream, Kind, Who, Route, Model, Tier, Usage, Reason string
+	Gen, Attempt                                                        int
+	Epoch                                                               uint64
+}
+
+// CostReap records a moved or dropped launch as its own per-run charge. The
+// primary keeps it while that card is on the work table, so a later land copies
+// it into the landed cost; a primary already landed has its cost and the
+// stream's landed sum set again. A primary that has left the table keeps the
+// charge on the stream control card, which the where view counts in the stream
+// total and not in per_landed. A different epoch writes nothing: the receipt
+// beside the log is the record of that run, and it is not copied into the new
+// epoch. The provider reconciliation gap is not this charge.
+func CostReap(s *Snapshot, r CostReapReq) Plan {
+	var p Plan
+	if s == nil || s.Epoch != r.Epoch {
+		return p
+	}
+	p.on(s)
+	if r.Reason != "claim-moved" && r.Reason != "dropped" {
+		p.refuse(cmp.Or(r.Card, r.Primary, "-"), "a reaped run names why it was reaped: claim-moved or dropped")
+		return p
+	}
+	if r.Kind != "work" && r.Kind != "read" {
+		p.refuse(cmp.Or(r.Card, r.Primary, "-"), "a reaped run is work or read")
+		return p
+	}
+	if r.Card == "" || r.Primary == "" || r.Stream == "" {
+		return p // nothing to attach it to; the local receipt is the record
+	}
+	usage := r.Usage
+	if !strings.Contains(usage, "reap=") {
+		usage = strings.TrimSpace(usage)
+		if usage == "" {
+			usage = "reap=" + r.Reason
+		} else {
+			usage += " reap=" + r.Reason
+		}
+	}
+	rec := costRecord(s, usage, r.Route, r.Model, r.Route == "", "", "")
+	u := cardcost.ParseUsage(rec)
+	key := r.Card + "#g" + itoa(r.Gen) + "#reaped"
+	if r.Kind == "read" {
+		key = r.Card + "#a" + itoa(r.Attempt) + "#reaped"
+	}
+	con := Consumer{Kind: r.Kind, Card: r.Card, Attempt: r.Attempt, Gen: r.Gen, Who: r.Who,
+		Route: r.Route, Model: cmp.Or(u.Model, r.Model), Tier: r.Tier, End: "reaped", At: stamp(s.Now), Key: key, Usage: u}
+	if pr := s.Work.Placed(r.Primary); pr != nil {
+		set := map[string]string{}
+		addConsumer(pr, set, con)
+		if len(set) == 0 {
+			return p // this claim was recorded already
+		}
+		charged := cardcost.ParseTotal(set[FieldCostTotal]).Charged
+		if pr.Col == Landed {
+			if charged == "" {
+				// the new total has no charged figure: the landed cell follows it
+				if pr.F(FieldCost) != "" {
+					p.Units = append(p.Units, reapUnit(Work, pr, set, []string{FieldCost}, pr.ID+" reaped cost"))
+				} else {
+					p.Units = append(p.Units, reapUnit(Work, pr, set, nil, pr.ID+" reaped cost"))
+				}
+			} else if charged != pr.F(FieldCost) {
+				set[FieldCost] = charged
+				p.Units = append(p.Units, reapUnit(Work, pr, set, nil, pr.ID+" reaped cost"))
+			} else {
+				p.Units = append(p.Units, reapUnit(Work, pr, set, nil, pr.ID+" reaped cost"))
+			}
+			p.Units = append(p.Units, reapedLandedSum(s, pr, charged)...)
+			return p
+		}
+		p.Units = append(p.Units, reapUnit(Work, pr, set, nil, pr.ID+" reaped cost"))
+		return p
+	}
+	if s.Merge == nil {
+		return p
+	}
+	ctl := s.StreamCtl(r.Stream)
+	if ctl == nil {
+		return p
+	}
+	set := map[string]string{}
+	addConsumer(ctl, set, con)
+	if len(set) == 0 {
+		return p
+	}
+	// the control card's cost field is the landed sum, not this charge
+	p.Units = append(p.Units, reapUnit(Merge, ctl, set, nil, ctl.ID+" reaped cost"))
+	return p
+}
+
+// reapUnit is one card's reaped-cost write, fields only.
+func reapUnit(table string, c *Card, set map[string]string, unset []string, moved string) Unit {
+	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(table, setEntry(c, set, unset...))}, Moved: moved}
+}
+
+// reapedLandedSum sets the stream control card's landed sum again when a landed
+// primary's charged total moved. The sum is the landed cards' cost fields, this
+// card's taken from the new total rather than the field the plan has not written.
+func reapedLandedSum(s *Snapshot, pr *Card, charged string) []Unit {
+	if s.Merge == nil {
+		return nil
+	}
+	ctl := s.StreamCtl(pr.Row)
+	if ctl == nil {
+		return nil
+	}
+	var sum []string
+	for _, c := range s.Work.Cell(pr.Row, Landed) {
+		v := c.F(FieldCost)
+		if c.ID == pr.ID {
+			v = charged
+		}
+		if v != "" {
+			sum = append(sum, v)
+		}
+	}
+	if len(sum) == 0 {
+		if ctl.F(FieldCost) == "" {
+			return nil
+		}
+		return []Unit{reapUnit(Merge, ctl, nil, []string{FieldCost}, pr.Row+" cost reaped")}
+	}
+	total, ok := cardcost.Sum(sum...)
+	if !ok || total == ctl.F(FieldCost) {
+		return nil
+	}
+	return []Unit{reapUnit(Merge, ctl, map[string]string{FieldCost: total}, nil, pr.Row+" cost reaped")}
+}
+
 // MoneyText is a cost as the work table's cost cell shows it: US dollars and cents,
 // rounded up to the next cent ("$1.24" for 1.2345; nothing past the cent is
 // shown), "-"
