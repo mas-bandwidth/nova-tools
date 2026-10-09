@@ -20,10 +20,11 @@ import (
 // firstrun_test.go pins the onboarding standard for this binary: the
 // docs/TESTS.md `### First run` transcript is RUN, line for line and in order,
 // through the one comparator (onboarding.CompareTranscript), and the usage
-// banner's `example:` block is that same sitting. The sitting is the canary
-// by hand with no daemon: a dry-run install, a ping as the coordinator, the
-// session's pong, the wait for it, the status of a directory no daemon has
-// run in, and a dry-run uninstall. It needs a store whose nova-config rows
+// banner's `example:` block is that same sitting. Setup first prints its plan
+// on a filesystem twin without native calls. The remaining canary has no
+// daemon: dry-run install and uninstall, a ping as the coordinator, the
+// session's pong, the wait for it, and the status of a directory no daemon has
+// run in. It needs a store whose nova-config rows
 // name ada and bob, so it runs on a throwaway redis-server with those two
 // names in the `friends` set, its address in NOVA_BUS_REDIS, which changes
 // what the tool dials and nothing it prints. `./` is a directory of the
@@ -43,6 +44,7 @@ func firstRunStore(t *testing.T) string {
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	t.Parallel()
 	documentedExamples := []string{
+		"nova-friend setup --as worker --harness opencode --dir /tmp/worker --config-dir /tmp/worker-config --home /tmp/worker-home --profile isolated --program /usr/local/bin/opencode --deny-self /tmp/coordinator --profile-only --dry-run",
 		"nova-friend install --as bob --harness opencode --dir ./bob --dry-run",
 		"nova-friend uninstall --as bob --dry-run",
 		"nova-friend ping --as ada --to bob --nonce abc123",
@@ -82,7 +84,11 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 			args = append(args, stand.Replace(a))
 		}
 		var out, errb strings.Builder
-		code := run(args, strings.NewReader(""), &out, &errb, w)
+		stepWorld := w
+		if s.Args[0] == "setup" {
+			stepWorld, _ = setupExampleWorld(t)
+		}
+		code := run(args, strings.NewReader(""), &out, &errb, stepWorld)
 		got = append(got, onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()})
 	}
 	volatile := []onboarding.Field{{Name: "tmpdir", Doc: ".", Run: dir}, {Name: "id"}, {Name: "at"}, {Name: "took"}}

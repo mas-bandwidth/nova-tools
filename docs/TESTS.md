@@ -131,8 +131,11 @@ NAMES NAME name=bob push=proven age=0s harness=claude
 Run by `cmd/nova-friend/firstrun_test.go` on a throwaway redis-server whose
 `friends` set names ada and bob (what `nova-config apply` writes for two friend
 rows), its address in `NOVA_BUS_REDIS`, so the lines read as a reader types
-them. The sitting is the canary by hand, with no daemon running: a dry-run
-install prints the plan for bob's agent; a dry-run uninstall the plan to undo
+them. The sitting starts with the explicit setup dry-run on a filesystem fixture
+whose working directory exists; its config/native home do not. The setup step is
+also executed by `cmd/nova-friend/setup_example_test.go`, with no host files, native
+commands, writes or provider calls. Then the canary runs by hand, with no daemon:
+a dry-run install prints the plan for bob's agent; a dry-run uninstall the plan to undo
 it; ada, as the coordinator, pings bob with a nonce; bob's session answers
 with `pong` (one note to ada, and the pong file under the home directory,
 `./home/.nova-friend/bob`); `wait-pong` finds it on the log from bob's own
@@ -151,6 +154,29 @@ coordinator's ping loop").
 ### First run
 
 ```text
+$ nova-friend setup --as worker --harness opencode --dir /tmp/worker --config-dir /tmp/worker-config --home /tmp/worker-home --profile isolated --program /usr/local/bin/opencode --deny-self /tmp/coordinator --profile-only --dry-run
+SETUP OK harness=opencode apply_requested=false applied=false dry_run=true
+SETUP STEP name=profile_owner kind=file path=/tmp/worker-config/.nova-friend-setup/OWNER want=explicit\x20friend/profile\x20ownership
+SETUP STEP name=native_home_owner kind=file path=/tmp/worker-home/.nova-friend-setup/PROFILE_ROOT want=reference\x20to\x20the\x20canonical\x20profile\x20owner
+SETUP STEP name=xdg-config-home kind=directory path=/tmp/worker-home/.config want=private\x20directory
+SETUP STEP name=xdg-data-home kind=directory path=/tmp/worker-home/.local/share want=private\x20directory
+SETUP STEP name=opencode-version kind=native path=- want=-
+SETUP NATIVE name=opencode-version program=/usr/local/bin/opencode args=[--version] env=[HOME\x3d/tmp/worker-home\x20PATH\x3d/usr/bin:/bin:/usr/sbin:/sbin\x20XDG_CONFIG_HOME\x3d/tmp/worker-home/.config\x20XDG_DATA_HOME\x3d/tmp/worker-home/.local/share\x20OPENCODE_CONFIG\x3d/tmp/worker/opencode.json\x20OPENCODE_CONFIG_DIR\x3d/tmp/worker-config] dir=/tmp/worker timeout=15s
+SETUP STEP name=profile_binding kind=file path=/tmp/worker-config/.nova-friend-setup/PROFILE want=completed\x20public\x20setup\x20selection
+SETUP FACT name=home state=selected detail=/tmp/worker-home
+SETUP FACT name=config-dir state=selected detail=/tmp/worker-config
+SETUP FACT name=xdg-config-home state=selected detail=/tmp/worker-home/.config
+SETUP FACT name=xdg-data-home state=selected detail=/tmp/worker-home/.local/share
+SETUP FACT name=route state=unselected detail=profile\x20only
+SETUP FACT name=provider-turn state=not_checked detail=-
+SETUP FACT name=activation state=not_requested detail=-
+SETUP FACT name=presence state=not_checked detail=-
+SETUP FACT name=friend state=selected detail=worker
+SETUP FACT name=profile state=selected detail=isolated
+SETUP FACT name=config_root state=selected detail=/tmp/worker-config
+SETUP FACT name=native_home state=selected detail=/tmp/worker-home
+SETUP FACT name=deny_self state=selected detail=/tmp/coordinator
+
 $ nova-friend install --as bob --harness opencode --dir ./bob --dry-run
 INSTALL OK label=com.nova.friend-bob plist=./home/Library/LaunchAgents/com.nova.friend-bob.plist launchd_log=./home/Library/Logs/nova-friend-bob.log dry_run=true
 INSTALL PLAN command="write ./bob/opencode.json permission.external_directory../bob/**=allow"

@@ -112,6 +112,7 @@ cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova
 cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
 cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus log --max 5
 cmd/nova-bus/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-bus names
+cmd/nova-friend/setup_example_test.go:TestSetupFirstRunExampleMatchesWholeTranscript example: nova-friend setup --as worker --harness opencode --dir /tmp/worker --config-dir /tmp/worker-config --home /tmp/worker-home --profile isolated --program /usr/local/bin/opencode --deny-self /tmp/coordinator --profile-only --dry-run
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend install --as bob --harness opencode --dir ./bob --dry-run
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend uninstall --as bob --dry-run
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend ping --as ada --to bob --nonce abc123
