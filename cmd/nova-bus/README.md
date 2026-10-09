@@ -57,7 +57,7 @@ ACK ID id=01ARZ3NDEKTSV4RRFFQ69G5FAV acked=false
 
 $ nova-bus log --max 5
 LOG OK total=1
-LOG MESSAGE id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z subject="hello"
+LOG MESSAGE id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z entry=1759544334115-0 subject="hello"
 
 $ nova-bus names
 NAMES OK count=2 proven=2

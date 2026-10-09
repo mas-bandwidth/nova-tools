@@ -419,13 +419,27 @@ example: nova-bus overdue --older 10m`,
 			},
 			{
 				Name:    "log",
-				Usage:   "log [--bodies] [--max <n>] [--timeout <duration>] [--redis <addr>]",
+				Usage:   "log [--bodies] [--after <id> | --newest] [--max <n>] [--timeout <duration>] [--redis <addr>]",
 				Example: "log --max 5",
 				Effect:  tool.Inspection,
 				Detail: `Prints LOG OK total=<n>, then one LOG MESSAGE id=<id> from=<name> to=<names> cc=<names> re=<id>
-[kind=<k>] at=<RFC3339> subject=<s> line per message of the log, oldest first, with body=<text> too under --bodies.`,
+[kind=<k>] at=<RFC3339> entry=<ms>-<seq> subject=<s> line per message of the log, oldest first, with
+body=<text> too under --bodies; entry is the message's place on the log stream. One read holds at most
+10000 messages, so on a log longer than that the plain listing ends before today: --after <entry> lists
+the messages after that entry (oldest first), and --newest lists the last 10000 newest first, so
+--newest --max 5 is the latest five. Give one or the other.`,
 				Flags: func(f *tool.Flags) {
 					f.Bool("bodies", false, "print each message's body as well")
+					f.String("after", "", "list the messages after this log entry, <ms>-<seq> as LOG MESSAGE prints entry=")
+					f.Bool("newest", false, "list newest first, from the log's end")
+					f.Check(func(c *tool.Call) {
+						if v := c.Str("after"); v != "" && !streamID(v) {
+							c.Problem(fmt.Sprintf("--after wants a log entry id, <ms>-<seq> as LOG MESSAGE prints entry=; %q is not one", v))
+						}
+						if c.Str("after") != "" && c.Bool("newest") {
+							c.Problem("--after lists forward from an id and --newest backward from the end; give one or the other")
+						}
+					})
 					f.Max()
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
 					callTimeoutFlag(f)
@@ -824,14 +838,23 @@ func (w world) log(c *tool.Call) *tool.Out {
 		return refused
 	}
 	defer closeStore()
-	got, err := b.Log(context.Background(), "-")
+	var got []bus.Entry
+	var err error
+	switch {
+	case c.Bool("newest"):
+		got, err = b.LogNewest(context.Background())
+	case c.Str("after") != "":
+		got, err = b.Log(context.Background(), "("+c.Str("after"))
+	default:
+		got, err = b.Log(context.Background(), "-")
+	}
 	if err != nil {
 		return answer(err)
 	}
 	o := tool.Done().Fact("total", len(got))
 	for _, e := range got {
 		m := e.Message()
-		kv := slices.Concat([]any{"id", m.ID, "from", m.From, "to", strings.Join(m.To, ","), "cc", strings.Join(m.CC, ","), "re", m.Re}, kindItem(m), []any{"at", m.At.Format(time.RFC3339), "subject", tool.Text(m.Subject)})
+		kv := slices.Concat([]any{"id", m.ID, "from", m.From, "to", strings.Join(m.To, ","), "cc", strings.Join(m.CC, ","), "re", m.Re}, kindItem(m), []any{"at", m.At.Format(time.RFC3339), "entry", e.Entry, "subject", tool.Text(m.Subject)})
 		if c.Bool("bodies") {
 			kv = append(kv, "body", tool.Text(m.Body))
 		}

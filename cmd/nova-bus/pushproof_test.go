@@ -1,10 +1,13 @@
 package main
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 )
@@ -68,4 +71,31 @@ func TestSendAndRecvRefuseUntilTheInboxPushIsProven(t *testing.T) {
 	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=1 new=0")
 	cli.Do(t, "ack", "--as", "bob", "--id", mid).Exit(0).Out("ACK OK acked=1")
 	cli.Do(t, "log").Exit(0).Out("LOG OK total=1")
+}
+
+// The log's oldest window is one read of 10000 (bus.Log); --after <id>
+// lists past an entry and --newest from the end, so the latest message is
+// reachable on a log of any length; the two together are refused.
+func TestLogReachesTheNewestMessage(t *testing.T) {
+	t.Parallel()
+	r := newRig("ada", "bob")
+	cli := r.cli()
+	var ids, entries []string
+	for i := range 3 {
+		ids = append(ids, id(t, cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", fmt.Sprint("s", i), "--body", "x").Stdout))
+	}
+	all := cli.Do(t, "log").Exit(0).Out("LOG OK total=3", "subject=\"s0\"\nLOG MESSAGE", "subject=\"s2\"").Stdout
+	for _, f := range strings.Fields(all) {
+		if v, ok := strings.CutPrefix(f, "entry="); ok {
+			entries = append(entries, v)
+		}
+	}
+	require.Len(t, entries, 3, "each line says its place on the log stream: %s", all)
+	newest := cli.Do(t, "log", "--newest", "--max", "1").Exit(0).Out("LOG OK total=3", "LOG MESSAGE id="+ids[2], "LOG MORE").NotOut("id=" + ids[0]).Stdout
+	assert.Less(t, strings.Index(newest, "id="+ids[2]), strings.Index(newest, "LOG MORE"))
+	cli.Do(t, "log", "--newest").Exit(0).Out("subject=\"s2\"\nLOG MESSAGE", "subject=\"s0\"")
+	cli.Do(t, "log", "--after", entries[1]).Exit(0).Out("LOG OK total=1", "LOG MESSAGE id="+ids[2]).NotOut("id=" + ids[1])
+	cli.Do(t, "log", "--after", entries[2]).Exit(0).Out("LOG OK total=0")
+	cli.Do(t, "log", "--after", ids[0]).Exit(2).Err("--after wants a log entry id, <ms>-<seq> as LOG MESSAGE prints entry=")
+	cli.Do(t, "log", "--after", entries[0], "--newest").Exit(2).Err("give one or the other")
 }

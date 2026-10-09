@@ -103,7 +103,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 		require.NoError(t, err)
 		got = append(got, res)
 	}
-	for _, p := range onboarding.CompareTranscript(steps, got, []onboarding.Field{{Name: "id"}, {Name: "at"}}) {
+	for _, p := range onboarding.CompareTranscript(steps, got, []onboarding.Field{{Name: "id"}, {Name: "at"}, {Name: "entry"}}) {
 		assert.Failf(t, "documented transcript differs", "docs/TESTS.md: %s", p)
 	}
 

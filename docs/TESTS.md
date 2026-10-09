@@ -91,7 +91,7 @@ message; bob peeks (new, not yet
 delivered), receives it through `--exec` (the header line and the body go to the
 command, acked when it exits 0), acks an id that is not pending (false, exit 0: ack is idempotent), reads the
 log, and lists the names. The run-owned values are the message's `id=` (a ULID
-from the store's time) and its `at=`. The throwaway store has no users, so every
+from the store's time), its `at=` and its `entry=` (its place on the log stream). The throwaway store has no users, so every
 write says `login=none`: on the fleet's store the identity is the login user and
 `--as` may be left out.
 
@@ -118,7 +118,7 @@ ACK ID id=01ARZ3NDEKTSV4RRFFQ69G5FAV acked=false
 
 $ nova-bus log --max 5
 LOG OK total=1
-LOG MESSAGE id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z subject="hello"
+LOG MESSAGE id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z entry=1759544334115-0 subject="hello"
 
 $ nova-bus names
 NAMES OK count=2 proven=2
