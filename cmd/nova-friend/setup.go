@@ -9,7 +9,7 @@ import (
 )
 
 func (w world) setupVerb() tool.Verb {
-	return tool.Verb{Name: "setup", Usage: "setup --as <me> --harness <h> --dir <d> --config-dir <d> --home <d> --profile <p> --program <exe> --deny-self <d,...> [--profile-only | --provider <p> --model <m> --key-env NAME --secrets NAME --seat <seat>] [--apply] [--dry-run]",
+	return tool.Verb{Name: "setup", Usage: "setup --as <me> --harness <h> --dir <d> --config-dir <d> --home <d> --profile <p> --program <exe> --deny-self <d,...> [--profile-only | --provider <p> --model <m> --key-env NAME --secrets NAME --seat <seat>] [--claude-account-id <id> --claude-machine <name> --claude-accounts <manifest.tsv> --claude-accounts-sha256 <digest>] [--apply] [--dry-run]",
 		Example: "setup --as worker --harness opencode --dir /tmp/worker --config-dir /tmp/worker-config --home /tmp/worker-home --profile isolated --program /usr/local/bin/opencode --deny-self /tmp/coordinator --profile-only --dry-run",
 		Effect:  tool.LocalWrite + ": explicit --apply initializes local harness configuration; otherwise inspects and prints the plan",
 		Detail:  "Plans read existing paths and configuration only. --apply runs bounded native initialization or authentication inspection with a complete environment and durable process receipts. It preserves existing profiles, selects no implicit provider/model, and never installs or starts the daemon, sends a provider turn, logs in, or proves presence. --dry-run always reads only, even with --apply. Credential inputs are sealed names and seat references, never values. An active or unverified native setup receipt holds retries until its group exits.", DryRun: true,
@@ -22,6 +22,9 @@ func (w world) setupVerb() tool.Verb {
 			for _, flag := range []struct{ name, want string }{{"provider", "the explicit provider ID"}, {"model", "the explicit model ID"}, {"package", "the explicit provider adapter package"}, {"base-url", "the explicit provider endpoint"}, {"key-env", "the sealed credential's environment name, never its value"}, {"secrets", "sealed variable names, comma-separated"}, {"seat", "the nova-secrets seat holding those names"}} {
 				f.String(flag.name, "", flag.want)
 			}
+			for _, flag := range []struct{ name, want string }{{"claude-account-id", "explicit stable Claude subscription account ID from the reviewed manifest"}, {"claude-machine", "the selected target machine name in the reviewed manifest"}, {"claude-accounts", "local reviewed public manifest input for Go materialization under the owned config root"}, {"claude-accounts-sha256", "the exact public manifest digest printed by nova-secrets gate"}} {
+				f.String(flag.name, "", flag.want)
+			}
 			f.Int("context-limit", 0, "explicit provider model context limit in tokens; zero leaves it unspecified")
 			f.Int("output-limit", 0, "explicit provider model output limit in tokens; zero leaves it unspecified")
 		}, Run: w.setup,
@@ -30,7 +33,10 @@ func (w world) setupVerb() tool.Verb {
 
 func (w world) setup(c *tool.Call) *tool.Out {
 	dry := c.DryRun()
-	opts := friend.SetupOptions{Harness: c.Str("harness"), Friend: c.Str("as"), Dir: c.Str("dir"), ConfigDir: c.Str("config-dir"), Home: c.Str("home"), Profile: c.Str("profile"), Program: c.Str("program"), Provider: c.Str("provider"), Model: c.Str("model"), Package: c.Str("package"), BaseURL: c.Str("base-url"), KeyEnv: c.Str("key-env"), Seat: c.Str("seat"), SecretNames: secretNames(c.Str("secrets")), DenySelf: commaList(c.Str("deny-self")), ProfileOnly: c.Bool("profile-only"), ContextLimit: c.Int("context-limit"), OutputLimit: c.Int("output-limit")}
+	opts := friend.SetupOptions{Harness: c.Str("harness"), Friend: c.Str("as"), Dir: c.Str("dir"), ConfigDir: c.Str("config-dir"), Home: c.Str("home"), Profile: c.Str("profile"), Program: c.Str("program"), Provider: c.Str("provider"), Model: c.Str("model"), Package: c.Str("package"), BaseURL: c.Str("base-url"), KeyEnv: c.Str("key-env"), Seat: c.Str("seat"), SecretNames: secretNames(c.Str("secrets")), DenySelf: commaList(c.Str("deny-self")), ProfileOnly: c.Bool("profile-only"), ContextLimit: c.Int("context-limit"), OutputLimit: c.Int("output-limit"), ClaudeAccountID: c.Str("claude-account-id"), ClaudeMachine: c.Str("claude-machine"), ClaudeAccountsSource: c.Str("claude-accounts"), ClaudeAccountsSHA256: c.Str("claude-accounts-sha256")}
+	if opts.Provider == "claude.ai" && opts.Model == "claude.ai/token-default" || opts.ClaudeAccountID != "" || opts.ClaudeMachine != "" || opts.ClaudeAccountsSource != "" || opts.ClaudeAccountsSHA256 != "" {
+		opts.ClaudeAccountsPath = friend.ClaudeAccountsOwnedPath(opts.ConfigDir)
+	}
 	planner := w.setupPlanner
 	if planner == nil {
 		planner = setupPlanner

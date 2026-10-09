@@ -16,6 +16,9 @@ import (
 type SetupOptions struct {
 	Harness, Friend, Dir, ConfigDir, Profile, Home, Program string
 	Provider, Model, Package, BaseURL, KeyEnv, Seat         string
+	ClaudeAccountID, ClaudeMachine, ClaudeAccountsPath      string
+	ClaudeAccountsSHA256                                    string
+	ClaudeAccountsSource                                    string `json:"-"` // apply-only public TSV input; PROFILE persists the owned copy instead
 	SecretNames, DenySelf                                   []string
 	ProfileOnly                                             bool
 	ContextLimit, OutputLimit                               int
@@ -117,6 +120,9 @@ func PlanSetup(opts SetupOptions, fs SettingsFS, planner SetupPlanner) (SetupPla
 	}
 	if opts.ProfileOnly && (opts.Model != "" || opts.Provider != "" || opts.KeyEnv != "" || opts.Package != "" || opts.BaseURL != "" || opts.Seat != "" || len(opts.SecretNames) > 0 || opts.ContextLimit != 0 || opts.OutputLimit != 0) {
 		problems = append(problems, errors.New("--profile-only does not select a model, provider, credential or route; remove route inputs or configure an explicit route"))
+	}
+	if hasClaudeAdmissionSelection(opts) && !ClaudeTokenSetupRoute(opts) {
+		problems = append(problems, errors.New("Claude account manifest inputs require the exact sealed claude.ai/token-default route; remove them from other setup selections"))
 	}
 	if !opts.ProfileOnly && !dshExplicitAccountRoute(opts) {
 		required := ProviderKeyEnv(opts.Model)

@@ -35,8 +35,12 @@ usage:
   nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path>
                       --only <NAME,...|all> [--require <NAME>]... -- <cmd> [args...]
   nova-secrets names  --store <dir> --as <name> [--max <n>] [--json]
+  nova-secrets claude-token --store <dir> --from <source seat> --to <seat,...>
+                      [--issued-at <RFC3339>] [--json]
+  nova-secrets claude-token-fleet --store <dir> --manifest <file> [--json]
   nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
   nova-secrets gate   --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
+                      [--claude-accounts <manifest.tsv>]
   nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
   nova-secrets place  --store <dir> --as <name> --key <path> --sops <path>
                       --machine <name> --secret <name> [--path <remote path>]
@@ -61,7 +65,12 @@ flags:
   --only <names|all>   comma-separated list of keys to deliver, or 'all' (exec only)
   --require <name>     assert key must be present in the file (repeatable)
   --max <n>            maximum items shown before MORE line (default 20, 0=unlimited)
-  --json               names only: the result as one JSON object on stdout, a refusal included
+  --to <seat,...>      target seats for the read-only Claude subscription-token plan
+  --issued-at <time>   recorded setup-token issue instant in RFC3339; optional
+  --manifest <file>    reviewed account/profile/machine/seat bindings (Claude fleet plan)
+  --claude-accounts <file>  gate: exact Claude account/profile/seat bindings for extra
+                       credential seats; requires --machines
+  --json               supported read-only plans: one JSON object on stdout, a refusal included
   --machine <name>     fleet machine to place a secret on (its target comes from --machines)
   --secret <name>      the key in <store>/<as>.yaml to copy to the machine
   --path <remote path> remote path to write; default <home>/.config/nova-secrets/<secret>.env
@@ -117,6 +126,8 @@ first value:
     --name GH_TOKEN --stdin --no-pr
 
 example:
+  nova-secrets claude-token --store ./secrets --from ada --to bo
+  nova-secrets claude-token-fleet --store ./secrets --manifest ./claude-token-fleet.tsv
   nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key --age-keygen /opt/homebrew/bin/age-keygen
   nova-secrets names  --store ./secrets --as ada
   nova-secrets check  --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops
@@ -180,7 +191,7 @@ func verbHelp(verb string) string {
 }
 
 // verbs is every verb, in the banner's order, for the refusal of one that is not.
-const verbs = "exec, names, check, gate, keygen, place, placed, seal, seat add, seat inject, version, help"
+const verbs = "exec, names, claude-token, claude-token-fleet, check, gate, keygen, place, placed, seal, seat add, seat inject, version, help"
 
 // dryRunHelp is the one sentence --dry-run carries on every verb that takes it.
 const dryRunHelp = "prints the plan and writes nothing; seal and seat inject read the store at HEAD, so their store must be committed"
@@ -324,6 +335,10 @@ func dispatch(args []string, s streams) int {
 		return runExecCLI(args[1:], s)
 	case "names":
 		return runNamesCLI(args[1:], s)
+	case "claude-token":
+		return runClaudeTokenCLI(args[1:], s)
+	case "claude-token-fleet":
+		return runClaudeTokenFleetCLI(args[1:], s)
 	case "check":
 		return runCheckCLI(args[1:], s)
 	case "gate":

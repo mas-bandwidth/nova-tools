@@ -42,6 +42,25 @@ func TestReadRegistryReadsEveryColumn(t *testing.T) {
 	assert.False(t, m.HasRole(RoleBench), "roles read back as %q, want runner and not bench", m.RoleList())
 }
 
+func TestRegistryKeepsOneCanonicalMachineWithMultipleCredentialSeats(t *testing.T) {
+	t.Parallel()
+	bindings := `[{"account_id":"work","source_seat":"work-source"},{"account_id":"work","profile_id":"work-profile","target_seat":"work-seat"},{"account_id":"personal","profile_id":"personal-profile","target_seat":"personal-seat"}]`
+	path := write(t, "mini\tmini\tdarwin/arm64\tbench\tprimary-seat\t8\t-\t"+bindings+"\n")
+	reg, err := ReadRegistry(path)
+	require.NoError(t, err)
+	require.Len(t, reg.Machines(), 1)
+	assert.Equal(t, "primary-seat", reg.Machines()[0].Seat)
+	assert.Equal(t, []CredentialSeat{{AccountID: "work", SourceSeat: "work-source"}, {AccountID: "work", ProfileID: "work-profile", TargetSeat: "work-seat"}, {AccountID: "personal", ProfileID: "personal-profile", TargetSeat: "personal-seat"}}, reg.Machines()[0].CredentialSeats)
+	for _, invalid := range []string{
+		"mini\tmini\tdarwin/arm64\tbench\tprimary-seat\t8\t-\t" + `[{"account_id":"work","profile_id":"p","target_seat":"primary-seat"}]` + "\n",
+		"mini\tmini\tdarwin/arm64\tbench\tprimary-seat\t8\t-\t" + `[{"account_id":"work","profile_id":"p","target_seat":"same"}]` + "\n" +
+			"other\tother\tdarwin/arm64\tbench\tother-primary\t8\t-\t" + `[{"account_id":"personal","profile_id":"q","target_seat":"same"}]` + "\n",
+	} {
+		_, err := ReadRegistry(write(t, invalid))
+		assert.Error(t, err)
+	}
+}
+
 func TestReadRegistryRefusesAMachineThatIsBothRunnerAndBenchWithoutTheNote(t *testing.T) {
 	t.Parallel()
 

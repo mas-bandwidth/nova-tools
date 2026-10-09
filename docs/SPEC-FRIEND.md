@@ -2666,15 +2666,28 @@ an ordered Go plan. Inspection and `--dry-run` make no writes and run no native
 commands. `--apply` applies local initialization only: it never installs or loads
 a daemon, logs in, sends a provider turn, starts sprint work, or proves presence.
 The supported initializer scope is OpenCode configuration, Claude private auth
-inspection, and DSH static headless initialization. Other harnesses are refused;
+inspection or explicit sealed setup-token selection, and DSH static headless
+initialization. Other harnesses are refused;
 their existing settings commands continue independently.
 
 The friend, working directory, private native home, config root, profile, installed
 native executable and coordinator roots (`--deny-self`) are explicit. A route
 needs explicit provider/model metadata and a sealed key name/seat reference;
-`--profile-only` explicitly initializes without selecting a model/provider. Claude
-and DSH initialization use profile-only mode and refuse route inputs they cannot
-configure. OpenCode records `{env:NAME}` references and preserves unrelated keys.
+`--profile-only` explicitly initializes without selecting a model/provider.
+Claude also accepts exact local `claude.ai/default` or sealed subscription
+`claude.ai/token-default` routes; the latter requires only
+`CLAUDE_CODE_OAUTH_TOKEN` in an explicit seat and never reads or probes its
+value during setup. The sealed route also requires explicit
+`--claude-account-id`, `--claude-machine`, `--claude-accounts` and
+`--claude-accounts-sha256` from the reviewed `nova-secrets gate` receipt. Go
+setup verifies the public manifest's bytes and exact account/machine/profile/
+seat tuple, then materializes an owner-only copy under the selected config
+root. PROFILE stores only that owned path and digest, not the staging path.
+Install and native use recheck the pinned copy; changed account bindings
+refuse before a token reaches Claude. This checks public identity selection,
+not credential validity, entitlement or a provider turn. DSH accepts its exact
+account route. All other route inputs
+are refused. OpenCode records `{env:NAME}` references and preserves unrelated keys.
 Credential values are never setup inputs, process arguments or stored receipts.
 Subscription auth inspection reports local authentication separately from paid
 entitlement, provider access and native control proof.

@@ -11,7 +11,7 @@ import (
 )
 
 // PlanClaudeSetup keeps each Claude subscription in its own config root.
-// Planning is read-only: native auth status runs only as an explicit apply step.
+// Planning is read-only: local OAuth status runs only as an explicit apply step.
 func PlanClaudeSetup(opts SetupOptions, fsys SettingsFS) (SetupPlan, error) {
 	if fsys == nil {
 		fsys = OSFS{}
@@ -21,8 +21,15 @@ func PlanClaudeSetup(opts SetupOptions, fsys SettingsFS) (SetupPlan, error) {
 	}
 	profileOnly := opts.ProfileOnly && opts.Provider == "" && opts.Model == ""
 	defaultRoute := ClaudeAccountSetupRoute(opts)
-	if (!profileOnly && !defaultRoute) || opts.Package != "" || opts.BaseURL != "" || opts.KeyEnv != "" || opts.Seat != "" || len(opts.SecretNames) != 0 || opts.ContextLimit != 0 || opts.OutputLimit != 0 {
-		return SetupPlan{}, errors.New("Claude setup wants --profile-only without route inputs or the explicit claude.ai/default subscription route; remove API key, seat, package, endpoint and limit inputs")
+	tokenRoute := ClaudeTokenSetupRoute(opts)
+	if !profileOnly && !defaultRoute && !tokenRoute {
+		return SetupPlan{}, errors.New("Claude setup wants --profile-only, local claude.ai/default, or a sealed claude.ai/token-default subscription route; API keys, endpoints and implicit credentials are unsupported")
+	}
+	if !tokenRoute && hasClaudeAdmissionSelection(opts) {
+		return SetupPlan{}, errors.New("Claude account manifest selections apply only to the explicit sealed claude.ai/token-default route")
+	}
+	if (profileOnly || defaultRoute) && (opts.Package != "" || opts.BaseURL != "" || opts.KeyEnv != "" || opts.Seat != "" || len(opts.SecretNames) != 0 || opts.ContextLimit != 0 || opts.OutputLimit != 0) {
+		return SetupPlan{}, errors.New("Claude --profile-only and local claude.ai/default setup do not accept API keys, seats, packages, endpoints or limits")
 	}
 	if opts.ConfigDir == "" || !filepath.IsAbs(opts.ConfigDir) || filepath.Clean(opts.ConfigDir) != opts.ConfigDir {
 		return SetupPlan{}, errors.New("Claude setup wants --config-dir as a clean absolute path to this friend's own config directory")
@@ -51,13 +58,36 @@ func PlanClaudeSetup(opts SetupOptions, fsys SettingsFS) (SetupPlan, error) {
 	}
 
 	root := opts.ConfigDir
+	if tokenRoute {
+		// A prior local-OAuth RUN receipt cannot certify a sealed token that
+		// setup never reads. A fresh root also keeps the two account routes apart.
+		prior, err := fsys.Lstat(filepath.Join(root, ".nova-friend-setup", "RUN"))
+		if err != nil {
+			return SetupPlan{}, fmt.Errorf("inspect Claude token profile receipt: %w", err)
+		}
+		if prior.Kind != KindMissing {
+			return SetupPlan{}, errors.New("Claude sealed token route needs a fresh config root without a local OAuth receipt; preserve the old profile and name separate token roots")
+		}
+	}
 	login := claudeLoginCommand(opts.Program, root, opts.Home)
-	plan := SetupPlan{Harness: "claude", Facts: []SetupFact{
-		{Name: "auth", State: "not_checked", Detail: "native status runs only during explicit setup apply"},
-		{Name: "subscription", State: "not_checked"},
-		{Name: "provider_turn", State: "not_checked"},
-		{Name: "login_command", State: "if_required", Detail: login},
-	}}
+	plan := SetupPlan{Harness: "claude"}
+	if tokenRoute {
+		plan.Facts = []SetupFact{
+			{Name: "route", State: "selected_unverified", Detail: "claude.ai/token-default"},
+			{Name: "auth", State: "sealed_token_not_checked", Detail: "only the named subscription token is selected; setup never reads its value"},
+			{Name: "token_expiry", State: "unknown", Detail: "verify rotation metadata separately; setup cannot infer the token's mint time"},
+			{Name: "subscription", State: "not_checked"},
+			{Name: "provider_turn", State: "not_checked"},
+			{Name: "model_resolution", State: "not_checked", Detail: "account default resolves only on a provider turn"},
+		}
+	} else {
+		plan.Facts = []SetupFact{
+			{Name: "auth", State: "not_checked", Detail: "native status runs only during explicit setup apply"},
+			{Name: "subscription", State: "not_checked"},
+			{Name: "provider_turn", State: "not_checked"},
+			{Name: "login_command", State: "if_required", Detail: login},
+		}
+	}
 	if defaultRoute {
 		plan.Facts = append(plan.Facts,
 			SetupFact{Name: "route", State: "selected_unverified", Detail: "claude.ai/default"},
@@ -120,6 +150,15 @@ func PlanClaudeSetup(opts SetupOptions, fsys SettingsFS) (SetupPlan, error) {
 			})
 		}
 	}
+	if tokenRoute {
+		steps, facts, err := planClaudeTokenAdmission(opts, fsys)
+		if err != nil {
+			return SetupPlan{}, err
+		}
+		plan.Steps = append(plan.Steps, steps...)
+		plan.Facts = append(plan.Facts, facts...)
+		return plan, nil // no local OAuth probe can verify a sealed headless token
+	}
 	plan.Steps = append(plan.Steps, SetupStep{
 		Name: "claude_auth_status", Kind: "native_check", Path: root,
 		Want: "local claude.ai subscription authentication; native status may write inside the owned config directory",
@@ -160,6 +199,14 @@ func ClaudeAccountSetupRoute(opts SetupOptions) bool {
 	return opts.Harness == "claude" && !opts.ProfileOnly && opts.Provider == "claude.ai" && opts.Model == "claude.ai/default" &&
 		opts.Package == "" && opts.BaseURL == "" && opts.KeyEnv == "" && opts.Seat == "" && len(opts.SecretNames) == 0 &&
 		opts.ContextLimit == 0 && opts.OutputLimit == 0
+}
+
+// ClaudeTokenSetupRoute selects only the one-year setup-token's subscription
+// credential by sealed name. It never accepts a Console API key or token value.
+func ClaudeTokenSetupRoute(opts SetupOptions) bool {
+	return opts.Harness == "claude" && !opts.ProfileOnly && opts.Provider == "claude.ai" && opts.Model == "claude.ai/token-default" &&
+		opts.KeyEnv == "CLAUDE_CODE_OAUTH_TOKEN" && opts.Seat != "" && len(opts.SecretNames) == 1 && opts.SecretNames[0] == "CLAUDE_CODE_OAUTH_TOKEN" &&
+		opts.Package == "" && opts.BaseURL == "" && opts.ContextLimit == 0 && opts.OutputLimit == 0
 }
 
 // claudeRootIsSafe refuses symlinks along the named config path. An account

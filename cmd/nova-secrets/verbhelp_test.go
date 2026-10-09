@@ -40,6 +40,8 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	testverbhelp.Check(t, inProcess, []testverbhelp.Case{
 		{Verb: "exec", Flags: store},
 		{Verb: "names", Flags: store},
+		{Verb: "claude-token", Flags: []string{"--store", "{dir}/store", "--from", "source", "--to", "target"}},
+		{Verb: "claude-token-fleet", Flags: []string{"--store", "{dir}/store", "--manifest", "{dir}/bindings.tsv"}},
 		{Verb: "check", Flags: store},
 		{Verb: "gate", Flags: []string{"--store", "{dir}/store"}},
 		{Verb: "keygen", Flags: []string{"--key", "{dir}/key.txt"}},

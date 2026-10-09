@@ -31,6 +31,11 @@ func writeSetupProfile(fs SettingsFS, opts SetupOptions) ([]SetupFact, error) {
 	if err := SetupPath(fs, path, false); err != nil {
 		return nil, err
 	}
+	if ClaudeTokenSetupRoute(opts) {
+		if err := claudeOwnedAdmission(opts, fs); err != nil {
+			return nil, err
+		}
+	}
 	runID, err := setupCompletedRun(fs, opts.ConfigDir)
 	if err != nil {
 		return nil, err
@@ -86,6 +91,11 @@ func ReadSetupProfile(fs SettingsFS, path string) (SetupProfile, error) {
 	if _, err = PlanSetup(opts, fs, func(SetupOptions, SettingsFS) (SetupPlan, error) { return SetupPlan{Harness: opts.Harness}, nil }); err != nil {
 		return profile, err
 	}
+	if ClaudeTokenSetupRoute(opts) {
+		if err := claudeOwnedAdmission(opts, fs); err != nil {
+			return profile, err
+		}
+	}
 	ownerPath := filepath.Join(opts.ConfigDir, ".nova-friend-setup", "OWNER")
 	owner, err := fs.Lstat(ownerPath)
 	if err != nil {
@@ -135,6 +145,11 @@ func (p SetupProfile) ValidateUse(friend, harness, dir string, fs SettingsFS, pl
 	if o.ProfileOnly {
 		return errors.New("setup profile initializes local files/auth only and has no selected model route; configure an explicitly supported provider/model route before activation")
 	}
+	if ClaudeTokenSetupRoute(o) {
+		if err := claudeOwnedAdmission(o, fs); err != nil {
+			return err
+		}
+	}
 	plan, err := planner(o, fs)
 	if err != nil {
 		return err
@@ -170,6 +185,11 @@ func (p SetupProfile) Environment(path string) []string {
 // the selected environment. Only named secrets pass from the launcher's seat.
 func (p SetupProfile) Exec(run Exec, getenv func(string) string) Exec {
 	return func(ctx context.Context, dir, name string, args []string, stdin string) (string, int, error) {
+		if ClaudeTokenSetupRoute(p.Selection) {
+			if err := claudeOwnedAdmission(p.Selection, OSFS{}); err != nil {
+				return "", 125, err
+			}
+		}
 		env := p.Environment(getenv("PATH"))
 		for _, key := range p.Selection.SecretNames {
 			env = append(env, key+"="+getenv(key))

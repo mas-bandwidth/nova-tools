@@ -291,7 +291,7 @@ func TestClaudeAccountSetupRouteRefusesAPIBillingInputs(t *testing.T) {
 			tc.edit(&opts)
 			assert.False(t, ClaudeAccountSetupRoute(opts))
 			_, err := PlanClaudeSetup(opts, NewMemFS())
-			require.ErrorContains(t, err, "claude.ai/default subscription route")
+			require.ErrorContains(t, err, "subscription route")
 		})
 	}
 }
@@ -325,7 +325,7 @@ func TestPlanSetupAllowsOnlyKeylessClaudeSubscriptionDefault(t *testing.T) {
 	withKey.SecretNames = []string{"ANTHROPIC_API_KEY"}
 	withKey.Seat = "seat"
 	_, err = PlanSetup(withKey, fs, PlanClaudeSetup)
-	require.ErrorContains(t, err, "claude.ai/default subscription route")
+	require.ErrorContains(t, err, "--profile-only")
 }
 
 func TestClaudeDefaultRouteBindsOnlyAfterNativeSubscriptionAuth(t *testing.T) {

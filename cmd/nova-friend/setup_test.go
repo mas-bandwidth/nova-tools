@@ -74,6 +74,24 @@ func TestSetupInspectionAndDryRunPerformNoNativeCallsOrWrites(t *testing.T) {
 	assert.Empty(t, r.launchctl)
 }
 
+func TestSetupClaudeManifestFlagsBindOwnedCopyWithoutPublishingInputPath(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	w := r.world()
+	w.settings = friend.NewMemFS()
+	var got friend.SetupOptions
+	w.setupPlanner = func(o friend.SetupOptions, _ friend.SettingsFS) (friend.SetupPlan, error) {
+		got = o
+		return friend.SetupPlan{Harness: o.Harness}, nil
+	}
+	cliOf(w).Do(t, "setup", "--as", "bob", "--harness", "claude", "--dir", "/work", "--config-dir", "/config", "--home", "/private", "--profile", "subscription-token", "--program", "/native/claude", "--deny-self", "/coordinator", "--provider", "claude.ai", "--model", "claude.ai/token-default", "--key-env", "CLAUDE_CODE_OAUTH_TOKEN", "--secrets", "CLAUDE_CODE_OAUTH_TOKEN", "--seat", "target-a", "--claude-account-id", "account-a", "--claude-machine", "mini", "--claude-accounts", "/reviewed/manifest.tsv", "--claude-accounts-sha256", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--dry-run").Exit(0).Out("applied=false")
+	assert.Equal(t, "account-a", got.ClaudeAccountID)
+	assert.Equal(t, "mini", got.ClaudeMachine)
+	assert.Equal(t, "/reviewed/manifest.tsv", got.ClaudeAccountsSource)
+	assert.Equal(t, friend.ClaudeAccountsOwnedPath("/config"), got.ClaudeAccountsPath)
+	assert.Equal(t, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", got.ClaudeAccountsSHA256)
+}
+
 func TestSetupApplyFailureDoesNotClaimCompletionOrPublishProfile(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")

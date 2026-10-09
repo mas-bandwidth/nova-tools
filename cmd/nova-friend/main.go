@@ -1283,8 +1283,8 @@ func (w world) run(c *tool.Call) *tool.Out {
 	var rowLaneCaps atomic.Pointer[map[string]time.Duration]
 	if cl, ok := deliver.(*friend.Claude); ok {
 		cl.Friend, cl.Now = name, w.now // every run's cost and limit on the record, its reset read on her clock
-		if w.setupProfile != nil && friend.ClaudeAccountSetupRoute(w.setupProfile.Selection) {
-			cl.Model = "default" // the selected account default overrides a stored user model
+		if w.setupProfile != nil && (friend.ClaudeAccountSetupRoute(w.setupProfile.Selection) || friend.ClaudeTokenSetupRoute(w.setupProfile.Selection)) {
+			cl.Model = "default" // an explicitly selected subscription default overrides a stored user model
 		}
 		cl.TokenCap = func() int64 { return rowTokenCap.Load() }
 		cl.ConfigDir = func() string {

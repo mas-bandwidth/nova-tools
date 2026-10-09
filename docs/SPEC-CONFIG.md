@@ -45,7 +45,7 @@ Where each field of this cut sits:
 
 | side | fields |
 | --- | --- |
-| machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `note` |
+| machine (varies per machine) | `user`, `seat`, `credential_seats`, `slots`, `runners`, `width`, `tla`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
 | friend (decided for her) | `slots`, `tiers`, `roles`, `width`, `mode`, `config_dir`, `token_cap` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar`, `decide_attempt_no_result`, `decide_attempt_nothing_to_do`, `decide_grade`, `decide_gate_flaky`, `decide_gate_preexisting`, `decide_judgment_bar`, `decide_brief_bar`, `answer_rules_off` |
@@ -135,11 +135,17 @@ nothing invented.
 | --- | --- | --- | --- | --- |
 | `user` | text | yes | the plays and the seals: `ssh <user>@<name>` | `machine:<m>` |
 | `seat` | text | yes | nova-secrets: the seat on that machine (a seat, another seat, ...) | `machine:<m>` |
+| `credential_seats` | JSON text | (empty) | nova-secrets gate: explicit `account_id` plus `source_seat`, or `account_id`, `profile_id`, `target_seat` for additional sealed credential seats on this same machine; no token values | `machine:<m>` |
 | `slots` | int | yes | apply: the machine ceiling the friends' desired slots must fit under (`ns_capacity_machine`, `ns_capacity_desired`); not the sprint's width | `machine:<m>:ceiling` (`ns_capacity_machine`) and `machine:<m>` |
 | `runners` | int | (0) | the CI play: how many runners it hosts; 0 hosts none | `machine:<m>` |
 | `width` | int | (unset) | `nova-sprint fleet sync`: the most work cards the sprint's member on it runs at once; unset is the default, half the machine's cores as its beat reports them; 0 is no member | `machine:<m>` |
 | `tla` | bool | (false) | the inventory's `tla` group and `nova_tla`, so the tools play's tla play holds the pinned TLC jar there; `tlacheck run --bench any` picks among these (tla/README.md, "The record machines") | `machine:<m>` |
 | `note` | text | (empty) | a reader: why the machine is as it is, a hold, a rest, the load that was measured (see "The note") | `machine:<m>` |
+
+The secrets gate reads the reviewed `machines.tsv` projection and the Claude
+account manifest, not this Postgres row. Deployment verifies their public
+bindings agree before using the projection as admission policy; no credential
+value is stored in either registry.
 
 **Declared and measured.** Measured facts (os, arch, cores, memory) are
 never typed and never columns: they come live from the machine's own
@@ -486,7 +492,8 @@ config.machines          (name PK, "user", seat, slots, runners,
                           coordinator machine, slots elsewhere; note added
                           by 0015, text NOT NULL DEFAULT ''; tla added by
                           0016, false; width nullable by 0019, NULL the
-                          default)
+                          default; credential_seats added by 0036, text
+                          NOT NULL DEFAULT '')
 config.fleet             (name PK = 'fleet', store -> machines.name,
                           coordinator -> machines.name, redis_port, pg_dsn,
                           loops_dir, created_at, updated_at;
@@ -603,7 +610,7 @@ each machine running its ceiling check before its write transaction).
 **machine:** `ns_capacity_machine(m, slots)` for the ceiling (refused
 `CEILING` when the friends and benches on it already desire more than
 `slots`; cores and memory are never declared, so the call carries none and
-derives no budget); the hash `machine:<m>` with user, seat, slots, runners,
+derives no budget); the hash `machine:<m>` with user, seat, credential_seats, slots, runners,
 width, tla, note, rev, at; the set `machines`. slots is read back from the ceiling, the key the
 runtime guards on, so a ceiling moved by hand is put back by the next apply.
 Remove: refused while any friend or bench desired hash names the machine;

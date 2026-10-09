@@ -41,6 +41,11 @@ func rowLine(k *Kind, row Row, cut bool) string {
 	b.WriteString(" name=" + Value(row.Name))
 	for _, f := range k.Fields {
 		v := row.Fields[f.Name]
+		// Older machine rows keep their exact public line. The new binding is
+		// shown when present, without printing an empty field on every machine.
+		if k.Name == KindMachine && f.Name == "credential_seats" && v == "" {
+			continue
+		}
 		if cut && f.Cut {
 			if r := []rune(v); len(r) > ListNoteRunes {
 				v = string(r[:ListNoteRunes]) + "..."
@@ -91,6 +96,9 @@ func changeFields(c Change) string {
 	switch c.Op {
 	case OpAdd:
 		for _, f := range slices.Sorted(maps.Keys(c.After)) {
+			if c.Kind == KindMachine && f == "credential_seats" && c.After[f] == "" {
+				continue
+			}
 			b.WriteString(" " + f + "=" + Value(c.After[f]))
 		}
 	case OpRemove:

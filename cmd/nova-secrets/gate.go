@@ -19,6 +19,7 @@ func runGateCLI(args []string, s streams) int {
 	baseFlag := fs.String("base", "", "the pull request's base commit, a git `ref` (required)")
 	headFlag := fs.String("head", "", "the pull request's head commit, a git `ref` (required)")
 	machinesFlag := fs.String("machines", "", "the fleet machines registry `file`, whose seat column vouches for a new recipient; without it that rule does not run and APPROVE says machines=-")
+	accountsFlag := fs.String("claude-accounts", "", "public Claude token account manifest `file`; with --machines, admits only exact machine/account/profile/target-seat bindings for extra credential seats")
 
 	// Every gate flag takes one value. Package flag keeps the LAST of a repeated flag, so
 	// `--head <ref> --head <other>` judged a diff the caller did not name first. A flag
@@ -36,10 +37,11 @@ func runGateCLI(args []string, s streams) int {
 	}
 
 	line, code := secrets.RunGate(secrets.GateInput{
-		StoreDir:     *storeFlag,
-		Base:         *baseFlag,
-		Head:         *headFlag,
-		MachinesPath: *machinesFlag,
+		StoreDir:           *storeFlag,
+		Base:               *baseFlag,
+		Head:               *headFlag,
+		MachinesPath:       *machinesFlag,
+		ClaudeAccountsPath: *accountsFlag,
 	})
 	if code != 0 {
 		fmt.Fprintln(s.stderr, line)

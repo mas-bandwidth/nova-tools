@@ -18,10 +18,11 @@ import (
 // GateInput is one call of the gate: the store, the two refs, and -- optionally -- the
 // fleet's machines registry, the only thing that can vouch for a seat nobody has seen before.
 type GateInput struct {
-	StoreDir     string
-	Base         string
-	Head         string
-	MachinesPath string // the fleet machines registry; "" leaves the recipient rule dormant
+	StoreDir           string
+	Base               string
+	Head               string
+	MachinesPath       string // the fleet machines registry; "" leaves the recipient rule dormant
+	ClaudeAccountsPath string // explicit account/profile/target-seat manifest for non-primary seats
 }
 
 // RunGate is the seat-rule gate as a verb: the store's shell gate, called by the
@@ -34,7 +35,7 @@ type GateInput struct {
 // (SPEC-SECRETS "gate").
 func RunGate(in GateInput) (string, int) {
 	storeDir := in.StoreDir
-	base, head, fleetSeats, findings, legacy := gateInputFindings(in)
+	base, head, fleetSeats, accountsHash, findings, legacy := gateInputFindings(in)
 	if len(findings) > 0 {
 		if len(findings) == 1 {
 			return legacy, 2
@@ -47,7 +48,7 @@ func RunGate(in GateInput) (string, int) {
 		return gateCouldNotRun(err.Error()), 2
 	}
 	if len(changed) == 0 {
-		return gateApprove(0, in.MachinesPath), 0
+		return gateApprove(0, in.MachinesPath, in.ClaudeAccountsPath, accountsHash), 0
 	}
 	sort.Strings(changed)
 	var gateFindings []gateFinding
@@ -104,17 +105,32 @@ func RunGate(in GateInput) (string, int) {
 		}
 		return gateFailedFindings(gateFindings), 1
 	}
+	// Recipient uniqueness is a property of the head store, including a PR
+	// that adds only a seat file under a rule already present at the base.
+	keyRule := map[string]int{}
+	for i, rule := range cfg.CreationRules {
+		for _, key := range rule.Recipients {
+			if key == recoveryKey {
+				continue
+			}
+			if prior := keyRule[key]; prior != 0 {
+				gateFindings = append(gateFindings, gateFinding{rule: i + 1, check: 1, file: ".sops.yaml", why: fmt.Sprintf("rule reuses a non-recovery recipient already assigned by rule %d; each seat needs its own key", prior)})
+			}
+			keyRule[key] = i + 1
+		}
+	}
 
-	// Check 1: Every changed .sops.yaml rule: exactly two age recipients, one the
-	// declared recovery key, and a path_regex naming exactly one seat file.
-	if slices.Contains(changed, ".sops.yaml") {
+	// Check 1: Every head rule on a rule or seat-file change: exactly two age
+	// recipients, one the declared recovery key, and a path_regex naming exactly
+	// one seat file. An unchanged rule can become broad when a new file appears.
+	if slices.Contains(changed, ".sops.yaml") || slices.ContainsFunc(changed, isSeatYAML) {
 		// The recipients the store already had. A key here is not a grant this pull request
 		// makes, so resealing a seat or editing its rule asks the registry nothing.
 		baseKeys, err := gateRecipientsAt(storeDir, base)
 		baseKeysKnown := err == nil
 		if err != nil {
 			gateFindings = append(gateFindings, gateFinding{file: ".sops.yaml", why: err.Error()})
-			baseKeys = map[string]bool{}
+			baseKeys = map[string]map[string]bool{}
 		}
 		for i := range cfg.CreationRules {
 			rule := cfg.CreationRules[i]
@@ -139,7 +155,6 @@ func RunGate(in GateInput) (string, int) {
 				gateFindings = append(gateFindings, gateFinding{rule: ruleNum, check: 1, file: ".sops.yaml", why: fmt.Sprintf("path_regex names %d seat files; expected exactly one", named)})
 				continue
 			}
-
 			// Check 4: A recipient key this pull request introduces is a GRANT, and a seat can
 			// be brought up with no second human on the bench. The fleet's machines
 			// registry is the only mechanical check that stands in for a human review:
@@ -150,13 +165,13 @@ func RunGate(in GateInput) (string, int) {
 			if fleetSeats != nil && baseKeysKnown && recipientProblem == "" {
 				seat := strings.TrimSuffix(seatFile, ".yaml")
 				for _, key := range rule.Recipients {
-					if key == recoveryKey || baseKeys[key] {
+					if key == recoveryKey || baseKeys[seatFile][key] {
 						continue
 					}
 					if !fleetSeats[seat] {
 						gateFindings = append(gateFindings, gateFinding{rule: ruleNum, check: 4, file: seatFile, why: fmt.Sprintf(
-							"rule adds a recipient no seat file rule named before, and no machine in %s carries the seat %s; add the machine's row (its seat column must read %s) or drop the rule",
-							oneline.Field(in.MachinesPath), oneline.Field(seat), oneline.Field(seat))})
+							"rule adds a recipient not previously assigned to this seat, and no machine/account/profile binding in %s admits seat %s; declare the exact binding or drop the rule",
+							oneline.Field(in.MachinesPath), oneline.Field(seat))})
 						break
 					}
 				}
@@ -234,7 +249,7 @@ func RunGate(in GateInput) (string, int) {
 		return gateFailedFindings(gateFindings), 1
 	}
 
-	return gateApprove(len(changed), in.MachinesPath), 0
+	return gateApprove(len(changed), in.MachinesPath, in.ClaudeAccountsPath, accountsHash), 0
 }
 
 // gateHasMark reports whether the file carries a root key SeatMarkKey in the clear whose
@@ -252,23 +267,30 @@ func gateHasMark(data []byte) bool {
 
 // gateApprove formats the one approval line. It carries the registry it read, or `-`, so an
 // APPROVE is never mistaken for the fleet having vouched for a seat when no fleet was asked.
-func gateApprove(files int, machinesPath string) string {
+func gateApprove(files int, machinesPath, accountsPath, accountsHash string) string {
 	registry := "-"
 	if machinesPath != "" {
 		registry = oneline.Field(machinesPath)
 	}
-	return fmt.Sprintf("GATE APPROVE files=%d machines=%s", files, registry)
+	line := fmt.Sprintf("GATE APPROVE files=%d machines=%s", files, registry)
+	if accountsPath != "" {
+		line += " accounts=" + oneline.Field(accountsPath) + " accounts_sha256=" + accountsHash
+	}
+	return line
 }
 
 // gateFleetSeats reads the machines registry whole and returns the set of seats the fleet
 // carries. A path of "" returns a nil set: the recipient rule is dormant, not satisfied.
-func gateFleetSeats(machinesPath string) (map[string]bool, error) {
+func gateFleetSeats(machinesPath, accountsPath string) (map[string]bool, string, error) {
 	if machinesPath == "" {
-		return nil, nil
+		if accountsPath != "" {
+			return nil, "", fmt.Errorf("--claude-accounts needs --machines, the machine registry it is checked against")
+		}
+		return nil, "", nil
 	}
 	reg, err := fleet.ReadRegistry(machinesPath)
 	if err != nil {
-		return nil, fmt.Errorf("the machines registry does not read: %s", err.Error())
+		return nil, "", fmt.Errorf("the machines registry does not read: %s", err.Error())
 	}
 	seats := map[string]bool{}
 	for _, m := range reg.Machines() {
@@ -278,13 +300,59 @@ func gateFleetSeats(machinesPath string) (map[string]bool, error) {
 			seats[m.Seat] = true
 		}
 	}
-	return seats, nil
+	accountsHash := ""
+	if accountsPath != "" {
+		raw, err := ReadClaudeTokenFleetManifestBytes(accountsPath)
+		if err != nil {
+			return nil, "", fmt.Errorf("the Claude token account manifest does not read: %w", err)
+		}
+		manifest, err := ParseClaudeTokenFleetManifest(raw)
+		if err != nil {
+			return nil, "", fmt.Errorf("the Claude token account manifest does not read: %w", err)
+		}
+		accountsHash = ClaudeTokenFleetSHA256(raw)
+		for _, account := range manifest.Accounts {
+			sourceMachine, ok := reg.Lookup(account.SourceMachine)
+			if !ok {
+				return nil, "", fmt.Errorf("Claude token account %s names source machine %s absent from %s", account.ID, account.SourceMachine, machinesPath)
+			}
+			sourceMatched := false
+			for _, entry := range sourceMachine.CredentialSeats {
+				if entry.AccountID == account.ID && entry.SourceSeat == account.SourceSeat && entry.ProfileID == "" && entry.TargetSeat == "" {
+					sourceMatched = true
+					break
+				}
+			}
+			if !sourceMatched {
+				return nil, "", fmt.Errorf("Claude token account %s source seat %s has no exact binding on machine %s in %s", account.ID, account.SourceSeat, account.SourceMachine, machinesPath)
+			}
+			seats[account.SourceSeat] = true
+			for _, target := range account.Targets {
+				machine, ok := reg.Lookup(target.Machine)
+				if !ok {
+					return nil, "", fmt.Errorf("Claude token profile %s names machine %s absent from %s", target.Profile, target.Machine, machinesPath)
+				}
+				matched := false
+				for _, entry := range machine.CredentialSeats {
+					if entry.AccountID == account.ID && entry.ProfileID == target.Profile && entry.TargetSeat == target.Seat {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					return nil, "", fmt.Errorf("Claude token profile %s account %s target seat %s has no exact binding on machine %s in %s", target.Profile, account.ID, target.Seat, target.Machine, machinesPath)
+				}
+				seats[target.Seat] = true
+			}
+		}
+	}
+	return seats, accountsHash, nil
 }
 
 // gateRecipientsAt returns every age recipient any creation rule names at ref. A store with
 // no .sops.yaml there -- the first seat of all -- has none, which is not an error.
-func gateRecipientsAt(storeDir, ref string) (map[string]bool, error) {
-	keys := map[string]bool{}
+func gateRecipientsAt(storeDir, ref string) (map[string]map[string]bool, error) {
+	keys := map[string]map[string]bool{}
 	data, err := gitShowFile(storeDir, ref, ".sops.yaml")
 	if err != nil {
 		return keys, nil
@@ -293,9 +361,21 @@ func gateRecipientsAt(storeDir, ref string) (map[string]bool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("unreadable at %s: %s", oneline.Field(ref), oneline.Escape(err.Error()))
 	}
-	for i := range cfg.CreationRules {
-		for _, k := range cfg.CreationRules[i].Recipients {
-			keys[k] = true
+	files, err := gitTreeFiles(storeDir, ref)
+	if err != nil {
+		return nil, fmt.Errorf("unable to list base seats at %s: %w", oneline.Field(ref), err)
+	}
+	for _, seatFile := range files {
+		if !isSeatYAML(seatFile) {
+			continue
+		}
+		i := matchingRuleIndex(cfg, seatFile)
+		if i < 0 {
+			continue
+		}
+		keys[seatFile] = map[string]bool{}
+		for _, key := range cfg.CreationRules[i].Recipients {
+			keys[seatFile][key] = true
 		}
 	}
 	return keys, nil
@@ -326,7 +406,7 @@ type gateFinding struct {
 // gateInputFindings validates independent gate inputs once and returns the resolved refs
 // and parsed registry used by the checks. Ref and registry reads are single snapshots
 // (SPEC-SECRETS "gate"). Every input problem is a gate that could not run: exit 2.
-func gateInputFindings(in GateInput) (base, head string, fleetSeats map[string]bool, findings []gateFinding, legacy string) {
+func gateInputFindings(in GateInput) (base, head string, fleetSeats map[string]bool, accountsHash string, findings []gateFinding, legacy string) {
 	storeDir, base, head := in.StoreDir, in.Base, in.Head
 	missing := preflight("", need{storeDir, "--store <dir>", false}, need{base, "--base <git ref>", false}, need{head, "--head <git ref>", false})
 	if missing != nil {
@@ -362,13 +442,16 @@ func gateInputFindings(in GateInput) (base, head string, fleetSeats map[string]b
 	head = resolve("--head", head)
 	if in.MachinesPath != "" {
 		var err error
-		fleetSeats, err = gateFleetSeats(in.MachinesPath)
+		fleetSeats, accountsHash, err = gateFleetSeats(in.MachinesPath, in.ClaudeAccountsPath)
 		if err != nil {
 			findings = append(findings, gateFinding{file: in.MachinesPath, why: err.Error()})
 			legacy = gateCouldNotRun(err.Error())
 		}
 	}
-	return base, head, fleetSeats, findings, legacy
+	if in.MachinesPath == "" && in.ClaudeAccountsPath != "" {
+		findings = append(findings, gateFinding{file: in.ClaudeAccountsPath, why: "--claude-accounts needs --machines so its exact account/profile/seat binding is checked against a machine"})
+	}
+	return base, head, fleetSeats, accountsHash, findings, legacy
 }
 
 // gateFailedFindings keeps the established line for one finding and lists every additional

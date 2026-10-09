@@ -210,9 +210,9 @@ func TestGateMachinesRefusesPlaceTableFormat(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "machines.tsv")
 	require.NoError(t, os.WriteFile(path, []byte("node\tnode\t/home/node\t-\n"), 0o600))
 
-	_, err := gateFleetSeats(path)
+	_, _, err := gateFleetSeats(path, "")
 	require.Error(t, err, "gate must refuse the place machine table")
-	require.Contains(t, err.Error(), "wants 7 tab-separated fields", "refusal = %q", err)
+	require.Contains(t, err.Error(), "wants 7 legacy fields", "refusal = %q", err)
 }
 
 func TestGateCollectsEveryIndependentSeatFinding(t *testing.T) {

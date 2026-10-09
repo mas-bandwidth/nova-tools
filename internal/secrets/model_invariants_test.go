@@ -628,7 +628,7 @@ func TestModelSecretsGateRefusesEveryRuleBreak(t *testing.T) {
 			"", 1, []string{"GATE FAILED", "rowan.yaml"}},
 		{"refuse a file with no rule", map[string]string{".sops.yaml": "creation_rules:\n  - path_regex: ^mini\\.yaml$\n    age: " + gateSeatKey + "," + gateRecoveryKey + "\n"},
 			map[string]string{"rowan.yaml": sealed},
-			"", 1, []string{"GATE FAILED rule=0", "rowan.yaml"}},
+			"", 1, []string{"GATE FAILED rule=1 check=1 file=.sops.yaml: path_regex names 0 seat files", "rule=0 check=2 file=rowan.yaml: no creation rule"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

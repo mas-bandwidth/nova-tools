@@ -28,7 +28,7 @@ func TestEveryRefusalNamesItsWholeFix(t *testing.T) {
 	}{
 		{"no verb", nil, 2, []string{"SECRETS REFUSED: no arguments is not an invocation", "run: nova-secrets help"}, nil},
 		{"unknown verb lists the verbs", []string{"bogus"}, 2,
-			[]string{`SECRETS REFUSED: unknown verb "bogus"`, "the verbs are exec, names, check, gate, keygen, place, placed, seal, seat add, seat inject, version", "run: nova-secrets help"}, nil},
+			[]string{`SECRETS REFUSED: unknown verb "bogus"`, "the verbs are exec, names, claude-token, claude-token-fleet, check, gate, keygen, place, placed, seal, seat add, seat inject, version", "run: nova-secrets help"}, nil},
 		{"a verb with a space is quoted plain", []string{"no such"}, 2, []string{`unknown verb "no such"`}, []string{`\x20`}},
 		{"unknown flag lists the verb's flags", []string{"names", "--stoer", "x"}, 2,
 			[]string{"SECRETS NAMES REFUSED: unknown flag --stoer", "the flags of names are --as, --json, --max, --store; did you mean --store?", "run: nova-secrets names -h"}, []string{"flag provided but not defined"}},

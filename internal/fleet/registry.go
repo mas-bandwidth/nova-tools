@@ -15,7 +15,7 @@
 //
 // The file is data, tab separated, kept in git beside the lanes file:
 //
-//	name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes
+//	name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes[<TAB>credential_seats]
 //
 // A line whose fields do not parse refuses the file: a truncated or unknown-role row is
 // not a machine, and guessing the rest would let a card through. The runner/bench lock is
@@ -71,15 +71,16 @@ const allowSharedPrefix = "allow-shared="
 
 // Machine is one line of the registry.
 type Machine struct {
-	Name  string   // the bench name every verb's --bench takes
-	SSH   string   // the ssh target; an alias in ~/.ssh/config or a host
-	OS    string   // linux, darwin, windows
-	Arch  string   // x64, amd64, arm64
-	Roles []string // sorted, unique, every one from knownRoles
-	Seat  string   // the nova-secrets seat on the machine; "" when it carries none
-	Cores int      // whole cores, as the machine counts them
-	Notes string   // free text; "" when the line said `-`
-	Line  int      // the line of the file this came from, for a refusal that can be found
+	Name            string           // the bench name every verb's --bench takes
+	SSH             string           // the ssh target; an alias in ~/.ssh/config or a host
+	OS              string           // linux, darwin, windows
+	Arch            string           // x64, amd64, arm64
+	Roles           []string         // sorted, unique, every one from knownRoles
+	Seat            string           // the legacy primary nova-secrets seat; "" when it carries none
+	CredentialSeats []CredentialSeat // explicit account/profile seats on this machine
+	Cores           int              // whole cores, as the machine counts them
+	Notes           string           // free text; "" when the line said `-`
+	Line            int              // the line of the file this came from, for a refusal that can be found
 }
 
 // HasRole says whether the machine carries one role.
@@ -222,22 +223,46 @@ func ReadRegistry(path string) (*Registry, error) {
 		reg.byName[m.Name] = len(reg.machines)
 		reg.machines = append(reg.machines, m)
 	}
+	// A target seat cannot quietly move to another machine or alias a primary
+	// seat. The whole registry must be unambiguous before it can admit a key.
+	primary := map[string]bool{}
+	for _, m := range reg.machines {
+		if m.Seat != "" {
+			primary[m.Seat] = true
+		}
+	}
+	targets := map[string]string{}
+	profileOwner := map[string]string{}
+	for _, m := range reg.machines {
+		for _, seat := range m.CredentialSeats {
+			name := seat.SeatName()
+			if primary[name] || targets[name] != "" {
+				return nil, fmt.Errorf("%s line %d: credential seat %s is bound more than once or aliases a primary seat", path, m.Line, name)
+			}
+			if seat.ProfileID != "" {
+				if owner := profileOwner[seat.ProfileID]; owner != "" && owner != seat.AccountID {
+					return nil, fmt.Errorf("%s line %d: profile %s changes accounts between machines", path, m.Line, seat.ProfileID)
+				}
+				profileOwner[seat.ProfileID] = seat.AccountID
+			}
+			targets[name] = m.Name
+		}
+	}
 	if len(reg.machines) == 0 && len(reg.lockFailed) == 0 {
 		return nil, fmt.Errorf("%s names no machine; refusing to guess (a machines file is name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes)", path)
 	}
 	return reg, nil
 }
 
-// machineFields is the shape of one line. Seven, always: a column nobody filled says `-`,
-// so a reader can see at a glance that it was answered and not forgotten.
+// machineFields is the legacy line's seven columns. The optional eighth column
+// declares additional source/profile seats; an empty one says `-`.
 const machineFields = 7
 
 // readMachine reads and validates one line.
 func readMachine(line string, n int) (Machine, error) {
 	f := strings.Split(line, "\t")
-	if len(f) != machineFields {
-		return Machine{}, fmt.Errorf("wants %d tab-separated fields name, ssh, os/arch, roles, seat, cores, notes; got %d",
-			machineFields, len(f))
+	if len(f) != machineFields && len(f) != machineFields+1 {
+		return Machine{}, fmt.Errorf("wants 7 legacy fields name, ssh, os/arch, roles, seat, cores, notes or an eighth credential_seats JSON field; got %d", len(f))
 	}
 	m := Machine{
 		Name: strings.TrimSpace(f[0]),
@@ -269,6 +294,12 @@ func readMachine(line string, n int) (Machine, error) {
 	}
 	m.Cores = cores
 	m.Notes = undash(f[6])
+	if len(f) == machineFields+1 {
+		m.CredentialSeats, err = ParseCredentialSeats(strings.TrimSpace(f[7]))
+		if err != nil {
+			return Machine{}, fmt.Errorf("%s: %w", m.Name, err)
+		}
+	}
 	return m, nil
 }
 

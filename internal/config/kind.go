@@ -31,6 +31,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 )
 
 // Type is a field's type. It decides the SQL column, the flag's parsing and
@@ -396,16 +397,18 @@ var Kinds = []*Kind{
 	{
 		Name:  KindMachine,
 		Table: "machines",
-		Doc:   "a machine of the fleet, named by its tailnet host: the login, the seat, its ceiling, its runners, the sprint member's width on it, and whether it is a TLC record machine",
+		Doc:   "a machine of the fleet, named by its tailnet host: its login, primary seat, explicit account/profile credential seats, ceiling, runners, sprint width and TLC status",
 		Fields: []Field{
 			{Name: "user", Type: TypeText, Required: true, Help: "the login the plays and seals use on it (ssh <user>@<name>)"},
 			{Name: "seat", Type: TypeText, Required: true, Help: "its nova-secrets seat: the identity it opens secrets as, one <seat>.yaml in the store"},
+			{Name: "credential_seats", Type: TypeText, Cut: true, Help: "optional JSON array of explicit account_id/source_seat or account_id/profile_id/target_seat bindings on this machine; no credential values"},
 			{Name: "slots", Type: TypeInt, Required: true, Help: "the machine ceiling apply writes to machine:<m>:ceiling, which the friends' desired slots must fit under; not the sprint's width"},
 			{Name: "runners", Type: TypeInt, Help: "how many CI runners it hosts; 0 (the default) hosts none"},
 			{Name: "width", Type: TypeInt, Nullable: true, Clear: "default", Help: "the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; set apart from --slots, never derived from it; unset (the default, or --width default) is half the machine's cores as its beat reports them, which fleet sync resolves; 0 is no member, dealt no work"},
 			{Name: "tla", Type: TypeBool, Help: "a TLC record machine: the tools play installs the pinned TLC jar on it and tlacheck run --bench any picks among them; false (the default) is none"},
 			noteField("why the machine is as it is: a hold, a rest, the load that was measured"),
 		},
+		Check: checkMachine,
 	},
 	{
 		Name:      KindFleet,
@@ -544,6 +547,19 @@ var Kinds = []*Kind{
 		Seed:  RouteTiers,
 		Check: checkTier,
 	},
+}
+
+func checkMachine(r Row) error {
+	seats, err := fleet.ParseCredentialSeats(r.Fields["credential_seats"])
+	if err != nil {
+		return fmt.Errorf("machine %s: %w", r.Name, err)
+	}
+	for _, seat := range seats {
+		if seat.SeatName() == r.Fields["seat"] {
+			return fmt.Errorf("machine %s: credential seat %s aliases its primary seat", r.Name, seat.SeatName())
+		}
+	}
+	return nil
 }
 
 // SayWhy is the remedy of a disabled route with no reason: a disabled route

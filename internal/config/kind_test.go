@@ -71,10 +71,10 @@ func TestTheMachineRowIsTheDeclaredFactsSomethingReads(t *testing.T) {
 
 	machine, _ := Lookup(KindMachine)
 	scopedGot70 := strings.Join(machine.FieldNames(), ",")
-	require.Equal(t, "user,seat,slots,runners,width,tla,note", scopedGot70, "machine fields %s, want user,seat,slots,runners,width,tla,note", scopedGot70)
+	require.Equal(t, "user,seat,credential_seats,slots,runners,width,tla,note", scopedGot70, "machine fields %s", scopedGot70)
 	for _, f := range machine.Fields {
-		scopedWant75 := f.Name != "runners" && f.Name != "width" && f.Name != "tla" && f.Name != "note"
-		assert.Equal(t, scopedWant75, f.Required, "--%s required=%v, want %v (runners and width default to 0, tla to false and the note to empty; the rest are typed on add)", f.Name, f.Required, scopedWant75)
+		scopedWant75 := f.Name != "credential_seats" && f.Name != "runners" && f.Name != "width" && f.Name != "tla" && f.Name != "note"
+		assert.Equal(t, scopedWant75, f.Required, "--%s required=%v, want %v (credential seats and note default empty, runners and width default to 0, tla to false; the rest are typed on add)", f.Name, f.Required, scopedWant75)
 	}
 	for _, invented := range []string{"ssh", "address", "os_arch", "os", "arch", "cores", "memory_gb", "roles", "store", "coordinator", "machine", "harness", "logins", "wake"} {
 		_, scopedOk81 := machine.Field(invented)
@@ -399,7 +399,7 @@ func TestNewRowNamesEveryProblemAtOnce(t *testing.T) {
 	machine, _ := Lookup(KindMachine)
 	_, err = machine.NewRow("hulk", map[string]string{"slots": "40", "ssh": "hulk", "os_arch": "linux/x64"})
 	require.Error(t, err, "a machine row with no user, no seat and two invented fields was accepted")
-	for _, want := range []string{"--user is required", "--seat is required", "--ssh is not a machine field; the fields are user, seat, slots, runners", "--os_arch is not a machine field"} {
+	for _, want := range []string{"--user is required", "--seat is required", "--ssh is not a machine field; the fields are user, seat, credential_seats, slots, runners", "--os_arch is not a machine field"} {
 		assert.ErrorContains(t, err, want, "the machine refusal does not name %q:\n%s", want, err)
 	}
 	row, err := friend.NewRow("rowan", map[string]string{"tiers": "frontier", "slots": "64"})

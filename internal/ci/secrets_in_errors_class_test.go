@@ -285,6 +285,7 @@ var secretOpeners = map[string]any{
 	"internal/dogfood.ParseHelp":                       dogfood.ParseHelp,
 	"internal/dogfood.ParseReference":                  dogfood.ParseReference,
 	"internal/filelock.ParseStamp":                     filelock.ParseStamp,
+	"internal/fleet.ParseCredentialSeats":              fleet.ParseCredentialSeats,
 	"internal/fleet.ParseWorkload":                     fleet.ParseWorkload,
 	"internal/friend.NewClaude":                        friend.NewClaude,
 	"internal/friend.NewDeliverer":                     friend.NewDeliverer,

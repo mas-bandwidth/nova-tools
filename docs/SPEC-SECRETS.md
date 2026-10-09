@@ -113,8 +113,9 @@ opened what, or when, so nobody may build a belief on an audit trail that does n
 nova-secrets version
 nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path> --only <NAME,...|all> [--require <NAME>]... -- <cmd> [args...]
 nova-secrets names  --store <dir> --as <name> [--max <n>] [--json]
+nova-secrets claude-token --store <dir> --from <source-seat> --to <seat,...> [--issued-at <RFC3339>] [--json]
 nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
-nova-secrets gate   --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
+nova-secrets gate   --store <dir> --base <git ref> --head <git ref> [--machines <registry>] [--claude-accounts <manifest.tsv>]
 nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
 nova-secrets place  --store <dir> --as <name> --key <path> --sops <path> --machine <name> --secret <name> [--path <remote path>] [--machines <file>] [--receipts <dir>] [--ssh <path>] [--dry-run]
 nova-secrets placed --machine <name> [--receipts <dir>]
@@ -358,7 +359,7 @@ proven by one line is a store proven for one line), or who has cloned the store.
 ### `gate`
 
 ```
-nova-secrets gate --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
+nova-secrets gate --store <dir> --base <git ref> --head <git ref> [--machines <registry>] [--claude-accounts <manifest.tsv>]
 GATE APPROVE files=<n> machines=<registry|->
 GATE REFUSE rule=<n> check=<k> file=<f>: <why>
 ```
@@ -454,10 +455,10 @@ what the gate cannot tell apart.
 up **automatically** when the owner asks — no second human approval on `mas-bandwidth/secrets`; the
 mechanical gate is the required check. So the reviewer's question — *whose key is this, and
 does that machine exist?* — is a machine's question, and the fleet's machines registry
-(`name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes`, `queue/control/machines.tsv`)
+(`name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes[<TAB>credential_seats]`, `queue/control/machines.tsv`)
 is the one place that already answers it. **With `--machines` given, a recipient key this
-diff introduces — one no creation rule named at `--base`, the recovery key aside — is
-permitted only when some machine's `seat` column holds this rule's seat, where the seat is
+diff introduces to this seat — one this seat's creation rule did not name at `--base`, the recovery key aside — is
+permitted only when some machine's legacy `seat` column holds this rule's seat, where the seat is
 the `<seat>` of the single `<seat>.yaml` the rule's `path_regex` names.** A row whose seat is
 `-` carries no seat and vouches for nothing. The refusal names the **seat**, never the key,
 because the seat is what a reader goes and checks:
@@ -466,15 +467,39 @@ because the seat is what a reader goes and checks:
 GATE REFUSE rule=1 check=4 file=air.yaml: rule adds a recipient no seat file rule named before, and no machine in queue/control/machines.tsv carries the seat air; add the machine's row (its seat column must read air) or drop the rule
 ```
 
+For multiple Claude subscription accounts on one machine, the optional eighth
+`credential_seats` column is a JSON array of explicit
+`{"account_id":"...","source_seat":"..."}` source objects or
+`{"account_id":"...","profile_id":"...","target_seat":"..."}` target objects. It mirrors
+the public `nova-config machine credential_seats` field on that one canonical
+machine row. An extra seat vouches for a recipient only when
+`--claude-accounts <manifest.tsv>` binds the **same source machine, account ID and
+source seat**, or the **same target machine, account ID, profile ID and target seat**.
+Missing or mismatched manifest bindings refuse admission; a seat named
+on some other machine or account never grants access. The primary `seat` column retains
+its existing seven-column behavior. A non-recovery recipient reused across seat rules
+is refused, and moving a recipient to a different seat is a new grant even if that key
+appeared elsewhere at the base. The gate proves agreement of the reviewed TSV and
+manifest files; it does not query Postgres. Deployment must verify that this TSV
+projection matches the nova-config machine rows before using it as fleet policy.
+When the account manifest is checked, the approval receipt appends
+`accounts=<manifest.tsv> accounts_sha256=<64-hex digest>` over the exact public
+bytes parsed by the gate. Claude setup pins this digest in each target's owned
+PROFILE and rechecks its materialized copy before install or native use; the
+digest binds reviewed bytes, not token validity. Legacy calls keep the same
+`GATE APPROVE files=... machines=...` line. A new seat file is checked even if its creation rule was already present
+at the base, because the file can make that rule match two seats or grant a key
+to a seat it did not previously govern.
+
 The registry is read **first and whole**, before any judgement leans on it — an unreadable or
 malformed one is a refusal, exactly as `internal/fleet` demands, because the half of a
 registry that parses is the half that lets a recipient through. **Without `--machines` the
 rule is dormant, not satisfied**, and the approval line says `machines=-` so that no APPROVE
 is ever read as the fleet having vouched. **The dormancy stands, and is acceptable now that
 `seat add` refuses a `--pub` any creation rule already names (see `seat add`): the seat-add
-wall is in the tool, before any write; the gate measures the diff; and a hand-edited rule
-that reuses a key is the gate's business and the registry's when the fleet gives
-`--machines`, and the review's where it does not.**
+wall is in the tool, before any write; the gate measures the diff, refuses reused
+non-recovery recipients across seat rules, and checks new grants against the registry
+when the fleet gives `--machines`.**
 
 ### `keygen`
 
@@ -844,13 +869,105 @@ secret, by who acts with it**, and sealed once in that seat's file — `DEEPSEEK
 dispatched by the coordinator, so it is in `<seat>.yaml` and nowhere else. Two copies of one
 value is two rotations, one forgotten.
 
-**API keys, never OAuth tokens, and never an auth file.** Each AI holds its own API keys. An
-OAuth token has a refresh dance, a device flow, an expiry
-and a file the harness rewrites behind your back. So **no harness auth file** is held here or
-handed over; a harness that can only authenticate that way is one we start by hand. **The one
-exception is the repository owner's: a friend's own Claude Code seat authenticates through the repository owner's manual login on the admin
-bench: not in the store, no `ANTHROPIC_API_KEY` in `<seat>.yaml` for it, and nobody should put
-one there.** That row is for *workers*, and whether they move off the plan seat is billing.
+**Sealed credentials, never a harness auth file.** Each AI holds only the credentials
+its selected route needs. Refreshable OAuth logins, device-flow state, keychain entries,
+and harness auth files stay with the harness that owns them; none is copied into this
+store or across machines. Claude Code has one narrower headless subscription path:
+`claude setup-token` obtains a one-year OAuth token after browser authorization, and
+the explicitly selected `claude.ai/token-default` route may seal it as
+`CLAUDE_CODE_OAUTH_TOKEN` for named seats. `nova-secrets seat inject` re-seals that one
+value to each selected target seat on any supported machine, and `nova-secrets exec --only ... --require`
+passes it only to that friend's non-bare Claude process. This is a Claude subscription
+credential, not a Console `ANTHROPIC_API_KEY`; the two routes never silently substitute
+for each other. Recorded issuance can set a conservative renew-by date; it does not
+introspect the provider's actual expiry or prove entitlement. The repository owner's manual
+Claude login remains local unless its owner explicitly selects the sealed token route.
+No `ANTHROPIC_API_KEY` is put into that subscription seat by default.
+
+### Claude subscription-token lifecycle
+
+The credential's source of truth is one sealed `CLAUDE_CODE_OAUTH_TOKEN` in a
+named source seat. A user authorizes `claude setup-token` **once per selected
+subscription account**, in a private terminal on a trusted source host. Claude
+prints the token there; the user pastes it into `nova-secrets seal`'s hidden
+terminal prompt. The token never belongs in a command argument, shell history,
+chat, setup PROFILE, receipt, or plaintext deployment file. No tool parses or
+captures `claude setup-token` output, because its terminal output is not a
+documented machine-readable secret channel.
+
+`nova-secrets claude-token --store <dir> --from <source-seat> --to <target-seat,...>`
+is the read-only Go plan. It reads only key names from the source and target
+encrypted files. `missing` means the named key is absent; `sealed_name_present_unverified`
+means only that the name exists in sealed form. Both leave token validity,
+subscription entitlement, provider reply, and actual expiry unknown. An optional
+`--issued-at` is an operator's RFC3339 record of issuance, not provider
+introspection; the command computes a conservative 330-day `renew_by` reminder.
+Without that record it prints `renewal=unknown` and no date. `seat_missing`
+means a new target recipient seat must first be created by `nova-secrets seat add`;
+the source seat's first value is created directly by `nova-secrets seal`.
+A date cannot
+turn the name-only check into an auth check.
+
+For several subscription accounts or machines, use a reviewed UTF-8 TSV
+manifest with this exact header:
+
+```
+account_id	label	source_machine	source_seat	machine	profile_id	target_seat	issued_at
+```
+
+Each row explicitly binds one stable account ID and human label to a source
+machine and source seat, plus one friend profile on its target machine with
+its own target seat. Multiple accounts may use the same source machine only
+with distinct source seats and recipient keys. The issue time
+may be empty. `nova-secrets claude-token-fleet --store <dir> --manifest <file>`
+checks all rows together: a source seat cannot belong to two accounts, and a
+profile cannot cross accounts. One profile may use the same account on several
+machines, each with its own target seat; a machine/profile pair and a target
+seat cannot be reused. Distinct accounts may target the same machine only with
+distinct profiles, seats and recipient keys.
+No email address, prior login file or machine name is interpreted as account
+ownership. Missing or contradictory bindings are refusals. This names-only
+plan reports recipient-registry admission as `not_checked` until the fleet
+registry and gate have independently accepted both the exact source
+machine/account/source-seat binding and target machine/account/profile/seat
+mapping; it never certifies provisioning or a provider turn.
+
+The source host uses the existing Go verbs in this order (replace paths and
+seat names with the selected account's own):
+
+```
+claude setup-token
+nova-secrets seal --store <dir> --as <source-seat> --key <source-key> \
+  --sops <sops> --name CLAUDE_CODE_OAUTH_TOKEN
+nova-secrets seat inject --store <dir> --as <target-seat> --from <source-seat> \
+  --only CLAUDE_CODE_OAUTH_TOKEN --key <source-key> --sops <sops>
+```
+
+`seal` reads the value from a hidden prompt and follows the store's review
+road. `seat inject` re-seals it under each target seat's existing recipients;
+it never reveals the value. After each approved store change, each target pulls
+the reviewed store through its normal deployment and runs `nova-secrets check`
+with that target's own key. A friend's explicit `claude.ai/token-default` setup
+uses a local reviewed public manifest input, its gate-receipt
+`accounts_sha256`, and explicit account and target-machine IDs. Go setup
+materializes an owner-only copy under the friend's private config root; PROFILE
+pins that copy and the exact account/machine/profile/seat tuple. Install and
+native use recheck it, so no source-machine path is assumed on a target. The
+PROFILE also binds only that target seat and secret name. `nova-friend install
+--setup-profile <PROFILE>` passes the selected secret through `nova-secrets exec
+--only CLAUDE_CODE_OAUTH_TOKEN --require CLAUDE_CODE_OAUTH_TOKEN`; the complete
+native environment excludes ambient `ANTHROPIC_API_KEY`. A bounded native turn
+is the separate provider/entitlement proof; no daemon pong or sealed-name check
+stands in for it.
+
+For planned rotation, issue a new setup-token for the **same selected account**,
+seal it into the source seat, inject into every selected target, sync the reviewed
+store, check each target, then restart and probe each friend after its old process
+has drained. Record the new issuance instant and re-run the planner; the previous
+date must never be carried forward. A revoked, expired, unauthorized or
+credit-limited token is reported as such by the native path, with no Console API
+key or local-login fallback. Provider revocation of old tokens is an explicit
+account-owner action; the encrypted git history is not revocation.
 
 **Per seat, so per file.** Each of four friends has one seat and one file,
 and an AI with no Bluesky simply has no `BSKY_APP_PASSWORD`. A swarm pool's file holds

@@ -1446,7 +1446,7 @@ usage:
   nova-friend hook --harness claude
   nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--setup-profile <PROFILE>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]
   nova-friend beat --as <me> [--server <addr>]
-  nova-friend setup --as <me> --harness <h> --dir <d> --config-dir <d> --home <d> --profile <p> --program <exe> --deny-self <d,...> [--profile-only | --provider <p> --model <m> --key-env NAME --secrets NAME --seat <seat>] [--apply] [--dry-run]
+  nova-friend setup --as <me> --harness <h> --dir <d> --config-dir <d> --home <d> --profile <p> --program <exe> --deny-self <d,...> [--profile-only | --provider <p> --model <m> --key-env NAME --secrets NAME --seat <seat>] [--claude-account-id <id> --claude-machine <name> --claude-accounts <manifest.tsv> --claude-accounts-sha256 <digest>] [--apply] [--dry-run]
   nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--setup-profile <PROFILE>] [--deny-self <d,...>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
   nova-friend uninstall --as <me> [--dry-run]
   nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--json]
@@ -1556,12 +1556,16 @@ effect: delivery: sends beyond this machine: one beat to the sprint server, the 
 ```
 usage: nova-friend setup [flags]
 from `nova-friend help`:
-  nova-friend setup --as <me> --harness <h> --dir <d> --config-dir <d> --home <d> --profile <p> --program <exe> --deny-self <d,...> [--profile-only | --provider <p> --model <m> --key-env NAME --secrets NAME --seat <seat>] [--apply] [--dry-run]
+  nova-friend setup --as <me> --harness <h> --dir <d> --config-dir <d> --home <d> --profile <p> --program <exe> --deny-self <d,...> [--profile-only | --provider <p> --model <m> --key-env NAME --secrets NAME --seat <seat>] [--claude-account-id <id> --claude-machine <name> --claude-accounts <manifest.tsv> --claude-accounts-sha256 <digest>] [--apply] [--dry-run]
   nova-friend setup --as worker --harness opencode --dir /tmp/worker --config-dir /tmp/worker-config --home /tmp/worker-home --profile isolated --program /usr/local/bin/opencode --deny-self /tmp/coordinator --profile-only --dry-run
 flags:
   --apply  apply the inspected local setup plan; no daemon or provider work starts
   --as <string>  the friend's name (required)
   --base-url <string>  the explicit provider endpoint
+  --claude-account-id <string>  explicit stable Claude subscription account ID from the reviewed manifest
+  --claude-accounts <string>  local reviewed public manifest input for Go materialization under the owned config root
+  --claude-accounts-sha256 <string>  the exact public manifest digest printed by nova-secrets gate
+  --claude-machine <string>  the selected target machine name in the reviewed manifest
   --config-dir <string>  the absolute private harness config root (required)
   --context-limit <int>  explicit provider model context limit in tokens; zero leaves it unspecified
   --deny-self <string>  the absolute coordinator roots excluded from the lane wall, comma-separated (required)
