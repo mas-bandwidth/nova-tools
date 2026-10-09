@@ -1,8 +1,10 @@
 package sprint
 
 import (
+	"cmp"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -120,7 +122,7 @@ func (d DevLag) What() string {
 	if !d.At.IsZero() {
 		last = "the last promotion at " + d.At.UTC().Format(time.RFC3339) + " (" + orDash(d.Sha) + ")"
 	}
-	return fmt.Sprintf("dev is behind: %d cards landed on %s since %s; promote: merge origin/dev into the sprint branch, open the PR to dev, run the functional tier, queue it; then: nova-sprint promoted --sha <merge sha>",
+	return fmt.Sprintf("dev is behind: %d cards landed on %s since %s; promote: merge origin/dev into the sprint branch, open the PR to dev, run the functional tier, queue it; then: nova-sprint promoted --sha <merge sha> --branch <sprint branch> --tip <sha> --cards <ids> (nova-sprint promote prints it whole; --failed <why> when it did not merge)",
 		d.Count, d.Branch, last)
 }
 
@@ -136,9 +138,11 @@ func devBehindCond(s *Snapshot) []cond {
 	return []cond{{typ: NDevBehind, streamLevel: true, what: d.What(), decisions: d.Decisions()}}
 }
 
-// PromotedReq is the coordinator's word that the sprint branch was promoted into dev: the
-// merge sha.
+// PromotedReq is the coordinator's word that a branch was promoted into dev, or that the
+// promotion failed (docs/SPEC-SPRINT.md section 7, delivery milestones).
 type PromotedReq struct {
+	// Sha is the merged result on the target, as the merge names it: under a squash or a
+	// rebase it is not the promoted tip, and both are recorded.
 	Sha     string
 	Answers []string // the judgments it answers (answered): one naming no open judgment refuses the whole step
 	Who     string
@@ -146,6 +150,22 @@ type PromotedReq struct {
 	// marked (readtier.go, FieldReturnedByDev) and the tick asks to raise its stream's
 	// read tier.
 	Returned []string `json:",omitempty"`
+	// Branch is the branch promoted (the sprint branch), Tip its commit promoted, Target the
+	// ref it was merged into (DefaultDevRef when empty), Repo the repository and Evidence the
+	// gate's or the review's (the pull request, the merge-queue entry).
+	Branch   string `json:",omitempty"`
+	Tip      string `json:",omitempty"`
+	Target   string `json:",omitempty"`
+	Repo     string `json:",omitempty"`
+	Evidence string `json:",omitempty"`
+	// Cards is the landed cards the promoted range carried (the caller's fact: their land
+	// commits are between the last promotion and the tip). Without them, the cards Tip carried
+	// on Branch are verified (tipCarried: a staged commit that is Tip or an ancestor of it); with
+	// no Branch or no Tip, none is.
+	Cards []string `json:",omitempty"`
+	// Failed is why the promotion failed: recorded on the work table, verifying nothing, and
+	// standing until a promotion merges after it (FailedPromotion).
+	Failed string `json:",omitempty"`
 }
 
 var shaWord = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
@@ -159,15 +179,21 @@ func PromotedSha(given string) (string, string) {
 	return sha, ""
 }
 
-// Promoted records the promotion (nova-sprint promoted --sha <merge sha>): the coordinator's
-// alone; the sha is 7 to 40 hex digits. It writes the work table's PropPromotedAt and
-// PropPromotedSha and closes the judgment "dev is behind"; the next tick counts landings
-// from here.
+// Promoted records the promotion (nova-sprint promoted --sha <merge sha> --branch <sprint
+// branch>): the coordinator's alone; the sha is 7 to 40 hex digits. It writes the work table's
+// PropPromotedAt and PropPromotedSha, verifies in dev the cards the promotion carried
+// (promotedCards: each card's verified record and its stream's), and closes the judgment "dev
+// is behind"; the next tick counts landings from here. With Failed it records the failure
+// alone (recordFailed).
 func Promoted(s *Snapshot, r PromotedReq) Plan {
 	var p Plan
 	if w := notCoordinator(s, r.Who, "promoted"); w != "" {
 		p.refuse("promoted", strings.Replace(w, "answers a judgment, which is", "is", 1))
 		return p
+	}
+	target := cmp.Or(r.Target, DefaultDevRef)
+	if r.Failed != "" {
+		return recordFailed(s, r, target)
 	}
 	sha, why := PromotedSha(r.Sha)
 	if why != "" {
@@ -190,12 +216,48 @@ func Promoted(s *Snapshot, r PromotedReq) Plan {
 			return p
 		}
 	}
+	verified, key, why := promotedCards(s, r)
+	if why != "" {
+		p.refuse(key, why)
+		return p
+	}
 	cards, branch := LandedSince(s)
-	u := Unit{Key: "promoted", Moved: fmt.Sprintf("promoted %s into dev at %s (%s): %d cards landed since the last promotion", branch, now, sha, len(cards))}
+	if r.Branch != "" {
+		branch = r.Branch
+	}
+	from := fromOf(r.Branch, r.Tip)
+	u := Unit{Key: "promoted", Moved: fmt.Sprintf("promoted %s into %s at %s (%s): %d cards landed since the last promotion, %d verified in %s", branch, target, now, sha, len(cards), len(verified), target)}
+	if why := tipUnknown(s, r); why != "" {
+		u.Moved += " (" + why + ")"
+	}
+	sets := map[string]map[string]string{}
+	for _, c := range verified {
+		sets[c.ID] = known(map[string]string{FieldVerified: now, FieldVerifiedRepo: r.Repo, FieldVerifiedRef: target,
+			FieldVerifiedCommit: sha, FieldVerifiedFrom: from, FieldVerifiedEvidence: r.Evidence})
+	}
 	for _, id := range r.Returned {
 		// returned by dev or an audit: the card's record, read by the tick (readtier.go)
 		c := s.Work.Placed(id)
-		u.Changes = append(u.Changes, change(Work, setEntry(c, map[string]string{FieldReturnedByDev: now, FieldReturnedByDevTier: s.readTierOf(c), FieldReturnedByDevSha: sha})))
+		set := map[string]string{FieldReturnedByDev: now, FieldReturnedByDevTier: s.readTierOf(c), FieldReturnedByDevSha: sha}
+		for k, v := range sets[id] {
+			set[k] = v
+		}
+		sets[id] = set
+	}
+	var streams []string
+	for _, c := range s.Work.Column(Landed) {
+		if set, ok := sets[c.ID]; ok {
+			u.Changes = append(u.Changes, change(Work, setEntry(c, set)))
+			if set[FieldVerified] != "" && !slices.Contains(streams, c.Row) {
+				streams = append(streams, c.Row)
+			}
+		}
+	}
+	slices.Sort(streams)
+	for _, st := range streams {
+		if set := streamRecord(s, st, sets, map[string]string{FieldVerifiedRef: target, FieldVerifiedCommit: sha}); set != nil {
+			u.Changes = append(u.Changes, change(Merge, setEntry(s.StreamCtl(st), set)))
+		}
 	}
 	if len(r.Returned) > 0 {
 		u.Moved += fmt.Sprintf("; returned by dev: %s", strings.Join(r.Returned, ", "))
@@ -206,6 +268,27 @@ func Promoted(s *Snapshot, r PromotedReq) Plan {
 		}
 	}
 	p.Units = append(p.Units, u)
+	answered(&p, s, r.Answers, r.Who)
+	return p
+}
+
+// recordFailed records a failed promotion on the work table (PropPromoteFailedAt and the rest):
+// no card is verified, the judgment "dev is behind" stays open, and the failure stands, in the
+// views, until a promotion merges after it.
+func recordFailed(s *Snapshot, r PromotedReq, target string) Plan {
+	var p Plan
+	if len(r.Returned) > 0 || len(r.Cards) > 0 || r.Sha != "" {
+		p.refuse("promoted", "--failed records a promotion that did not merge: it takes no --sha, --cards or --returned")
+		return p
+	}
+	why := strings.Join(strings.Fields(r.Failed), " ")
+	now := stamp(s.Now)
+	from := fromOf(r.Branch, r.Tip)
+	for _, kv := range [][2]string{{PropPromoteFailedAt, now}, {PropPromoteFailedWhy, why}, {PropPromoteFailedFrom, orDash(from)}, {PropPromoteFailedEvidence, orDash(r.Evidence)}} {
+		was, had := s.Work.Prop(kv[0])
+		p.Props = append(p.Props, PropWrite{Table: Work, Name: kv[0], Value: kv[1], Was: was, WasAbsent: !had})
+	}
+	p.Units = append(p.Units, Unit{Key: "promoted", Moved: fmt.Sprintf("promotion of %s into %s FAILED at %s: %s", orDash(from), target, now, why)})
 	answered(&p, s, r.Answers, r.Who)
 	return p
 }

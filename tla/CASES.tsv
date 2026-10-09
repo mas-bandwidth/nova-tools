@@ -445,6 +445,10 @@ MCFriendBrokenNeverWake.cfg	MCFriend.tla	temporal	LimitedEnds	ignore-terminal	fr
 MCBus2Receipts.cfg	MCBus2Receipts.tla	pass	-	ignore-terminal	bus2	required	-
 MCBus2BrokenPushDup.cfg	MCBus2Receipts.tla	invariant	NoIdActedTwice	ignore-terminal	bus2	required	-
 MCBus2BrokenBackStamp.cfg	MCBus2Receipts.tla	action	ReceiptNeverMovesBack	ignore-terminal	bus2	required	-
+MCPromoteDelivery.cfg	MCPromoteDelivery.tla	pass	-	ignore-terminal	promotedelivery	required	-
+MCPromoteDeliveryBrokenForgetFailure.cfg	MCPromoteDelivery.tla	invariant	FailureVisible	ignore-terminal	promotedelivery	required	-
+MCPromoteDeliveryBrokenVerifyAllLanded.cfg	MCPromoteDelivery.tla	invariant	VerifiedInDev	ignore-terminal	promotedelivery	required	-
+MCPromoteDeliveryBrokenIgnoreTip.cfg	MCPromoteDelivery.tla	invariant	VerifiedInDev	ignore-terminal	promotedelivery	required	-
 MCDirtyTickRefused.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-small	required	-
 MCFriendNotifications.cfg	MCFriendNotifications.tla	pass	-	ignore-terminal	friend-notifications	required	-
 MCFriendNotificationsBadAck.cfg	MCFriendNotifications.tla	invariant	NoLostReady	ignore-terminal	friend-notifications	required	-

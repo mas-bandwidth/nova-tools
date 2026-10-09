@@ -8,6 +8,7 @@ import (
 	"io"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -60,10 +61,15 @@ func (a *app) promoteOnTick(ctx context.Context, stdout io.Writer) {
 // TestNoGhPrMergeSpellingInTheToolsGo refuses, and that test names this
 // mutation as the one admission. A failed check, or a failed merge-group run,
 // raises one judgment naming the check, decisions fix-and-recut and skip, with
-// the failing run's log tail, and cuts one fix card per failing test (promote_red.go);
-// a failed run on the base at the last promotion's merge does the same. A merge
-// records `promoted --sha` in the store. Every forge call goes through promoteForge
-// (promote_forge.go).
+// the failing run's log tail and the record `promoted --failed --branch --tip`,
+// which the store keeps until a later promotion merges, and cuts one fix card
+// per failing test (promote_red.go); a failed run on the base at the last
+// promotion's merge does the same. A merge records `promoted --sha` with the
+// live branch and the frozen tip (`promote.tip`, not a later origin tip) and
+// not `--cards`: `--cards` would verify that list and skip the tip bound, so
+// the store verifies in dev only the cards whose staged commit is that frozen
+// tip or an ancestor of it (docs/SPEC-SPRINT.md section 7, delivery milestones).
+// Every forge call goes through promoteForge (promote_forge.go).
 
 // promoteDecisions are the one judgment a failed merge-group run raises.
 var promoteDecisions = []string{"fix-and-recut", "skip"}
@@ -102,9 +108,11 @@ type promoter struct {
 	// forge, when set, is the forge (a test). Nil is gh, through ghRun when
 	// that is set.
 	forge promoteForge
-	// recordFn, when set, records a merge in the sprint's store (the verb sets
-	// it). Nil prints `promoted --sha` for the coordinator to run.
-	recordFn func(ctx context.Context, sha string) error
+	// recordFn, when set, records a promotion in the sprint's store (the verb
+	// sets it): a merge, or a failure. Nil prints the delivery record line for
+	// the coordinator to run. The request names --branch and the frozen tip
+	// and not --cards, so tipCarried is the bound.
+	recordFn func(ctx context.Context, req sprint.PromotedReq) error
 	// gate, when set, is the tree gate (a test). Nil runs --check, or nothing
 	// when --check is empty.
 	gate func(ctx context.Context, dir, sha string) (string, error)
@@ -202,12 +210,13 @@ func (a *app) cmdPromote(args []string, stdout, stderr io.Writer) int {
 	}
 	if !*dry {
 		p.red = a.redCutter(*c)
-		p.recordFn = func(ctx context.Context, sha string) error {
+		p.recordFn = func(ctx context.Context, req sprint.PromotedReq) error {
 			st, err := a.store(*c)
 			if err != nil {
 				return err
 			}
-			if code := a.runStep("promoted", *c, st, store.PromotedStep(sprint.PromotedReq{Sha: sha, Who: c.actor}), stdout, stderr); code != 0 {
+			req.Who = c.actor
+			if code := a.runStep("promoted", *c, st, store.PromotedStep(req), stdout, stderr); code != 0 {
 				return fmt.Errorf("the store did not record it (exit %d)", code)
 			}
 			return nil
@@ -545,6 +554,9 @@ func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, s
 			o.Judgment = p.redJudgment(ctx, rRuns, "a check of the pull request failed", "the pull request of "+o.Branch, promoteDecisions, stderr)
 			fmt.Fprintf(stdout, "JUDGMENT promotion red branch=%s decisions=%s cards=%s open=%s\n%s\n", oneline.Field(o.Branch), strings.Join(o.Judgment.Decisions, ","),
 				oneline.Field(dashed(strings.Join(o.Judgment.Cards, ","))), oneline.Field(dashed(strings.Join(o.Judgment.Open, ","))), o.Judgment.Tail)
+			if code := p.noteFailed(ctx, o, "a check of the pull request failed", number, stdout, stderr); code != 0 {
+				return o, code
+			}
 			return o, 1
 		}
 	}
@@ -560,7 +572,7 @@ func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, s
 		if err != nil {
 			logText = "the failing run's log could not be read: " + oneline.Err(err)
 		}
-		return p.judge(ctx, o, "merge-group failed", r.Name, logText, stdout)
+		return p.judge(ctx, o, "merge-group failed", r.Name, logText, number, stdout, stderr)
 	}
 	entry, err := f.QueueEntry(ctx, view.ID)
 	if err != nil {
@@ -575,7 +587,7 @@ func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, s
 		for _, c := range checks {
 			switch c.Bucket {
 			case "fail", "cancel":
-				return p.judge(ctx, o, "check failed", c.Name, "", stdout)
+				return p.judge(ctx, o, "check failed", c.Name, "", number, stdout, stderr)
 			case "pass", "skipping":
 			default:
 				pending = append(pending, c.Name)
@@ -648,7 +660,7 @@ func (p *promoter) wait(o promoteOutcome, number, what string, stdout io.Writer)
 // the check, once per branch. The clone remembers it (promote.judged), so a
 // later run does not raise it again; the promotion is cut afresh once the sprint
 // tip moves (the fix landed), the decision fix-and-recut.
-func (p *promoter) judge(ctx context.Context, o promoteOutcome, kind, check, logText string, stdout io.Writer) (promoteOutcome, int) {
+func (p *promoter) judge(ctx context.Context, o promoteOutcome, kind, check, logText, number string, stdout, stderr io.Writer) (promoteOutcome, int) {
 	if p.judged == o.Branch {
 		fmt.Fprintf(stdout, "PROMOTE WAIT branch=%s judgment=already\n", oneline.Field(o.Branch))
 		return o, 1
@@ -663,6 +675,9 @@ func (p *promoter) judge(ctx context.Context, o promoteOutcome, kind, check, log
 	fmt.Fprintf(stdout, "JUDGMENT %s branch=%s check=%s decisions=%s\n", kind, oneline.Field(o.Branch), oneline.Field(check), strings.Join(o.Judgment.Decisions, ","))
 	if o.Judgment.Tail != "" {
 		fmt.Fprintln(stdout, o.Judgment.Tail)
+	}
+	if code := p.noteFailed(ctx, o, "a "+kind+": "+check, number, stdout, stderr); code != 0 {
+		return o, code
 	}
 	return o, 1
 }
@@ -680,7 +695,8 @@ func (p *promoter) markJudged(ctx context.Context, branch string) {
 }
 
 // record records the merge: refs/promoted/last moves to it, so the next pass's
-// landed list starts after it, and the store records `promoted --sha`.
+// landed list starts after it, and the store records `promoted --sha` with the
+// live branch and the frozen tip.
 func (p *promoter) record(ctx context.Context, o promoteOutcome, number, sha string, stdout, stderr io.Writer) (promoteOutcome, int) {
 	if p.dry {
 		fmt.Fprintf(stdout, "PROMOTE DRY-RUN branch=%s pr=%s merged sha=%s\n", oneline.Field(o.Branch), number, sha)
@@ -691,10 +707,13 @@ func (p *promoter) record(ctx context.Context, o promoteOutcome, number, sha str
 		return o, p.fail(stderr, err)
 	}
 	o.Promoted = sha
+	req := p.deliveryReq(ctx, o, sha, "", number)
+	line := quoteLine(promotedWords(req))
 	if p.recordFn == nil {
-		fmt.Fprintf(stdout, "promoted --sha %s\n", sha)
-	} else if err := p.recordFn(ctx, sha); err != nil {
-		return o, p.fail(stderr, fmt.Errorf("the merge %s was not recorded: %s; record it: nova-sprint promoted --sha %s", sha, oneline.Err(err), sha))
+		// the coordinator types this line; it still begins promoted --sha
+		fmt.Fprintln(stdout, line)
+	} else if err := p.recordFn(ctx, req); err != nil {
+		return o, p.fail(stderr, fmt.Errorf("the merge %s was not recorded: %s; record it: nova-sprint %s", sha, oneline.Err(err), line))
 	} else {
 		fmt.Fprintf(stdout, "PROMOTE RECORDED sha=%s\n", sha)
 	}
@@ -702,6 +721,83 @@ func (p *promoter) record(ctx context.Context, o promoteOutcome, number, sha str
 		return o, p.fail(stderr, fmt.Errorf("the merge %s is recorded, but the promotion in flight was not cleared: %s; the keys %s remain, so the next pass would handle pull request %s again", sha, oneline.Err(err), strings.Join(promoteKeys, ","), number))
 	}
 	return o, 0
+}
+
+// deliveryReq is the store call for one promotion. Branch is the live sprint
+// branch. Tip is the frozen tip the cut was taken from (promote.tip), never a
+// later origin tip: tipCarried then excludes a card landed after that freeze.
+// Cards is left empty on purpose. --cards would verify that list and skip the
+// tip bound (promotedCards).
+func (p *promoter) deliveryReq(ctx context.Context, o promoteOutcome, sha, failed, number string) sprint.PromotedReq {
+	branch := o.Live
+	if branch == "" {
+		branch = p.live
+	}
+	tip := ""
+	if frozen, err := p.git(ctx, "config", "--local", "--get", "promote.tip"); err == nil {
+		tip = strings.TrimSpace(frozen)
+	}
+	if tip == "" {
+		tip = o.Tip
+	}
+	var evidence []string
+	if number != "" {
+		evidence = append(evidence, "pr="+number)
+	}
+	if o.Branch != "" {
+		evidence = append(evidence, "head="+o.Branch)
+	}
+	if o.Entry != "" {
+		evidence = append(evidence, "entry="+o.Entry)
+	}
+	return sprint.PromotedReq{
+		Sha:      sha,
+		Failed:   failed,
+		Branch:   branch,
+		Tip:      tip,
+		Target:   p.base,
+		Evidence: strings.Join(evidence, " "),
+	}
+}
+
+// promotedWords is the delivery record as the coordinator types it. It names
+// no --cards: that list would skip the frozen-tip bound.
+func promotedWords(r sprint.PromotedReq) []string {
+	var words []string
+	if r.Failed != "" {
+		words = []string{"promoted", "--failed", r.Failed}
+	} else {
+		words = []string{"promoted", "--sha", r.Sha}
+	}
+	if r.Branch != "" {
+		words = append(words, "--branch", r.Branch)
+	}
+	if r.Tip != "" {
+		words = append(words, "--tip", r.Tip)
+	}
+	if r.Target != "" {
+		words = append(words, "--target", r.Target)
+	}
+	if r.Evidence != "" {
+		words = append(words, "--evidence", r.Evidence)
+	}
+	return words
+}
+
+// noteFailed prints the failed promotion and, when the verb records, writes it
+// in the store so it stays until a later promotion merges. A print with no
+// recordFn is the line the coordinator types. Nothing is verified.
+func (p *promoter) noteFailed(ctx context.Context, o promoteOutcome, why, number string, stdout, stderr io.Writer) int {
+	req := p.deliveryReq(ctx, o, "", why, number)
+	line := quoteLine(promotedWords(req))
+	fmt.Fprintln(stdout, line)
+	if p.recordFn == nil {
+		return 0
+	}
+	if err := p.recordFn(ctx, req); err != nil {
+		return p.fail(stderr, fmt.Errorf("the failed promotion was not recorded: %s; record it: nova-sprint %s", oneline.Err(err), line))
+	}
+	return 0
 }
 
 func (p *promoter) fail(stderr io.Writer, err error) int {
@@ -969,4 +1065,110 @@ func oneLine(s string) string {
 		return s[:300]
 	}
 	return s
+}
+
+// registerDeliveryVerbs patches the verb table after verbs.go has filled it
+// (view.go's init calls this; promote.go's own init runs too early). promoted
+// gains the delivery flags, and installed is the receipt verb. Both stay the
+// coordinator's store writes.
+func registerDeliveryVerbs() {
+	verbClasses["installed"] = classCoordinator
+	verbEffect["promoted"] = "local write: records the promotion in the sprint's store (the cards the tip carried, verified in dev); --dry-run writes nothing; --failed records a promotion that did not merge"
+	verbEffect["installed"] = "local write: records an install receipt on every card verified in dev at the commit named; --dry-run writes nothing"
+	for i := range verbs {
+		if verbs[i].name != "promoted" {
+			continue
+		}
+		verbs[i].syntax = "(--sha <merge sha> | --failed <why>) [--branch <sprint branch>] [--tip <sha>] [--target <ref>] [--repo <owner/name>] [--evidence <text>] [--cards <id,...>] [--returned <id,...>] [--answers <note>] [--dry-run]"
+		verbs[i].example = "promoted --sha 0123abc --branch sprint/main --tip 89abcde"
+		verbs[i].run = (*app).cmdPromotedDelivery
+	}
+	// before coordinator: that verb's example moves the seat, and a coordinator
+	// verb's example after it is refused as the old holder's (verbs.go).
+	at := len(verbs)
+	for i := range verbs {
+		if verbs[i].name == "coordinator" {
+			at = i
+			break
+		}
+	}
+	verbs = slices.Insert(verbs, at, verb{
+		name:    "installed",
+		syntax:  "<target> --sha <dev commit> --receipt <text> [--dry-run]",
+		example: "installed target-a --sha 0123abc --receipt 'nova-tools 1.2.3, sha256 ok'",
+		run:     (*app).cmdInstalled,
+	})
+}
+
+// cmdPromotedDelivery is the coordinator's word that a branch was promoted into
+// dev, or that the promotion failed (sprint.Promoted). The verb table's promoted
+// row runs this, so the flags are the delivery record and the old --sha line
+// still records a promotion that verifies nothing until it names what it carried.
+func (a *app) cmdPromotedDelivery(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("promoted")
+	sha := fs.String("sha", "", "the merged result on the target, as the merge names it (the merge commit, or the squash or rebase commit), 7 to 40 hex digits; required unless --failed")
+	failed := fs.String("failed", "", "the promotion did not merge: why (the failing check, the queue's refusal); recorded, no card is verified, and it stands until a promotion merges")
+	branch := fs.String("branch", "", "the branch promoted, the sprint branch: with --tip, the cards whose staged commit is the tip or an ancestor of it are verified in dev")
+	tip := fs.String("tip", "", "the commit of --branch that was promoted (the frozen tip): --branch verifies a card only when its staged commit is this tip or an ancestor of it; without it --branch verifies none")
+	target := fs.String("target", "", "the ref the promotion merged into (default dev)")
+	repo := fs.String("repo", "", "the repository, owner/name")
+	evidence := fs.String("evidence", "", "the gate's or the review's evidence: the pull request, the merge-queue entry, the run")
+	cards := fs.String("cards", "", "the landed cards the promoted range carried, comma separated (nova-sprint promote prints them); without it, the cards --tip carried on --branch")
+	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
+	dry := fs.Bool("dry-run", false, "check the sha and say what would be recorded; record nothing")
+	returned := fs.String("returned", "", "landed cards dev or an audit returned with this promotion, comma separated: each is marked on the card and the tick asks to raise its stream's read tier")
+	pos, err := parse(fs, args)
+	if err != nil {
+		return refuse(stderr, "promoted", err.Error())
+	}
+	if len(pos) > 0 || (*sha == "") == (*failed == "") {
+		return refuse(stderr, "promoted", "wants --sha <merge sha> or --failed <why>, one of them, and no positional words")
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "promoted", err.Error())
+	}
+	if *dry {
+		if *failed != "" {
+			fmt.Fprintf(stdout, "PROMOTED DRY-RUN failed=%s; nothing was changed\n", oneline.Field(*failed))
+			return 0
+		}
+		got, why := sprint.PromotedSha(*sha)
+		if why != "" {
+			return refuse(stderr, "promoted", why)
+		}
+		fmt.Fprintf(stdout, "PROMOTED DRY-RUN sha=%s; nothing was changed\n", got)
+		return 0
+	}
+	req := sprint.PromotedReq{Sha: *sha, Failed: *failed, Branch: *branch, Tip: *tip, Target: *target,
+		Repo: *repo, Evidence: *evidence, Cards: sprint.Split(*cards), Answers: answers(*ans), Returned: sprint.Split(*returned), Who: c.actor}
+	return a.runStep("promoted", *c, st, store.PromotedStep(req), stdout, stderr)
+}
+
+// cmdInstalled is the coordinator's install receipt (sprint.Installed): the target
+// took the dev commit a promotion recorded, and every card verified in dev at or
+// before it is installed there.
+func (a *app) cmdInstalled(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("installed")
+	sha := fs.String("sha", "", "the dev commit the target installed: a merge sha a promotion recorded (required)")
+	receipt := fs.String("receipt", "", "what the target reported: the version, its checksum, the install log's last line (required)")
+	dry := fs.Bool("dry-run", false, "check the words and say what would be recorded; record nothing")
+	pos, err := parse(fs, args)
+	if err != nil || len(pos) != 1 {
+		return refuse(stderr, "installed", argErr("wants one word, the target, ", err, pos...))
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "installed", err.Error())
+	}
+	if *dry {
+		got, why := sprint.PromotedSha(*sha)
+		if why != "" {
+			return refuse(stderr, "installed", why)
+		}
+		fmt.Fprintf(stdout, "INSTALLED DRY-RUN target=%s sha=%s; nothing was changed\n", oneline.Field(pos[0]), got)
+		return 0
+	}
+	req := sprint.InstalledReq{Target: pos[0], Commit: *sha, Receipt: *receipt, Who: c.actor}
+	return a.runStep("installed", *c, st, store.InstalledStep(req), stdout, stderr)
 }
