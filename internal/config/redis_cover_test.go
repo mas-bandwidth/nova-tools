@@ -448,6 +448,34 @@ func TestRedisCoverCharge(t *testing.T) {
 		assert.Equal(t, "m9", host)
 	})
 
+	t.Run("beat host takes precedence over fleet coordinator", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		a, c, _ := coverStore(t)
+
+		// Both fleet coordinator and friend beat host exist in Redis
+		c.Set(ctx, FleetKey("coordinator"), "coord-host", 0)
+		c.HSet(ctx, FriendBeatKey("ada"), "host", "beat-host")
+
+		// 1. Friend's slots must bill to beat-host, NOT coord-host
+		host, err := a.charge(ctx, "ada")
+		require.NoError(t, err)
+		assert.Equal(t, "beat-host", host, "friend beat host takes precedence over coordinator")
+		assert.Equal(t, "beat-host", a.friendHosts["ada"], "beat host is cached")
+
+		// 2. Friend without beat host falls back to coordinator
+		bHost, err := a.charge(ctx, "bob")
+		require.NoError(t, err)
+		assert.Equal(t, "coord-host", bHost, "unreported beat host falls back to coordinator")
+
+		// 3. Cleared beat host falls back to coordinator
+		delete(a.friendHosts, "ada")
+		c.HDel(ctx, FriendBeatKey("ada"), "host")
+		fallbackHost, err := a.charge(ctx, "ada")
+		require.NoError(t, err)
+		assert.Equal(t, "coord-host", fallbackHost, "empty beat host falls back to coordinator")
+	})
+
 	t.Run("nobody to charge refuses with the remedy", func(t *testing.T) {
 		t.Parallel()
 		a, _, _ := coverStore(t)
