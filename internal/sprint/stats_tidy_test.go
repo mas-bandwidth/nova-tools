@@ -354,3 +354,162 @@ func TestATidyWhoseCardMovedKeepsItsArchive(t *testing.T) {
 	assert.Equal(t, sprint.Withdrawn, r.snap().Fleet.Card(first).Col, "it stays where the other writer put it")
 	assert.Nil(t, r.snap().Fleet.Placed(sprint.WorkCardID("s1-2", 1)))
 }
+
+func TestATidyOverAFleetOfMoreThanSixtyFourRowsSucceeds(t *testing.T) {
+	t.Parallel()
+	r := newConflictRig(t)
+	_, _, _, err := r.st.SetMachine(r.ctx, true)
+	require.NoError(t, err)
+
+	const nRows = 70
+	for i := 1; i <= nRows; i++ {
+		row := fmt.Sprintf("m%02d", i)
+		r.must(store.FleetStep(sprint.FleetReq{Op: "up", Member: row, Width: 4}))
+	}
+
+	now := r.now
+	for j := 0; j < 11; j++ {
+		entries := make([]ntable.BatchMemberEntry, 0, nRows)
+		for i := 1; i <= nRows; i++ {
+			row := fmt.Sprintf("m%02d", i)
+			id := fmt.Sprintf("s1-%d-%d", i, j)
+			cardID := sprint.WorkCardID(id, 1)
+			entries = append(entries, ntable.BatchMemberEntry{
+				ID:     cardID,
+				Expect: &ntable.MemberExpect{Absent: true},
+				Create: &ntable.MemberCreateOp{
+					Row:   row,
+					Col:   sprint.DoneOK,
+					Score: 1,
+				},
+				Set: map[string]string{
+					"kind":              "work",
+					sprint.PrimaryField: id,
+					"attempt":           "1",
+					"ok":                "yes",
+					"finished":          now.Add(-time.Hour + time.Duration(j)*time.Minute).UTC().Format(time.RFC3339),
+					sprint.FieldModel:   "model-flash-a",
+					sprint.FieldUsage:   "wall=1200s actual_usd=0.2500",
+				},
+			})
+		}
+		s := r.snap()
+		_, err := r.m.Apply(r.ctx, ntable.BatchManifest{
+			Schema:                1,
+			Table:                 r.st.Names.Table(sprint.Fleet),
+			Epoch:                 "0",
+			ExpectedTableRevision: fmt.Sprint(s.Fleet.Revision),
+			OperationID:           fmt.Sprintf("seed-fleet-%d", j),
+			Actor:                 "coordinator",
+			Members:               entries,
+		})
+		require.NoError(t, err)
+	}
+
+	r.mu.Lock()
+	r.now = r.now.Add(time.Hour + 500*time.Millisecond)
+	r.mu.Unlock()
+
+	res, err := r.st.TidyStats(r.ctx, store.TidyReq{Kinds: sprint.TidyKinds, Reason: "tidy 70 fleet rows"})
+	require.NoError(t, err)
+	require.Empty(t, res.Refused)
+	assert.Equal(t, nRows, res.Moved, "one card moved per row")
+
+	after := r.snap()
+	props := after.Fleet.Props()
+	assert.LessOrEqual(t, len(props), ntable.LimitTableProps, "properties held: %d <= %d", len(props), ntable.LimitTableProps)
+
+	for i := 1; i <= nRows; i++ {
+		row := fmt.Sprintf("m%02d", i)
+		med, n := sprint.MemberMedianWall(after, row)
+		assert.Equal(t, 1200.0, med, "carried median for %s", row)
+		assert.Equal(t, 11, n, "carried count for %s", row)
+	}
+
+	// A second assertion: a fleet table already holding per-row carried_median_<row>
+	// properties near the bound is tidied without the LIMIT refusal and holds fewer
+	// properties after.
+	r2 := newConflictRig(t)
+	_, _, _, err = r2.st.SetMachine(r2.ctx, true)
+	require.NoError(t, err)
+
+	const nOldRows = 64
+	oldProps := map[string]string{}
+	for i := 1; i <= nOldRows; i++ {
+		row := fmt.Sprintf("old%02d", i)
+		r2.must(store.FleetStep(sprint.FleetReq{Op: "up", Member: row, Width: 4}))
+		oldProps[sprint.PropCarriedMedian(row)] = "600 10"
+	}
+	s2 := r2.snap()
+	_, err = r2.m.Apply(r2.ctx, ntable.BatchManifest{
+		Schema:                1,
+		Table:                 r2.st.Names.Table(sprint.Fleet),
+		Epoch:                 "0",
+		ExpectedTableRevision: fmt.Sprint(s2.Fleet.Revision),
+		OperationID:           "seed-old-props",
+		Actor:                 "coordinator",
+		Props:                 oldProps,
+	})
+	require.NoError(t, err)
+
+	beforeTidyProps := r2.snap().Fleet.Props()
+	require.GreaterOrEqual(t, len(beforeTidyProps), nOldRows, "holds old properties near the bound")
+
+	now2 := r2.now
+	for j := 0; j < 11; j++ {
+		cardID := sprint.WorkCardID(fmt.Sprintf("s1-old-%d", j), 1)
+		s2 = r2.snap()
+		_, err = r2.m.Apply(r2.ctx, ntable.BatchManifest{
+			Schema:                1,
+			Table:                 r2.st.Names.Table(sprint.Fleet),
+			Epoch:                 "0",
+			ExpectedTableRevision: fmt.Sprint(s2.Fleet.Revision),
+			OperationID:           fmt.Sprintf("seed-card-to-tidy-%d", j),
+			Actor:                 "coordinator",
+			Members: []ntable.BatchMemberEntry{{
+				ID:     cardID,
+				Expect: &ntable.MemberExpect{Absent: true},
+				Create: &ntable.MemberCreateOp{
+					Row:   "old01",
+					Col:   sprint.DoneOK,
+					Score: 1,
+				},
+				Set: map[string]string{
+					"kind":              "work",
+					sprint.PrimaryField: fmt.Sprintf("s1-old-%d", j),
+					"attempt":           "1",
+					"ok":                "yes",
+					"finished":          now2.Add(-time.Hour + time.Duration(j)*time.Minute).UTC().Format(time.RFC3339),
+					sprint.FieldModel:   "model-flash-a",
+					sprint.FieldUsage:   "wall=600s actual_usd=0.1000",
+				},
+			}},
+		})
+		require.NoError(t, err)
+	}
+
+	r2.mu.Lock()
+	r2.now = r2.now.Add(time.Hour + 500*time.Millisecond)
+	r2.mu.Unlock()
+
+	res2, err := r2.st.TidyStats(r2.ctx, store.TidyReq{Kinds: sprint.TidyKinds, Reason: "tidy legacy fleet"})
+	require.NoError(t, err)
+	require.Empty(t, res2.Refused)
+	assert.Equal(t, 1, res2.Moved, "one card moved on old01")
+
+	after2 := r2.snap()
+	afterProps := after2.Fleet.Props()
+	assert.Less(t, len(afterProps), len(beforeTidyProps), "table shrunk: holds fewer properties after tidy (%d < %d)", len(afterProps), len(beforeTidyProps))
+	assert.LessOrEqual(t, len(afterProps), ntable.LimitTableProps)
+
+	for i := 1; i <= nOldRows; i++ {
+		row := fmt.Sprintf("old%02d", i)
+		med, n := sprint.MemberMedianWall(after2, row)
+		assert.Equal(t, 600.0, med, "carried median for %s", row)
+		if row == "old01" {
+			assert.Equal(t, 11, n, "carried count for %s", row)
+		} else {
+			assert.Equal(t, 10, n, "carried count for %s", row)
+		}
+	}
+}
