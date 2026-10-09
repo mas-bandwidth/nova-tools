@@ -156,10 +156,14 @@ func (l *loop) stopPersistedStarted(now time.Time) {
 		if l.stopOwedFor(job, st) {
 			continue
 		}
-		if (st.Ending != nil || exists(st.Card.Report()) || exists(st.Card.Result())) && l.stopRunQuiescent(job, st) {
-			// A completed, quiescent run may have retained Started only
-			// because its finish note could not yet be journaled. Settle
-			// that result under STOP; do not turn it into a cancellation.
+		if st.Ending != nil || exists(st.Card.Report()) || exists(st.Card.Result()) {
+			// Completion evidence owns this card even when its matching group
+			// remains live. Keep Started and retry group proof under STOP;
+			// returning it as cancelled would discard the completed artifact.
+			if !l.stopRunQuiescent(job, st) {
+				l.lanes.recoveryPending = true
+				continue
+			}
 			l.endCard(st.Lane, st.Card, recoveredEnd(st, now), now)
 			continue
 		}
