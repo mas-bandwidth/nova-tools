@@ -9,14 +9,18 @@
 \* The state the code owns: conn, lastPing, silentFrom; chal, nonce, asked,
 \* pongs; daemonPongs, the daemon's own answers; turns, the turns running in
 \* the batch session, and owed, a wake check not yet pushed in (daemon.go
-\* loop.wake). The clock is now, one unit a tick, Window units a window. The
+\* loop.wake). file is one file under a walked root; visible means the folder
+\* check has read it (activity.go NewestWrite, called from daemon.go Run before
+\* Beat); fileBeat means a beat that depends on that file has run. The clock is
+\* now, one unit a tick, Window units a window. The
 \* outside: the coordinator pinging (Ping, each ping a fresh nonce, plain or a
 \* wake check), the session's turns (StartBatch, one carrying messages, with
 \* the pong line at its head while a challenge is open; WakeTurn, the pong line
 \* alone, pushed into a free session for a wake check; BatchEnds), the session
 \* having seen every nonce a turn put in front of it (seen), and the session
 \* answering (Pong, with any nonce it has seen, so a stale or replayed pong is
-\* possible). The pushes the session is owed are counted: silentSaid
+\* possible), and the session writing that file (WriteFile). The pushes the
+\* session is owed are counted: silentSaid
 \* (the "coordinator silent" pushes) beside outages (the times the
 \* connection went silent).
 \*
@@ -89,6 +93,8 @@
 \*                    StopOnlyWhenSilent
 \*   "asideearly"     a lane sets its card aside after one turn with no
 \*                    RESULT.md: SetAsideAfterCardTurns
+\*   "filebeforebeat" the beat runs before the file the folder check reads
+\*                    exists: FileBeforeBeat
 
 EXTENDS Naturals, FiniteSets
 
@@ -98,14 +104,16 @@ CONSTANTS Window, MaxTime, MaxPings, Broken,
 VARIABLES now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered,
           daemonPongs, turns, owed, lim, limUntil,
           mode, held, quiet, lastStop, pel, acked, hand, inHand, carry, failed, readm, pingIn,
-          streak, reason, broken, lcard, lrun, lquiet, cst, tries
+          streak, reason, broken, lcard, lrun, lquiet, cst, tries,
+          file, visible, fileBeat
 linkvars == <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered,
               daemonPongs, owed>>
 limvars == <<lim, limUntil>>
 msgvars == <<pel, acked, hand, inHand, carry, failed, readm, pingIn>>
 sessvars == <<streak, reason, broken>>
 lanevars == <<lcard, lrun, lquiet, cst, tries>>
-vars == <<linkvars, turns, limvars, mode, held, quiet, lastStop, msgvars, sessvars, lanevars>>
+filevars == <<file, visible, fileBeat>>
+vars == <<linkvars, turns, limvars, mode, held, quiet, lastStop, msgvars, sessvars, lanevars, filevars>>
 
 NoNonce == 0
 M == 1..Msgs
@@ -153,6 +161,9 @@ TypeOK ==
   /\ lquiet \in [L -> 0..SilentStop]
   /\ cst \in [C -> {"queued", "lane", "done", "aside"}]
   /\ tries \in [C -> 0..CardTurns]
+  /\ file \in BOOLEAN
+  /\ visible \in BOOLEAN
+  /\ fileBeat \in BOOLEAN
 
 Busy == turns > 0
 
@@ -176,6 +187,7 @@ Init ==
   /\ streak = 0 /\ reason = 0 /\ broken = FALSE
   /\ lcard = [l \in L |-> 0] /\ lrun = [l \in L |-> 0] /\ lquiet = [l \in L |-> 0]
   /\ cst = [c \in C |-> "queued"] /\ tries = [c \in C |-> 0]
+  /\ file = FALSE /\ visible = FALSE /\ fileBeat = FALSE
 
 \* The clock (machine.go Tick): a window without a ping makes the
 \* coordinator silent, said once at that moment; a window challenged with
@@ -195,7 +207,7 @@ Tick ==
   /\ quiet' = Quieter(quiet, Busy)
   /\ lquiet' = [l \in L |-> Quieter(lquiet[l], lrun[l] > 0)]
   /\ UNCHANGED <<lastPing, nonce, asked, pongs, seen, answered, daemonPongs, owed, turns, limvars>>
-  /\ UNCHANGED <<mode, held, lastStop, msgvars, sessvars, lcard, lrun, cst, tries>>
+  /\ UNCHANGED <<mode, held, lastStop, msgvars, sessvars, lcard, lrun, cst, tries, filevars>>
 
 \* A ping from the coordinator with a fresh nonce (machine.go Ping;
 \* daemon.go loop.ping), read or peeked off the stream whatever the session
@@ -218,7 +230,7 @@ Ping(wake) ==
   /\ owed' = ((owed \/ wake) /\ chal' # "quiet")
   /\ pingIn' = IF Broken = "pinghanded" /\ pingIn = "none" /\ ~broken THEN "hand" ELSE pingIn
   /\ UNCHANGED <<now, silentFrom, pongs, seen, silentSaid, outages, answered, turns, limvars>>
-  /\ UNCHANGED <<mode, held, quiet, lastStop, pel, acked, hand, inHand, carry, failed, readm, sessvars, lanevars>>
+  /\ UNCHANGED <<mode, held, quiet, lastStop, pel, acked, hand, inHand, carry, failed, readm, sessvars, lanevars, filevars>>
 
 \* The step's read of the stream (daemon.go read): every pending message not
 \* already in hand or in a turn goes into the hand in one read, when the
@@ -236,7 +248,7 @@ Read ==
                /\ UNCHANGED <<hand, inHand>>
           ELSE /\ hand' = hand \cup fresh /\ inHand' = inHand \cup fresh
                /\ UNCHANGED <<pel, acked>>
-     /\ UNCHANGED <<linkvars, turns, limvars, mode, held, quiet, lastStop, carry, failed, readm, pingIn, sessvars, lanevars>>
+     /\ UNCHANGED <<linkvars, turns, limvars, mode, held, quiet, lastStop, carry, failed, readm, pingIn, sessvars, lanevars, filevars>>
 
 \* What heads a turn while a challenge is open (loop.head): the pong line for
 \* the current nonce, which pays an owed wake check.
@@ -263,7 +275,7 @@ StartBatch ==
   /\ pingIn' = IF pingIn = "hand" THEN "turn" ELSE pingIn
   /\ seen' = HeadSeen /\ owed' = HeadOwed
   /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs>>
-  /\ UNCHANGED <<limvars, mode, held, lastStop, pel, acked, inHand, failed, sessvars, lanevars>>
+  /\ UNCHANGED <<limvars, mode, held, lastStop, pel, acked, inHand, failed, sessvars, lanevars, filevars>>
 
 \* A wake check owed to a free session with no message waiting is pushed
 \* in as its own turn holding only the pong line (daemon.go startWake). The
@@ -276,7 +288,7 @@ WakeTurn ==
   /\ turns' = turns + 1 /\ quiet' = 0 /\ owed' = FALSE
   /\ seen' = seen \cup {nonce}
   /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs>>
-  /\ UNCHANGED <<limvars, mode, held, lastStop, msgvars, sessvars, lanevars>>
+  /\ UNCHANGED <<limvars, mode, held, lastStop, msgvars, sessvars, lanevars, filevars>>
 
 \* The turn held by a deferral is tried again once the harness is up
 \* (daemon.go Run, l.retry), the same text and the same messages.
@@ -284,7 +296,7 @@ Retry ==
   /\ mode = "batch" /\ held /\ SessionFree
   /\ Deliverable
   /\ turns' = turns + 1 /\ quiet' = 0 /\ held' = FALSE
-  /\ UNCHANGED <<linkvars, limvars, mode, lastStop, msgvars, sessvars, lanevars>>
+  /\ UNCHANGED <<linkvars, limvars, mode, lastStop, msgvars, sessvars, lanevars, filevars>>
 
 \* settle (daemon.go): what a turn's end o does to the messages S it carried
 \* and to the refusal streak. Every one leaves the turn (inHand and carry);
@@ -316,7 +328,7 @@ BatchEnds(o) ==
   /\ turns' = turns - 1
   /\ Settle(InBatch, o)
   /\ pingIn' = IF pingIn = "turn" THEN "none" ELSE pingIn
-  /\ UNCHANGED <<linkvars, limvars, mode, held, quiet, lastStop, hand, readm, lanevars>>
+  /\ UNCHANGED <<linkvars, limvars, mode, held, quiet, lastStop, hand, readm, lanevars, filevars>>
 
 \* The silence rule (loop.watch): a turn that has printed nothing for
 \* SilentStop is stopped, its process group signalled, and its end is a
@@ -330,13 +342,13 @@ Stop ==
   /\ lastStop' = StopSaid(quiet)
   /\ Settle(InBatch, "failed")
   /\ pingIn' = IF pingIn = "turn" THEN "none" ELSE pingIn
-  /\ UNCHANGED <<linkvars, limvars, mode, held, quiet, hand, readm, lanevars>>
+  /\ UNCHANGED <<linkvars, limvars, mode, held, quiet, hand, readm, lanevars, filevars>>
 
 \* A running turn prints (the adapter's output watch, WithOutputSeen).
 Print ==
   /\ Busy /\ quiet > 0
   /\ quiet' = 0
-  /\ UNCHANGED <<linkvars, turns, limvars, mode, held, lastStop, msgvars, sessvars, lanevars>>
+  /\ UNCHANGED <<linkvars, turns, limvars, mode, held, lastStop, msgvars, sessvars, lanevars, filevars>>
 
 \* The batch turn hits the harness's usage limit or empty balance
 \* (limit.go Limits.see, Gate): it ends at once, Deferred, kept in the
@@ -347,7 +359,7 @@ HitLimit ==
   /\ turns' = turns - 1 /\ held' = TRUE
   /\ lim' = "limited"
   /\ \E u \in (now + 1)..MaxTime : limUntil' = u
-  /\ UNCHANGED <<linkvars, mode, quiet, lastStop, msgvars, sessvars, lanevars>>
+  /\ UNCHANGED <<linkvars, mode, quiet, lastStop, msgvars, sessvars, lanevars, filevars>>
 
 \* After the reset one wake turn is tried (limit.go Limits.Gate, a nonce the
 \* session must answer): answered, the friend is up again; still limited, the
@@ -357,7 +369,7 @@ Wake ==
   /\ lim = "limited" /\ ~Busy /\ now >= limUntil /\ Broken # "neverwake"
   /\ \/ lim' = "up" /\ UNCHANGED limUntil
      \/ /\ now < MaxTime /\ lim' = "limited" /\ \E u \in (now + 1)..MaxTime : limUntil' = u
-  /\ UNCHANGED <<linkvars, turns, mode, held, quiet, lastStop, msgvars, sessvars, lanevars>>
+  /\ UNCHANGED <<linkvars, turns, mode, held, quiet, lastStop, msgvars, sessvars, lanevars, filevars>>
 
 \* The session answers with a nonce it has seen (machine.go Pong): the
 \* current one ends the challenge; any other changes nothing. The witness
@@ -368,7 +380,7 @@ Pong(n) ==
   /\ (n = nonce \/ Broken = "stalepong")
   /\ chal' = "quiet" /\ pongs' = pongs + 1 /\ answered' = n /\ owed' = FALSE
   /\ UNCHANGED <<now, conn, lastPing, silentFrom, nonce, asked, seen, silentSaid, outages, daemonPongs>>
-  /\ UNCHANGED <<turns, limvars, mode, held, quiet, lastStop, msgvars, sessvars, lanevars>>
+  /\ UNCHANGED <<turns, limvars, mode, held, quiet, lastStop, msgvars, sessvars, lanevars, filevars>>
 
 \* ---------------------------------------------------------------- one-shot lanes
 
@@ -393,7 +405,7 @@ LaneStart(l) ==
   /\ pingIn' = IF pingIn = "hand" THEN "turn" ELSE pingIn
   /\ seen' = HeadSeen /\ owed' = HeadOwed
   /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs>>
-  /\ UNCHANGED <<turns, limvars, mode, held, quiet, lastStop, pel, acked, inHand, failed, sessvars, tries>>
+  /\ UNCHANGED <<turns, limvars, mode, held, quiet, lastStop, pel, acked, inHand, failed, sessvars, tries, filevars>>
 
 \* What a lane's turn end does to its card (laneDone): RESULT.md there, the
 \* card is done and the lane free; none, one more turn, and at CardTurns the
@@ -416,7 +428,7 @@ LaneEnds(l, o, result) ==
   /\ Settle(InLane(l), o)
   /\ CardAfter(l, result)
   /\ pingIn' = IF pingIn = "turn" THEN "none" ELSE pingIn
-  /\ UNCHANGED <<linkvars, turns, limvars, mode, held, quiet, lastStop, hand, readm, lquiet>>
+  /\ UNCHANGED <<linkvars, turns, limvars, mode, held, quiet, lastStop, hand, readm, lquiet, filevars>>
 
 \* The silence rule on a lane's turn: stopped, a failure, its card handed
 \* again or set aside as any turn without a RESULT.md (or done, when the
@@ -428,12 +440,12 @@ LaneStop(l, result) ==
   /\ Settle(InLane(l), "failed")
   /\ CardAfter(l, result)
   /\ pingIn' = IF pingIn = "turn" THEN "none" ELSE pingIn
-  /\ UNCHANGED <<linkvars, turns, limvars, mode, held, quiet, hand, readm, lquiet>>
+  /\ UNCHANGED <<linkvars, turns, limvars, mode, held, quiet, hand, readm, lquiet, filevars>>
 
 LanePrint(l) ==
   /\ lrun[l] > 0 /\ lquiet[l] > 0
   /\ lquiet' = [lquiet EXCEPT ![l] = 0]
-  /\ UNCHANGED <<linkvars, turns, limvars, mode, held, quiet, lastStop, msgvars, sessvars, lcard, lrun, cst, tries>>
+  /\ UNCHANGED <<linkvars, turns, limvars, mode, held, quiet, lastStop, msgvars, sessvars, lcard, lrun, cst, tries, filevars>>
 
 \* Lane l's turn is rate-limited or refused out of funds (limitedTurn): the
 \* card stays in the lane, counted toward nothing; the messages leave the turn
@@ -447,7 +459,32 @@ LaneLimited(l) ==
   /\ lim' = "limited"
   /\ IF lim = "up" THEN \E u \in (now + 1)..MaxTime : limUntil' = u ELSE UNCHANGED limUntil
   /\ UNCHANGED <<linkvars, turns, mode, held, quiet, lastStop, pel, acked, hand, failed, readm, sessvars>>
-  /\ UNCHANGED <<lcard, lquiet, cst, tries>>
+  /\ UNCHANGED <<lcard, lquiet, cst, tries, filevars>>
+
+\* The session writes one file under a walked root (outbox, inbox, jobs, or
+\* the working directory). It exists; the folder check has not read it yet.
+WriteFile ==
+  /\ ~file
+  /\ file' = TRUE
+  /\ UNCHANGED <<linkvars, turns, limvars, mode, held, quiet, lastStop, msgvars, sessvars, lanevars, visible, fileBeat>>
+
+\* The folder check reads that file, so it is visible to the beat
+\* (activity.go NewestWrite; daemon.go Run calls Activity before Beat).
+\* A file that is not there is not invented.
+FolderCheck ==
+  /\ file /\ ~visible
+  /\ visible' = TRUE
+  /\ UNCHANGED <<linkvars, turns, limvars, mode, held, quiet, lastStop, msgvars, sessvars, lanevars, file, fileBeat>>
+
+\* The beat that depends on the file (daemon.go Beat, carrying the walk's
+\* answer). The design runs it only once the folder check has seen the file.
+\* The witness runs it while the file does not exist. A walk that finds
+\* nothing still beats with the zero time; that beat is not this one.
+BeatOnFile ==
+  /\ ~fileBeat
+  /\ IF Broken = "filebeforebeat" THEN ~file ELSE visible
+  /\ fileBeat' = TRUE
+  /\ UNCHANGED <<linkvars, turns, limvars, mode, held, quiet, lastStop, msgvars, sessvars, lanevars, file, visible>>
 
 Next ==
   \/ Tick
@@ -468,6 +505,9 @@ Next ==
        \/ \E result \in BOOLEAN : LaneStop(l, result)
        \/ LanePrint(l)
        \/ LaneLimited(l)
+  \/ WriteFile
+  \/ FolderCheck
+  \/ BeatOnFile
 
 Spec == Init /\ [][Next]_vars /\ WF_vars(Tick) /\ WF_vars(Wake)
 
@@ -553,6 +593,13 @@ SetAsideAfterCardTurns ==
   /\ \A c \in C : cst[c] = "aside" => tries[c] = CardTurns
   /\ \A l \in L : lcard[l] # 0 => cst[lcard[l]] = "lane"
   /\ \A l1, l2 \in L : l1 # l2 /\ lcard[l1] # 0 => lcard[l1] # lcard[l2]
+
+\* The file is visible before the beat that depends on it: the folder check
+\* has read it (daemon.go Run walks, then beats; activity.go NewestWrite).
+\* A walk that finds nothing still beats with the zero time; that beat is
+\* not this one.
+FileBeforeBeat ==
+  [][(~fileBeat /\ fileBeat') => (file /\ visible)]_vars
 
 \* The one liveness claimed beyond that: the clock is finite here, and
 \* DeafAfterWindow already says an open challenge is younger than a window at
