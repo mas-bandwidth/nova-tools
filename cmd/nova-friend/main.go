@@ -1299,8 +1299,8 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return tool.Refuse(err.Error() + "; use private daemon state outside all native wall roots")
 		}
 		if err := authority.ValidateLegacyNativeAuthority(); err != nil {
- return tool.Refuse(err.Error()+"; drain and reconcile legacy native authority before launch")
- }
+			return tool.Refuse(err.Error() + "; drain and reconcile legacy native authority before launch")
+		}
 		activeDaemon = authority // CLI preflight is native execution too; it uses this validated authority snapshot.
 	}
 

@@ -133,17 +133,13 @@ func (d *Daemon) ValidateLegacyNativeAuthority() error {
 				}
 				continue
 			}
-			laneInfo, laneErr := os.Lstat(laneMarkPath(d.Dir, entry.Name()))
-			if laneErr != nil && !errors.Is(laneErr, os.ErrNotExist) {
-				return errors.New("legacy native lane claim cannot be inspected; preserve and reconcile it before launching")
-			}
+            raw,laneErr := nativeControlReadLegacyLane(laneMarkPath(d.Dir,entry.Name()))
+            if laneErr != nil && !errors.Is(laneErr,os.ErrNotExist) { return errors.New("legacy native lane claim is unreadable or malformed; preserve and reconcile it before launching") }
             if laneErr == nil {
-                if !laneInfo.Mode().IsRegular() || laneInfo.Size() > 4096 { return errors.New("legacy native lane claim is unreadable or malformed; preserve and reconcile it before launching") }
-                mark,claimed := ReadLaneMark(d.Dir,entry.Name())
-                if !claimed || mark.Who == "" { return errors.New("legacy native lane claim is unreadable or malformed; preserve and reconcile it before launching") }
-                raw,readErr := os.ReadFile(laneMarkPath(d.Dir,entry.Name()))
- if readErr != nil || strings.ContainsAny(mark.Who,"\r\n") || (mark.Ended && string(raw) != LaneMarkEnded(mark.Who)) { return errors.New("legacy native lane claim is unreadable or malformed; preserve and reconcile it before launching") }
-if !mark.Ended { return errors.New("legacy native lane claim remains; drain and reconcile it before launching") }
+                who,ended := strings.CutPrefix(string(raw),laneEnded)
+                if !ended { return errors.New("legacy native lane claim remains unknown; drain and reconcile it before launching") }
+                who = strings.TrimSuffix(who,"\n")
+                if who == "" || strings.ContainsAny(who,"\r\n") || string(raw) != LaneMarkEnded(who) { return errors.New("legacy native lane claim is unreadable or malformed; preserve and reconcile it before launching") }
             }
 			if _, err := os.Lstat(runReceiptPath(d.Dir, entry.Name())); errors.Is(err, os.ErrNotExist) {
 				if _, anchorErr := os.Lstat(runReceiptPath(d.Dir, entry.Name()) + ".anchor"); errors.Is(anchorErr, os.ErrNotExist) {

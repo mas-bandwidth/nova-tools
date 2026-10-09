@@ -22,3 +22,7 @@ func nativeControlOwnedPath(string, bool) error {
 func nativeControlNoSymlinkFile(string) error {
 	return errors.New("native control binding ownership is unsupported on this platform")
 }
+
+func nativeControlReadLegacyLane(string) ([]byte,error) {
+ return nil,errors.New("native control cannot verify a bounded legacy lane on this platform")
+}

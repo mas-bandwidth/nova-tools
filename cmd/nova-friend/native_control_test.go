@@ -78,17 +78,22 @@ func TestNativeControlOpenCodePreflightIsWalledBeforeFirstNativeExecution(t *tes
 }
 
 func TestNativeControlLegacyFencePrecedesNativeCapabilityPreflight(t *testing.T) {
- t.Parallel()
- r:=newRig(t,"sender","worker")
- w:=r.world()
- w.wall=func(_ friend.Wall,next friend.Exec)friend.Exec{return next}
- work:=t.TempDir()
- path:=filepath.Join(work,"jobs","owned",friend.LaneMarkFile)
- require.NoError(t,os.MkdirAll(filepath.Dir(path),0700))
- require.NoError(t,os.WriteFile(path,[]byte("unknown old claim"),0600))
- calls:=0
- w.exec=func(context.Context,string,string,[]string,string)(string,int,error){calls++;return "unexpected preflight",0,nil}
- cliOf(w).Do(t,"run","--as","worker","--harness","opencode","--dir",work).Exit(2).Err("legacy native lane claim")
- require.Zero(t,calls,"legacy authority must be fenced before even native --version/run --help")
- raw,err:=os.ReadFile(path);require.NoError(t,err);require.Equal(t,"unknown old claim",string(raw))
+	t.Parallel()
+	r := newRig(t, "sender", "worker")
+	w := r.world()
+	w.wall = func(_ friend.Wall, next friend.Exec) friend.Exec { return next }
+	work := t.TempDir()
+	path := filepath.Join(work, "jobs", "owned", friend.LaneMarkFile)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
+	require.NoError(t, os.WriteFile(path, []byte("unknown old claim"), 0600))
+	calls := 0
+	w.exec = func(context.Context, string, string, []string, string) (string, int, error) {
+		calls++
+		return "unexpected preflight", 0, nil
+	}
+	cliOf(w).Do(t, "run", "--as", "worker", "--harness", "opencode", "--dir", work).Exit(2).Err("legacy native lane claim")
+	require.Zero(t, calls, "legacy authority must be fenced before even native --version/run --help")
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "unknown old claim", string(raw))
 }

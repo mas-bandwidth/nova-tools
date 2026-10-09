@@ -4,6 +4,7 @@ package friend
 
 import (
 	"errors"
+ "io"
 	"os"
 	"syscall"
 )
@@ -48,4 +49,21 @@ func nativeControlNoSymlinkFile(path string) error {
 		return errors.New("native control binding/lock must be a real file owned by the effective UID")
 	}
 	return nil
+}
+
+// Legacy claims are read once through a bounded no-follow regular descriptor.
+// A changed pathname or growing file holds; this is not an atomic launch grant.
+func nativeControlReadLegacyLane(path string) ([]byte,error) {
+ f,err := os.OpenFile(path,os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK,0)
+ if err != nil { return nil,err }
+ defer f.Close()
+ info,err := f.Stat()
+ if err != nil || !info.Mode().IsRegular() || info.Size() > 4096 { return nil,errors.New("legacy lane is not a bounded regular file") }
+ raw,err := io.ReadAll(io.LimitReader(f,4097))
+ if err != nil || len(raw) > 4096 { return nil,errors.New("legacy lane read exceeds its bound") }
+ after,err := f.Stat()
+ if err != nil || after.Size() > 4096 { return nil,errors.New("legacy lane changed during its read") }
+ current,err := os.Lstat(path)
+ if err != nil || !os.SameFile(info,current) { return nil,errors.New("legacy lane pathname changed during its read") }
+ return raw,nil
 }
