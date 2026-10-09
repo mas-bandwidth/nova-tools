@@ -886,6 +886,11 @@ func sharedPromotionRepo(t *testing.T) *promotionRepo {
 	}
 }
 
+// ciBinDir is the directory the functional onboarding walk builds shared tool
+// binaries into (onboarding_functional_test.go). It lives in this file, which
+// vet compiles without the functional tag; the walk's file does not.
+var ciBinDir string
+
 func TestMain(m *testing.M) {
 	code := m.Run()
 	if promotionShared.dir != "" {

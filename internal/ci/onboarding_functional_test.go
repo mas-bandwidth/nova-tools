@@ -170,11 +170,10 @@ func readmeWhatItDoes(t *testing.T, readme string) map[string]string {
 
 // toolBuilds is one compile of each command for this process. The grammar walk
 // and the onboarding walk both build every tool, and on two cores those two
-// compiles of the same tree ran past the package's minute. ciBinDir is the one
-// directory those binaries live in; TestMain removes it.
+// compiles of the same tree ran past the package's minute. ciBinDir, declared
+// beside TestMain, is the one directory those binaries live in; TestMain removes it.
 var (
 	toolBuilds sync.Map
-	ciBinDir   string
 	ciBinOnce  sync.Once
 	ciBinErr   error
 )
