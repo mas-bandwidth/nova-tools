@@ -44,6 +44,7 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	if c.seat != nil {
 		seatVal = *c.seat
 	}
+	// The doctor's apply --check supplies an explicit actor too.
 	// The dry run takes the real run's checks: both resolve the actor the
 	// write is recorded under, so a missing one refuses before either runs
 	// (docs/STANDARD.md, "A verb that writes has a dry run").
