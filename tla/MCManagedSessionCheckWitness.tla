@@ -1,0 +1,3 @@
+--------------------- MODULE MCManagedSessionCheckWitness ---------------------
+EXTENDS ManagedSessionCheck
+=============================================================================

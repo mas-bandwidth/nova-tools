@@ -159,6 +159,15 @@ Presence is therefore the session's, never the daemon's:
   command has the check put on its own stream, which its session reads. The
   check is one line to run with nothing to fill in: `nova-friend pong` with
   the nonce, to the seat (else `--coordinator`), and then end the turn.
+- In one-shot mode a beat publishes its owed presence nonce without calling the
+  adapter or starting a standalone provider turn. The lane's cardless message turn
+  delivers initial and later checks through its owned control receipt and wall,
+  ahead of new cards, at `MessageTurnEvery` cadence. A pending check remains owed
+  after the initial push proof; only the session's exact answer clears it.
+  With no explicit mode, production holds checks until the down beat's reply
+  supplies the configured row; that reply refreshes row configuration even while
+  the session is down. An explicit mode overrides the row. Batch checks retain
+  their existing adapter turn, and per-card checks retain their folder route.
 - A pong answers by its nonce alone: only the latest check's, written by the
   session, counts; a `daemon-pong`, a pong the daemon wrote, another friend's
   pong, a stale or wrong nonce all answer nothing. The bound runs from when the

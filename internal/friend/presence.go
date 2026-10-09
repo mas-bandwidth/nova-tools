@@ -195,12 +195,17 @@ type SessionCheck struct {
 	Store  bus.Store // the store itself; the daemon is handed DaemonStore
 	// Deliver is the adapter the check goes in by, as Gate wrapped it.
 	Deliver Deliverer
-	Now     func() time.Time
-	Nonce   func() string             // a fresh nonce per check
-	Text    func(nonce string) string // the check as the session reads it: the one answer line to run
-	Record  func(line string)         // nil records nothing
-	Save    func(PresenceStatus) error
-	Go      func(func()) // runs a check's delivery; nil is a goroutine
+	// Managed selects one-shot checks: the lane scheduler owns their native turn.
+	// Asking only publishes the nonce; it never calls Deliver or starts a goroutine.
+	Managed func() bool
+	// Ready holds checks until production knows the configured delivery mode.
+	Ready  func() bool
+	Now    func() time.Time
+	Nonce  func() string             // a fresh nonce per check
+	Text   func(nonce string) string // the check as the session reads it: the one answer line to run
+	Record func(line string)         // nil records nothing
+	Save   func(PresenceStatus) error
+	Go     func(func()) // runs a check's delivery; nil is a goroutine
 	// Run is this daemon's run, its generation, said with every check and answer
 	// on the beat: the server counts an answer only to a check the same run asked.
 	Run string
@@ -617,7 +622,29 @@ func (s *SessionCheck) read(ctx context.Context, now time.Time) (answered string
 // held past StaleTurnLock while the record says no turn runs is never a turn,
 // and the check goes in as its own turn by the record. A check owed one check
 // period (SessionQuiet) that has not gone in is said once as a refusal, with why.
+// PendingCheck is the unanswered check a managed lane owes, including checks
+// after the initial push proof. Only the session's exact answer clears it.
+func (s *SessionCheck) PendingCheck() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.m == nil {
+		return s.Keep
+	}
+	return s.m.Nonce
+}
+
 func (s *SessionCheck) ask(ctx context.Context, now time.Time) {
+	if s.Ready != nil && !s.Ready() {
+		return
+	}
+	if s.Managed != nil && s.Managed() {
+		s.mu.Lock()
+		nonce := s.nextNonce()
+		s.m.Ask(now, nonce)
+		s.toCheck = nonce
+		s.mu.Unlock()
+		return // controlContext/messageTurn owns the only native delivery
+	}
 	if _, ok := s.Deliver.(interface{ Passive() }); ok || s.Deliver == nil {
 		s.mu.Lock()
 		nonce := s.nextNonce()

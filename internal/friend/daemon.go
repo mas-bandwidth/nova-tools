@@ -96,6 +96,9 @@ type Daemon struct {
 	StateDir             string // the daemon's durable files, including owed finish notes
 	Width                int
 	Store                bus.Store
+	NativeReplyStore     bus.Store       // raw store for capability-validated native replies; daemon's other sends use Store
+	NativeBrokerRoots    func() []string // effective wall-visible roots; broker must stay outside all of them
+	NativeBrokerDir      string          // daemon-only grants and send receipts, outside the lane's writable/readable roots
 	Deliver              Deliverer
 	Beat                 func(ctx context.Context, active time.Time) error // one beat to the sprint server, carrying the session's last activity (zero: none known)
 	// Activity is the newest write of the session's files and Cards the ids of
@@ -172,9 +175,16 @@ type Daemon struct {
 	// WriteLanes over the state files); nil keeps it in memory only.
 	LoadLanes func() (LaneState, error)
 	SaveLanes func(LaneState) error
-	// CardDone is the one bus line a lane's session sends when its card is
-	// done (nova-bus send by path, as this friend, to the coordinator).
+	// CardDone is the optional bus line a lane's session sends when its card
+	// is done. Empty means the daemon's durable finish notice sends it instead.
 	CardDone func(card, to string) string
+	// ReplyCommand is the exact local-file reply verb carried only by an
+	// authorized request in an OpenCode lane's native turn.
+	ReplyCommand func(session, re, capability string) string
+	// NativePongCommand is a scoped local-file answer for a challenge carried
+	// inside a walled OpenCode lane. NativePongCurrent checks the live nonce.
+	NativePongCommand func(session, nonce, capability string) string
+	NativePongCurrent func(nonce string) bool
 	// Progress stamps progress on the cards whose lane turn printed (ProgressArgv to the
 	// sprint server); nil stamps none.
 	Progress func(ctx context.Context, cards []Card) error
@@ -268,6 +278,9 @@ type Daemon struct {
 	// keeps every message pending (docs/SPEC-FRIEND.md, The push proof). The status
 	// says push=unproven with the nonce and since when.
 	Proof func() (proven bool, nonce string)
+	// ControlCheck is the unanswered presence nonce a one-shot lane must carry.
+	// Unlike Proof it remains owed after the initial push is proven.
+	ControlCheck func() string
 	// Sent is the session's proof the sprint server last took on her beat (friend
 	// beat --pong answered with it), zero before any; the status carries it.
 	Sent func() time.Time
@@ -480,6 +493,8 @@ type loop struct {
 	messageTries  int
 	messageSaidAt time.Time
 	finishCursor  string          // next pending finish note follows this filename, wrapping at the end
+	replyCursor   string          // next native reply envelope follows this filename
+	pongCursor    string          // next native pong envelope follows this filename
 	controlWG     sync.WaitGroup  // cardless adapters finish native cleanup before Run returns
 	controlRun    uint64          // unique native receipt for each session open or message turn
 	saidRefusal   string          // the card runner's refusal last recorded, "" when it runs
@@ -574,6 +589,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 		l.stampProgress(now)
 		l.takeResults(now)
 		l.sendFinishNotes(now)
+		if d.NativeReplyStore != nil && l.mode == ModeOneShot {
+			d.SendNativeReplies(ctx, &bus.Bus{Store: d.NativeReplyStore}, now, l.seat(now), &l.replyCursor)
+			d.SendNativePongs(ctx, &bus.Bus{Store: d.NativeReplyStore}, now, l.coordinator(), &l.pongCursor)
+		}
 		if d.Mailbox != nil {
 			// off the loop: a move sends the old conversation's unread deliveries again, and the
 			// beat never waits for it

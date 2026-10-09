@@ -65,6 +65,10 @@ const OpenRetryMax = 30 * time.Second
 // a test its own over internal/bus's Fake, a fake harness and its own
 // clock, so no test opens a socket or reads the real time.
 type world struct {
+	initialRowMode string // injected configured row for a serverless test world; production starts unknown
+
+	beatDownAnswer func(ctx context.Context, server, friend string, active, until time.Time, reason string, proof friend.BeatWords) (string, error) // production down beat preserves its configured row
+
 	getenv       func(string) string
 	open         func(ctx context.Context, addr string) (bus.Store, func(), error)
 	exec         friend.Exec
@@ -254,13 +258,12 @@ func realWorld() world {
 			}
 			return sprintBeat(ctx, server, append(args, proofArgs(proof)...))
 		},
-		beatDown: func(ctx context.Context, server, name string, active, until time.Time, reason string, proof friend.BeatWords) error {
+		beatDownAnswer: func(ctx context.Context, server, name string, active, until time.Time, reason string, proof friend.BeatWords) (string, error) {
 			args := []string{"friend", "beat", name, "--until", until.UTC().Format(time.RFC3339), "--reason", reason}
 			if !active.IsZero() {
 				args = append(args, "--active", active.UTC().Format(time.RFC3339))
 			}
-			_, err := sprintBeat(ctx, server, append(args, proofArgs(proof)...))
-			return err
+			return sprintBeat(ctx, server, append(args, proofArgs(proof)...))
 		},
 		progress: sprintVerb,
 		finish:   sprintVerb,
@@ -841,6 +844,28 @@ removes its plist.`,
 				Run: w.pingUninstall,
 			},
 			{
+				Name:    "local-pong",
+				Usage:   "local-pong --as <me> --dir <friend-dir> --session <native-session> --nonce <n> --capability <turn-capability> [--queue <n>] [--working <n>] [--width <n>] [--dry-run]",
+				Example: "local-pong --as bob --dir /work/bob --session ses_123 --nonce abc123 --capability <turn-capability>",
+				Effect:  tool.LocalWrite + ": queues one owner-only native challenge answer; the daemon validates and sends its bus pong",
+				DryRun:  true,
+				Detail: `Run the exact scoped command carried by a native OpenCode control turn.
+It writes one private local envelope and opens no network connection. Only the matching
+live challenge, native session and daemon-owned grant allow the daemon to send a pong.
+The daemon sends nothing unless the native turn actually runs this command.`,
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "the native friend's name")
+					f.Required("dir", "the friend's real working directory")
+					f.Required("session", "the session id carried by this native turn")
+					f.Required("nonce", "the current challenge nonce")
+					f.Required("capability", "the scoped capability carried by this native turn")
+					f.Int("queue", 0, "queued tasks counted by the native session")
+					f.Int("working", 0, "working tasks counted by the native session")
+					f.Int("width", 0, "the width known to the native session")
+				},
+				Run: w.localPong,
+			},
+			{
 				Name:    "pong",
 				Usage:   "pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]",
 				Example: "pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4",
@@ -864,6 +889,29 @@ the line it would send; nothing is sent and no pong file is written.`,
 					redis(f)
 				},
 				Run: w.pong,
+			},
+			{
+				Name:    "reply",
+				Usage:   "reply --as <me> --dir <friend-dir> --session <native-session> --re <request-id> --capability <turn-capability> --subject <line> --body <text> [--dry-run]",
+				Example: "reply --as bob --dir /work/bob --session ses_123 --re 01M4F39QAT9N7621G6XKC3R9AA --capability <turn-capability> --subject 'Review answer' --body 'Reviewed'",
+				Effect:  tool.LocalWrite + ": queues one owner-only reply envelope in the friend's outbox; the daemon validates and sends it",
+				DryRun:  true,
+				Detail: `Run from the native OpenCode turn that received a typed request. The turn supplies
+the session, request id and capability. This command writes only a private local envelope;
+it does not open a network connection. The daemon checks the request and its read receipt,
+then sends a bus reply to the request's original sender. The native turn cannot choose a
+different destination. A duplicate request envelope is refused, and the reply body is
+never printed in the result or daemon log.`,
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "the native friend's name")
+					f.Required("dir", "the friend's real working directory")
+					f.Required("session", "the session id carried by this native turn")
+					f.Required("re", "the typed request id carried by this native turn")
+					f.Required("capability", "the scoped capability carried by this native turn")
+					f.Required("subject", "one line describing the reply")
+					f.Required("body", "the reply text")
+				},
+				Run: w.reply,
 			},
 			{
 				Name:    "wait-pong",
@@ -1092,9 +1140,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 	if bin, err := w.binary(); err == nil {
 		wall.Self = []string{bin}
 	} // else no Self: a lane's child is refused, never run outside the wall
-	walledRaw := func(ctx context.Context, d, prog string, args []string, stdin string) (string, int, error) {
+	var activeDaemon *friend.Daemon
+	walledRaw := func(ctx context.Context, cwd, prog string, args []string, stdin string) (string, int, error) {
 		if w.wall == nil {
-			return w.exec(ctx, d, prog, args, stdin)
+			return w.exec(ctx, cwd, prog, args, stdin)
 		}
 		wl := wall
 		// the wall's config directory: --config-dir, else her row's config_dir, else CLAUDE_CONFIG_DIR
@@ -1112,7 +1161,16 @@ func (w world) run(c *tool.Call) *tool.Out {
 		if p := rowProfile.Load(); p != nil {
 			wl.Profile = *p
 		}
-		return w.wall(wl, w.exec)(ctx, d, prog, args, stdin)
+		if activeDaemon != nil && activeDaemon.Harness == "opencode" && friend.InLane(ctx) {
+			roots := append(append([]string{wl.Dir, wl.ConfigDir}, wl.Jobs...), wl.Reads...)
+			if w.setupProfile != nil {
+				roots = append(roots, w.setupProfile.Selection.Home, w.setupProfile.Selection.ConfigDir)
+			}
+			if err := activeDaemon.ValidateNativeBrokerRoots(roots); err != nil {
+				return "", 0, fmt.Errorf("native broker isolation refuses lane: %w", err)
+			}
+		}
+		return w.wall(wl, w.exec)(ctx, cwd, prog, args, stdin)
 	}
 	// the lane rules: the flags are the defaults and her row, as her beat answers it, wins
 	flagRules := friend.LaneRules{Tiers: commaList(c.Str("lane-tiers")), Streams: commaList(c.Str("lane-streams")), TokenCap: int64(c.Int("token-cap")),
@@ -1218,7 +1276,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		deliver = &friend.OpenCodePriced{OpenCode: oc, Friend: name, TokenCap: func() int64 { return rowTokenCap.Load() }} // every lane run priced from her own session record, and capped by her row's token_cap
 	}
 	// her row, as her beat last answered it (nova-sprint friend beat: row_mode, row_width, row_config_dir)
-	rowMode, rowWidth := "", 0
+	rowMode, rowWidth := w.initialRowMode, 0
 	var rowReadSlots atomic.Int64 // her row's read slots as her beat last answered; friend.DefaultReadSlots until it says
 	rowReadSlots.Store(friend.DefaultReadSlots)
 	// her row's lane caps by tier as her beat last answered; friend.DefaultLaneCaps until it says
@@ -1341,6 +1399,16 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	laneDeliver := sc.Gate(fl.Gate(deliver)) // card runner or session turn delivery
 	sc.Deliver = laneDeliver
+	sc.Ready = func() bool {
+		return perCard || c.Str("mode") != "" || rowMode == friend.ModeBatch || rowMode == friend.ModeOneShot
+	}
+	sc.Managed = func() bool {
+		mode := rowMode
+		if override := c.Str("mode"); override != "" {
+			mode = override
+		}
+		return !perCard && mode == friend.ModeOneShot
+	}
 	if perCard {
 		// A one-shot runner has no turn to push into; the check uses its folder.
 		sc.Deliver = &friend.FolderCheck{Friend: name, Dir: dir}
@@ -1392,6 +1460,29 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return age >= 0 && age <= 3*friend.BeatEvery
 	}
 	admitLaunch := func(ctx context.Context) bool { return admitMachineLaunch(ctx, &machine, name, w.sprintAsk(server)) }
+	acceptRow := func(answer string, err error) {
+		if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
+			rowMode, rowWidth = m, wd
+			dir := friend.RowConfigDir(answer)
+			rowConfigDir.Store(&dir)
+		}
+		if n, ok := friend.ParseReadSlots(answer); err == nil && ok {
+			rowReadSlots.Store(int64(n))
+		}
+		if p, ok := friend.ParseProfile(answer); err == nil && ok {
+			rowProfile.Store(&p)
+		}
+		if caps, ok := friend.ParseLaneCaps(answer); err == nil && ok {
+			rowLaneCaps.Store(&caps)
+		}
+		if err == nil {
+			if n, ok := friend.TokenCapOf(answer); ok {
+				rowTokenCap.Store(n)
+			}
+			r := friend.LaneRulesOf(answer)
+			rowRules.Store(&r)
+		}
+	}
 	owedStopReturns := func() int { return 0 }
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, StateDir: state, Width: c.Int("width"),
@@ -1461,30 +1552,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 				} else {
 					machine.publish(machineRequest, nil) // authorization fails closed while STOP remains latched
 				}
-				if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
-					rowMode, rowWidth = m, wd
-					dir := friend.RowConfigDir(answer)
-					rowConfigDir.Store(&dir)
-				}
-				if n, ok := friend.ParseReadSlots(answer); err == nil && ok {
-					rowReadSlots.Store(int64(n))
-				}
-				if p, ok := friend.ParseProfile(answer); err == nil && ok {
-					rowProfile.Store(&p)
-				}
-				if caps, ok := friend.ParseLaneCaps(answer); err == nil && ok {
-					rowLaneCaps.Store(&caps)
-				}
-				if err == nil {
-					if n, ok := friend.TokenCapOf(answer); ok {
-						rowTokenCap.Store(n)
-					}
-					r := friend.LaneRulesOf(answer)
-					rowRules.Store(&r)
-				}
+				acceptRow(answer, err)
 				return err
 			}
-			if w.beatDown == nil {
+			if w.beatDown == nil && w.beatDownAnswer == nil {
 				return held(fl.Beat(up))(ctx) // no down beat: held back while she is at her limit
 			}
 			// while her harness is at its limit her beat says down with the until and the
@@ -1493,7 +1564,20 @@ func (w world) run(c *tool.Call) *tool.Out {
 			// seen during the step is never beaten up
 			down := func(ctx context.Context, until time.Time, reason string) error {
 				said := words()
-				err := w.beatDown(ctx, server, name, active, until, reason, said)
+				var err error
+				if w.beatDownAnswer != nil {
+					var answer string
+					request := machine.begin()
+					answer, err = w.beatDownAnswer(ctx, server, name, active, until, reason, said)
+					acceptRow(answer, err)
+					if state, ok := friend.ParseMachine(answer); err == nil && ok && (state == friend.MachineStoppedWord || state == "RUNNING" || state == "PAUSED") {
+						machine.publish(request, &sprintMachine{state: state, at: time.Now()})
+					} else {
+						machine.publish(request, nil)
+					}
+				} else {
+					err = w.beatDown(ctx, server, name, active, until, reason, said)
+				}
 				if err == nil {
 					sc.Said(said)
 				}
@@ -1587,6 +1671,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return w.finish(ctx, server, argv)
 		},
 		CardDone: func(card, to string) string {
+			if c.Str("harness") == "opencode" {
+				return "" // finishNotice sends the durable completion; a walled lane has no bus socket
+			}
 			busBin, err := w.lookPath("nova-bus")
 			if err != nil {
 				busBin = "nova-bus" // ignored: the name on PATH stands in when it is not found
@@ -1612,14 +1699,49 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s --width %d --queue <tasks queued> --working <tasks working>", bin, name, nonce, state, c.Str("redis"), c.Int("width"))
 		},
 	}
+	activeDaemon = d
 	owedStopReturns = d.OwedStopReturns
 	if w.holders != nil {
 		d.Holders = func(ctx context.Context) (map[string]string, error) { return w.holders(ctx, server) }
 	}
 	if !perCard {
 		d.Proof = sc.Proof // nothing goes into the session until it answers its check
+		d.ControlCheck = sc.PendingCheck
 	}
 	if c.Str("harness") == "opencode" {
+		d.NativeReplyStore = st
+		d.NativeBrokerDir = filepath.Join(friend.DefaultStateDir(w.home, name), "native-broker")
+		d.NativeBrokerRoots = func() []string {
+			roots := append(append([]string{dir}, wall.Jobs...), wall.Reads...)
+			if w.setupProfile != nil {
+				return append(roots, w.setupProfile.Selection.Home, w.setupProfile.Selection.ConfigDir)
+			}
+			config := c.Str("config-dir")
+			if config == "" {
+				if row := rowConfigDir.Load(); row != nil {
+					config = *row
+				}
+			}
+			if config == "" {
+				config = w.getenv("CLAUDE_CONFIG_DIR")
+			}
+			return append(roots, config)
+		}
+		d.ReplyCommand = func(session, re, capability string) string {
+			bin, err := w.binary()
+			if err != nil {
+				bin = "nova-friend"
+			}
+			return fmt.Sprintf("%s reply --as %s --dir %s --session %s --re %s --capability %s", nativeCommandArg(bin), nativeCommandArg(name), nativeCommandArg(dir), nativeCommandArg(session), nativeCommandArg(re), nativeCommandArg(capability))
+		}
+		d.NativePongCommand = func(session, nonce, capability string) string {
+			bin, err := w.binary()
+			if err != nil {
+				bin = "nova-friend"
+			}
+			return fmt.Sprintf("%s local-pong --as %s --dir %s --session %s --nonce %s --capability %s --width %d", nativeCommandArg(bin), nativeCommandArg(name), nativeCommandArg(dir), nativeCommandArg(session), nativeCommandArg(nonce), nativeCommandArg(capability), c.Int("width"))
+		}
+		d.NativePongCurrent = func(nonce string) bool { return sc.PendingCheck() == nonce }
 		db := w.selectedOpenCodeDB(c)
 		if w.sqlite != nil {
 			d.Tokens = func(ctx context.Context, session string) (friend.LaneTokens, error) {

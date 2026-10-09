@@ -347,7 +347,7 @@ func LaneSeed(friend string, n, width int, agents, memory string) string {
 	case agents != "":
 		fmt.Fprintf(&b, "Read %s first: it is who you are.\n", agents)
 	}
-	b.WriteString("From the next turn on, each turn hands you exactly one card: do it, write its REPORT.md and RESULT.md, send one bus line, and stop.\nAnswer this turn with the one word: ready.\n")
+	b.WriteString("From the next turn on, each turn hands you exactly one card: do it, write its REPORT.md and RESULT.md, follow that turn's completion instruction, and stop.\nAnswer this turn with the one word: ready.\n")
 	return b.String()
 }
 
@@ -361,7 +361,11 @@ func CardText(job LaneJob, n, width int, sendLine, pong, notice string, seat str
 	if pong != "" {
 		b.WriteString("Run this now, first, exactly as written: " + pong + "\nThen read on.\n\n")
 	}
-	fmt.Fprintf(&b, "nova-friend: lane %d of %d: one card this turn, %s. Do exactly these three things, then stop.\n", n, width, c.ID)
+	if len(msgs) > 0 {
+		fmt.Fprintf(&b, "nova-friend: lane %d of %d: one card this turn, %s. Do exactly these three card steps, then handle the messages below and stop.\n", n, width, c.ID)
+	} else {
+		fmt.Fprintf(&b, "nova-friend: lane %d of %d: one card this turn, %s. Do exactly these three things, then stop.\n", n, width, c.ID)
+	}
 	if job.Dir != "" {
 		fmt.Fprintf(&b, "Your working directory is the card's job directory, %s. Every path here is absolute: use it exactly as written, leading slash and all.\n", job.Dir)
 	}
@@ -371,7 +375,15 @@ func CardText(job LaneJob, n, width int, sendLine, pong, notice string, seat str
 		fmt.Fprintf(&b, "1. Do the card. Its brief is %s; work as it says, only where it says.\n", c.Brief)
 	}
 	fmt.Fprintf(&b, "2. Write %s/REPORT.md and %s/RESULT.md as the brief's END step says.\n", c.Outbox, c.Outbox)
-	fmt.Fprintf(&b, "3. Send one bus line: %s\n", sendLine)
+	if sendLine == "" {
+		if len(msgs) > 0 {
+			b.WriteString("3. Finish the card. The daemon reads the finished outbox and sends the completion notice. Then handle the messages below and stop.\n")
+		} else {
+			b.WriteString("3. Stop. The daemon reads the finished outbox and sends the completion notice.\n")
+		}
+	} else {
+		fmt.Fprintf(&b, "3. Send one bus line: %s\n", sendLine)
+	}
 	if job.Brief != "" {
 		fmt.Fprintf(&b, "\nTHE BRIEF (%s):\n\n%s\nEND OF THE BRIEF\n", c.Brief, strings.TrimRight(job.Brief, "\n"))
 	}
@@ -646,6 +658,10 @@ func (l *loop) laneStep(now time.Time, width int) {
 				l.messageTurn(ln, lh, width, now)
 				continue
 			}
+			if !perCard && lh != nil && l.controlCheck(now) != "" {
+				l.messageTurn(ln, lh, width, now)
+				continue // an owed presence check precedes new card work
+			}
 			asking = ln.n
 			var c Card
 			var found bool
@@ -753,6 +769,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 			continue
 		}
 		t := &turn{}
+		priorHand := append([]bus.Entry(nil), l.hand...)
 		if l.owedMessage == nil && !l.messageInFlight() {
 			t.entries, t.msgs = l.take()
 		}
@@ -761,13 +778,43 @@ func (l *loop) laneStep(now time.Time, width int) {
 			subjects = append(subjects, m.Subject)
 		}
 		t.subjects = fmt.Sprintf("%q", strings.Join(append([]string{"card " + ln.card.ID}, subjects...), " | "))
+		seat := l.seat(now)
+		replyLines, err := l.nativeReplyLines(ln, t.msgs, seat)
+		if err != nil {
+			l.hand = priorHand
+			d.Record(now.UTC().Format(time.RFC3339) + " native reply: card turn held: " + oneLine(err.Error(), 200))
+			continue
+		}
+		checkNonce := l.controlCheck(now)
+		checkLine, err := l.nativePongLine(ln, checkNonce)
+		if err != nil {
+			l.hand = priorHand
+			d.Record(now.UTC().Format(time.RFC3339) + " local pong: card check held: " + oneLine(err.Error(), 200))
+			continue
+		}
+		wakeLine := ""
+		if d.m != nil && d.m.Challenge != Quiet && d.PongCommand != nil {
+			wakeLine, err = l.nativePongLine(ln, d.m.Nonce)
+			if err != nil {
+				l.hand = priorHand
+				d.Record(now.UTC().Format(time.RFC3339) + " local pong: card wake held: " + oneLine(err.Error(), 200))
+				continue
+			}
+		}
 		notice, pong := l.head()
+		if wakeLine != "" {
+			pong = wakeLine
+		}
 		t.notice = l.noticeTaken
 		send := ""
 		if d.CardDone != nil {
 			send = d.CardDone(ln.card.ID, l.coordinator())
 		}
-		t.text = CardText(ln.job, ln.n, width, send, pong, notice, l.seat(now), t.msgs)
+		t.text = CardText(ln.job, ln.n, width, send, pong, notice, seat, t.msgs) + replyLines
+		if checkLine != "" {
+			t.text = "Run this now, exactly as written, then read on: " + checkLine + "\n" + t.text
+			l.checkHanded, l.checkHandedAt = checkNonce, now
+		}
 		ln.t = t
 		dir := ln.job.Dir
 		l.startTurn(t, now, func(ctx context.Context) laneResult {
@@ -946,6 +993,25 @@ func (l *loop) messageInFlight() bool {
 	return false
 }
 
+// controlCheck applies the existing cadence to initial and later presence checks.
+func (l *loop) controlCheck(now time.Time) string {
+	if l.d.PongCommand == nil {
+		return ""
+	}
+	nonce := ""
+	if l.d.ControlCheck != nil {
+		nonce = l.d.ControlCheck()
+	} else if l.d.Proof != nil {
+		if proven, n := l.d.Proof(); !proven {
+			nonce = n
+		}
+	}
+	if nonce != "" && (l.checkHanded != nonce || now.Sub(l.checkHandedAt) >= MessageTurnEvery) {
+		return nonce
+	}
+	return ""
+}
+
 // messageTurn hands a free lane what waits with no card to ride with, as one turn of its
 // own in the friend's directory: the pong line of an open challenge (a wake ping, which a
 // lane friend with no card could not answer before), the push check's pong line while the
@@ -953,6 +1019,35 @@ func (l *loop) messageInFlight() bool {
 // lane's), and the bus messages pending, oldest first; a notice alone never makes a turn.
 // It answers whether a turn started. The daemon writes no pong itself: the line goes in,
 // and the session's own run of it is the answer (docs/SPEC-FRIEND.md, one-shot lanes).
+func (l *loop) nativeReplyLines(ln *lane, msgs []bus.Message, seat string) (string, error) {
+	if l.d.ReplyCommand == nil {
+		return "", nil
+	}
+	var lines strings.Builder
+	for _, m := range msgs {
+		if m.Kind != bus.KindRequest || m.From != seat {
+			continue
+		}
+		capability, err := l.d.GrantNativeReply(ln.session, m, seat)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&lines, "\nFor request %s, reply through this local command, replacing the two quoted examples with your answer: %s --subject 'Reply subject' --body 'Reply text'\n", m.ID, l.d.ReplyCommand(ln.session, m.ID, capability))
+	}
+	return lines.String(), nil
+}
+
+func (l *loop) nativePongLine(ln *lane, nonce string) (string, error) {
+	if nonce == "" || l.d.NativePongCommand == nil {
+		return "", nil
+	}
+	capability, err := l.d.GrantNativePong(ln.session, nonce, l.coordinator())
+	if err != nil {
+		return "", err
+	}
+	return l.d.NativePongCommand(ln.session, nonce, capability), nil
+}
+
 func (l *loop) messageTurn(ln *lane, lh LaneHarness, width int, now time.Time) bool {
 	d := l.d
 	if l.messageInFlight() {
@@ -982,18 +1077,48 @@ func (l *loop) messageTurn(ln *lane, lh LaneHarness, width int, now time.Time) b
 		})
 		return true
 	}
-	check, checkNonce := "", ""
-	if d.Proof != nil && d.PongCommand != nil {
-		if proven, nonce := d.Proof(); !proven && nonce != "" && (l.checkHanded != nonce || now.Sub(l.checkHandedAt) >= MessageTurnEvery) {
-			check, checkNonce = d.PongCommand(nonce), nonce
-		}
+	check, checkNonce := "", l.controlCheck(now)
+	if checkNonce != "" {
+		check = d.PongCommand(checkNonce)
 	}
 	if len(l.hand) == 0 && !l.wake && check == "" {
 		return false
 	}
 	t := &turn{}
+	priorHand := append([]bus.Entry(nil), l.hand...)
 	t.entries, t.msgs = l.take()
+	seat := l.seat(now)
+	replyLines, err := l.nativeReplyLines(ln, t.msgs, seat)
+	if err != nil {
+		l.hand = priorHand
+		d.Record(now.UTC().Format(time.RFC3339) + " native reply: request held: " + oneLine(err.Error(), 200))
+		return false
+	}
+	pongOverride := ""
+	if d.NativePongCommand != nil {
+		if checkNonce != "" {
+			line, err := l.nativePongLine(ln, checkNonce)
+			if err != nil {
+				l.hand = priorHand
+				d.Record(now.UTC().Format(time.RFC3339) + " local pong: control check held: " + oneLine(err.Error(), 200))
+				return false
+			}
+			check = line
+		}
+		if d.m != nil && d.m.Challenge != Quiet && d.PongCommand != nil {
+			line, err := l.nativePongLine(ln, d.m.Nonce)
+			if err != nil {
+				l.hand = priorHand
+				d.Record(now.UTC().Format(time.RFC3339) + " local pong: challenge held: " + oneLine(err.Error(), 200))
+				return false
+			}
+			pongOverride = line
+		}
+	}
 	notice, pong := l.head()
+	if pongOverride != "" {
+		pong = pongOverride
+	}
 	t.notice = l.noticeTaken
 	var subjects []string
 	if pong != "" {
@@ -1007,7 +1132,7 @@ func (l *loop) messageTurn(ln *lane, lh LaneHarness, width int, now time.Time) b
 		subjects = append(subjects, m.Subject)
 	}
 	t.subjects = fmt.Sprintf("%q", strings.Join(subjects, " | "))
-	t.text = MessageText(d.Friend, ln.n, width, pong, check, notice, l.seat(now), t.msgs)
+	t.text = MessageText(d.Friend, ln.n, width, pong, check, notice, seat, t.msgs) + replyLines
 	ln.t = t
 	control := l.controlContext(l.ctx, "message", ln.n)
 	l.controlWG.Add(1)

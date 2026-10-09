@@ -78,6 +78,8 @@ func newRig(t *testing.T, names ...string) *rig {
 
 func (r *rig) world() world {
 	return world{
+		initialRowMode: friend.ModeBatch, // this rig configures a batch friend
+
 		getenv: func(k string) string { return r.env[k] },
 		open: func(context.Context, string) (bus.Store, func(), error) {
 			if r.store.Fail != nil {
@@ -819,7 +821,8 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		assert.True(t, strings.HasPrefix(runs[0], "run You are bob: one of 1 one-shot lanes of bob, this is lane 1"), runs[0])
 		assert.Contains(t, runs[0], "Read "+filepath.Join(dir, "AGENTS.md")+" first")
 		assert.True(t, strings.HasPrefix(runs[1], "run --session ses_lane1 nova-friend: lane 1 of 1: one card this turn, c1."), runs[1])
-		assert.Contains(t, runs[1], `3. Send one bus line: /opt/nova/bin/nova-bus send --as bob --to ada --subject "card c1 done" --body "<the first line of your REPORT.md>" --redis store.test:6379`)
+		assert.Contains(t, runs[1], "3. Stop. The daemon reads the finished outbox and sends the completion notice.")
+		assert.NotContains(t, runs[1], "nova-bus send", "a walled OpenCode lane must not be told to dial the bus")
 		lanes, err := friend.ReadLanes(friend.StateDirIn(dir))
 		require.NoError(t, err)
 		assert.Equal(t, map[int]string{1: "ses_lane1"}, lanes.Sessions)

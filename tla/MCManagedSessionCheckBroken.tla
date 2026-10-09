@@ -1,0 +1,3 @@
+--------------------- MODULE MCManagedSessionCheckBroken ---------------------
+EXTENDS ManagedSessionCheck
+=============================================================================

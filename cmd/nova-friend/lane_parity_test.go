@@ -44,9 +44,11 @@ func TestRefuseGoRefusesWithTheWayToABench(t *testing.T) {
 func TestRunBeatsDownWhileTheLanesArePausedUntilAPersonResumes(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
+	r.env["INCEPTION_API_KEY"] = "test-only-placeholder"
 	dir := t.TempDir()
 	state := friend.StateDirIn(dir)
 	require.NoError(t, friend.WritePause(state, "402 Payment Required: insufficient balance", start))
+	require.NoError(t, friend.WriteLanes(state, friend.LaneState{Sessions: map[int]string{1: "ses_main"}}))
 	w := r.world()
 	var mu sync.Mutex
 	clock := start
@@ -89,10 +91,13 @@ func TestRunBeatsDownWhileTheLanesArePausedUntilAPersonResumes(t *testing.T) {
 		mu.Unlock()
 		return nil
 	}
-	w.exec = func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
-		if text := args[len(args)-1]; strings.HasPrefix(text, friend.SessionCheckPrefix) {
-			nonce, _, _ := strings.Cut(strings.TrimPrefix(text, friend.SessionCheckPrefix), "\n")
-			r.answer(nonce)
+	w.exec = func(ctx context.Context, _, _ string, args []string, _ string) (string, int, error) {
+		text := args[len(args)-1]
+		if _, after, ok := strings.Cut(text, "--nonce "); ok {
+			assert.True(t, friend.InLane(ctx), "the resumed session answers only through its managed control lane")
+			fields := strings.Fields(after)
+			require.NotEmpty(t, fields)
+			r.answer(strings.Trim(fields[0], "'\""))
 			return "answered\n", 0, nil
 		}
 		return "", 0, nil
@@ -117,5 +122,5 @@ func TestRunBeatsDownWhileTheLanesArePausedUntilAPersonResumes(t *testing.T) {
 	for _, at := range ups {
 		assert.False(t, at.Before(cleared), "no up beat while paused: %s before %s", at, cleared)
 	}
-	assert.NotEmpty(t, ups, "she beats up once a person resumed")
+	assert.NotEmpty(t, ups, "she beats up once a person resumed\n%s", out.String())
 }
