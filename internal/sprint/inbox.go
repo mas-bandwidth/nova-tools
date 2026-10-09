@@ -598,6 +598,13 @@ func commands(g Group, first Note, prefix string) []Command {
 			add(d, cmd+d+" --reason '<the payment made>'")
 		case d == "ack":
 			add(d, cmd+"ack "+strings.Join(g.Notes, ",")+" --reason "+noneText)
+		case d == "look at the readers" || d == "look at the reader":
+			// the verdicts' ledger (reads_window.go): the readers and their reads, by the view
+			add(d, cmd+"where --json", cmd+"inbox --open "+cmp.Or(first.ID, g.ID))
+		case d == "raise the read tier":
+			add(d, cmd+"stream set '<stream>' --read-tier '<tier>' --reason '<why: broken reads outrun ok reads>'"+ans)
+		case strings.HasPrefix(d, "hold "):
+			add(d, cmd+d+" --reason '<why: it breaks nearly everything>'")
 		case d == "raise":
 			// the stream's read tier rises to the tier the judgment proposes, the cause recorded (readtier.go)
 			_, why, _ := strings.Cut(first.What, "? ")

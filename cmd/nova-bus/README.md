@@ -23,7 +23,7 @@ Run by `cmd/nova-bus/firstrun_test.go` on a throwaway redis-server whose
 `friends` set names ada and bob (what `nova-config apply` writes for two friend
 rows), each with a proven inbox push on `bus2:push` (what each one's friend
 daemon writes when its session answers the SESSION CHECK; without it every send
-and recv is refused as deaf), its address in `NOVA_BUS_REDIS`, so the lines
+and recv carries a `push=none` NOTE and lands all the same), its address in `NOVA_BUS_REDIS`, so the lines
 read as a reader types them.
 The sitting is the loop: bob first waits on his own empty stream and, nothing
 coming within the second he gave it, is told `WAIT NONE` at exit 1 (the wait

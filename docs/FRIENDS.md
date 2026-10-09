@@ -47,14 +47,17 @@ hours). Name the real path with `--dir`.
 ## Her inbox pushes to her: the push proof
 
 `nova-friend install` and `run` refuse a harness nothing pushes into: one
-with no deliver command (every surveyed harness; not claude, which runs each card as a process of its own and has no session to push into) is refused
+with no deliver command (every surveyed harness; not claude, which runs each card as a process of its own and proves by the folder: its check is written as `<dir>/inbox/SESSION-CHECK-<nonce>` for a live session to answer) is refused
 before anything is written, with the adapter card as the remedy; a dsh
 session under an agent preset is refused with `start a session in <dir> with
 no agent preset and name it with --session <id>`. `run` delivers one SESSION
 CHECK before its loop and exits 2 when no pong comes back within five
 minutes. Her beat carries her session's last proof, and the sprint deals
 nothing to a friend whose proof is older than fifteen minutes
-(docs/SPEC-FRIEND.md, "The push proof").
+(docs/SPEC-FRIEND.md, "The push proof"). The bus never refuses a message on
+the proof: `nova-bus send` and `recv` print `push=<state> for <name>` as a
+NOTE and deliver all the same (docs/SPEC-BUS.md,
+bus-requires-inbox-push-proof).
 
 A dsh session that cannot take a turn defers its messages and never loses
 one, but it does not read up: a headless turn whose output carries the agent

@@ -82,7 +82,7 @@ Run by `cmd/nova-bus/firstrun_test.go` on a throwaway redis-server whose
 `friends` set names ada and bob (what `nova-config apply` writes for two friend
 rows), each with a proven inbox push on `bus2:push` (what each one's friend
 daemon writes when its session answers the SESSION CHECK; without it every send
-and recv is refused as deaf), its address in `NOVA_BUS_REDIS`, so the lines
+and recv carries a `push=none` NOTE and lands all the same), its address in `NOVA_BUS_REDIS`, so the lines
 read as a reader types them.
 The sitting is the loop: bob first waits on his own empty stream and, nothing
 coming within the second he gave it, is told `WAIT NONE` at exit 1 (the wait
@@ -647,10 +647,10 @@ mkdir -p ./out
 $ nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts --bus ./bus
 TOKENS FOLD at=2026-09-11T23:55:02Z build=devel out=./out sources=3 days=2026-09-11 repos=./repos.tsv
 TOKENS SOURCE label=claude:bench kind=claude path=./transcripts reports=input,output,cache_write,cache_read day_basis=utc files=1 unreadable=0 messages=3 dup=1 noid=0 nousage=- unparsed=- comments=- redated=- superseded=- rows=2
-TOKENS SOURCE label=bus:emma kind=bus path=bus/from-emma reports=input,output day_basis=utc files=1 unreadable=0 messages=- dup=- noid=- nousage=- unparsed=0 comments=1 redated=0 superseded=0 rows=1
-TOKENS SOURCE label=bus:rowan kind=bus path=bus/from-rowan reports=- day_basis=utc files=0 unreadable=0 messages=- dup=- noid=- nousage=- unparsed=0 comments=0 redated=0 superseded=0 rows=0
-TOKENS TOUCHED label=bus:emma day=2026-09-11 repos=schema,serialize
-TOKENS DAY day=2026-09-11 rows=3 models=2 repos=2 turns=3 unknown=0.0% other=0.0% rough=0 dashes=6 nonutc=0 sources=bus:emma,claude:bench written=true
+TOKENS SOURCE label=bus:peer1 kind=bus path=bus/from-peer1 reports=input,output day_basis=utc files=1 unreadable=0 messages=- dup=- noid=- nousage=- unparsed=0 comments=1 redated=0 superseded=0 rows=1
+TOKENS SOURCE label=bus:peer2 kind=bus path=bus/from-peer2 reports=- day_basis=utc files=0 unreadable=0 messages=- dup=- noid=- nousage=- unparsed=0 comments=0 redated=0 superseded=0 rows=0
+TOKENS TOUCHED label=bus:peer1 day=2026-09-11 repos=schema,serialize
+TOKENS DAY day=2026-09-11 rows=3 models=2 repos=2 turns=3 unknown=0.0% other=0.0% rough=0 dashes=6 nonutc=0 sources=bus:peer1,claude:bench written=true
 TOKENS OK days=1 rows=3 sources=3 unreadable=0 unparsed=0 mixed=0 conflict=0 shrank=0 partial=0 quiet=0
 TOKENS NOTE nothing was wrong; nova-tokens check --out ./out is the gate
 
