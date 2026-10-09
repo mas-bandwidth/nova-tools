@@ -62,6 +62,7 @@ func pushProofSprint(t *testing.T, name string) (*testApp, *fakeSession) {
 	ta.a.goos = "linux"
 	ta.a.executable = func() (string, error) { return "/opt/nova/bin/nova-sprint", nil }
 	ta.a.seatLoad = func(string, string, string) error { return nil }
+	recordSeatLogin(t, ta.a, "127.0.0.1:6381")
 	s := &fakeSession{}
 	pushTests.Store(name, s)
 	t.Cleanup(func() { pushTests.Delete(name) })

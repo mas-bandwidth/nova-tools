@@ -62,6 +62,7 @@ func TestInstallWritesEachSprintUnitAndUnitsCheckNamesWhatIsMissing(t *testing.T
 			assert.NoFileExists(t, file("server"), "a dry run writes nothing")
 			assert.Empty(t, calls)
 
+			recordSeatLogin(t, a, "127.0.0.1:6380")
 			for _, line := range [][]string{
 				{"server", "--listen", "127.0.0.1:6390", "--land", "--decide", "/srv/decide"},
 				{"member", "--as", "m1", "--server", "127.0.0.1:6390", "--harness", "/opt/h/opencode", "--root", "/srv/run", "--pass", "PROVIDER_A_KEY"},

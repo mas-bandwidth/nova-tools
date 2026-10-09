@@ -255,6 +255,11 @@ func (a *app) cmdSeatLogin(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// noSeatLogin is the sentence seat login --check prints when none is recorded.
+func noSeatLogin(path string) string {
+	return "no seat login is recorded at " + path + "; run: nova-sprint seat login --store <dir> --as <seat> --key <file> --secret <NAME> --user <name> --redis <addr>"
+}
+
 // seatLoginCheck is seat login --check: the login a bare verb would use, which login
 // wins when the environment names one, and whether the secret resolves. The password is
 // read and dropped, never shown.
@@ -264,7 +269,7 @@ func (a *app) seatLoginCheck(path string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "seat login", err.Error())
 	}
 	if !ok {
-		return refuse(stderr, "seat login", "no seat login is recorded at "+path+"; run: nova-sprint seat login --store <dir> --as <seat> --key <file> --secret <NAME> --user <name> --redis <addr>")
+		return refuse(stderr, "seat login", noSeatLogin(path))
 	}
 	line := fmt.Sprintf("SEAT LOGIN file=%s %s", oneline.Field(path), l.line())
 	if u := a.getenv(redisauth.UserEnv); u != "" {

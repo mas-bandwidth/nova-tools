@@ -160,6 +160,9 @@ func TestEveryVerbHelpShowsAnExampleItsFlagsTake(t *testing.T) {
 			// its state file under the test's temp, never the package directory
 			line = strings.ReplaceAll(line, "--state wake.json", "--state "+filepath.Join(t.TempDir(), "wake.json"))
 		}
+		if v.name == "seat install" {
+			recordSeatLogin(t, ta.a, "127.0.0.1:6381")
+		}
 		if v.name == "seat pong" {
 			// This example consumes an already delivered check; seed that
 			// prerequisite rather than mistaking its absence for bad flags.
