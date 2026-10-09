@@ -815,7 +815,7 @@ on disk, so its supervisor starts the new build.`) + "\n"
 // moves alone unless it says so.
 func answerRulesFlag(on *bool, byDefault bool) func(flagSet) {
 	return func(fs flagSet) {
-		fs.BoolVar(on, "answer-rules", byDefault, "answer the mechanical judgments by rule, recorded \"answered by rule <name>\" (work came back failed: redealt, then a tier up; a card at its bound: a tier up, heavy to a friend; a late card: a wait once with progress, else returned and redealt; a conflict in a file no ledger owns: returned, redone on the tip, resumed; the same finding twice: marked a brief defect); nova-config's sprint row answer_rules_off turns single rules off; --answer-rules=false leaves every judgment to the coordinator (run answers by default, a tick by hand only with --answer-rules); nova-sprint rules prints what they would answer now")
+		fs.BoolVar(on, "answer-rules", byDefault, "answer the mechanical judgments by rule, recorded \"answered by rule <name>\" (work came back failed: a harness fault or a HOLD with findings reworked on its tier with the failure as its fix, any other failure redealt, then a tier up; a card at its bound: a tier up, heavy to a friend; a late card: a wait once with progress, else returned and redealt; a conflict in a file no ledger owns: returned, redone on the tip, resumed; the same finding twice: marked a brief defect); nova-config's sprint row answer_rules_off turns single rules off; --answer-rules=false leaves every judgment to the coordinator (run answers by default, a tick by hand only with --answer-rules); nova-sprint rules prints what they would answer now")
 	}
 }
 
