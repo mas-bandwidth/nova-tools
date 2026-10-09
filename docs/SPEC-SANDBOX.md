@@ -276,9 +276,14 @@ The test requirements are listed under **Tests this spec demands**.
    it has no "the directory whose name is my own pid". The wall may therefore
    allow all of `/proc` or none of it, and none of it kills every toolchain a
    card runs. **Landlock cannot path-restrict procfs by pid**, so this is not
-   a wall defect and no wall change closes it; the closures are `hidepid=2` on
-   the bench or a harness that takes its credential by something other than
-   the environment. But an inherited `HOME` names a directory that is in no list and
+   a wall defect and no wall change closes it. On Linux, the OpenCode
+   `nova-friend` daemon becomes nondumpable before its first native turn, so
+   that turn cannot read the daemon's `/proc/<pid>/environ`; the owned
+   synthetic-parent regression checks this narrow protection. A provider
+   process that carries its own key remains a separate environment boundary;
+   the wall does not hide that process's procfs entry from its own children.
+   Other closures are `hidepid=2` on the bench or a harness that takes its
+   credential by something other than the environment. But an inherited `HOME` names a directory that is in no list and
    is therefore denied, and almost every tool a worker runs derives a path
    from it. Measured on this Mac under the profile below: with the caller's
    `HOME` inherited, `git -C <jobdir>/repo status` is `fatal: unable to
