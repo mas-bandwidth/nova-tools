@@ -109,6 +109,71 @@ func TestRestartOutboxWaitsForDurableLaneSettlement(t *testing.T) {
 	}
 }
 
+func TestBatchRestartOutboxPreservesPriorOneShotDebt(t *testing.T) {
+	t.Parallel()
+	for _, unreadable := range []bool{false, true} {
+		t.Run(map[bool]string{false: "known claims", true: "partial failed read"}[unreadable], func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			r.passive = true
+			row, f := &twinRow{}, &finishes{}
+			row.set(workCard("prior", "working"), workCard("cancelled", "working"), workCard("batch", "working"))
+			r.d.Held, r.d.Finish = row.held, f.finish
+			for _, id := range []string{"prior", "cancelled", "batch"} {
+				outboxReport(t, r.d.Dir, id+"~15", "Verdict: FAIL\n\nFinished.\n")
+			}
+			prior := Card{ID: "prior", Outbox: filepath.Join(r.d.Dir, "outbox", "prior~15")}
+			state := LaneState{
+				Started:     map[string]Started{"prior~15": {Lane: 1, Card: prior, At: t0, Pid: 4242, RunID: "prior-run"}},
+				StopReturns: []StopReturn{{Job: "cancelled~15", Card: "cancelled", Ended: true}},
+			}
+			require.NoError(t, os.MkdirAll(filepath.Join(r.d.Dir, "jobs", "prior~15"), 0o755))
+			require.NoError(t, writeRunReceipt(r.d.Dir, "prior~15", runReceipt{RunID: "prior-run", PID: 4242, Identity: "birth"}))
+			alive := true
+			r.d.ProcessIdentity = func(int) string {
+				if alive {
+					return "birth"
+				}
+				return ""
+			}
+			loads := 0
+			r.d.LoadLanes = func() (LaneState, error) {
+				loads++
+				if unreadable {
+					return state, errors.New("partial durable read")
+				}
+				return state, nil
+			}
+			r.at[3] = func() {
+				if unreadable {
+					assert.Empty(t, f.got(), "unknown claims hold even an unrelated batch report")
+				} else {
+					require.Len(t, f.got(), 1)
+					assert.Equal(t, "batch@1", f.got()[0][3], "unrelated batch reports remain finishable")
+				}
+				// Simulate recovery's durable settlement between passes. The
+				// outbox observes it without adopting the old one-shot sessions.
+				alive = false
+				delete(state.Started, "prior~15")
+				state.StopReturns[0].Result = "ok"
+				row.set(workCard("prior", "working"), workCard("batch", "working"))
+			}
+			r.run(t, 5)
+			assert.GreaterOrEqual(t, loads, 5, "durable clearance must be observed on later batch passes")
+			if unreadable {
+				assert.Empty(t, f.got())
+			} else {
+				var cards []string
+				for _, argv := range f.got() {
+					cards = append(cards, argv[3])
+				}
+				assert.ElementsMatch(t, []string{"prior@1", "batch@1"}, cards, "a cancelled card is never finished from its old report")
+			}
+			assert.Equal(t, ModeBatch, r.last().Mode)
+		})
+	}
+}
+
 // The daemon reads every outbox job (the night of 2026-10-05: eight working cards whose
 // outbox REPORT.md said Verdict: LAND with a Head sat unread for two hours, because the
 // daemon finished only the jobs its own lanes ran, and the coordinator's stopgap had

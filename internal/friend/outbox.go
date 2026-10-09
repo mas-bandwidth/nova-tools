@@ -202,6 +202,18 @@ func (l *loop) outboxStep(now time.Time) {
 		}
 	}
 	defer func() { o.said = said }()
+	state := l.lanes.state
+	if l.mode != ModeOneShot && d.LoadLanes != nil {
+		// A row can become batch while prior one-shot work is still owed.
+		// Read its durable claims without installing old sessions in batch;
+		// reread each pass so safe settlement can release their reports.
+		var err error
+		state, err = d.LoadLanes()
+		if err != nil {
+			note("*", "the lane state cannot be read: "+oneLine(err.Error(), 300))
+			return
+		}
+	}
 	outbox := filepath.Join(d.Dir, "outbox")
 	entries, err := os.ReadDir(outbox)
 	if err != nil {
@@ -211,13 +223,16 @@ func (l *loop) outboxStep(now time.Time) {
 		return
 	}
 	running := map[string]bool{}
-	if l.mode == ModeOneShot {
-		for job := range l.lanes.state.Started {
-			running[job] = true // endCard clears the claim only after safe settlement
+	for job := range state.Started {
+		running[job] = true // endCard clears the claim only after safe settlement
+	}
+	for _, ret := range state.StopReturns {
+		if ret.Owed() {
+			running[ret.Job] = true // cancellation debt is not report completion
 		}
-		for _, st := range l.lanes.adopt {
-			running[filepath.Base(st.Card.Outbox)] = true
-		}
+	}
+	for _, st := range l.lanes.adopt {
+		running[filepath.Base(st.Card.Outbox)] = true
 	}
 	for _, ln := range l.lanes.lanes {
 		if ln.card != nil {
