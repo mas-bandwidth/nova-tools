@@ -30,11 +30,12 @@ import (
 // LAND with a full sha Head finishes with that head, HOLD and FAIL finish --failed
 // with the report's first 600 characters; a LAND whose report does not carry the key
 // words of its brief's fix (THE ONE THING LEFT, rework.go) is a HOLD by the daemon,
-// finished --failed with its head kept and the words that say why. A report whose
-// verdict is not LAND, HOLD or FAIL (pending, or any other word) is not final: it is
-// left, and past the card's deadline it is collected as FAIL. A report with no
-// Verdict line, and a job whose card is not working on her row, are noted once and
-// left. The model is
+// finished --failed with its head kept and the words that say why. A report is final
+// only in the shape Final reads (its first line Verdict: LAND, HOLD or FAIL, its second
+// Head: a full sha or Head: -); every other report is left and noted once, and past the
+// card's deadline it is collected as FAIL. A report with no Verdict line stays until its
+// deadline too; a job whose card is not working on her row is noted once and left. The
+// model is
 // internal/friend/tla/OutboxFinish.tla (docs/SPEC-FRIEND.md, the daemon reads every outbox
 // job).
 
@@ -298,11 +299,11 @@ func reportSHA(report string) string {
 // outboxStep is the daemon's outbox pass, after each reconcile the server answered: every
 // job in her outbox named <work>~<epoch>[.g<gen>] with a REPORT.md is finished when its card
 // is working on her row (a work card, never a read), the job no lane is running, and the
-// report is final (Final, or a verdict word already LAND, HOLD or FAIL). The finish is sent
-// once, and one the server did not take is sent again after OutboxRetry. A report that is
-// not final is left and noted once, and past the card's deadline collected as FAIL. A report
-// with no Verdict line, one that cannot be read, and a job whose card is not working on her
-// row are said once while they stand, and left.
+// report is final (Final). The finish is sent once, and one the server did not take is
+// sent again after OutboxRetry. A report that is not final is left and noted once, and
+// past the card's deadline collected as FAIL. A report with no Verdict line, one that
+// cannot be read, and a job whose card is not working on her row are said once while they
+// stand; the first stays until its deadline, and the rest are left.
 func (l *loop) outboxStep(now time.Time) {
 	d := l.d
 	if d.Finish == nil {
@@ -394,18 +395,18 @@ func (l *loop) outboxStep(now time.Time) {
 		}
 		verdict, head := reportVerdict(report)
 		first, second := firstTwo(report)
-		final, _ := Final(first, second)
 		collected := report
-		// A verdict word that is not LAND, HOLD or FAIL is not final, pending
-		// included. Final is the strict shape a session writes; a report the
-		// daemon already reads as LAND, HOLD or FAIL is still collected.
-		if !final && verdict != "LAND" && verdict != "HOLD" && verdict != "FAIL" {
-			if verdict == "" {
-				note(job, "it has no Verdict line")
-				continue
-			}
+		// Collection is gated on Final for every report (docs/SPEC-FRIEND.md, the
+		// daemon reads every outbox job): a report Final does not read as final is
+		// left and noted once, and past the card's deadline it is collected as
+		// FAIL, so a card cannot hang forever.
+		if final, _ := Final(first, second); !final {
 			if !l.pastFinalDeadline(h, job, now) {
-				note(job, "report not final yet: "+id+": "+oneLine(first, 200))
+				if verdict == "" {
+					note(job, "it has no Verdict line")
+				} else {
+					note(job, "report not final yet: "+id+": "+oneLine(first, 200))
+				}
 				continue
 			}
 			report = "report never became final: first line " + oneLine(first, 300) + "\n"
@@ -549,10 +550,11 @@ func RunnerEnded(log, job string) (end string, dead bool) {
 	return end, dead
 }
 
-// DeadLaneReport is the REPORT.md the daemon writes for a dead lane: Verdict FAIL, and the
-// runner's END line.
+// DeadLaneReport is the REPORT.md the daemon writes for a dead lane: Verdict FAIL, the
+// Head: - line that makes it final (Final), and the runner's END line. The outbox pass
+// that follows finishes it.
 func DeadLaneReport(friend, job, end string) string {
-	return fmt.Sprintf("Verdict: FAIL\n\nnova-friend of %s: the runner ended job %s with no report, and no run of it is live: %s\n", friend, job, oneLine(end, 600))
+	return fmt.Sprintf("Verdict: FAIL\nHead: -\n\nnova-friend of %s: the runner ended job %s with no report, and no run of it is live: %s\n", friend, job, oneLine(end, 600))
 }
 
 // deadLanes writes the REPORT.md of every dead lane on her row (DeadLaneReport) and says
