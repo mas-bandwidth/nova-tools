@@ -1,0 +1,3 @@
+--------------------- MODULE MCManagedSessionCheckBatch ---------------------
+EXTENDS ManagedSessionCheck
+=============================================================================

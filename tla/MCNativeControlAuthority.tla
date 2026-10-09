@@ -1,0 +1,3 @@
+------------------- MODULE MCNativeControlAuthority -------------------
+EXTENDS NativeControlAuthority
+=======================================================================

@@ -1,0 +1,3 @@
+---------------- MODULE MCHierarchicalLanding ----------------
+EXTENDS HierarchicalLanding
+============================================================

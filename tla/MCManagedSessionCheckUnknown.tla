@@ -1,0 +1,3 @@
+--------------------- MODULE MCManagedSessionCheckUnknown ---------------------
+EXTENDS ManagedSessionCheck
+=============================================================================
