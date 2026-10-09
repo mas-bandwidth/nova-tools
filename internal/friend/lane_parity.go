@@ -265,14 +265,19 @@ type LaneTokens struct {
 	cardcost.Tokens
 	USD      string // opencode's own reported cost, a decimal; "" unknown
 	Sessions int
+	Harness  string // "opencode", "dsh", etc. Default "opencode"
 }
 
 // Sub is the tokens spent after base: a lane's session serves many cards, so a card's are
 // the session's totals at its end less its totals at its start.
 func (t LaneTokens) Sub(base LaneTokens) LaneTokens {
 	d := func(a, b int64) int64 { return max(a-b, 0) }
+	harness := t.Harness
+	if harness == "" {
+		harness = base.Harness
+	}
 	out := LaneTokens{Tokens: cardcost.Tokens{Input: d(t.Input, base.Input), CacheRead: d(t.CacheRead, base.CacheRead), CacheWrite: d(t.CacheWrite, base.CacheWrite),
-		Output: d(t.Output, base.Output), Reasoning: d(t.Reasoning, base.Reasoning), Requests: cardcost.Unreported, MaxPrompt: cardcost.Unreported}, Sessions: t.Sessions}
+		Output: d(t.Output, base.Output), Reasoning: d(t.Reasoning, base.Reasoning), Requests: cardcost.Unreported, MaxPrompt: cardcost.Unreported}, Sessions: t.Sessions, Harness: harness}
 	if a, err := cardcost.Decimal(t.USD); err == nil {
 		b, berr := cardcost.Decimal(base.USD)
 		if berr != nil {
@@ -318,7 +323,7 @@ func TokensOf(out string) (LaneTokens, error) {
 	if _, err := cardcost.Decimal(usd); err != nil {
 		usd = ""
 	}
-	return LaneTokens{Tokens: cardcost.Tokens{Input: n[0], CacheRead: n[1], CacheWrite: n[2], Output: n[3], Reasoning: n[4], Requests: cardcost.Unreported, MaxPrompt: cardcost.Unreported}, USD: usd, Sessions: int(n[6])}, nil
+	return LaneTokens{Tokens: cardcost.Tokens{Input: n[0], CacheRead: n[1], CacheWrite: n[2], Output: n[3], Reasoning: n[4], Requests: cardcost.Unreported, MaxPrompt: cardcost.Unreported}, USD: usd, Sessions: int(n[6]), Harness: "opencode"}, nil
 }
 
 // TokensFromOpenCode reads a session's tokens (and its children's) from opencode's own database
@@ -375,12 +380,16 @@ func opencodeCents(usd string) string {
 // cost: lines a RESULT.md does. The card is priced by the route row; opencode's own figure is
 // kept beside it.
 func CostLine(t LaneTokens, rp RoutePrice, model string) (report, tokens, cost string) {
-	cost = CostOf(t.Tokens, rp, model) + " (opencode: " + opencodeCents(t.USD) + ")"
+	harness := t.Harness
+	if harness == "" {
+		harness = "opencode"
+	}
+	cost = CostOf(t.Tokens, rp, model) + " (" + harness + ": " + opencodeCents(t.USD) + ")"
 	route := "-"
 	if rp.Found {
 		route = rp.Name
 	}
-	tokens = fmt.Sprintf("input=%s cache_read=%s cache_write=%s output=%s reasoning=%s model=%s harness=opencode", count(t.Input), count(t.CacheRead), count(t.CacheWrite), count(t.Output), count(t.Reasoning), model)
+	tokens = fmt.Sprintf("input=%s cache_read=%s cache_write=%s output=%s reasoning=%s model=%s harness=%s", count(t.Input), count(t.CacheRead), count(t.CacheWrite), count(t.Output), count(t.Reasoning), model, harness)
 	return fmt.Sprintf("Cost: %s tokens %s price_route=%s", cost, tokens, route), "tokens: " + tokens, "cost: " + cost
 }
 

@@ -1390,8 +1390,8 @@ log line:
 
 - `nova-friend install` and `run` refuse, before anything is written, loaded
   or delivered, a harness whose adapter has no deliver command (a `Stub`:
-  every surveyed harness; not claude, which runs each card as a process of its
-  own, below, and owes neither this refusal nor the proof), exit 2, with the remedy `the adapter
+  every surveyed harness; not claude and dsh, which run each card as a process of their
+  own, below, and owe neither this refusal nor the proof), exit 2, with the remedy `the adapter
   card: give internal/friend a deliver command for <harness> (NewDeliverer),
   or run the friend under a harness that has one: <the harnesses with one>`.
   `--dry-run` refuses it too.
@@ -1691,7 +1691,7 @@ Only a harness that can open a session and deliver into a named one has
 lanes (`LaneHarness`; OpenCode today: `opencode run <seed>`, run in the
 friend's directory, with no `--session` opens one, found as the session the listing of the directory
 gained, and `opencode run --session <id>` takes each card), or a harness
-that runs each card as a process of its own (`CardRunner`; Claude). On any
+that runs each card as a process of its own (`CardRunner`; Claude, DSH). On any
 other harness a one-shot row is delivered in batch, said once in the record.
 
 A claude lane opens no session: each card is one headless run in the

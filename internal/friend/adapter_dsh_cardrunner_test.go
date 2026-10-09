@@ -58,9 +58,9 @@ func TestADSHLaneRunsACardAsAProcessAndReadsItsOutbox(t *testing.T) {
 			Out:     &out,
 		}
 
-		lt, err := d.RunCard(context.Background(), card)
+		turn, err := d.RunCard(context.Background(), card)
 		require.NoError(t, err)
-		assert.Equal(t, 0, lt.Exit)
+		assert.Equal(t, 0, turn.Exit)
 		require.Len(t, runCalls, 1)
 		assert.Equal(t, []string{dir, "dsh", "--profile", "headless", "-"}, runCalls[0])
 		assert.Contains(t, runStdin, "STATUS: nova-sprint card c1")
@@ -68,7 +68,7 @@ func TestADSHLaneRunsACardAsAProcessAndReadsItsOutbox(t *testing.T) {
 		assert.Contains(t, out.String(), "turn completed")
 	})
 
-	t.Run("outbox missing report and result", func(t *testing.T) {
+	t.Run("outbox missing REPORT.md returns NoReport", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
 		briefDir := filepath.Join(dir, "inbox", "c2~1")
@@ -86,67 +86,78 @@ func TestADSHLaneRunsACardAsAProcessAndReadsItsOutbox(t *testing.T) {
 		}
 
 		fakeExec := func(ctx context.Context, runDir, prog string, args []string, stdin string) (string, int, error) {
-			return "exit 0 but no outbox written\n", 0, nil
+			// writes only RESULT.md, missing REPORT.md
+			require.NoError(t, os.WriteFile(filepath.Join(outboxDir, "RESULT.md"), []byte("RESULT: c2\n"), 0o644))
+			return "missing report output\n", 0, nil
 		}
 
 		d := &DSH{
 			Dir:     dir,
+			Friend:  "zhi",
 			Run:     fakeExec,
 			Program: "dsh",
 		}
 
-		lt, err := d.RunCard(context.Background(), card)
-		assert.Equal(t, 0, lt.Exit)
+		_, err := d.RunCard(context.Background(), card)
+		require.Error(t, err)
 		var noRep NoReport
 		require.ErrorAs(t, err, &noRep)
-		assert.Contains(t, err.Error(), "REPORT.md")
-		assert.Contains(t, err.Error(), "RESULT.md")
+		assert.Contains(t, noRep.Lacks, "REPORT.md")
 	})
 
-	t.Run("refusal on missing dir", func(t *testing.T) {
+	t.Run("missing dir refuses", func(t *testing.T) {
 		t.Parallel()
-		d := &DSH{}
-		assert.Equal(t, "dsh has no working directory", d.Refusal())
-		_, err := d.RunCard(context.Background(), Card{ID: "c3"})
+		d := &DSH{
+			Friend:  "zhi",
+			Program: "dsh",
+		}
+		card := Card{ID: "c-refused"}
+		_, err := d.RunCard(context.Background(), card)
 		require.Error(t, err)
-		assert.Equal(t, "dsh has no working directory", err.Error())
+		assert.Contains(t, err.Error(), "no working dir")
 	})
 
-	t.Run("refusal on agent preset in output", func(t *testing.T) {
+	t.Run("preset refusal intercepted", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
-		briefDir := filepath.Join(dir, "inbox", "c4~1")
-		outboxDir := filepath.Join(dir, "outbox", "c4~1")
+		briefDir := filepath.Join(dir, "inbox", "c-pres~1")
+		outboxDir := filepath.Join(dir, "outbox", "c-pres~1")
 		require.NoError(t, os.MkdirAll(briefDir, 0o755))
 		require.NoError(t, os.MkdirAll(outboxDir, 0o755))
+
 		briefPath := filepath.Join(briefDir, "BRIEF.md")
-		require.NoError(t, os.WriteFile(briefPath, []byte("BRIEF c4"), 0o644))
+		require.NoError(t, os.WriteFile(briefPath, []byte("BRIEF"), 0o644))
+
+		card := Card{
+			ID:     "c-pres",
+			Brief:  briefPath,
+			Outbox: outboxDir,
+		}
 
 		fakeExec := func(ctx context.Context, runDir, prog string, args []string, stdin string) (string, int, error) {
-			return `dsh: session "session-preset" runs under agent preset "minimal", which the one-shot runner does not compose` + "\n", 0, nil
+			return "Error: An agent with the preset minimal is not supported for this command.\n", 1, nil
 		}
 
 		d := &DSH{
 			Dir:     dir,
+			Friend:  "zhi",
 			Run:     fakeExec,
 			Program: "dsh",
 		}
 
-		_, err := d.RunCard(context.Background(), Card{ID: "c4", Brief: briefPath, Outbox: outboxDir})
-		var refused SessionRefused
-		require.ErrorAs(t, err, &refused)
-		assert.Contains(t, refused.Reason, "agent preset minimal")
+		_, err := d.RunCard(context.Background(), card)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "agent preset minimal")
 	})
 }
 
-// TestADSHMessageTurnPongsWithTheNonce verifies that DeliverTo handles message turns,
-// requiring a lane context, executing headless turns with text on stdin, and properly
-// handling session IDs and pongs.
+// TestADSHMessageTurnPongsWithTheNonce verifies DeliverTo for lane turns:
+// empty session invokes headless profile with text on stdin, named session
+// invokes headless with session ID.
 func TestADSHMessageTurnPongsWithTheNonce(t *testing.T) {
 	t.Parallel()
-
 	dir := t.TempDir()
-	jobDir := filepath.Join(dir, "jobs", "lane-1")
+	jobDir := filepath.Join(dir, "jobs", "job1")
 	require.NoError(t, os.MkdirAll(jobDir, 0o755))
 
 	t.Run("fails outside lane", func(t *testing.T) {
@@ -164,7 +175,7 @@ func TestADSHMessageTurnPongsWithTheNonce(t *testing.T) {
 		fakeExec := func(ctx context.Context, rDir, prog string, args []string, stdin string) (string, int, error) {
 			runCalls = append(runCalls, append([]string{rDir, prog}, args...))
 			runStdin = stdin
-			return "pong delivered\n", 0, nil
+			return "PONG nonce-98765\n", 0, nil
 		}
 
 		var out strings.Builder
@@ -183,7 +194,8 @@ func TestADSHMessageTurnPongsWithTheNonce(t *testing.T) {
 		require.Len(t, runCalls, 1)
 		assert.Equal(t, []string{jobDir, "dsh", "--profile", "headless", "-"}, runCalls[0])
 		assert.Equal(t, text, runStdin)
-		assert.Contains(t, out.String(), "pong delivered")
+		assert.Contains(t, runStdin, "nonce-98765")
+		assert.Contains(t, out.String(), "PONG nonce-98765")
 	})
 
 	t.Run("message turn into named session executes headless with session id", func(t *testing.T) {
@@ -193,7 +205,7 @@ func TestADSHMessageTurnPongsWithTheNonce(t *testing.T) {
 		fakeExec := func(ctx context.Context, rDir, prog string, args []string, stdin string) (string, int, error) {
 			runCalls = append(runCalls, append([]string{rDir, prog}, args...))
 			runStdin = stdin
-			return "session turn ok\n", 0, nil
+			return "PONG nonce-4444\n", 0, nil
 		}
 
 		d := &DSH{
@@ -203,13 +215,14 @@ func TestADSHMessageTurnPongsWithTheNonce(t *testing.T) {
 		}
 
 		ctx := WithLaneDir(LaneContext(context.Background()), jobDir)
-		text := "pong nonce-4444"
+		text := "PONG nonce-4444"
 		turn, err := d.DeliverTo(ctx, "session-zhi-real", text)
 		require.NoError(t, err)
 		assert.Equal(t, 0, turn.Exit)
 		require.Len(t, runCalls, 1)
 		assert.Equal(t, []string{jobDir, "dsh", "headless", "--session-id", "session-zhi-real", "-"}, runCalls[0])
 		assert.Equal(t, text, runStdin)
+		assert.Contains(t, runStdin, "nonce-4444")
 	})
 }
 
@@ -218,13 +231,9 @@ func TestADSHMessageTurnPongsWithTheNonce(t *testing.T) {
 // REPORT.md and RESULT.md files, and report cumulative spend.
 func TestDSHLanesRunToWidthAndPublishCost(t *testing.T) {
 	t.Parallel()
-
-	sessionsRoot := t.TempDir()
 	dir := t.TempDir()
-	realDir, err := filepath.EvalSymlinks(dir)
-	require.NoError(t, err)
-
-	bucket := filepath.Join(sessionsRoot, DSHSessionKey(realDir))
+	sessionsRoot := t.TempDir()
+	bucket := filepath.Join(sessionsRoot, DSHSessionKey(dir))
 	require.NoError(t, os.MkdirAll(bucket, 0o755))
 
 	rp := RoutePrice{
@@ -237,17 +246,34 @@ func TestDSHLanesRunToWidthAndPublishCost(t *testing.T) {
 		},
 	}
 
+	const width = 4
+	sharedRun := func(ctx context.Context, rDir, prog string, args []string, stdin string) (string, int, error) {
+		if prog == "zstd" {
+			for _, arg := range args {
+				for j := 0; j < width; j++ {
+					if strings.Contains(arg, fmt.Sprintf("card-w%d", j)) {
+						cardHeader := fmt.Sprintf("{\"type\":\"user/message\",\"data\":{\"text\":\"Lane: zhi one-shot card-w%d 1234567890.\"}}\n", j)
+						cardJSON := `{"type":"assistant/message","data":{"usage":{"inputTokens":100000,"cacheReadTokens":50000,"cacheWriteTokens":0,"outputTokens":10000},"message":{"source":{"model":"deepseek-chat"}}}}` + "\n"
+						return cardHeader + cardJSON, 0, nil
+					}
+				}
+			}
+			return `{"type":"assistant/message","data":{"usage":{"inputTokens":100000,"cacheReadTokens":50000,"cacheWriteTokens":0,"outputTokens":10000},"message":{"source":{"model":"deepseek-chat"}}}}` + "\n", 0, nil
+		}
+		return "ok", 0, nil
+	}
+
 	d := &DSH{
-		Dir:      dir,
-		Sessions: sessionsRoot,
-		Friend:   "zhi",
+		Dir:        dir,
+		Sessions:   sessionsRoot,
+		Friend:     "zhi",
 		Model:      "deepseek/deepseek-chat",
 		RoutePrice: func() RoutePrice { return rp },
 		Now:        func() time.Time { return time.Unix(1234567890, 0) },
-		Program:  "dsh",
+		Program:    "dsh",
+		Run:        sharedRun,
 	}
 
-	const width = 4
 	var wg sync.WaitGroup
 	errs := make([]error, width)
 
@@ -257,20 +283,38 @@ func TestDSHLanesRunToWidthAndPublishCost(t *testing.T) {
 			defer wg.Done()
 
 			cardID := fmt.Sprintf("card-w%d", idx)
-			sessionName := fmt.Sprintf("session-%s", cardID)
-			sDir := filepath.Join(bucket, sessionName)
+			var sDir string
+			if idx == 1 {
+				// Bare hex session directory
+				sDir = filepath.Join(bucket, fmt.Sprintf("0123456789abcdef%016x", idx))
+			} else {
+				sDir = filepath.Join(bucket, fmt.Sprintf("session-%s", cardID))
+			}
 			if err := os.MkdirAll(sDir, 0o755); err != nil {
 				errs[idx] = err
 				return
 			}
 
 			// Header containing Lane marker so FindDSHSessionFile matches
-			header := fmt.Sprintf("Lane: zhi one-shot %s 1234567890.\n", cardID)
-			jsonLine := `{"data":{"usage":{"inputTokens":100000,"cacheReadTokens":50000,"cacheWriteTokens":0,"outputTokens":10000},"message":{"source":{"model":"deepseek-chat"}}}}` + "\n"
-			sessionFile := filepath.Join(sDir, "session.v4.jsonl")
-			if err := os.WriteFile(sessionFile, []byte(header+jsonLine), 0o644); err != nil {
-				errs[idx] = err
-				return
+			header := fmt.Sprintf("{\"type\":\"user/message\",\"data\":{\"text\":\"Lane: zhi one-shot %s 1234567890.\"}}\n", cardID)
+			jsonLine := `{"type":"assistant/message","data":{"usage":{"inputTokens":100000,"cacheReadTokens":50000,"cacheWriteTokens":0,"outputTokens":10000},"message":{"source":{"model":"deepseek-chat"}}}}` + "\n"
+
+			var sessionFile string
+			if idx == 2 {
+				// Compressed session.v4.jsonl.zstd
+				sessionFile = filepath.Join(sDir, "session.v4.jsonl.zstd")
+				// Write dummy zstd header
+				zstdHeader := []byte{0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x00}
+				if err := os.WriteFile(sessionFile, zstdHeader, 0o644); err != nil {
+					errs[idx] = err
+					return
+				}
+			} else {
+				sessionFile = filepath.Join(sDir, "session.v4.jsonl")
+				if err := os.WriteFile(sessionFile, []byte(header+jsonLine), 0o644); err != nil {
+					errs[idx] = err
+					return
+				}
 			}
 
 			briefDir := filepath.Join(dir, "inbox", cardID+"~1")
@@ -306,16 +350,14 @@ func TestDSHLanesRunToWidthAndPublishCost(t *testing.T) {
 
 			// Local exec for each runner that succeeds
 			cardDSH := &DSH{
-				Dir:      dir,
-				Sessions: sessionsRoot,
-				Friend:   "zhi",
+				Dir:        dir,
+				Sessions:   sessionsRoot,
+				Friend:     "zhi",
 				Model:      "deepseek/deepseek-chat",
 				RoutePrice: func() RoutePrice { return rp },
 				Now:        func() time.Time { return time.Unix(1234567890, 0) },
-				Program:  "dsh",
-				Run: func(ctx context.Context, rDir, prog string, args []string, stdin string) (string, int, error) {
-					return "ok", 0, nil
-				},
+				Program:    "dsh",
+				Run:        sharedRun,
 			}
 
 			lt, err := cardDSH.RunCard(context.Background(), card)
@@ -367,4 +409,52 @@ func TestDSHLanesRunToWidthAndPublishCost(t *testing.T) {
 	assert.Contains(t, spendLine, fmt.Sprintf("runs=%d", width))
 	assert.Contains(t, spendLine, "cost_usd=")
 	assert.Contains(t, spendLine, "harness=dsh")
+}
+
+func TestDSHLaneMissingSessionWritesUnpriced(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sessionsRoot := t.TempDir()
+	bucket := filepath.Join(sessionsRoot, DSHSessionKey(dir))
+	require.NoError(t, os.MkdirAll(bucket, 0o755))
+
+	cardID := "card-unpriced-1"
+	briefDir := filepath.Join(dir, "inbox", cardID+"~1")
+	outboxDir := filepath.Join(dir, "outbox", cardID+"~1")
+	require.NoError(t, os.MkdirAll(briefDir, 0o755))
+	require.NoError(t, os.MkdirAll(outboxDir, 0o755))
+
+	briefPath := filepath.Join(briefDir, "BRIEF.md")
+	require.NoError(t, os.WriteFile(briefPath, []byte("STATUS: brief "+cardID), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(outboxDir, "REPORT.md"), []byte("Verdict: LAND\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(outboxDir, "RESULT.md"), []byte("RESULT: "+cardID+"\n"), 0o644))
+
+	card := Card{
+		ID:     cardID,
+		Brief:  briefPath,
+		Outbox: outboxDir,
+	}
+
+	d := &DSH{
+		Dir:      dir,
+		Sessions: sessionsRoot,
+		Friend:   "zhi",
+		Model:    "deepseek/deepseek-chat",
+		Now:      func() time.Time { return time.Unix(1234567890, 0) },
+		Program:  "dsh",
+		Run: func(ctx context.Context, rDir, prog string, args []string, stdin string) (string, int, error) {
+			return "ok", 0, nil
+		},
+	}
+
+	d.publishCardCost(context.Background(), card, fmt.Sprintf("zhi one-shot %s 1234567890", cardID))
+
+	repBytes, err := os.ReadFile(filepath.Join(outboxDir, "REPORT.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(repBytes), "Cost: unpriced (no session file for this run)")
+
+	resBytes, err := os.ReadFile(filepath.Join(outboxDir, "RESULT.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(resBytes), "cost: unpriced (no session file for this run)")
+	assert.Contains(t, string(resBytes), "tokens: -")
 }

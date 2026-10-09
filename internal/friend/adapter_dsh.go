@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
 
 // DSHProgram is where the DeepSeek Harness desktop app ships its CLI on this
@@ -244,6 +246,22 @@ func (d *DSH) DeliverTo(ctx context.Context, session, text string) (LaneTurn, er
 	return LaneTurn{Exit: exit, Rejected: PermissionRejection(out), FirstError: HarnessFirstError(out)}, err
 }
 
+func publishUnpriced(outbox, reason string) error {
+	costLine := "Cost: " + reason
+	if raw, err := os.ReadFile(filepath.Join(outbox, "REPORT.md")); err == nil {
+		if out := WithCost(string(raw), costLine); out != string(raw) {
+			if err := atomicfile.WriteFile(filepath.Join(outbox, "REPORT.md"), []byte(out), 0o644); err != nil {
+				return err
+			}
+		}
+	}
+	if raw, err := os.ReadFile(filepath.Join(outbox, "RESULT.md")); err == nil && !strings.Contains(string(raw), "\ncost: ") {
+		out := strings.TrimRight(string(raw), "\n") + "\ntokens: -\ncost: " + reason + "\n"
+		return atomicfile.WriteFile(filepath.Join(outbox, "RESULT.md"), []byte(out), 0o644)
+	}
+	return nil
+}
+
 func (d *DSH) publishCardCost(ctx context.Context, card Card, title string) {
 	sessionsRoot := d.Sessions
 	if sessionsRoot == "" {
@@ -254,12 +272,20 @@ func (d *DSH) publishCardCost(ctx context.Context, card Card, title string) {
 		realDir = d.Dir
 	}
 	bucket := filepath.Join(sessionsRoot, DSHSessionKey(realDir))
-	sessionFile, err := FindDSHSessionFile(bucket, title, card.ID)
+	sessionFile, err := FindDSHSessionFile(ctx, d.Run, bucket, title, card.ID)
 	if err != nil {
+		_ = publishUnpriced(card.Outbox, "unpriced (no session file for this run)") // ignored: best-effort recording of unpriced run when session file is absent
+		if d.Out != nil {
+			fmt.Fprintf(d.Out, "dsh cost: card %s: session file not found: %v\n", card.ID, err)
+		}
 		return
 	}
 	tokens, model, err := TokensFromDSHSessionFile(ctx, d.Run, sessionFile)
 	if err != nil {
+		_ = publishUnpriced(card.Outbox, "unpriced (failed reading session tokens)") // ignored: best-effort recording of unpriced run on token decode error
+		if d.Out != nil {
+			fmt.Fprintf(d.Out, "dsh cost: card %s: decode session tokens: %v\n", card.ID, err)
+		}
 		return
 	}
 	if d.Model != "" {
@@ -271,7 +297,12 @@ func (d *DSH) publishCardCost(ctx context.Context, card Card, title string) {
 	if d.RoutePrice != nil {
 		rp = d.RoutePrice()
 	}
-	_ = PublishCost(card.Outbox, tokens, rp, model)
+	if err := PublishCost(card.Outbox, tokens, rp, model); err != nil {
+		// ignored: a failed cost publication does not fail the card run; best effort outbox cost line
+		if d.Out != nil {
+			fmt.Fprintf(d.Out, "dsh cost: card %s: publish cost: %v\n", card.ID, err)
+		}
+	}
 	d.mu.Lock()
 	d.runs++
 	d.tokens += tokens.Total()
@@ -315,7 +346,7 @@ func DSHNoPresetRemedy(dir string) string {
 // agent preset, the preset its group; dshMissingCredential is the runner's
 // answer when the session's provider has no key.
 var (
-	dshPresetRefusal     = regexp.MustCompile(`runs under agent preset "([^"]*)", which the one-shot runner does not compose`)
+	dshPresetRefusal     = regexp.MustCompile(`(?:runs under agent preset "([^"]*)", which the one-shot runner does not compose|preset ([^ ]+) is not supported)`)
 	dshMissingCredential = regexp.MustCompile(`\bMISSING_CREDENTIAL\b`)
 )
 
@@ -328,8 +359,12 @@ var (
 // output itself, which may name a credential, is never carried.
 func DSHRefusal(session, dir, out string) (SessionRefused, bool) {
 	if m := dshPresetRefusal.FindStringSubmatch(out); m != nil {
-		return SessionRefused{Session: session, Reason: fmt.Sprintf("dsh session %s: agent preset %s", session, m[1]),
-			Detail: fmt.Sprintf("session %s runs under agent preset %q, which dsh's headless runner does not compose (it adopts only a session with no agent preset); start a session in %s without an agent preset and name it with --session, or read the bus with nova-bus recv", session, m[1], dir),
+		preset := m[1]
+		if preset == "" && len(m) > 2 {
+			preset = m[2]
+		}
+		return SessionRefused{Session: session, Reason: fmt.Sprintf("dsh session %s: agent preset %s", session, preset),
+			Detail: fmt.Sprintf("session %s runs under agent preset %q, which dsh's headless runner does not compose (it adopts only a session with no agent preset); start a session in %s without an agent preset and name it with --session, or read the bus with nova-bus recv", session, preset, dir),
 			Remedy: DSHNoPresetRemedy(dir)}, true
 	}
 	if dshMissingCredential.MatchString(out) {

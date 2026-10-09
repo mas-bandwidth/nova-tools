@@ -2,6 +2,7 @@
 
 ## v1.2.0 — unreleased
 
+- friend: DSH joins Claude as a CardRunner in one-shot mode (docs/SPEC-FRIEND.md)
 - docs: `nova-secrets gate`'s exit contract matches the binary — a verdict prints `GATE FAILED` at exit 1, and a gate that could not run prints `SECRETS GATE REFUSED` at exit 2 (docs/CLI.md, docs/SPEC-SECRETS.md)
 
 ## v1.1.0 — 2026-10-08
