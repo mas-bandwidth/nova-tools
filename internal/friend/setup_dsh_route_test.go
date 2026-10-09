@@ -153,6 +153,7 @@ func TestDSHAccountRouteRefusesImplicitAuthorityAndCompetingLayers(t *testing.T)
 		"expression":          "- id: agent-default-model\n  config: {provider: !!js process.env.ROUTE, model: deepseek-v4-pro}\n",
 		"extra row":           "- id: other\n  config: {provider: deepseek-account, model: deepseek-v4-pro}\n",
 		"extra field":         "- id: agent-default-model\n  disabled: true\n  config: {provider: deepseek-account, model: deepseek-v4-pro}\n",
+		"extra string field":  "- id: agent-default-model\n  unexpected: value\n  config: {provider: deepseek-account, model: deepseek-v4-pro}\n",
 		"multi document":      "[]\n---\n[]\n",
 		"alias":               "- &route {id: agent-default-model, config: {provider: deepseek-account, model: deepseek-v4-pro}}\n- *route\n",
 	} {
@@ -243,15 +244,15 @@ func TestDSHAccountRouteRefusesApplyTimeDriftAndUnsafeState(t *testing.T) {
 			r := newDSHAccountRig(t)
 			_, err := r.apply()
 			require.NoError(t, err)
-			plan, err := PlanDSHSetup(r.opts, r.fs)
+			plan, err := PlanSetup(r.opts, r.fs, PlanDSHSetup)
 			require.NoError(t, err)
 			change(t, r)
-			for _, step := range plan.Steps {
-				if step.Validate != nil {
-					_, err = step.Validate(SetupOutput{})
-					require.Error(t, err, "previously certified plan must re-audit before publication")
-				}
-			}
+			runner := SetupRunner{FS: r.fs, Identity: func(int) string { return "birth" }, GroupRunnable: func(int) bool { return false }, Lock: func(string) (func() error, error) { return func() error { return nil }, nil }, Nonce: func() string { return "unexpected" }, Exec: func(context.Context, string, string, []string, string) (string, int, error) {
+				require.FailNow(t, "certified route audit must not launch native work")
+				return "", 1, nil
+			}}
+			_, err = runner.Apply(context.Background(), plan, filepath.Join(r.opts.ConfigDir, ".nova-friend-setup"))
+			require.Error(t, err, "previously certified plan must re-audit before publication")
 			_, err = PlanDSHSetup(r.opts, r.fs)
 			require.Error(t, err)
 			assert.NotContains(t, err.Error(), "private synthetic contents")
