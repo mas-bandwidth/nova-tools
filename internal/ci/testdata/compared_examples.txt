@@ -116,6 +116,8 @@ cmd/nova-friend/setup_example_test.go:TestSetupFirstRunExampleMatchesWholeTransc
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend install --as bob --harness opencode --dir ./bob --dry-run
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend uninstall --as bob --dry-run
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend ping --as ada --to bob --nonce abc123
+cmd/nova-friend/reply_example_test.go:TestNativeEnvelopeExamplesMatchWholeTranscript example: nova-friend local-pong --as bob --dir /work/bob --session ses_123 --nonce abc123 --capability aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --dry-run
+cmd/nova-friend/reply_example_test.go:TestNativeEnvelopeExamplesMatchWholeTranscript example: nova-friend reply --as bob --dir /work/bob --session ses_123 --re 01M4F39QAT9N7621G6XKC3R9AA --capability aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --subject 'Review answer' --body 'Reviewed' --dry-run
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend status --as bob --dir ./bob

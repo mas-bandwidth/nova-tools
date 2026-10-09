@@ -138,7 +138,11 @@ commands, writes or provider calls. Then the canary runs by hand, with no daemon
 a dry-run install prints the plan for bob's agent; a dry-run uninstall the plan to undo
 it; ada, as the coordinator, pings bob with a nonce; bob's session answers
 with `pong` (one note to ada, and the pong file under the home directory,
-`./home/.nova-friend/bob`); `wait-pong` finds it on the log from bob's own
+`./home/.nova-friend/bob`). The local-pong and reply dry-runs validate fixture
+envelopes without reading control files, starting native processes or opening the
+bus; the fixture capability authorizes no delivery. Their complete output is
+compared by `cmd/nova-friend/reply_example_test.go`. `wait-pong` finds the direct
+pong on the log from bob's own
 stream; `status` says no daemon has run as bob (exit 1). `./` is a directory of the test's own, and so are the
 home directory and the uid the plan names. The run-owned values are the
 message `id=` (a ULID from the store's time), `at=`, and `took=`.
@@ -194,8 +198,14 @@ $ nova-friend ping --as ada --to bob --nonce abc123
 PING OK nonce=abc123 id=01M42EJZ1D4JEFR6ESF1YJ3YJA to=bob at=2026-10-04T03:40:12Z
 PING NOTE wait for it: nova-friend wait-pong --from bob --nonce abc123
 
+$ nova-friend local-pong --as bob --dir /work/bob --session ses_123 --nonce abc123 --capability aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --dry-run
+LOCAL-PONG OK nonce=abc123 state=valid-local-envelope dry_run=true
+
 $ nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
 PONG OK nonce=abc123 to=ada id=01M42EJZ1F8FXB5T0F6EXJCRS1 at=2026-10-04T03:40:12Z
+
+$ nova-friend reply --as bob --dir /work/bob --session ses_123 --re 01M4F39QAT9N7621G6XKC3R9AA --capability aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --subject 'Review answer' --body 'Reviewed' --dry-run
+REPLY OK re=01M4F39QAT9N7621G6XKC3R9AA state=valid-local-envelope dry_run=true
 
 $ nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
 WAIT-PONG OK nonce=abc123 from=bob at=2026-10-04T03:40:12Z took=1ms queue=2 working=1 width=4 daemon=false

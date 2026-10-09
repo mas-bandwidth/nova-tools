@@ -23,7 +23,7 @@ import (
 // banner's `example:` block is that same sitting. Setup first prints its plan
 // on a filesystem twin without native calls. The remaining canary has no
 // daemon: dry-run install and uninstall, a ping as the coordinator, the
-// session's pong, the wait for it, and the status of a directory no daemon has
+// session's pong, dry-run local envelopes, the wait for it, and the status of a directory no daemon has
 // run in. It needs a store whose nova-config rows
 // name ada and bob, so it runs on a throwaway redis-server with those two
 // names in the `friends` set, its address in NOVA_BUS_REDIS, which changes
@@ -48,7 +48,9 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 		"nova-friend install --as bob --harness opencode --dir ./bob --dry-run",
 		"nova-friend uninstall --as bob --dry-run",
 		"nova-friend ping --as ada --to bob --nonce abc123",
+		"nova-friend local-pong --as bob --dir /work/bob --session ses_123 --nonce abc123 --capability aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --dry-run",
 		"nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4",
+		"nova-friend reply --as bob --dir /work/bob --session ses_123 --re 01M4F39QAT9N7621G6XKC3R9AA --capability aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --subject 'Review answer' --body 'Reviewed' --dry-run",
 		"nova-friend wait-pong --from bob --nonce abc123 --timeout 2s",
 		"nova-friend status --as bob --dir ./bob",
 	}
@@ -60,7 +62,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	require.NotEmpty(t, steps, "the `### First run` block of docs/TESTS.md holds no nova-friend command")
 	var commands []string
 	for _, s := range steps {
-		commands = append(commands, "nova-friend "+strings.Join(s.Args, " "))
+		commands = append(commands, strings.TrimPrefix(s.Line, "$ "))
 	}
 	require.Equal(t, strings.Join(documentedExamples, "\n"), strings.Join(commands, "\n"), "the transcript and the examples this test names are one list")
 
@@ -87,6 +89,8 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 		stepWorld := w
 		if s.Args[0] == "setup" {
 			stepWorld, _ = setupExampleWorld(t)
+		} else if s.Args[0] == "local-pong" || s.Args[0] == "reply" {
+			stepWorld, _ = replyExampleWorld(t)
 		}
 		code := run(args, strings.NewReader(""), &out, &errb, stepWorld)
 		got = append(got, onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()})
