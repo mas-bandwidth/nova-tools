@@ -35,7 +35,8 @@ import (
 //     <name> is not one of the generic names in genericHomeUsers (a documented
 //     placeholder, a container user this repository defines, or a hosted runner's).
 //   - the project's own public links are not findings: mas-bandwidth/nova-tools (the
-//     module path and issue references), mas-bandwidth/nova (the seed) and
+//     module path and issue references), mas-bandwidth/nova (the seed),
+//     mas-bandwidth/nova-sprint (the sibling sprint project) and
 //     mas-bandwidth/secrets (the secrets store design), and the @mas-bandwidth.com
 //     contact addresses in docs/SECURITY.md. Any other reference to that account is.
 //
@@ -94,7 +95,7 @@ var (
 	// a path (or an escaped tab, newline or return, as a JSON log writes one), optionally followed by a URL scheme, github.com/ (or api.github.com/) and
 	// repos/ (the API path), so
 	// other/mas-bandwidth/nova is not the project's. Group 2 is the part blanked.
-	reOwnIdentity = regexp.MustCompile(`(?i)(^|[^A-Za-z0-9_./-]|\\[nrt])(?:https?://)?(?:(?:api\.)?github\.com/)?(?:repos/)?(mas-bandwidth/(?:nova-tools|nova|secrets))([^A-Za-z0-9_-]|$)`)
+	reOwnIdentity = regexp.MustCompile(`(?i)(^|[^A-Za-z0-9_./-]|\\[nrt])(?:https?://)?(?:(?:api\.)?github\.com/)?(?:repos/)?(mas-bandwidth/(?:nova-tools|nova|nova-sprint|secrets))([^A-Za-z0-9_-]|$)`)
 	// The project's contact addresses, in the one document that publishes them.
 	// Exactly the two published addresses, not any local part. Group 2 is the address.
 	reContact = regexp.MustCompile(`(?i)(^|[^A-Za-z0-9._+-])((?:glenn|rowan)@mas-bandwidth\.com)(?:\.?(?:[^A-Za-z0-9.-]|$))`)
@@ -464,6 +465,7 @@ func TestGeneralityTextFindings(t *testing.T) {
 		{"the store `mas-bandwidth/secrets`, and repos/mas-bandwidth/secrets/collaborators", nil},
 		{"mas-bandwidth/nova-tools-x and mas-bandwidth/novax and mas-bandwidth/secrets2", []string{"mas-bandwidth", "mas-bandwidth", "mas-bandwidth"}},
 		{"mas-bandwidth/nova mas-bandwidth/nova-tools", nil},
+		{"mas-bandwidth/nova-sprint", nil},
 		{`{"Output":"FAIL\tgithub.com/mas-bandwidth/nova-tools/cmd/x"}`, nil},
 		{"other/mas-bandwidth/nova and xgithub.com/mas-bandwidth/nova and other/github.com/mas-bandwidth/nova", []string{"mas-bandwidth", "mas-bandwidth", "mas-bandwidth"}},
 		{"gh api repos/mas-bandwidth/secrets/collaborators and (mas-bandwidth/nova)", nil},

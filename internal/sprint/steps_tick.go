@@ -121,15 +121,16 @@ const ReworkOnAHigherTier = "rework with a fix on a higher tier"
 
 // TickDecisions are the decisions open to the tick's judgments.
 var TickDecisions = map[string][]string{
-	NBound:         {"rework with a fix", "drop", "wait"},
-	NCannotAsk:     {"reader add", "rework", "drop", "wait"},
-	NFewReaders:    {"reader up", "reader add", "wait"},
-	NNoMember:      {"fleet beat", "fleet up", "wait"},
-	NAdoptFailed:   {"fleet up <m>", "wait"},                     // named per member (fleet_back.go)
-	NStarving:      {"release", "wait"},                          // the first held wave's sentinel, never a single card
-	NOverloaded:    {"fleet up <m> --width <half>", "wait 15m"},  // named per member (overload.go, Overload.Decisions)
-	NReadersBehind: {"reader up <r>", "restart <r>", "wait 10m"}, // named per reader (readers_behind.go, Behind.Decisions)
-	NRaiseReadTier: {"raise", "keep"},                            // readtier.go
+	NFriendSyncFailing: {"ack", "wait"},
+	NBound:             {"rework with a fix", "drop", "wait"},
+	NCannotAsk:         {"reader add", "rework", "drop", "wait"},
+	NFewReaders:        {"reader up", "reader add", "wait"},
+	NNoMember:          {"fleet beat", "fleet up", "wait"},
+	NAdoptFailed:       {"fleet up <m>", "wait"},                     // named per member (fleet_back.go)
+	NStarving:          {"release", "wait"},                          // the first held wave's sentinel, never a single card
+	NOverloaded:        {"fleet up <m> --width <half>", "wait 15m"},  // named per member (overload.go, Overload.Decisions)
+	NReadersBehind:     {"reader up <r>", "restart <r>", "wait 10m"}, // named per reader (readers_behind.go, Behind.Decisions)
+	NRaiseReadTier:     {"raise", "keep"},                            // readtier.go
 	// the verdicts' ledger (reads_window.go): the per-reader one names its reader
 	NBrokenReadsOutrun: {"look at the readers", "raise the read tier", "act"},
 	NReaderBreaks:      {"look at the reader", "act"},
@@ -750,6 +751,8 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	conds = append(conds, overloadConds(s)...)
 	// a member back from down whose adoption of the latest failed (fleet_back.go)
 	conds = append(conds, adoptConds(s)...)
+	// the friend sync loop refusing past its bound (friend_sync_state.go)
+	conds = append(conds, friendSyncConds(s)...)
 	// landings on the sprint branch not promoted into dev (promotion.go)
 	conds = append(conds, devBehindCond(s)...)
 	// one deal order for friends and machines, by the ladder: a low card fills only a lane no
@@ -839,7 +842,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	// a ready card dealt on a route that rests now is withdrawn, never taken there
 	p.Units = append(p.Units, restWithdrawals(s, r.who())...)
 	restWrites(&p, s, rests, r.who())
-	due += notify(&p, s, conds, []string{NNoMember, NStarving, NOverloaded, NAdoptFailed, NDevBehind, NBound, NNoRoute, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit}, r)
+	due += notify(&p, s, conds, []string{NNoMember, NStarving, NOverloaded, NAdoptFailed, NDevBehind, NBound, NNoRoute, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NFriendSyncFailing}, r)
 	// every provider out of credit: the binding stops the machine as the plan commits
 	p.Stop = stop
 	return p, due
@@ -1187,9 +1190,12 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 	// N4: work cards dealt and never taken, taken and not finished, by the
 	// card's state (WorkDeadline): never taken past the dealt bound from the
 	// first deal since its last take, not finished from the attempt's first
-	// take. No redeal or withdrawal rewrites either: a member whose beat
-	// lapses again and again cannot reset them, and the time a card spends
-	// withdrawn counts.
+	// take. On a machine's row no redeal or withdrawal rewrites either: a
+	// member whose beat lapses again and again cannot reset them, and the
+	// time a card spends withdrawn counts. The one exception is a friend's
+	// card dealt again after a take-back: it is measured from her own deal,
+	// and a never-taken judgment raised before that deal (while it sat
+	// withdrawn) closes on it (LateStands).
 	for _, c := range s.Fleet.Column(Ready, Working, Withdrawn) {
 		if c.Col == Withdrawn && c.F("kind") == "read" {
 			continue // a read withdrawn is history: its primary is asked again (friendReadLive)
@@ -1394,7 +1400,7 @@ func condKey(typ, subject, card, what string) string {
 	case NNoMember, NAdoptFailed, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NStarving, NOverloaded, NReadersBehind, NDevBehind, NRaiseReadTier,
 		NBrokenReadsOutrun, NReaderBreaks,
 		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFilesAlarm, NFriendDeaf, NFriendIdle, NCoordinatorBehind,
-		NDriftAhead, NDriftCardBase, NDriftServer, NDriftBaseRed:
+		NDriftAhead, NDriftCardBase, NDriftServer, NDriftBaseRed, NFriendSyncFailing:
 		what = ""
 	case NWorkLate, NReadLate:
 		// a lateness is one per attempt's card and kind (not taken, not
@@ -1420,10 +1426,14 @@ func lateKind(what string) string {
 // LateStands says the cause of a lateness still stands: no move that resolves
 // it has happened. Not finished stands while the attempt's work card is
 // ready, working or withdrawn (a redeal or a return to ready does not finish
-// it); never taken while the card is not taken (ready or withdrawn); not begun
-// while the read is asked; not reported while it is asked or reading. While
-// its cause stands a lateness stays raised, whether or not it is late at
-// this moment: no judgment flaps closed and open again.
+// it); never taken while the card is not taken (ready or withdrawn) and the
+// clock it is measured by (WorkDeadline's field) started before the note: a
+// friend's card dealt to her after the note was raised is measured from her
+// own deal, so the lateness the note records, the clock before, stands no
+// more and the note closes on her deal (her own bound raises its own
+// judgment); not begun while the read is asked; not reported while it is
+// asked or reading. While its cause stands a lateness stays raised, whether
+// or not it is late at this moment: no judgment flaps closed and open again.
 func LateStands(s *Snapshot, n Note) bool {
 	kind := lateKind(n.What)
 	switch n.Type {
@@ -1433,7 +1443,20 @@ func LateStands(s *Snapshot, n Note) bool {
 			return false
 		}
 		if kind == WordNeverTaken || kind == "not taken" { // "not taken": raised before the dealt bound
-			return c.Col == Ready || c.Col == Withdrawn
+			if c.Col != Ready && c.Col != Withdrawn {
+				return false
+			}
+			// measured from a stamp at or after the note (the note's second: stamps are
+			// whole seconds, and a never-taken judgment is raised a whole bound after the
+			// stamp it counts from, so a stamp in the note's second is a deal after it):
+			// the note is of the clock before, which the redeal to a friend ended. On a
+			// machine's row the field is untaken_since, which no redeal rewrites, so this
+			// closes nothing there.
+			field, _, _, _ := WorkDeadline(s, c)
+			if at := stampAt(c, field); !at.IsZero() && !at.Before(n.At.Truncate(time.Second)) {
+				return false
+			}
+			return true
 		}
 		return c.Col == Ready || c.Col == Working || c.Col == Withdrawn
 	case NReadLate:
@@ -1532,7 +1555,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 			if !open[k] {
 				fresh = append(fresh, sub)
 			}
-			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate || c.typ == NFewReaders || c.typ == NStarving || c.typ == NOverloaded || c.typ == NFilesAlarm || c.typ == NReadersBehind || c.typ == NDevBehind || c.typ == NBrokenReadsOutrun || c.typ == NReaderBreaks) {
+			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate || c.typ == NFewReaders || c.typ == NStarving || c.typ == NOverloaded || c.typ == NFilesAlarm || c.typ == NReadersBehind || c.typ == NDevBehind || c.typ == NBrokenReadsOutrun || c.typ == NReaderBreaks || c.typ == NFriendSyncFailing) {
 				update(n, c.what, c.decisions) // the latest facts, in place
 			}
 		}
@@ -1634,9 +1657,13 @@ func MovesDue(s *Snapshot) int {
 // WorkDeadline is the deadline a work card is held to, by its state: a card
 // not taken since its last deal (ready, or withdrawn again before a take) is
 // late never taken past the dealt bound (s.DealtMax) from untaken_since, the
-// first deal since its last take, which no later redeal or withdrawal rewrites:
-// a card waiting in a member's ready queue is the machine's queue, so its own
-// deadline starts at its take (nova-tools#5096 item 22); a card working, or
+// first deal since its last take, which on a machine's row no later redeal or
+// withdrawal rewrites: a card waiting in a member's ready queue is the
+// machine's queue, so its own deadline starts at its take (nova-tools#5096
+// item 22). The exception is a friend's row: a friend takes her own ready
+// cards, so a card dealt to her after a take-back (dealt later than
+// untaken_since) is measured from her own deal, never from the take-back or
+// the time it waited withdrawn; a card working, or
 // withdrawn from a take, is late not finished 2 hours from first_taken, the
 // attempt's first take. The tick's deadline part and the no-stall rule both
 // call it, so they speak at the same moment. field is the stamp it counts
@@ -1663,6 +1690,16 @@ func WorkDeadline(s *Snapshot, c *Card) (field string, limit time.Duration, word
 	case c.Col == Working:
 		return first("first_taken", "taken"), unfinishedLimit(c), "not finished", own
 	case c.F("untaken_since") != "":
+		if IsFriendRow(c.Row) && c.F("dealt") > c.F("untaken_since") {
+			// a friend's card dealt again after a take-back is measured from her own deal, as
+			// the start bound measures it (friendUnstartedLevel): the take-back stamps
+			// untaken_since and the deal to the next friend keeps it (friendRedealUnit,
+			// nextGen), and measured from it the next friend's card was late the second she
+			// got it, so rule friend-take took it back from her too and the card bounced
+			// between friends (2026-10-08: one card, seven generations in thirty minutes,
+			// started by no one). A machine's queue keeps the clock of the take before.
+			return "dealt", s.DealtMax(), WordNeverTaken, own
+		}
 		return "untaken_since", s.DealtMax(), WordNeverTaken, own
 	case c.F("first_taken") != "":
 		return "first_taken", unfinishedLimit(c), "not finished", own

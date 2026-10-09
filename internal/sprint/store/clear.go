@@ -44,11 +44,16 @@ func (st *Store) Clear(ctx context.Context) (ClearResult, error) {
 	// The machine first: no tick begins after it is STOPPED, and a tick in
 	// flight is refused as stale at its next part. Clear leaves it STOPPED.
 	if _, ok := st.B.(KV); ok {
-		before, _, _, err := st.SetMachine(ctx, false)
+		before, stopped, _, err := st.SetMachine(ctx, false)
 		if err != nil {
 			return res, fmt.Errorf("stopping the machine: %w", err)
 		}
 		res.Machine = before.StateWord()
+		// Keep StopReturn.tla's owner debt in this epoch until the runner's
+		// cancellation receipt is durable (SPEC-SPRINT section 14).
+		if len(stopped.StopDebt) > 0 {
+			return res, fmt.Errorf("clear stopped the machine with %d captured owner work/read leases; cancel and stop-return each child, then start and clear again", len(stopped.StopDebt))
+		}
 		// The people and their goals are the sprint's and are kept; their
 		// push times start again with the new sprint.
 		if err := st.ResetGoalPushes(ctx); err != nil {

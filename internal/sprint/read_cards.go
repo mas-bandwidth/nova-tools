@@ -509,6 +509,10 @@ func readCardsTakeBack(s *Snapshot) map[string][]Change {
 	return out
 }
 
+// NoReaderMayRead begins the wait of a primary no unit up may be dealt its read card: the
+// read-card ask raises cannot ask on it (readCardsAskPart).
+const NoReaderMayRead = "no reader up may read it"
+
 // readCardsAsk is the read-card ask: the cards it takes back (readCardsTakeBack), then for
 // every primary that wants reads (readCardsWaiting) every read it wants, at once, each to a
 // different unit that may read it (mayReadCard) with half a slot free, the cheapest first:
@@ -624,7 +628,7 @@ func readCardsAskWhy(s *Snapshot, seats []FriendSeat, ri routeIndexes, why *[]st
 		if len(picked) < want {
 			switch {
 			case len(may) == 0:
-				waits[pr.ID] = "no reader up may read it: no friend whose tiers reach its read tier, and no member whose reader row serves its tier, besides its own worker"
+				waits[pr.ID] = NoReaderMayRead + ": no friend whose tiers reach its read tier, and no member whose reader row serves its tier, besides its own worker"
 			default:
 				waits[pr.ID] = "every reader up who may read it is at its room"
 			}
@@ -699,6 +703,13 @@ func readCardsAskWhy(s *Snapshot, seats []FriendSeat, ri routeIndexes, why *[]st
 		u.Closes = closesFor(s.Open, []string{NStranded, NStalled}, pr.ID)
 		p.Units = append(p.Units, u)
 	}
+	if why != nil {
+		for _, pr := range view.Work.Column(Review) {
+			if !IsSentinel(pr) && readCardsWanted(view, pr, idx) == 0 && !acceptable(view, pr) {
+				*why = append(*why, pr.ID+" wants 0: "+readsWantZeroWhy(view, pr, idx))
+			}
+		}
+	}
 	// the cards taken back whose primary asks nothing now
 	for _, key := range slices.Sorted(maps.Keys(back)) {
 		if done[key] {
@@ -742,6 +753,14 @@ func readCardsAskPart(s *Snapshot, r TickReq, seats []FriendSeat) (Plan, int) {
 	}
 	conds = append(conds, raiseReadTierConds(s)...)
 	conds = append(conds, readsWindowConds(s, r)...)
+	// a read no unit up may take is cannot ask, one judgment, open until a reader may
+	var refused []Refusal
+	for _, id := range slices.Sorted(maps.Keys(waits)) {
+		if strings.HasPrefix(waits[id], NoReaderMayRead) {
+			refused = append(refused, Refusal{Key: id, Why: waits[id]})
+		}
+	}
+	conds = append(conds, cannotAskCond(s, refused)...)
 	due := notify(&p, s, conds, []string{NCannotAsk, NFewReaders, NReadersBehind, NRaiseReadTier, NBrokenReadsOutrun, NReaderBreaks}, r)
 	return p, due + len(waits)
 }
@@ -822,4 +841,32 @@ func readStart(c *Card) time.Time {
 		return t
 	}
 	return stampAt(c, "asked")
+}
+
+// readsWantZeroWhy says why a primary in review that is not acceptable wants no read card
+// (ReadCardsWhy): failed work, or the reads that stand (readCardsStanding), each named.
+func readsWantZeroWhy(s *Snapshot, pr *Card, idx map[string][]*Card) string {
+	if pr.F("result") == "failed" {
+		return "its work came back failed (result=failed)"
+	}
+	placed, oks, brk := fleetReadLiveOf(s, pr, idx[pr.ID])
+	var out []string
+	say := func(kind string, c *Card) {
+		out = append(out, kind+" "+c.ID+" col="+orDash(c.Col)+" verdict="+orDash(c.F("verdict"))+" start="+stamp(readStart(c)))
+	}
+	for _, c := range placed {
+		say("placed", c)
+	}
+	for _, c := range oks {
+		say("ok", c)
+	}
+	for _, c := range brk {
+		say("broken", c)
+	}
+	if s.Readers != nil {
+		for _, c := range liveReadsAt(s, pr, readAttempt(pr)) {
+			say("readers-table", c)
+		}
+	}
+	return "attempt=" + itoa(readAttempt(pr)) + " stands: " + strings.Join(out, "; ")
 }

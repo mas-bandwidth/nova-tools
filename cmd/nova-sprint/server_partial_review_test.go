@@ -21,6 +21,7 @@ func TestServerReviewRetriesAPartialBatchAfterRestart(t *testing.T) {
 	ta.ok("start")
 	ta.ok("tick")
 	ta.ok("stop --reason r --until 9999h")
+	ta.ok("start") // the retry checks worker takes, which STOP now fences
 	ta.a.serveAddr = "mem:0"
 	req := sprintwire.Request{Verbs: [][]string{
 		{"take", "--as", "m1", "--limit", "1", "--epoch", "0", "--op", "partial-first", "--json"},

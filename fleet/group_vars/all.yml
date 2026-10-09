@@ -77,8 +77,20 @@ nova_redis_user_password_keys:
 
 # The configuration store tools.yml migrates before anything reads a kind the
 # build adds. Its explicit password-free nova_pg_dsn comes from the applied
-# fleet row; its password is the secret of this name in the store_deployer
-# machine's seat.
+# fleet row. The migration runs as nova_pg_owner, the one Postgres role that
+# owns schema config and every table in it (only the owner alters and fills
+# them; on 2026-10-08 a migrate as the seat's own role was refused and the
+# store stayed behind the build for 7h45m): nova_pg_owner_dsn is nova_pg_dsn
+# with its user replaced by that role, and nova_pg_password_key names the
+# owner's password in the store_deployer machine's seat. The seat play reads
+# the store's owner back (nova-config migrate --dry-run, owner=) before its
+# window and refuses a store not owned whole by this role.
+nova_pg_owner: nova_config
+nova_pg_owner_dsn: >-
+  {{ ((nova_pg_dsn.split('://', 1) | first) ~ '://' ~ nova_pg_owner ~ '@'
+      ~ ((nova_pg_dsn.split('://', 1) | last) | regex_replace('^[^@/]*@', '')))
+     if '://' in nova_pg_dsn else
+     (((nova_pg_dsn.split() | reject('match', 'user=') | list) + ['user=' ~ nova_pg_owner]) | join(' ')) }}
 nova_pg_password_key: NOVA_PG_CONFIG_PASSWORD
 
 # The build tools.yml installs: nova_version (required, -e) built from the

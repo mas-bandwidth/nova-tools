@@ -108,7 +108,7 @@ takes `--json`; `log` takes `--max`.
   stops at its next read with that refusal.
 - `wait` is the wake a harness runs beside a session, general for any AI on
   the bus. Its flags are `--as <me>`, `--after <id>`, `--timeout <duration>`,
-  `--skip-subject <prefix,...>`, `--wake-file <path>`, `--redis <addr>` and
+  `--skip-subject <prefix,...>`, `--wake-file <path>`, `--wake-after <cursor>`, `--redis <addr>` and
   `--json`. It takes nothing: it reads the recipient's stream past a cursor
   (XREAD, never the consumer group), so a later recv still delivers and acks
   what it saw. The cursor is `--after <id>`, else the stream's last id read
@@ -133,6 +133,26 @@ takes `--json`; `log` takes `--max`.
   world, so every test runs on no real time. A wait with a wake file reads it
   once a `WaitTick`; with neither a wake file nor a timeout it parks on one
   blocking read that never runs out.
+  With a wake file, every completed result includes `wake-after=<cursor>` and
+  `wake-offset=<ending byte offset>` (JSON `wake_after`, `wake_offset`), including
+  a bus return and timeout. Re-arm with both cursors: `--after` for the stream,
+  `--wake-after` for the file. The opaque versioned cursor binds filesystem
+  identity, byte offset and SHA-256 of the consumed prefix. Only complete
+  returned records advance it; partial final records and wake bytes arriving
+  during a bus return remain unread. The caller saves the cursor after retaining
+  the returned payload, so a crash before saving replays rather than skips it.
+  For initial migration, `--wake-after 0` explicitly replays from byte zero
+  and returns the native identity-bound cursor. A caller retains payloads and
+  deduplicates their durable identities before saving that cursor; unresolved
+  actions remain pending independently. Without `--wake-after`, arming starts
+  at the file's current end as before.
+  Missing new files bind on creation; existing files must be regular and
+  seekable. Replacement, disappearance, truncation below the offset and changed
+  consumed bytes refuse visibly, without resetting. Reconcile and retain unread
+  data before explicitly starting a new cursor. Prefix validation streams bytes
+  with bounded memory and costs a pass over the consumed prefix per look.
+  The state transitions are modelled in `tla/WakeCursor.tla`; this cursor is
+  transport progress, never proof that an LLM consumed or answered the payload.
 - `ack [--as <me>] --id <id,...>` prints `ACK OK acked=<n> asked=<n>` and one
   `ACK ID id= acked=true|false` line per id.
 - `peek [--as <me>]` prints `PEEK OK pending=<n> new=<n>` and one `PEEK MESSAGE
@@ -237,6 +257,14 @@ deaf: <x> has no proven push since <age|never>: <why>; the remedy: <x> runs its 
 deliver adapter for its harness (nova-friend install --as <x> --harness <h> --dir <d>) and its session
 answers the daemon's SESSION CHECK, which records the proof; nova-bus names shows every name's push
 ```
+
+Advisory until every harness proves (the owner, 2026-10-07: adopt wide ASAP; the
+seat's push proof is card the-seats-pushes-are-proven-before-the-sprint-moves-b):
+a claude harness proves no push yet, so the refusal would stop every send by or to
+the coordinator and every recv restart. Until then `send` and `recv` print `NOTE
+push=<none|stale|down> [age=<age>] for <name>` for each name not heard and go on;
+`--require-push`, or `NOVA_BUS_REQUIRE_PUSH=1`, refuses as above
+(`TestThePushGateIsAdvisoryUntilRequired`). `nova-bus names` is unchanged.
 
 The proof is the friend daemon's SESSION CHECK round trip (SPEC-FRIEND.md,
 presence): a check carrying a fresh nonce goes into the session through the

@@ -17,6 +17,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
@@ -247,7 +248,7 @@ func pushNonce() string {
 // it prints the record and whether the seat is live.
 func (a *app) cmdSeatPush(args []string, stdout, stderr io.Writer) int {
 	const name = "seat push"
-	fs, c := a.verbSetup("seat")
+	fs, c := a.verbSetup(name)
 	harness := fs.String("harness", "", "the harness the AI holding the seat runs in: its adapter delivers each push into the session (a harness with no deliver command, claude, gets the folder adapter: each push a file in --target)")
 	target := fs.String("target", "", "with --harness, the session's directory, where the adapter delivers (for the folder adapter, the directory the session watches, which must be there)")
 	session := fs.String("session", "", "with --harness, the session's id, for a harness that names one (default: the adapter's newest in --target)")
@@ -358,7 +359,7 @@ func (a *app) sayPush(rec sprint.PushRecord, ok bool, now time.Time, asJSON bool
 // counts, and once.
 func (a *app) cmdSeatPong(args []string, stdout, stderr io.Writer) int {
 	const name = "seat pong"
-	fs, c := a.verbSetup("seat")
+	fs, c := a.verbSetup(name)
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) != 1 {
 		return refuse(stderr, name, "wants one word, the nonce read from the delivered check; run: nova-sprint seat pong <nonce> --actor <name>")
@@ -395,6 +396,29 @@ func (a *app) cmdSeatPong(args []string, stdout, stderr io.Writer) int {
 type pushProver interface {
 	pushRecord(ctx context.Context, name string) (sprint.PushRecord, bool, error)
 	pushSent(ctx context.Context, name, nonce, why string) error
+	pushReply(name, nonce string) (string, error)
+}
+
+func (s *storeSource) pushReply(name, nonce string) (string, error) {
+	if s.redis == "" {
+		return "", errors.New("the push source has no direct store address; restart inbox --wait --push seat with --redis <address>")
+	}
+	if !isTwin(s.redis) {
+		if _, err := redisconn.Resolve(redisconn.Options{Addr: s.redis}, nil); err != nil {
+			return "", err
+		}
+	}
+	return sprint.PushPongCommand(name, nonce, s.redis, ""), nil
+}
+
+func (s *serverSource) pushReply(name, nonce string) (string, error) {
+	if s.addr == "" {
+		return "", errors.New("the push source has no server address; restart inbox --wait --push seat with NOVA_SPRINT_SERVER set")
+	}
+	if _, err := redisconn.Resolve(redisconn.Options{Addr: s.addr}, nil); err != nil {
+		return "", err
+	}
+	return sprint.PushPongCommand(name, nonce, "", s.addr), nil
 }
 
 func (s *storeSource) pushRecord(ctx context.Context, name string) (sprint.PushRecord, bool, error) {
@@ -410,7 +434,7 @@ func (s *storeSource) pushSent(ctx context.Context, name, nonce, why string) err
 }
 
 func (s *serverSource) pushRecord(ctx context.Context, name string) (sprint.PushRecord, bool, error) {
-	res, err := s.a.ask(ctx, s.addr, []string{"seat"}, []string{"push", "--json", "--actor", name})
+	res, err := s.a.ask(ctx, s.addr, []string{"seat", "push"}, []string{"--json", "--actor", name})
 	if err != nil {
 		return sprint.PushRecord{}, false, err
 	}
@@ -426,11 +450,11 @@ func (s *serverSource) pushRecord(ctx context.Context, name string) (sprint.Push
 }
 
 func (s *serverSource) pushSent(ctx context.Context, name, nonce, why string) error {
-	words := []string{"push", "--json", "--actor", name, "--sent", nonce}
+	words := []string{"--json", "--actor", name, "--sent", nonce}
 	if why != "" {
 		words = append(words, "--failed", why)
 	}
-	res, err := s.a.ask(ctx, s.addr, []string{"seat"}, words)
+	res, err := s.a.ask(ctx, s.addr, []string{"seat", "push"}, words)
 	if err != nil {
 		return err
 	}
@@ -459,7 +483,12 @@ func (a *app) prove(ctx context.Context, src inboxSource, holder string, asJSON 
 		return
 	}
 	nonce := pushNonce()
-	why := a.deliverPush(ctx, rec, sprint.PushCheckText(holder, nonce))
+	reply, err := pr.pushReply(holder, nonce)
+	if err != nil {
+		say("DOWN", holder, "", err.Error())
+		return
+	}
+	why := a.deliverPush(ctx, rec, sprint.PushCheckText(nonce, reply))
 	if err := pr.pushSent(ctx, holder, nonce, why); err != nil {
 		say("DOWN", holder, nonce, "the check went out and could not be recorded: "+err.Error())
 		return

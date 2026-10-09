@@ -57,14 +57,14 @@ const (
 // runner finds inbox/<job>/BRIEF.md where it finds a work card's), and friend sync closes it
 // from outbox/<job>/REPORT.md (friendReadOf).
 //
-// A friend's read asked before read cards (the packet's ReadJob) keeps its card id as its
-// job at every epoch, the path it was delivered at: installing this build delivers none of
-// the live reads again.
+// A friend's read asked before read cards (the packet's ReadJob) keeps its
+// legacy job name in generation one; a resumed generation gets its own .gN
+// directory so a pre-STOP outbox report cannot be read as a new result.
 func friendJobOf(p sprint.Packet) string {
-	if p.Kind == "read" && p.ReadJob != "" {
-		return p.ReadJob
-	}
 	job := sprint.StoredID(p.Card, p.Epoch)
+	if p.Kind == "read" && p.ReadJob != "" {
+		job = p.ReadJob
+	}
 	if p.Gen > 1 {
 		job += ".g" + strconv.Itoa(p.Gen)
 	}
@@ -789,17 +789,17 @@ func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir strin
 		}
 		return delivered, finished, nil
 	}
-	primary, card, reportCopy, epoch := p.Primary, p.Card, report, p.Epoch
+	primary, card, reportCopy, epoch, generation := p.Primary, p.Card, report, p.Epoch, p.Gen
 	// a broken report on a branch origin does not hold is the machine's fault: checked here,
 	// at the close, and the read asked again (sprint read_missing.go)
 	var missing map[string]sprint.MissingBranch
 	if verdict, _, _ := sprint.ParseFriendReadReport(report); verdict == "broken" {
 		missing = a.readMissing(ctx, []sprint.Packet{p})
 	}
-	step := store.Step{Verb: "read", Named: true, Mirrors: true, Load: []string{sprint.Fleet, sprint.Work},
+	step := store.Step{Verb: "read", Named: true, Mirrors: true, ReportsWork: true, Load: []string{sprint.Fleet, sprint.Work},
 		Extras: sprint.NamedExtras(sprint.Fleet, []string{p.Card}), Actor: sprint.FriendRow(name), Epoch: &epoch,
 		Plan: func(s *sprint.Snapshot) sprint.Plan {
-			return sprint.FriendReadCloseChecked(s, name, primary, card, reportCopy, missing)
+			return sprint.FriendReadCloseChecked(s, name, primary, card, reportCopy, missing, generation)
 		}}
 	res, err := st.Run(ctx, step)
 	if err != nil {

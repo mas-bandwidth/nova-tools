@@ -142,6 +142,20 @@ func (ta *testApp) ok(line string) string {
 	return out
 }
 
+// clearWithReturns exercises Clear's STOP fence before clearing an epoch with
+// active owner work. The fixture observes each child exit before returning it.
+func (ta *testApp) clearWithReturns(epoch uint64, row string, cards ...string) string {
+	ta.t.Helper()
+	code, _, why := ta.do("clear --confirm sprint")
+	require.Equal(ta.t, 2, code, "clear captures active owner leases: %s", why)
+	require.Contains(ta.t, why, "captured owner work/read leases")
+	for _, card := range cards {
+		ta.ok("stop-return --as " + row + " --epoch " + strconv.FormatUint(epoch, 10) + " " + card + " --reason 'fixture child exited'")
+	}
+	ta.ok("start")
+	return ta.ok("clear --confirm sprint")
+}
+
 // split is words, with '...' quoting one word.
 func split(line string) []string {
 	var out []string
@@ -463,10 +477,10 @@ func TestClearByTheCommand(t *testing.T) {
 	ta.ok("take --as m1 --limit 2")
 	code, _, _ := ta.do("clear --confirm other")
 	require.Equal(t, 2, code, "clear with another prefix: %d", code)
-	out := ta.ok("clear --confirm sprint")
+	out := ta.clearWithReturns(0, "m1", "s1-1.w1@1", "s1-2.w1@1")
 	require.Contains(t, out, "CLEAR OK epoch=0->1", "clear")
 	require.Contains(t, out, "primaries=2", "clear")
-	require.True(t, strings.HasSuffix(strings.TrimSpace(out), "\nSTOPPED"), "clear: %s", out)
+	require.Contains(t, out, "\nSTOPPED\n", "clear: %s", out)
 	require.NotContains(t, out, "-> ETA", "clear")
 	code, _, errs := ta.do("finish --as m1 --epoch 0 s1-1.w1@1")
 	require.Equal(t, 1, code, "a late finish: %d %s", code, errs)
@@ -491,8 +505,9 @@ func TestClearByTheCommand(t *testing.T) {
 	require.Equal(t, uint64(1), q.Epoch, "the same ids in the new epoch: %+v", q)
 	require.Len(t, q.Cards, 2, "the same ids in the new epoch: %+v", q)
 	require.Equal(t, "s1-1.w1", q.Cards[0].ID, "the same ids in the new epoch: %+v", q)
+	ta.ok("start")
 	ta.ok("take --as m1 --epoch 1 s1-1.w1@1")
-	ta.ok("clear --confirm sprint")
+	ta.clearWithReturns(1, "m1", "s1-1.w1@1")
 	ta.clean()
 }
 

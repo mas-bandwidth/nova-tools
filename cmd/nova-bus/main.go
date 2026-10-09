@@ -9,7 +9,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -17,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net"
 	"net/netip"
 	"os"
@@ -51,6 +49,13 @@ const (
 	FleetBusKey    = "fleet:bus"
 )
 
+// RequirePushEnv set to 1 makes the push gate refuse, as --require-push does. The gate
+// is advisory until every harness proves its push (the owner, 2026-10-07: adopt wide
+// ASAP; the seat's push proof is card
+// the-seats-pushes-are-proven-before-the-sprint-moves-b): send and recv print
+// NOTE push=<state> for <name> for each name not heard, and go on.
+const RequirePushEnv = "NOVA_BUS_REQUIRE_PUSH"
+
 // ExecBudget bounds one run of --exec's command: a delivery into a harness
 // is a write of a few lines; one that takes longer is stuck. It is also how
 // long a reader keeps a message before another may claim it (bus.ClaimAfter).
@@ -78,17 +83,14 @@ type world struct {
 	fleetBus func(ctx context.Context, addr string) (string, error)
 	// now is the clock a wait reads: the real one, or a test's.
 	now func() time.Time
-	// fileSize is a wake file's end when a wait arms (0 when the file is not
-	// there): the offset a later line must lie past.
-	fileSize func(path string) (int64, error)
-	// fileLine reads a wake file from an offset, answering its first line
-	// past it and the offset past everything read ("" when nothing new).
-	fileLine func(path string, from int64) (line string, end int64, err error)
+	// wakeArm binds a caller-owned cursor; wakeLine validates it and reads one record.
+	wakeArm  func(path, token string) (wakeCursor, error)
+	wakeLine func(path string, cursor wakeCursor) (string, wakeCursor, error)
 }
 
 func realWorld() world {
 	w := world{getenv: os.Getenv, run: runShell, now: time.Now,
-		fileSize: realFileSize, fileLine: realFileLine,
+		wakeArm: realWakeArm, wakeLine: realWakeLine,
 		lookup: func(ctx context.Context, host string) ([]netip.Addr, error) {
 			return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 		},
@@ -173,7 +175,7 @@ func busTool(w world) *tool.Tool {
 		Stamp: version,
 		How: `the loop: send --as <me> --to <friend> --subject <s> --body <text> sends;
 recv --as <me> --forever --exec '<deliver-into-session>' takes each message in, acked on exit 0;
-ack --as <me> --id <id> acks by hand; send and recv refuse a deaf name (no push proven in 10m).
+ack --as <me> --id <id> acks; send, recv note a deaf name (no push in 10m); --require-push refuses.
 one stream per recipient (bus2:to:<name>) under a consumer group, one log (bus2:log); all or none.
 first run: a Redis at --redis (else NOVA_BUS_REDIS, else fleet:bus); loopback/tailnet only.`,
 		ExitTable: "0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).",
@@ -181,7 +183,7 @@ first run: a Redis at --redis (else NOVA_BUS_REDIS, else fleet:bus); loopback/ta
 		Verbs: []tool.Verb{
 			{
 				Name:    "wait",
-				Usage:   "wait [--as <me>] [--after <id>] [--timeout <duration>] [--skip-subject <prefix,...>] [--wake-file <path>] [--redis <addr>]",
+				Usage:   "wait [--as <me>] [--after <id>] [--timeout <duration>] [--skip-subject <prefix,...>] [--wake-file <path>] [--wake-after <cursor>] [--redis <addr>]",
 				Example: "wait --as bob --timeout 1s",
 				Effect:  tool.Inspection,
 				ExitTable: "0 the wait ended: WAIT OK, entries that counted, or WAIT WAKE, a line on the wake file; 1 WAIT NONE, the timeout ran out; " +
@@ -195,11 +197,17 @@ that are not from you and whose subject starts with none of --skip-subject's pre
 without case; default PING,PONG): one WAIT MESSAGE id=<id> from=<name> subject=<s> bytes=<n> line
 each, at most 5, then WAIT OK after=<last id seen> at exit 0. Skipped entries move the cursor and
 are not printed. --wake-file <path> also ends the wait when a line is appended to the file after the
-start (a harness's deliver adapter appends one per message): WAIT WAKE file=<path> line=<first line>
+start (a harness's deliver adapter appends one per message). Save the returned wake-after cursor
+and re-arm with --wake-after <cursor> as well as --after <id>; wake-offset is the ending byte offset.
+The cursor binds file identity and consumed prefix; replacement, truncation or rewriting refuses
+with a reconciliation remedy. For initial migration, --wake-after 0 explicitly replays from byte zero. Retain the returned payload
+and deduplicate by its durable identity before saving the returned cursor. No replay is an LLM receipt.
+Without --wake-after the file starts at its current end. A missing
+new file binds when it first appears; pipes and other nonregular files are refused: WAIT WAKE file=<path> line=<first line>
 at exit 0. Past --timeout <duration> (a Go duration; 0, the default, is for ever) it is WAIT NONE
 after=<cursor> waited=<duration> on standard error at exit 1. --json prints one object when the
 wait ends: {"status":"ok","word":"OK|NONE|WAKE","after":<id>,"messages":[{"id":<id>,"from":<name>,
-"subject":<s>,"bytes":<n>}],"wake":{"file":<path>,"line":<text>}} (messages is empty and wake left
+"subject":<s>,"bytes":<n>}],"wake":{"file":<path>,"line":<text>},"wake_after":<cursor>,"wake_offset":<bytes>} (messages is empty and wake left
 out when they hold nothing; the ARMED line is the text form's). Exit 2 when a flag is wrong, the
 name is not on the roster, or the store does not answer.
 example: nova-bus wait --as bob --timeout 1s`,
@@ -208,11 +216,20 @@ example: nova-bus wait --as bob --timeout 1s`,
 					f.String("after", "", "the stream entry id <ms>-<seq> to wait past; default: the stream's last id read once at start, as WAIT ARMED prints it")
 					f.Duration("timeout", 0, "how long to wait before WAIT NONE, a Go duration (1s, 2m); 0 is for ever")
 					f.String("skip-subject", "PING,PONG", "subjects starting with one of these prefixes, comma-separated, are skipped; matched without case")
+					f.String("wake-after", "", "0 replays the file from byte zero; otherwise the complete wake-after cursor returned by wait; requires --wake-file; preserves unread bytes across rearm and restart")
 					f.String("wake-file", "", "a file whose lines, appended after the start, also end the wait (one line per message)")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
 					f.Check(func(c *tool.Call) {
 						if v := c.Str("after"); v != "" && !streamID(v) {
 							c.Problem(fmt.Sprintf("--after wants a stream entry id, <ms>-<seq> as WAIT ARMED and WAIT OK print it; %q is not one", v))
+						}
+						if v := c.Str("wake-after"); v != "" {
+							if c.Str("wake-file") == "" {
+								c.Problem("--wake-after wants --wake-file, the same append-only regular file")
+							}
+							if _, err := parseWakeCursor(v); err != nil && v != "0" {
+								c.Problem(err.Error())
+							}
 						}
 						if c.Dur("timeout") < 0 {
 							c.Problem("--timeout wants a duration of at least 0, 0 for ever (a negative wait is no wait)")
@@ -234,8 +251,10 @@ You are the user the connection logged in as (NOVA_SPRINT_REDIS_USER): --as may 
 out, and another name is refused. With no login (a store with no users) --as is your word for who you
 are, and the line says login=none. The sender and every recipient must be heard: a name whose friend
 daemon proved its inbox push (a SESSION CHECK carried in by its harness's deliver adapter and answered
-by the session) under ten minutes ago; any other is refused with deaf: <name> has no proven push since
-<age> and the remedy, and nothing is written (nova-bus names shows each name's push). --dry-run checks
+by the session) under ten minutes ago. For now the gate is advisory: each name not heard is a
+NOTE push=<none|stale|down> [age=<age>] for <name> line and the send goes on; with --require-push (or
+` + RequirePushEnv + `=1) any such name is refused with deaf: <name> has no proven push since <age>
+and the remedy, and nothing is written (nova-bus names shows each name's push). --dry-run checks
 the message as send does (every problem named) and prints the line with no id, writing nothing.
 --token <t> makes the send safe to retry: the same token and the same arguments within --token-life
 (default 24h) print the first send's SEND OK line again (its id and at) and write nothing, so a send
@@ -255,6 +274,7 @@ Delivery to a reader is still at least once: a reader may be handed one message 
 					f.String("token", "", "your word for this one send, the same on every retry of it (letters, digits, . _ : -; at most 128 bytes)")
 					f.Duration("token-life", bus.DefaultTokenLife, "how long a retry under --token answers the first send")
 					f.Duration("token-cleanup", bus.DefaultTokenCleanup, "when the store drops the token (never before its life ends)")
+					f.Bool("require-push", false, "refuse a name with no proven push (deaf: ...) instead of noting it; also "+RequirePushEnv+"=1")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
 					callTimeoutFlag(f)
 					f.Check(func(c *tool.Call) {
@@ -294,8 +314,9 @@ Delivery to a reader is still at least once: a reader may be handed one message 
 				DryRun:  true,
 				Detail: `Prints one message: a line RECV OK id=<id> from=<name> to=<names> cc=<names> re=<id> [kind=<k>] at=<RFC3339>
 subject=<s> (login=none when the connection has no login user), a blank line, the body; or RECV
-NONE at exit 1 when nothing waits. You are the login user, as in send, and must be heard as there: a
-recv for a name with no proven push is refused (deaf: <name> ...). The oldest message a
+NONE at exit 1 when nothing waits. You are the login user, as in send, and are noted as there when
+not heard (NOTE push=... for <name>); with --require-push (or ` + RequirePushEnv + `=1) a recv for a
+name with no proven push is refused (deaf: <name> ...). The oldest message a
 reader lost (delivered, not acked, idle fifteen minutes) comes first, else the oldest new one; the
 reader keeps it for fifteen minutes. --exec '<command>' runs the command with that same text on its stdin and
 acks the message when it exits 0 (the line adds acked=true exec_exit=0); a non-zero exit leaves
@@ -317,6 +338,7 @@ before kinds existed.`,
 					f.Bool("ack", false, "ack each message after printing it (a plain recv leaves it pending)")
 					f.Bool("forever", false, "loop over every message, delivering each with --exec, until a signal")
 					f.String("exec", "", "a shell command run with each message on its stdin; exit 0 acks the message")
+					f.Bool("require-push", false, "refuse a name with no proven push (deaf: ...) instead of noting it; also "+RequirePushEnv+"=1")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
 					callTimeoutFlag(f)
 					f.Check(func(c *tool.Call) {
@@ -464,6 +486,50 @@ func refuseNonPositiveTimeout(c *tool.Call) {
 // is the deadline of one call (SPEC-BUS.md, the deadlines); a blocking read
 // gets its block and the margin more on top of it.
 func (w world) bus(c *tool.Call, timeout time.Duration) (*bus.Bus, string, func(), *tool.Out) {
+	return w.openBus(c, timeout, true)
+}
+
+// requirePush says send's or recv's push gate refuses: --require-push, or RequirePushEnv=1.
+func (w world) requirePush(c *tool.Call) bool {
+	return c.Bool("require-push") || w.getenv(RequirePushEnv) == "1"
+}
+
+// pushNotes is one NOTE for each name of names (deduplicated, in order) not heard at now:
+// push=<state> for <name>, with age=<age> when a proof was ever written. One HGETALL and no
+// roster trip.
+func pushNotes(ctx context.Context, b *bus.Bus, now time.Time, names ...string) ([]string, error) {
+	var uniq []string
+	for _, n := range names {
+		if !slices.Contains(uniq, n) {
+			uniq = append(uniq, n)
+		}
+	}
+	proofs, err := b.ProofsOf(ctx, uniq...)
+	if err != nil {
+		return nil, err
+	}
+	var notes []string
+	for _, p := range proofs {
+		switch st := p.State(now); st {
+		case bus.PushProven:
+		case bus.PushNone:
+			notes = append(notes, fmt.Sprintf("push=%s for %s", st, p.Name))
+		default:
+			notes = append(notes, fmt.Sprintf("push=%s age=%s for %s", st, p.AgeWord(now), p.Name))
+		}
+	}
+	return notes, nil
+}
+
+func withNotes(o *tool.Out, notes []string) *tool.Out {
+	for _, n := range notes {
+		o.Note(n)
+	}
+	return o
+}
+
+// openBus is the bus at the verb's store, behind the push gate when gated.
+func (w world) openBus(c *tool.Call, timeout time.Duration, gated bool) (*bus.Bus, string, func(), *tool.Out) {
 	ctx, cancel := context.WithTimeout(context.Background(), redisconn.OpenTimeout)
 	defer cancel()
 	addr, refused := w.address(ctx, c)
@@ -484,6 +550,9 @@ func (w world) bus(c *tool.Call, timeout time.Duration) (*bus.Bus, string, func(
 	if r, ok := st.(bus.Redis); ok {
 		r.Timeout = timeout
 		st = r
+	}
+	if !gated {
+		return &bus.Bus{Store: st}, login, closeStore, nil
 	}
 	return &bus.Bus{Store: bus.Hearing(st)}, login, closeStore, nil
 }
@@ -546,7 +615,8 @@ func (w world) send(c *tool.Call) *tool.Out {
 		}
 		body = string(raw)
 	}
-	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
+	gated := w.requirePush(c)
+	b, login, closeStore, refused := w.openBus(c, c.Dur("timeout"), gated)
 	if refused != nil {
 		return refused
 	}
@@ -566,7 +636,7 @@ func (w world) send(c *tool.Call) *tool.Out {
 		// push gate the write would meet is asked for by name
 		send = func(ctx context.Context, m bus.Message) (bus.Message, error) {
 			m, err := b.Check(ctx, m)
-			if err != nil {
+			if err != nil || !gated {
 				return m, err
 			}
 			return m, b.Heard(ctx, slices.Concat([]string{m.From}, m.To, m.CC)...)
@@ -576,10 +646,20 @@ func (w world) send(c *tool.Call) *tool.Out {
 	if err != nil {
 		return answer(err)
 	}
+	var notes []string
+	if !gated {
+		at := m.At
+		if at.IsZero() {
+			at = w.now()
+		}
+		if notes, err = pushNotes(context.Background(), b, at, slices.Concat([]string{as}, draft.To, draft.CC)...); err != nil {
+			return answer(err)
+		}
+	}
 	sum := sha256.Sum256([]byte(m.Body))
 	o := tool.Done().Fact("id", m.ID).Fact("to", strings.Join(m.To, ",")).Fact("cc", strings.Join(m.CC, ","))
-	return loginFact(kindFact(o, m).Fact("at", m.At.Format(time.RFC3339)).
-		Fact("bytes", len(m.Body)).Fact("sha256", hex.EncodeToString(sum[:])), login)
+	return withNotes(loginFact(kindFact(o, m).Fact("at", m.At.Format(time.RFC3339)).
+		Fact("bytes", len(m.Body)).Fact("sha256", hex.EncodeToString(sum[:])), login), notes)
 }
 
 // kindFact adds kind=<k> to a result when the message is not a status: a
@@ -625,7 +705,8 @@ func text(m bus.Message, login string) string {
 }
 
 func (w world) recv(c *tool.Call) *tool.Out {
-	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
+	gated := w.requirePush(c)
+	b, login, closeStore, refused := w.openBus(c, c.Dur("timeout"), gated)
 	if refused != nil {
 		return refused
 	}
@@ -638,12 +719,21 @@ func (w world) recv(c *tool.Call) *tool.Out {
 	if p := bus.CheckKinds(kinds...); p != "" {
 		return tool.Refuse(p)
 	}
+	var notes []string
+	if !gated {
+		var err error
+		if notes, err = pushNotes(context.Background(), b, w.now(), as); err != nil {
+			return answer(err)
+		}
+	}
 	if c.DryRun() {
 		// what waits, read only: the next delivered is a pending one held past fifteen
 		// minutes when there is one, else the oldest new one; a deaf name is refused
 		// as the recv itself would be
-		if err := b.Heard(context.Background(), as); err != nil {
-			return answer(err)
+		if gated {
+			if err := b.Heard(context.Background(), as); err != nil {
+				return answer(err)
+			}
 		}
 		pending, fresh, err := b.Peek(context.Background(), as)
 		if err != nil {
@@ -654,7 +744,7 @@ func (w world) recv(c *tool.Call) *tool.Out {
 		if len(fresh) > 0 {
 			next = fresh[0].Message().ID
 		}
-		return loginFact(tool.Done().Fact("pending", len(pending)).Fact("new", len(fresh)).Fact("next_new", next), login)
+		return withNotes(loginFact(tool.Done().Fact("pending", len(pending)).Fact("new", len(fresh)).Fact("next_new", next), login), notes)
 	}
 	command := c.Str("exec")
 	ctx, stop := w.signals(context.Background())
@@ -703,7 +793,10 @@ func (w world) recv(c *tool.Call) *tool.Out {
 	}
 	if !c.Bool("forever") && !c.Bool("all") && c.Int("max") == 1 {
 		o, _ := one(0)
-		return o
+		return withNotes(o, notes)
+	}
+	for _, n := range notes { // a batch or a loop says it once, before its first message
+		fmt.Fprintln(c.Stderr, "RECV NOTE "+n)
 	}
 	if !c.Bool("forever") {
 		// the batch: what waits now, in order, each its own result, until the
@@ -973,50 +1066,13 @@ type waitWake struct {
 // line are oneline-escaped, so nothing they hold can reorder the line a
 // reader reads.
 type waitJSON struct {
-	Status   string        `json:"status"`
-	Word     string        `json:"word"`
-	After    string        `json:"after"`
-	Messages []waitMessage `json:"messages"`
-	Wake     *waitWake     `json:"wake,omitempty"`
-}
-
-// realFileSize is a wake file's end when the wait arms: 0 when the file is
-// not there yet, so its first line, whenever it appears, is past the start.
-func realFileSize(path string) (int64, error) {
-	st, err := os.Stat(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, err
-	}
-	return st.Size(), nil
-}
-
-// realFileLine reads a wake file from an offset, answering its first line
-// past the offset and the offset just past that line's newline: "" and the
-// same offset when no newline is there yet (a fragment is not a line). A
-// file that is not there is no wake yet, never an error.
-func realFileLine(path string, from int64) (string, int64, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return "", from, nil
-		}
-		return "", 0, err
-	}
-	defer f.Close() // ignored: read-only, nothing to flush
-	if _, err := f.Seek(from, io.SeekStart); err != nil {
-		return "", 0, err
-	}
-	raw, err := io.ReadAll(io.LimitReader(f, wakeLineMax))
-	if err != nil {
-		return "", 0, err
-	}
-	if i := bytes.IndexByte(raw, '\n'); i >= 0 {
-		return string(raw[:i]), from + int64(i) + 1, nil
-	}
-	return "", from, nil
+	Status     string        `json:"status"`
+	Word       string        `json:"word"`
+	After      string        `json:"after"`
+	Messages   []waitMessage `json:"messages"`
+	Wake       *waitWake     `json:"wake,omitempty"`
+	WakeAfter  string        `json:"wake_after,omitempty"`
+	WakeOffset *int64        `json:"wake_offset,omitempty"`
 }
 
 // streamID is whether s is a stream entry id (<ms>-<seq>, both numbers): the
@@ -1077,17 +1133,16 @@ func (w world) wait(c *tool.Call) *tool.Out {
 		return answer(err)
 	}
 	jsonOut := c.Bool("json")
-	if !jsonOut {
-		waitLine(c, tool.Done().As("ARMED").Fact("after", cursor))
-	}
 	wakePath := c.Str("wake-file")
-	var offset int64
+	var wake wakeCursor
 	if wakePath != "" {
-		size, err := w.fileSize(wakePath)
+		wake, err = w.wakeArm(wakePath, c.Str("wake-after"))
 		if err != nil {
-			return tool.Refuse("the wake file cannot be read: " + err.Error())
+			return wakeRefusal(err)
 		}
-		offset = size
+	}
+	if !jsonOut {
+		waitLine(c, wakeFacts(tool.Done().As("ARMED").Fact("after", cursor), wakePath, wake))
 	}
 	// --skip-subject is a comma list of prefixes, empty words dropped; the
 	// match without case is WaitPick's, the one place the rule lives
@@ -1097,17 +1152,17 @@ func (w world) wait(c *tool.Call) *tool.Out {
 	timeout := c.Dur("timeout")
 	for {
 		if wakePath != "" {
-			text, end, err := w.fileLine(wakePath, offset)
+			text, next, err := w.wakeLine(wakePath, wake)
 			if err != nil {
-				return tool.Refuse("the wake file cannot be read: " + err.Error())
+				return wakeRefusal(err)
 			}
-			offset = end
+			wake = next
 			if text != "" {
 				if jsonOut {
 					return waitObject(c, waitJSON{Status: "ok", Word: "WAKE", After: cursor,
-						Messages: []waitMessage{}, Wake: &waitWake{File: wakePath, Line: oneline.Escape(text)}}, 0)
+						Messages: []waitMessage{}, Wake: &waitWake{File: wakePath, Line: oneline.Escape(text)}, WakeAfter: wake.token(), WakeOffset: &wake.Offset}, 0)
 				}
-				waitLine(c, tool.Done().As("WAKE").Fact("file", wakePath).Fact("line", tool.Text(text)))
+				waitLine(c, wakeFacts(tool.Done().As("WAKE").Fact("file", wakePath).Fact("line", tool.Text(text)), wakePath, wake))
 				return tool.Exit(0)
 			}
 		}
@@ -1119,9 +1174,9 @@ func (w world) wait(c *tool.Call) *tool.Out {
 			left := timeout - w.now().Sub(start)
 			if left <= 0 {
 				if jsonOut {
-					return waitObject(c, waitJSON{Status: "ok", Word: "NONE", After: cursor, Messages: []waitMessage{}}, 1)
+					return waitObject(c, waitJSON{Status: "ok", Word: "NONE", After: cursor, Messages: []waitMessage{}, WakeAfter: wakeToken(wakePath, wake), WakeOffset: wakeOffset(wakePath, wake)}, 1)
 				}
-				o := tool.Fail().As("NONE").Fact("after", cursor).Fact("waited", timeout.String())
+				o := wakeFacts(tool.Fail().As("NONE").Fact("after", cursor).Fact("waited", timeout.String()), wakePath, wake)
 				o.Verb = "wait"
 				o.Render(c.Stderr, false)
 				return tool.Exit(1)
@@ -1147,13 +1202,13 @@ func (w world) wait(c *tool.Call) *tool.Out {
 				m := e.Message()
 				msgs = append(msgs, waitMessage{ID: m.ID, From: m.From, Subject: oneline.Escape(m.Subject), Bytes: len(m.Body)})
 			}
-			return waitObject(c, waitJSON{Status: "ok", Word: "OK", After: cursor, Messages: msgs}, 0)
+			return waitObject(c, waitJSON{Status: "ok", Word: "OK", After: cursor, Messages: msgs, WakeAfter: wakeToken(wakePath, wake), WakeOffset: wakeOffset(wakePath, wake)}, 0)
 		}
 		for _, e := range kept {
 			m := e.Message()
 			waitLine(c, tool.Done().As("MESSAGE").Fact("id", m.ID).Fact("from", m.From).Fact("subject", m.Subject).Fact("bytes", len(m.Body)))
 		}
-		waitLine(c, tool.Done().Fact("after", cursor))
+		waitLine(c, wakeFacts(tool.Done().Fact("after", cursor), wakePath, wake))
 		return tool.Exit(0)
 	}
 }

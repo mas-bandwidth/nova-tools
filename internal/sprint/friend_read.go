@@ -483,16 +483,17 @@ func askOneFriend(p *Plan, s *Snapshot, pr *Card, seats []FriendSeat, name, dir 
 // column the fleet does not use, and not onto a readers column). HOLD with a
 // finding raises the same broken-read judgment Read raises. The readers table
 // gains no row.
-func FriendReadClose(s *Snapshot, name, primary, report string) Plan {
-	return FriendReadCloseChecked(s, name, primary, "", report, nil)
+func FriendReadClose(s *Snapshot, name, primary, report string, generation ...int) Plan {
+	return FriendReadCloseChecked(s, name, primary, "", report, nil, generation...)
 }
 
 // FriendReadCloseChecked is FriendReadClose of the read card named (card, the packet's own
 // key: a re-asked read is a later identity of the plain one, ReadCardGenIDs; "" is the one of
 // her identities at the attempt that is placed), with the server's check of the read's branch
 // at its close (missing, as ReadReq.Missing): a broken report on a read whose branch origin
-// does not hold is retired with no verdict (read_missing.go).
-func FriendReadCloseChecked(s *Snapshot, name, primary, card, report string, missing map[string]MissingBranch) Plan {
+// does not hold is retired with no verdict (read_missing.go). generation, when given, must be
+// the read card's live one (a stale report is refused).
+func FriendReadCloseChecked(s *Snapshot, name, primary, card, report string, missing map[string]MissingBranch, generation ...int) Plan {
 	var p Plan
 	pr := s.Work.Card(primary)
 	if pr == nil {
@@ -506,6 +507,10 @@ func FriendReadCloseChecked(s *Snapshot, name, primary, card, report string, mis
 	rc := friendReadCardOf(s, name, primary, attempt, card)
 	if rc == nil {
 		p.refuse(primary, "no read asked of "+name)
+		return p
+	}
+	if len(generation) > 0 && max(generation[0], 1) != max(rc.Int("gen"), 1) {
+		p.refuse(primary, fmt.Sprintf("stale read report: generation %d is not the live one (%d)", generation[0], max(rc.Int("gen"), 1)))
 		return p
 	}
 	verdict, finding, why := ParseFriendReadReport(report)
@@ -622,6 +627,11 @@ func readCardVerb(s *Snapshot, r ReadReq, row, name string) Plan {
 	}
 	SortCards(all)
 	chosen := pick(&p, sel, all, fieldStream, func(c *Card) string {
+		if len(r.Gens) > 0 || c.F("stopped_from_gen") != "" {
+			if why := liveGen("read", c, r.Gens); why != "" {
+				return why
+			}
+		}
 		switch {
 		case c.F("kind") != "read":
 			return "not a read (it is " + orDash(c.F("kind")) + "): work is reported with finish"
