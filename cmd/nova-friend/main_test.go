@@ -41,6 +41,7 @@ func TestMain(m *testing.M) {
 // rig is the tool over one fake store with ada and bob known, a fake
 // launchctl, a fixed home and clock: no socket, no real time, no launchd.
 type rig struct {
+	mu           sync.Mutex
 	store        *bustest.Fake
 	env          map[string]string
 	launchctl    []string
@@ -51,7 +52,8 @@ type rig struct {
 	onPath       map[string]string // what lookPath finds, by name
 	now          time.Time
 	home         string
-	answered     map[string]bool // the session checks bob's fake session has answered
+	answered       map[string]bool // the session checks bob's fake session has answered
+	answeredChecks map[string]bool // stream message IDs answerChecks has answered
 	alive        friend.Aliver
 	deaf         bool          // bob's opencode session takes a turn and never runs the pong line
 	fs           *friend.MemFS // the harness settings' filesystem: bob's directory /w/bob
@@ -76,6 +78,18 @@ func newRig(t *testing.T, names ...string) *rig {
 	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379", "PATH": "/usr/bin:/bin"}, now: start, home: t.TempDir(), alive: fakeAlive{running: true, why: "the fake harness runs"}, fs: fs}
 }
 
+func (r *rig) Now() time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.now
+}
+
+func (r *rig) SetNow(t time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.now = t
+}
+
 func (r *rig) world() world {
 	return world{
 		initialRowMode: friend.ModeBatch, // this rig configures a batch friend
@@ -88,14 +102,26 @@ func (r *rig) world() world {
 			return r.store, func() {}, nil
 		},
 		launchctl: func(_ context.Context, args ...string) (string, error) {
+			r.mu.Lock()
+			defer r.mu.Unlock()
 			r.launchctl = append(r.launchctl, strings.Join(args, " "))
 			if r.launchctlOut != "" {
 				return r.launchctlOut, nil
 			}
 			return "", nil
 		},
-		now:     func() time.Time { r.answerChecks(); r.now = r.now.Add(time.Second); return r.now },
-		sleep:   func(context.Context, time.Duration) { r.now = r.now.Add(time.Second) },
+		now: func() time.Time {
+			r.answerChecks()
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			r.now = r.now.Add(time.Second)
+			return r.now
+		},
+		sleep: func(context.Context, time.Duration) {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			r.now = r.now.Add(time.Second)
+		},
 		signals: func(ctx context.Context) (context.Context, context.CancelFunc) { return context.WithCancel(ctx) },
 		uid:     501,
 		home:    r.home,
@@ -137,18 +163,31 @@ func (r *rig) answerChecks() {
 		return // ignored: a store that is down answers nothing; the test that wants it down says so
 	}
 	for _, e := range es {
-		if nonce, ok := strings.CutPrefix(e.Message().Subject, friend.SessionCheckPrefix); ok && !r.answered[nonce] {
-			r.answer(nonce)
+		if nonce, ok := strings.CutPrefix(e.Message().Subject, friend.SessionCheckPrefix); ok {
+			r.mu.Lock()
+			if r.answeredChecks == nil {
+				r.answeredChecks = map[string]bool{}
+			}
+			alreadyAnswered := r.answeredChecks[e.Entry]
+			if !alreadyAnswered {
+				r.answeredChecks[e.Entry] = true
+			}
+			r.mu.Unlock()
+			if !alreadyAnswered {
+				r.answer(nonce)
+			}
 		}
 	}
 }
 
 // answer is bob's session sending its pong for nonce.
 func (r *rig) answer(nonce string) {
+	r.mu.Lock()
 	if r.answered == nil {
 		r.answered = map[string]bool{}
 	}
 	r.answered[nonce] = true
+	r.mu.Unlock()
 	b := &bus.Bus{Store: r.store}
 	_, _ = b.Send(context.Background(), bus.Message{From: "bob", To: []string{"ada"}, Subject: friend.PongSubject, Body: friend.PongLine(nonce, 0, 0, 0) + "\n"}) // ignored: a pong that is not sent leaves the friend down, which the test reads
 }
@@ -291,7 +330,7 @@ func TestStatusReadsTheThreeFiles(t *testing.T) {
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
 		Out("STATUS OK daemon=up harness=opencode status_age=1s connection=connected seat=ada last_ping=2026-10-04T02:59:00Z ping_age=1m1s challenge=challenged nonce=n1 last_pong=2026-10-04T02:58:00Z session_pong_age=2m1s daemon_pong_age=31s pongs=0 queue=1 working=1 width=8 beats=7 last_beat=- delivered=2 session=- mode=-",
 			"NOTE the last beat failed: the sprint server at 127.0.0.1:6390 did not answer")
-	r.now = start.Add(friend.DaemonStale)
+	r.SetNow(start.Add(friend.DaemonStale))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out("STATUS OK daemon=down")
 }
 
@@ -910,7 +949,7 @@ func TestRunWithNoSessionAnsweringBeatsDown(t *testing.T) {
 	mu.Unlock()
 	st, _, err := friend.ReadStatus(friend.StateDirIn(dir))
 	require.NoError(t, err)
-	r.now = st.At // read as the daemon last wrote it: up
+	r.SetNow(st.At) // read as the daemon last wrote it: up
 	r.cli().Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
 		Out("presence=down", `presence_reason="no session answer"`, "NOTE the daemon is up and the session is not (no session answer)")
 }
@@ -1098,7 +1137,7 @@ func TestRunKeepsTheHarnessWatchAdvisory(t *testing.T) {
 	assert.Empty(t, st.BeatError)
 	assert.Equal(t, friend.HarnessNotSeen, st.HarnessSeen)
 
-	r.now = st.At
+	r.SetNow(st.At)
 	r.cli().Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
 		Out("status=up", "harness not seen", `harness_seen="not-seen"`).NotOut("the last beat failed")
 }
@@ -1277,7 +1316,7 @@ func TestStatusIsDecidedFromEvidenceAndShowsIt(t *testing.T) {
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out(`status=down why="weekly limit until ` + start.Add(34*time.Hour).Local().Format("Mon 3:04 PM") + `"`)
 	require.NoError(t, os.Remove(filepath.Join(state, friend.LimitFile)))
 
-	r.now = start.Add(friend.DaemonStale)
+	r.SetNow(start.Add(friend.DaemonStale))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out(`daemon=down`, `status=down why="bus cannot deliver: daemon down 31s (2 undelivered)"`)
 
 	cli.Do(t, "status", "--as", "bob", "--dir", dir, "--redis", "").Exit(0).Out(`undelivered not counted`)
