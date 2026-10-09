@@ -290,7 +290,13 @@ materialised epoch. An omitted epoch selects the active epoch; an explicit epoch
 selects that materialised epoch. Its scope is a member-ID array or a complete
 declared row/column selection. It returns table identity, epoch/revision, every selected member's
 record revision, fields, verified owned placement and score, and explicit missing
-members. A selection beyond the declared bound refuses; it cannot return a prefix
+members. An optional `fields` array on an object scope selects only those application
+fields (at most 128 distinct names of at most 256 bytes each); absent or empty
+retains every application field. An overlong name or too many names refuses as `LIMIT`.
+Epoch, table/member revisions, missing members and verified placement/score are
+unchanged. Reserved metadata names, repeated or invalid UTF-8 field names refuse as `ARGS`.
+The projection reads named hash fields rather than fetching the full records.
+A selection beyond the declared bound refuses; it cannot return a prefix
 marked complete. Bound/external cells are not writable through this interface.
 The request is `{"members": [<id>, ...]}`, `{"selection": [{"row": <row>, "col":
 <col>}, ...]}` or a bare array of ids; its list is nonempty, an id is a nonempty
@@ -435,6 +441,8 @@ A test compares the shared constants with this table:
 | guards per member | 1000 |
 | one_of options | 1000 |
 | read set members | 1024 |
+| read set field name bytes | 256 |
+| read set fields | 128 |
 | columns per table | 1000 |
 | rows per table | 100000 |
 | properties per manifest | 64 |

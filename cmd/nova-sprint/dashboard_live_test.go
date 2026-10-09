@@ -75,25 +75,25 @@ func TestTheDashboardServesTheLiveServersDataOncePerSecond(t *testing.T) {
 	}
 
 	// a read a second with no page open, each sent to the live server as where --json
-	// --cards --rows (the rows place the critical path and are not served)
-	for range 5 {
+	// --cards --critical-rows (the placements are not served)
+	for range 60 {
 		second()
 	}
-	assert.Equal(t, 5, reads(), "one read a second, whoever is looking")
-	assert.Equal(t, []string{"where", "--actor", "boss", "--json", "--cards", "--rows", "--archived"}, sent[0])
+	assert.Equal(t, 60, reads(), "one read a second, whoever is looking")
+	assert.Equal(t, []string{"where", "--actor", "boss", "--json", "--cards", "--critical-rows", "--archived", "--landed-series=false"}, sent[0])
 	data, stale := api()
-	assert.JSONEq(t, r.boss("nova-sprint where --json --cards"), data, "the page's data is the live server's own")
+	assert.JSONEq(t, r.boss("nova-sprint where --json --cards --landed-series=false"), data, "the page's data is the live server's own")
 	assert.False(t, stale)
 	for range 3 {
 		api()
 	}
-	assert.Equal(t, 5, reads(), "pages between two ticks are answered from the copy")
+	assert.Equal(t, 60, reads(), "pages between two ticks are answered from the copy")
 
 	// the server moves; a second later the page has it
 	r.boss("nova-sprint add --stream s2 --count 2")
 	second()
 	data, _ = api()
-	assert.JSONEq(t, r.boss("nova-sprint where --json --cards"), data)
+	assert.JSONEq(t, r.boss("nova-sprint where --json --cards --landed-series=false"), data)
 	assert.Contains(t, data, `"all":5`)
 	good := data
 
@@ -125,7 +125,7 @@ func TestTheDashboardServesTheLiveServersDataOncePerSecond(t *testing.T) {
 	second()
 	assert.Equal(t, 1, strings.Count(log.String(), "FRESH again"), log.String())
 	data, stale = api()
-	assert.JSONEq(t, r.boss("nova-sprint where --json --cards"), data)
+	assert.JSONEq(t, r.boss("nova-sprint where --json --cards --landed-series=false"), data)
 	assert.False(t, stale)
 	code, _ = get("/healthz")
 	assert.Equal(t, http.StatusOK, code)

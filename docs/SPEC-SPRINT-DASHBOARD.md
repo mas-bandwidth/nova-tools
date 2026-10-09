@@ -28,7 +28,7 @@ tune the same way.
 `nova-sprint dashboard [--listen <address:port>[,<address:port>...] | none] [--pull <address:port>[,<address:port>...] | none | <url>] [--logo <file>] [--every 1s]`
 serves the page on each `--listen` address (default `127.0.0.1:7390`), one listener
 each, sharing one cached copy of the sprint. It reads the sprint in-process the way
-`where --json --cards` does (through the sprint's server when `NOVA_SPRINT_SERVER` names
+`where --json --cards --landed-series=false` does (through the sprint's server when `NOVA_SPRINT_SERVER` names
 one, else on the store `--redis` names), in one place, once per `--every` whether or not
 a page is open, so the copy is never older than a tick (the owner, 2026-10-04: "I need to
 be able to always trust the dashboard"; "Golang nova-tools and nova-sprint verbs only"):
@@ -50,8 +50,38 @@ the reads' count, failures and read times. `--logo` names an image file
 served as the logo and the favicon; with none, the slot renders nothing.
 `/healthz` answers `ok`.
 
-One freshness check: the served data's age is the time since its read (before any good
-read, since the dashboard started). Older than 2 s for 30 s raises the alarm: one line
+The one-second refresh reads current sprint facts without scanning the epoch log: the
+page does not consume the historical `landedSeries`, so the dashboard passes
+`--landed-series=false` to both a direct store read and the sprint server. Ordinary
+`where --json` includes that series by default; a client that needs it keeps the
+default or passes `--landed-series=true`. The dashboard also passes `--critical-rows`,
+which reads only the critical cards placements in one batch and carries none of their
+fields. Those rows place the critical path in its release and are then dropped.
+Ordinary `--rows` still reads every primary and its fields, even when both options are
+given. Active cards and the pull routes keep their complete existing projection.
+These are projection choices, not a second source of sprint state.
+
+Friend usage is read at one pinned fleet revision. A moved, missing or unplaced
+chunk retries the whole projection under the store's bounded load retry policy;
+no partial totals succeed. A cleared pinned shape fails the read as cleared; it
+does not retry into a newer epoch. A busy or failed source keeps the last good
+copy with its original age.
+
+The ideal fresh source budget is 100–200 ms. The release component gate
+`TestRedisFriendUsageProjectionRetainsTotalsWithinReadBudget` requires both
+`functional` and `perf` tags and asserts 100 ms p99 at 4,479 usage records; it is
+run alone in a disposable `tools/functionalrun` container. Its exact Make command
+inside that reader is `GOFLAGS="-mod=readonly -tags=functional,perf -v" make
+test-merge PKGS=./internal/sprint/store MERGE_TIMEOUT=600s
+RUN=^TestRedisFriendUsageProjectionRetainsTotalsWithinReadBudget$`. Single-tag CI
+lanes do not establish this numeric gate. Its isolated result does not establish
+live end-to-end p99, source cadence or 100-times fleet latency.
+
+One freshness check: the served data's age follows its `data.at` source timestamp,
+never a newer fetch of the same old generation. The fetch completion stays in
+`fetchedAt`; an upstream fetch time bounds the age too. If the source carries no
+valid time, the read time is the fallback (before any good read, since the dashboard
+started). Older than 2 s for 30 s raises the alarm: one line
 on the dashboard's output (`ALARM stale: ...`), once an episode; while it stands
 `/healthz` answers 503 with why, on the page's listeners and the pull routes', and
 `/api/sprint` carries `"stale": true`. The first fresh read clears it, with one line
@@ -97,7 +127,9 @@ from the owner edits one line here and nothing else moves.
   Menlo), right-aligned. Headers over numeric columns right-aligned too.
 - Refresh: the page keeps `/events` open and patches in place as each copy arrives; while the stream is not open it
   polls the server's cached copy every 1 s on a fixed timer (never after an answer); the server reads the sprint at
-  most once a second. A failed read: hold the previous data, change nothing, say nothing on the page (log only).
+  most once a second. A failed read holds the previous data and source clock. The existing stale alarm changes
+  only the live dot to waiting and the clock label to Stale; recovery restores Updated and the green dot. Before
+  the alarm, a failed read changes nothing on the page.
 - Caching: no-store on everything; versioned asset links; the page reloads itself when the build number changes.
 
 ## Header (one flex row, align-items center)

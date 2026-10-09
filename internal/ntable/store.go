@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/redis/go-redis/v9"
@@ -1780,6 +1781,9 @@ func batchReceipt(manifest BatchManifest, cmd *redis.Cmd) (Receipt, error) {
 type ReadSetScope struct {
 	Members   []string        `json:"members,omitempty"`
 	Selection []CellSelection `json:"selection,omitempty"`
+	// Fields selects application fields; empty retains every field. Identity,
+	// epoch, revision, placement and score remain verified (SPEC-NOVA-TABLE).
+	Fields []string `json:"fields,omitempty"`
 }
 
 // CellSelection specifies a row and column for ReadSet.
@@ -1836,6 +1840,8 @@ func (r ReadSetResult) IsMissing(id string) bool {
 // table (ns_table_read_set, a read-only function): each member's place, score,
 // revision and fields, the members that are missing, and the table's epoch and
 // revision, which a manifest's expected_table_revision is prepared from.
+// Fields optionally selects application fields; empty retains all fields. The
+// verified metadata and missing/placement checks remain unchanged.
 //
 // The scope is one of two shapes, each nonempty: Members (ids) or Selection
 // (row and column pairs, every member of each cell). An empty scope, both lists
@@ -1854,6 +1860,19 @@ type ReadSetCmd struct {
 func QueueReadSet(ctx context.Context, c redis.Cmdable, table string, scope ReadSetScope, epoch ...uint64) (*ReadSetCmd, error) {
 	if !ValidName(table) {
 		return nil, fmt.Errorf("table %q: invalid name; run: nova-table help", table)
+	}
+	if err := over(limitNameReadSetFields, LimitReadSetFields, len(scope.Fields), ""); err != nil {
+		return nil, fmt.Errorf("%w; run: nova-table help", err)
+	}
+	seenFields := make(map[string]bool, len(scope.Fields))
+	for _, field := range scope.Fields {
+		if !utf8.ValidString(field) || !word(field) || reservedField(field) || seenFields[field] {
+			return nil, fmt.Errorf("read set fields must be distinct application field names; run: nova-table help")
+		}
+		if err := over(limitNameReadSetFieldName, LimitReadSetFieldNameBytes, len(field), ""); err != nil {
+			return nil, fmt.Errorf("%w; run: nova-table help", err)
+		}
+		seenFields[field] = true
 	}
 	scopeBody, err := payload(scope)
 	if err != nil {

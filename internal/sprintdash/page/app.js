@@ -601,11 +601,11 @@ function renderRelease(j) {
   });
 }
 // The clock shows the time of the data on screen. A failed read or a
-// restarting server changes nothing on the page: the last data, clock and
-// dot stay exactly as they were (failures are logged by the server only).
-function setLive(since) {
-  setClass($("live"), "live ok");
-  setLiveHTML($("live-text"), "Updated <span class=\"mono\">" + clock(since) + "</span>");
+// restarting server holds the last data. The existing freshness alarm changes
+// only the indicator; its clock remains the source time (SPEC-SPRINT-DASHBOARD).
+function setLive(since, stale) {
+  setClass($("live"), stale ? "live waiting" : "live ok");
+  setLiveHTML($("live-text"), (stale ? "Stale" : "Updated") + " <span class=\"mono\">" + clock(since) + "</span>");
 }
 function setLiveHTML(e, s) { if (e.innerHTML !== s) e.innerHTML = s; }
 // The full form of a table, unless any of its rows or cells would overflow: then the compact form.
@@ -784,7 +784,7 @@ function apply(j) {
     if (snap !== lastSnap) { lastSnap = snap; try { render(j.data); } catch (e) { console.error(e); } }
     lastGood = j.data;
     renderRelease(j);
-    setLive(new Date(j.data.at));
+    setLive(new Date(j.data.at), j.stale);
   }
   if (j.build) { if (build == null) build = j.build; else if (build !== j.build) location.reload(); }
 }

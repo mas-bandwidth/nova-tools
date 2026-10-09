@@ -372,7 +372,7 @@ func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, er
 	if err != nil || len(rows) == 0 {
 		return rows, err
 	}
-	fleet, err := st.friendFleet(ctx)
+	fleet, err := st.friendFleet(ctx, rows)
 	if err != nil {
 		return nil, err
 	}
@@ -385,21 +385,6 @@ func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, er
 		rows[i].Tokens, rows[i].Charged = sprint.FriendTotalsFromCards(cards)
 	}
 	return rows, nil
-}
-
-// friendFleet is the fleet table's cards, read once for the friends table's token
-// sum: a friend's cards are on her row (sprint.FriendRow) in ready, working and
-// the done cells. An empty table (a store whose fleet was never initialised) is
-// no cards, not an error.
-func (st *Store) friendFleet(ctx context.Context) (*sprint.Table, error) {
-	loaded, err := st.Load(ctx, []string{sprint.Fleet}, nil)
-	if err != nil {
-		return nil, err
-	}
-	if loaded.Fleet == nil {
-		return sprint.NewTable(sprint.Fleet), nil
-	}
-	return loaded.Fleet, nil
 }
 
 // friendRows is FriendRows and, by name, why each friend is not up

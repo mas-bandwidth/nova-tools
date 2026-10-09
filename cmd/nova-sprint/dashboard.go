@@ -149,14 +149,16 @@ func dashboardUpstream(pull string) (string, error) {
 	return u.String(), nil
 }
 
-// whereJSON reads the sprint as `nova-sprint where --json --cards --rows --archived` does, in this
+// whereJSON reads the sprint as `nova-sprint where --json --cards --critical-rows --archived` does, in this
 // process: through the sprint's server when NOVA_SPRINT_SERVER names one, else on the
 // store; --redis is handed on when the dashboard was given it, as where would have been.
+// The page uses no historical landing series: false avoids scanning the epoch log on
+// each refresh (docs/SPEC-SPRINT-DASHBOARD.md, Serving and publishing).
 // The rows give each critical card its stream, so the critical path follows the page's
 // release (sprintdash.placed); the server drops them. The archived streams' rows come
 // too: the page hides them behind its one archived line (stream archive).
 func (a *app) whereJSON(addr string, given bool) ([]byte, error) {
-	argv := []string{"where", "--json", "--cards", "--rows", "--archived"}
+	argv := []string{"where", "--json", "--cards", "--critical-rows", "--archived", "--landed-series=false"}
 	if given {
 		argv = append(argv, "--redis", addr)
 	}

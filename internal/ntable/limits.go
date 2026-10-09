@@ -40,6 +40,14 @@ const (
 	limitNameBatchValues  = "value bytes per batch"
 )
 
+// Optional read-set projections have their own request bounds.
+const (
+	LimitReadSetFields         = 128
+	LimitReadSetFieldNameBytes = 256
+	limitNameReadSetFields     = "read set fields"
+	limitNameReadSetFieldName  = "read set field name bytes"
+)
+
 // ReceiptValueBytes is the longest field value a receipt, the change event and
 // the operation record's result hold in full; a longer one is recorded as its
 // length and SHA-1 (FieldChange.BeforeBytes, BeforeSHA1). The record's request is
@@ -130,6 +138,10 @@ func (e *LimitError) Advice() string {
 		return fmt.Sprintf("send at most %d in one manifest; split the entries across manifests, each its own transaction with its own operation id", e.Bound)
 	case limitNameManifest:
 		return fmt.Sprintf("send at most %d bytes; fewer entries or shorter values, split across manifests with their own operation ids", e.Bound)
+	case limitNameReadSetFields:
+		return fmt.Sprintf("request at most %d distinct application fields; narrow the read projection", e.Bound)
+	case limitNameReadSetFieldName:
+		return fmt.Sprintf("use a field name of at most %d bytes", e.Bound)
 	case limitNameMemberID:
 		return fmt.Sprintf("use a member id of at most %d bytes", e.Bound)
 	case limitNameFieldValue:

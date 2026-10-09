@@ -654,7 +654,7 @@ type whereView struct {
 	Merging   []mergingCard `json:"merging,omitempty"`
 	Judgments []judgmentRef `json:"judgments,omitempty"`
 	// Rows is where --json --rows's: every primary's row of the work table, in work
-	// order, its fields but the brief; absent without --rows.
+	// order, its fields but the brief; --critical-rows carries only critical placements.
 	Rows []primaryRow `json:"rows,omitempty"`
 	// Archived is the archived streams (stream archive): their names, the cards landed
 	// in them and what those cost, the work table's cost cells summed to the cent; absent
@@ -913,11 +913,12 @@ func dealtView(d store.Dealt, prefix string, epoch uint64) ([]dealtCard, []judgm
 
 // whereRun is what one where was asked, its flags read.
 type whereRun struct {
-	c     common
-	watch bool
-	all   bool
-	cards bool
-	rows  bool
+	c            common
+	watch        bool
+	all          bool
+	cards        bool
+	rows         bool
+	criticalRows bool
 	// archived puts the archived streams' rows in --json's tables and rows
 	archived bool
 	release  releaseFlag
@@ -964,12 +965,14 @@ func releaseFrame(releases map[string]int64, target string) string {
 
 func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("where")
+	fs.Bool("landed-series", true, "with --json: include the historical landing series; false reads no epoch log")
 	watch := fs.Bool("watch", false, "redraw in place every --every until interrupted")
 	every := fs.Duration("every", time.Second, "the redraw interval with --watch, above 0")
 	all := fs.Bool("all", false, "draw the readers and merge tables too, hidden from the default frame (--json always carries them)")
 	cards := fs.Bool("cards", false, "with --json: also every work card dealt to a fleet row and not finished (its row, state, since, deadline and branch) and the open judgments on them, as the dashboard's pull routes serve them, and every machine's lanes (lane list)")
 	archived := fs.Bool("archived", false, "with --json: the archived streams' rows of the work and merge tables in tables, and their primaries in --rows, beside the live ones (stream archive); the summary and the drawn footers count only the streams on the table either way, and archived_cards and archived_landed carry theirs")
 	rows := fs.Bool("rows", false, "with --json: also every primary's row of the work table (id, stream, state, score, and its fields but the brief: card <id> --brief), in work order, so a child reads every card in one call and never loops card calls")
+	criticalRows := fs.Bool("critical-rows", false, "with --json: only critical cards placements, without primary fields; --rows still includes every primary")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled (--json)")
 	atEpoch := fs.Int64("at-epoch", -1, "the sprint as it was at an earlier epoch (before a clear)")
 	var rel releaseFlag
@@ -1007,7 +1010,10 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	if *rows && !c.json {
 		return refuse(stderr, "where", "--rows is a field of the JSON view: give --json with it")
 	}
-	r := whereRun{c: *c, watch: *watch, all: *all, cards: *cards, rows: *rows, archived: *archived, release: rel, every: *every, stale: *stale, atEpoch: *atEpoch}
+	if *criticalRows && !c.json {
+		return refuse(stderr, "where", "--critical-rows is a field of the JSON view: give --json with it")
+	}
+	r := whereRun{criticalRows: *criticalRows, c: *c, watch: *watch, all: *all, cards: *cards, rows: *rows, archived: *archived, release: rel, every: *every, stale: *stale, atEpoch: *atEpoch}
 	if addr := a.server(fs); addr != "" {
 		// the sprint's server draws each frame: one plain where a frame, so the watch
 		// never holds the server between frames
@@ -1080,6 +1086,23 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 			}
 			v.Rows = rowsView(s, gone)
 			v.MergeRow.OldestMergingMin = oldestMerging(v.At, s.Work.Column(string(sprint.Merging)))
+		}
+		if r.c.json && r.criticalRows && !r.rows {
+			// Only these placements reach the page; one batched read replaces a full
+			// work-table load (docs/SPEC-SPRINT-DASHBOARD.md, Serving and publishing).
+			ids := make([]string, min(len(v.Critical), 5))
+			for i := range ids {
+				ids[i] = v.Critical[i].ID
+			}
+			cards, err := st.Records(ctx, sprint.Work, ids)
+			if err != nil {
+				return "", a.readFailed("where", err, stderr), false
+			}
+			for _, c := range cards {
+				if c.Row != "" {
+					v.Rows = append(v.Rows, primaryRow{ID: c.ID, Stream: c.Row, Column: c.Col, State: c.Col, Score: c.Score})
+				}
+			}
 		}
 		if r.c.json {
 			b, _ := json.Marshal(v)

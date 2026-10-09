@@ -135,7 +135,7 @@ do
   -- the three. A refusal names the bound and the count found, never the input.
   T.limits = {
     manifest_bytes = 1048576, changed_entries = 128, guard_entries = 1024,
-    member_id_bytes = 256, field_value_bytes = 65536,
+    member_id_bytes = 256, field_value_bytes = 65536, read_set_field_name_bytes = 256, read_set_fields = 128,
     set_fields = 128, unset_fields = 1000, field_guards = 1000, one_of_options = 1000,
     read_set_members = 1024,
     columns = 1000, rows = 100000,
@@ -144,7 +144,7 @@ do
   }
   T.limit_names = {
     manifest_bytes = 'manifest bytes', changed_entries = 'entries with changes', guard_entries = 'guard-only entries',
-    member_id_bytes = 'member id bytes', field_value_bytes = 'field value bytes',
+    member_id_bytes = 'member id bytes', field_value_bytes = 'field value bytes', read_set_field_name_bytes = 'read set field name bytes', read_set_fields = 'read set fields',
     set_fields = 'set fields per member', unset_fields = 'unset fields per member',
     field_guards = 'guards per member', one_of_options = 'one_of options', read_set_members = 'read set members',
     columns = 'columns per table', rows = 'rows per table',
@@ -665,12 +665,13 @@ do
     if exists and epoch ~= d.epoch then return nil, nil, T.refuse('MEMBEREPOCH', id, epoch, d.epoch) end
     return h, exists
   end
-  -- T.member_head(d, id): a batch's view of a member: whether the record exists
+  -- T.member_head(d, id, fields): a verified head with optional application fields;
+  -- a batch's view of a member: whether the record exists
   -- and its epoch, revision and place, read by name. Any other field is read on
   -- first use, by name (member_field in T.apply), so what a batch reads is what
   -- its entries name and not what the record holds; T.limits.batch_value_bytes
   -- bounds those reads.
-  function T.member_head(d, id)
+  function T.member_head(d, id, fields)
     if not T.word(id) then return nil, nil, T.refuse('MEMBER', 'a member id is a nonempty string without control characters') end
     local mkey = T.memberkey(d, id)
     local n = redis.pcall('HLEN', mkey)
@@ -680,10 +681,13 @@ do
     end
     local h = {}
     if n == 0 then return h, false end
-    local named = redis.call('HMGET', mkey, 'epoch', 'revision', 'place:' .. d.name)
+    local names = {'epoch', 'revision', 'place:' .. d.name}
+    for _, field in ipairs(fields or {}) do names[#names + 1] = field end
+    local named = redis.call('HMGET', mkey, unpack(names))
     if named[1] then h.epoch = named[1] end
     if named[2] then h.revision = named[2] end
     if named[3] then h['place:' .. d.name] = named[3] end
+    for i = 4, #names do if named[i] then h[names[i]] = named[i] end end
     if (named[1] or '0') ~= d.epoch then return nil, nil, T.refuse('MEMBEREPOCH', id, named[1] or '0', d.epoch) end
     return h, true
   end
@@ -1937,15 +1941,15 @@ do
     if not scope then return T.refuse('ARGS', 'read_set scope must be a JSON object or array') end
     if T.repeats(args[2]) then return T.refuse('ARGS', 'read_set request names a key twice') end
     local shape = 'read_set scope must be {"members": [...]}, {"selection": [...]} or a nonempty array of member ids'
-    local members, selection
+    local members, selection, fields
     if scope.members ~= nil or scope.selection ~= nil then
       for k in pairs(scope) do
-        if k ~= 'members' and k ~= 'selection' then return T.refuse('ARGS', 'read_set scope has an unknown key') end
+        if k ~= 'members' and k ~= 'selection' and k ~= 'fields' then return T.refuse('ARGS', 'read_set scope has an unknown key') end
       end
       if scope.members ~= nil and scope.selection ~= nil then
         return T.refuse('ARGS', 'read_set scope holds members or selection, not both')
       end
-      members, selection = scope.members, scope.selection
+      members, selection, fields = scope.members, scope.selection, scope.fields
     elseif #scope > 0 and next(scope, #scope) == nil then
       members = scope
     else
@@ -1956,6 +1960,21 @@ do
     end
     if selection ~= nil and (type(selection) ~= 'table' or #selection == 0) then
       return T.refuse('ARGS', 'read_set selection must be a nonempty array')
+    end
+    if fields ~= nil then
+      if type(fields) ~= 'table' or not T.arrayfield(args[2], 'fields') then return T.refuse('ARGS', 'read_set fields must be an array') end
+      local over_fields = T.over('read_set_fields', #fields, '')
+      if over_fields then return over_fields end
+      local seen_fields = {}
+      for _, field in ipairs(fields) do
+        if not T.word(field) or not T.utf8(field) or field == 'epoch' or field == 'revision' or string.sub(field, 1, 6) == 'place:' or seen_fields[field] then
+          return T.refuse('ARGS', 'read_set fields must be distinct application field names')
+        end
+        local over_field = T.over('read_set_field_name_bytes', #field, '')
+        if over_field then return over_field end
+        seen_fields[field] = true
+      end
+      if #fields == 0 then fields = nil end
     end
     local d, err = T.def(table_name, args[3])
     if not d then return err end
@@ -1997,7 +2016,14 @@ do
     local missing = {}
     local idx
     for _, id in ipairs(target_ids) do
-      local h, exists, why = T.member(d, id)
+      local h, exists, why
+      if fields then
+        local over_id = T.over('member_id_bytes', #id, '')
+        if over_id then return over_id end
+        h, exists, why = T.member_head(d, id, fields)
+      else
+        h, exists, why = T.member(d, id)
+      end
       if why then return why end
       if not exists then
         idx = idx or T.place_index(d, target_ids)

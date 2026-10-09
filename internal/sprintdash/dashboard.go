@@ -255,10 +255,15 @@ func (s *Server) record(start, end time.Time, body []byte, up *snapshot, err err
 			}
 			rate, minutes = s.sampleLanded(start, epoch)
 		}
-		s.fresh.at = at
 		var c sprintCopy
 		// ignored: sprintJSON has read body as JSON; a field of another shape is left zero
 		_ = json.Unmarshal(body, &c)
+		// Freshness follows the source timestamp, never a new fetch of old data
+		// (docs/SPEC-SPRINT-DASHBOARD.md, Serving and publishing).
+		s.fresh.at = at
+		if !c.At.IsZero() && c.At.Before(at) {
+			s.fresh.at = c.At
+		}
 		s.copy = &c
 		s.gen++
 		if s.changed != nil {

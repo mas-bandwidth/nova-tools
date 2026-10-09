@@ -15,13 +15,13 @@ import (
 func init() {
 	for i := range verbs {
 		if verbs[i].name == "where" {
-			verbs[i].syntax = "[--watch] [--every <duration>] [--all] [--json [--cards] [--rows] [--archived] [--stale <duration>] [--at-epoch <n>]: includes landedSeries] [--release [<name>]]"
+			verbs[i].syntax = "[--watch] [--every <duration>] [--all] [--json [--cards] [--rows] [--critical-rows] [--archived] [--stale <duration>] [--landed-series=<bool>] [--at-epoch <n>]: includes landedSeries by default] [--release [<name>]]"
 			orig := verbs[i].run
 			verbs[i].run = func(a *app, args []string, stdout, stderr io.Writer) int {
 				// where's own flags are parsed here once, every one of them, so --redis
 				// and --at-epoch are read whatever comes before them (where --json --cards
 				// --redis <addr>, the dashboard's call)
-				c, atEpoch, _, err := whereSeriesFlags(a, args)
+				c, atEpoch, fs, err := whereSeriesFlags(a, args)
 				if err != nil {
 					if hasJSONWord(args) {
 						// never a series from a store or epoch the caller did not name
@@ -29,7 +29,7 @@ func init() {
 					}
 					return orig(a, args, stdout, stderr)
 				}
-				if !c.json {
+				if !c.json || fs.Lookup("landed-series").Value.String() == "false" {
 					return orig(a, args, stdout, stderr)
 				}
 				w := &whereJSONWriter{a: a, c: *c, atEpoch: atEpoch, out: stdout, stderr: stderr}
@@ -46,11 +46,13 @@ func init() {
 // pinned to where's own by TestWhereSeriesFlagsAreWheresFlags.
 func whereSeriesFlags(a *app, args []string) (*common, int64, flagSet, error) {
 	fs, c := a.verbSetup("where")
+	fs.Bool("landed-series", true, "with --json: include the historical landing series; false reads no epoch log")
 	fs.Bool("watch", false, "redraw in place every --every until interrupted")
 	fs.Duration("every", time.Second, "the redraw interval with --watch, above 0")
 	fs.Bool("all", false, "draw the readers and merge tables too")
 	fs.Bool("cards", false, "with --json: also every dealt work card, judgment and lane")
 	fs.Bool("archived", false, "with --json: the archived streams' rows of the work and merge tables in tables, and their primaries in --rows, beside the live ones (stream archive); their counts are in the footers and the summary either way")
+	fs.Bool("critical-rows", false, "with --json: only critical cards placements, without primary fields; --rows still includes every primary")
 	fs.Bool("rows", false, "with --json: also every primary's row of the work table")
 	fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled (--json)")
 	atEpoch := fs.Int64("at-epoch", -1, "the sprint as it was at an earlier epoch (before a clear); the series is that epoch's")

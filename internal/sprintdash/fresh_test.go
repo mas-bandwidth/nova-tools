@@ -31,6 +31,7 @@ func (r *rig) health() (int, string) {
 func TestTheFreshnessAlarmIsOlderThanTwoSecondsForThirty(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
+	r.next = func() ([]byte, error) { return freshWhere(r, 0), nil }
 	for range 3 {
 		r.advance(time.Second)
 		r.s.Tick()
@@ -62,7 +63,7 @@ func TestTheFreshnessAlarmIsOlderThanTwoSecondsForThirty(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(r.log.String(), "ALARM"), "once an episode")
 	assert.EqualValues(t, 0, r.api()["data"].(map[string]any)["landed"], "the page holds the last good copy")
 
-	r.next = func() ([]byte, error) { return where(1), nil }
+	r.next = func() ([]byte, error) { return freshWhere(r, 1), nil }
 	r.advance(time.Second)
 	r.s.Tick()
 	assert.Equal(t, 1, strings.Count(r.log.String(), "FRESH again"), r.log.String())
@@ -94,7 +95,7 @@ func TestThePullerServesTheUpstreamsCopy(t *testing.T) {
 	t.Parallel()
 	up := newRig(t)
 	n := 0
-	up.next = func() ([]byte, error) { n++; return where(n), nil }
+	up.next = func() ([]byte, error) { n++; return freshWhere(up, n), nil }
 	for range 11 * 60 {
 		up.advance(time.Second)
 		up.s.Tick()
@@ -149,4 +150,35 @@ func TestThePullerServesTheUpstreamsCopy(t *testing.T) {
 	q.s.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/sprint", nil))
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &v))
 	assert.False(t, v.OK)
+}
+
+// freshWhere is a newly read source generation at the rig's clock.
+func freshWhere(r *rig, landed int) []byte {
+	return []byte(strings.Replace(string(where(landed)), "2026-10-02T19:00:00Z", r.now.Format(time.RFC3339Nano), 1))
+}
+
+// A successful fetch of an old source copy cannot clear its freshness alarm.
+func TestFreshFetchOfOldSourceDoesNotClearStale(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	old := where(7)
+	r.next = func() ([]byte, error) { return old, nil }
+	r.s.Tick()
+	r.advance(32 * time.Second)
+	r.s.Tick()
+	v := r.api()
+	assert.Equal(t, true, v["ok"], "the fetch succeeded")
+	assert.Equal(t, true, v["stale"], "the source generation stayed old")
+	assert.Equal(t, r.now.Format(time.RFC3339), v["fetchedAt"], "fetch completion stays distinct from source age")
+	code, _ := r.health()
+	assert.Equal(t, http.StatusServiceUnavailable, code)
+	r.advance(time.Second)
+	r.s.Tick()
+	assert.Equal(t, true, r.api()["stale"], "another successful old fetch stays stale")
+	assert.Equal(t, 1, strings.Count(r.log.String(), "ALARM stale:"))
+	r.next = func() ([]byte, error) { return freshWhere(r, 8), nil }
+	r.advance(time.Second)
+	r.s.Tick()
+	assert.Equal(t, false, r.api()["stale"])
+	assert.Equal(t, 1, strings.Count(r.log.String(), "FRESH again:"))
 }
