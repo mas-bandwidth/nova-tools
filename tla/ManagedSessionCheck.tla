@@ -12,14 +12,15 @@ vars == <<mode, pending, delivered, completed, route, unsafe>>
 Init == /\ mode = IF Override = "" THEN "unknown" ELSE Override
         /\ pending = 0 /\ delivered = FALSE /\ completed = 0
         /\ route = "none" /\ unsafe = FALSE
-DownBeat == /\ mode = "unknown" /\ mode' = RowMode
+DownBeat == /\ mode = "unknown"
+            /\ mode' = IF RowMode \in {"batch", "one-shot"} THEN RowMode ELSE "unknown"
             /\ UNCHANGED <<pending, delivered, completed, route, unsafe>>
 Ask == /\ mode # "unknown" /\ pending = 0 /\ completed < 2
        /\ pending' = completed + 1 /\ delivered' = FALSE /\ route' = "none"
        /\ UNCHANGED <<mode, completed, unsafe>>
 Deliver == /\ pending # 0 /\ ~delivered
            /\ route' = IF mode = "one-shot" /\ ~Broken THEN "owned-wall" ELSE "standalone"
-           /\ unsafe' = unsafe \/ (mode = "one-shot" /\ Broken)
+           /\ unsafe' = (unsafe \/ (mode = "one-shot" /\ Broken))
            /\ delivered' = TRUE
            /\ UNCHANGED <<mode, pending, completed>>
 Answer == /\ delivered /\ pending # 0

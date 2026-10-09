@@ -40,6 +40,13 @@ func TestProductionSessionCheckModeNeverLeaksOneShotOrUnknownTurn(t *testing.T) 
 					return ctx, cancel
 				}
 				var mu sync.Mutex
+				clock := start
+				w.now = func() time.Time {
+					mu.Lock()
+					defer mu.Unlock()
+					clock = clock.Add(time.Second)
+					return clock
+				}
 				rawChecks, marked, downs := 0, 0, 0
 				w.exec = func(ctx context.Context, dir, program string, args []string, _ string) (string, int, error) {
 					mu.Lock()

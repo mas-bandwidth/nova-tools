@@ -26,6 +26,13 @@ func TestExplicitOneShotNeverStartsRawPresenceTurn(t *testing.T) {
 			return ctx, cancel
 		}
 		var mu sync.Mutex
+		clock := start
+		w.now = func() time.Time {
+			mu.Lock()
+			defer mu.Unlock()
+			clock = clock.Add(time.Second)
+			return clock
+		}
 		raw := 0
 		w.exec = func(ctx context.Context, _, _ string, args []string, _ string) (string, int, error) {
 			mu.Lock()
