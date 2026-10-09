@@ -62,15 +62,17 @@ func pushReplyStore(t *testing.T, actor string, socket bool) (*app, *store.Store
 		require.Eventually(t, func() bool {
 			select {
 			case <-exited:
+				body, _ := os.ReadFile(logPath)
+				t.Logf("redis exited early! out=%s", string(body))
 				return false
 			default:
 			}
 			lastErr = admin.Ping(context.Background()).Err()
+			if lastErr != nil {
+				t.Logf("ping err: %v", lastErr)
+			}
 			return lastErr == nil
-		}, 10*time.Second, 20*time.Millisecond, func() string {
-			body, _ := os.ReadFile(logPath)
-			return fmt.Sprintf("socket redis did not become ready: err=%v, out=%s", lastErr, string(body))
-		})
+		}, 3*time.Second, 500*time.Millisecond)
 	}
 	require.NoError(t, fn.Load(context.Background(), admin))
 	a := newApp(func(k string) string {
