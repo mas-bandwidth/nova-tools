@@ -7,6 +7,7 @@ import (
  "os"
  "path/filepath"
  "testing"
+ "strings"
 
  "github.com/stretchr/testify/assert"
  "github.com/stretchr/testify/require"
@@ -61,7 +62,7 @@ func TestNativeControlSharedWorkDifferentFriendsKeepSeparateStateAndClaims(t *te
 
 func TestNativeControlLegacyPresentInvalidLaneIsHeldBeforeLaunch(t *testing.T) {
  t.Parallel()
- for _,kind:=range []string{"malformed","empty-ended","directory","symlink"} {
+ for _,kind:=range []string{"malformed","empty-ended","malformed-ended","oversized","directory","symlink"} {
   t.Run(kind,func(t *testing.T) {
    t.Parallel()
    work:=t.TempDir(); path:=laneMarkPath(work,"owned"); require.NoError(t,os.MkdirAll(filepath.Dir(path),0700))
@@ -69,7 +70,7 @@ func TestNativeControlLegacyPresentInvalidLaneIsHeldBeforeLaunch(t *testing.T) {
    case "directory": require.NoError(t,os.Mkdir(path,0700))
    case "symlink": require.NoError(t,os.Symlink(filepath.Join(t.TempDir(),"missing"),path))
    default:
-    raw:=[]byte("unknown owned claim"); if kind=="empty-ended" { raw=[]byte(LaneMarkEnded("")) }; require.NoError(t,os.WriteFile(path,raw,0600))
+    raw:=[]byte("unknown owned claim"); if kind=="empty-ended" { raw=[]byte(LaneMarkEnded("")) }; if kind=="malformed-ended" { raw=[]byte(LaneMarkEnded("old")+"junk\n") }; if kind=="oversized" { raw=[]byte(strings.Repeat("x",4097)) }; require.NoError(t,os.WriteFile(path,raw,0600))
    }
    d:=&Daemon{Dir:work,StateDir:filepath.Join(t.TempDir(),"state"),NativeControlDir:filepath.Join(t.TempDir(),"control")}
    assert.ErrorContains(t,d.ValidateLegacyNativeAuthority(),"legacy native lane claim")
