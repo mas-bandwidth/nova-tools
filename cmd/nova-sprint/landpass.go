@@ -281,24 +281,13 @@ func (l *lander) pass(ctx context.Context, s *sprint.Snapshot, order []string) (
 			contexts[j], cancels[j] = context.WithCancelCause(ctx)
 		}
 		go func() {
-			l.merges(jobs, contexts, finished)
+			l.merges(jobs, contexts, cancels, finished)
 			close(finished)
 		}()
 		ready := make(map[*landJob]bool, len(jobs))
 		for _, j := range jobs {
-			clock := time.After
-			if l.a != nil && l.a.after != nil {
-				clock = l.a.after
-			}
-			deadline := clock(LandDeadline)
 			for !ready[j] {
-				select {
-				case done := <-finished:
-					ready[done] = true
-				case <-deadline:
-					cancels[j](errLandDeadline)
-					deadline = nil // one abandonment of this batch, then wait for its exit
-				}
+				ready[<-finished] = true // deadline cancellation never skips worker exit
 			}
 			cancels[j](nil)
 			if !j.done {
@@ -598,9 +587,10 @@ func (l *lander) pruneWorktrees(ctx context.Context) {
 	}
 }
 
-// merges is phase 1: every job not yet ended merged in its own worktree, up to parallel at
-// a time (runBounded), each in its own lander.
-func (l *lander) merges(jobs []*landJob, contexts map[*landJob]context.Context, finished chan<- *landJob) {
+// merges is phase 1 (tla/LandPass.tla): every job not yet ended merged in its own
+// worktree, up to parallel at a time, each in its own lander. Its deadline
+// starts after its turn to cut the same base and its worker slot are both held.
+func (l *lander) merges(jobs []*landJob, contexts map[*landJob]context.Context, cancels map[*landJob]context.CancelCauseFunc, finished chan<- *landJob) {
 	var todo []*landJob
 	for _, j := range jobs {
 		if j.done {
@@ -627,10 +617,36 @@ func (l *lander) merges(jobs []*landJob, contexts map[*landJob]context.Context, 
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			ctx := contexts[j]
+			clock := time.After
+			if l.a != nil && l.a.after != nil {
+				clock = l.a.after
+			}
+			deadline := clock(LandDeadline) // this job owns the slot now, not while queued or when the parent reaches it
+			stopTimer, timerDone := make(chan struct{}), make(chan struct{})
+			go func() {
+				defer close(timerDone)
+				select {
+				case <-deadline:
+					cancels[j](errLandDeadline)
+				case <-stopTimer:
+				case <-ctx.Done():
+				}
+			}()
 			j.f.prepareCut(ctx, j)
 			close(cutDone)
 			if !j.done {
 				j.f.merge(ctx, j)
+			}
+			close(stopTimer)
+			<-timerDone
+			select {
+			case <-deadline:
+				cancels[j](errLandDeadline)
+			default:
+			}
+			cancels[j](nil) // stop this job's timer only after all its work and children exit
+			if !j.done && errors.Is(context.Cause(ctx), errLandDeadline) {
+				j.refuse(gateWaitWhy(ctx))
 			}
 			finished <- j
 		}(j, wait, cutDone)

@@ -38,10 +38,15 @@ func TestLandAnotherBaseProgressesWhileFirstBaseGateWaits(t *testing.T) {
 	}
 	r.queued(heads, "s1-1", "s2-1")
 	blocked, green, release, pushed := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
-	deadline := make(chan time.Time, 1)
+	var timersMu sync.Mutex
+	var deadlines []chan time.Time
 	parentAfter := r.a.after
 	r.a.after = func(d time.Duration) <-chan time.Time {
 		if d == LandDeadline {
+			deadline := make(chan time.Time, 1)
+			timersMu.Lock()
+			deadlines = append(deadlines, deadline)
+			timersMu.Unlock()
 			return deadline
 		}
 		return parentAfter(d)
@@ -65,7 +70,10 @@ func TestLandAnotherBaseProgressesWhileFirstBaseGateWaits(t *testing.T) {
 			}
 		}
 		if strings.HasSuffix(dir, "@s2") {
-			greenOnce.Do(func() { close(green) })
+			go func() {
+				<-ctx.Done() // its worker completed and stopped its own timer
+				greenOnce.Do(func() { close(green) })
+			}()
 		}
 		return "", 0, nil
 	}
@@ -83,7 +91,11 @@ func TestLandAnotherBaseProgressesWhileFirstBaseGateWaits(t *testing.T) {
 	}
 	select {
 	case <-green:
-		deadline <- time.Now() // the higher-priority gate reached its bound
+		timersMu.Lock()
+		for _, deadline := range deadlines {
+			deadline <- time.Now() // only the higher-priority worker remains active
+		}
+		timersMu.Unlock()
 	case <-t.Context().Done():
 		t.Error("second base could not gate while first base gate waited")
 	}
