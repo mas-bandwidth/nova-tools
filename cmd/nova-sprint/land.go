@@ -292,6 +292,8 @@ type lander struct {
 	baseWhy   string
 	now       func() time.Time
 	rulesOff  []string
+	// gitRun, when set, stands in for git (a test). Nil runs the real program.
+	gitRun func(ctx context.Context, dir string, args ...string) (string, error)
 }
 
 func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
@@ -1455,6 +1457,9 @@ func rejected(err error) bool {
 // except -z output whose status columns and paths are byte-exact; an error
 // carries git's own words.
 func (l *lander) git(ctx context.Context, dir string, args ...string) (string, error) {
+	if l.gitRun != nil {
+		return l.gitRun(ctx, dir, args...)
+	}
 	res, err := gitrun.Run(ctx, gitrun.Options{C: dir, Env: l.a.gitEnv, OwnRepo: dir != ""}, args...)
 	if err != nil {
 		words := strings.TrimSpace(string(res.Stderr) + "\n" + string(res.Stdout))
