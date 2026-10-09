@@ -3016,6 +3016,16 @@ the original failed measurement.
 **Its remedy line.** `schema.go no longer matches internal/sprint/TABLES.lock; a PR that changes a table's shape changes the lock file in the same PR, where a read sees it`, then each differing line, the lock's and the schema's.
 **Its narrowings.** Column width (always 0 here) is not in the lock; a change to what a table holds that is not in its definition (a card's fields, a hidden column's contents) is not seen.
 
+
+### `exit-word` — a tool's last status word and exit code agree (exit codes tell the truth)
+
+**The rule.** A tool's last printed line (the last line of its stdout or stderr before exit) has a status word (`OK`, `FAILED`, or `REFUSED`) followed by an exit code. The exit code must agree with the status word: `OK`→0, `FAILED`→1, `REFUSED`→2. An exit code above 2 must appear in the verb's exit table. (docs/STANDARD.md section 2, "Exit codes tell the truth and the banner states them.")
+**The mistake it prevents.** A tool that prints `VERB OK` but exits with a non-zero code leaves the reader uncertain whether the verb succeeded or failed. A gate that cannot decide and exits 0 (done) when it should exit 2 (usage/store failure) breaks the contract that tells the reader what happened.
+**The test.** `TestExitWordClassRuleHoldsOverTranscripts` (`internal/ci/exit_word_class_test.go`): reads `docs/TESTS.md` transcripts and refuses a last status word and exit code that disagree (OK and non-zero, FAILED and not 1, REFUSED and not 2), and a code above 2 not in the verb's exit table. Its witness `TestExitWordReadsFixtures` refuses a fixture that breaks the rule once, naming the site and the remedy.
+**Its allowlist.** the `exit-word` package ledger at `internal/ci/testdata/exit-word/<package>.txt`, `<package>:<kind> <sites> <why>`, kind `disagree` (status word and exit disagree) or `missing` (code above 2 not in exit table); counted and shrink-only, so a fix that aligns exit code with status word lowers its own row and `NOVA_CI_UPDATE=1 go test -count=1 -timeout 600s -run '^TestExitWordClassRuleHoldsOverTranscripts$' ./internal/ci/` lowers a count and drops a row at zero, never raising one or adding one.
+**Its remedy line.** `exit code <code> disagrees with status word <word>; align the exit code with the status word (OK→0, FAILED→1, REFUSED→2) or add it to the verb's exit table`
+**Its narrowings.** It reads `docs/TESTS.md` transcript text, not the tool's code: a mismatch in the transcript is refused, the transcript itself is the evidence of what the tool printed. The last status word is the last line matching a status word pattern.
+
 ### `onewriter` — a worker is a client and does not open the store
 
 **The rule.** One process writes a sprint's state: the run loop, beside the store, which is also the sprint's server (`nova-sprint run --listen`). A worker sends its verbs to it and reads its replies. The packages a worker's machine runs (`cmd/nova-swarm`, `internal/member`, `internal/sprintwire`) import, directly or through any package of this module, none of the packages that open the store (`internal/sprint/store`, `internal/redisconn`, `internal/ntable`, `internal/nsprint/store`, any `github.com/redis/` module).
