@@ -1566,11 +1566,15 @@ flags:
   --claude-accounts <string>  local reviewed public manifest input for Go materialization under the owned config root
   --claude-accounts-sha256 <string>  the exact public manifest digest printed by nova-secrets gate
   --claude-machine <string>  the selected target machine name in the reviewed manifest
+  --codex-device-enroll  run native device consent only on explicit apply in the person's terminal; no credentials copied
   --config-dir <string>  the absolute private harness config root (required)
   --context-limit <int>  explicit provider model context limit in tokens; zero leaves it unspecified
   --deny-self <string>  the absolute coordinator roots excluded from the lane wall, comma-separated (required)
   --dir <string>  the absolute working directory (required)
   --dry-run  print what the verb would write and write nothing
+  --enrollment-build <string>  expected coordinator build version; remote setup refuses a different or unknown build
+  --enrollment-label <string>  public browser account label; native status does not verify account identity
+  --enrollment-timeout <int>  native device consent deadline in seconds, 1-900; expiry or cancellation never certifies setup
   --harness <string>  the harness to initialize (required)
   --home <string>  the absolute private native home (required)
   --json  print the result as one JSON object instead of lines
@@ -1582,8 +1586,10 @@ flags:
   --profile-only  initialize the explicit profile without choosing a model or provider
   --program <string>  the absolute installed native executable (required)
   --provider <string>  the explicit provider ID
+  --remote-program <string>  absolute remote nova-friend executable from this same reviewed release
   --seat <string>  the nova-secrets seat holding those names
   --secrets <string>  sealed variable names, comma-separated
+  --target <string>  SSH user@host for Codex device enrollment on that execution host
 exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: local write: writes files on this machine: explicit --apply initializes local harness configuration; otherwise inspects and prints the plan
 ```
