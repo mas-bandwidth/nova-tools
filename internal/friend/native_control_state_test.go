@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
- "syscall"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -85,9 +85,11 @@ func TestNativeControlLegacyPresentInvalidLaneIsHeldBeforeLaunch(t *testing.T) {
 			path := laneMarkPath(work, "owned")
 			require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
 			switch kind {
-            case "absent":
-            case "canonical-ended": require.NoError(t,os.WriteFile(path,[]byte(LaneMarkEnded("old")),0600))
-            case "fifo": require.NoError(t,syscall.Mkfifo(path,0600))
+			case "absent":
+			case "canonical-ended":
+				require.NoError(t, os.WriteFile(path, []byte(LaneMarkEnded("old")), 0600))
+			case "fifo":
+				require.NoError(t, syscall.Mkfifo(path, 0600))
 			case "directory":
 				require.NoError(t, os.Mkdir(path, 0700))
 			case "symlink":
@@ -107,9 +109,10 @@ func TestNativeControlLegacyPresentInvalidLaneIsHeldBeforeLaunch(t *testing.T) {
 			}
 			d := &Daemon{Dir: work, StateDir: filepath.Join(t.TempDir(), "state"), NativeControlDir: filepath.Join(t.TempDir(), "control")}
 			if kind == "absent" || kind == "canonical-ended" {
- assert.NoError(t,d.ValidateLegacyNativeAuthority()); return
- }
- assert.ErrorContains(t, d.ValidateLegacyNativeAuthority(), "legacy native lane claim")
+				assert.NoError(t, d.ValidateLegacyNativeAuthority())
+				return
+			}
+			assert.ErrorContains(t, d.ValidateLegacyNativeAuthority(), "legacy native lane claim")
 			_, err := os.Lstat(path)
 			assert.NoError(t, err, "refusal preserves the old marker")
 		})
@@ -117,12 +120,13 @@ func TestNativeControlLegacyPresentInvalidLaneIsHeldBeforeLaunch(t *testing.T) {
 }
 
 func TestNativeControlEmptyStateIsReservedForOneFriendBeforeForwardProof(t *testing.T) {
- t.Parallel()
- home,work,state:=t.TempDir(),t.TempDir(),t.TempDir()
- require.NoError(t,os.Chmod(home,0700))
- root,err:=NativeControlDir(home,work);require.NoError(t,err)
- require.NoError(t,bindNativeControlOwnerState("first",state,root))
- assert.ErrorContains(t,bindNativeControlOwnerState("second",state,root),"another friend")
- require.NoError(t,bindNativeControlStateForFriend(state,root,"first"))
- require.NoError(t,bindNativeControlOwnerState("first",state,root),"same empty-state crash continuation stays valid")
+	t.Parallel()
+	home, work, state := t.TempDir(), t.TempDir(), t.TempDir()
+	require.NoError(t, os.Chmod(home, 0700))
+	root, err := NativeControlDir(home, work)
+	require.NoError(t, err)
+	require.NoError(t, bindNativeControlOwnerState("first", state, root))
+	assert.ErrorContains(t, bindNativeControlOwnerState("second", state, root), "another friend")
+	require.NoError(t, bindNativeControlStateForFriend(state, root, "first"))
+	require.NoError(t, bindNativeControlOwnerState("first", state, root), "same empty-state crash continuation stays valid")
 }

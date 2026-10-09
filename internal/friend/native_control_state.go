@@ -44,7 +44,9 @@ func bindNativeControlOwnerState(name, state, root string) error {
 		return errors.New("native control state directory cannot be verified")
 	}
 	indexPath := filepath.Join(filepath.Dir(root), "INDEX.json")
- if err := nativeControlNoSymlinkFile(indexPath+".lock"); err != nil { return err }
+	if err := nativeControlNoSymlinkFile(indexPath + ".lock"); err != nil {
+		return err
+	}
 	_, err = withLaneLock(indexPath, func() (string, error) {
 		if err := nativeControlNoSymlinkFile(indexPath); err != nil {
 			return "", err

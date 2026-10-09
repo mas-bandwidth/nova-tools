@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
- "strings"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/procgroup"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
@@ -133,14 +133,20 @@ func (d *Daemon) ValidateLegacyNativeAuthority() error {
 				}
 				continue
 			}
-            raw,laneErr := nativeControlReadLegacyLane(laneMarkPath(d.Dir,entry.Name()))
-            if laneErr != nil && !errors.Is(laneErr,os.ErrNotExist) { return errors.New("legacy native lane claim is unreadable or malformed; preserve and reconcile it before launching") }
-            if laneErr == nil {
-                who,ended := strings.CutPrefix(string(raw),laneEnded)
-                if !ended { return errors.New("legacy native lane claim remains unknown; drain and reconcile it before launching") }
-                who = strings.TrimSuffix(who,"\n")
-                if who == "" || strings.ContainsAny(who,"\r\n") || string(raw) != LaneMarkEnded(who) { return errors.New("legacy native lane claim is unreadable or malformed; preserve and reconcile it before launching") }
-            }
+			raw, laneErr := nativeControlReadLegacyLane(laneMarkPath(d.Dir, entry.Name()))
+			if laneErr != nil && !errors.Is(laneErr, os.ErrNotExist) {
+				return errors.New("legacy native lane claim is unreadable or malformed; preserve and reconcile it before launching")
+			}
+			if laneErr == nil {
+				who, ended := strings.CutPrefix(string(raw), laneEnded)
+				if !ended {
+					return errors.New("legacy native lane claim remains unknown; drain and reconcile it before launching")
+				}
+				who = strings.TrimSuffix(who, "\n")
+				if who == "" || strings.ContainsAny(who, "\r\n") || string(raw) != LaneMarkEnded(who) {
+					return errors.New("legacy native lane claim is unreadable or malformed; preserve and reconcile it before launching")
+				}
+			}
 			if _, err := os.Lstat(runReceiptPath(d.Dir, entry.Name())); errors.Is(err, os.ErrNotExist) {
 				if _, anchorErr := os.Lstat(runReceiptPath(d.Dir, entry.Name()) + ".anchor"); errors.Is(anchorErr, os.ErrNotExist) {
 					continue
