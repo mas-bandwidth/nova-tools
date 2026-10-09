@@ -104,6 +104,28 @@ func TestChecksRefuseWithTheFinding(t *testing.T) {
 	assert.Equal(t, "LINT DRIFT card=c check=test-outside-paths line=3: the TEST package b is no directory PATHS names (a/*.go); a card lands with a test it may edit", f[0].String())
 }
 
+// A card's repository and branch are the card's to name: the REPO:, BASE: and
+// CARRY: header lines name the repository, the base and the attempt the card
+// starts from, and prose may name the repository or branch path it works on
+// (`owner/name`, the repository word `name-tools` as a whole, `name/topic`),
+// so none is a personal name; a bare name in prose still is
+// (docs/SPEC-CARD-CONTRACT.md section 6).
+func TestARepositoryOrBranchNameIsNotAPersonalName(t *testing.T) {
+	t.Parallel()
+	opts := Options{Names: []string{"ana"}}
+	head := "RESULT: places.w1 sha=0123456789abcdef0123456789abcdef01234567 tier: flash\n" +
+		"REPO: org/ana-tools\nBASE: ana/topic\n" +
+		"CARRY: old-ana.w1 attempt 2 head=0123456789abcdef0123456789abcdef01234567\n\nTHE TASK. "
+	assert.Empty(t, Checks("places.w1", head+"see org/ana-tools\n", opts),
+		"the repository and branch names, on the header lines and in prose, are no person")
+	assert.Empty(t, Checks("places.w1", head+"the repo mas-bandwidth/ana-tools and the branch ana/fix are the card's\n", opts),
+		"a repository or branch path in prose is the place, not a person")
+	f := Checks("places.w1", head+"ask ana\n", opts)
+	require.Len(t, f, 1)
+	assert.Equal(t, "personal-name", f[0].Check)
+	assert.Equal(t, 6, f[0].Line, "the bare name in prose is the finding")
+}
+
 func TestTestPackage(t *testing.T) {
 	t.Parallel()
 	for brief, want := range map[string]string{

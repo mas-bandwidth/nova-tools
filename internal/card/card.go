@@ -136,8 +136,12 @@ func Lint(id, brief string, o Options) []cardgen.LintFinding {
 //   - test-outside-paths: the TEST line's package is a directory PATHS names, so the
 //     test the card lands with is one it may edit;
 //   - personal-name: no name of o.Names outside a double-quoted span (the owner's
-//     words, quoted, keep theirs), the card's own id, or the WHO: line that pins a
-//     friend;
+//     words, quoted, keep theirs), the card's own id, the WHO: line that pins a
+//     friend, the REPO:, BASE: and CARRY: header lines that name the repository,
+//     the branch and the carried attempt, or a repository or branch path on any
+//     line (`owner/name`, the repository word `name-tools` as a whole inside it,
+//     `name/topic`): a card names its repository and branch whatever their names,
+//     and a bare name in prose is still a finding;
 //   - dropped-card: no id of o.Dropped but the card's own;
 //   - author-name: no `By:` followed by a name of o.Names, quoted or not: a brief
 //     never names its author, the friend who does the work signs with their own name
@@ -159,10 +163,11 @@ func Checks(id, brief string, o Options) []cardgen.LintFinding {
 		}
 	}
 	for i, line := range strings.Split(brief, "\n") {
-		if strings.HasPrefix(line, "WHO:") {
-			continue // the friend a card is pinned to is named here (cardhdr.ReadWho)
+		if placeKey(line) {
+			continue // WHO: pins the friend a card is for (cardhdr.ReadWho); REPO:, BASE: and CARRY: name the repository, branch and carried attempt the card works from
 		}
 		scan := strings.ToLower(unquoted(line))
+		scan = blankPaths(scan)
 		if id != "" {
 			scan = strings.ReplaceAll(scan, strings.ToLower(id), " ")
 		}
@@ -266,6 +271,34 @@ var quotedRE = regexp.MustCompile(`"[^"]*"|“[^”]*”`)
 // are theirs to keep.
 func unquoted(line string) string {
 	return quotedRE.ReplaceAllStringFunc(line, func(q string) string { return strings.Repeat(" ", len(q)) })
+}
+
+// placeKeys begin the header lines the personal-name check reads past: WHO: pins the
+// friend a card is for (cardhdr.ReadWho), REPO: and BASE: name the repository and the
+// branch the card works on, CARRY: names the attempt it starts from (member.CarryLine):
+// a card names its repository and branch whatever their names
+// (docs/SPEC-CARD-CONTRACT.md section 6).
+var placeKeys = []string{"WHO:", "REPO:", "BASE:", "CARRY:"}
+
+// placeKey says line begins a header key the personal-name check reads past.
+func placeKey(line string) bool {
+	for _, k := range placeKeys {
+		if strings.HasPrefix(line, k) {
+			return true
+		}
+	}
+	return false
+}
+
+// placePathRE is a repository or branch path on a line: a word with a slash in it
+// (`owner/name`, `name/topic`); the repository component is a whole word
+// (`name-tools`), so a name inside it is part of the place the card names, not a
+// name in prose (docs/SPEC-CARD-CONTRACT.md section 6).
+var placePathRE = regexp.MustCompile(`\S*/\S*`)
+
+// blankPaths is a line with every repository or branch path blanked.
+func blankPaths(line string) string {
+	return placePathRE.ReplaceAllStringFunc(line, func(p string) string { return strings.Repeat(" ", len(p)) })
 }
 
 // hasWord says w is in s as a word of its own: no letter, digit or underscore on
