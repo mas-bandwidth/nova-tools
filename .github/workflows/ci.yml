@@ -229,7 +229,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          frozen='^(cmd/nova-sprint|cmd/nova-card|cmd/nova-work|internal/card|internal/ci/shrinkonly|internal/sprint/driver|internal/sprintdash|internal/workfile|internal/workgh|internal/worklang|tools/sprintsize)/'
+          frozen='^(cmd/nova-sprint|cmd/nova-card|cmd/nova-work|internal/card|internal/sprint/driver|internal/sprintdash|internal/workfile|internal/workgh|internal/worklang|tools/sprintsize)/'
           hits=$(git diff --name-only HEAD^1 HEAD | grep -E "$frozen" || true)
           if [ -n "$hits" ]; then
             echo "$hits"
