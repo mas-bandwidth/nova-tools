@@ -78,7 +78,7 @@ func PlanCodexEnrollment(o SetupOptions, fs SettingsFS, label string, timeout ti
 		if err := fs.MkdirAll(logDir, 0700); err != nil {
 			return nil, err
 		}
-		return []SetupFact{{Name: "native_log_directory", State: "private", Detail: logDir}}, nil
+		return []SetupFact{{Name: "native_log_directory", State: "parent_confined", Detail: logDir}}, nil
 	}}
 	p.Steps = append(p.Steps[:len(p.Steps)-1], logs, consent, status)
 	p.Facts = append(p.Facts, SetupFact{Name: "enrollment_label", State: "user_selected", Detail: label})

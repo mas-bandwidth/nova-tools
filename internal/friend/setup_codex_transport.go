@@ -15,10 +15,10 @@ import (
 // CodexEnrollmentTransport owns the local SSH wrapper through the same birth-
 // bound group cleanup as native setup; receipts contain no output (subscription spec).
 func CodexEnrollmentTransport(ctx context.Context, terminal *os.File, args []string, timeout time.Duration) error {
-	return codexEnrollmentTransport(ctx, terminal, "/usr/bin/ssh", args, timeout)
+	return codexEnrollmentTransport(ctx, terminal, "/usr/bin/ssh", args, timeout, "")
 }
 
-func codexEnrollmentTransport(ctx context.Context, terminal *os.File, program string, args []string, timeout time.Duration) error {
+func codexEnrollmentTransport(ctx context.Context, terminal *os.File, program string, args []string, timeout time.Duration, receiptRoot string) error {
 	ctx, err := CodexConsentContext(ctx, terminal)
 	if err != nil {
 		return err
@@ -26,9 +26,12 @@ func codexEnrollmentTransport(ctx context.Context, terminal *os.File, program st
 	if timeout <= 0 || timeout > 17*time.Minute {
 		return errors.New("enrollment transport wants a bounded deadline up to seventeen minutes; inspect setup -h")
 	}
-	root, err := os.MkdirTemp("", "nova-codex-enrollment-")
-	if err != nil {
-		return errors.New("enrollment transport cannot create a private public receipt; retry after fixing temporary storage")
+	root := receiptRoot
+	if root == "" {
+		root, err = os.MkdirTemp("", "nova-codex-enrollment-")
+		if err != nil {
+			return errors.New("enrollment transport cannot create a private public receipt; retry after fixing temporary storage")
+		}
 	}
 	receiptPath := filepath.Join(root, "RUN")
 	anchorPath := receiptPath + ".anchor"

@@ -59,7 +59,8 @@ the intended ChatGPT account in the native browser flow. The tool does not parse
 an undocumented challenge format or automate consent. Native CLI diagnostics
 remain native and are never read or copied by setup. Direct native login writes
 `codex-login.log`; enrollment requests the documented `log_dir` under the private
-CODEX_HOME and creates that real directory with owner-only permissions. It does not
+CODEX_HOME and creates missing real directories with owner-only permissions; existing log
+directories remain confined by the owner-only CODEX_HOME parent. It does not
 claim that native consent is log-free or alter an enforced administrator policy.
 
 On the selected host, the existing setup locks and birth-bound process receipts

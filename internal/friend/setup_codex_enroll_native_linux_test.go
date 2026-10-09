@@ -39,7 +39,7 @@ func TestNativeCodexConsentOutputIsTerminalOnlyAndStatusSwitchesBack(t *testing.
 	o := SetupOptions{Harness: "codex", Friend: "worker", Profile: "account", Dir: filepath.Join(root, "work"), Home: home, ConfigDir: config, Program: program, ProfileOnly: true, DenySelf: []string{filepath.Join(root, "coordinator")}}
 	runner := NativeSetupRunner()
 	p, err := PlanSetup(o, runner.FS, func(o SetupOptions, fs SettingsFS) (SetupPlan, error) {
-		return PlanCodexEnrollment(o, fs, "synthetic account", time.Second)
+		return PlanCodexEnrollment(o, fs, "synthetic account", 30*time.Second)
 	})
 	require.NoError(t, err)
 	terminal, master := codexTestTerminal(t)
@@ -72,10 +72,22 @@ func TestEnrollmentTransportCancellationReapsResistantFakeDescendants(t *testing
 	terminal, _ := codexTestTerminal(t)
 	root := t.TempDir()
 	pidPath := filepath.Join(root, "pid")
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	script := "trap '' TERM; printf '%s' \"$$\" > '" + pidPath + "'; (trap '' TERM; sleep 60) & wait"
-	err := codexEnrollmentTransport(ctx, terminal, "/bin/sh", []string{"-c", script}, time.Minute)
+	script := "trap '' TERM; (trap '' TERM; sleep 60) & printf '%s' \"$$\" > '" + pidPath + "'; wait"
+	done := make(chan error, 1)
+	receiptRoot := t.TempDir()
+	go func() {
+		done <- codexEnrollmentTransport(ctx, terminal, "/bin/sh", []string{"-c", script}, time.Minute, receiptRoot)
+	}()
+	require.Eventually(t, func() bool { _, err := os.Stat(pidPath); return err == nil }, 30*time.Second, 10*time.Millisecond, "fake child must publish its own marker before cancellation")
+	cancel()
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("transport cancellation did not finish verified cleanup")
+	}
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "trap")
 	raw, readErr := os.ReadFile(pidPath)
@@ -92,7 +104,7 @@ func TestCodexEnrollmentTransportRefusesNonTerminalBeforeChild(t *testing.T) {
 	require.NoError(t, err)
 	defer file.Close()
 	marker := filepath.Join(t.TempDir(), "must-not-launch")
-	err = codexEnrollmentTransport(context.Background(), file, "/usr/bin/touch", []string{marker}, time.Minute)
+	err = codexEnrollmentTransport(context.Background(), file, "/usr/bin/touch", []string{marker}, time.Minute, t.TempDir())
 	require.ErrorContains(t, err, "terminal")
 	_, err = os.Stat(marker)
 	assert.ErrorIs(t, err, os.ErrNotExist)
