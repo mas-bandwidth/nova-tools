@@ -1,6 +1,7 @@
 package friend
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -101,6 +102,11 @@ func TestClaudeAuthStatusClassification(t *testing.T) {
 		{name: "inconsistent signed out", stdout: `{"loggedIn":false,"authMethod":"claude.ai"}`, exit: 1, wantErr: true},
 		{name: "missing method", stdout: `{"loggedIn":true}`, wantErr: true},
 		{name: "missing login flag", stdout: `{"authMethod":"claude.ai"}`, wantErr: true},
+		{name: "duplicate login flag", stdout: `{"loggedIn":false,"loggedIn":true,"authMethod":"claude.ai"}`, wantErr: true},
+		{name: "case folded login flag", stdout: `{"loggedIn":false,"LoggedIn":true,"authMethod":"claude.ai"}`, wantErr: true},
+		{name: "duplicate method", stdout: `{"loggedIn":true,"authMethod":"none","authMethod":"claude.ai"}`, wantErr: true},
+		{name: "trailing object", stdout: `{"loggedIn":true,"authMethod":"claude.ai"} {}`, wantErr: true},
+		{name: "array status", stdout: `[{"loggedIn":true,"authMethod":"claude.ai"}]`, wantErr: true},
 		{name: "invalid JSON", stdout: `private@example.com`, wantErr: true},
 		{name: "oversized JSON", stdout: strings.Repeat("x", 33<<10), wantErr: true},
 		{name: "native failure", stdout: `{"loggedIn":true,"authMethod":"claude.ai"}`, exit: 1, wantErr: true},
@@ -220,4 +226,156 @@ func TestClaudeSetupRefusesUnimplementedRouteInputs(t *testing.T) {
 			require.ErrorContains(t, err, "--profile-only")
 		})
 	}
+}
+
+func TestClaudeDefaultSubscriptionRouteRequiresNativeClaudeAIAuth(t *testing.T) {
+	t.Parallel()
+	opts := claudeSetupOptions("/friends/account")
+	opts.ProfileOnly = false
+	opts.Provider = "claude.ai"
+	opts.Model = "claude.ai/default"
+	require.True(t, ClaudeAccountSetupRoute(opts))
+	fs := NewMemFS()
+	plan, err := PlanClaudeSetup(opts, fs)
+	require.NoError(t, err)
+	assert.Contains(t, plan.Facts, SetupFact{Name: "route", State: "selected_unverified", Detail: "claude.ai/default"})
+	assert.Contains(t, plan.Facts, SetupFact{Name: "model_resolution", State: "not_checked", Detail: "account default resolves only on a provider turn"})
+	status := plan.Steps[len(plan.Steps)-1]
+	require.NotNil(t, status.Validate)
+	for _, tc := range []struct {
+		name, stdout, wantState string
+		exit                    int
+		wantError               bool
+	}{
+		{name: "signed out", stdout: `{"loggedIn":false,"authMethod":"none"}`, exit: 1, wantState: "requires_user_login", wantError: true},
+		{name: "console", stdout: `{"loggedIn":true,"authMethod":"api_key"}`, wantState: "wrong_method", wantError: true},
+		{name: "subscription", stdout: `{"loggedIn":true,"authMethod":"claude.ai"}`, wantState: "local_claude_ai_auth"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			facts, err := status.Validate(SetupOutput{Stdout: tc.stdout, Exit: tc.exit})
+			if tc.wantError {
+				require.ErrorContains(t, err, "local claude.ai sign-in")
+			} else {
+				require.NoError(t, err)
+				assert.Contains(t, facts, SetupFact{Name: "subscription", State: "unverified", Detail: "local auth status does not verify subscription entitlement"})
+			}
+			require.NotEmpty(t, facts)
+			assert.Equal(t, tc.wantState, facts[0].State)
+		})
+	}
+}
+
+func TestClaudeAccountSetupRouteRefusesAPIBillingInputs(t *testing.T) {
+	t.Parallel()
+	base := claudeSetupOptions("/friends/account")
+	base.ProfileOnly = false
+	base.Provider = "claude.ai"
+	base.Model = "claude.ai/default"
+	for _, tc := range []struct {
+		name string
+		edit func(*SetupOptions)
+	}{
+		{name: "console provider", edit: func(o *SetupOptions) { o.Provider = "anthropic" }},
+		{name: "other model", edit: func(o *SetupOptions) { o.Model = "claude.ai/sonnet" }},
+		{name: "api key", edit: func(o *SetupOptions) { o.KeyEnv = "ANTHROPIC_API_KEY" }},
+		{name: "seat", edit: func(o *SetupOptions) { o.Seat = "seat" }},
+		{name: "secret", edit: func(o *SetupOptions) { o.SecretNames = []string{"ANTHROPIC_API_KEY"} }},
+		{name: "package", edit: func(o *SetupOptions) { o.Package = "adapter" }},
+		{name: "endpoint", edit: func(o *SetupOptions) { o.BaseURL = "https://example.test" }},
+		{name: "limit", edit: func(o *SetupOptions) { o.OutputLimit = 10 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			opts := base
+			tc.edit(&opts)
+			assert.False(t, ClaudeAccountSetupRoute(opts))
+			_, err := PlanClaudeSetup(opts, NewMemFS())
+			require.ErrorContains(t, err, "claude.ai/default subscription route")
+		})
+	}
+}
+
+func TestPlanSetupAllowsOnlyKeylessClaudeSubscriptionDefault(t *testing.T) {
+	t.Parallel()
+	fs := NewMemFS()
+	require.NoError(t, fs.MkdirAll("/friends/friend", 0o700))
+	require.NoError(t, fs.MkdirAll("/coordinator", 0o700))
+	opts := claudeSetupOptions("/friends/account")
+	opts.ProfileOnly = false
+	opts.Provider = "claude.ai"
+	opts.Model = "claude.ai/default"
+	opts.Profile = "isolated"
+	opts.DenySelf = []string{"/coordinator"}
+	plan, err := PlanSetup(opts, fs, PlanClaudeSetup)
+	require.NoError(t, err)
+	assert.Equal(t, "claude", plan.Harness)
+	for _, fact := range plan.Facts {
+		assert.NotEqual(t, "key_env", fact.Name)
+		assert.NotEqual(t, "secret_names", fact.Name)
+	}
+
+	other := opts
+	other.Model = "claude.ai/sonnet"
+	_, err = PlanSetup(other, fs, PlanClaudeSetup)
+	require.ErrorContains(t, err, "unknown provider wants explicit --key-env")
+
+	withKey := opts
+	withKey.KeyEnv = "ANTHROPIC_API_KEY"
+	withKey.SecretNames = []string{"ANTHROPIC_API_KEY"}
+	withKey.Seat = "seat"
+	_, err = PlanSetup(withKey, fs, PlanClaudeSetup)
+	require.ErrorContains(t, err, "claude.ai/default subscription route")
+}
+
+func TestClaudeDefaultRouteBindsOnlyAfterNativeSubscriptionAuth(t *testing.T) {
+	t.Parallel()
+	fs := NewMemFS()
+	require.NoError(t, fs.MkdirAll("/friends/friend", 0o700))
+	require.NoError(t, fs.MkdirAll("/coordinator", 0o700))
+	opts := claudeSetupOptions("/friends/account")
+	opts.ProfileOnly = false
+	opts.Provider = "claude.ai"
+	opts.Model = "claude.ai/default"
+	opts.Profile = "isolated"
+	opts.DenySelf = []string{"/coordinator"}
+	plan, err := PlanSetup(opts, fs, PlanClaudeSetup)
+	require.NoError(t, err)
+	statusOutput := `{"loggedIn":false,"loggedIn":true,"authMethod":"claude.ai"}`
+	statusExit := 0
+	runner := SetupRunner{
+		FS: fs,
+		Exec: func(ctx context.Context, _, _ string, _ []string, _ string) (string, int, error) {
+			require.NoError(t, processStarted(ctx)(42))
+			return statusOutput, statusExit, nil
+		},
+		Identity:      func(int) string { return "birth" },
+		GroupRunnable: func(int) bool { return false },
+		Lock:          func(string) (func() error, error) { return func() error { return nil }, nil },
+		Nonce:         func() string { return "run" },
+	}
+	root := "/friends/account/.nova-friend-setup"
+	result, err := runner.Apply(context.Background(), plan, root)
+	require.ErrorContains(t, err, "incomplete JSON")
+	entry, err := fs.Lstat(SetupProfilePath(opts.ConfigDir))
+	require.NoError(t, err)
+	assert.Equal(t, KindMissing, entry.Kind)
+
+	statusOutput = `{"loggedIn":false,"authMethod":"none"}`
+	statusExit = 1
+	result, err = runner.Apply(context.Background(), plan, root)
+	require.ErrorContains(t, err, "local claude.ai sign-in")
+	assert.Contains(t, result.Facts, SetupFact{Name: "auth", State: "requires_user_login", Detail: "Claude subscription sign-in is interactive"})
+	entry, err = fs.Lstat(SetupProfilePath(opts.ConfigDir))
+	require.NoError(t, err)
+	assert.Equal(t, KindMissing, entry.Kind)
+
+	statusOutput = `{"loggedIn":true,"authMethod":"claude.ai"}`
+	statusExit = 0
+	result, err = runner.Apply(context.Background(), plan, root)
+	require.NoError(t, err)
+	assert.Contains(t, result.Facts, SetupFact{Name: "auth", State: "local_claude_ai_auth", Detail: "native status reports claude.ai"})
+	entry, err = fs.Lstat(SetupProfilePath(opts.ConfigDir))
+	require.NoError(t, err)
+	assert.Equal(t, KindFile, entry.Kind)
 }

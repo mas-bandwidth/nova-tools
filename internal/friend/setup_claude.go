@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 	"time"
@@ -18,8 +19,10 @@ func PlanClaudeSetup(opts SetupOptions, fsys SettingsFS) (SetupPlan, error) {
 	if opts.Harness != "" && opts.Harness != "claude" {
 		return SetupPlan{}, fmt.Errorf("Claude setup wants harness claude, got %q", opts.Harness)
 	}
-	if !opts.ProfileOnly || opts.Provider != "" || opts.Model != "" || opts.Package != "" || opts.BaseURL != "" || opts.KeyEnv != "" || opts.Seat != "" || len(opts.SecretNames) != 0 || opts.ContextLimit != 0 || opts.OutputLimit != 0 {
-		return SetupPlan{}, errors.New("Claude setup initializes an isolated subscription profile only; use --profile-only without provider, model, key, seat or route inputs")
+	profileOnly := opts.ProfileOnly && opts.Provider == "" && opts.Model == ""
+	defaultRoute := ClaudeAccountSetupRoute(opts)
+	if (!profileOnly && !defaultRoute) || opts.Package != "" || opts.BaseURL != "" || opts.KeyEnv != "" || opts.Seat != "" || len(opts.SecretNames) != 0 || opts.ContextLimit != 0 || opts.OutputLimit != 0 {
+		return SetupPlan{}, errors.New("Claude setup wants --profile-only without route inputs or the explicit claude.ai/default subscription route; remove API key, seat, package, endpoint and limit inputs")
 	}
 	if opts.ConfigDir == "" || !filepath.IsAbs(opts.ConfigDir) || filepath.Clean(opts.ConfigDir) != opts.ConfigDir {
 		return SetupPlan{}, errors.New("Claude setup wants --config-dir as a clean absolute path to this friend's own config directory")
@@ -55,6 +58,11 @@ func PlanClaudeSetup(opts SetupOptions, fsys SettingsFS) (SetupPlan, error) {
 		{Name: "provider_turn", State: "not_checked"},
 		{Name: "login_command", State: "if_required", Detail: login},
 	}}
+	if defaultRoute {
+		plan.Facts = append(plan.Facts,
+			SetupFact{Name: "route", State: "selected_unverified", Detail: "claude.ai/default"},
+			SetupFact{Name: "model_resolution", State: "not_checked", Detail: "account default resolves only on a provider turn"})
+	}
 	if homeEntry.Kind == KindMissing {
 		home := opts.Home
 		plan.Steps = append(plan.Steps, SetupStep{
@@ -133,10 +141,25 @@ func PlanClaudeSetup(opts SetupOptions, fsys SettingsFS) (SetupPlan, error) {
 			Dir: opts.Home, Timeout: 30 * time.Second,
 		},
 		Validate: func(out SetupOutput) ([]SetupFact, error) {
-			return validateClaudeAuthStatus(out, login)
+			facts, err := validateClaudeAuthStatus(out, login)
+			if err != nil || !defaultRoute {
+				return facts, err
+			}
+			if len(facts) == 0 || facts[0].State != "local_claude_ai_auth" {
+				return facts, errors.New("Claude default route needs local claude.ai sign-in; run the printed login command and reapply setup")
+			}
+			return facts, nil
 		},
 	})
 	return plan, nil
+}
+
+// ClaudeAccountSetupRoute selects only the account's subscription default.
+// It never names an API credential, endpoint, or billable Console route.
+func ClaudeAccountSetupRoute(opts SetupOptions) bool {
+	return opts.Harness == "claude" && !opts.ProfileOnly && opts.Provider == "claude.ai" && opts.Model == "claude.ai/default" &&
+		opts.Package == "" && opts.BaseURL == "" && opts.KeyEnv == "" && opts.Seat == "" && len(opts.SecretNames) == 0 &&
+		opts.ContextLimit == 0 && opts.OutputLimit == 0
 }
 
 // claudeRootIsSafe refuses symlinks along the named config path. An account
@@ -163,15 +186,12 @@ func validateClaudeAuthStatus(out SetupOutput, login string) ([]SetupFact, error
 	if len(out.Stdout) > 32<<10 {
 		return nil, errors.New("Claude native auth status output is too large; inspect the local CLI and retry setup apply")
 	}
-	var status struct {
-		LoggedIn   *bool   `json:"loggedIn"`
-		AuthMethod *string `json:"authMethod"`
-	}
-	if err := json.Unmarshal([]byte(out.Stdout), &status); err != nil || status.LoggedIn == nil || status.AuthMethod == nil {
+	loggedIn, authMethod, err := claudeStatusFields(out.Stdout)
+	if err != nil || loggedIn == nil || authMethod == nil {
 		return nil, errors.New("Claude native auth status returned incomplete JSON; retry setup apply")
 	}
-	if !*status.LoggedIn {
-		if *status.AuthMethod != "none" {
+	if !*loggedIn {
+		if *authMethod != "none" {
 			return nil, errors.New("Claude native auth status is inconsistent; retry setup apply")
 		}
 		return []SetupFact{
@@ -182,7 +202,7 @@ func validateClaudeAuthStatus(out SetupOutput, login string) ([]SetupFact, error
 	if out.Exit != 0 {
 		return nil, errors.New("Claude native auth status exited unsuccessfully despite reporting login; retry setup apply")
 	}
-	if *status.AuthMethod != "claude.ai" {
+	if *authMethod != "claude.ai" {
 		return []SetupFact{
 			{Name: "auth", State: "wrong_method", Detail: "Claude is signed in through a method other than claude.ai subscription"},
 			{Name: "login_command", State: "next", Detail: login},
@@ -192,6 +212,52 @@ func validateClaudeAuthStatus(out SetupOutput, login string) ([]SetupFact, error
 		{Name: "auth", State: "local_claude_ai_auth", Detail: "native status reports claude.ai"},
 		{Name: "subscription", State: "unverified", Detail: "local auth status does not verify subscription entitlement"},
 	}, nil
+}
+
+// claudeStatusFields rejects duplicate and case-folded status members before
+// classifying native authentication; unknown native fields remain private.
+func claudeStatusFields(body string) (*bool, *string, error) {
+	decoder := json.NewDecoder(strings.NewReader(body))
+	start, err := decoder.Token()
+	if err != nil || start != json.Delim('{') {
+		return nil, nil, errors.New("status is not one JSON object")
+	}
+	seen := map[string]bool{}
+	var loggedIn *bool
+	var authMethod *string
+	for decoder.More() {
+		member, err := decoder.Token()
+		if err != nil {
+			return nil, nil, err
+		}
+		name, ok := member.(string)
+		if !ok || seen[strings.ToLower(name)] {
+			return nil, nil, errors.New("status has duplicate members")
+		}
+		seen[strings.ToLower(name)] = true
+		var raw json.RawMessage
+		if err := decoder.Decode(&raw); err != nil {
+			return nil, nil, err
+		}
+		switch name {
+		case "loggedIn":
+			if err := json.Unmarshal(raw, &loggedIn); err != nil {
+				return nil, nil, err
+			}
+		case "authMethod":
+			if err := json.Unmarshal(raw, &authMethod); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	end, err := decoder.Token()
+	if err != nil || end != json.Delim('}') {
+		return nil, nil, errors.New("status object is incomplete")
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return nil, nil, errors.New("status has trailing JSON")
+	}
+	return loggedIn, authMethod, nil
 }
 
 // claudeLoginCommand is for display only; setup never executes it.

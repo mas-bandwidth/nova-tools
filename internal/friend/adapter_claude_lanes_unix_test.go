@@ -43,11 +43,12 @@ func fakeClaude(t *testing.T, outbox string, write bool) (run Exec, rec string) 
 func TestClaudeOneShotLanePassesConfigDir(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, configDir string
-		write           bool
-		wantErr         string
+		name, configDir, model string
+		write                  bool
+		wantErr                string
 	}{
 		{name: "the outbox written", configDir: "/accounts/heavy-a", write: true},
+		{name: "selected account default", configDir: "/accounts/heavy-a", model: "default", write: true},
 		{name: "no outbox result", configDir: "/accounts/heavy-a", wantErr: "holds no REPORT.md and no RESULT.md"},
 		{name: "no config_dir", wantErr: "friend bob is a claude friend in one-shot mode with no config_dir, and a lane runs only as her own account (CLAUDE_CONFIG_DIR); run: nova-config friend set bob --config_dir <her account's absolute config directory>, or nova-friend run --config-dir <dir>"},
 	} {
@@ -59,7 +60,7 @@ func TestClaudeOneShotLanePassesConfigDir(t *testing.T) {
 			require.NoError(t, os.WriteFile(c.Brief, []byte(brief), 0o644))
 			run, rec := fakeClaude(t, c.Outbox, tc.write)
 			var out strings.Builder
-			cl := &Claude{Stub: Stub{Harness: "claude"}, Friend: "bob", Dir: dir, Run: run, Out: &out, ConfigDir: func() string { return tc.configDir }}
+			cl := &Claude{Stub: Stub{Harness: "claude"}, Friend: "bob", Dir: dir, Run: run, Out: &out, Model: tc.model, ConfigDir: func() string { return tc.configDir }}
 			var _ CardRunner = cl
 
 			lt, err := cl.RunCard(context.Background(), c)
@@ -86,7 +87,11 @@ func TestClaudeOneShotLanePassesConfigDir(t *testing.T) {
 			assert.Empty(t, got, "stdin is /dev/null")
 			got, err = os.ReadFile(filepath.Join(rec, "args"))
 			require.NoError(t, err)
-			assert.Equal(t, append([]string{"-p", brief, "--add-dir", dir, "--output-format", "stream-json", "--verbose"}, ClaudeTrim...), strings.Split(strings.TrimSuffix(string(got), "\x00"), "\x00"), "the prompt is the brief")
+			wantArgs := []string{"-p", brief, "--add-dir", dir, "--output-format", "stream-json", "--verbose"}
+			if tc.model != "" {
+				wantArgs = append(wantArgs, "--model", tc.model)
+			}
+			assert.Equal(t, append(wantArgs, ClaudeTrim...), strings.Split(strings.TrimSuffix(string(got), "\x00"), "\x00"), "the prompt is the brief and --tools stays last")
 			assert.Contains(t, out.String(), "nothing here is read", "the output goes to the record, and only there")
 		})
 	}

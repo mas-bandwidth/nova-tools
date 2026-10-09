@@ -3,6 +3,7 @@
 package friend
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -158,4 +159,25 @@ func TestAHeadlessClaudeRunsAReadAsOneShotOnItsTiersModelPricedLikeACard(t *test
 	cl.ConfigDir = func() string { return "" }
 	_, err = cl.RunRead(t.Context(), "", "no account")
 	assert.ErrorContains(t, err, "with no config_dir", "a read runs only as her own account")
+}
+
+func TestClaudeReadUsesBoundAccountDefaultOnlyWithoutTierOverride(t *testing.T) {
+	t.Parallel()
+	var args []string
+	run := func(_ context.Context, _, _ string, native []string, _ string) (string, int, error) {
+		args = append([]string{}, native...)
+		return `{"type":"result","result":"ok","total_cost_usd":0}`, 0, nil
+	}
+	cl := NewClaude("bud", "/work", run, nil)
+	cl.ConfigDir = func() string { return "/private" }
+	cl.Model = "default"
+	_, err := cl.RunRead(t.Context(), "", "probe")
+	require.NoError(t, err)
+	assert.Contains(t, strings.Join(args, " "), "--model default --strict-mcp-config")
+	assert.NotContains(t, strings.Join(args, " "), "claude.ai/default")
+
+	_, err = cl.RunRead(t.Context(), "sonnet", "tier probe")
+	require.NoError(t, err)
+	assert.Contains(t, strings.Join(args, " "), "--model sonnet --strict-mcp-config")
+	assert.NotContains(t, strings.Join(args, " "), "--model default")
 }

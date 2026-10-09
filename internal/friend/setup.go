@@ -125,7 +125,7 @@ func PlanSetup(opts SetupOptions, fs SettingsFS, planner SetupPlanner) (SetupPla
 				problems = append(problems, fmt.Errorf("selected provider requires sealed name %s; use that --key-env and include it in --secrets", required))
 			}
 			opts.KeyEnv = required
-		} else if opts.KeyEnv == "" {
+		} else if opts.KeyEnv == "" && !ClaudeAccountSetupRoute(opts) {
 			problems = append(problems, errors.New("unknown provider wants explicit --key-env; name its sealed credential without a value"))
 		}
 	}
