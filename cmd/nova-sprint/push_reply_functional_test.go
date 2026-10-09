@@ -31,19 +31,23 @@ func pushReplyStore(t *testing.T, actor string, socket bool) (*app, *store.Store
 	var addr string
 	var options *redis.Options
 	var exited chan struct{}
-	var logPath string
 	if socket {
 		bin := testutil.Program(t)
 		dir := t.TempDir()
+		if len(dir)+len("/emma's canary.sock") >= 104 {
+			var err error
+			dir, err = os.MkdirTemp("", "ns-sock-")
+			if err != nil {
+				dir, err = os.MkdirTemp("/tmp", "ns-sock-")
+			}
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = os.RemoveAll(dir) })
+		}
 		sock := filepath.Join(dir, "emma's canary.sock")
-		logPath = filepath.Join(dir, "redis.log")
-		logFile, err := os.Create(logPath)
-		require.NoError(t, err)
 		cmd := subproc.Long(context.Background(), bin, "--port", "0", "--unixsocket", sock, "--unixsocketperm", "700", "--save", "", "--appendonly", "no", "--dir", dir)
-		cmd.Stdout, cmd.Stderr = logFile, logFile
 		require.NoError(t, cmd.Start())
 		exited = make(chan struct{})
-		go func() { _ = cmd.Wait(); _ = logFile.Close(); close(exited) }()
+		go func() { _ = cmd.Wait(); close(exited) }()
 		t.Cleanup(func() {
 			_ = cmd.Process.Kill()
 			<-exited
@@ -57,21 +61,14 @@ func pushReplyStore(t *testing.T, actor string, socket bool) (*app, *store.Store
 	admin := redis.NewClient(options)
 	t.Cleanup(func() { _ = admin.Close() })
 	if socket {
-		var lastErr error
 		require.Eventually(t, func() bool {
 			select {
 			case <-exited:
-				body, _ := os.ReadFile(logPath)
-				t.Logf("redis exited early! out=%s", string(body))
 				return false
 			default:
 			}
-			lastErr = admin.Ping(context.Background()).Err()
-			if lastErr != nil {
-				t.Logf("ping err: %v", lastErr)
-			}
-			return lastErr == nil
-		}, 3*time.Second, 500*time.Millisecond)
+			return admin.Ping(context.Background()).Err() == nil
+		}, 10*time.Second, 20*time.Millisecond, "socket redis did not become ready")
 	}
 	require.NoError(t, fn.Load(context.Background(), admin))
 	a := newApp(func(k string) string {
