@@ -212,7 +212,7 @@ func holdNote(s *Snapshot, t HoldTarget, r HoldReq, line string) Note {
 		case r.Return:
 			n.What += "; --return: its work begun is handed back now"
 		case t.Kind == HoldFriend:
-			n.What += "; her work begun is handed back now, her cards not begun wait"
+			n.What += "; every card she holds, begun or not, is handed back now"
 		default:
 			n.What += "; its work begun finishes"
 		}
@@ -342,11 +342,11 @@ func readTakerUp(s *Snapshot, c *Card, reader string) bool {
 // 2026-10-04, on a held friend still showing two working cards: "nonono"), so every card
 // she has begun, working on her row or read as started, is taken back as friend down takes
 // it (FriendTake with Hold), each primary ready again for the tick to deal to a friend up, a
-// started one with its pushed head carried. Her ready cards not begun wait on her row (no
-// work on them to lose; the dealt bound and the ready judgment watch them); with --return
-// they are taken too (docs/SPEC-SPRINT.md sections 1 and 11, hold).
+// started one with its pushed head carried. Her ready cards not begun are taken back too, with
+// --return or without: a held friend keeps no card at all, so a dealt card never waits on a
+// friend who will not take it (the owner, 2026-10-09; docs/SPEC-SPRINT.md sections 1 and 11, hold).
 func holdFriendCards(s *Snapshot, friend string, r HoldReq) (Plan, string) {
-	p := FriendTake(s, FriendTakeReq{Friend: friend, All: true, Hold: true, Begun: !r.Return, Started: r.Started, Who: r.Who})
+	p := FriendTake(s, FriendTakeReq{Friend: friend, All: true, Hold: true, Begun: false, Started: r.Started, Who: r.Who})
 	var back, carried []string
 	for _, u := range p.Units {
 		back = append(back, u.Key)

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -157,8 +156,8 @@ func TestADealTakesAFriendsReadyCardAndOneLeftReadyIsAJudgment(t *testing.T) {
 	assert.Equal(t, 2, f["amy"].Ready)
 	ta.clean()
 
-	// held, her cards wait ready, and the start bound and ten minutes on a card in front of a
-	// free lane is a judgment
+	// held, every card of hers is handed back, begun or not: a held friend keeps no card (the
+	// owner, 2026-10-09); the ready judgment is for a friend up whose card nobody takes
 	ta, cfg, root := friendReadyApp(t)
 	ta.ok("hold amy --reason 'away'")
 	_, _, err := cfg.Update(context.Background(), config.KindFriend, "amy", map[string]string{"width": "4"}, "t")
@@ -166,13 +165,6 @@ func TestADealTakesAFriendsReadyCardAndOneLeftReadyIsAJudgment(t *testing.T) {
 	ta.ok("friend sync --root " + root)
 	ta.ok("tick")
 	c = freshCard(ta, "s1-3")
-	require.Equal(t, sprint.Ready, c.Work[0].Col)
-	assert.NotContains(t, ta.ok("inbox"), "has a lane free", "not yet ten minutes")
-	ta.later(sprint.FriendStartMaxDefault + sprint.FriendReadyMax + time.Minute)
-	ta.ok("tick")
-	in := ta.ok("inbox")
-	assert.Contains(t, in, "s1-3.w1 dealt, never taken, at friend.amy:ready")
-	assert.Contains(t, in, "while friend amy has a lane free")
-	assert.Contains(t, in, "friend take amy s1-3.w1")
+	require.Equal(t, sprint.Withdrawn, c.Work[0].Col, "the hold hands her ready card back")
 	ta.clean()
 }
