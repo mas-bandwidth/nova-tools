@@ -138,23 +138,27 @@ func TestRedisStoreRefusesWhatTheFakeRefuses(t *testing.T) {
 	assert.Equal(t, map[string]bool{"X": false}, acked)
 }
 
-// The push gate against the real commands: a proof is one HSET in a
-// transaction with no stream, read back by HGETALL, and Hearing refuses a
-// deaf send (nothing written) and a deaf recv (no group made), then lets
-// both through once every name is proven.
+// The push proof against the real commands: a proof is one HSET in a
+// transaction with no stream, read back by HGETALL; Unheard names the
+// unproven, and a send and a recv go through whoever is unheard.
 func TestRedisStoreKeepsThePushProof(t *testing.T) {
 	t.Parallel()
 	b, c, ctx := live(t)
-	gated := &Bus{Store: Hearing(b.Store)}
 	m := Message{From: "ada", To: []string{"bob"}, Subject: "s", Body: "x"}
 
-	_, err := gated.Send(ctx, m)
-	assert.ErrorContains(t, err, "deaf: ada has no proven push since never")
-	_, _, err = gated.Recv(ctx, "bob", 0)
-	assert.ErrorContains(t, err, "deaf: bob")
+	lines, err := b.Unheard(ctx, "ada", "bob")
+	require.NoError(t, err)
+	require.Len(t, lines, 2)
+	assert.Contains(t, lines[0], "push=none for ada: no proven push since never")
+	first, err := b.Send(ctx, m)
+	require.NoError(t, err, "unheard is advice, not a gate")
+	e, ok, err := b.Recv(ctx, "bob", 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, first.ID, e.Message().ID)
 	n, err := c.Exists(ctx, LogKey, StreamOf("bob")).Result()
 	require.NoError(t, err)
-	assert.Zero(t, n, "a deaf send writes nothing and a deaf recv makes no stream")
+	assert.Equal(t, int64(2), n)
 
 	for _, name := range []string{"ada", "bob"} {
 		p, err := b.ProvePush(ctx, PushProof{Name: name, Harness: "claude", Nonce: "n-" + name, Up: true})
@@ -166,14 +170,10 @@ func TestRedisStoreKeepsThePushProof(t *testing.T) {
 	assert.Equal(t, []string{PushProven, PushProven, PushNone}, []string{got[0].State(now), got[1].State(now), got[2].State(now)})
 	assert.Equal(t, "n-bob", got[1].Nonce)
 
-	sent, err := gated.Send(ctx, m)
+	lines, err = b.Unheard(ctx, "ada", "bob", "m1")
 	require.NoError(t, err)
-	e, ok, err := gated.Recv(ctx, "bob", 0)
-	require.NoError(t, err)
-	require.True(t, ok)
-	assert.Equal(t, sent.ID, e.Message().ID)
-	_, err = gated.Send(ctx, Message{From: "ada", To: []string{"m1"}, Subject: "s", Body: "x"})
-	assert.ErrorContains(t, err, "deaf: m1")
+	require.Len(t, lines, 1)
+	assert.Contains(t, lines[0], "push=none for m1")
 }
 
 // Enroll on the real commands: a friend row the roster misses is added to the

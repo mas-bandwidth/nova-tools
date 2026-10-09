@@ -302,6 +302,12 @@ func main() {
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int {
+	if len(args) > 0 && args[0] == "hook" {
+		if len(args) > 1 && (args[1] == "-h" || args[1] == "--help") {
+			return friendTool(w).Run(args, stdin, stdout, stderr)
+		}
+		return runClaudeHook(args[1:], stdin, stdout, stderr)
+	}
 	if len(args) > 0 && args[0] == friend.WallVerb {
 		// the lane's wall around one command: its argv follows "--", which the verb table
 		// does not carry, so it is dispatched here (internal/friend RunWall)
@@ -429,6 +435,16 @@ state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.
 		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).",
 		Words:     []string{"NONE", "FAIL", "DRIFT", "DRY-RUN"},
 		Verbs: []tool.Verb{
+			{
+				Name:   "hook",
+				Usage:  "hook --harness claude",
+				Effect: tool.Inspection + ": reads one PreToolUse JSON event from stdin and prints only Claude hook protocol JSON",
+				Detail: "An opt-in project hook for interactive Claude Code sessions (docs/CLAUDE-ASYNC-BASH-CANDIDATE.md). No settings are installed by this verb. Bash input is changed to run_in_background=true without approving the command; malformed input is denied.",
+				Flags: func(f *tool.Flags) {
+					f.Required("harness", "claude: the harness whose PreToolUse JSON is on stdin")
+				},
+				Run: func(*tool.Call) *tool.Out { return tool.Refuse("hook requires the raw PreToolUse entrypoint") },
+			},
 			{
 				Name:    "run",
 				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]",
@@ -1190,7 +1206,8 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// a harness nothing pushes into is refused at the start (friend.PushProof), a dry run alike
 	dry := c.DryRun()
 	// a harness that runs each card as a process of its own (friend.CardRunner) has no session to
-	// push into: no push proof and no session check stand for it (docs/SPEC-FRIEND.md, one-shot lanes)
+	// push a turn into: its session check goes in by the folder instead (friend.FolderCheck), and
+	// its beat is never held back on the answer (docs/SPEC-FRIEND.md, The push proof)
 	_, perCard := deliver.(friend.CardRunner)
 	if o := undriven(c.Str("harness"), dir, "the daemon did not start"); o != nil && !perCard {
 		return o
@@ -1305,7 +1322,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// delivers nothing into the session until the session answers it; a check the last run
 	// queued and never saw answered keeps its nonce, so the session's late answer proves it
 	if perCard {
-		record(w.now().UTC().Format(time.RFC3339) + " push proof: none owed: " + c.Str("harness") + " runs each card as a process of its own, no session to push into")
+		record(w.now().UTC().Format(time.RFC3339) + " push proof: owed by the folder: " + c.Str("harness") + " runs each card as a process of its own, so the session check goes in as " + friend.SessionCheckFile(dir, "<nonce>") + "; a live session answers it with nova-friend pong --as " + name + " --nonce <nonce> --state-dir " + state + ", and the beat carries the answer; with no live session her cards' finishes are her presence, and nothing is held back")
 	} else {
 		record(w.now().UTC().Format(time.RFC3339) + " push proof: pending: the first session check goes into the " + c.Str("harness") + " session now; nothing is delivered until the session answers it")
 	}
@@ -1337,7 +1354,12 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return friend.SessionCheckText(nonce, w.pongCommand(name, nonce, state, c.Str("redis"), dir), answerTo())
 		},
 	}
-	sc.Deliver = sc.Gate(fl.Gate(deliver))
+	laneDeliver := sc.Gate(fl.Gate(deliver)) // the daemon's: her turns, or her card runner
+	sc.Deliver = laneDeliver
+	if perCard {
+		// the check goes in by the folder, ungated: her lanes hold no turn of the session
+		sc.Deliver = &friend.FolderCheck{Friend: name, Dir: dir}
+	}
 	prover.Deliver = sc.Deliver
 	tellSeat = func(subject, body string) {
 		to := answerTo()
@@ -1376,7 +1398,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	stager := w.stager(dir)
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
-		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep, StepBeatForTests: w.stepBeat,
+		Store: sc.DaemonStore(), Deliver: laneDeliver, Now: w.now, Pause: w.sleep, StepBeatForTests: w.stepBeat,
 		Sent: func() time.Time {
 			if at := sent.Load(); at != nil {
 				return *at
@@ -1404,19 +1426,16 @@ func (w world) run(c *tool.Call) *tool.Out {
 		Beat: func(ctx context.Context, active time.Time) error {
 			// up or down, held back or not: the beat's record says what the lanes cost
 			saySpend()
-			held := sc.Beat // the session's answer holds the beat back; a per-card harness has no session, its process is the daemon
+			held := sc.Beat // the session's answer holds the beat back
 			if perCard {
-				held = func(beat func(context.Context) error) func(context.Context) error { return beat }
+				// a per-card harness's beat is never held back: her cards' finishes are her presence
+				// at the server; the check still steps (by the folder) and its answer rides the beat
+				held = sc.BeatAlways
 			}
 			// the owner, 2026-10-05 ~9:30 AM ET: "there is no value in things that are answered
-			// just by the daemon". A per-card harness has no session to check, so its beat says
-			// no proof at all: her evidence is a card of hers finished, which the server counts
-			words := func() friend.BeatWords {
-				if perCard {
-					return friend.BeatWords{}
-				}
-				return sc.Words() // the check asked and the check answered that no beat has said
-			}
+			// just by the daemon": the words are the check asked and the check the session
+			// answered that no beat has said, for a per-card harness too (the folder's answer)
+			words := sc.Words
 			up := func(ctx context.Context) error {
 				said := words()
 				answer, err := w.beat(ctx, server, name, active, said)
@@ -1777,7 +1796,7 @@ func (w world) install(c *tool.Call) *tool.Out {
 		return o
 	}
 	// a harness nothing pushes into is refused before anything is written (friend.PushProof); one that
-	// runs each card as a process of its own (claude) has no session to push into and is not
+	// runs each card as a process of its own (claude) proves by the folder (friend.FolderCheck) and is not
 	if !friend.RunsCards(c.Str("harness")) {
 		if o := undriven(c.Str("harness"), c.Str("dir"), "nothing was written or loaded"); o != nil {
 			return o
@@ -1864,7 +1883,11 @@ func (w world) install(c *tool.Call) *tool.Out {
 	} else {
 		o.Note("check: " + res.Line())
 	}
-	return noteClaudeWait(noteGrokMonitor(o.Note("check it: nova-friend status --as "+a.Friend+" --dir "+a.Dir), a.Harness, a.Session), a.Harness, a.Friend, w.claudeWake(c, a.Friend))
+	o = noteClaudeWait(noteGrokMonitor(o.Note("check it: nova-friend status --as "+a.Friend+" --dir "+a.Dir), a.Harness, a.Session), a.Harness, a.Friend, w.claudeWake(c, a.Friend))
+	if friend.RunsCards(a.Harness) {
+		o.Note(friend.FolderCheckLine(a.Friend, a.Dir, state)) // where her session check lands, and the answer
+	}
+	return o
 }
 
 // undriven is the refusal of a harness whose adapter has no deliver command

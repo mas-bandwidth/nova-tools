@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -10,50 +11,57 @@ import (
 )
 
 // Glenn, 2026-10-05: "nova-bus is useless if the friend using it is deaf and
-// is not listening to messages sent back." A note to the coordinator sat 40
-// minutes unread while neither side had a push into its session, and the
-// bus took every message anyway. A name is on the bus only while something
-// proven can hear it: send --as and recv --as refuse until the name has an
-// inbox push its friend daemon proved (a SESSION CHECK carried in by the
-// deliver adapter and answered by the session) younger than ten minutes;
-// send --to a name whose proof is stale, down or missing is refused with
-// `deaf: <x> has no proven push since <age>` and the remedy, writing
-// nothing; names shows each name's push and its age.
-func TestSendAndRecvRefuseUntilTheInboxPushIsProven(t *testing.T) {
+// is not listening to messages sent back." And Glenn, 2026-10-08 (issue
+// #5450, measured on a new fleet machine where send and recv were refused
+// for every name without a daemon proof, a claude friend never writing one):
+// "it is important that we can talk to friends, if you can't that's totally
+// a bug." So the push proof is the seat's liveness rule and a sender's
+// advice, never a gate: send lands and recv reads for every roster name, and
+// a name whose friend daemon has not proven its inbox push under ten minutes
+// is one NOTE push=<state> for <name> beside the result; names shows each
+// name's push, its age and what it rests on.
+func TestSendAndRecvNoteAnUnprovenPushAndNeverRefuseOnIt(t *testing.T) {
 	t.Parallel()
 	r := deafRig("ada", "bob")
-	r.env[RequirePushEnv] = "1" // the gate refuses only when it is required (TestThePushGateIsAdvisoryUntilRequired)
 	cli := r.cli()
 	send := []string{"send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "x"}
 
-	// no proof at all: the sender and the recipient are both deaf, named at once
-	cli.Do(t, send...).Exit(2).Err("SEND REFUSED",
-		"deaf: ada has no proven push since never: no daemon has recorded one",
-		"deaf: bob has no proven push since never",
-		"nova-friend install --as bob --harness <h> --dir <d>", "SESSION CHECK")
-	cli.Do(t, append(send, "--dry-run")...).Exit(2).Err("deaf: ada has no proven push since never")
-	cli.Do(t, "recv", "--as", "bob").Exit(2).Err("RECV REFUSED", "deaf: bob has no proven push since never")
-	cli.Do(t, "recv", "--as", "bob", "--dry-run").Exit(2).Err("deaf: bob has no proven push since never")
-	cli.Do(t, "recv", "--as", "bob", "--forever", "--exec", "deliver").Exit(2).Err("deaf: bob")
-	cli.Do(t, "names").Exit(0).Out("NAMES OK count=2 proven=0", "NAMES NAME name=ada push=none age=never", "NAMES NAME name=bob push=none age=never")
-	assert.Equal(t, 0, r.store.Len(bus.LogKey), "a send to or from a deaf name writes nothing")
+	// no proof at all: the message lands, and the sender and the recipient are each a NOTE
+	first := id(t, cli.Do(t, send...).Exit(0).Out("SEND OK id=",
+		"SEND NOTE push=none for ada: no proven push since never: no daemon has recorded one",
+		"SEND NOTE push=none for bob: no proven push since never",
+		"waits on its stream until something reads it (nova-bus recv --as bob)",
+		"nova-friend install --as bob --harness <h> --dir <d>").Stdout)
+	assert.Equal(t, 1, r.store.Len(bus.LogKey), "a send to an unheard name lands")
+	cli.Do(t, append(send, "--dry-run")...).Exit(0).Out("SEND OK ", "SEND NOTE push=none for ada").NotOut("id=0")
+	cli.Do(t, "recv", "--as", "bob", "--dry-run").Exit(0).Out("RECV OK pending=0 new=1", "RECV NOTE push=none for bob")
+	cli.Do(t, "recv", "--as", "bob").Exit(0).Out("RECV OK id="+first, "RECV NOTE push=none for bob: no proven push since never")
+	cli.Do(t, "recv", "--as", "bob").Exit(1).Err("RECV NONE: nothing for bob", "RECV NOTE push=none for bob")
+	cli.Do(t, "names").Exit(0).Out("NAMES OK count=2 proven=0", "NAMES NAME name=ada push=none age=never harness=-", "NAMES NAME name=bob push=none age=never")
 
-	// the sender proven, the recipient not: the sender never talks into a void
+	// a batch and a loop say it once, on the first result; a cc is a recipient too
+	cli.OK(t, send...)
+	cli.Do(t, "send", "--as", "ada", "--to", "ada", "--cc", "bob", "--subject", "s", "--body", "x").Exit(0).Out("SEND NOTE push=none for ada", "SEND NOTE push=none for bob")
+	cli.OK(t, send...)
+	out := cli.Do(t, "recv", "--as", "bob", "--all").Exit(0).Out("RECV NOTE push=none for bob").Stdout
+	assert.Equal(t, 1, strings.Count(out, "RECV NOTE"), "once per recv, not per message:\n%s", out)
+	assert.Equal(t, 3, strings.Count(out, "RECV OK id="), out)
+
+	// the sender proven, the recipient not: only the recipient is noted
 	r.prove(start, true, "ada")
-	cli.Do(t, send...).Exit(2).Err("deaf: bob has no proven push since never").NotErr("deaf: ada")
-	cli.Do(t, "send", "--as", "ada", "--to", "ada", "--cc", "bob", "--subject", "s", "--body", "x").Exit(2).Err("deaf: bob") // a cc is a recipient too
-	assert.Equal(t, 0, r.store.Len(bus.LogKey))
+	cli.Do(t, send...).Exit(0).Out("SEND NOTE push=none for bob").NotOut("for ada")
+	cli.Do(t, "recv", "--as", "bob").Exit(0).Out("RECV OK", "RECV NOTE push=none for bob")
 
-	// both proven: the loop works
+	// both proven: no NOTE at all
 	r.prove(start, true, "bob")
-	mid := id(t, cli.OK(t, send...).Stdout)
-	cli.Do(t, "recv", "--as", "bob").Exit(0).Out("RECV OK id=" + mid)
+	mid := id(t, cli.Do(t, send...).Exit(0).NotOut("SEND NOTE").Stdout)
+	cli.Do(t, "recv", "--as", "bob").Exit(0).Out("RECV OK id=" + mid).NotOut("RECV NOTE")
 	cli.Do(t, "names").Exit(0).Out("NAMES OK count=2 proven=2", "NAMES NAME name=ada push=proven age=", "harness=claude")
 
-	// a proof the daemon stopped renewing goes stale at ten minutes
+	// a proof the daemon stopped renewing goes stale at ten minutes: still advice
 	r.store.Advance(bus.PushFresh)
-	cli.Do(t, send...).Exit(2).Err("deaf: ada has no proven push since 10m", "last renewed it", "deaf: bob has no proven push since 10m")
-	cli.Do(t, "recv", "--as", "bob").Exit(2).Err("deaf: bob has no proven push since 10m")
+	cli.Do(t, send...).Exit(0).Out("SEND NOTE push=stale for ada: no proven push since 10m", "last renewed it", "SEND NOTE push=stale for bob: no proven push since 10m")
+	cli.Do(t, "recv", "--as", "bob").Exit(0).Out("RECV OK", "RECV NOTE push=stale for bob: no proven push since 10m")
 	cli.Do(t, "names").Exit(0).Out("NAMES OK count=2 proven=0", "NAMES NAME name=bob push=stale age=10m")
 
 	// renewed, then the session stops answering its check: down at once
@@ -61,21 +69,16 @@ func TestSendAndRecvRefuseUntilTheInboxPushIsProven(t *testing.T) {
 	r.store.Advance(time.Minute)
 	r.prove(now, true, "ada")
 	r.prove(now, false, "bob")
-	cli.Do(t, send...).Exit(2).Err("deaf: bob has no proven push since", "holds no answered SESSION CHECK from the session (no session answer)").NotErr("deaf: ada")
-	cli.Do(t, "names").Exit(0).Out("NAMES OK count=2 proven=1", "NAMES NAME name=ada push=proven", "NAMES NAME name=bob push=down")
-	assert.Equal(t, 1, r.store.Len(bus.LogKey), "only the message sent while both were heard")
-
-	// a deaf name may still look: peek, ack and log are not gated
-	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=1 new=0")
-	cli.Do(t, "ack", "--as", "bob", "--id", mid).Exit(0).Out("ACK OK acked=1")
-	cli.Do(t, "log").Exit(0).Out("LOG OK total=1")
+	cli.Do(t, send...).Exit(0).Out("SEND NOTE push=down for bob: no proven push since", "holds no answered SESSION CHECK from the session (no session answer)").NotOut("for ada")
+	cli.Do(t, "names").Exit(0).Out("NAMES OK count=2 proven=1", "NAMES NAME name=ada push=proven", "NAMES NAME name=bob push=down age=", "harness=claude")
+	assert.Equal(t, 8, r.store.Len(bus.LogKey), "every send landed")
 }
 
 // The owner, 2026-10-07: adopt wide ASAP; the seat's push proof is card
-// the-seats-pushes-are-proven-before-the-sprint-moves-b. Until every harness proves
-// its push, the gate is advisory: a send between two unproven names goes, with a
-// NOTE for each, and recv takes its message the same way; --require-push (or
-// NOVA_BUS_REQUIRE_PUSH=1) refuses it with the deaf line as before.
+// the-seats-pushes-are-proven-before-the-sprint-moves-b. The gate is advisory: a
+// send between two unproven names goes, with a NOTE for each, and recv takes its
+// message the same way; --require-push (or NOVA_BUS_REQUIRE_PUSH=1) alone refuses
+// it with the deaf line, writing and reading nothing, --dry-run alike.
 func TestThePushGateIsAdvisoryUntilRequired(t *testing.T) {
 	t.Parallel()
 	r := deafRig("ada", "bob")
@@ -88,6 +91,18 @@ func TestThePushGateIsAdvisoryUntilRequired(t *testing.T) {
 
 	cli.Do(t, append(send, "--require-push")...).Exit(2).Err("SEND REFUSED",
 		"deaf: ada has no proven push since never: no daemon has recorded one", "deaf: bob has no proven push since never")
+	cli.Do(t, append(send, "--require-push", "--dry-run")...).Exit(2).Err("SEND REFUSED", "deaf: bob has no proven push since never")
 	cli.Do(t, "recv", "--as", "bob", "--require-push").Exit(2).Err("RECV REFUSED", "deaf: bob has no proven push since never")
+	cli.Do(t, "recv", "--as", "bob", "--require-push", "--dry-run").Exit(2).Err("RECV REFUSED", "deaf: bob has no proven push since never")
 	assert.Equal(t, 1, r.store.Len(bus.LogKey), "a required gate writes nothing")
+
+	// the variable is the flag; both names proven, the required gate passes and nothing is noted
+	r.env[RequirePushEnv] = "1"
+	cli = r.cli()
+	cli.Do(t, send...).Exit(2).Err("SEND REFUSED", "deaf: ada has no proven push since never")
+	r.prove(start, true, "ada")
+	r.prove(start, true, "bob")
+	cli.Do(t, send...).Exit(0).Out("SEND OK id=").NotOut("SEND NOTE")
+	cli.Do(t, "recv", "--as", "bob").Exit(0).Out("RECV OK id=").NotOut("RECV NOTE")
+	assert.Equal(t, 2, r.store.Len(bus.LogKey), "the proven send was written")
 }

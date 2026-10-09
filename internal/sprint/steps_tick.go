@@ -131,7 +131,10 @@ var TickDecisions = map[string][]string{
 	NOverloaded:        {"fleet up <m> --width <half>", "wait 15m"},  // named per member (overload.go, Overload.Decisions)
 	NReadersBehind:     {"reader up <r>", "restart <r>", "wait 10m"}, // named per reader (readers_behind.go, Behind.Decisions)
 	NRaiseReadTier:     {"raise", "keep"},                            // readtier.go
-	NDevBehind:         {"promoted", "wait 30m"},                     // promotion.go
+	// the verdicts' ledger (reads_window.go): the per-reader one names its reader
+	NBrokenReadsOutrun: {"look at the readers", "raise the read tier", "act"},
+	NReaderBreaks:      {"look at the reader", "act"},
+	NDevBehind:         {"promoted", "wait 30m"}, // promotion.go
 	NNoRoute:           {"route add", "look at the card", "drop", "wait"},
 	// a payment and a key are the owner's: no rework is offered (provider_funds.go)
 	NProviderFunds:  {"ack", "wait"}, // and "funded <provider>", named per provider (providerConds)
@@ -1090,12 +1093,14 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 	conds = append(conds, readersBehindCond(s)...)
 	// a stream whose read tier should rise: one judgment per stream (readtier.go)
 	conds = append(conds, raiseReadTierConds(s)...)
+	// broken reads outrunning ok reads, and a reader breaking nearly everything (reads_window.go)
+	conds = append(conds, readsWindowConds(s, r)...)
 	if len(ids) > 0 {
 		p = Ask(s, AskReq{Sel: Sel{Only: ids}, Who: r.who()})
 	}
 	conds = append(conds, cannotAskCond(s, p.Refused)...)
 	p.Refused = nil
-	due += notify(&p, s, conds, []string{NCannotAsk, NFewReaders, NReadersBehind, NRaiseReadTier}, r)
+	due += notify(&p, s, conds, []string{NCannotAsk, NFewReaders, NReadersBehind, NRaiseReadTier, NBrokenReadsOutrun, NReaderBreaks}, r)
 	return p, due
 }
 
@@ -1393,6 +1398,7 @@ type cond struct {
 func condKey(typ, subject, card, what string) string {
 	switch typ {
 	case NNoMember, NAdoptFailed, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NStarving, NOverloaded, NReadersBehind, NDevBehind, NRaiseReadTier,
+		NBrokenReadsOutrun, NReaderBreaks,
 		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFilesAlarm, NFriendDeaf, NFriendIdle, NCoordinatorBehind,
 		NDriftAhead, NDriftCardBase, NDriftServer, NDriftBaseRed, NFriendSyncFailing:
 		what = ""
@@ -1549,7 +1555,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 			if !open[k] {
 				fresh = append(fresh, sub)
 			}
-			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate || c.typ == NFewReaders || c.typ == NStarving || c.typ == NOverloaded || c.typ == NFilesAlarm || c.typ == NReadersBehind || c.typ == NDevBehind || c.typ == NFriendSyncFailing) {
+			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate || c.typ == NFewReaders || c.typ == NStarving || c.typ == NOverloaded || c.typ == NFilesAlarm || c.typ == NReadersBehind || c.typ == NDevBehind || c.typ == NBrokenReadsOutrun || c.typ == NReaderBreaks || c.typ == NFriendSyncFailing) {
 				update(n, c.what, c.decisions) // the latest facts, in place
 			}
 		}

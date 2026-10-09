@@ -48,6 +48,7 @@ func newServerRig(t *testing.T, lines ...string) *serverRig {
 	a := newApp(func(k string) string { return env[k] })
 	t.Cleanup(a.close)
 	a.serveAddr = "mem:" + file
+	a.readTip, a.readHeads = nil, nil // a broken read's branch is checked only when a test gives a tip
 	r := &serverRig{t: t, a: a}
 	for _, l := range lines {
 		r.boss(l)

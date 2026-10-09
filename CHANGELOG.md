@@ -63,7 +63,7 @@ Spend gate waived: land and expand (the owner's ruling, 2026-10-06): dogfood gat
 - #4586 test(check): fixture caching, fast byte pre-checks, and golden repo template (9.9s -> 3.0s)
 - #4587 test(ci): reuse repoTree index, cache go list, and fast token pre-filters (7.2s -> 4.8s)
 - #4595 docs: complete the live tool roll call and generalize swarm guidance
-- #4590 fix(table): resolve Stella 5-point contract failures for table batch
+- #4590 fix(table): resolve the reader's 5-point contract failures for table batch
 - #4589 table: validate random shell traces against TableSession
 - #4585 test(update): tighten test bounds and eliminate redundant binary builds (6.6s -> 4.7s)
 - #4590 feat(table): add batch property tests and receipt replay verification
@@ -72,7 +72,7 @@ Spend gate waived: land and expand (the owner's ruling, 2026-10-06): dogfood gat
 - #4590 feat(table): implement atomic batch apply (ns_table_apply), CLI batch verb, property tests, and receipt replay
 - #4610 fix(table): exact-case path-aware raw validation, parallel witness, and isolated replay oracle
 - #4610 fix(table): reject raw null values across all schema paths and harden replay oracle
-- #4610 fix(table): apply Stella strict canonical schema patch
+- #4610 fix(table): apply the reader's strict canonical schema patch
 - #4685 feat(ci): report run cost to ci:cost and ratchet spin ceiling (#4328)
   - members: #4328
 - #4610 docs(swarm): restore card-pipeline phrasing in SPEC-SWARM.md
@@ -158,7 +158,7 @@ Spend gate waived: land and expand (the owner's ruling, 2026-10-06): dogfood gat
 - #4807 sprint: the real rules' steps apply on the twin: jopen reads, the set guard, the counter, the time writes, the version guard (the integration's gaps)
 - #4810 tset, ntable: a table property an entry can write in a step (prop, propguard, props)
 - #4811 sprint: a done sprint stops its machine and tells the coordinator (dogfood finding)
-- #4809 sprint: the deal goes round the fleet and the ask goes round the readers by a rolling index on each table (Glenn's rule)
+- #4809 sprint: the deal goes round the fleet and the ask goes round the readers by a rolling index on each table (the owner's rule)
 - #4814 sprint: the cycle check walks the gates' implicit needs; check reports a cycle (dogfood finding)
 - #4815 nova-table: watch prints no stale counter (owner's finding)
 - #4813 tset: Layer 1's lifecycle: define and teardown on a store, through the library, namespaces confined to {name}: (contract amendment)
@@ -166,8 +166,8 @@ Spend gate waived: land and expand (the owner's ruling, 2026-10-06): dogfood gat
 - #4818 sprint: presence brings every fresh member up in one tick, so the deal goes round the whole fleet (dogfood finding)
 - #4812 tset: Layer 2, the log, from the draft, at contract revision 1 with the decisions (the composed and sprint profiles load)
 - #4820 sprint: every placement of a card on a member goes through the rolling index: redeals, levelling, the withdrawn card (dogfood finding)
-- #4821 sprint: the simulation batches: one take, one finish, one read per machine per tick (Glenn's ruling)
-- #4822 sprint: a member is a fleet machine with a width; the deal fills to width in one step round the fleet (Glenn's ruling)
+- #4821 sprint: the simulation batches: one take, one finish, one read per machine per tick (the owner's ruling)
+- #4822 sprint: a member is a fleet machine with a width; the deal fills to width in one step round the fleet (the owner's ruling)
 - #4823 sprint: the fleet's width column totals (owner's finding)
 - #4825 sprint, nova-table: tables and rows always show, empty or not (owner's ruling)
 - #4826 sprint: the loop wakes on the log, not the clock (owner's finding: no 1 s gaps)
