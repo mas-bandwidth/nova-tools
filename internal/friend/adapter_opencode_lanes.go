@@ -200,13 +200,23 @@ func (o *OpenCode) sessions(ctx context.Context) ([]session, error) {
 		return nil, fmt.Errorf("opencode session list: %w", err)
 	}
 	if exit != 0 {
-		return nil, fmt.Errorf("opencode session list exited %d", exit)
+		return nil, &ExitError{Exit: exit, Text: fmt.Sprintf("opencode session list exited %d", exit)}
 	}
 	var rows []session
 	if err := json.Unmarshal([]byte(listing), &rows); err != nil {
 		return nil, fmt.Errorf("opencode session list: not a JSON list: %v", err)
 	}
 	return rows, nil
+}
+
+// VerifyDelivery checks whether opencode can list sessions, confirming that the runner
+// is working and any required provider keys are present and accepted.
+func (o *OpenCode) VerifyDelivery(ctx context.Context) error {
+	if o.Run == nil {
+		return nil
+	}
+	_, err := o.sessions(ctx)
+	return err
 }
 
 // DeliverTo is one card's turn in a lane's session: `opencode run --session

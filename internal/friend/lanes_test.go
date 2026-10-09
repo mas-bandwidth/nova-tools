@@ -65,6 +65,7 @@ type lanesHarness struct {
 	block   chan struct{}      // when set, a card turn waits for it
 	onPong  func(nonce string) // when set, the session "runs" each pong line a turn carries: called with its nonce
 	refuse  []error            // what the next message turns answer instead of running (a Deferred, a SessionRefused), in order
+	pid     int                // when set, the process id each card turn hands to the exec's sink (WithProcessStarted)
 }
 
 var cardOfText = regexp.MustCompile(`one card this turn, ([^ ]+)\. Do exactly`)
@@ -89,6 +90,9 @@ func (h *lanesHarness) DeliverTo(ctx context.Context, session, text string) (Lan
 		for _, m := range nonceOfLine.FindAllStringSubmatch(text, -1) {
 			h.onPong(m[1])
 		}
+	}
+	if started := processStarted(ctx); started != nil && h.pid != 0 && id != "-" {
+		started(h.pid)
 	}
 	h.mu.Lock()
 	h.turns = append(h.turns, session+": "+id)
@@ -439,6 +443,55 @@ func TestNoPongFromTheSessionLeavesThePushUnprovenAndNoCardRuns(t *testing.T) {
 		assert.Equal(t, PushUnproven, r.last().Push)
 		assert.Empty(t, r.adaGot(t), "the daemon writes no pong of its own")
 		assert.NotContains(t, strings.Join(r.records, "\n"), "card=done")
+	})
+}
+
+// A friend whose provider key is not in her environment reads down with the reason, never
+// up: while the key is missing her lanes open nothing and start nothing, her beat says
+// her down "no key sealed: NAME" (FaultDown, sent again each step), the status names the
+// name and the seat is told once; the key appearing lifts the hold on that step, the lanes
+// open and run, and the beat's down lapses (the owner, 2026-10-08: Alex has no key sealed
+// and must read truthfully DOWN with the reason, never a fake up).
+func TestAMissingProviderKeyBeatsDownNamedAndStartsNoLane(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
+		h := &lanesHarness{dir: dir, finish: map[string]bool{"c1": true}, active: map[string]int{}}
+		r, _ := laneRig(t, h, 1)
+		var mu sync.Mutex
+		env := map[string]string{}
+		r.d.NeedsEnv = []string{"INCEPTION_API_KEY"}
+		r.d.Getenv = func(k string) string { mu.Lock(); defer mu.Unlock(); return env[k] }
+		var downs []string
+		r.d.FaultDown = func(until time.Time, reason string) {
+			mu.Lock()
+			defer mu.Unlock()
+			downs = append(downs, reason+" until="+until.UTC().Format(time.RFC3339))
+		}
+		var held Status
+		r.at[6] = func() { held = r.last() }
+		r.at[8] = func() { mu.Lock(); env["INCEPTION_API_KEY"] = "sealed"; mu.Unlock() }
+		r.run(t, 16)
+		turns, _, seeds := h.got()
+		assert.Equal(t, "INCEPTION_API_KEY", held.MissingEnv)
+		assert.Equal(t, "1:-:-:paused", held.Lanes, "no session opened, no card taken while the key is missing")
+		mu.Lock()
+		got := append([]string(nil), downs...)
+		mu.Unlock()
+		require.NotEmpty(t, got, "the beat says down with the reason")
+		for _, d := range got {
+			assert.True(t, strings.HasPrefix(d, "no key sealed: INCEPTION_API_KEY until="), d)
+		}
+		assert.GreaterOrEqual(t, len(got), 6, "sent again each step while the key is missing: %d", len(got))
+		assert.Equal(t, []string{"ses_1: c1"}, turns, "once the key is in the environment the lane opens and runs the card")
+		require.Len(t, seeds, 1)
+		assert.Empty(t, r.last().MissingEnv)
+		records := strings.Join(r.records, "\n")
+		assert.Equal(t, 1, strings.Count(records, "lanes held: no key sealed: INCEPTION_API_KEY"), "said once: %s", records)
+		assert.Equal(t, 1, strings.Count(records, "key sealed: INCEPTION_API_KEY is in the environment"), records)
+		adaGot := r.adaGot(t)
+		require.Len(t, adaGot, 1, "the seat is told once: %v", adaGot)
+		assert.Contains(t, adaGot[0], "friend bob down: no key sealed: INCEPTION_API_KEY")
 	})
 }
 

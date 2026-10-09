@@ -142,7 +142,7 @@ func (l *loop) capWatch(now time.Time) {
 	s := l.lanes
 	for _, ln := range s.lanes {
 		t := ln.t
-		if t == nil || !t.running || ln.card == nil || ln.cap <= 0 || t.capped || t.stopped {
+		if t == nil || !t.running || ln.card == nil || ln.cap <= 0 || t.capped || t.stopped || t.adopted {
 			continue
 		}
 		began := s.state.Started[filepath.Base(ln.card.Outbox)].At

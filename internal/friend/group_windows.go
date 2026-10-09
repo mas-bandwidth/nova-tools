@@ -9,3 +9,6 @@ import "os/exec"
 func ownGroup(*exec.Cmd) {}
 
 func killGroup(int) {}
+
+// ProcessAlive is not read on Windows: no run is adopted there.
+func ProcessAlive(int) bool { return false }

@@ -33,6 +33,9 @@ type Started struct {
 	Lane int       `json:"lane"`
 	Card Card      `json:"card"`
 	At   time.Time `json:"at"`
+	// Pid is the run's process, once the exec has started it (WithProcessStarted); 0
+	// before. A daemon starting up adopts a run whose process is alive (adopt.go).
+	Pid int `json:"pid,omitempty"`
 }
 
 // LaneEnd is how a card's last run in a lane ended, as its finish says it.
@@ -288,8 +291,15 @@ const FinishWait = 10 * time.Second
 // endStarted is a daemon starting up: every card its lanes marked started is ended, for the
 // run that held it is gone with the daemon that ran it.
 func (l *loop) endStarted(now time.Time) {
-	s := l.lanes
+	s, d := l.lanes, l.d
 	for job, st := range s.state.Started {
+		if st.Pid > 0 && d.ProcessAlive != nil && d.ProcessAlive(st.Pid) {
+			// the run is alive past the daemon that started it: adopted once the lanes exist
+			// (laneStep, adoptRuns), never finished failed over a run still working
+			s.adopt = append(s.adopt, st)
+			d.Record(fmt.Sprintf("%s lane %d: card %s was begun at %s by the daemon before, and its run (pid %d) is alive: adopted, the lane waits on it", now.UTC().Format(time.RFC3339), st.Lane, st.Card.ID, st.At.UTC().Format(time.RFC3339), st.Pid))
+			continue
+		}
 		words := l.endCard(st.Lane, st.Card, LaneEnd{Restart: now, Started: st.At}, now)
 		if !s.given[job] {
 			s.given[job] = true

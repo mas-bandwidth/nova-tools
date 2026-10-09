@@ -1442,6 +1442,26 @@ log line:
   server sends `--pong <time>`, which counts for the server's first hour and is
   a beat with no proof after it, so that friend reads down, and deaf on the
   coordinator's pass fifteen minutes on, until her daemon is rebuilt.
+- The push proof on the bus (`bus.PushProof`, `friend.PushProver`): recorded
+  on `bus2:push` from the daemon's presence save (`SessionCheck.Save`). Until
+  the session has answered its first check, the proof is forced down with
+  the reason "no session answer yet" (`NotYetAnswered`), never proven. While
+  the presence stays up, the proof is renewed every `PushRenewEvery` (one
+  minute). An adapter may implement `DeliveryVerifier` (`VerifyDelivery`, e.g.
+  `*OpenCode` running `opencode session list --format json` in `o.Dir` bounded
+  by `PushWriteBudget` 5 s, synchronous in the presence save): when renewal is
+  due and the session did not just take delivery, the verifier runs. If
+  verification fails, the proof is written down: with `no key sealed: NAME` if
+  `MissingEnv` names unset keys from `--needs-env`, or with the harness exit
+  reason (such as `opencode session list exited 125`) or error string; while
+  the presence reads up and the proof reads down from a failed verify, the
+  verifier subprocess runs only when renewal is due (`now.Sub(wroteAt) >= PushRenewEvery`)
+  rather than every step, keeping the proof down until a renewal passes or the
+  session proves delivery by answering a check. Tests:
+  `TestAMissingProviderKeyPushProofReadsDownWithReasonNeverProven`,
+  `TestOpenCodeExit125ReadsDownWithNeedsEnvReasonNeverProven`,
+  `TestPushProofRefreshedOnlyWhenDeliveryTakenOrCapabilityVerified`,
+  `TestOpenCodeVerifyDeliveryAdapter`.
 
 The proof is the presence model's Ask then Answer within the bound
 (tla/FriendPresence.tla); `install` alone asks it before anything runs, and
@@ -1715,6 +1735,55 @@ answered) hold, and their reversed witnesses
 `MCFriendLanesBrokenCardBeforeProof.cfg` (cards dealt before the answer) and
 `MCFriendLanesBrokenDaemonPong.cfg` (the daemon's own pong counted as the proof)
 break them.
+
+**No key sealed is down, never a fake up** (internal/friend/needs_env.go; the
+owner, 2026-10-08: a friend whose key is not in the secrets store "must read
+truthfully DOWN with the reason 'no key sealed', never a fake up"). The daemon
+needs the names `run --needs-env NAME[,NAME]` gives, else the provider's key
+for `--model provider/model` (`ProviderKeyEnv`: `inception` ->
+`INCEPTION_API_KEY`, `deepseek` -> `DEEPSEEK_API_KEY`, and the table's others;
+a provider not in it needs the flag), and reads them from its environment every
+step (`envStep`). While one is empty: her lanes open nothing and start nothing
+(`paused`, `:paused` on the status's lanes), the status says `missing_env`, her
+beat says her down with `reason="no key sealed: NAME"` (`FaultDown`, `--until`
+`NeedsEnvBeatAhead` ahead, sent again each step so it lapses once the key
+appears), the record says it once and the seat is told one blocker; the key
+appearing is said once and the lanes open on that step. `install --needs-env`
+writes the flag into the agent. A wrap that refuses to start without the key
+(`nova-secrets exec --require`) is the launchd loop this replaces: the daemon
+starts, and says why it runs nothing. The model: `Key` toggles `keyed`,
+`NoStartWithoutKey` holds, `MCFriendLanesBrokenRunWithoutKey.cfg` breaks it.
+Tests: `TestAMissingProviderKeyBeatsDownNamedAndStartsNoLane`,
+`TestNeedsEnvIsTheFlagsElseTheProvidersKey`.
+
+**A daemon starting up adopts a run still alive** (internal/friend/adopt.go). A
+lane's run is its own process group, so a daemon killed, crashed or restarted
+leaves its runs working on; until 2026-10-08 the daemon that started up
+finished every card still marked started FAILED at once ("its run is gone"),
+over a run that was still working, and the stopgap runners had an `adopt` for
+exactly this. Now each card turn's process id is recorded on its started mark
+(`Started.Pid`, handed by the exec through the context, `WithProcessStarted`,
+written by the step, `pidStep`), and a daemon starting up (`endStarted`)
+adopts a run whose process is alive (`Daemon.ProcessAlive`, the kernel's word
+in `run`): the lane holds the card (`adoptRuns`: its own lane when free, else
+the first free one) and waits on the process (`WaitProcess`, else a poll every
+`AdoptPoll`), pushing nothing into it, the silence watch leaving it alone; the
+card ends as any run's does when the process exits (her report the finish; an
+adopted run that ends with no report ends the card as a gone run's does, set
+aside). Only a run whose process is gone is ended as before. The model:
+`tla/LaneEnd.tla`, `Down` leaves a run alive or gone, `Restart` adopts the
+alive ones (`Adopts`), `AdoptedNotFailed` (a restart never writes a report over
+a run alive) holds with `NoOrphan`, `HersStands`, `RedealOnce` and `Finished`
+(TLC on vision, 1940 distinct states); the reversed witness
+`MCLaneEndBrokenFailAlive.cfg` (the daemon before: `Adopts = FALSE`) breaks it
+at the first restart over a live run. Tests:
+`TestARestartedDaemonAdoptsALiveLaneRunAndFinishesItsCard`,
+`TestAStartedCardWhoseRunIsGoneIsEndedAndARunsPidIsRecorded`. Not done: a
+daemon SIGKILLed loses no run to this, but a run it adopts and that outlives
+the card's cap is not capped by the adopting daemon (the cap is the turn's);
+and `ProcessAlive` is a pid, so a pid reused by another process after a long
+outage reads alive until it ends (the daemon's restart is launchd's, seconds).
+
 The lane waits for the turn to end and looks for the card's `RESULT.md`:
 there, the card is done and the lane takes the next; a turn that exited 0 and
 left neither `RESULT.md` nor `REPORT.md` is a harness fault, the card kept with

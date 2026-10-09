@@ -481,3 +481,4 @@ MCFriendLanesBrokenOneResultPerStep.cfg	MCFriendLanes.tla	action	StepLeavesNoLan
 MCFriendLanesBrokenStartBeyondWidth.cfg	MCFriendLanes.tla	action	StartsWithinWidth	ignore-terminal	friendlanes	required	-
 MCFriendLanesBrokenCardBeforeProof.cfg	MCFriendLanes.tla	invariant	CardsOnlyAfterProof	ignore-terminal	friendlanes	required	-
 MCFriendLanesBrokenDaemonPong.cfg	MCFriendLanes.tla	invariant	ProvenOnlyBySession	ignore-terminal	friendlanes	required	-
+MCFriendLanesBrokenRunWithoutKey.cfg	MCFriendLanes.tla	action	NoStartWithoutKey	ignore-terminal	friendlanes	required	-

@@ -2,11 +2,26 @@ package friend
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 )
+
+// ExitError carries a subprocess's non-zero exit code and error description.
+type ExitError struct {
+	Exit int
+	Text string
+}
+
+func (e *ExitError) Error() string {
+	if e.Text != "" {
+		return e.Text
+	}
+	return fmt.Sprintf("exited %d", e.Exit)
+}
 
 // PushRenewEvery is how often the daemon renews its friend's push proof on
 // the bus while the session stays up: well inside bus.PushFresh, so a live
@@ -16,6 +31,21 @@ const (
 	PushRenewEvery  = time.Minute
 	PushWriteBudget = 5 * time.Second
 )
+
+// DeliveryVerifier is an adapter that can verify delivery capability without
+// running a session turn (for example, listing runner CLI sessions).
+type DeliveryVerifier interface {
+	VerifyDelivery(ctx context.Context) error
+}
+
+func verifierOf(d Deliverer) DeliveryVerifier {
+	var v DeliveryVerifier
+	under(d, func(a Deliverer) bool {
+		v, _ = a.(DeliveryVerifier)
+		return v != nil
+	})
+	return v
+}
 
 // PushProver records the friend's inbox push proof on the bus (bus.PushKey;
 // docs/SPEC-BUS.md, bus-requires-inbox-push-proof) from the daemon's
@@ -35,16 +65,31 @@ type PushProver struct {
 	Deliver         Deliverer // the adapter the check goes in by
 	Now             func() time.Time
 	Record          func(line string) // nil records nothing
+	NeedsEnv        []string
+	Getenv          func(string) string
+	Verify          func(ctx context.Context) error // optional verify hook; nil uses DeliveryVerifier on Deliver
 
-	mu      sync.Mutex
-	asked   string    // the nonce the latest check carried, until it is answered
-	nonce   string    // the nonce the session last answered
-	proven  time.Time // when the daemon saw that answer
-	answers int
-	wrote   bool // a proof has been written by this daemon
-	up      bool
-	reason  string
-	wroteAt time.Time
+	mu        sync.Mutex
+	asked     string    // the nonce the latest check carried, until it is answered
+	nonce     string    // the nonce the session last answered
+	proven    time.Time // when the daemon saw that answer
+	answers   int
+	wrote     bool // a proof has been written by this daemon
+	up        bool
+	reason    string
+	wroteAt   time.Time
+	retryAt   time.Time
+	verifyErr error
+}
+
+func (p *PushProver) verifyDelivery(ctx context.Context) error {
+	if p.Verify != nil {
+		return p.Verify(ctx)
+	}
+	if v := verifierOf(p.Deliver); v != nil {
+		return v.VerifyDelivery(ctx)
+	}
+	return nil
 }
 
 // passiveReason is the down proof of a harness with no deliver command.
@@ -79,19 +124,65 @@ func (p *PushProver) Step(s PresenceStatus) {
 	if s.Nonce != "" {
 		p.asked = s.Nonce
 	}
+	tookDelivery := false
 	if s.Answers > p.answers {
+		tookDelivery = true
 		p.nonce, p.proven = p.asked, now
 		if s.Answered != "" {
 			p.nonce = s.Answered // the check answered, never one asked after it in the same step
 		}
+		p.verifyErr = nil
+		p.retryAt = now
 	}
 	p.answers = s.Answers
-	due := !p.wrote || up != p.up || reason != p.reason || (up && now.Sub(p.wroteAt) >= PushRenewEvery)
-	proof := bus.PushProof{Name: p.Friend, Harness: p.Harness, Nonce: p.nonce, Proven: p.proven, Up: up}
+	if p.proven.IsZero() {
+		up = false
+		if reason == "" {
+			reason = NotYetAnswered
+		}
+	}
+	lastNonce := p.nonce
+	provenTime := p.proven
+	renewalDue := p.retryAt.IsZero() || now.Sub(p.retryAt) >= PushRenewEvery
+	priorVerifyErr := p.verifyErr
 	p.mu.Unlock()
+
+	missing := MissingEnv(p.NeedsEnv, p.Getenv)
+	if len(missing) > 0 {
+		up = false
+		reason = NeedsEnvReason(missing)
+	}
+
+	if up && !tookDelivery && renewalDue {
+		ctx, cancel := context.WithTimeout(context.Background(), PushWriteBudget)
+		err := p.verifyDelivery(ctx)
+		cancel()
+		p.mu.Lock()
+		p.retryAt = now
+		p.verifyErr = err
+		priorVerifyErr = err
+		p.mu.Unlock()
+	}
+
+	if up && priorVerifyErr != nil {
+		up = false
+		var exitErr *ExitError
+		if len(missing) > 0 {
+			reason = NeedsEnvReason(missing)
+		} else if errors.As(priorVerifyErr, &exitErr) {
+			reason = exitErr.Error()
+		} else {
+			reason = priorVerifyErr.Error()
+		}
+	}
+
+	proof := bus.PushProof{Name: p.Friend, Harness: p.Harness, Nonce: lastNonce, Proven: provenTime, Up: up}
 	if !up {
 		proof.Reason = reason
 	}
+	p.mu.Lock()
+	due := !p.wrote || up != p.up || reason != p.reason || tookDelivery || (up && now.Sub(p.wroteAt) >= PushRenewEvery)
+	p.mu.Unlock()
 	if !due {
 		return
 	}

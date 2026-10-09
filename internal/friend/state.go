@@ -84,6 +84,10 @@ type Status struct {
 	// off the beat).
 	RowWidth    int    `json:"row_width"`
 	WidthSource string `json:"width_source,omitempty"`
+	// MissingEnv is the environment names the harness needs that are empty now
+	// (needs_env.go), comma-separated: while any is, the lanes hold and the beat
+	// says down "no key sealed: NAME"; empty when every name is set or none is needed.
+	MissingEnv string `json:"missing_env,omitempty"`
 	// HarnessSeen is what the harness check last read (HarnessRunning,
 	// HarnessNotSeen, or empty: cannot tell). Advisory: it
 	// never makes the friend down (alive.go, HarnessWatch).

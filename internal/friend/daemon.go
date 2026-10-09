@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -186,6 +187,17 @@ type Daemon struct {
 	// her down with them until then (friend beat --until --reason). Nil: her lanes are
 	// held here alone.
 	FaultDown func(until time.Time, reason string)
+	// NeedsEnv is the environment names the harness needs (needs_env.go), read by Getenv
+	// (os.Getenv in run) every step: while one is empty her lanes open nothing and start
+	// nothing, and FaultDown says her down with NeedsEnvReason until the key appears.
+	NeedsEnv []string
+	Getenv   func(string) string
+	// ProcessAlive says whether the process pid is alive (adopt.go; run: the kernel's
+	// word, ProcessAlive); nil: no run is ever adopted, every started card is ended.
+	// WaitProcess waits until pid is no longer alive or ctx ends, answering whether it
+	// ended; nil: a poll every AdoptPoll on Pause.
+	ProcessAlive func(pid int) bool
+	WaitProcess  func(ctx context.Context, pid int) bool
 	// Held is every card on her row as the sprint server says it (HeldVia: friend cards
 	// <friend>, else the worker view), asked once an InboxEvery; her inbox is reconciled with
 	// the answer (SyncInbox, inbox.go). Nil leaves her inbox to friend sync alone.
@@ -312,6 +324,7 @@ type turn struct {
 	stamped  time.Time // when the daemon last stamped progress on the turn's card (stampProgress)
 	subjects string
 	present  bool // the present turn (present.go)
+	adopted  bool // a run adopted from the daemon before: the lane waits on its process, nothing is pushed (adopt.go)
 }
 
 type result struct {
@@ -548,6 +561,7 @@ type loop struct {
 	dealt         []string // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
 	wake          bool     // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
 	proven        bool     // the push proof this step (proof): a card goes into a lane only while it holds
+	envMissing    []string // the needed environment names empty this step (envStep): the lanes hold while any is
 	checkHanded   string   // the push check whose pong line a message turn last carried, and when (lanes.go messageTurn)
 	checkHandedAt time.Time
 	owedMessage   *turn // a message turn the session could not take (Deferred, SessionRefused): kept whole, handed again after messageRetry, acked never until it succeeds (lanes.go messageDone)
@@ -678,6 +692,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		mode, width := l.row(now)
 		proven := l.proof(now)
 		l.proven = proven
+		l.envStep(now)
 		if d.Session != nil {
 			if s := d.Session(); s != l.session {
 				if l.session != "" {
@@ -925,6 +940,36 @@ func (l *loop) row(now time.Time) (mode string, width int) {
 		}
 	}
 	return mode, width
+}
+
+// envStep reads the needed environment names (Daemon.NeedsEnv) at now: while one is empty
+// the lanes hold (laneStep: no open, no turn), the status names it, her beat says her down
+// with the reason until NeedsEnvBeatAhead from now (sent again each step while it stands, so
+// it lapses once the key appears), and the seat is told once per change; the key appearing
+// is said once and lifts the hold on that step (needs_env.go).
+func (l *loop) envStep(now time.Time) {
+	d := l.d
+	if len(d.NeedsEnv) == 0 {
+		return
+	}
+	missing := MissingEnv(d.NeedsEnv, d.Getenv)
+	d.status.MissingEnv = strings.Join(missing, ",")
+	if len(missing) > 0 && d.FaultDown != nil {
+		d.FaultDown(now.Add(NeedsEnvBeatAhead), NeedsEnvReason(missing))
+	}
+	if slices.Equal(missing, l.envMissing) {
+		return
+	}
+	at := now.UTC().Format(time.RFC3339)
+	switch {
+	case len(missing) > 0:
+		d.Record(at + " lanes held: " + NeedsEnvReason(missing) + "; no lane opens or starts, and the beat says down with it, until the key is in the environment")
+		subject, body := NeedsEnvHoldText(d.Friend, missing, now)
+		l.tellKind(bus.KindBlocker, subject, body, now)
+	default:
+		d.Record(at + " key sealed: " + strings.Join(l.envMissing, ",") + " is in the environment; the lanes resume and the beat withdraws the down")
+	}
+	l.envMissing = missing
 }
 
 // takeResults takes every result that is ready this step: the batch turn's, each
@@ -1342,6 +1387,9 @@ func (l *loop) startBatch(now time.Time) {
 // watch is the silence watch on a running turn: a turn that prints is
 // working; one silent past SilentStop is stopped, said on the record.
 func (l *loop) watch(t *turn, now time.Time) {
+	if t.adopted {
+		return // a run adopted from the daemon before prints nothing here: the process is its own word (adopt.go)
+	}
 	if n := t.seen.Load(); n != t.seenN {
 		if t.seenN == 0 {
 			l.stampTurn(t, bus.Read) // the session took the turn: it printed
