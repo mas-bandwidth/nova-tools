@@ -1,0 +1,3 @@
+---------------- MODULE MCTokenCapStopSettlementBrokenOutbox ----------------
+EXTENDS TokenCapStopSettlement
+=============================================================================

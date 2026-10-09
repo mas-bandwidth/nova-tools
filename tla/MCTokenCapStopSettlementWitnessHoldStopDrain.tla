@@ -1,0 +1,3 @@
+---------------- MODULE MCTokenCapStopSettlementWitnessHoldStopDrain ----------------
+EXTENDS TokenCapStopSettlement
+=============================================================================

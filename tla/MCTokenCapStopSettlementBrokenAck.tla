@@ -1,0 +1,3 @@
+---------------- MODULE MCTokenCapStopSettlementBrokenAck ----------------
+EXTENDS TokenCapStopSettlement
+=============================================================================

@@ -1,0 +1,3 @@
+---------------- MODULE MCTokenCapStopSettlementWitnessLiveHoldRetained ----------------
+EXTENDS TokenCapStopSettlement
+=============================================================================

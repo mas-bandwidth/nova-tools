@@ -1,0 +1,3 @@
+---------------- MODULE MCTokenCapStopSettlementWitnessBaselineBypassPublished ----------------
+EXTENDS TokenCapStopSettlement
+=============================================================================
