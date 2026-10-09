@@ -16,26 +16,48 @@ import (
 
 func TestNativeControlBindingHoldsChangedIdentityAndLostKnownAuthority(t *testing.T) {
 	t.Parallel()
-	for _, damage := range []string{"replaced-work", "corrupt-index", "missing-index", "missing-namespace", "symlink-index"} {
+	for _, damage := range []string{"replaced-work", "corrupt-index", "missing-index", "missing-namespace", "symlink-index", "truncated-index", "unknown-member", "duplicate-member", "unexpected-entry"} {
 		t.Run(damage, func(t *testing.T) {
 			t.Parallel()
 			home, work := t.TempDir(), filepath.Join(t.TempDir(), "work")
 			require.NoError(t, os.Mkdir(work, 0700))
-			root, err := NativeControlDir(home, work)
+			require.NoError(t, os.Chmod(home, 0700))
+	root, err := NativeControlDir(home, work)
 			require.NoError(t, err)
 			index := filepath.Join(home, ".nova-friend", "native-control", "INDEX.json")
 			before, err := os.ReadFile(index)
 			require.NoError(t, err)
-			switch damage {
+			receipt := filepath.Join(root, "RUN")
+            require.NoError(t, os.WriteFile(receipt, []byte("preserved owned receipt"), 0600))
+            switch damage {
+            case "truncated-index": require.NoError(t, os.WriteFile(index, []byte(`{"Version":1,"Bindings":[]}`+"\n"), 0600))
+            case "unknown-member": require.NoError(t, os.WriteFile(index, []byte(strings.TrimSpace(string(before[:len(before)-2]))+`,"Unknown":true}`+"\n"), 0600))
+            case "duplicate-member": require.NoError(t, os.WriteFile(index, []byte(strings.Replace(string(before), `"Version":1`, `"Version":0,"Version":1`, 1)), 0600))
+            case "unexpected-entry": require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(root), "unindexed-debt"), []byte("owned"), 0600))
 			case "replaced-work":
 				require.NoError(t, os.Rename(work, work+"-prior"))
 				require.NoError(t, os.Mkdir(work, 0700))
-			case "corrupt-index": require.NoError(t, os.WriteFile(index, []byte("not-json"), 0600))
-			case "missing-index": require.NoError(t, os.Remove(index))
-			case "missing-namespace": require.NoError(t, os.Rename(root, root+"-prior"))
-			case "symlink-index": require.NoError(t, os.Rename(index, index+"-prior")); require.NoError(t, os.Symlink(index+"-prior", index))
+			case "corrupt-index":
+				require.NoError(t, os.WriteFile(index, []byte("not-json"), 0600))
+			case "missing-index":
+				require.NoError(t, os.Remove(index))
+			case "missing-namespace":
+				require.NoError(t, os.Rename(root, root+"-prior"))
+			case "symlink-index":
+				require.NoError(t, os.Rename(index, index+"-prior"))
+				require.NoError(t, os.Symlink(index+"-prior", index))
 			}
-			_, err = NativeControlDir(home, work)
+			if damage == "truncated-index" {
+                // A new friend/state cannot use a syntactically valid empty
+                // index to hide a previous friend's still-owned authority.
+                work = t.TempDir()
+            }
+            _, err = NativeControlDir(home, work)
+            if damage != "missing-namespace" {
+                raw, readErr := os.ReadFile(receipt)
+                require.NoError(t, readErr)
+                assert.Equal(t, "preserved owned receipt", string(raw))
+            }
 			assert.Error(t, err, "damaged durable authority must not select a replacement namespace")
 			if damage == "replaced-work" || damage == "missing-namespace" {
 				after, err := os.ReadFile(index)
@@ -64,6 +86,7 @@ func TestNativeControlStateBindingCannotSilentlyResetExistingOwnership(t *testin
 func TestNativeControlPhysicalAliasUsesExistingAuthorityAndRequiresLiveProof(t *testing.T) {
 	t.Parallel()
 	home, work := t.TempDir(), t.TempDir()
+	require.NoError(t, os.Chmod(home, 0700))
 	root, err := NativeControlDir(home, work)
 	require.NoError(t, err)
 	indexPath := filepath.Join(home, ".nova-friend", "native-control", "INDEX.json")
@@ -87,7 +110,11 @@ func TestNativeControlPhysicalAliasUsesExistingAuthorityAndRequiresLiveProof(t *
 	assert.ErrorContains(t, err, "cannot be verified")
 }
 
-type nativeControlStatInfo struct { os.FileInfo; stat syscall.Stat_t }
+type nativeControlStatInfo struct {
+	os.FileInfo
+	stat syscall.Stat_t
+}
+
 func (i nativeControlStatInfo) Sys() any { return &i.stat }
 
 func TestNativeControlRejectsForeignWorkUIDAndWritableAccountBase(t *testing.T) {
@@ -114,8 +141,11 @@ func TestNativeControlCaseAliasUsesOneExistingNamespaceWhenFilesystemFoldsCase(t
 	first, err := os.Stat(work)
 	require.NoError(t, err)
 	other, err := os.Stat(alias)
-	if err != nil || !os.SameFile(first, other) { t.Skip("this filesystem does not fold case") }
+	if err != nil || !os.SameFile(first, other) {
+		t.Skip("this filesystem does not fold case")
+	}
 	home := t.TempDir()
+	require.NoError(t, os.Chmod(home, 0700))
 	root, err := NativeControlDir(home, work)
 	require.NoError(t, err)
 	aliased, err := NativeControlDir(home, alias)

@@ -69,42 +69,42 @@ type world struct {
 
 	beatDownAnswer func(ctx context.Context, server, friend string, active, until time.Time, reason string, proof friend.BeatWords) (string, error) // production down beat preserves its configured row
 
-	getenv       func(string) string
-	open         func(ctx context.Context, addr string) (bus.Store, func(), error)
-	exec         friend.Exec
-	wall         func(wl friend.Wall, run friend.Exec) friend.Exec                                                                      // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
-	beat         func(ctx context.Context, server, friend string, active time.Time, proof friend.BeatWords) (answer string, err error)  // the FRIEND-BEAT line, which carries the friend's row
-	beatDown     func(ctx context.Context, server, friend string, active, until time.Time, reason string, proof friend.BeatWords) error // her beat while she is down (friend beat --until --reason); nil holds the beat back
-	progress     func(ctx context.Context, server string, argv []string) error                                                          // one progress verb to the sprint server (friend.ProgressArgv)
-	finish       func(ctx context.Context, server string, argv []string) error                                                          // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
-	down         func(ctx context.Context, server string, argv []string) error                                                          // one down verb to the sprint server (DownArgv: a credit refusal's friend down --reason --until); nil names none (a test's)
-	sqlite       friend.Exec                                                                                                            // reads opencode's database (the sqlite3 CLI); nil reads none: no card cost, no token cap
-	cards        func(ctx context.Context, server string, argv []string) (string, error)                                                // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
-	friends      func(ctx context.Context, server string) (rows []friend.WakeRow, seat string, err error)                               // the friends table and the seat's holder, from the sprint server's coordinator view (GET /api/view/coordinator?all=1)
-	holders      func(ctx context.Context, server string) (map[string]string, error)                                                    // current card holders from GET /api/view/cards; nil in a world that reads none
-	view         func(ctx context.Context, server, friend string) (string, error)                                                       // the sprint server's worker view of her (GET /api/view/worker), while friend cards is refused; nil reads none
-	stage        func(dir string) *friend.Stager                                                                                        // stages a held card's job under her working directory and prunes the finished ones (friend.Stager, with the daemon's git credentials); nil stages none (a test's)
-	tip          func(ctx context.Context, repo, branch string) (string, error)                                                         // origin's tip of a card's branch (friend.Stager.Tip, one git ls-remote): a report's LAND finishes only there; nil reads none (a test's)
-	launchctl    friend.Launchctl
-	now          func() time.Time
-	sleep        func(ctx context.Context, d time.Duration)
-	signals      func(ctx context.Context) (context.Context, context.CancelFunc)
-	uid          int
-	home         string
+	getenv            func(string) string
+	open              func(ctx context.Context, addr string) (bus.Store, func(), error)
+	exec              friend.Exec
+	wall              func(wl friend.Wall, run friend.Exec) friend.Exec                                                                      // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
+	beat              func(ctx context.Context, server, friend string, active time.Time, proof friend.BeatWords) (answer string, err error)  // the FRIEND-BEAT line, which carries the friend's row
+	beatDown          func(ctx context.Context, server, friend string, active, until time.Time, reason string, proof friend.BeatWords) error // her beat while she is down (friend beat --until --reason); nil holds the beat back
+	progress          func(ctx context.Context, server string, argv []string) error                                                          // one progress verb to the sprint server (friend.ProgressArgv)
+	finish            func(ctx context.Context, server string, argv []string) error                                                          // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
+	down              func(ctx context.Context, server string, argv []string) error                                                          // one down verb to the sprint server (DownArgv: a credit refusal's friend down --reason --until); nil names none (a test's)
+	sqlite            friend.Exec                                                                                                            // reads opencode's database (the sqlite3 CLI); nil reads none: no card cost, no token cap
+	cards             func(ctx context.Context, server string, argv []string) (string, error)                                                // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
+	friends           func(ctx context.Context, server string) (rows []friend.WakeRow, seat string, err error)                               // the friends table and the seat's holder, from the sprint server's coordinator view (GET /api/view/coordinator?all=1)
+	holders           func(ctx context.Context, server string) (map[string]string, error)                                                    // current card holders from GET /api/view/cards; nil in a world that reads none
+	view              func(ctx context.Context, server, friend string) (string, error)                                                       // the sprint server's worker view of her (GET /api/view/worker), while friend cards is refused; nil reads none
+	stage             func(dir string) *friend.Stager                                                                                        // stages a held card's job under her working directory and prunes the finished ones (friend.Stager, with the daemon's git credentials); nil stages none (a test's)
+	tip               func(ctx context.Context, repo, branch string) (string, error)                                                         // origin's tip of a card's branch (friend.Stager.Tip, one git ls-remote): a report's LAND finishes only there; nil reads none (a test's)
+	launchctl         friend.Launchctl
+	now               func() time.Time
+	sleep             func(ctx context.Context, d time.Duration)
+	signals           func(ctx context.Context) (context.Context, context.CancelFunc)
+	uid               int
+	home              string
 	nativeControlRoot func(string) (string, error) // production: trusted account authority, never env HOME
-	binary       func() (string, error)
-	copy         friend.CopyFile              // places a removable-volume binary under home; nil refuses it
-	lookPath     func(string) (string, error) // a program on PATH by absolute path, for the agent's secrets wrap
-	random       func() string
-	alive        friend.Aliver     // the harness check, when set (a test's fake harness); nil watches the adapter
-	checkGo      func(func())      // optional test scheduler for a fake-clock session check
-	launch       []string          // host: the launch command after "--"
-	settings     friend.SettingsFS // where a harness's own settings are read and written (install, check --settings)
-	setupPlanner friend.SetupPlanner
-	setupRunner  *friend.SetupRunner
-	setupProfile *friend.SetupProfile
-	argv         []string // this run's arguments after the program's name: what the plist drift is read against
-	wake         *wakeFS  // watch: the wake file's reads; nil reads the disk
+	binary            func() (string, error)
+	copy              friend.CopyFile              // places a removable-volume binary under home; nil refuses it
+	lookPath          func(string) (string, error) // a program on PATH by absolute path, for the agent's secrets wrap
+	random            func() string
+	alive             friend.Aliver     // the harness check, when set (a test's fake harness); nil watches the adapter
+	checkGo           func(func())      // optional test scheduler for a fake-clock session check
+	launch            []string          // host: the launch command after "--"
+	settings          friend.SettingsFS // where a harness's own settings are read and written (install, check --settings)
+	setupPlanner      friend.SetupPlanner
+	setupRunner       *friend.SetupRunner
+	setupProfile      *friend.SetupProfile
+	argv              []string // this run's arguments after the program's name: what the plist drift is read against
+	wake              *wakeFS  // watch: the wake file's reads; nil reads the disk
 }
 
 // readPlist is the installed plist at path, empty when there is none or it
@@ -364,7 +364,9 @@ func (w world) stateDir(c *tool.Call, dir string) string {
 // nativeControlDir uses the production account binding even if HOME differs.
 // A fake world without that hook supplies its explicit temporary home.
 func (w world) nativeControlDir(dir string) (string, error) {
-	if w.nativeControlRoot != nil { return w.nativeControlRoot(dir) }
+	if w.nativeControlRoot != nil {
+		return w.nativeControlRoot(dir)
+	}
 	return friend.NativeControlDir(w.home, dir)
 }
 
@@ -1292,17 +1294,18 @@ func (w world) run(c *tool.Call) *tool.Out {
 		if w.setupProfile != nil {
 			roots = append(roots, w.setupProfile.Selection.Home, w.setupProfile.Selection.ConfigDir)
 		}
-		authority := &friend.Daemon{Dir: dir, StateDir: state, NativeControlDir: controlRoot, NativeControlBinding: func() (string, error) { return w.nativeControlDir(dir) }}
+		authority := &friend.Daemon{Dir: dir, StateDir: state, Harness: c.Str("harness"), NativeBrokerDir: filepath.Join(friend.DefaultStateDir(w.home, name), "native-broker"), NativeControlDir: controlRoot, NativeControlBinding: func() (string, error) { return w.nativeControlDir(dir) }}
 		if err := authority.ValidateNativeControlRoots(roots); err != nil {
 			return tool.Refuse(err.Error() + "; use private daemon state outside all native wall roots")
 		}
+		activeDaemon = authority // CLI preflight is native execution too; it uses this validated authority snapshot.
 	}
 
 	if oc, ok := deliver.(*friend.OpenCode); ok {
 		// the installed opencode, read once: a run verb lacking a flag the adapter passes is a
 		// refusal naming the version, never an exit 1 on every delivery (the finding of 2026-10-06)
 		// (through the wall, outside the limit watch: a read of the CLI is no turn)
-		cctx, ccancel := context.WithTimeout(context.Background(), 30*time.Second)
+		cctx, ccancel := context.WithTimeout(friend.LaneContext(context.Background()), 30*time.Second)
 		err := (&friend.OpenCode{Dir: oc.Dir, Program: oc.Program, Run: walled}).CheckRun(cctx)
 		ccancel()
 		if err != nil {

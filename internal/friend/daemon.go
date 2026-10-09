@@ -96,12 +96,12 @@ type Daemon struct {
 	StateDir             string // the daemon's durable files, including owed finish notes
 	Width                int
 	Store                bus.Store
-	NativeReplyStore     bus.Store       // raw store for capability-validated native replies; daemon's other sends use Store
-	NativeBrokerRoots    func() []string // effective wall-visible roots; broker must stay outside all of them
-	NativeBrokerDir      string          // daemon-only grants and send receipts, outside the lane's writable/readable roots
-	NativeControlDir     string          // private native RUN/ACTIVE receipts and cleanup channels
+	NativeReplyStore     bus.Store              // raw store for capability-validated native replies; daemon's other sends use Store
+	NativeBrokerRoots    func() []string        // effective wall-visible roots; broker must stay outside all of them
+	NativeBrokerDir      string                 // daemon-only grants and send receipts, outside the lane's writable/readable roots
+	NativeControlDir     string                 // private native RUN/ACTIVE receipts and cleanup channels
 	NativeControlBinding func() (string, error) // trusted persistent work/authority binding, rechecked before launch
-	NativeControlRoots   func() []string // all effective native wall roots, including reads and config
+	NativeControlRoots   func() []string        // all effective native wall roots, including reads and config
 	Deliver              Deliverer
 	Beat                 func(ctx context.Context, active time.Time) error // one beat to the sprint server, carrying the session's last activity (zero: none known)
 	// Activity is the newest write of the session's files and Cards the ids of

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"strings"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -128,4 +129,26 @@ func TestNativeControlSharedWorkClaimIgnoresPublicNativeForgery(t *testing.T) {
 	assert.True(t, found)
 	assert.False(t, mark.Ended)
 	assert.Equal(t, "first lane", mark.Who)
+}
+
+func TestNativeControlPhysicalOverlapRefusesCaseAndSymlinkAliases(t *testing.T) {
+ t.Parallel()
+ base := t.TempDir()
+ root := filepath.Join(base, "PrivateAuthority")
+ require.NoError(t, os.Mkdir(root, 0700))
+ for _, name := range []string{"symlink", "casefold", "missing"} {
+  t.Run(name, func(t *testing.T) {
+   t.Parallel()
+   allowed := filepath.Join(base, "alias-"+name)
+   switch name {
+   case "symlink": require.NoError(t, os.Symlink(root, allowed))
+   case "casefold":
+    allowed = filepath.Join(base, strings.ToLower(filepath.Base(root)))
+    first, err := os.Stat(root); require.NoError(t, err)
+    other, err := os.Stat(allowed)
+    if err != nil || !os.SameFile(first, other) { t.Skip("this filesystem does not fold case") }
+   }
+   assert.Error(t, nativeControlOutsideRoots(root, []string{allowed}))
+  })
+ }
 }

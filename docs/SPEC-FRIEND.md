@@ -76,7 +76,10 @@ FIFOs in a private daemon-owned control namespace. Production selects the
 trusted OS account home without an environment fallback: Linux reads the
 root-owned passwd UID row directly, Darwin uses its native account lookup,
 and unsupported lookup builds refuse. Cross-UID working directories refuse.
-The private, locked durable index maps canonical paths and verified live
+The private, locked durable index uses the canonical one-line JSON emitted by
+its writer; noncanonical, unknown or repeated members refuse. Every namespace
+directory must have exactly one index row, so even a valid empty/truncated index
+cannot hide older authority. It maps canonical paths and verified live
 physical aliases to one stable namespace. A changed device/inode at an existing
 path, missing namespace/index, corrupt binding, or lost known state proof holds
 launch for reconciliation. The friend-specific state also records its selected
@@ -85,7 +88,9 @@ Caller HOME changes and casefold/mount aliases do not select independent local
 claim authorities. This local account protocol does not establish cross-host
 NFS ownership or reconstruct arbitrary deletion of all durable records.
 
-The daemon checks all work, config, job and read grants before launch. The wall
+The daemon checks all work, config, job and read grants before launch, including
+native CLI capability preflight. Physical containment uses filesystem identity
+for existing roots in both directions; an unresolved caller grant refuses. The wall
 checks again against its completed policy, including HOME, temp, executable and
 system recursive reads. Both control and durable state roots are absolute,
 real, owner-only directories with no symlink component and no ancestor or

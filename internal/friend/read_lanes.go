@@ -739,7 +739,9 @@ func (l *loop) startRead(r AskedRead, now time.Time) {
 		ctx = WithProcessGroupAnchor(ctx, readAnchorPath(l.d.nativeReadDir(dir)))
 		ctx = WithProcessStarted(ctx, func(pid int) error {
 			res.gateCalled = true
-			if err := d.validateNativeControl(); err != nil { return err }
+			if err := d.validateNativeControl(); err != nil {
+				return err
+			}
 			held := !d.admitLaunch(rctx)
 			if err := saveReadActive(l.d.nativeReadDir(dir), readActive{Read: r, PID: pid, Identity: ProcessIdentity(pid), LaunchHeld: held}); err != nil {
 				return errors.Join(errMachineLaunchHeld, err)

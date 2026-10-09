@@ -1,6 +1,7 @@
 package friend
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -15,21 +16,24 @@ import (
 )
 
 type nativeControlBinding struct {
-	ID nativeWorkID
+	ID        nativeWorkID
 	Namespace string
-	Paths []string
+	Paths     []string
 }
 type nativeControlIndex struct {
-	Version int
+	Version  int
 	Bindings []nativeControlBinding
 }
+
 var nativeControlNamespace = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
 // NativeOwnerControlDir establishes the production account's namespace. The
 // durable index, not HOME or a new device number after remount, chooses it.
 func NativeOwnerControlDir(work string) (string, error) {
 	home, err := nativeAccountHome()
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	return NativeControlDir(home, work)
 }
 
@@ -38,23 +42,39 @@ func NativeOwnerControlDir(work string) (string, error) {
 // or missing/corrupt known index holds ownership rather than minting new debt.
 func NativeControlDir(home, work string) (string, error) {
 	canonical, err := filepath.EvalSymlinks(work)
-	if err != nil || !filepath.IsAbs(canonical) || !filepath.IsAbs(home) { return "", errors.New("native control needs absolute real work and account home") }
+	if err != nil || !filepath.IsAbs(canonical) || !filepath.IsAbs(home) {
+		return "", errors.New("native control needs absolute real work and account home")
+	}
 	info, err := os.Stat(canonical)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	id, err := nativeWorkIdentity(info)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	base, fresh, err := nativeControlIndexBase(home)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	path := filepath.Join(base, "INDEX.json")
-	if err := nativeControlNoSymlinkFile(path+".lock"); err != nil { return "", err }
+	if err := nativeControlNoSymlinkFile(path + ".lock"); err != nil {
+		return "", err
+	}
 	return withLaneLock(path, func() (string, error) {
-		if err := nativeControlOwnedPath(base, true); err != nil { return "", err }
-		if err := nativeControlNoSymlinkFile(path); err != nil { return "", err }
+		if err := nativeControlOwnedPath(base, true); err != nil {
+			return "", err
+		}
+		if err := nativeControlNoSymlinkFile(path); err != nil {
+			return "", err
+		}
 		index := nativeControlIndex{Version: 1}
 		raw, err := os.ReadFile(path)
 		if errors.Is(err, os.ErrNotExist) && fresh {
-			if err := writeNativeControlIndex(path, &index); err != nil { return "", err }
-		} else if err != nil || json.Unmarshal(raw, &index) != nil || index.Version != 1 {
+			if err := writeNativeControlIndex(path, &index); err != nil {
+				return "", err
+			}
+		} else if err != nil || readNativeControlIndex(raw, &index) != nil || index.Version != 1 {
 			return "", errors.New("native control durable index is missing or corrupt; preserve and reconcile ownership before launch")
 		}
 		return bindNativeWork(base, path, &index, canonical, info, id)
@@ -64,54 +84,93 @@ func NativeControlDir(home, work string) (string, error) {
 // The owned account home and each private index parent are checked without
 // following symlinks; a preexisting foreign/writable directory is never adopted.
 func nativeControlIndexBase(home string) (string, bool, error) {
-	if !filepath.IsAbs(home) || filepath.Clean(home) != home { return "", false, errors.New("native control account home is not canonical") }
+	if !filepath.IsAbs(home) || filepath.Clean(home) != home {
+		return "", false, errors.New("native control account home is not canonical")
+	}
 	base := filepath.Join(home, ".nova-friend", "native-control")
-	if err := nativeBrokerOutsideRoots(base, (&sandbox.Policy{}).VisibleRoots()); err != nil { return "", false, err }
-	if real, err := filepath.EvalSymlinks(home); err != nil || real != home { return "", false, errors.New("native control account home must be real without symlink aliases") }
-	if err := nativeControlOwnedPath(home, false); err != nil { return "", false, err }
+	if err := nativeBrokerOutsideRoots(base, (&sandbox.Policy{}).VisibleRoots()); err != nil {
+		return "", false, err
+	}
+	if real, err := filepath.EvalSymlinks(home); err != nil || real != home {
+		return "", false, errors.New("native control account home must be real without symlink aliases")
+	}
+	if err := nativeControlOwnedPath(home, false); err != nil {
+		return "", false, err
+	}
 	for _, path := range []string{filepath.Join(home, ".nova-friend"), filepath.Join(home, ".nova-friend", "native-control")} {
 		err := os.Mkdir(path, 0o700)
 		fresh := err == nil
-		if err != nil && !errors.Is(err, os.ErrExist) { return "", false, err }
-		if err := nativeControlOwnedPath(path, path != filepath.Join(home, ".nova-friend")); err != nil { return "", false, err }
-		if path == filepath.Join(home, ".nova-friend", "native-control") { return path, fresh, nil }
+		if err != nil && !errors.Is(err, os.ErrExist) {
+			return "", false, err
+		}
+		if err := nativeControlOwnedPath(path, path != filepath.Join(home, ".nova-friend")); err != nil {
+			return "", false, err
+		}
+		if path == filepath.Join(home, ".nova-friend", "native-control") {
+			return path, fresh, nil
+		}
 	}
 	return "", false, errors.New("native control index base is unavailable")
 }
 
 func bindNativeWork(base, indexPath string, index *nativeControlIndex, canonical string, info os.FileInfo, id nativeWorkID) (string, error) {
+	if err := verifyNativeControlNamespaces(base, index); err != nil { return "", err }
 	match := -1
 	seen := map[string]bool{}
 	for n, binding := range index.Bindings {
-		if !nativeControlNamespace.MatchString(binding.Namespace) || len(binding.Paths) == 0 || binding.ID.UID != id.UID || binding.ID.Inode == 0 || binding.ID.Device == 0 { return "", errors.New("native control index binding is malformed") }
-		if seen[binding.Namespace] { return "", errors.New("native control index repeats an authority namespace") }
+		if !nativeControlNamespace.MatchString(binding.Namespace) || len(binding.Paths) == 0 || binding.ID.UID != id.UID || binding.ID.Inode == 0 || binding.ID.Device == 0 {
+			return "", errors.New("native control index binding is malformed")
+		}
+		if seen[binding.Namespace] {
+			return "", errors.New("native control index repeats an authority namespace")
+		}
 		seen[binding.Namespace] = true
-		if err := nativeControlOwnedPath(filepath.Join(base, binding.Namespace), true); err != nil { return "", errors.New("known native control namespace is missing or unsafe; ownership held") }
+		if err := nativeControlOwnedPath(filepath.Join(base, binding.Namespace), true); err != nil {
+			return "", errors.New("known native control namespace is missing or unsafe; ownership held")
+		}
 		alias, samePath := false, false
 		for _, old := range binding.Paths {
-			if !filepath.IsAbs(old) || filepath.Clean(old) != old { return "", errors.New("native control index work path is malformed") }
+			if !filepath.IsAbs(old) || filepath.Clean(old) != old {
+				return "", errors.New("native control index work path is malformed")
+			}
 			samePath = samePath || old == canonical
-			if prior, err := os.Stat(old); err == nil && os.SameFile(prior, info) { alias = true }
+			if prior, err := os.Stat(old); err == nil && os.SameFile(prior, info) {
+				alias = true
+			}
 		}
 		if samePath || alias || binding.ID == id {
-			if binding.ID != id || !alias { return "", errors.New("native work identity changed or cannot be verified; reconcile existing ownership before launch") }
-			if match != -1 { return "", errors.New("native work has conflicting durable authority bindings") }
+			if binding.ID != id || !alias {
+				return "", errors.New("native work identity changed or cannot be verified; reconcile existing ownership before launch")
+			}
+			if match != -1 {
+				return "", errors.New("native work has conflicting durable authority bindings")
+			}
 			match = n
 		}
 	}
 	if match >= 0 {
 		binding := &index.Bindings[match]
-		for _, old := range binding.Paths { if old == canonical { return filepath.Join(base, binding.Namespace), nil } }
+		for _, old := range binding.Paths {
+			if old == canonical {
+				return filepath.Join(base, binding.Namespace), nil
+			}
+		}
 		binding.Paths = append(binding.Paths, canonical)
 	} else {
 		var key [16]byte
-		if _, err := rand.Read(key[:]); err != nil { return "", err }
+		if _, err := rand.Read(key[:]); err != nil {
+			return "", err
+		}
 		name := hex.EncodeToString(key[:])
-		if err := os.Mkdir(filepath.Join(base, name), 0o700); err != nil { return "", err }
+		if err := os.Mkdir(filepath.Join(base, name), 0o700); err != nil {
+			return "", err
+		}
 		index.Bindings = append(index.Bindings, nativeControlBinding{ID: id, Namespace: name, Paths: []string{canonical}})
-		match = len(index.Bindings)-1
+		match = len(index.Bindings) - 1
 	}
-	if err := writeNativeControlIndex(indexPath, index); err != nil { return "", err }
+	if err := writeNativeControlIndex(indexPath, index); err != nil {
+		return "", err
+	}
 	return filepath.Join(base, index.Bindings[match].Namespace), nil
 }
 
@@ -120,17 +179,33 @@ func bindNativeWork(base, indexPath string, index *nativeControlIndex, canonical
 // namespace. Missing proof in a nonempty state directory fails closed.
 func bindNativeControlState(state, root string) error {
 	path := filepath.Join(state, "CONTROL-BINDING")
-	if err := nativeControlNoSymlinkFile(path+".lock"); err != nil { return err }
+	if err := nativeControlNoSymlinkFile(path + ".lock"); err != nil {
+		return err
+	}
 	_, err := withLaneLock(path, func() (string, error) {
-		if err := nativeControlNoSymlinkFile(path); err != nil { return "", err }
+		if err := nativeControlNoSymlinkFile(path); err != nil {
+			return "", err
+		}
 		if raw, err := os.ReadFile(path); err == nil {
-			if string(raw) != root+"\n" { return "", errors.New("daemon control binding changed; preserve and reconcile its existing state") }
+			if string(raw) != root+"\n" {
+				return "", errors.New("daemon control binding changed; preserve and reconcile its existing state")
+			}
 			return root, nil
-		} else if !errors.Is(err, os.ErrNotExist) { return "", err }
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
 		entries, err := os.ReadDir(state)
-		if err != nil { return "", err }
-		for _, entry := range entries { if entry.Name() != "CONTROL-BINDING.lock" { return "", errors.New("daemon state lacks its known control binding; ownership held for reconciliation") } }
-		if err := atomicfile.WriteFile(path, []byte(root+"\n"), 0o600); err != nil { return "", fmt.Errorf("native control state binding: %w", err) }
+		if err != nil {
+			return "", err
+		}
+		for _, entry := range entries {
+			if entry.Name() != "CONTROL-BINDING.lock" {
+				return "", errors.New("daemon state lacks its known control binding; ownership held for reconciliation")
+			}
+		}
+		if err := atomicfile.WriteFile(path, []byte(root+"\n"), 0o600); err != nil {
+			return "", fmt.Errorf("native control state binding: %w", err)
+		}
 		return root, nil
 	})
 	return err
@@ -138,6 +213,36 @@ func bindNativeControlState(state, root string) error {
 
 func writeNativeControlIndex(path string, index *nativeControlIndex) error {
 	raw, err := json.Marshal(index)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	return atomicfile.WriteFile(path, append(raw, '\n'), 0o600)
+}
+
+// The index is machine-owned canonical JSON, not user configuration. Matching
+// the standard encoder's bytes rejects unknown/duplicate members and trailing
+// values without a second parser (SPEC-FRIEND, Native control roots).
+func readNativeControlIndex(raw []byte, index *nativeControlIndex) error {
+ if err := json.Unmarshal(raw, index); err != nil { return err }
+ canonical, err := json.Marshal(index)
+ if err != nil { return err }
+ if !bytes.Equal(raw, append(canonical, '\n')) { return errors.New("native control index must retain its canonical machine-written representation") }
+ return nil
+}
+
+// Every durable namespace must remain reachable through exactly one index row.
+// A syntactically valid truncated index cannot abandon RUN/LANE/read debt.
+func verifyNativeControlNamespaces(base string, index *nativeControlIndex) error {
+ expected := map[string]bool{"INDEX.json": true, "INDEX.json.lock": true}
+ for _, binding := range index.Bindings {
+  if !nativeControlNamespace.MatchString(binding.Namespace) || expected[binding.Namespace] { return errors.New("native control index has an invalid or repeated namespace") }
+  expected[binding.Namespace] = true
+ }
+ entries, err := os.ReadDir(base)
+ if err != nil { return err }
+ for _, entry := range entries {
+  if !expected[entry.Name()] { return errors.New("native control contains unindexed authority; preserve and reconcile ownership before launch") }
+  if nativeControlNamespace.MatchString(entry.Name()) && (!entry.IsDir() || entry.Type()&os.ModeSymlink != 0) { return errors.New("native control namespace must remain a real directory") }
+ }
+ return nil
 }
