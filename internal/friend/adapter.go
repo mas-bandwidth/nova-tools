@@ -191,6 +191,9 @@ func realExec(ctx context.Context, killDelay time.Duration, dir, name string, ar
 	if statusOnStderr, _ := ctx.Value(setupStderrOutputKey{}).(bool); statusOnStderr {
 		cmd.Stdout, cmd.Stderr = stderr, out
 	}
+	if terminal, _ := ctx.Value(codexConsentTerminalKey{}).(*os.File); terminal != nil {
+		cmd.Stdout, cmd.Stderr = terminal, terminal
+	}
 	ownGroup(cmd)
 	started := processStarted(ctx)
 	anchorPath := processGroupAnchor(ctx)
