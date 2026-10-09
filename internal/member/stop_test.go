@@ -310,3 +310,74 @@ func TestAChildThatCannotBeStoppedIsHandedBackWhenItEnds(t *testing.T) {
 	assert.Equal(t, []string{"stop-return --as m c1@1 --epoch 7 --reason owned process stopped"}, g.s.lines("stop-return"))
 	assert.Empty(t, g.s.lines("finish"))
 }
+
+// Beat trace: the member sends --stop-returns on every beat, 0 included, so the store's
+// owed count clears to 0 after the last hand-back and start does not wait for ever.
+func TestBeatAlwaysSendsStopReturnsFlagIncludingZero(t *testing.T) {
+	t.Parallel()
+	m, s, r, _ := stopRig(Config{As: "m", Width: 2})
+	p := pk("c1")
+	s.set("queue", 0, queueWith(t, "RUNNING", 7, ready("c1")))
+	s.set("take", 0, takeJSON(t, p))
+	_, err := m.Tick(time.Unix(0, 0))
+	require.NoError(t, err)
+
+	// initial beat with 0 owed
+	s.reset()
+	require.NoError(t, m.Beat())
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0"}, s.lines("beat"))
+
+	// the machine stops: c1 is cancelled, now 1 stop-return is owed
+	s.set("queue", 0, queueWith(t, "STOPPED", 7, working("c1", 1, &p)))
+	_, err = m.Tick(time.Unix(10, 0))
+	require.NoError(t, err)
+	s.reset()
+	require.NoError(t, m.Beat())
+	assert.Equal(t, []string{"fleet beat m --stop-returns 1"}, s.lines("beat"))
+
+	// child ends and is handed back via stop-return
+	r.child("c1").end(Result{OK: true})
+	_, err = m.Tick(time.Unix(20, 0))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"stop-return --as m c1@1 --epoch 7 --reason owned process stopped"}, s.lines("stop-return"))
+
+	// beat after hand-back: owed returns to 0
+	s.reset()
+	require.NoError(t, m.Beat())
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0"}, s.lines("beat"))
+}
+
+// A reader member restarted mid-stop: every reading card under its row with no child of ours
+// is handed back at its claim generation (not attempt), card@0 is guarded and never emitted,
+// and the cards are not recovered when RUNNING again.
+func TestAReaderMemberRestartedMidStopHandsBackItsReadingCards(t *testing.T) {
+	t.Parallel()
+	m, s, r, out := stopRig(Config{As: "reader.r1", Reader: true, Width: 4})
+	p1 := pk("rd1")
+	p1.Gen = 1
+	p1.Attempt = 3 // attempt is 3, but generation is 1!
+	pZero := pk("rd-zero")
+	pZero.Gen = 0 // unpopulated gen: must never emit card@0
+
+	s.set("queue", 0, queueWith(t, "STOPPED", 7, queueCard{ID: "rd1", Col: "reading", Packet: &p1}, queueCard{ID: "rd-zero", Col: "reading", Packet: &pZero}))
+	_, err := m.Tick(time.Unix(0, 0))
+	require.NoError(t, err)
+
+	// rd1 handed back at generation 1 (not attempt 3!), rd-zero never emitted
+	assert.Equal(t, []string{"stop-return --as reader.r1 rd1@1 --epoch 7 --reason owned process stopped"}, s.lines("stop-return"))
+	assert.NotContains(t, strings.Join(s.lines("stop-return"), " "), "rd-zero@0")
+	assert.Contains(t, out.String(), "STOP-RETURN OK card=rd1 gen=1 epoch=7 pid=0: handed back to reader.r1 ready by the machine's stop")
+
+	// subsequent ticks while STOPPED do not duplicate the stop-return
+	for i := range 3 {
+		_, err = m.Tick(time.Unix(1+int64(i), 0))
+		require.NoError(t, err)
+	}
+	assert.Len(t, s.lines("stop-return"), 1, "rd1 is not sent again once handed back")
+
+	// RUNNING again: recoverWorking checks gen == g, so it is not recovered at this generation
+	s.set("queue", 0, queueWith(t, "RUNNING", 7, queueCard{ID: "rd1", Col: "reading", Packet: &p1}))
+	_, err = m.Tick(time.Unix(10, 0))
+	require.NoError(t, err)
+	assert.Empty(t, r.started(), "handed back reading card is not recovered at the same generation")
+}

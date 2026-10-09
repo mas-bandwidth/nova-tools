@@ -314,5 +314,8 @@ func (f *FileStore) Migrate(ctx context.Context) (from, to int, applied []int, e
 // migrate's preflight has nothing to refuse.
 func (f *FileStore) Ownership(context.Context) (Ownership, error) { return Ownership{}, nil }
 
+// Sessions is none: a file has no other backends.
+func (f *FileStore) Sessions(context.Context) ([]Session, error) { return nil, nil }
+
 // Close writes nothing: every write saved the file as it landed.
 func (f *FileStore) Close() error { return nil }

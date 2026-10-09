@@ -735,10 +735,7 @@ func (m *Member) Beat() error {
 	}
 	var total uint64
 	if !m.cfg.Reader {
-		args = []string{"fleet", "beat", m.cfg.As}
-		if n := m.OwedStopReturns(); n > 0 {
-			args = append(args, "--stop-returns", strconv.Itoa(n)) // start waits on zero (section 14)
-		}
+		args = []string{"fleet", "beat", m.cfg.As, "--stop-returns", strconv.Itoa(m.OwedStopReturns())}
 		if m.cfg.Meter != nil {
 			var pct float64
 			var ok bool
@@ -1289,7 +1286,7 @@ func (m *Member) recoverWorking(ids []string, byID map[string]queueCard, wasOurs
 			continue
 		}
 		if g, handed := m.handedBack[id]; handed {
-			if _, gen, attempt := m.claim(c); (m.cfg.Reader && attempt == g) || (!m.cfg.Reader && gen == g) {
+			if _, gen, _ := m.claim(c); gen == g {
 				continue // handed back by the stop at this generation: the store deals it again at the next
 			}
 			delete(m.handedBack, id)
@@ -1515,9 +1512,9 @@ func (m *Member) machineStop(q queueOut, byID map[string]queueCard, now time.Tim
 			if _, ours := m.running[id]; ours || (c.Col != "working" && c.Col != "reading") {
 				continue
 			}
-			epoch, gen, attempt := m.claim(c)
-			if m.cfg.Reader {
-				gen = attempt
+			epoch, gen, _ := m.claim(c)
+			if gen <= 0 {
+				continue
 			}
 			if g, handed := m.handedBack[id]; handed && g == gen {
 				continue
@@ -1542,7 +1539,20 @@ func (m *Member) machineStop(q queueOut, byID map[string]queueCard, now time.Tim
 				continue
 			}
 		}
-		if m.stopReturn(id, l.gen, l.epoch, l.stopPid, now, "") {
+		gen, epoch := l.gen, l.epoch
+		if c, listed := byID[id]; listed {
+			ep, g, _ := m.claim(c)
+			if g > 0 {
+				gen = g
+			}
+			if ep > 0 {
+				epoch = ep
+			}
+		}
+		if gen <= 0 {
+			continue
+		}
+		if m.stopReturn(id, gen, epoch, l.stopPid, now, "") {
 			m.forget(id, true) // kept for inspection: the tree holds whatever the child had done
 			acted++
 		}
@@ -1554,6 +1564,9 @@ func (m *Member) machineStop(q queueOut, byID map[string]queueCard, now time.Tim
 // last refusal is younger than StopReturnRetry. It says the OK, and a refusal once while
 // its text stands, and returns whether the store took it.
 func (m *Member) stopReturn(id string, gen int, epoch uint64, pid int, now time.Time, why string) bool {
+	if gen <= 0 {
+		return false
+	}
 	if at, ok := m.stopRetry[id]; ok && now.Before(at) {
 		return false
 	}

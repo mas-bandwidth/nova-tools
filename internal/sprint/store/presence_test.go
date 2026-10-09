@@ -341,3 +341,35 @@ func TestAnUnknownMachineBeatingIsToldOnce(t *testing.T) {
 	keys := h.m.Keys(h.st.Names)
 	require.Empty(t, keys, "teardown left %v", keys)
 }
+
+// BeatOwing: nil preserves prev.StopReturns; 0 clears it to 0.
+func TestBeatOwingNilKeepsZeroClears(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(1)
+	h.startMachine()
+	h.machine()
+
+	zero := 0.0
+	// Initial beat with 3 owed stop-returns
+	three := 3
+	b, err := h.st.BeatOwing(h.ctx, "m1", &zero, hostload.Source{}, &three)
+	require.NoError(t, err)
+	require.Equal(t, 3, b.StopReturns, "explicit 3 sets StopReturns to 3")
+
+	// Next beat with nil (omitted flag): preserves previous count 3
+	b, err = h.st.BeatOwing(h.ctx, "m1", &zero, hostload.Source{}, nil)
+	require.NoError(t, err)
+	require.Equal(t, 3, b.StopReturns, "nil keeps previous StopReturns")
+
+	// Next beat with 0: clears to 0
+	clearZero := 0
+	b, err = h.st.BeatOwing(h.ctx, "m1", &zero, hostload.Source{}, &clearZero)
+	require.NoError(t, err)
+	require.Equal(t, 0, b.StopReturns, "0 clears StopReturns to 0")
+
+	// Next beat with nil: preserves 0
+	b, err = h.st.BeatOwing(h.ctx, "m1", &zero, hostload.Source{}, nil)
+	require.NoError(t, err)
+	require.Equal(t, 0, b.StopReturns, "nil keeps cleared StopReturns at 0")
+}

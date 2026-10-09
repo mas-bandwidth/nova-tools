@@ -406,3 +406,46 @@ func TestLaneStateKeepsItsStopReturns(t *testing.T) {
 	_, err = os.Stat(filepath.Join(dir, LanesFile))
 	require.NoError(t, err)
 }
+
+// Regression test for Fix 3: stopReads falls back to readSet.epoch and asked queue epoch
+// when r.Epoch is unpopulated on an asked/active read.
+func TestStopReadsFallsBackToReadSetEpochWhenReadEpochUnpopulated(t *testing.T) {
+	t.Parallel()
+	d := &Daemon{Friend: "bob", Record: func(string) {}}
+	cancelled := false
+	cancel := func() { cancelled = true }
+	rs := &readSet{
+		cancel:  map[string]context.CancelFunc{"r1": cancel},
+		stopped: map[string]bool{},
+		active:  map[string]AskedRead{"r1": {ID: "r1", Gen: 2, Epoch: ""}}, // r.Epoch unpopulated!
+		epoch:   "42",                                                      // fallback epoch on readSet
+	}
+	ls := &laneSet{state: LaneState{}}
+	l := &loop{d: d, reads: rs, lanes: ls}
+	now := time.Now()
+	l.stopReads(now)
+
+	require.True(t, cancelled, "read was cancelled")
+	require.True(t, rs.stopped["r1"], "marked stopped")
+	require.Len(t, ls.state.StopReturns, 1)
+	sr := ls.state.StopReturns[0]
+	assert.Equal(t, "42", sr.Epoch, "falls back to readSet.epoch when r.Epoch is unpopulated")
+	assert.Equal(t, "r1", sr.Card)
+	assert.Equal(t, 2, sr.Gen)
+	assert.Equal(t, "reader-bob", sr.Row)
+
+	// Also test fallback to parsed asked epoch when both r.Epoch and s.epoch are unpopulated
+	cancelled2 := false
+	rs2 := &readSet{
+		cancel:  map[string]context.CancelFunc{"r2": func() { cancelled2 = true }},
+		stopped: map[string]bool{},
+		active:  map[string]AskedRead{"r2": {ID: "r2", Gen: 3, Epoch: ""}},
+		asked:   []AskedRead{{ID: "r3", Gen: 1, Epoch: "99"}},
+	}
+	ls2 := &laneSet{state: LaneState{}}
+	l2 := &loop{d: d, reads: rs2, lanes: ls2}
+	l2.stopReads(now)
+	require.True(t, cancelled2, "read was cancelled")
+	require.Len(t, ls2.state.StopReturns, 1)
+	assert.Equal(t, "99", ls2.state.StopReturns[0].Epoch, "falls back to asked epoch")
+}

@@ -615,7 +615,7 @@ func TestBeatCarriesNoLoadOfItsOwn(t *testing.T) {
 			require.Equal(t, tc.running, g.m.Running())
 			g.s.reset()
 			require.NoError(t, g.m.Beat())
-			require.Equal(t, []string{"fleet beat m"}, g.s.lines("beat"))
+			require.Equal(t, []string{"fleet beat m --stop-returns 0"}, g.s.lines("beat"))
 		})
 	}
 }
@@ -1378,19 +1378,19 @@ func TestBeatCarriesTheHighestSecondSinceTheLastBeat(t *testing.T) {
 		require.NoError(t, g.m.Beat())
 		return strings.Join(g.s.lines("beat"), "|")
 	}
-	require.Equal(t, "fleet beat m", beat(), "no sample yet: the beat measures")
+	require.Equal(t, "fleet beat m --stop-returns 0", beat(), "no sample yet: the beat measures")
 	feed(10, 70, 20)
-	require.Equal(t, "fleet beat m --load 70.0", beat(), "10, 70, 20 beat 70")
-	require.Equal(t, "fleet beat m", beat(), "no sample since: the beat measures")
+	require.Equal(t, "fleet beat m --stop-returns 0 --load 70.0", beat(), "10, 70, 20 beat 70")
+	require.Equal(t, "fleet beat m --stop-returns 0", beat(), "no sample since: the beat measures")
 	feed(5, 5, 5)
 	g.s.set("beat", 2, "no store")
 	g.s.reset()
 	require.Error(t, g.m.Beat(), "a store that does not answer is a beat that failed")
 	g.s.set("beat", 0, "")
 	feed(5)
-	require.Equal(t, "fleet beat m --load 5.0", beat(), "the 70 went with the beat that wrote it; the lost beat's samples ride the next")
+	require.Equal(t, "fleet beat m --stop-returns 0 --load 5.0", beat(), "the 70 went with the beat that wrote it; the lost beat's samples ride the next")
 	feed(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
-	require.Equal(t, "fleet beat m --load 12.0", beat(), "at most the ten seconds the ring holds")
+	require.Equal(t, "fleet beat m --stop-returns 0 --load 12.0", beat(), "at most the ten seconds the ring holds")
 }
 
 // TestAReaderBeatsNothing: a reader sends no fleet beat and reads no sample; its beat is its

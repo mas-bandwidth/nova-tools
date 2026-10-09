@@ -1871,7 +1871,7 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		if *atEpoch >= 0 || *timeout <= 0 {
 			return refuse(stderr, "inbox", "--wait waits on the sprint's epoch for at most a --timeout above zero")
 		}
-		src, err := a.storeSource(ctx, st, *deadline, *stale)
+		src, err := a.storeSource(ctx, st, c.redis, *deadline, *stale)
 		if err != nil {
 			return a.readFailed("inbox", err, stderr)
 		}

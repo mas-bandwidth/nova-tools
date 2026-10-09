@@ -3,13 +3,29 @@ package doctor
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// dashboardEnv confines even the system unit directories to this test's
+// temporary root. The generic fakeEnv intentionally reads absolute paths on
+// the host, which would pick up a runner's real dashboard service here.
+type dashboardEnv struct{ fakeEnv }
+
+func (d dashboardEnv) fixturePath(p string) string {
+	return filepath.Join(d.root, strings.TrimPrefix(filepath.Clean(p), string(filepath.Separator)))
+}
+
+func (d dashboardEnv) ReadFile(p string) ([]byte, error) { return os.ReadFile(d.fixturePath(p)) }
+func (d dashboardEnv) ReadDir(p string) ([]fs.DirEntry, error) {
+	return os.ReadDir(d.fixturePath(p))
+}
 
 const (
 	dashboardPlist = `<?xml version="1.0" encoding="UTF-8"?>
@@ -36,7 +52,7 @@ func dashboardRig(t *testing.T, units map[string]string, up ...string) Env {
 		require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755))
 		require.NoError(t, os.WriteFile(full, []byte(text), 0o644))
 	}
-	return fakeEnv{env: map[string]string{"HOME": "home"}, root: root,
+	return dashboardEnv{fakeEnv{env: map[string]string{"HOME": "home"}, root: root,
 		dial: func(addr string) error {
 			for _, a := range up {
 				if a == addr {
@@ -44,7 +60,7 @@ func dashboardRig(t *testing.T, units map[string]string, up ...string) Env {
 				}
 			}
 			return errors.New("connection refused")
-		}}
+		}}}
 }
 
 func TestDashboardCheck(t *testing.T) {

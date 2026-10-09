@@ -100,7 +100,7 @@ func TestNotificationInstallPreservesNativeSettingsBinaryAndLabel(t *testing.T) 
 				require.NoError(t, err)
 				assert.Contains(t, string(got), "nova-friend-notifications-bob.log")
 				assert.Contains(t, string(got), "--notifications-only")
-				assert.Equal(t, []string{"bootout gui/501/com.nova.friend-notifications-bob", "bootstrap gui/501 " + plist}, r.launchctl)
+				assert.Equal(t, []string{"bootout gui/501/com.nova.friend-notifications-bob", "print gui/501/com.nova.friend-notifications-bob", "bootstrap gui/501 " + plist}, r.launchctl, "install waits for launchd to release the label before the bootstrap")
 			}
 		})
 	}

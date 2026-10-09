@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -527,5 +528,82 @@ func TestAReadHandedBackByFriendTakeIsNotDealtToHerAgain(t *testing.T) {
 			continue
 		}
 		require.Nil(t, w.s.Fleet.Placed(id+".g1"), "a read she handed back is never dealt to her again at the attempt")
+	}
+}
+
+// TestAReadCardHoldsItsPrimaryToTheReadCardsDeadline pins the 2026-10-06 10:18 PM finding:
+// a read card working on a friend's row holds its primary in review until the read card's
+// own deadline (ReadCardDeadline from its start, when the ask takes it back late), never
+// only the old friend read's DeadlineUnbegun from its ask; eight primaries with a read
+// working were judged stalled ("no read is outstanding") 30 minutes after the ask.
+func TestAReadCardHoldsItsPrimaryToTheReadCardsDeadline(t *testing.T) {
+	t.Parallel()
+	w := readCardsWorld(t, 4)
+	putReviewBy(w, "s1-1", "s1-1: work (s1)\n", "bob", 1)
+	dealReads(t, w, []FriendSeat{readerSeat("amy", 8, []string{"flash"}, []string{"builder", "reader"})})
+	rc := w.s.Fleet.Placed(ReadCardID("s1-1", 1, "amy"))
+	require.NotNil(t, rc)
+	require.Equal(t, Working, rc.Col)
+	w.s.Now = w.s.Now.Add(DeadlineUnbegun + 15*time.Minute)
+	hd := mustHold(t, running(w), "s1-1", HeldByActor)
+	require.Contains(t, hd.Why, rc.ID)
+	w.s.Now = w.s.Now.Add(ReadCardDeadline)
+	require.NotEqual(t, HeldByActor, Holder(running(w), w.s.Now, "s1-1").By, "past the read card's deadline it holds nothing")
+}
+
+// TestReadCardsWhySaysWhyAPrimaryWantsNoRead pins tick --shadow's wants-0 line: a primary in
+// review, not acceptable, that wants no read card says why (failed work, or the reads that
+// stand, each named).
+func TestReadCardsWhySaysWhyAPrimaryWantsNoRead(t *testing.T) {
+	t.Parallel()
+	w := readCardsWorld(t, 4)
+	putReviewBy(w, "s1-1", "s1-1: work (s1)\n", "bob", 1)
+	putReviewBy(w, "s1-2", "s1-2: work (s1)\n", "bob", 2)
+	w.s.Work.Card("s1-2").Fields["result"] = "failed"
+	seats := []FriendSeat{readerSeat("amy", 8, []string{"flash"}, []string{"builder", "reader"})}
+	dealReads(t, w, seats)
+	why := strings.Join(ReadCardsWhy(w.s, seats), "\n")
+	require.Contains(t, why, "s1-1 wants 0: attempt=1 stands: placed "+ReadCardID("s1-1", 1, "amy")+" col=working")
+	require.Contains(t, why, "s1-2 wants 0: its work came back failed (result=failed)")
+}
+
+// TestAPrimaryWaitingForAReadCardIsNeverStranded pins the 2026-10-06 10:36 PM finding: with
+// read cards on, a primary in review that wants a read card and holds none yet (the deal
+// deals it, or marks it waiting for a reader) is not "stranded: never asked" when a step
+// closes its last judgment; the read-card ask is owed it, as a read card dealt holds it.
+func TestAPrimaryWaitingForAReadCardIsNeverStranded(t *testing.T) {
+	t.Parallel()
+	w := readCardsWorld(t, 4)
+	putReviewBy(w, "s1-1", "s1-1: work (s1)\n", "bob", 1)
+	w.note(judgment(NWorkLate, "s1", w.s.Now, 0, "s1-1"))
+	closing := noteIDs(w.s.Open)
+	j, ok := reviewJudgment(w.s, w.s.Work.Card("s1-1"), reviewStep{closing: closing})
+	require.False(t, ok, "waiting for its read card, not stranded: %s %s", j.Type, j.What)
+	dealReads(t, w, []FriendSeat{readerSeat("amy", 8, []string{"flash"}, []string{"builder", "reader"})})
+	j, ok = reviewJudgment(w.s, w.s.Work.Card("s1-1"), reviewStep{closing: closing})
+	require.False(t, ok, "its read card dealt holds it: %s %s", j.Type, j.What)
+}
+
+// TestAReadNoUnitMayTakeIsCannotAskOnce pins the same evening's second finding: a primary
+// that wants a read no unit up may take (the worker is the only reader of its tier) gets the
+// cannot-ask judgment from the read-card ask, once, not "stranded" and not silence.
+func TestAReadNoUnitMayTakeIsCannotAskOnce(t *testing.T) {
+	t.Parallel()
+	w := readCardsWorld(t, 4)
+	putReviewBy(w, "s1-1", "s1-1: work (s1) tier: heavy\n", "bob", 1)
+	seats := []FriendSeat{readerSeat("bob", 8, []string{"heavy"}, []string{"builder", "reader"})}
+	p, _ := readCardsAskPart(w.s, TickReq{Friends: seats}, seats)
+	var cannot []Note
+	for _, n := range p.Notes {
+		if n.Type == NCannotAsk {
+			cannot = append(cannot, n)
+		}
+	}
+	require.Len(t, cannot, 1, "one cannot-ask judgment")
+	require.Contains(t, cannot[0].Primaries, "s1-1")
+	w.note(cannot...)
+	p, _ = readCardsAskPart(w.s, TickReq{Friends: seats}, seats)
+	for _, n := range p.Notes {
+		require.NotEqual(t, NCannotAsk, n.Type, "raised once: it stays open")
 	}
 }

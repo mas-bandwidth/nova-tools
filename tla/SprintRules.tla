@@ -26,6 +26,14 @@
 \*   it is gated; the third failure stops the stream.
 \* Part "idle": the fleet idle or working each tick; the alarm once an episode after
 \*   Window ticks, and the clear note when it recovers.
+\* Part "answers": one card's attempts under the three answers that took the seat's hand
+\*   loops (rules_read.go ruleReadBroken, harness_fault.go ruleHarness, steps_work.go
+\*   lateFinish): a broken read with a finding reworks the card with it, a broken read with
+\*   none is a mind's; work failed on a harness fault or a HOLD with findings is reworked with
+\*   the failure, any other failure is a mind's; a deadline fails an attempt while the
+\*   worker's report is still on its way, and that report, arriving while no later attempt
+\*   has started, finishes the attempt. Every rework is one attempt more and starts from the
+\*   head the attempt before pushed (a head here is its attempt's number).
 \*
 \* Part "late" also has a reachability witness, MCSprintRulesLateReachReturn: the design
 \* still returns a card (gen > 0), so NeverReturned fails there.
@@ -46,6 +54,14 @@
 \*   "nobound"    the read-broken rule reworks a card at its brief's bound: ReadAnswersBounded
 \*   "twinall"    the read-broken rule twins a card whose finding names no file outside
 \*                PATHS: TwinsWiden
+\*   "nofinding"  the read-broken rule reworks a broken read that carries no finding:
+\*                ReworkHasAFix
+\*   "recount"    a rework starts its attempt without counting it: ReworkKeepsCount
+\*   "nocarry"    a rework starts from the base, not the head the attempt before pushed:
+\*                ReworkCarriesHead
+\*   "stale"      finish refuses the report of an attempt the deadline failed, and the card
+\*                goes round again: LateReportFinishes
+\*   "faultnobound" the harness rule reworks a card at its attempt bound: AnswerAttemptsBounded
 
 EXTENDS Integers, FiniteSets
 
@@ -69,7 +85,8 @@ VARIABLES col, need, blocked, twin,               \* twins
           gen, waited, progress, late, waits, lst, stamped, badReturn, \* late
           rdst, rdatt, rdlast, rdfind, rdpaths, rdtwins, rdtotal, \* reads
           gfails, stopped,                         \* gate
-          idle, since, said, alarms, clk, nalarm, nclear \* idle
+          idle, since, said, alarms, clk, nalarm, nclear, \* idle
+          anst, anatt, anreworks, anhead, ancarry, anfind, anfail, anlast, anland, anlost, anfixless \* answers
 
 twinVars == <<col, need, blocked, twin>>
 ruleVars == <<tier, fails, st, attempts, envFails>>
@@ -77,7 +94,13 @@ lateVars == <<gen, waited, progress, late, waits, lst, stamped, badReturn>>
 rdVars == <<rdst, rdatt, rdlast, rdfind, rdpaths, rdtwins, rdtotal>>
 gateVars == <<gfails, stopped>>
 idleVars == <<idle, since, said, alarms, clk, nalarm, nclear>>
-vars == <<twinVars, ruleVars, lateVars, rdVars, gateVars, idleVars>>
+anVars == <<anst, anatt, anreworks, anhead, ancarry, anfind, anfail, anlast, anland, anlost, anfixless>>
+vars == <<twinVars, ruleVars, lateVars, rdVars, gateVars, idleVars, anVars>>
+
+\* -- answers: a reader's findings ("empty" is a broken verdict that carries none), and the
+\* ways an attempt fails
+AnFindings == {"f1", "f2", "empty"}
+AnFails == {"harness", "hold", "other"}
 
 TypeOK ==
   /\ col \in [TwinIds -> Cols]
@@ -111,6 +134,12 @@ TypeOK ==
   /\ said \in BOOLEAN
   /\ alarms \in 0..MaxClock
   /\ clk \in 0..MaxClock
+  /\ anst \in {"working", "broken", "failed", "bound", "done", "judged"}
+  /\ anatt \in Nat /\ anreworks \in Nat /\ anhead \in Nat /\ ancarry \in Nat
+  /\ anfind \in AnFindings \cup {None}
+  /\ anfail \in AnFails \cup {None}
+  /\ anlast \in AnFindings \cup {None}
+  /\ anland \in BOOLEAN /\ anlost \in BOOLEAN /\ anfixless \in BOOLEAN
 
 Init ==
   /\ col = [x \in TwinIds |-> CASE x = "o" -> "open" [] x = "t" -> "absent" [] OTHER -> "waiting"]
@@ -124,6 +153,9 @@ Init ==
   /\ rdtwins = 0 /\ rdtotal = 0
   /\ gfails = 0 /\ stopped = FALSE
   /\ idle = FALSE /\ since = -1 /\ said = FALSE /\ alarms = 0 /\ clk = 0 /\ nalarm = 0 /\ nclear = 0
+  /\ anst = "working" /\ anatt = 1 /\ anreworks = 0 /\ anhead = 0 /\ ancarry = 0
+  /\ anfind = None /\ anfail = None /\ anlast = None
+  /\ anland = FALSE /\ anlost = FALSE /\ anfixless = FALSE
 
 -----------------------------------------------------------------------------
 \* Part "twins".
@@ -419,19 +451,128 @@ TwinsWiden == rdtwins <= Cardinality(rdpaths)
 ReadAnswered == (rdst \in {"broken", "bound"}) ~> (rdst \notin {"broken", "bound"})
 
 -----------------------------------------------------------------------------
+\* Part "answers": one card's attempts under the broken-read, harness-fault and late-report
+\* answers (internal/sprint rules_read.go, harness_fault.go, steps_work.go lateFinish).
+
+\* the card's brief is at its bound for finding f: the same finding as the attempt before, or
+\* Cap attempts on one brief
+AnAtBound(f) == (f # "empty" /\ f = anlast) \/ anatt >= Cap
+
+\* the outside: a reader finds the attempt broken with finding f (at the bound the read raises
+\* the brief's judgment instead); the attempt pushed its head
+AnReadBroken(f) ==
+  /\ anst = "working"
+  /\ anhead' = anatt /\ anfind' = f
+  /\ anst' = IF f # "empty" /\ AnAtBound(f) THEN "bound" ELSE "broken"
+  /\ UNCHANGED <<anatt, anreworks, ancarry, anfail, anlast, anland, anlost, anfixless>>
+
+\* the outside: the attempt comes back failed the way k (at the attempt cap the finish raises
+\* the brief's judgment instead)
+AnWorkFails(k) ==
+  /\ anst = "working"
+  /\ anhead' = anatt /\ anfail' = k
+  /\ anst' = IF anatt >= Cap THEN "bound" ELSE "failed"
+  /\ UNCHANGED <<anatt, anreworks, ancarry, anfind, anlast, anland, anlost, anfixless>>
+
+\* the outside: the deadline fails the attempt (a harness fault) while the worker's LAND is
+\* still on its way
+AnDeadline ==
+  /\ anst = "working" /\ ~anland
+  /\ anhead' = anatt /\ anfail' = "harness" /\ anland' = TRUE
+  /\ anst' = IF anatt >= Cap THEN "bound" ELSE "failed"
+  /\ UNCHANGED <<anatt, anreworks, ancarry, anfind, anlast, anlost, anfixless>>
+
+\* the outside: the worker's late LAND arrives. While its attempt is failed and no later
+\* attempt has started, finish takes it: the attempt is done. Once a later attempt has
+\* started it is refused, the old attempt staying failed.
+AnLateLand ==
+  /\ anland
+  /\ anland' = FALSE
+  /\ IF anst \in {"failed", "bound"}
+       THEN IF Broken = "stale"
+              THEN /\ anlost' = TRUE
+                   /\ UNCHANGED <<anst, anfail>>
+              ELSE /\ anst' = "done" /\ anfail' = None
+                   /\ UNCHANGED anlost
+       ELSE UNCHANGED <<anst, anfail, anlost>>
+  /\ UNCHANGED <<anatt, anreworks, anhead, ancarry, anfind, anlast, anfixless>>
+
+\* a rework with fix f ("empty": no fix): one attempt more, from the head the attempt before
+\* pushed
+AnRework(f) ==
+  /\ anreworks < MaxFails
+  /\ anatt' = IF Broken = "recount" THEN anatt ELSE anatt + 1
+  /\ anreworks' = anreworks + 1
+  /\ ancarry' = IF Broken = "nocarry" THEN 0 ELSE anhead
+  /\ anfixless' = (anfixless \/ f = "empty")
+  /\ anst' = "working" /\ anfind' = None /\ anfail' = None
+  /\ UNCHANGED <<anhead, anland, anlost>>
+
+\* the read-broken rule: a broken read with a finding reworks the card with it
+RuleAnBroken ==
+  /\ anst = "broken"
+  /\ anfind # "empty" \/ Broken = "nofinding"
+  /\ AnRework(anfind)
+  /\ anlast' = anfind
+
+\* the failed rule: a harness fault, or a HOLD with findings, reworks the card with the
+\* failure as its fix
+RuleAnHarness ==
+  /\ \/ anst = "failed"
+     \/ Broken = "faultnobound" /\ anst = "bound"
+  /\ anfail \in {"harness", "hold"}
+  /\ AnRework(anfail)
+  /\ UNCHANGED anlast
+
+\* a mind: a broken read with no finding, a failure no class names, a card at its bound
+AnMind ==
+  /\ \/ anst = "broken" /\ anfind = "empty"
+     \/ anst = "failed" /\ anfail = "other"
+     \/ anst = "bound"
+  /\ anst' = "judged"
+  /\ UNCHANGED <<anatt, anreworks, anhead, ancarry, anfind, anfail, anlast, anland, anlost, anfixless>>
+
+AnNext ==
+  \/ AnDeadline \/ AnLateLand \/ RuleAnBroken \/ RuleAnHarness \/ AnMind
+  \/ \E f \in AnFindings : AnReadBroken(f)
+  \/ \E k \in AnFails : AnWorkFails(k)
+
+\* The answers never pass the attempt bound.
+AnswerAttemptsBounded == anatt <= Cap
+
+\* A reworked card keeps its attempt count: every rework is one attempt more.
+ReworkKeepsCount == anatt = anreworks + 1
+
+\* A reworked card carries its head: its attempt starts from the head the one before pushed.
+ReworkCarriesHead == anreworks > 0 => ancarry = anatt - 1
+
+\* No rule reworks a card without a fix: a broken read with no finding is a mind's.
+ReworkHasAFix == ~anfixless
+
+\* A report that arrives for an attempt the deadline failed, before a later attempt started,
+\* finishes it: it is never refused while it is the attempt's to finish.
+LateReportFinishes == ~anlost
+
+\* Every broken read, failure and bound is answered: by rule where a rule answers, by a mind
+\* where none does.
+AnAnswered == (anst \in {"broken", "failed", "bound"}) ~> (anst \notin {"broken", "failed", "bound"})
+
+-----------------------------------------------------------------------------
 
 Next ==
-  \/ Part = "twins" /\ TwinNext /\ UNCHANGED <<ruleVars, lateVars, rdVars, gateVars, idleVars>>
-  \/ Part = "rules" /\ RuleNext /\ UNCHANGED <<twinVars, lateVars, rdVars, gateVars, idleVars>>
-  \/ Part = "late" /\ LateNext /\ UNCHANGED <<twinVars, ruleVars, rdVars, gateVars, idleVars>>
-  \/ Part = "reads" /\ RdNext /\ UNCHANGED <<twinVars, ruleVars, lateVars, gateVars, idleVars>>
-  \/ Part = "gate" /\ GateNext /\ UNCHANGED <<twinVars, ruleVars, lateVars, rdVars, idleVars>>
-  \/ Part = "idle" /\ IdleNext /\ UNCHANGED <<twinVars, ruleVars, lateVars, rdVars, gateVars>>
+  \/ Part = "twins" /\ TwinNext /\ UNCHANGED <<ruleVars, lateVars, rdVars, gateVars, idleVars, anVars>>
+  \/ Part = "rules" /\ RuleNext /\ UNCHANGED <<twinVars, lateVars, rdVars, gateVars, idleVars, anVars>>
+  \/ Part = "late" /\ LateNext /\ UNCHANGED <<twinVars, ruleVars, rdVars, gateVars, idleVars, anVars>>
+  \/ Part = "reads" /\ RdNext /\ UNCHANGED <<twinVars, ruleVars, lateVars, gateVars, idleVars, anVars>>
+  \/ Part = "gate" /\ GateNext /\ UNCHANGED <<twinVars, ruleVars, lateVars, rdVars, idleVars, anVars>>
+  \/ Part = "idle" /\ IdleNext /\ UNCHANGED <<twinVars, ruleVars, lateVars, rdVars, gateVars, anVars>>
+  \/ Part = "answers" /\ AnNext /\ UNCHANGED <<twinVars, ruleVars, lateVars, rdVars, gateVars, idleVars>>
 
 \* The rules and a mind act when they may; the outside is unfair.
 Fairness ==
-  /\ WF_vars(Part = "rules" /\ (RuleFailed \/ RuleBound \/ Mind) /\ UNCHANGED <<twinVars, lateVars, rdVars, gateVars, idleVars>>)
-  /\ WF_vars(Part = "reads" /\ (RuleReadBroken \/ RdMind) /\ UNCHANGED <<twinVars, ruleVars, lateVars, gateVars, idleVars>>)
+  /\ WF_vars(Part = "rules" /\ (RuleFailed \/ RuleBound \/ Mind) /\ UNCHANGED <<twinVars, lateVars, rdVars, gateVars, idleVars, anVars>>)
+  /\ WF_vars(Part = "reads" /\ (RuleReadBroken \/ RdMind) /\ UNCHANGED <<twinVars, ruleVars, lateVars, gateVars, idleVars, anVars>>)
+  /\ WF_vars(Part = "answers" /\ (RuleAnBroken \/ RuleAnHarness \/ AnMind) /\ UNCHANGED <<twinVars, ruleVars, lateVars, rdVars, gateVars, idleVars>>)
 
 Spec == Init /\ [][Next]_vars /\ Fairness
 

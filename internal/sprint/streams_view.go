@@ -32,12 +32,13 @@ type StreamCard struct {
 }
 
 // StreamRow is one stream in a streams listing: the repositories and bases its cards
-// record, its release, its open and landed counts, and its cards when asked.
+// record, its release, the state it shows, its open and landed counts, and its cards when asked.
 type StreamRow struct {
 	Stream  string       `json:"stream"`
 	Repos   []string     `json:"repos"`
 	Bases   []string     `json:"bases"`
 	Release string       `json:"release,omitempty"`
+	State   string       `json:"state,omitempty"`
 	Open    int          `json:"open"`
 	Landed  int          `json:"landed"`
 	Cards   []StreamCard `json:"cards,omitempty"`
@@ -134,8 +135,10 @@ func StreamsOf(s *Snapshot, r StreamsReq) StreamsView {
 			continue
 		}
 		var release string
+		var fields map[string]string
 		if ctl := s.StreamCtl(stream); ctl != nil {
 			release = ctl.F(FieldRelease)
+			fields = ctl.Fields
 		}
 		if r.Release != "" && release != r.Release {
 			continue
@@ -154,6 +157,7 @@ func StreamsOf(s *Snapshot, r StreamsReq) StreamsView {
 				}
 			}
 		}
+		row.State = ShownStreamState(fields, row.Open)
 		if len(repos) > 1 {
 			v.Mixed = append(v.Mixed, stream)
 		}
