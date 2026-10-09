@@ -1047,7 +1047,7 @@ func classifySealReview(raw, prNum, sealedSHA string, localGate int) (approved, 
 	// local gate has already approved it. Any other failure stays terminal, and
 	// an APPROVED decision does not skip the loop.
 	waiveSeatRule := localGate == 0 && sealedSHA != "" && view.HeadRefOid == sealedSHA
-	waived := false
+	waived = false
 	for _, check := range view.StatusCheckRollup {
 		conc := strings.ToUpper(check.Conclusion)
 		st := strings.ToUpper(check.State)
