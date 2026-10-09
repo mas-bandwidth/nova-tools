@@ -27,7 +27,7 @@ claim. Changing between batch and one-shot changes no claim.
 Physical group exit and a verified observation are separate actions. An
 available report is separate from canonical report publication and durable
 finish-note journaling. Successful durable Started removal is the capacity
-release boundary. Outer Finish requires known ownership, group quiescence,
+release boundary. For this prior claimed job, outer Finish requires known ownership, group quiescence,
 canonical report and journal durability, and the committed Started clear.
 New batch work uses that same prior-debt boundary; `BatchWorkStart` abstracts
 admission of the next turn and executes no provider or native program.
@@ -51,6 +51,33 @@ individually named in `CASES.tsv`; an unrelated failure is red.
 | Partial error overwrite | Restart, partial load with error, save incomplete snapshot over the durable claim |
 | Batch debt bypass | Restart, known prior Started debt, batch mode, visible REPORT, outer Finish while the debt remains |
 
+## Bounded results
+
+All seven cases pass at model source `fa14092fc`, on Linux with pinned TLC
+jar `936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`
+and Java 21.0.12.1. The shared bench lock and private Java temporary directory
+bound the run. The group takes 4.230 seconds within its 15-second budget;
+seven current hash-bound rows are in `RUNS.tsv`.
+
+| Case | Distinct states | Expected result |
+|---|---:|---|
+| Required safety control | 52 | All boundary invariants hold |
+| Safe restart settlement | 46 | `WitnessSafeRestartFinish` reached |
+| Outbox before load | 37 | `WitnessOutboxBeforeLoad` reached |
+| Partial error overwrite | 23 | `WitnessPartialErrorOverwrite` reached |
+| Batch debt bypass | 38 | `WitnessBatchDebtBypass` reached |
+| Release mutation | 11 | `NoReleaseBeforeBarrier` violated |
+| Batch admission mutation | 11 | `NoBatchWorkWithOldDebt` violated |
+
+The before-load witness keeps the group live and durable Started present
+through `Restart`, one-shot selection and `OuterFinish`, while ownership is
+still not loaded. The partial-read witness removes the durable claim directly
+after `LoadPartialError`. The batch witness reaches `OuterFinish` after a
+successful ownership load, with the group live and durable Started still
+present. These counterexamples are model traces, not observed native runs.
+Logs and source provenance are retained under
+`release-evidence-v1.2/recovery-20261008/completion-boundary-model/`.
+
 ## Whole-daemon trace bridge
 
 `TestRestartOutboxWaitsForDurableLaneSettlement` calls the whole daemon and
@@ -64,6 +91,8 @@ a batch row and prior Started/STOP debt. It asserts that partial state plus
 error holds reports, unrelated batch work can settle, prior reports remain
 held, and simulated durable clear/stop acknowledgment permits their later
 settlement. Its synthetic snapshot clears do not prove native quiescence.
+The final outbox donor for these probes is `e51d97803`; its whole-loop hooks
+remain unit observations even though they execute the real daemon loop.
 
 `TestLaneCompletionWaitsForMatchingProcessGroup` separately runs a real Linux
 shell group with a surviving descendant. Its matching RUN/PID/birth checks
