@@ -58,7 +58,8 @@ func TestProductionSessionCheckModeNeverLeaksOneShotOrUnknownTurn(t *testing.T) 
 					if strings.Contains(text, friend.SessionCheckPrefix) && !friend.InLane(ctx) {
 						rawChecks++
 					}
-					if friend.InLane(ctx) {
+					preflight := len(args) == 1 && args[0] == "--version" || len(args) == 2 && args[0] == "run" && args[1] == "--help"
+					if friend.InLane(ctx) && !preflight {
 						marked++
 					}
 					return "", 1, errors.New("fixture refuses provider; no session proof")

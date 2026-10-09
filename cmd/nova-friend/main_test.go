@@ -75,7 +75,9 @@ func newRig(t *testing.T, names ...string) *rig {
 	t.Helper()
 	fs := friend.NewMemFS()
 	require.NoError(t, fs.MkdirAll("/w/bob", 0o755))
-	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379", "PATH": "/usr/bin:/bin"}, now: start, home: t.TempDir(), alive: fakeAlive{running: true, why: "the fake harness runs"}, fs: fs}
+	home := t.TempDir()
+	require.NoError(t, os.Chmod(home, 0700)) // the fake account owns its authority base regardless of bench umask
+	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379", "PATH": "/usr/bin:/bin"}, now: start, home: home, alive: fakeAlive{running: true, why: "the fake harness runs"}, fs: fs}
 }
 
 func (r *rig) Now() time.Time {
@@ -558,12 +560,13 @@ func TestRunRefusesAClaudeOneShotRowWithoutAConfigDir(t *testing.T) {
 // daemon's, so it cannot write outside the friend's directories.
 func TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir(t *testing.T) {
 	t.Parallel()
+	rowConfig, flagConfig := t.TempDir(), t.TempDir()
 	for _, tc := range []struct {
 		name, want string
 		flags      []string
 	}{
-		{"the row's", "/accounts/heavy-a", nil},
-		{"the flag over it", "/accounts/other", []string{"--config-dir", "/accounts/other"}},
+		{"the row's", rowConfig, nil},
+		{"the flag over it", flagConfig, []string{"--config-dir", flagConfig}},
 	} {
 		t.Run(tc.name, func(t *testing.T) { // not parallel: a bubble at a time
 			synctest.Test(t, func(t *testing.T) {
@@ -609,7 +612,7 @@ func TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir(t *testing.T) {
 					if beats == 12 {
 						cancel()
 					}
-					return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1 row_config_dir=/accounts/heavy-a machine=RUNNING", nil
+					return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1 row_config_dir=" + rowConfig + " machine=RUNNING", nil
 				}
 				var out, errb strings.Builder
 				code := run(append([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir, "--coordinator", "ada"}, tc.flags...), strings.NewReader(""), &out, &errb, w)

@@ -430,7 +430,7 @@ func friendTool(w world) *tool.Tool {
 nova-bus stream and, when the session is free, pushes every waiting message in as one turn (the
 harness's deliver command), beats to the sprint server while the session answers, answers the
 coordinator PING at once (daemon-pong); presence is the session's word on the bus, never a process.
-state: ~/.nova-friend/<friend>/ for native daemons (--state-dir moves it), the queue: <dir>/inbox/QUEUE.json.`,
+state: ~/.nova-friend/<friend>/ (--state-dir overrides); queue: <dir>/inbox/QUEUE.json.`,
 		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).",
 		Words:     []string{"NONE", "FAIL", "DRIFT", "DRY-RUN"},
 		Verbs: []tool.Verb{
