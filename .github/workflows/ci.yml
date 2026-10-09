@@ -217,6 +217,27 @@ jobs:
         with:
           fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
 
+      - name: nova-sprint paths are frozen
+        # nova-sprint, nova-card and nova-work moved to mas-bandwidth/nova-sprint
+        # (re-seeded there from v1.2.1 by its tools/seed RECIPE). Their trees stay
+        # here, frozen, until nova-tools stops carrying them: a pull request that
+        # touches one is refused. The list is the RECIPE's move rules: the three
+        # commands and the packages only they import. HEAD is the PR's merge
+        # commit and HEAD^1 the base it merges onto (fetch-depth 2 above), so the
+        # diff is exactly the PR's change.
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          frozen='^(cmd/nova-sprint|cmd/nova-card|cmd/nova-work|internal/card|internal/ci/shrinkonly|internal/sprint/driver|internal/sprintdash|internal/workfile|internal/workgh|internal/worklang|tools/sprintsize)/'
+          hits=$(git diff --name-only HEAD^1 HEAD | grep -E "$frozen" || true)
+          if [ -n "$hits" ]; then
+            echo "$hits"
+            echo "::error::nova-sprint lives in mas-bandwidth/nova-sprint; open this change there"
+            exit 1
+          fi
+          echo "no frozen nova-sprint path touched"
+
       - name: use the installed Go toolchain
         # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
         # /opt/homebrew or ~/go on macOS). Prefer it over a setup-go download.
