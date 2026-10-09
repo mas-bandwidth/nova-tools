@@ -36,7 +36,7 @@ func TestFunctionalRunClosesInheritedGateFDForChildren(t *testing.T) {
 
 	gate, err := os.OpenFile(filepath.Join(t.TempDir(), "gate.lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	require.NoError(t, err)
-	defer gate.Close()
+	defer gate.Close() // ignored: a test fixture's cleanup; the test's assertions are the report
 	cmd := exec.Command(os.Args[0], "-test.run=^TestFunctionalRunClosesInheritedGateFDForChildren$")
 	cmd.ExtraFiles = []*os.File{gate}
 	cmd.Env = append(os.Environ(), inheritedFDProbe+"=1")

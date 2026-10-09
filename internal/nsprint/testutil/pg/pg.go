@@ -180,7 +180,7 @@ func (s *Server) launch(data, port string) error {
 	if err != nil {
 		return err
 	}
-	defer log.Close()
+	defer log.Close() // ignored: the child process inherited the file descriptor; logging continues there
 	args := []string{"-D", data, "-p", port, "-c", "listen_addresses=127.0.0.1", "-c", "unix_socket_directories=", "-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off"}
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := subproc.Long(ctx, filepath.Join(s.Bin, "postgres"), args...)
