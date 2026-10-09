@@ -21,8 +21,11 @@ are declared against the combined machine. Each child is one abstract slot;
 work/read role, concrete packet selection and disk/store atomicity are outside
 this model.
 
-All eighteen cases are unmeasured at this source revision. New named wrappers
-and rows avoid importing private receipts for changed inputs. Existing canonical
+All eighteen declared outcomes passed on Linux from exact source
+`ab149ed3eb319182f676f9e9da0a9b07bb174165`. Normal STOP explored 298 distinct
+states; identity-loss safety explored 498; batch refill explored 1,010 and
+one-shot refill 2,308. These are bounded model outcomes, not source alignment.
+New named wrappers and rows avoid importing private receipts for changed inputs. Existing canonical
 rows are historical coverage of their original bounded machines. The companions
 use exact reviewed model semantics from private donor
 `4af7db035f2a0bdbad40d5d5f401ba242daaaf70`; only module names and case keys change.
