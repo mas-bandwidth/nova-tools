@@ -58,8 +58,8 @@ func TestCodexEnrollmentDryRunDoesNotNeedTerminalAndJSONApplyRefuses(t *testing.
 	w := world{settings: friend.NewMemFS()}
 	args := []string{"setup", "--as", "worker", "--harness", "codex", "--dir", "/workers/work", "--home", "/workers/home", "--config-dir", "/workers/config", "--profile", "account-space", "--program", "/usr/bin/codex", "--deny-self", "/coordinator", "--profile-only", "--codex-device-enroll", "--enrollment-label", "account label"}
 	cliOf(w).Do(t, append(args, "--apply", "--dry-run", "--json")...).Exit(0).Out("codex_device_consent", "native_consent")
-	cliOf(w).Do(t, append(args, "--apply", "--json")...).Exit(2).Err("refuses JSON")
-	cliOf(w).Do(t, append(args, "--target", "user@host", "--remote-program", "/remote/nova-friend", "--apply", "--json")...).Exit(2).Err("refuses JSON")
+	cliOf(w).Do(t, append(args, "--apply", "--json")...).Exit(2).Out("refuses JSON")
+	cliOf(w).Do(t, append(args, "--target", "user@host", "--remote-program", "/remote/nova-friend", "--apply", "--json")...).Exit(2).Out("refuses JSON")
 	e, err := w.settings.Lstat("/workers/config")
 	require.NoError(t, err)
 	assert.Equal(t, friend.KindMissing, e.Kind)
