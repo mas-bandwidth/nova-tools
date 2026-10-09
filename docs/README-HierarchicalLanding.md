@@ -95,12 +95,15 @@ using the pinned `tla2tools.jar` (SHA256
 All declared outcomes passed, including the expected diagnostic violations.
 `RUNS.tsv` preserves those individual receipts; the raw logs are in
 `release-evidence-v1.2/recovery-20261009/hierarchical-land-model/vision-check2`.
-On Hetzner, both Go bridges passed in 0.628 seconds on the exact baseline plus
+On Hetzner, both final Go bridges passed in 0.601 seconds on the exact baseline plus
 a60 source overlay, collecting the complete authored sequences. Raw source
-logs and hashes are in that evidence group's `source-go1` directory.
+logs and hashes are in that evidence group's `source-go2` directory. The later
+added sibling receives critical priority and must land before the earlier normal
+sibling; preserving ordinary order would fail this fixture. Scoped command vet
+also passed.
 The required full `internal/ci` invocation did not pass: Mac archive metadata
 caused parse failures, and the 7112 baseline also had unrelated friend
 error-handling and capability-example findings. The private archive metadata was
 removed. Those source findings have separate approved repairs; coherent full CI
-and scoped vet belong to the integrated candidate gate. No full CI pass is
+belongs to the integrated candidate gate. No full CI pass is
 claimed for this model donor.
