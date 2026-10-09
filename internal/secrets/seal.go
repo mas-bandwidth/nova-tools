@@ -408,7 +408,7 @@ func (c sealCarry) carry(ciphertext []byte) (prNum string, merged bool, err erro
 	}
 
 	say("approved; merging #%s", prNum)
-	if _, err := sealGH(c.run, c.ghPath, c.storeDir, "pr", "merge", prNum, "--squash"); err != nil {
+	if err := c.squashMerge(prNum); err != nil {
 		return "", false, err
 	}
 	// Back to the branch the store was on: the squash leaves the seal branch stale, and a
@@ -536,6 +536,13 @@ func resumeSeal(opts SealOptions, run execCommand) (string, error) {
 	return line, nil
 }
 
+// squashMerge is the one merge of a secrets pull request. The store has no merge
+// queue; the seal and a resumed seal both land here.
+func (c sealCarry) squashMerge(prNum string) error {
+	_, err := sealGH(c.run, c.ghPath, c.storeDir, "pr", "merge", prNum, "--squash")
+	return err
+}
+
 // resume waits for the named pull request, merges it, pulls and checks the seat.
 // The store stays on the branch it was on. No value is read and nothing is pushed.
 func (c sealCarry) resume(prNum string) error {
@@ -558,7 +565,7 @@ func (c sealCarry) resume(prNum string) error {
 		return err
 	}
 	say("approved; merging #%s", prNum)
-	if _, err := sealGH(c.run, c.ghPath, c.storeDir, "pr", "merge", prNum, "--squash"); err != nil {
+	if err := c.squashMerge(prNum); err != nil {
 		return err
 	}
 	say("pulling the store")

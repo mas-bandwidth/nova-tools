@@ -10,4 +10,4 @@
 # THE LIST ONLY SHRINKS. TestNoGhPrMergeSpellingInTheToolsGo checks it in both directions:
 # an unlisted call is red, and an entry whose call has left is red too.
 
-internal/secrets/seal.go:sealCarry.carry  # the SECRETS STORE's own pull request (seal, seat inject), squash-merged in a repository that has no merge queue and no batches; it lands a sealed secret, never a change to this tree
+internal/secrets/seal.go:sealCarry.squashMerge  # the SECRETS STORE's own pull request (seal, seat inject, and a resumed seal), squash-merged in a repository that has no merge queue and no batches; it lands a sealed secret, never a change to this tree
