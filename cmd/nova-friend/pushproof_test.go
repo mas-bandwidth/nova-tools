@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -160,11 +161,14 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 	})
 }
 
-// A per-card harness (claude: each card a process of its own) has no session for its
-// daemon to check, so its beat never proves her: no check and no answer on any beat,
-// whatever the daemon does (the owner, 2026-10-05: "there is no value in things that
-// are answered just by the daemon"); a card of hers finished stays her evidence.
-func TestAPerCardHarnessNeverProvesByTheDaemonAlone(t *testing.T) {
+// A claude friend's daemon (per-card lanes, no session to put a turn into)
+// writes its session check into her inbox folder, SESSION-CHECK-<nonce>,
+// beats whether or not it is answered (her cards' finishes are her presence),
+// and says the check on the beat; a live session that answers the file with
+// the pong it names is carried on the next beat, so the server records the
+// session proof natively (docs/SPEC-FRIEND.md, The push proof; the owner,
+// 2026-10-08: "why not, can we fix the harness to do this?").
+func TestAClaudeDaemonsCheckGoesInByTheFolderAndItsBeatCarriesThePong(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
 	w := r.world()
@@ -173,18 +177,34 @@ func TestAPerCardHarnessNeverProvesByTheDaemonAlone(t *testing.T) {
 		ctx, cancel = context.WithCancel(ctx)
 		return ctx, cancel
 	}
+	dir := t.TempDir()
+	// the rig's scheduler runs a check's turn in place; the folder check is not a
+	// turn and owes nothing to the scheduler: the file is on disk before the beat
+	// says the check (SessionCheck.ask, FolderCheck.InPlace), under any scheduler
+	w.checkGo = func(f func()) { go f() }
 	var said []friend.BeatWords
+	answered := ""
 	w.beat = func(_ context.Context, _, _ string, _ time.Time, words friend.BeatWords) (string, error) {
-		if said = append(said, words); len(said) == 5 {
+		said = append(said, words)
+		if words.Check != "" && answered == "" {
+			// the live session, watching the folder: the file is there and names the pong
+			text, err := os.ReadFile(friend.SessionCheckFile(dir, words.Check))
+			require.NoError(t, err)
+			require.Contains(t, string(text), "nova-friend pong --as bob --nonce "+words.Check)
+			answered = words.Check
+			r.answer(words.Check)
+		}
+		if (words.Pong != "" && words.Pong == answered) || len(said) == 40 {
 			cancel()
 		}
-		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1", nil
+		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1 proved=" + words.Pong, nil
 	}
 	var out, errb strings.Builder
-	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir()}, strings.NewReader(""), &out, &errb, w)
+	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir}, strings.NewReader(""), &out, &errb, w)
 	require.Equal(t, 0, code, errb.String())
-	require.Len(t, said, 5, "the daemon beats")
-	for _, words := range said {
-		assert.Equal(t, friend.BeatWords{}, words, "no proof word on a per-card harness's beat")
-	}
+	require.NotEmpty(t, answered, "a check went in by the folder and was said on the beat")
+	assert.Equal(t, answered, said[len(said)-1].Pong, "the beat carries the session's answer: %+v", said)
+	assert.Contains(t, out.String(), "push proof: owed by the folder: claude runs each card as a process of its own, so the session check goes in as "+friend.SessionCheckFile(dir, "<nonce>"))
+	assert.Contains(t, out.String(), "push proof: up: the session answered "+answered+" through claude's deliver adapter; nova-bus hears bob")
+	assert.Contains(t, out.String(), "push proof: proved: the session answered")
 }
