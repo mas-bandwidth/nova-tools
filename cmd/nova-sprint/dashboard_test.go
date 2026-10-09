@@ -105,28 +105,24 @@ func TestDashboardListensOnPrivateAddressesOnly(t *testing.T) {
 	}
 }
 
-// A first read that fails is a refusal on stderr and the process exits. It does
-// not log that failure on stdout and it does not keep serving.
-func TestDashboardRefusesWhenTheFirstReadFails(t *testing.T) {
+// No store is named, and the dashboard is not a puller and has no server.
+// That is a configuration refusal: exit 2, one line on stderr, nothing served.
+// It does not wait, and a named store that then fails to answer still serves.
+func TestDashboardRefusesWhenNoStoreIsConfigured(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
-	done := make(chan struct{})
-	var code int
-	var out, errs string
-	go func() {
-		code, out, errs = ta.do("dashboard --listen 127.0.0.1:0 --pull none")
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("dashboard did not exit when the first read failed")
+	ta.a.getenv = func(k string) string {
+		if k == "NOVA_SPRINT_ACTOR" {
+			return "coordinator"
+		}
+		return ""
 	}
+	code, out, errs := ta.do("dashboard --listen 127.0.0.1:0 --pull none")
 	assert.Equal(t, 2, code, "%s%s", out, errs)
-	assert.Empty(t, out, "the read failure must not be on stdout: %s", out)
+	assert.Empty(t, out, "a configuration refusal must not be on stdout: %s", out)
 	assert.Contains(t, errs, "nova-sprint dashboard REFUSED")
+	assert.Contains(t, errs, "--redis <addr> is required")
 	assert.Contains(t, errs, "; run: nova-sprint dashboard -h")
-	assert.Equal(t, 1, strings.Count(errs, "REFUSED"), "the why must not carry a second refusal: %s", errs)
 	assert.Equal(t, 1, strings.Count(errs, "\n"), "one line: %s", errs)
 }
 

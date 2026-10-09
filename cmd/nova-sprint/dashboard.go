@@ -76,26 +76,22 @@ func (a *app) cmdDashboard(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	redis := (verbArgs{fs: fs}).given("redis")
-	// The first read is buffered. A failure is this verb's refusal on stderr, and the
-	// process exits: the grammar walk runs dashboard with no flags, and a line that
-	// carries where's REFUSED must not sit on stdout while the server keeps running.
-	var first bytes.Buffer
-	boot := &lockedWriter{w: &first}
-	srv := a.dashboardServer(c.redis, redis, from, *every, *logo, boot)
+	// No store named, and this dashboard is not reading a server or a puller:
+	// that is a configuration refusal, one line on stderr, and nothing is served.
+	// A store that is named and then fails to answer is still served.
+	if from == "" && a.getenv(ServerEnv) == "" {
+		if err := a.storeConfigured(c); err != nil {
+			return refuse(stderr, "dashboard", err.Error())
+		}
+	}
+	stdout = &lockedWriter{w: stdout} // the listeners and the reads write lines from their own goroutines
+	srv := a.dashboardServer(c.redis, redis, from, *every, *logo, stdout)
 	ctx, stop := a.notify(context.Background())
 	defer stop()
 	// one poller: the first read before any listener opens, then one each --every whoever
 	// is looking (back to back when a read takes longer), each new copy pushed to the
 	// /events clients as it is read and its freshness checked; a page reads the copy only
 	srv.Tick()
-	if log := first.String(); strings.Contains(log, "read failed:") {
-		return refuse(stderr, "dashboard", dashboardReadWhy(log))
-	}
-	stdout = &lockedWriter{w: stdout} // the listeners and the reads write lines from their own goroutines
-	if _, err := io.Copy(stdout, &first); err != nil {
-		return refuse(stderr, "dashboard", err.Error())
-	}
-	srv.Log = stdout
 	tick := time.NewTicker(*every)
 	defer tick.Stop()
 	runCtx, endRun := context.WithCancel(ctx)
@@ -127,21 +123,6 @@ func (a *app) cmdDashboard(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, "DASHBOARD STOP interrupted")
 	return 0
-}
-
-// dashboardReadWhy is the first read's failure as this verb's own reason. The log
-// line may quote another's REFUSED sentence and its "; run:", and those would make
-// this line a second refusal. They do not travel.
-func dashboardReadWhy(log string) string {
-	line := strings.TrimSpace(log)
-	line = strings.ReplaceAll(line, "REFUSED", "refused")
-	if i := strings.Index(line, "; run:"); i >= 0 {
-		line = strings.TrimSpace(line[:i])
-	}
-	if line == "" {
-		return "the sprint could not be read"
-	}
-	return line
 }
 
 // dashboardServer is the dashboard's one server: it reads the sprint as where --json

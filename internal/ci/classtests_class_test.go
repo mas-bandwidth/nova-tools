@@ -891,6 +891,9 @@ func TestMain(m *testing.M) {
 	if promotionShared.dir != "" {
 		_ = os.RemoveAll(promotionShared.dir) // ignored: a temporary directory that may already be gone
 	}
+	if ciBinDir != "" {
+		_ = os.RemoveAll(ciBinDir) // ignored: the one directory the shared tool binaries were built in
+	}
 	os.Exit(code)
 }
 
