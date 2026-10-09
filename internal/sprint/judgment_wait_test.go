@@ -122,4 +122,25 @@ func TestRuleableJudgmentsAreAnsweredAtRaiseAndTheRestRecordTheirWait(t *testing
 		assert.Zero(t, AnswerWaits(w.notes, w.s.Now.Add(25*time.Hour), 24*time.Hour).N, "an answer older than the window is not counted")
 		assert.Empty(t, AnswerWaits(nil, w.s.Now, 24*time.Hour).Line())
 	})
+
+	t.Run("an even count's p50 is the mean of the middle two", func(t *testing.T) {
+		t.Parallel()
+		w := setup(t, 2)
+		w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 2}}))
+		w.must(Take(w.s, TakeReq{As: "m1", Sel: Sel{Limit: 10}}))
+		w.must(Take(w.s, TakeReq{As: "m2", Sel: Sel{Limit: 10}}))
+		failFinish(w, 1, "beta broke", false)
+		w.tick(5 * time.Minute)
+		p, _ := TickRuleRework(w.s, TickReq{AnswerRules: true})
+		w.must(p)
+		failFinish(w, 2, "gamma broke", false)
+		w.tick(15 * time.Minute)
+		p, _ = TickRuleRework(w.s, TickReq{AnswerRules: true})
+		w.must(p)
+		assert.Empty(t, openOfType(w, NWorkFailed))
+
+		got := AnswerWaits(w.notes, w.s.Now, 24*time.Hour)
+		assert.Equal(t, AnswerWait{N: 2, P50: 10 * time.Minute, P90: 15 * time.Minute}, got, "5m and 15m answer p50=10m, not the lower middle 5m; p90 stays nearest rank")
+		assert.Equal(t, "answered 24h: n=2 wait p50=10m0s p90=15m0s", got.Line())
+	})
 }
