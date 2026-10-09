@@ -16,8 +16,8 @@ import (
 // down return every card she has begun to ready; a started card with a push carries its
 // pushed head and the generation whose branch holds it to its next deal, so the next taker
 // starts from that work; the log says so. A plain hold leaves her ready cards not begun on
-// her row, none taken into a lane it frees; --return takes them too (docs/SPEC-SPRINT.md
-// sections 1 and 11).
+// her row no longer: a held friend keeps no card at all, so her ready cards are taken too,
+// with --return or without (the owner, 2026-10-09; docs/SPEC-SPRINT.md sections 1 and 11).
 func TestHoldingAFriendReturnsItsStartedCards(t *testing.T) {
 	t.Parallel()
 	const sha = "0123456789abcdef0123456789abcdef01234567"
@@ -37,11 +37,11 @@ func TestHoldingAFriendReturnsItsStartedCards(t *testing.T) {
 		running: "her beat names it running",
 	}
 
-	// hold with no --return: nothing she has begun stays, and her card not begun waits
+	// hold with no --return: nothing stays on her row, begun or not
 	r.hold(sprint.HoldReq{Names: []string{"amy"}, Reason: "out of credits", Started: started})
 	s = r.snap()
 	assert.Empty(t, onRow(s, sprint.FriendRow("amy"), "f1", sprint.Working), "a held friend keeps no begun card")
-	assert.Equal(t, []string{"f1-9.w1"}, onRow(s, sprint.FriendRow("amy"), "f1", sprint.Ready), "her card not begun waits ready, taken into no lane")
+	assert.Empty(t, onRow(s, sprint.FriendRow("amy"), "f1", sprint.Ready), "a held friend keeps no ready card either")
 	wc := s.Fleet.Card(pushed)
 	assert.Equal(t, sprint.Withdrawn, wc.Col)
 	assert.Equal(t, sha, wc.F(sprint.FieldCarryHead), "the pushed head is carried")
@@ -55,8 +55,8 @@ func TestHoldingAFriendReturnsItsStartedCards(t *testing.T) {
 	}
 	lines := r.holdLines()
 	require.NotEmpty(t, lines)
-	assert.Contains(t, lines[len(lines)-1], "friend amy held: out of credits; her work begun is handed back now, her cards not begun wait")
-	assert.Contains(t, lines[len(lines)-1], "withdrew 2")
+	assert.Contains(t, lines[len(lines)-1], "friend amy held: out of credits; every card she holds, begun or not, is handed back now")
+	assert.Contains(t, lines[len(lines)-1], "withdrew 3")
 	assert.Contains(t, lines[len(lines)-1], "carried the pushed head of 1: "+pushed)
 	assert.Contains(t, logWhat(t, r), "the next generation starts from its pushed head "+sha+" (gen "+gen+")")
 
