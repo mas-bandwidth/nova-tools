@@ -138,6 +138,11 @@ type app struct {
 	// gateRan, when set (a test), runs before each tree gate land runs, with the directory
 	// gated and whether the tree tests run: the count of gates a pass makes (landpass.go).
 	gateRan func(dir string, tests bool)
+	// beforeWait, when set (a test), runs in a stream's phase-1 goroutine just before it
+	// waits for the chain, a width slot or another stream's gate of its base commit, with
+	// the stream and the wait (chain, slot, gate): a test orders who waits behind whom
+	// (landpass.go, land.go gateBase).
+	beforeWait func(stream, what string)
 	// ledgers, when set (a test), is the generated ledgers land regenerates at a merge
 	// (landledger.go); nil is landLedgers.
 	ledgers []landLedger

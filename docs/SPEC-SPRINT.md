@@ -4277,7 +4277,15 @@ blocked gate on one does not hold another; every
 fetch and every write of the clone's shared refs is one at a time. In the second phase the
 green batches land one at a time in priority order. If an earlier batch gate is still
 waiting after `LandDeadline`, that batch is refused for this pass without blaming a card
-or counting a red base, and a ready later stream can land. A batch cut from the tip the base
+or counting a red base, and a ready later stream can land. Every wait a batch makes before
+its work watches that bound too: a batch abandoned while it waits for a width slot, for its
+turn in the same-repository/base chain, or for another stream's gate of the same base
+commit gives up its place at once, refused the same way with its cards still queued, and
+the pass goes on to the stream it waited behind, which is bounded in its own turn. So an
+abandonment always takes effect, a lower-priority stream stuck on a bench never holds the
+pass through a higher-priority one cancelled to no effect, and a ready stream behind k
+stuck ones waits at most k x `LandDeadline` (tla/LandPass.tla, Abandon and Leaves;
+cmd/nova-sprint/landpass.go merges, acquireGate). A batch cut from the tip the base
 still has is pushed with no new gate; one whose base moved (a batch before it in the pass
 landed, or a push from outside) is merged again onto the new tip in its worktree, the same
 merges and checks and no gate per head, and pushed with no new gate when the files it
@@ -6916,7 +6924,9 @@ still running (`step=-` and `since=0s` when nothing is in flight). A cycle with
 cards queued whose landing has not finished within 10 minutes (`LandDeadline`)
 raises one judgment, `an operation was stuck`, naming the stage and the process
 it waits on. The landing continues; a gate still holding an earlier batch at that bound
-is abandoned for this pass so ready later streams can land.
+is abandoned for this pass so ready later streams can land, and a batch still waiting for
+a slot, the chain or another stream's gate of its base commit at that bound leaves the
+wait, so the stream it waited behind is reached and bounded in its turn.
 
 With `server switch <binary> [--rollback]` the coordinator or an install switches the server's
 binary file on disk, keeping the previous binary (`<target>.prev`). With `--rollback`, if a
