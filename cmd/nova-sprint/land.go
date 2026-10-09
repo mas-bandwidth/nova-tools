@@ -844,6 +844,42 @@ func (l *lander) baseRefused(b landBatch, stream, why string) (bool, bool) {
 	return false, true
 }
 
+// classifyGateOutput classifies gate output: red tree for test failures, bench
+// fault for infrastructure problems. Bench faults are checked first so that a
+// test that failed because of an infrastructure problem (e.g. git exit 128) is
+// a bench fault, not a red tree. Returns (isRed, kind, firstLine).
+// Kinds: git, disk, tmp, ssh, copy (docs/SPEC-SPRINT.md section 7).
+func classifyGateOutput(out string) (isRed bool, kind string, what string) {
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return false, "", ""
+	}
+	first := strings.TrimSpace(strings.SplitN(out, "\n", 2)[0])
+	// Bench faults first: infrastructure problems are never a red tree,
+	// even when a FAIL line names the test that hit them.
+	if strings.Contains(out, "exit status 128") || strings.Contains(out, "not a git repository") {
+		return false, "git", first
+	}
+	if strings.Contains(out, "ENOSPC") || strings.Contains(out, "disk quota exceeded") || strings.Contains(out, "no space left") {
+		return false, "disk", first
+	}
+	if strings.Contains(out, "no such toolchain") || strings.Contains(out, "toolchain not found") {
+		return false, "tmp", first
+	}
+	if strings.Contains(out, "exit status 255") {
+		return false, "ssh", first
+	}
+	if strings.Contains(out, "copy incomplete") || strings.Contains(out, "did not finish") {
+		return false, "copy", first
+	}
+	// FAIL lines are red tree.
+	if strings.Contains(out, "--- FAIL:") || strings.Contains(out, "FAIL\t") {
+		return true, "", ""
+	}
+	// Default: assume red tree for any other non-zero exit.
+	return true, "", ""
+}
+
 // baseRecheck is each land pass's re-check of the bases that stopped streams
 // (docs/SPEC-SPRINT.md section 8, v11-base-red-auto-resume-now; internal/sprint, land_base.go):
 // a stream stopped on its base's red gets no pass of its own, so the pass gates the tip of
