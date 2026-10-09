@@ -231,6 +231,9 @@ func (r SetupRunner) native(ctx context.Context, step SetupStep, path string) ([
 	if len(stdout) > SetupOutputLimit {
 		return nil, errors.New("native setup output exceeds four MiB; use a bounded native inspection")
 	}
+	if errors.Is(runErr, errNativeOutputLimit) {
+		return nil, errNativeOutputLimit // fixed safe text; never include native output or credentials
+	}
 	allowed := exit == 0
 	if len(c.AllowedExits) > 0 {
 		allowed = slices.Contains(c.AllowedExits, exit)

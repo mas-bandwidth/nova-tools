@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/procgroup"
 )
 
@@ -115,25 +116,37 @@ func Printed(ctx context.Context, p []byte) {
 	}
 }
 
-// seenWriter is a Builder that says each write to the context's watch and tail.
+var errNativeOutputLimit = errors.New("native output exceeds the explicit byte limit")
+
+// seenWriter says each write to the watch and tail, retaining bounded output
+// when setup supplies a capture and a Builder otherwise.
 type seenWriter struct {
 	b     strings.Builder
 	seen  func()
 	tail  func([]byte)
 	limit int
+	cap   *bounded.Capture
 }
 
 func (w *seenWriter) Write(p []byte) (int, error) {
-	if w.limit > 0 && w.b.Len()+len(p) > w.limit {
-		return 0, errors.New("native output exceeds the explicit byte limit")
-	}
 	if len(p) > 0 && w.seen != nil {
 		w.seen()
 	}
 	if len(p) > 0 && w.tail != nil {
 		w.tail(p)
 	}
+	if w.cap != nil {
+		return w.cap.Write(p)
+	}
 	return w.b.Write(p)
+}
+
+func (w *seenWriter) String() string {
+	if w.cap != nil {
+		raw := w.cap.Bytes()
+		return string(raw[:min(len(raw), w.limit)])
+	}
+	return w.b.String()
 }
 
 // RealExec runs the command through os/exec: the program directly, never a
@@ -153,6 +166,8 @@ func RealExec(ctx context.Context, dir, name string, args []string, stdin string
 }
 
 func realExec(ctx context.Context, killDelay time.Duration, dir, name string, args []string, stdin string) (string, int, error) {
+	ctx, stopOutput := context.WithCancel(ctx)
+	defer stopOutput()
 	seen, _ := ctx.Value(outputKey{}).(func())
 	tail, _ := ctx.Value(tailKey{}).(func([]byte))
 	cmd := exec.CommandContext(ctx, name, args...)
@@ -165,6 +180,12 @@ func realExec(ctx context.Context, killDelay time.Duration, dir, name string, ar
 	} // else /dev/null: a headless opencode run with stdin left open hangs at init (measured 2026-10-04)
 	limit, _ := ctx.Value(execOutputLimitKey{}).(int)
 	out, stderr := &seenWriter{seen: seen, tail: tail, limit: limit}, &seenWriter{seen: seen, tail: tail, limit: limit}
+	if limit > 0 {
+		// FriendSetupLifecycle: bounded output cancels the same verified
+		// native group as a deadline. One extra byte distinguishes overflow
+		// from a complete response exactly at the configured limit.
+		out.cap, stderr.cap = bounded.NewCapture(limit+1, stopOutput), bounded.NewCapture(limit+1, stopOutput)
+	}
 	cmd.Stdout = out
 	cmd.Stderr = stderr
 	ownGroup(cmd)
@@ -256,25 +277,36 @@ func realExec(ctx context.Context, killDelay time.Duration, dir, name string, ar
 		_ = release(false)
 	}
 	var exitErr *exec.ExitError
+	if limit > 0 && (out.cap.Hit() || stderr.cap.Hit()) {
+		limitErr := errNativeOutputLimit
+		if anchorPath == "" {
+			limitErr = errors.Join(limitErr, errors.New("unreceipted descendants are unverified"))
+		}
+		exit := -1
+		if errors.As(err, &exitErr) {
+			exit = exitErr.ExitCode()
+		}
+		return out.String(), exit, errors.Join(limitErr, err)
+	}
 	if ctx.Err() != nil && anchorPath == "" {
-		return out.b.String(), -1, errors.New("the delivery was stopped; unreceipted descendants are unverified")
+		return out.String(), -1, errors.New("the delivery was stopped; unreceipted descendants are unverified")
 	}
 	if ctx.Err() != nil && groupUnverified {
-		return out.b.String(), -1, err
+		return out.String(), -1, err
 	}
 	if ctx.Err() != nil && anchorPath != "" && cmd.Process != nil {
-		return out.b.String(), -1, errors.New("the delivery was stopped with its verified process group")
+		return out.String(), -1, errors.New("the delivery was stopped with its verified process group")
 	}
 	if errors.As(err, &exitErr) {
 		if groupUnverified {
-			return out.b.String() + Head(stderr.b.String(), OutputKept), exitErr.ExitCode(), err
+			return out.String() + Head(stderr.String(), OutputKept), exitErr.ExitCode(), err
 		}
 		if separate, _ := ctx.Value(execSeparateOutputKey{}).(bool); separate {
-			return out.b.String(), exitErr.ExitCode(), nil
+			return out.String(), exitErr.ExitCode(), nil
 		}
-		return out.b.String() + Head(stderr.b.String(), OutputKept), exitErr.ExitCode(), nil
+		return out.String() + Head(stderr.String(), OutputKept), exitErr.ExitCode(), nil
 	}
-	return out.b.String(), 0, err
+	return out.String(), 0, err
 }
 
 // ProviderRefused is a Deliverer's answer when the turn reached the
