@@ -82,7 +82,7 @@ profile. Enrollment neither creates presence nor starts work or a provider turn.
 Example inspection (no native commands or credentials):
 
 ```sh
-nova-friend setup --as worker --harness codex --dir /workers/work --home /workers/home --config-dir /workers/account-config --profile account-space --program /usr/local/bin/codex --deny-self /coordinator --profile-only --codex-device-enroll --enrollment-label 'account label' --target user@worker-host --remote-program /usr/local/bin/nova-friend --apply --dry-run
+nova-friend setup --as worker --harness codex --dir /workers/work --home /workers/home --config-dir /workers/account-config --profile account-extra --program /usr/local/bin/codex --deny-self /coordinator --profile-only --codex-device-enroll --enrollment-label 'account label' --target user@worker-host --remote-program /usr/local/bin/nova-friend --apply --dry-run
 ```
 
 ## Supported route decision

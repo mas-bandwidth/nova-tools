@@ -91,11 +91,14 @@ func TestEnrollmentTransportCancellationReapsResistantFakeDescendants(t *testing
 	}, 30*time.Second, 10*time.Millisecond, "fake child must publish its own marker before cancellation")
 	cancel()
 	var err error
-	select {
-	case err = <-done:
-	case <-time.After(30 * time.Second):
-		require.FailNow(t, "transport cancellation did not finish verified cleanup")
-	}
+	require.Eventually(t, func() bool {
+		select {
+		case err = <-done:
+			return true
+		default:
+			return false
+		}
+	}, 30*time.Second, 10*time.Millisecond, "transport cancellation did not finish verified cleanup")
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "trap")
 	raw, readErr := os.ReadFile(pidPath)

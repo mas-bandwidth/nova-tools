@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/procgroup"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
 // CodexEnrollmentTransport owns the local SSH wrapper through the same birth-
@@ -64,7 +65,7 @@ func codexEnrollmentTransport(ctx context.Context, terminal *os.File, program st
 		return fmt.Errorf("enrollment transport group remains live or unverified; preserve public receipt %s and wait for verified exit before retrying", receiptPath)
 	}
 	// Only proven-quiescent wrapper metadata is removed; neither path holds native output.
-	if err := os.RemoveAll(root); err != nil {
+	if err := safepath.RemoveUnder(os.TempDir(), root); err != nil {
 		return errors.New("enrollment transport cannot remove its quiescent public receipt; inspect temporary storage before retrying")
 	}
 	if runErr != nil || exit != 0 || output != "" || ctx.Err() != nil {

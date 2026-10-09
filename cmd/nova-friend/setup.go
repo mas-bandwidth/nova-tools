@@ -73,11 +73,12 @@ func (w world) setup(c *tool.Call) *tool.Out {
 		return setupRemedy(tool.Refuse(err.Error()))
 	}
 	apply := c.Bool("apply") && !dry
+	applyCtx := c.Ctx
 	if apply {
 		if enroll {
 			enrollmentCtx, stopEnrollment := codexEnrollmentSignals(c.Ctx)
 			defer stopEnrollment()
-			c.Ctx = enrollmentCtx
+			applyCtx = enrollmentCtx
 			terminal, terminalErr := codexEnrollmentTerminal(c)
 			if terminalErr != nil {
 				return setupRemedy(tool.Refuse(terminalErr.Error()))
@@ -86,7 +87,7 @@ func (w world) setup(c *tool.Call) *tool.Out {
 			if _, terminalErr = fmt.Fprintf(terminal, "Codex enrollment: local target profile=%s account label=%s\nSelect the intended account in the native browser consent flow.\n", opts.Profile, c.Str("enrollment-label")); terminalErr != nil {
 				return setupRemedy(tool.Fail("controlling terminal is unavailable; retry interactively"))
 			}
-			c.Ctx, terminalErr = friend.CodexConsentContext(c.Ctx, terminal)
+			applyCtx, terminalErr = friend.CodexConsentContext(applyCtx, terminal)
 			if terminalErr != nil {
 				return setupRemedy(tool.Refuse(terminalErr.Error()))
 			}
@@ -96,7 +97,7 @@ func (w world) setup(c *tool.Call) *tool.Out {
 			native := friend.NativeSetupRunner()
 			runner = &native
 		}
-		plan, err = runner.Apply(c.Ctx, plan, filepath.Join(opts.ConfigDir, ".nova-friend-setup"))
+		plan, err = runner.Apply(applyCtx, plan, filepath.Join(opts.ConfigDir, ".nova-friend-setup"))
 		if err != nil {
 			return setupOut(plan, apply, setupRemedy(tool.Fail(err.Error())))
 		}

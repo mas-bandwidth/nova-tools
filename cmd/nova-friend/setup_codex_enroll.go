@@ -63,16 +63,15 @@ func (w world) setupCodexRemote(c *tool.Call, o friend.SetupOptions) *tool.Out {
 	}
 	enrollmentCtx, stopEnrollment := codexEnrollmentSignals(c.Ctx)
 	defer stopEnrollment()
-	c.Ctx = enrollmentCtx
 	terminal, err := codexEnrollmentTerminal(c)
 	if err != nil {
 		return setupRemedy(tool.Refuse(err.Error()))
 	}
 	defer terminal.Close()
-	if _, err = fmt.Fprintf(terminal, "Codex enrollment: target=%s profile=%s account label=%s\nSelect the intended account in the native browser consent flow. Status cannot prove account identity.\n", c.Str("target"), o.Profile, c.Str("enrollment-label")); err != nil {
+	if _, err = fmt.Fprintf(terminal, "Codex enrollment: target=%s profile=%s account label=%s\nSelect the intended account in the native browser consent flow. Native status leaves account identity unverified; run: nova-friend setup -h.\n", c.Str("target"), o.Profile, c.Str("enrollment-label")); err != nil {
 		return setupRemedy(tool.Fail("controlling terminal is unavailable; retry interactively"))
 	}
-	if err = codexRemoteEnrollment(c.Ctx, terminal, args, c.Int("enrollment-timeout")); err != nil {
+	if err = codexRemoteEnrollment(enrollmentCtx, terminal, args, c.Int("enrollment-timeout")); err != nil {
 		return setupRemedy(tool.Fail(err.Error()))
 	}
 	return tool.Done().Fact("target", c.Str("target")).Fact("profile", o.Profile).Fact("enrollment", "remote_setup_completed").Fact("account_identity", "unverified").Fact("provider_turn", "not_checked")
