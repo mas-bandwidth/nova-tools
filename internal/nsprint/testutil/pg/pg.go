@@ -38,16 +38,19 @@ const BinEnv = "NOVA_PG_BIN"
 // wellKnown are the install directories searched after PATH: Homebrew's
 // versioned kegs on macOS, Debian's and Ubuntu's versioned trees on Linux.
 var wellKnown = []string{
+	"/opt/homebrew/opt/postgresql@18/bin",
 	"/opt/homebrew/opt/postgresql@16/bin",
 	"/opt/homebrew/opt/postgresql@17/bin",
 	"/opt/homebrew/opt/postgresql@15/bin",
 	"/opt/homebrew/opt/postgresql@14/bin",
 	"/usr/local/opt/postgresql@16/bin",
+	"/usr/lib/postgresql/18/bin",
 	"/usr/lib/postgresql/16/bin",
 	"/usr/lib/postgresql/17/bin",
 	"/usr/lib/postgresql/15/bin",
 	"/usr/lib/postgresql/14/bin",
 	"/usr/pgsql-16/bin",
+	"/usr/pgsql-18/bin",
 }
 
 // Binaries finds initdb, pg_ctl and postgres: in NOVA_PG_BIN when set, else
