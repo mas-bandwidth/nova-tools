@@ -94,6 +94,23 @@ func (p PushProof) Unheard(now time.Time) string {
 	return fmt.Sprintf("push=%s for %s: no proven push since %s: %s; a message to %s waits on its stream until something reads it (nova-bus recv --as %s); the proof: %s runs its friend daemon (nova-friend install --as %s --harness <h> --dir <d>) and its session answers the daemon's SESSION CHECK; nova-bus names shows every name's push", p.State(now), p.Name, p.AgeWord(now), why, p.Name, p.Name, p.Name, p.Name)
 }
 
+// Deaf is why name is not heard at now, "" when its proof is proven: the
+// refusal of nova-bus's --require-push, with the remedy.
+func (p PushProof) Deaf(now time.Time) string {
+	var why string
+	switch p.State(now) {
+	case PushProven:
+		return ""
+	case PushNone:
+		why = "no daemon has recorded one"
+	case PushDown:
+		why = fmt.Sprintf("its daemon holds no answered SESSION CHECK from the session (%s)", p.Reason)
+	case PushStale:
+		why = fmt.Sprintf("its daemon (%s) last renewed it %s ago, past %s", p.Harness, p.Age(now), PushFresh)
+	}
+	return fmt.Sprintf("deaf: %s has no proven push since %s: %s; the remedy: %s runs its friend daemon with a deliver adapter for its harness (nova-friend install --as %s --harness <h> --dir <d>) and its session answers the daemon's SESSION CHECK, which records the proof; nova-bus names shows every name's push", p.Name, p.AgeWord(now), why, p.Name, p.Name)
+}
+
 // ProvePush records proof for name at the store's time, in one transaction
 // (HSET on PushKey through AddAll, with no stream): what the friend daemon
 // calls when its session answered a check carried in by the deliver adapter,
@@ -164,6 +181,32 @@ func (b *Bus) Unheard(ctx context.Context, names ...string) ([]string, error) {
 // UnheardAt is Unheard judged at at, with no roster trip: send's, judged at
 // the store's time its message was stamped with (one HGETALL after the write).
 func (b *Bus) UnheardAt(ctx context.Context, at time.Time, names ...string) ([]string, error) {
+	return b.unheardAt(ctx, at, PushProof.Unheard, names...)
+}
+
+// Heard refuses every name of names (deduplicated, in order) that is not
+// heard at the store's now, one deaf line each: the gate nova-bus's
+// --require-push puts in front of a send or a recv, before anything is
+// written or read. It is the exception, asked for by flag; the bus itself
+// never refuses on a proof.
+func (b *Bus) Heard(ctx context.Context, names ...string) error {
+	_, now, err := b.Store.Roster(ctx)
+	if err != nil {
+		return err
+	}
+	problems, err := b.unheardAt(ctx, now, PushProof.Deaf, names...)
+	if err != nil {
+		return err
+	}
+	if len(problems) > 0 {
+		return &Refusal{problems}
+	}
+	return nil
+}
+
+// unheardAt is line(proof, at) for every name of names (deduplicated, in
+// order) whose proof is not proven at at, in one trip (one HGETALL).
+func (b *Bus) unheardAt(ctx context.Context, at time.Time, line func(PushProof, time.Time) string, names ...string) ([]string, error) {
 	var uniq []string
 	for _, n := range names {
 		if !slices.Contains(uniq, n) {
@@ -176,7 +219,7 @@ func (b *Bus) UnheardAt(ctx context.Context, at time.Time, names ...string) ([]s
 	}
 	var lines []string
 	for _, p := range proofs {
-		if l := p.Unheard(at); l != "" {
+		if l := line(p, at); l != "" {
 			lines = append(lines, l)
 		}
 	}

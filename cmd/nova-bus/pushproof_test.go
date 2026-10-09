@@ -73,3 +73,36 @@ func TestSendAndRecvNoteAnUnprovenPushAndNeverRefuseOnIt(t *testing.T) {
 	cli.Do(t, "names").Exit(0).Out("NAMES OK count=2 proven=1", "NAMES NAME name=ada push=proven", "NAMES NAME name=bob push=down age=", "harness=claude")
 	assert.Equal(t, 8, r.store.Len(bus.LogKey), "every send landed")
 }
+
+// The owner, 2026-10-07: adopt wide ASAP; the seat's push proof is card
+// the-seats-pushes-are-proven-before-the-sprint-moves-b. The gate is advisory: a
+// send between two unproven names goes, with a NOTE for each, and recv takes its
+// message the same way; --require-push (or NOVA_BUS_REQUIRE_PUSH=1) alone refuses
+// it with the deaf line, writing and reading nothing, --dry-run alike.
+func TestThePushGateIsAdvisoryUntilRequired(t *testing.T) {
+	t.Parallel()
+	r := deafRig("ada", "bob")
+	cli := r.cli()
+	send := []string{"send", "--as", "ada", "--to", "bob", "--subject", "s", "--body", "x"}
+
+	mid := id(t, cli.Do(t, send...).Exit(0).Out("SEND OK id=", "SEND NOTE push=none for ada", "SEND NOTE push=none for bob").Stdout)
+	cli.Do(t, "recv", "--as", "bob").Exit(0).Out("RECV OK id="+mid, "RECV NOTE push=none for bob")
+	assert.Equal(t, 1, r.store.Len(bus.LogKey), "the advisory send was written")
+
+	cli.Do(t, append(send, "--require-push")...).Exit(2).Err("SEND REFUSED",
+		"deaf: ada has no proven push since never: no daemon has recorded one", "deaf: bob has no proven push since never")
+	cli.Do(t, append(send, "--require-push", "--dry-run")...).Exit(2).Err("SEND REFUSED", "deaf: bob has no proven push since never")
+	cli.Do(t, "recv", "--as", "bob", "--require-push").Exit(2).Err("RECV REFUSED", "deaf: bob has no proven push since never")
+	cli.Do(t, "recv", "--as", "bob", "--require-push", "--dry-run").Exit(2).Err("RECV REFUSED", "deaf: bob has no proven push since never")
+	assert.Equal(t, 1, r.store.Len(bus.LogKey), "a required gate writes nothing")
+
+	// the variable is the flag; both names proven, the required gate passes and nothing is noted
+	r.env[RequirePushEnv] = "1"
+	cli = r.cli()
+	cli.Do(t, send...).Exit(2).Err("SEND REFUSED", "deaf: ada has no proven push since never")
+	r.prove(start, true, "ada")
+	r.prove(start, true, "bob")
+	cli.Do(t, send...).Exit(0).Out("SEND OK id=").NotOut("SEND NOTE")
+	cli.Do(t, "recv", "--as", "bob").Exit(0).Out("RECV OK id=").NotOut("RECV NOTE")
+	assert.Equal(t, 2, r.store.Len(bus.LogKey), "the proven send was written")
+}

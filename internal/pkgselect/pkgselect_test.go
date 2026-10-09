@@ -503,6 +503,33 @@ func TestOrderHeavyFirstAndFunctional(t *testing.T) {
 	assert.Equal(t, `[{"name":"nothing","packages":"","os":"linux","arch":"x64","group":"lin"}]`, MarshalLegs([]Leg{NothingLeg(g)}), "the nothing leg")
 }
 
+func TestPullRequestSeparatesMeasuredHeavyPackages(t *testing.T) {
+	t.Parallel()
+	pkgs := []string{"./cmd/a", "./cmd/nova-sprint", "./cmd/b", "./cmd/nova-swarm", "./internal/ci", "./internal/docs", "./internal/sprint/store"}
+	ordered := OrderHeavyFirst(pkgs)
+	assert.Equal(t, []string{"./cmd/nova-sprint", "./cmd/nova-swarm", "./internal/ci", "./internal/sprint/store"}, ordered[:4])
+	legs := Fanout("pull_request", ordered, DarwinSensitive{}, Groups{Linux: "space", Mac: "darwin"}, false)
+	home := map[string]string{}
+	for _, leg := range legs {
+		for _, pkg := range strings.Fields(leg.Packages) {
+			assert.Empty(t, home[pkg], "%s must have only one Linux leg", pkg)
+			home[pkg] = leg.Name
+		}
+	}
+	assert.Len(t, home, len(pkgs), "every selected package keeps its one Linux leg")
+	heavyHomes := map[string]bool{}
+	for _, pkg := range HeavyFirst {
+		assert.False(t, heavyHomes[home[pkg]], "%s shares a PR leg with another measured heavy package", pkg)
+		heavyHomes[home[pkg]] = true
+	}
+
+	// A one-leg deal cannot separate the heavy packages, but retains them all.
+	want := []string{mod + "/cmd/nova-sprint", mod + "/cmd/nova-swarm", mod + "/internal/ci", mod + "/internal/sprint/store"}
+	one, err := Deal(want, []string{"cmd/nova-sprint", "cmd/nova-swarm", "internal/ci", "internal/sprint/store"}, 1, 1)
+	require.NoError(t, err)
+	assert.Equal(t, want, one)
+}
+
 func legNames(legs []Leg) []string {
 	var out []string
 	for _, l := range legs {

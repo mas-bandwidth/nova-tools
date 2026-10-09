@@ -60,7 +60,7 @@ func (a *app) cmdMachineStop(args []string, stdout, stderr io.Writer) int {
 // changed, and the sprint line. Setting the state the machine has changes
 // nothing and says so. A stop wants --reason and --until (docs/SPEC-SPRINT.md
 // section 14): the machine line says who stopped it, why and when it is back,
-// and at --until the tick starts it; a stop of a STOPPED machine replaces the
+// and only an explicit start resumes it; a stop of a STOPPED machine replaces the
 // two.
 func (a *app) setMachine(name string, running bool, args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup(name)
@@ -783,9 +783,10 @@ func machineWords() string {
 	return strings.TrimSpace(`
 The machine: nova-sprint start sets it RUNNING, nova-sprint stop --reason
 <text> --until <time or duration> sets it STOPPED: where, inbox and the
-dashboard say "STOPPED by <actor>: <reason>, back by 2:04 PM", and at --until
-the tick starts it again unless it was stopped again since (a clear takes the
-time off); nova-sprint run ticks as soon as a line comes on the log (a verb's
+dashboard say "STOPPED by <actor>: <reason>, back by 2:04 PM". That time is
+display metadata; only an explicit start resumes after every owned working
+job has been cancelled and returned with stop-return. nova-sprint run ticks
+as soon as a line comes on the log (a verb's
 step: a finish, a merge, a start), at most every 100ms, and once a second
 while the log is quiet; nova-sprint tick is one tick by hand. Each tick deals
 ready primaries, asks readers, resolves waiting primaries whose needs landed,
@@ -804,7 +805,7 @@ over zero; one low on funds (a balance not over an hour of its spend) until
 the balance is over it. When every provider is OUT the tick stops the
 machine (STOPPED, every provider is out of credit) and start is refused
 until one is paid. Low on funds never stops it. Every
-verb works in both states. run stops (exit 3) when its own binary is replaced
+other verbs can inspect and repair stopped state. run stops (exit 3) when its own binary is replaced
 on disk, so its supervisor starts the new build.`) + "\n"
 }
 
@@ -814,7 +815,7 @@ on disk, so its supervisor starts the new build.`) + "\n"
 // moves alone unless it says so.
 func answerRulesFlag(on *bool, byDefault bool) func(flagSet) {
 	return func(fs flagSet) {
-		fs.BoolVar(on, "answer-rules", byDefault, "answer the mechanical judgments by rule, recorded \"answered by rule <name>\" (work came back failed: redealt, then a tier up; a card at its bound: a tier up, heavy to a friend; a late card: a wait once with progress, else returned and redealt; a conflict in a file no ledger owns: returned, redone on the tip, resumed; the same finding twice: marked a brief defect); nova-config's sprint row answer_rules_off turns single rules off; --answer-rules=false leaves every judgment to the coordinator (run answers by default, a tick by hand only with --answer-rules); nova-sprint rules prints what they would answer now")
+		fs.BoolVar(on, "answer-rules", byDefault, "answer the mechanical judgments by rule, recorded \"answered by rule <name>\" (work came back failed: a harness fault or a HOLD with findings reworked on its tier with the failure as its fix, any other failure redealt, then a tier up; a card at its bound: a tier up, heavy to a friend; a late card: a wait once with progress, else returned and redealt; a conflict in a file no ledger owns: returned, redone on the tip, resumed; the same finding twice: marked a brief defect); nova-config's sprint row answer_rules_off turns single rules off; --answer-rules=false leaves every judgment to the coordinator (run answers by default, a tick by hand only with --answer-rules); nova-sprint rules prints what they would answer now")
 	}
 }
 

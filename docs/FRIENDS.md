@@ -211,6 +211,17 @@ first pass that is ok after it prints `FRIEND-SYNC OK again after <n> failing
 passes`. An interrupt ends it with 0 (`FRIEND-SYNC STOP interrupted`), and a
 binary replaced under it with 3, so its supervisor starts the new one.
 
+A loop failing for a minute (four passes) is one judgment in the coordinator's
+inbox, `friend sync keeps refusing`, naming the refusal and its remedy (the
+loop's own line, `schema config is at version 35 and this binary carries 36;
+run: nova-config migrate`, say): the loop records its standing failure on the
+fleet table (`FRIEND-SYNC JUDGMENT recorded`), the tick raises the judgment on
+the record, once, and the first ok pass clears the record, which closes the
+judgment (`ack` or `wait` are its only answers). The loop keeps retrying every
+pass as before. On 2026-10-08 the loop refused from 01:05 to 08:51 ET, no card
+was delivered or collected for 7h45m, and its one FAILING line in its own log
+told no one.
+
 It is installed as a nova-config loop row kept alive on the machine that holds
 the friends' working directories, its secrets by name from that machine's seat
 and no shell in its argv; `--root` is left out, so the friends' directories are

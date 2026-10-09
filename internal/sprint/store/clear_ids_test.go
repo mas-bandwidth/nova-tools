@@ -66,6 +66,7 @@ func TestNoteIDsCarryTheEpoch(t *testing.T) {
 	_, err := h.st.Clear(h.ctx)
 	require.NoError(t, err)
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 2}))
+	h.startMachine() // a clear leaves the new epoch STOPPED
 	newID := failIt()
 	require.NotEqual(t, oldID, newID, "judgment ids: epoch 0 %s, epoch 1 %s", oldID, newID)
 	require.Equal(t, uint64(0), sprint.IDEpoch(oldID), "judgment ids: epoch 0 %s, epoch 1 %s", oldID, newID)

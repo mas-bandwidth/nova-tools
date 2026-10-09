@@ -1,6 +1,6 @@
 {
   "participants": [
-    {"name": "Worker", "lane": "from-emma", "git_email": "worker@example.com"},
-    {"name": "Friend", "lane": "from-rowan", "git_email": "friend@example.com"}
+    {"name": "Worker", "lane": "from-peer1", "git_email": "worker@example.com"},
+    {"name": "Friend", "lane": "from-peer2", "git_email": "friend@example.com"}
   ]
 }

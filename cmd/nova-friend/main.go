@@ -1821,6 +1821,7 @@ func (w world) install(c *tool.Call) *tool.Out {
 	if err != nil {
 		return tool.Refuse("the harness's settings: " + err.Error())
 	}
+	a.Sleep = func(d time.Duration) { w.sleep(context.Background(), d) }
 	path, ran, err := friend.Install(context.Background(), a, w.uid, w.launchctl, func(p string, data []byte) error {
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			return err
