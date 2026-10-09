@@ -2469,7 +2469,7 @@ nova-sprint fleet up <member> [--width <n>]
 nova-sprint fleet down <member>
 nova-sprint fleet sync [--check] [--pg <dsn>]
 nova-sprint fleet level
-nova-sprint friend sync [--pg <dsn>] [--root <dir>] [--every <duration>]
+nova-sprint friend sync [--pg <dsn> | --file <path>] [--root <dir>] [--every <duration>]
 nova-sprint friend sync install --every <duration> [--redis <addr>] [--pg <dsn>] [--root <dir>] [--dir <dir>] [--log <file>] [--dry-run]
 nova-sprint friend sync uninstall [--dir <dir>] [--dry-run]
 nova-sprint collect [<friend>...] [--dead-lanes] [--pg <dsn>] [--root <dir>] [--dry-run]
@@ -2559,6 +2559,15 @@ A `<selector>` is `--stream <s>`, `--who <friend.<name>|friend|none>`, `--state 
 card it selects in one store step, prints one line per card and the total, and with
 `--dry-run` lists what would change and writes nothing (docs/SPEC-SPRINT.md, "One
 selector, one step").
+
+`friend sync --file <path>` reads a local `nova-config --file` store in
+PostgreSQL's place; `--pg` and `--file` are exclusive. It writes the same
+typed friend roster, width and delivery mode into the selected sprint store.
+With `--every`, each pass reopens the file so edits are read on the next pass.
+An unreadable or malformed file, or one with unknown top-level JSON members
+or row kinds, refuses without changing the
+friends table. This option is for trying a private sprint without a database;
+`friend sync install` continues to use PostgreSQL.
 
 `friend sync` wakes a friend through the bus store at `NOVA_BUS_REDIS` after
 delivering her card. Its bus login reads `NOVA_BUS_REDIS_USER` and the password

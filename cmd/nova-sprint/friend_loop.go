@@ -28,7 +28,7 @@ func init() {
 // says changes, and the pass that is ok after it says so once. An interrupt ends the
 // loop with 0, and a binary replaced under it with exitReplaced, so its supervisor
 // starts the new one.
-func (a *app) friendSyncLoop(c common, pg, root string, every time.Duration, stdout, stderr io.Writer) int {
+func (a *app) friendSyncLoop(c common, pg, file, root string, every time.Duration, stdout, stderr io.Writer) int {
 	ctx := context.Background()
 	if a.notify != nil {
 		var cancel context.CancelFunc
@@ -60,7 +60,7 @@ func (a *app) friendSyncLoop(c common, pg, root string, every time.Duration, std
 		if pc, why := a.friendSyncActor(ctx, c); why != "" {
 			fmt.Fprintf(&errs, "%s friend sync: %s\n", prog, why)
 		} else {
-			code, changed = a.friendSyncPass(pc, pg, root, &out, &errs)
+			code, changed = a.friendSyncPass(pc, pg, file, root, &out, &errs)
 		}
 		now := a.now()
 		stamp := now.Format(time.RFC3339)

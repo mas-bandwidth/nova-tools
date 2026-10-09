@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -46,7 +47,8 @@ import (
 func friendWords() string {
 	return strings.TrimSpace(`
 The friends: the friends table is nova-config's friend rows, copied into the
-store by friend sync (--pg, else NOVA_PG_DSN, as nova-config takes it; with
+store by friend sync (--pg, else NOVA_PG_DSN, as nova-config takes it, or
+--file <path> for a local nova-config store file in PostgreSQL's place; with
 --every <d> it syncs again each time d passes until interrupted, acting as the
 seat each pass, the friend sync loop row's verb, docs/FRIENDS.md; friend sync
 install --every <d> runs that loop as this machine's own service, a launchd agent
@@ -178,6 +180,7 @@ func (a *app) cmdFriendSync(args []string, stdout, stderr io.Writer) int {
 	}
 	fs, c := a.verbSetup(name)
 	pg := fs.String("pg", "", "the config store, Postgres postgres://user@host:port/db with no password (else NOVA_PG_DSN; the password from the variable NOVA_PG_PASSWORD_ENV names), as nova-config takes it")
+	file := fs.String("file", "", "a nova-config store file in PostgreSQL's place (nova-config --file), for trying it with no database; reread every pass with --every")
 	root := fs.String("root", "", "the directory the friends' working directories are under, <root>/<friend>-working (else HOME); the sync delivers and collects each friend's sprint cards there and never writes elsewhere")
 	every := fs.Duration("every", 0, "sync now and again each time this passes, until interrupted, as the sprint's coordinator seat when no --actor is given, read again each pass (default: once); friend sync install --every <d> runs it as this machine's service and friend sync uninstall removes it (-h of each), or the friend sync loop row runs it (docs/FRIENDS.md)")
 	pos, err := parse(fs, args)
@@ -187,27 +190,42 @@ func (a *app) cmdFriendSync(args []string, stdout, stderr io.Writer) int {
 	if len(pos) > 0 {
 		return refuse(stderr, name, "takes no words, found "+oneline.Escape(pos[0]))
 	}
+	pgGiven, fileGiven := false, false
+	fs.Visit(func(f *flag.Flag) {
+		pgGiven = pgGiven || f.Name == "pg"
+		fileGiven = fileGiven || f.Name == "file"
+	})
+	if pgGiven && fileGiven {
+		return refuse(stderr, name, "--pg and --file are exclusive: --file reads the friend rows from a nova-config store file in PostgreSQL's place")
+	}
+	if fileGiven && *file == "" {
+		return refuse(stderr, name, "--file wants the path of a nova-config store file; run: nova-sprint friend sync --file <path>")
+	}
 	if *every < 0 {
 		return refuse(stderr, name, "--every wants a duration above zero, or none for one pass, got "+every.String()+"; run: nova-sprint friend sync --every 15s")
 	}
 	if *every > 0 {
-		return a.friendSyncLoop(*c, *pg, *root, *every, stdout, stderr)
+		return a.friendSyncLoop(*c, *pg, *file, *root, *every, stdout, stderr)
 	}
-	code, _ := a.friendSyncPass(*c, *pg, *root, stdout, stderr)
+	code, _ := a.friendSyncPass(*c, *pg, *file, *root, stdout, stderr)
 	return code
 }
 
 // friendSyncPass is one pass of friend sync on a store it opens as c says: its exit
 // code, and whether it changed anything (a friend added, taken off or updated, a card
 // delivered or finished).
-func (a *app) friendSyncPass(c common, pg, root string, stdout, stderr io.Writer) (int, bool) {
+func (a *app) friendSyncPass(c common, pg, file, root string, stdout, stderr io.Writer) (int, bool) {
 	const name = "friend sync"
 	st, err := a.store(c)
 	if err != nil {
 		return refuse(stderr, name, err.Error()), false
 	}
 	ctx := context.Background()
-	rows, err := a.friends(ctx, pg)
+	read := a.friends
+	if file != "" {
+		read = fileFriends(file)
+	}
+	rows, err := read(ctx, pg)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s %s: the config cannot be read: %s; nothing was changed\n", prog, name, oneline.WithRemedy(err.Error(), "nova-config friend list"))
 		return exitCannotRead, false
