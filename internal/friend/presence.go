@@ -156,7 +156,7 @@ func SessionCheckText(nonce, pong, to string) string {
 	if to != "" {
 		pong += " --to " + to
 	}
-	return fmt.Sprintf("%s%s\nThe daemon has had no bus message from this session for a while and asks whether the session is alive; only an answer from inside this session counts, and none within %s puts you down. Answer now, before anything else, with one command, then end this turn: %s\n", SessionCheckPrefix, nonce, SessionBound, pong)
+	return fmt.Sprintf("%s%s\nThe daemon has had no bus message from this session for a while and asks whether the session is alive; only an answer from inside this session counts, and none within %s puts you down. For a bound conversation, the pong must report your live identifier (the harness runtime id, else append --session <live-session-id>; never guess the configured target). Answer now, before anything else, with one command, then end this turn: %s\n", SessionCheckPrefix, nonce, SessionBound, pong)
 }
 
 // PresenceStatus is the presence file: what status reads.
@@ -209,6 +209,16 @@ type SessionCheck struct {
 	// the push is proved, so the session's late answer to the check already queued
 	// in it proves the push, whatever restarts came between. "" starts fresh.
 	Keep string
+	// PersistSession writes a newly proven target before it becomes deliverable.
+	PersistSession           func(string) error
+	RequireSession           bool
+	SessionQuestion          string
+	JoinFrom                 func() string
+	binding                  SessionBinding
+	joinAsked                bool
+	provenNotice             string
+	pendingSession           string
+	awaitNonce, awaitSession string
 
 	mu         sync.Mutex
 	m          *Presence
@@ -326,6 +336,12 @@ type turnGated struct {
 }
 
 func (g turnGated) Deliver(ctx context.Context, text string) (int, error) {
+	g.s.mu.Lock()
+	blocked := g.s.syncSession() && g.s.binding.Proof != "proven"
+	g.s.mu.Unlock()
+	if blocked {
+		return 0, Deferred{Reason: "session unproven: ordinary delivery waits for the bound conversation"}
+	}
 	defer g.s.enter()()
 	g.s.turn.RLock()
 	defer g.s.turn.RUnlock()
@@ -374,6 +390,13 @@ func (s *SessionCheck) Present() (bool, string) {
 	defer s.mu.Unlock()
 	if s.m == nil {
 		return false, NotYetAnswered
+	}
+	if s.syncSession() && s.binding.Proof != "proven" {
+		reason := s.m.Reason
+		if s.binding.Proof != "mismatch" {
+			reason = "session unproven: " + dash(s.binding.Target)
+		}
+		return false, reason
 	}
 	return s.m.Up, s.m.Reason
 }
@@ -441,6 +464,12 @@ func (s *SessionCheck) downBeat(now time.Time) (until time.Time, reason string) 
 	default:
 		until = m.Asked.Add(m.Quiet + m.Bound)
 	}
+	if s.syncSession() && s.binding.Proof != "proven" {
+		if s.binding.Proof == "mismatch" {
+			return until, m.Reason
+		}
+		return until, "session unproven: " + dash(s.binding.Target) + " check=" + dash(nonce)
+	}
 	check := "session check " + dash(nonce)
 	switch {
 	case !m.Proven && m.Asked.IsZero():
@@ -495,6 +524,9 @@ func (s *SessionCheck) Proof() (proven bool, nonce string) {
 	if s.m == nil {
 		return false, s.Keep
 	}
+	if s.syncSession() && s.binding.Proof != "proven" {
+		return false, s.m.Nonce
+	}
 	if s.m.Proven {
 		return true, ""
 	}
@@ -526,8 +558,20 @@ func (s *SessionCheck) Step(ctx context.Context) {
 	if s.m == nil {
 		s.m, s.keep = StartPresence(), s.Keep
 	}
+	if s.pendingSession != "" {
+		s.sessionRequestLocked(ctx, bus.Message{From: s.Friend, To: []string{s.Friend}, Kind: "request", Subject: "session " + s.pendingSession})
+	}
 	proven := s.m.Proven
 	answered, rose, err := s.read(ctx, now)
+	if s.awaitNonce != "" && s.answerSession(s.awaitNonce, s.awaitSession) {
+		nonce := s.awaitNonce
+		if nonce == "" {
+			nonce = s.m.Nonce
+		}
+		if s.m.Answer(now, nonce) {
+			answered, s.toPong = nonce, nonce
+		}
+	}
 	was := s.m.Reason
 	s.m.Tick(now)
 	fell := was != NoSessionAnswer && s.m.Reason == NoSessionAnswer
@@ -566,6 +610,7 @@ func (s *SessionCheck) Step(ctx context.Context) {
 		s.ask(ctx, now)
 	}
 	s.save(now)
+	s.sessionNotice(ctx)
 }
 
 // read takes the log since the cursor: a message from the friend that the
@@ -588,6 +633,7 @@ func (s *SessionCheck) read(ctx context.Context, now time.Time) (answered string
 		s.cursor = e.Entry
 		m := e.Message()
 		if m.From != s.Friend {
+			s.joinQuestion(ctx, m)
 			continue
 		}
 		if s.sent[m.ID] {
@@ -597,11 +643,18 @@ func (s *SessionCheck) read(ctx context.Context, now time.Time) (answered string
 		if m.Subject == DaemonPongSubject || strings.HasPrefix(m.Subject, SessionCheckPrefix) {
 			continue // the daemon's by name, from a run before this one
 		}
+		if s.sessionRequestLocked(ctx, m) {
+			continue
+		}
 		if nonce, _, _, _, ok := ParsePong(strings.TrimSpace(m.Body)); ok {
-			if s.m.Answer(now, nonce) {
+			if s.answerSession(nonce, PongSession(m.Body)) && s.m.Answer(now, nonce) {
 				answered, s.toPong = nonce, nonce
 			}
 			continue // a pong answers by its nonce alone: a stale or wrong one proves nothing
+		}
+		s.joinQuestion(ctx, m)
+		if s.syncSession() {
+			continue
 		}
 		if s.m.Heard(now) {
 			rose = true

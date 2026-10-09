@@ -249,7 +249,9 @@ type Daemon struct {
 	// brief, no wake, no idle wake, no lane, no read; it beats, answers pings and
 	// keeps every message pending (docs/SPEC-FRIEND.md, The push proof). The status
 	// says push=unproven with the nonce and since when.
-	Proof func() (proven bool, nonce string)
+	Proof          func() (proven bool, nonce string)
+	SessionInfo    func() SessionBinding
+	SessionRequest func(context.Context, bus.Message) bool
 	// Sent is the session's proof the sprint server last took on her beat (friend
 	// beat --pong answered with it), zero before any; the status carries it.
 	Sent func() time.Time
@@ -799,6 +801,15 @@ const (
 // the status saying the push proof and the session proof the server last took.
 func (l *loop) proof(now time.Time) bool {
 	d := l.d
+	if d.SessionInfo != nil {
+		b := d.SessionInfo()
+		d.status.SessionID, d.status.SessionTarget, d.status.SessionObserved, d.status.SessionProof = b.ID, b.Target, b.Observed, b.Proof
+		if b.Proof == "mismatch" {
+			d.status.Session = "mismatch"
+		} else if d.status.Session == "mismatch" {
+			d.status.Session = SessionOK
+		}
+	}
 	if d.Sent != nil {
 		d.status.ProofSent = d.Sent()
 	}
@@ -1083,7 +1094,16 @@ func (l *loop) read(now time.Time) bool {
 		e, ok, err := b.Recv(l.ctx, d.Friend, block)
 		for err == nil && ok {
 			msg := e.Message()
-			if l.lost[e.Entry] && !l.inHand[e.Entry] {
+			// a session request is not a turn. That includes the live-session
+			// question: SessionRequest injects its text through the ungated
+			// deliverer while the target is unproven, and the ack below keeps
+			// it out of the hand.
+			if d.SessionRequest != nil && d.SessionRequest(l.ctx, msg) {
+				if _, aerr := b.AckEntry(l.ctx, d.Friend, e.Entry); aerr != nil {
+					err = aerr
+					break
+				}
+			} else if l.lost[e.Entry] && !l.inHand[e.Entry] {
 				// superseded by the present, its ack lost, handed in again by the claim: superseded again, never delivered
 				d.Record(fmt.Sprintf("%s superseded id=%s subject=%q: %s", now.UTC().Format(time.RFC3339), msg.ID, msg.Subject, SupersededReason(l.presentAt)))
 				if _, aerr := b.AckEntry(l.ctx, d.Friend, e.Entry); aerr != nil {
@@ -1591,6 +1611,15 @@ func (d *Daemon) daemonPong(ctx context.Context, b *bus.Bus, ping bus.Message, n
 // so a reader tells a live daemon from a dead one by the file's age.
 func (d *Daemon) flush(now time.Time) {
 	s := d.status
+	if d.SessionInfo != nil {
+		b := d.SessionInfo()
+		s.SessionID, s.SessionTarget, s.SessionObserved, s.SessionProof = b.ID, b.Target, b.Observed, b.Proof
+		if b.Proof == "mismatch" {
+			s.Session = "mismatch"
+		} else if s.Session == "mismatch" {
+			s.Session = SessionOK
+		}
+	}
 	s.Connection, s.LastPing, s.Seat, s.SeatSince = d.m.Connection, d.m.LastPing, d.m.Seat, d.m.SeatSince
 	s.Challenge, s.Nonce, s.LastPong, s.Pongs = d.m.Challenge, d.m.Nonce, d.m.LastPong, d.m.Pongs
 	if d.Queued != nil {

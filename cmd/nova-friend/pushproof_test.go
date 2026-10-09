@@ -72,7 +72,7 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 		assert.Contains(t, out.String(), remedy)
 		assert.Zero(t, beats, "never beaten up: the session was never proved")
 		require.NotEmpty(t, downs)
-		assert.Contains(t, downs[0], "push unproven: session check r4nd0m")
+		assert.Contains(t, downs[0], "session unproven:")
 		w = r.world()
 		w.exec = func(context.Context, string, string, []string, string) (string, int, error) {
 			return `dsh: session "session-z" runs under agent preset "minimal", which the one-shot runner does not compose` + "\n", 1, nil
@@ -113,7 +113,7 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 		assert.Equal(t, 1, strings.Count(out.String(), "push proof: unproven: session check r4nd0m"), "the refusal names the nonce once: %s", out.String())
 		assert.Zero(t, beats, "never beaten up")
 		require.NotEmpty(t, downs, "her beat says down")
-		assert.Contains(t, downs[len(downs)-1], "push unproven: session check r4nd0m")
+		assert.Contains(t, downs[len(downs)-1], "session unproven:")
 	})
 	t.Run("a pong starts the daemon, and its beat carries the session's proof", func(t *testing.T) {
 		t.Parallel()

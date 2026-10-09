@@ -19,7 +19,7 @@ func TestCheckSaysBrokenWhenTheTableShowsUpButNoTurnWasAnswered(t *testing.T) {
 	r := newRig(t, "ada", "bob")
 	cli := r.cli()
 	state := friend.DefaultStateDir(r.home, "bob")
-	require.NoError(t, friend.WriteStatus(state, friend.Status{
+	require.NoError(t, friend.WriteStatus(state, friend.Status{SessionProof: "proven", SessionID: "ses_1",
 		Friend:        "bob",
 		Harness:       "opencode",
 		At:            start,
@@ -44,7 +44,7 @@ func TestCheckSaysDeafWhenDeliveriesSucceedAndNothingComesBack(t *testing.T) {
 	r := newRig(t, "ada", "bob")
 	cli := r.cli()
 	state := friend.DefaultStateDir(r.home, "bob")
-	require.NoError(t, friend.WriteStatus(state, friend.Status{
+	require.NoError(t, friend.WriteStatus(state, friend.Status{SessionProof: "proven", SessionID: "ses_1",
 		Friend:     "bob",
 		Harness:    "opencode",
 		At:         start,
@@ -64,7 +64,7 @@ func TestCheckSaysOkForALiveFriend(t *testing.T) {
 	cli := r.cli()
 	state := friend.DefaultStateDir(r.home, "bob")
 	r.launchctlOut = "12345 0 com.nova.friend-bob\n"
-	require.NoError(t, friend.WriteStatus(state, friend.Status{
+	require.NoError(t, friend.WriteStatus(state, friend.Status{SessionProof: "proven", SessionID: "ses_1",
 		Friend:     "bob",
 		Harness:    "opencode",
 		At:         start,
@@ -104,7 +104,7 @@ func TestCheckExitsOneOnAnyVerdictButOk(t *testing.T) {
 		t.Parallel()
 		r := newRig(t, "ada", "bob")
 		state := friend.DefaultStateDir(r.home, "bob")
-		require.NoError(t, friend.WriteStatus(state, friend.Status{
+		require.NoError(t, friend.WriteStatus(state, friend.Status{SessionProof: "proven", SessionID: "ses_1",
 			Friend:   "bob",
 			Session:  friend.SessionBroken,
 			BrokenAt: start,
@@ -117,7 +117,7 @@ func TestCheckExitsOneOnAnyVerdictButOk(t *testing.T) {
 		t.Parallel()
 		r := newRig(t, "ada", "bob")
 		state := friend.DefaultStateDir(r.home, "bob")
-		require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob"}))
+		require.NoError(t, friend.WriteStatus(state, friend.Status{SessionProof: "proven", SessionID: "ses_1", Friend: "bob"}))
 		require.NoError(t, friend.Record(state, "2026-10-04T02:50:00Z subject=work exit=0"))
 		r.cli().Do(t, "check", "--as", "ada", "bob").Exit(1)
 	})
@@ -136,7 +136,7 @@ func TestCheckExitsOneOnAnyVerdictButOk(t *testing.T) {
 		r := newRig(t, "ada", "bob")
 		state := friend.DefaultStateDir(r.home, "bob")
 		r.launchctlOut = "12345 0 com.nova.friend-bob\n"
-		require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", At: start}))
+		require.NoError(t, friend.WriteStatus(state, friend.Status{SessionProof: "proven", SessionID: "ses_1", Friend: "bob", At: start}))
 		require.NoError(t, friend.WritePresence(state, friend.PresenceStatus{Friend: "bob", Presence: "asleep", At: start}))
 		require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start}))
 		require.NoError(t, friend.Record(state, "2026-10-04T02:50:00Z subject=work exit=0"))
@@ -153,7 +153,7 @@ func TestCheckExitsOneOnAnyVerdictButOk(t *testing.T) {
 		shownFile := filepath.Join(t.TempDir(), "shown.json")
 		require.NoError(t, os.WriteFile(shownFile, []byte(`{"bob": {"state": "up", "working": 1}}`), 0o644))
 		r.cli().Do(t, "check", "--as", "ada", "--shown", shownFile, "bob").Exit(1).
-			Out(`verdict=down shown=up/1 why="untrue: shown up/1, down by presence"`)
+			Out(`verdict=down shown=up/1 why="untrue: shown up/1, session unproven:`)
 	})
 
 	// OK exits 0
@@ -162,7 +162,7 @@ func TestCheckExitsOneOnAnyVerdictButOk(t *testing.T) {
 		r := newRig(t, "ada", "bob")
 		state := friend.DefaultStateDir(r.home, "bob")
 		r.launchctlOut = "12345 0 com.nova.friend-bob\n"
-		require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", At: start}))
+		require.NoError(t, friend.WriteStatus(state, friend.Status{SessionProof: "proven", SessionID: "ses_1", Friend: "bob", At: start}))
 		require.NoError(t, friend.WritePresence(state, friend.PresenceStatus{Friend: "bob", Presence: friend.PresenceUp, At: start, LastHeard: start}))
 		require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start}))
 		require.NoError(t, friend.Record(state, "2026-10-04T02:50:00Z subject=work exit=0"))
@@ -179,7 +179,7 @@ func TestCheckJSONCarriesEveryFact(t *testing.T) {
 	r := newRig(t, "ada", "bob")
 	state := friend.DefaultStateDir(r.home, "bob")
 	r.launchctlOut = "12345 0 com.nova.friend-bob\n"
-	require.NoError(t, friend.WriteStatus(state, friend.Status{
+	require.NoError(t, friend.WriteStatus(state, friend.Status{SessionProof: "proven", SessionID: "ses_1",
 		Friend:     "bob",
 		Harness:    "opencode",
 		At:         start,
@@ -282,7 +282,7 @@ func TestCheckAppliesTheWindowToTheLog(t *testing.T) {
 			t.Parallel()
 			r := newRig(t, "ada", "bob")
 			state := friend.DefaultStateDir(r.home, "bob")
-			require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start}))
+			require.NoError(t, friend.WriteStatus(state, friend.Status{SessionProof: "proven", SessionID: "ses_1", Friend: "bob", Harness: "opencode", At: start}))
 			for _, l := range log {
 				require.NoError(t, friend.Record(state, l))
 			}
@@ -294,7 +294,7 @@ func TestCheckAppliesTheWindowToTheLog(t *testing.T) {
 		t.Parallel()
 		r := newRig(t, "ada", "bob")
 		state := friend.DefaultStateDir(r.home, "bob")
-		require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start}))
+		require.NoError(t, friend.WriteStatus(state, friend.Status{SessionProof: "proven", SessionID: "ses_1", Friend: "bob", Harness: "opencode", At: start}))
 		require.NoError(t, friend.Record(state, "2026-10-03T01:00:00Z subject=work messages=1 exit=1"))
 		ran := r.cli().Do(t, "check", "--as", "ada", "--since", "1h", "bob").Exit(1)
 		assert.NotContains(t, ran.Stdout, "verdict=broken")
@@ -304,7 +304,7 @@ func TestCheckAppliesTheWindowToTheLog(t *testing.T) {
 		t.Parallel()
 		r := newRig(t, "ada", "bob")
 		state := friend.DefaultStateDir(r.home, "bob")
-		require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start}))
+		require.NoError(t, friend.WriteStatus(state, friend.Status{SessionProof: "proven", SessionID: "ses_1", Friend: "bob", Harness: "opencode", At: start}))
 		require.NoError(t, friend.Record(state, "2026-10-04T02:40:00Z subject=work messages=1 exit=1"))
 		require.NoError(t, friend.Record(state, "2026-10-04T02:50:00Z subject=work messages=1 exit=1"))
 		r.cli().Do(t, "check", "--as", "ada", "--since", "1h", "bob").Exit(1).
@@ -315,7 +315,7 @@ func TestCheckAppliesTheWindowToTheLog(t *testing.T) {
 		t.Parallel()
 		r := newRig(t, "ada", "bob")
 		state := friend.DefaultStateDir(r.home, "bob")
-		require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start}))
+		require.NoError(t, friend.WriteStatus(state, friend.Status{SessionProof: "proven", SessionID: "ses_1", Friend: "bob", Harness: "opencode", At: start}))
 		require.NoError(t, friend.Record(state, "2026-10-04T02:40:00Z subject=work messages=1 exit=1"))
 		require.NoError(t, friend.Record(state, "2026-10-04T02:50:00Z subject=work messages=1 exit=0"))
 		ran := r.cli().Do(t, "check", "--as", "ada", "--since", "1h", "bob").Exit(1)

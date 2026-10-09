@@ -7,6 +7,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -47,6 +48,7 @@ type AntigravityDelivery struct {
 	ReadAt       time.Time `json:"read_at,omitzero"`
 	ResentTo     string    `json:"resent_to,omitempty"`
 	Text         string    `json:"text,omitempty"`
+	ProofNonce   string    `json:"proof_nonce,omitempty"`
 }
 
 // AntigravityLedger is the ledger's file: the conversation delivery follows (Followed, moved
@@ -105,6 +107,9 @@ func (a *Antigravity) keep(d AntigravityDelivery) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	l := a.load()
+	if nonce, ok := strings.CutPrefix(strings.SplitN(d.Text, "\n", 2)[0], SessionCheckPrefix); ok {
+		d.ProofNonce = nonce
+	}
 	l.Deliveries = append(l.Deliveries, d)
 	a.live = d.Conversation
 	a.save()
@@ -271,6 +276,9 @@ func (a *Antigravity) Follow(ctx context.Context, now time.Time) {
 	a.looked = now
 	a.mu.Unlock()
 	a.observe(now)
+	if a.target.pin.Load() != nil {
+		return
+	} // a bound daemon switches only after its requested round trip
 	live := a.Live()
 	a.mu.Lock()
 	l := a.load()
@@ -334,4 +342,19 @@ func (a *Antigravity) Follow(ctx context.Context, now time.Time) {
 // antigravityMailbox is conversation c's mailbox, under the home.
 func antigravityMailbox(c string) string {
 	return path.Join(AntigravityData, "brain", c, ".system_generated", "messages")
+}
+
+// ReadNonceSession is the conversation whose mailbox read the nonce, independently
+// of the pong's own claim (SPEC-FRIEND, Session binding).
+func (a *Antigravity) ReadNonceSession(nonce string) string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	deliveries := a.load().Deliveries
+	for i := len(deliveries) - 1; i >= 0; i-- {
+		d := deliveries[i]
+		if d.ProofNonce == nonce && !d.ReadAt.IsZero() {
+			return d.Conversation
+		}
+	}
+	return ""
 }

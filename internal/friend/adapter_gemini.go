@@ -19,6 +19,7 @@ import (
 // the CLI's: 42 when the session is not found, 55 untrusted, 1 an error.
 type Gemini struct {
 	Dir, Session string
+	target       sessionTarget
 	Run          Exec
 	Program      string    // "gemini" when empty
 	Out          io.Writer // where the turn's output goes, when set: the daemon's record
@@ -42,11 +43,11 @@ func (g *Gemini) Deliver(ctx context.Context, text string) (int, error) {
 	if program == "" {
 		program = "gemini"
 	}
-	out, exit, err := g.Run(ctx, g.Dir, program, GeminiArgs(g.Session, text), "")
+	out, exit, err := g.Run(ctx, g.Dir, program, GeminiArgs(g.target.get(g.Session), text), "")
 	if g.Out != nil && out != "" {
 		fmt.Fprintln(g.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
-	session := GeminiArgs(g.Session, "")[2]
+	session := GeminiArgs(g.target.get(g.Session), "")[2]
 	exit, err = refused(session, out, exit, err)
 	g.turns.saw(session, exit, err)
 	return exit, err
