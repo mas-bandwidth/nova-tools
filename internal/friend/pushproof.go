@@ -2,6 +2,7 @@ package friend
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +17,21 @@ const (
 	PushRenewEvery  = time.Minute
 	PushWriteBudget = 5 * time.Second
 )
+
+// DeliveryVerifier is an adapter that can verify delivery capability without
+// running a session turn (for example, listing runner CLI sessions).
+type DeliveryVerifier interface {
+	VerifyDelivery(ctx context.Context) error
+}
+
+func verifierOf(d Deliverer) DeliveryVerifier {
+	var v DeliveryVerifier
+	under(d, func(a Deliverer) bool {
+		v, _ = a.(DeliveryVerifier)
+		return v != nil
+	})
+	return v
+}
 
 // PushProver records the friend's inbox push proof on the bus (bus.PushKey;
 // docs/SPEC-BUS.md, bus-requires-inbox-push-proof) from the daemon's
@@ -35,6 +51,10 @@ type PushProver struct {
 	Deliver         Deliverer // the adapter the check goes in by
 	Now             func() time.Time
 	Record          func(line string) // nil records nothing
+	NeedsEnv        []string
+	Getenv          func(string) string
+	Verify          func(ctx context.Context) error // optional verify hook; nil uses DeliveryVerifier on Deliver
+	Delivered       func() bool                     // optional: true when session actually took a delivery since last write
 
 	mu      sync.Mutex
 	asked   string    // the nonce the latest check carried, until it is answered
@@ -45,6 +65,16 @@ type PushProver struct {
 	up      bool
 	reason  string
 	wroteAt time.Time
+}
+
+func (p *PushProver) verifyDelivery(ctx context.Context) error {
+	if p.Verify != nil {
+		return p.Verify(ctx)
+	}
+	if v := verifierOf(p.Deliver); v != nil {
+		return v.VerifyDelivery(ctx)
+	}
+	return nil
 }
 
 // passiveReason is the down proof of a harness with no deliver command.
@@ -79,19 +109,55 @@ func (p *PushProver) Step(s PresenceStatus) {
 	if s.Nonce != "" {
 		p.asked = s.Nonce
 	}
+	tookDelivery := false
 	if s.Answers > p.answers {
+		tookDelivery = true
 		p.nonce, p.proven = p.asked, now
 		if s.Answered != "" {
 			p.nonce = s.Answered // the check answered, never one asked after it in the same step
 		}
 	}
 	p.answers = s.Answers
-	due := !p.wrote || up != p.up || reason != p.reason || (up && now.Sub(p.wroteAt) >= PushRenewEvery)
-	proof := bus.PushProof{Name: p.Friend, Harness: p.Harness, Nonce: p.nonce, Proven: p.proven, Up: up}
+	if p.proven.IsZero() {
+		up = false
+		if reason == "" {
+			reason = NotYetAnswered
+		}
+	}
+	lastNonce := p.nonce
+	provenTime := p.proven
+	due := !p.wrote || up != p.up || reason != p.reason || tookDelivery || (up && now.Sub(p.wroteAt) >= PushRenewEvery)
 	p.mu.Unlock()
+
+	missing := MissingEnv(p.NeedsEnv, p.Getenv)
+	if len(missing) > 0 {
+		up = false
+		reason = NeedsEnvReason(missing)
+	}
+
+	if due && up && !tookDelivery && (p.Delivered == nil || !p.Delivered()) {
+		ctx, cancel := context.WithTimeout(context.Background(), PushWriteBudget)
+		err := p.verifyDelivery(ctx)
+		cancel()
+		if err != nil {
+			up = false
+			if len(missing) > 0 {
+				reason = NeedsEnvReason(missing)
+			} else if strings.Contains(err.Error(), "125") {
+				reason = "no key sealed: opencode exit 125"
+			} else {
+				reason = err.Error()
+			}
+		}
+	}
+
+	proof := bus.PushProof{Name: p.Friend, Harness: p.Harness, Nonce: lastNonce, Proven: provenTime, Up: up}
 	if !up {
 		proof.Reason = reason
 	}
+	p.mu.Lock()
+	due = !p.wrote || up != p.up || reason != p.reason || tookDelivery || (up && now.Sub(p.wroteAt) >= PushRenewEvery)
+	p.mu.Unlock()
 	if !due {
 		return
 	}

@@ -42,7 +42,15 @@ func waitAdopted(ctx context.Context, pid int, alive func(int) bool, pause func(
 		if !alive(pid) {
 			return true
 		}
-		pause(ctx, AdoptPoll)
+		if pause != nil {
+			pause(ctx, AdoptPoll)
+		} else {
+			select {
+			case <-ctx.Done():
+				return false
+			case <-time.After(AdoptPoll):
+			}
+		}
 	}
 	return false
 }

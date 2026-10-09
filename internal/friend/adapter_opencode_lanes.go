@@ -209,6 +209,16 @@ func (o *OpenCode) sessions(ctx context.Context) ([]session, error) {
 	return rows, nil
 }
 
+// VerifyDelivery checks whether opencode can list sessions, confirming that the runner
+// is working and any required provider keys are present and accepted.
+func (o *OpenCode) VerifyDelivery(ctx context.Context) error {
+	if o.Run == nil {
+		return nil
+	}
+	_, err := o.sessions(ctx)
+	return err
+}
+
 // DeliverTo is one card's turn in a lane's session: `opencode run --session
 // <id> <text>` in Dir, its output read for a refused permission, and its
 // tail for a rate limit or out of funds (ProviderLimit, whatever the exit:

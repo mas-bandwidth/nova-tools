@@ -2,6 +2,7 @@ package friend
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -151,4 +152,154 @@ func TestAProofThatCannotBeWrittenIsSaidAndTriedAgain(t *testing.T) {
 	r.prover.Step(PresenceStatus{Friend: "bob", Presence: PresenceUp, Answers: 1})
 	p, now = r.proof(t)
 	assert.Equal(t, bus.PushProven, p.State(now))
+}
+
+// TestAMissingProviderKeyPushProofReadsDownWithReasonNeverProven verifies that
+// a friend whose provider key is not in her environment reads down with the
+// reason (5480 --needs-env), never as proven (Glenn 2026-10-08).
+func TestAMissingProviderKeyPushProofReadsDownWithReasonNeverProven(t *testing.T) {
+	t.Parallel()
+	r := newProverRig(t, nil)
+	r.prover.Harness = "opencode"
+	r.prover.NeedsEnv = []string{"INCEPTION_API_KEY"}
+	env := map[string]string{}
+	r.prover.Getenv = func(k string) string { return env[k] }
+
+	// Daemon starts with missing key
+	r.step(t, BeatEvery)
+	p, now := r.proof(t)
+	assert.Equal(t, bus.PushDown, p.State(now))
+	assert.Equal(t, "no key sealed: INCEPTION_API_KEY", p.Reason)
+
+	// Even if a session pong arrives, missing key must keep it down
+	r.send(t, r.direct, "bob", PongSubject, PongLine("n1", 0, 0, 4)+"\n")
+	r.step(t, BeatEvery)
+	p, now = r.proof(t)
+	assert.Equal(t, bus.PushDown, p.State(now), "missing key must never be proven")
+	assert.Equal(t, "no key sealed: INCEPTION_API_KEY", p.Reason)
+
+	// Once key is sealed in environment, proof comes up
+	env["INCEPTION_API_KEY"] = "sealed"
+	r.step(t, StatusEvery)
+	p, now = r.proof(t)
+	assert.Equal(t, bus.PushProven, p.State(now), "key sealed allows proven push proof")
+	assert.Equal(t, "", p.Reason)
+
+	// If key is unsealed/removed, proof immediately drops back to down
+	delete(env, "INCEPTION_API_KEY")
+	r.step(t, StatusEvery)
+	p, now = r.proof(t)
+	assert.Equal(t, bus.PushDown, p.State(now), "unsealed key drops push proof back to down")
+	assert.Equal(t, "no key sealed: INCEPTION_API_KEY", p.Reason)
+}
+
+// TestOpenCodeExit125ReadsDownWithNeedsEnvReasonNeverProven verifies that when
+// opencode fails delivery verification with exit 125, the push proof reads
+// down with the 5480 reason, never as proven.
+func TestOpenCodeExit125ReadsDownWithNeedsEnvReasonNeverProven(t *testing.T) {
+	t.Parallel()
+	r := newProverRig(t, nil)
+	r.prover.Harness = "opencode"
+	r.prover.NeedsEnv = []string{"INCEPTION_API_KEY"}
+	env := map[string]string{"INCEPTION_API_KEY": "present"}
+	r.prover.Getenv = func(k string) string { return env[k] }
+
+	var verifyErr error
+	r.prover.Verify = func(ctx context.Context) error { return verifyErr }
+
+	// Daemon starts and asks check n1
+	r.step(t, BeatEvery)
+
+	// Session answers check, proof is up
+	r.send(t, r.direct, "bob", PongSubject, PongLine("n1", 0, 0, 4)+"\n")
+	r.step(t, BeatEvery)
+	p, now := r.proof(t)
+	assert.Equal(t, bus.PushProven, p.State(now))
+
+	// Opencode session list exits 125 during periodic renewal
+	verifyErr = fmt.Errorf("opencode session list exited 125")
+	r.step(t, PushRenewEvery)
+	p, now = r.proof(t)
+	assert.Equal(t, bus.PushDown, p.State(now), "opencode exit 125 must read as down, never proven")
+	assert.Equal(t, "no key sealed: opencode exit 125", p.Reason)
+
+	// With missing env also detected, it names the exact key
+	delete(env, "INCEPTION_API_KEY")
+	r.step(t, PushRenewEvery)
+	p, now = r.proof(t)
+	assert.Equal(t, bus.PushDown, p.State(now))
+	assert.Equal(t, "no key sealed: INCEPTION_API_KEY", p.Reason)
+}
+
+// TestPushProofRefreshedOnlyWhenDeliveryTakenOrCapabilityVerified verifies that
+// push proof renewal only refreshes when delivery capability is verified or
+// when the session actually took a delivery.
+func TestPushProofRefreshedOnlyWhenDeliveryTakenOrCapabilityVerified(t *testing.T) {
+	t.Parallel()
+	r := newProverRig(t, nil)
+	r.prover.Harness = "opencode"
+	var verifyErr error
+	verifiedCount := 0
+	r.prover.Verify = func(ctx context.Context) error {
+		verifiedCount++
+		return verifyErr
+	}
+
+	// Daemon starts and asks check n1
+	r.step(t, BeatEvery)
+
+	// 1. Session answers check: tookDelivery is true, initial proof is written
+	r.send(t, r.direct, "bob", PongSubject, PongLine("n1", 0, 0, 4)+"\n")
+	r.step(t, BeatEvery)
+	p, now := r.proof(t)
+	assert.Equal(t, bus.PushProven, p.State(now))
+	assert.Equal(t, 0, verifiedCount, "answering a check is taking delivery, no verify needed")
+
+	// 2. Renewal due: verifyDelivery is called
+	r.step(t, PushRenewEvery)
+	p, now = r.proof(t)
+	assert.Equal(t, bus.PushProven, p.State(now))
+	assert.Equal(t, 1, verifiedCount, "renewal calls verifyDelivery")
+
+	// 3. Verification fails: renewal fails, proof is written down
+	verifyErr = fmt.Errorf("runner failure")
+	r.step(t, PushRenewEvery)
+	p, now = r.proof(t)
+	assert.Equal(t, bus.PushDown, p.State(now))
+	assert.Equal(t, "runner failure", p.Reason)
+	assert.Equal(t, 2, verifiedCount)
+
+	// 4. Session takes another delivery: next check goes in and is answered
+	verifyErr = nil
+	r.step(t, ProveEvery)
+	r.send(t, r.direct, "bob", PongSubject, PongLine("n2", 0, 0, 4)+"\n")
+	r.step(t, BeatEvery)
+	p, now = r.proof(t)
+	assert.Equal(t, bus.PushProven, p.State(now), "taking new delivery restores proof")
+	assert.Equal(t, "n2", p.Nonce)
+}
+
+// TestOpenCodeVerifyDeliveryAdapter verifies OpenCode.VerifyDelivery behavior
+// against session list exit codes.
+func TestOpenCodeVerifyDeliveryAdapter(t *testing.T) {
+	t.Parallel()
+	oc := &OpenCode{
+		Dir:     t.TempDir(),
+		Program: "opencode",
+		Run: func(ctx context.Context, dir, prog string, args []string, stdin string) (string, int, error) {
+			if len(args) >= 2 && args[0] == "session" && args[1] == "list" {
+				return "", 125, nil
+			}
+			return "[]", 0, nil
+		},
+	}
+	err := oc.VerifyDelivery(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "opencode session list exited 125")
+
+	oc.Run = func(ctx context.Context, dir, prog string, args []string, stdin string) (string, int, error) {
+		return "[]", 0, nil
+	}
+	err = oc.VerifyDelivery(context.Background())
+	require.NoError(t, err)
 }

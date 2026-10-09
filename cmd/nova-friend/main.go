@@ -1323,7 +1323,15 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// presence is the session's, never the daemon's (docs/SPEC-FRIEND.md, presence); each
 	// presence saved is also the bus's push proof, without which nova-bus refuses this name
 	// as deaf (docs/SPEC-BUS.md, bus-requires-inbox-push-proof)
-	prover := &friend.PushProver{Friend: name, Harness: c.Str("harness"), Store: st, Now: w.now, Record: record}
+	prover := &friend.PushProver{
+		Friend:   name,
+		Harness:  c.Str("harness"),
+		Store:    st,
+		Now:      w.now,
+		Record:   record,
+		NeedsEnv: friend.NeedsEnvOf(c.Str("needs-env"), c.Str("model")),
+		Getenv:   w.getenv,
+	}
 	keep := ""
 	if pr, found, err := friend.ReadPresence(state); err == nil && found {
 		keep = pr.Nonce // the last run's check, never answered: its answer still proves the push
