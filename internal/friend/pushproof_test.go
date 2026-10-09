@@ -288,6 +288,59 @@ func TestPushProofRefreshedOnlyWhenDeliveryTakenOrCapabilityVerified(t *testing.
 	assert.Equal(t, "n2", p.Nonce)
 }
 
+// TestConsecutiveDeliveryVerificationErrorsDoNotRecheckOnIntermediateSteps proves
+// that when delivery verification encounters consecutive identical errors, the
+// retry timestamp is properly maintained so verifyDelivery is not invoked on
+// intermediate presence steps before PushRenewEvery has elapsed.
+func TestConsecutiveDeliveryVerificationErrorsDoNotRecheckOnIntermediateSteps(t *testing.T) {
+	t.Parallel()
+	r := newProverRig(t, nil)
+	r.prover.Harness = "opencode"
+	var verifyErr error
+	verifiedCount := 0
+	r.prover.Verify = func(ctx context.Context) error {
+		verifiedCount++
+		return verifyErr
+	}
+
+	// Daemon starts and session answers check n1: proof is up
+	r.step(t, BeatEvery)
+	r.send(t, r.direct, "bob", PongSubject, PongLine("n1", 0, 0, 4)+"\n")
+	r.step(t, BeatEvery)
+	p, now := r.proof(t)
+	assert.Equal(t, bus.PushProven, p.State(now))
+	assert.Equal(t, 0, verifiedCount)
+
+	// 1. First verification failure at renewal time: proof transitions down
+	verifyErr = fmt.Errorf("persistent runner failure")
+	r.step(t, PushRenewEvery)
+	p, now = r.proof(t)
+	assert.Equal(t, bus.PushDown, p.State(now))
+	assert.Equal(t, "persistent runner failure", p.Reason)
+	assert.Equal(t, 1, verifiedCount)
+
+	// 2. Second verification failure at next renewal (PushRenewEvery elapsed):
+	// returns same error; proof remains down with same reason
+	r.step(t, PushRenewEvery)
+	p, now = r.proof(t)
+	assert.Equal(t, bus.PushDown, p.State(now))
+	assert.Equal(t, "persistent runner failure", p.Reason)
+	assert.Equal(t, 2, verifiedCount)
+
+	// 3. Intermediate presence steps (e.g. 5s BeatEvery increments):
+	// verifyDelivery MUST NOT be called before PushRenewEvery elapses
+	r.step(t, BeatEvery)
+	assert.Equal(t, 2, verifiedCount, "intermediate presence step 1 must not invoke verifyDelivery")
+	r.step(t, BeatEvery)
+	assert.Equal(t, 2, verifiedCount, "intermediate presence step 2 must not invoke verifyDelivery")
+	r.step(t, BeatEvery)
+	assert.Equal(t, 2, verifiedCount, "intermediate presence step 3 must not invoke verifyDelivery")
+
+	// 4. Once full PushRenewEvery elapses since second failure, verifyDelivery is retried
+	r.step(t, PushRenewEvery-3*BeatEvery)
+	assert.Equal(t, 3, verifiedCount, "verifyDelivery is invoked only after PushRenewEvery has elapsed")
+}
+
 // TestOpenCodeVerifyDeliveryAdapter verifies OpenCode.VerifyDelivery behavior
 // against session list exit codes.
 func TestOpenCodeVerifyDeliveryAdapter(t *testing.T) {

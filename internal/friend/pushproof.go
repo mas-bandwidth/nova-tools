@@ -78,6 +78,7 @@ type PushProver struct {
 	up        bool
 	reason    string
 	wroteAt   time.Time
+	retryAt   time.Time
 	verifyErr error
 }
 
@@ -131,6 +132,7 @@ func (p *PushProver) Step(s PresenceStatus) {
 			p.nonce = s.Answered // the check answered, never one asked after it in the same step
 		}
 		p.verifyErr = nil
+		p.retryAt = now
 	}
 	p.answers = s.Answers
 	if p.proven.IsZero() {
@@ -141,7 +143,7 @@ func (p *PushProver) Step(s PresenceStatus) {
 	}
 	lastNonce := p.nonce
 	provenTime := p.proven
-	renewalDue := !p.wrote || now.Sub(p.wroteAt) >= PushRenewEvery
+	renewalDue := p.retryAt.IsZero() || now.Sub(p.retryAt) >= PushRenewEvery
 	priorVerifyErr := p.verifyErr
 	p.mu.Unlock()
 
@@ -156,6 +158,7 @@ func (p *PushProver) Step(s PresenceStatus) {
 		err := p.verifyDelivery(ctx)
 		cancel()
 		p.mu.Lock()
+		p.retryAt = now
 		p.verifyErr = err
 		priorVerifyErr = err
 		p.mu.Unlock()
