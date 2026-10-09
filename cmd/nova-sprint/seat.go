@@ -586,6 +586,8 @@ func (a *app) cmdSeat(args []string, stdout, stderr io.Writer) int {
 			return a.cmdSeatLogin(args[1:], stdout, stderr)
 		case "logout":
 			return a.cmdSeatLogout(args[1:], stdout, stderr)
+		case "tool-result":
+			return a.cmdSeatToolResult(args[1:], stdout, stderr)
 		case "push":
 			return a.cmdSeatPush(args[1:], stdout, stderr)
 		case "pong":

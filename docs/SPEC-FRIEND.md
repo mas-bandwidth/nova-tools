@@ -3022,3 +3022,37 @@ a delayed response cannot erase a newer STOP or PAUSE, and failed/unknown reads
 hold authorization while retaining the last control word. A refused native read
 keeps its begun lease and durable ACTIVE reservation through daemon restart. The admission/completion distinction is modelled in
 `tla/SprintPause.tla` and pinned by the mixed work/read pause test.
+
+### Active Codex tool-result binding
+
+An explicitly selected `tool-result` route addresses the real Codex session UUID,
+private namespace and credential-free reply server. The root's bounded tool cell
+runs the Go receiver (`nova-sprint seat tool-result wait`); each invocation owns or
+renews a 30-second lease and waits at most 20 seconds. Another live owner is refused.
+The receiver installs a native directory observer before publishing the lease or
+scanning pending files: Linux inotify and Darwin kqueue, with no polling fallback.
+Every notification, including a Linux queue overflow, rescans durable records.
+Cancellation interrupts the blocking kernel wait; directory removal, move or
+revocation refuses without consuming records. A later wait can rearm and replay.
+Other platforms refuse this explicitly selected route.
+The producer defers when the lease is absent, expired or has different scope. It
+never falls back to Codex queue/resume, self-chat steers or private app IPC.
+
+The private directory holds one binding and immutable event envelopes. Delivery
+publishes a complete synced envelope and deduplicates its scope and exact payload.
+The root cell emits the envelope through buffered tool output before `ack`, whose
+receipt says transport emission only and retains the original payload. Interrupted
+calls preserve pending events; `release` disarms only the matching owner. A stopped
+cell cannot renew its lease. Neither publication nor emission proves a root receipt,
+a completed native turn, presence or a seat: the actual root answers the fresh
+nonce through the independently named sprint server. The lifecycle is
+`tla/ToolResultBinding.tla`. This active-session route does not supply permanent
+idle/session-restart wake; that application-owned binding remains a separate gap.
+
+A judgment is staged durably before its inbox file or seen key consumes it,
+including during an expired receiver lease. Staging is pending, never delivery;
+only a newly armed matching root wait exposes it. A failed staging write leaves
+the inbox judgment retryable. Every producer envelope checks its reply source
+against the same bound server. UUID identity is explicit caller binding, not app
+authentication. Buffered-output-before-ack is the trusted root wrapper contract;
+the filesystem command cannot authenticate model receipt or enforce that order.

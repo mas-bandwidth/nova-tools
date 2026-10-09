@@ -480,6 +480,12 @@ func (a *app) push(ctx context.Context, src inboxSource, p *pushTarget, holder s
 	}
 	now := a.now()
 	text := groupText(whole, now, true) + "clock: " + now.UTC().Format(time.RFC3339) + "\n"
+	if p.fixed == "" {
+		if err := retainToolResultJudgment(ctx, src, holder, "NOVA SPRINT INBOX: new for the coordinator\n"+text); err != nil {
+			fmt.Fprintf(stderr, "%s inbox --push: %s\n", prog, oneline.Escape(err.Error()))
+			return "", 1
+		}
+	}
 	wrote := false
 	for _, id := range noteKeys(whole) {
 		if seen[id] {

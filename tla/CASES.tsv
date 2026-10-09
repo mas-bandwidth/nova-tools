@@ -579,3 +579,7 @@ MCManagedSessionCheckBatch.cfg	MCManagedSessionCheckBatch.tla	pass	-	ignore-term
 MCManagedSessionCheckExplicit.cfg	MCManagedSessionCheckExplicit.tla	pass	-	ignore-terminal	managed-session-check	required	-
 MCManagedSessionCheckBroken.cfg	MCManagedSessionCheckBroken.tla	invariant	OneShotOwned	ignore-terminal	managed-session-check	required	-
 MCManagedSessionCheckWitness.cfg	MCManagedSessionCheckWitness.tla	invariant	ReachLaterManagedCheckWitness	ignore-terminal	managed-session-check	required	-
+MCToolResultBinding.cfg	MCToolResultBinding.tla	pass	-	ignore-terminal	tool-result	required	-
+MCToolResultBindingBrokenNoLease.cfg	MCToolResultBinding.tla	invariant	LeaseRequired	ignore-terminal	tool-result	required	-
+MCToolResultBindingBrokenEmitProof.cfg	MCToolResultBinding.tla	invariant	OutputRequiredForProof	ignore-terminal	tool-result	required	-
+MCToolResultBindingBrokenEarlyAck.cfg	MCToolResultBinding.tla	invariant	PendingRetainedUntilOutput	ignore-terminal	tool-result	required	-

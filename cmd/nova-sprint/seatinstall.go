@@ -60,6 +60,9 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 	harness := fs.String("harness", "", "the harness the seat's AI runs in (required): the push loop delivers each judgment, and the push proof, into the session through its adapter; a harness with no deliver command (claude) gets the folder adapter, each one a file written into --target")
 	target := fs.String("target", "", "the session's directory, where the harness's adapter delivers (required); for the folder adapter, the directory the session watches with a Monitor, which must be there")
 	session := fs.String("session", "", "the session's id, for a harness that names one (default: the adapter's newest in --target)")
+	adapter := fs.String("adapter", "", "explicit tool-result only for codex: an armed active root tool cell, never queue/resume")
+	namespace := fs.String("namespace", "", "with tool-result, private route label matching the receiver")
+	replyServer := fs.String("reply-server", "", "with tool-result, credential-free private reply server matching the receiver")
 	server := fs.String("server", "", "the sprint's server, `host:port` (default NOVA_SPRINT_SERVER): the unit's, and recorded in the seat beside the store login, where seat check reads it when NOVA_SPRINT_SERVER is not set")
 	cs := addConfigSeatFlags(fs)
 	pos, err := parse(fs, args)
@@ -71,7 +74,7 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 	}
 	// the push target first: a loop that cannot reach the session is no push (pushproof.go)
 	// (a dry run with no --harness still prints the unit, and says the install wants one)
-	push, why := seatPushTarget(sprint.PushRecord{Name: c.actor, Harness: *harness, Target: *target, Session: *session})
+	push, why := seatPushTarget(sprint.PushRecord{Name: c.actor, Harness: *harness, Target: *target, Session: *session, Adapter: *adapter, ToolResultNamespace: *namespace, ToolResultServer: *replyServer})
 	if why != "" && (!*dry || push.Harness != "") {
 		return refuse(stderr, name, why+"; run: "+sprint.PushSetup(c.actor, push, push.Harness != ""))
 	}
@@ -160,6 +163,9 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 func (a *app) recordPushTarget(srv string, c common, push sprint.PushRecord, stdout, stderr io.Writer) int {
 	const name = "seat install"
 	words := []string{"push", "--actor", push.Name, "--harness", push.Harness, "--target", push.Target} // the server derives the adapter again
+	if push.Adapter == sprint.AdapterToolResult {
+		words = append(words, "--adapter", push.Adapter, "--namespace", push.ToolResultNamespace, "--reply-server", push.ToolResultServer)
+	}
 	if push.Session != "" {
 		words = append(words, "--session", push.Session)
 	}

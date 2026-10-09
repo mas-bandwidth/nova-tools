@@ -64,6 +64,13 @@ func pushDeliverer(rec sprint.PushRecord) (friend.Deliverer, error) {
 			return d, nil
 		}
 	}
+	if rec.Adapter == sprint.AdapterToolResult {
+		if rec.Harness != "codex" {
+			return nil, errors.New("tool-result is only an explicit Codex root route")
+		}
+		route := toolResultDeliverer(rec)
+		return route, route.Scope.Validate()
+	}
 	if rec.Adapter == sprint.AdapterFolder {
 		return &folderAdapter{Dir: rec.Target}, nil
 	}
@@ -247,6 +254,9 @@ func (a *app) cmdSeatPush(args []string, stdout, stderr io.Writer) int {
 	harness := fs.String("harness", "", "the harness the AI holding the seat runs in: its adapter delivers each push into the session (a harness with no deliver command, claude, gets the folder adapter: each push a file in --target)")
 	target := fs.String("target", "", "with --harness, the session's directory, where the adapter delivers (for the folder adapter, the directory the session watches, which must be there)")
 	session := fs.String("session", "", "with --harness, the session's id, for a harness that names one (default: the adapter's newest in --target)")
+	adapter := fs.String("adapter", "", "explicit tool-result only for codex: an armed active root tool cell, never queue/resume")
+	namespace := fs.String("namespace", "", "with tool-result, private route label matching the receiver")
+	replyServer := fs.String("reply-server", "", "with tool-result, credential-free private reply server matching the receiver")
 	sent := fs.String("sent", "", "the push loop's report: the nonce of the check it delivered")
 	failed := fs.String("failed", "", "with --sent, why the delivery of the check failed")
 	if pos, err := parse(fs, args); err != nil || len(pos) > 0 {
@@ -257,6 +267,9 @@ func (a *app) cmdSeatPush(args []string, stdout, stderr io.Writer) int {
 	}
 	if *failed != "" && *sent == "" {
 		return refuse(stderr, name, "--failed goes with --sent")
+	}
+	if *harness == "" && (*adapter != "" || *namespace != "" || *replyServer != "") {
+		return refuse(stderr, name, "adapter/namespace/reply-server require --harness; nothing changed")
 	}
 	if *sent != "" && *harness != "" {
 		return refuse(stderr, name, "--sent is the push loop's report and --harness the setup: one at a time")
@@ -274,7 +287,7 @@ func (a *app) cmdSeatPush(args []string, stdout, stderr io.Writer) int {
 	now := a.now()
 	switch {
 	case *harness != "":
-		next, why := seatPushTarget(sprint.PushRecord{Name: c.actor, Harness: *harness, Target: *target, Session: *session})
+		next, why := seatPushTarget(sprint.PushRecord{Name: c.actor, Harness: *harness, Target: *target, Session: *session, Adapter: *adapter, ToolResultNamespace: *namespace, ToolResultServer: *replyServer})
 		if why != "" {
 			return refuse(stderr, name, why)
 		}
@@ -299,6 +312,24 @@ func (a *app) cmdSeatPush(args []string, stdout, stderr io.Writer) int {
 // deliver command (nova-friend's adapter is passive) gets the folder adapter,
 // and its target must be a directory that is there.
 func seatPushTarget(rec sprint.PushRecord) (sprint.PushRecord, string) {
+	if why := sprint.NotPushTarget(rec); why != "" {
+		return rec, why
+	}
+	if rec.Adapter != "" {
+		if rec.Adapter != sprint.AdapterToolResult || rec.Harness != "codex" {
+			return rec, "only --adapter tool-result with --harness codex is supported; no arbitrary adapter override"
+		}
+		if err := toolResultDeliverer(rec).Scope.Validate(); err != nil {
+			return rec, err.Error()
+		}
+		if !filepath.IsAbs(rec.Target) {
+			return rec, "tool-result wants an absolute private transport directory"
+		}
+		return rec, ""
+	}
+	if rec.ToolResultNamespace != "" || rec.ToolResultServer != "" {
+		return rec, "namespace/reply-server require --adapter tool-result"
+	}
 	rec.Adapter = ""
 	if why := sprint.NotPushTarget(rec); why != "" {
 		return rec, why
@@ -326,6 +357,9 @@ func (a *app) sayPush(rec sprint.PushRecord, ok bool, now time.Time, asJSON bool
 		fmt.Fprintln(stdout, string(b))
 	} else {
 		line := fmt.Sprintf("name=%s harness=%s target=%s adapter=%s", oneline.Field(rec.Name), oneline.Field(orDashStr(rec.Harness, "-")), oneline.Field(orDashStr(rec.Target, "-")), oneline.Field(rec.AdapterName()))
+		if rec.Adapter == sprint.AdapterToolResult {
+			line += " session=" + oneline.Field(rec.Session) + " namespace=" + oneline.Field(rec.ToolResultNamespace) + " server=" + oneline.Field(rec.ToolResultServer)
+		}
 		if why == "" {
 			fmt.Fprintf(stdout, "PUSH OK %s proven=%s\n", line, rec.Proven.UTC().Format(time.RFC3339))
 		} else {
@@ -475,7 +509,12 @@ func (a *app) prove(ctx context.Context, src inboxSource, holder string, asJSON 
 		say("DOWN", holder, "", err.Error())
 		return
 	}
-	why := a.deliverPush(ctx, rec, sprint.PushCheckText(nonce, reply))
+	why := ""
+	if mismatch := toolResultReplyMismatch(rec, holder, nonce, reply); mismatch != "" {
+		why = mismatch
+	} else {
+		why = a.deliverPush(ctx, rec, sprint.PushCheckText(nonce, reply))
+	}
 	if err := pr.pushSent(ctx, holder, nonce, why); err != nil {
 		say("DOWN", holder, nonce, "the check went out and could not be recorded: "+err.Error())
 		return
@@ -485,6 +524,39 @@ func (a *app) prove(ctx context.Context, src inboxSource, holder string, asJSON 
 		return
 	}
 	say("CHECK", holder, nonce, "")
+}
+
+// toolResultReplyMismatch fences every envelope to its explicit private source
+// (SPEC-SPRINT.md, Active Codex tool-result binding).
+func toolResultReplyMismatch(rec sprint.PushRecord, holder, nonce, reply string) string {
+	if rec.Adapter == sprint.AdapterToolResult && reply != sprint.PushPongCommand(holder, nonce, "", rec.ToolResultServer) {
+		return "the push source reply route does not match the bound tool-result server; restart the local inbox push loop with that private NOVA_SPRINT_SERVER"
+	}
+	return ""
+}
+
+// retainToolResultJudgment runs before inbox files/seen keys consume a group.
+// Failure leaves the original inbox group retryable (ToolResultBinding, Stage).
+func retainToolResultJudgment(ctx context.Context, src inboxSource, holder, text string) error {
+	pr, ok := src.(pushProver)
+	if !ok {
+		return nil
+	}
+	rec, found, err := pr.pushRecord(ctx, holder)
+	if err != nil {
+		return err
+	}
+	if !found || rec.Adapter != sprint.AdapterToolResult {
+		return nil
+	}
+	reply, err := pr.pushReply(holder, "route-check")
+	if err != nil {
+		return err
+	}
+	if why := toolResultReplyMismatch(rec, holder, "route-check", reply); why != "" {
+		return errors.New(why)
+	}
+	return toolResultDeliverer(rec).Retain(ctx, text)
 }
 
 // deliverPush delivers text into rec's session through its adapter, bounded by
@@ -528,7 +600,23 @@ func (a *app) pushJudgments(ctx context.Context, src inboxSource, holder string,
 		say("OK", holder, "", "")
 		return
 	}
-	if why := a.deliverPush(ctx, rec, "NOVA SPRINT INBOX: new for the coordinator\n"+strings.Join(texts, "\n")); why != "" {
+	text := "NOVA SPRINT INBOX: new for the coordinator\n" + strings.Join(texts, "\n")
+	if rec.Adapter == sprint.AdapterToolResult {
+		for _, part := range texts {
+			envelope := "NOVA SPRINT INBOX: new for the coordinator\n" + part
+			if err := retainToolResultJudgment(ctx, src, holder, envelope); err != nil {
+				say("DOWN", holder, "", "pending judgments could not be retained: "+err.Error())
+				return
+			}
+			if why := a.deliverPush(ctx, rec, envelope); why != "" {
+				say("DOWN", holder, "", "judgments retained pending root receiver: "+why)
+				return
+			}
+		}
+		say("OK", holder, "", "")
+		return
+	}
+	if why := a.deliverPush(ctx, rec, text); why != "" {
 		say("DOWN", holder, "", "the judgments were written and not delivered: "+why)
 		return
 	}

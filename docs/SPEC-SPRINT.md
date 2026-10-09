@@ -7285,3 +7285,33 @@ friend reaches that friend's inbox by the route her judgments already take: the
 push loop writes a group addressed to someone to that actor's own inbox
 directory (`pushTarget.dirOf`, `~/<actor>-working/inbox/sprint-judgments`), the
 group carrying the note's addressee (`sprint.Group.To`).
+
+### Active Codex tool-result binding
+
+`seat push` and `seat install` accept explicit `--adapter tool-result` only with
+`--harness codex`, the actual `--session` UUID, a private `--namespace`, and a
+credential-free `--reply-server`. `--target` is the absolute private transport
+directory of the actual root tool cell. The record preserves the true harness,
+session and route; it never labels Codex as Claude or permits arbitrary adapter
+bypasses. Server and push-loop/receiver binaries understand the same record fields;
+old servers that drop the scope fields are incompatible with this route.
+
+The local Go command `seat tool-result wait|ack|release --directory <dir>
+--session <UUID> --namespace <label> --reply-server <host:port> --receiver <owner>`
+never runs remotely through the sprint server and never answers a nonce. Wait arms
+or renews the short receiver lease and returns one bounded durable envelope;
+`ack --event <id>` records only buffered tool-output emission. Expired or mismatched
+bindings defer delivery. The actual root must receive the scoped challenge and run
+the routed `seat pong` against that private server. Only that independent fresh
+pong passes the ordinary push-proof gate; publication and transport receipts leave
+coordinator/card admission blocked. See `tla/ToolResultBinding.tla` and the
+SPEC-FRIEND binding contract. This route is bounded to an active root tool cell,
+not permanent idle wake.
+
+A judgment is staged durably before its inbox file or seen key consumes it,
+including during an expired receiver lease. Staging is pending, never delivery;
+only a newly armed matching root wait exposes it. A failed staging write leaves
+the inbox judgment retryable. Every producer envelope checks its reply source
+against the same bound server. UUID identity is explicit caller binding, not app
+authentication. Buffered-output-before-ack is the trusted root wrapper contract;
+the filesystem command cannot authenticate model receipt or enforce that order.

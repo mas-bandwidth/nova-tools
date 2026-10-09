@@ -163,6 +163,7 @@ func init() {
 		{"seat uninstall", "[--dir <dir>]", "seat uninstall --dir ./no-unit-here", (*app).cmdSeatUninstall},
 		{"seat push", "[--harness <name> --target <dir> [--session <id>]] | --sent <nonce> [--failed <why>]", "seat push", (*app).cmdSeatPush},
 		{"seat pong", "<nonce>", "seat pong received-nonce", (*app).cmdSeatPong},
+		{"seat tool-result", "wait|ack|release --directory <dir> --session <UUID> --namespace <label> --reply-server <host:port> --receiver <owner> [--event <id>] [--timeout <duration>]", "seat tool-result -h", (*app).cmdSeatToolResult},
 		{"seat", "[--repair --reason <text>] | push [--harness <name> --target <dir> [--session <id>]] | pong <nonce>", "seat", (*app).cmdSeat},
 		{"fsck seat", "[--pg <host:port or postgres:// URI>]", "fsck seat", (*app).cmdFsckSeat},
 		{"routes", "", "routes", (*app).cmdRoutes},

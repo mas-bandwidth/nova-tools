@@ -38,6 +38,10 @@ const PushCheckPrefix = "NOVA SPRINT PUSH CHECK "
 // (FolderWatch) and answers the check's file with seat pong (FolderProve).
 const AdapterFolder = "folder"
 
+// AdapterToolResult explicitly binds an active Codex root tool cell; it is
+// transport emission only, never proof or a permanent idle wake.
+const AdapterToolResult = "tool-result"
+
 // PushProofFilePrefix names the file a check is written as by the folder
 // adapter: <target>/PROOF-<nonce>.
 const PushProofFilePrefix = "PROOF-"
@@ -48,16 +52,18 @@ const PushProofFilePrefix = "PROOF-"
 // harness names one), the check last delivered (its nonce and when), the last
 // delivery failure, and the last pong that carried a delivered nonce.
 type PushRecord struct {
-	Name    string    `json:"name"`
-	Harness string    `json:"harness"`
-	Adapter string    `json:"adapter,omitempty"`
-	Target  string    `json:"target"`
-	Session string    `json:"session,omitempty"`
-	Nonce   string    `json:"nonce,omitempty"`
-	Sent    time.Time `json:"sent,omitzero"`
-	Failed  string    `json:"failed,omitempty"`
-	Proven  time.Time `json:"proven,omitzero"`
-	PongOf  string    `json:"pong_of,omitempty"`
+	Name                string    `json:"name"`
+	Harness             string    `json:"harness"`
+	Adapter             string    `json:"adapter,omitempty"`
+	Target              string    `json:"target"`
+	Session             string    `json:"session,omitempty"`
+	ToolResultNamespace string    `json:"tool_result_namespace,omitempty"`
+	ToolResultServer    string    `json:"tool_result_server,omitempty"`
+	Nonce               string    `json:"nonce,omitempty"`
+	Sent                time.Time `json:"sent,omitzero"`
+	Failed              string    `json:"failed,omitempty"`
+	Proven              time.Time `json:"proven,omitzero"`
+	PongOf              string    `json:"pong_of,omitempty"`
 }
 
 // AdapterName is the adapter the push loop delivers through: the record's
@@ -109,7 +115,12 @@ func PushSetup(name string, rec PushRecord, ok bool) string {
 	if ok && rec.Harness != "" {
 		h, target = rec.Harness, rec.Target
 	}
-	return "nova-sprint seat install --actor " + orDash(name) + " --harness " + h + " --target " + target
+	command := "nova-sprint seat install --actor " + orDash(name) + " --harness " + h + " --target " + target
+	if rec.Adapter == AdapterToolResult {
+		command = "nova-sprint seat install --actor " + orDash(name) + " --harness " + h + " --target " + shellQuote(target)
+		command += " --adapter tool-result --session " + shellQuote(rec.Session) + " --namespace " + shellQuote(rec.ToolResultNamespace) + " --reply-server " + shellQuote(rec.ToolResultServer)
+	}
+	return command
 }
 
 // PushLive says the record holds a pong no older than PushProofLive and the
