@@ -4,6 +4,7 @@ package store
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -20,8 +21,13 @@ func TestCRTwoRunLoopsAtOnce(t *testing.T) {
 		w := crSprint(t, uint64(trial+1))
 		h := w.h
 		h.startMachine()
+		// Retry waits give peer writers a scheduling opportunity without moving
+		// this drive's scripted clock. A no-op burns the bounded retry count
+		// while another goroutine may still own an in-flight operation.
+		yield := func(time.Duration) { runtime.Gosched() }
+		h.st.Sleep = yield
 		mk := func(actor string) *Store {
-			return &Store{B: h.m, Names: h.st.Names, Actor: actor, Now: h.st.Now, NewID: h.st.NewID, Sleep: func(time.Duration) {}}
+			return &Store{B: h.m, Names: h.st.Names, Actor: actor, Now: h.st.Now, NewID: h.st.NewID, Sleep: yield}
 		}
 		a, b := mk("machine"), mk("machine")
 		var wg sync.WaitGroup

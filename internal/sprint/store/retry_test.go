@@ -219,3 +219,57 @@ func TestAStepThatLostEveryAttemptSaysSo(t *testing.T) {
 	require.NotEmpty(t, res.Refused, "a step that lost every attempt: %+v %v", res, err)
 	require.Equal(t, sprint.Ready, h.state("s1-1"), "the lost step moved s1-1: %s", h.state("s1-1"))
 }
+
+// The real retry wait lets an in-flight writer finish. A no-op sleeper can
+// spend every bounded read without advancing time, even though that writer
+// needs only one timer to finish. The clock and timer below are virtual.
+func TestFenceRetryWaitLetsItsWriterFinish(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		spin bool
+	}{
+		{name: "production wait"},
+		{name: "no-op fixture wait", spin: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				ctx := context.Background()
+				m := NewMem()
+				st := &Store{B: m, Names: sprint.Names{Prefix: "wait-"}, Now: time.Now,
+					Rand: func(n int64) int64 { return n / 2 }}
+				require.NoError(t, st.Init(ctx))
+				f, err := m.ReadFence(ctx)
+				require.NoError(t, err)
+				op := OpRecord{ID: "writer-lock", Verb: "writer lock", At: st.now(), Lock: true}
+				ok, err := m.Acquire(ctx, f.Gen, op)
+				require.NoError(t, err)
+				require.True(t, ok)
+				owner := *st
+				done := make(chan error, 1)
+				go func() {
+					owner.sleep(time.Millisecond) // production sleep under synctest's virtual clock
+					done <- m.Release(ctx, op, false)
+				}()
+				synctest.Wait() // the owner is blocked on its virtual timer
+				if tc.spin {
+					st.Sleep = func(time.Duration) {}
+				}
+				snap, _, err := st.Fenced(ctx, All, nil, nil)
+				if tc.spin {
+					var busy *FenceBusyError
+					require.ErrorAs(t, err, &busy)
+					require.Equal(t, FenceTries, busy.Reads)
+					require.Nil(t, snap, "a spent retry never returns a partial snapshot")
+					require.NotNil(t, m.Pending(), "no-op waits have not let the writer finish")
+				} else {
+					require.NoError(t, err)
+					require.NotNil(t, snap)
+					require.Nil(t, m.Pending(), "the default wait lets the writer release")
+				}
+				require.NoError(t, <-done)
+			})
+		})
+	}
+}
