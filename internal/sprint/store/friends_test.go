@@ -371,3 +371,143 @@ func TestAReboundDropsTheHealthPongAndTheFinish(t *testing.T) {
 		assert.Equal(t, sprint.Down, seats[0].Status, "not eligible for new work")
 	})
 }
+
+// A legacy roster row has an empty session. Binding it to a named session is
+// a target change when old evidence exists: the health pong, the finish and
+// the beat proof were not answered through the new session, so the row is
+// not up, and not eligible, before that session answers a fresh check.
+func TestBindingAnEmptySessionDropsOldEvidence(t *testing.T) {
+	t.Parallel()
+	t.Run("health pong", func(t *testing.T) {
+		h := newHarness(t)
+		_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1}})
+		require.NoError(t, err)
+		_, _, _, err = h.health("amy", "tester", sprint.Up, h.now, 1)
+		require.NoError(t, err)
+		rows, err := h.st.FriendRows(h.ctx, h.now)
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		assert.Equal(t, sprint.Up, rows[0].Status)
+		assert.Equal(t, "session pong 0s ago", rows[0].Evidence)
+
+		_, _, updated, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1, Session: "ses_new"}})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"amy"}, updated)
+		_, ok, err := h.m.GetKey(h.ctx, friendHealthKey("amy"))
+		require.NoError(t, err)
+		assert.False(t, ok, "the old session pong is dropped")
+		rows, err = h.st.FriendRows(h.ctx, h.now)
+		require.NoError(t, err)
+		assert.Equal(t, sprint.Down, rows[0].Status, "a health pong from before the bind is not up")
+		assert.NotContains(t, rows[0].Evidence, "session pong")
+		seats, err := h.st.FriendSeats(h.ctx, h.now)
+		require.NoError(t, err)
+		assert.Equal(t, sprint.Down, seats[0].Status, "not eligible for new work")
+	})
+	t.Run("finish", func(t *testing.T) {
+		h := newHarness(t)
+		_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1}})
+		require.NoError(t, err)
+		require.NoError(t, h.st.FriendFinished(h.ctx, "amy", h.now))
+		rows, err := h.st.FriendRows(h.ctx, h.now)
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		assert.Equal(t, sprint.Up, rows[0].Status)
+		assert.Equal(t, "finish 0s ago", rows[0].Evidence)
+
+		_, _, updated, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1, Session: "ses_new"}})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"amy"}, updated)
+		_, ok, err := h.m.GetKey(h.ctx, friendFinishKey("amy"))
+		require.NoError(t, err)
+		assert.False(t, ok, "the old finish is dropped")
+		rows, err = h.st.FriendRows(h.ctx, h.now)
+		require.NoError(t, err)
+		assert.Equal(t, sprint.Down, rows[0].Status, "a finish from before the bind is not up")
+		assert.NotContains(t, rows[0].Evidence, "finish 0s ago")
+		seats, err := h.st.FriendSeats(h.ctx, h.now)
+		require.NoError(t, err)
+		assert.Equal(t, sprint.Down, seats[0].Status, "not eligible for new work")
+	})
+	t.Run("proof", func(t *testing.T) {
+		h := newHarness(t)
+		_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1}})
+		require.NoError(t, err)
+		_, proof, err := h.st.FriendBeatProof(h.ctx, "amy", sprint.FriendReport{}, nil, sprint.BeatWords{Run: "r1", Check: "n1", Pong: "n1"})
+		require.NoError(t, err)
+		require.True(t, proof.Proved)
+		rows, err := h.st.FriendRows(h.ctx, h.now)
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		assert.Equal(t, sprint.Up, rows[0].Status)
+		assert.False(t, rows[0].Proof.IsZero())
+
+		_, _, updated, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1, Session: "ses_new"}})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"amy"}, updated)
+		rows, err = h.st.FriendRows(h.ctx, h.now)
+		require.NoError(t, err)
+		assert.Equal(t, sprint.Down, rows[0].Status, "an empty-session proof is not evidence after the bind")
+		assert.True(t, rows[0].Proof.IsZero())
+		seats, err := h.st.FriendSeats(h.ctx, h.now)
+		require.NoError(t, err)
+		assert.Equal(t, sprint.Down, seats[0].Status, "not eligible for new work")
+
+		_, proof, err = h.st.FriendBeatProof(h.ctx, "amy", sprint.FriendReport{}, nil, sprint.BeatWords{Run: "r1", Pong: "n1"})
+		require.NoError(t, err)
+		assert.False(t, proof.Proved, "the nonce asked before the bind is not evidence")
+		rows, err = h.st.FriendRows(h.ctx, h.now)
+		require.NoError(t, err)
+		assert.Equal(t, sprint.Down, rows[0].Status)
+
+		_, proof, err = h.st.FriendBeatProof(h.ctx, "amy", sprint.FriendReport{}, nil, sprint.BeatWords{Run: "r2", Check: "n2", Pong: "n2"})
+		require.NoError(t, err)
+		require.True(t, proof.Proved)
+		rows, err = h.st.FriendRows(h.ctx, h.now)
+		require.NoError(t, err)
+		assert.Equal(t, sprint.Up, rows[0].Status, "a check through the new session proves her")
+	})
+}
+
+// FriendBeatFull must not copy an empty-session proof onto a named roster
+// session. While the roster still names no session, a later beat keeps that
+// proof, so a deploy does not put an unbound friend down. Naming the session
+// on the row, even before friend sync drops the record, makes the next beat
+// drop the proof and the nonce the old session was asked.
+func TestFriendBeatFullDoesNotKeepAnEmptySessionProofOnANamedRow(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1}})
+	require.NoError(t, err)
+	_, proof, err := h.st.FriendBeatProof(h.ctx, "amy", sprint.FriendReport{}, nil, sprint.BeatWords{Run: "r1", Check: "n1", Pong: "n1"})
+	require.NoError(t, err)
+	require.True(t, proof.Proved)
+
+	_, err = h.st.FriendBeat(h.ctx, "amy")
+	require.NoError(t, err)
+	rows, err := h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, sprint.Up, rows[0].Status, "an unbound row keeps the empty-session proof")
+	assert.False(t, rows[0].Proof.IsZero())
+
+	r, kv, err := h.st.roster(h.ctx)
+	require.NoError(t, err)
+	e := r["amy"]
+	e.Session = "ses_new"
+	r["amy"] = e
+	require.NoError(t, putRoster(h.ctx, kv, r))
+
+	_, proof, err = h.st.FriendBeatProof(h.ctx, "amy", sprint.FriendReport{}, nil, sprint.BeatWords{})
+	require.NoError(t, err)
+	assert.False(t, proof.Proved)
+	assert.True(t, proof.Proof.IsZero(), "the empty-session proof is not copied onto the named session")
+	rows, err = h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	assert.Equal(t, sprint.Down, rows[0].Status)
+	assert.True(t, rows[0].Proof.IsZero())
+
+	_, proof, err = h.st.FriendBeatProof(h.ctx, "amy", sprint.FriendReport{}, nil, sprint.BeatWords{Run: "r1", Pong: "n1"})
+	require.NoError(t, err)
+	assert.False(t, proof.Proved, "the nonce asked under the empty session is not evidence")
+}

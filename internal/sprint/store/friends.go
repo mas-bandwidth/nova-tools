@@ -228,12 +228,17 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		return nil, nil, nil, err
 	}
 	want := map[string]FriendSpec{}
-	rebound := map[string]string{} // a session that was already set and changed: the old presence is not evidence
+	rebound := map[string]string{} // a session that changed: the old presence is not evidence
 	rosterChanged := false
 	for _, s := range specs {
 		want[s.Name] = s
 		e, had := r[s.Name]
-		if had && e.Session != "" && e.Session != s.Session {
+		// A named session that changes is a target change. So is binding a
+		// legacy row, whose session is empty, to a named session: evidence
+		// from before the field was not proved through that session. An empty
+		// session that stays empty is not a change, so a deploy does not drop
+		// a friend who is not yet bound.
+		if had && e.Session != s.Session {
 			rebound[s.Name] = s.Session
 		}
 		switch {
@@ -281,11 +286,12 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 }
 
 // dropReboundProof clears every presence signal of a friend after her roster
-// session changed (nova-friend rebind, carried by friend sync). The beat
-// record's pong, the friend-health session pong, and the friend-finish time
-// are the old session's. FriendEvidence reads the pong or the finish as up
-// inside its window, so leaving either would keep her eligible before a
-// check through the new session. A record that cannot be read holds no proof.
+// session changed (nova-friend rebind, carried by friend sync), including a
+// legacy row bound from an empty session to a named one. The beat record's
+// pong, the friend-health session pong, and the friend-finish time are the
+// old target's. FriendEvidence reads the pong or the finish as up inside its
+// window, so leaving either would keep her eligible before a check through
+// the new session. A record that cannot be read holds no proof.
 func (st *Store) dropReboundProof(ctx context.Context, kv KV, friend, session string) error {
 	// Health and finish have no session of their own. Drop them even when she
 	// has no beat: a health pong or a finish alone reads up.
@@ -425,11 +431,14 @@ func (st *Store) FriendBeatFull(ctx context.Context, friend string, rep sprint.F
 		b.Load, b.How = *load, sprint.HowGiven
 	}
 	// A proof recorded for another session is not evidence after a rebind.
-	// An empty recorded session is a beat from before this field, and keeps
-	// its proof so a deploy does not put the fleet down.
+	// An empty recorded session is a beat from before this field. It keeps
+	// its proof only while the roster still names no session, so a deploy
+	// does not put an unbound friend down. Once the roster names a session,
+	// that empty-session proof is not hers: copying it forward would stamp
+	// the new session on evidence that never answered its check.
 	rosterSession := r[friend].Session
 	pong, noProof, askedPrev := prev.Pong, prev.NoProof, prev.Asked
-	if prev.Session != "" && prev.Session != rosterSession {
+	if prev.Session != rosterSession {
 		pong, noProof, askedPrev = time.Time{}, "", nil
 	}
 	rec := friendBeatRecord{Beat: b, Pong: pong, NoProof: noProof, Target: gone, Session: rosterSession}
