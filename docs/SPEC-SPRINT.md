@@ -6970,6 +6970,25 @@ the same port. The server checks no credential (the owner: "I am OK
 with relying on tailnet as secure"): what can reach the address can run a worker's verb as any
 worker, and nothing else.
 
+### sprint-local-only-mode-r-bcb.w5: the address rule and local-only mode
+
+nova-sprint's address rule is one function, `internal/sprint/addr.go` (`CheckAddr`), the way
+nova-bus's store rule is one function (`internal/bus/addr.go`, `Tailnet`). A store address
+(`--redis`, `NOVA_SPRINT_REDIS`, `NOVA_REDIS_ADDR`, or the seat login) and a listener
+(`dashboard --listen` and `--pull`, `run --listen`) are loopback or the tailnet
+(100.64.0.0/10); a private address outside the tailnet, a public address, a link-local
+address, an unspecified address, an address with no host (`:6379`) and a name that is no IP
+literal are refused before a socket is opened, each naming what the address is.
+`cmd/nova-sprint/main.go` cites it on the store address before the dial, and
+`cmd/nova-sprint/dashboard.go` and `cmd/nova-sprint/serve.go` cite it on the listeners.
+
+Local-only mode is the process setting `NOVA_SPRINT_LOCAL=1` (`sprint.LocalOnlyMode`), not a
+sprint row: a row needs a store to be read, and the single machine the mode is for may have no
+store yet, so the process names the mode before any store exists; it is what `nova-up --local`
+sets. In local-only mode every address must be loopback, a tailnet or other address is refused
+naming the mode, and nothing asks for a tailnet; nova-doctor's tailnet check
+(`internal/doctor/check_tailnet.go`) skips under it, naming the mode.
+
 A worker whose answer was lost sends the verb again with the same operation id (`--op`): a
 committed operation returns its recorded result and changes nothing twice; a refusal, or a take
 that found nothing, left no operation and is run again. A server that does not answer is, to the
