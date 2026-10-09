@@ -289,6 +289,16 @@ func (p *promoter) step(ctx context.Context, stdout, stderr io.Writer) (promoteO
 	}
 	o.Tip = tip
 	if branch, pr, ok := p.pending(ctx, tip); ok {
+		savedBase, baseErr := p.git(ctx, "config", "--local", "--get", "promote.base")
+		if baseErr != nil {
+			if promoteConfigAbsent(baseErr) {
+				return o, p.fail(stderr, errors.New("in-flight promotion has no saved base; reconcile its pull request and cut before retrying"))
+			}
+			return o, p.fail(stderr, fmt.Errorf("in-flight promotion base cannot be read: %w", baseErr))
+		}
+		if savedBase != p.base {
+			return o, p.fail(stderr, fmt.Errorf("in-flight promotion targets %s, not %s; restore its base before retrying", savedBase, p.base))
+		}
 		o.Branch, o.Head = branch, branch
 		if p.dry {
 			fmt.Fprintf(stdout, "PROMOTE DRY-RUN pending branch=%s pr=%s tip=%s\n", oneline.Field(branch), pr, tip)
@@ -302,8 +312,8 @@ func (p *promoter) step(ctx context.Context, stdout, stderr io.Writer) (promoteO
 			if err != nil {
 				return o, p.fail(stderr, err)
 			}
-			if sha := mergedSHA(view); sha != "" {
-				return p.record(ctx, o, pr, sha, stdout, stderr)
+			if mergedSHA(view) != "" {
+				return p.record(ctx, o, pr, view, stdout, stderr)
 			}
 			if strings.EqualFold(view.State, "CLOSED") {
 				return p.closed(ctx, o, pr, stdout, stderr)
@@ -312,6 +322,17 @@ func (p *promoter) step(ctx context.Context, stdout, stderr io.Writer) (promoteO
 			return o, 1
 		}
 		fmt.Fprintf(stdout, "PROMOTE PENDING branch=%s pr=%s tip=%s\n", oneline.Field(branch), pr, tip)
+		return p.watch(ctx, o, pr, stdout, stderr)
+	}
+	if branch, pr, found, err := p.recoverIntent(ctx, tip); err != nil {
+		return o, p.fail(stderr, err)
+	} else if found {
+		o.Branch, o.Head = branch, branch
+		if p.dry {
+			fmt.Fprintf(stdout, "PROMOTE DRY-RUN pending branch=%s pr=%s; saved intent was not changed\n", oneline.Field(branch), pr)
+			return o, 0
+		}
+		fmt.Fprintf(stdout, "PROMOTE RECOVERED branch=%s pr=%s\n", oneline.Field(branch), pr)
 		return p.watch(ctx, o, pr, stdout, stderr)
 	}
 	ahead, err := p.git(ctx, "rev-list", "--count", "--end-of-options", target+".."+tip)
@@ -387,8 +408,16 @@ func (p *promoter) step(ctx context.Context, stdout, stderr io.Writer) (promoteO
 	if _, err := p.runGate(ctx, cut); err != nil {
 		return o, p.fail(stderr, err)
 	}
-	spec := "refs/heads/" + branch + ":refs/heads/" + branch
-	if strings.Contains(spec, "refs/heads/"+live+":") {
+	// Save the complete stable intent before the push or PR can become visible.
+	// An interrupted write leaves an incomplete intent that refuses a fresh
+	// promotion; it cannot silently open a second PR for the same cut.
+	for _, kv := range [][2]string{{"promote.branch", branch}, {"promote.base", p.base}, {"promote.tip", tip}, {"promote.cut", cut}} {
+		if _, err := p.git(ctx, "config", "--local", kv[0], kv[1]); err != nil {
+			return o, p.fail(stderr, fmt.Errorf("promotion intent %s could not be saved: %w", kv[0], err))
+		}
+	}
+	spec := cut + ":refs/heads/" + branch
+	if branch == live {
 		return o, p.fail(stderr, errors.New("the push spec names the live sprint branch "+live))
 	}
 	fmt.Fprintf(stdout, "PROMOTE PUSH branch=%s sha=%s\n", oneline.Field(branch), cut)
@@ -397,12 +426,12 @@ func (p *promoter) step(ctx context.Context, stdout, stderr io.Writer) (promoteO
 	}
 	number, err := p.forger().OpenPR(ctx, p.base, branch, "promote "+branch, o.Body)
 	if err != nil {
-		return o, p.fail(stderr, err)
+		// The create may have succeeded remotely while its answer was lost.
+		// Leave the durable intent for a later exact head/base lookup.
+		return o, p.fail(stderr, fmt.Errorf("pull request creation is uncertain for %s: %w; retry to reconcile its saved intent", branch, err))
 	}
-	for _, kv := range [][2]string{{"promote.branch", branch}, {"promote.pr", number}, {"promote.tip", tip}} {
-		if _, err := p.git(ctx, "config", "--local", kv[0], kv[1]); err != nil {
-			return o, p.fail(stderr, err)
-		}
+	if _, err := p.git(ctx, "config", "--local", "promote.pr", number); err != nil {
+		return o, p.fail(stderr, err)
 	}
 	o.Cut = true
 	fmt.Fprintf(stdout, "PROMOTE CUT branch=%s live=%s tip=%s sha=%s pr=%s cards=%s\n", oneline.Field(branch), oneline.Field(live), tip, cut, number, oneline.Field(strings.Join(o.Cards, ",")))
@@ -522,8 +551,8 @@ func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, s
 	if err != nil {
 		return o, p.fail(stderr, err)
 	}
-	if sha := mergedSHA(view); sha != "" {
-		return p.record(ctx, o, number, sha, stdout, stderr)
+	if mergedSHA(view) != "" {
+		return p.record(ctx, o, number, view, stdout, stderr)
 	}
 	if strings.EqualFold(view.State, "CLOSED") {
 		return p.closed(ctx, o, number, stdout, stderr)
@@ -590,7 +619,11 @@ func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, s
 		if p.dry {
 			return p.wait(o, number, "checks passed; dry-run does not enqueue", stdout), 0
 		}
-		if _, err := f.Enqueue(ctx, view.ID); err != nil {
+		cut, err := p.confirmCut(ctx, o.Branch)
+		if err != nil {
+			return o, p.fail(stderr, err)
+		}
+		if _, err := f.Enqueue(ctx, view.ID, cut); err != nil {
 			return o, p.fail(stderr, err)
 		}
 		entry, err = f.QueueEntry(ctx, view.ID)
@@ -607,8 +640,8 @@ func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, s
 		if err != nil {
 			return o, p.fail(stderr, err)
 		}
-		if sha := mergedSHA(view); sha != "" {
-			return p.record(ctx, o, number, sha, stdout, stderr)
+		if mergedSHA(view) != "" {
+			return p.record(ctx, o, number, view, stdout, stderr)
 		}
 	}
 	o.Entry = entry
@@ -681,10 +714,14 @@ func (p *promoter) markJudged(ctx context.Context, branch string) {
 
 // record records the merge: refs/promoted/last moves to it, so the next pass's
 // landed list starts after it, and the store records `promoted --sha`.
-func (p *promoter) record(ctx context.Context, o promoteOutcome, number, sha string, stdout, stderr io.Writer) (promoteOutcome, int) {
+func (p *promoter) record(ctx context.Context, o promoteOutcome, number string, view prJSON, stdout, stderr io.Writer) (promoteOutcome, int) {
+	sha := mergedSHA(view)
 	if p.dry {
 		fmt.Fprintf(stdout, "PROMOTE DRY-RUN branch=%s pr=%s merged sha=%s\n", oneline.Field(o.Branch), number, sha)
 		return o, 0
+	}
+	if err := p.verifyDestination(ctx, sha, view.HeadOID); err != nil {
+		return o, p.fail(stderr, err)
 	}
 	fmt.Fprintf(stdout, "PROMOTE MERGED branch=%s pr=%s sha=%s\n", oneline.Field(o.Branch), number, sha)
 	if _, err := p.git(ctx, "update-ref", "refs/promoted/last", sha); err != nil {
@@ -702,6 +739,72 @@ func (p *promoter) record(ctx context.Context, o promoteOutcome, number, sha str
 		return o, p.fail(stderr, fmt.Errorf("the merge %s is recorded, but the promotion in flight was not cleared: %s; the keys %s remain, so the next pass would handle pull request %s again", sha, oneline.Err(err), strings.Join(promoteKeys, ","), number))
 	}
 	return o, 0
+}
+
+// gatedCut is the exact commit that passed the local gate before the pull
+// request was opened. Older in-flight records lacking it cannot prove a merge.
+func (p *promoter) gatedCut(ctx context.Context) (string, error) {
+	cut, err := p.git(ctx, "config", "--local", "--get", "promote.cut")
+	cut = strings.TrimSpace(cut)
+	if err != nil || !promoteHex.MatchString(cut) {
+		return "", errors.New("promotion has no saved gated cut; reconcile the in-flight pull request before recutting")
+	}
+	if _, err := p.rev(ctx, cut+"^{commit}"); err != nil {
+		return "", fmt.Errorf("the saved gated cut %s is not a local commit: %w", cut, err)
+	}
+	return cut, nil
+}
+
+// confirmCut binds passed pull-request checks to the immutable branch commit
+// before enqueue. A changed PR head is not a checked promotion.
+func (p *promoter) confirmCut(ctx context.Context, branch string) (string, error) {
+	cut, err := p.gatedCut(ctx)
+	if err != nil {
+		return "", err
+	}
+	ref := "refs/heads/" + branch
+	out, err := p.git(ctx, "ls-remote", "--exit-code", "--heads", "origin", ref)
+	fields := strings.Fields(out)
+	if err != nil || len(fields) != 2 || fields[1] != ref || fields[0] != cut {
+		return "", fmt.Errorf("the pull request head %s no longer equals gated cut %s; recut and rerun its checks", ref, cut)
+	}
+	return cut, nil
+}
+
+// verifyDestination reads the actual remote target after the forge says merged.
+// Both the gated cut and the reported merge must be in that destination before
+// either local marker or store may claim promotion.
+func (p *promoter) verifyDestination(ctx context.Context, sha, headOID string) error {
+	cut, err := p.gatedCut(ctx)
+	if err != nil {
+		return err
+	}
+	if headOID != cut {
+		return fmt.Errorf("the merged pull request head %s differs from gated cut %s; promotion was not recorded", oneline.Field(headOID), cut)
+	}
+	if !promoteHex.MatchString(sha) {
+		return errors.New("the forge reported no full merge commit oid; promotion was not recorded")
+	}
+	ref := "refs/heads/" + p.base
+	if _, err := p.git(ctx, "fetch", "--quiet", "origin", "+"+ref+":refs/remotes/origin/"+p.base); err != nil {
+		return fmt.Errorf("origin/%s could not be fetched to verify the promotion: %w", p.base, err)
+	}
+	destination, err := p.rev(ctx, "refs/remotes/origin/"+p.base)
+	if err != nil {
+		return fmt.Errorf("origin/%s has no fetched commit: %w", p.base, err)
+	}
+	if _, err := p.git(ctx, "merge-base", "--is-ancestor", cut, sha); err != nil {
+		return fmt.Errorf("the reported merge %s does not contain gated cut %s; promotion was not recorded", sha, cut)
+	}
+	if _, err := p.git(ctx, "merge-base", "--is-ancestor", sha, destination); err != nil {
+		return fmt.Errorf("the reported merge %s is not in actual origin/%s at %s; promotion was not recorded", sha, p.base, destination)
+	}
+	latest, err := p.git(ctx, "ls-remote", "--exit-code", "--heads", "origin", ref)
+	fields := strings.Fields(latest)
+	if err != nil || len(fields) != 2 || fields[1] != ref || fields[0] != destination {
+		return fmt.Errorf("origin/%s moved while promotion ancestry was verified; retry the merged pull request before recording", p.base)
+	}
+	return nil
 }
 
 func (p *promoter) fail(stderr io.Writer, err error) int {
@@ -733,7 +836,62 @@ func (p *promoter) since(ctx context.Context, target string) (string, error) {
 }
 
 // promoteKeys are the clone's record of the promotion in flight.
-var promoteKeys = []string{"promote.branch", "promote.pr", "promote.tip", "promote.judged"}
+var promoteKeys = []string{"promote.branch", "promote.base", "promote.pr", "promote.tip", "promote.cut", "promote.judged"}
+
+var errPromoteConfigAbsent = errors.New("promotion config key absent")
+
+func promoteConfigAbsent(err error) bool {
+	if errors.Is(err, errPromoteConfigAbsent) {
+		return true
+	}
+	var exit *exec.ExitError
+	return errors.As(err, &exit) && exit.ExitCode() == 1
+}
+
+// recoverIntent handles a create whose answer or local PR receipt was lost.
+// The branch/base/cut tuple was saved before the external PR create. An
+// incomplete tuple or an absent/ambiguous exact forge match holds rather than
+// cutting another branch. Even a closed or merged PR must be reconciled.
+func (p *promoter) recoverIntent(ctx context.Context, tip string) (branch, pr string, found bool, err error) {
+	values := map[string]string{}
+	for _, key := range promoteKeys {
+		value, readErr := p.git(ctx, "config", "--local", "--get", key)
+		if readErr != nil {
+			if !promoteConfigAbsent(readErr) {
+				return "", "", false, fmt.Errorf("saved promotion intent %s cannot be read: %w", key, readErr)
+			}
+			continue
+		}
+		values[key] = strings.TrimSpace(value)
+	}
+	if len(values) == 0 {
+		return "", "", false, nil
+	}
+	branch = values["promote.branch"]
+	// pending deliberately leaves a judged old cut untouched in dry-run when
+	// the live tip has moved. That read-only pass plans the next cut, rather
+	// than treating the old complete PR receipt as a broken new intent.
+	if p.dry && branch != "" && values["promote.pr"] != "" && values["promote.judged"] == branch && values["promote.tip"] != tip {
+		return "", "", false, nil
+	}
+	if !strings.HasPrefix(branch, "promo/") || values["promote.base"] != p.base || !promoteHex.MatchString(values["promote.cut"]) || !promoteHex.MatchString(values["promote.tip"]) || values["promote.pr"] != "" {
+		return "", "", false, errors.New("promotion has incomplete or mismatched saved intent; reconcile its local promote.* keys and forge pull request before recutting")
+	}
+	matches, err := p.forger().FindPR(ctx, p.base, branch)
+	if err != nil {
+		return "", "", false, fmt.Errorf("cannot reconcile saved promotion %s: %w", branch, err)
+	}
+	if len(matches) != 1 {
+		return "", "", false, fmt.Errorf("saved promotion %s has %d exact pull requests into %s; reconcile before recutting", branch, len(matches), p.base)
+	}
+	pr = matches[0]
+	if !p.dry {
+		if _, err := p.git(ctx, "config", "--local", "promote.pr", pr); err != nil {
+			return "", "", false, fmt.Errorf("recovered pull request %s could not be saved: %w", pr, err)
+		}
+	}
+	return branch, pr, true, nil
+}
 
 // pending is the promotion in flight: its branch and pull request number. A
 // promotion in flight is carried to its end before another is cut, though the
@@ -875,9 +1033,10 @@ func promoteStrategy(arg string) bool {
 
 // prJSON is the view the pass reads.
 type prJSON struct {
-	ID    string `json:"id"`
-	State string `json:"state"`
-	Merge *struct {
+	ID      string `json:"id"`
+	State   string `json:"state"`
+	HeadOID string `json:"headRefOid"`
+	Merge   *struct {
 		OID string `json:"oid"`
 	} `json:"mergeCommit"`
 }

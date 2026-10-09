@@ -32,7 +32,7 @@ func (s *promoteScript) config(args []string) (string, error) {
 		key := args[len(args)-1]
 		v, ok := s.cfg[key]
 		if !ok {
-			return "", errors.New("no config")
+			return "", errPromoteConfigAbsent
 		}
 		return v, nil
 	case strings.Contains(joined, "--unset"):
@@ -53,6 +53,8 @@ func (s *promoteScript) git(_ context.Context, _ string, args ...string) (string
 	case "rev-parse":
 		rev := args[len(args)-1]
 		switch rev {
+		case s.tip + "^{commit}":
+			return s.tip, nil
 		case s.live, "refs/heads/" + s.live, "refs/remotes/origin/" + s.live:
 			return s.tip, nil
 		case "dev", "refs/heads/dev", "refs/remotes/origin/dev":
@@ -71,6 +73,12 @@ func (s *promoteScript) git(_ context.Context, _ string, args ...string) (string
 		return "", nil
 	case "config":
 		return s.config(args)
+	case "ls-remote":
+		ref := args[len(args)-1]
+		if strings.HasPrefix(ref, "refs/heads/promo/") {
+			return s.tip + "\t" + ref, nil
+		}
+		return "", errors.New("unknown remote ref " + ref)
 	case "push", "update-ref", "fetch", "merge-base":
 		return "", nil
 	case "rev-list":
@@ -181,12 +189,14 @@ func TestPromoteCutsAFrozenBranchAndNeverTheLiveTip(t *testing.T) {
 		}
 		pushed = true
 		joined := strings.Join(c, " ")
-		require.Contains(t, joined, "refs/heads/promo/2026-10-04-1:refs/heads/promo/2026-10-04-1")
+		require.Contains(t, joined, tip+":refs/heads/promo/2026-10-04-1")
 		require.NotContains(t, joined, "refs/heads/"+live)
 	}
 	require.True(t, pushed, "the frozen branch is pushed: %v", s.gitCalls)
 
 	require.True(t, s.ghHas("enqueuePullRequest"), "admission is the enqueue mutation, gh calls %v", s.ghCalls)
+	require.True(t, s.ghHas("expectedHeadOid:$head"), "enqueue atomically binds the gated head, gh calls %v", s.ghCalls)
+	require.True(t, s.ghHas("head="+tip), "enqueue passes the gated cut as its expected head, gh calls %v", s.ghCalls)
 	require.True(t, s.ghHas("mergeQueueEntry"), "a query confirms the queue entry, gh calls %v", s.ghCalls)
 	for _, c := range s.ghCalls {
 		for _, a := range c {

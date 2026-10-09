@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"go/ast"
 	"go/parser"
 	gotoken "go/token"
@@ -38,6 +39,8 @@ type fakeForge struct {
 	merged    func(head string) string
 	mergedSHA string
 	prState   string
+	headSHA   string
+	headAt    func(string) string
 	// redRun, when set, is a failed run of the pull request's branch, and
 	// redLog its failed steps' log.
 	redRun *promoteRun
@@ -53,16 +56,34 @@ func (f *fakeForge) call(s string) {
 func (f *fakeForge) OpenPR(_ context.Context, base, head, _, _ string) (string, error) {
 	f.call("open " + base + " " + head)
 	f.head, f.base = head, base
+	if f.headAt != nil {
+		f.headSHA = f.headAt(head)
+	}
 	return "5351", nil
+}
+
+func (f *fakeForge) setHeadLookup(lookup func(string) string) { f.headAt = lookup }
+
+func (f *fakeForge) FindPR(_ context.Context, base, head string) ([]string, error) {
+	f.call("find " + base + " " + head)
+	if f.head == head && f.base == base {
+		return []string{"5351"}, nil
+	}
+	return nil, nil
 }
 
 func (f *fakeForge) PR(_ context.Context, number string) (prJSON, error) {
 	f.call("view " + number)
+	if f.headAt != nil && f.head != "" {
+		if current := f.headAt(f.head); current != "" {
+			f.headSHA = current
+		}
+	}
 	state := "OPEN"
 	if f.prState != "" {
 		state = f.prState
 	}
-	v := prJSON{ID: "PR_5351", State: state}
+	v := prJSON{ID: "PR_5351", State: state, HeadOID: f.headSHA}
 	if f.mergedSHA != "" {
 		v.State = "MERGED"
 		v.Merge = &struct {
@@ -86,7 +107,10 @@ func (f *fakeForge) QueueEntry(_ context.Context, id string) (string, error) {
 	return f.entry, nil
 }
 
-func (f *fakeForge) Enqueue(_ context.Context, id string) (string, error) {
+func (f *fakeForge) Enqueue(_ context.Context, id, expectedHeadOID string) (string, error) {
+	if f.headAt != nil && f.headAt(f.head) != expectedHeadOID {
+		return "", errors.New("enqueue rejected changed pull request head")
+	}
 	f.call("enqueue " + id)
 	f.entry = "MQE_1"
 	if f.merged != nil {
@@ -221,6 +245,9 @@ func (w *promoteTwin) remote(ref string) string {
 
 // useForge makes f the forge of every promote run in the twin's clone.
 func useForge(t *testing.T, w *promoteTwin, f promoteForge) {
+	if withHead, ok := f.(interface{ setHeadLookup(func(string) string) }); ok {
+		withHead.setHeadLookup(func(head string) string { return w.remote("refs/heads/" + head) })
+	}
 	promoteForges.Store(w.dir, f)
 	t.Cleanup(func() { promoteForges.Delete(w.dir) })
 }
@@ -238,8 +265,10 @@ func (w *promoteTwin) inFlight(tip string, judged bool) {
 	w.t.Helper()
 	w.git(w.dir, "branch", "promo/2030-01-02-1", "HEAD")
 	w.git(w.dir, "config", "--local", "promote.branch", "promo/2030-01-02-1")
+	w.git(w.dir, "config", "--local", "promote.base", "dev")
 	w.git(w.dir, "config", "--local", "promote.pr", "5351")
 	w.git(w.dir, "config", "--local", "promote.tip", tip)
+	w.git(w.dir, "config", "--local", "promote.cut", w.git(w.dir, "rev-parse", "HEAD"))
 	if judged {
 		w.git(w.dir, "config", "--local", "promote.judged", "promo/2030-01-02-1")
 	}
@@ -289,7 +318,7 @@ func TestPromoteCarriesACutToARecordedPromotion(t *testing.T) {
 		w := newPromoteTwin(t)
 		w.onDev(map[string]string{"devonly": "dev\n"})
 		f := &fakeForge{checks: []promoteCheck{{Name: "functional", Bucket: "pass"}}}
-		f.merged = func(head string) string { return w.remote("refs/heads/" + head) }
+		f.merged = func(head string) string { return w.mergeOnDev(head, false) }
 		useForge(t, w, f)
 		ta := promoteApp(t, w)
 		stale := w.git(w.dir, "rev-parse", "refs/heads/sprint/live")
@@ -307,10 +336,13 @@ func TestPromoteCarriesACutToARecordedPromotion(t *testing.T) {
 		require.Equal(t, "dev", f.base)
 		require.True(t, f.did("checks"), "the checks were waited on")
 		require.True(t, f.did("enqueue"), "the pull request was queued")
-		for _, step := range []string{"PROMOTE FETCH", "PROMOTE MERGE", "PROMOTE CUT", "PROMOTE WAIT", "checks pending: functional", "PROMOTE QUEUE", "PROMOTE RECORDED sha=" + cut} {
+		merged := w.remote("refs/heads/dev")
+		require.NotEqual(t, dev, merged, "the forge moved the actual destination")
+		w.git(w.bare, "merge-base", "--is-ancestor", cut, merged)
+		for _, step := range []string{"PROMOTE FETCH", "PROMOTE MERGE", "PROMOTE CUT", "PROMOTE WAIT", "checks pending: functional", "PROMOTE QUEUE", "PROMOTE RECORDED sha=" + merged} {
 			require.Contains(t, out, step, "each step is printed as it goes")
 		}
-		require.Equal(t, cut, ta.promotedSha(), "the promotion is recorded in the store")
+		require.Equal(t, merged, ta.promotedSha(), "the actual destination merge is recorded in the store")
 		ta.clean()
 	})
 
@@ -452,7 +484,7 @@ func TestPromoteCarriesACutToARecordedPromotion(t *testing.T) {
 		w.onLive(map[string]string{"fix": "fix\n"})
 		f.redRun = nil
 		f.checks = []promoteCheck{{Name: "functional", Bucket: "pass"}}
-		f.merged = func(head string) string { return w.remote("refs/heads/" + head) }
+		f.merged = func(head string) string { return w.mergeOnDev(head, false) }
 
 		// pass 2: the tip moved, so the judged promotion is forgotten and the
 		// next pass cuts afresh instead of keeping the old pull request
@@ -535,7 +567,7 @@ func TestPromoteCarriesACutToARecordedPromotion(t *testing.T) {
 		// pass 2: when sprint has work, next pass cuts afresh without being wedged
 		w.onLive(map[string]string{"newwork": "fresh work\n"})
 		f.prState = "OPEN"
-		f.merged = func(head string) string { return w.remote("refs/heads/" + head) }
+		f.merged = func(head string) string { return w.mergeOnDev(head, false) }
 		code2, out2, errs2 := ta.do(args + w.dir)
 		require.Zero(t, code2, "%s\n%s", out2, errs2)
 		require.Contains(t, out2, "PROMOTE CUT branch=promo/2030-01-02-2", "the next pass cuts afresh")

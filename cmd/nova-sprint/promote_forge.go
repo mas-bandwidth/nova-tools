@@ -16,6 +16,9 @@ import (
 type promoteForge interface {
 	// OpenPR opens the pull request of head into base and answers its number.
 	OpenPR(ctx context.Context, base, head, title, body string) (string, error)
+	// FindPR finds all pull requests in this repository with the exact head and
+	// base, including closed and merged ones, after a lost create answer.
+	FindPR(ctx context.Context, base, head string) ([]string, error)
 	// PR is the pull request's id, state and merge commit.
 	PR(ctx context.Context, number string) (prJSON, error)
 	// Checks is the pull request's checks, each with its bucket: pass, fail,
@@ -25,7 +28,7 @@ type promoteForge interface {
 	// QueueEntry is the pull request's merge-queue entry, "" when it has none.
 	QueueEntry(ctx context.Context, id string) (string, error)
 	// Enqueue admits the pull request to the merge queue, with no strategy.
-	Enqueue(ctx context.Context, id string) (string, error)
+	Enqueue(ctx context.Context, id, expectedHeadOID string) (string, error)
 	// QueueRuns is the merge-group runs of the pull request into base.
 	QueueRuns(ctx context.Context, base, number string) ([]promoteRun, error)
 	// RunLog is a run's failed steps' log.
@@ -69,7 +72,7 @@ func (p *promoter) forger() promoteForge {
 // The queries are one literal each, so they are not an argument list of pr and
 // the word the class test refuses after it, and neither is a strategy flag.
 const (
-	promoteEnqueueQuery = `mutation($id:ID!){enqueuePullRequest(input:{pullRequestId:$id}){mergeQueueEntry{id}}}`
+	promoteEnqueueQuery = `mutation($id:ID!,$head:GitObjectID!){enqueuePullRequest(input:{pullRequestId:$id,expectedHeadOid:$head}){mergeQueueEntry{id}}}`
 	promoteQueueQuery   = `query($id:ID!){node(id:$id){... on PullRequest{mergeQueueEntry{id state}}}}`
 )
 
@@ -85,8 +88,51 @@ func (g ghForge) OpenPR(ctx context.Context, base, head, title, body string) (st
 	return prNumber(url)
 }
 
+func (g ghForge) FindPR(ctx context.Context, base, head string) ([]string, error) {
+	repo, err := g.Repo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	owner, _, ok := strings.Cut(repo, "/")
+	if !ok || owner == "" {
+		return nil, fmt.Errorf("invalid repository identity %q", repo)
+	}
+	raw, err := g.p.gh(ctx, "pr", "list", "--repo", repo, "--state", "all", "--head", head, "--base", base,
+		"--limit", "1000", "--json", "number,headRefName,baseRefName,headRepository,headRepositoryOwner")
+	if err != nil {
+		return nil, err
+	}
+	var rows []struct {
+		Number         int    `json:"number"`
+		HeadRefName    string `json:"headRefName"`
+		BaseRefName    string `json:"baseRefName"`
+		HeadRepository *struct {
+			NameWithOwner string `json:"nameWithOwner"`
+		} `json:"headRepository"`
+		HeadRepositoryOwner *struct {
+			Login string `json:"login"`
+		} `json:"headRepositoryOwner"`
+	}
+	if err := json.Unmarshal([]byte(raw), &rows); err != nil {
+		return nil, fmt.Errorf("pull request reconciliation: %w", err)
+	}
+	if len(rows) >= 1000 {
+		return nil, errors.New("pull request reconciliation reached its result limit; inspect the exact head/base manually")
+	}
+	var matches []string
+	for _, row := range rows {
+		if row.Number <= 0 || row.HeadRefName != head || row.BaseRefName != base || row.HeadRepository == nil ||
+			!strings.EqualFold(row.HeadRepository.NameWithOwner, repo) || row.HeadRepositoryOwner == nil ||
+			!strings.EqualFold(row.HeadRepositoryOwner.Login, owner) {
+			continue
+		}
+		matches = append(matches, strconv.Itoa(row.Number))
+	}
+	return matches, nil
+}
+
 func (g ghForge) PR(ctx context.Context, number string) (prJSON, error) {
-	raw, err := g.p.gh(ctx, "pr", "view", number, "--json", "id,state,mergeCommit")
+	raw, err := g.p.gh(ctx, "pr", "view", number, "--json", "id,state,headRefOid,mergeCommit")
 	if err != nil {
 		return prJSON{}, err
 	}
@@ -143,8 +189,11 @@ func (g ghForge) QueueEntry(ctx context.Context, id string) (string, error) {
 	return resp.Data.Node.MergeQueueEntry.ID, nil
 }
 
-func (g ghForge) Enqueue(ctx context.Context, id string) (string, error) {
-	raw, err := g.p.gh(ctx, "api", "graphql", "-f", "query="+promoteEnqueueQuery, "-f", "id="+id)
+func (g ghForge) Enqueue(ctx context.Context, id, expectedHeadOID string) (string, error) {
+	if !promoteHex.MatchString(expectedHeadOID) {
+		return "", errors.New("enqueue needs the saved full gated cut OID")
+	}
+	raw, err := g.p.gh(ctx, "api", "graphql", "-f", "query="+promoteEnqueueQuery, "-f", "id="+id, "-f", "head="+expectedHeadOID)
 	if err != nil {
 		return "", err
 	}
