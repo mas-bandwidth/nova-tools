@@ -292,7 +292,10 @@ func extractTokensFromText(text string) []string {
 			continue
 		}
 
-		// Split on camelCase boundaries
+		// Split on camelCase boundaries and at a letter-to-digit boundary, so a
+		// forbidden name with a trailing digit run is also tried stripped
+		// ("hetzner2" yields hetzner2 and hetzner) and a fleet host written
+		// "swarm-hetzner2" is a finding (Rule 1: generality; docs/SPEC-CI.md#generality).
 		var buf []rune
 		var prev rune
 		flush := func() {
@@ -305,7 +308,7 @@ func extractTokensFromText(text string) []string {
 			}
 		}
 		for _, r := range w {
-			if unicode.IsUpper(r) && unicode.IsLower(prev) {
+			if (unicode.IsUpper(r) && unicode.IsLower(prev)) || (unicode.IsDigit(r) && unicode.IsLetter(prev)) {
 				flush()
 			}
 			buf = append(buf, r)

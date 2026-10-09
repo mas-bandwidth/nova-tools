@@ -486,6 +486,30 @@ func TestGeneralityTextFindings(t *testing.T) {
 	}
 }
 
+// TestGeneralityTextCatchesAHostWithADigitSuffix: the tokenizer splits at a
+// letter-to-digit boundary, so a forbidden name with a trailing number is a
+// finding ("swarm-hetzner2" names hetzner, docs/SPEC-CI.md#generality-text);
+// digits inside ordinary names are none ("sha256", "v1.2").
+func TestGeneralityTextCatchesAHostWithADigitSuffix(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		line string
+		want []string
+	}{
+		{"seat names such as swarm-hetzner2", []string{"hetzner"}},
+		{"sha256", nil},
+		{"v1.2", nil},
+	}
+	for _, tc := range cases {
+		got := generalityTextFindings("docs/x.md", tc.line)
+		sort.Strings(got)
+		want := append([]string(nil), tc.want...)
+		sort.Strings(want)
+		assert.Equal(t, strings.Join(want, ","), strings.Join(got, ","), "generalityTextFindings(%q) = %v, want %v", tc.line, got, want)
+	}
+}
+
 // TestGeneralityTextContactDoc: the project's contact addresses pass in the one document
 // that publishes them and nowhere else.
 func TestGeneralityTextContactDoc(t *testing.T) {
