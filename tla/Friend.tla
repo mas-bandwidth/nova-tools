@@ -9,13 +9,17 @@
 \* The state the code owns: conn, lastPing, silentFrom; chal, nonce, asked,
 \* pongs; daemonPongs, the daemon's own answers; busy, whether a turn is in
 \* the session, and owed, a wake check not yet pushed in (daemon.go loop.wake).
+\* file is one file under a walked root; visible means the folder check has
+\* read it (activity.go NewestWrite, called from daemon.go Run before Beat);
+\* fileBeat means a beat that depends on that file has run.
 \* The clock is now, one unit a tick, Window units a window. The outside: the
 \* coordinator pinging (Ping, each ping a fresh nonce, plain or a wake check),
 \* the session's turns (Turn, one carrying messages, with the pong line at its
 \* head while a challenge is open; WakeTurn, the pong line alone, pushed into
 \* a free session for a wake check; TurnEnds), the session having seen every
 \* nonce a turn put in front of it (seen), and the session answering (Pong,
-\* with any nonce it has seen, so a stale or replayed pong is possible). The pushes the session is owed are counted: silentSaid
+\* with any nonce it has seen, so a stale or replayed pong is possible), and
+\* the session writing that file (WriteFile). The pushes the session is owed are counted: silentSaid
 \* (the "coordinator silent" pushes) beside outages (the times the
 \* connection went silent).
 \*
@@ -29,15 +33,17 @@
 \*   "stalepong"      any nonce the session ever saw answers: OnlyCurrentNonceAnswers
 \*   "daemonpongends" the daemon's pong ends a wake challenge (session-pong.w1):
 \*                    OnlySessionPongEnds
+\*   "filebeforebeat" the beat runs before the file the folder check reads
+\*                    exists: FileBeforeBeat
 
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS Window, MaxTime, MaxPings, Broken
 
 VARIABLES now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered,
-          daemonPongs, busy, owed
+          daemonPongs, busy, owed, file, visible, fileBeat
 vars == <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered,
-          daemonPongs, busy, owed>>
+          daemonPongs, busy, owed, file, visible, fileBeat>>
 
 NoNonce == 0
 
@@ -57,6 +63,9 @@ TypeOK ==
   /\ daemonPongs \in 0..MaxPings
   /\ busy \in BOOLEAN
   /\ owed \in BOOLEAN
+  /\ file \in BOOLEAN
+  /\ visible \in BOOLEAN
+  /\ fileBeat \in BOOLEAN
 
 \* Up is what the daemon reports: the session answered the current challenge
 \* and has answered at least once (machine.go Up). The witness lets the
@@ -71,6 +80,7 @@ Init ==
   /\ silentSaid = 0 /\ outages = 0
   /\ answered = NoNonce
   /\ daemonPongs = 0 /\ busy = FALSE /\ owed = FALSE
+  /\ file = FALSE /\ visible = FALSE /\ fileBeat = FALSE
 
 \* The clock (machine.go Tick): a window without a ping makes the
 \* coordinator silent, said once at that moment; a window challenged with
@@ -85,7 +95,7 @@ Tick ==
        ELSE /\ UNCHANGED <<conn, silentFrom, outages>>
             /\ silentSaid' = IF Broken = "silenttwice" /\ conn = "silent" THEN silentSaid + 1 ELSE silentSaid
   /\ chal' = IF chal = "challenged" /\ now + 1 - asked >= Window /\ Broken # "neverdeaf" THEN "deaf" ELSE chal
-  /\ UNCHANGED <<lastPing, nonce, asked, pongs, seen, answered, daemonPongs, busy, owed>>
+  /\ UNCHANGED <<lastPing, nonce, asked, pongs, seen, answered, daemonPongs, busy, owed, file, visible, fileBeat>>
 
 \* A ping from the coordinator with a fresh nonce (machine.go Ping;
 \* daemon.go loop.ping): the daemon answers it at once (daemonPongs), the
@@ -104,7 +114,7 @@ Ping(wake) ==
             ELSE IF chal = "deaf" THEN "deaf" ELSE "challenged"
   /\ asked' = now
   /\ owed' = ((owed \/ wake) /\ chal' # "quiet")
-  /\ UNCHANGED <<now, silentFrom, pongs, seen, silentSaid, outages, answered, busy>>
+  /\ UNCHANGED <<now, silentFrom, pongs, seen, silentSaid, outages, answered, busy, file, visible, fileBeat>>
 
 \* A turn carrying messages starts in the free session (daemon.go
 \* startBatch): while a challenge is open the pong line for the current nonce
@@ -115,7 +125,7 @@ Turn ==
   /\ IF chal # "quiet"
        THEN seen' = seen \cup {nonce} /\ owed' = FALSE
        ELSE UNCHANGED <<seen, owed>>
-  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs>>
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs, file, visible, fileBeat>>
 
 \* A wake check owed to a free session with no message waiting is pushed
 \* in as its own turn holding only the pong line (daemon.go startWake).
@@ -123,12 +133,12 @@ WakeTurn ==
   /\ ~busy /\ owed /\ chal # "quiet"
   /\ busy' = TRUE /\ owed' = FALSE
   /\ seen' = seen \cup {nonce}
-  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs>>
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs, file, visible, fileBeat>>
 
 TurnEnds ==
   /\ busy
   /\ busy' = FALSE
-  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered, daemonPongs, owed>>
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered, daemonPongs, owed, file, visible, fileBeat>>
 
 \* The session answers with a nonce it has seen (machine.go Pong): the
 \* current one ends the challenge; any other changes nothing. The witness
@@ -138,7 +148,31 @@ Pong(n) ==
   /\ chal # "quiet"
   /\ (n = nonce \/ Broken = "stalepong")
   /\ chal' = "quiet" /\ pongs' = pongs + 1 /\ answered' = n /\ owed' = FALSE
-  /\ UNCHANGED <<now, conn, lastPing, silentFrom, nonce, asked, seen, silentSaid, outages, daemonPongs, busy>>
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, nonce, asked, seen, silentSaid, outages, daemonPongs, busy, file, visible, fileBeat>>
+
+\* The session writes one file under a walked root (outbox, inbox, jobs, or
+\* the working directory). It exists; the folder check has not read it yet.
+WriteFile ==
+  /\ ~file
+  /\ file' = TRUE
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered, daemonPongs, busy, owed, visible, fileBeat>>
+
+\* The folder check reads that file, so it is visible to the beat
+\* (activity.go NewestWrite; daemon.go Run calls Activity before Beat).
+\* A file that is not there is not invented.
+FolderCheck ==
+  /\ file /\ ~visible
+  /\ visible' = TRUE
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered, daemonPongs, busy, owed, file, fileBeat>>
+
+\* The beat that depends on the file (daemon.go Beat, carrying the walk's
+\* answer). The design runs it only once the folder check has seen the file.
+\* The witness runs it while the file does not exist.
+BeatOnFile ==
+  /\ ~fileBeat
+  /\ IF Broken = "filebeforebeat" THEN ~file ELSE visible
+  /\ fileBeat' = TRUE
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered, daemonPongs, busy, owed, file, visible>>
 
 Next ==
   \/ Tick
@@ -147,6 +181,9 @@ Next ==
   \/ WakeTurn
   \/ TurnEnds
   \/ \E n \in 1..MaxPings : Pong(n)
+  \/ WriteFile
+  \/ FolderCheck
+  \/ BeatOnFile
 
 Spec == Init /\ [][Next]_vars /\ WF_vars(Tick)
 
@@ -179,6 +216,11 @@ OnlySessionPongEnds ==
 \* A wake check is owed only while a challenge is open: the session's pong
 \* pays it, so a wake turn never carries an answered nonce.
 OwedOnlyWhileAsked == owed => chal # "quiet"
+
+\* The file is visible before the beat that depends on it: the folder check
+\* has read it (daemon.go Run walks, then beats; activity.go NewestWrite).
+FileBeforeBeat ==
+  [][(~fileBeat /\ fileBeat') => (file /\ visible)]_vars
 
 \* No liveness is claimed: the clock is finite here, and DeafAfterWindow
 \* already says an open challenge is younger than a window at every state,

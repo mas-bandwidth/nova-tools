@@ -3,6 +3,8 @@ package friend
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -490,4 +492,85 @@ func TestWakeCheckIsAnsweredOnlyByTheSession(t *testing.T) {
 		assert.Empty(t, r.delivered)
 		assert.Equal(t, []string{"daemon-pong: daemon-pong n1"}, r.adaGot(t))
 	})
+}
+
+// TestTheFolderCheckReadsTheFileBeforeTheBeatThatCarriesIt traces Run's
+// order: NewestWrite reads a file under a walked folder, then Beat carries
+// that file's time (activity.go NewestWrite; daemon.go the Activity walk,
+// then Beat). The loop's clock is the rig's, one BeatEvery per read, and the
+// walk's clock is fixed; nothing sleeps. The store is the in-memory fake.
+func TestTheFolderCheckReadsTheFileBeforeTheBeatThatCarriesIt(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.passive = true
+	dir := r.d.Dir
+	path := filepath.Join(dir, "outbox", "note.txt")
+	fileAt := t0.Add(5 * time.Minute)
+	var trace []string
+	r.d.Activity = func() time.Time {
+		got := NewestWrite(os.DirFS(dir), ActivityRoots, func() time.Time { return t0 }, DefaultActivityLimits)
+		if got.IsZero() {
+			trace = append(trace, "check")
+		} else {
+			trace = append(trace, "visible")
+		}
+		return got
+	}
+	r.d.Beat = func(_ context.Context, active time.Time) error {
+		r.mu.Lock()
+		r.beats++
+		r.actives = append(r.actives, active)
+		n, stop := r.beats, r.beats >= r.stopAfter
+		r.mu.Unlock()
+		if active.IsZero() {
+			trace = append(trace, "beat")
+		} else if _, err := os.Stat(path); err != nil {
+			trace = append(trace, "beat-before-file")
+		} else {
+			trace = append(trace, "beat-on-file")
+		}
+		if n == 1 {
+			require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+			require.NoError(t, os.WriteFile(path, []byte("note\n"), 0o644))
+			require.NoError(t, os.Chtimes(path, fileAt, fileAt))
+			trace = append(trace, "wrote")
+		}
+		if stop {
+			r.cancel()
+		}
+		return nil
+	}
+	// the first step walks at once; the next walk waits ActivityEvery on the rig's clock
+	r.run(t, int(ActivityEvery/BeatEvery)+2)
+	wrote, visible, carried := -1, -1, -1
+	for i, step := range trace {
+		switch step {
+		case "wrote":
+			if wrote < 0 {
+				wrote = i
+			}
+		case "visible":
+			if visible < 0 {
+				visible = i
+			}
+		case "beat-on-file":
+			if carried < 0 {
+				carried = i
+			}
+		}
+	}
+	require.NotContains(t, trace, "beat-before-file", "trace: %v", trace)
+	require.GreaterOrEqual(t, wrote, 0, "trace: %v", trace)
+	require.Greater(t, visible, wrote, "the folder check reads the file after it exists: %v", trace)
+	require.Greater(t, carried, visible, "the beat that carries the file follows the check: %v", trace)
+	require.NotEmpty(t, r.actives)
+	assert.True(t, r.actives[0].IsZero(), "the first beat is before the file exists")
+	var got time.Time
+	for _, active := range r.actives {
+		if !active.IsZero() {
+			got = active
+			break
+		}
+	}
+	assert.True(t, got.Equal(fileAt), "the beat carries the file's time, got %v; trace %v", got, trace)
 }
