@@ -2,12 +2,14 @@ package friend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -36,19 +38,42 @@ const DSHProgram = "/Applications/DeepSeek Harness.app/Contents/Resources/runtim
 // the open desktop session exists, so Route answers defer; the session reads the
 // bus itself with nova-bus wait or nova-bus recv.
 type DSH struct {
-	Dir, Session string
-	Run          Exec
-	Program      string    // DSHProgram when empty
-	Sessions     string    // the sessions root; DSH_HOME/sessions, else ~/.dsh/sessions, when empty
-	Out          io.Writer // where the turn's output goes, when set: the daemon's record
+	Friend, Dir, Session string
+	Run                  Exec
+	Program              string            // DSHProgram when empty
+	Model                string            // native model override (e.g. deepseek/deepseek-v4.1-flash)
+	Sessions             string            // the sessions root; DSH_HOME/sessions, else ~/.dsh/sessions, when empty
+	Out                  io.Writer         // where the turn's output goes, when set: the daemon's record
+	RoutePrice           func() RoutePrice // price sheet lookup for cost calculation
+	Now                  func() time.Time  // time.Now when nil
 
 	turns SessionTurns // the session's last turns, its liveness (alive.go)
+
+	mu     sync.Mutex
+	runs   int
+	cost   float64
+	tokens int64
 }
+
+var _ CardRunner = (*DSH)(nil)
+var _ Spender = (*DSH)(nil)
 
 // DSHArgs is the argument list of one delivery; the text travels on stdin
 // ("-"), so it is never parsed as an argument.
 func DSHArgs(session string) []string {
 	return []string{"headless", "--session-id", session, "-"}
+}
+
+// DSHCardArgs is the argument list of one one-shot card run.
+func DSHCardArgs() []string {
+	return []string{"--profile", "headless", "-"}
+}
+
+func (d *DSH) program() string {
+	if d.Program != "" {
+		return d.Program
+	}
+	return DSHProgram
 }
 
 // DSHSessionKey is the store's directory for the sessions of dir: the path
@@ -101,10 +126,7 @@ func (d *DSH) Deliver(ctx context.Context, text string) (int, error) {
 			return 0, err
 		}
 	}
-	program := d.Program
-	if program == "" {
-		program = DSHProgram
-	}
+	program := d.program()
 	out, exit, err := d.Run(ctx, d.Dir, program, DSHArgs(id), text)
 	if err == nil {
 		if r, ok := DSHRefusal(id, d.Dir, out); ok {
@@ -130,6 +152,156 @@ func (d *DSH) Route(ctx context.Context) (route, line string, err error) {
 		session = "<her newest session>"
 	}
 	return "push", "dsh " + strings.Join(DSHArgs(session), " "), nil
+}
+
+func (d *DSH) now() time.Time {
+	if d.Now == nil {
+		return time.Now()
+	}
+	return d.Now()
+}
+
+func (d *DSH) friendName() string {
+	if d.Friend != "" {
+		return d.Friend
+	}
+	return "zhi"
+}
+
+// Refusal is why no card can run now, with its remedy; empty when one can.
+func (d *DSH) Refusal() string {
+	if d.Dir == "" {
+		return "dsh has no working directory"
+	}
+	return ""
+}
+
+// RunCard runs card c as an independent one-shot process in the job directory
+// with the prompt on stdin (docs/SPEC-FRIEND.md, one-shot lanes).
+func (d *DSH) RunCard(ctx context.Context, card Card) (LaneTurn, error) {
+	if why := d.Refusal(); why != "" {
+		return LaneTurn{}, errors.New(why)
+	}
+	brief, err := os.ReadFile(card.Brief)
+	if err != nil {
+		return LaneTurn{}, fmt.Errorf("the card's brief: %w", err)
+	}
+	dir := LaneDirOf(ctx, d.Dir)
+	title := fmt.Sprintf("%s one-shot %s %d", d.friendName(), card.ID, d.now().Unix())
+	prompt := string(brief)
+	if !strings.Contains(prompt, "Lane: ") {
+		prompt = strings.TrimRight(prompt, "\n") + "\n\nLane: " + title + ".\n"
+	}
+	args := DSHCardArgs()
+	out, exit, err := d.Run(ctx, dir, d.program(), args, prompt)
+	if d.Out != nil && out != "" {
+		fmt.Fprintln(d.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
+	}
+	if refusal, ok := DSHRefusal(card.ID, dir, out); ok {
+		return LaneTurn{Exit: exit}, refusal
+	}
+	if exit, err = refused(card.ID, out, exit, err); err != nil {
+		return LaneTurn{Exit: exit}, err
+	}
+	var missing []string
+	for _, f := range []string{"REPORT.md", "RESULT.md"} {
+		if !exists(filepath.Join(card.Outbox, f)) {
+			missing = append(missing, f)
+		}
+	}
+	if len(missing) > 0 {
+		return LaneTurn{Exit: exit, FirstError: HarnessFirstError(out)}, NoReport{Run: "dsh --profile headless", Exit: exit, Outbox: card.Outbox, Lacks: missing}
+	}
+	d.publishCardCost(ctx, card, title)
+	return LaneTurn{Exit: exit}, nil
+}
+
+// DeliverTo executes one turn in a lane: either a message turn or into a session.
+func (d *DSH) DeliverTo(ctx context.Context, session, text string) (LaneTurn, error) {
+	if !InLane(ctx) {
+		return LaneTurn{}, errors.New("dsh one-shot delivery needs a managed lane")
+	}
+	if session == "" || session == "-" {
+		// A fresh headless session per turn (Row 2 acceptance)
+		out, exit, err := d.Run(ctx, LaneDirOf(ctx, d.Dir), d.program(), DSHCardArgs(), text)
+		if refusal, ok := DSHRefusal("(message)", d.Dir, out); ok {
+			return LaneTurn{Exit: exit}, refusal
+		}
+		if d.Out != nil && out != "" {
+			fmt.Fprintln(d.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
+		}
+		exit, err = refused("(message)", out, exit, err)
+		return LaneTurn{Exit: exit, Rejected: PermissionRejection(out), FirstError: HarnessFirstError(out)}, err
+	}
+	out, exit, err := d.Run(ctx, LaneDirOf(ctx, d.Dir), d.program(), DSHArgs(session), text)
+	if refusal, ok := DSHRefusal(session, d.Dir, out); ok {
+		return LaneTurn{Exit: exit}, refusal
+	}
+	if d.Out != nil && out != "" {
+		fmt.Fprintln(d.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
+	}
+	exit, err = refused(session, out, exit, err)
+	return LaneTurn{Exit: exit, Rejected: PermissionRejection(out), FirstError: HarnessFirstError(out)}, err
+}
+
+func (d *DSH) publishCardCost(ctx context.Context, card Card, title string) {
+	sessionsRoot := d.Sessions
+	if sessionsRoot == "" {
+		sessionsRoot = dshHome()
+	}
+	realDir, err := filepath.EvalSymlinks(d.Dir)
+	if err != nil {
+		realDir = d.Dir
+	}
+	bucket := filepath.Join(sessionsRoot, DSHSessionKey(realDir))
+	sessionFile, err := FindDSHSessionFile(bucket, title, card.ID)
+	if err != nil {
+		return
+	}
+	tokens, model, err := TokensFromDSHSessionFile(ctx, d.Run, sessionFile)
+	if err != nil {
+		return
+	}
+	if d.Model != "" {
+		model = d.Model
+	} else {
+		model = ModelForDSH(model)
+	}
+	var rp RoutePrice
+	if d.RoutePrice != nil {
+		rp = d.RoutePrice()
+	}
+	_ = PublishCost(card.Outbox, tokens, rp, model)
+	d.mu.Lock()
+	d.runs++
+	d.tokens += tokens.Total()
+	if rp.Found {
+		costStr := CostOf(tokens.Tokens, rp, model)
+		if strings.HasPrefix(costStr, "$") {
+			var parsed float64
+			if _, err := fmt.Sscanf(costStr, "$%f", &parsed); err == nil {
+				d.cost += parsed
+			}
+		}
+	}
+	d.mu.Unlock()
+}
+
+// SpendLine returns one line with cumulative runs and costs.
+func (d *DSH) SpendLine() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.runs == 0 {
+		return ""
+	}
+	return fmt.Sprintf("spend: harness=dsh runs=%d cost_usd=%.4f", d.runs, d.cost)
+}
+
+// Spent returns the total cost and tokens measured so far.
+func (d *DSH) Spent() (float64, int64) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.cost, d.tokens
 }
 
 // DSHNoPresetRemedy is what a friend whose dsh session runs under an agent

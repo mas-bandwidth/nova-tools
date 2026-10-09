@@ -1171,8 +1171,14 @@ func (w world) run(c *tool.Call) *tool.Out {
 	if err != nil {
 		return tool.Refuse(err.Error()) // the skeleton renders a refusal with the verb's token, on stderr
 	}
-	if friend.RunsCards(c.Str("harness")) {
+	if c.Str("harness") == "claude" {
 		deliver = friend.NewClaude(name, dir, watched, c.Stdout) // a card a process: the adapter with a lane
+	} else if dsh, ok := deliver.(*friend.DSH); ok {
+		dsh.Friend = name
+		dsh.Now = w.now
+		if m := c.Str("model"); m != "" {
+			dsh.Model = m
+		}
 	}
 	// a harness whose session queues what is delivered (Antigravity's mailbox): every delivery
 	// goes in at once, and the daemon follows the conversation that reads it (friend.Mailbox)
@@ -1190,7 +1196,8 @@ func (w world) run(c *tool.Call) *tool.Out {
 	dry := c.DryRun()
 	// a harness that runs each card as a process of its own (friend.CardRunner) has no session to
 	// push into: no push proof and no session check stand for it (docs/SPEC-FRIEND.md, one-shot lanes)
-	_, perCard := deliver.(friend.CardRunner)
+	_, isCardRunner := deliver.(friend.CardRunner)
+	perCard := isCardRunner && (c.Str("session") == "" || c.Str("session") == "-")
 	if o := undriven(c.Str("harness"), dir, "the daemon did not start"); o != nil && !perCard {
 		return o
 	}
@@ -1587,6 +1594,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 		}
 		d.Route = w.route(server, c.Str("model"))
+	}
+	if dsh, ok := deliver.(*friend.DSH); ok {
+		dsh.RoutePrice = w.route(server, c.Str("model"))
 	}
 	watch := friend.WatchHarness(d, deliver)
 	if w.alive != nil {
