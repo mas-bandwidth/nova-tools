@@ -85,6 +85,15 @@ type Printer interface {
 	Printed() time.Time
 }
 
+// Stopper is a Child the member can end for the machine's stop (docs/SPEC-SPRINT.md section
+// 14, stop cancels jobs): Stop signals the child's process to end, keeping its working tree
+// and its log, and returns the pid it signalled (0 when none is known). The runner escalates
+// to a kill after its own grace; the member reads Done as for any end. A Child that is no
+// Stopper is left to end by itself and is stop-returned when it has.
+type Stopper interface {
+	Stop() (pid int)
+}
+
 // ProgressEvery is how often the member stamps progress on a card whose child prints: the
 // sprint's own number (internal/sprint ProgressEvery, inside its RuleProgressWindow of ten
 // minutes with room for a stamp that is late or lost; docs/SPEC-SPRINT.md section 8, the
@@ -344,6 +353,10 @@ type queueOut struct {
 	// the field). A reader with no row beats nothing and is asked nothing until the
 	// coordinator declares it (reader add).
 	Reader *bool `json:"reader,omitempty"`
+	// Machine is the machine's state word as the queue's server read it, RUNNING or
+	// STOPPED (cmd/nova-sprint queue --json); "" from a server before the word. STOPPED
+	// cancels every lane this worker runs and takes nothing (machineStop).
+	Machine string `json:"machine,omitempty"`
 }
 
 type takeOut struct {
@@ -430,6 +443,12 @@ type launch struct {
 	claimMoved bool      // a prior queue answer showed the claim moved while still running
 	dropped    bool      // a prior queue answer showed the card left the queue while still running
 	stamped    time.Time // when the member last stamped progress on the card (stampProgress); zero: never
+	// stopped says the machine's stop cancelled this launch (machineStop): its child was
+	// told to stop (stopPid, 0 when unknown), and once it has ended the card is handed back
+	// with stop-return, never finished; stopAt is when.
+	stopped bool
+	stopPid int
+	stopAt  time.Time
 }
 
 // Member is the loop's state: the children running, by card id.
@@ -440,6 +459,18 @@ type Member struct {
 	pusher  Pusher
 	out     io.Writer
 	running map[string]launch // by card id (a work card's id, a read card's id)
+	// stopped says the last queue read said the machine is STOPPED (queueOut.Machine):
+	// every lane was told to stop and nothing is taken, started or recovered until a
+	// queue says it runs again (machineStop; tla/StopCancels.tla).
+	stopped bool
+	// stopRetry is when each card's refused stop-return is tried again (StopReturnRetry),
+	// and stopRefused the refusal last said for it, said once while its text stands.
+	stopRetry   map[string]time.Time
+	stopRefused map[string]string
+	// handedBack is each card the stop handed back and the generation it was handed back
+	// at: a queue read before the store moved it still lists it working at that
+	// generation, and it is never recovered at it (the store deals it again at the next).
+	handedBack map[string]int
 	// returnedAt is when this reader returned a read with no verdict, by card id: a read
 	// asked of it again is not begun before ReadStageRetry has passed, so a reader that
 	// cannot launch does not take and return the same read every pass
@@ -513,7 +544,7 @@ type decided struct {
 // pusher may be nil; a work member's pusher pushes every work card's commit.
 func New(cfg Config, s Sprint, r Runner, pu Pusher, out io.Writer) *Member {
 	m := &Member{cfg: cfg, sprint: s, runner: r, pusher: pu, out: out, running: map[string]launch{}, stageRetried: map[string]bool{}, returnedAt: map[string]time.Time{}, width: cfg.Width,
-		posted: map[string]post{}, pushGate: make(chan struct{}, pushWidth), wake: make(chan struct{}, 1)}
+		posted: map[string]post{}, pushGate: make(chan struct{}, pushWidth), wake: make(chan struct{}, 1), stopRetry: map[string]time.Time{}, stopRefused: map[string]string{}, handedBack: map[string]int{}}
 	m.advanced() // a member begins with its pass going on
 	return m
 }
@@ -704,7 +735,7 @@ func (m *Member) Beat() error {
 	}
 	var total uint64
 	if !m.cfg.Reader {
-		args = []string{"fleet", "beat", m.cfg.As}
+		args = []string{"fleet", "beat", m.cfg.As, "--stop-returns", strconv.Itoa(m.OwedStopReturns())}
 		if m.cfg.Meter != nil {
 			var pct float64
 			var ok bool
@@ -800,8 +831,8 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		reports := 0
 		for _, id := range slices.Sorted(maps.Keys(m.running)) {
 			l, ours := m.running[id]
-			if !ours || l.busy || l.spent {
-				continue
+			if !ours || l.busy || l.spent || l.stopped {
+				continue // a stopped launch is the stop's: handed back, never reported (machineStop)
 			}
 			if l.dropped && (l.res != nil || (l.child != nil && l.child.Done())) {
 				m.forget(id, false)
@@ -864,6 +895,10 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		m.saidNoWidth = true
 		fmt.Fprintf(m.out, "NOTE width 0: no fleet row names this worker's width, so it takes nothing; a member runs at its own fleet row's, a reader named reader-<m> runs at machine m's (nova-config machine set <m> --width <n>, then nova-sprint fleet sync)\n")
 	}
+	// The machine's stop (docs/SPEC-SPRINT.md section 14): every lane is cancelled and its
+	// card handed back with stop-return once the child has ended; nothing is reported,
+	// recovered or taken while it stands. The word is read every pass, so a stop between two
+	// beats still stops this pass's starts (NoLaunchAfterStop).
 	held := []string{"--epoch", strconv.FormatUint(q.Epoch, 10)}
 	ids := make([]string, 0, len(q.Cards))
 	byID := map[string]queueCard{}
@@ -872,6 +907,10 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		byID[c.ID] = c
 	}
 	sort.Strings(ids)
+	if acted += m.machineStop(q, byID, now); m.stopped {
+		m.spent.Fill = since()
+		return acted, nil
+	}
 
 	// 1. Report every child that ended, one verb per card (each report is its
 	// own words).
@@ -882,8 +921,10 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	for _, id := range ids {
 		c := byID[id]
 		l, ours := m.running[id]
-		if !ours || l.busy {
-			// long work of the launch is in flight: it is left alone until that posts
+		if !ours || l.busy || l.stopped {
+			// long work of the launch is in flight: it is left alone until that posts; a
+			// stopped launch is the stop's: handed back, never reported (machineStop), its
+			// end collected before the word was read notwithstanding
 			continue
 		}
 		if m.moved(l, c) {
@@ -1244,6 +1285,12 @@ func (m *Member) recoverWorking(ids []string, byID map[string]queueCard, wasOurs
 		if wasOurs[id] && !claimMoved[id] {
 			continue
 		}
+		if g, handed := m.handedBack[id]; handed {
+			if _, gen, _ := m.claim(c); gen == g {
+				continue // handed back by the stop at this generation: the store deals it again at the next
+			}
+			delete(m.handedBack, id)
+		}
 		if c.Packet == nil {
 			continue
 		}
@@ -1380,6 +1427,167 @@ func (m *Member) forget(id string, failed bool) {
 	}
 	delete(m.running, id)
 	delete(m.stageRetried, id)
+}
+
+// The machine's stop cancels jobs (docs/SPEC-SPRINT.md section 14; the owner, 2026-10-08:
+// "official machine stop must cancel every active fleet or friend sprint job, preserve progress,
+// return work AND reads to their same owner ready pool automatically"). The queue's answer
+// carries the machine's word (queueOut.Machine), read every pass, before any start: STOPPED
+// tells every child to stop (Stopper, its working tree and log kept), and once a stopped
+// child has ended its card is handed back to this worker's own row with
+//
+//	nova-sprint stop-return --as <row> <card>@<gen> --epoch <epoch> --reason "owned process stopped"
+//
+// (the store's verb: it returns the same card to ready, a read to asked, at a new generation,
+// idempotent on replay, and refuses a worker that is not the owner or names a stale
+// generation). A refusal is said and tried again next pass while the machine stays STOPPED.
+// Nothing is taken, started, recovered or finished while STOPPED: a card cancelled by the
+// stop is never finished (NoLaunchAfterStop, EveryLaneReturnsOnStop; tla/StopCancels.tla).
+// RUNNING again takes the queue's cards as they are, at the generation the queue carries.
+
+// StopReturnReason is the reason every stop-return names.
+const StopReturnReason = "owned process stopped"
+
+// StopReturnRetry is how long a refused stop-return waits before it is sent again: the
+// store's verb may be absent or the machine already RUNNING, and a verb a pass is a flood.
+const StopReturnRetry = time.Minute
+
+// Stopped says the last queue read said the machine is STOPPED.
+func (m *Member) Stopped() bool { return m.stopped }
+
+// OwedStopReturns is how many of this member's launches the stop cancelled whose card is
+// not yet handed back: the beat carries it (fleet beat --stop-returns), and start waits on
+// zero. A card the queue holds working under this row with no child of ours is owed too,
+// and returned at once (machineStop), so it is never counted here.
+func (m *Member) OwedStopReturns() int {
+	n := 0
+	for _, l := range m.running {
+		if l.stopped {
+			n++
+		}
+	}
+	return n
+}
+
+// machineStop is the pass's stop step. The cancel part runs while the word is STOPPED:
+// every child is told to stop, and every queue card working or reading under this row
+// with no child of ours (a member restarted mid-stop: its old children are gone, and the
+// queue is the record on disk) is handed back at once. The hand-back part runs every pass
+// whatever the word: a stopped launch whose child has ended is handed back with
+// stop-return, tried again after StopReturnRetry when refused, its refusal said once while
+// it stands; while RUNNING a stopped launch whose claim the queue no longer holds working
+// (moved to a new generation, or gone) has nothing left to return and is reaped. It
+// returns how many cards it handed back.
+func (m *Member) machineStop(q queueOut, byID map[string]queueCard, now time.Time) (acted int) {
+	switch {
+	case q.Machine == "STOPPED":
+		if !m.stopped {
+			m.stopped = true
+			fmt.Fprintf(m.out, "MEMBER STOP machine STOPPED: taking no card; %d running lane(s) are cancelled and handed back with stop-return\n", m.Running())
+		}
+	case q.Machine != "":
+		if m.stopped {
+			m.stopped = false
+			fmt.Fprintf(m.out, "MEMBER START machine %s: taking cards again\n", q.Machine)
+		}
+	}
+	if m.stopped {
+		// the cancel part
+		for _, id := range slices.Sorted(maps.Keys(m.running)) {
+			l := m.running[id]
+			if l.busy || l.child == nil || l.stopped {
+				continue // its start is in flight: the next pass stops it
+			}
+			if s, ok := l.child.(Stopper); ok {
+				l.stopPid = s.Stop()
+			}
+			l.stopped, l.stopAt = true, now
+			m.running[id] = l
+			fmt.Fprintf(m.out, "LANE CANCELLED BY STOP card=%s gen=%d epoch=%d pid=%d: the child was told to stop; its working tree and log are kept\n", id, l.gen, l.epoch, l.stopPid)
+		}
+		// a card working under this row with no child of ours: its run is gone with the
+		// member that ran it (a restart mid-stop), and the queue is the record
+		for _, id := range slices.Sorted(maps.Keys(byID)) {
+			c := byID[id]
+			if _, ours := m.running[id]; ours || (c.Col != "working" && c.Col != "reading") {
+				continue
+			}
+			epoch, gen, _ := m.claim(c)
+			if gen <= 0 {
+				continue
+			}
+			if g, handed := m.handedBack[id]; handed && g == gen {
+				continue
+			}
+			if m.stopReturn(id, gen, epoch, 0, now, "no child of this member runs it: the run is gone with the member that ran it") {
+				acted++
+			}
+		}
+	}
+	// the hand-back part, every pass
+	for _, id := range slices.Sorted(maps.Keys(m.running)) {
+		l := m.running[id]
+		if !l.stopped || l.busy || l.child == nil || !l.child.Done() {
+			continue
+		}
+		if !m.stopped {
+			if c, listed := byID[id]; !listed || (c.Col != "working" && c.Col != "reading") || m.moved(l, c) {
+				// RUNNING again and the claim is not ours to return: the store moved it (a
+				// new generation, a drop); the result is nobody's
+				fmt.Fprintf(m.out, "%s %s: cancelled by stop, and the claim moved under it (gen %d epoch %d); nothing to return\n", FinishReaped, id, l.gen, l.epoch)
+				m.forget(id, true)
+				continue
+			}
+		}
+		gen, epoch := l.gen, l.epoch
+		if c, listed := byID[id]; listed {
+			ep, g, _ := m.claim(c)
+			if g > 0 {
+				gen = g
+			}
+			if ep > 0 {
+				epoch = ep
+			}
+		}
+		if gen <= 0 {
+			continue
+		}
+		if m.stopReturn(id, gen, epoch, l.stopPid, now, "") {
+			m.forget(id, true) // kept for inspection: the tree holds whatever the child had done
+			acted++
+		}
+	}
+	return acted
+}
+
+// stopReturn sends one stop-return for the card at its generation and epoch, unless its
+// last refusal is younger than StopReturnRetry. It says the OK, and a refusal once while
+// its text stands, and returns whether the store took it.
+func (m *Member) stopReturn(id string, gen int, epoch uint64, pid int, now time.Time, why string) bool {
+	if gen <= 0 {
+		return false
+	}
+	if at, ok := m.stopRetry[id]; ok && now.Before(at) {
+		return false
+	}
+	args := []string{"stop-return", "--as", m.cfg.As, fmt.Sprintf("%s@%d", id, gen), "--epoch", strconv.FormatUint(epoch, 10), "--reason", StopReturnReason}
+	code, out := m.run(args...)
+	if code != 0 {
+		m.stopRetry[id] = now.Add(StopReturnRetry)
+		if text := oneLine(strings.TrimSpace(string(out))); m.stopRefused[id] != text {
+			m.stopRefused[id] = text
+			fmt.Fprintf(m.out, "STOP-RETURN refused card=%s gen=%d pid=%d exit=%d: %s; tried again in %s\n", id, gen, pid, code, text, StopReturnRetry)
+		}
+		return false
+	}
+	delete(m.stopRetry, id)
+	delete(m.stopRefused, id)
+	m.handedBack[id] = gen
+	if why != "" {
+		why = " (" + why + ")"
+	}
+	fmt.Fprintf(m.out, "STOP-RETURN OK card=%s gen=%d epoch=%d pid=%d: handed back to %s ready by the machine's stop%s\n", id, gen, epoch, pid, m.cfg.As, why)
+	return true
 }
 
 // Waiter is a child that says when it has ended: a Background member's loop is woken then
@@ -1624,7 +1832,7 @@ func (m *Member) endEnded(ids []string, byID map[string]queueCard) {
 	for _, id := range ids {
 		c := byID[id]
 		l, ours := m.running[id]
-		if !ours || l.busy || l.res != nil || l.spent || (c.Col != "working" && c.Col != "reading") || m.moved(l, c) || !l.child.Done() {
+		if !ours || l.busy || l.stopped || l.res != nil || l.spent || (c.Col != "working" && c.Col != "reading") || m.moved(l, c) || !l.child.Done() {
 			continue
 		}
 		l.busy, l.busyAt = true, m.clock()
@@ -1673,7 +1881,7 @@ func (m *Member) endEndedLocal() {
 	var ends sync.WaitGroup
 	for _, id := range slices.Sorted(maps.Keys(m.running)) {
 		l, ours := m.running[id]
-		if !ours || l.busy || l.res != nil || l.spent || l.child == nil || !l.child.Done() || l.claimMoved || l.dropped {
+		if !ours || l.busy || l.stopped || l.res != nil || l.spent || l.child == nil || !l.child.Done() || l.claimMoved || l.dropped {
 			continue
 		}
 		l.busy, l.busyAt = true, m.clock()

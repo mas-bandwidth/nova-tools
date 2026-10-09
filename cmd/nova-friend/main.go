@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -177,6 +178,9 @@ func proofArgs(w friend.BeatWords) []string {
 	}
 	if len(args) > 0 && w.Run != "" {
 		args = append(args, "--run", w.Run)
+	}
+	if w.StopReturns > 0 {
+		args = append(args, "--stop-returns", strconv.Itoa(w.StopReturns))
 	}
 	return args
 }
@@ -1395,8 +1399,19 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	var faultDown atomic.Pointer[faultHold]
 	stager := w.stager(dir)
+	// the machine's word, read off each beat's answer (friend.ParseMachine), and the
+	// stop-returns the lanes owe, carried on each beat (stop.go)
+	var machineStopped atomic.Bool
+	owedStopReturns := func() int { return 0 }
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
+		MachineStopped: machineStopped.Load,
+		StopReturn: func(ctx context.Context, argv []string) error {
+			if w.finish == nil {
+				return errors.New("this world sends no stop-return")
+			}
+			return w.finish(ctx, server, argv)
+		},
 		Store: sc.DaemonStore(), Deliver: laneDeliver, Now: w.now, Pause: w.sleep, StepBeatForTests: w.stepBeat,
 		Sent: func() time.Time {
 			if at := sent.Load(); at != nil {
@@ -1437,6 +1452,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			words := sc.Words
 			up := func(ctx context.Context) error {
 				said := words()
+				said.StopReturns = owedStopReturns()
 				answer, err := w.beat(ctx, server, name, active, said)
 				if err == nil {
 					sc.Said(said)
@@ -1444,6 +1460,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 						at := w.now()
 						sent.Store(&at) // the server took her session's answer as its proof
 					}
+				}
+				if st, ok := friend.ParseMachine(answer); err == nil && ok {
+					machineStopped.Store(st == friend.MachineStoppedWord) // STOPPED cancels the lanes (stop.go)
 				}
 				if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
 					rowMu.Lock()
@@ -1592,6 +1611,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return w.pongCommand(name, nonce, state, c.Str("redis"), dir)
 		},
 	}
+	owedStopReturns = d.OwedStopReturns
 	if w.holders != nil {
 		d.Holders = func(ctx context.Context) (map[string]string, error) { return w.holders(ctx, server) }
 	}
