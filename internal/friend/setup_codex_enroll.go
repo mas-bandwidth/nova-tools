@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,6 +30,9 @@ func CodexConsentContext(ctx context.Context, terminal *os.File) (context.Contex
 // Locks and birth-bound receipts reuse FriendSetupLifecycle; no credentials or
 // browser account identity are recorded (SPEC-CODEX-SUBSCRIPTION-SETUP).
 func PlanCodexEnrollment(o SetupOptions, fs SettingsFS, label string, timeout time.Duration) (SetupPlan, error) {
+	if fs == nil {
+		fs = OSFS{}
+	}
 	if strings.TrimSpace(label) == "" || len(label) > 128 || strings.ContainsAny(label, "\r\n\x00") {
 		return SetupPlan{}, errors.New("Codex enrollment wants a public account label of 1-128 bytes on one line; name the browser account selection explicitly")
 	}
@@ -51,7 +56,11 @@ func PlanCodexEnrollment(o SetupOptions, fs SettingsFS, label string, timeout ti
 		return facts, nil
 	}
 	command := *status.Command
-	command.Args = []string{"login", "--device-auth"}
+	logDir := filepath.Join(o.ConfigDir, "log")
+	if err := SetupPath(fs, logDir, true); err != nil {
+		return SetupPlan{}, err
+	}
+	command.Args = []string{"-c", "log_dir=" + strconv.Quote(logDir), "login", "--device-auth"}
 	command.Timeout = timeout
 	command.AllowedExits = []int{0}
 	command.StatusOnStderr = false
@@ -62,7 +71,16 @@ func PlanCodexEnrollment(o SetupOptions, fs SettingsFS, label string, timeout ti
 		}
 		return []SetupFact{{Name: "device_consent", State: "native_completed", Detail: "selected browser account identity remains unverified"}}, nil
 	}}
-	p.Steps = append(p.Steps[:len(p.Steps)-1], consent, status)
+	logs := SetupStep{Name: "codex_private_logs", Kind: "local_write", Path: logDir, Want: "private native diagnostic directory", Apply: func() ([]SetupFact, error) {
+		if err := SetupPath(fs, logDir, true); err != nil {
+			return nil, err
+		}
+		if err := fs.MkdirAll(logDir, 0700); err != nil {
+			return nil, err
+		}
+		return []SetupFact{{Name: "native_log_directory", State: "private", Detail: logDir}}, nil
+	}}
+	p.Steps = append(p.Steps[:len(p.Steps)-1], logs, consent, status)
 	p.Facts = append(p.Facts, SetupFact{Name: "enrollment_label", State: "user_selected", Detail: label})
 	return p, nil
 }

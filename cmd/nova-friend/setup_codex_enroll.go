@@ -12,7 +12,6 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
@@ -40,26 +39,19 @@ func codexRemoteEnrollmentArgs(o friend.SetupOptions, target, program, label str
 		}
 		argv[i] = "'" + strings.ReplaceAll(item, "'", "'\\''") + "'"
 	}
-	return []string{"-tt", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ClearAllForwardings=yes", "--", target, "exec " + strings.Join(argv, " ")}, nil
+	return []string{"-tt", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ClearAllForwardings=yes", "-o", "ForwardAgent=no", "-o", "ForwardX11=no", "-o", "PermitLocalCommand=no", "-o", "ControlPath=none", "-o", "ControlMaster=no", "--", target, "exec " + strings.Join(argv, " ")}, nil
 }
 
 // codexRemoteEnrollment keeps native output on the controlling terminal and
 // never stores or returns device codes, native logs or credentials (spec).
 func codexRemoteEnrollment(ctx context.Context, terminal *os.File, args []string, seconds int) error {
-	cmd, cancel := subproc.CommandFor(ctx, time.Duration(seconds+120)*time.Second, "/usr/bin/ssh", args...)
-	defer cancel()
-	cmd.Env = []string{"HOME=" + os.Getenv("HOME"), "PATH=/usr/bin:/bin:/usr/sbin:/sbin"}
-	if socket := os.Getenv("SSH_AUTH_SOCK"); socket != "" {
-		cmd.Env = append(cmd.Env, "SSH_AUTH_SOCK="+socket)
-	}
-	cmd.Stdout, cmd.Stderr = terminal, terminal
-	if err := cmd.Run(); err != nil {
-		return errors.New("remote enrollment did not complete; inspect the native terminal, wait for target setup's verified group exit, then retry the same owned profile")
-	}
-	return nil
+	return friend.CodexEnrollmentTransport(ctx, terminal, args, time.Duration(seconds+120)*time.Second)
 }
 
 func (w world) setupCodexRemote(c *tool.Call, o friend.SetupOptions) *tool.Out {
+	if c.Bool("apply") && !c.DryRun() && c.Bool("json") {
+		return setupRemedy(tool.Refuse("Codex enrollment refuses JSON mode; run the inspected command in the person's terminal"))
+	}
 	args, err := codexRemoteEnrollmentArgs(o, c.Str("target"), c.Str("remote-program"), c.Str("enrollment-label"), c.Int("enrollment-timeout"), buildinfo.Version(version))
 	if err != nil {
 		return setupRemedy(tool.Refuse(err.Error()))

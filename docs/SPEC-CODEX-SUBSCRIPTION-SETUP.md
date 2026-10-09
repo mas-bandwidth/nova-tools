@@ -45,7 +45,10 @@ The coordinator invokes the same reviewed Go tool remotely, compares its recorde
 build version, and refuses unknown/dirty build versions. This version comparison
 is compatibility evidence, not proof that either installed artifact passed review;
 installation/release verification supplies that proof separately. SSH uses existing
-key authentication, strict known-host checks and no forwarded connections. Each
+key authentication, strict known-host checks, and explicitly disables port, agent,
+X11 and control-master forwarding and local commands. The wrapper uses the existing
+birth-bound native process-group cleanup and a private temporary public PID receipt;
+an unverified wrapper group retains its receipt and refuses completion. Each
 remote shell argument is independently quoted, and target option injection is refused.
 No account grants, authentication files or private tokens cross this protocol.
 
@@ -54,7 +57,10 @@ host/profile/account label, then directs native device consent there without
 capturing it in output, JSON, receipts or application logs. The person selects
 the intended ChatGPT account in the native browser flow. The tool does not parse
 an undocumented challenge format or automate consent. Native CLI diagnostics
-remain native and are never read or copied by setup.
+remain native and are never read or copied by setup. Direct native login writes
+`codex-login.log`; enrollment requests the documented `log_dir` under the private
+CODEX_HOME and creates that real directory with owner-only permissions. It does not
+claim that native consent is log-free or alter an enforced administrator policy.
 
 On the selected host, the existing setup locks and birth-bound process receipts
 serialize the private profile. Native device login runs before a subsequent exact
@@ -103,3 +109,5 @@ Official references:
 - [SIWC accounts and sessions](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions)
 - [SIWC token lifetimes](https://developers.openai.com/siwc/token-sharing-open-source/token-reference)
 - [SIWC preview limitations](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)
+
+- [Native log directory configuration](https://learn.chatgpt.com/docs/config-file/config-reference)

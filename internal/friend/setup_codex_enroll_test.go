@@ -15,7 +15,7 @@ func TestCodexEnrollmentRequiresNativeConsentThenSubscriptionStatus(t *testing.T
 	require.NoError(t, err)
 	consent, status := p.Steps[len(p.Steps)-2], p.Steps[len(p.Steps)-1]
 	require.NotNil(t, consent.Command)
-	assert.Equal(t, []string{"login", "--device-auth"}, consent.Command.Args)
+	assert.Equal(t, []string{"-c", `log_dir="/workers/config/log"`, "login", "--device-auth"}, consent.Command.Args)
 	assert.True(t, consent.Command.ConsentOnTerminal)
 	assert.False(t, status.Command.ConsentOnTerminal)
 	assert.Equal(t, 10*time.Minute, consent.Command.Timeout)
