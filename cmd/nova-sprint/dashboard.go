@@ -80,7 +80,7 @@ func (a *app) cmdDashboard(args []string, stdout, stderr io.Writer) int {
 	// that is a configuration refusal, one line on stderr, and nothing is served.
 	// A store that is named and then fails to answer is still served.
 	if from == "" && a.getenv(ServerEnv) == "" {
-		if err := a.storeConfigured(c); err != nil {
+		if err := a.storeConfigured(*c); err != nil {
 			return refuse(stderr, "dashboard", err.Error())
 		}
 	}
