@@ -405,6 +405,9 @@ func (l *loop) releaseIdleReservation(ln *lane, now time.Time) bool {
 		return false
 	}
 	receipt, err := readRunReceipt(d.Dir, job)
+	if errors.Is(err, os.ErrNotExist) && st.Pid > 0 {
+		return false // a recorded launch without RUN is not an idle reservation
+	}
 	if !errors.Is(err, os.ErrNotExist) {
 		if err != nil || receipt.RunID != st.RunID || receipt.PID <= 0 || receipt.Identity == "" || d.ProcessIdentity == nil {
 			return false
@@ -454,8 +457,9 @@ func (l *loop) laneStep(now time.Time, width int) {
 			if err != nil {
 				s.stateUnknown = true
 				d.Record(now.UTC().Format(time.RFC3339) + " lanes: the lane state cannot be read: " + err.Error() + "; new jobs held, control sessions remain available")
+			} else {
+				s.state = st
 			}
-			s.state = st
 		}
 		if s.state.Sessions == nil {
 			s.state.Sessions = map[int]string{}

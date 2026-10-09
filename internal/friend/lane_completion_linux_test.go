@@ -28,7 +28,9 @@ func TestFailedLaneStateReadCannotOverwriteDurableStarted(t *testing.T) {
 		owed := LaneState{Started: map[string]Started{"c1~15": {Lane: 1, Card: card, At: t0.Add(-time.Minute)}}}
 		require.NoError(t, WriteLanes(stateDir, owed))
 		r.d.StateDir = stateDir
-		r.d.LoadLanes = func() (LaneState, error) { return LaneState{}, errors.New("lane state read refused") }
+		// A decoder can return useful-looking fields alongside a later field
+		// error. None of that partial state is safe to replay or save.
+		r.d.LoadLanes = func() (LaneState, error) { return owed, errors.New("lane state read refused") }
 		writes := 0
 		r.d.SaveLanes = func(s LaneState) error { writes++; return WriteLanes(stateDir, s) }
 		r.run(t, 4) // a control session may open while card admission is held
@@ -36,7 +38,26 @@ func TestFailedLaneStateReadCannotOverwriteDurableStarted(t *testing.T) {
 		require.NoError(t, err)
 		require.Contains(t, saved.Started, "c1~15")
 		require.Zero(t, writes, "an incomplete in-memory placeholder must never replace durable claims")
+		require.NoFileExists(t, card.Report(), "partial Started cannot be recovered as a completed run")
 	})
+}
+
+func TestMissingRunAfterRecordedLaunchRetainsLaneClaim(t *testing.T) {
+	t.Parallel()
+	dir, job := t.TempDir(), "c1~15"
+	card := Card{ID: "c1", Outbox: filepath.Join(dir, "outbox", job)}
+	st := Started{Lane: 1, Card: card, RunID: "run-1", Pid: 9999999}
+	state := LaneState{Started: map[string]Started{job: st}}
+	writes := 0
+	d := &Daemon{Dir: dir, ProcessIdentity: ProcessIdentity, SaveLanes: func(LaneState) error { writes++; return nil }}
+	ln := &lane{n: 1, card: &card}
+	l := &loop{d: d, ctx: context.Background(), lanes: &laneSet{lanes: []*lane{ln}, state: state}}
+	require.False(t, l.stopRunQuiescent(job, st), "a lost RUN is not no-launch proof after a PID was recorded")
+	require.False(t, l.releaseIdleReservation(ln, time.Now()))
+	require.Contains(t, l.lanes.state.Started, job)
+	require.Zero(t, writes)
+	st.Pid = 0
+	require.True(t, l.stopRunQuiescent(job, st), "a missing RUN before launch remains an idle reservation")
 }
 
 func TestPendingLanePassBoundsSlowFinishAndRotatesDebt(t *testing.T) {

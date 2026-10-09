@@ -186,7 +186,9 @@ func (l *loop) stopRunQuiescent(job string, st Started) bool {
 	}
 	receipt, err := readRunReceipt(l.d.Dir, job)
 	if errors.Is(err, os.ErrNotExist) {
-		return true // the gated harness cannot execute before RUN is durable
+		// Missing RUN proves no launch only while the durable Started record has
+		// no PID. A previously launched run may have lost its receipt.
+		return st.Pid == 0
 	}
 	if err != nil || receipt.RunID != st.RunID || receipt.Identity == "" || l.d.ProcessIdentity == nil {
 		return false
@@ -382,7 +384,7 @@ func (l *loop) returnOwed(now time.Time) {
 		d.owed.Store(int64(s.state.owed()))
 		return
 	}
-	if d.SaveLanes == nil {
+	if d.SaveLanes == nil || s.stateUnknown {
 		return
 	}
 	if err := d.SaveLanes(s.state); err != nil {
