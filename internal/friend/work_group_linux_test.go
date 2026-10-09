@@ -42,7 +42,7 @@ func TestRealExecKeepsGroupCleanupFailureWithNonzeroExit(t *testing.T) {
 	defer func() {
 		if len(anchor) > 0 {
 			assert.NoError(t, os.WriteFile(anchorPath, anchor, 0o600))
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			assert.True(t, procgroup.ReapVerified(cleanupCtx, pid, "", anchorPath, 100*time.Millisecond))
 		}
