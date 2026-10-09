@@ -33,6 +33,9 @@ func (w world) setupVerb() tool.Verb {
 
 func (w world) setup(c *tool.Call) *tool.Out {
 	dry := c.DryRun()
+	if c.Str("harness") == "antigravity-cli" {
+		return setupAntigravityCLI(c)
+	}
 	opts := friend.SetupOptions{Harness: c.Str("harness"), Friend: c.Str("as"), Dir: c.Str("dir"), ConfigDir: c.Str("config-dir"), Home: c.Str("home"), Profile: c.Str("profile"), Program: c.Str("program"), Provider: c.Str("provider"), Model: c.Str("model"), Package: c.Str("package"), BaseURL: c.Str("base-url"), KeyEnv: c.Str("key-env"), Seat: c.Str("seat"), SecretNames: secretNames(c.Str("secrets")), DenySelf: commaList(c.Str("deny-self")), ProfileOnly: c.Bool("profile-only"), ContextLimit: c.Int("context-limit"), OutputLimit: c.Int("output-limit"), ClaudeAccountID: c.Str("claude-account-id"), ClaudeMachine: c.Str("claude-machine"), ClaudeAccountsSource: c.Str("claude-accounts"), ClaudeAccountsSHA256: c.Str("claude-accounts-sha256")}
 	if opts.Provider == "claude.ai" && opts.Model == "claude.ai/token-default" || opts.ClaudeAccountID != "" || opts.ClaudeMachine != "" || opts.ClaudeAccountsSource != "" || opts.ClaudeAccountsSHA256 != "" {
 		opts.ClaudeAccountsPath = friend.ClaudeAccountsOwnedPath(opts.ConfigDir)
