@@ -71,7 +71,10 @@ in the v1.2 models.
 The lifecycle model abstracts equal-level stream turns and score ties; the queued
 model pins earlier-before-later stable ties. Exact tier/route selection,
 generation fencing, multi-reader quorum, merge batches/stuck-card barriers,
-budgets, and real-time latency are abstracted. A read completion represents the
+budgets, recut/replacement transitions, and real-time latency are abstracted.
+The source receipt gate is exact `9e477da`; later recut preservation repairs
+require their own source fixture and final integrated gate, and are not proved
+by that earlier snapshot. A read completion represents the
 required verdict aggregate; one broken finding opens held/rework. The merge model
 has one stream. Source tests additionally pin the real aggregate reads and real
 merge step. Colors are a source rendering obligation, not a TLA state variable. Higher rank constrains decisions among eligible competitors; it does
