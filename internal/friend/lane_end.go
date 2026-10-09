@@ -349,7 +349,7 @@ func (l *loop) endCard(lane int, card Card, end LaneEnd, now time.Time) string {
 			}
 		}
 	}
-	if err := endOwnedLaneMark(d.Dir, job, l.laneWho(lane)); err != nil {
+	if err := endOwnedLaneMark(d.nativeRunDir(), job, l.laneWho(lane)); err != nil {
 		words += fmt.Sprintf(" mark_error=%q", oneLine(err.Error(), 300)) // its other lanes end by her row alone
 	}
 	return words
@@ -388,7 +388,7 @@ func (l *loop) endStarted(now time.Time) {
 		if l.stopOwedFor(job, st) {
 			continue // STOP debt, never a restart FAIL
 		}
-		receipt, receiptErr := readRunReceipt(d.Dir, job)
+		receipt, receiptErr := readRunReceipt(d.nativeRunDir(), job)
 		heldReservation := st.RunID != "" && (d.machinePaused() || st.LaunchHeld) && !exists(st.Card.Report()) && !exists(st.Card.Result())
 		if heldReservation {
 			l.markLaunchHeld(job, now)
@@ -397,7 +397,7 @@ func (l *loop) endStarted(now time.Time) {
 		noLaunch := errors.Is(receiptErr, os.ErrNotExist) && st.Pid == 0
 		priorTurnGone := receiptErr == nil && receipt.RunID == st.RunID && receipt.PID > 0 && receipt.Identity != "" && d.ProcessIdentity != nil && d.ProcessIdentity(receipt.PID) == "" && !procgroup.GroupRunnable(receipt.PID)
 		if heldReservation && (noLaunch || priorTurnGone) {
-			mark, known := ReadLaneMark(d.Dir, job)
+			mark, known := ReadLaneMark(d.nativeRunDir(), job)
 			if !known || mark.Ended || mark.RunID != st.RunID {
 				s.recoveryPending = true
 				continue
@@ -414,7 +414,7 @@ func (l *loop) endStarted(now time.Time) {
 			}
 			who := l.laneWho(st.Lane)
 			if mark.Who != who {
-				holder, err := transferLane(d.Dir, job, st.RunID, who, now, d.ProcessIdentity, d.ProcessAlive)
+				holder, err := transferLane(d.nativeRunDir(), job, st.RunID, who, now, d.ProcessIdentity, d.ProcessAlive)
 				if err != nil || holder != "" {
 					s.recoveryPending = true
 					continue
@@ -454,7 +454,7 @@ func (l *loop) endStarted(now time.Time) {
 			s.recoveryPending = true
 			continue // missing/malformed positive-PID proof cannot discard a held retry
 		}
-		if mark, ok := ReadLaneMark(d.Dir, job); ok && !mark.Ended && mark.RunID != "" &&
+		if mark, ok := ReadLaneMark(d.nativeRunDir(), job); ok && !mark.Ended && mark.RunID != "" &&
 			mark.RunID != st.RunID && receiptErr == nil &&
 			receipt.RunID == mark.RunID && d.ProcessIdentity != nil && d.ProcessIdentity(receipt.PID) == receipt.Identity {
 			// A newer verified run took this job. Preserve its binding instead

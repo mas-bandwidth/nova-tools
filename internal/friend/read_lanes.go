@@ -441,13 +441,13 @@ func (l *loop) childRoom(width int) bool {
 			jobs["read:"+r.ID] = true
 		}
 	}
-	entries, err := os.ReadDir(filepath.Join(l.d.Dir, "reads"))
+	entries, err := os.ReadDir(l.d.nativeReadRoot())
 	if err != nil && !os.IsNotExist(err) {
 		return false
 	}
 	for _, e := range entries {
 		if e.IsDir() {
-			_, found, err := loadReadActive(filepath.Join(l.d.Dir, "reads", e.Name()))
+			_, found, err := loadReadActive(l.d.nativeReadDir(filepath.Join(l.d.Dir, "reads", e.Name())))
 			if err != nil {
 				return false
 			}
@@ -481,7 +481,7 @@ func (l *loop) readStep(now time.Time) {
 		}
 		dir := filepath.Join(d.Dir, "reads", r.ID)
 		quiescent := false
-		active, activeFound, activeErr := loadReadActive(dir)
+		active, activeFound, activeErr := loadReadActive(l.d.nativeReadDir(dir))
 		if activeErr != nil {
 			d.Record(fmt.Sprintf("%s read %s: active identity held: %s", at, r.ID, activeErr))
 			continue
@@ -506,7 +506,7 @@ func (l *loop) readStep(now time.Time) {
 			}
 			quiescent = true
 		}
-		p, found, err := loadReadSettlement(dir)
+		p, found, err := loadReadSettlement(l.d.nativeReadDir(dir))
 		if err != nil {
 			d.Record(fmt.Sprintf("%s read %s: settlement held: %s", at, r.ID, err))
 			continue
@@ -521,7 +521,7 @@ func (l *loop) readStep(now time.Time) {
 			if raw, err := os.ReadFile(filepath.Join(dir, "RESULT.md")); err == nil {
 				if verdict, finding := ReadVerdict(string(raw)); verdict != "" && readResultHead(string(raw)) == r.Packet.Head {
 					p = readSettlement{Read: r, Verdict: verdict, Finding: finding, Usage: "model=unknown wall=0s harness=" + d.Harness + " account=" + d.Friend}
-					if err = s.persist(dir, p); err != nil {
+					if err = s.persist(l.d.nativeReadDir(dir), p); err != nil {
 						d.Record(fmt.Sprintf("%s read %s: settlement held: %s", at, r.ID, err))
 						continue
 					}
@@ -539,7 +539,7 @@ func (l *loop) readStep(now time.Time) {
 			// The daemon owns no harness for this reading row. Return it so
 			// the coordinator can route the interrupted read again.
 			p = readSettlement{Read: r, Reason: "reader daemon stopped before a verdict was recorded", Usage: "model=unknown wall=0s harness=" + d.Harness + " account=" + d.Friend}
-			if err := s.persist(dir, p); err != nil {
+			if err := s.persist(l.d.nativeReadDir(dir), p); err != nil {
 				d.Record(fmt.Sprintf("%s read %s: settlement held: %s", at, r.ID, err))
 				continue
 			}
@@ -578,10 +578,10 @@ func (l *loop) readStep(now time.Time) {
 			continue
 		}
 		dir := filepath.Join(d.Dir, "reads", r.ID)
-		if _, found, err := loadReadActive(dir); found || err != nil {
+		if _, found, err := loadReadActive(l.d.nativeReadDir(dir)); found || err != nil {
 			continue // a prior native group owns this path until its exit and debt are settled
 		}
-		if _, found, err := loadReadSettlement(dir); found || err != nil {
+		if _, found, err := loadReadSettlement(l.d.nativeReadDir(dir)); found || err != nil {
 			continue
 		}
 		out, err := d.Sprint(l.ctx, ReadBeginArgv(d.Friend, r))
@@ -617,11 +617,11 @@ func (l *loop) readStopOwns(r AskedRead) bool {
 }
 
 func (l *loop) clearReadActive(dir, id, at string) bool {
-	if err := os.Remove(readAnchorPath(dir)); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(readAnchorPath(l.d.nativeReadDir(dir))); err != nil && !os.IsNotExist(err) {
 		l.d.Record(fmt.Sprintf("%s read %s: anchor cleanup: %s", at, id, err))
 		return false
 	}
-	if err := os.Remove(readActivePath(dir)); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(readActivePath(l.d.nativeReadDir(dir))); err != nil && !os.IsNotExist(err) {
 		l.d.Record(fmt.Sprintf("%s read %s: active identity cleanup: %s", at, id, err))
 		return false
 	}
@@ -632,7 +632,7 @@ func (l *loop) clearReadActive(dir, id, at string) bool {
 // read. Replay the durable, byte-identical argv under its stable operation;
 // the server's recorded result, not an absent queue row, acknowledges it.
 func (l *loop) retryReadSettlements(now time.Time) {
-	root := filepath.Join(l.d.Dir, "reads")
+	root := l.d.nativeReadRoot()
 	entries, err := os.ReadDir(root)
 	if os.IsNotExist(err) {
 		return
@@ -645,8 +645,8 @@ func (l *loop) retryReadSettlements(now time.Time) {
 		if !e.IsDir() || containsRead(l.reads.asked, e.Name()) {
 			continue
 		}
-		dir := filepath.Join(root, e.Name())
-		p, found, err := loadReadSettlement(dir)
+		dir := filepath.Join(l.d.Dir, "reads", e.Name())
+		p, found, err := loadReadSettlement(l.d.nativeReadDir(dir))
 		if err != nil {
 			l.d.Record("read " + e.Name() + ": settlement held: " + err.Error())
 			continue
@@ -654,7 +654,7 @@ func (l *loop) retryReadSettlements(now time.Time) {
 		if !found || p.Read.ID != e.Name() || l.readStopOwns(p.Read) {
 			continue
 		}
-		a, active, err := loadReadActive(dir)
+		a, active, err := loadReadActive(l.d.nativeReadDir(dir))
 		if err != nil {
 			continue
 		}
@@ -682,7 +682,7 @@ func (l *loop) sendReadSettlement(dir string, p readSettlement, now time.Time) {
 	out, err := d.Sprint(l.ctx, argv)
 	d.Record(fmt.Sprintf("%s read %s: settlement: %s", now.UTC().Format(time.RFC3339), p.Read.ID, recorded(out, err)))
 	if err == nil && readMovedOne(out) {
-		if err := os.Remove(readSettlementPath(dir)); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove(readSettlementPath(l.d.nativeReadDir(dir))); err != nil && !os.IsNotExist(err) {
 			d.Record(fmt.Sprintf("read %s: settlement cleanup: %s", p.Read.ID, err))
 		}
 		delete(l.reads.begun, p.Read.ID)
@@ -721,7 +721,10 @@ func (l *loop) startRead(r AskedRead, now time.Time) {
 				return
 			}
 		}
-		if res.err = saveReadActive(dir, readActive{Read: r, LaunchHeld: true}); res.err != nil {
+		if res.err = d.validateNativeControl(); res.err != nil {
+			return
+		}
+		if res.err = saveReadActive(l.d.nativeReadDir(dir), readActive{Read: r, LaunchHeld: true}); res.err != nil {
 			res.err = errors.Join(errMachineLaunchHeld, res.err)
 			return
 		}
@@ -730,11 +733,11 @@ func (l *loop) startRead(r AskedRead, now time.Time) {
 			return
 		}
 		ctx, prompt := LaneContext(rctx), ReadPrompt(d.Friend, dir)
-		ctx = WithProcessGroupAnchor(ctx, readAnchorPath(dir))
+		ctx = WithProcessGroupAnchor(ctx, readAnchorPath(l.d.nativeReadDir(dir)))
 		ctx = WithProcessStarted(ctx, func(pid int) error {
 			res.gateCalled = true
 			held := !d.admitLaunch(rctx)
-			if err := saveReadActive(dir, readActive{Read: r, PID: pid, Identity: ProcessIdentity(pid), LaunchHeld: held}); err != nil {
+			if err := saveReadActive(l.d.nativeReadDir(dir), readActive{Read: r, PID: pid, Identity: ProcessIdentity(pid), LaunchHeld: held}); err != nil {
 				return errors.Join(errMachineLaunchHeld, err)
 			}
 			if held {
@@ -793,7 +796,7 @@ func (l *loop) readDone(r readResult, now time.Time) {
 	p := readSettlement{Read: r.read, Usage: usage}
 	if verdict != "" {
 		p.Verdict, p.Finding = verdict, finding
-		if err := s.persist(r.dir, p); err != nil {
+		if err := s.persist(l.d.nativeReadDir(r.dir), p); err != nil {
 			d.Record(fmt.Sprintf("%s read %s: settlement held: %s", at, r.read.ID, err))
 			return
 		}
@@ -818,7 +821,7 @@ func (l *loop) readDone(r readResult, now time.Time) {
 		l.providerLimit(r.err, r.start, now)
 	}
 	p.Reason = why
-	if err := s.persist(r.dir, p); err != nil {
+	if err := s.persist(l.d.nativeReadDir(r.dir), p); err != nil {
 		d.Record(fmt.Sprintf("%s read %s: settlement held: %s", at, r.read.ID, err))
 		return
 	}
@@ -829,7 +832,7 @@ func (l *loop) readDone(r readResult, now time.Time) {
 }
 
 func (l *loop) readReadyToSettle(dir string, read AskedRead, at string) bool {
-	a, found, err := loadReadActive(dir)
+	a, found, err := loadReadActive(l.d.nativeReadDir(dir))
 	if err != nil {
 		l.d.Record(fmt.Sprintf("%s read %s: active identity held: %s", at, read.ID, err))
 		return false
@@ -841,11 +844,11 @@ func (l *loop) readReadyToSettle(dir string, read AskedRead, at string) bool {
 		l.d.Record(fmt.Sprintf("%s read %s: process group not quiescent; settlement held", at, read.ID))
 		return false
 	}
-	if err := os.Remove(readAnchorPath(dir)); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(readAnchorPath(l.d.nativeReadDir(dir))); err != nil && !os.IsNotExist(err) {
 		l.d.Record(fmt.Sprintf("%s read %s: anchor cleanup: %s", at, read.ID, err))
 		return false
 	}
-	if err := os.Remove(readActivePath(dir)); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(readActivePath(l.d.nativeReadDir(dir))); err != nil && !os.IsNotExist(err) {
 		l.d.Record(fmt.Sprintf("%s read %s: active identity cleanup: %s", at, read.ID, err))
 		return false
 	}
@@ -858,14 +861,14 @@ func (l *loop) readReadyToSettle(dir string, read AskedRead, at string) bool {
 // ran. Keep ACTIVE until the stop-return acknowledgement is durable.
 func (l *loop) readStopQuiescent(r readResult, now time.Time) bool {
 	debt := StopReturn{Job: "read:" + r.read.ID, Row: ReaderOf(l.d.Friend), Card: r.read.ID, Gen: r.read.Gen, Epoch: r.read.Epoch}
-	if _, found, err := loadReadActive(r.dir); err != nil {
+	if _, found, err := loadReadActive(l.d.nativeReadDir(r.dir)); err != nil {
 		l.d.Record(fmt.Sprintf("%s read %s: stop identity held: %s", now.UTC().Format(time.RFC3339), r.read.ID, err))
 		return false
 	} else if !found {
 		if r.gateCalled {
 			return false
 		}
-		return saveReadStopNoLaunch(r.dir, debt) == nil
+		return saveReadStopNoLaunch(l.d.nativeReadDir(r.dir), debt) == nil
 	}
 	return l.readStopDebtQuiescent(debt, now)
 }
@@ -875,9 +878,9 @@ func (l *loop) readStopQuiescent(r readResult, now time.Time) bool {
 // kernel process group to verify, at this read's generation and epoch.
 func (l *loop) readStopDebtQuiescent(debt StopReturn, now time.Time) bool {
 	dir := filepath.Join(l.d.Dir, "reads", debt.Card)
-	a, found, err := loadReadActive(dir)
+	a, found, err := loadReadActive(l.d.nativeReadDir(dir))
 	if err != nil || !found {
-		return err == nil && readStopNoLaunchMatches(dir, debt)
+		return err == nil && readStopNoLaunchMatches(l.d.nativeReadDir(dir), debt)
 	}
 	if debt.Row != ReaderOf(l.d.Friend) || a.Read.ID != debt.Card || a.Read.Epoch != debt.Epoch || max(a.Read.Gen, 1) != max(debt.Gen, 1) {
 		return false
@@ -895,7 +898,7 @@ func (l *loop) readGroupQuiescent(dir string, a readActive) bool {
 	if !procgroup.GroupRunnable(a.PID) {
 		return true
 	}
-	anchor := readAnchorPath(dir)
+	anchor := readAnchorPath(l.d.nativeReadDir(dir))
 	if !procgroup.AnchorPinned(a.PID, anchor) {
 		return false
 	}
@@ -908,7 +911,7 @@ func (l *loop) readGroupQuiescent(dir string, a readActive) bool {
 // The generation check prevents a late cleanup from erasing the next read.
 func (l *loop) clearStoppedReadActive(debt StopReturn) bool {
 	dir := filepath.Join(l.d.Dir, "reads", debt.Card)
-	a, found, err := loadReadActive(dir)
+	a, found, err := loadReadActive(l.d.nativeReadDir(dir))
 	if err != nil {
 		return false
 	}
@@ -922,15 +925,15 @@ func (l *loop) clearStoppedReadActive(debt StopReturn) bool {
 		if procgroup.GroupRunnable(a.PID) {
 			return false
 		}
-		if err := os.Remove(readAnchorPath(dir)); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove(readAnchorPath(l.d.nativeReadDir(dir))); err != nil && !os.IsNotExist(err) {
 			return false
 		}
-		if err := os.Remove(readActivePath(dir)); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove(readActivePath(l.d.nativeReadDir(dir))); err != nil && !os.IsNotExist(err) {
 			return false
 		}
 	}
-	if readStopNoLaunchMatches(dir, debt) {
-		if err := os.Remove(readStopNoLaunchPath(dir)); err != nil && !os.IsNotExist(err) {
+	if readStopNoLaunchMatches(l.d.nativeReadDir(dir), debt) {
+		if err := os.Remove(readStopNoLaunchPath(l.d.nativeReadDir(dir))); err != nil && !os.IsNotExist(err) {
 			return false
 		}
 	}

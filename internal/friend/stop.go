@@ -188,7 +188,7 @@ func (l *loop) stopRunQuiescent(job string, st Started) bool {
 			return false
 		}
 	}
-	receipt, err := readRunReceipt(l.d.Dir, job)
+	receipt, err := readRunReceipt(l.d.nativeRunDir(), job)
 	if errors.Is(err, os.ErrNotExist) {
 		// Missing RUN proves no launch only while the durable Started record has
 		// no PID. A previously launched run may have lost its receipt.
@@ -197,7 +197,7 @@ func (l *loop) stopRunQuiescent(job string, st Started) bool {
 	if err != nil || receipt.RunID != st.RunID || receipt.Identity == "" || l.d.ProcessIdentity == nil {
 		return false
 	}
-	if mark, ok := ReadLaneMark(l.d.Dir, job); ok && mark.RunID != "" && mark.RunID != st.RunID {
+	if mark, ok := ReadLaneMark(l.d.nativeRunDir(), job); ok && mark.RunID != "" && mark.RunID != st.RunID {
 		return false
 	}
 	current := l.d.ProcessIdentity(receipt.PID)
@@ -207,7 +207,7 @@ func (l *loop) stopRunQuiescent(job string, st Started) bool {
 	if !procgroup.GroupRunnable(receipt.PID) {
 		return true
 	}
-	anchorPath := runReceiptPath(l.d.Dir, job) + ".anchor"
+	anchorPath := runReceiptPath(l.d.nativeRunDir(), job) + ".anchor"
 	if !procgroup.AnchorPinned(receipt.PID, anchorPath) {
 		return false // a leaderless live group needs its birth-verified pin
 	}
@@ -264,7 +264,7 @@ func (l *loop) settleStopDebts(now time.Time) {
 			r.Ended = true
 		}
 		delete(s.state.Started, r.Job)
-		if err := releaseOwnedLane(l.d.Dir, r.Job, st.Owner); err != nil {
+		if err := releaseOwnedLane(l.d.nativeRunDir(), r.Job, st.Owner); err != nil {
 			l.d.Record(fmt.Sprintf("%s lane %d: card %s: lane mark release waits: %s", now.UTC().Format(time.RFC3339), r.Lane, r.Card, err))
 		}
 		changed = true

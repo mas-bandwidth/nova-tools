@@ -319,7 +319,7 @@ func (l *loop) laneHolder(c Card, now time.Time) (who, how string) {
 	if who := l.d.runningElsewhere(c); who != "" {
 		return who, "runs it"
 	}
-	m, ok := ReadLaneMark(l.d.Dir, filepath.Base(c.Outbox))
+	m, ok := ReadLaneMark(l.d.nativeRunDir(), filepath.Base(c.Outbox))
 	if !ok {
 		return "", ""
 	}
@@ -352,7 +352,7 @@ func (l *loop) oneLaneStep(now time.Time) {
 		}
 		c, job := *ln.card, filepath.Base(ln.card.Outbox)
 		me := l.laneWho(ln.n)
-		holder, err := refreshLane(d.Dir, job, me, now, now.Sub(ln.marked) >= LaneMarkEvery)
+		holder, err := refreshLane(d.nativeRunDir(), job, me, now, now.Sub(ln.marked) >= LaneMarkEvery)
 		if err != nil {
 			d.Record(fmt.Sprintf("%s lane %d: card %s: the lane mark cannot be checked: %s", now.UTC().Format(time.RFC3339), ln.n, c.ID, oneLine(err.Error(), 300)))
 			continue
@@ -401,7 +401,7 @@ func (l *loop) endOtherLane(ln *lane, who string, now time.Time) {
 	job := filepath.Base(c.Outbox)
 	if ln.t != nil && ln.t.adopted {
 		st := l.lanes.state.Started[job]
-		m, ok := ReadLaneMark(d.Dir, job)
+		m, ok := ReadLaneMark(d.nativeRunDir(), job)
 		if ok && m.RunID == st.RunID && m.Who == who && !m.Ended {
 			ln.t.cancel()
 			d.Record(fmt.Sprintf("%s lane %d: card %s: tracking handed to %s for the same live run", now.UTC().Format(time.RFC3339), ln.n, c.ID, who))
@@ -410,7 +410,7 @@ func (l *loop) endOtherLane(ln *lane, who string, now time.Time) {
 		d.Record(fmt.Sprintf("%s lane %d: card %s: lane mark changed to %s; adopted run remains under watch until its group exits", now.UTC().Format(time.RFC3339), ln.n, c.ID, who))
 		return
 	}
-	if err := endOtherMark(d.Dir, job, l.laneWho(ln.n), who); err != nil {
+	if err := endOtherMark(d.nativeRunDir(), job, l.laneWho(ln.n), who); err != nil {
 		words = fmt.Sprintf(" mark_error=%q", oneLine(err.Error(), 300))
 	}
 	if ln.t != nil && ln.t.cancel != nil {

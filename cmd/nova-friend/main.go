@@ -360,13 +360,14 @@ func (w world) stateDir(c *tool.Call, dir string) string {
 	return friend.FindStateDir(w.home, dir, c.Str("as"))
 }
 
-// daemonStateDir is where the daemon keeps its files: --state-dir, else
-// <dir>/.nova-friend, made here, so the session's pong lands inside the
-// directory it may write; when that directory refuses it, the home
-// directory's, and why says the refusal (friend.DaemonStateDir).
+// daemonStateDir keeps production native authority outside every native work
+// grant. Injected unwalled daemons retain the legacy explicit layout.
 func (w world) daemonStateDir(c *tool.Call) (state, why string) {
 	if s := c.Str("state-dir"); s != "" {
 		return s, ""
+	}
+	if w.wall != nil {
+		return friend.DefaultStateDir(w.home, c.Str("as")), "private native state"
 	}
 	return friend.DaemonStateDir(w.home, c.Str("dir"), c.Str("as"), func(d string) error { return os.MkdirAll(d, 0o755) })
 }
@@ -383,7 +384,7 @@ func friendTool(w world) *tool.Tool {
 		f.String("redis", w.getenv(RedisEnv), "the bus store's Redis address, host:port (default: "+RedisEnv+")")
 	}
 	stateDir := func(f *tool.Flags) {
-		f.String("state-dir", "", "where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)")
+		f.String("state-dir", "", "where daemon-owned state lives (native default: ~/.nova-friend/<me>; readers also find legacy <dir>/.nova-friend)")
 	}
 	settingFlags := func(f *tool.Flags) {
 		f.String("config-dir", w.getenv("CLAUDE_CONFIG_DIR"), "harness claude: the friend's own config directory, made and named in the agent (default: CLAUDE_CONFIG_DIR)")
@@ -419,7 +420,7 @@ func friendTool(w world) *tool.Tool {
 nova-bus stream and, when the session is free, pushes every waiting message in as one turn (the
 harness's deliver command), beats to the sprint server while the session answers, answers the
 coordinator PING at once (daemon-pong); presence is the session's word on the bus, never a process.
-state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.json.`,
+state: ~/.nova-friend/<friend>/ for native daemons (--state-dir moves it), the queue: <dir>/inbox/QUEUE.json.`,
 		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).",
 		Words:     []string{"NONE", "FAIL", "DRIFT", "DRY-RUN"},
 		Verbs: []tool.Verb{
@@ -1126,6 +1127,15 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	dir = abs
 	state, stateWhy := w.daemonStateDir(c)
+	if w.wall != nil && c.Str("state-dir") == "" {
+		// A native lane may write all of --dir. Its durable authority belongs
+		// outside that grant; preserve older in-work state for reconciliation.
+		entries, oldErr := os.ReadDir(friend.StateDirIn(dir))
+		if oldErr != nil && !errors.Is(oldErr, os.ErrNotExist) || len(entries) != 0 {
+			return tool.Refuse("legacy in-work daemon state remains; drain and reconcile it into a private --state-dir before starting native lanes")
+		}
+		state, stateWhy = friend.DefaultStateDir(w.home, name), "private native state"
+	}
 	// every lane child runs inside the wall of the profile her row names, else --profile
 	// (docs/SPEC-FRIEND.md, buds-in-the-wall-r.w5); a batch turn runs as it did
 	var rowProfile atomic.Pointer[string]
@@ -1161,13 +1171,19 @@ func (w world) run(c *tool.Call) *tool.Out {
 		if p := rowProfile.Load(); p != nil {
 			wl.Profile = *p
 		}
-		if activeDaemon != nil && activeDaemon.Harness == "opencode" && friend.InLane(ctx) {
+		if activeDaemon != nil && friend.InLane(ctx) {
 			roots := append(append([]string{wl.Dir, wl.ConfigDir}, wl.Jobs...), wl.Reads...)
 			if w.setupProfile != nil {
 				roots = append(roots, w.setupProfile.Selection.Home, w.setupProfile.Selection.ConfigDir)
 			}
-			if err := activeDaemon.ValidateNativeBrokerRoots(roots); err != nil {
-				return "", 0, fmt.Errorf("native broker isolation refuses lane: %w", err)
+			if err := activeDaemon.ValidateNativeControlRoots(roots); err != nil {
+				return "", 0, fmt.Errorf("native control isolation refuses lane: %w", err)
+			}
+			wl.ControlDir, wl.ControlState = activeDaemon.NativeControlDir, activeDaemon.StateDir
+			if activeDaemon.Harness == "opencode" {
+				if err := activeDaemon.ValidateNativeBrokerRoots(roots); err != nil {
+					return "", 0, fmt.Errorf("native broker isolation refuses lane: %w", err)
+				}
 			}
 		}
 		return w.wall(wl, w.exec)(ctx, cwd, prog, args, stdin)
@@ -1258,6 +1274,18 @@ func (w world) run(c *tool.Call) *tool.Out {
 		fmt.Fprintf(c.Stdout, "RUN DRY-RUN as=%s harness=%s dir=%s state=%s redis=%s; nothing was started\n", name, c.Str("harness"), dir, state, addr)
 		return tool.Exit(0)
 	}
+	controlRoot := ""
+	if w.wall != nil {
+		controlRoot, err = friend.NativeControlDir(w.home, dir)
+		if err != nil { return tool.Refuse(err.Error()+"; use a real absolute --dir and owner home") }
+		roots := append(append([]string{dir, wall.ConfigDir}, wall.Jobs...), wall.Reads...)
+		if w.setupProfile != nil { roots = append(roots, w.setupProfile.Selection.Home, w.setupProfile.Selection.ConfigDir) }
+		authority := &friend.Daemon{Dir: dir, StateDir: state, NativeControlDir: controlRoot}
+		if err := authority.ValidateNativeControlRoots(roots); err != nil {
+			return tool.Refuse(err.Error()+"; use private daemon state outside all native wall roots")
+		}
+	}
+
 	if oc, ok := deliver.(*friend.OpenCode); ok {
 		// the installed opencode, read once: a run verb lacking a flag the adapter passes is a
 		// refusal naming the version, never an exit 1 on every delivery (the finding of 2026-10-06)
@@ -1347,7 +1375,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 		record(w.now().UTC().Format(time.RFC3339) + " limit: woken: the session answered " + nonce + " after the reset")
 		tellSeat(friend.LimitUpText(name))
 	}
-	if stateWhy != "" {
+	if stateWhy == "private native state" {
+		record(w.now().UTC().Format(time.RFC3339) + " state: private native ownership in " + state)
+	} else if stateWhy != "" {
 		record(w.now().UTC().Format(time.RFC3339) + " state: " + friend.StateDirIn(dir) + " refused (" + stateWhy + "); the state is in " + state + ", outside the directory a sandboxed session may write: give --state-dir")
 	}
 	if line := friend.PlistDriftLine(w.readPlist(friend.Agent{Friend: name, Home: w.home}.PlistPath()), w.argv); line != "" {
@@ -1700,6 +1730,21 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 	}
 	activeDaemon = d
+	if w.wall != nil {
+		d.NativeControlDir = controlRoot
+		d.NativeControlRoots = func() []string {
+			roots := append(append([]string{dir}, wall.Jobs...), wall.Reads...)
+			if w.setupProfile != nil {
+				return append(roots, w.setupProfile.Selection.Home, w.setupProfile.Selection.ConfigDir)
+			}
+			config := c.Str("config-dir")
+			if config == "" {
+				if row := rowConfigDir.Load(); row != nil { config = *row }
+			}
+			if config == "" { config = w.getenv("CLAUDE_CONFIG_DIR") }
+			return append(roots, config)
+		}
+	}
 	owedStopReturns = d.OwedStopReturns
 	if w.holders != nil {
 		d.Holders = func(ctx context.Context) (map[string]string, error) { return w.holders(ctx, server) }
@@ -1906,6 +1951,7 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 		Coordinator: c.Str("coordinator"), SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), NeedsEnv: strings.Join(friend.NeedsEnvOf(c.Str("needs-env"), c.Str("model")), ","),
 		DenySelf: commaList(c.Str("deny-self")),
 	}
+	if a.StateDir == "" && w.wall != nil { a.StateDir = friend.DefaultStateDir(w.home, a.Friend) }
 	if a.Harness == "claude" {
 		a.ConfigDir = c.Str("config-dir")
 	}

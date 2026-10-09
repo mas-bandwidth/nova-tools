@@ -403,7 +403,7 @@ func CardText(job LaneJob, n, width int, sendLine, pong, notice string, seat str
 // lanes back off from a rate limit, or are held out of funds, no lane starts
 // a turn or an open (ratelimit.go).
 func (l *loop) releaseUnlaunchedClaim(job, owner string, now time.Time) {
-	if err := releaseOwnedLane(l.d.Dir, job, owner); err != nil {
+	if err := releaseOwnedLane(l.d.nativeRunDir(), job, owner); err != nil {
 		l.d.Record(fmt.Sprintf("%s card %s: unlaunched lane mark remains held: %s", now.UTC().Format(time.RFC3339), job, err))
 	}
 }
@@ -417,7 +417,7 @@ func (l *loop) releaseIdleReservation(ln *lane, now time.Time) bool {
 	if !ok || st.RunID == "" || ln.t != nil || d.SaveLanes == nil {
 		return false
 	}
-	receipt, err := readRunReceipt(d.Dir, job)
+	receipt, err := readRunReceipt(d.nativeRunDir(), job)
 	if errors.Is(err, os.ErrNotExist) && st.Pid > 0 {
 		return false // a recorded launch without RUN is not an idle reservation
 	}
@@ -430,7 +430,7 @@ func (l *loop) releaseIdleReservation(ln *lane, now time.Time) bool {
 			return false
 		}
 	}
-	if mark, found := ReadLaneMark(d.Dir, job); found && mark.RunID != "" && mark.RunID != st.RunID {
+	if mark, found := ReadLaneMark(d.nativeRunDir(), job); found && mark.RunID != "" && mark.RunID != st.RunID {
 		return false
 	}
 	// Missing RUN is the durable no-launch proof of the existing launch gate.
@@ -440,7 +440,7 @@ func (l *loop) releaseIdleReservation(ln *lane, now time.Time) bool {
 		d.Record(now.UTC().Format(time.RFC3339) + " lanes: idle reservation held: " + oneLine(err.Error(), 300))
 		return false
 	}
-	if err := releaseOwnedLane(d.Dir, job, l.laneWho(ln.n)); err != nil {
+	if err := releaseOwnedLane(d.nativeRunDir(), job, l.laneWho(ln.n)); err != nil {
 		s.state.Started[job] = st
 		l.saveLanes(now)
 		return false
@@ -683,7 +683,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 				continue // native reads and work share the configured physical child capacity
 			}
 			// the card's job claimed before its first turn: a lane that claimed it first runs it alone
-			holder, err := ClaimLane(d.Dir, filepath.Base(c.Outbox), l.laneWho(ln.n), now)
+			holder, err := ClaimLane(d.nativeRunDir(), filepath.Base(c.Outbox), l.laneWho(ln.n), now)
 			if err != nil {
 				d.Record(fmt.Sprintf("%s lane %d: card %s not started: its lane mark cannot be written: %s", now.UTC().Format(time.RFC3339), ln.n, c.ID, oneLine(err.Error(), 300)))
 				continue
@@ -738,7 +738,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 				d.Record(fmt.Sprintf("%s lane %d: card %s not started: lane state cannot be saved: %s", now.UTC().Format(time.RFC3339), ln.n, c.ID, oneLine(err.Error(), 300)))
 				continue
 			}
-			if err := bindRunLane(d.Dir, filepath.Base(c.Outbox), l.laneWho(ln.n), s.state.Started[filepath.Base(c.Outbox)].RunID, now); err != nil {
+			if err := bindRunLane(d.nativeRunDir(), filepath.Base(c.Outbox), l.laneWho(ln.n), s.state.Started[filepath.Base(c.Outbox)].RunID, now); err != nil {
 				delete(s.state.Started, filepath.Base(c.Outbox))
 				if saveErr := d.SaveLanes(s.state); saveErr != nil {
 					d.Record("lanes: failed to save a rejected run identity: " + saveErr.Error())
@@ -758,7 +758,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 			continue
 		}
 		started := l.pidSink(filepath.Base(ln.card.Outbox))
-		anchorPath := runReceiptPath(d.Dir, filepath.Base(ln.card.Outbox)) + ".anchor"
+		anchorPath := runReceiptPath(d.nativeRunDir(), filepath.Base(ln.card.Outbox)) + ".anchor"
 		if perCard { // the brief alone: no message, pong or notice rides with it
 			t, c, dir := &turn{subjects: fmt.Sprintf("%q", "card "+ln.card.ID)}, ln.job.Card, ln.job.Dir
 			ln.t = t
@@ -829,6 +829,9 @@ func (l *loop) pidSink(job string) func(pid int) error {
 	s := l.lanes
 	runID := s.state.Started[job].RunID
 	return func(pid int) error {
+		if err := l.d.validateNativeControl(); err != nil {
+			return err
+		}
 		if !l.d.admitLaunch(l.ctx) {
 			return errMachineLaunchHeld
 		}
@@ -839,7 +842,7 @@ func (l *loop) pidSink(job string) func(pid int) error {
 			return fmt.Errorf("run identity unavailable for %s", job)
 		}
 		identity := l.d.ProcessIdentity(pid)
-		if err := writeRunReceipt(l.d.Dir, job, runReceipt{RunID: runID, PID: pid, Identity: identity}); err != nil {
+		if err := writeRunReceipt(l.d.nativeRunDir(), job, runReceipt{RunID: runID, PID: pid, Identity: identity}); err != nil {
 			return err
 		}
 		s.pidMu.Lock()
@@ -888,9 +891,9 @@ func (l *loop) adoptRuns(now time.Time) {
 	var waiting []Started
 	for _, st := range s.adopt {
 		jobName := filepath.Base(st.Card.Outbox)
-		receipt, receiptErr := readRunReceipt(d.Dir, jobName)
+		receipt, receiptErr := readRunReceipt(d.nativeRunDir(), jobName)
 		if receiptErr == nil && receipt.RunID != st.RunID {
-			if mark, ok := ReadLaneMark(d.Dir, jobName); ok && !mark.Ended && mark.RunID == receipt.RunID &&
+			if mark, ok := ReadLaneMark(d.nativeRunDir(), jobName); ok && !mark.Ended && mark.RunID == receipt.RunID &&
 				d.ProcessIdentity != nil && receipt.Identity != "" &&
 				d.ProcessIdentity(receipt.PID) == receipt.Identity {
 				st.RunID, st.Pid, st.Owner = receipt.RunID, receipt.PID, mark.Who
@@ -936,7 +939,7 @@ func (l *loop) adoptRuns(now time.Time) {
 			waiting = append(waiting, st)
 			continue
 		}
-		holder, err := transferLane(d.Dir, jobName, st.RunID, l.laneWho(ln.n), now, d.ProcessIdentity, d.ProcessAlive)
+		holder, err := transferLane(d.nativeRunDir(), jobName, st.RunID, l.laneWho(ln.n), now, d.ProcessIdentity, d.ProcessAlive)
 		if err != nil || holder != "" {
 			waiting = append(waiting, st)
 			d.Record(fmt.Sprintf("%s lane %d: card %s adoption waits for its lane mark: holder=%q error=%v", now.UTC().Format(time.RFC3339), ln.n, st.Card.ID, holder, err))
@@ -1151,12 +1154,15 @@ func (l *loop) messageTurn(ln *lane, lh LaneHarness, width int, now time.Time) b
 func (l *loop) controlContext(ctx context.Context, kind string, lane int) context.Context {
 	l.controlRun++
 	job := fmt.Sprintf("control-%s-%s-%d-%d", l.tag, kind, lane, l.controlRun)
-	path := runReceiptPath(l.d.Dir, job)
+	path := runReceiptPath(l.d.nativeRunDir(), job)
 	started := func(pid int) error {
+		if err := l.d.validateNativeControl(); err != nil {
+			return err
+		}
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			return err
 		}
-		return writeRunReceipt(l.d.Dir, job, runReceipt{RunID: job, PID: pid, Identity: ProcessIdentity(pid)})
+		return writeRunReceipt(l.d.nativeRunDir(), job, runReceipt{RunID: job, PID: pid, Identity: ProcessIdentity(pid)})
 	}
 	return WithProcessGroupAnchor(WithProcessStarted(LaneContext(ctx), started), path+".anchor")
 }
@@ -1374,7 +1380,7 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		if t.adopted {
 			job := filepath.Base(ln.card.Outbox)
 			st := s.state.Started[job]
-			m, markFound := ReadLaneMark(d.Dir, job)
+			m, markFound := ReadLaneMark(d.nativeRunDir(), job)
 			if markFound && (m.Who != l.laneWho(ln.n) || m.RunID != st.RunID) {
 				// Another daemon owns the mark. Do not overwrite its newer
 				// Started state or its report while relinquishing this watcher.
@@ -1387,7 +1393,7 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 				ln.card, ln.attempts, ln.ended = nil, 0, ""
 				return
 			}
-			if err := endOtherMark(d.Dir, job, l.laneWho(ln.n), ln.ended); err != nil {
+			if err := endOtherMark(d.nativeRunDir(), job, l.laneWho(ln.n), ln.ended); err != nil {
 				d.Record(fmt.Sprintf("%s lane %d: card %s: prior mark remains held: %s", at, ln.n, ln.card.ID, err))
 			}
 		}
@@ -1798,6 +1804,8 @@ type Wall struct {
 	Reads        []string // what her harness reads beyond the system roots and its own directory
 	Deny         []string // the coordinator's self, never written inside the wall (sandbox.LaneProfile.Deny)
 	SetupProfile string   // the completed owned harness home/config selection
+	ControlDir string // private cleanup channels, never visible to the child
+	ControlState string // private durable daemon ownership
 }
 
 // Args is the wall verb and its flags, up to and with the "--" the command follows.
@@ -1816,6 +1824,8 @@ func (w Wall) Args() []string {
 	if w.SetupProfile != "" {
 		args = append(args, "--setup-profile", w.SetupProfile)
 	}
+	if w.ControlDir != "" { args = append(args, "--control-dir", w.ControlDir) }
+	if w.ControlState != "" { args = append(args, "--control-state", w.ControlState) }
 	for _, j := range w.Jobs {
 		args = append(args, "--job", j)
 	}
@@ -1860,6 +1870,8 @@ func RunWall(args, env []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	dir := fs.String("dir", "", "the friend's working directory")
 	configDir := fs.String("config-dir", "", "the friend's CLAUDE_CONFIG_DIR, and the HOME inside the wall")
 	setupProfile := fs.String("setup-profile", "", "the completed public setup selection; the owned native home/config paths remain writable inside the wall")
+	controlDir := fs.String("control-dir", "", "daemon-owned cleanup authority excluded from the completed wall")
+	controlState := fs.String("control-state", "", "daemon-owned durable state excluded from the completed wall")
 	var jobs, reads, deny listFlag
 	fs.Var(&deny, "deny", "a path no write inside the wall reaches, the coordinator's self; ~/ is under HOME (repeatable, at least one)")
 	fs.Var(&jobs, "job", "a job directory outside --dir, writable inside the wall (repeatable)")
@@ -1911,6 +1923,12 @@ func RunWall(args, env []string, stdin io.Reader, stdout, stderr io.Writer) int 
 			code = max(code, r.Code())
 		}
 		return code
+	}
+	if *controlDir != "" {
+		authority := &Daemon{Dir: *dir, NativeControlDir: *controlDir, StateDir: *controlState}
+		if err := authority.ValidateNativeControlRoots(p.VisibleRoots()); err != nil {
+			return refused("native_control", err.Error())
+		}
 	}
 	child := append(sandbox.ChildEnv(env, p.Tmp), "HOME="+p.Home)
 	if *configDir != "" && (selected == nil || selected.Selection.Harness == "claude") {

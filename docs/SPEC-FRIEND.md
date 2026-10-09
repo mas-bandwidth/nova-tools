@@ -40,20 +40,13 @@ below): the daemon answering is never the session.
   minutes after the read (`ClaimAfter`, SPEC-BUS.md). A turn may run longer
   than that: the daemon reads nothing while a turn runs (it only peeks), so a
   live daemon mid-turn is never handed its own message twice.
-- The files, one writer each. The state files live in the state directory,
-  `<dir>/.nova-friend` under the friend's working directory unless
-  `--state-dir` names another (`friend.DaemonStateDir`): inside the directory
-  her session may write, so a sandboxed session's `pong` lands where the daemon
-  reads it (the finding of 2026-10-05: zhi's `pong.json` was refused at
-  `~/.nova-friend/zhi`, outside her `--dir`). A directory that refuses it (a
-  background process on this platform may not touch a removable volume without
-  the person's permission; measured 2026-10-04, the mkdir refused with
-  "operation not permitted") puts it at `~/.nova-friend/<friend>` under the home
-  directory, said on the record (`state: ... refused`). A reader with no
-  `--state-dir` (`status`, `check`) looks under `--dir` (else the plist's) where
-  a daemon wrote its status, else under the home directory, where a daemon from
-  before the move kept it. The activity walk skips `.nova-friend`: the daemon's
-  writes are not the session's. `status.json`
+- The files, one writer each. Production native daemons default to
+  `~/.nova-friend/<friend>` outside their native working directory. An explicit
+  `--state-dir` must also stay outside every effective native wall root.
+  Unwalled injected daemons retain the legacy `<dir>/.nova-friend` layout.
+  Readers also find legacy status there for diagnosis. Existing in-work state
+  is held for owner reconciliation, never silently replaced by empty private
+  state. `status.json`
   (the daemon: its state, rewritten whole every five seconds and when it
   changes; a reader calls the daemon up while the file is under thirty seconds
   old), `pong.json` (the `pong` verb: the session's last answer), `deliver.log`
@@ -72,6 +65,36 @@ below): the daemon answering is never the session.
   is written and the agent is not loaded. A binary already off `/Volumes` is
   named as it is. The log path is a separate rule and stays under the home
   directory.
+
+### Native control roots
+
+Native output remains under the working directory: briefs, published reports,
+results and local reply/pong envelopes are not process cleanup authority.
+Production walled work, read and control turns keep `RUN`, `LANE` and its lock,
+read `ACTIVE.json`, stop/no-launch proof, settlement replay records and anchor
+FIFOs in a private daemon-owned control namespace. It is keyed by the canonical
+working directory under the launcher's owned home, so duplicate daemons and
+friends sharing that work/home retain one claim authority even through path
+aliases. Distinct launcher homes must not independently manage one shared
+working directory; this namespace does not establish cross-home exclusion.
+
+The daemon checks all work, config, job and read grants before launch. The wall
+checks again against its completed policy, including HOME, temp, executable and
+system recursive reads. Both control and durable state roots are absolute,
+real, owner-only directories with no symlink component and no ancestor or
+descendant overlap with a native grant. The checks add no native permissions.
+A root refusal preserves unlaunched work and unread message ownership for retry.
+Old in-work state, active/read settlement debt and live or unknown legacy claims
+hold startup for reconciliation; a live FIFO cannot be moved because its sidecar
+reopens the original path. No migration, deletion or new proof occurs there.
+
+`tla/NativeControlAuthority.tla` models protected channel authority, owner crash
+and restart, and legacy holds. Its visible-root mutation reaches sibling
+cancellation; its reachable witness denies the sibling then completes genuine
+owner cleanup. `StopGroupAnchor.tla` separately models birth/inode checks and
+anchor self-signalling. The Linux production-wall probe executes an ordinary
+work write, denies a private receipt read and a direct sibling FIFO write, and
+then proves the daemon can still clean its owned native group.
 
 ## The protocol
 

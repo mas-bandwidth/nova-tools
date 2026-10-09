@@ -99,6 +99,8 @@ type Daemon struct {
 	NativeReplyStore     bus.Store       // raw store for capability-validated native replies; daemon's other sends use Store
 	NativeBrokerRoots    func() []string // effective wall-visible roots; broker must stay outside all of them
 	NativeBrokerDir      string          // daemon-only grants and send receipts, outside the lane's writable/readable roots
+	NativeControlDir     string          // private native RUN/ACTIVE receipts and cleanup channels
+	NativeControlRoots   func() []string // all effective native wall roots, including reads and config
 	Deliver              Deliverer
 	Beat                 func(ctx context.Context, active time.Time) error // one beat to the sprint server, carrying the session's last activity (zero: none known)
 	// Activity is the newest write of the session's files and Cards the ids of
@@ -529,6 +531,8 @@ type loop struct {
 // daemon's own words about the coordinator collapse to the latest and ride in
 // a turn that carries messages or a card, never alone.
 func (d *Daemon) Run(ctx context.Context) error {
+	if err := d.validateNativeControl(); err != nil { return err }
+	if err := d.legacyNativeAuthority(); err != nil { return err }
 	l := &loop{d: d, ctx: ctx, b: &bus.Bus{Store: d.Store}, silentStop: d.SilentStop, brokenAfter: d.BrokenAfter,
 		answered: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, results: make(chan result, 1),
 		lanes: &laneSet{results: make(chan laneResult, 64), refused: map[string]string{}}, reads: newReadSet(), mode: ModeBatch, tag: laneTag()}

@@ -584,3 +584,7 @@ MCToolResultBindingBrokenNoLease.cfg	MCToolResultBinding.tla	invariant	LeaseRequ
 MCToolResultBindingBrokenEmitProof.cfg	MCToolResultBinding.tla	invariant	OutputRequiredForProof	ignore-terminal	tool-result	required	-
 MCToolResultBindingBrokenEarlyAck.cfg	MCToolResultBinding.tla	invariant	PendingRetainedUntilOutput	ignore-terminal	tool-result	required	-
 MCManagedSessionCheckUnknown.cfg	MCManagedSessionCheckUnknown.tla	pass	-	ignore-terminal	managed-session-check	required	-
+MCNativeControlAuthority.cfg	MCNativeControlAuthority.tla	pass	-	ignore-terminal	native-control-authority	required	-
+MCNativeControlAuthorityLegacy.cfg	MCNativeControlAuthority.tla	pass	-	ignore-terminal	native-control-authority	required	-
+MCNativeControlAuthorityBrokenVisible.cfg	MCNativeControlAuthority.tla	invariant	NoSiblingCancellation	ignore-terminal	native-control-authority	required	-
+MCNativeControlAuthorityReachOwnerCleanup.cfg	MCNativeControlAuthority.tla	invariant	ReachDeniedThenOwnerCleanupWitness	ignore-terminal	native-control-authority	required	-
