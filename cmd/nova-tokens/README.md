@@ -17,7 +17,7 @@ nova-tokens version
 
 ## First run
 
-The transcript below is executed line for line by the docs tests; the full record is in [docs/TESTS.md](../../docs/TESTS.md#nova-tokens).
+The transcript below is copied from the first run in [docs/TESTS.md](../../docs/TESTS.md#nova-tokens), which `cmd/nova-tokens/firstrun_test.go` executes line for line; a docs test holds this copy to that record.
 
 Fixture: `cmd/nova-tokens/testdata/example-bench` (copied into a temp directory first, because a first run WRITES; the bus lane is `example.com`).
 
@@ -28,7 +28,7 @@ TOKENS SOURCE label=claude:bench kind=claude path=./transcripts reports=input,ou
 TOKENS SOURCE label=bus:peer1 kind=bus path=bus/from-peer1 reports=input,output day_basis=utc files=1 unreadable=0 messages=- dup=- noid=- nousage=- unparsed=0 comments=1 redated=0 superseded=0 rows=1
 TOKENS SOURCE label=bus:peer2 kind=bus path=bus/from-peer2 reports=- day_basis=utc files=0 unreadable=0 messages=- dup=- noid=- nousage=- unparsed=0 comments=0 redated=0 superseded=0 rows=0
 TOKENS TOUCHED label=bus:peer1 day=2026-09-11 repos=schema,serialize
-TOKENS DAY date=2026-09-11 rows=3 models=2 repos=2 turns=3 unknown=0.0% other=0.0% rough=0 dashes=6 nonutc=0 sources=bus:peer1,claude:bench written=true
+TOKENS DAY day=2026-09-11 rows=3 models=2 repos=2 turns=3 unknown=0.0% other=0.0% rough=0 dashes=6 nonutc=0 sources=bus:peer1,claude:bench written=true
 TOKENS OK days=1 rows=3 sources=3 unreadable=0 unparsed=0 mixed=0 conflict=0 shrank=0 partial=0 quiet=0
 TOKENS NOTE nothing was wrong; nova-tokens check --out ./out is the gate
 

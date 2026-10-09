@@ -17,7 +17,7 @@ nova-up version
 
 ## First run
 
-The commands below are the tool's own example block, run by `cmd/nova-up/firstrun_test.go`.
+The commands below are the tool's own example block; `TestUpLocalDryRunWritesNothing` in `internal/up/up_test.go` runs `--local --dry-run` on a stand-in machine.
 
 ```text
 $ nova-up --local --dry-run --root ./nova-try
