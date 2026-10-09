@@ -255,6 +255,11 @@ func realExec(ctx context.Context, killDelay time.Duration, dir, name string, ar
 				}
 				cancel()
 			}
+			if anchorPath == "" {
+				// A successful Start already created an unreceipted child.
+				// Killing and waiting for its leader cannot prove descendant exit.
+				err = errors.Join(err, errors.New("unreceipted descendants are unverified"))
+			}
 			return "", 0, err
 		}
 		err = cmd.Wait()
