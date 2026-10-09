@@ -17,7 +17,7 @@ nova-config version
 
 ## First run
 
-The transcript below is executed line for line by the docs tests; the full record is in [docs/TESTS.md](../../docs/TESTS.md#nova-config).
+The transcript below is copied from the first run in [docs/TESTS.md](../../docs/TESTS.md#nova-config), which `cmd/nova-config/firstrun_test.go` executes line for line; a docs test holds this copy to that record.
 
 No database: the first run keeps its rows in `./try.json` (`--file`), the
 same kinds, refusals and history as PostgreSQL, and
@@ -30,12 +30,12 @@ Postgres and a throwaway Redis.
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=34 applied=34
+CONFIG MIGRATE file=try.json from=0 to=36 applied=36
 
-$ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
+$ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --actor a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
 
-$ nova-config machine set m1 --width 6 --as a1 --file try.json
+$ nova-config machine set m1 --width 6 --actor a1 --file try.json
 CONFIG SET kind=machine name=m1 rev=2 changed=width
 
 $ nova-config machine list --file try.json

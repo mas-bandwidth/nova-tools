@@ -3600,14 +3600,21 @@ reads close as `read --ok|--broken` closes them, and it leaves review only by th
   working, from its deal), is retired (`returned`, `late`) and spends that reader's read; the
   next deal deals the read to another reader. A read never started is never late: one left in
   ready past the deal bound (`DealtMax`) is taken back (`unstarted`), spending no one, and its
-  reader may be dealt it again (`TestAReadCardsDeadlineRunsFromItsStart`). A verdict names a
+  reader may be dealt it again (`TestAReadCardsDeadlineRunsFromItsStart`). A read card dealt
+  holds its primary under the no-stall rule to that same clock (working, `ReadCardDeadline`
+  from its take; ready, the deal bound from its deal), never only the friend read's thirty
+  minutes (`TestAReadCardHoldsItsPrimaryToTheReadCardsDeadline`). A verdict names a
   read of the attempt under review only: one for another attempt is refused. One whose primary left review at its attempt (a rework, a brief replaced, a drop, an
   accept) is retired by the deal (`primary`); a rework retires its read cards in its own step
   and takes a read card's finding as its fix (`TestAReturnedReadCardIsReplacedWithAnotherReader`).
 - **Waiting.** The tick's ask asks nothing while read cards are on (`readCardsAskPart`): it marks
   a primary that wants more reads than it holds `waiting for a reader`, once an attempt, counted
   due so the no-stall rule holds it, clears the mark once it waits no more, and keeps the readers
-  behind and raise-the-read-tier judgments; `cannot ask` and `fewer than two readers up` close.
+  behind and raise-the-read-tier judgments; `fewer than two readers up` closes. A primary that
+  wants a read card and holds none yet is never `stranded in review` as never asked: its read
+  is the read-card ask's (`TestAPrimaryWaitingForAReadCardIsNeverStranded`); one whose read no
+  unit up may take (its worker the only reader of its tier) gets the `cannot ask` judgment from
+  the read-card ask, once, open until a reader may (`TestAReadNoUnitMayTakeIsCannotAskOnce`).
 - **Turning it on.** On a store with reads asked the old way, a readers-table read asked and not
   begun is taken back (`retired_by` `read cards`) and dealt as a read card; a read begun there
   finishes there and stands, so no primary is read twice
@@ -3797,6 +3804,25 @@ queued or stuck waiting, with `since` then, and a stream landed when every
 primary of it left on the table has landed. A stopped stream stays stopped
 until it resumes. accept closes the open card judgments of the primaries it
 accepts.
+
+A stream whose stop sentinel has landed is not given another card in silence.
+A card admitted after that stop reopens the stream: add places a new sentinel
+`<stream>-stop-<n>` that needs the new card and every other open card of the
+stream, the stream's state is `working`, and the step says `STREAM REOPENED
+<stream> stop=<id>`. An add that names its own sentinel reopens on that
+sentinel and does not place a second one. A landed stream with no stop still
+comes back `waiting`.
+
+A stream never refuses a landing it dealt. The merge step of a stream marked
+`landed` still records a queued card that is merging in work. When the lander's
+report does not go through after the push, the loop line names the store's
+reason and the timeline is marked `pushed-unreported <sha>`. The next land
+records that card through the merge step before any new merge, and does not
+merge it again.
+
+`where --json` and `streams` say `closed` when the control card says landed and
+a card of the stream is still open, and `landed` when none is. A STREAM line
+ends with `state=`.
 
 `since` is the clock time the state last changed. The merge step is mechanical
 and is given its facts by the caller (what merged, what conflicted, ci result);
@@ -4189,15 +4215,21 @@ itself is detached while they work), its batch branch cut from the base's tip, i
 merged, remapped, resolved and checked as above, and its tree gated ONCE as a whole, the
 tree tests included, instead of once a head; only when that one gate is red is each head
 gated alone again from the base, so the red head is blamed with the finding above. The
-base's own gate and its cure stay serial, in priority order, before the merges fan out,
-so the stream that meets a red base first is the first in that order, as before; every
+base's own gate and its cure stay serial for one base commit, in priority order for
+streams sharing its repository and base. Different bases can gate in parallel, so a
+blocked gate on one does not hold another; every
 fetch and every write of the clone's shared refs is one at a time. In the second phase the
-green batches land one at a time in priority order: a batch cut from the tip the base
+green batches land one at a time in priority order. If an earlier batch gate is still
+waiting after `LandDeadline`, that batch is refused for this pass without blaming a card
+or counting a red base, and a ready later stream can land. A batch cut from the tip the base
 still has is pushed with no new gate; one whose base moved (a batch before it in the pass
 landed, or a push from outside) is merged again onto the new tip in its worktree, the same
 merges and checks and no gate per head, and pushed with no new gate when the files it
 changes and the files landed since it was cut are disjoint and the same heads merged (a
 clean merge of disjoint files), else gated once on the combined tree and pushed when green.
+`LandDeadline` abandonment applies to preparation in the first phase. A combined-tree
+gate in the serial landing phase runs under its command budget; the land loop raises its
+stuck judgment at `LandDeadline` while that gate continues.
 A red combined gate refuses the batch for this pass (`LAND REFUSED ... fails it merged onto
 <base> as this pass moved it (stream <s>, <ids>, on <files>)`), records no fact, stops no
 stream, and the next pass merges the batch onto the new tip, where the real finding is the
@@ -5292,14 +5324,14 @@ rules` prints the same answers, read-only: one `RULE` line per judgment and subj
 
 | rule | judgment | answer |
 |---|---|---|
-| `failed` | work came back failed (a take with no result is redealt by the machine, section 5, and reaches here as its bound) | the next attempt (rework, the report its fix) on the next route of its tier, the routes it drew left out; the `RuleAttemptCap`-th (2) failure on one tier (`rule_tier`, `rule_fails` on the primary) a new attempt one tier up (`rework --tier`: flash to pro to heavy, the first tier above that a route serves); past heavy, a friend's card (`who=friend`: the friends' deal gives it to a friend up with room) |
+| `failed` | work came back failed (a take with no result is redealt by the machine, section 5, and reaches here as its bound) | a harness fault (`sprint.HarnessFault`) or a HOLD with findings (`sprint.HoldFindings`) is reworked at once on its tier with the failure as its fix, a friend's card too, below its brief's bound (below); any other failure: the next attempt (rework, the report its fix) on the next route of its tier, the routes it drew left out; the `RuleAttemptCap`-th (2) failure on one tier (`rule_tier`, `rule_fails` on the primary) a new attempt one tier up (`rework --tier`: flash to pro to heavy, the first tier above that a route serves); past heavy, a friend's card (`who=friend`: the friends' deal gives it to a friend up with room) |
 | `bound` | a card reached its bound (its redeal bound at its ceiling, or the second identical failure) | a new attempt one tier up, as `failed`'s climb; past heavy, a friend's card. A card every member up refused at staging, or at its brief's bound, is left |
 | `late` | a work card is past its deadline | with progress in the last 10 minutes (the work card's `progress` stamp: the server's time of its holder's last `progress` verb, which the member sends every 3 minutes while its child prints and the friend daemon while a lane's turn on the card prints; a stamp from before the card's take is another holder's and counts as none) a wait of 30 minutes, once a generation (`rule_waited`). The default is wait only: a working card whose holder has stamped no progress since its take is held 30 minutes at a time and never returned by this rule, so a member that does not stamp never loses an honest long child to it (`tla/SprintRules.tla`, `NeverStampedNeverReturned`). A card whose holder stamped and then went silent past the 10 minutes, or whose one wait is spent, is returned and dealt again once its holder has had its own whole deadline (withdrawn, the take ended: it spends a redeal, so a card late again and again reaches its bound and climbs); a card just dealt again is held until its holder's own deadline. Each answer keeps a hold on the condition until the time it names, and the tick raises it again then if it still holds. A card on a friend's row is `friend-take`'s |
-| `friend-take` | a work card is past its deadline, on a friend's row (dealt and never taken, or working and not finished) | one she has not started (no `progress` stamp, and her beat names neither the card, its job nor its primary running: `friendStarted`) is taken back to ready (`friend take`, `rule take`; `taken_from` her row) and the next tick's deal places it again, never on her. One she started stays hers (a friend keeps the cards she started); a card pinned to her alone (`WHO: only friend`), a brief defect, and a card of a friend the tick holds no seat of are left |
+| `friend-take` | a work card is past its deadline, on a friend's row (dealt and never taken, or working and not finished) | one she has not started (no `progress` stamp, and her beat names neither the card, its job nor its primary running: `friendStarted`) is taken back to ready (`friend take`, `rule take`; `taken_from` her row) and the next tick's deal places it again, never on her. One she started stays hers (a friend keeps the cards she started); a card pinned to her alone (`WHO: only friend`), a brief defect, and a card of a friend the tick holds no seat of are left. A card taken back and dealt to the next friend is measured from her own deal (the later of `dealt` and `untaken_since`, as the start bound measures it), never from the take-back or the time it waited withdrawn, and a never-taken judgment raised before her deal (while the card sat withdrawn, past the dealt bound of no friend) closes on her deal (`LateStands`: the clock it was measured by started before the note), so the rule has nothing to answer against her on the first friend's clock; her own bound raises its own judgment (2026-10-08: one card, seven generations in thirty minutes, the first take-back two seconds after the deal; `TestACardTakenBackFromOneFriendGetsTheNextFriendsOwnBound`) |
 | `read-late` | a read card is past its deadline (asked and not begun, or begun and not reported), of the primary's attempt in review | its reader's read taken back and asked of one other reader (`ask <card> --instead <reader>`, `rule ask`, one a tick: each ask writes the readers' round index), once an attempt (`rule_reread` on the primary); the second late read of the attempt, and one no other reader can take (the ask's refusal), are left. A read handed back with no verdict needs no rule: the ask places it again on a free reader itself (section 6) |
 | `hold-need` | work came back failed and its report says the word `HOLD` | a HOLD naming a card on the table that has not landed (the first by id; the stream controls aside) waits for it: `rule_need` (`<card>@<attempt>`) and `rule_answer` on the primary and the judgment's text prefixed `waiting on <card> by rule hold-need: `, once an attempt (`rule need`); the judgment stays open, since a primary in review has no move to waiting (section 3). Once that card lands the primary is reworked (`rule rework`), its fix `<card> has landed: do the brief again on the current tip` with the report. A HOLD naming no such card, or one dropped since, is left, and `failed` does not redeal it |
 | `conflict` | stream stopped: conflict on a card, where the lander refused a head one of three ways (`sprint.RefusalWay`): its paths that did not merge are files no generated ledger owns (`conflict_kind=file`, `conflict_paths` on the stream's control card, from `merge --conflict-kind --conflict-path`, which land reports), it fails the lander's checks (files outside its PATHS, E12, or another check), or its merged tree fails the tree gate | in one tick: the card returned to review (`rule_redo` its attempt, `rule_refused` the way, `rule_refusal` the lander's words, `tier_now=flash`), the stream resumed, so the rest of its batch lands on the next landing, and the card reworked at flash, staged on the base's tip, with the fix `redo the same change on the current tip` (a PATHS, checks or gate refusal adds `; the lander refused attempt <n>: <its words>`). The same card refused the same way as the refusal it was last returned on is a brief defect: the card marked (`brief_defect`), the judgment's text prefixed `brief defect: `, the stream left stopped for a mind. A conflict in a ledger the lander could not resolve, one whose files the lander did not say, and a head that is no commit or that origin does not hold are left |
-| `read-broken` | a reader found it broken, on a card in review below its brief's bound | the next attempt (rework) on the same tier, the findings of the attempt's broken reads its fix (as `rework <card> --answers <id>` with no `--fix`); when the findings name a file outside the brief's PATHS (`sprint.FilesOutsidePaths`: a relative path with a directory and an extension of letters, read through quotes and a line number, that no PATHS name, glob or directory covers, and that `cardgen.AlwaysInPaths` does not put inside every PATHS), the card is twinned instead (`rule twin`: `add --replaces`), its brief's `PATHS:` lines widened by exactly those files and a `CARRY: <id> attempt <n> head=<sha>` line at the broken attempt's head, the findings the twin's `fix`, one card a tick. A card at its brief's bound (the same finding twice, or its attempts cap: the read raises `the brief is wrong` instead), a friend's card, a brief defect and a card whose twin ids are all taken are left; the coordinator sees only those and refusals (`TestABrokenReadIsReworkedByRuleWithItsFinding`; tla/SprintRules.tla Part `reads`: `ReadAnswersBounded`, `TwinsWiden`, `ReadAnswered`) |
+| `read-broken` | a reader found it broken, on a card in review below its brief's bound | the next attempt (rework) on the same tier, the findings of the attempt's broken reads its fix (as `rework <card> --answers <id>` with no `--fix`); when the findings name a file outside the brief's PATHS (`sprint.FilesOutsidePaths`: a relative path with a directory and an extension of letters, read through quotes and a line number, that no PATHS name, glob or directory covers, and that `cardgen.AlwaysInPaths` does not put inside every PATHS), the card is twinned instead (`rule twin`: `add --replaces`), its brief's `PATHS:` lines widened by exactly those files and a `CARRY: <id> attempt <n> head=<sha>` line at the broken attempt's head, the findings the twin's `fix`, one card a tick. A friend's card is answered as a machine's, its next attempt hers. A card at its brief's bound (the same finding twice, or its attempts cap: the read raises `the brief is wrong` instead), a broken verdict with no finding, a brief defect and a card whose twin ids are all taken are left; the coordinator sees only those and refusals (`TestABrokenReadIsReworkedByRuleWithItsFinding`; tla/SprintRules.tla Part `reads`: `ReadAnswersBounded`, `TwinsWiden`, `ReadAnswered`) |
 | `widen` | work came back failed, a card reached its bound, or its brief is wrong, where the worker's report is a HOLD that says PATHS and names files outside them; or returned to review by the merge step or the `conflict` rule on an E12 refusal (files outside its PATHS) at this attempt; on a card in review at a full sha head, not a friend's, a brief defect or a pinned model's | when every file named outside PATHS (`sprint.FilesOutsidePaths`, which does not count a file `cardgen.AlwaysInPaths` puts inside every PATHS) is adjacent to the change (`sprint.WidenAdjacent`: a test file of a package PATHS name, a file under that package's `testdata/`, a ledger under `internal/ci/testdata/`, a markdown file under `docs/` or an `AGENTS.md` map, or, in a HOLD, a file named with its reason, three words or more after it), the card's brief is edited in place (`rule widen`, before `rule rework`; `brief`, as `brief --widen` edits it, never a twin: the owner, 2026-10-06, "stop doing this twin shit"), its `PATHS:` and `SHARED:` lines widened by exactly those files and a `CARRY: <id> attempt <n> head=<sha>` line at the finished head: the same id, review -> ready, its next attempt staged from that head and its brief's bound counted from it, its `fix` naming the head to start from and the files, one card a tick, and the coordinator gets one happened note, `PATHS widened by rule`, naming each file and why it is adjacent. A HOLD naming a file that is not adjacent stays a judgment, its text prefixed `outside PATHS and not adjacent: <files> (its HOLD): ` once, and neither `failed` nor `bound` reworks it; an E12 refusal naming one is the `conflict` rule's redo, inside its PATHS. A HOLD with a `PATHS-PROPOSED:` line is `paths`'s, one naming a card that has not landed `hold-need`'s, and a reader's finding `read-broken`'s (`TestACardHeldOnlyForAdjacentPathsIsWidenedInPlace`, `TestAFileOutsidePathsIsAdjacentByRule`) |
 | `brief-defect` | a card has reached its bound: the brief is wrong, not the worker (the same finding twice, section 2) | the card marked (`brief_defect`), the judgment's text prefixed `brief defect: `, once; the judgment stays open (brief or drop) and no rule moves the card |
 | `base-gate` | (no judgment: the lander's) the base fails its tree gate at its tip | a queued head whose tree, merged onto that base alone, passes the same gate lands first as the base fix and the stream goes on (the base cure, below); with none, land gates that base commit again after 2 minutes and again after 5 (`sprint.BaseGateRetries`), each landing in between refused with the finding and when it is gated again; the third failure stops the stream that met it, `stream stopped: the base fails its tree gate` (`merge --base-red`), the one judgment for that base, carrying the error and naming the failing tests; every other stream that meets the base red is refused under that judgment and never stopped. Each land pass re-checks the tip of a base that stopped a stream, and a green tip (`sprint.BaseGreen`, `base_gate_passed`) resumes every stream stopped only on that base's red, the judgment answered by rule (`v11-base-red-auto-resume-now`, below); a green base is cached for its commit. With the rule off, a red base is cached for its commit as before (every landing refused until the base moves), the pass re-checks nothing and a stopped stream waits for a mind |
@@ -5324,6 +5356,54 @@ hour counts once). The tests are internal/sprint/store/rule_answers_test.go, int
 internal/sprint/judgment_rules_test.go, internal/sprint/widen_test.go,
 internal/sprint/rules_conflict_test.go and cmd/nova-sprint/base_gate_rule_test.go; the model is tla/SprintRules.tla (`RuleAnswersBounded`,
 `LadderClimbs`, `WaitOnce`, `BaseStopsOnThird`, `ReadAnswersBounded`, `TwinsWiden`).
+
+#### A broken read with a finding reworks the card
+
+A reader's broken verdict that carries a finding (a file and line, or the rule it breaks) is
+the tick's, whoever worked the card: the `read-broken` rule reworks the primary at once with
+the finding as its fix, a friend's card as a machine's, its next attempt dealt to her again
+(`ReworkPinned`), and closes the judgment with its decided note and the card's `note`. The
+finding already rides on the card, so the answer is the one the judgment itself suggests. A
+card at its attempt bound keeps the `the brief is wrong` judgment, a finding given once
+already keeps the repeated-finding brief-defect judgment, and a broken verdict with no
+finding at all stays the judgment a person decides
+(`TestABrokenReadWithAFindingReworksAFriendsCardByRule`).
+
+#### A harness-fault failure reworks the card
+
+Work that comes back failed on a harness fault is no finding about the card: the `failed` rule
+reworks it at once, on its tier, with the failure as its fix (`sprint.HarnessFix`: the fault,
+and the attempt done again from the staged tip, where its work may stand already), whoever
+worked it, up to its brief's bound. The classes (`sprint.HarnessFault`, first match): the lane
+died (`the runner ended job`, a lane that ended with no report); a step the result carries no
+line for; `HOLD: not started`; refused at staging (a bench mirror missing); a push refused
+(the head not on the staged commit); a misread staged base tip; a LAND with no Head; a
+verdict PENDING or none; a report that begins with its `Cost:` line; a provider's 5xx; a
+deadline or a lane cap with no result; no `RESULT.md`. A HOLD whose report names a file and
+line (`sprint.HoldFindings`) is reworked with its report, the findings, as the fix. A harness
+fault is not the fleet's either: many cards failing the same way are each reworked, never
+left as a shared failure, since the rework stays on the tier. A card at its attempt bound
+keeps the `the brief is wrong` judgment, a brief defect stays a person's, and a HOLD naming a
+card that has not landed is `hold-need`'s. A failure outside every class stays the judgment
+`work came back failed` (`TestAHarnessFaultFailureReworksTheCardByRule`).
+
+#### A late report finishes the failed attempt
+
+A deadline and a finisher can race: a lane ended at its deadline fails its attempt, and the
+worker's real report, LAND or HOLD, arrives after it. `finish` named by id accepts that
+report when the attempt is failed and no later attempt has started (`sprint.lateFinish`: the
+work card done failed, its primary in review on it at its attempt, its result failed), where
+it once refused it as `not working (it is <row>:failed)` and the card went round again for
+work that was done. A LAND moves the work card to done ok at its head and the primary's
+result to ok, and the reads are asked as for any finish; a HOLD replaces the failure with its
+own report, counted as the one failed attempt it is. The attempt's open `work came back
+failed`, bound and stranded judgments close in the same step, a late finish frees no lane on
+the worker's row, and the log says `a late report for the attempt the deadline failed`. A
+failed report that is no HOLD (a FAIL, a provider failure, a take with no result, a staging
+refusal, a lane cap), the very report the attempt failed on already (a retry of the finish
+that failed it, after a restart: the attempt is not finished twice), and a report carrying an
+attempt decision are still refused; once a later attempt has started the old one stays failed (`TestFinishAcceptsAReportForAnAttemptTheDeadlineFailed`,
+`TestALateLandFinishesTheFailedAttemptOnTheStore`).
 
 #### paths-proposed-answered-by-rule
 
@@ -6293,7 +6373,10 @@ an epoch by a stored id of that epoch, and a card id is used again in a later
 epoch.
 
 `nova-sprint clear` stops the sprint (the machine is set STOPPED first and left
-STOPPED) and clears all work in it: it finishes a
+STOPPED). If STOP captures an active owner work or read lease, `clear` refuses
+to advance the epoch until the child is cancelled, stop-returned to its owner,
+and the machine is explicitly started. With no captured leases, it clears all
+work: it finishes a
 pending operation, or abandons it at the epoch it started at, then advances the epoch
 once, atomically, recording when and the shape to restore. It deletes nothing.
 At the new epoch every table is empty with the same rows (streams, readers,
@@ -6334,8 +6417,47 @@ up, start) is ticked on at most TickFloor (100 ms) after the tick before
 began; a quiet log ticks it TickEvery (1 s) after the tick before began. It
 moves nothing while STOPPED; `tick` is one tick by hand. The state
 is read at the start of each tick and before each of its parts: after `stop`
-returns STOPPED no part begins, and the part in flight finishes. Every verb works in both states; only the tick's duties
-wait. `inbox` says `machine: running`, `machine: STOPPED` or `machine: DONE`,
+returns STOPPED no part begins. A STOP of a running machine, whether requested
+by the operator or caused by DONE or exhausted funds, also refuses new takes, read
+begins, friend start receipts, and late finish or read verdicts. An owner runner
+cancels each child process, then records the observed exit with `stop-return
+--as <owner-row> <card>@<gen> --reason <cancellation acknowledgement>`; the card
+returns to Ready on that same fleet row, or Asked on that same reader row, at a
+new generation. Its attempt, branch, and progress are retained. The generation
+refuses old finish and read reports. STOP and START acquire the same operation
+fence as takes and read begins; a worker plan made before STOP must re-read
+the changed generation before it can commit. The store trusts the owner runner's
+cancellation acknowledgement; it does not kill or inspect that process itself.
+An explicit STOP before the first START also revokes work; the initial STOPPED
+setup state permits setup until that command is issued.
+The machine records each active owner/card/generation as a stop debt under the
+same fence. `start` checks the returned card's same-owner, next-generation
+receipt against that durable debt, so moving or removing a card cannot erase
+the need for cancellation acknowledgement. While debt remains, a coordinator
+step that would rewrite one of those owner cards, including fleet down or drop,
+and deletion of its fleet row, is refused until its owner returns it. A stopped
+record from before durable debt was introduced still protects its live leases
+until their owners return them. DONE normally has no active jobs;
+when it does, the same debt rule applies. Inbox, queue, and coordinator control
+verbs remain available while the machine is stopped.
+`clear` records STOP but refuses to advance the epoch while it holds captured
+owner leases. Their runners must cancel and return them; an explicit `start`
+then clears the settled debt, after which `clear` can reset the epoch.
+Native readers begin a named queued read with `<read-card>@<gen>` from its packet;
+an old Asked packet cannot begin a returned read at a newer generation. A bare
+named begin of a returned read is refused; `read --begin --max` can select a
+fresh card from the live table. Begin keeps that generation. A named verdict
+with `@<gen>` checks the same live generation, including before any STOP; after
+a return, the verdict must name it. A reader retains the packet's generation
+through its child and reports that exact lease with a stable `--op`.
+The tick's DONE and funds stops, and its post-add DONE cleanup, take that
+same fence. Each tick part carries the explicit START generation it read;
+after STOP and a later restart, an old part cannot commit with old timing
+inputs, nor can its delayed DONE or funds judgment stop the new run or replace
+the operator's STOP reason.
+`start` refuses until all Fleet Working and Readers Reading cards have been
+returned, and names the active owner and card IDs. `inbox` says `machine:
+running`, `machine: STOPPED` or `machine: DONE`,
 and nothing after the word but a late tick or a STOPPED machine's why (below): when the state is RUNNING and
 nothing has ticked for 15 s (MachineSilence), on a store a run loop ticks, it
 says `machine: running (tick late 16s)`, the whole seconds since the last
@@ -6364,12 +6486,11 @@ after now (`sprint.StopArgs`). The record keeps the stop's actor, reason and
 time, and the machine line says them: `machine: STOPPED by <actor>: <reason>,
 back by 2:04 PM` (a time on another day with its date), in `inbox`, the header
 of `where`, its JSON (the dashboard's machine line) and every verb's sprint
-line (`sprint.StoppedText`). At `--until` the next tick starts the machine
-itself, recorded as the machine's start with the stop it ends, and runs it
-(`store.backAt`); a stop of the STOPPED machine before then replaces the reason
-and the time, and the span goes on; a clear takes them off, so nothing starts
-a cleared sprint; when every provider is out of credit at `--until` the
-machine stays STOPPED for that cause, as a start is refused then. The
+line (`sprint.StoppedText`). `--until` is display metadata for the intended
+pause; it never restarts a stopped machine. Only an explicit `start` resumes
+it after the owned jobs have been returned. A stop of the STOPPED machine
+before then replaces the reason and time, and the span goes on; a clear takes
+them off. A start is also refused when every provider is out of credit. The
 machine's own stops carry their cause instead (below).
 
 The machine stops itself when the sprint is done (section 8): the tick's last
@@ -6667,7 +6788,8 @@ on that cycle, or `LAND IDLE queued=<n> step=<stage> since=<age>` while one is
 still running (`step=-` and `since=0s` when nothing is in flight). A cycle with
 cards queued whose landing has not finished within 10 minutes (`LandDeadline`)
 raises one judgment, `an operation was stuck`, naming the stage and the process
-it waits on. The landing is not stopped.
+it waits on. The landing continues; a gate still holding an earlier batch at that bound
+is abandoned for this pass so ready later streams can land.
 
 With `server switch <binary> [--rollback]` the coordinator or an install switches the server's
 binary file on disk, keeping the previous binary (`<target>.prev`). With `--rollback`, if a

@@ -248,6 +248,7 @@ func (w world) pingInstall(c *tool.Call) *tool.Out {
 			Item("plan", "command", tool.Text(fmt.Sprintf("launchctl bootstrap gui/%d %s", w.uid, a.PlistPath()))).
 			Note("the agent runs: " + strings.Join(a.Args(), " "))
 	}
+	a.Sleep = func(d time.Duration) { w.sleep(context.Background(), d) }
 	path, ran, err := friend.Install(context.Background(), a, w.uid, w.launchctl, func(p string, data []byte) error {
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			return err

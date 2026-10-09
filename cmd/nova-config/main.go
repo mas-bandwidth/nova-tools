@@ -227,6 +227,9 @@ type pgStore interface {
 	Version(ctx context.Context) (int, error)
 	// Applied is the migration ledger, every version recorded, in order.
 	Applied(ctx context.Context) ([]int, error)
+	// Sessions is every other nova session holding the database: migrate
+	// --window refuses while there is one.
+	Sessions(ctx context.Context) ([]config.Session, error)
 	Close() error
 }
 

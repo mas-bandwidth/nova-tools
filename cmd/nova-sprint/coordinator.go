@@ -43,7 +43,7 @@ var verbClasses = map[string]string{
 	"ack":               classCoordinator, "answer": classCoordinator, "clear": classCoordinator, "teardown": classCoordinator, "repair": classCoordinator,
 	"goal set": classCoordinator, "goal drop": classCoordinator, "play": classCoordinator,
 
-	"take": classWorker, "finish": classWorker, "progress": classWorker, "read": classWorker, "fleet beat": classWorker, "friend beat": classWorker, "lane take": classWorker, "lane give": classWorker,
+	"take": classWorker, "finish": classWorker, "progress": classWorker, "read": classWorker, "stop-return": classWorker, "fleet beat": classWorker, "friend beat": classWorker, "lane take": classWorker, "lane give": classWorker,
 	// remind is any actor's: it sets a timer for itself or for another (--for).
 	"remind": classWorker,
 
@@ -52,7 +52,7 @@ var verbClasses = map[string]string{
 	"tick": classMachine, "run": classMachine, "friend clean": classMachine, "seat install": classMachine, "seat uninstall": classMachine, "selftest land": classMachine, "server switch": classMachine,
 
 	"queue": classRead, "inbox": classRead, "card": classRead, "log": classRead, "check": classRead, "where": classRead, "watch": classRead, "dashboard": classRead, "routes": classRead, "rules": classRead, "stats": classRead, "bases": classRead,
-	"goal show": classRead, "handover": classRead, "seat": classRead, "lane list": classRead, "fsck seat": classRead,
+	"goal show": classRead, "handover": classRead, "seat": classRead, "seat push": classRead, "seat pong": classRead, "lane list": classRead, "fsck seat": classRead,
 
 	"coordinator": classSeat,
 }

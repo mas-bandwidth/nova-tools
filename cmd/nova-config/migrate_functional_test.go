@@ -119,14 +119,14 @@ func TestMigrateRefusesMixedOwnershipUntilTheAlterLinesAreRun(t *testing.T) {
 	require.Equal(t, 14, ledger(t, super), "the refusal applied a migration")
 
 	out, _ := r.run(t, 1, "migrate", "--dry-run")
-	require.Contains(t, out, " ready=no\n", "dry-run: %q", out)
+	require.Contains(t, out, " ready=no owner=", "dry-run: %q", out)
 	require.Equal(t, 14, ledger(t, super), "the dry run applied a migration")
 
 	_, remedy, found := strings.Cut(strings.TrimSuffix(errs, "\n"), "; run: ")
 	require.True(t, found, "refusal names no remedy: %q", errs)
 	execAll(t, super, remedy)
 	out, _ = r.run(t, 0, "migrate", "--dry-run")
-	require.Contains(t, out, " ready=yes\n", "dry-run after the remedy: %q", out)
+	require.Contains(t, out, " ready=yes owner=", "dry-run after the remedy: %q", out)
 	out, _ = r.run(t, 0, "migrate")
 	require.True(t, strings.HasSuffix(out, fmt.Sprintf(" from=14 to=%d applied=%d\n", len(all), len(all)-14)), "migrate after the remedy: %q", out)
 	require.Equal(t, len(all), ledger(t, super))

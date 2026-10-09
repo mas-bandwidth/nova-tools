@@ -279,9 +279,11 @@ func mindCard(pr *Card) string {
 	return ""
 }
 
-// ruleFailed: work came back failed, or with no result. The first failure on a tier is
-// redealt on the next route of the tier (the rework's own fix, the report); the
-// RuleAttemptCap-th goes a tier up; past heavy, a friend's card.
+// ruleFailed: work came back failed, or with no result. A harness fault, or a HOLD with
+// findings, is reworked on its tier with the failure as its fix, a friend's card too
+// (ruleHarness). Any other failure: the first on a tier is redealt on the next route of the
+// tier (the rework's own fix, the report); the RuleAttemptCap-th goes a tier up; past
+// heavy, a friend's card.
 func ruleFailed(s *Snapshot, a *RuleAnswer) {
 	a.Rule = RuleFailed
 	pr := s.Work.Placed(a.Subject)
@@ -289,6 +291,8 @@ func ruleFailed(s *Snapshot, a *RuleAnswer) {
 	case pr == nil || pr.Col != Review || pr.F("result") != "failed":
 		left(a, "not in review with failed work")
 		return
+	case holdsFor(s, pr) == "" && ruleHarness(s, a, pr):
+		return // a harness fault, or a HOLD with findings: the failure is the fix (harness_fault.go)
 	case mindCard(pr) != "":
 		left(a, mindCard(pr))
 		return
@@ -331,6 +335,9 @@ func ruleBound(s *Snapshot, a *RuleAnswer) {
 	if pr == nil {
 		left(a, "the card is off the table")
 		return
+	}
+	if pr.Col == Review && pr.F("result") == "failed" && holdsFor(s, pr) == "" && ruleHarness(s, a, pr) {
+		return // the second identical harness fault: still the harness's, on its tier
 	}
 	if why := mindCard(pr); why != "" {
 		left(a, why)

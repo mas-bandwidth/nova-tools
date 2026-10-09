@@ -80,7 +80,7 @@ func newRig(t *testing.T, names ...string) *rig {
 func (r *rig) world() world {
 	return world{
 		stepBeat: true,
-		checkGo: func(f func()) { f() }, // fake-clock checks complete before the clock advances again
+		checkGo:  func(f func()) { f() }, // fake-clock checks complete before the clock advances again
 		getenv:   func(k string) string { return r.env[k] },
 		open: func(context.Context, string) (bus.Store, func(), error) {
 			if r.store.Fail != nil {
@@ -311,7 +311,7 @@ func TestInstallWritesThePlistBootsOutAndBootstrapsAndUninstallUndoesIt(t *testi
 	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--session", "ses_1").Exit(0).
 		Out("INSTALL OK label=com.nova.friend-bob plist="+plist, `INSTALL RAN command="launchctl bootout gui/501/com.nova.friend-bob"`, `INSTALL RAN command="launchctl bootstrap gui/501 `+plist+`"`,
 			"INSTALL NOTE check: CHECK OK harness=opencode took=", "NOTE check it: nova-friend status --as bob --dir /w/bob")
-	assert.Equal(t, []string{"bootout gui/501/com.nova.friend-bob", "bootstrap gui/501 " + plist}, r.launchctl)
+	assert.Equal(t, []string{"bootout gui/501/com.nova.friend-bob", "print gui/501/com.nova.friend-bob", "bootstrap gui/501 " + plist}, r.launchctl)
 	raw, err := os.ReadFile(plist)
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), "<string>--session</string>\n    <string>ses_1</string>")
@@ -356,7 +356,7 @@ func TestInstallVerbRefusesOrCopiesABinaryOnARemovableVolume(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), "<string>"+dst+"</string>")
 	assert.NotContains(t, string(raw), "/Volumes/")
-	assert.Equal(t, []string{"bootout gui/501/com.nova.friend-bob", "bootstrap gui/501 " + plist}, r.launchctl)
+	assert.Equal(t, []string{"bootout gui/501/com.nova.friend-bob", "print gui/501/com.nova.friend-bob", "bootstrap gui/501 " + plist}, r.launchctl)
 
 	refused := newRig(t, "ada", "bob")
 	refused.copy = func(string, string) error { return errors.New("disk full") }

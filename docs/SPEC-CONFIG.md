@@ -712,8 +712,9 @@ MIGRATION version=<v> file=<f> lines=<n>                 (migrate --print)
 MIGRATION version=<v> file=<f> lines=<n> state=applied|pending|missing   (migrate --dry-run: the ledger; missing is below the greatest recorded and not in the ledger, which migrate will not apply)
 CONFIG MIGRATE print=<n> pg=-
 MIGRATE NOT-OWNED table=config.<t> owner=<role> role=<role>   (migrate --dry-run: a table the role does not own)
+MIGRATE SESSION role=<role> pid=<n> app=<name>|-   (migrate --dry-run: another nova session holding the database; migrate --window refuses while there is one)
 MIGRATE WOULD-REFUSE <the refusal migrate would print>; run: ALTER TABLE config."<t>" OWNER TO "<role>"; ...   (migrate --dry-run, ready=no)
-CONFIG MIGRATE pg=<user@host:port/db>|file=<path> from=<v> to=<v> applied=<n> [dry_run=true pending=<n> missing=<n> role=<role> ready=yes|no]
+CONFIG MIGRATE pg=<user@host:port/db>|file=<path> from=<v> to=<v> applied=<n> [dry_run=true pending=<n> missing=<n> role=<role> ready=yes|no owner=<role>|mixed|none sessions=<n>]
 CONFIG STATUS pg=<...>|file=<path> schema=<v> <kind>=<rows> <kind>_rev=<r> ... redis=<addr> <kind>_applied=<r> ...   (a singleton: <kind>_rev alone)
 CONFIG DRY-RUN op=<op> kind=<k> name=<n> actor=<a> wrote=nothing <field>=<v>|<field>=<before>><after> ...   (add, set, remove --dry-run)
 NOTE machine=<m> width=0: no sprint member, ...; run: nova-config machine set <m> --width <n> ...   (machine add with no --width)

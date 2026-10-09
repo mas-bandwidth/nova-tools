@@ -56,6 +56,7 @@ func init() {
 		{"resolve", "[<id>...] [--stream <s>] [--max <n>]", "resolve", (*app).cmdResolve},
 		{"start", "", "start", (*app).cmdMachineStart},
 		{"stop", "--reason <text> --until <time or duration>", "stop --reason 'the bench is rebooting' --until 30m", (*app).cmdMachineStop},
+		{"stop-return", "--as <owner-row> <card>@<gen>... --epoch <n> --reason <cancel acknowledgement>", "stop-return --as friend-a s1-1.w1@1 --epoch 15 --reason 'owned process stopped'", (*app).cmdStopReturn},
 		{"run", "[--answer-rules=false] [--idle-alarm=false] [--listen <address:port>] [--land] [--decide <dir>]", "run", (*app).cmdRunGC},
 		{"tick", "[--answer-rules] [--idle-alarm] [--shadow]", "tick", (*app).cmdTick},
 		{"selftest land", "[--binary <path>] [--scratch-dir <dir>]", "selftest land", (*app).cmdSelftestLand},
@@ -68,7 +69,7 @@ func init() {
 		{"progress", "--as <worker> <card>[@<gen>]... --epoch <n>", "progress --as m1 s1-1.w1@1 --epoch 0", (*app).cmdProgress},
 		{"ask", "[<id>... | --group <id> [--expect <n>]] [--stream <s>] [--max <n>] [--another] [--answers <note>]", "ask", (*app).cmdAsk},
 		{"queue", "--as <reader|member> | --stream <s>", "queue --as reader-a", (*app).cmdQueue},
-		{"read", "--as <reader> (--begin | --ok | --broken) [<card>...] --epoch <n> [--max <n>] [--finding <text>] [--usage <text>] | --as <reader> --return <card> --reason <text> --epoch <n> [--usage <text>]", "read --as reader-a --ok --max 5 --epoch 0", (*app).cmdRead},
+		{"read", "--as <reader> (--begin | --ok | --broken) [<card>[@<gen>]...] --epoch <n> [--max <n>] [--finding <text>] [--usage <text>] | --as <reader> --return <card> --reason <text> --epoch <n> [--usage <text>]", "read --as reader-a --ok --max 5 --epoch 0", (*app).cmdRead},
 		{"accept", "(<id>... [--heavy --evidence <path> --reason <text>] | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]", "accept --read-ok", (*app).cmdAccept},
 		{"rework", "(<id>... | --group <id> [--expect <n>] | <selector> [--dry-run]) [--fix <text>] [--tier <tier>] [--answers <note>] [--one]", "rework s1-4 --fix 'handle the empty case'", (*app).cmdReworkSel},
 		{"return", "(<id>... | --group <id> [--expect <n>] | <selector> [--dry-run]) [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturnSel},
@@ -162,6 +163,8 @@ func init() {
 		{"seat install", "--harness <name> --target <dir> [--session <id>] [--dir <dir>] [--log <file>] [--server <host:port>] [--config-seat <name> --config-dsn <dsn> --config-password-env <NAME>] [--dry-run]", "seat install --dry-run --redis 127.0.0.1:6381", (*app).cmdSeatInstall},
 		{"seat watch", "<dir> [--json]", "seat watch ./inbox", (*app).cmdSeatWatch},
 		{"seat uninstall", "[--dir <dir>]", "seat uninstall --dir ./no-unit-here", (*app).cmdSeatUninstall},
+		{"seat push", "[--harness <name> --target <dir> [--session <id>]] | --sent <nonce> [--failed <why>]", "seat push", (*app).cmdSeatPush},
+		{"seat pong", "<nonce>", "seat pong received-nonce", (*app).cmdSeatPong},
 		{"seat", "[--repair --reason <text>] | push [--harness <name> --target <dir> [--session <id>]] | pong <nonce>", "seat", (*app).cmdSeat},
 		{"fsck seat", "[--pg <host:port or postgres:// URI>]", "fsck seat", (*app).cmdFsckSeat},
 		{"routes", "", "routes", (*app).cmdRoutes},
@@ -350,9 +353,9 @@ machine (DONE):
 
 one answer to each judgment (every one prints its own, filled in):
   ready to accept             accept --group <id> --expect <n> --answers <notes>
-  work came back failed       rework --group <id> --expect <n> --answers <notes>  (each fix is the work's report; --fix for all)
+  work came back failed       rework --group <id> --expect <n> --answers <notes>  (each fix is the work's report; --fix for all; a harness fault or a HOLD with findings is reworked by rule failed, a friend's card too, so only a failure no class names waits here)
   a brief defect              drop <primary> --reason 'a brief defect: re-cut', then add --stream <s> '<new id>' --brief-file '<the re-cut brief>'  (never a redeal)
-  a reader found it broken    rework --group <id> --expect <n> --answers <notes>  (each fix is the reader's finding)
+  a reader found it broken    rework --group <id> --expect <n> --answers <notes>  (each fix is the reader's finding; a read with a finding is reworked by rule read-broken, a friend's card too, so only one with no finding or at its brief's bound waits here)
   the brief is wrong          brief <id> --brief-file <path> (in place: its next attempt, from its last pushed head), or brief --group <id> --expect <n> --dir <dir> --answers <notes>, or drop <id>; never rework (the same finding twice, or over 5 attempts on one brief)
   conflict on a card          resume --stream <s> --did '<what you did>' --answers <note>  (land merges again, regenerating the ledgers; a conflict outside them: rework or drop)
   stream branch red           return <suspect> --answers <note>, then resume --stream <s> --did 'returned <suspect>' --answers <note>
@@ -378,7 +381,7 @@ one answer to each judgment (every one prints its own, filled in):
   timer                       ack <note> --reason '<what you did>'  (a timer remind set: it woke its actor, there is nothing to decide)
 
 the mechanical judgments the run loop answers by rule, recorded "answered by rule <name>"
-(failed, bound, late, conflict, brief-defect, base-gate); nova-sprint rules prints what
+(failed, bound, late, conflict, brief-defect, base-gate, read-broken); nova-sprint rules prints what
 they would answer now, and run --answer-rules=false turns them off
 
 the routine judgments answered by nova-decide (broken, failed, blocked, stalled, conflict,
@@ -735,7 +738,7 @@ const (
 // the step's own fenced read of the epoch: with no --epoch the step runs at
 // the epoch it finds (a clear between the read and the write is read again),
 // so the coordinator needs no epoch to name.
-var epochVerbs = map[string]bool{"finish": true, "progress": true, "read": true, "merge": true, "ci": true, "take by id": true}
+var epochVerbs = map[string]bool{"finish": true, "progress": true, "read": true, "stop-return": true, "merge": true, "ci": true, "take by id": true}
 
 // needsEpoch is whether the verb must be given --epoch: the verbs of
 // epochVerbs, except a merge run by the sprint's coordinator, which merges
@@ -2338,7 +2341,7 @@ func takeShort(ctx context.Context, st *store.Store, res store.Result, members [
 func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("finish")
 	as := fs.String("as", "", "the fleet member finishing its cards; several, comma separated, each finishing its own named cards in one step")
-	failed := fs.Bool("failed", false, "the work failed (default: ok)")
+	failed := fs.Bool("failed", false, "the work failed (default: ok); a card named by id whose attempt a deadline failed already, with no later attempt started, is finished by this report, LAND or HOLD, rather than refused")
 	head := fs.String("head", "", "the commit the work finished at, the head land merges (default: the card's id, for a run with no git: land refuses a head that is not a commit id)")
 	report := fs.String("report", "", "the worker's report")
 	branch := fs.String("branch", "", "the branch the work is on (its packet names the one to use)")
@@ -2433,7 +2436,7 @@ func (a *app) cmdAsk(args []string, stdout, stderr io.Writer) int {
 func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("read")
 	as := fs.String("as", "", "the reader; use read-card IDs from queue --as <reader>; several readers, comma separated, each reporting its own named read cards in one step")
-	begin := fs.Bool("begin", false, "asked -> reading")
+	begin := fs.Bool("begin", false, "asked -> reading; a named queued packet uses <read-card>@<gen>, while --max selects the live queue")
 	ok := fs.Bool("ok", false, "the read found it good")
 	broken := fs.Bool("broken", false, "the read found it broken")
 	finding := fs.String("finding", "", "what the read found; with --broken it names the file (file:line), the line, or the card's STEP or RULE the work breaks, and what to change, or the read is refused")
@@ -2469,6 +2472,10 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 		ids = []string{*ret}
 		c.actor = *as // the returner is the reader, whoever runs the verb
 	}
+	ids, gens, err := cardGens(ids)
+	if err != nil {
+		return refuse(stderr, "read", err.Error())
+	}
 	verdict := "ok"
 	if *broken {
 		verdict = "broken"
@@ -2487,7 +2494,7 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 			return readShort(ctx, st, res, sprint.Split(*as), col)
 		}
 	}
-	return a.runStep("read", *c, st, store.ReadStep(sprint.ReadReq{Sel: sprint.Sel{IDs: ids, Limit: limit}, As: *as, Begin: *begin,
+	return a.runStep("read", *c, st, store.ReadStep(sprint.ReadReq{Sel: sprint.Sel{IDs: ids, Limit: limit}, As: *as, Gens: gens, Begin: *begin,
 		Verdict: verdict, Finding: *finding, Return: *ret != "", Reason: *reason, Usage: *usage, Who: *as}), stdout, stderr)
 }
 

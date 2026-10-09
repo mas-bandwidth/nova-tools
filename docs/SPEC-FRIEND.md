@@ -781,7 +781,13 @@ headless `opencode run` with stdin left open hangs at init, measured
 SIGKILL, so a harness that forks leaves no orphan.
 Six adapters are real: OpenCode, `opencode run --session <id> <text>` with
 the friend's directory as the process's working directory, the newest session
-of the directory when none is named (the directory is never a flag: opencode
+of the directory when none is named (a fresh opencode with no session yet
+prints nothing for `session list --format json`, opencode 1.18.20 on a fresh
+install on a new bench, 2026-10-08: an empty or whitespace-only listing is an
+empty list, no session, never a broken harness, and a lane's open seeds the
+first one; a listing that is not a JSON list is refused with the JSON error
+alone, its first line written to the daemon's record and never into the error;
+`TestAnEmptyOpenCodeSessionListIsNoSessionNotABrokenHarness`; the directory is never a flag: opencode
 v2.0.20's run has no `--dir`, and from 2026-10-06 02:02Z every delivery that
 passed one exited 1, "Unrecognized flag: --dir"; the daemon reads `opencode
 --version` and `opencode run --help` once at start and refuses, one line naming
@@ -2708,6 +2714,18 @@ failed to bootstrap — launchd answered Input/output error on a plist that
 lints fine — where the daemon's own `install` already retries that
 bootstrap (`BootstrapTries`, internal/friend/launchd.go). No hand plist is
 written or kept for the beat: `install` covers it.
+
+`install` waits for launchd to release the label before it bootstraps (three
+of the seat's adopt runs of 2026-10-07 rolled back without it). After the bootout
+it asks `launchctl print gui/<uid>/<label>` every 250 ms (`ReleasePoll`) until
+launchd no longer finds the service, at most the plist's exit timeout (its
+`ExitTimeOut`, else launchd's default of 20 s: `ExitTimeout`), and only then
+bootstraps, still with `BootstrapTries` for an EIO or `37: Operation already
+in progress`. Without the wait, a daemon that takes about 5 s to exit made every
+one of the five bootstraps, one second apart, answer 37, and the adopt play
+rolled back. A label still held past the timeout is refused: `launchd still
+holds <gui/uid/label> <n>s after its bootout`, and nothing is bootstrapped
+(`TestInstallWaitsForLaunchdToReleaseTheLabelAfterTheBootout`).
 
 ## Watch (cmd/nova-friend watch; internal/friend/state.go)
 

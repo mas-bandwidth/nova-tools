@@ -284,11 +284,19 @@ the build `--incremental --gate report --reason <why>`, one `CYCLE BENCH`
 line per machine.
 
 The role that runs migrate must own every table in schema config. The play
-runs it as the role `nova_pg_dsn` names (the config role), so a schema whose
-tables another role made (an admin role at setup) is refused before any
-migration is applied, and the refusal is the play's failure line: it names
-the role, each table it does not own with its owner, and ends in `run:` and
-one `ALTER TABLE config."<table>" OWNER TO "<role>";` per table. Run those once,
+runs it as `nova_pg_owner` (group_vars: `nova_config`, the role that owns the
+schema whole; `nova_pg_owner_dsn` is `nova_pg_dsn` with that user, its password
+under `nova_pg_password_key`), never as the seat's own role: on 2026-10-08 a
+migrate as `nova_admin` was refused and the store stayed behind the build for
+7h45m. On the coordinator the migration runs inside the seat play's window
+(`nova-config migrate --window`, the old server and member stopped and seen
+gone), after a read-only preflight as the owner before the window: the
+candidate's `nova-config migrate --dry-run --json` must answer as the owner,
+say `owner=<nova_pg_owner>` (or `none`, a store before its first migration)
+and `ready=yes`, or the play refuses before anything is stopped, naming each
+table another role owns with its owner, and the refusal ends in `run:` and
+one `ALTER TABLE config."<table>" OWNER TO "<role>";` per table for a person
+to run in psql; no migration is run by hand before the window. Run those once,
 in psql, as a role with the owners' rights (the owner or a superuser), then
 run the play again. `nova-config migrate --dry-run` prints the same finding,
 applies nothing, and exits 1 when migrate would refuse (`ready=no`), 0 when

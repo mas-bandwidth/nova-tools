@@ -397,8 +397,11 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		p.refuse(r.Stream, "stopped ("+ctl.F("cause")+"); run: nova-sprint resume --stream "+r.Stream)
 		return p
 	case StreamLanded:
-		p.refuse(r.Stream, "landed")
-		return p
+		// a landing the stream dealt is still recorded; landed with nothing owed refuses
+		if !StreamOwesLanding(s, r.Stream) {
+			p.refuse(r.Stream, "landed")
+			return p
+		}
 	}
 	if r.DeadBase != "" {
 		return deadBaseStep(p, s, r)
@@ -473,10 +476,13 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 	}
 	ctlSet := map[string]string{}
 	var notes []Note
-	if state == StreamWaiting {
+	if state == StreamWaiting || state == StreamWorking || state == StreamLanded {
 		ctlSet["state"], ctlSet["since"] = StreamMerging, now
 		m := happened(NStartedMerging, r.Stream, s.Now)
 		m.Who = r.Who
+		if state == StreamLanded {
+			m.What = "a landing the stream dealt, after its stop"
+		}
 		notes = append(notes, m)
 	}
 	// A card named by a fact is a card of the batch: the first n queued, or the
@@ -614,13 +620,18 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 			ctlSet["state"], ctlSet["since"] = StreamLanded, now
 		case s.Merge.Count(r.Stream, Queued)+s.Merge.Count(r.Stream, Stuck) == len(landing):
 			// The last queued card lands and the stream is not done: nothing
-			// is queued or stuck, so the stream is waiting.
-			if state == StreamWaiting {
+			// is queued or stuck, so the stream is waiting. Waiting and working
+			// stay as they were. A stream that was landed while it still owed
+			// this landing leaves landed.
+			if state == StreamWaiting || state == StreamWorking {
 				delete(ctlSet, "state")
 				delete(ctlSet, "since")
 				notes = nil
 			} else {
 				ctlSet["state"], ctlSet["since"] = StreamWaiting, now
+				if state == StreamLanded {
+					notes = nil
+				}
 			}
 		}
 		// What each card cost, its total's charged figure as the card carries it

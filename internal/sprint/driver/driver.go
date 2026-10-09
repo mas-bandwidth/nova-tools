@@ -487,14 +487,15 @@ func (d *Driver) tick(tick int, c Config, w where) {
 		}
 		asked, reported := 0, 0
 		for _, card := range q.Cards {
+			word := card.ID + "@" + strconv.Itoa(max(card.Gen, 1))
 			switch {
 			case card.Col == "asked" && asked < c.ReadLimit:
 				asked++
-				begin = append(begin, card.ID)
+				begin = append(begin, word)
 			case card.Col == "reading" && reported < c.ReadLimit:
 				reported++
 				if good, finding := d.Facts.Read(card.ID); good {
-					ok = append(ok, card.ID)
+					ok = append(ok, word)
 				} else {
 					// one finding per attempt: a card found broken again at its next attempt is
 					// found broken another way, as readers find it (the same finding twice is
@@ -502,7 +503,7 @@ func (d *Driver) tick(tick int, c Config, w where) {
 					// attempt number still go in one batch (the read card's id carries the
 					// attempt: <primary>.r<attempt>.<reader>)
 					finding = fmt.Sprintf("%s (attempt %s)", finding, readAttempt(card.ID))
-					broken[finding] = append(broken[finding], card.ID)
+					broken[finding] = append(broken[finding], word)
 				}
 			}
 		}

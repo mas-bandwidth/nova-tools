@@ -28,9 +28,10 @@ func TestInboxReadAfterClear(t *testing.T) {
 	ta.ok("finish --as m1 s1-1.w1@1 --failed --report 'red'")
 	var before struct{ Cursor string }
 	ta.json("inbox --at-epoch 0", &before)
-	ta.ok("clear --confirm sprint")
+	ta.clearWithReturns(0, "m1", "s1-2.w1@1")
 	// new epoch: produce a happened notification
 	ta.ok("add --stream s1 --count 2")
+	ta.ok("start")
 	ta.deal(2)
 	ta.ok("take --as m1 --limit 2")
 	ta.ok("finish --as m1 s1-1.w1@1")
@@ -70,12 +71,13 @@ func TestWaitAfterClear(t *testing.T) {
 	ta.ok("finish --as m1 s1-1.w1@1 --failed --report 'red'")
 	oldg := ta.group(sprint.NWorkFailed, "s1")
 	oldNote := oldg.Notes[0]
-	ta.ok("clear --confirm sprint")
+	ta.clearWithReturns(0, "m1", "s1-2.w1@1")
 	// an old judgment's wait: must not change the old epoch, must say cleared
 	code, out, errs := ta.do("wait " + oldNote + " --for 1h")
 	t.Logf("wait old judgment after clear: %d %s%s", code, out, errs)
 	assert.NotEqual(t, 0, code, "wait on an old epoch's judgment after clear succeeded (it wrote the old epoch): %s", out)
 	ta.ok("add --stream s1 --count 2")
+	ta.ok("start")
 	ta.deal(2)
 	ta.ok("take --as m1 --limit 2")
 	ta.ok("finish --as m1 s1-1.w1@1 --failed --report 'red again'")
@@ -142,9 +144,10 @@ func TestEveryVerbAfterAClearLeavesTheOldEpochAlone(t *testing.T) {
 	ta.ok("take --as m1 --limit 2")
 	ta.ok("finish --as m1 s1-1.w1@1 --failed --report red")
 	ta.ok("inbox --read")
-	ta.ok("clear --confirm sprint")
+	ta.clearWithReturns(0, "m1", "s1-2.w1@1")
 	ta.ok("add --stream s1 --count 9")
 	ta.ok("add --stream s2 --count 3")
+	ta.ok("start")
 	ta.deal(4)
 	ta.ok("take --as m1 --limit 2")
 	ta.ok("finish --as m1 s1-2.w1@1 --failed --report red") // the deal takes the streams in turns: m1 holds s1-1 and s1-2
@@ -201,7 +204,7 @@ func TestAnOldWorkersFinishIsRefusedAfterAClear(t *testing.T) {
 	ta.ok("add --stream s1 p1 --one")
 	ta.deal(1)
 	ta.ok("take --as m1 p1.w1@1")
-	ta.ok("clear --confirm sprint")
+	ta.clearWithReturns(0, "m1", "p1.w1@1")
 	ta.ok("add --stream s1 p1 --one")
 	ta.deal(1)
 	raw := func(line string) (int, string) {
