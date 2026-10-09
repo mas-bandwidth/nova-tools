@@ -9,8 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
+
+	"github.com/mas-bandwidth/nova-tools/internal/tty"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -100,6 +104,12 @@ func (r SetupRunner) Apply(ctx context.Context, plan SetupPlan, root string) (ou
 	}
 	for _, step := range plan.Steps {
 		if step.Command != nil {
+			if step.Command.ConsentOnTerminal {
+				terminal, _ := ctx.Value(codexConsentTerminalKey{}).(*os.File)
+				if terminal == nil || !tty.IsTerminal(terminal) {
+					return out, errors.New("native enrollment requires the person's terminal; run setup interactively")
+				}
+			}
 			if err = validateSetupCommand(*step.Command); err != nil {
 				return out, err
 			}
@@ -211,6 +221,9 @@ func (r SetupRunner) native(ctx context.Context, step SetupStep, path string) ([
 	ctx = context.WithValue(ctx, execOutputLimitKey{}, SetupOutputLimit)
 	ctx = context.WithValue(ctx, execSeparateOutputKey{}, true)
 	ctx = context.WithValue(ctx, setupStderrOutputKey{}, c.StatusOnStderr)
+	if !c.ConsentOnTerminal {
+		ctx = context.WithValue(ctx, codexConsentTerminalKey{}, (*os.File)(nil))
+	}
 	ctx = WithProcessGroupAnchor(ctx, path+"."+receipt.RunID+".anchor")
 	ctx = WithProcessStarted(ctx, func(pid int) error {
 		receipt.PID, receipt.Identity = pid, r.Identity(pid)
@@ -250,10 +263,15 @@ func (r SetupRunner) native(ctx context.Context, step SetupStep, path string) ([
 }
 
 func validateSetupCommand(c SetupCommand) error {
-	if !filepath.IsAbs(c.Program) || c.Timeout <= 0 || c.Timeout > 2*time.Minute || len(c.Env) == 0 || !filepath.IsAbs(c.Dir) {
-		return errors.New("native setup wants absolute program/directory, complete environment and timeout up to two minutes; correct the plan")
+	limit := 2 * time.Minute
+	if c.ConsentOnTerminal {
+		limit = 15 * time.Minute
+	}
+	if !filepath.IsAbs(c.Program) || c.Timeout <= 0 || c.Timeout > limit || len(c.Env) == 0 || !filepath.IsAbs(c.Dir) {
+		return errors.New("native setup wants absolute program/directory, complete environment and bounded timeout (two minutes for inspection, fifteen for consent); correct the plan")
 	}
 	seen := map[string]bool{}
+	var codexHome string
 	for _, item := range c.Env {
 		name, _, found := strings.Cut(item, "=")
 		allowed := name == "HOME" || name == "PATH" || name == "LANG" || name == "TMPDIR" || name == "XDG_CONFIG_HOME" || name == "XDG_CACHE_HOME" || name == "XDG_DATA_HOME" || name == "XDG_STATE_HOME" || name == "CODEX_HOME" || name == "DSH_HOME" || name == "CLAUDE_CONFIG_DIR" || name == "OPENCODE_CONFIG_DIR" || name == "OPENCODE_CONFIG"
@@ -261,6 +279,12 @@ func validateSetupCommand(c SetupCommand) error {
 			return errors.New("native setup environment contains an inherited credential, unsupported name or duplicate; use only explicit home/config/runtime paths")
 		}
 		seen[name] = true
+		if name == "CODEX_HOME" {
+			_, codexHome, _ = strings.Cut(item, "=")
+		}
+	}
+	if c.ConsentOnTerminal && (!slices.Equal(c.Args, []string{"-c", "log_dir=" + strconv.Quote(filepath.Join(codexHome, "log")), "login", "--device-auth"}) || !seen["CODEX_HOME"]) {
+		return errors.New("terminal consent supports only isolated native Codex device login; correct the inspected plan")
 	}
 	if !seen["HOME"] || !seen["PATH"] {
 		return errors.New("native setup environment wants explicit HOME and PATH; name the private native home and system executable path")

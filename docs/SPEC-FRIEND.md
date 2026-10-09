@@ -2667,7 +2667,9 @@ and independently verify its control turn.
 `nova-friend setup` inspects an explicit harness/profile/config root and prints
 an ordered Go plan. Inspection and `--dry-run` make no writes and run no native
 commands. `--apply` applies local initialization only: it never installs or loads
-a daemon, logs in, sends a provider turn, starts sprint work, or proves presence.
+a daemon, sends a provider turn, starts sprint work, or proves presence. Codex
+`--codex-device-enroll --apply` explicitly runs native consent in the person's
+terminal; ordinary setup never logs in. See SPEC-CODEX-SUBSCRIPTION-SETUP.md.
 The supported initializer scope is OpenCode configuration, Claude private auth
 inspection or explicit sealed setup-token selection, Codex native subscription
 profile inspection (SPEC-CODEX-SUBSCRIPTION-SETUP.md), and DSH static headless

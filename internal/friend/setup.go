@@ -34,13 +34,14 @@ type SetupFact struct {
 // SetupCommand is a direct native invocation. Env is the complete environment;
 // the runner does not add inherited credentials or execute shell expressions.
 type SetupCommand struct {
-	Program        string        `json:"program"`
-	Args           []string      `json:"args,omitempty"`
-	Env            []string      `json:"env,omitempty"`
-	Dir            string        `json:"dir"`
-	Timeout        time.Duration `json:"timeout"`
-	AllowedExits   []int         `json:"allowed_exits,omitempty"`
-	StatusOnStderr bool          `json:"status_on_stderr,omitempty"`
+	Program           string        `json:"program"`
+	Args              []string      `json:"args,omitempty"`
+	Env               []string      `json:"env,omitempty"`
+	Dir               string        `json:"dir"`
+	Timeout           time.Duration `json:"timeout"`
+	AllowedExits      []int         `json:"allowed_exits,omitempty"`
+	StatusOnStderr    bool          `json:"status_on_stderr,omitempty"`
+	ConsentOnTerminal bool          `json:"consent_on_terminal,omitempty"`
 }
 
 // SetupOutput is available only to a step's validator. Full stdout permits
