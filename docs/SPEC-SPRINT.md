@@ -3599,14 +3599,21 @@ reads close as `read --ok|--broken` closes them, and it leaves review only by th
   working, from its deal), is retired (`returned`, `late`) and spends that reader's read; the
   next deal deals the read to another reader. A read never started is never late: one left in
   ready past the deal bound (`DealtMax`) is taken back (`unstarted`), spending no one, and its
-  reader may be dealt it again (`TestAReadCardsDeadlineRunsFromItsStart`). A verdict names a
+  reader may be dealt it again (`TestAReadCardsDeadlineRunsFromItsStart`). A read card dealt
+  holds its primary under the no-stall rule to that same clock (working, `ReadCardDeadline`
+  from its take; ready, the deal bound from its deal), never only the friend read's thirty
+  minutes (`TestAReadCardHoldsItsPrimaryToTheReadCardsDeadline`). A verdict names a
   read of the attempt under review only: one for another attempt is refused. One whose primary left review at its attempt (a rework, a brief replaced, a drop, an
   accept) is retired by the deal (`primary`); a rework retires its read cards in its own step
   and takes a read card's finding as its fix (`TestAReturnedReadCardIsReplacedWithAnotherReader`).
 - **Waiting.** The tick's ask asks nothing while read cards are on (`readCardsAskPart`): it marks
   a primary that wants more reads than it holds `waiting for a reader`, once an attempt, counted
   due so the no-stall rule holds it, clears the mark once it waits no more, and keeps the readers
-  behind and raise-the-read-tier judgments; `cannot ask` and `fewer than two readers up` close.
+  behind and raise-the-read-tier judgments; `fewer than two readers up` closes. A primary that
+  wants a read card and holds none yet is never `stranded in review` as never asked: its read
+  is the read-card ask's (`TestAPrimaryWaitingForAReadCardIsNeverStranded`); one whose read no
+  unit up may take (its worker the only reader of its tier) gets the `cannot ask` judgment from
+  the read-card ask, once, open until a reader may (`TestAReadNoUnitMayTakeIsCannotAskOnce`).
 - **Turning it on.** On a store with reads asked the old way, a readers-table read asked and not
   begun is taken back (`retired_by` `read cards`) and dealt as a read card; a read begun there
   finishes there and stands, so no primary is read twice
