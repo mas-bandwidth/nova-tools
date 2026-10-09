@@ -50,6 +50,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `onboarding/` | onboarding banner and doc verifier | `go test ./internal/onboarding` | `go test ./internal/onboarding` |
 | `oneline/` | single-line log and output grammar | `go test ./internal/oneline` | `go test ./internal/oneline` |
 | `pkgselect/` | package selection, the shard deal and the test fan-out that CI and nova-ci local share | `go test ./internal/pkgselect` | `go test ./internal/pkgselect` |
+| `procgroup/` | birth-verified authority and quiescence checks for native process groups, including descendants after the original leader exits | `go test ./internal/procgroup` | `go test ./internal/procgroup` |
 | `provbalance/` | a model provider's balance read through the seat's key | `go test ./internal/provbalance` | `go test ./internal/provbalance` |
 | `readregular/` | the one way to read a file a tool did not write: regular files only (links followed), size capped, FIFOs and devices refused by name | `go test ./internal/readregular` | `go test ./internal/readregular` |
 | `record/` | decision and execution records | `go test ./internal/record` | `go test ./internal/record` |
