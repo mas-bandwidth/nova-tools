@@ -61,9 +61,7 @@ func TestAReadNamesTheBranchTheWorkPushed(t *testing.T) {
 	reads := s.Readers.Of("f1-1")
 	require.NotEmpty(t, reads, "the fixture: f1-1 is asked of the readers")
 	var cards []*sprint.Card
-	for _, c := range reads {
-		cards = append(cards, c)
-	}
+	cards = append(cards, reads...)
 	packets, err := r.st.Packets(r.ctx, cards)
 	require.NoError(t, err)
 	for _, p := range packets {
