@@ -62,31 +62,6 @@ func init() {
 	verbEffect["live"] = "inspection: reads only, writes nothing: the installed nova-sprint's version and inode, the store's function library through nova-redis fn check, the dashboard links, and every com.nova.* launchd agent of this login (its plist, its pid from launchctl print, its running arguments from ps, its executable's inode from lsof); a friend daemon's last beat from nova-friend status"
 }
 
-// adoptRunner runs one command and returns its combined output: exec in
-// production, a fake in a test.
-type adoptRunner func(ctx context.Context, name string, args ...string) (string, error)
-
-func execAdoptRunner(ctx context.Context, name string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.WaitDelay = time.Second
-	var out bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &out
-	err := cmd.Run()
-	s := strings.TrimSpace(out.String())
-	if err != nil {
-		return s, fmt.Errorf("%s %s: %v: %s", name, strings.Join(args, " "), err, adoptLastLine(s))
-	}
-	return s, nil
-}
-
-func adoptLastLine(s string) string {
-	s = strings.TrimSpace(s)
-	if i := strings.LastIndexByte(s, '\n'); i >= 0 {
-		s = s[i+1:]
-	}
-	return oneline.Escape(s)
-}
-
 // liveManifest is what live prints with --json.
 type liveManifest struct {
 	BinDir string `json:"bin_dir"`

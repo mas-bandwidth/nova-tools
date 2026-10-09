@@ -1492,7 +1492,6 @@ example:
   nova-friend ping --as ada --to bob --nonce abc123
   nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
   nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
-  nova-friend watch --as ada --timeout 10m
   nova-friend status --as bob --dir ./bob
 ```
 
@@ -1746,7 +1745,6 @@ effect: delivery: sends beyond this machine: the session's answer to a PING, one
 usage: nova-friend watch [flags]
 from `nova-friend help`:
   nova-friend watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]
-  nova-friend watch --as ada --timeout 10m
 example: nova-friend watch --as ada --timeout 10m
 flags:
   --as <string>  your name, the coordinator whose stream and wake file are watched (required)
