@@ -134,7 +134,7 @@ func TestShipped(t *testing.T) {
 		// files=2 is the load-bearing half. `nocode` prints NOCODE OK and exits
 		// 0 for a tree it never opened, so exit 0 alone cannot tell a pass from
 		// a walk that scanned nothing.
-		require.Contains(t, out, "files=2 clean")
+		require.Contains(t, out, "files=2 deny-list=floor-list findings=0")
 	})
 
 	t.Run("a symlinked --dir is resolved, not passed over", func(t *testing.T) {

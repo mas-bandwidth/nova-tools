@@ -272,7 +272,7 @@ func TestLoopRunWrapperDeathEndsTheCommandAndTheLock(t *testing.T) {
 			_ = syscall.Kill(pid, syscall.SIGKILL)
 		}
 	})
-	require.NoError(t, syscall.Kill(pid, 0), "the command did not start: %s", werr.String())
+	require.NoError(t, syscall.Kill(pid, 0), "the command did not start")
 	require.NoError(t, wrapper.Process.Kill())
 	require.Eventually(t, func() bool { return commandGone(pid) }, 10*time.Second, 20*time.Millisecond,
 		"the command (pid %d) outlived the wrapper that held its lock", pid)
