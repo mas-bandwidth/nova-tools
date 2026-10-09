@@ -5,7 +5,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
