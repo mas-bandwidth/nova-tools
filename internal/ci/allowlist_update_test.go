@@ -42,8 +42,9 @@ var listFilePatterns = []string{"*allowlist*.txt", "*.allow", "*_examples.txt"}
 var countedShardDirectories = []string{
 	"discarded", "scripthide", "okonfailure", "remedy", "generality", "generality-text", "testify", "staticcheck", "errcheck",
 	"flagusage", "toolanswers",
-	"no-hand-printing", "unit-sockets", "refusal-grammar",
+	"no-hand-printing", "unit-sockets", "refusal-grammar", "exit-word",
 }
+
 
 // TestCountedShardDirectoriesNameEveryLedger: countedShardDirectories is the one
 // list the allowlist guard reads to know which ledgers are package-sharded, so a
