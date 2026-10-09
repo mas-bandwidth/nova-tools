@@ -91,8 +91,9 @@ func TestNativeControlLegacyFencePrecedesNativeCapabilityPreflight(t *testing.T)
 		calls++
 		return "unexpected preflight", 0, nil
 	}
-	cliOf(w).Do(t, "run", "--as", "worker", "--harness", "opencode", "--dir", work).Exit(2).Err("legacy native lane claim")
+	ran := cliOf(w).Do(t, "run", "--as", "worker", "--harness", "opencode", "--dir", work)
 	require.Zero(t, calls, "legacy authority must be fenced before even native --version/run --help")
+	ran.Exit(2).Err("legacy native lane claim")
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Equal(t, "unknown old claim", string(raw))
