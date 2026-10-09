@@ -1442,6 +1442,26 @@ log line:
   server sends `--pong <time>`, which counts for the server's first hour and is
   a beat with no proof after it, so that friend reads down, and deaf on the
   coordinator's pass fifteen minutes on, until her daemon is rebuilt.
+- The push proof on the bus (`bus.PushProof`, `friend.PushProver`): recorded
+  on `bus2:push` from the daemon's presence save (`SessionCheck.Save`). Until
+  the session has answered its first check, the proof is forced down with
+  the reason "no session answer yet" (`NotYetAnswered`), never proven. While
+  the presence stays up, the proof is renewed every `PushRenewEvery` (one
+  minute). An adapter may implement `DeliveryVerifier` (`VerifyDelivery`, e.g.
+  `*OpenCode` running `opencode session list --format json` in `o.Dir` bounded
+  by `PushWriteBudget` 5 s, synchronous in the presence save): when renewal is
+  due and the session did not just take delivery, the verifier runs. If
+  verification fails, the proof is written down: with `no key sealed: NAME` if
+  `MissingEnv` names unset keys from `--needs-env`, or with the harness exit
+  reason (such as `opencode session list exited 125`) or error string; while
+  the presence reads up and the proof reads down from a failed verify, the
+  verifier subprocess runs only when renewal is due (`now.Sub(wroteAt) >= PushRenewEvery`)
+  rather than every step, keeping the proof down until a renewal passes or the
+  session proves delivery by answering a check. Tests:
+  `TestAMissingProviderKeyPushProofReadsDownWithReasonNeverProven`,
+  `TestOpenCodeExit125ReadsDownWithNeedsEnvReasonNeverProven`,
+  `TestPushProofRefreshedOnlyWhenDeliveryTakenOrCapabilityVerified`,
+  `TestOpenCodeVerifyDeliveryAdapter`.
 
 The proof is the presence model's Ask then Answer within the bound
 (tla/FriendPresence.tla); `install` alone asks it before anything runs, and

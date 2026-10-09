@@ -2,6 +2,7 @@ package friend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -217,11 +218,11 @@ func TestOpenCodeExit125ReadsDownWithNeedsEnvReasonNeverProven(t *testing.T) {
 	assert.Equal(t, bus.PushProven, p.State(now))
 
 	// Opencode session list exits 125 during periodic renewal
-	verifyErr = fmt.Errorf("opencode session list exited 125")
+	verifyErr = &ExitError{Exit: 125, Text: "opencode session list exited 125"}
 	r.step(t, PushRenewEvery)
 	p, now = r.proof(t)
 	assert.Equal(t, bus.PushDown, p.State(now), "opencode exit 125 must read as down, never proven")
-	assert.Equal(t, "no key sealed: opencode exit 125", p.Reason)
+	assert.Equal(t, "opencode session list exited 125", p.Reason)
 
 	// With missing env also detected, it names the exact key
 	delete(env, "INCEPTION_API_KEY")
@@ -229,6 +230,14 @@ func TestOpenCodeExit125ReadsDownWithNeedsEnvReasonNeverProven(t *testing.T) {
 	p, now = r.proof(t)
 	assert.Equal(t, bus.PushDown, p.State(now))
 	assert.Equal(t, "no key sealed: INCEPTION_API_KEY", p.Reason)
+
+	// An error containing substring "125" (e.g. in a path or pid) is not parsed as exit 125 or a missing key
+	env["INCEPTION_API_KEY"] = "present"
+	verifyErr = fmt.Errorf("fork/exec /opt/test/125/opencode: no such file or directory")
+	r.step(t, PushRenewEvery)
+	p, now = r.proof(t)
+	assert.Equal(t, bus.PushDown, p.State(now))
+	assert.Equal(t, "fork/exec /opt/test/125/opencode: no such file or directory", p.Reason)
 }
 
 // TestPushProofRefreshedOnlyWhenDeliveryTakenOrCapabilityVerified verifies that
@@ -295,6 +304,9 @@ func TestOpenCodeVerifyDeliveryAdapter(t *testing.T) {
 	}
 	err := oc.VerifyDelivery(context.Background())
 	require.Error(t, err)
+	var exitErr *ExitError
+	require.True(t, errors.As(err, &exitErr))
+	assert.Equal(t, 125, exitErr.Exit)
 	assert.Contains(t, err.Error(), "opencode session list exited 125")
 
 	oc.Run = func(ctx context.Context, dir, prog string, args []string, stdin string) (string, int, error) {

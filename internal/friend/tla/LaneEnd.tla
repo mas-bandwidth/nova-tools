@@ -130,7 +130,7 @@ Next == \/ \E c \in Cards : Begin(c) \/ FriendReports(c) \/ Sync(c) \/ Redeal(c)
         \/ \E s \in BOOLEAN : Restart(s)
 
 Spec == Init /\ [][Next]_vars /\ WF_vars(Restart(FALSE))
-        /\ \A c \in Cards : WF_vars(Sync(c)) /\ WF_vars(RunEnds(c, FALSE)) /\ WF_vars(Redeal(c)) /\ SF_vars(Begin(c))
+        /\ \A c \in Cards : WF_vars(Sync(c)) /\ SF_vars(RunEnds(c, FALSE)) /\ WF_vars(Redeal(c)) /\ SF_vars(Begin(c))
 
 TypeOK == /\ store \in [Cards -> {"working", "finished"}]
           /\ run \in [Cards -> {"none", "running", "ended", "alive", "gone"}]

@@ -101,3 +101,63 @@ func TestAStartedCardWhoseRunIsGoneIsEndedAndARunsPidIsRecorded(t *testing.T) {
 		assert.Equal(t, []string{"ses_1: c2"}, turns)
 	})
 }
+
+// An adopted run whose Started.At is older than ln.cap is not cancelled by capWatch:
+// the foreign process is working on and must not be interrupted or marked capped
+// (PR 5480 cold-read repairs).
+func TestAnAdoptedRunOlderThanLaneCapIsNotCancelledByCapWatch(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "working"}}, []string{"c1"}, nil)
+		h := &lanesHarness{dir: dir, finish: map[string]bool{"c1": true}, active: map[string]int{}, block: make(chan struct{})}
+		r, state := laneRig(t, h, 1)
+		r.d.LaneCaps = func() map[string]time.Duration { return map[string]time.Duration{"flash": 2 * time.Minute} }
+		r.d.heldCards = []HeldCard{{Card: "c1", Job: "c1~15", Col: "working", Kind: "work", Tier: "flash", Epoch: 15}}
+		c1 := Card{ID: "c1", Brief: filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", "c1~15")}
+		*state = LaneState{
+			Sessions: map[int]string{1: "ses_1"},
+			Started: map[string]Started{
+				"c1~15": {Lane: 1, Card: c1, At: t0.Add(-2 * time.Hour), Pid: 4242},
+			},
+		}
+		var mu sync.Mutex
+		alive := true
+		r.d.ProcessAlive = func(pid int) bool { mu.Lock(); defer mu.Unlock(); return pid == 4242 && alive }
+		ended := make(chan struct{})
+		r.d.WaitProcess = func(ctx context.Context, pid int) bool {
+			select {
+			case <-ended:
+				return true
+			case <-ctx.Done():
+				return false
+			}
+		}
+		r.at[4] = func() {
+			require.NoError(t, os.MkdirAll(c1.Outbox, 0o755))
+			require.NoError(t, os.WriteFile(c1.Report(), []byte("Verdict: LAND\nHead: abc\n\nfine\n"), 0o644))
+			require.NoError(t, os.WriteFile(c1.Result(), []byte("RESULT: c1\n"), 0o644))
+			mu.Lock()
+			alive = false
+			mu.Unlock()
+			close(ended)
+		}
+		r.run(t, 8)
+		records := strings.Join(r.records, "\n")
+		assert.NotContains(t, records, "capped", "capWatch must never cancel or mark an adopted run capped")
+		assert.Contains(t, records, "card=done finish=report")
+		raw, err := os.ReadFile(c1.Report())
+		require.NoError(t, err)
+		assert.Equal(t, "Verdict: LAND\nHead: abc\n\nfine\n", string(raw))
+		assert.Empty(t, state.GivenUp)
+	})
+}
+
+// waitAdopted with a nil pause function must not panic when the process is dead or
+// when context is cancelled (PR 5480 cold-read repairs).
+func TestWaitAdoptedNilPauseDoesNotPanic(t *testing.T) {
+	t.Parallel()
+	assert.True(t, waitAdopted(context.Background(), 1234, func(int) bool { return false }, nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	assert.False(t, waitAdopted(ctx, 1234, func(int) bool { return true }, nil))
+}

@@ -200,7 +200,7 @@ func (o *OpenCode) sessions(ctx context.Context) ([]session, error) {
 		return nil, fmt.Errorf("opencode session list: %w", err)
 	}
 	if exit != 0 {
-		return nil, fmt.Errorf("opencode session list exited %d", exit)
+		return nil, &ExitError{Exit: exit, Text: fmt.Sprintf("opencode session list exited %d", exit)}
 	}
 	var rows []session
 	if err := json.Unmarshal([]byte(listing), &rows); err != nil {

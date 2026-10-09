@@ -2,12 +2,26 @@ package friend
 
 import (
 	"context"
-	"strings"
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 )
+
+// ExitError carries a subprocess's non-zero exit code and error description.
+type ExitError struct {
+	Exit int
+	Text string
+}
+
+func (e *ExitError) Error() string {
+	if e.Text != "" {
+		return e.Text
+	}
+	return fmt.Sprintf("exited %d", e.Exit)
+}
 
 // PushRenewEvery is how often the daemon renews its friend's push proof on
 // the bus while the session stays up: well inside bus.PushFresh, so a live
@@ -54,17 +68,17 @@ type PushProver struct {
 	NeedsEnv        []string
 	Getenv          func(string) string
 	Verify          func(ctx context.Context) error // optional verify hook; nil uses DeliveryVerifier on Deliver
-	Delivered       func() bool                     // optional: true when session actually took a delivery since last write
 
-	mu      sync.Mutex
-	asked   string    // the nonce the latest check carried, until it is answered
-	nonce   string    // the nonce the session last answered
-	proven  time.Time // when the daemon saw that answer
-	answers int
-	wrote   bool // a proof has been written by this daemon
-	up      bool
-	reason  string
-	wroteAt time.Time
+	mu        sync.Mutex
+	asked     string    // the nonce the latest check carried, until it is answered
+	nonce     string    // the nonce the session last answered
+	proven    time.Time // when the daemon saw that answer
+	answers   int
+	wrote     bool // a proof has been written by this daemon
+	up        bool
+	reason    string
+	wroteAt   time.Time
+	verifyErr error
 }
 
 func (p *PushProver) verifyDelivery(ctx context.Context) error {
@@ -116,6 +130,7 @@ func (p *PushProver) Step(s PresenceStatus) {
 		if s.Answered != "" {
 			p.nonce = s.Answered // the check answered, never one asked after it in the same step
 		}
+		p.verifyErr = nil
 	}
 	p.answers = s.Answers
 	if p.proven.IsZero() {
@@ -126,7 +141,8 @@ func (p *PushProver) Step(s PresenceStatus) {
 	}
 	lastNonce := p.nonce
 	provenTime := p.proven
-	due := !p.wrote || up != p.up || reason != p.reason || tookDelivery || (up && now.Sub(p.wroteAt) >= PushRenewEvery)
+	renewalDue := !p.wrote || now.Sub(p.wroteAt) >= PushRenewEvery
+	priorVerifyErr := p.verifyErr
 	p.mu.Unlock()
 
 	missing := MissingEnv(p.NeedsEnv, p.Getenv)
@@ -135,19 +151,25 @@ func (p *PushProver) Step(s PresenceStatus) {
 		reason = NeedsEnvReason(missing)
 	}
 
-	if due && up && !tookDelivery && (p.Delivered == nil || !p.Delivered()) {
+	if up && !tookDelivery && renewalDue {
 		ctx, cancel := context.WithTimeout(context.Background(), PushWriteBudget)
 		err := p.verifyDelivery(ctx)
 		cancel()
-		if err != nil {
-			up = false
-			if len(missing) > 0 {
-				reason = NeedsEnvReason(missing)
-			} else if strings.Contains(err.Error(), "125") {
-				reason = "no key sealed: opencode exit 125"
-			} else {
-				reason = err.Error()
-			}
+		p.mu.Lock()
+		p.verifyErr = err
+		priorVerifyErr = err
+		p.mu.Unlock()
+	}
+
+	if up && priorVerifyErr != nil {
+		up = false
+		var exitErr *ExitError
+		if len(missing) > 0 {
+			reason = NeedsEnvReason(missing)
+		} else if errors.As(priorVerifyErr, &exitErr) {
+			reason = exitErr.Error()
+		} else {
+			reason = priorVerifyErr.Error()
 		}
 	}
 
@@ -156,7 +178,7 @@ func (p *PushProver) Step(s PresenceStatus) {
 		proof.Reason = reason
 	}
 	p.mu.Lock()
-	due = !p.wrote || up != p.up || reason != p.reason || tookDelivery || (up && now.Sub(p.wroteAt) >= PushRenewEvery)
+	due := !p.wrote || up != p.up || reason != p.reason || tookDelivery || (up && now.Sub(p.wroteAt) >= PushRenewEvery)
 	p.mu.Unlock()
 	if !due {
 		return

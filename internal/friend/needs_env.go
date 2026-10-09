@@ -9,7 +9,7 @@ import (
 
 // A friend whose provider key is not in her environment must read down with the reason,
 // never up with lanes that burn turns into the provider's refusal, and never a silent
-// restart loop (Glenn 2026-10-08: Alex's key is not in the secrets store; he must read
+// restart loop (the owner, 2026-10-08: a friend's key is not in the secrets store; the daemon must read
 // truthfully DOWN with the reason "no key sealed", never a fake up). The names the daemon
 // needs are `run --needs-env NAME[,NAME]`, else the provider's key as ProviderKeyEnv names
 // it for `--model provider/model`; MissingEnv is the ones unset at a step, and while any is,
