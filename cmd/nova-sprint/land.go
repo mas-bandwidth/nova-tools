@@ -55,7 +55,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -1953,14 +1952,11 @@ func (l *lander) runCheck(ctx context.Context, dir string) (why, out string) {
 	if l.check == "" {
 		return "", ""
 	}
-	b := subproc.Prepare(ctx, landCheckBudget, "sh", "-c", l.check)
-	defer b.Cancel()
-	b.Cmd.Dir, b.Cmd.Env = dir, l.a.gitEnv
-	raw, err := b.Cmd.CombinedOutput()
-	if err = b.Wrap("check "+l.check, err); err != nil {
-		return "the check " + l.check + " failed: " + oneline.Err(err) + checkTail(string(raw)), string(raw)
+	raw, err := nativeCheck(ctx, dir, l.a.gitEnv, l.check)
+	if err != nil {
+		return "the check " + l.check + " failed: " + oneline.Err(err) + checkTail(raw), raw
 	}
-	return "", string(raw)
+	return "", raw
 }
 
 // checkTail is ": <the output's last line>", "" for no output.

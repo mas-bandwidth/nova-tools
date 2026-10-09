@@ -961,17 +961,11 @@ func (p *promoter) runGate(ctx context.Context, sha string) (string, error) {
 	if p.check == "" {
 		return "", nil
 	}
-	b := subproc.Prepare(ctx, landCheckBudget, "sh", "-c", p.check)
-	defer b.Cancel()
-	b.Cmd.Dir = p.dir
-	if p.env != nil {
-		b.Cmd.Env = p.env
+	raw, err := nativeCheck(ctx, p.dir, p.env, p.check)
+	if err != nil {
+		return raw, errors.New("the tree gate failed: " + oneline.Err(err) + checkTail(raw))
 	}
-	raw, err := b.Cmd.CombinedOutput()
-	if err = b.Wrap("check "+p.check, err); err != nil {
-		return string(raw), errors.New("the tree gate failed: " + oneline.Err(err) + checkTail(string(raw)))
-	}
-	return string(raw), nil
+	return raw, nil
 }
 
 func (p *promoter) git(ctx context.Context, args ...string) (string, error) {
