@@ -100,8 +100,9 @@
 \* errata 3's amendment 4, the deal's order, and W29 of amendment 5, the deal's
 \* member choice by the rolling index; W5Reach
 \* is W5's reach half, breaking reach and unreach and not the verb; W7 is
-\* split into W7a and W7b) that changes exactly one rule; "none" is the
-\* design.
+\* split into W7a and W7b; "friendold" is the friend-row redeal that leaves
+\* the card on the friend it was taken from) that changes exactly one rule;
+\* "none" is the design.
 \*
 \* Fixes names the repairs of the holes in the design this model found, as
 \* errata 3 to version 2.1 decides them (amended 03:20, and amendment 2 at
@@ -935,6 +936,20 @@ Variant(k) ==
 \* indexes, open counts, judgments and due entries are derived from them.
 
 MaxParts == Cardinality(Cards) + 2
+\* A card taken back from a friend sits withdrawn on her row, and every friend
+\* is up (internal/sprint/friend_deal.go, friendRedealUnit's before-state).
+\* The old friend is the first of MemSeq. MCSprintEventsFriendRedeal.cfg only.
+ScnFriendRedeal ==
+  LET p == CHOOSE x \in Prims : \A y \in Prims : Ord[x] <= Ord[y]
+      old == MemSeq[1]
+  IN [col |-> [c \in Cards |-> IF c = p THEN "ready" ELSE "none"],
+      score |-> [c \in Cards |-> IF c = p THEN 2 ELSE 0],
+      result |-> [c \in Cards |-> "ok"],
+      wpl |-> [q \in Prims |-> IF q = p THEN {<<old, "withdrawn">>} ELSE {}],
+      status |-> [m \in Members |-> "up"],
+      running |-> TRUE,
+      next |-> 4, dcur |-> 1, goal |-> FALSE,
+      log |-> <<>>, owe |-> {}, oweall |-> FALSE]
 \* The facts the rules' plans read (a probe runs only while they are as the plan read them).
 planv == <<col, score, fld, wk, rd, mi, status, beat, stab, sw, waitn, missing, J, remind, next, dcur, acur, dropping, cut, running>>
 commitv == <<col, score, fld, wk, rd, mi, status, stab, sw, waitn, missing, J, remind, pushes, next, dcur, acur,
@@ -1622,12 +1637,30 @@ Wall ==
 -----------------------------------------------------------------------------
 TickNext(t) == RT1(t) \/ ReadEvents(t) \/ RT2(t) \/ Apply(t)
 
+\* A friend's card taken back sits withdrawn on her row (the place names her,
+\* not Withdrawn's None). friendRedealUnit places that same card on another
+\* friend who is up with room (FriendDeal skips the friend in taken_from).
+\* "friendold" places it back on her.
+FriendWithdrawn(p) == \E m \in Members : wk[p].pl = {<<m, "withdrawn">>}
+OldFriend(p) == CHOOSE m \in Members : wk[p].pl = {<<m, "withdrawn">>}
+NextFriend(p) == FirstFrom(MemSeq, 1, {n \in Members : n # OldFriend(p) /\ status[n] = "up" /\ RCount(n) < Cap})
+FriendRedeal ==
+  \E p \in Prims :
+    /\ FriendWithdrawn(p) /\ NextFriend(p) # None
+    /\ LET old == OldFriend(p)
+           m == IF Broken = "friendold" THEN old ELSE NextFriend(p)
+       IN /\ wk' = [wk EXCEPT ![p] = [@ EXCEPT !.pl = {<<m, "working">>},
+                                                !.gen = (@ + 1) % GenMod, !.m0 = m]]
+          /\ col' = [col EXCEPT ![p] = "working"]
+    /\ UNCHANGED <<score, fld, rd, mi, fleetv, idxv, queue, clock, sprint, procs, bounds, ghosts>>
+
 Next ==
   \/ \E t \in Ticks : TickNext(t) \/ TickCrash(t) \/ ErrorRT1(t) \/ ErrorRT2(t) \/ ParkOnBug(t) \/ RunTwice(t)
   \/ LeaseExpire
   \/ \E v \in VerbProcs : VerbPlan(v) \/ VerbApply(v) \/ PartPlan(v) \/ PartApply(v) \/ AbortApply(v) \/ VerbCrash(v)
   \/ \E m \in Beaters : Beat(m)
   \/ Wall
+  \/ FriendRedeal
 
 \* Fairness on the tick and on time only; none on the coordinator, workers,
 \* readers, merger or beats (section 5).
@@ -1985,6 +2018,17 @@ DropComplete ==
 RedealsCounted ==
   [][\A p \in Prims : (InWorking(wk[p]) /\ ~InWorking(wk'[p]) /\ col'[p] \notin {"review", "removed"})
                       => fld'[p].redeals = Min(fld[p].redeals + 1, MaxRedeals)]_vars
+\* A friend row that is redealt is not left on the old friend (FriendDeal
+\* skips taken_from; friendRedealUnit moves the card onto the other row).
+\* The witness "friendold" leaves it on her. OldFriend is read only while
+\* the card is still withdrawn on her, so the CHOOSE is not empty.
+FriendNotLeft ==
+  [][\A p \in Prims :
+       LET old == IF FriendWithdrawn(p)
+                  THEN CHOOSE m \in Members : wk[p].pl = {<<m, "withdrawn">>}
+                  ELSE None
+           moved == FriendWithdrawn(p) /\ ~(FriendWithdrawn(p)') /\ MemberOf(wk'[p]) \in Members
+       IN ~moved \/ MemberOf(wk'[p]) # old]_vars
 \* nova-tools#5096 item 22: a card's deadline starts at its take; dealt and never
 \* taken it is judged late only after the dealt bound, DealtMax take deadlines of
 \* running time since the first deal after its last take (ua, which no redeal,

@@ -489,3 +489,39 @@ func TestBriefKindReadsOnlyTheTypedHeader(t *testing.T) {
 	assert.Equal(t, "fix-red", BriefKind("task\nREPO: mas-bandwidth/nova-tools\nKIND: fix-red\n\nThe work."))
 	assert.Empty(t, BriefKind("task\nREPO: mas-bandwidth/nova-tools\n\nThe work.\nKIND: fix-red"), "a KIND line in the body does not grant a restriction match")
 }
+
+// TestAFriendRowRedealtIsNotLeftOnTheOldFriend is the trace of FriendRedeal
+// (tla/SprintEvents.tla, FriendNotLeft; friendRedealUnit). A card taken back
+// from amy is placed again on bob. The snapshot clock is the only clock.
+// Class flash is what friendTakes requires before either friend is dealt.
+func TestAFriendRowRedealtIsNotLeftOnTheOldFriend(t *testing.T) {
+	t.Parallel()
+	w := friendWorld(t, friendBrief("friend"))
+	w.s.Now = time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	amy, bob := FriendRow("amy"), FriendRow("bob")
+	seats := []FriendSeat{
+		{Name: "amy", Width: 1, Status: Up, Class: "flash"},
+		{Name: "bob", Width: 1, Status: Up, Class: "flash"},
+	}
+	dealWith(w, seats...)
+	require.Equal(t, amy, w.s.Fleet.Card("s1-1.w1").Row, "first by name, equal room")
+
+	w.tick(time.Second)
+	w.must(FriendTake(w.s, FriendTakeReq{Friend: "amy", IDs: []string{"s1-1"}, Reason: "she is on another job", Who: "rowan"}))
+	taken := w.s.Fleet.Card("s1-1.w1")
+	require.Equal(t, Withdrawn, taken.Col)
+	require.Equal(t, amy, taken.Row, "taken back, still on her row")
+	require.Equal(t, amy, taken.F(FieldTakenFrom))
+	gen := taken.Int("gen")
+
+	w.tick(time.Second)
+	dealWith(w, seats...)
+	wc := w.s.Fleet.Card("s1-1.w1")
+	require.NotNil(t, wc)
+	assert.Equal(t, bob, wc.Row, "redealt onto the other friend")
+	assert.NotEqual(t, amy, wc.Row, "a friend row that is redealt is not left on the old friend")
+	assert.NotEqual(t, Withdrawn, wc.Col)
+	assert.Empty(t, wc.F(FieldTakenFrom))
+	assert.Greater(t, wc.Int("gen"), gen, "the same card, its next generation")
+	assert.Equal(t, 0, w.s.Fleet.Count(amy, Ready)+w.s.Fleet.Count(amy, Working))
+}
