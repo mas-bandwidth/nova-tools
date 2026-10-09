@@ -32,6 +32,33 @@ func TestCodexEnrollmentRequiresNativeConsentThenSubscriptionStatus(t *testing.T
 	assert.Equal(t, "local_chatgpt_auth", facts[0].State)
 }
 
+func TestCodexEnrollmentRefusesClaudeAdmissionInputs(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		edit func(*SetupOptions)
+	}{
+		{"account", func(o *SetupOptions) { o.ClaudeAccountID = "public-account" }},
+		{"machine", func(o *SetupOptions) { o.ClaudeMachine = "public-machine" }},
+		{"owned manifest", func(o *SetupOptions) { o.ClaudeAccountsPath = "/manifest" }},
+		{"digest", func(o *SetupOptions) { o.ClaudeAccountsSHA256 = "digest" }},
+		{"source manifest", func(o *SetupOptions) { o.ClaudeAccountsSource = "/source" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			o := codexSetupOptions()
+			tc.edit(&o)
+			fs := NewMemFS()
+			plan, err := PlanCodexEnrollment(o, fs, "account", time.Minute)
+			require.ErrorContains(t, err, "remove them from Codex setup")
+			assert.Empty(t, plan.Steps)
+			entry, err := fs.Lstat(o.ConfigDir)
+			require.NoError(t, err)
+			assert.Equal(t, KindMissing, entry.Kind)
+		})
+	}
+}
+
 func TestCodexEnrollmentRefusesUnboundedOrUnidentifiedSelection(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

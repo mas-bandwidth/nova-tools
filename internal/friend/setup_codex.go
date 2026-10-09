@@ -10,6 +10,9 @@ import (
 // PlanCodexSetup implements profile inspection in SPEC-CODEX-SUBSCRIPTION-SETUP.
 // Native credentials stay in one host's owned CODEX_HOME; setup never enrolls it.
 func PlanCodexSetup(o SetupOptions, fs SettingsFS) (SetupPlan, error) {
+	if hasClaudeAdmissionSelection(o) {
+		return SetupPlan{}, errors.New("Claude account manifest inputs require the exact sealed claude.ai/token-default route; remove them from Codex setup selections")
+	}
 	if fs == nil {
 		fs = OSFS{}
 	}
