@@ -531,7 +531,11 @@ func sealHas(existing []byte, name string) bool {
 }
 
 // readSealValue takes the value from stdin when asked or when stdin is not a terminal,
-// and otherwise from the controlling terminal with echo off.
+// and otherwise from the controlling terminal with echo off. A stdin value must end
+// with Enter. On a pipe, bytes after that line are the multi-line refusal. On a
+// terminal, Enter is the end: nothing further is read, so Ctrl-D is not required.
+// EOF without a newline is Ctrl-D, and that is a refusal, not a value.
+// The no-flag terminal read still accepts that EOF.
 func readSealValue(opts SealOptions) (string, error) {
 	var raw string
 	if opts.UseStdin || !opts.StdinIsTerminal {
@@ -539,11 +543,24 @@ func readSealValue(opts SealOptions) (string, error) {
 		if r == nil {
 			r = os.Stdin
 		}
-		b, err := io.ReadAll(r)
-		if err != nil {
+		br := bufio.NewReader(r)
+		line, err := br.ReadString('\n')
+		if errors.Is(err, io.EOF) && line != "" {
+			return "", fmt.Errorf("the value must end with Enter, and Ctrl-D is not a value")
+		}
+		if err != nil && !errors.Is(err, io.EOF) {
 			return "", fmt.Errorf("unable to read value from stdin: %w", err)
 		}
-		raw = string(b)
+		if err == nil && !opts.StdinIsTerminal {
+			rest, rerr := io.ReadAll(br)
+			if rerr != nil {
+				return "", fmt.Errorf("unable to read value from stdin: %w", rerr)
+			}
+			if len(rest) > 0 {
+				return "", fmt.Errorf("value is multi-line; a file-shaped secret is not an environment variable; generate it where it is used: this store holds no file-shaped secrets")
+			}
+		}
+		raw = line
 	} else {
 		s, err := readSealFromTTY()
 		if err != nil {

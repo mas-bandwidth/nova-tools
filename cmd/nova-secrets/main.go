@@ -112,7 +112,7 @@ setup: needs age-keygen and sops on PATH; run these from an empty directory firs
   git -C ./secrets push -qu origin main
 
 first value:
-  printf '%s' 'a-token-value' | nova-secrets seal --store ./secrets --as ada \
+  printf '%s\n' 'a-token-value' | nova-secrets seal --store ./secrets --as ada \
     --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops \
     --name GH_TOKEN --stdin --no-pr
 

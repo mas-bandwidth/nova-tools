@@ -159,6 +159,39 @@ func TestSealPipedValueLandsInEncryptStdinNotArgv(t *testing.T) {
 	assert.Contains(t, line, "seat=rowan", "unexpected OK line: %s", line)
 }
 
+// TestSealValueWithoutNewlineIsRefused: --stdin and a pipe take one line.
+// EOF with no newline is Ctrl-D, and that is not a value.
+func TestSealValueWithoutNewlineIsRefused(t *testing.T) {
+	t.Parallel()
+
+	const secret = "topsecret-no-newline"
+	_, err := readSealValue(SealOptions{
+		UseStdin:        true,
+		StdinIsTerminal: true,
+		Stdin:           strings.NewReader(secret),
+	})
+	require.Error(t, err, "a value with no newline must be refused")
+	assert.NotContains(t, err.Error(), secret, "the refusal must not echo the value")
+	assert.Contains(t, err.Error(), "Enter", "the refusal must say the value ends with Enter: %v", err)
+	assert.Contains(t, err.Error(), "Ctrl-D", "the refusal must say Ctrl-D is not a value: %v", err)
+}
+
+// TestSealValueWithAnotherLineIsRefused: one Enter ends the value. Bytes after
+// that line used to be dropped; they are the multi-line refusal.
+func TestSealValueWithAnotherLineIsRefused(t *testing.T) {
+	t.Parallel()
+
+	_, err := readSealValue(SealOptions{
+		UseStdin:        true,
+		StdinIsTerminal: false,
+		Stdin:           strings.NewReader("one\ntwo\n"),
+	})
+	require.Error(t, err, "a second line must be refused")
+	assert.NotContains(t, err.Error(), "one", "the refusal must not echo the value")
+	assert.NotContains(t, err.Error(), "two", "the refusal must not echo the rest")
+	assert.Contains(t, err.Error(), "multi-line", "the refusal must say multi-line: %v", err)
+}
+
 func TestSealEmptyValueRefused(t *testing.T) {
 	t.Parallel()
 

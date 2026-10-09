@@ -60,7 +60,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	// it names, seal's --stdin path, and the harness sentence on the flag.
 	assert.Contains(t, help, "setup: needs age-keygen and sops on PATH")
 	assert.Contains(t, help, "first value:")
-	assert.Contains(t, help, "printf '%s'")
+	assert.Contains(t, help, "printf '%s\\n'")
 	assert.Contains(t, help, "--stdin --no-pr")
 	assert.Contains(t, help, "the path a harness")
 
@@ -105,7 +105,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	value, args := parseFirstValue(t, line)
 	args = localizeSitting(h, args)
 	var out, errOut bytes.Buffer
-	code := run(args, strings.NewReader(value), &out, &errOut)
+	code := run(args, strings.NewReader(value+"\n"), &out, &errOut)
 	require.Equalf(t, 0, code, "the first value: line does not run: %s", errOut.String())
 	assert.Contains(t, out.String(), "SECRETS SEAL OK name=GH_TOKEN seat=ada")
 	assert.NotContains(t, out.String(), value, "the sealed value reached stdout")
@@ -250,7 +250,7 @@ func firstValueLine(t *testing.T, help string) string {
 	block, _, _ := strings.Cut(tail, "\n\n")
 	line := strings.ReplaceAll(block, "\\\n", " ")
 	line = strings.Join(strings.Fields(line), " ")
-	require.True(t, strings.HasPrefix(line, "printf '%s'"), "the first value: block does not open with printf: %q", line)
+	require.True(t, strings.HasPrefix(line, "printf '%s\\n'"), "the first value: block does not open with printf: %q", line)
 	return line
 }
 
