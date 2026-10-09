@@ -597,9 +597,8 @@ func TestEveryFriendFailureShowsWithinItsBound(t *testing.T) {
 			o.check(r.friendStatus("bob") != sprint.Up, "fr-limits-and-credits", "bob still not up a minute before the reset: the table says %s", r.friendStatus("bob"))
 			r.step(time.Until(reset))
 			r.harness.state.Store(harnessAnswering) // the credits refresh
-			// FriendStatus is down while the beat's Until is set, and that check is before session evidence.
-			_, down := r.within(2*time.Minute, func() bool { return r.friendStatus("bob") == sprint.Down && r.lastAnswer().After(reset) })
-			o.check(down, "fr-limits-and-credits", "bob down after the reset while his beat's until is set, though his session answered: the table says %s, last answer %s, reset %s", r.friendStatus("bob"), r.lastAnswer().Format(time.RFC3339), reset.Format(time.RFC3339))
+			_, woke := r.within(2*time.Minute, func() bool { return r.friendStatus("bob") == sprint.Up && r.lastAnswer().After(reset) })
+			o.check(woke, "fr-limits-and-credits", "bob woken after the reset with a nonce his session answered: the table says %s, last answer %s, reset %s", r.friendStatus("bob"), r.lastAnswer().Format(time.RFC3339), reset.Format(time.RFC3339))
 		})
 		o.settle(t)
 	})
