@@ -310,7 +310,7 @@ func (st *Store) checkTwin(ctx context.Context, snap *sprint.Snapshot, gen uint6
 // snapshot. A table that moved while it was read is a movedError.
 func (st *Store) twinView(ctx context.Context, tw *Twin, load []string, v View, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, error) {
 	shapes := v.Shapes
-	s := &sprint.Snapshot{Now: st.now(), Epoch: st.epoch, Cleared: st.cleared, Actor: st.Actor}
+	s := &sprint.Snapshot{Now: st.now(), Epoch: st.epoch, Cleared: st.cleared, Actor: st.Actor, Prefix: st.Names.Prefix}
 	for _, shape := range shapes {
 		if shape.Epoch != st.epoch {
 			return nil, errCleared

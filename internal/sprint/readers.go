@@ -455,6 +455,9 @@ func (s *Snapshot) freeReaders(pr *Card, attempt int) []string {
 // read is asked (docs/SPEC-SPRINT.md, a read asked of any unit with room at
 // or above the read tier).
 func ReadsWanted(s *Snapshot, pr *Card) int {
+	if readBranchMissingOpen(s, pr) {
+		return 0 // its branch is not on origin: the seat's judgment holds it (read_missing.go)
+	}
 	placed := readsAt(s, pr, pr.Int("attempt"))
 	live := liveReadsAt(s, pr, pr.Int("attempt"))
 	fp, fok, fbr := friendReadLive(s, pr)
