@@ -3698,9 +3698,11 @@ the script read is a read, placed and counted as one, and adds no state.
 
 The tick's ask (T2, section 14) writes its reads in small fenced steps, never in one write of
 the whole tick's plan. Each step plans the ask part on a fresh read, as every part does. It then
-writes the first five primaries of that plan that this tick has not yet written or given up
+writes the first twenty primaries of that plan that this tick has not yet written or given up
 (`store.AskBatch`), with the plan's judgments until a step has committed them. Each step makes
 at most three tries (`store.AskTries`, against the twelve of a whole step, `store.FenceTries`).
+A lost batch falls back to single-primary steps; twenty avoids repeating the full review
+read and plan after every five primaries when no writer contests the fence.
 A step that loses all three is tried again one primary at a time. A primary that loses its own
 three tries is refused alone, `its ask lost <n> tries this tick in a step of its own (another
 writer moved the fence, or the store refused the write as planned); nothing was written for it;
