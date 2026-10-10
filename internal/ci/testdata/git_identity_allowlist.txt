@@ -22,9 +22,7 @@ cmd/nova-secrets/slow_functional_test.go 2 predates the rule; route its commits 
 cmd/nova-secrets/testhelpers_test.go 1 predates the rule; route its commits through testgit.Environ
 cmd/nova-secrets/upstream_functional_test.go 1 predates the rule; route its commits through testgit.Environ
 cmd/nova-swarm/boundary_identity_test.go 2 predates the rule; route its commits through testgit.Environ
-cmd/nova-swarm/contract_cases_functional_test.go 13 predates the rule; route its commits through testgit.Environ
-cmd/nova-swarm/contract_functional_test.go 1 predates the rule; route its commits through testgit.Environ
-cmd/nova-swarm/member_functional_test.go 2 predates the rule; route its commits through testgit.Environ
+cmd/nova-swarm/contract_cases_functional_test.go 7 predates the rule; route its commits through testgit.Environ
 cmd/nova-swarm/native_stage_test.go 3 predates the rule; route its commits through testgit.Environ
 cmd/nova-swarm/nativedecide_test.go 2 predates the rule; route its commits through testgit.Environ
 cmd/nova-swarm/nativegate_test.go 2 predates the rule; route its commits through testgit.Environ
