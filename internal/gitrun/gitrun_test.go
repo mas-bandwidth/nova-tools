@@ -3,7 +3,6 @@ package gitrun_test
 import (
 	"bytes"
 	"context"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -24,7 +24,7 @@ func fakeGit(t *testing.T, body string) string {
 		t.Skip("the fake git is a shell script")
 	}
 	path := filepath.Join(t.TempDir(), "git")
-	require.NoError(t, os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o755))
+	require.NoError(t, testbin.WriteExecutable(path, []byte("#!/bin/sh\n"+body), 0o755))
 	return path
 }
 
