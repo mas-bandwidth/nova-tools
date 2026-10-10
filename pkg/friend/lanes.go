@@ -245,24 +245,25 @@ type laneResult struct {
 
 // laneSet is the daemon's lanes in one-shot mode.
 type laneSet struct {
-	lanes    []*lane
-	stopped  bool // the machine's word is STOPPED (stopStep): said once each way
-	given    map[string]bool
-	state    LaneState
-	loaded   bool
-	results  chan laneResult
-	refused  map[string]string // each job a lane was refused, and who held it, said once while it stands
-	gov      LaneGovernor      // the live cap under rate limits, the hold when out of funds (ratelimit.go)
-	pace     Pacer             // the effective width under the subscription windows (pacing.go)
-	paced    int               // the paced width at the last step
-	width    int               // the row's width at the last step
-	now      time.Time         // the last step's clock
-	marked   bool              // the hold in force is the pause marker's (a person lifts it)
-	loaded1  bool              // lanes are held to the load width
-	took     map[string]bool
-	faults   FaultWatch // the row's harness faults: the third alike within ten minutes marks her down (lane_parity.go)
-	takeAt   time.Time  // no take is asked before it: TakeRetry after a refused one (lane_take.go)
-	takeSaid string     // the last take refusal said, said once while it stands
+	lanes     []*lane
+	stopped   bool // the machine's word is STOPPED (stopStep): said once each way
+	given     map[string]bool
+	state     LaneState
+	loaded    bool
+	results   chan laneResult
+	refused   map[string]string // each job a lane was refused, and who held it, said once while it stands
+	gov       LaneGovernor      // the live cap under rate limits, the hold when out of funds (ratelimit.go)
+	pace      Pacer             // the effective width under the subscription windows (pacing.go)
+	paced     int               // the paced width at the last step
+	width     int               // the row's width at the last step
+	now       time.Time         // the last step's clock
+	marked    bool              // the hold in force is the pause marker's (a person lifts it)
+	loaded1   bool              // lanes are held to the load width
+	took      map[string]bool
+	faults    FaultWatch           // the row's harness faults: the third alike within ten minutes marks her down (lane_parity.go)
+	takeAt    map[string]time.Time // per job, no take is asked before it: TakeRetry after a refused one (lane_take.go)
+	refusedAt time.Time            // the pass whose take was refused: no other take that pass
+	takeSaid  string               // the last take refusal said, said once while it stands
 }
 
 func (s *laneSet) running() bool {
@@ -445,6 +446,9 @@ func (l *loop) laneStep(now time.Time, width int) {
 		}
 		if slices.ContainsFunc(s.lanes, func(ln *lane) bool { return ln.card != nil && ln.card.Outbox == c.Outbox }) {
 			return true
+		}
+		if now.Before(s.takeAt[id]) {
+			return true // its take was refused: asked again after TakeRetry, the next card meanwhile (lane_take.go)
 		}
 		if exists(c.Result()) || exists(c.Report()) {
 			return true // done: no lane is owed it, and none is refused it

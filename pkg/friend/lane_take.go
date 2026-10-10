@@ -32,6 +32,10 @@ import (
 // TakeRetry is how long the lanes wait after a refused take before they ask again.
 const TakeRetry = 5 * time.Second
 
+// CardTakeRetry is how long a card whose take was refused waits before its own take is asked
+// again; the other cards are asked after TakeRetry.
+const CardTakeRetry = 30 * time.Second
+
 // BatchTakeEvery is how often a batch-mode daemon asks the server to take her ready cards.
 const BatchTakeEvery = 15 * time.Second
 
@@ -63,7 +67,10 @@ func (l *loop) laneTake(lane int, c Card, now time.Time) bool {
 	if h, ok := d.heldOf(job); ok && h.Col == "working" {
 		return true // hers already on the server: resumed, no take
 	}
-	if now.Before(s.takeAt) {
+	if now.Before(s.refusedAt.Add(TakeRetry)) || now.Before(s.takeAt[job]) {
+		// after a refused take no take is asked for TakeRetry (a STOPPED machine is asked once
+		// a TakeRetry, never once a lane); the refused card itself waits CardTakeRetry, so a
+		// card refused for its own reason (its route resting) never holds back the others
 		return false
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), TakeWait)
@@ -71,7 +78,10 @@ func (l *loop) laneTake(lane int, c Card, now time.Time) bool {
 	cancel()
 	at := now.UTC().Format(time.RFC3339)
 	if err != nil {
-		s.takeAt = now.Add(TakeRetry)
+		if s.takeAt == nil {
+			s.takeAt = map[string]time.Time{}
+		}
+		s.takeAt[job], s.refusedAt = now.Add(CardTakeRetry), now
 		why := oneLine(err.Error(), 300)
 		if s.takeSaid != why { // said once while it stands, never once a lane
 			s.takeSaid = why
@@ -80,6 +90,7 @@ func (l *loop) laneTake(lane int, c Card, now time.Time) bool {
 		return false
 	}
 	s.takeSaid = ""
+	delete(s.takeAt, job)
 	d.Record(fmt.Sprintf("%s lane %d: took card %s@%d (ready -> working on her row)", at, lane, c.ID, c.Gen()))
 	return true
 }
@@ -121,8 +132,10 @@ const laneReportMark = "\nnova-friend lane "
 
 // reclaimRefused is the lanes' set-aside cards the server still has ready on her row: their
 // take or their finish was refused, so the server never counted the run. Each is held aside
-// no longer, and its REPORT.md, when the lane wrote it, is moved to REPORT.md.untaken-<unix>,
-// so a free lane takes it again; a REPORT.md the friend wrote is left, and so is the card.
+// no longer, its REPORT.md, when the lane wrote it, is moved to REPORT.md.untaken-<unix>, and
+// the ended lane mark endCard left is removed (laneHolder refuses every lane a card so marked),
+// so a free lane takes it again; a card with the friend's own REPORT.md or RESULT.md, or a live
+// lane mark, is left.
 func (l *loop) reclaimRefused(now time.Time) {
 	d, s := l.d, l.lanes
 	if !s.loaded || len(s.given) == 0 {
@@ -131,8 +144,15 @@ func (l *loop) reclaimRefused(now time.Time) {
 	at := now.UTC().Format(time.RFC3339)
 	changed := false
 	for _, h := range d.heldCards {
-		if h.Col != "ready" || !s.given[h.Job] || !validJob(h.Job) {
+		legacy := s.given[h.Card] && (h.Job == h.Card || strings.HasPrefix(h.Job, h.Card+"~"))
+		if h.Col != "ready" || !(s.given[h.Job] || legacy) || !validJob(h.Job) {
 			continue
+		}
+		if m, ok := ReadLaneMark(d.Dir, h.Job); ok && !m.Ended {
+			continue // a lane somewhere still runs it: one live lane per card
+		}
+		if exists(filepath.Join(d.Dir, "outbox", h.Job, "RESULT.md")) {
+			continue // the friend's result: never moved by the daemon
 		}
 		report := filepath.Join(d.Dir, "outbox", h.Job, "REPORT.md")
 		if raw, err := os.ReadFile(report); err == nil {
@@ -146,11 +166,17 @@ func (l *loop) reclaimRefused(now time.Time) {
 		} else if !os.IsNotExist(err) {
 			continue
 		}
-		if exists(filepath.Join(d.Dir, "outbox", h.Job, "RESULT.md")) {
+		// the ended lane mark endCard left: while it stands every lane is refused the card
+		// ("ended it", laneHolder), so it goes with the set-aside
+		if err := os.Remove(laneMarkPath(d.Dir, h.Job)); err != nil && !os.IsNotExist(err) {
+			d.Record(fmt.Sprintf("%s lanes: card %s is ready on her row and was set aside, and its ended lane mark could not be removed: %s", at, h.Card, oneLine(err.Error(), 300)))
 			continue
 		}
 		delete(s.given, h.Job)
-		s.state.GivenUp = slices.DeleteFunc(s.state.GivenUp, func(j string) bool { return j == h.Job })
+		if legacy {
+			delete(s.given, h.Card)
+		}
+		s.state.GivenUp = slices.DeleteFunc(s.state.GivenUp, func(j string) bool { return j == h.Job || (legacy && j == h.Card) })
 		changed = true
 		d.Record(fmt.Sprintf("%s lanes: card %s was set aside but is ready on her row (its take or finish was refused): held aside no longer, a free lane takes it again", at, h.Card))
 	}

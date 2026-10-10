@@ -22,6 +22,7 @@ import (
 type takeServer struct {
 	mu       sync.Mutex
 	running  bool
+	refuse   map[string]string // job -> why its take by id is refused (a route resting)
 	col      map[string]string // job -> ready | working | done
 	takes    []string
 	finishes []string
@@ -38,6 +39,9 @@ func (s *takeServer) take(_ context.Context, argv []string) error {
 	}
 	if len(argv) > 3 && strings.Contains(argv[3], "@") {
 		job := strings.Split(argv[3], "@")[0] + "~15"
+		if why := s.refuse[job]; why != "" {
+			return errors.New("take refused: REFUSED " + job + ": " + why)
+		}
 		if s.col[job] != "ready" {
 			return errors.New("take refused: REFUSED " + job + ": not in friend.bob ready (it is " + s.col[job] + ")")
 		}
@@ -137,6 +141,29 @@ func TestALaneNeverStartsACardItsTakeWasRefusedAndTakesItAgainOnALaterPass(t *te
 	})
 }
 
+// A take refused for one card's own reason (its route resting) holds back that card alone: the
+// next card is taken and run after TakeRetry, and the refused one is asked again after
+// CardTakeRetry.
+func TestARefusedTakeHoldsBackOnlyItsOwnCard(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}, {"c2", "queued"}}, []string{"c1", "c2"}, nil)
+		h := &lanesHarness{dir: dir, finish: map[string]bool{"c1": true, "c2": true}, active: map[string]int{}}
+		r, _ := laneRig(t, h, 1)
+		srv := &takeServer{running: true, col: map[string]string{"c1~15": "ready", "c2~15": "ready"}, refuse: map[string]string{"c1~15": "its route rests"}}
+		r.d.Held, r.d.Take, r.d.Finish = srv.held, srv.take, srv.finish
+		r.at[15] = func() { srv.mu.Lock(); delete(srv.refuse, "c1~15"); srv.mu.Unlock() }
+		r.run(t, 60)
+		turns, _, _ := h.got()
+		takes, cols := srv.got()
+		require.NotEmpty(t, turns, strings.Join(r.records, "\n"))
+		assert.Equal(t, "ses_1: c2", turns[0], "c2 runs while c1's take is refused")
+		assert.Contains(t, turns, "ses_1: c1", "c1 is taken again once it may be")
+		assert.Equal(t, map[string]string{"c1~15": "done", "c2~15": "done"}, cols)
+		assert.LessOrEqual(t, strings.Count(strings.Join(takes, "\n"), "c1@1"), 60/int(CardTakeRetry.Seconds())+1, "c1 asked again after CardTakeRetry: %v", takes)
+	})
+}
+
 // A card the server already has working on her row (her finish took it for her, or a lane
 // held it before a restart) is resumed with no take: the server's word, never a local guess.
 func TestACardWorkingOnHerRowRunsWithNoTake(t *testing.T) {
@@ -170,6 +197,8 @@ func TestACardSetAsideButStillReadyOnHerRowIsTakenAgain(t *testing.T) {
 			out := filepath.Join(dir, "outbox", id+"~15")
 			require.NoError(t, os.MkdirAll(out, 0o755))
 			require.NoError(t, os.WriteFile(filepath.Join(out, "REPORT.md"), []byte(report), 0o644))
+			// the ended mark endCard left: while it stands laneHolder refuses every lane the card
+			require.NoError(t, endLaneMark(dir, id+"~15", "bob lane 1 (daemon 999.1)"))
 		}
 		h := &lanesHarness{dir: dir, finish: map[string]bool{"c1": true, "c2": true}, active: map[string]int{}}
 		r, state := laneRig(t, h, 2)
@@ -187,6 +216,9 @@ func TestACardSetAsideButStillReadyOnHerRowIsTakenAgain(t *testing.T) {
 		assert.FileExists(t, filepath.Join(dir, "outbox", "c2~15", "REPORT.md"), "a report the friend wrote is never moved")
 		assert.Equal(t, []string{"c2~15"}, state.GivenUp, "c1 is held aside no longer")
 		assert.Contains(t, records, "lanes: card c1 was set aside but is ready on her row")
+		assert.NotContains(t, records, "card c1 refused", "the ended lane mark goes with the set-aside: %s", records)
+		_, marked := ReadLaneMark(dir, "c2~15")
+		assert.True(t, marked, "a card left aside keeps its mark")
 		_, cols := srv.got()
 		assert.Equal(t, "working", cols["c1~15"])
 	})
