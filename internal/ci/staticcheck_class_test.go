@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -50,6 +51,23 @@ var lintTarget = []string{"GOOS=linux", "CGO_ENABLED=0"}
 // packageLedgerOptions are the options of the two linter ledgers: counted,
 // ceiling-only, and keyed `<package directory>:<kind>`.
 var packageLedgerOptions = allowlist.Options{Ceiling: true, Counted: true, PackageKeys: true}
+
+// wholeTreeLintMu serializes the three whole-tree linter runs. Each tool is a
+// CPU-bound child that itself uses every core the leg gave the test binary;
+// started together by t.Parallel on the leg's two cores they starve one
+// another (errcheck reached 90 s and hit its deadline on a loaded bench) while
+// each finishes sooner alone. Taking a turn gives each the leg's whole budget,
+// holds every finding, assertion, check, timeout and bound as it was, and adds
+// no work (docs/SPEC-CI.md, `staticcheck`, `errcheck`, `deadcode`).
+var wholeTreeLintMu sync.Mutex
+
+// serializeLint runs f with wholeTreeLintMu held, releasing it even when f
+// fails the test: require's FailNow unwinds deferred calls.
+func serializeLint(f func()) {
+	wholeTreeLintMu.Lock()
+	defer wholeTreeLintMu.Unlock()
+	f()
+}
 
 // newPackageSiteLedger loads a package-keyed counted ledger into the shared
 // site ledger, so its findings read as the never-silent rules' do.
@@ -174,12 +192,14 @@ func staticcheckSites(t *testing.T, ctx context.Context, bin, dir string) map[st
 // (docs/SPEC-CI.md, `staticcheck`).
 func TestStaticcheckFindings(t *testing.T) {
 	t.Parallel()
-	ctx, cancel := context.WithTimeout(t.Context(), lintDeadline)
-	defer cancel()
 
 	root := repoRoot(t)
 	ledger := newPackageSiteLedger(t, staticcheckLedgerPath)
-	ledger.sites = staticcheckSites(t, ctx, buildModuleTool(t, ctx, root, staticcheckPkg), root)
+	serializeLint(func() {
+		ctx, cancel := context.WithTimeout(t.Context(), lintDeadline)
+		defer cancel()
+		ledger.sites = staticcheckSites(t, ctx, buildModuleTool(t, ctx, root, staticcheckPkg), root)
+	})
 	reportLedger(t, ledger, staticcheckRemedy)
 }
 
