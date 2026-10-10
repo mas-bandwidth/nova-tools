@@ -530,7 +530,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 			ln.tier = d.cardTier(c)
 			ln.cap = d.laneCap(ln.tier)
 			ln.capped = false
-			ln.base, ln.baseOK = l.tokens(ln.session)
+			ln.base, ln.baseOK = l.baseTokens(ln.session)
 			s.state.Started[filepath.Base(c.Outbox)] = Started{Lane: ln.n, Card: c, At: now}
 			l.saveLanes(now)
 		}
@@ -1234,7 +1234,8 @@ func (l *loop) takeBack(r LaneRules, now time.Time) {
 // TokenPollEvery is how often a running card's tokens are read for the cap.
 const TokenPollEvery = 15 * time.Second
 
-// tokens reads a session's tokens; ok is false when they cannot be read.
+// tokens reads a session's tokens; ok is false when they cannot be read (and a session in
+// no database the daemon reads is unread, never zero: TokensFromOpenCodeIn).
 func (l *loop) tokens(session string) (LaneTokens, bool) {
 	d := l.d
 	if d.Tokens == nil || session == "" {
@@ -1244,6 +1245,26 @@ func (l *loop) tokens(session string) (LaneTokens, bool) {
 	defer cancel()
 	t, err := d.Tokens(ctx, session)
 	if err != nil {
+		d.Record(l.d.Now().UTC().Format(time.RFC3339) + " tokens: " + oneLine(err.Error(), 300))
+		return LaneTokens{}, false
+	}
+	return t, true
+}
+
+// baseTokens is a session's tokens when a card begins: a session no database holds yet has
+// spent nothing (its lane writes it as the card's turn runs), so its base is zero and read.
+func (l *loop) baseTokens(session string) (LaneTokens, bool) {
+	d := l.d
+	if d.Tokens == nil || session == "" {
+		return LaneTokens{}, false
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), FinishWait)
+	defer cancel()
+	t, err := d.Tokens(ctx, session)
+	switch {
+	case errors.Is(err, ErrSessionInNoDB):
+		return LaneTokens{}, true
+	case err != nil:
 		d.Record(l.d.Now().UTC().Format(time.RFC3339) + " tokens: " + oneLine(err.Error(), 300))
 		return LaneTokens{}, false
 	}

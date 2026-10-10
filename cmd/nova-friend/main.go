@@ -1625,7 +1625,25 @@ func (w world) run(c *tool.Call) *tool.Out {
 		db := c.Str("db")
 		if w.sqlite != nil {
 			d.Tokens = func(ctx context.Context, session string) (friend.LaneTokens, error) {
-				return friend.TokensFromOpenCode(ctx, w.sqlite, db, session)
+				// a walled lane's opencode writes under the wall's HOME: the config directory
+				// as the wall names it (walledRaw), else her working directory
+				// (sandbox.LaneProfile); a batch turn under the daemon's HOME (--db)
+				dbs := []string{db}
+				if w.wall != nil {
+					home := c.Str("config-dir")
+					if home == "" {
+						if rd := rowConfigDir.Load(); rd != nil && *rd != "" {
+							home = *rd
+						} else {
+							home = w.getenv("CLAUDE_CONFIG_DIR")
+						}
+					}
+					if home == "" {
+						home = dir
+					}
+					dbs = []string{filepath.Join(home, ".local", "share", "opencode", "opencode.db"), db}
+				}
+				return friend.TokensFromOpenCodeIn(ctx, w.sqlite, dbs, session)
 			}
 		}
 		d.Route = w.route(server, c.Str("model"))
