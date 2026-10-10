@@ -179,3 +179,13 @@ The carried dashboard work now merges with the current sprint base: its doctor c
 requires a loopback page to answer, and image routes identify raster content from the
 bytes before the file extension. Tests: `TestDashboardCheck` (internal/doctor) and
 `TestDashboardServesWhatServerPyServedFromOnePoller` (internal/sprintdash).
+
+## duplicate-paths
+
+Class: internal/ci/duplicate_paths_class_test.go
+Test: TestDuplicatePathsLedgerOnlyShrinks
+
+The shrink-only ledger tracks duplicate function bodies in cmd/nova-sprint, internal/sprint, cmd/nova-friend, and internal/friend. Two functions are duplicates if their normalized bodies (identifiers renamed by first use, literals kept, comments dropped) hash to the same value and have at least 8 statements.
+
+Ledger: internal/ci/testdata/duplicate-paths-ledger.txt
+Remedy: keep one side, delete or merge the other
