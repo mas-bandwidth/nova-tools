@@ -308,7 +308,7 @@ func TestTickClosesAClaimWhoseStartFails(t *testing.T) {
 			card := Card{ID: "card", Kind: kind, Gen: 2, Epoch: 15}
 			var claim, close int
 			r := &Runner{Friend: "ada", Version: "1", Edges: Edges{
-				Show: func(context.Context, string) (Row, error) { return Row{Width: 1, RunnerVersion: "1"}, nil },
+				Show:  func(context.Context, string) (Row, error) { return Row{Width: 1, RunnerVersion: "1"}, nil },
 				Queue: func(context.Context, string) ([]Card, error) { return []Card{card}, nil },
 				Claim: func(context.Context, Card) error { claim++; return nil },
 				Start: func(context.Context, Card) (Proc, error) { return nil, errors.New("staging failed") },
@@ -350,9 +350,12 @@ func TestTickReturnsAReadWithNoReport(t *testing.T) {
 		cards: map[string]Card{card.ID: card},
 		procs: map[string]procSlot{card.ID: {proc: &fakeProc{exited: true, line: "no report", pid: 4}}},
 		Edges: Edges{
-			Queue: func(context.Context, string) ([]Card, error) { return nil, nil },
+			Queue:  func(context.Context, string) ([]Card, error) { return nil, nil },
 			Report: func(Card) (string, bool) { return "", false },
-			Finish: func(context.Context, Card, bool, string, string) error { t.Fatal("a read cannot use finish"); return nil },
+			Finish: func(context.Context, Card, bool, string, string) error {
+				t.Fatal("a read cannot use finish")
+				return nil
+			},
 			Read: func(_ context.Context, c Card, verdict, reason string) error {
 				require.Equal(t, card, c)
 				require.Equal(t, "return", verdict)

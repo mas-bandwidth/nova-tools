@@ -12,8 +12,8 @@ import (
 // docs/SPEC-RUNNER.md.
 
 const (
-	KindWork = "work"
-	KindRead = "read"
+	KindWork      = "work"
+	KindRead      = "read"
 	workHalfSlots = 2
 
 	// FaultPrefix is the report line of a lane that ended with no report.

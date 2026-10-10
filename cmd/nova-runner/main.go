@@ -75,16 +75,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 func runnerTool() *tool.Tool {
 	return &tool.Tool{
-		Name: "nova-runner",
-		What: "keep a friend at her configured width with one-shot harness lanes",
-		How: helpText,
-		Stamp: version,
+		Name:      "nova-runner",
+		What:      "keep a friend at her configured width with one-shot harness lanes",
+		How:       helpText,
+		Stamp:     version,
 		ExitTable: "0 stopped normally, 1 runner failed, 2 invalid invocation",
 		Verbs: []tool.Verb{{
-			Name: "run",
-			Usage: "run --as <friend> --dir <working-dir> --harness <command> --seat <seat> [--model-<tier> <model>]",
+			Name:    "run",
+			Usage:   "run --as <friend> --dir <working-dir> --harness <command> --seat <seat> [--model-<tier> <model>]",
 			Example: "run --as ada --dir ~/ada-working --harness opencode --seat coordinator",
-			Effect: tool.Delivery + "; claims and closes sprint cards, sends beats and harness-fault judgments",
+			Effect:  tool.Delivery + "; claims and closes sprint cards, sends beats and harness-fault judgments",
 			Flags: func(f *tool.Flags) {
 				f.Required("as", "the friend whose row this runner keeps")
 				f.Required("dir", "her working directory, where nova-friend stages jobs")
