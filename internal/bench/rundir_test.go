@@ -14,9 +14,9 @@ import (
 )
 
 type mockTransport struct {
-	lines       []string
-	shellFn     func(ctx context.Context, host, line string, stdout, stderr io.Writer) (int, error)
-	copyFn      func(ctx context.Context, host, src, dst string, withGit bool, stderr io.Writer) error
+	lines   []string
+	shellFn func(ctx context.Context, host, line string, stdout, stderr io.Writer) (int, error)
+	copyFn  func(ctx context.Context, host, src, dst string, withGit bool, stderr io.Writer) error
 }
 
 func (m *mockTransport) Shell(ctx context.Context, host, line string, stdout, stderr io.Writer) (int, error) {
@@ -120,7 +120,7 @@ func TestRunDirectoryRemovedOnOkFailingTestTimeoutAndCancel(t *testing.T) {
 
 	t.Run("on a timeout", func(t *testing.T) {
 		t.Parallel()
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
 		tr := &mockTransport{
@@ -166,6 +166,26 @@ func TestRunDirectoryRemovedOnOkFailingTestTimeoutAndCancel(t *testing.T) {
 		assert.True(t, res.Removed)
 		assert.Contains(t, tr.lines, RemoveLine(expectedDir))
 	})
+}
+
+func TestRunRejectsPathSeparatorsInKindAndID(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name     string
+		kind, id string
+	}{
+		{name: "kind", kind: "gate/../escape", id: "safe"},
+		{name: "id", kind: "gate", id: "../escape"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			o := Options{Hosts: []string{"bench1"}, Root: "/bench", Kind: tc.kind, ID: tc.id, Dir: "/repo", Argv: []string{"go", "test"}}
+			err := o.Validate()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "run "+tc.name)
+		})
+	}
 }
 
 func TestSweepRemovesOnlyRunsOlderThanBoundWithNoLiveProcess(t *testing.T) {

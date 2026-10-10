@@ -468,24 +468,47 @@ func (g *guard) pools() {
 // bench.RunAgeLimit with no live process is removed.
 func (g *guard) bench() {
 	for _, root := range g.roots {
+		candidates := make(map[string]os.DirEntry)
+		add := func(parent string) error {
+			entries, err := os.ReadDir(parent)
+			if err != nil {
+				return err
+			}
+			for _, e := range entries {
+				if e.IsDir() {
+					candidates[filepath.Join(parent, e.Name())] = e
+				}
+			}
+			return nil
+		}
 		runs := filepath.Join(root, "runs")
-		entries, err := os.ReadDir(runs)
+		err := add(runs)
+		if err != nil {
+			if os.IsNotExist(err) {
+				err = nil
+			} else {
+				g.fail(fmt.Sprintf("the runs directory %s could not be listed (%s)", oneline.Field(runs), oneline.Err(err)))
+				continue
+			}
+		}
+		rootEntries, err := os.ReadDir(root)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
-			g.fail(fmt.Sprintf("the runs directory %s could not be listed (%s)", oneline.Field(runs), oneline.Err(err)))
+			g.fail(fmt.Sprintf("the bench root %s could not be listed (%s)", oneline.Field(root), oneline.Err(err)))
 			continue
+		}
+		for _, e := range rootEntries {
+			if e.IsDir() && e.Name() != "runs" {
+				_ = add(filepath.Join(root, e.Name()))
+			}
 		}
 		list, ok := g.processes()
 		if !ok {
 			return
 		}
-		for _, e := range entries {
-			if !e.IsDir() {
-				continue
-			}
-			dir := filepath.Join(runs, e.Name())
+		for dir, e := range candidates {
 			fi, err := e.Info()
 			if err != nil {
 				continue
@@ -506,7 +529,7 @@ func (g *guard) bench() {
 				continue
 			}
 			size := treeSize(dir)
-			if err := g.unless(func() error { return safepath.RemoveUnderRoots(dir, runs) }); err != nil {
+			if err := g.unless(func() error { return safepath.RemoveUnderRoots(dir, root) }); err != nil {
 				g.fail(fmt.Sprintf("the run %s was not removed (%s)", oneline.Field(dir), oneline.Err(err)))
 				continue
 			}

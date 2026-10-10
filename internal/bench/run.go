@@ -161,7 +161,13 @@ func SweepRuns(ctx context.Context, t Transport, host, root string, bound time.D
 		// Check if a process is using dir
 		var pOut, pErr bytes.Buffer
 		pCode, pErrVal := t.Shell(ctx, host, ProcessCheckLine(dir), &pOut, &pErr)
-		if pErrVal == nil && pCode == 0 && strings.TrimSpace(pOut.String()) != "" {
+		if pErrVal != nil {
+			continue
+		}
+		if pCode == 0 && strings.TrimSpace(pOut.String()) != "" {
+			continue
+		}
+		if pCode != 1 {
 			continue
 		}
 

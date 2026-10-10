@@ -194,8 +194,16 @@ func (o *Options) Validate() error {
 	if len(o.Argv) == 0 || o.Argv[0] == "" {
 		bad = append(bad, "no command given")
 	}
-	if o.Kind != "" && o.ID == "" {
-		o.ID = fmt.Sprintf("%x", time.Now().UnixNano())
+	if o.Kind != "" {
+		if !pathRe.MatchString(o.Kind) || strings.Contains(o.Kind, "/") || strings.Contains(o.Kind, ".") {
+			bad = append(bad, "run kind must contain only letters, digits, '_' and '-'")
+		}
+		if o.ID == "" {
+			o.ID = fmt.Sprintf("%x", time.Now().UnixNano())
+		}
+		if !pathRe.MatchString(o.ID) || strings.Contains(o.ID, "/") || strings.Contains(o.ID, ".") {
+			bad = append(bad, "run id must contain only letters, digits, '_' and '-'")
+		}
 	}
 	if len(bad) > 0 {
 		return errors.New(strings.Join(bad, "; "))
