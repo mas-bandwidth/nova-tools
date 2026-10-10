@@ -2509,7 +2509,12 @@ and it is the coordinator's decision, receipted.
   tier, and the tick writes one judgment, `no route serves the tier`, per tier
   (its subject `stream:tier:<tier>`, the primaries listed), never one per
   card, closed when the tier is served (tla/DirtyTick.tla, RouteGuard; witness
-  W20). The failed-work judgment names the route and model; `card <id>` prints
+  W20). An enabled route no member up can launch (its machine row lists no such
+  harness, docs/SPEC-SWARM) is one persistent judgment of its own, subject
+  `stream:route:<name>`, naming the route, its harness and the machines up,
+  closed when a capable machine is up or the route is disabled (`routeUnserved`,
+  `internal/sprint/route_launch.go`; `TestAMemberNeverDrawsARouteWhoseHarnessItLacks`).
+  The failed-work judgment names the route and model; `card <id>` prints
   an `ATTEMPT` line per attempt (route, model, member, dealt, taken, finished,
   usage, end); `routes` prints the tiers and each route with its attempts, ok, failed,
   provider failures and mean wall, each pinned model a row of its own
@@ -3253,8 +3258,9 @@ rule is `internal/sprint/fleet_quiet.go`; the twin test is
   names it.
   The ask (`freeReaders`, `enoughReadersUp`, the level, and a returned read
   asked again in place) counts a reader only for a primary whose read tier
-  (`readTierOf`) the cell names, and never asks a reader a read outside that
-  tier. A card with fewer readers of its tier up than `ReadsNeeded` raises the
+  (`readTierOf`) the cell names and whose route the reader's machine can launch
+  (`readerServesTier`, `readerCanLaunch`; docs/SPEC-SWARM), and never asks a
+  reader a read outside that tier. A card with fewer readers of its tier up than `ReadsNeeded` raises the
   one existing judgment `fewer than two readers up` and asks nothing of a
   reader outside the tier. `where` and the reader verbs print the tiers
   (`default` when the cell is empty). The readers' level plans with the routes,
@@ -3450,8 +3456,9 @@ rule is `internal/sprint/fleet_quiet.go`; the twin test is
   (beaten by her daemon, `internal/friend` ReaderOf), brings its own model and
   serves every tier its tiers cell names, route or none; any other reader is the
   fleet's, runs the route its read draws, so it serves a tier only while an
-  enabled route of the tier is in the tier's array, and is asked no read of a
-  tier it cannot draw (`sprint.readerServesTier`,
+  enabled route of the tier is one its machine can launch (its machine row lists
+  the route's harness), and is asked no read of a
+  tier it cannot draw (`sprint.readerServesTier`, `sprint.readerCanLaunch`,
   `internal/sprint/read_route.go`). Its read of a tier no route serves is asked
   with no route, and its verdict records on the read card the `model` and
   `harness` its usage line names (`model=<provider/model> ... harness=<h>`), so
@@ -7660,3 +7667,12 @@ friend reaches that friend's inbox by the route her judgments already take: the
 push loop writes a group addressed to someone to that actor's own inbox
 directory (`pushTarget.dirOf`, `~/<actor>-working/inbox/sprint-judgments`), the
 group carrying the note's addressee (`sprint.Group.To`).
+
+### Machine harnesses and route draws
+
+Fleet sync projects each machine's `harnesses` list onto its fleet control card.
+An absent list means opencode only. Work and read draws skip array entries whose
+harness the target machine cannot launch; the route index moves past skipped
+entries. The deal skips incapable members, and the ask skips incapable fleet
+readers. A friend's reader brings its own model. The RouteIndex model checks the
+capability guard for work and read cards.

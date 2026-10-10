@@ -197,6 +197,28 @@ work card and its packet, and the member launches that program from its own PATH
 member without it refuses the launch (`staging refused`) and the sprint deals the card to
 one that has it. `native` learns the harness from the binary's name.
 
+**A member draws only routes whose harness it can launch.** A login is a machine's, and
+the machine row says which it holds: `nova-config machine set <m> --harnesses
+opencode,claude` (`opencode` alone is the default), which `nova-config apply` writes to
+`machine:<m>` with the rest of the row (docs/SPEC-CONFIG.md, machine). The rule is one set
+of pure functions in `internal/swarm/launchable.go`: `CanLaunch` (a route under harness
+`h` is launchable by a member whose machine lists `h`; a route with no harness is
+`opencode`), `Launchable` (the routes of a tier a member may draw), `Serves` and
+`MembersServing` (the members up that can launch at least one route of the tier: the deal
+and the ask skip the rest instead of dealing to them), and `Unserved` (each route no
+member up can launch, with its harness and the machines up: one judgment for the route,
+never one failure per card). On 2026-10-06 a heavy `subscription-claude` route was drawn
+by four fleet members that hold no claude login, and 73 attempts
+ended in one second `launch refused`, each a failure of the card, the member and the
+route (`TestAMemberNeverDrawsARouteWhoseHarnessItLacks`). Fleet sync carries the machine list to its fleet control card. The deal and ask
+filter target machines and route entries through `CanLaunch`; down and level
+moves keep an existing route on a capable machine. The shared reader eligibility
+(`readerServesTier`, `internal/sprint/read_route.go`) counts a fleet reader for a tier only
+while a route of it is one its machine lists, and the tick's route-level judgment
+(`TickDeal`, `internal/sprint/steps_tick.go`, `routeUnserved`) raises one persistent
+judgment per enabled route no member up can launch, naming the route and its machines,
+closed when a capable machine is up or the route is disabled.
+
 | harness | the child | the usage |
 |---|---|---|
 | `claude` | `claude -p --model <m> --output-format json --permission-mode bypassPermissions --disallowed-tools WebFetch,WebSearch -- <prompt>` | its one JSON result: `usage` (input, output, cache write, cache read), `total_cost_usd`, `modelUsage` names the model |

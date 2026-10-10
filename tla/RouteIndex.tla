@@ -48,7 +48,8 @@
 \* the place and leaves the index where it is, a read kept apart from the
 \* tier's rotation (RouteIndexAdvancesOncePerCard fails).
 \*
-\* WHAT IS NOT MODELLED. Members, widths and the tick (DirtyTick.tla); an entry
+\* Capable maps each work or read card to the routes its chosen machine can launch.
+\* WHAT IS NOT MODELLED. Member choice, widths and the tick (DirtyTick.tla); an entry
 \* that names no enabled route (the deal skips it as it skips an excluded one,
 \* and the Go test pins it); the array changed between deals (config, read once
 \* a tick); a plan's dropped unit (round.go's rewrite, the member rule's). The
@@ -56,7 +57,7 @@
 \* takes an entry does not change what the index does.
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
-CONSTANTS Tiers, Arr, Cards, TierOf, Pinned, Reads, MaxRedeals, Broken
+CONSTANTS Tiers, Arr, Cards, TierOf, Pinned, Reads, MaxRedeals, Broken, Capable
 
 VARIABLES ridx, st, route, drawn, rdl, deals, skipped, hist, last
 
@@ -69,17 +70,17 @@ At(t, i) == Arr[t][(i % Len(Arr[t])) + 1]
 
 \* The steps a deal from counter i takes, leaving out ex: one more than the
 \* entries it passes over; 1 when every entry is left out (the exclusion lapses).
-Steps(t, i, ex) ==
-  IF \A k \in 1..Len(Arr[t]) : Arr[t][k] \in ex
-  THEN 1
-  ELSE CHOOSE s \in 1..Len(Arr[t]) :
-         /\ At(t, i + s - 1) \notin ex
-         /\ \A u \in 1..(s - 1) : At(t, i + u - 1) \in ex
+Steps(t, i, ex, cap) ==
+  LET fresh == \E k \in 1..Len(Arr[t]) : Arr[t][k] \in cap \ ex
+      eligible(r) == r \in cap /\ (~fresh \/ r \notin ex)
+  IN CHOOSE s \in 1..Len(Arr[t]) :
+       /\ eligible(At(t, i + s - 1))
+       /\ \A u \in 1..(s - 1) : ~eligible(At(t, i + u - 1))
 
 \* A pick: the card, the tier, the route, what it left out, whether an entry was
 \* not left out (the exclusion held), and the entries passed over by the rule.
 Pick(c, r, ex, by) == [c |-> c, t |-> TierOf[c], r |-> r, ex |-> ex,
-                       fresh |-> \E k \in 1..Len(Arr[TierOf[c]]) : Arr[TierOf[c]][k] \notin ex,
+                       fresh |-> \E k \in 1..Len(Arr[TierOf[c]]) : Arr[TierOf[c]][k] \in Capable[c] \ ex,
                        sk |-> by - 1]
 
 TypeOK ==
@@ -116,6 +117,7 @@ Take(c, r, adv, by) ==
 \* The deal of a ready card that pins no model: the entry at the place, one step.
 Deal(c) ==
   /\ c \notin Pinned
+  /\ \E k \in 1..Len(Arr[TierOf[c]]) : Arr[TierOf[c]][k] \in Capable[c]
   /\ st[c] = "ready"
   /\ st' = [st EXCEPT ![c] = "dealt"]
   /\ UNCHANGED rdl
@@ -123,7 +125,9 @@ Deal(c) ==
      THEN \E k \in 1..Len(Arr[TierOf[c]]) : Take(c, Arr[TierOf[c]][k], 1, 1)
      ELSE IF Broken = "readapart" /\ c \in Reads
      THEN Take(c, At(TierOf[c], ridx[TierOf[c]]), 0, 1)
-     ELSE Take(c, At(TierOf[c], ridx[TierOf[c]]), 1, 1)
+     ELSE LET t == TierOf[c]
+              s == Steps(t, ridx[t], {}, Capable[c])
+          IN Take(c, At(t, ridx[t] + s - 1), s, s)
 
 \* A pinned card is dealt on its pin: the array and the index untouched.
 Pin(c) ==
@@ -146,9 +150,10 @@ Withdraw(c) ==
 \* moved past it and every entry skipped.
 Redeal(c) ==
   LET t == TierOf[c]
-      s == Steps(t, ridx[t], drawn[c])
+      s == Steps(t, ridx[t], drawn[c], Capable[c])
   IN
   /\ st[c] = "withdrawn"
+  /\ \E k \in 1..Len(Arr[t]) : Arr[t][k] \in Capable[c]
   /\ st' = [st EXCEPT ![c] = "dealt"]
   /\ rdl' = [rdl EXCEPT ![c] = @ + 1]
   /\ IF Broken = "noadvance"
@@ -163,6 +168,8 @@ Spec == Init /\ [][Next]_vars
 \* After N cards of a tier dealt, the index is N, and one more for every entry
 \* the rule passed over (none when no redeal left a route out): the place is
 \* N mod Len(Arr[t]).
+CapabilityRespected == \A c \in Cards \ Pinned : route[c] \in {"none"} \cup Capable[c]
+
 RouteIndexAdvancesOncePerCard == \A t \in Tiers : ridx[t] = deals[t] + skipped[t]
 
 \* Over any Len(Arr[t]) consecutive picks of a tier that passed over no entry,

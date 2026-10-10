@@ -100,10 +100,11 @@ type syncReport struct {
 	Holding []string `json:"holding"`
 	// Waiting is a line for each machine with the default width whose cores no
 	// beat has reported: not a member until one does.
-	Waiting []string `json:"waiting"`
-	Moved   []string `json:"moved"`
-	Refused []string `json:"refused"`
-	Error   string   `json:"error,omitempty"`
+	Waiting   []string `json:"waiting"`
+	Moved     []string `json:"moved"`
+	Refused   []string `json:"refused"`
+	Harnesses []string `json:"harnesses,omitempty"`
+	Error     string   `json:"error,omitempty"`
 }
 
 type syncDrift struct {
@@ -167,8 +168,10 @@ func (a *app) cmdFleetSync(args []string, stdout, stderr io.Writer) int {
 	var want []sprint.SyncMember
 	var machines, names []string
 	waiting := []string{}
+	harnesses := map[string]string{}
 	for _, w := range ws {
 		machines = append(machines, w.Machine)
+		harnesses[w.Machine] = strings.Join(config.HarnessesOf(w.Harnesses), ",")
 		width := w.Width
 		if w.Default {
 			if width = sprint.WidthOfCores(beats[w.Machine].Cores); width == 0 {
@@ -218,6 +221,7 @@ func (a *app) cmdFleetSync(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	drift := sprint.FleetDrift(snap, want, machines)
+	hd := sprint.HarnessDrift(snap, harnesses)
 	held := sprint.HeldInInventory(snap, want)
 	if held == nil {
 		held = []string{}
@@ -226,7 +230,7 @@ func (a *app) cmdFleetSync(args []string, stdout, stderr io.Writer) int {
 	if holding == nil {
 		holding = []string{}
 	}
-	rep := syncReport{Verb: name, Check: *check, Members: len(want), Drift: []syncDrift{}, Held: held, Holding: holding, Waiting: waiting, Moved: []string{}, Refused: []string{}}
+	rep := syncReport{Verb: name, Check: *check, Members: len(want), Drift: []syncDrift{}, Held: held, Holding: holding, Waiting: waiting, Harnesses: hd, Moved: []string{}, Refused: []string{}}
 	for _, m := range rejoined {
 		rep.Moved = append(rep.Moved, m+" placed again: its machine row is back")
 		if !c.json {
@@ -239,7 +243,7 @@ func (a *app) cmdFleetSync(args []string, stdout, stderr io.Writer) int {
 	if *check {
 		return a.syncCheck(c.json, rep, drift, stdout)
 	}
-	if len(drift) == 0 {
+	if len(drift) == 0 && len(hd) == 0 {
 		// the beat records a cleanup cut short still owes, whose rows are gone
 		if err := st.FinishDrops(ctx); err != nil {
 			fmt.Fprintf(stderr, "%s %s: the fleet table matches the inventory; deleting the beat records of members removed before: %s\n", prog, name, oneline.WithRemedy(oneline.Escape(err.Error()), prog+" "+name))
@@ -247,7 +251,7 @@ func (a *app) cmdFleetSync(args []string, stdout, stderr io.Writer) int {
 		}
 		return a.syncNothing(c.json, rep, stdout)
 	}
-	step := store.FleetStep(sprint.FleetReq{Op: "sync", Sync: want, Machines: machines, Who: c.actor})
+	step := store.FleetStep(sprint.FleetReq{Op: "sync", Sync: want, Machines: machines, Harnesses: harnesses, Who: c.actor})
 	if c.json {
 		return a.syncWriteJSON(ctx, c, st, step, rep, want, machines, stdout)
 	}
@@ -305,7 +309,7 @@ func nothingChanged(err error) string {
 // 2 when there is.
 func (a *app) syncCheck(asJSON bool, rep syncReport, drift []sprint.Drift, stdout io.Writer) int {
 	code := 0
-	if len(drift) > 0 {
+	if len(drift)+len(rep.Harnesses) > 0 {
 		code = exitDrift
 	}
 	if asJSON {
@@ -316,17 +320,20 @@ func (a *app) syncCheck(asJSON bool, rep syncReport, drift []sprint.Drift, stdou
 	for _, d := range drift {
 		fmt.Fprintf(stdout, "DRIFT %s %s\n", d.Kind, oneline.Escape(d.Line()))
 	}
+	for _, h := range rep.Harnesses {
+		fmt.Fprintf(stdout, "DRIFT harnesses %s\n", oneline.Escape(h))
+	}
 	for _, m := range rep.Held {
 		fmt.Fprintf(stdout, "NOTE %s is held by the coordinator and stays held; run: nova-sprint fleet up %s\n", oneline.Escape(m), oneline.Escape(m))
 	}
 	for _, l := range rep.Holding {
 		fmt.Fprintf(stdout, "NOTE %s\n", oneline.Escape(l))
 	}
-	if len(drift) == 0 {
+	if len(drift)+len(rep.Harnesses) == 0 {
 		fmt.Fprintf(stdout, "FLEET-SYNC CHECK OK drift=0 members=%d: the fleet table matches the inventory\n", rep.Members)
 		return 0
 	}
-	fmt.Fprintf(stdout, "FLEET-SYNC CHECK DRIFT drift=%d members=%d: run: nova-sprint fleet sync\n", len(drift), rep.Members)
+	fmt.Fprintf(stdout, "FLEET-SYNC CHECK DRIFT drift=%d members=%d: run: nova-sprint fleet sync\n", len(drift)+len(rep.Harnesses), rep.Members)
 	return code
 }
 

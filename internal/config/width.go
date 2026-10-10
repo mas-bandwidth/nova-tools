@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 // A machine's width is the most work cards the sprint's member on the machine
@@ -29,7 +30,8 @@ import (
 
 // MachineWidth is one machine row's width.
 type MachineWidth struct {
-	Machine string
+	Machine   string
+	Harnesses string
 	// Width is the row's width field; 0 when Default.
 	Width int
 	// Default says the row has no width: the default, resolved from the cores.
@@ -49,7 +51,7 @@ func Widths(ctx context.Context, st Store) ([]MachineWidth, error) {
 	}
 	out := make([]MachineWidth, 0, len(machines))
 	for _, m := range machines {
-		out = append(out, MachineWidth{Machine: m.Name, Width: m.Int("width"), Default: m.Fields["width"] == ""})
+		out = append(out, MachineWidth{Machine: m.Name, Width: m.Int("width"), Default: m.Fields["width"] == "", Harnesses: strings.Join(HarnessesOf(m.Fields["harnesses"]), ",")})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Machine < out[j].Machine })
 	return out, nil

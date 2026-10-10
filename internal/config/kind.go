@@ -467,6 +467,7 @@ var Kinds = []*Kind{
 			{Name: "runners", Type: TypeInt, Help: "how many CI runners it hosts; 0 (the default) hosts none"},
 			{Name: "width", Type: TypeInt, Nullable: true, Clear: "default", Help: "the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; set apart from --slots, never derived from it; unset (the default, or --width default) is half the machine's cores as its beat reports them, which fleet sync resolves; 0 is no member, dealt no work"},
 			{Name: "tla", Type: TypeBool, Help: "a TLC record machine: the tools play installs the pinned TLC jar on it and tlacheck run --bench any picks among them; false (the default) is none"},
+			{Name: "harnesses", Type: TypeList, Enum: harness.Kinds, Default: harness.OpenCode, Help: "the harnesses the sprint's member on it can launch: comma list of " + strings.Join(harness.Kinds, ", ") + "; opencode (the default) only, and a headless harness (" + strings.Join(harness.Headless, ", ") + ") only where its subscription login is on the machine; the rule of which routes its member can draw reads it (internal/swarm CanLaunch), so a machine with no claude login lists no claude"},
 			noteField("why the machine is as it is: a hold, a rest, the load that was measured"),
 		},
 	},
