@@ -434,7 +434,7 @@ func (s *Server) SnapshotOf(release string) []byte {
 	snap.Build, snap.Stale, snap.MinInterval = build, s.fresh.alarmed, s.Every.Seconds()
 	if len(snap.Data) > 0 {
 		v := viewOf(snap.Data, release)
-		v.Data = fixView(v.Data)
+		v.Data = fixView(reviewSplit(v.Data))
 		snap.Data, snap.Release, snap.Current, snap.Releases, snap.ReleaseStreams = v.Data, v.Release, v.Current, v.Releases, v.Streams
 	}
 	b, err := json.Marshal(snap)

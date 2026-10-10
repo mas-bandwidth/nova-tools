@@ -29,7 +29,7 @@ const (
 )
 
 // AlarmTypes is the backlog alarms' judgment types, in the order the tick checks them.
-var AlarmTypes = []string{NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet}
+var AlarmTypes = []string{NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NAlarmDefect}
 
 // alarmProps is each alarm's property, the flag that sets it and what its value wants.
 var alarmProps = []struct{ typ, prop, flag, wants string }{
@@ -37,6 +37,7 @@ var alarmProps = []struct{ typ, prop, flag, wants string }{
 	{NAlarmMerging, PropAlarmMerging, "--alarm-merging", "a whole number of primaries, 0 or more"},
 	{NAlarmFleet, PropAlarmFleet, "--alarm-fleet", "a percent of the up members' width, 1 to 100"},
 	{NAlarmReady, PropAlarmReady, "--alarm-ready", "on"},
+	{NAlarmDefect, PropAlarmDefect, "--alarm-defect", "a whole number of primaries, 0 or more"},
 }
 
 // alarmValid says a value is one the alarm's property takes: its threshold, or off.
@@ -55,8 +56,12 @@ func alarmValid(prop, v string) bool {
 }
 
 // alarmSetting is an alarm's threshold as the work table's property holds it, ok false
-// when it is off (no property, off, or a value it does not take).
+// when it is off (no property, off, or a value it does not take). The defect alarm is on by
+// default (columns.go, defectAlarmSetting), so it reads its own.
 func (s *Snapshot) alarmSetting(prop string) (int, bool) {
+	if prop == PropAlarmDefect {
+		return defectAlarmSetting(s)
+	}
 	v, ok := s.Work.Prop(prop)
 	if !ok || !alarmValid(prop, v) || v == AlarmOff {
 		return 0, false
@@ -97,6 +102,12 @@ func alarmFacts(s *Snapshot) map[string]string {
 		if width > 0 && working*100 < pct*width {
 			out[NAlarmFleet] = fmt.Sprintf("the members up work %d of their width %d, below the alarm of %d%%, with %d primaries ready or waiting; run: nova-sprint where", working, width, pct, ready+waiting)
 		}
+	}
+	// the defect alarm (columns.go, DefectAlarm): more than its threshold in defect, or any
+	// one over DefectAlarmAge, on by default; its what lists the oldest five with their
+	// reasons.
+	if what, raised := DefectAlarm(s); raised {
+		out[NAlarmDefect] = what
 	}
 	return out
 }
@@ -149,6 +160,8 @@ func alarmNow(s *Snapshot, typ string) string {
 		return fmt.Sprintf("%d primaries merging", len(s.Work.Column(Merging)))
 	case NAlarmReady:
 		return fmt.Sprintf("%d primaries ready, %d waiting", len(s.Work.Column(Ready)), len(s.Work.Column(Waiting)))
+	case NAlarmDefect:
+		return fmt.Sprintf("%d primaries in defect", len(DefectCards(s)))
 	}
 	return "the fleet works at its alarm or above, or has no work ready or waiting"
 }
