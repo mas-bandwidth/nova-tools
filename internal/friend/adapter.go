@@ -288,6 +288,21 @@ func (o *OpenCode) runVerb(args ...string) []string {
 	return append(verb, args...)
 }
 
+// listVerb is `session list --format json`, and --standalone after it when
+// CheckRun found the flag: without it opencode 2.0.25 starts its managed service
+// on a fixed port, and a listing under a lane's wall (its own HOME) exits 1
+// against the instance the daemon's HOME already holds ("Managed service port
+// ... is already in use"). The flag is `session list`'s, not `session`'s: placed
+// between them opencode answers "Unrecognized flag: --standalone in command
+// opencode session" (measured on 2.0.20 and 2.0.25), so it goes last.
+func (o *OpenCode) listVerb() []string {
+	verb := []string{"session", "list", "--format", "json"}
+	if o.Standalone {
+		verb = append(verb, "--standalone")
+	}
+	return verb
+}
+
 func (o *OpenCode) program() string {
 	if o.Program == "" {
 		return "opencode"
@@ -352,7 +367,7 @@ func (o *OpenCode) Deliver(ctx context.Context, text string) (int, error) {
 	}
 	id := o.Session
 	if id == "" {
-		listing, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"session", "list", "--format", "json"}, "")
+		listing, exit, err := o.Run(ctx, o.Dir, o.program(), o.listVerb(), "")
 		if err != nil {
 			return 0, fmt.Errorf("opencode session list: %w", err)
 		}

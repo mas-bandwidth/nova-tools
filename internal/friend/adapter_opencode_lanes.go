@@ -195,7 +195,7 @@ func (o *OpenCode) OpenSession(ctx context.Context, seed string) (string, error)
 }
 
 func (o *OpenCode) sessions(ctx context.Context) ([]session, error) {
-	listing, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"session", "list", "--format", "json"}, "")
+	listing, exit, err := o.Run(ctx, o.Dir, o.program(), o.listVerb(), "")
 	if err != nil {
 		return nil, fmt.Errorf("opencode session list: %w", err)
 	}
