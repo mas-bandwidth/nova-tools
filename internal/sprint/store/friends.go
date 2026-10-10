@@ -228,12 +228,12 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		return nil, nil, nil, err
 	}
 	want := map[string]FriendSpec{}
-	rebound := map[string]string{} // a session that was already set and changed: the old presence is not evidence
+	rebound := map[string]string{} // a session that changed (named, cleared, or named for the first time): the old presence is not evidence
 	rosterChanged := false
 	for _, s := range specs {
 		want[s.Name] = s
 		e, had := r[s.Name]
-		if had && e.Session != "" && e.Session != s.Session {
+		if had && e.Session != s.Session {
 			rebound[s.Name] = s.Session
 		}
 		switch {
@@ -462,12 +462,14 @@ func (st *Store) FriendBeatFull(ctx context.Context, friend string, rep sprint.F
 	if load != nil {
 		b.Load, b.How = *load, sprint.HowGiven
 	}
-	// A proof recorded for another session is not evidence after a rebind.
-	// An empty recorded session is a beat from before this field, and keeps
-	// its proof so a deploy does not put the fleet down.
+	// A proof recorded for a session other than the roster's is not evidence:
+	// a rebind drops it, and a record whose session is empty is a beat from
+	// before this field, so it is dropped once the roster names a session and
+	// kept only while the roster also names none (a deploy that adds the field
+	// does not put the fleet down).
 	rosterSession := r[friend].Session
 	pong, noProof, askedPrev := prev.Pong, prev.NoProof, prev.Asked
-	if prev.Session != "" && prev.Session != rosterSession {
+	if prev.Session != rosterSession {
 		pong, noProof, askedPrev = time.Time{}, "", nil
 	}
 	rec := friendBeatRecord{Beat: b, Pong: pong, NoProof: noProof, Target: gone, Session: rosterSession}
