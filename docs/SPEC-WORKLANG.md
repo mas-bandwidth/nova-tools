@@ -7,7 +7,9 @@ refuses, the three bounds it enforces and the shape of a refusal.
 The living caller is nova-work's tree file. `internal/workfile` reads it with
 `worklang.Read(file, data, limits)` and checks the shape of the records itself
 ([SPEC-WORK-V1.md](SPEC-WORK-V1.md) section 1); the reader knows nothing of the records and
-returns a `Form`. No other tool calls the package.
+returns a `Form`. The second caller is the roadmap: `internal/roadmap` reads `docs/roadmap.sexp`
+the same way and checks its records, and `tools/roadmap` renders ROADMAP.md from them. No other
+tool calls the package.
 
 ## 1. The reader
 

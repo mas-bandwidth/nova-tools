@@ -1,5 +1,9 @@
 # nova-tools changelog
 
+## v1.2.1 — unreleased
+
+- docs: ROADMAP.md returns, generated. #4855 deleted the hand-written ROADMAP.md because it was out of date, and said a roadmap is rendered from data, never written by hand. It comes back in that form: the data is docs/roadmap.sexp, read through internal/worklang into internal/roadmap; `make roadmap` (tools/roadmap) writes ROADMAP.md; and TestRoadmapIsGeneratedFromTheSexp fails when the page differs from what the data renders. It holds the work after v1.4 (the owner's release ladder, 2026-10-09: v1.2.1 small fixes, v1.3 larger fixes, v1.4 tests and cleanup, then stop), including the lessons from Prime Intellect's Prime Agent rewrite.
+
 ## v1.2.0 — 2026-10-09
 
 This build improves sprint cancellation, code reviews, agent messaging and setup.

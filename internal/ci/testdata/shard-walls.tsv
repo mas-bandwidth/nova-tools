@@ -111,6 +111,7 @@ internal/redisacl	0.2	@local	-
 internal/redisconn	0.6	@run37411066588	self-hosted
 internal/redisfn	0.3	@run37411066588	self-hosted
 internal/release	0.1	@run37411066588	self-hosted
+internal/roadmap	0.1	@local	-
 internal/safepath	0.0	@run37411066588	self-hosted
 internal/sandbox	0.3	@local	-
 internal/sandbox/darwincheck	0.2	@local	-

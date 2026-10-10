@@ -102,6 +102,7 @@ var DefaultCatalog = []Entry{
 	E("internal/redisconn", "the one way a nova tool opens its Redis connection: options from the environment, one bounded dial, trips counted, errors classified, no secret shown", "go test ./internal/redisconn", "go test ./internal/redisconn"),
 	E("internal/redisacl", "the fleet store's ACL users rendered from the function library and the key families, and compared with a store's live ACL", "go test ./internal/redisacl", "go test ./internal/redisacl"),
 	E("internal/redisfn", "build, load and check a Redis function library from embedded Lua source", "go test ./internal/redisfn", "go test ./internal/redisfn"),
+	E("internal/roadmap", "docs/roadmap.sexp decoded into typed records, and the ROADMAP.md it renders", "go test ./internal/roadmap", "make roadmap"),
 	E("internal/release", "release packaging and manifest gates", "go test ./internal/release", "go test ./internal/release"),
 	E("internal/safepath", "path sanitization and sandboxing", "go test ./internal/safepath", "go test ./internal/safepath"),
 	E("internal/sandbox", "OS isolation primitives (seatbelt/landlock)", "go test ./internal/sandbox", "go test ./internal/sandbox"),
@@ -134,7 +135,7 @@ var DefaultCatalog = []Entry{
 	E("internal/up", "nova-up's steps: the registry, the plan and apply of each step over a fake-able machine", "go test ./internal/up", "go test ./internal/up"),
 	E("internal/workfile", "nova-work tree file: the model, its canonical writer, strict reader and field-for-field diff", "go test ./internal/workfile", "go test ./internal/workfile"),
 	E("internal/workgh", "nova-work read-only GitHub issue capture over GraphQL, every call counted", "go test ./internal/workgh", "go test ./internal/workgh"),
-	E("internal/worklang", "bounded reader for nova-work's restricted s-expression tree file", "go test ./internal/worklang", "go test ./internal/worklang"),
+	E("internal/worklang", "bounded reader for the restricted s-expression files: nova-work's tree file and docs/roadmap.sexp", "go test ./internal/worklang", "go test ./internal/worklang"),
 	E("internal/yield", "CI over work: a copy, a local test run or a sprint card's native launch steps itself to nice 15 before it execs (nova-tools#4293)", "go test ./internal/yield", "go test ./internal/yield"),
 
 	// docs/
@@ -154,6 +155,7 @@ var DefaultCatalog = []Entry{
 	E("tools/benchstandard", "the Linux bench's acceptance witness: one DRIFT line per finding against the standard, STANDARD OK or STANDARD DRIFT, and --apply kills stray runner listeners and nothing else", "go test ./tools/benchstandard", "go run ./tools/benchstandard"),
 	E("tools/ci", "the verbs CI and the Makefile call: package selection and the shard deal, the test-step checks, the ancestry fetch, gofmt, the redis, postgres and sbcl installs, the lisp tier, the job aggregates, revert-on-red and the run reports; one runner for every process", "go test ./tools/ci", "go run ./tools/ci help"),
 	E("tools/clidoc", "CLI reference generator from tool help", "go test ./internal/docs", "make clidoc"),
+	E("tools/roadmap", "ROADMAP.md generator from docs/roadmap.sexp", "go test ./internal/docs", "make roadmap"),
 	E("tools/fardelay", "a store at a distance as a process: a loopback proxy that holds each write of its clients back by a fixed delay", "go test ./tools/fardelay", "go run ./tools/fardelay --target HOST:PORT --delay 64ms"),
 	E("tools/functionalrun", "the functional tier inside one container per run, and the reaper of its overdue containers", "go test ./tools/functionalrun", "make test-functional-container"),
 	E("tools/ghrelease", "the GitHub release verbs: the stamped ldflags, the build of every shipped tool per platform, the checksums over the shipped set, the stamp assertion, the certified gate and the draft-only upload", "go test ./tools/ghrelease", "go run ./tools/ghrelease help"),
