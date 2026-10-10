@@ -283,6 +283,7 @@ type Daemon struct {
 	inboxAt     time.Time // when the inbox was last reconciled
 	heldIDs     []string  // the cards on her row at it
 	heldCards   []HeldCard
+	epoch       uint64               // the sprint's epoch as her row last named it; zero before the first answer (epoch.go)
 	inboxSaid   map[string]bool      // the inbox lines the last reconcile said that are said once while they stand
 	turnEnded   func()               // a test's hook: a turn's result is on its channel (nil: none)
 	outbox      outboxState          // the outbox jobs finished, tried and noted (outbox.go)

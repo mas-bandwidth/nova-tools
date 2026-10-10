@@ -105,4 +105,11 @@
    :text "nova-friend install takes --wall-reads and writes it into the agent, and the seat play passes
     nova_friend_wall_reads to a reinstall whose plist records none, so a pinned harness whose shim
     execs a directory under the home no longer exits 126 (Operation not permitted) for every lane."
-   :origin "a one-shot friend host, 2026-10-10: every lane exit 126 after the harness pin; the wall denied reading the pinned harness directory")))
+   :origin "a one-shot friend host, 2026-10-10: every lane exit 126 after the harness pin; the wall denied reading the pinned harness directory")
+  (fix "friends-snap-to-the-new-epoch" :release "v1.2.6" :status "in-progress"
+   :title "A friend's new epoch retires her older-epoch items and starts empty"
+   :text "On the sprint's new epoch the daemon moves every older-epoch inbox and outbox item to the
+    retired folder named for its epoch, kept, never deleted, and the live folders start the new epoch
+    empty; on the same signal the lanes forget their sessions and the present is owed, so a full or
+    stale session never carries across a clear."
+   :origin "the seat ledger v1.2.4-held-2026-10-10.md friend snap, 2026-10-10: 323 inbox items and 535 outbox REPORTs of epoch 15, each refused (not on her row)")))

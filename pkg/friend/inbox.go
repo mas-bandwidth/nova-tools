@@ -59,11 +59,16 @@ type HeldCard struct {
 // job no card names is retired only when the answer covers its kind: the worker view lists
 // her work cards and none of her reads), where the answer came from, and Note, a line the
 // daemon says with it ("" for none: the server's refusal of friend cards, once a ServedEvery).
+// Epoch is the sprint's epoch as the answer said it: the highest on her row, every card on her
+// row being dealt at the sprint's current epoch, and on a view answer the view's own; zero
+// when the answer names no card and the epoch is unknown (an empty row: nothing is retired on
+// it, and the next deal names the new one).
 type Row struct {
 	Cards []HeldCard
 	Reads bool
 	From  string
 	Note  string
+	Epoch uint64
 }
 
 // The sources of a Row.
@@ -352,6 +357,21 @@ func (l *loop) inboxStep(now time.Time) {
 			}
 		}
 	}
+	// the epoch snap: every older-epoch inbox and outbox item is retired to the folder named
+	// for its epoch before the reconcile and the outbox pass read the live folders, so the new
+	// epoch starts empty and nothing older is refused again (epoch.go)
+	if row.Epoch > 0 {
+		if _, serr := SnapEpoch(d.Dir, row, keep, asked, now, record); serr != nil {
+			d.Record(fmt.Sprintf("%s inbox: the epoch's retirement stopped short: %s", now.UTC().Format(time.RFC3339), oneLine(serr.Error(), 300)))
+		}
+		if d.epoch != 0 && row.Epoch > d.epoch {
+			// the same signal: the next presence check is the present, a fresh session's
+			// greeting, and the lanes open fresh sessions (freshLanes, in the lanes' step)
+			d.Record(fmt.Sprintf("%s epoch: the sprint moved to epoch %d: the present is owed", now.UTC().Format(time.RFC3339), row.Epoch))
+			l.presentDue = true
+		}
+		d.epoch = row.Epoch
+	}
 	c, err := SyncInbox(d.Dir, row, keep, asked, now, record)
 	d.inboxSaid = said
 	d.status.InboxError = ""
@@ -456,7 +476,7 @@ func HeldVia(friend string, ask func(ctx context.Context, argv []string) (string
 			case err == nil:
 				refusedAt = time.Time{}
 				cards, err := ParseHeld(friend, out)
-				return Row{Cards: cards, Reads: true, From: FromCards}, err
+				return Row{Cards: cards, Reads: true, From: FromCards, Epoch: rowEpochOf(cards)}, err
 			case !errors.As(err, &refused):
 				return Row{}, err
 			}
@@ -478,8 +498,30 @@ func HeldVia(friend string, ask func(ctx context.Context, argv []string) (string
 			return Row{}, fmt.Errorf("friend cards is not served (card %s adds it), and the worker view did not answer: %w", ServedBy, err)
 		}
 		cards, err := ParseView(friend, out)
-		return Row{Cards: cards, From: FromView, Note: note}, err
+		return Row{Cards: cards, From: FromView, Note: note, Epoch: viewEpoch(out)}, err
 	}
+}
+
+// rowEpochOf is the sprint's epoch as a friend cards answer said it: the highest on her row
+// (every card on her row is dealt at the sprint's current epoch); zero when it names none.
+func rowEpochOf(cards []HeldCard) uint64 {
+	epoch := uint64(0)
+	for _, h := range cards {
+		if h.Epoch > epoch {
+			epoch = h.Epoch
+		}
+	}
+	return epoch
+}
+
+// viewEpoch is the sprint's epoch as the worker view's own field says it ("epoch", the
+// schema's row-level epoch the answer carries beside her cards); zero when it names none.
+func viewEpoch(out string) uint64 {
+	var v struct {
+		Epoch uint64 `json:"epoch"`
+	}
+	_ = json.Unmarshal([]byte(out), &v) // ignored: a view that names no epoch leaves it zero
+	return v.Epoch
 }
 
 // ViewWhy is why a card the worker view names has no brief written for it.
