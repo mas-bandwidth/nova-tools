@@ -614,7 +614,7 @@ func (c *SpellingChecker) CheckText(filename, text string, isMarkdown bool) ([]S
 		findings = append(findings, SpellingFinding{
 			File:        filename,
 			Line:        d.Line,
-			Column:      d.Column,
+			Column:      d.Column + 1,
 			Original:    d.Original,
 			Replacement: d.Corrected,
 		})
