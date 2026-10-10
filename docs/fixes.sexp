@@ -18,7 +18,10 @@
   (release "v1.2.6" :status "planned"
    :text "The fixes held during the split, the point-release candidates found on 2026-10-10, the owed
     tests, and the sprint store cards that are point-release work. Each is re-applied or written in
-    this repository, then cut as one release."))
+    this repository, then cut as one release.")
+  (release "v1.2.9" :status "planned"
+   :text "Release adopt verifies a partial release directory before trusting it, and stages a transfer
+    in a temporary directory it renames into place only after every artifact verifies."))
  :items
  ((fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
    :title "The sprint tools leave nova-tools"
@@ -80,4 +83,9 @@
    :text "A free lane takes its card by id and starts nothing until the take is answered OK; a refused
     take (the machine STOPPED) is asked again on a later pass, a batch daemon takes her ready cards, and
     a card set aside on a refused take or finish is taken again (tla/FriendLaneTake.tla)."
-   :origin "a friend host, 2026-10-10 20:14Z: a one-shot friend's 23 lanes ran ready cards and set them aside")))
+   :origin "a friend host, 2026-10-10 20:14Z: a one-shot friend's 23 lanes ran ready cards and set them aside")
+  (fix "update-adopt-partial-release-dir" :release "v1.2.9" :status "planned"
+   :title "Release adopt does not trust a partial release directory"
+   :text "A killed transfer leaves a partial release dir that the next adopt treats as complete. Adopt
+    verifies completeness or uses a temporary dir renamed at the end."
+   :origin "issue #1981")))
