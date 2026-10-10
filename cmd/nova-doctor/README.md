@@ -27,7 +27,7 @@ $ nova-doctor run --local --json
 
 ## Verbs
 
-The reference for its verbs is [docs/SPEC-DOCTOR.md](../../docs/SPEC-DOCTOR.md).
+The [nova-doctor section of the command reference](../../docs/CLI.md#nova-doctor) documents every verb's flags, effect and exit codes.
 
 - `run`
 - `version`

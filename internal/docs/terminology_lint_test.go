@@ -88,6 +88,9 @@ func countWord(text, word string) int {
 // scanText counts each retired word's uses in one file's text; in a glossary
 // file the text after "Replaces:" on a line is not read.
 func scanText(rel, text string, words []retiredWord) map[string]int {
+	if rel == "docs/CLI.md" {
+		text = withoutGeneratedCLIBlocks(text)
+	}
 	if glossaryFiles[rel] {
 		lines := strings.Split(text, "\n")
 		for i, l := range lines {
@@ -104,6 +107,38 @@ func scanText(rel, text string, words []retiredWord) map[string]int {
 		}
 	}
 	return found
+}
+
+// Generated CLI blocks quote the binaries' help verbatim. The terminology
+// ledger governs the hand-written documentation around them; changing a quote
+// here would make the command reference untrue to the binary.
+func withoutGeneratedCLIBlocks(text string) string {
+	var hand strings.Builder
+	for {
+		start := clidocBegin.FindStringSubmatchIndex(text)
+		if start == nil {
+			hand.WriteString(text)
+			return hand.String()
+		}
+		tool := text[start[2]:start[3]]
+		endMarker := "<!-- clidoc:end " + tool + " -->"
+		end := strings.Index(text[start[1]:], endMarker)
+		if end < 0 {
+			hand.WriteString(text)
+			return hand.String()
+		}
+		hand.WriteString(text[:start[0]])
+		text = text[start[1]+end+len(endMarker):]
+	}
+}
+
+func TestRetiredWordScanSkipsOnlyGeneratedCLIBlocks(t *testing.T) {
+	t.Parallel()
+	words := []retiredWord{{word: "asleep", replacement: "down"}}
+	doc := "asleep in prose\n<!-- clidoc:begin nova-friend -->\nasleep in help\n<!-- clidoc:end nova-friend -->\nasleep in examples"
+	assert.Equal(t, map[string]int{"asleep": 2}, scanText("docs/CLI.md", doc, words))
+	assert.Equal(t, map[string]int{"asleep": 3}, scanText("docs/OTHER.md", doc, words))
+	assert.Equal(t, map[string]int{"asleep": 2}, scanText("docs/CLI.md", "asleep <!-- clidoc:begin nova-friend --> asleep", words))
 }
 
 // loadRetired parses testdata/retired-words.txt.
