@@ -49,10 +49,6 @@
   (group "measure"
    :title "Measure and rate"
    :text "Measurements and ratings that only mean something once the code under them stops changing.")
-  (group "sprint"
-   :title "The sprint machine"
-   :text "New verbs, stages and policies for nova-sprint. Each is new capability, so none of it fits the
-    fixes-only ladder.")
   (group "friends"
    :title "Friends"
    :text "New ways for friends to connect and work.")
@@ -145,20 +141,12 @@
    :date "2026-10-09")
 
   ; The sprint machine
-  (item "policy-numbers-as-settings" :group "sprint" :area "nova-config"
+  (item "policy-numbers-as-settings" :group "ops" :area "nova-config"
    :title "Policy numbers and tool timings as settings"
    :text "Every policy number and tool timing (bounds, waits, widths, deadlines) becomes a named setting
     with its default in one place, instead of a constant in the code."
    :why "New capability."
    :cards 2
-   :date "2026-10-09")
-  (item "jev-decision-evaluation" :group "sprint" :area "nova-decide"
-   :title "Evaluating Jev's decisions"
-   :text "An evaluation harness that scores Jev's past decisions against their outcomes, a detector for
-    reads that bounced good work, a classifier for why a card is held, and the promotion of a decision
-    from shadow to acting once it measures well."
-   :why "New capability."
-   :cards 4
    :date "2026-10-09")
 
   ; Friends
@@ -389,13 +377,6 @@
    :release "after v1.4"
    :origin "cards moved out of the sprint (work record, 2026-10-04); card moved out of the sprint (work
     record, 2026-10-04)")
-  (item "promote-verb-end-to-end" :group "ops"
-   :title "A promote verb that takes the sprint base to dev end to end"
-   :text "Promoting the sprint base to dev is done by hand: cut a branch, bring dev in, resolve conflicts,
-    open the pull request. A verb does the whole path and records each step."
-   :date "2026-10-10"
-   :release "after v1.4"
-   :origin "card moved out of the sprint (work record, 2026-10-04)")
   (item "tool-cold-read-fix-steps" :group "quality"
    :title "Fix the defects found by cold reads of the tools"
    :text "Cold readers of config, fuse, memory, redis, self-talk, tokens and update found defects. Each is
@@ -568,13 +549,6 @@
    :date "2026-10-10"
    :release "v1.3"
    :origin "card moved out of the sprint (work record, 2026-10-04); issue #2171")
-  (item "coordinator-leased-shared-resources" :group "far"
-   :title "Shared resources are leased by the coordinator"
-   :text "Benches, branches, ports and accounts are claimed and released only through coordinator verbs
-    with leases, so a down holder cannot keep one."
-   :date "2026-10-10"
-   :release "after v1.4"
-   :origin "card moved out of the sprint (work record, 2026-10-04)")
   (item "config-dsn-keyword-test-fix" :group "tests"
    :title "Fix the red DSN keyword flag test in config"
    :text "The config test for a DSN keyword flag with a password fails; either the test or the resolver is
@@ -596,21 +570,6 @@
    :date "2026-10-10"
    :release "v1.4"
    :origin "cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)")
-  (item "brief-lint-honest-attribution" :group "quality"
-   :title "Brief lint refuses hiding the model or harness"
-   :text "nova-swarm lint gains a default rule that refuses a brief telling a worker to deny, hide or
-    misstate its model or harness."
-   :date "2026-10-10"
-   :release "after v1.4"
-   :origin "card moved out of the sprint (work record, 2026-10-04)")
-  (item "decide-bounce-and-hold-classifiers" :group "measure"
-   :title "Classifiers for false bounces and hold reports"
-   :text "Two decision kinds classify reader findings as harness failure, trailer-only or real, and
-    classify hold reports by cause, with a probability and the proposed paths. Both are seeded from
-    labelled past cases."
-   :date "2026-10-10"
-   :release "after v1.4"
-   :origin "cards moved out of the sprint (work record, 2026-10-04)")
   (item "bus-message-sender-authority" :group "friends"
    :title "Mark bus messages by sender authority in a friend's session"
    :text "A friend delivers a bus message as an instruction only when it comes from the coordinator seat
@@ -832,13 +791,6 @@
    :date "2026-10-10"
    :release "after v1.4"
    :origin "PR #5273")
-  (item "swarm-finish-derives-shas-and-format" :group "sprint"
-   :title "The swarm finish derives head and step shas from git and refuses an unformatted file"
-   :text "The result finish is mechanical: shas come from git, not from the model, and an unformatted Go
-    file is refused before landing."
-   :date "2026-10-10"
-   :release "v1.3"
-   :origin "PR #5276")
   (item "nova-local-provider-per-machine" :group "far"
    :title "nova-local: run local models, and local as a provider per fleet machine"
    :text "Restore nova-local built to its spec, with local as a provider per fleet machine that the sprint
@@ -860,13 +812,6 @@
    :date "2026-10-10"
    :release "v1.4"
    :origin "PR #5313")
-  (item "friend-status-counts-current-assignments" :group "friends"
-   :title "Scope friend status and pong counts to current assignments"
-   :text "Queue sync writes a versioned snapshot of the friend's current Ready and Working row so counts
-    do not include old records."
-   :date "2026-10-10"
-   :release "v1.3"
-   :origin "PR #5486")
   (item "loop-log-rotation" :group "ops"
    :title "Loop logs rotate by size and age"
    :text "Member and reader logs grow without bound today. A rule in the logs spec and the loop
@@ -938,14 +883,6 @@
    :date "2026-10-10"
    :release "v1.3"
    :origin "issue #1582")
-  (item "swarm-lint-card-validation" :group "quality"
-   :title "nova-swarm lint card validation closes its escapes"
-   :text "Drive letter paths, more than eight globs, comma only paths, unknown kinds, and no test on gated
-    kinds pass lint. The card header shape and the worker card practice agree so a spec shaped card
-    is admitted."
-   :date "2026-10-10"
-   :release "v1.3"
-   :origin "issue #1853; issue #1728; issue #2584; issue #2605; issue #2728")
   (item "swarm-native-capture-spoofing" :group "ops"
    :title "A card cannot spoof the native result or the idle watch"
    :text "A card can rewrite the harness capture file to turn a denial into an OK, and write files the
@@ -1002,13 +939,6 @@
    :date "2026-10-10"
    :release "v1.3"
    :origin "issue #199")
-  (item "swarm-lint-card-false-refusals" :group "ops"
-   :title "Card lint refuses valid cards: make gates and text inside fenced blocks"
-   :text "Card lint rejects make-driven gates and flags parent paths or absolute paths quoted inside
-    fenced blocks. It should accept both."
-   :date "2026-10-10"
-   :release "v1.3"
-   :origin "issue #1994; issue #2302; issue #3470")
   (item "swarm-provider-error-classify-requeue" :group "friends"
    :title "Classify provider errors and re-queue on another route"
    :text "A provider server error ends a card with no result after in-place retries. The verdict names
@@ -1058,13 +988,6 @@
    :date "2026-10-10"
    :release "v1.4"
    :origin "issue #2024; issue #2025; issue #2026")
-  (item "review-guard-check-verb" :group "tests"
-   :title "A mechanical guard check as a review verb"
-   :text "The unguarded verdict came from a model and was wrong about a third of the time. A verb reverts
-    non-test files, runs the named tests and reports mechanically."
-   :date "2026-10-10"
-   :release "after v1.4"
-   :origin "issue #2042")
   (item "harvest-refuse-stale-base" :group "ops"
    :title "Harvest refuses a returned branch based on a stale head"
    :text "A returned branch based on an old head would have reverted merged work. Harvest checks the diff
@@ -1079,13 +1002,6 @@
    :date "2026-10-10"
    :release "v1.3"
    :origin "issue #2033")
-  (item "merge-approval-head-from-disposition" :group "ops"
-   :title "Approval at head is read from the disposition line"
-   :text "The review API commit id can differ from the head the reviewer read. Merge checks parse the head
-    named in the disposition and treat commit id as untrusted."
-   :date "2026-10-10"
-   :release "v1.3"
-   :origin "issue #2037")
   (item "bus-draft-no-overwrite" :group "ops"
    :title "Bus draft never overwrites a file and send refuses the template"
    :text "Draft overwrote an existing note and send accepted the untouched template, so an empty note went
@@ -1208,13 +1124,6 @@
    :date "2026-10-10"
    :release "v1.3"
    :origin "issue #2548")
-  (item "record-replication-and-restore" :group "ops"
-   :title "Replicate the sprint record to a second machine with a restore verb"
-   :text "The playbook replicates the SQLite record continuously, and a restore from the replica matches
-    the row count."
-   :date "2026-10-10"
-   :release "after v1.4"
-   :origin "issue #2555")
   (item "central-log-shipper" :group "ops"
    :title "Ship bench and loop logs to one queryable place"
    :text "Install a log shipper on every bench that sends harness, bench and loop logs to one log store,
@@ -1315,13 +1224,6 @@
    :date "2026-10-10"
    :release "after v1.4"
    :origin "issue #3161")
-  (item "merge-receipt-store-and-fetch" :group "ops"
-   :title "nova-merge stores the gate receipt and fetches it from another machine"
-   :text "The gate's receipt is stored as evidence bound to the gate run, and any machine can fetch it.
-    The pull request body line is only a quote."
-   :date "2026-10-10"
-   :release "after v1.4"
-   :origin "issue #3183")
   (item "release-adopt-per-machine-platform" :group "ops"
    :title "Release adopt picks each machine's platform from the registry"
    :text "With no platform flag, adopt sends the wrong binary to machines of another platform. It reads
@@ -1351,13 +1253,6 @@
    :date "2026-10-10"
    :release "v1.3"
    :origin "issue #3391")
-  (item "decide-review-uses-confidence" :group "measure"
-   :title "nova-decide review uses the provider confidence in its verdict"
-   :text "The review verdict passes any rounded score of eight or more whatever the confidence. Low
-    confidence lowers or flags the verdict."
-   :date "2026-10-10"
-   :release "v1.3"
-   :origin "issue #3393")
   (item "wake-serve-blind-commit-limit" :group "ops"
    :title "nova-wake serve reports blindness instead of healthy when far behind"
    :text "Serve cannot see a reader whose cursor is over the commit limit behind, yet ends with zero

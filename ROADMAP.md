@@ -21,14 +21,13 @@ Decided and in place. Recorded so the items that measure them have their startin
 ## Contents
 
 - [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (5)
-- [Measure and rate](#measure-and-rate) (10)
-- [The sprint machine](#the-sprint-machine) (3)
-- [Friends](#friends) (30)
-- [Setup, release and operations](#setup-release-and-operations) (111)
+- [Measure and rate](#measure-and-rate) (8)
+- [Friends](#friends) (29)
+- [Setup, release and operations](#setup-release-and-operations) (107)
 - [Docs, models and the repository](#docs-models-and-the-repository) (15)
-- [Far](#far) (11)
-- [Tests and test tiers](#tests-and-test-tiers) (38)
-- [Cleanup, dead code and debt](#cleanup-dead-code-and-debt) (39)
+- [Far](#far) (10)
+- [Tests and test tiers](#tests-and-test-tiers) (37)
+- [Cleanup, dead code and debt](#cleanup-dead-code-and-debt) (37)
 
 ## Lessons from Prime Agent's rewrite
 
@@ -94,14 +93,6 @@ Target: v1.3
 
 From: card moved out of the sprint (work record, 2026-10-04); issue #2171
 
-### Classifiers for false bounces and hold reports
-
-Two decision kinds classify reader findings as harness failure, trailer-only or real, and classify hold reports by cause, with a probability and the proposed paths. Both are seeded from labelled past cases.
-
-Target: after v1.4
-
-From: cards moved out of the sprint (work record, 2026-10-04)
-
 ### Pin the upstream provider per route and log it in usage rows
 
 Routes through an aggregator pin the provider order and forbid fallbacks, so the same model does not cost many times more through another door. The chosen provider is logged per usage row so cost can be traced.
@@ -109,14 +100,6 @@ Routes through an aggregator pin the provider order and forbid fallbacks, so the
 Target: after v1.4
 
 From: issue #3151
-
-### nova-decide review uses the provider confidence in its verdict
-
-The review verdict passes any rounded score of eight or more whatever the confidence. Low confidence lowers or flags the verdict.
-
-Target: v1.3
-
-From: issue #3393
 
 ### nova-tokens publishes day rows and reports cost per unit
 
@@ -149,34 +132,6 @@ Card cost is context times harness turns, because every tool call resends the co
 Target: after v1.4
 
 From: issue #855; issue #856
-
-## The sprint machine
-
-New verbs, stages and policies for nova-sprint. Each is new capability, so none of it fits the fixes-only ladder.
-
-### Policy numbers and tool timings as settings
-
-Every policy number and tool timing (bounds, waits, widths, deadlines) becomes a named setting with its default in one place, instead of a constant in the code.
-
-Why it waits: New capability.
-
-Replaces 2 open sprint cards, each mapped to `policy-numbers-as-settings`.
-
-### Evaluating Jev's decisions
-
-An evaluation harness that scores Jev's past decisions against their outcomes, a detector for reads that bounced good work, a classifier for why a card is held, and the promotion of a decision from shadow to acting once it measures well.
-
-Why it waits: New capability.
-
-Replaces 4 open sprint cards, each mapped to `jev-decision-evaluation`.
-
-### The swarm finish derives head and step shas from git and refuses an unformatted file
-
-The result finish is mechanical: shas come from git, not from the model, and an unformatted Go file is refused before landing.
-
-Target: v1.3
-
-From: PR #5276
 
 ## Friends
 
@@ -302,14 +257,6 @@ Target: after v1.4
 
 From: PR #5273
 
-### Scope friend status and pong counts to current assignments
-
-Queue sync writes a versioned snapshot of the friend's current Ready and Working row so counts do not include old records.
-
-Target: v1.3
-
-From: PR #5486
-
 ### nova-bus gives each session of one participant its own cursor
 
 Two sessions of one participant share a single cursor, so the second has no usable inbox advance or wait. A per session cursor fixes this.
@@ -426,6 +373,14 @@ From: card from the sprint store (2026-10-10)
 
 Setting machines up, installing and releasing safely, and the checks that keep a fleet honest.
 
+### Policy numbers and tool timings as settings
+
+Every policy number and tool timing (bounds, waits, widths, deadlines) becomes a named setting with its default in one place, instead of a constant in the code.
+
+Why it waits: New capability.
+
+Replaces 2 open sprint cards, each mapped to `policy-numbers-as-settings`.
+
 ### Setup planners and credential seats
 
 Union slice B: a cold setup of a new machine accepted end to end, its launchd units, its Redis stores, nova-up for the fleet, a local-only mode, and one nova root layout.
@@ -487,14 +442,6 @@ From: card moved out of the sprint (work record, 2026-10-04)
 ### A verb that runs a card or read on a remote bench machine
 
 Every card, read and coordinator run on a Linux bench uses a recipe of ssh, rsync and environment setup typed into each brief. A real verb does the sync, the run and the collection of results.
-
-Target: after v1.4
-
-From: card moved out of the sprint (work record, 2026-10-04)
-
-### A promote verb that takes the sprint base to dev end to end
-
-Promoting the sprint base to dev is done by hand: cut a branch, bring dev in, resolve conflicts, open the pull request. A verb does the whole path and records each step.
 
 Target: after v1.4
 
@@ -692,14 +639,6 @@ Target: v1.3
 
 From: issue #199
 
-### Card lint refuses valid cards: make gates and text inside fenced blocks
-
-Card lint rejects make-driven gates and flags parent paths or absolute paths quoted inside fenced blocks. It should accept both.
-
-Target: v1.3
-
-From: issue #1994; issue #2302; issue #3470
-
 ### Fleet scripts run under bash 3.2 and are linted for it
 
 Launchers run under the old macOS bash and must not use newer builtins or rely on zsh word splitting. A lint rejects them.
@@ -755,14 +694,6 @@ A machine reached extreme load and fell off the network before the guard acted. 
 Target: v1.3
 
 From: issue #2033
-
-### Approval at head is read from the disposition line
-
-The review API commit id can differ from the head the reviewer read. Merge checks parse the head named in the disposition and treat commit id as untrusted.
-
-Target: v1.3
-
-From: issue #2037
 
 ### Bus draft never overwrites a file and send refuses the template
 
@@ -835,14 +766,6 @@ Setup raises the sshd session and startup limits on macOS benches, and every lon
 Target: v1.3
 
 From: issue #2426; issue #2551; issue #2459
-
-### Replicate the sprint record to a second machine with a restore verb
-
-The playbook replicates the SQLite record continuously, and a restore from the replica matches the row count.
-
-Target: after v1.4
-
-From: issue #2555
 
 ### Ship bench and loop logs to one queryable place
 
@@ -923,14 +846,6 @@ A step that waits on a person, or a decision past its deadline, sends one push n
 Target: after v1.4
 
 From: issue #3161
-
-### nova-merge stores the gate receipt and fetches it from another machine
-
-The gate's receipt is stored as evidence bound to the gate run, and any machine can fetch it. The pull request body line is only a quote.
-
-Target: after v1.4
-
-From: issue #3183
 
 ### Release adopt picks each machine's platform from the registry
 
@@ -1448,14 +1363,6 @@ A system in which thousands of workers organize themselves: they find work, spli
 
 Why it waits: A direction, not a plan.
 
-### Shared resources are leased by the coordinator
-
-Benches, branches, ports and accounts are claimed and released only through coordinator verbs with leases, so a down holder cannot keep one.
-
-Target: after v1.4
-
-From: card moved out of the sprint (work record, 2026-10-04)
-
 ### Atomic batches across several tables and gap-refusing receipt pages
 
 One batch applies across 2 to 16 tables, and receipt pages refuse missing history. Creates over 256 cells are refused before scoring.
@@ -1708,14 +1615,6 @@ Target: v1.4
 
 From: issue #2024; issue #2025; issue #2026
 
-### A mechanical guard check as a review verb
-
-The unguarded verdict came from a model and was wrong about a third of the time. A verb reverts non-test files, runs the named tests and reports mechanically.
-
-Target: after v1.4
-
-From: issue #2042
-
 ### Fake harness hangs inside the wall; document no-wall
 
 A local fake harness hangs silently until the deadline inside the wall, and the no-wall flag is missing from help. It fails fast and help lists the flag.
@@ -1928,14 +1827,6 @@ Target: v1.4
 
 From: card moved out of the sprint (work record, 2026-10-04)
 
-### Brief lint refuses hiding the model or harness
-
-nova-swarm lint gains a default rule that refuses a brief telling a worker to deny, hide or misstate its model or harness.
-
-Target: after v1.4
-
-From: card moved out of the sprint (work record, 2026-10-04)
-
 ### Class tests for duplicate function bodies and unused verbs and flags
 
 One CI class test hashes normalised function bodies to find duplicate paths. Another finds verbs and flags no test, doc or caller uses.
@@ -2071,14 +1962,6 @@ A run that produced nothing is not reported as delivered, one line never carries
 Target: v1.3
 
 From: issue #1844; issue #1611; issue #163
-
-### nova-swarm lint card validation closes its escapes
-
-Drive letter paths, more than eight globs, comma only paths, unknown kinds, and no test on gated kinds pass lint. The card header shape and the worker card practice agree so a spec shaped card is admitted.
-
-Target: v1.3
-
-From: issue #1853; issue #1728; issue #2584; issue #2605; issue #2728
 
 ### decide events carry confidence and floor only when present
 
