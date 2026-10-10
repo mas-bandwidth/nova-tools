@@ -1,5 +1,59 @@
 # nova-tools changelog
 
+## v1.2.2 — 2026-10-10
+
+Cut from 30b0ac23173e63c35e3238d297724d9fbcc1c212.
+
+A reliability release on v1.2.1.
+
+- **The functional CI tier is green again.** It tears down a stopped machine cleanly and uses one shared build for its walks (#5542).
+- **The store reads only what each step needs.** It reads named cells instead of whole tables, caches loads, and reconciles inside the tick with a 2 s deadline. Fleet read sets are down 83% (#5543).
+- **No silent stops.** Every automatic stop is pushed to the seat while it holds. Overdue judgments escalate. A late tick is pushed at most once every 10 minutes, as one digest. The seat pill and `doctor` list live stops (#5548).
+- **`fleet hold`/`unhold` and `friend hold`/`unhold`** are aliases of `hold` (#5549).
+- **A route rests only on a provider-typed failure or the coordinator's word.** A low balance is raised as a judgment, never as a rest; a no-result is never a rest. Model: RouteRest.tla (#5546).
+- **`nova-sprint stats reset`** counts every figure from a mark and moves nothing. Model in TLA+ (#5539).
+- **Dashboard:** there is one track cell per read, so the lit cells equal the working set (#5541). The In flight subline says *verify* for review, fix and merging together (#5544).
+- **Race fixes:** a table's lazy indexes and open lines are built under its lock (#5550). `friend.Run` waits for its turns (#5551). gitrun's fake git is written under the fork lock (#5553).
+- **self-talk** scans a giant sentence in linear time (#5554).
+
+SHA256SUMS digest: 56d9184e122186e04049d1eef3ec61f0d8a8e92a7a93f526fbde4681667f36b1
+
+Adopt this release with `--expect-sums 56d9184e122186e04049d1eef3ec61f0d8a8e92a7a93f526fbde4681667f36b1`.
+
+CI waived: the owner, 2026-10-10 ~13:17Z and ~14:45Z
+CI waived checks: certification-ok=failure, ci-ok=failure, test (macos-latest, 1)=cancelled, test (macos-latest, 12)=failure, test (macos-latest, 7)=cancelled, test (macos-latest, 8)=cancelled, test (ubuntu-latest, 1)=cancelled, test (ubuntu-latest, 7)=cancelled, test (ubuntu-latest, 8)=cancelled, test-hosted (macos-latest, 1)=cancelled, test-hosted (macos-latest, 2)=cancelled, test-hosted (macos-latest, 8)=cancelled, test-hosted (ubuntu-latest, 3)=failure, test-hosted (ubuntu-latest, 6)=cancelled, tick-gate=failure
+
+Recovery journeys incomplete, gate waived: the owner 2026-10-10 live waivers for v1.2.2 only: spend readouts for non-OpenRouter providers do not exist yet (v1.3 blocker); journey evidence owed; CI waived for the certification tick gate (fails at CI load; per-tick work cap owed in v1.3, draft #5557) and two hosted-runner failures (TestWallCapsAForkBomb on GitHub's landlock ABI 7 kernel; TestDashboardServesWhatServerPyServedFromOnePoller on hosted macOS), both carded for v1.3
+
+- TestEveryFriendFailureShowsWithinItsBound/harness closed: down within 1 minute: not-run (no --journeys evidence)
+- TestEveryFriendFailureShowsWithinItsBound/session silent: down within 15 minutes of bus silence: not-run (no --journeys evidence)
+- TestEveryFriendFailureShowsWithinItsBound/usage limit: down until the reset, woken after: not-run (no --journeys evidence)
+- TestEveryFriendFailureShowsWithinItsBound/bus credential revoked: an alarm on the first failed send: not-run (no --journeys evidence)
+- TestEveryFriendFailureShowsWithinItsBound/hold: no card left on him, his cards dealt elsewhere: not-run (no --journeys evidence)
+
+Spend gate waived: the owner 2026-10-10 live waivers for v1.2.2 only: spend readouts for non-OpenRouter providers do not exist yet (v1.3 blocker); journey evidence owed; CI waived for the certification tick gate (fails at CI load; per-tick work cap owed in v1.3, draft #5557) and two hosted-runner failures (TestWallCapsAForkBomb on GitHub's landlock ABI 7 kernel; TestDashboardServesWhatServerPyServedFromOnePoller on hosted macOS), both carded for v1.3 (window 2026-10-09T00:00:00Z..2026-10-10T14:41:12Z)
+- unread: --spend-store <addr> names no sprint store, so the recorded spend cannot be read
+
+**Owed:**
+- #5540 (a presence check waits for a running batch turn) follows in v1.3, after its FriendPresence model.
+- The functional `internal/ci` package is still over the one-minute rule (65 s): card the-functional-ci-package-runs-within-a-minute (v1.3).
+- The per-tick work cap is a v1.3 blocker: card a-tick-does-bounded-work-under-the-gate.
+- #5507 (dsh one-shot cards) follows in v1.3.
+
+## v1.2.1 — 2026-10-09
+
+A fix release for v1.2.0. The fleet can beat again.
+
+- **Fleet members can report in again.** In v1.2.0, every fleet member's heartbeat was refused by the sprint server, so no member could take work. The server now accepts the heartbeat members actually send (#5527).
+- **`nova-secrets seal --stdin` stops at Enter.** Typing a value and pressing Enter is enough; you no longer need Ctrl-D. Piped input must be exactly one line ending in a newline; a value with no newline, or more than one line, is refused (#5521).
+- **`nova-sprint seat install` no longer writes a broken Redis unit.** If no seat login is recorded for the Redis address, the install refuses and writes nothing, instead of installing a unit that crash-loops on NOAUTH (#5522).
+- **Tests only:** three certification tests (#5520) and three functional fixtures (#5524) now match the rules the code already follows. No behaviour change.
+- **Docs:** clearer v1.2.0 release notes in the CHANGELOG (#5523).
+
+**CI waived** by the owner for this release (certification and some test shards were red at 002cd2c); see the v1.2.1 tag message for the list.
+
+Cut from `002cd2c94d`. Adopt with `--expect-sums 0a32e90e24d12ce31d6bdefb78caa480c2b168fedc10e522915309f20ca61d8c` (darwin-arm64); darwin-amd64 `2d2856ab…`, linux-amd64 `8a46fd0d…` (full digests in the tag).
+
 ## v1.2.0 — 2026-10-09
 
 This build improves sprint cancellation, code reviews, agent messaging and setup.
