@@ -12,9 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestReadTarCover covers readTar: the unpacking and refusal paths for various
+// TestReleaseEdgesCoverReadTar covers readTar: the unpacking and refusal paths for various
 // tar entry types and names, and directory setup errors.
-func TestReadTarCover(t *testing.T) {
+func TestReleaseEdgesCoverReadTar(t *testing.T) {
 	t.Parallel()
 
 	t.Run("skipsRootAndDir", func(t *testing.T) {
@@ -52,30 +52,25 @@ func TestReadTarCover(t *testing.T) {
 		assert.Len(t, ents, 0)
 	})
 
-	t.Run("refusesSubPath", func(t *testing.T) {
-		t.Parallel()
-		var buf bytes.Buffer
-		tw := tar.NewWriter(&buf)
-		for _, name := range []string{"sub/file", "../x", "a\\b"} {
+	for _, name := range []string{"sub/file", "../x", "a\\b"} {
+		name := name
+		t.Run("refusesPath_"+name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			tw := tar.NewWriter(&buf)
 			require.NoError(t, tw.WriteHeader(&tar.Header{Name: name, Typeflag: tar.TypeReg, Size: 0}))
-		}
-		require.NoError(t, tw.Close())
+			require.NoError(t, tw.Close())
 
-		dest := t.TempDir()
-		err := readTar(bytes.NewReader(buf.Bytes()), dest)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "a path rather than a file name")
-	})
+			err := readTar(bytes.NewReader(buf.Bytes()), t.TempDir())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "a path rather than a file name")
+		})
+	}
 
 	t.Run("refusesHeaderError", func(t *testing.T) {
 		t.Parallel()
-		var buf bytes.Buffer
-		// Write 512 bytes of non-zero garbage (tar header size)
-		garbage := make([]byte, 512)
-		for i := range garbage {
-			garbage[i] = byte(i % 256)
-		}
-		buf.Write(garbage)
+		// A tar header is 512 bytes; non-zero garbage is invalid.
+		buf := bytes.NewBuffer(bytes.Repeat([]byte{1}, 512))
 
 		dest := t.TempDir()
 		err := readTar(bytes.NewReader(buf.Bytes()), dest)
@@ -100,9 +95,9 @@ func TestReadTarCover(t *testing.T) {
 	})
 }
 
-// TestWriteTarCover covers writeTar: directory read errors, allowed filtering, and
+// TestReleaseEdgesCoverWriteTar covers writeTar: directory read errors, allowed filtering, and
 // proper file content and permissions.
-func TestWriteTarCover(t *testing.T) {
+func TestReleaseEdgesCoverWriteTar(t *testing.T) {
 	t.Parallel()
 
 	t.Run("refusesMissingDir", func(t *testing.T) {
@@ -139,6 +134,7 @@ func TestWriteTarCover(t *testing.T) {
 		tmp := t.TempDir()
 		expected := []byte("exact bytes here")
 		require.NoError(t, os.WriteFile(filepath.Join(tmp, "test"), expected, 0o755))
+		require.NoError(t, os.Chmod(filepath.Join(tmp, "test"), 0o755))
 
 		allowed := map[string]bool{"test": true}
 		var buf bytes.Buffer
@@ -153,9 +149,4 @@ func TestWriteTarCover(t *testing.T) {
 		assert.Equal(t, expected, body)
 		assert.Equal(t, os.FileMode(0o755), os.FileMode(header.Mode))
 	})
-}
-
-// TestReleaseEdgesCover covers all release edges tests for coverage measurement.
-func TestReleaseEdgesCover(t *testing.T) {
-	t.Parallel()
 }
