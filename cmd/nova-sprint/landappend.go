@@ -354,7 +354,7 @@ func resolveRunsByConfig(base, ours, theirs []byte) ([]byte, int, int, error) {
 }
 
 // renderTablesLock is the lock's body as schema.go has it now (the same text
-// internal/ci's TestSprintTablesAreLocked renders): one line per column, then the view
+// internal/sprint's TestSprintTablesAreLocked renders): one line per column, then the view
 // order, default and --all.
 func renderTablesLock() string {
 	var b strings.Builder

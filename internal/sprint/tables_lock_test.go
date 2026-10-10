@@ -1,9 +1,8 @@
-package ci
+package sprint_test
 
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,7 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// THE CLASS RULE: THE SPRINT TABLES ARE LOCKED.
+// THE CLASS RULE: THE SPRINT TABLES ARE LOCKED. (It was internal/ci's
+// sprint_tables_lock_class_test.go; it lives beside TABLES.lock, with the sprint.)
 //
 // Glenn 2026-10-01: "i never want new things unless i ask for them" / "i dislike this
 // drift from the design of nova sprint tables that is *complete and locked*." A column
@@ -66,7 +66,7 @@ func lockBody(raw string) string {
 
 func TestSprintTablesAreLocked(t *testing.T) {
 	t.Parallel()
-	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "internal", "sprint", "TABLES.lock"))
+	raw, err := os.ReadFile("TABLES.lock")
 	require.NoError(t, err, "the lock file internal/sprint/TABLES.lock is missing")
 	want, got := lockBody(string(raw)), renderTablesLock()
 	if want == got {

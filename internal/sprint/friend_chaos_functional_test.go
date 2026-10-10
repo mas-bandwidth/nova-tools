@@ -1,6 +1,6 @@
 //go:build functional
 
-package friend
+package sprint_test
 
 import (
 	"context"
@@ -17,12 +17,18 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
+	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+// Moved from internal/friend/chaos_functional_test.go (the nova-sprint split), over
+// friend's exported API. The daemon here runs without the unexported noPresent switch
+// the in-package rig set (so its present is live, as in production); on the bench the
+// suite's results were identical with and without it (the same pass, skips and OWED lines).
+//
 // The chaos suite (docs/SPEC-FRIEND.md, "Chaos"): every way a friend fails is
 // broken on purpose, and the friends table must show it within its bound and
 // her cards must go elsewhere. The owner, 2026-10-04: "If your detection that
@@ -185,7 +191,7 @@ var pongRun = regexp.MustCompile(`nova-friend pong --as bob --nonce (\S+)`)
 
 // fakeHarness is bob's harness and the session in it. Answering, a turn that
 // carries the pong line is answered as the session does (the pong recorded
-// and sent on the bus as bob); closed, every delivery is Deferred, as an
+// and sent on the bus as bob); closed, every delivery is friend.Deferred, as an
 // adapter whose app is not running answers; silent, every turn ends at exit 0
 // with nothing said; limited, every turn fails with the harness's own words
 // and the reset time, as the credits message of 2026-10-04 did.
@@ -200,7 +206,7 @@ func (h *fakeHarness) Deliver(ctx context.Context, text string) (int, error) {
 	h.turns.Add(1)
 	switch h.state.Load() {
 	case harnessClosed:
-		return 0, Deferred{Reason: "the fake harness is not running"}
+		return 0, friend.Deferred{Reason: "the fake harness is not running"}
 	case harnessSilent:
 		return 0, nil
 	case harnessLimited:
@@ -228,10 +234,10 @@ type chaosRig struct {
 	st       *store.Store
 	mem      *store.Mem
 	pongMu   sync.Mutex
-	pong     Pong
+	pong     friend.Pong
 	pongSet  bool
 	answer   time.Time // when bob's session last said anything on the bus
-	status   []Status
+	status   []friend.Status
 	nonce    int
 	cards    int
 	amyBeat  *time.Ticker // amy's machinery: one beat each FriendBeatEvery
@@ -266,7 +272,7 @@ func newChaosRig(t *testing.T) *chaosRig {
 	_, _, _, err = r.st.SetMachine(ctx, true)
 	require.NoError(t, err)
 
-	d := &Daemon{Friend: "bob", Harness: "fake", Dir: t.TempDir(), Width: 2, Store: r.bobBus, Deliver: r.harness, noPresent: true,
+	d := &friend.Daemon{Friend: "bob", Harness: "fake", Dir: t.TempDir(), Width: 2, Store: r.bobBus, Deliver: r.harness,
 		Coordinator: "coord", Now: time.Now,
 		Pause: func(ctx context.Context, d time.Duration) {
 			select {
@@ -282,12 +288,12 @@ func newChaosRig(t *testing.T) *chaosRig {
 			return err
 		},
 		Record: func(string) {},
-		Pong: func() (Pong, bool, error) {
+		Pong: func() (friend.Pong, bool, error) {
 			r.pongMu.Lock()
 			defer r.pongMu.Unlock()
 			return r.pong, r.pongSet, nil
 		},
-		Status: func(s Status) error {
+		Status: func(s friend.Status) error {
 			r.pongMu.Lock()
 			defer r.pongMu.Unlock()
 			r.status = append(r.status, s)
@@ -309,7 +315,7 @@ func newChaosRig(t *testing.T) *chaosRig {
 	require.Len(t, r.cardsOf("bob"), 2, "two of the four cards are bob's")
 	r.ping()
 	r.step(10 * time.Second)
-	require.Equal(t, Quiet, r.lastStatus().Challenge, "the session answers the first ping")
+	require.Equal(t, friend.Quiet, r.lastStatus().Challenge, "the session answers the first ping")
 	require.Positive(t, r.lastStatus().Pongs)
 	return r
 }
@@ -322,9 +328,9 @@ func newChaosRig(t *testing.T) *chaosRig {
 func (r *chaosRig) sessionPong(ctx context.Context, nonce string) {
 	now := time.Now()
 	r.pongMu.Lock()
-	r.pong, r.pongSet, r.answer = Pong{Nonce: nonce, At: now, To: "coord", Width: 2}, true, now
+	r.pong, r.pongSet, r.answer = friend.Pong{Nonce: nonce, At: now, To: "coord", Width: 2}, true, now
 	r.pongMu.Unlock()
-	_, _ = r.session.Send(ctx, bus.Message{From: "bob", To: []string{"coord"}, Subject: PongSubject, Body: PongLine(nonce, 0, 0, 2) + "\n"})
+	_, _ = r.session.Send(ctx, bus.Message{From: "bob", To: []string{"coord"}, Subject: friend.PongSubject, Body: friend.PongLine(nonce, 0, 0, 2) + "\n"})
 	r.mu.Lock()
 	err := r.answered("bob")
 	r.mu.Unlock()
@@ -348,7 +354,7 @@ func (r *chaosRig) ping() string {
 	r.nonce++
 	nonce := fmt.Sprintf("n%05d", r.nonce)
 	for _, m := range []bus.Message{
-		{From: "coord", To: []string{"bob"}, Subject: PingPrefix + nonce, Body: PingText("coord", time.Now(), nonce)},
+		{From: "coord", To: []string{"bob"}, Subject: friend.PingPrefix + nonce, Body: friend.PingText("coord", time.Now(), nonce)},
 		{From: "coord", To: []string{"bob"}, Subject: "card dealt", Body: "a card is in your inbox"},
 	} {
 		_, err := r.coord.Send(r.ctx, m)
@@ -452,11 +458,11 @@ func (r *chaosRig) cardsOf(name string) []string {
 	return out
 }
 
-func (r *chaosRig) lastStatus() Status {
+func (r *chaosRig) lastStatus() friend.Status {
 	r.pongMu.Lock()
 	defer r.pongMu.Unlock()
 	if len(r.status) == 0 {
-		return Status{}
+		return friend.Status{}
 	}
 	return r.status[len(r.status)-1]
 }
@@ -563,14 +569,14 @@ func TestEveryFriendFailureShowsWithinItsBound(t *testing.T) {
 			_, ok := r.within(bound-time.Since(silentFrom), func() bool {
 				if !time.Now().Before(next) {
 					r.ping()
-					next = time.Now().Add(Window)
+					next = time.Now().Add(friend.Window)
 				}
 				return r.friendStatus("bob") == sprint.Down
 			})
 			assert.Equal(t, silentFrom, r.lastAnswer(), "the silent session said nothing on the bus")
 			assert.Positive(t, r.harness.turns.Load(), "turns went in; the session took them and said nothing")
 			// landed: the daemon itself knows within the bound: challenged a window with no pong
-			assert.Equal(t, Deaf, r.lastStatus().Challenge, "the daemon calls the session deaf within %s of its last answer", bound)
+			assert.Equal(t, friend.Deaf, r.lastStatus().Challenge, "the daemon calls the session deaf within %s of its last answer", bound)
 			o.check(ok, "fr-session-proof-of-life, fr-status-from-evidence", "bob down within %s of his session's last bus message: after %s the table says %s, while his daemon says %s", bound, time.Since(silentFrom), r.friendStatus("bob"), r.lastStatus().Challenge)
 			r.dealtElsewhere(&o, "fr-session-proof-of-life, fr-presence-model")
 		})

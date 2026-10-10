@@ -16,7 +16,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/record"
 	"github.com/mas-bandwidth/nova-tools/internal/redisfn"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // lib is a small library: a ping file, a table file with one writer and one
@@ -129,7 +128,8 @@ func TestEveryLibraryFileHasItsRoles(t *testing.T) {
 }
 
 // The families are the owners' key shapes: a table's keys and registry, a
-// view's, and the sprint's own.
+// view's, and the sprint's own (whose keys the sprint's test holds, in
+// internal/sprint, families_test.go).
 func TestFamiliesAreTheOwnersKeys(t *testing.T) {
 	t.Parallel()
 	match := func(patterns []string, key string) bool {
@@ -140,7 +140,6 @@ func TestFamiliesAreTheOwnersKeys(t *testing.T) {
 		}
 		return false
 	}
-	names := sprint.Names{}
 	family := map[string][]string{}
 	for _, f := range Families {
 		family[f.Name] = f.Patterns
@@ -148,7 +147,6 @@ func TestFamiliesAreTheOwnersKeys(t *testing.T) {
 	for name, ks := range map[string][]string{
 		"tables":   {ntable.DefKey("work"), ntable.ChangesKey("work"), ntable.RowsKeyAt("work", 3), ntable.Registry},
 		"views":    {"view:sprint", "views"},
-		"sprint":   {names.EpochKey(), names.Key("beat:bench-a"), names.KeyAt("tick", 2)},
 		"machines": {config.MachineKey("m"), config.MachineCeilingKey("m"), config.MachinesKey},
 		"beats":    {config.BeatKey("m")},
 		"friends":  {config.FriendBeatKey("f"), config.FriendsKey, "friend:f:roles", "friend:f:desired"},

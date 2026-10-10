@@ -2,7 +2,8 @@ package release
 
 // THE RECOVERY JOURNEYS, IN FRONT OF THE TAG.
 //
-// A review of the release lane (item 5): the chaos suite (internal/friend/chaos_functional_test.go)
+// A review of the release lane (item 5): the chaos suite (internal/sprint/friend_chaos_functional_test.go:
+// friend against the sprint's store, so it lives with the sprint)
 // turns every check the landed code cannot yet meet into a named skip, so that a
 // red-by-design test does not block the merge queue -- and `go test` calls a run
 // whose subtests all skipped green. A green run was being read as proof that a
@@ -40,7 +41,7 @@ import (
 // at the release revision.
 type Journey struct {
 	// Package is the test's package, relative to the module root, such as
-	// internal/friend. A checkout without it does not ship the capability, and
+	// internal/sprint. A checkout without it does not ship the capability, and
 	// does not promise its journeys.
 	Package string
 	// Test is the test's name as the source spells it, Parent/subtest, with the
@@ -52,15 +53,16 @@ type Journey struct {
 	Optional []string
 }
 
-// PromisedJourneys are the recovery journeys a release that ships the friend
-// package promises: each way a friend fails, detected within its bound, his cards
+// PromisedJourneys are the recovery journeys a release that ships the sprint
+// package promises (the chaos suite, friend against the sprint's store, lives with
+// the sprint): each way a friend fails, detected within its bound, his cards
 // dealt elsewhere, recovered (docs/SPEC-FRIEND.md, "Chaos").
 var PromisedJourneys = []Journey{
-	{Package: "internal/friend", Test: "TestEveryFriendFailureShowsWithinItsBound/harness closed: down within 1 minute"},
-	{Package: "internal/friend", Test: "TestEveryFriendFailureShowsWithinItsBound/session silent: down within 15 minutes of bus silence"},
-	{Package: "internal/friend", Test: "TestEveryFriendFailureShowsWithinItsBound/usage limit: down until the reset, woken after"},
-	{Package: "internal/friend", Test: "TestEveryFriendFailureShowsWithinItsBound/bus credential revoked: an alarm on the first failed send"},
-	{Package: "internal/friend", Test: "TestEveryFriendFailureShowsWithinItsBound/hold: no card left on him, his cards dealt elsewhere"},
+	{Package: "internal/sprint", Test: "TestEveryFriendFailureShowsWithinItsBound/harness closed: down within 1 minute"},
+	{Package: "internal/sprint", Test: "TestEveryFriendFailureShowsWithinItsBound/session silent: down within 15 minutes of bus silence"},
+	{Package: "internal/sprint", Test: "TestEveryFriendFailureShowsWithinItsBound/usage limit: down until the reset, woken after"},
+	{Package: "internal/sprint", Test: "TestEveryFriendFailureShowsWithinItsBound/bus credential revoked: an alarm on the first failed send"},
+	{Package: "internal/sprint", Test: "TestEveryFriendFailureShowsWithinItsBound/hold: no card left on him, his cards dealt elsewhere"},
 }
 
 // EvidenceKind is what the evidence header's "evidence" field says, so a file of
@@ -73,7 +75,7 @@ const EvidenceKind = "release-journeys"
 const PlatformUnavailable = "PLATFORM UNAVAILABLE "
 
 // owedMark is how the chaos suite names a part the landed code cannot meet yet
-// (owed.check in internal/friend/chaos_functional_test.go).
+// (owed.check in internal/sprint/friend_chaos_functional_test.go).
 const owedMark = "OWED "
 
 // EvidenceHeader is the evidence file's first line. Every field is required: a
@@ -110,7 +112,7 @@ const (
 )
 
 // JourneyNote is the gate said where a person meets it.
-var JourneyNote = "cut runs the journey gate once the head is known: a checkout that ships internal/friend PROMISES its recovery journeys, and the cut refuses unless --journeys names a `go test -json` run of each, " +
+var JourneyNote = "cut runs the journey gate once the head is known: a checkout that ships internal/sprint PROMISES its recovery journeys, and the cut refuses unless --journeys names a `go test -json` run of each, " +
 	"under a first line {\"evidence\":\"" + EvidenceKind + "\",\"revision\":<the sha being tagged>,\"functions\":<v>,\"schema\":<v>,\"installed\":[{\"machine\",\"build\",\"revision\"}]}. " +
 	"Each journey is read on its own and only a pass proves it: owed, skipped, failed and not-run are incomplete, and a green parent over skipped subtests proves nothing. " +
 	"A skip saying `" + PlatformUnavailable + "<platform>` is named, and is not incomplete only for a platform the journey names as optional. " +
