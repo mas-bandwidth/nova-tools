@@ -319,8 +319,16 @@ func (m *Mem) CellIDs(_ context.Context, shapes []ntable.Table) (map[string][]st
 		for _, r := range s.Rows {
 			rows[r.Key] = true
 		}
+		// a column the shape projects as text has no cell ids, as the store's
+		// own cells read gives none (Redis.CellIDs)
+		text := map[string]bool{}
+		for _, c := range s.Columns {
+			if !c.HasSet() {
+				text[c.Name] = true
+			}
+		}
 		for id, mm := range t.members {
-			if mm.epoch == s.Epoch && mm.placed && rows[mm.row] {
+			if mm.epoch == s.Epoch && mm.placed && rows[mm.row] && !text[mm.col] {
 				out[s.Name] = append(out[s.Name], id)
 			}
 		}
