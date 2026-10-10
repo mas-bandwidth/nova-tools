@@ -674,7 +674,6 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 		if wall <= a.tickDeadline {
 			lift = 0 // the store is as fast as --tick-deadline again
 		}
-		a.serial.Unlock()
 		if a.ticked != nil {
 			a.ticked(i+1, began, why)
 		}
@@ -703,9 +702,13 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 		if err == nil && res.State == store.Running {
 			// every friend reconciled after the tick's deal, with friend reconcile's plan
 			// (friendreconcile_tick.go; docs/SPEC-SPRINT.md section 1,
-			// friend-reconcile-every-tick-r.w1)
+			// friend-reconcile-every-tick-r.w1), in the tick's own turn of the line: on
+			// 2026-10-10 each friend's pass queued behind every waiting batch, and the
+			// passes cost 12 s a tick at the median (docs/SPEC-SPRINT.md section 14,
+			// store-trips-pipelinedb-bb)
 			a.reconcileFriendsTick(ctx, st, friends, stdout)
 		}
+		a.serial.Unlock()
 		if n != 0 && i == n-1 {
 			return false
 		}

@@ -51,8 +51,9 @@ func (ft *friendTick) skip(friend, why string, stdout io.Writer) {
 	fmt.Fprintf(stdout, "FRIEND-RECONCILE SKIPPED friend=%s: %s; the run loop tries again each tick and says this once\n", friend, oneline.Escape(why))
 }
 
-// reconcileFriendsTick is the run loop's pass over every friend, after a tick. A read of the
-// store that fails is said and the pass ends: the next tick reads again.
+// reconcileFriendsTick is the run loop's pass over every friend, after a tick, in the tick's
+// turn of the line (the caller holds it). A read of the store that fails is said and the pass
+// ends: the next tick reads again.
 func (a *app) reconcileFriendsTick(ctx context.Context, st *store.Store, ft *friendTick, stdout io.Writer) {
 	names, err := st.FriendNames(ctx)
 	if err != nil {
@@ -74,9 +75,10 @@ func (a *app) reconcileFriendsTick(ctx context.Context, st *store.Store, ft *fri
 	}
 }
 
-// reconcileFriendTick is one friend's pass, holding the server's line of control as every
-// step of the server does (serve.go): her directory and account read, each card working on
-// her row settled, and her disagreement episode written when it changed.
+// reconcileFriendTick is one friend's pass, run by the run loop while it holds the server's
+// line of control for the tick (run.go), as every step of the server holds it (serve.go):
+// her directory and account read, each card working on her row settled, and her
+// disagreement episode written when it changed.
 func (a *app) reconcileFriendTick(ctx context.Context, st *store.Store, ft *friendTick, friend, dir string, stdout io.Writer) error {
 	fi, err := os.Stat(dir)
 	switch {
@@ -96,8 +98,6 @@ func (a *app) reconcileFriendTick(ctx context.Context, st *store.Store, ft *frie
 		return nil
 	}
 	delete(ft.skipped, friend)
-	a.serial.Lock()
-	defer a.serial.Unlock()
 	// the moves alone are said: a card kept, or a stray of her queue, is the same each tick
 	say := func(l string) {
 		if !strings.HasPrefix(l, "FRIEND-RECONCILE KEPT") && !strings.HasPrefix(l, "NOTE ") {
