@@ -844,40 +844,60 @@ func (l *lander) baseRefused(b landBatch, stream, why string) (bool, bool) {
 	return false, true
 }
 
-// classifyGateOutput classifies gate output: red tree for test failures, bench
-// fault for infrastructure problems. Bench faults are checked first so that a
-// test that failed because of an infrastructure problem (e.g. git exit 128) is
-// a bench fault, not a red tree. Returns (isRed, kind, firstLine).
-// Kinds: git, disk, tmp, ssh, copy (docs/SPEC-SPRINT.md section 7).
+// classifyGateOutput classifies gate output: red tree for a test's own failure,
+// bench fault for a bench's infrastructure. Bench faults are checked first so a
+// test that failed because of the bench (git exit 128, a full disk, a missing
+// toolchain, an ssh that never answered, a copy that did not finish) is a bench
+// fault, never a red tree. Returns (isRed, kind, firstLine); kind is one of
+// git|disk|tmp|ssh|copy (docs/SPEC-SPRINT.md section 7).
 func classifyGateOutput(out string) (isRed bool, kind string, what string) {
-	out = strings.TrimSpace(out)
-	if out == "" {
-		return true, "", ""
+	what = firstGateLine(out)
+	if kind = benchFaultKind(out); kind != "" {
+		return false, kind, what
 	}
-	first := strings.TrimSpace(strings.SplitN(out, "\n", 2)[0])
-	// Bench faults first: infrastructure problems are never a red tree,
-	// even when a FAIL line names the test that hit them.
-	if strings.Contains(out, "exit status 128") || strings.Contains(out, "not a git repository") {
-		return false, "git", first
+	// Any other non-zero exit is the tree's: a FAIL line names the test.
+	return true, "", what
+}
+
+// benchFaultKind is the bench fault the gate output names, "" when it names
+// none. git: exit status 128, "not a git repository". disk: ENOSPC, "disk quota
+// exceeded", "no space left". tmp: a missing go toolchain. ssh: exit status
+// 255. copy: a copy that did not finish (docs/SPEC-SPRINT.md section 7).
+func benchFaultKind(out string) string {
+	lower := strings.ToLower(out)
+	switch {
+	case strings.Contains(lower, "exit status 128"), strings.Contains(lower, "not a git repository"):
+		return "git"
+	case strings.Contains(lower, "enospc"), strings.Contains(lower, "disk quota exceeded"), strings.Contains(lower, "no space left"):
+		return "disk"
+	case strings.Contains(lower, "no such toolchain"), strings.Contains(lower, "toolchain not found"),
+		strings.Contains(lower, "executable file not found"):
+		return "tmp"
+	case strings.Contains(lower, "exit status 255"):
+		return "ssh"
+	case strings.Contains(lower, "copy incomplete"), strings.Contains(lower, "copy did not finish"):
+		return "copy"
 	}
-	if strings.Contains(out, "ENOSPC") || strings.Contains(out, "disk quota exceeded") || strings.Contains(out, "no space left") {
-		return false, "disk", first
+	return ""
+}
+
+// firstGateLine is the gate output's first non-empty line, the what= of a
+// GATE FAULT line.
+func firstGateLine(out string) string {
+	for _, l := range strings.Split(out, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			return l
+		}
 	}
-	if strings.Contains(out, "no such toolchain") || strings.Contains(out, "toolchain not found") {
-		return false, "tmp", first
-	}
-	if strings.Contains(out, "exit status 255") {
-		return false, "ssh", first
-	}
-	if strings.Contains(out, "copy incomplete") || strings.Contains(out, "did not finish") {
-		return false, "copy", first
-	}
-	// FAIL lines are red tree.
-	if strings.Contains(out, "--- FAIL:") || strings.Contains(out, "FAIL\t") {
-		return true, "", ""
-	}
-	// Default: assume red tree for any other non-zero exit.
-	return true, "", ""
+	return ""
+}
+
+// benchFaultWhy says why is a bench fault, never a red tree: a GATE FAULT the
+// ring reported, or a landing deferred after every ring member faulted. A base
+// or a stream whose gate says this is not red and nothing is blamed
+// (docs/SPEC-SPRINT.md section 7).
+func benchFaultWhy(why string) bool {
+	return strings.HasPrefix(why, "GATE FAULT") || strings.HasPrefix(why, "LAND DEFERRED")
 }
 
 // baseRecheck is each land pass's re-check of the bases that stopped streams
@@ -1652,11 +1672,8 @@ func (l *lander) gateBase(ctx context.Context, dir, stream string, cards []landC
 	if red == benchGateUnavailableWhy {
 		return nil, 0, red, "" // no cure search or red-base retry for a missing bench
 	}
-	if strings.HasPrefix(red, "LAND DEFERRED") {
-		return nil, 0, red, "" // no cure search or red-base retry for deferred bench faults
-	}
-	if strings.HasPrefix(red, "LAND DEFERRED") {
-		return nil, 0, red, "" // no cure search or red-base retry for deferred bench faults
+	if benchFaultWhy(red) {
+		return nil, 0, red, "" // a bench fault is not a red base: no cure search, no retry
 	}
 	if red == "" {
 		return nil, 0, "", ""

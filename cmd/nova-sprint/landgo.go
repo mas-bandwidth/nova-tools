@@ -258,8 +258,8 @@ func (l *lander) treeGateBase(ctx context.Context, dir, baseSha string, branch .
 	if why == benchGateUnavailableWhy {
 		return why, false // infrastructure refusal is not a red base or a retry
 	}
-	if strings.HasPrefix(why, "LAND DEFERRED") {
-		return why, false // bench faults are not a red base
+	if benchFaultWhy(why) {
+		return why, false // a bench fault (GATE FAULT, LAND DEFERRED) is not a red base
 	}
 	if why != "" {
 		base := l.base
@@ -534,8 +534,14 @@ func (l *lander) gateOn(ctx context.Context, host, dir string, runs [][]string, 
 	if errors.As(err, &refused) {
 		return "", false, refused
 	}
-	if err != nil || code == bench.NoAnswer {
+	if err != nil {
 		return "", false, nil
+	}
+	// An ssh that cannot reach the bench (or a command that exits 255) is
+	// bench.NoAnswer: a bench fault, not a red tree. Report it so ringGate records
+	// the fault and steps to the next ring slot.
+	if code == bench.NoAnswer {
+		return "GATE FAULT bench=" + host + " kind=ssh what=" + oneline.Quote(firstGateLine(out)), true, nil
 	}
 	l.ranOnBench(host, wall)
 	if code == 0 {
@@ -686,23 +692,19 @@ func (l *lander) gateBenches(ctx context.Context) (hosts []string, inLoop, remot
 			break
 		}
 	}
-	l.locks().gateMu.Lock()
-	faults := l.locks().benchFaults
 	now := l.clock()
 	for _, m := range s.UpMembers() {
 		if self != "" && strings.EqualFold(m, self) {
 			continue
 		}
-		if rec, ok := faults[m]; ok && now.Before(rec.until) {
-			continue
+		if l.a.benchFaulted(m, now) {
+			continue // under a fault bound: skipped until its time (recordBenchFault)
 		}
-		err := bench.CheckHost(m)
-		if err != nil {
+		if err := bench.CheckHost(m); err != nil {
 			continue
 		}
 		hosts = append(hosts, m)
 	}
-	l.locks().gateMu.Unlock()
 	return hosts, inLoop, remote
 }
 
@@ -959,21 +961,32 @@ func (l *lander) cureBase(ctx context.Context, dir, stream string, cards []landC
 	return i, ""
 }
 
+// markFault marks host faulted with kind for the bound: a disk, tmp or git fault is
+// recorded on the member's row (skipped by the ring until its time) and the disk-guard
+// loop on that member runs at once (nova-swarm disk-guard, the row fleet/loops.yml
+// installs). An ssh or copy fault is said but not bound: neither is the member's disk.
 func (l *lander) markFault(host, kind string) {
 	if kind != "disk" && kind != "tmp" && kind != "git" {
 		return
 	}
-	l.locks().gateMu.Lock()
-	if l.locks().benchFaults == nil {
-		l.locks().benchFaults = map[string]benchFaultRecord{}
+	if l.a == nil {
+		return // no app to record the mark for where and the dashboard
 	}
-	l.locks().benchFaults[host] = benchFaultRecord{kind: kind, until: l.clock().Add(benchFaultBound)}
-	l.locks().gateMu.Unlock()
-	go bench.Run(context.Background(), bench.Exec{}, bench.Options{
-		Hosts: []string{host},
-		Argv:  []string{"nova-swarm", "disk-guard"},
-		Now:   l.clock,
-	})
+	l.a.recordBenchFault(host, kind, l.clock())
+	// Under the host guard of a unit test nothing reaches a host: the disk-guard is
+	// the production loop's, run on the member itself.
+	if testguard.Refusing() {
+		return
+	}
+	go func() {
+		// the disk-guard writes its own run log on the member, read there.
+		// ignored: its failure is not the gate's to report
+		_, _ = bench.Run(context.Background(), bench.Exec{}, bench.Options{
+			Hosts: []string{host},
+			Argv:  []string{"nova-swarm", "disk-guard"},
+			Now:   l.clock,
+		})
+	}()
 }
 
 func (l *lander) raiseFaultJudgment(faults []string) {

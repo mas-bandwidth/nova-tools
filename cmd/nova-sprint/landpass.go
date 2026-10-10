@@ -85,16 +85,17 @@ type landShared struct {
 	treesMu sync.Mutex
 	// pruned is each clone whose stale worktrees this pass has pruned; used is each clone's
 	// streams that worked in a worktree of it this pass, for the removal of the rest.
-	pruned       map[string]bool
-	used         map[string]map[string]bool
-	benchFaults  map[string]benchFaultRecord
+	pruned map[string]bool
+	used   map[string]map[string]bool
+	// faultsRaised says this pass has already raised its one "every bench faulted"
+	// judgment: one judgment per pass, not per stream (docs/SPEC-SPRINT.md section 7).
 	faultsRaised bool
 }
 
 // locks is the pass's shared locks, made once.
 func (l *lander) locks() *landShared {
 	if l.shared == nil {
-		l.shared = &landShared{pruned: map[string]bool{}, used: map[string]map[string]bool{}, benchFaults: map[string]benchFaultRecord{}}
+		l.shared = &landShared{pruned: map[string]bool{}, used: map[string]map[string]bool{}}
 	}
 	return l.shared
 }

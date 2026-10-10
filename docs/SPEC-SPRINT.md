@@ -4190,18 +4190,23 @@ the loop ran in the clone; `+` between them when a batch's gates ran in more
 than one place) and `wall=<seconds>`, the gates' total.
 
 **Gate outcomes: red tree vs bench fault.** When a gate runs on a bench and fails,
-the finding is classified before reporting. A `FAIL` line from `go test` naming a
-test (e.g. `--- FAIL: TestName`) or a `FAIL\t` package failure is a **red tree**:
-it marks the base red and can stop a stream. Bench infrastructure problems are
-**bench faults**: `exit status 128` from git, "not a git repository", ENOSPC,
-"disk quota exceeded", "no space left", a missing go toolchain, ssh exit 255, or
-a copy that did not finish. A bench fault is reported as `GATE FAULT
-bench=<member> kind=<git|disk|tmp|ssh|copy> what=<first line>` and never
-marks the base red. On a bench fault the gate steps to the next slot of the hash
-ring (landring.go) and runs again; after every ring member has faulted the landing
-is deferred one tick with `LAND DEFERRED stream=<s> faults=<n>`. A bench that
-faulted on disk, tmp or git is marked `bench-fault <kind> until <t+15m>` on its
-fleet row and is skipped by the ring for that time. With no such bench,
+the finding is classified before it is reported (`classifyGateOutput`). A `FAIL`
+line from `go test` naming a test (e.g. `--- FAIL: TestName`) or a `FAIL\t`
+package failure is a **red tree**: only a test's own failure makes the base red,
+and it can stop a stream. Bench infrastructure problems are **bench faults**,
+never a verdict on the tree: `exit status 128` from git, "not a git repository"
+(kind `git`); ENOSPC, "disk quota exceeded", "no space left" (kind `disk`); a
+missing go toolchain (kind `tmp`); ssh exit 255 (kind `ssh`); a copy that did not
+finish (kind `copy`). A bench fault is reported as `GATE FAULT bench=<member>
+kind=<git|disk|tmp|ssh|copy> what=<first line>` and never marks the base red or
+fails a stream's head. On a bench fault the gate steps to the next slot of the
+hash ring (landring.go) and runs again; after every ring member has faulted the
+landing is deferred one tick with `LAND DEFERRED stream=<s> faults=<n>`, and one
+judgment per pass (not per stream) reaches the seat: "every bench faulted:
+<kinds>". A bench that faulted on disk, tmp or git is marked `bench-fault <kind>
+until <t+15m>` on its fleet row, shown by `where` and the dashboard, is skipped by
+the ring for that time, and the disk-guard loop on that member runs at once
+(`nova-swarm disk-guard`, the row `fleet/loops.yml` installs). With no such bench,
 the loop's gate runs in the clone; a `land` command on its own (a hand land,
 the install walkthrough) runs it there as before and its line carries no
 bench. The ledgers' update runs stay in the clone.

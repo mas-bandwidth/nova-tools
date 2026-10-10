@@ -174,10 +174,53 @@ type landBeat struct {
 	gateBench func(ctx context.Context, host, dir string, runs [][]string, withGit bool) (string, int, error)
 	landMore  []string
 	flight    *landFlight
+	// benchFaults is each bench under a fault bound (benchFaultRecord): it is skipped
+	// by the gate's ring until its time, and its row carries the mark (where and the
+	// dashboard show it). It outlives a land pass, so a bench that faulted on disk,
+	// tmp or git stays out of the ring across passes for the bound
+	// (docs/SPEC-SPRINT.md section 7).
+	benchFaults map[string]benchFaultRecord
 	// pulse is one slot filled each land-loop cycle. A landing waiting to ask
 	// for a Go lane again receives it. The loop's own clock is the wait; the
 	// ask adds none.
 	pulse chan struct{}
+}
+
+// recordBenchFault marks host faulted with kind until the bound from now: the ring
+// skips it for that time, and its row carries "bench-fault <kind> until <time>"
+// (docs/SPEC-SPRINT.md section 7).
+func (a *app) recordBenchFault(host, kind string, now time.Time) {
+	b := a.landState()
+	b.mu.Lock()
+	if b.benchFaults == nil {
+		b.benchFaults = map[string]benchFaultRecord{}
+	}
+	b.benchFaults[host] = benchFaultRecord{kind: kind, until: now.Add(benchFaultBound)}
+	b.mu.Unlock()
+}
+
+// benchFaulted says host is under a fault bound at now: the ring skips it.
+func (a *app) benchFaulted(host string, now time.Time) bool {
+	b := a.landState()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	rec, ok := b.benchFaults[host]
+	return ok && now.Before(rec.until)
+}
+
+// benchFaultMarks is each bench's row mark in force at now, by member: the fleet row's
+// bench_fault field (where and the dashboard show it).
+func (a *app) benchFaultMarks(now time.Time) map[string]string {
+	b := a.landState()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := map[string]string{}
+	for host, rec := range b.benchFaults {
+		if now.Before(rec.until) {
+			out[host] = rec.rowMark()
+		}
+	}
+	return out
 }
 
 // landState is the loop's memory, made once.

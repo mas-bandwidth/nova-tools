@@ -1247,6 +1247,9 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	}
 	b.WriteString("\n")
 	parts := map[string]string{}
+	// each bench under a fault bound: its fleet row carries the mark (the gate's
+	// record, docs/SPEC-SPRINT.md section 7)
+	benchFaults := a.benchFaultMarks(now)
 	var friendCards map[string]store.FriendRow
 	for i, t := range shapes {
 		logical := sprint.ViewOrder[i]
@@ -1270,6 +1273,11 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 			}
 			if logical == sprint.Fleet {
 				rowCardFields(cells, facts.RowCards[r.Key])
+				// a bench under a fault bound carries its mark on its row: where and
+				// the dashboard show it (docs/SPEC-SPRINT.md section 7)
+				if mark := benchFaults[r.Key]; mark != "" {
+					cells[benchFaultField] = mark
+				}
 			}
 			rows[r.Key] = cells
 		}
@@ -1442,6 +1450,10 @@ const (
 	perLandedColumnName = "per landed"
 	perLandedField      = "per_landed"
 )
+
+// benchFaultField is a fleet row's mark of a bench under a fault bound, the gate's
+// "bench-fault <kind> until <time>" (where --json; docs/SPEC-SPRINT.md section 7).
+const benchFaultField = "bench_fault"
 
 // perLandedColumn is the work table with the per-landed column added: each stream's
 // dollars per landed card from the tick's record (sprint.TierCosts) when it has one, else
