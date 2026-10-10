@@ -50,7 +50,9 @@ type HeldCard struct {
 	Repo    string `json:"repo,omitempty"`
 	Base    string `json:"base,omitempty"`
 	Brief   string `json:"brief"`
-	Why     string `json:"-"`
+	// Lane is the lane of her row the server says holds the card (take --lane), 0 for none.
+	Lane int    `json:"lane,omitempty"`
+	Why  string `json:"-"`
 }
 
 // Row is one answer of what is on her row: the cards, whether her reads are among them (a
@@ -386,10 +388,9 @@ func (l *loop) inboxStep(now time.Time) {
 	for _, h := range row.Cards {
 		ids = append(ids, h.Card)
 	}
-	d.heldIDs, d.heldCards = ids, row.Cards // in the server's order
-	l.reclaimRefused(now)                   // a card set aside that the server still has ready is taken again (lane_take.go)
-	l.batchTake(now)                        // batch mode: her ready cards taken up to her width (lane_take.go)
-	l.outboxStep(now)                       // every report in her outbox against the row just read
+	d.heldIDs, d.heldCards, d.heldAt = ids, row.Cards, now // in the server's order, as asked at now
+	l.batchTake(now)                                       // batch mode: her ready cards taken up to her width (lane_take.go)
+	l.outboxStep(now)                                      // every report in her outbox against the row just read
 }
 
 // nextCard is the next card a free lane is handed: while the server has said what is on

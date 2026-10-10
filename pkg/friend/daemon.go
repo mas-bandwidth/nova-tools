@@ -180,7 +180,7 @@ type Daemon struct {
 	// Take sends one take to the sprint server (LaneTakeArgv, BatchTakeArgv), its refusal an
 	// error: a lane starts a card only once the server has it working on her row (lane_take.go).
 	// Nil (a test's world) takes nothing, and a lane runs any card on her row as before.
-	Take func(ctx context.Context, argv []string) error
+	Take func(ctx context.Context, argv []string) (string, error)
 	// batchTakeAt and batchTakeSaid pace and say a batch-mode daemon's take (batchTake).
 	batchTakeAt   time.Time
 	batchTakeSaid string
@@ -283,6 +283,7 @@ type Daemon struct {
 	inboxAt     time.Time // when the inbox was last reconciled
 	heldIDs     []string  // the cards on her row at it
 	heldCards   []HeldCard
+	heldAt      time.Time            // when the ask that answered heldCards began: a lane's card taken after it is not judged by it (laneCheck)
 	epoch       uint64               // the sprint's epoch as her row last named it; zero before the first answer (epoch.go)
 	inboxSaid   map[string]bool      // the inbox lines the last reconcile said that are said once while they stand
 	turnEnded   func()               // a test's hook: a turn's result is on its channel (nil: none)
@@ -1373,7 +1374,24 @@ func (l *loop) stampProgress(now time.Time) {
 	var ts []*turn
 	for _, ln := range l.lanes.lanes {
 		t := ln.t
-		if t == nil || !t.running || ln.card == nil || t.seenN == 0 || !t.lastOut.After(t.stamped) || now.Sub(t.stamped) < ProgressEvery {
+		if t == nil || !t.running || ln.card == nil || now.Sub(t.stamped) < ProgressEvery {
+			continue
+		}
+		if ln.card.Lane > 0 {
+			// a lane the server gave its card: its stamp is the lane heard from, sent while the
+			// run is under way, printing or not, and a refusal drops the job (lane_take.go)
+			t.stamped = now
+			if err := l.d.Progress(l.ctx, []Card{*ln.card}); err != nil {
+				var refused *Refused
+				if errors.As(err, &refused) {
+					l.laneDrop(ln, "the server refused its progress: "+refused.Why, now)
+					continue
+				}
+				l.d.Record(fmt.Sprintf("%s lane %d: progress on card %s not stamped: %s; tried again in %s", now.UTC().Format(time.RFC3339), ln.n, ln.card.ID, oneLine(err.Error(), 300), ProgressEvery))
+			}
+			continue
+		}
+		if t.seenN == 0 || !t.lastOut.After(t.stamped) {
 			continue
 		}
 		cards, ts = append(cards, *ln.card), append(ts, t)
