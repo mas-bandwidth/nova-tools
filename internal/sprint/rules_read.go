@@ -21,8 +21,9 @@ import (
 // answers it the same way: the finding is the fix of a rework on the same tier; a finding
 // that names a file outside the card's PATHS twins it (add --replaces) with PATHS
 // widened by exactly those files, starting from the broken attempt's head; a card at its
-// brief's bound (the same finding twice, or its attempts cap) is left to the coordinator,
-// as is a brief defect and a broken verdict with no finding. A friend's card is answered the
+// brief's bound (the same finding twice, or its rework bound) is parked in fix with the
+// BRIEF line; a brief defect and a broken verdict with no finding are a mind's. A friend's
+// card is answered the
 // same way, its next attempt hers (ReworkPinned): the finding rides on the card whoever
 // worked it. Every answer is a note on the card naming the rule ("note", logged with the
 // move) and the decided note of the judgment.
@@ -61,8 +62,8 @@ func ruleReadBroken(s *Snapshot, a *RuleAnswer) {
 		left(a, "no broken read of attempt "+pr.F("attempt")+" with a finding stands: a mind's")
 		return
 	}
-	if bb, ok := AtBriefBound(pr, finding, s.AttemptsCap(pr.Row)); ok {
-		left(a, bb.String())
+	if bb, ok := AtBriefBound(pr, finding, s.ReworkBound(pr.Row)); ok {
+		parkAnswer(a, pr, boundFinding(s, pr, bb), bb.String()+"; parked in fix")
 		return
 	}
 	a.Card, a.fix = pr.ID, cutText(finding, MaxCardTextBytes)
