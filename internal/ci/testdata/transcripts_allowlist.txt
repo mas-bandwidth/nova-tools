@@ -19,7 +19,6 @@
 
 # T9 (#1654): the set-of-shapes tests, which pass an abridged or reordered block.
 nova-fuse     # #1654 -- collects what was printed into a set
-nova-self-talk # #1654 -- collects what was printed into a set
 
 # T12 (#1657): the two security kinds, which are the designated mind's, and the two
 # remaining set-of-shapes sections.
