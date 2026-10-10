@@ -62,7 +62,7 @@ usage:
                         writes). --sandbox <binary> names the wall binary each program, POST command and
                         git runs in, default nova-sandbox on PATH; --no-wall runs them unconfined. One STEP
                         OK|FAILED line per step; --remainder prints the card a failed step leaves.)
-  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
+  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|report|read|fix|text|replay|drift|tone|models.tsv [--form <FORM block>]
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
   nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--max-load <load>] [--warn-load <load>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>]
@@ -564,6 +564,7 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 func cmdTemplate(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("template")
 	name := f.fs.String("name", "", "required: the template's `name`: "+strings.Join(swarm.TemplateNames(), ", ")+" (card is a whole card that passes lint --child-rules)")
+	form := f.fs.String("form", "", "with --name report: the card's FORM: block, the rules the printed skeleton is rendered from (docs/SPEC-SPRINT.md, the report's form)")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -572,6 +573,18 @@ func cmdTemplate(args []string, stdout, stderr io.Writer) int {
 	f.want(*name, "name", "one of "+strings.Join(swarm.TemplateNames(), ", "))
 	if f.refused(stderr) {
 		return 2
+	}
+	// A report skeleton is rendered from the card's own FORM: block when one is given, so
+	// the fill-in report a brief carries under FILL IN is the form the finish will check.
+	if *name == "report" && *form != "" {
+		fm, err := swarm.ReadForm(*form)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-swarm template: --form: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-swarm template -h"))
+			return 2
+		}
+		body := swarm.ReportSkeleton(fm)
+		fmt.Fprint(stdout, body)
+		return 0
 	}
 	body, err := swarm.Template(*name)
 	if err != nil {
