@@ -7,13 +7,13 @@ import (
 
 // The jev step: adds a reference to JEV_API_KEY in seat.env.
 // The actual key is sealed in the secrets store and loaded by nova-secrets exec.
-func init() { Register(Step{Name: "jev", Order: 60, Plan: planJev, Apply: applyJev}) }
+func init() { Register(Step{Name: "jev", Order: 75, Plan: planJev, Apply: applyJev}) }
 
 func planJev(e *Env) Finding {
 	seatEnv := e.Path("seat.env")
 	b, err := os.ReadFile(seatEnv)
 	if err != nil {
-		return Finding{Missing, "seat.env not found; run nova-up --local first"}
+		return Finding{OK, "jev optional (seat.env missing)"}
 	}
 	if strings.Contains(string(b), "JEV_API_KEY") {
 		return Finding{OK, "JEV_API_KEY in seat.env"}
@@ -25,7 +25,7 @@ func applyJev(e *Env) error {
 	seatEnv := e.Path("seat.env")
 	b, err := os.ReadFile(seatEnv)
 	if err != nil {
-		return err
+		return nil
 	}
 	if strings.Contains(string(b), "JEV_API_KEY") {
 		return nil

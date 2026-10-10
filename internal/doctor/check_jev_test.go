@@ -25,11 +25,11 @@ func TestDoctorJevCheckWarnsWithoutTheKeyAndNeverPrintsIt(t *testing.T) {
 	fake := fakeEnv{
 		env:  env,
 		root: root,
-		exec: func(_ string, args ...string) (string, error) {
-			switch args[0] {
-			case "names":
+		exec: func(name string, args ...string) (string, error) {
+			switch name {
+			case "nova-secrets":
 				// JEV_API_KEY is not in the listing
-				return "SECRETS NAMES OK\n", nil
+				return namesLines("coordinator", nil), nil
 			case "curl":
 				// Endpoint returns 200
 				return "200", nil
@@ -68,11 +68,10 @@ func TestDoctorJevCheckOKWithKeyAndHealthyEndpoint(t *testing.T) {
 	fake := fakeEnv{
 		env:  env,
 		root: root,
-		exec: func(_ string, args ...string) (string, error) {
-			switch args[0] {
-			case "names":
-				// JEV_API_KEY is in the listing
-				return "SECRETS NAME key=JEV_API_KEY clear=false\nSECRETS NAMES OK\n", nil
+		exec: func(name string, args ...string) (string, error) {
+			switch name {
+			case "nova-secrets":
+				return namesLines("coordinator", []string{"JEV_API_KEY"}), nil
 			case "curl":
 				// Endpoint returns 200
 				return "200", nil
@@ -134,10 +133,10 @@ func TestDoctorJevCheckWarnsWithUnhealthyEndpoint(t *testing.T) {
 	fake := fakeEnv{
 		env:  env,
 		root: root,
-		exec: func(_ string, args ...string) (string, error) {
-			switch args[0] {
-			case "names":
-				return "SECRETS NAME key=JEV_API_KEY clear=false\nSECRETS NAMES OK\n", nil
+		exec: func(name string, args ...string) (string, error) {
+			switch name {
+			case "nova-secrets":
+				return namesLines("coordinator", []string{"JEV_API_KEY"}), nil
 			case "curl":
 				// Endpoint returns 503
 				return "503", nil
