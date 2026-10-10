@@ -1461,9 +1461,9 @@ state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.
 
 usage:
   nova-friend hook --harness claude
-  nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]
+  nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--stages daemon|runner] [--mirrors <d>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]
   nova-friend beat --as <me> [--server <addr>]
-  nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
+  nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--stages daemon|runner] [--mirrors <d>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
   nova-friend uninstall --as <me> [--dry-run]
   nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--harness codex --dir <d> --session <id> --adapter folder --delivery-dir <watched-dir>] [--json]
   nova-friend host --as <me> --harness <h> --dir <d> [--prompt <regexp>] [--state-dir <d>] [--dry-run] [--json] -- <launch command...>
@@ -1513,7 +1513,7 @@ effect: inspection: reads, writes nothing: reads one PreToolUse JSON event from 
 ```
 usage: nova-friend run [flags]
 from `nova-friend help`:
-  nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]
+  nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--stages daemon|runner] [--mirrors <d>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]
 flags:
   --adapter <string>  delivery route: folder for an existing watched Codex session (default: the harness adapter)
   --as <string>  your name, a nova-config friend row (required)
@@ -1531,6 +1531,7 @@ flags:
   --limit-rest <duration>  how long the friend is down when its harness's usage limit or empty balance names no reset
   --load-max <int>  the machine's one-minute load above which lanes are held to --load-width; 0 none (default: the row's row_load_max)
   --load-width <int>  the lanes that run while the load is above --load-max
+  --mirrors <string>  the directory of the bare mirrors the daemon stages jobs from, <mirrors>/<owner>/<name>.git, each a full mirror (default: mirrors under the state dir, cloned the first time and fetched before each stage)
   --mode <string>  override the friend row's delivery mode, batch or one-shot, for a test (default: the row's, read from each beat)
   --model <string>  the friend's model as provider/model, to price a card by the store's route row (default: none, cards are unpriced)
   --notifications-only  deliver filtered notifications through one receiver; no sprint beats, proof, claims, jobs, staging, pruning or finishes
@@ -1543,6 +1544,7 @@ flags:
   --server <string>  the sprint server, host:port (default: NOVA_SPRINT_SERVER, else 127.0.0.1:6390)
   --session <string>  the session to deliver into (default: the harness's newest session in --dir; harness tmux: the tmux session, default: the one host saved, else friend-<me>)
   --silent-stop <duration>  stop a turn that has printed nothing for this long; a turn that prints runs on
+  --stages <string>  who stages each work card's job (jobs/<job>/repo and JOB.md): daemon, before it writes the card's BRIEF.md, or runner, a friend whose runner stages its own jobs, whose briefs the daemon writes alone
   --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
   --token-cap <int>  tokens one card may spend, all kinds, before its lane is stopped with a HOLD report; 0 none (default: the row's row_token_cap)
   --wall-jobs <string>  job directories outside --dir that are writable inside the lane's wall, comma-separated
@@ -1573,7 +1575,7 @@ effect: delivery: sends beyond this machine: one beat to the sprint server, the 
 ```
 usage: nova-friend install [flags]
 from `nova-friend help`:
-  nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
+  nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--stages daemon|runner] [--mirrors <d>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
   nova-friend install --as bob --harness opencode --dir ./bob --dry-run
 flags:
   --adapter <string>  delivery route: folder for an existing watched Codex session (default: the harness adapter)
@@ -1588,6 +1590,7 @@ flags:
   --json  print the result as one JSON object instead of lines
   --launchd-log <string>  launchd's stdout and stderr file (default: ~/Library/Logs/nova-friend-<me>.log)
   --limit-rest <duration>  how long the friend is down when its harness's usage limit or empty balance names no reset
+  --mirrors <string>  the directory of the bare mirrors the daemon stages jobs from, <mirrors>/<owner>/<name>.git, each a full mirror (default: mirrors under the state dir, cloned the first time and fetched before each stage)
   --model <string>  harness opencode: the model, provider/model, written into <dir>/opencode.json (default: left as it is)
   --notifications-only  deliver filtered notifications through one receiver; no sprint beats, proof, claims, jobs, staging, pruning or finishes
   --notify-kinds <string>  message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default
@@ -1598,6 +1601,7 @@ flags:
   --server <string>  the sprint server, host:port (default: NOVA_SPRINT_SERVER, else 127.0.0.1:6390)
   --session <string>  the session to deliver into (default: the harness's newest session in --dir; harness tmux: the tmux session, default: the one host saved, else friend-<me>)
   --silent-stop <duration>  stop a turn that has printed nothing for this long; a turn that prints runs on
+  --stages <string>  who stages each work card's job (jobs/<job>/repo and JOB.md): daemon, before it writes the card's BRIEF.md, or runner, a friend whose runner stages its own jobs, whose briefs the daemon writes alone
   --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
   --width <int>  the friend's width, from the nova-config friend row; 0 is unknown
   --within <duration>  how long the delivery check after loading waits for the session's pong
