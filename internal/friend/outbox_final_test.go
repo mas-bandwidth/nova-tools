@@ -49,7 +49,7 @@ func TestFinal(t *testing.T) {
 			ok, why := Final(tc.first, tc.second)
 			assert.Equal(t, tc.ok, ok, "%q / %q", tc.first, tc.second)
 			if tc.why != "" {
-				assert.Contains(t, why, tc.why)
+				assert.Equal(t, tc.why, why, "why names the offending line of %q / %q", tc.first, tc.second)
 			} else if !tc.ok {
 				assert.Empty(t, why)
 			}
