@@ -43,7 +43,7 @@
    :text "Walled sessions live under the wall home, tokens are read from there first, and a session in no
     database is unread rather than zero, so the token cap can trip."
    :origin "nova-tools PR #5590, head 0c4fd7ea; landed in dev as 1babe4a43f via PR #5595")
-  (fix "hosted-tests-green-on-main" :release "v1.2.6" :status "planned"
+  (fix "hosted-tests-green-on-main" :release "v1.2.6" :status "in-progress"
    :title "The hosted tests are green on main and nightly"
    :text "Two hosted tests are red on main and nightly (the fork bomb wall cap and jobs as worktrees of
     one mirror); make them pass there."
