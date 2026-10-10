@@ -168,12 +168,12 @@ func TestEveryRowNamesItsSources(t *testing.T) {
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
 	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 100, "output_tokens": 10}, "/x/schema/a.go")+"\n")
-	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
-	busNote(t, bus, "emma", "n1.md", "emma-000000000001", "tokens 2026-09-11", busDate,
-		"2026-09-11\temma\tfable\tschema\tinput\t5\n")
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "operator")
+	busNote(t, bus, "operator", "n1.md", "operator-000000000001", "tokens 2026-09-11", busDate,
+		"2026-09-11\toperator\tfable\tschema\tinput\t5\n")
 
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir),
-		"--claude", "glenn="+tr, "--bus", bus)
+		"--claude", "seat-a="+tr, "--bus", bus)
 	wantExit(t, r, 0)
 	day := read(t, filepath.Join(out, "2026-09-11.tsv"))
 	row := lineWith(day, "fable\tschema")
@@ -183,7 +183,7 @@ func TestEveryRowNamesItsSources(t *testing.T) {
 	require.Equal(t, len(tokens.Columns), len(cols), "the row has %d columns, want %d: %q", len(cols), len(tokens.Columns), row)
 	{
 		got := cols[10]
-		assert.Equal(t, "bus:emma,claude:glenn", got, "sources column is %q, want both labels sorted", got)
+		assert.Equal(t, "bus:operator,claude:seat-a", got, "sources column is %q, want both labels sorted", got)
 	}
 	for _, line := range strings.Split(strings.TrimSpace(day), "\n")[2:] {
 		{
@@ -194,9 +194,9 @@ func TestEveryRowNamesItsSources(t *testing.T) {
 
 	// A duplicate label across two flags is exit 2 naming it.
 	r = invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir),
-		"--claude", "glenn="+tr, "--swarm", "glenn="+tr)
+		"--claude", "seat-a="+tr, "--swarm", "seat-a="+tr)
 	wantExit(t, r, 2)
-	wantContains(t, r.stderr, "glenn")
+	wantContains(t, r.stderr, "seat-a")
 	wantContains(t, r.stderr, "REFUSED")
 }
 
@@ -213,9 +213,9 @@ func TestAnUnreadableSourceIsCountedAndPrintedAndExitsOne(t *testing.T) {
 	bad := write(t, filepath.Join(tr, "bad.jsonl"), "{}\n")
 	release := makeUnreadable(t, bad)
 
-	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "glenn="+tr)
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "seat-a="+tr)
 	wantExit(t, r, 1)
-	wantContains(t, r.stderr, "TOKENS UNREADABLE label=claude:glenn")
+	wantContains(t, r.stderr, "TOKENS UNREADABLE label=claude:seat-a")
 	wantContains(t, r.stderr, "bad.jsonl")
 	wantContains(t, r.stdout, "files=2 unreadable=1")
 	wantContains(t, r.stderr, "TOKENS FAILED")
@@ -231,7 +231,7 @@ func TestAnUnreadableSourceIsCountedAndPrintedAndExitsOne(t *testing.T) {
 		err := os.Remove(bad)
 		require.NoError(t, err)
 	}
-	r = invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "glenn="+tr)
+	r = invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "seat-a="+tr)
 	wantExit(t, r, 0)
 	wantContains(t, r.stdout, "TOKENS OK")
 }
@@ -259,7 +259,7 @@ func TestAValidLineIsNeverCountedAsNotJSON(t *testing.T) {
 	}
 	write(t, filepath.Join(tr, "a.jsonl"), strings.Join(lines, "\n")+"\n")
 
-	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "glenn="+tr)
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "seat-a="+tr)
 	wantExit(t, r, 0)
 	wantContains(t, r.stdout, "TOKENS OK")
 	assert.False(t, strings.Contains(r.stderr, "badline") || strings.Contains(r.stderr, "UNREADABLE"), "a valid line was counted as not JSON:\n%s", r.stderr)
@@ -268,7 +268,7 @@ func TestAValidLineIsNeverCountedAsNotJSON(t *testing.T) {
 
 	// And a line that really is not JSON is still counted, printed, and exit 1.
 	write(t, filepath.Join(tr, "b.jsonl"), "{not json\n")
-	r = invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "glenn="+tr)
+	r = invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "seat-a="+tr)
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "badline=1")
 	wantContains(t, r.stderr, "b.jsonl")
@@ -289,7 +289,7 @@ func TestAMessageIsCountedOnceByItsID(t *testing.T) {
 	lines = append(lines, msg("", "2026-09-11T10:05:00Z", "fable", map[string]int{"input_tokens": 999}, "/x/schema/a.go"))
 	write(t, filepath.Join(tr, "a.jsonl"), strings.Join(lines, "\n")+"\n")
 
-	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "glenn="+tr)
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "seat-a="+tr)
 	wantExit(t, r, 0)
 	wantContains(t, r.stdout, "dup=4")
 	wantContains(t, r.stdout, "noid=1")
@@ -316,7 +316,7 @@ func TestRepoAttributionAndTheTwoNamedBuckets(t *testing.T) {
 		msg("m3", "2026-09-11T10:02:00Z", "fable", map[string]int{"input_tokens": 69}, "/x/elsewhere/b.go"),
 	}, "\n")+"\n")
 
-	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "glenn="+tr)
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "seat-a="+tr)
 	wantExit(t, r, 0)
 	day := read(t, filepath.Join(out, "2026-09-11.tsv"))
 	for _, want := range []string{"fable\tschema\t30", "fable\tunknown\t1", "fable\tother\t69"} {
@@ -328,7 +328,7 @@ func TestRepoAttributionAndTheTwoNamedBuckets(t *testing.T) {
 	wantContains(t, line, "other=69.0%")
 
 	// A fold with no --repos is exit 2.
-	r = invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--claude", "glenn="+tr)
+	r = invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--claude", "seat-a="+tr)
 	wantExit(t, r, 2)
 	wantContains(t, r.stderr, "--repos")
 }
@@ -340,33 +340,33 @@ func TestTheSubjectIsExactAndAnUnparsedLineIsPrinted(t *testing.T) {
 
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
-	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
-	busNote(t, bus, "emma", "a.md", "emma-00000000000a", "Tokens 2026-09-11 (rough)", busDate, "2026-09-11\temma\tg\tschema\tinput\t1\n")
-	busNote(t, bus, "emma", "b.md", "emma-00000000000b", "tokens 2026-09-11 at=x", busDate, "2026-09-11\temma\tg\tschema\tinput\t1\n")
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "operator")
+	busNote(t, bus, "operator", "a.md", "operator-00000000000a", "Tokens 2026-09-11 (rough)", busDate, "2026-09-11\toperator\tg\tschema\tinput\t1\n")
+	busNote(t, bus, "operator", "b.md", "operator-00000000000b", "tokens 2026-09-11 at=x", busDate, "2026-09-11\toperator\tg\tschema\tinput\t1\n")
 	body := strings.Join([]string{
-		"2026-09-11\temma\tgemini\tschema\tinput\t100",
-		"2026-09-11\temma\tgemini\tschema\toutput\t20",
+		"2026-09-11\toperator\tgemini\tschema\tinput\t100",
+		"2026-09-11\toperator\tgemini\tschema\toutput\t20",
 		"",
-		"2026-09-11\temma\tgemini\tserialize\tinput\t5",
+		"2026-09-11\toperator\tgemini\tserialize\tinput\t5",
 		"# folded by hand",
 		"# repos: schema, serialize",
 		"",
 		"this is prose",
-		"2026-09-11\temma\tgemini\tschema\tinput",
-		"2026-09-11\temma\tgemini\t\tinput\t3",
+		"2026-09-11\toperator\tgemini\tschema\tinput",
+		"2026-09-11\toperator\tgemini\t\tinput\t3",
 		"",
 	}, "\n")
-	busNote(t, bus, "emma", "c.md", "emma-00000000000c", "tokens 2026-09-11 at=2026-09-11T23:55:02Z build=abc123", busDate, body)
+	busNote(t, bus, "operator", "c.md", "operator-00000000000c", "tokens 2026-09-11 at=2026-09-11T23:55:02Z build=abc123", busDate, body)
 
 	r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
 	wantExit(t, r, 1)
 	wantContains(t, r.stdout, "comments=2")
-	wantContains(t, r.stdout, "TOKENS TOUCHED label=bus:emma day=2026-09-11 repos=schema,serialize")
+	wantContains(t, r.stdout, "TOKENS TOUCHED label=bus:operator day=2026-09-11 repos=schema,serialize")
 	{
 		n := strings.Count(r.stderr, "TOKENS UNPARSED")
 		assert.Equal(t, 5, n, "%d TOKENS UNPARSED lines, want 5 -- three body lines and the two near-miss subjects:\n%s", n, r.stderr)
 	}
-	wantContains(t, r.stderr, "note=emma-00000000000c")
+	wantContains(t, r.stderr, "note=operator-00000000000c")
 	wantContains(t, r.stdout, "unparsed=5")
 	day := read(t, filepath.Join(out, "2026-09-11.tsv"))
 	if n := strings.Count(day, "\n"); n != 4 { // version, header, two rows
@@ -374,8 +374,8 @@ func TestTheSubjectIsExactAndAnUnparsedLineIsPrinted(t *testing.T) {
 	}
 	// Neither the wrong-case subject nor the one with trailing text is a tokens note:
 	// each is named, counted, and folds nothing (its 1 input is in no row).
-	for _, id := range []string{"emma-00000000000a", "emma-00000000000b"} {
-		wantContains(t, r.stderr, "TOKENS UNPARSED label=bus:emma note="+id)
+	for _, id := range []string{"operator-00000000000a", "operator-00000000000b"} {
+		wantContains(t, r.stderr, "TOKENS UNPARSED label=bus:operator note="+id)
 	}
 	assert.False(t, strings.Contains(day, "\t1\t"), "a near-miss note's numbers were folded:\n%s", day)
 }
@@ -391,24 +391,24 @@ func TestANearMissSubjectIsNamedAndNeverVanishes(t *testing.T) {
 
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
-	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
-	busNote(t, bus, "emma", "near.md", "emma-00000000000a", "tokens 2026-09-11 (rough)", busDate,
-		"2026-09-11\temma\tg\tschema\tinput\t100\n")
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "operator")
+	busNote(t, bus, "operator", "near.md", "operator-00000000000a", "tokens 2026-09-11 (rough)", busDate,
+		"2026-09-11\toperator\tg\tschema\tinput\t100\n")
 	// An ordinary note of the lane is not this tool's business and stays silent.
-	busNote(t, bus, "emma", "talk.md", "emma-00000000000b", "the build is red", busDate, "prose\n")
+	busNote(t, bus, "operator", "talk.md", "operator-00000000000b", "the build is red", busDate, "prose\n")
 
 	r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
 	wantExit(t, r, 1)
-	wantContains(t, r.stderr, "TOKENS UNPARSED label=bus:emma note=emma-00000000000a")
+	wantContains(t, r.stderr, "TOKENS UNPARSED label=bus:operator note=operator-00000000000a")
 	wantContains(t, r.stderr, "tokens 2026-09-11 (rough)")
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "files=2")
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "unparsed=1")
 	wantContains(t, lineWith(r.stderr, "TOKENS FAILED"), "unparsed=1")
 	note := lineWith(r.stdout, "TOKENS NOTE")
-	wantContains(t, note, "emma-00000000000a")
+	wantContains(t, note, "operator-00000000000a")
 	wantNotContains(t, note, "nothing was wrong")
 	// The ordinary note is a file this lane opened and nothing more.
-	wantNotContains(t, r.stdout+r.stderr, "emma-00000000000b")
+	wantNotContains(t, r.stdout+r.stderr, "operator-00000000000b")
 	{
 		_, err := os.Stat(filepath.Join(out, "2026-09-11.tsv"))
 		assert.Error(t, err, "a near-miss note was folded into a day file")
@@ -427,12 +427,12 @@ func TestABadDateRefusesTheWholeNote(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			out := mkdir(t, filepath.Join(dir, "out"))
-			bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
-			header := "From: Emma\nTo: Rowan\nId: emma-00000000000d\nSubject: tokens 2026-09-11\n"
+			bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "operator")
+			header := "From: Operator\nTo: friend-c\nId: operator-00000000000d\nSubject: tokens 2026-09-11\n"
 			if tc.date != "" {
-				header = "From: Emma\nTo: Rowan\nDate: " + tc.date + "\nId: emma-00000000000d\nSubject: tokens 2026-09-11\n"
+				header = "From: Operator\nTo: friend-c\nDate: " + tc.date + "\nId: operator-00000000000d\nSubject: tokens 2026-09-11\n"
 			}
-			write(t, filepath.Join(bus, "from-emma", "d.md"), header+"\n2026-09-11\temma\tg\tschema\tinput\t7\n")
+			write(t, filepath.Join(bus, "from-operator", "d.md"), header+"\n2026-09-11\toperator\tg\tschema\tinput\t7\n")
 			r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
 			wantExit(t, r, 1)
 			{
@@ -456,30 +456,30 @@ func TestSupersedesOrdersTwoNotesAndNothingElseDoes(t *testing.T) {
 	newBus := func(t *testing.T) (dir, out, bus string) {
 		dir = t.TempDir()
 		out = mkdir(t, filepath.Join(dir, "out"))
-		bus = busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
+		bus = busDir(t, mkdir(t, filepath.Join(dir, "bus")), "operator")
 		return
 	}
 	line := func(model, repo, typ, n string) string {
-		return "2026-09-11\temma\t" + model + "\t" + repo + "\t" + typ + "\t" + n + "\n"
+		return "2026-09-11\toperator\t" + model + "\t" + repo + "\t" + typ + "\t" + n + "\n"
 	}
 
 	t.Run("the successor is the day", func(t *testing.T) {
 		dir, out, bus := newBus(t)
 		// Filenames whose lexical order OPPOSES the send order, and one Date to the second.
-		busNote(t, bus, "emma", "zzz-first.md", "emma-000000000001", "tokens 2026-09-11", busDate, line("g", "schema", "input", "100"))
-		busNote(t, bus, "emma", "aaa-second.md", "emma-000000000002", "tokens 2026-09-11 at=2026-09-11T20:00:00Z build=b supersedes=emma-000000000001", busDate, line("g", "schema", "input", "250"))
+		busNote(t, bus, "operator", "zzz-first.md", "operator-000000000001", "tokens 2026-09-11", busDate, line("g", "schema", "input", "100"))
+		busNote(t, bus, "operator", "aaa-second.md", "operator-000000000002", "tokens 2026-09-11 at=2026-09-11T20:00:00Z build=b supersedes=operator-000000000001", busDate, line("g", "schema", "input", "250"))
 		r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
 		wantExit(t, r, 0)
-		wantContains(t, r.stdout, "TOKENS SUPERSEDED label=bus:emma note=emma-000000000001 by=emma-000000000002 day=2026-09-11")
+		wantContains(t, r.stdout, "TOKENS SUPERSEDED label=bus:operator note=operator-000000000001 by=operator-000000000002 day=2026-09-11")
 		wantContains(t, r.stdout, "superseded=1")
 		wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "\t250\t")
 	})
 
 	t.Run("a chain folds to its last link", func(t *testing.T) {
 		dir, out, bus := newBus(t)
-		busNote(t, bus, "emma", "a.md", "emma-000000000001", "tokens 2026-09-11", busDate, line("g", "schema", "input", "100"))
-		busNote(t, bus, "emma", "b.md", "emma-000000000002", "tokens 2026-09-11 at=2026-09-11T20:00:00Z build=b supersedes=emma-000000000001", busDate, line("g", "schema", "input", "250"))
-		busNote(t, bus, "emma", "c.md", "emma-000000000003", "tokens 2026-09-11 at=2026-09-11T21:00:00Z build=b supersedes=emma-000000000002", busDate, line("g", "schema", "input", "300"))
+		busNote(t, bus, "operator", "a.md", "operator-000000000001", "tokens 2026-09-11", busDate, line("g", "schema", "input", "100"))
+		busNote(t, bus, "operator", "b.md", "operator-000000000002", "tokens 2026-09-11 at=2026-09-11T20:00:00Z build=b supersedes=operator-000000000001", busDate, line("g", "schema", "input", "250"))
+		busNote(t, bus, "operator", "c.md", "operator-000000000003", "tokens 2026-09-11 at=2026-09-11T21:00:00Z build=b supersedes=operator-000000000002", busDate, line("g", "schema", "input", "300"))
 		r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
 		wantExit(t, r, 0)
 		{
@@ -492,15 +492,15 @@ func TestSupersedesOrdersTwoNotesAndNothingElseDoes(t *testing.T) {
 	t.Run("two roots are a conflict that folds nothing", func(t *testing.T) {
 		dir, out, bus := newBus(t)
 		// A day file already on disk, which the conflict must leave byte-identical.
-		busNote(t, bus, "emma", "a.md", "emma-000000000001", "tokens 2026-09-11", busDate, line("g", "schema", "input", "100"))
+		busNote(t, bus, "operator", "a.md", "operator-000000000001", "tokens 2026-09-11", busDate, line("g", "schema", "input", "100"))
 		r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
 		wantExit(t, r, 0)
 		before := read(t, filepath.Join(out, "2026-09-11.tsv"))
 
-		busNote(t, bus, "emma", "b.md", "emma-000000000002", "tokens 2026-09-11", busDate, line("g", "schema", "input", "250"))
+		busNote(t, bus, "operator", "b.md", "operator-000000000002", "tokens 2026-09-11", busDate, line("g", "schema", "input", "250"))
 		r = invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
 		wantExit(t, r, 1)
-		wantContains(t, r.stderr, "TOKENS CONFLICT label=bus:emma day=2026-09-11")
+		wantContains(t, r.stderr, "TOKENS CONFLICT label=bus:operator day=2026-09-11")
 		wantContains(t, r.stderr, "supersedes=")
 		wantContains(t, r.stderr, "conflict=1")
 		{
@@ -509,15 +509,15 @@ func TestSupersedesOrdersTwoNotesAndNothingElseDoes(t *testing.T) {
 		}
 
 		// A correction naming only one tip leaves the other, and the remedy names both.
-		busNote(t, bus, "emma", "c.md", "emma-000000000003", "tokens 2026-09-11 at=2026-09-11T21:00:00Z build=b supersedes=emma-000000000001", busDate, line("g", "schema", "input", "400"))
+		busNote(t, bus, "operator", "c.md", "operator-000000000003", "tokens 2026-09-11 at=2026-09-11T21:00:00Z build=b supersedes=operator-000000000001", busDate, line("g", "schema", "input", "400"))
 		r = invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
 		wantExit(t, r, 1)
 		conflict := lineWith(r.stderr, "TOKENS CONFLICT")
-		wantContains(t, conflict, "emma-000000000002")
-		wantContains(t, conflict, "emma-000000000003")
+		wantContains(t, conflict, "operator-000000000002")
+		wantContains(t, conflict, "operator-000000000003")
 
 		// The replacement snapshot: one note naming BOTH tips, sorted, clears it.
-		busNote(t, bus, "emma", "d.md", "emma-000000000004", "tokens 2026-09-11 at=2026-09-11T22:00:00Z build=b supersedes=emma-000000000002,emma-000000000003", busDate, line("g", "schema", "input", "900"))
+		busNote(t, bus, "operator", "d.md", "operator-000000000004", "tokens 2026-09-11 at=2026-09-11T22:00:00Z build=b supersedes=operator-000000000002,operator-000000000003", busDate, line("g", "schema", "input", "900"))
 		r = invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
 		wantExit(t, r, 0)
 		wantContains(t, r.stdout, "conflict=0")
@@ -527,17 +527,17 @@ func TestSupersedesOrdersTwoNotesAndNothingElseDoes(t *testing.T) {
 			n := strings.Count(r.stdout, "TOKENS SUPERSEDED")
 			assert.Equal(t, 3, n, "%d SUPERSEDED lines, want 3 (the two tips and the note already superseded):\n%s", n, r.stdout)
 		}
-		for _, tip := range []string{"emma-000000000002", "emma-000000000003"} {
-			wantContains(t, r.stdout, "note="+tip+" by=emma-000000000004")
+		for _, tip := range []string{"operator-000000000002", "operator-000000000003"} {
+			wantContains(t, r.stdout, "note="+tip+" by=operator-000000000004")
 		}
 		wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "\t900\t")
 	})
 
 	t.Run("two successors of one predecessor are a conflict", func(t *testing.T) {
 		dir, out, bus := newBus(t)
-		busNote(t, bus, "emma", "a.md", "emma-000000000001", "tokens 2026-09-11", busDate, line("g", "schema", "input", "100"))
-		busNote(t, bus, "emma", "b.md", "emma-000000000002", "tokens 2026-09-11 at=2026-09-11T20:00:00Z build=b supersedes=emma-000000000001", busDate, line("g", "schema", "input", "250"))
-		busNote(t, bus, "emma", "c.md", "emma-000000000003", "tokens 2026-09-11 at=2026-09-11T21:00:00Z build=b supersedes=emma-000000000001", busDate, line("g", "schema", "input", "300"))
+		busNote(t, bus, "operator", "a.md", "operator-000000000001", "tokens 2026-09-11", busDate, line("g", "schema", "input", "100"))
+		busNote(t, bus, "operator", "b.md", "operator-000000000002", "tokens 2026-09-11 at=2026-09-11T20:00:00Z build=b supersedes=operator-000000000001", busDate, line("g", "schema", "input", "250"))
+		busNote(t, bus, "operator", "c.md", "operator-000000000003", "tokens 2026-09-11 at=2026-09-11T21:00:00Z build=b supersedes=operator-000000000001", busDate, line("g", "schema", "input", "300"))
 		r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
 		wantExit(t, r, 1)
 		wantContains(t, r.stderr, "TOKENS CONFLICT")
@@ -548,30 +548,30 @@ func TestSupersedesOrdersTwoNotesAndNothingElseDoes(t *testing.T) {
 	})
 
 	for _, tc := range []struct{ name, trailer, want string }{
-		{"a duplicate id", "supersedes=emma-000000000001,emma-000000000001", "duplicate"},
-		{"an unsorted set", "supersedes=emma-000000000002,emma-000000000001", "sorted"},
-		{"a missing target", "supersedes=emma-0000000000ff", "no such note"},
+		{"a duplicate id", "supersedes=operator-000000000001,operator-000000000001", "duplicate"},
+		{"an unsorted set", "supersedes=operator-000000000002,operator-000000000001", "sorted"},
+		{"a missing target", "supersedes=operator-0000000000ff", "no such note"},
 		{"a target in another lane", "supersedes=bo-000000000001", "another lane"},
-		{"a target for another day", "supersedes=emma-000000000009", "another day"},
+		{"a target for another day", "supersedes=operator-000000000009", "another day"},
 		// SPEC-TOKENS' demanded test names five refusals, and this is the fifth: a
 		// predecessor that is a note of this lane and this day and did NOT parse. The
 		// successor is refused whole rather than replacing a note nobody could read.
-		{"a target that did not parse", "supersedes=emma-00000000000e", "did not parse"},
+		{"a target that did not parse", "supersedes=operator-00000000000e", "did not parse"},
 	} {
 		t.Run(tc.name+" refuses the whole successor", func(t *testing.T) {
 			dir, out, bus := newBus(t)
-			busDir(t, bus, "emma", "bo")
-			busNote(t, bus, "emma", "a.md", "emma-000000000001", "tokens 2026-09-11", busDate, line("g", "schema", "input", "100"))
-			busNote(t, bus, "emma", "b.md", "emma-000000000002", "tokens 2026-09-11 at=2026-09-11T20:00:00Z build=b supersedes=emma-000000000001", busDate, line("g", "schema", "input", "250"))
-			busNote(t, bus, "emma", "old.md", "emma-000000000009", "tokens 2026-09-10", busDate, "2026-09-10\temma\tg\tschema\tinput\t1\n")
+			busDir(t, bus, "operator", "bo")
+			busNote(t, bus, "operator", "a.md", "operator-000000000001", "tokens 2026-09-11", busDate, line("g", "schema", "input", "100"))
+			busNote(t, bus, "operator", "b.md", "operator-000000000002", "tokens 2026-09-11 at=2026-09-11T20:00:00Z build=b supersedes=operator-000000000001", busDate, line("g", "schema", "input", "250"))
+			busNote(t, bus, "operator", "old.md", "operator-000000000009", "tokens 2026-09-10", busDate, "2026-09-10\toperator\tg\tschema\tinput\t1\n")
 			busNote(t, bus, "bo", "x.md", "bo-000000000001", "tokens 2026-09-11", busDate, line("g", "schema", "input", "1"))
 			// A note of this lane and this day whose Date: nobody can parse: it is in the
 			// lane, it is dead, and naming it as a predecessor is the fifth refusal.
-			busNote(t, bus, "emma", "dead.md", "emma-00000000000e", "tokens 2026-09-11", "yesterday", line("g", "schema", "input", "7"))
-			busNote(t, bus, "emma", "z.md", "emma-00000000000f", "tokens 2026-09-11 at=2026-09-11T22:00:00Z build=b "+tc.trailer, busDate, line("g", "schema", "input", "900"))
+			busNote(t, bus, "operator", "dead.md", "operator-00000000000e", "tokens 2026-09-11", "yesterday", line("g", "schema", "input", "7"))
+			busNote(t, bus, "operator", "z.md", "operator-00000000000f", "tokens 2026-09-11 at=2026-09-11T22:00:00Z build=b "+tc.trailer, busDate, line("g", "schema", "input", "900"))
 			r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
 			wantExit(t, r, 1)
-			wantContains(t, r.stderr, "note=emma-00000000000f")
+			wantContains(t, r.stderr, "note=operator-00000000000f")
 			wantContains(t, strings.ToLower(r.stderr), tc.want)
 			wantNotContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "\t900\t")
 		})
@@ -579,8 +579,8 @@ func TestSupersedesOrdersTwoNotesAndNothingElseDoes(t *testing.T) {
 
 	t.Run("a cycle refuses both", func(t *testing.T) {
 		dir, out, bus := newBus(t)
-		busNote(t, bus, "emma", "a.md", "emma-000000000001", "tokens 2026-09-11 at=2026-09-11T20:00:00Z build=b supersedes=emma-000000000002", busDate, line("g", "schema", "input", "100"))
-		busNote(t, bus, "emma", "b.md", "emma-000000000002", "tokens 2026-09-11 at=2026-09-11T21:00:00Z build=b supersedes=emma-000000000001", busDate, line("g", "schema", "input", "250"))
+		busNote(t, bus, "operator", "a.md", "operator-000000000001", "tokens 2026-09-11 at=2026-09-11T20:00:00Z build=b supersedes=operator-000000000002", busDate, line("g", "schema", "input", "100"))
+		busNote(t, bus, "operator", "b.md", "operator-000000000002", "tokens 2026-09-11 at=2026-09-11T21:00:00Z build=b supersedes=operator-000000000001", busDate, line("g", "schema", "input", "250"))
 		r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
 		wantExit(t, r, 1)
 		wantContains(t, strings.ToLower(r.stderr), "cycle")
@@ -588,7 +588,7 @@ func TestSupersedesOrdersTwoNotesAndNothingElseDoes(t *testing.T) {
 
 	t.Run("a lone note folds", func(t *testing.T) {
 		dir, out, bus := newBus(t)
-		busNote(t, bus, "emma", "a.md", "emma-000000000001", "tokens 2026-09-11", busDate, line("g", "schema", "input", "100"))
+		busNote(t, bus, "operator", "a.md", "operator-000000000001", "tokens 2026-09-11", busDate, line("g", "schema", "input", "100"))
 		r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
 		wantExit(t, r, 0)
 		wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "\t100\t")
@@ -602,10 +602,10 @@ func TestARoughLineFoldsAsItsNumberAndIsCountedApart(t *testing.T) {
 
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
-	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
-	busNote(t, bus, "emma", "a.md", "emma-000000000001", "tokens 2026-09-11", busDate, strings.Join([]string{
-		"2026-09-11\temma\tg\tschema\tinput\t~100000",
-		"2026-09-11\temma\tg\tschema\toutput\t~3",
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "operator")
+	busNote(t, bus, "operator", "a.md", "operator-000000000001", "tokens 2026-09-11", busDate, strings.Join([]string{
+		"2026-09-11\toperator\tg\tschema\tinput\t~100000",
+		"2026-09-11\toperator\tg\tschema\toutput\t~3",
 		"",
 	}, "\n"))
 	repos := reposFile(t, dir)
@@ -634,7 +634,7 @@ func TestRandomSiblingTempIsNotAStrayAndIsPreserved(t *testing.T) {
 	tr := mkdir(t, filepath.Join(dir, "tr"))
 	repos := reposFile(t, dir)
 	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 100}, "/x/schema/a.go")+"\n")
-	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "glenn="+tr), 0)
+	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "seat-a="+tr), 0)
 	before := read(t, filepath.Join(out, "2026-09-11.tsv"))
 
 	// What a fold killed between the write and the rename leaves behind:
@@ -661,7 +661,7 @@ func TestRandomSiblingTempIsNotAStrayAndIsPreserved(t *testing.T) {
 
 	// The next fold writes the day file atomically via internal/atomicfile.
 	// Stale random-sibling temporaries from an interrupted run are preserved.
-	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "glenn="+tr), 0)
+	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "seat-a="+tr), 0)
 	{
 		_, err := os.Stat(stranded)
 		assert.NoError(t, err, "legacy stranded temp was unexpectedly removed: %v", err)
@@ -689,7 +689,7 @@ func TestOneFilePerDayAndNothingIsRemoved(t *testing.T) {
 	old := write(t, filepath.Join(out, "daily-2026-09.tsv"), "a month file from the prototype\n")
 	notes := write(t, filepath.Join(out, "notes.txt"), "a person's note\n")
 
-	wantExit(t, invoke(t, "fold", "--out", out, "--all", "--repos", repos, "--claude", "glenn="+tr), 0)
+	wantExit(t, invoke(t, "fold", "--out", out, "--all", "--repos", repos, "--claude", "seat-a="+tr), 0)
 	ents, _ := os.ReadDir(out)
 	days := 0
 	for _, e := range ents {
@@ -723,15 +723,15 @@ func TestADayThatWouldShrinkIsRefused(t *testing.T) {
 	repos := reposFile(t, dir)
 	src := filepath.Join(tr, "a.jsonl")
 	write(t, src, msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 100}, "/x/schema/a.go")+"\n")
-	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "glenn="+tr), 0)
+	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "seat-a="+tr), 0)
 	before := read(t, filepath.Join(out, "2026-09-11.tsv"))
 
 	write(t, src, msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 60}, "/x/schema/a.go")+"\n")
-	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "glenn="+tr)
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "seat-a="+tr)
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS SHRANK date=2026-09-11 type=input file=100 now=60 written=false")
 	assert.Equal(t, before, read(t, filepath.Join(out, "2026-09-11.tsv")), "a refused shrink rewrote the file")
-	r = invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "glenn="+tr, "--allow-shrink")
+	r = invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "seat-a="+tr, "--allow-shrink")
 	wantExit(t, r, 0)
 	wantContains(t, r.stderr, "written=true")
 	wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "\t60\t")
@@ -744,21 +744,21 @@ func TestANumberBecomingADashShrinksAndADashBecomingANumberDoesNot(t *testing.T)
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	repos := reposFile(t, dir)
-	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
-	note := filepath.Join(bus, "from-emma", "a.md")
-	header := "From: Emma\nTo: Rowan\nDate: " + busDate + "\nId: emma-000000000001\nSubject: tokens 2026-09-11\n\n"
-	write(t, note, header+"2026-09-11\temma\tg\tschema\tinput\t10\n2026-09-11\temma\tg\tschema\treasoning\t40\n")
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "operator")
+	note := filepath.Join(bus, "from-operator", "a.md")
+	header := "From: Operator\nTo: friend-c\nDate: " + busDate + "\nId: operator-000000000001\nSubject: tokens 2026-09-11\n\n"
+	write(t, note, header+"2026-09-11\toperator\tg\tschema\tinput\t10\n2026-09-11\toperator\tg\tschema\treasoning\t40\n")
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--bus", bus), 0)
 
-	write(t, note, header+"2026-09-11\temma\tg\tschema\tinput\t10\n")
+	write(t, note, header+"2026-09-11\toperator\tg\tschema\tinput\t10\n")
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--bus", bus)
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "type=reasoning file=40 now=-")
 
 	// The other direction: a dash in the file that is a number now is coverage arriving.
-	write(t, note, header+"2026-09-11\temma\tg\tschema\tinput\t10\n")
+	write(t, note, header+"2026-09-11\toperator\tg\tschema\tinput\t10\n")
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--bus", bus, "--allow-shrink"), 0)
-	write(t, note, header+"2026-09-11\temma\tg\tschema\tinput\t10\n2026-09-11\temma\tg\tschema\treasoning\t40\n")
+	write(t, note, header+"2026-09-11\toperator\tg\tschema\tinput\t10\n2026-09-11\toperator\tg\tschema\treasoning\t40\n")
 	r = invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--bus", bus)
 	wantExit(t, r, 0)
 	wantNotContains(t, r.stderr, "SHRANK")
@@ -767,7 +767,7 @@ func TestANumberBecomingADashShrinksAndADashBecomingANumberDoesNot(t *testing.T)
 // ---------------------------------------------------------------- issue #268: the fold merges by source
 
 // foldPools writes two swarm pools, one row each, and returns dir, out, repos, poolA, poolB.
-// poolA is claude-x on serialize; poolB is mercury-2.5 on serialize, the pair Rowan measured
+// poolA is claude-x on serialize; poolB is mercury-2.5 on serialize, the pair friend-c measured
 // at tip when a swarm-only fold erased the other source's row.
 func foldPools(t *testing.T, aIn, aOut, bIn, bOut string) (out, repos, poolA, poolB string) {
 	t.Helper()
@@ -791,10 +791,10 @@ func TestFoldKeepsARowNoDeclaredSourceWrote(t *testing.T) {
 	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
 	day := filepath.Join(out, "2026-09-14.tsv")
 
-	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "glenn="+poolA), 0)
+	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "seat-a="+poolA), 0)
 	wantContains(t, read(t, day), "claude-x")
 
-	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+poolB)
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "reader-b="+poolB)
 	wantExit(t, r, 0)
 	wantNotContains(t, r.all(), "SHRANK")
 	wantNotContains(t, r.all(), "PARTIAL")
@@ -803,7 +803,7 @@ func TestFoldKeepsARowNoDeclaredSourceWrote(t *testing.T) {
 	wantContains(t, got, "\t410\t")
 	wantContains(t, got, "mercury-2.5")
 	wantContains(t, got, "\t2000\t")
-	wantContains(t, got, "sources=swarm:freddy,swarm:glenn")
+	wantContains(t, got, "sources=swarm:reader-b,swarm:seat-a")
 }
 
 // R2: full replacement -- every source in the file is declared -- is exactly what it was.
@@ -814,9 +814,9 @@ func TestFullReplacementIsUnchanged(t *testing.T) {
 	out, repos, poolA, _ := foldPools(t, "410", "100", "2000", "420")
 	day := filepath.Join(out, "2026-09-14.tsv")
 
-	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "glenn="+poolA), 0)
+	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "seat-a="+poolA), 0)
 	swarmUsage(t, poolA, "j1", swarmRow("j1", "1", "-", "claude-x", "serialize", "2026-09-14T01:00:00Z", "900", "100", "0", "0", "-"))
-	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "glenn="+poolA)
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "seat-a="+poolA)
 	wantExit(t, r, 0)
 	wantNotContains(t, r.all(), "SHRANK")
 	wantNotContains(t, r.all(), "PARTIAL")
@@ -824,7 +824,7 @@ func TestFullReplacementIsUnchanged(t *testing.T) {
 	wantContains(t, got, "\t900\t")
 	wantNotContains(t, got, "\t410\t")  // replaced, not kept
 	wantNotContains(t, got, "\t1310\t") // replaced, not summed
-	wantContains(t, got, "sources=swarm:glenn")
+	wantContains(t, got, "sources=swarm:seat-a")
 }
 
 // R3: a BLENDED row -- one row whose sources cell names a label this run declared and one
@@ -839,17 +839,17 @@ func TestBlendedRowIsRefusedAndNothingIsWritten(t *testing.T) {
 	swarmUsage(t, poolB, "j2", swarmRow("j2", "1", "-", "claude-x", "serialize", "2026-09-14T02:00:00Z", "2000", "420", "0", "0", "-"))
 
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos,
-		"--swarm", "glenn="+poolA, "--swarm", "freddy="+poolB), 0)
+		"--swarm", "seat-a="+poolA, "--swarm", "reader-b="+poolB), 0)
 	before := read(t, day)
-	wantContains(t, before, "swarm:freddy,swarm:glenn")
+	wantContains(t, before, "swarm:reader-b,swarm:seat-a")
 
-	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+poolB)
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "reader-b="+poolB)
 	wantExit(t, r, 1)
-	wantContains(t, r.stderr, "TOKENS PARTIAL date=2026-09-14 model=claude-x repo=serialize sources=swarm:freddy,swarm:glenn folded=swarm:freddy written=false")
+	wantContains(t, r.stderr, "TOKENS PARTIAL date=2026-09-14 model=claude-x repo=serialize sources=swarm:reader-b,swarm:seat-a folded=swarm:reader-b written=false")
 	wantContains(t, r.stderr, "partial=1")
 	assert.Equal(t, before, read(t, day), "a refused partial fold rewrote the file")
 	// --allow-shrink is about a shrink, not about a row this fold cannot compute.
-	r = invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+poolB, "--allow-shrink")
+	r = invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "reader-b="+poolB, "--allow-shrink")
 	wantExit(t, r, 1)
 	assert.Equal(t, before, read(t, day), "--allow-shrink wrote a row the fold could not compute")
 }
@@ -863,18 +863,18 @@ func TestStillFiresOnTheMergedTotalsAndKeepsRetainedRows(t *testing.T) {
 	day := filepath.Join(out, "2026-09-14.tsv")
 
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos,
-		"--swarm", "glenn="+poolA, "--swarm", "freddy="+poolB), 0)
+		"--swarm", "seat-a="+poolA, "--swarm", "reader-b="+poolB), 0)
 	before := read(t, day)
 
 	// poolB's numbers LOWERED, folded alone: the claude-x row is retained, and the one
 	// source this run read went quiet by 1000 input. That is rule 10's day.
 	swarmUsage(t, poolB, "j2", swarmRow("j2", "1", "-", "mercury-2.5", "serialize", "2026-09-14T02:00:00Z", "1000", "420", "0", "81000", "50"))
-	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+poolB)
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "reader-b="+poolB)
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS SHRANK date=2026-09-14 type=input file=2410 now=1410 written=false")
 	assert.Equal(t, before, read(t, day), "a refused shrink rewrote the file")
 
-	r = invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+poolB, "--allow-shrink")
+	r = invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "reader-b="+poolB, "--allow-shrink")
 	wantExit(t, r, 0)
 	wantContains(t, r.stderr, "written=true")
 	got := read(t, day)
@@ -894,13 +894,13 @@ func TestMalformedExistingDayRowFailsClosedAndPreservesRawFile(t *testing.T) {
 	day := filepath.Join(out, "2026-09-14.tsv")
 	// Blank the sources cell on the claude-x row (malformed row: sources cell empty).
 	malformed := strings.Join([]string{
-		"nova-tokens v1 day=2026-09-14 at=2026-09-14T02:00:00Z build=test turns=1 sources=swarm:glenn",
+		"nova-tokens v1 day=2026-09-14 at=2026-09-14T02:00:00Z build=test turns=1 sources=swarm:seat-a",
 		"date\tmodel\trepo\tinput\toutput\tcache_write\tcache_read\treasoning\trough\tday_basis\tsources",
 		"2026-09-14\tclaude-x\tserialize\t410\t100\t0\t0\t-\t0\tutc\t",
 	}, "\n") + "\n"
 	write(t, day, malformed)
 
-	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+poolB)
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "reader-b="+poolB)
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS UNREADABLE label=out")
 	wantContains(t, r.stderr, "the sources cell is empty")
@@ -916,17 +916,17 @@ func TestCoherentDaySummaryScopeReflectsMergedFile(t *testing.T) {
 
 	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos,
-		"--swarm", "glenn="+poolA), 0)
+		"--swarm", "seat-a="+poolA), 0)
 
 	// Now fold with poolB alone. The resulting day file on disk holds 2 rows (claude-x and mercury-2.5).
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos,
-		"--swarm", "freddy="+poolB)
+		"--swarm", "reader-b="+poolB)
 	wantExit(t, r, 0)
 	daySummary := lineWith(r.stdout, "TOKENS DAY")
 	wantContains(t, daySummary, "rows=2")
 	wantContains(t, daySummary, "models=2")
 	wantContains(t, daySummary, "repos=1")
-	wantContains(t, daySummary, "sources=swarm:freddy,swarm:glenn")
+	wantContains(t, daySummary, "sources=swarm:reader-b,swarm:seat-a")
 	wantContains(t, daySummary, "written=true")
 
 	okSummary := lineWith(r.stdout, "TOKENS OK")
@@ -947,7 +947,7 @@ func TestExplicitDayQuietSourceDetectedAndRefused(t *testing.T) {
 	swarmUsage(t, pool, "j1", swarmRow("j1", "1", "-", "mercury-2.5", "serialize", "2026-09-14T01:00:00Z", "100", "50", "0", "0", "-"))
 
 	// Initial fold succeeds.
-	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+pool), 0)
+	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "reader-b="+pool), 0)
 	day := filepath.Join(out, "2026-09-14.tsv")
 	before := read(t, day)
 	wantContains(t, before, "\t100\t")
@@ -959,7 +959,7 @@ func TestExplicitDayQuietSourceDetectedAndRefused(t *testing.T) {
 	}
 
 	// Refused under rule 10: input fell from 100 to unknown (now=-). File on disk is left untouched.
-	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+pool)
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "reader-b="+pool)
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS SHRANK date=2026-09-14 type=input file=100 now=- written=false")
 	wantContains(t, r.stderr, "shrank=4")
@@ -967,7 +967,7 @@ func TestExplicitDayQuietSourceDetectedAndRefused(t *testing.T) {
 
 	// With --allow-shrink on a day that shrank to 0 rows: fold does not write an empty day file.
 	// Both SHRANK and DAY agree that written=false, and the file on disk remains unchanged.
-	r = invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+pool, "--allow-shrink")
+	r = invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "reader-b="+pool, "--allow-shrink")
 	wantExit(t, r, 0)
 	wantContains(t, r.stderr, "TOKENS SHRANK date=2026-09-14 type=input file=100 now=- written=false")
 	wantContains(t, r.stdout, "TOKENS DAY day=2026-09-14")
@@ -983,26 +983,26 @@ func TestExplicitDayQuietSourcePreservesOtherSources(t *testing.T) {
 	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
 	day := filepath.Join(out, "2026-09-14.tsv")
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos,
-		"--swarm", "glenn="+poolA, "--swarm", "freddy="+poolB), 0)
+		"--swarm", "seat-a="+poolA, "--swarm", "reader-b="+poolB), 0)
 	before := read(t, day)
 
-	// Remove poolA's usage file so glenn is quiet.
+	// Remove poolA's usage file so seat-a is quiet.
 	{
 		err := os.Remove(filepath.Join(poolA, "usage", "j1.tsv"))
 		require.NoError(t, err, err)
 	}
 
-	// Fold with both declared: glenn went quiet.
+	// Fold with both declared: seat-a went quiet.
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos,
-		"--swarm", "glenn="+poolA, "--swarm", "freddy="+poolB)
+		"--swarm", "seat-a="+poolA, "--swarm", "reader-b="+poolB)
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS SHRANK date=2026-09-14 type=input file=2410 now=2000 written=false")
 	assert.Equal(t, before, read(t, day), "refused shrink modified file")
 
-	// With --allow-shrink: writes freddy's rows (2000), glenn's row is removed.
+	// With --allow-shrink: writes reader-b's rows (2000), seat-a's row is removed.
 	// Both SHRANK and DAY agree that written=true.
 	r = invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos,
-		"--swarm", "glenn="+poolA, "--swarm", "freddy="+poolB, "--allow-shrink")
+		"--swarm", "seat-a="+poolA, "--swarm", "reader-b="+poolB, "--allow-shrink")
 	wantExit(t, r, 0)
 	wantContains(t, r.stderr, "TOKENS SHRANK date=2026-09-14 type=input file=2410 now=2000 written=true")
 	wantContains(t, r.stdout, "TOKENS DAY day=2026-09-14")
@@ -1021,18 +1021,18 @@ func TestQuietSourceNamedOnSelectedDay(t *testing.T) {
 
 	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos,
-		"--swarm", "glenn="+poolA, "--swarm", "freddy="+poolB), 0)
+		"--swarm", "seat-a="+poolA, "--swarm", "reader-b="+poolB), 0)
 
-	// Remove poolA's usage file so glenn is quiet for the selected day.
+	// Remove poolA's usage file so seat-a is quiet for the selected day.
 	{
 		err := os.Remove(filepath.Join(poolA, "usage", "j1.tsv"))
 		require.NoError(t, err, err)
 	}
 
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos,
-		"--swarm", "glenn="+poolA, "--swarm", "freddy="+poolB)
+		"--swarm", "seat-a="+poolA, "--swarm", "reader-b="+poolB)
 	wantExit(t, r, 1)
-	wantContains(t, r.all(), "TOKENS QUIET label=swarm:glenn day=2026-09-14")
+	wantContains(t, r.all(), "TOKENS QUIET label=swarm:seat-a day=2026-09-14")
 }
 
 // ---------------------------------------------------------------- rule 12: the tool stamps
@@ -1048,21 +1048,21 @@ func TestTheToolStampsAndNoFlagSetsIt(t *testing.T) {
 		msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 100}, "/x/schema/a.go"),
 		msg("m2", "2026-09-11T11:00:00Z", "fable", map[string]int{"input_tokens": 100}, "/x/schema/a.go"),
 	}, "\n")+"\n")
-	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "glenn="+tr)
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "seat-a="+tr)
 	wantExit(t, r, 0)
 	first := strings.Split(read(t, filepath.Join(out, "2026-09-11.tsv")), "\n")[0]
-	for _, want := range []string{"nova-tokens v1 ", "day=2026-09-11", "at=2026-09-11T23:55:02Z", "build=", "turns=2", "sources=claude:glenn"} {
+	for _, want := range []string{"nova-tokens v1 ", "day=2026-09-11", "at=2026-09-11T23:55:02Z", "build=", "turns=2", "sources=claude:seat-a"} {
 		assert.True(t, strings.Contains(first, want), "the version line %q lacks %q", first, want)
 	}
 	wantContains(t, lineWith(r.stdout, "TOKENS FOLD"), "at=2026-09-11T23:55:02Z")
 	wantContains(t, lineWith(r.stdout, "TOKENS DAY"), "turns=2")
 	// No flag sets at=.
-	bad := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "glenn="+tr, "--at", "2020-01-01T00:00:00Z")
+	bad := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "seat-a="+tr, "--at", "2020-01-01T00:00:00Z")
 	wantExit(t, bad, 2)
 
 	// A day fed by a bus note alone counts no turns.
-	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
-	busNote(t, bus, "emma", "a.md", "emma-000000000001", "tokens 2026-09-10", busDate, "2026-09-10\temma\tg\tschema\tinput\t10\n")
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "operator")
+	busNote(t, bus, "operator", "a.md", "operator-000000000001", "tokens 2026-09-10", busDate, "2026-09-10\toperator\tg\tschema\tinput\t10\n")
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-10", "--repos", repos, "--bus", bus), 0)
 	wantContains(t, strings.Split(read(t, filepath.Join(out, "2026-09-10.tsv")), "\n")[0], "turns=-")
 
@@ -1223,12 +1223,12 @@ func TestATypeTheSourceDidNotReportIsADashAndNeverAZero(t *testing.T) {
 	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 10, "output_tokens": 1, "cache_creation_input_tokens": 2, "cache_read_input_tokens": 3}, "/x/schema/a.go")+"\n")
 	pool := mkdir(t, filepath.Join(dir, "pool"))
 	swarmUsage(t, pool, "j1", swarmRow("j1", "t", "1", "dv3", "serialize", "2026-09-11T10:00:00Z", "5", "6", "-", "-", "7"))
-	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
-	busNote(t, bus, "emma", "a.md", "emma-000000000001", "tokens 2026-09-11", busDate,
-		"2026-09-11\temma\tgem\tschema\tinput\t9\n2026-09-11\temma\tgem\tschema\toutput\t0\n")
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "operator")
+	busNote(t, bus, "operator", "a.md", "operator-000000000001", "tokens 2026-09-11", busDate,
+		"2026-09-11\toperator\tgem\tschema\tinput\t9\n2026-09-11\toperator\tgem\tschema\toutput\t0\n")
 
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos,
-		"--claude", "glenn="+tr, "--swarm", "d="+pool, "--bus", bus)
+		"--claude", "seat-a="+tr, "--swarm", "d="+pool, "--bus", bus)
 	wantExit(t, r, 0)
 	day := read(t, filepath.Join(out, "2026-09-11.tsv"))
 	wantContains(t, day, "fable\tschema\t10\t1\t2\t3\t-\t")
@@ -1255,9 +1255,9 @@ func TestAMixedRowSumsPerTypeOverTheSourcesThatReportedIt(t *testing.T) {
 	repos := reposFile(t, dir)
 	tr := mkdir(t, filepath.Join(dir, "tr"))
 	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "m", map[string]int{"input_tokens": 10, "output_tokens": 1, "cache_creation_input_tokens": 2, "cache_read_input_tokens": 3}, "/x/schema/a.go")+"\n")
-	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
-	busNote(t, bus, "emma", "a.md", "emma-000000000001", "tokens 2026-09-11", busDate,
-		"2026-09-11\temma\tm\tschema\tinput\t5\n2026-09-11\temma\tm\tschema\treasoning\t77\n")
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "operator")
+	busNote(t, bus, "operator", "a.md", "operator-000000000001", "tokens 2026-09-11", busDate,
+		"2026-09-11\toperator\tm\tschema\tinput\t5\n2026-09-11\toperator\tm\tschema\treasoning\t77\n")
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr, "--bus", bus)
 	wantExit(t, r, 0)
 	wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "m\tschema\t15\t1\t2\t3\t77\t")
@@ -1427,9 +1427,9 @@ func TestABusLineDatedAnotherDayIsRedatedAndCounted(t *testing.T) {
 
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
-	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
-	busNote(t, bus, "emma", "a.md", "emma-000000000001", "tokens 2026-09-11", busDate,
-		"2026-09-10\temma\tg\tschema\tinput\t5\n")
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "operator")
+	busNote(t, bus, "operator", "a.md", "operator-000000000001", "tokens 2026-09-11", busDate,
+		"2026-09-10\toperator\tg\tschema\tinput\t5\n")
 	r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
 	wantExit(t, r, 0)
 	wantContains(t, r.stdout, "redated=1")
@@ -1449,9 +1449,9 @@ func TestTwoFoldsDifferInNothingButTheStamp(t *testing.T) {
 		msg("m1", "2026-09-11T10:00:00Z", "z", map[string]int{"input_tokens": 1}, "/x/schema/a.go"),
 		msg("m2", "2026-09-11T10:01:00Z", "a", map[string]int{"input_tokens": 2}, "/x/serialize/a.go"),
 	}, "\n")+"\n")
-	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
-	busNote(t, bus, "emma", "b.md", "emma-000000000002", "tokens 2026-09-11 at=2026-09-11T20:00:00Z build=b supersedes=emma-000000000001", busDate, "2026-09-11\temma\tg\tschema\tinput\t2\n")
-	busNote(t, bus, "emma", "a.md", "emma-000000000001", "tokens 2026-09-11", busDate, "2026-09-11\temma\tg\tschema\tinput\t1\n")
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "operator")
+	busNote(t, bus, "operator", "b.md", "operator-000000000002", "tokens 2026-09-11 at=2026-09-11T20:00:00Z build=b supersedes=operator-000000000001", busDate, "2026-09-11\toperator\tg\tschema\tinput\t2\n")
+	busNote(t, bus, "operator", "a.md", "operator-000000000001", "tokens 2026-09-11", busDate, "2026-09-11\toperator\tg\tschema\tinput\t1\n")
 
 	wantExit(t, invoke(t, "fold", "--out", out, "--all", "--repos", repos, "--claude", "g="+tr, "--bus", bus), 0)
 	first := read(t, filepath.Join(out, "2026-09-11.tsv"))
@@ -1478,7 +1478,7 @@ func TestReportPrintsTheBodyAndNothingElse(t *testing.T) {
 	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "gemini", map[string]int{"input_tokens": 100, "output_tokens": 20, "cache_creation_input_tokens": 0}, "/x/schema/a.go")+"\n")
 	note := filepath.Join(dir, "note-body.txt")
 
-	r := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr, "--note", note)
+	r := invoke(t, "report", "--who", "operator", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr, "--note", note)
 	wantExit(t, r, 0)
 	for _, line := range strings.Split(strings.TrimSuffix(r.stdout, "\n"), "\n") {
 		f := strings.Split(line, "\t")
@@ -1486,21 +1486,21 @@ func TestReportPrintsTheBodyAndNothingElse(t *testing.T) {
 		assert.False(t, strings.ContainsAny(line, "~#"), "a report line carries ~ or #: %q", line)
 	}
 	wantNotContains(t, r.stdout, "reasoning")
-	wantContains(t, r.stdout, "2026-09-11\temma\tgemini\tschema\tinput\t100")
-	wantContains(t, r.stdout, "2026-09-11\temma\tgemini\tschema\tcache_write\t0")
-	wantContains(t, r.stderr, "REPORT OK who=emma day=2026-09-11")
+	wantContains(t, r.stdout, "2026-09-11\toperator\tgemini\tschema\tinput\t100")
+	wantContains(t, r.stdout, "2026-09-11\toperator\tgemini\tschema\tcache_write\t0")
+	wantContains(t, r.stderr, "REPORT OK who=operator day=2026-09-11")
 	wantContains(t, r.stderr, `subject="tokens 2026-09-11 at=2026-09-11T23:55:02Z build=`)
 	assert.Equal(t, r.stdout, read(t, note), "--note is not exactly the stdout bytes")
 
 	// The note folds back as the same rows, through the bus, with one hand-added comment.
 	out := mkdir(t, filepath.Join(dir, "out"))
-	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "operator")
 	subject := subjectOf(t, r)
-	busNote(t, bus, "emma", "n.md", "emma-000000000001", subject, busDate, r.stdout+"# repos: schema\n")
+	busNote(t, bus, "operator", "n.md", "operator-000000000001", subject, busDate, r.stdout+"# repos: schema\n")
 	f := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--bus", bus)
 	wantExit(t, f, 0)
 	wantContains(t, f.stdout, "unparsed=0")
-	wantContains(t, f.stdout, "TOKENS TOUCHED label=bus:emma day=2026-09-11 repos=schema")
+	wantContains(t, f.stdout, "TOKENS TOUCHED label=bus:operator day=2026-09-11 repos=schema")
 	viaBus := read(t, filepath.Join(out, "2026-09-11.tsv"))
 	out2 := mkdir(t, filepath.Join(dir, "out2"))
 	wantExit(t, invoke(t, "fold", "--out", out2, "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr), 0)
@@ -1514,7 +1514,7 @@ func TestReportPrintsTheBodyAndNothingElse(t *testing.T) {
 		return strings.Join(keep, "\n")
 	}
 	assert.Equal(t, stripRow(direct), stripRow(viaBus), "the note's rows are not the transcript's rows:\nbus:\n%s\ndirect:\n%s", stripRow(viaBus), stripRow(direct))
-	wantContains(t, viaBus, "\t-\t0\tutc\tbus:emma")
+	wantContains(t, viaBus, "\t-\t0\tutc\tbus:operator")
 }
 
 // rule 20: report refuses a bad call and supersedes a note by subject.
@@ -1531,7 +1531,7 @@ func TestReportRefusesAndSupersedes(t *testing.T) {
 	{
 		bad := mkdir(t, filepath.Join(dir, "bad"))
 		release := makeUnreadable(t, write(t, filepath.Join(bad, "x.jsonl"), "{}\n"))
-		r := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+bad, "--note", note)
+		r := invoke(t, "report", "--who", "operator", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+bad, "--note", note)
 		wantExit(t, r, 1)
 		assert.Equal(t, "", r.stdout, "a failed report wrote to stdout: %q", r.stdout)
 		wantContains(t, r.stderr, "REPORT FAILED")
@@ -1544,38 +1544,38 @@ func TestReportRefusesAndSupersedes(t *testing.T) {
 		release()
 	}
 
-	r := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr,
-		"--supersedes", "emma-000000000002", "--supersedes", "emma-000000000001")
+	r := invoke(t, "report", "--who", "operator", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr,
+		"--supersedes", "operator-000000000002", "--supersedes", "operator-000000000001")
 	wantExit(t, r, 0)
-	wantContains(t, r.stderr, "supersedes=emma-000000000001,emma-000000000002")
-	r = invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr,
-		"--supersedes", "emma-000000000001", "--supersedes", "emma-000000000001")
+	wantContains(t, r.stderr, "supersedes=operator-000000000001,operator-000000000002")
+	r = invoke(t, "report", "--who", "operator", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr,
+		"--supersedes", "operator-000000000001", "--supersedes", "operator-000000000001")
 	wantExit(t, r, 2)
 	wantContains(t, r.stderr, "REPORT REFUSED")
-	wantContains(t, r.stderr, "emma-000000000001")
+	wantContains(t, r.stderr, "operator-000000000001")
 
 	// Demanded test 20's last clause, which had no test: "a note built from it folds as
 	// the successor of <id> (two sequential `report`s, the second superseding the first,
 	// fold to the second's rows and one SUPERSEDED line)."
-	first := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr)
+	first := invoke(t, "report", "--who", "operator", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr)
 	wantExit(t, first, 0)
-	firstID := "emma-000000000001"
-	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
-	busNote(t, bus, "emma", "n1.md", firstID, subjectOf(t, first), busDate, first.stdout)
+	firstID := "operator-000000000001"
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "operator")
+	busNote(t, bus, "operator", "n1.md", firstID, subjectOf(t, first), busDate, first.stdout)
 
 	// The friend folds again -- the transcript grew -- and corrects the day by name.
 	write(t, filepath.Join(tr, "b.jsonl"), msg("m2", "2026-09-11T11:00:00Z", "gemini", map[string]int{"input_tokens": 40}, "/x/schema/a.go")+"\n")
-	second := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr, "--supersedes", firstID)
+	second := invoke(t, "report", "--who", "operator", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr, "--supersedes", firstID)
 	wantExit(t, second, 0)
-	secondID := "emma-000000000002"
-	busNote(t, bus, "emma", "n2.md", secondID, subjectOf(t, second), busDate, second.stdout)
+	secondID := "operator-000000000002"
+	busNote(t, bus, "operator", "n2.md", secondID, subjectOf(t, second), busDate, second.stdout)
 
 	out := mkdir(t, filepath.Join(dir, "out-seq"))
 	f := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--bus", bus)
 	wantExit(t, f, 0)
 	// The successor is the day: 41, not 1 and not 42.
 	wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "gemini\tschema\t41\t")
-	wantContains(t, f.stdout, "TOKENS SUPERSEDED label=bus:emma note="+firstID+" by="+secondID+" day=2026-09-11")
+	wantContains(t, f.stdout, "TOKENS SUPERSEDED label=bus:operator note="+firstID+" by="+secondID+" day=2026-09-11")
 	{
 		n := strings.Count(f.stdout, "TOKENS SUPERSEDED")
 		assert.Equal(t, 1, n, "%d SUPERSEDED lines for two sequential reports, want one", n)
@@ -1610,10 +1610,10 @@ func TestAProviderExportIsUnattributedAndNeverSplit(t *testing.T) {
 		"2026-09-11T10:30:00-07:00,gemini-2.5-pro,200,20",
 		"",
 	}, "\n"))
-	r := invoke(t, "fold", "--out", out, "--all", "--repos", repos, "--provider", "google:emma="+g)
+	r := invoke(t, "fold", "--out", out, "--all", "--repos", repos, "--provider", "google:operator="+g)
 	wantExit(t, r, 0)
-	wantContains(t, read(t, filepath.Join(out, "2026-09-12.tsv")), "gemini-2.5-pro\tunattributed\t100\t10\t-\t-\t-\t0\tutc\tgoogle:emma")
-	wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "gemini-2.5-pro\tunattributed\t200\t20\t-\t-\t-\t0\tutc\tgoogle:emma")
+	wantContains(t, read(t, filepath.Join(out, "2026-09-12.tsv")), "gemini-2.5-pro\tunattributed\t100\t10\t-\t-\t-\t0\tutc\tgoogle:operator")
+	wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "gemini-2.5-pro\tunattributed\t200\t20\t-\t-\t-\t0\tutc\tgoogle:operator")
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "reports=input,output")
 
 	// xAI: per-day totals in a declared zone.
@@ -1672,12 +1672,12 @@ func TestAProviderExportIsUnattributedAndNeverSplit(t *testing.T) {
 	// parser name could not express.
 	out6 := mkdir(t, filepath.Join(dir, "out6"))
 	g2 := write(t, filepath.Join(dir, "google2.csv"), "timestamp,model,input_tokens\n2026-09-11T10:00:00Z,gemini-2.5-pro,4\n")
-	r = invoke(t, "fold", "--out", out6, "--all", "--repos", repos, "--provider", "google:emma="+g2, "--provider", "google:freddy="+g2)
+	r = invoke(t, "fold", "--out", out6, "--all", "--repos", repos, "--provider", "google:operator="+g2, "--provider", "google:reader-b="+g2)
 	wantExit(t, r, 0)
-	wantContains(t, read(t, filepath.Join(out6, "2026-09-11.tsv")), "google:emma,google:freddy")
+	wantContains(t, read(t, filepath.Join(out6, "2026-09-11.tsv")), "google:operator,google:reader-b")
 
 	// A --provider with no kind, and one whose kind names no parser, are refusals.
-	for _, bad := range []string{"emma=" + g2, "gerbil:emma=" + g2} {
+	for _, bad := range []string{"operator=" + g2, "gerbil:operator=" + g2} {
 		wantExit(t, invoke(t, "fold", "--out", out6, "--all", "--repos", repos, "--provider", bad), 2)
 	}
 }
@@ -1691,7 +1691,7 @@ func TestAMixedRowIsRefused(t *testing.T) {
 	repos := reposFile(t, dir)
 	g := write(t, filepath.Join(dir, "google.csv"), "timestamp,model,input_tokens\n2026-09-11T10:00:00Z,m,5\n")
 	x := write(t, filepath.Join(dir, "xai.csv"), "# timezone: America/Los_Angeles\ndate,model,input\n2026-09-11,m,7\n")
-	r := invoke(t, "fold", "--out", out, "--all", "--repos", repos, "--provider", "google:emma="+g, "--provider", "xai:johnny="+x)
+	r := invoke(t, "fold", "--out", out, "--all", "--repos", repos, "--provider", "google:operator="+g, "--provider", "xai:johnny="+x)
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS MIXED date=2026-09-11 model=m repo=unattributed")
 	wantContains(t, r.stderr, "mixed=1")
@@ -1707,11 +1707,11 @@ func TestANoteOfOneReposCommentIsValidWithZeroRows(t *testing.T) {
 
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
-	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
-	busNote(t, bus, "emma", "a.md", "emma-000000000001", "tokens 2026-09-11", busDate, "# repos: schema, serialize\n\n")
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "operator")
+	busNote(t, bus, "operator", "a.md", "operator-000000000001", "tokens 2026-09-11", busDate, "# repos: schema, serialize\n\n")
 	r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
 	wantExit(t, r, 0)
-	wantContains(t, r.stdout, "TOKENS TOUCHED label=bus:emma day=2026-09-11 repos=schema,serialize")
+	wantContains(t, r.stdout, "TOKENS TOUCHED label=bus:operator day=2026-09-11 repos=schema,serialize")
 	wantContains(t, r.stdout, "unparsed=0")
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "rows=0")
 }
@@ -1748,10 +1748,10 @@ func TestABusNoteWithSixAndSevenFieldLinesForOneKeyIsMixed(t *testing.T) {
 
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
-	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
-	busNote(t, bus, "emma", "a.md", "emma-000000000001", "tokens 2026-09-11", busDate, strings.Join([]string{
-		"2026-09-11\temma\tg\tschema\tinput\t100",
-		"2026-09-11\temma\tg\tschema\tinput\t5\tday_basis=America/Los_Angeles",
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "operator")
+	busNote(t, bus, "operator", "a.md", "operator-000000000001", "tokens 2026-09-11", busDate, strings.Join([]string{
+		"2026-09-11\toperator\tg\tschema\tinput\t100",
+		"2026-09-11\toperator\tg\tschema\tinput\t5\tday_basis=America/Los_Angeles",
 		"",
 	}, "\n"))
 	r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
@@ -1785,13 +1785,13 @@ func TestReportCountsAndPrintsEverythingItDropped(t *testing.T) {
 		msg("", "2026-09-11T11:00:00Z", "f", map[string]int{"input_tokens": 7}, "/x/schema/a.go"),
 	}, "\n")+"\n")
 
-	r := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr)
+	r := invoke(t, "report", "--who", "operator", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr)
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS UNPARSED label=claude:g")
 	wantContains(t, r.stderr, "yesterday")
 	// The status word follows the exit, so what says the day is short is the line above
 	// it, the note, and the FAILED word -- and the body still printed.
-	wantContains(t, r.stderr, "REPORT FAILED who=emma day=2026-09-11 rows=1")
+	wantContains(t, r.stderr, "REPORT FAILED who=operator day=2026-09-11 rows=1")
 	{
 		n := strings.Count(r.stderr, "TOKENS UNPARSED")
 		assert.Equal(t, 1, n, "%d TOKENS UNPARSED lines, want 1:\n%s", n, r.stderr)
@@ -1801,7 +1801,7 @@ func TestReportCountsAndPrintsEverythingItDropped(t *testing.T) {
 	wantContains(t, note, "no id")
 	wantContains(t, note, "claude:g")
 	// Exit 1 still writes: the body is what it could compute, and it is only the 3.
-	wantContains(t, r.stdout, "2026-09-11\temma\tf\tschema\tinput\t3")
+	wantContains(t, r.stdout, "2026-09-11\toperator\tf\tschema\tinput\t3")
 	wantNotContains(t, r.stdout, "\t15")
 }
 
@@ -1814,11 +1814,11 @@ func TestABusLaneWithASixFieldAndASevenFieldLineIsMixed(t *testing.T) {
 
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
-	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "operator")
 	// Two different models, so the two bases are two rows and not one mixed row.
-	busNote(t, bus, "emma", "a.md", "emma-000000000001", "tokens 2026-09-11", busDate, strings.Join([]string{
-		"2026-09-11\temma\tutcmodel\tschema\tinput\t100",
-		"2026-09-11\temma\tzonemodel\tschema\tinput\t5\tday_basis=America/Los_Angeles",
+	busNote(t, bus, "operator", "a.md", "operator-000000000001", "tokens 2026-09-11", busDate, strings.Join([]string{
+		"2026-09-11\toperator\tutcmodel\tschema\tinput\t100",
+		"2026-09-11\toperator\tzonemodel\tschema\tinput\t5\tday_basis=America/Los_Angeles",
 		"",
 	}, "\n"))
 	r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
@@ -1828,9 +1828,9 @@ func TestABusLaneWithASixFieldAndASevenFieldLineIsMixed(t *testing.T) {
 	// A lane whose lines all carry the one zone names that zone, and a lane of six-field
 	// lines alone is utc: mixed is a fact about the lane, not a default.
 	dir2 := t.TempDir()
-	bus2 := busDir(t, mkdir(t, filepath.Join(dir2, "bus")), "emma")
-	busNote(t, bus2, "emma", "a.md", "emma-000000000001", "tokens 2026-09-11", busDate,
-		"2026-09-11\temma\tzonemodel\tschema\tinput\t5\tday_basis=America/Los_Angeles\n")
+	bus2 := busDir(t, mkdir(t, filepath.Join(dir2, "bus")), "operator")
+	busNote(t, bus2, "operator", "a.md", "operator-000000000001", "tokens 2026-09-11", busDate,
+		"2026-09-11\toperator\tzonemodel\tschema\tinput\t5\tday_basis=America/Los_Angeles\n")
 	r = invoke(t, "fold", "--out", mkdir(t, filepath.Join(dir2, "out")), "--all", "--repos", reposFile(t, dir2), "--bus", bus2)
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "day_basis=America/Los_Angeles")
 }
@@ -1921,11 +1921,11 @@ func TestTheMixedRemedyNamesTheTwoLabels(t *testing.T) {
 	g := write(t, filepath.Join(dir, "google.csv"), "timestamp,model,input_tokens\n2026-09-11T12:00:00Z,gemini-2.5-pro,100\n")
 	x := write(t, filepath.Join(dir, "xai.csv"), "# timezone: America/Los_Angeles\ndate,model,input\n2026-09-11,gemini-2.5-pro,5\n")
 	r := invoke(t, "fold", "--out", out, "--all", "--repos", repos,
-		"--provider", "google:emma="+g, "--provider", "xai:johnny="+x)
+		"--provider", "google:operator="+g, "--provider", "xai:johnny="+x)
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS MIXED")
 	note := lineWith(r.stdout, "TOKENS NOTE")
-	for _, label := range []string{"google:emma", "xai:johnny"} {
+	for _, label := range []string{"google:operator", "xai:johnny"} {
 		wantContains(t, note, label)
 	}
 }
@@ -1940,22 +1940,22 @@ func TestABusNoteWithAHeadingReportsTheFileLineNumber(t *testing.T) {
 
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
-	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "operator")
 	// 1 heading, 2 blank, 3-7 header (one bulleted), 8 blank, 9 good, 10 prose.
 	note := strings.Join([]string{
 		"# tokens 2026-09-11",
 		"",
-		"From: Emma",
-		"To: Rowan",
+		"From: Operator",
+		"To: friend-c",
 		"- Date: " + busDate,
-		"Id: emma-000000000001",
+		"Id: operator-000000000001",
 		"Subject: tokens 2026-09-11",
 		"",
-		"2026-09-11\temma\tg\tschema\tinput\t100",
+		"2026-09-11\toperator\tg\tschema\tinput\t100",
 		"this line is prose",
 		"",
 	}, "\n")
-	write(t, filepath.Join(bus, "from-emma", "a.md"), note)
+	write(t, filepath.Join(bus, "from-operator", "a.md"), note)
 
 	r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
 	wantExit(t, r, 1)
@@ -2011,8 +2011,8 @@ func TestReportKeepsTheLinesForEveryKeyThatIsNotMixed(t *testing.T) {
 	}, "\n"))
 	x := write(t, filepath.Join(dir, "xai.csv"), "# timezone: America/Los_Angeles\ndate,model,input\n2026-09-11,mixed-model,5\n")
 
-	r := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--note", note,
-		"--provider", "google:emma="+g, "--provider", "xai:johnny="+x)
+	r := invoke(t, "report", "--who", "operator", "--day", "2026-09-11", "--repos", repos, "--note", note,
+		"--provider", "google:operator="+g, "--provider", "xai:johnny="+x)
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS MIXED")
 	wantContains(t, r.stderr, "REPORT FAILED")
@@ -2037,7 +2037,7 @@ func TestEveryVerbRefusesAPositionalArgument(t *testing.T) {
 	for _, args := range [][]string{
 		{"fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "g=" + tr, "extra"},
 		{"sources", "--repos", repos, "--claude", "g=" + tr, "extra"},
-		{"report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--claude", "g=" + tr, "extra"},
+		{"report", "--who", "operator", "--day", "2026-09-11", "--repos", repos, "--claude", "g=" + tr, "extra"},
 		{"sum", "--out", out, "--month", "2026-09", "extra"},
 		{"check", "--out", out, "extra"},
 	} {
@@ -2060,28 +2060,28 @@ func TestAWholeNoteRefusalCarriesTheSubjectsFileLine(t *testing.T) {
 	note := func(subject string) string {
 		return strings.Join([]string{
 			"# tokens 2026-09-11", "",
-			"From: Emma", "To: Rowan", "Date: " + busDate, "Id: emma-00000000000f", "Subject: " + subject, "",
-			"2026-09-11\temma\tg\tschema\tinput\t900", "",
+			"From: Operator", "To: friend-c", "Date: " + busDate, "Id: operator-00000000000f", "Subject: " + subject, "",
+			"2026-09-11\toperator\tg\tschema\tinput\t900", "",
 		}, "\n")
 	}
 	for _, tc := range []struct{ name, subject, want string }{
-		{"a duplicate predecessor", "tokens 2026-09-11 at=2026-09-11T22:00:00Z build=b supersedes=emma-000000000001,emma-000000000001", "twice"},
+		{"a duplicate predecessor", "tokens 2026-09-11 at=2026-09-11T22:00:00Z build=b supersedes=operator-000000000001,operator-000000000001", "twice"},
 		{"a predecessor in another lane", "tokens 2026-09-11 at=2026-09-11T22:00:00Z build=b supersedes=bo-000000000001", "another lane"},
-		{"a cycle", "tokens 2026-09-11 at=2026-09-11T22:00:00Z build=b supersedes=emma-00000000000f", "cycle"},
+		{"a cycle", "tokens 2026-09-11 at=2026-09-11T22:00:00Z build=b supersedes=operator-00000000000f", "cycle"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			out := mkdir(t, filepath.Join(dir, "out"))
-			bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma", "bo")
-			write(t, filepath.Join(bus, "from-emma", "z.md"), note(tc.subject))
-			busNote(t, bus, "emma", "a.md", "emma-000000000001", "tokens 2026-09-11", busDate,
-				"2026-09-11\temma\tg\tschema\tinput\t100\n")
+			bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "operator", "bo")
+			write(t, filepath.Join(bus, "from-operator", "z.md"), note(tc.subject))
+			busNote(t, bus, "operator", "a.md", "operator-000000000001", "tokens 2026-09-11", busDate,
+				"2026-09-11\toperator\tg\tschema\tinput\t100\n")
 			busNote(t, bus, "bo", "x.md", "bo-000000000001", "tokens 2026-09-11", busDate,
 				"2026-09-11\tbo\tg\tschema\tinput\t1\n")
 			r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
 			wantExit(t, r, 1)
 			wantContains(t, strings.ToLower(r.stderr), tc.want)
-			wantContains(t, r.stderr, "note=emma-00000000000f line=7")
+			wantContains(t, r.stderr, "note=operator-00000000000f line=7")
 			wantNotContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "\t900\t")
 		})
 	}
@@ -2117,7 +2117,7 @@ func TestAProviderUnparsedLineIsTheLineInTheFile(t *testing.T) {
 		"",
 	}, "\n"))
 	r = invoke(t, "fold", "--out", mkdir(t, filepath.Join(dir, "out2")), "--all",
-		"--repos", reposFile(t, dir), "--provider", "google:emma="+g)
+		"--repos", reposFile(t, dir), "--provider", "google:operator="+g)
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "line=4")
 }
@@ -2130,9 +2130,9 @@ func TestALaneThatFoldedNothingPrintsADashForReports(t *testing.T) {
 
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
-	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
-	busNote(t, bus, "emma", "near.md", "emma-00000000000a", "tokens 2026-09-11 (rough)", busDate,
-		"2026-09-11\temma\tg\tschema\tinput\t100\n")
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "operator")
+	busNote(t, bus, "operator", "near.md", "operator-00000000000a", "tokens 2026-09-11 (rough)", busDate,
+		"2026-09-11\toperator\tg\tschema\tinput\t100\n")
 	r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
 	wantExit(t, r, 1)
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "reports=-")
