@@ -166,3 +166,27 @@ func TestInstallRefusesAKindItDoesNotOwnAndAStoreTheUnitCannotLogInTo(t *testing
 	entries, _ := os.ReadDir(filepath.Join(home, ".config", "systemd", "user"))
 	assert.Empty(t, entries, "nothing was written")
 }
+
+// A server installed to clear a server-actor drift runs as the holder the
+// command's own --actor names, not as the caller's own NOVA_SPRINT_ACTOR, whose
+// value would only recreate the drift (docs/SPEC-DOCTOR.md, seat-agreement).
+func TestInstallServerUnitActorFollowsTheExplicitActor(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	env := map[string]string{"NOVA_SPRINT_REDIS": "127.0.0.1:6380", "NOVA_SPRINT_ACTOR": "bob"}
+	a := newApp(func(k string) string { return env[k] })
+	a.goos = "linux"
+	a.home = func() (string, error) { return home, nil }
+	a.executable = func() (string, error) { return "/opt/nova/bin/nova-sprint", nil }
+	a.seatLoad = func(string, string, string) error { return nil }
+	var out, errb bytes.Buffer
+	code := (*app).cmdInstall(a, []string{"server", "--listen", "127.0.0.1:6390", "--actor", "ada"}, &out, &errb)
+	require.Equal(t, 0, code, errb.String())
+	dir := sprint.UnitDir("linux", home, func(string) string { return "" })
+	k, ok := sprint.UnitKindOf("server")
+	require.True(t, ok)
+	b, err := os.ReadFile(filepath.Join(dir, k.File("linux")))
+	require.NoError(t, err)
+	assert.Contains(t, string(b), "NOVA_SPRINT_ACTOR=ada", "the unit's actor is the explicit --actor")
+	assert.NotContains(t, string(b), "NOVA_SPRINT_ACTOR=bob", "the caller's environment does not override the explicit actor")
+}

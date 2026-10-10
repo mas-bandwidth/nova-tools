@@ -235,10 +235,15 @@ func (a *app) installUnit(k sprint.UnitKind, args []string, stdout, stderr io.Wr
 		if *decideDir != "" {
 			u.Args = append(u.Args, "--decide", *decideDir)
 		}
-		for _, e := range []string{"NOVA_SPRINT_ACTOR", OwnerEnv} {
-			if v := a.getenv(e); v != "" {
-				u.Env = append(u.Env, [2]string{e, v})
-			}
+		// The unit's actor is the explicit --actor when one is given: a server
+		// reinstalled to clear a server-actor drift runs as the seat's holder, not as
+		// the caller's own NOVA_SPRINT_ACTOR, whose value would only recreate the
+		// drift (docs/SPEC-DOCTOR.md, seat-agreement).
+		if c.actor != "" {
+			u.Env = append(u.Env, [2]string{"NOVA_SPRINT_ACTOR", c.actor})
+		}
+		if v := a.getenv(OwnerEnv); v != "" {
+			u.Env = append(u.Env, [2]string{OwnerEnv, v})
 		}
 	case "member":
 		if *as == "" || *server == "" {

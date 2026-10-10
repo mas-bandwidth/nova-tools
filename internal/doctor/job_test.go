@@ -25,8 +25,9 @@ import (
 )
 
 const (
-	testRedis = "127.0.0.1:6390"
-	testHome  = "/home/ada"
+	testRedis  = "127.0.0.1:6390"
+	testHome   = "/home/ada"
+	testServer = "127.0.0.1:6391"
 )
 
 // testNow is the fake clock every world reads: no test reads real time.
@@ -67,6 +68,10 @@ type world struct {
 	// seatServer is the actor the running server reports when it differs from the seat's
 	// holder (a server-actor-only drift): "" is no drift.
 	seatServer string
+	// callerActor is the operator's own NOVA_SPRINT_ACTOR when a case needs one other
+	// than the seat's holder; serverAddr is NOVA_SPRINT_SERVER when the machine knows
+	// the fleet's server address ("" leaves the printed --listen placeholder).
+	callerActor, serverAddr string
 }
 
 // friendFact is one configured friend as the preflight's fakes report it.
@@ -120,9 +125,16 @@ func (e exitErr) Error() string { return e.stderr }
 func (e exitErr) ExitCode() int { return e.code }
 
 func (w *world) vars() map[string]string {
-	env := map[string]string{"PATH": "bin", "HOME": testHome, "NOVA_REDIS_ADDR": testRedis, "NOVA_SPRINT_ACTOR": "ada"}
+	actor := w.callerActor
+	if actor == "" {
+		actor = "ada"
+	}
+	env := map[string]string{"PATH": "bin", "HOME": testHome, "NOVA_REDIS_ADDR": testRedis, "NOVA_SPRINT_ACTOR": actor}
+	if w.serverAddr != "" {
+		env["NOVA_SPRINT_SERVER"] = w.serverAddr
+	}
 	if w.configEmpty {
-		env["NOVA_SPRINT_ACTOR"] = "ada"
+		env["NOVA_SPRINT_ACTOR"] = actor
 		env["NOVA_PG_DSN"] = "postgres://nova_config@127.0.0.1:5432/nova"
 		env["NOVA_PG_PASSWORD_ENV"] = "NOVA_PG_CONFIG_PASSWORD"
 	}
@@ -254,7 +266,7 @@ func (w *world) exec(name string, args ...string) (string, error) {
 		if w.seatDrift {
 			return "SEAT holder=ada epoch=1 generation=1 record=ada DRIFT the key says wrong and the record ada: nova-sprint seat --repair --reason <text> (the holder or the owner)\n", exitErr{1, ""}
 		}
-		if w.seatServer != "" {
+		if w.seatServer != "" && w.seatServer != "ada" {
 			return fmt.Sprintf("SEAT holder=ada epoch=1 generation=1 record=ada server=%s DRIFT the server runs as %s and the seat is ada's: change the server's NOVA_SPRINT_ACTOR=%s to NOVA_SPRINT_ACTOR=ada and restart it\n", w.seatServer, w.seatServer, w.seatServer), exitErr{1, ""}
 		}
 		return w.seatText()
@@ -520,6 +532,18 @@ func (w *world) run(cmd string) {
 			w.pushNonce = "check-1"
 			w.noncesIssued++
 		}
+	case a.verb == "nova-sprint install server":
+		// The drift's repair: the unit's actor is the command's own --actor when it
+		// names one, else the caller's environment (install.go, installUnit). The
+		// reinstalled server runs as that actor, so only the holder clears the drift.
+		actor := f["actor"]
+		if actor == "" {
+			actor = w.vars()["NOVA_SPRINT_ACTOR"]
+		}
+		if f["redis"] != testRedis || f["listen"] != w.serverAddr {
+			w.t.Fatalf("the server install is not the drift's repair: %q", cmd)
+		}
+		w.seatServer = actor
 	case a.verb == "nova-sprint seat pong":
 		if f["actor"] != "ada" || f["redis"] != testRedis || len(a.args) != 1 || a.args[0] == "" || a.args[0] != w.pushNonce {
 			w.t.Fatalf("the pong is not the outstanding nonce: %q nonce=%s", cmd, w.pushNonce)
@@ -745,6 +769,21 @@ func TestDoctorNamesTheFirstMissingDependencyAndItsFix(t *testing.T) {
 		assert.NotContains(t, next, "--repair")
 		_, refused := parseArgv(next)
 		assert.Empty(t, refused, next)
+
+		// The caller's own environment names bob; the machine knows the fleet's
+		// server address, so the printed repair runs as printed. The explicit
+		// --actor ada, never the caller's bob, is what clears the drift.
+		w.callerActor, w.serverAddr = "bob", testServer
+		code, lines = w.doctor(jobArgs["coordinator"]...)
+		require.Equal(t, 2, code, lines)
+		_, next, ok = strings.Cut(lines[len(lines)-1], " next: ")
+		require.True(t, ok, lines[len(lines)-1])
+		assert.Equal(t, "nova-sprint install server --listen "+testServer+" --redis "+testRedis+" --actor ada", next)
+		assert.NotContains(t, next, "bob")
+		w.run(next)
+		code, lines = w.doctor(jobArgs["coordinator"]...)
+		assert.Equal(t, 0, code, lines)
+		assert.Contains(t, strings.Join(lines, "\n"), "DOCTOR seat-agreement ok ")
 	})
 	t.Run("missing installed service precedes push", func(t *testing.T) {
 		t.Parallel()
