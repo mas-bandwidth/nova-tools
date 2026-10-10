@@ -507,7 +507,7 @@ func TestFleetSyncReleasesItsOwnHoldAndNotTheCoordinators(t *testing.T) {
 	require.Equal(t, sprint.Up, ta.fleetRows()["m2"]["status"], "m2 did not come up when it beat")
 	require.Contains(t, ta.ok("fleet sync"), "nothing to do", "after the release")
 	// the coordinator's own hold, on the machine the sync once held, stays
-	ta.ok("fleet down m2")
+	ta.ok("fleet down m2 --reason testing")
 	inv.set("m2", 7)
 	out = ta.ok("fleet sync")
 	require.Contains(t, out, "NOTE m2 is held by the coordinator", "the coordinator's hold is not said")
