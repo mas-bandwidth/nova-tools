@@ -3785,7 +3785,11 @@ three tries is refused alone, `its ask lost <n> tries this tick in a step of its
 writer moved the fence, or the store refused the write as planned); nothing was written for it;
 the next tick asks it again`, and the steps go on with the rest. The steps begin no try past the
 ask's budget (`store.AskBudget`, 2 s, or half of the time the tick's context has left when that
-is less, read on the store's clock): the ask stops there with what it asked, the primaries it did
+is less, read on the store's clock), and no step after the first begins past half of the tick's
+second from the tick's beginning (`store.AskBy`): a tick is held to one second (the owner's law of
+2026-09-30), and a two-second ask inside it made every tick with a backlog of reads a two-second
+tick (the certification drive of 2026-10-10, `readers/ask` 2.006 to 2.063 s). The first step
+always begins, so every tick asks some reads. The ask stops there with what it asked, the primaries it did
 not reach are due, and the next tick reads them. A batch that lost its tries and that the budget
 cut before it was tried again one primary at a time is due too, and leaves the ask unfinished.
 The tick's `TIMES` line prints the ask as `readers/ask=<ms>ms/<trips>t/
