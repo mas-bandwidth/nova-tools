@@ -118,6 +118,18 @@ func ReadQueueArgv(friend string) []string {
 	return []string{"queue", "--as", ReaderOf(friend), "--json"}
 }
 
+// benchOf reads the bench a lane gates on from a view coordinator --json answer
+// (sprint.BenchLine, carried as the view's bench_name field); "" when it names none.
+func benchOf(out string) string {
+	var v struct {
+		BenchName string `json:"bench_name"`
+	}
+	if json.Unmarshal([]byte(out), &v) == nil {
+		return v.BenchName
+	}
+	return ""
+}
+
 // ReadBeginArgv begins an asked read.
 func ReadBeginArgv(friend string, r AskedRead) []string {
 	return []string{"read", "--as", ReaderOf(friend), "--begin", r.ID, "--epoch", r.Epoch}
@@ -144,14 +156,21 @@ func briefField(re *regexp.Regexp, brief string) string {
 }
 
 // BenchRule is the sentence every read prompt carries: the machine the friend runs on runs no go command, a Linux
-// bench does.
-func BenchRule(friend, card string) string {
+// bench does. bench is the bench a lane gates on (sprint.BenchLine, docs/SPEC-SPRINT.md section 5, "the bench a
+// lane gates on"), the name the chosen bench wrote, so the rule names the machine the sprint chose and never one
+// by habit; "" falls back to the reader's own AGENTS.md.
+func BenchRule(friend, card, bench string) string {
 	d := "~/nova-bench/buds/" + friend + "/reads/" + card
-	return fmt.Sprintf("BENCH RULE, over any GOCACHE or go command the brief gives: this machine (the one you are on) runs no go build, go test or go vet, ever. Read the checkout here (change nothing), then copy the tree to a Linux bench and run every go command there: ssh <bench> 'mkdir -p %s' && rsync -a --delete <your repo dir>/ <bench>:%s/repo/ && ssh <bench> 'cd %s/repo && export GOCACHE=~/nova-bench/buds/%s/cache/go-build GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 && nice -n 19 go ...' (<bench> is the Linux bench your AGENTS.md names; the next one it names only when that one does not answer). Re-sync after each edit. When you are done, remove that bench directory: ssh <bench> 'rm -rf %s'. Report the gate lines as the bench printed them, naming the bench.", d, d, d, friend, d)
+	ref, note := "<bench>", "<bench> is the Linux bench your AGENTS.md names; the next one it names only when that one does not answer"
+	if bench != "" {
+		ref, note = bench, bench+" is the least loaded Linux bench, chosen by the sprint"
+	}
+	return fmt.Sprintf("BENCH RULE, over any GOCACHE or go command the brief gives: this machine (the one you are on) runs no go build, go test or go vet, ever. Read the checkout here (change nothing), then copy the tree to a Linux bench and run every go command there: ssh %s 'mkdir -p %s' && rsync -a --delete <your repo dir>/ %s:%s/repo/ && ssh %s 'cd %s/repo && export GOCACHE=~/nova-bench/buds/%s/cache/go-build GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 && nice -n 19 go ...' (%s). Re-sync after each edit. When you are done, remove that bench directory: ssh %s 'rm -rf %s'. Report the gate lines as the bench printed them, naming the bench.", ref, d, ref, d, ref, d, friend, note, ref, d)
 }
 
-// ReadText is READ.md: the read's job, as the reader loops wrote it.
-func ReadText(friend, jobDir string, r AskedRead) string {
+// ReadText is READ.md: the read's job, as the reader loops wrote it. bench is the bench a
+// lane gates on (sprint.BenchLine), written into the read's bench rule.
+func ReadText(friend, jobDir string, r AskedRead, bench string) string {
 	p := r.Packet
 	repo, base := briefField(repoLine, p.Brief), briefField(baseLine, p.Brief)
 	me := ReaderOf(friend)
@@ -172,7 +191,7 @@ You are %[3]s, a reader of %[4]s reading one card. Work only in %[5]s. Change no
     ## Body
     <your findings, each with file:line>
 A broken verdict tells the worker what to do: at least one finding names the file (file:line), the line, or the brief's STEP or RULE the work breaks, and says what to change. A broken verdict that names no file, line or rule is not a verdict.
-`, r.ID, p.Attempt, me, friend, jobDir, repo, p.WorkBranch, p.Head, base, BenchRule(friend, r.ID))
+`, r.ID, p.Attempt, me, friend, jobDir, repo, p.WorkBranch, p.Head, base, BenchRule(friend, r.ID, bench))
 }
 
 // ReadPrompt is the one turn a read runs: do READ.md, stop when RESULT.md is written.
@@ -226,6 +245,7 @@ type readSet struct {
 	asked   []AskedRead
 	askedAt time.Time
 	epoch   string                        // the latest epoch seen on the reader queue
+	bench   string                        // the bench a lane gates on (sprint.BenchLine), as the sprint server last said it
 	cancel  map[string]context.CancelFunc // each read under way: the machine's stop ends it (stop.go)
 	stopped map[string]bool               // reads the stop cancelled: no verdict, a stop-return
 	active  map[string]AskedRead          // each read under way as it was begun: its generation and epoch, which the queue's refresh no longer lists
@@ -260,6 +280,9 @@ func (l *loop) readStep(now time.Time) {
 	at := now.UTC().Format(time.RFC3339)
 	if s.askedAt.IsZero() || now.Sub(s.askedAt) >= ReadAskEvery {
 		s.askedAt = now
+		if bout, berr := d.Sprint(l.ctx, []string{"view", "coordinator", "--json"}); berr == nil {
+			s.bench = benchOf(bout) // the least loaded bench, so no read names one by habit
+		}
 		out, err := d.Sprint(l.ctx, ReadQueueArgv(d.Friend))
 		if err != nil {
 			d.Record(fmt.Sprintf("%s reads: the reader queue: %s", at, oneLine(err.Error(), 300)))
@@ -327,7 +350,7 @@ func (l *loop) startRead(r AskedRead, now time.Time) {
 		if res.err = os.MkdirAll(dir, 0o755); res.err != nil {
 			return
 		}
-		for name, text := range map[string]string{"BRIEF.md": r.Packet.Brief, "WORKER-REPORT.txt": r.Packet.Report, "READ.md": ReadText(d.Friend, dir, r)} {
+		for name, text := range map[string]string{"BRIEF.md": r.Packet.Brief, "WORKER-REPORT.txt": r.Packet.Report, "READ.md": ReadText(d.Friend, dir, r, s.bench)} {
 			if res.err = os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); res.err != nil {
 				return
 			}

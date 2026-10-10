@@ -42,18 +42,32 @@ func BenchLoad(pct float64, cores int) float64 {
 }
 
 // BenchRows is the benches of a fleet as the pick reads them: one row per member in
-// the order given that has a beat, its cores and its load average. A member with no
-// beat is no bench to gate on. GoProcs is zero until the beat carries the count.
-func BenchRows(members []string, beats map[string]Beat) []BenchRow {
+// the order given that has a beat, its cores, its load average and its go-process
+// count (GoProcessCounts). A member with no beat is no bench to gate on; a bench the
+// lanes name none of is zero.
+func BenchRows(members []string, beats map[string]Beat, goProcs map[string]int) []BenchRow {
 	rows := make([]BenchRow, 0, len(members))
 	for _, m := range members {
 		b, ok := beats[m]
 		if !ok || !b.Beaten() {
 			continue
 		}
-		rows = append(rows, BenchRow{Name: m, Cores: b.Cores, Load: BenchLoad(b.Load, b.Cores)})
+		rows = append(rows, BenchRow{Name: m, Cores: b.Cores, Load: BenchLoad(b.Load, b.Cores), GoProcs: goProcs[m]})
 	}
 	return rows
+}
+
+// GoProcessCounts is how many go processes each machine runs: the holders of its go
+// lane (LaneGo), the fleet table's go-process count (docs/SPEC-SPRINT.md section 18).
+// A machine the lanes name none of is absent from the map, so BenchRows reads it as zero.
+func GoProcessCounts(lanes []LaneRow) map[string]int {
+	out := map[string]int{}
+	for _, l := range lanes {
+		if l.Kind == LaneGo {
+			out[l.Machine] = len(l.Held)
+		}
+	}
+	return out
 }
 
 // benchCap is a bench's load cap: its cores times factor, and one core's cap when the

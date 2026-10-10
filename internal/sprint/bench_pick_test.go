@@ -48,6 +48,13 @@ func TestTheBenchIsTheLeastLoadedMachineNotAName(t *testing.T) {
 		BenchLine([]BenchRow{{Name: "only", Cores: 1, Load: 9}}, BenchCapFactor))
 	assert.Empty(t, BenchLine(nil, BenchCapFactor), "a fleet with no beat to gate on writes no bench line")
 
+	// equal loads: the pick ties to fewer go processes, so the busier bench is not chosen
+	tied := []BenchRow{
+		{Name: "busy", Cores: 32, Load: 4.0, GoProcs: 12},
+		{Name: "quiet", Cores: 32, Load: 4.0, GoProcs: 1},
+	}
+	assert.Equal(t, "quiet", mustPick(t, tied).Name, "equal loads tie to the fewer go processes")
+
 	// a beat's load is a percent of all its cores: the pick reads the load average
 	assert.Equal(t, 1.0, BenchLoad(3.125, 32))
 	assert.Equal(t, 0.03125, BenchLoad(3.125, 1))
@@ -62,8 +69,8 @@ func mustPick(t *testing.T, rows []BenchRow) BenchRow {
 }
 
 // BenchRows joins the fleet's members with their beats: the beat's percent of all the
-// machine's cores becomes the load average the pick reads, and a member that has never
-// beaten is no bench to gate on.
+// machine's cores becomes the load average the pick reads, a member that has never
+// beaten is no bench to gate on, and a bench's go-process count is its go lane's holders.
 func TestBenchRowsReadsTheBeatsLoadAverage(t *testing.T) {
 	t.Parallel()
 	at := time.Date(2026, 10, 6, 11, 0, 0, 0, time.UTC)
@@ -71,8 +78,30 @@ func TestBenchRowsReadsTheBeatsLoadAverage(t *testing.T) {
 		"crushed": {At: at, Load: 256, Cores: 64}, // a load average of 2.56 cores each
 		"idle":    {At: at, Load: 3.125, Cores: 32},
 	}
-	rows := BenchRows([]string{"crushed", "idle", "quiet"}, beats)
+	goProcs := map[string]int{"crushed": 31}
+	rows := BenchRows([]string{"crushed", "idle", "quiet"}, beats, goProcs)
 	require.Len(t, rows, 2, "a member that has never beaten is no bench")
-	assert.Equal(t, BenchRow{Name: "crushed", Cores: 64, Load: 163.84}, rows[0])
+	assert.Equal(t, BenchRow{Name: "crushed", Cores: 64, Load: 163.84, GoProcs: 31}, rows[0])
 	assert.Equal(t, BenchRow{Name: "idle", Cores: 32, Load: 1.0}, rows[1])
+}
+
+// GoProcessCounts reads the go lanes: a machine's go-process count is its go lane's
+// holders, and a machine no go lane names is absent.
+func TestGoProcessCountsReadsTheGoLanes(t *testing.T) {
+	t.Parallel()
+	lanes := []LaneRow{
+		{Kind: LaneGo, Machine: "crushed", Held: []string{"a", "b"}},
+		{Kind: LaneGo, Machine: "idle"},
+	}
+	assert.Equal(t, map[string]int{"crushed": 2, "idle": 0}, GoProcessCounts(lanes))
+}
+
+// The read card brief carries the bench a lane gates on in its STATUS line, and none
+// when no bench is named (docs/SPEC-SPRINT.md section 5, "the bench a lane gates on").
+func TestTheReadCardBriefCarriesTheBenchLine(t *testing.T) {
+	t.Parallel()
+	p := Packet{Card: "c.w1", Epoch: 0, Attempt: 1, Primary: "c", Brief: "REPO: o/r\nBASE: main\n"}
+	got := ReadCardBrief("friend", "c.w1", p, "", time.Time{}, "BENCH: idle (load 1.0 of 32 cores; crushed 164)")
+	assert.Contains(t, got, "BENCH: idle (load 1.0 of 32 cores; crushed 164)")
+	assert.NotContains(t, ReadCardBrief("friend", "c.w1", p, "", time.Time{}, ""), "BENCH:")
 }
