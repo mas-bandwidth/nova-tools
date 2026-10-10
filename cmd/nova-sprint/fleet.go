@@ -279,6 +279,14 @@ func init() {
 	verbClasses["fleet add"] = classMachine
 	verbExit["fleet add"] = "exit codes: 0 every step ran and the member is proved and dealt work (or, with --dry-run, every step was listed), 1 a step refused, the play ended without a step's line, or the member did not prove (it is left drained, width 0), 2 usage"
 	verbEffect["fleet add"] = "local and remote writes through ansible-playbook: it adds the member drained (width 0) and its reader row to the store, runs fleet/member.yml for the one host (the pinned tools, the nova binaries at the adopted release, the member and reader loop units and their records, the route credential through the sealed-secrets path, and a mirror for every repository a live card names), checks that the member beats within a minute and its reader row is up, and only then widens the member; --dry-run runs the play with --check, lists every step and writes nothing"
+	// the verb's row is installed here, not in verbs.go, so the whole fleet add
+	// lives in the file its card's PATHS name
+	installVerbs = append(installVerbs, verb{
+		name:    "fleet add",
+		syntax:  "<host> --width <n> [--dry-run] --source <checkout> --inventory <file>",
+		example: "fleet add bench-a --width 64 --source . --inventory ./nova-inventory --dry-run",
+		run:     (*app).cmdFleetAdd,
+	})
 }
 
 // fleetAddSteps are the steps of adding a member end to end, in order: the
@@ -681,17 +689,21 @@ func (a *app) fleetAddRows(ctx context.Context, st *store.Store, host, reader st
 	return changed, nil
 }
 
-// fleetAddProbe deals one probe card to a just-added member outside its width:
-// the member is briefly widened to one so the deal reaches it, the probe card
-// is admitted on its own stream and dealt to the member alone, and the play's
-// member loop takes and finishes it. A probe already finished (its primary in
-// Review) is left as it is, so a second run changes nothing; a probe already
-// dealt waits only for the member to take it. It returns the probe card's
-// primary id, which fleetAddProve requires finished before the member is
-// widened for real.
+// fleetAddProbe deals the probe to a just-added member outside its width: the
+// member is briefly widened to one so the deal reaches it, and two probe cards
+// on its own stream are admitted and dealt to it. Two fill the member's room
+// (DealAhead times width 1, width.go): while the setup runs the member holds no
+// ordinary work and an interleaved tick deals it none, so it is dealt no work
+// until it is proved. Both cards carry the host's BENCH line, so only the member
+// is ever dealt them. The play's member loop takes and finishes the primary
+// (-1); the holder (-2) is dropped once the member is proved. A probe already
+// finished (its primary in Review) is left as it is, so a second run changes
+// nothing; a probe already dealt waits only for the member to take it. It
+// returns the probe card's primary id, which fleetAddProve requires finished
+// before the member is widened for real.
 func (a *app) fleetAddProbe(ctx context.Context, st *store.Store, host string) (string, error) {
 	stream := "probe-" + host
-	primary := stream + "-1"
+	primary, holder := stream+"-1", stream+"-2"
 	snap, err := st.Load(ctx, []string{sprint.Work}, nil)
 	if err != nil {
 		return "", err
@@ -701,8 +713,10 @@ func (a *app) fleetAddProbe(ctx context.Context, st *store.Store, host string) (
 	case c == nil:
 		// the machine runs, so the add and the deal write the work table
 		// directly (Pump), the tick's own first update, instead of queuing for
-		// the next tick: the probe must be placed before the play runs
-		step := store.AddStep(sprint.AddReq{Stream: stream, IDs: []string{primary}, Brief: fleetAddProbeBrief})
+		// the next tick: the probe must be placed before the play runs. Two
+		// cards, so the member's room is full while the setup runs and an
+		// interleaved tick leaves ordinary work waiting.
+		step := store.AddStep(sprint.AddReq{Stream: stream, IDs: []string{primary, holder}, Brief: fleetAddProbeBrief(host)})
 		step.Pump = true
 		res, err := st.Run(ctx, step)
 		if err != nil {
@@ -723,7 +737,7 @@ func (a *app) fleetAddProbe(ctx context.Context, st *store.Store, host string) (
 		return "", err
 	}
 	if needDeal {
-		res, err := st.Run(ctx, fleetAddDealStep(sprint.DealReq{Sel: sprint.Sel{Only: []string{primary}}}))
+		res, err := st.Run(ctx, fleetAddDealStep(sprint.DealReq{Sel: sprint.Sel{Only: []string{primary, holder}}}))
 		if err != nil {
 			return "", err
 		}
@@ -743,12 +757,14 @@ func fleetAddDealStep(r sprint.DealReq) store.Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Deal(s, r) }}
 }
 
-// fleetAddUndo undoes a refused add's probe: the probe card is taken off the
-// table and the member is drained again (width 0), so a member that did not
-// prove leaves no probe card behind and is dealt no work. It runs from
-// cmdFleetAdd's defer on every refusal after the probe was dealt.
+// fleetAddUndo undoes a refused add's probe: the probe cards (the primary and
+// the holder that reserved the member) are taken off the table and the member is
+// drained again (width 0), so a member that did not prove leaves no probe card
+// behind and is dealt no work. It runs from cmdFleetAdd's defer on every refusal
+// after the probe was dealt.
 func (a *app) fleetAddUndo(ctx context.Context, st *store.Store, host, probe string) {
-	drop := store.DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{probe}}, Reason: "the probe card of a member add that did not finish"})
+	holder := "probe-" + host + "-2"
+	drop := store.DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{probe, holder}}, Reason: "the probe card of a member add that did not finish"})
 	drop.Pump = true
 	_, _ = st.Run(ctx, drop)                                                     // ignored: the drain below leaves the member drained whether or not the drop moves
 	_, _ = st.Run(ctx, a.fleetStep(st, "up", host, st.Actor, 0, true, 0, false)) // ignored: the refusal stands; the next run drains the member again
@@ -756,16 +772,21 @@ func (a *app) fleetAddUndo(ctx context.Context, st *store.Store, host, probe str
 
 // fleetAddProbeBrief is the probe card's brief: one card whose only work is to
 // be taken and finished, proving this member reaches the sprint and reports a
-// finish. Its model, tokens and deadline are drawn from the fleet's routes.
-const fleetAddProbeBrief = `RESULT: fleet-add-probe
+// finish. Its BENCH line names the host, so the probe is dealt only to the
+// member being proved; its model, tokens and deadline are drawn from the fleet's
+// routes.
+func fleetAddProbeBrief(host string) string {
+	return fmt.Sprintf(`RESULT: fleet-add-probe
 KIND: probe
 BASE: dev
 PATHS: RESULT.md
 TEST: none
 DEPENDS-ON: none
+BENCH: %s
 WHO: any
 DONE-WHEN: RESULT.md exists
-`
+`, host)
+}
 
 // fleetAddProve is the check a just-added member passes before it is dealt
 // work: its beat is within fleetAddBeatBound, its reader row is up, and it has
@@ -805,10 +826,15 @@ func (a *app) fleetAddProve(ctx context.Context, st *store.Store, host, reader, 
 	return "", nil
 }
 
-// fleetAddWiden sets the member's width to w once it is proved. A member
-// already at w is left as it is, so a second run writes nothing; it says
-// whether it wrote the width.
+// fleetAddWiden sets the member's width to w once it is proved, and drops the
+// holder probe card that reserved the member during setup (the primary in
+// Review is finished and stays as the proof). A member already at w is left as
+// it is, so a second run writes nothing; it says whether it wrote the width.
 func (a *app) fleetAddWiden(ctx context.Context, st *store.Store, host string, w int) (bool, error) {
+	holder := "probe-" + host + "-2"
+	drop := store.DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{holder}}, Reason: "the fleet add setup is complete"})
+	drop.Pump = true
+	_, _ = st.Run(ctx, drop) // ignored: the holder is dropped; the widen below sets the width whether or not it was there
 	snap, err := st.Load(ctx, []string{sprint.Fleet}, nil)
 	if err != nil {
 		return false, err

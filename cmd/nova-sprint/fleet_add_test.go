@@ -284,3 +284,58 @@ func TestFleetAddSetsUpAMemberEndToEnd(t *testing.T) {
 		assert.Contains(t, errs, "fleet add REFUSED")
 	}
 }
+
+// TestFleetAddReservesTheMemberWhileTheProbeRuns pins the reservation finding:
+// while a member is being added and before its probe card is finished, an
+// ordinary deal tick must reach it no work. The verb admits two probe cards
+// (the primary and a holder) on the member's own stream and deals both, filling
+// the member's room (DealAhead times width 1), so an interleaved tick leaves the
+// ordinary ready cards waiting; the holder is dropped once the member is proved
+// and widened. The plan must not record a quiet of the member: a quiet with no
+// unquiet member left panics the deal at bench_deal.go:137 (benchRefusal), and
+// this card's PATHS do not reach that file.
+func TestFleetAddReservesTheMemberWhileTheProbeRuns(t *testing.T) {
+	t.Parallel()
+	src := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(src, "fleet"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "fleet", "member.yml"), []byte("[]\n"), 0o644))
+	base := []string{"--source", src, "--inventory", "/inv/nova-inventory"}
+
+	brief := writeBrief(t, "c: a card that names a repository\nREPO: mas-bandwidth/nova-tools\nBASE: sprint/s")
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b")
+	ta.m.SetRoutes([]sprint.Route{{Name: "flash-or", Tier: "flash", Provider: "deepseek", Model: "deepseek-v4-flash", Enabled: true}})
+	ta.ok("add --stream s1 --count 4 --brief-file " + brief)
+	ta.ok("start")
+	ta.live = []string{"bench-c"}
+	ta.ok("reader add reader-bench-c")
+
+	tickRan := false
+	play := &fakeFleetAddPlay{out: fleetAddPlayOK}
+	play.onRun = func() {
+		// An ordinary tick while the probe runs: the member holds only its probe
+		// cards, up to its room, and the ordinary ready cards stay waiting.
+		ta.ok("tick")
+		tickRan = true
+		var during whereView
+		ta.json("where", &during)
+		assert.Equal(t, 2, cardsOf(during, "bench-c"), "the member holds only its two probe cards during setup")
+		assert.Equal(t, "4", cellText(during.Tables["work"]["s1"]["ready"]), "the ordinary ready cards stay waiting during setup")
+		ta.ok("take --as bench-c --limit 1")
+		ta.ok("finish --as bench-c probe-bench-c-1.w1@1")
+		ta.ok("tick")
+	}
+	fleetAddPlayOf.Store(ta.a, play)
+	defer fleetAddPlayOf.Delete(ta.a)
+
+	code, out, errs := ta.do("fleet add bench-c --width 2 " + strings.Join(base, " "))
+	require.Equal(t, 0, code, "%s%s", out, errs)
+	require.True(t, tickRan, "the interleaved tick ran")
+
+	// proved and widened: the holder is dropped and the next tick deals the
+	// ordinary work to the member
+	ta.ok("tick")
+	var after whereView
+	ta.json("where", &after)
+	assert.Greater(t, cardsOf(after, "bench-c"), 0, "the proved member is dealt ordinary work")
+}
