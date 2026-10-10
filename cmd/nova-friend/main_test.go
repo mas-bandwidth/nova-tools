@@ -17,14 +17,14 @@ func TestRunInstall(t *testing.T) {
 	}{
 		{
 			name:     "install with --deny-self and --dry-run",
-			args:     []string{"--deny-self", "/path/to/deny", "--dry-run"},
+			args:     []string{"--deny-self", "/path/to/deny", "--dry-run", "--as", "rowan"},
 			env:      map[string]string{},
 			wantCode: 0,
 			wantOut:  "run: nova-friend run --as",
 		},
 		{
 			name:     "install with NOVA_FRIEND_DENY_SELF env",
-			args:     []string{"--dry-run"},
+			args:     []string{"--dry-run", "--as", "rowan"},
 			env:      map[string]string{"NOVA_FRIEND_DENY_SELF": "/env/path"},
 			wantCode: 0,
 			wantOut:  "run: nova-friend run --as",
@@ -55,11 +55,11 @@ func TestRunInstall(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			env := map[string]string{}
+			envMap := map[string]string{}
 			for k, v := range tt.env {
-				env[k] = v
+				envMap[k] = v
 			}
-			getenv := func(s string) string { return env[s] }
+			getenv := func(s string) string { return envMap[s] }
 
 			code := runInstall(env{getenv: getenv}, tt.args, &stdout, &stderr)
 
@@ -114,11 +114,11 @@ func TestRunUninstall(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			env := map[string]string{}
+			envMap := map[string]string{}
 			for k, v := range tt.env {
-				env[k] = v
+				envMap[k] = v
 			}
-			getenv := func(s string) string { return env[s] }
+			getenv := func(s string) string { return envMap[s] }
 
 			code := runUninstall(env{getenv: getenv}, tt.args, &stdout, &stderr)
 
