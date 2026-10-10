@@ -154,11 +154,11 @@ func TestATwinReadCutShortLeavesNoTableHalfRead(t *testing.T) {
 		return nil
 	}
 	tw := NewTwin()
-	_, _, err := h.st.twinRead(h.ctx, tw, All, tickExtras, nil)
+	_, _, err := h.st.twinRead(h.ctx, tw, All, nil, tickExtras, nil)
 	require.Error(t, err, "the cut read: %v (failed %v)", err, failed)
 	require.True(t, failed, "the cut read: %v (failed %v)", err, failed)
 	h.m.Fail = nil
-	snap, gen, err := h.st.twinRead(h.ctx, tw, All, tickExtras, nil)
+	snap, gen, err := h.st.twinRead(h.ctx, tw, All, nil, tickExtras, nil)
 	require.NoError(t, err)
 	fresh, at, err := h.st.Fenced(h.ctx, All, tickExtras, nil)
 	require.NoError(t, err, "fresh read: %v at %d, twin at %d", err, at, gen.Gen)
@@ -263,7 +263,7 @@ func TestTwinRepairKeepsTheWorkReadIncremental(t *testing.T) {
 			tw := h.st.twin()
 			pinned, err := h.st.pin(h.ctx)
 			require.NoError(t, err)
-			_, _, err = pinned.twinRead(h.ctx, tw, All, nil, nil)
+			_, _, err = pinned.twinRead(h.ctx, tw, All, nil, nil, nil)
 			require.NoError(t, err)
 			world := &Store{B: h.outsideWrite("s1-1"), Names: h.st.Names, Actor: h.st.Actor, Now: h.st.Now, NewID: h.st.NewID, Sleep: h.st.Sleep}
 			_, err = world.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}}))
@@ -272,7 +272,7 @@ func TestTwinRepairKeepsTheWorkReadIncremental(t *testing.T) {
 			h.tick(tc.age)
 			before := h.st.meter()
 			var repaired []string
-			_, _, err = pinned.twinRead(h.ctx, tw, All, nil, &repaired)
+			_, _, err = pinned.twinRead(h.ctx, tw, All, nil, nil, &repaired)
 			require.NoError(t, err)
 			cost := before.part("", "first read")
 			require.Zero(t, cost.Reads, "pending repair read work whole: %+v, repaired %v", cost, repaired)

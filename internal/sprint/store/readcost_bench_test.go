@@ -108,11 +108,11 @@ func BenchmarkReadCost(b *testing.B) {
 	tw := pinned.twin()
 	benchOp(b, c, "twinRead-cold", func() {
 		tw.drop("bench")
-		_, _, err := pinned.twinRead(ctx, tw, All, tickExtras, nil)
+		_, _, err := pinned.twinRead(ctx, tw, All, nil, tickExtras, nil)
 		must(err)
 	})
 	benchOp(b, c, "twinRead-warm", func() {
-		_, _, err := pinned.twinRead(ctx, tw, All, tickExtras, nil)
+		_, _, err := pinned.twinRead(ctx, tw, All, nil, tickExtras, nil)
 		must(err)
 	})
 }

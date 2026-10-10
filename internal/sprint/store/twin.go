@@ -205,9 +205,13 @@ func (st *Store) twin() *Twin {
 // was read at. A pending operation is finished first, as fencedRead finishes
 // it.
 //
+// every names the tables whose every record, placed or kept off the table, the
+// step reads (Step.EveryRecord): the twin brings the kept ones into the
+// snapshot a fresh read carries them in (showExtras).
+//
 // mine, when not "", is the step's own lock (lock.go): the fence holding it is
 // the step's, not another writer's operation to wait for.
-func (st *Store) twinRead(ctx context.Context, tw *Twin, load []string, extras func(*sprint.Snapshot) map[string][]string, repaired *[]string, mine ...string) (*sprint.Snapshot, Fence, error) {
+func (st *Store) twinRead(ctx context.Context, tw *Twin, load []string, every []string, extras func(*sprint.Snapshot) map[string][]string, repaired *[]string, mine ...string) (*sprint.Snapshot, Fence, error) {
 	held := ""
 	if len(mine) > 0 {
 		held = mine[0]
@@ -241,7 +245,7 @@ func (st *Store) twinRead(ctx context.Context, tw *Twin, load []string, extras f
 		if tw.tables == nil || tw.epoch != st.epoch {
 			tw.reset(st.epoch)
 		}
-		snap, err := st.twinView(ctx, tw, load, v, extras)
+		snap, err := st.twinView(ctx, tw, load, v, every, extras)
 		var moved *movedError
 		if errors.As(err, &moved) {
 			continue
@@ -268,7 +272,7 @@ func (st *Store) twinRead(ctx context.Context, tw *Twin, load []string, extras f
 		f2.Gen = f.Gen
 		tw.last = snap
 		if st.CheckTwin != nil {
-			if err := st.checkTwin(ctx, snap, f.Gen, load, extras, held); err != nil {
+			if err := st.checkTwin(ctx, snap, f.Gen, load, every, extras, held); err != nil {
 				return nil, Fence{}, err
 			}
 		}
@@ -279,7 +283,7 @@ func (st *Store) twinRead(ctx context.Context, tw *Twin, load []string, extras f
 
 // checkTwin gives CheckTwin the twin's snapshot with a fresh read of the
 // same generation (its own read, not counted).
-func (st *Store) checkTwin(ctx context.Context, snap *sprint.Snapshot, gen uint64, load []string, extras func(*sprint.Snapshot) map[string][]string, held string) error {
+func (st *Store) checkTwin(ctx context.Context, snap *sprint.Snapshot, gen uint64, load []string, every []string, extras func(*sprint.Snapshot) map[string][]string, held string) error {
 	chk := st.clone()
 	chk.Stats, chk.CheckTwin, chk.tw = &Stats{}, nil, nil
 	var fresh *sprint.Snapshot
@@ -287,14 +291,13 @@ func (st *Store) checkTwin(ctx context.Context, snap *sprint.Snapshot, gen uint6
 	if held != "" {
 		// the step holds the fence (its lock): no other writer writes a record
 		// until it lets go, so a read of the tables is of the generation held
-		if fresh, err = chk.Load(ctx, load, extras); err != nil {
+		if fresh, err = chk.load(ctx, load, every, extras); err != nil {
 			return err
 		}
 		fresh.QueueLen, fresh.Running = snap.QueueLen, snap.Running
 	} else {
-		var at uint64
-		fresh, at, err = chk.Fenced(ctx, load, extras, nil)
-		if err != nil || at != gen {
+		var f Fence
+		if fresh, f, err = chk.fenced(ctx, load, every, extras, nil); err != nil || f.Gen != gen {
 			return err
 		}
 	}
@@ -306,9 +309,10 @@ func (st *Store) checkTwin(ctx context.Context, snap *sprint.Snapshot, gen uint6
 
 // twinView brings the twin up to date with the store as it is now (the
 // tables' shapes, the records written since, the open judgments, the
-// coordinator, the records the step's extras name) and is it as a step's
-// snapshot. A table that moved while it was read is a movedError.
-func (st *Store) twinView(ctx context.Context, tw *Twin, load []string, v View, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, error) {
+// coordinator, the records the step's extras or every-record read name) and is
+// it as a step's snapshot. A table that moved while it was read is a
+// movedError.
+func (st *Store) twinView(ctx context.Context, tw *Twin, load []string, v View, every []string, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, error) {
 	shapes := v.Shapes
 	s := &sprint.Snapshot{Now: st.now(), Epoch: st.epoch, Cleared: st.cleared, Actor: st.Actor, Prefix: st.Names.Prefix}
 	for _, shape := range shapes {
@@ -398,7 +402,7 @@ func (st *Store) twinView(ctx context.Context, tw *Twin, load []string, v View, 
 	}
 	s.Open, s.Acked = sprint.SplitOpen(v.Open)
 	s.Coordinator, s.SeatGeneration = v.Coordinator, v.SeatGeneration
-	if err := st.showExtras(ctx, tw, s, load, extras); err != nil {
+	if err := st.showExtras(ctx, tw, s, load, every, extras); err != nil {
 		return nil, err
 	}
 	st.stats().twin.Add(1)
@@ -513,44 +517,68 @@ func (st *Store) wholeTable(ctx context.Context, tw *Twin, name string, shape nt
 	return nil
 }
 
-// showExtras puts in each table the kept records the step's extras name, read
-// once (a fresh read reads them with its tables), and takes out the ones it
-// does not name.
-func (st *Store) showExtras(ctx context.Context, tw *Twin, s *sprint.Snapshot, load []string, extras func(*sprint.Snapshot) map[string][]string) error {
-	// The extras are named over the placed records (a fresh read names them
-	// before it reads any), which the kept ones shown do not change.
+// showExtras puts in each table the kept records the step names, read once (a
+// fresh read reads them with its tables), and takes out the ones it does not
+// name: the records the step's extras name, and every record of a table the
+// step reads every record of (Step.EveryRecord: the records a step that selects
+// dropped primaries by stream must find, redo --stream).
+func (st *Store) showExtras(ctx context.Context, tw *Twin, s *sprint.Snapshot, load []string, every []string, extras func(*sprint.Snapshot) map[string][]string) error {
+	// The named records are named over the placed records (a fresh read names
+	// them before it reads any), which the kept ones shown do not change.
 	want := map[string]map[string]bool{}
+	name := func(table, id string) {
+		if want[table] == nil {
+			want[table] = map[string]bool{}
+		}
+		want[table][id] = true
+	}
 	if extras != nil {
 		for table, ids := range extras(s) {
-			if want[table] == nil {
-				want[table] = map[string]bool{}
-			}
 			t := s.T(table)
 			if t == nil {
 				continue // an extra of a table the step does not load: a fresh read reads none
 			}
-			var missing []string
 			for _, id := range ids {
-				if t.Placed(id) != nil {
-					continue
-				}
-				want[table][id] = true
-				if tw.kept[table][id] == nil && !tw.absent[table][id] && !slices.Contains(missing, id) {
-					missing = append(missing, id)
+				if t.Placed(id) == nil {
+					name(table, id)
 				}
 			}
-			if len(missing) > 0 {
-				found := sprint.NewTable(table)
-				found.Revision = t.Revision
-				if err := st.readInto(ctx, found, st.sids(missing), false); err != nil {
-					return err
-				}
-				for _, id := range missing {
-					if c := found.Card(id); c != nil {
-						tw.kept[table][id] = c
-					} else {
-						tw.absent[table][id] = true
-					}
+		}
+	}
+	for _, table := range every {
+		t := s.T(table)
+		if t == nil {
+			continue
+		}
+		ids, err := st.B.RecordIDs(ctx, st.Names.Table(table))
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if id = sprint.CardID(id); t.Placed(id) == nil {
+				name(table, id)
+			}
+		}
+	}
+	for table, ids := range want {
+		t := s.T(table)
+		var missing []string
+		for id := range ids {
+			if tw.kept[table][id] == nil && !tw.absent[table][id] && !slices.Contains(missing, id) {
+				missing = append(missing, id)
+			}
+		}
+		if len(missing) > 0 {
+			found := sprint.NewTable(table)
+			found.Revision = t.Revision
+			if err := st.readInto(ctx, found, st.sids(missing), false); err != nil {
+				return err
+			}
+			for _, id := range missing {
+				if c := found.Card(id); c != nil {
+					tw.kept[table][id] = c
+				} else {
+					tw.absent[table][id] = true
 				}
 			}
 		}
@@ -718,12 +746,14 @@ func (tw *Twin) apply(table string, man ntable.BatchManifest, rc ntable.Receipt)
 }
 
 // fencedStep is the step's read: from the twin when the step has one and
-// loads the four tables (twinRead), else fenced.
+// loads the four tables (twinRead), else fenced. Either way the step's
+// every-record tables (Step.EveryRecord) bring in the records kept off the
+// table, so a step that selects dropped primaries finds them.
 func (st *Store) fencedStep(ctx context.Context, tw *Twin, step Step, repaired *[]string, mine string) (*sprint.Snapshot, Fence, error) {
 	if tw == nil || len(step.Load) == 0 || !twinTables(step.Load) {
-		return st.fenced(ctx, step.Load, step.Extras, repaired)
+		return st.fenced(ctx, step.Load, step.EveryRecord, step.Extras, repaired)
 	}
-	return st.twinRead(ctx, tw, step.Load, step.Extras, repaired, mine)
+	return st.twinRead(ctx, tw, step.Load, step.EveryRecord, step.Extras, repaired, mine)
 }
 
 // twinTables says the tables are the sprint's, each once.

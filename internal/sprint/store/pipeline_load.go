@@ -28,7 +28,7 @@ func redisBackend(b Backend) *Redis {
 // Stage 2: Single Pipeline [All ReadSet Chunks + OpenNotes + Coordinator + Trailing Fence].
 // The trailing fence f2 is queued at the tail of the Stage 2 pipeline so Redis executes
 // it contiguously immediately after the table reads, collapsing the OCC collision window.
-func (st *Store) PipelinedLoadWithFence(ctx context.Context, tables []string, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, Fence, error) {
+func (st *Store) PipelinedLoadWithFence(ctx context.Context, tables []string, every []string, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, Fence, error) {
 	st, err := st.pin(ctx)
 	if err != nil {
 		return nil, Fence{}, err
@@ -36,7 +36,7 @@ func (st *Store) PipelinedLoadWithFence(ctx context.Context, tables []string, ex
 	var last *movedError
 	r := st.retry(ctx)
 	for r.next(LoadTries) {
-		s, f2, err := st.pipelinedLoadOnceWithFence(ctx, tables, extras)
+		s, f2, err := st.pipelinedLoadOnceWithFence(ctx, tables, every, extras)
 		var moved *movedError
 		if errors.As(err, &moved) {
 			last = moved
@@ -48,11 +48,11 @@ func (st *Store) PipelinedLoadWithFence(ctx context.Context, tables []string, ex
 		last.table, r.tries, r.slept().Round(time.Millisecond))
 }
 
-func (st *Store) pipelinedLoadOnceWithFence(ctx context.Context, tables []string, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, Fence, error) {
+func (st *Store) pipelinedLoadOnceWithFence(ctx context.Context, tables []string, every []string, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, Fence, error) {
 	r := redisBackend(st.B)
 	if r == nil {
 		// Non-redis backend (e.g. Mem for in-memory tests): fall back to sequential Load + ReadFence.
-		s, err := st.loadOnce(ctx, tables, extras)
+		s, err := st.loadOnce(ctx, tables, every, extras)
 		if err != nil {
 			return nil, Fence{}, err
 		}
@@ -235,6 +235,15 @@ func (st *Store) pipelinedLoadOnceWithFence(ctx context.Context, tables []string
 					return nil, f2, err
 				}
 			}
+		}
+	}
+	// Every record of a table (Step.EveryRecord), read after the pipeline as
+	// the extras are: the records kept off the table (a dropped primary), so
+	// a step that selects dropped primaries by stream finds them.
+	if len(every) > 0 {
+		after = true
+		if err := st.readKeptRecords(ctx, s, every); err != nil {
+			return nil, f2, err
 		}
 	}
 	if after {

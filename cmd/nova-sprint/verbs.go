@@ -73,7 +73,7 @@ func init() {
 		{"accept", "(<id>... [--heavy --evidence <path> --reason <text>] | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]", "accept --read-ok", (*app).cmdAccept},
 		{"rework", "(<id>... | --group <id> [--expect <n>] | <selector> [--dry-run]) [--fix <text>] [--tier <tier>] [--answers <note>] [--one]", "rework s1-4 --fix 'handle the empty case'", (*app).cmdReworkSel},
 		{"return", "(<id>... | --group <id> [--expect <n>] | <selector> [--dry-run]) [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturnSel},
-		{"redo", "<card>... [--stream <s>] [--answers <note>]", "redo s1-2", (*app).cmdRedo},
+		{"redo", "<card>... [--stream <s>] [--reason <text>] [--answers <note>]", "redo s1-2", (*app).cmdRedo},
 		{"drop", "(<id>... | --stream <s> --col <state> | --group <id> [--expect <n>] | <selector> [--dry-run]) --reason <text> [--answers <note>] [--one]", "drop s1-9 --reason obsolete", (*app).cmdDropSel},
 		{"priority", "<id>... | (<id>... | --stream <s>) (--blocker | --critical | --fix | --high | --normal | --low) --reason <text>", "priority s1-4 --high --reason 'the release waits on it'", (*app).cmdPriority},
 		{"unpin", "(<id>... | --stream <s>) --reason <text> [--dry-run]", "unpin s1-1 --reason available", (*app).cmdUnpin},
@@ -2615,16 +2615,17 @@ func (a *app) cmdReturn(args []string, stdout, stderr io.Writer) int {
 }
 
 func (a *app) cmdRedo(args []string, stdout, stderr io.Writer) int {
-	var ans *string
+	var ans, reason *string
 	return a.setVerb("redo", args, stdout, stderr, false, func(fs flagSet) {
 		ans = fs.String("answers", "", "the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing")
+		reason = fs.String("reason", "", "why a dropped card comes back; wanted to restore a dropped card, unused for a conflict redo")
 	}, func(ids []string, s *sel) string {
 		if len(ids) == 0 && s.stream == "" {
 			return "wants ids or --stream <s>"
 		}
 		return ""
 	}, func(ids []string, s *sel, c *common) store.Step {
-		return store.RedoStep(sprint.RedoReq{Sel: s.sel(ids), Answers: answers(*ans), Who: c.actor})
+		return store.RedoStep(sprint.RedoReq{Sel: s.sel(ids), Answers: answers(*ans), Reason: *reason, Who: c.actor})
 	})
 }
 
