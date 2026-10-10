@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -473,6 +475,63 @@ func fenceOf(mget *redis.SliceCmd, llen *redis.IntCmd) (Fence, error) {
 
 var errFenceMoved = errors.New("the fence moved")
 
+// addsEnvelope is the write envelope every row and place call of a step's
+// commit carries, as the table layer's WriteOptions render it (epoch only:
+// actor, fence and idem are the operation's, not the rows').
+func (r *Redis) addsEnvelope() string {
+	b, _ := json.Marshal(struct {
+		Epoch string `json:"epoch"`
+		Actor string `json:"actor"`
+		Fence string `json:"fence"`
+		Idem  string `json:"idem"`
+	}{strconv.FormatUint(r.Pinned, 10), "", "", ""})
+	return string(b)
+}
+
+// queueAdds queues the operation's rows, hidden rows and places on the
+// pipeline, before the fence write: the one MULTI/EXEC of the commit, so a
+// reader sees all of it or none of it. It returns each place's command, so the
+// caller tells a place another writer made first from one that did not hold.
+func (r *Redis) queueAdds(ctx context.Context, p redis.Pipeliner, op OpRecord) []*redis.Cmd {
+	env := r.addsEnvelope()
+	for _, t := range slices.Sorted(maps.Keys(op.Rows)) {
+		body, _ := json.Marshal(struct {
+			Rows []string       `json:"rows"`
+			Spec ntable.RowSpec `json:"spec"`
+		}{op.Rows[t], ntable.RowSpec{}})
+		p.FCall(ctx, ntable.FnRowsAdd, []string{ntable.DefKey(t)}, t, string(body), env)
+	}
+	for _, t := range slices.Sorted(maps.Keys(op.HideRows)) {
+		body, _ := json.Marshal(op.HideRows[t])
+		p.FCall(ctx, ntable.FnRowsHide, []string{ntable.DefKey(t)}, t, "1", string(body), env)
+	}
+	var places []*redis.Cmd
+	for _, pl := range op.Places {
+		places = append(places, p.FCall(ctx, ntable.FnCellAdd, []string{ntable.DefKey(pl.Table)}, pl.Table, pl.Row, pl.Col, strconv.FormatFloat(pl.Score, 'g', -1, 64), pl.ID, env))
+	}
+	return places
+}
+
+// placeReplyRefusal is a place's refusal from its cell-add reply, nil when the
+// place held: the table layer's "PLACED" is a place another writer made first
+// (found made); any other "REFUSED" is a place that did not hold.
+func placeReplyRefusal(cmd *redis.Cmd) error {
+	if cmd == nil {
+		return nil
+	}
+	reply, err := cmd.Slice()
+	if err != nil {
+		return err
+	}
+	if len(reply) == 0 || fmt.Sprint(reply[0]) != "REFUSED" {
+		return nil
+	}
+	if len(reply) >= 2 && fmt.Sprint(reply[1]) == "PLACED" {
+		return nil
+	}
+	return fmt.Errorf("the table layer refused the place: %v", reply)
+}
+
 // Acquire is WATCH on the fence and its generation, then MULTI/EXEC.
 func (r *Redis) Acquire(ctx context.Context, gen uint64, op OpRecord) (bool, error) {
 	body, err := json.Marshal(op)
@@ -480,6 +539,7 @@ func (r *Redis) Acquire(ctx context.Context, gen uint64, op OpRecord) (bool, err
 		return false, err
 	}
 	fence, genKey, epochKey := r.key(keyFence), r.key(keyGen), r.Names.EpochKey()
+	var places []*redis.Cmd
 	err = r.C.Watch(ctx, func(tx *redis.Tx) error {
 		vals, err := tx.MGet(ctx, fence, genKey).Result()
 		if err != nil {
@@ -500,6 +560,11 @@ func (r *Redis) Acquire(ctx context.Context, gen uint64, op OpRecord) (bool, err
 			return errFenceMoved // the sprint was cleared since the step read it
 		}
 		_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
+			// the step's rows, hidden rows and places commit with the fence,
+			// before the manifests: one MULTI/EXEC, so a reader sees all of it
+			// or none of it, and a commit that loses the generation race
+			// writes none of it.
+			places = r.queueAdds(ctx, p, op)
 			p.Set(ctx, fence, body, 0)
 			p.Set(ctx, genKey, gen+1, 0)
 			return nil
@@ -509,7 +574,15 @@ func (r *Redis) Acquire(ctx context.Context, gen uint64, op OpRecord) (bool, err
 	if errors.Is(err, errFenceMoved) || errors.Is(err, redis.TxFailedErr) {
 		return false, nil
 	}
-	return err == nil, err
+	if err != nil {
+		return false, err
+	}
+	for i, pl := range op.Places {
+		if err := placeReplyRefusal(places[i]); err != nil {
+			return false, &placeRefused{id: pl.ID, err: err}
+		}
+	}
+	return true, nil
 }
 
 // Release is WATCH on the fence, then one MULTI/EXEC: the notifications

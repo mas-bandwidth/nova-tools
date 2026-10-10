@@ -5770,7 +5770,13 @@ and unset) are one entry; two that disagree refuse the step whole before
 anything is written, naming both causes. Its manifests apply in order; a
 table's changes over the table layer's bound are several
 manifests of that table under one operation id family, so a verb over a large
-set is one invocation. The release of the fence is the logical commit: in one
+set is one invocation. A step's new rows, the records it places back on a cell,
+and its manifests commit in one write: the rows (a new stream's work and merge
+rows) and the places (a removed stream's control card coming back) ride the
+pending-operation record and are applied inside the same atomic commit that
+takes the fence, before the manifests, so a reader sees all of it or none of
+it — a card added to a new stream is on the table the moment `add` returns, or
+not at all. The release of the fence is the logical commit: in one
 step it writes the notifications, opens and closes the judgments, records the
 streams' progress and the caller's result, and empties the fence.
 

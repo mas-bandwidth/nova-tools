@@ -628,6 +628,12 @@ func (m *Mem) RowsAdd(_ context.Context, table string, rows []string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.Calls["rows"]++
+	return m.rowsAddLocked(table, rows)
+}
+
+// rowsAddLocked is RowsAdd under m.mu, without the exchange count: a step's
+// commit adds its rows here, inside the fence's one atomic commit.
+func (m *Mem) rowsAddLocked(table string, rows []string) error {
 	t, err := m.table(table)
 	if err != nil {
 		return err
@@ -653,6 +659,11 @@ func (m *Mem) RowsHide(_ context.Context, table string, rows []string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.Calls["rowshide"]++
+	return m.rowsHideLocked(table, rows)
+}
+
+// rowsHideLocked is RowsHide under m.mu, without the exchange count.
+func (m *Mem) rowsHideLocked(table string, rows []string) error {
 	t, err := m.table(table)
 	if err != nil {
 		return err
@@ -802,6 +813,29 @@ func (m *Mem) Place(_ context.Context, table, row, col, id string, score float64
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.Calls["place"]++
+	return m.placeLocked(table, row, col, id, score)
+}
+
+// placeLocked is Place under m.mu, without the exchange count: a step's
+// commit places its records here, inside the fence's one atomic commit.
+func (m *Mem) placeLocked(table, row, col, id string, score float64) error {
+	if err := m.placeRefusalLocked(table, row, col, id); err != nil {
+		return err
+	}
+	t, _ := m.table(table)
+	mm := t.members[id]
+	mm.placed, mm.row, mm.col, mm.score = true, row, col, score
+	mm.rev++
+	t.rev++
+	t.wrote[m.active(t)] = true
+	t.changes = append(t.changes, memChange{epoch: m.active(t), before: t.rev - 1, after: t.rev, verb: "cell_add", ids: []string{id}})
+	return nil
+}
+
+// placeRefusalLocked is why a place on no cell would be refused, nil when the
+// record is there on no cell and the cell is owned: the same checks Place
+// makes, before anything is written.
+func (m *Mem) placeRefusalLocked(table, row, col, id string) error {
 	t, err := m.table(table)
 	if err != nil {
 		return err
@@ -820,11 +854,33 @@ func (m *Mem) Place(_ context.Context, table, row, col, id string, score float64
 	case !t.owned(m.active(t), row, col):
 		return refusal("NOCOL", "member "+id+": no owned cell "+row+":"+col)
 	}
-	mm.placed, mm.row, mm.col, mm.score = true, row, col, score
-	mm.rev++
-	t.rev++
-	t.wrote[m.active(t)] = true
-	t.changes = append(t.changes, memChange{epoch: m.active(t), before: t.rev - 1, after: t.rev, verb: "cell_add", ids: []string{id}})
+	return nil
+}
+
+// applyAdds applies the operation's rows, hidden rows and places, before its
+// manifests, under m.mu: the fence's one atomic commit, so a reader sees all
+// of it or none of it (this card's GOAL). A place another writer made first
+// is found made and the commit proceeds; any other place refusal refuses the
+// commit, with the rows already added, as the place pass did.
+func (m *Mem) applyAdds(op OpRecord) error {
+	for _, t := range slices.Sorted(maps.Keys(op.Rows)) {
+		if err := m.rowsAddLocked(t, op.Rows[t]); err != nil {
+			return err
+		}
+	}
+	for _, t := range slices.Sorted(maps.Keys(op.HideRows)) {
+		if err := m.rowsHideLocked(t, op.HideRows[t]); err != nil {
+			return err
+		}
+	}
+	for _, pl := range op.Places {
+		if err := m.placeLocked(pl.Table, pl.Row, pl.Col, pl.ID, pl.Score); err != nil {
+			if alreadyPlaced(err) {
+				continue
+			}
+			return &placeRefused{id: pl.ID, err: err}
+		}
+	}
 	return nil
 }
 
@@ -966,6 +1022,12 @@ func (m *Mem) Acquire(_ context.Context, gen uint64, op OpRecord) (bool, error) 
 	}
 	if l.fence != nil || l.gen != gen || m.epoch != m.epochN {
 		return false, nil
+	}
+	// The step's rows, hidden rows and places commit with the fence, before
+	// the manifests: one atomic commit, so a reader sees all of it or none of
+	// it, and a commit that loses the generation race writes none of it.
+	if err := m.applyAdds(op); err != nil {
+		return false, err
 	}
 	body, err := json.Marshal(op)
 	if err != nil {

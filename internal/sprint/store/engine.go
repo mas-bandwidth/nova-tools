@@ -461,11 +461,6 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 	if family == "" {
 		family = strings.ReplaceAll(step.Verb, " ", "-") + "-" + st.newID()
 	}
-	rowsAdded := false
-	// placed says the step's places (sprint.Plan.Places) were made, and came is
-	// their NOTE lines: the plan after them places nothing, and says them still
-	placed, placeErr := false, error(nil)
-	var came []string
 	drains := 0
 	plans := st.retry(ctx)
 	// a twin the step does not leave as the state it committed is dropped:
@@ -690,8 +685,16 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		res.Refused = plan.Refused
 		res.Moved = nil
 		res.Said = plan.Said
-		if len(came) > 0 {
-			res.Said = append(slices.Clone(came), plan.Said...)
+		// A step's new rows, places and records commit in one write (the
+		// backend applies them inside the fence's commit, before the
+		// manifests). Each place's NOTE line comes before the plan's, as the
+		// place pass did (a removed stream's control card coming back).
+		if len(plan.Places) > 0 {
+			said := make([]string, 0, len(plan.Places)+len(plan.Said))
+			for _, pl := range plan.Places {
+				said = append(said, pl.Said)
+			}
+			res.Said = append(said, plan.Said...)
 		}
 		for _, u := range plan.Units {
 			if u.Moved != "" {
@@ -718,43 +721,12 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		if why := unwritable(plan, op); why != "" {
 			return refuseWhole(res, plan, why)
 		}
-		// A step refused whole writes nothing: its rows are declared only
-		// with a unit to write.
-		if len(plan.Rows) > 0 && !rowsAdded && len(plan.Units) > 0 {
-			if err := st.addRows(ctx, plan.Rows); err != nil {
-				return res, err
-			}
-			rowsAdded = true
-			res.Attempts--
-			continue
-		}
-		// A record on no cell is put back by the table layer's cell add, after
-		// the rows and before the manifests (a batch never places a removed
-		// member), and the step is planned again on the table it left. A place
-		// still owed after that is refused whole: the record is on no cell.
-		if len(plan.Places) > 0 && len(plan.Units) > 0 {
-			if placed {
-				why := "placing " + plan.Places[0].ID + " on its cell again did not hold"
-				if placeErr != nil {
-					why += ": " + placeErr.Error()
-				}
-				// the rows (and any place that held) are on the table by now; the
-				// step's own record is not written
-				return refuseWhole(res, plan, why+"; the stream's rows are on the table and its control card is not; no card was added; run it again")
-			}
-			placed = true
-			for _, pl := range plan.Places {
-				// a place another writer made first is refused here and found
-				// made by the plan after it
-				if err := st.B.Place(ctx, st.Names.Table(pl.Table), pl.Row, pl.Col, st.sid(pl.ID), pl.Score); err != nil {
-					placeErr = err
-					continue
-				}
-				came = append(came, pl.Said)
-			}
-			res.Attempts--
-			continue
-		}
+		// A step's new rows, places and records commit in one write: the rows
+		// and places ride the operation (op.Rows, op.Places), applied by the
+		// backend inside the same atomic commit as the fence, before the
+		// manifests, so a reader sees all of it or none of it (this card's
+		// GOAL). A step refused whole writes nothing: its rows are declared
+		// only with a unit to write.
 		if len(op.Manifests) == 0 && len(op.Notes)+len(op.Decided)+len(op.Closes)+len(op.Updates)+len(op.Queue)+op.Drain == 0 && op.Health == nil && len(op.HealthClear) == 0 && len(op.CloseTimers) == 0 && op.Timers == nil {
 			res.Moved = nil
 			return st.after(ctx, step, res)
@@ -789,6 +761,14 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			ok, err = st.B.Acquire(ctx, gen, op)
 		}
 		if err != nil {
+			// A place the store refused (its record is not on the cell the
+			// plan read, and no other writer made it first) refused the whole
+			// step: the stream's rows are on the table and its control card is
+			// not, as the place pass did.
+			var pr *placeRefused
+			if errors.As(err, &pr) {
+				return refuseWhole(res, plan, fmt.Sprintf("placing %s on its cell again did not hold: %v; the stream's rows are on the table and its control card is not; no card was added; run it again", pr.id, pr.err))
+			}
 			if rec, confirmed := st.committed(ctx, step, op); confirmed {
 				return st.after(ctx, step, rec)
 			}
@@ -1076,36 +1056,6 @@ func (st *Store) after(ctx context.Context, step Step, res Result) (Result, erro
 		}
 	}
 	return res, nil
-}
-
-func (st *Store) addRows(ctx context.Context, rows []sprint.RowAdd) error {
-	by := map[string][]string{}
-	var order []string
-	for _, r := range rows {
-		if _, ok := by[r.Table]; !ok {
-			order = append(order, r.Table)
-		}
-		by[r.Table] = append(by[r.Table], r.Row)
-	}
-	for _, t := range order {
-		if err := st.B.RowsAdd(ctx, st.Names.Table(t), by[t]); err != nil {
-			return err
-		}
-		// a friend's fleet row holds her sprint cards and is no machine: the stored view
-		// sprint does not draw it, as where does not (docs/SPEC-SPRINT.md section 1)
-		var friends []string
-		for _, r := range by[t] {
-			if t == sprint.Fleet && sprint.IsFriendRow(r) {
-				friends = append(friends, r)
-			}
-		}
-		if len(friends) > 0 {
-			if err := st.B.RowsHide(ctx, st.Names.Table(t), friends); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
 
 type entryKey struct{ table, id string }
@@ -1418,6 +1368,25 @@ func hasChanges(e ntable.BatchMemberEntry) bool {
 // notifications and the answers.
 func (st *Store) operation(verb, actor, id string, plan sprint.Plan, snap *sprint.Snapshot) (OpRecord, error) {
 	op := OpRecord{ID: id, Verb: verb, At: snap.Now, Seat: plan.Seat, Health: plan.Health, HealthClear: plan.HealthClear, Timers: plan.Timers, CloseTimers: plan.CloseTimers}
+	// The rows and places the step's commit applies before its manifests,
+	// grouped by stored table name: one Acquire or Relock carries them with
+	// the records, so a card added to a new stream is on the table the moment
+	// add returns, or not at all (this card's GOAL). A friend's fleet row is
+	// hidden by the same commit, as st.addRows did.
+	if len(plan.Rows) > 0 {
+		op.Rows = map[string][]string{}
+		op.HideRows = map[string][]string{}
+		for _, r := range plan.Rows {
+			t := st.Names.Table(r.Table)
+			op.Rows[t] = append(op.Rows[t], r.Row)
+			if r.Table == sprint.Fleet && sprint.IsFriendRow(r.Row) {
+				op.HideRows[t] = append(op.HideRows[t], r.Row)
+			}
+		}
+	}
+	for _, pl := range plan.Places {
+		op.Places = append(op.Places, PlaceAdd{Table: st.Names.Table(pl.Table), Row: pl.Row, Col: pl.Col, ID: st.sid(pl.ID), Score: pl.Score, Said: pl.Said})
+	}
 	entries := map[string][]ntable.BatchMemberEntry{}
 	seen := map[entryKey]int{} // index+1 in entries[table]
 	cause := map[entryKey]string{}
