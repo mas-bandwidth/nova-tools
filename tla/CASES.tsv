@@ -497,3 +497,7 @@ MCStopCancelsBrokenLaunchAfterStop.cfg	MCStopCancels.tla	invariant	NoLaunchAfter
 MCStopCancelsBrokenForgetOnRestart.cfg	MCStopCancels.tla	invariant	StopReturnsSurviveRestart	ignore-terminal	stopcancels	required	-
 MCStopCancelsBrokenNudge.cfg	MCStopCancels.tla	invariant	NoNudgeWhileStopped	ignore-terminal	stopcancels	required	-
 MCStopCancelsBrokenFinishCancelled.cfg	MCStopCancels.tla	invariant	NoFinishOfACancelledCard	ignore-terminal	stopcancels	required	-
+MCLaneCheck.cfg	MCLaneCheck.tla	pass	-	ignore-terminal	lanecheck	required	-
+MCLaneCheckBrokenStaleBeat.cfg	MCLaneCheck.tla	invariant	NoMissedRise	ignore-terminal	lanecheck	required	-
+MCLaneCheckBrokenNoCap.cfg	MCLaneCheck.tla	invariant	NoMissedRise	ignore-terminal	lanecheck	required	-
+MCLaneCheckBrokenCountEveryTick.cfg	MCLaneCheck.tla	invariant	CountedOncePerSpan	ignore-terminal	lanecheck	required	-

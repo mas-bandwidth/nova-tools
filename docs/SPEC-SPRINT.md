@@ -5241,11 +5241,15 @@ the store's tick on every part, its probe included; a-judgment-checks-the-lane-b
   (`sprint.ReadTierRule`, section 6): kept unless two substantive findings disagree, and
   never asked.
 
-The lane and the count are owed a model, `tla/LaneCheck.tla`: no judgment rises over a live
-lane (`NoRiseOverLiveLane`), the count is once per span of ticks that keep it quiet
-(`CountedOncePerSpan`), and past the cap or with no beat it rises (`NoMissedRise`), each
-with a reversed witness; the module and its TLC records are owed. Readers busy and the tier
-rule are not modelled.
+The lane and the count are modelled by `tla/LaneCheck.tla`: no newly raised judgment
+rises over a live lane (`NoRiseOverLiveLane`), the count is once per span of ticks
+that keep the same type and subject quiet (`CountedOncePerSpan`), and a candidate
+with no live lane rises (`NoMissedRise`). Stale and future timestamps cannot revive
+a lane (`StaleBeatNeverRevives`); the first tick in a new epoch starts counting
+from none (`CountRestartsAtEpoch`). The `lanecheck` cases and their `RUNS.tsv`
+records check two cards through eight ticks, including three reversed witnesses:
+stale beats accepted, the cap ignored, and every quiet counted again. Readers busy
+and the tier rule are not modelled.
 
 Only a judgment being raised is checked. One already open stays the coordinator's, and the
 deadlines and the pass close it when their own condition ends. Each judgment the check

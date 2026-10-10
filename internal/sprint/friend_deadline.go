@@ -74,6 +74,7 @@ func friendTaken(s *Snapshot, c *Card, name string) (set map[string]string, unse
 	return set, append(unset, "untaken_since")
 }
 
+// model: tla/LaneCheck.tla
 // The lane check (docs/SPEC-SPRINT.md section 1, a judgment checks the lane before it
 // rises; a-judgment-checks-the-lane-before-it-rises.w1). On 2026-10-05 night about 250
 // judgments reached the coordinator, most of them a stall, a deadline or "finishes none"
