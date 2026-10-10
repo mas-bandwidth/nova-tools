@@ -60,7 +60,7 @@ func TestRedisBackedTestsDoNotSkipUnderCI(t *testing.T) {
 	require.NoError(t, err, "throwaway redis at %s did not answer: %v", addr, err)
 
 	root := repoRoot(t)
-	helper := readFile(t, filepath.Join(root, "internal", "nsprint", "testutil", "redis.go"))
+	helper := readFile(t, filepath.Join(root, "pkg", "nsprint", "testutil", "redis.go"))
 	fatalAt := strings.Index(helper, "Fatalf")
 	skipAt := strings.Index(helper, "t.Skip")
 	ciAt := strings.Index(helper, "NOVA_CI")
