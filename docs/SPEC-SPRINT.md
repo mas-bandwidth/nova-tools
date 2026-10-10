@@ -7468,4 +7468,13 @@ group carrying the note's addressee (`sprint.Group.To`).
 
 
 ## Server Switch Restarting and Bounded Wait
-During `server switch`, the server answers incoming verb requests with a typed `restarting` answer. The client waits in a bounded loop (500 ms steps, up to 4 minutes), prints one `WAITING` line, and resends until the server serves responses.
+
+While a server switch is under way the target binary's restart file
+(`sprint.IsRestarting`) says so, and the server answers every verb request with a
+typed `restarting` result, one a verb in the batch
+(`sprintwire.Result.Restarting`, `cmd/nova-sprint/serve.go`). A request that was
+sent and not answered is still "nothing is known of what ran" and is never sent
+again; only a typed restarting answer is waited out. The client waits one step
+(`sprintwire.RestartStep`, 500 ms), prints one `WAITING` line, and sends the same
+request again, up to its bound (`sprintwire.DefaultRestartBound`, 4 minutes by
+default). Past the bound it exits 2, naming the switch.

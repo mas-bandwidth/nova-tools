@@ -58,14 +58,21 @@ type Client struct {
 // Timeout is how long a client waits for the server's answer by default.
 const Timeout = 2 * time.Minute
 
-// Do sends the verbs in one request and returns their answers, one a verb. An
-// error is a server that did not answer, or answered something else: nothing
-// is known of what ran.
+// RestartStep is the step a client waits between resends while a server switch
+// is under way, and DefaultRestartBound how long it waits in all
+// (docs/SPEC-SPRINT.md, section "Server Switch Restarting and Bounded Wait").
 const (
 	RestartStep         = 500 * time.Millisecond
 	DefaultRestartBound = 4 * time.Minute
 )
 
+// Do sends the verbs in one request and returns their answers, one a verb. An
+// error is a server that did not answer, or answered something else: nothing
+// is known of what ran, and that request is never sent again. A typed
+// Restarting result instead means a server switch is under way: Do waits one
+// step, prints one WAITING line, and sends the same request again, up to its
+// bound, then fails naming the switch
+// (docs/SPEC-SPRINT.md, section "Server Switch Restarting and Bounded Wait").
 func (c Client) Do(ctx context.Context, verbs ...[]string) ([]Result, error) {
 	bound := c.Bound
 	if bound <= 0 {
@@ -136,12 +143,10 @@ func (c Client) Do(ctx context.Context, verbs ...[]string) ([]Result, error) {
 			if time.Since(start) >= bound {
 				return nil, fmt.Errorf("the sprint server at %s: server switch timed out waiting for restart", c.Addr)
 			}
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(RestartStep):
-				continue
+			if err := waitStep(ctx, RestartStep); err != nil {
+				return nil, err
 			}
+			continue
 		}
 
 		out := make([]Result, len(got.Results))
@@ -152,5 +157,19 @@ func (c Client) Do(ctx context.Context, verbs ...[]string) ([]Result, error) {
 			out[i] = Result{Code: *r.Code, Stdout: *r.Stdout, Stderr: *r.Stderr}
 		}
 		return out, nil
+	}
+}
+
+// waitStep waits one restart step or until ctx is done: the one-shot clock the
+// client's resend loop waits on between an answer that names a restart
+// (docs/SPEC-SPRINT.md, section "Server Switch Restarting and Bounded Wait").
+func waitStep(ctx context.Context, step time.Duration) error {
+	t := time.NewTimer(step)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
 	}
 }

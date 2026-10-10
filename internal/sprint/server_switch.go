@@ -122,6 +122,9 @@ func ServerSwitch(ctx context.Context, opts ServerSwitchOptions) error {
 	}
 
 	restartingFile := target + ".restarting"
+	// The switch is under way: mark it for the duration so the server answers a
+	// typed Restarting result, which the client waits out
+	// (docs/SPEC-SPRINT.md, section "Server Switch Restarting and Bounded Wait").
 	// ignored: write restarting indicator file
 	_ = os.WriteFile(restartingFile, []byte("restarting"), 0o644) // ignored: write restarting indicator file
 	defer func() {                                                // ignored: remove restarting indicator file
@@ -232,7 +235,10 @@ func CheckRollbackOnLandFailure(target string, landErr error, now time.Time) (ro
 	return true, nil
 }
 
-// IsRestarting reports whether a server switch is under way for target.
+// IsRestarting reports whether a server switch is under way for target: the
+// switch writes target+".restarting" for its duration, and the server answers
+// every verb request with a typed Restarting result meanwhile
+// (docs/SPEC-SPRINT.md, section "Server Switch Restarting and Bounded Wait").
 func IsRestarting(target string) bool {
 	if target == "" {
 		return false

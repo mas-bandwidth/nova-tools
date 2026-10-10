@@ -92,4 +92,3 @@ internal/tablemodel/redis.go StartServer waits and retries
 internal/tokens/lock_poll_other.go takeFold waits and retries
 internal/update/snapshot_lock_windows.go lockSnapshot waits and retries
 internal/update/snapshot_unix.go lockSnapshot waits and retries
-internal/sprintwire/wire.go Client.Do waits and retries

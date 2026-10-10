@@ -327,6 +327,9 @@ func (a *app) serveHTTP(w http.ResponseWriter, r *http.Request, local bool) {
 		}
 	}
 	if sprint.IsRestarting(targetPath) {
+		// A server switch is under way: answer a typed Restarting result, one a
+		// verb, so the client waits and resends rather than learn nothing is known
+		// (docs/SPEC-SPRINT.md, section "Server Switch Restarting and Bounded Wait").
 		// ignored: read request body for restarting check
 		body, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, sprintwire.MaxRequest)) // ignored: request body read for restarting check
 		var req sprintwire.Request
