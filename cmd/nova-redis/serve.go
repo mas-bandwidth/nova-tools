@@ -90,7 +90,8 @@ func launchRedis(ctx context.Context, spec launchSpec, stdout, stderr io.Writer)
 	return err
 }
 
-// serveVerb is the serve verb: runs redis-server in the foreground.
+// serveVerb is the serve verb: runs redis-server in the foreground. A doctor repair
+// supplies all five public login metadata flags; it never relaxes authentication.
 func serveVerb(d deps) tool.Verb {
 	return tool.Verb{
 		Name:    "serve",

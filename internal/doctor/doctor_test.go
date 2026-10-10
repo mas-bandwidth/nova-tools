@@ -158,17 +158,18 @@ func TestDoctorRunsEveryRegisteredCheckAndExitsByTheWorst(t *testing.T) {
 // fakeEnv is an Env with nothing behind it: every method that is not overridden
 // answers "not there". The fields are the fakes a test fills in.
 type fakeEnv struct {
-	env   map[string]string
-	root  string // files are read under this directory (a t.TempDir())
-	exec  func(name string, args ...string) (string, error)
-	dial  func(addr string) error
-	clock time.Time
+	rootAbsolute bool // keep absolute fixture reads inside root when requested
+	env          map[string]string
+	root         string // files are read under this directory (a t.TempDir())
+	exec         func(name string, args ...string) (string, error)
+	dial         func(addr string) error
+	clock        time.Time
 }
 
 func (f fakeEnv) Getenv(k string) string { return f.env[k] }
 func (f fakeEnv) Now() time.Time         { return f.clock }
 func (f fakeEnv) ReadFile(p string) ([]byte, error) {
-	if filepath.IsAbs(p) {
+	if filepath.IsAbs(p) && !f.rootAbsolute {
 		return os.ReadFile(p)
 	}
 	if f.root == "" {
@@ -177,7 +178,7 @@ func (f fakeEnv) ReadFile(p string) ([]byte, error) {
 	return os.ReadFile(filepath.Join(f.root, p))
 }
 func (f fakeEnv) ReadDir(p string) ([]fs.DirEntry, error) {
-	if filepath.IsAbs(p) {
+	if filepath.IsAbs(p) && !f.rootAbsolute {
 		return os.ReadDir(p)
 	}
 	if f.root == "" {
