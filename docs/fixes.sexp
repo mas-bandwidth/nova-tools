@@ -38,11 +38,11 @@
    :text "The worker card tells the child its deadline, and the native wall passes the slot temporary
     directory so TMPDIR is the slot one."
    :origin "nova-tools PR #5575, head 4725d7d7d")
-  (fix "walled-lane-tokens-read" :release "v1.2.6" :status "planned"
+  (fix "walled-lane-tokens-read" :release "v1.2.6" :status "shipped"
    :title "A walled lane tokens are read where its harness writes them"
    :text "Walled sessions live under the wall home, tokens are read from there first, and a session in no
     database is unread rather than zero, so the token cap can trip."
-   :origin "nova-tools PR #5590, head 0c4fd7ea")
+   :origin "nova-tools PR #5590, head 0c4fd7ea; landed in dev as 1babe4a43f via PR #5595")
   (fix "hosted-tests-green-on-main" :release "v1.2.6" :status "planned"
    :title "The hosted tests are green on main and nightly"
    :text "Two hosted tests are red on main and nightly (the fork bomb wall cap and jobs as worktrees of
