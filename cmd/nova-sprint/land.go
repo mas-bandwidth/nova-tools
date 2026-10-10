@@ -1039,7 +1039,7 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 	b.Cards, b.IDs = len(ids), ids
 	l.stage("report", "merge report")
 	start := time.Now()
-	res, err := l.step(sprint.MergeReq{Stream: stream, Batch: len(ids), Who: l.c.actor}, pins)
+	res, err := l.step(sprint.MergeReq{Stream: stream, Cards: ids, Who: l.c.actor}, pins)
 	if b.Times != nil {
 		since(&b.Times.Report, start)
 	}
