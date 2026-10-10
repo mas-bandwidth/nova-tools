@@ -766,8 +766,14 @@ nor a lateness (`TestAWithdrawnFriendReadIsAskedAgain`,
 a friend's card across the inbox/outbox standard
 (docs/FRIENDS.md, a sprint card): for each card working or ready on a friend's
 row it writes `inbox/<job>/BRIEF.md` when that is not there and tells her so
-with one nova-bus message from the coordinator to her, subject `card <card>
-dealt: <the FRIEND-CARD DELIVERED line>`, the inbox path in the body (her
+with a nova-bus message from the coordinator to her
+(a-deal-that-adds-no-card-sends-no-notice.w1): each pass sends at most one
+notice per friend, and a pass that wrote no new inbox file sends none; a pass
+that wrote one new file for a one-shot friend sends the card notice, subject
+`card <card> dealt: <the FRIEND-CARD DELIVERED line>`, and any other pass that
+wrote a new file sends the one pass notice, subject `cards dealt: <n> (<the
+card ids, cut at ten with and <n> more>)`. The message body holds the inbox
+path (her
 daemon pushes it into her session, which the inbox file alone never does; the
 store is `NOVA_BUS_REDIS`; `NOVA_BUS_REDIS_USER` names its ACL user and
 `NOVA_BUS_REDIS_PASSWORD_ENV` names the variable holding its password, both

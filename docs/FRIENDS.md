@@ -131,7 +131,7 @@ nova-config apply --kind friend
 
 ## A sprint card
 
-Each sync pass sends a batch-mode friend (the default) at most one status wake for the cards it delivers, naming their count and up to ten card ids with the remaining count, her inbox directory and the sentence that starts the work. A friend whose store row says mode `one-shot` keeps one wake per card so her runner starts its lane. A pass that delivers no file sends no wake. The per-card inbox file is the record: a failed batch wake leaves every delivered file in place and is said and recorded once for the pass as `NFriendNotWoken`.
+Each sync pass sends a friend at most one notice for the cards it delivers, and none when it delivers no file. A pass that delivered exactly one card to a one-shot friend sends the per-card wake, which is what starts her lane; any other pass with a delivery sends one status notice naming the count and up to ten card ids with the remaining count, her inbox directory and the sentence that starts the work. The per-card inbox file is the record: a failed wake leaves every delivered file in place and is said and recorded once for the pass as `NFriendNotWoken`.
 
 A card of the sprint whose brief says `WHO: friend`, `WHO: friend <name>`, or
 `WHO: only friend <name>`, and a card with no WHO line whose tier a friend covers,

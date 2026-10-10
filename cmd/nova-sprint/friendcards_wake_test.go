@@ -29,7 +29,8 @@ func TestFriendSyncWakesOncePerPassInBatchMode(t *testing.T) {
 	}{
 		{name: "default batch", cards: 3, messages: 1},
 		{name: "explicit batch", mode: config.FriendModeBatch, cards: 3, messages: 1},
-		{name: "one-shot", mode: config.FriendModeOneShot, cards: 3, messages: 3},
+		{name: "one-shot single", mode: config.FriendModeOneShot, cards: 1, messages: 1},
+		{name: "one-shot multi", mode: config.FriendModeOneShot, cards: 3, messages: 1},
 		{name: "no delivery"},
 		{name: "failed batch wake", cards: 3, messages: 1, fail: true},
 		{name: "bounded ids", cards: 13, messages: 1},
@@ -73,21 +74,12 @@ func TestFriendSyncWakesOncePerPassInBatchMode(t *testing.T) {
 				_, err := os.Stat(filepath.Join(root, "amy-working", "inbox", fmt.Sprintf("s1-%02d.w1", i+1), "BRIEF.md"))
 				assert.NoError(t, err, "the delivered file stands")
 			}
-			if tc.mode == config.FriendModeOneShot && len(sent) == tc.cards {
-				seen := map[string]int{}
-				for _, m := range sent {
-					assert.Contains(t, m.Subject, " dealt: FRIEND-CARD DELIVERED")
-					assert.Contains(t, m.Body, "BRIEF.md")
-					for i := 1; i <= tc.cards; i++ {
-						id := fmt.Sprintf("s1-%02d.w1", i)
-						if strings.Contains(m.Subject, "card "+id+" dealt:") {
-							seen[id]++
-						}
-					}
-				}
-				assert.Len(t, seen, tc.cards, "one message names each card")
+			if tc.mode == config.FriendModeOneShot && tc.cards == 1 && len(sent) == 1 {
+				m := sent[0]
+				assert.Contains(t, m.Subject, " dealt: FRIEND-CARD DELIVERED")
+				assert.Contains(t, m.Body, "BRIEF.md")
 			}
-			if tc.mode != config.FriendModeOneShot && tc.cards > 0 && len(sent) == 1 {
+			if (tc.mode != config.FriendModeOneShot || (tc.mode == config.FriendModeOneShot && tc.cards > 1)) && tc.cards > 0 && len(sent) == 1 {
 				m := sent[0]
 				assert.Equal(t, bus.KindStatus, m.Kind)
 				assert.Equal(t, "coordinator", m.From)
@@ -133,3 +125,62 @@ func TestFriendSyncWakesOncePerPassInBatchMode(t *testing.T) {
 		})
 	}
 }
+
+// A deal pass sends a friend one notice when it gave her a new card, and none
+// otherwise: a pass that re-deals only cards she holds sends nothing, and a
+// pass that deals her three new cards sends one notice naming three.
+func TestADealThatAddsNoCardSendsNoNotice(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		mode string
+	}{
+		{name: "batch", mode: config.FriendModeBatch},
+		{name: "one-shot", mode: config.FriendModeOneShot},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ta, cfg := friendApp(t)
+			_, err := cfg.Insert(context.Background(), config.KindFriend, config.Row{Name: "amy", Fields: map[string]string{"width": "16", "tiers": "flash"}}, "t")
+			require.NoError(t, err)
+			root := t.TempDir()
+			ta.ok("friend sync --root " + root)
+			ta.beatUp("amy")
+			briefs := t.TempDir()
+			for i := range 3 {
+				id := fmt.Sprintf("s1-%02d", i+1)
+				require.NoError(t, os.WriteFile(filepath.Join(briefs, id+".md"), []byte(passingBrief(id+": a friend's card\nREPO: mas-bandwidth/nova-tools\nWHO: only friend amy")), 0o644))
+			}
+			ta.ok("add --stream s1 --brief-dir " + briefs)
+			ta.ok("start")
+			ta.ok("tick")
+
+			if tc.mode != "" {
+				_, _, err = cfg.Update(context.Background(), config.KindFriend, "amy", map[string]string{"mode": tc.mode}, "t")
+				require.NoError(t, err)
+			}
+
+			var sent []bus.Message
+			ta.a.bus = func(_ context.Context, m bus.Message, _ func(string)) error {
+				sent = append(sent, m)
+				return nil
+			}
+
+			// A pass that deals her three new cards sends one notice naming three.
+			out := ta.ok("friend sync --root " + root)
+			assert.Equal(t, 3, strings.Count(out, "FRIEND-CARD DELIVERED"))
+			require.Len(t, sent, 1, "a pass that deals her three new cards sends one notice naming three")
+			assert.Contains(t, sent[0].Subject, "cards dealt: 3 (")
+			for i := range 3 {
+				assert.Contains(t, sent[0].Subject, fmt.Sprintf("s1-%02d.w1", i+1))
+			}
+
+			// A pass that re-deals only cards she holds sends nothing.
+			ta.ok("tick")
+			ta.ok("friend sync --root " + root)
+			assert.Len(t, sent, 1, "a pass that re-deals only cards she holds sends nothing")
+			ta.clean()
+		})
+	}
+}
+
