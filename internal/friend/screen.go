@@ -22,6 +22,16 @@ const (
 // ErrAccessibilityPermission is returned when the binary lacks macOS accessibility permission.
 var ErrAccessibilityPermission = errors.New("accessibility permission not granted")
 
+// ErrNoWindowText is returned when the friend's window has no readable text
+// area: the screen is refused rather than reporting the window's description
+// or title as its text (docs/SPEC-FRIEND.md, Screen: missing readable text is
+// a refusal).
+var ErrNoWindowText = errors.New("the window has no readable text")
+
+// noWindowTextMarker is what the accessibility script says when the window
+// has no text area; the reader turns it into ErrNoWindowText.
+const noWindowTextMarker = "nova-screen-no-text"
+
 // ScreenRefused is returned when a screen cannot be captured and the verb should refuse (exit 1).
 type ScreenRefused struct {
 	Why    string
@@ -112,25 +122,23 @@ tell application "System Events"
 		end repeat
 		if targetWin is "" then error "no matching window found"
 		tell targetWin
+			set out to ""
 			try
 				set out to value of text area 1 of scroll area 1
-				return out
-			on error
-				try
-					set out to description of targetWin
-					return out
-				on error
-					return name of targetWin
-				end try
 			end try
+			if out is "" then error "%s"
+			return out
 		end tell
 	end tell
-end tell`, appName, target)
+end tell`, appName, target, noWindowTextMarker)
 		out, exit, err := run(ctx, "", "osascript", []string{"-e", script}, "")
 		if err != nil || exit != 0 {
 			combined := strings.ToLower(out)
 			if err != nil {
 				combined += " " + strings.ToLower(err.Error())
+			}
+			if strings.Contains(combined, noWindowTextMarker) {
+				return "", ErrNoWindowText
 			}
 			if strings.Contains(combined, "not allowed assistive access") ||
 				strings.Contains(combined, "-1728") ||
@@ -243,6 +251,9 @@ func Screen(ctx context.Context, opts ScreenOpts) (ScreenResult, error) {
 	bundle := AntigravityApp.Bundle
 	text, err := reader(ctx, bundle, target)
 	if err != nil {
+		if errors.Is(err, ErrNoWindowText) {
+			return ScreenResult{}, ScreenRefused{Why: fmt.Sprintf("the matching %s window has no readable text", opts.Friend)}
+		}
 		if errors.Is(err, ErrAccessibilityPermission) || strings.Contains(strings.ToLower(err.Error()), "accessibility") || strings.Contains(strings.ToLower(err.Error()), "assistive access") {
 			remedy := "grant accessibility permission in System Settings > Privacy & Security > Accessibility"
 			if opts.Binary != "" {

@@ -19,20 +19,21 @@ func (w world) screen(c *tool.Call) *tool.Out {
 
 	// The recorded --dir identifies the friend's window even when her status
 	// carries no live session (internal/friend/state.go: SessionLive is the
-	// mailbox's conversation, not the directory).
+	// mailbox's conversation, not the directory). It is read whether or not
+	// --state-dir names the state directory, so an explicit --state-dir does
+	// not lose the directory the window is found by.
 	dir := ""
+	plistPath := filepath.Join(w.home, "Library", "LaunchAgents", "com.nova.friend-"+name+".plist")
+	if b, err := os.ReadFile(plistPath); err == nil {
+		args := friend.PlistArgs(string(b))
+		dir = argAfter(args, "--dir")
+	}
+
 	state := c.Str("state-dir")
-	if state != "" {
-		if _, err := os.Stat(filepath.Join(state, name)); err == nil {
-			state = filepath.Join(state, name)
-		}
-	} else {
-		plistPath := filepath.Join(w.home, "Library", "LaunchAgents", "com.nova.friend-"+name+".plist")
-		if b, err := os.ReadFile(plistPath); err == nil {
-			args := friend.PlistArgs(string(b))
-			dir = argAfter(args, "--dir")
-		}
+	if state == "" {
 		state = friend.FindStateDir(w.home, dir, name)
+	} else if _, err := os.Stat(filepath.Join(state, name)); err == nil {
+		state = filepath.Join(state, name)
 	}
 
 	bin, _ := w.binary()

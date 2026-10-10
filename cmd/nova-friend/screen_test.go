@@ -78,9 +78,9 @@ func TestScreenReadsAGUIWindowThroughTheAccessibilitySeam(t *testing.T) {
 
 // TestScreenUsesTheRecordedDirectoryForTheWindow pins the target the
 // accessibility seam is asked for: the friend's recorded --dir, from her
-// launch agent, wins even when her status carries no live session
-// (internal/friend/state.go: SessionLive is the mailbox's conversation, not
-// the directory).
+// launch agent, wins even when her status carries no live session and even
+// when --state-dir names the state directory (internal/friend/state.go:
+// SessionLive is the mailbox's conversation, not the directory).
 func TestScreenUsesTheRecordedDirectoryForTheWindow(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
@@ -114,7 +114,7 @@ func TestScreenUsesTheRecordedDirectoryForTheWindow(t *testing.T) {
 		return "step 1\nstep 2\n", nil
 	}
 
-	out := r.cli().Do(t, "screen", "bob").Exit(0)
+	out := r.cli().Do(t, "screen", "bob", "--state-dir", state).Exit(0)
 	assert.Contains(t, out.Stdout, "SCREEN friend=bob source=window")
 	assert.Equal(t, "/w/bob", readTarget)
 }

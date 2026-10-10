@@ -180,3 +180,48 @@ func TestScreenHarnessWithNeither(t *testing.T) {
 	require.True(t, errors.As(err, &sr))
 	assert.Contains(t, sr.Why, "opencode has no screen: it is neither hosted in tmux nor a GUI harness")
 }
+
+// TestScreenWindowReaderRequiresATextArea pins the accessibility read: it
+// takes the window's text area alone, so a window without readable text is
+// refused, never described by its title or description as if it were text
+// (docs/SPEC-FRIEND.md, Screen: missing readable text is a refusal).
+func TestScreenWindowReaderRequiresATextArea(t *testing.T) {
+	t.Parallel()
+
+	var script string
+	run := func(_ context.Context, _, name string, args []string, _ string) (string, int, error) {
+		require.Equal(t, "osascript", name)
+		script = args[len(args)-1]
+		return noWindowTextMarker, 1, nil
+	}
+
+	_, err := DefaultWindowReader(run)(context.Background(), AntigravityApp.Bundle, "chat-bob")
+	require.ErrorIs(t, err, ErrNoWindowText)
+	assert.Contains(t, script, "value of text area 1")
+	assert.NotContains(t, script, "description of")
+	assert.NotContains(t, script, "name of targetWin")
+}
+
+// TestScreenRefusesAWindowWithNoReadableText pins the seam's answer: a reader
+// that finds no text area refuses, naming the missing text, rather than
+// printing anything it found instead (docs/SPEC-FRIEND.md, Screen).
+func TestScreenRefusesAWindowWithNoReadableText(t *testing.T) {
+	t.Parallel()
+
+	state := t.TempDir()
+	require.NoError(t, WriteStatus(state, Status{Friend: "bob", Harness: "antigravity", SessionLive: "chat-bob"}))
+
+	reader := func(_ context.Context, _, _ string) (string, error) {
+		return "", ErrNoWindowText
+	}
+
+	_, err := Screen(context.Background(), ScreenOpts{
+		Friend:       "bob",
+		StateDir:     state,
+		WindowReader: reader,
+	})
+	require.Error(t, err)
+	var sr ScreenRefused
+	require.True(t, errors.As(err, &sr))
+	assert.Contains(t, sr.Why, "the matching bob window has no readable text")
+}
