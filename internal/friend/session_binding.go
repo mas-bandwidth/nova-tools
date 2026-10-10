@@ -144,20 +144,29 @@ func PongSession(body string) string {
 // LiveSessionSubject is the one request joinQuestion puts on the friend's own
 // stream. It is not a turn: while the target is unproven the hand delivers
 // nothing and the turn gate would defer it, so SessionRequest puts the text
-// in through the ungated deliverer (the session check's path) and the daemon
-// acks the entry.
+// in through the ungated deliverer (the session check's path).
 const LiveSessionSubject = "live session id wanted"
 
-// SessionRequest consumes only self-authored requests on the daemon's own stream;
-// an unsupported adapter or a running turn is refused without changing its target.
-// The live-session question is consumed the same way, injected, never handed to a turn.
+// SessionRequest handles a request outside the daemon loop. The daemon uses
+// HandleSessionRequest so an asynchronous question is acknowledged only after
+// the adapter succeeds.
 func (s *SessionCheck) SessionRequest(ctx context.Context, msg bus.Message) bool {
+	return s.HandleSessionRequest(ctx, msg, func() error { return nil })
+}
+
+// HandleSessionRequest consumes only self-authored requests on the daemon's own
+// stream. The live-session question is injected asynchronously and acked by its
+// caller only after the adapter succeeds, so a failure remains claimable.
+func (s *SessionCheck) HandleSessionRequest(ctx context.Context, msg bus.Message, ack func() error) bool {
 	s.mu.Lock()
 	if !s.sent[msg.ID] {
 		s.joinQuestion(ctx, msg)
 	}
 	if s.sessionRequestLocked(ctx, msg) {
 		s.mu.Unlock()
+		if err := ack(); err != nil {
+			s.record(s.Now(), "session request acknowledgement failed: "+err.Error())
+		}
 		return true
 	}
 	body, ok := s.ownSessionQuestion(msg)
@@ -165,7 +174,7 @@ func (s *SessionCheck) SessionRequest(ctx context.Context, msg bus.Message) bool
 	if !ok {
 		return false
 	}
-	return s.pushQuestion(ctx, body)
+	return s.pushQuestion(ctx, body, ack)
 }
 
 // ownSessionQuestion is the daemon's own live-session line, and only when an
@@ -181,37 +190,33 @@ func (s *SessionCheck) ownSessionQuestion(msg bus.Message) (string, bool) {
 }
 
 // pushQuestion puts the question into the session without waiting for proof.
-// A test's Go runs it before the answer, so a failure leaves the entry for the
-// hand; production starts it and the caller acks, so the line is not a turn.
-func (s *SessionCheck) pushQuestion(ctx context.Context, body string) bool {
+// A test's Go runs it before the answer; production starts it asynchronously.
+// Both acknowledge only after successful delivery, so failure leaves the entry
+// for the next claim.
+func (s *SessionCheck) pushQuestion(ctx context.Context, body string, ack func() error) bool {
 	d := s.deliverer()
 	if d == nil {
 		return false
 	}
-	deliver := func() (int, error) { return d.Deliver(ctx, body) }
-	note := func(exit int, err error) {
+	deliver := func() {
+		exit, err := d.Deliver(ctx, body)
 		now := time.Time{}
 		if s.Now != nil {
 			now = s.Now()
 		}
-		s.record(now, fmt.Sprintf("session id request into the session exit=%d error=%v", exit, err))
+		if err != nil || exit != 0 {
+			s.record(now, fmt.Sprintf("session id request into the session exit=%d error=%v", exit, err))
+			return
+		}
+		if err := ack(); err != nil {
+			s.record(now, "session id request acknowledgement failed: "+err.Error())
+		}
 	}
 	if s.Go != nil {
-		var exit int
-		var err error
-		s.Go(func() { exit, err = deliver() })
-		if err != nil || exit != 0 {
-			note(exit, err)
-			return false
-		}
-		return true
+		s.Go(deliver)
+	} else {
+		go deliver()
 	}
-	go func() {
-		exit, err := deliver()
-		if err != nil || exit != 0 {
-			note(exit, err)
-		}
-	}()
 	return true
 }
 

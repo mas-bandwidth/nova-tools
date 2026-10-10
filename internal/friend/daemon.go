@@ -251,7 +251,7 @@ type Daemon struct {
 	// says push=unproven with the nonce and since when.
 	Proof          func() (proven bool, nonce string)
 	SessionInfo    func() SessionBinding
-	SessionRequest func(context.Context, bus.Message) bool
+	SessionRequest func(context.Context, bus.Message, func() error) bool
 	// Sent is the session's proof the sprint server last took on her beat (friend
 	// beat --pong answered with it), zero before any; the status carries it.
 	Sent func() time.Time
@@ -1096,13 +1096,13 @@ func (l *loop) read(now time.Time) bool {
 			msg := e.Message()
 			// a session request is not a turn. That includes the live-session
 			// question: SessionRequest injects its text through the ungated
-			// deliverer while the target is unproven, and the ack below keeps
-			// it out of the hand.
-			if d.SessionRequest != nil && d.SessionRequest(l.ctx, msg) {
-				if _, aerr := b.AckEntry(l.ctx, d.Friend, e.Entry); aerr != nil {
-					err = aerr
-					break
-				}
+			// deliverer while the target is unproven and acks after success.
+			entry := e.Entry
+			ack := func() error {
+				_, aerr := b.AckEntry(l.ctx, d.Friend, entry)
+				return aerr
+			}
+			if d.SessionRequest != nil && d.SessionRequest(l.ctx, msg, ack) {
 			} else if l.lost[e.Entry] && !l.inHand[e.Entry] {
 				// superseded by the present, its ack lost, handed in again by the claim: superseded again, never delivered
 				d.Record(fmt.Sprintf("%s superseded id=%s subject=%q: %s", now.UTC().Format(time.RFC3339), msg.ID, msg.Subject, SupersededReason(l.presentAt)))

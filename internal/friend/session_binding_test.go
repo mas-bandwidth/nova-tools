@@ -2,6 +2,8 @@ package friend
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -129,7 +131,7 @@ func TestTheDaemonLoopInjectsTheLiveSessionQuestionWhileUnproven(t *testing.T) {
 	sc.Deliver = sc.Gate(r)
 	r.d.Deliver = sc.Deliver
 	r.d.Proof = func() (bool, string) { return false, "n1" }
-	r.d.SessionRequest = sc.SessionRequest
+	r.d.SessionRequest = sc.HandleSessionRequest
 	r.d.SessionInfo = sc.SessionInfo
 
 	r.send(t, "ada", "hello", "ordinary work")
@@ -152,6 +154,79 @@ func TestTheDaemonLoopInjectsTheLiveSessionQuestionWhileUnproven(t *testing.T) {
 	}
 	assert.NotContains(t, subjects, LiveSessionSubject)
 	assert.Contains(t, subjects, "hello")
+}
+
+type failingSessionQuestion struct {
+	boundSessionApp
+	mu      sync.Mutex
+	calls   int
+	started chan int
+	release chan struct{}
+	failed  chan struct{}
+}
+
+func (a *failingSessionQuestion) Deliver(context.Context, string) (int, error) {
+	a.mu.Lock()
+	a.calls++
+	call := a.calls
+	a.mu.Unlock()
+	a.started <- call
+	if call == 1 {
+		<-a.release
+		close(a.failed)
+		return 7, errors.New("adapter refused the question")
+	}
+	return 0, nil
+}
+
+func TestTheDaemonRetriesAnAsynchronousSessionQuestionThatTheAdapterFails(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.passive = true
+	app := &failingSessionQuestion{
+		boundSessionApp: boundSessionApp{session: "conversation-a"},
+		started:         make(chan int, 2),
+		release:         make(chan struct{}),
+		failed:          make(chan struct{}),
+	}
+	sc := &SessionCheck{
+		Friend: "bob", Store: r.store, Now: func() time.Time { return t0 },
+		Nonce:          func() string { return "n1" },
+		Text:           func(nonce string) string { return "check " + nonce },
+		RequireSession: true,
+		JoinFrom:       func() string { return "ada" },
+	}
+	sc.Deliver = sc.Gate(app)
+	r.d.Deliver = sc.Deliver
+	r.d.Proof = func() (bool, string) { return false, "n1" }
+	r.d.SessionRequest = sc.HandleSessionRequest
+	r.d.SessionInfo = sc.SessionInfo
+
+	_, err := r.bus.Send(context.Background(), bus.Message{From: "ada", To: []string{"bob"}, Kind: "request", Subject: "join", Body: "join"})
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	r.cancel = cancel
+	done := make(chan error, 1)
+	go func() { done <- r.d.Run(ctx) }()
+
+	assert.Equal(t, 1, <-app.started)
+	pending, _, err := r.bus.Peek(context.Background(), "bob")
+	require.NoError(t, err)
+	require.Contains(t, subjectsOf(pending), LiveSessionSubject, "the bus entry stays pending until the asynchronous adapter succeeds")
+	close(app.release)
+	<-app.failed
+	r.store.Advance(bus.ClaimAfter)
+	assert.Equal(t, 2, <-app.started, "the failed question is claimed and delivered again")
+	cancel()
+	require.NoError(t, <-done)
+}
+
+func subjectsOf(entries []bus.Entry) []string {
+	result := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		result = append(result, entry.Message().Subject)
+	}
+	return result
 }
 
 func TestOnlyTheCoordinatorJoinAsksForALiveSession(t *testing.T) {

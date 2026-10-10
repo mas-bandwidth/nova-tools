@@ -76,7 +76,7 @@ func TestCheckFriendDaemonFreshnessMatchesStatusBoundary(t *testing.T) {
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
-			st := Status{Friend: "bob", At: now.Add(-row.age)}
+			st := Status{Friend: "bob", At: now.Add(-row.age), SessionID: "ses_1", SessionProof: "proven"}
 			pr := PresenceStatus{Friend: "bob", Presence: PresenceUp, LastHeard: now.Add(-time.Second)}
 			fc := CheckFriend(context.Background(), "bob", CheckSeams{
 				Now:          func() time.Time { return now },

@@ -1643,7 +1643,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	if !perCard {
 		d.Proof = sc.Proof // nothing goes into the session until it answers its check
-		d.SessionInfo, d.SessionRequest = sc.SessionInfo, sc.SessionRequest
+		d.SessionInfo, d.SessionRequest = sc.SessionInfo, sc.HandleSessionRequest
 	}
 	if c.Str("harness") == "opencode" {
 		db := c.Str("db")
