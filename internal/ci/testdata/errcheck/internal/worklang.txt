@@ -1,2 +1,0 @@
-# The unchecked errors in this package when the rule landed; shrink-only (docs/SPEC-CI.md, errcheck).
-# ceiling: 0

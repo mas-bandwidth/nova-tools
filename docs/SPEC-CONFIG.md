@@ -405,7 +405,7 @@ reads the list and sets each enabled route's `price_input`, `price_cache_read`,
   refreshed them; a reader found it 2026-10-06).
 - Follow-up cards, outside this verb: the run before `nova-sprint funded <provider>`
   (`cmd/nova-sprint/verbs.go`, `cmdFunded`) should refresh the provider's list
-  first, and `nova-sprint routes` (`cmd/nova-sprint/reads.go`, `cmdRoutes`, and
+  first, and `nova-sprint routes` (in mas-bandwidth/nova-sprint, `cmdRoutes`, and
   `internal/sprint/route.go`, `RouteStats`) should mark a route whose price differs
   from the list by more than 10 percent as stale.
 

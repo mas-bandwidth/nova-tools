@@ -141,6 +141,9 @@ func findDeadCodeUnion(t *testing.T, ctx context.Context, root string) (map[stri
 		}
 		for _, pkg := range pkgs {
 			p := strings.TrimPrefix(pkg.Path, modulePrefix)
+			if !deadCodeCounted(p) {
+				continue
+			}
 			for _, fn := range pkg.Funcs {
 				if fn.Marker || fn.Generated {
 					continue
@@ -367,4 +370,26 @@ func TestDeadCodeWitness(t *testing.T) {
 	joined := strings.Join(rec4.lines, "\n")
 	assert.Contains(t, joined, "refuses to raise a count")
 	assert.Contains(t, joined, "refuses to grow")
+}
+
+// deadCodeCounted is whether the rule counts a package's unreachable functions:
+// every package but pkg/'s. pkg/ is a public library whose callers live in other
+// modules (mas-bandwidth/nova-sprint since the split), and the walk's roots are
+// this module's mains only, so a pkg/ function another module calls reads as dead
+// here (docs/SPEC-CI.md, "deadcode").
+func deadCodeCounted(rel string) bool {
+	return rel != "pkg" && !strings.HasPrefix(rel, "pkg/")
+}
+
+// TestDeadCodeCountsEverythingButPkg is the narrowing's reversed witness: a pkg/
+// package is not counted, and cmd/, internal/ and tools/ packages, and a path that
+// only starts with the letters pkg, still are.
+func TestDeadCodeCountsEverythingButPkg(t *testing.T) {
+	t.Parallel()
+	for _, rel := range []string{"pkg/swarm", "pkg/nsprint/fn", "pkg"} {
+		assert.False(t, deadCodeCounted(rel), "%s is pkg/, the public library", rel)
+	}
+	for _, rel := range []string{"cmd/nova-swarm", "internal/nsprint/store", "tools/ci", "pkgselect", "internal/pkg"} {
+		assert.True(t, deadCodeCounted(rel), "%s is counted", rel)
+	}
 }

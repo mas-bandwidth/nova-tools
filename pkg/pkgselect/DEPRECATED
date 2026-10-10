@@ -8,8 +8,8 @@
 # deprecated/ folder was removed on 2026-10-01; the old nova-work and its
 # modules live in the nova-work-old repository, for reference only.)
 
-# nova-sprint's old runtime. cmd/nova-sprint (living, rebuilt on nova-table)
-# does not use it; the deprecated copy of the old tool was deleted on
+# nova-sprint's old runtime. nova-sprint (living, rebuilt on nova-table, now in
+# mas-bandwidth/nova-sprint) does not use it; the deprecated copy of the old tool was deleted on
 # 2026-09-30. These packages stay here until nothing living imports them.
 internal/nsprint
 

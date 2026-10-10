@@ -1,1 +1,0 @@
-internal/sprint/foo.go:41 is not gofmt-clean (gofmt -l prints it); run gofmt -w and recommit.

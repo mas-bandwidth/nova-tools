@@ -331,9 +331,9 @@ bound after a close the friend is still shown up (the finding case
 `MCFriendPresenceFindingRunningNow`). The bound is the promise.
 
 Where the code today differs: a card stays with a friend who goes down
-(internal/sprint/friend_deal.go: "a friend who goes quiet keeps her card");
+(nova-sprint's friend_deal.go: "a friend who goes quiet keeps her card");
 the hold takes back only the cards not yet started
-(internal/sprint/friend_take.go), where the model has no started card; and
+(nova-sprint's friend_take.go), where the model has no started card; and
 a card the hold took back may be dealt to the same friend again (only
 `friend take` keeps it off them, `taken_from`). The provider's limit only
 stops answers in the model; limit.go's `Down` until the reset is not in it.
@@ -672,13 +672,13 @@ beats sent: plain, then down with the reset and the reason, then plain again; `T
 (cmd/nova-sprint) the row.
 
 The sprint server's beat lane takes the down beat: `friendBeatFlags`
-(`cmd/nova-sprint/serve.go`) names `--until` (an RFC3339 time) and `--reason` (not
+(nova-sprint's serve.go) names `--until` (an RFC3339 time) and `--reason` (not
 empty, one line, no control character) beside `--running --working --queue --width
 --load --active --pong --check --run`, each once with its value; any other shape is refused, exit 2,
 nothing changed (`TestTheServerTakesAFriendsDownBeat`). Before this (r7.w1) the lane
 refused the down beat and her row read down only by the lapse.
 The table's status cell shows reason and until for a hold and an observation only
-(`internal/sprint/store/friends.go`, `friendRows`); a down beat's pair is on her
+(nova-sprint's store, `friendRows`); a down beat's pair is on her
 report and in why she is down.
 
 ### Every harness's credit and quota refusal (cmd/nova-friend/limit.go)
@@ -1319,7 +1319,7 @@ beat loops are retired, with no replacement"). The beat itself proves the daemon
 nothing more: it is recorded and shown, and it never makes her up (below); the
 session's answer it carries (`--pong`) is her session's evidence.
 
-## Presence is her session's evidence (internal/sprint/presence.go)
+## Presence is her session's evidence (nova-sprint's presence.go)
 
 The owner, 2026-10-05 ~9:30 AM ET, on the daemon: "there is no value in things
 that are answered just by the daemon"; "The daemon stays up even while the
@@ -1351,7 +1351,7 @@ own session, within its window:
   evidence; when her beats stop, her proof stops with them
   (`TestABareTimeOrAnUnaskedNonceNeverProves`). The beat verb trusts its
   caller's actor (a worker verb runs as the friend it names,
-  cmd/nova-sprint/coordinator.go `orActor`), so a caller that beats as her can
+  nova-sprint's coordinator.go `orActor`), so a caller that beats as her can
   ask a check and answer it in one beat, and that proves her
   (`TestTheBeatTrustsItsCallersActor`): the nonce rule keeps a bare time and an
   answer to nothing asked out, never a caller who speaks as her. For
@@ -1388,7 +1388,7 @@ after the window without another; a finish the same for its window),
 `TestAFinishFromHerReportIsHerSessionsEvidence`. The roster and her cards are moved by the
 friend sync loop, `nova-sprint friend sync --every <d>`, a nova-config loop
 row kept alive with no shell in its argv (docs/FRIENDS.md, "The friend sync
-loop"; cmd/nova-sprint/friend_loop.go).
+loop"; nova-sprint's friend_loop.go).
 
 ## The push proof (pkg/friend/pushproof_start.go)
 
@@ -1476,7 +1476,7 @@ state (SPEC-BUS.md, bus-requires-inbox-push-proof).
   check asked, `Beat.Proof`), her session's evidence for `FriendProofLive`
   while her beats go on ("Presence is her session's evidence" below). The
   coordinator's pass raises one `friend deaf` judgment when the proof is older
-  than that (internal/sprint/coordinator_pass.go).
+  than that (nova-sprint's coordinator_pass.go).
 - The deploy order: the sprint server first, then every daemon within
   `LegacyPongGrace` (an hour) of the server's start. A daemon of this build
   against an older server fails every beat (that server refuses `--check` and
@@ -1513,7 +1513,7 @@ second), both ways:
   job (`friendJobOf`: `sprint.StoredID` and `.g<gen>`; a read's card id), its packet, and
   its brief as friend sync renders it (`friendBrief`; a read's `friendReadText`). A card
   taken back from her (withdrawn) is not listed. The server's side is
-  cmd/nova-sprint/friendcards_verb.go; `TestFriendCardsServesEveryHeldCardWithItsPacket`
+  nova-sprint's friendcards_verb.go; `TestFriendCardsServesEveryHeldCardWithItsPacket`
   pins it on a twin store end to end: the daemon's write from the answer alone is byte for
   byte friend sync's file, and a card taken from her and dealt to another friend is
   retired from her inbox and written to the other's as its `.g3` job).
@@ -1873,7 +1873,7 @@ and the daemon's wiring in
 
 Not here, owed: (1) cost and utilization on her beat and row: the sprint
 server's `friend beat` accepts only `--running --working --queue --width
---load --active --pong --check --run --until --reason` (`friendBeatFlags`, `cmd/nova-sprint/serve.go`) and
+--load --active --pong --check --run --until --reason` (`friendBeatFlags`, nova-sprint's `serve.go`) and
 refuses any other flag, so a cost or a utilization flag sent from here would
 fail every beat; until the server takes them they are on the daemon's record
 only. (2) No live `claude` or `opencode` run checks these shapes: the tests use
@@ -2217,7 +2217,7 @@ Head unread, breaks `LandOnTip` in 6 states. The test is
 
 The night of 2026-10-05, lint-pkg-tlc-tbb came back five times, sec-rocketnet-server-dos-zhi
 four and presence-from-session-only five, each with the same finding. A rework puts its fix on
-the packet (`rework --fix`, or the broken reads' finding: internal/sprint/steps_review.go), and
+the packet (`rework --fix`, or the broken reads' finding: nova-sprint's steps_review.go), and
 the server's brief says it as a `The coordinator asks:` line under the start, over a long card
 whose own STOP is the whole card's; the next lane read the card and never reached the fix.
 
@@ -2546,7 +2546,7 @@ daemon, whose `Recv` as herself is refused the same way, never parked on her
 stream.
 
 friend sync's deal now names her on the bus before it tells her
-(`enrollBus`, cmd/nova-sprint/friendcards.go): her name is the friend row
+(`enrollBus`, nova-sprint's friendcards.go): her name is the friend row
 friend sync already holds, and `bus.Enroll` (pkg/bus/names.go) adds it to
 the bus store's `friends` (SADD, one trip after the roster's, only when it is
 missing), said once as `FRIEND-CARD BUS-NAMES added=<name>`. The note then
@@ -2901,7 +2901,7 @@ records them for pacing. Claude has no deliver command, so its
 `Watch`. The state machine (up, down until a reset, waking on a nonce) wants
 its TLA+ module beside `tla/Friend.tla`.
 
-## Chaos: detection proved by breaking it (internal/sprint/friend_chaos_functional_test.go)
+## Chaos: detection proved by breaking it (nova-sprint's friend_chaos_functional_test.go)
 
 The owner, 2026-10-04: "If your detection that they are down doesn't work
 WHEN THEY ARE DOWN, that seems like a bad design." One functional test,

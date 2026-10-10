@@ -12,7 +12,7 @@ run would do.
 
 | play | what it converges | on |
 |---|---|---|
-| `fleet/tools.yml` | the build `nova_version` of the checkout `nova_source` in `~/.local/bin`, the build fact, the retired tools gone, the schema migrated, the function library loaded; the pinned TLC jar on the record machines | every machine; the build on the machine running the play; migrate and `fn load` on `store_deployer`; the jar on `tla` (`--tags tla` runs that alone) |
+| `fleet/tools.yml` | the build `nova_version` of the checkout `nova_source`, with nova-sprint's tools from its release in `nova_sprint_release`, in `~/.local/bin`, the build fact, the retired tools gone, the schema migrated, the function library loaded; the pinned TLC jar on the record machines | every machine; the build on the machine running the play; migrate and `fn load` on `store_deployer`; the jar on `tla` (`--tags tla` runs that alone) |
 | `fleet/redis.yml` | the store's ACL users, rendered from the library and the key families | the render on the machine running the play; check and apply on `store_deployer` |
 | `fleet/loops.yml` | one launchd or systemd unit per loop record, none for a record that is gone | every machine |
 | `fleet/container-runtime.yml` | rootless podman, the fleet's container runtime, and its version recorded in `~/.config/nova/podman` | every bench: Linux (apt on Ubuntu and Debian, dnf on Fedora) and macOS (brew, and a podman machine) |
@@ -48,8 +48,8 @@ refuses with the wrapper's own line when it cannot list.
 
 ```
 ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --list
-ansible-playbook -i ./nova-inventory fleet/tools.yml -e nova_version=v1.2.0-dev.abcdef12 -e nova_source=$PWD -e nova_dogfood_receipts=<dir> --check --diff </dev/null 2>&1 | cat
-ansible-playbook -i ./nova-inventory fleet/tools.yml -e nova_version=v1.2.0-dev.abcdef12 -e nova_source=$PWD -e nova_dogfood_receipts=<dir> </dev/null 2>&1 | cat
+ansible-playbook -i ./nova-inventory fleet/tools.yml -e nova_version=v1.2.0-dev.abcdef12 -e nova_source=$PWD -e nova_sprint_release=<nova-sprint release dir> -e nova_dogfood_receipts=<dir> --check --diff </dev/null 2>&1 | cat
+ansible-playbook -i ./nova-inventory fleet/tools.yml -e nova_version=v1.2.0-dev.abcdef12 -e nova_source=$PWD -e nova_sprint_release=<nova-sprint release dir> -e nova_dogfood_receipts=<dir> </dev/null 2>&1 | cat
 ansible-playbook -i ./nova-inventory fleet/redis.yml --check --diff </dev/null 2>&1 | cat
 ansible-playbook -i ./nova-inventory fleet/redis.yml </dev/null 2>&1 | cat
 ansible-playbook -i ./nova-inventory fleet/loops.yml --check --diff </dev/null 2>&1 | cat
@@ -111,14 +111,14 @@ supervisor pushes nothing twice:
 nova-config loop add inbox-push --machine bench-a --argv '["env","NOVA_SPRINT_SERVER=127.0.0.1:6390","NOVA_SPRINT_ACTOR=<coordinator>","nova-sprint","inbox","--wait","--push","<home>/<coordinator>-working/inbox/sprint-judgments","--timeout","1m"]' --keepalive true --as ada
 ```
 
-The sprint dashboard ([SPEC-SPRINT-DASHBOARD.md](SPEC-SPRINT-DASHBOARD.md)), a page
+The sprint dashboard ([SPEC-SPRINT-DASHBOARD.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT-DASHBOARD.md)), a page
 that is a second view of `where --json`, is one more loop record on the coordinator's
 machine and a client of the server like the others: it reads the sprint at most once
 per `--every` and only while a page is open. It listens on loopback, and on this
 machine's tailnet address when the page is wanted across the fleet's private network;
 an every-network or public address is refused, because the page checks no credential
 (a public page is a reverse proxy in front of the loopback listener,
-[SPEC-SPRINT-DASHBOARD.md](SPEC-SPRINT-DASHBOARD.md)). `--logo` names the image the page shows; the file stays on the
+[SPEC-SPRINT-DASHBOARD.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT-DASHBOARD.md)). `--logo` names the image the page shows; the file stays on the
 machine, never in the repository:
 
 ```
@@ -248,6 +248,7 @@ an explicit localhost; it is never derived from the Redis store machine.
 | `nova_pg_dsn`, `nova_pg_password_key` | the applied fleet row (no inferred DSN), `NOVA_PG_CONFIG_PASSWORD` | the configuration store `tools.yml` migrates; an empty DSN is refused with the set and apply commands |
 | `nova_release_out`, `nova_release_gocache` | `~/nova-bench/release-build`, `~/nova-bench/release-gocache` on the machine running the play | where the build is written and its Go cache |
 | `nova_version`, `nova_source` | none: `-e` | the build to install and the checkout it is built from |
+| `nova_sprint_release` | none: `-e` | a directory holding one mas-bandwidth/nova-sprint release (`gh release download <tag> -R mas-bandwidth/nova-sprint -D <dir>`); its nova-sprint, nova-card and nova-work are verified against its `SHA256SUMS_<goos>_<goarch>` and shipped in the same release, never compiled from this tree (`nova-update release build --sprint-release`) |
 | `nova_dogfood_receipts` | none: `-e` | the dogfood receipts directory the build's definition-of-done gate reads |
 | `nova_tla_dir`, `nova_tla_jar` | `/opt/tla`, `/opt/tla/tla2tools.jar` | where a record machine holds the TLC jar |
 | `nova_tla_sha256_file` | `tla/tla2tools.sha256` of the checkout the play runs from | the SHA-256 the jar must have, read on the machine running the play |

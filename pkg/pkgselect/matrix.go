@@ -46,17 +46,17 @@ type Groups struct{ Linux, Mac string }
 var DarwinOnly = []string{"./cmd/nova-sandbox", "./pkg/sandbox"}
 
 // LinuxOnly are the packages a pull request never deals to the macOS legs: their unit
-// tests cost more than a macOS runner's two cores give in the two-minute cap (cmd/nova-sprint
-// about 335 CPU-seconds, cmd/nova-swarm about 200), so those legs were cancelled at the cap
-// in every pull-request run of 2026-10-04. Linux runs them in every pull request and in
-// the merge group, and cmd/nova-sprint is leaving this repository (nova-tools#5309).
+// tests cost more than a macOS runner's two cores give in the two-minute cap (cmd/nova-swarm
+// about 200 CPU-seconds), so those legs were cancelled at the cap in every pull-request run
+// of 2026-10-04. Linux runs them in every pull request and in the merge group. cmd/nova-sprint,
+// the other one, left for its own repository, nova-sprint (the split, v1.2.3).
 // A push and the nightly run still deal them to macOS.
-var LinuxOnly = []string{"./cmd/nova-sprint", "./cmd/nova-swarm"}
+var LinuxOnly = []string{"./cmd/nova-swarm"}
 
 // HeavyFirst are the measured expensive packages the fan-out deals first, so
 // a four-leg PR gives each a separate leg. Ordinary round-robin put all four
 // on the first leg; that job crossed its wall even when its test step passed.
-var HeavyFirst = []string{"./cmd/nova-sprint", "./cmd/nova-swarm", "./internal/ci", "./internal/sprint/store"}
+var HeavyFirst = []string{"./cmd/nova-swarm", "./internal/ci"}
 
 // DarwinBranches are the target branches whose changes meet the darwin legs:
 // the integration branches (the concurrency group's integration list in

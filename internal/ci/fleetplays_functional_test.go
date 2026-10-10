@@ -98,7 +98,7 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 	r := newFleetPlayRig(t, "check-fixture.yml")
 	root, dir, home := r.root, r.dir, r.home
 	play := func(name string, extra ...string) string { t.Helper(); return r.play(t, name, extra...) }
-	check := []string{"--check", "--diff", "-e", "nova_home=" + home, "-e", "nova_version=v0.0.0-check", "-e", "nova_source=" + root, "-e", "nova_dogfood_receipts=" + filepath.Join(dir, "dogfood"), "-e", "nova_release_out=" + filepath.Join(dir, "release"), "-e", "nova_sops=/usr/bin/sops-of-the-fixture"}
+	check := []string{"--check", "--diff", "-e", "nova_home=" + home, "-e", "nova_version=v0.0.0-check", "-e", "nova_source=" + root, "-e", "nova_sprint_release=" + filepath.Join(dir, "nova-sprint-release"), "-e", "nova_dogfood_receipts=" + filepath.Join(dir, "dogfood"), "-e", "nova_release_out=" + filepath.Join(dir, "release"), "-e", "nova_sops=/usr/bin/sops-of-the-fixture"}
 
 	for _, p := range fleetPlays {
 		assert.Contains(t, play(p, "--syntax-check"), "playbook: ")
@@ -213,7 +213,7 @@ func TestToolsPlayAppliesAndReappliesOnTheFixture(t *testing.T) {
 	_, err = os.Stat(filepath.Join(r.home, ".config"))
 	require.True(t, os.IsNotExist(err), "the fixture's home starts with no .config")
 
-	vars := []string{"-e", "nova_home=" + r.home, "-e", "nova_version=" + version, "-e", "nova_source=" + r.root, "-e", "nova_dogfood_receipts=" + filepath.Join(r.dir, "dogfood"), "-e", "nova_release_out=" + out}
+	vars := []string{"-e", "nova_home=" + r.home, "-e", "nova_version=" + version, "-e", "nova_source=" + r.root, "-e", "nova_sprint_release=" + filepath.Join(r.dir, "nova-sprint-release"), "-e", "nova_dogfood_receipts=" + filepath.Join(r.dir, "dogfood"), "-e", "nova_release_out=" + out}
 	first := r.play(t, "tools.yml", vars...)
 	assert.Contains(t, first, "built="+platform+" missing=none")
 	assert.Contains(t, first, "was=none removed=1 INSTALLED RELEASE INSTALLED version="+version+" tools=1 ")
@@ -247,7 +247,7 @@ func TestDeployerPlaysCheckOnTheFixture(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(fake, "nova-secrets"), []byte("#!/bin/sh\necho \"FAKE-SECRETS $*\"\n"), 0o755))
 	home := os.Getenv("HOME")
 	vars := []string{"--check", "-e", "nova_bin_dir=" + fake, "-e", "nova_sops=/usr/bin/sops-of-the-fixture",
-		"-e", "nova_version=v0.0.0-check", "-e", "nova_source=" + r.root, "-e", "nova_dogfood_receipts=" + filepath.Join(r.dir, "dogfood"), "-e", "nova_release_out=" + filepath.Join(r.dir, "release")}
+		"-e", "nova_version=v0.0.0-check", "-e", "nova_source=" + r.root, "-e", "nova_sprint_release=" + filepath.Join(r.dir, "nova-sprint-release"), "-e", "nova_dogfood_receipts=" + filepath.Join(r.dir, "dogfood"), "-e", "nova_release_out=" + filepath.Join(r.dir, "release")}
 	seat := "FAKE-SECRETS exec --store " + filepath.Join(home, "nova-bench", "secrets") + " --as seat-local --key " + filepath.Join(home, ".config", "nova-secrets", "seat-local.key") + " --sops /usr/bin/sops-of-the-fixture"
 
 	redis := r.play(t, "redis.yml", vars...)
@@ -264,7 +264,7 @@ func TestToolsPlayRefusesAnEmptyFleetDSN(t *testing.T) {
 	r := newFleetPlayRig(t, "deployer-fixture.yml")
 	out, err := r.playResult(t, "tools.yml", "--check", "--limit", "store_deployer", "-e", "nova_pg_dsn=",
 		"-e", "nova_home="+r.home, "-e", "nova_version=v0.0.0-check",
-		"-e", "nova_source="+r.root, "-e", "nova_dogfood_receipts="+filepath.Join(r.dir, "dogfood"), "-e", "nova_release_out="+filepath.Join(r.dir, "release"))
+		"-e", "nova_source="+r.root, "-e", "nova_sprint_release="+filepath.Join(r.dir, "nova-sprint-release"), "-e", "nova_dogfood_receipts="+filepath.Join(r.dir, "dogfood"), "-e", "nova_release_out="+filepath.Join(r.dir, "release"))
 	require.Error(t, err)
 	assert.Contains(t, out, "the applied fleet row needs redis_port and pg_dsn")
 	assert.Contains(t, out, "nova-config migrate")
@@ -280,7 +280,7 @@ func TestToolsPlayNamesTheDogfoodReceipts(t *testing.T) {
 	t.Parallel()
 	r := newFleetPlayRig(t, "check-fixture.yml")
 	vars := []string{"--check", "--limit", "localhost", "-e", "nova_home=" + r.home, "-e", "nova_version=v0.0.0-check",
-		"-e", "nova_source=" + r.root, "-e", "nova_release_out=" + filepath.Join(r.dir, "release"), "-e", "nova_sops=/usr/bin/sops-of-the-fixture"}
+		"-e", "nova_source=" + r.root, "-e", "nova_sprint_release=" + filepath.Join(r.dir, "nova-sprint-release"), "-e", "nova_release_out=" + filepath.Join(r.dir, "release"), "-e", "nova_sops=/usr/bin/sops-of-the-fixture"}
 	out, err := r.playResult(t, "tools.yml", vars...)
 	require.Error(t, err)
 	assert.Contains(t, out, "-e nova_dogfood_receipts=<the dogfood receipts directory>")
@@ -481,7 +481,7 @@ func TestToolsPlaySendsOnlyTheFilesTheInstalledBuildLacks(t *testing.T) {
 	stage("v0.0.0-one", "v0.0.0-one", update)
 	stage("v0.0.0-two", "v0.0.0-two", update)
 	vars := func(version string) []string {
-		return []string{"-e", "nova_home=" + r.home, "-e", "nova_version=" + version, "-e", "nova_source=" + r.root,
+		return []string{"-e", "nova_home=" + r.home, "-e", "nova_version=" + version, "-e", "nova_source=" + r.root, "-e", "nova_sprint_release=" + filepath.Join(r.dir, "nova-sprint-release"),
 			"-e", "nova_dogfood_receipts=" + filepath.Join(r.dir, "dogfood"), "-e", "nova_release_out=" + out}
 	}
 
@@ -552,7 +552,7 @@ func TestToolsPlaySendsEveryStagedFileWhoseBytesDiffer(t *testing.T) {
 				require.NoError(t, os.WriteFile(filepath.Join(dir, "SHA256SUMS"), []byte(sums.String()), 0o644))
 			}
 			vars := func(version string) []string {
-				return []string{"-e", "nova_home=" + r.home, "-e", "nova_version=" + version, "-e", "nova_source=" + r.root,
+				return []string{"-e", "nova_home=" + r.home, "-e", "nova_version=" + version, "-e", "nova_source=" + r.root, "-e", "nova_sprint_release=" + filepath.Join(r.dir, "nova-sprint-release"),
 					"-e", "nova_dogfood_receipts=" + filepath.Join(r.dir, "dogfood"), "-e", "nova_release_out=" + out}
 			}
 			r.play(t, "tools.yml", vars("v0.0.0-one")...)
