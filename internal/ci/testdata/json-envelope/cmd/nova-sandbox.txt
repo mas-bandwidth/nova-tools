@@ -1,0 +1,5 @@
+# json-envelope: the --json rendering; shrink-only
+# ceiling: 3
+cmd/nova-sandbox:bare 1 the --json rendering is not yet the skeleton's one object; the count only falls
+cmd/nova-sandbox:unknown-verb 1 the --json rendering is not yet the skeleton's one object; the count only falls
+cmd/nova-sandbox:verb-no-flags 8 the --json rendering is not yet the skeleton's one object; the count only falls

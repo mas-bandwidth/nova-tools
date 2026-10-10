@@ -1,0 +1,7 @@
+# json-envelope: the --json rendering; shrink-only
+# ceiling: 5
+cmd/nova-sprint:bare 1 the --json rendering is not yet the skeleton's one object; the count only falls
+cmd/nova-sprint:transcript 12 the --json rendering is not yet the skeleton's one object; the count only falls
+cmd/nova-sprint:unknown-flag 1 the --json rendering is not yet the skeleton's one object; the count only falls
+cmd/nova-sprint:unknown-verb 1 the --json rendering is not yet the skeleton's one object; the count only falls
+cmd/nova-sprint:verb-no-flags 138 the --json rendering is not yet the skeleton's one object; the count only falls

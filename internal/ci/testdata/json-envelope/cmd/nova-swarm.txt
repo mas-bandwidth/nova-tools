@@ -1,0 +1,7 @@
+# json-envelope: the --json rendering; shrink-only
+# ceiling: 5
+cmd/nova-swarm:bare 1 the --json rendering is not yet the skeleton's one object; the count only falls
+cmd/nova-swarm:transcript 1 the --json rendering is not yet the skeleton's one object; the count only falls
+cmd/nova-swarm:unknown-flag 1 the --json rendering is not yet the skeleton's one object; the count only falls
+cmd/nova-swarm:unknown-verb 1 the --json rendering is not yet the skeleton's one object; the count only falls
+cmd/nova-swarm:verb-no-flags 19 the --json rendering is not yet the skeleton's one object; the count only falls

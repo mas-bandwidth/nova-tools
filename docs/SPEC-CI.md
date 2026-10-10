@@ -2187,20 +2187,28 @@ stdout is exactly one line of JSON.
 or print multiple JSON objects, make the CI's structured output checks fail and
 leave users unable to parse the output.
 
-**The test.** `TestJsonEnvelopeClassRuleHoldsOverTheRepository`
-(`internal/ci/json_envelope_functional_test.go`), which builds every command and
-runs each with `--json`, checking that the output is exactly one JSON object with
-`result.status` and `result.exit` matching the exit code. It has a witness test
-for broken output that checks multiple objects, missing exit, and mismatched exit.
+**The test.** `TestEveryJSONOutputIsOneEnvelope`
+(`internal/ci/json_envelope_functional_test.go`) builds every command and runs the
+same walk as `exit-word` with `--json`: bare, an unknown verb, an unknown flag on a
+verb, each verb with no flags, and each command in the tool's `docs/TESTS.md`
+transcript. `jsonEnvelopeAnswers` reads stdout and refuses it unless it is exactly
+one JSON object whose `result.status` and `result.exit` agree with the exit (0 ok,
+1 failed, every other refused). The witness is `TestJsonEnvelopeJudges`: a fixture
+that carries two objects, no `result.status`, or a disagreeing `result.exit` is
+refused naming the site, and `TestJsonEnvelopeFixesTheFixture` shows the fixed
+fixture passes.
 
-**Its ledger.** the `json-envelope` package ledger, one
-`<package>:<kind> <count> <reason>` row per tool still short (`internal/ci/testdata/json-envelope/`).
-The count only falls: a tool measuring more sites than its row, a tool with
-a site and no row, and a row above what the tool measures are each a red run,
-and `NOVA_CI_UPDATE=1` lowers the counts and drops the rows at zero, never raises a
-count and never adds a row.
+**Its ledger.** the `json-envelope` package ledger
+(`internal/ci/testdata/json-envelope/`), one shard per tool at `cmd/<tool>.txt`,
+one `cmd/<tool>:<kind> <count> <reason>` row per invocation kind still short
+(`bare`, `unknown-verb`, `unknown-flag`, `verb-no-flags`, `transcript`). The count
+only falls: a tool measuring more sites than its row, a tool with a site and no
+row, and a row above what the tool measures are each a red run, and
+`NOVA_CI_UPDATE=1` lowers the counts and drops the rows at zero, never raises a
+count and never adds a row. The rows are the seeding run: each names what the head
+held when the rule landed, and a port onto `internal/tool` lowers its own row.
 
-**Its remedy line.** `fix the JSON output: it must be exactly one object with result.status and result.exit matching the exit; the ledger only shrinks`.
+**Its remedy line.** `fix the --json rendering: stdout is exactly one object whose result.status and result.exit agree with the exit, which internal/tool's Out renders (a tool not on it moves onto it); the ledger only shrinks`.
 
 ### `slowwaits` — no per-commit test sleeps over a second or waits out a deadline
 

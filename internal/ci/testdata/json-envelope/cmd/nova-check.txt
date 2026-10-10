@@ -1,0 +1,5 @@
+# json-envelope: the --json rendering; shrink-only
+# ceiling: 3
+cmd/nova-check:transcript 1 the --json rendering is not yet the skeleton's one object; the count only falls
+cmd/nova-check:unknown-flag 1 the --json rendering is not yet the skeleton's one object; the count only falls
+cmd/nova-check:verb-no-flags 6 the --json rendering is not yet the skeleton's one object; the count only falls

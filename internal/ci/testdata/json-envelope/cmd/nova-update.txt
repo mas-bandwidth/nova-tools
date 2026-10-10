@@ -1,0 +1,3 @@
+# json-envelope: the --json rendering; shrink-only
+# ceiling: 1
+cmd/nova-update:verb-no-flags 2 the --json rendering is not yet the skeleton's one object; the count only falls

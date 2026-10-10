@@ -1,0 +1,7 @@
+# json-envelope: the --json rendering; shrink-only
+# ceiling: 5
+cmd/nova-fuse:bare 1 the --json rendering is not yet the skeleton's one object; the count only falls
+cmd/nova-fuse:transcript 5 the --json rendering is not yet the skeleton's one object; the count only falls
+cmd/nova-fuse:unknown-flag 1 the --json rendering is not yet the skeleton's one object; the count only falls
+cmd/nova-fuse:unknown-verb 1 the --json rendering is not yet the skeleton's one object; the count only falls
+cmd/nova-fuse:verb-no-flags 9 the --json rendering is not yet the skeleton's one object; the count only falls

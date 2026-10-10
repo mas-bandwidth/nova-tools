@@ -3,21 +3,83 @@
 package ci
 
 import (
-	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
 
-// json_envelope_functional_test.go builds every command and runs each with --json
-// to check that the output is exactly one JSON object whose result.status and
-// result.exit match the process exit. It is the class test for the rule
-// docs/STANDARD.md section 2: one output structure, two renderings.
+// json_envelope_functional_test.go builds every command and runs the same walk
+// as exit_word_functional_test.go with --json, holding each tool's stdout to the
+// one-object envelope (docs/STANDARD.md section 2; skeleton contract 1.4). It
+// needs no store and starts no server; the builds are the functional tier's.
+
+// TestEveryJSONOutputIsOneEnvelope walks every built tool: bare, with an unknown
+// verb, with an unknown flag on a verb, each verb with --json, and each command
+// in its docs/TESTS.md transcript with --json. The ledger is checked only when
+// every tool ran.
+func TestEveryJSONOutputIsOneEnvelope(t *testing.T) {
+	t.Parallel()
+
+	root := repoRoot(t)
+	entries, err := os.ReadDir(filepath.Join(root, "cmd"))
+	require.NoError(t, err)
+	transcripts := readFile(t, filepath.Join(root, "docs", "TESTS.md"))
+	envelope := newJSONEnvelope(t)
+	found := 0
+	t.Cleanup(func() { envelope.check(t, found) })
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		found++
+		tool := e.Name()
+		t.Run(tool, func(t *testing.T) {
+			t.Parallel()
+			envelope.begin()
+			bin := buildTool(t, root, tool)
+			_, banner, helpErr := runBare(t, root, tool, bin, []string{"help"})
+			require.Empty(t, helpErr, "`%s help` wrote to stderr: %s", tool, helpErr)
+			verbs := usageVerbs(tool, banner)
+
+			code, out, errs := runIn(t, bin, "--json")
+			envelope.short(tool, jsonEnvelopeBare, tool+" --json", jsonEnvelopeAnswers(code, out, errs))
+
+			code, out, errs = runIn(t, bin, noSuchVerb, "--json")
+			envelope.short(tool, jsonEnvelopeVerb, tool+" "+noSuchVerb+" --json", jsonEnvelopeAnswers(code, out, errs))
+
+			if len(verbs) > 0 {
+				args := append(strings.Fields(verbs[0]), noSuchFlag, "--json")
+				code, out, errs = runIn(t, bin, args...)
+				envelope.short(tool, jsonEnvelopeFlag, tool+" "+verbs[0]+" "+noSuchFlag+" --json", jsonEnvelopeAnswers(code, out, errs))
+			}
+			for _, v := range verbs {
+				args := append(strings.Fields(v), "--json")
+				code, out, errs := runIn(t, bin, args...)
+				envelope.short(tool, jsonEnvelopeNoArg, tool+" "+v+" --json", jsonEnvelopeAnswers(code, out, errs))
+			}
+
+			if lines, err := onboarding.FirstRun(transcripts, tool); err == nil && len(lines) > 0 {
+				if steps, err := onboarding.Steps(tool, lines); err == nil {
+					for _, s := range steps {
+						args := append(append([]string{}, s.Args...), "--json")
+						code, out, errs := runIn(t, bin, args...)
+						envelope.short(tool, jsonEnvelopeTranscript, s.Line+" --json", jsonEnvelopeAnswers(code, out, errs))
+					}
+				}
+			}
+			envelope.settle()
+		})
+	}
+	require.NotZero(t, found, "no command directories found under cmd/; this test was looking in the wrong place and would have passed by checking nothing")
+}
 
 // jsonEnvelopeLedgerPath is the shrink-only counted package ledger of the
 // json-envelope violations: one shard per tool at
@@ -34,150 +96,44 @@ const (
 )
 
 // jsonEnvelopeRemedy is the remedy line for json-envelope violations.
-const jsonEnvelopeRemedy = "ensure the --json output is exactly one object with result.status and result.exit matching the exit"
+const jsonEnvelopeRemedy = "fix the --json rendering: stdout is exactly one object whose result.status and result.exit agree with the exit, which internal/tool's Out renders (a tool not on it moves onto it); the ledger only shrinks"
 
-// TestJsonEnvelopeClassRuleHoldsOverTheRepository walks every built tool with
-// --json to verify the output envelope matches the contract.
-func TestJsonEnvelopeClassRuleHoldsOverTheRepository(t *testing.T) {
-	t.Parallel()
-
-	root := repoRoot(t)
-	entries, err := os.ReadDir(filepath.Join(root, "cmd"))
-	require.NoError(t, err)
-	found := 0
-	ledger, err := allowlist.LoadPackages(jsonEnvelopeLedgerPath, allowlist.Options{Ceiling: true, Counted: true, PackageKeys: true})
-	require.NoError(t, err)
-
-	sites := map[string][]string{}
-	addSite := func(pkg, where, problem string) {
-		key := pkg + ":json"
-		sites[key] = append(sites[key], where+": "+problem+"; to clear it: "+jsonEnvelopeRemedy)
-	}
-
-	// Test all tools in parallel but collect results sequentially
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		tool := e.Name()
-		bin := buildTool(t, root, tool)
-
-		t.Run(tool, func(t *testing.T) {
-			t.Parallel()
-			found++
-
-			// Test bare command with --json
-			_, stdout, stderr := runIn(t, bin, "--json")
-			checkJsonEnvelope(t, "cmd/"+tool+":bare", stdout, stderr, addSite)
-
-			// Test unknown verb with --json
-			_, stdout, stderr = runIn(t, bin, "--json", noSuchVerb)
-			checkJsonEnvelope(t, "cmd/"+tool+":unknown-verb", stdout, stderr, addSite)
-
-			// Test verbs if any
-			_, banner, _ := runBare(t, root, tool, bin, []string{"help"})
-			verbs := usageVerbs(tool, banner)
-			if len(verbs) > 0 {
-				// Test first verb with unknown flag
-				args := append([]string{"--json"}, strings.Fields(verbs[0])...)
-				args = append(args, noSuchFlag)
-				_, stdout, stderr = runIn(t, bin, args...)
-				checkJsonEnvelope(t, "cmd/"+tool+":unknown-flag", stdout, stderr, addSite)
-
-				// Test verb with no flags
-				args = append([]string{"--json"}, strings.Fields(verbs[0])...)
-				_, stdout, stderr = runIn(t, bin, args...)
-				checkJsonEnvelope(t, "cmd/"+tool+":verb-no-flags", stdout, stderr, addSite)
-			}
-		})
-	}
-
-	require.NotZero(t, found, "no command directories found under cmd/")
-
-	// Check ledger against collected sites
-	update := allowlist.Updating()
-	for key, problemList := range sites {
-		rowCount := 0
-		if row, listed := ledger.Get(key); listed {
-			rowCount = row.Count
-		}
-		siteCount := len(problemList)
-
-		if !listed {
-			addSite(key, "", "no ledger row for this tool; the ledger gains no row")
-		} else if siteCount > rowCount {
-			addSite(key, "", "over its ledger count; the count only falls")
-		} else if siteCount < rowCount {
-			if !update {
-				addSite(key, "", "the ledger has entries but the tree has none; delete the row")
-			}
-		}
-	}
-
-	// Fail if there are any problems
-	if len(sites) > 0 {
-		for key, problems := range sites {
-			for _, p := range problems {
-				t.Errorf("%s: %s", key, p)
-			}
-		}
-	}
+// jsonEnvelope is one walk's measure against its package ledger, shared by the
+// walk's parallel subtests and checked once they have all finished.
+type jsonEnvelope struct {
+	mu             sync.Mutex
+	ledger         *siteLedger
+	begun, settled int
 }
 
-// checkJsonEnvelope verifies that the output is exactly one JSON object with
-// correct result.status and result.exit fields.
-func checkJsonEnvelope(t *testing.T, key, stdout, stderr string, addSite func(string, string, string)) {
+func newJSONEnvelope(t *testing.T) *jsonEnvelope {
 	t.Helper()
+	allow, err := allowlist.LoadPackages(jsonEnvelopeLedgerPath, allowlist.Options{Ceiling: true, Counted: true, PackageKeys: true})
+	require.NoError(t, err)
+	requireReasons(t, allow)
+	return &jsonEnvelope{ledger: &siteLedger{path: jsonEnvelopeLedgerPath, allow: allow, sites: map[string][]string{}}}
+}
 
-	// For errors/refusals, output goes to stderr
-	output := stdout
-	if output == "" {
-		output = stderr
-	}
+func (w *jsonEnvelope) begin() { w.mu.Lock(); w.begun++; w.mu.Unlock() }
 
-	// Output should be one JSON object
-	var lines []string
-	for _, l := range strings.Split(strings.TrimSpace(output), "\n") {
-		l = strings.TrimSpace(l)
-		if l != "" {
-			lines = append(lines, l)
-		}
-	}
+func (w *jsonEnvelope) settle() { w.mu.Lock(); w.settled++; w.mu.Unlock() }
 
-	if len(lines) != 1 {
-		addSite(key, "output", fmt.Sprintf("expected exactly one JSON line, got %d", len(lines)))
+func (w *jsonEnvelope) short(tool, kind, where, problem string) {
+	if problem == "" {
 		return
 	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.ledger.add("cmd/"+tool+":"+kind, where+": "+problem+"; to clear it: "+jsonEnvelopeRemedy)
+}
 
-	// Parse the JSON
-	var result struct {
-		Result struct {
-			Verb   string `json:"verb"`
-			Status string `json:"status"`
-			Exit   int    `json:"exit"`
-		} `json:"result"`
-	}
-
-	if err := json.Unmarshal([]byte(lines[0]), &result); err != nil {
-		addSite(key, "parse", "failed to parse JSON: "+err.Error())
+func (w *jsonEnvelope) check(t *testing.T, tools int) {
+	t.Helper()
+	if w.begun != tools || w.settled != tools {
+		t.Logf("json-envelope: %d of %d tools measured; the ledger is checked only when every tool is", w.settled, tools)
 		return
 	}
-
-	// Check that status and exit match
-	// Exit 0 -> status ok
-	// Exit 1 -> status failed
-	// Exit 2 -> status refused
-	expectedStatus := ""
-	switch result.Result.Exit {
-	case 0:
-		expectedStatus = "ok"
-	case 1:
-		expectedStatus = "failed"
-	case 2:
-		expectedStatus = "refused"
-	}
-
-	if result.Result.Status != expectedStatus {
-		addSite(key, "status", fmt.Sprintf("result.status=%s but expected %s for exit %d", result.Result.Status, expectedStatus, result.Result.Exit))
+	for _, v := range w.ledger.violations(t, "a tool's --json stdout is one object whose result.status and result.exit agree with the exit (a row's count only falls)") {
+		assert.Fail(t, v)
 	}
 }

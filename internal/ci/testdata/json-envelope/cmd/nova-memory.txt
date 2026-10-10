@@ -1,0 +1,3 @@
+# json-envelope: the --json rendering; shrink-only
+# ceiling: 1
+cmd/nova-memory:bare 1 the --json rendering is not yet the skeleton's one object; the count only falls
