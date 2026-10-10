@@ -101,7 +101,7 @@ func TestAMemberDownTheCoordinatorDidNotHoldIsRaisedAgainUntilItIsHeld(t *testin
 	r.tickBeating(90*time.Second, "m1")
 	j := r.openNote(sprint.NStopMemberDown, "m2")
 	require.NotNil(t, j, "a member down the coordinator did not hold is a judgment")
-	assert.Contains(t, j.What, "member m2 is down and the coordinator did not hold it: its last beat was")
+	assert.Contains(t, j.What, "member m2 is down and the coordinator did not hold it: its last beat was at 20")
 	assert.Contains(t, j.What, "effect: its width 2 idles")
 	assert.Contains(t, j.What, "undo: ")
 	assert.Contains(t, j.Decisions, "fleet down m2")
@@ -112,9 +112,29 @@ func TestAMemberDownTheCoordinatorDidNotHoldIsRaisedAgainUntilItIsHeld(t *testin
 	require.NoError(t, err)
 	assert.Contains(t, kinds(now.Stops), sprint.StopKindMemberDown+" m2", "the doctor's count, from a fresh read, lists it too")
 
-	// it holds: raised again every ten minutes of running time, the one judgment rewritten
+	// stable while the stop holds (cold reader B): ticks later the judgment's text and the
+	// stops record are as they were, neither rewritten every tick (one tick first: the record
+	// is counted from a tick's first read, which the judgment raised above changes once)
+	r.tickBeating(5*time.Second, "m1")
+	rec0, _, err := r.st.StopsKept(r.ctx)
+	require.NoError(t, err)
+	r.tickBeating(5*time.Second, "m1")
+	r.tickBeating(5*time.Second, "m1")
+	assert.Equal(t, j.What, r.openNote(sprint.NStopMemberDown, "m2").What, "the text changes only when the stop does")
+	rec1, _, err := r.st.StopsKept(r.ctx)
+	require.NoError(t, err)
+	assert.Equal(t, rec0.At, rec1.At, "the stops record is not written again while nothing changed")
+
+	// it holds: raised again after ten minutes of running time in the one digest of the stops,
+	// the judgment itself not rewritten
 	r.tickBeating(10*time.Minute, "m1")
-	assert.Equal(t, 1, r.countNotes(sprint.Happened, sprint.NRaisedAgain, "member m2 is down"), "raised again after ten minutes")
+	assert.Equal(t, 0, r.countNotes(sprint.Happened, sprint.NRaisedAgain, "member m2 is down"), "no line of its own")
+	assert.Equal(t, 1, r.countNotes(sprint.Happened, sprint.NStopsDigest, "1 automatic stops still hold (1 member-down); the 1 oldest: "), "one digest")
+	assert.Equal(t, 1, r.countNotes(sprint.Happened, sprint.NStopsDigest, "undo: start its member loop"), "naming the undo verb")
+	r.tickBeating(time.Minute, "m1")
+	assert.Equal(t, 1, r.countNotes(sprint.Happened, sprint.NStopsDigest, ""), "once a window")
+	r.tickBeating(10*time.Minute, "m1")
+	assert.Equal(t, 2, r.countNotes(sprint.Happened, sprint.NStopsDigest, ""), "and again the next window")
 	assert.Equal(t, 1, r.countNotes(sprint.Judgment, sprint.NStopMemberDown, "m2"), "one judgment an episode")
 
 	// the coordinator holds it off: the stop is hers now, and the judgment closes
@@ -139,7 +159,7 @@ func TestACardPinnedToAFriendWhoIsNotUpIsRaisedUntilUnpinned(t *testing.T) {
 
 	j := r.openNote(sprint.NStopPinWaits, "p1-1")
 	require.NotNil(t, j, "a pin waiting on a friend who is not up is a judgment")
-	assert.Contains(t, j.What, "p1-1 is pinned to friend amy alone and waits: she is held")
+	assert.Contains(t, j.What, "p1-1 is pinned to friend amy alone and waits: she is held; effect: ")
 	assert.Contains(t, j.What, "undo: nova-sprint unpin p1-1")
 	_, ok := r.keptStop(sprint.StopKindPinWaits, "p1-1")
 	assert.True(t, ok, "the stops record lists it")

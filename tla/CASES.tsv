@@ -501,3 +501,6 @@ MCStopCancelsBrokenLaunchAfterStop.cfg	MCStopCancels.tla	invariant	NoLaunchAfter
 MCStopCancelsBrokenForgetOnRestart.cfg	MCStopCancels.tla	invariant	StopReturnsSurviveRestart	ignore-terminal	stopcancels	required	-
 MCStopCancelsBrokenNudge.cfg	MCStopCancels.tla	invariant	NoNudgeWhileStopped	ignore-terminal	stopcancels	required	-
 MCStopCancelsBrokenFinishCancelled.cfg	MCStopCancels.tla	invariant	NoFinishOfACancelledCard	ignore-terminal	stopcancels	required	-
+MCLatePush.cfg	MCLatePush.tla	pass	-	ignore-terminal	latepush	required	-
+MCLatePushBrokenWipe.cfg	MCLatePush.tla	invariant	OnePushAWindow	ignore-terminal	latepush	required	-
+MCLatePushBrokenForget.cfg	MCLatePush.tla	invariant	OnePushAWindow	ignore-terminal	latepush	required	-

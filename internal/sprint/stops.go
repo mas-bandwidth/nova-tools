@@ -189,7 +189,7 @@ func memberStops(s *Snapshot, r TickReq) []Stop {
 				continue
 			}
 			out = append(out, Stop{Kind: StopKindMemberAdopt, Subject: m, Since: at,
-				What:   fmt.Sprintf("member %s has been held adopting for %s (since %s), past %s", m, d.Round(time.Second), stamp(at), StopAdoptAfter),
+				What:   fmt.Sprintf("member %s has been held adopting since %s, past %s", m, stamp(at), StopAdoptAfter),
 				Effect: effect, Undo: "nova-sprint fleet up " + m, Signal: NStopMemberDown,
 				typ: NStopMemberDown, primaries: []string{m},
 				decisions: []string{"fleet up " + m, "fleet down " + m, "ack", "wait"}})
@@ -202,7 +202,9 @@ func memberStops(s *Snapshot, r TickReq) []Stop {
 		dwell := true
 		if r.Beats != nil {
 			if b := r.Beats[m]; b.Beaten() {
-				why = fmt.Sprintf("its last beat was %s ago (at %s)", s.Now.Sub(b.At).Truncate(time.Second), stamp(b.At))
+				// an absolute time, never an age: the text changes only when the stop does, so
+				// neither the judgment nor the stops record is rewritten every tick
+				why = "its last beat was at " + stamp(b.At)
 				if since.IsZero() {
 					since = b.At
 				}
@@ -248,14 +250,13 @@ func pinStops(s *Snapshot, r TickReq) []Stop {
 		if known && seat.Status == Up {
 			continue
 		}
-		status, why := "not on the roster", ""
+		// her status word alone: the evidence behind it (seat.Why) carries ages, and the text
+		// changes only when the stop does
+		status := "not on the roster"
 		if known {
-			status, why = orDash(seat.Status), seat.Why
+			status = orDash(seat.Status)
 		}
 		what := fmt.Sprintf("%s is pinned to friend %s alone and waits: she is %s", pr.ID, name, status)
-		if why != "" {
-			what += " (" + why + ")"
-		}
 		behind := needing(s, pr.ID)
 		effect := "1 card waits"
 		if len(behind) > 0 {
@@ -456,4 +457,107 @@ func behindLevelWord(what string) string {
 	}
 	word, _, _ := strings.Cut(what, ":")
 	return word
+}
+
+// The re-push of the stops is one digest (cold reader B, PR 5548: forty live stops were forty
+// "still holds" lines every ten minutes). A stop's first raise is its own judgment, pushed;
+// after it, every PassEvery of running time while any stop judgment has gone that long without
+// a push, the pass writes one happened note to the coordinator, NStopsDigest: how many stops
+// hold by kind, the StopsDigestOldest oldest with their undo verbs, and `nova-sprint doctor`
+// for the full list. The clock is an acknowledgement, NStopsDigestClock, its At the last
+// digest's, closed and written again with each digest (shown in no inbox, as the empty-row
+// clock). A stop acknowledged, or waited to a review time not reached, is left out.
+const (
+	// NStopsDigest is the digest of the automatic stops still holding.
+	NStopsDigest = "automatic stops still hold"
+	// NStopsDigestClock is the digest's clock: an acknowledgement, never a judgment.
+	NStopsDigestClock = "the automatic stops' digest"
+	// StopsDigestOldest is how many of the oldest stops the digest names.
+	StopsDigestOldest = 5
+)
+
+// stopKindOf is the short word of a stop judgment's type, as the digest counts them.
+var stopKindOf = map[string]string{
+	NStopMemberDown: StopKindMemberDown,
+	NStopPinWaits:   StopKindPinWaits,
+	NFriendStalled:  StopKindFriendStalled,
+}
+
+// stopsDigest writes the tick's digest of the stops still holding when one is due (above).
+func stopsDigest(p *Plan, s *Snapshot, r TickReq) {
+	var clock *Open
+	for i, o := range s.Acked {
+		if o.Note.Type == NStopsDigestClock {
+			clock = &s.Acked[i]
+		}
+	}
+	lastDigest := time.Time{}
+	if clock != nil {
+		lastDigest = clock.Note.At
+	}
+	seen := map[string]bool{}
+	var stops []Note
+	due := false
+	for _, o := range s.Open {
+		n := o.Note
+		if n.Kind != Judgment || !slices.Contains(StopTypes, n.Type) || seen[n.ID] {
+			continue
+		}
+		seen[n.ID] = true
+		if !n.Review.IsZero() && s.Now.Before(n.Review) {
+			continue // waited: quiet until its review time
+		}
+		stops = append(stops, n)
+		last := n.At
+		if lastDigest.After(last) {
+			last = lastDigest
+		}
+		if d, ok := r.running(s.Now, stamp(last)); ok && d >= PassEvery {
+			due = true
+		}
+	}
+	if !due || len(stops) == 0 {
+		return
+	}
+	if clock != nil {
+		if d, ok := r.running(s.Now, stamp(clock.Note.At)); !ok || d < PassEvery {
+			return
+		}
+	}
+	byKind := map[string]int{}
+	for _, n := range stops {
+		byKind[cmpOr(stopKindOf[n.Type], n.Type)]++
+	}
+	var counts []string
+	for _, k := range slices.Sorted(maps.Keys(byKind)) {
+		counts = append(counts, fmt.Sprintf("%d %s", byKind[k], k))
+	}
+	sort.SliceStable(stops, func(i, j int) bool { return stops[i].At.Before(stops[j].At) })
+	var oldest []string
+	for _, n := range stops[:min(len(stops), StopsDigestOldest)] {
+		undo := "see its judgment"
+		if _, u, ok := strings.Cut(n.What, "; undo: "); ok {
+			undo = u
+		}
+		oldest = append(oldest, fmt.Sprintf("%s %s %s since %s, undo: %s", n.ID, cmpOr(stopKindOf[n.Type], n.Type), strings.Join(n.Primaries, ","), stamp(n.At), undo))
+	}
+	to := s.Coordinator
+	if to == "" {
+		to = "coordinator"
+	}
+	p.Notes = append(p.Notes, Note{Kind: Happened, Type: NStopsDigest, Who: r.who(), To: to, At: s.Now,
+		What: fmt.Sprintf("%d automatic stops still hold (%s); the %d oldest: %s", len(stops), strings.Join(counts, ", "), len(oldest), strings.Join(oldest, "; ")),
+		Hint: "the full list: nova-sprint doctor; ack or wait a stop's judgment to quiet it"})
+	if clock != nil {
+		p.Closes = append(p.Closes, *clock)
+	}
+	p.Notes = append(p.Notes, Note{Kind: Acknowledged, Type: NStopsDigestClock, What: "digest", Who: r.who(), At: s.Now, SprintLevel: true})
+}
+
+// cmpOr is a when it is not empty, else b.
+func cmpOr(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }

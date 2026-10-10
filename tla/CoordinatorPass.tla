@@ -46,6 +46,9 @@
 \* is the stop in force. The machine makes it, and the coordinator's undo verb or the stop's
 \* own end clears it, between two ticks (Flip); the pass reads it at the next tick.
 \*   stoppedAt  the running clock the stop was made at; -1 while none holds.
+\* In the code a stop's raise again is pushed in the tick's one digest of the stops
+\* (stopsDigest, NStopsDigest), due every PassEvery while any stop has gone that long without a
+\* push: for the one stop modelled here that is a push every window, as Tick writes it.
 \*
 \* With Kind = "empty" (an up friend has an empty row while cards wait) holds is the
 \* conjunction the pass reads each tick: she is up and not held, her row is empty, and

@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -27,17 +29,23 @@ const TickLatePush = 30 * time.Second
 var tickLateRE = regexp.MustCompile(`\btick late (\d+)s\b`)
 
 // lateWatch is one push loop's watch of the tick's lateness: the episode's start, the last
-// push, the worst lateness since that push, and the looks that found it late.
+// push (kept across episodes), the start of the run of looks that found the tick on time, the
+// worst lateness since the last push, and the looks that found it late since then.
 type lateWatch struct {
-	since, last time.Time
-	worst       time.Duration
-	looks       int
+	since, last, onTime time.Time
+	worst               time.Duration
+	looks               int
+	// loaded says last was read from the inbox's late pushes (lastTickLate), once a loop
+	loaded bool
 }
 
 // step reads one look's machine line at now and says the text to push, "" when none is due.
-// An episode is the looks that found the tick TickLatePush late or more, ended by a look that
-// finds it on time; its first look pushes, and a look sprint.PassEvery after the last push
-// pushes again.
+// The machine line measures lateness from the last heartbeat, so a look right after a tick
+// reads on time even while every gap between ticks is late (cold reader B, PR 5548: the
+// episode ended at every tick and the seat was pushed sixty times an hour). So an episode ends
+// only after sprint.PassEvery of looks that all found the tick on time, and the last push is
+// kept across episodes: the seat is pushed at most once every sprint.PassEvery, whatever the
+// pattern of the ticks.
 func (w *lateWatch) step(machine string, now time.Time) string {
 	m := tickLateRE.FindStringSubmatch(machine)
 	late := time.Duration(0)
@@ -46,9 +54,19 @@ func (w *lateWatch) step(machine string, now time.Time) string {
 		late = time.Duration(n) * time.Second
 	}
 	if late < TickLatePush {
-		*w = lateWatch{}
+		if w.since.IsZero() {
+			return ""
+		}
+		if w.onTime.IsZero() {
+			w.onTime = now
+		}
+		if now.Sub(w.onTime) >= sprint.PassEvery {
+			// on time a whole window: the episode ends; the last push stays
+			w.since, w.onTime, w.worst, w.looks = time.Time{}, time.Time{}, 0, 0
+		}
 		return ""
 	}
+	w.onTime = time.Time{}
 	if w.since.IsZero() {
 		w.since = now.Add(-late)
 	}
@@ -68,17 +86,22 @@ func (w *lateWatch) step(machine string, now time.Time) string {
 // delivered into the holder's session as the judgments are (pushJudgments).
 func (a *app) pushLate(ctx context.Context, src inboxSource, p *pushTarget, w *lateWatch, look inboxLook, asJSON bool, stdout, stderr io.Writer) {
 	now := a.now()
-	text := w.step(look.machine, now)
-	if text == "" {
-		return
-	}
 	dir := p.fixed
 	if dir == "" {
 		dir, _, _ = a.seatInbox(look.holder)
 	}
+	if !w.loaded && dir != "" {
+		// a push loop that restarts reads its last late push off the inbox it wrote it to
+		// (cold reader A, PR 5548): a restart never pushes again inside sprint.PassEvery
+		w.last, w.loaded = lastTickLate(dir, w.last), true
+	}
+	text := w.step(look.machine, now)
+	if text == "" {
+		return
+	}
 	if dir != "" {
 		if _, err := p.keys(dir); err == nil {
-			path := filepath.Join(dir, "TICKLATE-"+now.UTC().Format("20060102T150405Z")+".md")
+			path := filepath.Join(dir, tickLatePrefix+now.UTC().Format(tickLateStamp)+".md")
 			if _, err := writeOnce(path, text+"clock: "+now.UTC().Format(time.RFC3339)+"\n"); err != nil {
 				fmt.Fprintf(stderr, "%s inbox --push: %s\n", prog, oneline.Escape(err.Error()))
 			} else if !asJSON {
@@ -89,4 +112,33 @@ func (a *app) pushLate(ctx context.Context, src inboxSource, p *pushTarget, w *l
 	if p.fixed == "" {
 		a.pushJudgments(ctx, src, look.holder, []string{text}, asJSON, stdout)
 	}
+}
+
+// The late push's file in the seat's inbox: TICKLATE-<UTC time>.md, the time its name.
+const (
+	tickLatePrefix = "TICKLATE-"
+	tickLateStamp  = "20060102T150405Z"
+)
+
+// lastTickLate is the newest late push the directory holds, by the time its file's name
+// carries, or last when it holds none newer (or cannot be read: the watch starts as before).
+func lastTickLate(dir string, last time.Time) time.Time {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return last
+	}
+	for _, e := range entries {
+		name, ok := strings.CutPrefix(e.Name(), tickLatePrefix)
+		if !ok {
+			continue
+		}
+		name, ok = strings.CutSuffix(name, ".md")
+		if !ok {
+			continue
+		}
+		if at, err := time.Parse(tickLateStamp, name); err == nil && at.After(last) {
+			last = at
+		}
+	}
+	return last
 }

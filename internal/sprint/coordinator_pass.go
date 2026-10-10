@@ -165,6 +165,7 @@ func TickCoordinatorPass(s *Snapshot, r TickReq) (Plan, int) {
 	conds = append(conds, stopConds(s, r)...)
 	due := notify(&p, s, conds, PassTypes, r)
 	reraise(&p, s, conds, r)
+	stopsDigest(&p, s, r)
 	return p, due
 }
 
@@ -338,8 +339,8 @@ func reraise(p *Plan, s *Snapshot, conds []cond, r TickReq) {
 	done := map[string]bool{}
 	for _, o := range s.Open {
 		n := o.Note
-		if n.Kind != Judgment || !slices.Contains(PassTypes, n.Type) || done[n.ID] {
-			continue
+		if n.Kind != Judgment || !slices.Contains(PassTypes, n.Type) || slices.Contains(StopTypes, n.Type) || done[n.ID] {
+			continue // a stop is raised again in the one digest of the tick (stopsDigest, stops.go)
 		}
 		c, ok := holding[condKey(n.Type, o.Subject(), n.Card, n.What)]
 		if !ok {

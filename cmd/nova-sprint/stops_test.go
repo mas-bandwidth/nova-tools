@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -71,9 +74,53 @@ func TestThePushLoopTellsTheSeatOfALateTickEveryTenMinutes(t *testing.T) {
 	assert.Empty(t, w.step("machine: running (tick late 90s)", t0.Add(2*time.Minute)), "pushed once a window")
 	text = w.step("machine: running (tick late 31s)", t0.Add(12*time.Minute))
 	assert.Contains(t, text, "runs 31s late (the worst 1m30s, 2 looks late", "again after ten minutes, with the worst since the last push")
-	assert.Empty(t, w.step("machine: running", t0.Add(13*time.Minute)), "on time again: the episode ends")
-	assert.Contains(t, w.step("machine: running (tick late 40s)", t0.Add(14*time.Minute)), "MACHINE TICK LATE", "a new episode pushes at once")
+	assert.Empty(t, w.step("machine: running", t0.Add(13*time.Minute)), "on time for a look: the episode goes on")
+	assert.Empty(t, w.step("machine: running (tick late 40s)", t0.Add(14*time.Minute)), "late again inside the window: no push")
+	assert.Contains(t, w.step("machine: running (tick late 40s)", t0.Add(22*time.Minute)), "MACHINE TICK LATE", "the next window pushes again")
+	// on time a whole window ends the episode; the last push is kept across episodes
+	assert.Empty(t, w.step("machine: running", t0.Add(23*time.Minute)))
+	assert.Empty(t, w.step("machine: running", t0.Add(33*time.Minute)))
+	assert.True(t, w.since.IsZero(), "the episode ended")
+	assert.Contains(t, w.step("machine: running (tick late 35s)", t0.Add(34*time.Minute)), "since about 2026-10-10T04:33:25Z", "a new episode, past the window since the last push")
 	assert.Empty(t, (&lateWatch{}).step("machine: STOPPED (tick late 99s)", t0), "a STOPPED machine is told by the push loop's machine line, not here")
+}
+
+// The live pattern of 2026-10-10 (cold reader B, PR 5548): the tick 60 s apart and the push
+// loop looking every 15 s, so the machine line reads late 45 s of every minute (lateness is
+// counted from the last heartbeat) and on time just after each tick. The seat is pushed at most
+// once every ten minutes: six an hour, never sixty.
+func TestALateTickSixtySecondsApartIsPushedAtMostSixTimesAnHour(t *testing.T) {
+	t.Parallel()
+	t0 := time.Date(2026, 10, 10, 4, 0, 0, 0, time.UTC)
+	var w lateWatch
+	pushes := 0
+	for look := time.Duration(0); look < time.Hour; look += 15 * time.Second {
+		since := look % time.Minute // the last tick was at the minute
+		line := "machine: running"
+		if since > 0 {
+			line = fmt.Sprintf("machine: running (tick late %ds)", int(since/time.Second)+30)
+		}
+		if w.step(line, t0.Add(look)) != "" {
+			pushes++
+		}
+	}
+	assert.LessOrEqual(t, pushes, 6, "at most once every ten minutes")
+	assert.GreaterOrEqual(t, pushes, 5, "and pushed while it stays late")
+}
+
+// A push loop that restarts reads its last late push off the inbox (cold reader A, PR 5548):
+// it does not push again inside ten minutes of it.
+func TestARestartedPushLoopDoesNotRepushALateTickInsideTheWindow(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	t0 := time.Date(2026, 10, 10, 4, 0, 0, 0, time.UTC)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, tickLatePrefix+t0.Format(tickLateStamp)+".md"), []byte("MACHINE TICK LATE\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "PUSH-x.md"), []byte("x\n"), 0o644))
+	w := lateWatch{last: lastTickLate(dir, time.Time{}), loaded: true}
+	assert.Equal(t, t0, w.last, "the newest late push, by its file's name")
+	assert.Empty(t, w.step("machine: running (tick late 45s)", t0.Add(3*time.Minute)), "restarted inside the window: no push")
+	assert.Contains(t, w.step("machine: running (tick late 45s)", t0.Add(10*time.Minute)), "MACHINE TICK LATE", "the window over: pushed")
+	assert.Equal(t, t0, lastTickLate(filepath.Join(dir, "none"), t0), "an inbox that cannot be read leaves the watch as it was")
 }
 
 func TestAPromotionEjectedFromTheMergeQueueIsToldToTheSeat(t *testing.T) {

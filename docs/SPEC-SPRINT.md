@@ -5591,8 +5591,13 @@ seat, the oldest 51 hours. Every automatic stop is now a signal to the seat whil
 `StopSignalled`, witness `silentstop`):
 
 - **The pass's stops** (`StopTypes`, kept by the coordinator's pass as its own judgments,
-  raised once an episode, raised again every `PassEvery` with `NRaisedAgain`, closed when the
-  stop clears; each text says what stopped, the evidence, the effect and the undo verb):
+  raised once an episode and closed when the stop clears; each text says what stopped, the
+  evidence (an absolute time, never an age, so the text and the stops record change only when
+  the stop does), the effect and the undo verb). While any stop judgment has gone `PassEvery`
+  without a push, the pass writes one digest to the coordinator, `NStopsDigest`, at most once a
+  `PassEvery` (its clock the acknowledgement `NStopsDigestClock`): how many stops hold by kind,
+  the `StopsDigestOldest` (5) oldest with their undo verbs, and `nova-sprint doctor` for the
+  full list; a stop acknowledged, or waited to a review time not reached, is left out:
   `NStopMemberDown`, a fleet machine down (or never beaten) that the coordinator did not hold,
   past the status dwell, or held adopting past `StopAdoptAfter`: its width idles; `NStopPinWaits`,
   a ready card hard-pinned (`WHO: only friend <name>`) to a friend who is not up, with the cards
@@ -5607,8 +5612,13 @@ seat, the oldest 51 hours. Every automatic stop is now a signal to the seat whil
   `ackforever`). A judgment the pass closes takes its overdue hold with it in the same tick.
 - **The late tick** cannot tell of itself: the push loop (`inbox --push`) reads the machine's
   line at every look and, while the tick runs `TickLatePush` (30 s) late or more, writes
-  `TICKLATE-<time>.md` to the seat's inbox and delivers it, again every `PassEvery` while it
-  stays late, with the worst lateness seen (cmd/nova-sprint/pushlate.go).
+  `TICKLATE-<time>.md` to the seat's inbox and delivers it, with the worst lateness seen
+  (cmd/nova-sprint/pushlate.go). It pushes at most once a `PassEvery`: the machine line counts
+  lateness from the last heartbeat, so a look just after a tick reads on time, and an episode
+  ends only after `PassEvery` of on-time looks; the last push is kept across episodes, and a
+  push loop that restarts reads it back from the newest `TICKLATE-*.md` of the inbox. The
+  model is tla/LatePush.tla (`OnePushAWindow`, `PushedWhileLate`; witnesses `wipe` and
+  `forget`).
 - **A promotion** tells the coordinator, through a note in the store (`Store.Tell`), of its
   judgments (a failed check or merge-group run, a red pull request, a pull request closed) and
   of its pull request found out of the merge queue neither merged nor closed
@@ -5633,7 +5643,9 @@ tla/StallLadder.tla `NoCardHeldPastBound`). `TestAMemberDownTheCoordinatorDidNot
 `TestACardPinnedToAFriendWhoIsNotUpIsRaisedUntilUnpinned`,
 `TestJudgmentsLateOnTheCoordinatorArePushedAndEscalatePastAWait` (internal/sprint/stops_test.go),
 `TestTheDoctorListsEveryAutomaticStopWithItsAgeAndUndo`,
-`TestThePushLoopTellsTheSeatOfALateTickEveryTenMinutes` and
+`TestThePushLoopTellsTheSeatOfALateTickEveryTenMinutes`,
+`TestALateTickSixtySecondsApartIsPushedAtMostSixTimesAnHour`,
+`TestARestartedPushLoopDoesNotRepushALateTickInsideTheWindow` and
 `TestAPromotionEjectedFromTheMergeQueueIsToldToTheSeat` (cmd/nova-sprint/stops_test.go) drive it.
 
 ## 9. What is always true
