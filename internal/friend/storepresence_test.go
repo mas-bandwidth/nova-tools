@@ -95,6 +95,7 @@ func (c *countingStore) PutHash(ctx context.Context, key string, fields map[stri
 func TestPresenceHoldsWhileTheSprintServerHangs(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
+	r.d.StepBeatOffLoopForTests = true // a beat that hangs runs beside the step, never in it
 	count := &countingStore{Fake: r.store}
 	r.d.Store = count
 	release := make(chan struct{})

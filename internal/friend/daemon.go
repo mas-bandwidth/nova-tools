@@ -92,13 +92,14 @@ const (
 // Everything it reaches outside itself is a field, so a test runs it over
 // bus's Fake, a fake harness and its own clock.
 type Daemon struct {
-	Friend, Harness, Dir string
-	Width                int
-	Store                bus.Store
-	Deliver              Deliverer
-	Beat                 func(ctx context.Context, active time.Time) error // one beat to the sprint server, carrying the session's last activity (zero: none known); nil beats nothing
-	StepBeatForTests     bool                                              // deterministic fake-clock seam; production has one independent beat caller
-	HarnessStatus        func() (seen, rule string)                        // the beat worker's advisory harness observation; only the loop writes Status
+	Friend, Harness, Dir    string
+	Width                   int
+	Store                   bus.Store
+	Deliver                 Deliverer
+	Beat                    func(ctx context.Context, active time.Time) error // one beat to the sprint server, carrying the session's last activity (zero: none known); nil beats nothing
+	StepBeatForTests        bool                                              // deterministic fake-clock seam; production has one independent beat caller
+	StepBeatOffLoopForTests bool                                              // that seam runs the beat off the loop under beatBudget: the hang test's server that never answers
+	HarnessStatus           func() (seen, rule string)                        // the beat worker's advisory harness observation; only the loop writes Status
 	// Instance is this run's id on the bus presence record. Empty is filled once.
 	Instance string
 	// Activity is the newest write of the session's files and Cards the ids of
@@ -774,7 +775,15 @@ func (d *Daemon) Run(ctx context.Context) error {
 				if d.Activity != nil && (d.walked.IsZero() || now.Sub(d.walked) >= ActivityEvery) {
 					d.active, d.cards, d.walked = d.Activity(), d.held(), now // one walk serves the beat and the idle watch (they share walked)
 				}
-				l.stepBeat(ctx, now)
+				if d.StepBeatOffLoopForTests {
+					l.stepBeat(ctx, now)
+				} else if d.Beat != nil {
+					if err := d.Beat(ctx, d.active); err != nil {
+						d.status.BeatError = err.Error()
+					} else {
+						d.status.BeatError, d.status.Beats, d.status.LastBeat = "", d.status.Beats+1, now
+					}
+				}
 			}
 		} else {
 			d.active, d.status.LastBeat, d.status.Beats, d.status.BeatError = beats.snapshot()
