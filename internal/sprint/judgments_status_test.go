@@ -260,6 +260,7 @@ func TestAFriendFlappingForAnHourIsTwoPushes(t *testing.T) {
 	flapsFrom := ""
 	for k := range 60 {
 		r.advance(time.Minute)
+		r.daemon("", time.Time{}, time.Time{}) // the one-second daemon is still beating during each flip
 		r.answered()
 		_, err := r.st.Hold(r.ctx, sprint.HoldReq{Names: []string{"amy"}, Who: "coordinator", Reason: "flap", Release: k%2 == 1})
 		require.NoError(t, err)

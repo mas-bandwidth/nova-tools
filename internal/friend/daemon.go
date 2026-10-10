@@ -592,6 +592,7 @@ func (b *beatState) snapshot() (active, last time.Time, beats int, err string) {
 // (docs/SPEC-FRIEND.md, The beat; tla/Presence.tla, Heartbeat).
 func (d *Daemon) beatLoop(ctx context.Context, b *beatState) {
 	var active, walked time.Time
+	// ignored: Heartbeat ends only with context cancellation; each send result is stored below.
 	_ = Heartbeat(ctx, func(call context.Context) error {
 		now := d.Now()
 		if d.Activity != nil && (walked.IsZero() || now.Sub(walked) >= ActivityEvery) {
@@ -607,7 +608,7 @@ func (d *Daemon) beatLoop(ctx context.Context, b *beatState) {
 		}
 		b.mu.Unlock()
 		return err
-	}) // ignored: the heartbeat ends only with its context; each result is on the beat state
+	})
 }
 
 // Run is the loop until ctx ends. Each step: the clock; the friend's row

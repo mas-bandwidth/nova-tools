@@ -1565,7 +1565,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 			if h := faultDown.Load(); h != nil && w.now().Before(h.until) {
 				return down(ctx, h.until, h.reason)
 			}
-			return fl.BeatOrDown(held(fl.BeatOrDown(up, down)), down)(ctx)
+			// Step the session check before taking the limits beat lock: its
+			// delivery can itself observe limits, so nesting the wrappers deadlocks.
+			return held(fl.BeatOrDown(up, down))(ctx)
 		},
 		Row: func() (string, int) {
 			rowMu.Lock()

@@ -378,6 +378,8 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	if code != 0 {
 		return code
 	}
+	provided := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) { provided[f.Name] = true })
 	rep := sprint.FriendReport{}
 	if runningSet(fs) {
 		rep.Running = explicitRunning(*running)
