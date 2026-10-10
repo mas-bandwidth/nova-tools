@@ -599,7 +599,10 @@ function renderHero(d, s, ft) {
   // card is that over the cards that landed
   var c = d.done ? s.sum.epoch : s.sum, recorded = c.totalCost;
   setText($("cost"), money(recorded));
-  var per = landed ? money(Math.ceil(recorded / landed)) + " per card" : "";
+  // after a stats reset the cost counts from its mark, and so do the cards it is over
+  // (where --json's stats_reset.landed, the same scope)
+  var perN = d.stats_reset ? int(d.stats_reset.landed) : landed;
+  var per = perN ? money(Math.ceil(recorded / perN)) + " per card" : "";
   setText($("cost-per"), per || " ");
   setText($("inflight"), s.sum.working + (s.sum.fix || 0) + s.sum.review + s.sum.merging);
   inflightLast = s.sum; renderInflight(s.sum);
@@ -608,6 +611,28 @@ function renderHero(d, s, ft) {
   setTitle($("tput"), throughput == null ? "needs ten minutes of samples" : "over the last " + Math.round(throughputMinutes) + " min");
   setText($("coord"), d.coordinator || "-"); setText($("epoch"), d.epoch != null ? d.epoch : "-");
   setMachine(d.machine);
+  setSeat(d.seat_waits);
+}
+
+// The judgments waiting on the seat (the owner, 2026-10-10: no silent waits): how many and the
+// oldest's age, from where --json's seat_waits; red while any is past its deadline. Hidden
+// until the tick has counted them.
+function ageText(sec) {
+  sec = Math.max(0, Math.floor(sec));
+  if (sec < 60) return sec + "s";
+  if (sec < 3600) return Math.floor(sec / 60) + "m";
+  if (sec < 86400) return Math.floor(sec / 3600) + "h" + (Math.floor(sec / 60) % 60 ? " " + (Math.floor(sec / 60) % 60) + "m" : "");
+  return Math.floor(sec / 86400) + "d " + (Math.floor(sec / 3600) % 24) + "h";
+}
+function setSeat(w) {
+  var chip = $("seat-chip"); if (!chip) return;
+  if (!w) { chip.hidden = true; return; }
+  chip.hidden = false;
+  var n = int(w.judgments), text = n + " waiting";
+  if (n > 0) text += " \u00b7 oldest " + ageText(int(w.oldest_age_seconds));
+  setText($("seat"), text);
+  setTitle(chip, n > 0 ? int(w.overdue) + " past their deadline; the oldest " + (w.oldest_id || "") + " (" + (w.oldest_type || "") + ")" : "no judgment waits on the seat");
+  setClass(chip, "chip" + (int(w.overdue) > 0 ? " alert" : ""));
 }
 
 // ---------- poll loop ----------
@@ -691,7 +716,9 @@ function tierCounts(obj) { // {flash: "12", pro: 3} -> [[tier, n], ...] sorted b
 function tierSpend(d) {
   var work = (d.tables && d.tables.work) || {}, byTier = {};
   Object.keys(work).forEach(function (k) {
-    var b = work[k].cost_by_tier; if (!b || typeof b !== "object") return;
+    // where --json carries the spend by tier in stream_costs (counted from a stats reset's
+    // mark); a work row's own is read where a copy carries one there
+    var b = ((d.stream_costs || {})[k] || {}).cost_by_tier || work[k].cost_by_tier; if (!b || typeof b !== "object") return;
     // the four tiers alone: a record with no tier ("untiered") is no tier and is left out (the owner 2026-10-04 3:10 PM)
     TIERS.forEach(function (t) { var c = cents(b[t]); if (c) byTier[t] = (byTier[t] || 0) + c; });
   });
@@ -761,7 +788,11 @@ function renderTopStreams(d) {
   Object.keys(work).forEach(function (k) {
     var w = work[k], ct = cents(w.cost); if (!ct) return;
     var n = {}; FLOW.forEach(function (c) { n[c] = parseInt(w[c], 10) || 0; });
-    rows.push({ name: k, cost: ct, n: n, per: n.landed ? Math.ceil(ct / n.landed) : null, tiers: tierCounts(w.tiers), byTier: w.cost_by_tier || null });
+    // per card is the row's per_landed (where's, counted from a stats reset's or a tidy's
+    // base, as its cost is), else its cost over its landed; tiers from stream_costs as the pie's
+    var sc = (d.stream_costs || {})[k] || {}, pl = w.per_landed;
+    var per = pl != null ? (pl === "-" ? null : cents(pl)) : (n.landed ? Math.ceil(ct / n.landed) : null);
+    rows.push({ name: k, cost: ct, n: n, per: per, tiers: tierCounts(sc.tiers || w.tiers), byTier: sc.cost_by_tier || w.cost_by_tier || null });
   });
   rows.sort(function (a, b) { return b.cost - a.cost; });
   var cols = String(order.length + 1); // the tiers with spend, then total
@@ -854,7 +885,7 @@ function render(d) {
   renderHero(d, s, ft);
   fitTables();
   if (DEBUG_FLASH) { // ?debug=flash: one line per refresh, same=1 when the rendered data did not change
-    var sig = JSON.stringify([d.landed, d.all, d.summary, d.coordinator, d.epoch, d.machine, d.tables.work, d.tables.fleet, d.tables.friends || null,
+    var sig = JSON.stringify([d.landed, d.all, d.summary, d.coordinator, d.epoch, d.machine, d.tables.work, d.tables.fleet, d.tables.friends || null, d.seat_waits || null,
       (d.streams || []).map(function (x) { return [x.Stream, x.State]; }), d.tables.merge]);
     var line = "flashes=" + flashCount + " same=" + (sig === prevSig ? 1 : 0);
     prevSig = sig; console.log(line);

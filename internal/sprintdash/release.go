@@ -156,10 +156,33 @@ func only(top map[string]json.RawMessage, streams []string) json.RawMessage {
 	_ = json.Unmarshal(top["all"], &wasAll)       // ignored: an absent count is zero
 	_ = json.Unmarshal(top["summary"], &summary)  // ignored: no summary is no ETA
 	out["landed"], out["all"] = mustJSON(landed), mustJSON(all)
+	resetOnly(out, in)
 	out["summary"] = mustJSON(releaseSummary(summary, wasAll-wasLanded, landed, all))
 	// held is counted over the sprint (sentinels and holds), never per stream
 	delete(out, "held")
 	return mustJSON(out)
+}
+
+// resetOnly is where --json's stats_reset over the streams that pass in: its per-stream
+// landed since the mark kept for those alone and its landed summed over them, so the page's
+// cost per card divides the release's cost since the mark by the release's cards since it.
+func resetOnly(out map[string]json.RawMessage, in func(string) bool) {
+	var r map[string]json.RawMessage
+	if json.Unmarshal(out["stats_reset"], &r) != nil || r == nil {
+		return
+	}
+	var by map[string]int64
+	_ = json.Unmarshal(r["streams"], &by) // ignored: none is no card landed since
+	var landed int64
+	kept := map[string]int64{}
+	for s, n := range by {
+		if in(s) {
+			kept[s] = n
+			landed += n
+		}
+	}
+	r["streams"], r["landed"] = mustJSON(kept), mustJSON(landed)
+	out["stats_reset"] = mustJSON(r)
 }
 
 // count is a work cell's number: the string where prints, or a number.

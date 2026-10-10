@@ -5,6 +5,9 @@ package store
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -14,6 +17,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/testredis"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -159,6 +163,7 @@ func TestRedisClear(t *testing.T) {
 	h.through("s1-1", "s1-2")
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1"}))
 	h.clean("landed again")
+	h.stopMachine()
 	_, err = st.Teardown(h.ctx)
 	require.NoError(t, err)
 	keys, err := c.Keys(h.ctx, "*f-*").Result()
@@ -264,4 +269,23 @@ func TestRedisHeldBackReadsTheWaitingColumn(t *testing.T) {
 	n, err = st.HeldBack(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 3, n, "gate, a and b are held back; c is ready")
+}
+
+// TestEveryFunctionalSocketPathFitsTheUnixBound pins internal/testredis's
+// SocketPath to the shortest sockaddr_un bound the platforms this runs on
+// allow (104 bytes, macOS), so a work directory a CI runner puts deep under a
+// long TMPDIR still yields a socket redis-server can bind (STANDARD.md
+// section 8, tests pin the rule). When SocketPath falls back to a private
+// directory outside work, the test removes that directory, which is the
+// caller's to remove (rule 10: a test writes only inside its own t.TempDir()).
+func TestEveryFunctionalSocketPathFitsTheUnixBound(t *testing.T) {
+	t.Parallel()
+	longWork := filepath.Join(t.TempDir(), strings.Repeat("a", 200))
+	sock, err := testredis.SocketPath(longWork, "test.sock")
+	require.NoError(t, err)
+	if !strings.HasPrefix(sock, longWork) {
+		dir := filepath.Dir(sock)
+		t.Cleanup(func() { _ = os.Remove(dir) })
+	}
+	assert.LessOrEqual(t, len(sock), 104, "socket path %s is %d bytes", sock, len(sock))
 }

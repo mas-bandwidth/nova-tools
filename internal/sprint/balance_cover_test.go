@@ -35,6 +35,20 @@ func TestBalanceCoverPaid(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "main: neither mark known, a read over zero (nova-tools#5220)",
+			rest: RouteRest{Provider: "p"},
+			was:  ProviderBalance{Provider: "p", Known: false, Note: "credits endpoint answered 503"},
+			b:    ProviderBalance{Provider: "p", Known: true, Balance: 942.68},
+			want: true,
+		},
+		{
+			name: "refusal: neither mark known, a read at zero",
+			rest: RouteRest{Provider: "p"},
+			was:  ProviderBalance{Provider: "p"},
+			b:    ProviderBalance{Provider: "p", Known: true, Balance: 0},
+			want: false,
+		},
+		{
 			name: "refusal: no payment seen",
 			rest: RouteRest{Provider: "p", HasBalance: true, Balance: 10},
 			was:  ProviderBalance{Provider: "p", Known: true, Balance: 5},
@@ -49,9 +63,8 @@ func TestBalanceCoverPaid(t *testing.T) {
 	}
 }
 
-// TestBalanceCoverLow pins ProviderBalance.Low: a balance calls for a rest of the
-// provider's funds at or under zero (out of credit), or not over one hour of the
-// spend (low on funds).
+// TestBalanceCoverLow pins ProviderBalance.Low: a balance calls for the coordinator's
+// judgment at or under zero, or not over one hour of the spend; it rests nothing.
 func TestBalanceCoverLow(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -83,54 +96,6 @@ func TestBalanceCoverLow(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, tc.b.Low())
-		})
-	}
-}
-
-// TestBalanceCoverSpendSince pins spendSince: the spend an hour between the read
-// before (was) and this one at now (balance.go).
-func TestBalanceCoverSpendSince(t *testing.T) {
-	t.Parallel()
-	hourSpent := ProviderBalance{Known: true, Balance: 100, At: coverT0, HasUsed: true, Used: 100, SpendHour: 50}
-	for _, tc := range []struct {
-		name string
-		was  ProviderBalance
-		r    ProviderRead
-		now  time.Time
-		want float64
-	}{
-		{
-			name: "main: spend from the provider's count used",
-			was:  hourSpent,
-			r:    ProviderRead{Provider: "p", Known: true, Balance: 90, HasUsed: true, Used: 110},
-			now:  coverT0.Add(10 * time.Minute),
-			want: 60,
-		},
-		{
-			name: "main: spend from the balance fall",
-			was:  ProviderBalance{Known: true, Balance: 100, At: coverT0, HasUsed: false, SpendHour: 0},
-			r:    ProviderRead{Provider: "p", Known: true, Balance: 40, HasUsed: false},
-			now:  coverT0.Add(10 * time.Minute),
-			want: 360,
-		},
-		{
-			name: "refusal: no previous read",
-			was:  ProviderBalance{},
-			r:    ProviderRead{Provider: "p", Known: true, Balance: 100},
-			now:  coverT0,
-			want: 0,
-		},
-		{
-			name: "refusal: spend falls back to the previous hour",
-			was:  hourSpent,
-			r:    ProviderRead{Provider: "p", Known: true, Balance: 100, HasUsed: true, Used: 80},
-			now:  coverT0.Add(10 * time.Minute),
-			want: 50,
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			assert.InDelta(t, tc.want, spendSince(tc.was, tc.r, tc.now), 1e-9)
 		})
 	}
 }
@@ -175,8 +140,10 @@ func TestBalanceCoverProviderRows(t *testing.T) {
 	f := NewTable(Fleet)
 	f.SetProps(map[string]string{
 		PropProviderBalance("p"): ProviderBalance{Known: true, Balance: 40, At: coverT0, SpendHour: 60, HasUsed: true, Used: 50}.value(),
-		PropProviderRest("p"):    RouteRest{At: coverT0, Until: coverT0.Add(30 * time.Minute), Cause: RestBalance, Why: "low on funds"}.value(),
+		PropProviderRest("p"):    RouteRest{At: coverT0, Until: coverT0.Add(30 * time.Minute), Cause: RestCoordinator, Why: "rested by boss: low on funds"}.value(),
 		PropProviderBalance("q"): ProviderBalance{Known: true, Balance: 100, At: coverT0, SpendHour: 60, HasUsed: true, Used: 50}.value(),
+		// a balance poll's rest of before is retired: it holds no route
+		PropProviderRest("q"): RouteRest{At: coverT0, Until: OpenUntil, Cause: RestBalance, Why: "low on funds"}.value(),
 	})
 	now := coverT0.Add(15 * time.Minute)
 	rows := ProviderRows(routes, f, now)
@@ -187,7 +154,7 @@ func TestBalanceCoverProviderRows(t *testing.T) {
 	assert.Equal(t, "2030-01-02T03:00:00Z", rows[0].BalanceAt)
 	assert.InDelta(t, 60.0, rows[0].SpendHour, 1e-9)
 	assert.Contains(t, rows[0].State, "resting until ")
-	assert.Contains(t, rows[0].State, "balance: low on funds")
+	assert.Contains(t, rows[0].State, "coordinator: rested by boss: low on funds")
 	assert.Empty(t, rows[0].Note)
 
 	assert.Equal(t, "q", rows[1].Name)
@@ -204,8 +171,8 @@ func TestBalanceCoverProviderRows(t *testing.T) {
 }
 
 // TestBalanceCoverBalance pins Balance: the poll's step (balance.go) — each read
-// written to its provider's property, and the rest it calls for written, changed
-// or ended on the provider.
+// written to its provider's property; it writes no rest, and ends a refused take's
+// rest only on a payment seen.
 func TestBalanceCoverBalance(t *testing.T) {
 	t.Parallel()
 	routes := []Route{
@@ -224,15 +191,27 @@ func TestBalanceCoverBalance(t *testing.T) {
 	}
 	cases := []tc{
 		{
-			name: "main: a provider low on funds rests the provider",
+			name: "main: a provider low on funds rests nothing",
 			props: map[string]string{
 				PropProviderBalance("p"): balWas.value(),
 			},
-			reads:        []ProviderRead{{Provider: "p", Known: true, Balance: 40, HasUsed: true, Used: 100}},
+			reads:        []ProviderRead{{Provider: "p", Known: true, Balance: 0.5, HasUsed: true, Used: 100}},
+			wantProps:    1,
+			wantNotes:    0,
+			wantRestProp: false,
+			wantBalance:  "0.5 ",
+		},
+		{
+			name: "main: a payment seen ends a refused take's rest",
+			props: map[string]string{
+				PropProviderBalance("p"): balWas.value(),
+				PropProviderRest("p"):    refusedRest.value(),
+			},
+			reads:        []ProviderRead{{Provider: "p", Known: true, Balance: 150}},
 			wantProps:    2,
 			wantNotes:    1,
 			wantRestProp: true,
-			wantBalance:  "40 ",
+			wantBalance:  "150 ",
 		},
 		{
 			name:         "refusal: an unknown balance writes no rest",
@@ -246,7 +225,8 @@ func TestBalanceCoverBalance(t *testing.T) {
 		{
 			name: "refusal: a refused rest with no payment holds",
 			props: map[string]string{
-				PropProviderRest("p"): refusedRest.value(),
+				// $10 at the refusal: $5 is no payment
+				PropProviderRest("p"): RouteRest{At: coverT0, Until: OpenUntil, Cause: RestCredit, Cards: []string{"c1"}, Balance: 10, HasBalance: true, Why: "out of credit"}.value(),
 			},
 			reads:        []ProviderRead{{Provider: "p", Known: true, Balance: 5}},
 			wantProps:    1,
@@ -270,7 +250,8 @@ func TestBalanceCoverBalance(t *testing.T) {
 			if tc.wantRestProp {
 				require.Len(t, p.Props, 2, "a rest is written alongside the balance")
 				assert.Equal(t, PropProviderRest("p"), p.Props[1].Name)
-				assert.Contains(t, p.Props[1].Value, "balance", "the rest carries its cause")
+				assert.Contains(t, p.Props[1].Value, "ended: a payment seen", "the rest ends on the payment")
+				assert.Contains(t, p.Props[1].Value, stamp(s.Now)+" c1 "+RestCredit, "the rest ends now")
 			}
 			require.Len(t, p.Notes, tc.wantNotes)
 			require.Len(t, p.Units, 1, "one balance unit")

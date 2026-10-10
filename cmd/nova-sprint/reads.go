@@ -552,6 +552,34 @@ func noSprintYet(err error) error {
 		Next: "nova-sprint init --coordinator <name>"}
 }
 
+// statsResetView is where --json's stats_reset: the mark in force and the cards landed since.
+type statsResetView struct {
+	At     time.Time `json:"at"`
+	By     string    `json:"by,omitempty"`
+	Reason string    `json:"reason"`
+	Landed int64     `json:"landed"`
+	// Streams is the cards landed since the mark, stream by stream, over the same scope as
+	// Landed: the dashboard's release view sums it over the release's streams.
+	Streams map[string]int64 `json:"streams,omitempty"`
+}
+
+// seatWaitsView is what waits on the seat as where carries it: the record's counts, the
+// oldest judgment's age at the view's time, and when the tick counted them.
+type seatWaitsView struct {
+	sprint.SeatWaits
+	OldestAgeSeconds int64     `json:"oldest_age_seconds"`
+	At               time.Time `json:"at"`
+}
+
+// seatWaitsOf is the seat's waits of the stops record, aged at now.
+func seatWaitsOf(r store.StopsRecord, now time.Time) *seatWaitsView {
+	w := &seatWaitsView{SeatWaits: r.Seat, At: r.At}
+	if !r.Seat.OldestAt.IsZero() && now.After(r.Seat.OldestAt) {
+		w.OldestAgeSeconds = int64(now.Sub(r.Seat.OldestAt) / time.Second)
+	}
+	return w
+}
+
 // whereView is the view, for a program.
 type whereView struct {
 	At      time.Time `json:"at"`
@@ -619,6 +647,13 @@ type whereView struct {
 	// read): what is held, its kind, the reason, by whom and since when; the tables' status
 	// cells read held beside it.
 	Holds []sprint.HoldView `json:"holds,omitempty"`
+	// SeatWaits is what waits on the seat (sprint.SeatWaitsOf; the owner, 2026-10-10: no
+	// silent waits): the open judgments, those past their deadline, the oldest with its age,
+	// and the level the late ones have escalated to, from the tick's stops record
+	// (store.StopsRecord) as of its at; absent before the first tick of an epoch. Stops is
+	// every automatic stop that holds (sprint.LiveStops), from the same record.
+	SeatWaits *seatWaitsView `json:"seat_waits,omitempty"`
+	Stops     []sprint.Stop  `json:"stops,omitempty"`
 	// Providers is the providers table (nova-tools#5199): each provider the routes name,
 	// its balance as the run loop's poll last read it, the spend an hour measured, and
 	// whether its routes serve; absent with no route. The text frame does not draw it.
@@ -645,6 +680,13 @@ type whereView struct {
 	// in tables and rows only with --archived; the summary and the drawn footers leave
 	// them out either way (ArchivedCards, ArchivedLanded carry their counts).
 	Archived *archivedView `json:"archived,omitempty"`
+	// StatsReset is the stats reset's mark in force (stats reset): when, by whom and why, and
+	// Landed, the cards landed since it over the headline's scope (the streams on the table,
+	// or the epoch's every stream once the sprint is done), which the dashboard's cost per card
+	// divides by; absent with no mark. Every figure the mark covers is counted from it
+	// already: the fleet and friends rows' done and ok%, the work rows' cost and per_landed,
+	// and stream_costs' total_cost, work_cost, read_cost and cost_by_tier.
+	StatsReset *statsResetView `json:"stats_reset,omitempty"`
 	// Ready, Width, Buffer and Low are the ready buffer a program reads off
 	// the view (docs/SPEC-SPRINT-DASHBOARD.md): the ready primaries across the
 	// work table's streams, the total width of the fleet members that are up,
@@ -1177,6 +1219,9 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		p50, p99 := facts.StoreRTTP50MS, facts.StoreRTTP99MS
 		v.StoreRTTP50MS, v.StoreRTTP99MS = &p50, &p99
 	}
+	if facts.HasStops {
+		v.SeatWaits, v.Stops = seatWaitsOf(facts.Stops, now), facts.Stops.Stops
+	}
 	v.Held = int64(facts.Held)
 	v.Ready = readyPrimaries(shapes[0])
 	working, review, merging := pipelineCounts(shapes[0])
@@ -1197,6 +1242,14 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	if v.Done = sprintDone(shapes[0]); v.Done {
 		// a sprint done: the headline is the epoch's, as the done line counts it
 		v.Landed, v.All = v.Landed+v.ArchivedLanded, v.All+v.ArchivedCards
+	}
+	if m := facts.Reset; m != nil {
+		done := v.Done
+		by := m.LandedSinceBy(shapes[0], func(r ntable.Row) bool { return done || !archivedRow(shapes[0], r) })
+		v.StatsReset = &statsResetView{At: m.At, By: m.By, Reason: m.Reason, Streams: by}
+		for _, n := range by {
+			v.StatsReset.Landed += n
+		}
 	}
 	mf, err := mergeFactsOf(ctx, st, shapes[0], shapes[2], clocks, facts.Landed, now)
 	if err != nil {
@@ -1248,7 +1301,8 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		if logical == sprint.Fleet {
 			// a friend's row holds her sprint cards: counted on the friends table, never a
 			// machine of the fleet table (sprint.FriendRow)
-			t, friendCards = splitFriendRows(t)
+			// done and ok% count from the stats reset's mark (sprint.ResetMark.FleetSince)
+			t, friendCards = splitFriendRows(facts.Reset.FleetSince(t))
 		}
 		if logical == sprint.Readers {
 			// each reader's width beside reading, derived from its fleet row
@@ -2447,8 +2501,8 @@ func (a *app) cmdCheck(args []string, stdout, stderr io.Writer) int {
 // cmdRoutes is each route of the store with what its attempts did: the work
 // cards dealt on it, finished ok, failed, failed by the provider, and the mean
 // wall from take to finish, so a bad route shows (docs/SPEC-SPRINT.md, the
-// deal's route), and when its rest ends while the machine rests it for children
-// that ended with no result (rule 3, sprint.RouteRests).
+// deal's route), and when its rest ends while it rests: its provider's failures,
+// a refusal, or the coordinator's routes rest (sprint.RouteRests).
 func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("routes")
 	if pos, err := parse(fs, args); err != nil || len(pos) > 0 {

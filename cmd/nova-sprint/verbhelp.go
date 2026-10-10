@@ -12,6 +12,7 @@ import (
 // member, a reader and a friend (docs/SPEC-ISA.md, the one wait kind).
 const releaseHoldWords = `release resolves a wait on a release: a sentinel or a held card. It does not release a held member, reader, friend or stream:
   unhold <name>... releases any of them (one verb for the four)
+  fleet unhold <member> and friend unhold <friend> release a held member or friend alone
   fleet up <member> releases a held member
   reader up <reader> releases a held reader
   friend up <friend> releases a held friend
@@ -46,6 +47,10 @@ var verbExit = map[string]string{
 var verbEffect = map[string]string{
 	"hold":              "local write: holds the named members, readers, friends or streams in the sprint's store (--return also hands back their begun work); --dry-run writes nothing",
 	"unhold":            "local write: releases the named holds in the sprint's store; --dry-run writes nothing",
+	"fleet hold":        "local write: holds the named fleet members in the sprint's store, as hold does (--return also hands back their begun work); --dry-run writes nothing",
+	"fleet unhold":      "local write: releases the named fleet members' holds in the sprint's store, as unhold does; --dry-run writes nothing",
+	"friend hold":       "local write: holds the named friends in the sprint's store, as hold does (every card she holds goes back to ready); --dry-run writes nothing",
+	"friend unhold":     "local write: releases the named friends' holds in the sprint's store, as unhold does; --dry-run writes nothing",
 	"check":             "inspection: reads the sprint's tables and prints each violation, writes nothing",
 	"routes":            "inspection: reads the route table and prints each route, writes nothing",
 	"cost reconcile":    "local write: reads each provider's usage of today through the seat's key and writes the reconciliation and its gap judgment to the sprint's store; --dry-run writes nothing",
@@ -59,6 +64,7 @@ var verbEffect = map[string]string{
 	"card":              "inspection: reads one card, its brief and its attempts, writes nothing",
 	"log":               "inspection: reads the sprint's change log, writes nothing",
 	"stats":             "inspection: reads the sprint's counts and rates, writes nothing",
+	"stats reset":       "local write: writes one mark, the counters as they stand, into the sprint's stats record; nothing moves, and every figure counts from the mark; --dry-run and --show write nothing",
 	"stats tidy":        "local write: takes the history off the done cells named and writes the tidy's archive and stats record to the sprint's store; --dry-run writes nothing",
 	"queue":             "inspection: reads a worker's or a stream's cards, writes nothing",
 	"handover":          "inspection: reads the store, writes nothing",
@@ -260,6 +266,8 @@ func verbProse(name string) string {
 		return cardHelpWords
 	case "hold", "unhold":
 		return holdWords()
+	case "fleet hold", "fleet unhold", "friend hold", "friend unhold":
+		return kindHoldWords(name)
 	case "fleet down", "reader away", "reader up":
 		return oldHoldWords(name)
 	default:

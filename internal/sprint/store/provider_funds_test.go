@@ -115,9 +115,9 @@ func TestAnOutOfCreditTakeRestsEveryRouteOfItsProvider(t *testing.T) {
 	require.Len(t, open, 1, "one judgment of the provider")
 	n := open[0].Note
 	assert.Equal(t, sprint.ProviderSubject("openrouter"), n.Stream)
-	assert.Contains(t, n.What, "provider openrouter is out of funds (balance unknown: not polled yet): a payment is the owner's")
-	assert.Contains(t, n.What, "it is excluded: its routes or-a, or-b rest until paid")
-	assert.Equal(t, []string{"funded openrouter", "ack", "wait"}, n.Decisions, "a payment is the owner's: no rework is offered")
+	assert.Contains(t, n.What, "provider openrouter is out of funds (balance unknown: not polled yet): it refused a take for credit; a payment is the owner's")
+	assert.Contains(t, n.What, "its routes or-a, or-b rest until paid")
+	assert.Equal(t, []string{"funded openrouter", "routes wake openrouter", "ack", "wait"}, n.Decisions, "a payment is the owner's: no rework is offered")
 	assert.Empty(t, h.openOf(sprint.NBound), "no card's judgment")
 	rested := h.noteWhats(sprint.NProviderRested)
 	require.Len(t, rested, 1, "one note of the provider's rest")
@@ -343,7 +343,7 @@ func TestACardReadyOnARestingProvidersRouteIsWithdrawnNeverTakenAndRefused(t *te
 	h.clean("ready cards withdrawn from a resting provider")
 }
 
-// The take checks the rests itself, for a rest written between two ticks (the balance poll
+// The take checks the rests itself, for a rest written between two ticks (routes rest
 // writes one): a take by id of a card ready on the resting provider's route is refused,
 // naming the rest, and changes nothing; a take by count passes over it; the next tick
 // withdraws it.
@@ -356,13 +356,13 @@ func TestATakeOfACardOnARestingRouteIsRefused(t *testing.T) {
 	h.machine()
 	onOR := h.onProvider(routes, "openrouter")
 	require.NotEmpty(t, onOR)
-	h.poll(openrouter(148, 148)) // $0: the poll rests the provider, out of credit
+	h.must(RouteRestStep(sprint.RouteRestReq{Target: "openrouter", Reason: "balance $0.00", Who: "boss"}))
 	require.True(t, sprint.ProviderRests(h.snap().Fleet)["openrouter"].Resting(h.snap().Now))
 
 	wc := h.snap().Fleet.Card(onOR[0])
 	res := h.run(TakeStep(sprint.TakeReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: wc.Int("gen")}, Who: wc.Row}))
 	require.Len(t, res.Refused, 1)
-	assert.Contains(t, res.Refused[0].Why, "its route or-a rests until paid (out of credit: provider openrouter balance $0.00 at ")
+	assert.Contains(t, res.Refused[0].Why, "its route or-a rests until woken (rested by boss: balance $0.00)")
 	assert.Equal(t, sprint.Ready, h.snap().Fleet.Card(wc.ID).Col, "not taken")
 
 	for _, m := range []string{"m1", "m2"} {

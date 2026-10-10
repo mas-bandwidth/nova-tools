@@ -66,8 +66,9 @@ words:
   route        a nova-config route row: tier, provider/model, token budget, deadline; the deal draws
                one of the tier the card is on for each work card, the ask one for each read
   provider     the first half of provider/model; a run the provider failed is redealt, never failed work
-  rested       a route the deal draws no work card on for 30 minutes: 3 of its last 10 ended takes left
-               no result; the tick rests it, tells the inbox, and routes prints rested_until
+  rested       a route the deal draws no work card on: its provider failed 3 of its last 10 ended takes
+               (a 429, a 5xx, a timeout; 30 minutes), refused a take for credit or its key, or the
+               coordinator said routes rest; a take with no result never rests it; routes prints rested_until
   bound        a card tried no more on its tier: its work card redealt 3 times, or its second try
                failed the way its first did (the second identical failure: two takes with no result,
                or two attempts with the same reason); a card reached its bound, answered by rework or drop

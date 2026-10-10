@@ -99,6 +99,12 @@ func init() {
 		{"fleet beat", "<member> [--load <percent>]", "fleet beat m1", (*app).cmdFleetBeat},
 		{"fleet up", "<member> [--width <n> | --width 0]", "fleet up m1 --width 64", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("up", args, o, e) }},
 		{"fleet down", "<member>", "fleet down m1", (*app).cmdFleetDown},
+		{"fleet hold", "<member>... --reason <text> [--return] [--dry-run]", "fleet hold m1 --reason 'the build cache cleaner deletes live entries'", func(a *app, args []string, o, e io.Writer) int {
+			return a.cmdHoldKind("fleet hold", sprint.HoldMember, false, args, o, e)
+		}},
+		{"fleet unhold", "<member>... [--reason <text>] [--dry-run]", "fleet unhold m1 --reason 'the cleaner is fixed'", func(a *app, args []string, o, e io.Writer) int {
+			return a.cmdHoldKind("fleet unhold", sprint.HoldMember, true, args, o, e)
+		}},
 		{"fleet sync", "[--check] [--pg <dsn>]", "fleet sync --check", (*app).cmdFleetSync},
 		{"fleet level", "", "fleet level", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("level", args, o, e) }},
 		{"fleet quiet", "<member> (--for <duration> | --until <RFC3339>) --reason <text> | <member> --end [--dry-run]", "fleet quiet m1 --for 11m --reason 'load 64: the macOS CI legs time out'", (*app).cmdFleetQuiet},
@@ -106,6 +112,12 @@ func init() {
 		{"collect", "[<friend>...] [--dead-lanes] [--pg <dsn>] [--root <dir>] [--dry-run]", "collect --dead-lanes", (*app).cmdCollect},
 		{"friend beat", "<friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>] [--active <RFC3339>] [--check <nonce>] [--pong <nonce>] [--run <id>]", "friend beat friend-a --working 2 --queue 3 --load 40", (*app).cmdFriendBeat},
 		{"friend down", "<friend> [--reason <text>] [--until <RFC3339>]", "friend down friend-a --reason 'opus rate limited'", func(a *app, args []string, o, e io.Writer) int { return a.cmdFriendHold(true, args, o, e) }},
+		{"friend hold", "<friend>... --reason <text> [--dry-run]", "friend hold friend-a --reason 'opus rate limited'", func(a *app, args []string, o, e io.Writer) int {
+			return a.cmdHoldKind("friend hold", sprint.HoldFriend, false, args, o, e)
+		}},
+		{"friend unhold", "<friend>... [--reason <text>] [--dry-run]", "friend unhold friend-a --reason 'her allowance is back'", func(a *app, args []string, o, e io.Writer) int {
+			return a.cmdHoldKind("friend unhold", sprint.HoldFriend, true, args, o, e)
+		}},
 		{"friend up", "<friend> [--width <n>]", "friend up friend-a --width 4", func(a *app, args []string, o, e io.Writer) int { return a.cmdFriendHold(false, args, o, e) }},
 		{"friend cards", "<friend> [--json]", "friend cards friend-a --json", (*app).cmdFriendCards},
 		{"friend take", "<friend> (<id>... | --all-unstarted) [--reason <text>]", "friend take friend-a s1-4 --reason 'she is on another job'", (*app).cmdFriendTake},
@@ -167,10 +179,14 @@ func init() {
 		{"seat pong", "<nonce> [--dry-run]", "seat pong received-nonce", (*app).cmdSeatPong},
 		{"seat", "[--repair --reason <text>] | push [--harness <name> --target <dir> [--session <id>]] | pong <nonce>", "seat", (*app).cmdSeat},
 		{"fsck seat", "[--pg <host:port or postgres:// URI>]", "fsck seat", (*app).cmdFsckSeat},
+		{"routes rest", "<provider|route> --reason <text> [--for <duration> | --until <RFC3339>]", "routes rest openrouter --reason 'balance $40, about 1.6 hours left' --for 2h", (*app).cmdRoutesRest},
+		{"routes wake", "<provider|route> --reason <text>", "routes wake openrouter --reason 'the rest was a balance rule the machine no longer keeps'", (*app).cmdRoutesWake},
 		{"routes", "", "routes", (*app).cmdRoutes},
 		{"rules", "", "rules", (*app).cmdRules},
 		{"stats tidy", "(--friends | --fleet | --routes | --streams | --all)... --reason <text> [--dry-run]", "stats tidy --all --reason 'a fresh start' --dry-run", (*app).cmdStatsTidy},
+		{"stats reset", "--reason <text> [--dry-run] | --show", "stats reset --reason 'count from now' --dry-run", (*app).cmdStatsReset},
 		{"stats", "[--routes [--since <10m|RFC3339>]]", "stats", (*app).cmdStats},
+		{"doctor", "", "doctor", (*app).cmdDoctor},
 		{"play", "[--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]", "play --seed 7 --every 1s", (*app).cmdPlay},
 		{"clear", "--confirm sprint", "clear --confirm sprint", (*app).cmdClear},
 		{"teardown", "--confirm sprint", "teardown --confirm sprint", (*app).cmdTeardown},

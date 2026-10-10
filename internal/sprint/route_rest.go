@@ -9,16 +9,23 @@ import (
 	"time"
 )
 
-// Rule 3 of the sprint's cost rules (nova-tools#5174; the owner, 2026-10-02): "A route
-// whose children end without a result three times is rested by the machine, never redealt
-// on." The tick counts the ended takes of each route over a sliding window, the last
+// A ROUTE RESTS ONLY ON A PROVIDER-TYPED FAILURE OR A COORDINATOR ACTION (the owner,
+// 2026-10-10, through the seat: "this sounds like something the machine should not do. it
+// should raise it to you as a thing to do, but not do it automatically."; tla/RouteRest.tla).
+//
+// The tick counts the ended takes of each route over a sliding window, the last
 // RouteRestWindow takes on it that ended after its last rest began, and when
-// RouteRestAfter of them left no result it rests the route for RouteRestFor: the rest is
-// one line in the fleet table's property rule3_rest_<provider>, one property per provider
-// however many of its routes rest, written in the deal's batch with a happened note to the
-// coordinator naming the cards; the deal draws no work card (a first deal, a redeal or a
-// rework's) on a resting route, and the rest ends by itself at its time. The rest is the
-// sprint's, never config: nova-config's enabled stays the coordinator's.
+// RouteRestAfter of them ended with a TRANSIENT provider failure (the provider's own line,
+// class rate-limited, provider-5xx or timeout: a 429, a 5xx, the provider not answering)
+// it rests the route for RouteRestFor (cause RestProvider): the rest is one line in the
+// fleet table's property rule3_rest_<provider>, one property per provider however many of
+// its routes rest, written in the deal's batch with a happened note to the coordinator
+// naming the cards; the deal draws no work card (a first deal, a redeal or a rework's) on a
+// resting route, and the rest ends by itself at its time. A take that ended with NO RESULT
+// is the model's output on that card, never the provider's: it counts against the card's
+// attempt and the route's ok%, and it never rests the route (rule 3 of 2026-10-02 rested on
+// three of them; that rule is retired, and a rest it wrote holds no route: Retired). The
+// rest is the sprint's, never config: nova-config's enabled stays the coordinator's.
 const (
 	RouteRestWindow = 10
 	RouteRestAfter  = 3
@@ -38,7 +45,7 @@ func PropProviderRest(provider string) string { return "provider_rest_" + provid
 // NRouteRested is the happened note of a rest the tick wrote, to the coordinator, and
 // NProviderRested the note of a provider's (provider_funds.go).
 const (
-	NRouteRested    = "a route rested: its children ended with no result"
+	NRouteRested    = "a route rested: its provider failed its takes"
 	NProviderRested = "a provider rested: its funds or its key"
 )
 
@@ -61,16 +68,28 @@ type RouteRest struct {
 	Why        string
 }
 
-// The causes of a rest: rule 3's children that ended with no result; a provider out of
-// credit (a take it refused for want of credit, or a balance at or under zero); a take it
-// refused for its key; and a provider low on funds, its balance over zero but not over one
-// hour of its spend (balance.go). Only out of credit counts toward stopping the sprint.
+// The causes of a rest: a route's transient provider failures (RestProvider: rate limit,
+// 5xx, timeout); a provider out of credit (a take it refused for want of credit); a take it
+// refused for its key; and the coordinator's word (RestCoordinator, routes rest). Only out
+// of credit counts toward stopping the sprint. RestNoResult (rule 3's, retired) and
+// RestBalance (a balance poll's, retired: a low balance is a judgment, never a rest) are
+// read only to say a rest written before is Retired.
 const (
-	RestNoResult = "no-result"
-	RestCredit   = "out-of-credit"
-	RestAuth     = "auth"
-	RestBalance  = "balance"
+	RestProvider    = "provider"
+	RestCredit      = "out-of-credit"
+	RestAuth        = "auth"
+	RestCoordinator = "coordinator"
+	RestNoResult    = "no-result"
+	RestBalance     = "balance"
 )
+
+// Retired says the rest was written by a rule the machine no longer keeps, so it holds no
+// route: rule 3's (no result), a balance poll's (low on funds, or out of credit read off a
+// balance at or under zero, which names no refused card). Only a provider-typed failure or
+// the coordinator rests a route (tla/RouteRest.tla, RestOnlyByProviderOrCoordinator).
+func (r RouteRest) Retired() bool {
+	return r.Cause == RestNoResult || r.Cause == RestBalance || r.Cause == RestCredit && len(r.Cards) == 0
+}
 
 // OpenUntil is the end of a rest that has no time: a provider resting for its funds rests
 // until it is paid, a payment the balance poll sees (balance.go) or the coordinator's word
@@ -84,19 +103,35 @@ const restOpen = "open"
 // Open says the rest has no time: it holds until the provider is paid.
 func (r RouteRest) Open() bool { return r.Until.Equal(OpenUntil) }
 
-// UntilSaid is when the rest ends as a line says it: its time, or until the provider is paid.
+// UntilSaid is when the rest ends as a line says it: its time, until the provider is paid,
+// or, for the coordinator's rest with no time, until woken (routes wake).
 func (r RouteRest) UntilSaid() string {
+	if r.Open() && r.Cause == RestCoordinator {
+		return "woken"
+	}
 	if r.Open() {
 		return "paid"
 	}
 	return stamp(r.Until)
 }
 
-// Resting says the rest holds at now.
-func (r RouteRest) Resting(now time.Time) bool { return now.Before(r.Until) }
+// Resting says the rest holds at now. A retired rule's rest never holds (Retired), though
+// it stays the history mark the rules count after (Mark).
+func (r RouteRest) Resting(now time.Time) bool { return !r.Retired() && now.Before(r.Until) }
 
-// Funds says the rest is the provider's want of funds: out of credit, or low.
-func (r RouteRest) Funds() bool { return r.Cause == RestCredit || r.Cause == RestBalance }
+// Mark is the moment the rules count ends after: the rest's end, or for a retired rule's
+// rest with no time (a balance poll's, open), when it began: no take was dealt on it while
+// it held, and a take launched after it began is the provider's to judge again
+// (TestARetiredRestKeepsItsMark: an old 402 never rests the provider again on deploy).
+func (r RouteRest) Mark() time.Time {
+	if r.Retired() && r.Open() {
+		return r.At
+	}
+	return r.Until
+}
+
+// Funds says the rest is the provider's want of funds: a take it refused for credit.
+func (r RouteRest) Funds() bool { return r.Cause == RestCredit }
 
 // Out says the provider is out of credit (RestCredit): the one rest that counts toward
 // stopping the sprint (AllOutOfCredit). A provider low on funds still has money, and the
@@ -133,12 +168,15 @@ func (r RouteRest) value() string {
 	return strings.TrimSpace(stamp(r.At) + " " + until + " " + cards + " " + cmp.Or(r.Cause, RestNoResult) + bal + " " + r.Why)
 }
 
-// Said is the rest's reason as a line says it: the provider's words, else rule 3's.
+// Said is the rest's reason as a line says it: its words, else its cause.
 func (r RouteRest) Said() string {
 	if r.Why != "" {
 		return r.Why
 	}
-	return "its children ended with no result"
+	if r.Cause == RestNoResult {
+		return "its children ended with no result"
+	}
+	return "its provider failed its takes (" + r.Cause + ")"
 }
 
 // parseRest is a rest as its property holds it (value); ok is false for a value that is
@@ -227,7 +265,7 @@ func rule3Rests(fleet *Table) map[string]map[string]RouteRest {
 		if !ok {
 			continue
 		}
-		out[p] = parseRule3(v)
+		out[p] = parseRule3(v) // a retired line stays: its mark (it holds nothing: Resting)
 	}
 	return out
 }
@@ -243,7 +281,7 @@ func ProviderRests(fleet *Table) map[string]RouteRest {
 		if !ok {
 			continue
 		}
-		if rest, ok := parseRest(v); ok {
+		if rest, ok := parseRest(v); ok { // a retired rest stays: its mark (it holds nothing: Resting)
 			rest.Provider = p
 			out[p] = rest
 		}
@@ -261,8 +299,10 @@ func RouteRests(routes []Route, fleet *Table) map[string]RouteRest {
 	for _, r := range routes {
 		own, hasOwn := rule3[r.Provider][r.Name]
 		pr, hasProvider := byProvider[r.Provider]
+		// a rest that holds decides over a retired one, whichever ends later
+		providerFirst := !hasOwn || pr.Retired() == own.Retired() && !own.Until.After(pr.Until) || own.Retired() && !pr.Retired()
 		switch {
-		case r.Provider != "" && hasProvider && (!hasOwn || !own.Until.After(pr.Until)):
+		case r.Provider != "" && hasProvider && providerFirst:
 			pr.Route = r.Name
 			out[r.Name] = pr
 		case hasOwn:
@@ -288,14 +328,15 @@ func restedRoutes(r RouteRest, routes []Route) []string {
 }
 
 // routeEnd is one ended take on a route: the work card, when it ended, when it was taken
-// (its child launched; zero when its record holds none), whether its child left no result,
-// and the provider's line when the provider refused it for credit or for its key (refusal,
-// provider_funds.go), "" otherwise.
+// (its child launched; zero when its record holds none), whether the provider failed it
+// transiently (a rate limit, a 5xx, a timeout: transient), and the provider's line when the
+// provider refused it for credit or for its key (refusal, provider_funds.go), "" otherwise.
+// A take that left no result is neither: it is the model's, never the provider's.
 type routeEnd struct {
 	card      string
 	take      int
 	at, taken time.Time
-	noResult  bool
+	transient bool
 	refused   string
 }
 
@@ -312,7 +353,7 @@ func routeEnds(fleet *Table) map[string][]routeEnd {
 				continue
 			}
 			taken, _ := time.Parse(time.RFC3339, t.Taken)
-			out[t.Route] = append(out[t.Route], routeEnd{card: c.ID, take: numbers[i], at: at, taken: taken, noResult: IsNoResult(t.Error), refused: refusal(t.Error)})
+			out[t.Route] = append(out[t.Route], routeEnd{card: c.ID, take: numbers[i], at: at, taken: taken, transient: transient(t.Error), refused: refusal(t.Error)})
 		}
 		if c.Col != DoneOK && c.Col != DoneFailed {
 			continue
@@ -327,8 +368,9 @@ func routeEnds(fleet *Table) map[string][]routeEnd {
 
 // RestsDue is the rests the rule writes now: each route of the store not resting at s.Now
 // whose window (its last RouteRestWindow ended takes after its last rest began, in the
-// order they ended) holds RouteRestAfter or more that left no result, rested from s.Now
-// for RouteRestFor, naming those takes' cards; and each provider a refusal rests
+// order they ended) holds RouteRestAfter or more the provider failed transiently, rested
+// from s.Now for RouteRestFor, naming those takes' cards (a take that left no result never
+// counts: tla/RouteRest.tla); and each provider a refusal rests
 // (providerRestsDue: one rest, Route "", over rule 3's on its routes); the providers' first,
 // then the routes', in name order.
 func RestsDue(s *Snapshot) []RouteRest {
@@ -352,12 +394,12 @@ func RestsDue(s *Snapshot) []RouteRest {
 		window = window[max(0, len(window)-RouteRestWindow):]
 		var cards []string
 		for _, e := range window {
-			if e.noResult {
+			if e.transient {
 				cards = append(cards, e.card)
 			}
 		}
 		if len(cards) >= RouteRestAfter {
-			out = append(out, RouteRest{Route: r.Name, At: s.Now, Until: s.Now.Add(RouteRestFor), Cards: cards, Cause: RestNoResult})
+			out = append(out, RouteRest{Route: r.Name, At: s.Now, Until: s.Now.Add(RouteRestFor), Cards: cards, Cause: RestProvider})
 		}
 	}
 	// a provider's refusal rests the provider, every route of it, over rule 3's on its routes
@@ -512,8 +554,8 @@ func restWrites(p *Plan, s *Snapshot, due []RouteRest, who string) {
 			}
 			n := happened(NRouteRested, TierSubject(tier), s.Now)
 			n.To, n.Who = s.Coordinator, who
-			n.What = fmt.Sprintf("route %s rested until %s: %d of its last %d ended takes or fewer left no result (%s); the deal draws no work card on it until then; nova-sprint routes shows it",
-				r.Route, stamp(r.Until), len(r.Cards), RouteRestWindow, strings.Join(r.Cards, ", "))
+			n.What = fmt.Sprintf("route %s rested until %s: its provider failed %d of its last %d ended takes or fewer (a rate limit, a 5xx or a timeout: %s); the deal draws no work card on it until then; nova-sprint routes shows it, nova-sprint routes wake %s ends it",
+				r.Route, stamp(r.Until), len(r.Cards), RouteRestWindow, strings.Join(r.Cards, ", "), r.Route)
 			p.Notes = append(p.Notes, n)
 		}
 	}

@@ -120,9 +120,12 @@ from the owner edits one line here and nothing else moves.
   tile's own rounded corners; also the favicon. With no `--logo` the slot and the favicon render nothing.
 - The word "nova-sprint" in Nunito 800 (lowercase), the page's primary white (never cream), cap height about two
   thirds of the tile, optically centered with the pills.
-- Pills: coordinator <name>, epoch <n>, machine <state>; then the Updated clock with its live dot; no theme toggle (dark
+- Pills: coordinator <name>, epoch <n>, machine <state>, seat <waiting>; then the Updated clock with its live dot; no theme toggle (dark
   only, the owner, 2:21 PM 2026-10-04: "just remove the toggle light/dark. always dark.").
   The clock never flashes.
+- The seat pill (the owner, 2026-10-10: no silent waits): the judgments waiting on the seat and the oldest's age, "3
+  waiting · oldest 51h", from where --json's seat_waits (the tick's stops record); red while any is past its deadline,
+  its title the count past the deadline and the oldest's id and type. Hidden until the tick has counted them.
 
 ## Hero row: five tiles, one row at 2000 px, three and two below, two per row below 1100 px, large figure (72 px)
 1. LANDED: n of all; sub-line "<pct>% complete". Narrow: the number alone, sub-line "of <all> · <pct>%".

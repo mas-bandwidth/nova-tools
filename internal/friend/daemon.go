@@ -557,6 +557,7 @@ type loop struct {
 	tag          string          // this daemon's tag in its lanes' names on a lane mark (laneTag, one_lane.go)
 	following    atomic.Bool     // a Mailbox.Follow runs
 	followWG     sync.WaitGroup  // it, waited for when Run ends
+	workWG       sync.WaitGroup  // every turn, lane open and read the loop started, waited for when Run ends
 	seatHolder   string          // the seat holder as last read; empty while unknown
 	seatRead     time.Time       // when it was read; zero before the first read
 	presentDue   bool            // the present is owed: the session started, its id changed, or she asked (present.go)
@@ -650,6 +651,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	defer d.stageWG.Wait() // a stage under way ends with ctx (its git is killed) and its result is kept for the next Run
 	defer l.followWG.Wait()
+	defer l.workWG.Wait() // a turn under way ends with ctx (its process group is signalled): Run never returns while one runs
 	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
 	if !l.passive {
 		d.status.Session = SessionOK
@@ -1259,9 +1261,32 @@ func (l *loop) startTurn(t *turn, now time.Time, deliver any) {
 	t.started, t.running, t.cancel, t.seen, t.seenN, t.lastOut, t.stopped, t.capped, t.tail = now, true, cancel, seen, 0, now, false, false, tail
 	switch f := deliver.(type) {
 	case func(context.Context) result:
-		go func() { r := f(tctx); cancel(); l.results <- r; l.turnEnded() }()
+		l.work(func() { r := f(tctx); cancel(); queue(l.ctx, l.results, r); l.turnEnded() })
 	case func(context.Context) laneResult:
-		go func() { r := f(tctx); cancel(); l.lanes.results <- r; l.turnEnded() }()
+		l.work(func() { r := f(tctx); cancel(); queue(l.ctx, l.lanes.results, r); l.turnEnded() })
+	}
+}
+
+// work runs f in a goroutine Run waits for before it returns, so nothing the loop started
+// (a turn, a lane open, a read) runs on, or touches the harness, after Run has ended.
+func (l *loop) work(f func()) {
+	l.workWG.Add(1)
+	go func() {
+		defer l.workWG.Done()
+		f()
+	}()
+}
+
+// queue hands v to the loop on ch, or drops it once ctx has ended: the loop reads no result
+// after its ctx ends, and a turn's messages not acked stay pending for the next Run.
+func queue[T any](ctx context.Context, ch chan<- T, v T) {
+	select {
+	case ch <- v:
+	case <-ctx.Done():
+		select {
+		case ch <- v: // room still: kept as before, never dropped for nothing
+		default:
+		}
 	}
 }
 
