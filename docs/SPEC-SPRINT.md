@@ -6505,6 +6505,23 @@ stream costs, and `stats_since=` on the sum, are owed in cmd/nova-sprint/reads.g
 `total_cost`, `cost_by_tier`, `work_cost` and `read_cost` in `where --json` stay the
 epoch's.
 
+### ok-percent-names-its-cause: the cause of a failed end
+
+A failed end names one of three causes, tested in this order (`sprint.FailCause`): the
+brief's (`sprint.CauseBrief`, "brief"), when `sprint.BriefDefectOf` names a brief defect; the
+machinery's (`sprint.CauseMachinery`, "machinery"), when `sprint.HarnessFault` names a class,
+or the end is a provider's failure, a staging refusal or a no-result take, or it begins with
+the finish kind `launch refused`; and the work's (`sprint.CauseWork`, "work"), a wrong fix, a
+false claim, a missing test or a reader's broken finding. The empty end names none. Brief is
+tested first, so a HOLD that names a brief defect is the brief's even when it also names an
+infrastructure fault.
+
+`sprint.CauseCounts` counts a set of ended work by cause: `Add` counts one end, and `OkPct` is
+`100*OK/(OK+Work)` rounded down, false when `OK+Work` is zero, so only the work's faults move
+ok%. `Cell` renders the table cell — the ok%, then the brief and machinery counts when
+non-zero, as `75% b4 m2`, and `-` where there is no percent — and `DayLine` renders one day as
+`causes <YYYY-MM-DD> ok=<n> brief=<n> machinery=<n> work=<n>`.
+
 ### release-check-frame
 
 `release check [--json] [--streams <glob>] [--check <name>]...` is a read-class verb (the owner, 2026-10-04: a release ships when the tool says so, not when someone feels it is done): it runs the registry of release checks (`sprint.ReleaseChecks`, internal/sprint/releasecheck.go) over the store's log and the sprint's settings and writes nothing. Each check is a pure function over `sprint.ReleaseFacts` (the clock, the log, the dealt bound; later checks add git facts), prints `RELEASE CHECK <name> ok|fail <evidence>`, and on a fail the evidence names what to look at; then one summary line, `RELEASE OK checks=<n>` or `RELEASE NOT READY failed=<n>`; exit 0 every check passed, 1 a check failed, 2 usage or a store that did not answer. `--json` prints the one report object (`results`, `checks`, `failed`, `ready`, `summary`); `--streams` keeps the log of the streams the glob names; `--check` runs only the named checks. `release check` is its own verb beside `release <id> --reason`, which still releases a held card or sentinel; `add` refuses a card whose id is `check`, naming the reason. The first check, `no-stuck-friend`, fails when a friend was stuck at any moment of the last 4 hours, stuck being the deadline rule's own lateness (`WorkDeadline`): a working card held past its deadline (its own `friend_deadline`, else `DeadlineUnfinished`, from its first take), or a card dealt to it and not taken past the dealt bound. No other definition of a stuck friend exists on this tree (the where table carries none), so this is the one, and any later count of stuck friends reuses `sprint.NoStuckFriend`'s spans. Tests: `TestReleaseCheckFailsWhileAFriendWasStuckInTheLastFourHours`, `TestTheReleaseReportSaysOKOrNotReadyByTheChecksRun`, `TestEveryReleaseCheckStatesItsBar`, `TestReleaseStreamsFilterKeepsTheStreamsTheGlobNames`.
