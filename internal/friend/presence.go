@@ -210,6 +210,10 @@ type SessionCheck struct {
 	// the push is proved, so the session's late answer to the check already queued
 	// in it proves the push, whatever restarts came between. "" starts fresh.
 	Keep string
+	// Ctx is the daemon's long-lived context: a check's delivery runs under it, so
+	// the turn outlives the beat's per-send deadline and is still cancelled when the
+	// daemon stops. nil runs the delivery under the step's own context (a test's).
+	Ctx context.Context
 
 	stepMu     sync.Mutex // serializes log cursors; transport never holds mu
 	mu         sync.Mutex
@@ -670,7 +674,16 @@ func (s *SessionCheck) ask(ctx context.Context, now time.Time) {
 			return
 		}
 	}
-	cctx, cancel := context.WithCancel(ctx)
+	// The delivery runs under the daemon's long-lived context (Ctx), never the
+	// beat's per-send one: the heartbeat cancels its 900ms call the moment the send
+	// returns (internal/friend/heartbeat.go), and a delivery that inherited it would
+	// be killed before it reached the session. The check's own bound still cancels it
+	// (s.cancel), and the daemon's stop cancels it with Ctx.
+	parent := ctx
+	if s.Ctx != nil {
+		parent = s.Ctx
+	}
+	cctx, cancel := context.WithCancel(parent)
 	s.mu.Lock()
 	nonce := s.nextNonce()
 	s.m.Ask(now, nonce)

@@ -1386,6 +1386,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		Friend: name, Store: st, Now: w.now, Nonce: w.random, Record: record, Keep: keep,
 		Run:  fmt.Sprintf("r%d", w.now().Unix()), // this run, its generation: an answer proves only to the run that asked
 		Go:   w.checkGo,
+		Ctx:  ctx, // the daemon's long-lived context: a check's delivery outlives the beat's per-send deadline and dies with the daemon
 		Save: prover.Save(writePresence),
 		Text: func(nonce string) string {
 			return friend.SessionCheckText(nonce, w.pongCommand(name, nonce, state, c.Str("redis"), dir), answerTo())

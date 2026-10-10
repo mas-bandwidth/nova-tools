@@ -1385,7 +1385,11 @@ immediately once the daemon's loop starts, and every second until it stops,
 independently of the loop's inbox and lane work. Each send has a 900ms context
 deadline, with one send at a time, so a slow bus read or filesystem walk (the
 send steps the session check and walks activity) is bounded and never stops the
-next tick. A failed transport attempt is an error on status and is tried again
+next tick. The deadline bounds only the read and the walk: the session check's
+delivery (the turn into the session) runs under the daemon's long-lived
+context, never the send's, so a turn reaches the session after its send has
+returned, and its own bound (`SessionBound`) and the daemon's stop still cancel
+it. A failed transport attempt is an error on status and is tried again
 on the next tick; it creates no session evidence. The Presence model assumes a
 reachable beat recipient and a scheduler that runs the heartbeat each tick; an
 unavailable server cannot record a successful beat.

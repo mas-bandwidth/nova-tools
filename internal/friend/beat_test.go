@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
@@ -129,4 +130,60 @@ func TestTheDaemonBeatsEverySecondWhateverTheSessionSays(t *testing.T) {
 			require.Equal(t, answered, b.evidence, "beat %d at %s carries the session's answer, read in the step it was sent", i, b.at.Sub(t0))
 		}
 	}
+}
+
+// cancelProbe is a harness whose delivery records whether it ran under a live
+// context: a delivery that reaches it only after its context is cancelled is a
+// killed session check, the finding of this card.
+type cancelProbe struct {
+	mu    sync.Mutex
+	texts []string
+	err   error
+}
+
+func (p *cancelProbe) Deliver(ctx context.Context, text string) (int, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		p.err = err
+		return 1, err
+	}
+	p.texts = append(p.texts, text)
+	return 0, nil
+}
+
+// TestAHeartbeatSendDoesNotCancelTheSessionCheckDelivery: the heartbeat's
+// per-send context is cancelled the moment the send returns, but the session
+// check's delivery runs under a context that outlives it, so the check reaches
+// the session whatever the beat's deadline (docs/SPEC-FRIEND.md, the beat).
+func TestAHeartbeatSendDoesNotCancelTheSessionCheckDelivery(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		store := bustest.NewFake(t0, "ada", "bob")
+		probe := &cancelProbe{}
+		sc := &SessionCheck{
+			Friend: "bob", Store: store, Now: func() time.Time { return t0 },
+			Nonce: func() string { return "n1" },
+			Text: func(nonce string) string {
+				return SessionCheckPrefix + nonce + "\nanswer: nova-friend pong --as bob --nonce " + nonce
+			},
+			Ctx: context.Background(), // the daemon's long-lived context, as nova-friend run wires it
+		}
+		sc.Deliver = sc.Gate(probe)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_ = Heartbeat(ctx, sc.Beat(func(context.Context) error { return nil })) // ignored: it ends with ctx
+		}()
+		synctest.Wait()
+		probe.mu.Lock()
+		defer probe.mu.Unlock()
+		require.Len(t, probe.texts, 1, "the session check reached the session")
+		assert.NoError(t, probe.err, "the delivery ran under a live context, not the send's cancelled one")
+		cancel()
+		synctest.Wait()
+		<-done
+	})
 }
