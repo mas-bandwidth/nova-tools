@@ -184,14 +184,25 @@ func gateRuns(tests bool, have []string) [][]string {
 	return runs
 }
 
-// gateWhy is a red run as a finding, one line: the run, how it ended and its output.
+// gateWhy is a red run as a finding, one line: the run, how it ended and its output. The
+// go command's own warning lines (a line starting "warning: " or "go: warning: "), which
+// its diagnostics never name and a reader does not fix, come after the other lines: each
+// group keeps the order it was written in, and output that holds only warnings is joined
+// as the toolchain wrote it.
 func gateWhy(run []string, err error, out string) string {
-	var lines []string
+	var lines, warnings []string
 	for _, l := range strings.Split(out, "\n") {
-		if l = strings.TrimSpace(l); l != "" {
-			lines = append(lines, l)
+		l = strings.TrimSpace(l)
+		if l == "" {
+			continue
 		}
+		if strings.HasPrefix(l, "warning: ") || strings.HasPrefix(l, "go: warning: ") {
+			warnings = append(warnings, l)
+			continue
+		}
+		lines = append(lines, l)
 	}
+	lines = append(lines, warnings...)
 	return strings.Join(run, " ") + ": " + oneline.Err(err) + ": " + oneline.Cap(strings.Join(lines, " | "), 1500)
 }
 
