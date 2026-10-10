@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -306,4 +307,114 @@ func mustReviewAlarm(t *testing.T, s *Snapshot, r TickReq) Plan {
 	p, due := TickReviewStarved(s, r)
 	require.Zero(t, due)
 	return p
+}
+
+// The episode is a condition the tick keeps: ack holds it quiet while the
+// condition stands, and wait names when it is shown again.
+func TestReviewStarvedIsAConditionTheTickKeeps(t *testing.T) {
+	t.Parallel()
+	require.True(t, TickKept(NReviewStarved))
+	require.True(t, TickKept(NReadsIdle))
+	require.Equal(t, []string{"ack", "wait"}, TickDecisions[NReviewStarved])
+	require.Equal(t, []string{"ack", "wait"}, TickDecisions[NReadsIdle])
+}
+
+// An acknowledged episode lives in s.Acked, not s.Open: when a read goes out
+// the hold is closed with it, as notify closes the tick's own conditions.
+func TestReviewStarvedClosesAnAcknowledgedEpisode(t *testing.T) {
+	t.Parallel()
+	s := reviewAlarmBoard()
+	r := TickReq{Who: "seat"}
+	applyReviewAlarm(s, mustReviewAlarm(t, s, r))
+	s.Now = s.Now.Add(reviewStarvedDefault)
+	raised := mustReviewAlarm(t, s, r)
+	require.Len(t, reviewAlarmJudgments(raised, NReviewStarved), 1)
+	applyReviewAlarm(s, raised)
+	require.Len(t, s.Open, 1)
+
+	// The coordinator acks: the judgment holds as an acknowledged condition.
+	held := s.Open[0]
+	held.Note.Kind = Acknowledged
+	s.Acked = append(s.Acked, held)
+	s.Open = nil
+
+	s.Fleet.Put(&Card{
+		ID: "other.r1.m1", Row: "m1", Col: Ready,
+		Fields: map[string]string{"kind": "read", "primary": "other"},
+	})
+	p, due := TickReviewStarved(s, r)
+	require.Zero(t, due)
+	require.Empty(t, reviewAlarmJudgments(p, NReviewStarved))
+	require.Equal(t, []Open{held}, p.Closes, "the acknowledged hold is not closed")
+	require.Len(t, alarmCleared(p, NReviewStarved), 1)
+}
+
+// A wait that has run out while the condition still holds is closed here, and
+// the condition is raised again this tick (WaitReq's words).
+func TestReviewStarvedWaitExpiryRaisesTheEpisodeAgain(t *testing.T) {
+	t.Parallel()
+	s := reviewAlarmBoard()
+	r := TickReq{Who: "seat"}
+	applyReviewAlarm(s, mustReviewAlarm(t, s, r))
+	s.Now = s.Now.Add(reviewStarvedDefault)
+	raised := mustReviewAlarm(t, s, r)
+	applyReviewAlarm(s, raised)
+	require.Len(t, s.Open, 1)
+
+	held := s.Open[0]
+	held.Note.Kind = Acknowledged
+	held.Note.Review = s.Now.Add(-time.Minute)
+	s.Acked = append(s.Acked, held)
+	s.Open = nil
+
+	p, _ := TickReviewStarved(s, r)
+	require.Equal(t, []Open{held}, p.Closes, "the expired hold is not closed")
+	require.Len(t, reviewAlarmJudgments(p, NReviewStarved), 1, "the condition still holds: the episode is raised again")
+}
+
+// The done note leads the composed plan: the store reads the done part's
+// first note as "the sprint is done", so an alarm note written first would be
+// reported and pushed in its place.
+func TestReviewAlarmDoneNoteLeadsTheComposedPlan(t *testing.T) {
+	t.Parallel()
+	w := setup(t, 2)
+	w.s.Work.SetProp(PropReadCards, ReadCardsOnWord)
+	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}, Reason: "obsolete"}))
+	require.True(t, w.s.ReadCardsOn())
+	w.s.Fleet.SetProp(PropReviewStarvedEp, reviewAlarmSaid(reviewAlarmEncode(w.s.Now.Add(-reviewStarvedDefault), false)))
+
+	p, due := tickReviewAlarmAndDone(w.s, TickReq{Who: "seat"})
+	require.Zero(t, due)
+	require.NotEmpty(t, p.Notes)
+	require.Equal(t, NSprintDone, p.Notes[0].Type, "the done note does not lead: %+v", p.Notes)
+	require.Equal(t, Happened, p.Notes[0].Kind)
+	require.Len(t, alarmCleared(p, NReviewStarved), 1, "the alarm clears in the same plan: %+v", p.Notes)
+}
+
+// The reference model's done duty (refmodel.partFn reads TickParts) is the
+// same composed function the store runs: a reference walk plans the alarm.
+func TestReviewStarvedRunsInTheReferenceModelDoneDuty(t *testing.T) {
+	t.Parallel()
+	var done TickPartFn
+	for _, p := range TickParts {
+		if p.Name == PartDone {
+			done = p.Fn
+		}
+	}
+	require.NotNil(t, done, "the tick has no done part")
+	p, due := done(reviewAlarmBoard(), TickReq{Who: "seat"})
+	require.Zero(t, due)
+	require.Len(t, p.Props, 1)
+	require.Equal(t, PropReviewStarvedEp, p.Props[0].Name)
+}
+
+// alarmCleared is the happened notes that closed an episode of the type.
+func alarmCleared(p Plan, typ string) []Note {
+	var out []Note
+	for _, n := range p.Notes {
+		if n.Kind == Happened && n.Type == NReviewAlarmCleared && strings.HasPrefix(n.What, typ+":") {
+			out = append(out, n)
+		}
+	}
+	return out
 }
