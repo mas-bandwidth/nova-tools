@@ -3,7 +3,6 @@ package sprint
 import (
 	"cmp"
 	"slices"
-	"strings"
 )
 
 // The kind of a waiting card's block: the summary line counts one per kind,
@@ -69,45 +68,62 @@ func ClassifyWaiting(s *Snapshot, stream string) WaitingView {
 }
 
 // classifyCard is one waiting card's kind, reason, chain head and chain length.
+// It follows the chain from c to the first card that is not itself waiting (a
+// need in another column, a missing id or a landed record) or the held card or
+// unreleased sentinel at the root, and reports the block at that root, so a
+// card behind a waiting card names the real block and the card at the head of
+// its chain rather than a false "unmoved" reason.
 func classifyCard(s *Snapshot, c *Card) (kind, reason, head string, length int) {
-	if IsHeld(c) {
-		return WaitHeld, heldReason(c), c.ID, 0
-	}
+	visited := map[string]bool{}
+	curr := c
+	for {
+		if IsHeld(curr) {
+			return WaitHeld, heldReason(curr), curr.ID, length
+		}
 
-	behind := PositionWaits(s, c, nil)
-	for _, bID := range behind {
-		bc := s.Work.Card(bID)
-		if bc != nil && IsSentinel(bc) && bc.F("reached") == "" {
-			h, l := followChain(s, c)
-			return WaitBehind, "behind sentinel " + bID + " not released", h, l
-		}
-	}
-
-	needs, _ := NeedsOf(s, c.ID)
-	for _, n := range needs {
-		if n.Waived {
-			continue // a waived need is satisfied: it blocks nothing and heads no chain
-		}
-		nc := s.Work.Card(n.ID)
-		if nc == nil || nc.Col == "dropped" || n.State == "off the table (dropped)" || n.State == "off the table (-)" {
-			return WaitNeedMissing, "needs " + n.ID + " missing", n.ID, 1
-		}
-		if nc.Placed() {
-			if nc.Col == string(Landed) {
-				return WaitNeedLanded, "needs " + n.ID + " landed and tidied", n.ID, 1
-			}
-			if nc.Col != string(Waiting) {
-				return WaitNeedColumn, "needs " + n.ID + " in " + nc.Col, nc.ID, 1
+		for _, bID := range PositionWaits(s, curr, nil) {
+			bc := s.Work.Card(bID)
+			if bc != nil && IsSentinel(bc) && bc.F("reached") == "" {
+				return WaitBehind, "behind sentinel " + bID + " not released", bID, length + 1
 			}
 		}
-	}
 
-	h, l := followChain(s, c)
-	if strings.Contains(h, "cycle") {
-		return WaitCycle, h, h, l
-	}
+		var next *Card
+		needs, _ := NeedsOf(s, curr.ID)
+		for _, n := range needs {
+			if n.Waived {
+				continue // a waived need is satisfied: it blocks nothing and heads no chain
+			}
+			nc := s.Work.Card(n.ID)
+			if nc == nil || nc.Col == "dropped" || n.State == "off the table (dropped)" || n.State == "off the table (-)" {
+				return WaitNeedMissing, "needs " + n.ID + " missing", n.ID, length + 1
+			}
+			if IsSentinel(nc) && nc.F("reached") == "" {
+				return WaitBehind, "behind sentinel " + n.ID + " not released", n.ID, length + 1
+			}
+			if nc.Placed() {
+				if nc.Col == string(Landed) {
+					return WaitNeedLanded, "needs " + n.ID + " landed and tidied", n.ID, length + 1
+				}
+				if nc.Col != string(Waiting) {
+					return WaitNeedColumn, "needs " + n.ID + " in " + nc.Col, nc.ID, length + 1
+				}
+				if next == nil {
+					next = nc // a need that is itself waiting is one more step
+				}
+			}
+		}
 
-	return WaitUnmoved, "every need has landed or was waived, and nothing moves it", h, l
+		if next == nil {
+			return WaitUnmoved, "every need has landed or was waived, and nothing moves it", curr.ID, length
+		}
+		if visited[next.ID] {
+			return WaitCycle, "its needs make a cycle through " + next.ID, next.ID, length + 1
+		}
+		visited[curr.ID] = true
+		curr = next
+		length++
+	}
 }
 
 // heldReason is why an admitted-held card waits, naming who holds it and the
@@ -124,61 +140,4 @@ func heldReason(c *Card) string {
 		return "held: " + why
 	}
 	return "held by the coordinator (add --held) until release"
-}
-
-// followChain follows a waiting card's needs and unreleased sentinels to the
-// first card that is not itself waiting, returning that head and how many steps
-// it took; a cycle is reported as its reason, never followed.
-func followChain(s *Snapshot, start *Card) (string, int) {
-	visited := map[string]bool{}
-	curr := start
-	length := 0
-
-	for curr != nil {
-		if visited[curr.ID] {
-			return "its needs make a cycle through " + curr.ID, length
-		}
-		visited[curr.ID] = true
-
-		if !curr.Placed() || curr.Col != string(Waiting) {
-			return curr.ID, length
-		}
-		if IsHeld(curr) {
-			return curr.ID, length
-		}
-
-		nextID := ""
-		behind := PositionWaits(s, curr, nil)
-		for _, bID := range behind {
-			bc := s.Work.Card(bID)
-			if bc != nil && IsSentinel(bc) && bc.F("reached") == "" {
-				nextID = bID
-				break
-			}
-		}
-		if nextID == "" {
-			needs, _ := NeedsOf(s, curr.ID)
-			for _, n := range needs {
-				if n.Waived {
-					continue // a waived need is off the chain
-				}
-				nc := s.Work.Card(n.ID)
-				if nc != nil && nc.Placed() && nc.Col == string(Waiting) {
-					nextID = n.ID
-					break
-				}
-			}
-		}
-
-		if nextID == "" {
-			return curr.ID, length
-		}
-
-		curr = s.Work.Card(nextID)
-		length++
-	}
-	if start != nil {
-		return start.ID, length
-	}
-	return "", length
 }

@@ -136,14 +136,58 @@ func TestClassifyWaitingReasonsAndChains(t *testing.T) {
 		w.s.Work.Put(&Card{ID: "c2", Row: "s1", Col: Waiting, Fields: map[string]string{"needs": "heldcard"}})
 		w.s.Work.Put(&Card{ID: "c3", Row: "s1", Col: Waiting, Fields: map[string]string{"needs": "c2"}})
 		v := ClassifyWaiting(w.s, "s1")
-		var c3 WaitingCard
+		byID := map[string]WaitingCard{}
 		for _, c := range v.Cards {
-			if c.ID == "c3" {
-				c3 = c
-			}
+			byID[c.ID] = c
 		}
-		assert.Equal(t, "heldcard", c3.Head)
-		assert.Equal(t, 2, c3.Length)
+		assert.Equal(t, WaitHeld, byID["c2"].Kind)
+		assert.Equal(t, "heldcard", byID["c2"].Head)
+		assert.Equal(t, 1, byID["c2"].Length)
+		assert.Equal(t, WaitHeld, byID["c3"].Kind, byID["c3"].Reason)
+		assert.Contains(t, byID["c3"].Reason, "held", "the chain's root block is not named: %+v", byID["c3"])
+		assert.Equal(t, "heldcard", byID["c3"].Head)
+		assert.Equal(t, 2, byID["c3"].Length)
+	})
+
+	t.Run("chain of two whose root is a card in another column", func(t *testing.T) {
+		t.Parallel()
+		w := setup(t, 0)
+		w.s.Work.Put(&Card{ID: "dep", Row: "s1", Col: Ready})
+		w.s.Work.Put(&Card{ID: "c2", Row: "s1", Col: Waiting, Fields: map[string]string{"needs": "dep"}})
+		w.s.Work.Put(&Card{ID: "c3", Row: "s1", Col: Waiting, Fields: map[string]string{"needs": "c2"}})
+		v := ClassifyWaiting(w.s, "s1")
+		byID := map[string]WaitingCard{}
+		for _, c := range v.Cards {
+			byID[c.ID] = c
+		}
+		assert.Equal(t, WaitNeedColumn, byID["c2"].Kind)
+		assert.Equal(t, "needs dep in ready", byID["c2"].Reason)
+		assert.Equal(t, "dep", byID["c2"].Head)
+		assert.Equal(t, 1, byID["c2"].Length)
+		assert.Equal(t, WaitNeedColumn, byID["c3"].Kind, byID["c3"].Reason)
+		assert.Equal(t, "needs dep in ready", byID["c3"].Reason)
+		assert.Equal(t, "dep", byID["c3"].Head)
+		assert.Equal(t, 2, byID["c3"].Length)
+	})
+
+	t.Run("chain of two whose root is a missing id", func(t *testing.T) {
+		t.Parallel()
+		w := setup(t, 0)
+		w.s.Work.Put(&Card{ID: "m2", Row: "s1", Col: Waiting, Fields: map[string]string{"needs": "ghost"}})
+		w.s.Work.Put(&Card{ID: "m1", Row: "s1", Col: Waiting, Fields: map[string]string{"needs": "m2"}})
+		v := ClassifyWaiting(w.s, "s1")
+		byID := map[string]WaitingCard{}
+		for _, c := range v.Cards {
+			byID[c.ID] = c
+		}
+		assert.Equal(t, WaitNeedMissing, byID["m2"].Kind)
+		assert.Equal(t, "needs ghost missing", byID["m2"].Reason)
+		assert.Equal(t, "ghost", byID["m2"].Head)
+		assert.Equal(t, 1, byID["m2"].Length)
+		assert.Equal(t, WaitNeedMissing, byID["m1"].Kind, byID["m1"].Reason)
+		assert.Equal(t, "needs ghost missing", byID["m1"].Reason)
+		assert.Equal(t, "ghost", byID["m1"].Head)
+		assert.Equal(t, 2, byID["m1"].Length)
 	})
 
 	t.Run("cycle reported as cycle", func(t *testing.T) {
