@@ -284,10 +284,13 @@ func TestApplySetsAndRemovesAFriend(t *testing.T) {
 	scopedGot286 := c.HGet(ctx, "friend:stella:roles", "roles").Val()
 	assert.Equal(t, "reader", scopedGot286, "stella roles %q", scopedGot286)
 
-	// The handover: the sprint names stella; the next friend apply gives
-	// her the role first and takes it from rowan, as rowan (who holds it).
+	// The handover: the live seat moves to stella (nova-sprint's seat verb
+	// writes sprint:coordinator, and the role follows the live seat,
+	// docs/SPEC-CONFIG.md, "sprint"); the next friend apply gives her the
+	// role first and takes it from rowan, as rowan (who holds it).
 	_, _, setupErr9967 := st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "stella"}, "rowan")
 	require.NoError(t, setupErr9967)
+	c.Set(ctx, SprintKey("coordinator"), "stella", 0)
 	var reported []string
 	res, err = Apply(ctx, st, ap, KindFriend, "rowan", false, func(op Op) { reported = append(reported, op.Name) })
 	assertionMsg191 := []any{"handover: %+v %v reported %v", res, err, reported}
@@ -304,6 +307,7 @@ func TestApplySetsAndRemovesAFriend(t *testing.T) {
 	// even if working copies exist.
 	_, _, setupErr10964 := st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "rowan"}, "stella")
 	require.NoError(t, setupErr10964)
+	c.Set(ctx, SprintKey("coordinator"), "rowan", 0)
 	{
 		_, err := Apply(ctx, st, ap, KindFriend, "stella", false, func(Op) {})
 		require.NoError(t, err, "handover back as stella: %v", err)
@@ -639,14 +643,14 @@ func TestRemoveFriendDoesNotTouchSprintKeys(t *testing.T) {
 // REDIS-TRIPS.md baseline from Rowan's audit (rowan-7fbdefecf56e), with the
 // loop and route kinds' one read trip each on a store with none of their
 // rows (readHashes), and the tier kind's two read trips (its flash and pro rows
-// are made by migrate), added to every apply of all kinds:
-//   - first run: 38 trips (32 before the tier kind, whose first apply also writes
-//     its two rows and its stamp; 30 before the loop and route kinds; 42 before
-//     Cuts 2, 3, 4)
-//   - steady apply: 10 trips (8 before the tier kind; 6 before the loop and route
-//     kinds; 18 before Cut 1)
-//   - two changes: 15 trips (13 before the tier kind; 11 before the loop and route
-//     kinds; 25 before Cut 2)
+// are made by migrate), added to every apply of all kinds. The friend kind's
+// apply reads the live sprint seat once (docs/SPEC-CONFIG.md, "sprint"), one
+// trip over the counts before that read, so every apply of all kinds is one
+// higher:
+//   - first run: 42 trips (was 41 before the live-seat read)
+//   - steady apply: 11 trips (was 10 before the live-seat read)
+//   - two changes: 16 trips (was 15 before the live-seat read)
+//   - machine removal: 18 trips (was 17 before the live-seat read)
 func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	t.Parallel()
 
@@ -661,14 +665,14 @@ func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	applyKinds(t, st, ap, "rowan")
 	firstRunTrips := trips.N() - before
 	t.Logf("first run trips = %d (baseline was 42)", firstRunTrips)
-	require.LessOrEqual(t, firstRunTrips, int64(41), "first run took %d trips, want <= 41: 30 for the four first kinds, 1 each for the loop and route kinds with no row, and 9 for the tier kind's three rows (flash, heavy, pro; was 42 before batching cuts)", firstRunTrips)
+	require.LessOrEqual(t, firstRunTrips, int64(42), "first run took %d trips, want <= 42: 31 for the four first kinds (the friend kind reads the live sprint seat), 1 each for the loop and route kinds with no row, and 9 for the tier kind's three rows (flash, heavy, pro; was 41 before the live-seat read, 42 before batching cuts)", firstRunTrips)
 
 	// 2. Steady apply: nothing changed; Cut 1 skips the stamps (18 -> 6)
 	before = trips.N()
 	applyKinds(t, st, ap, "rowan")
 	steadyTrips := trips.N() - before
 	t.Logf("steady apply trips = %d (baseline was 18)", steadyTrips)
-	require.Equal(t, int64(10), steadyTrips, "steady apply took %d trips, want 10: 6 for the four first kinds, 1 each for the loop and route kinds with no row, and 2 for the tier kind's read (was 18 before Cut 1)", steadyTrips)
+	require.Equal(t, int64(11), steadyTrips, "steady apply took %d trips, want 11: 7 for the four first kinds (the friend kind reads the live sprint seat), 1 each for the loop and route kinds with no row, and 2 for the tier kind's read (was 10 before the live-seat read, 18 before Cut 1)", steadyTrips)
 
 	// 3. Two changes: update two friends (slots on stella, slots on rowan) (25 -> 11)
 	_, _, setupErr25760 := st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "24"}, "rowan")
@@ -679,7 +683,7 @@ func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	applyKinds(t, st, ap, "rowan")
 	twoChangesTrips := trips.N() - before
 	t.Logf("two changes trips = %d (baseline was 25)", twoChangesTrips)
-	require.LessOrEqual(t, twoChangesTrips, int64(15), "two changes took %d trips, want <= 15: 11, the loop and route kinds' one each and the tier kind's two (was 25 before Cut 2)", twoChangesTrips)
+	require.LessOrEqual(t, twoChangesTrips, int64(16), "two changes took %d trips, want <= 16: 12 (the friend kind reads the live sprint seat), the loop and route kinds' one each and the tier kind's two (was 15 before the live-seat read, 25 before Cut 2)", twoChangesTrips)
 
 	// 4. Machine removal: add third machine "air" to store and apply, then delete "air" and measure apply trips.
 	machine, _ := Lookup(KindMachine)
@@ -695,7 +699,7 @@ func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	applyKinds(t, st, ap, "rowan")
 	machineRemovalTrips := trips.N() - before
 	t.Logf("machine removal trips = %d", machineRemovalTrips)
-	require.LessOrEqual(t, machineRemovalTrips, int64(17), "machine removal took %d trips, want <= 17: 15 and the loop and route kinds' one each (was 25 before Cut 5)", machineRemovalTrips)
+	require.LessOrEqual(t, machineRemovalTrips, int64(18), "machine removal took %d trips, want <= 18: 16 (the friend kind reads the live sprint seat) and the loop and route kinds' one each (was 17 before the live-seat read, 25 before Cut 5)", machineRemovalTrips)
 }
 
 // TestRefusedMachineCeilingLeavesMachineHashUntouched proves that when
