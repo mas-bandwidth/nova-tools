@@ -9,6 +9,27 @@ defect. A change not yet in `dev` is marked "after PR N" and listed under "Open 
 machine, `<s>` a stream, `<id>` an inbox group id, `<card>` a primary's id. Each judgment answer below is the
 line the inbox prints for it, filled in; `nova-sprint inbox --open <id>` shows the exact lines.
 
+## Before any decision: `nova-sprint view seat`
+
+The first command of every decision, run fresh each time, never answered from memory or from a card's
+fields: a model of the sprint kept in the head goes old, and a decision on an old model is a wrong one.
+
+```
+nova-sprint view seat --json        # the dashboard at $NOVA_SPRINT_DASHBOARD, else 127.0.0.1:7390
+nova-sprint view seat --dashboard <address:port | http(s) URL>
+```
+
+It is one GET of the dashboard's `/api/sprint?release=all`, the snapshot the page draws, and nothing else,
+so the seat and the page never disagree: `fetchedAt`; every friend's row and every machine's (status,
+ready, working, width, a friend's last beat, a machine's load, and a machine's last beat when
+the snapshot carries `machines`); the live streams with their column counts;
+the open judgments on the dealt cards by kind; the ready pool and the width; the gates (the heaviest open
+cards with the cards behind each, the streams held, the holds in force); and the five things most out of
+place, each one line with the command that answers it (`out`, and `nout` counting all of them). A snapshot
+older than 30 s is refused naming the dashboard: run `nova-sprint seat check`, and decide nothing until
+`view seat` answers. The inbox's every judgment is still `nova-sprint view coordinator`'s (section 11 of
+[SPEC-SPRINT.md](SPEC-SPRINT.md#role-views)).
+
 ## 1. The seat
 
 - The coordinator is the actor the sprint's `init` named: `nova-sprint where --json | jq -r .coordinator`.
