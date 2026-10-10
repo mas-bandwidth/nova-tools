@@ -376,6 +376,11 @@ MCServerLanesLive.cfg	MCServerLanes.tla	pass	-	ignore-terminal	serverlanes	requi
 MCServerLanesBrokenBeatOnLine.cfg	MCServerLanes.tla	invariant	BeatNeverWaitsForTheLine|LanesHoldNoLine	ignore-terminal	serverlanes	required	-
 MCServerLanesBrokenReadOnLine.cfg	MCServerLanes.tla	invariant	ReadWaitsOnlyForReads|LanesHoldNoLine	ignore-terminal	serverlanes	required	-
 MCServerLanesBrokenRunGone.cfg	MCServerLanes.tla	invariant	GoneNeverRuns	ignore-terminal	serverlanes	required	-
+MCServerInstall.cfg	MCServerInstall.tla	pass	-	ignore-terminal	serverinstall	required	-
+MCServerInstallBrokenTwoServers.cfg	MCServerInstall.tla	invariant	ExactlyOneServer	ignore-terminal	serverinstall	required	-
+MCServerInstallBrokenNoRollbackOnExit.cfg	MCServerInstall.tla	invariant	ExitRollsBack	ignore-terminal	serverinstall	required	-
+MCServerInstallBrokenLateRollback.cfg	MCServerInstall.tla	invariant	NoLateRollback	ignore-terminal	serverinstall	required	-
+MCServerInstallBrokenReServeRefused.cfg	MCServerInstall.tla	invariant	RolledBackNeverServed	ignore-terminal	serverinstall	required	-
 MCCoordinatorWake.cfg	MCCoordinatorWake.tla	pass	-	ignore-terminal	coordinatorwake	required	-
 MCCoordinatorWakeBrokenNoCursor.cfg	MCCoordinatorWake.tla	invariant	AtMostOnce	ignore-terminal	coordinatorwake	required	-
 MCCoordinatorWakeBrokenSkip.cfg	MCCoordinatorWake.tla	temporal	NoLapse	ignore-terminal	coordinatorwake	required	-

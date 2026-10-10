@@ -385,6 +385,38 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	// ignored: a best-effort read cleanup on startup; tick takes care of any subsequent lapses
 	_ = a.serverStart(context.Background(), st)
 
+	// a swapped server is on probation for its first N ticks (server switch
+	// --probation): a run that begins inside the probation after one before it
+	// exited rolls the previous binary back and exits so the supervisor starts
+	// it (docs/SPEC-SPRINT.md section 14, install-rollback-on-missed-ticks-b.w2;
+	// the model is tla/ServerInstall.tla)
+	if target := a.serverTargetPath(); target != "" {
+		if rec, ok := readProbationRecord(target); ok && rec.Good < rec.N {
+			push := func(ctx context.Context, note string) error {
+				res, err := st.Run(ctx, store.NoteStep("server switch", sprint.Note{Kind: sprint.Happened, Type: "install rolled back", To: sprint.MachineActor, Who: st.Actor, What: note}))
+				if err == nil && len(res.Refused) > 0 {
+					err = errors.New(res.Refused[0].Why)
+				}
+				return err
+			}
+			p := newProbation(target, rec.Binary, rec.Previous, rec.N, a.installSupervisor(), push, stdout, a.now, nil)
+			p.seen = rec.Good
+			if rec.Starts > 0 {
+				fmt.Fprintf(stdout, "%s INSTALL the probation server has started %d times within its first %d ticks: it exited, so the previous binary is rolled back\n", a.now().Format("15:04:05"), rec.Starts+1, rec.N)
+				if _, err := p.exited(context.Background()); err != nil {
+					fmt.Fprintf(stderr, "%s run: the probation rollback was not completed: %s\n", prog, oneline.Escape(err.Error()))
+				}
+				a.exit(exitRollback)
+				return exitRollback
+			}
+			rec.Starts++
+			if err := writeProbationRecord(target, rec); err != nil {
+				fmt.Fprintf(stderr, "%s run: the probation record was not written: %s\n", prog, oneline.Escape(err.Error()))
+			}
+			setProbation(a, p)
+		}
+	}
+
 	fmt.Fprintf(stdout, "RUN ticking on every line of the log (at most every %s) and every %s while it is quiet; %s\n", store.TickFloor, store.TickEvery, st.MachineLine(context.Background()))
 	if a.runLoop(context.Background(), st, c.max, 0, stdout, stderr) {
 		return exitReplaced
@@ -657,6 +689,21 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 				return false
 			}
 			a.serial.Unlock()
+			// a missed tick within the probation rolls the previous binary back
+			// and exits so the supervisor starts it (tla/ServerInstall.tla,
+			// RollbackOnMissedTick)
+			if p := probationOf(a); p != nil {
+				outcome, perr := p.tickMissed(ctx)
+				if perr != nil {
+					fmt.Fprintf(stderr, "%s run: the probation rollback was not completed: %s\n", prog, oneline.Escape(perr.Error()))
+				}
+				if outcome == probationRolledBack {
+					setProbation(a, nil)
+					fmt.Fprintf(stdout, "%s INSTALL ROLLBACK the probation server missed its tick deadline: run exits %d so the supervisor starts the previous binary\n", a.now().Format("15:04:05"), exitRollback)
+					a.exit(exitRollback)
+					return false
+				}
+			}
 			if count, cerr := st.CountTickOverrun(ctx); cerr != nil {
 				fmt.Fprintf(stderr, "%s run: the tick's overrun was not counted on the heartbeat: %s\n", prog, oneline.Escape(cerr.Error()))
 			} else {
@@ -675,6 +722,20 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 			lift = 0 // the store is as fast as --tick-deadline again
 		}
 		a.serial.Unlock()
+		// a good tick within the probation counts toward ending it; the Nth
+		// keeps the binary (tla/ServerInstall.tla, ProbationEnd)
+		if p := probationOf(a); p != nil {
+			outcome, perr := p.tickOK(ctx)
+			if perr != nil {
+				fmt.Fprintf(stderr, "%s run: the probation tick was not recorded: %s\n", prog, oneline.Escape(perr.Error()))
+			} else if outcome == probationKept {
+				if target := a.serverTargetPath(); target != "" {
+					// ignored: no probation record is the kept binary's state
+					_ = os.Remove(target + ".probation.json")
+				}
+				setProbation(a, nil)
+			}
+		}
 		if a.ticked != nil {
 			a.ticked(i+1, began, why)
 		}
