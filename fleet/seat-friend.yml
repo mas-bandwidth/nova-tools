@@ -26,7 +26,8 @@
   ansible.builtin.command:
     argv: >-
       {{ [nova_bin_dir ~ '/nova-friend'] + seat_friend.install
-         + (['--deny-self', nova_friend_deny_self] if (nova_friend_deny_self | default('')) and ('--deny-self' not in seat_friend.install) else []) }}
+         + (['--deny-self', nova_friend_deny_self] if (nova_friend_deny_self | default('')) and ('--deny-self' not in seat_friend.install) else [])
+         + (['--wall-reads', nova_friend_wall_reads] if (nova_friend_wall_reads | default('')) and ('--wall-reads' not in seat_friend.install) else []) }}
   register: seat_reinstalled
   changed_when: true
   # ignored: read by the assert below, which names the step
