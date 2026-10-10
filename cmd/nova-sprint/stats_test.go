@@ -84,9 +84,13 @@ func TestStatsPrintsThePassFromTheCards(t *testing.T) {
 		assert.Equal(t, v, rows[k], "row %s\n%s", k, out)
 	}
 	assert.Contains(t, out, "STATS OK epoch=0 primaries=2 members=1 readers=2 routes=1\n")
+	assert.Regexp(t, "(?m)^streams\\s+\\|\\s+cost_work\\s+\\|\\s+cost_reads\\s+\\|\\s+cost_land\\s+\\|\\s+cost_unanswered\\s+\\|\\s+total\\s+\\|\\s+per_landed\\s*$", out)
+	assert.Regexp(t, "(?m)^tiers\\s+\\|\\s+cost_work\\s+\\|\\s+cost_reads\\s+\\|\\s+cost_land\\s+\\|\\s+cost_unanswered\\s+\\|\\s+total\\s*$", out)
 
 	var ps sprint.PassStats
 	ta.json("stats", &ps)
+	require.NotEmpty(t, ps.Streams)
+	require.NotEmpty(t, ps.Tiers)
 	require.Len(t, ps.Work, 1)
 	assert.Equal(t, sprint.Measure{Median: 7, Max: 8, N: 2}, ps.Work[0].RunWall)
 	assert.Equal(t, sprint.Measure{Median: 49, Max: 58, N: 2}, ps.Stages.FinishToReads)

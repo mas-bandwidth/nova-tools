@@ -65,7 +65,7 @@ var coordinatorRules = []string{
 	"One card runs through before many are cut.",
 	"A rate limit is backed off and resumed; out of funds is held for the owner.",
 	"Priced cost is optimised, not token counts.",
-	"Cost per landed card (work, reads, landing) is measured every cadence, and launching stops when it beats no alternative or the merge queue backs up.",
+	"Cost per landed card (work, reads, landing, unanswered) is measured every cadence, and launching stops when it beats no alternative or the merge queue backs up.",
 	"A free route is trialled on one mechanical stream against flash, priced at zero in config, before it is used.",
 	"When a budget is exhausted, work in flight lands and nothing new starts.",
 	"Tooling work is ranked by tokens and waste removed first, then reliability, then wall clock.",
