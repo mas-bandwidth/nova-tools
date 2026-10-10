@@ -277,9 +277,9 @@ func batchOf(cards []landCard) int {
 	return n
 }
 
-// pass lands every stream of order: round after round, each stream's next batch merged
-// beside the others' (phase 1, merges), then the green ones landed one at a time in order
-// (phase 2, land), a stream going on past the cards its batch landed and past a card whose
+// pass lands every stream of order: each stream's batches merged beside the others' (phase
+// 1, launch), each built one landed one at a time as it is built (phase 2, land), a stream's
+// next batch started when its last is done, going on past the cards its batch landed and past a card whose
 // own refusal was recorded (reworked at the tip, or returned to review: the stream's other
 // cards land in the same pass), and ending at the lander's own failure, as stream did.
 // failed says a push landed and its report did not.
