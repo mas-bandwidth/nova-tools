@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,6 +13,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/bench"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
 // The friend's reader row (docs/SPEC-FRIEND.md, the reader row; the owner, 2026-10-05: "Make
@@ -31,6 +35,13 @@ const ReadAskEvery = 10 * time.Second
 
 // ReadBodyKept bounds the body of a read's RESULT.md recorded as its finding.
 const ReadBodyKept = 3500
+
+// ReadBenchBudget bounds one removal of a read's bench copy, so a bench that does not answer
+// does not hold the loop; the owed cleanup is tried again at the next step.
+const ReadBenchBudget = 10 * time.Second
+
+// ReadBenchRetry is how long before an owed bench removal is tried again.
+const ReadBenchRetry = 30 * time.Second
 
 // ReadHarness is a harness that runs one read as a one-shot of its own: a new session with
 // the prompt as its only turn, on model ("" is the harness's own), blocking until it ends.
@@ -147,7 +158,40 @@ func briefField(re *regexp.Regexp, brief string) string {
 // bench does.
 func BenchRule(friend, card string) string {
 	d := "~/nova-bench/buds/" + friend + "/reads/" + card
-	return fmt.Sprintf("BENCH RULE, over any GOCACHE or go command the brief gives: this machine (the one you are on) runs no go build, go test or go vet, ever. Read the checkout here (change nothing), then copy the tree to a Linux bench and run every go command there: ssh <bench> 'mkdir -p %s' && rsync -a --delete <your repo dir>/ <bench>:%s/repo/ && ssh <bench> 'cd %s/repo && export GOCACHE=~/nova-bench/buds/%s/cache/go-build GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 && nice -n 19 go ...' (<bench> is the Linux bench your AGENTS.md names; the next one it names only when that one does not answer). Re-sync after each edit. When you are done, remove that bench directory: ssh <bench> 'rm -rf %s'. Report the gate lines as the bench printed them, naming the bench.", d, d, d, friend, d)
+	return fmt.Sprintf("BENCH RULE, over any GOCACHE or go command the brief gives: this machine (the one you are on) runs no go build, go test or go vet, ever. Read the checkout here (change nothing), then copy the tree to a Linux bench and run every go command there: ssh <bench> 'mkdir -p %s' && rsync -a --delete <your repo dir>/ <bench>:%s/repo/ && ssh <bench> 'cd %s/repo && export GOCACHE=~/nova-bench/buds/%s/cache/go-build GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 && nice -n 19 go ...' (<bench> is the Linux bench your AGENTS.md names; the next one it names only when that one does not answer). Re-sync after each edit. When the finding is recorded, this lane removes that bench directory %s and the local checkout. Report the gate lines as the bench printed them, naming the bench in a `bench:` line.", d, d, d, friend, d)
+}
+
+// readBenchDir is the read's bench directory as the reader's prompt names it, under the
+// bench login's home (`~`), which the login shell on the bench expands.
+func readBenchDir(friend, id string) string {
+	return "~/nova-bench/buds/" + friend + "/reads/" + id
+}
+
+// readBenchRemoval is the remote line that removes a read's bench copy: the `~` is
+// expanded by the bench's login shell, and friend and id are validJob-safe, so the words
+// need no quoting beyond the path's fixed slashes. It removes only a path it built from a
+// validated friend and id, never a bare variable.
+func readBenchRemoval(friend, id string) string {
+	return "rm -rf -- " + readBenchDir(friend, id)
+}
+
+// benchKey is a field of the read's RESULT.md: `bench: <host>` names the Linux bench the
+// reader copied its tree to, which the lane's remote cleanup removes from after the finding
+// is recorded.
+var benchKey = regexp.MustCompile(`(?m)^bench:\s*(\S+)`)
+
+// ReadBenchHost reads the bench a read named off its RESULT.md (`bench: <host>`); "" when
+// there is none or the name is not a host.
+func ReadBenchHost(result string) string {
+	m := benchKey.FindStringSubmatch(result)
+	if m == nil {
+		return ""
+	}
+	host := strings.TrimSpace(m[1])
+	if bench.CheckHost(host) != nil {
+		return ""
+	}
+	return host
 }
 
 // ReadText is READ.md: the read's job, as the reader loops wrote it.
@@ -168,6 +212,7 @@ You are %[3]s, a reader of %[4]s reading one card. Work only in %[5]s. Change no
     branch: %[7]s
     verdict: ok | broken
     gate: <the gate commands you ran, or ->
+    bench: <the Linux bench that ran them>
     report: <one line>
     ## Body
     <your findings, each with file:line>
@@ -218,21 +263,29 @@ type readResult struct {
 	err   error
 }
 
+// readBenchCleanup is a read's bench copy owed removal: the host the reader named and the
+// directory on it (readBenchDir), tried again at next until it succeeds.
+type readBenchCleanup struct {
+	host, path string
+	next       time.Time
+}
+
 // readSet is the daemon's reads at once.
 type readSet struct {
-	results chan readResult
-	running map[string]bool
-	begun   map[string]bool // asked reads this daemon began: the queue shows them asked until the verdict lands
-	asked   []AskedRead
-	askedAt time.Time
-	epoch   string                        // the latest epoch seen on the reader queue
-	cancel  map[string]context.CancelFunc // each read under way: the machine's stop ends it (stop.go)
-	stopped map[string]bool               // reads the stop cancelled: no verdict, a stop-return
-	active  map[string]AskedRead          // each read under way as it was begun: its generation and epoch, which the queue's refresh no longer lists
+	results   chan readResult
+	running   map[string]bool
+	begun     map[string]bool // asked reads this daemon began: the queue shows them asked until the verdict lands
+	asked     []AskedRead
+	askedAt   time.Time
+	epoch     string                        // the latest epoch seen on the reader queue
+	cancel    map[string]context.CancelFunc // each read under way: the machine's stop ends it (stop.go)
+	stopped   map[string]bool               // reads the stop cancelled: no verdict, a stop-return
+	active    map[string]AskedRead          // each read under way as it was begun: its generation and epoch, which the queue's refresh no longer lists
+	owedBench map[string]readBenchCleanup   // reads whose remote bench copy is owed removal, tried until it succeeds
 }
 
 func newReadSet() *readSet {
-	return &readSet{results: make(chan readResult, 64), running: map[string]bool{}, begun: map[string]bool{}, cancel: map[string]context.CancelFunc{}, stopped: map[string]bool{}, active: map[string]AskedRead{}}
+	return &readSet{results: make(chan readResult, 64), running: map[string]bool{}, begun: map[string]bool{}, cancel: map[string]context.CancelFunc{}, stopped: map[string]bool{}, active: map[string]AskedRead{}, owedBench: map[string]readBenchCleanup{}}
 }
 
 func (d *Daemon) readSlots() int {
@@ -298,6 +351,10 @@ func (l *loop) readStep(now time.Time) {
 		if !s.running[id] && !containsRead(s.asked, id) {
 			delete(s.begun, id)
 		}
+	}
+	// a bench copy owed removal is tried until it succeeds, whatever the lanes do
+	if l.ctx.Err() == nil {
+		l.retryBenchCleanup(now)
 	}
 }
 
@@ -370,6 +427,9 @@ func (l *loop) readDone(r readResult, now time.Time) {
 	if verdict != "" {
 		out, err := d.Sprint(l.ctx, ReadVerdictArgv(d.Friend, r.read, verdict, finding, usage))
 		d.Record(fmt.Sprintf("%s read %s: verdict=%s wall=%s: %s", at, r.read.ID, verdict, now.Sub(r.start).Round(time.Second), recorded(out, err)))
+		if err == nil {
+			l.releaseRead(r.read.ID, now)
+		}
 		return
 	}
 	why := fmt.Sprintf("no verdict from the %s run (exit %d)", d.Harness, r.turn.Exit)
@@ -388,6 +448,89 @@ func (l *loop) readDone(r readResult, now time.Time) {
 	}
 	out, err := d.Sprint(l.ctx, ReadReturnArgv(d.Friend, r.read, why, usage))
 	d.Record(fmt.Sprintf("%s read %s: returned: %s: %s", at, r.read.ID, oneLine(why, 200), recorded(out, err)))
+}
+
+// releaseRead removes the read once its finding is recorded, whatever the finding: the
+// local checkout, the bench copy under BenchRoot when that root is set, and the bench copy
+// on the Linux bench the read's RESULT.md names (readBenchDir on the `bench:` host), reached
+// over Bench (ssh) and removed with the same authenticated line the reader ran (docs/SPEC-
+// FRIEND.md, what is scratch). The read's own files (READ.md, the brief, the worker's
+// report, RESULT.md) stay, so the bench it names stays recorded until it is gone. A path
+// that is not there is nothing to remove. A bench the daemon cannot reach yet is not
+// dropped: it is enqueued and tried again each step until it succeeds.
+func (l *loop) releaseRead(id string, now time.Time) {
+	d := l.d
+	if !validJob(id) {
+		return
+	}
+	dir := filepath.Join(d.Dir, "reads", id)
+	if err := safepath.RemoveUnder(dir, filepath.Join(dir, "repo")); err != nil {
+		d.Record(fmt.Sprintf("%s read %s: not removed reads/%s/repo: %s", now.UTC().Format(time.RFC3339), id, id, oneLine(err.Error(), 200)))
+	}
+	if d.BenchRoot != "" && validJob(d.Friend) {
+		bench := filepath.Join(d.BenchRoot, "buds", d.Friend, "reads", id)
+		if err := safepath.RemoveUnder(d.BenchRoot, bench); err != nil {
+			d.Record(fmt.Sprintf("%s read %s: not removed bench reads/%s: %s", now.UTC().Format(time.RFC3339), id, id, oneLine(err.Error(), 200)))
+		}
+	}
+	if d.Bench != nil && validJob(d.Friend) && l.readBenchHost(id) != "" {
+		l.removeBenchCopy(id, now)
+	}
+}
+
+// readBenchHost is the host the read's RESULT.md names (`bench:` line), "" when it names
+// none or no host. The read's own files stay after the finding is recorded, so the host the
+// reader actually copied to is what is removed, never a guess.
+func (l *loop) readBenchHost(id string) string {
+	raw, _ := os.ReadFile(filepath.Join(l.d.Dir, "reads", id, "RESULT.md"))
+	return ReadBenchHost(string(raw))
+}
+
+// removeBenchCopy removes the read's bench copy on the bench its RESULT.md named, enqueuing
+// the owed cleanup when the bench does not answer so the next step tries again until it
+// succeeds. A removal that reports no bench, or no transport, has nothing to reach.
+func (l *loop) removeBenchCopy(id string, now time.Time) {
+	d, s := l.d, l.reads
+	host, path := l.readBenchHost(id), readBenchDir(d.Friend, id)
+	ctx, cancel := context.WithTimeout(l.ctx, ReadBenchBudget)
+	defer cancel()
+	code, err := d.Bench.Shell(ctx, host, readBenchRemoval(d.Friend, id), io.Discard, io.Discard)
+	if err == nil && code == 0 {
+		delete(s.owedBench, id)
+		d.Record(fmt.Sprintf("%s read %s: removed bench %s", now.UTC().Format(time.RFC3339), id, host))
+		return
+	}
+	s.owedBench[id] = readBenchCleanup{host: host, path: path, next: now.Add(ReadBenchRetry)}
+	why := err
+	if err == nil {
+		why = fmt.Errorf("rm exit %d", code)
+	}
+	d.Record(fmt.Sprintf("%s read %s: bench %s not reached, owed removal of %s: %s", now.UTC().Format(time.RFC3339), id, host, path, oneLine(why.Error(), 120)))
+}
+
+// retryBenchCleanup tries each owed bench removal whose time has come, dropping the ones
+// that succeed. It runs each step, so a bench that answers again is cleaned without a
+// person.
+func (l *loop) retryBenchCleanup(now time.Time) {
+	d, s := l.d, l.reads
+	if len(s.owedBench) == 0 || d.Bench == nil {
+		return
+	}
+	for id, c := range s.owedBench {
+		if now.Before(c.next) {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(l.ctx, ReadBenchBudget)
+		code, err := d.Bench.Shell(ctx, c.host, readBenchRemoval(d.Friend, id), io.Discard, io.Discard)
+		cancel()
+		if err == nil && code == 0 {
+			delete(s.owedBench, id)
+			d.Record(fmt.Sprintf("%s read %s: removed bench %s", now.UTC().Format(time.RFC3339), id, c.host))
+			continue
+		}
+		c.next = now.Add(ReadBenchRetry)
+		s.owedBench[id] = c
+	}
 }
 
 func recorded(out string, err error) string {
