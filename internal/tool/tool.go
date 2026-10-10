@@ -85,6 +85,12 @@ type Tool struct {
 	// read the usage lines, the shape of a value several of them name (the
 	// manifest of --file), so no usage line carries it. Empty prints none.
 	UsageNote string
+	// Setup, when set, is printed in the banner after the exit codes and
+	// before the example block: the `setup:` heading and the shell lines a
+	// stranger runs before the examples. It is not an exit code. A verb's
+	// -h quotes ExitTable alone, so this text does not ride on every verb
+	// (STANDARD §2, every verb's -h quotes the table). Empty prints none.
+	Setup string
 	// Topics are the tool's help topics: `help <topic>` prints the topic's
 	// text at exit 0, and the banner lists the topic names on one line
 	// (skeleton contract 2.7). A tool's reference text lives here, never in
@@ -122,6 +128,7 @@ type Verb struct {
 	ExitTable string         // this verb's exit codes, quoted by its -h; "" quotes the tool's
 	DryRun    bool           // the verb takes --dry-run and honours it (Call.DryRun): it plans and writes nothing
 	Hidden    bool           // the verb runs and answers -h and `help <it>`, but the banner, the usage block and the verb lists a refusal names do not show it: a probe step verb a user never types (STANDARD §3, help is never a refusal; §2, a list names the verbs there are for the reader)
+	Token     string         // the first word of the verb's lines, where its spec names one; "" is the verb's name
 	Flags     func(f *Flags) // declares the verb's flags; nil declares none
 	Run       func(c *Call) *Out
 }
@@ -195,7 +202,7 @@ func (t *Tool) dispatch(ctx context.Context, args []string, stdin io.Reader, std
 					return 0
 				}
 			}
-			return t.dispatch(ctx, append(args[1:], "--help"), stdin, stdout, stderr)
+			return t.dispatch(ctx, t.helpArgs(args), stdin, stdout, stderr)
 		}
 		fmt.Fprint(stdout, t.Banner())
 		return 0
@@ -234,6 +241,27 @@ func (t *Tool) dispatch(ctx context.Context, args []string, stdin io.Reader, std
 		why += ", and the help topics are " + verbflag.List(t.topicNames())
 	}
 	return t.emit(nil, Refuse(why), asJSON, stdout, stderr)
+}
+
+// helpArgs places --help after the longest verb name, before any trailing arguments,
+// so help answers before the verb parses an operand after -- (STANDARD §3).
+func (t *Tool) helpArgs(args []string) []string {
+	rest := args[1:]
+	verbWords := 0
+	for _, v := range t.verbs() {
+		words := strings.Fields(v.Name)
+		if len(words) > verbWords && len(rest) >= len(words) && strings.Join(rest[:len(words)], " ") == v.Name {
+			verbWords = len(words)
+		}
+	}
+	if verbWords == 0 {
+		return append(append([]string(nil), rest...), "--help")
+	}
+	out := make([]string, 0, len(rest)+1)
+	out = append(out, rest[:verbWords]...)
+	out = append(out, "--help")
+	out = append(out, rest[verbWords:]...)
+	return out
 }
 
 // topic is the text of the topic named, and whether the tool has one:
@@ -478,7 +506,8 @@ func (t *Tool) names() []string {
 }
 
 // Banner is what `help` prints: what, how, usage, the standard flags, the exit
-// codes, and the example block last (docs/ONBOARDING.md point 1).
+// codes, the setup block when the tool sets one, and the example block last
+// (docs/ONBOARDING.md point 1).
 func (t *Tool) Banner() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s: %s\n", t.Name, t.What)
@@ -521,6 +550,9 @@ func (t *Tool) Banner() string {
 	}
 	b.WriteString(json + ": " + why + ". A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.\n\n")
 	fmt.Fprintf(&b, "exit codes: %s\n\n", t.ExitTable)
+	if setup := strings.TrimRight(t.Setup, "\n"); setup != "" {
+		b.WriteString(setup + "\n\n")
+	}
 	b.WriteString("example:\n")
 	for _, v := range t.shown() {
 		for _, l := range lines(v.Example) {
@@ -692,7 +724,7 @@ func (t *Tool) emit(v *Verb, o *Out, asJSON bool, stdout, stderr io.Writer) int 
 	o.token = strings.ToUpper(strings.TrimPrefix(t.Name, "nova-"))
 	if v != nil {
 		o.Verb = v.Name
-		o.token = strings.ToUpper(strings.Join(strings.Fields(v.Name), "-"))
+		o.token = cmp.Or(v.Token, strings.ToUpper(strings.Join(strings.Fields(v.Name), "-")))
 	}
 	if o.Status == Refused && o.Remedy == "" {
 		o.Remedy = t.Name + " help"
