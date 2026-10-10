@@ -32,10 +32,8 @@ MachineNamed(c) ==
     (c \in beatRunning /\ (Broken = "StaleBeat" \/ Fresh(beatAge))) \/
     (c \in seatRunning /\ (seatAge = -2 \/ Broken = "StaleBeat" \/ Fresh(seatAge)))
 MachineLive(c) == Active(c) /\ MachineNamed(c) /\ (Broken = "NoCap" \/ ran[c] < Cap)
-Kept(j) == IF j \in FriendKeys THEN \E c \in Cards : MachineLive(c)
-           ELSE MachineLive(j[2])
-ShouldKeep(j) == IF j \in FriendKeys THEN \E c \in Cards : Live(c)
-                ELSE Live(j[2])
+\* Card lateness uses that card; both friend-level keys use any live card.
+Quietable(lanes) == ({"late"} \X lanes) \cup (IF lanes = {} THEN {} ELSE FriendKeys)
 
 Init ==
     /\ clock = 0
@@ -51,15 +49,15 @@ Init ==
 \* Each successful tick is atomic, as the stored heartbeat's count and quiets are.
 \* The next clock value follows that tick. Environmental actions may occur any
 \* number of times between ticks, including immediately before or after a clear.
-Tick(wanted) ==
+Tick(wanted, machine, actual) ==
     /\ clock < MaxClock
     /\ LET candidates == wanted \ open
-           kept == {j \in candidates : Kept(j)}
+           kept == candidates \cap machine
            old == IF countEpoch = epoch THEN previous ELSE {}
            base == IF countEpoch = epoch THEN suppressed ELSE 0
            added == IF Broken = "CountEveryTick" THEN Cardinality(kept)
                     ELSE Cardinality(kept \ old)
-           expected == {j \in candidates : ShouldKeep(j)}
+           expected == candidates \cap actual
            raised == candidates \ kept
        IN /\ noRise' = (raised \cap expected = {})
           /\ noMiss' = (candidates \ expected \subseteq raised)
@@ -116,7 +114,11 @@ Clear ==
     /\ UNCHANGED <<clock, column, ran, beatAge, beatRunning, seatAge, seatRunning,
                    previous, countEpoch, suppressed, spans, noRise,
                    noMiss, noStale, epochRestartOK>>
-Next == (\E wanted \in SUBSET Judgments : Tick(wanted)) \/
+\* Compute the snapshot's lane sets once before enumerating proposed subsets.
+\* They are independent of wanted and open, just as LiveLane is in the code.
+Next == LET machine == Quietable({c \in Cards : MachineLive(c)})
+            actual == Quietable({c \in Cards : Live(c)})
+        IN (\E wanted \in SUBSET Judgments : Tick(wanted, machine, actual)) \/
         (\E channel \in {"beat", "seat"}, age \in Ages \cup {-2}, running \in SUBSET Cards :
             Beat(channel, age, running)) \/ BeatStops \/
         (\E c \in Cards : CardFinishes(c) \/ Take(c)) \/ Clear
