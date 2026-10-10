@@ -440,13 +440,13 @@ func friendFinishUsage(report string) string {
 	tokenLine, costRest, saw := friendTokenLine(report)
 	if saw {
 		u, ok := sprint.FriendUsage("tokens: " + tokenLine)
-		if !ok || !u.Tokens.Reported() {
+		if !ok || !u.Tokens.Reported() || u.Tokens.Total() == 0 {
 			return ""
 		}
 		return friendUsageLine(u, costRest)
 	}
 	u, ok := sprint.FriendUsage(report)
-	if !ok || !u.Tokens.Reported() {
+	if !ok || !u.Tokens.Reported() || u.Tokens.Total() == 0 {
 		return ""
 	}
 	return friendUsageLine(u, costRest)
