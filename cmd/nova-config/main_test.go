@@ -431,7 +431,7 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 	_, errs = step(1, "friend", "set", "nobody", "--slots", "1")
 	require.Equal(t, "nova-config friend set REFUSED: friend nobody not found; run: nova-config friend add nobody --<field> <value> ...\n", errs, "set nobody: %q", errs)
 	out, _ = step(0, "friend", "list")
-	require.Equal(t, "FRIEND name=rowan slots=64 tiers=frontier,pro roles=builder,reader width=8 mode=batch config_dir=- token_cap=6000000 streams=- kinds=-\nCONFIG LIST kind=friend rows=1\n", out, "friend list: %q", out)
+	require.Equal(t, "FRIEND name=rowan slots=64 tiers=frontier,pro roles=builder,reader width=8 mode=batch config_dir=- token_cap=6000000 streams=- kinds=- cap_usd_hour=10\nCONFIG LIST kind=friend rows=1\n", out, "friend list: %q", out)
 	out, _ = step(0, "friend", "show", "rowan")
 	require.True(t, strings.HasPrefix(out, "FRIEND name=rowan slots=64 tiers=frontier,pro roles=builder,reader width=8 mode=batch config_dir=- "), "friend show: %q", out)
 	require.Contains(t, out, " created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n", "friend show: %q", out)
@@ -595,7 +595,7 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	gotCheck594 := h.redis.views["friend"]["rowan"]["roles"]
 	require.Equal(t, "builder,coordinator", gotCheck594, "rowan's applied roles %q", gotCheck594)
 	out, _ = step(0, "friend", "show", "rowan")
-	require.True(t, strings.HasPrefix(out, "FRIEND name=rowan slots=32 tiers=frontier roles=builder width=8 mode=batch config_dir=- token_cap=6000000 streams=- kinds=- created="), "rowan's stored row: %q", out)
+	require.True(t, strings.HasPrefix(out, "FRIEND name=rowan slots=32 tiers=frontier roles=builder width=8 mode=batch config_dir=- token_cap=6000000 streams=- kinds=- cap_usd_hour=10 created="), "rowan's stored row: %q", out)
 	out, _ = step(0, "status")
 	require.True(t, strings.HasSuffix(out, " machine_applied=1 fleet_applied=4 friend_applied=3 sprint_applied=5 loop_applied=0 route_applied=0 tier_applied=0\n"), "status after apply: %q", out)
 	out, _ = step(0, "apply", "--kind", "friend")
