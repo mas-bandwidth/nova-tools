@@ -3083,9 +3083,11 @@ rule is `internal/sprint/fleet_quiet.go`; the twin test is
 A reader's checkout is scratch. The friend daemon writes the read under
 `reads/<id>/` and, once the verdict is recorded, removes `reads/<id>/repo` and
 the bench copy under `~/nova-bench/buds/<friend>/reads/<id>` when that bench
-directory is on the same machine (docs/SPEC-FRIEND.md, what is scratch). The
-read's brief, the worker's report and the finding stay. A bench on another
-machine is not removed from here.
+directory is on the same machine, and the bench copy on the Linux bench the
+read's `RESULT.md` names (its `bench:` line) over `Daemon.Bench` (the one ssh),
+whatever the finding; a bench the daemon cannot reach yet is owed and retried
+each step until it is gone (docs/SPEC-FRIEND.md, what is scratch). The read's
+brief, the worker's report and the finding stay.
 
 - **The interim rules of 2026-10-06, until read cards** (the owner, 7:25 PM ET: "fix it
   now, to work around it"; the read-cards change (PR 5392) replaces
