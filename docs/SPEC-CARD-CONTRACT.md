@@ -470,7 +470,10 @@ recorder every profile may reuse. A push whose remote is a local path (an absolu
 `./` or `../` path) or a `file://` URL is handed to the real git unchanged, as typed, and
 records nothing: it lands on the child's own machine and reaches no forge, and a test or tool
 inside a card that pushes to a bare repository it made under its own temp directory needs the
-push to land.
+push to land. So is a push run in any repository but the staged checkout (one whose git common
+directory is not the checkout's; a linked worktree and the clone link share it): a gate's tests
+push to an `origin` of their own temp repositories, and a recorded test commit would be taken
+for the child's head by a finish that names none (`LastPushed`).
 
 A profile is done when it passes the harness every profile passes: `TestEveryProfileKeepsTheContract`
 (the shims answer every verb form the profile claims) and `TestTheScriptedChildEndToEnd`, the
