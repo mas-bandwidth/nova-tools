@@ -38,7 +38,7 @@ Spend gate waived: the owner 2026-10-10 live waivers for v1.2.2 only: spend read
 - #5540 (a presence check waits for a running batch turn) follows in v1.3, after its FriendPresence model.
 - The functional `internal/ci` package is still over the one-minute rule (65 s): card the-functional-ci-package-runs-within-a-minute (v1.3).
 - The per-tick work cap is a v1.3 blocker: card a-tick-does-bounded-work-under-the-gate.
-- #5507 (dsh one-shot cards for Zhi) follows in v1.3.
+- #5507 (dsh one-shot cards) follows in v1.3.
 
 ## v1.2.1 — 2026-10-09
 
