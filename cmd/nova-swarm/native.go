@@ -637,14 +637,12 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 		refuseNative(errOut, fmt.Sprintf("the temp directory %s could not be made: %s", oneline.Field(tmpDir), oneline.Escape(err.Error())))
 		return nil, nativeRunResult{}, 2
 	}
-	// releaseTmp ends a run refused after its slot tmp was made: the leases are given
-	// back and the run's own slot temp is removed, so a refusal after the make does not
-	// leave a temp directory behind (docs/SPEC-SWARM.md, native).
+	// releaseTmp ends a run refused after its slot tmp was made. Remove the temp
+	// while this run still owns the slot and job; another run may reuse the label
+	// as soon as those leases are released.
 	releaseTmp := func() {
-		releaseSlot()
-		releaseLease()
 		// ignored: best-effort cleanup of the run's own slot temp on an early refusal
-		_ = removeNativeSlotTemp(cfg.slotDir, tmpDir)
+		_ = releaseNativeTemp(cfg.slotDir, tmpDir, releaseSlot, releaseLease)
 	}
 	// THE SHARED PER-BENCH CACHE. The Go toolchain and every module are the
 	// same for every card under one root, but each card left to itself downloads them
@@ -769,8 +767,6 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 	reads = append(reads, nativeReadRoots(cfg)...)
 	configSHA, reason, proxy := writeJobConfig(cfg, provider, dataHome, jobDir, reads, errOut)
 	cleanup := func() {
-		releaseSlot()
-		releaseLease()
 		if proxy != nil {
 			// ignored: a close on the refusal path; the reason printed below is the one reported
 			_ = proxy.Close()
@@ -780,7 +776,7 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 			_ = removeAuthCopy(dataHome, errOut)
 		}
 		// ignored: best-effort cleanup of the run's own slot temp on an early refusal
-		_ = removeNativeSlotTemp(cfg.slotDir, tmpDir)
+		_ = releaseNativeTemp(cfg.slotDir, tmpDir, releaseSlot, releaseLease)
 	}
 	if reason != "" {
 		cleanup()
@@ -1536,6 +1532,15 @@ func removeNativeSlotTemp(slotDir, tmpDir string) error {
 	return safepath.RemoveUnder(filepath.Join(slotDir, "tmp"), tmpDir)
 }
 
+// releaseNativeTemp keeps ownership until its temp is gone. Releasing first lets
+// a successor with the same label create files that this refusal would then erase.
+func releaseNativeTemp(slotDir, tmpDir string, releaseSlot, releaseJob func()) error {
+	err := removeNativeSlotTemp(slotDir, tmpDir)
+	releaseSlot()
+	releaseJob()
+	return err
+}
+
 // nativeRun executes one frozen configuration and returns the recorded result and
 // the command's exit code: 0 the child ran, 2 a refusal (one REFUSED line on
 // errOut). A refusal is a defect in the configuration the run can see before it
@@ -1975,7 +1980,7 @@ func nativeChildEnvFrom(environ []string, dataHome, jobDir, tmpDir, cacheDir, se
 		}
 	}
 	remove := []string{
-		"HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "NOVA_SWARM_JOB", "TMPDIR",
+		"HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "NOVA_SWARM_JOB", "TMPDIR", "GOTMPDIR",
 		"GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "ASDF_OUTPUT_TRANSLATIONS",
 	}
 	if shimShell != "" {
@@ -1997,6 +2002,7 @@ func nativeChildEnvFrom(environ []string, dataHome, jobDir, tmpDir, cacheDir, se
 		"XDG_DATA_HOME="+dataHome,
 		"NOVA_SWARM_JOB="+jobDir,
 		"TMPDIR="+tmpDir,
+		"GOTMPDIR="+tmpDir,
 		// the harness prints its ERROR lines into the capture, so a start it refuses names
 		// why (`error="ProviderModelNotFoundError: ..."`), not only its UnknownError envelope
 		"OPENCODE_PRINT_LOGS=1",

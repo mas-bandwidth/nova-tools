@@ -122,6 +122,39 @@ func TestNativeRemovesItsSlotTemp(t *testing.T) {
 	assert.DirExists(t, outside, "a path outside the slot's tmp is never removed")
 }
 
+func TestNativeGOTMPDIRIsTheRunsOwnTemp(t *testing.T) {
+	t.Parallel()
+	env := nativeChildEnvFrom([]string{"GOTMPDIR=/foreign", "TMPDIR=/foreign"}, "data", "job", "run-tmp", "", "", "", "", nil)
+	assert.Contains(t, env, "TMPDIR=run-tmp")
+	assert.Contains(t, env, "GOTMPDIR=run-tmp")
+	assert.NotContains(t, env, "GOTMPDIR=/foreign")
+}
+
+func TestNativeRefusalRemovesTempBeforeReleasingTheSlot(t *testing.T) {
+	t.Parallel()
+	_, slot := aSlot(t)
+	job := filepath.Join(slot, "jobs", "card")
+	require.NoError(t, os.MkdirAll(job, 0o755))
+	releaseJob, err := swarm.StartJobLease(job, "card")
+	require.NoError(t, err)
+	releaseSlot, err := swarm.StartSlotLease(slot, "card")
+	require.NoError(t, err)
+	tmp := filepath.Join(slot, "tmp", "card")
+	require.NoError(t, os.MkdirAll(tmp, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, "old"), []byte("old"), 0o644))
+
+	// Once the slot is released, a successor may immediately create the same temp path.
+	// The predecessor must not remove that successor's files afterward.
+	releaseAndStartSuccessor := func() {
+		releaseSlot()
+		require.NoError(t, os.MkdirAll(tmp, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(tmp, "successor"), []byte("new"), 0o644))
+	}
+	require.NoError(t, releaseNativeTemp(slot, tmp, releaseAndStartSuccessor, releaseJob))
+	assert.NoFileExists(t, filepath.Join(tmp, "old"))
+	assert.FileExists(t, filepath.Join(tmp, "successor"))
+}
+
 // A run refused after its slot temp was made removes that temp: the shell shim directory is
 // made after <slot>/tmp/<label>, and a run whose shim cannot be written refuses with the slot
 // temp gone, so a refusal does not leave a temp directory behind (docs/SPEC-SWARM.md, native).
