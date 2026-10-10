@@ -4686,3 +4686,47 @@ Reads the tree and GitHub again and writes nothing: zero differences is
 `VERIFY OK ... differences=0`, the receipt that the tree holds what GitHub
 holds. `--against <tree>` puts a second tree file where GitHub stands and reads
 no network at all.
+
+## nova-delete
+
+Move a literal path to quarantine instead of deleting it.
+
+<!-- clidoc:begin nova-delete -->
+`nova-delete help`:
+
+```
+nova-delete: moves a literal path to quarantine instead of deleting it
+
+how it works: nova-delete takes exactly one literal absolute path and moves it to a dated quarantine folder
+<root>/.quarantine-YYYYMMDD/<basename>.<HHMMSS>.<pid> under the allowed root that holds it.
+Allowed roots are: system temp directory and paths named by NOVA_DELETE_ROOTS (colon-separated).
+The sweep verb removes quarantine entries older than a specified duration.
+
+usage:
+  nova-delete nova-delete delete <path>
+  nova-delete nova-delete sweep --older-than <duration>
+  nova-delete version
+  nova-delete help [<verb>]
+
+Every verb takes --json: the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
+
+exit codes: 0 success, 1 refusal, 2 could not run (bad invocation)
+
+example:
+  nova-delete delete /tmp/file.txt
+  nova-delete sweep --older-than 7d
+```
+
+`nova-delete version -h`:
+
+```
+usage: nova-delete version [flags]
+from `nova-delete help`:
+  nova-delete version
+flags:
+  --json  print the result as one JSON object instead of lines
+exit codes: 0 success, 1 refusal, 2 could not run (bad invocation)
+effect: inspection: reads, writes nothing
+```
+<!-- clidoc:end nova-delete -->
+
