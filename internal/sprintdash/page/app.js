@@ -581,7 +581,14 @@ function renderReaders(d) {
 function renderHero(d, s, ft) {
   var landed = int(d.landed), all = int(d.all);
   setText($("landed"), landed.toLocaleString("en-US")); setText($("all"), all.toLocaleString("en-US")); setText($("all2"), all.toLocaleString("en-US"));
-  setText($("pct"), all ? (landed / all * 100).toFixed(1) + "%" : "-");
+  var pct = all ? (landed / all * 100).toFixed(1) + "%" : "-";
+  if (d.stats_since) {
+    var sinceDate = new Date(d.stats_since);
+    if (!isNaN(sinceDate)) {
+      pct += " · since " + clockShort(sinceDate);
+    }
+  }
+  setText($("pct"), pct);
   var m = String(d.summary || "").match(/ETA\s+(\S+)/), at = new Date(d.at);
   if (m) {
     setHTML($("eta"), etaText(m[1]));
@@ -595,7 +602,7 @@ function renderHero(d, s, ft) {
   // streams on the table, or, the sprint done, the epoch's every stream, as the hero's count
   // is. The cost is every recorded take and read of their cards in any column; the cost per
   // card is that over the cards that landed
-  var c = d.done ? s.sum.epoch : s.sum, recorded = c.totalCost;
+  var c = d.done ? s.sum.epoch : s.sum, recorded = d.stats_since ? s.sum.cost : c.totalCost;
   setText($("cost"), money(recorded));
   var per = landed ? money(Math.ceil(recorded / landed)) + " per card" : "";
   setText($("cost-per"), per || " ");

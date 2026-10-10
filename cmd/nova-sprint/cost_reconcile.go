@@ -57,6 +57,10 @@ func (a *app) cmdCostReconcile(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "COST RECONCILE OK providers=0 notes=0: the routes name no provider (nova-sprint routes)")
 		return 0
 	}
+	from, err := st.StatsSince(ctx, "")
+	if err != nil {
+		return a.readFailed(verb, err, stderr)
+	}
 	req := sprint.CostReconcileReq{Reads: reads, Who: c.actor}
 	notes, word := 0, "OK"
 	fleet := sprint.NewTable(sprint.Fleet)
@@ -67,13 +71,22 @@ func (a *app) cmdCostReconcile(args []string, stdout, stderr io.Writer) int {
 			return a.readFailed(verb, err, stderr)
 		}
 		s.Routes = routes
-		plan := sprint.CostReconcile(s, req)
+		plan := sprint.CostReconcileSince(s, req, from)
 		for _, pw := range plan.Props {
 			fleet.SetProp(pw.Name, pw.Value)
 		}
 		notes, word = len(plan.Notes), "DRY-RUN"
 	} else {
-		res, err := st.Run(ctx, store.CostReconcileStep(req))
+		step := store.Step{
+			Args:   store.ArgsOf(req),
+			Verb:   "cost reconcile",
+			Load:   []string{sprint.Work, sprint.Fleet},
+			Routes: true,
+			Plan: func(s *sprint.Snapshot) sprint.Plan {
+				return sprint.CostReconcileSince(s, req, from)
+			},
+		}
+		res, err := st.Run(ctx, step)
 		if err != nil {
 			return refuse(stderr, verb, err.Error())
 		}
