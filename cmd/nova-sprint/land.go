@@ -307,6 +307,15 @@ type lander struct {
 	st                         *store.Store
 	repoDir, base, check, root string
 	dry, twin                  bool // twin: a mem twin, which has no git
+	// staged is the milestone of the batch being reported, set for that one step and
+	// cleared after it (docs/SPEC-SPRINT.md section 7, delivery milestones). Nil on a
+	// refusal, a dry run and every step that is not a pushed batch's report.
+	staged *sprint.Milestone
+	// batchBase is the base tip this lander's batch was merged onto (cut's baseSha).
+	// staged_parent records it, not the pushed tip's first parent: a batch of two or
+	// more cards is one --no-ff merge per card, so tip^ is an intra-batch merge no
+	// card staged and the walk would stop before every earlier landing.
+	batchBase string
 	// conflictKind and conflictPaths are what the last merge that stopped on unmerged paths
 	// left (mergeHead): the conflict fact carries them (conflictCard).
 	conflictKind  string
@@ -1029,6 +1038,19 @@ func againRemedy(stream string) string {
 	return "run land again, which rereads the queue and lets its checks decide (where the cards are as they were, their merges and push are no-ops and the report records them; a card reworked since is merged at its new head, or meets a real conflict): nova-sprint land --stream " + stream
 }
 
+// stagedParent is the base tip the batch was merged onto (batchBase, cut's baseSha),
+// the link tipCarried walks. The pushed tip's first parent is that base only for a
+// batch of one card. A batch of two or more is one --no-ff merge per card, so tip^
+// is an intra-batch merge no card staged, and walking it stops before every landing
+// before the batch. Empty when this lander did not cut the batch, or the batch has
+// no tip to report.
+func stagedParent(l *lander, b landBatch) string {
+	if l == nil || b.Tip == "" {
+		return ""
+	}
+	return l.batchBase
+}
+
 // landed reports a pushed batch through the merge step; false (and the line
 // FAILED, with land again as the remedy) when the store did not take it.
 func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
@@ -1039,7 +1061,17 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 	b.Cards, b.IDs = len(ids), ids
 	l.stage("report", "merge report")
 	start := time.Now()
+	// staged, and nothing past it: the batch is on the base it was pushed to, a sprint
+	// branch or a stream branch. promoted alone records it in dev.
+	evidence := "land: no --check ran; the reads accepted each card, pushed to " + b.Base
+	if l.check != "" {
+		evidence = "land: the check " + l.check + " green at " + b.Tip + ", pushed to " + b.Base
+	}
+	// Parent is the base tip the batch was merged onto. tipCarried walks that link
+	// and does not treat an earlier landing stamp, or tip^, as ancestry.
+	l.staged = &sprint.Milestone{Repo: b.Repo, Ref: b.Base, Commit: b.Tip, Parent: stagedParent(l, b), Evidence: evidence}
 	res, err := l.step(sprint.MergeReq{Stream: stream, Batch: len(ids), Who: l.c.actor}, pins)
+	l.staged = nil
 	if b.Times != nil {
 		since(&b.Times.Report, start)
 	}
@@ -1356,7 +1388,15 @@ func (l *lander) stepWith(r sprint.MergeReq, pins []landCard, plan func(*sprint.
 		if why := headWhy(s, r.Stream, pins); why != "" {
 			return sprint.Plan{Refused: []sprint.Refusal{{Key: r.Stream, Why: why}}}
 		}
-		return plan(s, r)
+		p := plan(s, r)
+		if l.staged == nil || len(pins) == 0 {
+			return p
+		}
+		ids := make([]string, len(pins))
+		for i, c := range pins {
+			ids[i] = c.id
+		}
+		return sprint.WithStaged(s, p, r.Stream, ids, l.staged)
 	}
 	named := make([]string, len(pins))
 	for i, c := range pins {
@@ -1507,8 +1547,10 @@ func (l *lander) cut(ctx context.Context, dir, stream string, cards []landCard, 
 	defer since(&t.Merge, start)
 	baseSha, why := l.cutBranch(ctx, dir, stream, base)
 	if why != "" {
+		l.batchBase = ""
 		return landCut{}, why
 	}
+	l.batchBase = baseSha
 	merged, first, env, why := l.gateBase(ctx, dir, stream, cards, baseSha)
 	switch {
 	case env != "":

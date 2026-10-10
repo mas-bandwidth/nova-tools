@@ -45,6 +45,9 @@ type WhereRecord struct {
 	// StageTimes is the median and p90 of each stage over the cards landed in the last day
 	// (sprint.CycleTimes, docs/SPEC-SPRINT.md, cycle-time-breakdownb.w1), as of the count.
 	StageTimes sprint.StageTimes `json:"stage_times,omitzero"`
+	// Delivery is the three delivery milestones apart, and a failed promotion that stands
+	// (sprint.Delivery; docs/SPEC-SPRINT.md section 7, delivery milestones).
+	Delivery *sprint.DeliveryView `json:"delivery,omitempty"`
 	// DealtFleet is each friend's count of the fleet's cards on her row
 	// (sprint.FriendsDealtFleet), where --json's dealt_fleet.
 	DealtFleet map[string]int `json:"dealt_fleet,omitempty"`
@@ -80,6 +83,8 @@ func whereOf(s *sprint.Snapshot, m Machine, now time.Time) WhereRecord {
 		Tiers: sprint.TierCounts(s), Streams: sprint.StreamTierCosts(s), StageTimes: sprint.CycleTimes(s, now), DealtFleet: sprint.FriendsDealtFleet(s),
 		ReadsWaiting: sprint.ReadsWaiting(s), Priorities: sprint.PriorityCounts(s), StreamPriorities: sprint.StreamPriorities(s),
 		ReadsWindow: sprint.ReadsWindowOf(s, m.StoppedBetween)}
+	d := sprint.Delivery(s)
+	r.Delivery = &d
 	if s.Fleet != nil {
 		r.FleetRev = s.Fleet.Revision
 	}
@@ -289,6 +294,8 @@ type WhereFacts struct {
 	Streams map[string]sprint.TierCosts
 	// StageTimes is the record's stage times (sprint.CycleTimes); empty without the record.
 	StageTimes sprint.StageTimes
+	// Delivery is the record's delivery milestones (sprint.Delivery); nil without the record.
+	Delivery *sprint.DeliveryView
 	// DealtFleet is the record's count of the fleet's cards on each friend's row
 	// (sprint.FriendsDealtFleet); nil without the record.
 	DealtFleet map[string]int
@@ -352,6 +359,7 @@ func (st *Store) WhereFacts(ctx context.Context, workRev uint64) (WhereFacts, er
 		}
 		if r, ok := readWhere(vals[2], oks[2]); ok && r.Epoch == st.epoch && (r.Rev == workRev || st.keptBy(r, f.Machine, f.Heartbeat)) {
 			f.Held, f.Critical, f.Tiers, f.Streams, f.StageTimes, f.DealtFleet = r.Held, r.Critical, r.Tiers, r.Streams, r.StageTimes, r.DealtFleet
+			f.Delivery = r.Delivery
 			f.ReadsWaiting, f.Priorities, f.StreamPriorities = r.ReadsWaiting, r.Priorities, r.StreamPriorities
 			f.ReadsWindow = r.ReadsWindow
 			f.RowCards, f.ReadCards = r.RowCards, r.ReadCards
