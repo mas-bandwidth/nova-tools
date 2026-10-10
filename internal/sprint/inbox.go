@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"maps"
+	"math"
 	"regexp"
 	"slices"
 	"sort"
@@ -639,3 +640,84 @@ func IsAlias(word string) bool { return AliasRE.MatchString(word) }
 
 // Alias is the alias of the n'th note written in the epoch, counted from 1.
 func Alias(n int) string { return "j" + strconv.Itoa(n) }
+
+// NeedWeights is what each open judgment's subjects weigh in the inbox's order: the cards
+// blocked behind the judgment, through needs and stream order (NeedsRank, the ranking of
+// view-coordinator-needs), so the inbox lists first what holds the most cards
+// (docs/SPEC-SPRINT.md, judgment-answer-latencyb-t-bb.w1). The snapshot holds the work and merge
+// tables, its open judgments and its clock.
+func NeedWeights(s *Snapshot) map[string]int {
+	behind := map[string]int{}
+	for _, n := range NeedsRank(s) {
+		if n.Kind == NeedJudgment {
+			behind[n.ID] = n.Behind
+		}
+	}
+	out := map[string]int{}
+	for _, o := range s.Open {
+		// the subject, and for a stream's judgment the cards it stopped on: the group's members
+		for _, k := range append([]string{o.Subject()}, o.Note.Primaries...) {
+			out[k] = max(out[k], behind[o.Note.ID])
+		}
+	}
+	return out
+}
+
+// AnswerWait is the waits of the judgments answered in a window: how many, and the median
+// and p90 of their waits from raise to answer. A judgment a rule answered in the step that
+// raised it waited nothing.
+type AnswerWait struct {
+	N   int           `json:"n"`
+	P50 time.Duration `json:"p50_ns"`
+	P90 time.Duration `json:"p90_ns"`
+}
+
+// AnswerWaits is the waits of the answers among notes written in the window ending at now
+// (docs/SPEC-SPRINT.md, judgment-answer-latencyb-t-bb.w1): each decided note's wait, its own
+// record (Note.Waited) or else the time from the judgment it answers, found among notes.
+func AnswerWaits(notes []Note, now time.Time, window time.Duration) AnswerWait {
+	raised := map[string]time.Time{}
+	for _, n := range notes {
+		if n.Kind == Judgment {
+			raised[n.ID] = n.At
+		}
+	}
+	var waits []time.Duration
+	for _, n := range notes {
+		if n.Kind != Decided || n.At.Before(now.Add(-window)) || n.At.After(now) {
+			continue
+		}
+		w := n.Waited
+		if at, ok := raised[n.Answers]; w == 0 && ok {
+			w = max(n.At.Sub(at), 0)
+		}
+		waits = append(waits, w)
+	}
+	slices.Sort(waits)
+	n := len(waits)
+	// p50 is the median, the mean of the middle two of an even count, as
+	// statOf (cycletime.go) and measure (stats.go) report it.
+	p50 := time.Duration(0)
+	if n > 0 {
+		p50 = waits[n/2]
+		if n%2 == 0 {
+			p50 = (waits[n/2-1] + waits[n/2]) / 2
+		}
+	}
+	at := func(q float64) time.Duration { // nearest rank
+		if n == 0 {
+			return 0
+		}
+		return waits[max(int(math.Ceil(q*float64(n)))-1, 0)]
+	}
+	return AnswerWait{N: n, P50: p50, P90: at(0.9)}
+}
+
+// Line is the wait as where prints it, "answered 24h: n=<n> wait p50=<d> p90=<d>"; "" when
+// nothing was answered in the window.
+func (a AnswerWait) Line() string {
+	if a.N == 0 {
+		return ""
+	}
+	return fmt.Sprintf("answered 24h: n=%d wait p50=%s p90=%s", a.N, a.P50.Round(time.Second), a.P90.Round(time.Second))
+}

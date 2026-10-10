@@ -929,6 +929,7 @@ func (a *app) friendCollect(ctx context.Context, st *store.Store, name string, p
 		return false, nil
 	}
 	r.Reported = at
+	r.AnswerRules = a.answersByRule()
 	step := store.FinishStep(r)
 	step.Actor, step.Epoch = r.Who, &p.Epoch
 	if op != "" {
