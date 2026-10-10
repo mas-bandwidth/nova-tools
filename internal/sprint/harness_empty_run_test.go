@@ -67,6 +67,9 @@ func TestAnEmptyRunIsNeverReworkedOntoTheFriendWhoseLaneRanItEmpty(t *testing.T)
 		wc := w.s.Fleet.Card(WorkCardID("s1-1", 2))
 		require.NotNil(t, wc, "the next attempt is dealt")
 		assert.Equal(t, FriendRow("bob"), wc.Row, "never back to amy")
+		// the new work card carries her as left, so the rebalance, a lane's start, the level
+		// and the coordinator's pass (each reading friendsLeft of the work card) keep it off her
+		assert.Contains(t, friendsLeft(wc), "amy", "the work card has left amy too")
 	})
 	t.Run("amy alone up: it waits, never back to her", func(t *testing.T) {
 		t.Parallel()

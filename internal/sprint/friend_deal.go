@@ -754,6 +754,12 @@ func friendDealUnit(s *Snapshot, c *Card, card, row, _ string, set map[string]st
 			fields[k] = v
 		}
 	}
+	// the friends the primary has left for good (ClassEmptyRun, ruleHarness) ride on the new
+	// work card, so every reader of its friends_left (the rebalance, a lane's start, the level,
+	// the coordinator's pass) keeps the attempt off them, not the deal alone
+	if left := Split(c.F(FieldFriendsLeft)); len(left) > 0 {
+		fields[FieldFriendsLeft] = strings.Join(left, ",")
+	}
 	priorityOnWork(fields, c)
 	prim := map[string]string{"attempt": itoa(attempt), "work": card}
 	for k, v := range set {
