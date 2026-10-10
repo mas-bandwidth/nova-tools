@@ -134,7 +134,8 @@ func (l *lander) fetched(ctx context.Context, dir string, args ...string) (strin
 // landJob is one stream's batch through the pass's two phases.
 type landJob struct {
 	stream string
-	cards  []landCard
+	cards  []landCard // the current batch
+	rem    []landCard // the cards after this batch; non-empty means the stream is behind
 	ids    []string
 	f      *lander // the stream's lander: its own scratch and output (fork)
 	b      landBatch
@@ -290,7 +291,7 @@ func (l *lander) pass(ctx context.Context, s *sprint.Snapshot, order []string) (
 			for i, c := range cards[:n] {
 				ids[i] = c.id
 			}
-			jobs = append(jobs, &landJob{stream: name, cards: cards[:n], ids: ids, f: l.fork(name),
+			jobs = append(jobs, &landJob{stream: name, cards: cards[:n], rem: cards[n:], ids: ids, f: l.fork(name),
 				b: landBatch{Stream: name, Status: "refused", Cards: n, IDs: ids, Repo: cards[0].repo, Base: cards[0].base, DryRun: l.dry}})
 		}
 		if len(jobs) == 0 {
@@ -699,7 +700,8 @@ func (l *lander) merges(jobs []*landJob, contexts map[*landJob]context.Context, 
 func (l *lander) merge(ctx context.Context, j *landJob) {
 	b, stream, dir := &j.b, j.stream, j.dir
 	baseSha := j.cut.baseSha
-	merged, failed, why := l.mergeCards(ctx, dir, stream, j.cards, j.cut, b.Times, false)
+	behind := len(j.rem) > 0
+	merged, failed, why := l.mergeCards(ctx, dir, stream, j.cards, j.cut, b.Times, false, behind)
 	if why := gateWaitWhy(ctx); why != "" {
 		j.refuse(why)
 		return
@@ -725,7 +727,7 @@ func (l *lander) merge(ctx context.Context, j *landJob) {
 			j.gated = true
 		} else {
 			l.ledgerLog = nil // the second build logs the same resolutions
-			merged, failed, baseSha, _, why = l.build(ctx, dir, stream, j.cards, b.Times, true)
+			merged, failed, baseSha, _, why = l.build(ctx, dir, stream, j.cards, b.Times, true, behind)
 			if why := gateWaitWhy(ctx); why != "" {
 				j.refuse(why)
 				return
@@ -917,7 +919,8 @@ func (l *lander) again(ctx context.Context, j *landJob, newBase string, pushed [
 	}
 	b, dir := &j.b, j.dir
 	l.ledgerLog = nil
-	merged, failed, baseSha, _, why := l.build(ctx, dir, j.stream, j.cards, b.Times, false)
+	behind := len(j.rem) > 0
+	merged, failed, baseSha, _, why := l.build(ctx, dir, j.stream, j.cards, b.Times, false, behind)
 	b.Also, l.ledgerLog = append(b.Also, l.ledgerLog...), nil
 	if wait := gateWaitWhy(ctx); wait != "" {
 		return wait

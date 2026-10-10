@@ -753,6 +753,30 @@ func TestLandEndsTheBatchAtACardThatFailsTheMechanicalChecks(t *testing.T) {
 	}
 }
 
+// When a stream is behind (more than one batch waiting), cards land as one batch in work
+// order; a conflicting card stops only itself for redo on the tip, and later cards land
+// in the same pass (docs/SPEC-SPRINT.md section 7, merging batches per stream in work order).
+func TestABehindStreamLandsAsOneBatchInWorkOrder(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.ok("add --stream s1 --count 3")
+	heads := map[string]string{}
+	for _, id := range []string{"s1-1", "s1-2", "s1-3"} {
+		heads[id] = r.head(id, "main", id+".txt", id+"\n")
+	}
+	r.queued(heads, "s1-1", "s1-2", "s1-3")
+	// s1-2 has a conflicting head (different content on s1-1.txt)
+	heads["s1-2"] = r.head("s1-2", "main", "s1-1.txt", "conflict\n")
+	out := r.ok("land --repo-dir " + r.clone + " --base main")
+	// batch lands s1-1 and s1-3; s1-2 is reported as conflict but stream goes on
+	assert.Contains(t, out, "LAND OK stream=s1 cards=2 base=main")
+	assert.Contains(t, out, "ids=s1-1..s1-3")
+	// s1-1 and s1-3 land in work order, s1-2 is reworked at tip
+	assert.Equal(t, []string{"land s1-3 (sprint stream s1)", "land s1-1 (sprint stream s1)", "base"}, r.mainLog())
+	assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "ready/returned", "s1-3": "landed/merged"}, r.places("s1-1", "s1-2", "s1-3"))
+	r.clean()
+}
+
 // A card based on a protected branch (dev, main) is refused at land, dry run and land
 // alike, before any git, in a stream not marked for its repository, with the mark as
 // the remedy; once marked, the stream lands (docs/SPEC-SPRINT.md section 7).
