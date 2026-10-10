@@ -192,6 +192,8 @@ type TickReq struct {
 	IdleAlarm bool
 	// WakeFriend wakes a friend by bus message during the stall ladder (cmd/nova-sprint/friendcards.go).
 	WakeFriend func(friend string, rung int, d time.Duration) error
+	// SendWidthGoal sends an idle-loaded friend the width goal by bus message (cmd/nova-sprint/friendcards.go).
+	SendWidthGoal func(friend string, reads, work, width int, idle int64) error
 	// Sessions is each friend's session as her last beat carries it, and whether the
 	// coordinator holds her, read by the binding with every tick (coordinator_pass.go);
 	// nil is none read, and no friend is deaf.
