@@ -540,3 +540,15 @@ that reads and never answers, no port): `Roster` at `Timeout` 20 ms sent its pip
 refused in the words above; `AddAll` and `Ack` sent once; a blocking `Read` of 10 ms with a 20 ms
 margin and 20 ms timeout refused at 50 ms (20 + 10 + 20) having sent XREADGROUP once. The tests
 assert counts and the refusal, never elapsed time. A cancelled caller is not that refusal and is not retried.
+
+### Seat bus-push receipt
+
+The seat's bus receiver proof is distinct from a friend's session pong and from the
+bus's own deaf-name guard. A successful coordinator receiver pass reports `seat push
+--actor <seat> --beat bus` to the sprint at most once a minute; no failed read or delivery
+renews it. The sprint binds the receipt to the current seat generation, epoch and
+judgments delivery target and rejects it after three minutes without another success.
+A `recv --forever --exec` receiver renews the receipt after completed reads, including
+an empty blocking read, at most once per minute while it belongs to the current seat.
+A receiver for another name supplies no
+seat proof. The receiver still uses `--exec` and acks a message only on its success.

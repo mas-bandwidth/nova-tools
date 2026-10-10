@@ -2539,7 +2539,10 @@ nova-sprint seat
 nova-sprint seat login --store <secrets dir> --as <seat> --key <keyfile> --secret <NAME> --user <redis user> --redis <addr> [--sops <path>]
 nova-sprint seat login --check
 nova-sprint seat logout
-nova-sprint seat push [--harness <name> --target <dir> [--session <id>]] [--json]
+nova-sprint seat deliver --actor <seat> [--text <message>] # otherwise reads standard input, at most 1 MiB
+nova-sprint seat push [--harness <name> --target <dir> [--session <id>]] [--sent <nonce> [--failed <reason>]] [--beat bus|friends|transitions [--failed <reason>]] [--observe bus|friends|transitions --json] [--actor <seat>] [--json]
+nova-sprint friends watch --actor <seat> [--state <file>]
+nova-sprint status watch --actor <seat> [--state <file>]
 nova-sprint seat pong <nonce>
 nova-sprint seat watch <dir> [--json]
 nova-sprint seat install --harness <name> --target <dir> [--session <id>] [--server <host:port>] [--config-seat <name> --config-dsn <dsn> --config-password-env <NAME>] [--dry-run]

@@ -4657,6 +4657,55 @@ TestLandedRecordsAPushFoundOnTheBranch).
 
 ## 8. Notifications
 
+### The proven seat push set
+
+A seat-changing command requires four pushes: judgments, bus, friends check and
+transitions. The judgments retain the delivered nonce and the session's `seat pong`;
+no observer beat is a pong. The judgment proof keeps its existing fifteen-minute
+bound. The bus and transition observers beat every minute, and the friends check
+beats every ten minutes. An observer is down after three periods without a successful
+pass, immediately after a reported failure, for a future timestamp, for another seat
+generation or epoch, or after the delivery target or session changes. All four records
+share the existing seat push key; concurrent observer merges preserve other beats
+and the judgment nonce.
+
+`start`, `stop`, `resume`, `hold`, `unhold`, `coordinator`, `friend health` and `fleet up`
+print one `PUSH source=<judgments|bus|friends|transitions> status=<UP|DOWN>
+last=<RFC3339|-> period=<duration> command=<arm command>` line per source. JSON keeps
+one result object with a `pushes` array. Any down source refuses the operation before
+changing work, naming that source and its native arm command. A handover requires
+the current seat’s complete set and the next holder’s separate judgments nonce proof;
+the next holder’s observers bind to the new seat generation before any later work moves.
+A take (`coordinator <name> --take --approved-by <owner>`) gates on the next holder’s
+judgments proof alone: the away holder’s pushes are necessarily stale, and requiring
+them removes the only recovery path for a dead seat. Each `where` frame, including
+`--watch`, shows the same lines below the seat title, or the same array under JSON.
+
+`nova-sprint friends watch --actor <seat> [--state <file>]` checks the friends' current
+stored status, work counts and missing-evidence reasons every ten minutes.
+`nova-sprint status watch --actor <seat> [--state <file>]` observes the four table shapes
+and machine state every minute. Both are native loops on the caller; with a sprint
+server, they read their observations and submit their receipts through its API without
+holding the server's control line. A changed snapshot is delivered through the
+judgments' recorded harness target. Unchanged snapshots are not delivered twice. An
+optional state file advances only after delivery succeeds; a beat follows persistence.
+A failed read, delivery or state write does not renew proof and records a failure when
+the store can be reached. The observer stops on its own interrupt and never supplies
+a friend's session evidence.
+
+The arm commands are `nova-sprint seat install --actor <seat> --harness <harness>
+--target <session-dir>`, `nova-bus recv --as <seat> --forever --exec
+'nova-sprint seat deliver --actor <seat>'`, `nova-sprint friends watch --actor <seat>` and
+`nova-sprint status watch --actor <seat>`. The native `seat deliver` command reads the receiver's input and sends it to the
+current proven judgments target; a resident harness with no explicit session id is
+refused, and this transport command never mints a receiver proof. The bus receiver's
+completed read passes renew its seat receipt while the receiver runs for the holder.
+The receipt API is `nova-sprint seat push --actor <seat> --beat
+bus|friends|transitions [--failed <reason>]`. `--observe bus|friends|transitions --json`
+returns the native observers' consistent source facts; neither flag proves judgments. A native observer submits the epoch, seat generation,
+selected target and session that its pass read; a changed binding refuses that receipt.
+
+
 One stream of notifications, written by the same step as the move that caused
 it and visible at that step's logical commit (section 10), never before; read
 from the coordinator's cursor. Two kinds.
@@ -4900,6 +4949,7 @@ The mechanisms: a **blocking read** waits in the store until the thing arrives (
 
 | loop | direction | mechanism | cadence | card or reason |
 |---|---|---|---|---|
+| coordinator native observers | sprint state to the coordinator session | timer poll | friends watch every 10 min; status watch every 1 min; only a changed snapshot is delivered | measured: session evidence can expire without a table write, and the periodic pass checks that deadline; proof is renewed only after a successful read, delivery when needed, and state persistence |
 | friend bus read | bus to the friend's daemon | timer poll | XREADGROUP BLOCK BeatEvery (1 s) while the session is free; while a turn runs, in one-shot mode or for a passive harness a 0-block read or a peek, then a 1 s Pause | card friend-bus-read-blocks |
 | notification delivery recovery | bus to the existing Codex queue | timer poll | one bounded XREADGROUP BLOCK pass of at most 32 entries, then BeatEvery (1 s); enqueue failures back off ten seconds to one minute; ready courtesies share a 30 s configurable coalescing window | the journal owes recovery and queue capacity is observed only when enqueue is due; the Codex queue offers no capacity-change event, so bounded retries preserve full payloads without an unread-input flood (SPEC-FRIEND.md, Notifications) |
 | friend delivery | the friend's daemon into her session | delivery into a session | each batch as one turn; the tmux adapter looks at the pane every TmuxPoll (500 ms) until its prompt is free | the pane has no idle event; the wait is for the pane, never for a message |
