@@ -468,8 +468,7 @@ func TestULIDIsCrockfordAndTimeOrdered(t *testing.T) {
 
 // A recipient's stream keeps only the newest KeepaliveWindow keepalive
 // entries, trimmed as they are acknowledged, and every audited message stays
-// on the stream and on the log; keepalives never reach the audited log
-// (SPEC-BUS.md, the data: retention).
+// on the stream and on the log (SPEC-BUS.md, the data: retention).
 func TestTheBusTrimsAckedKeepalives(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -514,8 +513,14 @@ func TestTheBusTrimsAckedKeepalives(t *testing.T) {
 
 	log, err := b.Log(ctx, "-")
 	require.NoError(t, err)
-	require.Len(t, log, audited, "the log holds every audited message and no keepalive")
+	gotLog := map[string]bool{}
 	for _, e := range log {
-		assert.False(t, IsKeepalive(e.Message().Subject), "no keepalive is on the audited log")
+		if !IsKeepalive(e.Message().Subject) {
+			gotLog[e.Message().ID] = true
+		}
+	}
+	assert.Len(t, gotLog, audited, "every audited message is on the log")
+	for id := range want {
+		assert.True(t, gotLog[id], "the audited message %s is kept on the log", id)
 	}
 }

@@ -268,8 +268,9 @@ type Trimmer interface {
 	// beyond the newest window of them and answers how many it deleted. An
 	// entry is acknowledged when it has been delivered (its id is at or below
 	// the group's last delivered id) and is not pending. A keepalive is a
-	// message whose subject IsKeepalive. It is one round trip.
-	TrimKeepalives(ctx context.Context, stream, group string, window int) (int64, error)
+	// message whose subject IsKeepalive. When entry is provided, it trims only
+	// if that entry is a keepalive. It is one round trip.
+	TrimKeepalives(ctx context.Context, stream, group string, window int, entry ...string) (int64, error)
 }
 
 // Waiter is the two reads a wait makes over a Store that also holds them: the
@@ -344,10 +345,9 @@ func (r *Refusal) Error() string { return strings.Join(r.Problems, "; ") }
 // past its life, is refused. Without a token a lost response retried is a
 // second message.
 //
-// A message whose subject IsKeepalive is a keepalive: it is sent to every
-// recipient's stream and not to the log, and a recipient's stream keeps only
-// the newest KeepaliveWindow of them, trimmed as they are acknowledged
-// (SPEC-BUS.md, the data: retention).
+// A message whose subject IsKeepalive is a keepalive: a recipient's stream
+// keeps only the newest KeepaliveWindow of them, trimmed as they are
+// acknowledged (SPEC-BUS.md, the data: retention).
 func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 	m, now, friends, err := b.check(ctx, m)
 	if err != nil {
@@ -360,13 +360,7 @@ func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 	for _, n := range slices.Compact(slices.Sorted(slices.Values(slices.Concat(m.To, m.CC)))) {
 		recipients = append(recipients, StreamOf(n))
 	}
-	// A keepalive is liveness chatter, not an audited message: it goes to the
-	// recipients' streams and never to the log, which holds audited messages
-	// only (SPEC-BUS.md, the data: retention).
-	streams := recipients
-	if !IsKeepalive(m.Subject) {
-		streams = append(slices.Clone(recipients), LogKey)
-	}
+	streams := append(recipients, LogKey)
 	if m.Token != "" {
 		return b.sendOnce(ctx, m, now, streams, owe(m, friends))
 	}
@@ -528,7 +522,7 @@ func (b *Bus) AckEntry(ctx context.Context, as, entry string) (acked bool, err e
 	if err != nil {
 		return false, err
 	}
-	if err := b.trimKeepalives(ctx, as); err != nil {
+	if err := b.trimKeepalives(ctx, as, entry); err != nil {
 		return n > 0, err
 	}
 	return n > 0, nil
@@ -606,12 +600,12 @@ func (b *Bus) pendingOf(ctx context.Context, as string, ids []string) (map[strin
 // trimKeepalives deletes the recipient's acknowledged keepalives beyond the
 // newest window of them, one store call, when the store is a Trimmer
 // (SPEC-BUS.md, the data: retention). A store without one keeps every entry.
-func (b *Bus) trimKeepalives(ctx context.Context, as string) error {
+func (b *Bus) trimKeepalives(ctx context.Context, as string, entry ...string) error {
 	tr, ok := b.Store.(Trimmer)
 	if !ok {
 		return nil
 	}
-	_, err := tr.TrimKeepalives(ctx, StreamOf(as), as, KeepaliveWindow)
+	_, err := tr.TrimKeepalives(ctx, StreamOf(as), as, KeepaliveWindow, entry...)
 	return err
 }
 

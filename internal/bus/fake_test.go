@@ -366,8 +366,9 @@ func (f *Fake) Ack(_ context.Context, stream, group string, entries ...string) (
 // TrimKeepalives keeps the newest window of the stream's keepalives and
 // deletes the acknowledged ones past it, leaving every audited entry
 // (SPEC-BUS.md, the data: retention). An entry is acknowledged when it is at
-// or below the group's last delivered id and is not pending.
-func (f *Fake) TrimKeepalives(_ context.Context, stream, group string, window int) (int64, error) {
+// or below the group's last delivered id and is not pending. When entry is
+// provided, it trims only if that entry is a keepalive.
+func (f *Fake) TrimKeepalives(_ context.Context, stream, group string, window int, entry ...string) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.trip(); err != nil {
@@ -376,6 +377,20 @@ func (f *Fake) TrimKeepalives(_ context.Context, stream, group string, window in
 	es, ok := f.streams[stream]
 	if !ok {
 		return 0, nil
+	}
+	if len(entry) > 0 && entry[0] != "" {
+		foundLive := false
+		for _, e := range es {
+			if e.Entry == entry[0] {
+				if IsKeepalive(e.Fields["subject"]) {
+					foundLive = true
+				}
+				break
+			}
+		}
+		if !foundLive {
+			return 0, nil
+		}
 	}
 	g := f.groups[stream+"/"+group]
 	keep := 0

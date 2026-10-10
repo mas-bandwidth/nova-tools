@@ -2885,9 +2885,8 @@ written from `serve`'s states; the keepalive's TLA+ module beside
 `tla/Friend.tla` is owed. Each friend
 `serve` pings adds two keepalives a second to the streams (a ping and its
 daemon-pong), about 170,000 a day per friend; the bus keeps a recipient's
-keepalives to the newest `KeepaliveWindow` and writes none of them to the
-audited log (SPEC-BUS.md, the data: retention), so the traffic no longer grows
-the bus without bound. The beat carries the
+keepalives to the newest `KeepaliveWindow` (SPEC-BUS.md, the data: retention),
+so the traffic on the recipient streams no longer grows without bound. The beat carries the
 last session activity (above) and no
 numbers until `friend beat` takes them. A session that reads the bus itself
 (the stub harnesses) proves nothing to the daemon until it runs `pong`.

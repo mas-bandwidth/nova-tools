@@ -312,6 +312,23 @@ func (r Redis) Forward(ctx context.Context, key, state string, ids ...string) ([
 // it is not in the group's pending list.
 var trimKeepalives = redis.NewScript(`
 local window = tonumber(ARGV[2])
+if ARGV[3] and ARGV[3] ~= '' then
+  local target = redis.pcall('XRANGE', KEYS[1], ARGV[3], ARGV[3])
+  if type(target) == 'table' and #target > 0 then
+    local fields = target[1][2]
+    local subject = ''
+    for i = 1, #fields, 2 do
+      if fields[i] == 'subject' then subject = fields[i + 1] end
+    end
+    local s = string.lower(subject)
+    local live = string.find(s, '^ping') or string.find(s, '^pong') or string.find(s, '^daemon%-pong') or string.find(s, '^keepalive')
+    if not live then
+      return 0
+    end
+  else
+    return 0
+  end
+end
 local pending = {}
 local pel = redis.pcall('XPENDING', KEYS[1], ARGV[1], '-', '+', 1000000)
 if type(pel) == 'table' and not pel['err'] then
@@ -362,11 +379,16 @@ return n
 
 // TrimKeepalives keeps the newest window of a stream's keepalive entries and
 // deletes the acknowledged ones past it, leaving every audited entry
-// (SPEC-BUS.md, the data: retention). It is one round trip.
-func (r Redis) TrimKeepalives(ctx context.Context, stream, group string, window int) (int64, error) {
+// (SPEC-BUS.md, the data: retention). When entry is provided, it trims only
+// if that entry is a keepalive. It is one round trip.
+func (r Redis) TrimKeepalives(ctx context.Context, stream, group string, window int, entry ...string) (int64, error) {
 	var n int64
+	var target string
+	if len(entry) > 0 {
+		target = entry[0]
+	}
 	err := r.call(ctx, false, 0, func(ctx context.Context) (err error) {
-		n, err = trimKeepalives.Run(ctx, r.C, []string{stream}, group, window).Int64()
+		n, err = trimKeepalives.Run(ctx, r.C, []string{stream}, group, window, target).Int64()
 		return err
 	})
 	if err != nil {

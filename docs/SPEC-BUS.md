@@ -13,7 +13,7 @@ nova-bus on 2026-10-04, when the git bus was removed.
   named `<name>`, made on the recipient's first `recv` (`XGROUP CREATE ... 0
   MKSTREAM`). Every reader is the one consumer `nova-bus2`: who holds an entry
   is told by its idle time, never by a name.
-- One stream `bus2:log` holding every audited message once, for history and audit.
+- One stream `bus2:log` holding every message once, for history and audit.
 - A message is one stream entry with the fields `id` (a ULID the sender makes
   from the store's time: `TIME`, never the client's clock; its first ten random
   bits are the microsecond, so ids sort by the store's time), `from`, `to`
@@ -39,14 +39,13 @@ nova-bus on 2026-10-04, when the git bus was removed.
   message whose subject is one of the keepalive words (a ping `PING <nonce>`,
   a pong, a daemon-pong or the bare keepalive word; `IsKeepalive`, a prefix
   match without case): the liveness chatter of the friend daemon, not audited
-  traffic. A keepalive is never written to `bus2:log`, and a recipient's
-  stream keeps only the newest `KeepaliveWindow` (16) keepalive entries. The
-  bus trims a recipient's acknowledged keepalives past that window when it
-  acks (one store call, `Store.TrimKeepalives`; a store without it keeps
-  every entry): an acknowledged keepalive is one at or below the group's last
-  delivered id and not pending, so a keepalive a reader was handed and did not
-  ack is never trimmed. The one key the store removes is a token's record, by
-  its own expiry.
+  traffic. A recipient's stream keeps only the newest `KeepaliveWindow` (16)
+  keepalive entries. The bus trims a recipient's acknowledged keepalives past
+  that window when it acks (one store call, `Store.TrimKeepalives`; a store
+  without it keeps every entry): an acknowledged keepalive is one at or below
+  the group's last delivered id and not pending, so a keepalive a reader was
+  handed and did not ack is never trimmed. The one key the store removes is a
+  token's record, by its own expiry.
 - The keys keep the `bus2:` prefix (`bus2:to:<name>`, `bus2:log`, and
   `bus2:keepalive:<name>`, the coordinator keepalive), and the consumer keeps its
   `nova-bus2` name, although the tool is nova-bus: the fleet's store already holds
