@@ -31,9 +31,7 @@ func TestAdoptCheckReachesItsReceipt(t *testing.T) {
 			staged := tc.staged
 			t.Parallel()
 			play, err := exec.LookPath("ansible-playbook")
-			if err != nil {
-				t.Skip("ansible-playbook is required on the fleet bench")
-			}
+			require.NoError(t, err, "the check-mode acceptance gate requires ansible-playbook")
 			dir := t.TempDir()
 			home := filepath.Join(dir, "home")
 			bin := filepath.Join(home, ".local/bin")
@@ -136,8 +134,7 @@ else: sys.exit('unexpected fixture command: '+name+' '+repr(args))
 			} else {
 				require.NoError(t, err, string(out))
 				if tc.check {
-					assert.Contains(t, string(out), "ADOPT DRY-RUN OK host=localhost")
-					assert.Contains(t, string(out), "held=1")
+					assert.Regexp(t, `ADOPT DRY-RUN OK host=localhost would_replace=[0-9]+ held=1 stops=[^[:space:]]+ reinstalls=[^[:space:]]+`, string(out))
 				} else {
 					assert.Contains(t, string(out), "WINDOW host=localhost")
 					assert.Contains(t, string(out), "held=nova-bus")
