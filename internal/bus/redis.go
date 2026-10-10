@@ -36,6 +36,7 @@ const (
 // a context's deadline (redisconn sets ContextTimeoutEnabled).
 type Redis struct {
 	C       *redis.Client
+	PendingCap int
 	Timeout time.Duration
 	Margin  time.Duration // a blocking read's wait beyond its block (BlockMargin when zero)
 }
@@ -115,25 +116,101 @@ func (r Redis) Members(ctx context.Context) (friends, machines []string, now tim
 	return friends, machines, now, nil
 }
 
+
+func (r *Redis) SetPendingCap(c int) {
+	r.PendingCap = c
+}
+
+func (r Redis) pendingCap() int {
+	if r.PendingCap > 0 {
+		return r.PendingCap
+	}
+	return 20
+}
 func (r Redis) AddAll(ctx context.Context, streams []string, fields map[string]string, marks ...Mark) error {
 	return r.call(ctx, false, 0, func(ctx context.Context) error {
-		pipe := r.C.TxPipeline()
-		for _, s := range streams {
-			pipe.XAdd(ctx, &redis.XAddArgs{Stream: s, ID: "*", Values: toValues(fields)})
+		names := slices.Sorted(maps.Keys(fields))
+		args := []any{r.pendingCap(), len(streams), len(names)}
+		for _, n := range names {
+			args = append(args, n, fields[n])
 		}
+		keys := slices.Clone(streams)
 		for _, m := range marks {
+			keys = append(keys, m.Key)
 			switch {
 			case m.Clear:
-				pipe.HDel(ctx, m.Key, m.Field)
+				args = append(args, "del", m.Field)
 			case m.Forward:
-				forward.Eval(ctx, pipe, []string{m.Key}, m.Value, m.Field) // the script's text: a pipeline cannot fall back from EVALSHA
+				args = append(args, "fwd", m.Field, m.Value)
 			default:
-				pipe.HSet(ctx, m.Key, m.Field, m.Value)
+				args = append(args, "set", m.Field, m.Value)
 			}
 		}
-		return redisconn.Exec(ctx, pipe)
+		res, err := addAll.Eval(ctx, r.C, keys, args...).StringSlice()
+		if err != nil {
+			return err
+		}
+		if len(res) > 0 {
+			return errors.New(strings.Join(res, "; "))
+		}
+		return nil
 	})
 }
+
+var addAll = redis.NewScript(forwardLua + `
+local cap = tonumber(ARGV[1])
+local ns = tonumber(ARGV[2])
+local nf = tonumber(ARGV[3])
+local fields = {}
+for i = 1, nf * 2 do fields[i] = ARGV[3 + i] end
+local refusals = {}
+local valid_streams = {}
+for i = 1, ns do
+  local s = KEYS[i]
+  if string.sub(s, 1, 10) == "bus2:to:" then
+    local name = string.sub(s, 11)
+    local total = redis.call('XLEN', s)
+    local acked = tonumber(redis.call('GET', 'bus2:acked:' .. name) or '0')
+    local unack = total - acked
+    if unack >= cap then
+      table.insert(refusals, string.format("OVERLOAD: recipient %s has %d unacknowledged messages, at most %d", name, unack + 1, cap))
+    else
+      table.insert(valid_streams, s)
+    end
+  else
+    table.insert(valid_streams, s)
+  end
+end
+local has_recip = false
+for _, s in ipairs(valid_streams) do
+  if string.sub(s, 1, 10) == "bus2:to:" then
+    has_recip = true
+    break
+  end
+end
+if not has_recip and #refusals > 0 then
+  return refusals
+end
+for _, s in ipairs(valid_streams) do
+  redis.call('XADD', s, '*', unpack(fields))
+end
+local j, k = 4 + nf * 2, ns + 1
+local now = redis.call('TIME')[1]
+while j <= #ARGV do
+  if ARGV[j] == 'del' then
+    redis.call('HDEL', KEYS[k], ARGV[j + 1])
+    j = j + 2
+  elseif ARGV[j] == 'fwd' then
+    forward(KEYS[k], ARGV[j + 2], ARGV[j + 1], now)
+    j = j + 3
+  else
+    redis.call('HSET', KEYS[k], ARGV[j + 1], ARGV[j + 2])
+    j = j + 3
+  end
+  k = k + 1
+end
+return refusals
+`)
 
 // addOnce is AddOnce's one atomic step: Redis runs a script alone, so no
 // other send under the key comes between its GET and its writes. KEYS are the
@@ -365,6 +442,10 @@ func (r Redis) Release(ctx context.Context, stream, group string, ids ...string)
 func (r Redis) Ack(ctx context.Context, stream, group string, ids ...string) (n int64, err error) {
 	err = r.call(ctx, false, 0, func(ctx context.Context) (err error) {
 		n, err = r.C.XAck(ctx, stream, group, ids...).Result()
+		if n > 0 && strings.HasPrefix(stream, Prefix) {
+			name := strings.TrimPrefix(stream, Prefix)
+			r.C.IncrBy(ctx, "bus2:acked:"+name, n)
+		}
 		return err
 	})
 	return n, err

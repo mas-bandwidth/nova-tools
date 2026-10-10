@@ -1,6 +1,7 @@
 package bustest
 
 import (
+	"errors"
 	"context"
 	"fmt"
 	"maps"
@@ -21,6 +22,8 @@ import (
 // order. A test makes its own with NewFake; nothing is shared.
 type Fake struct {
 	mu      sync.Mutex
+	PendingCap int
+	acked   map[string]int64
 	names   []string
 	now     time.Time
 	streams map[string][]bus.Entry
@@ -136,14 +139,62 @@ func (f *Fake) Members(context.Context) ([]string, []string, time.Time, error) {
 	return friends, machines, f.now, nil
 }
 
+
+func (f *Fake) SetPendingCap(c int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.PendingCap = c
+}
+
+func (f *Fake) pendingCap() int {
+	if f.PendingCap > 0 {
+		return f.PendingCap
+	}
+	return 20
+}
 func (f *Fake) AddAll(_ context.Context, streams []string, fields map[string]string, marks ...bus.Mark) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.trip(); err != nil {
 		return err
 	}
-	f.add(streams, fields, marks)
-	return f.lost(streams)
+	cap := f.pendingCap()
+	var valid []string
+	var refusals []string
+	for _, s := range streams {
+		if strings.HasPrefix(s, bus.Prefix) {
+			name := strings.TrimPrefix(s, bus.Prefix)
+			total := int64(len(f.streams[s]))
+			var acked int64
+			if f.acked != nil {
+				acked = f.acked[name]
+			}
+			unack := total - acked
+			if int(unack) >= cap {
+				refusals = append(refusals, fmt.Sprintf("OVERLOAD: recipient %s has %d unacknowledged messages, at most %d", name, unack+1, cap))
+				continue
+			}
+		}
+		valid = append(valid, s)
+	}
+	hasRecip := false
+	for _, s := range valid {
+		if strings.HasPrefix(s, bus.Prefix) {
+			hasRecip = true
+			break
+		}
+	}
+	if !hasRecip && len(refusals) > 0 {
+		return errors.New(strings.Join(refusals, "; "))
+	}
+	f.add(valid, fields, marks)
+	if err := f.lost(valid); err != nil {
+		return err
+	}
+	if len(refusals) > 0 {
+		return errors.New(strings.Join(refusals, "; "))
+	}
+	return nil
 }
 
 // lost is the answer of a write that committed: Lose once, when it is set
@@ -380,6 +431,13 @@ func (f *Fake) Ack(_ context.Context, stream, group string, entries ...string) (
 			delete(g.pending, e)
 			n++
 		}
+	}
+	if n > 0 && strings.HasPrefix(stream, bus.Prefix) {
+		name := strings.TrimPrefix(stream, bus.Prefix)
+		if f.acked == nil {
+			f.acked = map[string]int64{}
+		}
+		f.acked[name] += n
 	}
 	return n, nil
 }

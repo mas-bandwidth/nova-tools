@@ -32,6 +32,7 @@ func StreamOf(name string) string { return Prefix + name }
 
 // Limits (SPEC-BUS.md, the data).
 const (
+	DefaultPendingCap = 20
 	MaxBody = 1 << 20 // bytes of a body
 	MaxName = 64      // bytes of a name
 )
@@ -272,6 +273,7 @@ func (b *Bus) Waiter() (Waiter, error) {
 // Bus is the rules over a Store.
 type Bus struct {
 	Store Store
+	PendingCap int
 	// Rand fills a ULID's random half; crypto/rand when nil.
 	Rand func([]byte) (int, error)
 	// TokenLife is how long a retry under a send's token answers the
@@ -314,6 +316,14 @@ func (r *Refusal) Error() string { return strings.Join(r.Problems, "; ") }
 // arguments and gets the original. The same token with other arguments, or
 // past its life, is refused. Without a token a lost response retried is a
 // second message.
+
+func (b *Bus) pendingCap() int {
+	if b.PendingCap > 0 {
+		return b.PendingCap
+	}
+	return DefaultPendingCap
+}
+
 func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 	m, now, friends, err := b.check(ctx, m)
 	if err != nil {
@@ -327,15 +337,27 @@ func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 		streams = append(streams, StreamOf(n))
 	}
 	streams = append(streams, LogKey)
+	if sc, ok := b.Store.(interface{ SetPendingCap(int) }); ok {
+		sc.SetPendingCap(b.pendingCap())
+	}
 	if m.Token != "" {
-		return b.sendOnce(ctx, m, now, streams, owe(m, friends))
+		res, err := b.sendOnce(ctx, m, now, streams, owe(m, friends))
+		if err != nil {
+			if strings.HasPrefix(err.Error(), "OVERLOAD:") {
+				return Message{}, &Refusal{[]string{err.Error()}}
+			}
+			return Message{}, err
+		}
+		return res, nil
 	}
 	if err := b.Store.AddAll(ctx, streams, m.Fields(), owe(m, friends)...); err != nil {
+		if strings.HasPrefix(err.Error(), "OVERLOAD:") {
+			return Message{}, &Refusal{[]string{err.Error()}}
+		}
 		return Message{}, err
 	}
 	return m, nil
 }
-
 // Check is Send that writes nothing (a send's --dry-run): every problem of the message
 // named at once, as Send names them, and the message as it would be sent, at the store's
 // time with its recipients sorted, and no id: an id is made for a message sent.

@@ -464,3 +464,38 @@ func TestULIDIsCrockfordAndTimeOrdered(t *testing.T) {
 	assert.Equal(t, "01M40T5AG0", a[:10], "the first ten characters are the millisecond time (computed apart from this code)")
 	assert.NotEqual(t, a[10:], z[10:], "the random half differs")
 }
+
+
+
+func TestAFullInboxRefusesWithATypedOverload(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	b, _ := rig(t, "ada", "bob", "cy")
+	b.PendingCap = 3
+
+	for i := 0; i < 3; i++ {
+		_, err := b.Send(ctx, msg("ada", "bob"))
+		require.NoError(t, err)
+	}
+
+	_, err := b.Send(ctx, msg("ada", "bob"))
+	var r *Refusal
+	require.ErrorAs(t, err, &r)
+	assert.Contains(t, err.Error(), "OVERLOAD")
+	assert.Contains(t, err.Error(), "bob")
+
+	_, err = b.Send(ctx, msg("ada", "bob", "cy"))
+	require.ErrorAs(t, err, &r)
+	assert.Contains(t, err.Error(), "OVERLOAD")
+	assert.Contains(t, err.Error(), "bob")
+
+	e, ok, err := b.Recv(ctx, "bob", 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	_, err = b.AckEntry(ctx, "bob", e.Entry)
+	require.NoError(t, err)
+
+	_, err = b.Send(ctx, msg("ada", "bob"))
+	require.NoError(t, err)
+}
