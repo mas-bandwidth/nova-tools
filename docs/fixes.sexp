@@ -133,13 +133,4 @@
     lane starts a fresh session itself, seeded from the friend's own files, its card continues in it
     (once per card; after that the refusal is the card's business again), and the seat is told once
     per renewal."
-   :origin "the owner 2026-10-10: what else is manual that should be automatic from the machine")
-  (fix "card-lint-names-in-paths-are-not-names" :release "v1.2.6" :status "in-progress"
-   :title "A path in a card brief is not a person's name"
-   :text "The card lint's personal-name check reads the tokens of a SOURCE or PATHS line and skips
-    every token with a slash or a `.md` suffix, so a ledger under a named home is not a person, and it
-    matches a name only as a whole word, so an ordinary word that holds one (`every`, `summary`) is
-    not the name; the names come from the caller -- `--names <file>` at `nova-swarm lint
-    --base-check`, and the explicit Names and the friends table the add hands over -- so a bare name
-    in prose still draws personal-name."
-   :origin "dogfood 2026-10-10: add refused a brief over a path segment")))
+   :origin "the owner 2026-10-10: what else is manual that should be automatic from the machine")))
