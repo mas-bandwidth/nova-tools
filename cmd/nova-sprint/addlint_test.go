@@ -6,28 +6,29 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/testgit"
 )
 
-// twinRemote is a bare repository standing in for a card's REPO:, every branch named at one
-// commit holding the files given (path to text), and the app set to keep the lander's clones
-// under a test directory and run git with the test identity, so add reads a brief's base with
-// no network. It returns the repository and the commit.
-func twinRemote(t *testing.T, ta *testApp, files map[string]string, branches ...string) (remote, sha string) {
+// twinRepo is twinRemote with the pieces a test that moves the base needs: the work tree on
+// the first branch and the git runner that wrote it, so a later commit can move the branch
+// the brief's BASE names.
+func twinRepo(t *testing.T, ta *testApp, files map[string]string, branches ...string) (remote, sha, work string, git func(in string, args ...string) string) {
 	t.Helper()
 	dir := t.TempDir()
-	git := func(in string, args ...string) string {
+	git = func(in string, args ...string) string {
 		t.Helper()
 		res, err := gitrun.Run(context.Background(), gitrun.Options{C: in, Env: testgit.Environ("GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1"), OwnRepo: in != ""}, args...)
 		require.NoError(t, err, "git %v: %s", args, res.Stderr)
 		return strings.TrimSpace(string(res.Stdout))
 	}
-	remote, work := filepath.Join(dir, "remote.git"), filepath.Join(dir, "work")
+	remote, work = filepath.Join(dir, "remote.git"), filepath.Join(dir, "work")
 	git("", "init", "-q", "--bare", "-b", branches[0], remote)
 	git("", "init", "-q", "-b", branches[0], work)
 	for name, text := range files {
@@ -42,7 +43,17 @@ func twinRemote(t *testing.T, ta *testApp, files map[string]string, branches ...
 	}
 	ta.a.gitEnv = testgit.Environ("GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
 	ta.a.landRoot = func() (string, error) { return filepath.Join(dir, "land"), nil }
-	return remote, git(work, "rev-parse", "HEAD")
+	return remote, git(work, "rev-parse", "HEAD"), work, git
+}
+
+// twinRemote is a bare repository standing in for a card's REPO:, every branch named at one
+// commit holding the files given (path to text), and the app set to keep the lander's clones
+// under a test directory and run git with the test identity, so add reads a brief's base with
+// no network. It returns the repository and the commit.
+func twinRemote(t *testing.T, ta *testApp, files map[string]string, branches ...string) (remote, sha string) {
+	t.Helper()
+	remote, sha, _, _ = twinRepo(t, ta, files, branches...)
+	return remote, sha
 }
 
 // add runs the brief checks at the card's base (docs/SPEC-SPRINT.md section 11, the brief
@@ -110,6 +121,42 @@ func TestAddRunsTheBriefChecksAtTheBase(t *testing.T) {
 
 	// the corrected PATHS line is what the card stores
 	assert.Contains(t, ta.ok("card m2 --brief"), "PATHS: internal/x/*.go,internal/x/testdata/**")
+
+	// the one-brief form stores the fixed brief too: add prints LINT APPLIED and admits
+	// the card on the corrected PATHS, not on the file's drifted line
+	one := write(t.TempDir(), "one", brief("sprint/s1", "internal/x/*.go", "TestNew"))
+	code, out, errs = ta.do("add --stream s3 one --one --brief-file " + one)
+	require.Equal(t, 0, code, "%s%s", out, errs)
+	assert.Contains(t, errs, "LINT APPLIED card=one PATHS: internal/x/*.go,internal/x/testdata/**\n")
+	assert.Contains(t, out, "MOVED one -> ready")
+	assert.True(t, ta.placed("one"), "the card is admitted")
+	assert.Contains(t, ta.ok("card one --brief"), "PATHS: internal/x/*.go,internal/x/testdata/**")
+}
+
+// The deal-time lint reads the base tip of each tick, not the tip of the tick it first saw:
+// the closure a run makes once keeps its evidence and its answers for the tick its snapshot's
+// clock belongs to, so a brief that passed at one tip is re-read at the next and parked once
+// its PATHS name nothing there. A cache that lived as long as the closure served the stale
+// pass (docs/SPEC-SPRINT.md section 11, the brief checks).
+func TestTheDealTimeLintReadsTheBaseOfEachTick(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	remote, _, work, git := twinRepo(t, ta, map[string]string{
+		"internal/x/x.go": "package x\n",
+	}, "sprint/s1")
+	brief := passingBrief("RESULT: c1 sha=0123456789ab tier: pro\nREPO: " + remote + "\nBASE: sprint/s1\nPATHS: internal/x/*.go\nTEST: ./internal/x TestNew\n\nTHE TASK. Fix internal/x/x.go.")
+	card := &sprint.Card{ID: "c1", Row: "s1", Col: "ready", Fields: map[string]string{"brief": brief}}
+	drift := ta.a.briefAtTheBase()
+	require.Empty(t, drift(&sprint.Snapshot{Now: time.Unix(1, 0)}, card), "the brief passes at the first tick's base")
+
+	// the base moves: the file the brief's PATHS names is gone
+	require.NoError(t, os.Remove(filepath.Join(work, "internal", "x", "x.go")))
+	git(work, "add", "-A")
+	git(work, "commit", "-q", "-m", "drop x")
+	git(work, "push", "-q", remote, "HEAD:refs/heads/sprint/s1")
+
+	second := drift(&sprint.Snapshot{Now: time.Unix(2, 0)}, card)
+	assert.Contains(t, second, "BRIEF DRIFT check=paths-at-base", "a new tick reads the base tip again")
 }
 
 // brief --fix applies the brief checks' own corrected header lines to the card's stored

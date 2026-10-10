@@ -1343,6 +1343,14 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 			checks[i].brief = fixed[i].brief
 		}
 		*brief = fixed[0].brief
+		// the corrected text is the brief the write below stores: every request it carries
+		// (one per stream, and the --count cards it makes) takes the fixed text, as the
+		// many-brief form writes each card's fixed brief (docs/SPEC-SPRINT.md section 11,
+		// the brief checks). Without this the request keeps the text from before the lint,
+		// so add prints LINT APPLIED and admits the card on the unfixed brief.
+		for i := range rs {
+			rs[i].Brief = *brief
+		}
 		if code := a.holdPathsAdmit("add", stderr, checks...); code != 0 {
 			return code
 		}

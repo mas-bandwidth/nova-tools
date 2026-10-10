@@ -233,21 +233,35 @@ func (a *app) fixBriefBase(verbName string, st *store.Store, allowPersonal, noFi
 }
 
 // briefDriftFunc is the deal-time brief lint (Store.BriefDrift, sprint.TickReq.BriefDrift):
-// every ready card's brief is held to the brief checks at the tip of its BASE of this
-// moment, and a card that no longer passes returns the line the tick parks it with, "BRIEF
-// DRIFT check=<check> line=<n>: <finding>". The evidence is cached for the tick, keyed by
-// the base and the brief, so one base is fetched once. nil is returned for a brief that
-// names no PATHS: line, no card brief, and under NOVA_TEST_NO_HOST, where no host may be
+// briefAtTheBase under the host guard, nil under NOVA_TEST_NO_HOST, where no host may be
 // cloned or fetched.
 func (a *app) briefDriftFunc() func(*sprint.Snapshot, *sprint.Card) string {
 	if os.Getenv("NOVA_TEST_NO_HOST") != "" {
 		return nil
 	}
+	return a.briefAtTheBase()
+}
+
+// briefAtTheBase is briefDriftFunc's lint without the host guard, for a caller that brings
+// its own repository (a test). Every ready card's brief is held to the brief checks at the
+// tip of its BASE of this moment, and a card that no longer passes returns the line the tick
+// parks it with, "BRIEF DRIFT check=<check> line=<n>: <finding>". The evidence and the
+// answers are cached for the tick alone, keyed by the snapshot's clock: the first card of a
+// tick whose Now moved drops both, so the base tip is read again and a brief that passed at
+// an earlier tip is not dealt on the stale answer. nil is returned for a brief that names no
+// PATHS: line, no card brief.
+func (a *app) briefAtTheBase() func(*sprint.Snapshot, *sprint.Card) string {
 	type bkey struct{ repo, ref, pin string }
+	var tick time.Time
 	evidence := map[bkey]swarm.BriefBase{}
 	seen := map[string]string{}
 	l := &lander{a: a}
 	return func(s *sprint.Snapshot, c *sprint.Card) string {
+		if !s.Now.Equal(tick) { // a new tick: the base tip of this moment, never the last tick's
+			tick = s.Now
+			evidence = map[bkey]swarm.BriefBase{}
+			seen = map[string]string{}
+		}
 		brief := c.F("brief")
 		if brief == "" {
 			return ""
