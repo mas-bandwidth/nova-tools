@@ -38,7 +38,9 @@ func TestDoctorProvidersCoverCheckProvidersFailSecretsEnv(t *testing.T) {
 	env := fakeEnv{
 		env:  map[string]string{},
 		root: root,
-		exec: func(string, ...string) (string, error) { return routesJSON(routeRow("r", "openrouter", "m", "", true)), nil },
+		exec: func(string, ...string) (string, error) {
+			return routesJSON(routeRow("r", "openrouter", "m", "", true)), nil
+		},
 	}
 	r := NewRegistry()
 	r.Register(Default.checks["providers"])
@@ -56,11 +58,13 @@ func TestDoctorProvidersCoverCheckProvidersFailMissingYaml(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "secrets"), 0o755))
 	env := fakeEnv{
 		env: map[string]string{
-			"NOVA_SECRETS_STORE":    "secrets",
-			"NOVA_SECRETS_SEAT": "coordinator",
+			"NOVA_SECRETS_STORE": "secrets",
+			"NOVA_SECRETS_SEAT":  "coordinator",
 		},
 		root: root,
-		exec: func(string, ...string) (string, error) { return routesJSON(routeRow("r", "openrouter", "m", "", true)), nil },
+		exec: func(string, ...string) (string, error) {
+			return routesJSON(routeRow("r", "openrouter", "m", "", true)), nil
+		},
 	}
 	r := NewRegistry()
 	r.Register(Default.checks["providers"])
@@ -79,8 +83,8 @@ func TestDoctorProvidersCoverCheckProvidersFailRoutesExecErr(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, "secrets", "coordinator.yaml"), []byte("OPENROUTER_API_KEY: ENC[x]\nsops:\n"), 0o644))
 	env := fakeEnv{
 		env: map[string]string{
-			"NOVA_SECRETS_STORE":    "secrets",
-			"NOVA_SECRETS_SEAT": "coordinator",
+			"NOVA_SECRETS_STORE": "secrets",
+			"NOVA_SECRETS_SEAT":  "coordinator",
 			"OPENROUTER_API_KEY": "sk-live",
 		},
 		root: root,
@@ -103,8 +107,8 @@ func TestDoctorProvidersCoverCheckProvidersFailRoutesNotJson(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, "secrets", "coordinator.yaml"), []byte("OPENROUTER_API_KEY: ENC[x]\nsops:\n"), 0o644))
 	env := fakeEnv{
 		env: map[string]string{
-			"NOVA_SECRETS_STORE":    "secrets",
-			"NOVA_SECRETS_SEAT": "coordinator",
+			"NOVA_SECRETS_STORE": "secrets",
+			"NOVA_SECRETS_SEAT":  "coordinator",
 			"OPENROUTER_API_KEY": "sk-live",
 		},
 		root: root,
