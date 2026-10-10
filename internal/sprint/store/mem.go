@@ -373,6 +373,13 @@ func (t *memTable) owned(e uint64, row, col string) bool {
 	if !slices.Contains(t.at(e).rows, row) {
 		return false
 	}
+	return t.setCell(col)
+}
+
+// setCell says whether col is a column the table declares as a set, the cell a
+// member is placed in: owned's column half, alone, so checkAdds can ask it of a
+// row the operation itself adds before the row is written.
+func (t *memTable) setCell(col string) bool {
 	for _, c := range t.def.Columns {
 		if c.Name == col {
 			return c.HasSet()
@@ -843,6 +850,15 @@ func (m *Mem) placeRefusalLocked(table, row, col, id string) error {
 	if err := m.writeEpoch(t); err != nil {
 		return err
 	}
+	return m.placeRefusal(t, row, col, id, false)
+}
+
+// placeRefusal is placeRefusalLocked's refusal with the table in hand and its
+// epoch checked: checkAdds validates every place of an operation before any is
+// written. pending names a row the same operation adds, which owns its cell the
+// moment the operation commits, so a place on a new stream's row is not refused
+// for a row the operation has not written yet.
+func (m *Mem) placeRefusal(t *memTable, row, col, id string, pending bool) error {
 	mm := t.members[id]
 	switch {
 	case mm == nil:
@@ -851,7 +867,7 @@ func (m *Mem) placeRefusalLocked(table, row, col, id string) error {
 		return refusal("MEMBEREPOCH", fmt.Sprintf("member %s belongs to epoch %d, the active epoch is %d", id, mm.epoch, m.active(t)))
 	case mm.placed:
 		return refusal("MEMBEREXISTS", "member "+id+": placed at "+place(mm))
-	case !t.owned(m.active(t), row, col):
+	case !t.owned(m.active(t), row, col) && !(pending && t.setCell(col)):
 		return refusal("NOCOL", "member "+id+": no owned cell "+row+":"+col)
 	}
 	return nil
@@ -859,10 +875,14 @@ func (m *Mem) placeRefusalLocked(table, row, col, id string) error {
 
 // applyAdds applies the operation's rows, hidden rows and places, before its
 // manifests, under m.mu: the fence's one atomic commit, so a reader sees all
-// of it or none of it (this card's GOAL). A place another writer made first
-// is found made and the commit proceeds; any other place refusal refuses the
-// commit, with the rows already added, as the place pass did.
+// of it or none of it (this card's GOAL). It validates the complete operation
+// first (checkAdds), so a refusal leaves Mem exactly as it was and a caller
+// cannot write half of one; a place another writer made first is found made
+// and the commit proceeds.
 func (m *Mem) applyAdds(op OpRecord) error {
+	if err := m.checkAdds(op); err != nil {
+		return err
+	}
 	for _, t := range slices.Sorted(maps.Keys(op.Rows)) {
 		if err := m.rowsAddLocked(t, op.Rows[t]); err != nil {
 			return err
@@ -884,8 +904,63 @@ func (m *Mem) applyAdds(op OpRecord) error {
 	return nil
 }
 
+// checkAdds is why the operation's rows, hidden rows or places would be
+// refused, before any of them is written: applyAdds validates the complete
+// operation with it first, then mutates, so a refusal leaves Mem exactly as it
+// was. A place on a row the operation itself adds is checked against the row
+// the commit will leave, pending, not the row Mem holds now. Acquire added the
+// new stream's rows through applyAdds before it marshalled and checked
+// MaxWrite, so a rejected write left the rows with no card (this card's STOP).
+func (m *Mem) checkAdds(op OpRecord) error {
+	pending := map[string]map[string]bool{}
+	for _, name := range slices.Sorted(maps.Keys(op.Rows)) {
+		t, err := m.table(name)
+		if err != nil {
+			return err
+		}
+		if err := m.epochRefusal(t); err != nil {
+			return err
+		}
+		if pending[name] == nil {
+			pending[name] = map[string]bool{}
+		}
+		for _, r := range op.Rows[name] {
+			pending[name][r] = true
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(op.HideRows)) {
+		t, err := m.table(name)
+		if err != nil {
+			return err
+		}
+		if err := m.epochRefusal(t); err != nil {
+			return err
+		}
+	}
+	for _, pl := range op.Places {
+		t, err := m.table(pl.Table)
+		if err != nil {
+			return err
+		}
+		if err := m.epochRefusal(t); err != nil {
+			return err
+		}
+		if err := m.placeRefusal(t, pl.Row, pl.Col, pl.ID, pending[pl.Table][pl.Row]); err != nil && !alreadyPlaced(err) {
+			return &placeRefused{id: pl.ID, err: err}
+		}
+	}
+	return nil
+}
+
 func (m *Mem) writeEpoch(t *memTable) error {
 	m.touch(m.epoch)
+	return m.epochRefusal(t)
+}
+
+// epochRefusal is writeEpoch's refusal without the touch: checkAdds validates
+// a whole operation before any of it mutates Mem, and the apply that follows
+// names the epoch once, as the table layer's one write does.
+func (m *Mem) epochRefusal(t *memTable) error {
 	if a := m.active(t); m.epoch != a {
 		code := "STALE"
 		if m.epoch > a {
@@ -1023,12 +1098,6 @@ func (m *Mem) Acquire(_ context.Context, gen uint64, op OpRecord) (bool, error) 
 	if l.fence != nil || l.gen != gen || m.epoch != m.epochN {
 		return false, nil
 	}
-	// The step's rows, hidden rows and places commit with the fence, before
-	// the manifests: one atomic commit, so a reader sees all of it or none of
-	// it, and a commit that loses the generation race writes none of it.
-	if err := m.applyAdds(op); err != nil {
-		return false, err
-	}
 	body, err := json.Marshal(op)
 	if err != nil {
 		return false, err
@@ -1038,6 +1107,15 @@ func (m *Mem) Acquire(_ context.Context, gen uint64, op OpRecord) (bool, error) 
 	}
 	var copyOp OpRecord
 	if err := json.Unmarshal(body, &copyOp); err != nil {
+		return false, err
+	}
+	// The record must marshal, fit the store's write bound and survive its
+	// round trip before anything mutates; applyAdds then validates the whole
+	// operation (checkAdds) and writes its rows, hidden rows and places with
+	// the fence, before the manifests: one atomic commit, so a reader sees
+	// all of it or none of it and a refused write leaves a new stream with no
+	// rows and no card.
+	if err := m.applyAdds(op); err != nil {
 		return false, err
 	}
 	l.fence = &copyOp

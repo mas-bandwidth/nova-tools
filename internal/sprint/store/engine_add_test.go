@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -137,4 +138,25 @@ func TestALostCommitLeavesNoStreamRow(t *testing.T) {
 	assert.True(t, snap.Merge.HasRow("s2"), "the stream row is on the merge table")
 	assert.Equal(t, 1, snap.Work.Count("s2", sprint.Ready), "the card is read back")
 	require.NotNil(t, snap.Work.Card("s2-1"), "the card is on the table")
+}
+
+// TestARefusedNewStreamAddWritesNoStreamRow pins the other refusal: a write
+// the store will not take is validated whole before any of it mutates Mem, so
+// a rejected add of a card to a new stream leaves neither stream row, not just
+// no card. Acquire added the rows before it marshalled and checked MaxWrite,
+// recreating the stream-without-card state this card makes all-or-nothing.
+func TestARefusedNewStreamAddWritesNoStreamRow(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.m.MaxWrite = 512
+
+	res, err := h.st.Run(h.ctx, AddStep(sprint.AddReq{Stream: "s2", Count: 20}))
+	require.False(t, err == nil && len(res.Refused) == 0, "a record over the store's bound was taken: %+v", res)
+	require.Contains(t, fmt.Sprint(err, res.Refused), "broken pipe", "the refusal does not name the store's reason: %v %+v", err, res.Refused)
+
+	snap := h.snap()
+	assert.False(t, snap.Work.HasRow("s2"), "a rejected new-stream add left the work stream row")
+	assert.False(t, snap.Merge.HasRow("s2"), "a rejected new-stream add left the merge stream row")
+	assert.Equal(t, 0, snap.Work.Count("s2", sprint.Ready), "a rejected new-stream add left the card")
+	h.clean("refused")
 }
