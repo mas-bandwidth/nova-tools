@@ -472,6 +472,19 @@ STEP 2. Fix the tone of the named page and write notes.txt in the repo directory
 STEP last. Write RESULT.md with line 1 equal to this card's line 1.
 `
 
+// templateReport is the fill-in skeleton of a report a card's FORM: block asks for
+// (docs/SPEC-SPRINT.md, the report's form). It is the default the tool prints with no
+// --form; with one, nova-swarm template renders the skeleton from that form's own rules
+// (ReportSkeleton), so a brief can carry it under FILL IN and a flash model copies
+// rather than composes. It is a document and not a task's conditions, so WrapTemplate
+// refuses it as it refuses `result` and `setup`.
+const templateReport = `Verdict: LAND
+
+## Gate
+
+1. gate: result: command:
+`
+
 // pulseModels is the cost table nova-pulse reads beside the .md templates when no
 // benches.tsv or routes.tsv sits there: one line `flash <id>` and/or one line `pro <id>`.
 const pulseModels = `flash opencode/deepseek-v4-flash
@@ -508,6 +521,8 @@ func Template(name string) (string, error) {
 		return templateCapacity, nil
 	case "card":
 		return templateCard, nil
+	case "report":
+		return templateReport, nil
 	case "read":
 		return pulseRead, nil
 	case "fix":
@@ -528,7 +543,7 @@ func Template(name string) (string, error) {
 
 // TemplateNames is every name Template answers to, in a fixed order.
 func TemplateNames() []string {
-	names := []string{"read-pr", "probe-row", "fix-card", "result", "worker", "setup", "capacity", "card",
+	names := []string{"read-pr", "probe-row", "fix-card", "result", "worker", "setup", "capacity", "card", "report",
 		"read", "fix", "text", "replay", "drift", "tone", "models.tsv"}
 	sort.Strings(names)
 	return names
@@ -567,6 +582,9 @@ func WrapTemplate(name string, files int, text []byte) ([]byte, error) {
 	}
 	if name == "card" {
 		return nil, fmt.Errorf("--template wants a task template (read-pr, probe-row, fix-card); `card` is a whole card with its RULES paragraph, printed by `template --name card`, the shape the coordinator starts from")
+	}
+	if name == "report" {
+		return nil, fmt.Errorf("--template wants a task template (read-pr, probe-row, fix-card); `report` is the fill-in report skeleton of a card's FORM: block, printed by `template --name report [--form <FORM block>]`")
 	}
 	if IsPulseTemplate(name) {
 		return nil, fmt.Errorf("--template wants a task template (read-pr, probe-row, fix-card); `%s` is a nova-pulse card template of SPEC-PULSE rule 4, printed by `template --name %s`, not a task template", name, name)

@@ -523,7 +523,19 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		}
 		if !r.Begin && !r.Return {
 			// a routed read's verdict is priced as work is, or it is no verdict (cost.go)
-			return ReadUsageMissing(c, r.Usage, r.Verdict)
+			if why := ReadUsageMissing(c, r.Usage, r.Verdict); why != "" {
+				return why
+			}
+		}
+		if !r.Begin && !r.Return && r.Verdict == "broken" && r.Finding != "" {
+			// A card with a FORM: block was held to its report's form at the finish
+			// (form.go): a broken read that names the form alone judges nothing, and the
+			// ask does not accept it (docs/SPEC-SPRINT.md, the report's form).
+			if pr := s.Work.Card(c.F("primary")); pr != nil {
+				if why := FormFinding(pr.F("brief"), r.Finding); why != "" {
+					return why
+				}
+			}
 		}
 		return ""
 	}, s.Readers.Card)

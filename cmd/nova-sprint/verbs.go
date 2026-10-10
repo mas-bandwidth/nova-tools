@@ -2387,8 +2387,245 @@ func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 			return nil
 		}
 	}
+	if !*failed {
+		// A report's form is the machine's check at the finish, never a reader's
+		// (docs/SPEC-SPRINT.md, the report's form): a card whose brief carries a FORM:
+		// block holds its report to every rule, and a miss refuses the finish.
+		// --head is the commit the report blob is read from. A file in this
+		// process's working directory is not the report.
+		if code, done := a.formFinish(context.Background(), st, ids, *head, *branch, failed, report, stderr); done {
+			return code
+		}
+	}
 	return a.runStep("finish", *c, st, store.FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: ids}, As: *as, Gens: gens, Failed: *failed,
 		Head: *head, Report: *report, Branch: *branch, Base: *baseBranch, Usage: *usage, Decided: decided, Who: *as}), stdout, stderr)
+}
+
+// formFinish holds an ok finish to the FORM: block of each named card (docs/SPEC-SPRINT.md,
+// the report's form; form.go). It reads each work card and its primary's brief, reads the
+// named report as the blob <head>:<path> (never a file in this process's working directory),
+// and either lets the finish go on (no FORM: block, or every rule held), refuses it with one
+// FORM: line per miss (the work card's form_refusals stamped, no attempt spent and no read
+// asked), or, on the third miss of one attempt, turns this finish into the FAIL with the
+// misses. done is false when the finish goes on. head and branch are the finish's --head
+// and --branch.
+func (a *app) formFinish(ctx context.Context, st *store.Store, ids []string, head, branch string, failed *bool, report *string, stderr io.Writer) (int, bool) {
+	wcs, err := st.Records(ctx, sprint.Fleet, ids)
+	if err != nil {
+		return a.readFailed("finish", err, stderr), true
+	}
+	var primaries []string
+	for _, wc := range wcs {
+		if p := wc.F("primary"); p != "" {
+			primaries = append(primaries, p)
+		}
+	}
+	prs, err := st.Records(ctx, sprint.Work, primaries)
+	if err != nil {
+		return a.readFailed("finish", err, stderr), true
+	}
+	brief := map[string]string{}
+	for _, pr := range prs {
+		brief[pr.ID] = pr.F("brief")
+	}
+	var refuseIDs, lines, failLines []string
+	fail := false
+	for _, wc := range wcs {
+		f, err := swarm.ReadForm(brief[wc.F("primary")])
+		if err != nil {
+			continue // no FORM: block: the finish is as it was
+		}
+		var misses []swarm.FormMiss
+		body, err := a.formReportBlob(ctx, brief[wc.F("primary")], head, branch, f.Path)
+		if err != nil {
+			misses = []swarm.FormMiss{{Line: 0, Rule: "the named file", Found: sprint.HeadFileMiss(head, err)}}
+		} else {
+			misses = swarm.CheckForm(f, string(body))
+		}
+		if len(misses) == 0 {
+			continue
+		}
+		text := swarm.FormRefusalText(f.Path, misses)
+		if wc.Int(sprint.FormRefusalsField)+1 >= swarm.FormMissesToFail {
+			fail = true
+			failLines = append(failLines, text)
+			continue
+		}
+		refuseIDs = append(refuseIDs, wc.ID)
+		lines = append(lines, text)
+	}
+	if fail {
+		// the third miss on the attempt: this finish FAILS it, the misses the report
+		*failed = true
+		*report = strings.Join(failLines, "\n")
+		return 0, false
+	}
+	if len(refuseIDs) == 0 {
+		return 0, false
+	}
+	// the refusal spends no attempt and asks no read: the count is stamped and the finish
+	// is refused, so the lane fixes the report and finishes again in the same attempt
+	req := sprint.FormRefusalReq{IDs: refuseIDs}
+	step := store.Step{Verb: "finish", Named: true, Load: []string{sprint.Fleet},
+		Extras: sprint.NamedExtras(sprint.Fleet, refuseIDs),
+		Plan:   func(s *sprint.Snapshot) sprint.Plan { return sprint.FormRefusal(s, req) }}
+	if _, err := st.Run(ctx, step); err != nil {
+		return a.readFailed("finish", err, stderr), true
+	}
+	for _, text := range lines {
+		for _, line := range strings.Split(text, "\n") {
+			fmt.Fprintln(stderr, oneline.Escape(line))
+		}
+	}
+	fmt.Fprintf(stderr, "%s finish REFUSED: the report does not hold its FORM; no attempt was spent and no read was asked; fix the report and finish again; run: nova-sprint finish <card>@<gen>\n", prog)
+	return 1, true
+}
+
+// formReportCap is the largest report blob a finish reads.
+const formReportCap = 1 << 20
+
+// formReportBlob is the FORM path as the blob <head>:<path> in the repository the
+// brief names. A friend's finish is an argv on the sprint server, so the report is
+// not a file in that process's working directory, and a missing file there is not
+// the report. Land's clone is fetched on the finish's branch when the commit is
+// not in it yet.
+func (a *app) formReportBlob(ctx context.Context, brief, head, branch, rel string) ([]byte, error) {
+	if !formCommitSHA(head) {
+		return nil, errors.New("the finish names no commit (--head)")
+	}
+	rel, err := formBlobPath(rel)
+	if err != nil {
+		return nil, err
+	}
+	repo := formBriefRepo(brief)
+	if repo == "" {
+		return nil, errors.New("the brief names no repository, so the report blob cannot be read")
+	}
+	if a.landRoot == nil {
+		return nil, errors.New("no land clone root, so the report blob cannot be read")
+	}
+	root, err := a.landRoot()
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(root, repoDirName(repo))
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+		return nil, fmt.Errorf("no clone at %s", dir)
+	}
+	if _, err := a.formGit(ctx, dir, "cat-file", "-e", head+"^{commit}"); err != nil {
+		if b, ok := formFetchBranch(branch); ok {
+			if ferr := a.formFetch(ctx, dir, b); ferr != nil {
+				return nil, fmt.Errorf("head %s is not in the clone at %s and fetching %s failed: %s", head, dir, b, ferr.Error())
+			}
+		}
+	}
+	spec := head + ":" + rel
+	sizeText, err := a.formGit(ctx, dir, "cat-file", "-s", spec)
+	if err != nil {
+		return nil, err
+	}
+	size, err := strconv.Atoi(strings.TrimSpace(sizeText))
+	if err != nil {
+		return nil, fmt.Errorf("the size of %s could not be read", spec)
+	}
+	if size > formReportCap {
+		return nil, fmt.Errorf("the blob %s is %d bytes, over the %d a finish reads", spec, size, formReportCap)
+	}
+	body, err := a.formGit(ctx, dir, "cat-file", "blob", spec)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(body), nil
+}
+
+// formGit runs one git in the land clone and returns its stdout. A failure names
+// git's own line, so a form miss is about the commit and not a file open.
+func (a *app) formGit(ctx context.Context, dir string, args ...string) (string, error) {
+	res, err := gitrun.Run(ctx, gitrun.Options{C: dir, Env: a.gitEnv, OwnRepo: true}, args...)
+	if err != nil {
+		msg := strings.TrimSpace(string(res.Stderr))
+		if msg == "" {
+			return "", err
+		}
+		return "", errors.New(firstLine(msg, nil))
+	}
+	return string(res.Stdout), nil
+}
+
+// formFetch fetches branch from origin into the land clone, the same fetch a diff
+// uses when the head is not there yet (cardDiff).
+func (a *app) formFetch(ctx context.Context, dir, branch string) error {
+	res, err := gitrun.Run(ctx, gitrun.Options{C: dir, Env: a.gitEnv, OwnRepo: true}, "fetch", "-q", "--no-tags", "origin", branch)
+	if err != nil {
+		msg := strings.TrimSpace(string(res.Stderr))
+		if msg == "" {
+			return err
+		}
+		return errors.New(firstLine(msg, nil))
+	}
+	return nil
+}
+
+// formCommitSHA reports a full commit id, the only --head a blob read accepts.
+func formCommitSHA(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for _, c := range s {
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// formBlobPath is a FORM path that can be a blob path. Anything that would leave
+// the commit, or that git would read as a rev, is refused.
+func formBlobPath(p string) (string, error) {
+	p = strings.TrimSpace(p)
+	if p == "" || strings.HasPrefix(p, "/") || strings.ContainsAny(p, ":\r\n\\") || strings.HasPrefix(p, "-") {
+		return "", fmt.Errorf("%q is not a path inside the commit", p)
+	}
+	c := path.Clean(p)
+	if c == "." || strings.HasPrefix(c, "../") || strings.HasPrefix(c, "/") {
+		return "", fmt.Errorf("%q is not a path inside the commit", p)
+	}
+	return c, nil
+}
+
+// formFetchBranch is a branch name safe to pass to git fetch. "" is not.
+func formFetchBranch(branch string) (string, bool) {
+	if branch == "" || strings.HasPrefix(branch, "-") || strings.Contains(branch, "..") {
+		return "", false
+	}
+	for _, c := range branch {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case c == '.', c == '_', c == '/', c == '-':
+		default:
+			return "", false
+		}
+	}
+	return branch, true
+}
+
+// formBriefRepo is the repository the brief names: the header's, else a REPO:
+// line later in the brief (a FORM card's REPO often sits after STOP).
+func formBriefRepo(brief string) string {
+	if r := swarm.ReadCardBase([]byte(brief)).Repo; r != "" {
+		return r
+	}
+	for _, l := range strings.Split(brief, "\n") {
+		k, v, ok := cardhdr.KeyValue(strings.TrimSpace(l))
+		if ok && k == "REPO" {
+			if u := swarm.CardRepoURL(v); u != "" {
+				return u
+			}
+		}
+	}
+	return ""
 }
 
 // cmdProgress stamps progress on the work cards a worker holds: the late rule's sign that a
