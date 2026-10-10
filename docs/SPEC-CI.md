@@ -2177,6 +2177,33 @@ under the `if`, a failing call in a `switch` or `select` case body, and a helper
 non-test file that takes a `testing.TB` and fails it. Each is a bare assertion the
 ledger does not see, so the ledger's count is a floor, not the whole of the work.
 
+### `json-envelope` — every --json output is exactly one object with result.status and result.exit
+
+**The rule.** Every verb accepts `--json` and prints one JSON object with
+`result.status` (ok, refused, or failed) and `result.exit` (the exit code);
+stdout is exactly one line of JSON.
+
+**The mistake it prevents.** Tools that print JSON without the standard shape,
+or print multiple JSON objects, make the CI's structured output checks fail and
+leave users unable to parse the output.
+
+**The test.** `TestJsonEnvelope` (`internal/ci/json_envelope_class_test.go`),
+with `TestJsonEnvelopeLedgerReadsPackageShards` for the ledger format,
+`TestJsonEnvelopeOutputEnvelope` and `TestJsonEnvelopeRefusalJSON` for the
+JSON shape. It scans test files under `cmd/` for `--json` flag usage.
+
+**Its allowlist.** the `json-envelope` package ledger, one
+`<package> <count> <reason>` row per package still short (`internal/ci/testdata/json-envelope/`).
+The count only falls: a package measuring more sites than its row, a package with
+a site and no row, and a row above what the package measures are each a red run,
+and `NOVA_CI_UPDATE=1` lowers the counts and drops the rows at zero, never raises a
+count and never adds a row.
+
+**Its remedy line.** `fix the JSON output: it must be exactly one object with result.status and result.exit matching the exit; the ledger only shrinks`.
+
+**Its narrowings.** It reads the syntax only: a `--json` used as a value (not a
+flag) is not counted, and JSON printed by helpers in non-test files is not seen.
+
 ### `slowwaits` — no per-commit test sleeps over a second or waits out a deadline
 
 **The rule.** No `_test.go` under `cmd/` or `internal/` outside a
