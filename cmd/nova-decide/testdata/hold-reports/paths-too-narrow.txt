@@ -1,0 +1,8 @@
+HOLD Report
+===
+The card PATHS are too narrow for the work requested.
+The report suggests these paths should be included:
+internal/decide/holdreason.go
+cmd/nova-decide/main.go
+
+PATHS-PROPOSED: internal/decide/holdreason.go, cmd/nova-decide/main.go

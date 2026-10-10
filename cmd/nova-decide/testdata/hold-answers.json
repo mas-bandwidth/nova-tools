@@ -1,0 +1,4 @@
+{
+  "class": {"choice": "paths-too-narrow", "p": {"already-done": 0.02, "harness-failure": 0.03, "missing-dependency": 0.05, "paths-too-narrow": 0.85, "work-defect": 0.05}},
+  "proposed_paths": {"noul": 0.9}
+}

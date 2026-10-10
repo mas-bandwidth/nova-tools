@@ -37,7 +37,7 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 	t.Parallel()
 	examples, err := onboarding.ExampleLines(cli.OK(t, "help").Stdout, "nova-decide")
 	require.NoError(t, err)
-	verbs := []string{"ask", "read", "score", "attempt", "grade", "gate", "brief", "outcome", "calibrate", "findings"}
+	verbs := []string{"ask", "read", "score", "attempt", "grade", "gate", "brief", "hold", "outcome", "calibrate", "findings"}
 	require.Len(t, examples, len(verbs), "want one example of each of %v under `example:`, got %q", verbs, examples)
 	run := sitting(t)
 	for i, verb := range verbs {
@@ -66,6 +66,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 		"nova-decide grade --brief ./cmd/nova-decide/testdata/card.md --backend fixed --answers ./cmd/nova-decide/testdata/grade-answers.json --record ./decisions.jsonl --op c1@grade",
 		"nova-decide gate --output ./cmd/nova-decide/testdata/gate-output.txt --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --base-red TestPortInUse --backend fixed --answers ./cmd/nova-decide/testdata/gate-answers.json --record ./decisions.jsonl --op c1@1@gate",
 		"nova-decide brief --card ./cmd/nova-decide/testdata/greet.md --backend fixed --answers ./cmd/nova-decide/testdata/brief-answers.json --record ./decisions.jsonl",
+		"nova-decide hold --report ./cmd/nova-decide/testdata/hold-reports/paths-too-narrow.txt --backend fixed --answers ./cmd/nova-decide/testdata/hold-answers.json --record ./decisions.jsonl --op holdreport",
 		`nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "the review found nothing"`,
 		"nova-decide calibrate --record ./cmd/nova-decide/testdata/record.jsonl --decision read --question defect --positive wrong --negative ok",
 		"nova-decide findings --record ./cmd/nova-decide/testdata/record.jsonl --since 2026-10-01",

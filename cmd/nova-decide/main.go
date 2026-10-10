@@ -211,7 +211,7 @@ in id order; a card the backend failed is named, the rest are recorded.`,
 			{
 				Name:    "hold",
 				Usage:   "hold --report <file> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
-				Example: "hold --report " + fixture + "hold-reports/paths-too-narrow.txt --backend fixed --answers " + fixture + "hold-answers.json --record ./decisions.jsonl",
+				Example: "hold --report " + fixture + "hold-reports/paths-too-narrow.txt --backend fixed --answers " + fixture + "hold-answers.json --record ./decisions.jsonl --op holdreport",
 				Effect:  tool.Delivery + "; with --backend jev it sends the report to the backend, and it appends to --record",
 				Detail: `The hold decision: a HOLD report's classification, over the report text alone.
 Two questions: class (choice) with p per option (paths-too-narrow, missing-dependency,
