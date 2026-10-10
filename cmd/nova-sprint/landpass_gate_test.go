@@ -147,9 +147,10 @@ func TestLandDeadlineCancelsFlightGateContext(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream s1 --count 1 --one")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	f := &landFlight{queued: 1, began: ta.a.now().Add(-LandDeadline - time.Second), coord: "tester", stream: "s1", step: "gate", cancel: cancel}
+	f := &landFlight{queued: 1, began: ta.a.now().Add(-LandDeadline - time.Second), coord: "coordinator", stream: "s1", step: "gate", cancel: cancel}
 	ta.a.raiseIfStuck(context.Background(), "mem:0", f)
 	select {
 	case <-ctx.Done():
