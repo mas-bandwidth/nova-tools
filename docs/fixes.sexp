@@ -92,4 +92,10 @@
    :text "nova-friend install takes --deny-self and writes it into the agent, the seat play passes
     nova_friend_deny_self to a reinstall whose plist records none, and with no flag the daemon denies
     the seat's working root, so no lane exits 125 with bad_profile for a missing deny list."
-   :origin "a one-shot friend host, 2026-10-10: every lane exit 125, the daemon ran with no --deny-self")))
+   :origin "a one-shot friend host, 2026-10-10: every lane exit 125, the daemon ran with no --deny-self")
+  (fix "worker-brief-never-rewrites-history" :release "v1.2.6" :status "planned"
+   :title "The worker brief says never amend, rebase or reset onto origin"
+   :text "The child rule no-rewrite-history in fleet/child-rules.txt, byte for byte the copy nova-sprint embeds
+    (its add refuses a held rules file that differs), stops children rewriting history, which caused the
+    does-not-descend refusals. A test pins the file's digest in both repositories."
+   :origin "v1.2.5 candidate list")))
