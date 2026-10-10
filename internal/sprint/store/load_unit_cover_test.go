@@ -93,7 +93,7 @@ func TestStoreLoadCoverNoIndexReadsTheWholeLog(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(3)
-	st, err := h.st.pin(h.ctx)
+	_, err := h.st.pin(h.ctx)
 	require.NoError(t, err)
 	about := loadCoverAbout(h, "s1-1")
 	require.NotEmpty(t, about, "the log has no line about s1-1")
@@ -125,7 +125,7 @@ func TestStoreLoadCoverLostReplyNamesItsPoint(t *testing.T) {
 		}
 		return nil
 	}
-	_, err = st.keepLogIndex(h.ctx)
+	err = st.keepLogIndex(h.ctx)
 	assert.ErrorContains(t, err, "logindex", "the lost reply at logindex is named")
 	_, err = st.CardLog(h.ctx, "s1-1")
 	assert.ErrorContains(t, err, "logindex", "the lost reply at logindex is named")
