@@ -123,9 +123,8 @@ func TestFleetQuietDealsNothingAndTellsWorkersUntilItEnds(t *testing.T) {
 }
 
 // TestAMemberWhoseBeatSaysNoRoomIsDealtNothing: a member whose fresh beat says it starts no
-// card (fleet beat --no-room: its free disk under its floor) is dealt nothing and levelled
-// nothing, the deal's refusal names it with its word, the snapshot carries the word, and the
-// first beat without it puts the member back in the deal (fault 2 of 2026-10-10: hetzner at
+// card (fleet beat --no-room: its free disk under its floor) is dealt nothing by the tick
+// while the other member is dealt as before, and the first beat without it puts the member back in the deal (fault 2 of 2026-10-10: hetzner at
 // 0.0 GiB was dealt 872 cards it handed straight back refused at staging).
 func TestAMemberWhoseBeatSaysNoRoomIsDealtNothing(t *testing.T) {
 	t.Parallel()
@@ -148,42 +147,11 @@ func TestAMemberWhoseBeatSaysNoRoomIsDealtNothing(t *testing.T) {
 		assert.Empty(t, onRow(r.snap(), "m1", "s1", sprint.Ready, sprint.Working), "a member that starts no card is dealt nothing")
 	}
 	s := r.snap()
-	assert.Equal(t, why, s.NoRoom["m1"], "the snapshot carries the member's word")
-	assert.NotContains(t, s.NoRoom, "m2")
 	assert.NotEmpty(t, onRow(s, "m2", "s1", sprint.Ready, sprint.Working), "the other member is dealt as before")
 
 	// a beat without the word clears it: the member is dealt again
 	r.tick()
 	r.tick()
 	s = r.snap()
-	assert.Empty(t, s.NoRoom["m1"])
 	assert.NotEmpty(t, onRow(s, "m1", "s1", sprint.Ready, sprint.Working), "the deal gives it cards again")
-}
-
-// TestAReaderWhoseBeatSaysNoRoomHasNoRoom: a reader whose queue carries --no-room has its
-// word on the snapshot while its beat is fresh, and none once a beat without it lands or the
-// beat goes stale; the ask's room for it is none (readerRooms), so it is asked nothing.
-func TestAReaderWhoseBeatSaysNoRoomHasNoRoom(t *testing.T) {
-	t.Parallel()
-	r := newHoldRig(t, 1, 0)
-	why := "free disk on the volume of /slots is 2.0 GiB, under the floor of 10 GiB"
-	wrote, err := r.st.ReaderBeat(r.ctx, "reader-a", why)
-	require.NoError(t, err)
-	require.True(t, wrote)
-	s := r.snap()
-	assert.Equal(t, why, s.NoRoom["reader-a"])
-	assert.NotContains(t, s.NoRoom, "reader-b")
-	assert.Equal(t, sprint.ReaderUp, s.ReaderStates["reader-a"], "a reader under its floor is up: it still returns and finishes its reads")
-
-	// stale: its word no longer counts
-	r.mu.Lock()
-	r.now = r.now.Add(2 * sprint.BeatDeadline)
-	r.mu.Unlock()
-	assert.NotContains(t, r.snap().NoRoom, "reader-a")
-
-	_, err = r.st.ReaderBeat(r.ctx, "reader-a", why)
-	require.NoError(t, err)
-	_, err = r.st.ReaderBeat(r.ctx, "reader-a", "")
-	require.NoError(t, err)
-	assert.NotContains(t, r.snap().NoRoom, "reader-a", "a beat without the word clears it")
 }

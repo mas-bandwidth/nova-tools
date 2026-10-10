@@ -193,6 +193,11 @@ type Step struct {
 	// within a tick).
 	Readers      bool
 	ReaderStates map[string]string
+	// NoRoom is every member and reader whose fresh beat says it starts no card
+	// (sprint.Snapshot.NoRoom), as the tick read it once with the readers' states:
+	// the deal, the level and the ask pass them by. nil: read with the readers'
+	// states when the step reads those, else none.
+	NoRoom map[string]string
 	// Friends says the step consults the friends roster (finish, for friendNext
 	// delivery mode): it plans with the friend seats (sprint.Snapshot.Friends).
 	Friends bool
@@ -637,6 +642,9 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			snap.Routes = priced
 		}
 		snap.Answered = answered
+		if step.NoRoom != nil {
+			snap.NoRoom = step.NoRoom
+		}
 		if step.Readers && step.ReaderStates != nil {
 			snap.ReaderStates = step.ReaderStates
 		} else if step.Readers {
