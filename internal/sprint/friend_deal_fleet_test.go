@@ -145,12 +145,18 @@ func TestOneWidthHoldsHerWorkAndReads(t *testing.T) {
 	assert.Equal(t, 13, room-friendLoad(w.s, "amy"), "her room less work and reads")
 	assert.Equal(t, -3, width-friendLoad(w.s, "amy"), "her lanes: 16 less 19, none idle")
 
-	// the one-shot friend: a read on her row is her one card
+	// the one-shot friend: her width bounds her reads and work together, as a batch friend's
+	// does (one lane per unit of width): a read in one of her 4 lanes leaves 3 for work
 	w2 := friendWorld(t, fleetBrief("flash"))
 	putReads(w2, "bee", 1)
 	dealWith(w2, FriendSeat{Name: "bee", Width: 4, Status: Up, Mode: config.FriendModeOneShot, Class: "flash", Tiers: []string{"flash"}})
-	assert.Zero(t, workOn(w2, FriendRow("bee")), "one card at a time, read or work")
-	wc := w2.s.Fleet.Card(WorkCardID("s1-1", 1))
+	assert.Equal(t, 1, workOn(w2, FriendRow("bee")), "a free lane beside the read takes the work card")
+	// and at her width, a read in every lane, she is dealt no work
+	w4 := friendWorld(t, fleetBrief("flash"))
+	putReads(w4, "bee", DealAhead*4)
+	dealWith(w4, FriendSeat{Name: "bee", Width: 4, Status: Up, Mode: config.FriendModeOneShot, Class: "flash", Tiers: []string{"flash"}})
+	assert.Zero(t, workOn(w4, FriendRow("bee")), "her room is full of reads")
+	wc := w4.s.Fleet.Card(WorkCardID("s1-1", 1))
 	require.NotNil(t, wc)
 	assert.Contains(t, []string{"m1", "m2"}, wc.Row, "the machines take it")
 

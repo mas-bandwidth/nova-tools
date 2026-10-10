@@ -131,7 +131,8 @@ func TestFriendLevelMovesAQueuedCardAndTheQueueFilesFollow(t *testing.T) {
 	ta.clean()
 }
 
-// friend level respects a friend's delivery mode: a one-shot friend has room 1, so only 1 card moves.
+// friend level treats a one-shot friend as her width (one lane per unit of width, the owner
+// 2026-10-10): bob, one-shot at width 2, takes both of amy's ready cards.
 func TestFriendLevelRespectsOneShotDeliveryMode(t *testing.T) {
 	t.Parallel()
 	ta, cfg := friendApp(t)
@@ -163,15 +164,15 @@ func TestFriendLevelRespectsOneShotDeliveryMode(t *testing.T) {
 	ta.beatUp("bob")
 
 	out := ta.ok("friend level")
-	// bob has room 1 (one-shot mode), so only 1 card moves (even though bob's width is 2 and amy has 2 ready cards)
-	assert.Contains(t, out, "FRIEND-LEVEL OK moved=1")
+	// bob's room is his width's (one-shot as batch), so both of amy's ready cards move
+	assert.Contains(t, out, "FRIEND-LEVEL OK moved=2")
 	assert.Contains(t, ta.ok("friend level"), "FRIEND-LEVEL OK moved=0")
 
 	f := whereFriends(ta)
 	assert.Equal(t, 2, f["amy"].Working)
-	assert.Equal(t, 1, f["amy"].Ready)
-	assert.Equal(t, 0, f["bob"].Working, "ready on his row until he starts it")
-	assert.Equal(t, 1, f["bob"].Ready)
+	assert.Equal(t, 0, f["amy"].Ready)
+	assert.Equal(t, 0, f["bob"].Working, "ready on his row until he starts them")
+	assert.Equal(t, 2, f["bob"].Ready)
 	ta.clean()
 }
 

@@ -1221,8 +1221,8 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 		decisions := []string{"wait", "drop"}
 		switch {
 		case idle && word == WordNeverTaken:
-			// a friend's card ready with a lane of hers free: neither the deal (batch mode)
-			// nor her daemon or session (one-shot) took it (docs/SPEC-SPRINT.md section 1, a
+			// a friend's card ready with a lane of hers free: neither the deal nor her
+			// daemon or session took it (docs/SPEC-SPRINT.md section 1, a
 			// friend takes her own ready cards)
 			what = fmt.Sprintf("%s %s, at %s (dealt %s, ready over %s while friend %s has a lane free)", c.ID, word, placeOf(c), at, limit, friend)
 			decisions = []string{"friend take " + friend + " " + c.ID, "wait"}

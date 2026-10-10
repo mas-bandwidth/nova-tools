@@ -43,7 +43,7 @@ type FriendLevelReq struct {
 
 // FriendLevel evens the ready queues of the friends up, as level evens the members': a
 // friend's backlog is the cards on her row, ready and working, less her width (her lanes);
-// her room is DealAhead times her width (1 and 1 in one-shot mode, docs/SPEC-SPRINT.md
+// her room is DealAhead times her width (in one-shot mode too, docs/SPEC-SPRINT.md
 // section 1, "A friend's card"). A card that may move goes, newest first, from a friend
 // with no idle lane to one with an idle lane, and otherwise from a larger backlog to one
 // smaller by more than one; its friend is the one preferredFriend picks among those below

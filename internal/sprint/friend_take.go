@@ -198,8 +198,8 @@ func FriendTake(s *Snapshot, r FriendTakeReq) Plan {
 
 // FriendReadyMax is how long a work card may sit ready on a friend's row while she has a
 // lane free before it is a judgment (a work card past its deadline, dealt and never
-// taken): in batch mode the deal takes it into the lane, in one-shot mode her daemon or
-// her session takes it (take --as friend.<name>), and a card neither took is no one's
+// taken): the deal takes it into the lane (in batch and one-shot mode alike), or her
+// daemon or her session takes it (take --as friend.<name>), and a card none took is no one's
 // (tla/FriendReadyTake.tla, NeverStrandedSilently).
 const FriendReadyMax = 10 * time.Minute
 

@@ -45,9 +45,8 @@ func TestFriendLevelEvensTheReadyQueuesOfAClass(t *testing.T) {
 	assert.Empty(t, p.Units)
 }
 
-// friend level respects a friend's delivery mode (docs/SPEC-SPRINT.md section 1, "A friend's card"):
-// in batch mode (the default), a friend fills up to room (DealAhead times width); in one-shot mode,
-// a friend's room is 1 and width is 1, so she takes at most one card into working and holds no ready cards.
+// friend level levels a one-shot friend as a batch one (docs/SPEC-SPRINT.md section 1, "A friend's
+// card"): in either mode a friend fills up to her room (DealAhead times width), her width working.
 func TestFriendLevelRespectsFriendDeliveryMode(t *testing.T) {
 	t.Parallel()
 	briefs := []string{friendBrief("friend amy")}
@@ -61,23 +60,21 @@ func TestFriendLevelRespectsFriendDeliveryMode(t *testing.T) {
 	require.Equal(t, 2, w.s.Fleet.Count(amy, Ready))
 	require.Equal(t, 2, w.s.Fleet.Count(amy, Working))
 
-	// bob is up in one-shot mode (width 2, but mode one-shot gives room 1 and width 1)
+	// bob is up in one-shot mode at width 2: his room is his width's, as a batch friend's
+	// (one lane per unit of width, the owner 2026-10-10)
 	seats := []FriendSeat{
 		{Name: "amy", Width: 2, Status: Up, Class: "flash", Mode: config.FriendModeBatch},
 		{Name: "bob", Width: 2, Status: Up, Class: "flash", Mode: config.FriendModeOneShot},
 	}
 
-	// amy's backlog is 4 - 2 = 2. bob's backlog is 0 - 1 = -1.
-	// 1 card moves to bob, ready until he starts it (room 1, width 1).
-	// bob now holds 1 (his room is full).
-	// amy holds 3 (backlog 1). bob holds 1 (backlog 0).
-	// No more cards move to bob because bob has reached his room of 1.
+	// amy's backlog is 4 - 2 = 2 and bob's is 0 - 2 = -2: both of amy's ready cards move
+	// to bob, ready until he starts them; amy keeps her two working
 	p := w.must(FriendLevel(w.s, FriendLevelReq{Seats: seats}))
-	require.Len(t, p.Units, 1)
+	require.Len(t, p.Units, 2)
 	assert.Equal(t, 0, w.s.Fleet.Count(bob, Working))
-	assert.Equal(t, 1, w.s.Fleet.Count(bob, Ready), "a one-shot friend holds one card, ready until he starts it")
+	assert.Equal(t, 2, w.s.Fleet.Count(bob, Ready), "a one-shot friend is levelled to his width")
 	assert.Equal(t, 2, w.s.Fleet.Count(amy, Working))
-	assert.Equal(t, 1, w.s.Fleet.Count(amy, Ready), "amy keeps her remaining ready card")
+	assert.Equal(t, 0, w.s.Fleet.Count(amy, Ready))
 	assert.Empty(t, Check(w.s, nil))
 
 	// Running friend level again moves nothing

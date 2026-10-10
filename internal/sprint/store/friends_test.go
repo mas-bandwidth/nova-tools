@@ -46,13 +46,12 @@ func (h *harness) up(friend string) {
 }
 
 // A friend's delivery mode (batch or one-shot) is respected by the store's tick dealing on
-// its twin (docs/SPEC-SPRINT.md section 1, "A friend's card"): in batch mode she fills up to width
-// working and ready behind (DealAhead times width); in one-shot mode she gets one card at a time
-// and the next only after a finish.
+// its twin (docs/SPEC-SPRINT.md section 1, "A friend's card"): in either mode she fills up to
+// her width working and ready behind (DealAhead times width); a one-shot friend runs one lane
+// per unit of width (the owner, 2026-10-10), and the lane a finish frees takes her next at once.
 func TestTwinStoreDealingRespectsFriendDeliveryMode(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	// amy is batch mode (width 2), bob is one-shot mode (width 2, mode: one-shot)
 	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{
 		{Name: "amy", Width: 2, Mode: "batch", Class: "flash"},
 		{Name: "bob", Width: 2, Mode: "one-shot", Class: "flash"},
@@ -77,53 +76,31 @@ func TestTwinStoreDealingRespectsFriendDeliveryMode(t *testing.T) {
 	h.startMachine()
 	h.machine()
 	h.start("amy", 2) // each starts what her lanes hold: dealt ready, working once started
-	h.start("bob", 1)
+	h.start("bob", 2)
 
 	snap := h.snap()
 	amyRow := sprint.FriendRow("amy")
 	bobRow := sprint.FriendRow("bob")
-
-	// Amy (batch mode): 2 working, 2 ready behind
 	assert.Equal(t, 2, snap.Fleet.Count(amyRow, sprint.Working))
 	assert.Equal(t, 2, snap.Fleet.Count(amyRow, sprint.Ready))
+	// Bob (one-shot mode, width 2): his three cards dealt, 2 working and 1 ready behind
+	assert.Equal(t, 2, snap.Fleet.Count(bobRow, sprint.Working))
+	assert.Equal(t, 1, snap.Fleet.Count(bobRow, sprint.Ready))
 
-	// Bob (one-shot mode): 1 working, 0 ready behind, s1-6 and s1-7 wait ready on work table
-	assert.Equal(t, 1, snap.Fleet.Count(bobRow, sprint.Working))
-	assert.Equal(t, 0, snap.Fleet.Count(bobRow, sprint.Ready))
-	assert.Equal(t, sprint.Ready, snap.StateOf("s1-6"))
-	assert.Equal(t, sprint.Ready, snap.StateOf("s1-7"))
-
-	// Another tick without finish: bob still holds 1 card
-	h.machine()
-	snap = h.snap()
-	assert.Equal(t, 1, snap.Fleet.Count(bobRow, sprint.Working))
-	assert.Equal(t, 0, snap.Fleet.Count(bobRow, sprint.Ready))
-
-	// Bob finishes his card: finish step moves it out of working
+	// Bob finishes a card: the lane it frees takes his next at once
 	h.must(FinishStep(sprint.FinishReq{
 		As: bobRow, Sel: sprint.Sel{IDs: []string{"s1-5.w1"}},
 		Gens: map[string]int{"s1-5.w1": 1}, Head: "abc",
 	}))
 	snap = h.snap()
-	assert.Equal(t, 0, snap.Fleet.Count(bobRow, sprint.Working), "no ready card auto-advances for one-shot friend")
-
-	// Next tick deals the next card to bob, and he starts it
-	h.machine()
-	h.start("bob", 1)
-	snap = h.snap()
-	assert.Equal(t, 1, snap.Fleet.Count(bobRow, sprint.Working))
+	assert.Equal(t, 2, snap.Fleet.Count(bobRow, sprint.Working), "the freed lane took his next")
 	assert.Equal(t, 0, snap.Fleet.Count(bobRow, sprint.Ready))
-	assert.Equal(t, sprint.Working, snap.StateOf("s1-6"))
-	assert.Equal(t, sprint.Ready, snap.StateOf("s1-7"))
 }
 
-// A friend's row switching from batch to one-shot mode through config sync preserves already-started
-// work but gates queued promotion until shared work/read occupancy reaches zero (friendNext).
-// A batch row width 2 has 2 Working + 2 Ready; switch it to one-shot through config sync;
-// finish the first Working card: this finish must NOT start a Ready card while the other
-// Working card remains active. Only when the last active card finishes does the oldest Ready
-// card advance into Working.
-func TestTwinStoreConfigSyncToOneShotGatesQueuedPromotionUntilOccupancyReachesZero(t *testing.T) {
+// A friend's row switching from batch to one-shot mode through config sync keeps her lanes:
+// a one-shot friend runs one lane per unit of width (the owner, 2026-10-10), so each finish
+// frees its own lane and her oldest ready card is taken into it at once.
+func TestTwinStoreConfigSyncToOneShotKeepsEachLaneRefreshing(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	// Amy begins in batch mode with width 2
@@ -170,36 +147,19 @@ func TestTwinStoreConfigSyncToOneShotGatesQueuedPromotionUntilOccupancyReachesZe
 	}))
 
 	snap = h.snap()
-	// Already-started work is preserved (s1-2.w1 still working)
-	// but queued promotion is gated: s1-3.w1 does NOT start into working!
-	assert.Equal(t, 1, snap.Fleet.Count(amyRow, sprint.Working), "only the remaining started card is working")
-	assert.Equal(t, 2, snap.Fleet.Count(amyRow, sprint.Ready), "both ready cards stay ready while an active job remains")
+	// s1-2.w1 still runs and the lane s1-1 freed took s1-3.w1 at once
+	assert.Equal(t, 2, snap.Fleet.Count(amyRow, sprint.Working))
+	assert.Equal(t, 1, snap.Fleet.Count(amyRow, sprint.Ready))
 	assert.Equal(t, sprint.Working, snap.Fleet.Card("s1-2.w1").Col)
-	assert.Equal(t, sprint.Ready, snap.Fleet.Card("s1-3.w1").Col)
+	assert.Equal(t, sprint.Working, snap.Fleet.Card("s1-3.w1").Col)
 	assert.Equal(t, sprint.Ready, snap.Fleet.Card("s1-4.w1").Col)
 
-	// Finish the second Working card (s1-2.w1)
 	h.must(FinishStep(sprint.FinishReq{
 		As: amyRow, Sel: sprint.Sel{IDs: []string{"s1-2.w1"}},
 		Gens: map[string]int{"s1-2.w1": 1}, Head: "def",
 	}))
-
 	snap = h.snap()
-	// Shared occupancy reached zero, so the oldest ready card (s1-3.w1) is promoted into working!
-	// And s1-4.w1 remains ready (one-shot: one card at a time).
-	assert.Equal(t, 1, snap.Fleet.Count(amyRow, sprint.Working), "promoted exactly one card into working")
-	assert.Equal(t, 1, snap.Fleet.Count(amyRow, sprint.Ready), "remaining card stays ready")
-	assert.Equal(t, sprint.Working, snap.Fleet.Card("s1-3.w1").Col)
-	assert.Equal(t, sprint.Ready, snap.Fleet.Card("s1-4.w1").Col)
-
-	// Finish the third card (s1-3.w1)
-	h.must(FinishStep(sprint.FinishReq{
-		As: amyRow, Sel: sprint.Sel{IDs: []string{"s1-3.w1"}},
-		Gens: map[string]int{"s1-3.w1": 1}, Head: "ghi",
-	}))
-
-	snap = h.snap()
-	assert.Equal(t, 1, snap.Fleet.Count(amyRow, sprint.Working))
+	assert.Equal(t, 2, snap.Fleet.Count(amyRow, sprint.Working), "the next freed lane took s1-4")
 	assert.Equal(t, 0, snap.Fleet.Count(amyRow, sprint.Ready))
 	assert.Equal(t, sprint.Working, snap.Fleet.Card("s1-4.w1").Col)
 }
