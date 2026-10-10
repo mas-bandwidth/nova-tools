@@ -574,7 +574,7 @@ func (l *lander) stageSkips() *bench.StageSkips {
 // benchFaults are what a bench says when it could not run the gate at all, whatever the
 // tree: 2026-10-10, 44 of the day's go build refusals blamed a head for `sh: 1: go: not
 // found` (exit 127, a non-interactive shell with no Go on its PATH) or `disk quota exceeded`
-// / `no space left on device` (the bench's build space full); none was a compile error.
+// / `no space left on device` (the bench's disk full); none was a compile error.
 var benchFaults = []string{"disk quota exceeded", "no space left on device"}
 
 // benchFault is the line of a red bench gate's output that says the bench, not the tree,

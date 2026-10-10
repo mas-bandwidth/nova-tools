@@ -1545,12 +1545,12 @@ func (l *lander) mergeCards(ctx context.Context, dir, stream string, cards []lan
 		case len(l.cardTips) > m:
 			l.cardTips = l.cardTips[:m+1] // the tip before the head that ended the batch
 		default:
-			head, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
-			if err != nil {
+			// no tip after the last head: nothing to bisect, and a red gate blames no head (bisect)
+			if head, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}"); err == nil {
+				l.cardTips = append(l.cardTips, head)
+			} else {
 				l.cardTips = nil
-				return
 			}
-			l.cardTips = append(l.cardTips, head)
 		}
 	}()
 	for i := c.first; i < len(cards); i++ {
