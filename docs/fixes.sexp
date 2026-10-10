@@ -68,4 +68,10 @@
    :title "A worker writes its result before the route deadline"
    :text "Children on some direct routes work to the route deadline and never write their result file;
     give the route a longer deadline or reserve a margin to write the result."
-   :origin "fault inventory, 2026-10-10")))
+   :origin "fault inventory, 2026-10-10")
+  (fix "draining-member-word-is-this-ticks" :release "v1.2.6" :status "in-progress"
+   :title "A draining member's beat carries this tick's no-room word"
+   :text "The member asks Room every tick before the drain return, so a member that drained under its
+    disk floor stops saying no room once the disk is freed (nova-sprint tla/NoRoom.tla,
+    WordIsThisTicks)."
+   :origin "v1.2.5 candidate 5; the PR #5569 follow-up")))
