@@ -42,8 +42,8 @@ func TestTheDaemonFinishesAReportItDidNotStage(t *testing.T) {
 	long := "the bench went red.\n" + strings.Repeat("x", 700) + "\n"
 	outboxReport(t, dir, land.Job, "Verdict: LAND\nHead: "+head+"\n\nThe card is done.\n")
 	outboxReport(t, dir, hold.Job, "Verdict: HOLD\nHead: "+head+"\n\nno push\n")
-	outboxReport(t, dir, fail.Job, "Verdict: FAIL\n\n"+long)
-	outboxReport(t, dir, gen.Job, "**Verdict:** land\nHead: "+strings.ToUpper(head)+"\n\nthird time.\n")
+	outboxReport(t, dir, fail.Job, "Verdict: FAIL\nHead: -\n\n"+long)
+	outboxReport(t, dir, gen.Job, "Verdict: land\nHead: "+strings.ToUpper(head)+"\n\nthird time.\n")
 	outboxReport(t, dir, silent.Job, "I am still working on it.\n")
 	outboxReport(t, dir, ready.Job, "Verdict: LAND\nHead: "+head+"\n")
 	outboxReport(t, dir, "gone.w1~15", "Verdict: LAND\nHead: "+head+"\n") // its card is not on her row
@@ -64,7 +64,7 @@ func TestTheDaemonFinishesAReportItDidNotStage(t *testing.T) {
 	failed := got["failed.w1@1"]
 	require.Len(t, failed, 11)
 	assert.Equal(t, []string{"finish", "--as", "friend.bob", "failed.w1@1", "--epoch", "15", "--failed", "--branch", "sprint/failed.w1.g1.e15", "--report"}, failed[:10])
-	assert.Equal(t, "friend bob FAIL: "+oneLine(("Verdict: FAIL\n\n" + long)[:600], 600), failed[10], "a failed finish carries the report's first 600 characters")
+	assert.Equal(t, "friend bob FAIL: "+oneLine(("Verdict: FAIL\nHead: -\n\n" + long)[:600], 600), failed[10], "a failed finish carries the report's first 600 characters")
 
 	count := func(sub string) int {
 		n := 0
@@ -82,7 +82,7 @@ func TestTheDaemonFinishesAReportItDidNotStage(t *testing.T) {
 	assert.Equal(t, 4, count("outbox: finished card "), "one line per finish: %v", r.records)
 
 	// she writes the verdict: the next pass finishes it; a finished job is not noted after it leaves her row
-	outboxReport(t, dir, silent.Job, "Verdict: FAIL\n\nstuck.\n")
+	outboxReport(t, dir, silent.Job, "Verdict: FAIL\nHead: -\n\nstuck.\n")
 	row.set(silent, ready)
 	r.run(t, 2)
 	assert.Len(t, f.got(), 5)
@@ -156,7 +156,7 @@ func TestTheDaemonFinishesADeadLaneAndALandOnlyAtOriginsTip(t *testing.T) {
 	d := got["dead.w1@1"]
 	require.Len(t, d, 11)
 	assert.Equal(t, []string{"finish", "--as", "friend.bob", "dead.w1@1", "--epoch", "15", "--failed", "--branch", "sprint/dead.w1.g1.e15", "--report"}, d[:10])
-	assert.Contains(t, d[10], "friend bob FAIL: Verdict: FAIL nova-friend of bob: the runner ended job dead.w1~15 with no report, and no run of it is live: "+end)
+	assert.Contains(t, d[10], "friend bob FAIL: Verdict: FAIL Head: - nova-friend of bob: the runner ended job dead.w1~15 with no report, and no run of it is live: "+end)
 	report, err := os.ReadFile(filepath.Join(dir, "outbox", dead.Job, "REPORT.md"))
 	require.NoError(t, err)
 	assert.Equal(t, DeadLaneReport("bob", dead.Job, end), string(report))
