@@ -500,3 +500,4 @@ MCStopCancelsBrokenFinishCancelled.cfg	MCStopCancels.tla	invariant	NoFinishOfACa
 MCLoadCache.cfg	MCLoadCache.tla	pass	-	ignore-terminal	loadcache	required	-
 MCLoadCacheBrokenCatchup.cfg	MCLoadCache.tla	invariant	LoadIsSnapshot	ignore-terminal	loadcache	required	-
 MCLoadCacheBrokenAhead.cfg	MCLoadCache.tla	invariant	LoadIsSnapshot	ignore-terminal	loadcache	required	-
+MCLoadCacheBrokenNoMark.cfg	MCLoadCache.tla	invariant	LoadIsSnapshot	ignore-terminal	loadcache	required	-
