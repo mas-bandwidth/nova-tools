@@ -250,9 +250,8 @@ func TestAConflictingCardIsReworkedAndTheStreamLandsOn(t *testing.T) {
 }
 
 // A base that moved under the push is fetched and the batch rebuilt on its
-// new tip once; a second rejection is reported with the rejected fact and
-// the cards stay queued.
-func TestLandRebuildsOnceOnAMovedBase(t *testing.T) {
+// new tip again until the push succeeds within the bound (SPEC-SPRINT section 7).
+func TestLandRebuildsOnAMovedBase(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name   string
@@ -261,9 +260,10 @@ func TestLandRebuildsOnceOnAMovedBase(t *testing.T) {
 		want   string
 		state  string
 		places string
+		pushes []int
 	}{
-		{"moved once", 1, 0, "LAND OK stream=s1 cards=2", "landed", "landed/merged"},
-		{"moved twice", 2, 1, "LAND REFUSED stream=s1 cards=2 base=main tip=- ids=s1-1..s1-2 dir=", "stopped rejected", "merging/queued"},
+		{"moved once", 1, 0, "LAND OK stream=s1 cards=2", "landed", "landed/merged", []int{1, 2}},
+		{"moved twice", 2, 0, "LAND OK stream=s1 cards=2", "landed", "landed/merged", []int{1, 2, 3}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -281,7 +281,7 @@ func TestLandRebuildsOnceOnAMovedBase(t *testing.T) {
 			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
 			assert.Equal(t, tc.code, code, out+errs)
 			assert.Contains(t, out+errs, tc.want)
-			assert.Equal(t, []int{1, 2}, pushes)
+			assert.Equal(t, tc.pushes, pushes)
 			assert.Equal(t, tc.state, r.streamState("s1"))
 			assert.Equal(t, map[string]string{"s1-1": tc.places, "s1-2": tc.places}, r.places("s1-1", "s1-2"))
 			if tc.moves == 1 {
