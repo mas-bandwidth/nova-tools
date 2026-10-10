@@ -188,7 +188,14 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 				readers[name] = true
 			}
 		}
-		if len(readers) < ReadsNeededIn(s, c) {
+		need := ReadsNeededIn(s, c)
+		if c.F(FieldReadsNeeded) == "" && acceptedBeforeReadsField(c) {
+			// accepted before the accept recorded the count it ran on: the sprint's
+			// count then (set --reads) is not on the card, so the tier's rule is not
+			// the bar; one ok read stands
+			need = min(need, 1)
+		}
+		if len(readers) < need {
 			out = append(out, Violation{6, fmt.Sprintf("%s is %s with ok reads at head %s from %d reader(s)", c.ID, c.Col, orDash(c.F("head")), len(readers))})
 		}
 	}
