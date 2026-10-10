@@ -64,6 +64,7 @@ internal/check	0.1	@run37411066588	self-hosted
 internal/ci	19.9	@run37518625834	self-hosted
 internal/ci/allowlist	0.0	@run37411066588	self-hosted
 internal/ci/functional	0.0	@run37411066588	self-hosted
+internal/ci/functionalrun	0.0	@local	-
 internal/ci/shrinkonly	0.0	@run37517528825	self-hosted
 internal/ci/slowtests	0.0	@run37411066588	self-hosted
 internal/ci/timing	0.2	@run37411066588	self-hosted

@@ -639,7 +639,7 @@ func TestFunctionalRefusesWhatItCannotRun(t *testing.T) {
 		{"missing tree", []string{"./nope/..."}, []string{`package pattern "./nope/..." matches no package (no such directory)`}},
 		{"not a dir", []string{file}, []string{"matches no package (not a directory)"}},
 		{"no go files", []string{empty}, []string{"matches no package (the directory holds no .go file)"}},
-		{"unknown flag", []string{"--bogus"}, []string{`unknown flag "--bogus" (functional takes no flags`}},
+		{"unknown flag", []string{"--bogus"}, []string{`unknown flag "--bogus" (functional takes --in-container`}},
 		// Every independent problem in the one refusal.
 		{"all at once", []string{"--bogus", "./nope", ".", "./also-nope"}, []string{`unknown flag "--bogus"`, `"./nope" matches no package`, `"./also-nope" matches no package`}},
 	} {
@@ -761,7 +761,7 @@ func TestEveryVerbHelpStatesItsEffect(t *testing.T) {
 
 	for verb, want := range map[string]string{
 		"slowtests":      "effect: inspection: reads, writes nothing\n",
-		"functional":     "effect: inspection: reads, writes nothing\n",
+		"functional":     "effect: local write: prints the selection; with --in-container it runs one container on this machine and removes it\n",
 		"version":        "effect: inspection: reads, writes nothing\n",
 		"local":          "effect: local write: runs this checkout's unit tests, writing only a temp dir\n",
 		"new-rule":       "effect: local write: writes files on this machine\n",

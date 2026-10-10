@@ -70,14 +70,32 @@ usage, in any Go module (no state, no store):
                       and one CI-SLOW MORE shown=<n> total=<n> line naming the
                       flag that prints the rest; --max 0 prints every finding.
                       --json prints the same verdict as one JSON object.
-  nova-ci functional <package-dir>...
-                      (inspection) print the packages among these that hold
-                      functional tests (a _test.go built only under the
-                      functional build tag) on one line and a go test -run
-                      pattern naming exactly those tests on the next; when
+  nova-ci functional [--in-container [--runtime podman|docker|auto] [--deadline D]
+                      [--memory M] [--pids N] [--cpus N] [--fresh-gocache]] <package-dir>...
+                      (inspection; with --in-container it runs one container on
+                      this machine, removed at the end) print the packages among
+                      these that hold functional tests (a _test.go built only
+                      under the functional build tag) on one line and a go test
+                      -run pattern naming exactly those tests on the next; when
                       there are none, one line
-                      CI FUNCTIONAL OK packages=0 reason=<why>. A flag, and a
-                      pattern matching no package, are refused.
+                      CI FUNCTIONAL OK packages=0 reason=<why>. A flag not
+                      listed, and a pattern matching no package, are refused.
+                      --in-container then runs exactly that selection in ONE
+                      container, from the current directory (a checkout with
+                      infra/functional-image): the source tree read-only, no
+                      network, a private IPC and PID namespace, memory with no
+                      swap, pids and cpus bounded, a deadline held from outside
+                      (default 10m, at least 30s), the container removed
+                      whatever happened, and every container of an earlier run
+                      past its deadline reaped first. --runtime auto (default)
+                      takes podman when it is on PATH and docker second; neither
+                      is exit 125 and one line CI FUNCTIONAL REFUSED
+                      reason=no_container_runtime, and the tests never run
+                      bare. docker has no run --timeout: its bound is the
+                      in-container timeout under --init, this process's own
+                      removal at the deadline plus 5s, and the reaper by the
+                      deadline label. stdout is the tests' own; one FUNCTIONAL
+                      RUN line on stderr ends the run.
 
 usage, in a nova-tools checkout (this repository's own CI steps):
   nova-ci local [--base origin/dev] [--functional] [--dry-run]
@@ -130,8 +148,11 @@ exit codes: 0 done, 1 the verb said no (slowtests, local, github receipt), 2 usa
     said no); 2 the invocation could not run (bad flag, unreadable stdin)
   local: 0 green; 1 a red test, a package that did not build, or a
     CI-SLEEPS line; 2 a step that could not run, or usage
-  functional: 0 the selection printed (packages=0 included); 2 a flag, or
-    a pattern that matches no package
+  functional: 0 the selection printed (packages=0 included), or the
+    container's run green; 2 a flag, or a pattern that matches no package;
+    with --in-container also the container's own code (make's 2 a red test
+    or build), 124 the deadline, 130 an interrupt, 125 no container runtime,
+    or a container still present after the run
   new-rule: 0 the files written (or listed, with --dry-run); 2 usage, not a
     checkout, a bad name, or a file already there
   new-verb: 0 the files written (or listed, with --dry-run); 2 usage, not a
@@ -175,7 +196,7 @@ func helpListsVerb(tool, verb string) bool {
 // internal/tool's words (inspection, local write or delivery; docs/STANDARD.md section 2).
 var verbEffect = map[string]tool.Effect{
 	"slowtests":      tool.Inspection,
-	"functional":     tool.Inspection,
+	"functional":     "local write: prints the selection; with --in-container it runs one container on this machine and removes it",
 	"version":        tool.Inspection,
 	"local":          "local write: runs this checkout's unit tests, writing only a temp dir",
 	"new-rule":       tool.LocalWrite,

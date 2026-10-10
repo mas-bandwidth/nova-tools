@@ -1804,6 +1804,108 @@ carry the ones known to be needed. The rest is caught by a run of the tier in
 the image, where `NOVA_CI=1` makes a missing program a failure. It does not
 build the image.
 
+#### functionalrun: the reaper's pattern matches every run id this tool writes
+
+**The rule.** The reaper pattern (`runIDRE`) in `internal/ci/functionalrun/reap.go`
+matches every run id produced by `newRunID` in `internal/ci/functionalrun/args.go`.
+**The mistake it prevents.** A mismatch between run id generation and the
+reaper pattern causes the reaper to miss containers that should be cleaned up,
+leaving orphan containers that accumulate over time.
+**The test.** `TestEveryRunIDMatchesTheReapersPattern`
+(`internal/ci/functionalrun/functionalrun_test.go`).
+**Its allowlist.** None.
+**Its remedy line.** ``<file> generates a run id that does not match runIDRE:
+fix the newRunID function to match the pattern in reap.go``.
+**Its narrowings.** Only the direct call to newRunID and the regex in the same
+package are checked; a run id written through a variable is not seen.
+
+#### functional-container: the functional tier runs in one container per run, on podman or docker, or not at all
+
+**The rule.** Layer 2 of the container-sandboxed functional tier (the ideas tracker, issue 826).
+The maintainer, 2026-10-04 3:09 PM: "functional tests should probably be sandboxed (like we talked
+about) using say, podman." 3:10 PM: "Please add podman support for functional tests to
+nova-sprint". 3:11 PM: "We have to get this stuff reliable end-to-end before we can make a
+1.0.0". The functional tier runs through one verb, `nova-ci functional --in-container
+[--runtime podman|docker|auto] [--deadline D] [--memory M] [--pids N] [--cpus N]
+[--fresh-gocache] PKG...`, which selects exactly as `nova-ci functional PKG...` does and
+then runs exactly that selection in ONE container. The engine is
+`internal/ci/functionalrun`, importable (nova-sprint's card
+`sn-functional-in-container` calls it); `tools/functionalrun` and `make
+test-functional-container` are thin callers of it, behaviour unchanged. The verb's name and
+surface are this card's decision and may be refined; the surface is the flags above, and a
+flag that means nothing without `--in-container` is refused.
+
+*The runtime.* `--runtime auto` (the default) takes podman when it is on PATH and docker
+second; `podman` or `docker` names one and is never swapped for the other. A machine with
+neither is exit 125 and one line `CI FUNCTIONAL REFUSED reason=no_container_runtime`,
+and the tests never run bare. The run's receipt line names the runtime
+(`FUNCTIONAL RUN run=<id> runtime=<podman|docker> ended=...`). The runtime is driven
+through its command line, never a client library.
+
+*Every isolation flag is explicit in the argv of both engines*, never a default:
+`--rm --init`, `--network none`, `--ipc private`, `--cap-drop all`,
+`--security-opt no-new-privileges`, `--memory M --memory-swap M` (no swap), `--pids-limit N`,
+`--cpus N`, `--read-only`, tmpfs scratch, the deadline as a label and as a bound, and a
+forced `rm --force --volumes` of the container at the end, whatever happened: removal is the
+cleanup. One difference, forced by the runtimes: podman takes `--pid private`; docker refuses
+the word (its private PID namespace is the default), so docker's argv carries no `--pid` and
+the test asserts the absence of any host namespace.
+
+*How the bound is held.* podman: `run --timeout`, enforced by the runtime's monitor outside
+the container, which holds when the client is killed. docker has no `run --timeout`, so its
+bound is three things, none of which is the client alone: (1) the in-container `timeout -k`
+under `--init`, ending the command 10 s before the deadline and whatever it left with it;
+(2) this process's own forced removal at the deadline plus 5 s (the client's deadline, the
+same on both engines); (3) the reaper, by the deadline label, at the deadline plus the grace.
+The reaper selects by label (the run label with a run id of the tool's own shape and the owner
+label of this uid), never by name, in any state, with `--volumes`, and never a cache volume. On
+docker it lists with a `--format` of the four labels, tab-separated, since docker prints labels
+as one string; a container already gone ("No such container") is a removal done.
+
+**The mistake it prevents.** A functional test that starts a redis-server or a postgres on a
+shared machine, outlives its run, and leaves a process, a namespace or a segment behind; and
+a bound that held on one runtime and silently did not on the other.
+
+**The model.** `tla/ContainerRun.tla` (`MCContainerRun.tla`, `MCContainerRun.cfg`). Variables:
+the container states, the runtime of each, the client, the monitor, the anonymous volumes, the
+cache volumes, the clock. Actions: start, finish, the runtime's bound (deadline), interrupt,
+the client killed, the monitor's death, the client's removal, the reaper's removal. TLC holds,
+on three containers (one foreign) on both runtimes, `NoOutlive` (no container of ours outlives
+its deadline plus the grace), `NoForeignTouched` and `NoYoungTouched` (the reaper never
+touches a foreign or a young container), `CachesKept` (a cache volume is never removed),
+`RemovedHoldsNothing`, and the liveness `RemovedEventually` (every started container is
+removed), whatever happens to the client. The assumption it states, as a guard on the clock:
+time does not pass while the reaper has a container it must remove (a reaper pass runs before
+every run and by hand; a timer for it is the fleet's). Six reversed witnesses
+(`MCContainerRunBroken{NoReaper,ByName,Young,Prune,KeepVol,KeepExited}.cfg`), one per property, are each refuted by
+TLC. `CASES.tsv` and `RUNS.tsv` carry the seven rows. The model carries forward PR 4708
+(draft, `tla/FunctionalRun.tla`: superseded) and folds in PR 4723 (functionalrun-src-symlink)
+with the move of the engine. The code cites the model (`run.go`, `reap.go`).
+
+**The test.** `TestFunctionalInContainerHoldsTheRunInsideItsBounds`
+(`cmd/nova-ci/functional_container_test.go`) runs the verb against a fake runtime of each
+name that records its argv, and asserts every flag above in the argv the verb really ran, for
+podman and for docker, one container for the selection, the forced removal and the leftover
+check by label last; `TestFunctionalInContainerWithNoRuntimeNeverRunsBare` (exit 125, the
+refusal line, no command run, a named runtime never swapped),
+`TestFunctionalInContainerChoosesTheRuntime`, `TestFunctionalInContainerRefusesBadFlags`,
+`TestFunctionalInContainerRunsNothingWhenNothingIsSelected`; and in
+`internal/ci/functionalrun`: `TestTestArgsCarryEveryBoundAndIsolationFlagOnBothEngines`,
+`TestTestArgsDifferWhereDockerHasNoEquivalent`,
+`TestPrefillKeepsEveryBoundOnBothEngines`, `TestRemovalIsForcedWithVolumesOnBothEngines`,
+`TestDockerListingIsParsedIntoTheSameShape`,
+`TestReapOnDockerRemovesOnlyOverdueContainersOfOurs`,
+`TestRunTierOnDockerHoldsTheRunInsideItsBounds`, `TestChooseRuntimeHonoursTheRequestedRuntime`,
+`TestNoRuntimeIsARefusalAndNeverABareRun` and the engine's older tests, moved with it.
+**Its allowlist.** None.
+**Its remedy line.** `nova-ci functional --in-container` on a machine with neither podman nor
+docker: install one (docs/FLEET.md; the fleet's container-runtime play installs rootless
+podman).
+**Its narrowings.** The fake runtime proves the argv, not the runtime's behaviour: a real run
+on a Linux bench with podman is recorded with each change. `--runtime auto` does not check that
+the podman it takes is rootless. The reaper's cadence is the model's stated assumption; the
+code runs it before every run and by hand.
+
 ### `redis-version` — every place that names a Redis version names the same one
 
 **The rule.** `ARG REDIS_VERSION` in `infra/functional-image/Containerfile` is

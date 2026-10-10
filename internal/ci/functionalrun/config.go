@@ -1,4 +1,4 @@
-package main
+package functionalrun
 
 import (
 	"errors"
@@ -46,15 +46,20 @@ type runConfig struct {
 	// with the container, instead of this user's shared one.
 	freshGocache bool
 	gomod        string
-	podman       string
-	packages     []string
-	ownerID      string
+	// podman is the runtime binary named with --podman; runtime is --runtime
+	// (auto, podman or docker); kind is the one chosen, kindPodman or kindDocker.
+	podman   string
+	runtime  string
+	kind     string
+	packages []string
+	ownerID  string
 }
 
 type reapConfig struct {
-	grace  time.Duration
-	dryRun bool
-	podman string
+	grace   time.Duration
+	dryRun  bool
+	podman  string
+	runtime string
 }
 
 // packageRE is the allowlist for a package argument. It reaches a shell inside
@@ -71,21 +76,27 @@ func parseRun(args []string) (runConfig, error) {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var c runConfig
-	fs.StringVar(&c.src, "src", ".", "")
-	fs.StringVar(&c.context, "context", "", "")
-	fs.StringVar(&c.image, "image", "", "")
-	fs.DurationVar(&c.deadline, "deadline", 10*time.Minute, "")
-	fs.DurationVar(&c.grace, "grace", 30*time.Second, "")
-	fs.IntVar(&c.cpus, "cpus", 4, "")
-	fs.StringVar(&c.memory, "memory", "4g", "")
-	fs.IntVar(&c.pids, "pids", 1024, "")
-	fs.StringVar(&c.scratch, "scratch", "2g", "")
-	fs.StringVar(&c.gocache, "gocache-volume", "", "")
-	fs.StringVar(&c.gomod, "gomod-volume", "", "")
-	fs.BoolVar(&c.freshGocache, "fresh-gocache", false, "")
-	fs.StringVar(&c.podman, "podman", "", "")
+	fs.StringVar(&c.src, "src", ".", "the source tree to test (default: the current directory)")
+	fs.StringVar(&c.context, "context", "", "the image build context, holding Containerfile (default: <src>/infra/functional-image)")
+	fs.StringVar(&c.image, "image", "", "run this image instead of building one")
+	fs.DurationVar(&c.deadline, "deadline", 10*time.Minute, "the bound of the test container, 30s to 24h (default 10m)")
+	fs.DurationVar(&c.grace, "grace", 30*time.Second, "how long past its deadline a container is left before the reaper removes it (default 30s)")
+	fs.IntVar(&c.cpus, "cpus", 4, "CPUs for the container, and go test -p (default 4)")
+	fs.StringVar(&c.memory, "memory", "4g", "memory for the container, no swap, such as 4g (default 4g)")
+	fs.IntVar(&c.pids, "pids", 1024, "the container process limit (default 1024)")
+	fs.StringVar(&c.scratch, "scratch", "2g", "the size of the /tmp tmpfs, such as 2g (default 2g)")
+	fs.StringVar(&c.gocache, "gocache-volume", "", "the Go build cache volume name (default: this user's)")
+	fs.StringVar(&c.gomod, "gomod-volume", "", "the Go module cache volume name (default: this user's)")
+	fs.BoolVar(&c.freshGocache, "fresh-gocache", false, "a throwaway build cache for this run only, an anonymous volume")
+	fs.StringVar(&c.podman, "podman", "", "the container runtime binary, by path (its name says which runtime it is)")
+	fs.StringVar(&c.runtime, "runtime", "auto", "podman, docker or auto (default auto: podman first, docker second)")
 	if err := fs.Parse(args); err != nil {
 		return c, err
+	}
+	switch c.runtime {
+	case "auto", kindPodman, kindDocker:
+	default:
+		return c, fmt.Errorf("--runtime %q is not podman, docker or auto", c.runtime)
 	}
 	c.packages = fs.Args()
 	if len(c.packages) == 0 {
@@ -166,11 +177,17 @@ func parseReap(args []string) (reapConfig, error) {
 	fs := flag.NewFlagSet("reap", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var c reapConfig
-	fs.DurationVar(&c.grace, "grace", 30*time.Second, "")
-	fs.BoolVar(&c.dryRun, "dry-run", false, "")
-	fs.StringVar(&c.podman, "podman", "", "")
+	fs.DurationVar(&c.grace, "grace", 30*time.Second, "how long past its deadline a container is left before the reaper removes it (default 30s)")
+	fs.BoolVar(&c.dryRun, "dry-run", false, "say what would be reaped and remove nothing")
+	fs.StringVar(&c.podman, "podman", "", "the container runtime binary, by path (its name says which runtime it is)")
+	fs.StringVar(&c.runtime, "runtime", "auto", "podman, docker or auto (default auto: podman first, docker second)")
 	if err := fs.Parse(args); err != nil {
 		return c, err
+	}
+	switch c.runtime {
+	case "auto", kindPodman, kindDocker:
+	default:
+		return c, fmt.Errorf("--runtime %q is not podman, docker or auto", c.runtime)
 	}
 	if fs.NArg() > 0 {
 		return c, fmt.Errorf("unexpected argument %q", fs.Arg(0))

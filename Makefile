@@ -97,7 +97,7 @@ help:
 	@echo "make preflight   gofmt, go vet, and go test -count=1 (PKGS)"
 	@echo "make test        the unit tier: go test -p GOTEST_P PKGS plus the 2 s package / 1 s test slowtests budgets"
 	@echo "make test-functional the functional tier: only the tests behind //go:build functional in PKGS, -p GOTEST_P"
-	@echo "make test-functional-container the functional tier of PKGS inside one container (tools/functionalrun; TESTING.md)"
+	@echo "make test-functional-container the functional tier of PKGS inside one container, podman or docker (tools/functionalrun, or nova-ci functional --in-container; TESTING.md)"
 	@echo "make test-full   go test -count=1 ./... (the whole tree)"
 	@echo "make test-short  go test -short -count=1 -timeout SHORT_TIMEOUT PKGS"
 	@echo "make test-slow   go test -count=1 -tags slow ./... (the nightly tier: the tests too slow for a commit)"
@@ -328,7 +328,9 @@ test-functional:
 	@$(GO) run ./tools/ci functional-run --go $(GO) --p $(GOTEST_P) --timeout $(FUNCTIONAL_TIMEOUT) $(PKGS)
 
 # THE FUNCTIONAL TIER IN A CONTAINER. test-functional-container runs the target
-# above inside one container per run (tools/functionalrun, TESTING.md): the
+# above inside one container per run (tools/functionalrun, a thin caller of
+# internal/ci/functionalrun, as is `nova-ci functional --in-container`;
+# docs/SPEC-CI.md "functional-container", TESTING.md): the
 # image built from FUNCTIONAL_CONTEXT or reused, the tree mounted read-only,
 # tmpfs scratch, this user's own Go cache volumes, no network, and
 # FUNCTIONAL_DEADLINE enforced from outside the container by the runtime. The
@@ -338,7 +340,7 @@ test-functional:
 # the tool's exit code is make's to report (make reports any failure as 2).
 FUNCTIONAL_DEADLINE ?= 10m
 FUNCTIONAL_CONTEXT ?= infra/functional-image
-# FUNCTIONAL_FLAGS: more flags for the tool, such as --fresh-gocache.
+# FUNCTIONAL_FLAGS: more flags for the tool, such as --fresh-gocache or --runtime docker.
 FUNCTIONAL_FLAGS ?=
 test-functional-container: PKGS = $(CL_PKGS)
 test-functional-container:

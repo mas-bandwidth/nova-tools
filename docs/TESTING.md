@@ -36,7 +36,8 @@ whole work stream merging into dev), nightly and by hand, never on a pull
 request. Keep them few and cheap: one server per package (`TestMain`) rather
 than one per test, and the same two-minute cap as every job. On a working machine
 they run inside one container per run, `make test-functional-container
-PKGS=<packages>` ([TESTING.md](../TESTING.md)), never bare.
+PKGS=<packages>` or `nova-ci functional --in-container <packages>`, on podman or
+docker ([TESTING.md](../TESTING.md)), never bare.
 
 ### Vetting the build-tagged test files
 
