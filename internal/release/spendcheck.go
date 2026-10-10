@@ -32,7 +32,6 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // SpendGapOver is the share of the provider's own figure a gap must pass to refuse.
@@ -81,25 +80,6 @@ type SpendSources struct {
 	Store     RecordedSpend
 	Providers []ProviderSpend
 	Receipts  TokenReceipts
-}
-
-// SnapshotSpend is RecordedSpend over one read of the store's tables: the work table's
-// cost records and the routes (sprint.RecordedSpendIn, cost_spend.go).
-type SnapshotSpend struct{ S *sprint.Snapshot }
-
-// Providers is the paid providers the snapshot knows of over the window.
-func (s SnapshotSpend) Providers(_ context.Context, w SpendWindow) ([]string, error) {
-	return sprint.RecordedProvidersIn(s.S, w.From, w.To), nil
-}
-
-// Spend is the snapshot's dollars of the provider over the window.
-func (s SnapshotSpend) Spend(_ context.Context, provider string, w SpendWindow) (float64, error) {
-	return sprint.RecordedSpendIn(s.S, provider, w.From, w.To), nil
-}
-
-// Tokens is the snapshot's tokens of each subscription friend over the window.
-func (s SnapshotSpend) Tokens(_ context.Context, w SpendWindow) (map[string]int64, error) {
-	return sprint.RecordedTokensIn(s.S, w.From, w.To), nil
 }
 
 // SpendRow is one comparison: a paid provider's dollars (Kind "provider") or a

@@ -17,11 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/provbalance"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
 // ProductionSpend is the gate's sources from the cut's flags: the store at --spend-store,
@@ -30,45 +26,26 @@ func ProductionSpend(ctx context.Context, o options, w SpendWindow) (SpendSource
 	if strings.TrimSpace(o.spendStore) == "" {
 		return SpendSources{}, errors.New("--spend-store <addr> names no sprint store, so the recorded spend cannot be read")
 	}
-	s, err := loadSpendStore(ctx, o.spendStore, os.Getenv)
+	if SpendStore == nil {
+		return SpendSources{}, fmt.Errorf("this build reads no sprint store, so the recorded spend at %s cannot be read: the store's reader is nova-sprint's", o.spendStore)
+	}
+	s, err := SpendStore(ctx, o.spendStore, os.Getenv)
 	if err != nil {
 		return SpendSources{}, fmt.Errorf("cannot read the sprint store at %s: %w", o.spendStore, err)
 	}
-	src := SpendSources{Store: SnapshotSpend{S: s}, Providers: SpendReaders(nil, os.Getenv)}
+	src := SpendSources{Store: s, Providers: SpendReaders(nil, os.Getenv)}
 	if o.spendReceipts != "" {
 		src.Receipts = FileReceipts{Path: o.spendReceipts}
 	}
 	return src, nil
 }
 
-// loadSpendStore reads the work and fleet tables and the routes of the store at addr, logged
-// in as nova-sprint logs in from the environment (NOVA_SPRINT_REDIS_USER and the variable
-// NOVA_SPRINT_REDIS_PASSWORD_ENV names).
-func loadSpendStore(ctx context.Context, addr string, getenv func(string) string) (*sprint.Snapshot, error) {
-	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
-	if getenv(redisauth.UserEnv) != "" {
-		o.Env.PasswordEnv = redisauth.PasswordEnvEnv
-		if getenv(redisauth.PasswordEnvEnv) == "" {
-			o.PasswordEnv = redisauth.DefaultPasswordEnv
-		}
-	}
-	dctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	conn, err := redisconn.Open(dctx, o, getenv)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Close() // ignored: a read-only connection; what was read is kept
-	st := &store.Store{B: &store.Redis{C: conn.Client(), Names: sprint.Names{}, Now: time.Now}, Names: sprint.Names{}, Actor: "nova-update", Now: time.Now, NewID: store.NewID}
-	s, err := st.Load(ctx, []string{sprint.Work, sprint.Fleet}, nil)
-	if err != nil {
-		return nil, err
-	}
-	if s.Routes, _, err = st.Routes(ctx); err != nil {
-		return nil, err
-	}
-	return s, nil
-}
+// SpendStore reads what the sprint's store at addr recorded, logged in from getenv. The
+// store's tables are nova-sprint's, so this package cannot read them itself: a binary that
+// links nova-sprint's store sets it (cmd/nova-sprint, spend_store.go), and where it is nil
+// (nova-update, since nova-sprint left this repository) the gate is refused as unread,
+// and --no-spend-gate --reason is the way past.
+var SpendStore func(ctx context.Context, addr string, getenv func(string) string) (RecordedSpend, error)
 
 // SpendReaders is the paid providers' readouts over the transport (nil is
 // http.DefaultTransport), their keys read from getenv: openrouter's account activity, and

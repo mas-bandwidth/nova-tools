@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/secrets"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/units"
 )
 
@@ -33,9 +32,9 @@ func TestInstallStoreAndBusWriteAUnitThatRunsServeWithItsLogin(t *testing.T) {
 			h.d.home = func() (string, error) { return home, nil }
 			h.d.executable = func() (string, error) { return "/opt/nova/bin/nova-redis", nil }
 			h.d.loadUnit = func(_, op, p string) error { calls = append(calls, op+" "+filepath.Base(p)); return nil }
-			unitDir := sprint.UnitDir(goos, home, func(string) string { return "" })
+			unitDir := units.Dir(goos, home, func(string) string { return "" })
 			for _, tc := range []struct{ kind, port string }{{"store", "6380"}, {"bus", "6381"}} {
-				k, ok := sprint.UnitKindOf(tc.kind)
+				k, ok := units.UnitKindOf(tc.kind)
 				require.True(t, ok)
 				path := filepath.Join(unitDir, k.File(goos))
 
@@ -55,17 +54,17 @@ func TestInstallStoreAndBusWriteAUnitThatRunsServeWithItsLogin(t *testing.T) {
 					"--dir", filepath.Join(home, "nova-bench", "redis", tc.kind)}, login...), args)
 				assert.NotContains(t, string(b), "nova-secrets")
 
-				states, err := sprint.CheckUnits(unitDir, goos, []sprint.UnitKind{k})
+				states, err := units.CheckUnits(unitDir, goos, []units.UnitKind{k})
 				require.NoError(t, err)
-				assert.Equal(t, sprint.UnitInstalled, states[0].State, states[0].Why)
+				assert.Equal(t, units.UnitInstalled, states[0].State, states[0].Why)
 
 				code, out, errs = h.run("uninstall", tc.kind)
 				require.Equal(t, 0, code, errs)
 				assert.Contains(t, out, "UNINSTALL "+strings.ToUpper(tc.kind)+" OK unit="+path+" removed=true")
 				assert.NoFileExists(t, path)
 			}
-			store, _ := sprint.UnitKindOf("store")
-			bus, _ := sprint.UnitKindOf("bus")
+			store, _ := units.UnitKindOf("store")
+			bus, _ := units.UnitKindOf("bus")
 			assert.Equal(t, []string{"load " + store.File(goos), "unload " + store.File(goos), "load " + bus.File(goos), "unload " + bus.File(goos)}, calls)
 
 			// the unit carries no password: a login missing a field is refused, nothing written
