@@ -17,6 +17,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
 // gc is the verb that reclaims the machinery's scratch (sprint.GC is the rule;
@@ -71,7 +72,9 @@ func (a *app) cmdGC(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, name, "--machine: "+err.Error())
 		}
 		code := gcOn(context.Background(), gcRemote, m, *dry, *maxAge, *aiRoot, stdout, stderr)
-		a.sweepBenchLanes(c, m, stdout, stderr)
+		if !*dry && code == 0 {
+			a.sweepBenchLanes(c, m, stdout, stderr)
+		}
 		return code
 	}
 	res := a.gcLocal(*dry, age, *aiRoot)
@@ -160,21 +163,35 @@ func gcOn(ctx context.Context, run gcRunner, machine string, dry bool, maxAge, a
 // directory whatever the verdict; the sweep is for the lane killed before its remove, and
 // the /tmp line names a bench whose /tmp is over BenchTmpOverPct and its largest directories.
 func (a *app) sweepBenchLanes(c *common, machine string, stdout, stderr io.Writer) {
-	var tmpOut bytes.Buffer
-	if code, err := gcRemote(context.Background(), machine, sprint.BenchTmpLine, &tmpOut, &tmpOut); err == nil && code == 0 {
-		if tmp, err := sprint.BenchTmpFrom(machine, tmpOut.String()); err == nil {
-			if n, ok := sprint.BenchTmpJudgment(&sprint.Snapshot{Now: a.now()}, "gc", tmp); ok {
-				fmt.Fprintf(stdout, "GC NOTE %s\n", oneline.Escape(n.What))
-			}
-		}
+	identity := *c
+	if identity.actor == "" {
+		identity.actor = sprint.MachineActor
 	}
-	st, err := a.store(*c)
+	st, err := a.store(identity)
 	if err != nil { // ignored: no store, no live lanes to read, nothing swept
 		return
 	}
 	rows, err := st.LaneRows(context.Background())
 	if err != nil { // ignored: lanes that cannot be read are not swept away
 		return
+	}
+	var tmpOut bytes.Buffer
+	if code, err := gcRemote(context.Background(), machine, sprint.BenchTmpLine, &tmpOut, &tmpOut); err == nil && code == 0 {
+		if tmp, err := sprint.BenchTmpFrom(machine, tmpOut.String()); err == nil && tmp.UsedPct > sprint.BenchTmpOverPct {
+			var wrote sprint.Note
+			res, runErr := st.Run(context.Background(), store.Step{Verb: "bench tmp", Plan: func(s *sprint.Snapshot) sprint.Plan {
+				if n, ok := sprint.BenchTmpJudgment(s, "gc", tmp); ok {
+					wrote = n
+					return sprint.Plan{Notes: []sprint.Note{n}}
+				}
+				return sprint.Plan{}
+			}})
+			if runErr == nil && res.Notes == 1 {
+				fmt.Fprintf(stdout, "GC NOTE %s\n", oneline.Escape(wrote.What))
+			} else if runErr != nil {
+				fmt.Fprintf(stderr, "%s gc: GC FAILED machine=%s: /tmp judgment was not stored: %s\n", prog, oneline.Escape(machine), oneline.Err(runErr))
+			}
+		}
 	}
 	for _, r := range rows {
 		if r.Machine == machine && r.Kind == sprint.LaneGo && len(r.Held) > 0 {
@@ -274,6 +291,7 @@ const gcLoopEvery = time.Minute
 // says: each once an hour and on a volume at the alarm. Each run's class lines and summary
 // are said, each prefixed with the time and the machine.
 func (a *app) gcLoop(ctx context.Context, stdout io.Writer) {
+	_, gcCommon := a.verbSetup("gc")
 	local, _ := os.Hostname() // ignored: an unnamed machine is "local"
 	local, _, _ = strings.Cut(local, ".")
 	if local == "" {
@@ -351,6 +369,13 @@ func (a *app) gcLoop(ctx context.Context, stdout io.Writer) {
 			}
 			if !said {
 				fmt.Fprintf(stdout, "%s GC machine=%s why=%s: GC FAILED no answer: %s\n", a.now().Format("15:04:05"), oneline.Escape(run.Machine), oneline.Escape(run.Why), oneline.Escape(oneline.Cap(out.String(), 300)))
+			}
+		}
+		// A killed lane has no deferred remove. Sweep on every tick, not only
+		// when a volume or age makes ordinary GC due.
+		for _, n := range names {
+			if n != local {
+				a.sweepBenchLanes(gcCommon, n, stdout, io.Discard)
 			}
 		}
 	}

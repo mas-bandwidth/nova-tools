@@ -93,9 +93,9 @@ func TestALaneRunsInItsOwnTmpAndRemovesIt(t *testing.T) {
 				return
 			}
 			assert.Contains(t, exec, "cd '"+dir+"/repo'")
-			assert.Contains(t, exec, "TMPDIR='"+dir+"/tmp'", "TMPDIR is inside the job directory")
-			assert.Contains(t, exec, "GOTMPDIR='"+dir+"/tmp'", "GOTMPDIR is inside the job directory")
-			assert.Contains(t, exec, "GOCACHE='"+BenchCacheDefault+"'", "GOCACHE is the bench's one shared cache")
+			assert.Contains(t, exec, "TMPDIR=\"$HOME\"/'"+dir+"/tmp'", "TMPDIR is absolute inside the job directory")
+			assert.Contains(t, exec, "GOTMPDIR=\"$HOME\"/'"+dir+"/tmp'", "GOTMPDIR is absolute inside the job directory")
+			assert.Contains(t, exec, "GOCACHE=\"$HOME\"/'"+BenchCacheDefault+"'", "GOCACHE is absolute and shared")
 			assert.NotContains(t, exec, "/tmp/", "nothing is put in the bench's shared temporary directory")
 			assert.Contains(t, exec, "nice -n 19 'go' 'test' './internal/sprint'")
 		})
@@ -112,8 +112,8 @@ func TestALaneRunsInItsOwnTmpAndRemovesIt(t *testing.T) {
 			assert.Equal(t, want, res.Dir, kind)
 			assert.True(t, res.Removed, kind)
 			joined := strings.Join(sh.lines, "\n")
-			assert.Contains(t, joined, "TMPDIR='"+want+"/tmp'", kind)
-			assert.Contains(t, joined, "GOTMPDIR='"+want+"/tmp'", kind)
+			assert.Contains(t, joined, "TMPDIR=\"$HOME\"/'"+want+"/tmp'", kind)
+			assert.Contains(t, joined, "GOTMPDIR=\"$HOME\"/'"+want+"/tmp'", kind)
 		}
 	})
 
@@ -123,7 +123,7 @@ func TestALaneRunsInItsOwnTmpAndRemovesIt(t *testing.T) {
 		res, err := RunBenchLane(context.Background(), over, "bench-a", lane, BenchLaneOptions{CacheCapGiB: 30}, []string{"go", "vet", "./..."})
 		require.NoError(t, err)
 		assert.True(t, res.CacheCleaned)
-		assert.Contains(t, strings.Join(over.lines, "\n"), "GOCACHE='"+BenchCacheDefault+"' go clean -cache")
+		assert.Contains(t, strings.Join(over.lines, "\n"), "GOCACHE=\"$HOME\"/'"+BenchCacheDefault+"' go clean -cache")
 		under := &fakeBenchShell{rules: []fakeBenchRule{{has: "du -sk", out: "1024\t" + BenchCacheDefault + "\n"}}}
 		res, err = RunBenchLane(context.Background(), under, "bench-a", lane, BenchLaneOptions{}, []string{"go", "vet", "./..."})
 		require.NoError(t, err)

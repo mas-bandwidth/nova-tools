@@ -45,8 +45,10 @@ func TestRunRemovesTheRunDirectoryWhenTheCopyFails(t *testing.T) {
 
 func TestLinesQuoteEveryWord(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, `cd '/r/run.x/repo' && GOCACHE='/c' GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 nice -n 19 'go' 'test' '-run' 'A B'\''C'`,
+	assert.Equal(t, `mkdir -p '/r/run.x/tmp' && cd '/r/run.x/repo' && TMPDIR='/r/run.x/tmp' GOTMPDIR='/r/run.x/tmp' GOCACHE='/c' GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 nice -n 19 'go' 'test' '-run' 'A B'\''C'`,
 		ExecLine("/r/run.x", "/c", []string{"go", "test", "-run", "A B'C"}))
+	assert.Contains(t, ExecLine("nova-bench/lanes/reader/run.a", DefaultCache, []string{"go", "test"}),
+		`TMPDIR="$HOME"/'nova-bench/lanes/reader/run.a/tmp' GOTMPDIR="$HOME"/'nova-bench/lanes/reader/run.a/tmp' GOCACHE="$HOME"/'nova-bench/cache/go-build'`)
 	assert.Equal(t, "rm -rf -- 'r/run.x'", RemoveLine("r/run.x"))
 }
 

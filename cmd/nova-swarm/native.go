@@ -637,6 +637,14 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 		refuseNative(errOut, fmt.Sprintf("the temp directory %s could not be made: %s", oneline.Field(tmpDir), oneline.Escape(err.Error())))
 		return nil, nativeRunResult{}, 2
 	}
+	// The slot lease owns this run's temp directory. Every later exit (including
+	// a refused preparation or cancelled child) releases the lease and removes
+	// the directory before another run can take the slot.
+	releaseLeasedSlot := releaseSlot
+	releaseSlot = func() {
+		_ = os.RemoveAll(tmpDir)
+		releaseLeasedSlot()
+	}
 	// THE SHARED PER-BENCH CACHE. The Go toolchain and every module are the
 	// same for every card under one root, but each card left to itself downloads them
 	// into its own data home -- up to 5 GB per slot, and 120 cards fill two benches to

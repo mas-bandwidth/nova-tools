@@ -102,9 +102,9 @@ func (l BenchLane) Tmp() string { return l.Dir() + "/tmp" }
 // Env is the environment the lane's command runs under.
 func (l BenchLane) Env(cache string) []string {
 	return []string{
-		"TMPDIR=" + benchQuote(l.Tmp()),
-		"GOTMPDIR=" + benchQuote(l.Tmp()),
-		"GOCACHE=" + benchQuote(cache),
+		"TMPDIR=" + benchAbsolute(l.Tmp()),
+		"GOTMPDIR=" + benchAbsolute(l.Tmp()),
+		"GOCACHE=" + benchAbsolute(cache),
 		"GOFLAGS=-mod=readonly",
 		"NOVA_TEST_NO_HOST=1",
 	}
@@ -182,7 +182,7 @@ func RunBenchLane(ctx context.Context, sh BenchShell, host string, lane BenchLan
 	}
 	var du bytes.Buffer
 	if code, err := benchShell(ctx, sh, host, "du -sk "+benchQuote(cache)+" 2>/dev/null || true", &du, stderr); err == nil && code == 0 && benchCacheOver(du.String(), capGiB) {
-		if code, err := benchShell(ctx, sh, host, "GOCACHE="+benchQuote(cache)+" go clean -cache", io.Discard, stderr); err == nil && code == 0 {
+		if code, err := benchShell(ctx, sh, host, "GOCACHE="+benchAbsolute(cache)+" go clean -cache", io.Discard, stderr); err == nil && code == 0 {
 			res.CacheCleaned = true
 		}
 	}
@@ -339,3 +339,12 @@ func benchShell(ctx context.Context, sh BenchShell, host, line string, stdout, s
 
 // benchQuote is s in single quotes for the bench's shell.
 func benchQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// benchAbsolute resolves a relative bench path against the login home before a
+// command changes directory to its checkout. The path itself remains quoted.
+func benchAbsolute(path string) string {
+	if strings.HasPrefix(path, "/") {
+		return benchQuote(path)
+	}
+	return `"$HOME"/` + benchQuote(path)
+}

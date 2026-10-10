@@ -328,6 +328,10 @@ func MakeLine(root string) string {
 // ExecLine is the remote line that runs argv in dir/repo.
 func ExecLine(dir, cache string, argv []string) string {
 	gocache := Quote(cache)
+	tmpdir := Quote(dir + "/tmp")
+	if !strings.HasPrefix(dir, "/") {
+		tmpdir = `"$HOME"/` + tmpdir
+	}
 	if !strings.HasPrefix(cache, "/") {
 		gocache = `"$HOME"/` + gocache
 	}
@@ -335,7 +339,7 @@ func ExecLine(dir, cache string, argv []string) string {
 	for i, a := range argv {
 		words[i] = Quote(a)
 	}
-	return "cd " + Quote(dir+"/repo") + " && GOCACHE=" + gocache + " " + strings.Join(Env, " ") +
+	return "mkdir -p " + Quote(dir+"/tmp") + " && cd " + Quote(dir+"/repo") + " && TMPDIR=" + tmpdir + " GOTMPDIR=" + tmpdir + " GOCACHE=" + gocache + " " + strings.Join(Env, " ") +
 		" nice -n " + strconv.Itoa(Nice) + " " + strings.Join(words, " ")
 }
 

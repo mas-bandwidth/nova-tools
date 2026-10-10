@@ -146,8 +146,7 @@ func briefField(re *regexp.Regexp, brief string) string {
 // BenchRule is the sentence every read prompt carries: the machine the friend runs on runs no go command, a Linux
 // bench does.
 func BenchRule(friend, card string) string {
-	d := "~/nova-bench/buds/" + friend + "/reads/" + card
-	return fmt.Sprintf("BENCH RULE, over any GOCACHE or go command the brief gives: this machine (the one you are on) runs no go build, go test or go vet, ever. Read the checkout here (change nothing), then copy the tree to a Linux bench and run every go command there: ssh <bench> 'mkdir -p %s' && rsync -a --delete <your repo dir>/ <bench>:%s/repo/ && ssh <bench> 'cd %s/repo && export GOCACHE=~/nova-bench/buds/%s/cache/go-build GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 && nice -n 19 go ...' (<bench> is the Linux bench your AGENTS.md names; the next one it names only when that one does not answer). Re-sync after each edit. When you are done, remove that bench directory: ssh <bench> 'rm -rf %s'. Report the gate lines as the bench printed them, naming the bench.", d, d, d, friend, d)
+	return fmt.Sprintf("BENCH RULE for %s read %s: this machine runs no go build, go test or go vet. Read the checkout here (change nothing). For each Go command use nova-ci bench run --host <bench> --dir <your repo dir> -- <go command>; its runner copies the tree, sets its own TMPDIR and GOTMPDIR plus the shared GOCACHE, runs on Linux with nice and removes its own directory even on failure. Use the fallback bench only if the first does not answer. Report the gate lines and bench.", friend, card)
 }
 
 // ReadText is READ.md: the read's job, as the reader loops wrote it.

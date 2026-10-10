@@ -7464,15 +7464,19 @@ gives one at a time beside the store, so no two steps of the record interleave.
 
 ### Bench lanes
 
-A lane the machinery starts on a bench (a worker, a reader, a lander, a bench gate)
-is `RunBenchLane` (`internal/sprint/bench_lane.go`). Its directory is
-`nova-bench/lanes/<kind>/<job>` and its `tmp` is inside that directory. The command
-runs with `TMPDIR` and `GOTMPDIR` set to that `tmp`, and with `GOCACHE` the bench's
-one shared cache (`nova-bench/cache/go-build` when the lane names none). The directory
-is removed when the lane ends, whatever the verdict, and the caller's cancellation
-does not end that remove. A directory whose lane is gone is removed on the next tick
-(`SweepBenchLanes`): each directory under the root whose lane is not live, and a name
-that is not one plain job is left.
+A bench gate started by the lander uses `RunBenchLane`
+(`internal/sprint/bench_lane.go`). Its directory is `nova-bench/lanes/<kind>/<job>`
+and its `tmp` is inside that directory. The command resolves `TMPDIR`, `GOTMPDIR`
+and the one shared `GOCACHE` to absolute paths before changing into its checkout.
+The directory is removed when the lane ends, whatever the verdict, under a context
+the caller's cancellation does not end. Native worker runs set their own slot temp
+and shared cache and remove the temp when releasing the slot. Reader prompts use
+`nova-ci bench run`, whose per-run directory and temp are removed after each gate.
+The lander's bench gate uses the same absolute temp and cache rule. A gate directory
+whose lane was killed is removed on the next tick (`SweepBenchLanes`) when no Go
+lane is held; a name that is not one plain job is left. Remote `gc --dry-run`
+does not sweep. The `/tmp` check writes one open judgment per bench through the
+sprint store.
 
 The shared cache has one cap per bench. The cap is the sprint's `bench_cache_gib`, a
 whole number from 1 (`Snapshot.BenchCacheCapGiB`), and `BenchCacheCapGiBDefault` when
