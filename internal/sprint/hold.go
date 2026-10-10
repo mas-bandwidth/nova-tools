@@ -107,7 +107,7 @@ func HoldTargets(s *Snapshot, r HoldReq) ([]HoldTarget, []Refusal) {
 		}
 		switch {
 		case r.Kind != "" && !slices.Contains(kinds, r.Kind):
-			refused = append(refused, Refusal{n, "no " + map[string]string{HoldMember: "fleet member", HoldReader: "reader", HoldFriend: "friend", HoldStream: "stream"}[r.Kind] + " " + n})
+			refused = append(refused, Refusal{n, "no " + holdKindWords[r.Kind] + " " + n + holdElsewhere(n, kinds, r.Release)})
 		case r.Kind != "":
 			out = append(out, HoldTarget{Name: n, Kind: r.Kind})
 		case len(kinds) == 0:
@@ -119,6 +119,28 @@ func HoldTargets(s *Snapshot, r HoldReq) ([]HoldTarget, []Refusal) {
 		}
 	}
 	return out, refused
+}
+
+// holdKindWords is each kind a hold names, in words.
+var holdKindWords = map[string]string{HoldMember: "fleet member", HoldReader: "reader", HoldFriend: "friend", HoldStream: "stream"}
+
+// holdElsewhere is the rest of a kind's refusal for a name of another kind: what it is
+// and the verb that holds or releases it (fleet hold for a member, friend hold for a
+// friend, hold for a reader or a stream); "" for a name of no kind.
+func holdElsewhere(n string, kinds []string, release bool) string {
+	if len(kinds) != 1 {
+		return ""
+	}
+	verb := map[string]string{HoldMember: "fleet hold", HoldFriend: "friend hold"}[kinds[0]]
+	if verb == "" {
+		verb = "hold"
+	}
+	tail := " --reason <text>"
+	if release {
+		verb = strings.Replace(verb, "hold", "unhold", 1)
+		tail = ""
+	}
+	return ": " + n + " is a " + holdKindWords[kinds[0]] + "; run: nova-sprint " + verb + " " + n + tail
 }
 
 // HoldNames is hold and unhold as one step (docs/SPEC-SPRINT.md section 11): every name
