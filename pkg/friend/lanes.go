@@ -39,9 +39,12 @@ const LaneOpenRetry = time.Minute
 // (lanes.json): each lane's session, so a lane is the same friend's session
 // for its life, the cards set aside after CardTurns, so a restart does
 // not hand them again, and the cards a lane has begun and not ended, so a
-// restart finishes each (a lane's end, lane_end.go).
+// restart finishes each (a lane's end, lane_end.go). Epoch is the sprint's
+// epoch the sessions were opened under (epoch.go): her row's past it forgets
+// every session, so a full or stale session never carries across a clear.
 type LaneState struct {
 	Sessions map[int]string     `json:"sessions"`
+	Epoch    uint64             `json:"epoch,omitempty"`
 	GivenUp  []string           `json:"given_up,omitempty"`
 	Started  map[string]Started `json:"started,omitempty"`
 	// StopReturns is every card the machine's stop took out of a lane and the stop-return
@@ -55,10 +58,20 @@ type Card struct {
 	ID     string `json:"id"`
 	Brief  string `json:"brief"`
 	Outbox string `json:"outbox"`
+	// Lane, ServerEpoch and ServerGen are what the server's answer to a lane's ask named
+	// (lane_take.go): the lane that holds the card, the epoch and the generation it holds it
+	// at. A card a lane holds is reported by these, never by its directory's name.
+	Lane        int    `json:"lane,omitempty"`
+	ServerEpoch string `json:"server_epoch,omitempty"`
+	ServerGen   int    `json:"server_gen,omitempty"`
 }
 
-// Epoch is the sprint epoch alone, without the job's generation (docs/FRIENDS.md).
+// Epoch is the sprint epoch alone, without the job's generation (docs/FRIENDS.md): the
+// server's, when its answer named one, else the job directory's.
 func (c Card) Epoch() string {
+	if c.ServerEpoch != "" {
+		return c.ServerEpoch
+	}
 	_, epoch, found := strings.Cut(filepath.Base(c.Outbox), "~")
 	if !found {
 		return "0"
@@ -70,6 +83,9 @@ func (c Card) Epoch() string {
 // Gen is the card's generation, its directory's .g<gen> (friend sync names a card dealt
 // again to the same friend <id>~<epoch>.g<gen>); 1 when it has none.
 func (c Card) Gen() int {
+	if c.ServerGen > 0 {
+		return c.ServerGen
+	}
 	base := filepath.Base(c.Outbox)
 	if i := strings.LastIndex(base, ".g"); i >= 0 && strings.Contains(base[:i], "~") {
 		if n, err := strconv.Atoi(base[i+2:]); err == nil && n > 1 {
@@ -113,10 +129,15 @@ const ProgressEvery = 3 * time.Minute
 // (held by friend.<name>, not <name>).
 func ProgressArgv(friend string, cards []Card) [][]string {
 	byEpoch := map[string][]string{}
+	var out [][]string
 	for _, c := range cards {
+		if c.Lane > 0 {
+			// a lane's card: its own stamp, by the ids the server gave and its lane (lane_take.go)
+			out = append(out, []string{"progress", "--as", "friend." + friend, c.ID + "@" + strconv.Itoa(c.Gen()), "--epoch", c.Epoch(), "--lane", strconv.Itoa(c.Lane)})
+			continue
+		}
 		byEpoch[c.Epoch()] = append(byEpoch[c.Epoch()], c.ID)
 	}
-	var out [][]string
 	for _, epoch := range slices.Sorted(maps.Keys(byEpoch)) {
 		argv := append([]string{"progress", "--as", "friend." + friend}, slices.Sorted(slices.Values(byEpoch[epoch]))...)
 		out = append(out, append(argv, "--epoch", epoch))
@@ -232,6 +253,13 @@ type lane struct {
 	polled   time.Time // when the card's tokens were last read for the cap
 	capped   bool      // stopped at the row's token cap
 	job      LaneJob   // the card as the harness is handed it: every path absolute, the brief inline, the job directory
+	askAt    time.Time // when the lane next asks the server what it holds (lane_take.go)
+	asked    bool      // the lane has asked the server since the daemon started
+	// reportJob is the job the server says the lane holds whose outbox has the report of a run
+	// before, and reportSince since when the lane has seen it so (finishStale)
+	reportJob   string
+	reportSince time.Time
+	said        string // the lane's last line said once while it stands (laneSay)
 }
 
 type laneResult struct {
@@ -245,25 +273,24 @@ type laneResult struct {
 
 // laneSet is the daemon's lanes in one-shot mode.
 type laneSet struct {
-	lanes     []*lane
-	stopped   bool // the machine's word is STOPPED (stopStep): said once each way
-	given     map[string]bool
-	state     LaneState
-	loaded    bool
-	results   chan laneResult
-	refused   map[string]string // each job a lane was refused, and who held it, said once while it stands
-	gov       LaneGovernor      // the live cap under rate limits, the hold when out of funds (ratelimit.go)
-	pace      Pacer             // the effective width under the subscription windows (pacing.go)
-	paced     int               // the paced width at the last step
-	width     int               // the row's width at the last step
-	now       time.Time         // the last step's clock
-	marked    bool              // the hold in force is the pause marker's (a person lifts it)
-	loaded1   bool              // lanes are held to the load width
-	took      map[string]bool
-	faults    FaultWatch           // the row's harness faults: the third alike within ten minutes marks her down (lane_parity.go)
-	takeAt    map[string]time.Time // per job, no take is asked before it: TakeRetry after a refused one (lane_take.go)
-	refusedAt time.Time            // the pass whose take was refused: no other take that pass
-	takeSaid  string               // the last take refusal said, said once while it stands
+	lanes   []*lane
+	stopped bool // the machine's word is STOPPED (stopStep): said once each way
+	given   map[string]bool
+	state   LaneState
+	loaded  bool
+	results chan laneResult
+	refused map[string]string // each job a lane was refused, and who held it, said once while it stands
+	gov     LaneGovernor      // the live cap under rate limits, the hold when out of funds (ratelimit.go)
+	pace    Pacer             // the effective width under the subscription windows (pacing.go)
+	paced   int               // the paced width at the last step
+	width   int               // the row's width at the last step
+	now     time.Time         // the last step's clock
+	marked  bool              // the hold in force is the pause marker's (a person lifts it)
+	loaded1 bool              // lanes are held to the load width
+	took    map[string]bool
+	faults  FaultWatch // the row's harness faults: the third alike within ten minutes marks her down (lane_parity.go)
+	// noneUntil: a lane was given nothing, and the lanes that have asked wait until then (lane_take.go)
+	noneUntil time.Time
 }
 
 func (s *laneSet) running() bool {
@@ -400,6 +427,11 @@ func (l *loop) laneStep(now time.Time, width int) {
 		if s.state.Sessions == nil {
 			s.state.Sessions = map[int]string{}
 		}
+		if l.serverLanes() {
+			// the server says what each lane holds (lane_take.go): nothing kept here decides it,
+			// so a restart keeps only the lanes' sessions and the stop-returns still owed
+			s.state.GivenUp, s.state.Started = nil, nil
+		}
 		for _, id := range s.state.GivenUp {
 			s.given[id] = true
 		}
@@ -427,11 +459,20 @@ func (l *loop) laneStep(now time.Time, width int) {
 	if l.stopStep(now) {
 		paused = true // NoLaunchAfterStop: no open, no turn, no card taken while STOPPED
 	}
+	// the epoch's signal, her row's epoch past the one the sessions were opened under
+	// (epoch.go): every lane opens fresh, never a full or stale session carried across a clear
+	if d.epoch > s.state.Epoch && d.epoch > 0 {
+		l.freshLanes(now)
+	}
 	for len(s.lanes) < width {
 		n := len(s.lanes) + 1
 		s.lanes = append(s.lanes, &lane{n: n, session: s.state.Sessions[n]})
 	}
-	l.oneLaneStep(now)
+	if l.serverLanes() {
+		l.laneCheck(now) // each lane against her row as the server last said it (lane_take.go)
+	} else {
+		l.oneLaneStep(now)
+	}
 	lh, _ := d.Deliver.(LaneHarness)
 	runner, perCard := d.Deliver.(CardRunner)
 	asking := 0 // the lane the hand is asked for
@@ -446,9 +487,6 @@ func (l *loop) laneStep(now time.Time, width int) {
 		}
 		if slices.ContainsFunc(s.lanes, func(ln *lane) bool { return ln.card != nil && ln.card.Outbox == c.Outbox }) {
 			return true
-		}
-		if now.Before(s.takeAt[id]) {
-			return true // its take was refused: asked again after TakeRetry, the next card meanwhile (lane_take.go)
 		}
 		if exists(c.Result()) || exists(c.Report()) {
 			return true // done: no lane is owed it, and none is refused it
@@ -494,26 +532,38 @@ func (l *loop) laneStep(now time.Time, width int) {
 			if d.machineStopped() {
 				continue // the word read right before the take, before any claim (NoLaunchAfterStop)
 			}
-			asking = ln.n
-			c, found, err := d.nextCard(held)
-			if err != nil {
-				d.Record(now.UTC().Format(time.RFC3339) + " lanes: the queue file: " + err.Error())
-				return
+			var c Card
+			if l.serverLanes() {
+				// the lane asks the server what it holds and runs exactly that (lane_take.go)
+				var ok bool
+				if c, ok = l.laneAsk(ln, now); !ok {
+					continue
+				}
+			} else {
+				// a world with no server to ask (a test's): the cards on her row in order, one
+				// live lane per card by the job's lane mark (one_lane.go)
+				asking = ln.n
+				var found bool
+				var err error
+				c, found, err = d.nextCard(held)
+				if err != nil {
+					d.Record(now.UTC().Format(time.RFC3339) + " lanes: the queue file: " + err.Error())
+					return
+				}
+				if !found {
+					continue // messages wait: they ride only with a card
+				}
+				holder, err := ClaimLane(d.Dir, filepath.Base(c.Outbox), l.laneWho(ln.n), now)
+				if err != nil {
+					d.Record(fmt.Sprintf("%s lane %d: card %s not started: its lane mark cannot be written: %s", now.UTC().Format(time.RFC3339), ln.n, c.ID, oneLine(err.Error(), 300)))
+					continue
+				}
+				if holder != "" {
+					l.refuseLane(ln.n, c, holder, "runs it", now)
+					continue
+				}
+				delete(s.refused, filepath.Base(c.Outbox))
 			}
-			if !found {
-				continue // messages wait: they ride only with a card
-			}
-			// the card's job claimed before its first turn: a lane that claimed it first runs it alone
-			holder, err := ClaimLane(d.Dir, filepath.Base(c.Outbox), l.laneWho(ln.n), now)
-			if err != nil {
-				d.Record(fmt.Sprintf("%s lane %d: card %s not started: its lane mark cannot be written: %s", now.UTC().Format(time.RFC3339), ln.n, c.ID, oneLine(err.Error(), 300)))
-				continue
-			}
-			if holder != "" {
-				l.refuseLane(ln.n, c, holder, "runs it", now)
-				continue
-			}
-			delete(s.refused, filepath.Base(c.Outbox))
 			// every path the harness is handed absolute, the brief inline, run in the job
 			// directory; a path that cannot be made absolute refuses the lane (lane_parity.go)
 			job, err := LaneJobOf(d.Dir, c, filepath.Abs)
@@ -529,13 +579,11 @@ func (l *loop) laneStep(now time.Time, width int) {
 					s.refused[jobName] = why
 					d.Record(fmt.Sprintf("%s lane %d: card %s %s", now.UTC().Format(time.RFC3339), ln.n, c.ID, oneLine(why, 400)))
 				}
-				_ = os.Remove(laneMarkPath(d.Dir, jobName)) // ignored: the claim just made is this lane's; one left stands until stale
-				continue
-			}
-			// the take before the lane: the card runs only once the server has it working on
-			// her row; a refused take runs nothing and is asked again (lane_take.go, NoLaneWithoutTake)
-			if !l.laneTake(ln.n, c, now) {
-				_ = os.Remove(laneMarkPath(d.Dir, filepath.Base(c.Outbox))) // ignored: as above, the claim is this lane's
+				if l.serverLanes() {
+					ln.askAt = now.Add(TakeRetry)
+				} else {
+					_ = os.Remove(laneMarkPath(d.Dir, jobName)) // ignored: the claim just made is this lane's; one left stands until stale
+				}
 				continue
 			}
 			ln.card, ln.attempts, ln.marked, ln.job = &c, 0, now, job
@@ -898,7 +946,13 @@ func (l *loop) saveLanes(now time.Time) {
 	if l.d.SaveLanes == nil {
 		return
 	}
-	if err := l.d.SaveLanes(l.lanes.state); err != nil {
+	st := l.lanes.state
+	if l.serverLanes() {
+		// the server is the truth of what each lane holds: what a lane began or set aside is
+		// never written for a restart to read back (lane_take.go)
+		st.Started, st.GivenUp = nil, nil
+	}
+	if err := l.d.SaveLanes(st); err != nil {
 		l.d.Record(now.UTC().Format(time.RFC3339) + " lanes: the lane state cannot be written: " + err.Error())
 	}
 }
@@ -965,6 +1019,19 @@ type Wall struct {
 	Jobs      []string // her job directories outside Dir
 	Reads     []string // what her harness reads beyond the system roots and its own directory
 	Deny      []string // the coordinator's self, never written inside the wall (sandbox.LaneProfile.Deny)
+}
+
+// DefaultDenySelf is the coordinator's self a lane wall denies when the daemon was given no
+// --deny-self (nor NOVA_FRIEND_DENY_SELF): the seat's working root on this machine,
+// <home>/<seat>-working, which holds the seat's self repository and its copies. A wall that
+// denies nothing is refused (sandbox bad_profile, exit 125 for every lane), so a friend
+// installed without the flag must not run lane-less. nil when the seat is unknown or is no
+// plain name; the wall then refuses as it always did.
+func DefaultDenySelf(home, seat string) []string {
+	if home == "" || seat == "" || strings.ContainsAny(seat, "/\\ \t\n.") {
+		return nil
+	}
+	return []string{filepath.Join(home, seat+"-working")}
 }
 
 // Args is the wall verb and its flags, up to and with the "--" the command follows.

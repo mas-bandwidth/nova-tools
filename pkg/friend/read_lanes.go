@@ -77,11 +77,29 @@ type AskedRead struct {
 	Epoch  string
 	Gen    int // the read card's generation as the queue carries it (0: a queue before it); a stop-return names it
 	Packet ReadPacket
+	Col    string // its column on the reader queue (asked, reading)
+	Lane   int    // the read lane the server says holds it (take --as reader-<friend> --lane <n>); 0 none
 }
 
 // ParseReadQueue reads `queue --as reader-<friend> --json`: the asked reads, in the queue's
 // order, each with the queue's epoch.
 func ParseReadQueue(out string) ([]AskedRead, error) {
+	all, err := ParseReadQueueAll(out)
+	if err != nil {
+		return nil, err
+	}
+	var asked []AskedRead
+	for _, r := range all {
+		if r.Col == "asked" {
+			asked = append(asked, r)
+		}
+	}
+	return asked, nil
+}
+
+// ParseReadQueueAll is every read on the reader queue, whatever its column, each with the
+// queue's epoch: a read lane that holds a read begun before it finds its packet here.
+func ParseReadQueueAll(out string) ([]AskedRead, error) {
 	var q struct {
 		Epoch any `json:"epoch"`
 		Cards []struct {
@@ -104,13 +122,11 @@ func ParseReadQueue(out string) ([]AskedRead, error) {
 	if epoch == "" {
 		return nil, errors.New("the reader queue names no epoch")
 	}
-	var asked []AskedRead
+	all := make([]AskedRead, 0, len(q.Cards))
 	for _, c := range q.Cards {
-		if c.Col == "asked" {
-			asked = append(asked, AskedRead{ID: c.ID, Epoch: epoch, Gen: c.Gen, Packet: c.Packet})
-		}
+		all = append(all, AskedRead{ID: c.ID, Epoch: epoch, Gen: c.Gen, Packet: c.Packet, Col: c.Col})
 	}
-	return asked, nil
+	return all, nil
 }
 
 // ReadQueueArgv is the sprint verb that is the reader's beat and answers its queue.
@@ -125,12 +141,20 @@ func ReadBeginArgv(friend string, r AskedRead) []string {
 
 // ReadVerdictArgv records a read's verdict (ok or broken) with its finding and usage.
 func ReadVerdictArgv(friend string, r AskedRead, verdict, finding, usage string) []string {
-	return []string{"read", "--as", ReaderOf(friend), "--" + verdict, r.ID, "--epoch", r.Epoch, "--finding", finding, "--usage", usage}
+	return withReadLane([]string{"read", "--as", ReaderOf(friend), "--" + verdict, r.ID, "--epoch", r.Epoch, "--finding", finding, "--usage", usage}, r)
+}
+
+// withReadLane names the read lane the server says holds the read, when one does.
+func withReadLane(argv []string, r AskedRead) []string {
+	if r.Lane > 0 {
+		return append(argv, "--lane", strconv.Itoa(r.Lane))
+	}
+	return argv
 }
 
 // ReadReturnArgv returns a read that has no verdict, with why.
 func ReadReturnArgv(friend string, r AskedRead, reason, usage string) []string {
-	return []string{"read", "--as", ReaderOf(friend), "--return", r.ID, "--reason", reason, "--epoch", r.Epoch, "--usage", usage}
+	return withReadLane([]string{"read", "--as", ReaderOf(friend), "--return", r.ID, "--reason", reason, "--epoch", r.Epoch, "--usage", usage}, r)
 }
 
 var repoLine = regexp.MustCompile(`(?m)^REPO:\s*(\S+)`)
@@ -229,10 +253,14 @@ type readSet struct {
 	cancel  map[string]context.CancelFunc // each read under way: the machine's stop ends it (stop.go)
 	stopped map[string]bool               // reads the stop cancelled: no verdict, a stop-return
 	active  map[string]AskedRead          // each read under way as it was begun: its generation and epoch, which the queue's refresh no longer lists
+	known   map[string]AskedRead          // every read on the reader queue at its last answer, any column: a read lane's packet
+	askAt   map[int]time.Time             // per read lane, when it next asks the server what it holds (readLaneStep)
+	said    map[int]string                // per read lane, its last line, said once while it stands
 }
 
 func newReadSet() *readSet {
-	return &readSet{results: make(chan readResult, 64), running: map[string]bool{}, begun: map[string]bool{}, cancel: map[string]context.CancelFunc{}, stopped: map[string]bool{}, active: map[string]AskedRead{}}
+	return &readSet{results: make(chan readResult, 64), running: map[string]bool{}, begun: map[string]bool{}, cancel: map[string]context.CancelFunc{}, stopped: map[string]bool{}, active: map[string]AskedRead{},
+		known: map[string]AskedRead{}, askAt: map[int]time.Time{}, said: map[int]string{}}
 }
 
 func (d *Daemon) readSlots() int {
@@ -266,12 +294,23 @@ func (l *loop) readStep(now time.Time) {
 			s.asked = nil
 		} else if s.asked, err = ParseReadQueue(out); err != nil {
 			d.Record(fmt.Sprintf("%s reads: %s", at, err))
-		} else if len(s.asked) > 0 {
-			s.epoch = s.asked[0].Epoch
+		} else {
+			if len(s.asked) > 0 {
+				s.epoch = s.asked[0].Epoch
+			}
+			all, _ := ParseReadQueueAll(out) // ignored: the same answer ParseReadQueue just read
+			clear(s.known)
+			for _, r := range all {
+				s.known[r.ID] = r
+			}
 		}
 	}
 	if l.lanes.gov.Held() != "" || l.lanes.gov.Paused(now) || d.machineStopped() {
 		return // nothing begins while STOPPED (NoLaunchAfterStop)
+	}
+	if l.serverLanes() {
+		l.readLaneStep(now) // each read lane asks the server what it holds (lane_take.go)
+		return
 	}
 	for _, r := range s.asked {
 		if len(s.running) >= d.readSlots() {
@@ -395,4 +434,70 @@ func recorded(out string, err error) string {
 		return "not recorded: " + oneLine(err.Error(), 200)
 	}
 	return oneLine(out, 120)
+}
+
+// readLaneStep is the reads through the same lane loop as her cards (lane_take.go): each read
+// lane free of a read asks the server `take --as reader-<friend> --lane <n>`, which answers the
+// read the lane holds, else begins her next asked read on it (asked -> reading); the lane runs
+// exactly that read, its packet from the reader queue, and reports its verdict by the ids the
+// server gave and its lane. A refusal runs nothing and the lane asks again.
+func (l *loop) readLaneStep(now time.Time) {
+	d, s := l.d, l.reads
+	member := ReaderOf(d.Friend)
+	busy := map[int]bool{}
+	for _, r := range s.active {
+		busy[r.Lane] = true
+	}
+	for n := 1; n <= d.readSlots(); n++ {
+		if busy[n] || now.Before(s.askAt[n]) || d.machineStopped() {
+			continue
+		}
+		at := now.UTC().Format(time.RFC3339)
+		say := func(line string) {
+			_, key, _ := strings.Cut(line, " ")
+			if key != s.said[n] {
+				s.said[n] = key
+				if line != "" {
+					d.Record(line)
+				}
+			}
+		}
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), TakeWait)
+		out, err := d.Take(ctx, LaneTakeArgv(member, n))
+		cancel()
+		var h LaneHold
+		if err == nil {
+			h, err = ParseLaneHold(member, n, out)
+		}
+		if err != nil {
+			s.askAt[n] = now.Add(TakeRetry)
+			say(fmt.Sprintf("%s read lane %d: asked the server what it holds: refused: %s; it runs nothing and asks again in %s", at, n, oneLine(err.Error(), 300), TakeRetry))
+			continue
+		}
+		if h.Card == "" {
+			s.askAt[n] = now.Add(LaneIdleAsk)
+			say("")
+			continue
+		}
+		if s.running[h.Card] {
+			s.askAt[n] = now.Add(TakeRetry)
+			say(fmt.Sprintf("%s read lane %d: the server says it holds read %s, which another read lane of this daemon runs; it asks again in %s", at, n, h.Card, TakeRetry))
+			continue
+		}
+		r, ok := s.known[h.Card]
+		if !ok || r.Packet.Brief == "" {
+			s.askAt[n], s.askedAt = now.Add(TakeRetry), time.Time{} // the queue is read again at once for its packet
+			say(fmt.Sprintf("%s read lane %d: holds read %s@%d at epoch %d on the server; not begun yet: the reader queue has not given its packet", at, n, h.Card, h.Gen, h.Epoch))
+			continue
+		}
+		say("")
+		r.Epoch, r.Gen, r.Lane = strconv.FormatUint(h.Epoch, 10), h.Gen, n
+		how := "holds"
+		if strings.Contains(out, "MOVED "+h.Card+" ") {
+			how = "took"
+		}
+		d.Record(fmt.Sprintf("%s read lane %d: %s read %s@%d (epoch %d): the server says lane %d holds it", at, n, how, r.ID, r.Gen, h.Epoch, n))
+		s.running[r.ID], s.begun[r.ID] = true, true
+		l.startRead(r, now)
+	}
 }

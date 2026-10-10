@@ -41,11 +41,11 @@
    :text "The worker card tells the child its deadline, and the native wall passes the slot temporary
     directory so TMPDIR is the slot one."
    :origin "nova-tools PR #5575, head 4725d7d7d")
-  (fix "walled-lane-tokens-read" :release "v1.2.6" :status "planned"
+  (fix "walled-lane-tokens-read" :release "v1.2.6" :status "shipped"
    :title "A walled lane tokens are read where its harness writes them"
    :text "Walled sessions live under the wall home, tokens are read from there first, and a session in no
     database is unread rather than zero, so the token cap can trip."
-   :origin "nova-tools PR #5590, head 0c4fd7ea")
+   :origin "nova-tools PR #5590, head 0c4fd7ea; landed in dev as 1babe4a43f via PR #5595")
   (fix "hosted-tests-green-on-main" :release "v1.2.6" :status "planned"
    :title "The hosted tests are green on main and nightly"
    :text "Two hosted tests are red on main and nightly (the fork bomb wall cap and jobs as worktrees of
@@ -62,7 +62,7 @@
    :text "nova-update release build without --sprint-release ships no sprint tools and succeeds; it
     refuses unless an explicit opt-out flag is given."
    :origin "nova-tools PR #5571 cold read")
-  (fix "changelog-lists-merge-queue-merges" :release "v1.2.6" :status "planned"
+  (fix "changelog-lists-merge-queue-merges" :release "v1.2.6" :status "in-progress"
    :title "The release changelog lists merge-queue merges"
    :text "The cut changelog says no pull request merged since the previous tag although the merge queue
     merged many; the listing includes merge-queue merges."
@@ -84,6 +84,38 @@
     take (the machine STOPPED) is asked again on a later pass, a batch daemon takes her ready cards, and
     a card set aside on a refused take or finish is taken again (tla/FriendLaneTake.tla)."
    :origin "a friend host, 2026-10-10 20:14Z: a one-shot friend's 23 lanes ran ready cards and set them aside")
+  (fix "friend-take-names-its-epoch" :release "v1.2.6" :status "in-progress"
+   :title "A friend's batch take names the epoch of her ready cards"
+   :text "The server refuses every worker verb that names no epoch; the batch take sent none, so a
+    batch friend's ready cards were never taken. The take now names the newest epoch her row holds, and
+    a lane's take names the epoch her row says for the card."
+   :origin "a friend host, 2026-10-10 20:53Z: take REFUSED, a worker's verb names the epoch")
+  (fix "friend-lane-wall-denies-the-seats-self" :release "v1.2.6" :status "in-progress"
+   :title "A friend's lane wall always has a coordinator self to deny"
+   :text "nova-friend install takes --deny-self and writes it into the agent, the seat play passes
+    nova_friend_deny_self to a reinstall whose plist records none, and with no flag the daemon denies
+    the seat's working root, so no lane exits 125 with bad_profile for a missing deny list."
+   :origin "a one-shot friend host, 2026-10-10: every lane exit 125, the daemon ran with no --deny-self")
+  (fix "friend-lanes-are-thin-clients" :release "v1.2.6" :status "in-progress"
+   :title "A friend's lanes are thin clients of the sprint server"
+   :text "Each lane asks the server what it holds (take --lane), runs exactly that, and reports by the
+    ids, epoch and lane the server gave; a refusal drops the job and the lane asks again. lanes.json
+    keeps sessions and owed stop-returns only, never what a lane holds, and reads go through the
+    same lane loop. The model is tla/FriendLane.tla."
+   :origin "a one-shot friend host, 2026-10-10: took logged while the server showed the card ready, and progress sent at epoch 0")
+  (fix "friend-wall-reads-its-pinned-harness" :release "v1.2.6" :status "shipped"
+   :title "A friend's lane wall reads the pinned harness it runs"
+   :text "nova-friend install takes --wall-reads and writes it into the agent, and the seat play passes
+    nova_friend_wall_reads to a reinstall whose plist records none, so a pinned harness whose shim
+    execs a directory under the home no longer exits 126 (Operation not permitted) for every lane."
+   :origin "a one-shot friend host, 2026-10-10: every lane exit 126 after the harness pin; the wall denied reading the pinned harness directory")
+  (fix "friends-snap-to-the-new-epoch" :release "v1.2.6" :status "in-progress"
+   :title "A friend's new epoch retires her older-epoch items and starts empty"
+   :text "On the sprint's new epoch the daemon moves every older-epoch inbox and outbox item to the
+    retired folder named for its epoch, kept, never deleted, and the live folders start the new epoch
+    empty; on the same signal the lanes forget their sessions and the present is owed, so a full or
+    stale session never carries across a clear."
+   :origin "the seat ledger v1.2.4-held-2026-10-10.md friend snap, 2026-10-10: 323 inbox items and 535 outbox REPORTs of epoch 15, each refused (not on her row)")
   (fix "update-adopt-partial-release-dir" :release "v1.2.9" :status "planned"
    :title "Release adopt does not trust a partial release directory"
    :text "A killed transfer leaves a partial release dir that the next adopt treats as complete. Adopt
