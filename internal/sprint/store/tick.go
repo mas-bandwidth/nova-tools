@@ -1027,7 +1027,7 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	read := st.meter()
 	var snap *sprint.Snapshot
 	if twin.mu.TryLock() {
-		snap, _, err = pinned.twinRead(withBudget(ctx), twin, All, tickExtras, nil)
+		snap, _, err = pinned.twinRead(withBudget(ctx), twin, All, nil, tickExtras, nil)
 		twin.mu.Unlock()
 	} else {
 		// another step of this process holds the twin: this read is the store's
@@ -2081,7 +2081,7 @@ func (st *Store) shadowRead(ctx context.Context) (*sprint.Snapshot, error) {
 		if f.Pending != nil {
 			continue
 		}
-		snap, f2, err := st.PipelinedLoadWithFence(ctx, All, tickExtras)
+		snap, f2, err := st.PipelinedLoadWithFence(ctx, All, nil, tickExtras)
 		if errors.Is(err, errCleared) {
 			return nil, errors.New("the sprint was cleared as the shadow tick read it; run it again")
 		}

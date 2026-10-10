@@ -158,9 +158,12 @@ func ReturnStep(r sprint.ReturnReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Return(s, r) }}
 }
 
-// RedoStep is the coordinator atomically returning, reworking and resuming conflicted cards.
+// RedoStep is the coordinator atomically returning, reworking and resuming
+// conflicted cards, or restoring dropped primaries by id or stream: it reads
+// every work table record, placed or kept off the table, so a dropped primary
+// is found by its stream (sprint.Redo).
 func RedoStep(r sprint.RedoReq) Step {
-	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "redo", Load: tables(sprint.Work, sprint.Readers, sprint.Fleet, sprint.Merge), Mirrors: true, Routes: true, Friends: true,
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "redo", Load: tables(sprint.Work, sprint.Readers, sprint.Fleet, sprint.Merge), EveryRecord: tables(sprint.Work), Mirrors: true, Routes: true, Friends: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Redo(s, r) }}
 }
 

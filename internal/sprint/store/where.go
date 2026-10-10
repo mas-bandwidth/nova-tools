@@ -140,7 +140,7 @@ func (st *Store) keepWhere(ctx context.Context, m Machine) error {
 	if !tw.mu.TryLock() {
 		return nil
 	}
-	snap, _, err := st.twinRead(withBudget(ctx), tw, All, tickExtras, nil)
+	snap, _, err := st.twinRead(withBudget(ctx), tw, All, nil, tickExtras, nil)
 	tw.mu.Unlock()
 	if errors.Is(err, errCleared) {
 		return nil

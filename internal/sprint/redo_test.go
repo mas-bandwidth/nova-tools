@@ -126,3 +126,52 @@ func TestRedoWhenNoMemberIsUp(t *testing.T) {
 	require.Contains(t, p.Units[0].Moved, "s1-2 merging -> ready (rework; no fleet member is up: start delegates it)")
 	require.Equal(t, StreamMerging, w.s.StreamCtl("s1").F("state"))
 }
+
+// TestADroppedCardIsRestoredByRedo pins the restore half of redo
+// (docs/SPEC-SPRINT.md section 11, redo): a stream of three cards, one needing
+// another, is dropped, and redo --stream restores all three to waiting at
+// their old scores with the need edge back; a card dropped as replaced by a
+// twin is refused naming the twin.
+func TestADroppedCardIsRestoredByRedo(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, "reader-a", "reader-b", "reader-c")
+	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1"}))
+	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m2"}))
+	w.must(Add(w.s, AddReq{Stream: "s1", IDs: []string{"s1-1"}, Brief: proBrief}))
+	w.must(Add(w.s, AddReq{Stream: "s1", IDs: []string{"s1-2"}, Needs: []string{"s1-1"}, Brief: proBrief}))
+	w.must(Add(w.s, AddReq{Stream: "s1", IDs: []string{"s1-3"}, Brief: proBrief}))
+	score := w.s.Work.Card("s1-2").Score
+	w.must(Drop(w.s, DropReq{Sel: Sel{Stream: "s1"}, Reason: "dropped by mistake", Cascade: true}))
+	require.Equal(t, "", w.state("s1-1"), "dropped: s1-1 off the table")
+	require.Equal(t, "dropped", w.s.Work.Card("s1-2").F("outcome"))
+
+	p := w.must(Redo(w.s, RedoReq{Sel: Sel{Stream: "s1"}, Reason: "re-admitted", Who: "coordinator"}))
+	require.Equal(t, Waiting, w.state("s1-1"))
+	require.Equal(t, Waiting, w.state("s1-2"))
+	require.Equal(t, Waiting, w.state("s1-3"))
+	require.Equal(t, score, w.s.Work.Card("s1-2").Score, "the old score is kept")
+	require.Equal(t, "s1-1", w.s.Work.Card("s1-2").F("needs"), "the need edge is back")
+	require.Empty(t, w.s.Work.Card("s1-1").F("outcome"), "the drop mark is cleared")
+	require.Len(t, p.Units, 3, "one MOVED line per card")
+
+	// A card dropped as replaced by a twin is refused naming the twin.
+	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-3"}}, Reason: "replaced by s1-9"}))
+	p = Redo(w.s, RedoReq{Sel: Sel{Stream: "s1"}, Reason: "re-admitted", Who: "coordinator"})
+	require.Len(t, p.Refused, 1, "the twinned card is refused: %+v", p.Refused)
+	require.Equal(t, "s1-3", p.Refused[0].Key)
+	require.Contains(t, p.Refused[0].Why, "s1-9", "the refusal names the twin")
+	require.Equal(t, "", w.state("s1-3"), "the twinned card stays dropped")
+}
+
+func TestRedoRestoreRefusesWithoutAReason(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, "reader-a", "reader-b", "reader-c")
+	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1"}))
+	w.must(Add(w.s, AddReq{Stream: "s1", IDs: []string{"s1-1"}, Brief: proBrief}))
+	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "obsolete"}))
+	p := Redo(w.s, RedoReq{Sel: Sel{IDs: []string{"s1-1"}}, Who: "coordinator"})
+	require.Len(t, p.Refused, 1, "restore without a reason: %+v", p.Refused)
+	require.Equal(t, "s1-1", p.Refused[0].Key)
+	require.Contains(t, p.Refused[0].Why, "--reason")
+	require.Empty(t, p.Units)
+}

@@ -15,7 +15,7 @@ func (st *Store) stoppedAssignments(ctx context.Context, res *TickResult) error 
 	// Pass an empty observation over, as running tick parts do. This fenced
 	// probe grants no write authority: Run re-reads before journaling a change
 	// (tla/DirtyTickRead.tla PassOver and ViewIsSnapshot).
-	snap, _, err := st.fenced(ctx, load, nil, nil)
+	snap, _, err := st.fenced(ctx, load, nil, nil, nil)
 	if err != nil {
 		return fmt.Errorf("stopped assignments: %w", err)
 	}

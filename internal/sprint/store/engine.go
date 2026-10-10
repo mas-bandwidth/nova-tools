@@ -118,12 +118,18 @@ type Store struct {
 // Step is one verb's step: the tables its plan reads, any records it reads
 // beyond them, and its plan.
 type Step struct {
-	Verb     string
-	Load     []string
-	Extras   func(*sprint.Snapshot) map[string][]string
-	Plan     func(s *sprint.Snapshot) sprint.Plan
-	Mirrors  bool   // bring the fleet's and merge's display cells up to date after
-	CallerOp string // the caller's operation id: a retry returns the recorded result
+	Verb   string
+	Load   []string
+	Extras func(*sprint.Snapshot) map[string][]string
+	// EveryRecord names the tables whose every record — placed or kept off the
+	// table (a dropped primary) — the step reads, so a step that selects
+	// dropped primaries by stream can find them (redo --stream): the store
+	// discovers the records from the table's change log (RecordIDs) and reads
+	// the ones not already read.
+	EveryRecord []string
+	Plan        func(s *sprint.Snapshot) sprint.Plan
+	Mirrors     bool   // bring the fleet's and merge's display cells up to date after
+	CallerOp    string // the caller's operation id: a retry returns the recorded result
 	// Epoch, when set, is the epoch the caller holds (a worker's card, a
 	// reader's read card, the driver's merge step): a sprint at another epoch
 	// refuses the step, naming the clear.
@@ -350,15 +356,15 @@ func (st *Store) grace() time.Duration {
 // pending operation first: the snapshot is no partial state of any operation,
 // and gen is the fence's generation it was read at.
 func (st *Store) Fenced(ctx context.Context, tables []string, extras func(*sprint.Snapshot) map[string][]string, repaired *[]string) (*sprint.Snapshot, uint64, error) {
-	snap, f, err := st.fenced(ctx, tables, extras, repaired)
+	snap, f, err := st.fenced(ctx, tables, nil, extras, repaired)
 	return snap, f.Gen, err
 }
 
 // fenced is Fenced with the fence it read: the machine's state and the
 // queue's length with the generation. The snapshot carries the queue's
 // length (Snapshot.Queued).
-func (st *Store) fenced(ctx context.Context, tables []string, extras func(*sprint.Snapshot) map[string][]string, repaired *[]string) (*sprint.Snapshot, Fence, error) {
-	snap, gen, f2, err := st.fencedRead(ctx, tables, extras, repaired)
+func (st *Store) fenced(ctx context.Context, tables []string, every []string, extras func(*sprint.Snapshot) map[string][]string, repaired *[]string) (*sprint.Snapshot, Fence, error) {
+	snap, gen, f2, err := st.fencedRead(ctx, tables, every, extras, repaired)
 	if err != nil {
 		return snap, Fence{Gen: gen}, err
 	}
@@ -367,7 +373,7 @@ func (st *Store) fenced(ctx context.Context, tables []string, extras func(*sprin
 	return snap, f2, nil
 }
 
-func (st *Store) fencedRead(ctx context.Context, tables []string, extras func(*sprint.Snapshot) map[string][]string, repaired *[]string) (*sprint.Snapshot, uint64, Fence, error) {
+func (st *Store) fencedRead(ctx context.Context, tables []string, every []string, extras func(*sprint.Snapshot) map[string][]string, repaired *[]string) (*sprint.Snapshot, uint64, Fence, error) {
 	r := st.retry(ctx)
 	for r.next(st.attempts()) {
 		f, err := st.B.ReadFence(ctx)
@@ -390,7 +396,7 @@ func (st *Store) fencedRead(ctx context.Context, tables []string, extras func(*s
 			}
 			continue
 		}
-		snap, f2, err := st.PipelinedLoadWithFence(ctx, tables, extras)
+		snap, f2, err := st.PipelinedLoadWithFence(ctx, tables, every, extras)
 		if err != nil {
 			return nil, 0, Fence{}, err
 		}
@@ -2128,7 +2134,7 @@ func (st *Store) rejudge(ctx context.Context, op OpRecord, from int, twins ...*T
 		// The caller holds this twin: read all work records incrementally
 		// for the lifecycle, treating the repair's own pending op as held.
 		// Taking its mutex again or repairing that op again recurses.
-		pre, _, err = st.twinRead(ctx, twins[0], []string{sprint.Work}, nil, nil, op.ID)
+		pre, _, err = st.twinRead(ctx, twins[0], []string{sprint.Work}, nil, nil, nil, op.ID)
 	} else {
 		pre, err = st.Load(ctx, []string{sprint.Work}, nil)
 	}
