@@ -58,6 +58,10 @@ type SeatInjectOptions struct {
 	Now   func() time.Time
 	Check func(storeDir, asName, keyPath, sopsPath string) error
 
+	// Gate is the seat-rule gate run on the commit before any push.
+	// Nil calls RunGate. A fixture whose git is not a real store passes a stand-in.
+	Gate func(GateInput) (string, int)
+
 	// Exec replaces the os/exec child process, as it does for seal.
 	Exec execCommand
 }
@@ -133,6 +137,7 @@ func RunSeatInject(opts SeatInjectOptions) (string, error) {
 	joined := strings.Join(names, "+")
 	branch := fmt.Sprintf("seal/%s-%s-%s", opts.AsName, joined, opts.Now().UTC().Format("20060102-150405"))
 	commitMsg := fmt.Sprintf("inject %s into %s from %s", strings.Join(names, ","), seatFile, opts.From)
+	var waivedLine string
 	carry := sealCarry{
 		run:      run,
 		storeDir: opts.StoreDir,
@@ -144,8 +149,10 @@ func RunSeatInject(opts SeatInjectOptions) (string, error) {
 		title:    commitMsg,
 		body: fmt.Sprintf("Injected with nova-secrets seat inject from %s: %d value(s) re-sealed to %s's own recipients, which are unchanged. No value was written to a file in the clear, to argv, or to output.",
 			opts.From, len(names), seatFile),
-		noPR: opts.NoPR,
-		say:  opts.say,
+		noPR:   opts.NoPR,
+		say:    opts.say,
+		gate:   opts.Gate,
+		report: &waivedLine,
 		check: func() error {
 			checkFn := opts.Check
 			if checkFn == nil {
@@ -182,7 +189,11 @@ func RunSeatInject(opts SeatInjectOptions) (string, error) {
 	case !merged:
 		return fmt.Sprintf("%s pr=#%s open (gate not yet approved)", head, prNum), nil
 	}
-	return fmt.Sprintf("%s pr=#%s merged", head, prNum), nil
+	line := fmt.Sprintf("%s pr=#%s merged", head, prNum)
+	if waivedLine != "" {
+		line += "\n" + waivedLine
+	}
+	return line, nil
 }
 
 // seatInjectValidate checks the invocation and answers the --only names, sorted and

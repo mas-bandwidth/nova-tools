@@ -68,6 +68,9 @@ func newTerminalTestOptions(t *testing.T, secretValue string, clock *terminalFak
 			if len(args) >= 2 && args[0] == "rev-parse" && args[1] == "--abbrev-ref" {
 				return []byte("main\n"), nil
 			}
+			if len(args) >= 2 && args[0] == "rev-parse" && args[1] == "HEAD" {
+				return []byte("1111111111111111111111111111111111111111\n"), nil
+			}
 			return []byte(""), nil
 		}
 		if cmdName == "gh" || name == opts.GHPath {
@@ -154,21 +157,28 @@ func TestSealStopsOnTerminalReviewState(t *testing.T) {
 		})
 	}
 
-	t.Run("PENDING review polls to deadline", func(t *testing.T) {
+	t.Run("a queued gate is not cut off at 2 minutes", func(t *testing.T) {
 		t.Parallel()
 		clock := newTerminalFakeClock(startTime)
+		var progress strings.Builder
 		opts := newTerminalTestOptions(t, secretValue, clock, func() ([]byte, error) {
-			return []byte(`{"state":"OPEN","reviewDecision":"REVIEW_REQUIRED","statusCheckRollup":[]}`), nil
+			_, slept := clock.stats()
+			if slept < 2*time.Minute+5*time.Second {
+				return []byte(`{"state":"OPEN","reviewDecision":"REVIEW_REQUIRED","statusCheckRollup":[{"name":"seat-rule","status":"QUEUED"}]}`), nil
+			}
+			return []byte(`{"state":"OPEN","reviewDecision":"APPROVED","statusCheckRollup":[{"name":"seat-rule","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-10-04T12:02:05Z"}]}`), nil
 		})
+		opts.Progress = &progress
 
 		line, err := RunSeal(opts)
-		require.NoError(t, err, "pending review timeout must return an OK line, not error")
-		assert.Contains(t, line, "open (gate not yet approved)", "pending review must report open line: %q", line)
-		assert.False(t, strings.Contains(line, secretValue), "OK line must not leak secret value")
+		require.NoError(t, err, "a gate that has not started must not be abandoned at 2 minutes: %v", err)
+		assert.Contains(t, line, "merged", "the seal finishes once the gate approves: %q", line)
+		assert.NotContains(t, line, secretValue, "OK line must not leak secret value")
+		assert.Contains(t, progress.String(), "gate job has not started", "the wait says the job has not started: %s", progress.String())
 
 		sleepCalls, slept := clock.stats()
-		assert.Greater(t, sleepCalls, 0, "pending review must poll")
-		assert.GreaterOrEqual(t, slept, 2*time.Minute, "pending review must poll to the bounded deadline")
+		assert.Greater(t, sleepCalls, 0, "a queued gate must keep polling")
+		assert.GreaterOrEqual(t, slept, 2*time.Minute, "the old 2-minute cap must not stop the wait")
 	})
 
 	t.Run("APPROVED merges without waiting", func(t *testing.T) {
@@ -186,5 +196,64 @@ func TestSealStopsOnTerminalReviewState(t *testing.T) {
 		sleepCalls, slept := clock.stats()
 		assert.Equal(t, 0, sleepCalls, "approved review must merge immediately without polling")
 		assert.Equal(t, time.Duration(0), slept, "approved review must not wait")
+	})
+	t.Run("APPROVED with a failed seat-rule check and no matching head refuses", func(t *testing.T) {
+		t.Parallel()
+		clock := newTerminalFakeClock(startTime)
+		opts := newTerminalTestOptions(t, secretValue, clock, func() ([]byte, error) {
+			return []byte(`{"state":"OPEN","reviewDecision":"APPROVED","statusCheckRollup":[{"name":"seat-rule","status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://example.com/gate-log"}]}`), nil
+		})
+
+		line, err := RunSeal(opts)
+		require.Error(t, err, "an approved review does not override a failed seat-rule check")
+		assert.Empty(t, line, "the refusal must not be an OK line")
+		assert.NotContains(t, err.Error(), secretValue, "the refusal must not leak the value")
+		assert.Contains(t, err.Error(), "seat-rule", "the refusal must name the failed check: %v", err)
+		assert.Contains(t, err.Error(), "https://example.com/gate-log", "the refusal prints the gate's failing line: %v", err)
+		assert.NotContains(t, err.Error(), "REFUSED", "the check failure is the check sentence, not a second refusal word")
+
+		sleepCalls, slept := clock.stats()
+		assert.Equal(t, 0, sleepCalls, "a failed check must stop without waiting")
+		assert.Equal(t, time.Duration(0), slept, "a failed check must not wait")
+	})
+
+	t.Run("a stale seat-rule check is waived when headRefOid is the sealed commit", func(t *testing.T) {
+		t.Parallel()
+		clock := newTerminalFakeClock(startTime)
+		opts := newTerminalTestOptions(t, secretValue, clock, func() ([]byte, error) {
+			return []byte(`{"state":"OPEN","reviewDecision":"APPROVED","headRefOid":"1111111111111111111111111111111111111111","statusCheckRollup":[{"name":"seat-rule","status":"COMPLETED","conclusion":"FAILURE"}]}`), nil
+		})
+
+		line, err := RunSeal(opts)
+		require.NoError(t, err, "a stale seat-rule check on this commit must not refuse: %v", err)
+		assert.Contains(t, line, "merged", "the waived review must report merged: %q", line)
+		assert.Contains(t, line, "GATE APPROVE", "the waived case prints the local gate verdict: %q", line)
+		assert.NotContains(t, line, "REFUSED", "the waived case must not say REFUSED: %q", line)
+		assert.NotContains(t, line, secretValue, "merged line must not leak the value")
+
+		sleepCalls, slept := clock.stats()
+		assert.Equal(t, 0, sleepCalls, "a waived seat-rule check must not wait")
+		assert.Equal(t, time.Duration(0), slept, "a waived seat-rule check must not wait")
+	})
+
+	t.Run("a local gate failure refuses before the review", func(t *testing.T) {
+		t.Parallel()
+		clock := newTerminalFakeClock(startTime)
+		opts := newTerminalTestOptions(t, secretValue, clock, func() ([]byte, error) {
+			return []byte(`{"state":"OPEN","reviewDecision":"APPROVED","headRefOid":"1111111111111111111111111111111111111111","statusCheckRollup":[{"name":"seat-rule","status":"COMPLETED","conclusion":"FAILURE"}]}`), nil
+		})
+		opts.Gate = func(GateInput) (string, int) {
+			return "GATE FAILED rule=3 check=3 file=notes.txt: only .sops.yaml, README.md and seat .yaml files may change", 1
+		}
+
+		line, err := RunSeal(opts)
+		require.Error(t, err, "a local gate failure must refuse")
+		assert.Empty(t, line, "a gate failure must not be an OK line")
+		assert.Contains(t, err.Error(), "GATE FAILED", "the refusal is the gate verdict: %v", err)
+		assert.NotContains(t, err.Error(), secretValue, "the refusal must not leak the value")
+
+		sleepCalls, slept := clock.stats()
+		assert.Equal(t, 0, sleepCalls, "a local gate failure must not wait on the review")
+		assert.Equal(t, time.Duration(0), slept, "a local gate failure must not wait")
 	})
 }

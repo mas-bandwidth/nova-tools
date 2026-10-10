@@ -42,7 +42,27 @@ func newSittingHome(t *testing.T) sittingHome {
 	writeFakeExe(t, filepath.Join(fakeBin, "ssh"), "#!/bin/sh\ncat >/dev/null\nexit 0\n")
 	h.path = fakeBin + string(os.PathListSeparator) + "/usr/bin:/bin"
 	writeFakeExe(t, h.sops, "#!/bin/sh\ncase \"$1\" in\n--version) echo 'sops 3.13.3'; exit 0 ;;\n"+
-		"-d) printf 'GH_TOKEN: gh-value\\nDEEPSEEK_API_KEY: ds-value\\nNOVA_REDIS_BENCH_PASSWORD: pw-value\\n'; exit 0 ;;\nesac\nexit 0\n")
+		"-d) printf 'GH_TOKEN: gh-value\\nDEEPSEEK_API_KEY: ds-value\\nNOVA_REDIS_BENCH_PASSWORD: pw-value\\n'; exit 0 ;;\n"+
+		"-e)\n"+
+		"rec=$(awk '/age:/ { sub(/^ *age: */, \"\"); print; exit }' .sops.yaml)\n"+
+		"while IFS= read -r line; do\n"+
+		"  case \"$line\" in\n"+
+		"    NOVA_SECRETS_WRITTEN_BY:*) printf '%s\\n' \"$line\" ;;\n"+
+		"    *:*)\n"+
+		"      key=${line%%:*}\n"+
+		"      val=${line#*: }\n"+
+		"      case \"$val\" in\n"+
+		"        ENC\\[*) printf '%s\\n' \"$line\" ;;\n"+
+		"        *) printf '%s: ENC[AES256_GCM,data:x,iv:a,tag:b,type:str]\\n' \"$key\" ;;\n"+
+		"      esac\n"+
+		"      ;;\n"+
+		"    *) printf '%s\\n' \"$line\" ;;\n"+
+		"  esac\n"+
+		"done\n"+
+		"printf 'sops:\\n    age:\\n'\n"+
+		"for r in $(printf '%s' \"$rec\" | tr ',' ' '); do printf '        - recipient: %s\\n' \"$r\"; done\n"+
+		"exit 0 ;;\n"+
+		"esac\nexit 0\n")
 
 	ada, recovery := agePub('p'), agePub('z')
 	store := filepath.Join(home, "secrets")

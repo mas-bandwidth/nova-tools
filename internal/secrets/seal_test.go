@@ -84,6 +84,7 @@ func newSealFixture(t *testing.T, decryptOut string) *sealFixture {
 
 	gitBody := "printf '%s\\n' \"$@\" >> \"" + f.gitArgs + "\"\n" +
 		"if [ \"$1\" = \"rev-parse\" ] && [ \"$2\" = \"--abbrev-ref\" ]; then echo \"main\"; fi\n" +
+		"if [ \"$1\" = \"rev-parse\" ] && [ \"$2\" = \"HEAD\" ]; then echo \"1111111111111111111111111111111111111111\"; fi\n" +
 		"exit 0\n"
 	f.gitPath = f.writeScript(t, "git", gitBody)
 	ghBody := "printf '%s\\n' \"$@\" >> \"" + f.ghArgs + "\"\n" +
@@ -118,6 +119,7 @@ func (f *sealFixture) options(t *testing.T, name, value string, noPR bool) SealO
 		StdinIsTerminal: false,
 		Now:             func() time.Time { return time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC) },
 		Check:           func(storeDir, asName, keyPath, sopsPath string) error { return nil },
+		Gate:            func(GateInput) (string, int) { return "GATE APPROVE files=0 machines=-", 0 },
 	}
 }
 
@@ -190,6 +192,58 @@ func TestSealValueWithAnotherLineIsRefused(t *testing.T) {
 	assert.NotContains(t, err.Error(), "one", "the refusal must not echo the value")
 	assert.NotContains(t, err.Error(), "two", "the refusal must not echo the rest")
 	assert.Contains(t, err.Error(), "multi-line", "the refusal must say multi-line: %v", err)
+}
+
+// TestClassifyDoesNotWaiveAFailedCheckWhenTheLocalGateFailed locks the review
+// rule: an APPROVED decision does not skip a failed check. The seat-rule check
+// is ignored only when the local gate returned 0 and headRefOid is the sealed
+// commit. A different check stays terminal even then.
+func TestClassifyDoesNotWaiveAFailedCheckWhenTheLocalGateFailed(t *testing.T) {
+	t.Parallel()
+
+	const sha = "1111111111111111111111111111111111111111"
+	raw := `{"state":"OPEN","reviewDecision":"APPROVED","headRefOid":"` + sha + `","statusCheckRollup":[{"name":"seat-rule","status":"COMPLETED","conclusion":"FAILURE"}]}`
+
+	approved, waived, err := classifySealReview(raw, "42", sha, 1)
+	require.Error(t, err, "a local gate failure must keep the failed check terminal")
+	assert.False(t, approved)
+	assert.False(t, waived)
+	assert.Contains(t, err.Error(), "seat-rule")
+
+	approved, waived, err = classifySealReview(raw, "42", sha, 0)
+	require.NoError(t, err, "a stale seat-rule check on this commit is not a refusal")
+	assert.True(t, approved)
+	assert.True(t, waived)
+
+	other := `{"state":"OPEN","reviewDecision":"APPROVED","headRefOid":"` + sha + `","statusCheckRollup":[{"name":"ci","status":"COMPLETED","conclusion":"FAILURE"}]}`
+	approved, waived, err = classifySealReview(other, "42", sha, 0)
+	require.Error(t, err, "a failed check that is not seat-rule stays terminal")
+	assert.False(t, approved)
+	assert.False(t, waived)
+	assert.Contains(t, err.Error(), "ci")
+}
+
+// TestAdmitLocalGateRefusesWhatRunGateRefuses: a nil gate is RunGate. A commit
+// the gate rejects is a refusal before any push, and the sentence is the gate's.
+func TestAdmitLocalGateRefusesWhatRunGateRefuses(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := gateStart(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("x\n"), 0o644))
+	gateGit(t, dir, "add", "notes.txt")
+	gateGit(t, dir, "commit", "-m", "bad")
+	parent := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD^"))
+	gitBin, err := exec.LookPath("git")
+	require.NoError(t, err)
+
+	c := sealCarry{run: realExecCommand, storeDir: dir, gitPath: gitBin}
+	_, _, gerr := c.admitLocalGate(parent)
+	require.Error(t, gerr, "RunGate must refuse a file the seat rule does not allow")
+	assert.Contains(t, gerr.Error(), "GATE FAILED")
+	assert.NotContains(t, gerr.Error(), "REFUSED")
 }
 
 func TestSealEmptyValueRefused(t *testing.T) {

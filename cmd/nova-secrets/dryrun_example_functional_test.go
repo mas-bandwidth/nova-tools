@@ -151,7 +151,7 @@ func TestTheHelpExampleIsWhatSealDryRunPrints(t *testing.T) {
 		"! seal: reading worker.yaml",
 		"SECRETS SEAL PLAN write=secrets/worker.yaml action=replace name=API_KEY seat=worker recipients=" + exWorker + "," + exRecovery + " value=not read (dry run)",
 		`SECRETS SEAL PLAN git store=./secrets from=main branch=seal/worker-API_KEY-20260930-120000 commit="seal API_KEY into worker.yaml"`,
-		`SECRETS SEAL PLAN push remote=origin branch=seal/worker-API_KEY-20260930-120000 pr title="seal API_KEY into worker.yaml" then waits up to 2m for the gate's approval, merges --squash, pulls and checks the seat`,
+		`SECRETS SEAL PLAN push remote=origin branch=seal/worker-API_KEY-20260930-120000 pr title="seal API_KEY into worker.yaml" then waits for the gate job to start and for its result, merges --squash, pulls and checks the seat`,
 		"SECRETS SEAL DRY-RUN OK name=API_KEY seat=worker nothing written, no value read, no push, no gh call",
 	}, []onboarding.Field{{Name: "branch"}})
 }
@@ -164,7 +164,7 @@ func TestTheHelpExampleIsWhatSeatInjectDryRunPrints(t *testing.T) {
 		"! seat inject: reading lead.yaml",
 		"SECRETS SEAT INJECT PLAN write=secrets/worker.yaml from=lead deliver=API_KEY recipients=" + exWorker + "," + exRecovery + " keep-clear=- every other held name is re-sealed from the source; values not shown",
 		`SECRETS SEAT INJECT PLAN git store=./secrets from=main branch=seal/worker-API_KEY-20260930-120000 commit="inject API_KEY into worker.yaml from lead"`,
-		`SECRETS SEAT INJECT PLAN push remote=origin branch=seal/worker-API_KEY-20260930-120000 pr title="inject API_KEY into worker.yaml from lead" then waits up to 2m for the gate's approval, merges --squash, pulls and checks the seat`,
+		`SECRETS SEAT INJECT PLAN push remote=origin branch=seal/worker-API_KEY-20260930-120000 pr title="inject API_KEY into worker.yaml from lead" then waits for the gate job to start and for its result, merges --squash, pulls and checks the seat`,
 		"SECRETS SEAT INJECT DRY-RUN OK seat=worker from=lead names=1 nothing written, no push, no gh call",
 	}, []onboarding.Field{{Name: "branch"}})
 }

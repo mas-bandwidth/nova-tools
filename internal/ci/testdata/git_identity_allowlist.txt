@@ -56,8 +56,6 @@ internal/nsprint/testutil/remote_test.go 3 predates the rule; route its commits 
 internal/release/edges_diff_functional_test.go 2 predates the rule; route its commits through testgit.Environ
 internal/sandbox/delete_outside_test.go 1 predates the rule; route its commits through testgit.Environ
 internal/secrets/check_store_test.go 2 predates the rule; route its commits through testgit.Environ
-internal/secrets/gate_recipients_test.go 1 predates the rule; route its commits through testgit.Environ
-internal/secrets/gate_test.go 2 predates the rule; route its commits through testgit.Environ
 internal/secrets/model_invariants_test.go 2 predates the rule; route its commits through testgit.Environ
 internal/secrets/seal_test.go 1 predates the rule; route its commits through testgit.Environ
 internal/secrets/store_test.go 1 predates the rule; route its commits through testgit.Environ

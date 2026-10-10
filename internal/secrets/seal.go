@@ -100,6 +100,10 @@ type SealOptions struct {
 	// read off the same carry the real run walks (sealCarry), so the two cannot differ.
 	DryRun bool
 
+	// Resume is the number of a pull request seal already pushed. The value is not
+	// read again. The road continues at the gate wait, the merge, the pull and the check.
+	Resume string
+
 	Stdin           io.Reader
 	StdinIsTerminal bool
 
@@ -112,6 +116,10 @@ type SealOptions struct {
 	Now   func() time.Time
 	Sleep func(time.Duration)
 	Check func(storeDir, asName, keyPath, sopsPath string) error
+
+	// Gate is the seat-rule gate run on the sealed commit before any push.
+	// Nil calls RunGate. A fixture whose git is not a real store passes a stand-in.
+	Gate func(GateInput) (string, int)
 
 	// Exec replaces the os/exec child process. Tests set it to a pure-Go fake
 	// so the seal path runs where a POSIX shell-script fake cannot.
@@ -130,12 +138,19 @@ var prNumberRegex = regexp.MustCompile(`/pull/(\d+)`)
 // RunSeal reads one value, folds it into the seat file under --name, and carries the
 // change through a branch, a commit and, unless --no-pr, a pull request to its merge.
 func RunSeal(opts SealOptions) (line string, err error) {
-	if err := preflight(opts.StoreDir, need{opts.StoreDir, "--store <dir>", false}, need{opts.AsName, "--as <name>", true},
-		need{opts.KeyPath, "--key <path>", false}, need{opts.SopsPath, "--sops <path>", false}, need{opts.Name, "--name <NAME>", false}); err != nil {
+	needs := []need{{opts.StoreDir, "--store <dir>", false}, {opts.AsName, "--as <name>", true},
+		{opts.KeyPath, "--key <path>", false}, {opts.SopsPath, "--sops <path>", false}}
+	if strings.TrimSpace(opts.Resume) == "" {
+		needs = append(needs, need{opts.Name, "--name <NAME>", false})
+	}
+	if err := preflight(opts.StoreDir, needs...); err != nil {
 		return "", err
 	}
-	if !IsValidEnvVar(opts.Name) {
+	if opts.Name != "" && !IsValidEnvVar(opts.Name) {
 		return "", fmt.Errorf("invalid key name %q: must match [A-Z][A-Z0-9_]*", opts.Name)
+	}
+	if strings.TrimSpace(opts.Resume) == "" && opts.Name == "" {
+		return "", fmt.Errorf("missing --name <NAME>")
 	}
 	if opts.GHPath == "" {
 		opts.GHPath = "gh"
@@ -157,11 +172,15 @@ func RunSeal(opts SealOptions) (line string, err error) {
 	if _, err := CheckSopsVersion(run, opts.SopsPath); err != nil {
 		return "", err
 	}
+	if strings.TrimSpace(opts.Resume) != "" {
+		return resumeSeal(opts, run)
+	}
 
 	seatFile := opts.AsName + ".yaml"
 	targetFile := filepath.Join(opts.StoreDir, seatFile)
 	branch := fmt.Sprintf("seal/%s-%s-%s", opts.AsName, opts.Name, opts.Now().UTC().Format("20060102-150405"))
 	commitMsg := fmt.Sprintf("seal %s into %s", opts.Name, seatFile)
+	var waivedLine string
 	carry := sealCarry{
 		run:      run,
 		storeDir: opts.StoreDir,
@@ -181,8 +200,10 @@ func RunSeal(opts SealOptions) (line string, err error) {
 			}
 			return checkFn(opts.StoreDir, opts.AsName, opts.KeyPath, opts.SopsPath)
 		},
-		now:   opts.Now,
-		sleep: opts.Sleep,
+		now:    opts.Now,
+		sleep:  opts.Sleep,
+		gate:   opts.Gate,
+		report: &waivedLine,
 	}
 
 	if opts.DryRun {
@@ -236,8 +257,12 @@ func RunSeal(opts SealOptions) (line string, err error) {
 		return fmt.Sprintf("SECRETS SEAL OK name=%s seat=%s pr=#%s open (gate not yet approved)",
 			oneline.Field(opts.Name), oneline.Field(opts.AsName), prNum), nil
 	}
-	return fmt.Sprintf("SECRETS SEAL OK name=%s seat=%s pr=#%s merged",
-		oneline.Field(opts.Name), oneline.Field(opts.AsName), prNum), nil
+	line = fmt.Sprintf("SECRETS SEAL OK name=%s seat=%s pr=#%s merged",
+		oneline.Field(opts.Name), oneline.Field(opts.AsName), prNum)
+	if waivedLine != "" {
+		line += "\n" + waivedLine
+	}
+	return line, nil
 }
 
 // checkSeatDecrypts is the check a merged seal ends on: the seat's file, at the
@@ -273,6 +298,11 @@ type sealCarry struct {
 	check    func() error // runs after the merge and the pull
 	now      func() time.Time
 	sleep    func(time.Duration)
+	gate     func(GateInput) (string, int) // nil calls RunGate
+	report   *string                       // set to the local gate verdict when a seat-rule check is waived
+	// sealedSHA and gateVerdict live for the review poll inside carry.
+	sealedSHA   string
+	gateVerdict string
 }
 
 // carry writes the ciphertext into place on a fresh branch and carries it to
@@ -342,6 +372,12 @@ func (c sealCarry) carry(ciphertext []byte) (prNum string, merged bool, err erro
 	if err := sealGit(c.run, c.storeDir, c.gitPath, "commit", "-m", c.message); err != nil {
 		return "", false, err
 	}
+	sha, verdict, gerr := c.admitLocalGate(home)
+	if gerr != nil {
+		return "", false, gerr
+	}
+	c.sealedSHA = sha
+	c.gateVerdict = verdict
 
 	if c.noPR {
 		say("returning the store to its branch")
@@ -367,43 +403,12 @@ func (c sealCarry) carry(ciphertext []byte) (prNum string, merged bool, err erro
 		return "", false, fmt.Errorf("gh pr create did not return a pull request number")
 	}
 
-	approved := false
-	started := nowFn()
-	deadline := started.Add(2 * time.Minute)
-	lastSaid := started
-	say("pull request #%s is open; waiting for the gate's approval (up to 2 min)", prNum)
-	for {
-		view, err := sealGH(c.run, c.ghPath, c.storeDir, "pr", "view", prNum, "--json", "reviewDecision,state,statusCheckRollup")
-		if err != nil {
-			errStr := strings.ToLower(err.Error())
-			if strings.Contains(errStr, "not found") || strings.Contains(errStr, "could not resolve") || strings.Contains(errStr, "missing") {
-				return "", false, fmt.Errorf("pull request #%s not found: %s; run: gh pr list", prNum, oneline.Err(err))
-			}
-			return "", false, fmt.Errorf("pull request #%s review query failed: %s; run: gh pr view %s", prNum, oneline.Err(err), prNum)
-		}
-		termErr, isApproved := classifySealReview(view, prNum)
-		if termErr != nil {
-			return "", false, termErr
-		}
-		if isApproved {
-			approved = true
-			break
-		}
-		if !nowFn().Before(deadline) {
-			break
-		}
-		if nowFn().Sub(lastSaid) >= 15*time.Second {
-			say("still waiting for approval (%ds)", int(nowFn().Sub(started).Seconds()))
-			lastSaid = nowFn()
-		}
-		sleepFn(5 * time.Second)
-	}
-	if !approved {
-		return prNum, false, nil
+	if err := c.awaitGate(prNum, say, nowFn, sleepFn); err != nil {
+		return "", false, err
 	}
 
 	say("approved; merging #%s", prNum)
-	if _, err := sealGH(c.run, c.ghPath, c.storeDir, "pr", "merge", prNum, "--squash"); err != nil {
+	if err := c.squashMerge(prNum); err != nil {
 		return "", false, err
 	}
 	// Back to the branch the store was on: the squash leaves the seal branch stale, and a
@@ -423,6 +428,160 @@ func (c sealCarry) carry(ciphertext []byte) (prNum string, merged bool, err erro
 		}
 	}
 	return prNum, true, nil
+}
+
+// awaitGate polls the pull request until the gate approves it or a check fails.
+// The two-minute cap is gone. Time is counted from the gate job starting
+// (status in progress, or a startedAt), not from the pull request opening.
+// A remote failure is printed before it is returned.
+func (c sealCarry) awaitGate(prNum string, say func(string, ...interface{}), nowFn func() time.Time, sleepFn func(time.Duration)) error {
+	if sleepFn == nil {
+		sleepFn = time.Sleep
+	}
+	say("pull request #%s is open; waiting for the gate job to start", prNum)
+	var gateAt time.Time
+	lastSaid := nowFn()
+	for {
+		view, err := sealGH(c.run, c.ghPath, c.storeDir, "pr", "view", prNum, "--json", "reviewDecision,state,statusCheckRollup,headRefOid")
+		if err != nil {
+			errStr := strings.ToLower(err.Error())
+			if strings.Contains(errStr, "not found") || strings.Contains(errStr, "could not resolve") || strings.Contains(errStr, "missing") {
+				return fmt.Errorf("pull request #%s not found: %s; run: gh pr list", prNum, oneline.Err(err))
+			}
+			return fmt.Errorf("pull request #%s review query failed: %s; run: gh pr view %s", prNum, oneline.Err(err), prNum)
+		}
+		isApproved, waived, termErr := classifySealReview(view, prNum, c.sealedSHA, 0)
+		if termErr != nil {
+			say("%s", termErr.Error())
+			return termErr
+		}
+		if isApproved {
+			if waived && c.report != nil {
+				*c.report = c.gateVerdict
+				if c.gateVerdict != "" {
+					say("%s", c.gateVerdict)
+				}
+			}
+			return nil
+		}
+		now := nowFn()
+		if gateAt.IsZero() && sealGateJobStarted(view) {
+			gateAt = now
+		}
+		if now.Sub(lastSaid) >= 15*time.Second {
+			if gateAt.IsZero() {
+				say("pull request #%s is open; the gate job has not started", prNum)
+			} else {
+				say("gate job running (%ds since it started)", int(now.Sub(gateAt).Seconds()))
+			}
+			lastSaid = now
+		}
+		sleepFn(5 * time.Second)
+	}
+}
+
+// sealGateJobStarted reports whether the gate check has left the queue.
+// A queued check has not started, so it does not start the wait's clock.
+func sealGateJobStarted(raw string) bool {
+	var view sealPRView
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &view); err != nil {
+		return false
+	}
+	for _, check := range view.StatusCheckRollup {
+		if check.Name != "" && check.Name != "seat-rule" && check.Name != "gate" {
+			continue
+		}
+		st := strings.ToUpper(check.Status)
+		if st == "IN_PROGRESS" || st == "COMPLETED" || strings.TrimSpace(check.StartedAt) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// resumeSeal finishes a pull request seal already pushed. It does not read a value.
+func resumeSeal(opts SealOptions, run execCommand) (string, error) {
+	prNum := strings.TrimPrefix(strings.TrimSpace(opts.Resume), "#")
+	if prNum == "" || strings.IndexFunc(prNum, func(r rune) bool { return r < '0' || r > '9' }) >= 0 {
+		return "", fmt.Errorf("--resume wants the pull request number")
+	}
+	var waivedLine string
+	name := opts.Name
+	if name == "" {
+		name = "-"
+	}
+	carry := sealCarry{
+		run:      run,
+		storeDir: opts.StoreDir,
+		gitPath:  opts.GitPath,
+		ghPath:   opts.GHPath,
+		say:      opts.say,
+		check: func() error {
+			checkFn := opts.Check
+			if checkFn == nil {
+				checkFn = checkSeatDecrypts
+			}
+			return checkFn(opts.StoreDir, opts.AsName, opts.KeyPath, opts.SopsPath)
+		},
+		now:    opts.Now,
+		sleep:  opts.Sleep,
+		gate:   opts.Gate,
+		report: &waivedLine,
+	}
+	if err := carry.resume(prNum); err != nil {
+		return "", err
+	}
+	line := fmt.Sprintf("SECRETS SEAL OK name=%s seat=%s pr=#%s merged",
+		oneline.Field(name), oneline.Field(opts.AsName), prNum)
+	if waivedLine != "" {
+		line += "\n" + waivedLine
+	}
+	return line, nil
+}
+
+// squashMerge is the one merge of a secrets pull request. The store has no merge
+// queue; the seal and a resumed seal both land here.
+func (c sealCarry) squashMerge(prNum string) error {
+	_, err := sealGH(c.run, c.ghPath, c.storeDir, "pr", "merge", prNum, "--squash")
+	return err
+}
+
+// resume waits for the named pull request, merges it, pulls and checks the seat.
+// The store stays on the branch it was on. No value is read and nothing is pushed.
+func (c sealCarry) resume(prNum string) error {
+	say := c.say
+	if say == nil {
+		say = func(string, ...interface{}) {}
+	}
+	nowFn := c.now
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	sleepFn := c.sleep
+	if sleepFn == nil {
+		sleepFn = time.Sleep
+	}
+	if _, err := c.preflight(); err != nil {
+		return err
+	}
+	if err := c.awaitGate(prNum, say, nowFn, sleepFn); err != nil {
+		return err
+	}
+	say("approved; merging #%s", prNum)
+	if err := c.squashMerge(prNum); err != nil {
+		return err
+	}
+	say("pulling the store")
+	if err := sealGit(c.run, c.storeDir, c.gitPath, "pull"); err != nil {
+		return err
+	}
+	say("checking the seat decrypts")
+	if c.check != nil {
+		if err := c.check(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // preflight is the two git reads the road opens with: the branch the store stands on and
@@ -463,7 +622,7 @@ func (c sealCarry) planLines(token, home string) []string {
 		return append(lines, fmt.Sprintf("SECRETS %s PLAN push none (--no-pr): no push, no gh call; the store returns to %s",
 			token, oneline.Field(home)))
 	}
-	return append(lines, fmt.Sprintf("SECRETS %s PLAN push remote=origin branch=%s pr title=%s then waits up to 2m for the gate's approval, merges --squash, pulls and checks the seat",
+	return append(lines, fmt.Sprintf("SECRETS %s PLAN push remote=origin branch=%s pr title=%s then waits for the gate job to start and for its result, merges --squash, pulls and checks the seat",
 		token, oneline.Field(c.branch), oneline.Quote(c.title)))
 }
 
@@ -836,6 +995,7 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 type sealPRView struct {
 	State             string          `json:"state"`
 	ReviewDecision    string          `json:"reviewDecision"`
+	HeadRefOid        string          `json:"headRefOid"`
 	StatusCheckRollup []sealCheckItem `json:"statusCheckRollup"`
 }
 
@@ -844,19 +1004,23 @@ type sealCheckItem struct {
 	Status     string `json:"status"`
 	Conclusion string `json:"conclusion"`
 	State      string `json:"state"`
+	DetailsURL string `json:"detailsUrl"`
+	StartedAt  string `json:"startedAt"`
 }
 
 // classifySealReview classifies the review state of a seal pull request
-// according to SPEC-SECRETS seal. Terminal states (changes-requested, closed,
-// merged elsewhere, terminal check failure) stop immediately with a redacted
-// one-line error carrying a remedy. Approved continues to the merge path, and
-// pending reviews poll to the bounded deadline.
-func classifySealReview(raw, prNum string) (error, bool) {
+// according to SPEC-SECRETS seal. Closed, merged elsewhere, and
+// changes-requested stop immediately. A failed check stops immediately too.
+// A failed seat-rule check is the one exception, and only when the local gate
+// already returned 0 on this commit and headRefOid is that commit: the Actions
+// check is then stale, and the caller prints the local gate verdict.
+// Anything still pending keeps polling. The wait is not capped at two minutes.
+func classifySealReview(raw, prNum, sealedSHA string, localGate int) (approved, waived bool, err error) {
 	trimmed := strings.TrimSpace(raw)
 	var view sealPRView
 	if strings.HasPrefix(trimmed, "{") {
 		if err := json.Unmarshal([]byte(trimmed), &view); err != nil {
-			return fmt.Errorf("pull request #%s review query response invalid: %s; run: gh pr view %s", prNum, oneline.Err(err), prNum), false
+			return false, false, fmt.Errorf("pull request #%s review query response invalid: %s; run: gh pr view %s", prNum, oneline.Err(err), prNum)
 		}
 	} else {
 		switch strings.ToUpper(trimmed) {
@@ -883,32 +1047,72 @@ func classifySealReview(raw, prNum string) (error, bool) {
 	}
 
 	if strings.EqualFold(view.State, "CLOSED") {
-		return fmt.Errorf("pull request #%s was closed without merging; run: gh pr reopen %s", prNum, prNum), false
+		return false, false, fmt.Errorf("pull request #%s was closed without merging; run: gh pr reopen %s", prNum, prNum)
 	}
 	if strings.EqualFold(view.State, "MERGED") {
-		return fmt.Errorf("pull request #%s was merged elsewhere; run: git pull", prNum), false
+		return false, false, fmt.Errorf("pull request #%s was merged elsewhere; run: git pull", prNum)
 	}
 
+	// A failed seat-rule check is stale only for this commit, and only after the
+	// local gate has already approved it. Any other failure stays terminal, and
+	// an APPROVED decision does not skip the loop.
+	waiveSeatRule := localGate == 0 && sealedSHA != "" && view.HeadRefOid == sealedSHA
+	waived = false
 	for _, check := range view.StatusCheckRollup {
 		conc := strings.ToUpper(check.Conclusion)
 		st := strings.ToUpper(check.State)
 		if conc == "FAILURE" || conc == "TIMED_OUT" || conc == "CANCELLED" || conc == "STARTUP_FAILURE" || conc == "ACTION_REQUIRED" ||
 			st == "FAILURE" || st == "ERROR" {
+			if waiveSeatRule && check.Name == "seat-rule" {
+				waived = true
+				continue
+			}
 			name := check.Name
 			if name == "" {
 				name = "gate"
 			}
-			return fmt.Errorf("pull request #%s check %s failed; run: gh pr checks %s", prNum, name, prNum), false
+			detail := strings.TrimSpace(check.DetailsURL)
+			if detail == "" {
+				detail = "conclusion=" + strings.ToLower(conc)
+			}
+			return false, false, fmt.Errorf("pull request #%s check %s failed: %s; run: gh pr checks %s", prNum, name, detail, prNum)
 		}
 	}
 
-	if strings.EqualFold(view.ReviewDecision, "CHANGES_REQUESTED") {
-		return fmt.Errorf("pull request #%s changes requested; run: gh pr view %s", prNum, prNum), false
-	}
-
 	if strings.EqualFold(view.ReviewDecision, "APPROVED") {
-		return nil, true
+		return true, waived, nil
 	}
 
-	return nil, false
+	if strings.EqualFold(view.ReviewDecision, "CHANGES_REQUESTED") {
+		return false, false, fmt.Errorf("pull request #%s changes requested; run: gh pr view %s", prNum, prNum)
+	}
+
+	return false, false, nil
+}
+
+// admitLocalGate runs the seat-rule gate on the commit just made, against the
+// branch the store was on, before any push. A non-zero gate is a refusal.
+// The sha is the commit a later headRefOid must equal before a failed
+// seat-rule check can be ignored.
+func (c sealCarry) admitLocalGate(home string) (string, string, error) {
+	sha, err := sealGitOutput(c.run, c.storeDir, c.gitPath, "rev-parse", "HEAD")
+	if err != nil {
+		return "", "", err
+	}
+	if sha == "" || strings.HasPrefix(sha, "-") {
+		return "", "", fmt.Errorf("the sealed commit has no name; run: git -C %s rev-parse HEAD", c.storeDir)
+	}
+	gate := c.gate
+	if gate == nil {
+		gate = RunGate
+	}
+	verdict, code := gate(GateInput{StoreDir: c.storeDir, Base: home, Head: sha})
+	verdict = strings.TrimSpace(verdict)
+	if code != 0 {
+		if verdict == "" {
+			verdict = fmt.Sprintf("the local gate returned %d", code)
+		}
+		return "", "", fmt.Errorf("%s", verdict)
+	}
+	return sha, verdict, nil
 }

@@ -63,6 +63,7 @@ func newInjectFixture(t *testing.T) *injectFixture {
 	f.gitPath = f.writeScript(t, "git",
 		"printf '%s\\n' \"$@\" >> \""+f.gitArgs+"\"\n"+
 			"if [ \"$1\" = \"rev-parse\" ] && [ \"$2\" = \"--abbrev-ref\" ]; then echo \"main\"; fi\n"+
+			"if [ \"$1\" = \"rev-parse\" ] && [ \"$2\" = \"HEAD\" ]; then echo \"1111111111111111111111111111111111111111\"; fi\n"+
 			"exit 0\n")
 	f.ghPath = f.writeScript(t, "gh",
 		"printf '%s\\n' \"$@\" >> \""+f.ghArgs+"\"\n"+
@@ -92,6 +93,7 @@ func (f *injectFixture) options(only string, noPR bool) SeatInjectOptions {
 		NoPR:     noPR,
 		Now:      func() time.Time { return time.Date(2026, 9, 27, 1, 30, 0, 0, time.UTC) },
 		Check:    func(storeDir, asName, keyPath, sopsPath string) error { return nil },
+		Gate:     func(GateInput) (string, int) { return "GATE APPROVE files=0 machines=-", 0 },
 	}
 }
 
