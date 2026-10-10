@@ -3016,6 +3016,15 @@ the original failed measurement.
 **Its remedy line.** `schema.go no longer matches internal/sprint/TABLES.lock; a PR that changes a table's shape changes the lock file in the same PR, where a read sees it`, then each differing line, the lock's and the schema's.
 **Its narrowings.** Column width (always 0 here) is not in the lock; a change to what a table holds that is not in its definition (a card's fields, a hidden column's contents) is not seen.
 
+### `brand` — the nova-sprint identity names its treatment and art
+
+**The rule.** `docs/sprint/BRAND.md` names the product treatment, mark, colours, type and voice, with do-and-don't examples. Every file under `assets/sprint/` has a matching row in `docs/ASSET-PROVENANCE.md`, which tells the reader how the original asset came to be.
+**The mistake it prevents.** A new sprint mark that looks like an uncredited photograph or an unexplained third-party drawing, or a brand sheet that leaves the name, palette or voice to drift by guesswork.
+**The test.** `TestSprintBrandSheetIsCompleteAndEveryAssetHasProvenance` (`internal/ci/sprint_brand_class_test.go`) checks for each required heading, at least one sprint asset, and an exact provenance row for every asset file.
+**Its allowlist.** None.
+**Its remedy line.** Add the missing named section to `docs/sprint/BRAND.md` or add the exact asset path and honest provenance to `docs/ASSET-PROVENANCE.md` in the same change.
+**Its narrowings.** It checks headings and asset paths, not whether the prose follows the design or whether a visual works at every size; those remain a review against the brand sheet.
+
 ### `onewriter` — a worker is a client and does not open the store
 
 **The rule.** One process writes a sprint's state: the run loop, beside the store, which is also the sprint's server (`nova-sprint run --listen`). A worker sends its verbs to it and reads its replies. The packages a worker's machine runs (`cmd/nova-swarm`, `internal/member`, `internal/sprintwire`) import, directly or through any package of this module, none of the packages that open the store (`internal/sprint/store`, `internal/redisconn`, `internal/ntable`, `internal/nsprint/store`, any `github.com/redis/` module).
