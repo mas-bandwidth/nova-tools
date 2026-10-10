@@ -88,6 +88,7 @@ var DefaultCatalog = []Entry{
 	E("internal/hostload", "a machine's load: CPU busy percent of all its cores, else the load average over them", "go test ./internal/hostload", "go test ./internal/hostload"),
 	E("internal/hygiene", "clean checkout and leak assertions", "go test ./internal/hygiene", "go test ./internal/hygiene"),
 	E("internal/keyshape", "cryptographic key format verification", "go test ./internal/keyshape", "go test ./internal/keyshape"),
+	E("internal/layout", "the one place every derived path comes from: the machine's nova_root and the roots under it", "go test ./internal/layout", "go test ./internal/layout"),
 	E("internal/log", "structured logging helpers", "go test ./internal/log", "go test ./internal/log"),
 	E("internal/memindex", "memory vector and text index", "go test ./internal/memindex", "go test ./internal/memindex"),
 	E("internal/nsprint", "the shared Redis store and login, its Functions, and the verb flags the living tools use", "go test ./internal/nsprint/...", "go test ./internal/nsprint/..."),

@@ -35,6 +35,13 @@ func (r Root) Bud(name string) string {
 	return filepath.Join(r.AI, "buds", name, "working")
 }
 
+// BudRead returns the bench scratch directory of a bud's read of one card:
+// <ai>/buds/<name>/reads/<card>. A read runs its go commands on a Linux bench
+// there, so the reader's own machine runs none.
+func (r Root) BudRead(name, card string) string {
+	return filepath.Join(r.AI, "buds", name, "reads", card)
+}
+
 // Shared returns the shared directory.
 func (r Root) Shared() string {
 	return filepath.Join(r.AI, "shared")

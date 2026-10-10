@@ -280,6 +280,25 @@ func TestFriendDirectoryFallbackCanBeNotedAfterSilentLookup(t *testing.T) {
 	assert.Empty(t, second.String(), "the note is written once")
 }
 
+// A machine row with a nova_root moves the friend fallback under it; a row with
+// none keeps today's <root>/<name>-working.
+func TestTheMachineRowsNovaRootMovesTheFriendFallback(t *testing.T) {
+	t.Parallel()
+	root := "/home/h"
+	withRoot := &app{inventory: func(context.Context, string) ([]config.MachineWidth, error) {
+		return []config.MachineWidth{{Machine: "studio", NovaRoot: "/Volumes/nova"}}, nil
+	}}
+	assert.Equal(t, "/Volumes/nova/ai/amy/working", withRoot.friendDir("amy", "", root, nil))
+
+	noRoot := &app{inventory: func(context.Context, string) ([]config.MachineWidth, error) {
+		return []config.MachineWidth{{Machine: "studio"}}, nil
+	}}
+	assert.Equal(t, filepath.Join(root, "amy-working"), noRoot.friendDir("amy", "", root, nil))
+
+	// A friend row's own dir always wins over the machine root.
+	assert.Equal(t, "/x/amy/working", withRoot.friendDir("amy", "/x/amy/working", root, nil))
+}
+
 // The folder proof uses the row directory too (docs/FRIENDS.md), and cannot
 // quietly deliver to the legacy path after a config read failure.
 func TestPushJudgmentsUsesTheFriendRowDirectory(t *testing.T) {
