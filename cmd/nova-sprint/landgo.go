@@ -534,8 +534,15 @@ func (l *lander) gateOn(ctx context.Context, host, dir string, runs [][]string, 
 	if errors.As(err, &refused) {
 		return "", false, refused
 	}
-	if err != nil || code == bench.NoAnswer {
+	if err != nil {
 		return "", false, nil
+	}
+	// An ssh that cannot reach the bench (or a command that exits 255) is
+	// bench.NoAnswer: a bench fault, not a red tree. Classify it so ringGate
+	// reports GATE FAULT kind=ssh and steps to the next slot.
+	if code == bench.NoAnswer {
+		_, _, what := classifyGateOutput(out)
+		return "GATE FAULT bench=" + host + " kind=ssh what=" + oneline.Quote(what), true, nil
 	}
 	l.ranOnBench(host, wall)
 	if code == 0 {
