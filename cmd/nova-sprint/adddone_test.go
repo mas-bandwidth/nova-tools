@@ -37,10 +37,10 @@ func TestAddRefusesACardWhoseWorkIsAlreadyOnTheBase(t *testing.T) {
 	branch := "sprint/branch-done.w1.g1.e15"
 	git(work, "switch", "-q", "-c", branch)
 	git(work, "commit", "-q", "--allow-empty", "-m", "unrelated: branch work")
-	git(work, "push", "-q", "origin", "HEAD:refs/heads/"+branch)
+	git(work, "push", "-q", remote, "HEAD:refs/heads/"+branch)
 	git(work, "switch", "-q", "sprint/base")
 	git(work, "merge", "-q", "--ff-only", branch)
-	git(work, "push", "-q", "origin", "HEAD:refs/heads/sprint/base")
+	git(work, "push", "-q", remote, "HEAD:refs/heads/sprint/base")
 	makeBrief := func(id, commit, created, testName string) string {
 		head := "RESULT: " + id + " sha=0123456789ab tier: pro\nREPO: " + remote + "\nBASE: sprint/base\nPATHS: cmd/example/*.go\n"
 		if created != "" {

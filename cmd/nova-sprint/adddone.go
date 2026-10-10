@@ -14,7 +14,7 @@ import (
 )
 
 // alreadyDoneAtBase checks Git evidence only (docs/SPEC-SPRINT.md section 11,
-// add-first-check-b.w1). It does not run the brief's TEST.
+// add-first-check-b.w3). It does not run the brief's TEST.
 func (a *app) alreadyDoneAtBase(ctx context.Context, l *lander, id, brief string) (string, error) {
 	cb := swarm.ReadCardBase([]byte(brief))
 	if cb.Named == "" || cb.Ref == "" {

@@ -6551,7 +6551,7 @@ the bar with the rest of the facts, so a unit test fakes them and opens no
 socket. Tests: `TestReleaseCheckFailsWhenTheMergeQueueAgeP90IsOverTheBar`,
 `TestPercentileNearestRankIsTheValueAtItsRank`.
 
-### add-first-check-b.w1
+### add-first-check-b.w3
 
 At `add`, nova-sprint checks Git evidence at the brief's `BASE:` in the
 lander's repository clone before asking for a model decision. It refuses a
