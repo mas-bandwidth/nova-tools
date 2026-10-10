@@ -1,6 +1,7 @@
 # nova-update dogfood — opencode-2, 2026-10-06
 
-Read cold as a stranger on a Linux bench: only `nova-update -h`, `nova-update help`,
+Read cold as a stranger on a Linux bench (named `<bench>` here): only `nova-update -h`,
+`nova-update help`,
 `nova-update help release`, every verb's `-h`, and the tool's page under `docs/`
 (`docs/SPEC-UPDATE.md`), nothing else. The binary was built in the staged checkout at
 `d746414234c081ea41b65ddde0aeadcca6c5ffe4` (the checkout's staged tip) with
