@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -311,4 +312,100 @@ func TestDeferredReportSurvivesRestartThenEnqueuesWhenCapacityOpens(t *testing.T
 	pending, err := r.store.Pending(context.Background(), bus.StreamOf("bob"), "bob", 1000)
 	require.NoError(t, err)
 	assert.Empty(t, pending)
+}
+
+// Deal notices coalesce per friend in the notification receiver (SPEC-FRIEND.md,
+// notifications): five deal notices while the session is busy collapse into one turn
+// carrying the newest, a batch subject coalesces with the per-card ones, and a notice
+// whose cards are all taken before delivery is withdrawn without a turn. A batch list
+// truncated at ten (with its "and N more" marker) is never withdrawn on its visible
+// subset alone, since a card it omits may still be held.
+func TestDealNoticesCoalescePerFriend(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	dir := t.TempDir()
+	r.d.Friend = "bob"
+	var heldCards []string
+	r.d.Cards = func() []string { return heldCards }
+	heldCards = []string{"c-1", "c-2", "c-3", "c-4", "c-5", "c-6"}
+
+	var mu sync.Mutex
+	busy := true
+	var delivered []string
+	r.d.Deliver = notificationDelivery(func(_ context.Context, text string) (int, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if busy {
+			return 0, Deferred{Reason: "busy"}
+		}
+		delivered = append(delivered, text)
+		return 0, nil
+	})
+
+	n := &notificationReceiver{d: r.d, b: r.bus, policy: NotificationPolicy{Window: 5 * time.Second}, dir: dir}
+	send := func(subject string) bus.Message {
+		m, err := r.bus.Send(context.Background(), bus.Message{From: "ada", To: []string{"bob"}, Kind: bus.KindStatus, Subject: subject, Body: "cards ready in inbox"})
+		require.NoError(t, err)
+		return m
+	}
+
+	// Five deal notices arrive while the session is busy, batch and per-card mixed.
+	send("card c-1 dealt: FRIEND-CARD DELIVERED friend=bob card=c-1")
+	send("card c-2 dealt: FRIEND-CARD DELIVERED friend=bob card=c-2")
+	send("cards dealt: 2 (c-3, c-4)")
+	send("card c-5 dealt: FRIEND-CARD DELIVERED friend=bob card=c-5")
+	m5 := send("cards dealt: 1 (c-6)")
+
+	require.NoError(t, n.step(context.Background(), t0))
+	require.NoError(t, n.step(context.Background(), t0.Add(10*time.Second)))
+	mu.Lock()
+	assert.Empty(t, delivered, "the session is busy: nothing is delivered yet")
+	mu.Unlock()
+
+	// The session is free: exactly one turn is delivered, carrying the newest notice.
+	mu.Lock()
+	busy = false
+	mu.Unlock()
+	require.NoError(t, n.step(context.Background(), t0.Add(10*time.Second+RecheckEvery)))
+	mu.Lock()
+	require.Len(t, delivered, 1, "the five notices coalesce into one turn")
+	assert.Contains(t, delivered[0], "c-6", "the turn carries the newest notice")
+	assert.NotContains(t, delivered[0], "c-1")
+	assert.NotContains(t, delivered[0], "c-2")
+	assert.NotContains(t, delivered[0], "c-5")
+	mu.Unlock()
+	stages, _, err := r.bus.Stages(context.Background(), "bob", m5.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, stages)
+	assert.Equal(t, bus.Delivered, stages[len(stages)-1].State)
+
+	// A notice whose cards are all taken before delivery is withdrawn, not delivered.
+	m7 := send("card c-7 dealt: FRIEND-CARD DELIVERED friend=bob card=c-7")
+	heldCards = []string{"c-1"} // c-7 is not held: every card it names is taken
+	now := t0.Add(100 * time.Second)
+	require.NoError(t, n.step(context.Background(), now))
+	require.NoError(t, n.step(context.Background(), now.Add(10*time.Second)))
+	mu.Lock()
+	assert.Len(t, delivered, 1, "the withdrawn notice produces no turn")
+	mu.Unlock()
+	stages7, _, err := r.bus.Stages(context.Background(), "bob", m7.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, stages7)
+	assert.Equal(t, bus.Delivered, stages7[len(stages7)-1].State)
+
+	// A batch list is cut at ten with "and N more": its visible ten are a subset, so a
+	// held card the list omits must keep the notice from being withdrawn on the subset alone.
+	m8 := send("cards dealt: 12 (c-1, c-2, c-3, c-4, c-5, c-6, c-7, c-8, c-9, c-10, and 2 more)")
+	heldCards = []string{"c-11"} // the visible ten have left the row; an omitted card is still held
+	now = now.Add(100 * time.Second)
+	require.NoError(t, n.step(context.Background(), now))
+	require.NoError(t, n.step(context.Background(), now.Add(10*time.Second)))
+	mu.Lock()
+	require.Len(t, delivered, 2, "a truncated batch is delivered, not withdrawn on its visible subset")
+	assert.Contains(t, delivered[1], "c-10")
+	mu.Unlock()
+	stages8, _, err := r.bus.Stages(context.Background(), "bob", m8.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, stages8)
+	assert.Equal(t, bus.Delivered, stages8[len(stages8)-1].State)
 }
