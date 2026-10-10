@@ -254,3 +254,23 @@ func TestTakeArgvs(t *testing.T) {
 	assert.Equal(t, []string{"take", "--as", "friend.ann", "c1@2", "--epoch", "16"}, LaneTakeArgv("ann", c))
 	assert.Equal(t, []string{"take", "--as", "friend.ann", "--max", "3", "--epoch", "16"}, BatchTakeArgv("ann", 3, 16))
 }
+
+// A take names an epoch or is not sent: a ready card whose row says no epoch is never taken with a guessed 0.
+func TestABatchTakeIsNotSentWhenNoReadyCardCarriesAnEpoch(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
+		h := &lanesHarness{dir: dir, finish: map[string]bool{}, active: map[string]int{}}
+		r, _ := laneRig(t, h, 0)
+		r.mode = ModeBatch
+		srv := &takeServer{running: true, col: map[string]string{"c1~15": "ready"}}
+		r.d.Take = srv.take
+		r.d.Held = func(context.Context) (Row, error) {
+			return Row{Cards: []HeldCard{{Card: "c1", Job: "c1~15", Col: "ready", Kind: "work"}}}, nil
+		}
+		r.run(t, 40)
+		takes, _ := srv.got()
+		assert.Empty(t, takes, "no take without an epoch")
+		assert.Contains(t, strings.Join(r.records, "\n"), "carries an epoch")
+	})
+}

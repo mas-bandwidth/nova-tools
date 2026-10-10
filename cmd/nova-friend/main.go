@@ -1130,13 +1130,19 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return ""
 		}
 		denySeatMu.Lock()
-		defer denySeatMu.Unlock()
-		if denySeatName == "" || w.now().Sub(denySeatAt) > time.Minute {
-			if s, err := seatOf(ctx); err == nil && s != "" {
-				denySeatName, denySeatAt = s, w.now()
-			}
+		name, at := denySeatName, denySeatAt
+		denySeatMu.Unlock()
+		if !at.IsZero() && w.now().Sub(at) <= time.Minute { // a failed read is cached a minute too: never one per lane command
+			return name
 		}
-		return denySeatName
+		s, err := seatOf(ctx) // outside the lock: a slow server never holds the other lanes
+		if err != nil {
+			s = name // keep the last holder it named
+		}
+		denySeatMu.Lock()
+		denySeatName, denySeatAt = s, w.now()
+		denySeatMu.Unlock()
+		return s
 	}
 	walledRaw := func(ctx context.Context, d, prog string, args []string, stdin string) (string, int, error) {
 		if w.wall == nil {

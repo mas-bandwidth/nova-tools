@@ -78,7 +78,7 @@ func (l *loop) laneTake(lane int, c Card, now time.Time) bool {
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), TakeWait)
 	argv := LaneTakeArgv(d.Friend, c)
-	if h, ok := d.heldOf(job); ok {
+	if h, ok := d.heldOf(job); ok && h.Epoch > 0 {
 		argv[len(argv)-1] = strconv.FormatUint(h.Epoch, 10) // the epoch her row says, not the directory name's guess
 	}
 	err := d.Take(ctx, argv)
@@ -121,10 +121,17 @@ func (l *loop) batchTake(now time.Time) {
 		return
 	}
 	d.batchTakeAt = now.Add(BatchTakeEvery)
+	at := now.UTC().Format(time.RFC3339)
+	if epoch == 0 { // the server refuses a take that names no epoch: none is sent, never a guessed 0
+		if why := "no ready card on her row carries an epoch"; why != d.batchTakeSaid {
+			d.batchTakeSaid = why
+			d.Record(fmt.Sprintf("%s take: her %d ready card(s) not taken: %s; asked again in %s", at, ready, why, BatchTakeEvery))
+		}
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), TakeWait)
 	err := d.Take(ctx, BatchTakeArgv(d.Friend, ready, epoch))
 	cancel()
-	at := now.UTC().Format(time.RFC3339)
 	if err != nil {
 		if why := oneLine(err.Error(), 300); why != d.batchTakeSaid {
 			d.batchTakeSaid = why
