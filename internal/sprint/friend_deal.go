@@ -119,7 +119,12 @@ type FriendSeat struct {
 	Status string
 	Class  string
 	Mode   string
-	Tiers  []string
+	// Billing is her nova-config row's billing word: a subscription friend is offered
+	// a heavy or pro card before an api friend or a fleet route takes it
+	// (docs/SPEC-SPRINT.md section 1, deal-subscription-first-r-t-bb); empty is the
+	// documented default, a subscription (config.FriendBilling, DefaultFriendBilling).
+	Billing string
+	Tiers   []string
 	// Roles is her nova-config row's roles: a read card is dealt only to a friend whose
 	// roles name reader (RoleReader, read_cards.go).
 	Roles []string
@@ -348,6 +353,37 @@ func preferredFriend(names []string, lanes, free map[string]int) string {
 	return best
 }
 
+// tierHeavyOrPro says the tier the deal drew is heavy or pro, the tiers whose cards the
+// subscription-first rule offers to a subscription friend before any other friend or a
+// fleet route takes them (docs/SPEC-SPRINT.md section 1, deal-subscription-first-r-t-bb).
+func tierHeavyOrPro(tier string) bool {
+	return tier == cardhdr.RoutePro || tier == cardhdr.RouteHeavy
+}
+
+// subscriptionFirst is the names the deal picks among for a card of the tier: for a heavy
+// or pro card, the subscription friends of names when there are any, so an up subscription
+// friend with room is offered the card first and an api friend or a fleet route takes only
+// what is left (docs/SPEC-SPRINT.md section 1, deal-subscription-first-r-t-bb); names
+// itself for any other tier, or when none of them is a subscription friend. A friend whose
+// billing is unset is a subscription, the documented default (config.FriendBilling); only an
+// explicit api is api. The caller's room rule (preferredFriend, friend-deal-most-room) picks
+// among the names returned.
+func subscriptionFirst(names []string, seats map[string]FriendSeat, tier string) []string {
+	if !tierHeavyOrPro(tier) {
+		return names
+	}
+	subs := make([]string, 0, len(names))
+	for _, n := range names {
+		if seats[n].Billing != config.FriendBillingAPI {
+			subs = append(subs, n)
+		}
+	}
+	if len(subs) == 0 {
+		return names
+	}
+	return subs
+}
+
 // FriendMode returns the friend's delivery mode (config.FriendModeBatch or
 // config.FriendModeOneShot), defaulting to config.FriendModeBatch if unset or unknown.
 func (s *Snapshot) FriendMode(name string) string {
@@ -512,7 +548,7 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 				}
 				left = slices.DeleteFunc(slices.Clone(left), func(f string) bool { return !slices.Contains(gone, f) })
 			}
-			name = preferredFriend(may, lanes, free)
+			name = preferredFriend(subscriptionFirst(may, seat, tier), lanes, free)
 		}
 		if name == "" || slices.Contains(left, name) || free[name] <= 0 || !friendRestrictionAllows(seat[name], c) {
 			continue // no friend it may go to is up with room: the fleet's, or (only) it waits ready
@@ -684,7 +720,7 @@ func reclaimUnit(s *Snapshot, wc *Card, up []string, seat map[string]FriendSeat,
 			may = append(may, f)
 		}
 	}
-	name := preferredFriend(may, lanes, free)
+	name := preferredFriend(subscriptionFirst(may, seat, tier), lanes, free)
 	if pinned, ok := FriendCard(pr); ok && pinned != "" && slices.Contains(may, pinned) {
 		name = pinned
 	}

@@ -431,7 +431,7 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 	_, errs = step(1, "friend", "set", "nobody", "--slots", "1")
 	require.Equal(t, "nova-config friend set REFUSED: friend nobody not found; run: nova-config friend add nobody --<field> <value> ...\n", errs, "set nobody: %q", errs)
 	out, _ = step(0, "friend", "list")
-	require.Equal(t, "FRIEND name=rowan slots=64 tiers=frontier,pro roles=builder,reader width=8 mode=batch config_dir=- token_cap=6000000 streams=- kinds=-\nCONFIG LIST kind=friend rows=1\n", out, "friend list: %q", out)
+	require.Equal(t, "FRIEND name=rowan slots=64 tiers=frontier,pro roles=builder,reader width=8 mode=batch config_dir=- token_cap=6000000 streams=- kinds=- billing=subscription\nCONFIG LIST kind=friend rows=1\n", out, "friend list: %q", out)
 	out, _ = step(0, "friend", "show", "rowan")
 	require.True(t, strings.HasPrefix(out, "FRIEND name=rowan slots=64 tiers=frontier,pro roles=builder,reader width=8 mode=batch config_dir=- "), "friend show: %q", out)
 	require.Contains(t, out, " created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n", "friend show: %q", out)
@@ -595,7 +595,7 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	gotCheck594 := h.redis.views["friend"]["rowan"]["roles"]
 	require.Equal(t, "builder,coordinator", gotCheck594, "rowan's applied roles %q", gotCheck594)
 	out, _ = step(0, "friend", "show", "rowan")
-	require.True(t, strings.HasPrefix(out, "FRIEND name=rowan slots=32 tiers=frontier roles=builder width=8 mode=batch config_dir=- token_cap=6000000 streams=- kinds=- created="), "rowan's stored row: %q", out)
+	require.True(t, strings.HasPrefix(out, "FRIEND name=rowan slots=32 tiers=frontier roles=builder width=8 mode=batch config_dir=- token_cap=6000000 streams=- kinds=- billing=subscription created="), "rowan's stored row: %q", out)
 	out, _ = step(0, "status")
 	require.True(t, strings.HasSuffix(out, " machine_applied=1 fleet_applied=4 friend_applied=3 sprint_applied=5 loop_applied=0 route_applied=0 tier_applied=0\n"), "status after apply: %q", out)
 	out, _ = step(0, "apply", "--kind", "friend")
@@ -823,4 +823,34 @@ func TestAFriendsConfigDirRoundTripsThroughSet(t *testing.T) {
 	step(0, "friend", "set", "amy", "--config_dir", "")
 	out, _ = step(0, "friend", "show", "amy")
 	assert.Contains(t, out, " config_dir=- ", "cleared: %q", out)
+}
+
+// A friend's billing, how her work is paid, is subscription when add is not
+// given one, friend set writes it and show reads it back, and api is accepted:
+// the deal offers a heavy or pro card to a subscription friend before an api
+// friend or a fleet route takes it (docs/SPEC-SPRINT.md section 1,
+// deal-subscription-first-r-t-bb).
+func TestAFriendsBillingRoundTripsThroughSet(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness()
+	h.env["NOVA_PG_DSN"] = dsn
+	h.env["NOVA_FRIEND"] = "rowan"
+	step := func(want int, args ...string) (string, string) {
+		t.Helper()
+		code, out, errs := h.run(t, args...)
+		require.Equal(t, want, code, "%v: exit %d, want %d\nstdout: %s\nstderr: %s", args, code, want, out, errs)
+		return out, errs
+	}
+	step(0, "friend", "add", "amy", "--slots", "2", "--tiers", "heavy")
+	out, _ := step(0, "friend", "show", "amy")
+	assert.Contains(t, out, " billing=subscription ", "the default billing: %q", out)
+	out, _ = step(0, "friend", "set", "amy", "--billing", "api")
+	assert.Equal(t, "CONFIG SET kind=friend name=amy rev=2 changed=billing\n", out)
+	out, _ = step(0, "friend", "show", "amy")
+	assert.Contains(t, out, " billing=api ", "the billing set to api: %q", out)
+	_, errs := step(2, "friend", "set", "amy", "--billing", "premium")
+	assert.Contains(t, errs, "api, subscription")
+	out, _ = step(0, "friend", "show", "amy")
+	assert.Contains(t, out, " billing=api ", "the refusal changed nothing: %q", out)
 }
