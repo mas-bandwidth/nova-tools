@@ -1331,12 +1331,11 @@ file.
 The daemon's beat sends `nova-sprint friend beat <friend> --daemon-version <stamp>`.
 The sprint keeps that stamp on the beat record (`friend-beat:<friend>`, the key
 `daemon_version`) and `nova-sprint seat` reads it (docs/SPEC-SPRINT.md,
-daemon-supervised-r-b.w7). `where --json`'s friends do not yet carry it beside
-`load`: that copy is `store.FriendRow`, and `FriendReport` has no field for it.
-`report.window` is the subscription window use and is not this stamp
-(subscription-pacing-is-a-setting.w1). A later card whose paths include
-`internal/sprint/presence.go` and `internal/sprint/store/friends.go` should put
-`daemon_version` on the friend row the way `load` is copied.
+daemon-supervised-r-b.w7). `where --json`'s friends carry that stamp as
+`daemon_version` on the row beside `load`, copied from the beat record in
+`friendRows` (`store.FriendRow.DaemonVersion`) and on her report
+(`sprint.FriendReport.DaemonVersion`); `report.window` is the subscription
+window use and is not this stamp (subscription-pacing-is-a-setting.w1).
 
 Check: `TestInstalledAgentKeepsAliveAndStatusSaysVersion` (internal/friend),
 `TestStatusSaysTheDaemonVersionAndStatusAllListsEveryAgent` (cmd/nova-friend),

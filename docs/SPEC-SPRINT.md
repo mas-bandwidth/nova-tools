@@ -6187,9 +6187,9 @@ than `MissedBeatsDown` windows of `BeatDeadline`, 45s), or she has never
 beaten. The alarms do not change the seat's exit code; a seat-key drift still
 exits 1. With no friend on the roster the line is the seat's alone.
 
-`where --json`'s friends do not yet carry `daemon_version` beside `load`. The
-record keeps it, and copying it onto the row needs `internal/sprint/store/friends.go`
-(`FriendRow`, and the line in `friendRows` that copies `Load`). `FriendReport.window`
+`where --json`'s friends carry `daemon_version` on the row beside `load`
+(`store.FriendRow.DaemonVersion`, copied from the beat record in `friendRows`),
+and on her report (`sprint.FriendReport.DaemonVersion`); `FriendReport.window`
 stays the subscription window use. Check:
 `TestSeatSaysEachDaemonsVersionAndAlarmsOnDriftAndADeadDaemon`.
 

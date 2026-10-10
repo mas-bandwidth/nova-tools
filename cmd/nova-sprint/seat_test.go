@@ -294,8 +294,8 @@ func TestThePushFollowsTheSeat(t *testing.T) {
 // beat, never the greatest on the roster: the friend that beat last is the
 // updated one however its stamp sorts, and an empty stamp is unknown, never a
 // drift (the reader's finding, daemon-supervised-r-b.w7). The stamp is kept on
-// the beat record, where --json's friends do not carry it beside load:
-// FriendRow is outside this card.
+// the beat record and carried on her row beside load (FriendRow.DaemonVersion;
+// daemon-supervised-r-b.w8).
 func TestSeatSaysEachDaemonsVersionAndAlarmsOnDriftAndADeadDaemon(t *testing.T) {
 	t.Parallel()
 	ta, _ := friendApp(t, "amy", "bob", "cat", "dan")
@@ -320,6 +320,7 @@ func TestSeatSaysEachDaemonsVersionAndAlarmsOnDriftAndADeadDaemon(t *testing.T) 
 	assert.NotContains(t, raw, "no_proof", "the check this run asked was answered")
 	amy := whereFriends(ta)["amy"]
 	assert.Equal(t, 12.5, amy.Load)
+	assert.Equal(t, "v9.0", amy.DaemonVersion, "the stamp is carried on her row beside load")
 	assert.Nil(t, amy.Report, "the stamp is not stuffed into report.window")
 	assert.False(t, amy.Proof.IsZero(), "the pong on the beat record is kept")
 

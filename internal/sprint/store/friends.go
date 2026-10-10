@@ -143,6 +143,10 @@ type FriendRow struct {
 	// sprint.FriendReport), absent when it reported none.
 	Load   float64              `json:"load,omitempty"`
 	Report *sprint.FriendReport `json:"report,omitempty"`
+	// DaemonVersion is the build stamp her daemon's last beat carried (friend
+	// beat --daemon-version), beside Load: which binary she runs, "" when that
+	// beat carried none (docs/SPEC-FRIEND.md, daemon-supervised-r-b.w8).
+	DaemonVersion string `json:"daemon_version,omitempty"`
 	// Active is the newest write her daemon found under her working directory and
 	// outbox (sprint.FriendReport.Active), zero when it reported none: the last
 	// session activity column.
@@ -492,10 +496,17 @@ func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, ma
 		var b sprint.Beat
 		var h sprint.FriendHealth
 		var fin time.Time
+		var daemonVersion string
 		if 3*i+2 < len(oks) {
 			if oks[3*i] {
 				// ignored: an unreadable record is no beat, which the next beat replaces
 				_ = json.Unmarshal([]byte(vals[3*i]), &b)
+				var dv struct {
+					DaemonVersion string `json:"daemon_version"`
+				}
+				// ignored: a record without the stamp is a daemon that reported none
+				_ = json.Unmarshal([]byte(vals[3*i]), &dv)
+				daemonVersion = dv.DaemonVersion
 			}
 			if oks[3*i+1] {
 				// ignored: an unreadable record is no observation, which the next replaces
@@ -508,12 +519,13 @@ func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, ma
 		}
 		presence := sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation, Finished: fin}
 		word, evidence := sprint.FriendEvidence(presence, now)
-		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Roles: r[n].Roles, Billing: r[n].Billing, Streams: r[n].Streams, Kinds: r[n].Kinds, Load: b.Load, Report: b.Friend, Beat: b.At, Proof: b.Proof}
+		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Roles: r[n].Roles, Billing: r[n].Billing, Streams: r[n].Streams, Kinds: r[n].Kinds, Load: b.Load, Report: b.Friend, DaemonVersion: daemonVersion, Beat: b.At, Proof: b.Proof}
 		if why := sprint.FriendDownWhy(presence, now); why != "" {
 			whys[n] = why
 		}
 		if b.Friend != nil {
 			row.Active = b.Friend.Active
+			b.Friend.DaemonVersion = daemonVersion
 		}
 		if h.Observed() {
 			row.Health = &h

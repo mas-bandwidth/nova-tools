@@ -130,6 +130,10 @@ type FriendReport struct {
 	Build   string    `json:"build,omitempty"`
 	Started time.Time `json:"started,omitzero"`
 	Present time.Time `json:"present,omitzero"`
+	// DaemonVersion is the build stamp her daemon's last beat carried (friend beat
+	// --daemon-version): which binary runs for her, beside her row's load (docs/SPEC-FRIEND.md,
+	// daemon-supervised-r-b.w8). Empty when that beat carried none.
+	DaemonVersion string `json:"daemon_version,omitempty"`
 }
 
 // SaysDown says the beat is her daemon's word that she is down (FriendReport.Until):
