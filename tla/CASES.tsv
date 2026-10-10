@@ -459,6 +459,8 @@ MCDelivery.cfg	MCDelivery.tla	pass	-	ignore-terminal	delivery	required	-
 MCDeliveryBrokenNoPresent.cfg	MCDelivery.tla	invariant	GapCarriesThePresent	ignore-terminal	delivery	required	-
 MCDeliveryBrokenReclaim.cfg	MCDelivery.tla	invariant	NoSupersededDelivered	ignore-terminal	delivery	required	-
 MCDeliveryBrokenAnswerStale.cfg	MCDelivery.tla	invariant	NoStaleNonceAnswered	ignore-terminal	delivery	required	-
+MCDeal.cfg	MCDeal.tla	pass	-	ignore-terminal	dealhandback	required	-
+MCDealBrokenAttempt.cfg	MCDeal.tla	action	HandBackKeepsAttempt	ignore-terminal	dealhandback	required	-
 MCLandPass.cfg	MCLandPass.tla	pass	-	ignore-terminal	landpass	required	-
 MCLandPassSerial.cfg	MCLandPass.tla	pass	-	ignore-terminal	landpass	required	-
 MCLandPassLive.cfg	MCLandPass.tla	pass	-	ignore-terminal	landpass	required	-

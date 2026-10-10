@@ -277,6 +277,94 @@ func retire(dir, job string, now time.Time) (string, error) {
 	return RetiredDir + "/" + name, nil
 }
 
+// validFriendName is a friend's name as her working directory is named: one word of
+// letters, digits, _ and -, never a path.
+func validFriendName(name string) bool {
+	if len(name) < 1 || len(name) > 128 || strings.Contains(name, "..") {
+		return false
+	}
+	for _, r := range name {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// RetireHandedBack moves inbox/<job> under <root>/<friend>-working to inbox/retired
+// once a hand-back has withdrawn that card (nova-sprint handback --root). A missing
+// brief is nothing to do. keep, a path that is not exactly her inbox/<job>, a link,
+// and a BRIEF.md that is not a sprint card's stay where they are and are an error.
+// The daemon's SyncInbox retires the same brief when the card has left her row.
+func RetireHandedBack(root, friendName, job string, keep bool, now time.Time) (string, error) {
+	if keep {
+		return "", fmt.Errorf("handback: inbox/%s stays: a lane still keeps it", job)
+	}
+	if !validJob(job) {
+		return "", fmt.Errorf("handback: job %q is not an inbox directory", job)
+	}
+	if !validFriendName(friendName) {
+		return "", fmt.Errorf("handback: friend %q is not a name", friendName)
+	}
+	root = filepath.Clean(root)
+	if root == "" || !filepath.IsAbs(root) {
+		return "", fmt.Errorf("handback: the root must be absolute")
+	}
+	dir := filepath.Clean(filepath.Join(root, friendName+"-working"))
+	src := filepath.Clean(filepath.Join(dir, "inbox", job))
+	rel, err := filepath.Rel(dir, src)
+	if err != nil || rel != filepath.Join("inbox", job) || strings.HasPrefix(rel, "..") {
+		return "", fmt.Errorf("handback: inbox/%s is not under %s-working", job, friendName)
+	}
+	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
+		if err != nil && errors.Is(err, fs.ErrNotExist) {
+			return "", nil
+		}
+		if err != nil {
+			return "", err
+		}
+		return "", fmt.Errorf("handback: %s-working is not a directory", friendName)
+	}
+	inbox := filepath.Join(dir, "inbox")
+	if fi, err := os.Lstat(inbox); err != nil || !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
+		if err != nil && errors.Is(err, fs.ErrNotExist) {
+			return "", nil
+		}
+		if err != nil {
+			return "", err
+		}
+		return "", fmt.Errorf("handback: inbox is not a directory")
+	}
+	fi, err := os.Lstat(src)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", nil
+		}
+		return "", err
+	}
+	if !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("handback: inbox/%s is a symlink or a file, not a directory", job)
+	}
+	brief := filepath.Join(src, "BRIEF.md")
+	bf, err := os.Lstat(brief)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", nil
+		}
+		return "", err
+	}
+	if !bf.Mode().IsRegular() {
+		return "", fmt.Errorf("handback: inbox/%s/BRIEF.md is not a regular file", job)
+	}
+	head, ok := briefHead(brief)
+	if !ok || !sprintBrief(head, false) {
+		return "", fmt.Errorf("handback: inbox/%s/BRIEF.md is not a sprint brief; it stays", job)
+	}
+	return retire(dir, job, now)
+}
+
 func cmpErr(first, err error) error {
 	if first != nil {
 		return first

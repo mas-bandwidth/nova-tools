@@ -673,6 +673,40 @@ only an earlier attempt's head), and a friend down by her beat alone (`friend
 beat --until`, or no beat) keeps her cards on her row until the stall ladder
 takes the unstarted ones.
 
+**A dealt card handed back** (the owner, 2026-10-06, on eight ready cards stranded
+on a friend's row with no way off it that did not count an attempt or record a
+failure). `handback (<card>... | --all-unstarted) [--from friend.<name>]
+--reason <text> [--root <dir>]` withdraws each named work card that is ready or
+working on that friend's row and whose lane has not started. The reason is
+required and is kept on the withdrawn card as `handed_back` (at most 8 KiB; a
+longer reason refuses the call, nothing written). `taken_from` is her row.
+`take_ended` is not set, so no failure is recorded and no redeal of its bound
+is spent. `first_taken` is unset and `untaken_since` is stamped, and the
+primary goes back to ready at the attempt it had (`sprint.HandBack`,
+`sprint.withdrawUnit`). A card whose lane has started is refused, and the
+refusal names the lane: her start (`started` equal to its generation), a
+`progress` stamp, a `report`, her beat naming it running (`friend.<name>`), or,
+with `--root`, a `jobs/<job>` directory or `outbox/<job>/REPORT.md` that is not
+a link. Cards named are handed back one by one: a started card is refused and
+the others move, and the exit is 1 when any is refused.
+`--all-unstarted` hands back every unstarted card on her row and says each one
+she keeps on a NOTE line, naming the lane. The friends' deal then skips her
+(`friendsLeft` reads `taken_from`; `internal/sprint/friend_deal.go` `friendsLeft`
+and the first candidate pass of `friendDealPass`). That skip holds until
+`friend give` clears `taken_from` (a redeal copies the friend into
+`friends_left` and keeps her out after that). It is at least the next pass. A
+counter that forgets her after one tick is that same pass, which this card does
+not change. A friend's own run omits `--from` and hands back only her cards;
+the coordinator passes `--from`. `--root` retires `inbox/<job>/BRIEF.md` through
+`friend.RetireHandedBack` once the withdraw has committed (the job is the one
+she was delivered, the generation before the hand-back). Without `--root` the
+daemon's `SyncInbox` retires that brief when the card leaves ready and working
+and no lane keeps it. The model is `tla/Deal.tla` (`HandBack`,
+`HandBackKeepsAttempt`, `NotDealtBack`; `MCDealBrokenAttempt` is the hand-back
+that counts an attempt). The local binary runs the verb. The server's worker
+allowlist (`cmd/nova-sprint/serve.go` `workerVerb`) does not yet run `handback`
+for a remote daemon.
+
 **Friend level** (the owner, 2026-10-04: "What else is like this? Missing
 verbs we need for friends, that machines already have"; `sprint.FriendLevel`).
 `friend level` (the coordinator's) evens the friends' ready queues as `fleet
@@ -5930,6 +5964,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | friend beat | a friend's beat, `friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>] [--active <RFC3339>]`, run by its own machinery every second; through the sprint's server it is `friend beat <friend>` and its report's flags, each once with its value, and nothing more |
 | friend down, friend up | `hold <friend>` and `unhold <friend>` in the old words, for one release: hold a friend (status `held`, whatever she beats or the coordinator observes; every card dealt to her goes back to ready, started or not, a started one with a push carrying its pushed head; `--reason <text>` and `--until <RFC3339>` shown in her status cell) and release the hold (no evidence: `down` until her session answers a wake ping or she finishes a card; `--width <n>` sets her width) |
 | friend take | take back cards dealt to a friend that she has not started (`<id>...` or `--all-unstarted`), each back to ready for the friends' deal |
+| handback | hand a dealt card whose lane has not started back to ready in the pool, attempt unchanged, no failure; the deal skips that friend (`taken_from`) |
 | friend level | even the ready queues of the friends up, idle lanes first and by the card's tier, as fleet level evens the members'; the tick runs it too (friend-deal-idle-lanes-first.w1) |
 | friend health | the coordinator's observation of a friend, `friend health <friend> --state up\|asleep\|down --seen <RFC3339> --generation <n> [--queue <n>] [--working <n>] [--width <n>] [--reason <text>] [--until <RFC3339>]`, written by the coordinator's daemon from its keepalive (section 1, a friend's health): the seat's holder alone, at the seat's generation now, with a proof newer than the row's; refused otherwise with nothing written; the same observation again is the recorded answer; `friend health <friend> --clear [--dry-run]` removes her observation, so her status falls back to her beat rule |
 | seat | the seat as the daemons read it every second: `SEAT holder= epoch= generation=`, `--json`; three keys, no table (section 1, a friend's health) |

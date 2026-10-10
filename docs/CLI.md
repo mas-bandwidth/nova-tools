@@ -2510,6 +2510,7 @@ nova-sprint friend down <friend> [--reason <text>] [--until <RFC3339>]
 nova-sprint friend up <friend> [--width <n>]
 nova-sprint friend cards <friend> [--json]
 nova-sprint friend take <friend> (<id>... | --all-unstarted) [--reason <text>]
+nova-sprint handback (<card>... | --all-unstarted) [--from friend.<name>] --reason <text> [--root <dir>] [--dry-run]
 nova-sprint friend give <friend> <id>... [--reason <text>]
 nova-sprint friend level
 nova-sprint friend health <friend> (--state up|asleep|down --seen <RFC3339> --generation <n> [--queue <n>] [--working <n>] [--width <n>] [--reason <text>] [--until <RFC3339>] | --clear)
