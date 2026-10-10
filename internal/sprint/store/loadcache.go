@@ -5,6 +5,7 @@ import (
 	"errors"
 	"maps"
 	"sync"
+	"sync/atomic"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -48,6 +49,25 @@ type TableMarker interface {
 type LoadCache struct {
 	mu     sync.Mutex
 	tables map[string]*cachedTable
+	// what each table's load got from the cache (LoadCacheCounts)
+	hits, caughtUp, whole, dropped atomic.Int64
+}
+
+// LoadCacheCounts is what the loads of tables through a cache got, since it was made:
+// Hits the cache at the shape's revision, CaughtUp the cache brought to it from the
+// change stream, Whole the tables read whole (none held, or dropped), and Dropped the
+// entries dropped (the store behind the cache, another event at its revision, a gap,
+// counts that did not add up). A table's load is one of Hits, CaughtUp or Whole.
+type LoadCacheCounts struct {
+	Hits, CaughtUp, Whole, Dropped int64
+}
+
+// Counts is what the cache's loads got so far.
+func (lc *LoadCache) Counts() LoadCacheCounts {
+	if lc == nil {
+		return LoadCacheCounts{}
+	}
+	return LoadCacheCounts{Hits: lc.hits.Load(), CaughtUp: lc.caughtUp.Load(), Whole: lc.whole.Load(), Dropped: lc.dropped.Load()}
 }
 
 // cachedTable is one table's kept placed records, at t.Revision of epoch, and the
@@ -110,6 +130,7 @@ func (st *Store) placedFromCache(ctx context.Context, lc *LoadCache, t *sprint.T
 	ct.mu.Lock()
 	defer ct.mu.Unlock()
 	if ct.t == nil || ct.epoch != shape.Epoch {
+		lc.whole.Add(1)
 		return false, nil
 	}
 	if ct.t.Revision > shape.Revision {
@@ -117,11 +138,24 @@ func (st *Store) placedFromCache(ctx context.Context, lc *LoadCache, t *sprint.T
 		// another load read a later shape first; either way the entry is dropped and
 		// the table read whole
 		ct.t = nil
+		lc.dropped.Add(1)
+		lc.whole.Add(1)
 		return false, nil
 	}
+	held := ct.t.Revision
 	ok, err := st.catchUpCached(ctx, ct, shape)
-	if err != nil || !ok {
+	if err != nil {
 		return false, err
+	}
+	if !ok {
+		lc.dropped.Add(1)
+		lc.whole.Add(1)
+		return false, nil
+	}
+	if held == shape.Revision {
+		lc.hits.Add(1)
+	} else {
+		lc.caughtUp.Add(1)
 	}
 	for _, c := range ct.t.Cards() {
 		t.Put(copyCard(c))

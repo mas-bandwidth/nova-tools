@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -38,6 +39,11 @@ import (
 type friendTick struct {
 	skipped  map[string]string
 	disagree map[string]bool
+	// reading is the friends whose last bounded read of her directory has not returned
+	// (friendRead): one read in flight a friend, so a mount hung for hours holds one OS
+	// thread, never one more each tick
+	readingMu sync.Mutex
+	reading   map[string]bool
 	// stalled is the friends whose directory did not answer within FriendReadDeadline
 	// since their last pass that got through: the coordinator is pushed one note an
 	// episode
@@ -45,7 +51,7 @@ type friendTick struct {
 }
 
 func newFriendTick() *friendTick {
-	return &friendTick{skipped: map[string]string{}, disagree: map[string]bool{}, stalled: map[string]bool{}}
+	return &friendTick{skipped: map[string]string{}, disagree: map[string]bool{}, stalled: map[string]bool{}, reading: map[string]bool{}}
 }
 
 // FriendReadDeadline bounds each read of a friend's directory by the run loop's reconcile
@@ -60,17 +66,35 @@ const FriendReadDeadline = 2 * time.Second
 // FriendReadDeadline.
 var errFriendDirStalled = errors.New("her directory did not answer within " + FriendReadDeadline.String())
 
-// friendRead runs read, a read of a friend's directory, and waits for what it read at
+// errFriendReadInFlight is a read of a friend's directory not begun because her last one
+// has not returned: it would be another OS thread held by the same stalled mount.
+var errFriendReadInFlight = fmt.Errorf("%w: her last read has not returned yet", errFriendDirStalled)
+
+// friendRead runs read, a read of friend's directory dir, and waits for what it read at
 // most FriendReadDeadline by the app's clock (a.after): past it, errFriendDirStalled, and
 // read goes on alone; what it reads then is sent to a channel no one reads, and shares
-// nothing with the caller.
-func friendRead[T any](a *app, dir string, read func() T) (T, error) {
+// nothing with the caller. While that read has not returned no other read of hers begins
+// (errFriendReadInFlight): a stalled read holds its OS thread in the syscall, and one a
+// friend is the most a hung mount takes, however many ticks it lasts.
+func friendRead[T any](a *app, ft *friendTick, friend, dir string, read func() T) (T, error) {
+	var zero T
+	ft.readingMu.Lock()
+	if ft.reading[friend] {
+		ft.readingMu.Unlock()
+		return zero, errFriendReadInFlight
+	}
+	ft.reading[friend] = true
+	ft.readingMu.Unlock()
 	got := make(chan T, 1)
 	go func() {
 		if a.friendDirHook != nil {
 			a.friendDirHook(dir)
 		}
-		got <- read()
+		v := read()
+		ft.readingMu.Lock()
+		delete(ft.reading, friend)
+		ft.readingMu.Unlock()
+		got <- v
 	}()
 	select {
 	case v := <-got:
@@ -80,7 +104,6 @@ func friendRead[T any](a *app, dir string, read func() T) (T, error) {
 		case v := <-got: // it answered as the deadline came
 			return v, nil
 		default:
-			var zero T
 			return zero, errFriendDirStalled
 		}
 	}
@@ -151,7 +174,7 @@ func (a *app) reconcileFriendTick(ctx context.Context, st *store.Store, ft *frie
 		why     string
 		err     error
 	}
-	d, stalled := friendRead(a, dir, func() (d dirRead) {
+	d, stalled := friendRead(a, ft, friend, dir, func() (d dirRead) {
 		if d.fi, d.statErr = os.Stat(dir); d.statErr == nil && d.fi.IsDir() {
 			d.account, d.why, d.err = friendQueueRead(dir)
 		}
@@ -184,7 +207,7 @@ func (a *app) reconcileFriendTick(ctx context.Context, st *store.Store, ft *frie
 		err         error
 	}
 	readReport := func(dir, job string) (string, string, time.Time, error) {
-		r, stalled := friendRead(a, dir, func() (r reportRead) {
+		r, stalled := friendRead(a, ft, friend, dir, func() (r reportRead) {
 			r.report, r.why, r.at, r.err = friendReadReport(dir, job)
 			return r
 		})

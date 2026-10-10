@@ -198,8 +198,24 @@ func (a *app) tally(beats, reads, serial, gone int, wait, hold time.Duration, fi
 	if a.serveLog == nil || now.Sub(t.since) < ServeSayEvery {
 		return
 	}
-	fmt.Fprintf(a.serveLog, "%s SERVE batches=%d beat-lane=%d read-lane=%d on-line=%d gone=%d wait-max=%s held-max=%s held-by=%s over=%s\n",
+	lc := a.loadCacheCounts()
+	fmt.Fprintf(a.serveLog, "%s SERVE batches=%d beat-lane=%d read-lane=%d on-line=%d gone=%d wait-max=%s held-max=%s held-by=%s over=%s load-cache=%dhit/%dcaught-up/%dwhole/%ddropped\n",
 		now.Format("15:04:05"), t.batches, t.beats, t.reads, t.serialVerbs, t.gone,
-		t.waitMax.Round(time.Millisecond), t.holdMax.Round(time.Millisecond), oneline.Field(orDashStr(t.holdWhat, "-")), now.Sub(t.since).Round(time.Second))
+		t.waitMax.Round(time.Millisecond), t.holdMax.Round(time.Millisecond), oneline.Field(orDashStr(t.holdWhat, "-")), now.Sub(t.since).Round(time.Second),
+		lc.Hits, lc.CaughtUp, lc.Whole, lc.Dropped)
 	t.since, t.batches, t.beats, t.reads, t.serialVerbs, t.gone, t.waitMax, t.holdMax, t.holdWhat = now, 0, 0, 0, 0, 0, 0, 0, ""
+}
+
+// loadCacheCounts is what every load cache of the process got so far, summed
+// (store.LoadCache): each table's load a hit, a catch-up from the change stream, or a
+// whole read, and the entries dropped. The SERVE line says them, since the start.
+func (a *app) loadCacheCounts() store.LoadCacheCounts {
+	a.readTwinsMu.Lock()
+	defer a.readTwinsMu.Unlock()
+	var out store.LoadCacheCounts
+	for _, lc := range a.loadCaches {
+		c := lc.Counts()
+		out.Hits, out.CaughtUp, out.Whole, out.Dropped = out.Hits+c.Hits, out.CaughtUp+c.CaughtUp, out.Whole+c.Whole, out.Dropped+c.Dropped
+	}
+	return out
 }

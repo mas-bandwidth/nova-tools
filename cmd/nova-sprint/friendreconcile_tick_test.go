@@ -5,6 +5,7 @@ import (
 	"context"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -139,8 +140,10 @@ func TestRunReconcilePassesOverAStalledFriendDirectory(t *testing.T) {
 			close(block)
 		}
 	})
+	var began atomic.Int64 // her reads begun: one a friend in flight, never one a tick
 	ta.a.friendDirHook = func(dir string) {
 		if dir == hers {
+			began.Add(1)
 			<-block
 		}
 	}
@@ -158,6 +161,7 @@ func TestRunReconcilePassesOverAStalledFriendDirectory(t *testing.T) {
 	assert.Equal(t, 3, strings.Count(out, "TICK OK"), "the loop ticks on past her: %s", out)
 	assert.NotContains(t, out, "RETURNED", "nothing of hers is moved while her directory does not answer")
 	assert.Equal(t, 1, strings.Count(ta.ok("inbox"), "a friend's directory did not answer the reconcile"), "pushed to the coordinator once")
+	assert.Equal(t, int64(1), began.Load(), "three ticks over a hung directory begin one read of it, not one a tick: each would hold an OS thread")
 
 	close(block)
 	ta.a.after = prev
@@ -165,4 +169,5 @@ func TestRunReconcilePassesOverAStalledFriendDirectory(t *testing.T) {
 	for _, id := range []string{"s1-1", "s1-2"} {
 		assert.Contains(t, out, "FRIEND-RECONCILE RETURNED friend=amy card="+id+".w1", "her directory answers again: her pass gets through (%s)", id)
 	}
+	assert.Greater(t, began.Load(), int64(1), "once the read in flight returns, her next reads begin")
 }
