@@ -4221,9 +4221,14 @@ its own, so the beat keeps printing), and runs the gate's go commands there
 as one bench run (the gated commit staged from the bench's own mirror, below,
 with its history, since `internal/ci` reads it; `nice -n 19`,
 `GOFLAGS=-mod=readonly`, `NOVA_TEST_NO_HOST=1`; each run named on its own line,
-the first red ending it and named in the finding), then gives the lane back. A
-bench that does not answer, or a gate no bench could stage, is nobody's
-finding: that gate runs in the clone instead. The batch's `LAND` line carries `bench=<member>` (`here` for a gate
+the first red ending it and named in the finding), then gives the lane back. The
+gate run lives in its own directory under `~/nova-bench/runs/` (kind-id/tree,
+kind-id/tmp, kind-id/gocache), exports `TMPDIR`, `GOTMPDIR` and `GOCACHE` to
+those paths, and removes the whole directory when it ends (successfully,
+on error, timeout, or context cancel). A bench with less free space than the
+floor says so on its fleet row (`disk <free>`, red under the floor) and takes
+no run until it is above it. A bench that does not answer, or a gate no bench
+could stage, is nobody's finding: that gate runs in the clone instead. The batch's `LAND` line carries `bench=<member>` (`here` for a gate
 the loop ran in the clone; `+` between them when a batch's gates ran in more
 than one place) and `wall=<seconds>`, the gates' total. With no such bench,
 the loop's gate runs in the clone; a `land` command on its own (a hand land,
