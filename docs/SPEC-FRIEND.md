@@ -1686,7 +1686,13 @@ prompt opens with that list (`CarryPromptOf`), the model resolving the conflicts
 step and nothing else about the base. A carried head the mirror does not hold (its branch was
 pruned from the remote) is a stage fault: the card's `REPORT.md` is written `Verdict: FAIL` with
 the exact line `carry head <sha> is gone`, the checkout is removed and the job is never started,
-and the judgment names the head. A card with no `CARRY:` line is staged as before.
+and the judgment names the head. The head must still be reachable from a freshly fetched
+remote-tracking branch or tag; a commit left only in the mirror's local object store or an old
+job branch after remote pruning is gone for this purpose. If staging stopped after moving the
+checkout but before writing `JOB.md`, its retry completes the carry before publishing that job.
+One-shot Claude lanes open with the same conflict list by reading a private card prompt in the
+job directory; the delivered inbox brief remains untouched. A card with no `CARRY:` line is
+staged as before.
 `TestACarryMergesThePriorHeadOntoTheBaseTipAsOneCommit`, `TestAConflictingCarryListsTheFilesAndMakesNoCommit`,
 `TestACarriedHeadThatIsGoneFailsTheCard` and `TestACardWithNoCarryLineStagesAtTheBase` pin it.
 

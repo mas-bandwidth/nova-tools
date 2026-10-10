@@ -135,14 +135,21 @@ func TestACarriedHeadThatIsGoneFailsTheCard(t *testing.T) {
 	g.Commit(clone, map[string]string{"b.txt": "work\n"})
 	carried := gitIn(t, env, clone, "rev-parse", "HEAD")
 	gitIn(t, env, clone, "push", "-q", g.Remote, "HEAD:refs/heads/sprint/card.g1.e15")
-	gitIn(t, env, g.Remote, "update-ref", "-d", "refs/heads/sprint/card.g1.e15") // the cleanup pruned it
 
 	p, ok := PacketOf(carriedCard("card.w1", "mas-bandwidth/nova-tools", "sprint/mechanical", carried))
 	require.True(t, ok)
 
 	dir := t.TempDir()
+	// First fetch while the carried branch exists. A local mirror retains its object even
+	// after the remote branch is later pruned; that must not count as remote existence.
+	warm := stagedCard("warm.w1", "working", "mas-bandwidth/nova-tools", "sprint/mechanical")
+	warmPacket, ok := PacketOf(warm)
+	require.True(t, ok)
+	_, err := (&Stager{Dir: dir, Env: env, URL: func(string) string { return g.Remote }}).Stage(context.Background(), warmPacket)
+	require.NoError(t, err)
+	gitIn(t, env, g.Remote, "update-ref", "-d", "refs/heads/sprint/card.g1.e15")
 	stager := &Stager{Dir: dir, Env: env, URL: func(string) string { return g.Remote }}
-	_, err := stager.Stage(context.Background(), p)
+	_, err = stager.Stage(context.Background(), p)
 	var ns *NotStageable
 	require.ErrorAs(t, err, &ns)
 	assert.Contains(t, ns.Why, carried)
@@ -153,6 +160,59 @@ func TestACarriedHeadThatIsGoneFailsTheCard(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(dir, "outbox", p.Job, "REPORT.md"))
 	require.NoError(t, err)
 	assert.Equal(t, "Verdict: FAIL\n\ncarry head "+carried+" is gone\n", string(raw))
+}
+
+// An interrupted stage can have moved the base checkout into place before it merged the
+// carry or wrote JOB.md. Retrying must merge the carry, not write a base-only JOB.md.
+func TestAnInterruptedStageResumesTheCarryBeforeWritingJob(t *testing.T) {
+	t.Parallel()
+	g := testkit.Git(t, 1)
+	clone := g.Clones[0]
+	env := carryEnv(t)
+	g.Commit(clone, map[string]string{"base.txt": "base\n"})
+	gitIn(t, env, clone, "push", "-q", g.Remote, "HEAD:refs/heads/sprint/mechanical")
+	g.Commit(clone, map[string]string{"carry.txt": "carry\n"})
+	carried := gitIn(t, env, clone, "rev-parse", "HEAD")
+	gitIn(t, env, clone, "push", "-q", g.Remote, "HEAD:refs/heads/sprint/card.g1.e15")
+
+	p, ok := PacketOf(carriedCard("card.w1", "mas-bandwidth/nova-tools", "sprint/mechanical", carried))
+	require.True(t, ok)
+	withoutCarry := p
+	withoutCarry.Carry = ""
+	dir := t.TempDir()
+	stager := &Stager{Dir: dir, Env: env, URL: func(string) string { return g.Remote }}
+	base, err := stager.Stage(context.Background(), withoutCarry)
+	require.NoError(t, err)
+	job := filepath.Join(dir, "jobs", p.Job)
+	require.NoError(t, os.Remove(filepath.Join(job, JobFile)))
+	sha, err := stager.Stage(context.Background(), p)
+	require.NoError(t, err)
+	assert.NotEqual(t, base, sha)
+	assert.Equal(t, carryCommitMsg(carried, base), gitIn(t, env, filepath.Join(job, "repo"), "log", "-1", "--format=%s", "HEAD"))
+	raw, err := os.ReadFile(filepath.Join(job, JobFile))
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), sha)
+}
+
+func TestOneShotCarryCardOpensWithConflicts(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	job := filepath.Join(dir, "job")
+	require.NoError(t, os.Mkdir(job, 0o755))
+	base, carried := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	require.NoError(t, os.WriteFile(filepath.Join(job, JobFile), []byte("# JOB\n"+conflictsSection(base, carried, []string{"conflict.txt"})), 0o644))
+	brief := filepath.Join(dir, "BRIEF.md")
+	require.NoError(t, os.WriteFile(brief, []byte("STATUS: card\n"), 0o644))
+	card := Card{ID: "card.w1", Brief: brief}
+	prepared, err := carryOneShotCard(job, card)
+	require.NoError(t, err)
+	assert.NotEqual(t, card.Brief, prepared.Brief)
+	raw, err := os.ReadFile(prepared.Brief)
+	require.NoError(t, err)
+	assert.Equal(t, CarryPrompt(base, carried, []string{"conflict.txt"})+"STATUS: card\n", string(raw))
+	original, err := os.ReadFile(brief)
+	require.NoError(t, err)
+	assert.Equal(t, "STATUS: card\n", string(original))
 }
 
 // A card with no CARRY line is staged as before: no carry head, the checkout at the base, no

@@ -544,6 +544,10 @@ func (l *loop) laneStep(now time.Time, width int) {
 			t, c, dir := &turn{subjects: fmt.Sprintf("%q", "card "+ln.card.ID)}, ln.job.Card, ln.job.Dir
 			ln.t = t
 			l.startTurn(t, now, func(ctx context.Context) laneResult {
+				c, err := carryOneShotCard(dir, c)
+				if err != nil {
+					return laneResult{ln: ln, err: err, t: t}
+				}
 				lt, err := runner.RunCard(WithLaneDir(LaneContext(ctx), dir), c)
 				return laneResult{ln: ln, turn: lt, err: err, t: t}
 			})
@@ -570,6 +574,25 @@ func (l *loop) laneStep(now time.Time, width int) {
 			return laneResult{ln: ln, turn: lt, err: err, t: t}
 		})
 	}
+}
+
+// carryOneShotCard gives a one-shot runner the same opening conflict list as a batch
+// lane. Its brief is a private file in the job; the delivered inbox brief is untouched.
+func carryOneShotCard(jobDir string, card Card) (Card, error) {
+	prompt := CarryPromptOf(jobDir)
+	if prompt == "" {
+		return card, nil
+	}
+	brief, err := os.ReadFile(card.Brief)
+	if err != nil {
+		return card, fmt.Errorf("the card's brief: %w", err)
+	}
+	path := filepath.Join(jobDir, "CARRY-CARD.md")
+	if err := atomicfile.WriteFile(path, []byte(prompt+string(brief)), 0o644); err != nil {
+		return card, fmt.Errorf("the card's carry prompt: %w", err)
+	}
+	card.Brief = path
+	return card, nil
 }
 
 // laneDone is a lane's open or turn ending: a session kept, or a card done,

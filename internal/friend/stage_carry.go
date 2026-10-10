@@ -47,8 +47,20 @@ func (s *Stager) carryStep(ctx context.Context, checkout, mirror string, p Packe
 	if p.Carry == "" {
 		return baseTip, nil, nil
 	}
-	carried, err := s.git(ctx, 0, "-C", mirror, "rev-parse", "--verify", "--quiet", "--end-of-options", p.Carry+"^{commit}")
-	if err != nil || !shaRE.MatchString(carried) {
+	// A previously fetched object survives `fetch --prune`, and a prior job's local branch
+	// can keep it forever. Only a freshly fetched remote ref proves the head is still held.
+	if _, err := s.git(ctx, MirrorCloneBudget, "-C", mirror, "fetch", "--quiet", "--prune", "origin"); err != nil {
+		return "", nil, fmt.Errorf("fetching carry refs: %w", err)
+	}
+	_, objectErr := s.git(ctx, 0, "-C", mirror, "rev-parse", "--verify", "--quiet", "--end-of-options", p.Carry+"^{commit}")
+	var refs string
+	if objectErr == nil {
+		refs, err = s.git(ctx, 0, "-C", mirror, "for-each-ref", "--format=%(refname)", "--contains", p.Carry, "refs/remotes/origin/", "refs/tags/")
+		if err != nil {
+			return "", nil, fmt.Errorf("checking carry refs: %w", err)
+		}
+	}
+	if objectErr != nil || strings.TrimSpace(refs) == "" {
 		if werr := s.writeCarryFail(p); werr != nil {
 			return "", nil, fmt.Errorf("carry head %s is gone, and its FAIL report cannot be written: %s", p.Carry, oneLine(werr.Error(), 300))
 		}
@@ -56,7 +68,7 @@ func (s *Stager) carryStep(ctx context.Context, checkout, mirror string, p Packe
 			Why:    fmt.Sprintf("its CARRY head %s is gone (the cleanup pruned the branch that held it from %s)", p.Carry, s.url(p.Repo)),
 			Remedy: fmt.Sprintf("cut the card with a CARRY head %s still holds, or onto a base that already has the work", s.url(p.Repo))}
 	}
-	if _, err = s.git(ctx, 0, "-C", checkout, "merge", "--no-ff", "-m", carryCommitMsg(carried, baseTip), carried); err != nil {
+	if _, err = s.git(ctx, 0, "-C", checkout, "merge", "--no-ff", "-m", carryCommitMsg(p.Carry, baseTip), p.Carry); err != nil {
 		files, ferr := s.conflictedFiles(ctx, checkout)
 		if ferr != nil {
 			return "", nil, ferr
@@ -71,6 +83,31 @@ func (s *Stager) carryStep(ctx context.Context, checkout, mirror string, p Packe
 		return "", nil, err
 	}
 	return head, nil, nil
+}
+
+// resumeCarry completes a stage interrupted after moving the worktree but before writing
+// JOB.md. A merge already committed or left conflicted is preserved; an untouched checkout
+// still runs the carry step before the lane can see JOB.md.
+func (s *Stager) resumeCarry(ctx context.Context, checkout string, p Packet) (string, []string, error) {
+	sha, err := s.git(ctx, 0, "-C", checkout, "rev-parse", "HEAD")
+	if err != nil {
+		return "", nil, err
+	}
+	conflicts, err := s.conflictedFiles(ctx, checkout)
+	if err != nil || len(conflicts) > 0 || p.Carry == "" {
+		return sha, conflicts, err
+	}
+	if _, err := s.git(ctx, 0, "-C", checkout, "merge-base", "--is-ancestor", p.Carry, "HEAD"); err == nil {
+		return sha, nil, nil // the clean carry committed before the interruption
+	}
+	lock := s.repoLock(p.Repo)
+	lock.Lock()
+	defer lock.Unlock()
+	mirror, err := s.mirror(ctx, p.Repo)
+	if err != nil {
+		return "", nil, err
+	}
+	return s.carryStep(ctx, checkout, mirror, p, sha)
 }
 
 // conflictedFiles is the paths of the checkout's conflicted files, in git's order: the merge a

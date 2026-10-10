@@ -250,11 +250,7 @@ func (s *Stager) Stage(ctx context.Context, p Packet) (string, error) {
 		if err != nil || branch != p.Branch {
 			return "", fmt.Errorf("%s/%s/repo is there with no %s and is not on %s (%q); it is left as found", JobsDir, p.Job, JobFile, p.Branch, branch)
 		}
-		sha, err := s.git(ctx, 0, "-C", checkout, "rev-parse", "HEAD")
-		if err != nil {
-			return "", err
-		}
-		conflicts, err := s.conflictedFiles(ctx, checkout)
+		sha, conflicts, err := s.resumeCarry(ctx, checkout, p)
 		if err != nil {
 			return "", err
 		}
