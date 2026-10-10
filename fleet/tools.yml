@@ -863,6 +863,13 @@
               loop: "{{ seat_restart }}"
               loop_control: { label: "{{ item.label }}" }
               changed_when: true
+
+            - name: "VERSION CHECK: ensure each restarted member, reader and friend runs the new version"
+              ansible.builtin.command: { argv: ["{{ item.binary }}", "version"] }
+              loop: "{{ seat_restart | selectattr('role', 'in', ['member', 'reader', 'friend']) | list }}"
+              loop_control: { label: "{{ item.label }}" }
+              register: seat_version_check
+              failed_when: seat_version_check.rc != 0 or not (seat_version_check.stdout is search(nova_version))
           rescue:
             - name: "server: a restart failed, so each agent is bootstrapped again from its plist"
               ansible.builtin.command:
