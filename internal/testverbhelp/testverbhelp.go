@@ -22,7 +22,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -251,8 +250,22 @@ const (
 
 // LedgerPath is the shrink-only ledger, found from this source file.
 func LedgerPath() string {
-	_, file, _, _ := runtime.Caller(0)
-	return filepath.Join(filepath.Dir(file), "..", "ci", "testdata", "help-complete-ledger.txt")
+	// The ledger is at repo/internal/ci/testdata/help-complete-ledger.txt
+	// When tests run from cmd/nova-friend, CWD is cmd/nova-friend
+	// When tests run from internal/testverbhelp, CWD is internal/testverbhelp
+	// We try both paths to find the file.
+	paths := []string{
+		filepath.Join("internal", "ci", "testdata", "help-complete-ledger.txt"),
+		filepath.Join("..", "internal", "ci", "testdata", "help-complete-ledger.txt"),
+		filepath.Join("..", "..", "internal", "ci", "testdata", "help-complete-ledger.txt"),
+		filepath.Join("..", "ci", "testdata", "help-complete-ledger.txt"),
+	}
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return paths[0] // default
 }
 
 var (
