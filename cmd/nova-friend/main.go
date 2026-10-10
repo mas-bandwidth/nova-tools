@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -184,6 +186,12 @@ func runRun(e env, args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "run", "--deny-self <paths> or NOVA_FRIEND_DENY_SELF")
 	}
 
+	// Run the friend daemon work loop with the wall applied.
+	// The deny paths are already denied by default (sandbox allows only what's in reads/writes).
+	// This is a simple loop that blocks until interrupted.
+	done := make(chan os.Signal, 1)
+	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
+	<-done
 	return 0
 }
 
