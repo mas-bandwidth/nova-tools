@@ -134,6 +134,8 @@ func prefixKind(report string) string {
 		return cardhdr.EndNoResult
 	case IsStagingRefusal(report):
 		return cardhdr.EndStaging
+	case strings.HasPrefix(strings.TrimSpace(report), cardhdr.EndLaunch):
+		return cardhdr.EndLaunch
 	}
 	return ""
 }

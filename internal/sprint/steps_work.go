@@ -1421,7 +1421,6 @@ type FinishReq struct {
 	As     string
 	Gens   map[string]int // the generation held, per named card
 	Failed bool
-	Blame  string
 	Head   string
 	Report string
 	// Branch and Base are the branch the work is on and the one it started
@@ -1539,7 +1538,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		if r.Failed {
 			kind, class, used = finishKind(c, r)
 		}
-		blame, defectClass, finding, fix := ClassifyAttempt(r.Report, r.Failed, r.Blame)
+		blame, defectClass, finding, fix := ClassifyAttempt(r.Report, r.Failed)
 		// a lane ended at its tier's cap: the first cap re-deals the card one tier up before
 		// it counts as a failure (lane_cap.go)
 		lc, capped := LaneCap{}, false
@@ -1556,6 +1555,9 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			continue
 		case cardhdr.EndStaging:
 			p.Units = append(p.Units, stagingRefused(s, c, pr, r))
+			continue
+		case cardhdr.EndLaunch:
+			p.Units = append(p.Units, launchRefused(s, c, pr, r, cardhdr.EndLaunch))
 			continue
 		}
 		head := r.Head
@@ -1978,19 +1980,26 @@ func IsStagingRefusal(report string) bool { return strings.HasPrefix(report, car
 // refusal by a member already among its refusers writes no second record and no
 // second note (tla/CardContract.tla, NeverOnARefuser).
 func stagingRefused(s *Snapshot, c, pr *Card, r FinishReq) Unit {
+	return launchRefused(s, c, pr, r, cardhdr.EndStaging)
+}
+
+// launchRefused records a typed refusal before a worker lane began. The same
+// attempt may be dealt again, so it is withdrawn without consuming the brief's
+// attempt bound or the worker's failed-work count.
+func launchRefused(s *Snapshot, c, pr *Card, r FinishReq, kind string) Unit {
 	set := nextGen(c, "", s.Now)
 	set["withdrawn"] = stamp(s.Now)
 	set[FieldBlame] = BlameCoordinator
 	set[FieldDefectClass] = DefectLaunchRefused
 	set["finding"] = ExtractFindingFirstLine(r.Report)
-	line := cutText(strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(r.Report, cardhdr.EndStaging), ":")), MaxProviderErrorBytes)
+	line := cutText(strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(r.Report, kind), ":")), MaxProviderErrorBytes)
 	var notes []Note
 	if !contains(StagingRefusers(c), c.Row) {
 		set[FieldStagingTake+itoa(c.Int("gen"))] = ProviderTake{Route: c.F(FieldRoute), Model: c.F(FieldModel), Member: c.Row,
 			Finished: stamp(s.Now), Usage: r.Usage, Error: line}.String()
 		n := happened(NStagingRefused, pr.Row, s.Now, pr.ID)
 		n.Who, n.Attempt = c.Row, c.Int("attempt")
-		n.What = cardhdr.EndStaging + " on " + c.Row + ": " + line
+		n.What = kind + " on " + c.Row + ": " + line
 		notes = append(notes, n)
 	}
 	// no child ran: the producer records the launch only when it cost something
@@ -2002,7 +2011,7 @@ func stagingRefused(s *Snapshot, c, pr *Card, r FinishReq) Unit {
 	return Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{
 		change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt")),
 		change(Work, moveEntry(pr, pr.Row, Ready, prSet, "work")),
-	}, Notes: notes, Moved: fmt.Sprintf("%s working -> withdrawn gen=%d, %s refused it at staging; %s working -> ready", c.ID, c.Int("gen")+1, c.Row, pr.ID)}
+	}, Notes: notes, Moved: fmt.Sprintf("%s working -> withdrawn gen=%d, %s refused its launch; %s working -> ready", c.ID, c.Int("gen")+1, c.Row, pr.ID)}
 }
 
 // withdrawCard is the unit that withdraws work card c from its member, the one path of a

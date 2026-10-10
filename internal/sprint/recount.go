@@ -49,7 +49,10 @@ func RecountPlan(s *Snapshot) (Plan, []RowRecount) {
 	afterFail := map[string]int{}
 	afterWith := map[string]int{}
 
-	for _, c := range s.Fleet.Column(Ready, Working, DoneOK, DoneFailed, Withdrawn) {
+	// Only a finished card carries a counter to re-derive: a card back in ready or
+	// working is a live attempt (a provider take re-dealt), and its stale blame and
+	// class must not be read as a finished withdrawal (redeal).
+	for _, c := range s.Fleet.Column(DoneOK, DoneFailed, Withdrawn) {
 		report := c.F("report")
 		blame := c.F(FieldBlame)
 		class := c.F(FieldDefectClass)
@@ -58,7 +61,7 @@ func RecountPlan(s *Snapshot) (Plan, []RowRecount) {
 
 		needsClassify := blame == "" && (c.F("ok") == "no" || c.Col == DoneFailed || c.Col == Withdrawn)
 		if needsClassify {
-			blame, class, finding, fix = ClassifyAttempt(report, c.F("ok") == "no" || c.Col == DoneFailed, "")
+			blame, class, finding, fix = ClassifyAttempt(report, c.F("ok") == "no" || c.Col == DoneFailed)
 		}
 
 		targetRow := c.Row
