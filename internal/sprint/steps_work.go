@@ -1012,7 +1012,11 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 		if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
 			if redealBound(wc) {
 				tier := s.NextTier(c)
-				if _, atCap := AtBriefBound(c, "", s.AttemptsCap(c.Row)); atCap {
+				atCard := c
+				if c.F(FieldAttemptsRan) != "" {
+					atCard = withField(c, "attempt", itoa(c.Int(FieldAttemptsRan)+c.Int(FieldBriefAttempt)))
+				}
+				if _, atCap := AtBriefBound(atCard, "", s.AttemptsCap(c.Row)); atCap {
 					tier = "" // the attempt cap: not dealt again, the tick's judgment says so (AtRedealBound)
 				}
 				if tier == "" {
@@ -1456,6 +1460,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		s.Friends = r.Friends
 	}
 	var p Plan
+	declared := map[string]bool{}
 	if !named(r.Sel) && r.As == "" {
 		p.refuse("finish", "a finish by selection names its member: --as <member>; better, name each card: finish <card>@<gen>")
 		return p
@@ -1533,6 +1538,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		if r.Failed {
 			kind, class, used = finishKind(c, r)
 		}
+		blame, defectClass, finding, fix := ClassifyAttempt(r.Report, r.Failed)
 		// a lane ended at its tier's cap: the first cap re-deals the card one tier up before
 		// it counts as a failure (lane_cap.go)
 		lc, capped := LaneCap{}, false
@@ -1549,6 +1555,9 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			continue
 		case cardhdr.EndStaging:
 			p.Units = append(p.Units, stagingRefused(s, c, pr, r))
+			continue
+		case cardhdr.EndLaunch:
+			p.Units = append(p.Units, launchRefused(s, c, pr, r, cardhdr.EndLaunch))
 			continue
 		}
 		head := r.Head
@@ -1579,6 +1588,18 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			into = DoneDefect
 		}
 		cardSet := map[string]string{"ok": okWord, "head": head, "finished": stamp(s.Now)}
+		if blame != "" {
+			cardSet[FieldBlame] = blame
+		}
+		if defectClass != "" {
+			cardSet[FieldDefectClass] = defectClass
+		}
+		if finding != "" {
+			cardSet["finding"] = finding
+		}
+		if fix != "" {
+			cardSet["fix"] = fix
+		}
 		if !r.Reported.IsZero() {
 			at := r.Reported
 			if at.After(s.Now) {
@@ -1621,13 +1642,38 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			// a decided class is the class when the decision routed the finish
 			identical = failureSet(pr, pr.Int("attempt"), r.Report, class, cardTierOf(pr), set)
 		}
+		attemptsRan := pr.Int(FieldAttemptsRan)
+		isRefusal := defectClass == DefectLaunchRefused || strings.HasPrefix(strings.TrimSpace(r.Report), cardhdr.EndLaunch)
+		isProvider := defectClass == DefectProvider || IsProviderFailure(r.Report) || IsNoResult(r.Report)
+		if !r.Failed || (!isRefusal && !isProvider) {
+			attemptsRan++
+			set[FieldAttemptsRan] = itoa(attemptsRan)
+		} else {
+			set[FieldAttemptsRan] = itoa(attemptsRan)
+		}
 		cons := workConsumer(s, c, 0, result, rec)
 		if capped {
 			cons.End, cons.Cap, cons.Overrun = laneCapEnd, lc.Cap.String(), lc.Overrun.String()
 		}
 		addConsumer(pr, set, cons)
-		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, c.Row, into, cardSet))},
-			Moved: fmt.Sprintf("%s working -> done %s; %s working -> review", c.ID, result, pr.ID)}
+		targetRow := c.Row
+		if r.Failed && blame == BlameCoordinator {
+			coord := s.Coordinator
+			if coord == "" {
+				coord = "coordinator"
+			}
+			targetRow = FriendRow(coord)
+			if !s.Fleet.HasRow(targetRow) && !declared[targetRow] {
+				p.Rows = append(p.Rows, RowAdd{Fleet, targetRow})
+				declared[targetRow] = true
+			}
+		}
+		moved := fmt.Sprintf("%s working -> done %s; %s working -> review", c.ID, result, pr.ID)
+		if targetRow != c.Row {
+			moved = fmt.Sprintf("%s working -> done %s on %s; %s working -> review", c.ID, result, targetRow, pr.ID)
+		}
+		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, targetRow, into, cardSet))},
+			Moved: moved}
 		if late {
 			// the attempt's failed judgments are this report's to answer: closed, and the
 			// finish writes its own below
@@ -1642,9 +1688,11 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			}
 		}
 		attempt := pr.Int("attempt")
+		briefAt := pr.Int(FieldBriefAttempt)
 		// the brief's bound as this finish leaves the card (brief_bound.go): the same failure
 		// escalates below the ceiling only under the attempt cap
-		bb, atBound := AtBriefBound(withField(pr, FieldCostTotal, set[FieldCostTotal]), r.Report, s.AttemptsCap(pr.Row))
+		effectiveCard := withField(withField(pr, FieldCostTotal, set[FieldCostTotal]), "attempt", itoa(attemptsRan+briefAt))
+		bb, atBound := AtBriefBound(effectiveCard, r.Report, s.AttemptsCap(pr.Row))
 		if next := s.NextTier(pr); identical && next != "" && !atBound {
 			// the second identical failure below its ceiling (rules 1 and 2, nova-tools#5174:
 			// "Flash first on every card; pro only on escalation"): no judgment; the primary
@@ -1879,6 +1927,9 @@ func IsNoResult(report string) bool { return strings.HasPrefix(report, cardhdr.E
 func takeEnded(s *Snapshot, c, pr *Card, r FinishReq, kind string, decided bool) Unit {
 	set := nextGen(c, "", s.Now)
 	set["withdrawn"], set[FieldTakeEnded] = stamp(s.Now), stamp(s.Now)
+	set[FieldBlame] = BlameProvider
+	set[FieldDefectClass] = DefectProvider
+	set["finding"] = ExtractFindingFirstLine(r.Report)
 	line := cutText(strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(r.Report, kind), ":")), MaxProviderErrorBytes)
 	why := "the provider failed the take"
 	if kind == cardhdr.EndNoResult {
@@ -1929,16 +1980,26 @@ func IsStagingRefusal(report string) bool { return strings.HasPrefix(report, car
 // refusal by a member already among its refusers writes no second record and no
 // second note (tla/CardContract.tla, NeverOnARefuser).
 func stagingRefused(s *Snapshot, c, pr *Card, r FinishReq) Unit {
+	return launchRefused(s, c, pr, r, cardhdr.EndStaging)
+}
+
+// launchRefused records a typed refusal before a worker lane began. The same
+// attempt may be dealt again, so it is withdrawn without consuming the brief's
+// attempt bound or the worker's failed-work count.
+func launchRefused(s *Snapshot, c, pr *Card, r FinishReq, kind string) Unit {
 	set := nextGen(c, "", s.Now)
 	set["withdrawn"] = stamp(s.Now)
-	line := cutText(strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(r.Report, cardhdr.EndStaging), ":")), MaxProviderErrorBytes)
+	set[FieldBlame] = BlameCoordinator
+	set[FieldDefectClass] = DefectLaunchRefused
+	set["finding"] = ExtractFindingFirstLine(r.Report)
+	line := cutText(strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(r.Report, kind), ":")), MaxProviderErrorBytes)
 	var notes []Note
 	if !contains(StagingRefusers(c), c.Row) {
 		set[FieldStagingTake+itoa(c.Int("gen"))] = ProviderTake{Route: c.F(FieldRoute), Model: c.F(FieldModel), Member: c.Row,
 			Finished: stamp(s.Now), Usage: r.Usage, Error: line}.String()
 		n := happened(NStagingRefused, pr.Row, s.Now, pr.ID)
 		n.Who, n.Attempt = c.Row, c.Int("attempt")
-		n.What = cardhdr.EndStaging + " on " + c.Row + ": " + line
+		n.What = kind + " on " + c.Row + ": " + line
 		notes = append(notes, n)
 	}
 	// no child ran: the producer records the launch only when it cost something
@@ -1950,7 +2011,7 @@ func stagingRefused(s *Snapshot, c, pr *Card, r FinishReq) Unit {
 	return Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{
 		change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt")),
 		change(Work, moveEntry(pr, pr.Row, Ready, prSet, "work")),
-	}, Notes: notes, Moved: fmt.Sprintf("%s working -> withdrawn gen=%d, %s refused it at staging; %s working -> ready", c.ID, c.Int("gen")+1, c.Row, pr.ID)}
+	}, Notes: notes, Moved: fmt.Sprintf("%s working -> withdrawn gen=%d, %s refused its launch; %s working -> ready", c.ID, c.Int("gen")+1, c.Row, pr.ID)}
 }
 
 // withdrawCard is the unit that withdraws work card c from its member, the one path of a

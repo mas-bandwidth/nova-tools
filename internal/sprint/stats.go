@@ -148,10 +148,15 @@ func StatsSince(s *Snapshot, since time.Time) PassStats {
 			if w := s.Fleet.Card(WorkCardID(p.ID, k)); w != nil && !before(w, since, "finished", "taken", "dealt") {
 				x := sampleOf(work, cmp.Or(w.F("member"), w.Row, "-"))
 				dealt, taken, finished := stampAt(w, "dealt"), stampAt(w, "taken"), stampAt(w, "finished")
-				switch w.F("ok") {
-				case "yes":
+				blame := w.F(FieldBlame)
+				class := w.F(FieldDefectClass)
+				if blame == "" && (w.F("ok") == "no" || w.Col == DoneFailed) {
+					blame, class, _, _ = ClassifyAttempt(w.F("report"), true)
+				}
+				switch {
+				case w.F("ok") == "yes" || w.Col == DoneOK:
 					lastFinished = finished
-				case "no":
+				case blame == BlameWorker && class != DefectLaunchRefused && !IsProviderFailure(w.F("report")) && !IsNoResult(w.F("report")):
 					x.failed++
 				}
 				x.timed(dealt, taken, finished, RunWall(w))
