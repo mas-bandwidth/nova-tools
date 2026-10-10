@@ -43,7 +43,7 @@ Report what was not done.
 	})
 
 	for _, tc := range []struct {
-		name  string
+		name   string
 		phrase string
 	}{
 		{name: "never claim another model", phrase: "ATTRIBUTION. Never claim Claude or another model."},
