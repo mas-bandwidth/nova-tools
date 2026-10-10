@@ -61,6 +61,7 @@ func TestHoldFixLinesAreAppliedAtFinish(t *testing.T) {
 		assert.Zero(t, pr.Int("failed"))
 		assert.Equal(t, "1", pr.F(FieldBriefAttempt))
 		assert.Equal(t, holdHead, pr.F("head"))
+		assert.Equal(t, PriorityFix, pr.F(FieldPriority))
 		assert.Contains(t, pr.F("fix"), "start from head "+holdHead)
 		assert.Contains(t, pr.F("brief"), "CARRY: "+id+" attempt 1 head="+holdHead)
 		assert.Nil(t, w.s.Work.Card(id+"-t"), "the card keeps its id")
@@ -106,17 +107,6 @@ func TestHoldFixLinesAreAppliedAtFinish(t *testing.T) {
 		assert.Equal(t, "pro", pr.F(FieldTierNow))
 		assert.Contains(t, pr.F("brief"), "tier: pro")
 		assert.NotContains(t, pr.F("brief"), "tier: flash")
-	})
-
-	t.Run("GATE-HOST linux marks the card", func(t *testing.T) {
-		t.Parallel()
-		w := holdWorld(t, CardAdd{ID: "s1-1", Brief: brief("s1-1")})
-		finishHold(t, w, "s1-1", "HOLD: the gate needs a bench\nGATE-HOST: linux")
-		ready(t, w, "s1-1")
-		pr := w.s.Work.Card("s1-1")
-		assert.Equal(t, "linux", pr.F(FieldGateHost))
-		assert.Contains(t, pr.F("brief"), "GATE-HOST: linux")
-		assert.Empty(t, pr.F("bench"))
 	})
 
 	t.Run("PATHS and TIER apply together", func(t *testing.T) {
@@ -253,11 +243,6 @@ func TestHoldFixLinesAreAppliedAtFinish(t *testing.T) {
 			friends: []FriendSeat{{Name: "worker", Status: Up, Tiers: []string{"flash", "pro", "heavy"}}},
 		},
 		{
-			name:   "a gate host other than linux",
-			report: "HOLD: host\nGATE-HOST: other",
-			want:   "GATE-HOST other is not linux",
-		},
-		{
 			name:   "a card that needs itself",
 			report: "HOLD: loop\nNEEDS: s1-1",
 			want:   "NEEDS names itself",
@@ -288,7 +273,6 @@ func TestHoldFixLinesAreAppliedAtFinish(t *testing.T) {
 			assert.Equal(t, "failed", pr.F("result"))
 			assert.Equal(t, brief("s1-1"), pr.F("brief"), "an unapplied line does not edit the brief")
 			assert.Empty(t, pr.F(FieldTierNow))
-			assert.Empty(t, pr.F(FieldGateHost))
 			require.Len(t, w.notesOf(NWorkFailed), 1)
 			assert.Contains(t, w.notesOf(NWorkFailed)[0].What, holdFixRefused)
 			assert.Contains(t, w.notesOf(NWorkFailed)[0].What, tc.want)

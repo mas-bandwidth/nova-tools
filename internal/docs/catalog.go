@@ -15,7 +15,11 @@ var DefaultCatalog = []Entry{
 	E("assets", "static assets and schemas", "none", "none"),
 	E("fleet", "fleet loop units and bench templates", "none", "none"),
 	Page("cmd", "17 nova command-line tools", "nova-ci local", "make build"),
-	Page("docs", "specs, guides, and proposals", "go test ./internal/docs", "go test ./internal/docs"),
+	Page("docs", "specs, guides, and proposals", "go test ./internal/docs", "go test ./internal/docs").withNote(
+		"A HOLD note is read by the machine only for these three lines, each the whole of a trimmed line. Nothing else in a HOLD note is read by a machine. `docs/SPEC-SPRINT.md` section 8 is the rule.\n\n" +
+			"- `PATHS-PROPOSED: <glob>[,<glob>...]` widens PATHS in place when the stream is marked land-protected for the card's repository. The card keeps its id and returns to ready.\n" +
+			"- `NEEDS: <card-id>` adds that dependency when the card has landed, and parks this card waiting when it has not.\n" +
+			"- `TIER: flash|pro|heavy` recuts the tier in place when a friend of the stream serves it.\n"),
 	E("infra", "runner images and scripts", "none", "none"),
 	Page("internal", "packages and libraries", "nova-ci local", "make test"),
 	E("tla", "the TLA+ models of the state machines and their runners", "go test ./internal/tlc", "make tlc-test"),

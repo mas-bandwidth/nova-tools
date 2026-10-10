@@ -13,7 +13,7 @@ import (
 )
 
 // A HOLD that names its own fix is applied by the machine at finish, not read by the seat
-// (docs/SPEC-SPRINT.md section 8, the hold fix lines). Four lines, each the whole of a
+// (docs/SPEC-SPRINT.md section 8, the hold fix lines). Three lines, each the whole of a
 // trimmed line and the first of its kind, are the whole grammar. Nothing else in the note
 // is read.
 //
@@ -28,7 +28,6 @@ import (
 //     itself, or a card that already needs this one leaves the hold.
 //   - TIER: flash, pro or heavy, rewritten on line 1 and tier_now, when a friend of the
 //     stream serves it. Any other word, or a tier no friend serves, leaves the hold.
-//   - GATE-HOST: linux marks gate_host and a GATE-HOST line. Any other host leaves the hold.
 //
 // One line the machine cannot apply leaves the whole hold, the judgment prefixed
 // holdFixRefused. A line the machine applies sends the card back to ready with fix set,
@@ -38,7 +37,6 @@ const (
 	holdFixPaths = "PATHS-PROPOSED:"
 	holdFixNeeds = "NEEDS:"
 	holdFixTier  = "TIER:"
-	holdFixGate  = "GATE-HOST:"
 
 	// holdFixRefused prefixes the failed-work judgment when a fix line cannot be applied.
 	holdFixRefused = "hold fix not applied: "
@@ -46,9 +44,6 @@ const (
 	holdFixReady  = "ready"
 	holdFixPark   = "park"
 	holdFixRefuse = "refuse"
-
-	// FieldGateHost is the bench a GATE-HOST line marks the card's gates to run on.
-	FieldGateHost = "gate_host"
 
 	// NHoldFix is the happened note, to the coordinator, naming the lines a finish applied.
 	NHoldFix = "hold fix applied"
@@ -61,7 +56,6 @@ type holdFix struct {
 	said  string // the lines applied, joined
 	brief string
 	tier  string
-	gate  string
 	park  string // the card NEEDS names that has not landed
 	needs string // the primary's needs field when a landed card is appended
 }
@@ -78,7 +72,7 @@ func readHoldFix(s *Snapshot, pr *Card, report, head string) holdFix {
 	}
 	var reasons, applied []string
 	var fresh []string
-	var tier, gate, park, needs string
+	var tier, park, needs string
 	if lines.pathsSeen {
 		switch {
 		case !lines.pathsOK:
@@ -86,7 +80,7 @@ func readHoldFix(s *Snapshot, pr *Card, report, head string) holdFix {
 		default:
 			claim, why, got := pathsHold(s, pr, lines.paths)
 			switch {
-			case !claim && !lines.needSeen && !lines.tierSeen && !lines.gateSeen:
+			case !claim && !lines.needSeen && !lines.tierSeen:
 				return holdFix{}
 			case !claim || why != "":
 				reasons = append(reasons, why)
@@ -122,14 +116,6 @@ func readHoldFix(s *Snapshot, pr *Card, report, head string) holdFix {
 			applied = append(applied, "tier "+lines.tier)
 		}
 	}
-	if lines.gateSeen {
-		if why := gateHold(lines.gate); why != "" {
-			reasons = append(reasons, why)
-		} else {
-			gate = lines.gate
-			applied = append(applied, "gate host "+lines.gate)
-		}
-	}
 	if len(reasons) > 0 {
 		return holdFix{act: holdFixRefuse, why: strings.Join(reasons, "; ")}
 	}
@@ -138,9 +124,8 @@ func readHoldFix(s *Snapshot, pr *Card, report, head string) holdFix {
 	}
 	fx := holdFix{
 		said:  strings.Join(applied, "; "),
-		brief: applyHoldBrief(pr, head, fresh, tier, gate),
+		brief: applyHoldBrief(pr, head, fresh, tier),
 		tier:  tier,
-		gate:  gate,
 		needs: needs,
 	}
 	if park != "" {
@@ -159,11 +144,9 @@ type holdFixLines struct {
 	needSeen           bool
 	tier               string
 	tierSeen           bool
-	gate               string
-	gateSeen           bool
 }
 
-// parseHoldFix reads the four lines. A line counts only when it starts with the key,
+// parseHoldFix reads the three lines. A line counts only when it starts with the key,
 // so a mention inside a sentence is not a fix. ok is false when the report has none.
 func parseHoldFix(report string) (holdFixLines, bool) {
 	var l holdFixLines
@@ -180,12 +163,9 @@ func parseHoldFix(report string) (holdFixLines, bool) {
 		case !l.tierSeen && strings.HasPrefix(line, holdFixTier):
 			l.tierSeen = true
 			l.tier = holdToken(strings.TrimPrefix(line, holdFixTier))
-		case !l.gateSeen && strings.HasPrefix(line, holdFixGate):
-			l.gateSeen = true
-			l.gate = holdToken(strings.TrimPrefix(line, holdFixGate))
 		}
 	}
-	return l, l.pathsSeen || l.needSeen || l.tierSeen || l.gateSeen
+	return l, l.pathsSeen || l.needSeen || l.tierSeen
 }
 
 // holdToken is the first word of a fix line's value, quotes and a closing stop removed.
@@ -337,14 +317,6 @@ func friendServes(s *Snapshot, pr *Card, tier string) bool {
 	return false
 }
 
-// gateHold is why a GATE-HOST line cannot be applied, "" for linux.
-func gateHold(host string) string {
-	if host != "linux" {
-		return "GATE-HOST " + host + " is not linux"
-	}
-	return ""
-}
-
 // withNeed is needs with id appended once.
 func withNeed(needs, id string) string {
 	cur := Split(needs)
@@ -355,7 +327,7 @@ func withNeed(needs, id string) string {
 }
 
 // applyHoldBrief is the brief with the applied lines written and the held head carried.
-func applyHoldBrief(pr *Card, head string, fresh []string, tier, gate string) string {
+func applyHoldBrief(pr *Card, head string, fresh []string, tier string) string {
 	brief := pr.F("brief")
 	carry := ""
 	if typedrec.IsFullSha(head) {
@@ -368,9 +340,6 @@ func applyHoldBrief(pr *Card, head string, fresh []string, tier, gate string) st
 	}
 	if tier != "" {
 		brief = briefWithTier(brief, tier)
-	}
-	if gate != "" {
-		brief = briefWithGate(brief, gate)
 	}
 	return brief
 }
@@ -386,21 +355,6 @@ func briefWithTier(brief, tier string) string {
 	} else {
 		lines[0] = strings.TrimRight(lines[0], " ") + " tier: " + tier
 	}
-	return strings.Join(lines, "\n")
-}
-
-// briefWithGate sets the header's GATE-HOST line, replacing one already there.
-func briefWithGate(brief, host string) string {
-	lines := strings.Split(brief, "\n")
-	line := holdFixGate + " " + host
-	for i, l := range lines {
-		if k, _, ok := cardhdr.KeyValue(strings.TrimSpace(l)); ok && k == "GATE-HOST" {
-			lines[i] = line
-			return strings.Join(lines, "\n")
-		}
-	}
-	at := min(1, len(lines))
-	lines = slices.Insert(lines, at, line)
 	return strings.Join(lines, "\n")
 }
 
@@ -433,15 +387,15 @@ func applyHoldFix(s *Snapshot, c, pr *Card, r FinishReq, who, head string, fx ho
 	if fx.tier != "" {
 		set[FieldTierNow] = fx.tier
 	}
-	if fx.gate != "" {
-		set[FieldGateHost] = fx.gate
-	}
 	if fx.needs != "" {
 		set["needs"] = fx.needs
 	}
 	if w := pr.F(FieldWho); w != "" {
 		set[FieldWho] = w
 	}
+	// a hold fix is a next attempt: the rework policy sets the card's priority (fix for a
+	// normal or low card), as the analogous in-place edits do (steps_edit.go briefInPlace).
+	reworkPriority(s, pr, set)
 	maps.Copy(set, finishStamps(pr, c, s.Now))
 	decidedSets(r, false, pr, cardSet, set)
 	addConsumer(pr, set, workConsumer(s, c, 0, "failed", rec))

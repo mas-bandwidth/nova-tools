@@ -1692,9 +1692,6 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			if held.tier != "" {
 				set[FieldTierNow] = held.tier
 			}
-			if held.gate != "" {
-				set[FieldGateHost] = held.gate
-			}
 		}
 		asked := map[string]string{}
 		if passed {

@@ -5511,8 +5511,6 @@ note is read. Each line is the whole of a trimmed line, and the first of its kin
   this one leave the hold.
 - `TIER: flash|pro|heavy` rewrites the tier on line 1 and `tier_now` when a friend of the
   stream serves that tier. Any other word, or a tier no friend serves, leaves the hold.
-- `GATE-HOST: linux` sets `gate_host` and a `GATE-HOST: linux` line, marking the card's
-  gates to run on a bench. Any other host leaves the hold.
 
 One line that cannot be applied leaves the whole note unapplied. The judgment is
 `work came back failed`, prefixed `hold fix not applied: <why>: `, and neither `paths`,
