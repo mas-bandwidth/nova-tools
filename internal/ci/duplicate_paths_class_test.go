@@ -4,10 +4,13 @@ package ci
 
 import (
 	"bufio"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -22,7 +25,7 @@ const duplicatePathsLedgerPath = "testdata/duplicate-paths-ledger.txt"
 // duplicatePathsRemedy is what to do when a duplicate pair is found.
 const duplicatePathsRemedy = "keep one side, delete or merge the other"
 
-// readLedger reads the ledger file and returns a map of pairs.
+// readLedger reads the ledger file and returns a map of pair keys.
 func readLedger(t *testing.T) map[string]bool {
 	f, err := os.Open(duplicatePathsLedgerPath)
 	require.NoError(t, err)
@@ -35,13 +38,275 @@ func readLedger(t *testing.T) map[string]bool {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		// Format: <key> <reason>
-		parts := strings.SplitN(line, " ", 2)
+		// Format: <file:func> <file:func> <reason>
+		parts := strings.SplitN(line, " ", 3)
 		if len(parts) >= 1 {
 			pairs[parts[0]] = true
 		}
 	}
 	return pairs
+}
+
+// FuncInfo holds information about a function.
+type FuncInfo struct {
+	Path     string
+	Name     string
+	BodyHash string
+	Stmts    int
+}
+
+// countStatements counts the number of statements in a function body.
+func countStatements(body *ast.BlockStmt) int {
+	if body == nil {
+		return 0
+	}
+	return len(body.List)
+}
+
+// normalizeBody creates a normalized representation of a function body.
+// Identifiers are renamed by first use, literals kept, comments dropped.
+func normalizeBody(body *ast.BlockStmt, fset *token.FileSet) string {
+	if body == nil {
+		return ""
+	}
+
+	idents := make(map[string]string)
+	nextID := 0
+
+	var buf strings.Builder
+
+	var walk func(node ast.Node)
+	walk = func(node ast.Node) {
+		if node == nil {
+			return
+		}
+
+		switch n := node.(type) {
+		case *ast.Ident:
+			if n.Name == "_" {
+				buf.WriteString("_")
+				return
+			}
+			if newName, ok := idents[n.Name]; ok {
+				buf.WriteString(newName)
+				return
+			}
+			newName := fmt.Sprintf("id%d", nextID)
+			nextID++
+			idents[n.Name] = newName
+			buf.WriteString(newName)
+		case *ast.BasicLit:
+			buf.WriteString(n.Value)
+		case *ast.BinaryExpr:
+			walk(n.X)
+			buf.WriteString(" ")
+			buf.WriteString(n.Op.String())
+			buf.WriteString(" ")
+			walk(n.Y)
+		case *ast.UnaryExpr:
+			buf.WriteString(n.Op.String())
+			walk(n.X)
+		case *ast.ParenExpr:
+			buf.WriteString("(")
+			walk(n.X)
+			buf.WriteString(")")
+		case *ast.CallExpr:
+			walk(n.Fun)
+			buf.WriteString("(")
+			for i, arg := range n.Args {
+				if i > 0 {
+					buf.WriteString(", ")
+				}
+				walk(arg)
+			}
+			buf.WriteString(")")
+		case *ast.SelectorExpr:
+			walk(n.X)
+			buf.WriteString(".")
+			buf.WriteString(n.Sel.Name)
+		case *ast.AssignStmt:
+			for i, lhs := range n.Lhs {
+				if i > 0 {
+					buf.WriteString(", ")
+				}
+				walk(lhs)
+			}
+			buf.WriteString(" ")
+			buf.WriteString(n.Tok.String())
+			buf.WriteString(" ")
+			for i, rhs := range n.Rhs {
+				if i > 0 {
+					buf.WriteString(", ")
+				}
+				walk(rhs)
+			}
+		case *ast.IncDecStmt:
+			walk(n.X)
+		case *ast.ReturnStmt:
+			buf.WriteString("return ")
+			for i, result := range n.Results {
+				if i > 0 {
+					buf.WriteString(", ")
+				}
+				walk(result)
+			}
+		case *ast.IfStmt:
+			buf.WriteString("if ")
+			walk(n.Cond)
+			buf.WriteString(" { ... }")
+		case *ast.RangeStmt:
+			if n.X != nil {
+				walk(n.X)
+			}
+		case *ast.ForStmt:
+			buf.WriteString("for ")
+			if n.Cond != nil {
+				walk(n.Cond)
+			}
+		case *ast.SwitchStmt:
+			buf.WriteString("switch ")
+			if n.Tag != nil {
+				walk(n.Tag)
+			}
+		case *ast.TypeSwitchStmt:
+			buf.WriteString("switch ")
+			if n.Assign != nil {
+				walk(n.Assign)
+			}
+		case *ast.BranchStmt:
+			buf.WriteString(n.Tok.String())
+		case *ast.LabeledStmt:
+			buf.WriteString(n.Label.Name)
+			buf.WriteString(": ")
+			walk(n.Stmt)
+		case *ast.DeclStmt:
+			if n, ok := n.Decl.(*ast.GenDecl); ok {
+				switch n.Tok {
+				case token.VAR:
+					buf.WriteString("var ")
+					for i, spec := range n.Specs {
+						if i > 0 {
+							buf.WriteString(", ")
+						}
+						if vs, ok := spec.(*ast.ValueSpec); ok {
+							buf.WriteString(vs.Names[0].Name)
+							if len(vs.Values) > 0 {
+								buf.WriteString(" ")
+								walk(vs.Values[0])
+							}
+						}
+					}
+				case token.CONST:
+					buf.WriteString("const ")
+					for i, spec := range n.Specs {
+						if i > 0 {
+							buf.WriteString(", ")
+						}
+						if vs, ok := spec.(*ast.ValueSpec); ok {
+							buf.WriteString(vs.Names[0].Name)
+							if len(vs.Values) > 0 {
+								buf.WriteString(" ")
+								walk(vs.Values[0])
+							}
+						}
+					}
+				case token.TYPE:
+					buf.WriteString("type ")
+					if ts, ok := n.Specs[0].(*ast.TypeSpec); ok {
+						buf.WriteString(ts.Name.Name)
+					}
+				}
+			}
+		default:
+		}
+	}
+
+	for _, stmt := range body.List {
+		walk(stmt)
+		buf.WriteString("; ")
+	}
+
+	return buf.String()
+}
+
+// scanPackage scans a Go package directory and returns all non-test functions.
+func scanPackage(dir string) []FuncInfo {
+	var decls []FuncInfo
+
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return decls
+	}
+
+	for _, file := range files {
+		// Skip test files
+		if strings.HasSuffix(file.Name(), "_test.go") {
+			continue
+		}
+		if !strings.HasSuffix(file.Name(), ".go") {
+			continue
+		}
+
+		path := filepath.Join(dir, file.Name())
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			continue
+		}
+
+		for _, decl := range f.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok {
+				decls = append(decls, FuncInfo{
+					Path:     filepath.Base(dir) + "/" + file.Name(),
+					Name:     fn.Name.Name,
+					BodyHash: normalizeBody(fn.Body, fset),
+					Stmts:    countStatements(fn.Body),
+				})
+			}
+		}
+	}
+
+	return decls
+}
+
+// findDuplicates finds duplicate function bodies across packages.
+func findDuplicates(packages []string) []FuncInfo {
+	// Map: normalizedBody -> []FuncInfo
+	bodies := make(map[string][]FuncInfo)
+
+	for _, pkg := range packages {
+		// Skip testdata directories
+		if strings.Contains(pkg, "testdata") {
+			continue
+		}
+
+		decls := scanPackage(pkg)
+		for _, fn := range decls {
+			// Only consider functions with at least 8 statements
+			if fn.Stmts < 8 {
+				continue
+			}
+
+			bodies[fn.BodyHash] = append(bodies[fn.BodyHash], fn)
+		}
+	}
+
+	// Collect all duplicates
+	var duplicates []FuncInfo
+	for _, funcs := range bodies {
+		if len(funcs) >= 2 {
+			// Sort for consistent ordering
+			sort.Slice(funcs, func(i, j int) bool {
+				if funcs[i].Path != funcs[j].Path {
+					return funcs[i].Path < funcs[j].Path
+				}
+				return funcs[i].Name < funcs[j].Name
+			})
+			duplicates = append(duplicates, funcs...)
+		}
+	}
+
+	return duplicates
 }
 
 // TestDuplicatePathsLedgerOnlyShrinks holds the duplicate-paths ledger: every pair of
@@ -50,16 +315,54 @@ func readLedger(t *testing.T) map[string]bool {
 func TestDuplicatePathsLedgerOnlyShrinks(t *testing.T) {
 	t.Parallel()
 
-	// For now, just verify the ledger exists and has valid format
-	// A full implementation would compare found duplicates against the ledger
+	// Read ledger
 	ledger := readLedger(t)
 
-	// Verify ledger is not empty (should have entries for today's pairs)
-	require.NotEmpty(t, ledger, "ledger should contain duplicate pairs")
+	// Packages to scan
+	packages := []string{
+		"cmd/nova-sprint",
+		"internal/sprint",
+		"internal/sprint/driver",
+		"internal/sprint/refmodel",
+		"internal/sprint/store",
+		"internal/sprint/store/bench",
+		"internal/sprint/store/redis",
+		"internal/sprint/store/twin",
+		"internal/friend",
+		"internal/friend/friendtest",
+		"internal/friend/testdata",
+		"internal/friend/tla",
+	}
 
-	// Verify ledger pairs have valid format
+	// Find duplicates
+	duplicates := findDuplicates(packages)
+
+	// Build set of actual duplicate pairs
+	actualPairs := make(map[string]bool)
+	for i := range duplicates {
+		for j := i + 1; j < len(duplicates); j++ {
+			if duplicates[i].BodyHash == duplicates[j].BodyHash {
+				// Create canonical pair key (sorted)
+				key1 := fmt.Sprintf("%s:%s:%s:%s", duplicates[i].Path, duplicates[i].Name, duplicates[j].Path, duplicates[j].Name)
+				key2 := fmt.Sprintf("%s:%s:%s:%s", duplicates[j].Path, duplicates[j].Name, duplicates[i].Path, duplicates[i].Name)
+				if key1 > key2 {
+					key1, key2 = key2, key1
+				}
+				actualPairs[key1] = true
+			}
+		}
+	}
+
+	// Check ledger entries exist in actual duplicates
 	for pair := range ledger {
-		require.Contains(t, pair, ":", "ledger pair should contain colon separator: %s", pair)
+		_, found := actualPairs[pair]
+		require.True(t, found, "ledger entry %s no longer has duplicates", pair)
+	}
+
+	// Check all actual duplicates are in ledger
+	for pair := range actualPairs {
+		_, found := ledger[pair]
+		require.True(t, found, "duplicate pair %s not in ledger", pair)
 	}
 }
 

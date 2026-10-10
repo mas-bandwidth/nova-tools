@@ -1,5 +1,3 @@
 # duplicate-paths ledger: function bodies that are the same after normalizing names
 # Shrink-only: NOVA_CI_UPDATE=1 lowers counts and drops rows at zero
 # Held by TestDuplicatePathsLedgerOnlyShrinks in internal/ci/duplicate_paths_class_test.go
-# Example: two functions with identical normalized bodies
-internal/ci/duplicate_paths_class_test.go:short1:internal/ci/duplicate_paths_class_test.go:long1 duplicate body
