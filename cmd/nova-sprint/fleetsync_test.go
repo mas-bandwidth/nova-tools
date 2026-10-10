@@ -320,7 +320,7 @@ func TestFleetSyncLeavesTheCoordinatorsHold(t *testing.T) {
 	inv.set("m1", 4)
 	inv.set("m2", 4)
 	ta.ok("fleet sync")
-	ta.ok("fleet down m1")
+	ta.ok("fleet down m1 --reason 'test'")
 	inv.set("m1", 6)
 	out := ta.ok("fleet sync")
 	require.Contains(t, out, "NOTE m1 is held by the coordinator and stays held; run: nova-sprint fleet up m1", "the hold is not said")

@@ -116,8 +116,8 @@ func TestAVerbWhoseDisplaySyncFailsAfterItsWriteReportsOK(t *testing.T) {
 	}{
 		{"add", "ADD", "add --stream s1 --count 2", func(*testApp) {}},
 		{"drop", "DROP", "drop s1-1 --reason obsolete", cards(2)},
-		{"fleet down", "FLEET-DOWN", "fleet down m1", func(*testApp) {}},
-		{"fleet up", "FLEET-UP", "fleet up m1", func(ta *testApp) { ta.ok("fleet down m1") }},
+		{"fleet down", "FLEET-DOWN", "fleet down m1 --reason 'test'", func(*testApp) {}},
+		{"fleet up", "FLEET-UP", "fleet up m1 --reason 'test'", func(ta *testApp) { ta.ok("fleet down m1 --reason 'test'") }},
 		{"finish", "FINISH", "finish --as m1 s1-1.w1@1", func(ta *testApp) {
 			cards(1)(ta)
 			ta.deal(1)

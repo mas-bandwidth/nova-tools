@@ -19,7 +19,7 @@ func TestAVerbSaysWhatTheMovesDoNot(t *testing.T) {
 	init := ta.ok("init --readers reader-a,reader-b --members m1:2,m2")
 	assert.Contains(t, init, "INIT OK tables=work,readers,merge,fleet view=sprint readers=reader-a,reader-b\n")
 	assert.NotContains(t, init, "NOTE a twin", "a store that is not a twin")
-	ta.ok("fleet down m2")
+	ta.ok("fleet down m2 --reason 'test'")
 
 	add := ta.ok("add --stream s1 --count 5")
 	assert.Contains(t, add, "ADD OK stream=s1 cards=5 before=- moved=5 refused=0 notes=0 op=")

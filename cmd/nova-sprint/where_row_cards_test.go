@@ -48,7 +48,7 @@ func TestTheDashboardRowsSayHowManyAreReads(t *testing.T) {
 	ta.ok("tick")
 	ta.ok("take --as m1 s1-1.w1@1")
 	ta.ok("finish --as m1 s1-1.w1@1 --report done --head " + landHead)
-	ta.ok("fleet down m1") // its two dealt ahead go back, to be dealt to fred
+	ta.ok("fleet down m1 --reason 'test'") // its two dealt ahead go back, to be dealt to fred
 	ta.beatUp("fred")
 	for range 3 { // the withdrawn two dealt to fred, and the read of s1-1, each taken
 		ta.ok("tick")

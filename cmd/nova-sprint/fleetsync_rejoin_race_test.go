@@ -56,7 +56,7 @@ func TestFleetSyncCleanupPreservesARejoinAndFreshAssignment(t *testing.T) {
 	inv.set("m1", 4)
 	inv.set("m2", 4)
 	ta.ok("fleet sync")
-	ta.ok("fleet down m1") // every fresh assignment must go to m2
+	ta.ok("fleet down m1 --reason 'test'") // every fresh assignment must go to m2
 	st, err := ta.a.store(common{redis: "mem:0", actor: "tester"})
 	require.NoError(t, err)
 	want := []sprint.SyncMember{{Name: "m1", Width: 4}}

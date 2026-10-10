@@ -17,7 +17,7 @@ func TestTheWidthIsSetByInitAndFleetUpAndShown(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1:64,m2:3,m3")
-	ta.ok("fleet up m3 --width 8")
+	ta.ok("fleet up m3 --width 8 --reason 'test'")
 	out := ta.ok("where")
 	require.Contains(t, out, "fleet | ready | working | width |", "the fleet table has no width beside working")
 	var v struct {
@@ -29,7 +29,7 @@ func TestTheWidthIsSetByInitAndFleetUpAndShown(t *testing.T) {
 	require.Equal(t, "3", fleet["m2"]["width"], "the widths: %v", fleet)
 	require.Equal(t, "8", fleet["m3"]["width"], "the widths: %v", fleet)
 	// a width of 0 drains the member (fleet_drain_test.go): it is written, not refused
-	assert.Contains(t, ta.ok("fleet up m3 --width 0"), "width=0 (drains")
+	assert.Contains(t, ta.ok("fleet up m3 --width 0 --reason 'test'"), "width=0 (drains")
 	require.NoError(t, json.Unmarshal([]byte(ta.ok("where --json")), &v))
 	require.Equal(t, "0", v.Tables["fleet"]["m3"]["width"], "the widths: %v", v.Tables["fleet"])
 	for _, line := range []string{"fleet up m4 --width -1", "fleet up m4 --width 1025", "fleet up m4 --width x"} {
@@ -62,6 +62,6 @@ func TestTheFleetFooterTotalsTheWidths(t *testing.T) {
 		return lines[len(lines)-1]
 	}
 	require.Contains(t, footer(), "|   512 |", "eight machines of 64 do not total 512 in the footer")
-	ta.ok("fleet up m1 --width 8")
+	ta.ok("fleet up m1 --width 8 --reason 'test'")
 	require.Contains(t, footer(), "|   456 |", "the footer after m1 narrows to 8")
 }

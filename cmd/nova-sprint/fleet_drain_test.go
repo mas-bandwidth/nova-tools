@@ -34,7 +34,7 @@ func TestFleetUpWidthZeroDrainsAMember(t *testing.T) {
 	}
 	require.NotEmpty(t, working, "the take left no working card: %+v", q.Cards)
 
-	out := ta.ok("fleet up m1 --width 0")
+	out := ta.ok("fleet up m1 --width 0 --reason 'test'")
 	assert.Contains(t, out, "MOVED m1 up width=0 (drains: no new deals, its working cards finish)")
 	ta.ok("tick")
 	ta.json("queue --as m1", &q)
@@ -51,7 +51,7 @@ func TestFleetUpWidthZeroDrainsAMember(t *testing.T) {
 	ta.json("queue --as m1", &q)
 	assert.Empty(t, q.Cards, "a drained member is dealt nothing")
 
-	ta.ok("fleet up m1 --width 2")
+	ta.ok("fleet up m1 --width 2 --reason 'test'")
 	ta.ok("tick")
 	ta.json("queue --as m1", &q)
 	assert.NotEmpty(t, q.Cards, "a width set again takes deals")
