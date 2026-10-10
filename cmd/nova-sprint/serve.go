@@ -610,10 +610,12 @@ func (a *app) serveView(w http.ResponseWriter, r *http.Request) {
 // updates at 1s." Measured that evening, `where --json` through the server took 4.6 to
 // 8.5 s wall (89 to 112 store trips, 192 to 560 rows) while the tick had the same display
 // ready in 29 ms, and the dashboard, which runs the verb back to back, showed a frame every
-// 5 to 8 s. So the server keeps the where --json document of its last tick in memory, read
-// once at the end of every tick (`--cards --rows --archived`, the dashboard's, the fullest),
-// and every where --json sent to it is answered from that document at once, with no line,
-// no lane and no store trip: a narrower one (no --cards, no --rows, no --archived) is the
+// 5 to 8 s. So the server keeps the where --json document of its last tick in memory,
+// rebuilt at the end of every tick from the rows the tick already read (its twin: the same
+// four tables every step of this process reads through, the one twin the store shares),
+// never read from the store a second time (`--cards --rows --archived`, the dashboard's,
+// the fullest). Every where --json sent to it is answered from that document at once, with
+// no line, no lane and no store trip: a narrower one (no --cards, no --rows, no --archived) is the
 // same document with those parts left out, as a read of the store leaves them out. The
 // answer carries "snapshot": {"at": <when the tick ended>, "age_ms": <its age>}. A document
 // older than two ticks (two of the last tick's periods, at least store.TickEvery each), none
@@ -758,36 +760,57 @@ func (s *whereSnapshots) settled() <-chan struct{} {
 	return s.idle
 }
 
-// readWhereSnapshot reads the where --json document of the tick that ended at at, as
-// `where --json --cards --rows --archived` reads it, on the read lane (one read at a time,
-// beside the line, on the lane's own state); on a twin file, which has no lanes, on the line.
-// The landings series is the epoch's log's, read from the line the last build read to (s's
-// log, which only s's one build at a time touches).
+// readWhereSnapshot builds the where --json document of the tick that ended at at, as
+// `where --json --cards --rows --archived` reads it, but from the rows the tick already read:
+// the store it opens is the server's own (a.store), which shares the process's one twin
+// (main.go, readTwins), so the four tables come from the twin, not read again from the
+// store. The cards (--cards) and the rows (--rows) are built from that snapshot; the rest
+// (the tables' shapes, the where record, the stream clocks, the friends, the routes) is
+// read beside them, each in one exchange, as where --json reads it, so the document is byte
+// for byte the fresh read of the same rows. On a twin file, which has no lanes, the read
+// takes the line, as every verb does there. The landings series is the epoch's log's, read
+// from the line the last build read to (s's log, which only s's one build at a time
+// touches).
 func (a *app) readWhereSnapshot(ctx context.Context, s *whereSnapshots, at time.Time, tick int) (*whereSnapshot, error) {
-	r, unlock, err := a.snapshotReader(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	_, c := r.verbSetup("where")
+	_, c := a.verbSetup("where")
 	c.redis, c.actor, c.json = a.serveAddr, "", true
-	st, err := r.storeAtCtx(ctx, *c, -1)
+	if a.lanesFor(ctx) == nil {
+		if err := a.serial.LockCtx(ctx); err != nil {
+			return nil, err
+		}
+		defer a.serial.Unlock()
+	}
+	st, err := a.storeAtCtx(ctx, *c, -1)
 	if err != nil {
 		return nil, err
 	}
-	v, _, err := r.whereOf(ctx, st, defaultStale, false, true)
+	// the four tables the tick read, from the twin, with no second read of their cards; a
+	// twin held by another step (the next tick, a verb on the line) reads the store instead
+	// (store.fencedStep), as the fallback.
+	var snap *sprint.Snapshot
+	if _, err := st.Run(ctx, store.Step{Verb: "where snapshot", Load: store.All,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { snap = s; return sprint.Plan{} }}); err != nil {
+		return nil, err
+	}
+	v, _, err := a.whereOf(ctx, st, defaultStale, false, true)
 	if err != nil {
 		return nil, err
 	}
 	doc := &whereSnapshot{at: at, tick: tick, docs: map[snapKey][]byte{}}
 	doc.oldest[0] = v.MergeRow.OldestMergingMin
-	if err := whereCards(ctx, st, &v); err != nil {
-		return nil, err
-	}
+	d := dealtOf(snap)
+	v.Cards, v.Judgments = dealtView(d, st.Names.Prefix, v.Epoch)
+	v.Merging = mergingView(d.Merging)
+	v.MergeRow.OldestMergingMin = oldestMerging(v.At, d.Merging)
 	doc.oldest[1] = v.MergeRow.OldestMergingMin
-	if err := whereRows(ctx, st, &v, true); err != nil {
+	if v.Holds, err = st.Holds(ctx); err != nil {
 		return nil, err
 	}
+	if v.Lanes, err = st.LaneRows(ctx); err != nil {
+		return nil, err
+	}
+	v.Rows = rowsView(snap, nil)
+	v.MergeRow.OldestMergingMin = oldestMerging(v.At, snap.Work.Column(string(sprint.Merging)))
 	doc.oldest[2] = v.MergeRow.OldestMergingMin
 	doc.view = v
 	if s.logEpoch != v.Epoch || s.logLines == nil {
@@ -811,23 +834,37 @@ func (a *app) readWhereSnapshot(ctx context.Context, s *whereSnapshots, at time.
 	return doc, nil
 }
 
+// dealtOf is the dealt cards the where --json --cards view reads, from the snapshot the
+// tick read (no store read): the fleet's ready and working cards, the work table's merging
+// cards and the open judgments naming one of their primaries, as store.Dealt reads them
+// (store/reads.go).
+func dealtOf(snap *sprint.Snapshot) store.Dealt {
+	var d store.Dealt
+	if snap.Work != nil {
+		d.Work = sprint.NewTable(sprint.Work)
+		d.Work.SetProps(snap.Work.Props())
+		d.Merging = snap.Work.Column(sprint.Merging)
+	}
+	if snap.Fleet != nil {
+		d.Cards = snap.Fleet.Column(sprint.Ready, sprint.Working)
+	}
+	if len(d.Cards) == 0 {
+		return d
+	}
+	primaries := map[string]bool{}
+	for _, c := range d.Cards {
+		primaries[c.F(sprint.PrimaryField)] = true
+	}
+	for _, o := range snap.Open {
+		if primaries[o.Subject()] || slices.ContainsFunc(o.Note.Primaries, func(p string) bool { return primaries[p] }) {
+			d.Open = append(d.Open, o)
+		}
+	}
+	return d
+}
+
 // snapshotLogPage is how many lines of the log a build reads at a time.
 const snapshotLogPage = 5000
-
-// snapshotReader is the app a snapshot is read on and the line it holds while it reads: the
-// read lane's, or the server's own on a store with no lanes.
-func (a *app) snapshotReader(ctx context.Context) (*app, func(), error) {
-	if l := a.lanesFor(ctx); l != nil {
-		if err := l.line.LockCtx(ctx); err != nil {
-			return nil, nil, err
-		}
-		return l.read, l.line.Unlock, nil
-	}
-	if err := a.serial.LockCtx(ctx); err != nil {
-		return nil, nil, err
-	}
-	return a, a.serial.Unlock, nil
-}
 
 // snapshotFlags are the flags a where --json answered from the snapshot may give: the
 // parts it asks for, and the flags a JSON view does not read. Any other (--fresh, --stale,

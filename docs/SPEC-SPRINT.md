@@ -6823,10 +6823,11 @@ at 1s, then that needs to be fixed, at critical priority." Measured that evening
 through the server took 4.6 to 8.5 s wall (89 to 112 store trips, 192 to 560 rows) while the
 tick had the same display ready in 29 ms, and the dashboard, which runs the verb back to back,
 showed a frame every 5 to 8 s. So the server keeps the `where --json` document of its last tick
-in memory: at the end of every tick (once the tick has given back the line) it reads the
-fullest document, `where --json --cards --rows --archived`, once, on the read lane beside the
-line (on a twin file, on the line), one read at a time; a tick that ends while a read is in
-flight has it read once more after. A `where --json` sent to the server (`NOVA_SPRINT_SERVER`,
+in memory: at the end of every tick (once the tick has given back the line) it rebuilds the
+fullest document, `where --json --cards --rows --archived`, from the rows the tick already read
+(its twin: the same four tables every step of the process reads through), never read from the
+store a second time; on a twin file, which has no lanes, the read takes the line, as every
+verb does there. A tick that ends while a build is in flight has it built once more after. A `where --json` sent to the server (`NOVA_SPRINT_SERVER`,
 the forward path) is answered from that document at once, with no line, no lane and no store
 trip: without `--cards`, `--rows` or `--archived` it is the same document with those parts left
 out, byte for byte the document a read of the store gives for the same rows
