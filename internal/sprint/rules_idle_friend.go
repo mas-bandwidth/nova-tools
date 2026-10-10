@@ -107,11 +107,8 @@ func friendIsUp(s *Snapshot, r TickReq, friend string, row string) bool {
 		return seat != nil && seat.Status == Up
 	}
 	if s != nil && s.Fleet != nil {
-		if ctl := s.Fleet.Card(row); ctl != nil {
-			return ctl.Col == "up" || ctl.F("status") == Up
-		}
 		if ctl := s.MemberCtl(row); ctl != nil {
-			return ctl.Col == "up" || ctl.F("status") == Up
+			return ctl.F("status") == Up
 		}
 	}
 	return false
@@ -133,10 +130,6 @@ func friendEvidenceOfWork(s *Snapshot, r TickReq, friend string, row string) tim
 	}
 
 	if s != nil && s.Fleet != nil {
-		if ctl := s.Fleet.Card(row); ctl != nil {
-			see(evidenceTime(ctl))
-			see(stampAt(ctl, "active"))
-		}
 		if ctl := s.MemberCtl(row); ctl != nil {
 			see(evidenceTime(ctl))
 			see(stampAt(ctl, "active"))
@@ -245,7 +238,7 @@ func (s *Snapshot) friendWidth(r TickReq, friend string, row string) int {
 		return seat.Width
 	}
 	if s != nil && s.Fleet != nil {
-		if ctl := s.Fleet.Card(row); ctl != nil && ctl.F(FieldWidth) != "" {
+		if ctl := s.MemberCtl(row); ctl != nil && ctl.F(FieldWidth) != "" {
 			if w, err := ParseWidth(ctl.F(FieldWidth)); err == nil {
 				return w
 			}
@@ -274,7 +267,7 @@ func TickRuleIdle(s *Snapshot, r TickReq) (Plan, int) {
 			continue
 		}
 
-		ctl := s.Fleet.Card(row)
+		ctl := s.MemberCtl(row)
 		idle, idleMinutes := isRowIdleLoaded(s, r, row, bound)
 
 		if !idle {
@@ -366,7 +359,7 @@ func TickRuleIdleReturn(s *Snapshot, r TickReq) (Plan, int) {
 			continue
 		}
 
-		ctl := s.Fleet.Card(row)
+		ctl := s.MemberCtl(row)
 		if ctl == nil || ctl.F(FieldFriendIdleLoaded) == "" {
 			continue
 		}

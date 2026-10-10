@@ -17,11 +17,12 @@ func TestRuleFriendIdle(t *testing.T) {
 	}
 	row := FriendRow("freddy")
 	s.Fleet.Put(&Card{
-		ID:  row,
+		ID:  CtlID(row),
 		Row: row,
-		Col: "up",
+		Col: Ctl,
 		Fields: map[string]string{
-			"kind":        "work",
+			"kind":        "member",
+			"status":      Up,
 			evidenceField: evidenceString(s.Now.Add(-30 * time.Minute)),
 		},
 	})
@@ -47,11 +48,12 @@ func TestRuleFriendIdleNoCards(t *testing.T) {
 	}
 	row := FriendRow("freddy")
 	s.Fleet.Put(&Card{
-		ID:  row,
+		ID:  CtlID(row),
 		Row: row,
-		Col: "up",
+		Col: Ctl,
 		Fields: map[string]string{
-			"kind":        "work",
+			"kind":        "member",
+			"status":      Up,
 			evidenceField: evidenceString(s.Now.Add(-30 * time.Minute)),
 		},
 	})
@@ -68,11 +70,12 @@ func TestRuleFriendIdleFreshEvidence(t *testing.T) {
 	}
 	row := FriendRow("freddy")
 	s.Fleet.Put(&Card{
-		ID:  row,
+		ID:  CtlID(row),
 		Row: row,
-		Col: "up",
+		Col: Ctl,
 		Fields: map[string]string{
-			"kind":        "work",
+			"kind":        "member",
+			"status":      Up,
 			evidenceField: evidenceString(s.Now.Add(-10 * time.Minute)),
 		},
 	})
@@ -98,11 +101,12 @@ func TestRuleFriendIdleNotUp(t *testing.T) {
 	}
 	row := FriendRow("freddy")
 	s.Fleet.Put(&Card{
-		ID:  row,
+		ID:  CtlID(row),
 		Row: row,
-		Col: "down",
+		Col: Ctl,
 		Fields: map[string]string{
-			"kind":        "work",
+			"kind":        "member",
+			"status":      Down,
 			evidenceField: evidenceString(s.Now.Add(-30 * time.Minute)),
 		},
 	})
@@ -128,11 +132,12 @@ func TestRuleFriendIdleNotFound(t *testing.T) {
 	}
 	row := FriendRow("freddy")
 	s.Fleet.Put(&Card{
-		ID:  row,
+		ID:  CtlID(row),
 		Row: row,
-		Col: "up",
+		Col: Ctl,
 		Fields: map[string]string{
-			"kind":        "work",
+			"kind":        "member",
+			"status":      Up,
 			evidenceField: evidenceString(s.Now.Add(-30 * time.Minute)),
 		},
 	})
@@ -158,11 +163,12 @@ func TestTickRuleIdleSentOnce(t *testing.T) {
 	}
 	row := FriendRow("freddy")
 	ctl := &Card{
-		ID:  row,
+		ID:  CtlID(row),
 		Row: row,
-		Col: "up",
+		Col: Ctl,
 		Fields: map[string]string{
-			"kind":        "work",
+			"kind":        "member",
+			"status":      Up,
 			evidenceField: evidenceString(s.Now.Add(-30 * time.Minute)),
 		},
 	}
@@ -198,11 +204,12 @@ func TestTickRuleIdleFreshEvidence(t *testing.T) {
 	}
 	row := FriendRow("freddy")
 	s.Fleet.Put(&Card{
-		ID:  row,
+		ID:  CtlID(row),
 		Row: row,
-		Col: "up",
+		Col: Ctl,
 		Fields: map[string]string{
-			"kind":        "work",
+			"kind":        "member",
+			"status":      Up,
 			evidenceField: evidenceString(s.Now.Add(-5 * time.Minute)),
 		},
 	})
@@ -230,11 +237,12 @@ func TestTickRuleIdleTurnsOff(t *testing.T) {
 	}
 	row := FriendRow("freddy")
 	s.Fleet.Put(&Card{
-		ID:  row,
+		ID:  CtlID(row),
 		Row: row,
-		Col: "up",
+		Col: Ctl,
 		Fields: map[string]string{
-			"kind":        "work",
+			"kind":        "member",
+			"status":      Up,
 			evidenceField: evidenceString(s.Now.Add(-30 * time.Minute)),
 		},
 	})
@@ -261,11 +269,12 @@ func TestTickRuleIdleReturn(t *testing.T) {
 	}
 	row := FriendRow("freddy")
 	s.Fleet.Put(&Card{
-		ID:  row,
+		ID:  CtlID(row),
 		Row: row,
-		Col: "up",
+		Col: Ctl,
 		Fields: map[string]string{
-			"kind":                "work",
+			"kind":                "member",
+			"status":              Up,
 			evidenceField:         evidenceString(s.Now.Add(-30 * time.Minute)),
 			FieldFriendIdleLoaded: stamp(s.Now.Add(-16 * time.Minute)),
 		},
@@ -376,10 +385,10 @@ func TestLoadedRowTurnsIdleLoadedAtBoundAndGoalMessageSentOnceWithLiveNumbers(t 
 	}
 	row := FriendRow("amy")
 	ctl := &Card{
-		ID:     row,
+		ID:     CtlID(row),
 		Row:    row,
-		Col:    "up",
-		Fields: map[string]string{},
+		Col:    Ctl,
+		Fields: map[string]string{"kind": "member", "status": Up},
 	}
 	s.Fleet.Put(ctl)
 	s.Fleet.SetRows([]string{row})
@@ -391,8 +400,22 @@ func TestLoadedRowTurnsIdleLoadedAtBoundAndGoalMessageSentOnceWithLiveNumbers(t 
 	s.Fleet.Put(&Card{ID: "amy.w2", Row: row, Col: Working, Fields: map[string]string{"kind": "work", "taken": stamp(now.Add(-20 * time.Minute))}})
 	s.Fleet.Put(&Card{ID: "amy.w3", Row: row, Col: Working, Fields: map[string]string{"kind": "work", "taken": stamp(now.Add(-20 * time.Minute))}})
 
+	var goalSent bool
+	var goalFriend string
+	var goalReads, goalWork, goalWidth int
+	var goalIdle int64
+	sendWidthGoal := func(friend string, reads, work, width int, idle int64) error {
+		goalSent = true
+		goalFriend = friend
+		goalReads = reads
+		goalWork = work
+		goalWidth = width
+		goalIdle = idle
+		return nil
+	}
+
 	friends := []FriendSeat{{Name: "amy", Width: 8, Status: Up}}
-	p, _ := TickRuleIdle(s, TickReq{AnswerRules: true, Friends: friends})
+	p, _ := TickRuleIdle(s, TickReq{AnswerRules: true, Friends: friends, SendWidthGoal: sendWidthGoal})
 
 	require.Len(t, p.Notes, 2)
 	assert.Equal(t, Happened, p.Notes[0].Kind)
@@ -403,13 +426,22 @@ func TestLoadedRowTurnsIdleLoadedAtBoundAndGoalMessageSentOnceWithLiveNumbers(t 
 	assert.Equal(t, "inbox", p.Notes[1].Type)
 	assert.Equal(t, "friend amy idle-loaded 20m: width goal sent", p.Notes[1].What)
 
+	assert.True(t, goalSent)
+	assert.Equal(t, "amy", goalFriend)
+	assert.Equal(t, 2, goalReads)
+	assert.Equal(t, 3, goalWork)
+	assert.Equal(t, 8, goalWidth)
+	assert.Equal(t, int64(20), goalIdle)
+
 	require.Len(t, p.Units, 1)
-	assert.Equal(t, row, p.Units[0].Key)
+	assert.Equal(t, ctl.ID, p.Units[0].Key)
 	ctl.Fields[FieldFriendIdleLoaded] = stamp(now)
 
 	// Second tick: sent once!
-	p2, _ := TickRuleIdle(s, TickReq{AnswerRules: true, Friends: friends})
+	goalSent = false
+	p2, _ := TickRuleIdle(s, TickReq{AnswerRules: true, Friends: friends, SendWidthGoal: sendWidthGoal})
 	assert.Empty(t, p2.Notes)
+	assert.False(t, goalSent)
 }
 
 func TestProgressLineResetsIdleLoaded(t *testing.T) {
@@ -422,10 +454,10 @@ func TestProgressLineResetsIdleLoaded(t *testing.T) {
 	}
 	row := FriendRow("amy")
 	ctl := &Card{
-		ID:     row,
+		ID:     CtlID(row),
 		Row:    row,
-		Col:    "up",
-		Fields: map[string]string{FieldFriendIdleLoaded: stamp(now.Add(-10 * time.Minute))},
+		Col:    Ctl,
+		Fields: map[string]string{"kind": "member", "status": Up, FieldFriendIdleLoaded: stamp(now.Add(-10 * time.Minute))},
 	}
 	s.Fleet.Put(ctl)
 	s.Fleet.SetRows([]string{row})
@@ -444,6 +476,7 @@ func TestProgressLineResetsIdleLoaded(t *testing.T) {
 	// Evidence is fresh (2m old <= 15m bound), so idle-loaded is reset!
 	assert.Empty(t, p.Notes)
 	require.Len(t, p.Units, 1)
+	assert.Equal(t, ctl.ID, p.Units[0].Key)
 	assert.Equal(t, "friend amy evidence fresh: idle-loaded reset", p.Units[0].Moved)
 }
 
@@ -457,10 +490,10 @@ func TestBeatWithChildrenResetsIdleLoaded(t *testing.T) {
 	}
 	row := FriendRow("amy")
 	ctl := &Card{
-		ID:     row,
+		ID:     CtlID(row),
 		Row:    row,
-		Col:    "up",
-		Fields: map[string]string{FieldFriendIdleLoaded: stamp(now.Add(-10 * time.Minute))},
+		Col:    Ctl,
+		Fields: map[string]string{"kind": "member", "status": Up, FieldFriendIdleLoaded: stamp(now.Add(-10 * time.Minute))},
 	}
 	s.Fleet.Put(ctl)
 	s.Fleet.SetRows([]string{row})
@@ -489,6 +522,7 @@ func TestBeatWithChildrenResetsIdleLoaded(t *testing.T) {
 	// Beat reporting children is evidence and fresh, so idle-loaded is reset!
 	assert.Empty(t, p.Notes)
 	require.Len(t, p.Units, 1)
+	assert.Equal(t, ctl.ID, p.Units[0].Key)
 	assert.Equal(t, "friend amy evidence fresh: idle-loaded reset", p.Units[0].Moved)
 }
 
@@ -502,10 +536,12 @@ func TestOneBoundLaterCardsReturnToPoolAndRowMarkedIdleWithOneJudgment(t *testin
 	}
 	row := FriendRow("amy")
 	ctl := &Card{
-		ID:  row,
+		ID:  CtlID(row),
 		Row: row,
-		Col: "up",
+		Col: Ctl,
 		Fields: map[string]string{
+			"kind":                "member",
+			"status":              Up,
 			FieldFriendIdleLoaded: stamp(now.Add(-16 * time.Minute)),
 		},
 	}
@@ -552,7 +588,7 @@ func TestOneBoundLaterCardsReturnToPoolAndRowMarkedIdleWithOneJudgment(t *testin
 		if p.Units[i].Key == "amy.w1" {
 			workUnit = &p.Units[i]
 		}
-		if p.Units[i].Key == row {
+		if p.Units[i].Key == ctl.ID {
 			rowUnit = &p.Units[i]
 		}
 	}
@@ -575,10 +611,12 @@ func TestSettingChangesBound(t *testing.T) {
 
 	row := FriendRow("amy")
 	ctl := &Card{
-		ID:  row,
+		ID:  CtlID(row),
 		Row: row,
-		Col: "up",
+		Col: Ctl,
 		Fields: map[string]string{
+			"kind":        "member",
+			"status":      Up,
 			evidenceField: evidenceString(now.Add(-6 * time.Minute)),
 		},
 	}
@@ -611,10 +649,11 @@ func TestTakeCardClearsIdle(t *testing.T) {
 	}
 	row := FriendRow("amy")
 	ctl := &Card{
-		ID:  row,
+		ID:  CtlID(row),
 		Row: row,
-		Col: "up",
+		Col: Ctl,
 		Fields: map[string]string{
+			"kind":                "member",
 			"status":              "idle",
 			FieldFriendIdleSince:  stamp(now.Add(-10 * time.Minute)),
 			FieldFriendIdleReason: "idle-loaded for two bounds",
