@@ -81,8 +81,12 @@ Each stream's record also holds the four parts of `total_cost`: `cost_work`,
 lander's run is `cost_land`, an end that begins `no result` is
 `cost_unanswered`, and every other priced run is `cost_work`. Kind wins over
 the end. A record past the list's bound stays in `total_cost` and is counted
-with `cost_work`, on the card attempt's tier, so the four parts are the total;
-each part is rounded up on its own, and so is the total. `work_cost` and
+with `cost_work`, on the card attempt's tier, so the four parts are the total.
+The total is rounded up to the cent, and its cents are allocated across the
+four parts — each part keeps its whole cents, and the remaining cents go to the
+largest fractional remainders, a tie keeping the part order work, reads, land,
+unanswered — so the four sum exactly to `total_cost`, including fractional-cent
+records (`TestTheFourPartsAllocateTheRoundedTotal`). `work_cost` and
 `read_cost` stay the split by kind, so a no-result run and a lander's run
 remain in `work_cost` (their kind is not read); the dashboard's tile draws that
 kind split, and beside `total_cost` the four parts when the record carries them.

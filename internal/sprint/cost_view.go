@@ -21,10 +21,10 @@ import (
 // attempts ran on (the cost records' tier, not the card's ceiling: a flash card
 // escalated to pro shows both).
 
-// CostParts is the complete recorded spend in four parts, dollars and cents rounded
-// up (cardcost.Cents): work attempts, reads, the lander's run, and runs that ended
-// with no result. A part that priced nothing is "". TotalCost is those four summed
-// exactly, then rounded.
+// CostParts is the complete recorded spend in four parts: work attempts, reads, the
+// lander's run, and runs that ended with no result. A part that priced nothing is "".
+// TotalCost is those four summed exactly, then rounded up to the cent, and its cents
+// are allocated across the four parts (partSums.cents) so the four sum to it.
 type CostParts struct {
 	CostWork       string `json:"cost_work,omitempty"`
 	CostReads      string `json:"cost_reads,omitempty"`
@@ -62,8 +62,9 @@ type TierCosts struct {
 	// CostWork, CostReads, CostLand and CostUnanswered are the complete spend in four
 	// parts (CostParts): a read, a lander's run (kind land), a run whose end begins
 	// "no result", and every other priced run. A record past the list's bound stays in
-	// TotalCost and is counted with CostWork, on the card attempt's tier. "" when that
-	// part priced nothing.
+	// TotalCost and is counted with CostWork, on the card attempt's tier. The four are
+	// TotalCost's cents allocated across them (partSums.cents), so they sum to it; ""
+	// when that part priced nothing.
 	CostWork       string `json:"cost_work,omitempty"`
 	CostReads      string `json:"cost_reads,omitempty"`
 	CostLand       string `json:"cost_land,omitempty"`
@@ -334,18 +335,51 @@ func addPart(tiers map[string]*partSums, tier string, part int, usd *big.Rat) {
 
 // money is the four parts as the table shows them; a part that priced nothing is "".
 func (p *partSums) money() (work, reads, land, unanswered string) {
-	out := [4]string{}
-	for i := range p.r {
-		if p.saw[i] {
-			out[i] = cardcost.Cents(p.r[i])
-		}
-	}
+	out := p.cents()
 	return out[0], out[1], out[2], out[3]
 }
 
-// parts is the four parts and their exact sum, rounded up to the cent.
+// cents is the four parts in dollars and cents, the total's rounded-up cents
+// allocated across them so they sum to the total: each part keeps its whole cents and
+// the remaining cents go to the largest fractional remainders, a tie keeping the part
+// order (work, reads, land, unanswered). A part that priced nothing is "".
+func (p *partSums) cents() [4]string {
+	type allocation struct {
+		idx      int
+		whole    *big.Int
+		fraction *big.Rat
+	}
+	parts := make([]allocation, 0, 4)
+	remainders := new(big.Rat)
+	for i := range p.r {
+		if !p.saw[i] {
+			continue
+		}
+		cents := new(big.Rat).Mul(p.r[i], big.NewRat(100, 1))
+		whole := new(big.Int).Quo(cents.Num(), cents.Denom())
+		fraction := new(big.Rat).Sub(cents, new(big.Rat).SetInt(whole))
+		remainders.Add(remainders, fraction)
+		parts = append(parts, allocation{i, whole, fraction})
+	}
+	left := new(big.Int).Quo(remainders.Num(), remainders.Denom()).Int64()
+	if !remainders.IsInt() {
+		left++
+	}
+	sort.SliceStable(parts, func(i, j int) bool { return parts[i].fraction.Cmp(parts[j].fraction) > 0 })
+	out := [4]string{}
+	for i, part := range parts {
+		if int64(i) < left {
+			part.whole.Add(part.whole, big.NewInt(1))
+		}
+		out[part.idx] = cardcost.Cents(new(big.Rat).SetFrac(part.whole, big.NewInt(100)))
+	}
+	return out
+}
+
+// parts is the four parts and their exact sum, rounded up to the cent, the total's
+// cents allocated across the parts so the four sum to it.
 func (p *partSums) parts() CostParts {
-	w, r, l, u := p.money()
+	out := p.cents()
 	sum := new(big.Rat)
 	any := false
 	for i := range p.r {
@@ -358,7 +392,7 @@ func (p *partSums) parts() CostParts {
 	if any {
 		total = cardcost.Cents(sum)
 	}
-	return CostParts{CostWork: w, CostReads: r, CostLand: l, CostUnanswered: u, TotalCost: total}
+	return CostParts{CostWork: out[0], CostReads: out[1], CostLand: out[2], CostUnanswered: out[3], TotalCost: total}
 }
 
 // tierCostCents partitions the rounded-up stream total into displayed tier cents.
