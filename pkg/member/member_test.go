@@ -498,7 +498,7 @@ func TestReaderLoopBeginsAskedCardsAndReportsEndedReads(t *testing.T) {
 	g.s.set("queue", 0, queueJSON(t, 7, asked("r1", &a1), asked("r2", &a2)))
 	acted, err := g.tick(t)
 	require.NoError(t, err)
-	require.Equal(t, []string{"read --as r --begin r1 r2 --epoch 7"}, g.s.lines("begin"), "begin lines")
+	require.Equal(t, []string{"read --as r --begin r1@0 r2@0 --epoch 7"}, g.s.lines("begin"), "begin lines")
 	require.Equal(t, 2, acted, "acted=%d started=%v", acted, g.r.started())
 	require.Equal(t, []string{"r1", "r2"}, g.r.started(), "acted=%d started=%v", acted, g.r.started())
 	require.Empty(t, g.s.lines("beat"), "a reader beats no fleet row")
@@ -949,7 +949,7 @@ func TestAWidthOneReaderReturningThreeReadsHoldsAtMostOne(t *testing.T) {
 		assert.LessOrEqual(t, g.m.Running(), 1, "after return %d", i+1)
 	}
 	assert.Len(t, g.s.lines("return"), 3)
-	assert.Equal(t, []string{"read --as r --begin r2 --epoch 7", "read --as r --begin r3 --epoch 7"}, g.s.lines("begin"))
+	assert.Equal(t, []string{"read --as r --begin r2@0 --epoch 7", "read --as r --begin r3@0 --epoch 7"}, g.s.lines("begin"))
 	assert.Equal(t, 0, g.m.Running(), "three returned, none held")
 	assert.Empty(t, g.s.lines("report"))
 }
@@ -979,7 +979,7 @@ func TestAReadItReturnedIsNotBegunAgainBeforeTheRetry(t *testing.T) {
 	assert.Equal(t, 0, g.m.Running())
 	_, err = g.m.Tick(time.Unix(0, 0).Add(ReadStageRetry))
 	require.NoError(t, err)
-	assert.Equal(t, []string{"read --as r --begin r1 --epoch 7"}, g.s.lines("begin"), "begun once the retry has passed")
+	assert.Equal(t, []string{"read --as r --begin r1@0 --epoch 7"}, g.s.lines("begin"), "begun once the retry has passed")
 }
 
 // TestAReaderHandsBackAReadItCannotStart pins the reader's side of a launch refused (commit
@@ -1015,7 +1015,7 @@ func TestAReaderHandsBackAReadItCannotStart(t *testing.T) {
 	g.s.reset()
 	_, err = g.tickAt(t, int64(ReadStageRetry/time.Second))
 	require.NoError(t, err)
-	assert.Equal(t, []string{"read --as r --begin r1 --epoch 7"}, g.s.lines("begin"), "begun once the retry has passed")
+	assert.Equal(t, []string{"read --as r --begin r1@0 --epoch 7"}, g.s.lines("begin"), "begun once the retry has passed")
 	assert.Empty(t, g.s.lines("return"))
 	assert.Equal(t, []string{"r2", "r1"}, g.r.started())
 }
@@ -1064,10 +1064,29 @@ func TestReadBeginNamesTheCards(t *testing.T) {
 	require.NoError(t, err)
 	// Dropping the `len(ids) < room` bound of the named reads in Member.Tick
 	// makes this fail: both are named and both started, past the width.
-	require.Equal(t, []string{"read --as r --begin zr --epoch 7"}, g.s.lines("begin"), "begin lines, want the first asked only")
+	require.Equal(t, []string{"read --as r --begin zr@0 --epoch 7"}, g.s.lines("begin"), "begin lines, want the first asked only")
 	require.Equal(t, 1, acted, "acted=%d started=%v running=%d, want zr only", acted, g.r.started(), g.m.Running())
 	require.Equal(t, []string{"zr"}, g.r.started(), "acted=%d started=%v running=%d, want zr only", acted, g.r.started(), g.m.Running())
 	require.Equal(t, 1, g.m.Running(), "acted=%d started=%v running=%d, want zr only", acted, g.r.started(), g.m.Running())
+}
+
+// TestReadBeginNamesCardsWithGen pins that reads begun are named as id@gen
+// (not bare id), so the server knows which generation to begin: two asked at
+// gen 2 and 0, room for one, and the verb names the first with @gen.
+func TestReadBeginNamesCardsWithGen(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	first := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
+	second := Packet{Card: "r2", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
+	g.s.set("queue", 0, queueJSON(t, 7,
+		queueCard{ID: "r1", Col: "asked", Gen: 2, Packet: &first},
+		queueCard{ID: "r2", Col: "asked", Gen: 0, Packet: &second},
+	))
+	acted, err := g.tick(t)
+	require.NoError(t, err)
+	require.Equal(t, []string{"read --as r --begin r1@2 --epoch 7"}, g.s.lines("begin"), "begin lines, want id@gen")
+	require.Equal(t, 1, acted)
+	require.Equal(t, []string{"r1"}, g.r.started())
 }
 
 // TestTakeAsksForTheRoom pins the limit as the member's whole room, whatever

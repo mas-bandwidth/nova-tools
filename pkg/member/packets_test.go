@@ -82,7 +82,7 @@ func (s *packetServer) Run(args ...string) (int, []byte) {
 		return 0, b
 	case "begin":
 		for i, c := range s.cards {
-			if slices.Contains(args, c.ID) {
+			if slices.Contains(args, c.ID) || slices.Contains(args, c.ID+"@"+strconv.Itoa(c.Gen)) {
 				s.cards[i].Col = "reading"
 			}
 		}
