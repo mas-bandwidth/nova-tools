@@ -38,4 +38,14 @@ func TestSetTakesActorLikeApply(t *testing.T) {
 	assert.Contains(t, errs, "--actor is required")
 	assert.Contains(t, errs, "NOVA_FRIEND")
 	assert.Contains(t, errs, "seat login's recorded actor")
+
+	// apply with no difference prints the no-change line first
+	h.env["NOVA_FRIEND"] = "testactor"
+	code, _, errs = h.run(t, "fleet", "set", "--redis_port", "6379", "--pg_dsn", "postgres://user@localhost/nova", "--file", "try.json")
+	require.Equal(t, 0, code, "%q", errs)
+	code, _, errs = h.run(t, "apply", "--file", "try.json", "--redis", "localhost:6379")
+	require.Equal(t, 0, code, "%q", errs)
+	code, out, errs = h.run(t, "apply", "--file", "try.json", "--redis", "localhost:6379")
+	require.Equal(t, 0, code, "%q", errs)
+	assert.Contains(t, out, "no change: 0 rows differ")
 }

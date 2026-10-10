@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -94,6 +95,7 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	o := tool.Done().Fact("dry_run", *check)
 	o.Verb = verb
 	var changed bool
+	var kindBuf bytes.Buffer
 	for _, kn := range kinds {
 		start := d.now()
 		applyKind := config.Apply
@@ -105,7 +107,7 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 				o.Item("op", "kind", kn, "op", op.Op, "name", op.Name, "changed", op.Changed)
 				return
 			}
-			fmt.Fprintln(stdout, config.SaidLine(word, kn, op)) // a held seat's line said whole
+			fmt.Fprintln(&kindBuf, config.SaidLine(word, kn, op)) // a held seat's line said whole
 		})
 		if err != nil {
 			if config.IsConflict(err) {
@@ -121,13 +123,16 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 			continue
 		}
 		if *check {
-			fmt.Fprintf(stdout, "CONFIG CHECK kind=%s add=%d set=%d remove=%d rev=%d applied=%d\n", kn, res.Add, res.Set, res.Remove, res.Rev, res.RedisRev)
+			fmt.Fprintf(&kindBuf, "CONFIG CHECK kind=%s add=%d set=%d remove=%d rev=%d applied=%d\n", kn, res.Add, res.Set, res.Remove, res.Rev, res.RedisRev)
 			continue
 		}
-		fmt.Fprintf(stdout, "CONFIG APPLY kind=%s add=%d set=%d remove=%d rev=%d ms=%d\n", kn, res.Add, res.Set, res.Remove, res.Rev, d.now().Sub(start).Milliseconds())
+		fmt.Fprintf(&kindBuf, "CONFIG APPLY kind=%s add=%d set=%d remove=%d rev=%d ms=%d\n", kn, res.Add, res.Set, res.Remove, res.Rev, d.now().Sub(start).Milliseconds())
 	}
 	if !*check && !*asJSON && !changed {
 		fmt.Fprintln(stdout, "no change: 0 rows differ")
+	}
+	if kindBuf.Len() > 0 {
+		stdout.Write(kindBuf.Bytes())
 	}
 	note := actorAliasNote(fs)
 	if note != "" {
