@@ -6365,15 +6365,22 @@ does landed, so the cost per card is the release's cost since the mark over the 
 cards since it. The page reads the spend by tier from `stream_costs` (where `where --json`
 carries it; a work row's own only where a copy has one). Later wins between a reset and a
 tidy: `stats`, the cost cells and per landed count from the later of the two, and a tidy of
-the fleet or the friends after a reset rebases the mark's rows by the cards it took off
-(`sprint.ResetMark.Rebase`, each row's ok and failed less the cards of that cell it moved,
-never below zero), so the row's done since the mark is what it was and a card after both
-counts one. The tidy takes the history, the oldest finishes, so the cards it moves are the
-ones before the mark first. A second reset replaces the mark; a tidy after a reset keeps
-it. Both write the stats record by compare-and-set (`store.updateStats`: Redis WATCH and
-MULTI/EXEC, the twin under its lock; read and changed again when another writer wrote
-between), so a reset and a tidy at once keep each other's writes: the tidy's kinds and
-archive, the mark. With `--op <id>` the mark keeps the id: the same id again prints
+the fleet or the friends after a reset rebases the mark's rows by the cards it took off that
+finished before the mark (`sprint.ResetMark.Rebase`, by each moved card's finish stamp,
+`sprint.TidyCard.Finished`, never by count: a tidy keeps a card whose primary has not landed
+whatever its age, so it does not take the oldest first). The row's done since the mark is then
+the cards finished since the mark still on the row: a card since the mark that the tidy takes
+off leaves it. A tidy writes a marker into the stats record before it writes or moves anything
+(`StatsRecord.Tidying`: its archive, when it began, the mark in force then) and clears it in
+its last write; a reset is refused while the marker stands (exit 1, `STATS-RESET REFUSED: a
+stats tidy is in flight ...`, nothing written), and the tidy rebases only the mark it saw when
+it began. A marker older than `store.TidyStale` (10 minutes) is a tidy whose process died: a
+reset or a tidy goes on past it, and a mark written then, counted after that tidy's move, is
+never rebased by it. Both write the stats record by compare-and-set (`store.updateStats`:
+Redis WATCH and MULTI/EXEC, the twin under its lock), and the reset counts its mark inside the
+compare-and-set: each try reads the stats record, then the fleet and work tables, and writes
+only while the record is what it read, so a tidy that began or ended between has the mark
+counted again from the rows after it. A second reset replaces the mark. With `--op <id>` the mark keeps the id: the same id again prints
 `STATS-RESET REPLAY op=<id> nothing written; mark ...` and writes nothing; the same id with
 another reason, or an id another verb's step recorded, is refused, as a step's is (only the
 mark in force is remembered: a retry of an id after a later reset writes again).
@@ -6385,8 +6392,9 @@ a `STREAM <s> landed=<n> cost=<$> total=<$> tiers=<t=$,...>` line each, then
 `TestAStatsResetCountsEveryFigureFromItsMarkAndMovesNothing`,
 `TestTheFleetSinceAMarkLeavesARowItDoesNotKnow`, `TestTierCostsSinceAMark`,
 `TestStatsResetVerbMarksShowsAndReplaces`, `TestAResetThenATidyOfTheFleetThenOneCardShowsDoneOne`,
-`TestAWhereRecordCountedBeforeAResetIsNeverTaken`, `TestAResetDuringATidyIsKept`,
-`TestAResetUnderAnOperationIDIsWrittenOnce`, `TestAReleaseViewCountsTheResetsLandedOverItsStreams`,
+`TestAWhereRecordCountedBeforeAResetIsNeverTaken`,
+`TestAResetUnderAnOperationIDIsWrittenOnce`, `TestATidyBetweenAResetsReadAndWriteHasTheMarkCountedAgain`,
+`TestAResetBetweenATidysMoveAndWrite`, `TestATidyRebasesTheMarkByTheCardsFinishedBeforeIt`, `TestAReleaseViewCountsTheResetsLandedOverItsStreams`,
 `TestThePageCountsCostPerCardAndTiersFromTheMark`.
 
 Not yet: `where` (its text frame, `where --json` and the dashboard it feeds) and the

@@ -203,13 +203,14 @@ func (m *ResetMark) LandedSinceBy(t ntable.Table, in func(ntable.Row) bool) map[
 }
 
 // Rebase is the mark after a tidy took cards off the done cells of rows it knows (the
-// tidy's rows, sprint.TidyDone): each row's ok and failed at the mark less the cards of that
-// cell the tidy moved, never below zero. A tidy takes the history (the oldest finishes,
-// TidyKept keeping the newest), so the cards it moves are those before the mark first: the
-// row's done since the mark is unchanged by it, and a tidy later than the mark never brings
-// back the counts the reset cleared. Cards finished after the mark that a tidy moves (one
-// that moves more than the mark held) are off the row as the tidy says, the later of the two.
-// tla/StatsReset.tla, Tidy.
+// tidy's rows, sprint.TidyDone): each row's ok and failed at the mark less the moved cards
+// of that cell that finished before the mark (TidyCard.Finished; a card with no stamp is
+// history, before it), never below zero. A moved card that finished after the mark is not in
+// the mark's counters: it leaves the row's done since the mark, as the tidy, later, says. A
+// tidy does not move the oldest cards first (TidyKept keeps a card whose primary has not
+// landed, whatever its age), so the rule is by each card's stamp, never by count. The row's
+// done since the mark is then the cards finished since the mark still on the row.
+// tla/StatsReset.tla, TidyMove and TidyEnd.
 func (m *ResetMark) Rebase(rows []TidyRow) {
 	if m == nil {
 		return
@@ -220,6 +221,9 @@ func (m *ResetMark) Rebase(rows []TidyRow) {
 			continue
 		}
 		for _, c := range r.Moved {
+			if !c.Finished.IsZero() && !c.Finished.Before(m.At) {
+				continue // finished since the mark: not in its counters
+			}
 			if c.Cell == "failed" {
 				base.Failed = max(0, base.Failed-1)
 			} else {

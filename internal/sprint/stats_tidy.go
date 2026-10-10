@@ -52,6 +52,9 @@ type TidyCard struct {
 	ID   string `json:"id"`
 	Cell string `json:"cell"`
 	Why  string `json:"why,omitempty"`
+	// Finished is the card's finish stamp: a stats reset's mark is rebased by the moved
+	// cards that finished before it alone (ResetMark.Rebase).
+	Finished time.Time `json:"finished,omitzero"`
 }
 
 // TidyRow is one fleet row's done cells as a tidy found them: its ok and failed counts
@@ -155,7 +158,7 @@ func TidyDone(s *Snapshot, kinds []string, stopped func(from, to time.Time) time
 				r.Kept = append(r.Kept, TidyCard{ID: wc.ID, Cell: cell, Why: why})
 				continue
 			}
-			r.Moved = append(r.Moved, TidyCard{ID: wc.ID, Cell: cell})
+			r.Moved = append(r.Moved, TidyCard{ID: wc.ID, Cell: cell, Finished: stampAt(wc, "finished")})
 			p.Units = append(p.Units, Unit{Key: wc.ID, Changes: []Change{change(Fleet, removeEntry(wc, nil))},
 				Moved: fmt.Sprintf("%s done %s -> off the table (stats tidy: its record kept)", wc.ID, cell)})
 		}

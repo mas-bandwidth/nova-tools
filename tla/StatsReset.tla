@@ -1,68 +1,77 @@
 ---------------------------- MODULE StatsReset ----------------------------
 (***************************************************************************)
-(* nova-sprint stats reset (internal/sprint/stats_reset.go,                *)
-(* internal/sprint/store/stats_reset.go; the owner, 2026-10-09: "Clear the *)
+(* nova-sprint stats reset and stats tidy together                         *)
+(* (internal/sprint/stats_reset.go, internal/sprint/store/stats_reset.go,  *)
+(* internal/sprint/store/stats_tidy.go; the owner, 2026-10-09: "Clear the  *)
 (* cost per-card right now. Clear the per-tier costs. Clear the total      *)
 (* cost.", "Clear the done and the ok% for all friends now.").             *)
 (*                                                                         *)
-(* A reset moves nothing. It writes one mark, the figures as they stand,   *)
+(* A reset moves nothing: it writes one mark, the figures as they stand,   *)
 (* and every figure the mark covers is shown as the epoch's figure less    *)
-(* the mark's, never below zero; a figure the mark does not know (a row or *)
-(* a stream that came after it) is shown as it is. A second reset replaces *)
-(* the mark.                                                               *)
+(* the mark's, never below zero. A figure here is a count of finished      *)
+(* cards on a row (a fleet row's done cells; a stream's priced spend       *)
+(* counts the same way). Ghosts count the cards by when they finished:     *)
+(* after[f], those since the mark in force (all of them with no mark, or   *)
+(* for a figure the mark does not know), and pend[f], those since a        *)
+(* reset's read still to be written.                                       *)
 (*                                                                         *)
-(* A figure here is a count of finished things on a row (a fleet row's     *)
-(* done cells; a stream's priced spend counts the same way). A ghost,      *)
-(* after, counts the ones finished since the mark (all of them with no     *)
-(* mark, or for a figure the mark does not know): that is what the reset   *)
-(* promises to show.                                                       *)
-(*                                                                         *)
-(* A stats tidy takes the history off a row: the oldest finished cards,    *)
-(* those before the mark first. Later wins: a tidy after the reset leaves  *)
-(* the row's figure since the mark as it was, which holds only because the *)
-(* tidy rebases the mark's counter by the cards it moved                   *)
-(* (sprint.ResetMark.Rebase, in the tidy's own compare-and-set write of    *)
-(* the stats record). Cards since the mark that a tidy moves are off the   *)
-(* row as the tidy says: the later of the two.                             *)
+(* Both writers are two steps, as in the code, so TLC sees them            *)
+(* interleave:                                                             *)
+(*  - a reset reads the stats record (its version, ver; refused while a    *)
+(*    tidy is in flight) and the sprint (ResetRead), then writes the mark  *)
+(*    by compare-and-set: only while the record is the version it read,    *)
+(*    else it reads again (ResetWrite, ResetRetry);                        *)
+(*  - a tidy writes its marker, the mark in force then (TidyStart), moves  *)
+(*    any subset of a row's finished cards, not the oldest first           *)
+(*    (TidyMove: a card whose primary has not landed stays whatever its    *)
+(*    age), then writes its end: the marker cleared and the mark it saw    *)
+(*    rebased by the moved cards that finished before it (TidyEnd;         *)
+(*    sprint.ResetMark.Rebase, by each card's stamp).                      *)
+(* The tidy takes cards off for good: the figure since the mark is the     *)
+(* cards since it still on the row (later wins).                           *)
 (*                                                                         *)
 (* The where record (store/where.go keepWhere) caches the shown figures:   *)
-(* the tick reads the sprint and the stats record in one step and writes   *)
-(* the record in a later one. where takes it only while it was counted at  *)
-(* the table's revision and from the stats record in force (its stamp,     *)
-(* statsStamp). A reset writes no table, so the revision alone would keep  *)
-(* a record counted before it, including one a tick read before the reset  *)
-(* and wrote after it.                                                     *)
+(* the tick reads in one step and writes in a later one, and where takes   *)
+(* the record only at the table's revision and the stats record's stamp.   *)
+(* The model stamps with the record's version; the code's stamp names the  *)
+(* fields the record caches (the streams' tidy and the mark), the rows'    *)
+(* done being counted at every read.                                       *)
 (*                                                                         *)
-(* Invariants: ShownIsSinceMark (the figure shown is the cards since the   *)
-(* mark: the epoch's less the mark's, never below zero), RecordShowsShown  *)
-(* (a record where takes shows exactly that), UnknownReadsAsBefore.        *)
-(* Reversed witnesses: Broken = "norebase" (the tidy keeps the mark's      *)
-(* counter: a row tidied after a reset reads 0 until new cards outnumber   *)
-(* the mark) breaks ShownIsSinceMark; Broken = "nostamp" (where takes a    *)
-(* record by its revision alone) breaks RecordShowsShown.                  *)
+(* Invariants: ShownIsSinceMark (with no tidy in flight, every shown       *)
+(* figure is the cards since the mark still on the row: the epoch's less   *)
+(* the mark's, never below zero), RecordShowsShown (a record where takes   *)
+(* shows exactly the figures), UnknownReadsAsBefore. Between a tidy's move *)
+(* and its end the mark is not yet rebased: the row reads low for that     *)
+(* one step, which ShownIsSinceMark leaves out.                            *)
+(*                                                                         *)
+(* Reversed witnesses (Broken): "norebase", the tidy keeps the mark's      *)
+(* counter; "bycount", the tidy lowers it by one per moved card, finished  *)
+(* before the mark or not (the first cut); "nolock", the reset neither     *)
+(* waits for a tidy in flight nor writes by compare-and-set, its mark      *)
+(* counted before a tidy's move written after it, and the tidy rebasing a  *)
+(* mark counted after its move; each breaks ShownIsSinceMark. "nostamp",   *)
+(* where takes a record by its revision alone, breaks RecordShowsShown.    *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
 CONSTANTS Figures,     \* the rows and streams, each one figure here
           MaxFig,      \* a figure's bound
           MaxRev,      \* the table's revision bound (every table write)
-          MaxResets,   \* how many resets
-          Broken       \* "none", "norebase" or "nostamp"
+          MaxVer,      \* the stats record's version bound (every write of it)
+          Broken       \* "none", "norebase", "bycount", "nolock" or "nostamp"
 
-VARIABLES live,     \* the figures that exist
-          fig,      \* the epoch's figure of each (cards on its cells)
-          after,    \* ghost: of those, the ones finished since the mark
-          marked,   \* a mark is in force
-          mark,     \* the mark's counter of each it knows
-          known,    \* the figures the mark knows
-          stamp,    \* the stats record's stamp: one more at every reset
-          rev,      \* the table's revision
-          rec,      \* the where record: counted at rec.rev from rec.stamp
-          reading   \* a tick's read not yet written: what it would write, or NoRecord
+VARIABLES live, fig, after, pend,
+          marked, mark, known, markId,
+          ver, rev, rec, reading,
+          rr,       \* a reset's read: active, the version read, the figures, the live set
+          tidying, tseen, tpre, tall, tmoved
 
-vars == <<live, fig, after, marked, mark, known, stamp, rev, rec, reading>>
+vars == <<live, fig, after, pend, marked, mark, known, markId, ver, rev, rec, reading,
+          rr, tidying, tseen, tpre, tall, tmoved>>
 
-NoRecord == [rev |-> -1, stamp |-> -1, vals |-> [f \in Figures |-> 0]]
+Zero == [f \in Figures |-> 0]
+NoRecord == [rev |-> -1, stamp |-> -1, vals |-> Zero]
+NoRead == [active |-> FALSE, ver |-> -1, vals |-> Zero, live |-> {}]
 
 Less(a, b) == IF a > b THEN a - b ELSE 0
 
@@ -72,100 +81,136 @@ Shown(f) == IF marked /\ f \in known THEN Less(fig[f], mark[f]) ELSE fig[f]
 TypeOK ==
     /\ live \subseteq Figures
     /\ fig \in [Figures -> 0..MaxFig]
-    /\ after \in [Figures -> 0..MaxFig]
-    /\ \A f \in Figures : after[f] <= fig[f]
-    /\ marked \in BOOLEAN
-    /\ mark \in [Figures -> 0..MaxFig]
-    /\ known \subseteq Figures
-    /\ stamp \in 0..MaxResets
-    /\ rev \in 0..MaxRev
-    /\ rec.rev \in -1..MaxRev /\ rec.stamp \in -1..MaxResets
-    /\ reading.rev \in -1..MaxRev /\ reading.stamp \in -1..MaxResets
+    /\ after \in [Figures -> 0..MaxFig] /\ pend \in [Figures -> 0..MaxFig]
+    /\ \A f \in Figures : pend[f] <= after[f] /\ after[f] <= fig[f]
+    /\ marked \in BOOLEAN /\ mark \in [Figures -> 0..MaxFig] /\ known \subseteq Figures
+    /\ ver \in 0..MaxVer /\ rev \in 0..MaxRev
+    /\ tidying \in BOOLEAN /\ tmoved \in BOOLEAN
+    /\ tpre \in [Figures -> 0..MaxFig] /\ tall \in [Figures -> 0..MaxFig]
 
 Init ==
-    /\ live = {}
-    /\ fig = [f \in Figures |-> 0]
-    /\ after = [f \in Figures |-> 0]
-    /\ marked = FALSE
-    /\ mark = [f \in Figures |-> 0]
-    /\ known = {}
-    /\ stamp = 0
-    /\ rev = 0
-    /\ rec = NoRecord
-    /\ reading = NoRecord
+    /\ live = {} /\ fig = Zero /\ after = Zero /\ pend = Zero
+    /\ marked = FALSE /\ mark = Zero /\ known = {} /\ markId = 0
+    /\ ver = 0 /\ rev = 0 /\ rec = NoRecord /\ reading = NoRecord
+    /\ rr = NoRead
+    /\ tidying = FALSE /\ tseen = 0 /\ tpre = Zero /\ tall = Zero /\ tmoved = FALSE
 
 \* a table write: the revision moves
 Write == rev < MaxRev /\ rev' = rev + 1
+\* a write of the stats record: its version moves
+Rewrite == ver < MaxVer /\ ver' = ver + 1
 
 Appear(f) ==
     /\ f \notin live
     /\ Write
     /\ live' = live \cup {f}
-    /\ UNCHANGED <<fig, after, marked, mark, known, stamp, rec, reading>>
+    /\ UNCHANGED <<fig, after, pend, marked, mark, known, markId, ver, rec, reading, rr, tidying, tseen, tpre, tall, tmoved>>
 
-\* a card finishes on the row (a take or read priced, for a stream)
+\* a card finishes on the row: since the mark, and since a reset's read in flight
 Grow(f) ==
     /\ f \in live
     /\ fig[f] < MaxFig
     /\ Write
     /\ fig' = [fig EXCEPT ![f] = @ + 1]
     /\ after' = [after EXCEPT ![f] = @ + 1]
-    /\ UNCHANGED <<live, marked, mark, known, stamp, rec, reading>>
+    /\ pend' = IF rr.active THEN [pend EXCEPT ![f] = @ + 1] ELSE pend
+    /\ UNCHANGED <<live, marked, mark, known, markId, ver, rec, reading, rr, tidying, tseen, tpre, tall, tmoved>>
 
-\* a stats tidy takes the k oldest finished cards off the row, those before
-\* the mark first, and rebases the mark's counter by them
-Tidy(f, k) ==
+\* ---- the reset, two steps ----
+ResetRead ==
+    /\ ~rr.active
+    /\ (Broken = "nolock" \/ ~tidying)
+    /\ rr' = [active |-> TRUE, ver |-> ver, vals |-> fig, live |-> live]
+    /\ pend' = Zero
+    /\ UNCHANGED <<live, fig, after, marked, mark, known, markId, ver, rev, rec, reading, tidying, tseen, tpre, tall, tmoved>>
+
+\* the compare-and-set found the record changed: the reset reads again
+ResetRetry ==
+    /\ rr.active
+    /\ Broken # "nolock"
+    /\ rr.ver # ver
+    /\ rr' = NoRead
+    /\ pend' = Zero
+    /\ UNCHANGED <<live, fig, after, marked, mark, known, markId, ver, rev, rec, reading, tidying, tseen, tpre, tall, tmoved>>
+
+ResetWrite ==
+    /\ rr.active
+    /\ Broken = "nolock" \/ (rr.ver = ver /\ ~tidying)
+    /\ Rewrite
+    /\ marked' = TRUE
+    /\ mark' = [f \in Figures |-> IF f \in rr.live THEN rr.vals[f] ELSE 0]
+    /\ known' = rr.live
+    /\ after' = [f \in Figures |-> IF f \in rr.live THEN pend[f] ELSE after[f]]
+    /\ markId' = markId + 1
+    /\ rec' = NoRecord
+    /\ rr' = NoRead
+    /\ pend' = Zero
+    /\ UNCHANGED <<live, fig, rev, reading, tidying, tseen, tpre, tall, tmoved>>
+
+\* ---- the tidy, three steps ----
+TidyStart ==
+    /\ ~tidying
+    /\ Rewrite
+    /\ tidying' = TRUE
+    /\ tseen' = markId
+    /\ tpre' = Zero /\ tall' = Zero /\ tmoved' = FALSE
+    /\ UNCHANGED <<live, fig, after, pend, marked, mark, known, markId, rev, rec, reading, rr>>
+
+\* any subset of the row's finished cards: k0 from before the mark, k1 since the mark and
+\* before a reset's read in flight, k2 since that read
+TidyMove(f) ==
+    /\ tidying /\ ~tmoved
     /\ f \in live
-    /\ k \in 1..fig[f]
-    /\ Write
-    /\ LET before == fig[f] - after[f]
-       IN after' = [after EXCEPT ![f] = @ - Less(k, before)]
-    /\ fig' = [fig EXCEPT ![f] = @ - k]
-    /\ mark' = IF Broken = "norebase" THEN mark ELSE [mark EXCEPT ![f] = Less(@, k)]
-    /\ UNCHANGED <<live, marked, known, stamp, rec, reading>>
+    /\ \E k0 \in 0..(fig[f] - after[f]), k1 \in 0..(after[f] - pend[f]), k2 \in 0..pend[f] :
+        /\ k0 + k1 + k2 > 0
+        /\ Write
+        /\ fig' = [fig EXCEPT ![f] = @ - k0 - k1 - k2]
+        /\ after' = [after EXCEPT ![f] = @ - k1 - k2]
+        /\ pend' = [pend EXCEPT ![f] = @ - k2]
+        /\ tpre' = [tpre EXCEPT ![f] = k0]
+        /\ tall' = [tall EXCEPT ![f] = k0 + k1 + k2]
+    /\ tmoved' = TRUE
+    /\ UNCHANGED <<live, marked, mark, known, markId, ver, rec, reading, rr, tidying, tseen>>
 
-\* the tick reads the sprint and the stats record in force: what it will write
+\* the end: the marker cleared, the mark it saw rebased by the moved cards before it
+TidyEnd ==
+    /\ tidying
+    /\ Rewrite
+    /\ tidying' = FALSE
+    /\ mark' = CASE Broken = "norebase" -> mark
+               [] Broken = "bycount" -> [f \in Figures |-> Less(mark[f], tall[f])]
+               [] Broken = "nolock" -> [f \in Figures |-> Less(mark[f], tpre[f])]
+               [] OTHER -> IF tseen = markId THEN [f \in Figures |-> Less(mark[f], tpre[f])] ELSE mark
+    /\ tpre' = Zero /\ tall' = Zero /\ tmoved' = FALSE
+    /\ UNCHANGED <<live, fig, after, pend, marked, known, markId, rev, rec, reading, rr, tseen>>
+
+\* ---- the tick's where record, two steps ----
 CountRead ==
-    /\ reading' = [rev |-> rev, stamp |-> stamp, vals |-> [f \in Figures |-> IF f \in live THEN Shown(f) ELSE 0]]
-    /\ UNCHANGED <<live, fig, after, marked, mark, known, stamp, rev, rec>>
+    /\ reading' = [rev |-> rev, stamp |-> ver, vals |-> [f \in Figures |-> IF f \in live THEN Shown(f) ELSE 0]]
+    /\ UNCHANGED <<live, fig, after, pend, marked, mark, known, markId, ver, rev, rec, rr, tidying, tseen, tpre, tall, tmoved>>
 
-\* and writes the where record, maybe after a reset in between
 CountWrite ==
     /\ reading.rev >= 0
     /\ rec' = reading
     /\ reading' = NoRecord
-    /\ UNCHANGED <<live, fig, after, marked, mark, known, stamp, rev>>
-
-\* the reset: one write of the mark into the stats record (its stamp moves),
-\* no table written; the where record is emptied for the next tick
-Reset ==
-    /\ stamp < MaxResets
-    /\ marked' = TRUE
-    /\ mark' = [f \in Figures |-> IF f \in live THEN fig[f] ELSE 0]
-    /\ after' = [f \in Figures |-> 0]
-    /\ known' = live
-    /\ stamp' = stamp + 1
-    /\ rec' = NoRecord
-    /\ UNCHANGED <<live, fig, rev, reading>>
+    /\ UNCHANGED <<live, fig, after, pend, marked, mark, known, markId, ver, rev, rr, tidying, tseen, tpre, tall, tmoved>>
 
 Next ==
-    \/ \E f \in Figures : Appear(f) \/ Grow(f) \/ \E k \in 1..MaxFig : Tidy(f, k)
-    \/ CountRead
-    \/ CountWrite
-    \/ Reset
+    \/ \E f \in Figures : Appear(f) \/ Grow(f) \/ TidyMove(f)
+    \/ ResetRead \/ ResetRetry \/ ResetWrite
+    \/ TidyStart \/ TidyEnd
+    \/ CountRead \/ CountWrite
 
 Spec == Init /\ [][Next]_vars
 
-\* where takes the record only when it was counted at the table's revision
-\* and from the stats record in force
-Taken == rec.rev = rev /\ (Broken = "nostamp" \/ rec.stamp = stamp)
+\* where takes the record only at the table's revision and the stats record's stamp
+Taken == rec.rev = rev /\ (Broken = "nostamp" \/ rec.stamp = ver)
 
-\* every shown figure is the cards since the mark: the epoch figure less the
-\* figure at the mark, never below zero, a tidy later than the mark included
+\* with no tidy in flight, every shown figure is the cards since the mark still on the row
 ShownIsSinceMark ==
-    \A f \in live : Shown(f) = after[f]
+    ~tidying => \A f \in live : Shown(f) = after[f]
 
-\* a record where takes shows exactly that
+\* a record where takes shows exactly the figures
 RecordShowsShown ==
     Taken => \A f \in live : rec.vals[f] = Shown(f)
 

@@ -66,6 +66,10 @@ func (a *app) cmdStatsReset(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return a.readFailed(verb, err, stderr)
 	}
+	if res.Refused != "" {
+		fmt.Fprintf(stderr, "%s %s REFUSED: %s; run: nova-sprint stats reset --show\n", prog, verb, oneline.Escape(res.Refused))
+		return 1
+	}
 	if !c.json {
 		for _, l := range res.Said {
 			fmt.Fprintf(stdout, "NOTE %s\n", oneline.Escape(l))

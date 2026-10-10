@@ -41,6 +41,8 @@ type ResetResult struct {
 	DryRun   bool              `json:"dry_run,omitempty"`
 	Replay   bool              `json:"replay,omitempty"`
 	Said     []string          `json:"said,omitempty"`
+	// Refused is why the reset wrote nothing (a tidy in flight); "" when it was not refused.
+	Refused string `json:"refused,omitempty"`
 }
 
 // resetIn is the record's reset mark when it is of the epoch, nil otherwise.
@@ -119,35 +121,58 @@ func (st *Store) ResetStats(ctx context.Context, req ResetReq) (ResetResult, err
 			return res, &OpConflictError{Op: req.Op, Verb: verb, Recorded: r.Verb}
 		}
 	}
-	raw, had, err := kv.GetKey(ctx, keyStats)
-	if err != nil {
-		return res, err
-	}
-	rec := st.statsRecordOf(raw, had)
-	res.Said = st.stats().takeNotes()
-	if m := rec.resetIn(st.epoch); m != nil && req.Op != "" && m.Op == req.Op {
-		if m.Reason != req.Reason {
-			return res, &OpConflictError{Op: req.Op, Verb: verb, Recorded: verb, OtherArgs: true}
+	// the mark is counted inside the compare-and-set: each try reads the stats record, then
+	// the sprint, and writes only while the record is what it read, so a tidy that began or
+	// ended between (its marker, its kinds, its archive) has the mark counted again from the
+	// fleet rows as they are after it; a tidy in flight refuses the reset
+	sw, swaps := kv.(keySwapper)
+	wrote := false
+	for try := 0; try < statsSwapTries && !wrote; try++ {
+		raw, had, err := kv.GetKey(ctx, keyStats)
+		if err != nil {
+			return res, err
 		}
-		res.Mark, res.Replay = *m, true
-		return res, nil
-	}
-	s, err := st.Load(ctx, All, tickExtras)
-	if err != nil {
-		return res, err
-	}
-	res.Mark = sprint.ResetMarkOf(s, st.now(), st.Actor, req.Reason)
-	res.Mark.Epoch, res.Mark.Op = st.epoch, req.Op
-	res.Replaced, res.DryRun = rec.resetIn(st.epoch), req.DryRun
-	if req.DryRun {
-		return res, nil
-	}
-	if _, err := st.updateStats(ctx, kv, func(rec *StatsRecord) {
-		res.Replaced = rec.resetIn(st.epoch)
+		rec := st.statsRecordOf(raw, had)
+		res.Said = append(res.Said, st.stats().takeNotes()...)
+		if t := rec.Tidying; t.Fresh(st.now()) {
+			res.Refused = fmt.Sprintf("a stats tidy is in flight (archive %s, since %s): a mark counted now could hold cards it is taking off; nothing written; run it again after it ends", t.Archive, t.At.Format(time.RFC3339Nano))
+			return res, nil
+		}
+		if m := rec.resetIn(st.epoch); m != nil && req.Op != "" && m.Op == req.Op {
+			if m.Reason != req.Reason {
+				return res, &OpConflictError{Op: req.Op, Verb: verb, Recorded: verb, OtherArgs: true}
+			}
+			res.Mark, res.Replay = *m, true
+			return res, nil
+		}
+		s, err := st.Load(ctx, All, tickExtras)
+		if err != nil {
+			return res, err
+		}
+		res.Mark = sprint.ResetMarkOf(s, st.now(), st.Actor, req.Reason)
+		res.Mark.Epoch, res.Mark.Op = st.epoch, req.Op
+		res.Replaced, res.DryRun = rec.resetIn(st.epoch), req.DryRun
+		if req.DryRun {
+			return res, nil
+		}
 		mark := res.Mark
 		rec.Reset = &mark
-	}); err != nil {
-		return res, err
+		b, err := json.Marshal(rec)
+		if err != nil {
+			return res, err
+		}
+		if !swaps {
+			if err := kv.SetKey(ctx, keyStats, string(b)); err != nil {
+				return res, err
+			}
+			break
+		}
+		if wrote, err = sw.SwapKey(ctx, keyStats, raw, had, string(b)); err != nil {
+			return res, err
+		}
+	}
+	if swaps && !wrote {
+		return res, fmt.Errorf("the stats record %q kept changing under the reset (%d tries): nothing written; run it again", keyStats, statsSwapTries)
 	}
 	// the where record's spend and per landed are counted again by the next tick, from the mark
 	if err := kv.SetKey(ctx, keyWhere, ""); err != nil {
@@ -167,15 +192,18 @@ const statsSwapTries = 16
 
 // updateStats reads the stats record, changes it and writes it back only while it is still
 // what was read, read again and changed again when another writer (a reset, a tidy) wrote
-// between; a store with no compare-and-set writes it plainly. It returns the record written.
-func (st *Store) updateStats(ctx context.Context, kv KV, change func(rec *StatsRecord)) (StatsRecord, error) {
+// between; a store with no compare-and-set writes it plainly. A change that returns an error
+// writes nothing and is that error. It returns the record written.
+func (st *Store) updateStats(ctx context.Context, kv KV, change func(rec *StatsRecord) error) (StatsRecord, error) {
 	for range statsSwapTries {
 		raw, had, err := kv.GetKey(ctx, keyStats)
 		if err != nil {
 			return StatsRecord{}, err
 		}
 		rec := st.statsRecordOf(raw, had)
-		change(&rec)
+		if err := change(&rec); err != nil {
+			return rec, err
+		}
 		b, err := json.Marshal(rec)
 		if err != nil {
 			return rec, err

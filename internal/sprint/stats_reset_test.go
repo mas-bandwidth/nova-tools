@@ -3,6 +3,7 @@ package sprint_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"strings"
 	"testing"
@@ -310,34 +311,190 @@ func TestAWhereRecordCountedBeforeAResetIsNeverTaken(t *testing.T) {
 	assert.NotNil(t, again.facts.Streams)
 }
 
-// A reset written while a tidy runs (between the tidy's read of the stats record and its
-// write) is kept: the tidy writes the record by compare-and-set, read again, and the reset's
-// own write is one too, so neither drops the other's (the tidy's kinds and archive, the mark).
-func TestAResetDuringATidyIsKept(t *testing.T) {
-	t.Parallel()
+// onSwap is the twin store with another writer that acts just before the at-th
+// compare-and-set of the stats record (store.updateStats, ResetStats): what the act does
+// lands between that writer's read and its write.
+type onSwap struct {
+	*store.Mem
+	n   *int
+	at  int
+	act func(ctx context.Context) error
+	err *error
+}
+
+func (o onSwap) AtEpoch(epoch uint64, old bool) store.Backend {
+	return onSwap{Mem: o.Mem.AtEpoch(epoch, old).(*store.Mem), n: o.n, at: o.at, act: o.act, err: o.err}
+}
+
+func (o onSwap) SwapKey(ctx context.Context, name, was string, had bool, value string) (bool, error) {
+	if name == "stats" {
+		*o.n++
+		if *o.n == o.at {
+			*o.err = o.act(ctx)
+		}
+	}
+	return o.Mem.SwapKey(ctx, name, was, had, value)
+}
+
+// swapping is a store on the rig's twin whose at-th write of the stats record runs act first.
+func (r *conflictRig) swapping(at int, act func(ctx context.Context) error) (*store.Store, *int, *error) {
+	n, err := 0, error(nil)
+	return &store.Store{B: onSwap{Mem: r.m, n: &n, at: at, act: act, err: &err}, Names: r.st.Names, Actor: "coordinator",
+		Now: r.st.Now, NewID: r.st.NewID, Sleep: r.st.Sleep}, &n, &err
+}
+
+// thirteenOnM1AnHourAgo is the rig with thirteen s1 cards finished on m1 and an hour of
+// RUNNING since: a tidy of the fleet takes the three oldest off (the newest ten stay).
+func thirteenOnM1AnHourAgo(t *testing.T) *conflictRig {
 	r := newConflictRig(t)
-	r.landOnM1(12)
+	r.landOnM1(13)
 	_, _, _, err := r.st.SetMachine(r.ctx, true)
 	require.NoError(t, err)
 	r.mu.Lock()
-	r.now = r.now.Add(time.Hour)
+	r.now = r.now.Add(time.Hour + 500*time.Millisecond)
 	r.mu.Unlock()
-	fired, lost := false, false
-	tidier := &store.Store{B: onTidy{Mem: r.m, fired: &fired, lost: &lost, act: func(ctx context.Context) error {
-		_, err := r.st.ResetStats(ctx, store.ResetReq{Reason: "meanwhile"})
+	return r
+}
+
+// (a) A tidy that moves cards between a reset's read and its write: the reset's write finds
+// the stats record changed and counts the mark again, from the fleet rows after the tidy;
+// the mark it would have written (13 on m1) would sit above the row (10) and clamp a card
+// after both to done 0.
+func TestATidyBetweenAResetsReadAndWriteHasTheMarkCountedAgain(t *testing.T) {
+	t.Parallel()
+	r := thirteenOnM1AnHourAgo(t)
+	var tidied store.TidyResult
+	resetter, writes, actErr := r.swapping(1, func(ctx context.Context) error {
+		var err error
+		tidied, err = r.st.TidyStats(ctx, store.TidyReq{Kinds: []string{sprint.TidyFleet}, Reason: "history"})
 		return err
-	}}, Names: r.st.Names, Actor: "coordinator", Now: r.st.Now, NewID: r.st.NewID, Sleep: r.st.Sleep}
-	res, err := tidier.TidyStats(r.ctx, store.TidyReq{Kinds: []string{sprint.TidyFleet}, Reason: "history"})
+	})
+	res, err := resetter.ResetStats(r.ctx, store.ResetReq{Reason: "count from now"})
 	require.NoError(t, err)
-	require.True(t, fired)
-	require.Equal(t, 2, res.Moved)
-	rec, err := r.st.StatsTidied(r.ctx)
+	require.NoError(t, *actErr)
+	require.Empty(t, res.Refused)
+	require.Equal(t, 3, tidied.Moved, "the tidy ran between the reset's read and its write")
+	assert.Equal(t, 2, *writes, "the first write found the record changed; the second, counted again, wrote")
+	assert.Equal(t, sprint.ResetRow{OK: 10}, res.Mark.Rows["m1"], "counted from the row after the tidy")
+	m, err := r.st.StatsReset(r.ctx)
 	require.NoError(t, err)
-	require.NotNil(t, rec.Reset, "the reset written during the tidy is kept")
-	assert.Equal(t, "meanwhile", rec.Reset.Reason)
-	assert.Equal(t, sprint.ResetRow{OK: 10}, rec.Reset.Rows["m1"], "and rebased by the two cards the tidy took off")
-	assert.Equal(t, []string{res.Archive}, rec.Archives, "the tidy's archive is recorded")
-	assert.False(t, rec.Kinds[sprint.TidyFleet].IsZero(), "and its kind")
+	require.NotNil(t, m)
+	assert.Equal(t, sprint.ResetRow{OK: 10}, m.Rows["m1"])
+	assert.Equal(t, "0", cell(r.resetView().fleet, "m1", sprint.Done))
+	r.must(store.AddStep(sprint.AddReq{Stream: "s1", Count: 1, Brief: "c: the work (s1) tier: flash\nREPO: mas-bandwidth/nova-tools\n\nThe task.\n"}))
+	_, _, _, err = r.st.SetMachine(r.ctx, true)
+	require.NoError(t, err)
+	r.beat()
+	r.must(store.FleetStep(sprint.FleetReq{Op: "down", Member: "m2"}))
+	r.landWithCost("s1", "s1-14")
+	r.must(store.DrainStep())
+	assert.Equal(t, "1", cell(r.resetView().fleet, "m1", sprint.Done), "one card since the reset")
+}
+
+// (b) A reset between a tidy's move and its last write: refused while the tidy is in flight,
+// and the tidy rebases the mark it saw when it began (13 less the three it took off, all
+// finished before it). Past a stale marker (a tidy whose process died) a reset goes on and
+// counts its mark after the move; the tidy then leaves that mark alone, never taking the
+// three off twice.
+func TestAResetBetweenATidysMoveAndWrite(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		later time.Duration // the resetter's clock past the tidy's
+	}{{"in flight", 0}, {"past a stale marker", store.TidyStale + time.Minute}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := thirteenOnM1AnHourAgo(t)
+			first, err := r.st.ResetStats(r.ctx, store.ResetReq{Reason: "before the tidy"})
+			require.NoError(t, err)
+			require.Equal(t, sprint.ResetRow{OK: 13}, first.Mark.Rows["m1"])
+			r.mu.Lock()
+			r.now = r.now.Add(2 * time.Minute)
+			r.mu.Unlock()
+			var during store.ResetResult
+			tidier, _, actErr := r.swapping(2, func(ctx context.Context) error { // 1: the marker; 2: the tidy's end
+				late := &store.Store{B: r.m, Names: r.st.Names, Actor: "coordinator", NewID: r.st.NewID, Sleep: r.st.Sleep,
+					Now: func() time.Time { return r.st.Now().Add(tc.later) }}
+				var err error
+				during, err = late.ResetStats(ctx, store.ResetReq{Reason: "during the tidy"})
+				return err
+			})
+			tidied, err := tidier.TidyStats(r.ctx, store.TidyReq{Kinds: []string{sprint.TidyFleet}, Reason: "history"})
+			require.NoError(t, err)
+			require.NoError(t, *actErr)
+			require.Equal(t, 3, tidied.Moved)
+			m, err := r.st.StatsReset(r.ctx)
+			require.NoError(t, err)
+			require.NotNil(t, m)
+			rec, err := r.st.StatsTidied(r.ctx)
+			require.NoError(t, err)
+			assert.Nil(t, rec.Tidying, "the tidy's end clears its marker")
+			if tc.later == 0 {
+				assert.Contains(t, during.Refused, "a stats tidy is in flight", "refused while the tidy stands")
+				assert.Equal(t, "before the tidy", m.Reason)
+				assert.Equal(t, sprint.ResetRow{OK: 10}, m.Rows["m1"], "the mark the tidy saw, rebased by the three it took off")
+			} else {
+				require.Empty(t, during.Refused, "past a stale marker the reset goes on")
+				assert.Equal(t, "during the tidy", m.Reason)
+				assert.Equal(t, sprint.ResetRow{OK: 10}, m.Rows["m1"], "counted after the move, and not rebased again (7)")
+			}
+			assert.Equal(t, "0", cell(r.resetView().fleet, "m1", sprint.Done))
+		})
+	}
+}
+
+// A tidy does not take the oldest cards first: a card whose primary has not landed stays
+// whatever its age (TidyKept). Here s2-1's work card finished before the reset and stays; the
+// tidy takes off three s1 cards that finished after it. The mark is rebased by the moved
+// cards that finished before it alone (none), so done is the cards since the mark still on
+// the row: 13 since the reset, three taken off by the tidy, 10. A rebase by count (one per
+// moved card) would lower the mark to 0 and count s2-1's card from before the reset: 11.
+func TestATidyRebasesTheMarkByTheCardsFinishedBeforeIt(t *testing.T) {
+	t.Parallel()
+	r := newConflictRig(t)
+	r.must(store.FleetStep(sprint.FleetReq{Op: "down", Member: "m2"}))
+	r.must(store.AddStep(sprint.AddReq{Stream: "s2", Count: 1, Brief: "c: the work (s2) tier: flash\nREPO: mas-bandwidth/nova-tools\n\nThe task.\n"}))
+	r.toMerging("s2-1")
+	kept := r.snap().Work.Card("s2-1").F("work")
+	require.Equal(t, "m1", r.snap().Fleet.Card(kept).Row)
+	r.mu.Lock()
+	r.now = r.now.Add(time.Minute)
+	r.mu.Unlock()
+	reset, err := r.st.ResetStats(r.ctx, store.ResetReq{Reason: "count from now"})
+	require.NoError(t, err)
+	require.Equal(t, sprint.ResetRow{OK: 1}, reset.Mark.Rows["m1"], "s2-1's work card, finished before the reset")
+	r.must(store.AddStep(sprint.AddReq{Stream: "s1", Count: 10, Brief: "c: the work (s1) tier: flash\nREPO: mas-bandwidth/nova-tools\n\nThe task.\n"}))
+	for i := 1; i <= 13; i++ {
+		r.mu.Lock()
+		r.now = r.now.Add(time.Minute)
+		r.mu.Unlock()
+		r.beat()
+		id := fmt.Sprintf("s1-%d", i)
+		r.landWithCost("s1", id)
+		r.must(store.DrainStep())
+		require.Equal(t, sprint.Landed, r.snap().StateOf(id), "%s landed", id)
+	}
+	_, _, _, err = r.st.SetMachine(r.ctx, true)
+	require.NoError(t, err)
+	r.mu.Lock()
+	r.now = r.now.Add(time.Hour + 500*time.Millisecond)
+	r.mu.Unlock()
+	require.Equal(t, "13", cell(r.resetView().fleet, "m1", sprint.Done), "thirteen since the reset")
+
+	tidied, err := r.st.TidyStats(r.ctx, store.TidyReq{Kinds: []string{sprint.TidyFleet}, Reason: "history"})
+	require.NoError(t, err)
+	require.Len(t, tidied.Record.Rows, 1)
+	var moved []string
+	for _, c := range tidied.Record.Rows[0].Moved {
+		moved = append(moved, c.ID)
+		assert.True(t, c.Finished.After(reset.Mark.At), "%s finished after the reset", c.ID)
+	}
+	assert.Len(t, moved, 3, "three s1 cards from after the reset")
+	assert.NotContains(t, moved, kept, "s2-1's card from before the reset stays: its primary is merging")
+	m, err := r.st.StatsReset(r.ctx)
+	require.NoError(t, err)
+	assert.Equal(t, sprint.ResetRow{OK: 1}, m.Rows["m1"], "no card from before the mark moved: the mark stands")
+	assert.Equal(t, "10", cell(r.resetView().fleet, "m1", sprint.Done), "the cards since the mark still on the row, never s2-1's")
 }
 
 // A reset under an operation id writes one mark: the same id again returns it and writes
