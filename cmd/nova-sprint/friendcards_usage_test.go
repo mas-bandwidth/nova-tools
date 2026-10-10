@@ -17,6 +17,27 @@ import (
 
 const friendUsageModel = "opencode/deepseek-v4-flash"
 
+func TestFriendFinishRefusesZeroTokensBeforeTheLedger(t *testing.T) {
+	t.Parallel()
+	report := "Verdict: LAND\nHead: abc\nCost: unpriced (zero tokens) tokens input=0 cache_read=0 cache_write=0 output=0 reasoning=0 model=opencode/flash harness=opencode\n"
+	assert.Empty(t, friendFinishUsage(report))
+	assert.Empty(t, friendFinishUsage("tokens: input=0 cache_read=0 cache_write=0 output=0 reasoning=0 model=opencode/flash harness=opencode\ncost: unpriced (zero tokens)\n"))
+}
+
+func TestFriendFinishRecordsZeroTokensAsUnpriced(t *testing.T) {
+	t.Parallel()
+	ta, root := friendCardApp(t, "friend amy", "amy")
+	ta.m.SetRoutes(costRoutes())
+	zeros := "input=0 cache_read=0 cache_write=0 output=0 reasoning=0 model=" + friendUsageModel + " harness=opencode"
+	report := "Verdict: LAND\nHead: " + landHead + "\nCost: unpriced (zero tokens) tokens " + zeros + "\n"
+	result := "tokens: " + zeros + "\ncost: unpriced (zero tokens)\n"
+	friendLand(t, ta, root, report, result)
+	got := friendConsumer(t, ta)
+	assert.Equal(t, cardcost.WhyNoTokens, got.Unpriced)
+	assert.Empty(t, got.Predicted)
+	assert.Empty(t, got.Actual)
+}
+
 func friendLand(t *testing.T, ta *testApp, root, report, result string) {
 	t.Helper()
 	ta.ok("tick")

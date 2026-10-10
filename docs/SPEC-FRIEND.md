@@ -2355,6 +2355,45 @@ coordinator acts on the request (a served `friend give <friend> <card> --reason`
 (width 8 after a clean load for 10 minutes, with a config-row write) is the lane governor's measured raise, not
 ported; the invoice-effective price beside the card price is not ported.
 
+### usage-capture-per-adapter — a finish carries the tokens it used, or says unknown; never priced free (internal/friend/usage_opencode.go)
+
+Every lane's finish carries the tokens it used, read from the harness's own session record after the lane ends,
+never from the model's report. The owner, 2026-10-07 8:12 PM ET: the measure is "maximum throughput and lowest $$$
+cost per-unit of work"; 2026-10-04: "we MUST track the complete cost." On 2026-10-07 the OpenCode friend's finishes
+carried `tokens input=0 ... output=0` on 172 of 195 finishes before her daemon was reinstalled and on 29 of 29
+after, every one with real work on the branch; the cost line printed `$0.00 (intro rate, route flash-mercury)`.
+The sprint's cost page counted 4617 unpriced runs that day, so the cost per landed card was understated by every
+OpenCode lane. The one-shot DeepSeek friend's runner had the same hole until its usage capture was fixed in the
+runner (91 finishes with usage since, 0 without); the daemon's OpenCode adapter reads the same way.
+
+- **The adapter reads usage from the session record, not the model's report.** After the lane ends, the OpenCode
+  adapter reads `opencode export <session>` — its assistant steps' `input`, `output`, `cache.read`, `cache.write` and
+  `reasoning` tokens summed (`SumOpenCodeRecord`), and the provider and model from the same record. The model's own
+  cost figure is never read for the finish. `SumOpenCodeRecord` and `OpenCodePriced.SessionUsage`
+  are the reader; they reuse the `SessionTokens` export parser and represent the finish with `LaneTokens`.
+  A session whose record holds no assistant step carrying tokens answers an error. An empty session at
+  card start has a zero baseline, so no token class gains a count during subtraction.
+- **A finish whose usage cannot be read is `usage=unknown`, said once, never priced free.** A record that cannot be
+  read (missing, not JSON, no tokens) finishes the card with `usage unknown for <card>: <why>` on the cost line and
+  one judgment to the seat (`UsageUnknownNote`), the cost ledger counts it unpriced, and the finish line prints no
+  dollar figure (`CostLineOf`, `PublishFinishCost`): a count not read is an absence, never a zero.
+- **The intro-rate price applies only to counted tokens.** A route found with zero counted tokens is refused by the
+  ledger as unpriced, never priced `$0.00` (`FinishCost`): the route's intro rate bills real tokens, and a finish
+  with none is the record's hole, not free work.
+- **`nova-sprint cost reconcile` lists the unpriced runs per friend and route**, one line each with the count
+  (`ReconcileUnpriced`), so the seat sees the hole on one line.
+
+What unpriced means: the card's cost is not known because its usage could not be read or its route has no price
+that prices the tokens counted, so the ledger carries no dollar figure rather than a wrong one. It is the opposite
+of `$0.00`; a zero is a claim the work was free, and unpriced is the admission that it was not counted.
+
+Tests: `internal/friend/usage_opencode_test.go` (a session record sums to the finish's usage; a missing record is
+usage unknown with the judgment; an intro-rate route with zero tokens is unpriced; the reconcile lists the hole).
+The finish reads the session record through `Daemon.SessionUsage`, which `cmd/nova-friend` sets to the adapter's
+`SessionUsage` through OpenCode's export runner; `Daemon.Tokens` stays the
+sqlite read the token cap polls (`capStep`), never the finish's. `nova-sprint cost reconcile` lists the unpriced
+runs per friend and route beside the provider gaps.
+
 ### the-lane-hands-the-brief-by-absolute-path-bb — the lane's paths are absolute; a no-report exit is a harness fault (internal/friend/lane_parity.go)
 
 On 2026-10-07, between 10:32 and 10:41 PM, five cards on a flash friend's row (opencode,

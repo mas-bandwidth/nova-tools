@@ -249,6 +249,7 @@ type LaneTokens struct {
 	cardcost.Tokens
 	USD      string // opencode's own reported cost, a decimal; "" unknown
 	Sessions int
+	Model    string // provider/model from the session export, when read there
 }
 
 // Sub is the tokens spent after base: a lane's session serves many cards, so a card's are

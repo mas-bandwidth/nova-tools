@@ -281,8 +281,10 @@ func (c *cardRuns) set(outbox string, t Tokens) {
 type openCodeTokens struct {
 	Messages []struct {
 		Info struct {
-			Role   string `json:"role"`
-			Tokens *struct {
+			Role     string `json:"role"`
+			Model    string `json:"modelID"`
+			Provider string `json:"providerID"`
+			Tokens   *struct {
 				Input     int64 `json:"input"`
 				Output    int64 `json:"output"`
 				Reasoning int64 `json:"reasoning"`
@@ -302,24 +304,42 @@ var errNoTokenShape = errors.New("opencode export: no assistant message carries 
 // summed. An export with no message carrying them answers errNoTokenShape, and the cap
 // is not applied; its price (SessionCost) stands as it is.
 func SessionTokens(export string) (Tokens, error) {
+	sum, _, _, err := parseOpenCodeSession(export)
+	return sum, err
+}
+
+// parseOpenCodeSession is the single export parser for both the running token cap
+// and the finish. Its model is the last assistant step's provider and model.
+// sawAssistant distinguishes an empty new session from a malformed usage record.
+func parseOpenCodeSession(export string) (Tokens, string, bool, error) {
 	at := strings.IndexByte(export, '{')
 	if at < 0 {
-		return Tokens{}, fmt.Errorf("opencode export: no JSON object in %q", oneLine(export, 120))
+		return Tokens{}, "", false, fmt.Errorf("opencode export: no JSON object in %q", oneLine(export, 120))
 	}
 	var e openCodeTokens
 	if err := json.NewDecoder(strings.NewReader(export[at:])).Decode(&e); err != nil {
-		return Tokens{}, fmt.Errorf("opencode export: %v", err)
+		return Tokens{}, "", false, fmt.Errorf("opencode export: %v", err)
 	}
-	sum, found := Tokens{}, false
+	sum, model, found, sawAssistant := Tokens{}, "", false, false
 	for _, m := range e.Messages {
-		if t := m.Info.Tokens; m.Info.Role == "assistant" && t != nil {
+		if m.Info.Role != "assistant" {
+			continue
+		}
+		sawAssistant = true
+		if t := m.Info.Tokens; t != nil {
 			sum, found = sum.add(Tokens{Input: t.Input, CacheRead: t.Cache.Read, CacheWrite: t.Cache.Write, Output: t.Output, Reasoning: t.Reasoning}), true
+			if m.Info.Model != "" {
+				model = m.Info.Model
+				if m.Info.Provider != "" && !strings.HasPrefix(model, m.Info.Provider+"/") {
+					model = m.Info.Provider + "/" + model
+				}
+			}
 		}
 	}
 	if !found {
-		return Tokens{}, errNoTokenShape
+		return Tokens{}, "", sawAssistant, errNoTokenShape
 	}
-	return sum, nil
+	return sum, model, sawAssistant, nil
 }
 
 // openCodeUsage is a lane turn's usage: its session's tokens since the read before the

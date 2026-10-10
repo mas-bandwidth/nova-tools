@@ -184,9 +184,14 @@ type Daemon struct {
 	// for her model and Model its name, LaneHold the pause marker's line (the lanes held
 	// down by a provider failure until a person clears it) and LaneHoldDown writes it: her
 	// beat then says her down with its message (PauseBeat).
-	Rules        func() LaneRules
-	Load         func() float64
-	Tokens       func(ctx context.Context, session string) (LaneTokens, error)
+	Rules  func() LaneRules
+	Load   func() float64
+	Tokens func(ctx context.Context, session string) (LaneTokens, error)
+	// SessionUsage reads a session's usage from the harness's own session record
+	// (LaneTokens, usage_opencode.go), never from the model's report; nil for a
+	// harness whose finish reads Tokens (the sqlite database). A finish whose usage
+	// cannot be read is unpriced, never $0.00.
+	SessionUsage func(session string) (LaneTokens, error)
 	Route        func() RoutePrice
 	Model        string
 	LaneHold     func() string

@@ -8,6 +8,7 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/provbalance"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -48,11 +49,23 @@ func (a *app) cmdCostReconcile(args []string, stdout, stderr io.Writer) int {
 	for _, p := range slices.Sorted(maps.Keys(names)) {
 		reads = append(reads, provbalance.ReadUsage(ctx, a.transport, p, day, a.getenv))
 	}
+	// the ledger's unpriced finished runs, per friend and route: the hole the seat
+	// sees on one line, whether or not any provider is read below
+	s, err := st.Load(ctx, []string{sprint.Work, sprint.Fleet}, nil)
+	if err != nil {
+		return a.readFailed(verb, err, stderr)
+	}
+	s.Routes = routes
+	unpriced := friend.ReconcileUnpriced(unpricedRuns(s))
 	if len(reads) == 0 {
 		// nothing to read and nothing written: no provider is named by a route
 		if c.json {
-			fmt.Fprintln(stdout, `{"providers":[],"notes":0}`)
+			b, _ := json.Marshal(map[string]any{"providers": []sprint.CostReconcileRecord{}, "notes": 0, "unpriced": unpriced})
+			fmt.Fprintln(stdout, string(b))
 			return 0
+		}
+		for _, line := range unpriced {
+			fmt.Fprintf(stdout, "COST unpriced %s\n", line)
 		}
 		fmt.Fprintln(stdout, "COST RECONCILE OK providers=0 notes=0: the routes name no provider (nova-sprint routes)")
 		return 0
@@ -62,11 +75,6 @@ func (a *app) cmdCostReconcile(args []string, stdout, stderr io.Writer) int {
 	fleet := sprint.NewTable(sprint.Fleet)
 	if *dry {
 		// the step's own plan on a read of the tables, applied nowhere
-		s, err := st.Load(ctx, []string{sprint.Work, sprint.Fleet}, nil)
-		if err != nil {
-			return a.readFailed(verb, err, stderr)
-		}
-		s.Routes = routes
 		plan := sprint.CostReconcile(s, req)
 		for _, pw := range plan.Props {
 			fleet.SetProp(pw.Name, pw.Value)
@@ -80,11 +88,11 @@ func (a *app) cmdCostReconcile(args []string, stdout, stderr io.Writer) int {
 		if len(res.Refused) > 0 {
 			return refuse(stderr, verb, res.Refused[0].Why)
 		}
-		s, err := st.Load(ctx, []string{sprint.Fleet}, nil)
+		sn, err := st.Load(ctx, []string{sprint.Fleet}, nil)
 		if err != nil {
 			return a.readFailed(verb, err, stderr)
 		}
-		fleet, notes = s.Fleet, res.Notes
+		fleet, notes = sn.Fleet, res.Notes
 	}
 	var recs []sprint.CostReconcileRecord
 	for _, rd := range reads {
@@ -93,7 +101,7 @@ func (a *app) cmdCostReconcile(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if c.json {
-		b, _ := json.Marshal(map[string]any{"providers": recs, "notes": notes, "dry_run": *dry})
+		b, _ := json.Marshal(map[string]any{"providers": recs, "notes": notes, "dry_run": *dry, "unpriced": unpriced})
 		fmt.Fprintln(stdout, string(b))
 		return 0
 	}
@@ -105,10 +113,35 @@ func (a *app) cmdCostReconcile(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "COST provider=%s day=%s provider_usd=%s records=%s gap=%s share=%.1f%%\n",
 			oneline.Field(rec.Provider), rec.Day, sprint.Dollars(rec.Used), sprint.Dollars(rec.Internal), sprint.Dollars(rec.Gap), rec.Share*100)
 	}
+	for _, line := range unpriced {
+		fmt.Fprintf(stdout, "COST unpriced %s\n", line)
+	}
 	if *dry {
 		fmt.Fprintf(stdout, "COST RECONCILE %s providers=%d notes=%d: nothing was written\n", word, len(recs), notes)
 		return 0
 	}
 	fmt.Fprintf(stdout, "COST RECONCILE %s providers=%d notes=%d\n", word, len(recs), notes)
 	return 0
+}
+
+// unpricedRuns is the ledger's finished work runs the sprint could not price: each
+// work consumer whose usage carries no dollar figure, named by the friend that ran it
+// and the route that should have priced it, in work order.
+func unpricedRuns(s *sprint.Snapshot) []friend.UnpricedRun {
+	if s == nil || s.Work == nil {
+		return nil
+	}
+	var runs []friend.UnpricedRun
+	for _, c := range s.Work.Column(sprint.States...) {
+		if sprint.IsSentinel(c) {
+			continue
+		}
+		for _, con := range sprint.CardCostOf(c).Consumers {
+			if con.Kind != "work" || con.Usage.Actual != "" || con.Usage.Predicted != "" {
+				continue
+			}
+			runs = append(runs, friend.UnpricedRun{Friend: con.Who, Route: con.Route})
+		}
+	}
+	return runs
 }
