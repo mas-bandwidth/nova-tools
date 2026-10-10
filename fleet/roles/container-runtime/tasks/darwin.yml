@@ -75,6 +75,6 @@
 - name: podman machine is running
   ansible.builtin.command: "{{ container_runtime_brew | dirname }}/podman machine start"
   register: container_runtime_machine_start
-  changed_when: "'already running' not in container_runtime_machine_start.stderr"
-  failed_when: container_runtime_machine_start.rc != 0 and 'already running' not in container_runtime_machine_start.stderr
+  changed_when: "'already running' not in (container_runtime_machine_start.stderr | default(''))"
+  failed_when: container_runtime_machine_start.rc != 0 and 'already running' not in (container_runtime_machine_start.stderr | default(''))
   when: container_runtime_machines.rc == 0 and container_runtime_machines.stdout | trim | length > 0
