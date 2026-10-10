@@ -1072,14 +1072,14 @@
 # The friends of the machines that are not the coordinator (v1.2.2): the seat
 # play above reinstalls the friend daemons of the coordinator only, so a friend
 # on a fleet host kept its old binary after the install play. Here every host
-# the build was installed on, the coordinator excepted, that holds a
+# the build was installed on, the coordinator ended first, that holds a
 # LaunchAgents directory (nova_seat_agents_dir) is read by the installed
 # nova-sprint live, and each friend daemon whose plist it finds stale takes the
 # same step the seat play runs (seat-friend.yml, one at a time: lanes empty, a
 # reinstall with the flags its plist records, a beat strictly newer than its own
 # cutoff, else ADOPT REFUSED step=friends). --check lists each WOULD-REINSTALL.
 - name: the friends of the fleet hosts reinstalled onto the installed build
-  hosts: all:!coordinator
+  hosts: all
   gather_facts: true
   gather_subset: [min]
   tags: [seat]
@@ -1091,6 +1091,10 @@
       {{ [nova_bin_dir ~ '/nova-sprint', 'live', '--json', '--bin-dir', nova_bin_dir,
           '--agents-dir', nova_seat_agents_dir, '--launchctl', nova_launchctl] }}
   tasks:
+    - name: "friends: the coordinator's friends are the seat play's"
+      ansible.builtin.meta: end_host
+      when: inventory_hostname in groups['coordinator'] | default([])
+
     - name: "friends: the agents directory (a host with none has no friend daemon)"
       ansible.builtin.stat: { path: "{{ nova_seat_agents_dir }}", get_checksum: false }
       register: ff_dir
