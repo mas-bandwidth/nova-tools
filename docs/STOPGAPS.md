@@ -22,7 +22,7 @@ claude-oneshot-lanes), `coordinator-wake-verb`, `coordinator-ping-verb`, `friend
 ## coordinator-wake
 
 Path: <coordinator-dir>/tmp/buswatch/watch.sh
-Replacement: coordinator-wake-verb
+Replacement: watch
 Tool: nova-sprint
 STATUS: retired 2026-10-10
 
