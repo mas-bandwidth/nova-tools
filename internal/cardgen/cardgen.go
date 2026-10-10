@@ -219,7 +219,10 @@ type Card struct {
 	Counted bool
 	// New is the NEW: line, the files the card creates (none for most): a test file
 	// in a package that has none yet (NewTestFile).
-	New []string
+	New          []string
+	Start        []string
+	GatePackages []string
+	ReLand       bool
 }
 
 // Plan is a directory's worth of cards with what the planner had to leave out.
@@ -431,6 +434,9 @@ func ledgerTask(l Ledger, c Card) string {
 // base and stays green, so it ends when the ledger's entry for its file shrinks to 0;
 // every other card's test is red before the change and green after it.
 func stopCondition(c Card) string {
+	if c.ReLand {
+		return "the exact commit intent is present on this branch and the STEP 4 gate passes"
+	}
 	if c.Kind != swarm.LedgerKind {
 		return "the test " + testName(c.Test) + " is red before the change and green after it"
 	}
@@ -779,7 +785,21 @@ func Render(h Header, c Card) string {
 		}
 	}
 	gate := "go test -count=1 -timeout 600s ./" + pkg + "/"
-	if pkg != "internal/ci" && !strings.HasPrefix(pkg, "internal/ci") {
+	if len(c.GatePackages) > 0 {
+		pkgs := slices.Clone(c.GatePackages)
+		if !slices.Contains(pkgs, "internal/ci") {
+			pkgs = append(pkgs, "internal/ci")
+		}
+		for i := range pkgs {
+			pkgPath := strings.TrimPrefix(strings.Trim(pkgs[i], "/"), "./")
+			if pkgPath == "" {
+				pkgs[i] = "./"
+			} else {
+				pkgs[i] = "./" + pkgPath + "/"
+			}
+		}
+		gate = "go test -count=1 -timeout 600s " + strings.Join(pkgs, " ")
+	} else if pkg != "internal/ci" && !strings.HasPrefix(pkg, "internal/ci") {
 		gate += " ./internal/ci/"
 	}
 	paths, model := c.Paths, ""
@@ -800,19 +820,37 @@ func Render(h Header, c Card) string {
 		fmt.Fprintf(&b, "NEW: %s\n", strings.Join(c.New, ", "))
 	}
 	fmt.Fprintf(&b, "TEST: %s\n", c.Test)
-	fmt.Fprintf(&b, "START: %s, %s\n", c.File, pkg)
+	start := c.Start
+	if len(start) == 0 {
+		start = []string{c.File, pkg}
+	}
+	fmt.Fprintf(&b, "START: %s\n", strings.Join(start, ", "))
 	fmt.Fprintf(&b, "STOP: %s, and the STEP 4 gate passes\n", stopCondition(c))
 	// docs/SPEC-CARD-CONTRACT.md: the deadline is a bound; past it is the coordinator's judgment.
 	fmt.Fprintf(&b, "Deadline: finish within %d minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.\n", minutes)
-	fmt.Fprintf(&b, "You are a child of the coordinator: one task, one staged checkout, one branch, unattended. This card is the whole task. Read $JOB/JOB.md first. Start at the current BASE tip; admission inspected exact base %s. Verify the defect still exists before editing; if already fixed report not-done with exact evidence rather than duplicate work. One change, one test that is red before and green after.\n", h.Sha)
+	fmt.Fprintf(&b, "You are a child of the coordinator: one task, one staged checkout, one branch, unattended. This card is the whole task. Read $JOB/JOB.md first. Start at the current BASE tip; admission inspected exact base %s. ", h.Sha)
+	if c.ReLand {
+		b.WriteString("Inspect the source commit's intent against the current tree. If it is already present, make no change and report the exact evidence; otherwise preserve it while re-landing the commit.")
+	} else {
+		b.WriteString("Verify the defect still exists before editing; if already fixed report not-done with exact evidence rather than duplicate work. One change, one test that is red before and green after.")
+	}
+	b.WriteString("\n")
 	b.WriteString("Libraries considered: the Go standard library and testify, already in the tree; the package's own seams and helpers; no new dependency, and no helper over thirty lines without first searching the package for one.\n\n")
 	b.WriteString(swarm.ChildRulesParagraph())
 	b.WriteString("\n")
 	b.WriteString(Attribution + "\n")
 	fmt.Fprintf(&b, "THE TASK. %s The work lives in %s; the files this card may touch are its PATHS line and no other, in the staged checkout JOB.md names, on the card's own branch, from BASE %s.\n\n", c.Task, c.File, h.Base)
 	b.WriteString("STEP 1. Enter the staged checkout JOB.md names with cd $JOB/repo && git log --oneline -1, no clone; work only on its own branch. Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; " + swarm.GoCacheLine + " Scratch belongs under $JOB/scratch.\n")
-	fmt.Fprintf(&b, "STEP 2. Make it red first, as the task says, with the test %s: run %s -run %s and keep the failing line as evidence.\n", testName(c.Test), gate, testName(c.Test))
-	b.WriteString("STEP 3. Make it pass in the files this card names, and only those. Commit the draft on your own branch as soon as the test is green, before any further probe; a later commit may refine it. A change any other file needs goes in the report as a proposed diff, never a commit.\n")
+	if c.ReLand {
+		b.WriteString("STEP 2. Inspect the exact source commit and current tree. If its intent is already present, finish with no change and report exact evidence. Otherwise cherry-pick that exact commit onto this branch, preserving its intent and resolving only conflicts needed for this commit.\n")
+	} else {
+		fmt.Fprintf(&b, "STEP 2. Make it red first, as the task says, with the test %s: run %s -run %s and keep the failing line as evidence.\n", testName(c.Test), gate, testName(c.Test))
+	}
+	if c.ReLand {
+		b.WriteString("STEP 3. Keep the re-land limited to this commit's PATHS. Do not revert newer work; resolve only conflicts needed to preserve this commit's intent. If the intent already exists, finish without starting a cherry-pick and report the exact evidence.\n")
+	} else {
+		b.WriteString("STEP 3. Make it pass in the files this card names, and only those. Commit the draft on your own branch as soon as the test is green, before any further probe; a later commit may refine it. A change any other file needs goes in the report as a proposed diff, never a commit.\n")
+	}
 	fmt.Fprintf(&b, "STEP 4. Run the gate: %s and read the last line of each. Run gofmt -l on every changed Go file; it must print nothing.%s %s\n", gate, model, swarm.GateNamesWhoseFile)
 	fmt.Fprintf(&b, "STEP 5. Commit on your own branch with the trailer. Nothing reaches the forge from inside the wall: in the job the git shim records a push, the pull request is the finish JOB.md names (STEP 6), and the member makes both, against %s, from outside the wall when the card finishes. The pull request body states the diff stat, what was deleted, the tests with what each pins, and what was not done.\n", h.Base)
 	b.WriteString("STEP 6. End as JOB.md says (docs/SPEC-CARD-CONTRACT.md): where JOB.md ends the card with its pull request, that is the end and there is nothing else to write, the gate's lines in the pull request body; where it asks for RESULT.md, write it in JOB.md's shape (head, branch, verdict, gate, output, report). For a friend's REPORT.md (docs/FRIENDS.md), first line exactly Verdict: LAND|HOLD|FAIL, second line exactly Head: <40-hex>; for HOLD and FAIL omit Head: and leave line 2 blank.\n")
