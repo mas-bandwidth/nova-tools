@@ -8,9 +8,11 @@ package swarm
 // frugal with the machine's cores). They run under -tags functional.
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"testing"
 	"time"
@@ -34,6 +36,23 @@ func findRepoRoot() (string, error) {
 		}
 		dir = parent
 	}
+}
+
+// waitStopped reports whether pid reaches state T (stopped by a signal) within d,
+// read from /proc/<pid>/stat: the state is the first field after the ")" that
+// closes the command name.
+func waitStopped(pid int, d time.Duration) bool {
+	stat := filepath.Join("/proc", strconv.Itoa(pid), "stat")
+	for end := time.Now().Add(d); time.Now().Before(end); time.Sleep(time.Millisecond) {
+		b, err := os.ReadFile(stat)
+		if err != nil {
+			continue
+		}
+		if i := bytes.LastIndexByte(b, ')'); i >= 0 && i+2 < len(b) && b[i+2] == 'T' {
+			return true
+		}
+	}
+	return false
 }
 
 func TestPausePointThreadDirected(t *testing.T) {
@@ -80,7 +99,15 @@ func TestPausePointThreadDirected(t *testing.T) {
 			time.Sleep(time.Millisecond)
 		}
 
-		time.Sleep(10 * time.Millisecond)
+		// The mark is written just before the child's tgkill, so seeing it does
+		// not mean the child has stopped. A SIGCONT sent before the stop is lost,
+		// the child then stops for good and Wait never returns: the functional
+		// shard's 1m40s timeout under load. Wait for the stop itself (state T).
+		if !waitStopped(child.Process.Pid, 5*time.Second) {
+			_ = child.Process.Kill()
+			_ = child.Wait()
+			require.Fail(t, "the child never stopped at its pause point", "iteration %d", i)
+		}
 
 		_, err = os.Stat(afterPath)
 		if err == nil {

@@ -106,6 +106,7 @@ var DefaultCatalog = []Entry{
 	E("internal/safepath", "path sanitization and sandboxing", "go test ./internal/safepath", "go test ./internal/safepath"),
 	E("internal/sandbox", "OS isolation primitives (seatbelt/landlock)", "go test ./internal/sandbox", "go test ./internal/sandbox"),
 	E("internal/scaffold", "scaffolding engine for class rules and CLI verbs", "go test ./internal/scaffold", "go test ./internal/scaffold"),
+	E("internal/secretcheck", "the harness of the rule that no secret reaches an error: secret-shaped inputs, a driver, and the table and allowlist comparisons", "go test ./internal/secretcheck", "go test ./internal/secretcheck"),
 	E("internal/secrets", "zero-leak memory and file vault", "go test ./internal/secrets", "go test ./internal/secrets"),
 	E("internal/seatcred", "a seat's Redis login read through the secrets library (--seat, NOVA_SEAT)", "go test ./internal/seatcred/...", "go test ./internal/seatcred/..."),
 	E("internal/selftalk", "agent self-talk journal stream", "go test ./internal/selftalk", "go test ./internal/selftalk"),

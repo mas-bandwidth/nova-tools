@@ -114,18 +114,21 @@ func TestTheAskBatchesTwentyPrimariesInOneStep(t *testing.T) {
 	h.clean("after the batched ask")
 }
 
-// The ask writes in small fenced steps: other writers commit every 60 ms and a
-// write's window is 10 ms a primary it names, so a write of six or more always
+// The ask writes in small fenced steps: other writers commit every 30 ms and a
+// write's window is 5 ms a primary it names, so a write of six or more always
 // holds another writer's commit. A large batch loses its tries (the live
 // failure of 2026-10-06); the ask retries its primaries alone, so every one
-// is asked in the one tick and none is refused for the fence.
+// is asked in the one tick and none is refused for the fence. (At 10 ms a
+// primary the lost batch's three tries alone took 600 ms, past AskBy: the ask
+// then rightly leaves the rest to the next tick, which
+// TestTheAskBeginsNoStepPastHalfItsTick holds.)
 func TestTheAskStepAsksInSmallFencedSteps(t *testing.T) {
 	t.Parallel()
 	h := inReview(t, 20)
 	writes := 0
 	h.st.B = racingAsk{Mem: h.m, h: h, writes: &writes,
-		cost: func(ps []string) time.Duration { return time.Duration(len(ps)) * 10 * time.Millisecond },
-		lose: func(ps []string) bool { return len(ps)*10 >= 60 }}
+		cost: func(ps []string) time.Duration { return time.Duration(len(ps)) * 5 * time.Millisecond },
+		lose: func(ps []string) bool { return len(ps)*5 >= 30 }}
 	res, err := h.st.Tick(h.ctx)
 	require.NoError(t, err, "the tick")
 	t.Logf("the ask's writes: %d; %s", writes, res.TimesLine())
@@ -234,6 +237,47 @@ func TestALostBatchIsCountedAsDue(t *testing.T) {
 	defer cancel()
 	require.Equal(t, 1500*time.Millisecond, askBudget(ctx, dl.Add(-3*time.Second)))
 	require.Equal(t, AskBudget, askBudget(context.Background(), t0))
+}
+
+// The ask begins no step past AskBy into its tick, the owner's sub-second tick
+// (2026-09-30), whatever its own budget leaves: its budget of two seconds inside a
+// tick of one made every tick with a backlog of reads a two-second tick (the
+// certification drive of 2026-10-10, readers/ask 2.006 to 2.063 s). Here every
+// write of the ask takes 600 ms on the clock and none is contested: the first
+// step asks twenty and ends past AskBy, so no second step begins; the other
+// twenty are due, and the next tick asks them.
+func TestTheAskBeginsNoStepPastHalfItsTick(t *testing.T) {
+	t.Parallel()
+	h := inReview(t, 2*AskBatch)
+	writes := 0
+	h.st.B = racingAsk{Mem: h.m, h: h, writes: &writes,
+		cost: func([]string) time.Duration { return 600 * time.Millisecond }}
+	res, err := h.st.Tick(h.ctx)
+	require.NoError(t, err, "the tick")
+	t.Logf("the ask's writes: %d; due %d; %s", writes, res.Due, res.TimesLine())
+	asked, refused := askOf(res)
+	require.Empty(t, refused)
+	require.Equal(t, 1, writes, "one step began: the second would begin past AskBy")
+	require.Len(t, asked, AskBatch, "the first step always begins and asks its batch")
+	require.GreaterOrEqual(t, res.Due, AskBatch, "the primaries the ask did not reach are due")
+	h.st.B = h.m
+	h.tick(time.Second)
+	res = h.machine()
+	asked, refused = askOf(res)
+	require.Len(t, asked, AskBatch, "the next tick asks the rest: refused %v", refused)
+	h.clean("after the next tick")
+
+	// when the ask begins no further step: AskBy past the tick's beginning when that
+	// is sooner than its budget, the budget alone for a tick with no beginning
+	t0 := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	bg := context.Background()
+	require.Equal(t, t0.Add(AskBy), askUntil(bg, t0, t0))
+	require.Equal(t, t0.Add(AskBy), askUntil(bg, t0, t0.Add(300*time.Millisecond)), "the ask's own start does not move the tick's half")
+	require.Equal(t, t0.Add(AskBudget), askUntil(bg, time.Time{}, t0))
+	dl := t0.Add(400 * time.Millisecond)
+	ctx, cancel := context.WithDeadline(bg, dl)
+	defer cancel()
+	require.Equal(t, t0.Add(200*time.Millisecond), askUntil(ctx, t0, t0), "half of the tick's deadline when that is sooner")
 }
 
 // friendRead closes a friend's read of the primary at its attempt with her

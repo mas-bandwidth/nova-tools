@@ -34,6 +34,20 @@ const (
 	// step begins (a step in flight plans no further try), and what is left is
 	// due for the next tick.
 	AskBudget = 2 * time.Second
+	// AskBy is how far into its tick the ask may begin a step after its first:
+	// half of the tick's second (TickEvery), the owner's law of 2026-09-30
+	// ("the whole intent is sub-second ticks. This is a requirement"). The ask
+	// is the tick's only part that writes in steps until a budget, and a budget
+	// of its own (AskBudget, 2 s) longer than the tick it runs in made every
+	// tick with a backlog of reads to ask a two-second tick: on 2026-10-10 the
+	// certification drive (cmd/nova-sprint TestTheDirtyTickDriveOnAStore) failed
+	// 11 times since 2026-10-09 18Z, and in run 38059743591 five of its eight
+	// ticks over 1 s spent 2.006 to 2.063 s in readers/ask alone. The parts after
+	// the ask (display, archive, where, the tick's end: 100 to 400 ms at load)
+	// take the other half. The first step always begins, so every tick asks
+	// some reads however long its earlier parts took; what is left is due, and
+	// the next tick asks it.
+	AskBy = TickEvery / 2
 )
 
 // askTally is what the tick's ask did, for the tick's TIMES line and tables.
@@ -65,6 +79,19 @@ func askBudget(ctx context.Context, now time.Time) time.Duration {
 	return b
 }
 
+// askUntil is when the ask begins no further step: its budget from now
+// (askBudget), or AskBy past the tick's beginning when that is sooner. A zero
+// beginning is a tick that recorded none, and the budget alone bounds it.
+func askUntil(ctx context.Context, began, now time.Time) time.Time {
+	until := now.Add(askBudget(ctx, now))
+	if !began.IsZero() {
+		if by := began.Add(AskBy); by.Before(until) {
+			until = by
+		}
+	}
+	return until
+}
+
 // askInSteps runs the tick's ask part as small fenced steps: each step plans
 // the part on a fresh read and writes the first AskBatch primaries of the plan
 // not yet written or given up in this tick (sprint.KeepUnits), with the
@@ -81,7 +108,7 @@ func (t *tickRun) askInSteps(step Step) (Result, askTally, error) {
 	tally := askTally{rows: map[string][]string{}}
 	out := Result{Verb: step.Verb, Tables: map[string]int{}}
 	begin := st.now()
-	until := begin.Add(askBudget(t.ctx, begin))
+	until := askUntil(t.ctx, t.res.began, begin)
 	done := map[string]bool{}   // primaries written this tick, or refused by the plan
 	gaveUp := map[string]bool{} // primaries given up this tick: the next tick asks them
 	single := map[string]bool{} // primaries of a lost batch: tried again alone

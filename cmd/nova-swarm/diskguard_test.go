@@ -104,6 +104,59 @@ func TestDiskGuardHoldsAGoBuildCacheUnderItsCap(t *testing.T) {
 	assert.EqualValues(t, 1500, g.freed)
 }
 
+// Under the watermark (twice the floor free on the tightest volume) every Go build cache is
+// held under a quarter of its cap: a cache under its cap is trimmed then, which it never is
+// above the watermark (reversed witness: the same cache at 100 GiB free keeps every entry).
+// An entry used in the last two hours still stays.
+func TestDiskGuardHoldsBuildCachesUnderAQuarterOfTheCapUnderTheWatermark(t *testing.T) {
+	t.Parallel()
+	mk := func() (string, []string, string) {
+		dir := t.TempDir()
+		var old []string
+		for i := range 6 {
+			p := filepath.Join(dir, fmt.Sprintf("%02x", i), fmt.Sprintf("%064x-d", i))
+			dgFile(t, p, 100, dgNow.Add(-72*time.Hour+time.Duration(i)*time.Hour))
+			old = append(old, p)
+		}
+		recent := filepath.Join(dir, "07", fmt.Sprintf("%064x-a", 7))
+		dgFile(t, recent, 100, dgNow.Add(-30*time.Minute))
+		return dir, old, recent
+	}
+
+	// above the watermark: 700 bytes under the cap of 1000, nothing removed, nothing said
+	above, aboveOld, _ := mk()
+	g, out := dgGuard(t)
+	g.caches, g.cacheMax = []string{above}, 1000
+	g.free = func(string) (uint64, error) { return 25 * gib, nil } // floor 10 GiB, watermark 20
+	g.buildCaches()
+	for _, p := range aboveOld {
+		assert.FileExists(t, p, "above the watermark a cache under its cap is never trimmed")
+	}
+	assert.Empty(t, out.String())
+
+	// under the watermark on a root's volume: cap 250, under 200 after the trim
+	under, underOld, recent := mk()
+	g, out = dgGuard(t)
+	root := t.TempDir()
+	g.caches, g.cacheMax, g.roots = []string{under}, 1000, []string{root}
+	g.free = func(p string) (uint64, error) {
+		if p == root {
+			return 15 * gib, nil
+		}
+		return 100 * gib, nil
+	}
+	g.buildCaches()
+	// 700 bytes against 250: the five oldest go (500), which leaves 200, not over 200
+	for _, p := range underOld[:5] {
+		assert.NoFileExists(t, p)
+	}
+	assert.FileExists(t, underOld[5])
+	assert.FileExists(t, recent, "an entry used in the last two hours is never removed")
+	assert.Equal(t, fmt.Sprintf("PRESSURE free=%d watermark=%d: every go build cache is held under cap=250 this run\n", 15*gib, 20*gib)+
+		"TRIMMED go-build "+under+" freed=500 size=200 cap=250\n", out.String())
+	assert.EqualValues(t, 500, g.freed)
+}
+
 // A loop log over its size is copied to .1 and emptied in place (its supervisor appends to
 // the same file), the older copies shift up and the one past --log-keep goes; a log under
 // its size and a link are never touched.

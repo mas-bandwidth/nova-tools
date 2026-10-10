@@ -2901,11 +2901,11 @@ records them for pacing. Claude has no deliver command, so its
 `Watch`. The state machine (up, down until a reset, waking on a nonce) wants
 its TLA+ module beside `tla/Friend.tla`.
 
-## Chaos: detection proved by breaking it (internal/friend/chaos_functional_test.go)
+## Chaos: detection proved by breaking it (internal/sprint/friend_chaos_functional_test.go)
 
 The owner, 2026-10-04: "If your detection that they are down doesn't work
 WHEN THEY ARE DOWN, that seems like a bad design." One functional test,
-`TestEveryFriendFailureShowsWithinItsBound` (`go test -tags functional ./internal/friend`),
+`TestEveryFriendFailureShowsWithinItsBound` (`go test -tags functional ./internal/sprint`; friend against the sprint's store, so it lives with the sprint),
 breaks a friend each way he can fail and asserts the
 bound on the friends table and where his cards go. The friend runs the real
 daemon over a scratch bus (bus's Fake behind a store that blocks on an empty

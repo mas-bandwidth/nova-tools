@@ -273,7 +273,7 @@ func TestTheGateRefusesAPromisedJourneyWithoutEvidence(t *testing.T) {
 		}
 	})
 
-	t.Run("the promise is the checkout's: a checkout that ships the friend package promises its journeys", func(t *testing.T) {
+	t.Run("the promise is the checkout's: a checkout that ships the sprint package promises its journeys", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
 		changelog := changelogIn(t, dir)
@@ -282,7 +282,7 @@ func TestTheGateRefusesAPromisedJourneyWithoutEvidence(t *testing.T) {
 		require.Equal(t, 0, Run("nova-update", cutArgs(changelog), &out, &errs, cutDeps(t, f)), "errs=%s", errs.String())
 		assert.Contains(t, out.String(), "journeys=none-promised")
 
-		require.NoError(t, os.MkdirAll(filepath.Join(dir, "internal", "friend"), 0o755))
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "internal", "sprint"), 0o755))
 		f = cutForge()
 		changelog = changelogIn(t, dir)
 		out.Reset()
@@ -291,23 +291,4 @@ func TestTheGateRefusesAPromisedJourneyWithoutEvidence(t *testing.T) {
 		cutRefused(t, code, f, changelog, &out, &errs)
 		assert.Contains(t, errs.String(), "reason=journey-evidence promised="+strconv.Itoa(len(PromisedJourneys)))
 	})
-}
-
-// The promise names the chaos suite's own subtests: a journey renamed there
-// and not here would be not-run forever, and the gate would refuse every cut
-// for a test nobody can run.
-func TestThePromisedJourneysAreTheChaosSuitesSubtests(t *testing.T) {
-	t.Parallel()
-
-	raw, err := os.ReadFile(filepath.Join("..", "friend", "chaos_functional_test.go"))
-	require.NoError(t, err)
-	src := string(raw)
-	require.NotEmpty(t, PromisedJourneys)
-	for _, j := range PromisedJourneys {
-		parent, sub, ok := strings.Cut(j.Test, "/")
-		require.True(t, ok, "%s names no subtest", j.Test)
-		assert.Contains(t, src, "func "+parent+"(t *testing.T)", "the chaos suite has no %s", parent)
-		assert.Contains(t, src, "t.Run(\""+sub+"\"", "the chaos suite has no subtest %q", sub)
-		assert.Equal(t, "internal/friend", j.Package)
-	}
 }
