@@ -32,16 +32,16 @@ func Heartbeat(ctx context.Context, send func(context.Context) error) error {
 	}
 }
 
-// BeatState is the heartbeat's last transport result, separate from session
-// evidence. The loop reads a published copy (docs/SPEC-FRIEND.md, The beat).
-type BeatState struct {
-	At    time.Time
-	Count int
-	Error string
-}
+// RunningNone is the friend-beat --running value for an explicit empty list.
+// The server's beat allow-list refuses an empty value, and a lone "-" is not a
+// card id. An omitted --running is unknown and keeps the last list; this value
+// clears it (the daemon's last lane ended).
+const RunningNone = "-"
 
 // BeatReport is what the daemon knows without reading the bus or disk on the
 // heartbeat path (docs/SPEC-FRIEND.md, The beat). Counts are absent until known.
+// Running nil means the jobs are unknown; a non-nil empty slice means none are
+// running and the next beat clears the stored list.
 type BeatReport struct {
 	Width          int
 	Started        time.Time

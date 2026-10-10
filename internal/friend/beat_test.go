@@ -45,7 +45,7 @@ func TestTheDaemonBeatsEverySecondWhateverTheSessionSays(t *testing.T) {
 	sc.Deliver = sc.Gate(app)
 	d := &Daemon{
 		Friend: "bob", Harness: "fake", Dir: t.TempDir(), Width: 8, Store: sc.DaemonStore(), Deliver: sc.Deliver,
-		Seat: func(context.Context) (string, error) { return "ada", nil },
+		Seat: func(context.Context) (string, error) { return "ada", nil }, StepBeatForTests: true,
 		// the first read of the clock is the daemon starting, at t0; each read after it
 		// is one step of the loop, a second each
 		Now: func() time.Time {
