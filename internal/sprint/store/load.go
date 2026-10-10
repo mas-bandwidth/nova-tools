@@ -39,7 +39,7 @@ func (st *Store) Load(ctx context.Context, tables []string, extras func(*sprint.
 	var last *movedError
 	r := st.retry(ctx)
 	for r.next(LoadTries) {
-		s, err := st.loadOnce(ctx, tables, extras)
+		s, err := st.loadOnce(ctx, tables, nil, extras)
 		var moved *movedError
 		if errors.As(err, &moved) {
 			last = moved
@@ -51,7 +51,7 @@ func (st *Store) Load(ctx context.Context, tables []string, extras func(*sprint.
 		last.table, r.tries, r.slept().Round(time.Millisecond))
 }
 
-func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, error) {
+func (st *Store) loadOnce(ctx context.Context, tables []string, every []string, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, error) {
 	s := &sprint.Snapshot{Now: st.now(), Epoch: st.epoch, Cleared: st.cleared, Prefix: st.Names.Prefix}
 	stored := make([]string, len(tables))
 	for i, t := range tables {
@@ -124,7 +124,42 @@ func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*spr
 			}
 		}
 	}
+	if len(every) > 0 {
+		if err := st.readKeptRecords(ctx, s, every); err != nil {
+			return nil, err
+		}
+	}
 	return s, nil
+}
+
+// readKeptRecords reads every record the store holds of the tables named,
+// placed or kept off the table, so a step can find a dropped primary by
+// stream (redo --stream): RecordIDs names every record the table held, and the
+// ones not already read are read in, unplaced records included. It is the
+// boundary a step that selects dropped primaries reads through (Step.EveryRecord).
+func (st *Store) readKeptRecords(ctx context.Context, s *sprint.Snapshot, tables []string) error {
+	for _, logical := range tables {
+		t := s.T(logical)
+		if t == nil {
+			continue
+		}
+		stored, err := st.B.RecordIDs(ctx, st.Names.Table(logical))
+		if err != nil {
+			return err
+		}
+		var missing []string
+		for _, id := range stored {
+			if c := sprint.CardID(id); t.Card(c) == nil {
+				missing = append(missing, c)
+			}
+		}
+		if len(missing) > 0 {
+			if err := st.readInto(ctx, t, st.sids(missing), false); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // HeldBack is sprint.HeldBack over the work table's waiting column, read

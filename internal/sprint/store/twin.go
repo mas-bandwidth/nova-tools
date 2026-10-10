@@ -721,7 +721,7 @@ func (tw *Twin) apply(table string, man ntable.BatchManifest, rc ntable.Receipt)
 // loads the four tables (twinRead), else fenced.
 func (st *Store) fencedStep(ctx context.Context, tw *Twin, step Step, repaired *[]string, mine string) (*sprint.Snapshot, Fence, error) {
 	if tw == nil || len(step.Load) == 0 || !twinTables(step.Load) {
-		return st.fenced(ctx, step.Load, step.Extras, repaired)
+		return st.fenced(ctx, step.Load, step.EveryRecord, step.Extras, repaired)
 	}
 	return st.twinRead(ctx, tw, step.Load, step.Extras, repaired, mine)
 }

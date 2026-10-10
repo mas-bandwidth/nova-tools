@@ -2075,7 +2075,7 @@ func (st *Store) shadowRead(ctx context.Context) (*sprint.Snapshot, error) {
 		if f.Pending != nil {
 			continue
 		}
-		snap, f2, err := st.PipelinedLoadWithFence(ctx, All, tickExtras)
+		snap, f2, err := st.PipelinedLoadWithFence(ctx, All, nil, tickExtras)
 		if errors.Is(err, errCleared) {
 			return nil, errors.New("the sprint was cleared as the shadow tick read it; run it again")
 		}

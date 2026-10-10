@@ -111,6 +111,11 @@ type RedoReq struct {
 	Sel     Sel
 	Answers []string
 	Who     string
+	// Reason is why a dropped primary comes back, the redo's restore: it is
+	// refused without one, and it is written on the card's MOVED line (the
+	// drop's own reason is cleared with its marks). The conflict redo reads
+	// no reason (docs/SPEC-SPRINT.md section 11, redo).
+	Reason string
 }
 
 // InConflict says whether a primary card is in a merge conflict:
@@ -130,9 +135,83 @@ func InConflict(s *Snapshot, c *Card) bool {
 	return true
 }
 
+// droppedPrimaries is every primary kept off the table with the outcome
+// dropped, the records redo restores (docs/SPEC-SPRINT.md section 11, redo):
+// a dropped card's record keeps its stream, brief, needs, tier, priority,
+// score and attempt history, and redo puts it back in waiting.
+func droppedPrimaries(s *Snapshot) []*Card {
+	var out []*Card
+	for _, c := range s.Work.Cards() {
+		if c.F("outcome") == "dropped" && !IsSentinel(c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// streamHasDropped says the stream holds a dropped primary to restore.
+func streamHasDropped(s *Snapshot, stream string) bool {
+	for _, c := range droppedPrimaries(s) {
+		if c.F("stream") == stream {
+			return true
+		}
+	}
+	return false
+}
+
+// replacedByTwin is the twin a dropped card was replaced by ("" for none): the
+// reason a Replace or the twin verb leaves ("replaced by <twin>" or "twinned as
+// <twin>"), which redo refuses to restore (docs/SPEC-SPRINT.md section 2, "A
+// card replaced by its twin").
+func replacedByTwin(c *Card) string {
+	reason := c.F("reason")
+	for _, p := range []string{"replaced by ", "twinned as "} {
+		if strings.HasPrefix(reason, p) {
+			return strings.TrimPrefix(reason, p)
+		}
+	}
+	return ""
+}
+
+// redoStreamOf is a card's stream for a redo's selection: the row a placed
+// card is on, the stream field a dropped record keeps.
+func redoStreamOf(c *Card) string {
+	if !c.Placed() {
+		return c.F("stream")
+	}
+	return c.Row
+}
+
+// redoRestore is the unit that brings one dropped primary back to waiting at
+// its old score: its record is placed again on its stream's waiting cell
+// (Plan.Places, the table layer's cell add, when it is off the table) and its
+// drop marks are cleared; its brief, needs, tier, priority, score and attempt
+// history are kept as the drop left them (docs/SPEC-SPRINT.md section 11,
+// redo).
+func redoRestore(p *Plan, c *Card, reason string) Unit {
+	stream := c.F("stream")
+	u := Unit{Key: c.ID, Stream: stream,
+		Moved: fmt.Sprintf("%s off the table -> waiting (restored: %s)", c.ID, reason)}
+	if c.Placed() {
+		// the record was placed again already (the rebuild after its place):
+		// clear its drop marks on the placed record
+		u.Changes = append(u.Changes, change(Work, setEntry(c, nil, "outcome", "reason", "dropped_from", "dropped_at")))
+		return u
+	}
+	back := *c
+	back.Row, back.Col, back.Rev = stream, Waiting, c.Rev+1
+	p.Places = append(p.Places, PlaceAgain{Table: Work, Row: stream, Col: Waiting, ID: c.ID, Score: c.Score,
+		Said: "a dropped primary comes back: " + c.ID + " is placed again in " + stream})
+	u.Changes = append(u.Changes, change(Work, setEntry(&back, nil, "outcome", "reason", "dropped_from", "dropped_at")))
+	return u
+}
+
 // Redo atomically executes return, rework with fix "redo the same change on the current tip",
 // and resumes the stopped stream in one step with one history line.
-// Refused when the card is not in a conflict.
+// Refused when the card is not in a conflict. A dropped primary, named or of
+// the stream named, is restored instead: it comes back to waiting at its old
+// score with its brief, needs, tier, priority and attempt history kept, one
+// MOVED line, refused when --reason is not given or it was replaced by a twin.
 func Redo(s *Snapshot, r RedoReq) Plan {
 	s, _ = s.withRests()
 	var p Plan
@@ -144,14 +223,38 @@ func Redo(s *Snapshot, r RedoReq) Plan {
 			return p
 		}
 		if ctl.F("state") != StreamStopped || ctl.F("cause") != "conflict" {
-			p.refuse(r.Sel.Stream, "not in a conflict")
-			return p
+			// a stream not in a conflict may still hold dropped primaries to
+			// restore; with none, the redo is refused as it always was
+			if !streamHasDropped(s, r.Sel.Stream) {
+				p.refuse(r.Sel.Stream, "not in a conflict")
+				return p
+			}
+		}
+		// a dropped primary replaced by a twin is refused naming the twin,
+		// never silently skipped by a stream selection
+		// (docs/SPEC-SPRINT.md section 2, "A card replaced by its twin")
+		for _, c := range droppedPrimaries(s) {
+			if c.F("stream") != r.Sel.Stream {
+				continue
+			}
+			if twin := replacedByTwin(c); twin != "" {
+				p.refuse(c.ID, "dropped replaced by "+twin+": redo the twin, not the dropped card")
+			}
 		}
 	}
 
-	chosen := pick(&p, r.Sel, s.Work.Column(Merging), rowOf, func(c *Card) string {
-		if r.Sel.Stream != "" && c.Row != r.Sel.Stream {
+	chosen := pick(&p, r.Sel, append(s.Work.Column(Merging), droppedPrimaries(s)...), redoStreamOf, func(c *Card) string {
+		if r.Sel.Stream != "" && redoStreamOf(c) != r.Sel.Stream {
 			return "not in stream " + r.Sel.Stream
+		}
+		if c.F("outcome") == "dropped" {
+			if r.Reason == "" {
+				return "wants --reason <text> to say why it comes back"
+			}
+			if twin := replacedByTwin(c); twin != "" {
+				return "dropped replaced by " + twin + ": redo the twin, not the dropped card"
+			}
+			return ""
 		}
 		if !InConflict(s, c) {
 			return "not in a conflict"
@@ -174,6 +277,10 @@ func Redo(s *Snapshot, r RedoReq) Plan {
 	}
 
 	for _, c := range chosen {
+		if c.F("outcome") == "dropped" {
+			p.Units = append(p.Units, redoRestore(&p, c, r.Reason))
+			continue
+		}
 		streams[c.Row] = true
 		fix := RedoFixText
 		broken := 0
