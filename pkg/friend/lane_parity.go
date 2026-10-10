@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -320,6 +321,37 @@ func TokensFromOpenCode(ctx context.Context, run Exec, db, session string) (Lane
 		return LaneTokens{}, fmt.Errorf("sqlite3 %s exited %d", db, exit)
 	}
 	return TokensOf(out)
+}
+
+// ErrSessionInNoDB is a session that none of the databases read holds: its tokens are unread,
+// never zero.
+var ErrSessionInNoDB = errors.New("no opencode database read holds the session")
+
+// TokensFromOpenCodeIn reads a session's tokens from the first of dbs that holds it (a row for
+// the session or a child). A lane's opencode runs inside the wall with the wall's HOME (the
+// friend's config directory, else her working directory: sandbox.LaneProfile), so it writes
+// its sessions under that HOME, not the daemon's; a batch turn writes under the daemon's
+// (--db). A session in none of them is ErrSessionInNoDB, naming each database and why, never the
+// all-zero tokens the sums give for no row (2026-10-10: every walled opencode lane read zero
+// tokens from the daemon's database, and its runs were judged empty).
+func TokensFromOpenCodeIn(ctx context.Context, run Exec, dbs []string, session string) (LaneTokens, error) {
+	var seen, tried []string
+	for _, db := range dbs {
+		if db == "" || slices.Contains(seen, db) {
+			continue
+		}
+		seen = append(seen, db)
+		t, err := TokensFromOpenCode(ctx, run, db, session)
+		switch {
+		case err != nil:
+			tried = append(tried, db+" ("+oneLine(err.Error(), 120)+")")
+		case t.Sessions == 0:
+			tried = append(tried, db+" (no row)")
+		default:
+			return t, nil
+		}
+	}
+	return LaneTokens{}, fmt.Errorf("%w %s: %s", ErrSessionInNoDB, session, strings.Join(tried, ", "))
 }
 
 // RoutePrice is the store's route row for the friend's exact provider/model: its name and
