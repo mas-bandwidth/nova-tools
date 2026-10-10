@@ -40,6 +40,14 @@ type Agent struct {
 	// ConfigDir is the friend's harness config directory (CLAUDE_CONFIG_DIR),
 	// the daemon's --config-dir, written only when set.
 	ConfigDir string
+	// DenySelf is the coordinator's self the daemon's lane wall never writes inside, the
+	// daemon's --deny-self, written only when set (the daemon's default, DefaultDenySelf,
+	// stands when it is not).
+	DenySelf string
+	// WallReads is what the harness reads inside the lane's wall beyond the system roots and its
+	// own directory (a pinned harness shim under the home), the daemon's --wall-reads, written only
+	// when set.
+	WallReads string
 	// Command, when set, is what the agent runs in place of the daemon: this tool's
 	// own verb and flags, after Binary (the wake ping loop, nova-friend ping-install).
 	Command []string
@@ -106,6 +114,12 @@ func (a Agent) Args() []string {
 	}
 	if a.ConfigDir != "" {
 		args = append(args, "--config-dir", a.ConfigDir)
+	}
+	if a.DenySelf != "" {
+		args = append(args, "--deny-self", a.DenySelf)
+	}
+	if a.WallReads != "" {
+		args = append(args, "--wall-reads", a.WallReads)
 	}
 	if a.SilentStop > 0 && a.SilentStop != DefaultSilentStop {
 		args = append(args, "--silent-stop", a.SilentStop.String())
