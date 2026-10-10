@@ -477,10 +477,25 @@ func (l *Limits) Gate(d Deliverer) Deliverer {
 		return d
 	}
 	g := &gated{l: l, d: d}
+	if oh, ok := d.(OneShotHarness); ok {
+		return &gatedOneShot{gated: g, oh: oh}
+	}
 	if lh, ok := d.(LaneHarness); ok {
 		return &gatedLanes{gated: g, lh: lh}
 	}
 	return g
+}
+
+// gatedOneShot is a OneShotHarness under the gate: Deliver, her main session's turn, is
+// gated's; RunOneShot, a lane's fresh run, goes straight to the harness, its output still
+// read for a limit under it, as gatedLanes' lanes are and for the same reason.
+type gatedOneShot struct {
+	*gated
+	oh OneShotHarness
+}
+
+func (g *gatedOneShot) RunOneShot(ctx context.Context, text string) (LaneTurn, error) {
+	return g.oh.RunOneShot(ctx, text)
 }
 
 // gatedLanes is a LaneHarness under the gate: Deliver, the batch turn and

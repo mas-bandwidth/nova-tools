@@ -5,11 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -29,7 +32,17 @@ func TestMain(m *testing.M) {
 		case WallVerb:
 			os.Exit(RunWall(os.Args[2:], os.Environ(), os.Stdin, os.Stdout, os.Stderr))
 		case "run":
+			if !slices.Contains(os.Args, "--session") {
+				os.Exit(fakeOneShot(os.Args[len(os.Args)-1])) // opencode run <text>: a fresh session
+			}
 			os.Exit(fakeLaneHarness())
+		case "headless", "exec": // dsh headless -, codex exec ... -: the text on stdin
+			text, _ := io.ReadAll(os.Stdin) // ignored: an unread stdin is an empty text, and the run says so
+			os.Exit(fakeOneShot(string(text)))
+		case "--skip-trust": // gemini ... --prompt=<text>
+			os.Exit(fakeOneShot(strings.TrimPrefix(os.Args[len(os.Args)-1], "--prompt=")))
+		case "--cwd": // grok --cwd <dir> --always-approve --single <text>
+			os.Exit(fakeOneShot(os.Args[len(os.Args)-1]))
 		}
 	}
 	os.Exit(m.Run())
@@ -60,6 +73,113 @@ func fakeLaneHarness() int {
 		write(filepath.Join(os.Getenv("LANE_WALL_OUTSIDE"), "lane.txt")),
 		dial)
 	return 0
+}
+
+// outboxOfText is the outbox a lane's text names in its second step.
+var outboxOfText = regexp.MustCompile(`2\. Write (\S+)/REPORT\.md`)
+
+// fakeOneShot is a harness's one-shot run of a card inside the wall: it writes the card's
+// REPORT.md and RESULT.md where the text says, tries the coordinator's self, a file in HOME
+// outside the wall and a connection outside the allow list, and says what each did.
+func fakeOneShot(text string) int {
+	write := func(path string) string {
+		if err := os.WriteFile(path, []byte("lane\n"), 0o644); err != nil {
+			return "refused"
+		}
+		return "written"
+	}
+	m := outboxOfText.FindStringSubmatch(text)
+	if m == nil {
+		fmt.Println("ONESHOT no outbox in the text")
+		return 3
+	}
+	report, result := write(filepath.Join(m[1], "REPORT.md")), write(filepath.Join(m[1], "RESULT.md"))
+	self := os.Getenv("LANE_WALL_SELF")
+	dial := "refused"
+	if c, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", os.Getenv("LANE_WALL_ADDR")); err == nil {
+		c.Close() // ignored: the test listener's accepted connection; the test reads nothing after
+		dial = "connected"
+	}
+	cwd, _ := os.Getwd() // ignored: an unread cwd is said empty
+	fmt.Printf("ONESHOT report=%s result=%s memory=%s outside=%s net=%s cwd=%s\n", report, result,
+		write(filepath.Join(self, "memory", "lane.md")), write(filepath.Join(os.Getenv("LANE_WALL_OUTSIDE"), "lane.txt")), dial, cwd)
+	return 0
+}
+
+// Every friend harness's one-shot lane run (dsh, opencode, codex, gemini, grok) runs inside
+// the lane's wall, in the card's job directory: it writes the card's report and result,
+// and the coordinator's self, HOME outside the wall and a connection outside the allow list
+// are refused. A run with no program to run the wall never runs.
+func TestAOneShotLaneRunsEveryHarnessInsideItsWall(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("the wall has a body on linux and darwin only")
+	}
+	if _, ok := sandbox.Available(); !ok {
+		t.Skip("no OS wall on this machine: " + sandbox.Note())
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("the wall does not run as root")
+	}
+	bin, err := os.Executable()
+	require.NoError(t, err)
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	self := filepath.Join(home, "rowan-working", "rowan-new")
+	friendDir := filepath.Join(root, "friend")
+	job := filepath.Join(friendDir, "jobs", "card~1")
+	outbox := filepath.Join(friendDir, "outbox", "card~1")
+	for _, d := range []string{filepath.Join(self, "memory"), job, outbox} {
+		require.NoError(t, os.MkdirAll(d, 0o755))
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0") // a port of this test's own, outside the allow list
+	require.NoError(t, err)
+	t.Cleanup(func() { ln.Close() }) // ignored: closing the test listener at cleanup
+	run := envExec(laneWallChild+"=1", "HOME="+home, "LANE_WALL_SELF="+self, "LANE_WALL_OUTSIDE="+home, "LANE_WALL_ADDR="+ln.Addr().String())
+	wall := Wall{Self: []string{bin}, Dir: friendDir, Deny: []string{"~/rowan-working/rowan-new"}}
+	walled := wall.Exec(run)
+	lane := Card{ID: "card", Brief: filepath.Join(friendDir, "inbox", "card~1", "BRIEF.md"), Outbox: outbox}
+	text := OneShotText("bob", LaneJob{Dir: job, Card: lane, Brief: "RESULT: card\n"}, 1, 1, "nova-bus send --as bob --to ada --subject 'card card done'", "", "")
+	ctx := WithLaneDir(LaneContext(t.Context()), job)
+	for _, tc := range []struct {
+		name string
+		h    func(out *bytes.Buffer) OneShotHarness
+	}{
+		{"dsh", func(out *bytes.Buffer) OneShotHarness {
+			return &DSH{Dir: friendDir, Program: bin, Run: walled, Out: out}
+		}},
+		{"opencode", func(out *bytes.Buffer) OneShotHarness {
+			return &OpenCode{Dir: friendDir, Program: bin, Run: walled, Out: out}
+		}},
+		{"codex", func(out *bytes.Buffer) OneShotHarness {
+			return &Codex{Dir: friendDir, Program: bin, Run: walled, Out: out}
+		}},
+		{"gemini", func(out *bytes.Buffer) OneShotHarness {
+			return &Gemini{Dir: friendDir, Program: bin, Run: walled, Out: out}
+		}},
+		{"grok", func(out *bytes.Buffer) OneShotHarness {
+			return &Grok{Dir: friendDir, Program: bin, Run: walled, Out: out}
+		}},
+	} {
+		for _, f := range []string{"REPORT.md", "RESULT.md"} {
+			_ = os.Remove(filepath.Join(outbox, f)) // ignored: the last harness's, or none
+		}
+		var out bytes.Buffer
+		lt, err := tc.h(&out).RunOneShot(ctx, text)
+		require.NoError(t, err, "%s: %s", tc.name, out.String())
+		require.Equal(t, 0, lt.Exit, "%s: %s", tc.name, out.String())
+		require.Contains(t, out.String(), "ONESHOT report=written result=written memory=refused outside=refused net=refused", "%s: %s", tc.name, out.String())
+		for _, f := range []string{"REPORT.md", "RESULT.md"} {
+			require.FileExists(t, filepath.Join(outbox, f), tc.name)
+		}
+		require.NoFileExists(t, filepath.Join(self, "memory", "lane.md"), tc.name)
+		got, err := filepath.EvalSymlinks(job)
+		require.NoError(t, err)
+		require.Contains(t, out.String(), "cwd="+got, "%s runs in the card's job directory", tc.name)
+	}
+	// with no program to run the wall, a lane's run is refused, never run unwalled
+	_, err = (&DSH{Dir: friendDir, Program: bin, Run: Wall{Dir: friendDir}.Exec(run)}).RunOneShot(ctx, text)
+	require.ErrorContains(t, err, "never runs outside it")
 }
 
 // A lane's turn runs its harness inside the wall of the friend profile: the job

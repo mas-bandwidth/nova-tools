@@ -314,10 +314,25 @@ func (s *SessionCheck) Gate(inner Deliverer) Deliverer {
 		return inner
 	}
 	g := turnGated{inner, s}
+	if oh, ok := inner.(OneShotHarness); ok {
+		return turnGatedOneShot{g, oh}
+	}
 	if lh, ok := inner.(LaneHarness); ok {
 		return turnGatedLanes{g, lh}
 	}
 	return g
+}
+
+// turnGatedOneShot is a OneShotHarness at the check's gate: her main session's turns hold
+// the turn shared; a lane's one-shot run holds nothing, since it is a fresh process and no
+// turn of her session, so a session check never waits on a lane, nor a lane on a check.
+type turnGatedOneShot struct {
+	turnGated
+	oh OneShotHarness
+}
+
+func (g turnGatedOneShot) RunOneShot(ctx context.Context, text string) (LaneTurn, error) {
+	return g.oh.RunOneShot(ctx, text)
 }
 
 type turnGated struct {

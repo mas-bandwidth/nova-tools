@@ -252,7 +252,8 @@ Presence is therefore the session's, never the daemon's:
   session check <nonce> within 5m0s` after one, so the server reads her down
   with the daemon's reason at once; a beat can say down, never up. The friend
   row's mode and width arrive with an up beat's answer, so while down the
-  daemon delivers by the row it last read (batch at `--width` before any).
+  daemon delivers by the row it last read (one-shot lanes at `--width` before
+  any, on a harness that runs them; Every lane refreshes independently).
 - On a headless harness (dsh, gemini: each turn a one-shot process into the
   session) the check goes in as a turn of its own as soon as no turn runs. A
   turn runs from the moment it comes to the gate (`SessionCheck.Gate`), before
@@ -1671,6 +1672,90 @@ Not yet: the server's `friend cards` answer does not send `repo` and `base` (cmd
 outside this card's paths), so the brief's lines are read; a read's checkout at the head under
 read is not staged here.
 
+## Every lane refreshes independently (internal/friend/oneshot.go, lanes.go, daemon.go row)
+
+Measured 2026-10-10 about 04:00Z: Freddy (opencode, width 32, row mode batch) had 28 cards
+ready on his row and worked 10 or 11 of them while the seat nudged him every minute, and his
+one main session filled its 260k context in about 25 minutes and was replaced; Zhi (dsh,
+width 32, batch) took one "58 card(s) dealt" turn and was silent 20 minutes, so her session
+checks read her down. The cause was the batch turn: her row's cards went into her main
+session as one turn, a turn takes the cards ready when it starts, a card dealt mid-turn waits
+for the next, and the main session is both the bottleneck and the context that fills. The
+owner, 2026-10-10 about 03:40Z: "this is a bad design. each lane should refresh
+independently."
+
+So, for every friend whatever her harness:
+
+- **No batch turn.** A harness that runs lanes runs one-shot lanes at her row's width
+  whatever the row's mode says; a row that says batch is said retired once on the record
+  (`mode: one-shot lanes at width <n>, each refreshing on its own: the row says batch, and
+  batch is retired for a harness that runs lanes (<harness>)`). `run --mode` is taken as
+  given, for a test.
+- **Each lane is independent.** The daemon keeps up to `width` lanes. On every step of its
+  loop each free lane within the width takes the next ready card of her row at once
+  (`NextCard`, in the queue file's order, skipping a card another lane holds) and starts it;
+  a lane whose run ends (report written, failed, set aside, capped) is free on the next step
+  and takes the next card without waiting for any other lane or any turn. A card dealt to her
+  row mid-run is taken by the first lane to free. A lane past a width since lowered finishes
+  its run and takes no other.
+- **Each card is a fresh run.** On a `OneShotHarness` (dsh, opencode, codex, gemini, grok)
+  a lane's card is one headless run of the harness with no session opened before it or kept
+  after it, so every card starts from a fresh context: `dsh headless -` (no
+  `--session-id`; the text on stdin), `opencode run [--standalone] <text>` (no `--session`,
+  and no session listing: the listing is what the lane wall broke on 2026-10-09, nova-tools
+  #5537), `codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox -`
+  (the lane's wall is the sandbox: codex's own seatbelt cannot be applied inside the wall's,
+  and a headless run has no one to answer an approval), `gemini --skip-trust
+  --approval-mode yolo --prompt=<text>`, and `grok --cwd <job> --always-approve --single
+  <text>`. The run's whole prompt (`OneShotText`) is who she is, from her own `AGENTS.md`
+  and `memory/` (a fresh run has no seed turn), then the card's turn (`CardText`) with its
+  three steps and nothing riding along. A claude lane is the same shape as a `CardRunner`
+  (Claude lanes, below). The session lanes of a `LaneHarness` (a session per lane, kept for
+  its life) remain for a harness that is one and not a `OneShotHarness`; no friend harness
+  is today.
+- **Every run is confined.** A lane's run is a lane's child (`LaneContext`), so it runs
+  inside the lane's wall (`Wall.Exec`, buds-in-the-wall-r.w5 below), in the card's job
+  directory (`WithLaneDir`), with HOME the wall's (her config directory, else her working
+  directory), never outside it; with no program to run the wall it is refused.
+  `TestAOneShotLaneRunsEveryHarnessInsideItsWall` runs each of the five under the real OS
+  wall: the card's report and result written, the coordinator's self, HOME outside the wall
+  and a connection outside the allow list refused.
+- **Her main session only talks.** It is never handed a card, a dealt brief or an idle
+  wake. While her lanes run fresh, the bus messages waiting go into her main session as one
+  turn of their own when it is free (the envelope, `startBatch`), an owed wake check as its
+  own, and a deferred turn again at its time (`comms`); the presence checks go in as ever. A
+  lane's run holds no turn of her session at the check's gate (`turnGatedOneShot`), so a
+  session check never waits on a lane, nor a lane on a check; the limit gate passes a lane's
+  run straight through (`gatedOneShot`), its output still read for a limit under it. Her
+  reads run the same way, a fresh one-shot of her harness (`RunOneShot`, read_lanes.go) when
+  it has no `RunRead` of its own.
+- **Batch is the named fallback, and a judgment.** A harness that runs no lane (antigravity,
+  tmux) is delivered in batch, said once on the record, and, when her row named a mode, told
+  to the seat once a daemon run as a blocker: `friend <name>: batch fallback: <harness> runs
+  no one-shot lane`.
+- **Cost.** An opencode one-shot run is priced from the session it made when its output
+  names it (`opencode export <ses_...>`); a run whose output names none says `cost=- (the
+  run printed no session id, so its record was not read)` on the record. The per-card token
+  cap read from a session's record (tokencap.go) has no session to read on a fresh run; the
+  lane's wall cap by its tier (lane_cap.go) still bounds it. Owed: a session id named before
+  the run (opencode's `run --session <id>` creates one that does not exist, on 2.x) so the
+  cap and the price read it, and dsh's spend.
+
+The machine is modelled in `tla/FriendLanes.tla` (`MCFriendLanes*`): cards new, ready, in a
+lane, done; lanes `1..MaxWidth`; the width moving; the main session's comms turns; the
+daemon's step filling every free lane within the width at once. It proves no lane runs past
+the width but one retiring from a width since lowered (`WithinWidth`, `WorkingWithinWidth`),
+a card on at most one lane (`OneLanePerCard`), the main session never holding a card
+(`MainHoldsNoCard`), no free lane within the width left beside a ready card after a step
+(`Filled`), and, under fairness, every ready card started by a lane (`ReadyStarts`). Five
+reversed witnesses, each breaking its property: the main session's batch turn
+(`MainHoldsNoCard`), a lane that takes only at a turn's boundary (`Filled`), a lane past the
+width (`WithinWidth`), a lane taking a card another runs (`OneLanePerCard`), a lane that never
+takes a second card (`ReadyStarts`). TLC on hetzner, 2026-10-10: the design 38,926 distinct
+states, the live instance 1,624, every witness as declared (tla/RUNS.tsv).
+`TestA32WideFriendStarts32LanesFrom32ReadyCardsWithNoBatchTurn` and
+`TestEachLaneRefreshesOnItsOwnAndADealtCardTakesTheNextFreeLane` hold the code to it.
+
 ## One-shot lanes (internal/friend/lanes.go)
 
 A friend's delivery mode is a column of her nova-config friend row, `mode`,
@@ -1721,12 +1806,15 @@ one-shot turn printed since that card's last stamp (`stampProgress`, at most
 every `ProgressEvery`; docs/SPEC-SPRINT.md section 8, the rules table's row
 late), so the late rule never returns a printing card for want of a stamp.
 
-Only a harness that can open a session and deliver into a named one has
-lanes (`LaneHarness`; OpenCode today: `opencode run <seed>`, run in the
-friend's directory, with no `--session` opens one, found as the session the listing of the directory
-gained, and `opencode run --session <id>` takes each card), or a harness
-that runs each card as a process of its own (`CardRunner`; Claude). On any
-other harness a one-shot row is delivered in batch, said once in the record.
+A harness has lanes when it runs each card as a fresh run of its own
+(`OneShotHarness`: dsh, opencode, codex, gemini, grok; Every lane refreshes
+independently, above), or as a process of its own (`CardRunner`; Claude), or
+when it can open a session and deliver into a named one (`LaneHarness`, the
+session lanes this section describes: `opencode run <seed>` with no
+`--session` opens one, found as the session the listing of the directory
+gained, and `opencode run --session <id>` takes each card; a OneShotHarness
+runs fresh runs instead). On any other harness her cards are delivered in
+batch, the named fallback, said once in the record and told to the seat.
 
 A claude lane opens no session: each card is one headless run in the
 friend's directory, `env CLAUDE_CONFIG_DIR=<config_dir> claude -p <the

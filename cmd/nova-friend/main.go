@@ -555,7 +555,7 @@ go and gofmt that refuse (this binary, by symlink) first on the lane's PATH; and
 					f.Int("load-width", friend.DefaultLoadWidth, "the lanes that run while the load is above --load-max")
 					f.String("pause-on", "", "funds or any: any holds the lanes and the friend down on a rate limit too (default: funds, a rate limit backs off)")
 					f.Bool("refuse-go", false, "put go and gofmt that refuse first on every lane's PATH, and GOROOT nowhere (default: the row's row_refuse_go)")
-					f.String("mode", "", "override the friend row's delivery mode, batch or one-shot, for a test (default: the row's, read from each beat)")
+					f.String("mode", "", "override the delivery mode, batch or one-shot, for a test (default: one-shot lanes on a harness that runs them, each lane refreshing on its own; batch, the named fallback, on one that does not)")
 					f.String("profile", sandbox.ProfileFriend, "the wall profile every lane child runs inside when the friend row names none (row_profile=): "+strings.Join(sandbox.LaneProfiles, ", "))
 					f.String("config-dir", "", "the friend's config directory, writable inside the lane's wall and its HOME there, and a claude one-shot lane's CLAUDE_CONFIG_DIR, an absolute path (default: the row's config_dir, read from each beat as row_config_dir=, else CLAUDE_CONFIG_DIR)")
 					f.String("deny-self", w.getenv("NOVA_FRIEND_DENY_SELF"), "the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; a lane wall with none is refused (default: NOVA_FRIEND_DENY_SELF)")
@@ -1539,11 +1539,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 		Row: func() (string, int) {
 			rowMu.Lock()
 			defer rowMu.Unlock()
-			if m := c.Str("mode"); m != "" {
-				return m, rowWidth // the override, for a test
-			}
 			return rowMode, rowWidth
 		},
+		Mode:      c.Str("mode"), // the override, for a test: taken as given
 		LoadLanes: func() (friend.LaneState, error) { return friend.ReadLanes(state) },
 		Sprint:    w.sprintAsk(server),
 		Rules:     rules,
