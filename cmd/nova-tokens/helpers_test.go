@@ -45,6 +45,16 @@ func invokeAt(t *testing.T, now time.Time, args ...string) result {
 	return result{exit: exit, stdout: out.String(), stderr: errb.String()}
 }
 
+// reportBody is a report's stdout without the skeleton's result line: the note body a
+// caller pipes into a bus note.
+func reportBody(r result) string {
+	lines := strings.Split(r.stdout, "\n")
+	if len(lines) > 0 && strings.HasPrefix(lines[0], "REPORT ") {
+		lines = lines[1:]
+	}
+	return strings.Join(lines, "\n")
+}
+
 func wantExit(t *testing.T, r result, want int) {
 	t.Helper()
 	assert.Equal(t, want, r.exit, "exit %d, want %d\nstdout:\n%s\nstderr:\n%s", r.exit, want, r.stdout, r.stderr)

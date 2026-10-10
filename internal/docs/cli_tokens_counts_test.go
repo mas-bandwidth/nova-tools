@@ -1,7 +1,12 @@
 package docs
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -20,92 +25,68 @@ var numberWords = map[int]string{
 // tool. A COUNTED claim about a tool's own help output is worse: it rots
 // silently as verbs are added, and nobody notices until someone counts.
 //
-// The banner in cmd/nova-tokens/main.go is the truth here, and the document is
-// judged against it. `report` carries two usage lines and one name, which is
-// why a count of usage lines and a count of verbs differ -- this test counts
-// names, not lines.
+// The definition in cmd/nova-tokens is the truth here, and the document is
+// judged against it: internal/tool prints one usage block from every
+// tool.Verb's Name and Usage, `version` added, and one example block from every
+// Verb's Example lines. `report` carries two usage lines and one name, which is
+// why this test counts names, not lines.
 //
-// The number in each expected sentence is derived from the banner rather than
-// hard-coded, so the test keeps its meaning when a verb is added.
+// The number in each expected sentence is derived from the definition rather
+// than hard-coded, so the test keeps its meaning when a verb is added.
 func TestTheCLIReferenceCountsNovaTokensHelpCorrectly(t *testing.T) {
 	t.Parallel()
 
-	const source = "../../cmd/nova-tokens/main.go"
-	raw, err := os.ReadFile(source)
-	require.NoError(t, err, "%s: %v; the banner printed by `nova-tokens help` lives in this file", source, err)
-	lines := strings.Split(string(raw), "\n")
-
-	start, end := -1, -1
-	for i, line := range lines {
-		if start == -1 && strings.HasPrefix(line, "const usage = `") {
-			start = i
+	const source = "../../cmd/nova-tokens"
+	files, err := filepath.Glob(filepath.Join(source, "*.go"))
+	require.NoError(t, err)
+	verbs, examples := 1, 0 // version is every tool's, added by internal/tool
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
 			continue
 		}
-		if start != -1 && line == "`" {
-			end = i
-			break
-		}
-	}
-	require.NotEqual(t, -1, start, "%s: no line beginning \"const usage = `\"; the banner this test cuts is not there", source)
-	require.NotEqual(t, -1, end, "%s: the banner opened at line %d never closes with a lone backtick at column one", source, start+1)
-	banner := lines[start+1 : end]
-
-	usageAt := -1
-	for i, line := range banner {
-		if line == "usage:" {
-			usageAt = i
-			break
-		}
-	}
-	require.NotEqual(t, -1, usageAt, "%s: the banner carries no line exactly \"usage:\"", source)
-	verbs := map[string]bool{}
-	for _, line := range banner[usageAt+1:] {
-		if line == "" {
-			break
-		}
-		if strings.HasPrefix(line, "  nova-tokens ") {
-			fields := strings.Fields(line)
-			if len(fields) >= 2 {
-				verbs[fields[1]] = true
+		file, err := parser.ParseFile(token.NewFileSet(), f, nil, parser.SkipObjectResolution)
+		require.NoError(t, err)
+		ast.Inspect(file, func(n ast.Node) bool {
+			lit, ok := n.(*ast.CompositeLit)
+			if !ok {
+				return true
 			}
-		}
-	}
-	require.GreaterOrEqual(t, len(verbs), 5, "%s: the usage block names %d distinct verbs; a scan that finds almost none would pass by asking nothing", source, len(verbs))
-
-	var blockCounts []int
-	for i, line := range banner {
-		if line != "example:" {
-			continue
-		}
-		n := 0
-		for _, after := range banner[i+1:] {
-			if after == "" {
-				break
+			if sel, isSel := lit.Type.(*ast.SelectorExpr); !isSel || sel.Sel.Name != "Verb" {
+				return true
 			}
-			if strings.HasPrefix(after, "  nova-tokens ") {
-				n++
+			for _, e := range lit.Elts {
+				kv := e.(*ast.KeyValueExpr)
+				switch kv.Key.(*ast.Ident).Name {
+				case "Name":
+					verbs++
+				case "Example":
+					text, err := strconv.Unquote(kv.Value.(*ast.BasicLit).Value)
+					require.NoError(t, err)
+					for _, l := range strings.Split(text, "\n") {
+						if strings.TrimSpace(l) != "" {
+							examples++
+						}
+					}
+				}
 			}
-		}
-		blockCounts = append(blockCounts, n)
+			return true
+		})
 	}
-	total := 0
-	for _, n := range blockCounts {
-		total += n
-	}
+	require.GreaterOrEqual(t, verbs, 5, "%s: the definition names %d verbs; a scan that finds almost none would pass by asking nothing", source, verbs)
 
 	ref, err := os.ReadFile("../../docs/CLI.md")
 	require.NoError(t, err, "../../docs/CLI.md: %v", err)
 	doc := string(ref)
 
-	verbWord, ok := numberWords[len(verbs)]
-	require.True(t, ok, "%s: the usage block names %d distinct verbs, outside the 1..12 this test can spell; widen numberWords", source, len(verbs))
+	verbWord, ok := numberWords[verbs]
+	require.True(t, ok, "%s: the definition names %d verbs, outside the 1..12 this test can spell; widen numberWords", source, verbs)
 	verbClaim := "`nova-tokens help` lists all " + verbWord + " verbs."
-	assert.Contains(t, doc, verbClaim, "docs/CLI.md makes a counted claim about the tool's own help that is wrong: it should say %q, where the usage block in %s names %d distinct verbs (report has two usage lines and one name, which is why a line count and a verb count differ) -- correct the sentence",
-		verbClaim, source, len(verbs))
+	assert.Contains(t, doc, verbClaim, "docs/CLI.md makes a counted claim about the tool's own help that is wrong: it should say %q, where %s defines %d verbs -- correct the sentence",
+		verbClaim, source, verbs)
 
-	exampleWord, ok := numberWords[total]
-	require.True(t, ok, "%s: the banner carries %d pasteable example lines, outside the 1..12 this test can spell; widen numberWords", source, total)
+	exampleWord, ok := numberWords[examples]
+	require.True(t, ok, "%s: the help carries %d example lines, outside the 1..12 this test can spell; widen numberWords", source, examples)
 	exampleClaim := "`nova-tokens help` carries " + exampleWord + " example lines"
-	assert.Contains(t, doc, exampleClaim, "docs/CLI.md makes a counted claim about the tool's own help that is wrong: it should say %q, where the banner in %s carries %d pasteable `nova-tokens ...` lines across %d example blocks -- correct the sentence",
-		exampleClaim, source, total, len(blockCounts))
+	assert.Contains(t, doc, exampleClaim, "docs/CLI.md makes a counted claim about the tool's own help that is wrong: it should say %q, where %s's verbs carry %d example lines -- correct the sentence",
+		exampleClaim, source, examples)
 }

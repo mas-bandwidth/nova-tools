@@ -149,6 +149,9 @@ func TestAZonedReportCrossesTheBusWithoutBeingCalledUTC(t *testing.T) {
 		"--provider", "xai:johnny="+export, "--note", note)
 	wantExit(t, r, 0)
 	for _, line := range lines(r.stdout) {
+		if strings.HasPrefix(line, "REPORT ") {
+			continue // the skeleton's result line, not a body line
+		}
 		{
 			f := strings.Split(line, "\t")
 			assert.True(t, len(f) == 7 && f[6] == "day_basis=America/Los_Angeles", "a zoned report line is %q; it wants seven fields ending day_basis=<zone>", line)
