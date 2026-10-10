@@ -246,6 +246,7 @@ func (a *app) briefDriftFunc() func(*sprint.Snapshot, *sprint.Card) string {
 	type bkey struct{ repo, ref, pin string }
 	evidence := map[bkey]swarm.BriefBase{}
 	seen := map[string]string{}
+	var tick time.Time
 	l := &lander{a: a}
 	return func(s *sprint.Snapshot, c *sprint.Card) string {
 		brief := c.F("brief")
@@ -254,6 +255,14 @@ func (a *app) briefDriftFunc() func(*sprint.Snapshot, *sprint.Card) string {
 		}
 		if _, ok := swarm.CardHeaderValue([]byte(brief), "PATHS"); !ok {
 			return ""
+		}
+		if !s.Now.Equal(tick) {
+			// the base is held to its tip of this moment: the evidence and the pass cache
+			// are rebuilt each tick, so a brief checked against a base that has since
+			// moved is checked again at its new tip
+			tick = s.Now
+			evidence = map[bkey]swarm.BriefBase{}
+			seen = map[string]string{}
 		}
 		if line, ok := seen[brief]; ok {
 			return line

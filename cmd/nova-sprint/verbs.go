@@ -1343,6 +1343,9 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 			checks[i].brief = fixed[i].brief
 		}
 		*brief = fixed[0].brief
+		for i := range rs {
+			rs[i].Brief = fixed[0].brief
+		}
 		if code := a.holdPathsAdmit("add", stderr, checks...); code != 0 {
 			return code
 		}

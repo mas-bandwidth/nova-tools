@@ -110,6 +110,15 @@ func TestAddRunsTheBriefChecksAtTheBase(t *testing.T) {
 
 	// the corrected PATHS line is what the card stores
 	assert.Contains(t, ta.ok("card m2 --brief"), "PATHS: internal/x/*.go,internal/x/testdata/**")
+
+	// the one-brief form applies the lint's fix to the brief it stores too: --one with a
+	// single --brief-file prints LINT APPLIED and admits the card with the corrected line
+	single := write(t.TempDir(), "single", brief("sprint/s1", "internal/x/*.go", "TestNew"))
+	code, out, errs = ta.do("add --stream s3 single --one --brief-file " + single)
+	require.Equal(t, 0, code, "%s%s", out, errs)
+	assert.Contains(t, errs, "LINT APPLIED card=single PATHS: internal/x/*.go,internal/x/testdata/**\n")
+	assert.True(t, ta.placed("single"), "the one-brief card is admitted")
+	assert.Contains(t, ta.ok("card single --brief"), "PATHS: internal/x/*.go,internal/x/testdata/**")
 }
 
 // brief --fix applies the brief checks' own corrected header lines to the card's stored
