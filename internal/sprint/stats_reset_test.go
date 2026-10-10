@@ -1,6 +1,8 @@
 package sprint_test
 
 import (
+	"context"
+	"encoding/json"
 	"math/big"
 	"strings"
 	"testing"
@@ -218,4 +220,161 @@ func TestTierCostsSinceAMark(t *testing.T) {
 	assert.Equal(t, "$1.00", got.PerLanded, "per landed is counted from the base by the tick")
 	assert.Equal(t, map[string]string{"flash": "$1.00", "pro": "$2.00"}, tc.CostByTier, "the figures read are not changed")
 	assert.True(t, strings.HasPrefix(got.TotalCost, "$"))
+}
+
+// A tidy of the fleet after a reset: later wins and the reset is kept. The tidy takes the
+// history off m1's done cells and rebases the mark's counters by what it took
+// (sprint.ResetMark.Rebase), so m1's done since the mark is what it was (0), and one card
+// landed after both shows done 1, where the mark's old counter would have clamped it to 0.
+func TestAResetThenATidyOfTheFleetThenOneCardShowsDoneOne(t *testing.T) {
+	t.Parallel()
+	r := newConflictRig(t)
+	r.landOnM1(13)
+	_, _, _, err := r.st.SetMachine(r.ctx, true)
+	require.NoError(t, err)
+	r.mu.Lock()
+	r.now = r.now.Add(time.Hour + 500*time.Millisecond)
+	r.mu.Unlock()
+	reset, err := r.st.ResetStats(r.ctx, store.ResetReq{Reason: "count from now"})
+	require.NoError(t, err)
+	require.Equal(t, sprint.ResetRow{OK: 13}, reset.Mark.Rows["m1"])
+	r.mu.Lock()
+	r.now = r.now.Add(2 * time.Minute)
+	r.mu.Unlock()
+	tidy, err := r.st.TidyStats(r.ctx, store.TidyReq{Kinds: []string{sprint.TidyFleet}, Reason: "history"})
+	require.NoError(t, err)
+	require.Equal(t, 3, tidy.Moved, "the three oldest: the row's newest ten stay")
+	m, err := r.st.StatsReset(r.ctx)
+	require.NoError(t, err)
+	require.NotNil(t, m, "the tidy keeps the reset")
+	assert.Equal(t, sprint.ResetRow{OK: 10}, m.Rows["m1"], "rebased by the three cards the tidy took off")
+	assert.Equal(t, reset.Mark.At, m.At)
+	assert.Equal(t, "0", cell(r.resetView().fleet, "m1", sprint.Done), "nothing since the mark")
+
+	r.must(store.AddStep(sprint.AddReq{Stream: "s1", Count: 1, Brief: "c: the work (s1) tier: flash\nREPO: mas-bandwidth/nova-tools\n\nThe task.\n"}))
+	_, _, _, err = r.st.SetMachine(r.ctx, true)
+	require.NoError(t, err)
+	r.beat()
+	r.must(store.FleetStep(sprint.FleetReq{Op: "down", Member: "m2"}))
+	r.landWithCost("s1", "s1-14")
+	r.must(store.DrainStep())
+	require.Equal(t, sprint.Landed, r.snap().StateOf("s1-14"))
+	worker := r.snap().Fleet.Card(r.snap().Work.Card("s1-14").F("work")).Row
+	require.Equal(t, "m1", worker, "m2 is down: the card is m1's")
+	v := r.resetView()
+	assert.Equal(t, "1", cell(v.fleet, "m1", sprint.Done), "one card since the reset, the tidy after it notwithstanding")
+	assert.Equal(t, "100.0%", cell(v.fleet, "m1", sprint.OkPct))
+}
+
+// The tick's read of the stats record and its write of the where record are two steps: a
+// reset between them (it moves no table) must not leave a where record counted without its
+// mark. The record carries the stamp of the stats record it was counted from, and where
+// takes none whose stamp is not the one in force; the next tick counts it again, idle or not.
+func TestAWhereRecordCountedBeforeAResetIsNeverTaken(t *testing.T) {
+	t.Parallel()
+	r := newConflictRig(t)
+	r.landOnM1(3)
+	before := r.resetView()
+	spent := before.facts.Streams["s1"].TotalCost
+	require.NotEmpty(t, spent)
+	_, err := r.st.ResetStats(r.ctx, store.ResetReq{Reason: "count from now"})
+	require.NoError(t, err)
+	now := r.resetView()
+	require.Empty(t, now.facts.Streams["s1"].TotalCost, "counted from the mark")
+
+	// the tick that read the stats record before the reset writes its record after it, at the
+	// work table's revision as it stands (the reset wrote no table): its spend is the epoch's
+	pinned, err := r.st.Pinned(r.ctx)
+	require.NoError(t, err)
+	raw, ok, err := r.m.GetKey(r.ctx, "where")
+	require.NoError(t, err)
+	require.True(t, ok)
+	var rec map[string]any
+	require.NoError(t, json.Unmarshal([]byte(raw), &rec))
+	require.NotEmpty(t, rec["stats"], "the record names the stats record it was counted from")
+	delete(rec, "stats") // counted before the reset: no tidy, no mark
+	rec["streams"].(map[string]any)["s1"].(map[string]any)["total_cost"] = spent
+	b, err := json.Marshal(rec)
+	require.NoError(t, err)
+	require.NoError(t, r.m.SetKey(r.ctx, "where", string(b)))
+	shapes, err := r.m.Shapes(r.ctx, []string{pinned.Names.Table(sprint.Work)})
+	require.NoError(t, err)
+	require.Equal(t, shapes[0].Revision, uint64(rec["rev"].(float64)), "the stale record is at the revision where reads")
+	facts, err := pinned.WhereFacts(r.ctx, shapes[0].Revision)
+	require.NoError(t, err)
+	assert.Nil(t, facts.Streams, "a record counted from another stats record is not taken, though its revision is current")
+
+	// the next tick counts it again, from the mark
+	again := r.resetView()
+	assert.Empty(t, again.facts.Streams["s1"].TotalCost)
+	assert.NotNil(t, again.facts.Streams)
+}
+
+// A reset written while a tidy runs (between the tidy's read of the stats record and its
+// write) is kept: the tidy writes the record by compare-and-set, read again, and the reset's
+// own write is one too, so neither drops the other's (the tidy's kinds and archive, the mark).
+func TestAResetDuringATidyIsKept(t *testing.T) {
+	t.Parallel()
+	r := newConflictRig(t)
+	r.landOnM1(12)
+	_, _, _, err := r.st.SetMachine(r.ctx, true)
+	require.NoError(t, err)
+	r.mu.Lock()
+	r.now = r.now.Add(time.Hour)
+	r.mu.Unlock()
+	fired, lost := false, false
+	tidier := &store.Store{B: onTidy{Mem: r.m, fired: &fired, lost: &lost, act: func(ctx context.Context) error {
+		_, err := r.st.ResetStats(ctx, store.ResetReq{Reason: "meanwhile"})
+		return err
+	}}, Names: r.st.Names, Actor: "coordinator", Now: r.st.Now, NewID: r.st.NewID, Sleep: r.st.Sleep}
+	res, err := tidier.TidyStats(r.ctx, store.TidyReq{Kinds: []string{sprint.TidyFleet}, Reason: "history"})
+	require.NoError(t, err)
+	require.True(t, fired)
+	require.Equal(t, 2, res.Moved)
+	rec, err := r.st.StatsTidied(r.ctx)
+	require.NoError(t, err)
+	require.NotNil(t, rec.Reset, "the reset written during the tidy is kept")
+	assert.Equal(t, "meanwhile", rec.Reset.Reason)
+	assert.Equal(t, sprint.ResetRow{OK: 10}, rec.Reset.Rows["m1"], "and rebased by the two cards the tidy took off")
+	assert.Equal(t, []string{res.Archive}, rec.Archives, "the tidy's archive is recorded")
+	assert.False(t, rec.Kinds[sprint.TidyFleet].IsZero(), "and its kind")
+}
+
+// A reset under an operation id writes one mark: the same id again returns it and writes
+// nothing; the same id with another reason, or an id another verb's step recorded, is refused.
+func TestAResetUnderAnOperationIDIsWrittenOnce(t *testing.T) {
+	t.Parallel()
+	r := newConflictRig(t)
+	r.landOnM1(2)
+	first, err := r.st.ResetStats(r.ctx, store.ResetReq{Reason: "count from now", Op: "reset-1"})
+	require.NoError(t, err)
+	assert.False(t, first.Replay)
+	assert.Equal(t, "reset-1", first.Mark.Op)
+	r.mu.Lock()
+	r.now = r.now.Add(time.Minute)
+	r.mu.Unlock()
+	again, err := r.st.ResetStats(r.ctx, store.ResetReq{Reason: "count from now", Op: "reset-1"})
+	require.NoError(t, err)
+	assert.True(t, again.Replay, "a retry returns the recorded mark")
+	assert.Equal(t, first.Mark.At, again.Mark.At, "and writes no second")
+	m, err := r.st.StatsReset(r.ctx)
+	require.NoError(t, err)
+	assert.Equal(t, first.Mark.At, m.At)
+
+	_, err = r.st.ResetStats(r.ctx, store.ResetReq{Reason: "another reason", Op: "reset-1"})
+	var conflict *store.OpConflictError
+	require.ErrorAs(t, err, &conflict, "the same id with other arguments is not a retry")
+	assert.True(t, conflict.OtherArgs)
+
+	r.must(store.Step{Verb: "poke", Load: []string{sprint.Fleet}, CallerOp: "poke-1", Plan: func(*sprint.Snapshot) sprint.Plan { return sprint.Plan{} }})
+	if _, err = r.st.ResetStats(r.ctx, store.ResetReq{Reason: "x", Op: "poke-1"}); err == nil {
+		// a step that changed nothing may record no result: then the id is free, and the
+		// reset is written under it once
+		m, _ := r.st.StatsReset(r.ctx)
+		assert.Equal(t, "poke-1", m.Op)
+	} else {
+		require.ErrorAs(t, err, &conflict, "an id another verb recorded is refused")
+	}
+	_, err = r.st.ResetStats(r.ctx, store.ResetReq{Reason: "x", Op: "bad~op"})
+	require.Error(t, err)
 }

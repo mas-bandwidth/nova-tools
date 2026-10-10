@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"time"
 
@@ -251,7 +252,11 @@ func (st *Store) TidyStats(ctx context.Context, req TidyReq) (TidyResult, error)
 	if err := st.putJSON(ctx, res.Archive, res.Record); err != nil {
 		return res, err
 	}
-	rec.Archives = append(rec.Archives, res.Archive)
+	keepArchive := func(rec *StatsRecord) {
+		if !slices.Contains(rec.Archives, res.Archive) {
+			rec.Archives = append(rec.Archives, res.Archive)
+		}
+	}
 	if has(sprint.TidyFriends) || has(sprint.TidyFleet) {
 		var rows []sprint.TidyRow
 		r, err := st.Run(ctx, Step{Verb: "stats tidy", Load: []string{sprint.Work, sprint.Fleet}, Plan: func(s *sprint.Snapshot) sprint.Plan {
@@ -269,7 +274,7 @@ func (st *Store) TidyStats(ctx context.Context, req TidyReq) (TidyResult, error)
 		if err != nil {
 			res.Record.State, res.Record.Error = ArchiveFailed, err.Error()
 			_ = st.putJSON(ctx, res.Archive, res.Record) // ignored: the move's error is the one to report; the planned archive stands
-			_ = st.putJSON(ctx, keyStats, rec)           // ignored: as above; the record keeps the archive's key for teardown
+			_, _ = st.updateStats(ctx, kv, keepArchive)  // ignored: as above; the record keeps the archive's key for teardown
 			return res, fmt.Errorf("%w; the archive %s is kept (state failed, or planned when that write failed too); run it again after a minute", err, res.Archive)
 		}
 		res.Record.Rows = rows
@@ -279,20 +284,33 @@ func (st *Store) TidyStats(ctx context.Context, req TidyReq) (TidyResult, error)
 	if err := st.putJSON(ctx, res.Archive, res.Record); err != nil {
 		return res, err
 	}
-	if rec.Epoch != st.epoch {
-		rec.Kinds, rec.Streams = nil, nil
-	}
-	rec.Epoch, rec.Since, rec.Reason, rec.By = st.epoch, now, req.Reason, st.Actor
-	if rec.Kinds == nil {
-		rec.Kinds = map[string]time.Time{}
-	}
-	for _, k := range kinds {
-		rec.Kinds[k] = now
-	}
-	if has(sprint.TidyStreams) {
-		rec.Streams = res.Record.Streams
-	}
-	if err := st.putJSON(ctx, keyStats, rec); err != nil {
+	// the record, read again and written only while unchanged (updateStats): a reset written
+	// since this tidy's first read is kept, its rows rebased on what this tidy took off
+	if _, err := st.updateStats(ctx, kv, func(rec *StatsRecord) {
+		keepArchive(rec)
+		if rec.Epoch != st.epoch {
+			rec.Kinds, rec.Streams = nil, nil
+		}
+		rec.Epoch, rec.Since, rec.Reason, rec.By = st.epoch, now, req.Reason, st.Actor
+		if rec.Kinds == nil {
+			rec.Kinds = map[string]time.Time{}
+		}
+		for _, k := range kinds {
+			rec.Kinds[k] = now
+		}
+		if has(sprint.TidyStreams) {
+			rec.Streams = res.Record.Streams
+		}
+		// a reset's rows count from the mark: the cards this tidy took off the done cells
+		// leave the mark's counters too (sprint.ResetMark.Rebase), so the row's done since
+		// the mark is what it was, and the tidy, later, never brings the cleared counts back
+		if m := rec.resetIn(st.epoch); m != nil {
+			rebased := *m
+			rebased.Rows = maps.Clone(m.Rows)
+			rebased.Rebase(res.Record.Rows)
+			rec.Reset = &rebased
+		}
+	}); err != nil {
 		return res, err
 	}
 	if has(sprint.TidyStreams) {

@@ -194,132 +194,7 @@ func runJSTweaks(t *testing.T, appJS string) *jsTweaksResult {
 		t.Skip("node is not installed on this machine; the dashboard JS behavioural test needs it")
 	}
 
-	const runnerScript = `
-const fs = require('fs');
-const vm = require('vm');
-const input = JSON.parse(fs.readFileSync(0, 'utf8'));
-const appCode = input.appJS;
-
-function createDOMStub() {
-  const elements = new Map();
-  function createElement(tag, id = '') {
-    const _classes = new Set();
-    const el = {
-      tagName: tag.toUpperCase(),
-      id: id,
-      _classes: _classes,
-      get className() { return Array.from(_classes).join(' '); },
-      set className(val) {
-        _classes.clear();
-        if (val) String(val).split(/\s+/).filter(Boolean).forEach(c => _classes.add(c));
-      },
-      get classList() {
-        const self = this;
-        return {
-          add(...c) { c.forEach(x => _classes.add(x)); },
-          remove(...c) { c.forEach(x => _classes.delete(x)); },
-          toggle(c, force) {
-            if (force === undefined) force = !_classes.has(c);
-            if (force) _classes.add(c); else _classes.delete(c);
-            return force;
-          },
-          contains(c) { return _classes.has(c); }
-        };
-      },
-      children: [],
-      style: {
-        setProperty(k, v) { this[k] = v; },
-        getPropertyValue(k) { return this[k] || ''; }
-      },
-      attributes: {},
-      addEventListener() {},
-      setAttribute(k, v) { this.attributes[k] = String(v); },
-      getAttribute(k) { return this.attributes[k] || null; },
-      appendChild(c) {
-        if (typeof c === 'string') c = { textContent: c, children: [] };
-        this.children.push(c);
-        c.parentNode = this;
-        return c;
-      },
-      insertBefore(c, ref) {
-        if (c.parentNode) c.parentNode.removeChild(c);
-        const idx = ref ? this.children.indexOf(ref) : -1;
-        if (idx >= 0) this.children.splice(idx, 0, c); else this.children.push(c);
-        c.parentNode = this;
-        return c;
-      },
-      get nextSibling() {
-        if (!this.parentNode) return null;
-        const s = this.parentNode.children;
-        return s[s.indexOf(this) + 1] || null;
-      },
-      get lastChild() { return this.children[this.children.length - 1] || null; },
-      dataset: {},
-      removeChild(c) {
-        const idx = this.children.indexOf(c);
-        if (idx >= 0) this.children.splice(idx, 1);
-        c.parentNode = null;
-        return c;
-      },
-      get firstChild() { return this.children[0] || null; },
-      get innerHTML() { return ''; },
-      set innerHTML(val) { this.children = []; },
-      get textContent() {
-        if (this.children.length > 0) return this.children.map(c => c.textContent).join('');
-        return this._text || '';
-      },
-      set textContent(val) { this._text = val; this.children = []; },
-      querySelector(sel) { return createElement('div'); },
-      querySelectorAll(sel) { return []; },
-      remove() { if (this.parentNode) this.parentNode.removeChild(this); },
-      cloneNode(deep) { return createElement(tag, id); },
-      scrollWidth: 50,
-      clientWidth: 100
-    };
-    return el;
-  }
-
-  function getEl(id) {
-    if (!elements.has(id)) {
-      elements.set(id, createElement('div', id));
-    }
-    return elements.get(id);
-  }
-
-  const context = {
-    window: { addEventListener() {} },
-    document: {
-      getElementById: getEl,
-      createElement: createElement,
-      createElementNS: (ns, tag) => createElement(tag),
-      createTextNode: (t) => ({ textContent: t, children: [] }),
-      documentElement: { fontSize: '16px' }
-    },
-    getComputedStyle: () => ({ fontSize: '16px' }),
-    location: { search: '' },
-    fetch: () => Promise.resolve({ ok: true, json: () => Promise.resolve({}) }),
-    setInterval: () => {},
-    console: console,
-    Intl: Intl,
-    Math: Math,
-    Date: Date,
-    String: String,
-    Number: Number,
-    parseInt: parseInt,
-    parseFloat: parseFloat,
-    isNaN: isNaN,
-    Array: Array,
-    Object: Object,
-    RegExp: RegExp
-  };
-
-  vm.createContext(context);
-  vm.runInContext(appCode, context);
-  return { context, getEl };
-}
-
-const { context, getEl } = createDOMStub();
-
+	const runnerScript = jsDOMPrelude + `
 // 1. dollars test
 const dollarsCases = [1, 100, 101, 999, 1000, 1001];
 const dollarsResults = {};
@@ -449,3 +324,133 @@ process.stdout.write(JSON.stringify({
 
 	return &res
 }
+
+// jsDOMPrelude is the node script's start that loads app.js into a stubbed DOM: it reads
+// {"appJS": ...} on stdin and leaves the page's functions on context and its elements by
+// getEl. runJSTweaks and the stats reset's page test (stats_reset_test.go) run after it.
+const jsDOMPrelude = `
+const fs = require('fs');
+const vm = require('vm');
+const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+const appCode = input.appJS;
+
+function createDOMStub() {
+  const elements = new Map();
+  function createElement(tag, id = '') {
+    const _classes = new Set();
+    const el = {
+      tagName: tag.toUpperCase(),
+      id: id,
+      _classes: _classes,
+      get className() { return Array.from(_classes).join(' '); },
+      set className(val) {
+        _classes.clear();
+        if (val) String(val).split(/\s+/).filter(Boolean).forEach(c => _classes.add(c));
+      },
+      get classList() {
+        const self = this;
+        return {
+          add(...c) { c.forEach(x => _classes.add(x)); },
+          remove(...c) { c.forEach(x => _classes.delete(x)); },
+          toggle(c, force) {
+            if (force === undefined) force = !_classes.has(c);
+            if (force) _classes.add(c); else _classes.delete(c);
+            return force;
+          },
+          contains(c) { return _classes.has(c); }
+        };
+      },
+      children: [],
+      style: {
+        setProperty(k, v) { this[k] = v; },
+        getPropertyValue(k) { return this[k] || ''; }
+      },
+      attributes: {},
+      addEventListener() {},
+      setAttribute(k, v) { this.attributes[k] = String(v); },
+      getAttribute(k) { return this.attributes[k] || null; },
+      appendChild(c) {
+        if (typeof c === 'string') c = { textContent: c, children: [] };
+        this.children.push(c);
+        c.parentNode = this;
+        return c;
+      },
+      insertBefore(c, ref) {
+        if (c.parentNode) c.parentNode.removeChild(c);
+        const idx = ref ? this.children.indexOf(ref) : -1;
+        if (idx >= 0) this.children.splice(idx, 0, c); else this.children.push(c);
+        c.parentNode = this;
+        return c;
+      },
+      get nextSibling() {
+        if (!this.parentNode) return null;
+        const s = this.parentNode.children;
+        return s[s.indexOf(this) + 1] || null;
+      },
+      get lastChild() { return this.children[this.children.length - 1] || null; },
+      dataset: {},
+      removeChild(c) {
+        const idx = this.children.indexOf(c);
+        if (idx >= 0) this.children.splice(idx, 1);
+        c.parentNode = null;
+        return c;
+      },
+      get firstChild() { return this.children[0] || null; },
+      get innerHTML() { return ''; },
+      set innerHTML(val) { this.children = []; },
+      get textContent() {
+        if (this.children.length > 0) return this.children.map(c => c.textContent).join('');
+        return this._text || '';
+      },
+      set textContent(val) { this._text = val; this.children = []; },
+      querySelector(sel) { return createElement('div'); },
+      querySelectorAll(sel) { return []; },
+      remove() { if (this.parentNode) this.parentNode.removeChild(this); },
+      cloneNode(deep) { return createElement(tag, id); },
+      scrollWidth: 50,
+      clientWidth: 100
+    };
+    return el;
+  }
+
+  function getEl(id) {
+    if (!elements.has(id)) {
+      elements.set(id, createElement('div', id));
+    }
+    return elements.get(id);
+  }
+
+  const context = {
+    window: { addEventListener() {} },
+    document: {
+      getElementById: getEl,
+      createElement: createElement,
+      createElementNS: (ns, tag) => createElement(tag),
+      createTextNode: (t) => ({ textContent: t, children: [] }),
+      documentElement: { fontSize: '16px' }
+    },
+    getComputedStyle: () => ({ fontSize: '16px' }),
+    location: { search: '' },
+    fetch: () => Promise.resolve({ ok: true, json: () => Promise.resolve({}) }),
+    setInterval: () => {},
+    console: console,
+    Intl: Intl,
+    Math: Math,
+    Date: Date,
+    String: String,
+    Number: Number,
+    parseInt: parseInt,
+    parseFloat: parseFloat,
+    isNaN: isNaN,
+    Array: Array,
+    Object: Object,
+    RegExp: RegExp
+  };
+
+  vm.createContext(context);
+  vm.runInContext(appCode, context);
+  return { context, getEl };
+}
+
+const { context, getEl } = createDOMStub();
+`

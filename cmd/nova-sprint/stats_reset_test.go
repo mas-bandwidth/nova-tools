@@ -65,4 +65,23 @@ func TestStatsResetVerbMarksShowsAndReplaces(t *testing.T) {
 	assert.Contains(t, show, "STATS-RESET mark at=")
 	assert.Contains(t, show, "reason=again")
 	assert.False(t, strings.Contains(show, "count from now"), "the first mark is replaced")
+
+	// under --op, a retry returns the mark it wrote and writes nothing
+	ta.mu.Lock()
+	ta.now = ta.now.Add(time.Second)
+	ta.mu.Unlock()
+	out = ta.ok("stats reset --reason third --op reset-3")
+	assert.Contains(t, out, "STATS-RESET OK at=")
+	ta.mu.Lock()
+	ta.now = ta.now.Add(time.Second)
+	ta.mu.Unlock()
+	again := ta.ok("stats reset --reason third --op reset-3")
+	assert.Contains(t, again, "STATS-RESET REPLAY op=reset-3 nothing written")
+	at := func(line string) string {
+		_, rest, _ := strings.Cut(line, " at=")
+		f, _, _ := strings.Cut(rest, " ")
+		return f
+	}
+	assert.Equal(t, at(out), at(again), "the same mark")
+	assert.NotContains(t, again, "replaced=")
 }

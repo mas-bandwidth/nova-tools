@@ -65,6 +65,10 @@ type WhereRecord struct {
 	RowCards  map[string]map[string]int `json:"row_cards,omitempty"`
 	ReadCards sprint.ReadCardCounts     `json:"read_cards"`
 	FixStates map[string]map[string]int `json:"fix_states,omitempty"`
+	// Stats is the stats record the spend and per landed were counted from (statsStamp: the
+	// last tidy of the streams and the reset's mark); a record whose stamp is not the stats
+	// record's is counted again and never taken, though no table moved.
+	Stats string `json:"stats,omitempty"`
 }
 
 // whereOf is the where record of a snapshot holding every card of the work
@@ -127,10 +131,11 @@ func (st *Store) keepWhere(ctx context.Context, m Machine) error {
 	if err != nil {
 		return err
 	}
-	if r, ok := readWhere(vals[0], oks[0]); ok && r.Epoch == st.epoch && r.Rev == shapes[0].Revision && r.FleetRev == shapes[1].Revision {
+	stats := st.statsRecordOf(vals[1], oks[1]) // permissive: an unreadable one is no tidy
+	stamp := stats.statsStamp(st.epoch)
+	if r, ok := readWhere(vals[0], oks[0]); ok && r.Epoch == st.epoch && r.Rev == shapes[0].Revision && r.FleetRev == shapes[1].Revision && r.Stats == stamp {
 		return nil
 	}
-	stats := st.statsRecordOf(vals[1], oks[1]) // permissive: an unreadable one is no tidy
 	tw := st.twin()
 	if !tw.mu.TryLock() {
 		return nil
@@ -144,6 +149,7 @@ func (st *Store) keepWhere(ctx context.Context, m Machine) error {
 		return err
 	}
 	r := whereOf(snap, m, st.now())
+	r.Stats = stamp
 	// the spend since the stats reset's mark (sprint.TierCostsSince): the total, the work, the
 	// reads and each tier, less the mark's; a stream the mark does not know reads as before
 	if m := stats.resetIn(st.epoch); m != nil {
@@ -354,9 +360,10 @@ func (st *Store) WhereFacts(ctx context.Context, workRev uint64) (WhereFacts, er
 		// the stats reset's mark, in the same exchange: an unreadable stats record is none
 		// here, as it is no tidy (the tick says it, statsRecordOf)
 		var stats StatsRecord
-		if oks[4] && json.Unmarshal([]byte(vals[4]), &stats) == nil {
-			f.Reset = stats.resetIn(st.epoch)
+		if !oks[4] || json.Unmarshal([]byte(vals[4]), &stats) != nil {
+			stats = StatsRecord{}
 		}
+		f.Reset = stats.resetIn(st.epoch)
 		for i, v := range []any{&f.Machine, &f.Heartbeat} {
 			if oks[i] {
 				if err := json.Unmarshal([]byte(vals[i]), v); err != nil {
@@ -367,7 +374,8 @@ func (st *Store) WhereFacts(ctx context.Context, workRev uint64) (WhereFacts, er
 		if r := readStoreRTT(vals[3], oks[3]); len(r.Samples) > 0 && st.now().Sub(time.UnixMilli(r.At)) <= StoreRTTWindow {
 			f.HasStoreRTT, f.StoreRTTP50MS, f.StoreRTTP99MS = true, r.P50MS, r.P99MS
 		}
-		if r, ok := readWhere(vals[2], oks[2]); ok && r.Epoch == st.epoch && (r.Rev == workRev || st.keptBy(r, f.Machine, f.Heartbeat)) {
+		// a record counted from another stats record (a reset or a tidy since) is not taken
+		if r, ok := readWhere(vals[2], oks[2]); ok && r.Epoch == st.epoch && r.Stats == stats.statsStamp(st.epoch) && (r.Rev == workRev || st.keptBy(r, f.Machine, f.Heartbeat)) {
 			f.Held, f.Critical, f.Tiers, f.Streams, f.StageTimes, f.DealtFleet = r.Held, r.Critical, r.Tiers, r.Streams, r.StageTimes, r.DealtFleet
 			f.ReadsWaiting, f.Priorities, f.StreamPriorities = r.ReadsWaiting, r.Priorities, r.StreamPriorities
 			f.ReadsWindow = r.ReadsWindow

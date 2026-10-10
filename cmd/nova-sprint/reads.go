@@ -558,6 +558,9 @@ type statsResetView struct {
 	By     string    `json:"by,omitempty"`
 	Reason string    `json:"reason"`
 	Landed int64     `json:"landed"`
+	// Streams is the cards landed since the mark, stream by stream, over the same scope as
+	// Landed: the dashboard's release view sums it over the release's streams.
+	Streams map[string]int64 `json:"streams,omitempty"`
 }
 
 // whereView is the view, for a program.
@@ -1215,8 +1218,11 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	}
 	if m := facts.Reset; m != nil {
 		done := v.Done
-		v.StatsReset = &statsResetView{At: m.At, By: m.By, Reason: m.Reason,
-			Landed: m.LandedSince(shapes[0], func(r ntable.Row) bool { return done || !archivedRow(shapes[0], r) })}
+		by := m.LandedSinceBy(shapes[0], func(r ntable.Row) bool { return done || !archivedRow(shapes[0], r) })
+		v.StatsReset = &statsResetView{At: m.At, By: m.By, Reason: m.Reason, Streams: by}
+		for _, n := range by {
+			v.StatsReset.Landed += n
+		}
 	}
 	mf, err := mergeFactsOf(ctx, st, shapes[0], shapes[2], clocks, facts.Landed, now)
 	if err != nil {

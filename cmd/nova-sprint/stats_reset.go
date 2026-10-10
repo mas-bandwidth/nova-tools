@@ -26,7 +26,7 @@ func init() {
 // fleet and friend row's done and ok%, each stream's cost and spend by tier, the sprint's
 // total cost and per card, and stats. Nothing moves: no card, no stream, no archive. A
 // second reset replaces the mark; --dry-run writes nothing and prints the mark it would
-// write; --show prints the mark in force.
+// write; --show prints the mark in force; --op <id> again returns the mark it wrote.
 func (a *app) cmdStatsReset(args []string, stdout, stderr io.Writer) int {
 	const verb = "stats reset"
 	fs, c := a.verbSetup(verb)
@@ -62,7 +62,7 @@ func (a *app) cmdStatsReset(args []string, stdout, stderr io.Writer) int {
 		sayOK(stdout, c.json, verb, "STATS-RESET mark "+markLine(*m), map[string]any{"mark": m})
 		return 0
 	}
-	res, err := st.ResetStats(ctx, store.ResetReq{Reason: *reason, DryRun: *dry})
+	res, err := st.ResetStats(ctx, store.ResetReq{Reason: *reason, DryRun: *dry, Op: c.op})
 	if err != nil {
 		return a.readFailed(verb, err, stderr)
 	}
@@ -73,14 +73,17 @@ func (a *app) cmdStatsReset(args []string, stdout, stderr io.Writer) int {
 		printMark(stdout, res.Mark)
 	}
 	word := "STATS-RESET OK"
-	if res.DryRun {
+	switch {
+	case res.DryRun:
 		word = "STATS-RESET DRY-RUN would mark"
+	case res.Replay:
+		word = "STATS-RESET REPLAY op=" + res.Mark.Op + " nothing written; mark"
 	}
 	line := word + " " + markLine(res.Mark)
 	if res.Replaced != nil {
 		line += " replaced=" + res.Replaced.At.Format(time.RFC3339Nano)
 	}
-	sayOK(stdout, c.json, verb, line, map[string]any{"mark": res.Mark, "replaced": res.Replaced, "dry_run": res.DryRun, "said": res.Said})
+	sayOK(stdout, c.json, verb, line, map[string]any{"mark": res.Mark, "replaced": res.Replaced, "dry_run": res.DryRun, "replay": res.Replay, "said": res.Said})
 	return 0
 }
 

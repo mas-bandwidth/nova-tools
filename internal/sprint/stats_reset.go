@@ -58,6 +58,9 @@ type ResetMark struct {
 	Rows      map[string]ResetRow    `json:"rows,omitempty"`
 	Streams   map[string]ResetStream `json:"streams,omitempty"`
 	TotalCost string                 `json:"total_cost,omitempty"`
+	// Op is the caller's operation id the mark was written under (--op): the same id again
+	// returns this mark and writes nothing.
+	Op string `json:"op,omitempty"`
 }
 
 // ResetMarkOf is the mark of the sprint s at at: every fleet row's done cells, every stream's
@@ -175,8 +178,17 @@ func (m *ResetMark) FleetSince(t ntable.Table) ntable.Table {
 // to count: each stream's landed count less the mark's, never below zero; a stream the mark
 // does not know counts every landed card (it had none at the mark).
 func (m *ResetMark) LandedSince(t ntable.Table, in func(ntable.Row) bool) int64 {
-	j := t.Column(Landed)
 	var n int64
+	for _, c := range m.LandedSinceBy(t, in) {
+		n += c
+	}
+	return n
+}
+
+// LandedSinceBy is LandedSince stream by stream: every row in says to count, by its key.
+func (m *ResetMark) LandedSinceBy(t ntable.Table, in func(ntable.Row) bool) map[string]int64 {
+	j := t.Column(Landed)
+	out := map[string]int64{}
 	for _, r := range t.Rows {
 		if j < 0 || j >= len(r.Cells) || r.Cells[j].Unread || (in != nil && !in(r)) {
 			continue
@@ -185,9 +197,37 @@ func (m *ResetMark) LandedSince(t ntable.Table, in func(ntable.Row) bool) int64 
 		if m != nil {
 			was = m.Streams[r.Key].Landed
 		}
-		n += countLess(r.Cells[j].Count, was)
+		out[r.Key] = countLess(r.Cells[j].Count, was)
 	}
-	return n
+	return out
+}
+
+// Rebase is the mark after a tidy took cards off the done cells of rows it knows (the
+// tidy's rows, sprint.TidyDone): each row's ok and failed at the mark less the cards of that
+// cell the tidy moved, never below zero. A tidy takes the history (the oldest finishes,
+// TidyKept keeping the newest), so the cards it moves are those before the mark first: the
+// row's done since the mark is unchanged by it, and a tidy later than the mark never brings
+// back the counts the reset cleared. Cards finished after the mark that a tidy moves (one
+// that moves more than the mark held) are off the row as the tidy says, the later of the two.
+// tla/StatsReset.tla, Tidy.
+func (m *ResetMark) Rebase(rows []TidyRow) {
+	if m == nil {
+		return
+	}
+	for _, r := range rows {
+		base, ok := m.Rows[r.Row]
+		if !ok {
+			continue
+		}
+		for _, c := range r.Moved {
+			if c.Cell == "failed" {
+				base.Failed = max(0, base.Failed-1)
+			} else {
+				base.OK = max(0, base.OK-1)
+			}
+		}
+		m.Rows[r.Row] = base
+	}
 }
 
 // Later is whether the mark is later than t: a reset after the last tidy of a kind is where

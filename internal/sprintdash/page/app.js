@@ -692,7 +692,9 @@ function tierCounts(obj) { // {flash: "12", pro: 3} -> [[tier, n], ...] sorted b
 function tierSpend(d) {
   var work = (d.tables && d.tables.work) || {}, byTier = {};
   Object.keys(work).forEach(function (k) {
-    var b = work[k].cost_by_tier; if (!b || typeof b !== "object") return;
+    // where --json carries the spend by tier in stream_costs (counted from a stats reset's
+    // mark); a work row's own is read where a copy carries one there
+    var b = ((d.stream_costs || {})[k] || {}).cost_by_tier || work[k].cost_by_tier; if (!b || typeof b !== "object") return;
     // the four tiers alone: a record with no tier ("untiered") is no tier and is left out (the owner 2026-10-04 3:10 PM)
     TIERS.forEach(function (t) { var c = cents(b[t]); if (c) byTier[t] = (byTier[t] || 0) + c; });
   });
@@ -762,7 +764,11 @@ function renderTopStreams(d) {
   Object.keys(work).forEach(function (k) {
     var w = work[k], ct = cents(w.cost); if (!ct) return;
     var n = {}; FLOW.forEach(function (c) { n[c] = parseInt(w[c], 10) || 0; });
-    rows.push({ name: k, cost: ct, n: n, per: n.landed ? Math.ceil(ct / n.landed) : null, tiers: tierCounts(w.tiers), byTier: w.cost_by_tier || null });
+    // per card is the row's per_landed (where's, counted from a stats reset's or a tidy's
+    // base, as its cost is), else its cost over its landed; tiers from stream_costs as the pie's
+    var sc = (d.stream_costs || {})[k] || {}, pl = w.per_landed;
+    var per = pl != null ? (pl === "-" ? null : cents(pl)) : (n.landed ? Math.ceil(ct / n.landed) : null);
+    rows.push({ name: k, cost: ct, n: n, per: per, tiers: tierCounts(sc.tiers || w.tiers), byTier: sc.cost_by_tier || w.cost_by_tier || null });
   });
   rows.sort(function (a, b) { return b.cost - a.cost; });
   var cols = String(order.length + 1); // the tiers with spend, then total

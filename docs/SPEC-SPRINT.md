@@ -6354,16 +6354,40 @@ card divides the cost tile by that `landed`. A figure the mark does not cover (a
 stream it never knew, the cards by tier, the reads of the day, the unpriced runs, the
 reconciliation) reads as before. The tick counts the where record again after a reset,
 since a reset writes no table and so moves no revision; the mark is written, then the
-where record is emptied and the display cells mirrored, as after a tidy of the streams. A
-second reset replaces the mark; a tidy after a reset keeps it. `--dry-run` writes nothing
-and `--show` prints the mark in force: a `ROW <row> done=<n> ok=<n> failed=<n>` line each,
+where record is emptied and the display cells mirrored, as after a tidy of the streams. The
+where record also carries the stamp of the stats record it was counted from (the last tidy
+of the streams and the mark, by their times, `WhereRecord.Stats`): the tick counts again,
+and where takes no record, whose stamp is not the one in force, so a tick that read the
+stats record before a reset and wrote after it is never shown. `where --json`'s
+`stats_reset.streams` is the cards landed since the mark stream by stream; the page's
+release view (internal/sprintdash/release.go) sums it over the release's streams, as it
+does landed, so the cost per card is the release's cost since the mark over the release's
+cards since it. The page reads the spend by tier from `stream_costs` (where `where --json`
+carries it; a work row's own only where a copy has one). Later wins between a reset and a
+tidy: `stats`, the cost cells and per landed count from the later of the two, and a tidy of
+the fleet or the friends after a reset rebases the mark's rows by the cards it took off
+(`sprint.ResetMark.Rebase`, each row's ok and failed less the cards of that cell it moved,
+never below zero), so the row's done since the mark is what it was and a card after both
+counts one. The tidy takes the history, the oldest finishes, so the cards it moves are the
+ones before the mark first. A second reset replaces the mark; a tidy after a reset keeps
+it. Both write the stats record by compare-and-set (`store.updateStats`: Redis WATCH and
+MULTI/EXEC, the twin under its lock; read and changed again when another writer wrote
+between), so a reset and a tidy at once keep each other's writes: the tidy's kinds and
+archive, the mark. With `--op <id>` the mark keeps the id: the same id again prints
+`STATS-RESET REPLAY op=<id> nothing written; mark ...` and writes nothing; the same id with
+another reason, or an id another verb's step recorded, is refused, as a step's is (only the
+mark in force is remembered: a retry of an id after a later reset writes again).
+`--dry-run` writes nothing and `--show` prints the mark in force: a `ROW <row> done=<n> ok=<n> failed=<n>` line each,
 a `STREAM <s> landed=<n> cost=<$> total=<$> tiers=<t=$,...>` line each, then
 `STATS-RESET OK at=<RFC3339Nano> by=<actor> rows=<n> streams=<n> total=<$> reason=<text>`
 (`replaced=<time>` when it replaced one; `STATS-RESET DRY-RUN would mark ...`,
 `STATS-RESET mark ...` with `--show`, `STATS-RESET none` with no mark).
 `TestAStatsResetCountsEveryFigureFromItsMarkAndMovesNothing`,
 `TestTheFleetSinceAMarkLeavesARowItDoesNotKnow`, `TestTierCostsSinceAMark`,
-`TestStatsResetVerbMarksShowsAndReplaces`.
+`TestStatsResetVerbMarksShowsAndReplaces`, `TestAResetThenATidyOfTheFleetThenOneCardShowsDoneOne`,
+`TestAWhereRecordCountedBeforeAResetIsNeverTaken`, `TestAResetDuringATidyIsKept`,
+`TestAResetUnderAnOperationIDIsWrittenOnce`, `TestAReleaseViewCountsTheResetsLandedOverItsStreams`,
+`TestThePageCountsCostPerCardAndTiersFromTheMark`.
 
 Not yet: `where` (its text frame, `where --json` and the dashboard it feeds) and the
 coordinator view's sum line say nothing of the tidy: `since <time>` beside `ok%` and the
