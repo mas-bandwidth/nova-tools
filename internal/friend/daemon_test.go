@@ -1015,7 +1015,31 @@ func TestProofIDsAreReleasedAfterReadingOrANewerPing(t *testing.T) {
 	}
 }
 
-// TestALongTurnWithNoSessionWriteIsDeaf: a fake turn that writes nothing for longer than the cap makes the friend deaf before the turn ends, while a turn whose session wrote within the cap keeps running.
+// verdictOf runs the health check the way nova-friend check does, over a
+// daemon's own log: CheckFriend's seams (check.go), with the daemon's records
+// as its ReadLog.
+func verdictOf(t *testing.T, records []string, window time.Duration) VerdictFacts {
+	t.Helper()
+	return CheckFriend(context.Background(), "bob", CheckSeams{
+		Now:        func() time.Time { return t0 },
+		Home:       t.TempDir(),
+		ReadStatus: func(string) (Status, bool, error) { return Status{Friend: "bob", At: t0}, true, nil },
+		ReadPresence: func(string) (PresenceStatus, bool, error) {
+			return PresenceStatus{Friend: "bob", Presence: PresenceUp, LastHeard: t0}, true, nil
+		},
+		ReadPong:   func(string) (Pong, bool, error) { return Pong{}, false, nil },
+		ReadLog:    func(string) ([]string, error) { return records, nil },
+		HarnessDir: func(string) (string, string, error) { return "fake", "", nil },
+	}, window, nil).Verdict
+}
+
+// TestALongTurnWithNoSessionWriteIsDeaf: a fake turn that writes nothing to
+// the session for longer than the cap makes the friend deaf by the health
+// check's own verdict (check.go, VerdictDeaf) before the turn ends, while a
+// turn whose session wrote within the cap keeps running. The machine's
+// challenge is untouched: the watchdog feeds the check's evidence, it does not
+// fabricate the challenge (docs/SPEC-FRIEND.md, the loop; the machine is the
+// one owner of quiet, challenged and deaf).
 func TestALongTurnWithNoSessionWriteIsDeaf(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
@@ -1037,7 +1061,13 @@ func TestALongTurnWithNoSessionWriteIsDeaf(t *testing.T) {
 		l.turnWatchdog(t0.Add(11 * time.Minute))
 		assert.True(t, hung.stopped, "a turn with no session write past the cap is stopped by the watchdog")
 		assert.True(t, hung.running, "the friend is called deaf before the turn's result ends it")
-		assert.Equal(t, Deaf, r.d.m.Challenge, "the same silence makes the friend deaf")
+		assert.Equal(t, Quiet, r.d.m.Challenge, "the watchdog does not fabricate the machine's challenge")
+
+		// The daemon's own log is what nova-friend check reads: the silent turn
+		// is evidence a delivery was taken and nothing came back, so the health
+		// check's existing deaf rule names the friend deaf.
+		assert.Equal(t, 1, ParseLog(r.records, t0).Silent, "the watchdog records the silent turn as the check's evidence")
+		assert.Equal(t, VerdictDeaf, verdictOf(t, r.records, 24*time.Hour).Verdict, "the check reports the friend deaf from the daemon's evidence")
 	})
 }
 

@@ -2594,8 +2594,11 @@ the log file, the bus store, the directory listing) so the verdict is a function
 
 1. `broken` when the session is marked broken, or `delivered > 0` and `failed == delivered`: every
    delivery in the window failed. One failure among successes is not broken.
-2. `deaf` when a delivery in the window succeeded (`delivered > failed`) and no session pong aged
-   within the window and no real message in the window came back.
+2. `deaf` when a delivery in the window succeeded (`delivered > failed`), or a turn ran with no
+   session write past its wall cap and the turn-progress watchdog ended it (`silent > 0`, a
+   `session=deaf` line in the daemon's log; the watchdog, below), and no session pong aged
+   within the window and no real message in the window came back. A `session=deaf` line is a
+   silent turn, never a failed delivery: it is not counted in `delivered` or `failed`.
 3. `down` when daemon status is stale, even if a later presence or pong file is fresh.
 4. `silent` when no delivery was due in the window (`delivered == 0`, no deferral, an empty inbox),
    nothing came back, and the friend is not down.
@@ -2866,8 +2869,10 @@ Presence's TLA+ module is `tla/FriendPresence.tla` (The model, above); the
 code is not yet held to it where the two differ. A session check waits for the
 turn under way, but the turn-progress watchdog (below) watches a silent turn: a
 running turn that writes nothing to the session for the tier's wall cap is
-ended, and the session's challenge goes deaf, so the check is no longer held
-until the turn ends. A one-shot friend with no session in its directory at all has
+ended, and the daemon records it as a `session=deaf` line, so the health check
+reads the friend deaf within the cap instead of waiting until the turn ends. The
+machine's challenge is untouched; the machine stays the one owner of `quiet`,
+`challenged` and `deaf`. A one-shot friend with no session in its directory at all has
 nowhere for the check to go until a lane opens one, and its lanes wait on the
 row, which comes with a beat; it stays down until a session exists.
 
@@ -3005,6 +3010,6 @@ cannot take").
 
 ## Turn-progress watchdog and busy guard
 
-A session check waits behind the turn under way, but a turn-progress watchdog watches a running turn: a turn that writes nothing to the session (`Activity`) for the tier's wall cap is hung, not working, so the watchdog ends it and says the session's challenge deaf (the friend is deaf) before the turn would have ended. The session check is no longer held behind the turn, and a session that answers no check reads deaf by the existing verdict (`internal/friend/check.go`, VerdictDeaf). The cap is the tier's wall cap (`lane_cap.go`): `TurnCap` when the daemon knows the turn's tier, else the one tier her row says she works when it says exactly one, else the longest default.
+A session check waits behind the turn under way, but a turn-progress watchdog watches a running turn: a turn that writes nothing to the session (`Activity`) for the tier's wall cap is hung, not working, so the watchdog ends it and records the silent turn as a `session=deaf` line in the daemon's log before the turn would have ended. The health check reads that line and names the friend deaf by its existing verdict (`internal/friend/check.go`, `factsVerdict` rule 2, VerdictDeaf); a `session=deaf` line is a silent turn, never a failed delivery, so the friend reads deaf and not broken. The watchdog feeds the check's evidence and never writes the machine's challenge: the machine stays the one owner of `quiet`, `challenged` and `deaf` (`internal/friend/machine.go`). The cap is the tier's wall cap (`lane_cap.go`): `TurnCap` when the daemon knows the turn's tier, else the one tier her row says she works when it says exactly one, else the longest default.
 
 Idle wake and ping turns never open a turn into a session that is busy, compacting, rate-limited, or has queued input. The guard (`loop.sessionFree`) reads the adapter's own `Busy` word (`Tmux.Busy`) and a headless adapter's `TurnRecord`, the provider's limit (`Limited`), the harness's own queue (`Queued`), and the running turn and lanes; a wake due while any of them says not free is skipped and retried at the next step.

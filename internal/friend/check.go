@@ -55,6 +55,7 @@ type HarnessFacts struct {
 	Deferred       int    `json:"deferred"`
 	Delivered      int    `json:"delivered"`    // deliveries in the window (JSON only)
 	Failed         int    `json:"failed"`       // of those, the ones that failed (JSON only)
+	Silent         int    `json:"silent"`       // turns the turn-progress watchdog ended with no session write (JSON only)
 	Broken         string `json:"broken"`       // RFC3339 or "-"
 	Reason         string `json:"reason"`       // one line or "-"
 	SessionLive    string `json:"session_live"` // the conversation a mailbox harness delivers into, or "-"
@@ -160,6 +161,7 @@ type LogFacts struct {
 	Deferred       int    // deferrals in the window
 	Delivered      int    // deliveries in the window
 	Failed         int    // of those, the ones that exited non-zero
+	Silent         int    // turns the turn-progress watchdog ended with no session write (SessionDeafMark)
 }
 
 // ParseLog reads the daemon's log lines for deliveries and deferrals at or
@@ -187,6 +189,13 @@ func ParseLog(lines []string, from time.Time) LogFacts {
 			}
 		}
 		if at.IsZero() || at.Before(from) {
+			continue
+		}
+		if strings.Contains(line, SessionDeafMark) {
+			// a turn the turn-progress watchdog ended: the session was taken
+			// and wrote nothing, so it is not a failed delivery. The deaf rule
+			// reads it (factsVerdict; docs/SPEC-FRIEND.md, Check: the verdicts).
+			lf.Silent++
 			continue
 		}
 		if strings.Contains(line, "deferred=") || strings.Contains(line, "deferred:") || strings.Contains(line, " deferred ") {
@@ -254,8 +263,9 @@ func DefaultReadWork(dir string) (inboxCount, outboxCount int, newestName string
 // The facts decide first, in this order:
 //  1. broken when the session is marked broken, or deliveries in the window
 //     are all failures (delivered > 0 and failed == delivered)
-//  2. deaf when a delivery in the window succeeded and neither a session pong
-//     nor a real message came back in the window
+//  2. deaf when a delivery in the window succeeded, or a turn ran with no
+//     session write past its wall cap (the turn-progress watchdog), and neither
+//     a session pong nor a real message came back in the window
 //  3. silent when no delivery was due in the window and nothing came back
 //  4. down by presence
 //  5. else ok
@@ -295,6 +305,8 @@ func factsVerdict(df DaemonFacts, hf HarnessFacts, bf BusFacts, wf WorkFacts, wi
 		return VerdictBroken, "session broken since " + hf.Broken
 	case hf.Delivered > 0 && hf.Failed == hf.Delivered:
 		return VerdictBroken, fmt.Sprintf("every delivery in the window failed (%d of %d)", hf.Failed, hf.Delivered)
+	case hf.Silent > 0 && !cameBack:
+		return VerdictDeaf, "a turn ran with no session write past its cap and no session pong or real message came back in the window"
 	case hf.Delivered > hf.Failed && !cameBack:
 		return VerdictDeaf, "deliveries succeed but no session pong or real message came back in the window"
 	case df.Status == "stale":
@@ -468,7 +480,7 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 		lines, _ := seams.ReadLog(friendName)
 		lf := ParseLog(lines, now.Add(-since))
 		hf.Last, hf.LastExit, hf.FailedOfLast20, hf.Deferred = lf.Last, lf.LastExit, lf.FailedOfLast20, lf.Deferred
-		hf.Delivered, hf.Failed = lf.Delivered, lf.Failed
+		hf.Delivered, hf.Failed, hf.Silent = lf.Delivered, lf.Failed, lf.Silent
 	}
 
 	if st.Session == SessionBroken {

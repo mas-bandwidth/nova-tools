@@ -321,6 +321,7 @@ type turn struct {
 	seenN    int64
 	lastOut  time.Time // when the daemon last saw the turn print, or its start
 	stopped  bool      // the daemon stopped it: silent past SilentStop
+	silent   bool      // the daemon ended it: no session write past the turn cap (turnWatchdog)
 	capped   bool      // the daemon ended it: its card's wall reached its lane's cap (lane_cap.go)
 	held     bool      // the daemon ended it: a provider failure stopped every lane (lane_parity.go)
 	byStop   bool      // the daemon ended it: the machine's stop cancelled every lane (stop.go)
@@ -1511,7 +1512,12 @@ func (l *loop) batchDone(r result, now time.Time) {
 	if r.err != nil {
 		line += " error=" + fmt.Sprintf("%q", r.err.Error())
 	}
-	if r.t.stopped {
+	if r.t.silent {
+		// the turn-progress watchdog ended it: no session write past the turn
+		// cap. The check reads this as a silent turn, never a failed delivery
+		// (turnWatchdog, ParseLog).
+		line += " " + SessionDeafMark
+	} else if r.t.stopped {
 		line += fmt.Sprintf(" stopped=%q", "no output for "+l.silentStop.String())
 	}
 	ok := r.err == nil && r.exit == 0 && !r.t.stopped
@@ -1634,14 +1640,17 @@ func (d *Daemon) flush(now time.Time) {
 // turnWatchdog is the wall watch on the daemon's own running turn: a turn
 // that writes nothing to the session for the tier's wall cap is hung, not
 // working, so the session is deaf before the turn ends (docs/SPEC-FRIEND.md,
-// the loop; internal/friend/check.go, VerdictDeaf). It stops the turn and
-// says the challenge deaf, so the session check is no longer held behind it.
+// the loop; internal/friend/check.go, rules 1 and 2 of factsVerdict). It stops
+// the turn and records the silent turn as the check's own evidence
+// (SessionDeafMark), so nova-friend check's existing deaf rule names the friend
+// deaf. It never writes the machine's challenge: the machine stays the one
+// owner of quiet, challenged and deaf (docs/SPEC-FRIEND.md, session-pong.w1).
 func (l *loop) turnWatchdog(now time.Time) {
 	if l == nil || l.d == nil {
 		return
 	}
 	d := l.d
-	if l.busy == nil || !l.busy.running || l.busy.stopped || l.busy.capped {
+	if l.busy == nil || !l.busy.running || l.busy.stopped || l.busy.silent || l.busy.capped {
 		return
 	}
 	t := l.busy
@@ -1658,18 +1667,22 @@ func (l *loop) turnWatchdog(now time.Time) {
 			return // the session wrote during the turn: it is working, not hung
 		}
 	}
-	t.stopped = true
+	t.silent, t.stopped = true, true
 	if t.cancel != nil {
 		t.cancel()
 	}
-	if d.m != nil && d.m.Challenge != Deaf {
-		d.m.Challenge = Deaf
-	}
 	if d.Record != nil {
-		d.Record(fmt.Sprintf("%s subject=%s stopping: no session write for %s (since %s); turn-progress watchdog: the session is deaf",
-			now.UTC().Format(time.RFC3339), t.subjects, cap, started.UTC().Format(time.RFC3339)))
+		d.Record(fmt.Sprintf("%s subject=%s messages=%d %s stopping: no session write for %s (since %s); turn-progress watchdog: the session is deaf",
+			now.UTC().Format(time.RFC3339), t.subjects, len(t.entries), SessionDeafMark, cap, started.UTC().Format(time.RFC3339)))
 	}
 }
+
+// SessionDeafMark is the word a turn's end carries when the turn-progress
+// watchdog ended it: the session wrote nothing for the turn's wall cap, so the
+// delivery was taken and nothing came back. ParseLog reads it as a silent turn
+// and not a failed delivery, and factsVerdict's deaf rule names the friend deaf
+// from it (check.go; docs/SPEC-FRIEND.md, Check: the verdicts).
+const SessionDeafMark = "session=deaf"
 
 // turnCap is the wall cap of the daemon's own running turn: the tier's wall cap
 // (lane_cap.go). TurnCap names it when the daemon knows the turn's tier; else
