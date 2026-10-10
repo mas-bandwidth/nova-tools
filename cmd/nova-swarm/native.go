@@ -167,6 +167,18 @@ type nativeRunConfig struct {
 	// gateRun, when set, is the gate decision's test runner (nativegate.go): a test's; nil
 	// runs go test in the child's wall with the child's environment.
 	gateRun gateRunner
+	// env carries the base environment slice the child inherits. Empty means use
+	// os.Environ(). Tests use this to provide a self-contained environment.
+	env []string
+	// dir is the working directory against which relative slots and job paths resolve.
+	// Empty means use os.Getwd(). Tests use this to provide an isolated working directory.
+	dir string
+	// launchArgvFor, when set, overrides the package seam for generating the launch argv.
+	// Tests use this to assert what launcher is used without swapping package variables.
+	launchArgvFor func(provider string, goos string, req swarm.LaunchRequest) ([]string, error)
+	// persistUnknownFn, when set, overrides the package seam for persisting unknown unknowns.
+	// Tests use this to assert persistence without swapping package variables.
+	persistUnknownFn func(string) error
 }
 
 // headless is the headless harness this run's binary is (internal/harness: claude, codex
@@ -1033,7 +1045,11 @@ func initRunState(p *nativePrepared, w *nativeWalled, errOut io.Writer) (*native
 			}
 		}
 	}
-	childEnv := nativeChildEnv(p.dataHome, p.jobDir, p.tmpDir, p.cacheDir, secretEnv, p.shimDir, p.shimShell, p.toolPath)
+	baseEnv := p.cfg.env
+	if baseEnv == nil {
+		baseEnv = os.Environ()
+	}
+	childEnv := nativeChildEnvFrom(baseEnv, p.dataHome, p.jobDir, p.tmpDir, p.cacheDir, secretEnv, p.shimDir, p.shimShell, p.toolPath)
 	// A headless harness runs from a private home under the data home, seeded with its credential
 	// file alone (swarm.HeadlessHomeOf), and is pointed at it by name where it reads one. claude
 	// copies no file: its login is the token --pass hands it by name, and a run without one says so.
@@ -1331,7 +1347,11 @@ func collect(s *nativeRunState, st *nativeStarted, wat *nativeWatched, attempt i
 		return &nativeCollected{retry: false}
 	}
 	if lost {
-		if err := persistUnknownFn(s.prep.jobDir); err != nil {
+		persist := s.prep.cfg.persistUnknownFn
+		if persist == nil {
+			persist = persistUnknownFn
+		}
+		if err := persist(s.prep.jobDir); err != nil {
 			fmt.Fprintf(errOut, "NATIVE NOTE: the acceptance could not be recorded: %s\n", oneline.Escape(err.Error()))
 			s.res.unrecorded = true
 		}
@@ -2502,7 +2522,11 @@ func nativeLaunchArgv(bin string, cfg nativeRunConfig, provider string) ([]strin
 	if k := cfg.headless(); k != "" {
 		return swarm.HeadlessArgv(k, bin, cfg.model[len(provider)+1:], nativePrompt(cfg))
 	}
-	return launchArgvFor(swarm.LaunchRow(provider), benchOS(cfg), swarm.LaunchRequest{
+	launcher := cfg.launchArgvFor
+	if launcher == nil {
+		launcher = launchArgvFor
+	}
+	return launcher(swarm.LaunchRow(provider), benchOS(cfg), swarm.LaunchRequest{
 		Harness: bin, Model: cfg.model, Title: cfg.label, Prompt: nativePrompt(cfg),
 	})
 }

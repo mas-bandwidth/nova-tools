@@ -1418,12 +1418,14 @@ func TestNativeStillAcceptsAnOrdinaryLabel(t *testing.T) {
 // table's declared default row, never a literal argv in the caller. RED WITHOUT THE WIRING:
 // native built `run --model <m> --title <l> -- <card>` inline and never asked the table.
 func TestNativeLaunchGoesThroughTheOneLauncher(t *testing.T) {
+	t.Parallel()
 	bin := nativeHarness(t)
 	for _, tc := range []struct{ model, row string }{
 		{"fake/fake-model", swarm.DefaultLaunchRow},
 		{"opencode/deepseek-v4-flash", "opencode"},
 	} {
 		t.Run(tc.row, func(t *testing.T) {
+			t.Parallel()
 			root, slot := aSlot(t)
 			type call struct {
 				provider string
@@ -1431,10 +1433,8 @@ func TestNativeLaunchGoesThroughTheOneLauncher(t *testing.T) {
 				argv     []string
 			}
 			var calls []call
-			orig := launchArgvFor
-			t.Cleanup(func() { launchArgvFor = orig })
-			launchArgvFor = func(provider, goos string, req swarm.LaunchRequest) ([]string, error) {
-				argv, err := orig(provider, goos, req)
+			launcher := func(provider, goos string, req swarm.LaunchRequest) ([]string, error) {
+				argv, err := launchArgvFor(provider, goos, req)
 				calls = append(calls, call{provider, req, argv})
 				return argv, err
 			}
@@ -1444,6 +1444,7 @@ func TestNativeLaunchGoesThroughTheOneLauncher(t *testing.T) {
 			_, code := nativeRun(nativeRunConfig{
 				binary: bin, model: tc.model, label: "launcher-lbl",
 				card: []byte(card), slotDir: slot, root: root, deadline: 30 * time.Second, noWall: true,
+				launchArgvFor: launcher,
 			}, &errOut)
 			require.Equal(t, 0, code, "the run exits 0, got %d:\n%s", code, errOut.String())
 			require.Len(t, calls, 1, "the launch did not go through swarm.LaunchArgvFor: %d calls, want 1", len(calls))
@@ -3805,24 +3806,23 @@ func TestNativeLostResponseStaysUnknownAndLaunchesOnce(t *testing.T) {
 }
 
 func TestUnrecordedUnknownIsStillAHarvestHold(t *testing.T) {
+	t.Parallel()
 	windowsIsNotABench(t)
-	prev := persistUnknownFn
-	persistUnknownFn = func(string) error { return errors.New("disk full") }
-	t.Cleanup(func() { persistUnknownFn = prev })
 
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	label := "unrecorded"
 	cardPath := filepath.Join(root, label+".md")
 	require.NoError(t, os.WriteFile(cardPath, []byte("FAKE-LOST-RESPONSE\n"), 0o644))
-	var stdout, stderr bytes.Buffer
-	code := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1",
-		"--harness", bin, "--model", "fake/fake-model", "--label", label,
-		"--card", cardPath, "--slot", slot, "--root", root,
-		"--deadline", "30s", "--no-wall"},
-		strings.NewReader(""), &stdout, &stderr, time.Now())
-	require.NotEqual(t, 0, code, "a failed record exited 0:\n%s", stdout.String())
-	require.Contains(t, stdout.String(), "why=unknown-acceptance", "the refusal returned before the unknown verdict:\n%s\n%s", stdout.String(), stderr.String())
+	var errOut bytes.Buffer
+	persist := func(string) error { return errors.New("disk full") }
+	_, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: label,
+		card: []byte("FAKE-LOST-RESPONSE\n"), slotDir: slot, root: root, deadline: 30 * time.Second, noWall: true,
+		persistUnknownFn: persist,
+	}, &errOut)
+	require.NotEqual(t, 0, code, "a failed record exited 0:\n%s", errOut.String())
+	require.Contains(t, errOut.String(), "NATIVE NOTE: the acceptance could not be recorded: disk full", "the acceptance was not recorded:\n%s", errOut.String())
 
 	// The nova-pulse harvest hold that followed here left with internal/pulse (deleted 2026-09-25, #3969);
 	// the native refusal above is the property that remains.
