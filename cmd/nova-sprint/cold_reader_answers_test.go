@@ -38,7 +38,7 @@ func TestARefusalCarriesTheRefusedWordAndWhatItFound(t *testing.T) {
 		code, _, errs := ta.do(line)
 		assert.Equal(t, 2, code, line)
 		assert.True(t, strings.HasPrefix(errs, "nova-sprint REFUSED: "), errs)
-		assert.Contains(t, errs, "init, add, quack", line)
+		assert.Contains(t, errs, "init, add, lint, quack", line)
 		assert.Equal(t, 1, strings.Count(errs, "\n"), "one line: %q", errs)
 	}
 }
@@ -48,7 +48,7 @@ func TestAMisspelledFlagNamesTheNearestAndTheVerbsFlags(t *testing.T) {
 	ta := newTestApp(t)
 	code, _, errs := ta.do("add --strem s1 --count 1 --one")
 	assert.Equal(t, 2, code)
-	assert.Equal(t, "nova-sprint add REFUSED: unknown flag --strem; the flags of add are --actor, --after, --allow-personal-base, --allow-shared-paths, --before, --brief, --brief-dir, --brief-file, --brief-op, --count, --decide-record, --epoch, --held, --json, --max, --needs and 10 more; did you mean --stream?; run: nova-sprint help add\n", errs)
+	assert.Equal(t, "nova-sprint add REFUSED: unknown flag --strem; the flags of add are --actor, --after, --allow-personal-base, --allow-shared-paths, --before, --brief, --brief-dir, --brief-file, --brief-op, --count, --decide-record, --epoch, --held, --json, --max, --needs and 11 more; did you mean --stream?; run: nova-sprint help add\n", errs)
 	assert.Contains(t, errs, "; run: nova-sprint help add\n")
 	assert.NotContains(t, errs, "provided but not defined")
 	code, _, errs = ta.do("fleet up m1 --wdth 3")
