@@ -7049,6 +7049,36 @@ candidates that error, panic, hang past the deadline and print no plan
 by a shadow (`TestShadowTickPlansOnTheStoreAndWritesNothing`), and every write of the read-only
 store refused (`TestShadowTickStoreRefusesEveryWrite`).
 
+#### install-rollback-on-missed-ticks-b.w2: a probation rollback after a missed tick or an exit
+
+A swap that lands a server which then wrecks the sprint is the canary's blind spot: the shadow
+tick only plans, so a binary that fails on its first real ticks, or exits, would be found by a
+person. `server switch <binary> --rollback` watches the swapped server through its first N ticks
+(`--probation`, default 5): the swap writes a probation record beside the target
+(`<target>.probation.json`: the binary, the previous binary, N, the good ticks and the starts of
+the run loop), and the run loop of the new binary reads it. A probation tick that ends within its
+deadline counts toward the N and the Nth ends the probation, which removes the record; a tick
+whose plan is given up past its deadline rolls back before the loop goes on, and a run that begins
+inside the probation after one before it exited (the record's starts above zero) rolls back as it
+starts, since a process that exited is not watched by its own loop. A rollback restores the
+previous binary to the target (`sprint.ServerRollback`), records the tick that failed and the
+binary in `<target>.rollback.json`, logs `INSTALL ROLLBACK target= binary= tick= reason=`, pushes
+the seat one happened note (`store.NoteStep`) and exits 5, so the supervisor (launchd KeepAlive or
+systemd `Restart=always`) starts the binary now on disk, the previous one; the rollback never
+loops, since `server switch` refuses a binary `<target>.rollback.json` names until a different
+binary is switched, which clears the record. The supervisor sits behind `installSupervisor`, faked
+in tests, and the clock is injected. The model is `tla/ServerInstall.tla` (states running old,
+canary, swapped on probation, kept and rolled back; actions shadow, swap, tick ok, tick missed,
+exit and probation end): it proves exactly one server serves (`ExactlyOneServer`) and a
+rolled-back binary is never served again by switch (`RolledBackNeverServed`), with reversed
+witnesses for two servers (`MCServerInstallBrokenTwoServers`), no rollback on exit
+(`MCServerInstallBrokenNoRollbackOnExit`), a rollback after the probation ended
+(`MCServerInstallBrokenLateRollback`) and switch serving a refused binary
+(`MCServerInstallBrokenReServeRefused`). `TestASwappedServerThatMissesItsFirstTicksIsRolledBack`
+drives the guard with a fake supervisor and an injected clock: a missed deadline or an exit in the
+first N replaces the candidate with the previous binary, logs and pushes; N good ticks keep it; a
+missed tick after the probation ended rolls nothing back.
+
 #### Adopting a build
 
 The seat adopts a build the way the fleet does, through the tools play (`fleet/tools.yml`) and

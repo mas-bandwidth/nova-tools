@@ -22,6 +22,7 @@ func (a *app) cmdServerSwitch(args []string, stdout, stderr io.Writer) int {
 	target := fs.String("target", "", "target binary to replace (default: this binary or NOVA_SPRINT_SERVER_BIN)")
 	dry := fs.Bool("dry-run", false, "run the candidate's shadow tick (read-only) and say what would be switched; switch, roll back and write nothing")
 	tickDeadline := fs.Duration("tick-deadline", TickDeadline, "the candidate's shadow tick (<binary> tick --shadow, read-only, against the store --redis names) must end in this long, or the switch is refused")
+	probationN := fs.Int("probation", DefaultProbation, "with --rollback, watch the swapped server's first N ticks: a tick that misses its deadline, or the run exiting, puts the previous binary back and refuses the rolled-back binary until a new one is named (tla/ServerInstall.tla)")
 
 	pos, err := parse(fs, args)
 	if err != nil {
@@ -57,6 +58,8 @@ func (a *app) cmdServerSwitch(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "%s server switch: rollback failed: %s\n", prog, oneline.Escape(err.Error()))
 			return 1
 		}
+		// ignored: a stop of the probation owed by the binary just put back
+		_ = os.Remove(targetPath + ".probation.json")
 		fmt.Fprintf(stdout, "SERVER SWITCH ROLLED BACK target %s restored from %s.prev\n", targetPath, targetPath)
 		return 0
 	}
@@ -70,6 +73,16 @@ func (a *app) cmdServerSwitch(args []string, stdout, stderr io.Writer) int {
 	}
 
 	candidate := pos[0]
+
+	// a binary rolled back on probation is refused until a new binary is named
+	// (tla/ServerInstall.tla, RolledBackNeverServed)
+	if why := rolledBackRefusal(targetPath, candidate); why != "" {
+		return refuse(stderr, "server switch", why)
+	}
+
+	if *rollback && *probationN < 1 {
+		return refuse(stderr, "server switch", "invalid --probation: the first N ticks watched wants N of 1 or more")
+	}
 
 	window, err := time.ParseDuration(*windowStr)
 	if err != nil || window <= 0 {
@@ -111,8 +124,18 @@ func (a *app) cmdServerSwitch(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s server switch: switched, and the shadow record %s.shadow.json was not written: %s\n", prog, targetPath, oneline.Escape(err.Error()))
 	}
 
+	// a different binary was named: the refusal a rollback recorded is lifted
+	// ignored: a marker that is not there needs no removal
+	_ = os.Remove(targetPath + ".rollback.json")
+
 	if *rollback {
-		fmt.Fprintf(stdout, "SERVER SWITCH OK target %s switched to %s (previous kept at %s.prev; rollback window %s)\n", targetPath, candidate, targetPath, window)
+		// the swapped server is on probation for its first N ticks
+		// (docs/SPEC-SPRINT.md section 14, install-rollback-on-missed-ticks-b.w2)
+		rec := probationRecord{Target: targetPath, Binary: candidate, Previous: targetPath + ".prev", N: *probationN, Changed: a.now()}
+		if err := writeProbationRecord(targetPath, rec); err != nil {
+			fmt.Fprintf(stderr, "%s server switch: switched, and the probation record %s.probation.json was not written: %s\n", prog, targetPath, oneline.Escape(err.Error()))
+		}
+		fmt.Fprintf(stdout, "SERVER SWITCH OK target %s switched to %s (previous kept at %s.prev; rollback window %s; probation %d ticks)\n", targetPath, candidate, targetPath, window, *probationN)
 	} else {
 		fmt.Fprintf(stdout, "SERVER SWITCH OK target %s switched to %s\n", targetPath, candidate)
 	}
