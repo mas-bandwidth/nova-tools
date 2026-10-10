@@ -470,6 +470,17 @@
               else 'SEAT-WINDOW (the seat play installs it, its old server and member stopped)' if tools_install is skipped
               else (('UP-TO-DATE ' if tools_install.stdout is search('RELEASE INSTALLED .*tools=0 ') else 'INSTALLED ') ~ tools_install.stdout)) }}
 
+    # Only a fleet add names nova_member: it reads this line as the binaries
+    # step of a member's setup (nova-sprint fleet add, docs/FLEET.md, "Adding a
+    # member"). A release cycle runs tools.yml without nova_member and prints
+    # no FLEET-ADD line.
+    - name: "FLEET-ADD step=binaries"
+      ansible.builtin.debug:
+        msg: >-
+          FLEET-ADD step=binaries host={{ inventory_hostname }} done
+          version={{ nova_version }} platform={{ nova_platform }}
+      when: nova_member | default('') != ''
+
 - name: the build's schema and function library on the store
   hosts: store_deployer
   gather_facts: false
