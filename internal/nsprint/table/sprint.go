@@ -73,18 +73,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/mas-bandwidth/nova-tools/internal/gh"
+	"log"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
+
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // WSStates are the six per-stream sets the table counts, in reply order:
@@ -458,6 +459,7 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		}
 	}
 	progress := pipe.HGetAll(ctx, ProgressKey)
+	propsCmd := pipe.HGetAll(ctx, "table:"+StreamsTable+":props")
 	// THE EPOCH (nova-tools#4238): read once per tick, in the same pipeline
 	// and AFTER every cell: the cells are keyed by the epoch of the last
 	// tick, and a clear that lands anywhere before this read (before or
@@ -469,8 +471,20 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		return nil, false, fmt.Errorf("pipeline: %w", err)
 	}
 	// Drop legacy properties on first sight.
-	if err := sprint.DropLegacy(ctx, r.Client, StreamsTable); err != nil {
-		return nil, false, fmt.Errorf("drop legacy: %w", err)
+	if props, err := propsCmd.Result(); err == nil {
+		var legacy []string
+		for p := range props {
+			if strings.HasPrefix(p, "route_rest_") {
+				legacy = append(legacy, p)
+			}
+		}
+		if len(legacy) > 0 {
+			if err := r.Client.HDel(ctx, "table:"+StreamsTable+":props", legacy...).Err(); err != nil {
+				return nil, false, fmt.Errorf("drop legacy: %w", err)
+			}
+			log.Printf("sprint: dropped %d legacy properties from table %s: %s",
+				len(legacy), StreamsTable, strings.Join(legacy, ", "))
+		}
 	}
 	// A dead connection fails every command; the order read standing is the
 	// tick's proof that Redis answered.

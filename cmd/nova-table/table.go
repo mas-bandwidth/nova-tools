@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/redis/go-redis/v9"
-
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
