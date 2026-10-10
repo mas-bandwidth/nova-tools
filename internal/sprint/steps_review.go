@@ -2285,26 +2285,47 @@ const (
 	reviewClearBusy = "no reader is free"
 )
 
-func init() { reviewStarvedInstall() }
+func init() {
+	// Both are conditions the tick keeps: ack holds the episode quiet until the
+	// condition clears, and wait names the time it is shown again
+	// (docs/SPEC-SPRINT.md, "ack and wait are the judgment's decisions; the
+	// episode stays one until the condition ends, whether or not it was
+	// acknowledged").
+	TickDecisions[NReviewStarved] = []string{"ack", "wait"}
+	TickDecisions[NReadsIdle] = []string{"ack", "wait"}
+	reviewStarvedInstall()
+}
 
 // reviewStarvedInstall keeps the tick's existing part count. Each part gets an
 // operation ID even when its plan is empty, so adding a separate end part
-// changes the IDs of unrelated first-run and inbox commands.
+// changes the IDs of unrelated first-run and inbox commands. TickParts copies
+// TickEnd at package initialization, before this init runs, so the reference
+// model's done duty (refmodel.partFn reads TickParts) would keep the bare
+// TickDone and never plan the alarm: patch it too, as friend_read.go patches
+// its own part.
 func reviewStarvedInstall() {
 	for i := range TickEnd {
 		if TickEnd[i].Name == PartDone {
 			TickEnd[i].Fn = tickReviewAlarmAndDone
-			return
+			break
+		}
+	}
+	for i := range TickParts {
+		if TickParts[i].Name == PartDone {
+			TickParts[i].Fn = tickReviewAlarmAndDone
 		}
 	}
 }
 
 // tickReviewAlarmAndDone composes the alarm's fleet-property and judgment
-// writes with the done note in the existing final tick step.
+// writes with the done note in the existing final tick step. The done note
+// leads: the store reads the done part's first note as "the sprint is done"
+// (store/tick.go, stopDone), so an alarm note written first would be reported
+// and pushed in its place.
 func tickReviewAlarmAndDone(s *Snapshot, r TickReq) (Plan, int) {
 	p, due := TickReviewStarved(s, r)
 	done, more := TickDone(s, r)
-	p.Notes = append(p.Notes, done.Notes...)
+	p.Notes = append(append([]Note{}, done.Notes...), p.Notes...)
 	return p, due + more
 }
 
@@ -2524,6 +2545,17 @@ func reviewAlarmDisarm(s *Snapshot, p Plan) Plan {
 // the tick that finds the condition ended closes it, with a note when one was raised.
 func reviewAlarmStep(s *Snapshot, r TickReq, p Plan, prop, typ string, window time.Duration, on bool, what func() string, clear string, count int, ids []string) Plan {
 	since, said := reviewAlarmRead(s, prop)
+	// A hold on this condition whose wait has run out is closed here; the
+	// condition, when it still holds, is raised again this tick (WaitReq's
+	// words; notify does the same for the tick's own conditions).
+	if on && said {
+		for _, o := range s.Acked {
+			if o.Note.Type == typ && !o.Note.Review.IsZero() && DueNow(s.Now, o.Note.Review, o.Note.ReviewSet, r.Stopped) {
+				p.Closes = append(p.Closes, o)
+				said = false
+			}
+		}
+	}
 	if !on {
 		if since == "" && !said {
 			return p
@@ -2611,6 +2643,14 @@ func reviewAlarmOpen(s *Snapshot, typ string) []Open {
 	var out []Open
 	for _, o := range s.Open {
 		if o.Note.Kind == Judgment && o.Note.Type == typ {
+			out = append(out, o)
+		}
+	}
+	// An acknowledged condition is held in s.Acked (SplitOpen): the episode is
+	// closed from there too when the condition ends, or a wait runs out, as
+	// notify closes its own.
+	for _, o := range s.Acked {
+		if o.Note.Type == typ {
 			out = append(out, o)
 		}
 	}
