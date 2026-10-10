@@ -248,3 +248,17 @@ func TestTheDashboardOverAStoreOfTwoReleasesShowsOneRelease(t *testing.T) {
 	assert.Len(t, streams, 3)
 	assert.Equal(t, int64(12), all)
 }
+
+// Given nothing to read (no store, no sprint's server, no dashboard to pull), the dashboard
+// refuses at once on stderr in the one grammar, at exit 2, and writes nothing to stdout:
+// it opens no listener and logs no failed read (internal/ci TestEveryRefusalFollowsTheGrammar).
+func TestDashboardWithNoStoreRefusesOnStderr(t *testing.T) {
+	t.Parallel()
+	a := newApp(func(string) string { return "" })
+	a.loginFile = nil
+	var out, errb strings.Builder
+	code := a.run([]string{"dashboard", "--listen", "127.0.0.1:0", "--pull", "none"}, &out, &errb)
+	assert.Equal(t, 2, code, "stderr: %s", errb.String())
+	assert.Empty(t, out.String(), "a refusal writes nothing to stdout")
+	assert.Equal(t, "nova-sprint dashboard REFUSED: "+dashboardNoStore+"; run: nova-sprint dashboard -h\n", errb.String())
+}
