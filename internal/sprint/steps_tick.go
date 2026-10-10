@@ -153,6 +153,9 @@ var TickDecisions = map[string][]string{
 	NAlarmFleet:   {"ack", "wait"},
 	// a member's open files over its alarm bound (fd.go): named per member, seen, or quiet a while
 	NFilesAlarm: {"fleet up <m> --width <half>", "fleet down <m>", "ack", "wait 15m"},
+	// a volume over its disk warn line (disk.go): hold the machine, seen, or
+	// quiet 30m while it is raised again every 30m it holds
+	NDiskWatermark: {"fleet down <m>", "ack", "wait 30m"},
 	// the coordinator's pass (coordinator_pass.go): each names its own
 	NFriendDeaf:        {"ack", "wait"},
 	NFriendIdle:        {"ack", "wait"},
@@ -606,6 +609,9 @@ func TickResume(s *Snapshot, r TickReq) (Plan, int) {
 // a withdrawn card is dealt again at a new generation. With no member up and primaries waiting to be dealt, the
 // coordinator is told once (N3), and the judgment closes when a member is up.
 func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
+	// a volume over its stop line holds its machines out of this tick's deal and
+	// reads at once, before the tick's own plan writes the quiet (disk.go)
+	s = withDiskQuiets(s, r)
 	// the routes resting now, and those the no-result rule rests in this tick (rule 3,
 	// route_rest.go): no card of this tick is drawn on one, and the new rests are written
 	// in its plan
@@ -794,8 +800,9 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 				what: fmt.Sprintf("the fleet is starving: ready %d is under twice the width %d; release a wave: nova-sprint release %s --reason '<why>'", n, 2*width, sentinel.ID)})
 		}
 	}
-	if len(up) > 0 {
-		room := widthRoom(s, up)
+	dealable := notQuiet(s, up)
+	if len(dealable) > 0 {
+		room := widthRoom(s, dealable)
 		n := min(room, TickMaxDeal, len(ready))
 		due = min(room, len(ready)) - n
 		if n > 0 {
@@ -1274,10 +1281,14 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 	// the backlog alarms, on a plan of their own: each notify closes and judges after its own closes
 	a, alarmsDue := tickAlarms(s, r)
 	p.Notes, p.Closes, p.Updates = append(p.Notes, a.Notes...), append(p.Closes, a.Closes...), append(p.Updates, a.Updates...)
+	// each volume over its disk warn line, from the beats (disk.go): one judgment
+	// per volume and the fleet table's disk quiet above the stop line
+	d, diskDue := tickDisk(s, r)
+	p.Notes, p.Closes, p.Updates, p.Props = append(p.Notes, d.Notes...), append(p.Closes, d.Closes...), append(p.Updates, d.Updates...), append(p.Props, d.Props...)
 	// the drift alarms, on a plan of their own the same way (drift.go)
 	d, driftDue := TickDrift(s, r, r.Drift)
 	p.Notes, p.Closes, p.Updates = append(p.Notes, d.Notes...), append(p.Closes, d.Closes...), append(p.Updates, d.Updates...)
-	return p, due + alarmsDue + driftDue
+	return p, due + alarmsDue + driftDue + diskDue
 }
 
 // TickOverdue marks each open judgment overdue once, when it passes its due

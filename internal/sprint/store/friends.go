@@ -179,6 +179,10 @@ type FriendRow struct {
 	// Proof is her session's last proof as her beat carries it (sprint.Beat.Proof: a
 	// SESSION CHECK it answered, or a bus message of its own), zero when none.
 	Proof time.Time `json:"proof,omitzero"`
+	// Disk is the free space and inode headroom of the volume her working
+	// directory lives on, while her beat's reading is fresh (sprint.DiskText);
+	// empty when the beat carried none. It is a figure, not a load.
+	Disk string `json:"disk,omitempty"`
 	// Reason and Until say why she is held or down and when she is expected
 	// back, when the hold or the observation said (friend down, friend health).
 	Reason string    `json:"reason,omitempty"`
@@ -368,8 +372,8 @@ func (st *Store) FriendBeatProof(ctx context.Context, friend string, rep sprint.
 	}
 	rep, set := friendBeatReport(prev.Beat.Friend, rep)
 	b := sprint.Beat{At: now}
-	if len(rep.Running) > 0 || rep.Working != nil || rep.Queue != nil || rep.Width != nil || !rep.Active.IsZero() {
-		b.Friend = &rep // a beat that still reports nothing carries no report
+	if len(rep.Running) > 0 || rep.Working != nil || rep.Queue != nil || rep.Width != nil || !rep.Active.IsZero() || rep.Disk != nil {
+		b.Friend = &rep // a beat that reports nothing carries no report
 	}
 	if rep.Build != "" || !rep.Started.IsZero() || !rep.Present.IsZero() || rep.DaemonVersion != "" {
 		b.Friend = &rep // her daemon's own facts are a report (sprint.StatusTransitions reads them)
@@ -516,7 +520,8 @@ func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, ma
 		}
 		presence := sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation, Finished: fin}
 		word, evidence := sprint.FriendEvidence(presence, now)
-		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Roles: r[n].Roles, Billing: r[n].Billing, Streams: r[n].Streams, Kinds: r[n].Kinds, Load: b.Load, Report: b.Friend, Beat: b.At, Proof: b.Proof}
+		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Roles: r[n].Roles, Billing: r[n].Billing, Streams: r[n].Streams, Kinds: r[n].Kinds, Load: b.Load, Report: b.Friend, Beat: b.At, Proof: b.Proof,
+			Disk: sprint.DiskText(b, now, sprint.DiskWarnDefault, sprint.DiskStopDefault)}
 		if why := sprint.FriendDownWhy(presence, now); why != "" {
 			whys[n] = why
 		}

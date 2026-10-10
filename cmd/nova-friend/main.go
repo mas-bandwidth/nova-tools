@@ -40,6 +40,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
@@ -186,6 +187,32 @@ func proofArgs(w friend.BeatWords) []string {
 	return args
 }
 
+// diskArgs are the beat's disk word (friend beat --disk): the volume her
+// working directory lives on, as one JSON sprint.DiskReading, measured here
+// because the sprint server cannot read her machine's files; none when it
+// cannot be read. The largest directories under the AI root are scanned only
+// over the warn line, so a beat does not walk the tree for a volume with room.
+func diskArgs() []string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+	d, err := sprint.MeasureDisk(wd, "", time.Now())
+	if err != nil {
+		return nil
+	}
+	if d.Use() >= float64(sprint.DiskWarnDefault) {
+		if root := os.Getenv("NOVA_AI_ROOT"); root != "" {
+			d.Top = sprint.LargestDirs(root, sprint.DiskScanDepth, sprint.DiskScanTop)
+		}
+	}
+	raw, err := json.Marshal(d)
+	if err != nil {
+		return nil
+	}
+	return []string{"--disk", string(raw)}
+}
+
 // maxView bounds the worker view the daemon reads: her cards and her results not landed.
 const maxView = 4 << 20
 
@@ -253,6 +280,7 @@ func realWorld() world {
 				args = append(args, "--active", active.UTC().Format(time.RFC3339))
 			}
 			args = append(args, "--daemon-version", buildinfo.Version(version))
+			args = append(args, diskArgs()...)
 			return sprintBeat(ctx, server, append(args, proofArgs(proof)...))
 		},
 		beatDown: func(ctx context.Context, server, name string, active, until time.Time, reason string, proof friend.BeatWords) error {
@@ -261,6 +289,7 @@ func realWorld() world {
 				args = append(args, "--active", active.UTC().Format(time.RFC3339))
 			}
 			args = append(args, "--daemon-version", buildinfo.Version(version))
+			args = append(args, diskArgs()...)
 			_, err := sprintBeat(ctx, server, append(args, proofArgs(proof)...))
 			return err
 		},

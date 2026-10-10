@@ -82,6 +82,10 @@ type Beat struct {
 	// Friend is what a friend's beat reports of her work (friend beat); nil on a
 	// machine's beat.
 	Friend *FriendReport `json:"friend,omitempty"`
+	// Disk is the free space and inode headroom of the volume the member's
+	// working directory lives on, as its beat measured it (DiskReading); nil on a
+	// beat that measured none.
+	Disk *DiskReading `json:"disk,omitempty"`
 	// Proof is a friend's session's last proof as her beat carried it (friend beat
 	// --pong: her session's answer to a SESSION CHECK, or its own bus message), zero
 	// when her beat carried none; the friend beat record keeps it under "pong".
@@ -135,6 +139,10 @@ type FriendReport struct {
 	// seat for version drift among friends (docs/SPEC-SPRINT.md, daemon-supervised-r-b.w8).
 	// Empty when the beat carried none.
 	DaemonVersion string `json:"daemon_version,omitempty"`
+	// Disk is the free space and inode headroom of the volume her working
+	// directory lives on, as her beat measured it (DiskReading); nil on a beat
+	// that measured none.
+	Disk *DiskReading `json:"disk,omitempty"`
 }
 
 // SaysDown says the beat is her daemon's word that she is down (FriendReport.Until):
@@ -294,8 +302,10 @@ func ago(d time.Duration) string {
 // LoadText is the load cell: the highest load of the last LoadWindow with
 // one decimal and a percent sign while the beat is fresh, else empty; and
 // beside it, while the machine's open file descriptors are over the member's
-// warn bound, "fds <count> warn" (or alarm, fd.go FilesText), so the fleet
-// table shows a machine running out of them before the alarm's judgment.
+// warn bound, "fds <count> warn" (or alarm, fd.go FilesText), and while the
+// beat carries a fresh disk reading, the free space and inode headroom of the
+// volume its working directory lives on (disk.go DiskText), so the fleet
+// table shows a machine running out of either before the alarm's judgment.
 func LoadText(b Beat, now time.Time) string {
 	if !b.Fresh(now) {
 		return ""
@@ -303,6 +313,9 @@ func LoadText(b Beat, now time.Time) string {
 	load := fmt.Sprintf("%.1f%%", b.Load)
 	if f := FilesText(b, now); f != "" {
 		load += " fds " + f
+	}
+	if d := DiskText(b, now, DiskWarnDefault, DiskStopDefault); d != "" {
+		load += " " + d
 	}
 	return load
 }

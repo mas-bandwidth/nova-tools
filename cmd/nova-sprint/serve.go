@@ -62,11 +62,35 @@ import (
 func workerVerb(argv []string) (as string, words int, why string) {
 	if len(argv) >= 2 && argv[0] == "fleet" && argv[1] == "beat" {
 		rest := argv[2:]
-		if len(rest) != 3 || rest[1] != "--load" || !sprint.ValidID(rest[0]) {
-			return "", 0, "a beat sent to the server is `fleet beat <member> --load <percent>` and nothing more: the server cannot measure the worker's machine"
+		if len(rest) < 1 || !sprint.ValidID(rest[0]) {
+			return "", 0, "a beat sent to the server is `fleet beat <member> [--load <percent>] [--disk <json>]`: the server cannot measure the worker's machine"
 		}
-		if _, err := strconv.ParseFloat(rest[2], 64); err != nil {
-			return "", 0, "a beat's --load is a number, found " + rest[2]
+		seen := map[string]bool{}
+		for i := 1; i < len(rest); i += 2 {
+			if i+1 >= len(rest) {
+				return "", 0, "a beat's " + rest[i] + " wants its value"
+			}
+			if seen[rest[i]] {
+				return "", 0, "a beat's " + rest[i] + " is given once"
+			}
+			seen[rest[i]] = true
+			switch rest[i] {
+			case "--load":
+				if _, err := strconv.ParseFloat(rest[i+1], 64); err != nil {
+					return "", 0, "a beat's --load is a number, found " + rest[i+1]
+				}
+			case "--disk":
+				if !json.Valid([]byte(rest[i+1])) {
+					return "", 0, "a beat's --disk is one JSON reading of the volume, found " + oneline.Escape(rest[i+1])
+				}
+			default:
+				return "", 0, "a beat sent to the server is `fleet beat <member> [--load <percent>] [--disk <json>]` and nothing more: the server cannot measure the worker's machine"
+			}
+		}
+		if !seen["--load"] {
+			// the worker's own measure: the server cannot measure another machine, and
+			// would record its own
+			return "", 0, "a beat sent to the server names its load (`fleet beat <member> --load <percent> [--disk <json>]`): the server cannot measure the worker's machine"
 		}
 		return rest[0], 2, ""
 	}
@@ -444,6 +468,7 @@ var friendBeatFlags = map[string]func(string) bool{
 	"--run":    sprint.ValidID,
 	"--until":  rfc3339,
 	"--reason": oneLineText,
+	"--disk":   func(v string) bool { return json.Valid([]byte(v)) && len(v) <= 8192 },
 }
 
 // oneLineText is the shape of a short text on one line: not empty, no control character.

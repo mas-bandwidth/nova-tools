@@ -21,6 +21,33 @@ import (
 // QuietPropPrefix is the fleet table's property of a member's quiet: quiet_<member>.
 const QuietPropPrefix = "quiet_"
 
+// DiskQuietPropPrefix is the fleet table's property of a member's disk quiet:
+// disk_quiet_<member>. The tick sets it while the member's volume is over the
+// stop line (disk.go), so the deal gives it no new lane and every worker's view
+// says why; it is the disk's own quiet, so fleet quiet never clobbers it and
+// quietEnds never ends it.
+const DiskQuietPropPrefix = "disk_quiet_"
+
+// DiskQuiets is every member's disk quiet the fleet table's properties hold, by
+// member name, in name order; a property that does not read is no quiet.
+func DiskQuiets(props map[string]string) []Quiet {
+	var out []Quiet
+	for name, v := range props {
+		m, ok := strings.CutPrefix(name, DiskQuietPropPrefix)
+		if !ok {
+			continue
+		}
+		var q Quiet
+		if json.Unmarshal([]byte(v), &q) != nil {
+			continue
+		}
+		q.Member = m
+		out = append(out, q)
+	}
+	slices.SortFunc(out, func(a, b Quiet) int { return strings.Compare(a.Member, b.Member) })
+	return out
+}
+
 // The happened notes of a quiet: begun by the coordinator, and ended, at its time or early.
 const (
 	NQuiet      = "a machine is quiet"
@@ -74,24 +101,42 @@ func Quiets(props map[string]string) []Quiet {
 }
 
 // QuietLines is the QUIET line of every quiet in force at now: what view worker shows every
-// member and friend.
+// member and friend. A member's disk quiet (DiskQuiets) is shown beside the coordinator's.
 func QuietLines(props map[string]string, now time.Time) []string {
 	var out []string
-	for _, q := range Quiets(props) {
-		if q.Active(now) {
+	seen := map[string]bool{}
+	for _, q := range append(Quiets(props), DiskQuiets(props)...) {
+		if q.Active(now) && !seen[q.Member] {
+			seen[q.Member] = true
 			out = append(out, q.Line())
 		}
 	}
+	slices.Sort(out)
 	return out
 }
 
-// quietNow is the members quiet at the snapshot's clock.
+// quietNow is the members quiet at the snapshot's clock, the coordinator's
+// (Quiets) and the disk's (DiskQuiets) together.
 func quietNow(s *Snapshot) map[string]Quiet {
 	out := map[string]Quiet{}
 	if s.Fleet == nil {
 		return out
 	}
-	for _, q := range Quiets(s.Fleet.Props()) {
+	for _, q := range append(Quiets(s.Fleet.Props()), DiskQuiets(s.Fleet.Props())...) {
+		if q.Active(s.Now) {
+			out[q.Member] = q
+		}
+	}
+	return out
+}
+
+// diskQuietNow is the members held by a disk quiet at the snapshot's clock.
+func diskQuietNow(s *Snapshot) map[string]Quiet {
+	out := map[string]Quiet{}
+	if s.Fleet == nil {
+		return out
+	}
+	for _, q := range DiskQuiets(s.Fleet.Props()) {
 		if q.Active(s.Now) {
 			out[q.Member] = q
 		}

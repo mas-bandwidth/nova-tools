@@ -5150,6 +5150,33 @@ alarm:" and says the count now. Over the warn bound only, no judgment is written
 fleet table's load cell says it instead, the load followed by `fds <count> warn` (or
 `alarm` above the alarm bound), while the beat and its reading are fresh.
 
+### Disk watermarks
+
+The owner, 2026-10-06: "Don't shit in your own bed." On the same morning the AI volume
+reached 100% with no warning from the machine: the first sign was the bus store refusing
+writes and lanes dying. The fleet and friend rows carried no disk figure, the tick raised
+no judgment about the disk, and nothing refused a new lane on a full disk. Every beat
+therefore measures the free bytes and the inode headroom of the volume its working
+directory lives on, and carries the reading (`sprint.Beat.Disk`, a friend's in her report
+with it), and the tick keeps a judgment of the volume: while a fresh reading is over the
+warn line (the work table's `disk_warn`, default `80`), one judgment of the volume, "a
+volume is over its disk watermark", filed under `volume:<volume>`, whatever the rows on
+it do, naming the volume, its use, the free bytes and inode headroom, the machines and
+friends on it, and the largest directories under the AI root by a bounded scan of its two
+levels (the producer carries them; a beat scans only over the warn line). It is raised
+again every re-raise cadence (the work table's `disk_reraise`, default `30m`) while the
+volume holds, and closed when it falls under or its readings go stale. Its decisions are
+`fleet down <m>`, `ack` and `wait 30m`; the line names the reclaim (`run: nova-sprint
+gc`). Above the stop line (the work table's `disk_stop`, default `95`) no new lane is
+started on a machine whose working directory is on the volume: the deal and the reads
+skip it, and its row carries the disk's own quiet (`disk_quiet_<m>`, the reason the
+readiness headline shows) until the watermark clears. The fleet table's load cell says
+the free bytes and the inode headroom with the warn or stop word while the reading is
+fresh. A friend's row has no load number; that same cell, and her friends-table `disk`
+field, carry the figure alone. `fleet beat --disk <json>` and `friend beat --disk <json>`
+carry the reading a worker measured, because the sprint server cannot read another
+machine's files.
+
 ### The coordinator's pass
 
 The owner, 2026-10-05: "everything I described above needs to be mechanical, so you
