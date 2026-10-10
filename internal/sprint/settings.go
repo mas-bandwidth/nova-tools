@@ -184,6 +184,27 @@ func (s *Snapshot) DealtMax() time.Duration {
 	return DealtMaxDefault
 }
 
+// PinWaitDefault is how long a named WHO preference waits for a friend who is down,
+// held, or already at her room before the pin is waived and the card is dealt on
+// (nova-sprint set --pin-wait). A hard pin (WHO: only friend, WHO: friend <name> only)
+// never waits on this clock.
+const PinWaitDefault = 30 * time.Minute
+
+// PropPinWait is the work table's property: the pin wait, a duration.
+const PropPinWait = "pin_wait"
+
+// PinWait is that bound: the sprint's setting, else PinWaitDefault.
+func (s *Snapshot) PinWait() time.Duration {
+	if s != nil && s.Work != nil {
+		if v, ok := s.Work.Prop(PropPinWait); ok {
+			if d, err := time.ParseDuration(v); err == nil && d > 0 {
+				return d
+			}
+		}
+	}
+	return PinWaitDefault
+}
+
 // FriendIdleDefault is how long a friend holding cards may show no file write under her
 // working directory and outbox before it is an alarm (nova-sprint set --friend-idle).
 const FriendIdleDefault = 20 * time.Minute
@@ -271,6 +292,7 @@ type SetReq struct {
 	DealtMax         string   `json:",omitempty"`
 	Attempts         string   `json:",omitempty"`
 	FriendIdle       string   `json:",omitempty"`
+	PinWait          string   `json:",omitempty"`
 	FriendStallAfter string   `json:",omitempty"`
 	FriendStallStep  string   `json:",omitempty"`
 	// Reason, with Streams and ReadTier, is why the read tier is set, recorded on the
@@ -418,6 +440,11 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--friend-idle wants a duration above zero (20m, 1h), or "+ReadTierDefault+" for "+FriendIdleDefault.String()+"; found "+r.FriendIdle)
 		}
 	}
+	if r.PinWait != "" && r.PinWait != ReadTierDefault {
+		if d, err := time.ParseDuration(r.PinWait); err != nil || d <= 0 {
+			why = append(why, "--pin-wait wants a duration above zero (30m, 1h), or "+ReadTierDefault+" for "+PinWaitDefault.String()+"; found "+r.PinWait)
+		}
+	}
 	if r.FriendStallAfter != "" && r.FriendStallAfter != ReadTierDefault {
 		if d, err := time.ParseDuration(r.FriendStallAfter); err != nil || d <= 0 {
 			why = append(why, "--friend-stall-after wants a duration above zero (20m, 1h), or "+ReadTierDefault+" for "+FriendStallAfterDefault.String()+"; found "+r.FriendStallAfter)
@@ -455,8 +482,8 @@ func Set(s *Snapshot, r SetReq) Plan {
 	if r.Base != "" && len(r.Streams) == 0 {
 		why = append(why, "--base is a stream's, not the sprint's: nova-sprint stream set <s> --base <branch>")
 	}
-	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && r.Base == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" && r.Fleet == "" && r.Friends == "" && len(sideTiers) == 0 && r.ReadCards == "" && r.Reads == "" && r.ReworkPriority == "" {
-		why = append(why, "nothing to set: --rework-priority, --read-tier, --read-cards, --reads, --prose, --base, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours, --fleet, --friends, --fleet-tiers, --friends-tiers or an --alarm-... threshold")
+	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && r.Base == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.PinWait == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" && r.Fleet == "" && r.Friends == "" && len(sideTiers) == 0 && r.ReadCards == "" && r.Reads == "" && r.ReworkPriority == "" {
+		why = append(why, "nothing to set: --rework-priority, --read-tier, --read-cards, --reads, --prose, --base, --dealt-max, --go-lanes, --attempts, --friend-idle, --pin-wait, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours, --fleet, --friends, --fleet-tiers, --friends-tiers or an --alarm-... threshold")
 	}
 	if len(r.Streams) > 0 && r.GoLanes != "" {
 		why = append(why, "--go-lanes is the sprint's, not a stream's: nova-sprint set --go-lanes "+r.GoLanes)
@@ -469,6 +496,9 @@ func Set(s *Snapshot, r SetReq) Plan {
 	}
 	if len(r.Streams) > 0 && r.FriendIdle != "" {
 		why = append(why, "--friend-idle is the sprint's, not a stream's: nova-sprint set --friend-idle "+r.FriendIdle)
+	}
+	if len(r.Streams) > 0 && r.PinWait != "" {
+		why = append(why, "--pin-wait is the sprint's, not a stream's: nova-sprint set --pin-wait "+r.PinWait)
 	}
 	if len(r.Streams) > 0 && r.FriendStallAfter != "" {
 		why = append(why, "--friend-stall-after is the sprint's, not a stream's: nova-sprint set --friend-stall-after "+r.FriendStallAfter)
@@ -581,6 +611,7 @@ func Set(s *Snapshot, r SetReq) Plan {
 		{PropGoLanes, r.GoLanes},
 		{PropAttempts, r.Attempts},
 		{PropFriendIdle, r.FriendIdle},
+		{PropPinWait, r.PinWait},
 		{PropFriendStallAfter, r.FriendStallAfter},
 		{PropFriendStallStep, r.FriendStallStep},
 		{PropDriftCommits, r.DriftCommits},
@@ -621,6 +652,8 @@ func orDefault(v, name string) string {
 		return fmt.Sprintf("default (%d attempts on one brief)", AttemptsDefault)
 	case name == PropFriendIdle:
 		return fmt.Sprintf("default (%s)", FriendIdleDefault)
+	case name == PropPinWait:
+		return fmt.Sprintf("default (%s)", PinWaitDefault)
 	case name == PropFriendStallAfter:
 		return fmt.Sprintf("default (%s)", FriendStallAfterDefault)
 	case name == PropFriendStallStep:

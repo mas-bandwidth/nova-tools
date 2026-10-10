@@ -423,6 +423,8 @@ func TestAnIdleUpFriendWhileCardsWaitElsewhereIsToldOnce(t *testing.T) {
 // step: why the pinned friend did not take it, and whose row holds the card.
 // The pass keeps that one note, raises it again in place, and closes it when
 // the card is finished. A hard pin is not rotated and is not this judgment.
+// A named pin is a preference with a clock (docs/SPEC-SPRINT.md, a WHO pin):
+// a held friend's pin waits inside the pin wait, then is waived and rotated.
 func TestAPinnedCardRotatedOffItsFriendIsJudgedOnce(t *testing.T) {
 	t.Parallel()
 	r := newPassRig(t)
@@ -430,10 +432,24 @@ func TestAPinnedCardRotatedOffItsFriendIsJudgedOnce(t *testing.T) {
 	r.must(store.AddStep(sprint.AddReq{Stream: "f1", Cards: []sprint.CardAdd{{ID: "f1-2", Brief: friendsBrief("friend amy")}}}))
 	r.pongs["bob"] = r.clock()
 	r.tick(time.Second)
+	// a held friend's pin waits inside the pin wait: its clock starts, no rotation
 	s := r.snap()
+	assert.Equal(t, sprint.Ready, s.Work.Card("f1-2").Col, "a held pin waits inside the pin wait")
+	assert.Nil(t, s.Fleet.Card(s.Work.Card("f1-2").F("work")), "the pin is not dealt while its clock runs")
+	assert.Nil(t, r.open(sprint.NPinIgnored, "f1-2"), "no rotation, so no judgment yet")
+
+	// past the pin wait the pin is waived and the card rotates to bob; the steps keep
+	// bob's session fresh so he is up with room to take it
+	for i := 0; i < 6; i++ {
+		r.pongs["bob"] = r.clock()
+		r.tick(5 * time.Minute)
+	}
+	r.pongs["bob"] = r.clock()
+	r.tick(time.Second)
+	s = r.snap()
 	wc := s.Fleet.Card(s.Work.Card("f1-2").F("work"))
 	require.NotNil(t, wc, "the pin was dealt")
-	require.Equal(t, sprint.FriendRow("bob"), wc.Row, "amy is held, so the pin rotates to bob")
+	require.Equal(t, sprint.FriendRow("bob"), wc.Row, "amy is held past the pin wait, so the pin rotates to bob")
 	j := r.open(sprint.NPinIgnored, "f1-2")
 	require.NotNil(t, j, "a pin placed on someone else's row is a judgment")
 	assert.Contains(t, j.What, wc.ID)
@@ -475,7 +491,8 @@ func TestAPinnedCardRotatedOffItsFriendIsJudgedOnce(t *testing.T) {
 
 // A named pin the friends do not take, so the fleet deals it, is still a
 // judgment. The deal writes no friend unit for it; the pass raises the one
-// note from the row the card landed on.
+// note from the row the card landed on. A held friend's pin waits inside the
+// pin wait first (docs/SPEC-SPRINT.md, a WHO pin is a preference with a clock).
 func TestAPinnedCardTheFleetTookIsJudgedOnce(t *testing.T) {
 	t.Parallel()
 	r := newPassRig(t)
@@ -483,6 +500,11 @@ func TestAPinnedCardTheFleetTookIsJudgedOnce(t *testing.T) {
 	r.must(store.AddStep(sprint.AddReq{Stream: "f1", Cards: []sprint.CardAdd{{ID: "f1-9", Brief: friendsBrief("friend amy")}}}))
 	r.tick(time.Second)
 	s := r.snap()
+	assert.Nil(t, s.Fleet.Card(s.Work.Card("f1-9").F("work")), "a held pin waits inside the pin wait")
+
+	// past the pin wait the pin is waived and, with no friend up, the fleet deals it
+	r.tick(sprint.PinWaitDefault + time.Second)
+	s = r.snap()
 	wc := s.Fleet.Card(s.Work.Card("f1-9").F("work"))
 	require.NotNil(t, wc, "no friend is up, so the fleet deals the pin")
 	require.False(t, sprint.IsFriendRow(wc.Row), "it sits on a machine, %s", wc.Row)

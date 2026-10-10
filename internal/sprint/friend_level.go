@@ -15,11 +15,12 @@ import (
 // the members' ready queues (level); friend level evens the friends', and every tick runs
 // it after its deal (TickDeal), so no verb is needed. A card moves only to a friend whose
 // tiers hold its tier (friendTakes), never by class, and never to a friend it has left
-// (friendsLeft). Every card but a hard pin (WHO: only friend, OnlyFriend) that is ready on
+// (friendsLeft). Every card but a hard pin (WHO: only friend, or WHO: friend <name> only,
+// OnlyFriend) that is ready on
 // her row behind the cards her lanes hold and that she has not started moves: a card with no WHO
-// line, WHO: friend, or one preferring her (WHO is a preference, friends first); a hard pin
+// line, WHO: friend, or one preferring her, a pin the clock has waived included (WHO is a preference, friends first); a hard pin
 // stays hers, and a working card is hers to finish or the coordinator's to take back
-// (FriendTake).
+// (FriendTake). Rebalance, not this level, is what carries an unstarted waived card back to her.
 
 // FriendLevelPerTick is the most cards the tick's level moves in one tick.
 const FriendLevelPerTick = 4
