@@ -947,6 +947,15 @@ its own role view.**
     Why: clutter and unasked notes made the page untrustworthy.
     Done by: `nova-sprint view coordinator --json`; `nova-sprint dashboard`.
 
+### simp-retire-buswatch-b
+
+The coordinator's hand wake script (`<coordinator-dir>/tmp/buswatch/watch.sh`) is retired:
+`nova-sprint watch --wake` holds every behaviour it had, each pinned by a test, and its row
+in docs/STOPGAPS.md is `STATUS: retired`. Run the verb in the background as a nova-config loop
+row, `NOVA_SPRINT_SERVER=127.0.0.1:$PORT NOVA_SPRINT_ACTOR=<coordinator> nova-sprint watch
+--wake --check 10m` (R80, R89, R91): stop the old background run, start the verb, then delete
+the script.
+
 ## Open items
 
 Each is a place this runbook describes a workaround; the change that removes it is named.

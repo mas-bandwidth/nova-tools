@@ -2608,6 +2608,16 @@ which refuses a group that has changed. `nova-sprint help <verb>` (or
 `<verb> -h`) prints one verb's usage, flags and exit codes; `nova-sprint help
 <group>` (fleet, friend, reader, goal, stream) prints one group's.
 
+### The coordinator's wake
+
+| command | what it does |
+| --- | --- |
+| `watch --wake [--state <file>] [--every <duration>] [--check <duration>] [--judgment-every <duration>] [--merge-every <duration>] [--backlog-every <duration>] [--land-after <duration>] [--merge-over <n>] [--merging-over <n>] [--review-over <n>]` | The coordinator's wake as one run: blocks until the first of a bus message to the coordinator, a new judgment (one wake in twenty minutes), a stop the coordinator did not ask for, a friend down twice in a row, a merge backlog or no land pass for fifteen minutes, a review or ready backlog, or a ten-minute check; prints one `WAKE <kind> <time> <evidence>` line and exits 0 |
+
+`watch` replaces the coordinator's hand wake script: run it in the background, as a
+nova-config loop row, and the session is re-invoked each time it returns. The register
+(docs/STOPGAPS.md, `## coordinator-wake`) and docs/SPRINT-COORDINATOR.md name the verb.
+
 ### A card's priority
 
 Every card carries a level of the ladder blocker, critical, high, reader, normal, low; a
