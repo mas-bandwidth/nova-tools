@@ -517,3 +517,4 @@ MCStatsResetBrokenNoRebase.cfg	MCStatsReset.tla	invariant	ShownIsSinceMark	ignor
 MCStatsResetBrokenByCount.cfg	MCStatsReset.tla	invariant	ShownIsSinceMark	ignore-terminal	statsreset	required	-
 MCStatsResetBrokenNoLock.cfg	MCStatsReset.tla	invariant	ShownIsSinceMark	ignore-terminal	statsreset	required	-
 MCStatsResetBrokenNoStamp.cfg	MCStatsReset.tla	invariant	RecordShowsShown	ignore-terminal	statsreset	required	-
+MCLandPassBrokenRecordBatch.cfg	MCLandPass.tla	invariant	RecordPushedCards	ignore-terminal	landpass	required	-

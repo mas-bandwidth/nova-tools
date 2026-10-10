@@ -1150,7 +1150,7 @@ func (l *lander) recordPushed(ctx context.Context, s *sprint.Snapshot, order []s
 			ids[i] = c.id
 		}
 		lb := landBatch{Stream: b.stream, Base: b.pins[0].base, Tip: b.sha, Repo: b.pins[0].repo, Cards: len(ids), IDs: ids}
-		res, err := l.step(sprint.MergeReq{Stream: b.stream, Batch: len(ids), Who: l.c.actor}, b.pins)
+		res, err := l.step(sprint.MergeReq{Stream: b.stream, Cards: ids, Who: l.c.actor}, b.pins)
 		if code := stepExit(res, err); code != 0 || !movedExactly(res.Moved, ids) {
 			lb.Status = "failed"
 			lb.Reason = sprint.ReportRefusedReason(lb.Base, b.sha, stepWhy(res, err)) + "; " + againRemedy(b.stream)

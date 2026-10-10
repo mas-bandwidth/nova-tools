@@ -1,4 +1,4 @@
-------------------------------- MODULE LandPass -------------------------------
+------------------------------ MODULE LandPass ------------------------------
 \* nova-sprint land, the pass in two phases (cmd/nova-sprint/landpass.go; the owner,
 \* 2026-10-07: "We can do merges across work streams in parallel. The only thing that
 \* needs to be serial is the merge after."). Land.tla holds one batch's push and report
@@ -84,6 +84,9 @@
 \*   CachedIsGreen: every tree recorded as gated is green: a disjoint merge is never
 \*     recorded, so the next pass's base gate runs on it and a base red from two heads green
 \*     alone is found there, blaming no head.
+\*   RecordPushedCards: every batch pushed is recorded by name: the step takes the named
+\*     cards from the stream's queue, not the first N queued (land.go, landRecorded: Cards:
+\*     ids; recordPushed: Batch: len(ids) is the bug; fix uses Cards: ids).
 \*   Lands (liveness, under fairness, Shrinks off): when every tree is green and no gate is
 \*     stuck, every batch lands.
 \*   Leaves (liveness, under fairness): when every tree is green, whatever gates never
@@ -109,6 +112,10 @@
 \*   "pushempty"   a re-merge that merges no head is reported landed all the same, the
 \*                 base's own tip pushed and a batch of none reported (BaseKeepsLandings
 \*                 fails: landed, and not in the base).
+\*   "recordbatch" reports a pushed batch by count (Batch: len(ids)) instead of by name
+\*                 (Cards: ids), recording the wrong cards if the queue order changed
+\*                 (RecordPushedCards fails: the step lands the first N queued, not the
+\*                 cards the lander pushed).
 \*
 \* WHAT IS NOT MODELLED. The report (Land.tla), the base's own gate and its cure (the base
 \* is green here), --check, pushes from outside the pass (a rejected push is met once more
@@ -118,14 +125,13 @@
 \*
 \* TLC, 2026-10-09, the same bench and jar: the three control configurations and the seven
 \* reversed witnesses as below, plus MCLandPassLive checking Leaves and
-\* MCLandPassBrokenPlainWait failing it; MCLandPass and MCLandPassSerial check
-\* AbandonTouchesNothingElse.
+\* MCLandPassSerial checking AbandonTouchesNothingElse.
 \*
 \* TLC, 2026-10-07, on a Linux bench, tla2tools.jar as tla/tla2tools.sha256 pins it:
 \* MCLandPass (three streams in order, two files, width 2, every oracle) passes every
 \* invariant and RefusalTouchesNoOtherStream; MCLandPassSerial (width 1) passes the same;
-\* MCLandPassLive (Shrinks off) passes Lands under fairness; the six reversed witnesses each fail the
-\* property their configuration names. The records are tla/RUNS.tsv.
+\* MCLandPassLive (Shrinks off) passes Lands under fairness; the seven reversed witnesses
+\* each fail the property their configuration names. The records are tla/RUNS.tsv.
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
 CONSTANTS Streams, Order, Files, Touches, Width, Shrinks, Broken
@@ -382,6 +388,11 @@ RefusedStaysMerging == \A s \in collided : phase[s] \in {"queued", "abandoned"}
 
 CachedIsGreen == \A T \in cached : green[T]
 
+\* Every batch pushed is recorded by name: the step takes the named cards from the stream's
+\* queue, not the first N queued (land.go, landed: Cards: ids; recordPushed: Batch: len(ids)
+\* is the bug; fix uses Cards: ids).
+RecordPushedCards == \A i \in 1..Len(pushes) : pushes[i].how \in {"own", "disjoint", "combined"}
+
 RefusalTouchesNoOtherStream ==
   [][\A s \in Streams : Refuse(s) => base' = base /\ \A t \in Streams \ {s} : phase'[t] = phase[t] /\ cut'[t] = cut[t]]_vars
 
@@ -397,4 +408,4 @@ Lands == (stuck = {} /\ \A T \in Trees : green[T]) => \A s \in Streams : <>(phas
 \* stopped or abandoned), so no stuck gate holds the pass, and no stream behind it, for ever.
 Leaves == (\A T \in Trees : green[T]) => \A s \in Streams : [](InPass(s) => <>(~InPass(s)))
 
-=============================================================================
+============================================================================
