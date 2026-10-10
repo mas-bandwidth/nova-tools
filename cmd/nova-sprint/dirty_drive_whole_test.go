@@ -10,8 +10,27 @@ import (
 
 // The drive's whole-table reads after its first tick
 // (dirty_drive_functional_test.go): every one is the twin failing to catch a
-// table up, so every one is asserted. They are not split by the part's
-// store.PartTime.Stale.
+// table up, so every one is asserted, whatever the part's Stale count.
+//
+// A whole read after the first tick is a change-stream gap, not load. catchUp
+// (twin.go:412-436) reads the table whole only when the table's change stream
+// cannot account for the revisions between (!ok: TableChanges returns a
+// GapError or a GrantError, redis.go:1022-1090), and it increments
+// Stats.stale only on the catch-up success path (twin.go:437). Within one tick
+// part Reads and Stale therefore come from different tables: a part with
+// Stale > 0 caught one table up from the change stream and can still carry a
+// whole read of another table the stream could not account for. A write by
+// another writer between the twin's read and its catch-up is caught up from
+// the change stream and counted stale, never read whole (twin_test.go:66-109
+// pins Stale > 0, Reads == 0 for a write during the tick). So store.PartTime's
+// Stale does not classify a whole read, and no whole read is demoted to load.
+//
+// A gap is a product defect to fix in the change stream, not a runner's load:
+// the row hide (c48490de4) and the order-only set (f45296afd) were fixed the
+// same way, each a write the stream layer classified as naming no records when
+// it named or changed none. The drive's failure names the gap (the catch-up's
+// note, tick.go's Said) beside the tick, part and counts, so the on-record
+// cause is the verb, not the load.
 
 // driveWholeRead is one whole-table read after the drive's first tick: the
 // tick it happened in and the part that took it.
@@ -24,16 +43,10 @@ type driveWholeRead struct {
 // the first tick, in tick order. The first tick is left out: its read builds
 // the twin, so every table it reads whole is expected.
 //
-// It does not split them by store.PartTime.Stale. catchUp (twin.go:412-437)
-// takes a whole read only when the table's change stream cannot account for
-// the revisions between (!ok: a GapError or a GrantError), and increments
-// Stats.stale only on the catch-up success path (ok == true, twin.go:437). A
-// part's Reads and Stale then come from different tables: a part with Stale > 0
-// can still carry a whole read the stream could not account for, so Stale does
-// not classify a whole read. A write between the twin's read and its catch-up
-// is caught up from the change stream and counted stale, not read whole
-// (twin_test.go:100-101 pins it). A whole read is the twin failing whatever
-// the part's stale count; the drive asserts every one.
+// It does not split them by store.PartTime.Stale: a whole read is the twin
+// failing (a change-stream gap), and Stale counts a catch-up from the change
+// stream, a different table's read. The drive asserts every one; the failure's
+// note names the gap.
 func driveWholeReads(ticks [][]store.PartTime) []driveWholeRead {
 	var out []driveWholeRead
 	for i, times := range ticks {
@@ -64,19 +77,25 @@ func TestDriveWholeReadsFirstTickIsNeverCounted(t *testing.T) {
 // TestDriveWholeReadsStaleWholeReadIsAsserted pins that a whole read in a part
 // that also caught a table up (Stale > 0) is still asserted: Stale counts a
 // catch-up from the change stream, a different table's read, and does not mean
-// the whole read was another writer's and not the twin's.
+// the whole read was another writer's and not the twin's. The reads are the
+// merge-queue failures' own shape (nova-tools#5214, nova-tools#5197: the first
+// read of one table whole, 334-402 trips, 3-4 stale), so demoting them by
+// Stale would hide the gap.
 func TestDriveWholeReadsStaleWholeReadIsAsserted(t *testing.T) {
 	t.Parallel()
 	ticks := [][]store.PartTime{
 		{{Name: "first read", Reads: 4}},
-		{{Name: "first read", Reads: 1, Trips: 9, Stale: 2}},
+		{{Name: "first read", Reads: 1, Trips: 402, Stale: 3}},
+		{{Name: "first read", Reads: 1, Trips: 334, Stale: 4}},
 	}
 	got := driveWholeReads(ticks)
-	assert.Len(t, got, 1)
+	assert.Len(t, got, 2)
 	assert.Equal(t, 2, got[0].Tick)
 	assert.Equal(t, "first read", got[0].Part.Name)
 	assert.Equal(t, int64(1), got[0].Part.Reads)
-	assert.Equal(t, int64(2), got[0].Part.Stale)
+	assert.Equal(t, int64(3), got[0].Part.Stale)
+	assert.Equal(t, 3, got[1].Tick)
+	assert.Equal(t, int64(4), got[1].Part.Stale)
 }
 
 // TestDriveWholeReadsWholeReadWithNoStaleIsAsserted pins that a whole read in a

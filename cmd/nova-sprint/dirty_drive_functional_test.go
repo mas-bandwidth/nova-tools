@@ -565,11 +565,15 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 
 	// THE GATE: every tick under MaxTickWall; after the first tick the loop
 	// reads no table whole (its twin catches up from the change streams), and
-	// its twin never disagrees with the store's counts. A write between the
-	// twin's read and its catch-up is caught up from the change stream and
-	// counted stale, not read whole; driveWholeReads
+	// its twin never disagrees with the store's counts. A whole read after the
+	// first tick is a change-stream gap (catchUp's !ok: twin.go:433-435), a
+	// product defect, not the load, so every one is asserted. A write between
+	// the twin's read and its catch-up is caught up from the change stream and
+	// counted stale, never read whole (twin_test.go:66-109), so a part's stale
+	// count does not classify the whole read. driveWholeReads
 	// (dirty_drive_whole_test.go) returns every whole read after the first tick
-	// whatever its part's stale count, and each one is asserted.
+	// whatever its part's stale count, and each one is asserted with the gap's
+	// note (Said) beside it.
 	var over []string
 	var sumTook, maxTook time.Duration
 	routeTrips, routeMax := int64(0), int64(0)
