@@ -2178,18 +2178,43 @@ whoever wrote the brief:
   markdown trimmed, the verdict upper case, the head lower case). `LAND` with a
   full sha head is `finish --as friend.<name> <card>@<gen> --epoch <n> --head
   <sha> --branch <b> --report "friend <name> LAND: <first paragraph>"`; `HOLD`,
-  `FAIL` and any other verdict, and a `LAND` with no full sha head, are
-  `--failed`, a full sha head kept, the report `friend <name> <verdict>: ` and
-  the report's first 600 characters on one line. The branch is the row's, else
-  the brief's STATUS line. One line on the record per finish (`outbox: finished
-  card <c> from outbox/<job>/REPORT.md (Verdict <v>, working on her row):
-  finish=ok|failed head=<sha> sent=server`).
+  `FAIL`, and a `LAND` with no full sha head, are `--failed`, a full sha head
+  kept, the report `friend <name> <verdict>: ` and the report's first 600
+  characters on one line. The branch is the row's, else the brief's STATUS
+  line. One line on the record per finish (`outbox: finished card <c> from outbox/<job>/REPORT.md (Verdict <v>, working on her row): finish=ok|failed head=<sha> sent=server sha256=<hex>`). The sha256 is the bytes collected.
+  A report that changes after that line is ignored: the collection is one event.
+- Collection is gated on `Final` for every report: it is final when its first
+  line is a verdict of `LAND`, `HOLD` or `FAIL` (any case) and its second line
+  is `Head: <40-hex>` or `Head: -`, both read as friend sync reads them
+  (markdown trimmed); a blank second line is final for `HOLD` and `FAIL`, whose
+  brief says line 2 is blank. A session writes the whole report once, at the
+  end, under a temporary name, then renames it onto `REPORT.md`; a report the
+  daemon writes (a dead lane, `DeadLaneReport`) carries `Head: -`.
+  Every other report is not final: `pending`, and any other word; a `LAND` whose
+  second line is not a `Head`; and a report whose first line is not the verdict
+  (a later `Verdict:` line does not count). The file is left, noted once
+  (`report not final yet: <card>: <first line>`), including when it has no
+  `Verdict:` line, and read again next pass. Past the
+  card's deadline every not-final report is collected as `FAIL` with the reason
+  `report never became final: first line <text>`. The deadline is the brief's
+  `DEADLINE:` line, its key read in any case (an issued brief writes `Deadline:`
+  and a value ending in a period): an absolute RFC3339 time, or a duration from
+  the card's start, the lane's own start when the daemon began it else the first
+  pass that saw the card working on her row; and two hours from that start when
+  the brief names none. `TestFinal`,
+  `TestAHoldOrFailWithABlankSecondLineIsFinishedNotLeft`,
+  `TestFinalGatesEveryReportAndTheDeadlineCollectsTheRest`,
+  `TestAReportThatIsNotFinalIsLeftUntilTheCardsDeadline` and
+  `TestACardDeadlineRunsFromTheCardsStart`.
 - A finish is sent once: a job finished is never sent again, nor noted when its
   card leaves her row. One the server did not answer or refused is said once
   and sent again after `OutboxRetry` (a minute); friend sync may finish it
   first, and the server refuses the second.
-- A report with no `Verdict:` line, a report that cannot be read, a card not
-  on her row, ready and not working, or a read, is said once while it stands
+- A report with no `Verdict:` line is said once while it stands
+  (`outbox: left outbox/<job>/REPORT.md: report not final yet: <card>: <first line>`) and left until
+  the card's deadline, when it is collected as `FAIL` like any report that never
+  became final. A report that cannot be read, a card not on her row, ready and
+  not working, or a read, is said once while it stands
   (`outbox: left outbox/<job>/REPORT.md: <why>`) and left; the next pass reads
   it again, so a verdict she writes later is finished then.
 - A report on a card that is no longer hers (taken back, dealt to another) is
