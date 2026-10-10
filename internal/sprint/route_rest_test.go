@@ -9,18 +9,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The rule's window (rule 3): the last RouteRestWindow ended takes on a route after its last
-// rest began, in the order they ended. RouteRestAfter takes with no result in it rest the
-// route from the clock for RouteRestFor; older ends, ends before the last rest, ok ends and
-// the provider's failures do not; a route resting now is not rested again.
-func TestRestsDueCountsNoResultEndsInTheRoutesWindow(t *testing.T) {
+// The rule's window (tla/RouteRest.tla): the last RouteRestWindow ended takes on a route
+// after its last rest began, in the order they ended. RouteRestAfter takes in it the
+// provider failed TRANSIENTLY (a rate limit, a 5xx, a timeout) rest the route from the clock
+// for RouteRestFor; a take that ended with no result never counts (it is the model's output,
+// not the provider's: the card's attempt and the route's ok% carry it), nor does a provider
+// failure of another class, an older end, an end before the last rest or an ok end; a route
+// resting now is not rested again.
+func TestRestsDueCountsTransientProviderFailuresNeverNoResults(t *testing.T) {
 	t.Parallel()
 	t0 := time.Date(2030, 1, 2, 3, 0, 0, 0, time.UTC)
 	at := func(m int) string { return stamp(t0.Add(time.Duration(m) * time.Minute)) }
-	noResult := func(m int) string {
-		return ProviderTake{Route: "a", Finished: at(m), Error: "no result: no RESULT.md shape"}.String()
+	ended := func(m int, err string) string { return ProviderTake{Route: "a", Finished: at(m), Error: err}.String() }
+	noResult := func(m int) string { return ended(m, "no result: no RESULT.md shape") }
+	limited := func(m int) string { return ended(m, "provider: class=rate-limited status=429 msg=Rate limit exceeded") }
+	outage := func(m int) string {
+		return ended(m, "provider: class=provider-5xx status=503 msg=upstream unavailable")
 	}
-	provider := func(m int) string { return ProviderTake{Route: "a", Finished: at(m), Error: "server_error"}.String() }
+	slow := func(m int) string { return ended(m, "provider: class=timeout status=- msg=no answer in 600s") }
+	other := func(m int) string {
+		return ended(m, "provider: class=other status=- msg=the harness recorded no cause")
+	}
 	// fleet is the table of the cards: each a withdrawn card whose take on route a ended so,
 	// or (ok) a card done ok on route a at that minute
 	fleet := func(takes map[string]string, ok map[string]int) *Table {
@@ -41,6 +50,7 @@ func TestRestsDueCountsNoResultEndsInTheRoutesWindow(t *testing.T) {
 		}
 		return out
 	}
+	was := func(from, to int) string { return at(from) + " " + at(to) + " x,y,z " + RestProvider }
 	for _, tc := range []struct {
 		name  string
 		takes map[string]string
@@ -48,14 +58,19 @@ func TestRestsDueCountsNoResultEndsInTheRoutesWindow(t *testing.T) {
 		rest  string // the property's value before
 		cards []string
 	}{
-		{"three with no result", map[string]string{"c1": noResult(1), "c2": noResult(2), "c3": noResult(3)}, nil, "", []string{"c1", "c2", "c3"}},
-		{"two", map[string]string{"c1": noResult(1), "c2": noResult(2)}, oks(3, 5), "", nil},
-		{"the provider's are not no result", map[string]string{"c1": noResult(1), "c2": provider(2), "c3": noResult(3)}, nil, "", nil},
-		{"three among ok ends, within ten", map[string]string{"c1": noResult(1), "c2": noResult(5), "c3": noResult(9)}, oks(2, 3), "", []string{"c1", "c2", "c3"}},
-		{"the first slid out of the window", map[string]string{"c1": noResult(1), "c2": noResult(20), "c3": noResult(21)}, oks(2, 9), "", nil},
-		{"ends before the last rest do not count", map[string]string{"c1": noResult(1), "c2": noResult(2), "c3": noResult(40)}, nil, at(10) + " " + at(30) + " x,y,z", nil},
-		{"resting now", map[string]string{"c1": noResult(41), "c2": noResult(42), "c3": noResult(43)}, nil, at(40) + " " + at(70) + " x,y,z", nil},
-		{"a rest ended, three after it", map[string]string{"c1": noResult(31), "c2": noResult(32), "c3": noResult(33)}, nil, at(0) + " " + at(30) + " x,y,z", []string{"c1", "c2", "c3"}},
+		{"three 429s", map[string]string{"c1": limited(1), "c2": limited(2), "c3": limited(3)}, nil, "", []string{"c1", "c2", "c3"}},
+		{"a 429, a 5xx and a timeout", map[string]string{"c1": limited(1), "c2": outage(2), "c3": slow(3)}, nil, "", []string{"c1", "c2", "c3"}},
+		{"three no results never rest", map[string]string{"c1": noResult(1), "c2": noResult(2), "c3": noResult(3)}, nil, "", nil},
+		{"ten no results never rest", map[string]string{"c1": noResult(1), "c2": noResult(2), "c3": noResult(3), "c4": noResult(4), "c5": noResult(5), "c6": noResult(6), "c7": noResult(7), "c8": noResult(8), "c9": noResult(9), "c10": noResult(10)}, nil, "", nil},
+		{"a no result is not the provider's", map[string]string{"c1": limited(1), "c2": noResult(2), "c3": outage(3)}, nil, "", nil},
+		{"a failure of another class does not count", map[string]string{"c1": limited(1), "c2": other(2), "c3": outage(3)}, nil, "", nil},
+		{"two", map[string]string{"c1": limited(1), "c2": limited(2)}, oks(3, 5), "", nil},
+		{"three among ok ends, within ten", map[string]string{"c1": limited(1), "c2": outage(5), "c3": slow(9)}, oks(2, 3), "", []string{"c1", "c2", "c3"}},
+		{"the first slid out of the window", map[string]string{"c1": limited(1), "c2": limited(20), "c3": limited(21)}, oks(2, 9), "", nil},
+		{"ends before the last rest do not count", map[string]string{"c1": limited(1), "c2": limited(2), "c3": limited(40)}, nil, was(10, 30), nil},
+		{"resting now", map[string]string{"c1": limited(41), "c2": limited(42), "c3": limited(43)}, nil, was(40, 70), nil},
+		{"a rest ended, three after it", map[string]string{"c1": limited(31), "c2": limited(32), "c3": limited(33)}, nil, was(0, 30), []string{"c1", "c2", "c3"}},
+		{"a retired no-result rest holds nothing", map[string]string{"c1": noResult(41)}, nil, at(40) + " " + at(70) + " x,y,z", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -68,9 +83,60 @@ func TestRestsDueCountsNoResultEndsInTheRoutesWindow(t *testing.T) {
 				assert.Empty(t, due)
 				return
 			}
-			assert.Equal(t, []RouteRest{{Route: "a", At: s.Now, Until: s.Now.Add(RouteRestFor), Cards: tc.cards, Cause: RestNoResult}}, due)
+			assert.Equal(t, []RouteRest{{Route: "a", At: s.Now, Until: s.Now.Add(RouteRestFor), Cards: tc.cards, Cause: RestProvider}}, due)
 			s.Fleet.SetProps(map[string]string{PropRule3Rest(""): "a " + due[0].value()})
 			assert.Equal(t, due[0], RouteRests(s.Routes, s.Fleet)["a"], "the property reads back as written")
+		})
+	}
+}
+
+// A rest a retired rule wrote holds no route from the moment the code that reads it runs:
+// rule 3's no-result rest (flash-deepseek41-direct, 2026-10-10 03:38Z: "no-result: its
+// children ended with no result"), and a balance poll's low-on-funds rest (openrouter, every
+// route, since 01:54:32Z: "is not over one hour of its spend ($234.82 an hour)") or its out
+// of credit read off a balance, which names no refused card. A refused take's credit rest, a
+// key's, a transient provider rest and the coordinator's still hold.
+func TestARetiredRuleRestsNoRoute(t *testing.T) {
+	t.Parallel()
+	t0 := time.Date(2026, 10, 10, 3, 38, 45, 0, time.UTC)
+	routes := []Route{
+		{Name: "flash-deepseek41-direct", Tier: "pro", Provider: "deepseek", Enabled: true},
+		{Name: "flash-glm53-openrouter", Tier: "flash", Provider: "openrouter", Enabled: true},
+		{Name: "pro-grok47-openrouter", Tier: "pro", Provider: "openrouter", Enabled: true},
+	}
+	lowRest := "2026-10-10T01:54:32Z open - balance low on funds: provider openrouter balance $190.77 at 2026-10-10T01:54:32Z is not over one hour of its spend ($234.82 an hour)"
+	for _, tc := range []struct {
+		name    string
+		props   map[string]string
+		resting []string
+	}{
+		{"the night's two rests", map[string]string{
+			PropRule3Rest("deepseek"):      "flash-deepseek41-direct 2026-10-10T03:38:45Z 2026-10-10T04:08:45Z c1,c2,c3 no-result",
+			PropProviderRest("openrouter"): lowRest,
+		}, nil},
+		{"a rule-3 line written before the cause", map[string]string{PropRule3Rest("deepseek"): "flash-deepseek41-direct 2026-10-10T03:38:45Z 2026-10-10T04:08:45Z c1,c2,c3"}, nil},
+		{"out of credit read off a balance", map[string]string{PropProviderRest("openrouter"): "2026-10-10T01:54:32Z open - out-of-credit out of credit: provider openrouter balance -$0.51"}, nil},
+		{"a refused take's credit rest holds", map[string]string{PropProviderRest("openrouter"): "2026-10-10T01:54:32Z open c9 out-of-credit out of credit: provider openrouter refused card c9"}, []string{"flash-glm53-openrouter", "pro-grok47-openrouter"}},
+		{"a transient provider rest holds", map[string]string{PropRule3Rest("deepseek"): "flash-deepseek41-direct 2026-10-10T03:38:45Z 2026-10-10T04:08:45Z c1,c2,c3 provider"}, []string{"flash-deepseek41-direct"}},
+		{"the coordinator's rest holds", map[string]string{PropProviderRest("openrouter"): "2026-10-10T03:38:45Z open - coordinator rested by seat: low"}, []string{"flash-glm53-openrouter", "pro-grok47-openrouter"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := NewTable(Fleet)
+			f.SetProps(tc.props)
+			var got []string
+			for name, r := range RouteRests(routes, f) {
+				if r.Resting(t0.Add(time.Minute)) {
+					got = append(got, name)
+				}
+			}
+			assert.ElementsMatch(t, tc.resting, got)
+			s := &Snapshot{Now: t0.Add(time.Minute), Fleet: f, Routes: routes}
+			for _, route := range routes[1:] { // a take reads its provider's rest; a route's own is the tick's
+				c := &Card{ID: "x", Fields: map[string]string{FieldRoute: route.Name, FieldModel: route.Provider + "/m"}}
+				_, rests := cardRest(s, c)
+				assert.Equal(t, contains(tc.resting, route.Name), rests, "a take on %s reads the same rest", route.Name)
+			}
 		})
 	}
 }
@@ -86,6 +152,8 @@ func TestAnOldPerRouteRestPropertyIsIgnored(t *testing.T) {
 	f.SetProps(map[string]string{"route_rest_a": old})
 	assert.Empty(t, RouteRests(routes, f), "the old per-route property rests nothing")
 	f.SetProp(PropRule3Rest("p"), "a "+old)
+	assert.Empty(t, RouteRests(routes, f), "a line with no cause is rule 3's, retired: it rests nothing")
+	f.SetProp(PropRule3Rest("p"), "a "+old+" "+RestProvider)
 	got := RouteRests(routes, f)["a"]
 	assert.Equal(t, "a", got.Route)
 	assert.True(t, got.Resting(t0.Add(time.Minute)))
@@ -103,9 +171,9 @@ func TestTwoRoutesOfOneProviderAreOneProperty(t *testing.T) {
 		{Name: "c", Provider: "q", Tier: "flash", Enabled: true},
 	}}
 	due := []RouteRest{
-		{Route: "b", At: t0, Until: t0.Add(RouteRestFor), Cards: []string{"c2"}, Cause: RestNoResult},
-		{Route: "a", At: t0, Until: t0.Add(RouteRestFor), Cards: []string{"c1"}, Cause: RestNoResult},
-		{Route: "c", At: t0, Until: t0.Add(RouteRestFor), Cards: []string{"c3"}, Cause: RestNoResult},
+		{Route: "b", At: t0, Until: t0.Add(RouteRestFor), Cards: []string{"c2"}, Cause: RestProvider},
+		{Route: "a", At: t0, Until: t0.Add(RouteRestFor), Cards: []string{"c1"}, Cause: RestProvider},
+		{Route: "c", At: t0, Until: t0.Add(RouteRestFor), Cards: []string{"c3"}, Cause: RestProvider},
 	}
 	var plan Plan
 	restWrites(&plan, s, due, "tick")
@@ -119,7 +187,7 @@ func TestTwoRoutesOfOneProviderAreOneProperty(t *testing.T) {
 	assert.Equal(t, "a "+lines["a"].value()+"\nb "+lines["b"].value(), plan.Props[0].Value, "lines in route-name order")
 
 	s.Fleet.SetProp(plan.Props[0].Name, plan.Props[0].Value)
-	again := []RouteRest{{Route: "b", At: t0.Add(time.Hour), Until: t0.Add(2 * time.Hour), Cards: []string{"c9"}, Cause: RestNoResult}}
+	again := []RouteRest{{Route: "b", At: t0.Add(time.Hour), Until: t0.Add(2 * time.Hour), Cards: []string{"c9"}, Cause: RestProvider}}
 	var next Plan
 	restWrites(&next, s, again, "tick")
 	require.Len(t, next.Props, 1)
@@ -145,7 +213,7 @@ func TestProviderRestsDueRestEveryRouteOfTheRefusedProvider(t *testing.T) {
 		return "provider: class=" + class + " status=" + status + " msg=the provider's words"
 	}
 	credit := line("out-of-credit", "402")
-	ended := at(2) + " " + at(4) + " - out-of-credit x; ended: funded by coordinator: paid" // began 3:02, ended 3:04
+	ended := at(2) + " " + at(4) + " c0 out-of-credit x; ended: funded by coordinator: paid" // began 3:02, ended 3:04
 	routes := []Route{{Name: "a", Tier: "flash", Provider: "p", Enabled: true}, {Name: "b", Tier: "pro", Provider: "p", Enabled: true}, {Name: "c", Tier: "flash", Provider: "q", Enabled: true}}
 	for _, tc := range []struct {
 		name          string
@@ -164,7 +232,7 @@ func TestProviderRestsDueRestEveryRouteOfTheRefusedProvider(t *testing.T) {
 		{"launched while the rest held, refused after it ended", credit, 3, 5, ended, ""},
 		{"launched after the last rest ended", credit, 5, 6, ended, RestCredit},
 		{"a record with no launch time", credit, -1, 6, ended, ""},
-		{"resting now", credit, 0, 1, at(0) + " " + at(60) + " - out-of-credit x", ""},
+		{"resting now", credit, 0, 1, at(0) + " " + at(60) + " c0 out-of-credit x", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

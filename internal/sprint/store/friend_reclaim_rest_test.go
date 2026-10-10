@@ -31,9 +31,9 @@ func TestTheReclaimLeavesACardWhoseRouteRests(t *testing.T) {
 		require.Equal(t, "p-flash", c.F(sprint.FieldRoute))
 	}
 
-	// provider p rests for half an hour (its funds low): the property the balance writes
+	// provider p rests for half an hour (its funds low): the coordinator's routes rest
 	at := h.st.Now()
-	rest := at.UTC().Format(time.RFC3339) + " " + at.Add(30*time.Minute).UTC().Format(time.RFC3339) + " - " + sprint.RestBalance + " low on funds"
+	rest := at.UTC().Format(time.RFC3339) + " " + at.Add(30*time.Minute).UTC().Format(time.RFC3339) + " - " + sprint.RestCoordinator + " rested by boss: low on funds"
 	st := DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"none"}}})
 	st.Plan = func(s *sprint.Snapshot) sprint.Plan {
 		was, ok := s.Fleet.Prop(sprint.PropProviderRest("p"))

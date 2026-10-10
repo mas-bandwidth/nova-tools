@@ -27,8 +27,8 @@ func TestAFriendsCardIsNeverWithdrawnForARestingRoute(t *testing.T) {
 	for _, id := range ids {
 		require.Equal(t, "or-a", h.snap().Fleet.Card(id+".w1").F(sprint.FieldRoute), "%s: dealt to the fleet on its route", id)
 	}
-	h.poll(openrouter(148, 148)) // $0: the provider rests, out of credit
-	h.machine()                  // the fleet's ready cards are withdrawn
+	h.must(RouteRestStep(sprint.RouteRestReq{Target: "openrouter", Reason: "out of funds", Who: "boss"})) // the provider rests
+	h.machine()                                                                                           // the fleet's ready cards are withdrawn
 	for _, id := range ids {
 		require.Equal(t, sprint.Withdrawn, h.snap().Fleet.Card(id+".w1").Col, "%s: withdrawn for the rest", id)
 	}

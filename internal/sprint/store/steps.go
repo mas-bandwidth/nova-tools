@@ -244,11 +244,24 @@ func MergeWindowStep(r sprint.MergeWindowReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.MergeWindowOpen(s, r) }}
 }
 
-// BalanceStep writes the providers' balances the run loop's poll read, and the rests they
-// call for (sprint.Balance; nova-tools#5199).
+// BalanceStep writes the providers' balances the run loop's poll read, each with its spend
+// over the last hour from the work table's cost records, and ends a refused take's rest on
+// a payment seen; it rests nothing (sprint.Balance; nova-tools#5199).
 func BalanceStep(r sprint.BalanceReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "balance", Load: tables(sprint.Fleet), Routes: true,
+	return Step{Args: ArgsOf(r), Verb: "balance", Load: tables(sprint.Work, sprint.Fleet), Routes: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Balance(s, r) }}
+}
+
+// RouteRestStep is the coordinator's rest of a provider's routes or of one route
+// (sprint.RestRoutes), and RouteWakeStep its end of one (sprint.WakeRoutes).
+func RouteRestStep(r sprint.RouteRestReq) Step {
+	return Step{Named: true, Args: ArgsOf(r), Verb: "routes rest", Load: tables(sprint.Fleet), Routes: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.RestRoutes(s, r) }}
+}
+
+func RouteWakeStep(r sprint.RouteWakeReq) Step {
+	return Step{Named: true, Args: ArgsOf(r), Verb: "routes wake", Load: tables(sprint.Fleet), Routes: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.WakeRoutes(s, r) }}
 }
 
 // CostReconcileStep is one cost reconciliation (sprint.CostReconcile): each provider's own

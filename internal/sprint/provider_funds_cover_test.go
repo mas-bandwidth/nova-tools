@@ -155,7 +155,7 @@ func TestProviderFundsCoverOutOfCredit(t *testing.T) {
 		{Name: "a", Tier: "flash", Provider: "p", Enabled: true},
 		{Name: "b", Tier: "pro", Provider: "p", Enabled: true},
 	}
-	credit := coverRestValue(RestCredit)
+	credit := coverRestValue(RestCredit, "c1")
 	for _, tc := range []struct {
 		name      string
 		props     map[string]string
@@ -171,8 +171,8 @@ func TestProviderFundsCoverOutOfCredit(t *testing.T) {
 			contains: FundsCause + " (p)",
 		},
 		{
-			name:      "refusal: a provider with money",
-			props:     map[string]string{PropProviderRest("p"): coverRestValue(RestBalance)},
+			name:      "refusal: the coordinator's rest of a provider with money",
+			props:     map[string]string{PropProviderRest("p"): coverRestValue(RestCoordinator)},
 			routes:    routes,
 			wantEmpty: true,
 		},
@@ -207,7 +207,7 @@ func TestProviderFundsCoverFunded(t *testing.T) {
 		{Name: "a", Tier: "flash", Provider: "p", Enabled: true},
 		{Name: "b", Tier: "pro", Provider: "p", Enabled: true},
 	}
-	openCredit := coverRestValue(RestCredit)
+	openCredit := coverRestValue(RestCredit, "c1")
 	for _, tc := range []struct {
 		name        string
 		props       map[string]string

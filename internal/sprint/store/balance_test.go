@@ -22,147 +22,138 @@ func openrouter(credits, used float64) sprint.ProviderRead {
 	return sprint.ProviderRead{Provider: "openrouter", Known: true, Balance: credits - used, HasUsed: true, Used: used}
 }
 
-// The balance poll (nova-tools#5199): each read is written to its provider's property, the
-// spend an hour measured from the provider's count used between two reads; a balance over
-// zero but not over one hour of that spend rests the provider LOW ON FUNDS before any take
-// is refused, and its one judgment opens. The rest does not flap: the spend is the one
-// measured before the rest began, so reads that show the resting provider spending nothing,
-// and a payment smaller than that hour of spend, end nothing; a read over it (a payment)
-// ends the rest and the judgment closes. A provider with no balance to read is unknown and
-// rests nothing.
-func TestTheBalancePollRestsAProviderUnderAnHourOfItsSpend(t *testing.T) {
+// failSpent takes the work card and finishes it failed with the report, its usage
+// carrying what the take cost (actual_usd): one cost record on its primary.
+func (h *harness) failSpent(card, report string, usd float64) {
+	h.t.Helper()
+	wc := h.snap().Fleet.Card(card)
+	require.NotNil(h.t, wc)
+	gens := map[string]int{wc.ID: wc.Int("gen")}
+	h.must(TakeStep(sprint.TakeReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: gens, Who: wc.Row}))
+	h.must(FinishStep(sprint.FinishReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: gens, Failed: true,
+		Report: report, Usage: fmt.Sprintf("wall=450.00s budget=1/1000 actual_usd=%.2f actual_by=harness", usd), Who: wc.Row}))
+}
+
+// The balance poll (nova-tools#5199; the owner, 2026-10-10: a low balance "should raise it
+// to you as a thing to do, but not do it automatically."): each read is written to its
+// provider's property with the provider's spend over the last hour from the sprint's cost
+// records; a balance not over one hour of that spend rests NOTHING: the provider's routes
+// keep serving, and one judgment, a provider is low on funds, gives the coordinator the
+// balance, the spend, the hours left and the verbs. The coordinator's routes rest answers
+// it (the judgment closes while the provider rests); routes wake ends that rest. A provider
+// with no balance to read is unknown.
+func TestTheBalancePollRaisesALowBalanceAndRestsNothing(t *testing.T) {
 	t.Parallel()
 	routes := []sprint.Route{providerRoute("or-a", "flash", "openrouter"), providerRoute("or-b", "flash", "openrouter"), providerRoute("oc-a", "flash", "opencode")}
 	h := routeHarness(t, routes...)
-	h.addReady("s1", 2, briefOf("flash", ""))
+	h.addReady("s1", 6, briefOf("flash", ""))
 	h.startMachine()
+	h.machine()
 	opencode := sprint.ProviderRead{Provider: "opencode", Note: "opencode Zen publishes no balance endpoint"}
 
-	h.poll(openrouter(1250, 1150), opencode) // $100 left, no spend measured yet
+	h.poll(openrouter(1250, 1150), opencode) // $100 left, nothing spent yet
 	b := sprint.ProviderBalances(h.snap().Fleet)
 	require.Contains(t, b, "openrouter")
 	assert.InDelta(t, 100, b["openrouter"].Balance, 1e-9)
-	assert.Zero(t, b["openrouter"].SpendHour, "one read measures no spend")
+	assert.Zero(t, b["openrouter"].SpendHour, "no record of the hour: nothing spent")
 	assert.False(t, b["opencode"].Known)
 	assert.Equal(t, "unknown: opencode Zen publishes no balance endpoint", b["opencode"].Said())
-	assert.Empty(t, sprint.RouteRests(routes, h.snap().Fleet), "nothing rests")
 
+	onOR := h.onProvider(routes, "openrouter")
+	require.Len(t, onOR, 4, "the deal draws the openrouter routes")
+	h.failSpent(onOR[0], noResultLine, 30)
+	h.failSpent(onOR[1], noResultLine, 30) // $60 of records in the hour
 	h.tick(10 * time.Minute)
-	h.poll(openrouter(1250, 1160), opencode) // $10 in ten minutes: $60 an hour, $90 left
-	assert.InDelta(t, 60, sprint.ProviderBalances(h.snap().Fleet)["openrouter"].SpendHour, 1e-9)
-	assert.Empty(t, sprint.RouteRests(routes, h.snap().Fleet), "$90 is over an hour at $60")
-
-	h.tick(10 * time.Minute)
-	h.poll(openrouter(1250, 1210), opencode) // $50 in ten minutes: $300 an hour, $40 left
+	h.poll(openrouter(1250, 1210), opencode) // $40 left at $60 an hour: low
 	s := h.snap()
-	restAt := s.Now
-	rests := sprint.RouteRests(routes, s.Fleet)
-	for _, name := range []string{"or-a", "or-b"} {
-		require.Contains(t, rests, name, "every route of the provider rests")
-		assert.Equal(t, sprint.RestBalance, rests[name].Cause)
-		assert.False(t, rests[name].Out(), "low on funds is not out of credit")
-		assert.Contains(t, rests[name].Why, "low on funds: provider openrouter balance $40.00 at")
-		assert.Contains(t, rests[name].Why, "is not over one hour of its spend ($300.00 an hour)")
-	}
-	assert.NotContains(t, rests, "oc-a", "an unknown balance rests nothing")
+	assert.InDelta(t, 60, sprint.ProviderBalances(s.Fleet)["openrouter"].SpendHour, 1e-9, "the hour's records")
+	assert.Empty(t, sprint.RouteRests(routes, s.Fleet), "a low balance rests nothing")
 	h.machine()
+	assert.True(t, h.machineRecord().Running(), "the sprint runs")
 	assert.Empty(t, h.openOf(sprint.NProviderFunds), "not out of funds")
 	open := h.openOf(sprint.NProviderLow)
 	require.Len(t, open, 1)
-	assert.Contains(t, open[0].Note.What, "provider openrouter is low on funds (balance $40.00 at ")
-	assert.Contains(t, open[0].Note.What, "it is not out of credit, and the sprint does not stop for it")
-	assert.Equal(t, []string{"funded openrouter", "ack", "wait"}, open[0].Note.Decisions)
-	assert.True(t, rests["or-a"].Open(), "until paid")
-	for _, c := range h.snap().Fleet.Column(sprint.Ready) {
-		assert.Equal(t, "oc-a", c.F(sprint.FieldRoute), "%s: dealt on the provider with funds", c.ID)
-	}
+	assert.Contains(t, open[0].Note.What, "provider openrouter is low on funds: balance $40.00 at ")
+	assert.Contains(t, open[0].Note.What, "spent $60.00 over the last hour")
+	assert.Contains(t, open[0].Note.What, "about 0.7 hours left")
+	assert.Contains(t, open[0].Note.What, "its routes or-a, or-b STILL SERVE")
+	assert.Equal(t, []string{"routes rest openrouter", "wait", "ack"}, open[0].Note.Decisions)
+	assert.NotEmpty(t, h.onProvider(routes, "openrouter"), "work is still dealt on openrouter")
 
-	// the resting provider spends next to nothing, and a payment under an hour of the spend
-	// measured before the rest is not enough: the rest holds, the same rest
-	for _, read := range []sprint.ProviderRead{openrouter(1250, 1210), openrouter(1250, 1215), openrouter(1500, 1215)} {
-		h.tick(10 * time.Minute)
-		h.poll(read, opencode)
-		s = h.snap()
-		bal := sprint.ProviderBalances(s.Fleet)["openrouter"]
-		assert.InDelta(t, 300, bal.SpendHour, 1e-9, "balance %v: the spend measured before the rest", bal.Balance)
-		rest := sprint.ProviderRests(s.Fleet)["openrouter"]
-		assert.True(t, rest.Resting(s.Now), "balance %v: not over $300, still resting", bal.Balance)
-		assert.Equal(t, restAt, rest.At, "the same rest: it never flapped")
-	}
+	// the coordinator rests its routes: the judgment is answered
+	h.must(RouteRestStep(sprint.RouteRestReq{Target: "openrouter", Reason: "balance $40, under an hour", Who: "boss"}))
 	h.machine()
-	assert.Len(t, h.openOf(sprint.NProviderLow), 1)
-	assert.Equal(t, 1, h.written(sprint.NProviderLow), "written once")
-
+	assert.Empty(t, h.openOf(sprint.NProviderLow), "the provider rests: the judgment closes")
+	assert.Empty(t, h.onProvider(routes, "openrouter"), "nothing dealt on the resting provider")
 	h.tick(10 * time.Minute)
-	h.poll(openrouter(2250, 1220), opencode) // a payment: $1030 left, over the $300
+	h.poll(openrouter(1250, 1210), opencode)
+	assert.True(t, sprint.ProviderRests(h.snap().Fleet)["openrouter"].Resting(h.snap().Now), "the poll never ends the coordinator's rest")
+
+	// paid, and the hour's records age out; the coordinator wakes it
+	h.tick(time.Hour)
+	h.poll(openrouter(2250, 1210), opencode)
+	assert.Zero(t, sprint.ProviderBalances(h.snap().Fleet)["openrouter"].SpendHour, "the records are over an hour old")
+	h.must(RouteWakeStep(sprint.RouteWakeReq{Target: "openrouter", Reason: "paid $1000", Who: "boss"}))
 	s = h.snap()
 	for name, r := range sprint.RouteRests(routes, s.Fleet) {
 		assert.False(t, r.Resting(s.Now), "%s serves again", name)
-		assert.Contains(t, r.Why, "ended: balance $1030.00 at")
 	}
-	assert.Len(t, h.noteWhats(sprint.NProviderFunded), 1, "one note of the provider")
+	assert.Len(t, h.noteWhats(sprint.NRouteWoken), 1)
 	h.machine()
-	assert.Empty(t, h.openOf(sprint.NProviderLow), "the judgment closes with the rest")
-	h.clean("a provider paid")
-
-	h.tick(10 * time.Minute)
-	h.poll(openrouter(2250, 1230), opencode) // spend measured again from the read that ended it
-	assert.InDelta(t, 60, sprint.ProviderBalances(h.snap().Fleet)["openrouter"].SpendHour, 1e-9)
+	assert.Empty(t, h.openOf(sprint.NProviderLow))
 
 	rows := sprint.ProviderRows(routes, h.snap().Fleet, h.snap().Now)
 	require.Len(t, rows, 2)
 	assert.Equal(t, sprint.ProviderRow{Name: "opencode", Balance: "unknown", BalanceAt: rows[0].BalanceAt, State: "serving", Note: "opencode Zen publishes no balance endpoint"}, rows[0])
 	assert.Equal(t, "openrouter", rows[1].Name)
-	assert.Equal(t, "$1020.00", rows[1].Balance)
-	assert.InDelta(t, 60, rows[1].SpendHour, 1e-9)
+	assert.Equal(t, "$1040.00", rows[1].Balance)
 	assert.Equal(t, "serving", rows[1].State)
+	h.clean("a low balance raised, rested by the coordinator, woken")
 }
 
-// Low on funds never stops the sprint; out of credit does (the owner, 2026-10-03: "if all
-// providers are out, then you stop the sprint."). With one provider: a balance not over an
-// hour of its spend rests it low, and the machine runs on, the tier's judgment saying why
-// nothing deals; a balance at zero is out of credit and the tick stops the machine; a small
-// payment (over zero, not over the hour) makes it low again, and a start is no longer
-// refused.
-func TestLowOnFundsNeverStopsTheSprintAndOutOfCreditDoes(t *testing.T) {
+// A balance never stops the sprint and never rests a provider, at or under zero either;
+// a take the provider refused for credit does (the owner, 2026-10-03: "if all providers are
+// out, then you stop the sprint."). With one provider: $0 raises the low-on-funds judgment
+// and the machine runs on, dealing on it; the 402 refusal rests it and the tick stops the
+// machine; a payment the poll sees ends the rest, and a start is no longer refused.
+func TestABalanceNeverStopsTheSprintAndARefusalDoes(t *testing.T) {
 	t.Parallel()
 	routes := []sprint.Route{providerRoute("or-a", "flash", "openrouter")}
 	h := routeHarness(t, routes...)
 	h.addReady("s1", 2, briefOf("flash", ""))
 	h.startMachine()
-	h.poll(openrouter(148, 100)) // $48
-	h.tick(10 * time.Minute)
-	h.poll(openrouter(148, 108)) // $40 at $48 an hour: low
+	h.poll(openrouter(148, 148)) // $0
 	h.machine()
 	h.tick(10 * time.Second)
 	h.machine()
-	assert.True(t, h.machineRecord().Running(), "a provider with $40 is not out: the sprint runs")
+	assert.Empty(t, sprint.ProviderRests(h.snap().Fleet), "a balance at zero rests nothing")
+	assert.True(t, h.machineRecord().Running(), "the sprint runs")
 	assert.Empty(t, h.openOf(sprint.NAllOutOfCredit))
-	assert.Len(t, h.openOf(sprint.NProviderLow), 1)
+	require.Len(t, h.openOf(sprint.NProviderLow), 1, "the coordinator is told")
+	assert.Contains(t, h.openOf(sprint.NProviderLow)[0].Note.What, "balance $0.00 at ")
+	assert.Contains(t, h.openOf(sprint.NProviderLow)[0].Note.What, "no spend measured over the last hour")
 	why, err := h.st.OutOfCredit(h.ctx)
 	require.NoError(t, err)
 	assert.Empty(t, why, "a start is not refused")
 
-	h.tick(10 * time.Minute)
-	h.poll(openrouter(148, 108)) // nothing spent while it rests: still low, never lifted
-	assert.Equal(t, sprint.RestBalance, sprint.ProviderRests(h.snap().Fleet)["openrouter"].Cause)
-
-	h.tick(10 * time.Minute)
-	h.poll(openrouter(148, 148)) // $0: out of credit
-	assert.Equal(t, sprint.RestCredit, sprint.ProviderRests(h.snap().Fleet)["openrouter"].Cause)
+	onOR := h.onProvider(routes, "openrouter")
+	require.NotEmpty(t, onOR, "still dealt on")
+	h.tick(30 * time.Second)
+	h.failTake(onOR[0], creditLine)
 	h.machine()
+	assert.Equal(t, sprint.RestCredit, sprint.ProviderRests(h.snap().Fleet)["openrouter"].Cause, "the provider's own refusal rests it")
 	assert.False(t, h.machineRecord().Running(), "every provider is out: the tick stopped the machine")
 	assert.Len(t, h.openOf(sprint.NProviderFunds), 1)
+	assert.Empty(t, h.openOf(sprint.NProviderLow), "the refusal's judgment, not the balance's")
 
 	h.tick(10 * time.Minute)
-	h.poll(openrouter(168, 148)) // $20 paid, under the $48 an hour measured before the rest
+	h.poll(openrouter(168, 148)) // $20 paid: higher than the read before it
 	rest := sprint.ProviderRests(h.snap().Fleet)["openrouter"]
-	assert.Equal(t, sprint.RestBalance, rest.Cause, "money again: low, not out")
-	assert.True(t, rest.Resting(h.snap().Now))
+	assert.False(t, rest.Resting(h.snap().Now), "a payment seen ends the rest")
 	why, err = h.st.OutOfCredit(h.ctx)
 	require.NoError(t, err)
 	assert.Empty(t, why, "a provider with money: the start is the coordinator's")
-	h.clean("low after out")
+	h.clean("paid after a refusal")
 }
 
 // An unknown balance changes no rest (balance.go: an unknown read writes and ends none): a
@@ -365,38 +356,73 @@ func TestAReadHigherThanTheReadBeforeItEndsARefusedTakesRest(t *testing.T) {
 	s = h.snap()
 	rest = sprint.ProviderRests(s.Fleet)["openrouter"]
 	assert.False(t, rest.Resting(s.Now), "$3.00 after $0.30 is a payment, though under the $5.00 at the refusal: the rest ends")
-	assert.Contains(t, rest.Why, "ended: balance $3.00 at")
+	assert.Contains(t, rest.Why, "ended: a payment seen, balance $3.00 at")
 	assert.Len(t, h.noteWhats(sprint.NProviderFunded), 1)
 	h.machine()
 	assert.Empty(t, h.openOf(sprint.NProviderFunds), "the judgment closes with the rest")
 	h.clean("a payment over the read before it")
 }
 
-// A rest a balance at zero began names no card, so it is not a refused take's
-// (RouteRest.Refused reads the cards) and a read over zero ends it whatever came before
-// (nova-tools#5205, the third cold read's probe): -$0.51, then an unknown read, then $0.30.
-// Were it held as a refused take's, no read before the $0.30 is known and no balance was kept
-// at a refusal, and it would never end.
-func TestABalanceAtZerosRestEndsOnAReadOverZeroAfterAnUnknownOne(t *testing.T) {
+// A balance at or under zero rests nothing (the owner, 2026-10-10): -$0.51, an unknown read,
+// then $0.30, and the provider's routes serve throughout, the low-on-funds judgment open
+// while the read is known and low.
+func TestABalanceAtZeroRestsNothing(t *testing.T) {
 	t.Parallel()
 	routes := []sprint.Route{providerRoute("or-a", "flash", "openrouter"), providerRoute("oc-a", "flash", "opencode")}
 	h := routeHarness(t, routes...)
 	h.startMachine()
 	h.poll(sprint.ProviderRead{Provider: "openrouter", Known: true, Balance: -0.51})
-	s := h.snap()
-	rest := sprint.ProviderRests(s.Fleet)["openrouter"]
-	require.True(t, rest.Resting(s.Now))
-	assert.True(t, rest.Out(), "out of credit")
-	assert.False(t, rest.Refused(), "no card: not a refused take's rest")
+	assert.Empty(t, sprint.ProviderRests(h.snap().Fleet), "no rest")
+	h.machine()
+	require.Len(t, h.openOf(sprint.NProviderLow), 1)
+	assert.Contains(t, h.openOf(sprint.NProviderLow)[0].Note.What, "balance -$0.51 at ")
 
 	h.tick(sprint.BalancePollEvery)
 	h.poll(sprint.ProviderRead{Provider: "openrouter", Note: "credits endpoint answered 503"})
-	s = h.snap()
-	assert.True(t, sprint.ProviderRests(s.Fleet)["openrouter"].Resting(s.Now), "an unknown read ends no rest")
+	h.machine()
+	assert.Empty(t, sprint.ProviderRests(h.snap().Fleet), "no rest")
+	assert.Empty(t, h.openOf(sprint.NProviderLow), "an unknown balance judges nothing")
 
 	h.tick(sprint.BalancePollEvery)
 	h.poll(sprint.ProviderRead{Provider: "openrouter", Known: true, Balance: 0.30})
+	h.machine()
+	assert.Empty(t, sprint.ProviderRests(h.snap().Fleet), "no rest")
+	assert.Empty(t, h.openOf(sprint.NProviderLow), "$0.30 is over an hour of no spend")
+	h.clean("a balance at zero, then over it")
+}
+
+// nova-tools#5220: a provider refused a take before any balance was read (the rest keeps
+// no balance) and the next read is unknown (a cold start, the key not yet in the loop's
+// environment): neither mark a payment is seen against is known, so the first read over
+// zero is the payment. On 2026-10-03 openrouter read $942.68 and its rest held, the
+// machine STOPPED, until funded by hand.
+func TestARefusedRestWithNoMarkEndsOnTheFirstReadOverZero(t *testing.T) {
+	t.Parallel()
+	routes := []sprint.Route{providerRoute("or-a", "flash", "openrouter"), providerRoute("or-b", "flash", "openrouter")}
+	h := routeHarness(t, routes...)
+	h.addReady("s1", 2, briefOf("flash", ""))
+	h.startMachine()
+	h.machine()
+	onOR := h.onProvider(routes, "openrouter")
+	require.NotEmpty(t, onOR)
+	h.tick(30 * time.Second)
+	h.failTake(onOR[0], creditLine)
+	h.machine()
+	s := h.snap()
+	rest := sprint.ProviderRests(s.Fleet)["openrouter"]
+	require.True(t, rest.Resting(s.Now))
+	require.False(t, rest.HasBalance, "no balance read before the refusal")
+	require.False(t, h.machineRecord().Running(), "every provider is out: stopped")
+
+	h.tick(sprint.BalancePollEvery)
+	h.poll(sprint.ProviderRead{Provider: "openrouter", Note: "no OPENROUTER_API_KEY in the environment"})
+	assert.True(t, sprint.ProviderRests(h.snap().Fleet)["openrouter"].Resting(h.snap().Now), "an unknown read ends nothing")
+	h.tick(sprint.BalancePollEvery)
+	h.poll(openrouter(2250, 1307.32)) // $942.68
 	s = h.snap()
-	assert.False(t, sprint.ProviderRests(s.Fleet)["openrouter"].Resting(s.Now), "a read over zero ends a balance's rest")
-	h.clean("a balance at zero, paid")
+	assert.False(t, sprint.ProviderRests(s.Fleet)["openrouter"].Resting(s.Now), "the first read over zero is the payment")
+	why, err := h.st.OutOfCredit(h.ctx)
+	require.NoError(t, err)
+	assert.Empty(t, why, "the start is the coordinator's")
+	h.clean("a refused rest with no mark, paid")
 }

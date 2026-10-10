@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -58,13 +57,13 @@ func balanceApp(t *testing.T, routes ...sprint.Route) (*testApp, *creditsAnswer,
 	return ta, fake, poll
 }
 
-// A polled balance at zero excludes the provider until a later poll shows a balance (the
-// owner, 2026-10-03, 8:18 AM ET: "you'll need to detect when a provider runs out of
-// credits, and exclude that provider moving forward, and let me know."): every route of it
-// rests "out of credit" with no time, hours do not end it, the coordinator is told in one
-// judgment naming it (a payment is the owner's), an unknown read ends nothing, and the poll
-// that reads a balance over zero ends the rest, after the unknown one too.
-func TestAPolledBalanceAtZeroExcludesTheProviderUntilABalanceReturns(t *testing.T) {
+// A polled balance at zero is the coordinator's judgment and rests nothing (the owner,
+// 2026-10-10: "it should raise it to you as a thing to do, but not do it automatically."):
+// every route of the provider serves, the inbox holds one judgment, a provider is low on
+// funds, naming the verbs; the coordinator's routes rest rests its routes until woken, the
+// judgment answered, no poll ends that rest, and routes wake ends it with a reason that is
+// not a payment.
+func TestAPolledBalanceAtZeroIsAJudgmentAndRestsNothing(t *testing.T) {
 	t.Parallel()
 	ta, fake, poll := balanceApp(t,
 		sprint.Route{Name: "flash-or", Tier: "flash", Provider: "openrouter", Model: "m", Enabled: true},
@@ -73,46 +72,43 @@ func TestAPolledBalanceAtZeroExcludesTheProviderUntilABalanceReturns(t *testing.
 	ta.ok("start")
 	poll()
 	routes := ta.ok("routes")
-	for _, r := range []string{"flash-or", "pro-or"} {
-		assert.Contains(t, routes, "ROUTE "+r+" ")
-	}
-	assert.Equal(t, 2, strings.Count(routes, " rested_until=open balance=-$0.51\n"), "every route of the provider, until paid:\n%s", routes)
-	assert.Contains(t, routes, " rested_until=- balance=unknown\n", "the other provider serves")
+	assert.Equal(t, 2, strings.Count(routes, " rested_until=- balance=-$0.51\n"), "every route of the provider serves:\n%s", routes)
 	ta.ok("tick")
 	inbox := ta.ok("inbox")
-	assert.Contains(t, inbox, "provider openrouter is out of funds (balance -$0.51 at ")
-	assert.Contains(t, inbox, "a payment is the owner's")
-	assert.Contains(t, inbox, "nova-sprint funded openrouter --reason")
-	assert.Equal(t, 1, strings.Count(inbox, "a provider is out of funds"), "one judgment of the provider:\n%s", inbox)
+	assert.Contains(t, inbox, "provider openrouter is low on funds: balance -$0.51 at ")
+	assert.Contains(t, inbox, "STILL SERVE")
+	assert.Contains(t, inbox, "nova-sprint routes rest openrouter --reason")
+	assert.Equal(t, 1, strings.Count(inbox, "! a provider is low on funds"), "one judgment of the provider:\n%s", inbox)
+	assert.NotContains(t, inbox, "a provider is out of funds")
 
-	ta.a.sleep(3 * time.Hour)
-	poll() // still out
+	ta.ok("routes rest openrouter --reason 'out of funds: the owner pays in the morning'")
+	assert.Equal(t, 2, strings.Count(ta.ok("routes"), " rested_until=open "), "the coordinator's rest, until woken")
 	ta.ok("tick")
-	assert.Equal(t, 2, strings.Count(ta.ok("routes"), " rested_until=open "), "hours end nothing")
+	assert.NotContains(t, ta.ok("inbox"), "provider openrouter is low on funds", "answered: the provider rests")
 
-	fake.body = `{"data":{}}` // an answer that is not the shape: unknown, and it ends no rest
-	poll()
-	assert.Equal(t, 2, strings.Count(ta.ok("routes"), " rested_until=open "), "an unknown read ends nothing")
-
-	// a payment after the unknown read: the rest a balance began names no card, so it is no
-	// refused take's (RouteRest.Refused reads the cards) and a read over zero ends it
 	fake.body = `{"data":{"total_credits":2250,"total_usage":1251}}`
 	poll()
+	assert.Equal(t, 2, strings.Count(ta.ok("routes"), " rested_until=open "), "no poll ends the coordinator's rest")
+
+	ta.ok("routes wake openrouter --reason 'paid $1000 in the console'")
 	routes = ta.ok("routes")
-	assert.Equal(t, 3, strings.Count(routes, " rested_until=- "), "the poll that reads a balance ends the rests:\n%s", routes)
+	assert.Equal(t, 3, strings.Count(routes, " rested_until=- "), "woken:\n%s", routes)
 	assert.Contains(t, routes, " balance=$999.00\n")
-	ta.ok("tick")
-	assert.NotContains(t, ta.ok("inbox"), "provider openrouter is out of funds", "the judgment closes")
+	code, _, errs := ta.do("routes wake openrouter --reason again")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "openrouter does not rest: nothing to wake")
+	code, _, errs = ta.do("routes rest openrouter")
+	assert.Equal(t, 2, code, "a usage refusal")
+	assert.Contains(t, errs, "--reason <text> is required")
 }
 
-// Every provider out of credit stops the sprint (the owner, 2026-10-03, 8:18 AM ET: "then
-// if all providers are out, then you stop the sprint."): the tick STOPS the machine with the
-// cause, the machine line says it, one judgment is raised; start is refused with the same
-// line while they stay out; a poll with a balance restored ends the rests and the
-// coordinator starts it.
-func TestEveryProviderOutOfCreditStopsTheSprint(t *testing.T) {
+// A balance at zero never stops the sprint (the owner, 2026-10-10): with every provider
+// at -$0.51 the machine runs, dealing on its routes, and the inbox holds the low-on-funds
+// judgment, never every provider is out of credit, which only refused takes raise
+// (store TestARefusedProviderAloneStopsTheMachineOnceUntilAPayment); start is not refused.
+func TestABalanceAtZeroNeverStopsTheSprint(t *testing.T) {
 	t.Parallel()
-	ta, fake, poll := balanceApp(t,
+	ta, _, poll := balanceApp(t,
 		sprint.Route{Name: "flash-or", Tier: "flash", Provider: "openrouter", Model: "m", Enabled: true},
 		sprint.Route{Name: "pro-or", Tier: "pro", Provider: "openrouter", Model: "m", Enabled: true})
 	ta.ok("start")
@@ -120,27 +116,17 @@ func TestEveryProviderOutOfCreditStopsTheSprint(t *testing.T) {
 	ta.ok("tick")
 	var v whereView
 	require.NoError(t, json.Unmarshal([]byte(ta.ok("where --json")), &v))
-	assert.Equal(t, "machine: STOPPED (every provider is out of credit)", v.Machine)
-	inbox := ta.ok("inbox")
-	assert.Equal(t, 1, strings.Count(inbox, "every provider is out of credit (openrouter): a payment is the owner's"), "one judgment:\n%s", inbox)
-
-	code, _, errs := ta.do("start")
-	assert.Equal(t, 1, code, "start is refused while every provider is out")
-	assert.Contains(t, errs, "every provider is out of credit (openrouter): a payment is the owner's; the sprint is STOPPED until a provider is paid: a balance over zero the poll reads higher than the one before or than the balance at the refusal, or nova-sprint funded <provider>")
-
-	fake.body = `{"data":{"total_credits":2250,"total_usage":1251}}`
-	poll()
-	ta.ok("start")
-	ta.ok("tick")
-	require.NoError(t, json.Unmarshal([]byte(ta.ok("where --json")), &v))
 	assert.NotContains(t, v.Machine, "STOPPED")
-	assert.NotContains(t, ta.ok("inbox"), "every provider is out of credit (openrouter)", "the judgment closes once the machine runs")
+	inbox := ta.ok("inbox")
+	assert.NotContains(t, inbox, "every provider is out of credit")
+	assert.Contains(t, inbox, "provider openrouter is low on funds")
+	ta.ok("start")
 }
 
 // The run loop's balance poll (nova-tools#5199) reads each provider through the seat's key in
 // its own environment and writes the reads: where --json carries the providers table (name,
 // balance, spend an hour, state), routes carries each route's provider balance, the poll's
-// line names the balances and never the key, and a provider at -$0.51 rests.
+// line names the balances and never the key, and a provider at -$0.51 serves on.
 func TestTheRunLoopPollsBalancesAndWhereShowsTheProvidersTable(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
@@ -164,7 +150,7 @@ func TestTheRunLoopPollsBalancesAndWhereShowsTheProvidersTable(t *testing.T) {
 	var out bytes.Buffer
 	ta.a.pollBalances(context.Background(), st, &out)
 	assert.Equal(t, []string{"Bearer " + key}, fake.keys, "one read, openrouter's, with the seat's key")
-	assert.Contains(t, out.String(), " BALANCE opencode=unknown openrouter=-$0.51 notes=1\n")
+	assert.Contains(t, out.String(), " BALANCE opencode=unknown openrouter=-$0.51 notes=0\n", "a balance writes no rest and no note")
 	assert.NotContains(t, out.String(), key)
 
 	var v whereView
@@ -177,7 +163,7 @@ func TestTheRunLoopPollsBalancesAndWhereShowsTheProvidersTable(t *testing.T) {
 	assert.Equal(t, "openrouter", v.Providers[1].Name)
 	assert.Equal(t, "-$0.51", v.Providers[1].Balance)
 	assert.NotEmpty(t, v.Providers[1].BalanceAt)
-	assert.Contains(t, v.Providers[1].State, "resting until ")
+	assert.Equal(t, "serving", v.Providers[1].State)
 	assert.NotContains(t, ta.ok("where"), "openrouter", "the text frame draws no providers table")
 
 	routes := ta.ok("routes")

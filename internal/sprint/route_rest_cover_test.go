@@ -36,8 +36,8 @@ func TestRouteRestCoverUntilSaid(t *testing.T) {
 }
 
 // TestRouteRestCoverFunds pins RouteRest.Funds: the rest is the provider's
-// want of funds exactly when its cause is out-of-credit or balance, never a
-// rest for its key or rule 3's no-result.
+// want of funds exactly when its cause is out-of-credit (a take it refused), never a
+// rest for its key, the coordinator's, a transient provider rest, or a retired rule's.
 func TestRouteRestCoverFunds(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -46,7 +46,9 @@ func TestRouteRestCoverFunds(t *testing.T) {
 		want  bool
 	}{
 		{"main: out of credit", RestCredit, true},
-		{"main: low on funds", RestBalance, true},
+		{"refusal: a retired balance rest", RestBalance, false},
+		{"refusal: the coordinator's", RestCoordinator, false},
+		{"refusal: a transient provider rest", RestProvider, false},
 		{"refusal: a rest for its key", RestAuth, false},
 		{"refusal: rule 3's no-result", RestNoResult, false},
 		{"refusal: no cause at all", "", false},

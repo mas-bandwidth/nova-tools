@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
@@ -27,33 +28,36 @@ func (h *harness) noteWhats(typ string) []string {
 	return out
 }
 
-// Rule 3 (nova-tools#5174, the owner, 2026-10-02: "A route whose children end without a
-// result three times is rested by the machine, never redealt on."): three takes on one route
-// that left no result, of three cards, rest the route in the tick that sees the third; the
-// rest names the cards, no work card is drawn on it while it rests (a redeal included, even
-// when it is the tier's only route), and it ends by itself at RouteRestFor, its window begun
-// again. Two such takes in a window with ok ends rest nothing.
-func TestARouteWhoseChildrenEndWithNoResultThreeTimesRests(t *testing.T) {
+// rateLimitLine is a member's report of a take the provider refused for its rate limit.
+const rateLimitLine = cardhdr.EndProvider + ": provider: class=rate-limited status=429 msg=Rate limit exceeded: free-models-per-min"
+
+// A route rests only on a provider-typed failure (tla/RouteRest.tla): three takes on one route
+// the provider failed with a 429, of three cards, rest the route in the tick that sees the
+// third; the rest names the cards, no work card is drawn on it while it rests (a redeal
+// included, even when it is the tier's only route), and it ends by itself at RouteRestFor,
+// its window begun again. Two such takes in a window with ok ends rest nothing.
+func TestARouteWhoseProviderFailsThreeTakesRests(t *testing.T) {
 	t.Parallel()
 	h := routeHarness(t, route("flash-a", "flash"))
 	h.addReady("s1", 4, briefOf("flash", ""))
 	h.startMachine()
 	h.machine()
 	for _, id := range []string{"s1-1.w1", "s1-2.w1"} {
-		h.failTake(id, noResultLine)
+		h.failTake(id, rateLimitLine)
 	}
 	h.machine()
-	assert.Empty(t, h.noteWhats(sprint.NRouteRested), "two no-result ends rest nothing")
+	assert.Empty(t, h.noteWhats(sprint.NRouteRested), "two 429s rest nothing")
 	for _, id := range []string{"s1-1.w1", "s1-2.w1"} {
 		require.Equal(t, sprint.Ready, h.snap().Fleet.Card(id).Col, "%s is dealt again on the tier's one route", id)
 	}
 
-	h.failTake("s1-3.w1", noResultLine)
+	h.failTake("s1-3.w1", rateLimitLine)
 	h.machine()
 	s := h.snap()
 	rests := sprint.RouteRests([]sprint.Route{route("flash-a", "flash")}, s.Fleet)
 	rest, ok := rests["flash-a"]
 	require.True(t, ok, "the route rests: %v", rests)
+	assert.Equal(t, sprint.RestProvider, rest.Cause)
 	assert.Equal(t, []string{"s1-1.w1", "s1-2.w1", "s1-3.w1"}, rest.Cards, "the rest names the three cards")
 	assert.Equal(t, sprint.RouteRestFor, rest.Until.Sub(rest.At))
 	whats := h.noteWhats(sprint.NRouteRested)
@@ -82,6 +86,32 @@ func TestARouteWhoseChildrenEndWithNoResultThreeTimesRests(t *testing.T) {
 	h.clean("a rest ended")
 }
 
+// A take that ended with no result is the model's output on that card, never the
+// provider's (flash-deepseek41-direct, 2026-10-10, rested twenty minutes for "no-result:
+// its children ended with no result"): five of them on the tier's one route rest nothing,
+// and each card is dealt again on it.
+func TestARouteWhoseChildrenEndWithNoResultNeverRests(t *testing.T) {
+	t.Parallel()
+	h := routeHarness(t, route("flash-a", "flash"))
+	h.addReady("s1", 5, briefOf("flash", ""))
+	h.startMachine()
+	h.machine()
+	ids := []string{"s1-1.w1", "s1-2.w1", "s1-3.w1", "s1-4.w1", "s1-5.w1"}
+	for _, id := range ids {
+		h.failTake(id, noResultLine)
+	}
+	h.machine()
+	s := h.snap()
+	assert.Empty(t, h.noteWhats(sprint.NRouteRested), "no-result ends rest nothing")
+	assert.Empty(t, sprint.RouteRests([]sprint.Route{route("flash-a", "flash")}, s.Fleet))
+	assert.Empty(t, h.openOf(sprint.NNoRoute), "the tier is served")
+	for _, id := range ids {
+		if c := s.Fleet.Card(id); c != nil && c.Col == sprint.Ready {
+			assert.Equal(t, "flash-a", c.F(sprint.FieldRoute), "%s is dealt again on the route", id)
+		}
+	}
+}
+
 // A rest leaves the other routes of the tier serving: every card the tick draws after it,
 // a first deal or a redeal, is on another route.
 func TestARestingRouteServesNoDealWhileAnotherServes(t *testing.T) {
@@ -98,7 +128,7 @@ func TestARestingRouteServesNoDealWhileAnotherServes(t *testing.T) {
 	}
 	require.Len(t, onA, 3, "the deal alternates the two routes")
 	for _, id := range onA {
-		h.failTake(id, noResultLine)
+		h.failTake(id, rateLimitLine)
 	}
 	h.addReady("s1", 4, briefOf("flash", ""))
 	h.machine()
@@ -113,7 +143,7 @@ func TestARestingRouteServesNoDealWhileAnotherServes(t *testing.T) {
 	h.clean("one route resting of two")
 }
 
-// Rule 3 rests are one fleet property per provider (nova-tools#5210). At 100 routes
+// A route's own rests are one fleet property per provider (nova-tools#5210). At 100 routes
 // over two providers, every route rested, the fleet table stays under the 64-property
 // cap with the count named here, and no route_rest_<route> property is written.
 func TestAHundredRoutesRestedByRule3StayUnderThePropertyCap(t *testing.T) {
@@ -152,7 +182,7 @@ func TestAHundredRoutesRestedByRule3StayUnderThePropertyCap(t *testing.T) {
 	for member, ids := range byMember {
 		h.must(TakeStep(sprint.TakeReq{As: member, Sel: sprint.Sel{IDs: ids}, Gens: gens, Who: member}))
 		h.must(FinishStep(sprint.FinishReq{As: member, Sel: sprint.Sel{IDs: ids}, Gens: gens, Failed: true,
-			Report: noResultLine, Usage: "wall=450.00s budget=1/1000", Who: member}))
+			Report: rateLimitLine, Usage: "wall=450.00s budget=1/1000", Who: member}))
 	}
 	h.machine()
 	s = h.snap()
