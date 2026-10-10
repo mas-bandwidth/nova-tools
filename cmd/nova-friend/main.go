@@ -1592,6 +1592,12 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			return w.finish(ctx, server, argv)
 		},
+		Take: func(ctx context.Context, argv []string) error {
+			if w.finish == nil {
+				return errors.New("this world sends no take") // a test's: d.Take is cleared below
+			}
+			return w.finish(ctx, server, argv) // the same worker verb send as finish: a refusal is an error
+		},
 		CardDone: func(card, to string) string {
 			busBin, err := w.lookPath("nova-bus")
 			if err != nil {
@@ -1615,6 +1621,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 	}
 	owedStopReturns = d.OwedStopReturns
+	if w.finish == nil {
+		d.Take = nil // a world that sends no verb takes nothing: its lanes run as before
+	}
 	if w.holders != nil {
 		d.Holders = func(ctx context.Context) (map[string]string, error) { return w.holders(ctx, server) }
 	}

@@ -177,6 +177,13 @@ type Daemon struct {
 	// REPORT.md says a verdict, whoever wrote its brief (OutboxFinishArgv, outbox.go). Nil,
 	// or a finish not answered, leaves it to friend sync, which reads the same REPORT.md.
 	Finish func(ctx context.Context, argv []string) error
+	// Take sends one take to the sprint server (LaneTakeArgv, BatchTakeArgv), its refusal an
+	// error: a lane starts a card only once the server has it working on her row (lane_take.go).
+	// Nil (a test's world) takes nothing, and a lane runs any card on her row as before.
+	Take func(ctx context.Context, argv []string) error
+	// batchTakeAt and batchTakeSaid pace and say a batch-mode daemon's take (batchTake).
+	batchTakeAt   time.Time
+	batchTakeSaid string
 	// The lanes' parity with the runner scripts they replace (lane_parity.go); Rules nil
 	// turns every one off. Rules is her row's lane rules as her beat last answered them,
 	// Load the machine's one-minute load (nil: no load rule), Tokens a session's tokens
