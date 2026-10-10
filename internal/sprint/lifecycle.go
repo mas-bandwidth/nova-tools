@@ -166,6 +166,9 @@ func unmet(u Unit, pre *Snapshot, landing map[string]bool) string {
 				return "a move waiting -> ready is judged against the step's pre-state, and this plan carries none"
 			}
 			pc := pre.Work.Card(e.ID)
+			if why := externalUnmet(pc, e.Set); why != "" {
+				return why
+			}
 			needs, waived = Split(pc.F("needs")), append(Split(pc.F("waived")), Split(e.Set["waived"])...)
 			needs = append(needs, PositionWaits(pre, pc, landing)...)
 		default:

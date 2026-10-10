@@ -15,8 +15,16 @@
 (*     is the `release` path alone. This module replaces Release with ONE   *)
 (*     action, Wait(c), guarded by ONE predicate, OperandHolds(c), whose    *)
 (*     operand is WaitFor[c]: another card id (today's needs), "release"    *)
-(*     (today's held and the wave behind it), or "external" (the proposed   *)
-(*     external wait). The paths are data now, not code.                    *)
+(*     (today's held and the wave behind it), or an external operand, one  *)
+(*     of Ext (layer 3: `pr <repo>#<n> merged`, `<branch> contains <sha>`,  *)
+(*     `after <RFC3339>`). The paths are data now, not code.               *)
+(*                                                                         *)
+(*     An external operand is a fact of the outside, which only comes to    *)
+(*     hold (a merged PR stays merged, a time once past stays past). The    *)
+(*     tick asks each distinct operand once (IsaTick: one gh or git call    *)
+(*     per operand, not per card) and keeps the answer for that tick in     *)
+(*     `answer`; the wait's one guard reads the answer, never the outside   *)
+(*     directly, so a card is released the first tick its operand holds.   *)
 (*                                                                         *)
 (*     Replaced: CardMachine.Release. Also replaced, so a waiting card can  *)
 (*     never be dispatched around the operand: CardMachine.DealWork (the    *)
@@ -40,7 +48,11 @@
 (*   RetiredHeadOnBase        a landed card's head is an ancestor of its base *)
 (*   WaitDispatchesOnlyWhenOperandHolds  a card never leaves waiting for a  *)
 (*                            consumer before its operand holds            *)
-(* and on MCCardISALive, a wait whose operand comes to hold is dealt.       *)
+(*   AnswerIsTheOutside       the tick's answer never says an operand holds *)
+(*                            that the outside does not                    *)
+(* and on MCCardISALive, a wait whose operand comes to hold is dealt; on    *)
+(* MCCardISAExtLive, a wait on an external operand that holds is released  *)
+(* by a later tick.                                                        *)
 (*                                                                         *)
 (* Reversed witnesses (Broken, the same shape as CoordinatorWake):          *)
 (*   "doubleland"  a landed card is counted landed a second time           *)
@@ -49,6 +61,10 @@
 (*                 (breaks RetiredHeadOnBase)                              *)
 (*   "waitfirst"   Wait releases a card whose operand does not hold        *)
 (*                 (breaks WaitDispatchesOnlyWhenOperandHolds)             *)
+(*   "onekey"      the tick's cache is read under one key for every        *)
+(*                 external operand: a card is released on another         *)
+(*                 operand's answer (breaks                                 *)
+(*                 WaitDispatchesOnlyWhenOperandHolds, external form)       *)
 (*                                                                         *)
 (* LandTwoLevel (the merge-tree-proof branch, head                         *)
 (* 40e9dc34ea18f7362f3b1b914ac204fe48263ae7, tla/LandTwoLevel.tla) is the   *)
@@ -60,29 +76,33 @@ EXTENDS CardMachine
 
 CONSTANTS
   Kind,     \* [Cards -> {"think", "verify", "script", "merge", "wait"}]
-  WaitFor,  \* [Cards -> Cards \cup {"release", "external"}]: the wait operand
+  Ext,      \* the external operands (layer 3): pr merged, branch contains, after
+  WaitFor,  \* [Cards -> Cards \cup {"release"} \cup Ext]: the wait operand
   MaxBase,  \* the base branch's bound; the ISA's base starts here
   Broken    \* the reversed witnesses to turn on
 
 ASSUME Kind \in [Cards -> {"think", "verify", "script", "merge", "wait"}]
-ASSUME WaitFor \in [Cards -> Cards \cup {"release", "external"}]
-ASSUME \A c \in Cards : WaitFor[c] /= "release" /\ WaitFor[c] /= "external" => WaitFor[c] /= c
+ASSUME Ext \cap (Cards \cup {"release"}) = {}
+ASSUME WaitFor \in [Cards -> Cards \cup {"release"} \cup Ext]
+ASSUME \A c \in Cards : WaitFor[c] \in Cards => WaitFor[c] /= c
 ASSUME MaxBase \in Nat /\ MaxBase >= 1
 
 Kinds       == {"think", "verify", "script", "merge", "wait"}
 ProducesHead(k) == k \in {"think", "script", "merge"}
 ProducesVerdict(k) == k /= "wait"
 WaitCards   == {c \in Cards : Kind[c] = "wait"}
+ExtCards    == {c \in Cards : WaitFor[c] \in Ext}
 
 VARIABLES
   released,  \* BOOLEAN: the coordinator's release, the operand "release"
-  external,  \* BOOLEAN: the outside's condition, the operand "external"
+  external,  \* [Ext -> BOOLEAN]: the outside's condition of each external operand
+  answer,    \* [Ext -> BOOLEAN]: the tick's answer for each operand, kept for that tick
   lands,     \* [Cards -> Nat]: how many times a card has landed (0 or 1, or 2 broken)
   base,      \* [Cards -> Nat]: the base branch the card's head must be an ancestor of
   verdict    \* [Cards -> {"-", "ok", "broken"}]: the result the kind owes
 
 \* the new variables as one tuple; ivars is the base's vars and these
-ivars == <<released, external, lands, base, verdict>>
+ivars == <<released, external, answer, lands, base, verdict>>
 avars == <<vars, ivars>>
 
 \* Frame(A): a reused CardMachine action, with the ISA's own variables still.
@@ -93,7 +113,8 @@ Frame(A) == A /\ UNCHANGED ivars
 IsaTypeOK ==
   /\ TypeOK
   /\ released \in BOOLEAN
-  /\ external \in BOOLEAN
+  /\ external \in [Ext -> BOOLEAN]
+  /\ answer \in [Ext -> BOOLEAN]
   /\ lands \in [Cards -> Nat]
   /\ base \in [Cards -> Nat]
   /\ verdict \in [Cards -> {"-", "ok", "broken"}]
@@ -101,7 +122,8 @@ IsaTypeOK ==
 IsaInit ==
   /\ Init
   /\ released = FALSE
-  /\ external = FALSE
+  /\ external = [e \in Ext |-> FALSE]
+  /\ answer = [e \in Ext |-> FALSE]
   /\ lands = [c \in Cards |-> 0]
   /\ base = [c \in Cards |-> MaxBase]
   /\ verdict = [c \in Cards |-> "-"]
@@ -110,22 +132,25 @@ IsaInit ==
 (* The one wait kind *)
 
 \* OperandHolds(c): the one guard of the one wait kind. WaitFor[c] says what
-\* the card waits for, in the four forms the spec reads off DEPENDS-ON:
+\* the card waits for, in the forms the spec reads off DEPENDS-ON:
 \* a card id (waits for it to land), "release" (the coordinator's release,
-\* which today is admitted held and the wave behind a held sentinel), or
-\* "external" (an external condition).
+\* which today is admitted held and the wave behind a held sentinel), or an
+\* external operand (internal/sprint/external.go), which holds when the
+\* tick's answer for it says so.
 OperandHolds(c) ==
   LET o == WaitFor[c] IN
   IF o = "release"  THEN released
-  ELSE IF o = "external" THEN external
+  ELSE IF o \in Ext THEN answer[o]
   ELSE where[o] \in {"landed"} \/ (where[o] = "done" /\ ok[o] = "ok")
 
 \* Wait(c): the one wait action, replacing CardMachine.Release (the judged
 \* path's own release) and, as one action, the release of a held card and of
-\* a wave. One guard, OperandHolds.
+\* a wave. One guard, OperandHolds. "onekey" reads the tick's answer under
+\* any operand's key for an external wait, not the card's own.
 Wait(c) ==
   /\ where[c] = "waiting"
-  /\ (OperandHolds(c) \/ "waitfirst" \in Broken)
+  /\ (OperandHolds(c) \/ "waitfirst" \in Broken
+      \/ ("onekey" \in Broken /\ WaitFor[c] \in Ext /\ \E e \in Ext : answer[e]))
   /\ where' = [where EXCEPT ![c] = "ready"]
   /\ UNCHANGED <<ok, copy, reads, pending, low, ncut, author, head, prHead, ci, cvars, up, ivars>>
 
@@ -134,13 +159,22 @@ Wait(c) ==
 CoordRelease ==
   /\ ~released
   /\ released' = TRUE
-  /\ UNCHANGED <<pvars, cvars, up, external, lands, base, verdict>>
+  /\ UNCHANGED <<pvars, cvars, up, external, answer, lands, base, verdict>>
 
-\* External(): the outside's condition comes to hold.
-Extern ==
-  /\ ~external
-  /\ external' = TRUE
-  /\ UNCHANGED <<pvars, cvars, up, released, lands, base, verdict>>
+\* Extern(e): the outside's condition of operand e comes to hold (a PR
+\* merges, a branch takes a commit, the clock passes a time).
+Extern(e) ==
+  /\ ~external[e]
+  /\ external' = [external EXCEPT ![e] = TRUE]
+  /\ UNCHANGED <<pvars, cvars, up, released, answer, lands, base, verdict>>
+
+\* IsaTick: the tick asks each external operand once and keeps the answer
+\* for that tick (internal/sprint/tick_external.go, externalAsk). The
+\* answer is the outside's as the tick read it.
+IsaTick ==
+  /\ answer /= external
+  /\ answer' = external
+  /\ UNCHANGED <<pvars, cvars, up, released, external, lands, base, verdict>>
 
 ----------------------------------------------------------------------------
 (* The per-kind results *)
@@ -154,7 +188,7 @@ RecordResult(c) ==
   /\ head' = IF ProducesHead(Kind[c])
               THEN [head EXCEPT ![c] = base[c]]
               ELSE head
-  /\ UNCHANGED <<where, ok, copy, reads, pending, low, ncut, author, prHead, ci, cvars, up, released, external, lands, base>>
+  /\ UNCHANGED <<where, ok, copy, reads, pending, low, ncut, author, prHead, ci, cvars, up, released, external, answer, lands, base>>
 
 ----------------------------------------------------------------------------
 (* Replaced life actions that touch the new variables *)
@@ -181,7 +215,7 @@ IsaLand(c) ==
   /\ where' = [where EXCEPT ![c] = "landed"]
   /\ head' = [head EXCEPT ![c] = IF "wrongbase" \in Broken THEN base[c] + 1 ELSE base[c]]
   /\ lands' = [lands EXCEPT ![c] = @ + 1]
-  /\ UNCHANGED <<ok, copy, reads, pending, low, ncut, author, prHead, ci, cw, ck, cl, leased, up, released, external, base, verdict>>
+  /\ UNCHANGED <<ok, copy, reads, pending, low, ncut, author, prHead, ci, cw, ck, cl, leased, up, released, external, answer, base, verdict>>
 
 \* IsaLandEvent(c): CardMachine.LandEvent (a landing event for a card that is
 \* not merging), with the same retire record as IsaLand.
@@ -194,7 +228,7 @@ IsaLandEvent(c) ==
            IF copy[c] /= NoCopy /\ cw[copy[c]] \in Live THEN [r EXCEPT ![copy[c]] = "fail"] ELSE r
   /\ reads' = [reads EXCEPT ![c] = {}]
   /\ copy' = [copy EXCEPT ![c] = NoCopy]
-  /\ UNCHANGED <<ok, pending, low, ncut, author, prHead, ci, ck, cl, leased, up, released, external, base, verdict>>
+  /\ UNCHANGED <<ok, pending, low, ncut, author, prHead, ci, ck, cl, leased, up, released, external, answer, base, verdict>>
 
 \* DoubleLand(c): the reversed witness only. A landed card is counted landed
 \* a second time, which the design never does. "doubleland" turns it on.
@@ -202,7 +236,7 @@ DoubleLand(c) ==
   /\ "doubleland" \in Broken
   /\ where[c] = "landed"
   /\ lands' = [lands EXCEPT ![c] = @ + 1]
-  /\ UNCHANGED <<pvars, cvars, up, released, external, base, verdict>>
+  /\ UNCHANGED <<pvars, cvars, up, released, external, answer, base, verdict>>
 
 ----------------------------------------------------------------------------
 
@@ -219,14 +253,15 @@ IsaNext ==
        \/ Frame(EndReadStale(i)) \/ Frame(EndReadLow(i)) \/ Frame(EndReadFail(i))
        \/ Frame(EndFixOK(i))
   \/ \E k \in Consumers : Frame(Down(k)) \/ Frame(Up(k))
-  \/ CoordRelease \/ Extern
+  \/ CoordRelease \/ IsaTick \/ \E e \in Ext : Extern(e)
 
 \* Fairness as CardMachine's, on the actions this module uses: the duties and
-\* the workers, and the coordinator's release. The wait is strongly fair too,
+\* the workers, the coordinator's release and the tick. The wait is fair too,
 \* so a card whose operand holds is not starved of its release.
 IsaFairness ==
   /\ \A c \in Cards : WF_avars(Wait(c))
-  /\ WF_avars(CoordRelease) /\ WF_avars(Extern)
+  /\ WF_avars(CoordRelease) /\ WF_avars(IsaTick)
+  /\ \A e \in Ext : WF_avars(Extern(e))
 
 IsaSpec == IsaInit /\ [][IsaNext]_avars /\ IsaFairness
 
@@ -248,8 +283,12 @@ RetiredHeadOnBase == \A c \in Cards : where[c] = "landed" => head[c] <= base[c]
 WaitDispatchesOnlyWhenOperandHolds ==
   \A c \in WaitCards : where[c] \in {"ready", "working"} => OperandHolds(c)
 
+\* the tick's answer is the outside's: an operand the answer says holds does
+\* hold, since the outside only comes to hold
+AnswerIsTheOutside == \A e \in Ext : answer[e] => external[e]
+
 IsaSafety == /\ IsaTypeOK /\ Safety /\ NoCardRetiresTwice /\ RetiredHeadOnBase
-              /\ WaitDispatchesOnlyWhenOperandHolds
+              /\ WaitDispatchesOnlyWhenOperandHolds /\ AnswerIsTheOutside
 
 ----------------------------------------------------------------------------
 (* What must eventually happen: a wait whose operand comes to hold is dealt *)
@@ -257,5 +296,9 @@ IsaSafety == /\ IsaTypeOK /\ Safety /\ NoCardRetiresTwice /\ RetiredHeadOnBase
 \* dealt: it leaves waiting and moves on (ready, working, or a terminal word)
 Dealt(c) == where[c] \in {"ready", "working", "review", "merging", "landed", "done"}
 WaitDealt == \A c \in WaitCards : (OperandHolds(c) /\ where[c] = "waiting") ~> Dealt(c)
+
+\* an external wait is released once the outside holds: the next tick reads
+\* the answer, and the wait takes it
+ExtDealt == \A c \in WaitCards \cap ExtCards : (external[WaitFor[c]] /\ where[c] = "waiting") ~> Dealt(c)
 
 =============================================================================

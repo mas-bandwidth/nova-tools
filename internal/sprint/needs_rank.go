@@ -21,10 +21,11 @@ const (
 	NeedSentinel = "sentinel" // a sentinel reached, or held, that waits for its release
 	NeedStream   = "stream"   // a stopped stream with no judgment open on it
 	NeedHeld     = "held"     // a card admitted held (add --held) that waits for its release
+	NeedExternal = "external" // a card that waits for an external operand, which the tick asks
 )
 
 // needRank orders needs of equal weight and age.
-var needRank = map[string]int{NeedJudgment: 0, NeedSentinel: 1, NeedStream: 2, NeedHeld: 3}
+var needRank = map[string]int{NeedJudgment: 0, NeedSentinel: 1, NeedStream: 2, NeedHeld: 3, NeedExternal: 4}
 
 // needCardsShown is the cards Evidence names before it counts the rest.
 const needCardsShown = 8
@@ -143,6 +144,16 @@ func NeedsRank(s *Snapshot) []Need {
 
 	for _, c := range s.Work.Column(Waiting) {
 		held := IsHeld(c)
+		if ext := ExternalWaits(c); !named[c.ID] && !held && len(ext) > 0 {
+			// what it waits for, so the coordinator reads it and polls nothing: the tick
+			// releases it the first tick its operands hold (tick_external.go)
+			what := "waits for " + strings.Join(ext, ", ")
+			if why := c.F(FieldExternalAsk); why != "" {
+				what += "; the last ask failed: " + why
+			}
+			out = append(out, Need{Kind: NeedExternal, ID: c.ID, Type: c.Row, Cards: []string{c.ID}, Behind: behind([]string{c.ID}), Age: age(stampAt(c, "admitted")), What: what})
+			continue
+		}
 		if named[c.ID] || !held && !(IsSentinel(c) && c.F("reached") != "") {
 			continue
 		}

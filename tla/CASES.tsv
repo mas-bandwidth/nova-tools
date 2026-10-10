@@ -384,6 +384,10 @@ MCCardISALive.cfg	MCCardISA.tla	pass	-	ignore-terminal	cardisa	required	-
 MCCardISABrokenSecondLand.cfg	MCCardISA.tla	invariant	NoCardRetiresTwice	ignore-terminal	cardisa	required	-
 MCCardISABrokenOtherBase.cfg	MCCardISA.tla	invariant	RetiredHeadOnBase	ignore-terminal	cardisa	required	-
 MCCardISABrokenWaitFirst.cfg	MCCardISA.tla	invariant	WaitDispatchesOnlyWhenOperandHolds	ignore-terminal	cardisa	required	-
+MCCardISAExt.cfg	MCCardISA.tla	pass	-	ignore-terminal	cardisa	required	-
+MCCardISAExtLive.cfg	MCCardISA.tla	pass	-	ignore-terminal	cardisa	required	-
+MCCardISABrokenOneKey.cfg	MCCardISA.tla	invariant	WaitDispatchesOnlyWhenOperandHolds	ignore-terminal	cardisa	required	-
+MCCardISABrokenExtFirst.cfg	MCCardISA.tla	invariant	WaitDispatchesOnlyWhenOperandHolds	ignore-terminal	cardisa	required	-
 MCConfigApply.cfg	MCConfigApply.tla	pass	-	ignore-terminal	configapply	required	-
 MCConfigApplyBrokenStampFirst.cfg	MCConfigApply.tla	invariant	StampOnlyWhenComplete	ignore-terminal	configapply	required	-
 MCConfigApplyBrokenFriendBeforeCeiling.cfg	MCConfigApply.tla	invariant	ApplyOrder	ignore-terminal	configapply	required	-
