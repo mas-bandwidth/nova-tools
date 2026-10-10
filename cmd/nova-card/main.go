@@ -650,7 +650,7 @@ func commitPaths(dir, sha string) ([]string, error) {
 	return paths, nil
 }
 
-var testFuncRE = regexp.MustCompile(`^func (Test[A-Za-z0-9_]+)\s*\(`)
+var testFuncRE = regexp.MustCompile(`(?m)^func (Test[A-Za-z0-9_]+)\s*\(`)
 
 func packageTestName(repoDir, pkg string) (string, bool) {
 	files, _ := filepath.Glob(filepath.Join(repoDir, filepath.FromSlash(pkg), "*_test.go"))
