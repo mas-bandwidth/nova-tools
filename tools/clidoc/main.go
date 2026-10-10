@@ -10,11 +10,8 @@
 // the tool adds joins the reference the next time clidoc runs.
 //
 // A pasted text keeps its typed lines whole — the usage synopsis, the flags
-// with what each wants, the exit codes and the effect — and drops one thing
-// the hand-written prose around the block already carries: a verb help's
-// free-text paragraph. The banner is pasted whole, its `example:` block
-// included; every example line of these five banners runs through the
-// comparator in the tool's own tests.
+// with what each wants, the exit codes and the effect — and drops the free-text
+// paragraphs and examples that the hand-written sections carry and test.
 package main
 
 import (
@@ -103,7 +100,7 @@ func reference(binDir, tool string) (string, error) {
 		return "", err
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n`%s help`:\n\n%s\n", tool, fence(strings.TrimRight(banner, "\n")))
+	fmt.Fprintf(&b, "\n`%s help`:\n\n%s\n", tool, fence(bannerReference(banner)))
 	for _, verb := range usageVerbs(banner, tool) {
 		help, err := verbHelp(binDir, tool, verb)
 		if err != nil {
@@ -112,6 +109,17 @@ func reference(binDir, tool string) (string, error) {
 		fmt.Fprintf(&b, "\n`%s %s -h`:\n\n%s\n", tool, verb, fence(typedLines(help)))
 	}
 	return b.String(), nil
+}
+
+// bannerReference leaves worked examples to the hand-written documentation.
+func bannerReference(banner string) string {
+	if before, _, ok := strings.Cut(banner, "\nexample:\n"); ok {
+		banner = before
+	}
+	if before, _, ok := strings.Cut(banner, "\nreading the inbox and answering a judgment:"); ok {
+		banner = before
+	}
+	return strings.TrimRight(banner, "\n")
 }
 
 // verbHelp runs one verb's -h, or `help <verb>` where the tool refuses -h after
@@ -159,12 +167,14 @@ func usageVerbs(banner, tool string) []string {
 			inUsage = false
 			continue
 		}
-		rest, ok := strings.CutPrefix(trimmed, tool+" ")
+		// A wrapped explanation may begin with the tool name at a deeper
+		// indentation. Only rows with the exact usage indent declare verbs.
+		rest, ok := strings.CutPrefix(line, "  "+tool+" ")
 		if !ok {
 			continue
 		}
 		words := verbWords(firstColumn(rest))
-		if len(words) == 0 || words[0] == "help" || seen[strings.Join(words, " ")] {
+		if len(words) == 0 || words[0] == "help" || strings.HasSuffix(words[0], ":") || seen[strings.Join(words, " ")] {
 			continue
 		}
 		seen[strings.Join(words, " ")] = true
@@ -202,7 +212,7 @@ func verbWords(rest string) []string {
 }
 
 // sectionWords are the line prefixes that open a typed section of a verb help.
-var sectionWords = []string{"usage:", "from `", "flags:", "exit codes", "effect:", "Help:", "example: "}
+var sectionWords = []string{"usage:", "from `", "flags:", "exit codes", "effect:", "Help:"}
 
 // typedLines drops a verb help's free-text paragraph and keeps its typed
 // sections: the usage synopsis, the flags with what each wants, the exit codes
@@ -255,10 +265,12 @@ func collapseBlanks(lines []string) string {
 // text itself opens a line with a fence run.
 func fence(body string) string {
 	mark := "```"
-	for _, line := range strings.Split(body, "\n") {
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimRight(line, " \t")
 		if run := strings.TrimLeft(line, "`"); len(line)-len(run) >= 3 {
 			mark = "````"
 		}
 	}
-	return mark + "\n" + body + "\n" + mark
+	return mark + "\n" + strings.Join(lines, "\n") + "\n" + mark
 }

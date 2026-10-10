@@ -17,7 +17,7 @@ nova-up version
 
 ## First run
 
-The commands below are the tool's own example block; `TestUpLocalDryRunWritesNothing` in `internal/up/up_test.go` runs `--local --dry-run` on a stand-in machine.
+The commands below are the tool's own example block, run by `cmd/nova-up/firstrun_test.go`.
 
 ```text
 $ nova-up --local --dry-run --root ./nova-try
@@ -27,7 +27,7 @@ $ nova-up version
 
 ## Verbs
 
-The reference for its verbs is [docs/SPEC-UP.md](../../docs/SPEC-UP.md).
+The [nova-up section of the command reference](../../docs/CLI.md#nova-up) documents every verb's flags, effect and exit codes.
 
 - `version`
 - `help`
