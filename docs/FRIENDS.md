@@ -129,6 +129,10 @@ nova-config friend add amy-b --slots 1 --tiers heavy --mode one-shot --config_di
 nova-config apply --kind friend
 ```
 
+### friend-token-efficiency-r-ns-b: one seed for every lane, a fresh session per card
+
+A friend paid per token spends tokens that land no work when one lane opens a session seeded with its lane number and width and then delivers every later card into it: the seed differs per lane, so a provider's prompt cache shares nothing between lanes, and each card pays for every card before it. The seed a lane opens with (`LaneSeed`) is now byte-identical for every lane of one friend — the lane number and width ride in each card's turn instead (`CardText`), where they named the lane already — so the seed is a cache hit across lanes. A lane option, `FreshSessionPerCard` (off by default, so the lane keeps one session for its life), drops the lane's session when its card finishes, so the next card opens a new session with that same seed: every card is its own session and pays for itself alone. The option is set by the caller; the friend row carries no word that means paid per token for the daemon to read, so a row field (the route's `billing` `metered`, or a new `fresh_session_per_card` word on her beat) would be the way to wire it.
+
 ## A sprint card
 
 Each sync pass sends a batch-mode friend (the default) at most one status wake for the cards it delivers, naming their count and up to ten card ids with the remaining count, her inbox directory and the sentence that starts the work. A friend whose store row says mode `one-shot` keeps one wake per card so her runner starts its lane. A pass that delivers no file sends no wake. The per-card inbox file is the record: a failed batch wake leaves every delivered file in place and is said and recorded once for the pass as `NFriendNotWoken`.

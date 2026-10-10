@@ -153,6 +153,12 @@ type Daemon struct {
 	// read every step so a change takes effect without a restart; nil, or
 	// empty answers, deliver in batch at Width.
 	Row func() (mode string, width int)
+	// FreshSessionPerCard makes a lane drop its session when its card
+	// finishes, so the next card opens a new session with the same seed
+	// (LaneSeed is byte-identical for every lane); off by default, one
+	// session serves the lane for its life. A caller sets it (the friend row
+	// carries no word that means paid per token for the daemon to read).
+	FreshSessionPerCard bool
 	// Pacing is the row's pacing as the daemon last read it: the fraction of each
 	// subscription window the lanes may spend, read every step; nil, or out of
 	// (0, 1], is DefaultPacing (pacing.go). No beat carries the row's pacing yet,
