@@ -139,7 +139,7 @@ nothing invented.
 | `runners` | int | (0) | the CI play: how many runners it hosts; 0 hosts none | `machine:<m>` |
 | `width` | int | (unset) | `nova-sprint fleet sync`: the most work cards the sprint's member on it runs at once; unset is the default, half the machine's cores as its beat reports them; 0 is no member | `machine:<m>` |
 | `tla` | bool | (false) | the inventory's `tla` group and `nova_tla`, so the tools play's tla play holds the pinned TLC jar there; `tlacheck run --bench any` picks among these (tla/README.md, "The record machines") | `machine:<m>` |
-| `harnesses` | list of `opencode`, `claude`, `codex`, `grok` | (opencode) | the draw: the harnesses the sprint's member on it can launch. `opencode` launches through the providers table with a provider key; a headless harness runs on the machine's own subscription login, so it is listed only where that login is (`nova-config machine set <m> --harnesses opencode,claude`). A member draws only the routes whose harness its machine lists, and a route no member up can launch is one judgment naming the route and the machines (`internal/swarm` `CanLaunch`, `Unserved`; docs/SPEC-SWARM.md, the headless harnesses). Migration 0037 adds the column, `opencode` on every row before it | `machine:<m>` |
+| `harnesses` | list of `opencode`, `claude`, `codex`, `grok` | (opencode) | the draw: the harnesses the sprint's member on it can launch. `opencode` launches through the providers table with a provider key; a headless harness runs on the machine's own subscription login, so it is listed only where that login is (`nova-config machine set <m> --harnesses opencode,claude`). A member draws only the routes whose harness its machine lists, and a route no member up can launch is one judgment naming the route and the machines (`internal/swarm` `CanLaunch`, `Unserved`; docs/SPEC-SWARM.md, the headless harnesses). Migration 0038 adds the column, `opencode` on every row before it | `machine:<m>` |
 | `note` | text | (empty) | a reader: why the machine is as it is, a hold, a rest, the load that was measured (see "The note") | `machine:<m>` |
 
 **Declared and measured.** Measured facts (os, arch, cores, memory) are
@@ -500,7 +500,7 @@ config.machines          (name PK, "user", seat, slots, runners,
                           coordinator machine, slots elsewhere; note added
                           by 0015, text NOT NULL DEFAULT ''; tla added by
                           0016, false; width nullable by 0019, NULL the
-                          default; harnesses added by 0037, text NOT NULL
+                          default; harnesses added by 0038, text NOT NULL
                           DEFAULT 'opencode')
 config.fleet             (name PK = 'fleet', store -> machines.name,
                           coordinator -> machines.name, redis_port, pg_dsn,

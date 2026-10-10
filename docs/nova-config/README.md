@@ -171,6 +171,23 @@ machine (false, the default, is none): the inventory's `tla` group, where the
 tools play holds the pinned TLC jar, and the machines `tlacheck run --bench
 any` picks from (tla/README.md, "The record machines").
 
+`--harnesses` is the one declared fact the draw reads: the harnesses the
+sprint's member on the machine can launch, a comma list from `opencode`,
+`claude`, `codex`, `grok`. `opencode` alone is the default, so a machine that
+needs no headless login is typed no flag; `opencode` launches through the
+providers table with a provider key, and a headless harness runs on the
+machine's own subscription login, so it is listed only where that login is
+(`machine set <m> --harnesses opencode,claude`). The row prints the list as
+`harnesses=opencode,claude`, `apply` writes it into `machine:<m>` with the rest
+of the row, and `nova-sprint fleet sync` projects it onto the machine's fleet
+control card. The deal, the ask and the fleet's readers then read it: a member
+draws only the routes whose harness its machine lists, a fleet reader serves a
+tier only while an enabled route of it is one its machine can launch, and a
+route no member up can launch is one judgment naming the route and its machines
+(`internal/swarm/launchable.go`; docs/SPEC-SWARM.md, "A member draws only
+routes whose harness it can launch"). A friend's reader brings its own model
+and is asked a read whatever its machine lists.
+
 Measured facts (os, arch, cores, memory) are never typed: "I like measured
 facts coming live ... It's more robust." With a Redis named (`--redis`, or
 `NOVA_SPRINT_REDIS`, `NOVA_REDIS_ADDR`), `list` and `show` end each line in
@@ -482,7 +499,8 @@ CONFIG APPLY kind=route add=0 set=0 remove=0 rev=0 ms=0
 `apply` reads Postgres and writes Redis, one kind at a time: machines, the
 fleet row, friends, the sprint row, loops, routes. For a machine it writes its machine ceiling
 (`ns_capacity_machine`, the ceiling from `--slots`; cores and memory are never
-declared, so none are passed) and its registry hash `machine:<m>`. For the
+declared, so none are passed) and its registry hash `machine:<m>` with every
+declared field, the `harnesses` list among them. For the
 fleet row, one plain `fleet:<field>` key per nonempty field. For a friend it
 writes her desired capacity and roles (`ns_capacity_desired`, `ns_friend_roles`),
 charging her slots to the machine her own beat reports, else to the fleet's

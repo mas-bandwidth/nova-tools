@@ -1,4 +1,4 @@
--- 0037: the machine's harnesses (internal/config/kind.go: Kinds, "machine";
+-- 0038: the machine's harnesses (internal/config/kind.go: Kinds, "machine";
 -- docs/SPEC-CONFIG.md, machine): the harnesses the sprint's member on it can
 -- launch, a comma list of opencode, claude, codex, grok. opencode alone is what
 -- every machine launched before this file (the providers table, by a provider

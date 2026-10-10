@@ -19,7 +19,7 @@ import (
 // nova-config apply writes the list with the rest of the row to machine:<m>.
 
 // HarnessesOf is the harness list a machine row's harnesses field names, in
-// harness.Kinds order; a field that is empty or absent (a row before migration 0037)
+// harness.Kinds order; a field that is empty or absent (a row before migration 0038)
 // is the default, opencode only.
 func HarnessesOf(field string) []string {
 	words, _ := splitList(field) // a word with = is no harness, and dropped below
