@@ -255,7 +255,11 @@ type lane struct {
 	job      LaneJob   // the card as the harness is handed it: every path absolute, the brief inline, the job directory
 	askAt    time.Time // when the lane next asks the server what it holds (lane_take.go)
 	asked    bool      // the lane has asked the server since the daemon started
-	said     string    // the lane's last line said once while it stands (laneSay)
+	// reportJob is the job the server says the lane holds whose outbox has the report of a run
+	// before, and reportSince since when the lane has seen it so (finishStale)
+	reportJob   string
+	reportSince time.Time
+	said        string // the lane's last line said once while it stands (laneSay)
 }
 
 type laneResult struct {

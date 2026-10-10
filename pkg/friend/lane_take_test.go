@@ -450,3 +450,43 @@ func TestARowReadOlderThanTheTakeNeverDropsTheLane(t *testing.T) {
 		assert.NotContains(t, records, "dropped", "a read older than the take is not the server disagreeing: %s", records)
 	})
 }
+
+// A lane the server says holds a card whose outbox has the report of a run before, which no
+// step finishes (here a RESULT.md and no REPORT.md: a run cut between the two writes), is not
+// held there forever: past ReportWait the lane finishes it failed itself, by its lane, and the
+// card leaves it (the reader's finding: before, the lane waited and was bounced and took it
+// again, round and round).
+func TestALanesStaleReportIsFinishedByTheLaneAfterReportWait(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
+		out := filepath.Join(dir, "outbox", "c1~15")
+		require.NoError(t, os.MkdirAll(out, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(out, "RESULT.md"), []byte("RESULT: c1\n"), 0o644))
+		h := &lanesHarness{dir: dir, finish: map[string]bool{}, active: map[string]int{}}
+		r, _ := laneRig(t, h, 1)
+		srv := newLaneServer(true, map[string]string{"c1~15": "working"})
+		srv.lane["c1~15"] = 1
+		srv.wire(r)
+		r.run(t, int(ReportWait.Seconds())+40)
+
+		records := strings.Join(r.records, "\n")
+		turns, _, _ := h.got()
+		assert.Empty(t, turns, "the card is not run again over its own report: %s", records)
+		_, reports, cols := srv.got()
+		assert.Equal(t, "done", cols["c1~15"], "finished: %v\n%s", reports, records)
+		require.NotEmpty(t, reports)
+		assert.Contains(t, reports[len(reports)-1], "finish --as friend.bob c1@1 --epoch 15 --failed")
+		assert.Contains(t, reports[len(reports)-1], "--lane 1")
+		assert.Contains(t, records, "finished failed by lane 1")
+		assert.FileExists(t, filepath.Join(out, "REPORT.md"), "the lane wrote the report it finished by")
+	})
+}
+
+// The outbox step finishes a lane's card naming the lane and the server's epoch and generation.
+func TestTheOutboxFinishNamesTheLane(t *testing.T) {
+	t.Parallel()
+	c := Card{ID: "c1", Outbox: "/w/outbox/c1", Lane: 4, ServerEpoch: "16", ServerGen: 2}
+	argv := OutboxFinishArgv("ann", c, "FAIL", "", "", "Verdict: FAIL\n\nno\n")
+	assert.Equal(t, []string{"finish", "--as", "friend.ann", "c1@2", "--epoch", "16", "--failed", "--lane", "4"}, argv[:9])
+}

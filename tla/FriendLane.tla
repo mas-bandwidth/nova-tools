@@ -19,7 +19,8 @@
 (*   Held(l)     what do I hold: a lane after a crash, restart or clear.  *)
 (*   Begin(l)    the run begins (a read's begin, a work card's start).    *)
 (*   Progress(l) the run is alive.                                        *)
-(*   Finish(l)   the run ended: done.                                     *)
+(*   Finish(l)   the run ended: done; TakenFinish(l), a card it holds and  *)
+(*               cannot run (a report of a run before) finished failed.   *)
 (*   Return(l)   the lane gives the card back (it drops it).              *)
 (* Begin, Progress, Finish and Return carry the card and the epoch the    *)
 (* server gave; the server applies them only when its record for this    *)
@@ -186,6 +187,20 @@ Finish(l) ==
     /\ Exchanged(l)
     /\ UNCHANGED <<epoch, alive, granted, clears, crashes, gones, returns>>
 
+\* The lane finishes, failed, a card it was told it holds and cannot run: its outbox holds
+\* the report of a run before that no step finished (lane_take.go finishStale).
+TakenFinish(l) ==
+    /\ alive[l] /\ lc[l].st = "taken"
+    /\ LET c == lc[l].card IN
+       IF Owns(l, c, Named(l))
+       THEN /\ col' = [col EXCEPT ![c] = "done"]
+            /\ srv' = [k \in Lanes |-> IF srv[k].card = c THEN Nobody ELSE srv[k]]
+            /\ lc' = [lc EXCEPT ![l] = Idle]
+            /\ Applied(l, lc[l].ep)
+       ELSE /\ Drop(l) /\ UNCHANGED <<col, srv, staleStep>>
+    /\ Exchanged(l)
+    /\ UNCHANGED <<epoch, alive, granted, clears, crashes, gones, returns>>
+
 \* The lane gives its card back: it was told it holds a card it will not run (after a
 \* restart, the job's tree gone), or its run was cut (the machine's stop, a cap).
 Return(l) ==
@@ -244,7 +259,7 @@ Clear ==
 
 Next ==
     \/ \E l \in Lanes :
-          Take(l) \/ Held(l) \/ Begin(l) \/ Progress(l) \/ Finish(l) \/ Return(l)
+          Take(l) \/ Held(l) \/ Begin(l) \/ Progress(l) \/ Finish(l) \/ TakenFinish(l) \/ Return(l)
           \/ Crash(l) \/ Restart(l) \/ Gone(l)
     \/ Clear
 

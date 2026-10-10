@@ -3,11 +3,14 @@ package friend
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
 )
 
 // A friend's lanes are thin clients of the sprint server (v1.2.6; the owner, 2026-10-10:
@@ -153,17 +156,31 @@ func (l *loop) laneAsk(ln *lane, now time.Time) (Card, bool) {
 	wait := ""
 	switch held, ok := d.heldOf(h.Job); {
 	case exists(c.Result()) || exists(c.Report()):
-		wait = "its outbox holds the report of a run before: the outbox step finishes it on the server"
+		// the report of a run before: the outbox step finishes one it can take; one it cannot
+		// (no REPORT.md, no Verdict, off its tip, refused) would hold the lane forever, so past
+		// ReportWait the lane finishes it itself, failed, by its lane (finishStale)
+		if ln.reportJob != h.Job {
+			ln.reportJob, ln.reportSince = h.Job, now
+		}
+		if now.Sub(ln.reportSince) >= ReportWait {
+			l.finishStale(ln, c, now)
+			ln.askAt, ln.reportJob = now.Add(TakeRetry), ""
+			return Card{}, false
+		}
+		wait = "its outbox holds the report of a run before: the outbox step finishes it on the server, else the lane does in " + ReportWait.String()
 	case !exists(c.Brief):
 		wait = "its brief is not in her inbox yet (written from the server's friend cards)"
 	case ok && d.stageOwed(held):
 		wait = "its job is being staged"
 	}
 	if wait != "" {
-		ln.askAt = now.Add(TakeRetry)
+		// what it waits on is her own (her inbox, a stage, the outbox step): asked again at the
+		// idle pace, not once a TakeRetry, so lanes that wait do not load the server's line
+		ln.askAt = now.Add(LaneIdleAsk)
 		l.laneSay(ln, fmt.Sprintf("%s lane %d: holds card %s@%d at epoch %d on the server; not started yet: %s", at, ln.n, c.ID, h.Gen, h.Epoch, wait))
 		return Card{}, false
 	}
+	ln.reportJob = ""
 	l.laneSay(ln, "")
 	how := "holds"
 	if strings.Contains(out, "MOVED "+h.Card+" ") {
@@ -171,6 +188,45 @@ func (l *loop) laneAsk(ln *lane, now time.Time) (Card, bool) {
 	}
 	d.Record(fmt.Sprintf("%s lane %d: %s card %s@%d (kind %s, epoch %d): the server says lane %d holds it", at, ln.n, how, c.ID, h.Gen, dash(h.Kind), h.Epoch, ln.n))
 	return c, true
+}
+
+// ReportWait is how long a lane the server says holds a card whose outbox has the report of a
+// run before waits for the outbox step to finish it before it finishes it itself.
+const ReportWait = 2 * time.Minute
+
+// finishStale is a lane's finish of a card it holds whose outbox has the report of a run before
+// that no step finished: failed, by the lane and the server's ids, the report its REPORT.md when
+// that says a verdict, else one the lane writes (EndReport) naming why. A refusal is said; the
+// lane asks the server again either way.
+func (l *loop) finishStale(ln *lane, c Card, now time.Time) {
+	d := l.d
+	at := now.UTC().Format(time.RFC3339)
+	head, branch := PushedHead(d.Dir, c)
+	report := ""
+	if raw, err := os.ReadFile(c.Report()); err == nil {
+		if v, _ := reportLine(string(raw), "Verdict"); v != "" {
+			report = string(raw)
+		}
+	}
+	if report == "" {
+		report = EndReport(d.Friend, ln.n, c, LaneEnd{Err: "the outbox held the report of a run before that the outbox step did not finish"}, head, branch)
+		if !exists(c.Report()) {
+			if err := os.MkdirAll(c.Outbox, 0o755); err == nil {
+				_ = atomicfile.WriteFile(c.Report(), []byte(report), 0o644) // ignored: the finish below carries the same words
+			}
+		}
+	}
+	if d.Finish == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), FinishWait)
+	err := d.Finish(ctx, FinishArgv(d.Friend, c, report, head, branch))
+	cancel()
+	if err != nil {
+		d.Record(fmt.Sprintf("%s lane %d: card %s: its outbox's report of a run before was not finished in %s, and the lane's failed finish was refused: %s", at, ln.n, c.ID, ReportWait, oneLine(err.Error(), 300)))
+		return
+	}
+	d.Record(fmt.Sprintf("%s lane %d: card %s: its outbox's report of a run before was not finished in %s: finished failed by lane %d sent=server", at, ln.n, c.ID, ReportWait, ln.n))
 }
 
 // laneSay says a lane's line once while it stands ("" clears it).
