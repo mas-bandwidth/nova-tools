@@ -55,6 +55,12 @@ const (
 // NOTE push=<state> for <name> for each name not heard, and go on.
 const RequirePushEnv = "NOVA_BUS_REQUIRE_PUSH"
 
+// PendingCapEnv sets the per-recipient pending cap (bus.Bus.PendingCap) for
+// every verb: how many unacknowledged messages one recipient's stream may hold
+// before a send to it is refused with an OVERLOAD (bus.DefaultPendingCap when
+// unset; SPEC-BUS.md, the pending cap).
+const PendingCapEnv = "NOVA_BUS_PENDING_CAP"
+
 // ExecBudget bounds one run of --exec's command: a delivery into a harness
 // is a write of a few lines; one that takes longer is stuck. It is also how
 // long a reader keeps a message before another may claim it (bus.ClaimAfter).
@@ -262,6 +268,11 @@ lines (or the same refusal), writing nothing.
 whose answer was lost after the store took it is retried without a second message; the same token with
 other arguments, or past its life, is refused naming the message that went. The store drops a token at
 --token-cleanup (default 168h, never before its life ends). Without --token every send is a new message.
+A recipient whose unacknowledged (delivered, not acked) messages have reached the pending cap is
+refused for that recipient: the message still goes to the other recipients, the SEND OK line holds
+the id, and one SEND NOTE OVERLOAD line names the full recipient and its count. The cap is 20 by
+default and ` + PendingCapEnv + ` sets it (a count of at least 1). Drain the recipient with
+recv --as <name> and ack, so its pending list falls below the cap.
 Delivery to a reader is still at least once: a reader may be handed one message twice, by its id.`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the sender: the login user when there is one (then it may be left out)")
@@ -515,7 +526,16 @@ func (w world) bus(c *tool.Call, timeout time.Duration) (*bus.Bus, string, func(
 		r.Timeout = timeout
 		st = r
 	}
-	return &bus.Bus{Store: st}, login, closeStore, nil
+	b := &bus.Bus{Store: st}
+	if v := strings.TrimSpace(w.getenv(PendingCapEnv)); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			closeStore()
+			return nil, "", nil, tool.Refuse(fmt.Sprintf("%s wants a count of at least 1, not %q", PendingCapEnv, v))
+		}
+		b.PendingCap = n
+	}
+	return b, login, closeStore, nil
 }
 
 // identity is who the verb acts as: the user the connection logged in as,
@@ -545,7 +565,9 @@ func loginFact(o *tool.Out, login string) *tool.Out {
 }
 
 // answer renders an error of the bus: a Refusal names the input (exit 2),
-// anything else is the store (exit 2, with redisconn's words).
+// anything else is the store (exit 2, with redisconn's words). An Overload is
+// never here: send renders it as its result with the refusal as a NOTE
+// (SPEC-BUS.md, the pending cap).
 func answer(err error) *tool.Out {
 	var r *bus.Refusal
 	if errors.As(err, &r) {
@@ -618,7 +640,11 @@ func (w world) send(c *tool.Call) *tool.Out {
 		}
 	}
 	m, err := send(context.Background(), draft)
-	if err != nil {
+	// a full recipient is refused for that recipient with an OVERLOAD, and the
+	// other recipients still get the message: the result is the send's line
+	// with the refusal as a NOTE (SPEC-BUS.md, the pending cap)
+	var over *bus.Overload
+	if err != nil && !errors.As(err, &over) {
 		return answer(err)
 	}
 	// the push proof is advice, never a gate: the message landed (or would), and a
@@ -643,6 +669,9 @@ func (w world) send(c *tool.Call) *tool.Out {
 		Fact("bytes", len(m.Body)).Fact("sha256", hex.EncodeToString(sum[:])), login)
 	for _, line := range unheard {
 		o.Note(line)
+	}
+	if over != nil {
+		o.Note(over.Error())
 	}
 	return o
 }

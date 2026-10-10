@@ -135,6 +135,100 @@ func (r Redis) AddAll(ctx context.Context, streams []string, fields map[string]s
 	})
 }
 
+// addCapped is the send under the pending cap, in one atomic step (SPEC-BUS.md,
+// the pending cap): Redis runs a script alone, so no other send or ack comes
+// between a stream's pending count and its XADD. KEYS are the streams (the
+// recipient streams under Prefix, then the log), then each mark's hash; ARGV
+// are the prefix, the cap, the count of streams, the count of field pairs, the
+// pairs, then each mark as "set" field value, "del" field or "fwd" field state.
+// A recipient stream whose group already holds cap or more pending entries
+// (XPENDING's count) is left out and answered as the pair stream, count; the
+// log and the streams under the cap are written together.
+var addCapped = redis.NewScript(forwardLua + `
+local prefix = ARGV[1]
+local cap = tonumber(ARGV[2])
+local ns, nf = tonumber(ARGV[3]), tonumber(ARGV[4])
+local fields = {}
+for i = 1, nf * 2 do fields[i] = ARGV[4 + i] end
+local over = {}
+local write = {}
+for i = 1, ns do
+  local key = KEYS[i]
+  local name = string.sub(key, #prefix + 1)
+  local recipient = string.sub(key, 1, #prefix) == prefix and name ~= ''
+  local n = 0
+  if recipient then
+    local pend = redis.pcall('XPENDING', key, name)
+    if pend[1] then n = tonumber(pend[1]) end
+  end
+  if recipient and n >= cap then
+    over[#over + 1] = key
+    over[#over + 1] = n
+  else
+    write[#write + 1] = key
+  end
+end
+for _, key in ipairs(write) do redis.call('XADD', key, '*', unpack(fields)) end
+local j, k = 5 + nf * 2, 1 + ns
+local now = redis.call('TIME')[1]
+while j <= #ARGV do
+  if ARGV[j] == 'del' then
+    redis.call('HDEL', KEYS[k], ARGV[j + 1])
+    j = j + 2
+  elseif ARGV[j] == 'fwd' then
+    forward(KEYS[k], ARGV[j + 2], ARGV[j + 1], now)
+    j = j + 3
+  else
+    redis.call('HSET', KEYS[k], ARGV[j + 1], ARGV[j + 2])
+    j = j + 3
+  end
+  k = k + 1
+end
+return over
+`)
+
+// AddCapped is AddAll with the pending cap checked in the same script as the
+// XADD (SPEC-BUS.md, the pending cap): a recipient stream whose group already
+// holds cap or more pending entries is left out, and the rest of the send is
+// written, all or none. It answers each stream left out and its pending count.
+func (r Redis) AddCapped(ctx context.Context, streams []string, fields map[string]string, cap int, marks ...Mark) (map[string]int, error) {
+	var over map[string]int
+	err := r.call(ctx, false, 0, func(ctx context.Context) error {
+		keys := slices.Clone(streams)
+		names := slices.Sorted(maps.Keys(fields))
+		args := []any{Prefix, cap, len(streams), len(names)}
+		for _, n := range names {
+			args = append(args, n, fields[n])
+		}
+		for _, m := range marks {
+			keys = append(keys, m.Key)
+			switch {
+			case m.Clear:
+				args = append(args, "del", m.Field)
+			case m.Forward:
+				args = append(args, "fwd", m.Field, m.Value)
+			default:
+				args = append(args, "set", m.Field, m.Value)
+			}
+		}
+		res, err := addCapped.Run(ctx, r.C, keys, args...).Slice()
+		if err != nil {
+			return err
+		}
+		over = map[string]int{}
+		for i := 0; i+1 < len(res); i += 2 {
+			stream, _ := res[i].(string) // ignored: the script answers only the strings it was given
+			n, _ := res[i+1].(int64)     // ignored: the script answers a count, never another type
+			over[stream] = int(n)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return over, nil
+}
+
 // addOnce is AddOnce's one atomic step: Redis runs a script alone, so no
 // other send under the key comes between its GET and its writes. KEYS are the
 // record's key, the streams, then each mark's hash; ARGV are the record, its

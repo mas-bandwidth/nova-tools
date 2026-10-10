@@ -227,6 +227,36 @@ the record inside the life, and an answer without the fingerprint) were
 measured on a bench and land with their rows in the TLC catalog in a change
 of their own; until then the module is the spec and is not run by the gate.
 
+### the-pending-cap.w1: a full inbox refuses with a typed overload
+
+The finding (the 2026-10-09 study): the bus had no per-recipient bound, so a
+recipient that stopped reading grew without limit. Now a send is refused for a
+recipient whose unacknowledged (delivered and not acked) messages have reached
+the pending cap, `Bus.PendingCap` (`NOVA_BUS_PENDING_CAP`, default
+`DefaultPendingCap`, 20; a count of at least 1). The cap is on the recipient's
+consumer group's pending list (the delivered, not acked entries, `XPENDING`),
+never on the stream's length: the bus deletes nothing, so the stream holds every
+message, and what bounds a live recipient is its pending list.
+
+The check is atomic with the write. `Bus.Send` writes through a `CappedStore`
+(`Redis.AddCapped`, one script; the in-memory fake beside it): in the same step
+as the `XADD`s the script reads each recipient stream's pending count and leaves
+out each at the cap, writing the log and the recipients under it together, so no
+send or ack comes between the count and the write. The store answers the streams
+it left out and their pending counts.
+
+A send past the cap is refused for that recipient with the typed refusal
+`*Overload`, whose code is `OVERLOAD` (`bus.CodeOverload`): `SEND OK` still
+carries the id (the message went to the recipients that were not full), and one
+`SEND NOTE OVERLOAD: <name> has <n> unacknowledged (cap <c>)` names each full
+recipient and its count, the other recipients of a multi-recipient send
+delivered. A `Store` that is not a `CappedStore` has the cap checked before the
+write (`Bus.overCap`, one `Group` and one `Pending` per recipient); a token send
+(the `AddOnce` script) writes without the cap, a follow-up. The verbs
+`nova-bus pause <name>` (stop taking messages) and `nova-bus clear <name>
+--reason <text>` (drain a full recipient's pending list) are not built; both are
+follow-ups.
+
 ### bus-message-kinds.w1: the kind of a message
 
 A message carries a kind, one of `report`, `ack`, `status`, `request`,
@@ -423,7 +453,7 @@ INFO` on Redis 8 answers):
 | Verb | Commands | Keys |
 | --- | --- | --- |
 | every verb | `HELLO` (the login), `PING` (redisconn's probe) | none |
-| send | `SMEMBERS`, `TIME`, `MULTI`, `XADD`, `HSET`, `HDEL`, `EXEC`, then `HGETALL` (the NOTE); with a token `EVALSHA` (and `EVAL` the first time), the script's `GET`, `SET`, `XADD`, `HSET`, `HDEL` | `friends`, `machines` (read); `bus2:push` (read); `bus2:to:<every recipient>` and `bus2:log` (XADD: read-write by its key flag); `bus2:owed:<every friend recipient>`, and the sender's own when it answers (re); `bus2:receipt:<f>` when it answers (re: `EVAL` in the transaction, `TIME`, `HGET`, `HSET`); `bus2:sent:<f>:*` with a token |
+| send | `SMEMBERS`, `TIME`, then `EVALSHA` (and `EVAL` the first time), the capped script's `XPENDING`, `XADD`, `HSET`, `HDEL`, `TIME`, then `HGETALL` (the NOTE); with a token the token's script's `GET`, `SET`, `XADD`, `HSET`, `HDEL` | `friends`, `machines` (read); `bus2:push` (read); `bus2:to:<every recipient>` and `bus2:log` (XADD: read-write by its key flag); `bus2:owed:<every friend recipient>`, and the sender's own when it answers (re); `bus2:receipt:<f>` when it answers (re: the script's `TIME`, `HGET`, `HSET`); `bus2:sent:<f>:*` with a token |
 | recv | `SMEMBERS`, `TIME`, `HGETALL` (the NOTE, once per run), `XGROUP CREATE`, `XAUTOCLAIM`, `XREADGROUP`, `XACK`; `EVALSHA` (and `EVAL` the first time), the script's `TIME`, `HGET`, `HSET` | `friends`, `machines`; `bus2:push` (read); `bus2:to:<f>`; `bus2:receipt:<f>` |
 | wait | `SMEMBERS`, `XINFO STREAM`, `XREAD` | `friends`, `machines`; `bus2:to:<f>` |
 | ack | `XINFO GROUPS`, `XPENDING`, `XRANGE`, `XACK`, `HDEL` | `bus2:to:<f>`, `bus2:owed:<f>` |
@@ -485,9 +515,9 @@ its machine rows; no new kind or field was needed.
 
 ## Round trips
 
-send: two (the roster and `TIME` in one pipeline, then the transaction, or
-with a token the script; a third, `EVAL`, the first time a connection's server
-has not the script, and a `GET` when the push gate refuses a retry). recv:
+send: two (the roster and `TIME` in one pipeline, then the capped script, or
+with a token the token's script; a third, `EVAL`, the first time a connection's
+server has not the script, and a `GET` when the push gate refuses a retry). recv:
 five (the roster, the group, the claim, the read, the delivered stamp). wait: two to arm (the
 roster, the stream's tail), then one `XREAD` per block (one parked read when
 nothing else is watched). ack: five (group, pending,
