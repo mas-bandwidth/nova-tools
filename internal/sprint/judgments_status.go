@@ -177,7 +177,7 @@ func statusRows(s *Snapshot, r TickReq) []statusRow {
 		if ctl == nil {
 			continue
 		}
-		out = append(out, statusRow{row: m, name: m, word: MemberStatus(ctl, r.Beats[m], s.Now), beat: r.Beats[m]})
+		out = append(out, statusRow{row: m, name: m, word: s.PolicyMemberStatus(ctl, r.Beats[m], s.Now), beat: r.Beats[m]})
 	}
 	for i := range r.Friends {
 		f := &r.Friends[i]

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -104,6 +105,9 @@ type Bars struct {
 	// RulesOff is the sprint row's rules the machine does not answer by (answer_rules_off: a
 	// comma list of config.AnswerRules); "" turns none off.
 	RulesOff string
+	// Policy is the sprint row's policy numbers nova-config applied (sprint:<name>, each of
+	// config.SprintPolicies), by name; a number it holds none of is absent.
+	Policy sprint.PolicyValues
 }
 
 // fields is each bar by its sprint row field (config.SprintKey(field) holds it).
@@ -130,6 +134,7 @@ func (rs RouteSet) into(s *sprint.Snapshot) {
 	s.DecideScoreBar = rs.Bars.Score
 	s.DecideGateFlaky, s.DecideGatePreexisting = rs.Bars.GateFlaky, rs.Bars.GatePreexisting
 	s.RulesOff = sprint.Split(rs.Bars.RulesOff)
+	s.Policy = rs.Bars.Policy
 }
 
 // routes is the routes a dealing step plans with, by name, and the tiers'
@@ -184,14 +189,33 @@ func (st *Store) cached(ctx context.Context, c *RouteCache) (RouteSet, error) {
 	return c.set, nil
 }
 
-// Routes reads the set, then every route's hash, each tier's array and the
-// sprint row's nova-decide bars (Bars) in one pipeline: two round trips, the second only when
-// the set names a route (the arrays and the bars ride in it, so the tick's trips
-// do not rise; with no route a read card has none to draw, and no decide read).
+// Routes reads the set and the sprint row's policy numbers in one pipeline, then every
+// route's hash, each tier's array and the sprint row's nova-decide bars (Bars) in a second:
+// two round trips, the second only when the set names a route (the arrays and the bars
+// ride in it, so the tick's trips do not rise; with no route a read card has none to draw,
+// and no decide read, and the policy numbers still hold).
 func (r *Redis) Routes(ctx context.Context) (RouteSet, int64, error) {
-	names, err := r.C.SMembers(ctx, config.RoutesKey).Result()
-	if err != nil || len(names) == 0 {
+	first := r.C.Pipeline()
+	members := first.SMembers(ctx, config.RoutesKey)
+	policy := map[string]interface{ Val() string }{}
+	for _, p := range config.SprintPolicies {
+		policy[p.Name] = first.Get(ctx, config.SprintKey(p.Name))
+	}
+	if err := redisconn.Exec(ctx, first); err != nil {
 		return RouteSet{}, 1, err
+	}
+	var values sprint.PolicyValues
+	for name, v := range policy {
+		if v.Val() != "" {
+			if values == nil {
+				values = sprint.PolicyValues{}
+			}
+			values[name] = v.Val()
+		}
+	}
+	names := members.Val()
+	if len(names) == 0 {
+		return RouteSet{Bars: Bars{Policy: values}}, 1, nil
 	}
 	pipe := r.C.Pipeline()
 	hs := make(map[string]interface{ Val() map[string]string }, len(names))
@@ -223,7 +247,7 @@ func (r *Redis) Routes(ctx context.Context) (RouteSet, int64, error) {
 	for f, v := range set.Bars.fields() {
 		*v = bars[f].Val()
 	}
-	set.Routes, set.Tiers = out, tiers
+	set.Routes, set.Tiers, set.Bars.Policy = out, tiers, values
 	return set, 2, nil
 }
 
@@ -350,6 +374,66 @@ func (st *Store) OutOfCredit(ctx context.Context) (string, error) {
 func (st *Store) JudgmentBar(ctx context.Context) (string, error) {
 	set, err := st.routes(ctx)
 	return set.Bars.Judgment, err
+}
+
+// SetPolicy gives the store a policy number, as nova-config's apply does a live one
+// (sprint:<name>); "" takes it off.
+func (m *Mem) SetPolicy(name, value string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	policy := sprint.PolicyValues{}
+	maps.Copy(policy, m.bars.Policy)
+	if value == "" {
+		delete(policy, name)
+	} else {
+		policy[name] = value
+	}
+	m.bars.Policy = policy
+}
+
+// PolicyReader reads only sprint policy keys, which every sprint role can read.
+// A worker does not need access to the coordinator's tier arrays to renew a lease.
+type PolicyReader interface {
+	Policy(context.Context) (sprint.PolicyValues, error)
+}
+
+// Policy is the applied policy numbers for a verb outside the tick. A tick shares
+// its routes read; standalone verbs read just the sprint keys (SPEC-SPRINT section 11).
+func (st *Store) Policy(ctx context.Context) (sprint.PolicyValues, error) {
+	if reader, ok := st.B.(PolicyReader); ok {
+		return reader.Policy(ctx)
+	}
+	set, err := st.routes(ctx)
+	return set.Bars.Policy, err
+}
+
+// Policy reads the sprint policy keys in one pipeline (SPEC-CONFIG policy numbers).
+func (r *Redis) Policy(ctx context.Context) (sprint.PolicyValues, error) {
+	pipe := r.C.Pipeline()
+	values := map[string]interface{ Val() string }{}
+	for _, p := range config.SprintPolicies {
+		values[p.Name] = pipe.Get(ctx, config.SprintKey(p.Name))
+	}
+	if err := redisconn.Exec(ctx, pipe); err != nil {
+		return nil, err
+	}
+	out := sprint.PolicyValues{}
+	for name, value := range values {
+		if value.Val() != "" {
+			out[name] = value.Val()
+		}
+	}
+	return out, nil
+}
+
+// Policy is an independent snapshot of the in-memory twin's applied values.
+func (m *Mem) Policy(context.Context) (sprint.PolicyValues, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.fail("policy"); err != nil {
+		return nil, err
+	}
+	return maps.Clone(m.bars.Policy), nil
 }
 
 // SetRulesOff gives the store the rules the machine does not answer by, as nova-config's

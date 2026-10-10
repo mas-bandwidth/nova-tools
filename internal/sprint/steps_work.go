@@ -532,7 +532,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 				if walls == nil {
 					walls = gateWalls(s)
 				}
-				set, said := gateTier(walls, a.brief)
+				set, said := gateTier(walls, a.brief, s.PolicyDuration(PolicyFlashGateBound))
 				maps.Copy(fields, set)
 				gateSaid = said
 			}
@@ -1010,7 +1010,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 			roomWhy += "; " + quiet
 		}
 		if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
-			if redealBound(wc) {
+			if redealBound(s, wc) {
 				tier := s.NextTier(c)
 				if _, atCap := AtBriefBound(c, "", s.AttemptsCap(c.Row)); atCap {
 					tier = "" // the attempt cap: not dealt again, the tick's judgment says so (AtRedealBound)
@@ -1029,7 +1029,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 					p.refuse(c.ID, roomWhy)
 					continue
 				}
-				on, _ := CardTiers(c)
+				on, _ := CardTiers(s, c)
 				why := fmt.Sprintf("attempt %s reached its bound on %s (redealt %d times)%s", wc.F("attempt"), on, wc.Int("redeals"), providerWhy(wc))
 				if class := identicalEnds(wc); class != "" {
 					// rule 2 inside one attempt: its last two takes ended the same way (failure.go)
@@ -1115,7 +1115,7 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 	if fix != "" {
 		fields["fix"] = fix
 	}
-	priorityOnWork(fields, c)
+	priorityOnWork(s, fields, c)
 	// the attempt decision's bars, which its failed finish is routed by (decide.go)
 	bars, _ := s.attemptBars()
 	maps.Copy(fields, bars)
@@ -1152,7 +1152,7 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 // the new attempt's work card is told why (the bound and the tiers), the brief and the
 // fix are the card's own.
 func escalate(s *Snapshot, c, prev *Card, tier, why, m string, q map[string]int, ri routeIndexes) (Unit, string) {
-	from, _ := CardTiers(c)
+	from, _ := CardTiers(s, c)
 	set := map[string]string{FieldTierNow: tier}
 	given := map[string]string{"finding": c.F("finding"), "why": fmt.Sprintf("escalated from %s to %s: %s", from, tier, why)}
 	u, refused := deal(s, withField(c, FieldTierNow, tier), c.F("fix"), m, q, ri, set, given)
@@ -1289,7 +1289,7 @@ func takeSeat(s *Snapshot, as string) (width int, why string) {
 		if seat.Status != Up {
 			return 0, "friend " + f + " is " + orDash(seat.Status) + ": " + cmp.Or(seat.Why, "not up")
 		}
-		_, width = friendRoom(seat)
+		_, width = friendRoom(s, seat)
 		return width, ""
 	}
 	if !s.Fleet.HasRow(as) {
@@ -1539,7 +1539,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		if r.Failed && kind == "" {
 			lc, capped = ParseLaneCap(r.Report)
 		}
-		if next := capNextTier(pr); capped && next != "" {
+		if next := capNextTier(s, pr); capped && next != "" {
 			p.Units = append(p.Units, capRedeal(s, c, pr, r, lc, next, p.Units))
 			continue
 		}
@@ -1619,7 +1619,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			}
 			// rule 2: the attempt before failed the same way, so this is the bound's (failure.go);
 			// a decided class is the class when the decision routed the finish
-			identical = failureSet(pr, pr.Int("attempt"), r.Report, class, cardTierOf(pr), set)
+			identical = failureSet(pr, pr.Int("attempt"), r.Report, class, cardTierOf(s, pr), set)
 		}
 		cons := workConsumer(s, c, 0, result, rec)
 		if capped {
@@ -1651,7 +1651,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			// takes the next tier and its why and goes back to ready, as a rework with no
 			// member up leaves it, and the tick's deal cuts its next attempt there. The new
 			// tier counts its own failures: the record of this one is not carried up.
-			from, _ := CardTiers(pr)
+			from, _ := CardTiers(s, pr)
 			why := fmt.Sprintf("escalated from %s to %s: attempts %d and %d failed the same way (%s) on %s", from, next, attempt-1, attempt, set[FieldFailure], from)
 			set[FieldTierNow], set["why"] = next, why
 			reworkPriority(s, pr, set)
@@ -2305,7 +2305,7 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 	withdrew := 0
 	for _, c := range cards {
 		taken := c.Col == Working
-		if len(up) > 0 && (!taken || c.Int("redeals") < MaxRedeals) {
+		if len(up) > 0 && (!taken || c.Int("redeals") < s.PolicyCount(PolicyMaxRedeals)) {
 			// the next member round the fleet below its width (round.go), the
 			// index moved past it; with none below its width the card is
 			// withdrawn, and the next deal places it where there is room: a

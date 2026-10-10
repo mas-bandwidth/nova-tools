@@ -12,7 +12,8 @@ import (
 )
 
 // DefaultRollbackWindow is how long server switch watches for a failed land before
-// the switch is considered permanent (docs/SPEC-SPRINT.md section 14; item 14).
+// the switch is considered permanent (docs/SPEC-SPRINT.md section 14; item 14) by
+// default: the rollback_window setting's default (policy.go).
 const DefaultRollbackWindow = 15 * time.Minute
 
 // ServerSwitchOptions configures ServerSwitch.

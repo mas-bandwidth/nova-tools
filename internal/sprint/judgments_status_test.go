@@ -325,6 +325,23 @@ func TestAFleetMemberGoingDownNamesItsLastBeat(t *testing.T) {
 	assert.Contains(t, notes2[0].What, "width 2; the tick deals it cards from now")
 }
 
+func TestMemberDownPolicyKeepsStatusJudgmentInStepWithTheTick(t *testing.T) {
+	t.Parallel()
+	r := newTransitionRig(t)
+	r.tick(time.Second) // record the first up status
+	r.m.SetPolicy("member_down_after", "5m")
+	r.member = false
+	r.tick(3 * time.Minute)
+	r.tick(time.Minute)
+	r.tick(time.Minute)
+	assert.Empty(t, r.statusNotes("m1"), "the configured five-minute window still says up at its boundary")
+	r.tick(time.Second)
+	r.tick(sprint.StatusDwell)
+	notes := r.statusNotes("m1")
+	require.Len(t, notes, 1)
+	assert.Contains(t, notes[0].What, "fleet member m1 is down")
+}
+
 func TestARestartDoesNotReplayTransitions(t *testing.T) {
 	t.Parallel()
 	r := newTransitionRig(t)

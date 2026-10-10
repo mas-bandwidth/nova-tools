@@ -141,7 +141,7 @@ func TestOneWidthHoldsHerWorkAndReads(t *testing.T) {
 	}
 	putReads(w, "amy", 9)
 	assert.Equal(t, 19, friendLoad(w.s, "amy"), "her load is her work and her reads")
-	room, width := friendRoom(amy)
+	room, width := friendRoom(nil, amy)
 	assert.Equal(t, 13, room-friendLoad(w.s, "amy"), "her room less work and reads")
 	assert.Equal(t, -3, width-friendLoad(w.s, "amy"), "her lanes: 16 less 19, none idle")
 
@@ -285,7 +285,7 @@ func TestARedealToAFriendWritesItsTierNow(t *testing.T) {
 	amy := FriendSeat{Name: "amy", Width: 1, Status: Up, Class: "flash", Tiers: []string{"flash"}}
 	dealWith(w, amy)
 	require.Equal(t, FriendRow("amy"), w.s.Fleet.Card(wc.ID).Row)
-	now, ceiling := CardTiers(w.s.Work.Card("s1-1"))
+	now, ceiling := CardTiers(w.s, w.s.Work.Card("s1-1"))
 	assert.Equal(t, "flash", now, "the tier the deal drew")
 	assert.Equal(t, "heavy", ceiling)
 }

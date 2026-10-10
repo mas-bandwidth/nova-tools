@@ -116,7 +116,7 @@ func friendReadsFirst(s *Snapshot, seats []FriendSeat, waiting []*Card, placed P
 			if friendMayRead(s, f, pr, attempt, friendReadTier(s, pr), attemptWorker(s, pr.ID, attempt)) {
 				all := f
 				all.ReadsFirst = 0
-				room, _ := friendRoom(all)
+				room, _ := friendRoom(s, all)
 				out[i].ReadsFirst += room // a read she may take waits: no work card this deal
 				break
 			}

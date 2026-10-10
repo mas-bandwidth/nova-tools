@@ -354,3 +354,57 @@ func TestATidyWhoseCardMovedKeepsItsArchive(t *testing.T) {
 	assert.Equal(t, sprint.Withdrawn, r.snap().Fleet.Card(first).Col, "it stays where the other writer put it")
 	assert.Nil(t, r.snap().Fleet.Placed(sprint.WorkCardID("s1-2", 1)))
 }
+
+// The configurable overload horizon retains timeout history beyond the newest
+// ten finishes, and dry-run and actual tidy use the same effective policy.
+func TestStatsTidyPreservesTheConfiguredOverloadHorizon(t *testing.T) {
+	t.Parallel()
+	for _, age := range []time.Duration{45 * time.Minute, 2 * time.Hour} {
+		t.Run(age.String(), func(t *testing.T) {
+			t.Parallel()
+			r := newConflictRig(t)
+			r.landOnM1(13)
+			_, err := r.st.Tick(r.ctx)
+			require.NoError(t, err)
+			_, _, _, err = r.st.SetMachine(r.ctx, true)
+			require.NoError(t, err)
+			r.mu.Lock()
+			r.now = r.now.Add(3 * time.Hour)
+			r.mu.Unlock()
+			r.m.SetPolicy("overload_window", "2h")
+			s := r.snap()
+			var entries []ntable.BatchMemberEntry
+			for i := 1; i <= 13; i++ {
+				c := s.Fleet.Card(sprint.WorkCardID(fmt.Sprintf("s1-%d", i), 1))
+				require.NotNil(t, c)
+				fields := map[string]string{"finished": s.Now.Add(-35 * time.Minute).Format(time.RFC3339)}
+				entry := ntable.BatchMemberEntry{ID: sprint.StoredID(c.ID, s.Epoch), Set: fields,
+					Expect: &ntable.MemberExpect{Place: &ntable.PlaceExpect{Row: c.Row, Col: c.Col}}}
+				if i <= 3 {
+					entry.Move = &ntable.MemberMoveOp{Row: "m1", Col: sprint.DoneFailed}
+					fields["finished"] = s.Now.Add(-age).Format(time.RFC3339)
+					fields["report"], fields["ok"] = "deadline: timed out", "no"
+				}
+				entries = append(entries, entry)
+			}
+			_, err = r.m.Apply(r.ctx, ntable.BatchManifest{Schema: 1, Table: r.st.Names.Table(sprint.Fleet), Epoch: fmt.Sprint(s.Epoch),
+				ExpectedTableRevision: fmt.Sprint(s.Fleet.Revision), OperationID: "timeout-history", Members: entries})
+			require.NoError(t, err)
+			overloaded := func() bool {
+				view := r.snap()
+				view.Policy = sprint.PolicyValues{"overload_window": "2h"}
+				_, yes := sprint.Overloaded(view, "m1")
+				return yes
+			}
+			require.True(t, overloaded(), "three landed timeout records are inside the configured horizon")
+			dry, err := r.st.TidyStats(r.ctx, store.TidyReq{Kinds: []string{sprint.TidyFleet}, Reason: "policy history", DryRun: true})
+			require.NoError(t, err)
+			assert.Zero(t, dry.Moved, "dry-run retains the old timeout records")
+			actual, err := r.st.TidyStats(r.ctx, store.TidyReq{Kinds: []string{sprint.TidyFleet}, Reason: "policy history"})
+			require.NoError(t, err)
+			assert.Zero(t, actual.Moved)
+			assert.Equal(t, dry.Kept, actual.Kept, "planned and applied retention agree")
+			assert.True(t, overloaded(), "tidy cannot erase timeouts counted by the overload policy")
+		})
+	}
+}

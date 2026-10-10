@@ -165,7 +165,7 @@ func decidedSets(r FinishReq, used bool, pr *Card, card, primary map[string]stri
 // of nova-tools#5174, for briefs that say flash or say no tier). The grade (decide.go, Grade)
 // is recorded on the card and raises nothing: line 1 decides the start.
 func (s *Snapshot) startTier(c *Card, m cardhdr.Model) string {
-	if ceilingTier(c, m) == cardhdr.RoutePro {
+	if ceilingTier(s, c, m) == cardhdr.RoutePro {
 		return cardhdr.RoutePro
 	}
 	return cardhdr.RouteFlash
@@ -229,7 +229,7 @@ func DecideDue(s *Snapshot) (grades []GradeAsk, outcomes []DecideOutcome) {
 		}
 		at, tier, note := 0, "", "dropped: "+c.F("reason")
 		if landed {
-			at, tier = c.Int("attempt"), LandedTier(c)
+			at, tier = c.Int("attempt"), LandedTier(s, c)
 			note = fmt.Sprintf("landed at attempt %d on %s", at, tier)
 		}
 		for _, k := range slices.Sorted(maps.Keys(c.Fields)) {
@@ -249,10 +249,10 @@ func DecideDue(s *Snapshot) (grades []GradeAsk, outcomes []DecideOutcome) {
 
 // LandedTier is the tier a landed primary was on: script for a card of script steps alone
 // (cardtree), else the tier it was on when it landed (cardTier).
-func LandedTier(c *Card) string {
+func LandedTier(s *Snapshot, c *Card) string {
 	if cardtree.Parse(c.F("brief")).AllScript() {
 		return decide.GradeScript
 	}
-	now, _ := CardTiers(c)
+	now, _ := CardTiers(s, c)
 	return now
 }

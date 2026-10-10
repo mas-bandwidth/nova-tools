@@ -104,6 +104,10 @@ usage:
   nova-config fleet set|show|history        one row each, no name:
                                             fleet and sprint have no add, remove or list
   nova-config sprint set|show|history
+  nova-config setting set sprint.<name> <value> --as <name> [--dry-run] [--json]
+                                            one sprint field by name, as sprint set
+                                            --<name> <value>; apply --kind sprint
+                                            delivers it to the tick
   nova-config <kind> <verb> -h              the verb's flags (required ones marked),
                                             its effect and a worked example
 
@@ -396,6 +400,8 @@ func dispatch(args []string, stdout, stderr io.Writer, d deps) (code int) {
 		return runBackupTool(ctx, args, stdout, stderr, d)
 	case "login", "logout":
 		return runLoginTool(ctx, args, stdout, stderr, d)
+	case "setting":
+		return runSetting(ctx, args[1:], stdout, stderr, d)
 	}
 	if k, ok := config.Lookup(args[0]); ok {
 		return runKind(ctx, k, args[1:], stdout, stderr, d)

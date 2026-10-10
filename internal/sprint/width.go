@@ -123,7 +123,7 @@ const DealAhead = 2
 func memberWidths(s *Snapshot, up []string) map[string]int {
 	w := map[string]int{}
 	for _, m := range up {
-		w[m] = DealAhead * s.Width(m)
+		w[m] = s.PolicyCount(PolicyDealAhead) * s.Width(m)
 	}
 	return w
 }
@@ -133,7 +133,7 @@ func memberWidths(s *Snapshot, up []string) map[string]int {
 func widthRoom(s *Snapshot, up []string) int {
 	room := 0
 	for _, m := range up {
-		room += max(0, DealAhead*s.Width(m)-halfLoad(rowLoad(s, m)))
+		room += max(0, s.PolicyCount(PolicyDealAhead)*s.Width(m)-halfLoad(rowLoad(s, m)))
 	}
 	return room
 }

@@ -176,7 +176,7 @@ func readUnitsOf(s *Snapshot, seats []FriendSeat) []readUnit {
 		}
 		g := f
 		g.ReadsFirst = 0
-		room, width := friendRoom(g)
+		room, width := friendRoom(s, g)
 		row := FriendRow(f.Name)
 		work, reads := rowLoad(s, row)
 		ww, wr := rowWorking(s, row)
@@ -189,7 +189,7 @@ func readUnitsOf(s *Snapshot, seats []FriendSeat) []readUnit {
 		w := s.Width(m)
 		work, reads := rowLoad(s, m)
 		ww, wr := rowWorking(s, m)
-		out = append(out, readUnit{name: m, row: m, half: 2*(DealAhead*w-work) - reads, idle: 2*w - 2*ww - wr})
+		out = append(out, readUnit{name: m, row: m, half: 2*(s.PolicyCount(PolicyDealAhead)*w-work) - reads, idle: 2*w - 2*ww - wr})
 	}
 	return out
 }

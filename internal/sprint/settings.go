@@ -188,48 +188,24 @@ func (s *Snapshot) DealtMax() time.Duration {
 // working directory and outbox before it is an alarm (nova-sprint set --friend-idle).
 const FriendIdleDefault = 20 * time.Minute
 
-// FriendIdleAfter is that bound: the sprint's setting, else FriendIdleDefault.
-func (s *Snapshot) FriendIdleAfter() time.Duration {
-	if s.Work != nil {
-		if v, ok := s.Work.Prop(PropFriendIdle); ok {
-			if d, err := time.ParseDuration(v); err == nil && d > 0 {
-				return d
-			}
-		}
-	}
-	return FriendIdleDefault
-}
+// FriendIdleAfter is that bound: nova-config's friend_idle, else the sprint's setting,
+// else FriendIdleDefault (policy.go).
+func (s *Snapshot) FriendIdleAfter() time.Duration { return s.PolicyDuration(PolicyFriendIdle) }
 
 // FriendStallAfterDefault is how long a friend holding cards may show neither file write
 // under her working directory nor card progress before the stall ladder begins.
 const FriendStallAfterDefault = 20 * time.Minute
 
-// FriendStallAfter is that bound: the sprint's setting, else FriendStallAfterDefault.
-func (s *Snapshot) FriendStallAfter() time.Duration {
-	if s.Work != nil {
-		if v, ok := s.Work.Prop(PropFriendStallAfter); ok {
-			if d, err := time.ParseDuration(v); err == nil && d > 0 {
-				return d
-			}
-		}
-	}
-	return FriendStallAfterDefault
-}
+// FriendStallAfter is that bound: nova-config's friend_stall_after, else the sprint's
+// setting, else FriendStallAfterDefault (policy.go).
+func (s *Snapshot) FriendStallAfter() time.Duration { return s.PolicyDuration(PolicyFriendStallAfter) }
 
 // FriendStallStepDefault is the duration between rungs of the friend stall ladder.
 const FriendStallStepDefault = 5 * time.Minute
 
-// FriendStallStep is that step: the sprint's setting, else FriendStallStepDefault.
-func (s *Snapshot) FriendStallStep() time.Duration {
-	if s.Work != nil {
-		if v, ok := s.Work.Prop(PropFriendStallStep); ok {
-			if d, err := time.ParseDuration(v); err == nil && d > 0 {
-				return d
-			}
-		}
-	}
-	return FriendStallStepDefault
-}
+// FriendStallStep is that step: nova-config's friend_stall_step, else the sprint's
+// setting, else FriendStallStepDefault (policy.go).
+func (s *Snapshot) FriendStallStep() time.Duration { return s.PolicyDuration(PolicyFriendStallStep) }
 
 // readTierSetting is the read tier set for the stream's reads: the stream's own,
 // else the sprint's, else "" (each card's own tier).
