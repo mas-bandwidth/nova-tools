@@ -353,3 +353,48 @@ func TestANotServedServerIsSaidOnceAMinute(t *testing.T) {
 	assert.NoDirExists(t, filepath.Join(dir, RetiredDir))
 	assert.Contains(t, r.last().InboxError, ServedBy)
 }
+
+// The held packet's model is hers to run the card on: friend cards carries it (HeldCard.Model),
+// her daemon keeps it on the card it hands a lane (nextCard), and the lane launches her harness
+// with it. The reader of attempt 7 found the held path dropped it (inbox.go's nextCard built a
+// Card with no model), so a card dealt to her once the server answered ran on whatever model
+// her session was set to; the queue file's own path (NextCard) already carried it.
+func TestTheHeldPacketsModelReachesTheLane(t *testing.T) {
+	t.Parallel()
+
+	// the server's answer: the model rides the held card's JSON, as ParseHeld reads it
+	held, err := ParseHeld("bob", `{"friend":"bob","cards":[{"card":"modelled.w1","job":"modelled.w1~15","col":"working","kind":"work","tier":"pro","model":"prov/m","brief":"STATUS: x\n"}]}`)
+	require.NoError(t, err)
+	require.Len(t, held, 1)
+	assert.Equal(t, "pro", held[0].Tier)
+	assert.Equal(t, "prov/m", held[0].Model, "the delivered model is on the held packet, not dropped")
+
+	r := newRig(t)
+	dir := r.d.Dir
+	c := workCard("modelled.w1", "working")
+	c.Tier, c.Model = "pro", "prov/m"
+	inboxJob(t, dir, c.Job, c.Brief)
+	row := &twinRow{}
+	row.set(c)
+	r.d.Held = row.held
+	r.d.status.HeldKnown = true
+	r.d.heldIDs, r.d.heldCards = []string{c.Card}, []HeldCard{c}
+
+	card, ok, err := r.d.nextCard(func(Card) bool { return false })
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, "pro", card.Tier)
+	assert.Equal(t, "prov/m", card.Model, "the lane's card carries the held packet's model")
+
+	// and the turn launches the harness with its model flag, as the queue file's path does
+	var ran [][]string
+	fake := func(_ context.Context, _, name string, args []string, _ string) (string, int, error) {
+		ran = append(ran, append([]string{name}, args...))
+		return "", 0, nil
+	}
+	oc := &OpenCode{Dir: dir, Run: fake}
+	_, err = oc.DeliverTo(WithModel(LaneContext(context.Background()), card.Model), "ses_1", "the card")
+	require.NoError(t, err)
+	require.Len(t, ran, 1)
+	assert.Equal(t, []string{"opencode", "run", "--model", "prov/m", "--session", "ses_1", "the card"}, ran[0])
+}

@@ -90,7 +90,7 @@ func positional(k *config.Kind, fs *stdflag.FlagSet, name, verb string) (string,
 var typeWords = map[config.Type]string{
 	config.TypeText: "text", config.TypeInt: "number", config.TypeEnum: "word", config.TypeList: "list",
 	config.TypeNames: "list", config.TypeRef: "name", config.TypeBool: "true|false", config.TypeKeys: "NAME,...",
-	config.TypeArgv: "json", config.TypeSeq: "list", config.TypeDecimal: "decimal",
+	config.TypeArgv: "json", config.TypeSeq: "list", config.TypeDecimal: "decimal", config.TypeMap: "key=value,...",
 }
 
 // fieldUsage is a field's flag help: what it wants (the backquoted word the

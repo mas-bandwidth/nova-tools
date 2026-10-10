@@ -77,6 +77,18 @@ type friendEntry struct {
 	// The cost card adds the field; until it exists this is empty, which is a
 	// subscription.
 	Billing string `json:"billing,omitempty"`
+	// Models is her row's model per tier, and Children and ChildModel what her harness
+	// can do (config.FriendModels, children, child_model; docs/SPEC-FRIEND.md, a friend's
+	// models): the deal writes the model of a card's tier on the card, and her queue file
+	// carries the three to her daemon. Empty is none, and yes.
+	Models     map[string]string `json:"models,omitempty"`
+	Children   string            `json:"children,omitempty"`
+	ChildModel string            `json:"child_model,omitempty"`
+	// Probes is the model her probe card of each tier reported (SetFriendProbe; friend
+	// sync, docs/SPEC-FRIEND.md, a friend's models): a tier whose model is not the one its
+	// probe reported is dealt no real card (sprint.FriendProven). Friend sync never writes
+	// it from her row, so a sync keeps it.
+	Probes map[string]string `json:"probes,omitempty"`
 	// Reason and Until are the hold's (friend down --reason --until, hold <friend>
 	// --reason): why, and when the coordinator expects her back. Return is whether
 	// the hold took her cards back (hold.go).
@@ -108,12 +120,25 @@ type FriendSpec struct {
 	// lists the dealer reads (sprint.Split; empty for no restriction).
 	Streams string
 	Kinds   string
+	// Models, Children and ChildModel are her row's model per tier and what her harness
+	// can do (config.FriendModels, children, child_model).
+	Models     map[string]string
+	Children   string
+	ChildModel string
+	// Probes is the model her probe of each tier reported (FriendSpecOf fills it; SyncFriends
+	// never reads it).
+	Probes map[string]string
 }
 
 // RestrictionWhy explains why the configured stream and kind do not fit this friend: ""
 // when they do (sprint.FriendRestrictionWhy).
 func (s FriendSpec) RestrictionWhy(stream, kind string) string {
 	return sprint.FriendRestrictionWhy(sprint.Split(s.Streams), sprint.Split(s.Kinds), stream, kind)
+}
+
+// sameModels says two friends' model maps hold the same models, none being empty.
+func sameModels(a, b map[string]string) bool {
+	return maps.Equal(a, b) || len(a) == 0 && len(b) == 0
 }
 
 // FriendRow is one row of the friends table as where draws it: the counts of
@@ -139,6 +164,10 @@ type FriendRow struct {
 	// friends table's shape.
 	Streams string `json:"-"`
 	Kinds   string `json:"-"`
+	// Models is her row's model per tier, as friend sync last wrote it; absent when none.
+	Models map[string]string `json:"models,omitempty"`
+	// Probes is the model her probe of each tier reported; absent when none returned.
+	Probes map[string]string `json:"probes,omitempty"`
 	// Load and Report are what her last beat reported (friend beat --load, and
 	// sprint.FriendReport), absent when it reported none.
 	Load   float64              `json:"load,omitempty"`
@@ -231,11 +260,12 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		case !had:
 			added = append(added, s.Name)
 			rosterChanged = true
-		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir || e.TokenCap != s.TokenCap || e.TokenCapSet != s.TokenCapSet || e.Roles != s.Roles || e.Billing != s.Billing || e.Streams != s.Streams || e.Kinds != s.Kinds:
+		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir || e.TokenCap != s.TokenCap || e.TokenCapSet != s.TokenCapSet || e.Roles != s.Roles || e.Billing != s.Billing || e.Streams != s.Streams || e.Kinds != s.Kinds || !sameModels(e.Models, s.Models) || e.Children != s.Children || e.ChildModel != s.ChildModel:
 			updated = append(updated, s.Name)
 			rosterChanged = true
 		}
 		e.Width, e.Class, e.Mode, e.ConfigDir, e.TokenCap, e.TokenCapSet, e.Roles, e.Billing, e.Streams, e.Kinds = s.Width, s.Class, s.Mode, s.ConfigDir, s.TokenCap, s.TokenCapSet, s.Roles, s.Billing, s.Streams, s.Kinds
+		e.Models, e.Children, e.ChildModel = s.Models, s.Children, s.ChildModel
 		r[s.Name] = e
 	}
 	for n := range r {
@@ -470,7 +500,7 @@ func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, ma
 		}
 		presence := sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation, Finished: fin}
 		word, evidence := sprint.FriendEvidence(presence, now)
-		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Roles: r[n].Roles, Billing: r[n].Billing, Streams: r[n].Streams, Kinds: r[n].Kinds, Load: b.Load, Report: b.Friend, Beat: b.At, Proof: b.Proof}
+		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Roles: r[n].Roles, Billing: r[n].Billing, Streams: r[n].Streams, Kinds: r[n].Kinds, Models: r[n].Models, Probes: r[n].Probes, Load: b.Load, Report: b.Friend, Beat: b.At, Proof: b.Proof}
 		if why := sprint.FriendDownWhy(presence, now); why != "" {
 			whys[n] = why
 		}
@@ -517,7 +547,7 @@ func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.Frien
 	}
 	seats := make([]sprint.FriendSeat, len(rows))
 	for i, r := range rows {
-		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class, Mode: r.Mode, Roles: sprint.Split(r.Roles), Streams: sprint.Split(r.Streams), Kinds: sprint.Split(r.Kinds), Why: whys[r.Name], Proof: r.Proof, Finished: r.Finished}
+		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class, Mode: r.Mode, Roles: sprint.Split(r.Roles), Streams: sprint.Split(r.Streams), Kinds: sprint.Split(r.Kinds), Models: r.Models, Probes: r.Probes, Why: whys[r.Name], Proof: r.Proof, Finished: r.Finished}
 		if r.Reason != "" && seats[i].Why != "" {
 			seats[i].Why += ": " + r.Reason
 		}
@@ -740,7 +770,31 @@ func (st *Store) FriendSpecOf(ctx context.Context, friend string) (FriendSpec, e
 	if !ok {
 		return FriendSpec{}, noFriend(r, friend)
 	}
-	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir, TokenCap: e.TokenCap, TokenCapSet: e.TokenCapSet, Roles: e.Roles, Billing: e.Billing, Streams: e.Streams, Kinds: e.Kinds}, nil
+	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir, TokenCap: e.TokenCap, TokenCapSet: e.TokenCapSet, Roles: e.Roles, Billing: e.Billing, Streams: e.Streams, Kinds: e.Kinds, Models: e.Models, Children: e.Children, ChildModel: e.ChildModel, Probes: e.Probes}, nil
+}
+
+// SetFriendProbe records the model the friend's probe card of the tier reported (friend
+// sync, docs/SPEC-FRIEND.md, a friend's models): changed is false when the roster already
+// held it, and nothing is written; a friend the roster lacks is refused.
+func (st *Store) SetFriendProbe(ctx context.Context, friend, tier, model string) (changed bool, err error) {
+	r, kv, err := st.roster(ctx)
+	if err != nil {
+		return false, err
+	}
+	e, ok := r[friend]
+	if !ok {
+		return false, noFriend(r, friend)
+	}
+	if had, ok := e.Probes[tier]; ok && had == model {
+		return false, nil
+	}
+	e.Probes = maps.Clone(e.Probes)
+	if e.Probes == nil {
+		e.Probes = map[string]string{}
+	}
+	e.Probes[tier] = model
+	r[friend] = e
+	return true, putRoster(ctx, kv, r)
 }
 
 // FriendSessions is every friend of the roster with her session's last pong as her last
