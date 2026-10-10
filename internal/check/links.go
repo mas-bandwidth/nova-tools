@@ -238,7 +238,7 @@ func checkFileLinks(root, mdPath string, exclude []string) (checked int, broken 
 			var reason string
 			checked++
 			if fragment != "" && strings.EqualFold(filepath.Ext(resolved), ".md") {
-				if !fragmentExists(resolved, fragment) {
+				if hasHeadings(resolved) && !fragmentExists(resolved, fragment) {
 					reason = "missing anchor"
 				}
 			}
@@ -354,10 +354,14 @@ func parseDestination(s string) (dest string, ok bool) {
 		i += 1 + end + 1
 	} else {
 		start := i
-		for i < len(s) && s[i] != ' ' && s[i] != '\t' && s[i] != ')' {
+		for i < len(s) && s[i] != ')' {
 			i++
 		}
 		dest = s[start:i]
+		// Strip any title from the destination. Titles start with quote chars.
+		if j := strings.IndexAny(dest, "\"'("); j >= 0 {
+			dest = strings.TrimSpace(dest[:j])
+		}
 	}
 	i = skipSpaces(s, i)
 	if i >= len(s) {
@@ -432,6 +436,21 @@ func resolveTarget(root, mdPath, target string, exclude []string) (resolved stri
 	return resolved, false, fragment
 }
 
+// hasHeadings reports whether the markdown file has at least one heading.
+func hasHeadings(path string) bool {
+	data, err := readregular.Read(path, readregular.DefaultMax)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimLeft(line, " \t")
+		if strings.HasPrefix(trimmed, "#") {
+			return true
+		}
+	}
+	return false
+}
+
 // fragmentExists reports whether the markdown file at path contains a heading
 // that anchors to the given fragment. GitHub's anchor rule is applied:
 // lower-case, spaces to dashes, punctuation dropped.
@@ -440,7 +459,7 @@ func fragmentExists(path, fragment string) bool {
 	if err != nil {
 		return false
 	}
-	fragment = strings.ToLower(fragment)
+	fragment = normalizeFragment(fragment)
 	for _, line := range strings.Split(string(data), "\n") {
 		trimmed := strings.TrimLeft(line, " \t")
 		if !strings.HasPrefix(trimmed, "#") {
@@ -473,4 +492,19 @@ func anchorFromHeading(heading string) string {
 
 func isAlphaNum(r rune) bool {
 	return (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+}
+
+// normalizeFragment applies GitHub's anchor rule to a URL fragment:
+// lower-case, spaces to dashes, punctuation dropped.
+func normalizeFragment(fragment string) string {
+	fragment = strings.ToLower(fragment)
+	var b strings.Builder
+	for _, r := range fragment {
+		if r == ' ' {
+			b.WriteRune('-')
+		} else if isAlphaNum(r) || r == '-' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
