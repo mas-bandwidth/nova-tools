@@ -40,6 +40,34 @@ var looks = map[string]string{
 	"spelling": "files",
 }
 
+// wantAll reads the named required flags in the verb's own Run, so the refusal
+// is one the verb builds and verbHelpDoor can point at its own help: a flag
+// declared with Flags.Required is checked by internal/tool before the verb
+// runs, and that refusal cannot name the verb (the card's step 3). Every Want
+// is recorded before Refused, so one run still names every missing flag.
+func wantAll(c *tool.Call, wants ...[2]string) {
+	for _, w := range wants {
+		c.Want(w[0], w[1])
+	}
+}
+
+// verbHelpDoor points a refusal the verb itself builds at the verb's own help
+// instead of the whole banner: the card's door is `nova-check help <verb>`
+// (docs/STANDARD.md section 3, recovery takes one turn, so a reader who
+// mis-invoked one verb pastes the page with that verb's flags and effect). The
+// skeleton already names `<verb> -h` for a flag it cannot parse; this names the
+// same page for the refusals a verb returns, which the skeleton builds without a
+// verb to point at.
+func verbHelpDoor(name string, run func(c *tool.Call) *tool.Out) func(c *tool.Call) *tool.Out {
+	return func(c *tool.Call) *tool.Out {
+		o := run(c)
+		if o != nil && o.Status == tool.Refused && o.Remedy == "" {
+			o.Remedy = "nova-check help " + name
+		}
+		return o
+	}
+}
+
 // withAlias adds the note a run owes when it spelled the ceiling --fail-max.
 func withAlias(run func(c *tool.Call) *tool.Out) func(c *tool.Call) *tool.Out {
 	return func(c *tool.Call) *tool.Out {
@@ -93,7 +121,7 @@ func quickstartVerb() tool.Verb {
 		ExitTable: exitCodes,
 		Flags: func(f *tool.Flags) {
 			f.Prints()
-			f.Required("dir", dirHint)
+			f.String("dir", "", dirHint+" (required)")
 			addMax(f)
 			f.Var(&repeatable{}, "exclude", "path prefix not scanned by links (repeatable; empty by default)")
 		},
@@ -102,6 +130,10 @@ func quickstartVerb() tool.Verb {
 }
 
 func quickstart(c *tool.Call) *tool.Out {
+	wantAll(c, [2]string{"dir", dirHint})
+	if o := c.Refused(); o != nil {
+		return o
+	}
 	aliasNote(c)
 	dir := c.Str("dir")
 	deny, source, err := effectiveDenyList("", "")
@@ -139,12 +171,12 @@ func quickstart(c *tool.Call) *tool.Out {
 
 // writeOut renders one delegated check's Out to the stream its status belongs
 // on: a run that said no writes to stderr, a clean one to stdout. A refusal
-// carries the door the skeleton gives every refusal, nova-check help, because
-// this Out is rendered here and not by Tool.Run.
+// carries the door the card gives every refusal, the refusing verb's own help,
+// because this Out is rendered here and not by Tool.Run.
 func writeOut(c *tool.Call, o *tool.Out) {
 	o.Cap(c.Int("max"))
 	if o.Status == tool.Refused && o.Remedy == "" {
-		o.Remedy = "nova-check help"
+		o.Remedy = "nova-check help " + o.Verb
 	}
 	w := c.Stdout
 	if o.Exit != 0 {
@@ -161,8 +193,8 @@ func attestVerb() tool.Verb {
 		Detail:    "A manifest lists one path per line relative to --home (blank lines and # comments ignored).",
 		ExitTable: exitCodes,
 		Flags: func(f *tool.Flags) {
-			f.Required("home", homeHint)
-			f.Required("manifest", manifestHint)
+			f.String("home", "", homeHint+" (required)")
+			f.String("manifest", "", manifestHint+" (required)")
 			addMax(f)
 		},
 		Run: withAlias(attest),
@@ -170,6 +202,10 @@ func attestVerb() tool.Verb {
 }
 
 func attest(c *tool.Call) *tool.Out {
+	wantAll(c, [2]string{"home", homeHint}, [2]string{"manifest", manifestHint})
+	if o := c.Refused(); o != nil {
+		return o
+	}
 	home, manifest := c.Str("home"), c.Str("manifest")
 	att, failures, err := check.Attest(home, manifest)
 	if err != nil {
@@ -193,6 +229,10 @@ func linksVerb() tool.Verb {
 }
 
 func links(c *tool.Call) *tool.Out {
+	wantAll(c, [2]string{"dir", dirHint})
+	if o := c.Refused(); o != nil {
+		return o
+	}
 	return linksLookedAtNothing(c, linksOut(c.Str("dir"), c.Get("file").([]string), c.Get("exclude").([]string)))
 }
 
@@ -274,11 +314,10 @@ func kernelVerb() tool.Verb {
 		Detail:    "The kernel size budget, in bytes or in tokens; findings use the --file path as given.",
 		ExitTable: exitCodes,
 		Flags: func(f *tool.Flags) {
-			f.Required("file", fileHint)
+			f.String("file", "", fileHint+" (required)")
 			f.Int64("max-bytes", 0, "size budget in bytes, must be positive (one of --max-bytes / --max-tokens)")
 			f.Int64("max-tokens", 0, "size budget in tokens, must be positive (one of --max-bytes / --max-tokens)")
 			f.Float64("bytes-per-token", 0, "measured bytes per token, required with --max-tokens; no default")
-			f.Check(kernelCheck)
 		},
 		Run: kernel,
 	}
@@ -318,6 +357,11 @@ func kernelCheck(c *tool.Call) {
 }
 
 func kernel(c *tool.Call) *tool.Out {
+	wantAll(c, [2]string{"file", fileHint})
+	kernelCheck(c)
+	if o := c.Refused(); o != nil {
+		return o
+	}
 	file := c.Str("file")
 	if c.Given("max-tokens") {
 		budget, perToken := c.Get("max-tokens").(int64), c.Get("bytes-per-token").(float64)
@@ -360,20 +404,21 @@ func nocodeVerb(s seams) tool.Verb {
 			f.String("deny-ext-add", "", "extend the floor EXTENSION list (not the name floor): comma list, or @file")
 			f.Bool("print-deny-list", false, "print both floors in force (extensions and names) and exit 0")
 			addMax(f)
-			f.Check(func(c *tool.Call) {
-				if c.Str("deny-ext") != "" && c.Str("deny-ext-add") != "" {
-					c.Problem("--deny-ext and --deny-ext-add are mutually exclusive")
-				}
-				if !c.Bool("print-deny-list") {
-					c.Want("dir", dirHint)
-				}
-			})
 		},
 		Run: withAlias(func(c *tool.Call) *tool.Out { return nocode(c, s.staged) }),
 	}
 }
 
 func nocode(c *tool.Call, seams stagedSeams) *tool.Out {
+	if c.Str("deny-ext") != "" && c.Str("deny-ext-add") != "" {
+		c.Problem("--deny-ext and --deny-ext-add are mutually exclusive")
+	}
+	if !c.Bool("print-deny-list") {
+		c.Want("dir", dirHint)
+	}
+	if o := c.Refused(); o != nil {
+		return o
+	}
 	dir := c.Str("dir")
 	allow := c.Get("allow").([]string)
 	// Resolve the effective deny-list and its provenance before anything else:
@@ -446,14 +491,18 @@ func floorsVerb() tool.Verb {
 			"titles and --source has the section 6 charter enumeration and section 0 rank declarations.",
 		ExitTable: exitCodes,
 		Flags: func(f *tool.Flags) {
-			f.Required("core", coreHint)
-			f.Required("source", sourceHint)
+			f.String("core", "", coreHint+" (required)")
+			f.String("source", "", sourceHint+" (required)")
 		},
 		Run: floors,
 	}
 }
 
 func floors(c *tool.Call) *tool.Out {
+	wantAll(c, [2]string{"core", coreHint}, [2]string{"source", sourceHint})
+	if o := c.Refused(); o != nil {
+		return o
+	}
 	core, source := c.Str("core"), c.Str("source")
 	n, failures, err := check.Floors(core, source)
 	if err != nil {
@@ -470,23 +519,25 @@ func corpusVerb() tool.Verb {
 		Detail:    "Protected material is still where the ledger says it is. A ledger uses markdown rows: | fragment | home file | given | by |.",
 		ExitTable: exitCodes,
 		Flags: func(f *tool.Flags) {
-			f.Required("ledger", ledgerHint)
-			f.Required("root", rootHint)
+			f.String("ledger", "", ledgerHint+" (required)")
+			f.String("root", "", rootHint+" (required)")
 			f.Int("min-anchors", 0, "the fewest rows the ledger may hold, must be positive (required); the ledger is inside what it protects, so its own shrinking must be red")
 			addMax(f)
-			f.Check(func(c *tool.Call) {
-				if !c.Given("min-anchors") {
-					c.Problem("--min-anchors is required; the ledger lives inside the tree it protects and can be shrunk by the same events its rows exist to catch, so the floor is a number you state; it wants " + anchorsHint + "; refusing to guess")
-				} else if n := c.Int("min-anchors"); n <= 0 {
-					c.Problem(fmt.Sprintf("--min-anchors must be a positive row floor (got %d); a floor of zero guards nothing, which is what an empty ledger already is; refusing to guess; %s", n, anchorsHint))
-				}
-			})
 		},
 		Run: withAlias(corpus),
 	}
 }
 
 func corpus(c *tool.Call) *tool.Out {
+	wantAll(c, [2]string{"ledger", ledgerHint}, [2]string{"root", rootHint})
+	if !c.Given("min-anchors") {
+		c.Problem("--min-anchors is required; the ledger lives inside the tree it protects and can be shrunk by the same events its rows exist to catch, so the floor is a number you state; it wants " + anchorsHint + "; refusing to guess")
+	} else if n := c.Int("min-anchors"); n <= 0 {
+		c.Problem(fmt.Sprintf("--min-anchors must be a positive row floor (got %d); a floor of zero guards nothing, which is what an empty ledger already is; refusing to guess; %s", n, anchorsHint))
+	}
+	if o := c.Refused(); o != nil {
+		return o
+	}
 	ledger, root, minAnchors := c.Str("ledger"), c.Str("root"), c.Int("min-anchors")
 	// --root is validated BEFORE any finding is built: a FAILED line from a
 	// run that then exits 2 reports findings from a run that did not happen.

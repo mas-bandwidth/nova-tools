@@ -869,16 +869,19 @@ func TestAnUnusableInvocationCarriesTheDoor(t *testing.T) {
 }
 
 // quickstart renders the two checks it delegates to itself, so each refusal
-// carries the door the skeleton gives every refusal: `; run: nova-check help`.
+// carries the refusing check's own door: `; run: nova-check help <verb>`.
 func TestQuickstartsDelegatedRefusalsCarryTheDoor(t *testing.T) {
 	t.Parallel()
 
 	missing := filepath.Join(t.TempDir(), "nope")
 	exit, _, stderr := runCheck(t, "quickstart", "--dir", missing)
 	require.EqualValues(t, 2, exit, "exit = %d, want 2; stderr: %s", exit, stderr)
-	for _, token := range []string{"LINKS REFUSED: ", "NOCODE REFUSED: "} {
-		line := stLine(t, stderr, token)
-		assert.True(t, strings.HasSuffix(line, "; run: nova-check help"), "%s refusal drops the door: %q", token, line)
+	for _, tc := range []struct{ token, door string }{
+		{"LINKS REFUSED: ", "nova-check help links"},
+		{"NOCODE REFUSED: ", "nova-check help nocode"},
+	} {
+		line := stLine(t, stderr, tc.token)
+		assert.True(t, strings.HasSuffix(line, "; run: "+tc.door), "%s refusal drops the door: %q", tc.token, line)
 	}
 }
 

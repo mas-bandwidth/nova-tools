@@ -24,6 +24,11 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
+// hygieneIdentityHint says what --identity wants: one Name <email> pair, and
+// why there is no default. It is one constant because both the flag's help and
+// the refusal wantAll builds name it (the card's step 3).
+const hygieneIdentityHint = "the allowed authors, Name <email>, repeatable with commas; there is no default identity, and a range checked against nobody would admit anybody"
+
 func hygieneVerb() tool.Verb {
 	return tool.Verb{
 		Name: "hygiene",
@@ -35,25 +40,32 @@ func hygieneVerb() tool.Verb {
 			"paths=- and out-of-path is skipped, never silently passed.",
 		ExitTable: exitCodes,
 		Flags: func(f *tool.Flags) {
-			f.Required("repo", "the git checkout to inspect")
-			f.Required("base", "the base git ref of the comparison")
-			f.Required("head", "the head git ref of the comparison")
-			f.Required("identity", "the allowed authors, Name <email>, repeatable with commas; there is no default identity, and a range checked against nobody would admit anybody")
+			f.String("repo", "", "the git checkout to inspect (required)")
+			f.String("base", "", "the base git ref of the comparison (required)")
+			f.String("head", "", "the head git ref of the comparison (required)")
+			f.String("identity", "", hygieneIdentityHint+" (required)")
 			f.String("paths", "", "comma-separated allowed path globs; empty skips out-of-path checking")
 			f.String("kind", "", "card kind to validate; empty skips kind-specific checks")
 			f.Max()
 			f.Int("timeout", 120, "git inspection deadline in positive seconds")
-			f.Check(func(c *tool.Call) {
-				if c.Int("timeout") <= 0 {
-					c.Problem("--timeout must be positive")
-				}
-			})
 		},
 		Run: hygieneRun,
 	}
 }
 
 func hygieneRun(c *tool.Call) *tool.Out {
+	wantAll(c,
+		[2]string{"repo", "the git checkout to inspect"},
+		[2]string{"base", "the base git ref of the comparison"},
+		[2]string{"head", "the head git ref of the comparison"},
+		[2]string{"identity", hygieneIdentityHint},
+	)
+	if c.Int("timeout") <= 0 {
+		c.Problem("--timeout must be positive")
+	}
+	if o := c.Refused(); o != nil {
+		return o
+	}
 	repo, base, head, kind := c.Str("repo"), c.Str("base"), c.Str("head"), c.Str("kind")
 	var ids []hygiene.Identity
 	for _, one := range strings.Split(c.Str("identity"), ",") {

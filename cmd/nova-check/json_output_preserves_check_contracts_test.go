@@ -70,7 +70,7 @@ func TestPolishJSONRefusalIsOneObjectWithEveryProblem(t *testing.T) {
 	require.Len(t, out.Result.Why, 2)
 	assert.Contains(t, strings.Join(out.Result.Why, " "), "--file")
 	assert.Contains(t, strings.Join(out.Result.Why, " "), "--max-bytes")
-	assert.Equal(t, "nova-check help", out.Result.Remedy)
+	assert.Equal(t, "nova-check help kernel", out.Result.Remedy)
 }
 
 func TestPolishUnknownVerbNamesAvailableRemedies(t *testing.T) {
