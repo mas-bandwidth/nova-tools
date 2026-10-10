@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bench"
 	"github.com/mas-bandwidth/nova-tools/internal/testverbhelp"
+	"github.com/mas-bandwidth/nova-tools/pkg/bench"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

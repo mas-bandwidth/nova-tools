@@ -23,8 +23,8 @@ allow	docs/SPEC-FRIEND.md	asleep	2
 allow	docs/SPEC-SPRINT.md	asleep	8
 allow	docs/SPEC-UPDATE.md	git bus	2
 allow	internal/ci/hosted_shards_class_test.go	git bus	1
-allow	internal/friend/check.go	asleep	6
-allow	internal/friend/check_test.go	asleep	7
+allow	pkg/friend/check.go	asleep	6
+allow	pkg/friend/check_test.go	asleep	7
 allow	internal/sprint/TABLES.lock	asleep	3
 allow	internal/sprint/friend_health.go	asleep	1
 allow	internal/sprint/friend_health_test.go	asleep	2

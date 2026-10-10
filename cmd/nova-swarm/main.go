@@ -23,15 +23,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
-	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
-	"github.com/mas-bandwidth/nova-tools/internal/harness"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/bounded"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
+	"github.com/mas-bandwidth/nova-tools/pkg/harness"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 const usage = `nova-swarm: one-task AI workers, each run in the sandbox with a deadline and a token budget
@@ -947,7 +947,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, " survivors=%s", oneline.Field(res.survivors))
 	}
 	// what the job spent, by token class, with the harness's own cost (spendWord): the
-	// member carries it into the card's cost record (internal/cardcost, ParseSpend)
+	// member carries it into the card's cost record (pkg/cardcost, ParseSpend)
 	if res.spend != "" {
 		fmt.Fprintf(stdout, " spend=%s", oneline.Field(res.spend))
 	}

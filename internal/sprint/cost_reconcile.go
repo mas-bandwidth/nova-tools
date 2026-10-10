@@ -11,16 +11,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/provbalance"
+	"github.com/mas-bandwidth/nova-tools/pkg/provbalance"
 )
 
 // THE COST RECONCILIATION (docs/SPEC-SPRINT.md, "What a card cost", the reconciliation; the
 // owner, 2026-10-04: "this is a tragedy. we MUST track the complete cost of what we do on the
 // fleet and friends on API plans."). `nova-sprint cost reconcile` reads each provider's own
 // count of the dollars its key used today (openrouter's GET /api/v1/key, data.usage_daily,
-// the UTC day: internal/provbalance.ReadUsage) and runs this step once; the release's spend
+// the UTC day: pkg/provbalance.ReadUsage) and runs this step once; the release's spend
 // check sets the same records beside each provider's own over the release's window
-// (internal/release/spendcheck.go), and the run loop's hourly call (CostReconcileEvery) is
+// (pkg/release/spendcheck.go), and the run loop's hourly call (CostReconcileEvery) is
 // still owed. This
 // step sets it beside
 // the sprint's own records of that provider for the same UTC day: every consumer record on

@@ -4,7 +4,7 @@
 // built from the commit under review, and the release assertion holds every shipped tool
 // to reporting its tag. The identity is read from the build itself -- a release's
 // -ldflags "-X main.version=<tag>", then the installed module version, then the vcs
-// stamp, then the honest floor `devel` -- by internal/buildinfo, so all shipped tools
+// stamp, then the honest floor `devel` -- by pkg/buildinfo, so all shipped tools
 // answer in the same one line: `<tool> <version> <goos>/<goarch> <go version>`.
 package main
 
@@ -12,8 +12,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 )
 
 // version is empty in ordinary builds and is filled only by a release stamp.

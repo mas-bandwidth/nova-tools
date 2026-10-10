@@ -23,19 +23,19 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
-	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
-	"github.com/mas-bandwidth/nova-tools/internal/harness"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/mas-bandwidth/nova-tools/internal/yield"
+	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardtree"
+	"github.com/mas-bandwidth/nova-tools/pkg/decide"
+	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
+	"github.com/mas-bandwidth/nova-tools/pkg/harness"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/typedrec"
 )
 
 // THE NATIVE OPENCODE EXECUTION PATH. A frozen run
@@ -169,7 +169,7 @@ type nativeRunConfig struct {
 	gateRun gateRunner
 }
 
-// headless is the headless harness this run's binary is (internal/harness: claude, codex
+// headless is the headless harness this run's binary is (pkg/harness: claude, codex
 // or grok, by the program's name), and "" for an opencode launch through the providers
 // table (docs/SPEC-SWARM.md, the headless harnesses).
 func (cfg nativeRunConfig) headless() string {
@@ -737,7 +737,7 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 	// all still runs under the harness's default fence -- which auto-rejects the job's own
 	// `../scratch` and every read-only path a card names -- and that fence is what killed 8
 	// cards. The block names this job's directories; the carried
-	// provider config keeps its own bytes and its own rules beside them (internal/swarm/fence.go).
+	// provider config keeps its own bytes and its own rules beside them (pkg/swarm/fence.go).
 	// On a walled bench the wall owns what the child may read, so only a --no-wall run takes
 	// the card's `READ:` paths: with no OS wall there is nothing else to open them.
 	//
@@ -1836,7 +1836,7 @@ func nativeSandboxArgv(launch []string, cfg nativeRunConfig, dataHome, jobDir, t
 	if fi, err := os.Stat("/opt/homebrew"); err == nil && fi.IsDir() {
 		argv = append(argv, "--read", "/opt/homebrew")
 	}
-	// THE BENCH TOOLCHAIN (internal/swarm/toolchain.go is the one source of these names).
+	// THE BENCH TOOLCHAIN (pkg/swarm/toolchain.go is the one source of these names).
 	// This is the implicit worker description's `read_roots`: the provisioning standard puts
 	// Go and sbcl in a user directory, and without the roots the wall denied EXECUTION of
 	// the bench's own `go` and left the card the distribution's 1.22.2, which `go.mod`
@@ -2024,7 +2024,7 @@ func nativeCacheDir(cfg nativeRunConfig) string {
 // absolute directories the description names -- a bench-local mirror, a
 // corpus, a toolchain under a user directory. `swarm.LoadWorker` has already refused a
 // relative entry, an empty one, one that does not exist, one that is not a directory and one
-// that would hold the key file (internal/swarm/worker.go:227-268), so nothing is re-checked
+// that would hold the key file (pkg/swarm/worker.go:227-268), so nothing is re-checked
 // here and nothing is invented: a run with no description names none.
 func nativeReadRoots(cfg nativeRunConfig) []string {
 	if cfg.worker == nil {
@@ -2142,7 +2142,7 @@ func wallNamed(out string) (backend, cwd, reason string) {
 	return "", "", "ran without a SANDBOX OK line naming its backend"
 }
 
-// decodeField inverts the one-line field encoding of internal/oneline for a token read
+// decodeField inverts the one-line field encoding of pkg/oneline for a token read
 // back out of a producer's record. `\xNN` decodes to the byte it spells and
 // `\uNNNN` to the code point; every other byte is copied through. The encoding is NOT
 // injective (a literal backslash is not escaped), so a path that literally spells an
@@ -2309,7 +2309,7 @@ func seedHeadlessHome(h swarm.HeadlessHome) error {
 	return nil
 }
 
-// launchSpend is one launch's final read as a cost record (internal/cardcost): the five
+// launchSpend is one launch's final read as a cost record (pkg/cardcost): the five
 // token classes (a dash stays unreported, never 0), its requests and largest prompt, the
 // harness's own cost and the provider/model it reported.
 func launchSpend(v map[string]string) cardcost.Usage {

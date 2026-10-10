@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/doctor"
-	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/mas-bandwidth/nova-tools/internal/testverbhelp"
+	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 )
 
 // The one verb answers -h and --help with its own help at exit 0 and runs no check.

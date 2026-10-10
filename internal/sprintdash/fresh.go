@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 // The live read and its freshness (the owner, 2026-10-04: "I need to be able to always

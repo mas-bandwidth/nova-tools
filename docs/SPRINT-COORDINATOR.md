@@ -979,7 +979,7 @@ Each is a place this runbook describes a workaround; the change that removes it 
   (`cmd/nova-sprint/handover_rules.go` holds the numbered sentences, kept equal to section 10 by its test).
 - After card every-unit-installed-by-a-verb: `nova-sprint install`, `uninstall` and `units --check` are in
   nova-sprint's verb table, and `nova-swarm install disk-guard` writes the disk-guard unit in the swarm
-  binary (the shared unit text is `internal/units`, which a worker may import). `nova-swarm install mirror-refresh` and a
+  binary (the shared unit text is `pkg/units`, which a worker may import). `nova-swarm install mirror-refresh` and a
   `nova-swarm mirror` verb stay owed: there is no mirror verb for the unit to run. The coordinator
   switches the hand-written units over after this lands; this card does not load them.
 - Where the sources disagree, the help is followed here:

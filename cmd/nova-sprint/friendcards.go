@@ -17,18 +17,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/bus"
-	"github.com/mas-bandwidth/nova-tools/internal/config"
-	"github.com/mas-bandwidth/nova-tools/internal/friend"
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
-	"github.com/mas-bandwidth/nova-tools/internal/member"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/config"
+	"github.com/mas-bandwidth/nova-tools/pkg/friend"
+	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
+	"github.com/mas-bandwidth/nova-tools/pkg/member"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/typedrec"
 )
 
 // A friend's sprint cards (the owner, 2026-10-03: "Could we try expressing the work left
@@ -225,7 +225,7 @@ func (a *app) branchTip(ctx context.Context, repo, branch string) (string, error
 
 // friendFinish is the finish a friend's report gives her card (a reworked card's LAND that
 // does not address its fix is read as a HOLD, friend.UnaddressedLand; the model is
-// internal/friend/tla/OutboxFinish.tla, SyncFinish). friendCollect, the one collect of
+// pkg/friend/tla/OutboxFinish.tla, SyncFinish). friendCollect, the one collect of
 // friend sync, friend reconcile and the run loop, calls it, and collect does too: LAND with
 // a full sha Head
 // that is origin's tip of the card's branch (tip, read once) is work ok at that tip, as a
@@ -546,7 +546,7 @@ func busOptions(getenv func(string) string) redisconn.Options {
 }
 
 // openBus is the real busOpen: the bus store dialed as nova-bus dials it
-// (internal/redisconn, the fleet's login from the environment).
+// (pkg/redisconn, the fleet's login from the environment).
 func (a *app) openBus(ctx context.Context, addr, user string) (*bus.Bus, func(), error) {
 	o := busOptions(a.getenv)
 	if addr != "" {

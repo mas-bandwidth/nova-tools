@@ -25,7 +25,7 @@ import (
 // never in the test's text, it was in a default two packages away.
 //
 // So the rule is on the PRODUCTION side, where the default lives. Every seam in
-// this tree that reaches a host calls internal/testguard's RefuseHosts with the
+// this tree that reaches a host calls pkg/testguard's RefuseHosts with the
 // command line it is about to run; under NOVA_TEST_NO_HOST, which `make test`
 // sets, that call panics. A test that wants a child installs its own fake on
 // PATH and declares it with testguard.AllowHosts().
@@ -41,7 +41,7 @@ const hostSeamAllowlistPath = "testdata/hostseam_allowlist.txt"
 
 // testguardPkgDir is the guard itself. Reading it against itself is circular:
 // this is the one place RefuseHosts is declared rather than called.
-const testguardPkgDir = "internal/testguard"
+const testguardPkgDir = "pkg/testguard"
 
 // sshFamily is what "reaches a host" means mechanically: the four programs this
 // repository spawns to work on another machine. A seam is found by the program
@@ -49,7 +49,7 @@ const testguardPkgDir = "internal/testguard"
 var sshFamily = []string{"ssh", "scp", "sftp", "rsync"}
 
 // TestNoTestReachesAHostThroughAnUnfakedSeam holds every host seam in cmd/ and
-// internal/ against internal/testguard.
+// internal/ against pkg/testguard.
 //
 // A function is a HOST SEAM when either:
 //
@@ -74,7 +74,7 @@ func TestNoTestReachesAHostThroughAnUnfakedSeam(t *testing.T) {
 	seen := map[string]bool{}
 	var violations []string
 
-	for _, dir := range []string{"cmd", "internal"} {
+	for _, dir := range []string{"cmd", "internal", "pkg"} {
 		base := filepath.Join(root, dir)
 		err := walkSourceDir(base, func(path string, d os.DirEntry, err error) error {
 			if err != nil {

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
+	"github.com/mas-bandwidth/nova-tools/pkg/pkgselect"
 )
 
 func init() {
@@ -24,7 +24,7 @@ fan-out; --all keeps the whole tree (the push to dev, the nightly run, make test
 The diff is read against <base-sha>, the event's own base (pull_request.base.sha or
 merge_group.base_sha). A go.mod or go.sum change puts every package in scope.
 internal/ci and internal/docs are selected on every run. A package named by
-internal/pkgselect/DEPRECATED is never selected.
+pkg/pkgselect/DEPRECATED is never selected.
 
 NEVER SILENTLY NOTHING: a go list that fails, or a diff of Go files that selects zero
 packages, is not an empty answer. What it does is the caller's choice:

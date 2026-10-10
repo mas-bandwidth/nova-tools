@@ -12,8 +12,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/release"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/release"
 )
 
 // The adopt verb is the seat's adoption (docs/SPEC-SPRINT.md, "Adopting a

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/pkg/typedrec"
 )
 
 // The steps of review: ask and read (mechanical, and the readers' own), and
@@ -34,14 +34,14 @@ type AskReq struct {
 const RetiredByCoordinator = "coordinator"
 
 // A decide read's fields on its read card: the sprint row's two bars on p(defect) it is
-// routed by (docs/SPEC-SPRINT.md section 6, the decide read; internal/decide, Bars).
+// routed by (docs/SPEC-SPRINT.md section 6, the decide read; pkg/decide, Bars).
 const (
 	FieldDecideBounce = "decide_bounce"
 	FieldDecideReview = "decide_review"
 )
 
 // A work card's gate decision fields: the sprint row's two bars on a failed gate's
-// decisions (docs/SPEC-SPRINT.md section 5, the gate verdict; internal/decide, GateBars).
+// decisions (docs/SPEC-SPRINT.md section 5, the gate verdict; pkg/decide, GateBars).
 const (
 	FieldDecideGateFlaky       = "decide_gate_flaky"
 	FieldDecideGatePreexisting = "decide_gate_preexisting"

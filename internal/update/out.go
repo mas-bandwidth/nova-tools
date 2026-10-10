@@ -7,26 +7,26 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/bounded"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
-// The verbs of this package build one value each, internal/tool's Out, and it is
+// The verbs of this package build one value each, pkg/tool's Out, and it is
 // rendered either as typed lines or as the JSON of the same value (STANDARD §2,
 // "one output structure, two renderings"). nova-version's snapshot, diff and moved
-// go through internal/tool, which renders them; the verbs here that nova-update
+// go through pkg/tool, which renders them; the verbs here that nova-update
 // runs, and report, which both tools share, are rendered by emit below, because
-// internal/tool's line rendering has no place for prose inside an item: a reason
+// pkg/tool's line rendering has no place for prose inside an item: a reason
 // or a command there would print as one escaped key=value field (\x20 for every
 // blank), and a reason is printed plain. Once an item can carry a prose tail in
-// internal/tool, emit, capped and text go and these verbs move onto it.
+// pkg/tool, emit, capped and text go and these verbs move onto it.
 
 // prose are the item fields printed plain after the typed fields, in this order:
 // `: <reason|command|detail>` and then ` (<remedy>)`. Every other field is typed.
 var prose = []string{"reason", "command", "detail"}
 
-// statusWord is the word a status line opens with, as internal/tool spells it.
+// statusWord is the word a status line opens with, as pkg/tool spells it.
 var statusWord = map[tool.Status]string{tool.OK: "OK", tool.Failed: "FAILED", tool.Refused: "REFUSED"}
 
 // emit renders o, capped at max items of each kind (0 keeps all): as one JSON
@@ -77,7 +77,7 @@ func capped(o *tool.Out, max int) *tool.Out {
 	return &c
 }
 
-// text writes o as typed lines in internal/tool's layout: the status line with the
+// text writes o as typed lines in pkg/tool's layout: the status line with the
 // facts (one per reason when there are several), one line per item, a MORE line
 // per kind cut, a NOTE line per note, and the payload last. A value holding only a
 // payload (a --draft note) prints the payload alone.

@@ -6,8 +6,8 @@ import (
 	"maps"
 	"sync"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/pkg/ntable"
 )
 
 // The load cache (docs/SPEC-SPRINT.md section 14, store-trips-pipelinedb-bb).

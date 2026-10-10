@@ -13,8 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/pkg/ntable"
 )
 
 // Mem is a Backend in memory with the batch's refusal semantics: the
@@ -418,7 +418,7 @@ func (m *Mem) Apply(_ context.Context, man ntable.BatchManifest) (ntable.Receipt
 	// Twin replay fidelity (security#78 finding 7): an operation already
 	// recorded under this id replays or conflicts on its recorded bytes, before
 	// any newer validator would refuse the re-sent request. This mirrors the real
-	// store's op-record lookup in internal/nsprint/fn/lua/table.lua.
+	// store's op-record lookup in pkg/nsprint/fn/lua/table.lua.
 	if rec, ok := t.ops[opKey]; ok {
 		if rec.body != body {
 			return ntable.Receipt{}, refusal("OPCONFLICT", "operation "+man.OperationID+" already holds a different request")

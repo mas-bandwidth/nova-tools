@@ -10,12 +10,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// badKey is a row key with an ASCII control character, which internal/ntable
+// badKey is a row key with an ASCII control character, which pkg/ntable
 // refuses before it sends anything.
 const badKey = "bad\x01key"
 
 // writeRefusals is, for every verb that writes, one input it refuses: some
-// are refused by the verb's own parsing, the rest only by the internal/ntable
+// are refused by the verb's own parsing, the rest only by the pkg/ntable
 // call's checks before its first command (marked store-free below), which a
 // dry run must make as the real run does.
 var writeRefusals = map[string][]string{

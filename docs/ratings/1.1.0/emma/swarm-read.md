@@ -8,7 +8,7 @@ README: 8/10
 ## Reasons
 The tool enforces sound architectural boundaries for running AI subtasks: OS-level sandbox containment, external machinery deadlines, token budgets, slot isolation, and publishing results through atomic file renames. Task templates and card linting provide clear guidance for constructing valid child briefs.
 
-A score of 10 would require decomposing the 1,197-line nativeRun function, adopting the internal/tool skeleton for consistent dispatch and --json support, unifying flag refusal output grammar with actionable remedies, pruning pervasive historical issue numbers from source comments, and removing extreme line-length narrative bloat from the specification.
+A score of 10 would require decomposing the 1,197-line nativeRun function, adopting the pkg/tool skeleton for consistent dispatch and --json support, unifying flag refusal output grammar with actionable remedies, pruning pervasive historical issue numbers from source comments, and removing extreme line-length narrative bloat from the specification.
 
 The first place of confusion was docs/CLI.md:741, where lint mixes markdown task card validation with coordinator launcher bash 3.2 script syntax checks.
 The first place of boredom was docs/SPEC-SWARM.md:76, where a 16,783-character paragraph recounts specific benchmark incidents, CPU sampling details, and hardware frequencies.
@@ -19,7 +19,7 @@ The first place of doubting a claim was cmd/nova-swarm/main.go:166, which assert
 |---|---|---|---|---|
 | 1 | cmd/nova-swarm/native.go:262 | nativeRun is a monolithic 1197-line function combining staging execution proxying idle checks and cleanup | decompose into dedicated lifecycle stage run and proxy packages | L |
 | 2 | cmd/nova-swarm/main.go:337 | flags.refused formats required-input errors without REFUSED token or remediation command | align flag refusal output to standard REFUSED grammar with remedy hint | M |
-| 3 | cmd/nova-swarm/main.go:27 | cmd/nova-swarm bypasses internal/tool skeleton hand-rolling usage help flag parsing and dispatch | adopt internal/tool skeleton to provide standard json dry-run and help infrastructure | L |
+| 3 | cmd/nova-swarm/main.go:27 | cmd/nova-swarm bypasses pkg/tool skeleton hand-rolling usage help flag parsing and dispatch | adopt pkg/tool skeleton to provide standard json dry-run and help infrastructure | L |
 | 4 | docs/SPEC-SWARM.md:76 | spec includes a 16783-character single-line paragraph mixing load test history into functional requirements | break narrative into structured subsections and move run history to test docs | M |
 | 5 | cmd/nova-swarm/native.go:549 | legacy --auth option and auth copy handling are maintained alongside modern worker secret definitions | deprecate and remove legacy auth copying in favor of worker secrets | S |
 | 6 | cmd/nova-swarm/main.go:653 | non-test source files contain 117 issue and ticket references instead of self-contained rationale | rewrite comments to state current requirements directly without historical tickets | M |

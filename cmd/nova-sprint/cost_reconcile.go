@@ -8,16 +8,16 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/provbalance"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/provbalance"
 )
 
 // cmdCostReconcile is `cost reconcile`: the cost reconciliation run once (docs/SPEC-SPRINT.md,
 // "What a card cost", the reconciliation; the owner, 2026-10-04: "we MUST track the complete
 // cost"). Each provider the routes name is asked its own count of today's usage (the UTC day)
-// through the seat's key in this environment (internal/provbalance.ReadUsage), the reads are
+// through the seat's key in this environment (pkg/provbalance.ReadUsage), the reads are
 // set beside the sprint's records of the same day in one step (sprint.CostReconcile: each
 // provider's record on the fleet table, and its one gap judgment opened past the bound or
 // closed within it), and each provider's gap is printed. The release's spend check calls it.

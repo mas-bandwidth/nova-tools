@@ -39,9 +39,9 @@ import (
 //
 // A wait that goes through an injected clock seam is not a wall-clock wait
 // and is not found: the test calls the seam, never package time. The seams the
-// tree already has: internal/swarm batchClock and pullClock,
-// internal/log.Clock, and the injected `Sleep func(time.Duration)` /
-// `now func() time.Time` fields of internal/swarm.
+// tree already has: pkg/swarm batchClock and pullClock,
+// pkg/log.Clock, and the injected `Sleep func(time.Duration)` /
+// `now func() time.Time` fields of pkg/swarm.
 //
 // THE LEDGER. A wait is keyed by its package directory and the top-level
 // function it is written in (a Test, a helper, a method `Type.Method`), and it
@@ -67,7 +67,7 @@ type wallClockWait struct {
 func (w wallClockWait) Key() string { return sleepsLedgerKey(path.Dir(w.Rel), w.Func) }
 
 // unitWaitDirs are the trees the unit tier's tests live in.
-var unitWaitDirs = []string{"cmd", "internal", "tools"}
+var unitWaitDirs = []string{"cmd", "internal", "pkg", "tools"}
 
 // timeWaits are the package time functions that wait on the wall clock, called
 // or named as a value.

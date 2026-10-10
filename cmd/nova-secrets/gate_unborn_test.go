@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testgit"
+	"github.com/mas-bandwidth/nova-tools/pkg/testgit"
 )
 
 // TestGateRefusesAStoreWithNoCommit: a store with no commit yet has no base and no head

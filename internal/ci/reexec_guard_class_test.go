@@ -179,14 +179,14 @@ func TestRunsItselfByArgs(t *testing.T) {
 
 const reexecGuardSrc = `package main
 
-import "github.com/mas-bandwidth/nova-tools/internal/testbin"
+import "github.com/mas-bandwidth/nova-tools/pkg/testbin"
 
 func init() { testbin.Enter("tool", nil) }
 `
 
 const reexecGuardOutsideSrc = `package main
 
-import "github.com/mas-bandwidth/nova-tools/internal/testbin"
+import "github.com/mas-bandwidth/nova-tools/pkg/testbin"
 
 func helper() { testbin.Enter("tool", nil) }
 `

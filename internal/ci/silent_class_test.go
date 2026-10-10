@@ -27,7 +27,7 @@ const silentAllowlistPath = "testdata/silent_allowlist.txt"
 // should not fail silently"): the function library loader, the table and its
 // tool. A new live package is added here, never the other way round.
 var silentLivePackages = []string{
-	"internal/nsprint/fn", "internal/ntable", "cmd/nova-table",
+	"pkg/nsprint/fn", "pkg/ntable", "cmd/nova-table",
 }
 
 // silentErrIdent is an identifier that holds an error by its name: err,

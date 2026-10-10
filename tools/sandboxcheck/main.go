@@ -9,7 +9,7 @@
 // It prints one line per check, CHECK OK name=... or CHECK FAIL name=..., and
 // exits 1 on any FAIL. It runs on darwin only: sandbox-exec is that platform's
 // wall. The probes are the real processes (git, /bin/sh, mkdir, cat, pbpaste, nc,
-// curl); the driver around them is internal/sandbox/darwincheck.
+// curl); the driver around them is pkg/sandbox/darwincheck.
 //
 // The scratch tree is the check's own fresh directory (os.MkdirTemp) under the
 // working directory by default, never in a shared temp directory, and only that
@@ -48,7 +48,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox/darwincheck"
+	"github.com/mas-bandwidth/nova-tools/pkg/sandbox/darwincheck"
 	"github.com/mas-bandwidth/nova-tools/profiles"
 )
 

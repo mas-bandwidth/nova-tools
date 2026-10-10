@@ -27,7 +27,7 @@ the dispatch). What keeps it from 10: `nova-ci bench -h` and `bench run -h`
 paste the entire tool banner after `exit codes:` (the banner is 126 lines; the
 verb's own codes end at line 104 and line 119) (finding 1); github receipt is a
 store write in the banner and a delivery in its effect line (finding 2); every
-verb but `bench run` still runs on a hand-rolled dispatch beside internal/tool's
+verb but `bench run` still runs on a hand-rolled dispatch beside pkg/tool's
 (finding 3); docs/TESTS.md still names the wrong exit for `--enforce`
 (finding 4); the nova-ci section of docs/CLI.md still opens without
 `### First run` (finding 5); an unknown verb gets no nearest-name hint while an
@@ -55,9 +55,9 @@ characters naming 689 tests (finding 11).
 
 | # | where | finding | fix | size |
 |---|---|---|---|---|
-| 1 | cmd/nova-ci/bench.go:35 | `ExitTable` is handed `exitTable("bench run")`, which is the whole banner, the paragraph and the example (main.go:210 cuts `head` from `usage` at :211 and returns head + rows + tail), where internal/tool's field wants the bare paragraph (internal/tool/tool.go:56); `nova-ci bench -h` (114 lines) and `bench run -h` (130 lines) therefore print `exit codes:` followed by the entire 126-line banner, and the verb's own codes end at line 104 and line 119 | pass only the exit rows: the head line plus the verb's own lines, without the banner or the example | S |
+| 1 | cmd/nova-ci/bench.go:35 | `ExitTable` is handed `exitTable("bench run")`, which is the whole banner, the paragraph and the example (main.go:210 cuts `head` from `usage` at :211 and returns head + rows + tail), where pkg/tool's field wants the bare paragraph (pkg/tool/tool.go:56); `nova-ci bench -h` (114 lines) and `bench run -h` (130 lines) therefore print `exit codes:` followed by the entire 126-line banner, and the verb's own codes end at line 104 and line 119 | pass only the exit rows: the head line plus the verb's own lines, without the banner or the example | S |
 | 2 | cmd/nova-ci/main.go:117 | github receipt is classified two ways: the banner block says `(store write)` (main.go:117) while its effect line says `delivery: writes one row of a CI run to a Redis store` (`github receipt -h` line 28, from main.go:184); the standard's classes are inspection, local write, store write and external delivery, and writing one row to the store at `--redis` is the second | make both say store write | S |
-| 3 | cmd/nova-ci/main.go:259 | every verb but `bench run` still runs on the hand-rolled dispatch (`switch args[0]` at main.go:259), refusal printer and exit-table extraction beside internal/tool's copies; only `bench run` rides the skeleton, and the reason written for that (bench.go:3-8) is nowhere at the switch that keeps the others off it | write the reason at the switch in one line, or move the verbs onto internal/tool | M |
+| 3 | cmd/nova-ci/main.go:259 | every verb but `bench run` still runs on the hand-rolled dispatch (`switch args[0]` at main.go:259), refusal printer and exit-table extraction beside pkg/tool's copies; only `bench run` rides the skeleton, and the reason written for that (bench.go:3-8) is nowhere at the switch that keeps the others off it | write the reason at the switch in one line, or move the verbs onto pkg/tool | M |
 | 4 | docs/TESTS.md:958 | the first-run transcript says "only `--enforce` makes it exit 2"; measured, `--enforce` with a CI-SLOW line exits 1 (the check said no) and 2 is input it could not read, as the banner's own table says | change "exit 2" to "exit 1" | S |
 | 5 | docs/CLI.md:2366 | the nova-ci section (2366 to 2504) still opens without `### First run` (docs/STANDARD.md section 3, point 3), holding only `### bench run` (2449) and `### github receipt` (2475) | add the `### First run`: the two example lines and how to read CI-SLOW and CI-LOAD | S |
 | 6 | cmd/nova-ci/main.go:282 | `nova-ci helpp` names no nearest verb (`unknown verb "helpp"; the verbs are ...` at :282-283), though an unknown flag does (`--budg` yields "did you mean --budget?") | name the nearest verb the same way an unknown flag does | S |
@@ -93,7 +93,7 @@ characters naming 689 tests (finding 11).
 | the allowlist row's bound is not in the help (USE 1.1.0) | FIXED | `nova-ci slowtests -h` says "bound: budget sits between its measurement and three times it, the 3x headroom ceiling" |
 | only slowtests takes `--json`; five output dialects (READ 1.1.0) | STILL THERE | `local`, `functional`, `new-rule`, `new-verb` and `github receipt` -h list no `--json`; their lines lead `nova-ci local: base=...`, `./store/`, `wrote ...`, `CI RECEIPT ...` |
 | a leftover script with no written reason (READ 1.1.0) | STILL THERE, the reason now written | cmd/nova-ci/timing.go:1 is still `//go:build ignore`, its purpose and run line now at the top and TestTimingTableReproduces behind it; the banner and docs/CLI.md:2366 still do not name it |
-| the dispatch stands off the skeleton with no reason at the switch (READ 1.1.0) | PARTLY | `bench run` is on internal/tool now (bench.go:3-8), the first verb to move; every other verb still runs on the hand-rolled switch (finding 3) |
+| the dispatch stands off the skeleton with no reason at the switch (READ 1.1.0) | PARTLY | `bench run` is on pkg/tool now (bench.go:3-8), the first verb to move; every other verb still runs on the hand-rolled switch (finding 3) |
 | docs/TESTS.md names the wrong exit for `--enforce` (READ 1.1.0) | STILL THERE | docs/TESTS.md:958, now "makes it exit 2"; measured exit 1 (finding 4) |
 | docs/CLI.md has no First run for nova-ci (READ 1.1.0, both raters) | STILL THERE | docs/CLI.md:2366 (finding 5) |
 | an unknown verb names no nearest (USE 1.1.0) | STILL THERE | `nova-ci helpp` lists the verbs only; `--budg` yields "did you mean --budget?" (finding 6) |

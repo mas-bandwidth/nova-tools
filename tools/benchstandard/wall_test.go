@@ -12,7 +12,7 @@ import (
 // The standard asks whether go and sbcl can be EXECUTED inside the sandbox wall,
 // not merely whether they are on PATH. A card does not run in the bench user's
 // shell: it runs behind the wall, whose execute roots are the system table of
-// internal/sandbox/wrap_linux.go plus $HOME/sdk. An interpreter at
+// pkg/sandbox/wrap_linux.go plus $HOME/sdk. An interpreter at
 // $HOME/.local/bin is found by `command -v` and is `Permission denied` inside
 // the wall, so a bench passes a presence check and every card on it dies.
 //

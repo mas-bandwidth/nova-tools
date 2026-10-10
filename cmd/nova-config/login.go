@@ -19,10 +19,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/secrets"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/config"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 // loginFileKey is the name a getenv answers with the login file's path. It has
@@ -269,7 +269,7 @@ func dsnWithSecret(path string, rec loginRecord) (string, error) {
 	})
 }
 
-// runLoginTool dispatches login and logout through internal/tool.
+// runLoginTool dispatches login and logout through pkg/tool.
 func runLoginTool(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
 	return loginTool(d).RunContext(ctx, args, os.Stdin, stdout, stderr)
 }

@@ -7,14 +7,14 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardtree"
+	"github.com/mas-bandwidth/nova-tools/pkg/decide"
 )
 
 // NOVA-DECIDE'S LAYER 2 in the sprint (docs/SPEC-SPRINT.md sections 2 and 5; the owner,
 // 2026-10-02: "the nova-decide is both sides"; 2026-10-03: "Please push Jev wide."). Two
-// decisions, each a typed question set in internal/decide:
+// decisions, each a typed question set in pkg/decide:
 //
 //   - the attempt decision: after a work take ends, its member asks how it ended (done,
 //     nothing-to-do, wrong-scope, no-result, needs-pro, provider-failure) over the brief, the

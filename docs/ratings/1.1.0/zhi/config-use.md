@@ -25,7 +25,7 @@ what is wanted; a bad `--tier quantum` named `want one of flash, pro`.
 
 `--dry-run` on add, set and remove prints the change and writes nothing, and it
 runs the real checks: `machine remove m1 --dry-run` refused because m1 is the
-fleet's --store. `--json` on a success is one object in internal/tool's shape
+fleet's --store. `--json` on a success is one object in pkg/tool's shape
 (result, facts, items) and is actable. Where I had to guess: `apply` against a
 live Redis and `inventory` against a live Redis were not run (the rules forbid
 starting one), so the CEILING, CONFLICT and roles refusals, and the parity of
@@ -43,7 +43,7 @@ clean refusal line.
 | # | where | finding | fix | size |
 |---|---|---|---|---|
 | 1 | `nova-config machine add m1 --user nova --seat s1 --slots 8 --as a1 --file try.json --json` | a refused write leaves stdout empty and puts the refusal on stderr, and the same holds for a usage refusal (a missing required flag): --json never wraps a refusal, so a program reading stdout sees nothing on the failure path | render every refusal and failure as the same tool.Out JSON object (status refused, remedy) the success path prints | M |
-| 2 | `nova-config machine width m1 --file try.json --json` | machine width --json prints a bare object (machine, width, member) instead of internal/tool's result, facts and items shape, so --json is not one shape across the tool | emit the width as one item under the standard result shape, or drop --json here and print the line | S |
+| 2 | `nova-config machine width m1 --file try.json --json` | machine width --json prints a bare object (machine, width, member) instead of pkg/tool's result, facts and items shape, so --json is not one shape across the tool | emit the width as one item under the standard result shape, or drop --json here and print the line | S |
 | 3 | `nova-config apply --dry-run --file try.json --redis 127.0.0.1:6379` | when the store does not answer, the Redis client's own pool log lines print to stderr before the tool's one-line refusal, so the failure is noisy instead of one line | silence the Redis client logger on the tool's stderr and keep only the one refusal line with its remedy | S |
 
 ## Good, keep

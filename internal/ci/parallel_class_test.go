@@ -44,7 +44,7 @@ func TestEveryTestOpensWithTParallel(t *testing.T) {
 	var violations []string
 	total, parallel := 0, 0
 
-	for _, f := range tree.GoFilesUnder(true, "cmd", "internal") {
+	for _, f := range tree.GoFilesUnder(true, "cmd", "internal", "pkg") {
 		if f.HasDirNamed("testdata") {
 			continue
 		}

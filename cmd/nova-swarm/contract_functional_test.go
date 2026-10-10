@@ -17,9 +17,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/internal/member"
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/pkg/member"
+	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
 )
 
 // familyModel is a model id of each family the scripted child runs as: the member hands
@@ -36,7 +36,7 @@ var (
 )
 
 // scriptFor is the scripted child of a family: the Go test binary of
-// internal/cardcontract/testdata/scripted/child placed under the family's name,
+// pkg/cardcontract/testdata/scripted/child placed under the family's name,
 // plain's for a family with none. It is built once for the package, beside the
 // other shared binaries, and the OpenAI profile requires its own.
 func scriptFor(t *testing.T, family string) string {
@@ -47,7 +47,7 @@ func scriptFor(t *testing.T, family string) string {
 			return
 		}
 		var bin string
-		if bin, scriptedErr = build(scriptedDir, "child", "./internal/cardcontract/testdata/scripted/child"); scriptedErr != nil {
+		if bin, scriptedErr = build(scriptedDir, "child", "./pkg/cardcontract/testdata/scripted/child"); scriptedErr != nil {
 			return
 		}
 		for _, name := range []string{"claude", "openai", "plain"} {

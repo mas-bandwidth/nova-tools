@@ -70,7 +70,7 @@ func cleanPkgPath(p string) string {
 // and asserts that no living package (or keep foundation test dependency) imports
 // dropped deprecated packages without an allowlist entry.
 //
-// A keep line in internal/pkgselect/DEPRECATED permits importing that package; it is never
+// A keep line in pkg/pkgselect/DEPRECATED permits importing that package; it is never
 // permission for that package's test dependencies to import non-keep retired packages.
 func TestLivingPackagesDoNotImportDroppedDeprecatedPackages(t *testing.T) {
 	t.Parallel()
@@ -94,7 +94,7 @@ func TestLivingPackagesDoNotImportDroppedDeprecatedPackages(t *testing.T) {
 	for _, unlisted := range res.Unlisted {
 		t.Errorf("%s: unlisted dependency on dropped deprecated package: %s\n"+
 			"A living package (or keep foundation test dependency) must not import dropped deprecated packages without an allowlist entry.\n"+
-			"A keep line in internal/pkgselect/DEPRECATED permits importing that package; it is never permission for that package's test dependencies to import non-keep retired packages.\n"+
+			"A keep line in pkg/pkgselect/DEPRECATED permits importing that package; it is never permission for that package's test dependencies to import non-keep retired packages.\n"+
 			"Remedy: lift the target package into a shared module, decouple the test fixture, or remove the dependency; the allowlist only shrinks and refuses new rows.",
 			deprecatedImportsAllowlistPath, unlisted)
 	}

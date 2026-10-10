@@ -2,7 +2,7 @@
 //
 // A refusal, a green or a line pasted into a note is evidence about a BUILD, so the binary
 // says which one it is. The version is not a constant kept by hand, which is wrong at the
-// commit after a release: it is read from the build by internal/buildinfo, which holds the
+// commit after a release: it is read from the build by pkg/buildinfo, which holds the
 // resolution order and the shape of the line for every nova tool, so that each answers the
 // question in one spelling.
 package main
@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
 )
 
 // version is empty in every ordinary build and is the one override: a release stamps it

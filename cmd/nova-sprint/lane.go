@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 // The lanes' verbs (docs/SPEC-SPRINT.md section 18; internal/sprint/lane.go): lane take

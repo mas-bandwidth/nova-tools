@@ -15,7 +15,7 @@ package main
 // Windows machine as the rules say. The first Windows bench proves that. These prove the
 // shape that machine will be asked for, and they go red the moment the shape changes.
 //
-// They follow internal/sandbox/winpath_test.go's pattern exactly: the platform is a
+// They follow pkg/sandbox/winpath_test.go's pattern exactly: the platform is a
 // PARAMETER, never runtime.GOOS, because a test that only ever walks the darwin path calls a
 // windows bug green.
 
@@ -34,7 +34,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -491,7 +491,7 @@ func TestWindowsScratchIsRequiredAndAbsolute(t *testing.T) {
 	}
 }
 
-// absolutePathFor is the pure half of that, and it is the one internal/sandbox's winpath
+// absolutePathFor is the pure half of that, and it is the one pkg/sandbox's winpath
 // tests exist for: filepath.IsAbs answers for the HOST, and the host here is a Mac, which
 // gets `C:\nova` and `/nova` exactly backwards.
 func TestAbsolutePathForNamesThePlatform(t *testing.T) {

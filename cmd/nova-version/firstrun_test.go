@@ -3,8 +3,8 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/mas-bandwidth/nova-tools/internal/update"
+	"github.com/mas-bandwidth/nova-tools/pkg/onboarding"
 	"os"
 	"path/filepath"
 	"strings"

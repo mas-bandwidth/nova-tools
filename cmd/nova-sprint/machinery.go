@@ -14,7 +14,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
 // The seat check (docs/SPEC-SPRINT.md, "The seat check"; the owner, 2026-10-04 1:52 PM:
@@ -34,7 +34,7 @@ const DashboardListenDefault = "127.0.0.1:7390"
 
 // BusEnv names nova-bus2's Redis; unset is "not configured", never DOWN. It
 // is dialed as the store is (openConn): the one fleet Redis seat every tool
-// dials with, internal/nsprint/redisauth, never a password variable of its own.
+// dials with, pkg/nsprint/redisauth, never a password variable of its own.
 const BusEnv = "NOVA_BUS_REDIS"
 
 // outside is every reach of the check past the store: each a function a test

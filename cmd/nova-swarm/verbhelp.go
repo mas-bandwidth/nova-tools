@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 )
 
 // exitParagraph is the banner's exit codes, every verb's at once: `nova-swarm help` prints
@@ -98,7 +98,7 @@ nova-sprint add holds a brief to the --child-rules tokens only, and to its model
 }
 
 // verbEffect is what running a verb does beyond printing, the last line of its -h, in the
-// skeleton's words (internal/tool Effect: inspection, local write or delivery; docs/
+// skeleton's words (pkg/tool Effect: inspection, local write or delivery; docs/
 // STANDARD.md section 2, "Its effects are explicit").
 var verbEffect = map[string]string{
 	"version":      "inspection: reads, writes nothing",

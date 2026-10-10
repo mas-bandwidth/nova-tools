@@ -33,7 +33,7 @@ import (
 // `<package>:<kind> <sites> <reason>`, and the count only falls. A package that
 // measures more sites than its row is red, a package with a site and no row is
 // red, and a row above what the package measures is red, so a port onto
-// internal/tool or a fix lowers its own row in the same change.
+// pkg/tool or a fix lowers its own row in the same change.
 // NOVA_CI_UPDATE=1 lowers the counts and drops the rows at zero, and never
 // raises a count or adds a row. The seeding run is the one time rows are written.
 const noHandPrintingLedgerPath = "testdata/no-hand-printing"
@@ -43,15 +43,15 @@ const noHandPrintingLedgerPath = "testdata/no-hand-printing"
 var noHandPrintingWants = map[string]string{
 	"stream-print": "a tool package writes its own line to a process stream: the verb returns one Out and the skeleton computes the status word from it (skeleton contract 1.5, docs/STANDARD.md section 2), so no line is typed into a format string",
 	"flagset":      "a tool package builds its own flag.FlagSet: the skeleton parses the verb's flags through tool.Flags, which gives the verb its help, its --json and its refusal grammar (docs/STANDARD.md section 3)",
-	"verbflag":     "a tool package builds its own flag set through verbflag.New: a verb on internal/tool declares its flags with tool.Flags and the skeleton parses them (docs/STANDARD.md section 3)",
+	"verbflag":     "a tool package builds its own flag set through verbflag.New: a verb on pkg/tool declares its flags with tool.Flags and the skeleton parses them (docs/STANDARD.md section 3)",
 	"exit":         "a tool package ends the process itself: a verb returns its Out and its exit, main() is the one os.Exit, and a verb that writes a payload the skeleton cannot render declares Prints (tool.Flags.Prints) and returns tool.Exit",
 }
 
 // noHandPrintingRemedy is the one thing to do for each kind.
 var noHandPrintingRemedy = map[string]string{
 	"stream-print": "build the line as an Out (tool.OK, tool.Refuse, Out.Item, Out.ItemText) and return it; a payload the skeleton cannot render goes behind a verb that declares Prints and writes to c.Stdout",
-	"flagset":      "declare the flags with tool.Flags in the verb's Flags func and read them with the tool.Flag accessors; a tool not on internal/tool moves onto it",
-	"verbflag":     "declare the flags with tool.Flags in the verb's Flags func; a tool not on internal/tool moves onto it",
+	"flagset":      "declare the flags with tool.Flags in the verb's Flags func and read them with the tool.Flag accessors; a tool not on pkg/tool moves onto it",
+	"verbflag":     "declare the flags with tool.Flags in the verb's Flags func; a tool not on pkg/tool moves onto it",
 	"exit":         "return the verb's Out and its exit code from the verb, or declare Prints and return tool.Exit; only main() calls os.Exit",
 }
 
@@ -71,9 +71,9 @@ func TestNoHandPrintingInAToolPackage(t *testing.T) {
 	tree := repoTree(t)
 	pkgs := toolPackages(tree)
 	require.NotEmpty(t, pkgs, "no tool package under cmd/ or internal/; this test would pass by reading nothing")
-	assert.Contains(t, pkgs, "internal/release", "nova-update's release verbs are dispatched in internal/release without a tool.Tool")
-	assert.NotContains(t, pkgs, "internal/tool", "the skeleton is not a tool's verbs")
-	assert.NotContains(t, pkgs, "internal/nsprint/verbflag", "the flag seam is not a tool's verbs")
+	assert.Contains(t, pkgs, "pkg/release", "nova-update's release verbs are dispatched in pkg/release without a tool.Tool")
+	assert.NotContains(t, pkgs, "pkg/tool", "the skeleton is not a tool's verbs")
+	assert.NotContains(t, pkgs, "pkg/nsprint/verbflag", "the flag seam is not a tool's verbs")
 
 	byKey := map[string][]noHandPrintingSite{}
 	files := 0
@@ -102,8 +102,8 @@ func TestNoHandPrintingInAToolPackage(t *testing.T) {
 // toolPackages names the packages this rule reads (docs/SPEC-CI.md,
 // `no-hand-printing`): every package under cmd/ that holds a non-test Go file,
 // and every package under internal/ that holds a tool's verbs, found by what it
-// builds or dispatches rather than by a name written here. internal/tool and
-// internal/nsprint/verbflag are the skeleton and the flag seam, not a tool's verbs.
+// builds or dispatches rather than by a name written here. pkg/tool and
+// pkg/nsprint/verbflag are the skeleton and the flag seam, not a tool's verbs.
 func toolPackages(tree *repoTreeIndex) []string {
 	set := map[string]bool{}
 	for _, f := range tree.GoFilesUnder(false, "cmd") {
@@ -112,7 +112,7 @@ func toolPackages(tree *repoTreeIndex) []string {
 		}
 		set[path.Dir(f.Rel)] = true
 	}
-	for _, f := range tree.GoFilesUnder(false, "internal") {
+	for _, f := range tree.GoFilesUnder(false, "internal", "pkg") {
 		if f.HasDirNamed("testdata") || f.ParseErr != nil {
 			continue
 		}
@@ -135,11 +135,11 @@ func isToolVerbPackage(pkg string, f *ast.File) bool {
 	return buildsATool(f) || dispatchesToolVerbs(f)
 }
 
-// skeletonOrFlagSeam is internal/tool, the skeleton, and internal/nsprint/verbflag,
+// skeletonOrFlagSeam is pkg/tool, the skeleton, and pkg/nsprint/verbflag,
 // the flag seam. Neither holds a tool's verbs (docs/SPEC-CI.md, `no-hand-printing`).
 func skeletonOrFlagSeam(pkg string) bool {
-	return pkg == "internal/tool" || strings.HasPrefix(pkg, "internal/tool/") ||
-		pkg == "internal/nsprint/verbflag" || strings.HasPrefix(pkg, "internal/nsprint/verbflag/")
+	return pkg == "pkg/tool" || strings.HasPrefix(pkg, "pkg/tool/") ||
+		pkg == "pkg/nsprint/verbflag" || strings.HasPrefix(pkg, "pkg/nsprint/verbflag/")
 }
 
 // buildsATool reports whether the file builds a tool.Tool, the skeleton's one
@@ -162,7 +162,7 @@ func buildsATool(f *ast.File) bool {
 
 // dispatchesToolVerbs reports whether a function takes the verb off the first
 // argument and switches on it (docs/SPEC-CI.md, `no-hand-printing`).
-// internal/release.Run is that shape and does not build a tool.Tool. A switch
+// pkg/release.Run is that shape and does not build a tool.Tool. A switch
 // on a word cut from a line is not one: the assigned name is not args[0].
 func dispatchesToolVerbs(f *ast.File) bool {
 	if f == nil {
@@ -317,7 +317,7 @@ func inSpans(spans []span, pos token.Pos) bool {
 // exitExemptSpans are the two places an os.Exit is the design's: the body of
 // main(), the process's one exit, and the Run of a verb that declares Prints
 // (tool.Flags.Prints), which writes a payload the skeleton cannot render and
-// returns tool.Exit (internal/tool, Flags.Prints and Call.Exit).
+// returns tool.Exit (pkg/tool, Flags.Prints and Call.Exit).
 func exitExemptSpans(f *ast.File) []span {
 	var spans []span
 	for _, d := range f.Decls {
@@ -566,18 +566,18 @@ func Run(args []string) int {
 }
 `
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "internal/release/cli.go", src, 0)
+	file, err := parser.ParseFile(fset, "pkg/release/cli.go", src, 0)
 	require.NoError(t, err)
 	assert.True(t, dispatchesToolVerbs(file), "a hand dispatcher is a tool package without a tool.Tool")
 	assert.False(t, buildsATool(file))
-	assert.True(t, isToolVerbPackage("internal/release", file))
-	assert.False(t, isToolVerbPackage("internal/tool", file), "the skeleton is not a tool's verbs")
-	assert.False(t, isToolVerbPackage("internal/nsprint/verbflag", file), "the flag seam is not a tool's verbs")
+	assert.True(t, isToolVerbPackage("pkg/release", file))
+	assert.False(t, isToolVerbPackage("pkg/tool", file), "the skeleton is not a tool's verbs")
+	assert.False(t, isToolVerbPackage("pkg/nsprint/verbflag", file), "the flag seam is not a tool's verbs")
 
-	sites := noHandPrintingSites(fset, file, "internal/release/cli.go", "internal/release")
+	sites := noHandPrintingSites(fset, file, "pkg/release/cli.go", "pkg/release")
 	require.Len(t, sites, 1)
 	assert.Equal(t, "flagset", sites[0].Kind)
-	assert.Equal(t, "internal/release/cli.go:10", sites[0].Where)
+	assert.Equal(t, "pkg/release/cli.go:10", sites[0].Where)
 
 	other := `package swarm
 

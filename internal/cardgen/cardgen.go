@@ -17,11 +17,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
-	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
-	"github.com/mas-bandwidth/nova-tools/internal/tlc"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardtree"
+	"github.com/mas-bandwidth/nova-tools/pkg/hygiene"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/tlc"
 )
 
 // Row is one entry of a source: the file (or package directory) the work lives in,
@@ -307,7 +307,7 @@ func ledgerPaths(file, ledger string) []string {
 // NewTestFile marks the test file a card creates: when its package's *_test.go glob
 // names nothing at the base (exists reports it), the package has no test yet and the
 // card writes <dir>/<file>_test.go, named on its NEW: line. The glob stays in PATHS:
-// the land holds the diff to PATHS (internal/diffcheck), and the new file matches it.
+// the land holds the diff to PATHS (pkg/diffcheck), and the new file matches it.
 func NewTestFile(c *Card, exists func(glob string) bool) {
 	for _, p := range c.Paths {
 		if strings.HasSuffix(p, "/*_test.go") && !exists(p) {

@@ -79,7 +79,7 @@ func TestNoTestSleepsOverASecondOrWaitsOutADeadlineOverFive(t *testing.T) {
 
 	tree := repoTree(t)
 	var hits []slowWait
-	for _, f := range tree.GoFilesUnder(true, "cmd", "internal") {
+	for _, f := range tree.GoFilesUnder(true, "cmd", "internal", "pkg") {
 		if f.HasDirNamed("testdata") || isSlowTagged(f.Src) {
 			continue
 		}

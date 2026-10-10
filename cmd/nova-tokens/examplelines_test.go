@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/pkg/goenv"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -119,7 +119,7 @@ func exampleBlockLines(usage string) []string {
 // buildExampleBinary builds this command into a temp dir and returns its path. It builds rather
 // than calls the package because the question is what a stranger meets at a shell prompt; the
 // environment is sanitized with goenv.Clean because the parent's GOFLAGS can reshape a go
-// command's output under the parser that reads it (internal/goenv, the `goenv` class test).
+// command's output under the parser that reads it (pkg/goenv, the `goenv` class test).
 func buildExampleBinary(t *testing.T) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "nova-tokens")

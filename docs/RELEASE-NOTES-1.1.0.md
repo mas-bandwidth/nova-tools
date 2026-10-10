@@ -173,7 +173,7 @@ changes behaviour only where it says so:
   reads are counted, never timed.
 - `nova-redis serve` is pinned to print no secret on any path.
 - `nova-version snapshot` no longer fails with "text file busy" on Linux.
-- Unchecked errors in `internal/friend`, staticcheck findings and the config's
+- Unchecked errors in `pkg/friend`, staticcheck findings and the config's
   command list are cleaned up.
 
 ## What is not in this release

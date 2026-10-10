@@ -31,7 +31,7 @@ The `Replaces:` clause is the one place a retired word may stand in a glossary.
 - **dogfood shape** — the issue shape the family files against its own tools: tool, command,
   verbatim output, expected, smallest fix. Defined: [SPEC-UPDATE.md, The rules, numbered](SPEC-UPDATE.md#the-rules-numbered).
 - **down** — a friend or machine that is not answering; the one word for it in every table.
-  Defined: [SPEC-FRIEND.md, Presence](SPEC-FRIEND.md#presence-internalfriendpresencego). Replaces: asleep.
+  Defined: [SPEC-FRIEND.md, Presence](SPEC-FRIEND.md#presence-pkgfriendpresencego). Replaces: asleep.
 - **friend** — a named participant you exchange notes with, the coordinator included; her
   configuration is a config row. Defined: [SPEC-CONFIG.md, Kinds](SPEC-CONFIG.md#kinds).
 - **lane** — one slot a worker takes to run a Go build or test on a machine, or one sprint-card run of a friend.

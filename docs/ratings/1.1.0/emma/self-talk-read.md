@@ -15,7 +15,7 @@ Before examining the code, the README entry presents a clear summary and an exec
 3. Doubted a claim: The package comment in internal/selftalk/selftalk.go:21 asserts that widening the pattern to reach neutral traits flags half of any file. This semantic overstatement is repeated in line 97, asserting an exaggerated failure mode rather than characterizing measured false positive rates.
 
 To achieve a 10/10 rating, the tool would need to:
-- Adopt the standard tool framework from internal/tool for flag handling and dispatch instead of maintaining bespoke positional parsing.
+- Adopt the standard tool framework from pkg/tool for flag handling and dispatch instead of maintaining bespoke positional parsing.
 - Provide a clear one-line definition for the INSTALLATION category or align terminology with standard grammatical descriptors such as trait or verdict.
 - Condense the CLI usage banner to the primary onboarding contract, delegating deeper grammatical exposition to documentation.
 - Replace polemical comments and uppercase section headers with measured, present-tense rationale.

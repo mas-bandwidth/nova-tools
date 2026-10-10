@@ -16,7 +16,7 @@ so `install`, `uninstall`, `ping-install` and `ping-uninstall` wrote under the s
 touched no real home. The first pass against the empty store is what a real `nova-config` roster
 would supply: `nova-friend ping --as ada --to bob` refuses every unknown name in one run, naming the
 `nova-config friend add` line and `apply`, and `wait-pong` answers `WAIT-PONG NONE ... within 2s` at
-exit 1; both are correct and were the first real use. The `cmd/nova-friend` and `internal/friend`
+exit 1; both are correct and were the first real use. The `cmd/nova-friend` and `pkg/friend`
 trees are byte-identical at the build's commit and at this branch's base (`git diff --stat` between
 them is empty), so the findings hold at the tip.
 
@@ -233,7 +233,7 @@ written `<retired>` here because the lint below refuses the word itself.
 `docs/TERMINOLOGY.md` says to say `down`; `internal/docs`'s
 `TestRetiredWordsAppearOnlyInRecords` scores a use in any file outside the dated records, and
 `docs/dogfood/` is not one of them (`internal/docs/testdata/retired-words.txt` carries allow rows
-for `cmd/nova-friend/main.go`, `internal/friend/check.go` and `docs/CLI.md`). So the tool prints the
+for `cmd/nova-friend/main.go`, `pkg/friend/check.go` and `docs/CLI.md`). So the tool prints the
 retired word and the record that documents the print is the file the gate refuses. Expected the
 printed value and the help to use the word the docs keep, or `docs/dogfood/` to join the dated
 records the lint exempts.

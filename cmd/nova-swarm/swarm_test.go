@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/pkg/goenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -56,7 +56,7 @@ func buildShared() error {
 		// The one program the usage source runs. It is a stand-in, on the same PATH as the
 		// fake harness, so the dispatcher reads a database end to end with no sqlite3 of
 		// the machine's and no provider (SPEC-SWARM rule 12).
-		if _, buildErr = build(harnessDir, "sqlite3", "./internal/swarm/testdata/fakesqlite"); buildErr != nil {
+		if _, buildErr = build(harnessDir, "sqlite3", "./pkg/swarm/testdata/fakesqlite"); buildErr != nil {
 			return
 		}
 		// THE WALL AND THE STAND-IN. nova-sandbox is the binary every job now runs inside
@@ -107,7 +107,7 @@ func TestMain(m *testing.M) {
 	// THE PROVIDER RETRY WAIT IS NOT UNDER TEST HERE. A launch that dies on a provider 5xx
 	// is retried after 5-20s and then 30-60s (swarm.ProviderRetryDelay); a verdict test
 	// that drives FAKE-5XX through all three launches sat up to 80s in those waits and
-	// asserted nothing about them. The bands are internal/swarm's TestProviderRetryDelayBands;
+	// asserted nothing about them. The bands are pkg/swarm's TestProviderRetryDelayBands;
 	// here every run pins the wait to zero through the seam the delay already reads, once,
 	// for the whole process, so no test needs t.Setenv (which t.Parallel refuses) for it. A
 	// test that wants a wait of its own still sets it.

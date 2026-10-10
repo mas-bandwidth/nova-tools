@@ -209,7 +209,7 @@ out"), and an observation carries the same (`friend health --reason --until`);
 `where --json` carries the cell as printed. A friend whose harness says it is
 out of credits or at a usage limit is down by her own daemon (the owner,
 2026-10-04: "stopped on credits means she should automatically be DOWN";
-`internal/friend/limit.go`, docs/SPEC-FRIEND.md, a harness at its limit): from
+`pkg/friend/limit.go`, docs/SPEC-FRIEND.md, a harness at its limit): from
 the turn that said it, `nova-friend run` sends no beat, so her row reads
 `down`, delivers nothing, and tells the seat (else `--coordinator`) once with
 the line that shows why, `friend down <friend> --reason <its words> --until
@@ -782,7 +782,7 @@ state `queued`, `working` or `done`; her daemon's pong reports its counts),
 saying which of her cards are `working` and which `queued` (ready behind
 them), never touching a record her session marked `done` or one the sprint
 does not name (written whole by
-`internal/atomicfile`, never over a file there; a later attempt's says it starts from the current
+`pkg/atomicfile`, never over a file there; a later attempt's says it starts from the current
 tip of the card's base branch on origin, never an older base, carrying the work of the last
 attempt that pushed onto it herself (`git diff origin/<base>...<head>` shows it, redone where it
 does not apply), and that the Head she reports must be on that tip: the rule a member's rework is
@@ -901,7 +901,7 @@ friend not on the roster, exit 1; a config that cannot be read, exit 3. `--dry-r
 finishes nothing and reads no tip. The nova-friend daemon keeps the same rule for her own
 tree on every sync (docs/SPEC-FRIEND.md, the daemon reads every outbox job, and its dead
 lanes), so the verb is the coordinator's hand and the daemon's duty. The model is
-`internal/friend/tla/Collect.tla`.
+`pkg/friend/tla/Collect.tla`.
 
 **A brief defect** (the owner, 2026-10-04: "trust but VERIFY"; "I want to trust the ok%";
 "Are they actually doing the work that is shown in the friend table? Really?"). A worker's
@@ -1562,7 +1562,7 @@ directories whose lane is dead and whose report is written), run from a shell lo
 minutes; the owner, 2026-10-04: no bash scripts, ship verbs, every coordinator need is a nova
 verb. `nova-sprint gc [--machine <m>] [--dry-run] [--max-age <d>] [--ai-root <dir>]` is that verb
 (`sprint.GC`, `cmd/nova-sprint/gc.go`). On the machine it runs on, or with `--machine` on that
-machine through the fleet runner (`internal/bench`'s ssh, which runs the same verb there), it
+machine through the fleet runner (`pkg/bench`'s ssh, which runs the same verb there), it
 removes exactly the scratch the machinery made and no longer needs, class by class:
 
 - `jobs`: `<w>/jobs/<job>` of every working directory `<w>` (a `<home>/<name>-working` link
@@ -1580,7 +1580,7 @@ removes exactly the scratch the machinery made and no longer needs, class by cla
   of a tree that lives elsewhere; a clone inside it with uncommitted work keeps the directory,
   as any other removal does;
 - `cache`: every Go build cache of the bench root (`cache/go-build`, `buds/<name>/cache/go-build`)
-  and of each working directory (`.cache/go-build`), held under its cap (`internal/gocache`,
+  and of each working directory (`.cache/go-build`), held under its cap (`pkg/gocache`,
   20 GiB).
 
 The known scratch roots are the AI root, the bench root (`~/nova-bench`), land's clone root
@@ -1997,7 +1997,7 @@ consumer card cost, total for producer"; "One is a guess/prediction. the other i
 actual"; "No changes in sprint tables at all." The primary is the producer card;
 its consumers are its work cards' takes and its read cards. Each consumer keeps
 what it cost in its own `usage` field (and a take the provider failed in its
-provider_take_<n> record), one line of key=value words (`internal/cardcost`,
+provider_take_<n> record), one line of key=value words (`pkg/cardcost`,
 `Usage`), so no table gains a column, line or row:
 
 - what the member or reader reported from its child (`finish --usage`,
@@ -2027,7 +2027,7 @@ provider_take_<n> record), one line of key=value words (`internal/cardcost`,
 A finish or a read that reports usage reads the routes with its tables to price
 it: the routes set and each route's record alone (`routes`, `route:<name>`), never
 a tier's array or the sprint row, the keys a worker's ACL user may read
-(internal/redisacl, the member role; `TestEveryStepReadsOnlyKeysItsRoleMayRead`). A failed take and a returned read record the same: they still cost tokens
+(pkg/redisacl, the member role; `TestEveryStepReadsOnlyKeysItsRoleMayRead`). A failed take and a returned read record the same: they still cost tokens
 and time. Each run has one record and one only: a work card's `usage` holds its
 own ended take (finish), and a take the provider failed is in its
 provider_take_<n> record alone, so a redealt card never counts it twice; a read
@@ -2091,10 +2091,10 @@ in what we read: the verdict is kept, never lost for its accounting, its record 
 `unpriced_runs`), so a harness that stops reporting is seen
 (`TestAFleetReadWithNoTokensKeepsItsVerdict`). A return (`read --return`) is taken without
 a usage, for a read that never ran (a staging or launch refusal) has no tokens. The fleet
-reader passes `--usage` on every verdict and every return it ran (internal/member
+reader passes `--usage` on every verdict and every return it ran (pkg/member
 `usageArgs`): its harness's own report, from native's `spend=` word or the job's
 `usage.tsv` receipt, and when the harness reported nothing, `usage_source=none` (cmd/nova-swarm
-`noUsageReported`), so its usage is never absent. A friend's read lane (internal/friend
+`noUsageReported`), so its usage is never absent. A friend's read lane (pkg/friend
 `readDone`) passes `--usage` too, but today it carries only `model= wall= harness=
 account=` and no token count, so its verdicts are kept and counted in `reads_no_tokens`
 until that lane reads its harness's own report (opencode's store for the run, as native's
@@ -2198,7 +2198,7 @@ that day, summed over the providers (`unreconciled`, the sprint's, the same on e
 record). The cost per card is that recorded total over the cards landed, so every attempt and
 read behind them counts, those of cards not landed included.
 
-**A card is a tree of steps** (`internal/cardtree`; nova-tools#5174 rule 7). The owner,
+**A card is a tree of steps** (`pkg/cardtree`; nova-tools#5174 rule 7). The owner,
 2026-10-02: "any card can be a tree"; "a batch card is just nomenclature"; a script step is "a
 script card, when it is anything that is not an LLM", "preference: lisp, or golang obv.", a
 regex at simplest. The failed-step rule is the coordinator's, 2026-10-02: a failed step n lands
@@ -2590,7 +2590,7 @@ and it is the coordinator's decision, receipted.
   calibration of 2026-10-03 (60 failing tests of the coordinator bench's CI runs,
   labelled by git and the other runs): with the base run, p(caused) AUC 0.914,
   p(pre-existing) 0.907, p(flaky) 0.716, and at the starting bars no caused failure
-  was routed flaky or pre-existing (internal/decide, `TestTheGateCalibrationRecordsSupportTheBars`).
+  was routed flaky or pre-existing (pkg/decide, `TestTheGateCalibrationRecordsSupportTheBars`).
 - The bound holds across attempts (the coordinator's finding, 2026-10-03, not the
   owner's words: "So the bound is per attempt, and a rework resets it."; an answer
   loop reworked ci-03 231 times and docsd-03 244 times in one night, every rework a
@@ -2779,7 +2779,7 @@ and it is the coordinator's decision, receipted.
   - The balance poll. `run` reads each provider's balance when it begins and every 10 minutes
     after (`sprint.BalancePollEvery`), outside every tick, through the seat's key in its own
     environment (`nova-secrets exec --only OPENROUTER_API_KEY -- nova-sprint run ...`;
-    `internal/provbalance`): openrouter's `GET /api/v1/credits`, the balance `total_credits`
+    `pkg/provbalance`): openrouter's `GET /api/v1/credits`, the balance `total_credits`
     less `total_usage`; opencode publishes none (Zen has no balance endpoint,
     anomalyco/opencode#44189, and its CLI reads none), so its balance is recorded `unknown` and
     why, as any provider's with no endpoint or no key. One step writes each read to the fleet
@@ -2916,7 +2916,7 @@ and it is the coordinator's decision, receipted.
   be measured, the one-minute load average over the logical cores, capped at
   1000%. `--load <percent>` gives it instead.
 - Every beat, the load given or measured, also reads the machine's open file
-  descriptors (internal/hostload, files.go): the count and the system's limit
+  descriptors (pkg/hostload, files.go): the count and the system's limit
   (darwin: the sysctl `kern.num_files` and `kern.maxfiles`; Linux:
   `/proc/sys/fs/file-nr`), against the member's warn and alarm bounds:
   `--fd-warn <n>` and `--fd-alarm <n>`, else the environment's `NOVA_FD_WARN` and
@@ -2941,7 +2941,7 @@ and it is the coordinator's decision, receipted.
   beaten, and held while the coordinator holds it, whatever it beats. A card
   is taken back from a member only when the member is down by this rule
   (tla/DirtyTick.tla, Lapse). A member's verb the server does not answer is
-  sent again, three tries in all (internal/sprintwire). `hold <member> --reason
+  sent again, three tries in all (pkg/sprintwire). `hold <member> --reason
   <text>` holds a member (section 11, hold; `fleet down <member>` is `hold
   <member> --return` in the old words, for one release) and takes it down;
   `unhold <member>` or `fleet up <member>` releases the hold; `fleet up` counts as a
@@ -3061,7 +3061,7 @@ held). While it is held so, each tick asks the adopter for the episode's adoptio
 
 With no adopter, or one that knows no release, presence is as above: a member back
 is up at once. The part is `sprint.FleetBackPresence` (internal/sprint/fleet_back.go),
-the adoption `release.OneMachine` (internal/release/adopt_one.go). Test:
+the adoption `release.OneMachine` (pkg/release/adopt_one.go). Test:
 `TestAMachineBackFromDownAdoptsTheLatestBeforeItIsDealt`.
 
 ### fleet-quiet-machine-b.w7: a quiet machine
@@ -3396,7 +3396,7 @@ rule is `internal/sprint/fleet_quiet.go`; the twin test is
   chose this over a heavy fleet route, which would let the fleet be dealt heavy
   cards it cannot run): a friend's or a bud's reader, `reader-<name>` for a
   friend whose seat the tick reads or whose friend row the fleet table has
-  (beaten by her daemon, `internal/friend` ReaderOf), brings its own model and
+  (beaten by her daemon, `pkg/friend` ReaderOf), brings its own model and
   serves every tier its tiers cell names, route or none; any other reader is the
   fleet's, runs the route its read draws, so it serves a tier only while an
   enabled route of the tier is in the tier's array, and is asked no read of a
@@ -4045,7 +4045,7 @@ writes yet (`TestDevDriftOfReadsTheMergeTablesProperties`). The promotion of dev
 (above) is what keeps the two together until then.
 
 **The lander's checks.** Each head `land` merges is checked by script, no model,
-before the batch's check runs (`internal/diffcheck`), the two checks the decide
+before the batch's check runs (`pkg/diffcheck`), the two checks the decide
 read's calibration of 2026-10-02 found a model read does not make: the merge's
 own diff changes no file outside the brief's `PATHS` globs (E12: p(inside_paths)
 was 0.98 on the card that left its PATHS), the class ledgers excepted (under
@@ -4232,7 +4232,7 @@ it runs (`landlane_holder_test.go`).
 2026-10-07 the gate's tree went as a tar stream of the clone on ssh's stdin,
 about 180 MB a batch and 60 to 90 s over the tailnet when it completed, and when
 it did not the loop's line said only `step=gate` while run directories came and
-went on the bench. Now only the commit travels (`internal/bench/stage_mirror.go`,
+went on the bench. Now only the commit travels (`pkg/bench/stage_mirror.go`,
 `benchGate` in `cmd/nova-sprint/landgo.go`):
 
 1. The lander pushes the gated commit (the batch worktree's `HEAD`, which must be
@@ -4406,7 +4406,7 @@ merge) undoes it too, so the clone is left clean as the merge left it and a
 **The shrink-only ledgers.** A merge that stops in a shrink-only ledger lands
 without a stop. The shrink-only ledgers are the lists whose class test in
 internal/ci says they only shrink, named in one place, `shrinkonly.ShrinkOnly`
-(`internal/ci/shrinkonly/shrinkonly.go`): every top-level list file under
+(`pkg/ci/shrinkonly/shrinkonly.go`): every top-level list file under
 `internal/ci/testdata/` but the lists that grow (the deleted-tests log, which
 is appended to, and `compared_examples.txt` and `namedpaths_allowlist.txt`,
 which gain rows by hand), and the unit tier's two lists under `internal/ci/`
@@ -4565,7 +4565,7 @@ caller's: it is never cleaned, and a dirty one is refused as before
 (`TestLanderRestoresItsOwnDirtyCacheClone`, cmd/nova-sprint/land_clean_clone_test.go).
 
 One land at a time works in a clone, kept or given. Land takes the clone's land lock
-(`nova-sprint-land.lock` in its git directory, `internal/filelock`) the first time it uses
+(`nova-sprint-land.lock` in its git directory, `pkg/filelock`) the first time it uses
 the clone and holds it until land ends; a clone another land holds is refused before any
 git changes it, `the clone <dir> is in use by another land (<holder>)`, and its cards stay
 queued for the next land (found 2026-10-06: the server's lander and a second land shared the
@@ -4938,7 +4938,7 @@ The mechanisms: a **blocking read** waits in the store until the thing arrives (
 
 The cards this audit cut, each one row of the table turned from a timer poll into a push; each one's DONE-WHEN is its row's mechanism changed here and its ledger line gone:
 
-- **friend-bus-read-blocks**: the daemon's read blocks on XREADGROUP with no timer between reads in every mode: the beat goes on its own ticker (as the member's does), a running turn no longer turns the read into a peek and a Pause (the turn's end is a channel the read's select takes), and a passive harness's daemon blocks the same way. Paths: internal/friend/daemon.go, internal/bus.
+- **friend-bus-read-blocks**: the daemon's read blocks on XREADGROUP with no timer between reads in every mode: the beat goes on its own ticker (as the member's does), a running turn no longer turns the read into a peek and a Pause (the turn's end is a channel the read's select takes), and a passive harness's daemon blocks the same way. Paths: pkg/friend/daemon.go, pkg/bus.
 - **friend-cards-pushed-on-the-bus** and **friend-reads-pushed-on-the-bus**: the server's deal and ask write one bus message of kind `card` or `read` to the friend's stream, in the step that deals or asks, and the daemon reconciles her inbox and her reader row when it reads one; InboxEvery and ReadAskEvery become a backstop of minutes, not the path.
 - **member-waits-on-the-servers-bus-message**: the server writes one bus message to `member:<name>` when it deals to the member or the reader, and the member's pass blocks on that stream (sprintwire carries the wait); --every becomes a backstop of a minute, the beat stays on its own clock.
 - **inbox-wait-blocks-on-the-server**: the sprint server serves a wait verb (a long poll of the notes stream, WaitNotes on the server side), so inbox --wait through the server blocks there; tickEndPoll goes.
@@ -5841,7 +5841,7 @@ control card's text fields
 (brief, fix, finding, report, reason, note, return reason, ci note, did) are
 at most 8 KiB, except the brief: a brief is a child's whole brief, so it is at
 most 16 KiB (16384 bytes; the card lint advises at most 12000, and
-`internal/cardlimits` holds both numbers, which the store and the lint read; the
+`pkg/cardlimits` holds both numbers, which the store and the lint read; the
 bound is a constant of the model and does not change the model). A field over its bound refuses the step whole, nothing
 written, naming the field, its size and the bound. Every manifest is checked against
 the table layer's bounds before anything is written, split by entries and by
@@ -5886,7 +5886,7 @@ first on the `LAND REFUSED` line, each other on a `NOTE` line and in the `--json
 `also`: each head of the batch that is not a commit id, with its return), and on a twin,
 which has no git, a `NOTE` that `merge --stream <s> --batch <n>` records the landing in
 land's place; a head that is not a commit id stops the dry run where land stops, the cards before it a batch, that card refused with the conflict fact land would record and nothing recorded; `--json`. A batch landed and reported tags the branches its cards' work cards of every attempt record (`branches_queued=<n>` on its line, `prune` on its item; never the base, an empty name, an option-like name or one not under `sprint/`, each said on a NOTE and counted as `branches_kept=<n>`), and the cleanup deletes only canonical successful-attempt branches from origin later, many in one push, each with an explicit lease against its recorded head; advanced or recreated tips, unowned branches and all recorded stream bases stay on origin, and a retry keeps the original lease; then removes the clone's remote-tracking refs of branches origin no longer holds, never while a landing builds or pushes: the one-shot land once after every stream, the land loop (`run --land`) between rounds when a round finds nothing queued or 256 branches wait, a line per clone `PRUNE OK|FAILED branches= refs= dir= took=` (`--json` `prune`); a failed cleanup fails no landing, and the loop keeps its branches and tries again after a minute; the queue is the process's memory, so a crash or a stop loses it and those branches stay on origin; a dry run queues and deletes nothing and says how many it would queue |
-| promote | the machine's promotion of the sprint branch into dev, carried from the cut to the recorded merge with no hand steps (the hand sequence of 2026-10-05, pull request 5351, as one verb). Each pass fetches origin and cuts a frozen branch `promo/<YYYY-MM-DD>-<n>` from `origin/<branch>`, never a local ref (a stale local ref, 0 ahead of dev, was cut and pushed twice on 2026-10-05), and refuses a cut not ahead of `origin/<base>`, exit 1, nothing cut. It merges `origin/<base>` into the cut without a checkout (`git merge-tree --write-tree`, then `git commit-tree` with the tip and the target as parents; the cut is the tip itself when the target is already in it); a conflict raises one judgment naming the conflicted files, decisions `merge-by-hand-and-recut` and `skip`, and stops with nothing cut or pushed: the tool resolves nothing. The cut is never the live sprint branch: a queued pull request whose head is the live branch blocks the lander's pushes (GH006, found 2026-10-04). `--every <duration>` (default 1h) is the clock; `--landings <n>` also promotes once that many `land <id> (sprint stream <s>)` commits have landed since the last cut, looked for once a minute until the clock elapses; `--once` carries one promotion to its end (recorded, a judgment, nothing to promote, or a refusal) and exits; `--poll <duration>` (default 1m) is how often a promotion in flight is looked at; `--branch` (default the checkout's branch), `--repo-dir`, `--base` (default dev), `--check <command>` the tree gate run on the cut before anything is pushed. The pull request body is the landed card ids since `refs/promoted/last`, else since `origin/<base>`, oldest first. The clone records the promotion in flight (`promote.branch`, `promote.pr`, `promote.tip`, `promote.judged` in its local git config); one in flight is carried to its end before another is cut. Its checks are waited on (`PROMOTE WAIT ... checks pending: <names>`); once they pass, admission is the `enqueuePullRequest` mutation, which carries no merge strategy (the queue refuses one; `gh pr merge` and a flag named auto are the spelling the class test refuses), then a query confirms `mergeQueueEntry`. A merge moves `refs/promoted/last` and records `promoted --sha <merge>` in the store (section 7, dev is behind), `PROMOTE RECORDED sha=<merge>`; a store that does not record it names the `promoted` command to run. A failed check, or a failed merge-group run of the pull request (the queue's branch `gh-readonly-queue/<base>/pr-<n>-...`), raises one judgment naming the check, with the failing log's tail, decisions `fix-and-recut` and `skip`, and does not record the sha; it is not raised again while the sprint tip stands, and once the tip moves (the fix landed) the next pass cuts afresh. A pull request closed without a merge clears the promotion in flight, a judged one included, with one judgment naming it (`JUDGMENT closed-pr branch=<promo> pr=<n> decisions=recut,skip`), records nothing, and the next pass cuts afresh. The verb claims the promotion cleared only after every in-flight key is gone: a cleanup that fails (`git config --local --unset` exiting other than 5, the key absent) is a refusal naming the keys that remain, and the next pass would handle the closed pull request again. Every pass also reads the base's runs at the last promotion's merge (`refs/promoted/last`, the forge's failed runs of the base at that commit). A red run, on the pull request's branch or on the base after the merge, cuts its fix cards by the machine (`(*promoter).redJudgment`, cmd/nova-sprint/promote_red.go): each failed run's failed-steps log is read through the forge into its failing tests (`sprint.RedTests`, go test's output per job, one per distinct test name, a build failure naming no test), and one card per test is added to the day's stream `promote-red-<YYYY-MM-DD>`, its id `red-<TestName>` (the next free `-<n>` when a landed card holds it), its brief (`sprint.FixBrief`) line 1 the heavy tier, `REPO:` and `BASE:` the live sprint branch, `START:` the test, its file and its failing line from the log, `STOP:` the test green on the job (the runner) it failed on, `PATHS:` the test file and the package, `TEST:` the test (`-tags functional` when the job is named functional), held to the card lint as `add` holds a brief, ranked first (scored below every card on the work table), and deduplicated by test name against the open cards inside the one add step (`sprint.FixCards`: a test an open card's `TEST:` line names is cut by no one). The judgment names the cards cut and the tests already open (`JUDGMENT promotion red branch=<promo> decisions=fix-and-recut,skip cards=<ids> open=<tests>`, or `JUDGMENT dev red base=<base> sha=<sha> decisions=fix,skip cards=<ids> open=<tests>`, each red base run judged once); the coordinator writes no fix card by hand (`TestARedPromotionCutsOneFixCardPerFailingTest`). Every step prints a line as it goes (`PROMOTE FETCH`, `MERGE`, `GATE`, `PUSH`, `CUT`, `WAIT`, `QUEUE`, `MERGED`, `RECORDED`), and between looks `PROMOTE NEXT ... in=<duration>: <what it waits on>`, so the verb never waits without saying on what. Every forge call goes through one interface, `promoteForge` (cmd/nova-sprint/promote_forge.go: the gh CLI through internal/subproc, and a fake in the tests), the red-run reads included: the failed runs of a branch or of the base at a commit, a run's log, and the repository's name. `--dry-run` prints the branch and the cards, or the promotion in flight, and writes, enqueues and records nothing on any path: it reads origin's tips with `git ls-remote` and fetches their objects with no refmap and no FETCH_HEAD, so no ref, no config key, no push, no pull request, no queue entry and no store row is written, and an in-flight promotion is neither watched nor forgotten. The land loop calls the same step only when promotion is armed; `run --land` does not arm it. The step is `(*promoter).step` (cmd/nova-sprint/promote.go), which cites this section; `TestPromoteCarriesACutToARecordedPromotion` drives it over a twin repository and a fake forge |
+| promote | the machine's promotion of the sprint branch into dev, carried from the cut to the recorded merge with no hand steps (the hand sequence of 2026-10-05, pull request 5351, as one verb). Each pass fetches origin and cuts a frozen branch `promo/<YYYY-MM-DD>-<n>` from `origin/<branch>`, never a local ref (a stale local ref, 0 ahead of dev, was cut and pushed twice on 2026-10-05), and refuses a cut not ahead of `origin/<base>`, exit 1, nothing cut. It merges `origin/<base>` into the cut without a checkout (`git merge-tree --write-tree`, then `git commit-tree` with the tip and the target as parents; the cut is the tip itself when the target is already in it); a conflict raises one judgment naming the conflicted files, decisions `merge-by-hand-and-recut` and `skip`, and stops with nothing cut or pushed: the tool resolves nothing. The cut is never the live sprint branch: a queued pull request whose head is the live branch blocks the lander's pushes (GH006, found 2026-10-04). `--every <duration>` (default 1h) is the clock; `--landings <n>` also promotes once that many `land <id> (sprint stream <s>)` commits have landed since the last cut, looked for once a minute until the clock elapses; `--once` carries one promotion to its end (recorded, a judgment, nothing to promote, or a refusal) and exits; `--poll <duration>` (default 1m) is how often a promotion in flight is looked at; `--branch` (default the checkout's branch), `--repo-dir`, `--base` (default dev), `--check <command>` the tree gate run on the cut before anything is pushed. The pull request body is the landed card ids since `refs/promoted/last`, else since `origin/<base>`, oldest first. The clone records the promotion in flight (`promote.branch`, `promote.pr`, `promote.tip`, `promote.judged` in its local git config); one in flight is carried to its end before another is cut. Its checks are waited on (`PROMOTE WAIT ... checks pending: <names>`); once they pass, admission is the `enqueuePullRequest` mutation, which carries no merge strategy (the queue refuses one; `gh pr merge` and a flag named auto are the spelling the class test refuses), then a query confirms `mergeQueueEntry`. A merge moves `refs/promoted/last` and records `promoted --sha <merge>` in the store (section 7, dev is behind), `PROMOTE RECORDED sha=<merge>`; a store that does not record it names the `promoted` command to run. A failed check, or a failed merge-group run of the pull request (the queue's branch `gh-readonly-queue/<base>/pr-<n>-...`), raises one judgment naming the check, with the failing log's tail, decisions `fix-and-recut` and `skip`, and does not record the sha; it is not raised again while the sprint tip stands, and once the tip moves (the fix landed) the next pass cuts afresh. A pull request closed without a merge clears the promotion in flight, a judged one included, with one judgment naming it (`JUDGMENT closed-pr branch=<promo> pr=<n> decisions=recut,skip`), records nothing, and the next pass cuts afresh. The verb claims the promotion cleared only after every in-flight key is gone: a cleanup that fails (`git config --local --unset` exiting other than 5, the key absent) is a refusal naming the keys that remain, and the next pass would handle the closed pull request again. Every pass also reads the base's runs at the last promotion's merge (`refs/promoted/last`, the forge's failed runs of the base at that commit). A red run, on the pull request's branch or on the base after the merge, cuts its fix cards by the machine (`(*promoter).redJudgment`, cmd/nova-sprint/promote_red.go): each failed run's failed-steps log is read through the forge into its failing tests (`sprint.RedTests`, go test's output per job, one per distinct test name, a build failure naming no test), and one card per test is added to the day's stream `promote-red-<YYYY-MM-DD>`, its id `red-<TestName>` (the next free `-<n>` when a landed card holds it), its brief (`sprint.FixBrief`) line 1 the heavy tier, `REPO:` and `BASE:` the live sprint branch, `START:` the test, its file and its failing line from the log, `STOP:` the test green on the job (the runner) it failed on, `PATHS:` the test file and the package, `TEST:` the test (`-tags functional` when the job is named functional), held to the card lint as `add` holds a brief, ranked first (scored below every card on the work table), and deduplicated by test name against the open cards inside the one add step (`sprint.FixCards`: a test an open card's `TEST:` line names is cut by no one). The judgment names the cards cut and the tests already open (`JUDGMENT promotion red branch=<promo> decisions=fix-and-recut,skip cards=<ids> open=<tests>`, or `JUDGMENT dev red base=<base> sha=<sha> decisions=fix,skip cards=<ids> open=<tests>`, each red base run judged once); the coordinator writes no fix card by hand (`TestARedPromotionCutsOneFixCardPerFailingTest`). Every step prints a line as it goes (`PROMOTE FETCH`, `MERGE`, `GATE`, `PUSH`, `CUT`, `WAIT`, `QUEUE`, `MERGED`, `RECORDED`), and between looks `PROMOTE NEXT ... in=<duration>: <what it waits on>`, so the verb never waits without saying on what. Every forge call goes through one interface, `promoteForge` (cmd/nova-sprint/promote_forge.go: the gh CLI through pkg/subproc, and a fake in the tests), the red-run reads included: the failed runs of a branch or of the base at a commit, a run's log, and the repository's name. `--dry-run` prints the branch and the cards, or the promotion in flight, and writes, enqueues and records nothing on any path: it reads origin's tips with `git ls-remote` and fetches their objects with no refmap and no FETCH_HEAD, so no ref, no config key, no push, no pull request, no queue entry and no store row is written, and an in-flight promotion is neither watched nor forgotten. The land loop calls the same step only when promotion is armed; `run --land` does not arm it. The step is `(*promoter).step` (cmd/nova-sprint/promote.go), which cites this section; `TestPromoteCarriesACutToARecordedPromotion` drives it over a twin repository and a fake forge |
 | resume | a stopped stream moves again, with what was done; refused while a cause is unresolved |
 | fleet | `up|down <member>`, `level` (down is `hold <member> --return` in the old words, for one release); `up <member> --deadline <duration|default>` pins the deadline every card dealt to the member gets, or takes the pin off (section 5, the deadline by machine); down and up say on the member's MOVED line where its cards went (nova-tools#5096 item 21): down `moved=N to m2(n),m3(n); stayed=K withdrawn: <primaries>` (a card no member up has room for, or at its redeal bound, is withdrawn), up `moved=N to <member>(n) from m2(n),...` when the level moves cards onto it; a member going down in the tick's presence part says the same |
 | hold | `hold <name>... --reason <text> [--return]`: the coordinator's hold of fleet members, readers, friends and streams, one verb for the four (the owner, 2026-10-04 1:50 PM: "there should be a hold verb in nova-sprint"; 1:51 PM: the same for friends, hold and unhold). Each name is a fleet member, a reader, a friend (nova-config's friend rows) or a stream, resolved first: a name of none, or of more than one, refuses the whole call, exit 1, nothing written; a hold wants `--reason` (exit 2 without one). One step (`sprint.HoldNames`). A name held takes no new cards: a member is dealt none and its takes are refused, a reader is asked nothing, a friend is dealt none (and keeps none), a stream's ready primaries are dealt to no machine and no friend. What is dealt and not begun is handed back now: a member's ready cards are dealt round the fleet as a member going down sends them, a reader's reads asked and not begun are asked of another at the next tick, a stream's work cards ready on members are withdrawn (no redeal spent). What is begun finishes (the default): a member's working cards stay on it (the sweep leaves them, section 5; the deadline judges them), a reader's reads begun stay with it, a stream's working cards finish; a friend keeps no card, with `--return` or without: every card she has begun (working, or read as started) is taken back to ready as `friend down` takes it, a started one with a push carrying its pushed head to the next taker, and her ready cards not begun are handed back too: a held friend keeps no card at all, with `--return` or without (the owner, 2026-10-09; `TestHoldingAFriendReturnsItsStartedCards`, `TestAHeldFriendKeepsNoReadyCards`). `--return` hands the work begun back now too: a member's working cards dealt round the fleet (a redeal counted, as fleet down always did), a reader's reads asked or begun taken back where a reader up is free to read them, a stream's working cards withdrawn to ready. Its status reads `held`: the fleet and friends tables' status, the readers' state, the merge table's state cell (and the stream clocks' state; a stopped stream reads `stopped`); the reason is on the member's and the stream's control card (`held_reason`) and in the reader's and friend's hold records, and `where --json --cards` (the dashboard's read) carries every hold as `holds` (kind, name, reason, by, at, return). Each name held writes a happened note (`held by the coordinator`), the reason in it, so the log holds every hold; handover shows it among the decisions. `fleet down <member>` is `hold <member> --return`, `reader away <reader>...` is `hold <reader>... --return`, and `friend down <friend>` holds her as `hold <friend>` does and takes back every card of hers, started or not (`--until` is its own), each with its old words' output, kept for one release with their help naming the pair; a member down because it stopped beating is the machine's `down`, never a hold; `--repo <owner/name>... --expect <n>` holds or releases the streams recording those repositories instead of a name (the same one-snapshot read as `streams --repo`, the count of streams required as `drop --repo` requires it); `fleet hold <member>...` and `fleet unhold <member>...` are hold and unhold of fleet members alone, `friend hold <friend>...` and `friend unhold <friend>...` of friends alone (the owner, 2026-10-10: "you can add a fleet hold if you want. it's a good idea. also a friend hold"), the same request with its kind set, the same step, writes and HOLD/UNHOLD lines, a name of another kind refusing the whole call with the verb that holds it (`no friend m1: m1 is a fleet member; run: nova-sprint fleet hold m1 --reason <text>`; `TestFleetHoldIsHoldOfAMemberAlone`, `TestFriendHoldIsHoldOfAFriendAlone`); the friend's hold and release are `FriendPresence.tla`'s `Hold(f)` and `Release(f)` |
@@ -5899,7 +5899,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | gc | the machinery's scratch reclaimed on the machine it runs on, or on `--machine`'s through the fleet runner (section 1, gc): `gc [--machine <m>] [--dry-run] [--max-age <d>] [--ai-root <dir>]`; job directories of finished or absent lanes, reader checkouts of recorded findings, lander worktrees and bench directories past `--max-age`, the go caches trimmed to their cap, never a path under no known scratch root or a clone with work that is nowhere else; one line per class and `GC OK freed=<bytes> volume=<use%>`; run by `run` on every machine hourly and on a volume at 80%; never run by the server |
 | friend reconcile | a friend's own account of her cards, `<friend>-working/inbox/QUEUE.json`, and her outbox compared with the cards working on her row, each collected, kept or returned to ready (section 1, friend reconcile): `friend reconcile <friend> [--root <dir>] [--dry-run]`; never run by the server |
 | friend give | the coordinator's undo of `friend take` (section 1, a friend's card taken back): `friend give <friend> <id>... [--reason <text>]`; on each card named (a primary or its work card), ready or waiting, its current attempt's work card loses `taken_from` her row, so the next deal may deal it to her again, a hard pin taken back from her included; the marks of other friends stay. A card not ready or waiting, or never taken back from her, and a friend not on the friends table are refused, one `REFUSED` line each, the rest given; each given says `MOVED <card> may be dealt to <friend> again (<reason>)` (default reason: given back by the coordinator) with a happened note, then `FRIEND-GIVE OK moved=<n> refused=<m>` (`FAILED`, exit 1, when any is refused) |
-| friend clean | the retention rule of the friends' working directories (docs/FRIENDS.md; ideas#833), run nightly from a loop row on the machine that holds them, never by the server and never on the store: `friend clean [--pg <dsn>] [--root <dir>] [--days <n>] [--dry-run]`. For each friend row of nova-config (as `friend sync` reads them; the coordinator is one), `<root>/<friend>-working` (`--root`, else HOME); a friend with no directory there is said and skipped. A job is `inbox/<job>/` or `jobs/<job>/`, done when `outbox/<job>/REPORT.md` is a regular file, its age that file's. Inside a done job at least `--days` old (default 3) a clone (a directory holding `.git`) is removed when `git status --porcelain` is empty, it holds no stash and no commit of `HEAD` or a local branch is missing from every remote-tracking ref (`git log HEAD --branches --not --remotes`, no network); build output (`node_modules`, `target`, `gocache`, `gocache-*`, `.gocache`, `go-build`, `wt-*`) that is no clone is removed. A clone that fails the check, or whose git fails, is dirty: listed each run, `FRIENDS-CLEAN DIRTY friend= path= age=<d>d why=`, and removed once its job is 14 days old whatever its state, its line saying `dirty=<why>`. Nothing else is touched: the brief and any text of the job, `outbox/`, every file outside `inbox/` and `jobs/`; a link is never followed; a job under `jobs/` that is itself a clone is one target, one under `inbox/` is never removed (a NOTE). Every removal is `safepath.RemoveUnderRoots` under the job's directory. The friend's one build cache, `<friend>-working/.cache/go-build`, is held under 20 GiB by the member's trim (`internal/gocache`). `--dry-run` says `WOULD-REMOVE` in place of `REMOVED` with the bytes and removes nothing. Lines `FRIENDS-CLEAN REMOVED\|WOULD-REMOVE friend= path= bytes= age=<d>d kind=clone\|build[ dirty=<why>]`, `FRIENDS-CLEAN CACHE ...`, `FRIENDS-CLEAN FRIEND <f> dir= jobs= done= freed= listed=` (or `absent`), `FRIENDS-CLEAN FAILED friend= path=: <why>`, and last `FRIENDS-CLEAN OK freed=<bytes> listed=<n>` (a dry run adds `dry-run: nothing was removed`), or `FRIENDS-CLEAN INCOMPLETE ... failed=<n>`, exit 1; a config that cannot be read or holds no friend row, exit 3, nothing removed; `--json` one object with the lines |
+| friend clean | the retention rule of the friends' working directories (docs/FRIENDS.md; ideas#833), run nightly from a loop row on the machine that holds them, never by the server and never on the store: `friend clean [--pg <dsn>] [--root <dir>] [--days <n>] [--dry-run]`. For each friend row of nova-config (as `friend sync` reads them; the coordinator is one), `<root>/<friend>-working` (`--root`, else HOME); a friend with no directory there is said and skipped. A job is `inbox/<job>/` or `jobs/<job>/`, done when `outbox/<job>/REPORT.md` is a regular file, its age that file's. Inside a done job at least `--days` old (default 3) a clone (a directory holding `.git`) is removed when `git status --porcelain` is empty, it holds no stash and no commit of `HEAD` or a local branch is missing from every remote-tracking ref (`git log HEAD --branches --not --remotes`, no network); build output (`node_modules`, `target`, `gocache`, `gocache-*`, `.gocache`, `go-build`, `wt-*`) that is no clone is removed. A clone that fails the check, or whose git fails, is dirty: listed each run, `FRIENDS-CLEAN DIRTY friend= path= age=<d>d why=`, and removed once its job is 14 days old whatever its state, its line saying `dirty=<why>`. Nothing else is touched: the brief and any text of the job, `outbox/`, every file outside `inbox/` and `jobs/`; a link is never followed; a job under `jobs/` that is itself a clone is one target, one under `inbox/` is never removed (a NOTE). Every removal is `safepath.RemoveUnderRoots` under the job's directory. The friend's one build cache, `<friend>-working/.cache/go-build`, is held under 20 GiB by the member's trim (`pkg/gocache`). `--dry-run` says `WOULD-REMOVE` in place of `REMOVED` with the bytes and removes nothing. Lines `FRIENDS-CLEAN REMOVED\|WOULD-REMOVE friend= path= bytes= age=<d>d kind=clone\|build[ dirty=<why>]`, `FRIENDS-CLEAN CACHE ...`, `FRIENDS-CLEAN FRIEND <f> dir= jobs= done= freed= listed=` (or `absent`), `FRIENDS-CLEAN FAILED friend= path=: <why>`, and last `FRIENDS-CLEAN OK freed=<bytes> listed=<n>` (a dry run adds `dry-run: nothing was removed`), or `FRIENDS-CLEAN INCOMPLETE ... failed=<n>`, exit 1; a config that cannot be read or holds no friend row, exit 3, nothing removed; `--json` one object with the lines |
 | friend beat | a friend's beat, `friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>] [--active <RFC3339>]`, run by its own machinery every second; through the sprint's server it is `friend beat <friend>` and its report's flags, each once with its value, and nothing more |
 | friend down, friend up | `hold <friend>` and `unhold <friend>` in the old words, for one release: hold a friend (status `held`, whatever she beats or the coordinator observes; every card dealt to her goes back to ready, started or not, a started one with a push carrying its pushed head; `--reason <text>` and `--until <RFC3339>` shown in her status cell) and release the hold (no evidence: `down` until her session answers a wake ping or she finishes a card; `--width <n>` sets her width) |
 | friend take | take back cards dealt to a friend that she has not started (`<id>...` or `--all-unstarted`), each back to ready for the friends' deal |
@@ -6272,7 +6272,7 @@ environment's when `NOVA_SPRINT_REDIS_USER` is set (that user, the password in t
 `NOVA_SPRINT_REDIS_PASSWORD_ENV` names), which wins; else the recorded user, when the store opened
 is the recorded address (an explicit other address is never sent the recorded password); else the
 store's default user. The recorded password is read in the verb's own process through
-`secrets.ReadLogin` (internal/secrets/login.go), which takes the path `nova-secrets exec` takes
+`secrets.ReadLogin` (pkg/secrets/login.go), which takes the path `nova-secrets exec` takes
 (`OpenSeatFile`: the store's invariants, the key's mode, the sops version, then the decrypt), and
 is handed to the connection through the getenv redisconn reads it by. It is never printed, never
 written, and never in the process's environment, so no child of the verb inherits it. A recorded
@@ -6339,9 +6339,9 @@ cumulative, every addition the findings ask for applied at once, one `LINT FIX c
 <line>` per header line changed, in the order `PATHS:`, `NEW:`, `SHARED:`, line 1, so the
 coordinator applies them in one step and the brief passes. Then one refusal, `<n> brief
 finding(s) at the base, the first <token>: <excerpt>`, exit 2, nothing written; one red brief
-refuses the whole call. The code is `swarm.LintBrief` (internal/swarm/lintpaths.go) and
+refuses the whole call. The code is `swarm.LintBrief` (pkg/swarm/lintpaths.go) and
 `holdBriefBase` (cmd/nova-sprint/addlint.go); the tests are
-`TestAddLintRefusesABriefWhosePathsMissTheFilesItNames` (internal/swarm, a twin of a base, one
+`TestAddLintRefusesABriefWhosePathsMissTheFilesItNames` (pkg/swarm, a twin of a base, one
 brief per token that fails it and one that passes, and the corrections applied passing) and
 `TestAddRunsTheBriefChecksAtTheBase` (cmd/nova-sprint, add against a twin repository).
 
@@ -6736,7 +6736,7 @@ reading the machine's word off the answer it already gets, once per pass and
 again right before each start: a member's `queue --json` carries
 `"machine":"RUNNING"|"STOPPED"` and a friend's `friend beat` answer
 `machine=RUNNING|STOPPED` (`machineWord`; nothing on a store without the
-records). On STOPPED a member (internal/member `machineStop`) tells every
+records). On STOPPED a member (pkg/member `machineStop`) tells every
 running child to stop (`member.Stopper`: native is signalled and reaps its
 harness group with its own grace, killed after `StopGrace` 60 s; the job
 directory and the log are kept), reports, recovers and takes nothing, and once
@@ -6747,7 +6747,7 @@ stands and tried again after `StopReturnRetry` (a minute), and its beat
 carries the count still owed (`fleet beat --stop-returns <n>`). A member
 restarted mid-stop finds its old children gone: every queue card working under
 its row with no child of its own is handed back at once (the queue is the
-record on disk). A friend's daemon (internal/friend/stop.go) cancels every
+record on disk). A friend's daemon (pkg/friend/stop.go) cancels every
 lane turn and read under way the same way (the process group signalled, the
 card kept in the job directory; a read keeps the generation and epoch it was
 begun at, which the queue's refresh no longer lists), records each stop-return
@@ -6984,7 +6984,7 @@ DEADLINE the tick begun at <t> did not end within <d>`, writes every goroutine's
 stderr, and cancels the tick's context: its plan is never written, and its store calls after
 the cancel are never sent (a write already in flight is the fence's to finish or repair). A
 cancel does not end a store call already in flight at once: a read sent to Redis runs until its
-reply or its `ReadTimeout` (5 s, internal/redisconn), so a tick given up can take seconds to
+reply or its `ReadTimeout` (5 s, pkg/redisconn), so a tick given up can take seconds to
 stop. The loop holds the line until the tick given up has stopped, for it shares the loop's
 store and twin; then it adds one to `tick_overrun` on the heartbeat and moves the heartbeat's
 clock as a tick would (`store.CountTickOverrun`: a tick given up writes no heartbeat, and the
@@ -7138,8 +7138,8 @@ that found nothing, left no operation and is run again. A server that does not a
 worker, a store that did not answer.
 
 The server is `serve` in cmd/nova-sprint/serve.go, a step with no network in it; the listener is
-a shell around it; the wire and the worker's client are internal/sprintwire. Each rule here has a
-test in cmd/nova-sprint/serve_test.go and internal/sprintwire/worker_test.go, and none opens a
+a shell around it; the wire and the worker's client are pkg/sprintwire. Each rule here has a
+test in cmd/nova-sprint/serve_test.go and pkg/sprintwire/worker_test.go, and none opens a
 socket.
 
 #### install-canary-shadow-tick-r.w1: a shadow tick before every server swap

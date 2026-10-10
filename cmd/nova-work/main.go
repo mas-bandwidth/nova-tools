@@ -6,7 +6,7 @@
 // source again and compares it with the tree field for field. Neither verb
 // writes to the source: the GitHub seam refuses any document that is not a
 // query. The dispatch, the banner, the help, the version verb, the refusals
-// and the output (typed lines or --json of one value) are internal/tool's.
+// and the output (typed lines or --json of one value) are pkg/tool's.
 package main
 
 import (
@@ -19,10 +19,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
 	"github.com/mas-bandwidth/nova-tools/internal/workgh"
+	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 var version string

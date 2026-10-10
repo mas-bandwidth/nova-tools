@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/pkg/decide"
 )
 
 // The card decides the model it runs on.
@@ -43,7 +43,7 @@ type Route struct {
 	Tier     string `json:"tier"`
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
-	// Harness is the harness a card on it runs under (internal/harness: opencode, the
+	// Harness is the harness a card on it runs under (pkg/harness: opencode, the
 	// default, or a headless program of the heavy tier); the member launches by it.
 	Harness string `json:"harness,omitempty"`
 	Tokens  int    `json:"tokens"` // 0 is unmetered

@@ -8,8 +8,8 @@ the child meets it through the commands it already knows: `git push` works, `gh 
 finishes the card, `gh pr review` finishes a read. The child pushes nothing and opens nothing;
 the member does both, outside the wall, with its own credential.
 
-The code is `internal/cardcontract` (the frame, the result shape, the profiles and their shims),
-`internal/member` (the finish), `cmd/nova-swarm` (native installs the frame; the member pushes
+The code is `pkg/cardcontract` (the frame, the result shape, the profiles and their shims),
+`pkg/member` (the finish), `cmd/nova-swarm` (native installs the frame; the member pushes
 and opens the pull request). The model is `tla/CardContract.tla`.
 
 ## 1. The layers, bottom up
@@ -18,8 +18,8 @@ and opens the pull request). The model is `tla/CardContract.tla`.
 |---|---|---|
 | 1. the frame | the member writes `<slot>.frame.json` from the packet and the brief's header lines: the repository, the base ref, the commit to stage (the base, or for a rework the last pushed head of any earlier attempt, `base_head` and its attempt `base_attempt` in the packet, which staging carries onto the tip of the base branch, or for a read the head under read), the branch, the attempt, the head it continues and that head's attempt, why the attempt exists (`why`), the readers' finding and the coordinator's fix, the tier, the model | `TestTheFrameIsThePackets`, `TestALaterAttemptStartsFromTheLastPushedHeadOfAnyEarlierAttempt`, `TestAReworkStagesAtTheLastPushedHeadOfAnyEarlierAttempt` |
 | 2. staging | `native --frame` stages that commit on that branch (never the brief's prose, never a branch name that never reached origin), a rework at the tip of its base branch with that commit's work carried on top where it applies cleanly, and writes `JOB.md` into the job directory | `TestStageCardStagesTheFramesCommitOnItsBranch`, `TestAReworkIsStagedAtTheTipOfItsBase`, `TestAReworkCarriesThePreviousWorkThatApplies`, `TestAReworkWhoseWorkDoesNotApplyIsTheBareTip` (functional tier) |
-| 3. the profile | the child's model family picks a profile; the profile writes the shims first on the child's `PATH` and the text of `JOB.md` | `internal/cardcontract`: unit tests of the text and the shape, functional tests of every shim verb form |
-| 4. the finish | the member reads the result shape, pushes the head, opens the pull request, and judges the finish: ok, failed with its reason, or reaped | `TestJudgeIsTheFinishRule`, `TestJudgeNamesTheProviderForARunItFailed` and the push tests of `internal/member`, the twin tests of `cmd/nova-sprint`, `tla/CardContract.tla` |
+| 3. the profile | the child's model family picks a profile; the profile writes the shims first on the child's `PATH` and the text of `JOB.md` | `pkg/cardcontract`: unit tests of the text and the shape, functional tests of every shim verb form |
+| 4. the finish | the member reads the result shape, pushes the head, opens the pull request, and judges the finish: ok, failed with its reason, or reaped | `TestJudgeIsTheFinishRule`, `TestJudgeNamesTheProviderForARunItFailed` and the push tests of `pkg/member`, the twin tests of `cmd/nova-sprint`, `tla/CardContract.tla` |
 | 5. end to end | a scripted child (clone, branch, commit, push, `gh pr create`) runs under the real member and native on the mem twin with a local bare origin, once per profile | `TestTheScriptedChildEndToEnd` (functional tier) |
 
 `STAGE OK` reports total staging `secs` and cumulative Git command seconds for `clone`
@@ -138,7 +138,7 @@ clone URL in the body names nothing.
 
 The brief's header grammar also names two reading lines: `START: <files or packages to read
 first>` and `STOP: <the condition that ends the task>`. The card lint checks them beside `TEST:`
-(`internal/swarm/lintheader.go`, tokens `start-named` and `stop-named`): line 1's tier is the
+(`pkg/swarm/lintheader.go`, tokens `start-named` and `stop-named`): line 1's tier is the
 condition, read as the sprint writes it (`tier: flash` or `tier: pro`), and a tier flash brief
 missing either line is refused, the finding naming the missing line; for tier pro, or no tier,
 the same finding is advice, and the verdict stands. The lint decides that by tier before it
@@ -328,7 +328,7 @@ first (nova-tools#5199; the owner, 2026-10-03: "provider out of funds should nev
 failure."): a non-retryable 402 at launch makes the harness exit 1 within two seconds, before
 its log holds a line, so the 402 is in the printed output and the session alone
 (`TestANonRetryableProviderRefusalAtLaunchIsAProviderFailure`,
-`TestASessionErrorThatIsNotARefusalForCreditIsNotAProviderFailureByItself`). The reason is the cause (`internal/swarm` providercause.go):
+`TestASessionErrorThatIsNotARefusalForCreditIsNotAProviderFailureByItself`). The reason is the cause (`pkg/swarm` providercause.go):
 `provider: class=<class> status=<status|-> msg=<words>`. The class is one of `unknown-model`
 (the provider does not know or serve the model id: a config error), `auth`, `out-of-credit`,
 `rate-limited`, `provider-5xx`, `timeout` and `other` (none of these, or the harness recorded
@@ -478,7 +478,7 @@ for the child's head by a finish that names none (`LastPushed`).
 A profile is done when it passes the harness every profile passes: `TestEveryProfileKeepsTheContract`
 (the shims answer every verb form the profile claims) and `TestTheScriptedChildEndToEnd`, the
 scripted child of section 1 layer 5, which runs once per family in `cardcontract.Families`
-with the Go test binary `internal/cardcontract/testdata/scripted/child` placed as `<family>` as the
+with the Go test binary `pkg/cardcontract/testdata/scripted/child` placed as `<family>` as the
 harness (`plain` for a family with none): add the steps the family's models follow (how they clone, branch,
 commit, push and finish), and the test asserts the member pushed the child's commit to the
 card's branch on origin and, when the child ran `gh pr create`, opened the pull request with
@@ -616,4 +616,4 @@ scanned as before:
   `patterns-block-without-class-test`, at the paragraph's first line.
 
 `nova-sprint add` runs the same lint, so the exemption holds there. Pinned by
-`TestPatternsToRefuseBlockIsExemptForAClassTestCard` (`internal/swarm`).
+`TestPatternsToRefuseBlockIsExemptForAClassTestCard` (`pkg/swarm`).
