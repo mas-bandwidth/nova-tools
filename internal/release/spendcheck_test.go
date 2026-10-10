@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,9 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/provbalance"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // TagTime makes the fake forge a TagTimer: every tag was made a day before the cut.
@@ -28,7 +27,24 @@ func (f *fakeForge) TagTime(_ context.Context, _, tag string) (time.Time, error)
 // noSpend is a spend gate with nothing to compare: a store that recorded no spend and
 // knows no provider, the cut tests' own that are not about spend.
 func noSpend() *SpendSources {
-	return &SpendSources{Store: SnapshotSpend{S: &sprint.Snapshot{}}, Receipts: fakeReceipts{}}
+	return &SpendSources{Store: fakeRecorded{}, Receipts: fakeReceipts{}}
+}
+
+// fakeRecorded is what the store recorded over the window, as the sprint's reader answers it
+// (cmd/nova-sprint, spend_store.go, whose test reads these figures off a store's cards).
+type fakeRecorded struct {
+	usd    map[string]float64
+	tokens map[string]int64
+}
+
+func (r fakeRecorded) Providers(context.Context, SpendWindow) ([]string, error) {
+	return slices.Sorted(maps.Keys(r.usd)), nil
+}
+func (r fakeRecorded) Spend(_ context.Context, provider string, _ SpendWindow) (float64, error) {
+	return r.usd[provider], nil
+}
+func (r fakeRecorded) Tokens(context.Context, SpendWindow) (map[string]int64, error) {
+	return maps.Clone(r.tokens), nil
 }
 
 // fakeProvider is a provider's own count: a figure, or an error that it cannot be read.
@@ -50,80 +66,11 @@ type fakeReceipts map[string]int64
 
 func (r fakeReceipts) Tokens(context.Context, SpendWindow) (map[string]int64, error) { return r, nil }
 
-// spendStore is the store's read: an openrouter route and one card whose records over the
-// window (since the previous tag's day, 2026-09-17) hold $836 of openrouter in a take, a
-// take with no result and a read, $50 of it before the window, and a subscription friend's
-// run of 1000 tokens.
-func spendStore(t *testing.T) *sprint.Snapshot {
+// spendStore is the store's read over the window (since the previous tag's day,
+// 2026-09-17): $836 of openrouter, and a subscription friend's run of 1000 tokens.
+func spendStore(t *testing.T) fakeRecorded {
 	t.Helper()
-	s := &sprint.Snapshot{Now: at(t), Work: sprint.NewTable(sprint.Work), Fleet: sprint.NewTable(sprint.Fleet)}
-	s.Routes = []sprint.Route{{Name: "pro-or", Tier: "pro", Provider: "openrouter", Model: "m"}}
-	s.Work.SetRows([]string{"s1"})
-	pr := &sprint.Card{ID: "s1-1", Row: "s1", Col: sprint.Working, Fields: map[string]string{}}
-	in, before := "2026-09-17T18:00:00Z", "2026-09-16T18:00:00Z"
-	for _, c := range []sprint.Consumer{
-		{Kind: "work", Card: "s1-1", Key: "a", Route: "pro-or", End: "ok", At: in, Usage: cardcost.ParseUsage("input=10 actual_usd=500 actual_by=harness")},
-		{Kind: "work", Card: "s1-1", Key: "b", Route: "pro-or", End: "no result", At: in, Usage: cardcost.ParseUsage("input=10 actual_usd=300 actual_by=harness")},
-		{Kind: "read", Card: "s1-1.r1", Key: "c", Model: "openrouter/m", End: "ok", At: in, Usage: cardcost.ParseUsage("input=10 predicted_usd=36")},
-		{Kind: "work", Card: "s1-1", Key: "d", Route: "pro-or", End: "failed", At: before, Usage: cardcost.ParseUsage("input=10 actual_usd=50 actual_by=harness")},
-		{Kind: "read", Card: "s1-1.r2", Key: "e", Who: "alex", End: "ok", At: in, Usage: cardcost.ParseUsage("input=600 output=400 " + sprint.UsageSubscription)},
-	} {
-		recordConsumer(pr, c)
-	}
-	s.Work.Put(pr)
-	return s
-}
-
-// recordConsumer writes one consumer onto a primary the way a step does, for a
-// world built outside a step. The production writer is unexported.
-func recordConsumer(pr *sprint.Card, c sprint.Consumer) {
-	if pr.Fields == nil {
-		pr.Fields = map[string]string{}
-	}
-	key := sprint.FieldCostRecord + c.Key
-	if pr.Fields[key] != "" {
-		return
-	}
-	total := cardcost.ParseTotal(pr.Fields[sprint.FieldCostTotal])
-	pr.Fields[sprint.FieldCostTotal] = total.Add(c.Usage).String()
-	n := 0
-	for k := range pr.Fields {
-		if strings.HasPrefix(k, sprint.FieldCostRecord) && k != sprint.FieldCostTotal {
-			n++
-		}
-	}
-	if n >= sprint.MaxCostRecords {
-		cut, _ := strconv.Atoi(pr.Fields[sprint.FieldCostCut])
-		pr.Fields[sprint.FieldCostCut] = strconv.Itoa(cut + 1)
-		return
-	}
-	pr.Fields[key] = consumerLine(c)
-}
-
-func consumerLine(c sprint.Consumer) string {
-	orDash := func(s string) string {
-		if s == "" {
-			return "-"
-		}
-		return s
-	}
-	w := []string{
-		"kind=" + c.Kind,
-		"card=" + c.Card,
-		"attempt=" + strconv.Itoa(c.Attempt),
-		"take=" + strconv.Itoa(c.Take),
-		"gen=" + strconv.Itoa(c.Gen),
-		"who=" + orDash(c.Who),
-		"on_route=" + orDash(c.Route),
-		"on_model=" + orDash(c.Model),
-		"on_tier=" + orDash(c.Tier),
-		"end=" + orDash(strings.ReplaceAll(c.End, " ", "-")),
-		"at=" + orDash(c.At),
-	}
-	if c.Cap != "" {
-		w = append(w, "lane_cap="+c.Cap, "lane_overrun="+orDash(c.Overrun))
-	}
-	return strings.Join(w, " ") + " " + c.Usage.String()
+	return fakeRecorded{usd: map[string]float64{"openrouter": 836}, tokens: map[string]int64{"alex": 1000}}
 }
 
 // cutWithSpend runs a cut against the fake forge with the spend sources given.
@@ -151,7 +98,7 @@ func TestAReleaseIsRefusedWhenRecordedSpendMissesTheProvidersOwn(t *testing.T) {
 	t.Run("2250 against 836 refuses naming the provider", func(t *testing.T) {
 		t.Parallel()
 		or := &fakeProvider{name: "openrouter", usd: 2250}
-		code, out, errs, f := cutWithSpend(t, &SpendSources{Store: SnapshotSpend{S: spendStore(t)}, Providers: []ProviderSpend{or}, Receipts: fakeReceipts{"alex": 1000}})
+		code, out, errs, f := cutWithSpend(t, &SpendSources{Store: spendStore(t), Providers: []ProviderSpend{or}, Receipts: fakeReceipts{"alex": 1000}})
 		require.Equal(t, 2, code, "out=%s errs=%s", out, errs)
 		assert.Contains(t, errs, "SPEND provider=openrouter store=$836.00 provider_usd=$2250.00 gap=$1414.00 share=62.8% verdict=refuse")
 		assert.Contains(t, errs, "CUT REFUSED reason=spend-gate window=2026-09-17T00:00:00Z..2026-09-18T09:00:00Z refused=1 providers=openrouter friends=-")
@@ -163,7 +110,7 @@ func TestAReleaseIsRefusedWhenRecordedSpendMissesTheProvidersOwn(t *testing.T) {
 	t.Run("a 3% gap passes", func(t *testing.T) {
 		t.Parallel()
 		or := &fakeProvider{name: "openrouter", usd: 836 / 0.97}
-		code, out, errs, f := cutWithSpend(t, &SpendSources{Store: SnapshotSpend{S: spendStore(t)}, Providers: []ProviderSpend{or}, Receipts: fakeReceipts{"alex": 1000}})
+		code, out, errs, f := cutWithSpend(t, &SpendSources{Store: spendStore(t), Providers: []ProviderSpend{or}, Receipts: fakeReceipts{"alex": 1000}})
 		require.Equal(t, 0, code, "out=%s errs=%s", out, errs)
 		assert.Contains(t, errs, "SPEND provider=openrouter store=$836.00 provider_usd=$861.86 gap=$25.86 share=3.0% verdict=ok")
 		assert.Contains(t, errs, "SPEND friend=alex store_tokens=1000 receipt_tokens=1000 gap=0 share=0.0% verdict=ok")
@@ -174,14 +121,14 @@ func TestAReleaseIsRefusedWhenRecordedSpendMissesTheProvidersOwn(t *testing.T) {
 	t.Run("an unreadable provider refuses", func(t *testing.T) {
 		t.Parallel()
 		or := &fakeProvider{name: "openrouter", err: errors.New("GET activity answered 401")}
-		code, _, errs, f := cutWithSpend(t, &SpendSources{Store: SnapshotSpend{S: spendStore(t)}, Providers: []ProviderSpend{or}, Receipts: fakeReceipts{"alex": 1000}})
+		code, _, errs, f := cutWithSpend(t, &SpendSources{Store: spendStore(t), Providers: []ProviderSpend{or}, Receipts: fakeReceipts{"alex": 1000}})
 		require.Equal(t, 2, code, errs)
 		assert.Contains(t, errs, "SPEND provider=openrouter unread verdict=refuse: GET activity answered 401")
 		assert.Contains(t, errs, "refused=1 providers=openrouter friends=-")
 		assert.Empty(t, f.tagged)
 
 		// a provider the store knows of and no readout is given for is unread too
-		code, _, errs, _ = cutWithSpend(t, &SpendSources{Store: SnapshotSpend{S: spendStore(t)}, Receipts: fakeReceipts{"alex": 1000}})
+		code, _, errs, _ = cutWithSpend(t, &SpendSources{Store: spendStore(t), Receipts: fakeReceipts{"alex": 1000}})
 		require.Equal(t, 2, code, errs)
 		assert.Contains(t, errs, "SPEND provider=openrouter unread verdict=refuse: no readout of openrouter's own spend is known")
 	})
@@ -189,13 +136,13 @@ func TestAReleaseIsRefusedWhenRecordedSpendMissesTheProvidersOwn(t *testing.T) {
 	t.Run("subscription tokens are compared the same way", func(t *testing.T) {
 		t.Parallel()
 		or := &fakeProvider{name: "openrouter", usd: 836}
-		code, _, errs, _ := cutWithSpend(t, &SpendSources{Store: SnapshotSpend{S: spendStore(t)}, Providers: []ProviderSpend{or}, Receipts: fakeReceipts{"alex": 2500, "emma": 300}})
+		code, _, errs, _ := cutWithSpend(t, &SpendSources{Store: spendStore(t), Providers: []ProviderSpend{or}, Receipts: fakeReceipts{"alex": 2500, "emma": 300}})
 		require.Equal(t, 2, code, errs)
 		assert.Contains(t, errs, "SPEND friend=alex store_tokens=1000 receipt_tokens=2500 gap=1500 share=60.0% verdict=refuse")
 		assert.Contains(t, errs, "SPEND friend=emma store_tokens=0 receipt_tokens=300 gap=300 share=100.0% verdict=refuse")
 		assert.Contains(t, errs, "refused=2 providers=- friends=alex,emma")
 
-		code, _, errs, _ = cutWithSpend(t, &SpendSources{Store: SnapshotSpend{S: spendStore(t)}, Providers: []ProviderSpend{or}})
+		code, _, errs, _ = cutWithSpend(t, &SpendSources{Store: spendStore(t), Providers: []ProviderSpend{or}})
 		require.Equal(t, 2, code, errs)
 		assert.Contains(t, errs, "SPEND friend=alex unread verdict=refuse: no harness receipts were given")
 	})
@@ -204,7 +151,7 @@ func TestAReleaseIsRefusedWhenRecordedSpendMissesTheProvidersOwn(t *testing.T) {
 		t.Parallel()
 		f := cutForge()
 		deps := cutDeps(t, f)
-		deps.Spend = &SpendSources{Store: SnapshotSpend{S: spendStore(t)}, Providers: []ProviderSpend{&fakeProvider{name: "openrouter", usd: 2250}}, Receipts: fakeReceipts{"alex": 1000}}
+		deps.Spend = &SpendSources{Store: spendStore(t), Providers: []ProviderSpend{&fakeProvider{name: "openrouter", usd: 2250}}, Receipts: fakeReceipts{"alex": 1000}}
 		path := filepath.Join(t.TempDir(), "CHANGELOG.md")
 		var out, errs bytes.Buffer
 		code := Run("nova-update", []string{"cut", "--repo", "mas-bandwidth/nova-tools", "--from", "main", "--version", "v0.16.0", "--changelog", path,
@@ -228,6 +175,15 @@ func TestAReleaseIsRefusedWhenRecordedSpendMissesTheProvidersOwn(t *testing.T) {
 		require.Equal(t, 2, code, errs.String())
 		assert.Contains(t, errs.String(), "CUT REFUSED reason=spend-gate")
 		assert.Contains(t, errs.String(), "--spend-store <addr> names no sprint store")
+		assert.Empty(t, f.tagged)
+
+		// a store named to a build with no sprint store reader is unread, never a pass
+		out.Reset()
+		errs.Reset()
+		code = Run("nova-update", []string{"cut", "--repo", "mas-bandwidth/nova-tools", "--from", "main", "--version", "v0.16.0",
+			"--changelog", filepath.Join(t.TempDir(), "CHANGELOG.md"), "--spend-store", "127.0.0.1:1"}, &out, &errs, deps)
+		require.Equal(t, 2, code, errs.String())
+		assert.Contains(t, errs.String(), "this build reads no sprint store")
 		assert.Empty(t, f.tagged)
 	})
 }

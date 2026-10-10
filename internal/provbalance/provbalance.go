@@ -11,9 +11,30 @@ import (
 	"io"
 	"net/http"
 	"time"
-
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
+
+// ProviderRead is one balance the poll read: the provider, the dollars left (Known false
+// with Note saying why when there is none to read), and its count of dollars used (HasUsed
+// false when it keeps none). The sprint's balance poll names it ProviderRead.
+type ProviderRead struct {
+	Provider string
+	Known    bool
+	Balance  float64
+	HasUsed  bool
+	Used     float64
+	Note     string
+}
+
+// UsageRead is one provider's own count of a UTC day's usage as the run loop read it: Known
+// false with Note saying why when there was none to read. The sprint's cost reconciliation
+// names it UsageRead.
+type UsageRead struct {
+	Provider string
+	Known    bool
+	Day      string // the UTC day the count is of, 2006-01-02
+	Used     float64
+	Note     string
+}
 
 // OpenRouterURL is openrouter's credits endpoint: GET with the key as a bearer token answers
 // {"data": {"total_credits": <dollars bought>, "total_usage": <dollars used>}}.
@@ -39,8 +60,8 @@ const maxBody = 64 << 10
 // Read is the provider's balance over the transport (nil is http.DefaultTransport), its key
 // read from getenv; a provider with no endpoint, no key, or an answer that is not its shape
 // is unknown with why.
-func Read(ctx context.Context, rt http.RoundTripper, provider string, getenv func(string) string) sprint.ProviderRead {
-	unknown := func(why string) sprint.ProviderRead { return sprint.ProviderRead{Provider: provider, Note: why} }
+func Read(ctx context.Context, rt http.RoundTripper, provider string, getenv func(string) string) ProviderRead {
+	unknown := func(why string) ProviderRead { return ProviderRead{Provider: provider, Note: why} }
 	if provider != "openrouter" {
 		if why, ok := unknownWhy[provider]; ok {
 			return unknown(why)
@@ -83,7 +104,7 @@ func Read(ctx context.Context, rt http.RoundTripper, provider string, getenv fun
 	if err := json.Unmarshal(raw, &wire); err != nil || wire.Data.Credits == nil || wire.Data.Usage == nil {
 		return unknown("GET " + OpenRouterURL + " answered no data.total_credits and data.total_usage")
 	}
-	return sprint.ProviderRead{Provider: provider, Known: true, Balance: *wire.Data.Credits - *wire.Data.Usage, HasUsed: true, Used: *wire.Data.Usage}
+	return ProviderRead{Provider: provider, Known: true, Balance: *wire.Data.Credits - *wire.Data.Usage, HasUsed: true, Used: *wire.Data.Usage}
 }
 
 // OpenRouterKeyURL is openrouter's key endpoint: GET with the key as a bearer token answers
@@ -95,8 +116,8 @@ const OpenRouterKeyURL = "https://openrouter.ai/api/v1/key"
 // http.DefaultTransport), its key read from getenv; day is the UTC day the count is of,
 // 2006-01-02. A provider with no usage endpoint, no key, or an answer that is not its shape
 // is unknown with why, and the key is never in the why.
-func ReadUsage(ctx context.Context, rt http.RoundTripper, provider, day string, getenv func(string) string) sprint.UsageRead {
-	unknown := func(why string) sprint.UsageRead { return sprint.UsageRead{Provider: provider, Note: why} }
+func ReadUsage(ctx context.Context, rt http.RoundTripper, provider, day string, getenv func(string) string) UsageRead {
+	unknown := func(why string) UsageRead { return UsageRead{Provider: provider, Note: why} }
 	if provider != "openrouter" {
 		if why, ok := unknownWhy[provider]; ok {
 			return unknown(why)
@@ -138,5 +159,5 @@ func ReadUsage(ctx context.Context, rt http.RoundTripper, provider, day string, 
 	if err := json.Unmarshal(raw, &wire); err != nil || wire.Data.Daily == nil {
 		return unknown("GET " + OpenRouterKeyURL + " answered no data.usage_daily")
 	}
-	return sprint.UsageRead{Provider: provider, Known: true, Day: day, Used: *wire.Data.Daily}
+	return UsageRead{Provider: provider, Known: true, Day: day, Used: *wire.Data.Daily}
 }
