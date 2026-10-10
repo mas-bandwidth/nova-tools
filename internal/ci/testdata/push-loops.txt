@@ -82,6 +82,7 @@ internal/nsprint/testutil/pg/pg.go Server.ready waits and retries
 internal/nsprint/testutil/redis.go startOnce waits and retries
 internal/sandbox/tree.go Tree.KillAndAwait waits and retries
 internal/secrets/seal.go sealCarry.carry waits and retries
+internal/sprint/adopt_window.go AdoptWindow.Wait waits and retries
 internal/sprint/control_line.go ControlLine.TickLock waits and retries
 internal/swarm/deadline.go Reap waits and retries
 internal/swarm/fileretry.go readFileSteadyBy waits and retries
