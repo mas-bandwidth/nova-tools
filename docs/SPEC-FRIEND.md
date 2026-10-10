@@ -2160,10 +2160,14 @@ whoever wrote the brief:
   report with no `Verdict:` line is noted `it has no Verdict line`. Past the
   card's deadline every not-final report is collected as `FAIL` with the reason
   `report never became final: first line <text>`. The deadline is the brief's
-  `DEADLINE:` line (an absolute RFC3339 time, or a duration from the first pass
-  that saw the report) and two hours when the brief names none. `TestFinal`,
-  `TestFinalGatesEveryReportAndTheDeadlineCollectsTheRest` and
-  `TestAReportThatIsNotFinalIsLeftUntilTheCardsDeadline`.
+  `DEADLINE:` line, its key read in any case (an issued brief writes `Deadline:`
+  and a value ending in a period): an absolute RFC3339 time, or a duration from
+  the card's start, the lane's own start when the daemon began it else the first
+  pass that saw the card working on her row; and two hours from that start when
+  the brief names none. `TestFinal`,
+  `TestFinalGatesEveryReportAndTheDeadlineCollectsTheRest`,
+  `TestAReportThatIsNotFinalIsLeftUntilTheCardsDeadline` and
+  `TestACardDeadlineRunsFromTheCardsStart`.
 - A finish is sent once: a job finished is never sent again, nor noted when its
   card leaves her row. One the server did not answer or refused is said once
   and sent again after `OutboxRetry` (a minute); friend sync may finish it
