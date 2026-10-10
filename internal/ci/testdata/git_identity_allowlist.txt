@@ -1,5 +1,5 @@
 # git_identity_allowlist.txt -- the test files that still run `git commit` without the
-# shared identity (internal/testgit), held by TestNoTestCommitsWithoutTheSharedGitIdentity
+# shared identity (pkg/testgit), held by TestNoTestCommitsWithoutTheSharedGitIdentity
 # in internal/ci/git_identity_class_test.go (docs/SPEC-CI.md, "Tests this spec demands").
 # One row: file count reason, the count the commit sites in the file that do not run
 # under testgit. Each either names an identity of its own (`-c user.name`, its own
@@ -43,24 +43,24 @@ cmd/nova-swarm/step_functional_test.go 1 predates the rule; route its commits th
 cmd/nova-swarm/step_test.go 1 predates the rule; route its commits through testgit.Environ
 cmd/nova-tokens/boundary_functional_test.go 1 predates the rule; route its commits through testgit.Environ
 cmd/nova-tokens/boundary_test.go 1 predates the rule; route its commits through testgit.Environ
-internal/cardcontract/shims_functional_test.go 2 predates the rule; route its commits through testgit.Environ
-internal/cardcontract/shims_test.go 1 predates the rule; route its commits through testgit.Environ
+pkg/cardcontract/shims_functional_test.go 2 predates the rule; route its commits through testgit.Environ
+pkg/cardcontract/shims_test.go 1 predates the rule; route its commits through testgit.Environ
 internal/ci/change_base_reads_base_list_functional_test.go 2 predates the rule; route its commits through testgit.Environ
 internal/ci/classtests_class_test.go 8 predates the rule; route its commits through testgit.Environ
 internal/ci/deprecated_imports_ratchet_test.go 5 predates the rule; route its commits through testgit.Environ
 internal/ci/unitwaits_git_functional_test.go 7 predates the rule; route its commits through testgit.Environ
-internal/dogfood/authors_test.go 4 predates the rule; route its commits through testgit.Environ
-internal/hygiene/hygiene_test.go 19 predates the rule; route its commits through testgit.Environ
-internal/hygiene/submodule_config_test.go 1 predates the rule; route its commits through testgit.Environ
-internal/nsprint/testutil/remote_test.go 3 predates the rule; route its commits through testgit.Environ
-internal/release/edges_diff_functional_test.go 2 predates the rule; route its commits through testgit.Environ
-internal/sandbox/delete_outside_test.go 1 predates the rule; route its commits through testgit.Environ
-internal/secrets/check_store_test.go 2 predates the rule; route its commits through testgit.Environ
-internal/secrets/gate_recipients_test.go 1 predates the rule; route its commits through testgit.Environ
-internal/secrets/gate_test.go 2 predates the rule; route its commits through testgit.Environ
-internal/secrets/model_invariants_test.go 2 predates the rule; route its commits through testgit.Environ
-internal/secrets/seal_test.go 1 predates the rule; route its commits through testgit.Environ
-internal/secrets/store_test.go 1 predates the rule; route its commits through testgit.Environ
+pkg/dogfood/authors_test.go 4 predates the rule; route its commits through testgit.Environ
+pkg/hygiene/hygiene_test.go 19 predates the rule; route its commits through testgit.Environ
+pkg/hygiene/submodule_config_test.go 1 predates the rule; route its commits through testgit.Environ
+pkg/nsprint/testutil/remote_test.go 3 predates the rule; route its commits through testgit.Environ
+pkg/release/edges_diff_functional_test.go 2 predates the rule; route its commits through testgit.Environ
+pkg/sandbox/delete_outside_test.go 1 predates the rule; route its commits through testgit.Environ
+pkg/secrets/check_store_test.go 2 predates the rule; route its commits through testgit.Environ
+pkg/secrets/gate_recipients_test.go 1 predates the rule; route its commits through testgit.Environ
+pkg/secrets/gate_test.go 2 predates the rule; route its commits through testgit.Environ
+pkg/secrets/model_invariants_test.go 2 predates the rule; route its commits through testgit.Environ
+pkg/secrets/seal_test.go 1 predates the rule; route its commits through testgit.Environ
+pkg/secrets/store_test.go 1 predates the rule; route its commits through testgit.Environ
 internal/sprint/land_cure_test.go 1 predates the rule; route its commits through testgit.Environ
 internal/sprint/store/branch_redeal_push_test.go 2 predates the rule; route its commits through testgit.Environ
 internal/sprint/sync_twin_test.go 2 predates the rule; route its commits through testgit.Environ

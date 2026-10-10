@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
 )
 
 // THE REPRICE (docs/SPEC-SPRINT.md, "What a card cost", the reprice; the owner, 2026-10-05:

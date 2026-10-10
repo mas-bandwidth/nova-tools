@@ -15,7 +15,7 @@ the login flags are explained once, the fn and acl grammars are printed whole,
 and the exit table is repeated where a reader needs it. From the spec
 (docs/SPEC-REDIS.md) the code reads as one entry point (main.go:109), one file
 per concern — serve.go, fn.go, acl.go, report.go — and the two internal
-neighbours that matter (internal/redisconn, internal/redisfn) name their own
+neighbours that matter (pkg/redisconn, pkg/redisfn) name their own
 contracts well. Four verbs a stranger can try with the dry run, and the scratch
 keys carry an owner and a TTL by construction (main.go:507-523).
 
@@ -69,7 +69,7 @@ package seam (main.go:508), so a caller that skips the parser still cannot write
 a key without an owner and a TTL.
 
 The scratch verbs build one value rendered as lines or as the JSON of the same
-value, with the refusal grammar and the exit table inherited from internal/tool
+value, with the refusal grammar and the exit table inherited from pkg/tool
 (cmd/nova-redis/main.go:221,255); the verbs that print their own receipts
 (cmd/nova-redis/fn.go:65 and acl.go:177) mark themselves `Prints` and drop
 `--json`, so the banner's "every verb but these takes --json" stays true.
@@ -77,7 +77,7 @@ value, with the refusal grammar and the exit table inherited from internal/tool
 ## Compared with earlier ratings
 | earlier | now | evidence |
 |---|---|---|
-| a hand-rolled skeleton | FIXED | cmd/nova-redis/main.go:109 builds on internal/tool, the one shape; the unit tests meet Problems() through the package's own checks and internal/ci holds every such package |
+| a hand-rolled skeleton | FIXED | cmd/nova-redis/main.go:109 builds on pkg/tool, the one shape; the unit tests meet Problems() through the package's own checks and internal/ci holds every such package |
 | a 50-line prose wall in help | CHANGED | cmd/nova-redis/main.go:114-118 is a five-line how-text; the long prose moved to the package doc (main.go:1-27) and docs/SPEC-REDIS.md |
 | ticket numbers in the package doc | FIXED | cmd/nova-redis/main.go:1-27 names no issue id; the ids that remain are in test comments, not the shipped doc (serve_test.go:4) |
-| three line grammars in one help | CHANGED | the invocation grammar is one (internal/tool), but the fn and acl receipts keep their own bare-head printers (cmd/nova-redis/fn.go:231-259), so the count is two, not one |
+| three line grammars in one help | CHANGED | the invocation grammar is one (pkg/tool), but the fn and acl receipts keep their own bare-head printers (cmd/nova-redis/fn.go:231-259), so the count is two, not one |

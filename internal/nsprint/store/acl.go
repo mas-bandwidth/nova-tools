@@ -16,11 +16,11 @@ package store
 // also keeps its own beat (seat-keeps-beat: friend beat's HSET and PERSIST of
 // friend:<f>:beat) and its one beat loop's lease and models through the
 // ns_friend_loop_* and ns_friend_models functions, never SET or EVAL
-// (TestFriendSeatKeepsBeatUnderACL). The tables of internal/ntable
+// (TestFriendSeatKeepsBeatUnderACL). The tables of pkg/ntable
 // (nova-table; the sprint's streams table) live under ~table:* with the
 // registry set tables: the coordinator seat writes them (the plain writes
 // plus the two functions, ns_oset_move and ns_table_clear;
-// internal/ntable's TestTableGrantsAreExactlyWhatTheWriterNeeds runs every
+// pkg/ntable's TestTableGrantsAreExactlyWhatTheWriterNeeds runs every
 // write as a user holding exactly those) and the table seat reads them.
 // A table's read set and batch check their members' places with one ZMSCORE
 // per cell, and a sprint's twin catches a table up from its change stream

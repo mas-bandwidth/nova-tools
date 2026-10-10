@@ -19,9 +19,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/filelock"
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/filelock"
+	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
 // diskutilPath is where macOS ships the tool. It is looked up on the PATH first so a
@@ -278,7 +278,7 @@ func rootOwnedAndWritable(mount string) error {
 }
 
 // lockVolumeCreate takes the one lock that makes a concurrent `nova-sandbox run` safe:
-// internal/filelock's kernel lock (tla/FileLock.tla) on a file under the CALLER's cache
+// pkg/filelock's kernel lock (tla/FileLock.tla) on a file under the CALLER's cache
 // directory. Not /tmp and not /var: a lock at a path any process can write is a lock any
 // process can take, and the contained command of a run is exactly a process this tool
 // does not trust.

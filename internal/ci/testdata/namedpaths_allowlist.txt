@@ -14,7 +14,7 @@
 
 # --- 2. An invented example: a name chosen to show the SHAPE of a path. ---
 
-internal/bus/send.go nova-card's findings fixture (cmd/nova-card/testdata/findings.tsv): an invented finding, quoted by docs/dogfood/2026-10-06/antigravity/card.md's recorded output
+pkg/bus/send.go nova-card's findings fixture (cmd/nova-card/testdata/findings.tsv): an invented finding, quoted by docs/dogfood/2026-10-06/antigravity/card.md's recorded output
 
 # --- 3. A path in another tree: another repository, another branch, or a retired file. ---
 
@@ -33,10 +33,19 @@ cmd/nova-bus/help.go a file of the git bus, removed 2026-10-04; the ratings and 
 cmd/nova-bus/inbox.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
 cmd/nova-bus/send.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
 cmd/nova-bus/wait.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
-internal/bus/draft_test.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
-internal/bus/git.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
-internal/bus/instrument.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
-internal/bus/note.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
-internal/bus/prepared.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+pkg/bus/draft_test.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+pkg/bus/git.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+pkg/bus/instrument.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+pkg/bus/note.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+pkg/bus/prepared.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
 docs/SPEC-BUS-DELIVERY.md a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
-internal/secrets/storepull.go deleted with the dead storepull.go (dead-pkg-secrets-t2b); the 1.1.0 ratings doc cites it as history
+pkg/secrets/storepull.go deleted with the dead storepull.go (dead-pkg-secrets-t2b); the 1.1.0 ratings doc cites it as history
+
+# The sprint's docs and its sprint and work ratings moved to nova-sprint at v1.2.3 (split layer L5).
+docs/SPEC-SPRINT.md moved to mas-bandwidth/nova-sprint at v1.2.3 (split layer L5, docs/SPLIT-NOVA-SPRINT.md section (c)); the files that still name it are sprint code L6/L7 removes, or records of their day
+docs/SPEC-WORK-V1.md moved to mas-bandwidth/nova-sprint at v1.2.3 (split layer L5, docs/SPLIT-NOVA-SPRINT.md section (c)); the files that still name it are sprint code L6/L7 removes, or records of their day
+docs/SPEC-WORKLANG.md moved to mas-bandwidth/nova-sprint at v1.2.3 (split layer L5, docs/SPLIT-NOVA-SPRINT.md section (c)); the files that still name it are sprint code L6/L7 removes, or records of their day
+docs/SPRINT-COORDINATOR.md moved to mas-bandwidth/nova-sprint at v1.2.3 (split layer L5, docs/SPLIT-NOVA-SPRINT.md section (c)); the files that still name it are sprint code L6/L7 removes, or records of their day
+docs/SPRINT-COORDINATOR-SEAT.md moved to mas-bandwidth/nova-sprint at v1.2.3 (split layer L5, docs/SPLIT-NOVA-SPRINT.md section (c)); the files that still name it are sprint code L6/L7 removes, or records of their day
+docs/ratings/snapshots/0c5803c2de40/work-read.md moved to mas-bandwidth/nova-sprint at v1.2.3 (split layer L5, docs/SPLIT-NOVA-SPRINT.md section (c)); the files that still name it are sprint code L6/L7 removes, or records of their day
+pkg/mod the Go module cache under GOPATH (go env GOMODCACHE), not a directory of this repository

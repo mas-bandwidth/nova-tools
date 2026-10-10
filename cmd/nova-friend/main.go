@@ -8,7 +8,7 @@
 // second. The verbs are run, beat, install, uninstall, check, status, pong,
 // ping, wait-pong, watch, host, serve and reach; the
 // dispatch, the banner, the help, the refusals and the output envelope are
-// internal/tool's, and the rules are internal/friend's.
+// pkg/tool's, and the rules are pkg/friend's.
 package main
 
 import (
@@ -33,15 +33,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus"
-	"github.com/mas-bandwidth/nova-tools/internal/friend"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
-	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/friend"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/redisauth"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
+	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
+	"github.com/mas-bandwidth/nova-tools/pkg/sprintwire"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 var version string
@@ -62,7 +62,7 @@ const WaitPongEvery = time.Second
 const OpenRetryMax = 30 * time.Second
 
 // world is what the tool reaches outside itself; main passes the real one,
-// a test its own over internal/bus's Fake, a fake harness and its own
+// a test its own over pkg/bus's Fake, a fake harness and its own
 // clock, so no test opens a socket or reads the real time.
 type world struct {
 	getenv         func(string) string
@@ -314,7 +314,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int 
 	}
 	if len(args) > 0 && args[0] == friend.WallVerb {
 		// the lane's wall around one command: its argv follows "--", which the verb table
-		// does not carry, so it is dispatched here (internal/friend RunWall)
+		// does not carry, so it is dispatched here (pkg/friend RunWall)
 		return friend.RunWall(args[1:], os.Environ(), stdin, stdout, stderr)
 	}
 	w.argv = args
@@ -328,7 +328,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int 
 	return friendTool(w).Run(args, stdin, stdout, stderr)
 }
 
-// openRedis dials the bus store the way nova-bus does (internal/redisconn,
+// openRedis dials the bus store the way nova-bus does (pkg/redisconn,
 // the fleet's login from the environment, the password never on the line).
 func (w world) openRedis(ctx context.Context, addr string) (bus.Store, func(), error) {
 	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
@@ -1931,7 +1931,7 @@ func undriven(harness, dir, undone string) *tool.Out {
 }
 
 // harnessSettings is what install writes into the friend's harness and
-// check --settings compares (internal/friend/settings.go).
+// check --settings compares (pkg/friend/settings.go).
 func (w world) harnessSettings(c *tool.Call) friend.HarnessSettings {
 	h := friend.HarnessSettings{Harness: c.Str("harness"), Friend: c.Str("as"), Dir: c.Str("dir"), Home: w.home, StateDir: c.Str("state-dir"),
 		ConfigDir: c.Str("config-dir"), Model: c.Str("model"), CodexHome: w.getenv("CODEX_HOME"), DSHHome: w.getenv("DSH_HOME"), FS: w.settings}

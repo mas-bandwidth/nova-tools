@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
-// Tool is nova-up on internal/tool, over the machine machine returns
+// Tool is nova-up on pkg/tool, over the machine machine returns
 // (Local on a real machine, a fake in a test). The one verb, up, is the
 // default, so `nova-up --local` is `nova-up up --local` (docs/SPEC-UP.md).
 func Tool(stamp string, machine func() (Machine, error)) *tool.Tool {

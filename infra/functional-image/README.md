@@ -25,7 +25,7 @@ Versions are chosen to satisfy every place the repository states or assumes
 one. Postgres is 16: it is the first directory the fixtures search
 (`/usr/lib/postgresql/16/bin`, so no `NOVA_PG_BIN` is needed) and the version
 `go run ./tools/ci install-postgres` installs. Redis is 8: the tests read Redis
-8's error wording (the texts in `internal/redisfn`'s tests are Redis 8's), and
+8's error wording (the texts in `pkg/redisfn`'s tests are Redis 8's), and
 Redis 8.10.2 is the
 release `go run ./tools/ci install-redis-server` builds where the distribution
 has none. It is the repository's one Redis version:
@@ -95,7 +95,7 @@ The run:
       --read-only --tmpfs /tmp:rw,exec,size=2g --tmpfs /home/bench:rw,size=1g,mode=1777 \
       -v "$PWD":/src:ro -v nova-gocache-<domain>:/gocache -v nova-gomod:/gomodcache:ro \
       -w /src nova-functional \
-      make test-functional PKGS=./internal/ntable/
+      make test-functional PKGS=./pkg/ntable/
 
 `make test-functional` runs only the functional tests of the packages named,
 which is the definition of the tier. The mounted tree is read by the `bench`

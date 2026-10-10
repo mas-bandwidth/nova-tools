@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/tlc"
+	"github.com/mas-bandwidth/nova-tools/pkg/tlc"
 )
 
 type result struct {
@@ -74,12 +74,12 @@ const header = "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\
 
 // checkedSources is the runner files CheckRunner compares, read from this
 // module. The test binary is built from these files, so they are the bytes
-// the embed holds (internal/tlc TestEmbeddedSourcesAreTheCheckedFiles).
+// the embed holds (pkg/tlc TestEmbeddedSourcesAreTheCheckedFiles).
 func checkedSources(t *testing.T) map[string][]byte {
 	t.Helper()
 	out := map[string][]byte{}
 	for _, name := range tlc.CheckedFiles() {
-		raw, err := os.ReadFile(filepath.Join("..", "..", "internal", "tlc", name))
+		raw, err := os.ReadFile(filepath.Join("..", "..", "pkg", "tlc", name))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -675,7 +675,7 @@ func TestReadmeCommandsParseUnderTheRealFlagParser(t *testing.T) {
 func TestVerbsRefuseABinaryBuiltFromOtherRunnerFiles(t *testing.T) {
 	t.Parallel()
 	root, jar := checkout(t)
-	dir := filepath.Join(root, "internal", "tlc")
+	dir := filepath.Join(root, "pkg", "tlc")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -711,13 +711,13 @@ func TestVerbsRefuseABinaryBuiltFromOtherRunnerFiles(t *testing.T) {
 	}
 	for name, args := range verbs {
 		r := ok(name, args, 2)
-		if r.code != 2 || !strings.Contains(r.stderr, "built from other runner files than the ones under "+root) || !strings.Contains(r.stderr, "internal/tlc/run.go differ") || strings.Contains(r.stderr, "outcome.go") || !strings.Contains(r.stderr, "build tlacheck from this tree: go build -o /tmp/tlacheck ./tools/tlacheck") || r.stdout != "" && name != "run" {
+		if r.code != 2 || !strings.Contains(r.stderr, "built from other runner files than the ones under "+root) || !strings.Contains(r.stderr, "pkg/tlc/run.go differ") || strings.Contains(r.stderr, "outcome.go") || !strings.Contains(r.stderr, "build tlacheck from this tree: go build -o /tmp/tlacheck ./tools/tlacheck") || r.stdout != "" && name != "run" {
 			t.Errorf("%s: %+v", name, r)
 		}
 	}
 	// The list of inputs is computed by inputs.go: a binary built from another
 	// one lists other inputs than the checkout does, and each verb refuses it.
-	if err := os.WriteFile(filepath.Join(dir, "run.go"), built["internal/tlc/run.go"], 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "run.go"), built["pkg/tlc/run.go"], 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "inputs.go"), []byte("another input list\n"), 0o644); err != nil {
@@ -725,11 +725,11 @@ func TestVerbsRefuseABinaryBuiltFromOtherRunnerFiles(t *testing.T) {
 	}
 	for name, args := range verbs {
 		r := ok(name, args, 2)
-		if r.code != 2 || !strings.Contains(r.stderr, "internal/tlc/inputs.go differ") || strings.Contains(r.stderr, "run.go") {
+		if r.code != 2 || !strings.Contains(r.stderr, "pkg/tlc/inputs.go differ") || strings.Contains(r.stderr, "run.go") {
 			t.Errorf("%s with another input list: %+v", name, r)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(dir, "inputs.go"), built["internal/tlc/inputs.go"], 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "inputs.go"), built["pkg/tlc/inputs.go"], 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// A bookkeeping file that differs is no concern of the fingerprint.
@@ -743,7 +743,7 @@ func TestVerbsRefuseABinaryBuiltFromOtherRunnerFiles(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "outcome.go")); err != nil {
 		t.Fatal(err)
 	}
-	if r := ok("inputs", verbs["inputs"], 2); r.code != 2 || !strings.Contains(r.stderr, "internal/tlc/outcome.go differ") {
+	if r := ok("inputs", verbs["inputs"], 2); r.code != 2 || !strings.Contains(r.stderr, "pkg/tlc/outcome.go differ") {
 		t.Errorf("a missing result file: %+v", r)
 	}
 }

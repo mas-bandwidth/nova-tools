@@ -21,19 +21,19 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
-	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardlimits"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardtree"
+	"github.com/mas-bandwidth/nova-tools/pkg/decide"
+	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 type flagSet = *flag.FlagSet
@@ -1254,7 +1254,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "add", "several streams take --count <n>: each gets n cards")
 	}
 	// A BRIEF IS A CHILD'S WHOLE BRIEF, AND THE CARD LINT HOLDS IT TO THE RULES OF ONE: the
-	// rules are the coordinator's (internal/swarm/lintchild.go), from --rules, else the file
+	// rules are the coordinator's (pkg/swarm/lintchild.go), from --rules, else the file
 	// init recorded, else the general defaults, and they are checked here in process, before
 	// anything is written. A card with no brief (a --count card, a sentinel) carries none to
 	// check.
@@ -1790,7 +1790,7 @@ func lintBriefReads(brief string, rs ruleSet) (modelWhy string, findings []swarm
 	} else {
 		findings = swarm.LintCardChildWith([]byte(brief), rs.rules)
 	}
-	// a tree card's steps are held too (internal/cardtree; docs/SPEC-SPRINT.md, a card is
+	// a tree card's steps are held too (pkg/cardtree; docs/SPEC-SPRINT.md, a card is
 	// a tree of steps): a flat brief has no such finding
 	for _, f := range cardtree.Lint(brief) {
 		findings = append(findings, swarm.CardHeaderFinding{Check: f.Check, Line: f.Line, Excerpt: f.Excerpt})

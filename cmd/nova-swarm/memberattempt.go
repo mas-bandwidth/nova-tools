@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
-	"github.com/mas-bandwidth/nova-tools/internal/member"
+	"github.com/mas-bandwidth/nova-tools/pkg/decide"
+	"github.com/mas-bandwidth/nova-tools/pkg/member"
 )
 
-// THE ATTEMPT DECISION (docs/SPEC-SPRINT.md section 2; internal/decide, attempt.go). A work
+// THE ATTEMPT DECISION (docs/SPEC-SPRINT.md section 2; pkg/decide, attempt.go). A work
 // member whose environment holds JEV_API_KEY (the loop row's nova-secrets keys) asks, when
 // any take ends, how it ended (whether the class routes the finish is the server's to say,
 // by the card's bars): the member's own process asks it, in the end's long work beside the

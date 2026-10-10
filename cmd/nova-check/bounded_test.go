@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/pkg/bounded"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

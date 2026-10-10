@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 // A PROVIDER FAILURE IS NOT THE CARD'S (docs/SPEC-CARD-CONTRACT.md section 4;
@@ -38,7 +38,7 @@ import (
 // the one the member reads (cmd/nova-swarm/member.go, nativeEnd), and the finish it
 // causes redeals the card (internal/sprint, providerEnded).
 //
-// The line names the cause (internal/swarm providercause.go): the class, the status and the
+// The line names the cause (pkg/swarm providercause.go): the class, the status and the
 // provider's words, read from the session's own record of the failed message when it has
 // one (an API error keeps the provider's status there), else from the log's error line.
 

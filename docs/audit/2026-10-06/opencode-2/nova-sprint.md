@@ -1,12 +1,12 @@
 # Cold audit: nova-sprint
 
 Read at this base's tip: `cmd/nova-sprint`, `internal/sprint` (core and its `store`),
-`internal/sprintdash`, `internal/sprintwire`, `docs/SPEC-SPRINT.md`,
+`internal/sprintdash`, `pkg/sprintwire`, `docs/SPEC-SPRINT.md`,
 `docs/SPEC-CARD-CONTRACT.md`, and the sprint models under `tla/` (ServerLanes,
 DirtyTick and DirtyTickRead, FriendPresence, Level, ReadsByRoom, CardContract).
 Nothing was changed; every command ran against an in-memory snapshot or a scratch
 store, never a live store or server. The tree's own unit tests pass
-(`./internal/sprint/...`, `./internal/sprintwire/...`, `./internal/sprintdash/...`),
+(`./internal/sprint/...`, `./pkg/sprintwire/...`, `./internal/sprintdash/...`),
 `go vet` is silent and `staticcheck` reports no functional finding, so these are the
 places the tests do not reach.
 
@@ -34,15 +34,15 @@ places the tests do not reach.
    an away reader's.
 
 2. **NEXT — a worker's `progress` and `queue` are retried without the operation id the
-   spec says every lost write carries.** `internal/sprintwire/worker.go:47`.
+   spec says every lost write carries.** `pkg/sprintwire/worker.go:47`.
    What is wrong: the id is appended only for `take`, `finish` and `read`,
    while `docs/SPEC-SPRINT.md` section 14 ("A worker whose answer was lost sends the verb
    again with the same operation id (`--op`)") and the `Worker` comment at
-   `internal/sprintwire/worker.go:33-35` ("A write carries one operation id through
+   `pkg/sprintwire/worker.go:33-35` ("A write carries one operation id through
    them") promise it for every write, and the server runs `progress` and `queue` as
    line-taking writes (`cmd/nova-sprint/serve.go:100-101`).
    Evidence: read `worker.go:47` beside the two promises;
-   `internal/sprintwire/worker_test.go:40` pins the gap for `queue` ("a read is sent as
+   `pkg/sprintwire/worker_test.go:40` pins the gap for `queue` ("a read is sent as
    given, with no operation id") and `worker_test.go:57` pins the id for the other
    three. Both verbs are idempotent in effect (a progress stamp is rewritten, a queue
    beat re-recorded), so no result is lost; the promise is what does not hold.
@@ -50,17 +50,17 @@ places the tests do not reach.
    spec line and the comment to the three commits that take an id.
 
 3. **NEXT — `Worker.Run` can panic on a `Send` that returns no result, and dereferences
-   a nil error when the retry loop never runs.** `internal/sprintwire/worker.go:62`
-   (`r := res[0]`) and `internal/sprintwire/worker.go:68` (`err.Error()`).
+   a nil error when the retry loop never runs.** `pkg/sprintwire/worker.go:62`
+   (`r := res[0]`) and `pkg/sprintwire/worker.go:68` (`err.Error()`).
    What is wrong: the loop indexes the answer before checking it is there, and on the
    exhausted path it calls `err.Error()` without checking `err` is non-nil; a `Send`
    that returns `(nil, nil)` (or an empty slice with no error) panics on `res[0]`, and
    a context already expired before the first send panics with a nil-pointer
    dereference.
    Evidence: the two lines; `Client.Do` does enforce the length
-   (`internal/sprintwire/wire.go:95-104`), so the production path is safe today, but
+   (`pkg/sprintwire/wire.go:95-104`), so the production path is safe today, but
    `Send` is a public field with no stated length contract and tests pass their own
-   functions (`internal/sprintwire/worker_test.go:23-30`).
+   functions (`pkg/sprintwire/worker_test.go:23-30`).
    Fix: check `len(res) > 0` before `res[0]` and return exit 2 naming the malformed
    answer, and check `err != nil` before `err.Error()`.
 

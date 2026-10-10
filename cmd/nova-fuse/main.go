@@ -30,8 +30,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/fuse"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 const usage = `nova-fuse: a recorded decision to stop reading an untrusted source, checked before every read
@@ -743,7 +743,7 @@ func stamp(now time.Time) string { return now.UTC().Format(time.RFC3339) }
 // why and since read a hand-edited file defensively. Editing the box by hand is not an
 // edge case: it is the only way a lockdown is replaced, so a missing key produces an
 // honest sentence, never a crash and never an invented value.
-// Both render through internal/oneline, and that is the load-bearing half: the box is
+// Both render through pkg/oneline, and that is the load-bearing half: the box is
 // world-readable and hand-editable on purpose, so on a shared machine these two strings
 // are authored by whoever can write the file. Echoed raw, a newline in a reason forges a
 // SECOND line in the grammar SPEC.md tells callers to scan -- a FUSE OK beneath a real

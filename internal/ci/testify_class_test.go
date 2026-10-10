@@ -78,7 +78,7 @@ func TestTestsUseTestify(t *testing.T) {
 
 	tree := repoTree(t)
 	var sites []testifySite
-	for _, f := range tree.GoFilesUnder(true, "cmd", "internal") {
+	for _, f := range tree.GoFilesUnder(true, "cmd", "internal", "pkg") {
 		if f.HasDirNamed("testdata") {
 			continue
 		}

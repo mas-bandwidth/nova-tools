@@ -10,7 +10,7 @@ package main
 // persistence and eviction rules) and hands it over stdin, and reads the password in
 // its own process from the login the unit names (--secret and the seat it is in), so
 // neither the unit nor any file holds it. The unit's text, its install and its loader
-// are internal/units' (units.ServiceUnit, units.Installer, units.Load), shared with
+// are pkg/units' (units.ServiceUnit, units.Installer, units.Load), shared with
 // nova-sprint install, and nova-sprint units --check names both units installed,
 // missing or different.
 
@@ -23,9 +23,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
-	"github.com/mas-bandwidth/nova-tools/internal/units"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/units"
 )
 
 // The Redis servers nova-redis installs, and each one's port and store directory
@@ -93,7 +93,7 @@ example: nova-redis uninstall ` + kind + ` --dry-run`,
 }
 
 // loginUnitFlags are where serve reads its password in its own process: one name in
-// one seat of a secrets store (internal/secrets.Login), none of them a secret.
+// one seat of a secrets store (pkg/secrets.Login), none of them a secret.
 func loginUnitFlags(f *tool.Flags) {
 	f.String("secrets", "", "the secrets store's working copy the password is in (nova-secrets --store)")
 	f.String("as", "", "the seat of the secrets store the password is sealed for (nova-secrets --as)")

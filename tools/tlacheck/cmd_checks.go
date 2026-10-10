@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/tablemodel"
-	"github.com/mas-bandwidth/nova-tools/internal/tlc"
+	"github.com/mas-bandwidth/nova-tools/pkg/tlc"
 )
 
 const defaultChecksTimeout = 2 * time.Minute

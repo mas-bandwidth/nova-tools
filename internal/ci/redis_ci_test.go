@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -60,7 +60,7 @@ func TestRedisBackedTestsDoNotSkipUnderCI(t *testing.T) {
 	require.NoError(t, err, "throwaway redis at %s did not answer: %v", addr, err)
 
 	root := repoRoot(t)
-	helper := readFile(t, filepath.Join(root, "internal", "nsprint", "testutil", "redis.go"))
+	helper := readFile(t, filepath.Join(root, "pkg", "nsprint", "testutil", "redis.go"))
 	fatalAt := strings.Index(helper, "Fatalf")
 	skipAt := strings.Index(helper, "t.Skip")
 	ciAt := strings.Index(helper, "NOVA_CI")
@@ -72,7 +72,7 @@ func TestRedisBackedTestsDoNotSkipUnderCI(t *testing.T) {
 	require.True(t, strings.Contains(helper, `"--save", ""`), "helper must start redis-server on loopback with --save \"\"")
 	require.True(t, strings.Contains(helper, `"127.0.0.1"`), "helper must start redis-server on loopback with --save \"\"")
 	offenders := redisServerGates(t, root)
-	require.Empty(t, offenders, "redis-server is started or skipped outside internal/nsprint/testutil: %s", strings.Join(offenders, ", "))
+	require.Empty(t, offenders, "redis-server is started or skipped outside pkg/nsprint/testutil: %s", strings.Join(offenders, ", "))
 
 	ci := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	require.Contains(t, ci, `NOVA_CI: "1"`, "ci.yml does not set NOVA_CI=1; a missing redis-server would skip and the run would stay green")
@@ -168,10 +168,10 @@ var redisServerExemptions = []redisServerExemption{
 // runner without the binary used to go green.
 func redisServerGates(t *testing.T, root string) []string {
 	t.Helper()
-	const helper = "internal/nsprint/testutil/redis.go"
+	const helper = "pkg/nsprint/testutil/redis.go"
 	// The helper lifted out of the sprint; the one above goes when its
 	// importers are re-pointed.
-	const lifted = "internal/testredis/testredis.go"
+	const lifted = "pkg/testredis/testredis.go"
 	const self = "internal/ci/redis_ci_test.go"
 	var bad []string
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {

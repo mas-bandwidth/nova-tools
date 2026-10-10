@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
-	"github.com/mas-bandwidth/nova-tools/internal/friend"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/pkg/config"
+	"github.com/mas-bandwidth/nova-tools/pkg/friend"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 // The friends table (docs/SPEC-SPRINT.md section 1; the owner, 2026-10-02: "add a
@@ -539,7 +539,7 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 		facts["down"], facts["until"], facts["reason"] = true, rep.Until, rep.Reason
 	}
 	// the machine's word, so her daemon cancels its lanes on STOPPED and starts nothing
-	// (docs/SPEC-SPRINT.md section 14, stop cancels jobs; internal/friend/stop.go)
+	// (docs/SPEC-SPRINT.md section 14, stop cancels jobs; pkg/friend/stop.go)
 	if word := machineWord(ctx, st); word != "" {
 		line += " machine=" + word
 		facts["machine"] = word

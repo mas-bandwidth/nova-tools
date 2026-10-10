@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 // verbOut is one inspection verb's result (check, policy, probe), built once and rendered
 // two ways (docs/STANDARD.md §2, "one output structure, two renderings"): the typed lines
 // this tool has always printed, or with --json one JSON object on stdout from
-// internal/tool's Out, a refusal included. Every line of those verbs goes through here,
+// pkg/tool's Out, a refusal included. Every line of those verbs goes through here,
 // so the two renderings cannot say different things.
 type verbOut struct {
 	token          string // the first word of each line: CHECK, POLICY, PROBE

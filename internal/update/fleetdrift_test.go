@@ -12,7 +12,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

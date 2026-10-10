@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 // THE NATIVE OPENCODE PATH (issue #296, slice 2). A frozen run configuration is executed
@@ -194,7 +194,7 @@ func TestWallNamedDecodesTheProducersEscapedCwd(t *testing.T) {
 // windows-latest a source the test wrote 0600 read 0666 and the check refused it: the legacy
 // shape, TestNativeAuthWithAWorkerNamesItsLegacyCopy, died exit 2 on the line that says it
 // runs. This is the same class as the execute bit (executable.go) and the key file mode
-// (internal/swarm/key.go, which already answers nothing on windows). The rules now ask the
+// (pkg/swarm/key.go, which already answers nothing on windows). The rules now ask the
 // platform, and because they are written where every platform compiles them, darwin and linux
 // hold the windows answer to this contract.
 func TestAuthModeRulesAskThePlatform(t *testing.T) {

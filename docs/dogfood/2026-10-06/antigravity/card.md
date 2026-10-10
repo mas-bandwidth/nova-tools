@@ -52,7 +52,7 @@ says. Roughly thirty minutes of use.
    - `LINT DRIFT card=dead-code-cmd-nova-sandbox check=personal-name line=6: names sandbox outside the owner's quoted words; write the role (the owner, a friend, a bench), never the name` (4 DRIFT lines, then `nova-card generate FAILED: 4 red line(s) above; nothing written to ./use/dead-cards`, exit 1)
    - Expected: `--name` guards person, friend and machine names in prose. A name that is also
      a path word reds every card whose PATHS or TEST names the path (`sandbox` in
-     `cmd/nova-sandbox`, `internal` in `internal/bus`), and the remedy — "write the role
+     `cmd/nova-sandbox`, `internal` in `pkg/bus`), and the remedy — "write the role
      (the owner, a friend, a bench), never the name" — cannot be applied to a PATHS line,
      so the tool's own generated content can never pass its own `--name` check for such
      words. This fleet runs machines named like tools, so the collision
@@ -60,7 +60,7 @@ says. Roughly thirty minutes of use.
    - Grade: NEXT.
 
 6. `nova-card generate --from findings --file ./repo/cmd/nova-card/testdata/findings.tsv --repo example/repo --base dev --sha 0123456789abcdef0123456789abcdef01234567 --out ./use/cards-dryrun2 --dry-run`
-   - `id	file	test	wave	deps` / `finding-internal-bus-send	internal/bus/send.go	internal/bus TestReceiptIsFsynced	1	-` / `finding-cmd-nova-bus-main	cmd/nova-bus/main.go	cmd/nova-bus TestFindingMain	1	-` (then `CARDS OK dir=./use/cards-dryrun2 cards=2 waves=1 tier=pro dry-run=yes (nothing written)`, exit 0)
+   - `id	file	test	wave	deps` / `finding-internal-bus-send	pkg/bus/send.go	pkg/bus TestReceiptIsFsynced	1	-` / `finding-cmd-nova-bus-main	cmd/nova-bus/main.go	cmd/nova-bus TestFindingMain	1	-` (then `CARDS OK dir=./use/cards-dryrun2 cards=2 waves=1 tier=pro dry-run=yes (nothing written)`, exit 0)
    - Expected: the help documents "CARDS OK dir=... then manifest" — the CARDS line first,
      as in the real run, with the manifest after it. The dry-run prints the manifest first
      and the CARDS line last, so a caller reading the first line (or a script grepping the
@@ -70,10 +70,10 @@ says. Roughly thirty minutes of use.
 
 7. `go test -count=1 -timeout 600s ./internal/ci/` (the docs-tree gate, on the Linux
    bench; a report quoting nova-card's example output must pass it)
-   - `--- FAIL: TestEveryNamedRepoPathExists (2.01s)` / `Error: docs/dogfood/2026-10-06/antigravity/card.md:64: internal/bus/send.go names no file or directory in this tree; a friend following it finds nothing -- correct the path, or add it to testdata/namedpaths_allowlist.txt with the reason it is not a real path` (exit 1)
+   - `--- FAIL: TestEveryNamedRepoPathExists (2.01s)` / `Error: docs/dogfood/2026-10-06/antigravity/card.md:64: pkg/bus/send.go names no file or directory in this tree; a friend following it finds nothing -- correct the path, or add it to testdata/namedpaths_allowlist.txt with the reason it is not a real path` (exit 1)
    - Expected: recording the documented first run's manifest (this card's own form) should
      not red the docs tree. The findings fixture the example reads names
-     `internal/bus/send.go`, a file that does not exist in this repository, so a report
+     `pkg/bus/send.go`, a file that does not exist in this repository, so a report
      quoting the example's output needs a `testdata/namedpaths_allowlist.txt` row (added,
      section 2, with the reason) before the gate goes green; a stranger recording the
      example hits the red and has to find the list. A fixture naming only real paths

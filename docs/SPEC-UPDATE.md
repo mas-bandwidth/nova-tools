@@ -23,7 +23,7 @@ One tool, three verbs.
 `check` is this estate's first tool that reads somebody else's server on a clock, so
 every rule below is about a bound: a bounded read, a bounded budget, a bounded listing,
 and a failure never allowed to read as *up to date*. SPEC.md's **Conventions** govern —
-exit codes, the one-line grammar, the field law, `internal/oneline`, `internal/bounded`,
+exit codes, the one-line grammar, the field law, `pkg/oneline`, `pkg/bounded`,
 no guessed paths — and this file says only what is more. The estate runs it nightly and
 reads the counts in the morning; the tool has no clock of its own — no daemon, no timer,
 no `--watch`, no state file of its own (the snapshot is the caller's, named by flag)
@@ -60,7 +60,7 @@ no `--watch`, no state file of its own (the snapshot is the caller's, named by f
    there are two builds, and a read that kept the dotted number alone would collapse them
    into one. A command that exits non-zero, times out, or prints no such
    token is UNKNOWN, remedy *wrap it in a script that prints the version alone*; its stdout
-   and stderr go through `internal/bounded`, the 64 KB cap, a child reaching it
+   and stderr go through `pkg/bounded`, the 64 KB cap, a child reaching it
    UNKNOWN reason `output`, the same remedy. Before the read, a first line whose second
    token is `devel` or a bare commit has no release identity: under `check`, a
    `pin` aside, UNKNOWN reason `no_release_identity`, remedy *install a stamped
@@ -274,7 +274,7 @@ no `--watch`, no state file of its own (the snapshot is the caller's, named by f
 21. **A report line carries the whole identity raw, beside the key `check` would compare.**
     One `REPORT TOOL` line per entry that answered: `version=` is the key — the fixed version read,
     or the pin rule's for `kind=pin` — and `raw=` is the observed first line, whole, one
-    `internal/oneline` token; `+dirty`, `-rc1` and the pseudo-version stamp stay in both.
+    `pkg/oneline` token; `+dirty`, `-rc1` and the pseudo-version stamp stay in both.
     For a model, `raw` is the matched `ollama list` row from the model digest rule, so a changed
     digest changes the retained observation; the unchanged table header cannot hide it.
     Both are on the line because they differ in what they can say: an opaque commit or a
@@ -295,7 +295,7 @@ no `--watch`, no state file of its own (the snapshot is the caller's, named by f
 23. **Each subprocess is bounded in time and output.** `--timeout <d>` per argv, default
     `5s`; `--budget <d>` for the run, default `60s`, an entry not reached being UNKNOWN
     reason `budget` (rule 8); at most four children at once. A child's stdout and stderr go
-    through `internal/bounded`, 64 KB each; a child reaching the cap is UNKNOWN reason
+    through `pkg/bounded`, 64 KB each; a child reaching the cap is UNKNOWN reason
     `output`, wrap-it remedy — a tool that prints a banner is wrapped, not trusted to stop.
 24. **`--draft` and `--send` are explicit; delivery is nova-bus's.** Absent both, nothing
     is composed. `--draft --as <friend> --to <who,who>` prints the report as a bus note body
@@ -677,8 +677,8 @@ and every fact of the run (`ADOPTION` has no `FAIL`: declined, deferred, unknown
 equivalent are answers); the rest are items, one per finding, declared here as SPEC.md
 requires. A run that is OK prints on stdout and one that is not on stderr, whole; under
 `--json` every one of these verbs prints the same value as one JSON object on stdout
-(`result`, `facts`, `items`, `more`, `notes`, `payload`: internal/tool's shape), refusals
-included. A value is one `internal/oneline` token, except the text after `: ` on an item
+(`result`, `facts`, `items`, `more`, `notes`, `payload`: pkg/tool's shape), refusals
+included. A value is one `pkg/oneline` token, except the text after `: ` on an item
 (a reason, a command, a detail) and its remedy in parentheses, which are prose printed plain.
 `watch`'s `ADOPT` lines keep their own order: one per check, then `ADOPT DONE`.
 

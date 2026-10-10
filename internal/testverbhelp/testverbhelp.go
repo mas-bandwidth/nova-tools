@@ -1,5 +1,5 @@
 // Package testverbhelp is the per-tool check of the verb-help rule
-// (the CLI style's rule (b), #4505; internal/nsprint/verbflag is the one seam that
+// (the CLI style's rule (b), #4505; pkg/nsprint/verbflag is the one seam that
 // implements it): `<tool> <verb> -h` and `--help` print that verb's help on
 // stdout and exit 0, with nothing on stderr, no file written and no dial.
 // The check opens no socket: it is a unit-tier check.
@@ -28,7 +28,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 // Run is the tool, in process: args after the tool's name, the two streams,
@@ -230,7 +230,7 @@ func HelpVerb(t *testing.T, run Run, tool string, verbs ...string) {
 //   - an `exit codes:` line.
 //
 // The flags are the verb's FlagSet's, never a hand list: -h prints them from
-// the set (internal/nsprint/verbflag), and the refusal of an unknown flag
+// the set (pkg/nsprint/verbflag), and the refusal of an unknown flag
 // names the set's flags as well, so a flag the refusal names and -h omits is
 // a gap too. What a verb lacks and is not yet fixed is a line of
 // internal/ci/testdata/help-complete-ledger.txt, `<tool> <verb> <parts>`,

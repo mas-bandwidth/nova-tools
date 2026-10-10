@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/redisacl"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisacl"
 )
 
 // fakeACL is a store's ACL: users by name as GETUSER prints them, the

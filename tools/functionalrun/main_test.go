@@ -14,7 +14,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -92,7 +92,7 @@ func testConfig() runConfig {
 		scratch:  "2g",
 		gocache:  "nova-functional-gocache-uid501",
 		gomod:    "nova-functional-gomod-uid501",
-		packages: []string{"./internal/ntable/...", "./internal/config/"},
+		packages: []string{"./pkg/ntable/...", "./pkg/config/"},
 		ownerID:  "501",
 	}
 }
@@ -175,7 +175,7 @@ func TestTestArgsHoldTheRunInsideItsBounds(t *testing.T) {
 	i := indexOf(args, "sha256:abc")
 	require.NotEqual(t, -1, i, "no image in argv: %q", joined)
 	assert.Equal(t, strings.Join([]string{"timeout", "-k", "5", "590", "make", "test-functional",
-		"PKGS=./internal/ntable/... ./internal/config/", "GOTEST_P=4", "FUNCTIONAL_TIMEOUT=580s"}, "\x00"),
+		"PKGS=./pkg/ntable/... ./pkg/config/", "GOTEST_P=4", "FUNCTIONAL_TIMEOUT=580s"}, "\x00"),
 		strings.Join(args[i+1:], "\x00"), "command")
 	// Every flag of the runtime comes before the image.
 	for _, f := range []string{"--timeout", "--network", "--label", "-v"} {
@@ -342,7 +342,7 @@ func TestParseRun(t *testing.T) {
 	testkit.WriteFile(t, filepath.Join(dir, "go.mod"), "module x\n")
 	ctxDir := filepath.Join(dir, "img")
 	testkit.WriteFile(t, filepath.Join(ctxDir, "Containerfile"), "FROM x\n")
-	c, err := parseRun([]string{"--src", dir, "--context", ctxDir, "--deadline", "2m", "./internal/ntable/..."})
+	c, err := parseRun([]string{"--src", dir, "--context", ctxDir, "--deadline", "2m", "./pkg/ntable/..."})
 	require.NoError(t, err)
 	assert.Equal(t, 2*time.Minute, c.deadline)
 	assert.Equal(t, cacheVolumeName("gocache", c.ownerID), c.gocache)
@@ -354,7 +354,7 @@ func TestParseRun(t *testing.T) {
 	}{
 		{with(), "no package"},
 		{with("./a", "--deadline", "1m"), "flags come first"},
-		{with("internal/ntable"), "not a package directory"},
+		{with("pkg/ntable"), "not a package directory"},
 		{with("./a b"), "not a package directory"},
 		{with("--deadline", "29s", "./a"), "under 30s"},
 		{with("--deadline", "0s", "./a"), "under 30s"},
@@ -722,12 +722,12 @@ func TestPackageArgumentsAreAllowlisted(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	testkit.WriteFile(t, filepath.Join(dir, "go.mod"), "module x\n")
-	for _, ok := range []string{".", "./...", "./internal/ntable", "./internal/ntable/", "./internal/ntable/...", "./cmd/nova-ci", "./a_b.c-d/e"} {
+	for _, ok := range []string{".", "./...", "./pkg/ntable", "./pkg/ntable/", "./pkg/ntable/...", "./cmd/nova-ci", "./a_b.c-d/e"} {
 		_, err := parseRun([]string{"--src", dir, "--image", "x", ok})
 		assert.NoError(t, err, "package %q", ok)
 	}
 	for _, bad := range []string{
-		"./internal/ntable/;id>&2;cat</etc/hostname>&2;exit",
+		"./pkg/ntable/;id>&2;cat</etc/hostname>&2;exit",
 		"./a|b", "./a&b", "./a<b", "./a>b", "./a*", "./a(b)", "./a;b", "./a$b", "./a`b`", "./a'b", `./a"b`, `./a\b`,
 		"./a b", "./a\tb", "./a\nb", "./../../../etc", "./a/../b", "..", "/abs", "internal/x", "",
 	} {

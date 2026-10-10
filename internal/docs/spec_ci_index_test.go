@@ -186,7 +186,7 @@ func declaredTests(t *testing.T) map[string]string {
 	t.Helper()
 	root := filepath.Join("..", "..")
 	found := map[string]string{}
-	for _, dir := range []string{"cmd", "internal"} {
+	for _, dir := range []string{"cmd", "internal", "pkg"} {
 		base := filepath.Join(root, dir)
 		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
 			if err != nil {

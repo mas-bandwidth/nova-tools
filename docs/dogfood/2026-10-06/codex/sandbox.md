@@ -13,7 +13,7 @@ nftables plan applied to and dropped from the bench). Every command below was ty
     S=$B/scratch
 
 and `HOME=$S/home`, which is inside the `--write`. The `cmd/nova-sandbox` and
-`internal/sandbox` trees are byte-identical at the build's commit and at this branch's base
+`pkg/sandbox` trees are byte-identical at the build's commit and at this branch's base
 (`git diff --stat` between them is empty), so the findings hold at the tip.
 
 ## 1. `--read-noexec` is silently defeated when the command lives in that directory — URGENT

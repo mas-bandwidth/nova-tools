@@ -34,10 +34,10 @@ A 10 needs:
 | 7 | internal/update/cli.go:146 | the top usage line lists release verbs cut, build, install, adopt, pull; `help release` and the refusal list six with cycle (also cli.go:239) | name cycle in both places | S |
 | 8 | docs/SPEC-UPDATE.md:6 | "One tool, three verbs", then four bullets; :415 "five usage lines" and :440 "Five verbs" for six release verbs | open with the verbs that exist, and count six | S |
 | 9 | internal/update/cli.go:702 | APPLY BEFORE (and :733 under --dry-run) prints latest= as the asked --version (9.9.9) while the source answered 0.2.0 | print latest= as the source's answer and target= separately | S |
-| 10 | internal/release/cli.go:233 | every release verb's --version help says "such as 1.2.0"; install refuses 1.2.0 as not v-prefixed | say such as v1.2.0 | S |
+| 10 | pkg/release/cli.go:233 | every release verb's --version help says "such as 1.2.0"; install refuses 1.2.0 as not v-prefixed | say such as v1.2.0 | S |
 | 11 | release install -h | the only verb that writes a live bin directory has no effect line and no --dry-run (refused as an unknown flag) | add the effect line and a --dry-run that prints the plan | M |
-| 12 | internal/release/install.go:352 | success prints RELEASE INSTALLED, after `release:` progress lines, while its refusals print INSTALL REFUSED; the first token is not the verb's own | one first token per verb, as the manifest verbs do | S |
-| 13 | internal/release/pull.go:275 | `pull --dry-run` says files=3 for a directory holding two files: the count includes a SUMS.digest that is not there, and the files are not named | count and name only the files that exist | S |
+| 12 | pkg/release/install.go:352 | success prints RELEASE INSTALLED, after `release:` progress lines, while its refusals print INSTALL REFUSED; the first token is not the verb's own | one first token per verb, as the manifest verbs do | S |
+| 13 | pkg/release/pull.go:275 | `pull --dry-run` says files=3 for a directory holding two files: the count includes a SUMS.digest that is not there, and the files are not named | count and name only the files that exist | S |
 | 14 | internal/update/report.go:91 | a draft with no --host has the subject "versions on - at <stamp>" | leave the host out of the subject when none is given | S |
 | 15 | docs/SPEC-UPDATE.md:23 | "this estate's first tool", "The estate runs it nightly", and a release pipeline written for a coordinator and a fleet play; a stranger has no estate | describe what the tool does, and move the release pipeline to its own spec | M |
 

@@ -1,6 +1,6 @@
 package main
 
-import "github.com/mas-bandwidth/nova-tools/internal/testbin"
+import "github.com/mas-bandwidth/nova-tools/pkg/testbin"
 
 // init runs before every test and before TestMain: a start of this test binary is
 // decided by testbin.Enter (docs/TESTS.md, "tests-reexec-guard-everywhere"). A

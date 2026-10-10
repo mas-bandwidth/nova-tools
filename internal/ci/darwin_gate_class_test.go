@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
+	"github.com/mas-bandwidth/nova-tools/pkg/pkgselect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,7 +23,7 @@ import (
 //
 // The gate is Go: pkgselect.DarwinOn decides it from the event and the target
 // branch, and `ci test-matrix --target-branch` deals the matrix with it (its
-// table test is internal/pkgselect's TestDarwinOn). With the gate off every
+// table test is pkg/pkgselect's TestDarwinOn). With the gate off every
 // package rides the Linux shards and the darwin-only packages have no leg, as on
 // the nightly schedule, so the `test` job has no darwin entry to run and `ci-ok`
 // has no darwin job to wait for. This test holds what stays in the workflow:

@@ -64,7 +64,7 @@ A test binary that runs itself (`os.Executable()` or `os.Args[0]`) with words it
 - **handled**: CLI words the package's own dispatch answers (a helper process, a marked CLI child), which that dispatch runs and exits;
 - **refused**, exit 3 and one line ending `refusing to recurse`: CLI words from a test binary nothing in the package answers, or a chain of test binaries `testbin.MaxDepth` deep. `testbin.DepthEnv(tool)` counts the starts of one tool, so a chain of one tool's binaries is never counted against another's.
 
-`TestEveryReexecOfTheTestBinaryHasTheGuard` (`internal/ci/reexec_guard_class_test.go`, docs/SPEC-CI.md) refuses a `_test.go` under `cmd/` that runs its own binary in a package with no such call, naming the file and the line. The guard itself is proved by `TestDecideRunsTheSuiteHandlesItsOwnWordsOrRefuses` and `TestEnterRefusesARecursionAndAChainTooDeepInAChild` (`internal/testbin`).
+`TestEveryReexecOfTheTestBinaryHasTheGuard` (`internal/ci/reexec_guard_class_test.go`, docs/SPEC-CI.md) refuses a `_test.go` under `cmd/` that runs its own binary in a package with no such call, naming the file and the line. The guard itself is proved by `TestDecideRunsTheSuiteHandlesItsOwnWordsOrRefuses` and `TestEnterRefusesARecursionAndAChainTooDeepInAChild` (`pkg/testbin`).
 
 ### The CL shards fit two minutes
 
@@ -231,7 +231,7 @@ The last run is the whole tool: the wall named, the job's own write landed, the 
 
     go test -tags novadisk -run TestARealRunLeavesNothingBehind ./cmd/nova-sandbox/
 
-`nova-sandbox run --go` is what a card that builds Go uses; a plain `go build` inside a disposable volume was measured working with no flags at all once the optional roots' ancestors were granted (`internal/sandbox`, `TestAnOptionalRootsAncestorsAreGranted`).
+`nova-sandbox run --go` is what a card that builds Go uses; a plain `go build` inside a disposable volume was measured working with no flags at all once the optional roots' ancestors were granted (`pkg/sandbox`, `TestAnOptionalRootsAncestorsAreGranted`).
 
 The disposable-volume check makes a volume, runs `sh -c 'echo hi > out; sleep 1'` inside the wall with the volume as its only writable directory, and removes the volume from `/Volumes` and `diskutil apfs list` afterwards — `SANDBOX DONE name=e2e63562 exit=0 wall=9.500 freed=32768`.
 
@@ -838,7 +838,7 @@ SCORE ANSWER question=stranded_fragment type=noul value=no p=yes:0.04
 SCORE ANSWER question=test_weakened type=noul value=no p=yes:0.02
 SCORE ANSWER question=verdict type=choice value=LAND p=BOUNCE:0.05,LAND:0.92,UNSURE:0.03
 
-$ nova-decide attempt --brief ./cmd/nova-decide/testdata/card.md --result ./cmd/nova-decide/testdata/result.md --reason "verdict not-done: tests red in internal/decide" --backend fixed --answers ./cmd/nova-decide/testdata/attempt-answers.json --record ./decisions.jsonl --op c1@1
+$ nova-decide attempt --brief ./cmd/nova-decide/testdata/card.md --result ./cmd/nova-decide/testdata/result.md --reason "verdict not-done: tests red in pkg/decide" --backend fixed --answers ./cmd/nova-decide/testdata/attempt-answers.json --record ./decisions.jsonl --op c1@1
 ATTEMPT OK id=c1@1 decision=attempt backend=fixed class=needs-pro p=0.78 tokens_in=0 tokens_out=0 recorded=new
 ATTEMPT ANSWER question=class type=choice value=needs-pro p=done:0.04,needs-pro:0.78,no-result:0.08,nothing-to-do:0.02,provider-failure:0.02,wrong-scope:0.06
 
@@ -883,7 +883,7 @@ routed caused, the take as reported; `--bars 0.8,0.8` routes both flaky. With
 `brief` lines ask the model instead, under `nova-secrets exec --only
 JEV_API_KEY`, and all but the brief's lines carry the tokens spent, each failure
 of a gate on its own. The gate decision's calibration records (base run, and
-base not run) are `internal/decide/testdata/gate-calibration-*.jsonl`. The
+base not run) are `pkg/decide/testdata/gate-calibration-*.jsonl`. The
 brief's op id ends in the hex of the schema and the card, so a reworded schema
 or card changes it and this transcript names the change.
 
@@ -1121,7 +1121,7 @@ MERGE OK moved=1 refused=0 notes=2 op=merge-t36-1
 ### Answered by nova-decide
 
 The routine judgments answered by the judgment decision
-([SPEC-SPRINT.md section 8](SPEC-SPRINT.md#answered-by-nova-decide)): two cards
+([SPEC-SPRINT.md section 8](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md#answered-by-nova-decide)): two cards
 come back failed in one note, and `answer` asks the decision for each
 card. With no `decide_judgment_bar` set (the sprint row ships it empty) and no
 `--bar`, it applies nothing: it records each decision and lists what a bar would
@@ -1327,7 +1327,7 @@ $ nova-doctor run --check nosuch
 ! RUN REFUSED: no check named "nosuch"; the checks are dashboard, gosdk, harness, providers, secrets, self, ssh, tailnet; run: nova-doctor help
 ```
 
-## One-shot lanes at parity (internal/friend/lane_parity_test.go, cmd/nova-friend/lane_parity_test.go)
+## One-shot lanes at parity (pkg/friend/lane_parity_test.go, cmd/nova-friend/lane_parity_test.go)
 
 `TestOpencodeLanesDoWhatTheRunnerStopgapsDid` has one subtest per behaviour the two runner scripts had (card filter, row
 rules, take back, generation job names, width under load, token cap, provider stop, cost line, tokens from opencode's

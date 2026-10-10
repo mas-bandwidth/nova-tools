@@ -8,8 +8,8 @@ import (
 
 // EMMA'S ITEM-4 ESCAPES, AT THE VERB (#1853).
 //
-// The typed-header rules live in internal/swarm and the PATHS: validator in
-// internal/hygiene. These four are the card writer's half: `lint --card` names the
+// The typed-header rules live in pkg/swarm and the PATHS: validator in
+// pkg/hygiene. These four are the card writer's half: `lint --card` names the
 // escape on a LINT DRIFT line and exits 1, so a card that would have printed
 // `LINT OK checks=16` is refused before any spend. One test per class.
 
@@ -76,14 +76,14 @@ func TestLintCardRefusesACommaOnlyPathsLine(t *testing.T) {
 
 // #1853.4 AN UNKNOWN KIND IS NOT A KIND. `KIND: completely-unknown-kind` used to
 // lint clean (LINT OK checks=16) because the typed header asked only that the
-// line exist. The name set is internal/hygiene/kinds.txt.
+// line exist. The name set is pkg/hygiene/kinds.txt.
 func TestLintCardRefusesAnUnknownKind(t *testing.T) {
 	t.Parallel()
 
 	stdout, exit := lintEscapeCard(t, "unknown.card",
 		"KIND: completely-unknown-kind",
-		"PATHS: internal/hygiene/glob.go",
-		"TEST: internal/hygiene TestValidatePathsRefusesAWindowsDriveLetter",
+		"PATHS: pkg/hygiene/glob.go",
+		"TEST: pkg/hygiene TestValidatePathsRefusesAWindowsDriveLetter",
 	)
 	require.Equal(t, 1, exit, "an unknown KIND: is a drift, exit %d\n%s", exit, stdout)
 	require.Contains(t, stdout, "kind-declared", "the drift is kind-declared:\n%s", stdout)

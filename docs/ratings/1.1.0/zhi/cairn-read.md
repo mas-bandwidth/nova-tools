@@ -17,7 +17,7 @@ store, open_remedy.go the shell remedy. Names are a stranger's words — open,
 append, index, receipt over a store, session, entry, source, publish — and the
 comments say why, in the present tense, with the hurt each guard is written
 from (cairn.go:158-171, SPEC-CAIRN.md:53-62). The tool is one family with the
-others: internal/tool supplies the banner, the refusal grammar, the exit table
+others: pkg/tool supplies the banner, the refusal grammar, the exit table
 and one output shape, so nothing here is hand-rolled where the skeleton already
 holds it. Tests teach the contract: SPEC-CAIRN.md:110-151 names thirty-three
 cases, and firstrun_test.go executes the documented first run rather than only

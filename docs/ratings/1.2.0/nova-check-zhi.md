@@ -48,7 +48,7 @@ A 10 would fix the spec's tool name and `--fail-max` claim, make every `-h` mark
 | 24 | `nova-check kernel --file f --max-bytes 10 --max-tokens 5 --bytes-per-token 4` | Two REFUSED lines, each followed by the same three-line `state the unit` paragraph. | Print the remedy paragraph once per run. | S |
 | 25 | `nova-check quickstart --dir ./self --json`, `dogfood ledger --json` | Unknown flag; the banner lists the exception, but the first-run verb and the receipt verbs are the ones a script reads. Carried from 1.1.0. | Accept `--json` on quickstart and dogfood. | M |
 | 26 | docs/CLI.md:13 | kernel, floors, corpus, door and seed meet the newcomer with no definition. Carried from 1.1.0. | Open the nova-check section with a short glossary. | S |
-| 27 | cmd/nova-check/main.go | 1,008 lines that hand-roll dispatch, help excerpts and refusals, up from 877 at 1.1.0; findings 3, 4, 9 and 10 live there. | Move dispatch and help onto internal/tool. | L |
+| 27 | cmd/nova-check/main.go | 1,008 lines that hand-roll dispatch, help excerpts and refusals, up from 877 at 1.1.0; findings 3, 4, 9 and 10 live there. | Move dispatch and help onto pkg/tool. | L |
 
 ## Good, keep
 

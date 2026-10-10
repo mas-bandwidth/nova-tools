@@ -6,7 +6,7 @@
 // first on PATH prints and the one the literal ~/.local/bin/nova-swarm prints, and if the two
 // differ it prints both in full and names the fix. `native` runs the same check
 // before they start anything, so a launch refuses before it spends rather than after
-// somebody notices. It invents no version of its own: internal/buildinfo produces the line
+// somebody notices. It invents no version of its own: pkg/buildinfo produces the line
 // and this file only reads what a binary said.
 //
 // `DOCTOR OK stamp=<line>` says the two agree, or that there is one binary to read. A
@@ -45,11 +45,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/harness"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/pkg/harness"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 // doctorLookPath resolves a bare binary name on PATH. A package var so a test answers the
@@ -242,7 +242,7 @@ type headlessReport struct {
 	loggedIn                    bool
 }
 
-// headlessReports asks each headless harness (internal/harness; docs/SPEC-SWARM.md, the
+// headlessReports asks each headless harness (pkg/harness; docs/SPEC-SWARM.md, the
 // headless harnesses) whether it is on PATH, its version, and its login, in the order of
 // harness.Headless. A machine without one has no report to refuse on: the heavy tier's
 // members have them and the others do not.

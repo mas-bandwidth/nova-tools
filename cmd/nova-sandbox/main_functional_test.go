@@ -10,13 +10,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox/darwincheck"
+	"github.com/mas-bandwidth/nova-tools/pkg/goenv"
+	"github.com/mas-bandwidth/nova-tools/pkg/sandbox/darwincheck"
 	"github.com/mas-bandwidth/nova-tools/profiles"
 	"github.com/stretchr/testify/require"
 )
 
-// The darwin check (internal/sandbox/darwincheck, run by tools/sandboxcheck), run against
+// The darwin check (pkg/sandbox/darwincheck, run by tools/sandboxcheck), run against
 // the profile THIS TOOL generates rather than the one the check fills for itself. One text,
 // filled two ways: if the generator and the check ever disagree, this is where it shows, and
 // it shows as a named check rather than as a job that dies in its first second. It is behind

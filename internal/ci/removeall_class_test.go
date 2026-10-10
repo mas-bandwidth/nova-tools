@@ -26,7 +26,7 @@ const removeAllAllowlistPath = "testdata/removeall_allowlist.txt"
 // it on purpose: safepath.RemoveUnder is where the single os.RemoveAll of a
 // computed path is allowed to live, so reading it against itself would be
 // circular. Everything OUTSIDE this directory must go through it.
-const safepathPkgDir = "internal/safepath"
+const safepathPkgDir = "pkg/safepath"
 
 // TestRemoveAllOnlyOnTempOrThroughSafepath is the class rule Glenn asked for on
 // 2026-09-17: "It is just one mistake away from deleting the whole disk. I want
@@ -44,7 +44,7 @@ func TestRemoveAllOnlyOnTempOrThroughSafepath(t *testing.T) {
 	seen := map[string]bool{}
 	var violations []string
 
-	for _, dir := range []string{"cmd", "internal"} {
+	for _, dir := range []string{"cmd", "internal", "pkg"} {
 		for _, src := range tree.GoFilesUnder(false, dir) {
 			rel := src.Rel
 			if strings.HasPrefix(rel, safepathPkgDir+"/") {

@@ -10,13 +10,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/pkg/ntable"
 	"github.com/redis/go-redis/v9"
 )
 
 // Redis is the Backend of a Redis store holding the table layer's function
-// library: the tables through internal/ntable, in process; the operation
+// library: the tables through pkg/ntable, in process; the operation
 // records and the notifications under the deployment's prefix.
 type Redis struct {
 	C     redis.UniversalClient

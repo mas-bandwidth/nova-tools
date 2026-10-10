@@ -1,3 +1,3 @@
 # no-hand-printing: hand printing in a tool package; each row's count only falls
 # ceiling: 1
-cmd/nova-sandbox:flagset 1 one flag set the tool's own help seam builds (helpIfAsked): the tool is not on internal/tool, so the seam parses the verb's flags until the port
+cmd/nova-sandbox:flagset 1 one flag set the tool's own help seam builds (helpIfAsked): the tool is not on pkg/tool, so the seam parses the verb's flags until the port

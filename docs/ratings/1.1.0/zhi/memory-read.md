@@ -40,8 +40,8 @@ emphasis markers before collapsing whitespace because the order is the whole fix
 (memindex.go:99-121); postings arrive sorted by construction and the invariant
 is asserted cheaply rather than trusted (memindex.go:308-315). It is one family
 with the other tools: the same refusal grammar, the 0/1/2 exit table, the shared
-internal/tool result value and oneline escaping, and version through
-internal/buildinfo.
+pkg/tool result value and oneline escaping, and version through
+pkg/buildinfo.
 
 Weight is the cost. main.go is 1,286 lines and holds seven verbs plus the shared
 flag plumbing, the shell-arg quoting and the function-word chooser — "each file

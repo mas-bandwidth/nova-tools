@@ -1,0 +1,3 @@
+# Migrated counted package ledger; original row keys preserved.
+# ceiling: 1
+pkg/tlc/suite.go:RunSuite:blank 1 a cleanup of the check's own scratch directory, safe to ignore; the reason comment waits for the next TLC re-run, because suite.go is an input every TLC record hashes and a comment there stales them all

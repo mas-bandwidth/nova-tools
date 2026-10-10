@@ -25,7 +25,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"gopkg.in/yaml.v3"
 )
 
@@ -437,7 +437,7 @@ func ParseSleeps(r io.Reader) ([]SleepRow, error) {
 // the same way. docs/SPEC-CI.md, "The unit tier's budgets": a row names
 // exactly that package, and the column is the full module-relative path.
 func refuseShortPackage(line int, pkg string) error {
-	if strings.HasPrefix(pkg, "cmd/") || strings.HasPrefix(pkg, "internal/") || strings.HasPrefix(pkg, "tools/") {
+	if strings.HasPrefix(pkg, "cmd/") || strings.HasPrefix(pkg, "internal/") || strings.HasPrefix(pkg, "pkg/") || strings.HasPrefix(pkg, "tools/") {
 		return nil
 	}
 	return fmt.Errorf("line %d: package %q must be the full module-relative path", line, pkg)

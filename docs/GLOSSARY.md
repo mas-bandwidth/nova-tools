@@ -2,7 +2,7 @@
 
 The words the nova-tools specs and help use, one line each: what it means, the
 section that defines it, and the words it replaced where it replaced any. The
-sprint's own words are in [sprint/GLOSSARY.md](sprint/GLOSSARY.md) (nova-sprint
+sprint's own words are in [sprint/GLOSSARY.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/sprint/GLOSSARY.md) (nova-sprint
 1.0.0). The rules of naming, and the words retired from both, are in
 [TERMINOLOGY.md](TERMINOLOGY.md); `internal/docs/terminology_lint_test.go` fails
 when a retired word is used outside a dated record.
@@ -31,15 +31,13 @@ The `Replaces:` clause is the one place a retired word may stand in a glossary.
 - **dogfood shape** — the issue shape the family files against its own tools: tool, command,
   verbatim output, expected, smallest fix. Defined: [SPEC-UPDATE.md, The rules, numbered](SPEC-UPDATE.md#the-rules-numbered).
 - **down** — a friend or machine that is not answering; the one word for it in every table.
-  Defined: [SPEC-FRIEND.md, Presence](SPEC-FRIEND.md#presence-internalfriendpresencego). Replaces: asleep.
+  Defined: [SPEC-FRIEND.md, Presence](SPEC-FRIEND.md#presence-pkgfriendpresencego). Replaces: asleep.
 - **friend** — a named participant you exchange notes with, the coordinator included; her
   configuration is a config row. Defined: [SPEC-CONFIG.md, Kinds](SPEC-CONFIG.md#kinds).
 - **lane** — one slot a worker takes to run a Go build or test on a machine, or one sprint-card run of a friend.
-  Defined: [SPEC-SPRINT.md, Lanes](SPEC-SPRINT.md#18-lanes).
+  Defined: [SPEC-FRIEND.md, One-shot lanes](SPEC-FRIEND.md#one-shot-lanes-pkgfriendlanesgo).
 - **ledger** — the shrink-only allowlist under `internal/ci/testdata`, one row per place still short of a rule.
   Defined: [STANDARD.md](STANDARD.md).
-- **no tier** — a cost record that names no tier, counted under its own heading.
-  Defined: [SPEC-SPRINT.md, The tables](SPEC-SPRINT.md#1-the-tables). Replaces: untiered.
 - **OK** — the verdict a successful verb line carries as its second token: `<TOKEN> OK`, on stdout.
   Defined: [SPEC.md, Conventions](SPEC.md#conventions).
 - **receipt** — one line appended to `from-<me>/RECEIPTS` recording that a note arrived; not an approval.

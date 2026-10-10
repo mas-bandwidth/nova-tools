@@ -9,7 +9,7 @@ import (
 // with their constructors emptyBench and conformingBench and the drift-line
 // readers, are the rig bench_test.go lays down. This file holds the scenarios
 // and checkers the package's shapes share; each serves at least two of them,
-// and the general mechanics stay in internal/testkit where they fit.
+// and the general mechanics stay in pkg/testkit where they fit.
 
 // toolOnPath installs tool at at (relative to the home) with its directory
 // first on PATH, and returns the tool's path.

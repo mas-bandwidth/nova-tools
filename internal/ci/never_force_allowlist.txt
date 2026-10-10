@@ -6,10 +6,10 @@
 cmd/nova-sprint/land_prune_test.go:80 a test fixture: it asserts the land prune's delete push, leased on each card branch's head, and the trace it reads names the remote
 cmd/nova-sprint/lintbrief_test.go:41 a test fixture: a forbidden brief the card lint must refuse, kept so the refusal is proved
 cmd/nova-swarm/lintchild_test.go:111 a test fixture: a bad card the child lint must refuse at STEP 7, kept so the refusal is proved
-internal/cardcontract/openai_functional_test.go:198 a test fixture row: a force push the shim must refuse, kept so the refusal is proved
-internal/cardcontract/shims_functional_test.go:103 a test fixture row: a leased push the shim must carry on the caller's own branch, kept so the handling is proved
-internal/cardcontract/shims_functional_test.go:368 a test fixture list: leased pushes the shim must carry, kept so the handling is proved
-internal/swarm/lintbase_test.go:84 a test fixture: a card body quoting a leased push to the card's own branch, kept so the base lint's read is proved
-internal/swarm/lintchild_test.go:291 a test fixture table: the force lines the child lint must refuse, kept so the refusal is proved
-internal/swarm/lintchild_test.go:292 a test fixture table: the accepted pushes the child lint must not refuse, the rule sentence beside them names the remote
+pkg/cardcontract/openai_functional_test.go:198 a test fixture row: a force push the shim must refuse, kept so the refusal is proved
+pkg/cardcontract/shims_functional_test.go:103 a test fixture row: a leased push the shim must carry on the caller's own branch, kept so the handling is proved
+pkg/cardcontract/shims_functional_test.go:368 a test fixture list: leased pushes the shim must carry, kept so the handling is proved
+pkg/swarm/lintbase_test.go:84 a test fixture: a card body quoting a leased push to the card's own branch, kept so the base lint's read is proved
+pkg/swarm/lintchild_test.go:291 a test fixture table: the force lines the child lint must refuse, kept so the refusal is proved
+pkg/swarm/lintchild_test.go:292 a test fixture table: the accepted pushes the child lint must not refuse, the rule sentence beside them names the remote
 tools/ci/revertonred_test.go:316 a test fixture: the revert-on-red tool's forced push to its own revert branch, kept so the fallback is proved

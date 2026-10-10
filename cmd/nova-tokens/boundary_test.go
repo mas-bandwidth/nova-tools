@@ -85,8 +85,8 @@ func binaryPackages(t *testing.T) []string {
 	// The floor: the five packages of the binary's own graph. Fewer
 	// than that and the walk found nothing and this test would pass by checking nothing.
 	for _, must := range []string{
-		"cmd/nova-tokens", "internal/tokens", "internal/oneline",
-		"internal/bounded", "internal/buildinfo",
+		"cmd/nova-tokens", "internal/tokens", "pkg/oneline",
+		"pkg/bounded", "pkg/buildinfo",
 	} {
 		require.True(t, seen[must], "the import walk did not reach %s; it was looking in the wrong place and would have passed by checking nothing (found %v)", must, order)
 	}
@@ -244,7 +244,7 @@ func TestNamesGitKnowsAProgramNameFromASubstring(t *testing.T) {
 		assert.True(t, namesGit(yes), "namesGit(%q) is false; that is a program to run", yes)
 	}
 	for _, no := range []string{
-		"github.com/mas-bandwidth/nova-tools/internal/oneline",
+		"github.com/mas-bandwidth/nova-tools/pkg/oneline",
 		"an ID is sha256: and 64 lowercase hex digits",
 		"a \\u escape is not four hex digits",
 		"digits", "legitimate", "gitignore", "", "gi t", "(git)",

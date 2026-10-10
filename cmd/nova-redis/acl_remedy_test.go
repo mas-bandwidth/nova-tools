@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/redisacl"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisacl"
 )
 
 // TestACLApplyRefusalNamesEveryMissingUser: an apply that finds four rendered

@@ -106,7 +106,7 @@ func topHelpExplainsItsFailures(t *testing.T) {
 
 // TestTopHelpSetupLinesRunAsPrinted holds the banner's `setup:` block to the
 // class rule: its lines are commands, run in order from an empty directory
-// before the `example:` lines (internal/onboarding, internal/ci's
+// before the `example:` lines (pkg/onboarding, internal/ci's
 // TestPlatformsMatchCILegsAndUnexecutedExamplesOnlyShrink). The mkdir and
 // printf that make the tree the quickstart example walks live under it.
 func TestTopHelpSetupLinesRunAsPrinted(t *testing.T) {
