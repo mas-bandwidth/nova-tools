@@ -1,0 +1,10 @@
+HOLD report from nova-sprint:
+
+CARD: add-logging-to-auth-handler
+TASK: add log lines to the auth handler
+
+FOUND: the paths named in the card are too narrow
+The card says PATHS: internal/auth/handler.go
+But the log needs to be added to internal/auth/middleware.go and internal/auth/verify.go too
+
+PATHS-PROPOSED: internal/auth/handler.go internal/auth/middleware.go internal/auth/verify.go

@@ -855,6 +855,11 @@ $ nova-decide brief --card ./cmd/nova-decide/testdata/greet.md --backend fixed -
 BRIEF OK decision=brief backend=fixed cards=1 asked=1 existing=0 failed=0
 BRIEF CARD id=greet op=greet@brief-825042ac p_converges=0.72 minutes=under-10 failed=- uncalibrated=true recorded=new
 
+$ nova-decide hold --report ./cmd/nova-decide/testdata/hold-reports/paths-too-narrow.txt --backend fixed --answers ./cmd/nova-decide/testdata/hold-answers.json --record ./decisions.jsonl --op holdreport
+HOLD OK id=holdreport decision=holdreason backend=fixed class=paths-too-narrow p=0.85 tokens_in=0 tokens_out=0 recorded=new
+HOLD ANSWER question=class type=choice value=paths-too-narrow p=already-done:0.02,harness-failure:0.03,missing-dependency:0.05,paths-too-narrow:0.85,work-defect:0.05
+HOLD ANSWER question=proposed_paths type=noul value=yes p=yes:0.9
+
 $ nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "the review found nothing"
 OUTCOME OK id=card-1 decision=read label=ok changed=true
 

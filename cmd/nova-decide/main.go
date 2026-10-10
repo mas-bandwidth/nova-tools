@@ -209,6 +209,23 @@ in id order; a card the backend failed is named, the rest are recorded.`,
 				Run: w.brief,
 			},
 			{
+				Name:    "hold",
+				Usage:   "hold --report <file> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]",
+				Example: "hold --report " + fixture + "hold-reports/paths-too-narrow.txt --backend fixed --answers " + fixture + "hold-answers.json --record ./decisions.jsonl --op holdreport",
+				Effect:  tool.Delivery + "; with --backend jev it sends the report to the backend, and it appends to --record",
+				Detail: `The hold decision: a HOLD report's classification, over the report text alone.
+Two questions: class (choice) with p per option (paths-too-narrow, missing-dependency,
+already-done, work-defect, harness-failure), and proposed_paths (noul) p that PATHS-PROPOSED
+line is present. ExtractProposedPaths reads PATHS-PROPOSED if present, else paths named as needed.`,
+				DryRun: true,
+				Flags: func(f *tool.Flags) {
+					f.Required("report", "the HOLD report to classify, a file")
+					w.asking(f)
+					f.String("op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
+				},
+				Run: w.hold,
+			},
+			{
 				Name:    "outcome",
 				Usage:   "outcome --record <file> --id <decision-id> --label <word> [--note <text>] [--dry-run]",
 				Example: "outcome --record ./decisions.jsonl --id card-1 --label ok --note \"the review found nothing\"",
@@ -685,6 +702,17 @@ func gateBars(s string) (decide.GateBars, error) {
 		return decide.GateBars{}, fmt.Errorf("--bars %q: %v", s, err)
 	}
 	return b, nil
+}
+
+// hold makes the hold decision of a single report.
+func (w world) hold(c *tool.Call) *tool.Out {
+	raw, err := os.ReadFile(c.Str("report"))
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	return w.decision(c, decide.HoldSchema(), decide.HoldState(string(raw)), map[string]string{
+		"report": c.Str("report"), "report_sha256": decide.Sum(raw),
+	})
 }
 
 // brief makes the brief decision of every card --card names, as one batch.
