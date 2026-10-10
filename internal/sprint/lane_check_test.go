@@ -48,7 +48,9 @@ func (r *passRig) laneTick(d time.Duration, friend string, running ...string) {
 		}
 		rep := sprint.FriendReport{Active: r.clock()}
 		if f == friend {
-			rep.Running = running
+			// name the running list, empty included: a bare beat leaves the list the
+			// store has (friendBeatReport, a-beat-never-erases-the-running-list-bc.w3)
+			rep.Running = append([]string{}, running...)
 		}
 		_, err := r.st.FriendBeatReport(r.ctx, f, rep, nil)
 		require.NoError(r.t, err)
