@@ -415,6 +415,9 @@ func (a *app) pushLoop(ctx context.Context, src inboxSource, dir string, timeout
 	if err != nil {
 		return refuse(stderr, "inbox", "--push: "+err.Error())
 	}
+	// the tick's lateness, at every look (pushlate.go): a tick that runs late cannot tell of itself
+	late := &lateWatch{}
+	a.pushLate(ctx, src, p, late, look, asJSON, stdout, stderr)
 	for {
 		var texts []string
 		for _, g := range fresh {
@@ -438,6 +441,7 @@ func (a *app) pushLoop(ctx context.Context, src inboxSource, dir string, timeout
 			if p.fixed == "" {
 				a.prove(ctx, src, l.holder, asJSON, stdout)
 			}
+			a.pushLate(ctx, src, p, late, l, asJSON, stdout, stderr)
 			return p.unseen(l)
 		}, running, timeout)
 		if err != nil {

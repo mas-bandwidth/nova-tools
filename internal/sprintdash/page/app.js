@@ -608,6 +608,28 @@ function renderHero(d, s, ft) {
   setTitle($("tput"), throughput == null ? "needs ten minutes of samples" : "over the last " + Math.round(throughputMinutes) + " min");
   setText($("coord"), d.coordinator || "-"); setText($("epoch"), d.epoch != null ? d.epoch : "-");
   setMachine(d.machine);
+  setSeat(d.seat_waits);
+}
+
+// The judgments waiting on the seat (the owner, 2026-10-10: no silent waits): how many and the
+// oldest's age, from where --json's seat_waits; red while any is past its deadline. Hidden
+// until the tick has counted them.
+function ageText(sec) {
+  sec = Math.max(0, Math.floor(sec));
+  if (sec < 60) return sec + "s";
+  if (sec < 3600) return Math.floor(sec / 60) + "m";
+  if (sec < 86400) return Math.floor(sec / 3600) + "h" + (Math.floor(sec / 60) % 60 ? " " + (Math.floor(sec / 60) % 60) + "m" : "");
+  return Math.floor(sec / 86400) + "d " + (Math.floor(sec / 3600) % 24) + "h";
+}
+function setSeat(w) {
+  var chip = $("seat-chip"); if (!chip) return;
+  if (!w) { chip.hidden = true; return; }
+  chip.hidden = false;
+  var n = int(w.judgments), text = n + " waiting";
+  if (n > 0) text += " \u00b7 oldest " + ageText(int(w.oldest_age_seconds));
+  setText($("seat"), text);
+  setTitle(chip, n > 0 ? int(w.overdue) + " past their deadline; the oldest " + (w.oldest_id || "") + " (" + (w.oldest_type || "") + ")" : "no judgment waits on the seat");
+  setClass(chip, "chip" + (int(w.overdue) > 0 ? " alert" : ""));
 }
 
 // ---------- poll loop ----------
@@ -854,7 +876,7 @@ function render(d) {
   renderHero(d, s, ft);
   fitTables();
   if (DEBUG_FLASH) { // ?debug=flash: one line per refresh, same=1 when the rendered data did not change
-    var sig = JSON.stringify([d.landed, d.all, d.summary, d.coordinator, d.epoch, d.machine, d.tables.work, d.tables.fleet, d.tables.friends || null,
+    var sig = JSON.stringify([d.landed, d.all, d.summary, d.coordinator, d.epoch, d.machine, d.tables.work, d.tables.fleet, d.tables.friends || null, d.seat_waits || null,
       (d.streams || []).map(function (x) { return [x.Stream, x.State]; }), d.tables.merge]);
     var line = "flashes=" + flashCount + " same=" + (sig === prevSig ? 1 : 0);
     prevSig = sig; console.log(line);

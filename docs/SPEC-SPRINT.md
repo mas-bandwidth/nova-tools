@@ -5577,6 +5577,77 @@ store, rule on and off) and `TestALandPassFindsTheBaseGreenAndItsStreamResumesBy
 
 **wait takes several notes, and a group** (the coordinator waited judgments one at a time in a loop, `wait <id> --for 3h` per note). `wait <note>[,<note>]... (--for <duration> | --until <RFC3339>)` sets each named note, and `wait --group <id> [--expect <n>] (--for <duration> | --until <RFC3339>)` sets every note of that inbox group (a stalled stream's group, which has no note, is its own id), as `ack` takes `<note>[,<note>]...` and a verb given `--group` takes the group. Each note is set or refused on its own line (`WAIT OK note=<id> ...`, or `WAIT REFUSED note=<id>: <why>`). `--group` with a size other than `--expect` is refused and nothing changes. A group of one note keeps the one-id command the inbox already prints; a group of several names every note, comma separated (`TestWaitTakesSeveralNotes`).
 
+### No silent stops
+
+The owner, 2026-10-10 ~04:18Z: "sprint doctor can check this, but i still dislike these silent
+stops/failures"; and the night before, of a rest the machine made on an estimate: "it should
+raise it to you as a thing to do, but not do it automatically". The night of 2026-10-09 lost
+its throughput to stops the machine made and told no one, each found by a person reading the
+dashboard: two machine rows down since they never beat, a hard pin waiting on a friend who was
+down, a friend's stall judgment closed in the tick that raised it, the tick 20 to 90 s late for
+hours, a promotion's pull request ejected from the merge queue, and 111 judgments waiting on the
+seat, the oldest 51 hours. Every automatic stop is now a signal to the seat while it holds
+(internal/sprint/stops.go; the model is tla/CoordinatorPass.tla, Kind `stop`, invariant
+`StopSignalled`, witness `silentstop`):
+
+- **The pass's stops** (`StopTypes`, kept by the coordinator's pass as its own judgments,
+  raised once an episode and closed when the stop clears; each text says what stopped, the
+  evidence (an absolute time, never an age, so the text and the stops record change only when
+  the stop does), the effect and the undo verb). While any stop judgment has gone `PassEvery`
+  without a push, the pass writes one digest to the coordinator, `NStopsDigest`, at most once a
+  `PassEvery` (its clock the acknowledgement `NStopsDigestClock`): how many stops hold by kind,
+  the `StopsDigestOldest` (5) oldest with their undo verbs, and `nova-sprint doctor` for the
+  full list; a stop acknowledged, or waited to a review time not reached, is left out:
+  `NStopMemberDown`, a fleet machine down (or never beaten) that the coordinator did not hold,
+  past the status dwell, or held adopting past `StopAdoptAfter`: its width idles; `NStopPinWaits`,
+  a ready card hard-pinned (`WHO: only friend <name>`) to a friend who is not up, with the cards
+  that need it; `NFriendStalled`, the stall ladder at rung 3 or above while she holds cards (its
+  own type: as `stalled` the check closed it in the tick that raised it). A hold the coordinator
+  made (`fleet down`, `hold`) is hers and never a stop.
+- **The judgments late on the coordinator escalate**: the overdue line is addressed to the
+  coordinator, so the push delivers it at the deadline; `NCoordinatorBehind` opens with its level
+  (`level <n>: ...`), one level every `BehindEscalateEvery` (three `PassEvery`) of running time
+  since the overdue line of the oldest it counts, and the level is part of the condition, so a
+  new level is a new judgment whatever quieted the one before (`EscalatedPastAck`, witness
+  `ackforever`). A judgment the pass closes takes its overdue hold with it in the same tick.
+- **The late tick** cannot tell of itself: the push loop (`inbox --push`) reads the machine's
+  line at every look and, while the tick runs `TickLatePush` (30 s) late or more, writes
+  `TICKLATE-<time>.md` to the seat's inbox and delivers it, with the worst lateness seen
+  (cmd/nova-sprint/pushlate.go). It pushes at most once a `PassEvery`: the machine line counts
+  lateness from the last heartbeat, so a look just after a tick reads on time, and an episode
+  ends only after `PassEvery` of on-time looks; the last push is kept across episodes, and a
+  push loop that restarts reads it back from the newest `TICKLATE-*.md` of the inbox. The
+  model is tla/LatePush.tla (`OnePushAWindow`, `PushedWhileLate`; witnesses `wipe` and
+  `forget`).
+- **A promotion** tells the coordinator, through a note in the store (`Store.Tell`), of its
+  judgments (a failed check or merge-group run, a red pull request, a pull request closed) and
+  of its pull request found out of the merge queue neither merged nor closed
+  (`NPromoteEjected`); each was stdout alone.
+- **The stops record** (store key `stops`): every automatic stop that holds (`LiveStops`: the
+  pass's own, and those another part signals, the route and provider rests and a stream the
+  lander stopped, listed with their age) and what waits on the seat (`SeatWaitsOf`: the open
+  judgments, those past their deadline, the oldest, the level), written by the tick when it
+  changes and once a minute. `where --json` carries `seat_waits` and `stops` from it; the
+  dashboard's seat pill shows the judgments waiting and the oldest's age, red while any is past
+  its deadline.
+- **`nova-sprint doctor`** counts the same from a fresh read whether or not the machine ticks:
+  each layer (routes, machines, friends, cards) GREEN, or RED with every stop in it, one line each
+  with its age, effect and undo verb, then the seat's waits; exit 1 when a stop holds or a
+  judgment is past its deadline. The card the-doctor-checks-every-layer-and-refuses-a-red builds
+  its layers onto this verb.
+
+Left as they are, and listed: the route and provider rests (route_rest.go, provider_funds.go: a
+sibling card makes their decision the coordinator's); the stall ladder's take-back and down at
+rungs 4 and 5 (pushed to the coordinator as `friend stall` notes; their bound is modelled,
+tla/StallLadder.tla `NoCardHeldPastBound`). `TestAMemberDownTheCoordinatorDidNotHoldIsRaisedAgainUntilItIsHeld`,
+`TestACardPinnedToAFriendWhoIsNotUpIsRaisedUntilUnpinned`,
+`TestJudgmentsLateOnTheCoordinatorArePushedAndEscalatePastAWait` (internal/sprint/stops_test.go),
+`TestTheDoctorListsEveryAutomaticStopWithItsAgeAndUndo`,
+`TestThePushLoopTellsTheSeatOfALateTickEveryTenMinutes`,
+`TestALateTickSixtySecondsApartIsPushedAtMostSixTimesAnHour`,
+`TestARestartedPushLoopDoesNotRepushALateTickInsideTheWindow` and
+`TestAPromotionEjectedFromTheMergeQueueIsToldToTheSeat` (cmd/nova-sprint/stops_test.go) drive it.
+
 ## 9. What is always true
 
 Checked by `nova-sprint check`, and by the model. Sets of primaries are compared
