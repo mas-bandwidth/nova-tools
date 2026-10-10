@@ -7464,3 +7464,7 @@ friend reaches that friend's inbox by the route her judgments already take: the
 push loop writes a group addressed to someone to that actor's own inbox
 directory (`pushTarget.dirOf`, `~/<actor>-working/inbox/sprint-judgments`), the
 group carrying the note's addressee (`sprint.Group.To`).
+
+
+## Server Switch Restarting and Bounded Wait
+During `server switch`, the server answers incoming verb requests with a typed `restarting` answer. The client waits in a bounded loop (500 ms steps, up to 4 minutes), prints one `WAITING` line, and resends until the server serves responses.

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -343,4 +344,56 @@ func TestAFileFlagIsFoundAsTheVerbParsesIt(t *testing.T) {
 	} {
 		assert.Equal(t, c.want, absolutePaths(append([]string(nil), c.in...)), "%v", c.in)
 	}
+}
+
+type mockHandler struct {
+	attempts int
+	serveFn  func(w http.ResponseWriter, r *http.Request)
+}
+
+func (mh *mockHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	mh.attempts++
+	w.Header().Set("Content-Type", "application/json")
+	if mh.attempts <= 2 {
+		_, _ = w.Write([]byte(`{"results":[{"code":0,"stdout":"","stderr":"","restarting":true}]}`)) // ignored: write restarting response
+		return
+	}
+	if mh.serveFn != nil {
+		mh.serveFn(w, r)
+		return
+	}
+	_, _ = w.Write([]byte(`{"results":[{"code":0,"stdout":"ok\n","stderr":""}]}`)) // ignored: write success response
+}
+
+func TestAVerbDuringASwitchGetsRestartingAndWaits(t *testing.T) {
+	t.Parallel()
+	mh := &mockHandler{}
+	var stderr bytes.Buffer
+	c := sprintwire.Client{
+		Addr:   "sprint.test:6390",
+		HTTP:   &http.Client{Transport: handlerTransport{mh}},
+		Stderr: &stderr,
+		Bound:  5 * time.Second,
+	}
+	res, err := c.Do(context.Background(), []string{"where"})
+	require.NoError(t, err)
+	require.Len(t, res, 1)
+	assert.Equal(t, 0, res[0].Code)
+	assert.Equal(t, "ok\n", res[0].Stdout)
+	assert.Equal(t, "WAITING\n", stderr.String())
+	assert.Equal(t, 3, mh.attempts, "twice restarting then serves")
+
+	mhTimeout := &mockHandler{
+		serveFn: func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"results":[{"code":0,"stdout":"","stderr":"","restarting":true}]}`)) // ignored: write restarting response
+		},
+	}
+	cTimeout := sprintwire.Client{
+		Addr:  "sprint.test:6390",
+		HTTP:  &http.Client{Transport: handlerTransport{mhTimeout}},
+		Bound: 50 * time.Millisecond,
+	}
+	_, err = cTimeout.Do(context.Background(), []string{"where"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "server switch", "past the bound it names the switch")
 }
