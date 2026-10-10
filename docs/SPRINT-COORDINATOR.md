@@ -979,6 +979,12 @@ retired-script command in docs/COORDINATOR-TOOLS.md maps to a real verb and opti
 `TestWatchWakeSynopsisNamesWakeFile` pins the synopsis, and
 `TestEveryCoordinatorToolMapsToARealNovaVerb` checks the guide's command mapping.
 
+### simp-retire-buswatch-bcb.w2
+
+The watch.sh row is retired with a test on every behaviour, and
+`TestStopgapWatchShIsRetired` (internal/ci) holds the citations through the register's own
+parser. The coordinator runs `nova-sprint watch --wake` where the script ran.
+
 ## Open items
 
 Each is a place this runbook describes a workaround; the change that removes it is named.

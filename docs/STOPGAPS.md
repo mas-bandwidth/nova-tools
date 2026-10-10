@@ -46,6 +46,12 @@ docs/SPRINT-COORDINATOR.md names the file. The wake-file baseline is initialized
 whole state's seed, so a state seeded before the flag was enabled starts at the file's end
 rather than waking on the lines already there (`TestWatchWakeSeededOldState`, cmd/nova-sprint).
 
+### simp-retire-buswatch-bcb.w2
+
+Every behaviour of the watch.sh row cites a test that exists, `TestStopgapWatchShIsRetired`
+reads the row through this file's parser, and the replacement verb and its `--wake-file`
+flag are in the `nova-sprint` verb table.
+
 ## bud-card-runner
 
 Path: <buds-dir>/<bud>/runner.zsh (identical copies, one per bud)
