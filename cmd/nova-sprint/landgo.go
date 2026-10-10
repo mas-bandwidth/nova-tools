@@ -469,6 +469,10 @@ func (l *lander) ringGate(ctx context.Context, hosts []string, dir string, runs 
 			skips.Fail(host, refused.Error())
 			continue
 		}
+		if strings.HasPrefix(why, "GATE FAULT") {
+			l.copySaid(why)
+			continue
+		}
 		if ran {
 			l.gateRing, l.gateSlot = len(hosts), ringSlot(l.gateKey, len(hosts))
 		}
@@ -496,7 +500,11 @@ func (l *lander) gateOn(ctx context.Context, host, dir string, runs [][]string, 
 	if code == 0 {
 		return "", true, nil
 	}
-	return gateWhy(redRun(runs, out), fmt.Errorf("exit status %d on the bench %s", code, host), out), true, nil
+	isRed, kind, what := classifyGateOutput(out)
+	if isRed {
+		return gateWhy(redRun(runs, out), fmt.Errorf("exit status %d on the bench %s", code, host), out), true, nil
+	}
+	return "GATE FAULT bench=" + host + " kind=" + kind + " what=" + oneline.Quote(what), true, nil
 }
 
 // copySaid says one stage line: the loop's idle line carries it as the step, and the
