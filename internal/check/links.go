@@ -231,11 +231,17 @@ func checkFileLinks(root, mdPath string, exclude []string) (checked int, broken 
 			continue
 		}
 		for _, target := range extractLinkTargets(line) {
-			resolved, skip, reason := resolveTarget(root, mdPath, target, exclude)
+			resolved, skip, fragment := resolveTarget(root, mdPath, target, exclude)
 			if skip {
 				continue
 			}
+			var reason string
 			checked++
+			if fragment != "" && strings.EqualFold(filepath.Ext(resolved), ".md") {
+				if !fragmentExists(resolved, fragment) {
+					reason = "missing anchor"
+				}
+			}
 			if reason == "" {
 				// The lexical check in resolveTarget rejects targets that leave
 				// root with "..", but an intermediate directory symlink could
@@ -399,7 +405,9 @@ func resolveTarget(root, mdPath, target string, exclude []string) (resolved stri
 	if strings.IndexByte(target, ':') >= 0 && schemeRE.MatchString(target) {
 		return "", true, ""
 	}
+	var fragment string
 	if i := strings.Index(target, "#"); i >= 0 {
+		fragment = target[i+1:]
 		target = target[:i]
 	}
 	if target == "" {
@@ -421,5 +429,48 @@ func resolveTarget(root, mdPath, target string, exclude []string) (resolved stri
 	if rel != "." && underExclude(rel, exclude) {
 		return "", true, ""
 	}
-	return resolved, false, ""
+	return resolved, false, fragment
+}
+
+// fragmentExists reports whether the markdown file at path contains a heading
+// that anchors to the given fragment. GitHub's anchor rule is applied:
+// lower-case, spaces to dashes, punctuation dropped.
+func fragmentExists(path, fragment string) bool {
+	data, err := readregular.Read(path, readregular.DefaultMax)
+	if err != nil {
+		return false
+	}
+	fragment = strings.ToLower(fragment)
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimLeft(line, " \t")
+		if !strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		heading := strings.TrimLeft(trimmed, "#")
+		heading = strings.TrimSpace(heading)
+		anchor := anchorFromHeading(heading)
+		if anchor == fragment {
+			return true
+		}
+	}
+	return false
+}
+
+// anchorFromHeading converts a markdown heading to a GitHub-style anchor.
+// GitHub's rule: lower-case, spaces to dashes, punctuation removed.
+func anchorFromHeading(heading string) string {
+	heading = strings.ToLower(heading)
+	var b strings.Builder
+	for _, r := range heading {
+		if r == ' ' {
+			b.WriteRune('-')
+		} else if isAlphaNum(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func isAlphaNum(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
 }
