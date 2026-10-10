@@ -972,6 +972,13 @@ for append wakes and `TestWatchWakeFiresOncePerEventAndNeverLapses` for judgment
 checks, stops, friends, merge and backlog alarms, and filtered bus messages.
 `TestStopgapWatchShIsRetired` checks the register's per-behaviour test citations.
 
+### simp-retire-buswatch-bcb.w1
+
+The watch verb's synopsis includes its registered `--wake-file <path>` flag, so the
+retired-script command in docs/COORDINATOR-TOOLS.md maps to a real verb and option.
+`TestWatchWakeSynopsisNamesWakeFile` pins the synopsis, and
+`TestEveryCoordinatorToolMapsToARealNovaVerb` checks the guide's command mapping.
+
 ## Open items
 
 Each is a place this runbook describes a workaround; the change that removes it is named.
