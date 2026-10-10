@@ -58,7 +58,14 @@ case "$nova_sub" in
 // path (an absolute path, a ./ or ../ path) or a file:// URL goes through to the real git
 // unchanged, as typed (docs/SPEC-CARD-CONTRACT.md, the push): it lands on the child's own
 // machine and reaches no forge, and a test or tool inside a card that pushes to a bare
-// repository it made under its own temp directory needs the push to land.
+// repository it made under its own temp directory needs the push to land. A push run in
+// any repository but the staged checkout (one whose git common directory is not the
+// checkout's: a linked worktree and the clone link share it) goes through to the real git
+// unchanged too, and records nothing: on 2026-10-09/10 the gates' own tests pushed to an
+// `origin` of their temp repositories under the job, the shim recorded those test commits
+// (1,072 of 1,076 records on hetzner), and a finish with no head of its own took the last
+// one for the child's (LastPushed): "the result's head d05a62fc... is not a commit on the
+// checkout's branches", ~600 refused pushes a day across the fleet.
 const gitPush = `push)
 	shift "$nova_n"
 	nova_remote=""; nova_skip=""
@@ -73,6 +80,9 @@ const gitPush = `push)
 	case "$nova_remote" in
 	/*|./*|../*|file://*) nova_git push "$@"; exit ;;
 	esac
+	nova_common=$(nova_git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && nova_common=$(cd "$nova_common" && pwd -P) || nova_common=""
+	nova_ours=$(cd "$NOVA_STAGED" 2>/dev/null && nova_c=$("$NOVA_GIT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && cd "$nova_c" && pwd -P) || nova_ours=""
+	if [ -n "$nova_common" ] && [ -n "$nova_ours" ] && [ "$nova_common" != "$nova_ours" ]; then nova_git push "$@"; exit; fi
 	nova_pos=""; nova_skip=""
 	for nova_a in "$@"; do
 		if [ -n "$nova_skip" ]; then nova_skip=""; continue; fi
