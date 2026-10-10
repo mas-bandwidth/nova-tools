@@ -1,0 +1,245 @@
+# member.yml: one machine from the fleet's tools to a proved member, in one
+# play. nova-sprint fleet add <host> --width <n> runs it for that host and then
+# checks the store (docs/FLEET.md, "Adding a member"); the play on its own is:
+#
+#   ansible-playbook -i ./nova-inventory fleet/member.yml \
+#     -e nova_member=<host> -e nova_member_width=<n> -e nova_member_reader=reader-<host> \
+#     --limit <host> [--check] </dev/null 2>&1 | cat
+#
+# The member's own steps, in order: the pinned tools (go, sqlite3, the pinned
+# harness, age, sops, bats); the nova binaries at the adopted release
+# (fleet/tools.yml, included below); the member and reader loop records added
+# and applied, then their units rendered from them (fleet/loops.yml, included
+# below); the route credential through the sealed-secrets path (the play never
+# prints or takes a secret value: nova-secrets opens the seat and the tool reads
+# the key in its own process); a mirror for every repository a live card names;
+# and one probe card, taken and finished, that proves the member. The verb adds
+# the member drained and deals it the probe card outside its width, so no work
+# reaches it until the play's member has taken and finished the probe. Each step
+# prints one FLEET-ADD line, done or the refusal with its remedy.
+- name: the member's machine and its pinned tools
+  hosts: all
+  gather_facts: true
+  gather_subset: [min]
+  tasks:
+    - name: the member, its width and its reader are named
+      ansible.builtin.assert:
+        that:
+          - nova_member | default('') != ''
+          - nova_member_width | int >= 1
+          - nova_member_reader | default('') != ''
+        fail_msg: >-
+          name the member: -e nova_member=<host> -e nova_member_width=<n>
+          -e nova_member_reader=reader-<host>; nothing was written
+        quiet: true
+
+    - name: the machine's build fact (the adopted release)
+      ansible.builtin.slurp: { src: "{{ nova_build_file }}" }
+      register: fleet_add_build
+      # ignored: a machine never installed has no build fact; -e nova_version names the release
+      failed_when: false
+      when: nova_version is not defined
+
+    - name: the adopted release is known
+      ansible.builtin.set_fact:
+        nova_version: >-
+          {{ nova_version if nova_version is defined else
+             (fleet_add_build.content | default('') | b64decode | trim) }}
+        nova_source: "{{ nova_source | default(playbook_dir ~ '/..') }}"
+
+    - name: the machine has an adopted release
+      ansible.builtin.assert:
+        that: nova_version != ''
+        fail_msg: >-
+          {{ inventory_hostname }} has no adopted release (no {{ nova_build_file }} and no -e nova_version);
+          install a build on it first; nothing was written
+        quiet: true
+
+    # the pinned tools every member runs: the Go toolchain to build a child's
+    # work, sqlite3 for the sprint's records, the pinned harness, age and sops
+    # for the sealed secrets, and bats for a card's own tests. They are installed
+    # before the binaries are built, so the build has its Go toolchain.
+    - name: the pinned tools (go, sqlite3, the pinned harness, age, sops, bats)
+      ansible.builtin.package: { name: "{{ item }}", state: present }
+      loop: "{{ nova_member_tools }}"
+      become: true
+      register: fleet_add_tools
+
+    - name: the pinned harness is present
+      ansible.builtin.command: "{{ nova_member_harness }} --version"
+      register: fleet_add_harness
+      changed_when: false
+      # ignored: read by the assert below, which names the harness and its remedy
+      failed_when: false
+
+    - name: every pinned tool answered
+      ansible.builtin.assert:
+        that: fleet_add_harness.rc == 0
+        fail_msg: >-
+          FLEET-ADD REFUSED step=tools host={{ inventory_hostname }}: {{ nova_member_harness }} is not installed;
+          run: install {{ nova_member_harness }} (or set nova_member_harness), then run fleet add again
+        quiet: true
+
+    - name: FLEET-ADD the pinned tools
+      ansible.builtin.debug:
+        msg: >-
+          FLEET-ADD step=tools host={{ inventory_hostname }} done
+          tools=go,sqlite3,{{ nova_member_harness }},age,sops,bats
+
+# the nova binaries at the adopted release; its FLEET-ADD step=binaries line is
+# printed when a fleet add names nova_member (fleet/tools.yml)
+- import_playbook: tools.yml
+
+# The member and reader loop records, added and applied *before* loops.yml:
+# loops.yml renders and loads the units only from the applied records the
+# inventory prints (nova_loops), so the records are applied and the inventory is
+# refreshed here, in this run, before loops.yml reads it.
+- name: the member and reader loop records
+  hosts: all
+  gather_facts: true
+  gather_subset: [min]
+  vars:
+    fleet_add_member: "member-{{ nova_member }}"
+  tasks:
+    # The records name the keys and the seat their units open through
+    # nova-secrets (loops.yml wraps a unit whose record names keys), and the
+    # member and reader argvs name --pass so nova-swarm hands the route's key to
+    # each card's child. Without both the unit's process holds no key and the
+    # child is handed none, so the probe card cannot run on its route.
+    - name: the member and reader loop records
+      ansible.builtin.command:
+        argv: "{{ [nova_bin_dir ~ '/nova-config', 'loop', 'add', item.name, '--machine', nova_member,
+                   '--argv', item.argv | to_json, '--keepalive', 'true', '--as', nova_member,
+                   '--keys', nova_member_route_key, '--seat', nova_seat] }}"
+      loop:
+        - name: "{{ fleet_add_member }}"
+          argv: >-
+            {{ [nova_bin_dir ~ '/nova-swarm', 'member', '--as', nova_member, '--server', nova_redis_addr,
+                '--harness', nova_member_harness, '--root', nova_home ~ '/nova-bench/member']
+               + (['--pass', nova_member_route_key] if nova_member_route_key else []) }}
+        - name: "{{ nova_member_reader }}"
+          argv: >-
+            {{ [nova_bin_dir ~ '/nova-swarm', 'member', '--as', nova_member_reader, '--server', nova_redis_addr,
+                '--reader', '--harness', nova_member_harness, '--root', nova_home ~ '/nova-bench/reader']
+               + (['--pass', nova_member_route_key] if nova_member_route_key else []) }}
+      loop_control: { label: "{{ item.name }}" }
+      register: fleet_add_records
+      changed_when: "'added' in (fleet_add_records.stdout | default(''))"
+      # ignored: a record that is already there is left as it is; the units below converge
+      failed_when: false
+
+    - name: the loop records are applied
+      ansible.builtin.command:
+        argv: "{{ [nova_bin_dir ~ '/nova-config', 'apply', '--kind', 'loop', '--as', nova_member] }}"
+      register: fleet_add_apply
+      changed_when: "'applied' in (fleet_add_apply.stdout | default('')) or 'add=' in (fleet_add_apply.stdout | default(''))"
+
+    # the inventory is what loops.yml reads nova_loops from: it was parsed before
+    # the records were applied, so it is read again here
+    - name: the inventory carries the new records
+      ansible.builtin.meta: refresh_inventory
+
+# the member and reader units, rendered from the records applied above
+- import_playbook: loops.yml
+
+- name: the member's own steps
+  hosts: all
+  gather_facts: true
+  gather_subset: [min]
+  vars:
+    fleet_add_member: "member-{{ nova_member }}"
+    fleet_add_probe: "probe-{{ nova_member }}"
+    # the repositories to mirror as a list: the verb passes nova_member_repos as
+    # one comma-separated word (its -e form), group_vars holds the list [], and
+    # the inventory may hold either; join and length want the list, never a
+    # string iterated character by character (the house rule, loops.yml
+    # nova_loop_only).
+    fleet_add_repos: >-
+      {{ ((nova_member_repos.split(',') if nova_member_repos is string else nova_member_repos)
+          | map('trim') | reject('equalto', '') | list) }}
+  tasks:
+    - name: FLEET-ADD the loop units and records
+      ansible.builtin.debug:
+        msg: >-
+          FLEET-ADD step=units host={{ inventory_hostname }} done
+          member={{ fleet_add_member }} reader={{ nova_member_reader }} records=2
+
+    # the route credential: nova-secrets opens the seat with sops and only the
+    # named keys (a comma list, one per route provider), and the tool reads them
+    # in its own process. --only refuses a name the seat does not hold, so the
+    # step proves the seat holds every route key. The play prints no secret and
+    # takes no secret value.
+    - name: the route credential through the sealed-secrets path
+      ansible.builtin.command:
+        argv: >-
+          {{ [nova_bin_dir ~ '/nova-secrets', 'exec', '--store', nova_secrets_store, '--as', nova_seat,
+              '--key', nova_secrets_key_dir ~ '/' ~ nova_seat ~ '.key', '--sops', nova_sops,
+              '--only', nova_member_route_key, '--',
+              nova_bin_dir ~ '/nova-sprint', 'routes'] }}
+      register: fleet_add_credential
+      changed_when: false
+      when: nova_member_route_key != ''
+      # ignored: a run that names no route key reads no secret; the receipt says so
+
+    - name: the route credential is sealed
+      ansible.builtin.debug:
+        msg: >-
+          FLEET-ADD step=credential host={{ inventory_hostname }} done
+          route_key={{ nova_member_route_key or 'none' }} sealed=yes secret_printed=no
+
+    # a mirror for every repository a live card names: nova-swarm mirror takes
+    # --dir, --repos (a comma-separated list) and --base (the url each
+    # repository is fetched from, <base>/<name>.git), never positional names
+    - name: a mirror for every repository a live card names
+      ansible.builtin.command:
+        argv: >-
+          {{ [nova_bin_dir ~ '/nova-swarm', 'mirror', '--dir', nova_home ~ '/nova-bench/mirror',
+              '--repos', fleet_add_repos | join(','), '--base', nova_member_mirror_base] }}
+      register: fleet_add_mirrors
+      changed_when: false
+      when: fleet_add_repos | length > 0
+      # ignored: a fleet with no repository yet takes no mirror; the receipt says so
+
+    - name: FLEET-ADD the mirrors
+      ansible.builtin.debug:
+        msg: >-
+          FLEET-ADD step=mirrors host={{ inventory_hostname }} done
+          repos={{ fleet_add_repos | length }}
+
+    # the probe: the verb dealt the member one probe card outside its width (it
+    # is drained at width 0), the member's loop takes it and reports its finish;
+    # this pass waits for that take and the verb reads the store for the finish.
+    # The probe runs under the same sealed-secrets path as the unit (its route's
+    # key in the environment) and names --pass, so the card's child is handed the
+    # key; a fleet with no route runs it bare and needs none.
+    - name: one probe card, taken and finished by the member
+      ansible.builtin.command:
+        argv: >-
+          {{ ([nova_bin_dir ~ '/nova-secrets', 'exec', '--store', nova_secrets_store, '--as', nova_seat,
+              '--key', nova_secrets_key_dir ~ '/' ~ nova_seat ~ '.key', '--sops', nova_sops,
+              '--only', nova_member_route_key, '--'] if nova_member_route_key else [])
+             + [nova_bin_dir ~ '/nova-swarm', 'member', '--as', nova_member,
+                '--server', nova_redis_addr, '--harness', nova_member_harness,
+                '--root', nova_home ~ '/nova-bench/probe', '--ticks', '2']
+             + (['--pass', nova_member_route_key] if nova_member_route_key else []) }}
+      register: fleet_add_probe_run
+      changed_when: "'acted=' in (fleet_add_probe_run.stdout | default(''))"
+      # ignored: read by the assert below, which names the member and its loop
+      failed_when: false
+
+    - name: the member took and finished the probe card
+      ansible.builtin.assert:
+        that:
+          - (fleet_add_probe_run.rc | default(1)) == 0
+          - fleet_add_probe_run.stdout is search('acted=[1-9]')
+        fail_msg: >-
+          FLEET-ADD REFUSED step=probe host={{ inventory_hostname }}: the member took no probe card
+          ({{ (fleet_add_probe_run.stderr | default('')) | truncate(200) }});
+          run: nova-swarm member --as {{ nova_member }} --server {{ nova_redis_addr }}, then run fleet add again
+        quiet: true
+
+    - name: FLEET-ADD the probe card
+      ansible.builtin.debug:
+        msg: >-
+          FLEET-ADD step=probe host={{ inventory_hostname }} done
+          card={{ fleet_add_probe }}-1 took=1 finished=1

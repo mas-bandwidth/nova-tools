@@ -6,14 +6,22 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/release"
+	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // fleetWords is how a fleet member's status comes about, in nova-sprint help
@@ -253,4 +261,597 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	return 0
+}
+
+// The fleet add verb (docs/FLEET.md, "Adding a member"): one verb that runs one
+// play, fleet/member.yml, and does a member end to end. The play converges the
+// machine (the pinned tools, the nova binaries at the adopted release, the
+// member and reader loop units and their records, the route credential through
+// the sealed-secrets path, and a mirror for every repository a live card
+// names); the verb adds the fleet and reader rows to the store, the member
+// drained, and checks the result: the member beats within a minute, its reader
+// row is up, and the play has finished one probe card. Only then does the verb
+// widen the member, so until the check passes the member is dealt no work.
+// Each step prints one FLEET-ADD line, done or the refusal with its remedy; a
+// second run changes nothing; --dry-run lists every step and writes nothing.
+func init() {
+	notServed = append(notServed, "fleet add")
+	verbClasses["fleet add"] = classMachine
+	verbExit["fleet add"] = "exit codes: 0 every step ran and the member is proved and dealt work (or, with --dry-run, every step was listed), 1 a step refused, the play ended without a step's line, or the member did not prove (it is left drained, width 0), 2 usage"
+	verbEffect["fleet add"] = "local and remote writes through ansible-playbook: it adds the member drained (width 0) and its reader row to the store, runs fleet/member.yml for the one host (the pinned tools, the nova binaries at the adopted release, the member and reader loop units and their records, the route credential through the sealed-secrets path, and a mirror for every repository a live card names), checks that the member beats within a minute and its reader row is up, and only then widens the member; --dry-run runs the play with --check, lists every step and writes nothing"
+	// the verb's row is installed here, not in verbs.go, so the whole fleet add
+	// lives in the file its card's PATHS name
+	installVerbs = append(installVerbs, verb{
+		name:    "fleet add",
+		syntax:  "<host> --width <n> [--dry-run] --source <checkout> --inventory <file>",
+		example: "fleet add bench-a --width 64 --source . --inventory ./nova-inventory --dry-run",
+		run:     (*app).cmdFleetAdd,
+	})
+}
+
+// fleetAddSteps are the steps of adding a member end to end, in order: the
+// machine steps the plays print (fleet/member.yml and the fleet/tools.yml it
+// imports), and the store and check steps the verb does. Every one prints
+// exactly one FLEET-ADD line.
+var fleetAddSteps = []string{"rows", "tools", "binaries", "units", "credential", "mirrors", "probe", "beat", "reader"}
+
+// fleetAddPlaySteps are the steps the plays must print: member.yml prints the
+// tools, units, credential, mirrors and probe steps, and tools.yml prints the
+// binaries step (the verb does rows, beat and reader itself).
+var fleetAddPlaySteps = []string{"tools", "binaries", "units", "credential", "mirrors", "probe"}
+
+// fleetAddBeatBound is how long a just-added member's beat is allowed to take:
+// its loop has a minute to start and beat.
+const fleetAddBeatBound = time.Minute
+
+var (
+	fleetAddLine    = regexp.MustCompile(`"FLEET-ADD (?:[^"\\]|\\.)*"`)
+	fleetAddStepRe  = regexp.MustCompile(`\bstep=(\S+)`)
+	fleetAddTaskRe  = regexp.MustCompile(`(?m)^(?:TASK|RUNNING HANDLER) \[([^\]]*)\]`)
+	fleetAddFatalRe = regexp.MustCompile(`(?m)^(?:fatal|failed): .*$`)
+)
+
+// fleetAddPlayOf is a test's play runner for one app (*app to release.Ansible).
+var fleetAddPlayOf sync.Map
+
+// fleetAddReport is what the play's output says: its FLEET-ADD lines, the
+// steps the host printed, and the first refusal.
+type fleetAddReport struct {
+	lines   []string
+	steps   map[string]bool
+	refused string
+}
+
+// readFleetAdd reads the play's FLEET-ADD lines: the lines as printed, the step
+// each names, and the first refusal. An ansible debug message is a JSON string,
+// so a quoted line is unquoted first (as readAdopt does).
+func readFleetAdd(output string) fleetAddReport {
+	r := fleetAddReport{steps: map[string]bool{}}
+	for _, q := range fleetAddLine.FindAllString(output, -1) {
+		var text string
+		if json.Unmarshal([]byte(q), &text) != nil {
+			text = strings.Trim(q, `"`)
+		}
+		l := strings.Join(strings.Fields(text), " ")
+		if len(r.lines) > 0 && r.lines[len(r.lines)-1] == l {
+			continue
+		}
+		r.lines = append(r.lines, l)
+		if strings.HasPrefix(l, "FLEET-ADD REFUSED ") {
+			if r.refused == "" {
+				r.refused = strings.TrimPrefix(l, "FLEET-ADD REFUSED ")
+			}
+			continue
+		}
+		if m := fleetAddStepRe.FindStringSubmatch(l); m != nil {
+			r.steps[m[1]] = true
+		}
+	}
+	return r
+}
+
+// fleetAddFailedStep is the step of the play task that failed: the word before
+// the colon of the last TASK header before the first fatal line, or "play" when
+// that names no step of the play.
+func fleetAddFailedStep(output string) string {
+	fatal := fleetAddFatalRe.FindStringIndex(output)
+	if fatal == nil {
+		return "play"
+	}
+	tasks := fleetAddTaskRe.FindAllStringSubmatch(output[:fatal[0]], -1)
+	if len(tasks) == 0 {
+		return "play"
+	}
+	step, _, _ := strings.Cut(tasks[len(tasks)-1][1], ":")
+	if !slices.Contains(fleetAddPlaySteps, step) {
+		return "play"
+	}
+	return step
+}
+
+// fleetAddInputs are the values fleet add supplies to fleet/member.yml from the
+// store when the caller names none: the sealed secret names the member's routes
+// read (routeKey), the repository names its mirrors cover (repos) and the url
+// each is fetched from (mirrorBase).
+type fleetAddInputs struct {
+	routeKey   string
+	repos      []string
+	mirrorBase string
+}
+
+// fleetAddDerive reads the store for what a member add supplies itself: the live
+// work cards name the repositories the member must mirror, and the enabled
+// routes name the credentials it must be able to read. A value the caller names
+// (--route-key, --repos, --mirror-base) wins over the derived one, so an
+// operator can stand in where the store names none.
+func (a *app) fleetAddDerive(ctx context.Context, st *store.Store, routeKey, repos, mirrorBase string) (fleetAddInputs, error) {
+	in := fleetAddInputs{routeKey: routeKey, mirrorBase: mirrorBase}
+	if routeKey == "" {
+		derived, err := a.fleetAddRouteKey(ctx, st)
+		if err != nil {
+			return in, err
+		}
+		in.routeKey = derived
+	}
+	names, bases, err := a.fleetAddMirrors(ctx, st)
+	if err != nil {
+		return in, err
+	}
+	if repos == "" {
+		in.repos = names
+	} else {
+		in.repos = splitCSV(repos)
+	}
+	if in.mirrorBase == "" && len(in.repos) > 0 {
+		base := ""
+		for _, n := range in.repos {
+			b, ok := bases[n]
+			if !ok {
+				return in, fmt.Errorf("--repos names %s, which no live work card names, so its base is unknown; name the base with --mirror-base <url>, or admit a card whose REPO: line names it", n)
+			}
+			if base == "" {
+				base = b
+			} else if base != b {
+				return in, fmt.Errorf("the repositories to mirror live under more than one base (%s and %s); one mirror fetches one base", base, b)
+			}
+		}
+		in.mirrorBase = base
+	}
+	return in, nil
+}
+
+// fleetAddMirrors reads the live work cards' briefs for the repositories a
+// member must mirror: each repository name and the base url its REPO: line
+// resolves to (<base>/<name>.git, the shape nova-swarm mirror takes). A
+// repository two live cards name under two bases is a refusal: one mirror
+// fetches one base.
+func (a *app) fleetAddMirrors(ctx context.Context, st *store.Store) (names []string, bases map[string]string, err error) {
+	snap, err := st.Load(ctx, []string{sprint.Work}, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	bases = map[string]string{}
+	for _, c := range snap.Work.Column(sprint.Waiting, sprint.Ready, sprint.Working, sprint.Review, sprint.Merging) {
+		cb := swarm.ReadCardBase([]byte(c.F("brief")))
+		name, base := mirrorNameBase(cb.Repo)
+		if name == "" {
+			continue
+		}
+		if prev, ok := bases[name]; ok && prev != base {
+			return nil, nil, fmt.Errorf("the live cards name %s under two bases (%s and %s); one mirror fetches one base", name, prev, base)
+		}
+		bases[name] = base
+	}
+	for n := range bases {
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	return names, bases, nil
+}
+
+// mirrorNameBase is a repository clone url as nova-swarm mirror takes it: the
+// repository name and the base url it is fetched from, <base>/<name>.git. ""
+// when the url names no repository under a base.
+func mirrorNameBase(repo string) (name, base string) {
+	r := strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(repo), "/"), ".git")
+	i := strings.LastIndex(r, "/")
+	if i <= 0 || i == len(r)-1 {
+		return "", ""
+	}
+	return r[i+1:], r[:i]
+}
+
+// fleetAddRouteKey is the sealed secret names the member's routes read: the
+// provider key of every enabled route (<PROVIDER>_API_KEY), in name order,
+// comma separated. A provider whose key name is no secret name is skipped (a
+// headless harness's subscription login holds no such secret); "" when no route
+// needs one.
+func (a *app) fleetAddRouteKey(ctx context.Context, st *store.Store) (string, error) {
+	routes, _, err := st.Routes(ctx)
+	if err != nil {
+		return "", err
+	}
+	seen := map[string]bool{}
+	var keys []string
+	for _, r := range routes {
+		if !r.Enabled || r.Provider == "" {
+			continue
+		}
+		k := strings.ToUpper(r.Provider) + "_API_KEY"
+		if !secrets.IsValidEnvVar(k) || seen[k] {
+			continue
+		}
+		seen[k] = true
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return strings.Join(keys, ","), nil
+}
+
+func (a *app) cmdFleetAdd(args []string, stdout, stderr io.Writer) int {
+	const name = "fleet add"
+	fs, c := a.verbSetup(name)
+	width := fs.String("width", "", fmt.Sprintf("the member's width once it is proved: the most work cards it runs at once; the member is added drained and takes no work until it beats, its reader row is up and a probe card is done; 1 to %d", sprint.MaxWidth))
+	source := fs.String("source", "", "the nova-tools checkout whose fleet/member.yml is the play")
+	inventory := fs.String("inventory", a.getenv("NOVA_INVENTORY"), "the inventory the play reads, the nova-inventory script (else NOVA_INVENTORY)")
+	ansible := fs.String("ansible", "ansible-playbook", "the ansible-playbook binary")
+	routeKey := fs.String("route-key", "", "the sealed secret names the member's routes read, comma separated, read in the seat's own process; else derived from the store's enabled routes")
+	repos := fs.String("repos", "", "the repository names the member mirrors, a comma-separated list; else every repository a live work card names")
+	mirrorBase := fs.String("mirror-base", "", "the url each mirrored repository is fetched from, <base>/<name>.git; else derived from the repositories the live work cards name")
+	dry := fs.Bool("dry-run", false, "run the play with --check, list every step and write nothing")
+	pos, err := parse(fs, args)
+	if err != nil {
+		return refuse(stderr, name, err.Error())
+	}
+	if len(pos) != 1 {
+		return refuse(stderr, name, "wants one <host>")
+	}
+	host := pos[0]
+	if !sprint.ValidID(host) {
+		return refuse(stderr, name, "a host name wants letters, digits, _ and -: "+oneline.Escape(host))
+	}
+	if strings.TrimSpace(*width) == "" {
+		return refuse(stderr, name, "--width names the member's width, 1 to "+strconv.Itoa(sprint.MaxWidth))
+	}
+	w, err := sprint.ParseWidth(*width)
+	if err != nil {
+		return refuse(stderr, name, "--width: "+err.Error())
+	}
+	play := filepath.Join(*source, "fleet", "member.yml")
+	switch {
+	case *source == "":
+		return refuse(stderr, name, "--source names the nova-tools checkout whose fleet/member.yml is the play")
+	case *inventory == "":
+		return refuse(stderr, name, "--inventory (or NOVA_INVENTORY) names the inventory the play reads")
+	}
+	if _, err := os.Stat(play); err != nil {
+		// an input that does not read, not a usage: exit 1, nothing run
+		fmt.Fprintf(stderr, "%s fleet add REFUSED step=play: --source %s holds no fleet/member.yml (%s); nothing was run; run: nova-sprint fleet add -h\n", prog, oneline.Escape(*source), oneline.Err(err))
+		return 1
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, name, err.Error())
+	}
+	ctx := context.Background()
+	reader := "reader-" + host
+	again := "fix the cause and run the same fleet add again (it changes only what is still missing or stale)"
+	// the run's own variables, from the store or the caller: the route credential
+	// the member reads, and the repository mirrors every live card names. The
+	// play's credential and mirror steps are driven by these; without them the
+	// member is set up with neither.
+	inputs, err := a.fleetAddDerive(ctx, st, *routeKey, *repos, *mirrorBase)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s fleet add REFUSED step=inputs host=%s: %s; nothing was run; %s; run: nova-sprint fleet add -h\n", prog, host, oneline.Err(err), again)
+		return 1
+	}
+	// the probe card this run deals the member: the member is widened to one for
+	// it, so every refusal after the deal drains it again (proven is set once the
+	// member is widened for real)
+	probePrimary, proven := "", false
+	defer func() {
+		if probePrimary != "" && !proven {
+			a.fleetAddUndo(ctx, st, host, probePrimary)
+		}
+	}()
+	argv := []string{"-i", *inventory, play, "-e", "nova_member=" + host,
+		"-e", "nova_member_width=" + strconv.Itoa(w), "-e", "nova_member_reader=" + reader, "--limit", host}
+	if inputs.routeKey != "" {
+		argv = append(argv, "-e", "nova_member_route_key="+inputs.routeKey)
+	}
+	if len(inputs.repos) > 0 {
+		argv = append(argv, "-e", "nova_member_repos="+strings.Join(inputs.repos, ","), "-e", "nova_member_mirror_base="+inputs.mirrorBase)
+	}
+	if *dry {
+		argv = append(argv, "--check")
+	}
+	var runner release.Ansible = release.ExecAnsible{Path: *ansible}
+	if fake, ok := fleetAddPlayOf.Load(a); ok {
+		runner = fake.(release.Ansible)
+	}
+
+	// the store rows, the member drained, before the play starts its loops: no
+	// deal reaches it until the check below widens it
+	if !*dry {
+		added, err := a.fleetAddRows(ctx, st, host, reader)
+		if err != nil {
+			fmt.Fprintf(stderr, "%s fleet add REFUSED step=rows host=%s: %s; %s; run: nova-sprint fleet add -h\n", prog, host, oneline.Err(err), again)
+			return 1
+		}
+		rowsWord := "already there"
+		if added {
+			rowsWord = "added"
+		}
+		fmt.Fprintf(stdout, "FLEET-ADD step=rows host=%s done member=%s reader=%s (%s, the member drained)\n", host, host, reader, rowsWord)
+
+		// the probe: one card the play's member must take and finish before the
+		// member is dealt any work; the verb deals it outside the member's width
+		probePrimary, err = a.fleetAddProbe(ctx, st, host)
+		if err != nil {
+			fmt.Fprintf(stderr, "%s fleet add REFUSED step=probe host=%s: %s; the member is left drained (width 0); %s; run: nova-sprint fleet add -h\n", prog, host, oneline.Err(err), again)
+			return 1
+		}
+	}
+
+	output, playErr := runner.Play(ctx, argv)
+	r := readFleetAdd(output)
+	for _, l := range r.lines {
+		if !strings.HasPrefix(l, "FLEET-ADD REFUSED ") {
+			fmt.Fprintln(stdout, oneline.Escape(l))
+		}
+	}
+
+	if *dry {
+		// the plan the real run would take: the play's own steps, then the
+		// store and check steps the verb does; nothing is written
+		for _, step := range fleetAddSteps {
+			fmt.Fprintf(stdout, "FLEET-ADD WOULD host=%s step=%s\n", host, step)
+		}
+		fmt.Fprintf(stdout, "FLEET-ADD WOULD-ADD host=%s width=%d steps=%s\n", host, w, strings.Join(fleetAddSteps, ","))
+		return 0
+	}
+
+	switch {
+	case r.refused != "":
+		fmt.Fprintf(stderr, "%s fleet add REFUSED %s; the member is left drained (width 0); %s; run: nova-sprint fleet add -h\n", prog, oneline.Escape(r.refused), again)
+		return 1
+	case playErr != nil:
+		step := fleetAddFailedStep(output)
+		for _, l := range fleetAddFatalRe.FindAllString(output, 5) {
+			fmt.Fprintln(stderr, oneline.Escape(truncateLine(l, 300)))
+		}
+		fmt.Fprintf(stderr, "%s fleet add REFUSED step=%s host=%s: the play stopped (%s); the member is left drained (width 0); %s; run: nova-sprint fleet add -h\n", prog, step, host, oneline.Err(playErr), again)
+		return 1
+	}
+
+	// every machine step the play owed printed its line
+	for _, step := range fleetAddPlaySteps {
+		if !r.steps[step] {
+			fmt.Fprintf(stderr, "%s fleet add REFUSED step=%s host=%s: the play ended without this step's line; the member is left drained (width 0); %s; run: nova-sprint fleet add -h\n", prog, step, host, again)
+			return 1
+		}
+	}
+
+	// the check: the member beats within a minute, its reader row is up, and it
+	// has taken and finished the probe card the deal gave it
+	if step, err := a.fleetAddProve(ctx, st, host, reader, probePrimary); err != nil {
+		fmt.Fprintf(stderr, "%s fleet add REFUSED step=%s host=%s: %s; the member is left drained (width 0); %s; run: nova-sprint fleet add -h\n", prog, step, host, oneline.Err(err), again)
+		return 1
+	}
+	fmt.Fprintf(stdout, "FLEET-ADD step=beat host=%s done at=%s\n", host, a.now().UTC().Format(time.RFC3339))
+	fmt.Fprintf(stdout, "FLEET-ADD step=reader host=%s done reader=%s state=%s\n", host, reader, sprint.ReaderUp)
+
+	// proved: widen the member so the deal reaches it
+	widened, err := a.fleetAddWiden(ctx, st, host, w)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s fleet add REFUSED step=rows host=%s: %s; the member is left drained (width 0); %s; run: nova-sprint fleet add -h\n", prog, host, oneline.Err(err), again)
+		return 1
+	}
+	proven = true
+	word := "unchanged"
+	if widened {
+		word = "widened"
+	}
+	fmt.Fprintf(stdout, "FLEET-ADD OK host=%s width=%d steps=%s (%s)\n", host, w, strings.Join(fleetAddSteps, ","), word)
+	return 0
+}
+
+// fleetAddRows adds the reader row and, when the member has none, the member's
+// row drained (width 0): a member at width 0 takes no new deal, so it is dealt
+// no work until fleetAddWiden widens it. It says whether it wrote anything, so
+// a second run changes nothing.
+func (a *app) fleetAddRows(ctx context.Context, st *store.Store, host, reader string) (bool, error) {
+	changed := false
+	rows, err := st.ReaderRows(ctx)
+	if err != nil {
+		return false, err
+	}
+	if !slices.Contains(rows, reader) {
+		if err := st.B.RowsAdd(ctx, st.Names.Table(sprint.Readers), []string{reader}); err != nil {
+			return false, err
+		}
+		changed = true
+	}
+	snap, err := st.Load(ctx, []string{sprint.Fleet}, nil)
+	if err != nil {
+		return changed, err
+	}
+	if !snap.Fleet.HasRow(host) {
+		res, err := st.Run(ctx, a.fleetStep(st, "up", host, st.Actor, 0, true, 0, false))
+		if err != nil {
+			return changed, err
+		}
+		if len(res.Refused) > 0 {
+			return changed, fmt.Errorf("%s: %s", res.Refused[0].Key, res.Refused[0].Why)
+		}
+		changed = true
+	}
+	return changed, nil
+}
+
+// fleetAddProbe deals the probe to a just-added member outside its width: the
+// member is briefly widened to one so the deal reaches it, and two probe cards
+// on its own stream are admitted and dealt to it. Two fill the member's room
+// (DealAhead times width 1, width.go): while the setup runs the member holds no
+// ordinary work and an interleaved tick deals it none, so it is dealt no work
+// until it is proved. Both cards carry the host's BENCH line, so only the member
+// is ever dealt them. The play's member loop takes and finishes the primary
+// (-1); the holder (-2) is dropped once the member is proved. A probe already
+// finished (its primary in Review) is left as it is, so a second run changes
+// nothing; a probe already dealt waits only for the member to take it. It
+// returns the probe card's primary id, which fleetAddProve requires finished
+// before the member is widened for real.
+func (a *app) fleetAddProbe(ctx context.Context, st *store.Store, host string) (string, error) {
+	stream := "probe-" + host
+	primary, holder, reserve := stream+"-1", stream+"-2", stream+"-3"
+	snap, err := st.Load(ctx, []string{sprint.Work}, nil)
+	if err != nil {
+		return "", err
+	}
+	needDeal := false
+	switch c := snap.Work.Card(primary); {
+	case c == nil:
+		// the machine runs, so the add and the deal write the work table
+		// directly (Pump), the tick's own first update, instead of queuing for
+		// the next tick: the probes must be placed before the play runs. Two
+		// holders keep the width-one room full after the primary finishes.
+		step := store.AddStep(sprint.AddReq{Stream: stream, IDs: []string{primary, holder, reserve}, Brief: fleetAddProbeBrief(host)})
+		step.Pump = true
+		res, err := st.Run(ctx, step)
+		if err != nil {
+			return "", err
+		}
+		if len(res.Refused) > 0 {
+			return "", fmt.Errorf("%s: %s", res.Refused[0].Key, res.Refused[0].Why)
+		}
+		needDeal = true
+	case c.Col == sprint.Ready:
+		needDeal = true
+	case c.Col == sprint.Review:
+		return primary, nil // taken and finished already: a second run changes nothing
+	}
+	// Widen to two to place the primary and both holders, then return to one:
+	// the member takes only its primary, while the two holders fill its room.
+	if _, err := st.Run(ctx, a.fleetStep(st, "up", host, st.Actor, 2, false, 0, false)); err != nil {
+		return "", err
+	}
+	if needDeal {
+		res, err := st.Run(ctx, fleetAddDealStep(sprint.DealReq{Sel: sprint.Sel{Only: []string{primary, holder, reserve}}}))
+		if err != nil {
+			return "", err
+		}
+		if len(res.Refused) > 0 {
+			return "", fmt.Errorf("%s: %s", res.Refused[0].Key, res.Refused[0].Why)
+		}
+	}
+	if _, err := st.Run(ctx, a.fleetStep(st, "up", host, st.Actor, 1, false, 0, false)); err != nil {
+		return "", err
+	}
+	return primary, nil
+}
+
+// fleetAddDealStep cuts and deals the probe card by hand, the step the tick's
+// deal (sprint.TickDeal) runs: a targeted selection, so no other ready card is
+// dealt while the member is proved. It is a pump step (the machine runs), so
+// the primary's move to working applies at once, not at the next tick.
+func fleetAddDealStep(r sprint.DealReq) store.Step {
+	return store.Step{Args: store.ArgsOf(r), Verb: "deal", Load: []string{sprint.Work, sprint.Fleet, sprint.Merge}, Mirrors: true, Routes: true, Pump: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Deal(s, r) }}
+}
+
+// fleetAddUndo undoes a refused add's probe: the probe cards (the primary and
+// the holder that reserved the member) are taken off the table and the member is
+// drained again (width 0), so a member that did not prove leaves no probe card
+// behind and is dealt no work. It runs from cmdFleetAdd's defer on every refusal
+// after the probe was dealt.
+func (a *app) fleetAddUndo(ctx context.Context, st *store.Store, host, probe string) {
+	holder, reserve := "probe-"+host+"-2", "probe-"+host+"-3"
+	drop := store.DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{probe, holder, reserve}}, Reason: "the probe cards of a member add that did not finish"})
+	drop.Pump = true
+	_, _ = st.Run(ctx, drop)                                                     // ignored: the drain below leaves the member drained whether or not the drop moves
+	_, _ = st.Run(ctx, a.fleetStep(st, "up", host, st.Actor, 0, true, 0, false)) // ignored: the refusal stands; the next run drains the member again
+}
+
+// fleetAddProbeBrief is the probe card's brief: one card whose only work is to
+// be taken and finished, proving this member reaches the sprint and reports a
+// finish. Its BENCH line names the host, so the probe is dealt only to the
+// member being proved; its model, tokens and deadline are drawn from the fleet's
+// routes.
+func fleetAddProbeBrief(host string) string {
+	return fmt.Sprintf(`RESULT: fleet-add-probe
+KIND: probe
+BASE: dev
+PATHS: RESULT.md
+TEST: none
+DEPENDS-ON: none
+BENCH: %s
+WHO: any
+DONE-WHEN: RESULT.md exists
+`, host)
+}
+
+// fleetAddProve is the check a just-added member passes before it is dealt
+// work: its beat is within fleetAddBeatBound, its reader row is up, and it has
+// taken and finished the probe card (its primary in Review). It names the step
+// that failed ("beat", "reader" or "probe") and why.
+func (a *app) fleetAddProve(ctx context.Context, st *store.Store, host, reader, probe string) (string, error) {
+	beats, err := st.Beats(ctx, []string{host})
+	if err != nil {
+		return "beat", err
+	}
+	b, ok := beats[host]
+	if !ok || !b.Beaten() || a.now().Sub(b.At) > fleetAddBeatBound {
+		return "beat", fmt.Errorf("the member has not beat within %s; its member loop is not running on %s", fleetAddBeatBound, host)
+	}
+	states, err := st.ReaderStates(ctx, []string{reader}, a.now())
+	if err != nil {
+		return "reader", err
+	}
+	if states[reader] != sprint.ReaderUp {
+		return "reader", fmt.Errorf("the reader row %s is %s, not up; its reader loop is not running on %s", reader, states[reader], host)
+	}
+	// the probe: the member took and finished the card the deal gave it; the
+	// play's member pass reports the finish before it returns, and the verb
+	// reads the store
+	snap, err := st.Load(ctx, []string{sprint.Work}, nil)
+	if err != nil {
+		return "probe", err
+	}
+	c := snap.Work.Card(probe)
+	if c == nil || c.Col != sprint.Review {
+		state := "-"
+		if c != nil {
+			state = c.Col
+		}
+		return "probe", fmt.Errorf("the member has not taken and finished the probe card %s (it is %s); its member loop must reach the sprint and report the probe's finish; run: nova-swarm member --as %s --server <address:port> --once, then run fleet add again", probe, state, host)
+	}
+	return "", nil
+}
+
+// fleetAddWiden sets the member's width to w once it is proved, and drops the
+// holder probe card that reserved the member during setup (the primary in
+// Review is finished and stays as the proof). A member already at w is left as
+// it is, so a second run writes nothing; it says whether it wrote the width.
+func (a *app) fleetAddWiden(ctx context.Context, st *store.Store, host string, w int) (bool, error) {
+	holder, reserve := "probe-"+host+"-2", "probe-"+host+"-3"
+	drop := store.DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{holder, reserve}}, Reason: "the fleet add setup is complete"})
+	drop.Pump = true
+	_, _ = st.Run(ctx, drop) // ignored: the holder is dropped; the widen below sets the width whether or not it was there
+	snap, err := st.Load(ctx, []string{sprint.Fleet}, nil)
+	if err != nil {
+		return false, err
+	}
+	changed := false
+	if ctl := snap.MemberCtl(host); ctl == nil || sprint.MemberWidth(ctl) != w {
+		res, err := st.Run(ctx, a.fleetStep(st, "up", host, st.Actor, w, false, 0, false))
+		if err != nil {
+			return false, err
+		}
+		if len(res.Refused) > 0 {
+			return false, fmt.Errorf("%s: %s", res.Refused[0].Key, res.Refused[0].Why)
+		}
+		changed = true
+	}
+	// Only after proof do we drop the reserved holder cards and widen the member.
+	return changed, nil
 }

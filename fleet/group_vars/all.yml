@@ -145,3 +145,26 @@ nova_seat_friend_drain: 180
 # nova-sprint and nova-swarm member to be gone before it migrates (seconds).
 nova_seat_rollback_dir: "{{ nova_release_dir }}/adopt-rollback"
 nova_seat_quiet: 60
+
+# The member nova-sprint fleet add sets up (fleet/member.yml; docs/FLEET.md,
+# "Adding a member"): the host the run names, its width and its reader row, and
+# the pieces the play converges on it. Every value is the run's -e or the
+# inventory's; the defaults name the tools every member gets and leave the
+# route key, the mirror base and the repository list for the run to fill from a
+# live card.
+nova_member: ""
+nova_member_width: 0
+nova_member_reader: ""
+nova_member_tools: ["golang-go", "sqlite3", "age", "sops", "bats"]
+nova_member_harness: opencode
+# nova_member_route_key are the sealed secret names the member's routes read,
+# comma separated (one <PROVIDER>_API_KEY per enabled route); the run fills it
+# from the store's routes, or --route-key names it.
+nova_member_route_key: ""
+# nova_member_repos are the mirrors the member needs (nova-swarm mirror
+# --repos, a comma-separated list); nova_member_mirror_base is the url each is
+# fetched from, <base>/<name>.git (nova-swarm mirror --base). The run fills both
+# from the repository every live work card names, or --repos/--mirror-base
+# name them.
+nova_member_repos: []
+nova_member_mirror_base: ""
