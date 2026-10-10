@@ -159,8 +159,10 @@ func TestDroppedJobIsRemoved(t *testing.T) {
 	assert.NoDirExists(t, primary)
 }
 
-// Below the floor the landed removal runs and then the caches, and the refusal
-// names the free space. Below the stop this machine's deals are held, never
+// Below the floor the pure rule names the landed removal to run and then the
+// caches (RunLanded, ThenCaches), and the refusal names the free space; the
+// command that runs them in that order is the disk guard's, tested through its
+// seam in cmd/nova-swarm. Below the stop this machine's deals are held, never
 // the server's, in the one judgment. A volume that could not be read is not
 // treated as empty.
 func TestGuardRunsLandedBelowTheFloorAndHoldsDealsBelowTheStop(t *testing.T) {
@@ -174,20 +176,6 @@ func TestGuardRunsLandedBelowTheFloorAndHoldsDealsBelowTheStop(t *testing.T) {
 	assert.False(t, floor.ServerHeld)
 	assert.Contains(t, floor.Refused, "free=100GB")
 	assert.Equal(t, "REFUSED /Volumes/nova free=100GB", floor.Refused)
-
-	g := newLandedTree(t)
-	dir := g.job("c~15", 2*time.Hour)
-	var order []string
-	if floor.RunLanded {
-		order = append(order, "landed")
-		res := PruneLanded(filepath.Join(g.w, "jobs"), g.now, false, g.cards(landedAt("c", g.now.Add(-2*time.Hour))))
-		assert.Contains(t, strings.Join(res.Detail, "\n"), "GC REMOVED class=landed path="+dir)
-		assert.NoDirExists(t, dir)
-	}
-	if floor.ThenCaches {
-		order = append(order, "caches")
-	}
-	assert.Equal(t, []string{"landed", "caches"}, order)
 
 	stop := GuardVolumes("studio", []GuardedVolume{{
 		Name: "/Volumes/nova", Path: "/Volumes/nova", Free: 10 * GB,

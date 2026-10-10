@@ -115,12 +115,15 @@ type guard struct {
 	// else --volume, else the root disk and the volume of the friends'
 	// directories). Nil leaves the older floor and stop lines alone, which the
 	// tests pin. The guard reads and reports each volume's free space and, below
-	// a volume's floor, says REFUSED with the free figure, and below its stop
-	// holds this machine's deals and says one judgment. The landed removal itself
-	// is gc's (nova-sprint gc --class landed, run by the sprint's loop), not the
-	// guard's: the guard is a worker and never opens the sprint's store.
-	host    string
-	volumes []guardedVolume
+	// a volume's floor, runs the landed removal (gcLanded) before the caches and
+	// says REFUSED with the free figure; below its stop it holds this machine's
+	// deals and says one judgment. The landed removal itself is gc's class: the
+	// guard is a worker and never opens the sprint's store, so it runs the
+	// command (nova-sprint gc --class landed) and that command reads the cards.
+	// gcLanded is the seam a test fakes.
+	host     string
+	volumes  []guardedVolume
+	gcLanded func() error
 }
 
 // say is one line of the run's output.
@@ -240,6 +243,9 @@ func (g *guard) run() int {
 	}
 	g.logs()
 	act := g.guardVolumes()
+	if act.RunLanded {
+		g.landed()
+	}
 	g.buildCaches()
 	g.sayVolume(act)
 	g.modules()
@@ -325,6 +331,19 @@ func (g *guard) sayVolume(act volumeAction) {
 	}
 }
 
+// landed runs the landed removal (gcLanded), the guard's first move below a
+// volume's floor, before the caches (docs/SPEC-SPRINT.md, the disk guard's
+// volumes). Nothing runs under --dry-run, and a run that cannot start is a
+// NOTE line.
+func (g *guard) landed() {
+	if g.gcLanded == nil || g.dry {
+		return
+	}
+	if err := g.gcLanded(); err != nil {
+		g.fail(fmt.Sprintf("the landed removal (nova-sprint gc --class landed) could not run (%s)", oneline.Err(err)))
+	}
+}
+
 // The guarded volumes (the pure rule, kept here rather than in internal/sprint
 // so the guard, a worker, never imports the sprint package, which opens the
 // store; docs/SPEC-SPRINT.md, the disk guard's volumes). The landed removal
@@ -367,17 +386,21 @@ func (v guardedVolume) stop() uint64 {
 }
 
 // volumeAction is what one reading of the guarded volumes asks of the guard.
-// A stop holds this machine's deals, never the server.
+// A stop holds this machine's deals, never the server. Below a floor RunLanded
+// names the landed removal to run (before the caches, as run does), and
+// Refused names the tightest volume and its free space.
 type volumeAction struct {
+	RunLanded bool
 	Refused   string
 	HoldDeals bool
 	Judgment  string
 	Rows      []string
 }
 
-// readGuardVolumes reads the volumes. Below a floor Refused names the tightest
-// volume and its free space; below a stop HoldDeals is this machine only and
-// Judgment is the one line for the seat: "<host> <volume> at <free>: deals held".
+// readGuardVolumes reads the volumes. Below a floor RunLanded names the
+// landed removal to run and Refused names the tightest volume and its free
+// figure, and below a stop HoldDeals is this machine only and Judgment is the
+// one line for the seat: "<host> <volume> at <free>: deals held".
 func readGuardVolumes(host string, vols []guardedVolume) volumeAction {
 	if host == "" {
 		host = "localhost"
@@ -410,6 +433,7 @@ func readGuardVolumes(host string, vols []guardedVolume) volumeAction {
 		if name == "" {
 			name = floor.Path
 		}
+		act.RunLanded = true
 		act.Refused = "REFUSED " + name + " free=" + formatFree(floor.Free)
 	}
 	if stop != nil {
@@ -1174,6 +1198,7 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 	}
 	g.host = host
 	g.volumes = g.fillVolumes(vols)
+	g.gcLanded = g.runGCLanded
 	return g.run()
 }
 
@@ -1205,6 +1230,21 @@ func (g *guard) fillVolumes(vols []guardedVolume) []guardedVolume {
 		vols[i].Free = n
 	}
 	return vols
+}
+
+// runGCLanded runs nova-sprint gc --class landed on this machine: gc's class
+// landed, which removes a landed or dropped card's job whole after the grace
+// (docs/SPEC-SPRINT.md, "gc"). The guard is a worker and never reads a card's
+// state itself, so it runs the command, whose output is the guard's own and
+// whose exit a non-zero one fails the run. The command reads the sprint's
+// store from its environment (NOVA_SPRINT_REDIS or NOVA_REDIS_ADDR), as gc
+// does; with no address it removes nothing and says so.
+func (g *guard) runGCLanded() error {
+	cmd, cancel := subproc.CommandFor(context.Background(), subproc.GoBudget, "nova-sprint", "gc", "--class", "landed")
+	defer cancel()
+	cmd.Stdout = g.out
+	cmd.Stderr = g.out
+	return cmd.Run()
 }
 
 // friendVolumePaths is where the friends' directories sit: NOVA_AI_ROOT, else
