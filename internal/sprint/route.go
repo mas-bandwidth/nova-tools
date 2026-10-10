@@ -31,8 +31,9 @@ import (
 //   - a pinned card runs on its pin (route "pin");
 //   - a store with no route at all deals as before, with no route: the member runs
 //     its own --model (a twin, a one-machine test);
-//   - a frontier card with no pin is not dealt: it is the coordinator's, one
-//     judgment for the tier;
+//   - a frontier card with no pin is never a machine's: it is the friends' deal's
+//     when a friend up serves frontier, else the coordinator's, one judgment for
+//     the tier;
 //   - a card whose tier (flash when line 1 names none) has no enabled route in its
 //     array is not dealt, one judgment for the tier;
 //   - a route with first set is drawn before the others of its tier (preferFirst).
@@ -155,6 +156,36 @@ func (s *Snapshot) tierServed(tier string, rested []string) (up []string, why st
 	return nil, why
 }
 
+// frontierWaits is the refusal of a frontier card no friend up serves: it waits for the
+// coordinator, and the sentence names every friend with her tiers and why she does not
+// take it, so the coordinator sees who could.
+func (s *Snapshot) frontierWaits() string {
+	var who []string
+	for _, f := range s.Friends {
+		tiers := strings.Join(friendTiers(f), ",")
+		if tiers == "" {
+			tiers = "none"
+		}
+		state := "up"
+		switch {
+		case s.FriendsOff():
+			state = "friends' work off"
+		case !friendCanRead(s, f):
+			state = "held/down"
+		case !slices.Contains(friendTiers(f), cardhdr.RouteFrontier):
+			state = "up, no frontier"
+		case !s.FriendsTake(cardhdr.RouteFrontier):
+			state = "up, --friends-tiers leaves out frontier"
+		}
+		who = append(who, f.Name+" (tiers "+tiers+"; "+state+")")
+	}
+	said := "no friends"
+	if len(who) > 0 {
+		said = "friends: " + strings.Join(who, ", ")
+	}
+	return "a frontier card waits for the coordinator: no friend up serves frontier (" + said + "): bring up a friend whose row lists frontier, run it, or pin it with a model: <provider>/<model> line"
+}
+
 // tierArray is the tier's route array as the deal reads it: the tier kind's list
 // when nova-config applied one, else the tier's enabled routes in name order, each once
 // (tla/RouteIndex.tla, Arr).
@@ -248,7 +279,15 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 		return nil, tier, "its brief's model lines: " + bad, false
 	}
 	if tier == cardhdr.RouteFrontier && m.Pin == "" && len(s.Routes) > 0 {
-		return nil, tier, "a frontier card waits for the coordinator: run it, or pin it with a model: <provider>/<model> line", false
+		// a frontier card is never a machine's, whatever the fleet's tiers or routes: it is
+		// the friends' deal's when a friend up serves frontier (tierServed), exactly as a
+		// tier no fleet route serves; with none, it waits for the coordinator
+		// (2026-10-10: the refusal came first and stranded every frontier card with a
+		// frontier friend up)
+		if up, _ := s.tierServed(tier, nil); len(up) > 0 {
+			return nil, tier, "a frontier card is never a machine's; a friend up serves frontier (" + strings.Join(up, ", ") + "): the friends' deal deals it", true
+		}
+		return nil, tier, s.frontierWaits(), false
 	}
 	if !s.FleetTakes(tier) {
 		// the fleet's tiers leave it out (set --fleet-tiers): no machine draws it, whatever
@@ -317,8 +356,9 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 // ceiling, what it likely needs, never its first deal: every card is dealt on flash, and
 // one that reaches its bound below its ceiling is escalated by the machine to the next
 // tier of the ladder and dealt a new attempt there, no judgment raised; at its ceiling
-// the bound is the coordinator's judgment as before. A frontier card is the
-// coordinator's and is never dealt (it climbs no ladder); a pinned model runs on its pin;
+// the bound is the coordinator's judgment as before. A frontier card climbs no ladder and
+// is never dealt to a machine: a friend up who serves frontier takes it, else it is the
+// coordinator's; a pinned model runs on its pin;
 // a tier the coordinator pinned (rework --tier, FieldTier) is the card's tier and its
 // ceiling both.
 var tierLadder = []string{cardhdr.RouteFlash, cardhdr.RoutePro, cardhdr.RouteHeavy}
