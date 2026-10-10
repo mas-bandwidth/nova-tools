@@ -155,7 +155,7 @@ func TestATwiceRefusedBenchIsPassedOverForThePass(t *testing.T) {
 		return "", 0, nil
 	}
 	b.mu.Unlock()
-	runs := gateRuns(false, nil)
+	runs := gateRuns(false, nil, nil)
 
 	l := &lander{a: r.a, st: st, gateKey: "s1"}
 	for i := 0; i < 3; i++ {
@@ -200,7 +200,7 @@ func TestAFailedGateRefDeleteDoesNotFailTheGate(t *testing.T) {
 	ref := bench.GateRef("s1", head)
 	l := &lander{a: r.a, gateKey: "s1"}
 
-	why, ran := l.benchGate(context.Background(), nil, r.clone, gateRuns(false, nil), false)
+	why, ran := l.benchGate(context.Background(), nil, r.clone, gateRuns(false, nil, nil), false)
 	assert.False(t, ran, "a refused delete does not by itself set ran; with no bench the gate runs in the clone")
 	assert.Empty(t, why, "a refused delete does not replace an empty why")
 	assert.Contains(t, strings.Join(l.ledgerLog, "\n"), "deleting the gate's ref "+ref)

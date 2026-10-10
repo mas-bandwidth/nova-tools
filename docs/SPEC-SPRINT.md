@@ -3958,6 +3958,13 @@ when it cannot; it adds no state of its own. The base is the sprint branch:
 not marked for promotion, its remedy the sprint branch (re-cut the card with
 `BASE: <the sprint branch>`, or `--base <the sprint branch>` for a card naming no
 `BASE:`) or, for the promotion stream, the mark (the protected branches, below).
+For every merged batch tip, its tree gate runs the build and vet classes, the
+four whole-tree functional checks, and `go test` for every package containing a
+changed file plus every package that imports one. The package graph is one
+`go list -deps -test` read of the merged tree; reverse reachability selects the
+importers. This keeps the gate bounded by the changed dependency closure rather
+than the whole unit suite, while catching an API change that breaks an untouched
+consumer.
 
 **The rebase verb.** `nova-sprint rebase --from <branch> --to <branch> [--repo-dir <clone>] [--dry-run]` moves every unlanded card whose brief's `BASE:` line names
 `--from` to `--to`, on a RUNNING machine as on a STOPPED one. It exists because a

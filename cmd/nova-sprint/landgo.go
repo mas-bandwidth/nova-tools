@@ -25,19 +25,23 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 	"weak"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bench"
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
@@ -62,12 +66,11 @@ var treeTests = []string{"internal/docs", "internal/ci"}
 func (l *lander) goRun(ctx context.Context, dir string, run []string, set ...string) (string, error) {
 	b := subproc.Prepare(ctx, landGoBudget, run[0], run[1:]...)
 	defer b.Cancel()
-	var env []string
+	env := goenv.Clean(os.Environ())
 	if l.a != nil {
-		env = l.a.gitEnv
-	}
-	if env == nil {
-		env = os.Environ()
+		if l.a.gitEnv != nil {
+			env = goenv.Clean(l.a.gitEnv)
+		}
 	}
 	with := []string{readonlyGoFlags(env)}
 	if cache := l.goCache(ctx, env); cache != "" {
@@ -163,7 +166,7 @@ func treeTested(p string) bool {
 // gateRuns is SPEC-SPRINT's base class suite (sprint.BaseClasses), preserving the build
 // first, then formatting, vet and the functional-tier vet. Analyzer classes and the tree
 // tests need their packages (have: the ones the clone holds) and run only when tests is asked.
-func gateRuns(tests bool, have []string) [][]string {
+func gateRuns(tests bool, have, batch []string) [][]string {
 	var runs [][]string
 	for _, class := range sprint.BaseClasses {
 		if class.Name == "class-tests" {
@@ -181,7 +184,84 @@ func gateRuns(tests bool, have []string) [][]string {
 		}
 		runs = append(runs, slices.Clone(class.Run))
 	}
+	if tests && slices.Contains(have, "internal/ci") {
+		runs = append(runs, []string{"go", "test", "-tags", "functional", "-count=1", "-timeout", "600s", "-run", "^TestEveryCommandMeetsTheOnboardingStandard$", "./internal/ci/"})
+	}
+	if len(batch) > 0 {
+		runs = append(runs, append([]string{"go", "test", "-count=1", "-timeout", "600s"}, batch...))
+	}
 	return runs
+}
+
+// listedPackage is the part of go list's package graph the landing gate needs.
+type listedPackage struct {
+	ImportPath string
+	Dir        string
+	Deps       []string
+}
+
+// batchPackagePaths returns every package containing a changed file and every package
+// that imports one of them. It is pure so the refusal test can use a fake go-list graph.
+func batchPackagePaths(changed []string, listed []listedPackage) []string {
+	touched := map[string]bool{}
+	for _, p := range listed {
+		for _, file := range changed {
+			if rel, err := filepath.Rel(p.Dir, file); err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				touched[p.ImportPath] = true
+				break
+			}
+		}
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, p := range listed {
+			if touched[p.ImportPath] {
+				continue
+			}
+			for _, dep := range p.Deps {
+				if touched[dep] {
+					touched[p.ImportPath], changed = true, true
+					break
+				}
+			}
+		}
+	}
+	var paths []string
+	for p := range touched {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+// batchPackages reads the merged tree's dependency graph and selects the changed packages
+// and their importers (docs/SPEC-SPRINT.md, Landing: the bounded whole-tree gate).
+func (l *lander) batchPackages(ctx context.Context, dir string, changed []string) ([]string, error) {
+	if len(changed) == 0 {
+		return nil, nil
+	}
+	out, err := l.goRun(ctx, dir, []string{"go", "list", "-deps", "-test", "-json", "./..."})
+	if err != nil {
+		return nil, err
+	}
+	dec := json.NewDecoder(strings.NewReader(out))
+	var listed []listedPackage
+	for {
+		var p listedPackage
+		if err := dec.Decode(&p); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, err
+		}
+		if p.ImportPath != "" && p.Dir != "" {
+			listed = append(listed, p)
+		}
+	}
+	for i := range changed {
+		changed[i] = filepath.Join(dir, changed[i])
+	}
+	return batchPackagePaths(changed, listed), nil
 }
 
 // gateWhy is a red run as a finding, one line: the run, how it ended and its output.
@@ -340,7 +420,7 @@ func treePackages(dir string) []string {
 // remote bench that cannot run the gate refuses it; it does not run Go on this machine.
 // A land command on its own, or a loop with no remote bench configured, runs here
 // (goRun). The ledgers' update runs stay here.
-func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
+func (l *lander) treeGate(ctx context.Context, dir string, tests bool, changed ...[]string) string {
 	if err := ctx.Err(); err != nil {
 		return err.Error()
 	}
@@ -353,7 +433,15 @@ func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 	if err := ctx.Err(); err != nil {
 		return err.Error()
 	}
-	runs := gateRuns(tests, treePackages(dir))
+	var batch []string
+	if len(changed) > 0 {
+		var err error
+		batch, err = l.batchPackages(ctx, dir, changed[0])
+		if err != nil {
+			return gateWhy([]string{"go", "list", "-deps", "-test", "-json", "./..."}, err, "")
+		}
+	}
+	runs := gateRuns(tests, treePackages(dir), batch)
 	hosts, inLoop, remote := l.gateBenches(ctx)
 	// A test's gateBench seam stands in for the bench when no fleet member is up
 	// (the class-gate regression: a fake runner, no socket, no beat to keep fresh).
@@ -809,7 +897,7 @@ func (l *lander) gateCard(ctx context.Context, dir string, c landCard, before st
 	if err != nil {
 		return "", "the files the merge of " + c.id + " changed could not be listed: " + firstLine("", err)
 	}
-	why := l.treeGate(ctx, dir, slices.ContainsFunc(strings.Split(changed, "\n"), treeTested))
+	why := l.treeGate(ctx, dir, slices.ContainsFunc(strings.Split(changed, "\n"), treeTested), strings.Fields(changed))
 	if wait := gateWaitWhy(ctx); wait != "" {
 		return "", wait // cancellation says nothing about the card
 	}
