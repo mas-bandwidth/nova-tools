@@ -99,7 +99,7 @@ it back.`) + "\n"
 // width when width is above zero, and drains it at a width of 0; level evens
 // the ready queues (fleet down is hold --return, hold.go).
 func (a *app) fleetStep(st *store.Store, op, member, who string, width int, drain bool, deadline int, deadlineOff bool, why string) store.Step {
-	r := sprint.FleetReq{Op: op, Member: member, Who: who, Width: width, Drain: drain, Deadline: deadline, DeadlineOff: deadlineOff, Why: why}
+	r := sprint.FleetReq{Op: op, Member: member, Who: who, Width: width, Drain: drain, Deadline: deadline, DeadlineOff: deadlineOff, Why: why, Reason: why}
 	switch op {
 	case "up":
 		r.Op = "release"
