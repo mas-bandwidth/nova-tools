@@ -301,7 +301,7 @@ func stage(ctx context.Context, t Transport, o Options, host, dst string) Stage 
 	}
 	st.Wall = now().Sub(start)
 	if err != nil || code != 0 {
-		st.Err = &StageError{Host: host, Step: step, Code: code, Tail: tailLines(errb.String()), Wall: st.Wall, Err: err}
+		st.Err = &StageError{Host: host, Step: step, Code: code, Tail: TailLines(errb.String()), Wall: st.Wall, Err: err}
 	}
 	return st
 }

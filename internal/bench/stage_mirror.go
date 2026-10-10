@@ -201,9 +201,9 @@ func (e *StageError) Error() string {
 
 func (e *StageError) Unwrap() error { return e.Err }
 
-// tailLines is the last three non-empty lines of s joined by " | ", capped at 400 bytes
+// TailLines is the last three non-empty lines of s joined by " | ", capped at 400 bytes
 // from the end: the stderr a refusal carries.
-func tailLines(s string) string {
+func TailLines(s string) string {
 	var lines []string
 	for _, l := range strings.Split(s, "\n") {
 		if l = strings.TrimSpace(l); l != "" {
