@@ -2776,8 +2776,10 @@ promotion from the cut to the recorded merge with no hand steps. It fetches orig
 `promo/<date>-<n>` from `origin/<sprint branch>`, never the clone's local ref, and refuses a
 cut that is not ahead of `origin/dev`. It merges `origin/dev` into the cut without a checkout.
 If that merge conflicts, it raises one judgment naming the files, `JUDGMENT promote conflict ... files=<a,b>`, and stops; nothing is cut or pushed, and the tool resolves nothing. A clean
-cut is gated (`--check`), pushed, and its pull request opened. The verb waits on the pull
-request's checks, queues it once they pass, and watches the queue. When the queue merges it,
+cut is gated (`--check`, defaulting to build, vet, every package's tests, and the functional
+whole-tree tier in its container), pushed, and its pull request opened from the throwaway branch,
+never the live sprint branch. The verb waits on the pull request's checks, queues it once they
+pass, and watches the queue. When the queue merges it,
 the verb records `promoted --sha <merge>` in the store. A failed check or merge-group run
 raises one judgment naming the check, `JUDGMENT merge-group failed ... check=<name>`, with
 the failing log's tail. A pull request closed without a merge clears the promotion in
