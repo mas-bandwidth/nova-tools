@@ -21,10 +21,10 @@ func TestFinishHeadHelpLeadsWithTheCommit(t *testing.T) {
 	require.Equal(t, 0, code, errb.String())
 	help := out.String()
 
-	// Find the --head line
+	// Find the --head flag description line (in the flags section)
 	var headLine string
 	for _, line := range strings.Split(help, "\n") {
-		if strings.Contains(line, "--head") {
+		if strings.HasPrefix(strings.TrimSpace(line), "--head ") {
 			headLine = line
 			break
 		}
