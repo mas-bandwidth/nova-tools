@@ -186,7 +186,7 @@ func TestTheCoordinatorViewNamesAFriendWithStaleReports(t *testing.T) {
 // (a-judgment-checks-the-lane-before-it-rises.w2): a friend whose beat names her card running
 // inside its cap raises no finishes none, and the view counts it once, suppressed 1, its cause
 // a live lane beside it, in the JSON and in the text's summary, however many ticks keep it
-// quiet; when her beat stops naming the card her finishes none rises and the count stays.
+// quiet; when her beat names the running list empty her finishes none rises and the count stays.
 func TestTheCoordinatorViewCountsTheJudgmentsTheLaneCheckSuppressed(t *testing.T) {
 	t.Parallel()
 	ta, _ := friendCardApp(t, "friend amy", "amy")
@@ -220,11 +220,11 @@ func TestTheCoordinatorViewCountsTheJudgmentsTheLaneCheckSuppressed(t *testing.T
 	}
 	assert.Regexp(t, `^running [0-9]+m of [0-9]+m$`, row.Run, "her row says her run: %+v", row)
 
-	// her beat stops naming it: her finishes none rises (her running beat a minute ago is
-	// still activity to the stall ladder, so it is not a stall), and what was kept quiet
-	// stays counted
+	// her beat names the list empty, so it stops naming the card (a bare beat leaves the
+	// list): her finishes none rises (her running beat a minute ago is still activity to
+	// the stall ladder, so it is not a stall), and what was kept quiet stays counted
 	ta.a.sleep(time.Minute)
-	ta.ok("friend beat amy")
+	ta.ok("friend beat amy --running=")
 	ta.pong("amy")
 	ta.ok("tick")
 	idle := groupsOf(ta, sprint.NFriendIdle)
