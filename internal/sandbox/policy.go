@@ -88,6 +88,24 @@ type Input struct {
 	// NetDeny; the darwin profile grants them, and on linux they are not granted (Landlock
 	// here handles no port rule), so there the denial is whole: fail closed.
 	NetPorts []int
+	// NetLoopback is a --net-deny wall that may bind, accept on and connect to the
+	// machine's own loopback, any port: a lane's wall profile (profile.go) asks for it
+	// because opencode 2.0.25's --standalone run still starts an in-process server on a
+	// loopback port (`serve --stdio --port 0`; measured on mini-m5 2026-10-10: under the
+	// wall "Failed to start server. Is port 0 in use?", a bind refused with EPERM). The
+	// loopback is the machine's own; nothing on it reaches another host, and the darwin
+	// profile grants it by the literal "localhost" alone. Only with NetDeny; on linux
+	// Landlock here handles no port rule, so nothing is granted and the denial is whole.
+	NetLoopback bool
+	// AncestorOpen lets the wall open(2) each proper ancestor of its paths, which is the
+	// directory's own entries by name and nothing under them: file-read-data on the
+	// ancestor literal, beside the file-read-metadata every wall already grants. A lane's
+	// wall profile (profile.go) asks for it because opencode 2.0.25 real-paths every
+	// ancestor of its project up to / through open(2)+F_GETPATH (measured on mini-m5
+	// 2026-10-10: `session list --standalone` answered 500 with "FileSystem.realPath
+	// (<ancestor>)" at the first ancestor outside the wall, and again at the next once that
+	// one was readable). File contents under an ancestor stay denied.
+	AncestorOpen bool
 	// Deny is the paths no write of this wall may reach (a lane's wall profile: the
 	// coordinator's self). Every --write, the --cwd, the --tmp and HOME is refused when it
 	// is inside one or holds one, so the wall denies them by having no grant there.
@@ -122,6 +140,8 @@ type Policy struct {
 	NetListen     bool
 	NetAllow      []string // host:port the profile opens back up by name
 	NetPorts      []int    // TCP ports a --net-deny wall opens outbound (Input.NetPorts)
+	NetLoopback   bool     // a --net-deny wall may bind, accept and connect on its own loopback (Input.NetLoopback)
+	AncestorOpen  bool     // each proper ancestor may be opened, its entries listed by name (Input.AncestorOpen)
 	Deny          []string // resolved paths no write reaches (Input.Deny)
 	GPUMode       GPUMode
 	MaxProcs      int      // the tree's process cap, set by Build; 0 on a hand-built policy is unbounded
@@ -609,7 +629,7 @@ func Build(in Input) (*Policy, []Refusal) {
 
 func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
 	var bad []Refusal
-	p := &Policy{NetDeny: in.NetDeny, NetListen: in.NetListen, Name: in.Name, MaxProcs: in.MaxProcs, MaxMem: in.MaxMem}
+	p := &Policy{NetDeny: in.NetDeny, NetListen: in.NetListen, NetLoopback: in.NetDeny && in.NetLoopback, AncestorOpen: in.AncestorOpen, Name: in.Name, MaxProcs: in.MaxProcs, MaxMem: in.MaxMem}
 	if p.MaxProcs <= 0 {
 		p.MaxProcs = DefaultMaxProcs
 	}

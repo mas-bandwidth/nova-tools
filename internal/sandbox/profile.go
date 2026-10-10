@@ -54,6 +54,12 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 	var ancestors []string
 	for _, d := range Ancestors(p.ancestorPaths()...) {
 		ancestors = append(ancestors, fmt.Sprintf("(allow file-read-metadata (literal %q))", d))
+		if p.AncestorOpen {
+			// the directory itself may be opened and its entries read by name (a lane's
+			// harness real-paths every ancestor through open(2)); nothing under it is
+			// granted by this literal, so an ancestor's files stay unreadable
+			ancestors = append(ancestors, fmt.Sprintf("(allow file-read-data (literal %q))", d))
+		}
 	}
 	for _, d := range p.PathDirs {
 		if bad := badPathText(d); bad != "" {
@@ -146,6 +152,18 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 		for _, port := range p.NetPorts {
 			lines = append(lines, fmt.Sprintf(`(allow network-outbound (remote tcp "*:%d"))`, port))
 		}
+	}
+	// A lane's wall may use the machine's own loopback, any port: bind and accept on it,
+	// and connect to it, so a harness whose --standalone run still starts an in-process
+	// server on a loopback port (opencode 2.0.25: `serve --stdio --port 0`) can run
+	// inside the wall. "localhost" is the one host literal SBPL takes (above); measured on
+	// darwin 27.2, (local ip "localhost:*") admits a 127.0.0.1 listener on an ephemeral
+	// port, and nothing on the loopback reaches another host.
+	if p.NetDeny && p.NetLoopback {
+		lines = append(lines,
+			`(allow network-bind (local ip "localhost:*"))`,
+			`(allow network-inbound (local ip "localhost:*"))`,
+			`(allow network-outbound (remote ip "localhost:*"))`)
 	}
 	for _, hp := range p.NetAllow {
 		_, port, err := net.SplitHostPort(hp)
@@ -283,13 +301,15 @@ func (lp LaneProfile) Input(cwd string, argv []string) (Input, error) {
 		}
 	}
 	in := Input{
-		Reads:    lp.Reads,
-		Writes:   writes,
-		NetDeny:  true,
-		NetPorts: LaneNetPorts,
-		Deny:     deny,
-		Home:     home,
-		Argv:     argv,
+		Reads:        lp.Reads,
+		Writes:       writes,
+		NetDeny:      true,
+		NetPorts:     LaneNetPorts,
+		NetLoopback:  true, // opencode --standalone serves itself on a loopback port
+		AncestorOpen: true, // opencode real-paths every ancestor of its project through open(2)
+		Deny:         deny,
+		Home:         home,
+		Argv:         argv,
 	}
 	// the command runs where it was started when that is inside the wall, else in Work
 	if cwd != "" && slices.ContainsFunc(writes, func(w string) bool { return Inside(resolved(cwd), resolved(w)) }) {
