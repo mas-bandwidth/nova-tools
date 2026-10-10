@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -417,4 +418,56 @@ func alarmCleared(p Plan, typ string) []Note {
 		}
 	}
 	return out
+}
+
+// The threshold is the work table's setting (docs/SPEC-SPRINT.md, "Review starved,
+// and reads idle"): set --review-starved writes a duration (clamped up to one tick)
+// or off, and refuses an invalid duration without writing anything.
+func TestWithReviewStarvedWritesTheWindowSetting(t *testing.T) {
+	t.Parallel()
+	t.Run("a duration clears the nothing-to-set refusal and writes the window", func(t *testing.T) {
+		t.Parallel()
+		s := settingsSnapshot(map[string]string{PropReviewStarved: "4s"})
+		p := WithReviewStarved(Set(s, SetReq{Who: "coord"}), s, "3s")
+		require.Empty(t, p.Refused)
+		require.Len(t, p.Props, 1)
+		assert.Equal(t, PropWrite{Table: Work, Name: PropReviewStarved, Value: "3s", Was: "4s"}, p.Props[0])
+		require.Len(t, p.Units, 1)
+		assert.Equal(t, "set", p.Units[0].Key)
+		assert.Equal(t, "sprint review-starved 3s", p.Units[0].Moved)
+	})
+	t.Run("off disables both judgments", func(t *testing.T) {
+		t.Parallel()
+		s := settingsSnapshot(nil)
+		p := WithReviewStarved(Set(s, SetReq{Who: "coord"}), s, AlarmOff)
+		require.Empty(t, p.Refused)
+		require.Len(t, p.Props, 1)
+		assert.Equal(t, PropWrite{Table: Work, Name: PropReviewStarved, Value: AlarmOff, WasAbsent: true}, p.Props[0])
+		assert.Equal(t, "sprint review-starved off", p.Units[0].Moved)
+	})
+	t.Run("a duration below one tick is one tick", func(t *testing.T) {
+		t.Parallel()
+		s := settingsSnapshot(nil)
+		p := WithReviewStarved(Set(s, SetReq{Who: "coord"}), s, "500ms")
+		require.Empty(t, p.Refused)
+		require.Len(t, p.Props, 1)
+		assert.Equal(t, reviewStarvedTick.String(), p.Props[0].Value)
+		assert.Equal(t, "sprint review-starved 1s", p.Units[0].Moved)
+	})
+	t.Run("an invalid duration refuses without writing", func(t *testing.T) {
+		t.Parallel()
+		s := settingsSnapshot(nil)
+		p := WithReviewStarved(Set(s, SetReq{Who: "coord"}), s, "bogus")
+		require.Len(t, p.Refused, 1)
+		assert.Contains(t, p.Refused[0].Why, "--review-starved wants a duration above zero")
+		assert.Empty(t, p.Props)
+		assert.Empty(t, p.Units)
+	})
+	t.Run("a second setting appends to the set move", func(t *testing.T) {
+		t.Parallel()
+		s := settingsSnapshot(nil)
+		p := WithReviewStarved(Set(s, SetReq{DealtMax: "2h", Who: "coord"}), s, "3s")
+		require.Empty(t, p.Refused)
+		assert.Equal(t, "sprint dealt-max 2h, review-starved 3s", p.Units[0].Moved)
+	})
 }
