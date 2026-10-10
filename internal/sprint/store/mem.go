@@ -1079,7 +1079,7 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 			if m.kv == nil {
 				m.kv = map[string]string{}
 			}
-			rec, err := json.Marshal(time.Now().UTC().Truncate(time.Second).Format(time.RFC3339))
+			rec, err := json.Marshal(op.At.UTC().Truncate(time.Second).Format(time.RFC3339))
 			if err != nil {
 				return err
 			}

@@ -710,7 +710,7 @@ func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) erro
 		p.Set(ctx, r.Names.Key(friendHealthKey(op.Health.Friend)), string(rec), 0)
 	}
 	for _, f := range op.ReadFriendFinishes {
-		rec, err := json.Marshal(time.Now().UTC().Truncate(time.Second).Format(time.RFC3339))
+		rec, err := json.Marshal(op.At.UTC().Truncate(time.Second).Format(time.RFC3339))
 		if err != nil {
 			return err
 		}
