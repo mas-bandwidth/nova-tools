@@ -5,7 +5,10 @@
 \* once (Need less the reads that stand), each a card on a different reader; a card
 \* is ready, then working, then closed ok or broken by its reader, handed back
 \* (returned), let pass its deadline (late), or taken back by the machine (away:
-\* its reader down or held, a resting route, its primary moved). A reader that
+\* its reader down or held, a resting route, its primary moved, or its reader
+\* handing it back on the provider's refusal of its take for credit or its key,
+\* which rests the provider: internal/sprint/provider_funds.go readRefusalRest,
+\* the TakeBack action, never Return). A reader that
 \* closed, returned or let pass a read of the attempt is never dealt it again; a
 \* read the machine took back spends nothing and its reader may be dealt it again
 \* under the next generation, at most MaxGen times. The primary leaves review only

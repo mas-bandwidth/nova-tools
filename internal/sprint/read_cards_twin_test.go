@@ -269,3 +269,50 @@ func TestAReturnedReadCardIsReplacedWithAnotherReader(t *testing.T) {
 	require.Equal(t, second.Row, reads[0].Row)
 	require.Equal(t, second.ID+".g1", reads[0].ID)
 }
+
+// TestAReadHandedBackOnAProviderRefusalIsTheProvidersJudgment pins fault 6 of 2026-10-10:
+// a member's read handed back because the provider refused its take for its key (`class=auth
+// status=401`) is no read of the attempt. It is taken back spending nothing of its reader
+// (RetiredByRest), the provider rests for its key as a work take's refusal rests it, and the
+// tick raises the provider's one judgment (NProviderKey); a second read handed back on the
+// same refusal while the provider rests writes no second rest, and neither reader is spent.
+func TestAReadHandedBackOnAProviderRefusalIsTheProvidersJudgment(t *testing.T) {
+	t.Parallel()
+	r := newReadCardsRig(t)
+	r.toReview("s1-1", proBrief)
+	reads := r.readCards("s1-1")
+	require.Len(t, reads, 2)
+	refused := `no verdict (ran=false verdict=""): provider failure: provider: class=auth status=401 msg=Provide an API key [redacted]`
+	res := r.read(reads[0], sprint.ReadReq{Return: true, Reason: refused, Who: reads[0].Row})
+	require.Contains(t, strings.Join(res.Moved, "\n"), "-> rest (retired: the provider refused its take, not a read)")
+	require.Equal(t, sprint.RetiredByRest, r.rec(reads[0].ID).F("retired_by"), "not a read: it spends nothing of its reader")
+	rest, ok := sprint.ProviderRests(r.snap().Fleet)["prov-pro-a"]
+	require.True(t, ok, "the provider rests")
+	require.Equal(t, sprint.RestAuth, rest.Cause)
+	require.Equal(t, []string{reads[0].ID}, rest.Cards)
+	require.Contains(t, rest.Why, "class=auth status=401")
+
+	r.read(reads[1], sprint.ReadReq{Return: true, Reason: refused, Who: reads[1].Row})
+	require.Equal(t, sprint.RetiredByRest, r.rec(reads[1].ID).F("retired_by"))
+	again := sprint.ProviderRests(r.snap().Fleet)["prov-pro-a"]
+	require.Equal(t, rest.Cards, again.Cards, "one rest while it rests")
+
+	r.tick()
+	s := r.snap()
+	var judged bool
+	var open []string
+	for _, o := range s.Open {
+		open = append(open, o.Note.Type+" "+o.Key)
+		if o.Note.Type == sprint.NProviderKey && strings.Contains(o.Key, sprint.ProviderSubject("prov-pro-a")) {
+			judged = true
+		}
+	}
+	require.True(t, judged, "the provider's judgment is open: %q", open)
+	require.Equal(t, sprint.Review, s.Work.Card("s1-1").Col, "the primary waits in review")
+	// neither reader was spent: each may be dealt the read again, under the next generation
+	var ids []string
+	for _, c := range r.readCards("s1-1") {
+		ids = append(ids, c.ID)
+	}
+	require.ElementsMatch(t, []string{reads[0].ID + ".g1", reads[1].ID + ".g1"}, ids, "no read was spent")
+}

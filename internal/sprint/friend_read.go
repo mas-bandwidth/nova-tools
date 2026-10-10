@@ -592,7 +592,9 @@ func FriendReadOutboxLine(row, id string, epoch uint64) string {
 // a verdict closes its read card as her outbox report does (friendReadCloseUnit); a return
 // (--return, with the reason) hands it back with no verdict, retired by returned, which
 // spends the reader's read of the attempt, and the read-card deal deals it to another
-// reader. A read card has no begin: the take moves it to working.
+// reader; a return whose reason is the provider's refusal of the take for credit or its key
+// is no read: the provider rests and is judged, and the card is taken back spending nothing
+// (readRefusalRest). A read card has no begin: the take moves it to working.
 func readCardVerb(s *Snapshot, r ReadReq, row, name string) Plan {
 	var p Plan
 	if r.Begin {
@@ -639,6 +641,7 @@ func readCardVerb(s *Snapshot, r ReadReq, row, name string) Plan {
 	}, s.Fleet.Card)
 	namePrimarysReads(&p, all)
 	var verdicts []ReadVerdict // the ledger's (reads_window.go)
+	restWritten := map[string]bool{} // the providers whose rest a return wrote in this plan
 	for _, c := range chosen {
 		pr := s.Work.Card(c.F("primary"))
 		if r.Return {
@@ -648,8 +651,20 @@ func readCardVerb(s *Snapshot, r ReadReq, row, name string) Plan {
 			}
 			n := happened(NReadReturned, pr.Row, s.Now, pr.ID)
 			n.Who, n.Attempt, n.What = name, c.Int("attempt"), name+" returned "+c.ID+": "+r.Reason
+			moved := c.ID + " " + c.Col + " -> returned (retired: " + name + " gave no verdict)"
+			if rest, refused, write := readRefusalRest(s, c, r.Reason); refused {
+				// the provider refused the read's take for credit or its key: the provider's
+				// judgment, not a read; taken back spending nothing of the reader's
+				set["retired_by"] = RetiredByRest
+				n.What += "; the provider's refusal, not a read: the provider's judgment, the read asked again"
+				moved = c.ID + " " + c.Col + " -> rest (retired: the provider refused its take, not a read)"
+				if write && !restWritten[rest.Provider] {
+					restWritten[rest.Provider] = true
+					restWrites(&p, s, []RouteRest{rest}, name)
+				}
+			}
 			p.Units = append(p.Units, Unit{Key: pr.ID, Stream: pr.Row, Changes: []Change{change(Fleet, removeEntry(c, set))},
-				Moved: c.ID + " " + c.Col + " -> returned (retired: " + name + " gave no verdict)", Notes: []Note{n}})
+				Moved: moved, Notes: []Note{n}})
 			continue
 		}
 		if m, ok := r.missingBranch(c); ok {

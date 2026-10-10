@@ -114,17 +114,53 @@ func providerRestsDue(s *Snapshot, rests map[string]RouteRest, ends map[string][
 	balances := ProviderBalances(s.Fleet)
 	for _, p := range slices.Sorted(maps.Keys(newest)) {
 		e := newest[p]
-		m := causeRE.FindStringSubmatch(e.refused)
-		cause, until := m[1], s.Now.Add(RouteRestFor)
-		words := fmt.Sprintf("provider %s refused its key: card %s on route %s: class=%s status=%s msg=%s", p, e.card, on[p], m[1], m[2], m[3])
-		if cause == RestCredit {
-			until = OpenUntil
-			words = fmt.Sprintf("out of credit: provider %s refused card %s on route %s: class=%s status=%s msg=%s", p, e.card, on[p], m[1], m[2], m[3])
-		}
-		b := balances[p]
-		out = append(out, RouteRest{Provider: p, At: s.Now, Until: until, Cards: []string{e.card}, Cause: cause, Balance: b.Balance, HasBalance: b.Known, Why: oneLine(words)})
+		out = append(out, providerRest(s, balances, p, e.card, on[p], e.refused))
 	}
 	return out
+}
+
+// providerRest is the rest a provider's refusal of a take writes (refused: the take's
+// provider line, refusal): out of credit until it is paid (OpenUntil), its key for
+// RouteRestFor, naming the card, the route and the provider's words, with the balance the
+// poll last read.
+func providerRest(s *Snapshot, balances map[string]ProviderBalance, p, card, route, refused string) RouteRest {
+	m := causeRE.FindStringSubmatch(refused)
+	cause, until := m[1], s.Now.Add(RouteRestFor)
+	words := fmt.Sprintf("provider %s refused its key: card %s on route %s: class=%s status=%s msg=%s", p, card, route, m[1], m[2], m[3])
+	if cause == RestCredit {
+		until = OpenUntil
+		words = fmt.Sprintf("out of credit: provider %s refused card %s on route %s: class=%s status=%s msg=%s", p, card, route, m[1], m[2], m[3])
+	}
+	b := balances[p]
+	return RouteRest{Provider: p, At: s.Now, Until: until, Cards: []string{card}, Cause: cause, Balance: b.Balance, HasBalance: b.Known, Why: oneLine(words)}
+}
+
+// readRefusalRest is the provider's rest a fleet member's read card handed back (read
+// --return) writes when the reason is the provider's refusal of the read's take for credit
+// or for its key (refusal): a harness's word about the provider, never a read of the
+// attempt, so it is the provider's judgment (NProviderKey, NProviderFunds) as a work take's
+// refusal is (providerRestsDue), and the read is taken back spending nothing of its reader
+// (RetiredByRest). refused says the reason is such a refusal on a fleet route; write says
+// the rest is due: the provider does not rest now, and the read's take launched after its
+// last rest ended (a take launched inside a rest window belongs to that rest). A friend's
+// read (her own model) and a pinned model's are never a route's.
+func readRefusalRest(s *Snapshot, c *Card, reason string) (rest RouteRest, refused, write bool) {
+	line := refusal(reason)
+	route := c.F(FieldRoute)
+	if line == "" || route == "" || route == RoutePin || IsFriendRow(c.Row) {
+		return RouteRest{}, false, false
+	}
+	p := routeProvider(s, route)
+	if p == "" {
+		p, _, _ = strings.Cut(c.F(FieldModel), "/")
+	}
+	if p == "" {
+		return RouteRest{}, true, false
+	}
+	if last, had := ProviderRests(s.Fleet)[p]; had && (last.Resting(s.Now) || !stampAt(c, "taken").After(last.Mark())) {
+		return RouteRest{}, true, false
+	}
+	return providerRest(s, ProviderBalances(s.Fleet), p, c.ID, route, line), true, true
 }
 
 // oneLine is text as a rest's words hold it: its words joined by single blanks.
