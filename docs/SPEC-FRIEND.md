@@ -1678,35 +1678,78 @@ The machine is modelled in `tla/FriendStage.tla` (`MCFriendStage*`): a lane is h
 only once its `JOB.md` is there, one judgment per repository or card while it stands, a stop
 says nothing, and a failed job is staged again once its remedy lands; three reversed witnesses
 (nextCard without the guard, a judgment per failed stage, no retry).
+What is scratch, and when it goes. `jobs/<job>/` is scratch. The branch in the mirror is the
+record. A lane the daemon starts, batch or one-shot (the same `laneDone`), removes
+`jobs/<job>/` when its run ends and `outbox/<job>/REPORT.md` names a head origin holds, whatever
+the verdict (`Stager.Release`, called from the lane's end, from a restart that finishes a card
+the dead daemon had started, and from the outbox pass once the finish is taken). Origin holds
+the head when a remote-tracking ref under `refs/remotes/origin/` in the job's git directory
+(the mirror, for a worktree) names that sha. The checkout goes only when it is clean: no
+tracked change and no stash. A worktree's other commits stay on its branch in the mirror; a
+clone goes only when `HEAD` is that same sha, because a clone's commits live nowhere else.
+`safepath.RemoveUnder` removes the path, and only a path strictly under the job directory or,
+for the worktree, `git worktree remove` on that checkout. A job with a report is not staged
+again. A lane killed before that end is swept by the next prune: a job that is not live (not
+held, not run by a lane, not being staged) and whose brief is not in her inbox. The newest
+`FinishedJobsKept` (8) of those whose head is not confirmed stay; a confirmed head is removed
+even inside that cap. At most `PrunePerPass` (4) a cleanup, confirmed first, never waiting on
+a mirror a stage holds.
+
 Finished jobs are pruned by the cleanup the daemon already owns: after each inbox reconcile
 (which retires the briefs of cards that left her row), in the loop itself, `pruneStep` hands
-`Stager.Prune` the live jobs (held on her row, run by a lane, being staged). A job is finished
-when it is not live and its brief is not in her inbox; only a job whose checkout is a worktree
-of one of her mirrors is ever pruned, never a clone or anything another hand staged. The newest
-`FinishedJobsKept` (8, by their `JOB.md`) are kept and the rest removed oldest first, at most
-`PrunePerPass` (4) a cleanup and never waiting on a mirror a stage holds (its lock is tried,
-not taken): the worktree is removed from the mirror (`worktree remove --force`, then `worktree
-prune`) and `jobs/<job>` with it, and the branch stays in the mirror, so a commit on it is never
-lost. Each job removed is one line (`prune: removed jobs/<job> and its worktree: its card is
-finished (8 finished kept)`); a failure is said once while it stands (`prune: not pruned: ...`).
-The prune runs in the loop, never on a goroutine handed a snapshot: a job dealt to her again
-meanwhile would have its brief written, be handed to a lane on its old `JOB.md`, and lose its
-checkout under it. `TestJobsAreWorktreesOfOneMirror` stages two jobs of one repository and sees
-one full bare mirror and two worktrees on their branches at the base, origin the repository; a
-push from one is read by `PushedHead`; a fetch that fails is a judgment named on the job and
-leaves nothing of it; a finished job is pruned past the cap and its branch and commit stay; a
-job in her inbox or live is never pruned; a pruned job staged again takes its branch back.
-`TestAMirrorOfTheCloneLayoutIsConverted` and `TestTheInboxCleanupPrunesFinishedJobs` pin the
-rest. The worktrees and their pruning are modelled in `internal/friend/tla/JobWorktrees.tla`
-(TLC on a Linux bench, three jobs, cap 1, one a pass, `MCJobWorktrees`: 33,344 distinct states,
-no error; `NoLaneLosesItsCheckout`, `WorkKept`, `CapKept`, `HeldKept`), with three reversed
-witnesses: `MCJobWorktreesBrokenAsync` (the prune on a goroutine, the first cut of this change)
-breaks `NoLaneLosesItsCheckout` in 16 states as above, `MCJobWorktreesBrokenDropBranch` breaks
-`WorkKept`, and `MCJobWorktreesBrokenNoLimit` breaks `CapKept`. Jobs staged as clones before
-this change are never pruned (they are no worktree of a mirror) and are left to a hand.
+`Stager.Prune` the live jobs (held on her row, run by a lane, being staged). Each job removed
+is one line (`prune: removed jobs/<job> and its worktree: its card is finished (8 finished kept)`);
+a failure is said once while it stands (`prune: not pruned: ...`). A release at the lane's end
+is `release: removed jobs/<job>: its report names a head origin holds`. The prune runs in the
+loop, never on a goroutine handed a snapshot: a job dealt to her again meanwhile would have its
+brief written, be handed to a lane on its old `JOB.md`, and lose its checkout under it.
+`TestJobsAreWorktreesOfOneMirror` stages two jobs of one repository and sees one full bare
+mirror and two worktrees on their branches at the base, origin the repository; a push from one
+is read by `PushedHead`; a fetch that fails is a judgment named on the job and leaves nothing
+of it; a finished job whose head is not confirmed is pruned past the cap and its branch and
+commit stay; a job in her inbox or live is never pruned; a pruned job staged again takes its
+branch back. `TestAFinishedLaneLeavesNoJobDirectory` is the confirmed head: the job directory
+is gone inside the cap of 8, the unconfirmed job beside it stays, and a checkout with tracked
+work origin does not hold stays. `TestAMirrorOfTheCloneLayoutIsConverted` and
+`TestTheInboxCleanupPrunesFinishedJobs` pin the rest. The cap on jobs whose head is not
+confirmed is modelled in `internal/friend/tla/JobWorktrees.tla` (TLC on a Linux bench, three
+jobs, cap 1, one a pass, `MCJobWorktrees`: 33,344 distinct states, no error;
+`NoLaneLosesItsCheckout`, `WorkKept`, `CapKept`, `HeldKept`), with three reversed witnesses:
+`MCJobWorktreesBrokenAsync` (the prune on a goroutine, the first cut of this change) breaks
+`NoLaneLosesItsCheckout` in 16 states as above, `MCJobWorktreesBrokenDropBranch` breaks
+`WorkKept`, and `MCJobWorktreesBrokenNoLimit` breaks `CapKept`. A confirmed finish is outside
+that grain: `tla/DeliveryLane.tla` (TLC on a Linux bench, one job, `MCDeliveryLane`: 13 distinct
+states, no error; `FinishedLaneLeavesNoJobDirectory`, `NoLaneLosesItsJob`; the reversed witness
+`MCDeliveryLaneBrokenKeepsJob` breaks `FinishedLaneLeavesNoJobDirectory`, 10 distinct states).
+`tla/Delivery.tla` is the present, a different machine. A clone whose report does not name a head origin holds is left:
+removing it would drop commits that exist only there.
+
+A reader lane removes its checkout `reads/<id>/repo` after the verdict is recorded, and, when
+`Daemon.BenchRoot` is set (nova-friend sets it to `~/nova-bench` when that directory is there),
+the bench copy `BenchRoot/buds/<friend>/reads/<id>`. Both go through `safepath.RemoveUnder`.
+The read's own files stay. The read's RESULT.md names the Linux bench it copied to (its
+`bench:` line; the prompt asks for it), and the lane removes that bench's copy
+`~/nova-bench/buds/<friend>/reads/<id>` over `Daemon.Bench` (the one ssh, the same
+authenticated line the reader ran), whatever the finding. A bench the daemon cannot reach
+yet is not dropped: the owed removal is kept and tried again each step until it succeeds,
+so a finished read leaves no bench directory on any machine. The prompt's bench rule tells
+the reader the lane removes that directory; it does not ask the reader to remove it.
+
+The lander's scratch is not a job directory. The clone stays. It still cuts
+`land/base-check` in that clone with `git switch --no-track --force-create` from
+origin's base, and the next check cuts it again. Each stream's batch is built in a
+detached worktree under the land root (`<clone-name>@<stream>`,
+`cmd/nova-sprint/landpass.go`), made on first use and kept across passes; in that
+worktree the batch cuts `land/<stream>` the same way from origin's base. At the end
+of a pass, for each clone the pass used, worktrees of streams that had no batch are
+removed (`git worktree remove --force`). `nova-sprint gc` ages a leftover lander
+worktree. That lander is `cmd/nova-sprint`, outside the paths that remove a friend's
+job.
+
 Not yet: the server's `friend cards` answer does not send `repo` and `base` (cmd/nova-sprint is
 outside this card's paths), so the brief's lines are read; a read's checkout at the head under
-read is not staged here.
+read is not staged from the mirror (the reader still clones into `reads/<id>/repo`, and the
+lane removes that clone when the finding is recorded).
 
 ## One-shot lanes (internal/friend/lanes.go)
 

@@ -3136,6 +3136,16 @@ rule is `internal/sprint/fleet_quiet.go`; the twin test is
 
 ## 6. The readers
 
+A reader's checkout is scratch. The friend daemon writes the read under
+`reads/<id>/` and, once the verdict is recorded, removes `reads/<id>/repo` and
+the bench copy under `~/nova-bench/buds/<friend>/reads/<id>` when that bench
+directory is on the same machine (docs/SPEC-FRIEND.md, what is scratch). The
+read's brief, the worker's report and the finding stay. The read's RESULT.md
+names the Linux bench it copied to (its `bench:` line), and the daemon removes
+that bench's copy over the ssh `Bench` transport, whatever the finding; a bench
+it cannot reach yet is owed and retried each step until it succeeds
+(docs/SPEC-FRIEND.md, what is scratch).
+
 - **The interim rules of 2026-10-06, until read cards** (the owner, 7:25 PM ET: "fix it
   now, to work around it"; the read-cards change (PR 5392) replaces
   the ask, and these rules with it):
@@ -3858,6 +3868,18 @@ cards had none outstanding.
 `TestAnAskConflictIsOneCardsRefusalNotTheTicks`, `TestTheFriendAskAsksEveryReviewCardAFriendMayRead`.)
 
 ## 7. Merging
+
+The lander's scratch is the branch `land/<stream>` (and `land/base-check`) plus one
+detached worktree per stream. The clone stays. `land/base-check` is cut again in the
+clone with `git switch --no-track --force-create` from origin's base. Each stream's
+batch is built in its own worktree under the land root (`<clone-name>@<stream>`,
+`cmd/nova-sprint/landpass.go`), made on first use and kept across passes, and cuts
+`land/<stream>` there the same way. At the end of a pass, for each clone the pass
+used, worktrees of streams that had no batch are removed
+(`git worktree remove --force`). `nova-sprint gc` ages a leftover lander worktree.
+The lander does not leave a friend's job directory. A friend's `jobs/<job>/` is her
+daemon's scratch, removed when the lane ends (docs/SPEC-FRIEND.md, what is scratch),
+not the lander's.
 
 1. In work order, never random: the head of the stream's queued cell first.
 2. In batches onto the sprint branch, the branch every stream lands on; the

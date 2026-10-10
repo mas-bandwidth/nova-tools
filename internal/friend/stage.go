@@ -30,14 +30,17 @@ import (
 // under mirrors/ (so a stage is a fetch and a worktree add, seconds and megabytes: on
 // 2026-10-05 a whole clone per job had her disk at 99% with 42 staged clones and 765 finished
 // job dirs), and writes jobs/<job>/JOB.md in the card-contract shape
-// (docs/SPEC-CARD-CONTRACT.md). After each inbox cleanup the finished jobs' worktrees past
-// FinishedJobsKept are pruned (Stager.Prune, pruneStep). No lane is handed the card until JOB.md is there. A
+// (docs/SPEC-CARD-CONTRACT.md). After each inbox cleanup a finished job whose report names
+// a head origin holds is removed, and the other finished worktrees past FinishedJobsKept
+// are pruned (Stager.Prune, pruneStep). No lane is handed the card until JOB.md is there. A
 // repository her account cannot reach is one judgment to the coordinator with the remedy,
 // never a lane that discovers it (docs/SPEC-FRIEND.md, staging). The machine is modelled in
 // tla/FriendStage.tla (MCFriendStage*: a lane handed only a staged card, one judgment while it
 // stands, a failed job staged again), and the worktrees and their pruning in
 // internal/friend/tla/JobWorktrees.tla (MCJobWorktrees*: a live job never pruned, a branch's
-// work never lost, the finished worktrees within the cap after a prune).
+// work never lost, the finished worktrees within the cap after a prune; the cap is the jobs
+// whose head is not confirmed). A finished lane whose report names a head origin holds leaves
+// no job directory (tla/DeliveryLane.tla, FinishedLaneLeavesNoJobDirectory).
 
 // The directories under her working directory that staging writes.
 const (
@@ -459,75 +462,92 @@ func (s *Stager) base(ctx context.Context, mirror string, p Packet) (string, err
 		Remedy: fmt.Sprintf("push %s to %s, or rework the card onto a base it holds", named, p.Repo)}
 }
 
-// FinishedJobsKept is how many finished jobs' worktrees the daemon's cleanup keeps, the newest
-// staged; the rest are pruned (Stager.Prune), at most PrunePerPass a cleanup, so the loop that
-// runs it is held a few seconds at most.
+// FinishedJobsKept is how many finished jobs whose head is not on origin the daemon's
+// cleanup keeps, the newest staged. A job whose report names a head origin holds is not one
+// of them: it is removed even inside the cap (a finished lane leaves no job directory,
+// tla/DeliveryLane.tla FinishedLaneLeavesNoJobDirectory). The rest are pruned past the cap
+// (Stager.Prune), at most PrunePerPass a cleanup, so the loop that runs it is held a few
+// seconds at most.
 const (
 	FinishedJobsKept = 8
 	PrunePerPass     = 4
 )
 
-// Prune removes the worktrees of finished jobs past kept, the oldest staged first (by its
-// JOB.md), at most PrunePerPass of them, and answers the jobs it removed; a job whose mirror a
-// stage holds is left for the next pass, never waited on. A job is finished when it is not live (held on her
-// row, run by a lane, being staged: the caller's live) and its brief is not in her inbox (the
-// inbox cleanup retired it); only a job whose checkout is a worktree of one of her mirrors is
-// ever pruned, never a clone or anything another hand staged. A pruned job is gone whole
-// (jobs/<job>), its worktree removed from the mirror; its branch stays in the mirror, so any
-// commit on it is kept, and a stage of the job again takes the branch as it stands.
+// A release that is not a removal yet: the caller leaves the job, and the next prune tries
+// a confirmed one again. A dirty checkout is left, so unpushed tracked work is not deleted.
+// errJobGone is a job already removed; the caller says nothing.
+var (
+	errHeadUnconfirmed = errors.New("its head is not confirmed on origin")
+	errCheckoutDirty   = errors.New("its checkout holds work origin does not")
+	errMirrorHeld      = errors.New("its mirror is held")
+	errJobGone         = errors.New("its job directory is already gone")
+)
+
+// scratch is one finished job directory the cleanup may remove.
+type scratch struct {
+	job, repo, mirror string
+	at                time.Time
+	confirmed         bool // its report names a head origin holds
+	worktree          bool
+}
+
+// Prune removes finished jobs and answers the ones it removed (docs/SPEC-FRIEND.md, what is
+// scratch). A job is finished when it is not live (held on her row, run by a lane, being
+// staged: the caller's live) and its brief is not in her inbox (the inbox cleanup retired
+// it): its lane is gone and its card is no longer working, so the next tick sweeps it. A job
+// whose report names a head origin holds is removed even inside kept, oldest first; the
+// other finished worktrees of her mirrors are kept up to kept, the newest, and the rest
+// removed oldest first. At most PrunePerPass go in one call, the confirmed ones first, and a
+// mirror a stage holds is left for the next pass, never waited on. A clone is removed only
+// when that head is origin's and the checkout is clean at it. A pruned job is gone whole
+// (jobs/<job>); a worktree is removed from the mirror and its branch stays, so any commit on
+// it is kept, and a stage of the job again takes the branch as it stands.
 func (s *Stager) Prune(ctx context.Context, live map[string]bool, kept int) ([]string, error) {
-	jobs := filepath.Join(s.Dir, JobsDir)
-	entries, err := os.ReadDir(jobs)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	} else if err != nil {
+	confirmed, rest, err := s.finishedScratch(ctx, live)
+	if err != nil {
 		return nil, err
 	}
-	type finished struct {
-		job, repo, mirror string
-		at                time.Time
+	queue := append([]scratch{}, confirmed...)
+	if extra := len(rest) - max(kept, 0); extra > 0 {
+		queue = append(queue, rest[:extra]...)
 	}
-	var done []finished
-	for _, e := range entries {
-		job := e.Name()
-		if !e.IsDir() || !validJob(job) || live[job] || exists(filepath.Join(s.Dir, "inbox", job)) {
-			continue
-		}
-		repo, mirror, ok := s.worktreeOf(filepath.Join(jobs, job, "repo"))
-		if !ok {
-			continue
-		}
-		at := time.Time{}
-		if fi, err := os.Lstat(filepath.Join(jobs, job, JobFile)); err == nil {
-			at = fi.ModTime()
-		}
-		done = append(done, finished{job: job, repo: repo, mirror: mirror, at: at})
-	}
-	sort.Slice(done, func(i, j int) bool {
-		if !done[i].at.Equal(done[j].at) {
-			return done[i].at.Before(done[j].at)
-		}
-		return done[i].job < done[j].job
-	})
 	var pruned []string
 	var firstErr error
-	for _, f := range done[:max(len(done)-max(kept, 0), 0)] {
+	for _, f := range queue {
 		if len(pruned) == PrunePerPass {
 			break
 		}
-		lock := s.repoLock(f.repo)
-		if !lock.TryLock() {
-			continue // a stage holds the mirror: the next pass
-		}
-		err := s.pruneJob(ctx, f.mirror, f.job)
-		lock.Unlock()
-		if err != nil {
-			firstErr = cmpErr(firstErr, fmt.Errorf("%s/%s: %w", JobsDir, f.job, err))
+		if err := s.removeScratch(ctx, f); err != nil {
+			if !errors.Is(err, errMirrorHeld) {
+				firstErr = cmpErr(firstErr, fmt.Errorf("%s/%s: %w", JobsDir, f.job, err))
+			}
 			continue
 		}
 		pruned = append(pruned, f.job)
 	}
 	return pruned, firstErr
+}
+
+// Release removes jobs/<job> when its report names a head origin holds and the checkout
+// is clean (tla/DeliveryLane.tla End). The lane that just ended calls it, so the directory
+// does not wait for the card to leave her row. A job already gone is nothing to remove.
+func (s *Stager) Release(ctx context.Context, job string) error {
+	if !validJob(job) {
+		return fmt.Errorf("its job %q is no jobs directory", job)
+	}
+	dir := JobDir(s.Dir, job)
+	if _, err := os.Lstat(dir); errors.Is(err, fs.ErrNotExist) {
+		return errJobGone
+	} else if err != nil {
+		return err
+	}
+	// the brief may still be in her inbox: the lane ended and the card has not left
+	// her row yet, which is when Release runs
+	f, err := s.oneScratch(ctx, job)
+	if err != nil {
+		return err
+	}
+	return s.removeScratch(ctx, f)
 }
 
 // pruneJob removes a finished job, its mirror's lock held: its worktree from the mirror, then
@@ -542,6 +562,209 @@ func (s *Stager) pruneJob(ctx context.Context, mirror, job string) error {
 	}
 	_, err := s.git(ctx, 0, "-C", mirror, "worktree", "prune")
 	return err
+}
+
+// finishedScratch splits the finished jobs into those whose report names a head origin
+// holds and the other worktrees of her mirrors. A live job, and one whose brief is still
+// in her inbox, is neither.
+func (s *Stager) finishedScratch(ctx context.Context, live map[string]bool) (confirmed, rest []scratch, err error) {
+	jobs := filepath.Join(s.Dir, JobsDir)
+	entries, err := os.ReadDir(jobs)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil, nil
+	} else if err != nil {
+		return nil, nil, err
+	}
+	for _, e := range entries {
+		job := e.Name()
+		if !e.IsDir() || !validJob(job) || live[job] || exists(filepath.Join(s.Dir, "inbox", job)) {
+			continue
+		}
+		f, kind, err := s.classify(ctx, job)
+		if err != nil {
+			return nil, nil, err
+		}
+		switch kind {
+		case scratchConfirmed:
+			confirmed = append(confirmed, f)
+		case scratchWorktree:
+			rest = append(rest, f)
+		}
+	}
+	byAge := func(list []scratch) {
+		sort.Slice(list, func(i, j int) bool {
+			if !list[i].at.Equal(list[j].at) {
+				return list[i].at.Before(list[j].at)
+			}
+			return list[i].job < list[j].job
+		})
+	}
+	byAge(confirmed)
+	byAge(rest)
+	return confirmed, rest, nil
+}
+
+const (
+	scratchSkip = iota
+	scratchConfirmed
+	scratchWorktree
+)
+
+// oneScratch is job's directory when its report names a head origin holds and the
+// checkout can be removed. It does not ask whether the card is still on her row.
+func (s *Stager) oneScratch(ctx context.Context, job string) (scratch, error) {
+	f, kind, err := s.classify(ctx, job)
+	if err != nil {
+		return scratch{}, err
+	}
+	switch kind {
+	case scratchConfirmed:
+		return f, nil
+	case scratchWorktree:
+		return scratch{}, errHeadUnconfirmed
+	default:
+		if f.confirmed {
+			return scratch{}, errCheckoutDirty
+		}
+		return scratch{}, errHeadUnconfirmed
+	}
+}
+
+// classify reads one job directory. scratchConfirmed is a report head origin holds and
+// a checkout that can go; scratchWorktree is a mirror worktree whose head is not
+// confirmed; anything else is left where it is (docs/SPEC-FRIEND.md, what is scratch).
+func (s *Stager) classify(ctx context.Context, job string) (scratch, int, error) {
+	checkout := filepath.Join(JobDir(s.Dir, job), "repo")
+	repo, mirror, wt := s.worktreeOf(checkout)
+	head, onOrigin := s.reportOnOrigin(job)
+	at := time.Time{}
+	if fi, err := os.Lstat(filepath.Join(JobDir(s.Dir, job), JobFile)); err == nil {
+		at = fi.ModTime()
+	}
+	f := scratch{job: job, repo: repo, mirror: mirror, at: at, confirmed: onOrigin, worktree: wt}
+	if onOrigin {
+		ok, err := s.checkoutReleasable(ctx, checkout, head, wt)
+		if err != nil {
+			return f, scratchSkip, err
+		}
+		if !ok {
+			f.confirmed = true
+			return f, scratchSkip, nil
+		}
+		return f, scratchConfirmed, nil
+	}
+	if wt {
+		return f, scratchWorktree, nil
+	}
+	return f, scratchSkip, nil
+}
+
+// removeScratch removes one finished job: a worktree under its mirror's lock, or a
+// clone by the job directory alone. The branch in the mirror is left.
+func (s *Stager) removeScratch(ctx context.Context, f scratch) error {
+	if f.worktree {
+		lock := s.repoLock(f.repo)
+		if !lock.TryLock() {
+			return errMirrorHeld
+		}
+		defer lock.Unlock()
+		return s.pruneJob(ctx, f.mirror, f.job)
+	}
+	return s.removeClone(f.job)
+}
+
+// removeClone removes a job that is a clone, the checkout first and then the job
+// directory, each strictly under the directory that holds it.
+func (s *Stager) removeClone(job string) error {
+	dir := JobDir(s.Dir, job)
+	if err := safepath.RemoveUnder(dir, filepath.Join(dir, "repo")); err != nil {
+		return err
+	}
+	return safepath.RemoveUnder(filepath.Join(s.Dir, JobsDir), dir)
+}
+
+// reportOnOrigin is the report's head when a remote-tracking ref of origin in the
+// job's git directory names it. The brief is not read: it is gone once the card leaves.
+func (s *Stager) reportOnOrigin(job string) (string, bool) {
+	raw, err := os.ReadFile(filepath.Join(s.Dir, "outbox", job, "REPORT.md"))
+	if err != nil {
+		return "", false
+	}
+	_, head := reportVerdict(string(raw))
+	if !fullSha.MatchString(head) {
+		return "", false
+	}
+	if !originHolds(gitDir(filepath.Join(JobDir(s.Dir, job), "repo", ".git")), head) {
+		return "", false
+	}
+	return head, true
+}
+
+// originHolds says sha is a remote-tracking ref of origin in the git directory gd,
+// loose or packed. gd is the common git directory of a worktree (lane_end.go gitDir).
+func originHolds(gd, sha string) bool {
+	if gd == "" || !fullSha.MatchString(sha) {
+		return false
+	}
+	root := filepath.Join(gd, "refs", "remotes", "origin")
+	found := false
+	// ignored: a missing refs/remotes/origin is no loose ref; packed-refs is read next
+	_ = filepath.WalkDir(root, func(path string, e fs.DirEntry, err error) error {
+		if err != nil || e.IsDir() {
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err == nil && strings.EqualFold(strings.TrimSpace(string(raw)), sha) {
+			found = true
+			return fs.SkipAll
+		}
+		return nil
+	})
+	if found {
+		return true
+	}
+	raw, err := os.ReadFile(filepath.Join(gd, "packed-refs"))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "^") {
+			continue
+		}
+		refSha, name, ok := strings.Cut(line, " ")
+		if ok && strings.HasPrefix(name, "refs/remotes/origin/") && strings.EqualFold(refSha, sha) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkoutReleasable says the checkout can be removed without dropping tracked work
+// origin does not hold: no tracked change and no stash, and a clone's HEAD is head
+// (a worktree's other commits stay on its branch in the mirror).
+func (s *Stager) checkoutReleasable(ctx context.Context, checkout, head string, worktree bool) (bool, error) {
+	out, err := s.git(ctx, 0, "-C", checkout, "status", "--porcelain", "--untracked-files=no")
+	if err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(out) != "" {
+		return false, nil
+	}
+	stash, err := s.git(ctx, 0, "-C", checkout, "stash", "list")
+	if err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(stash) != "" {
+		return false, nil
+	}
+	if worktree {
+		return true, nil
+	}
+	tip, err := s.git(ctx, 0, "-C", checkout, "rev-parse", "--verify", "HEAD")
+	if err != nil {
+		return false, err
+	}
+	return strings.EqualFold(strings.TrimSpace(tip), head), nil
 }
 
 // worktreeOf is the repository (owner/name) and the mirror whose worktree checkout is: its
@@ -655,8 +878,8 @@ func (l *loop) stageStep(cards []HeldCard, now time.Time) {
 		if !ok || !validJob(p.Job) || d.staging[p.Job] || now.Before(d.stageRetry[p.Job]) {
 			continue
 		}
-		if !exists(filepath.Join(d.Dir, "inbox", p.Job, "BRIEF.md")) || Staged(d.Dir, p.Job) {
-			continue
+		if !exists(filepath.Join(d.Dir, "inbox", p.Job, "BRIEF.md")) || Staged(d.Dir, p.Job) || exists(filepath.Join(d.Dir, "outbox", p.Job, "REPORT.md")) {
+			continue // a report means the lane finished: do not stage the job back (docs/SPEC-FRIEND.md, what is scratch)
 		}
 		d.staging[p.Job] = true
 		d.stageWG.Add(1)
