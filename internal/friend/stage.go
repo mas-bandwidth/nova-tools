@@ -19,6 +19,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // The daemon stages every job it holds (the finding of 2026-10-05: the first lanes of the
@@ -37,7 +38,10 @@ import (
 // tla/FriendStage.tla (MCFriendStage*: a lane handed only a staged card, one judgment while it
 // stands, a failed job staged again), and the worktrees and their pruning in
 // internal/friend/tla/JobWorktrees.tla (MCJobWorktrees*: a live job never pruned, a branch's
-// work never lost, the finished worktrees within the cap after a prune).
+// work never lost, the finished worktrees within the cap after a prune). A rework whose fix
+// names no new files starts in the last attempt's worktree, moved into its job (Stager.keep),
+// and the last worktree of a card is kept by every prune until it lands (ReworkKeptMax): the
+// same module, its rework half (MCJobWorktrees: LastKept, KeptWhenItMay, KeptOnlyWhenFixable).
 
 // The directories under her working directory that staging writes.
 const (
@@ -61,10 +65,16 @@ const (
 // Packet is what a held work card says about its checkout: the repository (owner/name), the
 // base it starts at (a branch, a tag or a full sha) and its pin (BaseSha, the commit a
 // `BASE: <ref>@<sha40>` names; "" when unpinned), the branch its work is pushed to, and its
-// attempt.
+// attempt. A rework's packet says too what its brief carries of the attempt before: its fix
+// (the brief's `The coordinator asks:` line), the files the fix names outside the card's
+// PATHS (NewFiles), and the head the last attempt pushed (Carry, of attempt CarryAttempt; ""
+// when none pushed).
 type Packet struct {
 	Card, Job, Repo, Base, BaseSha, Branch string
 	Attempt                                int
+	Fix, Carry                             string
+	CarryAttempt                           int
+	NewFiles                               []string
 }
 
 var (
@@ -73,7 +83,15 @@ var (
 	repoRE          = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
 	refRE           = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_./~-]*$`)
 	shaRE           = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	// the head a rework carries: friend sync's start line (nova-sprint friendStart), else a
+	// recut twin's CARRY: line (member.CarryLine)
+	carryStartRE = regexp.MustCompile(`Carry the work of attempt (\d+) onto it yourself: its head, ([0-9a-f]{40}),`)
+	carryLineRE  = regexp.MustCompile(`(?m)^CARRY: \S+ attempt (\d+) head=([0-9a-f]{40})\s*$`)
 )
+
+// FixKey begins the line of a friend's brief that carries a rework's fix (nova-sprint
+// friendBrief: `The coordinator asks: <fix>`).
+const FixKey = "The coordinator asks: "
 
 // PacketOf is the packet of a held card, the server's fields first and the brief's lines
 // (its STATUS line, REPO: and BASE:) for any it did not send. It answers false for a card that
@@ -101,6 +119,23 @@ func PacketOf(h HeldCard) (Packet, bool) {
 	if ref, sha, ok := cardhdr.ParseBase(p.Base); ok && p.BaseSha == "" {
 		p.Base, p.BaseSha = ref, sha
 	}
+	// a rework's fix is a line of the brief's head, before the card's own text
+	head, _, _ := strings.Cut(h.Brief, "\n\n")
+	for _, l := range strings.Split(head, "\n") {
+		if fix, ok := strings.CutPrefix(l, FixKey); ok && strings.TrimSpace(fix) != "" {
+			p.Fix = strings.TrimSpace(fix)
+			p.NewFiles = sprint.FilesOutsidePaths(h.Brief, p.Fix)
+			break
+		}
+	}
+	m := carryStartRE.FindStringSubmatch(h.Brief)
+	if m == nil {
+		m = carryLineRE.FindStringSubmatch(h.Brief)
+	}
+	if m != nil {
+		p.CarryAttempt, _ = strconv.Atoi(m[1]) // ignored: the pattern is digits
+		p.Carry = m[2]
+	}
 	return p, p.Repo != ""
 }
 
@@ -117,6 +152,8 @@ func (p Packet) check() error {
 		return fmt.Errorf("its BASE pin %q is no full sha", p.BaseSha)
 	case !validRef(p.Branch):
 		return fmt.Errorf("its branch %q is no branch name", p.Branch)
+	case p.Carry != "" && !shaRE.MatchString(p.Carry):
+		return fmt.Errorf("its carried head %q is no full sha", p.Carry)
 	}
 	return nil
 }
@@ -230,6 +267,12 @@ func Staged(dir, job string) bool {
 // worktree is added beside, under jobs/<job>/.staging, and moved in whole), and JOB.md is
 // written last, so a lane never meets a checkout not ready. A branch the mirror already holds
 // (a pruned job's, staged again) is checked out as it stands, never reset to the base.
+//
+// A rework starts in the last worktree when it may (keep): the previous attempt's checkout on
+// this friend, moved whole into the job on the card's new branch, so the lane edits and pushes
+// without re-learning the tree. When it may not (the tree is gone, the friend differs, or a
+// lane is still in that checkout), its branch starts at the head the last attempt pushed
+// (Carry) when the mirror holds it, else at the base.
 func (s *Stager) Stage(ctx context.Context, p Packet) (string, error) {
 	if err := p.check(); err != nil {
 		return "", &NotStageable{Repo: p.Repo, Card: p.Card, Job: p.Job, Why: err.Error(), Remedy: "rework the card with a packet that names its repository (owner/name), its base and its branch"}
@@ -240,7 +283,9 @@ func (s *Stager) Stage(ctx context.Context, p Packet) (string, error) {
 		return "", nil
 	}
 	if _, err := os.Lstat(checkout); err == nil {
-		// moved in by a stage that ended before its JOB.md: it is the card's when it is on its branch
+		// a stage that ended after the checkout was in place and before JOB.md: it is the card's
+		// when it is on its branch. A tree moved in from the attempt before (KEPT names that job)
+		// is written as the kept job, so the fix stays the first line.
 		branch, err := s.git(ctx, 0, "-C", checkout, "rev-parse", "--abbrev-ref", "HEAD")
 		if err != nil || branch != p.Branch {
 			return "", fmt.Errorf("%s/%s/repo is there with no %s and is not on %s (%q); it is left as found", JobsDir, p.Job, JobFile, p.Branch, branch)
@@ -249,11 +294,21 @@ func (s *Stager) Stage(ctx context.Context, p Packet) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		if prev, ok := readKeptFrom(job); ok && p.Fix != "" && len(p.NewFiles) == 0 {
+			return sha, s.writeJobText(p, KeptJobText(s.Dir, p, prev, sha))
+		}
 		return sha, s.writeJob(p, sha)
 	}
 	lock := s.repoLock(p.Repo)
 	lock.Lock()
 	defer lock.Unlock()
+	sha, prev, kept, err := s.keep(ctx, p)
+	if err != nil {
+		return "", err
+	}
+	if kept {
+		return sha, s.writeJobText(p, KeptJobText(s.Dir, p, prev, sha))
+	}
 	mirror, err := s.mirror(ctx, p.Repo)
 	var ns *NotStageable
 	if errors.As(err, &ns) {
@@ -262,7 +317,7 @@ func (s *Stager) Stage(ctx context.Context, p Packet) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	sha, err := s.base(ctx, mirror, p)
+	sha, err = s.base(ctx, mirror, p)
 	if err != nil {
 		return "", err
 	}
@@ -277,6 +332,11 @@ func (s *Stager) Stage(ctx context.Context, p Packet) (string, error) {
 	}
 	_, err = s.git(ctx, 0, "-C", mirror, "rev-parse", "--verify", "--quiet", "--end-of-options", "refs/heads/"+p.Branch)
 	created := err != nil
+	if !created || !s.holds(ctx, mirror, p) {
+		p.Carry = "" // the branch as it stands, or the base: JobText names which
+	} else {
+		sha = p.Carry
+	}
 	add := []string{"-C", mirror, "worktree", "add", "--quiet", tmp, p.Branch}
 	if created {
 		add = []string{"-C", mirror, "worktree", "add", "--quiet", "-b", p.Branch, tmp, sha}
@@ -296,6 +356,206 @@ func (s *Stager) Stage(ctx context.Context, p Packet) (string, error) {
 		return "", err
 	}
 	return head, s.writeJob(p, head)
+}
+
+// holds says the mirror holds the head p carries, fetched once more when it does not: a
+// mirror fetched within MirrorFreshFor may predate the last attempt's push.
+func (s *Stager) holds(ctx context.Context, mirror string, p Packet) bool {
+	if p.Carry == "" {
+		return false
+	}
+	has := func() bool {
+		c, err := s.git(ctx, 0, "-C", mirror, "rev-parse", "--verify", "--quiet", "--end-of-options", p.Carry+"^{commit}")
+		return err == nil && c == p.Carry
+	}
+	if has() {
+		return true
+	}
+	if _, err := s.git(ctx, MirrorCloneBudget, "-C", mirror, "fetch", "--quiet", "--prune", "origin"); err != nil {
+		return false
+	}
+	s.mu.Lock()
+	s.fetched[p.Repo] = time.Now()
+	s.mu.Unlock()
+	return has()
+}
+
+// keep is a rework started in the last worktree, its mirror's lock held (tla/JobWorktrees.tla
+// KeepStage: KeptWhenItMay, KeptOnlyWhenFixable). For a later attempt whose fix names no file
+// outside the card's PATHS, the checkout of the attempt before it on this friend (the newest
+// job of <primary>.w<n-1>) is moved whole into this job with git worktree move (never a rename
+// or a copy: the mirror's record of the tree moves with it) and put on the card's new branch at
+// its own HEAD, when that attempt is over: its outbox REPORT.md is there, its brief is retired
+// from her inbox, and no lane is still in that checkout (laneInCheckout). A report and a
+// retired brief do not say the lane has left. The checkout is a worktree of this repository's
+// mirror, no tracked file has an uncommitted change, it holds the carried head, and the mirror
+// holds no branch of the card's name yet. It answers the commit the checkout is at and the job
+// it came from. ok is false when any of that is not so, and Stage stages afresh, the old tree
+// untouched. err is set only when the tree was moved and could not be put back. The prune
+// keeps the last worktree of a card (Prune, ReworkKeptMax), so it is there for the rework.
+func (s *Stager) keep(ctx context.Context, p Packet) (sha, prev string, ok bool, err error) {
+	refuse := func() (string, string, bool, error) { return "", "", false, nil }
+	if p.Attempt < 2 || p.Fix == "" || len(p.NewFiles) > 0 {
+		return refuse()
+	}
+	prev = lastJob(s.Dir, PreviousCard(p.Card, p.Attempt))
+	if prev == "" || !exists(filepath.Join(s.Dir, "outbox", prev, "REPORT.md")) || exists(filepath.Join(s.Dir, "inbox", prev)) || laneInCheckout(ctx, s.Dir, prev, time.Now()) {
+		return refuse()
+	}
+	kept := filepath.Join(JobDir(s.Dir, prev), "repo")
+	repo, mirror, isTree := s.worktreeOf(kept)
+	if !isTree || repo != p.Repo {
+		return refuse()
+	}
+	if dirty, derr := s.git(ctx, 0, "-C", kept, "status", "--porcelain", "--untracked-files=no"); derr != nil || dirty != "" {
+		return refuse()
+	}
+	if p.Carry != "" {
+		if _, derr := s.git(ctx, 0, "-C", kept, "merge-base", "--is-ancestor", p.Carry, "HEAD"); derr != nil {
+			return refuse() // the tree is not where the last attempt's pushed work is
+		}
+	}
+	if _, derr := s.git(ctx, 0, "-C", mirror, "rev-parse", "--verify", "--quiet", "--end-of-options", "refs/heads/"+p.Branch); derr == nil {
+		return refuse() // the branch as it stands is the card's: Stage checks it out
+	}
+	sha, err = s.git(ctx, 0, "-C", kept, "rev-parse", "HEAD")
+	if err != nil || !shaRE.MatchString(sha) {
+		return refuse()
+	}
+	oldBranch, berr := s.git(ctx, 0, "-C", kept, "rev-parse", "--abbrev-ref", "HEAD")
+	if berr != nil || oldBranch == "" || oldBranch == "HEAD" {
+		return refuse()
+	}
+	job := JobDir(s.Dir, p.Job)
+	checkout := filepath.Join(job, "repo")
+	if err = os.MkdirAll(job, 0o755); err != nil {
+		return refuse()
+	}
+	if _, merr := s.git(ctx, 0, "-C", mirror, "worktree", "move", kept, checkout); merr != nil {
+		return refuse()
+	}
+	if _, cerr := s.git(ctx, 0, "-C", checkout, "checkout", "--quiet", "-b", p.Branch); cerr != nil {
+		// moved back, as it was: Stage stages afresh, and a later rework may take it.
+		// A tree that cannot be moved back stops the stage, so a second worktree is not added beside it.
+		if _, merr := s.git(ctx, 0, "-C", mirror, "worktree", "move", checkout, kept); merr != nil {
+			return "", "", false, fmt.Errorf("%s/%s: the last worktree moved and its branch could not be created, and it could not be moved back: %v", JobsDir, p.Job, cerr)
+		}
+		return refuse()
+	}
+	if werr := atomicfile.WriteFile(keptFromPath(job), []byte(prev+"\n"), 0o644); werr != nil {
+		_, _ = s.git(ctx, 0, "-C", checkout, "checkout", "--quiet", oldBranch)  // ignored: best effort; the error returned is the move back failing
+		_, _ = s.git(ctx, 0, "-C", mirror, "branch", "--quiet", "-D", p.Branch) // ignored: the branch was just created empty; a delete that fails leaves a name the next keep refuses
+		if _, merr := s.git(ctx, 0, "-C", mirror, "worktree", "move", checkout, kept); merr != nil {
+			return "", "", false, fmt.Errorf("%s/%s: the last worktree moved and its record could not be written, and it could not be moved back: %v", JobsDir, p.Job, werr)
+		}
+		_ = os.Remove(keptFromPath(job)) // ignored: the next stage writes it again, or leaves a note of a move that was undone
+		return refuse()
+	}
+	return sha, prev, true, nil
+}
+
+// laneJobsKey carries the jobs a lane still holds into a stage. It is the set pruneStep puts
+// in live, taken on the loop before the stage runs.
+type laneJobsKey struct{}
+
+func withLaneJobs(ctx context.Context, jobs map[string]bool) context.Context {
+	if ctx == nil || len(jobs) == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, laneJobsKey{}, jobs)
+}
+
+func laneJobsOf(ctx context.Context) map[string]bool {
+	if ctx == nil {
+		return nil
+	}
+	jobs, _ := ctx.Value(laneJobsKey{}).(map[string]bool)
+	return jobs
+}
+
+// laneJobs is every job a lane still holds a card for.
+func laneJobs(l *loop) map[string]bool {
+	if l == nil || l.lanes == nil {
+		return nil
+	}
+	jobs := map[string]bool{}
+	for _, ln := range l.lanes.lanes {
+		if ln == nil || ln.card == nil {
+			continue
+		}
+		if j := filepath.Base(ln.card.Outbox); validJob(j) {
+			jobs[j] = true
+		}
+		if ln.card.Brief != "" {
+			if j := filepath.Base(filepath.Dir(ln.card.Brief)); validJob(j) {
+				jobs[j] = true
+			}
+		}
+	}
+	if len(jobs) == 0 {
+		return nil
+	}
+	return jobs
+}
+
+// laneInCheckout says a lane is still in job's checkout. A report in the outbox and a brief
+// gone from the inbox do not say so: the lane writes the report before its turn leaves the
+// tree. The loop's set counts, and so does a fresh running lane mark on the job.
+func laneInCheckout(ctx context.Context, dir, job string, now time.Time) bool {
+	if laneJobsOf(ctx)[job] {
+		return true
+	}
+	m, found := ReadLaneMark(dir, job)
+	if !found || m.Ended {
+		return false
+	}
+	return m.heldBy("", now) != ""
+}
+
+// PreviousCard is the work card of the attempt before a card's: <primary>.w<attempt-1> for
+// <primary>.w<attempt> (sprint.WorkCardID); "" when the card is no work card of that attempt.
+func PreviousCard(card string, attempt int) string {
+	primary, n, ok := workCardOf(card)
+	if !ok || n != attempt || attempt < 2 {
+		return ""
+	}
+	return sprint.WorkCardID(primary, attempt-1)
+}
+
+// workCardOf reads a work card's id, <primary>.w<attempt> (sprint.WorkCardID).
+func workCardOf(card string) (primary string, attempt int, ok bool) {
+	i := strings.LastIndex(card, ".w")
+	if i <= 0 {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(card[i+2:])
+	if err != nil || n < 1 || strconv.Itoa(n) != card[i+2:] {
+		return "", 0, false
+	}
+	return card[:i], n, true
+}
+
+// lastJob is the newest job of a card under jobs/ that holds a checkout (its highest epoch,
+// then generation; ParseJob); "" when there is none.
+func lastJob(dir, card string) string {
+	if card == "" {
+		return ""
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, JobsDir))
+	if err != nil {
+		return ""
+	}
+	best, bestEpoch, bestGen := "", -1, 0
+	for _, e := range entries {
+		id, epoch, gen, ok := ParseJob(e.Name())
+		if !ok || id != card || !e.IsDir() || !exists(filepath.Join(dir, JobsDir, e.Name(), "repo")) {
+			continue
+		}
+		if epoch > bestEpoch || epoch == bestEpoch && gen > bestGen {
+			best, bestEpoch, bestGen = e.Name(), epoch, gen
+		}
+	}
+	return best
 }
 
 // stageScratch is where a job's worktree is added before it is moved in, under its job dir.
@@ -467,6 +727,13 @@ const (
 	PrunePerPass     = 4
 )
 
+// ReworkKeptMax caps how many cards' last worktrees a friend keeps for a rework, the newest
+// staged kept; a longer list is finished like any other. A card's last worktree (the newest job
+// of its newest attempt held here) is kept until the card lands or is dropped, never for a fixed
+// time: this count, never a clock, bounds them, so a rework after any delay still finds its tree
+// (Stager.keep; tla/JobWorktrees.tla LastKept, Spared).
+const ReworkKeptMax = 24
+
 // Prune removes the worktrees of finished jobs past kept, the oldest staged first (by its
 // JOB.md), at most PrunePerPass of them, and answers the jobs it removed; a job whose mirror a
 // stage holds is left for the next pass, never waited on. A job is finished when it is not live (held on her
@@ -474,7 +741,10 @@ const (
 // inbox cleanup retired it); only a job whose checkout is a worktree of one of her mirrors is
 // ever pruned, never a clone or anything another hand staged. A pruned job is gone whole
 // (jobs/<job>), its worktree removed from the mirror; its branch stays in the mirror, so any
-// commit on it is kept, and a stage of the job again takes the branch as it stands.
+// commit on it is kept, and a stage of the job again takes the branch as it stands. The last
+// worktree of a card is kept until its card lands or is dropped, however long that is, at most
+// ReworkKeptMax of them (lastWorktrees; tla/JobWorktrees.tla LastKept): it is neither pruned nor
+// counted among the finished.
 func (s *Stager) Prune(ctx context.Context, live map[string]bool, kept int) ([]string, error) {
 	jobs := filepath.Join(s.Dir, JobsDir)
 	entries, err := os.ReadDir(jobs)
@@ -488,9 +758,10 @@ func (s *Stager) Prune(ctx context.Context, live map[string]bool, kept int) ([]s
 		at                time.Time
 	}
 	var done []finished
+	spared := lastWorktrees(s.Dir, entries)
 	for _, e := range entries {
 		job := e.Name()
-		if !e.IsDir() || !validJob(job) || live[job] || exists(filepath.Join(s.Dir, "inbox", job)) {
+		if !e.IsDir() || !validJob(job) || live[job] || spared[job] || exists(filepath.Join(s.Dir, "inbox", job)) {
 			continue
 		}
 		repo, mirror, ok := s.worktreeOf(filepath.Join(jobs, job, "repo"))
@@ -528,6 +799,60 @@ func (s *Stager) Prune(ctx context.Context, live map[string]bool, kept int) ([]s
 		pruned = append(pruned, f.job)
 	}
 	return pruned, firstErr
+}
+
+// lastWorktrees is the jobs that hold the last worktree of their card: each the newest job (by
+// attempt, then epoch, then generation) of a work card's primary that holds a checkout. A card's
+// last worktree is kept until the card lands or is dropped, with no time bound, so the newest
+// ReworkKeptMax of them (by the time their attempt ended, its outbox REPORT.md, else its JOB.md)
+// are spared by a prune; a longer list is finished like any other. No clock takes one: a last
+// worktree staged a year ago is kept while it is among the newest ReworkKeptMax.
+func lastWorktrees(dir string, entries []fs.DirEntry) map[string]bool {
+	type last struct {
+		job                 string
+		attempt, epoch, gen int
+		at                  time.Time
+	}
+	newest := map[string]last{}
+	for _, e := range entries {
+		id, epoch, gen, ok := ParseJob(e.Name())
+		if !ok || !e.IsDir() || !exists(filepath.Join(dir, JobsDir, e.Name(), "repo")) {
+			continue
+		}
+		primary, attempt, ok := workCardOf(id)
+		if !ok {
+			continue
+		}
+		b, seen := newest[primary]
+		if !seen || attempt > b.attempt || attempt == b.attempt && (epoch > b.epoch || epoch == b.epoch && gen > b.gen) {
+			newest[primary] = last{job: e.Name(), attempt: attempt, epoch: epoch, gen: gen}
+		}
+	}
+	all := make([]last, 0, len(newest))
+	for _, l := range newest {
+		fi, err := os.Lstat(filepath.Join(dir, "outbox", l.job, "REPORT.md"))
+		if err != nil {
+			fi, err = os.Lstat(filepath.Join(JobDir(dir, l.job), JobFile))
+		}
+		if err == nil {
+			l.at = fi.ModTime()
+		}
+		all = append(all, l)
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if !all[i].at.Equal(all[j].at) {
+			return all[i].at.After(all[j].at) // newest first
+		}
+		return all[i].job > all[j].job
+	})
+	spared := map[string]bool{}
+	for i, l := range all {
+		if i >= ReworkKeptMax {
+			break
+		}
+		spared[l.job] = true
+	}
+	return spared
 }
 
 // pruneJob removes a finished job, its mirror's lock held: its worktree from the mirror, then
@@ -583,16 +908,86 @@ func JobText(dir string, p Packet, sha string) string {
 	attempt := max(p.Attempt, 1)
 	checkout := filepath.Join(JobDir(dir, p.Job), "repo")
 	outbox := filepath.Join(dir, "outbox", p.Job)
+	at := p.Base
+	if p.Carry != "" {
+		at = fmt.Sprintf("the head attempt %d pushed", p.CarryAttempt)
+	}
 	return fmt.Sprintf("# JOB: work %s, attempt %d\n\n"+
 		"The staged checkout: %s (a git worktree of %s at %s, %s, on branch %s).\n"+
 		"Work there; commit as the brief says; push the branch (git push -u origin %s).\n"+
 		"Finish: write %s with 'Verdict: LAND|HOLD|FAIL' and 'Head: <sha>' on the first two lines, then the report; RESULT.md beside it with the same head. The coordinator syncs the outbox.\n"+
 		"If the push is refused, leave the report with Verdict: HOLD naming 'no push' and the coordinator pushes from this checkout.\n",
-		p.Card, attempt, checkout, p.Repo, p.Base, sha, p.Branch, p.Branch, filepath.Join(outbox, "REPORT.md"))
+		p.Card, attempt, checkout, p.Repo, at, sha, p.Branch, p.Branch, filepath.Join(outbox, "REPORT.md"))
+}
+
+// KeptJobText is the JOB.md of a rework started in the last worktree (keep): the title, the
+// fix, the kept checkout, the branch and the finish, as JobText says them. The fix is the line
+// the lane is handed first (KeptFix).
+func KeptJobText(dir string, p Packet, prev, sha string) string {
+	checkout := filepath.Join(JobDir(dir, p.Job), "repo")
+	outbox := filepath.Join(dir, "outbox", p.Job)
+	return fmt.Sprintf("# JOB: work %s, attempt %d\n\n"+
+		"%s%s\n"+
+		"%s%s (the git worktree of the attempt before, job %s, moved here whole; at %s, on branch %s, a new branch at that commit; origin is %s).\n"+
+		"Make the fix there: the tree, its build and its history are as the last attempt left them, so there is nothing to re-learn and nothing to clone. Fetch origin first if the brief asks for its base's tip.\n"+
+		"Commit; push the branch (git push -u origin %s).\n"+
+		"Finish: write %s with 'Verdict: LAND|HOLD|FAIL' and 'Head: <sha>' on the first two lines, then the report; RESULT.md beside it with the same head. The coordinator syncs the outbox.\n"+
+		"If the push is refused, leave the report with Verdict: HOLD naming 'no push' and the coordinator pushes from this checkout.\n",
+		p.Card, max(p.Attempt, 1), KeptFixKey, p.Fix, KeptCheckoutKey, checkout, prev, sha, p.Branch, p.Repo, p.Branch, filepath.Join(outbox, "REPORT.md"))
+}
+
+// The lines of a kept job's JOB.md that KeptFix reads, and the file that names the job the
+// checkout was moved from. KEPT is written before JOB.md, so a stage that dies between the
+// move and JOB.md writes the kept text on the next try.
+const (
+	KeptFixKey      = "The fix: "
+	KeptCheckoutKey = "The kept checkout: "
+	KeptFromFile    = "KEPT"
+)
+
+func keptFromPath(jobDir string) string { return filepath.Join(jobDir, KeptFromFile) }
+
+func readKeptFrom(jobDir string) (string, bool) {
+	raw, err := os.ReadFile(keptFromPath(jobDir))
+	if err != nil {
+		return "", false
+	}
+	prev := strings.TrimSpace(string(raw))
+	if !validJob(prev) {
+		return "", false
+	}
+	return prev, true
+}
+
+// KeptFix is the fix of a job staged in the last worktree, read from its JOB.md; "" for any
+// other job. A lane hands it as the first line of the card (CardText, LanePrompt).
+func KeptFix(dir, job string) string {
+	if !validJob(job) {
+		return ""
+	}
+	raw, err := os.ReadFile(filepath.Join(JobDir(dir, job), JobFile))
+	if err != nil {
+		return ""
+	}
+	fix, kept := "", false
+	for _, l := range strings.Split(string(raw), "\n") {
+		if v, ok := strings.CutPrefix(l, KeptFixKey); ok && fix == "" {
+			fix = strings.TrimSpace(v)
+		}
+		kept = kept || strings.HasPrefix(l, KeptCheckoutKey)
+	}
+	if !kept {
+		return ""
+	}
+	return fix
 }
 
 func (s *Stager) writeJob(p Packet, sha string) error {
-	err := atomicfile.WriteFile(filepath.Join(JobDir(s.Dir, p.Job), JobFile), []byte(JobText(s.Dir, p, sha)), 0o644, atomicfile.NoReplace())
+	return s.writeJobText(p, JobText(s.Dir, p, sha))
+}
+
+func (s *Stager) writeJobText(p Packet, text string) error {
+	err := atomicfile.WriteFile(filepath.Join(JobDir(s.Dir, p.Job), JobFile), []byte(text), 0o644, atomicfile.NoReplace())
 	if errors.Is(err, fs.ErrExist) {
 		return nil // staged by another hand between the look and the write
 	}
@@ -627,7 +1022,10 @@ func (l *loop) stageStep(cards []HeldCard, now time.Time) {
 			delete(d.stageRetry, r.p.Job)
 			delete(d.stageSaid, "repo "+r.p.Repo)
 			delete(d.stageSaid, "card "+r.p.Card)
-			if r.sha != "" {
+			switch {
+			case r.sha != "" && KeptFix(d.Dir, r.p.Job) != "":
+				d.Record(fmt.Sprintf("%s stage: kept the last worktree as %s/%s/repo (%s, %s, on %s, a rework) and its %s", at, JobsDir, r.p.Job, r.p.Repo, r.sha, r.p.Branch, JobFile))
+			case r.sha != "":
 				d.Record(fmt.Sprintf("%s stage: staged %s/%s/repo (%s at %s, %s, on %s) and its %s", at, JobsDir, r.p.Job, r.p.Repo, r.p.Base, r.sha, r.p.Branch, JobFile))
 			}
 			if line, ok := d.stageDealt[r.p.Job]; ok && l.mode == ModeBatch {
@@ -660,9 +1058,10 @@ func (l *loop) stageStep(cards []HeldCard, now time.Time) {
 		}
 		d.staging[p.Job] = true
 		d.stageWG.Add(1)
+		ctx := withLaneJobs(l.ctx, laneJobs(l))
 		go func() {
 			defer d.stageWG.Done()
-			sha, err := d.Stage(l.ctx, p)
+			sha, err := d.Stage(ctx, p)
 			d.stageMu.Lock()
 			d.stageDone = append(d.stageDone, stageResult{p: p, sha: sha, err: err, stopped: err != nil && l.ctx.Err() != nil})
 			d.stageMu.Unlock()

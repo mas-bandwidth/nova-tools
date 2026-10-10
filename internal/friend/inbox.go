@@ -394,6 +394,7 @@ func (d *Daemon) nextCard(skip func(Card) bool) (Card, bool, error) {
 		if done || skip(c) || !exists(c.Brief) || exists(c.Result()) || exists(c.Report()) || d.stageOwed(h) {
 			continue
 		}
+		c.Fix = KeptFix(d.Dir, h.Job)
 		return c, true, nil
 	}
 	return Card{}, false, nil

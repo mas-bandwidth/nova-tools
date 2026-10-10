@@ -108,31 +108,43 @@ func TestJobsAreWorktreesOfOneMirror(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(JobDir(dir, c.Job), JobFile))
 	assert.Len(t, worktreesOf(t, env, mirror), 2, "no worktree for the job that failed")
 
-	// finished jobs (no brief in her inbox, no lane, no stage) are pruned past the cap, oldest
-	// first; a live job and one whose brief is still in her inbox are never pruned
+	// finished jobs past the cap are pruned, oldest first; a live job and one whose brief is
+	// still in her inbox are never pruned, and the last worktree of a card is kept until its
+	// card lands or is dropped, with no time bound. a.w2 supersedes a.w1, so a.w1 is no card's
+	// last worktree any more and is the finished one past the cap.
 	d, ok := PacketOf(stagedCard("d.w1", "working", "mas-bandwidth/nova-tools", "sprint/mechanical"))
 	require.True(t, ok)
 	_, err = stager.Stage(context.Background(), d)
 	require.NoError(t, err)
+	a2, ok := PacketOf(stagedCard("a.w2", "working", "mas-bandwidth/nova-tools", "sprint/mechanical"))
+	require.True(t, ok)
+	_, err = stager.Stage(context.Background(), a2)
+	require.NoError(t, err)
 	old := time.Now().Add(-time.Hour)
 	require.NoError(t, os.Chtimes(filepath.Join(JobDir(dir, a.Job), JobFile), old, old))
 	require.NoError(t, os.RemoveAll(filepath.Dir(brief))) // a's card left her row: the inbox cleanup retired inbox/<job>
-	pruned, err := stager.Prune(context.Background(), map[string]bool{b.Job: true}, 1)
+	pruned, err := stager.Prune(context.Background(), map[string]bool{b.Job: true}, 0)
 	require.NoError(t, err)
-	assert.Equal(t, []string{a.Job}, pruned, "b is live; d is the one finished job the cap keeps")
+	assert.Equal(t, []string{a.Job}, pruned, "b is live; a.w1 is superseded by a.w2; d is the last worktree of its card")
 	assert.NoDirExists(t, JobDir(dir, a.Job), "a finished job is gone whole")
 	assert.DirExists(t, filepath.Join(JobDir(dir, b.Job), "repo"))
-	assert.DirExists(t, filepath.Join(JobDir(dir, d.Job), "repo"))
-	assert.Len(t, worktreesOf(t, env, mirror), 2, "its worktree is pruned from the mirror")
+	assert.DirExists(t, filepath.Join(JobDir(dir, d.Job), "repo"), "d is its card's last worktree: kept")
+	assert.DirExists(t, filepath.Join(JobDir(dir, a2.Job), "repo"), "a.w2 is its card's last worktree: kept")
+	assert.Len(t, worktreesOf(t, env, mirror), 3, "a.w1's worktree is pruned from the mirror")
 	assert.Equal(t, work, gitIn(t, env, mirror, "rev-parse", "refs/heads/"+a.Branch), "its branch, and its commit, stay in the mirror")
 
-	// a job in her inbox is never finished, and a cap of none prunes every finished one
+	// a job in her inbox is never finished, and no clock takes a card's last worktree: a prune
+	// after a long delay keeps d and a.w2 for a rework
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox", b.Job), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", b.Job, "BRIEF.md"), []byte("STATUS: nova-sprint card b.w1\n"), 0o644))
+	longAgo := time.Now().Add(-365 * 24 * time.Hour)
+	for _, job := range []string{d.Job, a2.Job} {
+		require.NoError(t, os.Chtimes(filepath.Join(JobDir(dir, job), JobFile), longAgo, longAgo))
+	}
 	pruned, err = stager.Prune(context.Background(), nil, 0)
 	require.NoError(t, err)
-	assert.Equal(t, []string{d.Job}, pruned)
-	assert.Equal(t, evalPaths(t, checkouts[1:2]), evalPaths(t, worktreesOf(t, env, mirror)))
+	assert.Empty(t, pruned, "b is in her inbox; d and a.w2 are the last worktrees of their cards, kept however long they sit")
+	assert.Len(t, worktreesOf(t, env, mirror), 3, "the kept worktrees stay")
 
 	// a pruned job staged again takes its branch back from the mirror, its work on it
 	sha, err := stager.Stage(context.Background(), a)
