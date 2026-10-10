@@ -1593,7 +1593,6 @@ cmd/nova-sprint/friendsync_every_test.go nova-sprint moved to mas-bandwidth/nova
 cmd/nova-sprint/fsck_seat_test.go nova-sprint moved to mas-bandwidth/nova-sprint with its tests (split v1.2.3, L7); the test runs there
 cmd/nova-sprint/gc_test.go nova-sprint moved to mas-bandwidth/nova-sprint with its tests (split v1.2.3, L7); the test runs there
 cmd/nova-sprint/goal_test.go nova-sprint moved to mas-bandwidth/nova-sprint with its tests (split v1.2.3, L7); the test runs there
-cmd/nova-sprint/handover_rules_test.go nova-sprint moved to mas-bandwidth/nova-sprint with its tests (split v1.2.3, L7); the test runs there
 cmd/nova-sprint/hard_width_review_test.go nova-sprint moved to mas-bandwidth/nova-sprint with its tests (split v1.2.3, L7); the test runs there
 cmd/nova-sprint/head_trap_test.go nova-sprint moved to mas-bandwidth/nova-sprint with its tests (split v1.2.3, L7); the test runs there
 cmd/nova-sprint/headline_table_test.go nova-sprint moved to mas-bandwidth/nova-sprint with its tests (split v1.2.3, L7); the test runs there
