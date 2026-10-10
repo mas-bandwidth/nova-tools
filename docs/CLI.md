@@ -1365,7 +1365,13 @@ each message `{"id":<id>,"from":<name>,"subject":<s>,"bytes":<n>}` and the wake
 count and the digest are the body's as the store holds it (check a file against `shasum -a 256`). Who you
 are is the user the connection logged in as (`NOVA_SPRINT_REDIS_USER`): `--as`
 may repeat it or be left out, and another name is refused; on a store with no
-users (this first run) `--as` is your word and every write says `login=none`. `peek`
+users (this first run) `--as` is your word and every write says `login=none`. A
+recipient whose unacknowledged (delivered, not acked) messages have reached the
+pending cap (`NOVA_BUS_PENDING_CAP`, default 20) is refused for that recipient
+with one `SEND NOTE OVERLOAD: <name> has <n> unacknowledged (cap <c>)` line
+(the other recipients still get the message, the `SEND OK` line holds the id):
+drain the recipient with `recv` and `ack` so its pending list falls below the
+cap. `peek`
 prints `PEEK OK pending= new=` and one `PEEK MESSAGE state= id= from= at=
 subject=` line per message waiting, moving nothing. `recv` prints the oldest
 message a reader lost (delivered, not acked, idle fifteen minutes), else the
@@ -1415,7 +1421,7 @@ file, so the next turn of the session is the message that arrived.
 | Command | What it does |
 | --- | --- |
 | `wait [--as <me>] [--after <id>] [--timeout <d>] [--skip-subject <p,...>] [--wake-file <path>]` | Watches your stream without taking anything, past a cursor; up to 5 `WAIT MESSAGE id= from= subject= bytes=` lines, then `WAIT OK after=<last id seen>`, or `WAIT WAKE` on a line appended to the wake file, or `WAIT NONE after= waited=` at exit 1 when `--timeout` runs out |
-| `send --as <me> --to <a,b> [--cc <c>] --subject <s> (--body <text> \| --stdin) [--re <id>]` | One entry on every recipient's stream and the log, in one transaction; refused while the sender or a recipient is deaf (no proven inbox push) |
+| `send --as <me> --to <a,b> [--cc <c>] --subject <s> (--body <text> \| --stdin) [--re <id>]` | One entry on every recipient's stream and the log, in one transaction; a recipient at the pending cap (`NOVA_BUS_PENDING_CAP`, default 20) is refused with an OVERLOAD while the other recipients still receive, and the sender or a recipient with no proven inbox push is one NOTE, never a refusal |
 | `peek [--as <me>]` | What waits: pending and new, moving nothing |
 | `recv [--as <me>] [--max <n> \| --all] [--ack] [--exec <cmd>] [--forever --exec <cmd>]` | The oldest message a reader lost, else the oldest new one; `--max`/`--all` take several in order, each its own line; `--ack` acks each after printing; with `--exec`, delivered and acked on exit 0; refused while the reader is deaf |
 | `ack [--as <me>] --id <id,...>` | Acks by message id; idempotent |

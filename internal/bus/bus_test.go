@@ -32,6 +32,32 @@ func msg(from string, to ...string) Message {
 	return Message{From: from, To: to, Subject: "hello", Body: "the body\n"}
 }
 
+// AddCapped is the Fake as a CappedStore (SPEC-BUS.md, the pending cap): the
+// cap is checked and the entry written under one lock, so a stream whose group
+// already holds cap pending entries is left out in the same step. It is AddAll
+// with the check, so the fake refuses what redis.go's script refuses.
+func (f *Fake) AddCapped(_ context.Context, streams []string, fields map[string]string, cap int, marks ...Mark) (map[string]int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.trip(); err != nil {
+		return nil, err
+	}
+	over := map[string]int{}
+	var write []string
+	for _, s := range streams {
+		name, isRecipient := strings.CutPrefix(s, Prefix)
+		if isRecipient {
+			if g := f.groups[s+"/"+name]; g != nil && len(g.pending) >= cap {
+				over[s] = len(g.pending)
+				continue
+			}
+		}
+		write = append(write, s)
+	}
+	f.add(write, fields, marks)
+	return over, f.lost(write)
+}
+
 func TestSendRefusesEveryProblemAtOnce(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -450,6 +476,44 @@ func TestParseToleratesTheShapesTheBusActuallyWrites(t *testing.T) {
 	assert.True(t, m.At.IsZero(), "an at that is no instant reads as the zero time, never a refusal")
 	assert.Equal(t, "odd", m.Subject, "the fields around the odd one still read")
 	assert.Empty(t, m.Body, "a field that is not there is empty")
+}
+
+// TestAFullInboxRefusesWithATypedOverload: a recipient's unacknowledged
+// messages are capped (SPEC-BUS.md, the pending cap): with a cap of 3, the
+// fourth unacknowledged send to one recipient is refused with code OVERLOAD
+// while a second recipient still receives, and after one ack the next send is
+// delivered.
+func TestAFullInboxRefusesWithATypedOverload(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	b, f := rig(t, "ada", "bob", "cy")
+	b.PendingCap = 3
+	for range 3 {
+		_, err := b.Send(ctx, msg("ada", "bob"))
+		require.NoError(t, err)
+		_, ok, err := b.Recv(ctx, "bob", 0)
+		require.NoError(t, err)
+		require.True(t, ok)
+	}
+
+	_, err := b.Send(ctx, msg("ada", "bob", "cy"))
+	var over *Overload
+	require.ErrorAs(t, err, &over)
+	assert.Equal(t, CodeOverload, over.Code())
+	assert.Equal(t, 3, over.Recipients["bob"], "the refusal names the recipient and its pending count")
+	assert.Contains(t, err.Error(), "bob")
+	assert.Len(t, f.streams[StreamOf("cy")], 1, "the other recipient of a multi-recipient send still receives")
+	assert.Len(t, f.streams[StreamOf("bob")], 3, "the full recipient's stream grew by nothing")
+
+	// one ack frees a slot, and the next send to bob lands
+	pending, err := b.Store.Pending(ctx, StreamOf("bob"), "bob", 1)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	_, err = b.Store.Ack(ctx, StreamOf("bob"), "bob", pending[0])
+	require.NoError(t, err)
+	_, err = b.Send(ctx, msg("ada", "bob"))
+	require.NoError(t, err)
+	assert.Len(t, f.streams[StreamOf("bob")], 4)
 }
 
 func TestULIDIsCrockfordAndTimeOrdered(t *testing.T) {

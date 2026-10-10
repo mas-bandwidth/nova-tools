@@ -14,6 +14,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"sort"
@@ -35,6 +36,15 @@ const (
 	MaxBody = 1 << 20 // bytes of a body
 	MaxName = 64      // bytes of a name
 )
+
+// DefaultPendingCap is how many unacknowledged (delivered and not acked)
+// messages one recipient's stream may hold before a send to it is refused for
+// that recipient (Bus.PendingCap when set; SPEC-BUS.md, the pending cap).
+const DefaultPendingCap = 20
+
+// CodeOverload is the code of the typed refusal a send past the pending cap
+// answers for a recipient (SPEC-BUS.md, the pending cap).
+const CodeOverload = "OVERLOAD"
 
 // ClaimAfter is how long a delivered message stays with its reader before
 // recv hands it to another. It is longer than the longest delivery a reader
@@ -243,6 +253,18 @@ type Store interface {
 	Forward(ctx context.Context, key, state string, ids ...string) ([]string, error)
 }
 
+// CappedStore is a Store that writes a send under the pending cap in one
+// atomic step (SPEC-BUS.md, the pending cap): of the streams of one send, each
+// recipient stream whose consumer group already holds cap or more pending
+// entries is left out, and the rest are written together. It answers each
+// stream left out and the pending count that refused it, keyed by the stream;
+// the log is never left out. A Store that is not a CappedStore has the cap
+// checked before the write (Send: overCap), which leaves the cap out of the
+// write itself; Redis is a CappedStore, so the real send checks it atomically.
+type CappedStore interface {
+	AddCapped(ctx context.Context, streams []string, fields map[string]string, cap int, marks ...Mark) (over map[string]int, err error)
+}
+
 // Waiter is the two reads a wait makes over a Store that also holds them: the
 // Redis store does; a Store without them cannot wait (SPEC-BUS.md, the verbs:
 // wait).
@@ -279,6 +301,12 @@ type Bus struct {
 	// store drops the token's record (DefaultTokenCleanup when zero, never
 	// before the life ends). token.go.
 	TokenLife, TokenCleanup time.Duration
+	// PendingCap is the per-recipient cap on unacknowledged (delivered and not
+	// acked) messages a send may add to (DefaultPendingCap when zero;
+	// SPEC-BUS.md, the pending cap): a send that reaches a recipient's cap is
+	// refused for that recipient with an *Overload, and the other recipients
+	// of the send still get the message.
+	PendingCap int
 	// OnStampError hears a delivered receipt recv stamps that the store did
 	// not write; the recv goes on, and the message stays in Overdue until a
 	// later stamp lands. Nil drops it, the overdue alarm standing for it
@@ -290,6 +318,74 @@ type Bus struct {
 type Refusal struct{ Problems []string }
 
 func (r *Refusal) Error() string { return strings.Join(r.Problems, "; ") }
+
+// Overload is a send refused for the recipients whose unacknowledged messages
+// have reached the pending cap (SPEC-BUS.md, the pending cap): the message was
+// written to the recipients that were not full, and each recipient named here
+// was left out, with the count of its pending entries. It is the typed refusal
+// whose code is OVERLOAD.
+type Overload struct {
+	Cap        int
+	Recipients map[string]int // recipient name -> pending count
+}
+
+// Code is the overload's stable code (CodeOverload), as tool reasons carry.
+func (o *Overload) Code() string { return CodeOverload }
+
+func (o *Overload) Error() string {
+	var parts []string
+	for _, n := range slices.Sorted(maps.Keys(o.Recipients)) {
+		parts = append(parts, fmt.Sprintf("%s has %d unacknowledged (cap %d)", n, o.Recipients[n], o.Cap))
+	}
+	return CodeOverload + ": " + strings.Join(parts, "; ")
+}
+
+// pendingCap is PendingCap, or the default when it is not set.
+func (b *Bus) pendingCap() int {
+	if b.PendingCap > 0 {
+		return b.PendingCap
+	}
+	return DefaultPendingCap
+}
+
+// overload is the typed refusal for the streams a CappedStore left out, keyed
+// by recipient name.
+func (b *Bus) overload(over map[string]int) *Overload {
+	rec := make(map[string]int, len(over))
+	for stream, n := range over {
+		rec[strings.TrimPrefix(stream, Prefix)] = n
+	}
+	return &Overload{Cap: b.pendingCap(), Recipients: rec}
+}
+
+// overCap is the recipient streams whose consumer group already holds cap or
+// more pending entries, keyed by recipient name, read one Group and one
+// Pending per recipient. It is the cap for a Store that is not a CappedStore
+// and so cannot check it in the write itself.
+func (b *Bus) overCap(ctx context.Context, streams []string, cap int) (map[string]int, error) {
+	over := map[string]int{}
+	for _, s := range streams {
+		name, ok := strings.CutPrefix(s, Prefix)
+		if !ok {
+			continue // the log is not a recipient's stream
+		}
+		_, exists, err := b.Store.Group(ctx, s, name)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			continue
+		}
+		ids, err := b.Store.Pending(ctx, s, name, cap)
+		if err != nil {
+			return nil, err
+		}
+		if len(ids) >= cap {
+			over[name] = len(ids)
+		}
+	}
+	return over, nil
+}
 
 // Send checks the message, stamps it with the store's time and a ULID made
 // from that time, and appends it to every recipient's stream and the log in
@@ -314,6 +410,11 @@ func (r *Refusal) Error() string { return strings.Join(r.Problems, "; ") }
 // arguments and gets the original. The same token with other arguments, or
 // past its life, is refused. Without a token a lost response retried is a
 // second message.
+//
+// A recipient whose unacknowledged messages have reached the pending cap is
+// refused for that recipient with an *Overload (SPEC-BUS.md, the pending cap):
+// the message is still written to the recipients that are not full and to the
+// log, so a multi-recipient send reaches the rest.
 func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 	m, now, friends, err := b.check(ctx, m)
 	if err != nil {
@@ -330,8 +431,34 @@ func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 	if m.Token != "" {
 		return b.sendOnce(ctx, m, now, streams, owe(m, friends))
 	}
-	if err := b.Store.AddAll(ctx, streams, m.Fields(), owe(m, friends)...); err != nil {
+	marks := owe(m, friends)
+	if cs, ok := b.Store.(CappedStore); ok {
+		over, err := cs.AddCapped(ctx, streams, m.Fields(), b.pendingCap(), marks...)
+		if err != nil {
+			return Message{}, err
+		}
+		if len(over) > 0 {
+			return m, b.overload(over)
+		}
+		return m, nil
+	}
+	// a Store that cannot check the cap in its write: check it here, then write
+	// to the recipients that are not full (the other recipients still delivered)
+	over, err := b.overCap(ctx, streams, b.pendingCap())
+	if err != nil {
 		return Message{}, err
+	}
+	write := streams[:0:0]
+	for _, s := range streams {
+		if _, full := over[strings.TrimPrefix(s, Prefix)]; !full {
+			write = append(write, s)
+		}
+	}
+	if err := b.Store.AddAll(ctx, write, m.Fields(), marks...); err != nil {
+		return Message{}, err
+	}
+	if len(over) > 0 {
+		return m, b.overload(over)
 	}
 	return m, nil
 }
