@@ -6438,13 +6438,15 @@ moved=<n> kept=<n> archive=<key>` (`STATS-TIDY DRY-RUN would move ...` with `--d
 `TestASecondStatsTidyWithinAMinuteIsRefused`, `TestATidyWhoseCardMovedKeepsItsArchive`,
 `TestATidyKeepsTheRecentAndTheRulesSamplesAndTakesTheRest`.
 
-Not yet: `where` (its text frame, `where --json` and the dashboard it feeds) and the
-coordinator view's sum line say nothing of the tidy: `since <time>` beside `ok%` and the
-stream costs, and `stats_since=` on the sum, are owed in cmd/nova-sprint/reads.go
-(`whereOf`), view.go and dashboard.go; the counts they show are the tidied ones already.
-`cost reconcile` recounts the whole day, not the window since the tidy. A stream's
-`total_cost`, `cost_by_tier`, `work_cost` and `read_cost` in `where --json` stay the
-epoch's.
+After a tidy (`nova-sprint stats tidy`), headline counts start from it:
+`landed/total`, `percent`, and `ETA` over cards admitted or finished since the last tidy
+(an archived stream's cards are not in the total). Cost total and per card over work and
+reads since it; throughput over landings since it. `where`, `where --json (stats_since=<RFC3339>)`
+and the dashboard header say `since <time>` beside the numbers. The coordinator view carries
+`stats_since=` on the sum line. `cost reconcile` recounts only the window since the tidy.
+With no tidy recorded, every number is the epoch's as today. A stream's `total_cost`,
+`cost_by_tier`, `work_cost` and `read_cost` in `where --json` stay the epoch's.
+`TestTheHeadlineCountsFromTheTidy`.
 
 ### release-check-frame
 

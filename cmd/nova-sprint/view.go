@@ -162,6 +162,7 @@ type coordinatorView struct {
 	FleetTiers   []string    `json:"fleet_tiers,omitempty"`
 	FriendsTiers []string    `json:"friends_tiers,omitempty"`
 	Cursor       string      `json:"cursor"`
+	StatsSince   *time.Time  `json:"stats_since,omitempty"`
 	N            coordCounts `json:"n"`
 	Items        []viewItem  `json:"items"`
 	Rows         []viewRow   `json:"rows,omitempty"`
@@ -341,33 +342,63 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 		return err == nil && !t.Before(now.Add(-viewWindow)) && !t.After(now)
 	}
 
+	rec, _ := st.StatsTidied(ctx)
+	var bases map[string]sprint.StreamBase
+	if rec.Epoch == v.Epoch && !rec.Since.IsZero() {
+		since := rec.Since.UTC()
+		v.StatsSince = &since
+		bases = rec.Streams
+	}
+
 	// the counts: the work table's primaries by state (sentinels aside), and the recent landings
 	n := &v.N
 	for _, stream := range s.Streams() {
+		var open, landedNow, l30 int
 		for _, col := range sprint.States {
 			for _, c := range s.Work.Cell(stream, col) {
 				if sprint.IsSentinel(c) {
 					continue
 				}
-				n.All++
 				switch col {
 				case sprint.Waiting:
 					n.Waiting++
+					open++
 				case sprint.Ready:
 					n.Ready++
+					open++
 				case sprint.Working:
 					n.Working++
+					open++
 				case sprint.Review:
 					n.Review++
+					open++
 				case sprint.Merging:
 					n.Merging++
+					open++
 				case sprint.Landed:
-					n.Landed++
+					landedNow++
 					if within(c.F("landed")) {
-						n.L30++
+						t, err := time.Parse(time.RFC3339, c.F("landed"))
+						if v.StatsSince == nil || (err == nil && !t.Before(*v.StatsSince)) {
+							l30++
+						}
 					}
 				}
 			}
+		}
+		if v.StatsSince != nil {
+			baseLanded := 0
+			if b, ok := bases[stream]; ok {
+				baseLanded = b.Landed
+			}
+			landedSince := max(0, landedNow-baseLanded)
+			n.Landed += landedSince
+			n.All += landedSince + open
+			n.L30 += l30
+		} else {
+			n.Landed += landedNow
+			n.All += landedNow + open
+			n.L30 += l30
 		}
 	}
 	n.Held = sprint.HeldBack(s)
@@ -721,6 +752,9 @@ func coordinatorSum(v coordinatorView, known bool, m store.Machine) string {
 	}
 	if line := switchesLine(v.Fleet, v.Friends, v.FleetTiers, v.FriendsTiers); line != "" {
 		sum += " | " + line
+	}
+	if v.StatsSince != nil && !v.StatsSince.IsZero() {
+		sum += " | stats_since=" + v.StatsSince.UTC().Format(time.RFC3339)
 	}
 	return sum
 }
