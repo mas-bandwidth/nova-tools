@@ -1340,6 +1340,8 @@ nova-bus peek --as bob
 nova-bus recv --as bob --exec true
 nova-bus ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
 nova-bus log --max 5
+nova-bus log --from ada
+nova-bus log --to bob
 nova-bus names
 ```
 
@@ -1419,7 +1421,7 @@ file, so the next turn of the session is the message that arrived.
 | `peek [--as <me>]` | What waits: pending and new, moving nothing |
 | `recv [--as <me>] [--max <n> \| --all] [--ack] [--exec <cmd>] [--forever --exec <cmd>]` | The oldest message a reader lost, else the oldest new one; `--max`/`--all` take several in order, each its own line; `--ack` acks each after printing; with `--exec`, delivered and acked on exit 0; refused while the reader is deaf |
 | `ack [--as <me>] --id <id,...>` | Acks by message id; idempotent |
-| `log [--bodies] [--max <n>]` | The log, oldest first |
+| `log [--bodies] [--from <name>] [--to <name>] [--max <n>]` | The log, oldest first; `--from` and `--to` filter before `--max` |
 | `names` | The known names (nova-config's friend and machine rows), each with its inbox push: proven, stale, down or none, and its age |
 | `version`, `help [<verb>]` | The version line; the banner, or a verb's help |
 
