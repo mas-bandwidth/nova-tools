@@ -13,7 +13,25 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
+
+// recordMerge is the merge step a landing records once its push is on the base, run as land
+// runs it (the step, at the epoch given), not through the verb: on a real store the verb
+// refuses a bare merge, and these cards have no git to name by --landed.
+func recordMerge(t *testing.T, a *app, stream string, batch int, epoch string) string {
+	t.Helper()
+	fs, c := a.verbSetup("merge")
+	_, err := parse(fs, []string{"--epoch", epoch})
+	require.NoError(t, err)
+	st, err := a.store(*c)
+	require.NoError(t, err)
+	var out, errb bytes.Buffer
+	code := a.runStep("merge", *c, st, store.MergeStep(sprint.MergeReq{Stream: stream, Batch: batch, Who: c.actor}), &out, &errb)
+	require.Zero(t, code, "the merge step: exit %d\n%s%s", code, out.String(), errb.String())
+	return out.String()
+}
 
 // On a real store, with the machine running: the coordinator's accept queues
 // the work table's review -> merging for the next pump and writes the merge
@@ -54,7 +72,14 @@ func TestAMergeBeforeThePumpOnTheStore(t *testing.T) {
 	require.Contains(t, out, "ACCEPT OK moved=2", "accept on a running machine:\n%s", out)
 	out = run("check")
 	require.Contains(t, out, "CHECK OK violations=0", "check after the accept, before the pump:\n%s", out)
-	out = run("merge --stream s1 --batch 10 --epoch 0")
+	// a bare merge on the store is refused and writes nothing: check stays clean and the
+	// landing below still moves both cards
+	var bare, bareErr bytes.Buffer
+	require.NotZero(t, a.run(strings.Fields("merge --stream s1 --batch 10 --epoch 0"), &bare, &bareErr), "a bare merge on a real store:\n%s%s", bare.String(), bareErr.String())
+	require.Contains(t, bareErr.String(), "a bare merge records the queue's head as landed with no push, and a real store refuses it; nothing was changed")
+	out = run("check")
+	require.Contains(t, out, "CHECK OK violations=0", "check after the refused bare merge:\n%s", out)
+	out = recordMerge(t, a, "s1", 10, "0")
 	require.Contains(t, out, "MERGE OK", "merge before the pump:\n%s", out)
 	require.NotContains(t, out, "REFUSED", "merge before the pump:\n%s", out)
 	out = run("check")

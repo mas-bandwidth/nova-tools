@@ -59,7 +59,7 @@ func TestReadOkDoneAndTheWakeOnTheStore(t *testing.T) {
 		do(l)
 	}
 	require.Contains(t, do("accept --read-ok"), "ACCEPT OK moved=2", "accept --read-ok on the store")
-	do("merge --stream s1 --batch 10 --epoch 0")
+	recordMerge(t, world, "s1", 10, "0")
 
 	// the coordinator waits; the tick that finds the sprint done wakes it
 	type waited struct {
