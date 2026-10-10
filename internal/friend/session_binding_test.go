@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -241,6 +242,16 @@ func TestTheDaemonRetriesAnAsynchronousSessionQuestionThatTheAdapterFails(t *tes
 	assert.Empty(t, app.started, "reclaiming an in-flight question does not start an overlapping adapter call")
 	release()
 	waitSessionQuestionDone(t, app.failed)
+	require.Eventually(t, func() bool {
+		sc.mu.Lock()
+		defer sc.mu.Unlock()
+		for id := range sc.sent {
+			if strings.HasPrefix(id, activeQuestionPrefix) {
+				return false
+			}
+		}
+		return true
+	}, 5*time.Second, time.Millisecond, "the failed adapter call completes before the retry claim")
 	r.store.Advance(bus.ClaimAfter)
 	assert.Equal(t, 2, waitSessionQuestion(t, app.started), "the failed question is claimed and delivered again")
 	require.Eventually(t, func() bool {
