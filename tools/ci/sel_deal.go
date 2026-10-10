@@ -3,10 +3,10 @@ package main
 import (
 	"flag"
 	"fmt"
+	"go/build"
 	"go/build/constraint"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
@@ -31,8 +31,9 @@ union of the shards is the live tree, each package once.
 expression holds with those tags set and fails without them, the selection a nightly
 tagged leg runs (nothing is listed by hand): --tags slow deals the packages a slow
 test reaches, --tags functional,slow the packages either tag reaches. The toolchain's
-own tags (GOOS, GOARCH, unix) hold in both evaluations. An empty selection deals the
-empty line, so its shard prints one line and passes.
+own tags (GOOS, GOARCH, the compiler, cgo when it is enabled, unix and the GOOS
+aliases, go1.NN, goexperiment.*) hold in both evaluations. An empty selection deals
+the empty line, so its shard prints one line and passes.
 
 Exit 0 dealt, 1 go list failed, 2 bad usage.
 
@@ -139,20 +140,11 @@ func firstBuildConstraint(path string) (string, error) {
 }
 
 // hostBaseTags are the tags the toolchain sets by itself on this machine: the
-// GOOS, the GOARCH, the compiler, and `unix` on a unix system. TaggedPackages
-// holds them in both evaluations, so a platform file like `functional && unix`
-// is selected for functional here and a `!windows` file is not selected at all.
+// GOOS, GOARCH and compiler, `cgo` when it is enabled, the release and tool
+// tags (go1.NN, goexperiment.*), and the portability aliases (unix, linux on
+// android, solaris on illumos, darwin on ios). build.Default is the host's own
+// toolchain context, so the selection agrees with the compiler about what is
+// already on; pkgselect.BaseTags mirrors go/build.Context.matchTag.
 func hostBaseTags() []string {
-	tags := []string{runtime.GOOS, runtime.GOARCH, runtime.Compiler}
-	if unixGOOS[runtime.GOOS] {
-		tags = append(tags, "unix")
-	}
-	return tags
-}
-
-// unixGOOS is the GOOS set the toolchain tags `unix` (go/build's own list).
-var unixGOOS = map[string]bool{
-	"aix": true, "android": true, "darwin": true, "dragonfly": true,
-	"freebsd": true, "hurd": true, "illumos": true, "ios": true,
-	"linux": true, "netbsd": true, "openbsd": true, "solaris": true,
+	return pkgselect.BaseTags(build.Default)
 }

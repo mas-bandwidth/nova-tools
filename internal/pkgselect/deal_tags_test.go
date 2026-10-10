@@ -1,6 +1,7 @@
 package pkgselect
 
 import (
+	"go/build"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -112,6 +113,68 @@ func TestDealTagsSelectsOnlyTheTaggedFiles(t *testing.T) {
 			got, err := TaggedPackages(tc.pairs, tc.tags, tc.base)
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// TestDealTagsBaseTagsHoldTheToolchainTags pins BaseTags, the host half of the
+// selection: the tags go/build treats as satisfied without a -tags line. A
+// context with cgo enabled and a go1.NN release must hand both to
+// TaggedPackages — otherwise a `slow && cgo` or `slow && go1.NN` test file is
+// dropped from its nightly leg though the toolchain compiles and runs it.
+func TestDealTagsBaseTagsHoldTheToolchainTags(t *testing.T) {
+	t.Parallel()
+
+	ctxt := build.Context{
+		GOOS:        "linux",
+		GOARCH:      "amd64",
+		Compiler:    "gc",
+		CgoEnabled:  true,
+		ToolTags:    []string{"goexperiment.regabiargs"},
+		ReleaseTags: []string{"go1.24", "go1.25"},
+	}
+	base := BaseTags(ctxt)
+	for _, want := range []string{"linux", "amd64", "gc", "cgo", "unix", "goexperiment.regabiargs", "go1.24", "go1.25"} {
+		assert.Contains(t, base, want)
+	}
+
+	selected, err := TaggedPackages([]TaggedPackage{
+		{Package: "cgo", Constraint: "slow && cgo"},
+		{Package: "release", Constraint: "slow && go1.24"},
+		{Package: "tool", Constraint: "slow && goexperiment.regabiargs"},
+	}, []string{"slow"}, base)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"cgo", "release", "tool"}, selected)
+}
+
+// TestDealTagsBaseTagsWithoutCgoDoNotSelect: cgo is a host base tag only when
+// the toolchain enables it, so a `slow && cgo` file is dealt for slow on a cgo
+// host and nothing on a pure one.
+func TestDealTagsBaseTagsWithoutCgoDoNotSelect(t *testing.T) {
+	t.Parallel()
+
+	base := BaseTags(build.Context{GOOS: "linux", GOARCH: "amd64", Compiler: "gc", ReleaseTags: []string{"go1.26"}})
+	assert.NotContains(t, base, "cgo")
+	selected, err := TaggedPackages([]TaggedPackage{{Package: "a", Constraint: "slow && cgo"}}, []string{"slow"}, base)
+	require.NoError(t, err)
+	assert.Empty(t, selected)
+}
+
+// TestDealTagsBaseTagsCarryTheGOOSAliases: the toolchain sets the portability
+// aliases go/build derives from GOOS (linux on android, solaris on illumos,
+// darwin on ios), so a `slow && linux` file is dealt on android.
+func TestDealTagsBaseTagsCarryTheGOOSAliases(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ goos, alias string }{
+		{"android", "linux"},
+		{"illumos", "solaris"},
+		{"ios", "darwin"},
+	} {
+		t.Run(tc.goos, func(t *testing.T) {
+			t.Parallel()
+			base := BaseTags(build.Context{GOOS: tc.goos, GOARCH: "amd64", Compiler: "gc"})
+			assert.Contains(t, base, tc.alias)
 		})
 	}
 }

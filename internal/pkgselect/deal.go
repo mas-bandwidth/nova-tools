@@ -2,6 +2,7 @@ package pkgselect
 
 import (
 	"fmt"
+	"go/build"
 	"go/build/constraint"
 	"strings"
 )
@@ -57,8 +58,9 @@ type TaggedPackage struct {
 // that hold a _test.go the build only includes when one of tags is set. A
 // package is selected when one of its files' constraints holds with tags and
 // the toolchain's own base tags and fails without them; base names what the
-// toolchain sets by itself (GOOS, GOARCH, `unix` on a unix host, the compiler),
-// so `functional && unix` is selected for functional on a unix host and
+// toolchain sets by itself (BaseTags: GOOS, GOARCH, the compiler, cgo when it
+// is enabled, `unix` and the GOOS aliases, go1.NN, goexperiment.*), so
+// `functional && unix` is selected for functional on a unix host and
 // `!functional` is not. An untagged file is true either way and selects
 // nothing, and a negated opt-in like `!slow` is true without the tag, so it
 // selects nothing either. The result keeps the first-seen order and names each
@@ -89,6 +91,51 @@ func TaggedPackages(pairs []TaggedPackage, tags, base []string) ([]string, error
 		}
 	}
 	return out, nil
+}
+
+// BaseTags is the tags the toolchain sets by itself for a build context: the
+// GOOS, the GOARCH and the compiler; `cgo` when the context has it enabled; the
+// portability alias go/build matches from the GOOS (`unix` on a unix GOOS,
+// `linux` on android, `solaris` on illumos, `darwin` on ios); the context's
+// tool tags (goexperiment.*, arch feature tags like amd64.v1) and release tags
+// (go1.NN); and the old `boringcrypto` name for goexperiment.boringcrypto. It
+// is what TaggedPackages holds in both of its evaluations and what
+// tools/ci/sel_deal.go feeds it from build.Default, so a `slow && cgo`,
+// `slow && go1.NN` or `functional && unix` file is selected for the tag on a
+// host and toolchain that enable it. Mirrors go/build.Context.matchTag so the
+// selection agrees with the compiler about what is already on.
+// internal/pkgselect TestDealTagsBaseTags* pins it.
+func BaseTags(ctxt build.Context) []string {
+	tags := []string{ctxt.GOOS, ctxt.GOARCH, ctxt.Compiler}
+	if ctxt.CgoEnabled {
+		tags = append(tags, "cgo")
+	}
+	switch ctxt.GOOS {
+	case "android":
+		tags = append(tags, "linux")
+	case "illumos":
+		tags = append(tags, "solaris")
+	case "ios":
+		tags = append(tags, "darwin")
+	}
+	if unixGOOS[ctxt.GOOS] {
+		tags = append(tags, "unix")
+	}
+	tags = append(tags, ctxt.ToolTags...)
+	for _, t := range ctxt.ToolTags {
+		if t == "goexperiment.boringcrypto" {
+			tags = append(tags, "boringcrypto")
+		}
+	}
+	tags = append(tags, ctxt.ReleaseTags...)
+	return tags
+}
+
+// unixGOOS is the GOOS set the toolchain tags `unix` (go/build's own list).
+var unixGOOS = map[string]bool{
+	"aix": true, "android": true, "darwin": true, "dragonfly": true,
+	"freebsd": true, "hurd": true, "illumos": true, "ios": true,
+	"linux": true, "netbsd": true, "openbsd": true, "solaris": true,
 }
 
 // tagSet returns the membership test go/build/constraint's Expr.Eval wants: a
