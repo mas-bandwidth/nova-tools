@@ -328,6 +328,7 @@ func addCutSummary(pr *Card, set map[string]string, c Consumer) {
 		return
 	}
 	at, err := time.Parse(time.RFC3339, c.At)
+	// ignored: a record whose timestamp is not RFC3339 cannot be put to a clock hour, so it adds nothing to the hourly cap sum
 	if err != nil {
 		return
 	}
