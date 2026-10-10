@@ -191,10 +191,7 @@ var childScans = []childScan{
 		// list) is no proof.
 		RE:     childCmd(`(?i)\b(?:ls-remote\b|proof[ \t]+of[ \t]+push\b|parent[ \t]*:|remote[ \t]+tip\b.*?\b(?:equals|matches)\b)`),
 		Remedy: "the machine reads your branch; never prove the push in prose",
-		Allow: func(line string, at int) bool {
-			low := strings.ToLower(line)
-			return strings.Contains(low, "friendcards.go")
-		}},
+		Allow:  childPushProofAllow},
 	{Check: "step-stash",
 		RE:     childCmd(gitCmd + `stash\b`),
 		Remedy: "no line stashes: the stash list is shared by every worktree of the repository, so a stash taken here is popped there; commit to the child's own branch instead"},
@@ -221,6 +218,12 @@ var (
 	childKillOwn = regexp.MustCompile(`^kill[ \t]+(?:-[A-Za-z0-9]+[ \t]+)*(?:"?\$!"?|%[0-9]+)(?:[ \t;&|)]|$)`)
 	// childSeparator ends one command on a line.
 	childSeparator = regexp.MustCompile(`&&|\|\||;|\||$`)
+	// childPushProofCmd matches commands that invoke or run ls-remote: a worker never runs
+	// git ls-remote or proves a push, even if the line mentions friendcards.go.
+	childPushProofCmd = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_./-])(?:` + gitCmd + `ls-remote\b|\brun\b[^\n;&|]*?\bls-remote\b)`)
+	// childMachineLsRemote matches prose describing the machine-owned ls-remote in
+	// friendcards.go: the machine reads origin's tip itself.
+	childMachineLsRemote = regexp.MustCompile(`(?i)\bfriendcards\.go(?:'s(?:[ \t]+own)?)?[ \t]+ls-remote\b|\bls-remote\b[^\n;&|]*?\b(?:in|of|by)\b[^\n;&|]*?\bfriendcards\.go\b`)
 )
 
 // childHasTimeout reports whether the `go test` command starting at byte at carries
@@ -266,6 +269,19 @@ func childInsideJob(p string) bool {
 		return false
 	}
 	return true
+}
+
+// childPushProofAllow reports whether a line matching step-push-proof is allowed:
+// prose describing the machine-owned ls-remote in friendcards.go is allowed, but
+// any line asking to run git ls-remote, run ls-remote, or report push proof is not.
+func childPushProofAllow(line string, at int) bool {
+	if childPushProofCmd.MatchString(line) {
+		return false
+	}
+	if !strings.HasPrefix(strings.ToLower(line[at:]), "ls-remote") {
+		return false
+	}
+	return childMachineLsRemote.MatchString(line)
 }
 
 // childRulesHeadRE opens the RULES paragraph, where a card quotes what it forbids.

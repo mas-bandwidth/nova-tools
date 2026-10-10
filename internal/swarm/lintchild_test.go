@@ -303,8 +303,16 @@ func TestChildScansRefuseTheCommandAndAllowTheRest(t *testing.T) {
 			[]string{"STEP 7. go test ./...", "STEP 7. Run go test -count=1 ./x/", "STEP 7. go test ./a && go test -timeout 600s ./b"},
 			[]string{"STEP 7. go test -timeout 600s ./...", "STEP 7. go test -count=1 -timeout 600s ./x/ -run TestY", "STEP 7. go vet ./...", "STEP 7. Never go test the whole tree."}},
 		{"step-push-proof",
-			[]string{"STEP 7. Run git ls-remote and verify remote tip equals HEAD", "STEP 7. Parent: abc123", "STEP 7. Send proof of push"},
-			[]string{"STEP 7. Head: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "STEP 7. Check friendcards.go ls-remote logic"}},
+			[]string{
+				"STEP 7. Run git ls-remote and verify remote tip equals HEAD",
+				"STEP 7. Parent: abc123",
+				"STEP 7. Send proof of push",
+				"STEP 7. Run git ls-remote and check friendcards.go uses it",
+			},
+			[]string{
+				"STEP 7. Head: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+				"STEP 7. Check friendcards.go ls-remote logic",
+			}},
 	}
 	covered := map[string]bool{}
 	for _, c := range cases {
@@ -531,6 +539,7 @@ func TestAPushProofStepIsRefused(t *testing.T) {
 		"STEP 3. Parent: abc1234",
 		"STEP 4. Send proof of push",
 		"STEP 5. Verify remote tip matches HEAD",
+		"STEP 6. Run git ls-remote and check friendcards.go uses it",
 	} {
 		card := ourCard(t) + line + "\n"
 		want := strings.Count(card, "\n") // the line just appended, the card's last
@@ -559,4 +568,23 @@ func TestAHeadLineIsNotAPushProof(t *testing.T) {
 		assert.Empty(t, got, "%q draws %v, want none", line, got)
 	}
 	assert.Empty(t, childChecks(LintCardChildWith([]byte(ourCard(t)), ourRules(t))), "a brief with none of these draws none")
+}
+
+// A STEP that asks to run git ls-remote is refused even when it mentions that friendcards.go
+// uses it; the exception allows only prose describing the machine-owned ls-remote.
+func TestAPushProofStepMentioningFriendcardsIsRefused(t *testing.T) {
+	t.Parallel()
+	for _, line := range []string{
+		"STEP 1. Run git ls-remote and check friendcards.go uses it",
+		"STEP 2. Run git ls-remote origin feat, which friendcards.go uses",
+		"STEP 3. git ls-remote origin (friendcards.go uses it)",
+	} {
+		card := ourCard(t) + line + "\n"
+		want := strings.Count(card, "\n")
+		got := LintCardChildWith([]byte(card), ourRules(t))
+		if assert.Len(t, got, 1, "%q draws %v, want step-push-proof", line, got) {
+			assert.Equal(t, "step-push-proof", got[0].Check, "%q draws %v, want step-push-proof", line, got)
+			assert.Equal(t, want, got[0].Line, "%q draws %v, want it at line %d", line, got, want)
+		}
+	}
 }
