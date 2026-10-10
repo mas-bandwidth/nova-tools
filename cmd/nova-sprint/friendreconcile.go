@@ -94,7 +94,7 @@ func (a *app) cmdFriendReconcile(args []string, stdout, stderr io.Writer) int {
 	if *root == "" && spec.Dir == "" {
 		return refuse(stderr, name, "wants --root <dir>, the directory holding <root>/"+friend+"-working, for her nova-config row has no dir (HOME is not set); or run: nova-config friend set "+friend+" --dir <her working directory>, then nova-sprint friend sync")
 	}
-	dir := a.friendDir(friend, spec.Dir, *root, stderr)
+	dir := a.friendDir(friend, spec.Dir, stderr)
 	account, why, err := friendQueueRead(dir)
 	switch {
 	case err != nil:

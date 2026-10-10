@@ -255,7 +255,7 @@ func (a *app) friendSyncPass(c common, pg, root string, stdout, stderr io.Writer
 		}
 	}
 	for _, s := range specs {
-		dir := a.friendDir(s.Name, s.Dir, root, stderr)
+		dir := a.friendDir(s.Name, s.Dir, stderr)
 		// her starts first, so a card she began is working before its report is read
 		if err := a.friendStartsOf(ctx, st, s.Name, dir, say); err != nil {
 			fmt.Fprintf(stderr, "%s %s: the sprint cards of %s cannot be read for her starts: %s; the friends table is synced; run: nova-sprint friend sync\n", prog, name, s.Name, oneline.Escape(err.Error()))

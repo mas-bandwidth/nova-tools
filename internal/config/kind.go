@@ -459,7 +459,7 @@ var Kinds = []*Kind{
 	{
 		Name:  KindMachine,
 		Table: "machines",
-		Doc:   "a machine of the fleet, named by its tailnet host: the login, the seat, its ceiling, its runners, the sprint member's width on it, and whether it is a TLC record machine",
+		Doc:   "a machine of the fleet, named by its tailnet host: the login, the seat, its ceiling, its runners, the sprint member's width on it, whether it is a TLC record machine, and the ai root for paths",
 		Fields: []Field{
 			{Name: "user", Type: TypeText, Required: true, Help: "the login the plays and seals use on it (ssh <user>@<name>)"},
 			{Name: "seat", Type: TypeText, Required: true, Help: "its nova-secrets seat: the identity it opens secrets as, one <seat>.yaml in the store"},
@@ -467,6 +467,7 @@ var Kinds = []*Kind{
 			{Name: "runners", Type: TypeInt, Help: "how many CI runners it hosts; 0 (the default) hosts none"},
 			{Name: "width", Type: TypeInt, Nullable: true, Clear: "default", Help: "the most work cards the sprint's member on it runs at once, what nova-sprint fleet sync sets; set apart from --slots, never derived from it; unset (the default, or --width default) is half the machine's cores as its beat reports them, which fleet sync resolves; 0 is no member, dealt no work"},
 			{Name: "tla", Type: TypeBool, Help: "a TLC record machine: the tools play installs the pinned TLC jar on it and tlacheck run --bench any picks among them; false (the default) is none"},
+			{Name: "ai_root", Type: TypeText, Nullable: true, Help: "the ai root for all derived paths; unset (the default, or --ai_root) is ~/ai; the bench, secrets, loop logs, and mirrors derive from it"},
 			noteField("why the machine is as it is: a hold, a rest, the load that was measured"),
 		},
 	},
