@@ -3119,7 +3119,7 @@ rule is `internal/sprint/fleet_quiet.go`; the twin test is
 ### a-route-has-a-lane-cap-bb.w2: a route's lane cap
 
 A route row carries a lane cap, `lanes` (`nova-config route set <r> --lanes <n>`, migration
-0036): the most lanes in flight on that route at once. `route list` prints `lanes=<n>`, and 0
+0037): the most lanes in flight on that route at once. `route list` prints `lanes=<n>`, and 0
 (the default) is unlimited. A lane is a card or a read started on the route and not finished:
 the fleet table's ready, working, asked and reading cards whose `route` field names it, a
 machine's and a friend's alike (a friend's card counts when it names the route its runner
