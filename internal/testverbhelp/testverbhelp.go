@@ -22,7 +22,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -83,7 +82,6 @@ const UnknownFlag = "--no-such-flag-breadcrumb"
 
 // RefusalProblems runs one case with UnknownFlag and returns every way the
 // refusal broke the rule: a tool or verb never fails silently, and every
-// refusal carries a breadcrumb to the fix. It is the runtime half of
 // internal/ci's remedy and
 // no-ok-on-failure rules, run through the same seam every verb parses its flags
 // with:
@@ -249,10 +247,10 @@ const (
 	GapMissingPrefix = "flag-missing:"
 )
 
-// LedgerPath is the shrink-only ledger, found from this source file.
+// LedgerPath is the shrink-only ledger.
 func LedgerPath() string {
-	_, file, _, _ := runtime.Caller(0)
-	return filepath.Join(filepath.Dir(file), "..", "ci", "testdata", "help-complete-ledger.txt")
+	// to avoid issues with module paths in test binaries.
+	return "../ci/testdata/help-complete-ledger.txt"
 }
 
 var (
