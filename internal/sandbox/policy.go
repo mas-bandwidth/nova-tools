@@ -35,10 +35,6 @@ const (
 	ExitProbeFailed = 1   // probe/check grammar: the verb ran and said NO
 	ExitCannotRun   = 2   // probe/check grammar: the verb could not run
 	tmpDirName      = ".nova-sandbox-tmp"
-	// profileFilePrefx is the name NO file carries: the darwin body passes the profile
-	// inline with -p, and wrap_darwin_test.go asserts that nothing with this prefix is
-	// ever written. The companion profileFilePerm went with the file it was for.
-	profileFilePrefx = ".nova-sandbox-"
 )
 
 // Refusal is one independent problem, named by the flag it is about. A refusal

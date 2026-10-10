@@ -13,6 +13,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// profileFilePrefix is the name the darwin wrap must never write.
+const profileFilePrefix = ".nova-sandbox-"
+
 // Rule 1: a machine with no backend REFUSES, and the command does not run. The seam is
 // the `available` variable, because the behaviour under test is the refusal, not the
 // platform — on a Mac sandbox-exec is always there, so without the seam this rule has
@@ -60,6 +63,6 @@ func TestNoProfileFileIsWritten(t *testing.T) {
 	entries, err := os.ReadDir(write)
 	require.NoError(t, err)
 	for _, e := range entries {
-		assert.False(t, strings.HasPrefix(e.Name(), profileFilePrefx) && strings.HasSuffix(e.Name(), ".sb"), "the wrap left a profile file in the write set: %s", e.Name())
+		assert.False(t, strings.HasPrefix(e.Name(), profileFilePrefix) && strings.HasSuffix(e.Name(), ".sb"), "the wrap left a profile file in the write set: %s", e.Name())
 	}
 }
