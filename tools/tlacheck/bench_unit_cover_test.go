@@ -190,6 +190,7 @@ func TestTlacheckBenchCoverParseLoad(t *testing.T) {
 }
 
 func TestTlacheckBenchCoverStageArchive(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		root    string
