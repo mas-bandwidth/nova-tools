@@ -138,14 +138,15 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
 
 // landBatch is one batch's outcome, a line of output and an item of --json.
 type landBatch struct {
-	Stream string   `json:"stream"`
-	Status string   `json:"status"` // ok, refused, failed
-	Cards  int      `json:"cards"`
-	IDs    []string `json:"ids"`
-	Repo   string   `json:"repo,omitempty"`
-	Base   string   `json:"base,omitempty"`
-	Dir    string   `json:"dir,omitempty"`
-	Tip    string   `json:"tip,omitempty"`
+	Stream   string   `json:"stream"`
+	Status   string   `json:"status"` // ok, refused, failed
+	Cards    int      `json:"cards"`
+	IDs      []string `json:"ids"`
+	Repo     string   `json:"repo,omitempty"`
+	Base     string   `json:"base,omitempty"`
+	Dir      string   `json:"dir,omitempty"`
+	Tip      string   `json:"tip,omitempty"`
+	LandedAt string   `json:"landed_at,omitempty"`
 	// Fact is the merge fact reported for a refusal (conflict, red,
 	// rejected); empty when nothing was reported and the store is unchanged,
 	// and always empty in a dry run, which reports nothing.
@@ -225,6 +226,9 @@ func (b landBatch) line() string {
 		if b.Ring > 0 {
 			l += fmt.Sprintf(" ring=%d slot=%d", b.Ring, b.Slot)
 		}
+	}
+	if b.LandedAt != "" {
+		l += " landed_at=" + b.LandedAt
 	}
 	if p := b.Prune; p != nil {
 		switch {
@@ -371,12 +375,16 @@ type lander struct {
 	laneAs string
 	// parallel is how many streams merge at once in the pass's first phase (--land-parallel;
 	// landpass.go), and shared the locks and records the pass's streams share.
-	parallel int
-	shared   *landShared
+	parallel  int
+	gateBound time.Duration
+	shared    *landShared
 }
 
 // keep appends a batch, carrying the tree gate's bench and wall when one ran.
 func (l *lander) keep(b landBatch) {
+	if b.Status == "ok" && !b.DryRun && b.Tip != "" && b.LandedAt == "" {
+		b.LandedAt = l.clock().UTC().Format(time.RFC3339)
+	}
 	if b.Bench == "" && l.gateHost != "" {
 		b.Bench, b.Wall = l.gateHost, l.gateWall.Seconds()
 		b.Ring, b.Slot = l.gateRing, l.gateSlot
@@ -417,6 +425,7 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	check := fs.String("check", "", "a command run once per batch, by sh -c in the clone on the batch branch, before the push (bounded to 30m); non-zero reports the batch red and pushes nothing")
 	dry := fs.Bool("dry-run", false, "print the batches it would land and change nothing: reads the store only (no git, no push, no report)")
 	parallel := fs.Int("land-parallel", landParallelDefault, "how many streams merge at once, each in its own worktree of the clone, before the landings go one at a time (landpass.go); 1 merges the streams one after another")
+	gateBound := fs.Duration("gate-bound", 8*time.Minute, "the maximum wall time for one bench gate or Go lane wait before it is abandoned without blaming the card (default 8m)")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "land", err.Error())
@@ -427,6 +436,9 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	}
 	if *parallel < 1 {
 		bad = append(bad, "--land-parallel wants a count of one or more, not "+strconv.Itoa(*parallel))
+	}
+	if *gateBound <= 0 {
+		bad = append(bad, "--gate-bound wants a positive duration")
 	}
 	if strings.HasPrefix(*base, "-") {
 		bad = append(bad, "--base wants a branch name, not "+*base)
@@ -462,7 +474,7 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 		a.baseGateFails = map[string]*baseGateFail{}
 	}
 	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch(), diffs: map[string]string{}, scope: map[string][]string{}, prose: map[string][]string{},
-		baseGateCache: a.baseGateCache, baseGateFails: a.baseGateFails, cureTried: map[string]bool{}, parallel: *parallel}
+		baseGateCache: a.baseGateCache, baseGateFails: a.baseGateFails, cureTried: map[string]bool{}, parallel: *parallel, gateBound: *gateBound}
 	l.locks()
 	defer l.release()
 	ctx := a.landCtx

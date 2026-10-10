@@ -49,6 +49,36 @@ import (
 // the tree's own packages, or one update run (a build and two tests of one package).
 const landGoBudget = 15 * time.Minute
 
+var errGateBound = errors.New("bench gate bound")
+
+func (l *lander) gateBoundValue() time.Duration {
+	if l.gateBound > 0 {
+		return l.gateBound
+	}
+	return 8 * time.Minute
+}
+
+// boundGate gives one lane wait or one bench run its own wall bound. The
+// injected clock is also used by the pure land tests; cancel releases its
+// timer goroutine when the operation finishes first.
+func (l *lander) boundGate(ctx context.Context) (context.Context, context.CancelCauseFunc) {
+	bounded, cancel := context.WithCancelCause(ctx)
+	bound := l.gateBoundValue()
+	after := time.After
+	if l.a != nil && l.a.after != nil {
+		after = l.a.after
+	}
+	deadline := after(bound)
+	go func() {
+		select {
+		case <-deadline:
+			cancel(errGateBound)
+		case <-bounded.Done():
+		}
+	}()
+	return bounded, cancel
+}
+
 const benchGateUnavailableWhy = "the configured remote bench did not run the tree gate; restore a bench and run land again"
 
 // treeTests are the packages that test the tree itself (its docs and its tests), run by
@@ -463,12 +493,21 @@ func (l *lander) ringGate(ctx context.Context, hosts []string, dir string, runs 
 		if len(live) == 0 {
 			return "", false
 		}
-		host, err := l.takeGateLane(ctx, live)
+		waitCtx, stopWait := l.boundGate(ctx)
+		host, err := l.takeGateLane(waitCtx, live)
+		waitBound := errors.Is(context.Cause(waitCtx), errGateBound)
+		stopWait(nil)
 		if err != nil {
+			if waitBound {
+				l.copySaid("gate abandoned: " + live[0] + " after " + l.gateBoundValue().String())
+			}
 			return "", false
 		}
 		tried[host] = true
-		why, ran, refused := l.gateOn(ctx, host, dir, runs, tests, st)
+		why, ran, refused, abandoned := l.gateOn(ctx, host, dir, runs, tests, st)
+		if abandoned {
+			continue // that bench's lane is returned; try the next ring bench
+		}
 		if refused != nil {
 			skips.Fail(host, refused.Error())
 			continue
@@ -482,25 +521,29 @@ func (l *lander) ringGate(ctx context.Context, hosts []string, dir string, runs 
 
 // gateOn runs the gate on host, whose Go lane the lander holds and gives back: the finding
 // ("" green) and ran, or the stage's refusal when the tree never reached the bench.
-func (l *lander) gateOn(ctx context.Context, host, dir string, runs [][]string, tests bool, st *bench.MirrorStage) (why string, ran bool, refused *bench.StageError) {
+func (l *lander) gateOn(ctx context.Context, host, dir string, runs [][]string, tests bool, st *bench.MirrorStage) (why string, ran bool, refused *bench.StageError, abandoned bool) {
 	defer l.giveGateLane(host)
 	l.stage("gate", "bench "+host+" held by "+l.laneWho()+" ("+l.gateWhose()+"): "+strings.Join(runs[0], " "))
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(len(runs))*landGoBudget)
-	defer cancel()
+	ctx, cancel := l.boundGate(ctx)
+	defer cancel(nil)
 	start := l.clock()
 	out, code, err := l.runOnBench(ctx, host, dir, runs, tests, st)
 	wall := l.clock().Sub(start)
+	if errors.Is(context.Cause(ctx), errGateBound) {
+		l.copySaid("gate abandoned: " + host + " after " + l.gateBoundValue().String())
+		return "", false, nil, true
+	}
 	if errors.As(err, &refused) {
-		return "", false, refused
+		return "", false, refused, false
 	}
 	if err != nil || code == bench.NoAnswer {
-		return "", false, nil
+		return "", false, nil, false
 	}
 	l.ranOnBench(host, wall)
 	if code == 0 {
-		return "", true, nil
+		return "", true, nil, false
 	}
-	return gateWhy(redRun(runs, out), fmt.Errorf("exit status %d on the bench %s", code, host), out), true, nil
+	return gateWhy(redRun(runs, out), fmt.Errorf("exit status %d on the bench %s", code, host), out), true, nil, false
 }
 
 // copySaid says one stage line: the loop's idle line carries it as the step, and the

@@ -304,27 +304,27 @@ func (l *lander) pass(ctx context.Context, s *sprint.Snapshot, order []string) (
 		cancels := make(map[*landJob]context.CancelCauseFunc, len(jobs))
 		for _, j := range jobs {
 			contexts[j], cancels[j] = context.WithCancelCause(ctx)
-		}
-		go func() {
-			l.merges(jobs, contexts, finished)
-			close(finished)
-		}()
-		ready := make(map[*landJob]bool, len(jobs))
-		for _, j := range jobs {
 			clock := time.After
 			if l.a != nil && l.a.after != nil {
 				clock = l.a.after
 			}
 			deadline := clock(LandDeadline)
-			for !ready[j] {
+			jobCtx, cancel := contexts[j], cancels[j]
+			go func() {
 				select {
-				case done := <-finished:
-					ready[done] = true
 				case <-deadline:
-					cancels[j](errLandDeadline)
-					deadline = nil // one abandonment of this batch, then wait for its exit
+					cancel(errLandDeadline)
+				case <-jobCtx.Done():
 				}
-			}
+			}()
+		}
+		go func() {
+			l.merges(jobs, contexts, finished)
+			close(finished)
+		}()
+		// The serial push takes each green batch in completion order, without
+		// waiting for a sibling's bench gate.
+		for j := range finished {
 			cancels[j](nil)
 			if !j.done {
 				l.land(ctx, j, pushed)

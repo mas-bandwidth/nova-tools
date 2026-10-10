@@ -4333,9 +4333,13 @@ base's own gate and its cure stay serial for one base commit, in priority order 
 streams sharing its repository and base. Different bases can gate in parallel, so a
 blocked gate on one does not hold another; every
 fetch and every write of the clone's shared refs is one at a time. In the second phase the
-green batches land one at a time in priority order. If an earlier batch gate is still
-waiting after `LandDeadline`, that batch is refused for this pass without blaming a card
-or counting a red base, and a ready later stream can land. Every wait a batch makes before
+green batches land one at a time as their merge jobs finish, in channel arrival order;
+each LAND line records its gate bench, gate wall time and landing timestamp. A bench gate
+run and its Go lane wait each have `--gate-bound` (default 8 minutes). At that bound the
+gate records `gate abandoned: <bench> after <duration>`, returns its lane, tries the next
+bench in the ring, or leaves the batch for the next pass without blaming a card. If a
+batch gate is still waiting after `LandDeadline`, that batch is refused for this pass
+without blaming a card or counting a red base, and a ready later stream can land. Every wait a batch makes before
 its work watches that bound too: a batch abandoned while it waits for a width slot, for its
 turn in the same-repository/base chain, or for another stream's gate of the same base
 commit gives up its place at once, refused the same way with its cards still queued, and

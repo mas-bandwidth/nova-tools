@@ -165,6 +165,7 @@ type landFlight struct {
 	done, judged, idle bool
 	out                []byte
 	code               int
+	cancel             context.CancelFunc // ends the pass's gates when LandDeadline fires
 }
 
 // landBeat is the loop's bench seam and the landing in flight.
@@ -298,6 +299,11 @@ func (a *app) landCycle(ctx context.Context, addr string, stdout io.Writer, flig
 // runFlight is the landing beside the loop. Its lines stay in the flight until
 // the cycle that sees it done.
 func (a *app) runFlight(ctx context.Context, addr string, f *landFlight, more []string) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	f.mu.Lock()
+	f.cancel = cancel
+	f.mu.Unlock()
 	var buf bytes.Buffer
 	a.landLazy, a.landCtx = true, ctx
 	code, idle := a.landOnce(ctx, addr, more, &buf)
@@ -364,9 +370,12 @@ func (a *app) raiseIfStuck(ctx context.Context, addr string, f *landFlight) {
 		f.mu.Unlock()
 		return
 	}
-	step, proc, stream, coord := f.step, f.proc, f.stream, f.coord
+	step, proc, stream, coord, cancel := f.step, f.proc, f.stream, f.coord, f.cancel
 	age := a.now().Sub(f.began).Round(time.Second)
 	f.mu.Unlock()
+	if cancel != nil {
+		cancel() // the judgment is also an action: every in-flight gate sees cancellation
+	}
 	if proc == "" {
 		proc = "nothing named"
 	}
