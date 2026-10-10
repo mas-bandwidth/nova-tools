@@ -181,7 +181,10 @@ func Base(p string) string {
 // source line begins in that text. starts is sorted. One int per source line,
 // not one int per input byte.
 func flattenLineStarts(text string) (string, []int) {
-	flat := make([]byte, 0, len(text))
+	split := strings.Split(text, "\n")
+	// Every byte of text emits at most one byte, and each line break at most one more (the
+	// boundary '.'), so this capacity is never outgrown: growing it copies the whole text again.
+	flat := make([]byte, 0, len(text)+len(split))
 	var starts []int
 	emit := func(b byte) {
 		if strings.ContainsRune("*_`>#|", rune(b)) {
@@ -200,7 +203,6 @@ func flattenLineStarts(text string) (string, []int) {
 		s = strings.TrimSpace(s)
 		return s == "" || strings.HasPrefix(s, "#")
 	}
-	split := strings.Split(text, "\n")
 	for i, raw := range split {
 		starts = append(starts, len(flat))
 		for j := 0; j < len(raw); j++ {
