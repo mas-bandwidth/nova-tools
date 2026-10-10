@@ -10,6 +10,43 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
+// TestEveryCoordinatorVerbThatChangesStateTakesAReason walks the coordinator
+// verbs that change a member's or friend's state and asserts each accepts --reason.
+// The reason is recorded on the change and in the log as hold's is.
+func TestEveryCoordinatorVerbThatChangesStateTakesAReason(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1,m2")
+	ta.ok("start")
+
+	// fleet up: accepts --reason, records it in the log
+	ta.ok("fleet up m1 --width 64 --reason 'member coming back online'")
+	log := ta.ok("log --member m1")
+	assert.Contains(t, log, "reason=member coming back online", "fleet up log should have reason")
+
+	// fleet down: accepts --reason, records it in the log
+	ta.ok("fleet down m1 --reason 'member going down'")
+	log = ta.ok("log --member m1")
+	assert.Contains(t, log, "reason=member going down", "fleet down log should have reason")
+
+	// fleet quiet: already has --reason
+	ta.ok("fleet quiet m1 --for 10m --reason 'load spike'")
+	log = ta.ok("log --member m1")
+	assert.Contains(t, log, "reason=load spike", "fleet quiet log should have reason")
+
+	// hold: already has --reason (required)
+	ta.ok("hold m2 --reason 'testing'")
+
+	// unhold: already has --reason (optional)
+	ta.ok("unhold m2 --reason 'testing done'")
+
+	// friend down: already has --reason
+	ta.ok("friend down friend-a --reason 'rate limited'")
+
+	// friend up: already has --reason (optional, like unhold)
+	ta.ok("friend up friend-a --width 4 --reason 'friend back'")
+}
+
 // TestFleetBeatWritesTheLoadGivenOrMeasured: fleet beat prints the load it
 // wrote, given or measured by the machine's meter, and refuses a load that
 // is not a percent.

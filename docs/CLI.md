@@ -2487,8 +2487,8 @@ nova-sprint backup (--out <dir> [--part-bytes <n>] [--secrets-store <dir> --secr
 nova-sprint demo load <backup.xz part>... [--sha256 <hex>] [--dir <dir>] [--xz <path>] [--redis-server <path>]
 nova-sprint demo stop [--dir <dir>]
 nova-sprint fleet beat <member> [--load <percent>] [--stop-returns <n>]
-nova-sprint fleet up <member> [--width <n>]
-nova-sprint fleet down <member>
+nova-sprint fleet up <member> [--width <n>] --reason <text>
+nova-sprint fleet down <member> --reason <text>
 nova-sprint fleet sync [--check] [--pg <dsn>]
 nova-sprint fleet level
 nova-sprint friend sync [--pg <dsn>] [--root <dir>] [--every <duration>]
@@ -2504,7 +2504,7 @@ nova-sprint units --check [--dir <dir>]
 nova-sprint gc [--machine <m>] [--dry-run] [--max-age <d>] [--ai-root <dir>]
 nova-sprint friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>] [--stop-returns <n>]
 nova-sprint friend down <friend> [--reason <text>] [--until <RFC3339>]
-nova-sprint friend up <friend> [--width <n>]
+nova-sprint friend up <friend> [--width <n>] [--reason <text>]
 nova-sprint friend cards <friend> [--json]
 nova-sprint friend take <friend> (<id>... | --all-unstarted) [--reason <text>]
 nova-sprint friend give <friend> <id>... [--reason <text>]

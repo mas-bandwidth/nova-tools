@@ -557,6 +557,7 @@ func (a *app) cmdFriendHold(held bool, args []string, stdout, stderr io.Writer) 
 		until = fs.String("until", "", "when you expect her back, RFC3339, shown on her row")
 	} else {
 		width = fs.String("width", "", fmt.Sprintf("her width: the jobs she works at once; the deal holds her at %d times that, ready and working; 1 to %d (default: as it is; friend sync sets it to her nova-config row's again)", sprint.DealAhead, sprint.MaxWidth))
+		reason = fs.String("reason", "", "why, in words: the log carries it")
 	}
 	friend, code := oneFriend(name, fs, args, stderr)
 	if code != 0 {
@@ -579,6 +580,8 @@ func (a *app) cmdFriendHold(held bool, args []string, stdout, stderr io.Writer) 
 				return refuse(stderr, name, "--until wants an RFC3339 time")
 			}
 		}
+	} else if *reason != "" {
+		why = strings.TrimSpace(*reason)
 	}
 	st, err := a.store(*c)
 	if err != nil {
