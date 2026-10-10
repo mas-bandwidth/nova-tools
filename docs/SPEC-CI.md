@@ -1194,9 +1194,10 @@ min(share, 2) and the Makefile's `GOTEST_P ?= 2` on `go test -p` and
 redis-server is functional-only (build tag functional)` and exits 86, so
 `testutil.Start` fails closed under `NOVA_CI=1`. The functional tier (the
 `functional` job, `make test-functional`) runs only the `//go:build functional`
-tests of the selected packages, on `merge_group`, `schedule` and
-`workflow_dispatch`, never on `pull_request`, six Linux shards under the
-two-minute cap; `ci-ok` requires it when it ran. The unit budgets are 2 s a
+tests of the selected packages, on `pull_request`, `merge_group`, `schedule`
+and `workflow_dispatch`: the PR and the queue deal the same shard list, under
+the two-minute cap, so a red functional test is red on the pull request that
+made it; `ci-ok` requires it when it ran. The unit budgets are 2 s a
 package and 1 s a test, with an allowlist whose every row names its
 measurement, printed on every leg and enforced only on the nightly Linux legs;
 what is enforced on every leg is static (`unitwaits`). The unit legs (`test`
@@ -1213,8 +1214,10 @@ queue waits on CI.
 does and runs it: exit 86 and its line), `TestStartFailsClosedOnTheUnitTierShim` (functional-tagged, in
 `internal/ci/redis_ci_test.go`: `testutil.Start` against that shim fails
 closed), `TestUnitLegTakesAtMostTwoCores` (the share
-function, `pkgselect.RunnerShare`, with one runner on any box), `TestFunctionalTierRunsOnlyAsStreamsMerge` and
-`TestSlowAllowlistRowsNameTheirMeasurement`,
+function, `pkgselect.RunnerShare`, with one runner on any box), `TestFunctionalTierRunsOnPullRequestAndAsStreamsMerge` and
+`TestPRCIRunsEveryFunctionalShardTheMergeGroupRuns` (the PR and the merge group
+read the one `test-packages` functional list, and `ci-ok` requires the job's
+result) and `TestSlowAllowlistRowsNameTheirMeasurement`,
 `TestSlowAllowlistRatchetRefusesAnUnmeasuredRow`,
 `TestUnitBudgetsJudgeTheTestNotTheLoad` (a 1.4 s test is exit 0 with its
 CI-SLOW and CI-LOAD lines at load 2, at load 20 and unread, and exit 2 at all
@@ -1419,6 +1422,10 @@ a target list drift, and a dry run that builds differently from the release prov
 nothing about the release.
 **The test.** `TestReleaseMatricesAreTheTargetsFile`,
 `TestReleaseSumsAreOneMachineOverTheWholeSet`,
+`TestTheReleaseChainIsCertificationThenCutThenRelease` (certification.yml's
+`certification-ok` is the suite release.yml's `certified` job asks about; the
+tag triggers release.yml; `build` needs `certified`; `release` needs `build`
+and publishes the set with `ghrelease attach`) and
 `TestEveryJobThatRunsGhreleaseSetsUpGoFirst` (a job that runs `go run ./tools/ghrelease`
 carries the pinned `actions/setup-go` with `go-version-file: go.mod` before its first
 call) and `TestNoWorkflowStepRunsAReleaseScript` (no release or certification step runs a

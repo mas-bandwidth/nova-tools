@@ -305,9 +305,9 @@ jobs:
         # The Go best-practice linters as class tests: staticcheck and errcheck,
         # each held per package to its shrink-only ledger (docs/SPEC-CI.md,
         # `staticcheck` and `errcheck`). They are functional-tier and the
-        # functional job never runs on a pull request, so this step is where
-        # they gate one. `make lint` also re-runs the gofmt and vet targets
-        # above, which this job's build cache answers at once.
+        # functional job runs the functional TESTS, not the linters, so this
+        # step is where they gate one. `make lint` also re-runs the gofmt and
+        # vet targets above, which this job's build cache answers at once.
         # internal/ci: TestTheLintJobRunsTheLinterClassTests.
         run: make lint
 
@@ -800,18 +800,22 @@ jobs:
           "$RUNNER_TEMP/ci" unit-test --packages "${{ matrix.entry.packages }}"
 
   functional:
-    # THE FUNCTIONAL TIER: functional tests run when merging whole work streams,
-    # and are built to be frugal and avoid wasting resources.
+    # THE FUNCTIONAL TIER: functional tests run on every pull request, on
+    # merge_group (the queue's run of a stream PR into dev), on the nightly
+    # schedule and by hand, and are built to be frugal and avoid wasting
+    # resources.
     # A functional test is one behind `//go:build functional`: a real
-    # redis-server, a real binary, a real process. It runs on merge_group (the
-    # queue's run of a stream PR into dev), on the nightly schedule and by hand,
-    # and NEVER on pull_request: a card PR into a stream branch and a stream PR
-    # into dev both skip it. Same selected packages as the unit legs, four space
-    # shards, two cores a leg, the two-minute cap. ci-ok requires it when it ran.
-    # internal/ci: TestFunctionalTierRunsOnlyAsStreamsMerge.
+    # redis-server, a real binary, a real process. The PR runs the SAME matrix
+    # the merge group runs (`needs.test-packages.outputs.functional`, the one
+    # shard deal), so a red functional test is red on the pull request that
+    # made it, never first in the queue or at the cut. Same selected packages
+    # as the unit legs, four space shards, two cores a leg, the two-minute cap;
+    # a shard that cannot finish under the per-package timeout is split by the
+    # selection, never skipped. ci-ok requires it when it ran.
+    # internal/ci: TestFunctionalTierRunsOnPullRequestAndAsStreamsMerge.
     name: functional (${{ matrix.entry.name }})
     needs: test-packages
-    if: github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -1862,10 +1866,10 @@ jobs:
       # of this job went wrong. The skip rules are tools/ci/aggregate.go's; the arguments below
       # are the events' own: a skip is ok for the legs that do not run on this event (lisp when
       # no lisp/ path moved, test-hosted-pr on a fork PR, a manual run or a diff that matches no
-      # platform path; functional on a pull request only: it runs on merge_group and
-      # workflow_dispatch, and when it ran it must pass). test-windows-pr is not aggregated:
-      # the Windows guard is the lint job's `make vet-windows`, so a GOOS=windows compile break
-      # is a red `lint`, which this verdict reads.
+      # platform path). functional runs on pull_request and merge_group alike and is required
+      # there: a functional shard that did not run is not a passing one. test-windows-pr is not
+      # aggregated: the Windows guard is the lint job's `make vet-windows`, so a GOOS=windows
+      # compile break is a red `lint`, which this verdict reads.
       - name: every CL-tier job succeeded (pull request, merge group or manual)
         # merge_group is the queue's group commit: ci-ok on it is THE merge gate,
         # so this step must run there too; a guard that names no event lets ci-ok
@@ -1878,7 +1882,7 @@ jobs:
         shell: bash
         run: |
           "$RUNNER_TEMP/ci" aggregate --event "${{ github.event_name }}" \
-            --skip-ok lisp,test-hosted-pr --skip-ok-on pull_request=functional \
+            --skip-ok lisp,test-hosted-pr \
             lint=${{ needs.lint.result }} test=${{ needs.test.result }} functional=${{ needs.functional.result }} \
             lisp-changes=${{ needs.lisp-changes.result }} lisp=${{ needs.lisp.result }} e2e=${{ needs.e2e.result }} test-hosted-pr=${{ needs.test-hosted-pr.result }}
       - name: a fork's pull request is red here

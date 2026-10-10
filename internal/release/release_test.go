@@ -44,6 +44,14 @@ type fakeForge struct {
 	failTag   error
 	failHead  error
 	failFiles error
+	// certRuns is what certification.yml has done on each commit, keyed by
+	// sha. A zero fakeForge answers one completed green run on every commit,
+	// so a test that is not about certification still cuts; a test that IS
+	// about it sets this map (an empty map is "nothing vouches").
+	certRuns map[string][]CertificationRun
+	// dispatches names the refs DispatchCertification was called with, so a
+	// test can assert the dispatch happened exactly once.
+	dispatches []string
 	// headCalls counts the reads of the forge, so a test can assert that a
 	// gate said to be in front of the forge really is in front of it.
 	headCalls int
@@ -62,6 +70,21 @@ func (f *fakeForge) HeadSHA(_ context.Context, _, branch string) (string, error)
 }
 func (f *fakeForge) CheckRuns(_ context.Context, _, sha string) ([]CheckRun, error) {
 	return f.checks[sha], nil
+}
+func (f *fakeForge) CertificationRuns(_ context.Context, _, sha string) ([]CertificationRun, error) {
+	if f.certRuns == nil {
+		return []CertificationRun{{ID: 1, Status: "completed", Conclusion: "success", UpdatedAt: "2026-09-18T09:00:00Z"}}, nil
+	}
+	return f.certRuns[sha], nil
+}
+func (f *fakeForge) DispatchCertification(_ context.Context, _, ref string) error {
+	f.dispatches = append(f.dispatches, ref)
+	if f.certRuns != nil {
+		// A dispatch a forge accepted lands as a run that finishes green; the
+		// fake answers that at once so no test waits on a clock.
+		f.certRuns[ref] = []CertificationRun{{ID: 2, Status: "completed", Conclusion: "success", UpdatedAt: "2026-09-18T09:10:00Z"}}
+	}
+	return nil
 }
 func (f *fakeForge) Tags(_ context.Context, _ string) ([]string, error) { return f.tags, nil }
 func (f *fakeForge) Compare(_ context.Context, _, base, head string) ([]Commit, error) {

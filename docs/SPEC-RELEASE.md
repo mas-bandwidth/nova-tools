@@ -705,6 +705,20 @@ tier amounts sum exactly to the displayed total.
 `TestReceiptsAreReadOnlyForTheirWindow`, `TestCostByTierTakesTheRouteTierWhenTheRunRecordsNone`,
 `TestCostByTierAllocatesFractionalCentsWithoutChangingTheTotal`.*
 
+## 19. The chain: PR CI with the functional shards, certification, the cut, the tag, release.yml publishes
+
+A release is real only when the commit it names passed the same suite the merge queue runs and the tag's workflow published the release object. The chain has five links:
+
+1. **The pull request runs the functional shards.** `ci.yml`'s `functional` job runs on `pull_request` and `merge_group` alike, and both events deal the one `test-packages` functional list, so a red functional test is red on the pull request that made it, never first in the queue or at the cut. A shard that cannot finish under the per-package cap is split by the selection, never skipped.
+2. **Certification vouches for the commit.** `certification.yml` runs the slower tier — the whole-tree race run, the per-package Windows tests, the three-OS smoke of the shipped binary, the release dry run — and its aggregate job is `certification-ok`. Nothing certifies a commit on its own, so certifying a commit is a dispatch: `gh workflow run certification.yml --ref <tag-or-sha>`.
+3. **The cut refuses a commit certification.yml has not vouched for.** `nova-update release cut` reads certification.yml's runs on the commit and refuses until the latest-updated evidence is a completed success, naming the dispatch above. `--dispatch-certification` starts that run and waits for it. The `--no-dogfood-gate`, `--no-journey-gate` and `--no-spend-gate` waivers are evidence about other things; none of them covers certification.
+4. **The tag is annotated and triggers release.yml.** A successful cut writes the CHANGELOG section and creates the annotated tag carrying `sums=<sha256 of SHA256SUMS>`; the tag push is what starts `release.yml`.
+5. **release.yml publishes the release object.** Its `certified` job asks the same certification question again on the tagged commit; `build` compiles every shipped platform as `<tool>_<version>_<goos>_<goarch>`; `release` downloads the set, asserts the stamp, computes `SHA256SUMS` over the whole shipped set on the one machine that holds every artifact, and publishes the release object with the assets and that checksum file (`ghrelease attach`).
+
+**The one recovery path.** Creating the release by hand (`gh release create <tag>`) is the recovery when the workflow itself is broken, never the ordinary path. A cut's receipt says which path this release took: `publish=release.yml`.
+
+*Tests: `TestPRCIRunsEveryFunctionalShardTheMergeGroupRuns`, `TestTheReleaseChainIsCertificationThenCutThenRelease`, `TestCutRefusesAnUncertifiedCommitNamingTheDispatch`, `TestCutAcceptsACertifiedCommit`, `TestCutDispatchCertificationDispatchesOnceAndWaits`, `TestCertificationIsNotCoveredByTheWaivers`, `TestCertificationReasonTakesTheLatestEvidence`.*
+
 ## What this file does not cover
 
 The verbs themselves, the machines file, the retire rule, where `adopt` runs from and the security rules

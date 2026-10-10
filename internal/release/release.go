@@ -49,6 +49,19 @@ type CheckRun struct {
 	Conclusion string // success, failure, cancelled, timed_out, skipped, neutral
 }
 
+// CertificationRun is one certification.yml run on one commit, as the Actions
+// API reports it: the run id (the receipt a report can name), its status and
+// conclusion, and the RFC3339 timestamp of its last update. The timestamp is
+// read as a string and compared as one because the latest-evidence rule is an
+// ordering, not arithmetic: `ghrelease certified` reads the same field the same
+// way, so the cut and the release decide from the same evidence.
+type CertificationRun struct {
+	ID         int
+	Status     string // queued, in_progress, completed
+	Conclusion string // success, failure, cancelled, timed_out, skipped, neutral
+	UpdatedAt  string // RFC3339, as GitHub writes it
+}
+
 // Commit is one commit in a range, with the whole message: the subject carries
 // the pull request number a squash merge writes, and the body of an
 // integration batch carries the members it rolled up. Both are read from this
@@ -69,14 +82,25 @@ type PR struct {
 	Members []int
 }
 
-// Forge is the edge between this tool and GitHub. Seven questions, one gh
-// invocation each -- Tag is two, for the reason it gives -- and every one of
-// them is a read except Tag.
+// Forge is the edge between this tool and GitHub. Nine questions, one gh
+// invocation each -- Tag and DispatchCertification are the mutations, and every
+// other one is a read.
 type Forge interface {
 	// HeadSHA resolves a branch to the commit it points at.
 	HeadSHA(ctx context.Context, repo, branch string) (string, error)
 	// CheckRuns reads every check run recorded against one commit.
 	CheckRuns(ctx context.Context, repo, sha string) ([]CheckRun, error)
+	// CertificationRuns reads every certification.yml run recorded on one
+	// commit. It is a separate question from CheckRuns because certification
+	// is a separate suite, and it is the SAME question release.yml's certified
+	// job asks: does a green certification run vouch for this commit? The
+	// answer carries updated_at because a rerun of an older run id is newer
+	// evidence than a later run that was never rerun.
+	CertificationRuns(ctx context.Context, repo, sha string) ([]CertificationRun, error)
+	// DispatchCertification asks the forge to start certification.yml at ref.
+	// It is the one mutation besides Tag, and only `cut
+	// --dispatch-certification` performs it.
+	DispatchCertification(ctx context.Context, repo, ref string) error
 	// Tags lists the repository's tag names, unordered; the caller picks.
 	Tags(ctx context.Context, repo string) ([]string, error)
 	// Compare lists the commits in base..head, oldest first.

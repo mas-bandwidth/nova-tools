@@ -144,6 +144,42 @@ func (g *GH) CheckRuns(ctx context.Context, repo, sha string) ([]CheckRun, error
 	return runs, nil
 }
 
+// CertificationRuns reads certification.yml's runs on one commit, paginated,
+// the same ask release.yml's certified job makes and from the same endpoint:
+// `gh api repos/<repo>/actions/workflows/certification.yml/runs?head_sha=<sha>`.
+// The status is read rather than gh's exit code for the reason ghrelease
+// certified gives: gh exits 1 on an empty answer and on no answer alike, so an
+// empty list is an answer (nothing vouches) and an error is the forge not
+// answering.
+func (g *GH) CertificationRuns(ctx context.Context, repo, sha string) ([]CertificationRun, error) {
+	out, err := g.api(ctx, "api", "--paginate",
+		"repos/"+repo+"/actions/workflows/certification.yml/runs?head_sha="+sha+"&per_page=100",
+		"--jq", ".workflow_runs[] | {ID:.id, Status:.status, Conclusion:.conclusion, UpdatedAt:.updated_at}")
+	if err != nil {
+		return nil, err
+	}
+	var runs []CertificationRun
+	dec := json.NewDecoder(strings.NewReader(out))
+	for {
+		var r CertificationRun
+		if err := dec.Decode(&r); err == io.EOF {
+			break
+		} else if err != nil {
+			return nil, fmt.Errorf("cannot read gh's certification runs: %w", err)
+		}
+		runs = append(runs, r)
+	}
+	return runs, nil
+}
+
+// DispatchCertification starts certification.yml at ref. It is the one call
+// `cut` makes that changes anything but a tag, and only when a person asked for
+// it with --dispatch-certification.
+func (g *GH) DispatchCertification(ctx context.Context, repo, ref string) error {
+	_, err := g.api(ctx, "workflow", "run", "certification.yml", "--repo", repo, "--ref", ref)
+	return err
+}
+
 // Tags lists tag names. The caller picks the highest by semantic order; this
 // returns them in whatever order the forge gave them, because a lexical order
 // from the API is exactly the order that puts v0.15.10 before v0.15.3.

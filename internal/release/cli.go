@@ -19,7 +19,7 @@ import (
 // same command is the same release on either host. The one exception is
 // --receipts, and internal/release/dogfoodgate.go says at length why the gate
 // in front of the definition of done is worth it.
-const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--journeys <file> | --no-journey-gate --reason <why>] [--spend-store <addr>] [--spend-since <RFC3339>] [--spend-receipts <file>] [--no-spend-gate --reason <why>] [--dry-run] [--timeout <d>]
+const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--journeys <file> | --no-journey-gate --reason <why>] [--spend-store <addr>] [--spend-since <RFC3339>] [--spend-receipts <file>] [--no-spend-gate --reason <why>] [--dispatch-certification] [--dry-run] [--timeout <d>]
 nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--incremental] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why> | --gate report --reason <why>] [--timeout <d>]
 nova-update release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
 nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --repo <owner/name> | --stage <dir> --expect-sums <sha256> | --stage <dir> --expect-sums-from <file>] [--retire <dir>] [--platform <goos-goarch>] (--certify <machines.tsv> --certs <file> --standard <file> | --no-certify) [--dry-run] [--timeout <d>]
@@ -37,7 +37,8 @@ var CutNote = "cut classifies the range since the previous tag against the sensi
 	"Classify such a range from a complete local list instead -- `--local-diff <checkout>` runs `git diff --name-only <previous tag>...<head>` in that checkout, and `--paths-from <file>` writes the answer there for a later cut to read back. " +
 	"The tag is annotated, and the annotation carries `sums=<sha256 of SHA256SUMS>` when --sums names the built checksum file, which is the digest `adopt --repo` reads back. " +
 	"`build` writes one SHA256SUMS per platform, under <out>/<version>/<goos-goarch>/, and --sums takes one of them: the tag and the CHANGELOG section carry THAT platform's digest, and `adopt --repo` verifies that platform only. " +
-	"Every other platform the release built is adopted with --expect-sums-from <out>/<version>/<goos-goarch>/" + DigestFile + " on the host that built it, or --expect-sums <sha256> from the sums= field of its `RELEASE BUILT` line."
+	"Every other platform the release built is adopted with --expect-sums-from <out>/<version>/<goos-goarch>/" + DigestFile + " on the host that built it, or --expect-sums <sha256> from the sums= field of its `RELEASE BUILT` line. " +
+	"THE COMMIT MUST BE CERTIFIED: cut reads certification.yml's runs on the commit and REFUSES until a green one vouches for it -- the same check release.yml's certified job makes -- naming `gh workflow run certification.yml --ref <sha>`. --dispatch-certification starts that run and waits for it; the dogfood, journey and spend waivers never cover certification."
 
 // AdoptNote is what a person needs before their first adopt, and every sentence
 // of it is something the first dogfood pass had to find out by failing.
@@ -118,7 +119,12 @@ type options struct {
 	inventory, benches, ansible string
 	platforms                   platformList
 	dryRun                      bool
-	timeout                     time.Duration
+	// dispatchCertification is cut's --dispatch-certification: when
+	// certification.yml has not vouched for the commit, dispatch it at the
+	// commit and wait for the run to finish green, rather than refusing with
+	// the command that would. The waivers never cover this gate.
+	dispatchCertification bool
+	timeout               time.Duration
 	// The three that turn on certification after an adopt. They are named together or
 	// not at all: a certificates file with no registry names no machine's roles, and a
 	// registry with no standard has no hash to write.
@@ -252,6 +258,7 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		f.BoolVar(&o.dryRun, "dry-run", false, "decide and print, write nothing")
 		f.StringVar(&o.sums, "sums", "", "one platform's built SHA256SUMS, <out>/<version>/<goos-goarch>/SHA256SUMS; the section and the tag record its digest, and adopt --repo verifies that platform")
 		f.StringVar(&o.securityRead, "security-read", "", "the note id or comment url of the security reader's read, required when the range touches a sensitive path")
+		f.BoolVar(&o.dispatchCertification, "dispatch-certification", false, "dispatch certification.yml at the commit when it has not vouched for it and wait for the run to finish green; the waivers never cover certification")
 		f.StringVar(&o.localDiff, "local-diff", "", "a checkout to run `git diff --name-only <previous>...<head>` in, when the forge's compare is at its ceiling")
 		f.StringVar(&o.pathsFrom, "paths-from", "", "the path list to classify: written by --local-diff, read back without it")
 		addDogfoodFlags(f, &o, "docs/CLI.md beside --changelog")

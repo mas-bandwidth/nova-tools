@@ -4908,6 +4908,7 @@ The mechanisms: a **blocking read** waits in the store until the thing arrives (
 | table and where displays | sprint to a terminal (nova-table watch, where --watch) | timer poll | --every (1 s) | a display pull: a person's terminal, no party waits on it |
 | samplers and watchdogs | one machine to itself (host load, a card's live sample, the slot cleaner, the wall's process count, a job lease's heartbeat, the idle watch, the store round trip) | not a channel | 1 s to 30 s each | a measurement or a lease of one machine; no message or card moves |
 | waits and retries | one machine to itself (a process gone, a lock, a file steady, a server up, a push or open retried, a tick given up stopping) | not a channel | bounded by its caller | a wait on the machine's own state, or a backoff; no message or card moves |
+| release certification wait | the cut to the certification workflow it dispatched | not a channel | the workflow's runs asked again every 15 s, bounded by the cut's --timeout | a wait on an external service that pushes nothing into this process; no message or card moves |
 | nova-wake | bus to the coordinator (nova-wake serve) | removed | - | retired with the tool (fleet/retired-tools.txt); its binary is gone, so a unit that still names it restarts for ever: the loops play retires the unit (nova_retire_units) |
 
 The cards this audit cut, each one row of the table turned from a timer poll into a push; each one's DONE-WHEN is its row's mechanism changed here and its ledger line gone:
