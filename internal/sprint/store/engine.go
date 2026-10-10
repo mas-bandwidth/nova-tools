@@ -927,10 +927,11 @@ func withQueuedPromotion(s *sprint.Snapshot, q []sprint.QueuedChange) *sprint.Sn
 	}
 	all := s.Work.Props()
 	maps.Copy(all, props)
-	w := *s.Work
+	// a frozen copy, never *s.Work: the copy has its own indexes and their lock
+	w := s.Work.Frozen()
 	w.SetProps(all)
 	n := *s
-	n.Work = &w
+	n.Work = w
 	return &n
 }
 
