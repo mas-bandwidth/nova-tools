@@ -27,10 +27,60 @@ func kindValid(s string) bool {
 	return slices.Contains(Kinds, s)
 }
 func argv(s string) ([]string, error) {
-	if s == "" || strings.TrimSpace(s) != s || strings.Contains(s, "  ") || strings.ContainsAny(s, "\r\n\t\"'") {
+	if s == "" {
+		return nil, fmt.Errorf("argv requires single spaces and no quoting (put arguments needing spaces in a script and name the script)")
+	}
+	if strings.HasPrefix(s, "json:[") {
+		return parseJSONArgv(s)
+	}
+	if strings.Contains(s, "  ") || strings.ContainsAny(s, "\r\n\t\"'()") {
 		return nil, fmt.Errorf("argv requires single spaces and no quoting (put arguments needing spaces in a script and name the script)")
 	}
 	return strings.Split(s, " "), nil
+}
+
+func parseJSONArgv(s string) ([]string, error) {
+	if !strings.HasPrefix(s, "json:[") {
+		return nil, fmt.Errorf("argv requires single spaces and no quoting (put arguments needing spaces in a script and name the script)")
+	}
+	if !strings.HasSuffix(s, "]") || len(s) < 7 {
+		return nil, fmt.Errorf("argv requires single spaces and no quoting (put arguments needing spaces in a script and name the script)")
+	}
+	content := s[6 : len(s)-1]
+	if content == "" {
+		return []string{}, nil
+	}
+	var args []string
+	var cur strings.Builder
+	var inQuote bool
+	i := 0
+	for i < len(content) {
+		c := content[i]
+		if c == '"' {
+			if inQuote {
+				inQuote = false
+				args = append(args, cur.String())
+				cur.Reset()
+			} else {
+				inQuote = true
+			}
+		} else if inQuote {
+			if c == '\\' && i+1 < len(content) {
+				i++
+				cur.WriteByte(content[i])
+			} else {
+				cur.WriteByte(c)
+			}
+		}
+		i++
+	}
+	if inQuote {
+		return nil, fmt.Errorf("argv requires single spaces and no quoting (put arguments needing spaces in a script and name the script)")
+	}
+	if cur.Len() > 0 {
+		return nil, fmt.Errorf("argv requires single spaces and no quoting (put arguments needing spaces in a script and name the script)")
+	}
+	return args, nil
 }
 
 // ManifestError is every problem one read of a manifest found, in line order, each one
