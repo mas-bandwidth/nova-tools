@@ -90,6 +90,20 @@ type Beat struct {
 	// stop (fleet beat --stop-returns; docs/SPEC-SPRINT.md section 14, stop cancels jobs):
 	// start waits for zero. A friend's count is her report's (FriendReport.StopReturns).
 	StopReturns int `json:"stop_returns,omitempty"`
+	// NoRoom is a member's or reader's word that it starts no card, and why (fleet beat or
+	// queue --no-room: its free disk under its floor, its usage source's rest); "" while it
+	// starts cards. While its beat is fresh the deal gives it no card and the ask asks it no
+	// read (NoRoomNow), so a card is not dealt to a machine that hands it straight back.
+	NoRoom string `json:"no_room,omitempty"`
+}
+
+// NoRoomNow is the word of a beat fresh at now that its member or reader starts no card,
+// "" when it says none or is not fresh.
+func NoRoomNow(b Beat, now time.Time) string {
+	if !b.Fresh(now) {
+		return ""
+	}
+	return b.NoRoom
 }
 
 // FriendReport is what a friend's machinery reports with her beat, as a machine's beat

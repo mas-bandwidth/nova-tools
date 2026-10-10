@@ -403,6 +403,33 @@ func TestAReadersBeatAsksForNoPacket(t *testing.T) {
 	assert.Zero(t, s.lastHanded())
 }
 
+// While Room says no (the disk floor), a reader's beat and its pass's queue carry its word
+// (--no-room), so the sprint asks it no read; the first tick Room says yes, they carry none.
+func TestAReadersBeatCarriesItsNoRoom(t *testing.T) {
+	t.Parallel()
+	s := &packetServer{epoch: 7}
+	room, why := false, "free disk 0.0 GiB under the floor of 10 GiB"
+	g := packetRig(Config{As: "r", Width: 2, Reader: true, Room: func() (bool, string) { return room, why }}, s)
+	s.forget()
+	require.NoError(t, g.m.Beat())
+	assert.Equal(t, []string{"queue --as r --json --packets 0"}, s.queues(), "no word before the first tick")
+	_, err := g.tick(t)
+	require.NoError(t, err)
+	s.forget()
+	require.NoError(t, g.m.Beat())
+	assert.Equal(t, []string{"queue --as r --json --packets 0 --no-room " + why}, s.queues())
+	s.forget()
+	_, err = g.tick(t)
+	require.NoError(t, err)
+	assert.Contains(t, s.queues()[0], " --no-room "+why, "the pass's queue is its beat too")
+	room = true
+	_, err = g.tick(t)
+	require.NoError(t, err)
+	s.forget()
+	require.NoError(t, g.m.Beat())
+	assert.Equal(t, []string{"queue --as r --json --packets 0"}, s.queues(), "the word is gone once Room says yes")
+}
+
 // The brief a card file begins with is the brief alone: the sprint's mechanics, a read's
 // worker's report among them, are cut off (the decide read asks over it, as its bars were
 // calibrated on the work card alone).

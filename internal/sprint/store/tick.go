@@ -1066,7 +1066,7 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	if req.Sessions, err = pinned.FriendSessions(ctx); err != nil {
 		return last, err
 	}
-	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, runSeq: m.RunSeq, snap: &first, queues: map[string]int{}, twin: twin, readers: first.ReaderStates}
+	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, runSeq: m.RunSeq, snap: &first, queues: map[string]int{}, twin: twin, readers: first.ReaderStates, noRoom: first.NoRoom}
 	defer func() { res.RouteTrips = t.routes.Trips }()
 	updates := st.Updates
 	if updates == nil {
@@ -1208,6 +1208,9 @@ type tickRun struct {
 	// readers is each reader's state as the tick's first read found it (nil: a
 	// store that keeps no beats).
 	readers map[string]string
+	// noRoom is every member and reader whose fresh beat said it starts no card, as the
+	// tick's first read found it (sprint.Snapshot.NoRoom)
+	noRoom map[string]string
 }
 
 // update is one table's update: its queue drained (the entries other updates
@@ -1236,6 +1239,11 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		if view != nil && view.ReaderStates == nil && t.readers != nil {
 			v := *view
 			v.ReaderStates = t.readers
+			view = &v
+		}
+		if view != nil && view.NoRoom == nil && t.noRoom != nil {
+			v := *view
+			v.NoRoom = t.noRoom
 			view = &v
 		}
 		if view != nil && view.Friends == nil && t.req.Friends != nil {
@@ -1325,6 +1333,9 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		// the ask, and the parts that ask what the ask does, plan with the readers' states
 		step.Readers = part.Name == "ask" || part.Name == "check" || part.Name == sprint.PartLevelReads
 		step.ReaderStates = t.readers
+		// every part plans with who starts no card as the tick read it (the deal, the
+		// level, the ask: sprint.Snapshot.NoRoom)
+		step.NoRoom = t.noRoom
 		// the machine's state is read with the step's fence: STOPPED halts the
 		// tick before the part begins
 		step.Halts = true

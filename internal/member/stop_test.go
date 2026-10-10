@@ -394,6 +394,26 @@ func TestBeatAlwaysSendsStopReturnsFlagIncludingZero(t *testing.T) {
 	assert.Equal(t, []string{"fleet beat m --stop-returns 0"}, s.lines("beat"))
 }
 
+// While Room says no (the disk floor), the member's fleet beat carries its word (--no-room),
+// so the deal gives it no card; the first tick Room says yes, the beat carries none.
+func TestBeatCarriesNoRoomWhileRoomSaysNo(t *testing.T) {
+	t.Parallel()
+	room, why := false, "free disk 0.0 GiB under the floor of 10 GiB"
+	m, s, _, _ := stopRig(Config{As: "m", Width: 2, Room: func() (bool, string) { return room, why }})
+	s.set("queue", 0, queueWith(t, "RUNNING", 7))
+	_, err := m.Tick(time.Unix(0, 0))
+	require.NoError(t, err)
+	s.reset()
+	require.NoError(t, m.Beat())
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --no-room " + why}, s.lines("beat"))
+	room = true
+	_, err = m.Tick(time.Unix(10, 0))
+	require.NoError(t, err)
+	s.reset()
+	require.NoError(t, m.Beat())
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0"}, s.lines("beat"))
+}
+
 // A reader member restarted mid-stop: every reading card under its row with no child of ours
 // is handed back at its claim generation (not attempt), card@0 is guarded and never emitted,
 // and the cards are not recovered when RUNNING again.

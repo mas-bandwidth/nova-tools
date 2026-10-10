@@ -109,7 +109,7 @@ func (ta *testApp) beat() {
 		if quiet {
 			continue
 		}
-		_, err := st.ReaderBeat(context.Background(), r)
+		_, err := st.ReaderBeat(context.Background(), r, "")
 		require.NoError(ta.t, err)
 	}
 }
