@@ -552,6 +552,8 @@ func TestAHeadLineIsNotAPushProof(t *testing.T) {
 		"STEP 2. Check friendcards.go ls-remote logic",
 		"STEP 3. git push origin HEAD",
 		"STEP 4. The git shim records a push; the member makes both from outside the wall",
+		"STEP 5. The result equals the head of the list",
+		"STEP 6. The label matches the head of the table",
 	} {
 		got := scanFindings(t, line)
 		assert.Empty(t, got, "%q draws %v, want none", line, got)

@@ -186,7 +186,10 @@ var childScans = []childScan{
 		// or report an `ls-remote`, to show the remote tip `equals`/`matches` HEAD, to report a
 		// `Parent:` sha, or for `proof of push` is refused; a friend report's `Head: <40-hex>`
 		// line, prose naming friendcards.go's own ls-remote, and the bare word `push` are not.
-		RE:     childCmd(`(?i)\b(?:ls-remote\b|proof[ \t]+of[ \t]+push\b|parent[ \t]*:|remote[ \t]+tip\b.*?\b(?:equals|matches)\b|(?:equals|matches)\b.*?\bhead\b)`),
+		// The remote-tip reading ties `equals`/`matches` to the remote tip, so a line where
+		// `equals` or `matches` only happens to precede a standalone `head` (the head of a
+		// list) is no proof.
+		RE:     childCmd(`(?i)\b(?:ls-remote\b|proof[ \t]+of[ \t]+push\b|parent[ \t]*:|remote[ \t]+tip\b.*?\b(?:equals|matches)\b)`),
 		Remedy: "the machine reads your branch; never prove the push in prose",
 		Allow: func(line string, at int) bool {
 			low := strings.ToLower(line)
