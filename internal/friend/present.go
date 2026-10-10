@@ -151,6 +151,22 @@ func (d *Daemon) LiveQueue() []QueueLine {
 	return out
 }
 
+// jobsInQueue is the job identity of each live-queue line the present text names.
+// A line that is not an inbox brief names no job, so it retires no nudge.
+func jobsInQueue(queue []QueueLine) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, q := range queue {
+		job, ok := jobFromBriefLine(q.Brief)
+		if !ok || seen[job] {
+			continue
+		}
+		seen[job] = true
+		out = append(out, job)
+	}
+	return out
+}
+
 // PresentText is the present turn's text: the pong line first while a challenge is open, the
 // daemon's word about the coordinator, then who she is and who has the seat, her live queue,
 // the skipped line, and the newest coordinator note (as the session reads it under the seat's
@@ -204,7 +220,9 @@ func (l *loop) presentOwed(now time.Time) bool {
 	if l.presentDue {
 		return true
 	}
-	waiting := len(l.hand) > 0 || len(l.dealt) > 0 || (l.busy != nil && !l.busy.running && !l.busy.present)
+	// A dealt line that persistStagedBriefs has moved into the pending ledger is
+	// still a written brief. The present comes before that nudge after StaleAfter.
+	waiting := len(l.hand) > 0 || l.briefWaiting(now) || (l.busy != nil && !l.busy.running && !l.busy.present)
 	return l.mode == ModeBatch && waiting && now.Sub(l.delivered) >= StaleAfter
 }
 
@@ -332,7 +350,7 @@ func (l *loop) startPresent(now time.Time, withTurn bool) {
 		return
 	}
 	queue := d.LiveQueue()
-	t := &turn{present: true, subjects: fmt.Sprintf("%q", "present")}
+	t := &turn{present: true, subjects: fmt.Sprintf("%q", "present"), covered: jobsInQueue(queue)}
 	var note *bus.Message
 	if plan.Note != nil {
 		m := plan.Note.Message()

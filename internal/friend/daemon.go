@@ -120,6 +120,9 @@ type Daemon struct {
 	// answer (ParseMachine), is STOPPED: the lanes cancel what runs, owe and send
 	// stop-returns, and start nothing (stop.go). nil: never stopped.
 	MachineStopped func() bool
+	MachinePaused  func() bool
+	MachineKnown   func() bool
+	LaunchAllowed  func() bool
 	// StopReturn sends one stop-return (StopReturnArgv) to the sprint server; nil sends it
 	// through Sprint.
 	StopReturn func(ctx context.Context, argv []string) error
@@ -319,6 +322,10 @@ type turn struct {
 	capped   bool      // the daemon ended it: its card's wall reached its lane's cap (lane_cap.go)
 	held     bool      // the daemon ended it: a provider failure stopped every lane (lane_parity.go)
 	byStop   bool      // the daemon ended it: the machine's stop cancelled every lane (stop.go)
+	covered  []string  // jobs named by a successful present
+	nudge    bool      // batch work nudge, excluding request/present/control checks
+	dealt    []string  // brief lines held by this work nudge
+	attempt  int       // durable advisory delivery attempt
 	tail     *outputTail
 	stamped  time.Time // when the daemon last stamped progress on the turn's card (stampProgress)
 	subjects string
@@ -551,21 +558,30 @@ type loop struct {
 	reads        *readSet
 	mode         string // the mode the daemon delivers in now
 	saidNoLanes  bool
-	dealt        []string        // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
-	wake         bool            // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
-	saidRefusal  string          // the card runner's refusal last recorded, "" when it runs
-	tag          string          // this daemon's tag in its lanes' names on a lane mark (laneTag, one_lane.go)
-	following    atomic.Bool     // a Mailbox.Follow runs
-	followWG     sync.WaitGroup  // it, waited for when Run ends
-	seatHolder   string          // the seat holder as last read; empty while unknown
-	seatRead     time.Time       // when it was read; zero before the first read
-	presentDue   bool            // the present is owed: the session started, its id changed, or she asked (present.go)
-	presentAt    time.Time       // the store's time of the last present, named in the reason
-	lost         map[string]bool // entries the present superseded whose ack failed: superseded again when the claim hands them in
-	presentCarry *bus.Entry      // the note a present turn that failed carried, carried again by the next
-	presentRetry time.Time       // when a present whose turn failed is tried again
-	delivered    time.Time       // when the session last took a turn: the stale bound runs from it
-	session      string          // the session id as last read (Session)
+	dealt             []string        // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
+	owedBriefs        []string        // brief lines retained for a replayable advisory nudge
+	owedAttempt       int             // durable attempt of retained brief lines
+	workAttempt       int             // last durable advisory attempt
+	nudgeDebtLoaded   bool            // this process has read the durable ledger
+	nudgeDebtBlocked  bool            // unknown/corrupt debt holds delivery without rewriting
+	nudgeRecovered    bool            // staged/deferred records recovered once
+	nudgeBadBriefSaid bool            // unparsable brief refusal already recorded
+	nudgeLedger       nudgeLedger     // durable advisory phases, never native-start authority
+	coverHold         []string        // successful present coverage awaiting durable save
+	wake              bool            // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
+	saidRefusal       string          // the card runner's refusal last recorded, "" when it runs
+	tag               string          // this daemon's tag in its lanes' names on a lane mark (laneTag, one_lane.go)
+	following         atomic.Bool     // a Mailbox.Follow runs
+	followWG          sync.WaitGroup  // it, waited for when Run ends
+	seatHolder        string          // the seat holder as last read; empty while unknown
+	seatRead          time.Time       // when it was read; zero before the first read
+	presentDue        bool            // the present is owed: the session started, its id changed, or she asked (present.go)
+	presentAt         time.Time       // the store's time of the last present, named in the reason
+	lost              map[string]bool // entries the present superseded whose ack failed: superseded again when the claim hands them in
+	presentCarry      *bus.Entry      // the note a present turn that failed carried, carried again by the next
+	presentRetry      time.Time       // when a present whose turn failed is tried again
+	delivered         time.Time       // when the session last took a turn: the stale bound runs from it
+	session           string          // the session id as last read (Session)
 }
 
 // beatState is the cadence worker's last result. The main loop owns Status and
@@ -725,28 +741,36 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.mode = mode
 		}
 		d.status.Mode = l.mode
+		if l.mode == ModeBatch {
+			l.recoverNudgeDebt(now)
+		}
 		l.inboxStep(now) // before the lanes: a card written this step is handed this step
+		l.flushStageDealt(now)
+		l.persistStagedBriefs(now)
+		l.parkWorkNudges(now)
+		if err := l.retryPresentCoverage(now); err != nil && d.Record != nil {
+			d.Record(fmt.Sprintf("%s nudge debt: present coverage not durable, pending kept: %s", now.UTC().Format(time.RFC3339), err.Error()))
+		}
 		switch {
 		case l.broken:
 		case !proven: // the push rule: nothing goes into a session that has not answered
 		case l.mode == ModeOneShot:
-			if l.presentOwed(now) {
+			if l.presentOwed(now) && !l.holdPresent(now) {
 				l.startPresent(now, false)
 			}
 			l.laneStep(now, width)
 			l.readStep(now)
 			d.status.Lanes = l.lanes.said(width)
-		case (l.busy == nil || !l.busy.running) && l.presentOwed(now):
-			l.startPresent(now, true)
-		case l.busy == nil && len(l.hand) > 0:
+		case (l.busy == nil || !l.busy.running) && l.presentOwed(now) && !l.batchLaneDebt():
+			if !l.holdPresent(now) {
+				l.startPresent(now, true)
+			}
+		case l.busy == nil && len(l.hand) > 0 && !l.batchLaneDebt():
 			l.startBatch(now)
-		case l.busy == nil && len(l.dealt) > 0 && !d.machineStopped(): // NoNudgeWhileStopped
-			l.startDealt(now)
-		case l.busy == nil && l.wake && drained && !d.machineStopped():
+		case l.startOwedDealt(now): // durable advisory, behind the existing machine and batch-lane fences
+		case l.busy == nil && l.wake && drained: // proof control stays live during STOP
 			l.startWake(now)
-		case l.busy != nil && !l.busy.running && !l.retry.IsZero() && !now.Before(l.retry):
-			l.retry = time.Time{}
-			l.startTurn(l.busy, now, l.deliverBatch(l.busy))
+		case !l.batchLaneDebt() && l.retryDeferred(now): // retain the existing batch-lane recovery fence
 		}
 		if l.broken && !l.told {
 			l.told = d.tellBroken(ctx, l.b, fmt.Sprintf("The provider refused %d turns in a row the same way. The daemon delivers nothing into the session until it restarts; every message stays pending, none given up. Renew the session, then restart the daemon (nova-friend install again, or launchctl kickstart -k gui/<uid>/com.nova.friend-%s).", l.brokenAfter, d.Friend))
@@ -861,7 +885,7 @@ func (l *loop) idle(now time.Time) {
 		d.Record(fmt.Sprintf("%s not delivered: %s has no deliver command: idle wake (%d cards, nothing written for %s)", now.UTC().Format(time.RFC3339), d.Harness, len(d.cards), after))
 	case wake:
 		// the pong line heads it while a challenge is open; the word about the coordinator rides with messages, never in a wake
-		t := &turn{subjects: fmt.Sprintf("%q", "idle wake")}
+		t := &turn{subjects: fmt.Sprintf("%q", "idle wake"), nudge: true}
 		if d.m.Challenge != Quiet && d.PongCommand != nil {
 			t.text = "Run this now, first, exactly as written: " + d.PongCommand(d.m.Nonce) + "\nThen read on.\n\n"
 		}
@@ -1472,6 +1496,234 @@ func (l *loop) remember(t *turn) {
 	}
 }
 
+// workNudge is a batch turn that tells the session to start dealt cards or continue held work.
+// A message, a request, a present, and a session-check wake are not work nudges.
+func (t *turn) workNudge() bool {
+	return t != nil && t.nudge && !t.present && len(t.msgs) == 0
+}
+
+// machineWord is the authorization a deferred-start marker records.
+// RUNNING, PAUSED, STOPPED, or UNKNOWN. It does not claim a native guard.
+func (d *Daemon) machineWord() string {
+	if !d.machineKnown() {
+		return "UNKNOWN"
+	}
+	if d.machineStopped() {
+		return "STOPPED"
+	}
+	if d.machinePaused() {
+		return "PAUSED"
+	}
+	if d.LaunchAllowed != nil && !d.LaunchAllowed() {
+		return "UNKNOWN"
+	}
+	return "RUNNING"
+}
+
+func (d *Daemon) machinePaused() bool {
+	return d.MachinePaused != nil && d.MachinePaused()
+}
+
+func (d *Daemon) machineKnown() bool {
+	return d.MachineKnown == nil || d.MachineKnown()
+}
+
+func (d *Daemon) machineMayLaunch() bool {
+	if d.LaunchAllowed != nil {
+		return d.LaunchAllowed()
+	}
+	return d.machineKnown() && !d.machineStopped() && !d.machinePaused()
+}
+
+func (l *loop) batchLaneDebt() bool {
+	s := l.lanes
+	if s == nil || !s.loaded {
+		return false
+	}
+	if len(s.state.Started) > 0 {
+		return true
+	}
+	for _, r := range s.state.StopReturns {
+		if r.Owed() {
+			return true
+		}
+	}
+	for _, ln := range s.lanes {
+		if ln.card != nil || ln.t != nil || ln.opening {
+			return true
+		}
+	}
+	return false
+}
+
+func deferredStartLine(attempt int, event, auth string, now time.Time) string {
+	return fmt.Sprintf("%s deferred-start attempt=%d event=%s auth=%s", now.UTC().Format(time.RFC3339), attempt, event, auth)
+}
+
+func (l *loop) traceDeferred(attempt int, event, auth string, now time.Time) {
+	if l.d.Record == nil {
+		return
+	}
+	l.d.Record(deferredStartLine(attempt, event, auth, now))
+}
+
+// holdPresent says startPresent must not run. present nils dealt and busy.
+// Unpersisted brief lines, and a work nudge whose ledger row is missing or
+// still inflight, would be gone for good. A deferred or pending row can be
+// replayed, so a present may supersede that turn.
+func (l *loop) holdPresent(now time.Time) bool {
+	if len(l.dealt) > 0 || l.nudgeTurnMustStay(l.busy) {
+		if l.d.Record != nil {
+			l.d.Record(fmt.Sprintf("%s present: held, a work nudge is not durable yet", now.UTC().Format(time.RFC3339)))
+		}
+		return true
+	}
+	return false
+}
+
+// nudgeTurnMustStay is true when dropping this turn would lose brief debt.
+// An idle wake has no briefs. A pending, deferred, or accepted row can be
+// recovered from the ledger.
+func (l *loop) nudgeTurnMustStay(t *turn) bool {
+	if t == nil || t.running || !t.workNudge() || len(t.dealt) == 0 {
+		return false
+	}
+	for _, r := range l.nudgeLedger.Records {
+		if r.Attempt != t.attempt {
+			continue
+		}
+		return r.Phase != nudgePending && r.Phase != nudgeDeferred && r.Phase != nudgeAccepted
+	}
+	return true
+}
+
+// parkWorkNudges holds a deferred work nudge while the machine cannot launch
+// or batch lane debt is unsettled. Brief lines move to owedBriefs, are written
+// to nudge-debt.json, and are not acked. A message, a request, and a
+// session-check wake stay in hand. This is not an atomic native-start guard.
+func (l *loop) parkWorkNudges(now time.Time) {
+	// The machine word is a lane's stop signal. Reading it with no nudge
+	// waiting shifts the read a surrender uses, and the card is never claimed.
+	if l.busy == nil || l.busy.running || !l.busy.workNudge() {
+		return
+	}
+	if l.d.machineMayLaunch() && !l.batchLaneDebt() {
+		return
+	}
+	if l.nudgeDebtBlocked {
+		return
+	}
+	var subject string
+	var attempt int
+	if l.busy != nil && !l.busy.running && l.busy.workNudge() {
+		subject = l.busy.subjects
+		if len(l.busy.dealt) == 0 {
+			// An idle wake is a nudge with no brief. It is not ledger debt.
+			// Dropping it frees the slot; idle speaks again when launch is allowed.
+			l.busy, l.retry, l.deferrals, l.deferSaid = nil, time.Time{}, 0, time.Time{}
+			if l.d.Record != nil {
+				l.d.Record(fmt.Sprintf("%s subject=%s idle wake held: no brief debt; not delivered", now.UTC().Format(time.RFC3339), subject))
+			}
+			subject = ""
+		} else {
+			marked, err := l.markNudgePhase(l.busy.attempt, nudgeDeferred, l.busy.dealt, now)
+			if err != nil {
+				if l.d.Record != nil {
+					l.d.Record(fmt.Sprintf("%s nudge debt: deferred not durable, turn kept: %s", now.UTC().Format(time.RFC3339), err.Error()))
+				}
+				return
+			}
+			attempt = marked
+			l.owedAttempt = marked
+			l.owedBriefs = append([]string{}, l.busy.dealt...)
+			l.busy, l.retry, l.deferrals, l.deferSaid = nil, time.Time{}, 0, time.Time{}
+		}
+	}
+	l.persistStagedBriefs(now)
+	if subject == "" {
+		return
+	}
+	if attempt > 0 {
+		l.traceDeferred(attempt, "work_retry_held", l.d.machineWord(), now)
+	}
+	if l.d.Record == nil {
+		return
+	}
+	l.d.Record(fmt.Sprintf("%s subject=%s work nudge held: machine does not authorize a launch or batch lane debt is unsettled; owed briefs=%d; not delivered, not acked",
+		now.UTC().Format(time.RFC3339), subject, len(l.owedBriefs)))
+}
+
+// startOwedDealt delivers parked or newly written briefs once the machine
+// authorizes a launch and no batch lane debt remains. It does nothing while a
+// turn is busy, launch is held, or an earlier one-shot claim is unsettled.
+func (l *loop) startOwedDealt(now time.Time) bool {
+	if l.passive || l.busy != nil || !l.d.machineMayLaunch() || l.batchLaneDebt() || l.nudgeDebtBlocked || len(l.coverHold) > 0 || !l.loadNudgeLedger(now) || len(l.dealt) > 0 {
+		return false
+	}
+	for _, r := range l.nudgeLedger.Records {
+		lines := l.replayableBriefs(r)
+		if len(lines) == 0 {
+			continue
+		}
+		attempt, err := l.markNudgePhase(r.Attempt, nudgeInflight, lines, now)
+		if err != nil {
+			return false
+		}
+		l.owedAttempt = attempt
+		l.dealt = lines
+		l.startDealt(now)
+		return true
+	}
+	return false
+}
+
+// retryDeferred retries a batch turn whose delivery was deferred. A work nudge
+// is held instead when the machine cannot launch or batch lane debt is
+// unsettled. Control turns still retry. work_retry_begin is that retry, and
+// it is not native_start.
+func (l *loop) retryDeferred(now time.Time) bool {
+	if l.busy == nil || l.busy.running || l.retry.IsZero() || now.Before(l.retry) {
+		return false
+	}
+	if l.busy.workNudge() && (!l.d.machineMayLaunch() || l.batchLaneDebt()) {
+		l.parkWorkNudges(now)
+		return true
+	}
+	if l.busy.workNudge() && len(l.busy.dealt) > 0 {
+		lines := l.replayableBriefs(nudgeRecord{Phase: nudgeDeferred, Briefs: l.busy.dealt})
+		if l.passive || len(lines) != len(l.busy.dealt) {
+			if !l.passive && !l.nudgeTurnMustStay(l.busy) {
+				// Durable deferred debt retains all briefs; the next pass can
+				// split current work into its own delivery without stale text.
+				l.busy, l.retry = nil, time.Time{}
+			}
+			return true
+		}
+		// The earlier defer is no longer the truth once this delivery begins.
+		// Inflight is uncertain: a crash here is held, not replayed. A failed
+		// write does not launch. nil briefs keep a stored record intact; the
+		// second call creates one only when this attempt is not there yet.
+		// An idle wake has no briefs and must not enter this write.
+		if _, err := l.markNudgePhase(l.busy.attempt, nudgeInflight, nil, now); err != nil {
+			marked, err2 := l.markNudgePhase(l.busy.attempt, nudgeInflight, l.busy.dealt, now)
+			if err2 != nil {
+				if l.d.Record != nil {
+					l.d.Record(fmt.Sprintf("%s nudge debt: inflight not durable, retry not launched: %s", now.UTC().Format(time.RFC3339), err2.Error()))
+				}
+				l.retry = now.Add(RecheckEvery)
+				return true
+			}
+			l.busy.attempt = marked
+		}
+	}
+	if l.busy.nudge && l.busy.attempt > 0 {
+		l.traceDeferred(l.busy.attempt, "work_retry_begin", l.d.machineWord(), now)
+	}
+	l.retry = time.Time{}
+	l.startTurn(l.busy, now, l.deliverBatch(l.busy))
+	return true
+}
+
 // batchDone is the batch turn's end: a session that cannot take a turn
 // (SessionRefused) breaks the session at once and keeps the turn in hand, as
 // a deferral does, tried again; anything else settles its messages, and a
@@ -1488,6 +1740,15 @@ func (l *loop) batchDone(r result, now time.Time) {
 	if errors.As(r.err, &deferred) && !r.t.stopped { // not a failure: the turn stays in hand, tried again, counted toward nothing
 		l.deferrals++
 		l.retry = now.Add(RecheckEvery)
+		if r.t.nudge && r.t.attempt > 0 {
+			// Explicit deferred is durable before anything drops the turn. A failed
+			// write leaves inflight, which a restart holds and does not replay.
+			if _, err := l.markNudgePhase(r.t.attempt, nudgeDeferred, r.t.dealt, now); err != nil && d.Record != nil {
+				d.Record(fmt.Sprintf("%s nudge debt: deferred not durable, turn kept: %s", now.UTC().Format(time.RFC3339), err.Error()))
+			}
+			// The session did not take the turn. This is not native_start.
+			l.traceDeferred(r.t.attempt, "delivery_deferred", d.machineWord(), now)
+		}
 		if l.deferrals == 1 || now.Sub(l.deferSaid) >= DeferredSaidEvery {
 			l.deferSaid = now
 			d.Record(fmt.Sprintf("%s subject=%s deferred=%d: %s; tried again every %s, counted toward nothing (said once per %s)",
@@ -1506,6 +1767,25 @@ func (l *loop) batchDone(r result, now time.Time) {
 		line += fmt.Sprintf(" stopped=%q", "no output for "+l.silentStop.String())
 	}
 	ok := r.err == nil && r.exit == 0 && !r.t.stopped
+	if ok && r.t.present {
+		// Exit 0 is the replacement. Only jobs named in that text are retired,
+		// and only after the write lands. A failed write keeps them pending.
+		if err := l.supersedeCoveredNudges(r.t.covered, now); err != nil {
+			line += "\n" + fmt.Sprintf("%s nudge debt: present coverage not durable, pending kept: %s", now.UTC().Format(time.RFC3339), err.Error())
+			l.coverHold = coverUnion(l.coverHold, r.t.covered)
+		} else {
+			l.coverHold = coverWithout(l.coverHold, r.t.covered)
+		}
+	}
+	if ok && r.t.nudge && r.t.attempt > 0 {
+		// The tombstone is written before this turn is forgotten. A failed write
+		// leaves inflight, which a restart holds and does not replay.
+		if _, err := l.markNudgePhase(r.t.attempt, nudgeAccepted, nil, now); err != nil {
+			line += "\n" + fmt.Sprintf("%s nudge debt: accepted not durable, inflight held: %s", now.UTC().Format(time.RFC3339), err.Error())
+		}
+		// Exit 0 accepted the delivery. It is not a native queue or a native start.
+		line += "\n" + deferredStartLine(r.t.attempt, "delivery_accepted", d.machineWord(), now)
+	}
 	line += l.settle(r.t, ok, r.err, now)
 	l.delivered = now // the session took a turn: the stale bound runs from here
 	l.presentEnded(r.t, ok, now)

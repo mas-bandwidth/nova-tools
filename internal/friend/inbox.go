@@ -410,7 +410,19 @@ func (l *loop) startDealt(now time.Time) {
 		d.Record(fmt.Sprintf("%s not delivered: %s has no deliver command: %d card(s) dealt into her inbox", now.UTC().Format(time.RFC3339), d.Harness, len(lines)))
 		return
 	}
-	t := &turn{subjects: fmt.Sprintf("%q", fmt.Sprintf("%d card(s) dealt", len(lines)))}
+	resumed := l.owedAttempt != 0
+	attempt := l.owedAttempt
+	if attempt == 0 {
+		l.workAttempt++
+		attempt = l.workAttempt
+	}
+	l.owedAttempt = 0
+	kept := append([]string{}, lines...)
+	t := &turn{subjects: fmt.Sprintf("%q", fmt.Sprintf("%d card(s) dealt", len(lines))), nudge: true, dealt: kept, attempt: attempt}
+	if !resumed {
+		l.traceDeferred(attempt, "brief_staged", d.machineWord(), now)
+	}
+	l.traceDeferred(attempt, "work_delivery_begin", d.machineWord(), now)
 	if d.m.Challenge != Quiet && d.PongCommand != nil {
 		t.text = "Run this now, first, exactly as written: " + d.PongCommand(d.m.Nonce) + "\nThen read on.\n\n"
 	}
