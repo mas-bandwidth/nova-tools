@@ -41,6 +41,20 @@
           {{ (nova_os ~ '-' ~ nova_arch) if (nova_os is defined and nova_arch is defined)
              else ((ansible_system | lower) ~ '-' ~ ({'x86_64': 'amd64', 'amd64': 'amd64', 'aarch64': 'arm64', 'arm64': 'arm64'}[ansible_architecture] | default(ansible_architecture))) }}
 
+    - name: the sops binary, read even with no staged candidate
+      ansible.builtin.stat: { path: "{{ item }}" }
+      loop: "{{ nova_sops_candidates }}"
+      register: tools_sops
+      check_mode: false
+      when: nova_sops is not defined
+
+    - name: the sops the seat is opened with
+      ansible.builtin.set_fact:
+        nova_sops: >-
+          {{ nova_sops if nova_sops is defined else (tools_sops.results | default([]) | selectattr('stat', 'defined')
+             | selectattr('stat.exists') | map(attribute='item') | first | default('')) }}
+      when: not ansible_check_mode or tools_sops is defined
+
 - name: the build, once per platform
   hosts: localhost
   gather_facts: false
@@ -89,6 +103,8 @@
   gather_facts: false
   vars:
     tools_stage: "{{ nova_release_dir }}/{{ nova_version }}/{{ nova_platform }}"
+    tools_selection: "{{ nova_release_dir }}/held-selection/{{ nova_version }}/{{ nova_platform }}"
+    tools_install_root: "{{ nova_release_dir ~ '/held-selection' if nova_tool_hold | length > 0 else nova_release_dir }}"
     tools_was_version: "{{ tools_was.content | default('') | b64decode | trim }}"
   tasks:
     - name: the build installed now (the build fact)
@@ -195,18 +211,7 @@
             seat_cand: >-
               {{ tools_stage if seat_staged.stat.exists else (seat_built if seat_unstaged.stat.exists
                  and (ansible_connection | default('')) == 'local' else '') }}
-
-        - name: "seat: the sops binary (nova_sops, else the first of nova_sops_candidates on the machine)"
-          ansible.builtin.stat: { path: "{{ item }}" }
-          loop: "{{ nova_sops_candidates }}"
-          register: seat_sops
-          when: nova_sops is not defined and seat_cand != ''
-
-        - name: "seat: the sops the seat is opened with"
-          ansible.builtin.set_fact:
-            nova_sops: >-
-              {{ nova_sops if nova_sops is defined else (seat_sops.results | default([]) | selectattr('stat', 'defined')
-                 | selectattr('stat.exists') | map(attribute='item') | first | default('')) }}
+          when: not ansible_check_mode or (seat_staged is defined and seat_unstaged is defined)
 
         - name: "seat: the host read by the candidate (its nova-sprint live)"
           ansible.builtin.command:
@@ -227,14 +232,14 @@
             that: seat_before.rc == 0 and seat_before.stdout is match('[{]')
             fail_msg: >-
               ADOPT REFUSED step=live host={{ inventory_hostname }}: the candidate's nova-sprint live printed no manifest
-              ({{ (seat_before.stderr or seat_before.stdout) | default('') | truncate(200) }}); nothing was installed or loaded
+              ({{ ((seat_before.stderr | default('')) or (seat_before.stdout | default(''))) | truncate(200) }}); nothing was installed or loaded
             quiet: true
           when: seat_cand != ''
 
         - name: "seat: what the host runs, before"
           ansible.builtin.set_fact:
             seat_was: "{{ seat_before.stdout | from_json }}"
-          when: seat_cand != ''
+          when: seat_cand != '' and (not ansible_check_mode or seat_before is defined)
 
         - name: "server: the candidate's shadow tick on the store, read-only (its nova-sprint server switch --dry-run)"
           ansible.builtin.command:
@@ -345,7 +350,7 @@
             fail_msg: >-
               ADOPT REFUSED step=friends host={{ inventory_hostname }}: the candidate's nova-friend install --dry-run refuses the flags of
               {{ seat_planned.results | rejectattr('rc', 'equalto', 0) | map(attribute='item.friend') | join(', ') }}
-              ({{ (seat_planned.results | rejectattr('rc', 'equalto', 0) | first).stderr | default('') | truncate(300) }}); nothing was installed or loaded
+              ({{ ((seat_planned.results | default([]) | rejectattr('rc', 'equalto', 0) | first | default({})).stderr | default('')) | truncate(300) }}); nothing was installed or loaded
             quiet: true
 
         # Every check passed. What the window changes is measured (a stage
@@ -378,9 +383,9 @@
                  | zip(seat_stage_files.files | map(attribute='checksum')) | map('join', ':') | list
                  | difference(seat_bin_files.files | map(attribute='path') | map('basename')
                    | zip(seat_bin_files.files | map(attribute='checksum')) | map('join', ':') | list)
-                 | map('regex_replace', ':[^:]*$', '') | reject('in', ['SHA256SUMS', 'SUMS.digest']) | list }}
+                 | map('regex_replace', ':[^:]*$', '') | reject('in', ['SHA256SUMS', 'SUMS.digest']) | reject('in', nova_tool_hold) | list }}
             seat_kept: "{{ seat_bin_files.files | map(attribute='path') | map('basename') | list }}"
-          when: seat_cand != ''
+          when: seat_cand != '' and (not ansible_check_mode or (seat_stage_files is defined and seat_bin_files is defined))
 
         - name: "seat: the window opens when the install replaces a tool or the library is not the installed build's"
           ansible.builtin.set_fact:
@@ -423,14 +428,54 @@
             mode: "0755"
           when: seat_window and not ansible_check_mode and seat_keeps_redis
 
+    - name: the release's install selection (held tools keep their bytes and inode)
+      tags: [seat]
+      when: not ansible_check_mode and nova_tool_hold | length > 0
+      block:
+        - name: the release's recorded SHA256SUMS
+          ansible.builtin.slurp: { src: "{{ tools_stage }}/SHA256SUMS" }
+          register: tools_sums
+
+        - name: the recorded checksums name safe tool files
+          ansible.builtin.assert:
+            that: >-
+              (tools_sums.content | b64decode).splitlines()
+              | reject('match', '^[0-9a-fA-F]{64}  [a-zA-Z0-9][a-zA-Z0-9._-]*$') | list | length == 0
+            fail_msg: "ADOPT REFUSED step=install host={{ inventory_hostname }}: SHA256SUMS names an invalid file; rebuild the release"
+            quiet: true
+
+        - name: the checksums of the files this window installs
+          ansible.builtin.set_fact:
+            tools_selected_sums: >-
+              {{ (tools_sums.content | b64decode).splitlines()
+                 | reject('match', '^[0-9a-fA-F]+  (' ~ (nova_tool_hold | map('regex_escape') | join('|')) ~ ')$') | list }}
+          when: not ansible_check_mode or tools_sums is defined
+
+        - name: the selected release directory
+          ansible.builtin.file: { path: "{{ tools_selection }}", state: directory, mode: "0755" }
+
+        - name: the selected release files (the installer verifies all before any rename)
+          ansible.builtin.copy:
+            src: "{{ tools_stage }}/{{ item.split('  ')[1] }}"
+            dest: "{{ tools_selection }}/{{ item.split('  ')[1] }}"
+            remote_src: true
+            mode: "0755"
+          loop: "{{ tools_selected_sums }}"
+
+        - name: the selected release checksum manifest
+          ansible.builtin.copy:
+            content: "{{ tools_selected_sums | join('\n') }}\n"
+            dest: "{{ tools_selection }}/SHA256SUMS"
+            mode: "0644"
+
     - name: install them into the bin directory (verified whole, a tool at the version skipped)
       ansible.builtin.command:
-        argv: [ "{{ tools_stage }}/nova-update", release, install, --from, "{{ nova_release_dir }}", --version, "{{ nova_version }}",
+        argv: [ "{{ tools_stage }}/nova-update", release, install, --from, "{{ tools_install_root }}", --version, "{{ nova_version }}",
                 --bin, "{{ nova_bin_dir }}", --platform, "{{ nova_platform }}" ]
       register: tools_install
       changed_when: "tools_install.stdout is search('RELEASE INSTALLED .*tools=[1-9]')"
       # the coordinator installs inside the seat play's window, its old server and member stopped
-      when: inventory_hostname not in (groups['coordinator'] | default([]))
+      when: inventory_hostname not in (groups['coordinator'] | default([])) and (nova_tool_hold | length == 0 or tools_selected_sums | default([]) | length > 0)
 
     - name: the retired tools in the bin directory, by exact name (one listing)
       ansible.builtin.find: { paths: "{{ nova_bin_dir }}", patterns: "{{ hostvars['localhost'].tools_retired }}", file_type: any, hidden: true }
@@ -439,8 +484,9 @@
     - name: the ones present
       ansible.builtin.set_fact:
         tools_retire: >-
-          {{ tools_present.files | map(attribute='path') | select('in', hostvars['localhost'].tools_retired
+          {{ tools_present.files | rejectattr('path', 'in', nova_tool_hold | map('regex_replace', '^', nova_bin_dir ~ '/') | list) | map(attribute='path') | select('in', hostvars['localhost'].tools_retired
              | map('regex_replace', '^', nova_bin_dir ~ '/') | list) | list }}
+      when: not ansible_check_mode or tools_present is defined
 
     - name: what --check would remove
       ansible.builtin.debug: { msg: "WOULD-REMOVE {{ item }} on {{ inventory_hostname }}" }
@@ -492,24 +538,10 @@
           then nova-config apply --kind fleet --as <actor>
         quiet: true
 
-    - name: the sops binary (nova_sops, else the first of nova_sops_candidates on the machine)
-      ansible.builtin.stat: { path: "{{ item }}" }
-      loop: "{{ nova_sops_candidates }}"
-      register: tools_sops
-      when: nova_sops is not defined
-      tags: [seat]
-
-    - name: the sops the seat is opened with
-      ansible.builtin.set_fact:
-        nova_sops: >-
-          {{ nova_sops if nova_sops is defined else (tools_sops.results | selectattr('stat', 'defined')
-             | selectattr('stat.exists') | map(attribute='item') | first | default('')) }}
-      tags: [seat]
-
     - name: the store_deployer machine has sops
       ansible.builtin.assert:
         that: nova_sops != ''
-        fail_msg: "{{ inventory_hostname }} has no sops at any of {{ nova_sops_candidates | join(', ') }}; install it or set nova_sops in host_vars"
+        fail_msg: "ADOPT REFUSED step=sops host={{ inventory_hostname }}: has no sops at any of {{ nova_sops_candidates | join(', ') }}; install it or set nova_sops in host_vars"
         quiet: true
       tags: [seat]
 
@@ -548,7 +580,7 @@
       tags: [seat]
 
     - name: the library receipt
-      ansible.builtin.debug: { var: tools_fn.stdout_lines }
+      ansible.builtin.debug: { msg: "{{ tools_fn.stdout_lines | default([]) }}" }
       tags: [seat]
 
 # The seat play (docs/SPEC-SPRINT.md, "Adopting a build"): the coordinator
@@ -597,6 +629,7 @@
   tags: [seat]
   vars:
     seat_stage: "{{ nova_release_dir }}/{{ nova_version }}/{{ nova_platform }}"
+    tools_install_root: "{{ nova_release_dir ~ '/held-selection' if nova_tool_hold | length > 0 else nova_release_dir }}"
     seat_wrap_as: >-
       {{ [nova_bin_dir ~ '/nova-secrets', 'exec', '--store', nova_secrets_store, '--as', nova_seat,
           '--key', nova_secrets_key_dir ~ '/' ~ nova_seat ~ '.key', '--sops', nova_sops | default('')] }}
@@ -638,8 +671,11 @@
           the candidate is neither staged nor built on this machine, so its checks wait for the run
       when: ansible_check_mode and seat_was is not defined
 
-    - name: "seat: --check ends here for such a host"
-      ansible.builtin.meta: end_host
+    - name: "seat: an unstaged candidate cannot have a measured dry-run receipt"
+      ansible.builtin.fail:
+        msg: >-
+          ADOPT REFUSED step=candidate host={{ inventory_hostname }}: no candidate build is staged on this machine;
+          stage the candidate and run --check again to measure replacements, stops and reinstalls
       when: ansible_check_mode and seat_was is not defined
 
     - name: "seat: the candidate's checks ran"
@@ -657,7 +693,7 @@
             msg: >-
               {{ 'WOULD-' if ansible_check_mode else '' }}WINDOW host={{ inventory_hostname }}
               replaces={{ seat_replaces | default([]) | join(',') or 'none' }} library={{ 'matches' if seat_was.library.match else 'differs' }}
-              stops={{ seat_stopped_labels | join(',') or 'none' }}
+              stops={{ seat_stopped_labels | join(',') or 'none' }} held={{ nova_tool_hold | join(',') or 'none' }}
           when: seat_window
 
         - name: "window: stop the old server, member and every nova agent but the friends"
@@ -742,9 +778,10 @@
 
             - name: "window: the tools are installed (the candidate's nova-update, fresh inodes)"
               ansible.builtin.command:
-                argv: [ "{{ seat_stage }}/nova-update", release, install, --from, "{{ nova_release_dir }}", --version, "{{ nova_version }}",
+                argv: [ "{{ seat_stage }}/nova-update", release, install, --from, "{{ tools_install_root }}", --version, "{{ nova_version }}",
                         --bin, "{{ nova_bin_dir }}", --platform, "{{ nova_platform }}" ]
               register: seat_install
+              when: nova_tool_hold | length == 0 or tools_selected_sums | default([]) | length > 0
               changed_when: "seat_install.stdout is search('RELEASE INSTALLED .*tools=[1-9]')"
 
             - name: "window: the build fact's directory"
@@ -771,12 +808,13 @@
             that: ansible_check_mode or (seat_read.rc == 0 and seat_read.stdout is match('[{]'))
             fail_msg: >-
               ADOPT REFUSED step=live host={{ inventory_hostname }}: the installed nova-sprint live printed no manifest
-              ({{ (seat_read.stderr or seat_read.stdout) | default('') | truncate(200) }})
+              ({{ ((seat_read.stderr | default('')) or (seat_read.stdout | default(''))) | truncate(200) }})
             quiet: true
 
         - name: "seat: what runs now, and what is stale (--check: the candidate's reading)"
           ansible.builtin.set_fact:
             seat_cur: "{{ seat_was if ansible_check_mode else (seat_read.stdout | from_json) }}"
+          when: not ansible_check_mode or seat_read is defined
 
         - name: "seat: the agents the candidate found are all still there"
           ansible.builtin.assert:
@@ -970,6 +1008,14 @@
               after={{ seat_cur.server.revision or 'none' }} reinstalled={{ seat_friends | map(attribute='friend') | join(',') or 'none' }}
               {{ ('WOULD-CHANGE' if seat_friends else 'UNCHANGED') if ansible_check_mode else ('CHANGED' if seat_friends else 'UNCHANGED') }}
 
+        - name: "seat: the completed dry-run receipt"
+          ansible.builtin.debug:
+            msg: >-
+              ADOPT DRY-RUN OK host={{ inventory_hostname }} would_replace={{ seat_replaces | default([]) | length }}
+              held={{ nova_tool_hold | length }} stops={{ seat_stopped_labels | join(',') or 'none' }}
+              reinstalls={{ seat_friends | map(attribute='friend') | join(',') or 'none' }}
+          when: ansible_check_mode
+
         - name: "seat: adopted, so the nova-redis kept for a restore is the one whose library the store now holds"
           ansible.builtin.copy:
             src: "{{ nova_bin_dir }}/nova-redis"
@@ -1132,6 +1178,7 @@
     - name: the java the record machine runs TLC with
       ansible.builtin.set_fact:
         tla_java: "{{ tla_javas.results | selectattr('stat.exists') | map(attribute='item') | first | default('') }}"
+      when: not ansible_check_mode or tla_javas is defined
 
     - name: java runs
       ansible.builtin.command: { argv: ["{{ tla_java }}", -version] }

@@ -277,6 +277,25 @@ password reaches the tool's environment and no file, line or log. That the
 4. On `store_deployer`: `nova-config migrate` (the schema a kind the build adds needs: run before any `nova-config loop add`), then `nova-redis fn load` as the deploy user; `--check` runs `nova-redis fn check` instead.
 5. On `tla`, the record machines (rows with `tla=true`; tagged `tla`, so `--tags tla` runs this step alone): the machine is Linux; `nova_tla_dir` exists and is the login's, and the jar at `nova_tla_jar` is the login's (sudo only when either is not); the jar's SHA-256 is the first word of `nova_tla_sha256_file`; java (the first of `nova_tla_java_candidates`) runs. It downloads and copies nothing: a jar that is missing or differs refuses the host with `TLA REFUSED host=<m> jar=<path> want=<sha> got=<sha|none>` and the `scp` that places it; a host that passes prints `TLA OK host=<m> jar=<path> sha256=<sha> java=<path> version=<v>`, and `--check` says the same. `tlacheck run --bench` runs the records there (tla/README.md, "The record machines").
 
+`nova_tool_hold: [nova-bus]` leaves the named installed tool's bytes and inode
+alone; the default is `[]`. This is separate from `nova_seat_hold`, which holds
+launchd agents. `WOULD-WINDOW` and `WINDOW` include `held=<names|none>`.
+The full candidate and its original `SHA256SUMS` stay intact. With a tool hold,
+the play builds a separate selected manifest, and the release installer verifies
+every selected file before its first rename. Held files are absent from that
+manifest, so even a held candidate with a bad checksum does not fail the set.
+A held retired tool is also left alone.
+
+A check-mode adoption discovers sops even without a staged build and never stops,
+migrates, installs or reinstalls anything. Its final seat receipt is
+`ADOPT DRY-RUN OK host=<h> would_replace=<n> held=<n> stops=<agents> reinstalls=<friends>`.
+With no staged or locally built candidate, it refuses at `step=candidate` and
+asks for the candidate to be staged before another check. There are no candidate
+bytes or manifest from which to measure the replacement and window counts.
+The real run still performs the candidate checks before opening the window.
+Missing prerequisites refuse with `ADOPT REFUSED step=<task>` and name the
+remedy; optional command results never cause an undefined-stderr template error.
+
 A machinery install during a sprint is one command from the coordinator,
 `nova-update release cycle` (docs/CLI.md, SPEC-RELEASE rule 13): this play
 with `--check`, then for real, limited to the benches named and `localhost`,

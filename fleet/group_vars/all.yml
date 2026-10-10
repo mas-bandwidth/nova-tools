@@ -133,6 +133,9 @@ nova_seat_server_ports: []
 nova_seat_tick_deadline: 60s
 nova_seat_beat_within: 60
 nova_seat_hold: []
+# Exact tool names whose installed bytes and inode the adoption leaves alone.
+# The full candidate stays intact; only the selected install manifest excludes them.
+nova_tool_hold: []
 # The launchd agents directory the seat play reads and the launchctl it
 # runs, and how long it waits for a stale friend daemon's lanes to put their
 # cards down when its plist sets no ExitTimeOut (seconds).
