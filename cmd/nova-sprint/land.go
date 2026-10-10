@@ -1451,7 +1451,7 @@ func headWhy(s *sprint.Snapshot, stream string, pins []landCard) string {
 // seconds and the merges' are added to t.
 // behind says the stream has more than one batch waiting; when behind, a code conflict
 // parks only this member for redo on the current tip, and the batch goes on with later
-// cards.
+// cards. when not behind, a code conflict stops the batch as before.
 func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard, t *landTimes, gateEach bool, behind bool) (merged []string, failed conflictCard, baseSha string, gated bool, why string) {
 	c, why := l.cut(ctx, dir, stream, cards, t)
 	if why != "" {
@@ -1546,6 +1546,7 @@ func (l *lander) cutBranch(ctx context.Context, dir, stream, base string) (strin
 // each head is gated whatever gateEach says. The results are build's.
 // behind says the stream has more than one batch waiting; when behind, a code conflict
 // parks only this member for redo on the current tip, and the batch goes on with later cards.
+// when not behind, a code conflict stops the batch as before.
 func (l *lander) mergeCards(ctx context.Context, dir, stream string, cards []landCard, c landCut, t *landTimes, gateEach bool, behind bool) (merged []string, failed conflictCard, why string) {
 	start := time.Now()
 	defer since(&t.Merge, start)
