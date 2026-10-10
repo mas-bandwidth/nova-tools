@@ -18,6 +18,9 @@ import (
 // osExec runs programs on this machine, each under its subproc budget.
 type osExec struct{}
 
+// Osexec is an exported alias for osExec, used in tests.
+type Osexec = osExec
+
 func (osExec) LookPath(name string) (string, error) { return exec.LookPath(name) }
 
 func (osExec) Run(ctx context.Context, c Cmd) (string, error) {
@@ -38,6 +41,11 @@ func (osExec) Run(ctx context.Context, c Cmd) (string, error) {
 func lastLine(s string) string {
 	lines := strings.Split(strings.TrimSpace(s), "\n")
 	return lines[len(lines)-1]
+}
+
+// LastLine returns the last line of the trimmed string s.
+func LastLine(s string) string {
+	return lastLine(s)
 }
 
 // Local is this machine.
