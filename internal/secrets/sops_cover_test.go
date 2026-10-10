@@ -45,7 +45,7 @@ func TestSopsCoverAgeKeygenVersionParsesProbeOutput(t *testing.T) {
 	}{
 		{"the minimum version is accepted", "1.3.2", "1.3.2", ""},
 		{"a v-prefixed newer version is accepted", "v1.4.0", "1.4.0", ""},
-		{"an older version is refused with the remedy", "1.2.9", "1.2.9", "too old; minimum required is 1.3.2; run: brew upgrade age"},
+		{"an older version is refused with the remedy", "1.2.9", "1.2.9", "too old; minimum required is 1.3.2; run: " + ageUpgradeCmd()},
 		{"unparseable output is refused", "age-keygen fake", "", "unable to parse age-keygen version"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -87,7 +87,7 @@ func TestSopsCoverAgeKeygenVersionRefusesABinaryItCannotExecute(t *testing.T) {
 			t.Parallel()
 			_, err := CheckAgeKeygenVersion(realExecCommand, tc.path)
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "is absent or not executable; run: brew install age")
+			assert.Contains(t, err.Error(), "is absent or not executable; run: "+ageUpgradeCmd())
 		})
 	}
 }
