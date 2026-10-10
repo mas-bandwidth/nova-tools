@@ -834,7 +834,7 @@ func (a *app) workerView(ctx context.Context, st *store.Store, as string) (worke
 		wc := workerCard{ID: c.ID, P: p.Primary, St: c.Col, Att: p.Attempt, Gen: p.Gen, DL: deadline[c.ID], Br: p.Branch, J: open[p.Primary],
 			Base: cmp.Or(p.Base, swarm.ReadCardBase([]byte(p.Brief)).Ref), Paths: swarm.CardPaths([]byte(p.Brief))}
 		if v.Kind == "friend" {
-			wc.Brief = friendWorkDir(as, v.Dir) + "/inbox/" + friendJobOf(p) + "/BRIEF.md"
+			wc.Brief = friendWorkDir("", as, v.Dir) + "/inbox/" + friendJobOf(p) + "/BRIEF.md"
 		} else {
 			wc.Brief = "nova-sprint card " + p.Primary + " --brief"
 		}
@@ -911,9 +911,9 @@ func workerNext(v workerView, c *sprint.Card, p sprint.Packet) string {
 	switch {
 	case v.Kind == "friend" && p.Kind == "read":
 		// a read on her row is returned, never finished (sprint.FriendReadOutboxLine)
-		return "read " + c.ID + ": write " + friendWorkDir(v.As, v.Dir) + "/outbox/" + friendJobOf(p) + "/REPORT.md with Verdict: LAND, or Verdict: HOLD and a line naming the file:line or rule and what to change"
+		return "read " + c.ID + ": write " + friendWorkDir("", v.As, v.Dir) + "/outbox/" + friendJobOf(p) + "/REPORT.md with Verdict: LAND, or Verdict: HOLD and a line naming the file:line or rule and what to change"
 	case v.Kind == "friend" && c.Col == sprint.Working:
-		return "finish " + c.ID + ": push to " + p.Branch + ", then write " + friendWorkDir(v.As, v.Dir) + "/outbox/" + friendJobOf(p) + "/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>"
+		return "finish " + c.ID + ": push to " + p.Branch + ", then write " + friendWorkDir("", v.As, v.Dir) + "/outbox/" + friendJobOf(p) + "/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>"
 	case v.Kind == "friend":
 		return "start " + c.ID + ": its brief is " + v.Cards[0].Brief
 	case c.Col == sprint.Working:

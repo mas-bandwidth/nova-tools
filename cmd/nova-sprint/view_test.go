@@ -320,9 +320,12 @@ func TestTheWorkerViewOfAFriend(t *testing.T) {
 	ta.json("view worker --as amy", &v)
 	assert.Equal(t, "friend", v.Kind)
 	require.Len(t, v.Cards, 1)
-	assert.Equal(t, "~/amy-working/inbox/s1-1.w1/BRIEF.md", v.Cards[0].Brief)
+	home, _ := os.UserHomeDir()
+	briefPath := filepath.Join(home, "nova", "ai", "amy", "working", "inbox", "s1-1.w1", "BRIEF.md")
+	assert.Equal(t, briefPath, v.Cards[0].Brief)
 	assert.Equal(t, "sprint/s1-1.w1.g1.e0", v.Cards[0].Br)
-	assert.Equal(t, "finish s1-1.w1: push to sprint/s1-1.w1.g1.e0, then write ~/amy-working/outbox/s1-1.w1/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>", v.Next)
+	reportPath := filepath.Join(home, "nova", "ai", "amy", "working", "outbox", "s1-1.w1", "REPORT.md")
+	assert.Equal(t, "finish s1-1.w1: push to sprint/s1-1.w1.g1.e0, then write "+reportPath+" with Verdict: LAND|HOLD|FAIL and Head: <sha>", v.Next)
 }
 
 // The server serves both views read-only on GET, through the handler with no socket: JSON,

@@ -269,14 +269,18 @@ func TestSeatInboxDoesNotFallBackWhenFriendRowsCannotBeRead(t *testing.T) {
 func TestFriendDirectoryFallbackCanBeNotedAfterSilentLookup(t *testing.T) {
 	t.Parallel()
 	a := &app{}
-	root := t.TempDir()
-	fallback := filepath.Join(root, "amy-working")
-	assert.Equal(t, fallback, a.friendDir("amy", "", root, nil), "a nil writer does not consume the note")
+	// The fallback path uses the layout package
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = t.TempDir()
+	}
+	fallback := filepath.Join(home, "nova", "ai", "amy", "working")
+	assert.Equal(t, fallback, a.friendDir("amy", "", nil), "a nil writer does not consume the note")
 	var note bytes.Buffer
-	assert.Equal(t, fallback, a.friendDir("amy", "", root, &note))
+	assert.Equal(t, fallback, a.friendDir("amy", "", &note))
 	assert.Equal(t, "NOTE friend=amy has no dir on her nova-config row, so her working directory is "+fallback+"; run: nova-config friend set amy --dir <her real working directory>\n", note.String())
 	var second bytes.Buffer
-	a.friendDir("amy", "", root, &second)
+	a.friendDir("amy", "", &second)
 	assert.Empty(t, second.String(), "the note is written once")
 }
 
