@@ -120,9 +120,9 @@ func TestUnitsUnitsCoverRefusal(t *testing.T) {
 func TestUnitsUnitsCoverThrottle(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name string
+		name  string
 		every time.Duration
-		want int
+		want  int
 	}{
 		{"zero", 0, 10},
 		{"1500ms", 1500 * time.Millisecond, 2},
@@ -141,8 +141,8 @@ func TestUnitsUnitsCoverThrottle(t *testing.T) {
 func TestUnitsUnitsCoverSystemdUnit(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name string
-		restart int
+		name           string
+		restart        int
 		wantStartLimit bool
 	}{
 		{"restart over 10", 15, true},
@@ -164,9 +164,9 @@ func TestUnitsUnitsCoverSystemdUnit(t *testing.T) {
 func TestUnitsUnitsCoverLaunchdPlist(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name string
-		env [][2]string
-		log string
+		name    string
+		env     [][2]string
+		log     string
 		wantEnv bool
 		wantLog bool
 	}{
@@ -274,10 +274,10 @@ func TestUnitsUnitsCoverPlistArgs(t *testing.T) {
 		want []string
 		ok   bool
 	}{
-		{"has ProgramArguments", `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>ProgramArguments</key><array><string>/usr/bin/foo</string><string>arg</string></array></dict></plist>`, []string{"/usr/bin/foo", "arg"}, true},
-		{"no ProgramArguments", `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>test</string></dict></plist>`, nil, false},
+		{"has ProgramArguments", `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist><plist version="1.0"><dict><key>ProgramArguments</key><array><string>/usr/bin/foo</string><string>arg</string></array></dict></plist>`, []string{"/usr/bin/foo", "arg"}, true},
+		{"no ProgramArguments", `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist><plist version="1.0"><dict><key>Label</key><string>test</string></dict></plist>`, nil, false},
 		{"malformed XML", `<bad`, nil, false},
-		{"nested array ignored", `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>ProgramArguments</key><array><array><string>foo</string></array></array></dict></plist>`, nil, true},
+		{"nested array ignored", `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist><plist version="1.0"><dict><key>ProgramArguments</key><array><array><string>foo</string></array></array></dict></plist>`, nil, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -361,9 +361,9 @@ func TestUnitsUnitsCoverInstallerRemove(t *testing.T) {
 		},
 	}
 	tests := []struct {
-		name string
-		path string
-		wantChanged bool
+		name             string
+		path             string
+		wantChanged      bool
 		wantUnloadCalled int
 	}{
 		{"no file", "missing.txt", false, 0},
@@ -478,8 +478,8 @@ func TestUnitsUnitsCoverInstallerUninstall(t *testing.T) {
 func TestUnitsUnitsCoverCheckUnits(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name string
-		files map[string]string
+		name      string
+		files     map[string]string
 		wantState string
 	}{
 		{"missing", map[string]string{}, "missing"},
@@ -506,8 +506,8 @@ func TestUnitsUnitsCoverCheckUnits(t *testing.T) {
 func TestUnitsUnitsCoverCheckUnitsDifferent(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name string
-		content string
+		name      string
+		content   string
 		wantState string
 	}{
 		{"wrapper", "[Unit]\nExecStart=/usr/bin/nova-secrets exec nova-redis serve\n[Service]\nRestart=always\n[Install]\nWantedBy=default.target\n", "different"},
@@ -585,10 +585,10 @@ func TestUnitsUnitsCoverOrDash(t *testing.T) {
 func TestUnitsUnitsCoverHasPrefix(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name string
-		words []string
+		name   string
+		words  []string
 		prefix []string
-		want bool
+		want   bool
 	}{
 		{"match", []string{"serve"}, []string{"serve"}, true},
 		{"no match", []string{"run"}, []string{"serve"}, false},
