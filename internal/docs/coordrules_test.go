@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/mas-bandwidth/nova-tools/pkg/config"
 )
 
 // coordrules_test.go holds the coordinator's numbered rules, section 10 of
@@ -25,7 +25,7 @@ import (
 //
 // numbered from 1 with no gap. Every code span of Done by is checked as
 // TestEveryCoordinatorToolMapsToARealNovaVerb checks a verb line, and a
-// nova-config line against the kinds and fields of internal/config: a setting
+// nova-config line against the kinds and fields of pkg/config: a setting
 // is `nova-config <kind> set ... --<field> <value>`.
 
 // coordinatorRunbookPath is the runbook, relative to this package.
@@ -121,7 +121,7 @@ func coordRules(text string) (rules []coordRule, problems []string) {
 	return rules, problems
 }
 
-// configTool is nova-config's grammar read from internal/config: each kind's
+// configTool is nova-config's grammar read from pkg/config: each kind's
 // verbs and fields, the verbs of the store, and the flags every verb takes.
 type configTool struct {
 	kinds  map[string]*config.Kind

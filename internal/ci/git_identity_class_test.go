@@ -26,10 +26,10 @@ const gitIdentityAllowlistPath = "testdata/git_identity_allowlist.txt"
 
 // testgitDoor is the shared identity's own package: its tests commit with Env
 // unqualified, so reading them against the rule would be circular.
-const testgitDoor = "internal/testgit/"
+const testgitDoor = "pkg/testgit/"
 
 // gitIdentityRemedy is the one thing to do at a refused site.
-const gitIdentityRemedy = "run the commit with the shared identity: cmd.Env = testgit.Environ(...) in the helper that runs it (internal/testgit)"
+const gitIdentityRemedy = "run the commit with the shared identity: cmd.Env = testgit.Environ(...) in the helper that runs it (pkg/testgit)"
 
 // gitShellCommit is a `git commit` written into a shell script: git, any `-c k=v` or
 // `-C dir`, then commit and a flag. A literal is a script when it carries `&&` or a
@@ -48,7 +48,7 @@ type gitIdentitySite struct {
 // ubuntu-latest red of run 37344601638: TestWallCoverWallCommitsCountsPastBaseRef
 // committed in a scratch clone with no identity of its own, and only the benches'
 // global git config made it green. Every `git commit` in a _test.go under cmd/,
-// internal/ and tools/ must run under internal/testgit's identity: the call is
+// internal/ and tools/ must run under pkg/testgit's identity: the call is
 // testgit's, or the helper it calls (a function, method or closure of the same
 // package) names testgit, or, for a direct exec, a command list or a shell script,
 // the function it stands in names testgit (docs/SPEC-CI.md, "Tests this spec
@@ -58,7 +58,7 @@ func TestNoTestCommitsWithoutTheSharedGitIdentity(t *testing.T) {
 
 	tree := repoTree(t)
 	byDir := map[string]map[string]*ast.File{}
-	for _, src := range tree.GoFilesUnder(true, "cmd", "internal", "tools") {
+	for _, src := range tree.GoFilesUnder(true, "cmd", "internal", "pkg", "tools") {
 		if strings.HasPrefix(src.Rel, testgitDoor) || strings.Contains(src.Rel, "/testdata/") {
 			continue
 		}
@@ -119,7 +119,7 @@ func TestNoTestCommitsWithoutTheSharedGitIdentity(t *testing.T) {
 func TestGitIdentityRuleRefusesItsProbes(t *testing.T) {
 	t.Parallel()
 
-	const head = "package p\n\nimport (\n\t\"os/exec\"\n\t\"testing\"\n\n\t\"github.com/mas-bandwidth/nova-tools/internal/testgit\"\n)\n\nvar _ = testgit.Env\nvar _ = exec.Command\n\n"
+	const head = "package p\n\nimport (\n\t\"os/exec\"\n\t\"testing\"\n\n\t\"github.com/mas-bandwidth/nova-tools/pkg/testgit\"\n)\n\nvar _ = testgit.Env\nvar _ = exec.Command\n\n"
 	cases := []struct {
 		name, src string
 		want      []bool // OK of each site, in source order

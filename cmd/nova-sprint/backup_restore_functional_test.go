@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )

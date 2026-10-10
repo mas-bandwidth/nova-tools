@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
-	"github.com/mas-bandwidth/nova-tools/internal/dogfood"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/bounded"
+	"github.com/mas-bandwidth/nova-tools/pkg/dogfood"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 // The dogfood verb answers the one question a tool's own tests cannot: has
@@ -80,7 +80,7 @@ func (s dogfoodSeams) now() time.Time {
 
 // dogfoodVerb is one of the three sub-verbs as a tool.Verb of the group
 // `dogfood`. Each prints its own lines (Prints): the rows, summaries and
-// findings are the lines internal/dogfood builds (Row.Line, Summary.Line,
+// findings are the lines pkg/dogfood builds (Row.Line, Summary.Line,
 // Finding.Line, Receipt.RecordLine), the DOGFOOD NOTE lines it adds while it
 // works, and the DOGFOOD FAILED lines of an unreadable receipt set. Its refusals
 // and the gate's "no receipts" answer are the skeleton's.

@@ -1,3 +1,0 @@
-# The unchecked errors in this package when the rule landed; shrink-only (docs/SPEC-CI.md, errcheck).
-# ceiling: 1
-internal/cardcontract:unchecked 4 measured when the rule landed; a checked or reasoned call lowers the count

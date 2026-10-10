@@ -124,7 +124,7 @@ func helpFlags(help string) []string {
 	return out
 }
 
-// effectRe reads the effect line internal/tool prints last in a verb's -h.
+// effectRe reads the effect line pkg/tool prints last in a verb's -h.
 var effectRe = regexp.MustCompile(`(?m)^effect: (.*)$`)
 
 // dryRunAnswers is "" when a verb's -h lists --dry-run, or states an effect
@@ -160,7 +160,7 @@ func firstLine(s string) string {
 }
 
 // TestToolAnswersJudges proves each judge on the answers the tools give today
-// and on the answer internal/tool gives: the good one passes, each bad one is
+// and on the answer pkg/tool gives: the good one passes, each bad one is
 // named.
 func TestToolAnswersJudges(t *testing.T) {
 	t.Parallel()

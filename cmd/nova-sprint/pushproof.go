@@ -15,11 +15,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/friend"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/pkg/friend"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
 )
 
 // The seat's push proof (docs/SPEC-SPRINT.md, "The push proof"; the owner,

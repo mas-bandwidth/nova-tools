@@ -5,10 +5,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/check"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/bounded"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 // spellingVerb prints its own lines (Prints): the SPELLING FIX line of a

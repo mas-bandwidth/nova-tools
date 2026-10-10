@@ -214,7 +214,7 @@ func usageTool(t *testing.T, tool string) novaTool {
 	return nt
 }
 
-// verbTableTool reads a tool built on internal/tool: each tool.Verb literal's
+// verbTableTool reads a tool built on pkg/tool: each tool.Verb literal's
 // Name and Usage, the Usage one form per line, each line beginning with the
 // verb's name.
 func verbTableTool(t *testing.T, tool string) novaTool {

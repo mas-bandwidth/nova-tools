@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
 )
 
 // version_functional_test.go builds every cmd/nova-* and runs it: a build is the functional
@@ -31,7 +31,7 @@ import (
 // time.
 //
 // The class fix is that there is ONE grammar -- four tokens and then
-// `key=value` extras -- that internal/buildinfo both writes and reads, and this
+// `key=value` extras -- that pkg/buildinfo both writes and reads, and this
 // test runs the REAL binary of every cmd/nova-* through the REAL reader. It
 // walks cmd/ rather than holding a list, so a tool added tomorrow is held to
 // the grammar on the day it appears. No network: every binary is built from
@@ -58,7 +58,7 @@ func TestEveryToolPrintsTheOneVersionLine(t *testing.T) {
 					continue
 				}
 				f, ok := buildinfo.Parse(stdout)
-				if !assert.Truef(t, ok, "`%s %s` printed a line internal/buildinfo.Parse refuses; the grammar is `<tool> <identity> <goos>/<goarch> <go version>` and then any number of key=value extras:\n%s", tool, verb, stdout) {
+				if !assert.Truef(t, ok, "`%s %s` printed a line pkg/buildinfo.Parse refuses; the grammar is `<tool> <identity> <goos>/<goarch> <go version>` and then any number of key=value extras:\n%s", tool, verb, stdout) {
 					continue
 				}
 				assert.Equalf(t, tool, f.Tool, "`%s %s` names itself %q in field one; a reader holding two pastes reads the tool out of field one", tool, verb, f.Tool)

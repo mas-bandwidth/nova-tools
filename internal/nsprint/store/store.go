@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
-	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/redisauth"
+	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
 	"github.com/redis/go-redis/v9"
 	"github.com/redis/go-redis/v9/maintnotifications"
 )
@@ -52,7 +52,7 @@ func authFromEnv(sel *seatcred.Selection) (user, password string, err error) {
 	return Auth("", "")
 }
 
-// Auth is the environment seat (internal/nsprint/redisauth): user is the
+// Auth is the environment seat (pkg/nsprint/redisauth): user is the
 // ACL user, else UserEnv; passwordEnv the variable holding its password, else
 // PasswordEnvEnv, else DefaultPasswordEnv.
 func Auth(user, passwordEnv string) (string, string, error) { return redisauth.Auth(user, passwordEnv) }

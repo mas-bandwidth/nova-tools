@@ -6,8 +6,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/pkg/decide"
 )
 
 // RedTest is one failing test read from a CI run's failed log (RedTests): its

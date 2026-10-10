@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
+	"github.com/mas-bandwidth/nova-tools/pkg/pkgselect"
 )
 
 func init() {

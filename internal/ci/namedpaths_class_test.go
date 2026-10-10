@@ -34,7 +34,7 @@ const namedPathsAllowlistPath = "testdata/namedpaths_allowlist.txt"
 // URL, a path on a bench -- and this rule says nothing about it. The tail is
 // the character set a path of ours is written in; a glob or a template breaks out of that
 // set at its first metacharacter, which is how namedPathIsTemplate sees one.
-var namedPathRe = regexp.MustCompile(`(?:\.github|cmd|internal|docs|tools|scripts|testdata|fleet|infra)/[\w./-]+`)
+var namedPathRe = regexp.MustCompile(`(?:\.github|cmd|internal|pkg|docs|tools|scripts|testdata|fleet|infra)/[\w./-]+`)
 
 // namedPathMetaRunes are the characters that mean the token is a PATTERN rather than a
 // path: a shell or doublestar glob, a Go or shell template, a printf verb, an ellipsis.
@@ -172,7 +172,7 @@ func namedPathsIn(text string) []string {
 }
 
 // namedPathRoots are namedPathRe's alternatives, each with its slash.
-var namedPathRoots = []string{".github/", "cmd/", "internal/", "docs/", "tools/", "scripts/", "testdata/", "fleet/", "infra/"}
+var namedPathRoots = []string{".github/", "cmd/", "internal/", "pkg/", "docs/", "tools/", "scripts/", "testdata/", "fleet/", "infra/"}
 
 func namedPathMayMatch(text string) bool {
 	for _, root := range namedPathRoots {
@@ -219,7 +219,7 @@ func namedPathIsTemplate(text string, start, end int) bool {
 }
 
 // namedPathIsSymbol reports whether the token names a Go SYMBOL rather than a file. This
-// package writes `internal/merge.Enqueuer.Enqueue`, `internal/bus.IsProgress` and
+// package writes `internal/merge.Enqueuer.Enqueue`, `pkg/bus.IsProgress` and
 // `internal/lockfile/TestLockRule1` all the time -- a package directory, then the exported
 // thing inside it -- and none of them is a path a friend opens. The signal is Go's own: an
 // exported identifier begins with an upper-case letter, and no file extension we write

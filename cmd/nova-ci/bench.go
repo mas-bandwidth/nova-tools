@@ -2,8 +2,8 @@ package main
 
 // bench.go is `nova-ci bench run`: one command on a Linux bench against a copy
 // of a local tree, the recipe every brief used to type out by hand
-// (internal/bench holds the run; this file is its flags and its lines). It is
-// nova-ci's first verb on internal/tool: the skeleton parses its flags and
+// (pkg/bench holds the run; this file is its flags and its lines). It is
+// nova-ci's first verb on pkg/tool: the skeleton parses its flags and
 // renders its refusals, and the verb prints only the command's own output and
 // its one CI BENCH line (Flags.Prints).
 
@@ -16,9 +16,9 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bench"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/bench"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 // benchEffect is what `bench run` does beyond printing, the last line of its -h.

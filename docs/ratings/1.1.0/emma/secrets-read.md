@@ -18,9 +18,9 @@ The first place of doubting a claim was docs/SPEC-SECRETS.md:34, which claims th
 | # | where | finding | fix | size |
 |---|---|---|---|---|
 | 1 | cmd/nova-secrets/main.go:276 | exec embeds table and sprint specific command restrictions intercepting redis-cli writes | move external tool policy to higher-level wrappers | M |
-| 2 | internal/secrets/gate.go:252 | gate formats errors using custom GATE REFUSE syntax and halts on the first problem encountered | report all rule violations in one standard refusal | M |
+| 2 | pkg/secrets/gate.go:252 | gate formats errors using custom GATE REFUSE syntax and halts on the first problem encountered | report all rule violations in one standard refusal | M |
 | 3 | cmd/nova-secrets/main.go:414 | exec uses custom SECRETS EXEC FAIL syntax with exit code 125 rather than standard refusal conventions | harmonize refusal output and return standard exit code 2 | S |
-| 4 | internal/secrets/secret.go:2 | package documentation is stale claiming the package provides only four verbs | update doc comments to cover all current verbs | S |
+| 4 | pkg/secrets/secret.go:2 | package documentation is stale claiming the package provides only four verbs | update doc comments to cover all current verbs | S |
 | 5 | cmd/nova-secrets/main.go:81 | example block hardcodes platform-specific Homebrew binary paths for age-keygen and sops | rely on PATH lookups or portable path references | S |
 | 6 | docs/CLI.md:1710 | reference documentation opens with CI gate verification instead of credential onboarding | restructure docs to lead with first-run keygen and exec | S |
 | 7 | docs/SPEC-SECRETS.md:34 | specification claims the tool is about two hundred lines of Go over two binaries | update specification to match actual scope and dependencies | S |
@@ -34,7 +34,7 @@ Comprehensive dry-run planning for store modifications and seat injections that 
 | earlier | now | evidence |
 |---|---|---|
 | a table special case inside exec | STILL THERE | cmd/nova-secrets/main.go:276 |
-| a stale package doc | STILL THERE | internal/secrets/secret.go:2 |
+| a stale package doc | STILL THERE | pkg/secrets/secret.go:2 |
 | its own refusal grammar | STILL THERE | cmd/nova-secrets/main.go:414 |
 | the advertised first sitting is incomplete and platform-specific | STILL THERE | cmd/nova-secrets/main.go:81 |
 | README rated 6.5 to 7 from one rater and 8.4 from another | CHANGED | README.md:30 |

@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
 )
 
 // Reads are priced like work (the owner, 2026-10-05: "do we have the cost for readers

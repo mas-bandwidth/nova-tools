@@ -11,9 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/internal/member"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/pkg/member"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 // A read whose base branch cannot be fetched from origin is refused at staging, visibly, and

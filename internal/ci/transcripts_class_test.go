@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
-	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/mas-bandwidth/nova-tools/pkg/onboarding"
 )
 
 // THE CLASS RULE BEHIND THE DOCUMENTS (SPEC-TOOLWORK.md documents rules 2-3).

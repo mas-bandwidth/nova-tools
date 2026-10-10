@@ -49,14 +49,14 @@ reads, and two model headers that cite code deleted days before the model landed
 2. **`internal/ci/dead_code_class_test.go:150-201` with `internal/ci/testdata/dead_code_allowlist.txt` — `TestDeadCode` is red: the shrink-only ledger has 14 packages wrong, and the class test refuses both the new dead code and the rows that shrank.**
    `findDeadCodeUnion` runs the go.mod-pinned `deadcode` (v0.50.0, go1.26.6) over
    `./cmd/...` for linux, darwin and windows and unions what is unreachable. The ledger
-   (18 rows) is stale: `cmd/nova-check 2`, `cmd/nova-sprint 29`, `internal/bus 2`,
-   `internal/cardgen 1`, `internal/friend 14`, `internal/hostload 3`, `internal/release 1`
-   and `internal/tlc 36` are not listed at all; `internal/secrets` measures 3 over a ledger
-   of 1, `internal/sprint` 51 over 2, `internal/swarm` 40 over 39; `internal/filelock` and
-   `internal/gitrun` measure 1 below their ledger of 2; and `internal/workgh` is a stale
+   (18 rows) is stale: `cmd/nova-check 2`, `cmd/nova-sprint 29`, `pkg/bus 2`,
+   `internal/cardgen 1`, `pkg/friend 14`, `pkg/hostload 3`, `pkg/release 1`
+   and `pkg/tlc 36` are not listed at all; `pkg/secrets` measures 3 over a ledger
+   of 1, `internal/sprint` 51 over 2, `pkg/swarm` 40 over 39; `pkg/filelock` and
+   `pkg/gitrun` measure 1 below their ledger of 2; and `internal/workgh` is a stale
    row (0 measured). The named functions include the half-landed adoption feature
    (`cmd/nova-sprint`: `adoptSteps.Ask`, `adoptSteps.BaseTip`, `AdoptPass.say`,
-   `Adoption.push`) and the test/lane helpers in `internal/friend` (`Batch`, `JobName`,
+   `Adoption.push`) and the test/lane helpers in `pkg/friend` (`Batch`, `JobName`,
    `MemFS.Lstat`, `MemFS.MkdirAll`).
    *Evidence:* `go test -tags functional -count=1 -timeout 900s ./internal/ci/` on the
    bench → `--- FAIL: TestDeadCode (49.36s)`, `assert.Failf(t, "dead code rule", …)` at
@@ -68,7 +68,7 @@ reads, and two model headers that cite code deleted days before the model landed
    until the new functions are wired or deleted and the two shrunken rows lowered.
    *Fix:* wire or delete the newly unreachable functions (the adoption cluster first),
    then `NOVA_CI_UPDATE=1 go test -tags functional -run '^TestDeadCode$' ./internal/ci/`
-   to lower `internal/filelock` and `internal/gitrun` and drop the `internal/workgh` row.
+   to lower `pkg/filelock` and `pkg/gitrun` and drop the `internal/workgh` row.
 
 3. **`cmd/nova-swarm/mirror_test.go:17-19` against `cmd/nova-swarm/slow_helpers_test.go:104-113` — two test files declare the same `recordGit`, so `make vet-functional` and `make vet-slow` are red.**
    `mirror_test.go` (untagged) declares `type recordGit struct` with `run(ctx, dir, args...)`;
@@ -119,18 +119,18 @@ reads, and two model headers that cite code deleted days before the model landed
    `wrapper.Wait()` (or use a mutex-guarded writer), and build the failure message from
    static fields.
 
-6. **`internal/typedrec/oneparser_test.go:667-716` — `TestOneTypedParser/tree` is red: four new bare-token parsers in the sprint's brief code are outside the one-typed-parser home.**
+6. **`pkg/typedrec/oneparser_test.go:667-716` — `TestOneTypedParser/tree` is red: four new bare-token parsers in the sprint's brief code are outside the one-typed-parser home.**
    The tree walk flags a function that compares a line's token to a bare word, cuts its
-   prefix or builds a token table outside `internal/typedrec` and the allowlist. The four
+   prefix or builds a token table outside `pkg/typedrec` and the allowlist. The four
    new hits are `cmd/nova-sprint/add.go:148` (`k == "PATHS"`, a bare comparison), and
    `internal/sprint/brief_defect.go:47` (a token-table entry), `:72`
    (`reason == BriefDefectPaths`, a comparison against a token constant) and `:95`
    (`strings.CutPrefix(line, "PATHS:")`, a prefix cut). All four lines are from
    `231f2f64c` ("sprint: admit briefs against the base tree", 2026-10-07 18:04), landed
    as `a9fe2a7fd`.
-   *Evidence:* `go test -count=1 -timeout 600s ./internal/typedrec` on the bench → `--- FAIL: TestOneTypedParser/tree`, `found 4 unexpected RESULT parser hit(s)` at
+   *Evidence:* `go test -count=1 -timeout 600s ./pkg/typedrec` on the bench → `--- FAIL: TestOneTypedParser/tree`, `found 4 unexpected RESULT parser hit(s)` at
    `oneparser_test.go:712`, then the four `file:line fn form tok shape` lines; the package
-   prints `FAIL github.com/mas-bandwidth/nova-tools/internal/typedrec`.
+   prints `FAIL github.com/mas-bandwidth/nova-tools/pkg/typedrec`.
    *Grade:* **URGENT** — the unit tier is red at the base, so the required gate for this
    card (and every card) cannot be green, and the one-typed-parser rule is the guard that
    keeps the RESULT/card-header grammar in one place.
@@ -181,22 +181,22 @@ reads, and two model headers that cite code deleted days before the model landed
    (`main.go:1117`) with `Stdout` and `Log`, and the test literals with `Stderr`/`Report`;
    `grep -n 'Report' cmd/nova-friend/limit.go` → only `Sources()` and `FirstErrorLine`.
    *Grade:* **NEXT** — the primary refusal path (a failed turn's stdout plus the head of
-   stderr, `internal/friend/adapter.go:181-186`) still works, so this is a promised source
+   stderr, `pkg/friend/adapter.go:181-186`) still works, so this is a promised source
    that is never read rather than a broken down.
    *Fix:* read the card's `REPORT.md` in the lane step and pass it as `LaneText.Report`,
    or narrow `docs/SPEC-FRIEND.md` and the commit's claim to the sources that are read.
 
 10. **`tla/FileLock.tla:3-9` — the model's header says it was written from the merge package's `lock.go` and the wake package's `lockprobe_other.go`, neither of which is in the tree.**
-    Line 4 lists "`internal/bus`, merge, tokens, swarm, wake and update each carry a copy"
+    Line 4 lists "`pkg/bus`, merge, tokens, swarm, wake and update each carry a copy"
     and line 8 makes the merge package's lock rule ("the kernel releases the lock when its
     holder dies") the rule the design stands on. Neither the merge nor the wake package
-    survives; `internal/filelock/filelock_unix.go` is the surviving home and the models'
+    survives; `pkg/filelock/filelock_unix.go` is the surviving home and the models'
     `COVERAGE.tsv` row ("file-lock") still calls the module current. The same header is the
     only citation a reader has for the design's origin.
     *Evidence:* a listing of `internal/` holds no `merge` or `wake` entry; `grep -n 'merge\|wake' tla/FileLock.tla` → lines 4 and 8; the same two names are cited by no
     other model.
     *Grade:* **NEXT** — a dead path in a live model's header; the model itself is current.
-    *Fix:* retarget the header to `internal/filelock/filelock_unix.go` (the surviving
+    *Fix:* retarget the header to `pkg/filelock/filelock_unix.go` (the surviving
     copy) or mark the two deleted packages as historical in the same sentence.
 
 11. **`internal/selftalk/selftalk_test.go:181` — the allocation budget does not hold under the race build and the leg takes nearly six minutes.**

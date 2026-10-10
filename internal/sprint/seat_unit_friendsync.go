@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/units"
+	"github.com/mas-bandwidth/nova-tools/pkg/units"
 )
 
 // friend sync install (docs/SPEC-SPRINT.md, "The friend sync loop as a service"; the
@@ -105,7 +105,7 @@ func (u FriendSyncUnit) Text() (string, error) {
 }
 
 // launchdPlist is a launchd agent kept alive that runs args with env, its lines to log,
-// started again no sooner than every 10 s (internal/units).
+// started again no sooner than every 10 s (pkg/units).
 func launchdPlist(label string, args []string, env [][2]string, log string) string {
 	return units.LaunchdPlist(label, args, env, log, 10)
 }

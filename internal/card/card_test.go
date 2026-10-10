@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardgen"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 var header = cardgen.Header{Repo: "example/repo", Base: "dev", Sha: "0123456789abcdef0123456789abcdef01234567"}

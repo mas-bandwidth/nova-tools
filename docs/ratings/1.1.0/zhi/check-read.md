@@ -35,21 +35,21 @@ cap with a MORE line, and the count line printed on failure too are all
 present and cite the spec. Names are mostly plain (links, attest, kernel,
 nocode, spelling), but the self-repo cluster (floors, corpus, door, seed)
 stays private. One family with the other tools is only partly true: it shares
-internal/bounded and internal/oneline and the refusal shape, but it hand-rolls
-its dispatch and help in an 877-line main.go instead of the internal/tool
+pkg/bounded and pkg/oneline and the refusal shape, but it hand-rolls
+its dispatch and help in an 877-line main.go instead of the pkg/tool
 skeleton the standard names, which is the main weight. The tests are thorough
 and teach the contract, each spec section naming the red tests that pin it.
 
 A 10 would need the self-repo nouns defined on the first-run path, the eleven
 verbs either explained as one tool or split, and the hand-rolled dispatch
-moved onto internal/tool.
+moved onto pkg/tool.
 
 ## Findings
 | # | where | finding | fix | size |
 |---|---|---|---|---|
 | 1 | docs/CLI.md:13 | the newcomer meets kernel, floors, corpus, door and seed with no definition on the first-run path | open the command reference section with a three-line glossary of the self-repo nouns | S |
 | 2 | README.md:34 | the row says "broken links and other problems" but the binary is eleven verbs spanning hygiene, dogfood and convergence | name the wider scope in the row, or narrow it to what a first run meets | S |
-| 3 | cmd/nova-check/main.go:877 | an 877-line main.go hand-rolls dispatch, help and refusals that internal/tool provides by construction | move dispatch onto internal/tool and keep only the verb bodies | L |
+| 3 | cmd/nova-check/main.go:877 | an 877-line main.go hand-rolls dispatch, help and refusals that pkg/tool provides by construction | move dispatch onto pkg/tool and keep only the verb bodies | L |
 | 4 | docs/SPEC-CHECK.md:10 | the spec claims help prints the convergence line byte for byte, which the banner does not | state which help form prints the line, and quote the banner as it prints | S |
 | 5 | docs/SPEC.md:327 | the spec is split, record-layer verbs here and convergence in SPEC-CHECK.md, so one tool has two contracts | link the two at the top of each, or merge them under one heading | M |
 

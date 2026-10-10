@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
 	"github.com/stretchr/testify/assert"
 )
 

@@ -10,10 +10,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 var quackID = regexp.MustCompile(`quack-[0-9a-f]{12}-[A-Za-z0-9_-]+?-[0-9]{3}`)

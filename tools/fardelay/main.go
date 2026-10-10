@@ -4,7 +4,7 @@
 // it forwards it. Point a tool at the address it prints and every command costs
 // the delay, the way it would against a server that far away. It is the proxy
 // tests use (testredis.Far), run by hand for an interactive drive; both run
-// internal/delayproxy.
+// pkg/delayproxy.
 //
 //	example:
 //	  fardelay --listen 127.0.0.1:7001 --target 127.0.0.1:7000 --delay 64ms
@@ -26,7 +26,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/delayproxy"
+	"github.com/mas-bandwidth/nova-tools/pkg/delayproxy"
 )
 
 // The exit codes: 0 stopped as asked or help, 2 could not run.

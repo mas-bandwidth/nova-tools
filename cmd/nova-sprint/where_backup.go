@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/pkg/ntable"
 )
 
 // where's backup state (docs/SPEC-SPRINT.md section 1, "Priority"; sprint.BackupOf): reads

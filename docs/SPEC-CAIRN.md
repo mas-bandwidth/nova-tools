@@ -6,7 +6,7 @@ exact words with a real clock stamp, builds a bounded index and coverage
 ledger over what was preserved, and hands back a receipt for each entry. It
 stands beside [SPEC.md](SPEC.md), whose **Conventions** section — exit
 codes, no guessed paths, the one-line output grammar, the cap-and-count
-rule, `internal/oneline` and `internal/bounded` — applies here unchanged
+rule, `pkg/oneline` and `pkg/bounded` — applies here unchanged
 and is not restated. Where this tool needs something the Conventions do not
 cover, it is below and it says so.
 
@@ -85,7 +85,7 @@ candidates for what was chosen. A retry of the same request succeeds with
 `duplicate=true`, the original stored timestamp, and no second entry. The
 reported stamp uses the stored precision (whole seconds for a flat heading);
 a malformed stored stamp refuses rather than inventing a time. The same entry
-id carrying different prose is exit 1, a conflict, never an overwrite. Each entry lands atomically through internal/atomicfile: a unique sibling temp file honors the process umask, the file is synced and renamed, and parent-directory sync is attempted on a best-effort basis. Stale random-sibling temp files from interrupted appends are never indexed or overwritten by a retry. The retry writes the complete entry and heals a missing pointer line without touching another writer's files. Success reports local persistence and remote publication
+id carrying different prose is exit 1, a conflict, never an overwrite. Each entry lands atomically through pkg/atomicfile: a unique sibling temp file honors the process umask, the file is synced and renamed, and parent-directory sync is attempted on a best-effort basis. Stale random-sibling temp files from interrupted appends are never indexed or overwritten by a retry. The retry writes the complete entry and heals a missing pointer line without touching another writer's files. Success reports local persistence and remote publication
 separately — `persisted=true published=false` — because meaningful notes
 are fsync-durable before success is acknowledged, independently of Redis;
 local durability is real while remote publication is pending, and neither
@@ -149,7 +149,7 @@ New regression cases must demonstrate the defect before the repair.
 17. `TestBadClockIsRefused` — the stamp is a real clock in UTC; `--now` names an RFC 3339 UTC replay and a non-RFC 3339 value is exit 2.
 18. `TestSourcePointerIsRecordedNeverOpened` — the source pointers are recorded and never opened; an append with no `--source` carries the session's, and every verb prints `source=` (`-` for none).
 19. `TestBothTextAndFileAreRefused` — exactly one of `--text` or `--file` names the words; giving both is refused.
-20. `TestInterruptedAppendRecoversAndPreservesOtherWriters` — each entry lands atomically through internal/atomicfile (unique temp file, fsync, rename, parent dir fsync); a stale random-sibling `.*.tmp*` is never indexed and the retry writes the entry atomically; the retry preserves other writers' entries.
+20. `TestInterruptedAppendRecoversAndPreservesOtherWriters` — each entry lands atomically through pkg/atomicfile (unique temp file, fsync, rename, parent dir fsync); a stale random-sibling `.*.tmp*` is never indexed and the retry writes the entry atomically; the retry preserves other writers' entries.
 21. `TestRetryHealsTheMissingPointerLine` — the retry heals the missing pointer line.
 22. `TestInvalidPublishPolicyIsRefused` — the caller-chosen `--publish` policy (`never|manual|deferred|immediate`, required) travels with the entry; an invalid value is refused.
 23. `TestIndexRowCarriesStampSourceAndSize` — index rows are derived from the stored entries: session/entry pointers, stamps, sources, sizes — never recopied narratives.

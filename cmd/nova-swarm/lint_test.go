@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 // `nova-swarm lint --card` is the mechanical shape check that runs BEFORE any spend. A card
@@ -25,8 +25,8 @@ func lintGoodCard() string {
 		"You are a Go engineer. Work in $(pwd).",
 		"STEP 1. pwd && { [ -d repo ] || git clone -q https://github.com/mas-bandwidth/nova-tools.git repo; } && cd repo && git log --oneline -1",
 		"STEP 2. Read docs/SPEC-SWARM.md first.",
-		"STEP 3. Write a red test named TestCardLintPasses, run go test ./internal/swarm/, and record the failing output in <working directory>/scratch/red.txt using that absolute path.",
-		"STEP 4. Run: export TMPDIR=\"$PWD/scratch\" && go test ./internal/swarm/ ./cmd/nova-swarm/",
+		"STEP 3. Write a red test named TestCardLintPasses, run go test ./pkg/swarm/, and record the failing output in <working directory>/scratch/red.txt using that absolute path.",
+		"STEP 4. Run: export TMPDIR=\"$PWD/scratch\" && go test ./pkg/swarm/ ./cmd/nova-swarm/",
 		"STEP 5. finish within 20 minutes.",
 		"STEP 6. Write RESULT.md: line 1 is the RESULT: line above.",
 		"",
@@ -62,7 +62,7 @@ func TestLintNamesTheParentPathLine(t *testing.T) {
 		"RESULT: CARD-1111 do the thing",
 		"STEP 1. pwd && git clone -q https://github.com/mas-bandwidth/nova-tools.git repo && cd repo",
 		"STEP 2. Write a red test named TestThing and record the failing output in ../scratch/red.txt.",
-		"STEP 3. Run: go test ./internal/swarm/",
+		"STEP 3. Run: go test ./pkg/swarm/",
 		"STEP 4. finish within 20 minutes.",
 		"STEP 5. Write RESULT.md: line 1 is the RESULT: line above.",
 		"",
@@ -160,7 +160,7 @@ func TestLintAdvisesAnOversizeCardAndDoesNotRefuseIt(t *testing.T) {
 	assert.Contains(t, stdout, "nova-sprint add refuses a brief over 16384 bytes")
 }
 
-// The lint's two numbers are internal/cardlimits': 12000 is the advice, and the bound the
+// The lint's two numbers are pkg/cardlimits': 12000 is the advice, and the bound the
 // note names is the one nova-sprint add enforces (the store reads it there too), above the
 // advice.
 func TestTheSizeNoteAgreesWithTheSprintsBriefBound(t *testing.T) {

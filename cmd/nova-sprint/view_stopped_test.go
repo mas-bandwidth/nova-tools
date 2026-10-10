@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/mas-bandwidth/nova-tools/pkg/ntable"
 )
 
 // viewLine is the summary line nova-table renders for the sprint's stored view

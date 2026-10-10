@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
 // engine is the container runtime as this tool uses it. The podman type below

@@ -10,10 +10,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/bounded"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 // workerDrift is one reason a worker description cannot launch, named by the field it

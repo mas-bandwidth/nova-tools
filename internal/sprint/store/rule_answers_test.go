@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/pkg/config"
+	"github.com/mas-bandwidth/nova-tools/pkg/ntable"
 )
 
 // Rule answers (docs/SPEC-SPRINT.md section 8, "Answered by rule"; the owner, 2026-10-04, at

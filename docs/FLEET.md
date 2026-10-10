@@ -88,7 +88,7 @@ with `--model`, `--tokens` and `--deadline` runs its reads on those instead.
 A loop record runs a verb its program must still have: a release that retires
 the verb leaves the unit exiting at every start (`sprint-table-live` ran
 `nova-sprint table` that way until 2026-10-04). The loop kind asks each nova
-program in a record's argv `help <verb>` (`internal/config/loop.go`: exit 2
+program in a record's argv `help <verb>` (`pkg/config/loop.go`: exit 2
 naming verbs is a verb gone; a program not installed where nova-config runs
 judges nothing): `CheckLoopVerb` is the refusal of an enabled record whose
 verb is gone (enforced by `loop add` and `loop set`), and `DeadLoops` the line
@@ -201,7 +201,7 @@ the service's environment has to give them. `nova-sprint units --check` names ea
 machine a stranger set up is checked against what a sprint needs; a unit written by hand around a
 wrapper reads as different. `nova-swarm install disk-guard` writes that unit in the swarm
 binary, and the unit runs `nova-swarm disk-guard` itself. The unit text the sprint and redis
-verbs share lives in `internal/units`, which a worker's binary may import. `nova-swarm install mirror-refresh` stays owed: the mirror verb `nova-swarm mirror` is written, its
+verbs share lives in `pkg/units`, which a worker's binary may import. `nova-swarm install mirror-refresh` stays owed: the mirror verb `nova-swarm mirror` is written, its
 unit is not, and `units --check` says the unit is owed rather than telling a stranger to run it. Until
 that unit is written, a mirror refresh is not installed from here. The play's disk-guard row above is the
 fleet's copy of the same pass.

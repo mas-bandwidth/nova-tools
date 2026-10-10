@@ -8,7 +8,7 @@
 //
 // The version is NOT a constant maintained by hand -- a hand-maintained constant is wrong
 // exactly at the commit after the release, where it still names the release. It is read
-// from the build itself by internal/buildinfo, which holds the resolution order and the
+// from the build itself by pkg/buildinfo, which holds the resolution order and the
 // shape of the line for every binary here, so that eleven tools answer this question in
 // one spelling rather than eleven.
 package main
@@ -17,8 +17,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 )
 
 // version is empty in every ordinary build and is the one override: a release stamps it

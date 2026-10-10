@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus"
-	"github.com/mas-bandwidth/nova-tools/internal/friend"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/friend"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 // The watch verb: the coordinator's wake, one run of it (docs/SPEC-FRIEND.md,
@@ -139,7 +139,7 @@ type watchJSON struct {
 }
 
 // watchLine is one wake as its text line: values that could break a line or
-// a field are escaped (internal/oneline), a subject and a wake line quoted.
+// a field are escaped (pkg/oneline), a subject and a wake line quoted.
 func watchLine(v watchWake) string {
 	switch v.Kind {
 	case WatchWake:

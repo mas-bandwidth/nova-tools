@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/mas-bandwidth/nova-tools/pkg/ntable"
 )
 
 // Unit coverage for Rejudge (internal/sprint/lifecycle.go): a repair applies

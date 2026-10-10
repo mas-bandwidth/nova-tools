@@ -19,7 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/pkg/goenv"
 )
 
 // The Go best-practice linters as class tests (docs/SPEC-CI.md, `staticcheck`

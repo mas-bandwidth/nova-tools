@@ -23,14 +23,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
-	"github.com/mas-bandwidth/nova-tools/internal/member"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/pkg/decide"
+	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
+	"github.com/mas-bandwidth/nova-tools/pkg/member"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
+	"github.com/mas-bandwidth/nova-tools/pkg/typedrec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1032,7 +1032,7 @@ func TestNativeLeavesAFinishedCardsReportAlone(t *testing.T) {
 // tool already names, and a model that fell over is not waiting for an answer. The exit
 // code is read before the capture is, which is why this card gets no report even though it
 // asked; the question-is-the-last-line half of the same shape is a row of the table in
-// internal/swarm/nativeasked_test.go, where it costs no provider retry to arrange.
+// pkg/swarm/nativeasked_test.go, where it costs no provider retry to arrange.
 func TestNativeDoesNotCallACrashAnAskedCard(t *testing.T) {
 	t.Parallel()
 
@@ -1721,7 +1721,7 @@ func TestPublicationFailureKeepsTheJob(t *testing.T) {
 // one worker"; under **the races, taken out**, two workers on one data home is the
 // 2026-09-10 `database is locked` failure, closed on purpose. Two live runs in one job
 // directory is therefore not a thing to make safe: it is a thing to REFUSE. The lease is
-// also pid-fenced (internal/swarm, TestAReleaseNeverRemovesAnotherRunsLease), so that a
+// also pid-fenced (pkg/swarm, TestAReleaseNeverRemovesAnotherRunsLease), so that a
 // release can never remove a lease it did not take even when a hand, an older binary or a
 // bench script has freed the path.
 //
@@ -4169,12 +4169,12 @@ func TestAReadsGateIsReadOffItsDiff(t *testing.T) {
 	seed, origin := filepath.Join(root, "seed"), filepath.Join(root, "origin.git")
 	runGit(t, "", "init", "-q", "-b", "main", "--", seed)
 	for rel, body := range map[string]string{
-		"go.mod":                     "module example.com/m\n\ngo 1.26\n",
-		"internal/sprint/x.go":       "package sprint\n",
-		"internal/swarm/s.go":        "package swarm\n",
-		"internal/swarm/doc_test.go": "package swarm\n\nvar doc = \"../../docs/SPEC-FIXTURE.md\"\n",
-		"internal/ci/ci_test.go":     "package ci\n\nfunc TestEverything(t *testing.T) {}\n",
-		"docs/SPEC-FIXTURE.md":       "# swarm\n",
+		"go.mod":                 "module example.com/m\n\ngo 1.26\n",
+		"internal/sprint/x.go":   "package sprint\n",
+		"pkg/swarm/s.go":         "package swarm\n",
+		"pkg/swarm/doc_test.go":  "package swarm\n\nvar doc = \"../../docs/SPEC-FIXTURE.md\"\n",
+		"internal/ci/ci_test.go": "package ci\n\nfunc TestEverything(t *testing.T) {}\n",
+		"docs/SPEC-FIXTURE.md":   "# swarm\n",
 	} {
 		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(seed, rel)), 0o755))
 		write(t, filepath.Join(seed, rel), body)
@@ -4202,7 +4202,7 @@ func TestAReadsGateIsReadOffItsDiff(t *testing.T) {
 	require.NoError(t, ferr)
 	text, err := os.ReadFile(filepath.Join(job, cardcontract.JobName))
 	require.NoError(t, err)
-	assert.Contains(t, string(text), "    nice -n 19 go test -count=1 -timeout 600s ./internal/sprint ./internal/swarm\n")
+	assert.Contains(t, string(text), "    nice -n 19 go test -count=1 -timeout 600s ./internal/sprint ./pkg/swarm\n")
 	assert.NotContains(t, string(text), "./internal/ci\n", "internal/ci is never run whole, and no test of it reads the doc")
 	assert.Contains(t, string(text), "GOCACHE is "+filepath.Join(root, "cache", "go-build"))
 }
@@ -4249,7 +4249,7 @@ func TestReviewARefusedFallbackPushDoesNotClaimItWasPushed(t *testing.T) {
 }
 
 // A rework staged at the tip of its base branch finishes from the commit staging made there
-// (internal/swarm restageAtTip: the tip with the attempt before's work carried on top): a child
+// (pkg/swarm restageAtTip: the tip with the attempt before's work carried on top): a child
 // that continues from it is pushed, and a head on the attempt before's old base is refused for
 // not descending from the staged commit. nongo-11 attempt 262 was refused the other way round:
 // staged at the old head, it restarted from the tip as its fix asked (nova-tools#5215). The

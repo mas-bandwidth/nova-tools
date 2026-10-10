@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/hostload"
+	"github.com/mas-bandwidth/nova-tools/pkg/hostload"
 )
 
 // A member's open files (docs/SPEC-SPRINT.md section 8, "Open files"). A sprint once ran

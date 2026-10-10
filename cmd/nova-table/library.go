@@ -1,7 +1,7 @@
 package main
 
 // Every table verb is an FCALL into the nova_sprint function library
-// (internal/nsprint/fn's lua/), so a store that holds no library answers the
+// (pkg/nsprint/fn's lua/), so a store that holds no library answers the
 // first one with "ERR Function not found". nova-table puts the library on
 // such a store itself, on first contact, with redisfn's LoadMissing: the
 // load of every caller that is not the deployer, which never replaces a
@@ -32,8 +32,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/redisfn"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisfn"
 )
 
 // functionNotFound is the store's answer to an FCALL of a function no

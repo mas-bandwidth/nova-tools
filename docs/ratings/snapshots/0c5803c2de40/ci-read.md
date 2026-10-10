@@ -10,7 +10,7 @@ The source under review is exactly 0c5803c2de406c1b0b2b0841f579c9bf73406b1c; the
 Reading order was README.md top to bottom, then AGENTS.md, then the nova-ci
 section of docs/CLI.md and its spec docs/SPEC-CI.md, then cmd/nova-ci from
 main.go into the internal packages it leans on (internal/ci/slowtests,
-internal/ci/functional, internal/tool, internal/oneline, internal/bounded,
+internal/ci/functional, pkg/tool, pkg/oneline, pkg/bounded,
 internal/yield). No binary ran and no test ran for this score; the reading
 alone decides it.
 
@@ -52,7 +52,7 @@ unreachable from the binary still lives in the command's directory, its
 header arguing from a sprint card's file list (cmd/nova-ci/timing.go:21).
 The tool that enforces the house standard is also the one tool off the house
 skeleton, its dispatch, refusal printer and exit-table extraction hand-rolled
-beside internal/tool's copies, with no reason written where the reader stands
+beside pkg/tool's copies, with no reason written where the reader stands
 (cmd/nova-ci/main.go:232).
 
 A 10 needs: the spec's help lines to name verbs that exist (or the verbs to
@@ -66,7 +66,7 @@ printed in the one key=value grammar the rest of the tool already speaks.
 |---|---|---|---|---|
 | 1 | docs/SPEC-CI.md:16 | the spec's help line names a verb, waits, that no help prints; the same block form at docs/SPEC-CI.md:80 and docs/SPEC-CI.md:148 names two more, and the banner's verb list, cmd/nova-ci/main.go:150, holds none of them, so a reader auditing the tool against its spec finds the surface missing | either land the roster as a real help section of nova-ci, or rewrite the spec's help-line blocks to name the class test's Go entry point it actually runs | M |
 | 2 | cmd/nova-ci/timing.go:21 | a second, unbuilt program lives in the command's directory and its header argues from a sprint card's file list, words that mean nothing to a reader at this snapshot; the measurement it exists for is reachable from no verb and named in no README row | move it under tools/ with a header that states what keeps it unbuilt and what runs it, or wire the verb in and say why it is a file | M |
-| 3 | cmd/nova-ci/main.go:232 | the tool that enforces the house standard stands off the shared skeleton: dispatch, refusal printer and exit-table extraction are hand-rolled here beside internal/tool's copies, and no line at the switch says why, so the tree carries two of each | write the reason at the dispatch in one line, or move the tool onto internal/tool and delete the copies | M |
+| 3 | cmd/nova-ci/main.go:232 | the tool that enforces the house standard stands off the shared skeleton: dispatch, refusal printer and exit-table extraction are hand-rolled here beside pkg/tool's copies, and no line at the switch says why, so the tree carries two of each | write the reason at the dispatch in one line, or move the tool onto pkg/tool and delete the copies | M |
 | 4 | docs/TESTS.md:812 | the prose under the executed transcript says --enforce makes slowtests exit 2; the exit table, cmd/nova-ci/main.go:126-127, and the verdict, internal/ci/slowtests/slowtests.go:610-612, say 1, the check ran and said no, so the document a stranger copies from teaches the wrong exit | write exit 1 there | S |
 | 5 | docs/CLI.md:1828 | the standard's onboarding point 3 says the tool's section here opens with a First run heading; nova-ci's section has none, and its transcript lives under docs/TESTS.md:795, while most sibling tools carry the heading in this file | add the heading over the existing three-command block at docs/CLI.md:1835, or point the reader to the transcript by name | S |
 | 6 | cmd/nova-ci/local.go:375 | local prints its package lines as fixed-width columns while every other finding line of the tool is key=value, so one run speaks two line grammars, the residue of the earlier dialect critique | print PKG as key=value through the same helper that renders RED | S |

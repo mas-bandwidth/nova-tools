@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
+	"github.com/mas-bandwidth/nova-tools/pkg/ntable"
 )
 
 // Stats reset (`nova-sprint stats reset`; docs/SPEC-SPRINT.md section 11, Statistics): the

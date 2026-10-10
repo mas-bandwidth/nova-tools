@@ -13,7 +13,7 @@ nova-sandbox --read <dir>... --write <dir>... [--net-deny] [--net-listen] -- <co
 This spec is normative. If the code and this document disagree, one of them has
 a bug, and the tests decide which. It stands beside [SPEC.md](SPEC.md), whose
 **Conventions** section — no guessed paths, the one-line output grammar, the
-cap-and-count rule, `internal/oneline` and `internal/bounded` — applies here
+cap-and-count rule, `pkg/oneline` and `pkg/bounded` — applies here
 unchanged and is not restated. The one deliberate departure from it is the exit
 grammar of the exec verb, and that departure has its own section and its reason.
 
@@ -248,7 +248,7 @@ The test requirements are listed under **Tests this spec demands**.
    neither half. It is by **exclusion**, never an allow-list, because the caller's
    credential must still arrive: the tool drops the names it knows are agents
    and passes everything else through untouched. The evidence is a **Go test**, not
-   the check: `internal/sandbox/policy_test.go`'s `TestChildEnv` and
+   the check: `pkg/sandbox/policy_test.go`'s `TestChildEnv` and
    `TestScrubSetIsExactlyTheSpecs` (test 27(c)) plant `SSH_AUTH_SOCK`,
    `SSH_AGENT_PID`, `GPG_AGENT_INFO`, `PODMAN_AGENT_SOCK`, `AI_AGENT`,
    `CLAUDE_AGENT_SDK_VERSION` and `FOO_TOKEN` and assert the exact set, and
@@ -457,8 +457,8 @@ were written.
   `TestAStepsGitCommitInsideItsWallSucceeds`, linux: a step's wall lets `git
   commit` in the checkout succeed, and an `rm` in a further `--write` succeeds
   too. `TestEveryWriteRootCarriesRemoveRights` checks the masks, the printed
-  ruleset and the profile (`internal/sandbox/delete_outside_test.go`,
-  `internal/sandbox/wall_deletes_test.go`).
+  ruleset and the profile (`pkg/sandbox/delete_outside_test.go`,
+  `pkg/sandbox/wall_deletes_test.go`).
 
 ## The verbs
 
@@ -501,7 +501,7 @@ across platforms.
 `check`, `policy` and `probe` take `--json`: the same result as one JSON object
 on stdout, a refusal included (`{"result":{"verb","status","exit","remedy","why"},
 "facts":{...},"items":[...],"notes":[...],"payload":"..."}`, the shape of
-`internal/tool`'s output value). `policy`'s profile is the `payload`, `probe`'s
+`pkg/tool`'s output value). `policy`'s profile is the `payload`, `probe`'s
 steps are `items` of kind `step`, and every typed line's fields are `facts`. The
 bare form and `run` wrap a command whose output is its own, and refuse `--json`.
 
@@ -573,7 +573,7 @@ runaway command cannot take the machine (289 test processes ran unbounded under 
   processes` with `n` over 256 and no live process of that group),
   `TestWallCapsATreeWhoseLeaderExits`, `TestWallCapsLeaveANormalRunAlone` and
   `TestPolicyOverNamesTheCapPast` (`cmd/nova-sandbox/nproc_cap_test.go`), the tree's
-  membership by `TestTree*` (`internal/sandbox/tree_test.go`), and rule 12's group by
+  membership by `TestTree*` (`pkg/sandbox/tree_test.go`), and rule 12's group by
   `TestTheBareFormKeepsTheCallersGroup` (`cmd/nova-sandbox/reap_darwin_test.go`, default
   build) and `TestAForkedChildIsReapedWithTheCallersGroup` (its functional twin), and the
   freeze by `TestARunawayIsFrozenBeforeItIsKilled` (darwin, functional: a loop forking 1,500
@@ -691,7 +691,7 @@ nova-sandbox run --name card1 --size 8g --go -- /bin/sh -c 'cd repo && go build 
 `--go` adds the Go toolchain's own two roots to the read set, as `go env` reports
 them: **`GOROOT`** and **`GOMODCACHE`**. Neither is a path the caller typed and
 neither is guessed — both are asked of the toolchain that is actually on the
-`PATH`, with `internal/goenv`'s cleaned environment, because a `GOFLAGS` inherited
+`PATH`, with `pkg/goenv`'s cleaned environment, because a `GOFLAGS` inherited
 from a Makefile can reshape a `go` command's output under the reader's feet. A
 path `go env` names that is **not there** — an empty module cache on a machine
 that has never downloaded a module — is skipped with a note, not refused: rule 5's
@@ -1284,7 +1284,7 @@ linux is from inside the wall: the tool writes to the stderr it already holds
 and opens nothing. `SANDBOX OK` names `cmd=<name>` — the base name of
 the executable — and never the arguments, because arguments carry task text and
 task text carries quoted rules. The `cwd=<dir>` slot is a one-line field
-rendered through `internal/oneline` like every other path, so a directory whose
+rendered through `pkg/oneline` like every other path, so a directory whose
 path holds a blank reaches a reader escaped; a consumer that compares it with a
 path it holds decodes that field first.
 
@@ -1430,7 +1430,7 @@ the harness could not resolve DNS, because `/etc/resolv.conf` is a symlink into
 resolver runtime path was hidden and curl said `Could not resolve host`; adding
 `/run/systemd/resolve` to `linuxReadRoots` fixed it, and curl got `http=200`.
 The Linux backend therefore always reads the roots in `linuxReadRoots` in
-`internal/sandbox/wrap_linux.go`,
+`pkg/sandbox/wrap_linux.go`,
 applied by `addRules`, including the resolver runtime directory
 `/run/systemd/resolve`, and it says so in the roots table above. They are part
 of the one roots table, not a separate policy and not a caller switch: there is
@@ -1465,7 +1465,7 @@ job's data home always is.
 ### buds-in-the-wall-r.w5 — the lane profile, and the deny list
 
 A nova-friend lane's children run inside a **wall profile** (`LaneProfile`,
-`internal/sandbox/profile.go`; docs/SPEC-FRIEND.md has the lane side). The
+`pkg/sandbox/profile.go`; docs/SPEC-FRIEND.md has the lane side). The
 one profile is `friend` (`LaneProfiles`; any other name is refused):
 
 | | |
@@ -1595,7 +1595,7 @@ and widening it to save time would trade a denial for nothing. A slow Intel
 bench is slow in the kernel for every process, walled or not.
 
 **`tools/sandboxcheck`** is how that file is known to be right. It is a Go
-driver (`internal/sandbox/darwincheck`) around the real probes, and it fills the
+driver (`pkg/sandbox/darwincheck`) around the real probes, and it fills the
 embedded template for a scratch write set under the working directory (no
 `/tmp`, any cwd), then runs inside the wall, by absolute path, the first
 second of a real job: `cd`, `mkdir -p`, `git init`, `git clone --shared` of a
@@ -1667,8 +1667,8 @@ status, not to clean anything up.
 
 ## Linux — Landlock, no root
 
-The Linux body is `internal/sandbox/wrap_linux.go` and
-`internal/sandbox/landlock_linux.go`. It restricts the current process before
+The Linux body is `pkg/sandbox/wrap_linux.go` and
+`pkg/sandbox/landlock_linux.go`. It restricts the current process before
 starting the child. Its limits are listed at the end of this section.
 
 Landlock is an LSM available from kernel **5.13**, usable by an unprivileged
@@ -2372,8 +2372,8 @@ And one for each thing the rules above assert but no test yet reached:
 
 The command dispatch and probe are in `cmd/nova-sandbox/main.go`; policy
 validation, path containment and the shared environment rules are in
-`internal/sandbox/policy.go`. The operating-system wrappers are
-`internal/sandbox/wrap_darwin.go` and `internal/sandbox/wrap_linux.go`;
-`internal/sandbox/wrap_other.go` refuses unsupported platforms. The disposable
+`pkg/sandbox/policy.go`. The operating-system wrappers are
+`pkg/sandbox/wrap_darwin.go` and `pkg/sandbox/wrap_linux.go`;
+`pkg/sandbox/wrap_other.go` refuses unsupported platforms. The disposable
 run, artifact handoff, worktree and egress commands have their own files under
 `cmd/nova-sandbox/`.

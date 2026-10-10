@@ -1,7 +1,7 @@
 package main
 
 // The acl verbs put the fleet store's ACL users in the shape this build
-// renders (internal/redisacl): one user per role, its key families, its
+// renders (pkg/redisacl): one user per role, its key families, its
 // command categories and FCALL of exactly the functions the library this
 // binary embeds registers in the role's files.
 //
@@ -36,10 +36,10 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/redisacl"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisacl"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 // aclServer is the store the acl verbs read and write; aclStore is the one
@@ -231,7 +231,7 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 	}
 	users, err := redisacl.Render(lib)
 	if err != nil {
-		return tool.Refuse(fmt.Sprintf("this build's roles do not render: %s; fix internal/redisacl and rebuild", err))
+		return tool.Refuse(fmt.Sprintf("this build's roles do not render: %s; fix pkg/redisacl and rebuild", err))
 	}
 	if sub == "render" {
 		// A family is what an operator reads: its name and its key patterns.
@@ -258,7 +258,7 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 	}
 	// after prints the one NOTE a run that spelled --addr carries, after the
 	// verb's own answer line: the status word leads the line the reader acts
-	// on, and the alias note follows it as internal/tool renders its own
+	// on, and the alias note follows it as pkg/tool renders its own
 	// notes. A failure is the answer, and prints nothing more.
 	alias := store.aliasNote()
 	after := func() {

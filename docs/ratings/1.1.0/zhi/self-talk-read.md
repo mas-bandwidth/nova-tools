@@ -11,14 +11,14 @@ The README row at README.md:26 says the tool "flags sentences where a writer pas
 
 The tool says what it is in one line, the verbs are named plainly (scan, shapes, example, version), and the data is markdown files named on the command line, with - for stdin. The names a stranger understands: STANDING, DATED, INSTALLATION, RANKING, FORECLOSURE, TRAIT. The comments say why in present tense: cmd/nova-self-talk/main.go:1 explains why it is an advisory instrument and never a wall, and internal/selftalk/selftalk.go:7 explains why it measures a construct and not grammar, with the history that made the old grammar measure wrong. The tests are extensive and pin the shapes and their near misses, and the audit tests assert the refusal grammar.
 
-What keeps it from a 10: the banner wall, the capitalised comment emphasis, and the verbs are still hand-dispatched with verbflag rather than the internal/tool Verb table, so it is only half on the family skeleton.
+What keeps it from a 10: the banner wall, the capitalised comment emphasis, and the verbs are still hand-dispatched with verbflag rather than the pkg/tool Verb table, so it is only half on the family skeleton.
 
 ## Findings
 | # | where | finding | fix | size |
 |---|---|---|---|---|
 | 1 | cmd/nova-self-talk/main.go:25 | the usage block embeds the full shape table before the flags; a cold reader meets a spec before the tool | move the shape table under shapes or a shorter help, and keep the banner to the five-line orientation | M |
 | 2 | internal/selftalk/selftalk.go:24 | capitalised comment lines for emphasis are a style the family avoids, and they read as shouting | rewrite the two lines in sentence case, keeping the content | S |
-| 3 | cmd/nova-self-talk/verbs.go:23 | the verbs are hand-dispatched with verbflag and refuse(), not the internal/tool Verb table the bigger siblings use | port scan, shapes, example and version onto internal/tool | S |
+| 3 | cmd/nova-self-talk/verbs.go:23 | the verbs are hand-dispatched with verbflag and refuse(), not the pkg/tool Verb table the bigger siblings use | port scan, shapes, example and version onto pkg/tool | S |
 
 ## Good, keep
 

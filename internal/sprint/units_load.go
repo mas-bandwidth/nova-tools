@@ -1,6 +1,6 @@
 package sprint
 
-import "github.com/mas-bandwidth/nova-tools/internal/units"
+import "github.com/mas-bandwidth/nova-tools/pkg/units"
 
 // LoadUnit loads or unloads the unit at path. Under NOVA_TEST_NO_HOST it refuses:
 // a test gives its own loader and loads nothing on the machine.

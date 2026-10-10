@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/filelock"
+	"github.com/mas-bandwidth/nova-tools/pkg/filelock"
 )
 
 // blow is the lockdown half of a two-writer interleaving: the change a lockdown

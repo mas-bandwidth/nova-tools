@@ -3,7 +3,7 @@
 // The run verb's executor: the same seatbelt wall the bare form applies, around a child
 // in a PROCESS GROUP OF ITS OWN.
 //
-// The bare form deliberately does NOT make a group (internal/sandbox/wrap_darwin.go): the
+// The bare form deliberately does NOT make a group (pkg/sandbox/wrap_darwin.go): the
 // caller owns the group there, because a swarm supervisor puts each job in a group of its
 // making and reaps that group at the deadline, and a tool that made its own would hide a
 // forked background child from the reaper. The run verb is the OTHER side of that same
@@ -19,8 +19,8 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
 // startInOwnGroup applies the policy, starts the command in a new process group, and

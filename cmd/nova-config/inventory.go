@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/config"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
 )
 
 // localHost is the machine row this process runs on, which inventory marks

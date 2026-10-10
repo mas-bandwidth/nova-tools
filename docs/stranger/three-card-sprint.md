@@ -29,8 +29,8 @@ it. Nothing was pushed to the forge.
 - Read: README.md; `nova-sprint help`, `nova-sprint <verb> -h` for init, add, seat, seat
   install, seat push; `nova-redis help`, `nova-redis serve -h`; `nova-swarm template --name card`.
   After the stumbles named below: docs/SPEC-SPRINT.md "The push proof", docs/RELEASE-NOTES-1.1.0.md
-  "The push proof", internal/friend/adapter.go (NewDeliverer, ClaudeWake),
-  internal/swarm/stage.go (CardRepoURL), cmd/nova-sprint/mergewindow.go (ghMergeQueue) and
+  "The push proof", pkg/friend/adapter.go (NewDeliverer, ClaudeWake),
+  pkg/swarm/stage.go (CardRepoURL), cmd/nova-sprint/mergewindow.go (ghMergeQueue) and
   cmd/nova-sprint/land.go (originIs, normRepo).
 - Time: README opened 15:31 UTC; the third card landed 15:44:28 UTC; the container stopped and
   ~/nova-bench/stranger/<job>/ was removed at 15:45 UTC.
@@ -850,7 +850,7 @@ c3.txt each hold their one line.
   image sets GOFLAGS=-buildvcs=false, so Go recorded no revision; the line does not say that,
   and the commit had to be read from git outside the tool.
 - card: version-devel-says-why
-- PATHS: internal/buildinfo/buildinfo.go
+- PATHS: pkg/buildinfo/buildinfo.go
 - Task: a build with no release version and no VCS revision says so on its version line (for example `devel (no vcs revision recorded)`), so a run can tell an unknown build from a named one.
 
 ### 3. `nova-redis serve` wants a password the README row does not mention
@@ -871,7 +871,7 @@ c3.txt each hold their one line.
   without naming that variable; I guessed `NOVA_SPRINT_REDIS_USER=default`, and only then the
   refusal named `NOVA_REDIS_BENCH_PASSWORD`. Two retries, and two names for one password.
 - card: sprint-help-names-the-redis-login
-- PATHS: cmd/nova-sprint/main.go,internal/nsprint/redisauth/redisauth.go
+- PATHS: cmd/nova-sprint/main.go,pkg/nsprint/redisauth/redisauth.go
 - Task: the first NOAUTH refusal and `--redis` help name the user and password variables (NOVA_SPRINT_REDIS_USER, NOVA_REDIS_BENCH_PASSWORD), and the default user also reads NOVA_REDIS_PASSWORD, the one nova-redis serve took.
 
 ### 5. init needs the function library, which no first-run text mentions
@@ -887,7 +887,7 @@ c3.txt each hold their one line.
 
 - Read: `nova-sprint seat install -h`, `nova-sprint seat push -h`, `nova-sprint help`; then, past
   them, docs/SPEC-SPRINT.md "The push proof", docs/RELEASE-NOTES-1.1.0.md "The push proof" and
-  internal/friend/adapter.go (to learn which adapter needs no binary).
+  pkg/friend/adapter.go (to learn which adapter needs no binary).
 - Expected: `add` after `init`, as the help's example shows.
 - Happened: `add REFUSED: PUSH DOWN: boss has no push target recorded`. `seat install` installs a
   systemd user unit (none in a container); `--harness fake` is refused with a `run:` line that
@@ -906,12 +906,12 @@ c3.txt each hold their one line.
 - Expected: a brief filled in from the template to pass the lint.
 - Happened: `LINT DRIFT ... tier-line: line 1 names no tier` on each card; I added `tier: flash` as line 1. The template also shows no `NEW:` line, though the next lint said a new file must be on one.
 - card: swarm-template-card-passes-the-lint
-- PATHS: internal/swarm/templates.go
+- PATHS: pkg/swarm/templates.go
 - Task: the card template carries `tier: flash` on line 1 and a `NEW:` line, and a test lints the template as add does.
 
 ### 8. `REPO:` reads as a GitHub repository; a local origin is not shown
 
-- Read: the template's `REPO: <owner>/<name>`; past it, internal/swarm/stage.go (CardRepoURL) and
+- Read: the template's `REPO: <owner>/<name>`; past it, pkg/swarm/stage.go (CardRepoURL) and
   cmd/nova-sprint/land.go (originIs, normRepo).
 - Expected: a way to name the throwaway bare origin.
 - Happened: `REPO: trial/work` was cloned from github.com (no network: lint refused). I guessed a
@@ -920,7 +920,7 @@ c3.txt each hold their one line.
   Only the source said a REPO: may be an absolute path. I stopped the machine (`stop` wanted
   `--until`, one more retry), cleared the sprint and added the cards again with `REPO: /work/trial/origin.git`.
 - card: card-repo-may-be-a-path
-- PATHS: internal/swarm/templates.go,cmd/nova-sprint/main.go
+- PATHS: pkg/swarm/templates.go,cmd/nova-sprint/main.go
 - Task: the template's REPO: line and the twin walkthrough say REPO: takes an owner/name, a URL or an absolute path, and the walkthrough's cards name origin.git by path.
 
 ### 9. Landing pauses for a missing `gh`

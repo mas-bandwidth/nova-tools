@@ -17,10 +17,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bench"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/bench"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 const usage = `nova-ci: test-time budgets over go test -json output, and this repository's own CI steps
@@ -172,7 +172,7 @@ func helpListsVerb(tool, verb string) bool {
 }
 
 // verbEffect is what running a verb does beyond printing, the last line of its -h, in
-// internal/tool's words (inspection, local write or delivery; docs/STANDARD.md section 2).
+// pkg/tool's words (inspection, local write or delivery; docs/STANDARD.md section 2).
 var verbEffect = map[string]tool.Effect{
 	"slowtests":      tool.Inspection,
 	"functional":     tool.Inspection,

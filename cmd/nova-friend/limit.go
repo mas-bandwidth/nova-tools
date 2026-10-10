@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 // CreditRetry is how long a friend is down when a harness refuses for credits
@@ -25,7 +25,7 @@ const CreditRetry = 24 * time.Hour
 
 // The kinds of a refusal: the balance that pays for the harness is empty, or
 // its usage window or quota is spent. The status says the kind
-// (`session=limited limit_kind=<kind>`), the same words internal/friend's
+// (`session=limited limit_kind=<kind>`), the same words pkg/friend's
 // limit does, and the reason always says "no credits" as the card's down line
 // spells it.
 const (
@@ -76,7 +76,7 @@ type refusalRow struct {
 // refusalRows is the one table: every harness the daemon runs, its provider's
 // 402 and the wordings the harness prints itself, credits before quota so a
 // line that says both is the balance. The wordings are the recorded refusals
-// in internal/friend/testdata/limits.tsv; the antigravity and gemini rows are
+// in pkg/friend/testdata/limits.tsv; the antigravity and gemini rows are
 // their real refusals.
 var refusalRows = []refusalRow{
 	{Harness: "claude", Kind: RefusalCredits, Re: regexp.MustCompile(`(?i)credit balance is too low|billing_error|payment_required|\b402\b`)},

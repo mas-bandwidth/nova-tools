@@ -12,7 +12,7 @@ It runs exactly what the unit tier of `.github/workflows/ci.yml` runs for your
 change, so your answer matches CI before you push:
 
 - **the packages** are `go run ./tools/ci select-packages`'s answer (the same
-  selection, `internal/pkgselect`) against the merge base of `--base` (default `origin/dev`) and `HEAD`: the Go packages the
+  selection, `pkg/pkgselect`) against the merge base of `--base` (default `origin/dev`) and `HEAD`: the Go packages the
   committed diff touches, every package that imports one of them, and the class
   test packages every run carries;
 - **the run** is the Makefile's `test` target, the one entry CI's legs call:
@@ -47,7 +47,7 @@ container. The fixtures are unchanged; they start their dependencies as child
 processes, and those are inside the container.
 
 ```sh
-make test-functional-container PKGS=./internal/ntable/...
+make test-functional-container PKGS=./pkg/ntable/...
 ```
 
 Name the packages. The run needs rootless `podman` (on macOS, a running
@@ -108,7 +108,7 @@ not trust (another person's branch before your own), use a throwaway build
 cache for that run, an anonymous volume removed with the container:
 
 ```sh
-make test-functional-container PKGS=./internal/ntable/... FUNCTIONAL_FLAGS=--fresh-gocache
+make test-functional-container PKGS=./pkg/ntable/... FUNCTIONAL_FLAGS=--fresh-gocache
 ```
 
 The tool by hand, for its flags (`--cpus`, `--memory`, `--pids`, `--scratch`,

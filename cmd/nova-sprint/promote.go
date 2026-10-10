@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
 func init() {

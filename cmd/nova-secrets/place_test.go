@@ -13,7 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
 )
 
 type placeFixture struct {

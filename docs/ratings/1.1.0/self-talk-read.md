@@ -42,7 +42,7 @@ What a 10 would need: the banner cut to its orientation and example (finding 1),
 |---|---|---|
 | off the skeleton | STILL THERE | cmd/nova-self-talk/main.go:199 hand-dispatches the verbs and carries its own refuse and usage const beside the verb table the siblings use (cmd/nova-cairn/main.go:31); the stated reason — the first file may be no verb (cmd/nova-self-talk/main.go:49-51) — holds the dispatch |
 | an 88-line banner | STILL THERE | the usage const is 94 lines now, cmd/nova-self-talk/main.go:30-123, restructured to the three-question opening; the wall stands, its front door improved |
-| comments in capitals | STILL THERE | cmd/nova-self-talk/main.go:308 and internal/selftalk/selftalk.go:91; the emphasis turns out to be the family's own style (internal/tool/tool.go:57), so it costs less than it did |
+| comments in capitals | STILL THERE | cmd/nova-self-talk/main.go:308 and internal/selftalk/selftalk.go:91; the emphasis turns out to be the family's own style (pkg/tool/tool.go:57), so it costs less than it did |
 | a class name nobody glosses | FIXED | INSTALLATION is glossed at cmd/nova-self-talk/main.go:61-64, docs/CLI.md:278 and docs/SPEC.md:1779; what remains unexplained is the word's metaphor, not its meaning |
 | jargon and a semantic overstatement | CHANGED | every token is glossed at first use (cmd/nova-self-talk/main.go:53-91); the overstatement left is the internal map row, internal/docs/catalog.go:99 |
 | the README rated 6.5-7 and 8.4 | CHANGED | README: 8/10 now; the row matches the banner's first line and its first command runs as printed; the two tail clauses are finding 4 |

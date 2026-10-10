@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 )
 
 // fakeOllama is an ollama daemon in a function: /api/tags, /api/ps, /api/show,

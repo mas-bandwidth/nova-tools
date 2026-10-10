@@ -7,11 +7,11 @@ import (
 	"io"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 // quackBase is the test repository's branch quack cards start from and merge

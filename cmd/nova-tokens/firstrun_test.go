@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/mas-bandwidth/nova-tools/pkg/onboarding"
 )
 
 // ONBOARDING.md, pinned for this binary: the example lines are EXECUTED against the

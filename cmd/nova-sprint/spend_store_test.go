@@ -10,9 +10,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
-	"github.com/mas-bandwidth/nova-tools/internal/release"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
+	"github.com/mas-bandwidth/nova-tools/pkg/release"
 )
 
 // spendSnapshot is the store's read: an openrouter route and one card whose records over the

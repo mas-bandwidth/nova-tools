@@ -15,7 +15,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/testgit"
+	"github.com/mas-bandwidth/nova-tools/pkg/testgit"
 )
 
 // twinRepo is a repository standing for origin as the binding fetches it: dev, and the

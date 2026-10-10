@@ -15,7 +15,7 @@ import (
 // helper struct owning the plumbing): one output directory of its own, the
 // non-regular nodes the refusal tests stage at the lock path, the guarded
 // take every refusal test repeats, and one checker per refusal family.
-// internal/testkit has no FIFO or flock mechanics, so the rig stays
+// pkg/testkit has no FIFO or flock mechanics, so the rig stays
 // package-specific as its HARNESS.md asks.
 
 type rig struct {

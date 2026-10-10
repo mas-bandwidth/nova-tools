@@ -9,7 +9,7 @@ import (
 	"io"
 	"runtime"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
 )
 
 func startInOwnGroup(*sandbox.Policy, []string, io.Reader, io.Writer, io.Writer) (startedRun, error) {

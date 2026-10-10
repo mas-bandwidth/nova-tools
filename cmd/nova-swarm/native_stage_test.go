@@ -13,7 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 // captureStageLine redirects os.Stdout around fn and returns the first line fn prints that

@@ -19,11 +19,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/pkg/config"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/testutil"
 )
 
 // The dirty-driven tick driven on a store (the owner's shape of 2026-09-30:

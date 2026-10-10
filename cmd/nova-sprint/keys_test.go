@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
-	"github.com/mas-bandwidth/nova-tools/internal/secrets"
+	"github.com/mas-bandwidth/nova-tools/pkg/decide"
+	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
 )
 
 // The decision key's name is the decide loop's name. secrets does not import decide.

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
-	"github.com/mas-bandwidth/nova-tools/internal/tlc"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/pkg/tlc"
 	tassert "github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

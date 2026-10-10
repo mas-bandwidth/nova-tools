@@ -99,7 +99,7 @@ RUN arch="$(dpkg --print-architecture)" \
  && install -m 0755 /tmp/age/age /tmp/age/age-keygen /usr/local/bin/
 
 # ---- redis-build: redis-server and redis-cli from the pinned source release ----
-# Redis 8, the wording the tests expect (internal/redisfn's test texts are
+# Redis 8, the wording the tests expect (pkg/redisfn's test texts are
 # Redis 8's); Redis 8.10.2 is also
 # the release `go run ./tools/ci install-redis-server` builds where the
 # distribution has none. This ARG is the repository's one Redis version:

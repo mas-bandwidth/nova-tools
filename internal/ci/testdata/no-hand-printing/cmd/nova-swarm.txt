@@ -1,4 +1,4 @@
 # no-hand-printing: hand printing in a tool package; each row's count only falls
 # ceiling: 2
-cmd/nova-swarm:flagset 3 three verbs build their own flag set: the tool dispatches by hand and is not on internal/tool, so each verb parses its own flags until the port
+cmd/nova-swarm:flagset 3 three verbs build their own flag set: the tool dispatches by hand and is not on pkg/tool, so each verb parses its own flags until the port
 cmd/nova-swarm:stream-print 6 six STAGE lines the native runner writes to os.Stdout as it goes, which the batch launcher reads while the run is still live: a stream one returned Out cannot hold, and they leave when the launcher reads the runner through the skeleton

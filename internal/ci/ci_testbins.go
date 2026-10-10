@@ -21,7 +21,7 @@ import (
 // scanner for longer than a test waits; a hard link shares the inode the
 // scanner already assessed, so the fixture is not re-assessed and the run
 // stays inside its wait. The
-// allowed shape is internal/testbin.Place, which links first and copies only
+// allowed shape is pkg/testbin.Place, which links first and copies only
 // where a link is impossible. A shell script written 0o755 is NOT the shape:
 // the interpreter is the executable and its bytes are never scanned. It writes
 // nothing. Its only input besides the tree is an allowlist of existing
@@ -96,7 +96,7 @@ func (r TestbinsResult) ExitCode() int {
 
 // checkTestbinDirs are the trees the CI path runs: every _test.go under
 // internal/ and cmd/.
-var checkTestbinDirs = []string{"internal", "cmd"}
+var checkTestbinDirs = []string{"internal", "pkg", "cmd"}
 
 // CheckTestbins reads every _test.go under root/internal and root/cmd and
 // returns the copied built binaries, the allowlist entries honored, and any

@@ -12,8 +12,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 // THE MIRROR (docs/COORDINATOR-TOOLS.md, the mirror-refresh row; docs/FLEET.md).

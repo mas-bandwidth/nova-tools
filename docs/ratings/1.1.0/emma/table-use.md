@@ -29,6 +29,6 @@ Exit codes cleanly distinguish success, semantic refusals, and invocation syntax
 ## Compared with earlier ratings
 | earlier | now | evidence |
 |---|---|---|
-| the remedy after drop ping-pongs between create and set | FIXED | internal/ntable/store.go:341 suggests drop with definition flag |
+| the remedy after drop ping-pongs between create and set | FIXED | pkg/ntable/store.go:341 suggests drop with definition flag |
 | reads have no --json | STILL THERE | `nova-table show demo --json` yields unknown flag --json |
 | the unknown-option refusal is generic | FIXED | `nova-table create --unknown-flag demo --columns ready,done` lists valid flags |

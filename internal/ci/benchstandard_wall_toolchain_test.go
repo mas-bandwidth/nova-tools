@@ -3,8 +3,8 @@ package ci
 // The bench standard asks whether `go` and `sbcl` can be EXECUTED inside the
 // sandbox wall, not merely whether they are ON PATH. A card does not run in the
 // bench user's shell: it runs behind the sandbox wall, whose linux read roots are
-// the system table of internal/sandbox/wrap_linux.go plus the toolchain roots of
-// internal/swarm/toolchain.go (sdk with EXECUTE, go/pkg/mod without). An
+// the system table of pkg/sandbox/wrap_linux.go plus the toolchain roots of
+// pkg/swarm/toolchain.go (sdk with EXECUTE, go/pkg/mod without). An
 // interpreter at $HOME/.local/bin/sbcl satisfies `command -v` and is `Permission
 // denied` inside the wall, so a bench passes the standard and every card on it
 // dies. The wall is right, so the standard asks the wall's question.
@@ -37,17 +37,17 @@ const (
 // /etc, no /run/systemd/resolve, no /dev, no /proc), so a toolchain the wall executes under one
 // of those was reported "under NO read root" and a conforming bench was rejected. The two
 // lists are ONE list, read here from both places -- linuxReadRoots in
-// internal/sandbox/wrap_linux.go (a linux-tagged unexported var, so read as source, which
+// pkg/sandbox/wrap_linux.go (a linux-tagged unexported var, so read as source, which
 // also keeps this test running on the darwin benches) and the marker block in the standard's
 // Go -- and must match in both directions and in order.
 func TestBenchStandardAndTheWallNameTheSameReadRoots(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
-	wallSrc, err := os.ReadFile(filepath.Join(root, "internal", "sandbox", "wrap_linux.go"))
+	wallSrc, err := os.ReadFile(filepath.Join(root, "pkg", "sandbox", "wrap_linux.go"))
 	require.NoError(t, err)
 	m := regexp.MustCompile(`(?m)^var linuxReadRoots = \[\]string\{([^}]*)\}`).FindSubmatch(wallSrc)
-	require.NotNil(t, m, "internal/sandbox/wrap_linux.go no longer declares `var linuxReadRoots = []string{...}` on one line; update this test's reader with it")
+	require.NotNil(t, m, "pkg/sandbox/wrap_linux.go no longer declares `var linuxReadRoots = []string{...}` on one line; update this test's reader with it")
 	var fromWall []string
 	for _, q := range regexp.MustCompile(`"([^"]*)"`).FindAllSubmatch(m[1], -1) {
 		fromWall = append(fromWall, string(q[1]))
@@ -56,7 +56,7 @@ func TestBenchStandardAndTheWallNameTheSameReadRoots(t *testing.T) {
 
 	body := string(rawBenchStandard(t, root))
 	fromStandard := quotedBetween(t, body, wallReadRootsBegin, wallReadRootsEnd)
-	assert.Equal(t, strings.Join(fromWall, " "), strings.Join(fromStandard, " "), "the executable-root check and the wall name different linux read roots:\n  %s: %v\n  internal/sandbox/wrap_linux.go linuxReadRoots: %v\nThey are ONE list: a root the wall grants and the check omits rejects a conforming bench. Edit both sides together.",
+	assert.Equal(t, strings.Join(fromWall, " "), strings.Join(fromStandard, " "), "the executable-root check and the wall name different linux read roots:\n  %s: %v\n  pkg/sandbox/wrap_linux.go linuxReadRoots: %v\nThey are ONE list: a root the wall grants and the check omits rejects a conforming bench. Edit both sides together.",
 		benchStandardSource, fromStandard, fromWall)
 	// The block is only half the rule: the check must actually read it, with the
 	// per-machine resolver directory and $HOME/sdk, or the block is decoration.

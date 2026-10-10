@@ -9,7 +9,7 @@ README: 8/10
 
 The rated source is exactly 0c5803c2de406c1b0b2b0841f579c9bf73406b1c; the staged HEAD is that same commit, so nothing later is scored here. The README's sentence for the tool is "a session's words, kept durably as plain files you can come back to" (README.md:33), and the banner repeats it word for word (cmd/nova-cairn/main.go:47), which the onboarding standard demands.
 
-nova-cairn is the easy half of a hard problem done plainly: four verbs, plain files, no lifecycle, one value rendered as lines or JSON, refusals that name the whole remedy, writes that are fsync-durable through internal/atomicfile, and a first-run transcript a test actually executes (cmd/nova-cairn/firstrun_test.go:118). I would reach for it, and I would enjoy working in cmd/nova-cairn/. The reasons it is not a 10 are below.
+nova-cairn is the easy half of a hard problem done plainly: four verbs, plain files, no lifecycle, one value rendered as lines or JSON, refusals that name the whole remedy, writes that are fsync-durable through pkg/atomicfile, and a first-run transcript a test actually executes (cmd/nova-cairn/firstrun_test.go:118). I would reach for it, and I would enjoy working in cmd/nova-cairn/. The reasons it is not a 10 are below.
 
 First confusion: the banner's how text names one store shape only — "append keeps an entry's exact words in entries/<session>/<entry>.json" (cmd/nova-cairn/main.go:50) — while the same tool deliberately reads a second shape, one markdown file per session directly under the store, with no entries and no log, which the command reference spends a long paragraph on (docs/CLI.md:2115). A cold reader of `nova-cairn help` never learns the second shape exists.
 
@@ -38,7 +38,7 @@ The refusal that names the whole open remedy (internal/cairn/open_remedy.go:12),
 
 The first-run test executes every documented line and compares values, not shapes (cmd/nova-cairn/firstrun_test.go:118), so the transcript cannot drift away from the tool.
 
-Writes are atomic and fsync-durable through internal/atomicfile, and a crash between the entry file and its pointer line is healed on retry (internal/cairn/cairn.go:437).
+Writes are atomic and fsync-durable through pkg/atomicfile, and a crash between the entry file and its pointer line is healed on retry (internal/cairn/cairn.go:437).
 
 ## Compared with earlier ratings
 

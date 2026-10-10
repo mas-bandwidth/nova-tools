@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
 )
 
 // repriceWorld is a sprint whose flash route was priced wrong for days (input $0.03/M and

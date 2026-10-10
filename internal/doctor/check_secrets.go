@@ -134,7 +134,7 @@ func checkSecrets(ctx context.Context, env Env) Result {
 
 // sopsOn is the sops the check runs: the first executable `sops` on PATH, as
 // the shell would resolve it, else the executable NOVA_SECRETS_SOPS names
-// (internal/seatcred reads the same variable).
+// (pkg/seatcred reads the same variable).
 func sopsOn(env Env) string {
 	for _, dir := range filepath.SplitList(env.Getenv("PATH")) {
 		if dir == "" {

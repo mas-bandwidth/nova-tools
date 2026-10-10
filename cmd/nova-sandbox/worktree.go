@@ -25,11 +25,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
+	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
 // worktreeRemedy is the one remedy line a bad flag carries.
@@ -504,7 +504,7 @@ func newGUID() string {
 }
 
 // under is the strict-inside test kept readably here; the deletion itself goes
-// through internal/safepath.
+// through pkg/safepath.
 func under(root, path string) bool {
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {

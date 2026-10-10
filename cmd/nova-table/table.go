@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/ntable"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/redis/go-redis/v9"
 )
 

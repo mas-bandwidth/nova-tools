@@ -45,7 +45,7 @@ const (
 )
 
 // pushLoopDirs are the trees whose loops ship.
-var pushLoopDirs = []string{"cmd", "internal"}
+var pushLoopDirs = []string{"cmd", "internal", "pkg"}
 
 // pushClockTime are the clocks of package time a loop may wait on.
 var pushClockTime = map[string]bool{"Sleep": true, "After": true, "Tick": true, "NewTicker": true, "NewTimer": true}

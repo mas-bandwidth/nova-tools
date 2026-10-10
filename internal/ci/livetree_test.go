@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
+	"github.com/mas-bandwidth/nova-tools/pkg/pkgselect"
 )
 
 // liveTree is pkgselect.DeprecatedFile read the way pkgselect.Deprecated reads it,

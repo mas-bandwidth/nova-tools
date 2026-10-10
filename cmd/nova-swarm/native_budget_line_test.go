@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/mas-bandwidth/nova-tools/internal/member"
+	"github.com/mas-bandwidth/nova-tools/pkg/member"
 )
 
 // A budget that ends a card says which budget it was and at what count, with what the
