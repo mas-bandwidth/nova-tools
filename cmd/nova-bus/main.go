@@ -272,7 +272,9 @@ A recipient whose unacknowledged (delivered, not acked) messages have reached th
 refused for that recipient: the message still goes to the other recipients, the SEND OK line holds
 the id, and one SEND NOTE OVERLOAD line names the full recipient and its count. The cap is 20 by
 default and ` + PendingCapEnv + ` sets it (a count of at least 1). Drain the recipient with
-recv --as <name> and ack, so its pending list falls below the cap.
+recv --as <name> and ack, so its pending list falls below the cap. This check also covers
+--token sends in the idempotent write; a retry repeats the original OVERLOAD without delivering
+twice to recipients that were under the cap.
 Delivery to a reader is still at least once: a reader may be handed one message twice, by its id.`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the sender: the login user when there is one (then it may be left out)")

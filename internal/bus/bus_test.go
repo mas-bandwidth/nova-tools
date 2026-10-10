@@ -2,6 +2,7 @@ package bus
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -56,6 +57,58 @@ func (f *Fake) AddCapped(_ context.Context, streams []string, fields map[string]
 	}
 	f.add(write, fields, marks)
 	return over, f.lost(write)
+}
+
+// AddOnceCapped is the Fake's idempotent write under the same pending cap:
+// checking pending counts, recording the token and writing accepted streams
+// are one lock-held operation (SPEC-BUS.md, the pending cap and token send).
+func (f *Fake) AddOnceCapped(_ context.Context, key, record string, keep time.Duration, streams []string, fields map[string]string, cap int, marks ...Mark) (string, bool, map[string]int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.trip(); err != nil {
+		return "", false, nil, err
+	}
+	if prior, ok := f.record(key); ok {
+		return prior, true, nil, nil
+	}
+	over := map[string]int{}
+	var write []string
+	for _, stream := range streams {
+		name, isRecipient := strings.CutPrefix(stream, Prefix)
+		if isRecipient {
+			if g := f.groups[stream+"/"+name]; g != nil && len(g.pending) >= cap {
+				over[stream] = len(g.pending)
+				continue
+			}
+		}
+		write = append(write, stream)
+	}
+	if len(over) > 0 {
+		var sent struct {
+			Fingerprint string         `json:"fingerprint"`
+			ID          string         `json:"id"`
+			At          time.Time      `json:"at"`
+			Over        map[string]int `json:"over,omitempty"`
+		}
+		if err := json.Unmarshal([]byte(record), &sent); err != nil {
+			return "", false, nil, err
+		}
+		sent.Over = map[string]int{}
+		for stream, count := range over {
+			sent.Over[strings.TrimPrefix(stream, Prefix)] = count
+		}
+		updated, err := json.Marshal(sent)
+		if err != nil {
+			return "", false, nil, err
+		}
+		record = string(updated)
+	}
+	if f.records == nil {
+		f.records = map[string]fakeRecord{}
+	}
+	f.records[key] = fakeRecord{value: record, until: f.now.Add(keep)}
+	f.add(write, fields, marks)
+	return "", false, over, f.lost(write)
 }
 
 func TestSendRefusesEveryProblemAtOnce(t *testing.T) {
@@ -514,6 +567,43 @@ func TestAFullInboxRefusesWithATypedOverload(t *testing.T) {
 	_, err = b.Send(ctx, msg("ada", "bob"))
 	require.NoError(t, err)
 	assert.Len(t, f.streams[StreamOf("bob")], 4)
+}
+
+// TestATokenSendCannotExceedAFullInbox keeps the pending cap on the idempotent
+// send path too (SPEC-BUS.md, the pending cap and the token send): after bob's
+// inbox is full, a token send is refused for bob, reaches cy, and a retry does
+// not append a second message to either stream.
+func TestATokenSendCannotExceedAFullInbox(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	b, f := rig(t, "ada", "bob", "cy")
+	b.PendingCap = 3
+	for range 3 {
+		_, err := b.Send(ctx, msg("ada", "bob"))
+		require.NoError(t, err)
+		_, ok, err := b.Recv(ctx, "bob", 0)
+		require.NoError(t, err)
+		require.True(t, ok)
+	}
+
+	m := msg("ada", "bob", "cy")
+	m.Token = "token-full-inbox"
+	sent, err := b.Send(ctx, m)
+	var over *Overload
+	require.ErrorAs(t, err, &over)
+	assert.Equal(t, CodeOverload, over.Code())
+	assert.Equal(t, 3, over.Recipients["bob"])
+	assert.Equal(t, 3, f.Len(StreamOf("bob")))
+	assert.Equal(t, 1, f.Len(StreamOf("cy")))
+	assert.Equal(t, 4, f.Len(LogKey))
+
+	replayed, err := b.Send(ctx, m)
+	require.ErrorAs(t, err, &over, "the token replay preserves the original overload answer")
+	assert.Equal(t, 3, over.Recipients["bob"])
+	assert.Equal(t, sent.ID, replayed.ID)
+	assert.Equal(t, 3, f.Len(StreamOf("bob")))
+	assert.Equal(t, 1, f.Len(StreamOf("cy")))
+	assert.Equal(t, 4, f.Len(LogKey))
 }
 
 func TestULIDIsCrockfordAndTimeOrdered(t *testing.T) {

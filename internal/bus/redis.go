@@ -230,19 +230,48 @@ func (r Redis) AddCapped(ctx context.Context, streams []string, fields map[strin
 }
 
 // addOnce is AddOnce's one atomic step: Redis runs a script alone, so no
-// other send under the key comes between its GET and its writes. KEYS are the
-// record's key, the streams, then each mark's hash; ARGV are the record, its
-// expiry in ms, the count of streams, the count of field pairs, the pairs,
-// then each mark as "set" field value, "del" field or "fwd" field state.
+// other send under the key comes between its GET, cap checks and writes. KEYS
+// are the record's key, the streams, then each mark's hash; ARGV are the
+// record, its expiry in ms, the cap (zero means none), the count of streams,
+// the count of field pairs, the pairs, then each mark as "set" field value,
+// "del" field or "fwd" field state.
 var addOnce = redis.NewScript(forwardLua + `
 local prior = redis.call('GET', KEYS[1])
 if prior then return {1, prior} end
-redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
-local ns, nf = tonumber(ARGV[3]), tonumber(ARGV[4])
+local prefix = 'bus2:to:'
+local cap = tonumber(ARGV[3])
+local ns, nf = tonumber(ARGV[4]), tonumber(ARGV[5])
 local fields = {}
-for i = 1, nf * 2 do fields[i] = ARGV[4 + i] end
-for i = 1, ns do redis.call('XADD', KEYS[1 + i], '*', unpack(fields)) end
-local j, k = 5 + nf * 2, 2 + ns
+for i = 1, nf * 2 do fields[i] = ARGV[5 + i] end
+local over = {}
+local overNames = {}
+local write = {}
+for i = 1, ns do
+  local key = KEYS[1 + i]
+  local name = string.sub(key, #prefix + 1)
+  local recipient = string.sub(key, 1, #prefix) == prefix and name ~= ''
+  local n = 0
+  if cap > 0 and recipient then
+    local pend = redis.pcall('XPENDING', key, name)
+    if pend[1] then n = tonumber(pend[1]) end
+  end
+  if cap > 0 and recipient and n >= cap then
+    over[#over + 1] = key
+    over[#over + 1] = n
+    overNames[name] = n
+  else
+    write[#write + 1] = key
+  end
+end
+local record = ARGV[1]
+if next(overNames) then
+  local decoded = cjson.decode(record)
+  decoded['over'] = overNames
+  record = cjson.encode(decoded)
+end
+redis.call('SET', KEYS[1], record, 'PX', ARGV[2])
+for _, key in ipairs(write) do redis.call('XADD', key, '*', unpack(fields)) end
+local j, k = 6 + nf * 2, 2 + ns
 local now = redis.call('TIME')[1]
 while j <= #ARGV do
   if ARGV[j] == 'del' then
@@ -257,14 +286,28 @@ while j <= #ARGV do
   end
   k = k + 1
 end
-return {0, ''}
+local result = {0, ''}
+for _, value in ipairs(over) do result[#result + 1] = value end
+return result
 `)
 
 func (r Redis) AddOnce(ctx context.Context, key, record string, keep time.Duration, streams []string, fields map[string]string, marks ...Mark) (prior string, found bool, err error) {
+	prior, found, _, err = r.addOnceCapped(ctx, key, record, keep, streams, fields, 0, marks...)
+	return prior, found, err
+}
+
+// AddOnceCapped is the token send's AddOnce with a per-recipient pending cap,
+// checked in the same script as the idempotency record and XADDs (SPEC-BUS.md,
+// the pending cap and a-lost-send-response-is-safe-to-retry.w1).
+func (r Redis) AddOnceCapped(ctx context.Context, key, record string, keep time.Duration, streams []string, fields map[string]string, cap int, marks ...Mark) (prior string, found bool, over map[string]int, err error) {
+	return r.addOnceCapped(ctx, key, record, keep, streams, fields, cap, marks...)
+}
+
+func (r Redis) addOnceCapped(ctx context.Context, key, record string, keep time.Duration, streams []string, fields map[string]string, cap int, marks ...Mark) (prior string, found bool, over map[string]int, err error) {
 	err = r.call(ctx, false, 0, func(ctx context.Context) error {
 		keys := append([]string{key}, streams...)
 		names := slices.Sorted(maps.Keys(fields))
-		args := []any{record, keep.Milliseconds(), len(streams), len(names)}
+		args := []any{record, keep.Milliseconds(), cap, len(streams), len(names)}
 		for _, n := range names {
 			args = append(args, n, fields[n])
 		}
@@ -283,18 +326,24 @@ func (r Redis) AddOnce(ctx context.Context, key, record string, keep time.Durati
 		if err != nil {
 			return err
 		}
-		if len(res) != 2 {
-			return fmt.Errorf("the send-once script answered %d values, not 2", len(res))
+		if len(res) < 2 || (len(res)-2)%2 != 0 {
+			return fmt.Errorf("the send-once script answered %d values, not a result and stream/count pairs", len(res))
 		}
 		n, _ := res[0].(int64)     // ignored: anything but 1 is a write the script made
 		prior, _ = res[1].(string) // ignored: as above, empty when it wrote
 		found = n == 1
+		over = map[string]int{}
+		for i := 2; i+1 < len(res); i += 2 {
+			stream, _ := res[i].(string) // ignored: the script answers only the strings it was given
+			count, _ := res[i+1].(int64) // ignored: as above, a pending count
+			over[stream] = int(count)
+		}
 		return nil
 	})
 	if err != nil {
-		return "", false, err
+		return "", false, nil, err
 	}
-	return prior, found, nil
+	return prior, found, over, nil
 }
 
 func (r Redis) Sent(ctx context.Context, key string) (v string, ok bool, err error) {

@@ -12,6 +12,7 @@ package bus
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -265,6 +266,13 @@ type CappedStore interface {
 	AddCapped(ctx context.Context, streams []string, fields map[string]string, cap int, marks ...Mark) (over map[string]int, err error)
 }
 
+// CappedOnceStore is a token send under the pending cap, in one atomic step:
+// the idempotency record, cap checks, accepted streams and marks are written
+// together. A Store without it uses Send's read-before-write fallback.
+type CappedOnceStore interface {
+	AddOnceCapped(ctx context.Context, key, record string, keep time.Duration, streams []string, fields map[string]string, cap int, marks ...Mark) (prior string, found bool, over map[string]int, err error)
+}
+
 // Waiter is the two reads a wait makes over a Store that also holds them: the
 // Redis store does; a Store without them cannot wait (SPEC-BUS.md, the verbs:
 // wait).
@@ -429,7 +437,7 @@ func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 	}
 	streams = append(streams, LogKey)
 	if m.Token != "" {
-		return b.sendOnce(ctx, m, now, streams, owe(m, friends))
+		return b.sendOnceUnderCap(ctx, m, now, streams, owe(m, friends))
 	}
 	marks := owe(m, friends)
 	if cs, ok := b.Store.(CappedStore); ok {
@@ -461,6 +469,95 @@ func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 		return m, b.overload(over)
 	}
 	return m, nil
+}
+
+// sendOnceUnderCap keeps token sends under the same per-recipient pending cap
+// as ordinary sends (SPEC-BUS.md, the pending cap and the token send). Redis
+// checks and writes in one idempotent script; a Store without that operation
+// uses the same read-before-write fallback as a Store without CappedStore.
+func (b *Bus) sendOnceUnderCap(ctx context.Context, m Message, now time.Time, streams []string, marks []Mark) (Message, error) {
+	if cs, ok := b.Store.(CappedOnceStore); ok {
+		fp := fingerprint(m)
+		raw, err := json.Marshal(sentRecord{Fingerprint: fp, ID: m.ID, At: m.At})
+		if err != nil {
+			return Message{}, err
+		}
+		prior, found, over, err := cs.AddOnceCapped(ctx, SentOf(m.From, m.Token), string(raw), b.tokenCleanup(), streams, m.Fields(), b.pendingCap(), marks...)
+		if err != nil {
+			return Message{}, err
+		}
+		if found {
+			return b.replayCappedSend(m, fp, prior, now)
+		}
+		if len(over) > 0 {
+			return m, b.overload(over)
+		}
+		return m, nil
+	}
+
+	// A token that already has a record is a replay regardless of today's
+	// pending count. The write below still resolves races through AddOnce.
+	key := SentOf(m.From, m.Token)
+	_, exists, err := b.Store.Sent(ctx, key)
+	if err != nil {
+		return Message{}, err
+	}
+	if exists {
+		return b.sendOnce(ctx, m, now, streams, marks)
+	}
+	over, err := b.overCap(ctx, streams, b.pendingCap())
+	if err != nil {
+		return Message{}, err
+	}
+	write := streams[:0:0]
+	for _, stream := range streams {
+		if _, full := over[strings.TrimPrefix(stream, Prefix)]; !full {
+			write = append(write, stream)
+		}
+	}
+	if len(over) == 0 {
+		return b.sendOnce(ctx, m, now, streams, marks)
+	}
+	byName := make(map[string]int, len(over))
+	for stream, count := range over {
+		byName[strings.TrimPrefix(stream, Prefix)] = count
+	}
+	fp := fingerprint(m)
+	raw, err := json.Marshal(struct {
+		Fingerprint string         `json:"fingerprint"`
+		ID          string         `json:"id"`
+		At          time.Time      `json:"at"`
+		Over        map[string]int `json:"over,omitempty"`
+	}{Fingerprint: fp, ID: m.ID, At: m.At, Over: byName})
+	if err != nil {
+		return Message{}, err
+	}
+	prior, found, err := b.Store.AddOnce(ctx, key, string(raw), b.tokenCleanup(), write, m.Fields(), marks...)
+	if err != nil {
+		return Message{}, err
+	}
+	if found {
+		return b.replayCappedSend(m, fp, prior, now)
+	}
+	return m, b.overload(over)
+}
+
+// replayCappedSend returns the token's original message and original cap refusal.
+func (b *Bus) replayCappedSend(m Message, fp, prior string, now time.Time) (Message, error) {
+	replayed, err := b.replay(m, fp, prior, now)
+	if err != nil {
+		return replayed, err
+	}
+	var result struct {
+		Over map[string]int `json:"over"`
+	}
+	if err := json.Unmarshal([]byte(prior), &result); err != nil {
+		return Message{}, err
+	}
+	if len(result.Over) > 0 {
+		return replayed, &Overload{Cap: b.pendingCap(), Recipients: result.Over}
+	}
+	return replayed, nil
 }
 
 // Check is Send that writes nothing (a send's --dry-run): every problem of the message

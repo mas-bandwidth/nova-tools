@@ -1371,7 +1371,9 @@ pending cap (`NOVA_BUS_PENDING_CAP`, default 20) is refused for that recipient
 with one `SEND NOTE OVERLOAD: <name> has <n> unacknowledged (cap <c>)` line
 (the other recipients still get the message, the `SEND OK` line holds the id):
 drain the recipient with `recv` and `ack` so its pending list falls below the
-cap. `peek`
+cap. A token send checks the cap in its idempotent write as well; retrying a
+partial delivery repeats its original OVERLOAD and does not duplicate delivery
+to recipients that were under the cap. `peek`
 prints `PEEK OK pending= new=` and one `PEEK MESSAGE state= id= from= at=
 subject=` line per message waiting, moving nothing. `recv` prints the oldest
 message a reader lost (delivered, not acked, idle fifteen minutes), else the

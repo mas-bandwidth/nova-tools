@@ -242,8 +242,11 @@ The check is atomic with the write. `Bus.Send` writes through a `CappedStore`
 (`Redis.AddCapped`, one script; the in-memory fake beside it): in the same step
 as the `XADD`s the script reads each recipient stream's pending count and leaves
 out each at the cap, writing the log and the recipients under it together, so no
-send or ack comes between the count and the write. The store answers the streams
-it left out and their pending counts.
+send or ack comes between the count and the write. A token send uses the same
+check in its idempotent script (`Redis.AddOnceCapped`): the token record stores
+the original overloaded recipients and counts, so replay returns the same typed
+OVERLOAD without duplicating delivery to recipients that were under the cap.
+The store answers the streams it left out and their pending counts.
 
 A send past the cap is refused for that recipient with the typed refusal
 `*Overload`, whose code is `OVERLOAD` (`bus.CodeOverload`): `SEND OK` still
@@ -251,8 +254,9 @@ carries the id (the message went to the recipients that were not full), and one
 `SEND NOTE OVERLOAD: <name> has <n> unacknowledged (cap <c>)` names each full
 recipient and its count, the other recipients of a multi-recipient send
 delivered. A `Store` that is not a `CappedStore` has the cap checked before the
-write (`Bus.overCap`, one `Group` and one `Pending` per recipient); a token send
-(the `AddOnce` script) writes without the cap, a follow-up. The verbs
+write (`Bus.overCap`, one `Group` and one `Pending` per recipient); a store
+without the atomic token operation uses that same read-before-write fallback
+for idempotent sends. The verbs
 `nova-bus pause <name>` (stop taking messages) and `nova-bus clear <name>
 --reason <text>` (drain a full recipient's pending list) are not built; both are
 follow-ups.
