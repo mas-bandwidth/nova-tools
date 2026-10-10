@@ -44,6 +44,7 @@
 package testredis
 
 import (
+	"path/filepath"
 	"bufio"
 	"context"
 	"errors"
@@ -419,4 +420,29 @@ func commandLine(args []string) string {
 		words[i] = strconv.Quote(arg)
 	}
 	return strings.Join(words, " ")
+}
+
+
+// SocketPath returns a Unix socket path for a given work directory, ensuring it fits
+// within the platform's Unix socket sun_path bound (<= 104 bytes). If the work directory
+// is too long, it falls back to a short private directory under os.TempDir() or /tmp.
+func SocketPath(work, name string) (string, error) {
+	if sock := filepath.Join(work, name); len(sock) <= 104 {
+		return sock, nil
+	}
+	var last error
+	for _, root := range []string{os.TempDir(), "/tmp"} {
+		dir, err := os.MkdirTemp(root, "nsb")
+		if err != nil {
+			last = err
+			continue
+		}
+		sock := filepath.Join(dir, name)
+		if len(sock) <= 104 {
+			return sock, nil
+		}
+		// ignored: dir is this function's own scratch and may already be gone
+		_ = safepath.RemoveUnder(os.TempDir(), dir)
+	}
+	return "", fmt.Errorf("work directory %s is too long and no short socket path could be made: %v", work, last)
 }
