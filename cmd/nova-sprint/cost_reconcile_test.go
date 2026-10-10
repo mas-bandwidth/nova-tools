@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -8,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -71,4 +73,22 @@ func TestCostReconcileSetsEachProvidersDayBesideTheRecords(t *testing.T) {
 	bare := newTestApp(t)
 	bare.ok("init --readers reader-a --members m1")
 	assert.Equal(t, "COST RECONCILE OK providers=0 notes=0: the routes name no provider (nova-sprint routes)\n", bare.ok("cost reconcile"))
+}
+
+// unpricedRuns turns the ledger's finished work runs the sprint could not price
+// into the friend/route lines `cost reconcile` lists (internal/friend.ReconcileUnpriced):
+// a friend's finish with no counted token is unpriced, never a zero-dollar price, and the
+// reconcile names it on one line so the seat sees the hole.
+func TestUnpricedRunsListsTheUnpricedHolePerFriendAndRoute(t *testing.T) {
+	t.Parallel()
+	ta, root := friendCardApp(t, "friend amy", "amy")
+	ta.m.SetRoutes(costRoutes())
+	friendLand(t, ta, root, "Verdict: LAND\nHead: "+landHead+"\n\nPushed.\n", "")
+
+	st, err := ta.a.store(common{redis: "mem:0", actor: "tester"})
+	require.NoError(t, err)
+	s, err := st.Load(context.Background(), []string{sprint.Work, sprint.Fleet}, nil)
+	require.NoError(t, err)
+	got := friend.ReconcileUnpriced(unpricedRuns(s))
+	assert.Equal(t, []string{"friend=friend.amy route=- unpriced=1"}, got)
 }
