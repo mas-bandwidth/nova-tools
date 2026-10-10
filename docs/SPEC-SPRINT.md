@@ -2920,11 +2920,11 @@ and it is the coordinator's decision, receipted.
   is taken back from a member only when the member is down by this rule
   (tla/DirtyTick.tla, Lapse). A member's verb the server does not answer is
   sent again, three tries in all (internal/sprintwire). `hold <member> --reason
-  <text>` holds a member (section 11, hold; `fleet down <member>` is `hold
-  <member> --return` in the old words, for one release) and takes it down;
-  `unhold <member>` or `fleet up <member>` releases the hold; `fleet up` counts as a
-  beat of a member that has beaten, adds a member the sprint does not know,
-  and brings it up at once when it is alive.
+  <text>` holds a member (section 11, hold; `fleet down <member> --reason <text>`
+  is `hold <member> --return` in the old words, for one release) and takes it down;
+  `unhold <member>` or `fleet up <member> --reason <text>` releases the hold;
+  `fleet up` counts as a beat of a member that has beaten, adds a member the sprint
+  does not know, and brings it up at once when it is alive.
 - The fleet comes from the inventory. `nova-sprint fleet sync` makes the fleet
   table match nova-config's machine rows, in one step, and types no machine name
   and no width. The inventory is read through the config package by the config
