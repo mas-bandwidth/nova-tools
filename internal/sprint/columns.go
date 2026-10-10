@@ -213,9 +213,8 @@ func briefDefectRemedy(id string) string {
 
 // ReviewCardFields is a primary's stored fields with its review reason added, the shape
 // card --all --json carries: the fields map as the card has it, FieldReviewReason set to
-// ReviewReasonRead or ReviewReasonDefect while it is in review. The command should marshal
-// this instead of the raw fields map (a proposed diff on cmd/nova-sprint reads.go, outside
-// this card's PATHS).
+// ReviewReasonRead or ReviewReasonDefect while it is in review. cmd/nova-sprint marshals
+// this in place of the raw fields map (cmd/nova-sprint/reads.go).
 func ReviewCardFields(s *Snapshot, c *Card) map[string]string {
 	out := map[string]string{}
 	if c != nil {
