@@ -112,7 +112,7 @@ func TestLoopVerbsEndToEndOnTheFake(t *testing.T) {
 		if s.pre {
 			assert.True(t, strings.HasPrefix(out, s.out), "%s: %q, want the prefix %q", s.name, out, s.out)
 		} else if s.code == 0 {
-			assert.Equal(t, s.out, out, s.name)
+			assert.Equal(t, s.out, withoutDisposition(t, out), s.name)
 		}
 		if s.errs != "" {
 			assert.Contains(t, errs, s.errs, s.name)
@@ -170,8 +170,10 @@ func TestApplyKindLoopWritesTheViewAndStatusShowsParity(t *testing.T) {
 	t.Parallel()
 
 	h := loopHarness(t, "m1")
+	delete(h.env, "NOVA_SPRINT_REDIS") // exercise a write made while the copy is unavailable
 	code, _, errs := h.run(t, "loop", "add", "l1", "--machine", "m1", "--argv", `["/bin/prog"]`, "--keepalive", "true")
 	require.Equal(t, 0, code, errs)
+	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
 
 	code, out, _ := h.run(t, "apply", "--kind", "loop", "--check")
 	require.Equal(t, 0, code)
