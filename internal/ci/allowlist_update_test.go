@@ -45,7 +45,6 @@ var countedShardDirectories = []string{
 	"no-hand-printing", "unit-sockets", "refusal-grammar", "exit-word",
 }
 
-
 // TestCountedShardDirectoriesNameEveryLedger: countedShardDirectories is the one
 // list the allowlist guard reads to know which ledgers are package-sharded, so a
 // ledger directory missing from it is discovered by no class test: its shards are

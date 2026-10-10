@@ -593,7 +593,6 @@ func TestExitWordLedgerSeedsOnlyWhenTheBaseHasNoShard(t *testing.T) {
 	}, problems, "replacing the base's last shard does not reopen the seed")
 }
 
-
 func testCountedShardInMemory(t *testing.T) {
 	t.Helper()
 	base := "# a rule's shard\nrow-a  reason\nrow-b  reason\n# ceiling: 2\n"
