@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -35,8 +34,8 @@ print) l=${2##*/}; [ -f "$S/$l.pid" ] && kill -0 "$(cat "$S/$l.pid")" 2>/dev/nul
   printf '\tstate = running\n\tpid = %%s\n' "$(cat "$S/$l.pid")"; exit 0;;
 bootout) l=${2##*/}; echo "bootout $l" >> "$L"; [ -f "$S/$l.pid" ] || exit 3; kill "$(cat "$S/$l.pid")" 2>/dev/null; rm -f "$S/$l.pid"; exit 0;;
 bootstrap) l=$(basename "$3" .plist); echo "bootstrap $l" >> "$L"; [ -f "$S/$l.fail" ] && exit 5; [ -f "$S/$l.pid" ] && exit 5
-  set -- $(/usr/bin/plutil -extract ProgramArguments xml1 -o - "$3" | sed -n 's:.*<string>\(.*\)</string>.*:\1:p')
-  nohup "$@" >/dev/null 2>&1 & echo $! > "$S/$l.pid"; exit 0;;
+  p=$(python3 -c 'import plistlib,subprocess,sys; d=plistlib.load(open(sys.argv[1],"rb")); p=subprocess.Popen(d["ProgramArguments"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); print(p.pid)' "$3") || exit 5
+  echo "$p" > "$S/$l.pid"; exit 0;;
 *) echo "unexpected $*" >> "$L"; exit 64;;
 esac
 `
@@ -187,7 +186,8 @@ done
 echo "RELEASE INSTALLED version=$v tools=$n skipped=$k"
 `
 
-// TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove runs the seat's part of
+// TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove runs check mode and then
+// the seat's part of
 // tools.yml for real (--tags seat: the candidate checks, the install, the
 // migration, the library and the seat play) on a coordinator fixture whose
 // home, launchd, store and friend are the test's own, in the order a real
@@ -207,18 +207,15 @@ echo "RELEASE INSTALLED version=$v tools=$n skipped=$k"
 //  6. a bootstrap that fails is bootstrapped again and refused naming it.
 func TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove(t *testing.T) {
 	t.Parallel()
-	if runtime.GOOS != "darwin" {
-		t.Skip("the fake launchctl reads plists with plutil, a darwin tool")
-	}
 	r := newFleetPlayRig(t, "seat-fixture.yml")
 	home := filepath.Join(r.dir, "seat-home")
 	bin := filepath.Join(home, ".local", "bin")
 	agents := filepath.Join(home, "Library", "LaunchAgents")
-	stage := filepath.Join(home, "nova-bench", "release", "v0.0.0-seat", runtime.GOOS+"-"+runtime.GOARCH)
+	stage := filepath.Join(home, "nova-bench", "release", "v0.0.0-seat", "darwin-arm64")
 	state := filepath.Join(r.dir, "launchd")
 	fdir := filepath.Join(r.dir, "friend")
 	redisState := filepath.Join(r.dir, "redis-loaded")
-	for _, d := range []string{bin, agents, stage, state, fdir, filepath.Join(r.dir, "dir-a")} {
+	for _, d := range []string{bin, agents, stage, state, fdir, filepath.Join(home, "dashboards"), filepath.Join(r.dir, "dir-a")} {
 		require.NoError(t, os.MkdirAll(d, 0o755))
 	}
 	write := func(path, body string, mode os.FileMode) {
@@ -344,9 +341,13 @@ func TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove(t *testing.T) {
 	}
 	write(filepath.Join(fdir, "fa.busy"), "", 0o644) // the old daemon holds a card when the play starts
 
-	vars := []string{"--tags", "seat", "--limit", "localhost", "-e", "nova_home=" + home, "-e", "nova_version=v0.0.0-seat",
+	dashboardLinks, err := json.Marshal(map[string][]string{
+		"nova_seat_dashboard_links": {filepath.Join(home, "dashboards", "nova-sprint")},
+	})
+	require.NoError(t, err)
+	vars := []string{"--tags", "seat", "--limit", "coord-a,bench,localhost", "-f", "1", "-e", "ansible_connection=local", "-e", string(dashboardLinks), "-e", "nova_home=" + home, "-e", "nova_version=v0.0.0-seat",
 		"-e", "nova_redis_addr=mem:" + twin, "-e", "nova_launchctl=" + launchctl, "-e", "nova_sops=/usr/bin/true",
-		"-e", "nova_member_stop_timeout=5", "-e", "nova_seat_beat_within=15", "-e", "nova_seat_friend_drain=60"}
+		"-e", "nova_os=darwin", "-e", "nova_arch=arm64", "-e", "nova_member_stop_timeout=5", "-e", "nova_seat_beat_within=15", "-e", "nova_seat_friend_drain=60"}
 	logs := func() string {
 		var all string
 		for _, f := range []string{filepath.Join(fdir, "log")} {
@@ -358,15 +359,31 @@ func TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove(t *testing.T) {
 	}
 	logs()
 
+	// The same staged candidate completes the real Ansible check-mode play
+	// before the real-mode adoption opens its window below.
+	check, checkErr := r.playResult(t, "tools.yml", append(vars, "--check")...)
+	require.NoError(t, checkErr, "check-mode seat play:\n%s", check)
+	assert.Contains(t, check, "WOULD-WINDOW host=coord-a")
+	for _, step := range []string{"store", "server", "dashboard", "friends"} {
+		assert.Regexp(t, `ADOPT step=`+step+` host=coord-a .* (WOULD-CHANGE|UNCHANGED)`, check,
+			"check-mode receipt for %s", step)
+	}
+	for _, step := range []string{"store", "server", "dashboard", "friends"} {
+		assert.Regexp(t, `ADOPT step=`+step+` host=coord-a .* WOULD-CHANGE`, check,
+			"check-mode says the stale %s step would change", step)
+	}
+	assert.NotContains(t, check, "FAILED!")
+	assert.NotContains(t, check, "ADOPT REFUSED")
+
 	// 1. the whole sequence
 	first := r.play(t, "tools.yml", vars...)
-	assert.Contains(t, first, "ADOPT step=store host=localhost before=lib-old after=lib-new CHANGED")
-	assert.Contains(t, first, "WINDOW host=localhost replaces=")
-	assert.Contains(t, first, `"RESTART com.nova.loop.srv on localhost: the window stopped it"`)
-	assert.Regexp(t, `ADOPT step=server host=localhost before=\S+ after=\S+ restarted=com.nova.loop.mem,com.nova.loop.srv CHANGED`, first)
-	assert.Contains(t, first, "ADOPT step=friends host=localhost before=")
+	assert.Contains(t, first, "ADOPT step=store host=coord-a before=lib-old after=lib-new CHANGED")
+	assert.Contains(t, first, "WINDOW host=coord-a replaces=")
+	assert.Contains(t, first, `"RESTART com.nova.loop.srv on coord-a: the window stopped it"`)
+	assert.Regexp(t, `ADOPT step=server host=coord-a before=\S+ after=\S+ restarted=com.nova.loop.mem,com.nova.loop.srv CHANGED`, first)
+	assert.Contains(t, first, "ADOPT step=friends host=coord-a before=")
 	assert.Contains(t, first, "reinstalled=fa CHANGED")
-	assert.Contains(t, first, "FAILED - RETRYING: [localhost]: friends: fa's lanes have no card in hand", "the drain waited")
+	assert.Contains(t, first, "FAILED - RETRYING: [coord-a]: friends: fa's lanes have no card in hand", "the drain waited")
 	ran := logs()
 	assert.NotContains(t, ran, "kickstart")
 	// the window: the old server and member stopped before the migration, nothing old running during it
@@ -388,7 +405,7 @@ func TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove(t *testing.T) {
 	// 2. a second run of the whole sequence changes nothing
 	second := r.play(t, "tools.yml", vars...)
 	for _, step := range []string{"store", "server", "dashboard", "friends"} {
-		assert.Regexp(t, `ADOPT step=`+step+` host=localhost .*UNCHANGED"`, second)
+		assert.Regexp(t, `ADOPT step=`+step+` host=coord-a .*UNCHANGED"`, second)
 	}
 	assert.Regexp(t, `localhost\s+: ok=\d+\s+changed=0\s`, second, "nothing installed, loaded, restarted or written")
 	assert.Empty(t, logs(), "no bootout, bootstrap or install")
@@ -406,7 +423,7 @@ func TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove(t *testing.T) {
 	write(filepath.Join(kept, "nova-ancient"), "#!/bin/sh\n", 0o755)
 	third, err := r.playResult(t, "tools.yml", append(vars, "-e", "nova_seat_dashboard_url="+dash.URL)...)
 	require.Error(t, err, third)
-	assert.Contains(t, third, "ADOPT REFUSED step=dashboard host=localhost: "+dash.URL+" answered 500 with no summary;")
+	assert.Contains(t, third, "ADOPT REFUSED step=dashboard host=coord-a: "+dash.URL+" answered 500 with no summary;")
 	assert.Contains(t, third, "library lib-new read back, the one of before")
 	assert.Contains(t, third, "started again: com.nova.loop.mem,com.nova.loop.srv")
 	assert.Equal(t, "lib-new", strings.TrimSpace(string(must(os.ReadFile(redisState)))), "the restore loaded the old library")
@@ -423,7 +440,7 @@ func TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove(t *testing.T) {
 	tool("new4", stage)
 	fourth, err := r.playResult(t, "tools.yml", vars...)
 	require.Error(t, err, fourth)
-	assert.Contains(t, fourth, "ADOPT REFUSED step=friends host=localhost: fa has not beaten since its reinstall within 15 s")
+	assert.Contains(t, fourth, "ADOPT REFUSED step=friends host=coord-a: fa has not beaten since its reinstall within 15 s")
 	require.NoError(t, os.Remove(filepath.Join(fdir, "fa.nobeat")))
 	logs()
 
@@ -432,7 +449,7 @@ func TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove(t *testing.T) {
 	tool("new5", stage)
 	fifth, err := r.playResult(t, "tools.yml", vars...)
 	require.Error(t, err, fifth)
-	assert.Contains(t, fifth, "ADOPT REFUSED step=friends host=localhost: fa has no plist in "+agents+" after its reinstall")
+	assert.Contains(t, fifth, "ADOPT REFUSED step=friends host=coord-a: fa has no plist in "+agents+" after its reinstall")
 	require.NoError(t, os.Remove(filepath.Join(fdir, "fa.noplist")))
 	logs()
 
@@ -442,7 +459,7 @@ func TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove(t *testing.T) {
 	tool("new6", stage)
 	sixth, err := r.playResult(t, "tools.yml", vars...)
 	require.Error(t, err, sixth)
-	assert.Contains(t, sixth, "ADOPT REFUSED step=server host=localhost: server: bootstrap each from its plist failed for com.nova.loop.mem;")
+	assert.Contains(t, sixth, "ADOPT REFUSED step=server host=coord-a: server: bootstrap each from its plist failed for com.nova.loop.mem;")
 	assert.Contains(t, sixth, "not started: com.nova.loop.mem")
 	assert.Equal(t, 3, strings.Count(logs(), "bootstrap com.nova.loop.mem\n"), "bootstrapped, again, and by the rollback")
 }
