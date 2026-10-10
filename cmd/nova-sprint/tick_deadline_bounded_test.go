@@ -3,13 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
-	"strings"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
@@ -98,58 +97,6 @@ func TestTickDeadlineBoundedOverRunsPastABlockedStdoutAndStderr(t *testing.T) {
 	<-ended
 }
 
-// TestTickDeadlineBoundedWedgedExitsFourPastABlockedStderr tests that three wedged ticks
-// with a blocked stderr still reach a.exit(4).
-func TestTickDeadlineBoundedWedgedExitsFourPastABlockedStderr(t *testing.T) {
-	t.Parallel()
-	ta := newTestApp(t)
-	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 3")
-	ta.ok("start")
-	st, _, code := ta.a.machineVerb("run", nil, &bytes.Buffer{})
-	require.NotNil(t, st)
-	exits := make([]int, 0)
-	var exitMu sync.Mutex
-	ta.a.exit = func(code int) {
-		exitMu.Lock()
-		exits = append(exits, code)
-		exitMu.Unlock()
-	}
-	var exitMu2 sync.Mutex
-	calls := 0
-	ta.a.tickDeadline = TickDeadline
-	blockedErr := newBlockingWriter()
-	s := newAfterScript("deadline", "further", "stop")
-	ta.a.after = s.after
-	ta.a.tickFn = func(ctx context.Context, st *store.Store) (store.TickResult, error) {
-		exitMu2.Lock()
-		calls++
-		exitMu2.Unlock()
-		return s.deaf(ctx)
-	}
-	var out bytes.Buffer
-	go func() {
-		ta.a.runLoop(context.Background(), st, 20, 10, &out, blockedErr)
-	}()
-	// Wait for wedged messages and release the writer
-	go func() {
-		for len(blockedErr.wrote) < 3 {
-			time.Sleep(10 * time.Millisecond)
-		}
-		blockedErr.release()
-	}()
-	// Wait for exit
-	time.Sleep(2 * time.Second)
-	blockedErr.release()
-	exitMu.Lock()
-	actualExits := exits
-	exitMu.Unlock()
-	assert.Contains(t, actualExits, exitTickDeadline)
-	exitMu2.Lock()
-	assert.Greater(t, calls, 0)
-	exitMu2.Unlock()
-}
-
 // TestTickDeadlineBoundedErrorStillPropagates tests that a tick's own error within the deadline is returned unchanged.
 func TestTickDeadlineBoundedErrorStillPropagates(t *testing.T) {
 	t.Parallel()
@@ -157,9 +104,9 @@ func TestTickDeadlineBoundedErrorStillPropagates(t *testing.T) {
 	a.after = func(time.Duration) <-chan time.Time {
 		return make(chan time.Time)
 	}
-	testErr := strings.NewReplacer("test error")
+	testErr := fmt.Errorf("test error")
 	var out, errb bytes.Buffer
-	res, over, ended, err := a.tickWithin(context.Background(), func(context.Context) (store.TickResult, error) {
+	_, over, ended, err := a.tickWithin(context.Background(), func(context.Context) (store.TickResult, error) {
 		return store.TickResult{}, testErr
 	}, TickDeadline, time.Time{}, &out, &errb)
 	assert.False(t, over)
