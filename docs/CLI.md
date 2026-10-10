@@ -2027,6 +2027,22 @@ example: nova-friend reach --as ada --to bob --dry-run
 
 The result line is first, then one line per step in the order it happened. `--json` carries facts `friend`, `step` (on OK), `tried` (on FAILED), `from` and `step_timeout` (on a dry run), `dry_run`, and items `STEP`, `PROOF` and `NONE`.
 
+### The friend screen
+
+`nova-friend screen <friend> [--lines <n>] [--state-dir <d>] [--json]` prints the last n lines (default 40) of the friend's open session. Hosted sessions use `tmux capture-pane -p -t friend-<name>`. A GUI harness reads only the matching directory or session-title window through macOS accessibility; it refuses with the accessibility remedy when permission is missing, and refuses rather than selecting another window.
+
+```
+SCREEN friend=<f> source=<tmux|window> lines=<n> at=<RFC3339>
+
+<text>
+```
+
+`--json` prints `{"friend":..,"source":..,"at":..,"lines":[..]}`. Exit 0 printed, 1 refused, 2 could not run.
+
+```sh
+nova-friend screen bob --lines 40
+```
+
 ### The friend health check
 
 The help of `nova-friend check -h` says, and this is the same text:

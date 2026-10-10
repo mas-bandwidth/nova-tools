@@ -28,10 +28,11 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "wait-pong", Flags: store},
 		{Verb: "watch", Flags: append([]string{"--as", "ada"}, store...)},
 		{Verb: "status"},
+		{Verb: "screen"},
 		{Verb: "reach", Flags: store},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, cli, "nova-friend", "run", "beat", "install", "uninstall", "check", "ping", "pong", "wait-pong", "watch", "status", "reach", "version")
+	testverbhelp.HelpVerb(t, cli, "nova-friend", "run", "beat", "install", "uninstall", "check", "ping", "pong", "wait-pong", "watch", "status", "screen", "reach", "version")
 }
 
 func TestCommandReferenceNamesEveryKnownHarness(t *testing.T) {
