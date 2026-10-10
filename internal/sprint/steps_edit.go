@@ -137,6 +137,11 @@ func Brief(s *Snapshot, r BriefReq) Plan {
 		} else {
 			unset = append(unset, FieldBench)
 		}
+		// a card whose PATHS name TLA+ model work is tiered frontier: the brief may carry
+		// the tier on its RESULT line, else the card's own tier field carries it
+		if _, said, _ := ModelTier(b.Brief); said != "" {
+			set[FieldTier] = cardhdr.RouteFrontier
+		}
 		if c.Int("attempt") > 0 {
 			u, orphan := briefInPlace(s, c, b.Brief, set, unset, r.Who)
 			if orphan {

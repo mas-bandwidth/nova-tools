@@ -85,6 +85,9 @@ func Recut(s *Snapshot, r RecutReq) Plan {
 	if r.Brief != "" {
 		brief, rules = r.Brief, r.Rules
 	}
+	if why := RepoLineWhy(brief); why != "" {
+		return refuse(why) // a REPO that is no owner/name is no card the friend's staging can take (brief_repo.go)
+	}
 	tier := cmp.Or(r.Tier, c.F(FieldTier))
 	if _, why := PriorityOfBrief(brief); why != "" {
 		return refuse(why) // a PRIORITY line naming no level is never recut at the card's (priority.go)

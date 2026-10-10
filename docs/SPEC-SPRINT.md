@@ -2422,12 +2422,23 @@ and it is the coordinator's decision, receipted.
   I would like that to go to frontier models."): a card whose PATHS name model work (a
   `.tla` module anywhere, an MC config or the directory itself under a `tla/` directory,
   or a glob that matches one: `sprint.ModelPaths`) is admitted by `add` with `tier:
-  frontier` written on its line 1 when line 1 names no tier (its unit says `tiered
-  frontier: PATHS name TLA+ model work (<entries>)`), as written when it names frontier,
-  and refused, with that reason and what to write, when it names a lower tier
-  (`sprint.ModelTier`); `nova-card generate` tiers its cards the same, the source's tier
-  giving way, and a `--tier` below frontier on such a card is its red line
-  `check=model-tier`. The TLC run records (`tla/RUNS.tsv`, `tla/CASES.tsv`) alone are no
+  frontier` written on its `RESULT:` line when the brief carries one -- and when the brief
+  carries none, with the brief unchanged and the card's own tier field carrying frontier
+  (`steps_work.go`), because the tier writer stamps only a `RESULT:` line and never a title
+  or a header (`PATHS:`, `REPO:`, `BASE:`, `TEST:`, ...). That happens when the brief names
+  no tier (its
+  unit says `tiered frontier: PATHS name TLA+ model work (<entries>)`), as written when it
+  names frontier, and refused, with that reason and what to write, when it names a lower
+  tier (`sprint.ModelTier`); `nova-card generate` tiers its cards the same, the source's
+  tier giving way, and a `--tier` below frontier on such a card is its red line
+  `check=model-tier`. The tier is never appended to a header: a brief's `REPO:` line names
+  one repository, exactly `owner/name` (a URL or a local path is no repository the friend's
+  staging can take), and a line that carries a word
+  after it -- the tier a writer appended -- is refused by the card checks
+  (`check=repo-line`, naming the card and the value) and by `recut` and `rework` before
+  anything is written, because the friend's staging reads the whole value and refuses a
+  card whose REPO is no owner/name (`sprint.RepoLineWhy`). The TLC run records
+  (`tla/RUNS.tsv`, `tla/CASES.tsv`) alone are no
   model: running the checker is mechanical (`TestACardThatWritesAModelIsTieredFrontier`,
   `TestAGeneratedCardThatWritesAModelIsTieredFrontier`). A card admitted before (an unknown tier, a pin short
   of a line) is not dealt and is judged under the tier its line 1 names. The routes are nova-config's `route` kind, applied to

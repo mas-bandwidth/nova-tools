@@ -133,6 +133,9 @@ func Lint(id, brief string, o Options) []cardgen.LintFinding {
 // Checks are the card checks, past the add's own lint:
 //
 //   - tier-line: line 1 names a tier (`tier: flash|pro|heavy|frontier`);
+//   - repo-line: the REPO: line names one repository, exactly `owner/name`, and no other
+//     word (the tier a writer appended to the line) and no URL or local path, which the
+//     friend's staging refuses (`cardhdr.IsRepoValue`);
 //   - test-outside-paths: the TEST line's package is a directory PATHS names, so the
 //     test the card lands with is one it may edit;
 //   - personal-name: no name of o.Names outside a double-quoted span (the owner's
@@ -157,6 +160,9 @@ func Checks(id, brief string, o Options) []cardgen.LintFinding {
 		if pkg := TestPackage(brief); pkg != "" && !covers(paths, pkg) {
 			add("test-outside-paths", headerLine(brief, "TEST"), "the TEST package "+pkg+" is no directory PATHS names ("+strings.Join(paths, ", ")+"); a card lands with a test it may edit")
 		}
+	}
+	if v, ok := cardhdr.Value(brief, "REPO"); ok && !cardhdr.IsRepoValue(v) && !unfilledRepo(brief) {
+		add("repo-line", headerLine(brief, "REPO"), "the REPO line reads "+v+", which is no repository: one owner/name alone, with the tier on the card's own line and no word after it")
 	}
 	for i, line := range strings.Split(brief, "\n") {
 		if strings.HasPrefix(line, "WHO:") {
@@ -258,6 +264,32 @@ func headerLine(brief, key string) int {
 		}
 	}
 	return 1
+}
+
+// unfilledRepo reports whether a brief is the card template itself and its first REPO: line
+// -- the value the staging reads (cardhdr.Value) -- is one of the template's own unfilled
+// lines (swarm.UnfilledTemplateLines): a template is not yet a card, and add answers it with
+// the unfilled-lines note (cmd/nova-sprint, sayok.go), so the repo-line check leaves the
+// template the help hands a writer to that. A brief whose line 1 is filled is a card, not
+// the template, and its first REPO: value must be an owner/name; a later template line never
+// exempts a different value, because the staging reads the first.
+func unfilledRepo(brief string) bool {
+	unfilled := map[int]bool{}
+	for _, f := range swarm.UnfilledTemplateLines(brief) {
+		unfilled[f.Line] = true
+	}
+	return unfilled[1] && unfilled[repoLine(brief)]
+}
+
+// repoLine is the 1-based line of the first REPO: line cardhdr.Value reads, 0 when the
+// brief names none.
+func repoLine(brief string) int {
+	for i, l := range strings.Split(brief, "\n") {
+		if k, _, ok := cardhdr.KeyValue(l); ok && k == "REPO" {
+			return i + 1
+		}
+	}
+	return 0
 }
 
 var quotedRE = regexp.MustCompile(`"[^"]*"|“[^”]*”`)

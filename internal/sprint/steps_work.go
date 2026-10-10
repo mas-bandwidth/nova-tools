@@ -516,6 +516,12 @@ func Add(s *Snapshot, r AddReq) Plan {
 		gateSaid := ""
 		if a.brief != "" && !a.gate {
 			fields["brief"] = a.brief
+			if a.model != "" {
+				// the card's own tier field carries the frontier tier a brief with no
+				// RESULT line cannot: the tier writer stamps only a RESULT line
+				// (brief_tier.go, tier_model.go)
+				fields[FieldTier] = cardhdr.RouteFrontier
+			}
 			if a.rules != "" {
 				fields[FieldRules] = a.rules
 			}

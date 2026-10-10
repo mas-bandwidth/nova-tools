@@ -27,7 +27,7 @@ func TestBasesListsEveryBaseInUseAndAddRefusesAPersonalOne(t *testing.T) {
 	briefs := t.TempDir()
 	brief := func(id, base string) string {
 		path := filepath.Join(briefs, id+".md")
-		require.NoError(t, os.WriteFile(path, []byte(passingBrief("REPO: "+r.remote+"\nBASE: "+base+"\n\nWrite "+id+".txt.")), 0o600))
+		require.NoError(t, os.WriteFile(path, []byte(passingBrief("base-repo: "+r.remote+"\nBASE: "+base+"\n\nWrite "+id+".txt.")), 0o600))
 		return path
 	}
 
