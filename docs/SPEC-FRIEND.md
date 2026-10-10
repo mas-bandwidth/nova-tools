@@ -2080,8 +2080,9 @@ everything that is not the model's fault fixed." A friend's finish is read from
 what the lane did, never from the essay the model wrote. `DecideFinish` is that
 contract. The daemon applies it when a lane turn ends (`branchFinish`), before
 the lane's own end. A cap, a silent stop, and a restart stay on the lane's end.
-A report with no commits of the lane's own stays there too, so friend sync still
-reads the report the lane left.
+A report with no commits of the lane's own is that finish too, with an empty
+head: the `Head` line is removed from the report, so friend sync and the outbox
+pass cannot send the sha the report named.
 
 - **The head is the branch tip.** At finish time the daemon reads the job
   checkout with git (`internal/gitrun`): `rev-parse` of `HEAD`, then
@@ -2090,7 +2091,12 @@ reads the report the lane left.
   an empty log, is no commits and no head. The head on the finish is that tip.
   A report that names a different sha is finished at the tip with the judgment
   `report named <sha>, branch is <tip>`. A lane with no commits finishes with
-  no head.
+  no head. A report present in that case is still taken (`applyInLane`): the
+  finish argv has no `--head`, and every `Head` line is dropped from
+  `REPORT.md` before friend sync or the outbox pass reads it. A `LAND` with
+  no branch tip is not finished ok. When the decision's verdict is not the
+  report's (an unaddressed `LAND` is a `HOLD`), the file starts with the
+  decision's verdict.
 - **One recovery turn.** A lane that exits with no `REPORT.md` and commits on
   its branch is not failed yet. The same attempt runs the harness once more, in
   the same job, with the prompt `Your branch <name> at <tip> has these commits:
@@ -2132,7 +2138,8 @@ reads the report the lane left.
   zero-token `Cost:` line, is still the harness fault in the lane's end: the
   card stays in hand, the attempt is not counted, and the third alike marks the
   row down. The new fault is taken when usage was measured zero or absent, or
-  the report contains a `Cost:` line. `applyInLane` is that gate.
+  the report contains a `Cost:` line. `applyInLane` is that gate. A finish
+  (`ActFinish`) is taken whether or not the lane committed.
 
 No library decides a finish. git is read through `internal/gitrun`, the tree's
 one runner.
@@ -2141,9 +2148,14 @@ The tests are `TestHeadFromTheBranchBeatsHeadInTheReport`,
 `TestNoReportWithCommitsGetsOneRecoveryTurnThenFailsNamingIt`,
 `TestZeroUsageIsAFaultNotAFinish`, `TestCostOnlyHoldIsTheSameFault`,
 `TestThreeFaultsFailWithTheFaultReason`,
-`TestMissingVerdictWithReportAndCommitsFinishesOk`, and
-`TestUnmeasuredNoReportStaysOutOfTheLane`, in `internal/friend/finish_test.go`.
-They decide the finish in memory: no sockets, no git, no clock.
+`TestMissingVerdictWithReportAndCommitsFinishesOk`,
+`TestUnmeasuredNoReportStaysOutOfTheLane`, and
+`TestNoCommitReportIsFinishedFromTheBranchWithAnEmptyHead`, in
+`internal/friend/finish_test.go`. The first of those decide the finish in
+memory: no sockets, no git, no clock. The last runs the lane's branch finish
+and then the outbox pass: a report that names a sha, and a lane that
+committed nothing, finishes with no head, and the outbox does not send that
+sha.
 
 A TLA+ module for this decision is outside this card's paths
 (`internal/friend/tla`). `DecideFinish` is the model, and `finish_test.go` pins
