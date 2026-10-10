@@ -803,7 +803,7 @@ func (l *lander) merge(ctx context.Context, j *landJob) {
 			// it is returned with its finding, and the prefix before it, which passed a gate,
 			// goes on to land
 			start := time.Now()
-			k, finding, env := l.bisect(ctx, dir, l.cardTips, len(merged), red)
+			k, finding, gated, env := l.bisect(ctx, dir, l.cardTips, len(merged), red)
 			since(&b.Times.Merge, start)
 			if why := gateWaitWhy(ctx); why != "" {
 				j.refuse(why)
@@ -813,9 +813,11 @@ func (l *lander) merge(ctx context.Context, j *landJob) {
 				j.refuse(env + "; no card is blamed and nothing was pushed or reported")
 				return
 			}
-			c := j.cards[k]
-			merged, failed = merged[:k], conflictCard{landCard: c, why: "the head " + c.head + " of " + c.id + " fails the tree gate: " + finding}
-			j.gated = k > 0
+			if k < len(merged) {
+				c := j.cards[k]
+				merged, failed = merged[:k], conflictCard{landCard: c, why: "the head " + c.head + " of " + c.id + " fails the tree gate: " + finding}
+			}
+			j.gated = gated
 		}
 	}
 	if why != "" {
@@ -862,40 +864,76 @@ func (l *lander) merge(ctx context.Context, j *landJob) {
 
 // bisect finds the head that turned a red batch's tree red (tla/LandBisect.tla). tips[i] is
 // the batch branch's tip before head i merged (tips[0] the base, whose tree passed its gate)
-// and tips[n] the tip after the last of the n heads merged, whose tree's finding is red. The
-// search keeps tip before head lo passing and tip after head hi red, gating the middle tip
-// with the tree tests: at most ceil(log2 n) gates. k is the head blamed, finding the gate's
-// finding on the tip it turned red, and the batch branch is left at the tip before it (the
-// prefix that passed). env is a refusal that blames no head: a bench that did not run the
-// gate, a cancelled gate, or a branch git could not move.
-func (l *lander) bisect(ctx context.Context, dir string, tips []string, n int, red string) (k int, finding, env string) {
+// and tips[n] the tip after the last of the n heads merged, whose tree's gate with the tree
+// tests is red. A tip is gated with the tree tests only when the heads up to it changed a
+// file they read (treeTested), as a head was gated alone before 2026-10-10: a batch that
+// changes none of them is gated once more without them, and green there it lands whole
+// (k = n). The search keeps the tip before head lo passing and the tip after head hi red,
+// gating the middle tip: at most ceil(log2 n) gates. k is the head blamed, finding the
+// gate's finding on the tip it turned red, and the batch branch is left at the tip before
+// it (the prefix that passed); gated says that prefix passed a gate with the tree tests
+// (its tip may be recorded as gated). env is a refusal that blames no head: a bench that did
+// not run the gate, a cancelled gate, or a branch git could not move.
+func (l *lander) bisect(ctx context.Context, dir string, tips []string, n int, red string) (k int, finding string, gated bool, env string) {
 	if n < 1 || len(tips) < n+1 {
-		return 0, "", "the tips of the batch's merges were not recorded, so its red gate blames no head"
+		return 0, "", false, "the tips of the batch's merges were not recorded, so its red gate blames no head"
+	}
+	tested := func(i int) (bool, string) {
+		changed, err := l.git(ctx, dir, "diff", "--name-only", "-M", tips[0], tips[i])
+		if err != nil {
+			return false, "the files the batch changes up to head " + strconv.Itoa(i) + " could not be listed: " + firstLine("", err)
+		}
+		return slices.ContainsFunc(strings.Split(changed, "\n"), treeTested), ""
+	}
+	gate := func(i int) (string, bool, string) {
+		if _, err := l.git(ctx, dir, "reset", "-q", "--hard", tips[i]); err != nil {
+			return "", false, "the batch branch could not be moved to the tip after head " + strconv.Itoa(i) + " for the bisection of its red gate: " + firstLine("", err)
+		}
+		tests, why := tested(i)
+		if why != "" {
+			return "", false, why
+		}
+		l.stage("gate", "bisect: the tip after head "+strconv.Itoa(i)+" of "+strconv.Itoa(n))
+		red := l.treeGate(ctx, dir, tests)
+		if wait := gateWaitWhy(ctx); wait != "" {
+			return "", false, wait
+		}
+		if red == benchGateUnavailableWhy {
+			return "", false, red
+		}
+		return red, tests, ""
+	}
+	if tests, why := tested(n); why != "" {
+		return 0, "", false, why
+	} else if !tests {
+		// the batch's red came from tree tests that read none of its files
+		r, _, env := gate(n)
+		if env != "" {
+			return 0, "", false, env
+		}
+		if r == "" {
+			return n, "", false, ""
+		}
+		red = r
 	}
 	lo, hi, finding := 0, n-1, red
+	gated = true // the base passed its gate with the tree tests
 	for lo < hi {
 		mid := (lo + hi) / 2
-		if _, err := l.git(ctx, dir, "reset", "-q", "--hard", tips[mid+1]); err != nil {
-			return 0, "", "the batch branch could not be moved to the tip after head " + strconv.Itoa(mid+1) + " for the bisection of its red gate: " + firstLine("", err)
-		}
-		l.stage("gate", "bisect: the tip after head "+strconv.Itoa(mid+1)+" of "+strconv.Itoa(n))
-		why := l.treeGate(ctx, dir, true)
-		if wait := gateWaitWhy(ctx); wait != "" {
-			return 0, "", wait
-		}
-		if why == benchGateUnavailableWhy {
-			return 0, "", why
+		why, tests, env := gate(mid + 1)
+		if env != "" {
+			return 0, "", false, env
 		}
 		if why != "" {
 			hi, finding = mid, why
 		} else {
-			lo = mid + 1
+			lo, gated = mid+1, tests
 		}
 	}
 	if _, err := l.git(ctx, dir, "reset", "-q", "--hard", tips[lo]); err != nil {
-		return 0, "", "the batch branch could not be reset to the tip before " + strconv.Itoa(lo+1) + " after the bisection: " + firstLine("", err)
+		return 0, "", false, "the batch branch could not be reset to the tip before " + strconv.Itoa(lo+1) + " after the bisection: " + firstLine("", err)
 	}
-	return lo, finding, ""
+	return lo, finding, gated && lo > 0, ""
 }
 
 // checkDecided is a red --check's gate decision (gateRerun), one stream at a time: the

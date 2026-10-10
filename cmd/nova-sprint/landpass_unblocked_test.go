@@ -276,7 +276,7 @@ func TestLandBisectsARedBatchToTheBreakingHead(t *testing.T) {
 	cards := map[string]map[string]string{}
 	for i := 1; i <= 8; i++ {
 		id := "a" + strconv.Itoa(i)
-		cards[id] = map[string]string{id + ".txt": id + "\n"}
+		cards[id] = map[string]string{id + ".go": "package main\n\nfunc " + id + "() {}\n"}
 	}
 	twoStreams(t, r, cards, map[string]map[string]string{})
 	var gates atomic.Int32
@@ -284,7 +284,7 @@ func TestLandBisectsARedBatchToTheBreakingHead(t *testing.T) {
 	b := r.a.landState()
 	b.mu.Lock()
 	b.gateBench = func(_ context.Context, _, dir string, _ [][]string, _ bool) (string, int, error) {
-		if _, err := os.Stat(filepath.Join(dir, "a6.txt")); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, "a6.go")); err == nil {
 			return "a6 breaks the build", 1, nil
 		}
 		return "", 0, nil

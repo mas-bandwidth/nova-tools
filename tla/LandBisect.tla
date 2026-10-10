@@ -41,7 +41,10 @@
 \*
 \* WHAT IS NOT MODELLED. The merges and checks (a head that does not merge ends the batch
 \* before any gate, as before), the base's gate and cure, the deadline (LandPass.tla), the
-\* push and the report (Land.tla).
+\* push and the report (Land.tla), and which gates run the tree tests: a tip is gated with
+\* them only when the heads up to it changed a file they read, so a batch that changes none
+\* is gated once more without them before the search, and green there lands whole with
+\* nothing blamed; red[N] here is the batch's red under the gate the search uses.
 \*
 \* TLC, 2026-10-10, hetzner2, tla2tools.jar as tla/tla2tools.sha256 pins it: MCLandBisect
 \* (N = 6, faults on) passes TypeOK, BlameSound, ProbesBounded and Ends; the three reversed
