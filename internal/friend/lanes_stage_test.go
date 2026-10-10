@@ -264,9 +264,9 @@ func TestAReadMissingItsBriefIsAStageFailure(t *testing.T) {
 	assert.NotContains(t, string(raw), "wrote no report")
 }
 
-// A JOB.md that names neither a brief nor a checkout is the older record: its presence
-// is the stage, so a later pass does not treat it as a missing file.
-func TestAJobFileThatNamesNothingStaysStaged(t *testing.T) {
+// A JOB.md that names neither a brief nor a checkout is incomplete and must
+// not prevent a later staging pass from repairing the job.
+func TestAJobFileThatNamesNothingIsRestaged(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	job := "a.w1~15"
