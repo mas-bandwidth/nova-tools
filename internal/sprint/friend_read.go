@@ -513,6 +513,10 @@ func FriendReadCloseChecked(s *Snapshot, name, primary, card, report string, mis
 		p.Units = append(p.Units, missingBranchUnit(s, Fleet, rc, pr, m, finding, "", FriendRow(name)))
 		return p
 	}
+	// Accepted read (ok/broken) updates completion evidence once
+	if verdict == "ok" || verdict == "broken" {
+		p.ReadFriendFinishes = append(p.ReadFriendFinishes, name)
+	}
 	p.Units = append(p.Units, friendReadCloseUnit(s, name, pr, rc, verdict, finding, ""))
 	if pw, ok := windowWrite(s.Fleet, Fleet, []ReadVerdict{verdictOf(s, rc, pr, FriendRow(name), verdict, finding)}); ok {
 		p.Props = append(p.Props, pw)
@@ -668,6 +672,10 @@ func readCardVerb(s *Snapshot, r ReadReq, row, name string) Plan {
 			// the machine's fault, not the card's: no verdict, asked again (read_missing.go)
 			p.Units = append(p.Units, missingBranchUnit(s, Fleet, c, pr, m, r.Finding, r.Usage, r.Who))
 			continue
+		}
+		// Accepted read (ok/broken) updates completion evidence once
+		if r.Verdict == "ok" || r.Verdict == "broken" {
+			p.ReadFriendFinishes = append(p.ReadFriendFinishes, name)
 		}
 		u := friendReadCloseUnit(s, name, pr, c, r.Verdict, r.Finding, r.Usage)
 		u.Moved = c.ID + " " + c.Col + " -> " + r.Verdict + " (retired: read by " + name + ")"

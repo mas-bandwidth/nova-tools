@@ -231,6 +231,9 @@ type OpRecord struct {
 	// HealthClear is the friends whose friend-health record its commit removes
 	// (friend health --clear; the stall ladder's release).
 	HealthClear []string `json:"health_clear,omitempty"`
+	// ReadFriendFinishes are friends whose read cards were accepted (verdict
+	// ok/broken) in this step. The commit updates their friend-finish records.
+	ReadFriendFinishes []string `json:"read_friend_finishes,omitempty"`
 	// CloseTimers is the ids of the timers this step closes (store/timers.go):
 	// its commit deletes only these ids from the timer record, read inside
 	// the same commit, so a timer set or cancelled while the step ran is not

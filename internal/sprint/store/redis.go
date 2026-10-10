@@ -709,6 +709,13 @@ func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) erro
 		}
 		p.Set(ctx, r.Names.Key(friendHealthKey(op.Health.Friend)), string(rec), 0)
 	}
+	for _, f := range op.ReadFriendFinishes {
+		rec, err := json.Marshal(time.Now().UTC().Truncate(time.Second).Format(time.RFC3339))
+		if err != nil {
+			return err
+		}
+		p.Set(ctx, r.Names.Key(friendFinishKey(f)), string(rec), 0)
+	}
 	if len(op.CloseTimers) > 0 {
 		raw, err := r.C.Get(ctx, r.Names.Key(keyTimers)).Result()
 		if err != nil && !errors.Is(err, redis.Nil) {
