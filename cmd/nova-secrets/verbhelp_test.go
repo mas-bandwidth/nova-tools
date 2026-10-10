@@ -136,6 +136,7 @@ case "$out" in
 esac
 A=qpzry9x8gf2tvdw0s3jn54khce6mua7l
 tail=$(printf %s "$A$A" | cut -c2-58)
+[ -n "$out" ] && mkdir -p "$(dirname "$out")"
 printf '# created: 2026-09-18\n# public key: age1%s%s\nAGE-SECRET-KEY-1FAKE\n' "$lead" "$tail" > "$out"
 `
 	require.NoError(t, testbin.WriteExecutable(path, []byte(script), 0o755))
@@ -208,6 +209,90 @@ func TestTheHelpSetupBlockRunsAsPrinted(t *testing.T) {
 	head := gitHere(t, store, env, "rev-parse", "HEAD")
 	remote := gitHere(t, store, env, "rev-parse", "origin/main")
 	assert.Equal(t, head, remote, "HEAD is not the remote-tracking ref")
+}
+
+// TestTheHelpSetupBlockKeyPathIsTheOneItWrites asserts that the key path the
+// banner's setup: keygen line writes is the exact path the next line reads,
+// under the user's HOME, with no host-specific path.
+func TestTheHelpSetupBlockKeyPathIsTheOneItWrites(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	inProcess := func(args []string, stdout, stderr io.Writer) int {
+		return run(args, strings.NewReader(""), stdout, stderr)
+	}
+	require.Equal(t, 0, inProcess([]string{"help"}, &stdout, &stderr), "`nova-secrets help` exits 0")
+	lines := setupLines(t, stdout.String())
+	require.NotEmpty(t, lines, "the banner's setup: block is empty")
+
+	var keygenRecoveryKey, sedRecoveryKey string
+	var keygenAdaKey string
+	var initLine string
+	for _, l := range lines {
+		if strings.Contains(l, "keygen") && strings.Contains(l, "--as recovery") {
+			keygenRecoveryKey = extractFlagValue(l, "--key")
+		}
+		if strings.HasPrefix(l, "sed -n") && strings.Contains(l, "recovery.pub") {
+			fields := strings.Fields(l)
+			for i, f := range fields {
+				if f == ">" && i > 0 {
+					sedRecoveryKey = fields[i-1]
+					break
+				}
+			}
+		}
+		if strings.Contains(l, "keygen") && strings.Contains(l, "--as ada") {
+			keygenAdaKey = extractFlagValue(l, "--key")
+		}
+		if strings.Contains(l, "git -C ./secrets init") {
+			initLine = l
+		}
+	}
+
+	require.NotEmpty(t, keygenRecoveryKey, "the setup: block has no recovery keygen line with --key")
+	require.NotEmpty(t, sedRecoveryKey, "the setup: block has no sed line reading recovery.key")
+	require.NotEmpty(t, keygenAdaKey, "the setup: block has no ada keygen line with --key")
+	require.NotEmpty(t, initLine, "the setup: block has no git init line for ./secrets")
+
+	assert.Equal(t, keygenRecoveryKey, sedRecoveryKey,
+		"the key path the recovery keygen line writes is not the path the next line reads")
+
+	// Under HOME (~/):
+	assert.True(t, strings.HasPrefix(keygenRecoveryKey, "~/"),
+		"recovery key path %q is not under HOME (~/)", keygenRecoveryKey)
+	assert.True(t, strings.HasPrefix(keygenAdaKey, "~/"),
+		"ada key path %q is not under HOME (~/)", keygenAdaKey)
+
+	// No host-specific paths:
+	for _, p := range []string{keygenRecoveryKey, sedRecoveryKey, keygenAdaKey} {
+		assert.False(t, strings.HasPrefix(p, "/opt/"), "key path %q carries a host-specific path (/opt/)", p)
+		assert.False(t, strings.HasPrefix(p, "/home/"), "key path %q carries a host-specific path (/home/)", p)
+		assert.False(t, strings.HasPrefix(p, "/Users/"), "key path %q carries a host-specific path (/Users/)", p)
+	}
+
+	// The setup block must ensure .sops.yaml exists so keygen --store does not refuse.
+	assert.Contains(t, initLine, ".sops.yaml",
+		"the git init line does not touch .sops.yaml to prevent the keygen --store race")
+
+	// Under the test's HOME, running the keygen command writes that exact file.
+	home := t.TempDir()
+	keyDir := filepath.Join(home, ".config", "nova-secrets")
+	require.NoError(t, os.MkdirAll(keyDir, 0o700))
+	ageKeygen := fakeAgeKeygen(t)
+	localKey := filepath.Join(home, strings.TrimPrefix(keygenRecoveryKey, "~/"))
+	var kOut, kErr bytes.Buffer
+	code := run([]string{"keygen", "--as", "recovery", "--key", localKey, "--age-keygen", ageKeygen}, strings.NewReader(""), &kOut, &kErr)
+	require.Equal(t, 0, code, "keygen exits %d: %s", code, kErr.String())
+	assert.FileExists(t, localKey, "the key path keygen writes does not exist on disk")
+}
+
+func extractFlagValue(line, flagName string) string {
+	fields := strings.Fields(line)
+	for i, f := range fields {
+		if f == flagName && i+1 < len(fields) {
+			return fields[i+1]
+		}
+	}
+	return ""
 }
 
 // gitHere runs the real git in a directory with the environment the setup lines ran

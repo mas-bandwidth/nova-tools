@@ -101,7 +101,7 @@ setup: needs age-keygen and sops on PATH; run these from an empty directory firs
   mkdir -m 700 -p ~/.config/nova-secrets
   nova-secrets keygen --as recovery --key ~/.config/nova-secrets/recovery.key \
     --age-keygen "$(command -v age-keygen)"
-  mkdir -p ./secrets && git -C ./secrets init -q -b main
+  mkdir -p ./secrets && git -C ./secrets init -q -b main && touch ./secrets/.sops.yaml
   sed -n 's/^# public key: //p' ~/.config/nova-secrets/recovery.key > ./secrets/recovery.pub
   nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key \
     --age-keygen "$(command -v age-keygen)" \
