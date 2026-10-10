@@ -175,3 +175,40 @@ func TestRedoRestoreRefusesWithoutAReason(t *testing.T) {
 	require.Contains(t, p.Refused[0].Why, "--reason")
 	require.Empty(t, p.Units)
 }
+
+// TestRedoByStreamRefusesWithoutAReason pins the stream selection's restore
+// refusal (docs/SPEC-SPRINT.md section 11, redo): a redo --stream on a stream
+// holding a dropped primary without --reason is refused, never a silent no-op.
+func TestRedoByStreamRefusesWithoutAReason(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, "reader-a", "reader-b", "reader-c")
+	w.must(Add(w.s, AddReq{Stream: "s1", IDs: []string{"s1-1"}, Brief: proBrief}))
+	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "obsolete"}))
+	p := Redo(w.s, RedoReq{Sel: Sel{Stream: "s1"}, Who: "coordinator"})
+	require.Len(t, p.Refused, 1, "restore by stream without a reason: %+v", p.Refused)
+	require.Equal(t, "s1-1", p.Refused[0].Key)
+	require.Contains(t, p.Refused[0].Why, "--reason")
+	require.Empty(t, p.Units)
+	require.Equal(t, "", w.state("s1-1"), "the card stays dropped")
+}
+
+// TestRedoRestoreUndoesTheDropBookkeeping pins the restore's reverse of the
+// drop's bookkeeping (docs/SPEC-SPRINT.md section 11, redo): a restored card's
+// need edge brings its weight back on the card it waits on, and the stream's
+// dropped counter is brought back down by the count restored.
+func TestRedoRestoreUndoesTheDropBookkeeping(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, "reader-a", "reader-b", "reader-c")
+	w.must(Add(w.s, AddReq{Stream: "s1", IDs: []string{"s1-1"}, Brief: proBrief}))
+	w.must(Add(w.s, AddReq{Stream: "s1", IDs: []string{"s1-2"}, Needs: []string{"s1-1"}, Brief: proBrief}))
+	w.must(Add(w.s, AddReq{Stream: "s1", IDs: []string{"s1-3"}, Brief: proBrief}))
+	require.Equal(t, "1", w.s.Work.Card("s1-1").F("behind"), "s1-2 waits on s1-1")
+
+	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-2"}}, Reason: "obsolete"}))
+	require.Empty(t, w.s.Work.Card("s1-1").F("behind"), "the weight is recomputed away by the drop")
+	require.Equal(t, "1", w.s.StreamCtl("s1").F("dropped"), "the drop counts one on the stream")
+
+	w.must(Redo(w.s, RedoReq{Sel: Sel{IDs: []string{"s1-2"}}, Reason: "re-admitted", Who: "coordinator"}))
+	require.Equal(t, "1", w.s.Work.Card("s1-1").F("behind"), "the need's weight is back")
+	require.Equal(t, "0", w.s.StreamCtl("s1").F("dropped"), "the dropped counter is undone")
+}

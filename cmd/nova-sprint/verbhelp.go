@@ -112,7 +112,7 @@ var verbEffect = map[string]string{
 	"funded":   "local write: ends the provider's rest of its funds in the sprint's store, with the reason; --dry-run writes nothing",
 	"move":     "local write: moves the named cards to the stream, in line where --before, --after or --score says, in the sprint's store; --dry-run writes nothing",
 	"priority": "local write: with a level, sets it on the named cards or the stream in the sprint's store; with none, prints the levels and writes nothing; --dry-run writes nothing",
-	"redo":     "local write: returns, reworks and resumes the named conflicted cards in one step in the sprint's store; --dry-run writes nothing",
+	"redo":     "local write: returns, reworks and resumes the named conflicted cards in one step, or restores a dropped card to waiting at its old score (with --reason), in the sprint's store; --dry-run writes nothing",
 	"resolve":  "local write: moves the waiting primaries whose needs landed in the sprint's store; --dry-run writes nothing",
 	"resume":   "local write: resumes each named stopped stream in the sprint's store, with what was done; --dry-run writes nothing",
 	"set":      "local write: sets the sprint's settings named in the sprint's store; --dry-run writes nothing",

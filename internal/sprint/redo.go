@@ -230,11 +230,16 @@ func Redo(s *Snapshot, r RedoReq) Plan {
 				return p
 			}
 		}
-		// a dropped primary replaced by a twin is refused naming the twin,
-		// never silently skipped by a stream selection
-		// (docs/SPEC-SPRINT.md section 2, "A card replaced by its twin")
+		// a dropped primary of the stream is refused per card, never silently
+		// skipped by a stream selection: with no reason it names --reason, a
+		// card replaced by a twin names the twin (docs/SPEC-SPRINT.md section
+		// 11, redo; section 2, "A card replaced by its twin")
 		for _, c := range droppedPrimaries(s) {
 			if c.F("stream") != r.Sel.Stream {
+				continue
+			}
+			if r.Reason == "" {
+				p.refuse(c.ID, "wants --reason <text> to say why it comes back")
 				continue
 			}
 			if twin := replacedByTwin(c); twin != "" {
@@ -272,6 +277,8 @@ func Redo(s *Snapshot, r RedoReq) Plan {
 	moves := roundMoves{}
 	streams := map[string]bool{}
 	chosenMap := map[string]bool{}
+	restored := map[string]bool{}
+	var restoredCards []*Card
 	for _, c := range chosen {
 		chosenMap[c.ID] = true
 	}
@@ -279,6 +286,8 @@ func Redo(s *Snapshot, r RedoReq) Plan {
 	for _, c := range chosen {
 		if c.F("outcome") == "dropped" {
 			p.Units = append(p.Units, redoRestore(&p, c, r.Reason))
+			restored[c.ID] = true
+			restoredCards = append(restoredCards, c)
 			continue
 		}
 		streams[c.Row] = true
@@ -406,6 +415,31 @@ func Redo(s *Snapshot, r RedoReq) Plan {
 			u.Changes = append(u.Changes, change(Merge, moveEntry(sc, stream, Queued, nil, "need_card", "need_stream")))
 		}
 		p.Units = append(p.Units, u)
+	}
+
+	// the drop's bookkeeping, undone for the restored set (docs/SPEC-SPRINT.md
+	// section 11, redo): the cards come back carrying their own weight, so the
+	// primaries they wait on are written their new `behind` (weighUnits, as
+	// Drop's pass was), and each stream's dropped counter is brought back down
+	// by the count restored
+	if len(restoredCards) > 0 {
+		p.Units = append(p.Units, weighUnits(s, restoredCards, nil)...)
+		for _, st := range unitStreams(p) {
+			k := 0
+			for _, u := range p.Units {
+				if u.Stream == st && restored[u.Key] {
+					k++
+				}
+			}
+			if k == 0 {
+				continue
+			}
+			n := s.StreamCtl(st).Int("dropped") - k
+			if n < 0 {
+				n = 0
+			}
+			setStream(&p, s, st, map[string]string{"dropped": itoa(n)})
+		}
 	}
 
 	answered(&p, s, r.Answers, r.Who)
