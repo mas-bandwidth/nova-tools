@@ -69,7 +69,7 @@ func TestAReadersQueueCarriesItsMachinesWidth(t *testing.T) {
 	r := readRig(t)
 	assert.Equal(t, 2, r.queueWidth("reader-m1"), "the fleet row m1 is width 2")
 	assert.Equal(t, 0, r.queueWidth("reader-x"), "no fleet row is named x")
-	r.boss("nova-sprint fleet up m1 --width 1")
+	r.boss("nova-sprint fleet up m1 --width 1 --reason 'test'")
 	assert.Equal(t, 1, r.queueWidth("reader-m1"), "the row changed, the reader's width with it")
 	assert.Equal(t, 1, r.queueWidth("m1"), "the member's own is unchanged in shape")
 }
@@ -93,7 +93,7 @@ func TestAReaderRunsTheWidthOfItsMachinesFleetRow(t *testing.T) {
 	tick()
 	require.Len(t, rn.packets, 2, "two reads at width 2: %s", log.String())
 
-	r.boss("nova-sprint fleet up m1 --width 1")
+	r.boss("nova-sprint fleet up m1 --width 1 --reason 'test'")
 	tick()
 	assert.Contains(t, log.String(), "width 2 -> 1 (the fleet row)")
 	assert.Len(t, rn.packets, 2, "nothing new while the running fill the lowered width: %s", log.String())

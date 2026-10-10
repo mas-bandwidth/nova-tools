@@ -103,7 +103,7 @@ func TestFleetSyncRemovesAMemberWithNoMachineRow(t *testing.T) {
 		inv.remove("m2")
 		ta.ok("fleet sync")
 		require.Nil(t, ta.fleetRows()["m2"])
-		ta.ok("fleet up m2")
+		ta.ok("fleet up m2 --reason 'test'")
 		rows := ta.fleetRows()
 		require.NotNil(t, rows["m2"], "fleet up of a removed member: %v", rows)
 		assert.Equal(t, sprint.Up, rows["m2"]["status"])
@@ -120,7 +120,7 @@ func TestFleetSyncRemovalDeletesTheBeat(t *testing.T) {
 	inv.set("m1", 4)
 	inv.set("m2", 4)
 	ta.ok("fleet sync")
-	ta.ok("fleet up m2") // a beat of m2
+	ta.ok("fleet up m2 --reason 'test'") // a beat of m2
 	st, err := ta.a.store(common{redis: "mem:0", actor: "tester"})
 	require.NoError(t, err)
 	beats, err := st.Beats(context.Background(), []string{"m2"})

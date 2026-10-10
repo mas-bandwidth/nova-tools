@@ -410,7 +410,7 @@ func TestTablesAreNamedPlainlyAndConfirmIsTheViewName(t *testing.T) {
 	code, _, _ := ta.do("where")
 	require.NotEqual(t, 0, code, "the tables are still there")
 	const none = "there is no prefix: the tables are always work, merge, readers and fleet and the view is sprint"
-	for _, verb := range []string{"where", "card p1", "log", "clear", "teardown", "inbox", "check", "repair", "init", "add --stream s1", "fleet up m1", "goal set a", "goal show", "goal", "reader add r"} {
+	for _, verb := range []string{"where", "card p1", "log", "clear", "teardown", "inbox", "check", "repair", "init", "add --stream s1", "fleet up m1 --reason 'test'", "goal set a", "goal show", "goal", "reader add r"} {
 		var name string
 		if f := strings.Fields(verb); f[0] == "goal" && len(f) == 1 {
 			name = "goal"

@@ -22,7 +22,7 @@ func TestFleetDoneAndOkPctAreTableFormulas(t *testing.T) {
 	ta.ok("take --as m1 --limit 4")
 	ta.ok("finish --as m1 s1-1.w1@1 s1-3.w1@1 s1-4.w1@1")
 	ta.ok("finish --as m1 s1-2.w1@1 --failed --report 'the tests went red'")
-	ta.ok("fleet up m2")
+	ta.ok("fleet up m2 --reason 'test'")
 	out := ta.ok("where")
 	i := strings.Index(out, "fleet |")
 	require.GreaterOrEqual(t, i, 0, "where has no fleet table:\n%s", out)

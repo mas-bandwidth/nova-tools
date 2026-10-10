@@ -43,7 +43,7 @@ func TestFleetUpOnAMemberThatNeverBeatTouchesNothing(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("fleet up m9")
+	ta.ok("fleet up m9 --reason 'test'")
 	ta.ok("tick")
 	var w whereView
 	ta.json("where", &w)

@@ -76,7 +76,7 @@ func TestFleetSyncCleanupPreservesARejoinAndFreshAssignment(t *testing.T) {
 	var workID, primaryID string
 	hook := &rejoinRowsDelHook{before: func() {
 		fired = true
-		ta.ok("fleet up m2") // production RejoinMembers and fleet release
+		ta.ok("fleet up m2 --reason 'test'") // production RejoinMembers and fleet release
 		ta.ok("add --stream fresh --count 1 --one")
 		ta.deal(1) // production DealStep assigns the fresh primary
 		before, err := st.Load(ctx, []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet}, nil)

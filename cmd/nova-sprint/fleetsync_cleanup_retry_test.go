@@ -69,7 +69,7 @@ func TestFleetSyncRetriesBeatCleanupAfterTheRowIsGone(t *testing.T) {
 	inv.set("m1", 4)
 	inv.set("m2", 4)
 	ta.ok("fleet sync")
-	ta.ok("fleet up m2") // one real beat, which the removal must delete
+	ta.ok("fleet up m2 --reason 'test'") // one real beat, which the removal must delete
 	st, err := ta.a.store(common{redis: "mem:0", actor: "tester"})
 	require.NoError(t, err)
 	require.Zero(t, st.PinnedEpoch(), "the backend hook is retained at epoch 0")
@@ -104,7 +104,7 @@ func TestFleetSyncRetriesBeatCleanupAfterTheRowIsGone(t *testing.T) {
 	inv.set("m2", 6)
 	ta.ok("fleet sync")
 	ta.ok("fleet beat m2 --load 0") // the returning machine beats: a member is up while it beats
-	ta.ok("fleet up m2")
+	ta.ok("fleet up m2 --reason 'test'")
 	rows = ta.fleetRows()
 	require.NotNil(t, rows["m2"], "a removed member still rejoins when its inventory row returns")
 	assert.Equal(t, "6", rows["m2"]["width"])
