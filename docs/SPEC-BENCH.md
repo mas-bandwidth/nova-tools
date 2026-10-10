@@ -61,9 +61,14 @@ The path is strictly validated under the root by the bench's own `rm` guard (`Ch
 ## 5. Disk Guard Sweep Rule
 
 A run directory older than two hours with no live process on the bench is a leak:
-- The disk-guard loop (`nova-swarm disk-guard`) periodically sweeps `<root>/runs/*` and `<root>/<friend>/*`.
-- For each directory where modification age exceeds 2 hours and no live process holds files (`fuser`), the directory is removed.
-- Each removal prints a single `REMOVED <path>` line.
+- The disk-guard loop (`nova-swarm disk-guard`) sweeps only the run directories,
+  `<root>/runs/*`. Every other directory under the bench root (the shared build
+  cache, a friend's copy, anything else) is never a candidate, so the sweep can
+  never delete an arbitrary two-level directory below a bench root.
+- For each run directory where modification age exceeds 2 hours and no live
+  process names it or holds a file in it, the path is checked against the bench
+  package's own run guard (`bench.CheckRunDir`) and then removed.
+- Each removal prints a single `REMOVED run <path> freed=<bytes>` line.
 
 ## 6. Disk Floor Check
 
