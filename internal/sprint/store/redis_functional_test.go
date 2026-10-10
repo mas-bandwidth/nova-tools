@@ -4,11 +4,9 @@ package store
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
-
-	"github.com/mas-bandwidth/nova-tools/internal/testredis"
-	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -18,6 +16,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/testredis"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
