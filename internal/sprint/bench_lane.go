@@ -99,12 +99,15 @@ func (l BenchLane) Dir() string { return BenchLaneRoot + "/" + l.Kind + "/" + l.
 // Tmp is the lane's TMPDIR and GOTMPDIR, inside its directory.
 func (l BenchLane) Tmp() string { return l.Dir() + "/tmp" }
 
-// Env is the environment the lane's command runs under.
+// Env is the environment the lane's command runs under. Each path is absolute: the exec
+// line cds into the lane's repo first, so a path relative to the login's home would name a
+// directory under the repo instead (benchAbs).
 func (l BenchLane) Env(cache string) []string {
+	tmp := benchAbs(l.Tmp())
 	return []string{
-		"TMPDIR=" + benchQuote(l.Tmp()),
-		"GOTMPDIR=" + benchQuote(l.Tmp()),
-		"GOCACHE=" + benchQuote(cache),
+		"TMPDIR=" + tmp,
+		"GOTMPDIR=" + tmp,
+		"GOCACHE=" + benchAbs(cache),
 		"GOFLAGS=-mod=readonly",
 		"NOVA_TEST_NO_HOST=1",
 	}
@@ -181,8 +184,8 @@ func RunBenchLane(ctx context.Context, sh BenchShell, host string, lane BenchLan
 		}
 	}
 	var du bytes.Buffer
-	if code, err := benchShell(ctx, sh, host, "du -sk "+benchQuote(cache)+" 2>/dev/null || true", &du, stderr); err == nil && code == 0 && benchCacheOver(du.String(), capGiB) {
-		if code, err := benchShell(ctx, sh, host, "GOCACHE="+benchQuote(cache)+" go clean -cache", io.Discard, stderr); err == nil && code == 0 {
+	if code, err := benchShell(ctx, sh, host, "du -sk "+benchAbs(cache)+" 2>/dev/null || true", &du, stderr); err == nil && code == 0 && benchCacheOver(du.String(), capGiB) {
+		if code, err := benchShell(ctx, sh, host, "GOCACHE="+benchAbs(cache)+" go clean -cache", io.Discard, stderr); err == nil && code == 0 {
 			res.CacheCleaned = true
 		}
 	}
@@ -220,8 +223,9 @@ func (s *Snapshot) BenchCacheCapGiB() int {
 }
 
 // SweepBenchLanes removes, on host, each lane directory under BenchLaneRoot whose lane is
-// not in live: a lane killed before its own remove. It names what it removed, sorted.
-func SweepBenchLanes(ctx context.Context, sh BenchShell, host string, live []BenchLane) ([]string, error) {
+// not in live: a lane killed before its own remove. It names what it removed, sorted; with
+// dry set it names what it would remove and removes nothing.
+func SweepBenchLanes(ctx context.Context, sh BenchShell, host string, live []BenchLane, dry bool) ([]string, error) {
 	var ls bytes.Buffer
 	if code, err := benchShell(ctx, sh, host, "ls -d "+benchQuote(BenchLaneRoot)+"/*/* 2>/dev/null || true", &ls, io.Discard); err != nil || code != 0 {
 		if err == nil {
@@ -248,6 +252,9 @@ func SweepBenchLanes(ctx context.Context, sh BenchShell, host string, live []Ben
 		gone = append(gone, d)
 	}
 	slices.Sort(gone)
+	if dry {
+		return gone, nil
+	}
 	var removed []string
 	var errs []error
 	for _, d := range gone {
@@ -328,7 +335,7 @@ func BenchTmpJudgment(s *Snapshot, who string, t BenchTmp) (Note, bool) {
 	}
 	what := fmt.Sprintf("%s/tmp is %d%% full, over %d%%; its largest: %s; a lane runs in %s and removes its own directory, so these are left by something else",
 		head, t.UsedPct, BenchTmpOverPct, largest, BenchLaneRoot)
-	return Note{Kind: Judgment, Type: NBenchTmp, Who: who, To: s.Coordinator, At: s.Now, What: what}, true
+	return Note{Kind: Judgment, Type: NBenchTmp, Who: who, To: s.Coordinator, At: s.Now, Primaries: []string{t.Bench}, What: what}, true
 }
 
 func benchShell(ctx context.Context, sh BenchShell, host, line string, stdout, stderr io.Writer) (int, error) {
@@ -339,3 +346,14 @@ func benchShell(ctx context.Context, sh BenchShell, host, line string, stdout, s
 
 // benchQuote is s in single quotes for the bench's shell.
 func benchQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// benchAbs is p as the bench's shell reads it wherever the command runs: an absolute path
+// is quoted as it stands, one relative to the login's home is put under the shell's
+// "$HOME", so it stays absolute after the exec line cds into the lane's repo. bench.ExecLine
+// puts its cache under "$HOME" the same way.
+func benchAbs(p string) string {
+	if strings.HasPrefix(p, "/") {
+		return benchQuote(p)
+	}
+	return `"$HOME"/` + benchQuote(p)
+}

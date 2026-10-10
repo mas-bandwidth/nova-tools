@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -17,6 +19,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // gc is the verb that reclaims the machinery's scratch (sprint.GC is the rule;
@@ -71,10 +75,34 @@ func (a *app) cmdGC(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, name, "--machine: "+err.Error())
 		}
 		code := gcOn(context.Background(), gcRemote, m, *dry, *maxAge, *aiRoot, stdout, stderr)
-		a.sweepBenchLanes(c, m, stdout, stderr)
+		if a.sweepBenchLanes(c, m, *dry, stdout, stderr) && code == 0 {
+			code = 1
+		}
 		return code
 	}
 	res := a.gcLocal(*dry, age, *aiRoot)
+	// the killed lane sweep and the /tmp judgment are this pass too: the tick runs this
+	// verb on every machine, so a lane killed before its own remove has its directory
+	// removed here, and a bench whose /tmp is over the mark raises one judgment
+	// (docs/SPEC-SPRINT.md section 18, bench lanes). --json keeps its one object: the
+	// sweep's lines go in the pass's own lines.
+	if name := gcLocalName(); name != "" {
+		var sweep bytes.Buffer
+		dst := io.Writer(&sweep)
+		if !c.json {
+			dst = stdout
+		}
+		if a.sweepBenchLanes(c, name, *dry, dst, stderr) {
+			res.Failed++
+		}
+		if c.json {
+			for _, l := range strings.Split(strings.TrimRight(sweep.String(), "\n"), "\n") {
+				if l != "" {
+					res.Detail = append(res.Detail, l)
+				}
+			}
+		}
+	}
 	if c.json {
 		facts := map[string]any{"freed": res.Freed, "volume": res.Volume, "failed": res.Failed, "dry_run": res.Dry, "classes": res.Classes, "lines": orEmpty(res.Detail)}
 		line := res.Lines()[len(res.Lines())-1]
@@ -123,6 +151,17 @@ func gcIsLocal(m string) bool {
 	return m == h || m == short
 }
 
+// gcLocalName is this machine's name as the fleet's machine rows name it: the short host
+// name, empty when there is none.
+func gcLocalName() string {
+	h, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+	short, _, _ := strings.Cut(h, ".")
+	return short
+}
+
 // gcLine is the remote line of gc on another machine: the same verb, its flags carried
 // (--ai-root when given; without it the machine finds its own, as gcLocal does).
 func gcLine(dry bool, maxAge, aiRoot string) string {
@@ -152,42 +191,112 @@ func gcOn(ctx context.Context, run gcRunner, machine string, dry bool, maxAge, a
 	return 0
 }
 
-// sweepBenchLanes sweeps machine's bench lane directories whose lane is gone, and says the
-// bench's /tmp when it is nearly full: a machine with a live Go lane holder is running
-// something and is left alone; one with no holder has no live lane, so every directory under
-// nova-bench/lanes there is a killed lane's (docs/SPEC-SPRINT.md section 18, bench lanes).
-// The sweep and the /tmp line are the check beside the mechanism: a lane removes its own
-// directory whatever the verdict; the sweep is for the lane killed before its remove, and
-// the /tmp line names a bench whose /tmp is over BenchTmpOverPct and its largest directories.
-func (a *app) sweepBenchLanes(c *common, machine string, stdout, stderr io.Writer) {
+// sweepBenchLanes sweeps machine's bench lane directories whose lane is gone, and persists
+// the bench's /tmp judgment when it is nearly full: a machine with a live Go lane holder is
+// running something and is left alone; one with no holder has no live lane, so every
+// directory under nova-bench/lanes there is a killed lane's (docs/SPEC-SPRINT.md section 18,
+// bench lanes). The sweep and the /tmp judgment are the check beside the mechanism: a lane
+// removes its own directory whatever the verdict; the sweep is for the lane killed before its
+// remove, and the judgment names a bench whose /tmp is over BenchTmpOverPct and its largest
+// directories. It reports whether anything failed; with dry set it changes nothing.
+func (a *app) sweepBenchLanes(c *common, machine string, dry bool, stdout, stderr io.Writer) (failed bool) {
+	sh := gcSweepShell(machine)
+	st, serr := a.store(*c)
 	var tmpOut bytes.Buffer
-	if code, err := gcRemote(context.Background(), machine, sprint.BenchTmpLine, &tmpOut, &tmpOut); err == nil && code == 0 {
+	tmpCtx, cancel := context.WithTimeout(context.Background(), sprint.BenchLaneStep)
+	defer cancel()
+	if code, err := sh.Shell(tmpCtx, machine, sprint.BenchTmpLine, &tmpOut, &tmpOut); err == nil && code == 0 {
 		if tmp, err := sprint.BenchTmpFrom(machine, tmpOut.String()); err == nil {
-			if n, ok := sprint.BenchTmpJudgment(&sprint.Snapshot{Now: a.now()}, "gc", tmp); ok {
-				fmt.Fprintf(stdout, "GC NOTE %s\n", oneline.Escape(n.What))
-			}
+			a.raiseBenchTmp(st, serr, machine, tmp, dry, stdout, stderr)
 		}
 	}
-	st, err := a.store(*c)
-	if err != nil { // ignored: no store, no live lanes to read, nothing swept
-		return
+	if serr != nil { // ignored: no store, no live lanes to read, nothing swept
+		return failed
 	}
 	rows, err := st.LaneRows(context.Background())
 	if err != nil { // ignored: lanes that cannot be read are not swept away
-		return
+		return failed
 	}
 	for _, r := range rows {
 		if r.Machine == machine && r.Kind == sprint.LaneGo && len(r.Held) > 0 {
-			return // a live lane: nothing swept while it runs
+			return failed // a live lane: nothing swept while it runs
 		}
 	}
-	swept, err := sprint.SweepBenchLanes(context.Background(), bench.Exec{}, machine, nil)
+	swept, err := sprint.SweepBenchLanes(context.Background(), sh, machine, nil, dry)
 	for _, d := range swept {
-		fmt.Fprintf(stdout, "GC REMOVED class=bench-lanes path=%s why=%s\n", oneline.Escape(d), "its lane is gone")
+		verb := "GC REMOVED"
+		if dry {
+			verb = "GC WOULD-REMOVE"
+		}
+		fmt.Fprintf(stdout, "%s class=bench-lanes path=%s why=%s\n", verb, oneline.Escape(d), "its lane is gone")
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "%s gc: GC FAILED machine=%s: %s\n", prog, oneline.Escape(machine), oneline.Err(err))
+		return true
 	}
+	return failed
+}
+
+// raiseBenchTmp writes the one open judgment a bench whose /tmp is over BenchTmpOverPct
+// raises, naming it and its largest directories; with dry it says what it would write and
+// writes nothing. With no store the line is said and not kept. One judgment is open a bench
+// while it stands: BenchTmpJudgment reads the open judgments the store holds.
+func (a *app) raiseBenchTmp(st *store.Store, serr error, machine string, tmp sprint.BenchTmp, dry bool, stdout, stderr io.Writer) {
+	var open []sprint.Open
+	if serr == nil {
+		open, _ = st.B.OpenNotes(context.Background())
+	}
+	n, ok := sprint.BenchTmpJudgment(&sprint.Snapshot{Now: a.now(), Open: open}, "gc", tmp)
+	if !ok {
+		return
+	}
+	if dry {
+		fmt.Fprintf(stdout, "GC WOULD-NOTE %s\n", oneline.Escape(n.What))
+		return
+	}
+	if serr != nil {
+		fmt.Fprintf(stdout, "GC NOTE %s\n", oneline.Escape(n.What))
+		return // ignored: no store holds the judgment, so it is said and not kept
+	}
+	if _, err := st.Run(context.Background(), store.NoteStep("gc", n)); err != nil {
+		fmt.Fprintf(stderr, "%s gc: GC FAILED machine=%s: the /tmp judgment was not written: %s\n", prog, oneline.Escape(machine), oneline.Err(err))
+		return
+	}
+	fmt.Fprintf(stdout, "GC NOTE %s\n", oneline.Escape(n.What))
+}
+
+// gcSweepShell is the shell the lane sweep runs through on machine: this machine's own shell
+// when it is local (a bench sweeps its own lanes; no ssh to itself), the fleet runner's ssh
+// otherwise.
+func gcSweepShell(machine string) sprint.BenchShell {
+	if gcIsLocal(machine) {
+		return gcLocalShell{}
+	}
+	return gcRemoteShell{}
+}
+
+// gcRemoteShell is the fleet runner's ssh.
+type gcRemoteShell struct{}
+
+func (gcRemoteShell) Shell(ctx context.Context, host, line string, stdout, stderr io.Writer) (int, error) {
+	return gcRemote(ctx, host, line, stdout, stderr)
+}
+
+// gcLocalShell runs one line on this machine through the login shell.
+type gcLocalShell struct{}
+
+func (gcLocalShell) Shell(ctx context.Context, host, line string, stdout, stderr io.Writer) (int, error) {
+	cmd := subproc.Long(ctx, "sh", "-c", line)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
+	err := cmd.Run()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return exit.ExitCode(), nil
+	}
+	if err != nil {
+		return -1, err
+	}
+	return 0, nil
 }
 
 // gcLocal is one pass on this machine: the home, the AI root (aiRoot, else NOVA_AI_ROOT,

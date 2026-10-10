@@ -7464,15 +7464,22 @@ gives one at a time beside the store, so no two steps of the record interleave.
 
 ### Bench lanes
 
-A lane the machinery starts on a bench (a worker, a reader, a lander, a bench gate)
-is `RunBenchLane` (`internal/sprint/bench_lane.go`). Its directory is
+A bench gate the machinery starts on a bench is `RunBenchLane`
+(`internal/sprint/bench_lane.go`); a worker, reader or lander lane runs in its own
+directory as its own machinery runs it (a native run's slot tmp, a read's bench rule),
+and the bench gate is the lane this package runs. Its directory is
 `nova-bench/lanes/<kind>/<job>` and its `tmp` is inside that directory. The command
 runs with `TMPDIR` and `GOTMPDIR` set to that `tmp`, and with `GOCACHE` the bench's
-one shared cache (`nova-bench/cache/go-build` when the lane names none). The directory
+one shared cache (`nova-bench/cache/go-build` when the lane names none). Each path is
+absolute: the command cds into the lane's repo first, so a path relative to the login's
+home is put under the shell's `$HOME` (`benchAbs`, as `internal/bench`'s `ExecLine`
+does for its cache). The directory
 is removed when the lane ends, whatever the verdict, and the caller's cancellation
 does not end that remove. A directory whose lane is gone is removed on the next tick
 (`SweepBenchLanes`): each directory under the root whose lane is not live, and a name
-that is not one plain job is left.
+that is not one plain job is left. The sweep runs in the same gc pass that reclaims
+the machine's scratch (the tick runs gc on every machine); with `--dry-run` it names
+what it would remove and removes nothing.
 
 The shared cache has one cap per bench. The cap is the sprint's `bench_cache_gib`, a
 whole number from 1 (`Snapshot.BenchCacheCapGiB`), and `BenchCacheCapGiBDefault` when
@@ -7481,7 +7488,9 @@ cleaned with `go clean -cache`. A clean that fails does not fail the lane.
 
 A bench whose `/tmp` is over `BenchTmpOverPct` raises one judgment (`BenchTmpFrom`,
 `NBenchTmp`, `BenchTmpJudgment`) naming the bench and its largest directories, while one such
-judgment for that bench is open, and none at the threshold or under. The judgment is
+judgment for that bench is open, and none at the threshold or under. The bench is the
+judgment's primary, so the store holds one open judgment a bench, and gc says it and
+persists it. The judgment is
 the check beside the mechanism: a lane runs in `nova-bench/lanes` and removes its own
 directory, so what remains was left by something else.
 

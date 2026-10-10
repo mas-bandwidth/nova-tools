@@ -93,9 +93,10 @@ func TestALaneRunsInItsOwnTmpAndRemovesIt(t *testing.T) {
 				return
 			}
 			assert.Contains(t, exec, "cd '"+dir+"/repo'")
-			assert.Contains(t, exec, "TMPDIR='"+dir+"/tmp'", "TMPDIR is inside the job directory")
-			assert.Contains(t, exec, "GOTMPDIR='"+dir+"/tmp'", "GOTMPDIR is inside the job directory")
-			assert.Contains(t, exec, "GOCACHE='"+BenchCacheDefault+"'", "GOCACHE is the bench's one shared cache")
+			assert.Contains(t, exec, `TMPDIR="$HOME"/'`+dir+`/tmp'`, "TMPDIR is absolute and inside the job directory")
+			assert.Contains(t, exec, `GOTMPDIR="$HOME"/'`+dir+`/tmp'`, "GOTMPDIR is absolute and inside the job directory")
+			assert.Contains(t, exec, `GOCACHE="$HOME"/'`+BenchCacheDefault+`'`, "GOCACHE is the bench's one shared cache, made absolute")
+			assert.NotContains(t, exec, "TMPDIR='"+dir, "the exported path is not left relative to the login's home")
 			assert.NotContains(t, exec, "/tmp/", "nothing is put in the bench's shared temporary directory")
 			assert.Contains(t, exec, "nice -n 19 'go' 'test' './internal/sprint'")
 		})
@@ -112,8 +113,8 @@ func TestALaneRunsInItsOwnTmpAndRemovesIt(t *testing.T) {
 			assert.Equal(t, want, res.Dir, kind)
 			assert.True(t, res.Removed, kind)
 			joined := strings.Join(sh.lines, "\n")
-			assert.Contains(t, joined, "TMPDIR='"+want+"/tmp'", kind)
-			assert.Contains(t, joined, "GOTMPDIR='"+want+"/tmp'", kind)
+			assert.Contains(t, joined, `TMPDIR="$HOME"/'`+want+`/tmp'`, kind)
+			assert.Contains(t, joined, `GOTMPDIR="$HOME"/'`+want+`/tmp'`, kind)
 		}
 	})
 
@@ -123,7 +124,7 @@ func TestALaneRunsInItsOwnTmpAndRemovesIt(t *testing.T) {
 		res, err := RunBenchLane(context.Background(), over, "bench-a", lane, BenchLaneOptions{CacheCapGiB: 30}, []string{"go", "vet", "./..."})
 		require.NoError(t, err)
 		assert.True(t, res.CacheCleaned)
-		assert.Contains(t, strings.Join(over.lines, "\n"), "GOCACHE='"+BenchCacheDefault+"' go clean -cache")
+		assert.Contains(t, strings.Join(over.lines, "\n"), `GOCACHE="$HOME"/'`+BenchCacheDefault+`' go clean -cache`)
 		under := &fakeBenchShell{rules: []fakeBenchRule{{has: "du -sk", out: "1024\t" + BenchCacheDefault + "\n"}}}
 		res, err = RunBenchLane(context.Background(), under, "bench-a", lane, BenchLaneOptions{}, []string{"go", "vet", "./..."})
 		require.NoError(t, err)
@@ -134,6 +135,11 @@ func TestALaneRunsInItsOwnTmpAndRemovesIt(t *testing.T) {
 		res, err = RunBenchLane(context.Background(), overDefault, "bench-a", lane, BenchLaneOptions{}, []string{"go", "vet", "./..."})
 		require.NoError(t, err)
 		assert.True(t, res.CacheCleaned, "the default cap is %d GiB", BenchCacheCapGiBDefault)
+		// An absolute cache is quoted as it stands, never put under the login's home.
+		absCache := &fakeBenchShell{rules: []fakeBenchRule{{has: "du -sk", out: "1024\t/var/cache/go-build\n"}}}
+		res, err = RunBenchLane(context.Background(), absCache, "bench-a", lane, BenchLaneOptions{Cache: "/var/cache/go-build"}, []string{"go", "vet", "./..."})
+		require.NoError(t, err)
+		assert.Contains(t, strings.Join(absCache.lines, "\n"), "GOCACHE='/var/cache/go-build'", "an absolute cache is not put under $HOME")
 		work := &Table{}
 		work.SetProps(map[string]string{PropBenchCacheGiB: "12"})
 		assert.Equal(t, 12, (&Snapshot{Work: work}).BenchCacheCapGiB())
@@ -160,7 +166,7 @@ func TestALaneRunsInItsOwnTmpAndRemovesIt(t *testing.T) {
 			"/tmp/elsewhere",
 		}, "\n") + "\n"}}}
 		live := []BenchLane{{Kind: BenchLaneWorker, Job: "a~15"}}
-		swept, err := SweepBenchLanes(context.Background(), sh, "bench-a", live)
+		swept, err := SweepBenchLanes(context.Background(), sh, "bench-a", live, false)
 		require.NoError(t, err)
 		assert.Equal(t, []string{BenchLaneRoot + "/reader/a~15", BenchLaneRoot + "/worker/b~15"}, swept)
 		all := strings.Join(sh.lines, "\n")
@@ -169,6 +175,12 @@ func TestALaneRunsInItsOwnTmpAndRemovesIt(t *testing.T) {
 		assert.NotContains(t, all, "rm -rf -- '"+BenchLaneRoot+"/worker/a~15'", "a live lane's directory is kept")
 		assert.NotContains(t, all, "elsewhere", "nothing outside the lanes' root is removed")
 		assert.NotContains(t, all, "..", "a name that climbs is never removed")
+		// A dry run names the same lanes and removes nothing.
+		drySh := &fakeBenchShell{rules: sh.rules}
+		dry, err := SweepBenchLanes(context.Background(), drySh, "bench-a", live, true)
+		require.NoError(t, err)
+		assert.Equal(t, swept, dry)
+		assert.NotContains(t, strings.Join(drySh.lines, "\n"), "rm -rf", "a dry run removes nothing")
 	})
 
 	t.Run("a bench whose /tmp is over 80% raises one judgment naming it and its largest directories", func(t *testing.T) {
