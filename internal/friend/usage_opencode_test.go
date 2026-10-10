@@ -32,6 +32,21 @@ func TestSumOpenCodeRecordSumsTheSessionsTokensAndModel(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// A record whose modelID carries no provider keeps the provider from providerID, so the
+// finish's model is "provider/model" whatever the record's fields say (the provider and
+// model come from the same record).
+func TestSumOpenCodeRecordKeepsTheProviderWithTheModel(t *testing.T) {
+	t.Parallel()
+	u, err := SumOpenCodeRecord([]byte(`{"messages":[{"info":{"role":"assistant","modelID":"mercury-2.5","providerID":"inception","tokens":{"input":1,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}}]}`))
+	require.NoError(t, err)
+	assert.Equal(t, "inception/mercury-2.5", u.Model)
+
+	// a modelID that already carries the provider is left as it is
+	u, err = SumOpenCodeRecord([]byte(`{"messages":[{"info":{"role":"assistant","modelID":"inception/mercury-2.5","providerID":"inception","tokens":{"input":1,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}}]}`))
+	require.NoError(t, err)
+	assert.Equal(t, "inception/mercury-2.5", u.Model)
+}
+
 // A session record the adapter cannot read is finished usage=unknown, and the seat
 // is told once with the card and why, never priced as free.
 func TestAMissingSessionRecordIsUsageUnknownWithTheJudgment(t *testing.T) {

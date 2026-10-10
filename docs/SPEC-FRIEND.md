@@ -2388,9 +2388,10 @@ of `$0.00`; a zero is a claim the work was free, and unpriced is the admission t
 
 Tests: `internal/friend/usage_opencode_test.go` (a session record sums to the finish's usage; a missing record is
 usage unknown with the judgment; an intro-rate route with zero tokens is unpriced; the reconcile lists the hole).
-Not done here: the daemon's `--db` wiring in `cmd/nova-friend` still reads the sqlite database for the finish's
-tokens (`Daemon.Tokens`); the session-record reader above is the adapter's, and wiring `Daemon.Tokens` to it is a
-one-line change in `cmd/nova-friend` outside this card's paths.
+The finish reads the session record through `Daemon.SessionUsage`, which `cmd/nova-friend` sets to the adapter's
+`SessionUsage` with `DataDir` the friend's opencode data directory (beside her `--db`); `Daemon.Tokens` stays the
+sqlite read the token cap polls (`capStep`), never the finish's. `nova-sprint cost reconcile` lists the unpriced
+runs per friend and route beside the provider gaps.
 
 ### the-lane-hands-the-brief-by-absolute-path-bb — the lane's paths are absolute; a no-report exit is a harness fault (internal/friend/lane_parity.go)
 

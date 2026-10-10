@@ -232,6 +232,11 @@ type lane struct {
 	polled   time.Time // when the card's tokens were last read for the cap
 	capped   bool      // stopped at the row's token cap
 	job      LaneJob   // the card as the harness is handed it: every path absolute, the brief inline, the job directory
+	// baseUsage is the session's usage when the card began, read from the harness's own
+	// session record (OpenCodeUsage); baseUsageOK says the read succeeded. The finish's
+	// tokens are the record at the end less this (finishNote), never the sqlite database.
+	baseUsage   OpenCodeUsage
+	baseUsageOK bool
 }
 
 type laneResult struct {
@@ -530,8 +535,15 @@ func (l *loop) laneStep(now time.Time, width int) {
 			ln.tier = d.cardTier(c)
 			ln.cap = d.laneCap(ln.tier)
 			ln.capped = false
+			ln.baseOK = false
 			if base, err := l.tokens(ln.session); err == nil {
 				ln.base, ln.baseOK = base, true
+			}
+			ln.baseUsageOK = false
+			if d.SessionUsage != nil {
+				if u, err := d.SessionUsage(ln.session); err == nil {
+					ln.baseUsage, ln.baseUsageOK = u, true
+				}
 			}
 			s.state.Started[filepath.Base(c.Outbox)] = Started{Lane: ln.n, Card: c, At: now}
 			l.saveLanes(now)
@@ -1283,15 +1295,27 @@ func (l *loop) capStep(r LaneRules, ln *lane, now time.Time) {
 // to the coordinator, at each finish; off when the parity is not wired (Rules nil). A finish
 // whose usage could not be read is unpriced, never $0.00, and one judgment tells the seat
 // (usage unknown for <card>: <why>); a route found with no counted token is unpriced too
-// (usage_opencode.go).
+// (usage_opencode.go). The tokens come from the harness's own session record (SessionUsage),
+// never from the model's report, where one is wired; else from the sqlite database (Tokens).
 func (l *loop) finishNote(ln *lane, card Card, wall time.Duration, now time.Time) {
 	d := l.d
 	if d.Rules == nil {
 		return
 	}
 	spent := LaneTokens{Tokens: cardcost.None()}
+	model := d.Model
 	unknown := ""
-	if d.Tokens != nil {
+	switch {
+	case d.SessionUsage != nil:
+		if cur, err := d.SessionUsage(ln.session); err == nil && ln.baseUsageOK {
+			spent = LaneTokens{Tokens: cur.Sub(ln.baseUsage)}
+			if cur.Model != "" {
+				model = cur.Model
+			}
+		} else if err != nil {
+			unknown = oneLine(err.Error(), 300)
+		}
+	case d.Tokens != nil:
 		if cur, err := l.tokens(ln.session); err == nil && ln.baseOK {
 			spent = cur.Sub(ln.base)
 		} else if err != nil {
@@ -1302,8 +1326,8 @@ func (l *loop) finishNote(ln *lane, card Card, wall time.Duration, now time.Time
 	if d.Route != nil {
 		rp = d.Route()
 	}
-	if d.Tokens != nil {
-		if err := PublishFinishCost(card.Outbox, spent, rp, d.Model, unknown); err != nil {
+	if d.SessionUsage != nil || d.Tokens != nil {
+		if err := PublishFinishCost(card.Outbox, spent, rp, model, unknown); err != nil {
 			d.Record(fmt.Sprintf("%s cost: %s: %s", now.UTC().Format(time.RFC3339), card.ID, oneLine(err.Error(), 300)))
 		}
 	}
@@ -1311,7 +1335,7 @@ func (l *loop) finishNote(ln *lane, card Card, wall time.Duration, now time.Time
 	if raw, err := os.ReadFile(card.Report()); err == nil {
 		verdict, _ = reportLine(string(raw), "Verdict")
 	}
-	cost := FinishCost(spent.Tokens, rp, d.Model)
+	cost := FinishCost(spent.Tokens, rp, model)
 	if unknown != "" {
 		cost = "unpriced (usage unknown: " + unknown + ")"
 	}

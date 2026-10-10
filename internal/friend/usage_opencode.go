@@ -35,14 +35,26 @@ type OpenCodeUsage struct {
 	Model  string
 }
 
+// Sub is the tokens spent after base: a lane's session serves many cards, so a card's
+// are the session's totals at its end less its totals at its start, each class floored
+// at zero. The provider and model are not a count: the finish reads them from the
+// session's record at the end.
+func (u OpenCodeUsage) Sub(base OpenCodeUsage) cardcost.Tokens {
+	d := func(a, b int64) int64 { return max(a-b, 0) }
+	return cardcost.Tokens{Input: d(u.Tokens.Input, base.Tokens.Input), CacheRead: d(u.Tokens.CacheRead, base.Tokens.CacheRead),
+		CacheWrite: d(u.Tokens.CacheWrite, base.Tokens.CacheWrite), Output: d(u.Tokens.Output, base.Tokens.Output),
+		Reasoning: d(u.Tokens.Reasoning, base.Tokens.Reasoning), Requests: cardcost.Unreported, MaxPrompt: cardcost.Unreported}
+}
+
 // openCodeRecord is the part of a session's record the sum reads: each message is one
-// step, carrying the tokens it spent and the model it ran.
+// step, carrying the tokens it spent and the provider and model it ran.
 type openCodeRecord struct {
 	Messages []struct {
 		Info struct {
-			Role   string `json:"role"`
-			Model  string `json:"modelID"`
-			Tokens *struct {
+			Role     string `json:"role"`
+			Model    string `json:"modelID"`
+			Provider string `json:"providerID"`
+			Tokens   *struct {
 				Input     int64 `json:"input"`
 				Output    int64 `json:"output"`
 				Reasoning int64 `json:"reasoning"`
@@ -83,7 +95,11 @@ func SumOpenCodeRecord(data []byte) (OpenCodeUsage, error) {
 		u.Tokens.Output += t.Output
 		u.Tokens.Reasoning += t.Reasoning
 		if m.Info.Model != "" {
-			u.Model = m.Info.Model
+			model := m.Info.Model
+			if m.Info.Provider != "" && !strings.HasPrefix(model, m.Info.Provider+"/") {
+				model = m.Info.Provider + "/" + model
+			}
+			u.Model = model
 		}
 	}
 	if !found {
