@@ -417,7 +417,11 @@ func gateRunError(run []string, out string, err error) error {
 // when the gate did not run on a bench (the commit could not be pushed, no lane before ctx
 // ended, a bench not answering, every slot's stage refused): the caller runs it here, and
 // that is nobody's finding. A gate that ran records the ring's size and the slot for the
-// batch's LAND line (gateRing, gateSlot).
+// batch's LAND line (gateRing, gateSlot). A delete of the temporary ref that fails is
+// said (copySaid) and left off the finding: why and ran stay what the ring set, so a
+// cleanup refusal does not skip the clone and is not recorded as the head or the base
+// failing the tree. A push refusal is said the same way; the ring was not asked, so
+// ran stays false and the caller runs the gate here.
 func (l *lander) benchGate(ctx context.Context, hosts []string, dir string, runs [][]string, tests bool) (why string, ran bool) {
 	st, err := l.gateStage(ctx, dir)
 	if err != nil {

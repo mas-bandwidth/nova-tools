@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
@@ -182,4 +184,26 @@ func TestATwiceRefusedBenchIsPassedOverForThePass(t *testing.T) {
 	assert.False(t, ran, "every slot refused: the gate runs here")
 	assert.Equal(t, []string{bad, good}, asked)
 	r.clean()
+}
+
+// A gate ref that origin refuses to delete is said on the ledger and is not the gate's
+// finding. With no bench, ran stays false so the caller still runs the tree in the clone,
+// and an empty why is not replaced by the cleanup refusal.
+func TestAFailedGateRefDeleteDoesNotFailTheGate(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	hook := "#!/bin/sh\nwhile read old new ref; do\n" +
+		"  case \"$ref:$new\" in refs/nova-gate/*:0000000000000000000000000000000000000000) echo delete refused >&2; exit 1;; esac\n" +
+		"done\n"
+	require.NoError(t, os.WriteFile(filepath.Join(r.remote, "hooks", "pre-receive"), []byte(hook), 0o700))
+	head := r.git(r.clone, "rev-parse", "HEAD")
+	ref := bench.GateRef("s1", head)
+	l := &lander{a: r.a, gateKey: "s1"}
+
+	why, ran := l.benchGate(context.Background(), nil, r.clone, gateRuns(false, nil), false)
+	assert.False(t, ran, "a refused delete does not by itself set ran; with no bench the gate runs in the clone")
+	assert.Empty(t, why, "a refused delete does not replace an empty why")
+	assert.Contains(t, strings.Join(l.ledgerLog, "\n"), "deleting the gate's ref "+ref)
+	assert.Equal(t, head, r.git(r.remote, "rev-parse", ref), "the refusal left the temporary ref on origin")
+	r.git(r.remote, "update-ref", "-d", ref)
 }
