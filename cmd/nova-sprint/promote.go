@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
@@ -174,7 +177,7 @@ func (a *app) cmdPromote(args []string, stdout, stderr io.Writer) int {
 	branch := fs.String("branch", "", "the live sprint branch; the cut is taken from origin/<branch> after a fetch, never a local ref (default: the checkout's current branch)")
 	repo := fs.String("repo-dir", "", "the clone the branch is cut in (default: the current directory)")
 	base := fs.String("base", "dev", "the branch the pull request targets, fetched and merged into the cut first (default dev)")
-	check := fs.String("check", "", "the tree gate, a command run on the frozen commit before the pull request (default: none)")
+	check := fs.String("check", "", "the tree gate, a command run in a private checkout of the merged cut before the pull request (default: none)")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "promote", argErr("takes no words ", err, pos...))
@@ -261,7 +264,7 @@ func (a *app) cmdPromote(args []string, stdout, stderr io.Writer) int {
 }
 
 // step is one promote pass: fetch, cut from origin's sprint tip, merge the
-// target into the cut, gate, push, open the pull request, then watch it. Each
+// target into the cut, gateMergedCut, push, open the pull request, then watch it. Each
 // step prints a line as it goes, so the verb never waits without saying on what.
 func (p *promoter) step(ctx context.Context, stdout, stderr io.Writer) (promoteOutcome, int) {
 	o := promoteOutcome{Live: p.live, Dry: p.dry}
@@ -381,11 +384,8 @@ func (p *promoter) step(ctx context.Context, stdout, stderr io.Writer) (promoteO
 	if _, err := p.git(ctx, "branch", "--no-track", branch, cut); err != nil {
 		return o, p.fail(stderr, err)
 	}
-	if p.check != "" || p.gate != nil {
-		fmt.Fprintf(stdout, "PROMOTE GATE branch=%s sha=%s\n", oneline.Field(branch), cut)
-	}
-	if _, err := p.runGate(ctx, cut); err != nil {
-		return o, p.fail(stderr, err)
+	if code := p.gateMergedCut(ctx, stdout, stderr, branch, cut); code != 0 {
+		return o, code
 	}
 	spec := "refs/heads/" + branch + ":refs/heads/" + branch
 	if strings.Contains(spec, "refs/heads/"+live+":") {
@@ -796,24 +796,62 @@ func (p *promoter) rev(ctx context.Context, rev string) (string, error) {
 	return out, nil
 }
 
-func (p *promoter) runGate(ctx context.Context, sha string) (string, error) {
+// gateMergedCut is the tree gate on the merged cut: it runs after the target
+// is merged into the cut and before that cut is pushed. A configured gate
+// prints one line and a failure stops the promotion; with no gate the cut
+// passes. Nothing is resolved or pushed here.
+func (p *promoter) gateMergedCut(ctx context.Context, stdout, stderr io.Writer, branch, cut string) int {
+	if p.check == "" && p.gate == nil {
+		return 0
+	}
+	fmt.Fprintf(stdout, "PROMOTE GATE branch=%s sha=%s\n", oneline.Field(branch), cut)
+	if _, err := p.runGate(ctx, cut); err != nil {
+		return p.fail(stderr, err)
+	}
+	return 0
+}
+
+func (p *promoter) runGate(ctx context.Context, sha string) (output string, err error) {
 	if p.gate != nil {
 		return p.gate(ctx, p.dir, sha)
 	}
 	if p.check == "" {
 		return "", nil
 	}
+	// The cut is a commit-tree object, not the caller's checkout. A private detached
+	// worktree makes the normal --check path inspect the exact tree being promoted.
+	root, err := os.MkdirTemp("", "nova-promote-gate-*")
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		if e := safepath.RemoveUnder(os.TempDir(), root); e != nil {
+			err = errors.Join(err, fmt.Errorf("remove private gate directory: %w", e))
+		}
+	}()
+	checkout := filepath.Join(root, "checkout")
+	if _, err := p.git(ctx, "worktree", "add", "--detach", checkout, sha); err != nil {
+		return "", fmt.Errorf("check out merged cut %s: %w", sha, err)
+	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, e := p.git(cleanup, "worktree", "remove", "--force", checkout); e != nil {
+			err = errors.Join(err, fmt.Errorf("remove private gate checkout: %w", e))
+		}
+	}()
 	b := subproc.Prepare(ctx, landCheckBudget, "sh", "-c", p.check)
 	defer b.Cancel()
-	b.Cmd.Dir = p.dir
+	b.Cmd.Dir = checkout
 	if p.env != nil {
 		b.Cmd.Env = p.env
 	}
-	raw, err := b.Cmd.CombinedOutput()
-	if err = b.Wrap("check "+p.check, err); err != nil {
-		return string(raw), errors.New("the tree gate failed: " + oneline.Err(err) + checkTail(string(raw)))
+	raw, runErr := b.Cmd.CombinedOutput()
+	output = string(raw)
+	if runErr = b.Wrap("check "+p.check, runErr); runErr != nil {
+		return output, errors.New("the tree gate failed: " + oneline.Err(runErr) + checkTail(output))
 	}
-	return string(raw), nil
+	return output, nil
 }
 
 func (p *promoter) git(ctx context.Context, args ...string) (string, error) {

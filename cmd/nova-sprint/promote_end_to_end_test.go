@@ -271,6 +271,25 @@ func promoteApp(t *testing.T, w *promoteTwin) *testApp {
 	return ta
 }
 
+// The normal --check path must inspect the merged cut, even though promote
+// leaves the clone's checkout on its original branch.
+func TestPromoteCheckRunsInMergedCutCheckout(t *testing.T) {
+	t.Parallel()
+	w := newPromoteTwin(t)
+	w.onDev(map[string]string{"devonly": "on dev\n"})
+	require.NoFileExists(t, filepath.Join(w.dir, "devonly"), "the caller's checkout lacks the target's file")
+	f := &fakeForge{checks: []promoteCheck{{Name: "functional", Bucket: "pass"}}}
+	f.merged = func(head string) string { return w.remote("refs/heads/" + head) }
+	useForge(t, w, f)
+	ta := promoteApp(t, w)
+	code, out, errs := ta.do("promote --once --branch sprint/live --poll 1m --repo-dir " + w.dir + " --check 'test -f devonly'")
+	require.Zero(t, code, "%s\n%s", out, errs)
+	require.Contains(t, out, "PROMOTE GATE")
+	require.True(t, f.did("open "), "the verified cut opens a pull request")
+	require.NoFileExists(t, filepath.Join(w.dir, "devonly"), "the original checkout remains untouched")
+	ta.clean()
+}
+
 // TestPromoteCarriesACutToARecordedPromotion is the hand sequence of
 // 2026-10-05 (promotion 5, pull request 5351) as one verb over a twin
 // repository and a fake forge: the cut is taken from origin's sprint branch,
