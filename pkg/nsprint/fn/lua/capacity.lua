@@ -111,7 +111,7 @@ local function write_desired(kind, name, slots, machine, actor, idem, at, legacy
 end
 
 -- TIERS is the model tiers a friend's tiers filter may name, in one place:
--- Go's config.Tiers holds this same list (pkg/config/kind.go) and
+-- Go's config.Tiers holds this same list (internal/config/kind.go) and
 -- TestTiersMatchCapacityFilter reads this line, so apply and the runtime
 -- cannot drift on which tiers a friend can do.
 local TIERS = { 'flash', 'frontier', 'heavy', 'pro' }

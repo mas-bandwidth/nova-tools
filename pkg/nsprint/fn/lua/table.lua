@@ -1,7 +1,7 @@
--- Atomic table operations and read-only snapshots for pkg/ntable.
+-- Atomic table operations and read-only snapshots for internal/ntable.
 -- Every public table operation is one exchange after connection setup.
 --
--- Keys (pkg/ntable/ntable.go):
+-- Keys (internal/ntable/ntable.go):
 --   table:<t>               HASH order, footer, created_at, col:<name>
 --   table:<t>:rows          ZSET row key -> rank
 --   table:<t>:row:<r>       HASH label, exclude, owner, key:<col> (a bound cell)
@@ -130,7 +130,7 @@ do
     if #a ~= #b then return #a > #b end
     return a > b
   end
-  -- The bounds of a batch and of a read set. pkg/ntable/limits.go holds
+  -- The bounds of a batch and of a read set. internal/ntable/limits.go holds
   -- the same numbers and docs/SPEC-NOVA-TABLE.md states them; a test compares
   -- the three. A refusal names the bound and the count found, never the input.
   T.limits = {
@@ -173,7 +173,7 @@ do
   end
   -- A receipt, the change event and the operation record's result hold a field value in
   -- full when it is at most this many bytes; a longer one is its length and its
-  -- SHA-1 (sha1hex is the digest the script API has). pkg/ntable/limits.go
+  -- SHA-1 (sha1hex is the digest the script API has). internal/ntable/limits.go
   -- holds the same number (ReceiptValueBytes); a test compares them.
   T.receipt_value_bytes = 64
   -- The longest text of a score read back from the store: a double as the store
@@ -222,7 +222,7 @@ do
   end
   function T.name(n) return type(n) == 'string' and string.match(n, '^[%w_][%w_.-]*$') end
   function T.word(n) return type(n) == 'string' and n ~= '' and not string.find(n, '%c') end
-  -- T.formula(proj): a formula projection read (pkg/ntable ParseFormula):
+  -- T.formula(proj): a formula projection read (internal/ntable ParseFormula):
   -- pct(<col>), pct(<col>/<a>+<b>+...) or sum(<a>+<b>+...). It returns
   -- {sum=bool, inputs={every column named, each once}}, or nil when proj is
   -- not a well-formed formula.
