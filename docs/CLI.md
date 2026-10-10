@@ -4556,6 +4556,7 @@ nova-card is pre-alpha: not ready for production use.
 nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--name <n>...] [--dropped <id>...] [--dry-run]
 nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
 nova-card generate --from help --tool <name> [--tool <name>...] --out <dir> [--bin-dir <dir>] (--repo-dir <dir> | --repo --base --sha) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
+nova-card generate --from commits (--range <a>..<b> [--paths <glob>] | --file <list>) --repo-dir <dir> --out <dir> [--tier pro] [--prefix <p>] [--max <n>] [--dry-run]
 nova-card lint --card <file> [--card <file>...] [--name <n>...] [--dropped <id>...]
 nova-card template
 nova-card version
@@ -4575,6 +4576,16 @@ nova-card generate --from ledger --ledger serial-tests --repo-dir ./repo --out .
 nova-sprint add --stream debt --brief-dir ./cards --allow-shared-paths
 nova-sprint where
 ```
+
+`--from commits` writes one re-land brief per commit, oldest first, and records
+the dependency chain in `manifest.tsv` so the stream preserves commit order.
+Use `--range <a>..<b>` to select history, optionally filtered by a path glob,
+or `--file <list>` for commit IDs (one per line; blank lines and `#` comments
+are ignored). Each brief's START names the commit's changed files; PATHS covers
+their Go packages and document files. Its gate includes every changed Go package
+plus `./internal/ci/`, and asks the child to preserve the commit's
+intent when cherry-picking it onto the current base. A commit whose intent is
+already present ends with no change and exact evidence.
 
 ### First run
 

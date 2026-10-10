@@ -31,13 +31,13 @@ import (
 
 const preAlpha = "nova-card is pre-alpha: not ready for production use."
 
-const usage = `nova-card: writes a directory of pre-linted briefs from a ledger, a findings file or a tool's help
+const usage = `nova-card: writes a directory of pre-linted briefs from a ledger, findings, a tool's help or commit history
 ` + preAlpha + `
 
 how it works: a source is read from a checkout of the target repository (a ratchet ledger of
 internal/ci, a findings TSV, a tool's rendered help); the planner cuts one card per file with
-its PATHS, TEST and tier computed from the row, plans every ledger in one wave with no
-dependency, and holds every brief to the lint nova-sprint add runs before the directory is written.
+its PATHS, TEST and tier computed from the source, plans every ledger in one wave with no
+dependency and each re-land stream oldest first, and holds every brief to lint before writing.
 State: none; the directory, its manifest.tsv and the one CARDS OK line are the whole result.
 
 the flow, three lines:
@@ -49,6 +49,7 @@ usage:
   nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--name <n>...] [--dropped <id>...] [--dry-run]
   nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
   nova-card generate --from help --tool <name> [--tool <name>...] --out <dir> [--bin-dir <dir>] (--repo-dir <dir> | --repo --base --sha) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
+  nova-card generate --from commits (--range <a>..<b> [--paths <glob>] | --file <list>) --repo-dir <dir> --out <dir> [--tier pro] [--prefix <p>] [--max <n>] [--dry-run]
   nova-card lint --card <file> [--card <file>...] [--name <n>...] [--dropped <id>...]
   nova-card template
   nova-card version
@@ -217,9 +218,9 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 
 func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("generate")
-	from := fs.String("from", "", "the source `kind`: ledger, findings or help")
+	from := fs.String("from", "", "the source `kind`: ledger, findings, help or commits")
 	ledger := fs.String("ledger", "", "with --from ledger: the ledger's `name`, one of "+strings.Join(cardgen.LedgerNames(), ", "))
-	file := fs.String("file", "", "with --from findings: the TSV `file` of file:line, finding, remedy, test (a header row is skipped)")
+	file := fs.String("file", "", "with --from findings: a TSV of findings; with commits: a text `file` of commit IDs, one per line")
 	var tools multi
 	fs.Var(&tools, "tool", "with --from help: a tool `name` whose help the card is about; repeat for more")
 	binDir := fs.String("bin-dir", "", "with --from help: the `dir` holding the tools' binaries (default: PATH)")
@@ -233,6 +234,8 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 	minutes := fs.Int("minutes", 0, "the Deadline line's `minutes` (default: 45 flash, 60 pro)")
 	maxCards := fs.Int("max", 0, "write at most this many cards, in source order; 0 is all")
 	dryRun := fs.Bool("dry-run", false, "plan and lint, print the manifest and the CARDS line, and write nothing")
+	commitRange := fs.String("range", "", "with --from commits: the commit `range` (sha1..sha2)")
+	pathsGlob := fs.String("paths", "", "with --from commits --range: keep commits changing a path matching this `glob`")
 	opts := lintFlags(fs)
 	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, "generate", verbflag.Explain(fs, err))
@@ -309,10 +312,86 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 			}
 			plan.Cards = append(plan.Cards, cardgen.PlanHelp(tool, help, exampleTest(*repoDir, tool), *prefix, *tier))
 		}
+	case "commits":
+		if *repoDir == "" {
+			return refuse(stderr, "generate", "--from commits needs --repo-dir <dir>, a checkout of the repository")
+		}
+		var lines []string
+		var err error
+		if *commitRange != "" && *file != "" {
+			return refuse(stderr, "generate", "--from commits takes --range or --file, not both")
+		}
+		if *pathsGlob != "" && *commitRange == "" {
+			return refuse(stderr, "generate", "--paths requires --range")
+		}
+		if _, err := filepath.Match(*pathsGlob, ""); err != nil {
+			return refuse(stderr, "generate", "invalid --paths glob: "+err.Error())
+		}
+		if *commitRange != "" {
+			lines, err = gitlogRange(*repoDir, *commitRange)
+		} else if *file != "" {
+			lines, err = gitFileCommits(*repoDir, *file)
+		} else {
+			return refuse(stderr, "generate", "--from commits wants --range <a>..<b> or --file <list>")
+		}
+		if err != nil {
+			return refuse(stderr, "generate", err.Error())
+		}
+		if len(lines) == 0 {
+			return refuse(stderr, "generate", "no commits found")
+		}
+		prefix := *prefix
+		if prefix == "" {
+			prefix = "land"
+		}
+		tier := *tier
+		if tier == "" {
+			tier = "pro"
+		}
+		kept := lines[:0]
+		for _, sha := range lines {
+			if *pathsGlob != "" {
+				changed, err := commitPaths(*repoDir, sha)
+				if err != nil {
+					return refuse(stderr, "generate", "cannot inspect commit "+sha+": "+err.Error())
+				}
+				match := false
+				for _, p := range changed {
+					if ok, _ := filepath.Match(*pathsGlob, p); ok {
+						match = true
+						break
+					}
+				}
+				if !match {
+					continue
+				}
+			}
+			kept = append(kept, sha)
+		}
+		lines = kept
+		if len(lines) == 0 {
+			return refuse(stderr, "generate", "no commits found after --paths filter")
+		}
+		if *maxCards > 0 && len(lines) > *maxCards {
+			lines = lines[:*maxCards]
+		}
+		for i, sha := range lines {
+			c, err := planCommit(*repoDir, sha, prefix, tier, i+1)
+			if err != nil {
+				return refuse(stderr, "generate", "cannot plan commit "+sha+": "+err.Error())
+			}
+			if i > 0 {
+				c.Deps = []string{plan.Cards[i-1].ID}
+			}
+			c.Wave = i + 1
+			plan.Cards = append(plan.Cards, c)
+		}
+		plan.Tier = tier
+		plan.Waves = len(plan.Cards)
 	case "":
-		return refuse(stderr, "generate", "wants --from ledger|findings|help")
+		return refuse(stderr, "generate", "wants --from ledger|findings|help|commits")
 	default:
-		return refuse(stderr, "generate", fmt.Sprintf("--from %q; want ledger, findings or help", *from))
+		return refuse(stderr, "generate", fmt.Sprintf("--from %q; want ledger, findings, help or commits", *from))
 	}
 	if len(plan.Cards) == 0 {
 		return refuse(stderr, "generate", "the source yields no card; nothing to write")
@@ -327,7 +406,7 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 	for i := range plan.Cards {
 		c := &plan.Cards[i]
 		c.Paths = card.Paths(h, *c) // computed from the START line, never typed (docs/SPEC-CARD-CONTRACT.md section 6)
-		if *repoDir != "" {
+		if *repoDir != "" && !c.ReLand {
 			cardgen.NewTestFile(c, func(glob string) bool { return existsAt(*repoDir, glob) })
 		}
 		// a card whose PATHS name TLA+ model work is tiered frontier, as nova-sprint add
@@ -347,7 +426,7 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, oneline.Escape(f.String()))
 			red++
 		}
-		if *repoDir != "" {
+		if *repoDir != "" && !c.ReLand {
 			for _, p := range c.Paths {
 				if !existsAt(*repoDir, p) && !card.Answered(*c, p) {
 					fmt.Fprintln(stdout, oneline.Escape(cardgen.LintFinding{ID: c.ID, Check: "paths-at-base", Line: 6, Excerpt: "PATHS entry " + p + " names nothing in " + *repoDir}.String()))
@@ -495,4 +574,122 @@ func renderedHelp(binDir, tool string) (string, error) {
 		return "", fmt.Errorf("`%s help` printed nothing: %v", bin, err)
 	}
 	return out.String(), nil
+}
+
+// gitlogRange returns the list of commit SHAs in the given range (sha1..sha2),
+// oldest first.
+func gitlogRange(dir, commitRange string) ([]string, error) {
+	res, err := gitrun.Run(context.Background(), gitrun.Options{C: dir}, "log", "--pretty=format:%H", "--reverse", "--topo-order", commitRange)
+	if err != nil {
+		return nil, fmt.Errorf("git log: %s", strings.TrimSpace(string(res.Stderr)))
+	}
+	var lines []string
+	for _, line := range strings.Split(string(res.Stdout), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines, nil
+}
+
+func gitFileCommits(dir, file string) ([]string, error) {
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read commit list %s: %w", file, err)
+	}
+	selected := map[string]bool{}
+	var args []string
+	for i, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		res, e := gitrun.Run(context.Background(), gitrun.Options{C: dir}, "rev-parse", "--verify", line+"^{commit}")
+		if e != nil {
+			return nil, fmt.Errorf("commit list line %d is not a commit: %s", i+1, line)
+		}
+		sha := strings.TrimSpace(string(res.Stdout))
+		if selected[sha] {
+			return nil, fmt.Errorf("commit list repeats %s", sha)
+		}
+		selected[sha] = true
+		args = append(args, sha)
+	}
+	if len(args) == 0 {
+		return nil, fmt.Errorf("commit list is empty")
+	}
+	args = append([]string{"log", "--pretty=format:%H", "--reverse", "--topo-order"}, args...)
+	res, err := gitrun.Run(context.Background(), gitrun.Options{C: dir}, args...)
+	if err != nil {
+		return nil, fmt.Errorf("git log: %s", strings.TrimSpace(string(res.Stderr)))
+	}
+	var ordered []string
+	for _, sha := range strings.Fields(string(res.Stdout)) {
+		if selected[sha] {
+			ordered = append(ordered, sha)
+			delete(selected, sha)
+		}
+	}
+	if len(selected) != 0 {
+		return nil, fmt.Errorf("could not order all listed commits")
+	}
+	return ordered, nil
+}
+
+func commitPaths(dir, sha string) ([]string, error) {
+	res, err := gitrun.Run(context.Background(), gitrun.Options{C: dir}, "diff-tree", "--root", "--first-parent", "--no-renames", "--no-commit-id", "--name-only", "-r", "-z", sha)
+	if err != nil {
+		return nil, fmt.Errorf("git diff-tree: %s", strings.TrimSpace(string(res.Stderr)))
+	}
+	var paths []string
+	for _, p := range strings.Split(string(res.Stdout), "\x00") {
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths, nil
+}
+
+// planCommit creates a re-land card for one commit. The index is used for IDs and waves.
+func planCommit(repoDir, sha, prefix, tier string, index int) (cardgen.Card, error) {
+	// Get changed files for this commit
+	paths, err := commitPaths(repoDir, sha)
+	if err != nil {
+		return cardgen.Card{}, err
+	}
+	if len(paths) == 0 {
+		return cardgen.Card{}, fmt.Errorf("commit %s has no changed files", sha)
+	}
+	for _, p := range paths {
+		if strings.ContainsAny(p, ", \t\r\n") {
+			return cardgen.Card{}, fmt.Errorf("commit %s has a path the card header cannot represent: %q", sha, p)
+		}
+	}
+	// Create card with computed PATHS
+	id := fmt.Sprintf("%s-%d", prefix, index)
+	packages := map[string]bool{}
+	for _, p := range paths {
+		if strings.HasSuffix(p, ".go") {
+			packages[filepath.ToSlash(filepath.Dir(p))] = true
+		}
+	}
+	var gates []string
+	for p := range packages {
+		gates = append(gates, p)
+	}
+	slices.Sort(gates)
+	return cardgen.Card{
+		ID:           id,
+		File:         paths[0],
+		Start:        paths,
+		Paths:        paths,
+		GatePackages: gates,
+		Test:         "none (re-land commit)",
+		Tier:         tier,
+		Wave:         index,
+		Deps:         nil,
+		Task:         fmt.Sprintf("Re-land source commit %s. Inspect it with `git show %s`; if its intent is absent, run `git cherry-pick %s` and preserve that intent on the current base without reverting newer work. Finish with no change only when the intent is already present.", sha, sha, sha),
+		Kind:         "fix-red",
+		ReLand:       true,
+	}, nil
 }
