@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
@@ -116,7 +115,7 @@ func TestCiCmdrunCoverPrependPath(t *testing.T) {
 	// Do NOT use t.Parallel because we modify the process environment
 	tmpDir := t.TempDir()
 	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+oldPath)
+	t.Setenv("PATH", oldPath)
 	r := osCmdRunner{}
 	r.PrependPath(tmpDir)
 	newPath := os.Getenv("PATH")
