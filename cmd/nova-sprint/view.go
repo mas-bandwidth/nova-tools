@@ -163,10 +163,15 @@ type coordinatorView struct {
 	FriendsTiers []string    `json:"friends_tiers,omitempty"`
 	Cursor       string      `json:"cursor"`
 	N            coordCounts `json:"n"`
-	Items        []viewItem  `json:"items"`
-	Rows         []viewRow   `json:"rows,omitempty"`
-	Same         int         `json:"same,omitempty"` // with --since: items left out, unchanged
-	Gone         int         `json:"gone,omitempty"` // with --since: items the cursor's read showed that stand no more
+	// Bench is the bench a lane gates on now: the least loaded of the fleet's benches
+	// under its load cap, with its reason (sprint.BenchLine), so the reader sees where
+	// new lanes go; empty when no member has beaten (docs/SPEC-SPRINT.md section 5,
+	// "the bench a lane gates on").
+	Bench string     `json:"bench,omitempty"`
+	Items []viewItem `json:"items"`
+	Rows  []viewRow  `json:"rows,omitempty"`
+	Same  int        `json:"same,omitempty"` // with --since: items left out, unchanged
+	Gone  int        `json:"gone,omitempty"` // with --since: items the cursor's read showed that stand no more
 }
 
 // workerCard is one of a worker's cards.
@@ -331,6 +336,7 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 	if err != nil {
 		return v, err
 	}
+	v.Bench = sprint.BenchLine(sprint.BenchRows(members, beats), sprint.BenchCapFactor)
 	if v.Seat, err = st.B.Coordinator(ctx); err != nil {
 		return v, err
 	}
@@ -721,6 +727,9 @@ func coordinatorSum(v coordinatorView, known bool, m store.Machine) string {
 	}
 	if line := switchesLine(v.Fleet, v.Friends, v.FleetTiers, v.FriendsTiers); line != "" {
 		sum += " | " + line
+	}
+	if v.Bench != "" {
+		sum += " | " + v.Bench
 	}
 	return sum
 }
