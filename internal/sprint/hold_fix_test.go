@@ -336,16 +336,19 @@ func TestACollectedFriendHoldAppliesItsFixAtFinish(t *testing.T) {
 func TestACollectedFriendHoldKeepsLaterFixLines(t *testing.T) {
 	t.Parallel()
 	w := holdWorld(t, CardAdd{ID: "s1-1", Brief: holdCardBrief("s1-1", "internal/sprint/hold_fix.go", "flash")})
+	w.s.Friends = []FriendSeat{{Name: "worker", Status: Up, Tiers: []string{"flash", "pro", "heavy"}}}
 	raw := "Verdict: HOLD\nHead: " + holdHead + "\n\nThe gate needs Linux; TIER: pro was only discussed.\n\nTIER: heavy\nGATE-HOST: linux\n"
 	got := collectReport(CollectCard{Friend: "amy", Card: "s1-1", Job: "s1-1.w1"}, "amy", raw)
 	require.True(t, got.Failed)
 	assert.Contains(t, got.Report, "; TIER: heavy; GATE-HOST: linux")
-	assert.NotContains(t, got.Report, "; TIER: pro")
+	parsed, ok := parseHoldFix(got.Report)
+	require.True(t, ok)
+	assert.Equal(t, "heavy", parsed.tier)
 	finishHold(t, w, "s1-1", got.Report)
 	pr := w.s.Work.Card("s1-1")
 	require.Equal(t, Ready, pr.Col)
 	assert.Contains(t, pr.F("brief"), "tier: heavy")
-	assert.Contains(t, pr.F("brief"), "GATE-HOST: linux")
+	assert.Equal(t, "linux", pr.F("gate_host"))
 }
 
 func TestHoldFixProseMentionsAreNotInstructions(t *testing.T) {
