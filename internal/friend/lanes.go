@@ -562,7 +562,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 		if d.CardDone != nil {
 			send = d.CardDone(ln.card.ID, l.coordinator())
 		}
-		t.text = CardText(ln.job, ln.n, width, send, pong, notice, l.seat(now), t.msgs)
+		t.text = CarryPromptOf(ln.job.Dir) + CardText(ln.job, ln.n, width, send, pong, notice, l.seat(now), t.msgs)
 		ln.t = t
 		dir := ln.job.Dir
 		l.startTurn(t, now, func(ctx context.Context) laneResult {
