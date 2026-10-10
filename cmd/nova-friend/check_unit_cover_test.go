@@ -4,232 +4,154 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/stretchr/testify/require"
 )
 
-// TestNovaFriendCheckCoverShownMissingFile tests --shown naming a missing file (exit 2, "cannot be read")
+// TestNovaFriendCheckCoverShownMissingFile pins --shown naming a missing file:
+// exit 2 and a refusal that says the file cannot be read.
 func TestNovaFriendCheckCoverShownMissingFile(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
-	cli := r.cli()
-	cli.Do(t, "check", "--as", "ada", "--shown", "/nonexistent/file.json", "bob").Exit(2).
+	missing := filepath.Join(t.TempDir(), "missing.json")
+	r.cli().Do(t, "check", "--as", "ada", "--shown", missing, "bob").Exit(2).
 		Err("cannot be read")
 }
 
-// TestNovaFriendCheckCoverShownInvalidJSON tests --shown naming a file of invalid JSON (exit 2, "is invalid JSON")
+// TestNovaFriendCheckCoverShownInvalidJSON pins --shown naming a file that is
+// not JSON: exit 2 and a refusal that says so.
 func TestNovaFriendCheckCoverShownInvalidJSON(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
-	cli := r.cli()
-	shownFile := filepath.Join(t.TempDir(), "shown.json")
-	require.NoError(t, os.WriteFile(shownFile, []byte(`{ invalid json }`), 0o644))
-	cli.Do(t, "check", "--as", "ada", "--shown", shownFile, "bob").Exit(2).
+	shown := filepath.Join(t.TempDir(), "shown.json")
+	require.NoError(t, os.WriteFile(shown, []byte(`{ invalid json }`), 0o644))
+	r.cli().Do(t, "check", "--as", "ada", "--shown", shown, "bob").Exit(2).
 		Err("is invalid JSON")
 }
 
-// TestNovaFriendCheckCoverShownStdin tests --shown - with stdin input
+// TestNovaFriendCheckCoverShownStdin pins --shown - reading the map on stdin:
+// the VERDICT line carries the shown state it read.
 func TestNovaFriendCheckCoverShownStdin(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
-	cli := r.cli()
-	ran := cli.RunIn(`{"bob":{"state":"up","working":1}}`, "check", "--as", "ada", "--shown", "-", "bob")
-	require.Equal(t, 1, ran.Code)
-	require.Contains(t, ran.Stdout, "VERDICT")
-	require.Contains(t, ran.Stdout, "shown=up/1")
+	r.cli().DoIn(t, `{"bob":{"state":"up","working":1}}`, "check", "--as", "ada", "--shown", "-", "bob").Exit(1).
+		Out("CHECK VERDICT friend=bob verdict=down shown=up/1")
 }
 
-// TestNovaFriendCheckCoverStoreFail tests r.store.Fail set (exit 2, the store's error, no CHECK line)
+// TestNovaFriendCheckCoverStoreFail pins a store that does not open: exit 2,
+// the store's error, and no CHECK line printed.
 func TestNovaFriendCheckCoverStoreFail(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
 	r.store.Fail = errors.New("store is down")
-	cli := r.cli()
-	ran := cli.Do(t, "check", "--as", "ada", "bob").Exit(2)
+	ran := r.cli().Do(t, "check", "--as", "ada", "bob").Exit(2)
 	require.Contains(t, ran.Stderr, "store is down")
 	require.NotContains(t, ran.Stdout, "CHECK")
 }
 
-// TestNovaFriendCheckCoverNoPosFriendFromStore tests no positional friend with r.store.Friends = ["bob"]
+// TestNovaFriendCheckCoverNoPosFriendFromStore pins a run with no positional
+// friend whose list comes from the store's friends: bob is checked once.
 func TestNovaFriendCheckCoverNoPosFriendFromStore(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
-	// Ensure store.Friends is set so ListFriends returns from store
 	r.store.Friends = []string{"bob"}
-	cli := r.cli()
-	state := friend.DefaultStateDir(r.home, "bob")
-	require.NoError(t, friend.WriteStatus(state, friend.Status{
-		Friend:     "bob",
-		At:         start,
-		Connection: friend.Connected,
-	}))
-	require.NoError(t, friend.WritePresence(state, friend.PresenceStatus{
-		Friend:    "bob",
-		Presence:  friend.PresenceUp,
-		At:        start,
-		LastHeard: start,
-	}))
-	require.NoError(t, friend.WritePong(state, friend.Pong{
-		Nonce: "n0",
-		At:    start,
-	}))
-	require.NoError(t, friend.Record(state, "2026-10-04T02:50:00Z subject=work exit=0"))
-	cli.Do(t, "check", "--as", "ada").Exit(1).
-		Out("friends=1")
+	r.cli().Do(t, "check", "--as", "ada").Exit(1).Out("CHECK DAEMON friend=bob", "friends=1")
 }
 
-// TestNovaFriendCheckCoverNoPosFriendFromFS tests no positional friend, no store, directories zed and amy
+// TestNovaFriendCheckCoverNoPosFriendFromFS pins a run with no positional
+// friend and no store: the directories under the home's .nova-friend are the
+// list, a plain file there is not, and the list is sorted.
 func TestNovaFriendCheckCoverNoPosFriendFromFS(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada")
 	r.env = map[string]string{"PATH": "/usr/bin:/bin"}
-	home := r.home
-	base := filepath.Join(home, ".nova-friend")
-	require.NoError(t, os.MkdirAll(base, 0o755))
-	// Create directories for zed and amy
+	base := filepath.Join(r.home, ".nova-friend")
 	require.NoError(t, os.MkdirAll(filepath.Join(base, "zed"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(base, "amy"), 0o755))
-	// Create a plain file (should be ignored)
-	require.NoError(t, os.WriteFile(filepath.Join(base, "not-a-dir"), []byte("x"), 0o644))
-	cli := r.cli()
-	// No friends in store, so should use filesystem
-	// Should find amy and zed (sorted: amy first, then zed)
-	ran := cli.Do(t, "check", "--as", "ada")
-	require.Equal(t, 1, ran.Code) // friends are down
-	require.Contains(t, ran.Stdout, "friends=2")
+	require.NoError(t, os.WriteFile(filepath.Join(base, "plain"), []byte("x"), 0o644))
+	ran := r.cli().Do(t, "check", "--as", "ada").Exit(1).
+		Out("friends=2", "CHECK DAEMON friend=amy", "CHECK DAEMON friend=zed")
+	require.Less(t, strings.Index(ran.Stdout, "CHECK DAEMON friend=amy"), strings.Index(ran.Stdout, "CHECK DAEMON friend=zed"),
+		"the filesystem list is sorted, amy before zed")
 }
 
-// TestNovaFriendCheckCoverNoFriends tests no positional friend, no store, no .nova-friend directory
+// TestNovaFriendCheckCoverNoFriends pins a run with no positional friend, no
+// store and no .nova-friend directory: no friend is checked, exit 0.
 func TestNovaFriendCheckCoverNoFriends(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada")
 	r.env = map[string]string{"PATH": "/usr/bin:/bin"}
-	// No .nova-friend directory
-	cli := r.cli()
-	ran := cli.Do(t, "check", "--as", "ada").Exit(0)
-	require.Contains(t, ran.Stdout, "friends=0")
+	r.cli().Do(t, "check", "--as", "ada").Exit(0).Out("CHECK OK friends=0")
 }
 
-// TestNovaFriendCheckCoverStateDirSubdir tests --state-dir D where D/bob holds a status
+// TestNovaFriendCheckCoverStateDirSubdir pins --state-dir D where the friend's
+// own subdirectory D/bob holds the status: the HARNESS line names its harness.
 func TestNovaFriendCheckCoverStateDirSubdir(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
-	cli := r.cli()
 	state := t.TempDir()
-	bobState := filepath.Join(state, "bob")
-	require.NoError(t, os.MkdirAll(bobState, 0o755))
-	// Write status using friend.WriteStatus
-	require.NoError(t, friend.WriteStatus(bobState, friend.Status{
-		Friend:     "bob",
-		Harness:    "opencode",
-		At:         start,
-		Connection: friend.Connected,
+	bob := filepath.Join(state, "bob")
+	require.NoError(t, os.MkdirAll(bob, 0o755))
+	require.NoError(t, friend.WriteStatus(bob, friend.Status{
+		Friend: "bob", Harness: "opencode", At: start, Connection: friend.Connected,
 	}))
-	require.NoError(t, friend.WritePresence(bobState, friend.PresenceStatus{
-		Friend:    "bob",
-		Presence:  friend.PresenceUp,
-		At:        start,
-		LastHeard: start,
-	}))
-	require.NoError(t, friend.WritePong(bobState, friend.Pong{
-		Nonce: "n0",
-		At:    start,
-	}))
-	require.NoError(t, friend.Record(bobState, "2026-10-04T02:50:00Z subject=work exit=0"))
-	ran := cli.Do(t, "check", "--as", "ada", "--state-dir", state, "bob").Exit(1)
-	require.Contains(t, ran.Stdout, "harness=opencode")
+	r.cli().Do(t, "check", "--as", "ada", "--state-dir", state, "bob").Exit(1).
+		Out("CHECK HARNESS friend=bob harness=opencode")
 }
 
-// TestNovaFriendCheckCoverStateDirSelf tests --state-dir D where only D itself holds status
+// TestNovaFriendCheckCoverStateDirSelf pins --state-dir D where D itself (and
+// no per-friend subdirectory) holds the status: the HARNESS line names its
+// harness.
 func TestNovaFriendCheckCoverStateDirSelf(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
-	cli := r.cli()
 	state := t.TempDir()
-	// Write status directly in state dir (not in subdirectory)
 	require.NoError(t, friend.WriteStatus(state, friend.Status{
-		Friend:     "bob",
-		Harness:    "opencode",
-		At:         start,
-		Connection: friend.Connected,
+		Friend: "bob", Harness: "opencode", At: start, Connection: friend.Connected,
 	}))
-	require.NoError(t, friend.WritePresence(state, friend.PresenceStatus{
-		Friend:    "bob",
-		Presence:  friend.PresenceUp,
-		At:        start,
-		LastHeard: start,
-	}))
-	require.NoError(t, friend.WritePong(state, friend.Pong{
-		Nonce: "n0",
-		At:    start,
-	}))
-	require.NoError(t, friend.Record(state, "2026-10-04T02:50:00Z subject=work exit=0"))
-	ran := cli.Do(t, "check", "--as", "ada", "--state-dir", state, "bob").Exit(1)
-	require.Contains(t, ran.Stdout, "harness=opencode")
+	r.cli().Do(t, "check", "--as", "ada", "--state-dir", state, "bob").Exit(1).
+		Out("CHECK HARNESS friend=bob harness=opencode")
 }
 
-// TestNovaFriendCheckCoverPlist tests plist with --state-dir
+// TestNovaFriendCheckCoverPlist pins the fallback with no --state-dir: the
+// daemon's plist names the state directory, and the status written there is
+// the one read.
 func TestNovaFriendCheckCoverPlist(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
-	cli := r.cli()
-	home := r.home
-	stateDir := t.TempDir()
-	agent := friend.Agent{
-		Friend:   "bob",
-		Home:     home,
-		StateDir: stateDir,
-	}
-	plistPath := agent.PlistPath()
-	require.NoError(t, os.MkdirAll(filepath.Dir(plistPath), 0o755))
-	require.NoError(t, os.WriteFile(plistPath, []byte(agent.Plist()), 0o644))
-	// Write status under stateDir (this friend has no pre-existing status in rig)
-	require.NoError(t, friend.WriteStatus(stateDir, friend.Status{
-		Friend:     "bob",
-		Harness:    "opencode",
-		At:         start,
-		Connection: friend.Connected,
+	state := t.TempDir()
+	agent := friend.Agent{Friend: "bob", Home: r.home, StateDir: state}
+	require.NoError(t, os.MkdirAll(filepath.Dir(agent.PlistPath()), 0o755))
+	require.NoError(t, os.WriteFile(agent.PlistPath(), []byte(agent.Plist()), 0o644))
+	require.NoError(t, friend.WriteStatus(state, friend.Status{
+		Friend: "bob", Harness: "opencode", At: start, Connection: friend.Connected,
 	}))
-	require.NoError(t, friend.WritePresence(stateDir, friend.PresenceStatus{
-		Friend:    "bob",
-		Presence:  friend.PresenceUp,
-		At:        start,
-		LastHeard: start,
-	}))
-	require.NoError(t, friend.WritePong(stateDir, friend.Pong{
-		Nonce: "n0",
-		At:    start,
-	}))
-	require.NoError(t, friend.Record(stateDir, "2026-10-04T02:50:00Z subject=work exit=0"))
-	ran := cli.Do(t, "check", "--as", "ada", "bob")
-	require.Equal(t, 0, ran.Code)
-	require.Contains(t, ran.Stdout, "harness=opencode")
+	r.cli().Do(t, "check", "--as", "ada", "bob").Exit(1).
+		Out("CHECK HARNESS friend=bob harness=opencode")
 }
 
-// TestNovaFriendCheckCoverDir tests --dir W where W/inbox holds two files
+// TestNovaFriendCheckCoverDir pins --dir W feeding the work reader: W/inbox
+// holds two files and the WORK line counts them.
 func TestNovaFriendCheckCoverDir(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
-	cli := r.cli()
-	workDir := t.TempDir()
-	inbox := filepath.Join(workDir, "inbox")
+	work := t.TempDir()
+	inbox := filepath.Join(work, "inbox")
 	require.NoError(t, os.MkdirAll(inbox, 0o755))
-	// Create two files in inbox
-	require.NoError(t, os.WriteFile(filepath.Join(inbox, "file1"), []byte("x"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(inbox, "file2"), []byte("y"), 0o644))
-	ran := cli.Do(t, "check", "--as", "ada", "--dir", workDir, "bob").Exit(1)
-	require.Contains(t, ran.Stdout, "inbox=2")
+	require.NoError(t, os.WriteFile(filepath.Join(inbox, "a"), []byte("x"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(inbox, "b"), []byte("y"), 0o644))
+	r.cli().Do(t, "check", "--as", "ada", "--dir", work, "bob").Exit(1).
+		Out("CHECK WORK friend=bob inbox=2")
 }
 
-// TestNovaFriendCheckCoverArgAfter tests argAfter function
+// TestNovaFriendCheckCoverArgAfter pins the value after a flag: the last word
+// with no value, an absent flag and a present flag.
 func TestNovaFriendCheckCoverArgAfter(t *testing.T) {
 	t.Parallel()
-	// Test with flag last and no value (returns "")
 	require.Equal(t, "", argAfter([]string{"--flag", "--last"}, "--last"))
-	// Test with flag absent (returns "")
 	require.Equal(t, "", argAfter([]string{"--flag"}, "--last"))
-	// Test with flag present and value
 	require.Equal(t, "value", argAfter([]string{"--flag", "--last", "value"}, "--last"))
 }
