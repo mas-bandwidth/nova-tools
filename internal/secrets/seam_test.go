@@ -213,8 +213,9 @@ func TestPlaceSSHDeliveryRefusalNamesTheChildExit(t *testing.T) {
 	}
 
 	f := newPlaceSeamFixture(t)
-	// The seam is faked, so inject a disarmed guard for the ssh delivery: the
-	// test pins the child-exit refusal, not the host guard.
+	// The seam is faked, but the guard still sees the ssh command line: declare the fake
+	// the test installs as the allowed seam, as testguard names.
+	defer testguard.AllowHosts()()
 	remotePath := "/srv/web/.config/nova-secrets/TOKEN.env"
 	remoteCmd := "umask 077 && set -e && mkdir -p \"$(dirname " + shSingleQuote(remotePath) + ")\" && cat > " +
 		shSingleQuote(remotePath) + " && chmod 600 " + shSingleQuote(remotePath)
@@ -239,7 +240,6 @@ func TestPlaceSSHDeliveryRefusalNamesTheChildExit(t *testing.T) {
 		StoreDir: f.storeDir, AsName: "rowan", KeyPath: f.keyPath, SopsPath: f.sopsPath,
 		Machine: "web-1", Secret: "TOKEN", RemotePath: remotePath,
 		Machines: f.machines, Receipts: f.receipts, SSH: "ssh", Exec: send,
-		Guard: testguard.NewGuard(false),
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ssh to "+f.target+" failed: exit 5", "the refusal does not name the target and exit: %v", err)

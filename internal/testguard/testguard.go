@@ -23,8 +23,8 @@
 // resolves INSIDE a temp directory (GOTMPDIR included) is a fake, a program that resolves to
 // /usr/bin/ssh is the fleet. So the tests that already fake the seam that way
 // -- and the tools they run as child processes, which inherit the variable --
-// keep working untouched. A fake on PATH must live under a temp directory;
-// otherwise inject the fake the seam takes.
+// keep working untouched. A test whose fake lives anywhere else says so out
+// loud with `defer testguard.AllowHosts()()`.
 //
 // Every seam this package guards is held by
 // TestNoTestReachesAHostThroughAnUnfakedSeam in internal/ci, which reads the
@@ -38,6 +38,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 )
 
@@ -49,6 +50,7 @@ const EnvNoHost = "NOVA_TEST_NO_HOST"
 // Guard holds the state and seams for refusing host calls in tests.
 type Guard struct {
 	refusing  atomic.Bool
+	allowed   atomic.Int64
 	lookPath  func(string) (string, error)
 	tempRoots func() []string
 }
@@ -74,9 +76,34 @@ func init() { Reload() }
 // path needs it.
 func Reload() { defaultGuard.refusing.Store(os.Getenv(EnvNoHost) == "1") }
 
+// Refusing reports whether the process-wide guard is armed.
+func Refusing() bool { return defaultGuard.refusing.Load() }
+
+// AllowHosts opens a scope in which a seam may run a child, and returns the
+// function that closes it. The one honest use is a test that has installed its
+// own fake on PATH:
+//
+//	defer testguard.AllowHosts()()
+//
+// The scope is process-wide for its duration, so a test that opens one must
+// not run in parallel with a test relying on the guard. That is a narrowing,
+// written down rather than left to be discovered: the guard catches the
+// UNFAKED seam, and a test that fakes a seam declares it.
+func AllowHosts() func() {
+	return defaultGuard.AllowHosts()
+}
+
+// AllowHosts opens a scope in which a seam may run a child, and returns the
+// function that closes it.
+func (g *Guard) AllowHosts() func() {
+	g.allowed.Add(1)
+	var once sync.Once
+	return func() { once.Do(func() { g.allowed.Add(-1) }) }
+}
+
 // RefuseHosts is what every ssh/scp/rsync seam in this tree calls with the
-// command line it is about to run. Under the guard, it panics naming that
-// command line; otherwise it returns immediately.
+// command line it is about to run. Under the guard, and outside an AllowHosts
+// scope, it panics naming that command line; otherwise it returns immediately.
 //
 // It panics rather than returning an error on purpose. An error would travel
 // up a path that already handles "the bench was unreachable" and would be
@@ -88,8 +115,8 @@ func RefuseHosts(program string, args ...string) {
 }
 
 // RefuseHosts is what every ssh/scp/rsync seam in this tree calls with the
-// command line it is about to run. Under the guard, it panics naming that
-// command line; otherwise it returns immediately.
+// command line it is about to run. Under the guard, and outside an AllowHosts
+// scope, it panics naming that command line; otherwise it returns immediately.
 //
 // It panics rather than returning an error on purpose. An error would travel
 // up a path that already handles "the bench was unreachable" and would be
@@ -97,7 +124,7 @@ func RefuseHosts(program string, args ...string) {
 // panic names the test, the seam and the command in one stack, which is the
 // cheapest possible read of the hurt above.
 func (g *Guard) RefuseHosts(program string, args ...string) {
-	if !g.refusing.Load() {
+	if !g.refusing.Load() || g.allowed.Load() > 0 {
 		return
 	}
 	if g.isFakeProgram(program) {
@@ -105,7 +132,7 @@ func (g *Guard) RefuseHosts(program string, args ...string) {
 	}
 	panic(fmt.Sprintf(
 		"%s=1: a test reached a host through an unfaked seam: %s; "+
-			"a fake on PATH must live under a temp directory; inject the fake the seam takes",
+			"inject the fake the seam takes, or install a fake on PATH and declare it with testguard.AllowHosts()",
 		EnvNoHost, commandLine(program, args)))
 }
 
@@ -117,11 +144,11 @@ func (g *Guard) RefuseHosts(program string, args ...string) {
 // rather than by asking every honest test to declare itself.
 //
 // This is the narrowing to know about: a test that installs its fake somewhere
-// other than a temp directory is refused and must inject the fake the seam
-// takes, and a test that constructs the real seam while some other test's fake
-// is on PATH is not caught. Both are cheap beside the alternative, which is a
-// rule every fake-installing test has to be edited for -- and a rule that
-// costs the honest test is one people learn to edit around.
+// other than a temp directory is refused and must say `defer
+// testguard.AllowHosts()()`, and a test that constructs the real seam while
+// some other test's fake is on PATH is not caught. Both are cheap beside the
+// alternative, which is a rule every fake-installing test has to be edited for
+// -- and a rule that costs the honest test is one people learn to edit around.
 //
 // A program that cannot be resolved at all is NOT treated as a fake: the seam
 // was about to run something this machine does not have, and the panic says so

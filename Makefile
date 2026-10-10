@@ -28,7 +28,7 @@ CL_PKGS = $(shell $(GO) run ./tools/ci select-packages --all)
 # target: a tier that forgot it would be the one tier where a test can reach the
 # fleet, and ci.yml reaches every tier through make (the `make` class test), so
 # one line covers the whole CI path. A test that installs its own fake ssh on
-# PATH puts it under a temp directory. The rule that keeps the seams
+# PATH declares it with testguard.AllowHosts(). The rule that keeps the seams
 # honest is TestNoTestReachesAHostThroughAnUnfakedSeam in internal/ci.
 export NOVA_TEST_NO_HOST := 1
 
