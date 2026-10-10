@@ -1,0 +1,26 @@
+You are a child of the coordinator: one task, one staged checkout, one branch, unattended. The card is the whole task: its header lines above and this contract, read once. Read $JOB/JOB.md first. Start at the current BASE tip; admission inspected the base whose sha line 1 names. Verify the defect still exists before editing; if already fixed report not-done with exact evidence rather than duplicate work. One change, one test that is red before and green after.
+Libraries considered: the Go standard library and testify, already in the tree; the package's own seams and helpers; no new dependency, and no helper over thirty lines without first searching the package for one.
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+
+ATTRIBUTION: By: your own name, the worker who does this attempt, on its own line at the end of every commit message; a model name is never a By:, and this brief names no author: its WHO line, if any, is a preference for who is dealt the card, never the name to sign. Below the By: line, a Claude worker adds its true Co-Authored-By trailer (Claude, its model, the noreply@anthropic.com address); any other worker adds no Co-Authored-By.
+
+THE TASK. The STOP line is the task and says when it is done; the work lives in the first file the START line names; the files this card may touch are its PATHS line (and the files its NEW line creates) and no other, in the staged checkout JOB.md names, on the card's own branch, from its BASE. The Deadline line is the time it has.
+
+STEP 1. Enter the staged checkout JOB.md names with cd $JOB/repo && git log --oneline -1, no clone; work only on its own branch. Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it. Scratch belongs under $JOB/scratch.
+STEP 2. Make it red first, as the task says, with the test the TEST line names: run the STEP 4 gate with -run and that test's name, and keep the failing line as evidence.
+STEP 3. Make it pass in the files this card names, and only those. Commit the draft on your own branch as soon as the test is green, before any further probe; a later commit may refine it. A change any other file needs goes in the report as a proposed diff, never a commit.
+STEP 4. Run the gate: go test -count=1 -timeout 600s on the package the TEST line names and on ./internal/ci/ (one run when they are the same), and read the last line of each. Run gofmt -l on every changed Go file; it must print nothing. Where the STOP line names a model gate, run it as part of this step. When a test fails, name its file and say whether that file was changed by your work (yours) or is unchanged (already red at BASE: run the same test on the unchanged base to say so), and report that line first.
+STEP 5. Commit on your own branch with the trailer. Nothing reaches the forge from inside the wall: in the job the git shim records a push, the pull request is the finish JOB.md names (STEP 6), and the member makes both, against the card's BASE, from outside the wall when the card finishes. The pull request body states the diff stat, what was deleted, the tests with what each pins, and what was not done.
+STEP 6. End as JOB.md says (docs/SPEC-CARD-CONTRACT.md): where JOB.md ends the card with its pull request, that is the end and there is nothing else to write, the gate's lines in the pull request body; where it asks for RESULT.md, write it in JOB.md's shape (head, branch, verdict, gate, output, report). For a friend's REPORT.md (docs/FRIENDS.md), first line exactly Verdict: LAND|HOLD|FAIL, second line exactly Head: <40-hex>; for HOLD and FAIL omit Head: and leave line 2 blank.
+
+AS A READ
+A By: trailer is judged only for being present and true: it names the worker who pushed the branch under read, whoever was preferred for the card. A trailer naming another friend than a WHO line or an earlier brief expected is no finding, and attribution alone never decides a verdict; read the change against the task, its test and its PATHS.
+The scope of this change is its PATHS line. Files a change must touch to keep the tree green are always inside PATHS, whatever the brief names: every *_test.go, every file under a testdata/ directory, tla/RUNS.tsv and tla/CASES.tsv, internal/docs/catalog.go, and every AGENTS.md map; any other file outside PATHS is still out of scope.
+A head whose only defect is PATHS is a HOLD with a PATHS-PROPOSED line for the worker, not a broken finding.

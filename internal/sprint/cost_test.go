@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/card"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 )
 
@@ -84,4 +85,22 @@ func TestARecordReadsBackAsTheConsumer(t *testing.T) {
 		At: "2026-10-01T12:00:00Z", Key: "s1-1.w2#g3", Usage: cardcost.ParseUsage("input=10 actual_usd=0.1 actual_by=harness wait=2s run=9s")}
 	got := parseConsumer(c.Key, c.line())
 	assert.Equal(t, c, got)
+}
+
+// A take's cost record carries the token count of the brief it was dealt (cost.go,
+// Consumer.BriefTokens; docs/SPEC-CARD-CONTRACT.md section 7), read back from the primary
+// with the rest of the record; a read's carries none.
+func TestATakesCostRecordCarriesItsBriefsTokens(t *testing.T) {
+	t.Parallel()
+	brief := "RESULT: s1-1 sha=0123456789ab tier: pro\nREPO: o/r\nBASE: dev\nContract: docs/SPEC-CARD-CONTRACT.md v1\n"
+	pr := &Card{ID: "s1-1", Fields: map[string]string{"brief": brief}}
+	work := Consumer{Kind: "work", Card: "s1-1.w1", Attempt: 1, Who: "m1", End: "done", At: "2026-10-01T12:00:00Z", Key: "s1-1.w1#g1", Usage: cardcost.ParseUsage("input=10")}
+	book(pr, work, consumerOf("s1-1.r1#v", "2026-10-01T12:00:01Z", "input=5"))
+	v := CardCostOf(pr)
+	require.Len(t, v.Consumers, 2)
+	assert.Equal(t, card.Tokens(brief), v.Consumers[0].BriefTokens, "the take's record carries its brief's tokens")
+	assert.Equal(t, (len(brief)+3)/4, v.Consumers[0].BriefTokens)
+	assert.Equal(t, int64(10), v.Consumers[0].Usage.Tokens.Input, "the usage reads back beside it")
+	assert.Zero(t, v.Consumers[1].BriefTokens, "a read carries none")
+	assert.Contains(t, pr.F(FieldCostRecord+"s1-1.w1#g1"), " brief_tokens="+fmt.Sprint(card.Tokens(brief))+" ")
 }

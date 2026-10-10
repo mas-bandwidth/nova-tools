@@ -27,6 +27,9 @@ this row has no colon
 
 var header = Header{Repo: "example/repo", Base: "dev", Sha: "0123456789abcdef0123456789abcdef01234567"}
 
+// fullHeader renders the long form, the whole frame in the brief (Header.Full).
+var fullHeader = Header{Repo: header.Repo, Base: header.Base, Sha: header.Sha, Full: true}
+
 // A ledger's rows group by file, in ledger order; a row the parser cannot read is
 // reported, not dropped silently.
 func TestLedgerRowsGroupByFileInLedgerOrder(t *testing.T) {
@@ -52,7 +55,7 @@ func TestALedgerCardStopsWhenItsLedgerEntryShrinks(t *testing.T) {
 	l := Ledgers["serial-tests"]
 	rows, _ := ParseLedger(l, serialFixture)
 	p := PlanLedger(l, rows, "", "", 0)
-	two, one := Render(header, p.Cards[0]), Render(header, p.Cards[1])
+	two, one := Render(fullHeader, p.Cards[0]), Render(fullHeader, p.Cards[1])
 	assert.Contains(t, two, "\nKIND: ledger\n")
 	assert.Contains(t, two, "\nSTOP: the ledger rows for cmd/nova-bus/a_test.go in internal/ci/testdata/serial-tests_allowlist.txt shrink from 2 to 0 and the class test TestEveryTestOpensWithTParallel stays green, and the STEP 4 gate passes\n")
 	assert.Contains(t, one, "\nSTOP: the ledger row for cmd/nova-bus/b_test.go in internal/ci/testdata/serial-tests_allowlist.txt shrinks from 1 to 0 and the class test TestEveryTestOpensWithTParallel stays green, and the STEP 4 gate passes\n")
@@ -60,9 +63,9 @@ func TestALedgerCardStopsWhenItsLedgerEntryShrinks(t *testing.T) {
 	d := Ledgers["dead-code"]
 	drows, _ := ParseLedger(d, "# ceiling: 3\ninternal/bounded 3\n")
 	dc := PlanLedger(d, drows, "", "", 0).Cards[0]
-	assert.Contains(t, Render(header, dc), "\nSTOP: the count on the ledger row for internal/bounded in internal/ci/testdata/dead_code_allowlist.txt shrinks from 3 to 0 and the class test TestDeadCode stays green, and the STEP 4 gate passes\n")
+	assert.Contains(t, Render(fullHeader, dc), "\nSTOP: the count on the ledger row for internal/bounded in internal/ci/testdata/dead_code_allowlist.txt shrinks from 3 to 0 and the class test TestDeadCode stays green, and the STEP 4 gate passes\n")
 
-	other := Render(header, Card{ID: "a", File: "x/y.go", Paths: []string{"x/y.go"}, Test: "x TestA", Tier: "pro", Kind: "fix-red", Task: "Do it."})
+	other := Render(fullHeader, Card{ID: "a", File: "x/y.go", Paths: []string{"x/y.go"}, Test: "x TestA", Tier: "pro", Kind: "fix-red", Task: "Do it."})
 	assert.Contains(t, other, "\nSTOP: the test TestA is red before the change and green after it, and the STEP 4 gate passes\n")
 	assert.Contains(t, other, "\nKIND: fix-red\n")
 }
@@ -169,7 +172,9 @@ func TestEveryRenderedBriefPassesTheLint(t *testing.T) {
 			assert.True(t, strings.HasPrefix(brief, "RESULT: "+c.ID+" sha=0123456789ab tier: "+c.Tier+"\n"), brief)
 			assert.Contains(t, brief, "\nTEST: "+l.Test+"\n")
 			assert.Contains(t, brief, "\nKIND: ledger\n")
-			_, read, ok := strings.Cut(brief, "\nAS A READ\n")
+			readBrief, why := AsRead(brief)
+			assert.Empty(t, why, name)
+			_, read, ok := strings.Cut(readBrief, "\nAS A READ\n")
 			assert.True(t, ok, "the brief has an AS A READ section")
 			assert.Contains(t, "\n"+read, "\nThe scope of this change is its PATHS line. "+AlwaysInPathsRule+"\n", "the reader is handed the scope rule")
 		}
@@ -182,7 +187,7 @@ func TestTheLintNamesWhatTheAddWouldRefuse(t *testing.T) {
 	l := Ledgers["serial-tests"]
 	rows, _ := ParseLedger(l, serialFixture)
 	c := PlanLedger(l, rows, "", "", 0).Cards[0]
-	good := Render(header, c)
+	good := Render(fullHeader, c)
 	bad := strings.Replace(good, "Never kill a process you did not start.", "", 1)
 	bad = strings.Replace(bad, "tier: flash", "tier: cheap", 1)
 	bad = strings.Replace(bad, "THE TASK.", "THE TASK. <fill me>", 1)
@@ -341,10 +346,15 @@ func TestTheGateStepNamesWhoseFileFailed(t *testing.T) {
 	cards := append(PlanLedger(Ledgers["serial-tests"], rows, "", "", 0).Cards, PlanFindings(fs, "", "", 0).Cards...)
 	cards = append(cards, PlanHelp("nova-x", "x\n", "", "", ""))
 	for _, c := range cards {
-		brief := Render(header, c)
+		brief := Render(fullHeader, c)
 		assert.Contains(t, gateStep(brief), sentence, c.ID)
 		assert.Empty(t, Lint(c.ID, brief), c.ID)
 		assert.Less(t, len(brief), cardlimits.BriefAdvisoryBytes, c.ID)
+		ref := Render(header, c)
+		read, why := AsRead(ref)
+		assert.Empty(t, why, c.ID)
+		assert.Contains(t, gateStep(read), sentence, "%s: by reference, the contract's gate step", c.ID)
+		assert.Empty(t, Lint(c.ID, ref), c.ID)
 	}
 
 	tmpl, err := swarm.Template("card")
@@ -369,8 +379,11 @@ func TestACardThatTouchesAModelRunsItInItsGate(t *testing.T) {
 	}
 	for _, paths := range [][]string{{"tla/Land.tla", "tla/MCLand.cfg"}, {"tla/*", "internal/sprint/land*.go"}, {"tla/**"}} {
 		c := Card{ID: "model-land", File: paths[0], Paths: paths, Test: "internal/tlc TestTLCRecordsCoverCurrentModels", Tier: "pro", Wave: 1, Kind: "fix-red", Task: "Fix the model."}
-		brief := Render(header, c)
+		brief := Render(fullHeader, c)
 		step := gateStep(brief)
+		ref := Render(header, c)
+		assert.Contains(t, ref, modelGate, "%v: by reference, the model gate rides on the STOP line", paths)
+		assert.Empty(t, Lint(c.ID, ref), paths)
 		assert.Contains(t, step, "make tlc TLC_JAR=/opt/tla/tla2tools.jar TLC_OUT=$JOB/scratch/tlc-$g TLC_GROUP=$g", paths)
 		assert.Contains(t, step, "go run ./tools/tlacheck groups --root . --stale", paths)
 		assert.Contains(t, step, "go run ./tools/tlacheck merge --root . --keep tla/RUNS.tsv --out tla/RUNS.tsv", paths)
@@ -387,7 +400,7 @@ func TestACardThatTouchesAModelRunsItInItsGate(t *testing.T) {
 		assert.Less(t, len(brief), cardlimits.BriefAdvisoryBytes, paths)
 		assert.Equal(t, paths, c.Paths, "the card's own PATHS are not changed")
 	}
-	plain := Render(header, Card{ID: "go-only", File: "internal/x/x.go", Paths: []string{"internal/x/x.go", "docs/tla.md"}, Test: "internal/x TestX", Tier: "pro", Wave: 1, Kind: "fix-red", Task: "Fix x."})
+	plain := Render(fullHeader, Card{ID: "go-only", File: "internal/x/x.go", Paths: []string{"internal/x/x.go", "docs/tla.md"}, Test: "internal/x TestX", Tier: "pro", Wave: 1, Kind: "fix-red", Task: "Fix x."})
 	assert.NotContains(t, plain, "make tlc")
 	assert.NotContains(t, strings.ReplaceAll(plain, AlwaysInPathsRule, ""), "tla/RUNS.tsv", "only the rule names the ledger")
 }
@@ -438,6 +451,9 @@ func TestAGeneratedCardNamesNoStaleGoCacheLine(t *testing.T) {
 	cards["remedy-step-go-clean"] = swarm.ChildRemedy(rules, "step-go-clean")
 
 	for name, card := range cards {
+		read, why := AsRead(card)
+		require.Empty(t, why, name)
+		card = read
 		assert.Contains(t, card, swarm.GoCacheLine, name)
 		assert.Equal(t, 1, strings.Count(card, swarm.GoCacheLine), "%s: the one sentence, once", name)
 		assert.NotContains(t, card, "GOCACHE=", "%s: a child card assigns no GOCACHE of its own", name)
@@ -468,8 +484,10 @@ func TestAGeneratedCardNamesNoStaleGoCacheLine(t *testing.T) {
 func TestGeneratedBriefPinsTheFriendReportFirstTwoLines(t *testing.T) {
 	t.Parallel()
 	brief := Render(header, Card{ID: "shape", File: "internal/x/x.go", Paths: []string{"internal/x/x.go"}, Test: "internal/x TestX", Tier: "pro", Kind: "fix-red", Task: "Fix x."})
-	assert.Contains(t, brief, "first line exactly Verdict: LAND|HOLD|FAIL, second line exactly Head: <40-hex>")
-	assert.Contains(t, brief, "for HOLD and FAIL omit Head: and leave line 2 blank")
+	read, why := AsRead(brief)
+	require.Empty(t, why)
+	assert.Contains(t, read, "first line exactly Verdict: LAND|HOLD|FAIL, second line exactly Head: <40-hex>")
+	assert.Contains(t, read, "for HOLD and FAIL omit Head: and leave line 2 blank")
 }
 
 func TestTheDeadlineLineSaysTheJudgmentIsTheCoordinators(t *testing.T) {

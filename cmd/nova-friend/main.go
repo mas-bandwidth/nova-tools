@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/cardgen"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -1590,6 +1591,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			return w.finish(ctx, server, argv)
 		},
+		// the contract a brief by reference names, put in its place when the lane's checkout
+		// cannot be read first: this build's copy of the versioned block (docs/SPEC-CARD-CONTRACT.md section 7)
+		Contract: cardgen.HeldContract,
 		CardDone: func(card, to string) string {
 			busBin, err := w.lookPath("nova-bus")
 			if err != nil {

@@ -256,3 +256,42 @@ func TestTheUsageBannerPrintsEachExampleOnce(t *testing.T) {
 		assert.Equal(t, 1, count, "example line should appear exactly once, found %d times: %s", count, line)
 	}
 }
+
+// generate writes the brief by reference by default (docs/SPEC-CARD-CONTRACT.md section 7):
+// its header lines and the Contract: line last, no RULES and no STEP; --full-frame writes
+// the long form, the frame in the brief. lint admits either with no contract option.
+func TestGenerateWritesTheBriefByReferenceAndTheLongFormOnItsFlag(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	args := []string{"generate", "--from", "findings", "--file", "testdata/findings.tsv", "--repo", "o/r", "--base", "dev", "--sha", strings.Repeat("ab", 20)}
+	for _, tc := range []struct {
+		name  string
+		flags []string
+		ref   bool
+	}{
+		{"by reference, the default", nil, true},
+		{"the long form, on its flag", []string{"--full-frame"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out := filepath.Join(dir, strings.ReplaceAll(tc.name, " ", "-"))
+			exit, stdout, stderr := runCard(append(append(args, "--out", out), tc.flags...)...)
+			require.Equal(t, 0, exit, "stdout: %s\nstderr: %s", stdout, stderr)
+			brief := filepath.Join(out, "finding-internal-bus-send.md")
+			raw, err := os.ReadFile(brief)
+			require.NoError(t, err)
+			if tc.ref {
+				assert.True(t, strings.HasSuffix(string(raw), "\n"+cardgen.ContractLine()+"\n"), string(raw))
+				assert.NotContains(t, string(raw), "RULES.")
+				assert.NotContains(t, string(raw), "STEP 1.")
+			} else {
+				assert.NotContains(t, string(raw), cardgen.ContractLine())
+				assert.Contains(t, string(raw), "\nRULES.\n")
+				assert.Contains(t, string(raw), "\nSTEP 1. ")
+			}
+			exit, stdout, _ = runCard("lint", "--card", brief)
+			assert.Equal(t, 0, exit, stdout)
+			assert.Contains(t, stdout, "LINT OK file=")
+		})
+	}
+}

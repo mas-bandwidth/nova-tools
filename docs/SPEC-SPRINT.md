@@ -1660,6 +1660,19 @@ card's child reads. The bytes a card no longer carries are the RULES paragraph o
 coordinator's `nova-sprint`: a coordinator with rules by reference stores cards without their
 rules, and a member older than it injects none, so its children would read no rules.
 
+**The contract by reference** (docs/SPEC-CARD-CONTRACT.md section 7). The rest of the frame a
+generated brief repeated (the child paragraph, the Libraries considered line, the RULES,
+ATTRIBUTION, the six STEPs, AS A READ) lives once, versioned, in the contract file: a brief is
+its header lines and one line `Contract: docs/SPEC-CARD-CONTRACT.md <version>`, which `nova-card
+generate` writes by default (`--full-frame` writes the long form). `add` holds a brief by
+reference as its lane reads it, the contract of its version in place of the line
+(`cardgen.AsRead`, in `lintBriefReads`, beside the rules by reference above), and stores the
+brief as given; a version this build does not hold is the finding `contract-version`. The lane
+reads the contract once from its staged checkout when that block matches the held text;
+nova-friend's daemon puts the held text in the brief when it differs or is missing, and records each card it hands with
+`brief_tokens=<n> contract=checkout|prepended|unread|none`. A take's cost record on the primary
+carries the token count of the brief it was dealt (`brief_tokens=<n>`, `Consumer.BriefTokens`).
+
 **Work card** (consumer). What a child with a worktree is handed: the brief and
 the place to work, and on a later attempt the fix, the finding of the broken read that
 caused it and why the attempt before ended. Identity `<primary>.w<attempt>`.

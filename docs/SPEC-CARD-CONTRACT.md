@@ -624,3 +624,122 @@ scanned as before:
 
 `nova-sprint add` runs the same lint, so the exemption holds there. Pinned by
 `TestPatternsToRefuseBlockIsExemptForAClassTestCard` (`internal/swarm`).
+
+## 7. The lane's contract, by reference
+
+Every generated brief used to repeat the same frame after its own lines: the paragraph that
+makes the child a child of the coordinator, the Libraries considered line, the RULES, the
+ATTRIBUTION line, the six STEPs and the AS A READ section. A lane read them on every attempt and
+every read read them again, and tokens per landed card are the sprint's cost. The frame lives
+here instead, once, versioned, and a brief names it in one line.
+
+- **The brief.** A brief by reference is its header lines and one line `Contract:
+  docs/SPEC-CARD-CONTRACT.md <version>`, last: the tier line (`RESULT: <id> sha=<sha12> tier:
+  <tier>`), `REPO:`, `BASE:`, `KIND:`, `DEPENDS-ON:`, `PATHS:`, `NEW:` when the card creates a
+  file, `TEST:`, `START:` (the card's file and its test's package), `STOP:` (the task and when it
+  is done, and the model gate of a card whose PATHS reach `tla/`), `Deadline:`, then the
+  reference. No prose paragraph, no RULES and no STEP rides in it. `cardgen.Render` writes that
+  shape by default, as `nova-card generate` calls it; `nova-card generate --full-frame`
+  (`Header.Full`) writes the long form, the frame in every brief
+  (`TestABriefIsFiveLinesAndAContractReference`, `internal/card`;
+  `TestGenerateWritesTheBriefByReferenceAndTheLongFormOnItsFlag`, `cmd/nova-card`).
+- **One file, versioned.** The current contract text is the block below between `<!-- contract v2 -->`
+  and `<!-- end contract v2 -->`; the v1 block is retained for existing briefs. A change is a new version, a new block beside
+  the old, never an edit of a published one: a brief names the version it was written against.
+  The build holds a copy of each version (`internal/cardgen/contract/<version>.txt`,
+  `cardgen.HeldContract`) equal to the block byte for byte, and each published version's digest is pinned
+  (`TestTheHeldContractIsTheDocsBlock`).
+- **The lint.** A brief by reference is linted as the lane reads it, the held contract of its
+  version in place of the line (`cardgen.AsRead`), with no contract option: `cardgen.Lint`,
+  `card.Lint`, `nova-card generate` and `nova-card lint`, and `nova-sprint add`
+  (`lintBriefReads`, beside the held rules by reference of `internal/swarm/heldrules.go`;
+  `TestAddAdmitsABriefByReferenceAsItsLaneReadsIt`). A reference that names no version, or one
+  this build does not hold, is the finding `contract-version`. A `Contract:` line whose first
+  word is not this file is the brief's own prose, no reference.
+- **The lane.** The lane reads the contract once from the repository: its staged checkout's
+  `docs/SPEC-CARD-CONTRACT.md`, at the version the brief names. The daemon compares that block
+  with the held text it used to validate the brief; a matching version marker alone is not
+  enough. Where the checkout has no matching block (including a truncated same-version block),
+  nova-friend's daemon puts the held contract text in the brief in place
+  of its `Contract:` line before the session is handed it (`friend.HandBrief`); the header lines
+  stay first, so line 1 says what it said. The daemon is given the text (`friend.Daemon.Contract`,
+  set by `cmd/nova-friend`), this build's copy of the versioned block when nothing else sets it;
+  with no text for the version it hands the brief as it is and records `contract=unread`. A lane
+  is handed its brief when it takes the card, and a batch session each brief dealt to it, before
+  the turn that names them (`TestTheDaemonPrependsTheContractOnlyWhenTheCheckoutCannotBeRead`,
+  `TestTheDaemonHoldsTheVersionedBlockWhenNothingElseSetsIt`).
+- **The cost.** A brief's token count is `card.Tokens`: four bytes to a token, rounded up. The
+  daemon's record of each card it hands says it (`brief_tokens=<n>
+  contract=checkout|prepended|unread|none`), and a take's cost record on the primary carries the
+  brief it was dealt (`brief_tokens=<n>`, `sprint.Consumer.BriefTokens`;
+  `TestATakesCostRecordCarriesItsBriefsTokens`).
+- **The measure.** Over 20 briefs the generator renders in the test (six serial-tests and four
+  dead-code ledger cards, six findings cards, four help cards), the long form against the brief
+  by reference, and the contract a lane reads once beside it:
+
+    MEASURE briefs=20 full_bytes=115670 full_tokens=28925 ref_bytes=28942 ref_tokens=7245 contract_bytes=4670 contract_tokens=1168
+
+  A brief by reference weighs about a quarter of the long form (7,245 tokens against 28,925 over
+  the 20, 362 against 1,446 a brief). The contract is 1,168 tokens: a session that reads it once for
+  all 20 briefs reads 8,413 tokens against 28,925; a session that reads it afresh for one brief
+  reads 1,530 against 1,446, so the saving is in every brief read past the first in a session.
+
+<!-- contract v1 -->
+You are a child of the coordinator: one task, one staged checkout, one branch, unattended. The card is the whole task: its header lines above and this contract, read once. Read $JOB/JOB.md first. Start at the current BASE tip; admission inspected the base whose sha line 1 names. Verify the defect still exists before editing; if already fixed report not-done with exact evidence rather than duplicate work. One change, one test that is red before and green after.
+Libraries considered: the Go standard library and testify, already in the tree; the package's own seams and helpers; no new dependency, and no helper over thirty lines without first searching the package for one.
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+
+ATTRIBUTION: By: your own name, the friend doing this work, on the line above the Co-Authored-By trailer of every commit; this brief names no author, and its WHO line, if any, is a preference for who is dealt the card, never the name to sign.
+
+THE TASK. The STOP line is the task and says when it is done; the work lives in the first file the START line names; the files this card may touch are its PATHS line (and the files its NEW line creates) and no other, in the staged checkout JOB.md names, on the card's own branch, from its BASE. The Deadline line is the time it has.
+
+STEP 1. Enter the staged checkout JOB.md names with cd $JOB/repo && git log --oneline -1, no clone; work only on its own branch. Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it. Scratch belongs under $JOB/scratch.
+STEP 2. Make it red first, as the task says, with the test the TEST line names: run the STEP 4 gate with -run and that test's name, and keep the failing line as evidence.
+STEP 3. Make it pass in the files this card names, and only those. Commit the draft on your own branch as soon as the test is green, before any further probe; a later commit may refine it. A change any other file needs goes in the report as a proposed diff, never a commit.
+STEP 4. Run the gate: go test -count=1 -timeout 600s on the package the TEST line names and on ./internal/ci/ (one run when they are the same), and read the last line of each. Run gofmt -l on every changed Go file; it must print nothing. Where the STOP line names a model gate, run it as part of this step. When a test fails, name its file and say whether that file was changed by your work (yours) or is unchanged (already red at BASE: run the same test on the unchanged base to say so), and report that line first.
+STEP 5. Commit on your own branch with the trailer. Nothing reaches the forge from inside the wall: in the job the git shim records a push, the pull request is the finish JOB.md names (STEP 6), and the member makes both, against the card's BASE, from outside the wall when the card finishes. The pull request body states the diff stat, what was deleted, the tests with what each pins, and what was not done.
+STEP 6. End as JOB.md says (docs/SPEC-CARD-CONTRACT.md): where JOB.md ends the card with its pull request, that is the end and there is nothing else to write, the gate's lines in the pull request body; where it asks for RESULT.md, write it in JOB.md's shape (head, branch, verdict, gate, output, report).
+
+AS A READ
+A By: trailer is judged only for being present and true: it names the friend who pushed the branch under read, whoever was preferred for the card. A trailer naming another friend than a WHO line or an earlier brief expected is no finding, and attribution alone never decides a verdict; read the change against the task, its test and its PATHS.
+<!-- end contract v1 -->
+
+### Contract v2
+
+The current version retains v1 and carries the current attribution rule: the worker signs its own name, a model name is never a By:, and only a Claude worker adds a Co-Authored-By. It also carries the scope rule (the files always inside PATHS) and the friend report's first two lines.
+
+<!-- contract v2 -->
+You are a child of the coordinator: one task, one staged checkout, one branch, unattended. The card is the whole task: its header lines above and this contract, read once. Read $JOB/JOB.md first. Start at the current BASE tip; admission inspected the base whose sha line 1 names. Verify the defect still exists before editing; if already fixed report not-done with exact evidence rather than duplicate work. One change, one test that is red before and green after.
+Libraries considered: the Go standard library and testify, already in the tree; the package's own seams and helpers; no new dependency, and no helper over thirty lines without first searching the package for one.
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+
+ATTRIBUTION: By: your own name, the worker who does this attempt, on its own line at the end of every commit message; a model name is never a By:, and this brief names no author: its WHO line, if any, is a preference for who is dealt the card, never the name to sign. Below the By: line, a Claude worker adds its true Co-Authored-By trailer (Claude, its model, the noreply@anthropic.com address); any other worker adds no Co-Authored-By.
+
+THE TASK. The STOP line is the task and says when it is done; the work lives in the first file the START line names; the files this card may touch are its PATHS line (and the files its NEW line creates) and no other, in the staged checkout JOB.md names, on the card's own branch, from its BASE. The Deadline line is the time it has.
+
+STEP 1. Enter the staged checkout JOB.md names with cd $JOB/repo && git log --oneline -1, no clone; work only on its own branch. Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it. Scratch belongs under $JOB/scratch.
+STEP 2. Make it red first, as the task says, with the test the TEST line names: run the STEP 4 gate with -run and that test's name, and keep the failing line as evidence.
+STEP 3. Make it pass in the files this card names, and only those. Commit the draft on your own branch as soon as the test is green, before any further probe; a later commit may refine it. A change any other file needs goes in the report as a proposed diff, never a commit.
+STEP 4. Run the gate: go test -count=1 -timeout 600s on the package the TEST line names and on ./internal/ci/ (one run when they are the same), and read the last line of each. Run gofmt -l on every changed Go file; it must print nothing. Where the STOP line names a model gate, run it as part of this step. When a test fails, name its file and say whether that file was changed by your work (yours) or is unchanged (already red at BASE: run the same test on the unchanged base to say so), and report that line first.
+STEP 5. Commit on your own branch with the trailer. Nothing reaches the forge from inside the wall: in the job the git shim records a push, the pull request is the finish JOB.md names (STEP 6), and the member makes both, against the card's BASE, from outside the wall when the card finishes. The pull request body states the diff stat, what was deleted, the tests with what each pins, and what was not done.
+STEP 6. End as JOB.md says (docs/SPEC-CARD-CONTRACT.md): where JOB.md ends the card with its pull request, that is the end and there is nothing else to write, the gate's lines in the pull request body; where it asks for RESULT.md, write it in JOB.md's shape (head, branch, verdict, gate, output, report). For a friend's REPORT.md (docs/FRIENDS.md), first line exactly Verdict: LAND|HOLD|FAIL, second line exactly Head: <40-hex>; for HOLD and FAIL omit Head: and leave line 2 blank.
+
+AS A READ
+A By: trailer is judged only for being present and true: it names the worker who pushed the branch under read, whoever was preferred for the card. A trailer naming another friend than a WHO line or an earlier brief expected is no finding, and attribution alone never decides a verdict; read the change against the task, its test and its PATHS.
+The scope of this change is its PATHS line. Files a change must touch to keep the tree green are always inside PATHS, whatever the brief names: every *_test.go, every file under a testdata/ directory, tla/RUNS.tsv and tla/CASES.tsv, internal/docs/catalog.go, and every AGENTS.md map; any other file outside PATHS is still out of scope.
+A head whose only defect is PATHS is a HOLD with a PATHS-PROPOSED line for the worker, not a broken finding.
+<!-- end contract v2 -->

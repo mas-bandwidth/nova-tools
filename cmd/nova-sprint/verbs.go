@@ -21,9 +21,9 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/cardgen"
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
 	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
@@ -1776,17 +1776,26 @@ func modelLinesWhy(why string) string {
 // lintBriefReads holds one brief to the card lint's child rules and to its
 // model lines: it returns the model-line why ("" when the lines read) and the
 // lint findings. The single-brief and many-brief paths both call it, so one
-// brief is held the same however it is given.
+// brief is held the same however it is given. A brief by reference is held as its
+// lane reads it, the contract of its version in place of its Contract: line, as the
+// rules by reference are held as the member injects them (docs/SPEC-CARD-CONTRACT.md
+// section 7); the brief is stored as it was given.
 func lintBriefReads(brief string, rs ruleSet) (modelWhy string, findings []swarm.CardHeaderFinding) {
 	if _, why := cardhdr.ReadModel(brief); why != "" {
 		return why, nil
 	}
+	read, why := cardgen.AsRead(brief)
+	if why != "" {
+		_, at := cardgen.ContractRef(brief)
+		findings = append(findings, swarm.CardHeaderFinding{Check: "contract-version", Line: at, Excerpt: why})
+	}
+	brief = read
 	if rs = cardRules(brief, rs); rs.held != "" {
 		// rules by reference: the member injects the held file at stage time, so the brief
 		// is linted as the child is handed it (nova-tools#5174 rule 6)
-		findings = swarm.LintCardChildByReference([]byte(brief), rs.rules)
+		findings = append(findings, swarm.LintCardChildByReference([]byte(brief), rs.rules)...)
 	} else {
-		findings = swarm.LintCardChildWith([]byte(brief), rs.rules)
+		findings = append(findings, swarm.LintCardChildWith([]byte(brief), rs.rules)...)
 	}
 	// a tree card's steps are held too (internal/cardtree; docs/SPEC-SPRINT.md, a card is
 	// a tree of steps): a flat brief has no such finding

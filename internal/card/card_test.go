@@ -130,8 +130,9 @@ func TestABriefNamesNoFriendAsAuthor(t *testing.T) {
 	c := cardgen.PlanHelp("nova-x", "x\n", "TestExamples", "", "")
 	c.Paths = Paths(header, c)
 	brief := cardgen.Render(header, c)
-	assert.Contains(t, brief, "\nATTRIBUTION: By: your own name, the worker who does this attempt")
-	assert.Contains(t, brief, "\nAS A READ\nA By: trailer is judged only for being present and true: it names the worker who pushed")
+	read, _ := cardgen.AsRead(brief) // read with its versioned contract
+	assert.Contains(t, read, "\nATTRIBUTION: By: your own name, the worker who does this attempt")
+	assert.Contains(t, read, "\nAS A READ\nA By: trailer is judged only for being present and true: it names the worker who pushed")
 	assert.Empty(t, Lint(c.ID, brief, opts))
 	assert.Empty(t, Lint(c.ID, brief+"WHO: friend ada\n", opts), "WHO stays a preference line")
 
@@ -184,6 +185,8 @@ func TestAStagedBriefSignsTheWorkersOwnName(t *testing.T) {
 	rules, err := swarm.HeldRules(swarm.OwnRulesName(cardgen.Render(h, c), ""))
 	require.NoError(t, err)
 	staged := swarm.StagedBrief(cardgen.Render(h, c)+"WHO: friend ada\n", rules)
+	staged, why := cardgen.AsRead(staged)
+	require.Empty(t, why)
 
 	assert.Contains(t, staged, "\nWHO: friend ada\n", "the pin is the deal's and stays")
 	assert.Empty(t, Lint(c.ID, staged, opts), "no line names the pinned friend as the author")

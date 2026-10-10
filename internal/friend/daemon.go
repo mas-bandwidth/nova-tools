@@ -169,6 +169,10 @@ type Daemon struct {
 	// CardDone is the one bus line a lane's session sends when its card is
 	// done (nova-bus send by path, as this friend, to the coordinator).
 	CardDone func(card, to string) string
+	// Contract is the contract text of a version the daemon holds, put in a brief by
+	// reference whose staged checkout does not hold it (HandBrief, docs/SPEC-CARD-CONTRACT.md
+	// section 7); nil is this build's copy of the versioned block (cardgen.HeldContract).
+	Contract func(version string) (string, bool)
 	// Progress stamps progress on the cards whose lane turn printed (ProgressArgv to the
 	// sprint server); nil stamps none.
 	Progress func(ctx context.Context, cards []Card) error
