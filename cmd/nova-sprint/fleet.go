@@ -351,7 +351,9 @@ func recordFriendTests(ctx context.Context, st *store.Store, friend string, n, p
 	}
 	var rec struct {
 		sprint.Beat
-		Pong time.Time `json:"pong,omitzero"`
+		Pong    time.Time           `json:"pong,omitzero"`
+		Asked   []sprint.AskedCheck `json:"asked,omitempty"`
+		NoProof string              `json:"no_proof,omitempty"`
 	}
 	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
 		return err
