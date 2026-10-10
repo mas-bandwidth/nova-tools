@@ -31,8 +31,9 @@ import (
 // 2026-10-05 a whole clone per job had her disk at 99% with 42 staged clones and 765 finished
 // job dirs), and writes jobs/<job>/JOB.md in the card-contract shape
 // (docs/SPEC-CARD-CONTRACT.md). After each inbox cleanup the finished jobs' worktrees past
-// FinishedJobsKept are pruned (Stager.Prune, pruneStep). No lane is handed the card until JOB.md is there. A
-// repository her account cannot reach is one judgment to the coordinator with the remedy,
+// FinishedJobsKept are pruned (Stager.Prune, pruneStep). No lane is handed the card while a
+// brief or checkout its JOB.md names is missing. A repository her account cannot reach is one
+// judgment to the coordinator with the remedy,
 // never a lane that discovers it (docs/SPEC-FRIEND.md, staging). The machine is modelled in
 // tla/FriendStage.tla (MCFriendStage*: a lane handed only a staged card, one judgment while it
 // stands, a failed job staged again), and the worktrees and their pruning in
@@ -217,10 +218,77 @@ func (s *Stager) repoLock(repo string) *sync.Mutex {
 // JobDir is where a job is staged, under her working directory.
 func JobDir(dir, job string) string { return filepath.Join(dir, JobsDir, job) }
 
-// Staged says a job's JOB.md is there.
+// Staged says the files the stage record names are still there. A JOB.md that
+// names a brief or a checkout does not suppress a retry while either is
+// missing. A JOB.md that names neither is the older record, staged by its
+// presence, so a stage that ended on the file alone is not run again.
 func Staged(dir, job string) bool {
-	_, err := os.Lstat(filepath.Join(JobDir(dir, job), JobFile))
-	return err == nil
+	jobFile := filepath.Join(JobDir(dir, job), JobFile)
+	if _, err := os.Lstat(jobFile); err != nil {
+		return false
+	}
+	rec, ok := stageRecordOf(dir, job)
+	if !ok {
+		return true
+	}
+	return readableRegular(jobFile) && readableRegular(rec.Brief) && validCheckout(rec.Checkout)
+}
+
+// readBriefPath is the file a read's stage wrote: the read card's BRIEF.md in the friend's
+// inbox (inbox/<job>/BRIEF.md), the line friend sync writes for every held card. A read
+// gets no JOB.md and no staged checkout: its lane clones the work under review itself
+// (ReadText).
+func readBriefPath(dir, job string) string {
+	return filepath.Join(dir, "inbox", job, "BRIEF.md")
+}
+
+// ReadStaged says a read's staged files are there: its inbox BRIEF.md is a readable
+// regular file. A read is not a work card: requiring its JOB.md or a staged checkout would
+// refuse every read. A job that is no inbox directory is never staged.
+func ReadStaged(dir, job string) bool {
+	return validJob(job) && readableRegular(readBriefPath(dir, job))
+}
+
+// ReadStageGate is the stage contract at the lane for a read (`HeldCard.Kind == "read"`): the
+// read's staged files are its inbox BRIEF.md, and no work JOB.md and no checkout are required
+// of it. It answers false when the read's lane may start, else the StageFailure naming what is
+// missing. It is the read's StageGate, whose three work files (the brief the stage record
+// names, the JOB.md and the checkout) a read does not have.
+func ReadStageGate(dir string, c Card, job string) (StageFailure, bool) {
+	if !validJob(job) {
+		return StageFailure{Card: c.ID, What: "its job " + dash(job), Why: "no inbox directory"}, true
+	}
+	brief := readBriefPath(dir, job)
+	if !readableRegular(brief) {
+		why := "the stage wrote no BRIEF.md for the read"
+		if fi, err := os.Stat(brief); err == nil && !fi.Mode().IsRegular() {
+			why = "the read's brief is not a readable regular file"
+		}
+		return StageFailure{Card: c.ID, What: "its read " + dash(brief), Why: why}, true
+	}
+	return StageFailure{}, false
+}
+
+// repairBrief restores a missing recorded brief from the canonical inbox copy.
+// Existing files are preserved; the next gate judges whether they are readable.
+func (s *Stager) repairBrief(p Packet) error {
+	rec, ok := stageRecordOf(s.Dir, p.Job)
+	if !ok {
+		return nil // the first stage's inbox brief is written by reconciliation
+	}
+	source := filepath.Join(s.Dir, "inbox", p.Job, "BRIEF.md")
+	target := rec.Brief
+	if target == "" || readableRegular(target) {
+		return nil
+	}
+	raw, err := os.ReadFile(source)
+	if err != nil {
+		return fmt.Errorf("restore staged brief: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return err
+	}
+	return atomicfile.WriteFile(target, raw, 0o644, atomicfile.NoReplace())
 }
 
 // Stage stages p's job: the mirror of its repository fetched (cloned the first time), a git
@@ -236,6 +304,9 @@ func (s *Stager) Stage(ctx context.Context, p Packet) (string, error) {
 	}
 	job := JobDir(s.Dir, p.Job)
 	checkout := filepath.Join(job, "repo")
+	if err := s.repairBrief(p); err != nil {
+		return "", err
+	}
 	if Staged(s.Dir, p.Job) {
 		return "", nil
 	}
@@ -708,7 +779,7 @@ func (l *loop) pruneStep(held []HeldCard, keep map[string]bool, now time.Time) {
 }
 
 // stageOwed says a held card is not handed to a lane yet: the daemon stages jobs, the card is
-// one it stages, and its JOB.md is not there.
+// one it stages, and a brief or checkout its record names is missing.
 func (d *Daemon) stageOwed(h HeldCard) bool {
 	if d.Stage == nil {
 		return false
