@@ -66,22 +66,16 @@ func PullRequests(commits []Commit) []PR {
 // with a conclusion that is not a failure. A commit no run has ever judged is
 // not green either -- it is unjudged, which is the state that let four benches
 // run six-hour-old tools while everybody believed otherwise.
+//
+// The way past is `--waive-ci "<who, when>"` (ciWaiver), which is the cut's own
+// flag and not a hand-made tag: what it waived travels in the tag annotation
+// and the release notes, per docs/SPEC-RELEASE.md section 19.
 func green(runs []CheckRun) error {
 	if len(runs) == 0 {
 		return refuse("dispatch CI on this commit and cut again when it is green",
 			"no check run has judged this commit")
 	}
-	var pending, failing []string
-	for _, r := range runs {
-		switch {
-		case r.Status != "completed":
-			pending = append(pending, r.Name)
-		case r.Conclusion != "success" && r.Conclusion != "skipped" && r.Conclusion != "neutral":
-			failing = append(failing, r.Name+"="+r.Conclusion)
-		}
-	}
-	sort.Strings(pending)
-	sort.Strings(failing)
+	failing, pending := ciNotGreen(runs)
 	if len(failing) > 0 {
 		return refuse("fix the red and cut again; a tag cannot be amended",
 			"CI is not green on this commit: %s", strings.Join(failing, ", "))
@@ -91,6 +85,71 @@ func green(runs []CheckRun) error {
 			"CI has not finished on this commit: %s", strings.Join(pending, ", "))
 	}
 	return nil
+}
+
+// ciNotGreen reads the runs once and answers the checks green() would refuse
+// on, in green()'s own words: the failing ones as `name=conclusion`, and the
+// ones that have not completed by name. It is separate so a waiver records the
+// same checks the gate would have named rather than a second reading of them.
+func ciNotGreen(runs []CheckRun) (failing, pending []string) {
+	for _, r := range runs {
+		switch {
+		case r.Status != "completed":
+			pending = append(pending, r.Name)
+		case r.Conclusion != "success" && r.Conclusion != "skipped" && r.Conclusion != "neutral":
+			failing = append(failing, r.Name+"="+r.Conclusion)
+		}
+	}
+	sort.Strings(failing)
+	sort.Strings(pending)
+	return failing, pending
+}
+
+// CIWaiverPrefix is how the tag annotation and the CHANGELOG section name a
+// waived CI gate, spelled once so the two records cannot drift. A red CI is
+// let past only by the cut's own --waive-ci, and what it let past outlives the
+// terminal: a person asking in six months why a version shipped on a red commit
+// reads the answer in the tag. docs/SPEC-RELEASE.md section 19.
+const CIWaiverPrefix = "CI waived: "
+
+// CIWaiverChecksPrefix opens the line that names the checks the waiver covered.
+const CIWaiverChecksPrefix = "CI waived checks: "
+
+// ciWaivedChecks names, for a one-line terminal field, the checks a CI waiver
+// covered: the failing ones, else the unfinished ones, else none.
+func ciWaivedChecks(runs []CheckRun) string {
+	failing, pending := ciNotGreen(runs)
+	switch {
+	case len(failing) > 0:
+		return strings.Join(failing, ",")
+	case len(pending) > 0:
+		return strings.Join(pending, ",") + "(not-finished)"
+	}
+	return "none"
+}
+
+// ciWaiver is the waived CI record as the tag annotation and the CHANGELOG
+// section carry it, and the empty string when there is nothing to waive. who is
+// trimmed; the caller refuses an empty one before calling. It names the checks
+// green() would have refused on, so the record says WHAT was let past and not
+// only that the gate was: docs/SPEC-RELEASE.md section 19.
+func ciWaiver(runs []CheckRun, who string) string {
+	who = strings.TrimSpace(who)
+	if who == "" {
+		return ""
+	}
+	failing, pending := ciNotGreen(runs)
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s%s\n", CIWaiverPrefix, who)
+	switch {
+	case len(failing) > 0:
+		fmt.Fprintf(&b, "%s%s\n", CIWaiverChecksPrefix, strings.Join(failing, ", "))
+	case len(pending) > 0:
+		fmt.Fprintf(&b, "%s%s (not finished)\n", CIWaiverChecksPrefix, strings.Join(pending, ", "))
+	default:
+		fmt.Fprintf(&b, "%snone judged this commit\n", CIWaiverChecksPrefix)
+	}
+	return b.String()
 }
 
 // previousTag picks the highest version tag in the repository. It is a semantic
@@ -140,7 +199,7 @@ func lessVersion(a, b []int) bool {
 // is already in the section's words (JourneyRecord.section; "" when it found nothing to
 // say). It is pure so that the shape of what a release says about itself is asserted by
 // a test rather than by reading a file somebody wrote by hand afterwards.
-func sectionWith(version, sha, previous, sumsDigest, dogfoodWaiver, journeys string, when time.Time, prs []PR) string {
+func sectionWith(version, sha, previous, sumsDigest, dogfoodWaiver, journeys string, when time.Time, prs []PR, ciWaiver ...string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## %s — %s\n\n", version, when.UTC().Format("2006-01-02"))
 	since := "this repository's first commit"
@@ -165,6 +224,14 @@ func sectionWith(version, sha, previous, sumsDigest, dogfoodWaiver, journeys str
 	// open edge reads the answer in the same place they read what shipped.
 	if dogfoodWaiver != "" {
 		fmt.Fprintf(&b, "%s%s\n\n", DogfoodWaiverPrefix, dogfoodWaiver)
+	}
+	// AND THE CI WAIVER, WHEN A RED OR MISSING CI WAS LET PAST. It sits beside
+	// the dogfood waiver for the same reason: a version cut past the green gate
+	// says so where the release is read, in the file that travels by git, and
+	// names the checks it let past (docs/SPEC-RELEASE.md section 19).
+	if len(ciWaiver) > 0 && ciWaiver[0] != "" {
+		b.WriteString(ciWaiver[0])
+		b.WriteString("\n")
 	}
 	// AND WHAT THE PROMISED JOURNEYS WERE PROVEN AT, or which of them were
 	// not, under the waiver's reason.
@@ -213,12 +280,18 @@ var annotationSums = regexp.MustCompile(`(?m)^` + AnnotationSumsPrefix + `([0-9a
 // because it is written by `cut` and read by `adopt` and the two have to agree
 // about where the digest is (the repository owner's decision 2, #1337). A tag is the one
 // thing in this repository that cannot be quietly amended, so what it says
-// about a release is the most durable record the release has.
-func Annotation(version, sha, sumsDigest string) string {
+// about a release is the most durable record the release has. It also carries a
+// waived CI gate, when there was one: the tag is exactly where a person asks
+// why a version shipped red, and the extra lines are appended after the digest
+// so the `sums=` line stays put (docs/SPEC-RELEASE.md section 19).
+func Annotation(version, sha, sumsDigest string, ciWaiver ...string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n\nCut from %s.\n", version, sha)
 	if sumsDigest != "" {
 		fmt.Fprintf(&b, "%s%s\n", AnnotationSumsPrefix, sumsDigest)
+	}
+	if len(ciWaiver) > 0 {
+		b.WriteString(ciWaiver[0])
 	}
 	return b.String()
 }
@@ -491,8 +564,25 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	if err != nil {
 		return refusal(errs, "CUT", fmt.Errorf("cannot read the checks on %s: %w (ask again when the forge answers)", sha, err))
 	}
+	// THE GREEN GATE, AND THE ONE WAY PAST IT. A waiver with an empty value is
+	// not a waiver, and a waiver of a green commit is a lie in the tag's
+	// permanent record, so both refuse before anything is written
+	// (docs/SPEC-RELEASE.md section 19).
+	waive := strings.TrimSpace(o.waiveCI)
+	if o.waiveCISet && waive == "" {
+		return refusal(errs, "CUT", refuse(`name who waives the CI and when: --waive-ci "<who, when>"`,
+			"--waive-ci wants a person and a date, and was given an empty value"))
+	}
+	ciWaive := ""
 	if err := green(runs); err != nil {
-		return refusal(errs, "CUT", err)
+		if waive == "" {
+			return refusal(errs, "CUT", err)
+		}
+		ciWaive = ciWaiver(runs, waive)
+		fmt.Fprintf(out, "RELEASE CUT CI WAIVED waived=%s checks=%s\n", field(waive), field(ciWaivedChecks(runs)))
+	} else if waive != "" {
+		return refusal(errs, "CUT", refuse("cut without it; nothing here needs waiving",
+			"--waive-ci waives a red or missing CI, and every check on %s is green", sha))
 	}
 	// THE PROMISED RECOVERY JOURNEYS, once the revision is known: evidence is
 	// proof about one revision, and this is the one the tag will name.
@@ -559,7 +649,7 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			return refusal(errs, "CUT", fmt.Errorf("cannot read %s: %w (name the SHA256SUMS that `release build` wrote, or leave --sums out)", o.sums, err))
 		}
 	}
-	section := sectionWith(o.version, sha, previous, sumsDigest, dogfoodWaiver(gate, o.reason), journeys.section()+spend.Section, deps.Now(), prs)
+	section := sectionWith(o.version, sha, previous, sumsDigest, dogfoodWaiver(gate, o.reason), journeys.section()+spend.Section, deps.Now(), prs, ciWaive)
 	if o.dryRun {
 		fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s journeys=%s spend=%s dry-run=yes\n",
 			field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest), gate, journeys.State, spend.State)
@@ -570,7 +660,7 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		return refusal(errs, "CUT", fmt.Errorf("cannot write %s: %w (name a writable --changelog)", o.changelog, err))
 	}
 	progress(errs, "tagging %s at %s, annotated with the digest adopt will check", o.version, sha)
-	if err := forge.Tag(ctx, o.repo, o.version, sha, Annotation(o.version, sha, sumsDigest)); err != nil {
+	if err := forge.Tag(ctx, o.repo, o.version, sha, Annotation(o.version, sha, sumsDigest, ciWaive)); err != nil {
 		// The changelog is already written; say so, because the remedy is to
 		// tag by hand or to cut again, not to wonder which half happened.
 		fmt.Fprintf(errs, "CUT FAILED version=%s sha=%s: %s (the changelog section is written at %s; create the tag by hand or delete the section and cut again)\n",

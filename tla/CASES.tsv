@@ -504,3 +504,7 @@ MCStopCancelsBrokenFinishCancelled.cfg	MCStopCancels.tla	invariant	NoFinishOfACa
 MCLatePush.cfg	MCLatePush.tla	pass	-	ignore-terminal	latepush	required	-
 MCLatePushBrokenWipe.cfg	MCLatePush.tla	invariant	OnePushAWindow	ignore-terminal	latepush	required	-
 MCLatePushBrokenForget.cfg	MCLatePush.tla	invariant	OnePushAWindow	ignore-terminal	latepush	required	-
+MCLoadCache.cfg	MCLoadCache.tla	pass	-	ignore-terminal	loadcache	required	-
+MCLoadCacheBrokenCatchup.cfg	MCLoadCache.tla	invariant	LoadIsSnapshot	ignore-terminal	loadcache	required	-
+MCLoadCacheBrokenAhead.cfg	MCLoadCache.tla	invariant	LoadIsSnapshot	ignore-terminal	loadcache	required	-
+MCLoadCacheBrokenNoMark.cfg	MCLoadCache.tla	invariant	LoadIsSnapshot	ignore-terminal	loadcache	required	-

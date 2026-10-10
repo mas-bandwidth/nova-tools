@@ -29,8 +29,9 @@ tune the same way.
 serves the page on each `--listen` address (default `127.0.0.1:7390`), one listener
 each, sharing one cached copy of the sprint. It reads the sprint in-process the way
 `where --json --cards` does (through the sprint's server when `NOVA_SPRINT_SERVER` names
-one, else on the store `--redis` names), in one place, once per `--every` whether or not
-a page is open, so the copy is never older than a tick (the owner, 2026-10-04: "I need to
+one, else on the store `--redis` names; given none of them and no `--pull <url>`, it is
+refused on stderr at exit 2 before any listener opens), in one place, once per `--every`
+whether or not a page is open, so the copy is never older than a tick (the owner, 2026-10-04: "I need to
 be able to always trust the dashboard"; "Golang nova-tools and nova-sprint verbs only"):
 `/api/sprint` is that copy, with the build number and the throughput, and `/events`
 pushes each new copy as it is read (server-sent events); a request between two ticks is

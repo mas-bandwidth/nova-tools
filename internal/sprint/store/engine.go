@@ -94,6 +94,10 @@ type Store struct {
 	// fails the step (twin.go).
 	CheckTwin func(twin, fresh *sprint.Snapshot) error
 	tw        *Twin // the store's twin (twin.go): kept from one tick to the next
+	// lc is the process's load cache of the store (loadcache.go): the records each
+	// table's last whole read found, which a later load catches up instead of
+	// reading the table whole. nil: every load reads its tables whole.
+	lc *LoadCache
 	// LockAfterLoss has a part of the tick that lost a try take the fence
 	// before its next read (lock.go). The program's stores set it; a test
 	// harness whose other writers write from inside a part's plan (a writer

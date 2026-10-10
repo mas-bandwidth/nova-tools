@@ -3372,7 +3372,11 @@ can refuse. The gates are in [docs/SPEC-RELEASE.md](SPEC-RELEASE.md) and the ver
 nova-update release cut --repo mas-bandwidth/nova-tools --from main --version v0.17.0 --changelog ./CHANGELOG.md --sums ./release/v0.17.0/linux-amd64/SHA256SUMS
 ```
 
-`cut` refuses a commit whose checks are not green, refuses a version that is already a tag, writes the
+`cut` refuses a commit whose checks are not green — one that failed, one that has not finished, or
+one no run has judged — and the way past is the cut's own `--waive-ci "<who, when>"`: the cut then
+proceeds, prints `RELEASE CUT CI WAIVED waived=<who> checks=<name,...>`, and writes `CI waived: <who, when>` and the red checks it waived into both the tag annotation and the CHANGELOG section. An empty
+`--waive-ci` is refused, a green CI refuses a waiver, and certification is not waived by it. `cut`
+also refuses a version that is already a tag, writes the
 changelog section and creates the **annotated** tag carrying `sums=<sha256 of SHA256SUMS>`. `build`
 writes one `SHA256SUMS` per platform, under `<out>/<version>/<goos-goarch>/`, and `--sums` takes one
 of them: the tag and the changelog section carry that platform's digest, and `adopt --repo` verifies

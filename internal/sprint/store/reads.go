@@ -55,6 +55,18 @@ func (st *Store) readCellsOnce(ctx context.Context, logical, row string, cols ..
 		return nil, nil
 	}
 	shape.Rows = rows
+	// only the named columns' cells are read: every other set column is read as
+	// text, which has no cell ids. A member's queue (queue --as, every worker's
+	// poll) names ready, working and ctl, and its row's ok and failed cells hold
+	// every card it ever finished: on 2026-10-10 reading them made the fleet
+	// table's read sets 62% of the store's one thread (docs/SPEC-SPRINT.md
+	// section 14, store-trips-pipelinedb-bb).
+	shape.Columns = slices.Clone(shape.Columns)
+	for k := range shape.Columns {
+		if shape.Columns[k].HasSet() && !slices.Contains(cols, shape.Columns[k].Name) {
+			shape.Columns[k].Projection = ntable.Text
+		}
+	}
 	ids, err := st.B.CellIDs(ctx, []ntable.Table{shape})
 	if err != nil {
 		return nil, err

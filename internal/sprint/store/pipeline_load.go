@@ -70,16 +70,53 @@ func (st *Store) pipelinedLoadOnceWithFence(ctx context.Context, tables []string
 	if err != nil {
 		return nil, Fence{}, err
 	}
-	if len(tables) > 0 {
-		st.stats().reads.Add(1)
-	}
-	ids, err := st.B.CellIDs(ctx, shapes)
-	if err != nil {
-		return nil, Fence{}, err
-	}
 	for _, shape := range shapes {
 		if st.pinned && shape.Epoch != st.epoch {
 			return nil, Fence{}, errCleared
+		}
+	}
+	// a table the load cache holds is brought to its shape's revision from the
+	// change stream (loadcache.go) before the pipeline, and reads no record in it;
+	// the rest are read whole in it, and kept
+	lc := st.loadCache()
+	fromCache := make([]*sprint.Table, len(shapes)) // the records of each table the cache held
+	var whole []ntable.Table
+	for i, shape := range shapes {
+		if lc != nil {
+			t := sprint.NewTable(tables[i])
+			t.Revision = shape.Revision
+			hit, err := st.placedFromCache(ctx, lc, t, shape)
+			if err != nil {
+				return nil, Fence{}, err
+			}
+			if hit {
+				fromCache[i] = t
+				continue
+			}
+		}
+		whole = append(whole, shape)
+	}
+	if len(whole) > 0 {
+		st.stats().reads.Add(1)
+	}
+	// each table read whole: its mark first (markOf), kept with its records below
+	marks := map[string]string{}
+	for _, shape := range whole {
+		if lc == nil {
+			break
+		}
+		mark, ok, err := st.markOf(ctx, shape)
+		if err != nil {
+			return nil, Fence{}, err
+		}
+		if ok {
+			marks[shape.Name] = mark
+		}
+	}
+	var ids map[string][]string
+	if len(whole) > 0 {
+		if ids, err = st.B.CellIDs(ctx, whole); err != nil {
+			return nil, Fence{}, err
 		}
 	}
 
@@ -95,6 +132,11 @@ func (st *Store) pipelinedLoadOnceWithFence(ctx context.Context, tables []string
 			}
 			if len(row.Texts) > 0 {
 				t.Texts[row.Key] = row.Texts
+			}
+		}
+		if fromCache[i] != nil {
+			for _, c := range fromCache[i].Cards() {
+				t.Put(c)
 			}
 		}
 		tbls[i] = t
@@ -215,6 +257,14 @@ func (st *Store) pipelinedLoadOnceWithFence(ctx context.Context, tables []string
 				c.Row, c.Col = m.Row, m.Col
 			}
 			chunk.table.Put(c)
+		}
+	}
+
+	if lc != nil {
+		for i, shape := range shapes {
+			if mark, ok := marks[shape.Name]; ok && fromCache[i] == nil {
+				lc.keepLoaded(tbls[i], shape, mark)
+			}
 		}
 	}
 

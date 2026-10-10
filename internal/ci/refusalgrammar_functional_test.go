@@ -42,7 +42,7 @@ func TestEveryRefusalFollowsTheGrammar(t *testing.T) {
 		t.Run(tool, func(t *testing.T) {
 			t.Parallel()
 			grammar.begin()
-			bin := buildTool(t, root, tool)
+			bin := builtTool(t, root, tool)
 			_, banner, helpErr := runBare(t, root, tool, bin, []string{"help"})
 			require.Empty(t, helpErr, "`%s help` wrote to stderr: %s", tool, helpErr)
 			verbs := usageVerbs(tool, banner)
