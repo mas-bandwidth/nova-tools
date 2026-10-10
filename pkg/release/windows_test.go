@@ -396,7 +396,7 @@ func TestAWindowsBuildDoesNotClaimToHaveRunItsOwnArtifacts(t *testing.T) {
 	}
 	var o, e bytes.Buffer
 	if code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", out,
-		"--source", source, "--platform", "windows-amd64"}, &o, &e, Deps{Toolchain: &fakeToolchain{}}); code != 0 {
+		"--source", source, "--without-sprint-release", "--platform", "windows-amd64"}, &o, &e, Deps{Toolchain: &fakeToolchain{}}); code != 0 {
 		require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())
 	}
 	if !strings.Contains(o.String(), "platform=windows-amd64") || !strings.Contains(o.String(), "verified=2") {

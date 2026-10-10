@@ -78,14 +78,14 @@ func TestStatusGrammar(t *testing.T) {
 		}, true, "CUT", "FAILED", 1},
 
 		{"build ok", func(t *testing.T) outcome {
-			return run([]string{"build", "--version", "v0.16.0", "--out", t.TempDir(), "--source", sourceTree(t)},
+			return run([]string{"build", "--version", "v0.16.0", "--out", t.TempDir(), "--source", sourceTree(t), "--without-sprint-release"},
 				Deps{Toolchain: &fakeToolchain{}})
 		}, false, "RELEASE BUILD", "OK", 0},
 		{"build refused", func(t *testing.T) outcome {
 			return run([]string{"build"}, Deps{})
 		}, true, "BUILD", "REFUSED", 2},
 		{"build failed", func(t *testing.T) outcome {
-			return run([]string{"build", "--version", "v0.16.0", "--out", t.TempDir(), "--source", sourceTree(t)},
+			return run([]string{"build", "--version", "v0.16.0", "--out", t.TempDir(), "--source", sourceTree(t), "--without-sprint-release"},
 				Deps{Toolchain: &fakeToolchain{fail: "nova-bus"}})
 		}, true, "BUILD", "FAILED", 1},
 

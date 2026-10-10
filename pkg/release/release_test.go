@@ -655,7 +655,7 @@ func TestBuildStampsEveryToolAndWritesOneChecksumFile(t *testing.T) {
 	source, out := sourceTree(t), t.TempDir()
 	tc := &fakeToolchain{}
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", out, "--source", source},
+	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", out, "--source", source, "--without-sprint-release"},
 		&o, &e, Deps{Toolchain: tc})
 	if code != 0 {
 		require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())
@@ -714,7 +714,7 @@ func TestBuildRefusesWhenOneToolDoesNotCompile(t *testing.T) {
 
 	source, out := sourceTree(t), t.TempDir()
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", out, "--source", source},
+	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", out, "--source", source, "--without-sprint-release"},
 		&o, &e, Deps{Toolchain: &fakeToolchain{fail: "nova-swarm"}})
 	if code != 1 {
 		require.Equal(t, 1, code, "code=%d", code)
@@ -821,7 +821,7 @@ func built(t *testing.T, version, platform string, tools ...string) string {
 			require.NoError(t, err, err)
 		}
 	}
-	args := []string{"build", "--version", version, "--out", out, "--source", source}
+	args := []string{"build", "--version", version, "--out", out, "--source", source, "--without-sprint-release"}
 	if platform != "" {
 		args = append(args, "--platform", platform)
 	}
@@ -2374,7 +2374,7 @@ func TestBuildTakesSeveralPlatformsAtOnce(t *testing.T) {
 	source, out := sourceTree(t), t.TempDir()
 	tc := &fakeToolchain{}
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", out, "--source", source,
+	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", out, "--source", source, "--without-sprint-release",
 		"--platform", "linux-amd64,darwin-arm64", "--platform", "windows-amd64"}, &o, &e, Deps{Toolchain: tc})
 	if code != 0 {
 		require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())
@@ -2472,7 +2472,7 @@ func TestBuildVerifiesTheChecksumsItJustWrote(t *testing.T) {
 
 	source, out := sourceTree(t), t.TempDir()
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", out, "--source", source},
+	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", out, "--source", source, "--without-sprint-release"},
 		&o, &e, Deps{Toolchain: &fakeToolchain{}})
 	if code != 0 {
 		require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())

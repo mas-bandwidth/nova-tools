@@ -365,7 +365,7 @@ func TestBuildPassesTheGateAndSaysSoOnTheLine(t *testing.T) {
 	cli, receipts := noOpenEdge(t)
 	source, outDir := sourceTree(t), t.TempDir()
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", outDir, "--source", source,
+	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", outDir, "--source", source, "--without-sprint-release",
 		"--cli", cli, "--receipts", receipts}, &o, &e, Deps{Toolchain: &fakeToolchain{}})
 	if code != 0 {
 		require.Equal(t, 0, code, "code=%d errs=%s", code, e.String())

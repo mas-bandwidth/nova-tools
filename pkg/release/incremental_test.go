@@ -103,7 +103,7 @@ func TestParsePackagesAnswersEachToolsDirectoriesInsideTheCheckout(t *testing.T)
 func buildAt(t *testing.T, source, out, version string, src Source, tc *fakeToolchain, extra ...string) (string, string) {
 	t.Helper()
 	var o, e bytes.Buffer
-	args := append([]string{"build", "--version", version, "--out", out, "--source", source, "--platform", "linux-amd64"}, extra...)
+	args := append([]string{"build", "--version", version, "--out", out, "--source", source, "--platform", "linux-amd64", "--without-sprint-release"}, extra...)
 	code := Run("nova-update", args, &o, &e, Deps{Toolchain: tc, Source: src})
 	require.Equal(t, 0, code, "stdout:%s\nstderr:%s", o.String(), e.String())
 	return o.String(), e.String()
@@ -194,7 +194,7 @@ func TestBuildGateReportPrintsTheOpenEdgesAndBuilds(t *testing.T) {
 	run := func(extra ...string) (int, string, string, *fakeToolchain) {
 		tc := &fakeToolchain{}
 		var o, e bytes.Buffer
-		args := append([]string{"build", "--version", "v0.1.0", "--out", t.TempDir(), "--source", sourceTree(t), "--cli", cli, "--receipts", receipts}, extra...)
+		args := append([]string{"build", "--version", "v0.1.0", "--out", t.TempDir(), "--source", sourceTree(t), "--cli", cli, "--receipts", receipts, "--without-sprint-release"}, extra...)
 		code := Run("nova-update", args, &o, &e, Deps{Toolchain: tc, Dogfood: verdict, Source: &fakeSource{commit: "c1"}})
 		return code, o.String(), e.String(), tc
 	}
