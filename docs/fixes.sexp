@@ -74,4 +74,10 @@
    :text "The member asks Room every tick before the drain return, so a member that drained under its
     disk floor stops saying no room once the disk is freed (nova-sprint tla/NoRoom.tla,
     WordIsThisTicks)."
-   :origin "v1.2.5 candidate 5; the PR #5569 follow-up")))
+   :origin "v1.2.5 candidate 5; the PR #5569 follow-up")
+  (fix "worker-brief-never-rewrites-history" :release "v1.2.6" :status "planned"
+   :title "The worker brief says never amend, rebase or reset onto origin"
+   :text "The child rule no-rewrite-history in fleet/child-rules.txt, byte for byte the copy nova-sprint embeds
+    (its add refuses a held rules file that differs), stops children rewriting history, which caused the
+    does-not-descend refusals. A test pins the file's digest in both repositories."
+   :origin "v1.2.5 candidate list")))
