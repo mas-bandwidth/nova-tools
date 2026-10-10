@@ -2,7 +2,7 @@
 # not yet executed by a test through the comparator (SPEC-TOOLWORK.md documents rule 6).
 #
 # Every $  line in a fenced block of README.md, docs/USAGE.md, docs/CLI.md and
-# docs/nova-swarm-quickstart.md, every example: line of a `help` banner pasted in
+# docs/nova-worker-quickstart.md, every example: line of a `help` banner pasted in
 # a fenced block of those docs, and every example: line of every tool's own
 # `help` banner under cmd/ (both listed as `example: <line>`), is either executed
 # by a test through the comparator (compared_examples.txt) or listed here.

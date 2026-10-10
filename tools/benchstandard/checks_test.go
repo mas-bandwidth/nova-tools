@@ -522,8 +522,8 @@ func TestNovaBinRows(t *testing.T) {
 	t.Run("a wrong version", func(t *testing.T) {
 		t.Parallel()
 		b := conformingBench(t)
-		b.h.reply("nova-swarm", []string{"version"}, out("nova-swarm v0.0.1\n"))
-		b.drift(t, "nova-swarm version [nova-swarm v0.0.1] want "+benchWant)
+		b.h.reply("nova-worker", []string{"version"}, out("nova-worker v0.0.1\n"))
+		b.drift(t, "nova-worker version [nova-worker v0.0.1] want "+benchWant)
 	})
 	t.Run("--version when version is refused", func(t *testing.T) {
 		t.Parallel()

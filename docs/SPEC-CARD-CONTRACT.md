@@ -9,7 +9,7 @@ finishes the card, `gh pr review` finishes a read. The child pushes nothing and 
 the member does both, outside the wall, with its own credential.
 
 The code is `internal/cardcontract` (the frame, the result shape, the profiles and their shims),
-`internal/member` (the finish), `cmd/nova-swarm` (native installs the frame; the member pushes
+`internal/member` (the finish), `cmd/nova-worker` (native installs the frame; the member pushes
 and opens the pull request). The model is `tla/CardContract.tla`.
 
 ## 1. The layers, bottom up
@@ -118,7 +118,7 @@ rework staged from the immediately previous attempt only). `nova-sprint card <id
 attempt's pushed head (`head=`, `-` when none) and one `NEXT` line: the attempt whose head the next
 attempt starts from, or the base (`TestCardShowsTheHeadTheNextAttemptStartsFrom`).
 
-The member stages that work at the tip of the card's base branch (docs/SPEC-SWARM.md, "A rework
+The member stages that work at the tip of the card's base branch (docs/SPEC-WORKER.md, "A rework
 is staged at its base branch's tip"; nova-tools#5215): origin's branch is fetched when the rework
 is staged, and `base_head`'s work is carried onto its tip as one commit, a squashed three-way merge;
 a head that already descends from the tip is staged as it is, work the tip already holds adds
@@ -216,7 +216,7 @@ commit a full sha or its first twelve; a line whose commit is any other word is 
 not-done (`TestAStepLineWhoseCommitIsAWordIsADefect`). `cardtree.ParseVerdicts` reads the body's
 lines, and the member's finish of a tree card is judged from them (`member.treeFinish`,
 `TestAFailedStepTwoOfThreeLandsStepOneAndWritesTheRemainder`). A script card's body is written by
-`nova-swarm step --result`, one line per step it ran.
+`nova-worker step --result`, one line per step it ran.
 
 The rules on the shape:
 
@@ -304,7 +304,7 @@ A work card's finish is judged in one place, `member.Judge`, cited from the mode
 The child has ended when native's process has. Native's output goes to a file in the slot,
 never a pipe back to the member, so what a harness left running cannot hold the finish; and
 native, which runs the harness as the leader of its own process group, ends what the harness
-left in that group before it exits and names it on its line (docs/SPEC-SWARM.md, `native`).
+left in that group before it exits and names it on its line (docs/SPEC-WORKER.md, `native`).
 
 **A provider failure is not the card's** (`tla/CardContract.tla`, `ProviderFailure`; its
 invariants `ProviderIsNotFailedWork`, `RedealBound`, `BoundJudgedOnce` and
@@ -480,7 +480,7 @@ harness (`plain` for a family with none): add the steps the family's models foll
 commit, push and finish), and the test asserts the member pushed the child's commit to the
 card's branch on origin and, when the child ran `gh pr create`, opened the pull request with
 its title and body. Run it with `go test -tags functional -run TestTheScriptedChildEndToEnd
-./cmd/nova-swarm/`; it needs no store and no network.
+./cmd/nova-worker/`; it needs no store and no network.
 
 A friend's card is staged by her own daemon, not by native: for each held work card whose
 brief it writes, `nova-friend run` clones the card's `REPO` at its `BASE` on the card's branch
@@ -489,7 +489,7 @@ this shape (`friend.JobText`: the checkout, the branch and its push, the outbox 
 finish); a repository her account cannot reach is a judgment to the coordinator
 (docs/SPEC-FRIEND.md, "The daemon stages every job it writes").
 
-The card template (`nova-swarm template --name card`) ends with STEP 6, "End as JOB.md says":
+The card template (`nova-worker template --name card`) ends with STEP 6, "End as JOB.md says":
 under a profile whose JOB.md ends the card with its pull request, there is nothing else to write;
 under one that asks for RESULT.md, the shape above.
 
@@ -594,7 +594,7 @@ with no clock and no store). What it holds:
   The output is the directory, its `manifest.tsv` (id, file, test, wave, deps)
   and one `CARDS OK dir= cards= waves= tier=` line.
 
-`nova-swarm lint --card` is the fuller contract lint and is run over a
+`nova-worker lint --card` is the fuller contract lint and is run over a
 generated directory by the coordinator before the add; its `no-sandbox` check
 matches the word `nova-sandbox` on any line, so a card whose PATHS name
 `cmd/nova-sandbox/` draws it though the add admits the card.

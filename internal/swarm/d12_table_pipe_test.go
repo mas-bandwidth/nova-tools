@@ -18,7 +18,7 @@ import (
 // cells out of three and the state column landed on prose: not one of rule 15's three
 // words, so the whole report was quarantined and five findings were lost to triage.
 //
-// A backtick span is a QUOTE, and a quote is text. Rule 2 (SPEC-SWARM.md:82-84) requires
+// A backtick span is a QUOTE, and a quote is text. Rule 2 (SPEC-WORKER.md:82-84) requires
 // every finding to quote its rule VERBATIM -- and this tool's own rules are grammar lines
 // full of `|`. A reader obeying rule 2 could not write a row about them. The parser gains
 // no opinion here and salvages nothing: it reads the cell boundaries of the row the

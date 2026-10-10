@@ -1,13 +1,13 @@
 // Package harness is the vocabulary of the harnesses a card's child runs under: the one
 // word a route row, a packet and a launch name a harness by. It is a leaf (standard
-// library only) so nova-config's route kind, the sprint's route and nova-swarm's launcher
+// library only) so nova-config's route kind, the sprint's route and nova-worker's launcher
 // all spell the words from one list.
 //
 // A harness is known by the name of its program. opencode is the harness every provider
 // row of the providers table launches (internal/swarm providers.go); claude, codex and
 // grok are the headless harnesses of the heavy tier (the owner, 2026-10-04): subscription
 // logins on one machine, each run as a one-shot child printing its own usage, and the
-// route row names which (docs/SPEC-SWARM.md, the headless harnesses).
+// route row names which (docs/SPEC-WORKER.md, the headless harnesses).
 package harness
 
 import (

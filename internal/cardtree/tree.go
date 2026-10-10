@@ -265,7 +265,7 @@ const (
 	CheckScript = "script-step"
 )
 
-// Remedies is the remedy of each rule token, for `nova-swarm lint --rules`.
+// Remedies is the remedy of each rule token, for `nova-worker lint --rules`.
 var Remedies = map[string]string{
 	CheckNested: "a dotted step `STEP <n>.<k>.` sits under its parent `STEP <n>.`, and the children of one parent are numbered 1, 2, 3 with no gap and no repeat",
 	CheckStep:   "a work step (one with COMMIT:) carries its own PATHS:, COMMIT: and VERDICT: lines, every glob of its PATHS: is a relative path inside the checkout and one of the card's PATHS: or NEW: globs, a step with PATHS:, VERDICT:, SCRIPT: or POST: and no COMMIT: is missing its COMMIT:, and From: STEP <n> names a step of the card",

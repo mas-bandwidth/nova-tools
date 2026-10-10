@@ -9,7 +9,7 @@ package bench
 // every 15 to 30 s and the loop's line said only "step=gate": nothing said what refused the
 // copy, and the gate was asked again from the top.
 //
-// THE STAGE. The bench already keeps the repository's bare mirror (nova-swarm member's
+// THE STAGE. The bench already keeps the repository's bare mirror (nova-worker member's
 // NOVA_SWARM_MIRRORS, swarm.MirrorPath: ~/nova-bench/mirror/<repo>.git, gc.auto=0, only
 // ever fetched into). The lander pushes the gated tip to a temporary ref on the remote
 // (refs/nova-gate/<batch>, WithGateRef), the bench fetches that one ref into its mirror

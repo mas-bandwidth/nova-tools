@@ -766,7 +766,7 @@ jobs:
         # The budget is 60 s by the two-minute law, except on the Intel Mac
         # benches (about 3x slower per core than a macOS runner), where the
         # alert prints every CI-SLOW line and the budget is 300 s until
-        # cmd/nova-swarm and internal/swarm are fast. The first
+        # cmd/nova-worker and internal/swarm are fast. The first
         # night of this check found eight packages between 77 s and 272 s on
         # a macOS runner at load 60 and an Intel Mac at load 2. All of it
         # lives in the Makefile's `test` target: the Makefile is the
@@ -1085,7 +1085,7 @@ jobs:
       - name: deal this shard's packages
         # The heavy packages first, one per shard: two heavy packages dealt by
         # count alone once shared shard 3 of 4 and the ubuntu leg was cancelled
-        # at 123 s. cmd/nova-swarm is the one heavy command left (the git bus,
+        # at 123 s. cmd/nova-worker is the one heavy command left (the git bus,
         # 46 s -short, is removed). Then every other package
         # round-robin in go list order (stable: go list sorts), continuing after the
         # heavy ones. One line of space-separated packages, so vet and test below
@@ -1093,7 +1093,7 @@ jobs:
         # internal/ci: TestHostedDealSplitsTheHeavyPackages (hostedHeavy).
         shell: bash
         run: |
-          "$RUNNER_TEMP/ci" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "cmd/nova-swarm"
+          "$RUNNER_TEMP/ci" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "cmd/nova-worker"
 
       - name: fetch dev's ancestry for the hosted ratchet
         # Main already fetched this ancestry above. Other refs need it only
@@ -1131,7 +1131,7 @@ jobs:
         shell: bash
         run: |
           # The hosted legs run -short: the multi-process and thousand-note fixture tests
-          # in cmd/nova-swarm are gated
+          # in cmd/nova-worker are gated
           # behind testing.Short() and skip here, so a hosted leg answers inside the
           # two-minute budget instead of hitting Go's 10 m default on main (run
           # 35052889521, panic: test timed out after 10m0s). The self-hosted shards keep

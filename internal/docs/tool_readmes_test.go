@@ -17,6 +17,14 @@ import (
 // writes none for it and the scan below skips it.
 const flagshipReadmeTool = "nova-sprint"
 
+// shimTools are the one-release compatibility shims: a directory under cmd/
+// whose binary is a passthrough to another tool, not a tool of its own. It has
+// no verbs, no banner and no docs/CLI.md section of its own, so the six-section
+// guide and the release catalogue's row are the tool's (nova-worker's), not the
+// shim's. nova-swarm is the v1.3 shim for nova-worker and goes in the release
+// after it (cmd/nova-swarm/README.md).
+var shimTools = map[string]bool{"nova-swarm": true}
+
 // readmeRequiredSections are the sections a tool's standalone README must carry:
 // what the tool is, why a reader uses it, the one install line, a first run the
 // docs tests execute, its verbs linked to its docs/CLI.md section, and its spec.
@@ -75,7 +83,7 @@ func TestEveryToolHasAStandaloneReadme(t *testing.T) {
 		tool := tool
 		t.Run(tool, func(t *testing.T) {
 			t.Parallel()
-			if tool == flagshipReadmeTool {
+			if tool == flagshipReadmeTool || shimTools[tool] {
 				return
 			}
 			rel := filepath.Join("cmd", tool, "README.md")
@@ -124,7 +132,7 @@ func TestEveryToolHasAStandaloneReadme(t *testing.T) {
 	require.NoError(t, err)
 	top := string(topRaw)
 	for _, tool := range tools {
-		if tool == flagshipReadmeTool {
+		if tool == flagshipReadmeTool || shimTools[tool] {
 			continue
 		}
 		assert.Contains(t, top, "cmd/"+tool+"/README.md", "README.md does not link cmd/%s/README.md", tool)

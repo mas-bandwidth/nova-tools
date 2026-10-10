@@ -518,7 +518,7 @@ func TestAClassRedCardPassesTheLint(t *testing.T) {
 	t.Parallel()
 	for _, r := range []ClassRed{
 		{Class: "staticcheck", Run: "go test -tags functional ./internal/ci/", Test: "internal/ci TestStaticcheckFindings",
-			Files: []string{"cmd/nova-swarm/x_test.go"}, Finding: "exit status 1: cmd/nova-swarm/x_test.go:12:6: func helper is unused (U1000)"},
+			Files: []string{"cmd/nova-worker/x_test.go"}, Finding: "exit status 1: cmd/nova-worker/x_test.go:12:6: func helper is unused (U1000)"},
 		{Class: "gofmt", Run: "gofmt -l .", Files: []string{"cmd/nova-secrets/main.go"}, Finding: "it printed: cmd/nova-secrets/main.go"},
 		{Class: "class-tests", Run: "go test ./internal/ci/ ./internal/docs/", Test: "internal/docs TestNovaToolsIsEveryCommand", Finding: "exit status 1: --- FAIL: TestNovaToolsIsEveryCommand"},
 	} {

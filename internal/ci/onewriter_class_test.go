@@ -32,7 +32,7 @@ import (
 const onewriterModule = "github.com/mas-bandwidth/nova-tools/"
 
 // onewriterWorkerRoots are the packages a worker's machine runs for a sprint.
-var onewriterWorkerRoots = []string{"cmd/nova-swarm", "internal/member", "internal/sprintwire"}
+var onewriterWorkerRoots = []string{"cmd/nova-worker", "internal/member", "internal/sprintwire"}
 
 // onewriterStore are the import path prefixes that open a sprint's store.
 var onewriterStore = []string{
@@ -135,5 +135,5 @@ func TestOneWriterFindsAChainToTheStore(t *testing.T) {
 	assert.Equal(t, []string{"cmd/outside", "pkg/bridge", onewriterModule + "internal/sprint/store"}, onewriterReach(imports, "cmd/outside", map[string]bool{}), "and read, its chain is followed wherever it stands in the tree")
 	roots := append([]string(nil), onewriterWorkerRoots...)
 	sort.Strings(roots)
-	assert.Equal(t, []string{"cmd/nova-swarm", "internal/member", "internal/sprintwire"}, roots)
+	assert.Equal(t, []string{"cmd/nova-worker", "internal/member", "internal/sprintwire"}, roots)
 }

@@ -157,13 +157,13 @@ type liveAgent struct {
 	// status's lanes, n:session:card), the work a reinstall would cut.
 	Lanes int `json:"lanes"`
 	// Holds: its process is one the seat's window stops (a nova-sprint, or a
-	// nova-swarm member), whatever its plist runs first (a shell that execs it).
+	// nova-worker member), whatever its plist runs first (a shell that execs it).
 	Holds bool `json:"holds"`
 }
 
 // liveProcess is one process running a nova tool: the tool, and whether it
 // is server or member work of this bin directory the seat's window stops (its
-// nova-sprint, or its nova-swarm as a member).
+// nova-sprint, or its nova-worker as a member).
 type liveProcess struct {
 	PID   int    `json:"pid"`
 	Tool  string `json:"tool"`
@@ -245,7 +245,7 @@ func (p liveProbe) read(ctx context.Context) (liveManifest, error) {
 
 // processes is ps's every process that runs a nova tool, this one aside. A
 // process holds the seat's window when it runs this bin directory's
-// nova-sprint, or its nova-swarm as a member: its first argument, a bare name
+// nova-sprint, or its nova-worker as a member: its first argument, a bare name
 // found on PATH and a link followed, is in the bin directory.
 func (p liveProbe) processes(ctx context.Context) []liveProcess {
 	out := []liveProcess{}
@@ -281,7 +281,7 @@ func (p liveProbe) processes(ctx context.Context) []liveProcess {
 			continue
 		}
 		mine := filepath.Dir(path) == bin
-		holds := mine && (tool == "nova-sprint" || (tool == "nova-swarm" && slices.Contains(f[2:], "member")))
+		holds := mine && (tool == "nova-sprint" || (tool == "nova-worker" && slices.Contains(f[2:], "member")))
 		out = append(out, liveProcess{PID: pid, Tool: tool, Args: strings.Join(f[1:], " "), Holds: holds})
 	}
 	return out

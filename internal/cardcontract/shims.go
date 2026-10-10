@@ -22,7 +22,7 @@ func prelude(name, family string, f Frame, s Staged) string {
 		base = f.BaseRef
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "#!/bin/sh\n# nova-swarm %s shim, profile %s (docs/SPEC-CARD-CONTRACT.md): the card's frame,\n", name, family)
+	fmt.Fprintf(&b, "#!/bin/sh\n# nova-worker %s shim, profile %s (docs/SPEC-CARD-CONTRACT.md): the card's frame,\n", name, family)
 	b.WriteString("# met through the commands the child knows; nothing reaches a forge from inside the wall.\n")
 	for _, kv := range [][2]string{
 		{"NOVA_GIT", s.Git}, {"NOVA_JOB", s.Job}, {"NOVA_STAGED", s.Repo}, {"NOVA_HEAD", s.Head},
@@ -140,7 +140,7 @@ const gitClone = `clone)
 	"$nova_root/"*) mkdir -p "$nova_root/.git/info" && printf '/%s/%s\n' "${nova_parent#"$nova_root"}" "$(basename "$nova_dir")" | sed 's#^//*#/#' >> "$nova_root/.git/info/exclude" ;;
 	esac
 	echo "Cloning into '$nova_dir'..." >&2
-	echo "nova-swarm: '$nova_dir' is the staged checkout of $NOVA_REPO at $NOVA_HEAD on branch $NOVA_BRANCH; work and commit there" >&2
+	echo "nova-worker: '$nova_dir' is the staged checkout of $NOVA_REPO at $NOVA_HEAD on branch $NOVA_BRANCH; work and commit there" >&2
 	exit 0 ;;
 `
 

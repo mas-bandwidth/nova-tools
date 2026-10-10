@@ -148,7 +148,7 @@ func (p Policy) RemoveUnder(root, path string) error {
 //
 // They are the only four: a sweep of the repository for os.UserHomeDir found four other
 // callers (pulse/statushtmlrows.go at 27c9ffc66, pulse/harvest_working.go at 27c9ffc66,
-// the deleted nova-merge tool's batch.go, cmd/nova-swarm/native.go) and not one of them COMPARES a path to
+// the deleted nova-merge tool's batch.go, cmd/nova-worker/native.go) and not one of them COMPARES a path to
 // the home -- each joins onto it or hands it to a command -- so none of them can make this
 // mistake.
 //

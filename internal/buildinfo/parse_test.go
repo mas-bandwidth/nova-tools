@@ -87,7 +87,7 @@ func TestParseRefusesWhatIsNotAVersionLine(t *testing.T) {
 
 	for _, tc := range []struct{ name, line string }{
 		{"nothing at all", ""},
-		{"a usage refusal, which is what a nova tool prints with no verb", "nova-swarm: no verb given; run: nova-swarm help"},
+		{"a usage refusal, which is what a nova tool prints with no verb", "nova-worker: no verb given; run: nova-worker help"},
 		{"three tokens: the platform is missing", "nova-bus v1 go1.27.1"},
 		{"field three carries no goos/goarch slash", "nova-bus v1 darwin go1.27.1"},
 		{"a fifth token that is not key=value", "nova-bus v1 darwin/arm64 go1.27.1 9c1885748f57"},

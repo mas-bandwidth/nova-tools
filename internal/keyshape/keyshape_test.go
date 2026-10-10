@@ -17,5 +17,5 @@ func TestSecretNameIsTheArgvLogsPredicate(t *testing.T) {
 	for _, name := range []string{"PATH", "HOME", "LANG", "TERM", "NOVA_SWARM_JOB", "XDG_DATA_HOME"} {
 		require.False(t, SecretName(name), "%s was called a secret name", name)
 	}
-	require.True(t, SecretName("MONKEY"), "the predicate stopped being a substring test; cmd/nova-swarm's argv log and shell shim assume it is one")
+	require.True(t, SecretName("MONKEY"), "the predicate stopped being a substring test; cmd/nova-worker's argv log and shell shim assume it is one")
 }

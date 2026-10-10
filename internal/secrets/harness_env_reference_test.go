@@ -19,7 +19,7 @@ import (
 //	 DRIFT, because a copied value outlives its rotation in a file nobody watches."
 //
 // A harness config is the provider declaration a worker's description becomes:
-// its apiKey is the reference {env:NAME}, never the value (SPEC-SWARM "native
+// its apiKey is the reference {env:NAME}, never the value (SPEC-WORKER "native
 // --worker"). This test exercises the real production writer in
 // internal/swarm/worker.go (Worker.HarnessConfig), failing if the writer emits
 // a literal key or raw variable name rather than an {env:NAME} reference.

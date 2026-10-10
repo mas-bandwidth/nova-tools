@@ -115,7 +115,7 @@ func TestStageCardRefusesACardValueGitWouldReadAsAnOption(t *testing.T) {
 // A stage borrows the bench mirror's objects (`--shared`): no copy of the object graph per
 // job (a 36-thread bench, 2026-10-02: `--dissociate` took 21 s at load 31 against 3.4 s shared, and
 // 73-79 s median under the afternoon's load, over a 120 s wall). A repository that is not
-// a bench mirror keeping its objects is copied in as before (docs/SPEC-SWARM.md, the clone).
+// a bench mirror keeping its objects is copied in as before (docs/SPEC-WORKER.md, the clone).
 func TestAStageBorrowsTheMirrorsObjects(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, []string{"clone", "-q", "--shared", "--", "/m.git", "/j/repo"}, MirrorCloneArgs("/m.git", "/j/repo", true))

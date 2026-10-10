@@ -74,7 +74,7 @@ unfilled <...> lines, which the add does not read, one LINT DRIFT line each; and
 checks: a tier on line 1, a TEST whose package PATHS names, no name --name gives outside
 double-quoted words, no card --dropped gives. generate holds every brief the same before it
 writes. A sprint initialised with --rules holds a brief to that file at
-the add. template prints nova-swarm's card template, the shape every generated brief has.
+the add. template prints nova-worker's card template, the shape every generated brief has.
 
 what it prints:
   CARDS OK dir=<dir> cards=<n> waves=<k> tier=<t> [frontier=<n>] [shared-paths=yes]   then manifest.tsv in <dir> (--dry-run: the manifest on stdout, dry-run=yes)

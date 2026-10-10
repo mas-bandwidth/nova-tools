@@ -50,8 +50,8 @@ import (
 // lander's --base decides where it lands, and add cannot know it).
 
 // BriefBaseRemedies is what each brief token wants, in the table shape of CardBaseRemedies and
-// beside it: these hold a brief at add (nova-sprint), not a card under `nova-swarm lint`, so
-// they are their own table and `nova-swarm lint --rules` does not count them as its checks.
+// beside it: these hold a brief at add (nova-sprint), not a card under `nova-worker lint`, so
+// they are their own table and `nova-worker lint --rules` does not count them as its checks.
 // paths-at-base and donewhen-test-name answer from CardBaseRemedies.
 var BriefBaseRemedies = map[string]string{
 	"paths-cover-named":    "every repository path START: and THE TASK name as a file to change is in PATHS: (or NEW:); mark a START entry the card only reads `(read)`; apply the corrected PATHS: line add printed",

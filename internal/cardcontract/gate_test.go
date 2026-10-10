@@ -24,26 +24,26 @@ func gateTree(t *testing.T, files map[string]string) string {
 }
 
 // gateFixture is the shape of nova-tools at the read: a package the diff touches, a package
-// whose test reads docs/SPEC-SWARM.md, and internal/ci, the class tests the pull request's
+// whose test reads docs/SPEC-WORKER.md, and internal/ci, the class tests the pull request's
 // CI runs on every change, with a test that builds every command and a test that reads the
 // doc.
 var gateFixture = map[string]string{
 	"internal/sprint/x.go":                "package sprint\n",
 	"internal/sprint/x_test.go":           "package sprint\n",
 	"internal/swarm/swarm.go":             "package swarm\n",
-	"internal/swarm/doc_test.go":          "package swarm\n\nfunc TestDoc(t *testing.T) { os.ReadFile(filepath.Join(\"..\", \"..\", \"docs\", \"SPEC-SWARM.md\")) }\n",
-	"internal/other/other_test.go":        "package other\n\n// SPEC-SWARM.md says so in prose, which reads nothing\n",
+	"internal/swarm/doc_test.go":          "package swarm\n\nfunc TestDoc(t *testing.T) { os.ReadFile(filepath.Join(\"..\", \"..\", \"docs\", \"SPEC-WORKER.md\")) }\n",
+	"internal/other/other_test.go":        "package other\n\n// SPEC-WORKER.md says so in prose, which reads nothing\n",
 	"internal/ci/build_test.go":           "package ci\n\nfunc TestBuildsEveryCommand(t *testing.T) { exec.Command(\"go\", \"build\", \"./cmd/...\") }\n",
-	"internal/ci/roots_class_test.go":     "package ci\n\nfunc TestRootsAreDocumented(t *testing.T) { read(\"docs/SPEC-SWARM.md\") }\n\nfunc TestRootsHelper(t *testing.T) {}\n",
+	"internal/ci/roots_class_test.go":     "package ci\n\nfunc TestRootsAreDocumented(t *testing.T) { read(\"docs/SPEC-WORKER.md\") }\n\nfunc TestRootsHelper(t *testing.T) {}\n",
 	"internal/ci/ci.go":                   "package ci\n",
-	"docs/SPEC-SWARM.md":                  "# swarm\n",
+	"docs/SPEC-WORKER.md":                  "# swarm\n",
 	"docs/OTHER.md":                       "# other\n",
 	"internal/sprint/testdata/golden.txt": "golden\n",
 }
 
 // A read runs the tests of the packages its diff touches and of the packages whose tests read
 // a doc it changes (nova-tools#5111), never ./internal/ci/ whole: a diff touching
-// internal/sprint/x.go and docs/SPEC-SWARM.md is gated on internal/sprint and internal/swarm,
+// internal/sprint/x.go and docs/SPEC-WORKER.md is gated on internal/sprint and internal/swarm,
 // and internal/ci, whose functional tests build every command, runs only the tests that read
 // the changed doc (a 36-thread bench, 2026-10-02: 16 reads each running ./internal/ci/ kept the
 // machine 85% in the kernel).
@@ -55,7 +55,7 @@ func TestAReadIsGatedOnThePackagesItsDiffTouches(t *testing.T) {
 		changed []string
 		want    Gate
 	}{
-		{"a package and a doc", []string{"internal/sprint/x.go", "docs/SPEC-SWARM.md"},
+		{"a package and a doc", []string{"internal/sprint/x.go", "docs/SPEC-WORKER.md"},
 			Gate{Packages: []string{"./internal/sprint", "./internal/swarm"}, Runs: []GateRun{{Pkg: "./internal/ci", Tests: []string{"TestRootsAreDocumented", "TestRootsHelper"}}}}},
 		{"a package alone", []string{"internal/sprint/x.go"}, Gate{Packages: []string{"./internal/sprint"}}},
 		{"a doc no test reads", []string{"docs/OTHER.md"}, Gate{}},

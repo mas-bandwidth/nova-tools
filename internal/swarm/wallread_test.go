@@ -144,7 +144,7 @@ func TestWriteBlockedResultNamesTheBlockAndCannotBeGreen(t *testing.T) {
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
 	body := string(raw)
-	for _, want := range []string{"RESULT: BLOCKED card-8311", "WALL REFUSED write /etc/hosts task=card-8311 step=2", "written-by: nova-swarm native"} {
+	for _, want := range []string{"RESULT: BLOCKED card-8311", "WALL REFUSED write /etc/hosts task=card-8311 step=2", "written-by: nova-worker native"} {
 		require.Contains(t, body, want, "the blocked report carries %q:\n%s", want, body)
 	}
 	rep := ParseReport(raw)

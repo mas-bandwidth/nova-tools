@@ -21,7 +21,7 @@ import (
 
 // The wall's child stays in the CALLER's process group, and the caller owns pgid and
 // reaping. A swarm supervisor puts each job in its own group and reaps that group when
-// the job's deadline passes (SPEC-SWARM rule 11); if the tool put its child in a group of
+// the job's deadline passes (SPEC-WORKER rule 11); if the tool put its child in a group of
 // its own, a command that forked a background child left that child outside the group the
 // supervisor kills — the reaper reported survivors=0 while a process was still running,
 // which is the silent failure the rule exists to prevent.

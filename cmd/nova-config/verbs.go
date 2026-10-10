@@ -48,7 +48,7 @@ var kindExamples = []struct{ kind, verb, line string }{
 	{"sprint", "set", "nova-config sprint set --coordinator f1 --actor a1 --file try.json"},
 	{"sprint", "show", "nova-config sprint show --file try.json"},
 	{"sprint", "history", "nova-config sprint history --file try.json"},
-	{"loop", "add", `nova-config loop add reader-m1 --machine m1 --argv '["nova-swarm","member","--as","reader-m1","--reader"]' --keepalive true --actor a1 --file try.json`},
+	{"loop", "add", `nova-config loop add reader-m1 --machine m1 --argv '["nova-worker","member","--as","reader-m1","--reader"]' --keepalive true --actor a1 --file try.json`},
 	{"loop", "set", "nova-config loop set reader-m1 --enabled false --actor a1 --file try.json"},
 	{"loop", "list", "nova-config loop list --file try.json"},
 	{"loop", "show", "nova-config loop show reader-m1 --file try.json"},

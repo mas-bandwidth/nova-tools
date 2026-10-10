@@ -137,7 +137,7 @@ Two tools have a `quickstart` verb — `nova-memory` and `nova-check` — and
 `nova-sandbox`, `nova-self-talk`, `nova-fuse` and `nova-cairn` have none. Each entry below
 names what its own first trial needs.
 
-### nova-swarm — more work at once
+### nova-worker — more work at once
 
 **Try it when** you have bounded, independent jobs and workers configured to run
 them, and doing them one after another is what is slowing you down.
@@ -151,11 +151,11 @@ harness and provider setup. A batch also needs a TSV naming its cards.
 uses Landlock when the running kernel supports it. Windows has no containment
 backend yet.
 
-**First trial.** `nova-swarm template --name read-pr` prints the read-pr
-template. `nova-swarm lint --rules` prints the lint rules. Neither starts a
+**First trial.** `nova-worker template --name read-pr` prints the read-pr
+template. `nova-worker lint --rules` prints the lint rules. Neither starts a
 worker nor spends a token. See the
-[first-run transcript](TESTS.md#nova-swarm) and
-[nova-swarm in the command reference](CLI.md#nova-swarm).
+[first-run transcript](TESTS.md#nova-worker) and
+[nova-worker in the command reference](CLI.md#nova-worker).
 
 **It worked if** several jobs finished inside their deadlines and you could read
 each result and the evidence behind it.

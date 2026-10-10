@@ -12,7 +12,7 @@ import (
 // asks for generic configuration examples and an agreement/evidence template "rather than
 // private security details", and this repository's one mechanism for a practice a caller
 // must not retype is a template in the binary (WORKER-CARDS.md: "a promoted practice lands
-// in nova-swarm template"). Every wanted string below is a sentence of that issue: the
+// in nova-worker template"). Every wanted string below is a sentence of that issue: the
 // attributed proposal, the friend's own agreement half where missing feedback is pending
 // and never assent, the guarantee table that separates what the OS wall enforces from what
 // only a cooperating harness does, the generic wall/fence/seat/launcher examples with

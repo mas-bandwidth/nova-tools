@@ -303,7 +303,7 @@ func TestBenchesComeFromCIYML(t *testing.T) {
 }
 
 // PROBE 6: a package over its budget whose every test is under its own (many
-// small tests, the shape of cmd/nova-swarm's 245) is one package line naming
+// small tests, the shape of cmd/nova-worker's 245) is one package line naming
 // its top three tests by time, and no test line.
 func TestSlowTestsManySmallTestsNameThePackageAndItsTopThree(t *testing.T) {
 	t.Parallel()

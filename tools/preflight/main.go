@@ -27,7 +27,7 @@
 //
 //	example:
 //	  go run ./tools/preflight ./internal/swarm
-//	  go run ./tools/preflight -run TestLease ./internal/swarm ./cmd/nova-swarm
+//	  go run ./tools/preflight -run TestLease ./internal/swarm ./cmd/nova-worker
 //	  make preflight PKGS=./internal/swarm RUN=TestLease
 package main
 

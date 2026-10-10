@@ -23,13 +23,13 @@ seven — `nova-table` (tables of ordered sets over Redis), `nova-redis` (the
 local Redis instance and its scratch verbs), `nova-config` (the permanent
 configuration, in Postgres, applied into Redis), `nova-ci` (the checks CI runs
 on its own test output), `nova-sandbox` (one command, contained by the OS),
-`nova-cairn` (optional checkpoints), `nova-swarm` (bounded worker runs and card
+`nova-cairn` (optional checkpoints), `nova-worker` (bounded worker runs and card
 batches) — and the four above each have their own normative text under `docs/` ([SPEC-TOKENS.md](SPEC-TOKENS.md),
 [SPEC-SECRETS.md](SPEC-SECRETS.md), [SPEC-UPDATE.md](SPEC-UPDATE.md),
 [SPEC-VERSION.md](SPEC-VERSION.md), [nova-table/README.md](nova-table/README.md),
 [SPEC-REDIS.md](SPEC-REDIS.md), [SPEC-CONFIG.md](SPEC-CONFIG.md),
 [SPEC-CI.md](SPEC-CI.md), [SPEC-SANDBOX.md](SPEC-SANDBOX.md),
-[SPEC-CAIRN.md](SPEC-CAIRN.md), [SPEC-SWARM.md](SPEC-SWARM.md)); this file states
+[SPEC-CAIRN.md](SPEC-CAIRN.md), [SPEC-WORKER.md](SPEC-WORKER.md)); this file states
 the count, the layer and the Conventions they all keep.
 
 This spec is normative. If the code and this document disagree, one of them has a

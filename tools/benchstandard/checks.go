@@ -53,7 +53,7 @@ func wallExecRoots(home, resolvDir string) []string {
 // which must report the wanted version.
 var novaBins = []string{
 	"nova-bus", "nova-check", "nova-fuse", "nova-memory", "nova-sandbox",
-	"nova-secrets", "nova-self-talk", "nova-swarm", "nova-tokens", "nova-update",
+	"nova-secrets", "nova-self-talk", "nova-worker", "nova-tokens", "nova-update",
 	"nova-version",
 }
 

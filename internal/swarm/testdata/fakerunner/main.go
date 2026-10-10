@@ -2,8 +2,8 @@
 // executable on every platform.
 //
 // WHY IT EXISTS. The batch tests used to write POSIX shell scripts -- runner.sh, writing.sh,
-// silent.sh, record.sh and a dozen more -- and hand their paths to `nova-swarm batch
-// --runner`. That is not what a runner is: SPEC-SWARM's usage line says
+// silent.sh, record.sh and a dozen more -- and hand their paths to `nova-worker batch
+// --runner`. That is not what a runner is: SPEC-WORKER's usage line says
 // `--runner <cmd>`, batch.go's own refusal says "--runner is required; it wants the command
 // one process per card runs", and batch.go starts it with
 // `exec.Command(in.Runner, label, slot, model, card, root)` -- a plain exec of an
@@ -21,7 +21,7 @@
 // branched.
 //
 // Argv is the contract. A `--runner` fixture is handed label, slot, model, card path, root;
-// the same binary stands in for nova-swarm itself, so it is also run as `nova-swarm native`
+// the same binary stands in for nova-worker itself, so it is also run as `nova-worker native`
 // with the native flags (issue #636), parsed the way native.go parses them.
 package main
 
@@ -77,8 +77,8 @@ func main() {
 		return
 	}
 	var r *runner
-	// A runnerless batch (issue #636) runs the card through `nova-swarm native`, so a fixture
-	// standing in for the nova-swarm binary itself is handed the native flags, not the five
+	// A runnerless batch (issue #636) runs the card through `nova-worker native`, so a fixture
+	// standing in for the nova-worker binary itself is handed the native flags, not the five
 	// runner arguments. The steps are the same; parsing the flags keeps the self's `{label}`,
 	// `{root}` and guards as exact as a `--runner` fixture's. A native invocation is never
 	// exactly five positional arguments, which is what separates it from the runner contract.
@@ -124,13 +124,13 @@ func nativeRunner(args []string) (*runner, error) {
 	_ = fs.String("deadline", "", "the card's deadline")
 	_ = fs.String("auth", "", "the auth profile")
 	// The bench slot lease (nova-tools#1546) travels with every native launch, so the
-	// fixture standing in for nova-swarm must accept it or a runnerless batch cannot run
-	// here at all. The fixture takes no lease: it is not nova-swarm, and a test that let it
+	// fixture standing in for nova-worker must accept it or a runnerless batch cannot run
+	// here at all. The fixture takes no lease: it is not nova-worker, and a test that let it
 	// pretend to would be testing the fixture.
 	_ = fs.String("slots-store", "", "the bench slot store")
 	_ = fs.String("owner", "", "whose share the lease counts against")
 	// The budget word (rule 13d) travels with every native launch, so the fixture standing
-	// in for nova-swarm must accept it or a runnerless batch cannot run here at all.
+	// in for nova-worker must accept it or a runnerless batch cannot run here at all.
 	tokens := fs.String("tokens", "", "the card's token budget, or `unmetered`")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -143,7 +143,7 @@ func nativeRunner(args []string) (*runner, error) {
 type runner struct {
 	label, slot, model, card, root string
 	// tokens is the budget word the batch hands a runner as its sixth argument, and `native`
-	// as --tokens (SPEC-SWARM rule 13d). The fixture only carries it: deciding what a budget
+	// as --tokens (SPEC-WORKER rule 13d). The fixture only carries it: deciding what a budget
 	// word means is `native`'s, and a fixture that decided would be testing itself.
 	tokens       string
 	job          string

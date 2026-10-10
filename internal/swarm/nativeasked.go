@@ -117,7 +117,7 @@ func WriteAskedResult(jobDir, task, question string) (string, bool, error) {
 // the one that writes the report and the one that refuses to count it as the card's own.
 const (
 	AskedResultPrefix = "RESULT: ASKED "
-	AskedWrittenBy    = "written-by: nova-swarm native (the card published no report of its own)"
+	AskedWrittenBy    = "written-by: nova-worker native (the card published no report of its own)"
 )
 
 // AskedReport reports whether the `RESULT.md` at path is the one this file wrote for a card

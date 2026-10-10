@@ -640,7 +640,7 @@ func remedy(f foldFindings) string {
 		}
 		switch kind {
 		case tokens.KindSwarm:
-			return "a swarm usage file did not parse (" + note + "): its header is the sixteen columns SPEC-SWARM rule 12 names, in order -- " + strings.Join(tokens.SwarmColumns, ", ")
+			return "a swarm usage file did not parse (" + note + "): its header is the sixteen columns SPEC-WORKER rule 12 names, in order -- " + strings.Join(tokens.SwarmColumns, ", ")
 		case tokens.KindProvider:
 			return "a line of a billing export did not parse (" + note + "): the parser is the kind in --provider <kind>:<label>=<path>, and a row carries the columns that kind declares"
 		case tokens.KindClaude, tokens.KindOpenCode:

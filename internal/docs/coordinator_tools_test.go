@@ -23,7 +23,7 @@ import (
 // the tool does not carry is a line that fails the first time it is run. The
 // verbs and flags are read from each tool's own source, never copied here:
 // nova-sprint's verb table (cmd/nova-sprint/verbs.go) and the flags its
-// common.register adds, the usage banner of nova-secrets, nova-swarm and nova-config, and
+// common.register adds, the usage banner of nova-secrets, nova-worker and nova-config, and
 // the tool.Verb table of nova-friend and nova-bus. A flag counts when the
 // verb's synopsis names it and the tool's source registers it.
 
@@ -262,7 +262,7 @@ func readNovaTools(t *testing.T) map[string]novaTool {
 	return map[string]novaTool{
 		"nova-sprint":  sprintTool(t),
 		"nova-secrets": usageTool(t, "nova-secrets"),
-		"nova-swarm":   usageTool(t, "nova-swarm"),
+		"nova-worker":   usageTool(t, "nova-worker"),
 		"nova-config":  usageTool(t, "nova-config"),
 		"nova-friend":  verbTableTool(t, "nova-friend"),
 		"nova-bus":     verbTableTool(t, "nova-bus"),
@@ -293,7 +293,7 @@ func checkCommand(tools map[string]novaTool, words []string) (checked bool, prob
 	}
 	tool, ok := tools[name]
 	if !ok {
-		return true, []string{name + " is a nova tool this test reads no verb table of: map to a verb of nova-sprint, nova-secrets, nova-swarm, nova-config, nova-friend or nova-bus, or teach the test the tool"}
+		return true, []string{name + " is a nova tool this test reads no verb table of: map to a verb of nova-sprint, nova-secrets, nova-worker, nova-config, nova-friend or nova-bus, or teach the test the tool"}
 	}
 	words = words[1:]
 	var verbName string
@@ -449,7 +449,7 @@ func TestEveryCoordinatorToolMapsToARealNovaVerb(t *testing.T) {
 		head := "| Tool | What it does | Replaced by |\n|---|---|---|\n"
 		good := head + "| `a` | x | `NOVA_SPRINT_SERVER=127.0.0.1:6390 nova-sprint where --watch --every 1s` |\n" +
 			"| `b` | x | `nova-secrets exec --store <d> --as <s> --key <k> --sops <p> --only A --require=A -- env A=b nova-sprint friend sync --root <d> --actor <s>` |\n" +
-			"| `c` | x | `nova-friend ping --as <c> --to <f>`, `nova-swarm disk-guard --root <d> --disk-floor 200`, `nova-bus recv --as <me> --forever --exec <cmd>` |\n" +
+			"| `c` | x | `nova-friend ping --as <c> --to <f>`, `nova-worker disk-guard --root <d> --disk-floor 200`, `nova-bus recv --as <me> --forever --exec <cmd>` |\n" +
 			"| `d` | x | card: friend-ping-every; needs `nova-friend ping --every <d>`; PATHS: cmd/nova-friend/main.go |\n"
 		checked, ps := checkCommand(tools, nil)
 		assert.False(t, checked)

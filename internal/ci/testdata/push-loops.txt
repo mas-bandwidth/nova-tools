@@ -19,9 +19,9 @@ cmd/nova-friend/wakeping.go world.wakeFriends wake ping
 cmd/nova-friend/wakeping.go world.wakePass wake ping
 cmd/nova-friend/main.go world.waitPong wake ping pong wait
 
-# the fleet member and reader (cmd/nova-swarm member, internal/member)
-cmd/nova-swarm/member.go cmdMember member pass
-cmd/nova-swarm/member.go memberLoop member pass
+# the fleet member and reader (cmd/nova-worker member, internal/member)
+cmd/nova-worker/member.go cmdMember member pass
+cmd/nova-worker/member.go memberLoop member pass
 internal/member/member.go Member.BeatLoop member beat
 
 # the coordinator's inbox and wake (cmd/nova-sprint)
@@ -52,8 +52,8 @@ cmd/nova-table/watch.go watchLoop table and where displays
 
 # one machine's own samplers, watchdogs and heartbeats
 cmd/nova-sprint/run.go app.storeRTTLoop samplers and watchdogs
-cmd/nova-swarm/nativesample.go liveSampler.loop samplers and watchdogs
-cmd/nova-swarm/slotclean.go nativeRunner.cleaner samplers and watchdogs
+cmd/nova-worker/nativesample.go liveSampler.loop samplers and watchdogs
+cmd/nova-worker/slotclean.go nativeRunner.cleaner samplers and watchdogs
 internal/hostload/sampler.go Sampler.Run samplers and watchdogs
 internal/sandbox/policy.go Policy.watch samplers and watchdogs
 internal/swarm/lease.go startJobLeaseTicking samplers and watchdogs
@@ -74,7 +74,7 @@ cmd/nova-sandbox/runwin.go waitForWSBExit waits and retries
 cmd/nova-sandbox/runwin_windows.go winPlace.RemoveTree waits and retries
 cmd/nova-sprint/backup_out.go startServerTwin waits and retries
 cmd/nova-sprint/snapshot.go redisSource.Save waits and retries
-cmd/nova-swarm/member.go nativeRunner.Start waits and retries
+cmd/nova-worker/member.go nativeRunner.Start waits and retries
 internal/nsprint/testutil/pg/pg.go Server.ready waits and retries
 internal/nsprint/testutil/redis.go startOnce waits and retries
 internal/sandbox/tree.go Tree.KillAndAwait waits and retries

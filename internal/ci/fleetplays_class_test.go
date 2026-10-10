@@ -314,7 +314,7 @@ func TestFleetPlaysReadOnlyTheInventory(t *testing.T) {
 	member := full.Meta.Hostvars["bench-b"]["nova_loops"].([]config.InventoryLoop)
 	require.Len(t, member, 1)
 	assert.Equal(t, config.InventoryLoop{
-		Name: "member-bench-b", Argv: []string{"/usr/bin/env", "NOVA_SPRINT_REDIS_USER=bench", "NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD", "~/.local/bin/nova-swarm", "member", "--as", "bench-b"}, Seat: "bench-b",
+		Name: "member-bench-b", Argv: []string{"/usr/bin/env", "NOVA_SPRINT_REDIS_USER=bench", "NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD", "~/.local/bin/nova-worker", "member", "--as", "bench-b"}, Seat: "bench-b",
 		Keys: []string{"API_KEY", "NOVA_REDIS_BENCH_PASSWORD"}, Keepalive: true, Enabled: true, Log: "~/nova-bench/loops/member-bench-b.log",
 	}, member[0])
 	// The retired tools are names nova-tools no longer ships: none is a

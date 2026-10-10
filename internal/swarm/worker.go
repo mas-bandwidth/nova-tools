@@ -46,7 +46,7 @@ type Worker struct {
 	// no description written before the gate changes meaning by being re-read.
 	//
 	// CLASS (worker check): `class` is the one word public or paid, an OPTIONAL
-	// field a description may carry and the launcher never requires. `nova-swarm
+	// field a description may carry and the launcher never requires. `nova-worker
 	// worker check` validates it when it is present. The two budgets below are
 	// the same fields worker check validates.
 	Class       string   `json:"class,omitempty"`

@@ -37,14 +37,14 @@ var certRaceMinShards = map[string]int{
 // Run 37159703304 puts internal/sprint/store (65.470 s on Linux) alongside
 // cmd/nova-sandbox on a capped leg, so it also has a separate heavy slot.
 // Run 37165758129 caps Linux shard 1 with internal/ci 67.708 s,
-// internal/sprint/refmodel 60.236, cmd/nova-swarm 44.763 and internal/docs 18.834
+// internal/sprint/refmodel 60.236, cmd/nova-worker 44.763 and internal/docs 18.834
 // together. Its completed legs also measure internal/sprint 15.951 s,
 // internal/redisconn 18.169, internal/config 17.741 and internal/secrets 15.577.
 // certification.yml's deal step spells the same list.
 var certRaceHeavy = []string{
 	"internal/ci", "cmd/nova-tokens", "cmd/nova-sandbox", "cmd/nova-self-talk",
 	"internal/update", "cmd/nova-secrets", "cmd/nova-sprint",
-	"internal/sprint/store", "cmd/nova-swarm", "internal/sprint/refmodel",
+	"internal/sprint/store", "cmd/nova-worker", "internal/sprint/refmodel",
 	"internal/docs", "internal/sprint", "internal/redisconn", "internal/config",
 	"internal/secrets",
 }

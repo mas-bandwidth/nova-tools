@@ -36,7 +36,7 @@ func TestSplitPlanIsWritten(t *testing.T) {
 	} {
 		assert.Contains(t, src, section)
 	}
-	for _, cmd := range []string{"nova-sprint", "nova-card", "nova-work", "nova-swarm", "nova-decide"} {
+	for _, cmd := range []string{"nova-sprint", "nova-card", "nova-work", "nova-worker", "nova-decide"} {
 		assert.Truef(t, strings.Contains(src, "| "+cmd+" |"), "the classification omits %s", cmd)
 	}
 	require.Contains(t, src, "Status: written")

@@ -110,10 +110,10 @@ func TestEveryBriefExampleInTheHelpPassesTheCardLint(t *testing.T) {
 	}
 	assertBriefPassesLint(t, briefExampleCard, "verbhelp.go briefExampleCard")
 
-	// 4. Verify that briefExampleCard matches nova-swarm template --name card.
+	// 4. Verify that briefExampleCard matches nova-worker template --name card.
 	template, err := swarm.Template("card")
 	require.NoError(t, err)
-	assert.Equal(t, strings.TrimSpace(template), strings.TrimSpace(briefExampleCard), "briefExampleCard must match nova-swarm template --name card")
+	assert.Equal(t, strings.TrimSpace(template), strings.TrimSpace(briefExampleCard), "briefExampleCard must match nova-worker template --name card")
 }
 
 func assertBriefPassesLint(t *testing.T, brief, source string) {

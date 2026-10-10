@@ -48,7 +48,7 @@ func TestHasRemedyIsNotFooledByProse(t *testing.T) {
 	for _, s := range []string{
 		"the card is not ready; run: nova-sprint cards",
 		"see nova-sprint help claim",
-		"nova-swarm help batch",
+		"nova-worker help batch",
 		"retry with --force",
 		"see --help",
 		"the verb wants --sprint",
