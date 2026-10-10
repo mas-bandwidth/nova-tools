@@ -56,17 +56,21 @@ func TestSumOpenCodeRecordKeepsTheProviderWithTheModel(t *testing.T) {
 // be zero in every class: -1 (unreported) would add one to each finish count.
 func TestEmptySessionBaselineDoesNotOvercountTheFinish(t *testing.T) {
 	t.Parallel()
+	base, ok := usageBaseline(LaneTokens{}, errEmptySession)
+	require.True(t, ok)
 	usage, err := SumOpenCodeRecord([]byte(`{"messages":[{"info":{"role":"assistant","modelID":"mercury","providerID":"inception","tokens":{"input":100,"output":20,"reasoning":0,"cache":{"read":0,"write":0}}}}]}`))
 	require.NoError(t, err)
-	spent := usage.Sub(LaneTokens{})
+	spent := usage.Sub(base)
 	assert.Equal(t, cardcost.Tokens{Input: 100, Output: 20, Requests: cardcost.Unreported, MaxPrompt: cardcost.Unreported}, spent.Tokens)
 
 	zero, err := SumOpenCodeRecord([]byte(`{"messages":[{"info":{"role":"assistant","tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}}]}`))
 	require.NoError(t, err)
-	spent = zero.Sub(LaneTokens{})
+	spent = zero.Sub(base)
 	assert.Zero(t, spent.Tokens.Total())
 	rp := RoutePrice{Name: "flash-mercury", Found: true, Prices: cardcost.Prices{Input: "0"}}
 	assert.Contains(t, FinishCost(spent.Tokens, rp, usage.Model), "unpriced (zero tokens")
+	_, ok = usageBaseline(LaneTokens{}, errors.New("export failed"))
+	assert.False(t, ok, "a failed starting read is unknown, not a zero baseline")
 }
 
 // A session record the adapter cannot read is finished usage=unknown, and the seat

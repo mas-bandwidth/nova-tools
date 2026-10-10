@@ -541,11 +541,8 @@ func (l *loop) laneStep(now time.Time, width int) {
 			}
 			ln.baseUsageOK = false
 			if d.SessionUsage != nil {
-				if u, err := d.SessionUsage(ln.session); err == nil {
-					ln.baseUsage, ln.baseUsageOK = u, true
-				} else if errors.Is(err, errEmptySession) {
-					ln.baseUsage, ln.baseUsageOK = LaneTokens{}, true
-				}
+				u, err := d.SessionUsage(ln.session)
+				ln.baseUsage, ln.baseUsageOK = usageBaseline(u, err)
 			}
 			s.state.Started[filepath.Base(c.Outbox)] = Started{Lane: ln.n, Card: c, At: now}
 			l.saveLanes(now)

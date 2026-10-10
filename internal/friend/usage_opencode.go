@@ -30,6 +30,18 @@ import (
 
 var errEmptySession = errors.New("opencode session record has no assistant steps")
 
+// usageBaseline is the session's measured total when a card starts. A newly
+// opened session has a known zero total; any other failed read is unknown.
+func usageBaseline(u LaneTokens, err error) (LaneTokens, bool) {
+	if err == nil {
+		return u, true
+	}
+	if errors.Is(err, errEmptySession) {
+		return LaneTokens{}, true
+	}
+	return LaneTokens{}, false
+}
+
 // SumOpenCodeRecord sums a session's record: its assistant steps' tokens by class
 // (input, cache read, cache write, output, reasoning), and the provider and model the
 // steps ran. A record that holds no assistant step carrying tokens answers an error,
