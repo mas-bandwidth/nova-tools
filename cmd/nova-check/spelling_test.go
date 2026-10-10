@@ -211,7 +211,7 @@ func TestSpellingCLIRootRelativeExcludeAllModes(t *testing.T) {
 		before := "recieve\n"
 		require.NoError(t, os.WriteFile(path, []byte(before), 0o600))
 
-		code, stdout, stderr := runSpelling(t, "--dir", root, "--path", "vendor/*.md", "--exclude", "vendor", "--write")
+		code, stdout, stderr := runSpelling(t, "--dir", root, "--path", "vendor/*.md", "--exclude", "vendor", "--write", "--allow-empty")
 		require.EqualValues(t, 0, code, "exit = %d, want 0; stdout = %q, stderr = %q", code, stdout, stderr)
 		after, err := os.ReadFile(path)
 		require.NoError(t, err)
@@ -227,7 +227,7 @@ func TestSpellingCLIRootRelativeExcludeAllModes(t *testing.T) {
 		before := "recieve\n"
 		require.NoError(t, os.WriteFile(path, []byte(before), 0o600))
 
-		code, stdout, stderr := runSpelling(t, "--dir", root, "--file", "vendor/doc.md", "--exclude", "vendor", "--write")
+		code, stdout, stderr := runSpelling(t, "--dir", root, "--file", "vendor/doc.md", "--exclude", "vendor", "--write", "--allow-empty")
 		require.EqualValues(t, 0, code, "exit = %d, want 0; stdout = %q, stderr = %q", code, stdout, stderr)
 		after, err := os.ReadFile(path)
 		require.NoError(t, err)
@@ -243,7 +243,7 @@ func TestSpellingCLIRootRelativeExcludeAllModes(t *testing.T) {
 		before := "recieve\n"
 		require.NoError(t, os.WriteFile(path, []byte(before), 0o600))
 
-		code, stdout, stderr := runSpelling(t, "--dir", root, "--exclude", "vendor", "--write")
+		code, stdout, stderr := runSpelling(t, "--dir", root, "--exclude", "vendor", "--write", "--allow-empty")
 		require.EqualValues(t, 0, code, "exit = %d, want 0; stdout = %q, stderr = %q", code, stdout, stderr)
 		after, err := os.ReadFile(path)
 		require.NoError(t, err)

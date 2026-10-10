@@ -20,6 +20,26 @@ func addMax(f *tool.Flags) {
 	f.Var(f.Lookup("max").Value, "fail-max", "the old spelling of --max, accepted for one release; it sets the same value")
 }
 
+// addAllowEmpty declares --allow-empty, the answer a verb whose read can find
+// no file takes when nothing is the answer. A verb that reads files adds it
+// beside addMax and turns its own zero count into FAILED (linksLookedAtNothing
+// for an Out the skeleton renders, spellingLookedAtNothing for one the verb
+// prints): the skeleton's Verb.Looks would make the turn by construction, and
+// is not on this tree (docs/STANDARD.md section 2, exit codes tell the truth).
+func addAllowEmpty(f *tool.Flags) {
+	f.Bool("allow-empty", false, "answer OK when the read finds no file, instead of FAILED over nothing")
+}
+
+// looks is each check verb's declaration of the fact its OK line counts as what
+// it read: the skeleton's no-green-over-nothing field (Verb.Looks), which this
+// tool declares here because internal/tool has no such field on this tree. A
+// verb whose read found none of that fact is not green; it prints FAILED naming
+// the count and the flag addAllowEmpty declared (docs/STANDARD.md section 2).
+var looks = map[string]string{
+	"links":    "files",
+	"spelling": "files",
+}
+
 // withAlias adds the note a run owes when it spelled the ceiling --fail-max.
 func withAlias(run func(c *tool.Call) *tool.Out) func(c *tool.Call) *tool.Out {
 	return func(c *tool.Call) *tool.Out {
@@ -173,7 +193,42 @@ func linksVerb() tool.Verb {
 }
 
 func links(c *tool.Call) *tool.Out {
-	return linksOut(c.Str("dir"), c.Get("file").([]string), c.Get("exclude").([]string))
+	return linksLookedAtNothing(c, linksOut(c.Str("dir"), c.Get("file").([]string), c.Get("exclude").([]string)))
+}
+
+// linksLookedAtNothing is links' no-green-over-nothing turn (looks["links"]):
+// the count is the Out's own files= fact, the why names it, and the remedy is
+// the same run plus the flag addAllowEmpty declared. An Out that found files, or
+// a caller who passed --allow-empty, is returned untouched.
+func linksLookedAtNothing(c *tool.Call, o *tool.Out) *tool.Out {
+	fact, declared := looks[o.Verb]
+	if !declared || o.Status != tool.OK || c.Bool("allow-empty") || !factIsZero(o, fact) {
+		return o
+	}
+	o.Status, o.Exit = tool.Failed, 1
+	o.Why = append(o.Why, "looked at nothing: "+fact+"=0")
+	o.Remedy = "nova-check links --dir " + oneline.ShellWord(c.Str("dir"))
+	for _, f := range c.Get("file").([]string) {
+		o.Remedy += " --file " + oneline.ShellWord(f)
+	}
+	for _, e := range c.Get("exclude").([]string) {
+		o.Remedy += " --exclude " + oneline.ShellWord(e)
+	}
+	o.Remedy += " --allow-empty"
+	return o
+}
+
+// factIsZero reports whether the Out carries the named fact at 0. A fact that
+// is absent, or one that is not a count, is no zero, so it is left to the
+// verb's own tests.
+func factIsZero(o *tool.Out, k string) bool {
+	for _, f := range o.Facts {
+		if f.K == k {
+			n, ok := f.V.(int)
+			return ok && n == 0
+		}
+	}
+	return false
 }
 
 // linksOut runs the links check and returns its Out, shared with quickstart so

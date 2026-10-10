@@ -107,6 +107,7 @@ from `nova-check help`:
   nova-check links --dir <dir> [--file <path>] [--exclude <prefix>] [--max <n>]
   nova-check links --dir ./self
 flags:
+  --allow-empty  answer OK when the read finds no file, instead of FAILED over nothing
   --dir <string>  --dir <dir> is the tree to walk, your self repo's root or a directory inside it; it is never guessed from the working directory, so write it out every run (required)
   --exclude <value>  path prefix not scanned, and links into it not checked (repeatable; empty by default)
   --fail-max <int>  the old spelling of --max, accepted for one release; it sets the same value
@@ -317,6 +318,7 @@ usage: nova-check spelling [flags]
 from `nova-check help`:
   nova-check spelling (--dir <dir> | --file <path> | --path <pattern>) [--ignore <word|@file>] [--write] [--exclude <prefix>] [--max <n>] [--dry-run]
 flags:
+  --allow-empty  answer OK when the read finds no file, instead of FAILED over nothing
   --dir <string>  directory tree to scan for misspellings
   --dry-run  print what the verb would write and write nothing
   --exclude <value>  path prefix not scanned (repeatable; empty by default)
