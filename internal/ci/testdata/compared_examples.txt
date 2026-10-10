@@ -13,6 +13,7 @@
 # pasted in. An example is in this file or in unexecuted_examples.txt, never
 # both. Moving a line from unexecuted_examples.txt to here is how that list
 # shrinks.
+cmd/nova-runner/runner_test.go:TestRunnerBannerExampleNamesItsSetup example: nova-runner run --as ada --dir ~/ada-working --harness opencode --seat coordinator
 
 cmd/nova-table/firstrun_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-table create demo --columns ready,working,done
 cmd/nova-table/firstrun_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-table row add demo build

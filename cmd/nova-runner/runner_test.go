@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/stretchr/testify/require"
 )
 
@@ -137,6 +138,25 @@ func TestHelpExplainsTheLoop(t *testing.T) {
 func TestRunnerToolMeetsStandard(t *testing.T) {
 	t.Parallel()
 	require.Empty(t, runnerTool().Problems())
+}
+
+func TestRunnerBannerExampleNamesItsSetup(t *testing.T) {
+	t.Parallel()
+	const example = "nova-runner run --as ada --dir ~/ada-working --harness opencode --seat coordinator"
+	var out, errb bytes.Buffer
+	require.Zero(t, run([]string{"help"}, &out, &errb))
+	lines, err := onboarding.ExampleLines(out.String(), "nova-runner")
+	require.NoError(t, err)
+	require.Contains(t, lines, example)
+	out.Reset()
+	errb.Reset()
+	code := run(strings.Fields(strings.TrimPrefix(example, "nova-runner ")), &out, &errb)
+	require.Equal(t, 2, code)
+	require.Empty(t, out.String())
+	step := onboarding.Step{Line: "example: " + example, Want: []string{
+		"RUN REFUSED: --dir ~/ada-working is not a directory; give an existing working directory; run: nova-runner help",
+	}}
+	require.Empty(t, onboarding.Compare(step, onboarding.Result{Code: code, Stderr: errb.String()}, nil))
 }
 
 type fakeProc struct {
