@@ -157,6 +157,11 @@ func SeriesLandings(s *Snapshot, since time.Time) []Landing {
 		if err != nil || at.Before(since) {
 			continue
 		}
+		// a sentinel released into landed (Release stamps landed and released at
+		// once) moved waiting -> landed, which the log's series never counts: no work landed
+		if r := c.F("released"); r != "" && r == c.F("landed") {
+			continue
+		}
 		out = append(out, Landing{At: at.Unix(), Worker: latest[c.ID].row})
 	}
 	slices.SortFunc(out, func(a, b Landing) int { return cmp.Or(cmp.Compare(a.At, b.At), cmp.Compare(a.Worker, b.Worker)) })

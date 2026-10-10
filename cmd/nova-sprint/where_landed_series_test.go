@@ -44,6 +44,12 @@ func TestTheRecordsLandedSeriesIsTheLogs(t *testing.T) {
 	ta.ok("add --stream s1 --count 2 --brief-file " + proBriefFile(t))
 	ta.ok("start")
 	ta.landStream("s1", []string{"input=10 actual_usd=1 actual_by=harness", "input=10 actual_usd=2 actual_by=harness"}, []string{"", ""}, []string{"", ""})
+	// a sentinel released waiting -> landed carries a landed stamp but is no landing of
+	// work: the log's series skips it, so the record's must (7 of them on the live store,
+	// 2026-10-10, counted as unknown)
+	ta.ok("add --stream s2 --sentinel gate")
+	ta.ok("release gate --reason 'nothing waits on it'")
+	require.Equal(t, sprint.Landed, ta.primary("gate").Col)
 	ta.ok("tick")
 
 	ctx := context.Background()
