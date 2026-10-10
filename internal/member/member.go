@@ -2219,8 +2219,13 @@ func WallText(deadlineSeconds int) string {
 	}
 	wall := max(1, deadlineSeconds/60)
 	by := max(1, int(float64(deadlineSeconds)*WallFinishShare)/60)
-	return fmt.Sprintf("Your wall: this run is ended at %d minutes from its start, whatever time the brief names; work not in RESULT.md by then is lost. Commit and write RESULT.md by minute %d, then stop; if the card cannot be finished by then, write what is done and what is left, and stop.\n\n", wall, by)
+	return fmt.Sprintf("Your wall: this run is ended at %d minutes from its start, whatever time the brief names; work not in RESULT.md by then is lost. Commit and write RESULT.md by minute %d, then stop; if the card cannot be finished by then, write what is done and what is left, and stop.\n\n%s", wall, by, TmpText)
 }
+
+// TmpText tells a child where its temp files go. The sandbox denies a write outside the
+// directories it was handed, and /tmp is not one of them: a child that wrote /tmp/gate1.log
+// had its run refused for the denial (fault 1, 2026-10-10). $TMPDIR is its own, writable.
+const TmpText = "Temp files go under $TMPDIR, which is yours and writable; never write to /tmp or /var/tmp directly: the sandbox denies it and the run is refused.\n\n"
 
 // routeWords is a work card's route as the member's start and finish lines name
 // it: " route=<r> model=<m>", "" when the packet names none (the member's

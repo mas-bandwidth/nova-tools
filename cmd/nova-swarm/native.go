@@ -1817,7 +1817,10 @@ func nativeSandboxArgv(launch []string, cfg nativeRunConfig, dataHome, jobDir, t
 	if cacheDir := nativeCacheDir(cfg); cacheDir != "" {
 		argv = append(argv, "--write", cacheDir)
 	}
-	argv = append(argv, "--cwd", jobDir)
+	// --tmp names the slot's temp directory as the child's TMPDIR. Without it the wall made
+	// its default, <first --write>/.nova-sandbox-tmp, inside the job directory's repo, and
+	// set TMPDIR there over the one nativeChildEnv hands (fault 1, 2026-10-10).
+	argv = append(argv, "--tmp", tmpDir, "--cwd", jobDir)
 	// The keyless provider's loopback address is opened back up by name, never by widening
 	// the wall's network promise (issue #591).
 	if cfg.netAllow != "" {
