@@ -1004,13 +1004,9 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 			if !limited {
 				limited = true
 				turns = append(turns, turn{now, "limit", p})
-				// the harness says its credit refusal on its own stderr: the daemon
-				// never reads credits from the model's stdout
-				const refusal = "Insufficient AI Credits. Your credits will refresh in 10 minutes.\n"
-				if cw := friend.CapturedStderr(ctx); cw != nil {
-					_, _ = cw.Write([]byte(refusal))
-				}
-				return "working\n" + refusal, 1, nil
+				// the harness says its credit refusal on its own stderr, never the
+				// model's stdout: the fixture is limit_test.go's (harnessRefusalOnStderr)
+				return harnessRefusalOnStderr(ctx, "working\n", "Insufficient AI Credits. Your credits will refresh in 10 minutes.\n"), 1, nil
 			}
 			turns = append(turns, turn{now, "message", p})
 			cancel()

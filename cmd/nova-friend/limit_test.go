@@ -13,6 +13,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// harnessRefusalOnStderr is a test lane's credit refusal: line goes to the
+// lane's harness's own stderr -- caught apart from the model's stdout by the
+// daemon's watched wrapper (friend.WithStderrCapture, CapturedStderr) -- and
+// modelOut carries line after it, so the fake harness prints on both channels
+// as a real one does. The daemon's run test (main_test.go) uses it to model a
+// credit refusal on the harness's own channel; the reader and the watched path
+// are pinned here (TestModelStdoutPlusExitOneThroughWatchedPathDoesNotDownFriend).
+func harnessRefusalOnStderr(ctx context.Context, modelOut, line string) string {
+	if cw := friend.CapturedStderr(ctx); cw != nil {
+		_, _ = cw.Write([]byte(line))
+	}
+	return modelOut + line
+}
+
 // The recorded refusal each harness left, and the channel it was read from, so
 // the harness's stderr and the runner's own log are both read. The antigravity
 // and gemini lines are their real refusals, quoted as the harness printed them.
