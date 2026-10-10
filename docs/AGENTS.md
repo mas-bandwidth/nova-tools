@@ -13,3 +13,10 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `ratings/` | cold ratings of the tools, one file per rater and tool | `go test ./internal/docs` | `go test ./internal/docs` |
 | `sprint/` | the nova-sprint 1.0.0 glossary, which moves to nova-sprint's docs/ at the split | `go test ./internal/docs` | `go test ./internal/docs -run TestRetiredWordsAppearOnlyInRecords` |
 | `stranger/` | cold stranger runs of the tools, one file per run, every stumble with its proposed card | `go test ./internal/docs` | `go test ./internal/docs` |
+
+A HOLD note is read by the machine only for these four lines, each the whole of a trimmed line. Nothing else in a HOLD note is read by a machine. `docs/SPEC-SPRINT.md` section 8 is the rule.
+
+- `PATHS-PROPOSED: <glob>[,<glob>...]` widens PATHS in place when the stream is marked land-protected for the card's repository. The card keeps its id and returns to ready.
+- `NEEDS: <card-id>` adds that dependency when the card has landed, and parks this card waiting when it has not.
+- `TIER: flash|pro|heavy` recuts the tier in place when a friend of the stream serves it.
+- `GATE-HOST: linux` marks the next attempt's executable Go gates for a Linux bench.
