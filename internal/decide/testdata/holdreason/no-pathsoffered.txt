@@ -1,0 +1,9 @@
+HOLD report from nova-sprint:
+
+CARD: refactor-auth-module
+TASK: refactor the auth module
+
+FOUND: paths too narrow
+The module is split across three files
+
+needs to update internal/auth/main.go internal/auth/token.go internal/auth/session.go

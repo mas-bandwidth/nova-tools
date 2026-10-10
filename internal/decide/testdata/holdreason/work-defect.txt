@@ -1,0 +1,10 @@
+HOLD report from nova-sprint:
+
+CARD: fix-null-pointer-crash
+TASK: fix null pointer in user lookup
+
+FOUND: work defect
+The fix does not handle the case where user.ID is empty
+This will cause another crash
+
+PATHS-PROPOSED: internal/api/lookup.go

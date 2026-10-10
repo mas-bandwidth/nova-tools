@@ -1,0 +1,10 @@
+HOLD report from nova-sprint:
+
+CARD: integrate-with-payment-service
+TASK: add payment integration
+
+FOUND: missing dependency
+The card requires payment-service/v2 which is not in the vendor list
+Need to add payment-service/v2 to go.mod and vendor.json
+
+PATHS-PROPOSED: go.mod vendor.json
