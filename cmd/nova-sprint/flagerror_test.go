@@ -20,7 +20,7 @@ func TestMisspelledFlagIsOneCleanLine(t *testing.T) {
 		{"clear --zz", "nova-sprint clear REFUSED: unknown flag --zz; the flags of clear are --actor, --confirm, --epoch, --json, --max, --op, --redis; run: nova-sprint help clear\n"},
 		{"teardown --zz", "nova-sprint teardown REFUSED: unknown flag --zz; the flags of teardown are --actor, --confirm, --epoch, --json, --max, --op, --redis; run: nova-sprint help teardown\n"},
 		{"log --zz", "nova-sprint log REFUSED: unknown flag --zz; the flags of log are --actor, --at-epoch, --card, --epoch, --json, --max, --member, --op, --redis, --since, --stream; run: nova-sprint help log\n"},
-		{"card --zz s1-1", "nova-sprint card REFUSED: unknown flag --zz; the flags of card are --actor, --all, --at-epoch, --brief, --epoch, --fields, --json, --max, --op, --redis, --stream; run: nova-sprint help card\n"},
+		{"card --zz s1-1", "nova-sprint card REFUSED: unknown flag --zz; the flags of card are --actor, --all, --at-epoch, --brief, --epoch, --fields, --json, --max, --op, --redis, --stream, --why; run: nova-sprint help card\n"},
 		{"add --stream s1 --brief", "nova-sprint add REFUSED: --brief wants a value; run: nova-sprint help add\n"},
 	} {
 		code, out, errs := ta.do(c.line)

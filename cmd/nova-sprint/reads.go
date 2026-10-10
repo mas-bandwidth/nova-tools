@@ -763,16 +763,18 @@ func archivedLine(a *archivedView) string {
 // when its deadline falls by the clock (sprint.WorkDeadline; the tick counts running time,
 // so a stop moves it later), and the branch its work is pushed to.
 type dealtCard struct {
-	ID       string    `json:"id"`
-	Primary  string    `json:"primary"`
-	Stream   string    `json:"stream"`
-	Member   string    `json:"member"`
-	State    string    `json:"state"`
-	Since    time.Time `json:"since,omitzero"`
-	Deadline time.Time `json:"deadline,omitzero"`
-	Branch   string    `json:"branch"`
-	Priority string    `json:"priority,omitempty"`
-	Tier     string    `json:"tier,omitempty"` // the tier its route was drawn from (sprint.FieldTier)
+	ID       string             `json:"id"`
+	Primary  string             `json:"primary"`
+	Stream   string             `json:"stream"`
+	Member   string             `json:"member"`
+	State    string             `json:"state"`
+	Since    time.Time          `json:"since,omitzero"`
+	Deadline time.Time          `json:"deadline,omitzero"`
+	Branch   string             `json:"branch"`
+	Priority string             `json:"priority,omitempty"`
+	Tier     string             `json:"tier,omitempty"` // the tier its route was drawn from (sprint.FieldTier)
+	Needs    []sprint.NeedState `json:"needs,omitempty"`
+	Held     bool               `json:"held,omitempty"`
 }
 
 // mergingCard is a primary merging: its stream, the head its merge would land, its attempt.
@@ -868,8 +870,15 @@ func dealtView(d store.Dealt, prefix string, epoch uint64) ([]dealtCard, []judgm
 		if c.F("kind") == "read" {
 			continue
 		}
+		pr := snap.Work.Card(c.F(sprint.PrimaryField))
+		var needs []sprint.NeedState
+		held := false
+		if pr != nil {
+			needs, _ = sprint.NeedsOf(snap, pr.ID)
+			held = sprint.IsHeld(pr)
+		}
 		v := dealtCard{ID: c.ID, Primary: c.F(sprint.PrimaryField), Stream: c.F("stream"), Member: c.Row, State: c.Col,
-			Branch: cmp.Or(c.F("branch"), sprint.BranchOf(prefix, epoch, c.ID, c.Int("gen"))), Tier: c.F(sprint.FieldTier), Priority: queuePriority(c)}
+			Branch: cmp.Or(c.F("branch"), sprint.BranchOf(prefix, epoch, c.ID, c.Int("gen"))), Tier: c.F(sprint.FieldTier), Priority: queuePriority(c), Needs: needs, Held: held}
 		own := "dealt"
 		if c.Col == string(sprint.Working) {
 			own = "taken"
@@ -2175,6 +2184,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 	atEpoch := fs.Int64("at-epoch", -1, "the primary as it was at an earlier epoch (before a clear)")
 	fields := fs.Bool("fields", false, "every field of the primary and its cards, one record a line, instead of its story")
 	brief := fs.Bool("brief", false, "the brief alone, as the card holds it, and nothing else (a card with no brief is refused, exit 1); not with --fields")
+	why := fs.Bool("why", false, "print why the card waits")
 	all := fs.Bool("all", false, "every card on the table, one JSON object a line (its fields, column, needs and brief length), in one read; with --json, and no id")
 	stream := fs.String("stream", "", "--all of one stream's cards")
 	pos, err := parse(fs, args)
@@ -2213,6 +2223,66 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 	if v.Primary == nil {
 		fmt.Fprintf(stderr, "%s card: no primary %s; run: nova-sprint where\n", prog, oneline.Escape(id))
 		return 1
+	}
+	if *why {
+		t := &sprint.Table{Name: sprint.Work}
+		for _, c := range v.Column {
+			t.Put(c)
+		}
+		snap := &sprint.Snapshot{Work: t}
+		view := sprint.ClassifyWaiting(snap, v.Primary.Row)
+		var found *sprint.WaitingCard
+		for _, wc := range view.Cards {
+			if wc.ID == id {
+				found = &wc
+				break
+			}
+		}
+		if c.json {
+			if found != nil {
+				b, _ := json.Marshal(found)
+				fmt.Fprintln(stdout, string(b))
+			} else {
+				fmt.Fprintln(stdout, "{}")
+			}
+			return 0
+		}
+		if found != nil {
+			fmt.Fprintf(stdout, "WAITING %s stream=%s reason=%s head=%s length=%d\n", oneline.Escape(found.ID), oneline.Escape(found.Stream), oneline.Escape(found.Reason), oneline.Escape(found.Head), found.Length)
+		} else {
+			fmt.Fprintf(stdout, "CARD %s is not waiting (column=%s)\n", oneline.Escape(id), v.Primary.Col)
+		}
+		return 0
+	}
+	if *why {
+		t := &sprint.Table{Name: sprint.Work}
+		for _, c := range v.Column {
+			t.Put(c)
+		}
+		snap := &sprint.Snapshot{Work: t}
+		view := sprint.ClassifyWaiting(snap, v.Primary.Row)
+		var found *sprint.WaitingCard
+		for _, wc := range view.Cards {
+			if wc.ID == id {
+				found = &wc
+				break
+			}
+		}
+		if c.json {
+			if found != nil {
+				b, _ := json.Marshal(found)
+				fmt.Fprintln(stdout, string(b))
+			} else {
+				fmt.Fprintln(stdout, "{}")
+			}
+			return 0
+		}
+		if found != nil {
+			fmt.Fprintf(stdout, "WAITING %s stream=%s reason=%s head=%s length=%d\n", oneline.Escape(found.ID), oneline.Escape(found.Stream), oneline.Escape(found.Reason), oneline.Escape(found.Head), found.Length)
+		} else {
+			fmt.Fprintf(stdout, "CARD %s is not waiting (column=%s)\n", oneline.Escape(id), v.Primary.Col)
+		}
+		return 0
 	}
 	if *brief {
 		return printBrief(stdout, stderr, id, v.Primary.F("brief"), c.json)
