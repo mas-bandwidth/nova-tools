@@ -1877,7 +1877,9 @@ Four verbs make it (internal/sprint/twins.go, twin_verb.go and recut.go; the mod
   card never re-cut (`lint-pkg-cairn-t` -> `lint-pkg-cairn-tb`), and for a twin that
   replaced its id less one letter, that id with the letter after (`-tb` -> `-tc`). Refused
   whole, nothing written, for no tier and no brief, a tier that is no class or the one the
-  card is pinned to with no brief, a card not on the table, a sentinel or landed, a model
+  card is pinned to with no brief (a card whose brief names a model is the exception: it
+  runs at frontier whatever it was pinned to, so a recut at frontier is a scope change), a
+  card not on the table, a sentinel or landed, a model
   the brief pins with a tier, and any refusal of the replace
   (`TestRecutKeepsIdLineageViaReplaces`,
   `TestRecutIsRefusedWholeWhenItChangesNothingOrCannotHold`, `TestRecutFromTheCommandLine`).

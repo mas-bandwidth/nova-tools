@@ -40,6 +40,12 @@ func ModelPaths(paths []string) []string {
 	return out
 }
 
+// NamesModel says a brief's PATHS name TLA+ model work (ModelPaths): a card that writes a
+// model is tiered frontier whatever it was pinned to, so re-cutting it at frontier changes
+// its scope at the one tier the model runs on, and the same-tier refusal a plain card takes
+// is not the model card's (recut.go; docs/SPEC-SPRINT.md, the card decides its model).
+func NamesModel(brief string) bool { return len(ModelPaths(decide.CardPaths(brief))) > 0 }
+
 // ModelTier is the brief add admits for a card whose PATHS name model work (ModelPaths):
 // with tier: frontier stamped on its RESULT line when the brief carries one, else with the
 // brief unchanged -- the card's own tier field carries frontier and the add persists it

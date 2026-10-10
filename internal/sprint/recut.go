@@ -57,7 +57,9 @@ func TwinID(s *Snapshot, c *Card) string {
 // Every waiting card that needed the old id needs the twin, the old card is dropped
 // "replaced by <new>", no blocked judgment is raised, and the twin records the id it
 // replaces (FieldReplaces), in one step. Refused whole, writing nothing, for no tier and no
-// brief, a tier that is no class or the one the card is pinned to with no brief, a card
+// brief, a tier that is no class or the one the card is pinned to with no brief (a card
+// whose brief names a model is the exception: it runs at frontier whatever it was pinned
+// to, so a recut at frontier is a scope change, tier_model.go), a card
 // not on the table, a sentinel or landed, a brief that pins a model with a tier, and any
 // refusal of the replace.
 func Recut(s *Snapshot, r RecutReq) Plan {
@@ -78,7 +80,10 @@ func Recut(s *Snapshot, r RecutReq) Plan {
 		return refuse(r.ID + " is landed: the change is a new card")
 	case r.Tier != "" && !cardhdr.IsRoute(r.Tier):
 		return refuse("--tier wants " + cardhdr.RouteList + ", found " + r.Tier)
-	case r.Brief == "" && c.F(FieldTier) == r.Tier:
+	case r.Brief == "" && c.F(FieldTier) == r.Tier && !NamesModel(c.F("brief")):
+		// a card whose brief names a model is tiered frontier whatever it was pinned to
+		// (tier_model.go): re-cutting it at frontier changes its scope at the one tier the
+		// model runs on, so the same-tier refusal a plain card takes is not its.
 		return refuse(r.ID + " is pinned to tier " + r.Tier + " already, and no brief is named")
 	}
 	brief, rules := c.F("brief"), c.F(FieldRules)
