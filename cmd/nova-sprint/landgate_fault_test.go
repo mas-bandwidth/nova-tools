@@ -16,29 +16,12 @@ import (
 func TestEveryBenchFaultedDefersAndRaisesJudgment(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
-	r.env = append(r.env, "NOVA_TEST_NO_HOST=1")
-	r.a.gitEnv = r.env
-	r.live = []string{"m1", "m2", "m3"}
-	r.ok("init --members m1,m2,m3")
-	r.ok("fleet beat m1 --load 1 --cores 8")
-	r.ok("fleet up m1 --width 1")
-	r.ok("fleet beat m2 --load 1 --cores 8")
-	r.ok("fleet up m2 --width 1")
-	r.ok("fleet beat m3 --load 1 --cores 8")
-	r.ok("fleet up m3 --width 1")
-	r.promotionStream("s1")
+	r.ok("init")
 
-	r.commit("go.mod", "module github.com/test/m\n\ngo 1.22\n", "mod")
-	r.git(r.worker, "push", "-q", "origin", "HEAD:refs/heads/main")
-	r.git(r.worker, "fetch", "-q", "origin")
+	st, err := r.a.store(common{redis: "mem:0", actor: "tester"})
+	require.NoError(t, err)
 
-	briefs := t.TempDir()
-	path := filepath.Join(briefs, "a.md")
-	require.NoError(t, os.WriteFile(path, []byte(passingBrief("REPO: "+r.remote+"\nBASE: main\n\nWrite a.txt.")), 0o600))
-	r.ok("add --stream s1 --one --brief-file " + path)
-
-	r.queued(map[string]string{"a": r.head("a", "main", "a.txt", "a\n")}, "a")
-
+	hosts := []string{"m1", "m2", "m3"}
 	var asked []string
 	b := r.a.landState()
 	b.mu.Lock()
@@ -48,13 +31,21 @@ func TestEveryBenchFaultedDefersAndRaisesJudgment(t *testing.T) {
 	}
 	b.mu.Unlock()
 
-	r.ok("start")
-	r.ok("tick")
-	r.ok("stop --reason r --until 9999h")
+	l := &lander{a: r.a, st: st, gateKey: "s1"}
+	runs := gateRuns(false, nil)
+	why, ran := l.benchGate(context.Background(), hosts, r.clone, runs, false)
 
+	assert.True(t, ran, "gate ran on benches")
+	assert.Equal(t, "LAND DEFERRED stream=s1 faults=3", why, "LAND DEFERRED is said")
 	require.ElementsMatch(t, []string{"m1", "m2", "m3"}, asked, "every bench slot should be asked")
 
-	assert.Contains(t, r.streamState("s1"), "LAND DEFERRED stream=s1 faults=3", "LAND DEFERRED is said")
+	l.locks().gateMu.Lock()
+	faults := l.locks().benchFaults
+	l.locks().gateMu.Unlock()
+
+	require.NotNil(t, faults)
+	require.Contains(t, faults, "m1")
+	assert.Equal(t, "git", faults["m1"].kind)
 
 	var faultJudgments []sprint.Group
 	for _, g := range r.inboxGroups() {
