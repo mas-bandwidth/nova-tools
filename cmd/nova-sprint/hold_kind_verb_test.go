@@ -22,10 +22,16 @@ func holdsOf(t *testing.T, ta *testApp) []string {
 	return held
 }
 
-// lastLine is the last line of a verb's output.
-func lastLine(out string) string {
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	return lines[len(lines)-1]
+// okLines is a verb's MOVED and OK lines, the op id taken off.
+func okLines(out string) string {
+	var keep []string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "MOVED ") || strings.Contains(l, " OK ") {
+			l, _, _ = strings.Cut(l, " op=")
+			keep = append(keep, l)
+		}
+	}
+	return strings.Join(keep, "\n")
 }
 
 // fleet hold and fleet unhold are hold and unhold of fleet members alone (the owner,
@@ -40,7 +46,7 @@ func TestFleetHoldIsHoldOfAMemberAlone(t *testing.T) {
 
 	code, _, errs := ta.do("fleet hold m1")
 	assert.Equal(t, 2, code)
-	assert.Contains(t, errs, "nova-sprint fleet hold: --reason <text> is required")
+	assert.Contains(t, errs, "nova-sprint fleet hold REFUSED: --reason <text> is required")
 	code, _, errs = ta.do("fleet hold --reason r")
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errs, "wants at least one fleet member")
@@ -59,21 +65,21 @@ func TestFleetHoldIsHoldOfAMemberAlone(t *testing.T) {
 	assert.Empty(t, holdsOf(t, ta), "a refused name refuses the whole call: nothing held")
 
 	out := ta.ok("fleet hold m1 --reason 'the cache trim'")
-	assert.True(t, strings.HasPrefix(lastLine(out), "HOLD OK"), out)
+	assert.Regexp(t, `(?m)^HOLD OK moved=`, out)
 	assert.Equal(t, []string{"member m1: the cache trim"}, holdsOf(t, ta))
 	var v whereView
 	require.NoError(t, json.Unmarshal([]byte(ta.ok("where --json --cards")), &v))
 	assert.Equal(t, sprint.Held, v.Tables["fleet"]["m1"]["status"])
 	assert.Contains(t, ta.ok("log"), "member m1 held: the cache trim")
-	// the top-level hold's line on the other member is the same line
-	assert.Equal(t, strings.Fields(lastLine(out))[0:2], strings.Fields(lastLine(ta.ok("hold m2 --reason 'the cache trim'")))[0:2])
+	// the top-level hold on the other member says the same lines
+	assert.Equal(t, strings.ReplaceAll(okLines(out), "m1", "m2"), okLines(ta.ok("hold m2 --reason 'the cache trim'")))
 	ta.ok("unhold m2")
 
 	code, _, errs = ta.do("fleet unhold reader-a")
 	assert.Equal(t, 1, code, errs)
 	assert.Contains(t, errs, "reader-a is a reader; run: nova-sprint unhold reader-a")
 	out = ta.ok("fleet unhold m1 --reason trimmed")
-	assert.True(t, strings.HasPrefix(lastLine(out), "UNHOLD OK"), out)
+	assert.Regexp(t, `(?m)^UNHOLD OK moved=`, out)
 	assert.Empty(t, holdsOf(t, ta))
 	assert.Contains(t, ta.ok("log"), "member m1 released from its hold: trimmed")
 
@@ -91,7 +97,7 @@ func TestFriendHoldIsHoldOfAFriendAlone(t *testing.T) {
 
 	code, _, errs := ta.do("friend hold amy")
 	assert.Equal(t, 2, code)
-	assert.Contains(t, errs, "nova-sprint friend hold: --reason <text> is required")
+	assert.Contains(t, errs, "nova-sprint friend hold REFUSED: --reason <text> is required")
 	code, _, errs = ta.do("friend hold --reason r")
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errs, "wants at least one friend")
@@ -112,7 +118,7 @@ func TestFriendHoldIsHoldOfAFriendAlone(t *testing.T) {
 
 	ta.pong("amy")
 	out := ta.ok("friend hold amy --reason 'rate limited'")
-	assert.True(t, strings.HasPrefix(lastLine(out), "HOLD OK"), out)
+	assert.Regexp(t, `(?m)^HOLD OK moved=`, out)
 	assert.Equal(t, []string{"friend amy: rate limited"}, holdsOf(t, ta))
 	assert.Equal(t, sprint.Held, whereFriends(ta)["amy"].Status, "held whatever she beats")
 	assert.Contains(t, ta.ok("log"), "friend amy held: rate limited")
@@ -121,7 +127,7 @@ func TestFriendHoldIsHoldOfAFriendAlone(t *testing.T) {
 	assert.Equal(t, 1, code, errs)
 	assert.Contains(t, errs, "m1 is a fleet member; run: nova-sprint fleet unhold m1")
 	out = ta.ok("friend unhold amy")
-	assert.True(t, strings.HasPrefix(lastLine(out), "UNHOLD OK"), out)
+	assert.Regexp(t, `(?m)^UNHOLD OK moved=`, out)
 	assert.Empty(t, holdsOf(t, ta))
 	assert.NotEqual(t, sprint.Held, whereFriends(ta)["amy"].Status)
 }
