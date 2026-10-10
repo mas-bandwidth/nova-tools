@@ -481,6 +481,10 @@ type TickResult struct {
 	// Said is what the tick's reads met that it says once: a grant the
 	// store's user lacks (its read then reads the table whole).
 	Said []string `json:"said,omitempty"`
+	// began is when the tick began, on the store's clock (Store.now): the ask
+	// begins no step past AskBy from it (tick_ask.go). Zero is a tick run with
+	// no beginning recorded, whose ask keeps its own budget alone.
+	began time.Time
 }
 
 // PartTime is one part of a tick and the time its step took.
@@ -693,6 +697,7 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 	st.stats()
 	st.twin() // made on the store the run loop keeps: its ticks share it
 	defer func() { res.Took = time.Since(began) }()
+	start := st.now()
 	st, err = st.repin(ctx)
 	if err != nil {
 		return TickResult{}, err
@@ -701,7 +706,7 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 	if err != nil {
 		return TickResult{}, err
 	}
-	res = TickResult{Epoch: st.epoch}
+	res = TickResult{Epoch: st.epoch, began: start}
 	// a stop by hand whose --until has come: the machine starts itself
 	// (section 14) and this tick runs it
 	if m, err = st.backAt(ctx, m, &res); err != nil {
