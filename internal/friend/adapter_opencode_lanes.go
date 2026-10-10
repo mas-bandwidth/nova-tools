@@ -293,6 +293,11 @@ type OpenCodePriced struct {
 
 	// Friend is the friend's name, as a capped card's report says it.
 	Friend string
+	// DataDir is the friend's opencode data directory, where a session's record
+	// lives (its session JSON); a session's usage is read from there
+	// (SessionUsage, usage_opencode.go), never from the model's report. Empty:
+	// a session's usage cannot be read and is unknown.
+	DataDir string
 	// TokenCap is the friend row's per-card token cap as the daemon last read
 	// it (TokenCapOf; 0 none); nil is DefaultTokenCap.
 	TokenCap func() int64

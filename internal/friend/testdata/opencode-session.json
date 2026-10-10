@@ -1,0 +1,8 @@
+{
+  "info": {"id": "ses_abc123"},
+  "messages": [
+    {"info": {"role": "user", "time": {"created": 0}}},
+    {"info": {"role": "assistant", "modelID": "inception/mercury-2.5", "providerID": "inception", "cost": 0.0012, "tokens": {"input": 100, "output": 20, "reasoning": 0, "cache": {"read": 0, "write": 0}}}, "parts": []},
+    {"info": {"role": "assistant", "modelID": "inception/mercury-2.5", "providerID": "inception", "cost": 0.0034, "tokens": {"input": 50, "output": 10, "reasoning": 5, "cache": {"read": 30, "write": 40}}}, "parts": []}
+  ]
+}
