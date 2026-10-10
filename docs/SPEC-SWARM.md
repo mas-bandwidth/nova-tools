@@ -768,7 +768,7 @@ scanned as before:
 `nova-sprint add` runs the same lint, so the exemption holds there. Pinned by
 `TestPatternsToRefuseBlockIsExemptForAClassTestCard` (`internal/swarm`).
 
-### Attribution check
+### brief-lint-attribution: the honest-attribution check
 
 A brief that tells the worker to hide or misstate its model or harness draws
 `honest-attribution` at the line containing the hiding phrase. A brief that says to name the
