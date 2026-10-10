@@ -147,7 +147,8 @@ from the owner edits one line here and nothing else moves.
   once it prints one); a Work row's `fix` is its primaries at fix, taken off its `working`, where a primary
   sent out again sits (review -> working on rework), unless where prints the row's `fix` itself; the copy's
   `fix` is the Work rows' summed; and `priorities.fix` lists those primaries, off high and low. A track's lit
-  cells run in the ladder, highest on the left: blocker (`--p-blocker`), critical (`--p-critical`), fix
+  cells run in the ladder, highest on the left: blocker (`--p-blocker`), critical (`--p-critical`, the same
+  bright red `#ff1a1a` as blocker), fix
   (purple), reads (orange, one cell per two reads, a lone read a whole cell), then the working blue; the
   Total row says "<n> fix" under the tracks when any row has one. The In flight tile counts a card at fix as
   working. Owed from where: a primary in review awaiting the coordinator's rework, and one parked on a brief
@@ -203,6 +204,7 @@ This specification is locked. No line changes without his words, quoted here wit
 "Can we horizontally ALIGN the status columns across the three tables pls: work, fleet, friends" / "so they scan nicely as the eye goes top to bottom scrolling down." / "aligned on the right align (column right side)". The status column of Work, Fleet and Friends shares one right edge (one grid template or one fixed column width and offset for all three tables, so the pills line up as the page scrolls). Nothing else changes.
 
 ## LOCK 2 (the owner, 7:40 PM): "ok this is perfect. lock this in." The page as checked at this time (landed header centred, one status right edge across the three tables, the Fleet width column at 8rem) is the page. No change without a quoted line from him.
+- 2026-10-07 ~6:26 PM ET, the owner: "please change critical and blocker to have the same bright red color. The difference is that a blocker can evict an already working slot, while a critical does not." The shared colour says "the sprint's own fix, first"; eviction is the machine's behaviour, not the page's.
 - 2026-10-06 ~5:30 PM ET, the owner (relayed by the seat), a quoted change after the lock: "The dashboard
   shows priority by colour on the card marks: a blocker card bright red, a critical card dark red, a reader
   card the orange of the robot's shoes ..., work cards blue whatever their priority." The Priority row under the progress bar.
