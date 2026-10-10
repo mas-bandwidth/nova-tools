@@ -145,7 +145,6 @@ func (a *app) server(fs *flag.FlagSet) string {
 
 // forwarded sends the verb to the sprint's server when there is one and the server runs
 // the verb; sent is false when the verb runs here.
-// forwarded handles forwarding verbs to the sprint server, waiting out restarting during server switch.
 func (a *app) forwarded(args []string, stdout, stderr io.Writer) (code int, sent bool) {
 	v := readVerb(args)
 	addr := a.server(v.fs)
