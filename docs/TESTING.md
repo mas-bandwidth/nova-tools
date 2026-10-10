@@ -141,3 +141,26 @@ the lists now match the tree.
 `TestEveryAllowlistIsReadThroughTheOneHelper` holds the table's promise: every
 list file there is loaded through the helper, and nothing anywhere in the tree
 reads one with `os.ReadFile`, `os.Open` or `readFile`.
+
+## friend-chaos-suite-b.w2: chaos harness and functional suite
+
+The chaos harness (internal/chaos) is a general-purpose engine for chaos engineering tests. It injects faults, polls for recovery on an injected clock, heals, and prints report lines. The unit tier tests it with fakes; the functional tier (internal/friend/chaos_functional_test.go) runs in a container through tools/functionalrun and tests five fault scenarios on the nova-friend daemon:
+
+1. Daemon stopped (SIGKILL): recovery within 1m
+2. Session ended: recovery within 5m
+3. Bus dropped (Redis restarted): all pending messages delivered within 2m, none lost
+4. Context filled: fresh session with handoff within 5m
+5. Rate limit injected: down within 1m, up within 1m of reset
+
+The suite prints five CHAOS lines, each recovered=true inside its bound. Invariants: no message lost, no message pushed twice.
+
+To run the unit gate:
+```
+nice -n 10 env GOMAXPROCS=4 go test -p 2 ./internal/chaos -run TestHarnessRunsNamedFaultsWithinBounds -count=1 -timeout 600s
+```
+
+To run the functional suite:
+```
+nice -n 10 env GOMAXPROCS=4 go run ./tools/functionalrun run --deadline 20m ./internal/friend
+```
+
