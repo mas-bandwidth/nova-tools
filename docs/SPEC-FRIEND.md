@@ -1311,6 +1311,18 @@ beat loops are retired, with no replacement"). The beat itself proves the daemon
 nothing more: it is recorded and shown, and it never makes her up (below); the
 session's answer it carries (`--pong`) is her session's evidence.
 
+#### fsck-friend-queue-agreement-b.w6
+
+The daemon carries her own account on its beat for the sprint's fsck check `friend-queue`
+(docs/SPEC-SPRINT.md, "What is always true"): the ids her `inbox/QUEUE.json` names, each
+with its state (`internal/friend/state.go`), and the job directories of the `REPORT.md`
+files in her outbox (`internal/friend/daemon.go`). Her files never leave her machine, so
+the beat's ids are the only way the store learns them; the check compares them with the
+cards the store has dealt to her row through the comparison `friend reconcile` uses
+(`sprint.FsckFriendQueue`, `internal/sprint/fsck_friend_queue.go`). The beat verb carries
+the ids (`nova-sprint friend beat`), and a beat that names none leaves them as the store
+had them, as a nil running list, working or queue count does.
+
 ## Presence is her session's evidence (internal/sprint/presence.go)
 
 The owner, 2026-10-05 ~9:30 AM ET, on the daemon: "there is no value in things
