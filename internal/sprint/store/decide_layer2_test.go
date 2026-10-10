@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -70,8 +71,9 @@ func TestTheDealWritesTheAttemptBarsOnTheWorkCard(t *testing.T) {
 // nothing-to-do`. Every other class (needs-pro, wrong-scope, provider-failure, done) is
 // recorded and shown and never routes; a decision under its bar, or whose class's bar is
 // empty, leaves the prefix rule standing; and a report the provider failed, or a staging
-// refusal or a launch refused, is never overridden by a decision. The work card keeps the decision and whether
-// it routed the finish; the primary keeps its record of the decision for the outcome.
+// refusal or a launch refused, is never overridden by a decision. A finish that is not one
+// of those refusals keeps the work card's decision and whether it routed the finish; the
+// primary keeps its record of the decision for the outcome.
 func TestAFailedFinishGoesByItsAttemptDecisionAtItsClassBar(t *testing.T) {
 	t.Parallel()
 	const verdict, verdictClass = "verdict not-done; tests red in x", "verdict not-done; tests red in"
@@ -99,7 +101,7 @@ func TestAFailedFinishGoesByItsAttemptDecisionAtItsClassBar(t *testing.T) {
 		{"a provider failure is never made failed work", both, providerLine, decide.ClassNothingToDo, 0.99, sprint.Withdrawn, "", false},
 		{"a provider failure is never made no result", both, providerLine, decide.ClassNoResult, 0.99, sprint.Withdrawn, "", false},
 		{"a staging refusal is the member's", both, cardhdr.EndStaging + ": no bench mirror", decide.ClassNoResult, 0.99, sprint.Withdrawn, "", false},
-		{"a launch refused is the member's", both, cardhdr.EndLaunch + ": no worktree", decide.ClassNoResult, 0.99, sprint.DoneFailed, "", false},
+		{"a launch refused is the member's", both, cardhdr.EndLaunch + ": no worktree", decide.ClassNoResult, 0.99, sprint.Withdrawn, "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -116,8 +118,8 @@ func TestAFailedFinishGoesByItsAttemptDecisionAtItsClassBar(t *testing.T) {
 			assert.Equal(t, tc.used, wc.F(sprint.FieldDecidedUsed) == "yes")
 			used := map[bool]string{true: "yes", false: "no"}[tc.used]
 			d, _ := decide.ParseDecided(line)
-			staging := tc.report == cardhdr.EndStaging+": no bench mirror"
-			if staging {
+			refused := strings.HasPrefix(tc.report, cardhdr.EndStaging) || strings.HasPrefix(tc.report, cardhdr.EndLaunch)
+			if refused {
 				// no take ran: no decision of one is kept
 				assert.Empty(t, wc.F(sprint.FieldDecided))
 				assert.Empty(t, pr.F(sprint.PrefixDecided+d.Op))
@@ -125,7 +127,7 @@ func TestAFailedFinishGoesByItsAttemptDecisionAtItsClassBar(t *testing.T) {
 				assert.Equal(t, line, wc.F(sprint.FieldDecided), "the work card keeps the decision")
 				assert.Equal(t, fmt.Sprintf("%s p=%.3f used=%s", tc.class, tc.p, used), pr.F(sprint.PrefixDecided+d.Op))
 			}
-			if tc.col == sprint.Withdrawn && !staging {
+			if tc.col == sprint.Withdrawn && !refused {
 				assert.NotEmpty(t, wc.F(sprint.FieldTakeEnded), "an ended take")
 				assert.Zero(t, h.notesOf(sprint.NWorkFailed), "never a failed-work judgment")
 			}

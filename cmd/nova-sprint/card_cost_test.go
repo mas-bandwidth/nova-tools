@@ -161,9 +161,9 @@ func (ta *testApp) workGen(member, card string) string {
 }
 
 // A take the provider failed is counted once: take 1 fails at the provider with its
-// usage, the card is dealt again, and take 2 is a failed launch that reports no usage.
-// The first take's record is in its provider_take_1 alone, so the card's own take
-// shows nothing spent and the total is the first take's.
+// usage, the card is dealt again, and take 2 is a launch refused before a worker ran,
+// so it spends nothing and is no cost consumer at all. The total is the first take's
+// alone.
 func TestAProviderFailedTakeCountsOnceAfterARedeal(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
@@ -182,11 +182,10 @@ func TestAProviderFailedTakeCountsOnceAfterARedeal(t *testing.T) {
 	ta.ok("finish --as m1 s1-1.w1@" + gen + " --failed --report 'launch refused: no route for the model'")
 	out := ta.ok("card s1-1")
 	lines := costLines(out)
-	require.Len(t, lines, 3, out)
+	require.Len(t, lines, 2, out)
 	assert.Contains(t, lines[0], "COST kind=work card=s1-1.w1 attempt=1 take=1 who=m1 route=flash-a model=opencode/deepseek-v4-flash tier=flash end=provider-failure input=1000 ")
-	assert.Contains(t, lines[1], "COST kind=work card=s1-1.w1 attempt=1 who=m1 route=flash-a model=opencode/deepseek-v4-flash tier=flash end=failed input=- cache_read=- ", "the second take spent nothing it reported")
-	assert.Contains(t, lines[2], "COST TOTAL consumers=2 input=1000 cache_read=2000 cache_write=- output=300 reasoning=200 requests=3 ")
-	assert.Contains(t, lines[2], "predicted_usd=0.000336 predicted_of=1/2 actual_usd=0.0005 actual_by=harness actual_of=1/2", "the first take counted once")
+	assert.Contains(t, lines[1], "COST TOTAL consumers=1 input=1000 cache_read=2000 cache_write=- output=300 reasoning=200 requests=3 ")
+	assert.Contains(t, lines[1], "predicted_usd=0.000336 predicted_of=1/1 actual_usd=0.0005 actual_by=harness actual_of=1/1", "the first take counted once")
 }
 
 // A read handed back without a verdict keeps its run's record (read_take_<n>), the
