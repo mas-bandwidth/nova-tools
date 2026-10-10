@@ -1730,9 +1730,9 @@ jobs:
       - name: provision Ansible
         shell: bash
         run: |
-          python3 -m venv "$RUNNER_TEMP/fleet-ansible"
-          "$RUNNER_TEMP/fleet-ansible/bin/python" -m pip install --disable-pip-version-check 'ansible-core==2.21.5'
+          python3 -m pip install --disable-pip-version-check --target "$RUNNER_TEMP/fleet-ansible" 'ansible-core==2.21.5'
           echo "$RUNNER_TEMP/fleet-ansible/bin" >> "$GITHUB_PATH"
+          echo "PYTHONPATH=$RUNNER_TEMP/fleet-ansible" >> "$GITHUB_ENV"
       - name: check-mode adoption fixture
         shell: bash
         run: |
