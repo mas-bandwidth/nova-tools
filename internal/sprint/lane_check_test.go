@@ -22,6 +22,10 @@ import (
 // laneTick is the pass rig's tick with the friend's beat naming the cards running.
 func (r *passRig) laneTick(d time.Duration, friend string, running ...string) {
 	r.t.Helper()
+	if running == nil {
+		// An empty report clears the previous running list; nil leaves it unchanged.
+		running = []string{}
+	}
 	r.mu.Lock()
 	r.now = r.now.Add(d)
 	r.mu.Unlock()
