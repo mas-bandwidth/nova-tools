@@ -17,9 +17,10 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
-// The inbox files are the record. A batch friend (the default) gets one status
-// message for the cards a pass delivers, not one per card; one-shot keeps a
-// message per card. A failed batch send is one line and one note, and the files stay.
+// The inbox files are the record. A friend gets one notice for the cards a pass
+// delivers, not one per card: a one-shot friend's per-card wake stands only for a
+// single delivered card, and any other pass with a delivery folds into one status
+// message. A failed send is one line and one note, and the files stay.
 func TestFriendSyncWakesOncePerPassInBatchMode(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
