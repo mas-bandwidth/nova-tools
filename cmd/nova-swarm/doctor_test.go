@@ -222,14 +222,15 @@ func TestPreflightLeavesNonLaunchVerbsAlone(t *testing.T) {
 // The verb is reachable from the dispatcher, and `doctor` is not a launch verb itself, so
 // running it does not recurse.
 func TestDoctorVerbIsReachableFromTheDispatch(t *testing.T) {
-	doctorFakeGlobal(t,
+	t.Parallel()
+	env := doctorFake(
 		map[string]string{
 			"/opt/go/bin/nova-swarm":         doctorRebuiltLine,
 			"/home/me/.local/bin/nova-swarm": doctorRebuiltLine,
 		},
 		noPath, "/home/me")
 	var out, errOut bytes.Buffer
-	code := run([]string{"doctor", "--path", "/opt/go/bin/nova-swarm", "--local", "/home/me/.local/bin/nova-swarm"}, strings.NewReader(""), &out, &errOut, time.Now().UTC())
+	code := env.cmdDoctor([]string{"--path", "/opt/go/bin/nova-swarm", "--local", "/home/me/.local/bin/nova-swarm"}, &out, &errOut)
 	require.Equal(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
 	assert.True(t, strings.HasPrefix(out.String(), "DOCTOR OK stamp="), "not the OK line: %q", out.String())
 }

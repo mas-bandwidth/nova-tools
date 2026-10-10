@@ -151,9 +151,10 @@ func TestTheReadmeTranscriptIsWhatTheToolPrints(t *testing.T) {
 //
 // The transcript's `--pool ./pool` is written from wherever the reader's shell
 // stands, and quickstart MAKES that directory, so the test does not rewrite the
-// documented path: it moves to a temp directory where `./pool` is the test's to
+// documented path: it uses a temp directory where `./pool` is the test's to
 // create, and the tool echoes back the relative `./pool` it was handed.
 func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
 	raw, err := os.ReadFile(filepath.Join(root, "docs", "TESTS.md"))
 	require.NoError(t, err)
@@ -166,22 +167,21 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	// names the next moves, status reports it empty. A transcript that has lost
 	// one of them still matches line for line and is still short of a first run.
 	assert.Len(t, steps, 1, "the `### First run` block runs %d commands, want 1: template", len(steps))
-	t.Chdir(t.TempDir())
-	for _, p := range onboarding.Execute(steps, runDocumentedSwarm(t)) {
+	dir := t.TempDir()
+	for _, p := range onboarding.Execute(steps, runDocumentedSwarmInDir(t, dir)) {
 		t.Error(p)
 	}
 }
 
-// runDocumentedSwarm calls this binary's own entry point with the documented
+// runDocumentedSwarmInDir calls this binary's own entry point with the documented
 // arguments, opening the file a `< path` redirect names. The transcript's paths
-// are relative to the directory the test now stands in, which is where the
-// document's reader types them.
-func runDocumentedSwarm(t *testing.T) onboarding.Runner {
+// are resolved against the given directory instead of relying on the working directory.
+func runDocumentedSwarmInDir(t *testing.T, dir string) onboarding.Runner {
 	t.Helper()
 	return func(s onboarding.Step) (onboarding.Result, error) {
 		stdin := io.Reader(strings.NewReader(""))
 		if s.Stdin != "" {
-			f, err := os.Open(s.Stdin)
+			f, err := os.Open(filepath.Join(dir, s.Stdin))
 			if err != nil {
 				return onboarding.Result{}, err
 			}
@@ -208,10 +208,11 @@ func TestTheCommandReferenceFirstRunIsWhatTheToolPrints(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, steps, 1, "the `### First run` block of docs/CLI.md runs %d commands, want 1: template", len(steps))
 	pool := filepath.Join(t.TempDir(), "pool")
+	dir := t.TempDir()
 	for i := range steps {
 		steps[i].Args = localize(t, pool, steps[i].Args)
 	}
-	for _, p := range onboarding.Execute(steps, runDocumentedSwarm(t), onboarding.Path("./pool", pool)) {
+	for _, p := range onboarding.Execute(steps, runDocumentedSwarmInDir(t, dir), onboarding.Path("./pool", pool)) {
 		t.Error(p)
 	}
 }
@@ -244,8 +245,9 @@ func TestUsageBannerExamplesRunThroughTheComparator(t *testing.T) {
 	require.Equal(t, strings.Join(linesOfTheBanner, "\n"), strings.Join(got, "\n"), "the banner's example block is not the sitting this test runs\nbanner:\n  %s\nwant:\n  %s",
 		strings.Join(got, "\n  "), strings.Join(linesOfTheBanner, "\n  "))
 	pool := filepath.Join(t.TempDir(), "pool")
+	dir := t.TempDir()
 	norms := []onboarding.Norm{onboarding.Path("./pool", pool)}
-	run := runDocumentedSwarm(t)
+	run := runDocumentedSwarmInDir(t, dir)
 	for _, ex := range got {
 		step, ok := documented[ex]
 		if !ok {
