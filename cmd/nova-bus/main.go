@@ -937,10 +937,11 @@ func (w world) log(c *tool.Call) *tool.Out {
 		got = filtered
 	}
 	// Apply --max: log reads oldest first, --max returns the newest match
+	total := len(got)
 	if max := c.Int("max"); max > 0 && len(got) > max {
 		got = got[len(got)-max:]
 	}
-	o := tool.Done().Fact("total", len(got))
+	o := tool.Done().Fact("total", total)
 	for _, e := range got {
 		m := e.Message()
 		kv := slices.Concat([]any{"id", m.ID, "from", m.From, "to", strings.Join(m.To, ","), "cc", strings.Join(m.CC, ","), "re", m.Re}, kindItem(m), []any{"at", m.At.Format(time.RFC3339), "subject", tool.Text(m.Subject)})
