@@ -635,6 +635,7 @@ func TestRedisTeardownLeavesNoKeyAndNothingElse(t *testing.T) {
 	_, err := b.st.Clear(ctx)
 	require.NoError(t, err)
 	b.must(AddStep(sprint.AddReq{Stream: "s1", Count: 2}))
+	b.startMachine()
 	b.through("s1-1")
 	// keys of no sprint, and keys that look like the sprint's but are not its own
 	foreign := []string{"other:key", "f-stranger", "table:f-work:stranger", "f-sprint-not:fence"}
@@ -651,6 +652,7 @@ func TestRedisTeardownLeavesNoKeyAndNothingElse(t *testing.T) {
 		_, err := a.st.Clear(ctx)
 		require.NoError(t, err)
 		a.must(AddStep(sprint.AddReq{Stream: "s1", Count: 2}))
+		a.startMachine()
 		a.through("s1-1")
 		require.NoError(t, a.st.B.SetCoordinator(ctx, "tester"))
 	}
@@ -659,6 +661,7 @@ func TestRedisTeardownLeavesNoKeyAndNothingElse(t *testing.T) {
 	a.setGoal("friend-a", "goal", route)
 	a.machine()
 	require.Greater(t, len(liveKeys(t, c)), len(untouched), "the sprint wrote no keys")
+	a.stopMachine()
 	n, err := a.st.Teardown(ctx)
 	require.NoError(t, err)
 	t.Logf("teardown deleted %d keys", n)

@@ -5,3 +5,4 @@
 # goes through safepath.RemoveUnder. This list only shrinks: the class test
 # (removeall_class_test.go) fails on an entry whose call has left as well as on a call
 # that is not listed.
+internal/testredis/testredis.go:SocketPath

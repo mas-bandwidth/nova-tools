@@ -4,6 +4,10 @@ package store
 
 import (
 	"context"
+	"path/filepath"
+	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testredis"
 	"errors"
 	"sync"
 	"testing"
@@ -159,6 +163,7 @@ func TestRedisClear(t *testing.T) {
 	h.through("s1-1", "s1-2")
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1"}))
 	h.clean("landed again")
+	h.stopMachine()
 	_, err = st.Teardown(h.ctx)
 	require.NoError(t, err)
 	keys, err := c.Keys(h.ctx, "*f-*").Result()
@@ -264,4 +269,12 @@ func TestRedisHeldBackReadsTheWaitingColumn(t *testing.T) {
 	n, err = st.HeldBack(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 3, n, "gate, a and b are held back; c is ready")
+}
+
+func TestEveryFunctionalSocketPathFitsTheUnixBound(t *testing.T) {
+	t.Parallel()
+	longWork := filepath.Join(t.TempDir(), strings.Repeat("a", 200))
+	sock, err := testredis.SocketPath(longWork, "test.sock")
+	require.NoError(t, err)
+	assert.LessOrEqual(t, len(sock), 104, "socket path %s is %d bytes", sock, len(sock))
 }
