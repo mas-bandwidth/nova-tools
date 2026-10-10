@@ -347,23 +347,6 @@ func preferredFriend(names []string, lanes, free map[string]int) string {
 	return best
 }
 
-// FriendMode returns the friend's delivery mode (config.FriendModeBatch or
-// config.FriendModeOneShot), defaulting to config.FriendModeBatch if unset or unknown.
-func (s *Snapshot) FriendMode(name string) string {
-	if s == nil {
-		return config.FriendModeBatch
-	}
-	for _, f := range s.Friends {
-		if f.Name == name {
-			if f.Mode != "" {
-				return f.Mode
-			}
-			return config.FriendModeBatch
-		}
-	}
-	return config.FriendModeBatch
-}
-
 // Members is the fleet's machines: its rows but the friends' (FriendRow), in row order.
 func (s *Snapshot) Members() []string {
 	var out []string
@@ -377,8 +360,8 @@ func (s *Snapshot) Members() []string {
 
 // friendLoad is the cards a friend holds: ready and working on her row, her work cards and
 // her reads together. One width bounds her row (docs/SPEC-SPRINT.md section 1, a friend's
-// card; the owner's rule): her reads hold her lanes and her room as her work does, and a
-// one-shot friend holds one card at a time, read or work.
+// card; the owner's rule): her reads hold her lanes and her room as her work does, in
+// batch and one-shot mode alike.
 //
 // While read cards are on (read_cards.go) a read holds half a slot of her width, as a
 // member's does (halfLoad): her row holds her width of work or twice it of reads.
@@ -411,10 +394,8 @@ func friendLoad(s *Snapshot, name string) int {
 // below its ceiling is offered at the tier it escalates to (escalating), as the machines
 // would escalate it, and a friend's deal of it is a new attempt on that tier, the bound
 // attempt retired (friendEscalateUnit). A friend at or over her room is never
-// dealt. In batch mode (the default), a friend's room is DealAhead times her width and
-// her lanes are her width; in one-shot mode (docs/SPEC-SPRINT.md section 1, "A friend's
-// card"), a friend's room is 1 and her lanes are 1: she gets one card at a time, and the
-// next only after the last one finished. A lane of hers is idle while no card on her row
+// dealt. In batch and one-shot mode alike (docs/SPEC-SPRINT.md section 1, "A friend's
+// card"), a friend's room is DealAhead times her width and her lanes are her width. A lane of hers is idle while no card on her row
 // holds it, started or not.
 // Each is its next attempt's work card, created on the friend's row at generation 1, ready
 // whatever her lanes, untaken and with no deadline running (docs/SPEC-SPRINT.md section 1,

@@ -45,9 +45,8 @@ func TestFriendLevelEvensTheReadyQueuesOfAClass(t *testing.T) {
 	assert.Empty(t, p.Units)
 }
 
-// friend level respects a friend's delivery mode (docs/SPEC-SPRINT.md section 1, "A friend's card"):
-// in batch mode (the default), a friend fills up to room (DealAhead times width); in one-shot mode,
-// a friend's room is 1 and width is 1, so she takes at most one card into working and holds no ready cards.
+// friend level levels a one-shot friend as a batch one (docs/SPEC-SPRINT.md section 1, "A friend's
+// card"): in either mode a friend fills up to her room (DealAhead times width), her width working.
 func TestFriendLevelRespectsFriendDeliveryMode(t *testing.T) {
 	t.Parallel()
 	briefs := []string{friendBrief("friend amy")}

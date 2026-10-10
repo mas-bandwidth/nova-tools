@@ -260,6 +260,15 @@ func TestAOneShotFriendsFreedLaneTakesHerNextWhileOtherLanesRun(t *testing.T) {
 	assert.Equal(t, 1, w.s.Fleet.Count(amy, Ready))
 	assert.Equal(t, Working, w.s.Fleet.Card("s1-2.w1").Col)
 	assert.Equal(t, Working, w.s.Fleet.Card("s1-3.w1").Col, "her oldest ready card is her next")
+
+	// an active read holds a lane of hers too, and still gates nothing: finishing s1-2 while
+	// read-1 runs takes s1-4 into the lane s1-2 frees
+	w.s.Fleet.Put(&Card{ID: "read-1", Row: amy, Col: Working, Rev: 1,
+		Fields: map[string]string{"kind": "read", "primary": "s1-3", "stream": "s1", "reader": "amy"}})
+	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-2.w1"}}, As: amy, Gens: gensOf(w.s, "s1-2.w1"), Head: "def", Friends: seats}))
+	assert.Equal(t, Working, w.s.Fleet.Card("read-1").Col, "the read still runs")
+	assert.Equal(t, Working, w.s.Fleet.Card("s1-4.w1").Col, "the lane s1-2 freed took her next while a read ran")
+	assert.Equal(t, 0, w.s.Fleet.Count(amy, Ready))
 }
 
 // The deal fills only a row that can work (docs/SPEC-SPRINT.md section 1, a friend's card):
