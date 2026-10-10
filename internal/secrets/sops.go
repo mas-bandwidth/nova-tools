@@ -16,9 +16,9 @@ import (
 const MinSopsVersion = "3.13.3"
 const MinAgeKeygenVersion = "1.3.2"
 
-// ageUpgradeCmd returns the GOOS-specific command to upgrade age.
-func ageUpgradeCmd() string {
-	switch runtime.GOOS {
+// ageUpgradeCmdForOS returns the GOOS-specific command to upgrade age.
+func ageUpgradeCmdForOS(goos string) string {
+	switch goos {
 	case "darwin":
 		return "brew upgrade age"
 	case "linux":
@@ -27,6 +27,11 @@ func ageUpgradeCmd() string {
 	default:
 		return "brew upgrade age"
 	}
+}
+
+// ageUpgradeCmd returns the GOOS-specific command to upgrade age.
+func ageUpgradeCmd() string {
+	return ageUpgradeCmdForOS(runtime.GOOS)
 }
 
 var sopsVersionRegex = regexp.MustCompile(`^sops (\d+)\.(\d+)\.(\d+)`)

@@ -28,6 +28,28 @@ func sopsCoverFakeAgeKeygen(t *testing.T, output string) string {
 	return path
 }
 
+// TestAgeUpgradeCmdForOS returns the GOOS-specific age upgrade commands.
+func TestAgeUpgradeCmdForOS(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		goos string
+		want string
+	}{
+		{"darwin uses brew", "darwin", "brew upgrade age"},
+		{"linux uses apt-get, dnf, or curl", "linux", "sudo apt-get install --only-upgrade age || sudo dnf upgrade age || curl -L https://github.com/FiloSottile/age/releases/download/v" + MinAgeKeygenVersion + "/age-" + MinAgeKeygenVersion + "-linux-amd64.tar.gz | tar xz && sudo mv age/age /usr/local/bin/ && sudo mv age/age-keygen /usr/local/bin/"},
+		{"windows defaults to brew", "windows", "brew upgrade age"},
+		{"unknown OS defaults to brew", "unknown", "brew upgrade age"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := ageUpgradeCmdForOS(tc.goos)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
 // TestSopsCoverAgeKeygenVersionParsesProbeOutput pins the main path: the probe
 // parses the version the binary prints, with and without the v prefix, returns
 // it bare, and refuses an older binary with the upgrade remedy and output it
