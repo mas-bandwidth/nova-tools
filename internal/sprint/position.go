@@ -11,8 +11,28 @@ import "sort"
 // openLine is the row's cards that have not landed, in score order: the
 // stream's line as it stands. Everything below reads the line through here:
 // StopBefore, PositionWaits, Behind and WaitsFor.
+//
+// Any number of goroutines may read one table at once (a snapshot shared by
+// readers): the line is built on first use under the table's write lock, and
+// a built line is read under its read lock, so a read never writes what
+// another read is reading.
 func (t *Table) openLine(row string) []*Card {
-	t.index()
+	t.index() // takes and releases the lock itself: built before ours is taken
+	mu := t.mutex()
+	mu.RLock()
+	if l, ok := t.lines[row]; ok {
+		mu.RUnlock()
+		return l
+	}
+	mu.RUnlock()
+	mu.Lock()
+	defer mu.Unlock()
+	return t.openLineLocked(row)
+}
+
+// openLineLocked is openLine with the table's write lock held and its cells
+// built.
+func (t *Table) openLineLocked(row string) []*Card {
 	if t.lines == nil {
 		t.lines = map[string][]*Card{}
 	}
@@ -56,6 +76,15 @@ func StopBefore(s *Snapshot, stream string, score float64, landing map[string]bo
 // the last sentinel at or before it (-1 for none): built once with the line.
 func (t *Table) lineStops(row string) ([]*Card, []int) {
 	line := t.openLine(row)
+	mu := t.mutex()
+	mu.RLock()
+	if st, ok := t.stops[row]; ok && len(st) == len(line) {
+		mu.RUnlock()
+		return line, st
+	}
+	mu.RUnlock()
+	mu.Lock()
+	defer mu.Unlock()
 	if t.stops == nil {
 		t.stops = map[string][]int{}
 	}

@@ -4,7 +4,6 @@ package ci
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -14,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // version_functional_test.go builds every cmd/nova-* and runs it: a build is the functional
@@ -44,7 +42,7 @@ func TestEveryToolPrintsTheOneVersionLine(t *testing.T) {
 	root := repoRoot(t)
 	tools := novaCommands(t, root)
 	require.NotEmpty(t, tools, "no nova-* command directories found under cmd/; this test was looking in the wrong place and would have passed by checking nothing")
-	bin := buildAllTools(t, root)
+	bin := builtTools(t, root)
 
 	for _, tool := range tools {
 		t.Run(tool, func(t *testing.T) {
@@ -85,20 +83,6 @@ func novaCommands(t *testing.T, root string) []string {
 		}
 	}
 	return tools
-}
-
-// buildAllTools builds the whole set in ONE `go build ./cmd/...`, because
-// twenty-one separate builds is twenty-one link steps for the same evidence and
-// this package is held to the fast suite.
-func buildAllTools(t *testing.T, root string) string {
-	t.Helper()
-	dir := t.TempDir()
-	build := exec.Command("go", "build", "-o", dir+string(os.PathSeparator), "./cmd/...")
-	build.Env = goenv.Clean(os.Environ())
-	build.Dir = root
-	out, err := build.CombinedOutput()
-	require.NoErrorf(t, err, "building ./cmd/...: %v\n%s", err, out)
-	return dir
 }
 
 func exeName(tool string) string {

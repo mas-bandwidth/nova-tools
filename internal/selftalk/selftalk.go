@@ -25,6 +25,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // Verdict is the classification of a claim.
@@ -51,12 +52,49 @@ type Claim struct {
 	Match   string // the negative words that made the sentence a claim
 }
 
-// claim matches a sentence carrying a first-person self/capability
-// assertion. The bounded context either side keeps a match to roughly one
-// sentence without needing a real parser.
-var claim = regexp.MustCompile(`(?i)[^.!?]{0,120}\b(I am|I'm|I have never|I always|I never|` +
+// A claim is a sentence carrying a first-person self/capability assertion:
+// the whole-sentence shape
+//
+//	(?i)[^.!?]{0,120}\b(<claimMarkers>)\b[^.!?]{0,160}[.!?]
+//
+// The bounded context either side keeps a match to roughly one sentence
+// without needing a real parser.
+//
+// That shape is never compiled as one expression, because its leading
+// [^.!?]{0,120} costs a hundred and twenty live states at every byte of the
+// input: on one megabyte of a single sentence the scan ran past CI's 75 s
+// test deadline under -race. claimTail finds the marker and the rest of the
+// sentence, and claimLead walks back over the bounded context before it, so
+// the scan is one linear pass plus at most claimLead runes per claim, and its
+// spans are exactly the whole-sentence shape's (pinned by a test that runs
+// both).
+const claimMarkers = `I am|I'm|I have never|I always|I never|` +
 	`I cannot|I can't|I can not|I do not|I don't|my \w+ is|makes me|I tend|I struggle|I fail|` +
-	`reliably|every time|in one direction)\b[^.!?]{0,160}[.!?]`)
+	`reliably|every time|in one direction`
+
+// claimTail is the claim shape from its marker on: the marker, at most 160
+// more runes of the same sentence, and the sentence's terminator.
+var claimTail = regexp.MustCompile(`(?i)\b(` + claimMarkers + `)\b[^.!?]{0,160}[.!?]`)
+
+// claimLead is how many runes of the same sentence a claim reaches back before
+// its marker: the shape's leading [^.!?]{0,120}.
+const claimLead = 120
+
+// leadStart is where a claim whose marker begins at at starts: up to
+// claimLead runes back, stopping after a sentence terminator. Because a
+// marker's sentence holds no terminator before its own end, the leftmost
+// marker of a sentence that has one within reach of the end gives the
+// leftmost start, which is the match the whole-sentence shape reports.
+func leadStart(flat string, at int) int {
+	for n := 0; n < claimLead && at > 0; n++ {
+		r, size := utf8.DecodeLastRuneInString(flat[:at])
+		if r == '.' || r == '!' || r == '?' {
+			break
+		}
+		at -= size
+	}
+	return at
+}
 
 // negative is the vocabulary that turns a first-person assertion into a
 // claim worth looking at: without it every ordinary "I am" sentence flags.
@@ -93,7 +131,7 @@ var whitespace = regexp.MustCompile(`\s+`)
 func Scan(text string) []Claim {
 	flat, starts := flattenLineStarts(text)
 	var out []Claim
-	for _, span := range claim.FindAllStringIndex(flat, -1) {
+	for _, span := range claimSpans(flat) {
 		m := flat[span[0]:span[1]]
 		s := strings.TrimSpace(m)
 		word := negative.FindString(s)
@@ -107,6 +145,17 @@ func Scan(text string) []Claim {
 		out = append(out, Claim{Line: lineAt(1, starts, span[0]+strings.Index(m, s)), Verdict: v, Text: s, Match: word})
 	}
 	return out
+}
+
+// claimSpans returns the byte span of every claim in flattened text, in order:
+// the spans the whole-sentence claim shape's FindAllStringIndex returns, found
+// in one linear pass.
+func claimSpans(flat string) [][]int {
+	spans := claimTail.FindAllStringIndex(flat, -1)
+	for _, span := range spans {
+		span[0] = leadStart(flat, span[0])
+	}
+	return spans
 }
 
 // lineAt returns the source line of byte pos in a flattened buffer.
@@ -132,7 +181,10 @@ func Base(p string) string {
 // source line begins in that text. starts is sorted. One int per source line,
 // not one int per input byte.
 func flattenLineStarts(text string) (string, []int) {
-	flat := make([]byte, 0, len(text))
+	split := strings.Split(text, "\n")
+	// Every byte of text emits at most one byte, and each line break at most one more (the
+	// boundary '.'), so this capacity is never outgrown: growing it copies the whole text again.
+	flat := make([]byte, 0, len(text)+len(split))
 	var starts []int
 	emit := func(b byte) {
 		if strings.ContainsRune("*_`>#|", rune(b)) {
@@ -151,7 +203,6 @@ func flattenLineStarts(text string) (string, []int) {
 		s = strings.TrimSpace(s)
 		return s == "" || strings.HasPrefix(s, "#")
 	}
-	split := strings.Split(text, "\n")
 	for i, raw := range split {
 		starts = append(starts, len(flat))
 		for j := 0; j < len(raw); j++ {

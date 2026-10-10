@@ -61,9 +61,10 @@ const (
 	NRaisedAgain = "a judgment still holds: raised again"
 )
 
-// PassTypes are the pass's judgment types. NFriendRowEmpty is the empty-row clock,
-// not a judgment, and stays off this list.
-var PassTypes = []string{NFriendDeaf, NFriendIdle, NCoordinatorBehind, NFriendEmpty, NPinIgnored}
+// PassTypes are the pass's judgment types: its own and the automatic stops it keeps
+// (StopTypes, stops.go). NFriendRowEmpty is the empty-row clock, not a judgment, and stays
+// off this list.
+var PassTypes = append([]string{NFriendDeaf, NFriendIdle, NCoordinatorBehind, NFriendEmpty, NPinIgnored}, StopTypes...)
 
 // The two judgments list ack and wait on TickDecisions, same as deaf and idle, so an
 // acknowledgement is kept on the condition (steps_ack.go) and the next pass does not
@@ -160,8 +161,11 @@ func TickCoordinatorPass(s *Snapshot, r TickReq) (Plan, int) {
 	conds := append(append(deafConds(s, r), idleConds(s, r)...), behindConds(s, r)...)
 	conds = append(conds, emptyConds(&p, s, r)...)
 	conds = append(conds, pinConds(s, r)...)
+	// every automatic stop the machine made, while it holds (stops.go)
+	conds = append(conds, stopConds(s, r)...)
 	due := notify(&p, s, conds, PassTypes, r)
 	reraise(&p, s, conds, r)
+	stopsDigest(&p, s, r)
 	return p, due
 }
 
@@ -268,6 +272,8 @@ func behindConds(s *Snapshot, r TickReq) []cond {
 	byType := map[string][]string{}
 	seen := map[string]bool{}
 	n := 0
+	var since, oldest time.Time // the oldest counted judgment's overdue line, and its write
+	var oldestID string
 	for _, o := range s.Open {
 		j := o.Note
 		if j.Kind != Judgment || j.Type == NSprintDone || slices.Contains(PassTypes, j.Type) || seen[j.ID] {
@@ -288,6 +294,12 @@ func behindConds(s *Snapshot, r TickReq) []cond {
 		// by id, as the overdue line names it: an alias is the store's, not the decision's
 		byType[j.Type] = append(byType[j.Type], j.ID)
 		n++
+		if since.IsZero() || at.Before(since) {
+			since = at
+		}
+		if oldest.IsZero() || j.At.Before(oldest) {
+			oldest, oldestID = j.At, j.ID
+		}
 	}
 	if n == 0 {
 		return nil
@@ -298,8 +310,13 @@ func behindConds(s *Snapshot, r TickReq) []cond {
 		sort.Strings(refs)
 		parts = append(parts, fmt.Sprintf("%d %s (%s)", len(refs), typ, Preview(refs, ", ")))
 	}
+	// escalating (stops.go, BehindLevel): the level opens the text and is part of the
+	// condition, so each new level is a new judgment whatever quieted the one before
+	level := BehindLevel(s, r, since)
+	age, _ := r.running(s.Now, stamp(oldest))
 	return []cond{{typ: NCoordinatorBehind, streamLevel: true,
-		what:      fmt.Sprintf("%d judgments wait past their deadline: %s; run: nova-sprint inbox", n, strings.Join(parts, "; ")),
+		what: fmt.Sprintf("%s%d: %d judgments wait past their deadline, the oldest %s for %s: %s; run: nova-sprint inbox",
+			behindLevelPrefix, level, n, oldestID, age.Truncate(time.Second), strings.Join(parts, "; ")),
 		decisions: []string{"act", "wait"}}}
 }
 
@@ -322,8 +339,8 @@ func reraise(p *Plan, s *Snapshot, conds []cond, r TickReq) {
 	done := map[string]bool{}
 	for _, o := range s.Open {
 		n := o.Note
-		if n.Kind != Judgment || !slices.Contains(PassTypes, n.Type) || done[n.ID] {
-			continue
+		if n.Kind != Judgment || !slices.Contains(PassTypes, n.Type) || slices.Contains(StopTypes, n.Type) || done[n.ID] {
+			continue // a stop is raised again in the one digest of the tick (stopsDigest, stops.go)
 		}
 		c, ok := holding[condKey(n.Type, o.Subject(), n.Card, n.What)]
 		if !ok {

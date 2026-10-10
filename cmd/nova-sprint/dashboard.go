@@ -61,6 +61,15 @@ func (a *app) cmdDashboard(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "dashboard", err.Error())
 	}
+	if from == "" && a.server(fs) == "" && strings.TrimSpace(c.redis) == "" {
+		// no sprint to read: refused here, on stderr, before any line goes to stdout or any
+		// listener opens (refusal grammar); a store that is named but down is a read that
+		// fails and is logged, the page holding the last good copy
+		if _, _, err := a.recordedLogin(); err != nil {
+			return refuse(stderr, "dashboard", err.Error())
+		}
+		return refuse(stderr, "dashboard", dashboardNoStore)
+	}
 	var pulls []string
 	if from == "" {
 		if pulls, err = dashboardAddrs("--pull", *pull); err != nil {
@@ -116,6 +125,10 @@ func (a *app) cmdDashboard(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintln(stdout, "DASHBOARD STOP interrupted")
 	return 0
 }
+
+// dashboardNoStore is the dashboard's refusal when it is given nothing to read: no store, no
+// sprint's server, no dashboard to pull from.
+const dashboardNoStore = "the dashboard reads the sprint: --redis <addr> (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, or a login recorded by nova-sprint seat login), the sprint's server (NOVA_SPRINT_SERVER), or another dashboard (--pull <url>); with no Redis, --redis mem:<file> serves the in-memory twin kept in that file"
 
 // dashboardServer is the dashboard's one server: it reads the sprint as where --json
 // --cards does (whereJSON), or, given from (a puller), that dashboard's /api/sprint; each

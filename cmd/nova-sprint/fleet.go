@@ -26,9 +26,10 @@ machine's load. A beat window is `+sprint.BeatDeadline.String()+`; a member is u
 in a row (one missed beat marks nothing; a beat resets the count) and down past
 that or when it has never beaten; the tick applies each change
 (a member down has its unfinished work cards dealt to the members up; a
-member up levels the ready queues). hold <member> holds a member whatever it
-beats (status held), and fleet down <member> is hold --return in the old
-words; unhold or fleet up releases the hold, fleet up adding a member the
+member up levels the ready queues). fleet hold <member> --reason <text> (hold
+<member>) holds a member whatever it beats (status held), and fleet down
+<member> is hold --return in the old words; fleet unhold <member> (unhold), or
+fleet up, releases the hold, fleet up adding a member the
 sprint does not know; fleet up <m> --width 0 drains a member instead: no new
 deal reaches it, its untaken ready cards are levelled away and its working
 cards finish where they are (fleet down deals them again elsewhere); --width

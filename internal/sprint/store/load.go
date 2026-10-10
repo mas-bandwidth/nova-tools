@@ -61,32 +61,11 @@ func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*spr
 	if err != nil {
 		return nil, err
 	}
-	if len(tables) > 0 {
-		st.stats().reads.Add(1)
-	}
-	ids, err := st.B.CellIDs(ctx, shapes)
+	tbls, err := st.placedRecords(ctx, tables, shapes)
 	if err != nil {
 		return nil, err
 	}
-	for i, shape := range shapes {
-		if st.pinned && shape.Epoch != st.epoch {
-			return nil, errCleared
-		}
-		t := sprint.NewTable(tables[i])
-		t.Epoch, t.Revision = shape.Epoch, shape.Revision
-		t.SetProps(shape.Props)
-		for _, r := range shape.Rows {
-			t.SetRows(append(t.Rows(), r.Key))
-			if r.Hidden {
-				t.SetHidden(r.Key)
-			}
-			if len(r.Texts) > 0 {
-				t.Texts[r.Key] = r.Texts
-			}
-		}
-		if err := st.readInto(ctx, t, ids[shape.Name], true); err != nil {
-			return nil, err
-		}
+	for i, t := range tbls {
 		switch tables[i] {
 		case sprint.Work:
 			s.Work = t
@@ -125,6 +104,75 @@ func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*spr
 		}
 	}
 	return s, nil
+}
+
+// placedRecords is each table at its shape: its rows, texts and properties, and
+// every placed record at the shape's revision, from the load cache where it holds
+// the table (loadcache.go), else read whole (the tables read whole share one
+// exchange for their cells' member ids) and kept in the cache.
+func (st *Store) placedRecords(ctx context.Context, tables []string, shapes []ntable.Table) ([]*sprint.Table, error) {
+	lc := st.loadCache()
+	tbls := make([]*sprint.Table, len(shapes))
+	var whole []ntable.Table
+	var wholeAt []int
+	for i, shape := range shapes {
+		if st.pinned && shape.Epoch != st.epoch {
+			return nil, errCleared
+		}
+		t := sprint.NewTable(tables[i])
+		t.Epoch, t.Revision = shape.Epoch, shape.Revision
+		t.SetProps(shape.Props)
+		for _, r := range shape.Rows {
+			t.SetRows(append(t.Rows(), r.Key))
+			if r.Hidden {
+				t.SetHidden(r.Key)
+			}
+			if len(r.Texts) > 0 {
+				t.Texts[r.Key] = r.Texts
+			}
+		}
+		tbls[i] = t
+		if lc != nil {
+			hit, err := st.placedFromCache(ctx, lc, t, shape)
+			if err != nil {
+				return nil, err
+			}
+			if hit {
+				continue
+			}
+		}
+		whole, wholeAt = append(whole, shape), append(wholeAt, i)
+	}
+	if len(whole) == 0 {
+		return tbls, nil
+	}
+	st.stats().reads.Add(1)
+	// each table's mark is read before its records (markOf)
+	marks := make([]string, len(whole))
+	keep := make([]bool, len(whole))
+	for k, shape := range whole {
+		if lc == nil {
+			break
+		}
+		var err error
+		if marks[k], keep[k], err = st.markOf(ctx, shape); err != nil {
+			return nil, err
+		}
+	}
+	ids, err := st.B.CellIDs(ctx, whole)
+	if err != nil {
+		return nil, err
+	}
+	for k, shape := range whole {
+		t := tbls[wholeAt[k]]
+		if err := st.readInto(ctx, t, ids[shape.Name], true); err != nil {
+			return nil, err
+		}
+		if keep[k] {
+			lc.keepLoaded(t, shape, marks[k])
+		}
+	}
+	return tbls, nil
 }
 
 // HeldBack is sprint.HeldBack over the work table's waiting column, read

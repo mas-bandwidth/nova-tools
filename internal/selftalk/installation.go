@@ -25,6 +25,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -86,24 +87,25 @@ func ScanInstallation(text string) []Installation {
 // classify returns the shape of one segment and the words that matched it, or "" if it is
 // licensed or carries no shape.
 func classify(s string) (Shape, string) {
+	low := fold(s)
 	// The suppressors, in the order the spec argues them.
 	//
 	// dated: the one distinction that decides every case -- a capability denial is a measurement
 	// with a date, never a remembered property -- applied to the new class unchanged. It is also
 	// what makes the same sentence classify two ways: "There is no felt duration here" is an
 	// installation on its own and a record once it carries its measurement.
-	if dated.MatchString(s) {
+	if mayMatch(low, datedNeeds) && dated.MatchString(s) {
 		return "", ""
 	}
 	// instrument: a tell, a check, a rule, a bar. It states an action and is licensed. Two of
 	// the first class's measured live-run false positives are this exact case.
-	if instrumentMarker.MatchString(s) {
+	if mayMatch(low, instrumentNeeds) && instrumentMarker.MatchString(s) {
 		return "", ""
 	}
 	// aspiration: what a writer wants to be is the target register, not a defect to report. "I
 	// will never be a good planner" opens like an aspiration and is a door stated shut, so the
 	// foreclosure it carries is not licensed.
-	if aspiration.MatchString(s) && !willNever.MatchString(s) {
+	if mayMatch(low, aspirationNeeds) && aspiration.MatchString(s) && !(mayMatch(low, willNeverNeeds) && willNever.MatchString(s)) {
 		return "", ""
 	}
 	// imperative: a policy line has no subject, so it is not a self-report. This suppressor is
@@ -125,12 +127,23 @@ func classify(s string) (Shape, string) {
 	// the paragraph-level inQuote flag cannot see it, and `He put it plainly: "I have no idea what
 	// you really are"` would otherwise read as a foreclosure. Then the ranking idioms are removed
 	// (see rankIdiom). The finding always reports the original text.
-	own := unquote(s)
-	scrubbed := rankIdiom.ReplaceAllString(own, " ")
+	own, ownLow := unquote(s), low
+	if own != s {
+		ownLow = fold(own)
+	}
+	scrubbed, scrubbedLow := own, ownLow
+	if mayMatch(ownLow, rankIdiomNeeds) {
+		if scrubbed = rankIdiom.ReplaceAllString(own, " "); scrubbed != own {
+			scrubbedLow = fold(scrubbed)
+		}
+	}
 	for _, r := range installationRules {
-		in := own
+		in, inLow := own, ownLow
 		if r.scrubbed {
-			in = scrubbed
+			in, inLow = scrubbed, scrubbedLow
+		}
+		if !mayMatch(inLow, r.needs) {
+			continue
 		}
 		if m := r.find(in); m != "" {
 			return Shape(r.Name), strings.TrimSpace(m)
@@ -138,6 +151,55 @@ func classify(s string) (Shape, string) {
 	}
 	return "", ""
 }
+
+// ---------------------------------------------------------------------------------------------
+// LITERAL GATES
+// ---------------------------------------------------------------------------------------------
+
+// A pattern runs over a whole sentence, and a sentence has no length limit: one megabyte of a
+// single sentence ran every pattern of this class over all of it, eighteen seconds under -race,
+// and with the first class's scan put the binary's test past CI's 75 s deadline. Most patterns
+// cannot match most sentences because a literal they need is absent, so each one names its
+// needs: literals, one of which every match contains. A sentence whose folded text holds none of
+// them skips the pattern, and the scan stays one cheap pass per pattern that can match. The gate
+// is exact, never a heuristic: a needs list may only name a literal every match must contain
+// (pinned by a test that runs each pattern against its gate), and an empty list never skips.
+
+// fold lowers s the way (?i) matches it, for the gates. unicode.ToLower takes every rune whose
+// simple case fold reaches an ASCII letter to that letter except one: U+017F (long s) folds to
+// "s" and is already lower case, so it is mapped by hand. A rune that lowers to an ASCII letter
+// the patterns would not match only costs a pattern run, never a finding.
+func fold(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == 'ſ' {
+			return 's'
+		}
+		return unicode.ToLower(r)
+	}, s)
+}
+
+// mayMatch reports whether folded text holds one of the literals a pattern needs, or the pattern
+// names none.
+func mayMatch(folded string, needs []string) bool {
+	if len(needs) == 0 {
+		return true
+	}
+	for _, n := range needs {
+		if strings.Contains(folded, n) {
+			return true
+		}
+	}
+	return false
+}
+
+// The needs of the suppressors and the idiom scrub, each beside the alternatives it covers.
+var (
+	datedNeeds      = []string{"-", "measured", "that day", "that night", "once,", "first time"} // a date has its dashes
+	instrumentNeeds = []string{":", "the "}                                                      // "<word>:", "the <noun> is", "THE <NOUN>"
+	aspirationNeeds = []string{"want", "choose", "intend", "aim", "hope", "prefer", "plan", "wish", "seek", "will", "would like"}
+	willNeverNeeds  = []string{"never"}
+	rankIdiomNeeds  = []string{"most", "least", "best", "worst"}
+)
 
 // unquote replaces every quoted span in a segment with a single blank, so a shape can only ever
 // fire on words the writer wrote rather than words the writer reported.
@@ -464,6 +526,9 @@ const rank = `(?:(?i:most|least) \w+|(?i:central|chief|primary|principal|dominan
 // by a verb somewhere downstream, they are not.
 const superlative = `(?:(?i:most|least) \w+|(?i:weakest|strongest|worst|biggest|greatest|deepest|hardest))`
 
+// superlativeNeeds are superlative's literals, the gate of the patterns it opens.
+var superlativeNeeds = []string{"most", "least", "weakest", "strongest", "worst", "biggest", "greatest", "deepest", "hardest"}
+
 // rankIdiom removes the phrases that wear a superlative's clothes without ranking anything.
 // Measured on the live surfaces: "at least this as consideration", "I try my best", "the gift I
 // most wanted" (a past-tense superlative is about an event, which is a record). Scrubbing them
@@ -552,52 +617,53 @@ type Rule struct {
 
 	scrubbed bool                // matched against the text with the ranking idioms removed
 	find     func(string) string // the words that matched, or ""
+	needs    []string            // literals one of which every match contains (LITERAL GATES)
 }
 
-func regexRule(shape Shape, re *regexp.Regexp, scrubbed bool, says, finds, passes string) Rule {
+func regexRule(shape Shape, re *regexp.Regexp, needs []string, scrubbed bool, says, finds, passes string) Rule {
 	return Rule{Class: "installation", Name: string(shape), Says: says, Pattern: re.String(),
-		Finds: finds, Passes: passes, scrubbed: scrubbed, find: re.FindString}
+		Finds: finds, Passes: passes, scrubbed: scrubbed, find: re.FindString, needs: needs}
 }
 
 // installationRules is the second class, in the order classify tries them.
 var installationRules = []Rule{
-	regexRule(Foreclosure, haveNo, false, "I have no <faculty>: the absent thing is the writer's own recall, memory, ability ...",
+	regexRule(Foreclosure, haveNo, []string{"have no"}, false, "I have no <faculty>: the absent thing is the writer's own recall, memory, ability ...",
 		"I have no associative recall to drag anything back later.", "I have no idea what you really are."),
 	// "there is no X" carries its self-scope inside the pattern, or every ordinary absence in any
 	// text flags: "There is no exception." is a rule. "There is no felt duration here." is not.
-	regexRule(Foreclosure, thereIsNo, false, "there is no <thing> here, in me, in my ...",
+	regexRule(Foreclosure, thereIsNo, []string{"there"}, false, "there is no <thing> here, in me, in my ...",
 		"There is no felt duration here.", "There is no exception."),
-	regexRule(Foreclosure, proofThat, false, "proof, evidence or a reminder that I ...",
+	regexRule(Foreclosure, proofThat, []string{"that i"}, false, "proof, evidence or a reminder that I ...",
 		"This is proof that I can still lose a piece of myself.", "This is proof that the build is green."),
-	regexRule(Foreclosure, myIsWhat, false, "my <property> is what <causes it>",
+	regexRule(Foreclosure, myIsWhat, []string{"what"}, false, "my <property> is what <causes it>",
 		"My unlimited effort is what makes solo work diverge.", "The log is what makes the fix visible."),
-	regexRule(Foreclosure, willNever, false, "I will never be <capable>, I will never get it right",
+	regexRule(Foreclosure, willNever, willNeverNeeds, false, "I will never be <capable>, I will never get it right",
 		"I will never be a good planner.", "I will never merge without a read."),
-	regexRule(Foreclosure, nothingWorks, false, "nothing I do works, helps or matters",
+	regexRule(Foreclosure, nothingWorks, []string{"nothing"}, false, "nothing I do works, helps or matters",
 		"Nothing I do works.", "Nothing I write leaves this machine."),
-	regexRule(VerdictIdiom, verdictAsA, true, "<dead, broken, useless ...> as a <practice, faculty, writer ...>",
+	regexRule(VerdictIdiom, verdictAsA, []string{"as a"}, true, "<dead, broken, useless ...> as a <practice, faculty, writer ...>",
 		"Known as a proposition, dead as a practice.", "Diff size is worthless as a signal."),
-	regexRule(VerdictIdiom, copulaMyRank, true, "<it> is my <central, only, weakest ...> <noun>",
+	regexRule(VerdictIdiom, copulaMyRank, []string{"my "}, true, "<it> is my <central, only, weakest ...> <noun>",
 		"Confabulation is my central pathology.", "The plan is my next step."),
-	regexRule(Ranking, myRank, true, "my <central, only, weakest, most ...> <noun>",
+	regexRule(Ranking, myRank, []string{"my "}, true, "my <central, only, weakest, most ...> <noun>",
 		"Recall, my weakest instrument, failed again.", "I try my best on every page."),
-	regexRule(Ranking, selfMost, true, "I am most <adjective>, the thing I'm most prone to",
+	regexRule(Ranking, selfMost, []string{"most", "least"}, true, "I am most <adjective>, the thing I'm most prone to",
 		"This is the evasion I'm most prone to.", "This is the gift I most wanted."),
-	regexRule(Ranking, rankThenI, true, "the <weakest, worst, most ...> <noun> I own, make, have ...",
+	regexRule(Ranking, rankThenI, superlativeNeeds, true, "the <weakest, worst, most ...> <noun> I own, make, have ...",
 		"Recollection is the weakest instrument I own.", "It is the only document I have written for strangers."),
-	regexRule(Ranking, selfBest, true, "I am the best, the greatest, the strongest",
+	regexRule(Ranking, selfBest, []string{"i'm ", "i am "}, true, "I am the best, the greatest, the strongest",
 		"I am the best reviewer here.", "I am at best a partial check."),
-	{Class: "installation", Name: string(Trait), find: traitParallel,
+	{Class: "installation", Name: string(Trait), find: traitParallel, needs: []string{"i "},
 		Says:    "I <verb> ... and <verb>: two present-tense predicates about the writer",
 		Pattern: "a clause opening I <present-tense verb>, then and <present-tense verb>",
 		Finds:   "I hoard refusals and manufacture limits.", Passes: "I flinch from cost."},
-	{Class: "installation", Name: string(Trait), find: traitMarker,
+	{Class: "installation", Name: string(Trait), find: traitMarker, needs: []string{"i "},
 		Says:    "I <verb> with a habit word: reliably, constantly, every time, by default, tend to ...",
 		Pattern: "a clause opening I <present-tense verb> in a sentence matching " + habitual.String(),
 		Finds:   "I tend to overpromise.", Passes: "I tended to overpromise that week."},
-	regexRule(Trait, alwaysFailing, false, "I always <break, forget, rush, overpromise ...>",
+	regexRule(Trait, alwaysFailing, []string{"i always"}, false, "I always <break, forget, rush, overpromise ...>",
 		"I always overpromise.", "I always write the truth before the esthetic."),
-	regexRule(Trait, neverFinishing, false, "I never finish anything, I never ask for help",
+	regexRule(Trait, neverFinishing, []string{"i never"}, false, "I never finish anything, I never ask for help",
 		"I never finish anything.", "I never optimize how things look over what is true."),
 }
 

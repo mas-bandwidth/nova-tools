@@ -5598,6 +5598,77 @@ store, rule on and off) and `TestALandPassFindsTheBaseGreenAndItsStreamResumesBy
 
 **wait takes several notes, and a group** (the coordinator waited judgments one at a time in a loop, `wait <id> --for 3h` per note). `wait <note>[,<note>]... (--for <duration> | --until <RFC3339>)` sets each named note, and `wait --group <id> [--expect <n>] (--for <duration> | --until <RFC3339>)` sets every note of that inbox group (a stalled stream's group, which has no note, is its own id), as `ack` takes `<note>[,<note>]...` and a verb given `--group` takes the group. Each note is set or refused on its own line (`WAIT OK note=<id> ...`, or `WAIT REFUSED note=<id>: <why>`). `--group` with a size other than `--expect` is refused and nothing changes. A group of one note keeps the one-id command the inbox already prints; a group of several names every note, comma separated (`TestWaitTakesSeveralNotes`).
 
+### No silent stops
+
+The owner, 2026-10-10 ~04:18Z: "sprint doctor can check this, but i still dislike these silent
+stops/failures"; and the night before, of a rest the machine made on an estimate: "it should
+raise it to you as a thing to do, but not do it automatically". The night of 2026-10-09 lost
+its throughput to stops the machine made and told no one, each found by a person reading the
+dashboard: two machine rows down since they never beat, a hard pin waiting on a friend who was
+down, a friend's stall judgment closed in the tick that raised it, the tick 20 to 90 s late for
+hours, a promotion's pull request ejected from the merge queue, and 111 judgments waiting on the
+seat, the oldest 51 hours. Every automatic stop is now a signal to the seat while it holds
+(internal/sprint/stops.go; the model is tla/CoordinatorPass.tla, Kind `stop`, invariant
+`StopSignalled`, witness `silentstop`):
+
+- **The pass's stops** (`StopTypes`, kept by the coordinator's pass as its own judgments,
+  raised once an episode and closed when the stop clears; each text says what stopped, the
+  evidence (an absolute time, never an age, so the text and the stops record change only when
+  the stop does), the effect and the undo verb). While any stop judgment has gone `PassEvery`
+  without a push, the pass writes one digest to the coordinator, `NStopsDigest`, at most once a
+  `PassEvery` (its clock the acknowledgement `NStopsDigestClock`): how many stops hold by kind,
+  the `StopsDigestOldest` (5) oldest with their undo verbs, and `nova-sprint doctor` for the
+  full list; a stop acknowledged, or waited to a review time not reached, is left out:
+  `NStopMemberDown`, a fleet machine down (or never beaten) that the coordinator did not hold,
+  past the status dwell, or held adopting past `StopAdoptAfter`: its width idles; `NStopPinWaits`,
+  a ready card hard-pinned (`WHO: only friend <name>`) to a friend who is not up, with the cards
+  that need it; `NFriendStalled`, the stall ladder at rung 3 or above while she holds cards (its
+  own type: as `stalled` the check closed it in the tick that raised it). A hold the coordinator
+  made (`fleet down`, `hold`) is hers and never a stop.
+- **The judgments late on the coordinator escalate**: the overdue line is addressed to the
+  coordinator, so the push delivers it at the deadline; `NCoordinatorBehind` opens with its level
+  (`level <n>: ...`), one level every `BehindEscalateEvery` (three `PassEvery`) of running time
+  since the overdue line of the oldest it counts, and the level is part of the condition, so a
+  new level is a new judgment whatever quieted the one before (`EscalatedPastAck`, witness
+  `ackforever`). A judgment the pass closes takes its overdue hold with it in the same tick.
+- **The late tick** cannot tell of itself: the push loop (`inbox --push`) reads the machine's
+  line at every look and, while the tick runs `TickLatePush` (30 s) late or more, writes
+  `TICKLATE-<time>.md` to the seat's inbox and delivers it, with the worst lateness seen
+  (cmd/nova-sprint/pushlate.go). It pushes at most once a `PassEvery`: the machine line counts
+  lateness from the last heartbeat, so a look just after a tick reads on time, and an episode
+  ends only after `PassEvery` of on-time looks; the last push is kept across episodes, and a
+  push loop that restarts reads it back from the newest `TICKLATE-*.md` of the inbox. The
+  model is tla/LatePush.tla (`OnePushAWindow`, `PushedWhileLate`; witnesses `wipe` and
+  `forget`).
+- **A promotion** tells the coordinator, through a note in the store (`Store.Tell`), of its
+  judgments (a failed check or merge-group run, a red pull request, a pull request closed) and
+  of its pull request found out of the merge queue neither merged nor closed
+  (`NPromoteEjected`); each was stdout alone.
+- **The stops record** (store key `stops`): every automatic stop that holds (`LiveStops`: the
+  pass's own, and those another part signals, the route and provider rests and a stream the
+  lander stopped, listed with their age) and what waits on the seat (`SeatWaitsOf`: the open
+  judgments, those past their deadline, the oldest, the level), written by the tick when it
+  changes and once a minute. `where --json` carries `seat_waits` and `stops` from it; the
+  dashboard's seat pill shows the judgments waiting and the oldest's age, red while any is past
+  its deadline.
+- **`nova-sprint doctor`** counts the same from a fresh read whether or not the machine ticks:
+  each layer (routes, machines, friends, cards) GREEN, or RED with every stop in it, one line each
+  with its age, effect and undo verb, then the seat's waits; exit 1 when a stop holds or a
+  judgment is past its deadline. The card the-doctor-checks-every-layer-and-refuses-a-red builds
+  its layers onto this verb.
+
+Left as they are, and listed: the route and provider rests (route_rest.go, provider_funds.go: a
+sibling card makes their decision the coordinator's); the stall ladder's take-back and down at
+rungs 4 and 5 (pushed to the coordinator as `friend stall` notes; their bound is modelled,
+tla/StallLadder.tla `NoCardHeldPastBound`). `TestAMemberDownTheCoordinatorDidNotHoldIsRaisedAgainUntilItIsHeld`,
+`TestACardPinnedToAFriendWhoIsNotUpIsRaisedUntilUnpinned`,
+`TestJudgmentsLateOnTheCoordinatorArePushedAndEscalatePastAWait` (internal/sprint/stops_test.go),
+`TestTheDoctorListsEveryAutomaticStopWithItsAgeAndUndo`,
+`TestThePushLoopTellsTheSeatOfALateTickEveryTenMinutes`,
+`TestALateTickSixtySecondsApartIsPushedAtMostSixTimesAnHour`,
+`TestARestartedPushLoopDoesNotRepushALateTickInsideTheWindow` and
+`TestAPromotionEjectedFromTheMergeQueueIsToldToTheSeat` (cmd/nova-sprint/stops_test.go) drive it.
+
 ## 9. What is always true
 
 Checked by `nova-sprint check`, and by the model. Sets of primaries are compared
@@ -5813,7 +5884,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | promote | the machine's promotion of the sprint branch into dev, carried from the cut to the recorded merge with no hand steps (the hand sequence of 2026-10-05, pull request 5351, as one verb). Each pass fetches origin and cuts a frozen branch `promo/<YYYY-MM-DD>-<n>` from `origin/<branch>`, never a local ref (a stale local ref, 0 ahead of dev, was cut and pushed twice on 2026-10-05), and refuses a cut not ahead of `origin/<base>`, exit 1, nothing cut. It merges `origin/<base>` into the cut without a checkout (`git merge-tree --write-tree`, then `git commit-tree` with the tip and the target as parents; the cut is the tip itself when the target is already in it); a conflict raises one judgment naming the conflicted files, decisions `merge-by-hand-and-recut` and `skip`, and stops with nothing cut or pushed: the tool resolves nothing. The cut is never the live sprint branch: a queued pull request whose head is the live branch blocks the lander's pushes (GH006, found 2026-10-04). `--every <duration>` (default 1h) is the clock; `--landings <n>` also promotes once that many `land <id> (sprint stream <s>)` commits have landed since the last cut, looked for once a minute until the clock elapses; `--once` carries one promotion to its end (recorded, a judgment, nothing to promote, or a refusal) and exits; `--poll <duration>` (default 1m) is how often a promotion in flight is looked at; `--branch` (default the checkout's branch), `--repo-dir`, `--base` (default dev), `--check <command>` the tree gate run on the cut before anything is pushed. The pull request body is the landed card ids since `refs/promoted/last`, else since `origin/<base>`, oldest first. The clone records the promotion in flight (`promote.branch`, `promote.pr`, `promote.tip`, `promote.judged` in its local git config); one in flight is carried to its end before another is cut. Its checks are waited on (`PROMOTE WAIT ... checks pending: <names>`); once they pass, admission is the `enqueuePullRequest` mutation, which carries no merge strategy (the queue refuses one; `gh pr merge` and a flag named auto are the spelling the class test refuses), then a query confirms `mergeQueueEntry`. A merge moves `refs/promoted/last` and records `promoted --sha <merge>` in the store (section 7, dev is behind), `PROMOTE RECORDED sha=<merge>`; a store that does not record it names the `promoted` command to run. A failed check, or a failed merge-group run of the pull request (the queue's branch `gh-readonly-queue/<base>/pr-<n>-...`), raises one judgment naming the check, with the failing log's tail, decisions `fix-and-recut` and `skip`, and does not record the sha; it is not raised again while the sprint tip stands, and once the tip moves (the fix landed) the next pass cuts afresh. A pull request closed without a merge clears the promotion in flight, a judged one included, with one judgment naming it (`JUDGMENT closed-pr branch=<promo> pr=<n> decisions=recut,skip`), records nothing, and the next pass cuts afresh. The verb claims the promotion cleared only after every in-flight key is gone: a cleanup that fails (`git config --local --unset` exiting other than 5, the key absent) is a refusal naming the keys that remain, and the next pass would handle the closed pull request again. Every pass also reads the base's runs at the last promotion's merge (`refs/promoted/last`, the forge's failed runs of the base at that commit). A red run, on the pull request's branch or on the base after the merge, cuts its fix cards by the machine (`(*promoter).redJudgment`, cmd/nova-sprint/promote_red.go): each failed run's failed-steps log is read through the forge into its failing tests (`sprint.RedTests`, go test's output per job, one per distinct test name, a build failure naming no test), and one card per test is added to the day's stream `promote-red-<YYYY-MM-DD>`, its id `red-<TestName>` (the next free `-<n>` when a landed card holds it), its brief (`sprint.FixBrief`) line 1 the heavy tier, `REPO:` and `BASE:` the live sprint branch, `START:` the test, its file and its failing line from the log, `STOP:` the test green on the job (the runner) it failed on, `PATHS:` the test file and the package, `TEST:` the test (`-tags functional` when the job is named functional), held to the card lint as `add` holds a brief, ranked first (scored below every card on the work table), and deduplicated by test name against the open cards inside the one add step (`sprint.FixCards`: a test an open card's `TEST:` line names is cut by no one). The judgment names the cards cut and the tests already open (`JUDGMENT promotion red branch=<promo> decisions=fix-and-recut,skip cards=<ids> open=<tests>`, or `JUDGMENT dev red base=<base> sha=<sha> decisions=fix,skip cards=<ids> open=<tests>`, each red base run judged once); the coordinator writes no fix card by hand (`TestARedPromotionCutsOneFixCardPerFailingTest`). Every step prints a line as it goes (`PROMOTE FETCH`, `MERGE`, `GATE`, `PUSH`, `CUT`, `WAIT`, `QUEUE`, `MERGED`, `RECORDED`), and between looks `PROMOTE NEXT ... in=<duration>: <what it waits on>`, so the verb never waits without saying on what. Every forge call goes through one interface, `promoteForge` (cmd/nova-sprint/promote_forge.go: the gh CLI through internal/subproc, and a fake in the tests), the red-run reads included: the failed runs of a branch or of the base at a commit, a run's log, and the repository's name. `--dry-run` prints the branch and the cards, or the promotion in flight, and writes, enqueues and records nothing on any path: it reads origin's tips with `git ls-remote` and fetches their objects with no refmap and no FETCH_HEAD, so no ref, no config key, no push, no pull request, no queue entry and no store row is written, and an in-flight promotion is neither watched nor forgotten. The land loop calls the same step only when promotion is armed; `run --land` does not arm it. The step is `(*promoter).step` (cmd/nova-sprint/promote.go), which cites this section; `TestPromoteCarriesACutToARecordedPromotion` drives it over a twin repository and a fake forge |
 | resume | a stopped stream moves again, with what was done; refused while a cause is unresolved |
 | fleet | `up|down <member>`, `level` (down is `hold <member> --return` in the old words, for one release); `up <member> --deadline <duration|default>` pins the deadline every card dealt to the member gets, or takes the pin off (section 5, the deadline by machine); down and up say on the member's MOVED line where its cards went (nova-tools#5096 item 21): down `moved=N to m2(n),m3(n); stayed=K withdrawn: <primaries>` (a card no member up has room for, or at its redeal bound, is withdrawn), up `moved=N to <member>(n) from m2(n),...` when the level moves cards onto it; a member going down in the tick's presence part says the same |
-| hold | `hold <name>... --reason <text> [--return]`: the coordinator's hold of fleet members, readers, friends and streams, one verb for the four (the owner, 2026-10-04 1:50 PM: "there should be a hold verb in nova-sprint"; 1:51 PM: the same for friends, hold and unhold). Each name is a fleet member, a reader, a friend (nova-config's friend rows) or a stream, resolved first: a name of none, or of more than one, refuses the whole call, exit 1, nothing written; a hold wants `--reason` (exit 2 without one). One step (`sprint.HoldNames`). A name held takes no new cards: a member is dealt none and its takes are refused, a reader is asked nothing, a friend is dealt none (and keeps none), a stream's ready primaries are dealt to no machine and no friend. What is dealt and not begun is handed back now: a member's ready cards are dealt round the fleet as a member going down sends them, a reader's reads asked and not begun are asked of another at the next tick, a stream's work cards ready on members are withdrawn (no redeal spent). What is begun finishes (the default): a member's working cards stay on it (the sweep leaves them, section 5; the deadline judges them), a reader's reads begun stay with it, a stream's working cards finish; a friend keeps no card, with `--return` or without: every card she has begun (working, or read as started) is taken back to ready as `friend down` takes it, a started one with a push carrying its pushed head to the next taker, and her ready cards not begun are handed back too: a held friend keeps no card at all, with `--return` or without (the owner, 2026-10-09; `TestHoldingAFriendReturnsItsStartedCards`, `TestAHeldFriendKeepsNoReadyCards`). `--return` hands the work begun back now too: a member's working cards dealt round the fleet (a redeal counted, as fleet down always did), a reader's reads asked or begun taken back where a reader up is free to read them, a stream's working cards withdrawn to ready. Its status reads `held`: the fleet and friends tables' status, the readers' state, the merge table's state cell (and the stream clocks' state; a stopped stream reads `stopped`); the reason is on the member's and the stream's control card (`held_reason`) and in the reader's and friend's hold records, and `where --json --cards` (the dashboard's read) carries every hold as `holds` (kind, name, reason, by, at, return). Each name held writes a happened note (`held by the coordinator`), the reason in it, so the log holds every hold; handover shows it among the decisions. `fleet down <member>` is `hold <member> --return`, `reader away <reader>...` is `hold <reader>... --return`, and `friend down <friend>` holds her as `hold <friend>` does and takes back every card of hers, started or not (`--until` is its own), each with its old words' output, kept for one release with their help naming the pair; a member down because it stopped beating is the machine's `down`, never a hold; `--repo <owner/name>... --expect <n>` holds or releases the streams recording those repositories instead of a name (the same one-snapshot read as `streams --repo`, the count of streams required as `drop --repo` requires it) |
+| hold | `hold <name>... --reason <text> [--return]`: the coordinator's hold of fleet members, readers, friends and streams, one verb for the four (the owner, 2026-10-04 1:50 PM: "there should be a hold verb in nova-sprint"; 1:51 PM: the same for friends, hold and unhold). Each name is a fleet member, a reader, a friend (nova-config's friend rows) or a stream, resolved first: a name of none, or of more than one, refuses the whole call, exit 1, nothing written; a hold wants `--reason` (exit 2 without one). One step (`sprint.HoldNames`). A name held takes no new cards: a member is dealt none and its takes are refused, a reader is asked nothing, a friend is dealt none (and keeps none), a stream's ready primaries are dealt to no machine and no friend. What is dealt and not begun is handed back now: a member's ready cards are dealt round the fleet as a member going down sends them, a reader's reads asked and not begun are asked of another at the next tick, a stream's work cards ready on members are withdrawn (no redeal spent). What is begun finishes (the default): a member's working cards stay on it (the sweep leaves them, section 5; the deadline judges them), a reader's reads begun stay with it, a stream's working cards finish; a friend keeps no card, with `--return` or without: every card she has begun (working, or read as started) is taken back to ready as `friend down` takes it, a started one with a push carrying its pushed head to the next taker, and her ready cards not begun are handed back too: a held friend keeps no card at all, with `--return` or without (the owner, 2026-10-09; `TestHoldingAFriendReturnsItsStartedCards`, `TestAHeldFriendKeepsNoReadyCards`). `--return` hands the work begun back now too: a member's working cards dealt round the fleet (a redeal counted, as fleet down always did), a reader's reads asked or begun taken back where a reader up is free to read them, a stream's working cards withdrawn to ready. Its status reads `held`: the fleet and friends tables' status, the readers' state, the merge table's state cell (and the stream clocks' state; a stopped stream reads `stopped`); the reason is on the member's and the stream's control card (`held_reason`) and in the reader's and friend's hold records, and `where --json --cards` (the dashboard's read) carries every hold as `holds` (kind, name, reason, by, at, return). Each name held writes a happened note (`held by the coordinator`), the reason in it, so the log holds every hold; handover shows it among the decisions. `fleet down <member>` is `hold <member> --return`, `reader away <reader>...` is `hold <reader>... --return`, and `friend down <friend>` holds her as `hold <friend>` does and takes back every card of hers, started or not (`--until` is its own), each with its old words' output, kept for one release with their help naming the pair; a member down because it stopped beating is the machine's `down`, never a hold; `--repo <owner/name>... --expect <n>` holds or releases the streams recording those repositories instead of a name (the same one-snapshot read as `streams --repo`, the count of streams required as `drop --repo` requires it); `fleet hold <member>...` and `fleet unhold <member>...` are hold and unhold of fleet members alone, `friend hold <friend>...` and `friend unhold <friend>...` of friends alone (the owner, 2026-10-10: "you can add a fleet hold if you want. it's a good idea. also a friend hold"), the same request with its kind set, the same step, writes and HOLD/UNHOLD lines, a name of another kind refusing the whole call with the verb that holds it (`no friend m1: m1 is a fleet member; run: nova-sprint fleet hold m1 --reason <text>`; `TestFleetHoldIsHoldOfAMemberAlone`, `TestFriendHoldIsHoldOfAFriendAlone`); the friend's hold and release are `FriendPresence.tla`'s `Hold(f)` and `Release(f)` |
 | unhold | `unhold <name>... [--reason <text>]`: releases the holds of the names (resolved as hold resolves them, all or none), the reason in its note (`released from a hold`): a member that beats is up at once and is dealt again, otherwise down until it beats; a reader's state is then its beat's and a friend's her session's evidence (a wake ping her session answered, or a card of hers finished, within its window); a stream's primaries are dealt again. `reader up` and `friend up` are its old words, for one release; `fleet up` still releases a member's hold and adds a member or sets a width |
 | merge-window open | `merge-window open --for <duration> --reason <text>`: landing pauses from now for the duration, the reason on every batch it pauses (section 7, the lander's pause); a store write of the merge table's properties `merge_window_until` and `merge_window_reason`, replacing a window open before; the coordinator's; refused whole, nothing written, for a duration that is none or not above zero, no reason, a reason over 8 KiB, or another actor |
 | routes rest | `routes rest <provider-or-route> --reason <text> [--for <duration> or --until <RFC3339>]`: the coordinator rests every route of the provider (the fleet property `provider_rest_<provider>`, cause `coordinator`) or one route (its line in `rule3_rest_<provider>`), until the time or until woken; a happened note; the coordinator's; refused whole, nothing written, with no reason, a name that is neither a route nor a provider of one, or a time not after now |
@@ -7155,6 +7226,58 @@ machine's records; `where --json` carries `store_rtt_p50_ms` and `store_rtt_p99_
 With no record, or one whose last sample is older than the window (a server that stopped
 measuring), both fields and the line are left out. Tested on the twin store with the harness's
 clock, never the wall clock (`TestWhereReportsTheStoreRoundTrip`).
+
+#### store-trips-pipelinedb-bb: the server reads only what it needs
+
+On 2026-10-10 the server called the table layer's read set on the fleet table about 56 times
+a second, 25 to 30 ms each, 62% of the store's one thread, and the rows it read were mostly
+the finished cards of the members' ok and failed cells, which grow with every landing; ticks
+began every 30 to 95 s and `where --json` took 6 to 15 s. Three changes:
+
+- A row's cells (`Store.ReadCells`; `queue --as <member>`, every worker's and reader's poll,
+  names ready, working and ctl) read the named cells' records alone: every other set column of
+  the row is read as text, which has no cell ids. On a copy of the live store this was most of
+  the fleet table's read sets.
+- A process keeps, for each table it loads, the placed records its last whole read found, at
+  the revision read, with the mark of the change event that left that revision (its stream id;
+  `store.LoadCache`, one per store address, shared by the verbs' stores). A later load
+  (`Store.Load`, and the fenced read of a step without the tick's twin,
+  `PipelinedLoadWithFence`) reads the shape and the change stream back from the shape's
+  revision to the cache's in one exchange; the cache is used only while the event at its
+  revision is still the one it was read at (the same mark), and then the records the writes
+  since changed are read again, as the tick's twin catches up. Read whole, and kept with the
+  mark read before it: a table the cache does not hold at its epoch, one whose stream does not
+  chain between the two revisions, one whose kept records do not add up to the shape's counts,
+  and one whose store is behind the cache or has another event at the cache's revision (the
+  entry is dropped). A store that loses its last writes (a restart from an AOF synced every
+  second, an RDB or a backup restore: the same epoch, a lower revision) and writes another
+  history from there gives those revisions new events with new ids, so the cache never serves
+  the lost history, whether the store is below, at or past the cached revision when it is next
+  read. Each load gets its own copy of every card. The model is `tla/LoadCache.tla`: two loads
+  at once over a shared cache, with record and display writes and a store that loses its last
+  writes; `LoadIsSnapshot` (every table a load took was, when it took it, the store's records
+  at the revision its shape read) and `CacheIsHistory`, each reversed by a witness (a catch-up
+  that misses the last write; a cache later than the shape used as it is; the mark not
+  checked).
+- The run loop's friend reconcile (section 1, friend-reconcile-every-tick-r.w1) runs in the
+  tick's own turn of the line, before the tick lets the line go, instead of taking a batch's
+  place in the line once per friend: each pass queued behind every waiting batch, and the
+  passes cost 12 s a tick at the median (the gap between ticks less the tick's own time, over
+  the 5,991 ticks of 2026-10-09 17:40 to 23:40 ET). The line still has one holder at a time
+  (`tla/ServerLanes.tla`: the tick is one holder from TickBegin to TickEnd), and the batches'
+  turn after a tick is as long as the tick held the line (`sprint.ControlLine`), the reconcile
+  included. Every read of a friend's directory in that pass (its stat, her QUEUE.json, each
+  card's outbox report) answers within `FriendReadDeadline` (2 s) or the friend is passed over
+  for the tick: one record line, and one note to the coordinator an episode ("a friend's
+  directory did not answer the reconcile"); what the pass settled before the stall stands, and
+  the read is left to finish on its own (it only reads).
+
+Tested on the twin store: `TestReadCellsReadsOnlyTheNamedCells`,
+`TestLoadCacheReadsOnlyWhatChanged`, `TestLoadCacheSnapshotsShareNothing`,
+`TestLoadCacheFencedReadAgrees`, `TestLoadCacheAfterTheStoreLostWrites`,
+`TestLoadCacheConcurrentLoads` (with -race) and
+`TestRunReconcilePassesOverAStalledFriendDirectory`; on a real Redis,
+`TestRedisLoadCacheAgreesWithAWholeRead` (functional).
 
 ## 15. Reminders
 

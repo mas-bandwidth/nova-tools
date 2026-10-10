@@ -198,8 +198,10 @@ function allocate(counts, total, n) {
 // column; the lit cells first, the rest dark; nothing past the width. The lit cells run in the
 // priority ladder, highest on the left (docs/SPEC-SPRINT-DASHBOARD.md, "Fix"; the owner,
 // 2026-10-07: "to the left of read cards, and to the right of critical cards"): blocker,
-// critical, fix (purple), reads (one orange cell per two reads, a lone read a whole cell), then
-// the working blue; a row's counts are where's <level>_working and the view's fix.
+// critical, fix (purple), reads (one orange cell a read), then the working blue; a row's counts
+// are where's <level>_working and the view's fix. One cell is one card or read on the row, so the
+// lit cells always number the row's working figure (half-cell reads drew 24 cells for a friend's
+// "31 / 32", the owner 2026-10-09: "Something is wrong with the rendering for a friend").
 var TRACK_LEVELS = [["blocker_working", "p-blocker", "blocker"], ["critical_working", "p-critical", "critical"], ["fix", "p-fix", "fix"]];
 function trackSegs(m) {
   var working = int(m.working), segs = [], words = [], cards = 0;
@@ -209,7 +211,7 @@ function trackSegs(m) {
     if (n) words.push(n + " " + l[2]);
   });
   var reads = int(m.reads_working); cards += reads;
-  for (var j = 0; j < Math.ceil(reads / 2); j++) segs.push("p-reader");
+  for (var j = 0; j < reads; j++) segs.push("p-reader");
   if (reads) words.push(reads + " read" + (reads === 1 ? "" : "s"));
   for (var k = cards; k < working; k++) segs.push("working");
   return { segs: segs, words: words };
@@ -606,6 +608,28 @@ function renderHero(d, s, ft) {
   setTitle($("tput"), throughput == null ? "needs ten minutes of samples" : "over the last " + Math.round(throughputMinutes) + " min");
   setText($("coord"), d.coordinator || "-"); setText($("epoch"), d.epoch != null ? d.epoch : "-");
   setMachine(d.machine);
+  setSeat(d.seat_waits);
+}
+
+// The judgments waiting on the seat (the owner, 2026-10-10: no silent waits): how many and the
+// oldest's age, from where --json's seat_waits; red while any is past its deadline. Hidden
+// until the tick has counted them.
+function ageText(sec) {
+  sec = Math.max(0, Math.floor(sec));
+  if (sec < 60) return sec + "s";
+  if (sec < 3600) return Math.floor(sec / 60) + "m";
+  if (sec < 86400) return Math.floor(sec / 3600) + "h" + (Math.floor(sec / 60) % 60 ? " " + (Math.floor(sec / 60) % 60) + "m" : "");
+  return Math.floor(sec / 86400) + "d " + (Math.floor(sec / 3600) % 24) + "h";
+}
+function setSeat(w) {
+  var chip = $("seat-chip"); if (!chip) return;
+  if (!w) { chip.hidden = true; return; }
+  chip.hidden = false;
+  var n = int(w.judgments), text = n + " waiting";
+  if (n > 0) text += " \u00b7 oldest " + ageText(int(w.oldest_age_seconds));
+  setText($("seat"), text);
+  setTitle(chip, n > 0 ? int(w.overdue) + " past their deadline; the oldest " + (w.oldest_id || "") + " (" + (w.oldest_type || "") + ")" : "no judgment waits on the seat");
+  setClass(chip, "chip" + (int(w.overdue) > 0 ? " alert" : ""));
 }
 
 // ---------- poll loop ----------
@@ -730,15 +754,15 @@ function renderPie(d) {
   });
 }
 // the In flight tile's subline (the owner 2026-10-04 3:20 and 3:25 PM): one line, two parts,
-// "<working> working · <review+fix+merging> review + fix + merge", each number white and its words grey;
-// the separate review, fix and merging counts are in the tooltip (the owner 2026-10-09: review-fix-merge)
+// "<working> working · <review+fix+merging> verify" (the owner 2026-10-10: review, fix and merge are one global state, verify), each number white and its words grey;
+// the separate review, fix and merging counts are in the tooltip
 var inflightLast = null;
 function renderInflight(sum) {
   var box = $("inflight-sub"); if (!box) return;
   var fx = sum.fix || 0;
   setTitle(box, sum.working + " working, " + sum.review + " review, " + fx + " fix, " + sum.merging + " merging");
   // the words shorten in turn when the line does not fit the tile (a phone)
-  var forms = [["working", "review + fix + merge"], ["work", "review + fix + merge"], ["work", "rev + fix + merge"], ["work", "rev+fix+mrg"], ["wk", "r+f+m"]];
+  var forms = [["working", "verify"], ["work", "verify"], ["wk", "vfy"]];
   var draw = function (w) {
     var parts = [[sum.working, w[0]], [sum.review + fx + sum.merging, w[1]]].filter(function (p) { return p[0] > 0; });
     box.textContent = "";
@@ -852,7 +876,7 @@ function render(d) {
   renderHero(d, s, ft);
   fitTables();
   if (DEBUG_FLASH) { // ?debug=flash: one line per refresh, same=1 when the rendered data did not change
-    var sig = JSON.stringify([d.landed, d.all, d.summary, d.coordinator, d.epoch, d.machine, d.tables.work, d.tables.fleet, d.tables.friends || null,
+    var sig = JSON.stringify([d.landed, d.all, d.summary, d.coordinator, d.epoch, d.machine, d.tables.work, d.tables.fleet, d.tables.friends || null, d.seat_waits || null,
       (d.streams || []).map(function (x) { return [x.Stream, x.State]; }), d.tables.merge]);
     var line = "flashes=" + flashCount + " same=" + (sig === prevSig ? 1 : 0);
     prevSig = sig; console.log(line);
