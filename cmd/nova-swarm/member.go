@@ -910,8 +910,9 @@ var nativeSpent = regexp.MustCompile(`\bNATIVE \S+ .*\bwall=([0-9.]+s)\b.*\bbudg
 var nativeSpend = regexp.MustCompile(`\bNATIVE \S+ .*\bspend=(\S+)`)
 
 // nativeEnd is how a launch that did not finish ended, from its log: the provider's
-// failure (a NATIVE PROVIDER- line), the budget (stopped=), the deadline (rc=-1 with
-// neither, and no TERM from outside), else "".
+// failure (a NATIVE PROVIDER- line), the budget (stopped=), the idle reap
+// (reason=idle-reap, the watch's own mark), the deadline (rc=-1 with none of those, and
+// no TERM from outside), else "".
 func nativeEnd(log []byte) string {
 	switch {
 	case nativeProvider.Match(log):
@@ -920,6 +921,8 @@ func nativeEnd(log []byte) string {
 		return member.EndUnverifiable
 	case nativeStopped.Match(log):
 		return member.EndBudget
+	case nativeIdleReap.Match(log):
+		return member.EndIdleReap
 	case nativeKilled.Match(log) && !nativeTermed.Match(log):
 		return member.EndDeadline
 	}
@@ -976,8 +979,12 @@ var (
 	// nativeBudgetWhy is the NATIVE BUDGET line's words: which budget ended the run and at
 	// what count (nativeBudgetWords)
 	nativeBudgetWhy = regexp.MustCompile(`(?m)^NATIVE BUDGET \S+ budget: (.+)$`)
-	nativeKilled    = regexp.MustCompile(`\bNATIVE \S+ .*\brc=-1\b`)
-	nativeTermed    = regexp.MustCompile(`\breason=terminated\b`)
+	// nativeIdleReap is native's mark for a card its idle watch ended: the verdict
+	// states idle reaping, and the finish names the reaping and never the deadline,
+	// which never fired for it (docs/roadmap.sexp, swarm-idle-reap-verdict)
+	nativeIdleReap = regexp.MustCompile(`\breason=idle-reap\b`)
+	nativeKilled   = regexp.MustCompile(`\bNATIVE \S+ .*\brc=-1\b`)
+	nativeTermed   = regexp.MustCompile(`\breason=terminated\b`)
 )
 
 // Result reads how the child ended: the NATIVE line's rc and harness word, and

@@ -86,6 +86,11 @@ var swarmAudit = audit.Config{
 		// it is another one-safe-token tail like fenceSuffix. Only the empty string and the
 		// escaped literal can come back.
 		"termSuffix",
+		// idleSuffix (main.go) renders the one token an idle reap carries,
+		// ` reason=idle-reap`, and puts the reason through oneline.Field inside itself, so
+		// it is another one-safe-token tail like termSuffix: the literal is this file's own
+		// constant, and only the empty string and the escaped literal can come back.
+		"idleSuffix",
 		// stoppedSuffix (main.go, SPEC-SWARM rule 13d, issue #1545) renders the one token a
 		// budget stop carries, ` stopped=<tokens|max_turns|max_cache_read|unverifiable>`,
 		// and puts the word through oneline.Field inside itself, so it is another

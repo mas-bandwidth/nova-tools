@@ -18,7 +18,9 @@
   (release "v1.2.6" :status "planned"
    :text "The fixes held during the split, the point-release candidates found on 2026-10-10, the owed
     tests, and the sprint store cards that are point-release work. Each is re-applied or written in
-    this repository, then cut as one release."))
+    this repository, then cut as one release.")
+   (release "v1.2.9" :status "planned"
+    :text "Idle-reaped cards report their real cause and are not wrongly reaped."))
  :items
  ((fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
    :title "The sprint tools leave nova-tools"
@@ -80,4 +82,9 @@
    :text "A free lane takes its card by id and starts nothing until the take is answered OK; a refused
     take (the machine STOPPED) is asked again on a later pass, a batch daemon takes her ready cards, and
     a card set aside on a refused take or finish is taken again (tla/FriendLaneTake.tla)."
-   :origin "a friend host, 2026-10-10 20:14Z: a one-shot friend's 23 lanes ran ready cards and set them aside")))
+   :origin "a friend host, 2026-10-10 20:14Z: a one-shot friend's 23 lanes ran ready cards and set them aside")
+   (fix "swarm-idle-reap-verdict" :release "v1.2.9" :status "planned"
+    :title "Idle-reaped cards report their real cause and are not wrongly reaped"
+    :text "A reaped card reports a wall refusal that names nothing, and the harness shell cap silenced
+     working cards. The verdict states idle reaping and the idle watch accounts for the shell cap."
+    :origin "issue #2157; issue #2158; issue #2577; issue #2579; issue #2585")))

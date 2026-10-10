@@ -190,6 +190,12 @@ const (
 	EndNoResult = cardhdr.EndNoResult // the child left no result: the sprint deals the card again
 	EndBudget   = "budget"
 	EndDeadline = "deadline"
+	// EndIdleReap is native's mark for a card its idle watch ended (`reason=idle-reap`
+	// on the NATIVE line): neither the provider, the budget nor the deadline stopped it,
+	// and the finish names the reaping rather than the deadline, because the deadline
+	// never fired (docs/roadmap.sexp, swarm-idle-reap-verdict: the verdict states idle
+	// reaping).
+	EndIdleReap = "idle-reap"
 	// EndUnverifiable is native's end=budget-unverifiable (docs/SPEC-SWARM.md, native): the
 	// member's usage source, its read of the harness's usage database, stopped answering and
 	// native ended the child for a budget it could no longer see. Judge says it as a budget

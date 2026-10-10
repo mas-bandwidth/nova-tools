@@ -151,7 +151,10 @@ func TestACardWithNoRouteAndNoOverrideIsRefused(t *testing.T) {
 }
 
 // How a launch that did not finish ended, from native's log: the provider, the
-// budget, the deadline; a TERM from outside and an ok run are none of them.
+// budget, the idle reap, the deadline; a TERM from outside and an ok run are none of
+// them. An idle reap is read off native's own mark (`reason=idle-reap`) and said as
+// its own end, because the deadline never fired for a card the watch ended
+// (docs/roadmap.sexp, swarm-idle-reap-verdict: the verdict states idle reaping).
 func TestTheEndOfALaunchIsReadFromNativesLog(t *testing.T) {
 	t.Parallel()
 	for log, want := range map[string]string{
@@ -160,6 +163,7 @@ func TestTheEndOfALaunchIsReadFromNativesLog(t *testing.T) {
 		"NATIVE OK label=c1 job=j tmp=t rc=0 wall=none harness=ok budget=12/1000 stopped=unverifiable\n": member.EndUnverifiable,
 		"NATIVE INCOMPLETE label=c1 job=j tmp=t rc=-1 wall=none harness=ok budget=10/1000\n":             member.EndDeadline,
 		"NATIVE INCOMPLETE label=c1 job=j tmp=t rc=-1 wall=none harness=ok budget=10 reason=terminated":  "",
+		"NATIVE INCOMPLETE label=c1 job=j tmp=t rc=-1 wall=none harness=ok budget=10/1000 reason=idle-reap": "idle-reap",
 		"NATIVE OK label=c1 job=j tmp=t rc=0 wall=none harness=ok budget=10/1000\n":                      "",
 	} {
 		assert.Equal(t, want, nativeEnd([]byte(log)), log)
