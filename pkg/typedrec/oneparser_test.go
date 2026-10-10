@@ -83,20 +83,8 @@ var driftAllowlist = []allowlistEntry{
 		reason: "the card's REPO: header for staging (#3711), read before any RESULT exists"},
 	{file: "tools/ci/revertonred.go", fn: "land", record: "git-refspec", since: "a1f1f62c1",
 		reason: "the git push refspec HEAD:main, not a RESULT parser"},
-	{file: "cmd/nova-sprint/landprune.go", fn: "tidyRefs", record: "git-HEAD", since: "c6e85c5e",
-		reason: "skips origin/HEAD, the clone's symbolic ref, in a for-each-ref listing; not a RESULT parser"},
-	{file: "cmd/nova-sprint/selftest.go", fn: "selftestFlow", record: "git-refspec", since: "b45240fab",
-		reason: "the git push refspecs HEAD:main and HEAD:sprint/<card> of the selftest's throwaway clone, not a RESULT parser"},
 	{file: "internal/docs/ratings_form.go", fn: "ratingFormParts", record: "heading", since: "861ec8bc45",
 		reason: "the words of the rating form the docs/ratings README must state (TestRatingFileIsInForm), checked as plain substrings; not a RESULT parser"},
-	{file: "cmd/nova-sprint/add.go", fn: "pathsHeaderLine", record: "SPEC-CARD", since: "231f2f64c",
-		reason: "the line number of a brief's PATHS: header for the lint's refusal, through cardhdr.KeyValue; not a RESULT parser"},
-	{file: "internal/sprint/brief_defect.go", fn: "briefDefectReasons", record: "finding", since: "231f2f64c",
-		reason: "the words of a worker's hold note (PATHS do not hold) the brief-defect classifier matches as plain text; not a RESULT parser"},
-	{file: "internal/sprint/brief_defect.go", fn: "BriefDefectOf", record: "finding", since: "231f2f64c",
-		reason: "the PATHS-PROPOSED line of a worker's hold note, read as the hold's own fix; not a RESULT parser"},
-	{file: "internal/sprint/brief_defect.go", fn: "pathsFixLine", record: "finding", since: "231f2f64c",
-		reason: "the PATHS-PROPOSED line of a worker's hold note, split on its colon; not a RESULT parser"},
 }
 
 var allowlist = append(append([]allowlistEntry{}, specAllowlist...), driftAllowlist...)

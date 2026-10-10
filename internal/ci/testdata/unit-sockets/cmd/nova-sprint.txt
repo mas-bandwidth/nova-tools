@@ -1,6 +1,4 @@
 # The unit-sockets ledger (docs/SPEC-CI.md, `unit-sockets`): the unit-tier
 # test files that still open a socket, one row per file with its count, seeded
 # once at the rule's landing. It only shrinks.
-# ceiling: 2
-cmd/nova-sprint/dashboard_cover_test.go:socket 2 the dashboard's port-hold branch needs real listeners
-cmd/nova-sprint/serve_test.go:socket 1 an httptest server stands in for the serve target
+# ceiling: 0

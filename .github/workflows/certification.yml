@@ -231,7 +231,7 @@ jobs:
         # internal/ci: TestCertificationRaceShardsPartitionTheLiveTree (certRaceHeavy).
         shell: bash
         run: |
-          "$RUNNER_TEMP/ci" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "internal/ci cmd/nova-tokens cmd/nova-sandbox cmd/nova-self-talk internal/update cmd/nova-secrets cmd/nova-sprint internal/sprint/store cmd/nova-swarm internal/sprint/refmodel internal/docs internal/sprint pkg/redisconn pkg/config pkg/secrets"
+          "$RUNNER_TEMP/ci" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "internal/ci cmd/nova-tokens cmd/nova-sandbox cmd/nova-self-talk internal/update cmd/nova-secrets cmd/nova-swarm internal/docs pkg/redisconn pkg/config pkg/secrets"
 
       - name: fetch origin/dev for the deprecated-imports ratchet
         # internal/ci's TestDeprecatedImportsAllowlistOnlyShrinksAgainstMergeBase compares the
@@ -731,77 +731,6 @@ jobs:
         shell: bash
         run: go test -tags perf -count=1 -v -p 1 -parallel 1 -timeout 60s -run "$PERF_RUN" "$PERF_PACKAGE"
 
-  tick-gate:
-    # This job is the tick's wall clock: cmd/nova-sprint's TestTheDirtyTickDriveOnAStore drives
-    # 3 x 1000 cards over 8 members of width 64 against a redis-server with the world played
-    # every 10 ms, and asserts every tick under MaxTickWall (1 s) only when
-    # NOVA_SPRINT_GATE_STORE=1. In the functional tier (ci.yml's functional job, the
-    # container) the same drive asserts its invariants and prints the bound, because two
-    # cores shared by the store, the loop and the world driver holding the fence are not the
-    # store the bound is about.
-    #
-    # ON A BENCH, as ci.yml's functional legs run, with the machine's cores and not a
-    # leg's share: a wall clock measured on two cores of eight shared runners measures the
-    # neighbours. The drive takes about 25 s and its build under a minute warm, inside the
-    # two-minute cap; a cold cache that puts it over is read in the morning, not a CL gate.
-    # The bench is configuration, not a name in the tree: the coordinator sets the
-    # repository variable TICK_GATE_RUNS_ON to a JSON array of runner labels. Unset,
-    # the job does not run on a guess and certification-ok reports it not-configured.
-    if: vars.TICK_GATE_RUNS_ON != ''
-    runs-on: ${{ fromJSON(vars.TICK_GATE_RUNS_ON) }}
-    timeout-minutes: 2
-    steps:
-      - name: remove stale build dirs from the shared runner
-        shell: bash
-        run: |
-          [ -n "${GITHUB_WORKSPACE}" ] || exit 1
-          [ -d "${GITHUB_WORKSPACE}" ] || exit 0
-          [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
-          if git -C "${GITHUB_WORKSPACE}" reset -q --hard && git -C "${GITHUB_WORKSPACE}" clean -ffdxq; then
-            exit 0
-          fi
-          find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
-
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      - name: use the installed Go toolchain
-        # ci.yml's toolchain pick for the benches: the toolchain go.mod names under
-        # ~/sdk, else ~/go/bin.
-        shell: bash
-        run: |
-          set -euo pipefail
-          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
-          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
-          sdk=
-          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
-          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin; do
-            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
-          done
-          command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
-          go version
-
-      - name: cache Go on a hosted tick runner
-        if: runner.environment == 'github-hosted'
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-${{ runner.arch }}-tick-go-${{ hashFiles('go.mod') }}
-
-      - name: build the ci runner
-        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
-
-      - name: install redis-server
-        # The drive spawns a throwaway redis-server on loopback; it does not dial the
-        # fleet store.
-        run: '"$RUNNER_TEMP/ci" install-redis-server'
-
-      - name: the tick gate, against the bench's store
-        env:
-          NOVA_SPRINT_GATE_STORE: "1"
-        run: go test -tags functional -count=1 -timeout 100s -run '^TestTheDirtyTickDriveOnAStore$' ./cmd/nova-sprint
-
   certification-ok:
     # THE ONE CHECK THAT SAYS A RELEASE IS READY, and the reason it exists rather than a
     # list of check names in a branch ruleset. It aggregates EXACTLY the jobs of this file
@@ -809,7 +738,7 @@ jobs:
     # succeeded, so a leg renamed out of existence shows up here as a missing success and
     # not as silence. A red certification is a blocker for the next release, never for a
     # CL, whose gate is ci-ok in ci.yml.
-    needs: [race-cache, test, smoke, release-build, release-dry-run, release-checks, perf-plan, perf, tick-gate]
+    needs: [race-cache, test, smoke, release-build, release-dry-run, release-checks, perf-plan, perf]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -856,8 +785,7 @@ jobs:
         if: always()
         shell: bash
         run: |
-          "$RUNNER_TEMP/ci" aggregate --skip-ok tick-gate \
+          "$RUNNER_TEMP/ci" aggregate \
             race-cache=${{ needs.race-cache.result }} test=${{ needs.test.result }} smoke=${{ needs.smoke.result }} \
             release-build=${{ needs.release-build.result }} release-dry-run=${{ needs.release-dry-run.result }} \
-            release-checks=${{ needs.release-checks.result }} perf-plan=${{ needs.perf-plan.result }} perf=${{ needs.perf.result }} \
-            tick-gate=${{ needs.tick-gate.result }}
+            release-checks=${{ needs.release-checks.result }} perf-plan=${{ needs.perf-plan.result }} perf=${{ needs.perf.result }}

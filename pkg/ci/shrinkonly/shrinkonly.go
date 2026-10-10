@@ -37,7 +37,7 @@ const DeadCode = "internal/ci/testdata/dead_code_allowlist.txt"
 // ShrinkOnlyOutsideTestdata. The counted-ledger shards below LedgerDir's directories are
 // not: their rows carry counts that are lowered in place. The lander resolves a merge
 // conflict in a shrink-only ledger as the union of both sides' removals
-// (docs/SPEC-SPRINT.md section 7, cmd/nova-sprint/ledgerunion.go); this is the one
+// (docs/SPEC-SPRINT.md section 7; the lander is nova-sprint's, in its own repository); this is the one
 // place that says which ledgers those are.
 func ShrinkOnly(p string) bool {
 	for _, q := range ShrinkOnlyOutsideTestdata {

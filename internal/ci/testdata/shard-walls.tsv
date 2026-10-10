@@ -23,7 +23,6 @@
 # reads 0.0.
 cmd/nova-bus	0.0	@run37517528825	self-hosted
 cmd/nova-cairn	4.8	@run37518625834	self-hosted
-cmd/nova-card	0.1	@run37518625834	self-hosted
 cmd/nova-check	1.6	@run37518625834	self-hosted
 cmd/nova-ci	5.3	@run37518625834	self-hosted
 cmd/nova-config	4.5	@run37518625834	self-hosted
@@ -37,14 +36,12 @@ cmd/nova-redis	0.5	@run37518625834	self-hosted
 cmd/nova-sandbox	7.0	@local	-
 cmd/nova-secrets	3.3	@run37517528825	self-hosted
 cmd/nova-self-talk	6.9	@run37518625834	self-hosted
-cmd/nova-sprint	53.3	@run37518625834	self-hosted
 cmd/nova-swarm	8.5	@run37518625834	self-hosted
 cmd/nova-table	0.2	@run37518625834	self-hosted
 cmd/nova-tokens	8.4	@run37518625834	self-hosted
 cmd/nova-up	0.0	@local	-
 cmd/nova-update	0.0	@run37517528825	self-hosted
 cmd/nova-version	0.0	@run37518625834	self-hosted
-cmd/nova-work	0.1	@run37517528825	self-hosted
 pkg/atomicfile	1.4	@run37411066588	self-hosted
 pkg/bench	0.1	@local	-
 pkg/binstamp	0.1	@local	-
@@ -53,10 +50,8 @@ pkg/buildinfo	0.0	@run37411066588	self-hosted
 pkg/bus	0.0	@run37517528825	self-hosted
 pkg/bus/bustest	0.0	@local	-
 internal/cairn	0.0	@run37411066588	self-hosted
-internal/card	0.0	@run37518625834	self-hosted
 pkg/cardcontract	1.2	@local	-
 pkg/cardcost	0.1	@local	-
-internal/cardgen	0.0	@run37517528825	self-hosted
 pkg/cardhdr	0.0	@run37518625834	self-hosted
 pkg/cardlimits	0.2	@local	-
 pkg/cardtree	0.2	@local	-
@@ -120,12 +115,6 @@ pkg/seatcred/seattest	0.0	@local	-
 pkg/secrets	0.7	@run37411066588	self-hosted
 internal/selftalk	0.0	@run37411066588	self-hosted
 internal/shippedsmoke	0.0	@local	-
-internal/sprint	2.9	@run37518625834	self-hosted
-internal/sprint/driver	0.2	@local	-
-internal/sprint/refmodel	4.8	@run37518625834	self-hosted
-internal/sprint/store	21.2	@run37518625834	self-hosted
-internal/sprint/store/storetest	0.0	@local	-
-internal/sprintdash	0.2	@run37517528825	self-hosted
 pkg/sprintwire	0.2	@local	-
 pkg/subproc	0.6	@local	-
 pkg/swarm	5.1	@run37518625834	self-hosted
@@ -145,9 +134,6 @@ pkg/typedrec	0.8	@run37514991425	self-hosted
 pkg/units	0.0	@local	-
 internal/up	0.0	@run37518625834	self-hosted
 internal/update	0.8	@run37517528825	self-hosted
-internal/workfile	0.1	@local	-
-internal/workgh	0.1	@local	-
-internal/worklang	0.0	@run37411066588	self-hosted
 internal/yield	0.0	@run37411066588	self-hosted
 tools/agentsmap	0.0	@local	-
 tools/analyzers/cmd/vetlaw	0.0	@run37411066588	self-hosted
@@ -163,6 +149,5 @@ tools/notes20261002	0.1	@local	-
 tools/preflight	0.2	@local	-
 tools/sandboxcheck	0.1	@local	-
 tools/sessiontrace	0.1	@local	-
-tools/sprintsize	0.6	@local	-
 tools/testmanifest	0.0	@run37411066588	self-hosted
 tools/tlacheck	0.6	@run37517528825	self-hosted
