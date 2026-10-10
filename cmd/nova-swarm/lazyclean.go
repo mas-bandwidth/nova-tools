@@ -25,7 +25,7 @@ import (
 // stay, epoch after epoch, and the build cache every launch shares only grows (Go itself
 // removes an entry only after five days unused, with no bound on size). A loop that ran a
 // day of sprints held thousands of such entries and gigabytes of results and cache. So the
-// cleaner, between tagged launches and never on the member's pass, does two more jobs, a
+// cleaner, between tagged launches and never on the member's pass, does three more jobs, a
 // bounded amount of each per round (lazy):
 //
 //   - old epochs: an entry of the slots (a launch's directory, its .native.log, .card.md,
@@ -34,6 +34,12 @@ import (
 //     epoch and the one before it are never touched: the previous epoch's logs are what is
 //     read after a run is stopped and cleared. A name that does not parse as a launch's, a
 //     link, and anything of a launch that is running or claimed is left alone, always.
+//   - ended launch files: a small file of the slots (a launch's .native.log, .card.md, frame
+//     or .pid) whose launch ended and whose file is older than launchFileAge is removed,
+//     whatever its epoch (cleanEndedFiles): a sprint runs for days on one epoch and its slots
+//     would otherwise hold these files without bound. A launch the pool keeps for inspection
+//     is left alone; the old-epoch entries and the aged files together remove at most
+//     lazyRound.
 //   - the build cache: the Go build cache this loop's launches share (GOCACHE, nativeChildEnv)
 //     is held under --gocache-limit (gocache.Limit, 20 GiB), least recently used entries removed
 //     first down to 80% of it, never one used in the last two hours (internal/gocache).
@@ -53,6 +59,13 @@ const lazyRound = 32
 // backlog of a few thousand entries is gone within minutes, and an idle round is one
 // directory listing.
 const lazyEvery = 2 * time.Second
+
+// launchFileAge is how long a launch's small files (its .native.log, .card.md, frame and
+// .pid) may stay in the slots after their launch ended, whatever the launch's epoch: a file
+// written when the launch started is read while it runs and just after, and nothing reads it
+// a day later. A sprint runs for days on one epoch, so without this the slots grow without
+// bound.
+const launchFileAge = 24 * time.Hour
 
 // The build cache's trim (internal/gocache): held under the member's --gocache-limit, then
 // down to the low-water mark a fifth under it (gocache.SlackOf). cacheDirsPerRound is how
@@ -78,8 +91,17 @@ func (r *nativeRunner) lazy(now time.Time) {
 	if r.urgent() {
 		return
 	}
-	if o := r.cleanOld(now); o.removed > 0 || o.failed > 0 {
+	o := r.cleanOld(now)
+	if o.removed > 0 || o.failed > 0 {
 		fmt.Fprintf(r.stderr, "CLEAN old epochs: removed %d entries, %s freed, %d left%s\n", o.removed, oneline.Escape(sizeWord(o.freed)), o.left, oneline.Escape(o.failures()))
+	}
+	if r.urgent() {
+		return
+	}
+	// the old-epoch entries and the aged files share the round's bound (lazyRound)
+	a := r.cleanEndedFiles(now, lazyRound-o.removed-o.failed)
+	if a.removed > 0 || a.failed > 0 {
+		fmt.Fprintf(r.stderr, "CLEAN ended launch files: removed %d entries, %s freed, %d left%s\n", a.removed, oneline.Escape(sizeWord(a.freed)), a.left, oneline.Escape(a.failures()))
 	}
 	if r.urgent() {
 		return
@@ -226,6 +248,69 @@ func (r *nativeRunner) cleanOld(now time.Time) (c lazyCount) {
 			continue
 		}
 		path := filepath.Join(e.root, e.name)
+		gone, freed, err := r.removeOld(e, now)
+		switch {
+		case err != nil:
+			r.noteOldFailed(path)
+			c.fail(path, err)
+			c.left++
+		case gone:
+			c.removed++
+			c.freed += freed
+		default:
+			c.left++ // running, claimed, or active: a later round
+		}
+	}
+	return c
+}
+
+// cleanEndedFiles removes up to budget of the slots' small files (a launch's .native.log,
+// .card.md, frame or .pid) whose launch ended and whose file is older than launchFileAge,
+// whatever the file's epoch, and counts what it removed, the bytes freed and the eligible
+// files left. Only a regular file that launchEntry parses is judged; a directory, a link, a
+// name that does not parse, and a launch the pool keeps for inspection (r.kept) are left
+// alone. What is removed is held by removeOld's own ending checks: a launch this process runs
+// or claims, one whose pid file names a live process, and one active in the last leftoverIdle
+// keep their files.
+func (r *nativeRunner) cleanEndedFiles(now time.Time, budget int) (c lazyCount) {
+	if budget <= 0 || r.slots == "" {
+		return c
+	}
+	entries, err := os.ReadDir(r.slots)
+	if err != nil {
+		r.noteOldFailed(r.slots)
+		c.fail(r.slots, err)
+		return c
+	}
+	for _, d := range entries {
+		e, ok := launchEntry(r.slots, d, false)
+		if !ok || e.dir {
+			continue
+		}
+		path := filepath.Join(r.slots, e.name)
+		if r.oldFailed[path] {
+			continue
+		}
+		r.mu.Lock()
+		kept := r.kept[e.launch]
+		r.mu.Unlock()
+		if kept {
+			continue
+		}
+		fi, err := d.Info()
+		if err != nil {
+			r.noteOldFailed(path)
+			c.fail(path, err)
+			c.left++
+			continue
+		}
+		if now.Sub(fi.ModTime()) < launchFileAge {
+			continue
+		}
+		if c.removed+c.failed >= budget || r.urgent() {
+			c.left++
+			continue
+		}
 		gone, freed, err := r.removeOld(e, now)
 		switch {
 		case err != nil:
