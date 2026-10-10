@@ -19,7 +19,7 @@ import (
 func worktreesOf(t *testing.T, env []string, mirror string) []string {
 	var out []string
 	for _, l := range strings.Split(gitIn(t, env, mirror, "worktree", "list", "--porcelain"), "\n") {
-		if p, ok := strings.CutPrefix(l, "worktree "); ok && filepath.Clean(p) != filepath.Clean(mirror) {
+		if p, ok := strings.CutPrefix(l, "worktree "); ok && evalPath(t, p) != evalPath(t, mirror) {
 			out = append(out, p)
 		}
 	}
