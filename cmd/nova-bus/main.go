@@ -433,13 +433,17 @@ example: nova-bus overdue --older 10m`,
 			},
 			{
 				Name:    "log",
-				Usage:   "log [--bodies] [--max <n>] [--timeout <duration>] [--redis <addr>]",
+				Usage:   "log [--bodies] [--from <name>] [--to <name>] [--max <n>] [--timeout <duration>] [--redis <addr>]",
 				Example: "log --max 5",
 				Effect:  tool.Inspection,
 				Detail: `Prints LOG OK total=<n>, then one LOG MESSAGE id=<id> from=<name> to=<names> cc=<names> re=<id>
-[kind=<k>] at=<RFC3339> subject=<s> line per message of the log, oldest first, with body=<text> too under --bodies.`,
+[kind=<k>] at=<RFC3339> subject=<s> line per message of the log, oldest first, with body=<text> too under --bodies.
+--from <name> filters to messages sent by that sender; --to <name> filters to messages sent to that recipient.
+Both can be combined. Filtering happens before --max.`,
 				Flags: func(f *tool.Flags) {
 					f.Bool("bodies", false, "print each message's body as well")
+					f.String("from", "", "only messages from this sender")
+					f.String("to", "", "only messages to this recipient")
 					f.Max()
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
 					callTimeoutFlag(f)
@@ -905,6 +909,36 @@ func (w world) log(c *tool.Call) *tool.Out {
 	got, err := b.Log(context.Background(), "-")
 	if err != nil {
 		return answer(err)
+	}
+	// Filter by --from and --to before applying --max (SPEC-BUS.md, log verb)
+	from := c.Str("from")
+	to := c.Str("to")
+	if from != "" || to != "" {
+		filtered := make([]bus.Entry, 0, len(got))
+		for _, e := range got {
+			m := e.Message()
+			if from != "" && m.From != from {
+				continue
+			}
+			if to != "" {
+				found := false
+				for _, recipient := range m.To {
+					if recipient == to {
+						found = true
+						break
+					}
+				}
+				if !found {
+					continue
+				}
+			}
+			filtered = append(filtered, e)
+		}
+		got = filtered
+	}
+	// Apply --max: log reads oldest first, --max returns the newest match
+	if max := c.Int("max"); max > 0 && len(got) > max {
+		got = got[len(got)-max:]
 	}
 	o := tool.Done().Fact("total", len(got))
 	for _, e := range got {
