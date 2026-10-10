@@ -1117,13 +1117,6 @@
    :date "2026-10-10"
    :release "v1.3"
    :origin "issue #2426; issue #2551; issue #2459")
-  (item "worker-question-ending-asked" :group "friends"
-   :title "End a card as asked when its last turn is a question"
-   :text "A headless card whose last turn asks the user a question ends at once as asked instead of
-    holding its slot to the deadline."
-   :date "2026-10-10"
-   :release "v1.3"
-   :origin "issue #2548")
   (item "central-log-shipper" :group "ops"
    :title "Ship bench and loop logs to one queryable place"
    :text "Install a log shipper on every bench that sends harness, bench and loop logs to one log store,
