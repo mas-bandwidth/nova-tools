@@ -4187,7 +4187,21 @@ the first red ending it and named in the finding), then gives the lane back. A
 bench that does not answer, or a gate no bench could stage, is nobody's
 finding: that gate runs in the clone instead. The batch's `LAND` line carries `bench=<member>` (`here` for a gate
 the loop ran in the clone; `+` between them when a batch's gates ran in more
-than one place) and `wall=<seconds>`, the gates' total. With no such bench,
+than one place) and `wall=<seconds>`, the gates' total.
+
+**Gate outcomes: red tree vs bench fault.** When a gate runs on a bench and fails,
+the finding is classified before reporting. A `FAIL` line from `go test` naming a
+test (e.g. `--- FAIL: TestName`) or a `FAIL\t` package failure is a **red tree**:
+it marks the base red and can stop a stream. Bench infrastructure problems are
+**bench faults**: `exit status 128` from git, "not a git repository", ENOSPC,
+"disk quota exceeded", "no space left", a missing go toolchain, ssh exit 255, or
+a copy that did not finish. A bench fault is reported as `GATE FAULT
+bench=<member> kind=<git|disk|tmp|ssh|copy> what=<first line>` and never
+marks the base red. On a bench fault the gate steps to the next slot of the hash
+ring (landring.go) and runs again; after every ring member has faulted the landing
+is deferred one tick with `LAND DEFERRED stream=<s> faults=<n>`. A bench that
+faulted on disk, tmp or git is marked `bench-fault <kind> until <t+15m>` on its
+fleet row and is skipped by the ring for that time. With no such bench,
 the loop's gate runs in the clone; a `land` command on its own (a hand land,
 the install walkthrough) runs it there as before and its line carries no
 bench. The ledgers' update runs stay in the clone.
@@ -4487,7 +4501,10 @@ clusters the classes into the material for new finder rules.
 **The lander's gate.** A batch whose `--check` is red on go test failures has each
 failure classified by the gate decision (docs/SPEC-NOVA-DECIDE.md section 12; section 5,
 the gate verdict) at the sprint row's bars, read once a land run, over its lines, the
-batch's PATHS and its diff from the base; the base is not run. Each decision is recorded
+batch's PATHS and its diff from the base; the base is not run. The gate has two outcomes: a
+test failure is a red tree (`FAIL` lines naming tests), and a bench fault (`exit status 128`
+from git, "not a git repository", ENOSPC, "disk quota exceeded", "no space left", missing go
+toolchain, ssh exit 255, or incomplete copy) is reported as `GATE FAULT bench=<m> kind=<git|disk|tmp|ssh|copy> what=<first line>`. Each decision is recorded
 and shown in a red batch's reason, `(the gate decision, <op>: <Test>:<class>:<p>,...;
 recorded; the flaky bar is unset, so nothing is rerun)` while the bar is empty, its
 default. When the flaky bar is set, no failure is caused and one is flaky at or above it,
