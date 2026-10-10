@@ -3048,3 +3048,59 @@ the message stays pending, never given up, the session reads broken with the
 reason until a turn succeeds, and the detail tells the friend to start a session
 without a preset or read the bus with `nova-bus recv` ("A turn the session
 cannot take").
+
+## One engine (internal/friend/engine_guard.go)
+
+A friend has one lane engine. The adopt installs it for a row whose `mode` is
+exactly `batch`, and no hand starts or stops it. A row whose mode is
+`one-shot`, or a row that leaves mode empty, gets no unit, and a shell script
+in that friend's directory is left as it is.
+
+The lock is `engine.lock` in her state directory. It holds the holder's pid,
+the time that pid first took the lock, the lane count, and the last lane
+start. The same pid keeps the original start. A second live pid does not
+start: the error is `engine held by <pid> since <RFC3339>` (UTC), and that
+line is written to `engine.row` beside the lock. A dead holder's lock can be
+taken. `Release` removes the lock only while this pid is still the one in the
+file. A lane count is the holder's number only while that pid is alive
+(`LanesFromHolder`); any other reader gets no count.
+
+The lane step claims this lock when `<dir>/.nova-friend` is already
+a directory, and it does not create that directory. A second live engine is
+one record line and the step starts no lane. Any other error leaves the step
+as it was. That step does not know how many cards are ready, so it does not
+emit the judgment below.
+
+`nova-sprint friend engine <friend> status` reads the lock and writes
+nothing. With no `--state-dir` and no `--home` it prints
+`ENGINE friend=<friend> held=none` and exits 0. `restart` is the only
+sanctioned stop. It is `launchctl kickstart -k gui/<uid>/com.nova.runner-<friend>`,
+which keeps the lanes. It does not kill the process. When the state directory
+is known, a dead holder's lock is dropped before that kickstart. `--dry-run`
+prints `WOULD launchctl kickstart -k ...` and runs nothing.
+`--rows <file>` runs the engine play over the JSON array of friend rows in
+that file, before status or restart (one unit per `mode=batch` row). Never kill a runner or a daemon;
+use `nova-sprint friend engine <friend> restart`. The seat's own instructions
+are meant to say the same. This change does not edit that file.
+
+Zero lanes with ready cards, for a batch friend, for five minutes
+(`ZeroLanesFor`), is one judgment for that stretch. The text names the lock
+holder (or `engine held by none`), the last lane start (or `none`), and the
+restart verb. A second look in the same stretch produces no second judgment.
+A lane coming back, or the ready cards going to none, ends the stretch, and
+the next five minutes can judge once more. A one-shot row is not judged. The
+function is `ConsiderLanes`. The batch loop that can see ready cards is not
+in this change, so nothing here pushes that judgment on a tick.
+
+The unit the play writes is [SPEC-RUNNER.md](SPEC-RUNNER.md). `Play.Install`
+writes one unit per batch row, boots it, and retires that friend's shell
+runner in place: `runner.zsh`, `runner.sh`, or `lanes.zsh` in her directory
+is kept, with a `# RETIRED` line prepended once, naming the unit and the
+restart verb. A shell the play is given (path, pid, label) is stopped
+through the play's own `Stop` and booted out; the play does not signal a pid
+when `Stop` is nil, and that is an error if a pid was recorded. The seat's
+adopt is the fleet tools play (`cmd/nova-sprint/adopt_play.go`); that play
+does not yet call `Play.Install`, so on this tree the play is run by the
+verb's `--rows` call. The play's `friends` step is where the call belongs:
+one task running `nova-sprint friend engine --rows <the friend rows>`,
+beside the reinstall of each stale friend daemon.
