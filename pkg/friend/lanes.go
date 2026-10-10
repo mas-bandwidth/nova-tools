@@ -39,9 +39,12 @@ const LaneOpenRetry = time.Minute
 // (lanes.json): each lane's session, so a lane is the same friend's session
 // for its life, the cards set aside after CardTurns, so a restart does
 // not hand them again, and the cards a lane has begun and not ended, so a
-// restart finishes each (a lane's end, lane_end.go).
+// restart finishes each (a lane's end, lane_end.go). Epoch is the sprint's
+// epoch the sessions were opened under (epoch.go): her row's past it forgets
+// every session, so a full or stale session never carries across a clear.
 type LaneState struct {
 	Sessions map[int]string     `json:"sessions"`
+	Epoch    uint64             `json:"epoch,omitempty"`
 	GivenUp  []string           `json:"given_up,omitempty"`
 	Started  map[string]Started `json:"started,omitempty"`
 	// StopReturns is every card the machine's stop took out of a lane and the stop-return
@@ -426,6 +429,11 @@ func (l *loop) laneStep(now time.Time, width int) {
 	}
 	if l.stopStep(now) {
 		paused = true // NoLaunchAfterStop: no open, no turn, no card taken while STOPPED
+	}
+	// the epoch's signal, her row's epoch past the one the sessions were opened under
+	// (epoch.go): every lane opens fresh, never a full or stale session carried across a clear
+	if d.epoch > s.state.Epoch && d.epoch > 0 {
+		l.freshLanes(now)
 	}
 	for len(s.lanes) < width {
 		n := len(s.lanes) + 1
