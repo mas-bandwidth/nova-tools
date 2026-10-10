@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -400,7 +401,21 @@ func TestDiskGuardHoldsDealsAndJudgesBelowTheStop(t *testing.T) {
 	assert.Contains(t, text, judgment)
 	assert.Contains(t, text, "deals held on this machine, never the server")
 	assert.Contains(t, text, "volume=/Volumes/nova free=10GB red")
-	assert.Contains(t, text, "DISK-GUARD STOP freed=0 "+judgment+"\n")
+	assert.Contains(t, text, "DISK-GUARD STOP freed=0 "+oneline.Escape(judgment)+"\n")
+}
+
+// The STOP closing line prints the judgment escaped, so a host or a volume name
+// holding a control character cannot break the line in two (the no-hand-printing
+// rule; TestEveryPrintedArgumentIsLiteralQuotedOrEscaped holds the source shape).
+func TestDiskGuardSTOPLineEscapesTheJudgment(t *testing.T) {
+	t.Parallel()
+	g, out := dgGuard(t)
+	g.host = "studio\n"
+	g.volumes = []guardedVolume{{
+		Name: "/Volumes/nova", Path: "/Volumes/nova", Free: 10 * volGB, Floor: 200 * volGB, Stop: 50 * volGB,
+	}}
+	assert.Equal(t, 3, g.run())
+	assert.Contains(t, out.String(), "DISK-GUARD STOP freed=0 studio\\x0a /Volumes/nova at 10GB: deals held\n")
 }
 
 // A deal hold or a judgment the guard could not start is a NOTE line, and the
