@@ -571,7 +571,7 @@ The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), "Adopting a build"; the coordi
 
 ### release-check-frame
 
-`nova-sprint release check [--json] [--streams <glob>] [--check <name>]...` is the release gate (docs/SPEC-SPRINT.md, section 11, subsection release-check-frame). It reads and writes nothing, runs every check in the registry (`sprint.ReleaseChecks`), prints `RELEASE CHECK <name> ok|fail <evidence>` for each (on a fail the evidence names what to look at), then `RELEASE OK checks=<n>` or `RELEASE NOT READY failed=<n>`; exit 0 or 1, and 2 for usage. A release is cut when it prints `RELEASE OK`, and not before. The checks and their bars:
+`nova-sprint release check [--json] [--product <name>] [--streams <glob>] [--window <duration>] [--merge-p90 <duration>] [--check <name>]...` is the release gate (docs/SPEC-SPRINT.md, section 11, subsection release-check-frame). `--product` selects the product to check (nova-sprint|nova-tools; default nova-sprint); each product has its own stream glob (nova-sprint: sprint-v1-*; nova-tools: tools-v1-2-0-). It reads and writes nothing, runs every check in the registry (`sprint.ReleaseChecks`), prints `RELEASE CHECK <name> ok|fail <evidence>` for each (on a fail the evidence names what to look at), then `RELEASE OK checks=<n>` or `RELEASE NOT READY failed=<n>`; exit 0 or 1, and 2 for usage. A release is cut when it prints `RELEASE OK`, and not before. The checks and their bars:
 
 | check | the bar |
 |---|---|
