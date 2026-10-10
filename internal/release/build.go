@@ -104,6 +104,100 @@ func Tools(source string) ([]string, error) {
 	return dogfood.CmdTools(filepath.Join(source, "cmd"))
 }
 
+// SprintReleaseFlag is --sprint-release, said once for build and cycle.
+const SprintReleaseFlag = "a directory holding one mas-bandwidth/nova-sprint release as `gh release download <tag> -R mas-bandwidth/nova-sprint -D <dir>` writes it " +
+	"(<tool>_<tag>_<goos>_<goarch> and SHA256SUMS_<goos>_<goarch>): its tools (nova-sprint, nova-card, nova-work) are verified against " +
+	"its checksums and shipped in this release beside the ones built from --source, never compiled here"
+
+// sprintAsset is one tool of a nova-sprint release for one platform: the
+// file it was downloaded as and the sha256 its release's checksums give it.
+type sprintAsset struct{ tool, path, sum string }
+
+// sprintReleaseRemedy is what every refusal about --sprint-release says to do.
+const sprintReleaseRemedy = "download the nova-sprint release into an empty directory: gh release download <tag> -R mas-bandwidth/nova-sprint -D <dir>, then pass --sprint-release <dir>"
+
+// sprintToolName is a tool name a nova-sprint checksum file may list.
+var sprintToolName = regexp.MustCompile(`^nova-[a-z0-9-]+$`)
+
+// sprintRelease reads one platform's tools out of a downloaded nova-sprint
+// release (the split, v1.2.3: nova-sprint, nova-card and nova-work left this
+// tree for mas-bandwidth/nova-sprint, and its own release builds them). Every
+// tool the platform's SHA256SUMS_<goos>_<goarch> lists must be there as
+// exactly one <tool>_<tag>_<goos>_<goarch> holding those bytes, every one of
+// the same tag, and none of them a tool --source builds: one name, one source.
+// Nothing is copied here; the build copies only after every platform passed.
+func sprintRelease(dir, goos, goarch string, ours map[string]bool) (string, []sprintAsset, error) {
+	suffix := "_" + goos + "_" + goarch
+	sumsPath := filepath.Join(dir, "SHA256SUMS"+suffix)
+	data, err := os.ReadFile(sumsPath)
+	if err != nil {
+		return "", nil, refuse(sprintReleaseRemedy, "cannot read %s: %v (the release has no %s-%s build, or this is not a nova-sprint release)", sumsPath, err, goos, goarch)
+	}
+	tag := ""
+	var assets []sprintAsset
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		sum, name, ok := strings.Cut(strings.TrimSpace(line), "  ")
+		name = strings.TrimSuffix(name, ExeSuffix(goos))
+		if !ok || len(sum) != 64 || !sprintToolName.MatchString(name) {
+			return "", nil, refuse(sprintReleaseRemedy, "%s holds a line that is not <sha256>  <tool>: %q", sumsPath, line)
+		}
+		if _, err := hex.DecodeString(sum); err != nil {
+			return "", nil, refuse(sprintReleaseRemedy, "%s holds a line that is not <sha256>  <tool>: %q", sumsPath, line)
+		}
+		if ours[name] {
+			return "", nil, refuse("build each tool from one place: drop it from --source or from the nova-sprint release",
+				"--source builds %s and the nova-sprint release in %s ships it too", name, dir)
+		}
+		matches, err := filepath.Glob(filepath.Join(dir, name+"_*"+suffix+ExeSuffix(goos)))
+		if err != nil || len(matches) != 1 {
+			return "", nil, refuse(sprintReleaseRemedy, "%s lists %s, and %s holds %d files named %s_<tag>%s%s",
+				sumsPath, name, dir, len(matches), name, suffix, ExeSuffix(goos))
+		}
+		got := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(matches[0]), name+"_"), suffix+ExeSuffix(goos))
+		if tag == "" {
+			tag = got
+		}
+		if got != tag {
+			return "", nil, refuse(sprintReleaseRemedy, "%s holds two nova-sprint releases, %s and %s", dir, tag, got)
+		}
+		have, err := fileSum(matches[0])
+		if err != nil {
+			return "", nil, fmt.Errorf("cannot hash %s: %w", matches[0], err)
+		}
+		if have != sum {
+			return "", nil, refuse(sprintReleaseRemedy, "%s is not the bytes %s lists (sha256 %s, want %s)", matches[0], sumsPath, have, sum)
+		}
+		assets = append(assets, sprintAsset{tool: name, path: matches[0], sum: sum})
+	}
+	if len(assets) == 0 {
+		return "", nil, refuse(sprintReleaseRemedy, "%s lists no tool", sumsPath)
+	}
+	return tag, assets, nil
+}
+
+// takeSprint copies one platform's verified nova-sprint tools into the
+// release directory under their tool names, and checks the copy's bytes, so
+// the SHA256SUMS written next covers them like every compiled tool.
+func takeSprint(dir, goos string, assets []sprintAsset) error {
+	for _, a := range assets {
+		data, err := os.ReadFile(a.path)
+		if err != nil {
+			return err
+		}
+		dst := filepath.Join(dir, ToolFile(a.tool, goos))
+		if err := writeNoFollow("take nova-sprint tool", dst, data, 0o755); err != nil {
+			return err
+		}
+		if err := os.Chmod(dst, 0o755); err != nil {
+			return err
+		}
+		if got, err := fileSum(dst); err != nil || got != a.sum {
+			return fmt.Errorf("the copy of %s at %s is not the release's bytes", a.path, dst)
+		}
+	}
+	return nil
+}
+
 func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	// THE DEFINITION OF DONE, FIRST -- before a single tool is compiled. A dev
 	// build has no tag and no changelog, which is exactly why it needs the
@@ -175,6 +269,28 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		return refusal(errs, "BUILD", refuse("name a nova-tools checkout with --source",
 			"%s holds no cmd/nova-* directory, so this build would ship an empty set", o.source))
 	}
+	// nova-sprint's tools (the split, v1.2.3) come from its own release,
+	// verified for every platform before the first compile like everything
+	// else a build is asked for.
+	sprintTag := "none"
+	sprint := make(map[string][]sprintAsset, len(targets))
+	if o.sprintRelease != "" {
+		ours := make(map[string]bool, len(tools))
+		for _, t := range tools {
+			ours[t] = true
+		}
+		for _, tgt := range targets {
+			tag, assets, err := sprintRelease(o.sprintRelease, tgt.goos, tgt.goarch, ours)
+			if err != nil {
+				return refusal(errs, "BUILD", err)
+			}
+			if sprintTag != "none" && tag != sprintTag {
+				return refusal(errs, "BUILD", refuse(sprintReleaseRemedy, "%s holds two nova-sprint releases, %s and %s", o.sprintRelease, sprintTag, tag))
+			}
+			sprintTag = tag
+			sprint[tgt.goos+"-"+tgt.goarch] = assets
+		}
+	}
 	// THE STAMP IS COMPOSED ONCE, before the first target, the way
 	// tools/ghrelease's ldflags verb composes it once for the release
 	// workflow: `-X main.version=` with an empty value is a legal linker flag
@@ -222,6 +338,9 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 				return 1
 			}
 		}
+		if err := takeSprint(dir, goos, sprint[goos+"-"+goarch]); err != nil {
+			return refusal(errs, "BUILD", fmt.Errorf("cannot take the nova-sprint release's tools into %s: %w (name a writable --out)", dir, err))
+		}
 		// SHA256SUMS LAST, over the whole set, in the same step that finished
 		// it. A checksum file written beside a half-built directory is a file
 		// that agrees with itself and with nothing anybody released.
@@ -267,8 +386,8 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		}
 		names = append(names, goos+"-"+goarch)
 		digests = append(digests, digest)
-		fmt.Fprintf(out, "RELEASE BUILT version=%s platform=%s tools=%d verified=%d out=%s sums=%s digest=%s\n",
-			field(o.version), field(goos+"-"+goarch), len(tools), verified, field(dir), field(digest), field(digestPath))
+		fmt.Fprintf(out, "RELEASE BUILT version=%s platform=%s tools=%d verified=%d out=%s sums=%s digest=%s sprint=%s\n",
+			field(o.version), field(goos+"-"+goarch), len(tools)+len(sprint[goos+"-"+goarch]), verified, field(dir), field(digest), field(digestPath), field(sprintTag))
 	}
 	// LAST, and never a reason to fail: every platform is built and verified,
 	// and the version directories under --out that prune.go's rule does not keep are
@@ -284,7 +403,7 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	// order, one token each, so a summary line with one of them shorter than the
 	// other names the platform that was never built.
 	fmt.Fprintf(out, "RELEASE BUILD OK version=%s platforms=%s tools=%d sums=%s dogfood=%s out=%s pruned=%d prune-failed=%d\n",
-		field(o.version), field(strings.Join(names, ",")), len(tools), field(strings.Join(digests, ",")), gate, field(o.out), pruned, pruneFailed)
+		field(o.version), field(strings.Join(names, ",")), len(tools)+len(sprint[names[0]]), field(strings.Join(digests, ",")), gate, field(o.out), pruned, pruneFailed)
 	return 0
 }
 

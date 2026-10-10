@@ -166,6 +166,7 @@ func cycle(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	argv := []string{"-i", o.inventory, play,
 		"-e", "nova_version=" + o.version, "-e", "nova_source=" + o.source, "-e", "nova_release_out=" + o.out,
 		"-e", "nova_dogfood_receipts=" + receipts, "-e", string(buildArgs),
+		"-e", "nova_sprint_release=" + o.sprintRelease,
 		"--limit", strings.Join(append(append([]string(nil), benches...), "localhost", "store_deployer"), ",")}
 	logs := filepath.Join(o.out, o.version)
 	if err := os.MkdirAll(logs, 0o755); err != nil {
