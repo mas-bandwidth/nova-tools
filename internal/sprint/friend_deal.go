@@ -79,6 +79,13 @@ func FriendCard(c *Card) (name string, ok bool) {
 	return FriendOfRow(w)
 }
 
+// pinnedTo says the hard pin pr (OnlyFriend) names this friend: the card is hers to keep. A pin
+// released past its bound and dealt to another friend is that friend's ordinary card, not her pin.
+func pinnedTo(pr *Card, friend string) bool {
+	name, _ := FriendCard(pr)
+	return OnlyFriend(pr) && name == friend
+}
+
 // OnlyFriend is the hard pin (docs/SPEC-SPRINT.md, WHO preference): the explicit one,
 // WHO: only friend <name>, and a WHO: friend <name> card come back by a rework, a return
 // or a redo (ReworkPinned), whose next attempt is hers as its first was.

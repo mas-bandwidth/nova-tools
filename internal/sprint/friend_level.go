@@ -98,7 +98,7 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 		SortCards(unstarted)
 		inLanes := max(0, width[f.Name]-s.Fleet.Count(row, Working)-dealtWorking[f.Name])
 		for _, c := range unstarted[min(inLanes, len(unstarted)):] {
-			if pr := s.Work.Placed(c.F("primary")); pr != nil && !OnlyFriend(pr) {
+			if pr := s.Work.Placed(c.F("primary")); pr != nil && !pinnedTo(pr, f.Name) {
 				queues[f.Name] = append(queues[f.Name], c)
 			}
 		}

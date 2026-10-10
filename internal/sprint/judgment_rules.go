@@ -56,7 +56,7 @@ func ruleFriendTake(s *Snapshot, r TickReq, a *RuleAnswer, wc *Card) {
 		left(a, "friend "+friend+" has started it: friends keep the cards they started")
 		return
 	}
-	if pr := s.Work.Placed(wc.F("primary")); pr != nil && (OnlyFriend(pr) || pr.F(FieldBriefDefect) != "") {
+	if pr := s.Work.Placed(wc.F("primary")); pr != nil && (pinnedTo(pr, friend) || pr.F(FieldBriefDefect) != "") {
 		left(a, "pinned to friend "+friend+" alone, or a brief defect: taken back it has nowhere to go")
 		return
 	}

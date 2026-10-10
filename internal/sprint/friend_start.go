@@ -201,7 +201,7 @@ func friendUnstartedLevel(s *Snapshot, seats []FriendSeat, since func(string) (t
 		}
 		for _, c := range s.Fleet.Cell(FriendRow(n), Ready) {
 			pr := s.Work.Placed(c.F("primary"))
-			if skip[c.ID] || pr == nil || OnlyFriend(pr) || friendStarted(s, f, c) || isRead(c) {
+			if skip[c.ID] || pr == nil || pinnedTo(pr, n) || friendStarted(s, f, c) || isRead(c) {
 				continue
 			}
 			// its deal onto her row (WorkDeadline: a ready card's own stamp), or its return to
