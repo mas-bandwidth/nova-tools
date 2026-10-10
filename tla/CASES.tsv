@@ -481,6 +481,11 @@ MCFriendBrokenDeliverBroken.cfg	MCFriend.tla	action	NoDeliveryWhenBroken	ignore-
 MCFriendBrokenPingHanded.cfg	MCFriend.tla	invariant	PingNeverDelivered	ignore-terminal	friend	required	-
 MCFriendBrokenFixedKill.cfg	MCFriend.tla	invariant	StopOnlyWhenSilent	ignore-terminal	friend	required	-
 MCFriendBrokenAsideEarly.cfg	MCFriend.tla	invariant	SetAsideAfterCardTurns	ignore-terminal	friend	required	-
+MCFriendStartedLanes.cfg	MCFriendStartedLanes.tla	pass	-	ignore-terminal	friendstartedlanes	required	-
+MCFriendStartedLanesBrokenNoReturn.cfg	MCFriendStartedLanes.tla	invariant	NeverHeldPastWindow	ignore-terminal	friendstartedlanes	required	-
+MCFriendStartedLanesBrokenBackToHer.cfg	MCFriendStartedLanes.tla	invariant	NeverBackToHer	ignore-terminal	friendstartedlanes	required	-
+MCFriendStartedLanesBrokenNoTrialLane.cfg	MCFriendStartedLanes.tla	invariant	RoomToRise	ignore-terminal	friendstartedlanes	required	-
+MCFriendStartedLanesBrokenPastWidth.cfg	MCFriendStartedLanes.tla	invariant	WidthCeiling	ignore-terminal	friendstartedlanes	required	-
 MCReach.cfg	MCReach.tla	pass	-	ignore-terminal	reach	required	-
 MCReachBrokenStepAfterProof.cfg	MCReach.tla	invariant	NoStepAfterProof	ignore-terminal	reach	required	-
 MCStopReturn.cfg	MCStopReturn.tla	pass	-	ignore-terminal	stopreturn	required	-
