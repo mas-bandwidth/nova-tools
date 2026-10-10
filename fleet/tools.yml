@@ -1154,6 +1154,69 @@
           ADOPT step=friends host={{ inventory_hostname }} reinstalled={{ ff_stale | map(attribute='friend') | join(',') or 'none' }}
           {{ ('WOULD-CHANGE' if ff_stale else 'UNCHANGED') if ansible_check_mode else ('CHANGED' if ff_stale else 'UNCHANGED') }}
 
+# The identity check (v1.2.8; docs/SPEC-RELEASE.md, install skip): every tool
+# of the build is installed from the published release and never compiled on
+# the machine it runs on, so after the install and the friends' reinstall each
+# machine's bin directory holds, for every file in its platform's SHA256SUMS,
+# exactly those bytes (the sha256 of the file, not the version it prints: a
+# tool built here by `go build` prints the release's version and holds the
+# bytes of another Go toolchain, as one machine's nova-friend did with go1.27.1
+# beside the release's go1.26.6). A tool that differs refuses the play, naming
+# it: TOOLS REFUSED step=identity. --check names what the install would
+# replace (WOULD-REPLACE) and refuses nothing. The comparison is read on the
+# machine and against the controller's own build directory; nothing is
+# copied, built or removed here.
+- name: every tool in the bin directory holds the release's bytes
+  hosts: all
+  gather_facts: false
+  tags: [seat]
+  vars:
+    id_built: "{{ nova_release_out }}/{{ nova_version }}/{{ nova_platform }}"
+    id_sums: "{{ id_built ~ '/SHA256SUMS' }}"
+    id_want: >-
+      {{ (lookup('ansible.builtin.file', id_sums).splitlines() | select('match', '^[0-9a-f]{64}  [^ ]') | list)
+         if id_sums is file else [] }}
+  tasks:
+    - name: the bin directory's files and their sha256 (one listing)
+      ansible.builtin.find: { paths: "{{ nova_bin_dir }}", get_checksum: true, checksum_algorithm: sha256, hidden: true }
+      register: id_bin
+      check_mode: false
+
+    - name: the release's sums, as the build wrote them, are there to compare with
+      ansible.builtin.assert:
+        that: ansible_check_mode or id_want | length > 0
+        fail_msg: >-
+          TOOLS REFUSED step=identity host={{ inventory_hostname }}: {{ id_sums }} holds no sums to compare the bin directory with
+        quiet: true
+
+    - name: the tools whose bytes in the bin directory are not the release's (absent, built here, or corrupt)
+      ansible.builtin.set_fact:
+        id_differ: >-
+          {{ id_want | difference(id_bin.files | map(attribute='checksum') | zip(id_bin.files | map(attribute='path') | map('basename'))
+             | map('join', '  ') | list) | map('split', '  ') | map('last') | list }}
+
+    - name: "--check: what the install would replace"
+      ansible.builtin.debug: { msg: "WOULD-REPLACE {{ item }} on {{ inventory_hostname }}: the bin directory's bytes are not the release {{ nova_version }}'s" }
+      loop: "{{ id_differ }}"
+      when: ansible_check_mode
+
+    - name: every tool is the release's, installed from it and not built here
+      ansible.builtin.assert:
+        that: ansible_check_mode or id_differ | length == 0
+        fail_msg: >-
+          TOOLS REFUSED step=identity host={{ inventory_hostname }}: {{ id_differ | join(', ') }} in {{ nova_bin_dir }}
+          {{ 'is' if id_differ | length == 1 else 'are' }} not the bytes of the {{ nova_version }} release for {{ nova_platform }}
+          (a tool built or copied on this machine, not installed from the release's assets); run the play again, or install
+          from the release: nova-update release install --from {{ nova_release_dir }} --version {{ nova_version }}
+        quiet: true
+
+    - name: the receipt
+      ansible.builtin.debug:
+        msg: >-
+          TOOLS IDENTITY host={{ inventory_hostname }} platform={{ nova_platform }} version={{ nova_version }}
+          tools={{ id_want | length }} differ={{ id_differ | length }}
+          {{ ('WOULD-REPLACE' if id_differ else 'UNCHANGED') if ansible_check_mode else 'OK' }}
+
 # The tla play: on every TLC record machine (the inventory's tla group, the
 # machine rows with tla=true), the pinned TLC jar at nova_tla_jar, owned by the
 # login, its SHA-256 the one the repository holds (tla/tla2tools.sha256), and
