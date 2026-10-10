@@ -346,6 +346,9 @@ type lander struct {
 	// process, which a hand land starts empty every run and the server every start
 	baseCount bool
 	baseWhy   string
+	// baseSaid says the last build met a base whose failing test was said once for the pass
+	// (sayBaseRed): the batch is not refused, no card is blamed and the pass ends
+	baseSaid bool
 	// baseAbsent says the last build's fetch of the base alone failed with origin's
 	// words for a ref it does not hold (notOnOrigin). The batch is the dead-base
 	// fact (deadBaseRefused), not a fetch to retry.
@@ -548,11 +551,12 @@ func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Wri
 			refused++
 		}
 	}
+	redBase := l.redBaseSaid()
 	code := 0
 	switch {
 	case failed:
 		code = 2
-	case refused > 0:
+	case refused > 0 || redBase != nil:
 		code = 1
 	}
 	if l.c.json {
@@ -569,8 +573,13 @@ func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Wri
 		if notes == nil {
 			notes = []string{}
 		}
-		b, _ := json.Marshal(map[string]any{"verb": "land", "status": status, "exit": code, "batches": batches, "cards": cards,
-			"refused": refused, "dry_run": l.dry, "items": out, "prune": pruned, "base_checks": notes})
+		report := map[string]any{"verb": "land", "status": status, "exit": code, "batches": batches, "cards": cards,
+			"refused": refused, "dry_run": l.dry, "items": out, "prune": pruned, "base_checks": notes}
+		if f := redBase; f != nil {
+			report["base_red"] = map[string]any{"line": f.line(), "repo": f.repo, "base": f.base, "tip": f.tip, "test": f.test, "since": f.since.UTC().Format(time.RFC3339),
+				"suspect": f.suspect, "cards": orEmpty(f.cards), "open": orEmpty(f.open), "judgment_stream": f.holder, "notes": orEmpty(f.notes), "finding": f.why}
+		}
+		b, _ := json.Marshal(report)
 		fmt.Fprintln(stdout, string(b))
 		return code
 	}
@@ -609,6 +618,24 @@ func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Wri
 			for _, k := range p.Kept {
 				fmt.Fprintf(w, "NOTE no branch queued for deletion for %s\n", oneline.Escape(k))
 			}
+		}
+	}
+	if f := redBase; f != nil {
+		// the one line, and what the pass did about it: the seat reads it where the loop
+		// shows what went wrong (stderr)
+		fmt.Fprintln(stderr, f.line())
+		fmt.Fprintf(stderr, "NOTE base red since %s: %s; the landing that turned it red: %s\n", f.since.UTC().Format("15:04:05 MST"), oneline.Escape(f.test), oneline.Escape(f.suspect))
+		switch {
+		case len(f.cards) > 0:
+			fmt.Fprintf(stderr, "NOTE fix cards opened by rule in stream %s: %s; nothing lands on %s until its tip is green; run: nova-sprint inbox\n", baseRedStream, oneline.Escape(strings.Join(f.cards, ",")), oneline.Field(f.base))
+		case len(f.open) > 0:
+			fmt.Fprintf(stderr, "NOTE a fix card is already open for %s; nothing lands on %s until its tip is green; run: nova-sprint inbox\n", oneline.Escape(strings.Join(f.open, ",")), oneline.Field(f.base))
+		}
+		if f.holder != "" {
+			fmt.Fprintf(stderr, "NOTE the base's one judgment is on stream %s; no batch was refused and no card was blamed; the other streams' cards stay queued; run: nova-sprint inbox\n", oneline.Field(f.holder))
+		}
+		for _, n := range f.notes {
+			fmt.Fprintf(stderr, "NOTE %s\n", oneline.Escape(n))
 		}
 	}
 	for _, p := range pruned {
@@ -842,6 +869,296 @@ func (l *lander) baseRefused(b landBatch, stream, why string) (bool, bool) {
 	}
 	l.keep(b)
 	return false, true
+}
+
+// A RED BASE IS SAID ONCE, ON THE BASE, NEVER ON EACH BATCH (docs/SPEC-SPRINT.md section 7,
+// the base gate first; found dogfooding the v1.2 candidate on 2026-10-07: the base's tree
+// gate went red from a landing at about 7:30 PM while the cache held that tip as green, from
+// 8:10 PM to 9:50 PM every batch's gate failed on every bench, the lander refused each batch
+// as the card's conflict, the seat blamed the benches, and nothing landed for 100 minutes
+// until the gate was run by hand). The pass gates the base's tip before any batch (gateBase,
+// the cache consulted first), and a batch whose own gate is red gates the base's tip itself,
+// the cache set aside, before any head is blamed (baseRegate, landpass.go). A red base ends
+// the pass at once: one line "BASE RED <tip>: <first failing test>", one judgment to the seat
+// (the base-gate rule's, sprint.LandBaseRefused: the first stream in order carries it and
+// stops, resumed by rule when the base is green again; every other stream is refused under
+// it and never stopped), the landing that turned the base red named (suspectLanding), and
+// one critical card per failing test opened by rule in the stream critical-base-red
+// (baseRedCards), so the fix is dealt within the tick. No batch is refused, no card is
+// blamed, and nothing is merged onto the red base. A base red with no test named (a build
+// or a vet failure, the toolchain's transient of 2026-10-04) stays the base-gate rule's:
+// retried, then the stream stopped on the third failure, as before.
+
+// baseRedStream is the stream the fix cards of a red base are opened in.
+const baseRedStream = "critical-base-red"
+
+// baseRedFact is a red base as the pass says it.
+type baseRedFact struct {
+	repo, base, tip, test, why string
+	since                      time.Time
+	suspect                    string   // the landing that turned the base red, as git logs it
+	cards, open                []string // the fix cards opened by rule, and the tests an open card already names
+	holder                     string   // the stream whose judgment the base's red is under
+	notes                      []string // what was not done, each with its reason
+}
+
+// line is the one line the pass prints for the red base.
+func (f *baseRedFact) line() string { return "BASE RED " + f.tip + ": " + f.test }
+
+// redFileRE is a test file and its line as testing prints them.
+var redFileRE = regexp.MustCompile(`([A-Za-z0-9_.-]+_test\.go):\d+`)
+
+// redTestOfFinding reads the first failing test out of a tree gate's finding (gateWhy: the
+// run, how it ended and its output's lines joined by " | "): its name, its package when the
+// finding's FAIL line names one, its file and its failing line. false when the finding
+// names no test (a build or a vet failure).
+func redTestOfFinding(why string) (sprint.RedTest, bool) {
+	tests := sprint.FailingTests(why)
+	if len(tests) == 0 {
+		return sprint.RedTest{}, false
+	}
+	t := sprint.RedTest{Test: tests[0], Job: "the lander's tree gate"}
+	rest := why
+	if i := strings.Index(why, "--- FAIL: "+t.Test); i >= 0 {
+		rest = why[i:]
+	}
+	for _, line := range strings.Split(rest, " | ") {
+		line = strings.TrimSpace(line)
+		if t.Line == "" {
+			if m := redFileRE.FindStringSubmatch(line); m != nil {
+				t.File, t.Line = m[1], line
+			}
+		}
+		if pkg, ok := strings.CutPrefix(line, "FAIL"); ok {
+			if fs := strings.Fields(pkg); len(fs) > 0 && t.Pkg == "" {
+				t.Pkg = fs[0]
+			}
+		}
+	}
+	return t, true
+}
+
+// treeTestClass names the base class that is the whole tree's own tests (sprint.BaseClasses,
+// the run the tree gate makes): its red is a batch's tree gate's finding, said once through
+// sayBaseRed with a fix card by rule. The other classes (build, gofmt, vet, vet-functional,
+// staticcheck, errcheck, dead-code) keep the base-gate rule's own repair card and retries.
+var treeTestClass = func() string {
+	for _, c := range sprint.BaseClasses {
+		if c.Test == "" && strings.HasPrefix(strings.Join(c.Run, " "), "go test ") {
+			return c.Name
+		}
+	}
+	return "class-tests"
+}()
+
+// classRedFinding says a base gate's finding is another class's, not the whole tree test
+// class's: sprint.ClassGateWhy stamped it with that class's repair card (""; fix-red card ""),
+// and the base-gate rule carries it, its card and its retry count as before. The tree test
+// class is the batch's own gate finding and is said through sayBaseRed instead, so the two do
+// not double-say one base.
+func classRedFinding(why string) bool {
+	if !strings.Contains(why, "; fix-red card ") {
+		return false
+	}
+	return !strings.Contains(why, " is red on its class "+treeTestClass+";")
+}
+
+// suspectLanding names the landing that turned the base red: the commits behind tip on the
+// base's first-parent line are walked from the tip until one whose tree the pass's cache
+// holds green (the last green), and the commit just after it is the suspect, as git logs it
+// (<sha> <subject>; a landing's subject is `land <id> (sprint stream <s>)`). With no tip
+// behind it recorded green, the oldest commit walked is named and the note says so. The
+// caller holds the pass's gate lock (the cache's).
+func (l *lander) suspectLanding(ctx context.Context, dir, tip string) string {
+	out, err := l.git(ctx, dir, "log", "--first-parent", "--format=%H%x09%s", "-n", "200", tip)
+	if err != nil {
+		return "not known (git log failed: " + firstLine("", err) + ")"
+	}
+	suspect := ""
+	for _, line := range lines(out) {
+		sha, subject, _ := strings.Cut(line, "\t")
+		if why, cached := l.baseGateCache[sha]; cached && why == "" && sha != tip && suspect != "" {
+			return suspect + " (the last green tip is " + shortSha(sha) + ")"
+		}
+		suspect = shortSha(sha) + " " + subject
+	}
+	if suspect == "" {
+		return "not known (no commit behind the tip)"
+	}
+	return suspect + " (no tip behind it is recorded green)"
+}
+
+// sayBaseRed is the red base said once a pass, under the pass's gate lock: the fact kept for
+// the pass (landShared.redBase), the tip's finding cached as the base's (no stream gates it
+// again this process; the next pass meets it in the cache and says it again until the base
+// moves or the base re-check finds it green), the suspect named, the fix cards opened by
+// rule and the one judgment raised through stream, the first in order to meet it. A dry run
+// says the line and records nothing.
+func (l *lander) sayBaseRed(ctx context.Context, dir, stream, repo, base, tip, why string) *baseRedFact {
+	s := l.locks()
+	if f := s.redBase; f != nil && f.tip == tip {
+		return f
+	}
+	f := &baseRedFact{repo: repo, base: base, tip: tip, why: why, since: l.clock()}
+	t, named := redTestOfFinding(why)
+	if named {
+		f.test = t.Test
+	} else {
+		f.test, _, _ = strings.Cut(why, ": ")
+	}
+	l.baseGateCache[tip] = why
+	delete(l.baseGateFails, tip)
+	f.suspect = l.suspectLanding(ctx, dir, tip)
+	s.redBase = f
+	if l.dry {
+		f.notes = append(f.notes, "dry run: no judgment was raised and no card was opened")
+		return f
+	}
+	if named {
+		var reds []sprint.RedTest
+		for _, name := range sprint.FailingTests(why) {
+			r := t
+			r.Test = name
+			if name != t.Test {
+				r.File, r.Line = "", ""
+			}
+			reds = append(reds, r)
+		}
+		cut, open, err := l.baseRedCards(ctx, dir, f, reds)
+		if err != nil {
+			f.notes = append(f.notes, "no fix card was opened: "+oneline.Err(err))
+		}
+		f.cards, f.open = cut, open
+	} else {
+		f.notes = append(f.notes, "no fix card was opened: the finding names no test")
+	}
+	f.holder = l.baseRedJudgment(stream, f)
+	return f
+}
+
+// baseRedJudgment is the red base's one judgment to the seat, through the merge step's
+// base-gate path (sprint.LandBaseRefused): stream, the first in order to meet the red base,
+// stops under the judgment NBaseRed at once (sprint.MergeReq.BaseRed) and is resumed by rule
+// when the base is green again (baseRecheck, sprint.BaseGreen); a stream that meets a base
+// whose red already stopped another is refused under that stream's judgment and never
+// stopped, so one judgment stands per base. The stream the judgment is under, "" when the
+// step did not record it (a note says why).
+func (l *lander) baseRedJudgment(stream string, f *baseRedFact) string {
+	what := f.line() + " since " + f.since.UTC().Format(time.RFC3339) + "; the landing that turned it red: " + f.suspect
+	if len(f.cards) > 0 {
+		what += "; fix cards opened by rule in stream " + baseRedStream + ": " + strings.Join(f.cards, ", ")
+	}
+	if len(f.open) > 0 {
+		what += "; a card is already open for: " + strings.Join(f.open, ", ")
+	}
+	what += "; the gate said: " + f.why
+	r := sprint.MergeReq{Stream: stream, Base: f.base, BaseRed: what, Who: l.c.actor}
+	res, err := l.stepWith(r, nil, sprint.LandBaseRefused)
+	if code := stepExit(res, err); code != 0 {
+		f.notes = append(f.notes, "the merge step did not record the judgment ("+stepWhy(res, err)+"); "+againRemedy(stream))
+		return ""
+	}
+	for _, m := range res.Moved {
+		if strings.Contains(m, " stopped: ") {
+			return stream
+		}
+		if _, holder, ok := strings.Cut(m, "under the judgment on stream "); ok {
+			return strings.TrimSpace(holder)
+		}
+	}
+	return stream
+}
+
+// baseRedCards opens the red base's fix cards by rule, as the promotion's red cutter opens a
+// red run's (redCutter, promote_red.go): one card per failing test the finding names, in the
+// stream critical-base-red at PRIORITY critical, its brief sprint.FixBrief's with the base's
+// own task (the tip, the suspect, the gate's finding) and PATHS the failing test's named
+// file and its package, held to the card lint as add holds a brief, ranked first and
+// deduplicated by test name against the open cards inside the one add step
+// (sprint.FixCards), recorded as the machine's. cut is the ids opened, open the tests an
+// open card already names.
+func (l *lander) baseRedCards(ctx context.Context, dir string, f *baseRedFact, reds []sprint.RedTest) (cut, open []string, err error) {
+	if l.a == nil || l.st == nil {
+		return nil, nil, errors.New("no store to open a card in")
+	}
+	c := l.c
+	var why strings.Builder
+	var st *store.Store
+	rs, code := l.a.briefRules("land", "", &c, &st, &why)
+	if code != 0 {
+		return nil, nil, errors.New(strings.TrimSpace(why.String()))
+	}
+	if st == nil {
+		st = l.st
+	}
+	module := ""
+	if mod, err := l.git(ctx, dir, "show", "--end-of-options", f.tip+":go.mod"); err == nil {
+		for line := range strings.SplitSeq(mod, "\n") {
+			if m, ok := strings.CutPrefix(strings.TrimSpace(line), "module "); ok {
+				module = strings.Trim(strings.TrimSpace(m), `"`)
+				break
+			}
+		}
+	}
+	sp := sprint.FixSpec{Repo: f.repo, Base: f.base, Module: module, Stream: baseRedStream, Where: "the base " + f.base + " at " + shortSha(f.tip)}
+	req := sprint.AddReq{Stream: sp.Stream, Who: sprint.MachineActor}
+	for _, r := range reds {
+		r.Run = shortSha(f.tip)
+		brief := baseRedBrief(r, sp, f)
+		if cs := cardRules(brief, rs); cs.held == "" && len(cs.rules) > 0 {
+			// the members hold no rules file for the repository: the card carries its own
+			brief += "\n\n" + strings.TrimSuffix(swarm.RulesParagraph(cs.rules), "\n")
+		}
+		id := sprint.FixCardID(r.Test)
+		req.Cards = append(req.Cards, sprint.CardAdd{ID: id, File: id, Brief: brief, Rules: cardRules(brief, rs).held, Base: sp.Base, Repo: swarm.ReadCardBase([]byte(brief)).Named})
+	}
+	var lint strings.Builder
+	if lintBriefFiles("land", req.Cards, rs, 0, &lint) != 0 {
+		return nil, nil, errors.New(strings.TrimSpace(lint.String()))
+	}
+	step := store.AddStep(req)
+	step.Actor = sprint.MachineActor
+	epoch := l.epoch
+	step.Epoch = &epoch
+	step.Plan = func(s *sprint.Snapshot) sprint.Plan {
+		add, dup := sprint.FixCards(s, req)
+		cut, open = nil, dup
+		for _, card := range add.Cards {
+			cut = append(cut, card.ID)
+		}
+		if len(add.Cards) == 0 {
+			return sprint.Plan{}
+		}
+		return sprint.Add(s, add)
+	}
+	l.a.serial.Lock()
+	res, err := st.Run(ctx, step)
+	l.a.serial.Unlock()
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(res.Refused) > 0 {
+		return nil, nil, fmt.Errorf("the add of %s refused %s: %s", strings.Join(cut, ","), res.Refused[0].Key, res.Refused[0].Why)
+	}
+	return cut, open, nil
+}
+
+// baseRedBrief is one fix card's brief: sprint.FixBrief's form (the id and the heavy tier,
+// REPO and BASE, START, STOP, PATHS the test file and its package, TEST), PRIORITY critical
+// after BASE, and the task the base's: the tip, the suspect landing and what the gate said.
+func baseRedBrief(r sprint.RedTest, sp sprint.FixSpec, f *baseRedFact) string {
+	brief := sprint.FixBrief(r, sp)
+	brief = strings.Replace(brief, "\nBASE: "+sp.Base+"\n", "\nBASE: "+sp.Base+"\nPRIORITY: "+sprint.PriorityCritical+"\n", 1)
+	task := fmt.Sprintf("THE TASK. The base %s is red at its tip %s: %s fails the lander's tree gate there, so nothing lands on it until it is green (docs/SPEC-SPRINT.md section 7, the base gate first). The landing that turned it red: %s. The gate said: %s. Find why it fails at the tip and fix the cause, in the test or in the code it tests; never skip it, never loosen what it asserts.",
+		f.base, f.tip, r.Test, f.suspect, oneline.Cap(f.why, 1500))
+	if i := strings.Index(brief, "THE TASK. "); i >= 0 {
+		end := len(brief)
+		if j := strings.Index(brief[i:], "\n"); j >= 0 {
+			end = i + j
+		}
+		brief = brief[:i] + task + brief[end:]
+	}
+	return brief
 }
 
 // baseRecheck is each land pass's re-check of the bases that stopped streams
@@ -1602,14 +1919,27 @@ func (l *lander) gateBase(ctx context.Context, dir, stream string, cards []landC
 	}
 	defer release()
 	base := cards[0].base
+	if f := l.redBaseSaid(); f != nil && f.tip == baseSha {
+		// this pass already said this base red (sayBaseRed): no batch gates it again, and no
+		// card is blamed; this stream's line rides on the one fact (buildFailed)
+		l.baseSaid = true
+		return nil, 0, "", f.line()
+	}
 	l.baseStop, l.baseCount, l.baseWhy = false, false, ""
 	was := 0
 	s.gateMu.Lock()
 	if f := l.baseGateFails[baseSha]; f != nil {
 		was = f.n
 	}
+	_, wasCached := l.baseGateCache[baseSha]
 	s.gateMu.Unlock()
 	red, stop := l.treeGateBase(ctx, dir, baseSha, base)
+	if !wasCached {
+		// this pass saw the tip's gate itself: a red batch on it is the head's
+		s.gateMu.Lock()
+		s.gatedNow[baseSha] = true
+		s.gateMu.Unlock()
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, 0, err.Error(), "" // no cure or base failure for an abandoned gate
 	}
@@ -1626,6 +1956,21 @@ func (l *lander) gateBase(ctx context.Context, dir, stream string, cards []landC
 		return nil, 0, env, ""
 	}
 	if cured < 0 {
+		if _, named := redTestOfFinding(red); named && !classRedFinding(red) {
+			// a failing test at the base's tip is the base's, said once for the pass
+			// (sayBaseRed): the pass ends, no batch is refused and no card is blamed. The
+			// saying holds the gate lock (the cache and the pass's red-base record are its).
+			s.gateMu.Lock()
+			why := red
+			if f := l.baseGateFails[baseSha]; f != nil && f.why != "" {
+				why = f.why
+			}
+			f := l.sayBaseRed(ctx, dir, stream, cards[0].repo, base, baseSha, why)
+			f.notes, l.ledgerLog = append(f.notes, l.ledgerLog...), nil // the gates' own lines ride on the fact
+			l.baseSaid = true
+			s.gateMu.Unlock()
+			return nil, 0, "", f.line()
+		}
 		// counted when the gate ran red here (or this process's record stops the stream); a
 		// refusal inside a retry's wait, or with the rule off, is not
 		s.gateMu.Lock()

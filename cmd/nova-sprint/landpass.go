@@ -73,12 +73,19 @@ type landShared struct {
 	// fetchMu serializes every fetch and every other write of the clone's shared refs and
 	// metadata (a worktree added or removed): two fetches of one ref at once fail on its lock.
 	fetchMu sync.Mutex
-	// gateMu guards the baseGateCache, baseGateFails and cureTried maps and baseGates.
+	// gateMu guards the baseGateCache, baseGateFails and cureTried maps and baseGates, and
+	// the records the red base's saying writes (redBase, gatedNow).
 	gateMu sync.Mutex
 	// baseGates keeps a gate and its cure single-writer for each base commit: a one-slot
 	// channel per commit, so the wait for it watches the job's context (acquireGate). A
 	// different base can be checked while one gate waits on a bench.
 	baseGates map[string]chan struct{}
+	// redBase is the red base the pass said once (sayBaseRed, land.go), nil while none: set,
+	// the pass ends, no batch is refused and no card is blamed.
+	redBase *baseRedFact
+	// gatedNow is each base tip whose gate this pass ran itself (gateBase, not the cache): a
+	// red batch on such a tip is the head's, and the tip is not gated again (baseRegate).
+	gatedNow map[string]bool
 	// checkMu serializes a red --check's gate decision, which appends to one record.
 	checkMu sync.Mutex
 	// treesMu guards pruned and used.
@@ -92,7 +99,7 @@ type landShared struct {
 // locks is the pass's shared locks, made once.
 func (l *lander) locks() *landShared {
 	if l.shared == nil {
-		l.shared = &landShared{pruned: map[string]bool{}, used: map[string]map[string]bool{}}
+		l.shared = &landShared{pruned: map[string]bool{}, used: map[string]map[string]bool{}, gatedNow: map[string]bool{}}
 	}
 	return l.shared
 }
@@ -120,6 +127,75 @@ func (s *landShared) acquireGate(ctx context.Context, sha string) (release func(
 	case <-ctx.Done():
 		return nil, false
 	}
+}
+
+// redBaseSaid is the red base the pass has said, nil while none (landShared.redBase).
+func (l *lander) redBaseSaid() *baseRedFact {
+	s := l.locks()
+	s.gateMu.Lock()
+	defer s.gateMu.Unlock()
+	return s.redBase
+}
+
+// gatedNowBy says this pass ran the base tip's gate itself (gateBase).
+func (l *lander) gatedNowBy(tip string) bool {
+	s := l.locks()
+	s.gateMu.Lock()
+	defer s.gateMu.Unlock()
+	return s.gatedNow[tip]
+}
+
+// endPass ends the pass on a red base (sayBaseRed): the lines the jobs kept before it are
+// folded in their order, the rest of the jobs are left as they are (their cards queued, no
+// line of their own, nothing merged or pushed), and the pass returns.
+func (l *lander) endPass(jobs []*landJob, failed bool) bool {
+	for _, j := range jobs {
+		l.take(j.f)
+	}
+	return failed
+}
+
+// baseRegate is the base gate run first on a red batch gate, before any head is blamed: the
+// batch's tree failed where the cache held the base's tip green (the landing of 2026-10-07:
+// a tip recorded green by one bench's gate was red), so the base's tip itself is gated
+// again in the stream's worktree, the cache set aside. Red, the base is said once and the
+// pass ends (sayBaseRed): true, the job ended by the caller. Green, the tip is recorded so,
+// the batch branch is back and the heads are gated one by one as before: false. A worktree
+// that cannot be switched to the tip blames the heads as before, the trouble a NOTE; one
+// that cannot be switched back refuses the batch with it (true, the job ended here). A tip
+// this pass gated itself (landShared.gatedNow) is not gated again: its green was seen, not
+// read from the cache, so the red is the head's.
+func (l *lander) baseRegate(ctx context.Context, j *landJob) bool {
+	dir, tip := j.dir, j.cut.baseSha
+	if l.redBaseSaid() == nil && l.gatedNowBy(tip) {
+		return false
+	}
+	if _, err := l.git(ctx, dir, "switch", "-q", "--detach", tip); err != nil {
+		l.ledgerLog = append(l.ledgerLog, "the base's tip "+shortSha(tip)+" was not gated after the batch's red gate: "+firstLine("", err))
+		return false
+	}
+	l.stage("gate", "the base's tip "+shortSha(tip)+" after the batch's red gate")
+	key, as := l.gateKey, l.laneAs
+	l.gatesBase(j.b.Base)
+	red := l.treeGate(ctx, dir, true)
+	l.gateKey, l.laneAs = key, as
+	if _, err := l.git(ctx, dir, "switch", "-q", "land/"+j.stream); err != nil {
+		j.refuse("the batch branch land/" + j.stream + " could not be switched back to after the base's tip " + shortSha(tip) + " was gated: " + firstLine("", err))
+		return true
+	}
+	s := l.locks()
+	s.gateMu.Lock()
+	defer s.gateMu.Unlock()
+	if red == "" {
+		l.baseGateCache[tip] = ""
+		l.ledgerLog = append(l.ledgerLog, "the base's tip "+shortSha(tip)+" passes the gate the batch fails: a head is blamed")
+		return false
+	}
+	f := l.sayBaseRed(ctx, dir, j.stream, j.b.Repo, j.b.Base, tip, red)
+	// the gates' own lines (the benches asked, their agreement) ride on the fact: the job
+	// ends with no line of its own
+	f.notes, l.ledgerLog = append(f.notes, l.ledgerLog...), nil
+	return true
 }
 
 // fetched runs one git fetch (or another write of the clone's shared refs) under the pass's
@@ -166,7 +242,7 @@ func (l *lander) fork(stream string) *lander {
 	f.out, f.toScore = nil, nil
 	f.ledgerLog, f.recLog, f.recNote, f.baseFix = nil, nil, "", ""
 	f.conflictKind, f.conflictPaths = "", nil
-	f.baseStop, f.baseCount, f.baseWhy = false, false, ""
+	f.baseStop, f.baseCount, f.baseWhy, f.baseSaid = false, false, "", false
 	f.gateHost, f.gateWall = "", 0
 	f.gateKey, f.gateRing, f.gateSlot = stream, 0, 0
 	f.laneAs = landLaneWho + "/" + stream
@@ -296,8 +372,13 @@ func (l *lander) pass(ctx context.Context, s *sprint.Snapshot, order []string) (
 		if len(jobs) == 0 {
 			return failed
 		}
+		// the base's gate runs before any head merges (prepareCut, cut, gateBase): a red base
+		// is said once and ends the pass before any head is blamed (sayBaseRed, land.go)
 		for _, j := range jobs {
 			l.prepare(ctx, s, j)
+			if l.redBaseSaid() != nil {
+				return l.endPass(jobs, failed)
+			}
 		}
 		finished := make(chan *landJob, len(jobs))
 		contexts := make(map[*landJob]context.Context, len(jobs))
@@ -310,6 +391,7 @@ func (l *lander) pass(ctx context.Context, s *sprint.Snapshot, order []string) (
 			close(finished)
 		}()
 		ready := make(map[*landJob]bool, len(jobs))
+		redSaid := false
 		for _, j := range jobs {
 			clock := time.After
 			if l.a != nil && l.a.after != nil {
@@ -326,7 +408,12 @@ func (l *lander) pass(ctx context.Context, s *sprint.Snapshot, order []string) (
 				}
 			}
 			cancels[j](nil)
-			if !j.done {
+			if l.redBaseSaid() != nil {
+				// a batch's gate found the base's tip red (gateBase, baseRegate): nothing
+				// lands on it and no card is blamed (endPass)
+				redSaid = true
+			}
+			if !j.done && !redSaid {
 				l.land(ctx, j, pushed)
 			}
 			l.take(j.f)
@@ -334,6 +421,10 @@ func (l *lander) pass(ctx context.Context, s *sprint.Snapshot, order []string) (
 				// what this pass put on the base, a whole batch or the heads before a conflict:
 				// the files a later batch may collide with
 				pushed = append(pushed, j)
+			}
+			if redSaid {
+				// a red base ends the pass: this batch's cards stay queued, no line of their own
+				continue
 			}
 			switch {
 			case !j.ok:
@@ -344,6 +435,9 @@ func (l *lander) pass(ctx context.Context, s *sprint.Snapshot, order []string) (
 			default:
 				queues[j.stream] = nil
 			}
+		}
+		if redSaid {
+			return failed
 		}
 	}
 }
@@ -458,6 +552,13 @@ func (l *lander) buildNotes(j *landJob) {
 // judgment of a base branch that is gone (missingBase), else the refusal as it is.
 func (l *lander) buildFailed(ctx context.Context, j *landJob, why string) {
 	l.buildNotes(j)
+	if l.baseSaid {
+		// the base's failing test was said once for the pass (sayBaseRed): this batch is not
+		// refused, no card is blamed and the pass ends
+		l.baseSaid = false
+		j.ended(0, false, true)
+		return
+	}
 	if l.baseAbsent {
 		// the base is not on origin: one fact, recorded once, and the stream goes on
 		past, on, ok := l.deadBaseRefused(j.b, j.stream, j.cards)
@@ -721,9 +822,17 @@ func (l *lander) merge(ctx context.Context, j *landJob) {
 			j.refuse(red + "; no card is blamed and nothing was pushed or reported")
 			return
 		}
-		if red == "" {
+		switch {
+		case red == "":
 			j.gated = true
-		} else {
+		case l.baseRegate(ctx, j):
+			// the base's tip itself is red, or the worktree could not come back: said once,
+			// no head blamed (baseRegate)
+			if !j.done {
+				j.ended(0, false, true)
+			}
+			return
+		default:
 			l.ledgerLog = nil // the second build logs the same resolutions
 			merged, failed, baseSha, _, why = l.build(ctx, dir, stream, j.cards, b.Times, true)
 			if why := gateWaitWhy(ctx); why != "" {
