@@ -4909,6 +4909,7 @@ The mechanisms: a **blocking read** waits in the store until the thing arrives (
 | table and where displays | sprint to a terminal (nova-table watch, where --watch) | timer poll | --every (1 s) | a display pull: a person's terminal, no party waits on it |
 | samplers and watchdogs | one machine to itself (host load, a card's live sample, the slot cleaner, the wall's process count, a job lease's heartbeat, the idle watch, the store round trip) | not a channel | 1 s to 30 s each | a measurement or a lease of one machine; no message or card moves |
 | waits and retries | one machine to itself (a process gone, a lock, a file steady, a server up, a push or open retried, a tick given up stopping) | not a channel | bounded by its caller | a wait on the machine's own state, or a backoff; no message or card moves |
+| server switch restart wait | a worker's verbs to the sprint server while a switch runs | not a channel | the client resends every RestartStep (500 ms), up to its bound (DefaultRestartBound, 4 min) | a wait on a server coming up, moving nothing between parties: the server answers a typed restarting result and the client resends; the loop is `internal/sprintwire/wire.go Client.Do` |
 | nova-wake | bus to the coordinator (nova-wake serve) | removed | - | retired with the tool (fleet/retired-tools.txt); its binary is gone, so a unit that still names it restarts for ever: the loops play retires the unit (nova_retire_units) |
 
 The cards this audit cut, each one row of the table turned from a timer poll into a push; each one's DONE-WHEN is its row's mechanism changed here and its ledger line gone:
@@ -7477,4 +7478,6 @@ sent and not answered is still "nothing is known of what ran" and is never sent
 again; only a typed restarting answer is waited out. The client waits one step
 (`sprintwire.RestartStep`, 500 ms), prints one `WAITING` line, and sends the same
 request again, up to its bound (`sprintwire.DefaultRestartBound`, 4 minutes by
-default). Past the bound it exits 2, naming the switch.
+default). Past the bound it exits 2, naming the switch. The wait is a wait on a
+server coming up, moving nothing between parties: its row is `server switch
+restart wait` in the section "Push, not poll".
