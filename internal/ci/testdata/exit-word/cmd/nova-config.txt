@@ -1,0 +1,3 @@
+# exit-word: status word and exit code agreement; shrink-only
+# ceiling: 1
+cmd/nova-config:transcript 4 machine add, history, list, set exit 1 on REFUSED (seed)

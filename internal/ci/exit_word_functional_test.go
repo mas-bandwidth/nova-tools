@@ -1,0 +1,183 @@
+//go:build functional
+
+package ci
+
+import (
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// exit_word_functional_test.go builds every command and associates each executed
+// command and each tool's transcripts in docs/TESTS.md with its captured exit status
+// and last status-bearing output line, checking them against the status contract.
+// It needs no store and starts no server; the builds are the functional tier's.
+
+// TestEveryExitWordMatchesStatusContract walks every built tool: bare, with an
+// unknown verb, with an unknown flag on a verb, each verb with no flags, and each
+// command in its docs/TESTS.md transcript.
+// The ledger is checked only when every tool ran.
+func TestEveryExitWordMatchesStatusContract(t *testing.T) {
+	t.Parallel()
+
+	root := repoRoot(t)
+	entries, err := os.ReadDir(filepath.Join(root, "cmd"))
+	require.NoError(t, err)
+	transcripts := readFile(t, filepath.Join(root, "docs", "TESTS.md"))
+	exitWord := newExitWord(t)
+	found := 0
+	t.Cleanup(func() { exitWord.check(t, found) })
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		found++
+		tool := e.Name()
+		t.Run(tool, func(t *testing.T) {
+			t.Parallel()
+			exitWord.begin()
+			bin := buildTool(t, root, tool)
+			_, banner, helpErr := runBare(t, root, tool, bin, []string{"help"})
+			require.Empty(t, helpErr, "`%s help` wrote to stderr: %s", tool, helpErr)
+			verbs := usageVerbs(tool, banner)
+			toolTable := exitWordExitCodes(banner)
+			// One verb's help is read at most once per tool; a transcript that
+			// repeats a verb reuses its table.
+			verbTables := map[string][]int{}
+			verbTable := func(verb string) []int {
+				if codes, ok := verbTables[verb]; ok {
+					return codes
+				}
+				codes := exitWordVerbTable(t, bin, verb, toolTable)
+				verbTables[verb] = codes
+				return codes
+			}
+
+			code, out, errs := runIn(t, bin)
+			exitWord.short(tool, exitWordBare, tool, exitWordAnswers(code, out, errs, toolTable))
+
+			code, out, errs = runIn(t, bin, noSuchVerb)
+			exitWord.short(tool, exitWordVerb, tool+" "+noSuchVerb, exitWordAnswers(code, out, errs, toolTable))
+
+			if len(verbs) > 0 {
+				args := append(strings.Fields(verbs[0]), noSuchFlag)
+				code, out, errs = runIn(t, bin, args...)
+				exitWord.short(tool, exitWordFlag, tool+" "+verbs[0]+" "+noSuchFlag, exitWordAnswers(code, out, errs, verbTable(verbs[0])))
+			}
+			for _, v := range verbs {
+				code, out, errs := runIn(t, bin, strings.Fields(v)...)
+				exitWord.short(tool, exitWordNoArg, tool+" "+v, exitWordAnswers(code, out, errs, verbTable(v)))
+			}
+
+			if lines, err := onboarding.FirstRun(transcripts, tool); err == nil && len(lines) > 0 {
+				if steps, err := onboarding.Steps(tool, lines); err == nil {
+					for _, s := range steps {
+						code, out, errs := runIn(t, bin, s.Args...)
+						exitWord.short(tool, exitWordTranscript, s.Line, exitWordAnswers(code, out, errs, verbTable(exitWordVerbIn(verbs, s.Args))))
+					}
+				}
+			}
+			exitWord.settle()
+		})
+	}
+	require.NotZero(t, found, "no command directories found under cmd/; this test was looking in the wrong place and would have passed by checking nothing")
+}
+
+// exitWordLedgerPath is the shrink-only counted package ledger of the
+// exit-word violations: one shard per tool at
+// `testdata/exit-word/cmd/<tool>.txt`, a row `cmd/<tool>:<kind> <count> <why>`.
+const exitWordLedgerPath = "testdata/exit-word"
+
+// The kinds of invocation the walk judges.
+const (
+	exitWordBare       = "bare"          // the bare command
+	exitWordVerb       = "unknown-verb"  // an unknown verb
+	exitWordFlag       = "unknown-flag"  // an unknown flag on a verb
+	exitWordNoArg      = "verb-no-flags" // a verb run with no flags
+	exitWordTranscript = "transcript"    // a documented transcript command
+)
+
+// exitWordRemedy is the remedy line for exit-word violations.
+const exitWordRemedy = "align the exit code with the status word (OK→0, FAILED→1, REFUSED→2) or add it to the verb's exit table"
+
+// exitWord is one walk's measure against its package ledger, shared by the
+// walk's parallel subtests and checked once they have all finished.
+type exitWord struct {
+	mu             sync.Mutex
+	ledger         *siteLedger
+	begun, settled int
+}
+
+func newExitWord(t *testing.T) *exitWord {
+	t.Helper()
+	allow, err := allowlist.LoadPackages(exitWordLedgerPath, allowlist.Options{Ceiling: true, Counted: true, PackageKeys: true})
+	require.NoError(t, err)
+	requireReasons(t, allow)
+	return &exitWord{ledger: &siteLedger{path: exitWordLedgerPath, allow: allow, sites: map[string][]string{}}}
+}
+
+func (w *exitWord) begin() { w.mu.Lock(); w.begun++; w.mu.Unlock() }
+
+func (w *exitWord) settle() { w.mu.Lock(); w.settled++; w.mu.Unlock() }
+
+func (w *exitWord) short(tool, kind, where, problem string) {
+	if problem == "" {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.ledger.add("cmd/"+tool+":"+kind, where+": "+problem+"; to clear it: "+exitWordRemedy)
+}
+
+func (w *exitWord) check(t *testing.T, tools int) {
+	t.Helper()
+	if w.begun != tools || w.settled != tools {
+		t.Logf("exit-word: %d of %d tools measured; the ledger is checked only when every tool is", w.settled, tools)
+		return
+	}
+	for _, v := range w.ledger.violations(t, "a tool's last status word and exit code agree (a row's count only falls)") {
+		assert.Fail(t, v)
+	}
+}
+
+// exitWordVerbTable reads the exit table a verb publishes for itself: the codes
+// its own `<verb> -h` states, else the tool's table where the verb's help states
+// none (a verb that refuses -h, or one whose help carries no exit paragraph).
+// The walk passes it to the judge so a code above 2 is accepted only where the
+// verb publishes it (docs/STANDARD.md section 2).
+func exitWordVerbTable(t *testing.T, bin, verb string, toolTable []int) []int {
+	t.Helper()
+	if verb == "" {
+		return toolTable
+	}
+	_, out, _ := runIn(t, bin, append(strings.Fields(verb), "-h")...)
+	if codes := exitWordExitCodes(out); len(codes) > 0 {
+		return codes
+	}
+	return toolTable
+}
+
+// exitWordVerbIn returns the verb of a documented command: the longest of the
+// tool's verb names whose words are a prefix of its arguments, or "" when none
+// is, so a transcript's command is judged against the table it publishes.
+func exitWordVerbIn(verbs []string, args []string) string {
+	best := ""
+	for _, v := range verbs {
+		f := strings.Fields(v)
+		if len(f) <= len(strings.Fields(best)) || len(f) > len(args) {
+			continue
+		}
+		if slices.Equal(f, args[:len(f)]) {
+			best = v
+		}
+	}
+	return best
+}
