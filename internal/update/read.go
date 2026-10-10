@@ -379,7 +379,13 @@ func reading(e Entry, p ProcessResult, report bool) Read {
 		r.Reason = p.Reason
 		r.Remedy = "wrap it in a script that prints the version alone"
 		if p.Reason == "not_found" {
-			r.Remedy = "install " + e.Installed[0] + " or supply its executable path; searched PATH=" + os.Getenv("PATH")
+			e := e.Installed[0]
+			if strings.ContainsRune(e, filepath.Separator) {
+				r.Remedy = "install " + e + " or supply its executable path"
+			} else {
+				dirs := len(strings.Split(os.Getenv("PATH"), string(os.PathListSeparator)))
+				r.Remedy = fmt.Sprintf("install %s or supply its executable path; searched=PATH dirs=%d", e, dirs)
+			}
 		}
 		if p.Reason == "timeout" {
 			r.Remedy = "increase --timeout or repair the version command"
