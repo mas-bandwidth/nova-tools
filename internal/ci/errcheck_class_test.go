@@ -69,12 +69,14 @@ func uncheckedErrorSites(t *testing.T, ctx context.Context, bin, dir string) map
 // (docs/SPEC-CI.md, `errcheck`).
 func TestUncheckedErrors(t *testing.T) {
 	t.Parallel()
-	ctx, cancel := context.WithTimeout(t.Context(), lintDeadline)
-	defer cancel()
 
 	root := repoRoot(t)
 	ledger := newPackageSiteLedger(t, errcheckLedgerPath)
-	ledger.sites = uncheckedErrorSites(t, ctx, buildModuleTool(t, ctx, root, errcheckPkg), root)
+	serializeLint(func() {
+		ctx, cancel := context.WithTimeout(t.Context(), lintDeadline)
+		defer cancel()
+		ledger.sites = uncheckedErrorSites(t, ctx, buildModuleTool(t, ctx, root, errcheckPkg), root)
+	})
 	reportLedger(t, ledger, errcheckRemedy)
 }
 

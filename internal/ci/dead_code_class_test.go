@@ -172,13 +172,19 @@ func findDeadCodeUnion(t *testing.T, ctx context.Context, root string) (map[stri
 func TestDeadCode(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithTimeout(t.Context(), 120*time.Second)
-	defer cancel()
-
 	root := repoRoot(t)
 	l := loadAllowlist(t, deadCodeLedgerPath, allowlist.Options{Ceiling: true, Counted: true})
 
-	measured, byPkg, err := findDeadCodeUnion(t, ctx, root)
+	var (
+		measured map[string]int
+		byPkg    map[string][]string
+	)
+	var err error
+	serializeLint(func() {
+		ctx, cancel := context.WithTimeout(t.Context(), 120*time.Second)
+		defer cancel()
+		measured, byPkg, err = findDeadCodeUnion(t, ctx, root)
+	})
 	require.NoError(t, err, "detecting dead code across linux, darwin, windows")
 
 	update := allowlist.Updating()
