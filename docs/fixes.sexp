@@ -80,4 +80,10 @@
    :text "A free lane takes its card by id and starts nothing until the take is answered OK; a refused
     take (the machine STOPPED) is asked again on a later pass, a batch daemon takes her ready cards, and
     a card set aside on a refused take or finish is taken again (tla/FriendLaneTake.tla)."
-   :origin "a friend host, 2026-10-10 20:14Z: a one-shot friend's 23 lanes ran ready cards and set them aside")))
+   :origin "a friend host, 2026-10-10 20:14Z: a one-shot friend's 23 lanes ran ready cards and set them aside")
+  (fix "adopt-removes-friend-units-that-moved" :release "v1.2.6" :status "in-progress"
+   :title "The adopt removes the unit of a friend who moved hosts"
+   :text "The friends step of the tools play splits the stale friend daemons live lists by what launchd
+    holds: it reinstalls the ones the host runs (the friends table's place for them) and removes the
+    unit of a friend who no longer lives there (installed, not loaded) with nova-friend uninstall."
+   :origin "dogfood 2026-10-10: stale friend unit on the seat host")))

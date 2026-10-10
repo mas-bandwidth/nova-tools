@@ -640,9 +640,17 @@
          | rejectattr('role', 'equalto', 'friend') | rejectattr('label', 'in', nova_seat_hold)
          | rejectattr('label', 'in', seat_stopped_labels if seat_window | default(false) else []) | list }}
     seat_restart_labels: "{{ seat_restart | map(attribute='label') | list }}"
+    # The stale friend daemons live lists (role friend, stale), split by what
+    # launchd holds: the ones it holds are the friends the friends table places
+    # on this host and seat-friend.yml reinstalls them; the ones it does not are
+    # the unit of a friend who no longer lives here (installed, not loaded, live's
+    # why), and that unit is removed instead (docs/FLEET.md, the tools play).
     seat_friends: >-
       {{ (seat_cur | default(dict(agents=[]))).agents | selectattr('stale') | selectattr('role', 'equalto', 'friend')
-         | rejectattr('label', 'in', nova_seat_hold) | list }}
+         | selectattr('loaded') | rejectattr('label', 'in', nova_seat_hold) | list }}
+    seat_friends_gone: >-
+      {{ (seat_cur | default(dict(agents=[]))).agents | selectattr('stale') | selectattr('role', 'equalto', 'friend')
+         | rejectattr('loaded') | rejectattr('label', 'in', nova_seat_hold) | list }}
   tasks:
     - name: "seat: what --check says with no candidate on this machine"
       ansible.builtin.debug:
@@ -971,6 +979,21 @@
           loop_control: { label: "{{ item.friend }}" }
           when: ansible_check_mode
 
+        - name: "friends: what --check would remove (a friend who no longer lives on this host: installed, not loaded)"
+          ansible.builtin.debug:
+            msg: "WOULD-REMOVE {{ item.friend }} on {{ inventory_hostname }}: its unit is installed and launchd holds no daemon ({{ item.why }})"
+          loop: "{{ seat_friends_gone }}"
+          loop_control: { label: "{{ item.friend }}" }
+          when: ansible_check_mode
+
+        - name: "friends: the unit of a friend who no longer lives on this host is removed (never reinstalled here)"
+          ansible.builtin.command:
+            argv: "{{ [nova_bin_dir ~ '/nova-friend', 'uninstall', '--as', item.friend] }}"
+          loop: "{{ seat_friends_gone if not ansible_check_mode else [] }}"
+          loop_control: { label: "{{ item.friend }}" }
+          register: seat_friend_uninstalled
+          changed_when: true
+
         - name: "friends: one friend at a time: drain, reinstall, a beat after its own reinstall"
           ansible.builtin.include_tasks: seat-friend.yml
           loop: "{{ seat_friends if not ansible_check_mode else [] }}"
@@ -981,7 +1004,8 @@
             msg: >-
               ADOPT step=friends host={{ inventory_hostname }} before={{ seat_was.server.revision or 'none' }}
               after={{ seat_cur.server.revision or 'none' }} reinstalled={{ seat_friends | map(attribute='friend') | join(',') or 'none' }}
-              {{ ('WOULD-CHANGE' if seat_friends else 'UNCHANGED') if ansible_check_mode else ('CHANGED' if seat_friends else 'UNCHANGED') }}
+              removed={{ seat_friends_gone | map(attribute='friend') | join(',') or 'none' }}
+              {{ ('WOULD-CHANGE' if seat_friends or seat_friends_gone else 'UNCHANGED') if ansible_check_mode else ('CHANGED' if seat_friends or seat_friends_gone else 'UNCHANGED') }}
 
         - name: "seat: adopted, so the nova-redis kept for a restore is the one whose library the store now holds"
           ansible.builtin.copy:
@@ -1130,11 +1154,14 @@
         quiet: true
       when: ff_dir.stat.exists
 
-    - name: "friends: the stale friend daemons on this host"
+    - name: "friends: the stale friend daemons live lists, split by what launchd holds"
       ansible.builtin.set_fact:
         ff_stale: >-
           {{ ((ff_read.stdout | from_json).agents | selectattr('stale') | selectattr('role', 'equalto', 'friend')
-              | rejectattr('label', 'in', nova_seat_hold | default([])) | list) if ff_dir.stat.exists else [] }}
+              | selectattr('loaded') | rejectattr('label', 'in', nova_seat_hold | default([])) | list) if ff_dir.stat.exists else [] }}
+        ff_gone: >-
+          {{ ((ff_read.stdout | from_json).agents | selectattr('stale') | selectattr('role', 'equalto', 'friend')
+              | rejectattr('loaded') | rejectattr('label', 'in', nova_seat_hold | default([])) | list) if ff_dir.stat.exists else [] }}
 
     - name: "friends: what --check would reinstall"
       ansible.builtin.debug:
@@ -1142,6 +1169,21 @@
       loop: "{{ ff_stale }}"
       loop_control: { label: "{{ item.friend }}" }
       when: ansible_check_mode
+
+    - name: "friends: what --check would remove (a friend who no longer lives on this host: installed, not loaded)"
+      ansible.builtin.debug:
+        msg: "WOULD-REMOVE {{ item.friend }} on {{ inventory_hostname }}: its unit is installed and launchd holds no daemon ({{ item.why }})"
+      loop: "{{ ff_gone }}"
+      loop_control: { label: "{{ item.friend }}" }
+      when: ansible_check_mode
+
+    - name: "friends: the unit of a friend who no longer lives on this host is removed (never reinstalled here)"
+      ansible.builtin.command:
+        argv: "{{ [nova_bin_dir ~ '/nova-friend', 'uninstall', '--as', item.friend] }}"
+      loop: "{{ ff_gone if not ansible_check_mode else [] }}"
+      loop_control: { label: "{{ item.friend }}" }
+      register: ff_friend_uninstalled
+      changed_when: true
 
     - name: "friends: one friend at a time: drain, reinstall, a beat after its own reinstall"
       ansible.builtin.include_tasks: seat-friend.yml
@@ -1152,7 +1194,8 @@
       ansible.builtin.debug:
         msg: >-
           ADOPT step=friends host={{ inventory_hostname }} reinstalled={{ ff_stale | map(attribute='friend') | join(',') or 'none' }}
-          {{ ('WOULD-CHANGE' if ff_stale else 'UNCHANGED') if ansible_check_mode else ('CHANGED' if ff_stale else 'UNCHANGED') }}
+          removed={{ ff_gone | map(attribute='friend') | join(',') or 'none' }}
+          {{ ('WOULD-CHANGE' if ff_stale or ff_gone else 'UNCHANGED') if ansible_check_mode else ('CHANGED' if ff_stale or ff_gone else 'UNCHANGED') }}
 
 # The tla play: on every TLC record machine (the inventory's tla group, the
 # machine rows with tla=true), the pinned TLC jar at nova_tla_jar, owned by the
