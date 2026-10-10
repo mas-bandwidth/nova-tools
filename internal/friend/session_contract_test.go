@@ -39,17 +39,20 @@ func (f *contractSession) got() []string {
 	return append([]string(nil), f.texts...)
 }
 
-// posts is the fake push path: each message the daemon sends to her stream.
+// posts is the fake push path into the session: each message the daemon pushes is kept, and
+// err (nil: delivered) is the answer the harness's deliver command gives, a grok session
+// running no monitor over its wake file answering Deferred among them.
 type posts struct {
 	mu   sync.Mutex
 	msgs [][2]string // subject, body
+	err  error
 }
 
 func (p *posts) post(_ context.Context, subject, body string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.msgs = append(p.msgs, [2]string{subject, body})
-	return nil
+	return p.err
 }
 
 func (p *posts) got() [][2]string {
@@ -241,7 +244,7 @@ func TestAWakePathChangePushesTheContractAgain(t *testing.T) {
 }
 
 // A session check deferred because the session runs no monitor over its wake file is pushed as
-// a message on her stream, "answer <nonce>: <pong line>", and that message still carries the
+// a message into the session, "answer <nonce>: <pong line>", and that message still carries the
 // contract (the wake file, the monitor command, the start stamp, the finish form). A grok
 // deliver with no monitor writes nothing, so the check's own text never reaches the session.
 // A check deferred for any other reason is not pushed.
@@ -263,7 +266,7 @@ func TestADeferredCheckIsPushedAsAMessage(t *testing.T) {
 	} {
 		assert.Contains(t, got[1][1], want, "the deferred message carries the contract")
 	}
-	assert.Contains(t, strings.Join(r.records, "\n"), "presence: session check n1 pushed as a message: the session runs no monitor over /h/bob.wake (1 of 3 unanswered)")
+	assert.Contains(t, strings.Join(r.records, "\n"), "presence: session check n1 deferred: the session runs no monitor over /h/bob.wake (1 of 3 unanswered); the answer was pushed into the session as a message")
 
 	other := &MonitorWatch{Post: r.pushed.post}
 	other.Line(context.Background(), "2026-10-07T23:53:00Z presence: session check n2 deferred: deferred: a turn runs in friend-bob: its prompt is not shown; the bound runs")
@@ -272,6 +275,44 @@ func TestADeferredCheckIsPushedAsAMessage(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "n7", nonce)
 	assert.Equal(t, "/h/bob.wake", file)
+}
+
+// A push the harness's deliver command defers (a grok session running no monitor over its wake
+// file) is recorded as deferred, never as delivered: the contract's start and the deferred
+// check's answer alike say "the push was deferred", nothing claims the session received it, and
+// the contract stays owed to the next session check (docs/SPEC-FRIEND.md, the session contract).
+func TestADeferredPushIsRecordedAsDeferredNotDelivered(t *testing.T) {
+	t.Parallel()
+	reason := "the grok session in /w/bob runs no monitor over /h/bob.wake; in that session: monitor `tail -n 0 -F /h/bob.wake`"
+	run := func(t *testing.T, fn func(p *posts, record func(string))) []string {
+		t.Helper()
+		p := &posts{err: Deferred{Reason: reason}}
+		var records []string
+		fn(p, func(line string) { records = append(records, line) })
+		return records
+	}
+
+	t.Run("the contract's start", func(t *testing.T) {
+		records := run(t, func(p *posts, record func(string)) {
+			teller := &ContractTeller{Push: p.post, Write: func(string) error { return nil }, Record: record}
+			assert.False(t, teller.Start(context.Background(), bobContract("/h/bob.wake", ""), ""), "a deferred push is not a delivered contract")
+			assert.True(t, teller.Owed(), "the next check still carries the contract")
+		})
+		joined := strings.Join(records, "\n")
+		assert.Contains(t, joined, "contract: start: owed to the session")
+		assert.Contains(t, joined, "the push was deferred: "+reason)
+		assert.NotContains(t, joined, "pushed into the session as a message")
+	})
+
+	t.Run("the deferred check's answer", func(t *testing.T) {
+		records := run(t, func(p *posts, record func(string)) {
+			w := &MonitorWatch{Post: p.post, Pong: func(nonce string) string { return "nova-friend pong --as bob --nonce " + nonce }, Record: record}
+			w.Deferred(context.Background(), "n1", "/h/bob.wake")
+		})
+		joined := strings.Join(records, "\n")
+		assert.Contains(t, joined, "the answer's push was deferred: "+reason)
+		assert.NotContains(t, joined, "pushed into the session")
+	})
 }
 
 // Three session checks in a row deferred for no monitor, none answered, are the friend down

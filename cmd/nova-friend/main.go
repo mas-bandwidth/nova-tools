@@ -1418,7 +1418,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		// the check goes in by the folder, ungated: her lanes hold no turn of the session
 		sc.Deliver = &friend.FolderCheck{Friend: name, Dir: dir}
 	} else {
-		sct = w.newSessionContract(ctx, c, name, dir, state, postTo(sc.DaemonStore(), name), record, func(nonce string) string {
+		sct = w.newSessionContract(ctx, c, name, dir, state, pushInto(laneDeliver), record, func(nonce string) string {
 			if to := answerTo(); to != "" {
 				return pongLine(nonce) + " --to " + to
 			}

@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
@@ -32,8 +31,8 @@ func contractOf(c *tool.Call, name, dir string, pong func(nonce string) string) 
 }
 
 // newSessionContract starts the contract for a session friend: CONTRACT.md as the last run
-// wrote it says whether this start is a reinstall that changed it. post sends one message from
-// the daemon to her own stream, the path a card's deal takes into her session.
+// wrote it says whether this start is a reinstall that changed it. post delivers one message
+// into her session through the harness's deliver command, the path a card's deal takes.
 func (w world) newSessionContract(ctx context.Context, c *tool.Call, name, dir, state string, post func(ctx context.Context, subject, body string) error, record func(string), pong func(nonce string) string) *sessionContract {
 	s := &sessionContract{
 		teller: &friend.ContractTeller{Push: post, Write: func(text string) error { return friend.WriteContract(state, text) }, Record: record, Now: w.now},
@@ -81,12 +80,18 @@ func (s *sessionContract) checkText(check string) string {
 	return s.teller.CheckText(check)
 }
 
-// postTo is the daemon's message to her own stream through its own store (so the session check
-// never reads it as hers): the path every message, a card's deal among them, takes into her
-// session.
-func postTo(st bus.Store, name string) func(ctx context.Context, subject, body string) error {
+// pushInto is the daemon's push of one message into the session through its harness's deliver
+// command (d, the same path a card's deal takes): the subject as the title line, a blank line,
+// then the body. A deliver the harness defers (a grok session running no monitor over its wake
+// file) is an error the teller and the watch record as a deferred push: nothing was delivered
+// into the session and nothing is claimed delivered.
+func pushInto(d friend.Deliverer) func(ctx context.Context, subject, body string) error {
 	return func(ctx context.Context, subject, body string) error {
-		_, err := (&bus.Bus{Store: st}).Send(ctx, bus.Message{From: name, To: []string{name}, Subject: subject, Body: body})
+		text := subject
+		if body != "" {
+			text += "\n\n" + body
+		}
+		_, err := d.Deliver(ctx, text)
 		return err
 	}
 }

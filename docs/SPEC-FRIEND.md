@@ -1544,30 +1544,36 @@ The contract (`friend.Contract`, `Contract.Text`) is one message titled `your co
 
 How it is told (`friend.ContractTeller`, wired by `cmd/nova-friend/daemon.go`):
 
-- On the daemon's start, a restart and a reinstall alike, the daemon pushes one message on her
-  stream, subject `your contract`, body the contract's text, on the same path a card's deal takes
-  into her session (`postTo`, the daemon's own send). Every session check also carries it after
-  the check's own lines (the first line stays `SESSION CHECK <nonce>`), the same delivery path the
-  check takes, until the session answers one. The daemon's start reads the last run's
-  `CONTRACT.md`; one whose wake path, server or epoch differs is said as a reinstall
+- On the daemon's start, a restart and a reinstall alike, the daemon pushes one message into her
+  session through the harness's deliver command, titled `your contract`, body the contract's text,
+  the same path a card's deal takes (`pushInto`, the daemon's own delivery, before the push proof:
+  it is the message that tells the session how to answer the check). Every session check also
+  carries it after the check's own lines (the first line stays `SESSION CHECK <nonce>`), the same
+  delivery path the check takes, until the session answers one. A deliver the harness defers (a
+  grok session running no monitor over its wake file) is recorded as a deferred push, never as
+  delivered: the daemon does not claim the session received anything. The daemon's start reads the
+  last run's `CONTRACT.md`; one whose wake path, server or epoch differs is said as a reinstall
   (`contract: reinstall: the wake path (<old> -> <new>) since the last run: ...`) and that start
   pushes the new contract once, the same way.
 - Whenever the wake path, the server or the epoch changes while it runs (the epoch is read off
-  each answer of the cards on her row), the contract is pushed as one message on her stream, from
-  the daemon (subject `your contract`), the path a card's deal takes into her session, and the
-  next check carries it again. The first epoch the server says, empty to a number, is a change
-  and is pushed the same way a later epoch change is; it is not a silent fill.
+  each answer of the cards on her row), the contract is pushed as one message into her session
+  through the harness's deliver command, titled `your contract`, the path a card's deal takes into
+  her session, and the next check carries it again. The first epoch the server says, empty to a
+  number, is a change and is pushed the same way a later epoch change is; it is not a silent fill.
 - Every telling writes `<state-dir>/CONTRACT.md`, which `nova-friend contract --as <me>` prints
   (exit 2 when no daemon has written one). The verb is off the banner until docs/CLI.md is
   regenerated with it; it answers `-h` like any verb.
 
 A session check deferred because the session runs no monitor over its wake file
 (`friend.MonitorWatch`, reading the check's own record line, `DeferredCheckOf`) is pushed as a
-message on her stream, subject `SESSION CHECK <nonce>`, body `answer <nonce>: <pong line>` and
-then the contract (the wake file, the exact monitor command, the start stamp and the finish
-form). A grok deliver with no monitor writes nothing, so that pushed message is what still
-carries the contract; it is never left in the log alone (`presence: session check <nonce> pushed
-as a message: the session runs no monitor over <file> (<n> of 3 unanswered)`). After `NoMonitorChecks` (three) such checks in a row
+message into her session through the harness's deliver command, titled `SESSION CHECK <nonce>`,
+body `answer <nonce>: <pong line>` and then the contract (the wake file, the exact monitor
+command, the start stamp and the finish form). A grok deliver with no monitor writes nothing, so
+that pushed message is what still carries the contract, and that push is itself deferred while no
+monitor runs: the record says `the answer's push was deferred: <reason>`, and never claims the
+session received it; it is never left in the log alone (`presence: session check <nonce>
+deferred: the session runs no monitor over <file> (<n> of 3 unanswered); ...`). After
+`NoMonitorChecks` (three) such checks in a row
 with no answer, the friend is down with the reason `session runs no monitor over <file>`
 (`presence: down: ...`): her down beat and her presence file say those words, so the dashboard's
 reason is the true one, as soon as the third is unanswered. A no-monitor deferral writes nothing
@@ -1592,7 +1598,8 @@ The start is stamped by the daemon wherever it can see it:
 
 Tests: `internal/friend/session_contract_test.go` (pure, a fake deliver, no sockets, no real time):
 `TestStartAndReinstallPushTheContractOnce`, `TestAWakePathChangePushesTheContractAgain`,
-`TestADeferredCheckIsPushedAsAMessage`, `TestThreeUnansweredNoMonitorChecksAreDownWithTheExactReason`,
+`TestADeferredCheckIsPushedAsAMessage`, `TestADeferredPushIsRecordedAsDeferredNotDelivered`,
+`TestThreeUnansweredNoMonitorChecksAreDownWithTheExactReason`,
 `TestAJobDirectoryGainingABranchPushStampsTheStart`, `TestALaneItStartedIsStampedAtStart`.
 
 ## The daemon writes every card she holds (internal/friend/inbox.go)

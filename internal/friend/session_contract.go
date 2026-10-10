@@ -195,7 +195,7 @@ func changed(old, now Contract) string {
 
 // ContractTeller tells the session its contract. Start is the daemon's start (a restart, a
 // reinstall): it pushes one message, subject ContractTitle, body Contract.Text, on Push (the
-// daemon's own delivery path, the one a card's deal takes), and every session check carries it
+// harness's deliver command, the one a card's deal takes), and every session check carries it
 // (CheckText) until the session answers one (Answered). Update is the contract as it stands at
 // a step: a change of the wake path, the server or the epoch, the epoch first said by the
 // server among them, pushes it the same way and owes it to the checks again. Every change is
@@ -231,9 +231,14 @@ func (t *ContractTeller) Start(ctx context.Context, c Contract, prior string) (p
 	case t.Push == nil:
 		line += "; no push path"
 	default:
-		if err := t.Push(ctx, ContractTitle, c.Text()); err != nil {
+		var deferred Deferred
+		err := t.Push(ctx, ContractTitle, c.Text())
+		switch {
+		case errors.As(err, &deferred):
+			line += "; the push was deferred: " + oneLine(deferred.Reason, 300) + "; the next session check carries it"
+		case err != nil:
 			line += "; the push failed: " + oneLine(err.Error(), 300)
-		} else {
+		default:
 			pushed = true
 			line += "; pushed into the session as a message titled \"" + ContractTitle + "\""
 		}
@@ -264,7 +269,13 @@ func (t *ContractTeller) Update(ctx context.Context, c Contract) (pushed bool) {
 		t.record("contract: " + why + " changed; no push path: the next session check carries it")
 		return false
 	}
-	if err := t.Push(ctx, ContractTitle, c.Text()); err != nil {
+	var deferred Deferred
+	err := t.Push(ctx, ContractTitle, c.Text())
+	switch {
+	case errors.As(err, &deferred):
+		t.record("contract: " + why + " changed; the push was deferred: " + oneLine(deferred.Reason, 300) + "; the next session check carries it")
+		return false
+	case err != nil:
 		t.record("contract: " + why + " changed; the push failed: " + oneLine(err.Error(), 300) + "; the next session check carries it")
 		return false
 	}
@@ -375,12 +386,14 @@ func (s *SessionCheck) NoteNoMonitor(line string) {
 func IsSessionAnswer(line string) bool { return strings.Contains(line, "presence: up: ") }
 
 // MonitorWatch is the daemon's answer to a session check deferred because the session runs no
-// monitor over its wake file: the check is pushed as a message on her stream ("answer <nonce>:
-// <pong line>", then the contract, Post) instead of being left in the log, and NoMonitorChecks
-// of them in a row with no answer is the friend down with the reason "session runs no monitor
-// over <file>" (Down), which her beat and her presence file say. Any answer from the session
-// clears it. A grok deliver with no monitor writes nothing, so this message is what the session
-// is pushed, and it carries the contract.
+// monitor over its wake file: the check's answer is pushed into the session through the
+// harness's deliver command ("answer <nonce>: <pong line>", then the contract, Post) instead of
+// being left in the log, and NoMonitorChecks of them in a row with no answer is the friend down
+// with the reason "session runs no monitor over <file>" (Down), which her beat and her presence
+// file say. Any answer from the session clears it. A grok deliver with no monitor writes
+// nothing, so this message is what the session is pushed, and it carries the contract; that push
+// is itself deferred while no monitor runs, and the record says so instead of claiming the
+// session received anything.
 type MonitorWatch struct {
 	Post func(ctx context.Context, subject, body string) error
 	Pong func(nonce string) string
@@ -427,11 +440,20 @@ func (m *MonitorWatch) Deferred(ctx context.Context, nonce, file string) {
 			body += "\n" + text
 		}
 	}
-	line := fmt.Sprintf("presence: session check %s pushed as a message: the session runs no monitor over %s (%d of %d unanswered)", nonce, file, n, NoMonitorChecks)
+	line := fmt.Sprintf("presence: session check %s deferred: the session runs no monitor over %s (%d of %d unanswered)", nonce, file, n, NoMonitorChecks)
 	if m.Post == nil {
 		line += "; no push path"
-	} else if err := m.Post(ctx, SessionCheckPrefix+nonce, body); err != nil {
-		line += "; the push failed: " + oneLine(err.Error(), 300)
+	} else {
+		var deferred Deferred
+		err := m.Post(ctx, SessionCheckPrefix+nonce, body)
+		switch {
+		case errors.As(err, &deferred):
+			line += "; the answer's push was deferred: " + oneLine(deferred.Reason, 300)
+		case err != nil:
+			line += "; the answer's push failed: " + oneLine(err.Error(), 300)
+		default:
+			line += "; the answer was pushed into the session as a message"
+		}
 	}
 	m.record(line)
 	if n == NoMonitorChecks {
