@@ -986,15 +986,19 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		noAnswer("progress", out)
 	}
 	m.spent.Report += since()
+	// Room is asked every tick, a draining member's too, after the reports, so a launch whose
+	// end rested the member (room) rests it in this pass, and the word its beats carry
+	// (noRoomArgs) is this tick's: asked only past the drain return, a member that drained
+	// under its floor kept saying no room after the disk was freed (nova-tools#5569 follow-up)
+	ok, why := m.room(now)
 	if m.drain {
 		return acted, nil
 	}
 	// every card this tick would start is started, or, when Config.Room says no, finished as
 	// refused at staging with its reason, so the sprint deals it to another member and says why
-	// (refuseStaging); asked after the reports, so a launch whose end rested the member
-	// (room) rests it in this pass
+	// (refuseStaging)
 	launch := m.start
-	if ok, why := m.room(now); !ok {
+	if !ok {
 		launch = func(p Packet) bool {
 			returned := m.refuseStaging(p, why)
 			if returned && p.Kind == "read" {

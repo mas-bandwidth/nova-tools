@@ -414,6 +414,32 @@ func TestBeatCarriesNoRoomWhileRoomSaysNo(t *testing.T) {
 	assert.Equal(t, []string{"fleet beat m --stop-returns 0"}, s.lines("beat"))
 }
 
+// A draining member's beat carries this tick's word, not a stale one: Room is asked before
+// the drain return, so a member that drained under its floor says room again once the disk is
+// freed, and says no room again when it falls back under the floor (v1.2.6, nova-tools#5569
+// follow-up). Reversed witness: with room asked only past the drain return, the second beat
+// still carries the stale word (checked on hetzner2: the test fails there without the fix).
+func TestADrainingMembersBeatCarriesThisTicksNoRoom(t *testing.T) {
+	t.Parallel()
+	room, why := false, "free disk 0.0 GiB under the floor of 10 GiB"
+	m, s, _, _ := stopRig(Config{As: "m", Width: 2, Room: func() (bool, string) { return room, why }})
+	s.set("queue", 0, queueWith(t, "RUNNING", 7))
+	beat := func(at int64) []string {
+		t.Helper()
+		_, err := m.Tick(time.Unix(at, 0))
+		require.NoError(t, err)
+		s.reset()
+		require.NoError(t, m.Beat())
+		return s.lines("beat")
+	}
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --no-room " + why}, beat(0))
+	m.Drain()
+	room = true
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0"}, beat(10), "the disk freed while draining: the word is gone")
+	room = false
+	assert.Equal(t, []string{"fleet beat m --stop-returns 0 --no-room " + why}, beat(20), "under the floor again while draining: the word is said")
+}
+
 // A reader member restarted mid-stop: every reading card under its row with no child of ours
 // is handed back at its claim generation (not attempt), card@0 is guarded and never emitted,
 // and the cards are not recovered when RUNNING again.
