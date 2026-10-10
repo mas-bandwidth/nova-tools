@@ -242,13 +242,6 @@ func readBriefPath(dir, job string) string {
 	return filepath.Join(dir, "inbox", job, "BRIEF.md")
 }
 
-// ReadStaged says a read's staged files are there: its inbox BRIEF.md is a readable
-// regular file. A read is not a work card: requiring its JOB.md or a staged checkout would
-// refuse every read. A job that is no inbox directory is never staged.
-func ReadStaged(dir, job string) bool {
-	return validJob(job) && readableRegular(readBriefPath(dir, job))
-}
-
 // ReadStageGate is the stage contract at the lane for a read (`HeldCard.Kind == "read"`): the
 // read's staged files are its inbox BRIEF.md, and no work JOB.md and no checkout are required
 // of it. It answers false when the read's lane may start, else the StageFailure naming what is

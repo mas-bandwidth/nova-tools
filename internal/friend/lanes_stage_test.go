@@ -215,7 +215,8 @@ func TestAReadMissingItsBriefIsAStageFailure(t *testing.T) {
 	r.d.heldCards = []HeldCard{read}
 	handed := Card{ID: read.Card, Outbox: filepath.Join(dir, "outbox", job), Brief: filepath.Join(dir, "inbox", job, "BRIEF.md")}
 
-	assert.False(t, ReadStaged(dir, job), "the read's inbox BRIEF.md is not there")
+	_, refused := ReadStageGate(dir, handed, job)
+	assert.True(t, refused, "the read's inbox BRIEF.md is not there")
 	assert.False(t, l.stageHandsOver(handed), "a read with no staged BRIEF.md is not handed over")
 
 	l.stageLaneStep(t0)
@@ -230,7 +231,8 @@ func TestAReadMissingItsBriefIsAStageFailure(t *testing.T) {
 	// required of it, and a staged read clears the failure count
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox", job), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", job, "BRIEF.md"), []byte(read.Brief), 0o644))
-	assert.True(t, ReadStaged(dir, job))
+	_, refused = ReadStageGate(dir, handed, job)
+	assert.False(t, refused)
 	assert.True(t, l.stageHandsOver(handed), "a staged read is handed over")
 	assert.NoFileExists(t, filepath.Join(dir, "jobs", job, JobFile), "a read needs no work JOB.md")
 	l.stageLaneStep(t0.Add(StageRetryEvery))
