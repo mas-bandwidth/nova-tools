@@ -152,6 +152,13 @@ type app struct {
 	// the stream and the wait (chain, slot, gate): a test orders who waits behind whom
 	// (landpass.go, land.go gateBase).
 	beforeWait func(stream, what string)
+	// landDeadline, when set (a test), is each stream's LandDeadline clock in a land pass,
+	// started when the stream's batch takes its width slot (landpass.go, launch); nil is
+	// after (or time.After) of LandDeadline.
+	landDeadline func(stream string) <-chan time.Time
+	// landGrace, when set (a test), is each built batch's wait for a higher-priority stream
+	// still merging (landpass.go, pass); nil is time.After of landGrace.
+	landGrace func(stream string) <-chan time.Time
 	// ledgers, when set (a test), is the generated ledgers land regenerates at a merge
 	// (landledger.go); nil is landLedgers.
 	ledgers []landLedger

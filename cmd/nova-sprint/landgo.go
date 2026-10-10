@@ -496,6 +496,11 @@ func (l *lander) gateOn(ctx context.Context, host, dir string, runs [][]string, 
 	if code == 0 {
 		return "", true, nil
 	}
+	if fault := benchFault(code, out); fault != "" {
+		// the bench could not run the gate (no go on its PATH, its disk full): the tree is
+		// not red, and no head is blamed; the ring's next slot runs it (ringGate)
+		return "", false, &bench.StageError{Host: host, Step: "the gate's toolchain", Code: code, Tail: fault}
+	}
 	return gateWhy(redRun(runs, out), fmt.Errorf("exit status %d on the bench %s", code, host), out), true, nil
 }
 
@@ -566,13 +571,38 @@ func (l *lander) stageSkips() *bench.StageSkips {
 	return v.(*bench.StageSkips)
 }
 
+// benchFaults are what a bench says when it could not run the gate at all, whatever the
+// tree: 2026-10-10, 44 of the day's go build refusals blamed a head for `sh: 1: go: not
+// found` (exit 127, a non-interactive shell with no Go on its PATH) or `disk quota exceeded`
+// / `no space left on device` (the bench's build space full); none was a compile error.
+var benchFaults = []string{"disk quota exceeded", "no space left on device"}
+
+// benchFault is the line of a red bench gate's output that says the bench, not the tree,
+// failed: "" when the gate ran and the tree is red.
+func benchFault(code int, out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		low := strings.ToLower(line)
+		if code == 127 && strings.Contains(low, "not found") {
+			return strings.TrimSpace(line)
+		}
+		for _, f := range benchFaults {
+			if strings.Contains(low, f) {
+				return strings.TrimSpace(line)
+			}
+		}
+	}
+	return ""
+}
+
 // gateMark starts the line a bench gate prints before each of its runs.
 const gateMark = "GATE RUN: "
 
 // gateScript is the gate's runs as one shell line on the bench: each run named on its
 // own line (gateMark) and then run, the first red ending the line with its status.
 func gateScript(runs [][]string) string {
-	parts := []string{"set -e"}
+	// a non-interactive ssh shell reads no profile: when go is not on its PATH, the Go a
+	// bench keeps under ~/sdk (the fleet's install) or /usr/local/go is put there
+	parts := []string{"set -e", `command -v go >/dev/null 2>&1 || for d in "$HOME"/sdk/go*/bin /usr/local/go/bin; do if [ -x "$d/go" ]; then PATH="$d:$PATH"; fi; done; export PATH`}
 	for _, run := range runs {
 		words := make([]string, len(run))
 		for i, w := range run {

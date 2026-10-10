@@ -318,10 +318,11 @@ func TestLandRefusesARedCombinedTreeForThePassAndStopsNoStream(t *testing.T) {
 	r.clean()
 }
 
-// A red batch gate names the head: the batch's tree is gated once and, red, each head is
-// gated alone from the base again, the red one ending the batch as before (the heads before it
-// land, the red head is reworked at the tip, and the stream's cards after it land in the same
-// pass, a card's own refusal); the green one-gate path never changes a refusal's words.
+// A red batch gate names the head: the batch's tree is gated once and, red, the head that
+// turned it red is found by bisection over the merges' tips (bisect), ending the batch as
+// before (the heads before it land, the red head is reworked at the tip, and the stream's
+// cards after it land in the same pass, a card's own refusal); the green one-gate path never
+// changes a refusal's words.
 func TestLandBlamesTheHeadWhenTheBatchsOneGateIsRed(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
@@ -336,10 +337,10 @@ func TestLandBlamesTheHeadWhenTheBatchsOneGateIsRed(t *testing.T) {
 	assert.Contains(t, errs, "NOTE the card is reworked at the tip and stream s1 goes on; the seat is told")
 	assert.Equal(t, map[string]string{"a1": "landed/merged", "a2": "ready/returned", "a3": "landed/merged"}, r.places("a1", "a2", "a3"))
 	assert.Equal(t, []string{"land a3 (sprint stream s1)", "land a1 (sprint stream s1)", "the module", "base"}, r.mainLog(), "a3 lands in the same pass")
-	// the base, the batch's tree (red), then a1 alone (green) and a2 alone (red); the next
-	// round, a3's batch: the base once more (a1's tip was gated alone without the tree tests,
-	// so it is not recorded as gated) and a3's tree
-	assert.Len(t, gates(), 6)
+	// the base, the batch's tree (red), then the bisection: the tip after a2 (red), the tip
+	// after a1 (green, with the tree tests, so a1's pushed tip is recorded as gated); a3's
+	// batch: no base gate, and a3's tree
+	assert.Len(t, gates(), 5)
 	r.clean()
 }
 

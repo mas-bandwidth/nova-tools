@@ -311,6 +311,9 @@ type lander struct {
 	// left (mergeHead): the conflict fact carries them (conflictCard).
 	conflictKind  string
 	conflictPaths []string
+	// cardTips is the batch branch's tip before each head mergeCards merged, then after the
+	// last: what a red batch gate bisects (landpass.go, bisect)
+	cardTips []string
 	out           []landBatch
 	epoch         uint64              // the epoch land read: every report is fenced to it
 	diffs         map[string]string   // each card's merge diff, as checkCard read it, for its score
@@ -1531,12 +1534,32 @@ func (l *lander) mergeCards(ctx context.Context, dir, stream string, cards []lan
 	if c.first > 0 {
 		gateEach = true // the cure's tree was gated alone; each head after it is, as before
 	}
+	// cardTips is the branch's tip before each head merged, then after the last that did:
+	// what a red batch gate bisects (landpass.go, bisect)
+	l.cardTips = nil
+	defer func() {
+		m := len(merged) - c.first
+		switch {
+		case why != "" || m < 0:
+			l.cardTips = nil
+		case len(l.cardTips) > m:
+			l.cardTips = l.cardTips[:m+1] // the tip before the head that ended the batch
+		default:
+			head, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
+			if err != nil {
+				l.cardTips = nil
+				return
+			}
+			l.cardTips = append(l.cardTips, head)
+		}
+	}()
 	for i := c.first; i < len(cards); i++ {
 		card := &cards[i]
 		before, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
 		if err != nil {
 			return nil, failed, "the batch branch has no tip before the merge of " + card.id + ": " + firstLine("", err) + "; no card is blamed and nothing was pushed or reported"
 		}
+		l.cardTips = append(l.cardTips, before)
 		var refused, env string
 		l.conflictKind, l.conflictPaths = "", nil // the merge below says, when it stops on unmerged paths
 		refused, env, card.resolved = l.mergeHead(ctx, dir, stream, *card)
