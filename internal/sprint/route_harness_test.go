@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/stretchr/testify/assert"
@@ -76,7 +77,7 @@ func TestTheDealSendsAClaudeCardToAMemberWithClaude(t *testing.T) {
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1", Width: 2}))
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m2", Width: 2, Harnesses: "claude"}))
 	assert.Equal(t, "claude", w.s.MemberCtl("m2").F(FieldHarnesses), "fleet up --harnesses names it on the control card")
-	w.s.Routes = []Route{{Name: "flash-claude", Tier: cardhdr.RouteFlash, Provider: "subscription-claude", Model: "opus", Harness: "claude", Enabled: true, Deadline: 600}}
+	w.s.Routes = []Route{{Name: "flash-claude", Tier: cardhdr.RouteFlash, Provider: "subscription-claude", Model: "opus", Harness: "claude", Enabled: true, Deadline: int(10 * time.Minute / time.Second)}}
 	w.must(Add(w.s, AddReq{Stream: "s1", Count: 3}))
 	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1", "s1-2", "s1-3"}}}))
 	for _, id := range []string{"s1-1", "s1-2", "s1-3"} {
@@ -96,7 +97,7 @@ func TestADownedMembersClaudeCardsGoOnlyToMembersWithClaude(t *testing.T) {
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1", Width: 4}))
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m2", Width: 4, Harnesses: "claude"}))
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m3", Width: 4, Harnesses: "claude"}))
-	w.s.Routes = []Route{{Name: "flash-claude", Tier: cardhdr.RouteFlash, Provider: "subscription-claude", Model: "opus", Harness: "claude", Enabled: true, Deadline: 600}}
+	w.s.Routes = []Route{{Name: "flash-claude", Tier: cardhdr.RouteFlash, Provider: "subscription-claude", Model: "opus", Harness: "claude", Enabled: true, Deadline: int(10 * time.Minute / time.Second)}}
 	w.must(Add(w.s, AddReq{Stream: "s1", Count: 4}))
 	ids := []string{"s1-1", "s1-2", "s1-3", "s1-4"}
 	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: ids}}))
