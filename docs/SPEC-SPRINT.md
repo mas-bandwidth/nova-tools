@@ -269,9 +269,11 @@ subscription shows the compact count, `1.2M`; a friend her nova-config row bills
 call, `api` or `metered` in its `billing` field, shows the dollars those records
 charged, rounded up to the cent (`cardcost.Cents`). The billing field is added by the
 cost card; until a row sets it every friend is a subscription. The card's usage is read
-from the report her session writes when it finishes (the `usage:` line, else the `tokens`
-segment of the friend machinery's `Cost:` line), so a card with no usage reported adds
-nothing to the column.
+when it finishes, from `RESULT.md`'s `tokens:` and `cost:` lines when they are there,
+otherwise from the report's `Cost:` headline, otherwise from a `usage:` line (What a card
+cost, a friend's finish). The counts and the model go on the attempt's cost record and
+are priced by the route row whose provider and model match, and `on_route` is that row.
+A finish with no token line stays `unpriced=no-tokens` and adds nothing to the column.
 
 **A subscription friend's window use** (subscription-pacing-is-a-setting.w1; the owner,
 2026-10-05 ~10:45 PM, "Please try to go easy on <friend> (<machine>) and this session until
@@ -2201,6 +2203,42 @@ keep what was recorded at their end; the primary's records are the cost
 **Not yet run by the loop:** the read when `nova-sprint run` begins and every hour after
 (outside every tick, as the balance poll does), with the judgment's entry in `Decisions` and
 its line in the help, is owed; until it lands a read is written only when the verb runs.
+
+**A friend's finish** (`cmd/nova-sprint/friendcards.go`, `friendFinish`). friend sync reads
+the published usage into the finish it builds. `outbox/<job>/RESULT.md` supplies the
+`tokens:` line (`input`, `cache_read`, `cache_write`, `output`, `reasoning`, `model`) and
+the `cost:` line; when RESULT.md has no token line, the report's `Cost:` headline supplies
+the same tokens segment and the text before it. A `usage:` line is read only when neither
+of those is present, so a session's compact counts still reach the friends table. The counts
+and the model are recorded on the attempt's cost record as a fleet member's finish records
+them (`costRecord`): `on_model` is the reported provider/model. `price_route` is the first
+route row in name order whose provider/model matches (enabled or not), and `predicted_usd`
+is that row's prices. `on_route` is that same row: a friend's card has no fleet route of
+its own, and the finish stamps the matched row onto the record. `actual_usd` is the harness
+parenthetical on the cost line (`opencode:` or `harness:`) when that word is a dollar,
+marked `actual_by=harness`. When the parenthetical is `-` or otherwise not a dollar, actual
+is absent: the list-price headline is not the actual. The first other dollar is actual only
+when no harness parenthetical is there. A harness word or a `price_route` word in the
+published line is not kept: the route row prices the record again. A finish with no reported
+token stays `unpriced=no-tokens`. No count and no dollar is invented.
+
+**cost attach** (`nova-sprint cost attach`). A record that already ended with no tokens
+can be priced after the fact.
+`nova-sprint cost attach <card>.<attempt> --model <provider/model> --input <n> --cache-read <n> --cache-write <n> --output <n> [--reasoning <n>] [--usd <x>] [--source <text>] [--replace] [--dry-run]`
+attaches those counts to the attempt's existing cost record. `<card>.<attempt>` is the
+work card (`s1-1.w1`) or the primary and the attempt (`s1-1.1`). The record is priced by
+the first route row in name order whose provider/model matches: the record's `on_route`
+and `on_model`, the card's total, the work card's usage field (so a friend's tokens and
+charged figures move), and, when the primary has landed, its `cost` and its stream's sum
+on the control card. Waiting and running time already on the record stay. A record that
+already holds tokens is refused unless `--replace`, and the old figures go on the card's
+story as one happened note (`cost attached`), with `--source` on that note when it was
+given. `--file <tsv>` takes rows of `card`, `attempt`, `model`, `input`, `cache_read`,
+`cache_write`, `output`, `reasoning`, `usd`, `source` (a header whose first cell is `card`
+is skipped; reasoning, usd and source may be absent). One result line is printed per row.
+A file is all or none: one bad row is named, by its line and its card and attempt, and
+nothing is written. `--dry-run` plans on a read of the tables and writes nothing
+(`COST ATTACH DRY-RUN ...: nothing was written`). A run ends `COST ATTACH OK records=<n>`.
 
 **The dashboard's cost** covers one scope, the headline's: the streams on the table, or, a
 sprint done (`where --json`'s `done`), every stream of the epoch (section 1, the summary
