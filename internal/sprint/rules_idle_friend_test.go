@@ -379,9 +379,10 @@ func TestLoadedRowTurnsIdleLoadedAtBoundAndGoalMessageSentOnceWithLiveNumbers(t 
 	t.Parallel()
 	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	s := &Snapshot{
-		Now:   now,
-		Work:  NewTable(Work),
-		Fleet: NewTable(Fleet),
+		Now:         now,
+		Work:        NewTable(Work),
+		Fleet:       NewTable(Fleet),
+		Coordinator: "coordinator",
 	}
 	row := FriendRow("amy")
 	ctl := &Card{
@@ -417,14 +418,11 @@ func TestLoadedRowTurnsIdleLoadedAtBoundAndGoalMessageSentOnceWithLiveNumbers(t 
 	friends := []FriendSeat{{Name: "amy", Width: 8, Status: Up}}
 	p, _ := TickRuleIdle(s, TickReq{AnswerRules: true, Friends: friends, SendWidthGoal: sendWidthGoal})
 
-	require.Len(t, p.Notes, 2)
+	require.Len(t, p.Notes, 1)
 	assert.Equal(t, Happened, p.Notes[0].Kind)
-	assert.Contains(t, p.Notes[0].What, "Width goal for amy: you are holding 2 reads and 3 work cards (width 8). You have been idle for 20 minutes.")
-	assert.Equal(t, "amy", p.Notes[0].To)
-
-	assert.Equal(t, Happened, p.Notes[1].Kind)
-	assert.Equal(t, "inbox", p.Notes[1].Type)
-	assert.Equal(t, "friend amy idle-loaded 20m: width goal sent", p.Notes[1].What)
+	assert.Equal(t, "inbox", p.Notes[0].Type)
+	assert.Equal(t, "friend amy idle-loaded 20m: width goal sent", p.Notes[0].What)
+	assert.Equal(t, "coordinator", p.Notes[0].To)
 
 	assert.True(t, goalSent)
 	assert.Equal(t, "amy", goalFriend)
@@ -678,4 +676,53 @@ func TestTakeCardClearsIdle(t *testing.T) {
 	assert.Equal(t, wc.ID, p.Units[0].Key)
 	assert.Equal(t, ctl.ID, p.Units[1].Key)
 	assert.Contains(t, p.Units[1].Moved, "idle cleared")
+}
+
+
+func TestStaleBeatWithChildrenDoesNotSuppressIdleLoaded(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	s := &Snapshot{
+		Now:         now,
+		Work:        NewTable(Work),
+		Fleet:       NewTable(Fleet),
+		Coordinator: "coordinator",
+	}
+	row := FriendRow("amy")
+	ctl := &Card{
+		ID:     CtlID(row),
+		Row:    row,
+		Col:    Ctl,
+		Fields: map[string]string{"kind": "member", "status": Up},
+	}
+	s.Fleet.Put(ctl)
+	s.Fleet.SetRows([]string{row})
+
+	wc := &Card{
+		ID:     "amy.w1",
+		Row:    row,
+		Col:    Working,
+		Fields: map[string]string{"kind": "work", "taken": stamp(now.Add(-30 * time.Minute))},
+	}
+	s.Fleet.Put(wc)
+
+	workingChildren := 2
+	beats := map[string]Beat{
+		"amy": {
+			At: now.Add(-20 * time.Minute),
+			Friend: &FriendReport{
+				Working: &workingChildren,
+			},
+		},
+	}
+
+	friends := []FriendSeat{{Name: "amy", Width: 8, Status: Up}}
+	p, _ := TickRuleIdle(s, TickReq{AnswerRules: true, Friends: friends, Beats: beats})
+
+	// Stale beat (20m > 15m default bound) does not count as evidence: friend is idle-loaded!
+	require.Len(t, p.Notes, 1)
+	assert.Equal(t, Happened, p.Notes[0].Kind)
+	assert.Equal(t, "inbox", p.Notes[0].Type)
+	assert.Equal(t, "friend amy idle-loaded 30m: width goal sent", p.Notes[0].What)
+	assert.Equal(t, "coordinator", p.Notes[0].To)
 }

@@ -186,13 +186,26 @@ func friendEvidenceOfWork(s *Snapshot, r TickReq, friend string, row string) tim
 		}
 	}
 
+	recent := func(t time.Time) bool {
+		if t.IsZero() || s == nil || s.Now.IsZero() {
+			return false
+		}
+		age := s.Now.Sub(t)
+		return age >= 0 && age <= s.FriendIdleAfter()
+	}
+
 	for _, seat := range r.Friends {
 		if seat.Name == friend {
 			see(seat.Finished)
 			see(seat.Active)
 			see(seat.Proof)
 			if len(seat.Running) > 0 {
-				see(s.Now)
+				if recent(seat.Beat.At) {
+					see(seat.Beat.At)
+				}
+				if recent(seat.Active) {
+					see(seat.Active)
+				}
 			}
 		}
 	}
@@ -203,7 +216,12 @@ func friendEvidenceOfWork(s *Snapshot, r TickReq, friend string, row string) tim
 				see(seat.Active)
 				see(seat.Proof)
 				if len(seat.Running) > 0 {
-					see(s.Now)
+					if recent(seat.Beat.At) {
+						see(seat.Beat.At)
+					}
+					if recent(seat.Active) {
+						see(seat.Active)
+					}
 				}
 			}
 		}
@@ -217,8 +235,12 @@ func friendEvidenceOfWork(s *Snapshot, r TickReq, friend string, row string) tim
 		see(b.Friend.Active)
 		see(b.Proof)
 		if (b.Friend.Working != nil && *b.Friend.Working > 0) || len(b.Friend.Running) > 0 {
-			see(b.At)
-			see(s.Now)
+			if recent(b.At) {
+				see(b.At)
+			}
+			if recent(b.Friend.Active) {
+				see(b.Friend.Active)
+			}
 		}
 	}
 
@@ -325,18 +347,11 @@ func TickRuleIdle(s *Snapshot, r TickReq) (Plan, int) {
 		reads, work := friendTakenCounts(s, row)
 		width := s.friendWidth(r, friend, row)
 
-		// 1. Bus message (nova-bus2, subject "WIDTH: your row is loaded and idle")
-		p.Notes = append(p.Notes, Note{
-			Kind:   Happened,
-			Type:   "friend loaded but idle",
-			Stream: row,
-			What:   WidthGoalText(friend, reads, work, width, idleMinutes),
-			Who:    "rule " + RuleFriendIdle,
-			At:     s.Now,
-			To:     friend,
-		})
-
-		// 2. Judgment-free line to seat's inbox feed: "friend <f> idle-loaded <n>m: width goal sent"
+		// Judgment-free line to seat's inbox feed: "friend <f> idle-loaded <n>m: width goal sent"
+		to := ""
+		if s != nil {
+			to = s.Coordinator
+		}
 		p.Notes = append(p.Notes, Note{
 			Kind:   Happened,
 			Type:   "inbox",
@@ -344,6 +359,7 @@ func TickRuleIdle(s *Snapshot, r TickReq) (Plan, int) {
 			What:   fmt.Sprintf("friend %s idle-loaded %dm: width goal sent", friend, idleMinutes),
 			Who:    "rule " + RuleFriendIdle,
 			At:     s.Now,
+			To:     to,
 		})
 
 		if r.SendWidthGoal != nil {
