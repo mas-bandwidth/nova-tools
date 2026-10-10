@@ -320,7 +320,8 @@ type Packet struct {
 	Deadline int    `json:"deadline,omitempty"`
 	// Tier is the tier the route was drawn from when the sprint decided it (a read's
 	// read tier, a rework's --tier); empty when the brief's line 1 names it.
-	Tier string `json:"tier,omitempty"`
+	Tier     string `json:"tier,omitempty"`
+	GateHost string `json:"gate_host,omitempty"` // a hold fix: the next work attempt's gate host class
 	// A decide read's bars on p(defect), as the ask wrote them on the read card
 	// (docs/SPEC-SPRINT.md section 6, the decide read); empty for a strings read.
 	DecideBounce string `json:"decide_bounce,omitempty"`
@@ -2177,6 +2178,9 @@ func CardText(p Packet) string {
 			fmt.Fprintf(&b, " The checkout is on branch %s; JOB.md, which the prompt names first, says where it is and how this card ends. When you end, the member pushes your commit to origin's branch %s from outside the wall.", p.Branch, p.Branch)
 		}
 		b.WriteString("\n\n")
+		if p.GateHost == "linux" {
+			b.WriteString("GATE-HOST: linux was applied to this attempt. Run every executable Go gate on a Linux bench, preserve its output, and report the bench and exit status. A gate run only on this member's machine does not satisfy this card.\n\n")
+		}
 		b.WriteString(cardtree.Guide(cardtree.Parse(p.Brief)))
 	}
 	if strings.TrimSpace(p.Fix) != "" {
