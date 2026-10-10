@@ -2254,36 +2254,6 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		}
 		return 0
 	}
-	if *why {
-		t := &sprint.Table{Name: sprint.Work}
-		for _, c := range v.Column {
-			t.Put(c)
-		}
-		snap := &sprint.Snapshot{Work: t}
-		view := sprint.ClassifyWaiting(snap, v.Primary.Row)
-		var found *sprint.WaitingCard
-		for _, wc := range view.Cards {
-			if wc.ID == id {
-				found = &wc
-				break
-			}
-		}
-		if c.json {
-			if found != nil {
-				b, _ := json.Marshal(found)
-				fmt.Fprintln(stdout, string(b))
-			} else {
-				fmt.Fprintln(stdout, "{}")
-			}
-			return 0
-		}
-		if found != nil {
-			fmt.Fprintf(stdout, "WAITING %s stream=%s reason=%s head=%s length=%d\n", oneline.Escape(found.ID), oneline.Escape(found.Stream), oneline.Escape(found.Reason), oneline.Escape(found.Head), found.Length)
-		} else {
-			fmt.Fprintf(stdout, "CARD %s is not waiting (column=%s)\n", oneline.Escape(id), v.Primary.Col)
-		}
-		return 0
-	}
 	if *brief {
 		return printBrief(stdout, stderr, id, v.Primary.F("brief"), c.json)
 	}
