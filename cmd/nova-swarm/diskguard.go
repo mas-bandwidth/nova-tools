@@ -359,8 +359,8 @@ func rotate(path string, keep int, dry bool) (freed int64, err error) {
 // only when it is over, removes its entries used longest ago until it is under the cap less
 // a fifth (internal/gocache, the member's trim, with the whole cache in one round).
 //
-// The cap alone never freed a full disk (fleet-cleanup-2026-10-10: hetzner and space at
-// 0 bytes free, six build caches each under its 20 GiB cap holding about 76 GB between them,
+// The cap alone never freed a full disk (2026-10-10: two fleet machines at 0 bytes free,
+// six build caches on each, every one under its 20 GiB cap, holding about 76 GB between them,
 // and every pass said freed=0 and only warned). So under the watermark, twice --disk-floor
 // on the tightest volume the guard reads, every cache is held under a quarter of its cap.
 func (g *guard) buildCaches() {
