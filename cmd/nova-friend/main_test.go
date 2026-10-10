@@ -525,9 +525,11 @@ func TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir(t *testing.T) {
 	for _, tc := range []struct {
 		name, want string
 		flags      []string
+		deny       []string // the wall's deny list; nil is the seat's working root under the home
 	}{
-		{"the row's", "/accounts/heavy-a", nil},
-		{"the flag over it", "/accounts/other", []string{"--config-dir", "/accounts/other"}},
+		{"the row's", "/accounts/heavy-a", nil, nil},
+		{"the flag over it", "/accounts/other", []string{"--config-dir", "/accounts/other"}, nil},
+		{"a given --deny-self", "/accounts/heavy-a", []string{"--deny-self", "/seat/self,/vol/self"}, []string{"/seat/self", "/vol/self"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) { // not parallel: a bubble at a time
 			synctest.Test(t, func(t *testing.T) {
@@ -544,8 +546,9 @@ func TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir(t *testing.T) {
 				require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"c1","state":"queued"}]}`), 0o644))
 				require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"), []byte("RESULT: c1\n"), 0o644))
 				var mu sync.Mutex
-				var walls []string // the config dir of each wall a lane's child ran in
-				var plain int      // children run outside any lane's wall
+				var walls []string    // the config dir of each wall a lane's child ran in
+				var denies [][]string // and what each wall denied
+				var plain int         // children run outside any lane's wall
 				w.wall = func(wl friend.Wall, _ friend.Exec) friend.Exec {
 					return func(ctx context.Context, _, _ string, _ []string, _ string) (string, int, error) {
 						mu.Lock()
@@ -555,6 +558,7 @@ func TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir(t *testing.T) {
 							return "", 0, nil
 						}
 						walls = append(walls, wl.ConfigDir)
+						denies = append(denies, wl.Deny)
 						out := filepath.Join(dir, "outbox", "c1~15")
 						if err := os.MkdirAll(out, 0o755); err != nil {
 							return "", 0, err
@@ -582,6 +586,11 @@ func TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir(t *testing.T) {
 				defer mu.Unlock()
 				require.NotEmpty(t, walls, "the card ran inside a lane's wall\n%s", out.String())
 				assert.Equal(t, tc.want, walls[0], "the wall's --config-dir")
+				wantDeny := tc.deny
+				if wantDeny == nil { // none given: never a wall that denies nothing (bad_profile, exit 125 for every lane)
+					wantDeny = []string{filepath.Join(w.home, "ada-working")}
+				}
+				assert.Equal(t, wantDeny, denies[0], "the wall's deny list")
 				assert.Zero(t, plain, "no child of the lane ran outside the wall")
 				assert.Contains(t, out.String(), "card=done")
 				assert.Equal(t, 1, strings.Count(out.String(), "spend: harness=claude runs=1 cost_usd=0.0125"), "the beat after the run says its cost once, not on every beat\n%s", out.String())

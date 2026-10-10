@@ -67,18 +67,21 @@ const StopReturnRetry = StatusErrorEvery
 // job, the card at its generation, the epoch, the process's end) and the stop-return owed
 // for it, Result "" while it is owed and the server's answer once it took it.
 type StopReturn struct {
-	Lane   int       `json:"lane"`
-	Job    string    `json:"job"`
-	Row    string    `json:"row"`  // the owner row the return is sent as: friend.<name>, or the reader row
-	Card   string    `json:"card"` // the card id
-	Gen    int       `json:"gen"`
-	Epoch  string    `json:"epoch"`
-	Pid    int       `json:"pid,omitempty"`   // the process signalled, when the harness said it (0: its group, by the lane's context)
-	Exit   int       `json:"exit"`            // how the run ended; -1 while it has not
-	Ended  bool      `json:"ended"`           // the run has ended: the return may be sent
-	At     time.Time `json:"at"`              // when the stop cancelled it
-	Tries  int       `json:"tries,omitempty"` // stop-returns sent and refused
-	Result string    `json:"result,omitempty"`
+	Lane int `json:"lane"`
+	// ServerLane is the lane the server says holds the card (take --lane), named on the
+	// stop-return so another lane's card is refused; 0 when no lane holds it
+	ServerLane int       `json:"server_lane,omitempty"`
+	Job        string    `json:"job"`
+	Row        string    `json:"row"`  // the owner row the return is sent as: friend.<name>, or the reader row
+	Card       string    `json:"card"` // the card id
+	Gen        int       `json:"gen"`
+	Epoch      string    `json:"epoch"`
+	Pid        int       `json:"pid,omitempty"`   // the process signalled, when the harness said it (0: its group, by the lane's context)
+	Exit       int       `json:"exit"`            // how the run ended; -1 while it has not
+	Ended      bool      `json:"ended"`           // the run has ended: the return may be sent
+	At         time.Time `json:"at"`              // when the stop cancelled it
+	Tries      int       `json:"tries,omitempty"` // stop-returns sent and refused
+	Result     string    `json:"result,omitempty"`
 	// NextTry is when a refused stop-return is sent again (StopReturnRetry), and Refusal
 	// the refusal last said for it, said once while its text stands.
 	NextTry time.Time `json:"next_try,omitzero"`
@@ -89,11 +92,15 @@ type StopReturn struct {
 func (s StopReturn) Owed() bool { return s.Result == "" }
 
 // StopReturnArgv is the store's verb for one stop-return, as the wire of 2026-10-08 says it.
-func StopReturnArgv(row, card string, gen int, epoch string) []string {
+func StopReturnArgv(row, card string, gen int, epoch string, lane int) []string {
 	if gen <= 0 {
 		return nil
 	}
-	return []string{"stop-return", "--as", row, card + "@" + strconv.Itoa(gen), "--epoch", epoch, "--reason", StopReturnReason}
+	argv := []string{"stop-return", "--as", row, card + "@" + strconv.Itoa(gen), "--epoch", epoch, "--reason", StopReturnReason}
+	if lane > 0 {
+		argv = append(argv, "--lane", strconv.Itoa(lane)) // the server's lane (lane_take.go)
+	}
+	return argv
 }
 
 // ParseMachine reads the machine's word off a beat's answer (`machine=RUNNING` or
@@ -151,7 +158,7 @@ func (l *loop) stopStep(now time.Time) bool {
 			}
 			t.byStop = true
 			job := filepath.Base(ln.card.Outbox)
-			l.oweStopReturn(StopReturn{Lane: ln.n, Job: job, Row: "friend." + d.Friend, Card: ln.card.ID, Gen: ln.card.Gen(), Epoch: ln.card.Epoch(), Exit: -1, At: now})
+			l.oweStopReturn(StopReturn{Lane: ln.n, ServerLane: ln.card.Lane, Job: job, Row: "friend." + d.Friend, Card: ln.card.ID, Gen: ln.card.Gen(), Epoch: ln.card.Epoch(), Exit: -1, At: now})
 			delete(s.state.Started, job) // not a run gone: a daemon starting up owes it a stop-return, never a FAIL
 			if t.cancel != nil {
 				t.cancel()
@@ -224,7 +231,7 @@ func (l *loop) returnOwed(now time.Time) {
 				continue // a read card whose gen is unknown waits for its gen, never sends 0
 			}
 		}
-		argv := StopReturnArgv(r.Row, r.Card, r.Gen, r.Epoch)
+		argv := StopReturnArgv(r.Row, r.Card, r.Gen, r.Epoch, r.ServerLane)
 		if len(argv) == 0 {
 			continue
 		}
@@ -312,7 +319,7 @@ func (l *loop) stopReads(now time.Time) {
 				}
 			}
 		}
-		l.oweStopReturn(StopReturn{Job: "read:" + id, Row: ReaderOf(d.Friend), Card: id, Gen: r.Gen, Epoch: epoch, Exit: -1, At: now})
+		l.oweStopReturn(StopReturn{Job: "read:" + id, ServerLane: r.Lane, Row: ReaderOf(d.Friend), Card: id, Gen: r.Gen, Epoch: epoch, Exit: -1, At: now})
 		cancel()
 		d.Record(fmt.Sprintf("%s read %s@%d cancelled by stop: its process group is told to end; stop-return owed", at, id, r.Gen))
 	}
@@ -343,7 +350,7 @@ func (l *loop) releaseHeld(ln *lane, now time.Time) {
 	d := l.d
 	at := now.UTC().Format(time.RFC3339)
 	job := filepath.Base(ln.card.Outbox)
-	l.oweStopReturn(StopReturn{Lane: ln.n, Job: job, Row: "friend." + d.Friend, Card: ln.card.ID, Gen: ln.card.Gen(), Epoch: ln.card.Epoch(), Exit: -1, Ended: true, At: now})
+	l.oweStopReturn(StopReturn{Lane: ln.n, ServerLane: ln.card.Lane, Job: job, Row: "friend." + d.Friend, Card: ln.card.ID, Gen: ln.card.Gen(), Epoch: ln.card.Epoch(), Exit: -1, Ended: true, At: now})
 	delete(l.lanes.state.Started, job)
 	if err := os.Remove(laneMarkPath(d.Dir, job)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		d.Record(fmt.Sprintf("%s lane %d: card %s: its lane mark could not be removed: %s", at, ln.n, ln.card.ID, oneLine(err.Error(), 300)))
