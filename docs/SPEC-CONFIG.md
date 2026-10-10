@@ -557,7 +557,8 @@ records `before = null, after = the row`; `set` records the row before and
 after; `remove` records `before = the row, after = null`. `actor` is the name
 the write is recorded under, taken from the `--actor` flag, else `NOVA_FRIEND`
 environment variable, else the seat login's recorded actor; when none resolves,
-the write refuses naming all three sources. There is no path that changes
+the write refuses naming all three sources and ends "nothing was written".
+There is no path that changes
 a row without a record, and no path that edits history.
 
 **A kind's revision** is the greatest `history.id` of its rows, 0 for a

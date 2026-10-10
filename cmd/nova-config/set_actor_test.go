@@ -36,4 +36,7 @@ func TestSetTakesActorLikeApply(t *testing.T) {
 	assert.Contains(t, errs, "--actor is required")
 	assert.Contains(t, errs, "NOVA_FRIEND")
 	assert.Contains(t, errs, "seat login's recorded actor")
+	// The refusal says the write did not happen, so a failed set is never
+	// mistaken for a set that took.
+	assert.Contains(t, errs, "nothing was written")
 }

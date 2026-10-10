@@ -580,7 +580,7 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	require.Equal(t, want, out, "apply --check with --actor:\n%s\nwant:\n%s", out, want)
 	// Real apply without --actor or NOVA_FRIEND refuses.
 	_, errs = step(2, "apply")
-	require.Contains(t, errs, "apply REFUSED: --actor is required: the name the write is recorded under (from --actor flag, NOVA_FRIEND, or the seat login's recorded actor); run: nova-config apply -h", "apply without --actor refusal: %q", errs)
+	require.Contains(t, errs, "apply REFUSED: --actor is required: the name the write is recorded under (from --actor flag, NOVA_FRIEND, or the seat login's recorded actor); nothing was written; run: nova-config apply -h", "apply without --actor refusal: %q", errs)
 	h.env["NOVA_FRIEND"] = "rowan"
 	out, _ = step(0, "apply")
 	want = "APPLY ADD kind=machine name=studio\nAPPLY SET kind=fleet name=fleet changed=coordinator,redis_port,pg_dsn,loops_dir\nAPPLY ADD kind=friend name=rowan\nAPPLY ADD kind=friend name=stella\nAPPLY SET kind=sprint name=sprint changed=coordinator,decide_bounce,decide_review\nAPPLY ADD kind=tier name=flash\nAPPLY ADD kind=tier name=heavy\nAPPLY ADD kind=tier name=pro\nCONFIG APPLY kind=machine add=1 set=0 remove=0 rev=1 ms=0\nCONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=4 ms=0\nCONFIG APPLY kind=friend add=2 set=0 remove=0 rev=3 ms=0\nCONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=5 ms=0\nCONFIG APPLY kind=loop add=0 set=0 remove=0 rev=0 ms=0\nCONFIG APPLY kind=route add=0 set=0 remove=0 rev=0 ms=0\nCONFIG APPLY kind=tier add=3 set=0 remove=0 rev=0 ms=0\n"

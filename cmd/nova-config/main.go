@@ -718,7 +718,7 @@ func actorName(flagValue string, getenv func(string) string, seatValues ...strin
 			return v, nil
 		}
 	}
-	return "", fmt.Errorf("--actor is required: the name the write is recorded under (from --actor flag, NOVA_FRIEND, or the seat login's recorded actor)")
+	return "", fmt.Errorf("--actor is required: the name the write is recorded under (from --actor flag, NOVA_FRIEND, or the seat login's recorded actor); nothing was written")
 }
 
 // --- kinds ------------------------------------------------------------------
