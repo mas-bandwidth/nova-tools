@@ -120,7 +120,7 @@ help:
 # tool binaries and then runs the reference generator over them).
 docs-check:
 	$(GO) test -count=1 ./internal/docs/...
-	$(GO) run ./cmd/nova-check links --dir .
+	$(GO) run ./cmd/nova-check links --dir "$(CURDIR)" --exclude docs/dogfood
 	$(MAKE) clidoc
 
 map:

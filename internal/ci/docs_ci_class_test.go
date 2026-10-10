@@ -99,7 +99,7 @@ func TestDocsWorkflowRunsTheDocsGatesOnEveryDocsChange(t *testing.T) {
 		assert.NotRegexp(t, docsShellControlRe, step.Run, "step %q carries shell control flow: %q", step.Name, step.Run)
 		assert.True(t, strings.HasPrefix(step.Run, "make ") || strings.HasPrefix(step.Run, "go "),
 			"step %q is not one command of a Go tool or make: %q", step.Name, step.Run)
-		if strings.Contains(step.Run, "make docs-check") {
+		if strings.TrimSpace(step.Run) == "make docs-check" {
 			ranDocsCheck = true
 		}
 	}
@@ -115,6 +115,8 @@ func TestDocsWorkflowRunsTheDocsGatesOnEveryDocsChange(t *testing.T) {
 	joined := strings.Join(recipe, "\n")
 	assert.Contains(t, joined, "internal/docs", "docs-check must run the internal/docs tests")
 	assert.Contains(t, joined, "nova-check links", "docs-check must run the link check")
+	assert.Contains(t, joined, `--dir "$(CURDIR)"`, "docs-check must pass an absolute tree root so relative links stay inside the tree")
+	assert.Contains(t, joined, "--exclude docs/dogfood", "docs-check must leave recorded dogfood transcripts out of the repository link scan")
 	assert.Contains(t, joined, "clidoc", "docs-check must run the generated CLI check")
 
 	for _, line := range recipe {
