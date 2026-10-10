@@ -3,6 +3,7 @@
 package layout
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,15 +11,15 @@ import (
 
 // Defaults for path roots.
 const (
-	// DefaultAIRoot is the default ai_root setting when unset.
-	DefaultAIRoot = "~/ai"
+	// DefaultNovaRoot is the default nova_root setting when unset.
+	DefaultNovaRoot = "~/nova"
 )
 
 // Root holds the machine's path roots.
 type Root struct {
-	// AI is the AI root (ai_root). Default is DefaultAIRoot (~/ai).
+	// AI is the AI root under the nova root. Default is AI/<name>/working for friends.
 	AI string
-	// Bench is the bench root. Default is AI/bench.
+	// Bench is the bench root under the nova root. Default is Bench/secrets, Bench/loops, Bench/mirror.
 	Bench string
 	// Secrets is the secrets store. Default is Bench/secrets.
 	Secrets string
@@ -46,16 +47,34 @@ func ExpandHome(path string) string {
 	return filepath.Join(home, path[2:])
 }
 
-// ResolveRoot returns the root paths for a machine.
-// aiRoot is the machine's ai_root setting (empty uses default).
-// Validates that aiRoot, if set, is an absolute path.
-func ResolveRoot(aiRoot string) Root {
-	if aiRoot == "" {
-		aiRoot = DefaultAIRoot
+// ValidNovaRoot checks that the nova root is an existing directory and not a symlink.
+func ValidNovaRoot(root string) error {
+	if root == "" {
+		return nil
 	}
-	aiRoot = ExpandHome(aiRoot)
+	root = ExpandHome(root)
+	fi, err := os.Lstat(root)
+	switch {
+	case err != nil:
+		return fmt.Errorf("nova_root %q is not an existing directory", root)
+	case fi.Mode()&os.ModeSymlink != 0:
+		return fmt.Errorf("nova_root %q is a symlink; it must be a real directory", root)
+	case !fi.IsDir():
+		return fmt.Errorf("nova_root %q is not a directory", root)
+	}
+	return nil
+}
 
-	benchRoot := filepath.Join(aiRoot, "bench")
+// ResolveRoot returns the root paths for a machine.
+// novaRoot is the machine's nova_root setting (empty uses default).
+func ResolveRoot(novaRoot string) Root {
+	if novaRoot == "" {
+		novaRoot = DefaultNovaRoot
+	}
+	novaRoot = ExpandHome(novaRoot)
+
+	aiRoot := filepath.Join(novaRoot, "ai")
+	benchRoot := filepath.Join(novaRoot, "bench")
 	secrets := filepath.Join(benchRoot, "secrets")
 	loopLogs := filepath.Join(benchRoot, "loops")
 	mirrors := filepath.Join(benchRoot, "mirror")
@@ -70,13 +89,13 @@ func ResolveRoot(aiRoot string) Root {
 }
 
 // ResolveFriend returns the friend's working path.
-// aiRoot is the machine's ai_root setting.
+// novaRoot is the machine's nova_root setting.
 // name is the friend's name.
 // dir is the friend's dir setting (empty uses default).
-func ResolveFriend(aiRoot string, name, dir string) Friend {
+func ResolveFriend(novaRoot string, name, dir string) Friend {
 	if dir == "" {
-		aiRoot = ExpandHome(aiRoot)
-		dir = filepath.Join(aiRoot, name, "working")
+		aiRoot := ExpandHome(novaRoot)
+		dir = filepath.Join(aiRoot, "ai", name, "working")
 	}
 	return Friend{Working: dir}
 }

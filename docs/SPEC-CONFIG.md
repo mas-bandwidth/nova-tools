@@ -45,7 +45,7 @@ Where each field of this cut sits:
 
 | side | fields |
 | --- | --- |
-| machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `ai_root`, `note` |
+| machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `nova_root`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
 | friend (decided for her) | `slots`, `tiers`, `roles`, `width`, `mode`, `config_dir`, `token_cap`, `streams`, `kinds`, `dir` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar`, `decide_attempt_no_result`, `decide_attempt_nothing_to_do`, `decide_grade`, `decide_gate_flaky`, `decide_gate_preexisting`, `decide_judgment_bar`, `decide_brief_bar`, `answer_rules_off` |
@@ -139,7 +139,7 @@ nothing invented.
 | `runners` | int | (0) | the CI play: how many runners it hosts; 0 hosts none | `machine:<m>` |
 | `width` | int | (unset) | `nova-sprint fleet sync`: the most work cards the sprint's member on it runs at once; unset is the default, half the machine's cores as its beat reports them; 0 is no member | `machine:<m>` |
 | `tla` | bool | (false) | the inventory's `tla` group and `nova_tla`, so the tools play's tla play holds the pinned TLC jar there; `tlacheck run --bench any` picks among these (tla/README.md, "The record machines") | `machine:<m>` |
-| `ai_root` | text | (unset) | `internal/layout`: the ai root for all derived paths; unset (the default, or --ai_root '') is ~/ai; the bench, secrets, loop logs, and mirrors derive from it | `machine:<m>` |
+| `nova_root` | text | (unset) | `internal/layout`: the nova root for all derived paths; unset (the default, or --nova_root '') is ~/nova; the bench, secrets, loop logs, and mirrors derive from it | `machine:<m>` |
 | `note` | text | (empty) | a reader: why the machine is as it is, a hold, a rest, the load that was measured (see "The note") | `machine:<m>` |
 
 **Declared and measured.** Measured facts (os, arch, cores, memory) are

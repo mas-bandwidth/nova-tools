@@ -37,7 +37,7 @@ const (
 	UserEnv = "NOVA_SPRINT_REDIS_USER"
 
 	// DefaultStore and DefaultKeyDir are the fleet layout under $HOME.
-	DefaultStore  = "ai/bench/secrets"
+	DefaultStore  = "nova/bench/secrets"
 	DefaultKeyDir = ".config/nova-secrets"
 )
 

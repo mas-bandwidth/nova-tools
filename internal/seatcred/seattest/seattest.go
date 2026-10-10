@@ -18,7 +18,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
-// Home returns a new HOME holding <home>/nova-bench/secrets (the store, with
+// Home returns a new HOME holding <home>/nova/bench/secrets (the store, with
 // <seat>.yaml sealed from values) and <home>/.config/nova-secrets/<seat>.key.
 // The values are test values; the caller asserts none of them is printed.
 func Home(t *testing.T, seat string, values map[string]string) string {

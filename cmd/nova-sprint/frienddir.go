@@ -15,7 +15,7 @@ import (
 // A friend's working directory is her nova-config row's dir (config.FriendDir).
 // friend sync carries it onto the friends table (store.FriendSpec.Dir), and sync,
 // reconcile (the verb and the run loop's tick), clean and the seat's inbox read it
-// there or from the row. A row with no dir is <ai-root>/<name>/working.
+// there or from the row. A row with no dir is <nova-root>/ai/<name>/working.
 // The explicit path avoids requiring a symlink as a sandbox root.
 
 // friendDirNoted is the friends each app has said the fallback for, so a given
@@ -28,17 +28,13 @@ type friendDirKey struct {
 }
 
 // friendDir is the friend's working directory: dir, her row's, when it is set; else
-// <ai-root>/<name>/working, with the note said on note the first time this app falls
+// <nova-root>/ai/<name>/working, with the note said on note the first time this app falls
 // back for her. A nil note says nothing.
 func (a *app) friendDir(friend, dir string, note io.Writer) string {
 	if dir != "" {
 		return dir
 	}
-	// Get the ai_root from the machine row or use default
-	aiRoot := layout.DefaultAIRoot
-	// TODO: get ai_root from machine row when available
-
-	fallback := layout.ResolveFriend(aiRoot, friend, "").Working
+	fallback := layout.ResolveFriend("", friend, "").Working
 	if note != nil {
 		if _, said := friendDirNoted.LoadOrStore(friendDirKey{a, friend}, true); !said {
 			fmt.Fprintf(note, "NOTE friend=%s has no dir on her nova-config row, so her working directory is %s; run: nova-config friend set %s --dir <her real working directory>\n", friend, oneline.Field(fallback), friend)
@@ -48,13 +44,12 @@ func (a *app) friendDir(friend, dir string, note io.Writer) string {
 }
 
 // friendWorkDir is the friend's working directory as a brief or a view names it to her:
-// dir, her row's, when it is set, so no symlink is needed; else <ai-root>/<name>/working.
+// dir, her row's, when it is set, so no symlink is needed; else <nova-root>/ai/<name>/working.
 func friendWorkDir(friend, dir string) string {
 	if dir != "" {
 		return dir
 	}
-	aiRoot := layout.DefaultAIRoot
-	return layout.ResolveFriend(aiRoot, friend, "").Working
+	return layout.ResolveFriend("", friend, "").Working
 }
 
 // friendRowDirs is each friend's dir as nova-config's friend rows say it, by name (a
