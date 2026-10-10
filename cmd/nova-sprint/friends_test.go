@@ -115,25 +115,25 @@ func TestTheFriendsTableCountsTheFriendsSprintCards(t *testing.T) {
 	}
 	// dealt, not started: ready, and none working (docs/SPEC-SPRINT.md section 1, a friend's
 	// card is working once she starts it)
-	assert.Equal(t, map[string]any{"ready": "2", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "tokens": "0", "ok": "0", "failed": "0"}, amy(), "two cards dealt, neither started")
+	assert.Equal(t, map[string]any{"ready": "2", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "tokens": "0", "ok": "0", "failed": "0", "refused": "0", "provider": "0"}, amy(), "two cards dealt, neither started")
 	ta.startFriend("amy", 2)
-	assert.Equal(t, map[string]any{"ready": "0", "working": "2", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "tokens": "0", "ok": "0", "failed": "0"}, amy(), "two cards started, both working; the hand job is nowhere")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "2", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "tokens": "0", "ok": "0", "failed": "0", "refused": "0", "provider": "0"}, amy(), "two cards started, both working; the hand job is nowhere")
 
 	// amy finishes s1-1 with a LAND, its report carrying her session's usage: done ok,
 	// and the tokens column sums it (docs/SPEC-SPRINT.md, a friend's usage)
 	outboxReport(t, root, "amy", "s1-1.w1", "# s1-1\n\n**Verdict:** LAND\nHead: "+landHead+"\nusage: in=1000000 out=150000 cache=50000\n\nThe change is pushed.\n")
 	ta.ok("friend sync --root " + root)
-	assert.Equal(t, map[string]any{"ready": "0", "working": "1", "width": "8", "done": "1", "okpct": "100.0%", "status": "up", "active": "-", "tokens": "1.2M", "ok": "1", "failed": "0"}, amy(), "s1-1 done ok, its usage summed, s1-2 still working")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "1", "width": "8", "done": "1", "okpct": "100.0%", "status": "up", "active": "-", "tokens": "1.2M", "ok": "1", "failed": "0", "refused": "0", "provider": "0"}, amy(), "s1-1 done ok, its usage summed, s1-2 still working")
 
 	// amy reports s1-2 with no verdict word: finished failed, never ok, and no usage adds none
 	outboxReport(t, root, "amy", "s1-2.w1", "# s1-2\n\nAll green, nothing more.\n")
 	ta.ok("friend sync --root " + root)
-	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "2", "okpct": "50.0%", "status": "up", "active": "-", "tokens": "1.2M", "ok": "1", "failed": "1"}, amy(), "s1-2 done failed (no verdict), s1-1 done ok; its tokens stay")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "2", "okpct": "50.0%", "status": "up", "active": "-", "tokens": "1.2M", "ok": "1", "failed": "1", "refused": "0", "provider": "0"}, amy(), "s1-2 done failed (no verdict), s1-1 done ok; its tokens stay")
 
 	var w whereView
 	ta.json("where", &w)
-	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "tokens": "0", "ok": "0", "failed": "0"}, withoutRowCards(w.Tables[sprint.Friends]["bob"]), "bob has no card")
-	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "tokens": "0", "ok": "0", "failed": "0"}, withoutRowCards(w.Tables[sprint.Friends]["cat"]), "cat has no card")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "tokens": "0", "ok": "0", "failed": "0", "refused": "0", "provider": "0"}, withoutRowCards(w.Tables[sprint.Friends]["bob"]), "bob has no card")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "tokens": "0", "ok": "0", "failed": "0", "refused": "0", "provider": "0"}, withoutRowCards(w.Tables[sprint.Friends]["cat"]), "cat has no card")
 }
 
 // A friend's width is her friend row's (the owner, 2026-10-02: "6/1 seems a bit

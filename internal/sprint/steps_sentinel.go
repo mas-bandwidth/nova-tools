@@ -108,7 +108,7 @@ func withdrawnCard(s *Snapshot, c *Card) bool {
 		return false
 	}
 	for _, fc := range s.Fleet.Of(c.ID) {
-		if fc.Col == Withdrawn {
+		if IsWithdrawn(fc.Col) {
 			return true
 		}
 	}

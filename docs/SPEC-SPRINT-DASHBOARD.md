@@ -177,7 +177,7 @@ from the owner edits one line here and nothing else moves.
   the column; then the "n / width" figure right after the track. Gaps: Ready to track and track to figure equal and
   wide (double the first attempt, ~64 px); every column gutter ~56 px.
 - Cells: no steady pulse; a cell flashes once when it lights or unlights. No numeric column in Fleet ever flashes.
-- OK% and Load: plain numbers, right-aligned, no bars, no dots. Total row: Ready and Done and OK% numbers, no cells. OK% is landed-or-ok over attempts a worker actually ran to an end, excluding launch refusals, withdrawn attempts, coordinator take-backs, and provider failures.
+- OK% and Load: plain numbers, right-aligned, no bars, no dots. Total row: Ready and Done and OK% numbers, no cells. OK% is landed-or-ok over attempts a worker actually ran to an end, excluding launch refusals, withdrawn attempts, coordinator take-backs, and provider failures. A launch the member refused and a take the provider failed are counted in the fleet table's own `refused` and `provider` columns (a handed-back or taken-back attempt in `withdrawn`), never in ok% nor failed; the page does not render those three columns yet.
 - Done and OK% (and the Friends table's) count from the last `nova-sprint stats tidy --fleet` (`--friends`): the tidy takes
   the history off the done cells the page's counts are read from. Not yet: "since <time>" beside OK%, as for Cost.
 

@@ -141,7 +141,7 @@ func TestOkPercentCountsOnlyAttemptsAWorkerRan(t *testing.T) {
 		assert.Equal(t, 1, w.s.Fleet.Count("m1", DoneFailed), "launch refusal not charged to m1 failed")
 		wc3 := w.s.Fleet.Card("s1-3.w1")
 		require.NotNil(t, wc3)
-		assert.Equal(t, Withdrawn, wc3.Col)
+		assert.Equal(t, Refused, wc3.Col)
 		assert.Equal(t, BlameCoordinator, wc3.F(FieldBlame))
 		assert.Equal(t, DefectLaunchRefused, wc3.F(FieldDefectClass))
 		assert.Equal(t, 0, w.s.Work.Card("s1-3").Int(FieldAttemptsRan), "refusal does not consume attempt bound")
@@ -165,7 +165,7 @@ func TestOkPercentCountsOnlyAttemptsAWorkerRan(t *testing.T) {
 		assert.Equal(t, 1, w.s.Fleet.Count("m1", DoneFailed), "provider failure not charged to m1 failed")
 		wc4 := w.s.Fleet.Card("s1-4.w1")
 		require.NotNil(t, wc4)
-		assert.Equal(t, Withdrawn, wc4.Col)
+		assert.Equal(t, Provider, wc4.Col)
 		assert.Equal(t, BlameProvider, wc4.F(FieldBlame))
 		assert.Equal(t, DefectProvider, wc4.F(FieldDefectClass))
 		assert.Equal(t, 0, w.s.Work.Card("s1-4").Int(FieldAttemptsRan), "provider failure does not consume attempt bound")
@@ -219,5 +219,52 @@ func TestOkPercentCountsOnlyAttemptsAWorkerRan(t *testing.T) {
 		assert.True(t, classes[DefectLaunchRefused])
 		assert.True(t, classes[DefectProvider])
 		assert.True(t, classes[DefectPaths])
+	})
+
+	// The recount rebuilds the refused and provider columns from the cards' typed
+	// ends: a launch refusal or provider failure left in withdrawn by an earlier
+	// build is moved into its own column, and ok/failed never count it.
+	t.Run("RecountRebuildsRefusedAndProviderColumns", func(t *testing.T) {
+		w := newWorld(t, "reader-a", "reader-b")
+		w.s.Coordinator = "coordinator"
+		w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1"}))
+
+		// A launch refusal finishes into refused.
+		w.must(Add(w.s, AddReq{Stream: "s1", Cards: []CardAdd{{ID: "s1-1", Brief: "brief 1"}}}))
+		p, _ := TickDeal(w.s, TickReq{})
+		w.must(p)
+		takeCard(w, "s1-1.w1")
+		w.must(Finish(w.s, FinishReq{As: "m1", Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: gensOf(w.s, "s1-1.w1"), Failed: true, Report: cardhdr.EndLaunch + ": refused"}))
+		require.Equal(t, Refused, w.s.Fleet.Card("s1-1.w1").Col)
+
+		// A provider failure finishes into provider.
+		w.must(Add(w.s, AddReq{Stream: "s1", Cards: []CardAdd{{ID: "s1-2", Brief: "brief 2"}}}))
+		p, _ = TickDeal(w.s, TickReq{})
+		w.must(p)
+		takeCard(w, "s1-2.w1")
+		w.must(Finish(w.s, FinishReq{As: "m1", Sel: Sel{IDs: []string{"s1-2.w1"}}, Gens: gensOf(w.s, "s1-2.w1"), Failed: true, Report: cardhdr.EndProvider + ": 429"}))
+		require.Equal(t, Provider, w.s.Fleet.Card("s1-2.w1").Col)
+
+		// The accounting before this build left both in withdrawn: the recount moves
+		// each back into its own column.
+		w.place(w.s.Fleet, "s1-1.w1", "m1", Withdrawn)
+		w.place(w.s.Fleet, "s1-2.w1", "m1", Withdrawn)
+
+		plan, rows := RecountPlan(w.s)
+		require.False(t, plan.Empty(), "a recount re-derives a mis-placed refusal and provider failure")
+		w.must(plan)
+		assert.Equal(t, Refused, w.s.Fleet.Card("s1-1.w1").Col)
+		assert.Equal(t, Provider, w.s.Fleet.Card("s1-2.w1").Col)
+		var m1Row RowRecount
+		for _, r := range rows {
+			if r.Row == "m1" {
+				m1Row = r
+				break
+			}
+		}
+		assert.Equal(t, 1, m1Row.AfterRefuse)
+		assert.Equal(t, 1, m1Row.AfterProv)
+		assert.Equal(t, 0, m1Row.AfterWith)
+		assert.Equal(t, 0, m1Row.AfterFail, "neither a refusal nor a provider failure is failed work")
 	})
 }

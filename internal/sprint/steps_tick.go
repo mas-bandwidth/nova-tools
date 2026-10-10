@@ -906,7 +906,7 @@ func AtRedealBound(s *Snapshot, pr *Card) *Card {
 		return nil
 	}
 	wc := s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt")))
-	if wc == nil || wc.Col != Withdrawn || !redealBound(wc) {
+	if wc == nil || !IsWithdrawn(wc.Col) || !redealBound(wc) {
 		return nil
 	}
 	if _, atCap := AtBriefBound(pr, "", s.AttemptsCap(pr.Row)); s.NextTier(pr) == "" || atCap {
@@ -948,7 +948,7 @@ func AtStagingBound(s *Snapshot, pr *Card, up []string) (*Card, []ProviderTake) 
 		return nil, nil
 	}
 	wc := s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt")))
-	if wc == nil || wc.Col != Withdrawn || len(without(up, StagingRefusers(wc))) > 0 {
+	if wc == nil || !IsWithdrawn(wc.Col) || len(without(up, StagingRefusers(wc))) > 0 {
 		return nil, nil
 	}
 	takes, _ := StagingTakes(wc)
@@ -971,7 +971,7 @@ func providerWhy(wc *Card) string {
 // below its ceiling, on the tier it escalates to (NextTier, escalate); else c.
 func escalating(s *Snapshot, c *Card) *Card {
 	wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt")))
-	if wc == nil || wc.Col != Withdrawn || !redealBound(wc) {
+	if wc == nil || !IsWithdrawn(wc.Col) || !redealBound(wc) {
 		return c
 	}
 	if t := s.NextTier(c); t != "" {
@@ -1199,8 +1199,8 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 	// card dealt again after a take-back: it is measured from her own deal,
 	// and a never-taken judgment raised before that deal (while it sat
 	// withdrawn) closes on it (LateStands).
-	for _, c := range s.Fleet.Column(Ready, Working, Withdrawn) {
-		if c.Col == Withdrawn && c.F("kind") == "read" {
+	for _, c := range s.Fleet.Column(Ready, Working, Withdrawn, Refused, Provider) {
+		if IsWithdrawn(c.Col) && c.F("kind") == "read" {
 			continue // a read withdrawn is history: its primary is asked again (friendReadLive)
 		}
 		field, limit, word, own := WorkDeadline(s, c)
@@ -1446,7 +1446,7 @@ func LateStands(s *Snapshot, n Note) bool {
 			return false
 		}
 		if kind == WordNeverTaken || kind == "not taken" { // "not taken": raised before the dealt bound
-			if c.Col != Ready && c.Col != Withdrawn {
+			if c.Col != Ready && !IsWithdrawn(c.Col) {
 				return false
 			}
 			// measured from a stamp at or after the note (the note's second: stamps are
@@ -1461,7 +1461,7 @@ func LateStands(s *Snapshot, n Note) bool {
 			}
 			return true
 		}
-		return c.Col == Ready || c.Col == Working || c.Col == Withdrawn
+		return c.Col == Ready || c.Col == Working || IsWithdrawn(c.Col)
 	case NReadLate:
 		c := s.Readers.Placed(n.Card)
 		if c == nil {
@@ -1478,7 +1478,7 @@ func LateStands(s *Snapshot, n Note) bool {
 // placeOf is where a card is, as a lateness says it: member:column, or
 // withdrawn.
 func placeOf(c *Card) string {
-	if c.Col == Withdrawn {
+	if IsWithdrawn(c.Col) {
 		return "withdrawn"
 	}
 	return c.Row + ":" + c.Col
@@ -1632,7 +1632,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 // with the ok reads they need that nothing holds (the pump accepts them,
 // TickAccept): a STOPPED machine with any of these says so to the seat.
 func MovesDue(s *Snapshot) int {
-	n := len(s.Fleet.Column(Withdrawn))
+	n := len(s.Fleet.Column(Withdrawn)) + len(s.Fleet.Column(Refused)) + len(s.Fleet.Column(Provider))
 	for _, c := range s.Work.Column(Review) {
 		switch {
 		case s.Readers == nil || c.F("result") == "failed":

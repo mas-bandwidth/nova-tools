@@ -15,12 +15,12 @@ func TestSchemaCoverFriendsDef(t *testing.T) {
 	t.Parallel()
 	def := FriendsDef()
 	assert.Equal(t, Friends, def.Name)
-	assert.Equal(t, []string{DoneOK, DoneFailed}, def.Hidden, "ok and failed are kept but not drawn")
+	assert.Equal(t, []string{DoneOK, DoneFailed, Refused, Provider}, def.Hidden, "ok, failed, refused and provider are kept but not drawn")
 	var names []string
 	for _, c := range def.Columns {
 		names = append(names, c.Name)
 	}
-	assert.Equal(t, []string{"ready", "working", "width", Done, OkPct, Status, Active, Tokens, DoneOK, DoneFailed}, names)
+	assert.Equal(t, []string{"ready", "working", "width", Done, OkPct, Status, Active, Tokens, DoneOK, DoneFailed, Refused, Provider}, names)
 }
 
 func TestSchemaCoverNamesTable(t *testing.T) {
@@ -122,7 +122,7 @@ func TestSchemaCoverDefinitions(t *testing.T) {
 		{"pre-work", "pre-sprint:w:", nil},
 		{"pre-readers", "pre-sprint:r:", nil},
 		{"pre-merge", "pre-sprint:m:", []string{Since, Returned, Ctl}},
-		{"pre-fleet", "pre-sprint:f:", []string{Withdrawn, DoneOK, DoneFailed, DoneDefect, Ctl}},
+		{"pre-fleet", "pre-sprint:f:", []string{Withdrawn, Refused, Provider, DoneOK, DoneFailed, DoneDefect, Ctl}},
 	}
 	for i, w := range want {
 		t.Run(w.name, func(t *testing.T) {

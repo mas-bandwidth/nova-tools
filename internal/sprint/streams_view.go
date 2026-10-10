@@ -32,7 +32,8 @@ type StreamCard struct {
 }
 
 // StreamRow is one stream in a streams listing: the repositories and bases its cards
-// record, its release, the state it shows, its open and landed counts, and its cards when asked.
+// record, its release, the state it shows, its open and landed counts, its work ok, failed
+// and ok% over its work cards, and its cards when asked.
 type StreamRow struct {
 	Stream  string       `json:"stream"`
 	Repos   []string     `json:"repos"`
@@ -41,6 +42,9 @@ type StreamRow struct {
 	State   string       `json:"state,omitempty"`
 	Open    int          `json:"open"`
 	Landed  int          `json:"landed"`
+	OK      int          `json:"ok"`
+	Failed  int          `json:"failed"`
+	OKPct   float64      `json:"okpct"`
 	Cards   []StreamCard `json:"cards,omitempty"`
 }
 
@@ -122,6 +126,18 @@ func StreamTitle(brief string) string {
 	return ""
 }
 
+// StreamStats is every stream's counters over the fleet table's work cards,
+// grouped by the card's stream field: the same WorkerStats definition the
+// friends and fleet rows use, so a stream's ok% is landed-or-ok over the
+// attempts a worker actually ran to an end, launch refusals, provider failures
+// and withdrawals left out. A snapshot with no fleet table has no counters.
+func StreamStats(s *Snapshot) map[string]WorkerCounters {
+	if s == nil || s.Fleet == nil {
+		return nil
+	}
+	return WorkerStatsBy(s.Fleet.Column(Ready, Working, DoneOK, DoneFailed, DoneDefect, Withdrawn, Refused, Provider), "stream")
+}
+
 // StreamsOf is the streams listing: every stream row, with the repositories and bases
 // its cards record, its release, its open and landed counts and, with Cards, every card
 // in work order (a state at a time). Only keeps the streams a repository in Repos
@@ -129,6 +145,7 @@ func StreamTitle(brief string) string {
 // every stream whose cards name more than one repository.
 func StreamsOf(s *Snapshot, r StreamsReq) StreamsView {
 	var v StreamsView
+	work := StreamStats(s)
 	for _, stream := range s.Work.Rows() {
 		repos := StreamRepos(s, stream)
 		if len(r.Repos) > 0 && !anyRepo(r.Repos, repos) {
@@ -144,6 +161,9 @@ func StreamsOf(s *Snapshot, r StreamsReq) StreamsView {
 			continue
 		}
 		row := StreamRow{Stream: stream, Repos: repos, Bases: StreamBasesOf(s, stream), Release: release}
+		if w, ok := work[stream]; ok {
+			row.OK, row.Failed, row.OKPct = w.OK, w.Failed, w.OKPct
+		}
 		for _, col := range States {
 			for _, c := range s.Work.Cell(stream, col) {
 				if IsOpen(col) {

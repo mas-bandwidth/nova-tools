@@ -194,7 +194,7 @@ func briefInPlace(s *Snapshot, c *Card, brief string, set map[string]string, uns
 		changes = append(changes, change(table, removeEntry(x, map[string]string{"retired": stamp(s.Now), "retired_by": "brief"})))
 	}
 	if s.Fleet != nil {
-		if wc := s.Fleet.Placed(WorkCardID(c.ID, n)); wc != nil && wc.Col == Withdrawn {
+		if wc := s.Fleet.Placed(WorkCardID(c.ID, n)); wc != nil && IsWithdrawn(wc.Col) {
 			retire(Fleet, wc)
 		}
 	}

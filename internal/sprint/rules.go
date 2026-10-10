@@ -401,7 +401,7 @@ func ruleLate(s *Snapshot, r TickReq, a *RuleAnswer) {
 		left(a, "a friend's card, or one that needs a mind: friends keep their cards")
 		return
 	}
-	if wc.Col == Withdrawn {
+	if IsWithdrawn(wc.Col) {
 		left(a, "withdrawn: the deal places it")
 		return
 	}

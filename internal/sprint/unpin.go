@@ -73,7 +73,7 @@ func unpinWhy(s *Snapshot, id string) string {
 	c := s.Work.Placed(id)
 	if c != nil && !IsSentinel(c) && c.Col == Ready && c.Int("attempt") == 1 && s.Fleet != nil {
 		wc := s.Fleet.Placed(WorkCardID(id, 1))
-		if wc != nil && IsFriendRow(wc.Row) && wc.Col == Withdrawn && wc.F(FieldTakenBack) != "" &&
+		if wc != nil && IsFriendRow(wc.Row) && IsWithdrawn(wc.Col) && wc.F(FieldTakenBack) != "" &&
 			wc.F(FieldTakeEnded) == "" && wc.Int("redeals") == 0 {
 			return ""
 		}

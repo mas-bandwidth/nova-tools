@@ -107,7 +107,7 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 		out = append(out, diff(2, working, dealt, "work working", "fleet ready+working")...)
 		// A primary whose work card was withdrawn is ready, not working. A read
 		// withdrawn is history: its primary stays in review and is asked again.
-		for _, c := range s.Fleet.Column(Withdrawn) {
+		for _, c := range s.Fleet.Column(Withdrawn, Refused, Provider) {
 			if st := s.StateOf(c.F("primary")); c.F("kind") != "read" && st != Ready {
 				out = append(out, Violation{2, fmt.Sprintf("%s is withdrawn and its primary %s is %s, not ready", c.ID, c.F("primary"), orDash(st))})
 			}

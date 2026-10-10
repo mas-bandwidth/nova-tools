@@ -244,7 +244,7 @@ func friendsLeft(wc *Card) []string {
 // of the tier names it (TickDeal).
 func (s *Snapshot) friendsFor(c *Card, tier string) []FriendSeat {
 	var gone []string
-	if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
+	if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && IsWithdrawn(wc.Col) {
 		gone = withdrawnFrom(wc)
 	}
 	var out []FriendSeat
@@ -464,7 +464,7 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 		}
 		// a card taken back from a friend (friend take) is placed again, never on her (FriendTake)
 		wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt")))
-		if wc != nil && wc.Col != Withdrawn {
+		if wc != nil && !IsWithdrawn(wc.Col) {
 			wc = nil
 		}
 		// a failed attempt's judgment (at its ceiling or its attempt cap), and a staging

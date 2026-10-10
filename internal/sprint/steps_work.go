@@ -1009,7 +1009,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 		if quiet != "" {
 			roomWhy += "; " + quiet
 		}
-		if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
+		if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && IsWithdrawn(wc.Col) {
 			if redealBound(wc) {
 				tier := s.NextTier(c)
 				atCard := c
@@ -1960,9 +1960,9 @@ func takeEnded(s *Snapshot, c, pr *Card, r FinishReq, kind string, decided bool)
 	addConsumer(pr, prSet, workConsumer(s, c, take, kind, rec))
 	decidedSets(r, decided, pr, set, prSet)
 	return Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{
-		change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt")),
+		change(Fleet, moveEntry(c, c.Row, Provider, set, "taken", "dealt")),
 		change(Work, moveEntry(pr, pr.Row, Ready, prSet, "work")),
-	}, Moved: fmt.Sprintf("%s working -> withdrawn gen=%d, %s; %s working -> ready", c.ID, c.Int("gen")+1, why, pr.ID)}
+	}, Moved: fmt.Sprintf("%s working -> provider gen=%d, %s; %s working -> ready", c.ID, c.Int("gen")+1, why, pr.ID)}
 }
 
 // IsStagingRefusal says a failed finish's report names its member's staging as the cause:
@@ -2009,9 +2009,9 @@ func launchRefused(s *Snapshot, c, pr *Card, r FinishReq, kind string) Unit {
 		addConsumer(pr, prSet, workConsumer(s, c, 0, "staging refused", costRecord(s, r.Usage, c.F(FieldRoute), c.F(FieldModel), false, dealt, taken)))
 	}
 	return Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{
-		change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt")),
+		change(Fleet, moveEntry(c, c.Row, Refused, set, "taken", "dealt")),
 		change(Work, moveEntry(pr, pr.Row, Ready, prSet, "work")),
-	}, Notes: notes, Moved: fmt.Sprintf("%s working -> withdrawn gen=%d, %s refused its launch; %s working -> ready", c.ID, c.Int("gen")+1, c.Row, pr.ID)}
+	}, Notes: notes, Moved: fmt.Sprintf("%s working -> refused gen=%d, %s refused its launch; %s working -> ready", c.ID, c.Int("gen")+1, c.Row, pr.ID)}
 }
 
 // withdrawCard is the unit that withdraws work card c from its member, the one path of a

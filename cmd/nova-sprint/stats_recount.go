@@ -32,8 +32,8 @@ func (a *app) cmdStatsRecount(args []string, stdout, stderr io.Writer) int {
 	if *dryRun {
 		fmt.Fprintln(stdout, "STATS RECOUNT DRY-RUN")
 		for _, r := range rows {
-			fmt.Fprintf(stdout, "row %-20s ok: %d -> %d | failed: %d -> %d | withdrawn: %d -> %d\n",
-				r.Row, r.BeforeOK, r.AfterOK, r.BeforeFail, r.AfterFail, r.BeforeWith, r.AfterWith)
+			fmt.Fprintf(stdout, "row %-20s ok: %d -> %d | failed: %d -> %d | withdrawn: %d -> %d | refusals: %d -> %d | provider: %d -> %d\n",
+				r.Row, r.BeforeOK, r.AfterOK, r.BeforeFail, r.AfterFail, r.BeforeWith, r.AfterWith, r.BeforeRefuse, r.AfterRefuse, r.BeforeProv, r.AfterProv)
 		}
 		return 0
 	}
@@ -52,8 +52,8 @@ func (a *app) cmdStatsRecount(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	for _, r := range rows {
-		fmt.Fprintf(stdout, "row %-20s ok: %d -> %d | failed: %d -> %d | withdrawn: %d -> %d\n",
-			r.Row, r.BeforeOK, r.AfterOK, r.BeforeFail, r.AfterFail, r.BeforeWith, r.AfterWith)
+		fmt.Fprintf(stdout, "row %-20s ok: %d -> %d | failed: %d -> %d | withdrawn: %d -> %d | refusals: %d -> %d | provider: %d -> %d\n",
+			r.Row, r.BeforeOK, r.AfterOK, r.BeforeFail, r.AfterFail, r.BeforeWith, r.AfterWith, r.BeforeRefuse, r.AfterRefuse, r.BeforeProv, r.AfterProv)
 	}
 	fmt.Fprintf(stdout, "STATS RECOUNT OK epoch=%d rows=%d\n", s.Epoch, len(rows))
 	return 0

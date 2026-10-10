@@ -60,7 +60,7 @@ func TestARouteWhoseChildrenEndWithNoResultThreeTimesRests(t *testing.T) {
 	require.Len(t, whats, 1, "one note, to the coordinator")
 	assert.Contains(t, whats[0], "route flash-a rested until")
 	assert.Contains(t, whats[0], "s1-1.w1, s1-2.w1, s1-3.w1")
-	assert.Equal(t, sprint.Withdrawn, s.Fleet.Card("s1-3.w1").Col, "never redealt on the resting route, its tier's only one")
+	assert.Equal(t, sprint.Provider, s.Fleet.Card("s1-3.w1").Col, "never redealt on the resting route, its tier's only one")
 	open := h.openOf(sprint.NNoRoute)
 	require.Len(t, open, 1, "the tier waits, once")
 	assert.Contains(t, open[0].Note.What, "rests")
@@ -68,7 +68,7 @@ func TestARouteWhoseChildrenEndWithNoResultThreeTimesRests(t *testing.T) {
 
 	h.machine()
 	assert.Len(t, h.noteWhats(sprint.NRouteRested), 1, "a rest is written once")
-	assert.Equal(t, sprint.Withdrawn, h.snap().Fleet.Card("s1-3.w1").Col, "still resting")
+	assert.Equal(t, sprint.Provider, h.snap().Fleet.Card("s1-3.w1").Col, "still resting")
 	h.clean("a route resting")
 
 	// the rest ends by itself; the window begins again after it, so the old ends rest nothing

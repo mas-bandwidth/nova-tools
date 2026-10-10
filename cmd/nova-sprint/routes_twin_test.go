@@ -48,8 +48,8 @@ func TestAPinnedCardOnTheTwinIsReadBackByCardAndRoutes(t *testing.T) {
 
 	_, story, _ := run("nova-sprint card s1-1")
 	assert.Contains(t, story, "ATTEMPT 1 card=s1-1.w1 gen=2 route=pin model=x/y tier=- member=m1")
-	// the take's cost record is the take's own (below): the withdrawn card holds none
-	assert.Contains(t, story, "usage=- end=withdrawn")
+	// the take's cost record is the take's own (below): the provider card holds none
+	assert.Contains(t, story, "usage=- end=provider")
 	assert.Contains(t, story, "ATTEMPT 1 card=s1-1.w1 take=1 route=pin model=x/y member=m1 finished=", "the failed take keeps its own record")
 	// the take's wait and run are read on the clock between two verbs of this test: either
 	// may be a second on a loaded machine, so the record is pinned around them
@@ -61,7 +61,7 @@ func TestAPinnedCardOnTheTwinIsReadBackByCardAndRoutes(t *testing.T) {
 	assert.Contains(t, plain, "ATTEMPT 1 card=s4-1.w1 gen=1 route=- model=-", "a card on a twin with no route runs on the member's override")
 
 	_, routes, _ := run("nova-sprint routes")
-	assert.Contains(t, routes, "ROUTE pin:x/y model=x/y pinned attempts=1 ok=0 failed=1 provider_failures=1 mean_wall=")
+	assert.Contains(t, routes, "ROUTE pin:x/y model=x/y pinned attempts=1 ok=0 failed=1 okpct=0.0% provider_failures=1 mean_wall=")
 	assert.Contains(t, routes, " rested_until=- balance=-\n", "a route the machine does not rest (rule 3)")
 	assert.Contains(t, routes, "ROUTES OK routes=1")
 	_, js, _ := run("nova-sprint routes --json")

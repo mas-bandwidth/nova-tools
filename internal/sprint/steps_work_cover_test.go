@@ -157,7 +157,7 @@ func TestStepsWorkCoverTakeEnded(t *testing.T) {
 			assert.Contains(t, p.Units[0].Moved, tc.why+"; s1-1 working -> ready")
 			w.must(p)
 			c := w.s.Fleet.Card(wc)
-			assert.Equal(t, Withdrawn, c.Col, "the take's card withdraws for the next deal")
+			assert.Equal(t, Provider, c.Col, "the take's card withdraws into its own provider column for the next deal")
 			assert.NotEqual(t, "", c.F(FieldTakeEnded), "the ended take counts against the redeal bound")
 			assert.Equal(t, tc.line, c.F(FieldProviderError), "the card keeps the ended take's line")
 			takes, numbers := ProviderTakes(c)

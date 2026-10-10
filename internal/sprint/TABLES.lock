@@ -174,6 +174,18 @@
 # fleet defect --after failed, then nova-table set fleet --hide defect. Held by
 # TestSprintTablesAreLocked and
 # TestAHoldNamingABriefDefectCountsAgainstTheStreamNotTheWorker.
+# Change, 2026-10-06, two hidden fleet columns, asked by Glenn in words: "I want the ok% to
+# be the actual amount of good work produced. if it is artificially low for some reason,
+# then that is a BUG". fleet.refused and fleet.provider (hidden, after withdrawn) hold a
+# member's or a friend's work cards whose launch the member refused before a lane began
+# (refused) and whose take the provider failed (provider): each counted in neither done nor
+# ok%, in its own column so the reason is not hidden and a recount re-derives it. The friends
+# table carries the same two hidden columns. The live store takes them before the build that
+# writes them is installed: nova-table col add fleet refused --after withdrawn, nova-table col
+# add fleet provider --after refused, nova-table set fleet --hide refused --hide provider (and
+# nova-table col add friends refused --after failed, nova-table col add friends provider
+# --after refused, nova-table set friends --hide refused --hide provider). Held by
+# TestSprintTablesAreLocked.
 # Note, 2026-10-04, the friend row's work restriction, not a display column: her
 # nova-config row's `streams` and `kinds` (docs/SPEC-CONFIG.md, friend) are carried into
 # her friends record by friend sync and applied by the dealer, which hands her no card
@@ -209,6 +221,8 @@ fleet.okpct pct(ok/ok+failed) pooled shown label=ok%
 fleet.status text none shown
 fleet.load text none shown
 fleet.withdrawn count sum hidden
+fleet.refused count sum hidden
+fleet.provider count sum hidden
 fleet.ok count sum hidden
 fleet.failed count sum hidden
 fleet.defect count sum hidden
@@ -223,5 +237,7 @@ friends.active text none shown
 friends.tokens text sum shown
 friends.ok count sum hidden
 friends.failed count sum hidden
+friends.refused count sum hidden
+friends.provider count sum hidden
 view work friends fleet
 view-all work readers merge friends fleet

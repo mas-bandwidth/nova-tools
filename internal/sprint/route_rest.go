@@ -304,7 +304,7 @@ type routeEnd struct {
 // A take that ended with its member down keeps no record and is not counted.
 func routeEnds(fleet *Table) map[string][]routeEnd {
 	out := map[string][]routeEnd{}
-	for _, c := range fleet.Column(Ready, Working, DoneOK, DoneFailed, DoneDefect, Withdrawn) {
+	for _, c := range fleet.Column(Ready, Working, DoneOK, DoneFailed, DoneDefect, Withdrawn, Refused, Provider) {
 		takes, numbers := ProviderTakes(c)
 		for i, t := range takes {
 			at, err := time.Parse(time.RFC3339, t.Finished)

@@ -327,12 +327,12 @@ func friendLateSpans(lines []Line, now time.Time, dealtMax time.Duration) (spans
 		friend, isFriend := FriendOfRow(row)
 		for _, id := range ids {
 			c := state[id]
-			if c != nil && (l.Removed || !placed || !isFriend || c.friend != friend || (col != Ready && col != Working && col != Withdrawn)) {
+			if c != nil && (l.Removed || !placed || !isFriend || c.friend != friend || (col != Ready && col != Working && !IsWithdrawn(col))) {
 				checkSpan(id, c, l.At)
 				delete(state, id)
 				c = nil
 			}
-			if l.Removed || !placed || !isFriend || (col != Ready && col != Working && col != Withdrawn) {
+			if l.Removed || !placed || !isFriend || (col != Ready && col != Working && !IsWithdrawn(col)) {
 				continue
 			}
 			if c == nil {
@@ -357,7 +357,7 @@ func friendLateSpans(lines []Line, now time.Time, dealtMax time.Duration) (spans
 				c.card.Fields[k] = v
 			}
 			switch col {
-			case Withdrawn:
+			case Withdrawn, Refused, Provider:
 				delete(c.card.Fields, stampFirstTaken)
 				delete(c.card.Fields, stampTaken)
 				delete(c.card.Fields, stampDealt)
