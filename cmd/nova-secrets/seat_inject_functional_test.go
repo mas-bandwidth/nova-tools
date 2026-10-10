@@ -71,7 +71,7 @@ func TestSeatInjectReSealsAValueIntoAnExistingSeat(t *testing.T) {
 		"--store", s.storeDir, "--as", "bo", "--from", "ada", "--only", "NOVA_REDIS_BENCH_PASSWORD",
 		"--key", s.ada.privPath, "--sops", sopsPath, "--no-pr")
 	require.Equal(t, 0, code, "seat inject exited %d: %s", code, errOut)
-	line := strings.TrimSpace(out)
+	line := strings.SplitN(strings.TrimSpace(out), "\n", 2)[0]
 	assert.True(t, strings.HasPrefix(line, "SECRETS SEAT INJECT OK seat=bo from=ada names=1 committed branch=seal/bo-NOVA_REDIS_BENCH_PASSWORD-"), "unexpected OK line: %s", line)
 	for _, v := range injectValues {
 		assert.NotContains(t, out, v, "a value reached a stream:\nstdout:\n%s\nstderr:\n%s", out, errOut)
@@ -155,6 +155,7 @@ func TestTheHelpExampleIsWhatSeatInjectPrints(t *testing.T) {
 		"! seat inject: encrypting 1 value(s) to bo.yaml's own recipients",
 		"! seat inject: returning the store to its branch",
 		"SECRETS SEAT INJECT OK seat=bo from=ada names=1 committed branch=seal/bo-NOVA_REDIS_BENCH_PASSWORD-20260927-013000",
+		"SECRETS SEAT INJECT NOTE exec and check read the store's own branch, which does not hold this value yet; next: git -C ./secrets push -u origin seal/bo-NOVA_REDIS_BENCH_PASSWORD-20260927-013000, then open and merge its pull request",
 	}
 
 	sopsPath := findSops(t)
