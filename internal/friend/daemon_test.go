@@ -1014,3 +1014,16 @@ func TestProofIDsAreReleasedAfterReadingOrANewerPing(t *testing.T) {
 		})
 	}
 }
+
+func TestDaemonBeatPublishesHostToStore(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.d.Host = "m1"
+	r.run(t, 1)
+
+	marks, err := r.store.Marks(context.Background(), "friend:bob:beat")
+	require.NoError(t, err)
+	require.Len(t, marks, 1)
+	assert.Equal(t, "m1", marks[0]["host"], "heartbeat must write host into friend:<name>:beat")
+	assert.NotEmpty(t, marks[0]["at"], "heartbeat must write at timestamp into friend:<name>:beat")
+}

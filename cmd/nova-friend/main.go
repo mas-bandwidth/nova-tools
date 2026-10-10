@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -99,6 +100,8 @@ type world struct {
 	stepBeat       bool                                // deterministic fake clock in CLI tests; never set by realWorld
 	checkGo        func(func())                        // optional test scheduler for a fake-clock session check
 	reachPermitted func(context.Context) (bool, error) // reach window permission; nil checks the platform without prompting
+	hostname       func() (string, error)              // machine hostname source (seam for tests)
+	selfHostFn     func(ctx context.Context) string    // machine name resolver (seam for tests)
 }
 
 // readPlist is the installed plist at path, empty when there is none or it
@@ -231,6 +234,7 @@ func sprintHolders(ctx context.Context, server string) (map[string]string, error
 
 func realWorld() world {
 	w := world{getenv: os.Getenv, exec: friend.RealExec, sqlite: friend.RealExec, wall: friend.Wall.Exec, now: time.Now, uid: os.Getuid(), home: os.Getenv("HOME"),
+		hostname: os.Hostname,
 		sleep: func(ctx context.Context, d time.Duration) {
 			select {
 			case <-ctx.Done():
@@ -393,6 +397,7 @@ func friendTool(w world) *tool.Tool {
 		f.String("adapter", "", "delivery route: folder for an existing watched Codex session (default: the harness adapter)")
 		f.String("delivery-dir", "", "existing folder watched by that Codex session when --adapter folder")
 		f.String("server", w.server(), "the sprint server, host:port (default: "+ServerEnv+", else "+DefaultServer+")")
+		f.String("host", "", "the machine this friend runs on (default: self host)")
 		f.Int("width", 0, "the friend's width, from the nova-config friend row; 0 is unknown")
 		f.Duration("silent-stop", friend.DefaultSilentStop, "stop a turn that has printed nothing for this long; a turn that prints runs on")
 		f.Int("broken-after", friend.DefaultBrokenAfter, "turns in a row the provider refuses the same way before the session is broken")
@@ -1066,6 +1071,24 @@ func answer(err error) *tool.Out {
 	return tool.Refuse("the store did not answer: " + err.Error())
 }
 
+func (w world) selfHost(ctx context.Context) string {
+	if w.selfHostFn != nil {
+		return w.selfHostFn(ctx)
+	}
+	hFn := os.Hostname
+	if w.hostname != nil {
+		hFn = w.hostname
+	}
+	h, _, err := config.SelfName(ctx, config.SelfSource{
+		Getenv:   w.getenv,
+		Hostname: hFn,
+	})
+	if err == nil {
+		return h
+	}
+	return ""
+}
+
 // openUntil opens the store, trying again after a wait that doubles from a
 // second up to OpenRetryMax, until it answers or ctx ends (nil then): the loop
 // tolerates a store that goes down, so one that is down at the start is no
@@ -1406,8 +1429,13 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// stop-returns the lanes owe, carried on each beat (stop.go)
 	var machineStopped atomic.Bool
 	owedStopReturns := func() int { return 0 }
+	host := c.Str("host")
+	if host == "" {
+		host = w.selfHost(ctx)
+	}
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
+		Host: host,
 		MachineStopped: machineStopped.Load,
 		StopReturn: func(ctx context.Context, argv []string) error {
 			if w.finish == nil {

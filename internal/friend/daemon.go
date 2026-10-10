@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -93,6 +94,7 @@ const (
 // bus's Fake, a fake harness and its own clock.
 type Daemon struct {
 	Friend, Harness, Dir string
+	Host                 string // the machine this friend runs on; written to friend:<f>:beat on each beat
 	Width                int
 	Store                bus.Store
 	Deliver              Deliverer
@@ -585,6 +587,15 @@ func (b *beatState) snapshot() (active, last time.Time, beats int, err string) {
 	return b.active, b.last, b.beats, b.err
 }
 
+func (d *Daemon) beatHost(ctx context.Context, now time.Time) {
+	if d.Host != "" && d.Store != nil && d.Friend != "" {
+		_ = d.Store.AddAll(ctx, nil, nil,
+			bus.Mark{Key: "friend:" + d.Friend + ":beat", Field: "host", Value: d.Host},
+			bus.Mark{Key: "friend:" + d.Friend + ":beat", Field: "at", Value: strconv.FormatInt(now.UnixMilli(), 10)},
+		)
+	}
+}
+
 // beatLoop is this daemon's sole production beat caller. A tick waits for the
 // previous beat, never sending overlapping proof words or duplicate beat verbs.
 func (d *Daemon) beatLoop(ctx context.Context, b *beatState) {
@@ -596,6 +607,7 @@ func (d *Daemon) beatLoop(ctx context.Context, b *beatState) {
 		if d.Activity != nil && (walked.IsZero() || now.Sub(walked) >= ActivityEvery) {
 			active, walked = d.Activity(), now
 		}
+		d.beatHost(ctx, now)
 		err := d.Beat(ctx, active)
 		b.mu.Lock()
 		b.active = active
@@ -758,6 +770,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 				if d.Activity != nil && (d.walked.IsZero() || now.Sub(d.walked) >= ActivityEvery) {
 					d.active, d.cards, d.walked = d.Activity(), d.held(), now
 				}
+				d.beatHost(ctx, now)
 				if err := d.Beat(ctx, d.active); err != nil {
 					d.status.BeatError = err.Error()
 				} else {

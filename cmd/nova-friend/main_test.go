@@ -1324,3 +1324,54 @@ func TestHostHelpExampleIsWhatTheToolPrints(t *testing.T) {
 		assert.Fail(t, "the help example differs", p.Message)
 	}
 }
+
+func TestRunPublishesBeatHostToRedisStore(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	w := r.world()
+	var cancel context.CancelFunc
+	w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+		ctx, cancel = context.WithCancel(ctx)
+		return ctx, cancel
+	}
+	w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
+		cancel()
+		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=2", nil
+	}
+	dir := t.TempDir()
+	var out, errb strings.Builder
+	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--host", "box", "--width", "4"}, strings.NewReader(""), &out, &errb, w)
+	assert.Equal(t, 0, code, errb.String())
+
+	marks, err := r.store.Marks(context.Background(), "friend:bob:beat")
+	require.NoError(t, err)
+	require.Len(t, marks, 1)
+	assert.Equal(t, "box", marks[0]["host"])
+	assert.NotEmpty(t, marks[0]["at"])
+}
+
+func TestRunPublishesDefaultSelfHostToRedisStore(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	w := r.world()
+	w.hostname = func() (string, error) { return "m1", nil }
+	var cancel context.CancelFunc
+	w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+		ctx, cancel = context.WithCancel(ctx)
+		return ctx, cancel
+	}
+	w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
+		cancel()
+		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=2", nil
+	}
+	dir := t.TempDir()
+	var out, errb strings.Builder
+	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--width", "4"}, strings.NewReader(""), &out, &errb, w)
+	assert.Equal(t, 0, code, errb.String())
+
+	marks, err := r.store.Marks(context.Background(), "friend:bob:beat")
+	require.NoError(t, err)
+	require.Len(t, marks, 1)
+	assert.Equal(t, "m1", marks[0]["host"])
+	assert.NotEmpty(t, marks[0]["at"])
+}
