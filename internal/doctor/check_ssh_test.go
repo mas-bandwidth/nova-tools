@@ -18,6 +18,7 @@ type sshRig struct {
 	benches []string          // the machine names the inventory holds
 	fail    map[string]string // bench -> what ssh prints when it cannot reach it
 	invErr  error             // the inventory read's own failure, if any
+	calls   *[][]string       // when set, every ssh argv is recorded here
 }
 
 // runSSH runs only the ssh check over the rig.
@@ -38,7 +39,10 @@ func runSSH(t *testing.T, r sshRig) Result {
 				fmt.Fprintf(&b, "CONFIG LIST kind=machine rows=%d\n", len(r.benches))
 				return b.String(), nil
 			case "ssh":
-				bench := args[len(args)-2] // -o BatchMode=yes -o ConnectTimeout=5 <bench> true
+				if r.calls != nil {
+					*r.calls = append(*r.calls, append([]string(nil), args...))
+				}
+				bench := args[len(args)-2] // -o BatchMode=yes -o ConnectTimeout=5 -- <bench> true
 				if reason, ok := r.fail[bench]; ok {
 					return "", errors.New("ssh: " + reason)
 				}
@@ -112,6 +116,25 @@ func TestDoctorSSHCheckNamesTheBenchItCannotReach(t *testing.T) {
 		r := runSSH(t, sshRig{})
 		assert.Equal(t, OK, r.Status)
 		assert.Contains(t, r.Evidence, "no benches")
+	})
+
+	t.Run("a bad machine name is a finding and no ssh is run", func(t *testing.T) {
+		t.Parallel()
+		var calls [][]string
+		r := runSSH(t, sshRig{benches: []string{"-oProxyCommand=touch"}, calls: &calls})
+		assert.Equal(t, Fail, r.Status)
+		assert.Contains(t, r.Evidence, "-oProxyCommand=touch")
+		assert.Contains(t, r.Evidence, "is not a host name")
+		assert.Empty(t, calls, "an unvalidated name is never passed to ssh")
+	})
+
+	t.Run("the ssh argv puts -- before the host", func(t *testing.T) {
+		t.Parallel()
+		var calls [][]string
+		r := runSSH(t, sshRig{benches: []string{"bench1"}, calls: &calls})
+		assert.Equal(t, OK, r.Status)
+		require.Len(t, calls, 1)
+		assert.Equal(t, []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "--", "bench1", "true"}, calls[0])
 	})
 
 	t.Run("an unreadable inventory is a fail naming the seat", func(t *testing.T) {
