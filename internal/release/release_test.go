@@ -91,6 +91,7 @@ func (f *fakeForge) TagMessage(_ context.Context, _, tag string) (string, error)
 	}
 	return message, nil
 }
+func (f *fakeForge) DispatchWorkflow(_ context.Context, _, _, _ string) error { return nil }
 
 type fakeToolchain struct {
 	calls []string

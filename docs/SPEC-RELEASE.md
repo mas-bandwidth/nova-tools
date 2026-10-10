@@ -705,6 +705,39 @@ tier amounts sum exactly to the displayed total.
 `TestReceiptsAreReadOnlyForTheirWindow`, `TestCostByTierTakesTheRouteTierWhenTheRunRecordsNone`,
 `TestCostByTierAllocatesFractionalCentsWithoutChangingTheTotal`.*
 
+## 19. A release is certified green and published by the workflow
+
+The owner, 2026-10-07: "We need to fix the release process as well so we do real
+releases. Please fix the functional tests as critical." A release is real: the commit
+it names is certified green by the same suite the merge queue runs, the tag triggers
+`release.yml`, and `release.yml` publishes the release object and its assets.
+
+### 1. PR CI runs functional shards
+The pull-request CI runs the functional shards (`.github/workflows/ci.yml`) on every PR
+onto the sprint base and onto dev, so a red functional test is red on the PR that made it,
+never first in the queue or at the cut. The shards run under CI's two-minute cap across the
+runner pool.
+
+### 2. Cut requires certification and offers dispatch
+`nova-update release cut` refuses any commit that `certification.yml` has not vouched for
+(the same check `release.yml` makes: every certification run completed and the newest
+updated run green), names the certification dispatch command
+(`gh workflow run certification.yml --ref <sha>`), and offers `--dispatch-certification`
+to dispatch and wait for certification. Waivers (`--no-dogfood-gate`, `--no-journey-gate`,
+`--no-spend-gate`) never cover certification.
+
+### 3. Workflow publishes the release object
+`release.yml` publishes the release object with the built assets and per-platform checksums:
+- Shipped tool binaries: `<tool>_<version>_<goos>_<goarch>[.exe]`
+- Per-platform checksums: `SHA256SUMS_<goos>_<goarch>`
+- Global checksums: `SHA256SUMS`
+The workflow appends the CHANGELOG section's `SHA256SUMS digest: <digest>` into the release body
+and publishes the release draft (`gh release edit "$TAG" --draft=false`).
+
+The operator path (`gh release create` by hand) is documented only as a recovery path
+when the automated workflow itself is broken. The cut receipt line records `publish=workflow`
+to indicate the publication path.
+
 ## What this file does not cover
 
 The verbs themselves, the machines file, the retire rule, where `adopt` runs from and the security rules
@@ -784,6 +817,12 @@ One numbered line per test; where one test holds several behaviours, they share 
 65. `TestAReleaseIsRefusedWhenRecordedSpendMissesTheProvidersOwn` — over the window since the previous tag's UTC day, a store figure of $836 against a provider's own $2,250 refuses naming the provider, both figures and the gap; a 3% gap passes (`spend=ok`); a provider whose readout errs, or has none, refuses; subscription friends' recorded tokens are set beside their receipts the same way, and no receipts refuses; no store refuses; `--no-spend-gate --reason` writes every unpassed row into the section.
 66. `TestOpenRouterSpendIsTheActivityDaysAndToday` — openrouter's own count is its activity's completed days in the window plus the key's count of today; no key, or a window past 30 days, is unread; opencode and Inception are unread.
 67. `TestReceiptsAreReadOnlyForTheirWindow` — a receipts file is read only for the window it covers.
+68. `TestCutRefusesUncertifiedCommit` — `cut` refuses an uncertified commit (exit 2) naming the dispatch command `gh workflow run certification.yml --ref <sha>` and offering `--dispatch-certification`.
+69. `TestCutAcceptsCertifiedCommit` — `cut` accepts a commit whose latest certification run completed with success.
+70. `TestCutDispatchCertification` — `--dispatch-certification` dispatches `certification.yml` once on the fake and waits for completion.
+71. `TestCertificationNotCoveredByWaivers` — dogfood, journey, and spend waivers never cover certification; an uncertified or failing commit is refused even with all waivers granted.
+72. `TestWorkflowLintPRCIIncludesEveryFunctionalShard` — workflow lint reads `ci.yml`, `certification.yml`, and `release.yml` and asserts PR CI includes every functional shard the merge group runs: one `functional` job whose matrix is `test-packages`'s `functional` output and whose `if` runs on pull_request (head-repo guarded) and merge_group.
+73. `TestCertificationIsTheNewestRunNotAnOlderGreen` — the certification gate is the check `release.yml` makes: every certification run completed and the newest `updated_at` group uniformly green; an older green does not vouch for a newer red or a newer still-running run, and two runs sharing the latest stamp must both be green.
 
 Demanded, and proven by no test yet (8):
 

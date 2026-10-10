@@ -126,7 +126,7 @@ func (g *GH) HeadSHA(ctx context.Context, repo, branch string) (string, error) {
 // first page read as the whole set is a green nobody checked.
 func (g *GH) CheckRuns(ctx context.Context, repo, sha string) ([]CheckRun, error) {
 	out, err := g.api(ctx, "api", "--paginate", "repos/"+repo+"/commits/"+sha+"/check-runs",
-		"--jq", ".check_runs[] | {Name:.name, Status:.status, Conclusion:.conclusion}")
+		"--jq", ".check_runs[] | {Name:.name, Status:.status, Conclusion:.conclusion, UpdatedAt:.completed_at}")
 	if err != nil {
 		return nil, err
 	}
@@ -271,6 +271,12 @@ func (g *GH) TagMessage(ctx context.Context, repo, tag string) (string, error) {
 		return "", err
 	}
 	return message, nil
+}
+
+// DispatchWorkflow requests that GitHub run the named workflow on ref.
+func (g *GH) DispatchWorkflow(ctx context.Context, repo, workflow, ref string) error {
+	_, err := g.api(ctx, "workflow", "run", workflow, "-R", repo, "--ref", ref)
+	return err
 }
 
 // GoBuild is the production toolchain. CGO is off so the artifact runs on a
