@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -74,7 +73,7 @@ func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 			// door. It used to be the banner itself, which cost between 1,900 and
 			// 6,500 bytes to say that no arguments is not an invocation — and cost
 			// the same on every flag typo, which is the common case.
-			bin := buildTool(t, root, tool)
+			bin := builtTool(t, root, tool)
 			exit, stdout, stderr := runBare(t, root, tool, bin, nil)
 			assert.Equal(t, 2, exit, "a bare `%s` exits %d, want 2 (could not run — no arguments is not an invocation)", tool, exit)
 			assert.Empty(t, stdout, "a bare `%s` wrote to stdout: %q; a refusal belongs on stderr", tool, stdout)
@@ -167,23 +166,42 @@ func readmeWhatItDoes(t *testing.T, readme string) map[string]string {
 	return out
 }
 
-// buildTool builds one command and returns its path. It is BUILT rather than called
-// as a package, because what this test is about is what a stranger meets at a shell
-// prompt. Each tool is built ONCE per subtest and run twice (bare, then `help`):
-// building it per invocation made this the slowest package in the tree for no extra
-// evidence -- the same binary answers both questions (#516).
-func buildTool(t *testing.T, root, tool string) string {
+// builtTool returns the path of one command from the package's one build of
+// every command (builtTools). It is BUILT rather than called as a package,
+// because what this test is about is what a stranger meets at a shell prompt.
+// The binary is shared: the onboarding walk, the refusal-grammar walk and the
+// version walk all run the same build, which is one `go build ./cmd/...` per
+// package run instead of a link per tool per walk (#516; the per-walk links
+// took the functional internal/ci package past its 100 s bound at GOMAXPROCS=2).
+func builtTool(t *testing.T, root, tool string) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), tool)
-	if runtime.GOOS == "windows" {
-		bin += ".exe"
-	}
-	build := exec.Command("go", "build", "-o", bin, "./cmd/"+tool)
-	build.Env = goenv.Clean(os.Environ())
-	build.Dir = root
-	out, err := build.CombinedOutput()
-	require.NoError(t, err, "building %s: %v\n%s", tool, err, out)
+	bin := filepath.Join(builtTools(t, root), exeName(tool))
+	_, err := os.Stat(bin)
+	require.NoError(t, err, "cmd/%s is a directory under cmd/ but `go build ./cmd/...` made no %s; every directory under cmd/ is a command", tool, filepath.Base(bin))
 	return bin
+}
+
+// builtTools builds every command ONCE per package run, in one `go build -o
+// <dir>/ ./cmd/...`, and returns the directory the binaries are in. The first
+// caller builds while the others wait; every caller reads the one result, and
+// a failed build fails every caller with its output. TestMain removes the
+// directory (classtests_class_test.go).
+func builtTools(t *testing.T, root string) string {
+	t.Helper()
+	toolsShared.once.Do(func() {
+		dir, err := os.MkdirTemp("", "ci-built-tools-")
+		if err != nil {
+			toolsShared.err = err
+			return
+		}
+		toolsShared.dir = dir
+		build := exec.Command("go", "build", "-o", dir+string(os.PathSeparator), "./cmd/...")
+		build.Env = goenv.Clean(os.Environ())
+		build.Dir = root
+		toolsShared.out, toolsShared.err = build.CombinedOutput()
+	})
+	require.NoErrorf(t, toolsShared.err, "building ./cmd/...: %v\n%s", toolsShared.err, toolsShared.out)
+	return toolsShared.dir
 }
 
 // runBare runs the built command with the arguments given (none, or `help`).

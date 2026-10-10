@@ -886,10 +886,22 @@ func sharedPromotionRepo(t *testing.T) *promotionRepo {
 	}
 }
 
+// toolsShared is the one build of every command per package run, shared by the
+// functional walks over cmd/ (builtTools, onboarding_functional_test.go); TestMain
+// removes it.
+var toolsShared struct {
+	once sync.Once
+	dir  string
+	out  []byte
+	err  error
+}
+
 func TestMain(m *testing.M) {
 	code := m.Run()
-	if promotionShared.dir != "" {
-		_ = os.RemoveAll(promotionShared.dir) // ignored: a temporary directory that may already be gone
+	for _, dir := range []string{promotionShared.dir, toolsShared.dir} {
+		if dir != "" {
+			_ = os.RemoveAll(dir) // ignored: a temporary directory that may already be gone
+		}
 	}
 	os.Exit(code)
 }
