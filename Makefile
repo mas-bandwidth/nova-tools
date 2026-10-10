@@ -76,7 +76,7 @@ DARWIN_TIMEOUT ?= 110s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-functional vet-slow vet-shippedsmoke vet-novadisk vet-laws vet-windows lint preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map new-rule new-verb clidoc
+.PHONY: help build fmt vet vet-functional vet-slow vet-shippedsmoke vet-novadisk vet-laws vet-windows lint preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map new-rule new-verb clidoc compat-verbs
 
 help:
 	@echo "make tlc         bounded Linux TLC group (TLC_JAR, TLC_OUT, TLC_GROUP)"
@@ -110,6 +110,7 @@ help:
 	@echo "make check       build, lint, test, test-e2e and test-lisp (CI's gates; the stream lander's batch test)"
 	@echo "make clean       remove ./bin and ./scratch"
 	@echo "make map         regenerate AGENTS.md and per-directory maps"
+	@echo "make compat-verbs regenerate cmd/nova-sprint/testdata/last-release-verbs.golden from the last release tag"
 	@echo "make new-rule    scaffold a class rule skeleton (ARGS=<name>)"
 	@echo "make new-verb    scaffold a CLI verb skeleton (ARGS='<tool> <verb>')"
 	@echo "make clidoc      regenerate CLI.md reference blocks from tool help"
@@ -148,6 +149,25 @@ new-verb:
 clidoc:
 	$(GO) build -o ./bin/ $(shell sed -n 's/^<!-- clidoc:begin \(nova-[a-z0-9-]*\) -->$$/\1/p' docs/CLI.md | sort -u | sed 's|^|./cmd/|') ./tools/clidoc
 	./bin/clidoc --bin ./bin
+
+# compat-verbs regenerates cmd/nova-sprint/testdata/last-release-verbs.golden
+# from the last release tag, which is the table TestEveryVerbOfThisClientIsReadByTheLastRelease
+# reads (docs/SPEC-SPRINT.md, "The client of this build is read by the last
+# release's server"). It checks the tag out in a worktree, runs this tree's
+# TestWriteCompatGolden THERE -- the test computes the table from the package
+# under test, so the table written is the tag's -- and the test writes it
+# straight to this tree's golden. Nothing here pushes or rebases; the worktree is
+# removed whatever happens.
+compat-verbs:
+	@set -e; \
+	tag=$$(git tag --list 'v[0-9]*' --sort=-v:refname | head -1); \
+	test -n "$$tag" || { echo "compat-verbs: this checkout has no release tag" >&2; exit 2; }; \
+	tmp=$$(mktemp -d); \
+	trap 'git worktree remove --force "$$tmp/tree" >/dev/null 2>&1 || true; rm -rf "$$tmp"' EXIT; \
+	git worktree add -q --detach "$$tmp/tree" "$$tag"; \
+	cp cmd/nova-sprint/compat_test.go "$$tmp/tree/cmd/nova-sprint/compat_test.go"; \
+	( cd "$$tmp/tree" && NOVA_SPRINT_COMPAT_GOLDEN="$(CURDIR)/cmd/nova-sprint/testdata/last-release-verbs.golden" $(GO) test -count=1 ./cmd/nova-sprint -run TestWriteCompatGolden ); \
+	echo "compat-verbs: wrote cmd/nova-sprint/testdata/last-release-verbs.golden from $$tag"
 
 
 build:
