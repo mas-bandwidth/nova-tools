@@ -7018,6 +7018,13 @@ daemon), and a step forgotten by hand is an outage that looks like a mystery: th
 blanked three times, a friend daemon ran a stale copy for a day, and a plist edit did not take
 because `launchctl kickstart -k` keeps the arguments launchd loaded. So every step is the play's.
 
+`nova-sprint adopt --dry-run` runs this play with Ansible check mode and writes nothing. For
+each step the play says it would change, the command prints `ADOPT WOULD step=<name> host=<host>`
+and ends with `ADOPT DRY-RUN OK steps=<n>`; a check-mode fatal prints
+`ADOPT REFUSED step=<name> dry-run=yes: <ansible one-line error>`. A successful rehearsal
+means each reported change was planned and no check-mode task failed; it does not open the
+adoption window.
+
 `nova-sprint live` is the manifest of this host, read-only: the installed nova-sprint (path,
 inode, version, revision), the store's function library against the installed build's
 (`nova-redis fn check`: `match` when the loaded digest is the build's), each `--dashboard` link

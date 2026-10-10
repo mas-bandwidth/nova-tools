@@ -81,14 +81,17 @@ func TestAdoptRunsThePlayAndRefusesAHalfMove(t *testing.T) {
 	assert.Contains(t, out, "ADOPT ADOPTED version=v1.2.0-dev.abc1234 hosts=seat-a steps=store,server,dashboard,friends")
 
 	// --dry-run is --check; a built release directory is <out>/<version>; --limit names the host
-	dry := &fakePlay{out: playOK}
+	dry := &fakePlay{out: strings.ReplaceAll(playOK, "CHANGED", "WOULD-CHANGE")}
 	code, out, errs = run(dry, append([]string{built, "--dry-run", "--limit", "seat-a"}, base...)...)
 	require.Equal(t, 0, code, errs)
 	assert.True(t, slices.Contains(dry.argv, "--check"))
 	assert.True(t, slices.Contains(dry.argv, "nova_version=v1.2.0-dev.abc1234"))
 	assert.True(t, slices.Contains(dry.argv, "nova_release_out="+filepath.Dir(built)))
 	assert.True(t, slices.Contains(dry.argv, "seat-a,localhost,store_deployer"))
-	assert.Contains(t, out, "ADOPT WOULD-ADOPT ")
+	for _, step := range adoptPlaySteps {
+		assert.Contains(t, out, "ADOPT WOULD step="+step+" host=seat-a")
+	}
+	assert.Contains(t, out, "ADOPT DRY-RUN OK steps=4")
 
 	// the play stops at the dashboard: the steps before it are said, the refusal names the step
 	stopped := &fakePlay{out: `TASK [store: the receipt] ***

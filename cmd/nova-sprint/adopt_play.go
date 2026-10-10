@@ -198,15 +198,42 @@ func (a *app) cmdAdoptPlay(args []string, stdout, stderr io.Writer) int {
 	}
 	output, playErr := runner.Play(context.Background(), argv)
 	r := readAdopt(output)
+	would := 0
 	for _, l := range r.lines {
-		if !strings.HasPrefix(l, "ADOPT REFUSED ") {
-			fmt.Fprintln(stdout, oneline.Escape(l))
+		if strings.HasPrefix(l, "ADOPT REFUSED ") {
+			continue
 		}
+		if *dry {
+			if !strings.Contains(l, "WOULD-CHANGE") {
+				continue
+			}
+			step, host := adoptStepRe.FindStringSubmatch(l), adoptHostRe.FindStringSubmatch(l)
+			if step == nil || host == nil {
+				continue
+			}
+			fmt.Fprintf(stdout, "ADOPT WOULD step=%s host=%s\n", step[1], host[1])
+			would++
+			continue
+		}
+		fmt.Fprintln(stdout, oneline.Escape(l))
 	}
 	again := "fix the cause and run the same adopt again (the play is idempotent: it changes only what is still stale)"
 	finish := "the steps before it are done and the ones after it did not run; " + again
 	switch {
 	case r.refused != "":
+		if *dry {
+			step := adoptStepRe.FindStringSubmatch(r.refused)
+			name := "play"
+			if step != nil {
+				name = step[1]
+			}
+			line := strings.Join(strings.Fields(r.refused), " ")
+			if fatal := adoptFatalRe.FindString(output); fatal != "" {
+				line = strings.Join(strings.Fields(fatal), " ")
+			}
+			fmt.Fprintf(stderr, "ADOPT REFUSED step=%s dry-run=yes: %s; run: nova-sprint live\n", name, oneline.Escape(truncateLine(line, 300)))
+			return 1
+		}
 		said := r.refused
 		if r.rollback != "" {
 			said += "; " + r.rollback
@@ -226,6 +253,14 @@ func (a *app) cmdAdoptPlay(args []string, stdout, stderr io.Writer) int {
 		step, _, _ := strings.Cut(task, ":")
 		if !slices.Contains(adoptPlaySteps, step) {
 			step = "play"
+		}
+		if *dry {
+			line := adoptFatalRe.FindString(output)
+			if line == "" {
+				line = oneline.Err(playErr)
+			}
+			fmt.Fprintf(stderr, "ADOPT REFUSED step=%s dry-run=yes: %s; run: nova-sprint live\n", step, oneline.Escape(truncateLine(strings.Join(strings.Fields(line), " "), 300)))
+			return 1
 		}
 		for _, l := range adoptFatalRe.FindAllString(output, 5) {
 			fmt.Fprintln(stderr, oneline.Escape(truncateLine(l, 300)))
@@ -254,11 +289,11 @@ func (a *app) cmdAdoptPlay(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
-	word := "ADOPTED"
 	if *dry {
-		word = "WOULD-ADOPT"
+		fmt.Fprintf(stdout, "ADOPT DRY-RUN OK steps=%d\n", would)
+		return 0
 	}
-	fmt.Fprintf(stdout, "ADOPT %s version=%s hosts=%s steps=%s\n", word, version, strings.Join(hosts, ","), strings.Join(adoptPlaySteps, ","))
+	fmt.Fprintf(stdout, "ADOPT ADOPTED version=%s hosts=%s steps=%s\n", version, strings.Join(hosts, ","), strings.Join(adoptPlaySteps, ","))
 	return 0
 }
 
