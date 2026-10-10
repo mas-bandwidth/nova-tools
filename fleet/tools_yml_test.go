@@ -126,10 +126,15 @@ func TestToolsYmlBuildsNovaSprintFromItsOwnRepo(t *testing.T) {
 		argv := strings.Join(stringList(cmd["argv"]), " ")
 		return strings.Contains(argv, "[seat_sprint, 'live'") && !strings.Contains(argv, "seat_cand ~ '/nova-sprint'")
 	})
+	// The copy reads the verified stage on the managed machine, never the
+	// controller's build out: remote_src is part of the copy's identity here,
+	// so a copy that lost it no longer matches and every row that names
+	// `copied` reads red (docs/FLEET.md, "tools.yml", step 3).
 	copied := taskIndex(install, func(task map[string]any) bool {
 		cp, _ := task["ansible.builtin.copy"].(map[string]any)
 		return str(cp["src"]) == "{{ tools_sprint_stage }}/{{ tools_sprint_file }}" &&
-			str(cp["dest"]) == "{{ nova_bin_dir }}/{{ tools_sprint_file }}" && cp["mode"] == "0755"
+			str(cp["dest"]) == "{{ nova_bin_dir }}/{{ tools_sprint_file }}" && cp["mode"] == "0755" &&
+			cp["remote_src"] == true
 	})
 	seatRelease := taskIndex(seat, func(task map[string]any) bool {
 		cmd, _ := task["ansible.builtin.command"].(map[string]any)
@@ -138,17 +143,8 @@ func TestToolsYmlBuildsNovaSprintFromItsOwnRepo(t *testing.T) {
 	seatCopied := taskIndex(seat, func(task map[string]any) bool {
 		cp, _ := task["ansible.builtin.copy"].(map[string]any)
 		return str(cp["src"]) == "{{ tools_sprint_stage }}/{{ tools_sprint_file }}" &&
-			str(cp["dest"]) == "{{ nova_bin_dir }}/{{ tools_sprint_file }}" && cp["mode"] == "0755"
-	})
-	installRemoteSrc := taskIndex(install, func(task map[string]any) bool {
-		cp, _ := task["ansible.builtin.copy"].(map[string]any)
-		return str(cp["src"]) == "{{ tools_sprint_stage }}/{{ tools_sprint_file }}" &&
-			str(cp["dest"]) == "{{ nova_bin_dir }}/{{ tools_sprint_file }}" && cp["remote_src"] == true
-	})
-	seatRemoteSrc := taskIndex(seat, func(task map[string]any) bool {
-		cp, _ := task["ansible.builtin.copy"].(map[string]any)
-		return str(cp["src"]) == "{{ tools_sprint_stage }}/{{ tools_sprint_file }}" &&
-			str(cp["dest"]) == "{{ nova_bin_dir }}/{{ tools_sprint_file }}" && cp["remote_src"] == true
+			str(cp["dest"]) == "{{ nova_bin_dir }}/{{ tools_sprint_file }}" && cp["mode"] == "0755" &&
+			cp["remote_src"] == true
 	})
 	// The window's replacement detection lists the release stage WITHOUT its
 	// nova-sprint (that stale copy must not open the window on every run) and
@@ -201,8 +197,7 @@ func TestToolsYmlBuildsNovaSprintFromItsOwnRepo(t *testing.T) {
 			verified > stagedSums && stagedSums >= 0},
 		{"the install play's copy follows the verification and the release's own install",
 			verified >= 0 && copied > verified && copied > release && release >= 0},
-		{"the install play's copy uses the verified local stage, not the controller's build out", copied >= 0},
-		{"the install play's copy reads the verified stage on the managed machine", installRemoteSrc >= 0},
+		{"the install play's copy reads the verified stage on the managed machine, not the controller's build out", copied >= 0},
 		{"the desired nova-sprint is the split build's stage, never the release stage's", candidateSprint >= 0},
 		{"the candidate's directory for its other tools is the release stage", candidateRelease >= 0},
 		{"the candidate checks run the selected split build", candidateLive >= 0},
@@ -214,7 +209,6 @@ func TestToolsYmlBuildsNovaSprintFromItsOwnRepo(t *testing.T) {
 		{"the seat play installs through the release's own install", seatRelease >= 0},
 		{"the seat play places nova-sprint after that install", seatCopied > seatRelease && seatRelease >= 0},
 		{"the seat window's copy is the one that installs on the coordinator", seatCopied >= 0 && !excludesCoordinators(seat[seatCopied])},
-		{"the seat window's copy reads the verified stage on the managed machine", seatRemoteSrc >= 0},
 		{"both copies record a receipt", installReceipt >= 0 && seatReceipt >= 0},
 		{"fleet/retired-tools.txt never names nova-sprint", !slices.Contains(strings.Fields(string(readFleetFile(t, "retired-tools.txt"))), "nova-sprint")},
 	}
