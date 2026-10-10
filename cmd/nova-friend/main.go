@@ -82,6 +82,7 @@ type world struct {
 	stage          func(dir string) *friend.Stager                                                                                        // stages a held card's job under her working directory and prunes the finished ones (friend.Stager, with the daemon's git credentials); nil stages none (a test's)
 	tip            func(ctx context.Context, repo, branch string) (string, error)                                                         // origin's tip of a card's branch (friend.Stager.Tip, one git ls-remote): a report's LAND finishes only there; nil reads none (a test's)
 	launchctl      friend.Launchctl
+	disabled       func(domain, label string) bool // launchd's override database (print-disabled) holds an agent's label disabled; nil reads none (a test that does not exercise the enable step)
 	now            func() time.Time
 	sleep          func(ctx context.Context, d time.Duration)
 	signals        func(ctx context.Context) (context.Context, context.CancelFunc)
@@ -293,6 +294,7 @@ func realWorld() world {
 		},
 	}
 	w.open = w.openRedis
+	w.disabled = func(domain, label string) bool { return friend.Disabled(context.Background(), w.launchctl, domain, label) }
 	return w
 }
 
@@ -608,7 +610,11 @@ file's directory and the config directory must each be a real directory: a symli
 that is one) is refused and nothing is written or loaded. nova-friend check --settings names drift.
 Then writes ~/Library/LaunchAgents/com.nova.friend-<me>.plist (RunAtLoad, KeepAlive: started at login,
 restarted when it dies, pending messages redelivered first), boots out whatever that label runs,
-and bootstraps the new one; running it again replaces the agent. launchd's own log goes under
+and bootstraps the new one; running it again replaces the agent. A label launchd's override database
+holds disabled (an earlier bootout that disabled it, or a hand launchctl disable) answers exit 5,
+Input/output error, at every bootstrap: install reads launchctl print-disabled and enables the label
+before it bootstraps, and a bootstrap that still fails names the label, its domain, launchd's exit,
+whether the label was disabled, and the enable line that is the remedy. launchd's own log goes under
 ~/Library/Logs (launchd cannot open one on a network volume). The daemon's state files and record
 go under <dir>/.nova-friend, inside the directory the session may write, so a sandboxed session's
 pong lands where the daemon reads it; a directory that refuses them (a background process may not
@@ -1853,9 +1859,15 @@ func (w world) install(c *tool.Call) *tool.Out {
 		if copy {
 			o.Item("plan", "command", tool.Text("copy "+src+" "+placed))
 		}
-		o.Item("plan", "command", tool.Text("write "+a.PlistPath())).
-			Item("plan", "command", tool.Text(fmt.Sprintf("launchctl bootout gui/%d/%s", w.uid, a.Label()))).
-			Item("plan", "command", tool.Text(fmt.Sprintf("launchctl bootstrap gui/%d %s", w.uid, a.PlistPath()))).
+		domain := fmt.Sprintf("gui/%d", w.uid)
+		o = o.Item("plan", "command", tool.Text("write "+a.PlistPath())).
+			Item("plan", "command", tool.Text("launchctl bootout " + domain + "/" + a.Label()))
+		// a label disabled in launchd's override database answers exit 5 at
+		// every bootstrap: the real install enables it first, so the plan says so
+		if w.disabled != nil && w.disabled(domain, a.Label()) {
+			o = o.Item("plan", "command", tool.Text("launchctl enable " + domain + "/" + a.Label()))
+		}
+		o = o.Item("plan", "command", tool.Text("launchctl bootstrap " + domain + " " + a.PlistPath())).
 			Note("the agent runs: " + a.Said())
 		return noteClaudeWait(noteGrokMonitor(o, a.Harness, a.Session), a.Harness, a.Friend, w.claudeWake(c, a.Friend))
 	}
