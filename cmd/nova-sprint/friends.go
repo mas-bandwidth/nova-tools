@@ -386,7 +386,13 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	if whyTests != "" {
 		return refuse(stderr, name, whyTests)
 	}
-	rep := sprint.FriendReport{Running: sprint.Split(*running)}
+	rep := sprint.FriendReport{}
+	if provided["running"] {
+		rep.Running = sprint.Split(*running)
+		if rep.Running == nil {
+			rep.Running = []string{} // a named empty list clears the stored list
+		}
+	}
 	if b := strings.TrimSpace(*build); b != "" {
 		rep.Build = oneline.Field(b)
 	}
