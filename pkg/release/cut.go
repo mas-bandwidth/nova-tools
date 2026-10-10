@@ -31,10 +31,14 @@ var memberNumber = regexp.MustCompile(`#(\d+)\b`)
 
 // PullRequests reads a compare range as a changelog. One commit whose subject
 // ends in `(#n)` is one pull request; the rest of the message, if it names other
-// pull requests, is that entry's member list.
+// pull requests, is that entry's member list. Merge-queue commits (identified by
+// gh-readonly-queue in the message) are excluded.
 func PullRequests(commits []Commit) []PR {
 	var prs []PR
 	for _, c := range commits {
+		if strings.Contains(c.Message, "gh-readonly-queue") {
+			continue
+		}
 		subject, body, _ := strings.Cut(strings.TrimSpace(c.Message), "\n")
 		subject = strings.TrimSpace(subject)
 		m := prNumber.FindStringSubmatch(subject)

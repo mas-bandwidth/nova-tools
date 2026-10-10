@@ -523,6 +523,34 @@ func TestCutCountsOnlyCommitsThatNameAPullRequest(t *testing.T) {
 	}
 }
 
+// TestPullRequestsExcludesMergeQueueCommits verifies that merge-queue merge commits
+// (which have "gh-readonly-queue" in the source branch) are not included in the changelog.
+func TestPullRequestsExcludesMergeQueueCommits(t *testing.T) {
+	t.Parallel()
+
+	commits := []Commit{
+		// Regular squash merge - should be included
+		{SHA: "aaa", Message: "feat: some feature (#123)\n\nbody"},
+		// Merge-queue merge - should NOT be included
+		{SHA: "bbb", Message: "Merge pull request #456 from gh-readonly-queue/main/pr-456-abcdef"},
+		// Another regular squash merge - should be included
+		{SHA: "ccc", Message: "fix: a fix (#789)\n\nbody"},
+	}
+
+	prs := PullRequests(commits)
+
+	// Should only have 2 PRs (the squash merges)
+	if len(prs) != 2 {
+		t.Errorf("expected 2 PRs, got %d: %v", len(prs), prs)
+	}
+	if prs[0].Number != 123 {
+		t.Errorf("expected first PR to be #123, got #%d", prs[0].Number)
+	}
+	if prs[1].Number != 789 {
+		t.Errorf("expected second PR to be #789, got #%d", prs[1].Number)
+	}
+}
+
 func TestCutDryRunWritesNothingAndTagsNothing(t *testing.T) {
 	t.Parallel()
 
