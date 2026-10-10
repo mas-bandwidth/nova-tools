@@ -40,3 +40,4 @@ internal/bus/note.go a file of the git bus, removed 2026-10-04; the ratings and 
 internal/bus/prepared.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
 docs/SPEC-BUS-DELIVERY.md a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
 internal/secrets/storepull.go deleted with the dead storepull.go (dead-pkg-secrets-t2b); the 1.1.0 ratings doc cites it as history
+internal/testverbhelp/complete.go a file the spec plans to write for the completeness rule check; not yet written

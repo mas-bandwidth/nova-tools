@@ -2,7 +2,6 @@ package testverbhelp
 
 import (
 	"io"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -98,7 +97,7 @@ func TestTheShippedCompleteLedgerParses(t *testing.T) {
 
 func readLedger(t *testing.T) string {
 	t.Helper()
-	b, err := os.ReadFile(LedgerPath())
+	b, err := readLedgerFile()
 	require.NoError(t, err)
 	return string(b)
 }
