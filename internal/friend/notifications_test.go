@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -311,4 +312,111 @@ func TestDeferredReportSurvivesRestartThenEnqueuesWhenCapacityOpens(t *testing.T
 	pending, err := r.store.Pending(context.Background(), bus.StreamOf("bob"), "bob", 1000)
 	require.NoError(t, err)
 	assert.Empty(t, pending)
+}
+
+// Deal notices coalesce per friend in the notification receiver: multiple deal
+// notices while the session is busy collapse into one turn carrying the newest,
+// batch and per-card subjects coalesce together, and a notice whose cards are
+// already taken before delivery is withdrawn without delivering a turn.
+func TestDealNoticesCoalescePerFriend(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	dir := t.TempDir()
+	r.d.Friend = "bob"
+	var heldCards []string
+	r.d.Cards = func() []string {
+		return heldCards
+	}
+	heldCards = []string{"c-1", "c-2", "c-3", "c-4", "c-5", "c-6"}
+
+	var mu sync.Mutex
+	busy := true
+	var delivered []string
+	r.d.Deliver = notificationDelivery(func(_ context.Context, text string) (int, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if busy {
+			return 0, Deferred{Reason: "busy"}
+		}
+		delivered = append(delivered, text)
+		return 0, nil
+	})
+
+	n := &notificationReceiver{
+		d:      r.d,
+		b:      r.bus,
+		policy: NotificationPolicy{Window: 5 * time.Second},
+		dir:    dir,
+	}
+
+	send := func(subject string) bus.Message {
+		m, err := r.bus.Send(context.Background(), bus.Message{
+			From:    "ada",
+			To:      []string{"bob"},
+			Kind:    bus.KindStatus,
+			Subject: subject,
+			Body:    "cards ready in inbox",
+		})
+		require.NoError(t, err)
+		return m
+	}
+
+	// 5 deal notices arrive while session is busy:
+	// mix per-card and batch subjects so batch-subject coalesces with per-card.
+	send("card c-1 dealt: FRIEND-CARD DELIVERED friend=bob card=c-1")
+	send("card c-2 dealt: FRIEND-CARD DELIVERED friend=bob card=c-2")
+	send("cards dealt: 2 (c-3, c-4)")
+	send("card c-5 dealt: FRIEND-CARD DELIVERED friend=bob card=c-5")
+	m5 := send("cards dealt: 1 (c-6)")
+
+	// Step while busy.
+	require.NoError(t, n.step(context.Background(), t0))
+	// Advance clock past ReadyDue to attempt delivery while still busy.
+	require.NoError(t, n.step(context.Background(), t0.Add(10*time.Second)))
+
+	mu.Lock()
+	assert.Empty(t, delivered, "session is busy, nothing delivered yet")
+	mu.Unlock()
+
+	// Available now: when available, 1 turn delivered carrying newest.
+	mu.Lock()
+	busy = false
+	mu.Unlock()
+
+	// Advance clock past RetryAt.
+	require.NoError(t, n.step(context.Background(), t0.Add(10*time.Second+RecheckEvery)))
+
+	mu.Lock()
+	require.Len(t, delivered, 1, "exactly 1 turn delivered after coalescing 5 deal notices")
+	assert.Contains(t, delivered[0], "c-6", "turn carries newest deal notice")
+	assert.NotContains(t, delivered[0], "c-1")
+	assert.NotContains(t, delivered[0], "c-2")
+	assert.NotContains(t, delivered[0], "c-5")
+	mu.Unlock()
+
+	// Verify m5 was delivered and acknowledged.
+	stages, _, err := r.bus.Stages(context.Background(), "bob", m5.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, stages)
+	assert.Equal(t, bus.Delivered, stages[len(stages)-1].State)
+
+	// Now verify: a notice whose cards are taken before delivery is withdrawn.
+	m7 := send("card c-7 dealt: FRIEND-CARD DELIVERED friend=bob card=c-7")
+	// Cards c-7 are NOT held (all taken).
+	heldCards = []string{"c-1"} // c-7 is not in heldCards!
+
+	// Step past window to reach delivery.
+	now := t0.Add(100 * time.Second)
+	require.NoError(t, n.step(context.Background(), now))
+	require.NoError(t, n.step(context.Background(), now.Add(10*time.Second)))
+
+	mu.Lock()
+	assert.Len(t, delivered, 1, "withdrawn notice produces no new delivery")
+	mu.Unlock()
+
+	// Verify m7 was acknowledged on the bus as withdrawn.
+	stages7, _, err := r.bus.Stages(context.Background(), "bob", m7.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, stages7)
+	assert.Equal(t, bus.Delivered, stages7[len(stages7)-1].State)
 }

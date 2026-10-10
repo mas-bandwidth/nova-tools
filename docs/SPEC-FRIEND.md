@@ -989,7 +989,7 @@ queued request of the same kind:
   (`TestAFailedCodexQueueLeavesTheOldRequestStanding`).
 - A withdrawal the app refuses is one line, marked superseded. One the
   session took first is one line saying so.
-- A queued message that carries anything else (a bus message, a card dealt)
+- A queued message that carries anything else (a bus message)
   is never withdrawn.
 
 `CodexCheckRequeue` is the session check's re-ask age (`ReaskAfter`, an hour) less one
@@ -1257,11 +1257,16 @@ Plain transport acknowledgments and routine status retain bus/audit handling and
 produce no model wake; `--notify-kinds` opts other kinds in. Requests and blockers
 cannot be filtered out. Genuine ping/wake controls remain separate from card noise.
 
-The server's `card <id> dealt: FRIEND-CARD|FRIEND-READ DELIVERED ...` status courtesies
-set one global ready-queue bit across all cards. Each receive pass reads at most
-32 entries. `--notify-window` (30 seconds) coalesces a burst across passes; one
-constant ready-queue wake asks the coordinator to read the canonical queue. It
-claims or executes nothing. Child-finish refill belongs to the existing dispatcher.
+The server's deal notices—both per-card `card <id> dealt: FRIEND-CARD|FRIEND-READ DELIVERED ...`
+status courtesies and batch `cards dealt: N (...)` notices—are treated as state, not events,
+and keyed per friend in notification state. A newer deal notice replaces an older pending
+one for the same friend, acknowledging the superseded notice on the bus. Each receive pass
+reads at most 32 entries. `--notify-window` (30 seconds) coalesces bursts across passes.
+When delivery is due, if all cards in the deal notice are already taken (answered by the
+daemon's card state `d.held()`), the notice is withdrawn at delivery and acknowledged
+without delivering a turn. Otherwise, when available, one turn is delivered carrying the
+newest deal notice alongside the canonical ready queue notification. It claims or executes
+nothing; child-finish refill belongs to the existing dispatcher.
 
 The file-synced atomic journal holds one active immutable batch, at most one deferred
 nonurgent report or notice batch, and one ready bit. The app queue permits one unread notification batch

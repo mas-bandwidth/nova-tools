@@ -51,10 +51,64 @@ func (p NotificationPolicy) window() time.Duration {
 // cardNotification is the server's delivery courtesy, not a word in someone's prose
 // (cmd/nova-sprint wakeFriend; SPEC-FRIEND.md, notifications). All cards share one wake.
 func cardNotification(m bus.Message) bool {
-	if m.KindName() != bus.KindStatus || !strings.HasPrefix(m.Subject, "card ") {
+	if m.KindName() != bus.KindStatus {
+		return false
+	}
+	if strings.HasPrefix(m.Subject, "cards dealt: ") {
+		return true
+	}
+	if !strings.HasPrefix(m.Subject, "card ") {
 		return false
 	}
 	return strings.Contains(m.Subject, " dealt: FRIEND-CARD DELIVERED ") || strings.Contains(m.Subject, " dealt: FRIEND-READ DELIVERED ")
+}
+
+func dealFriend(m bus.Message, fallback string) string {
+	if idx := strings.Index(m.Subject, "friend="); idx != -1 {
+		rest := m.Subject[idx+len("friend="):]
+		if f := strings.Fields(rest); len(f) > 0 {
+			return f[0]
+		}
+	}
+	if len(m.To) > 0 && m.To[0] != "" {
+		return m.To[0]
+	}
+	return fallback
+}
+
+func dealCards(m bus.Message) []string {
+	if strings.HasPrefix(m.Subject, "cards dealt: ") {
+		start := strings.Index(m.Subject, "(")
+		end := strings.LastIndex(m.Subject, ")")
+		if start != -1 && end > start {
+			parts := strings.Split(m.Subject[start+1:end], ",")
+			var cards []string
+			for _, p := range parts {
+				p = strings.TrimSpace(p)
+				if p == "" || (strings.HasPrefix(p, "and ") && strings.HasSuffix(p, " more")) {
+					continue
+				}
+				cards = append(cards, p)
+			}
+			return cards
+		}
+	}
+	if strings.HasPrefix(m.Subject, "card ") {
+		rest := strings.TrimPrefix(m.Subject, "card ")
+		if cardID, _, ok := strings.Cut(rest, " dealt:"); ok {
+			cardID = strings.TrimSpace(cardID)
+			if cardID != "" {
+				return []string{cardID}
+			}
+		}
+	}
+	if idx := strings.Index(m.Subject, "card="); idx != -1 {
+		rest := m.Subject[idx+len("card="):]
+		if f := strings.Fields(rest); len(f) > 0 {
+			return []string{f[0]}
+		}
+	}
+	return nil
 }
 
 // NotificationBatch is the immutable input kept before enqueue. Accepted means the
@@ -67,20 +121,28 @@ type NotificationBatch struct {
 	Accepted bool          `json:"accepted,omitempty"`
 }
 
+type DealNotice struct {
+	Friend  string      `json:"friend"`
+	Cards   []string    `json:"cards,omitempty"`
+	Entry   string      `json:"entry,omitempty"`
+	Message bus.Message `json:"message,omitempty"`
+}
+
 // NotificationState is bounded to one active batch, one deferred nonurgent batch and a ready bit. The
 // bus remains the source of every message; filtered entries retain their audit there.
 type NotificationState struct {
 	Pending *NotificationBatch `json:"pending,omitempty"`
 	// Report retains the legacy JSON key for the one deferred report or notice batch.
-	Report        *NotificationBatch `json:"report,omitempty"`
-	ReportRetryAt time.Time          `json:"report_retry_at,omitzero"`
-	Ready         bool               `json:"ready,omitempty"`
-	ReadyDue      time.Time          `json:"ready_due,omitzero"`
-	NextReady     time.Time          `json:"next_ready,omitzero"`
-	RetryAt       time.Time          `json:"retry_at,omitzero"`
-	Failures      int                `json:"failures,omitempty"`
-	Audited       int                `json:"audited"`
-	LastID        string             `json:"last_id,omitempty"`
+	Report        *NotificationBatch     `json:"report,omitempty"`
+	ReportRetryAt time.Time              `json:"report_retry_at,omitzero"`
+	Deals         map[string]*DealNotice `json:"deals,omitempty"`
+	Ready         bool                   `json:"ready,omitempty"`
+	ReadyDue      time.Time              `json:"ready_due,omitzero"`
+	NextReady     time.Time              `json:"next_ready,omitzero"`
+	RetryAt       time.Time              `json:"retry_at,omitzero"`
+	Failures      int                    `json:"failures,omitempty"`
+	Audited       int                    `json:"audited"`
+	LastID        string                 `json:"last_id,omitempty"`
 }
 
 // ReadNotificationState and WriteNotificationState use the existing fsynced atomic
@@ -145,6 +207,66 @@ func (n *notificationReceiver) save() error {
 	return WriteNotificationState(n.dir, n.state)
 }
 
+func (d *Daemon) cardsKnown() bool {
+	if d == nil {
+		return false
+	}
+	if _, ok := d.heldFrom(); ok {
+		return true
+	}
+	if d.Cards != nil {
+		return true
+	}
+	path := filepath.Join(d.Dir, filepath.FromSlash(QueueFile))
+	var q Queue
+	if found, _ := read(path, &q); found {
+		return true
+	}
+	if found, _ := read(path, &q.Tasks); found {
+		return true
+	}
+	return false
+}
+
+func (n *notificationReceiver) cardsAllTaken(cards []string) bool {
+	if !n.d.cardsKnown() || len(cards) == 0 {
+		return false
+	}
+	held := n.d.held()
+	for _, c := range cards {
+		if slices.Contains(held, c) {
+			return false
+		}
+	}
+	return true
+}
+
+func (n *notificationReceiver) dealForFriend() *DealNotice {
+	if len(n.state.Deals) == 0 {
+		return nil
+	}
+	if d, ok := n.state.Deals[n.d.Friend]; ok && d != nil {
+		return d
+	}
+	if len(n.state.Deals) == 1 {
+		for _, d := range n.state.Deals {
+			return d
+		}
+	}
+	return nil
+}
+
+func (n *notificationReceiver) removeDeal(deal *DealNotice) {
+	if n.state.Deals == nil || deal == nil {
+		return
+	}
+	for k, d := range n.state.Deals {
+		if d == deal || d.Entry == deal.Entry {
+			delete(n.state.Deals, k)
+		}
+	}
+}
+
 func (n *notificationReceiver) step(ctx context.Context, now time.Time) error {
 	// A failed urgent batch stays pending; a failed nonurgent batch has its own slot. A ready wake is only a bit until due, so
 	// requests and blockers never wait behind its coalescing or retry window.
@@ -154,7 +276,27 @@ func (n *notificationReceiver) step(ctx context.Context, now time.Time) error {
 		}
 	}
 	if n.state.Pending == nil && n.state.Ready && !now.Before(n.state.ReadyDue) && !now.Before(n.state.RetryAt) {
-		n.state.Pending = &NotificationBatch{Text: NotificationReadyText, Ready: true}
+		deal := n.dealForFriend()
+		if deal != nil && n.cardsAllTaken(deal.Cards) {
+			if err := n.ack(ctx, []string{deal.Entry}, []bus.Message{deal.Message}, "deal notice withdrawn: cards taken"); err != nil {
+				return err
+			}
+			n.removeDeal(deal)
+			if len(n.state.Deals) == 0 {
+				n.state.Ready = false
+				n.state.ReadyDue = time.Time{}
+			}
+			return n.save()
+		}
+		text := NotificationReadyText
+		var entries []string
+		var messages []bus.Message
+		if deal != nil {
+			text = NotificationReadyText + "\n" + BatchFor(n.d.Coordinator, []bus.Message{deal.Message}, "", "")
+			entries = []string{deal.Entry}
+			messages = []bus.Message{deal.Message}
+		}
+		n.state.Pending = &NotificationBatch{Text: text, Entries: entries, Messages: messages, Ready: true}
 		if err := n.save(); err != nil {
 			return err
 		}
@@ -171,6 +313,21 @@ func (n *notificationReceiver) step(ctx context.Context, now time.Time) error {
 		return nil
 	}
 	if !p.Accepted {
+		if p.Ready {
+			deal := n.dealForFriend()
+			if deal != nil && n.cardsAllTaken(deal.Cards) {
+				if err := n.ack(ctx, p.Entries, p.Messages, "deal notice withdrawn: cards taken"); err != nil {
+					return err
+				}
+				n.removeDeal(deal)
+				n.state.Pending = nil
+				if len(n.state.Deals) == 0 {
+					n.state.Ready = false
+					n.state.ReadyDue = time.Time{}
+				}
+				return n.save()
+			}
+		}
 		exit, err := n.d.Deliver.Deliver(ctx, p.Text)
 		if ctx.Err() != nil {
 			return nil
@@ -207,8 +364,14 @@ func (n *notificationReceiver) step(ctx context.Context, now time.Time) error {
 		return err
 	}
 	if p.Ready {
-		n.state.Ready = false
-		n.state.ReadyDue = time.Time{}
+		deal := n.dealForFriend()
+		if deal != nil {
+			n.removeDeal(deal)
+		}
+		if len(n.state.Deals) == 0 {
+			n.state.Ready = false
+			n.state.ReadyDue = time.Time{}
+		}
 		n.state.NextReady = now.Add(n.policy.window())
 	}
 	n.state.Pending = nil
@@ -258,6 +421,21 @@ func (n *notificationReceiver) receive(ctx context.Context, now time.Time) error
 			silent = append(silent, e.Entry)
 			audited = append(audited, m)
 		} else if cardNotification(m) {
+			friend := dealFriend(m, n.d.Friend)
+			cards := dealCards(m)
+			if n.state.Deals == nil {
+				n.state.Deals = make(map[string]*DealNotice)
+			}
+			if old, exists := n.state.Deals[friend]; exists && old != nil {
+				silent = append(silent, old.Entry)
+				audited = append(audited, old.Message)
+			}
+			n.state.Deals[friend] = &DealNotice{
+				Friend:  friend,
+				Cards:   cards,
+				Entry:   e.Entry,
+				Message: m,
+			}
 			if !n.state.Ready {
 				n.state.Ready = true
 				n.state.ReadyDue = now.Add(n.policy.window())
@@ -265,8 +443,6 @@ func (n *notificationReceiver) receive(ctx context.Context, now time.Time) error
 					n.state.ReadyDue = n.state.NextReady
 				}
 			}
-			silent = append(silent, e.Entry)
-			audited = append(audited, m)
 		} else if n.policy.selected(m) && n.state.Report != nil && m.KindName() != bus.KindRequest && m.KindName() != bus.KindBlocker {
 			// Backpressured nonurgent input remains bus-pending, never released or acknowledged;
 			// the same bounded receiver can still reach later requests and blockers.
@@ -337,7 +513,7 @@ func (n *notificationReceiver) ack(ctx context.Context, entries []string, messag
 // NotificationKey is the durable enqueue family: one global ready wake, or a batch's
 // immutable message-id fingerprint. Only exact notifier prefixes participate.
 func NotificationKey(text string) string {
-	if text == NotificationReadyText {
+	if text == NotificationReadyText || strings.HasPrefix(text, NotificationReadyText) {
 		return "ready queue"
 	}
 	if first, _, ok := strings.Cut(text, "\n"); ok && strings.HasPrefix(first, NotificationBatchPrefix) {
@@ -349,7 +525,7 @@ func NotificationKey(text string) string {
 // NotificationCategory bounds unread useful input to one batch of each category;
 // report backpressure cannot consume the urgent category's capacity.
 func NotificationCategory(text string) string {
-	if text == NotificationReadyText {
+	if text == NotificationReadyText || strings.HasPrefix(text, NotificationReadyText) {
 		return "ready"
 	}
 	first, _, ok := strings.Cut(text, "\n")
