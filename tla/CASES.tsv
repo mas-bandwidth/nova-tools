@@ -319,6 +319,8 @@ MCLevelBrokenNoGap.cfg	MCLevel.tla	temporal	Terminates	ignore-terminal	level	req
 MCLevelBrokenRequeue.cfg	MCLevel.tla	invariant	MovesBounded	ignore-terminal	level	required	-
 MCLevelBrokenNaive.cfg	MCLevel.tla	invariant	SelectionComplete	ignore-terminal	level	required	-
 MCLevelBrokenNoSkip.cfg	MCLevel.tla	invariant	NeverOnARefuser	ignore-terminal	level	required	-
+MCLifecycle.cfg	MCLifecycle.tla	pass	-	ignore-terminal	lifecycle	required	-
+MCLifecycleBrokenTwice.cfg	MCLifecycle.tla	invariant	TwinnedAtMostOnce	ignore-terminal	lifecycle	required	-
 MCBus2.cfg	MCBus2.tla	pass	-	ignore-terminal	bus2	required	-
 MCBus2BrokenPartial.cfg	MCBus2.tla	invariant	OnEveryStreamOrNone	ignore-terminal	bus2	required	-
 MCBus2BrokenNewFirst.cfg	MCBus2.tla	action	PendingBeforeNew	ignore-terminal	bus2	required	-

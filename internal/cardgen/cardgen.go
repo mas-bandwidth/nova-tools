@@ -723,7 +723,7 @@ const Attribution = "ATTRIBUTION: By: your own name, the worker who does this at
 // AlwaysInPathsRule widens it. The sentence stays out of THE TASK: add's paths-cover-named
 // check would otherwise refuse every generated brief for naming tla/RUNS.tsv, tla/CASES.tsv
 // and internal/docs/catalog.go.
-const AsARead = "AS A READ\nA By: trailer is judged only for being present and true: it names the worker who pushed the branch under read, whoever was preferred for the card. A trailer naming another friend than a WHO line or an earlier brief expected is no finding, and attribution alone never decides a verdict; read the change against the task, its test and its PATHS.\nThe scope of this change is its PATHS line. " + AlwaysInPathsRule + "\n"
+const AsARead = "AS A READ\nA By: trailer is judged only for being present and true: it names the worker who pushed the branch under read, whoever was preferred for the card. A trailer naming another friend than a WHO line or an earlier brief expected is no finding, and attribution alone never decides a verdict; read the change against the task, its test and its PATHS.\nThe scope of this change is its PATHS line. " + AlwaysInPathsRule + "\nA head whose only defect is PATHS is a HOLD with a PATHS-PROPOSED line for the worker, not a broken finding.\n"
 
 // Deadline is the minutes a tier gets when the header names none.
 func Deadline(tier string) int {
