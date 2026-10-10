@@ -416,10 +416,14 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	base := fs.String("base", "", "the base branch of a card whose brief names no BASE: line")
 	check := fs.String("check", "", "a command run once per batch, by sh -c in the clone on the batch branch, before the push (bounded to 30m); non-zero reports the batch red and pushes nothing")
 	dry := fs.Bool("dry-run", false, "print the batches it would land and change nothing: reads the store only (no git, no push, no report)")
+	statusFlag := fs.Bool("status", false, "print the current land pass, phase and how long it has run, or no land pass running; when the server is running --land, reads the server's status file")
 	parallel := fs.Int("land-parallel", landParallelDefault, "how many streams merge at once, each in its own worktree of the clone, before the landings go one at a time (landpass.go); 1 merges the streams one after another")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "land", err.Error())
+	}
+	if *statusFlag {
+		return a.cmdLandStatus(args, stdout, stderr)
 	}
 	var bad []string
 	if len(pos) > 0 {
@@ -1037,6 +1041,7 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 		ids[i] = c.id
 	}
 	b.Cards, b.IDs = len(ids), ids
+	l.printPhase(stream, "report", len(pins), io.Discard)
 	l.stage("report", "merge report")
 	start := time.Now()
 	res, err := l.step(sprint.MergeReq{Stream: stream, Batch: len(ids), Who: l.c.actor}, pins)
@@ -1542,6 +1547,7 @@ func (l *lander) cutBranch(ctx context.Context, dir, stream, base string) (strin
 // held to the lander's checks (checkCard), and with gateEach gated (gateCard); after a cure
 // each head is gated whatever gateEach says. The results are build's.
 func (l *lander) mergeCards(ctx context.Context, dir, stream string, cards []landCard, c landCut, t *landTimes, gateEach bool) (merged []string, failed conflictCard, why string) {
+	l.printPhase(stream, "merge", len(cards), io.Discard)
 	start := time.Now()
 	defer since(&t.Merge, start)
 	merged = slices.Clone(c.merged)

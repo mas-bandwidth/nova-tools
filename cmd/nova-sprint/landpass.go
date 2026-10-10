@@ -346,6 +346,7 @@ func (l *lander) pass(ctx context.Context, s *sprint.Snapshot, order []string) (
 			}
 		}
 	}
+	l.clearStatus()
 }
 
 // refuse ends the job in phase 1 with a refusal: nothing pushed or reported for it.
@@ -429,6 +430,7 @@ func (l *lander) prepare(ctx context.Context, s *sprint.Snapshot, j *landJob) {
 // prepareCut cuts the branch and gates its base in this stream's bounded worker.
 func (l *lander) prepareCut(ctx context.Context, j *landJob) {
 	b := &j.b
+	l.printPhase(j.stream, "fetch", len(j.cards), io.Discard)
 	c, why := l.cut(ctx, j.dir, j.stream, j.cards, b.Times)
 	if why := gateWaitWhy(ctx); why != "" {
 		j.refuse(why)
@@ -749,6 +751,7 @@ func (l *lander) merge(ctx context.Context, j *landJob) {
 		j.refuse("the batch branch has no tip: " + firstLine("", err))
 		return
 	}
+	l.printPhase(stream, "check", len(merged), io.Discard)
 	l.stage("check", "check")
 	start := time.Now()
 	why, out := l.runCheck(ctx, dir)
@@ -837,6 +840,7 @@ func (l *lander) land(ctx context.Context, j *landJob, pushed []*landJob) {
 				}
 			}
 		}
+		f.printPhase(stream, "queue", len(j.merged), io.Discard)
 		f.stage("queue", "queue read")
 		start := time.Now()
 		why := f.queueHead(ctx, stream, j.cards[:len(j.merged)])
@@ -848,6 +852,7 @@ func (l *lander) land(ctx context.Context, j *landJob, pushed []*landJob) {
 		if l.a.beforePush != nil {
 			l.a.beforePush(attempt)
 		}
+		f.printPhase(stream, "push", len(j.merged), io.Discard)
 		f.stage("push", "git push")
 		start = time.Now()
 		_, err := f.git(ctx, j.dir, "push", "--porcelain", "origin", j.tip+":refs/heads/"+b.Base)
