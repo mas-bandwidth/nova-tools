@@ -2,6 +2,7 @@ package friend
 
 import (
 	"fmt"
+	"math/rand/v2"
 	"regexp"
 	"strings"
 	"time"
@@ -103,15 +104,17 @@ func ProviderLimit(session, out string) error {
 // turn ended clean in it (Clean). Back at the row's width the backoff starts
 // over. Each change is one line.
 type LaneGovernor struct {
-	cap         int           // the live cap; 0 is the row's width
-	pausedUntil time.Time     // no new turn before it
-	resumed     bool          // the pause's end has been said
-	backoff     time.Duration // the next pause; 0 is RateBackoffFirst
-	last        time.Time     // the last lowering
-	cleanSince  time.Time     // since when no rate limit: the pause's end, or the last raise
-	measured    bool          // a turn ended clean since cleanSince
-	lowered     []time.Time   // lowerings not yet judged, within RateJudgeWithin
-	held        string        // out of funds: why; "" none
+	cap         int              // the live cap; 0 is the row's width
+	pausedUntil time.Time        // no new turn before it
+	resumed     bool             // the pause's end has been said
+	backoff     time.Duration    // the next pause; 0 is RateBackoffFirst
+	last        time.Time        // the last lowering
+	cleanSince  time.Time        // since when no rate limit: the pause's end, or the last raise
+	measured    bool             // a turn ended clean since cleanSince
+	lowered     []time.Time      // lowerings not yet judged, within RateJudgeWithin
+	held        string           // out of funds: why; "" none
+	Rand        func() float64   // pseudo-random in [0, 1); nil is math/rand/v2.Float64 (docs/SPEC-FRIEND.md #rate-limit-backs-off-not-down.w1)
+	Now         func() time.Time // clock; nil is time.Now
 }
 
 // Cap is the live cap at width: the row's width unless a rate limit has
@@ -135,10 +138,32 @@ func (g *LaneGovernor) Release() { g.held = "" }
 // Held is why the lanes are held, out of funds; "" when they are not.
 func (g *LaneGovernor) Held() string { return g.held }
 
+// rand draws a pseudo-random float64 in [0, 1): LaneGovernor.Rand when set,
+// else math/rand/v2.Float64 (docs/SPEC-FRIEND.md #rate-limit-backs-off-not-down.w1).
+func (g *LaneGovernor) rand() float64 {
+	if g.Rand != nil {
+		return g.Rand()
+	}
+	return rand.Float64()
+}
+
+// clock is now when given, else LaneGovernor.Now when set, else time.Now.
+func (g *LaneGovernor) clock(now ...time.Time) time.Time {
+	if len(now) > 0 && !now[0].IsZero() {
+		return now[0]
+	}
+	if g.Now != nil {
+		return g.Now()
+	}
+	return time.Now()
+}
+
 // RateLimit is a rate limit met at now by a turn (or open) started at
 // started, at the row's width: the line that says the change, and whether
 // it is a judgment (the RateJudgeAfter-th lowering within RateJudgeWithin).
 // A turn started before the last lowering is the same episode: no line.
+// Every lane resume after a rate limit is spread by a jitter of +/-20% of
+// the pause (docs/SPEC-FRIEND.md #rate-limit-backs-off-not-down.w1).
 func (g *LaneGovernor) RateLimit(now, started time.Time, width int, reason string) (line string, judge bool) {
 	if !g.last.IsZero() && !started.After(g.last) {
 		return "", false
@@ -150,7 +175,9 @@ func (g *LaneGovernor) RateLimit(now, started time.Time, width int, reason strin
 		pause = RateBackoffFirst
 	}
 	g.cap, g.last = to, now
-	g.pausedUntil, g.resumed, g.cleanSince, g.measured = now.Add(pause), false, now.Add(pause), false
+	jitter := time.Duration((g.rand()*0.4 - 0.2) * float64(pause))
+	resume := now.Add(pause + jitter)
+	g.pausedUntil, g.resumed, g.cleanSince, g.measured = resume, false, resume, false
 	g.backoff = min(2*pause, RateBackoffMax)
 	kept := g.lowered[:0]
 	for _, at := range g.lowered {
@@ -166,13 +193,21 @@ func (g *LaneGovernor) RateLimit(now, started time.Time, width int, reason strin
 }
 
 // PauseUntil is a usage limit with its reset: no new turn or open before
-// until, the cap left alone. It answers the line that says it, empty when
-// the pause already reaches until.
-func (g *LaneGovernor) PauseUntil(until time.Time, reason string) string {
+// until, jittered by adding up to 20% of the remaining wait, never earlier
+// than the reported reset itself (docs/SPEC-FRIEND.md
+// #rate-limit-backs-off-not-down.w1). The cap is left alone. It answers the
+// line that says it, empty when the pause already reaches until.
+func (g *LaneGovernor) PauseUntil(until time.Time, reason string, now ...time.Time) string {
 	if !until.After(g.pausedUntil) {
 		return ""
 	}
-	g.pausedUntil, g.resumed, g.cleanSince, g.measured = until, false, until, false
+	at := g.clock(now...)
+	var jitter time.Duration
+	if until.After(at) {
+		jitter = time.Duration(float64(until.Sub(at)) * 0.2 * g.rand())
+	}
+	resume := until.Add(jitter)
+	g.pausedUntil, g.resumed, g.cleanSince, g.measured = resume, false, resume, false
 	return fmt.Sprintf("usage limit: lanes paused until %s (its reset): %s", until.UTC().Format(time.RFC3339), oneLine(reason, 200))
 }
 

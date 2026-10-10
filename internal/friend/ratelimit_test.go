@@ -3,6 +3,7 @@ package friend
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"strings"
 	"sync"
 	"testing"
@@ -205,7 +206,8 @@ func TestOutOfFundsHoldsTheLanesWithOneJudgment(t *testing.T) {
 // at the row's width the backoff starts over.
 func TestTheLaneGovernorBacksOffAndRaisesByMeasurement(t *testing.T) {
 	t.Parallel()
-	g := &LaneGovernor{}
+	zeroJitter := func() float64 { return 0.5 }
+	g := &LaneGovernor{Rand: zeroJitter}
 	now := t0
 	var pauses []time.Duration
 	for i := 0; i < 7; i++ {
@@ -220,7 +222,7 @@ func TestTheLaneGovernorBacksOffAndRaisesByMeasurement(t *testing.T) {
 	assert.Equal(t, []time.Duration{30 * time.Second, time.Minute, 2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 10 * time.Minute, 10 * time.Minute}, pauses)
 	assert.Equal(t, 5, g.Cap(24), "24, 18, 14, 11, 9, 7, 6, 5: a quarter off each, at least one")
 
-	g = &LaneGovernor{}
+	g = &LaneGovernor{Rand: zeroJitter}
 	now = t0
 	_, _ = g.RateLimit(now, now.Add(-time.Second), 8, "429")
 	assert.Equal(t, 6, g.Cap(8))
@@ -242,7 +244,7 @@ func TestTheLaneGovernorBacksOffAndRaisesByMeasurement(t *testing.T) {
 	assert.Equal(t, 4, g.Cap(4), "never above the row")
 
 	// three lowerings in an hour are one judgment; the next three another
-	g = &LaneGovernor{}
+	g = &LaneGovernor{Rand: zeroJitter}
 	now = t0
 	var judged []bool
 	for i := 0; i < 6; i++ {
@@ -251,7 +253,7 @@ func TestTheLaneGovernorBacksOffAndRaisesByMeasurement(t *testing.T) {
 		now = now.Add(5 * time.Minute)
 	}
 	assert.Equal(t, []bool{false, false, true, false, false, true}, judged)
-	g = &LaneGovernor{}
+	g = &LaneGovernor{Rand: zeroJitter}
 	_, _ = g.RateLimit(t0, t0.Add(-time.Second), 24, "429")
 	_, _ = g.RateLimit(t0.Add(40*time.Minute), t0.Add(39*time.Minute), 24, "429")
 	_, j := g.RateLimit(t0.Add(61*time.Minute), t0.Add(60*time.Minute), 24, "429")
@@ -331,4 +333,45 @@ func TestOpenCodeLanesAnswerARateLimitAndOutOfFunds(t *testing.T) {
 	_, err = o.DeliverTo(context.Background(), "ses_1", "card")
 	var pr ProviderRefused
 	require.ErrorAs(t, err, &pr, "a refusal is still one")
+}
+
+// With an injectable fixed source, two lane governors paused at the same
+// instant for the same pause resume at different times, each within
+// [0.8, 1.2] of the pause; a PauseUntil reset never resumes before the reset
+// (docs/SPEC-FRIEND.md #rate-limit-backs-off-not-down.w1).
+func TestALaneResumeAfterARateLimitIsJittered(t *testing.T) {
+	t.Parallel()
+	src := rand.New(rand.NewPCG(12345, 67890))
+	g1 := &LaneGovernor{Rand: src.Float64}
+	g2 := &LaneGovernor{Rand: src.Float64}
+
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	started := now.Add(-time.Second)
+
+	l1, _ := g1.RateLimit(now, started, 8, "429")
+	l2, _ := g2.RateLimit(now, started, 8, "429")
+
+	require.NotEmpty(t, l1)
+	require.NotEmpty(t, l2)
+	assert.NotEqual(t, g1.pausedUntil, g2.pausedUntil, "two governors paused at the same instant resume at different times")
+
+	p1 := g1.pausedUntil.Sub(now)
+	p2 := g2.pausedUntil.Sub(now)
+
+	assert.GreaterOrEqual(t, p1, time.Duration(float64(RateBackoffFirst)*0.8))
+	assert.LessOrEqual(t, p1, time.Duration(float64(RateBackoffFirst)*1.2))
+	assert.GreaterOrEqual(t, p2, time.Duration(float64(RateBackoffFirst)*0.8))
+	assert.LessOrEqual(t, p2, time.Duration(float64(RateBackoffFirst)*1.2))
+
+	// PauseUntil reset never resumes before the reset, and jitter adds up to 20%
+	for i := 1; i <= 10; i++ {
+		g := &LaneGovernor{Rand: src.Float64}
+		reset := now.Add(time.Duration(i) * 5 * time.Minute)
+		g.PauseUntil(reset, "usage limit", now)
+		assert.False(t, g.pausedUntil.Before(reset), "a PauseUntil reset never resumes before the reset")
+		assert.GreaterOrEqual(t, g.pausedUntil, reset)
+		remaining := reset.Sub(now)
+		maxAllowed := reset.Add(time.Duration(float64(remaining) * 0.20))
+		assert.LessOrEqual(t, g.pausedUntil, maxAllowed)
+	}
 }

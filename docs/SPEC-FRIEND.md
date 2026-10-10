@@ -1908,7 +1908,12 @@ and lowers the live lane cap by a quarter (at least one lane, never below
 one): 24, 18, 14, 11 ... Lanes whose turns started before that lowering met
 the same episode and change nothing. When the pause ends the lanes resume at
 the cap; a lane beyond it takes nothing and hands back a card it holds
-between turns. A clean ten minutes, measured (no rate limit, and a lane turn
+between turns. Every lane resume after a rate limit is jittered by +/-20% of
+the computed pause, drawn from an injectable random source (default `math/rand/v2`),
+so two lanes or friends on the same provider do not wake at the exact same instant
+to re-hit the rate limit in lockstep. A reported usage-limit reset (`PauseUntil`)
+is jittered only by adding up to 20% of the remaining wait, never earlier than
+the reset itself. A clean ten minutes, measured (no rate limit, and a lane turn
 ended clean in it), raises the cap one lane, up to the row's width; back at
 the width the backoff starts over at 30 s. There is no hold and no person in
 it: the beat goes on, her status stays her session's evidence, the cards stay hers. Each change
@@ -1927,6 +1932,7 @@ the record (`out of funds: lanes held until the daemon restarts`) and once
 to the coordinator as a blocker, `friend <name>: out of funds: <reason>`,
 with the `nova-sprint friend down` line that shows it on her row and the
 restart once paid. It lowers no cap.
+`TestALaneResumeAfterARateLimitIsJittered`,
 `TestARateLimitBacksOffAndResumesWithoutAHold`,
 `TestOutOfFundsHoldsTheLanesWithOneJudgment`,
 `TestTheLaneGovernorBacksOffAndRaisesByMeasurement`. Not here: the batch

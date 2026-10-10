@@ -756,7 +756,7 @@ func (l *loop) faultTurn(ln *lane, line, fault, first string, now time.Time) {
 	if !down {
 		return
 	}
-	s.gov.PauseUntil(until, reason)
+	s.gov.PauseUntil(until, reason, now)
 	d.Record(fmt.Sprintf("%s harness fault: %d alike within %s: her row down until %s, her lanes held: %s", now.UTC().Format(time.RFC3339), FaultRepeats, FaultWithin, until.UTC().Format(time.RFC3339), oneLine(reason, 300)))
 	if d.FaultDown != nil {
 		d.FaultDown(until, reason)
@@ -851,7 +851,7 @@ func (l *loop) providerLimit(err error, started, now time.Time) bool {
 		}
 		return true
 	case errors.As(err, &usage):
-		if line := s.gov.PauseUntil(usage.Until, usage.Reason); line != "" {
+		if line := s.gov.PauseUntil(usage.Until, usage.Reason, now); line != "" {
 			d.Record(at + " " + line)
 		}
 		return true
