@@ -505,16 +505,16 @@ A failed check applies nothing (`CYCLE FAIL step=check`); a bench with no receip
 
 ## 14. A promised recovery journey is proven at the release revision, or the cut refuses
 
-A review of the release lane (item 5): the chaos suite (`internal/friend/chaos_functional_test.go`) turns every part
+A review of the release lane (item 5): the chaos suite (`internal/sprint/friend_chaos_functional_test.go`: friend against the sprint's store, so it lives with the sprint) turns every part
 the landed code cannot meet yet into a named skip (`OWED <card>: ...`), so a red-by-design test does
 not block the merge queue, and `go test` reports a parent whose subtests all skipped as a pass. A
 green run was read as proof that a friend whose harness closed, whose session went silent, who hit a
 usage limit or whose bus credential was revoked is detected, his cards are dealt elsewhere and he
 recovers. It proved none of that.
 
-**The promise is the checkout's.** A checkout that ships `internal/friend` promises the journeys in
+**The promise is the checkout's.** A checkout that ships `internal/sprint` promises the journeys in
 `release.PromisedJourneys`, one per chaos subtest; `TestThePromisedJourneysAreTheChaosSuitesSubtests`
-holds the list to the suite's own `t.Run` names. A checkout without the package promises nothing and
+(`internal/sprint/journeys_test.go`, beside the suite) holds the list to the suite's own `t.Run` names. A checkout without the package promises nothing and
 the receipt says `journeys=none-promised`.
 
 **The evidence is bound to the revision.** `cut --journeys <file>` names a file whose first line is
@@ -811,7 +811,7 @@ One numbered line per test; where one test holds several behaviours, they share 
 61. `TestATransitiveChangeRebuildsTheTool` (functional) — the real `go list` on a chain A -> B -> C (a tool, a package it imports, a package that one imports) puts C in A's set (`.Deps` is recursive), and a change under C, an embedded-style file included, rebuilds A and reuses a tool beside it.
 62. `TestToolsPlaySendsEveryStagedFileWhoseBytesDiffer` (functional) — a seeded file corrupt on the machine whose `SHA256SUMS` line matches the release's (the binary the play runs, or any other) is sent again in the same run and the install succeeds; an intact reused file is not sent (`tla/BenchStage.tla` `ReusedByteIdentical`).
 63. `TestTheGateRefusesAPromisedJourneyWithoutEvidence` — a cut whose checkout promises recovery journeys refuses without `--journeys`, on evidence for another revision or installed build, without a function or schema version, on a broken line, and on any owed, skipped, failed or not-run journey (a green parent proves nothing); an optional platform's `PLATFORM UNAVAILABLE` skip is named and passes; a proven cut binds the revision, versions and installed builds into the section; `--no-journey-gate --reason` enumerates every incomplete journey there.
-64. `TestThePromisedJourneysAreTheChaosSuitesSubtests` — every promised journey names a subtest the chaos suite runs.
+64. `TestThePromisedJourneysAreTheChaosSuitesSubtests` (`internal/sprint`) — every promised journey names a subtest the chaos suite runs.
 65. `TestAReleaseIsRefusedWhenRecordedSpendMissesTheProvidersOwn` — over the window since the previous tag's UTC day, a store figure of $836 against a provider's own $2,250 refuses naming the provider, both figures and the gap; a 3% gap passes (`spend=ok`); a provider whose readout errs, or has none, refuses; subscription friends' recorded tokens are set beside their receipts the same way, and no receipts refuses; no store refuses; `--no-spend-gate --reason` writes every unpassed row into the section.
 66. `TestOpenRouterSpendIsTheActivityDaysAndToday` — openrouter's own count is its activity's completed days in the window plus the key's count of today; no key, or a window past 30 days, is unread; opencode and Inception are unread.
 67. `TestReceiptsAreReadOnlyForTheirWindow` — a receipts file is read only for the window it covers.
