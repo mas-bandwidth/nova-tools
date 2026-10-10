@@ -15,15 +15,20 @@ import (
 func TestPushedBatchIsRecordedInItsPass(t *testing.T) {
 	t.Parallel()
 
-	t.Run("movedExactly checks the right cards", func(t *testing.T) {
+	t.Run("Cards:ids reports the pushed cards by name", func(t *testing.T) {
 		t.Parallel()
 
-		// Verify movedExactly checks for the exact cards that should have landed
+		// This test verifies the invariant RecordPushedCards: when a batch is landed,
+		// the exact cards that were pushed must be recorded as moved. movedExactly checks
+		// that the step's moved lines contain exactly the cards that were pushed by name.
+		// If we report with Batch: len(ids), we might move the first N queued cards
+		// instead of the actual pushed cards.
 		ids := []string{"p2"} // Only p2 was pushed
 
-		// If we report with Cards: [p2], movedExactly should verify p2 landed
-		// If we report with Batch: 1, movedExactly would verify the first queued card
+		// Verify movedExactly checks for the exact cards that should have landed
 		assert.True(t, movedExactly([]string{"p2 merging -> landed"}, ids))
 		assert.False(t, movedExactly([]string{"p1 merging -> landed"}, ids)) // p1 is not the pushed card
+		assert.True(t, movedExactly([]string{"p1 merging -> landed", "p2 merging -> landed"}, []string{"p1", "p2"}))
+		assert.False(t, movedExactly([]string{"p1 merging -> landed", "p2 merging -> landed"}, []string{"p2"}))
 	})
 }

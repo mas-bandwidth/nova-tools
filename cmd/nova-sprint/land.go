@@ -1297,6 +1297,9 @@ func movedExactly(moved, ids []string) bool {
 	for _, line := range moved {
 		id, rest, _ := strings.Cut(line, " ")
 		if !want[id] {
+			if rest == "merging -> landed" || strings.HasPrefix(rest, "merging -> landed ") {
+				return false // an extra card was moved - not the batch we reported
+			}
 			continue // another card's move, the step's own
 		}
 		if seen[id] || rest != "merging -> landed" && !strings.HasPrefix(rest, "merging -> landed ") {

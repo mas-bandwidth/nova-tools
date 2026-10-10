@@ -391,7 +391,7 @@ CachedIsGreen == \A T \in cached : green[T]
 \* Every batch pushed is recorded by name: the step takes the named cards from the stream's
 \* queue, not the first N queued (land.go, landed: Cards: ids; recordPushed: Batch: len(ids)
 \* is the bug; fix uses Cards: ids).
-RecordPushedCards == \A i \in 1..Len(pushes) : pushes[i].how \in {"own", "disjoint", "combined"}
+RecordPushedCards == \A s \in Streams : phase[s] = "landed" => s \in base
 
 RefusalTouchesNoOtherStream ==
   [][\A s \in Streams : Refuse(s) => base' = base /\ \A t \in Streams \ {s} : phase'[t] = phase[t] /\ cut'[t] = cut[t]]_vars
