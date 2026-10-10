@@ -326,6 +326,56 @@ func TestDiskGuardWarnsUnderTheFloorAndEndsOnOneLine(t *testing.T) {
 	assert.Equal(t, "DISK-GUARD OK freed=0 free=5368709120", lines[1])
 }
 
+// Below a guarded volume's floor the guard runs gc's class landed through the gcLanded
+// seam before the caches, and says REFUSED with the free figure after them. The order is
+// the point: a landed job is freed before the caches trim, and the refusal comes last
+// (CHANGE 2, the below-floor action wired into the command).
+func TestDiskGuardRunsLandedBelowTheFloorBeforeTheCaches(t *testing.T) {
+	t.Parallel()
+	g, out := dgGuard(t)
+	g.host = "studio"
+	g.volumes = []guardedVolume{{
+		Name: "/Volumes/nova", Path: "/Volumes/nova", Free: 100 * volGB, Floor: 200 * volGB, Stop: 50 * volGB,
+	}}
+	cache := t.TempDir()
+	dgFile(t, filepath.Join(cache, "00", fmt.Sprintf("%064x-d", 0)), 3000, dgNow.Add(-72*time.Hour))
+	g.caches, g.cacheMax = []string{cache}, 1000
+
+	var order []string
+	g.gcLanded = func() error {
+		order = append(order, "landed")
+		g.say("RUN landed")
+		return nil
+	}
+	assert.Equal(t, 0, g.run())
+	assert.Equal(t, []string{"landed"}, order, "a volume below its floor runs gc landed once")
+
+	text := out.String()
+	landed := strings.Index(text, "RUN landed")
+	trimmed := strings.Index(text, "TRIMMED go-build "+cache)
+	refused := strings.Index(text, "REFUSED /Volumes/nova free=100GB")
+	require.NotEqual(t, -1, landed, "the landed removal ran: %s", text)
+	require.NotEqual(t, -1, trimmed, "the caches ran: %s", text)
+	require.NotEqual(t, -1, refused, "the refusal names the free figure: %s", text)
+	assert.Less(t, landed, trimmed, "the landed removal runs before the caches")
+	assert.Less(t, trimmed, refused, "the refusal is said after the caches")
+}
+
+// A landed removal the guard could not start is a NOTE line and the run ends INCOMPLETE,
+// exit 1, as any other failure: the guard never fails silently.
+func TestDiskGuardNotesALandedRemovalItCouldNotRun(t *testing.T) {
+	t.Parallel()
+	g, out := dgGuard(t)
+	g.host = "studio"
+	g.volumes = []guardedVolume{{
+		Name: "/Volumes/nova", Path: "/Volumes/nova", Free: 100 * volGB, Floor: 200 * volGB, Stop: 50 * volGB,
+	}}
+	g.gcLanded = func() error { return errors.New("nova-sprint: not found") }
+	assert.Equal(t, 1, g.run())
+	assert.Contains(t, out.String(), "NOTE the landed removal (nova-sprint gc --class landed) could not run (nova-sprint: not found)")
+	assert.Contains(t, out.String(), "DISK-GUARD INCOMPLETE freed=0 free=107374182400 failed=1\n")
+}
+
 // A run that cannot read the process list removes nothing that needs it, says so, and ends
 // INCOMPLETE, exit 1.
 func TestDiskGuardWithoutTheProcessListRemovesNothingThatNeedsIt(t *testing.T) {

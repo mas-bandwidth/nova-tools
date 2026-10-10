@@ -675,11 +675,14 @@ func (l *loop) stageStep(cards []HeldCard, now time.Time) {
 // snapshot, could remove a job dealt to her again and handed to a lane meanwhile: the reversed
 // witness "async" of tla/JobWorktrees.tla). Live is every job held on her row, run by a lane
 // (keep) or being staged; Stager.Prune never touches one, nor a job whose brief is in her
-// inbox, and removes at most PrunePerPass, never waiting on a mirror a stage holds. Each job
+// inbox, and removes at most PrunePerPass, never waiting on a mirror a stage holds. The same
+// pass runs the landed removal (PruneLanded, sprint.PruneLanded): each job whose card is landed
+// or dropped goes whole whatever its git state, a clone or a worktree, which is the daemon's
+// prune pass and the one-shot reap alike (docs/SPEC-FRIEND.md, the prune pass). Each job
 // removed is said, and a failure once while it stands.
 func (l *loop) pruneStep(held []HeldCard, keep map[string]bool, now time.Time) {
 	d := l.d
-	if d.Prune == nil {
+	if d.Prune == nil && d.PruneLanded == nil {
 		return
 	}
 	live := map[string]bool{}
@@ -692,18 +695,29 @@ func (l *loop) pruneStep(held []HeldCard, keep map[string]bool, now time.Time) {
 	for job := range d.staging {
 		live[job] = true
 	}
-	pruned, err := d.Prune(l.ctx, live)
 	at := now.UTC().Format(time.RFC3339)
-	for _, job := range pruned {
-		d.Record(fmt.Sprintf("%s prune: removed %s/%s and its worktree: its card is finished (%d finished kept)", at, JobsDir, job, FinishedJobsKept))
+	var firstErr error
+	if d.Prune != nil {
+		pruned, err := d.Prune(l.ctx, live)
+		for _, job := range pruned {
+			d.Record(fmt.Sprintf("%s prune: removed %s/%s and its worktree: its card is finished (%d finished kept)", at, JobsDir, job, FinishedJobsKept))
+		}
+		firstErr = cmpErr(firstErr, err)
+	}
+	if d.PruneLanded != nil {
+		removed, err := d.PruneLanded(l.ctx, live)
+		for _, job := range removed {
+			d.Record(fmt.Sprintf("%s prune: removed %s/%s whole: its card is landed or dropped", at, JobsDir, job))
+		}
+		firstErr = cmpErr(firstErr, err)
 	}
 	switch {
-	case err == nil:
+	case firstErr == nil:
 		d.pruneSaid = ""
 	case l.ctx.Err() != nil:
-	case err.Error() != d.pruneSaid:
-		d.pruneSaid = err.Error()
-		d.Record(fmt.Sprintf("%s prune: not pruned: %s; tried again at the next cleanup", at, oneLine(err.Error(), 400)))
+	case firstErr.Error() != d.pruneSaid:
+		d.pruneSaid = firstErr.Error()
+		d.Record(fmt.Sprintf("%s prune: not pruned: %s; tried again at the next cleanup", at, oneLine(firstErr.Error(), 400)))
 	}
 }
 

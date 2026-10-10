@@ -39,6 +39,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
@@ -1578,12 +1579,13 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			return nil
 		},
-		SaveLanes: func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
-		Held:      w.held(name, server),
-		Seat:      w.seat(server),
-		Stage:     stager.stage(),
-		Prune:     stager.prune(),
-		Tip:       w.tip,
+		SaveLanes:   func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
+		Held:        w.held(name, server),
+		Seat:        w.seat(server),
+		Stage:       stager.stage(),
+		Prune:       stager.prune(),
+		PruneLanded: w.pruneLanded(dir, server),
+		Tip:         w.tip,
 		Finish: func(ctx context.Context, argv []string) error {
 			if w.finish == nil {
 				return errors.New("this world sends no finish") // a test's: friend sync reads the lane's REPORT.md
@@ -1768,6 +1770,80 @@ func (d daemonStager) prune() func(ctx context.Context, live map[string]bool) ([
 	return func(ctx context.Context, live map[string]bool) ([]string, error) {
 		return d.s.Prune(ctx, live, friend.FinishedJobsKept)
 	}
+}
+
+// landedStandingFor is how long one card's standing is reused by the landed removal. The
+// cleanup runs every loop (a second); a card that lands or drops is found within this bound,
+// far inside the one-hour grace, and an open card costs the sprint server no read each second.
+const landedStandingFor = time.Minute
+
+// pruneLanded is the daemon's PruneLanded: gc's class landed over her own jobs/, so a landed
+// or dropped card's job is removed whole whatever its git state, a clone or a worktree
+// (sprint.PruneLanded, docs/SPEC-FRIEND.md, the prune pass; the daemon's prune pass and the
+// one-shot reap are the one cleanup). The daemon is a store client and reads no card's state
+// itself: standing asks the sprint server for one card's record, once per id a pass, and a
+// job that is live is answered open without a read. Nil in a world that asks no server.
+func (w world) pruneLanded(dir, server string) func(context.Context, map[string]bool) ([]string, error) {
+	if w.cards == nil || dir == "" {
+		return nil
+	}
+	jobs := filepath.Join(dir, friend.JobsDir)
+	now := w.now
+	if now == nil {
+		now = time.Now
+	}
+	type standingAt struct {
+		card *sprint.Card
+		at   time.Time
+	}
+	cache := map[string]standingAt{}
+	return func(ctx context.Context, live map[string]bool) ([]string, error) {
+		tick := now()
+		liveIDs := map[string]bool{}
+		for job := range live {
+			if id, _, _ := strings.Cut(job, "~"); id != "" {
+				liveIDs[id] = true
+			}
+		}
+		standing := func(id string) *sprint.Card {
+			if liveIDs[id] {
+				return &sprint.Card{ID: id, Col: sprint.Working}
+			}
+			if c, ok := cache[id]; ok && tick.Sub(c.at) < landedStandingFor {
+				return c.card
+			}
+			c := w.cardStanding(ctx, server, id)
+			cache[id] = standingAt{card: c, at: tick}
+			return c
+		}
+		res := sprint.PruneLanded(jobs, tick, false, standing)
+		out := make([]string, 0, len(res.Removed))
+		for _, p := range res.Removed {
+			out = append(out, filepath.Base(p))
+		}
+		if res.Failed > 0 {
+			return out, fmt.Errorf("the landed removal failed on %d paths", res.Failed)
+		}
+		return out, nil
+	}
+}
+
+// cardStanding is one card's record as the sprint server answers card <id> --json: its
+// primary card, nil when the server knows none or does not answer. A dropped card is a
+// record the server's card read may not see; gc, which reads the sprint's store, takes that
+// one (docs/SPEC-SPRINT.md, the disk guard's volumes).
+func (w world) cardStanding(ctx context.Context, server, id string) *sprint.Card {
+	out, err := w.cards(ctx, server, []string{"card", id, "--json"})
+	if err != nil {
+		return nil
+	}
+	var view struct {
+		Primary *sprint.Card
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &view); err != nil {
+		return nil
+	}
+	return view.Primary
 }
 
 func (w world) agent(c *tool.Call) (friend.Agent, error) {

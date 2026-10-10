@@ -1667,6 +1667,18 @@ witnesses: `MCJobWorktreesBrokenAsync` (the prune on a goroutine, the first cut 
 breaks `NoLaneLosesItsCheckout` in 16 states as above, `MCJobWorktreesBrokenDropBranch` breaks
 `WorkKept`, and `MCJobWorktreesBrokenNoLimit` breaks `CapKept`. Jobs staged as clones before
 this change are never pruned (they are no worktree of a mirror) and are left to a hand.
+A landed or dropped card's job is a different removal (`sprint.PruneLanded`, docs/SPEC-SPRINT.md,
+gc's class `landed`). gc runs it on every friend's `jobs/` it can see, after one hour, and it
+removes the directory whole whatever its git state, which is what a landed one-shot job looks
+like once its branch is pruned. The daemon's own cleanup calls it in the same pass that prunes
+finished worktrees (`pruneStep`): after `Stager.Prune`, it runs `sprint.PruneLanded` against
+her own `jobs/`, so each job whose card is landed or dropped goes whole whatever its git state,
+a worktree, a clone or neither. The one-shot reap is that pass, so a one-shot friend's job
+goes the same way. The daemon is a store client and reads no card's state beyond her own row:
+for each job the removal asks the sprint server (`nova-sprint card <id> --json`) for its card's
+standing, answers a job that is live open without a read, and keeps a card the server does not
+know. gc, which reads the sprint's store, makes the same call where the daemon's server read
+answers none.
 Not yet: the server's `friend cards` answer does not send `repo` and `base` (cmd/nova-sprint is
 outside this card's paths), so the brief's lines are read; a read's checkout at the head under
 read is not staged here.

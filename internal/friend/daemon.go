@@ -215,6 +215,11 @@ type Daemon struct {
 	// jobs that are live (held on her row, run by a lane, being staged), after each inbox
 	// cleanup, and answers the jobs it removed; nil prunes none.
 	Prune func(ctx context.Context, live map[string]bool) ([]string, error)
+	// PruneLanded removes a landed or dropped card's job from her own jobs/ whatever its git
+	// state (sprint.PruneLanded, gc's class landed): after Prune, in the same cleanup that is
+	// the daemon's prune pass and the one-shot reap. The daemon, a store client, asks the
+	// sprint server for each job's card (cmd/nova-friend); nil removes none.
+	PruneLanded func(ctx context.Context, live map[string]bool) ([]string, error)
 	// Tip is origin's tip of a branch of a repository (owner/name), "" when origin has no
 	// such branch (Stager.Tip: one git ls-remote): a report's LAND finishes only at that tip,
 	// as nova-sprint collect's does (outbox.go). Nil reads none, and a LAND finishes at its
