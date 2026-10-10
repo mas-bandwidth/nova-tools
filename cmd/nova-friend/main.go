@@ -70,7 +70,7 @@ type world struct {
 	exec           friend.Exec
 	wall           func(wl friend.Wall, run friend.Exec) friend.Exec                                                                      // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
 	beat           func(ctx context.Context, server, friend string, active time.Time, proof friend.BeatWords) (answer string, err error)  // the FRIEND-BEAT line, which carries the friend's row
-	beatReport     func(context.Context, string, string, time.Time, friend.BeatWords, friend.BeatReport) (string, error)                   // the FRIEND-BEAT line carrying her work report (width, started, running, working, queue)
+	beatReport     func(context.Context, string, string, time.Time, friend.BeatWords, friend.BeatReport) (string, error)                  // the FRIEND-BEAT line carrying her work report (width, started, running, working, queue)
 	beatDown       func(ctx context.Context, server, friend string, active, until time.Time, reason string, proof friend.BeatWords) error // her beat while she is down (friend beat --until --reason); nil holds the beat back
 	progress       func(ctx context.Context, server string, argv []string) error                                                          // one progress verb to the sprint server (friend.ProgressArgv)
 	finish         func(ctx context.Context, server string, argv []string) error                                                          // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
@@ -1538,7 +1538,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 				return err
 			}
 			if w.beatDown == nil {
-				return fl.Beat(up)(ctx) // a world with no down beat (a test's): held back while she is at her limit
+				return held(fl.Beat(up))(ctx) // a world with no down beat (a test's): held back while she is at her limit
 			}
 			// while her harness is at its limit her beat says down with the until and the
 			// reason (limits-mean-down-w-r5.w1~15), the session's check stepped first; the
@@ -1565,7 +1565,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			if h := faultDown.Load(); h != nil && w.now().Before(h.until) {
 				return down(ctx, h.until, h.reason)
 			}
-			return fl.BeatOrDown(up, down)(ctx)
+			return fl.BeatOrDown(held(fl.BeatOrDown(up, down)), down)(ctx)
 		},
 		Row: func() (string, int) {
 			rowMu.Lock()
