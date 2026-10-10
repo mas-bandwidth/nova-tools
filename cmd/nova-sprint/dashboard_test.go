@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -117,6 +118,11 @@ func TestADashboardWhoseFirstReadFailsRefusesOnStderr(t *testing.T) {
 		}
 		return ""
 	}
+	opened := false
+	ta.a.dashListen = func(network, addr string) (net.Listener, error) {
+		opened = true
+		return nil, errors.New("a configuration refusal opens no listener")
+	}
 	code, out, errs := ta.do("dashboard --listen 127.0.0.1:0 --pull none")
 	assert.Equal(t, 2, code, "%s%s", out, errs)
 	assert.Empty(t, out, "a configuration refusal must not be on stdout: %s", out)
@@ -124,6 +130,7 @@ func TestADashboardWhoseFirstReadFailsRefusesOnStderr(t *testing.T) {
 	assert.Contains(t, errs, "--redis <addr> is required")
 	assert.Contains(t, errs, "; run: nova-sprint dashboard -h")
 	assert.Equal(t, 1, strings.Count(errs, "\n"), "one line: %s", errs)
+	assert.False(t, opened, `the refusal is before any listener opens (docs/SPEC-SPRINT-DASHBOARD.md, "Serving and publishing")`)
 }
 
 // Every refusal comes before any listener: exit 2, one line, nothing served.
