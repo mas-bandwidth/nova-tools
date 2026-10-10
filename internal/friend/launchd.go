@@ -296,7 +296,7 @@ func ExitTimeout(plist string) time.Duration {
 // `"<label>" => true` after an earlier bootout disabled it, or a hand
 // `launchctl disable`. A launchctl that does not answer, or an output that does
 // not list the label, is not disabled: the database is an addition to launchd,
-// and a machine without one has nothing disabled.
+// and a machine without one has nothing disabled (docs/SPEC-FRIEND.md, install).
 func Disabled(ctx context.Context, run Launchctl, domain, label string) bool {
 	out, err := run(ctx, "print-disabled", domain)
 	if err != nil {
@@ -437,7 +437,8 @@ func Install(ctx context.Context, a Agent, uid int, run Launchctl, write func(pa
 
 // bootstrapRefusal is a bootstrap that failed after the retries: it names the
 // label, its domain, launchd's exit and words, whether the label was disabled
-// in the override database, and the enable line that is the remedy.
+// in the override database, and the enable line that is the remedy
+// (docs/SPEC-FRIEND.md, install).
 func bootstrapRefusal(label, domain, target string, err error, out string, wasDisabled bool) error {
 	state := "the label was not disabled in launchd's override database"
 	if wasDisabled {
