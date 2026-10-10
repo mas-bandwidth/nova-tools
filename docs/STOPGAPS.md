@@ -39,6 +39,13 @@ Behaviours:
 10. It blocks up to 5 s per round on the bus stream bus2:to:<coordinator> (redis port 6381) from the end of the stream. (test: TestWatchWakeFiresOncePerEventAndNeverLapses)
 11. It exits 0 printing `BUS WAKE <time>: <up to 5 subjects>` for a message to the coordinator from anyone but the coordinator, except pong or PING, `card <id> dealt`, `card <id> finished`, LAND or landed, DONE, `width <n>`, e2e-ok, awake, `RESULT:`, a subject ending ` HOLD`, rule applied, ACK and acknowledged. (test: TestWatchWakeFiresOncePerEventAndNeverLapses)
 
+### simp-retire-buswatch-bc.w1
+
+The append wake of the retired script is the verb's `--wake-file`, and the launch command in
+docs/SPRINT-COORDINATOR.md names the file. The wake-file baseline is initialized apart from the
+whole state's seed, so a state seeded before the flag was enabled starts at the file's end
+rather than waking on the lines already there (`TestWatchWakeSeededOldState`, cmd/nova-sprint).
+
 ## bud-card-runner
 
 Path: <buds-dir>/<bud>/runner.zsh (identical copies, one per bud)

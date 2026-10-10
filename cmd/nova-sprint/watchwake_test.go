@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -307,6 +308,30 @@ func TestWatchWakeWatchesTheWakeFile(t *testing.T) {
 	r.f.world.WakeFile = append(r.f.world.WakeFile, "five")
 	assert.Equal(t, "file", r.run(nil).Kind, "a later append wakes")
 	assert.Equal(t, "check", r.run(nil).Kind, "the same lines do not wake twice")
+}
+
+// TestWatchWakeSeededOldState: a watch --wake state written before --wake-file
+// was enabled is seeded (true) with no wake field, read as zero. Enabling the
+// flag must set the baseline at the file's end like a first run, not treat the
+// lines already there as new and wake at once.
+func TestWatchWakeSeededOldState(t *testing.T) {
+	t.Parallel()
+	r := newWakeRig(t)
+	require.NoError(t, os.WriteFile(r.path, []byte(`{"seeded":true,"bus":"1728540000000-0","judgments":[]}`), 0o600))
+
+	r.f.world.WakeFile = []string{"existing 1", "existing 2", "existing 3"}
+	assert.Equal(t, "check", r.run(nil).Kind, "a seeded state starts at the file's end")
+
+	s, err := readWakeState(r.path)
+	require.NoError(t, err)
+	assert.True(t, s.WakeInit, "the wake baseline is set")
+	assert.Equal(t, 3, s.Wake, "the baseline counts the lines already there")
+
+	r.f.world.WakeFile = append(r.f.world.WakeFile, "appended 4")
+	w := r.run(nil)
+	assert.Equal(t, "file", w.Kind, "a line appended after the baseline wakes")
+	assert.Contains(t, w.Evidence, "appended 4")
+	assert.NotContains(t, w.Evidence, "existing")
 }
 
 func TestWatchRefusesWithoutWake(t *testing.T) {

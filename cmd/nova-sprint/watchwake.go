@@ -131,7 +131,8 @@ type wakeSource interface {
 type wakeState struct {
 	Seeded    bool                 `json:"seeded"`
 	Bus       string               `json:"bus"`
-	Wake      int                  `json:"wake"` // the wake file's lines consumed
+	Wake      int                  `json:"wake"`      // the wake file's lines consumed
+	WakeInit  bool                 `json:"wake_init"` // the wake file's baseline is set
 	Judgments []string             `json:"judgments"`
 	Stop      string               `json:"stop"`
 	Down      map[string]int       `json:"down"`
@@ -269,17 +270,19 @@ func (s *wakeState) step(cfg wakeCfg, l wakeLook, now time.Time) (wakeLine, bool
 		return woke(wakeBus, strings.Join(ev, "; "))
 	}
 	// the wake file: a line appended since the last look wakes (the first look,
-	// before the seed sets the baseline, is not new)
-	if len(l.WakeFile) > s.Wake {
-		fresh := l.WakeFile[s.Wake:]
-		s.Wake = len(l.WakeFile)
-		if len(fresh) > 3 {
-			fresh = fresh[:3]
+	// before the baseline is set, is not new)
+	if l.WakeFile != nil {
+		if len(l.WakeFile) > s.Wake {
+			fresh := l.WakeFile[s.Wake:]
+			s.Wake = len(l.WakeFile)
+			if len(fresh) > 3 {
+				fresh = fresh[:3]
+			}
+			return woke(wakeFile, strings.Join(fresh, "; "))
 		}
-		return woke(wakeFile, strings.Join(fresh, "; "))
-	}
-	if len(l.WakeFile) < s.Wake {
-		s.Wake = len(l.WakeFile) // the file was replaced or truncated: start over
+		if len(l.WakeFile) < s.Wake {
+			s.Wake = len(l.WakeFile) // the file was replaced or truncated: start over
+		}
 	}
 	if len(fresh) > 0 && due(wakeJudgment, cfg.judgmentEvery) {
 		s.Judgments = slices.Clone(l.Judgments)
@@ -378,8 +381,14 @@ func runWake(ctx context.Context, cfg wakeCfg, src wakeSource, path string, now 
 		at := now()
 		if !st.Seeded {
 			// what is open now is not new, and the check counts from now
-			st.Seeded, st.Judgments, st.Wake = true, slices.Clone(l.Judgments), len(l.WakeFile)
+			st.Seeded, st.Judgments = true, slices.Clone(l.Judgments)
 			st.Last = map[string]time.Time{wakeCheck: at}
+		}
+		if l.WakeFile != nil && !st.WakeInit {
+			// a --wake-file first seen -- the first run, or a state seeded before
+			// the flag was given -- starts at the file's end: the lines already
+			// there are the baseline, not news
+			st.WakeInit, st.Wake = true, len(l.WakeFile)
 		}
 		w, ok := st.step(cfg, l, at)
 		if now, _ := json.Marshal(st); ok || string(now) != string(kept) {
@@ -466,6 +475,9 @@ func (w *storeWake) look(ctx context.Context, after string) (wakeLook, error) {
 		lines, err := readWakeFile(w.wakeFile)
 		if err != nil {
 			return l, err
+		}
+		if lines == nil {
+			lines = []string{} // watched and empty is not the same as not watched
 		}
 		l.WakeFile = lines
 	}
