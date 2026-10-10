@@ -341,8 +341,11 @@ func restStops(s *Snapshot) []Stop {
 			continue
 		}
 		undo := "it ends at " + x.UntilSaid()
-		if x.Funds() {
+		switch {
+		case x.Funds():
 			undo = "nova-sprint funded " + p + " --reason '<the payment>'"
+		case x.Cause == RestAuth && x.Open():
+			undo = "the owner replaces the key, then nova-sprint routes wake " + p + " --reason '<the key replaced>'"
 		}
 		out = append(out, Stop{Kind: StopKindProviderRest, Subject: p, Since: x.At,
 			What:   fmt.Sprintf("provider %s rests until %s: %s", p, x.UntilSaid(), x.Said()),

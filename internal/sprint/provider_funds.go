@@ -25,6 +25,8 @@ import (
 //     to you as a thing to do, but not do it automatically."): a balance at or under zero,
 //     or not over one hour of the spend, is the coordinator's judgment, the provider low on
 //     funds, its routes serving until the coordinator rests them (routes rest);
+//   - a take refused for its key rests the provider until the coordinator wakes it (routes
+//     wake, once the owner has replaced the key), never for a time;
 //   - a refused take's rest holds until the provider is paid: funded, or a payment the poll
 //     sees (a balance read higher than the read before it, or than the balance at the
 //     refusal, since a provider that refuses can still read over zero), or the
@@ -90,7 +92,8 @@ func transient(line string) bool {
 // (Until, which ending a rest sets to the moment it ended): a take launched before that end
 // belongs to the rest window it launched in, however late its refusal arrives, and a record
 // that holds no launch time starts no second rest. Out of credit rests it until it is paid
-// (OpenUntil), its key for RouteRestFor; the rest names the take's card, its route and the
+// (OpenUntil), its key until the coordinator wakes it (OpenUntil: the owner replaces the key,
+// then routes wake); the rest names the take's card, its route and the
 // provider's words, and keeps the balance the poll last read (the mark a payment is seen
 // against, balance.go).
 func providerRestsDue(s *Snapshot, rests map[string]RouteRest, ends map[string][]routeEnd) []RouteRest {
@@ -115,10 +118,12 @@ func providerRestsDue(s *Snapshot, rests map[string]RouteRest, ends map[string][
 	for _, p := range slices.Sorted(maps.Keys(newest)) {
 		e := newest[p]
 		m := causeRE.FindStringSubmatch(e.refused)
-		cause, until := m[1], s.Now.Add(RouteRestFor)
+		// a refused key rests until woken, never for a time: the key does not mend itself, and a
+		// timed rest only re-fails every take dealt after it ends (pro-abliterated-alex, 46 of 46
+		// takes refused with a 401 on 2026-10-09/10; tla/RouteRest.tla, AuthEndsOnlyWoken)
+		cause, until := m[1], OpenUntil
 		words := fmt.Sprintf("provider %s refused its key: card %s on route %s: class=%s status=%s msg=%s", p, e.card, on[p], m[1], m[2], m[3])
 		if cause == RestCredit {
-			until = OpenUntil
 			words = fmt.Sprintf("out of credit: provider %s refused card %s on route %s: class=%s status=%s msg=%s", p, e.card, on[p], m[1], m[2], m[3])
 		}
 		b := balances[p]
@@ -227,7 +232,7 @@ func providerConds(s *Snapshot) (conds []cond, stop string) {
 		case h != nil:
 			routes := strings.Join(slices.Sorted(slices.Values(h.routes)), ", ")
 			conds = append(conds, cond{typ: NProviderKey, stream: ProviderSubject(p), streamLevel: true,
-				what: fmt.Sprintf("provider %s refuses the seat's key: the key is the owner's; its routes %s rest until %s (%s); the deal draws none of them until then; nova-sprint routes wake %s --reason <why> ends it sooner",
+				what: fmt.Sprintf("provider %s refuses the seat's key: the key is the owner's to replace; its routes %s rest until %s (%s); the deal draws none of them until then, and the rest never ends by the clock; once the key is replaced, nova-sprint routes wake %s --reason <why> ends it",
 					p, routes, h.rest.UntilSaid(), h.rest.Why, p)})
 		default:
 			spent := "no spend measured over the last hour (the sprint's cost records)"

@@ -29,14 +29,17 @@
 \*   Rest       the coordinator rests the provider or one route.
 \*   Wake       the coordinator ends the provider's rest (any cause) and its
 \*              routes' own, or one route's own while its provider serves.
-\*   Expire     a timed rest (transient, auth, the coordinator's with a time)
-\*              ends by the clock; a credit rest has no time.
+\*   Expire     a timed rest (transient, the coordinator's with a time) ends by
+\*              the clock; a credit rest and an auth rest have no time (a refused
+\*              key does not mend itself: the owner replaces it, then Wake).
 \* Reversed witnesses:
 \*   "noresult" the retired rule 3: a no-result counts toward the window's
 \*              rest: RestOnlyByProviderOrCoordinator
 \*   "balance"  the retired balance rest: a low read rests the provider:
 \*              RestOnlyByProviderOrCoordinator
 \*   "silent"   the tick never raises the low-on-funds judgment: LowIsRaised
+\*   "authclock" the retired timed key rest (RouteRestFor, until 2026-10-10): the
+\*              clock ends an auth rest: AuthEndsOnlyWoken
 EXTENDS Naturals, Sequences, FiniteSets
 
 CONSTANTS Routes, W, After, Broken
@@ -148,7 +151,7 @@ ExpireRoute(r) ==
     /\ UNCHANGED <<provRest, win, low, judged>>
 
 ExpireProvider ==
-    /\ provRest \in {"auth", "coord"}
+    /\ provRest \in IF "authclock" \in Broken THEN {"auth", "coord"} ELSE {"coord"}
     /\ provRest' = "none"
     /\ event' = "clock"
     /\ UNCHANGED <<own, win, low, judged>>
@@ -178,6 +181,11 @@ RestOnlyByProviderOrCoordinator ==
 \* coordinator's wake: never by the clock
 CreditEndsOnlyPaidOrWoken ==
     [][(provRest = "credit" /\ provRest' # "credit") => event' \in {"payment", "funded", "wake"}]_vars
+
+\* a provider's auth rest ends only on the coordinator's wake: never by the
+\* clock, never by a payment
+AuthEndsOnlyWoken ==
+    [][(provRest = "auth" /\ provRest' # "auth") => event' = "wake"]_vars
 
 \* a no-result step never changes a rest
 NoResultNeverRests ==

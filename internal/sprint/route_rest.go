@@ -104,9 +104,9 @@ const restOpen = "open"
 func (r RouteRest) Open() bool { return r.Until.Equal(OpenUntil) }
 
 // UntilSaid is when the rest ends as a line says it: its time, until the provider is paid,
-// or, for the coordinator's rest with no time, until woken (routes wake).
+// or, for the coordinator's rest with no time and a refused key's, until woken (routes wake).
 func (r RouteRest) UntilSaid() string {
-	if r.Open() && r.Cause == RestCoordinator {
+	if r.Open() && (r.Cause == RestCoordinator || r.Cause == RestAuth) {
 		return "woken"
 	}
 	if r.Open() {
