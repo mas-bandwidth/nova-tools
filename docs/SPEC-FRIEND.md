@@ -1233,6 +1233,10 @@ where the coordinator reads it (a sprint note, like the idle alarm); and
 the model (tla/Bus2.tla gaining the owed set, with a reversed witness for
 a daemon ack that clears it).
 
+## Screen (internal/friend/screen.go)
+
+`nova-friend screen <friend> [--lines <n>] [--state-dir <d>] [--json]` reads the last lines of a friend's open session without a person. A hosted tmux session is captured through the Exec seam. A GUI harness window is selected only when its title matches the friend's recorded directory or live session title; the tool refuses rather than selecting another window. Missing accessibility permission, missing readable text, and a harness with no screen are refusals. The result is a `SCREEN` header and text, or the same `friend`, `source`, `at`, and `lines` values as JSON. This is a read-only query and needs no TLA+ state model.
+
 ## Notifications
 
 `run --notifications-only --harness codex` selects a delivery-only receiver before

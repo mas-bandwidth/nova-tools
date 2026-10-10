@@ -94,6 +94,8 @@ type world struct {
 	alive          friend.Aliver                       // the harness check, when set (a test's fake harness); nil watches the adapter
 	launch         []string                            // host: the launch command after "--"
 	settings       friend.SettingsFS                   // where a harness's own settings are read and written (install, check --settings)
+	windowReader   friend.WindowReader                 // reads a GUI harness window through accessibility; nil uses DefaultWindowReader
+	screenFriend   string                              // screen: the friend whose session to read
 	argv           []string                            // this run's arguments after the program's name: what the plist drift is read against
 	wake           *wakeFS                             // watch: the wake file's reads; nil reads the disk
 	stepBeat       bool                                // deterministic fake clock in CLI tests; never set by realWorld
@@ -324,6 +326,32 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int 
 		if i := slices.Index(args, "--"); i >= 0 {
 			w.launch, args = args[i+1:], args[:i]
 		}
+	}
+	if len(args) > 0 && args[0] == "screen" {
+		var flagsOnly []string
+		flagsOnly = append(flagsOnly, args[0])
+		skipNext := false
+		for i := 1; i < len(args); i++ {
+			if skipNext {
+				flagsOnly = append(flagsOnly, args[i])
+				skipNext = false
+				continue
+			}
+			a := args[i]
+			if strings.HasPrefix(a, "-") {
+				flagsOnly = append(flagsOnly, a)
+				if (a == "--lines" || a == "-lines" || a == "--state-dir" || a == "-state-dir") && !strings.Contains(a, "=") {
+					skipNext = true
+				}
+				continue
+			}
+			if w.screenFriend == "" {
+				w.screenFriend = a
+			} else {
+				flagsOnly = append(flagsOnly, a)
+			}
+		}
+		args = flagsOnly
 	}
 	return friendTool(w).Run(args, stdin, stdout, stderr)
 }
@@ -1015,6 +1043,28 @@ A friend a person held with nova-sprint friend down stays held until nova-sprint
 					stateDir(f)
 				},
 				Run: w.resume,
+			},
+			{
+				Name: "screen", Usage: "screen <friend> [--lines <n>] [--state-dir <d>] [--json]", Effect: tool.Inspection,
+				ExitTable: "0 printed, 1 refused, 2 could not run.",
+				Detail: `The last n lines (default 40) of the friend's open session as text. A tmux-hosted friend uses tmux capture-pane -p -t friend-<name>. A GUI harness reads its matching window through macOS accessibility. A harness with neither is refused naming why.
+Output: SCREEN friend=<f> source=<tmux|window> lines=<n> at=<RFC3339>, a blank line, the text; --json {"friend":..,"source":..,"at":..,"lines":[..]}. Exit 0 printed, 1 refused, 2 could not run.
+example: nova-friend screen bob --lines 40`,
+				Flags: func(f *tool.Flags) {
+					f.Prints()
+					f.Int("lines", friend.DefaultScreenLines, "how many lines from the end of the session to print (default: 40)")
+					f.Bool("json", false, "print the result as one JSON object instead of lines")
+					stateDir(f)
+					f.Check(func(c *tool.Call) {
+						if w.screenFriend == "" {
+							c.Problem("friend is required: nova-friend screen <friend>")
+						}
+						if c.Int("lines") <= 0 {
+							c.Problem("--lines wants a positive integer")
+						}
+					})
+				},
+				Run: w.screen,
 			},
 			{
 				Name:    "serve",

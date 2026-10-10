@@ -520,3 +520,9 @@ func (*ClaudeWake) Passive() {}
 
 // Known says whether harness is one of Harnesses.
 func Known(harness string) bool { return slices.Contains(Harnesses, harness) }
+
+// GUIHarnesses lists the harnesses that run as a desktop GUI app on macOS.
+var GUIHarnesses = []string{"antigravity"}
+
+// IsGUI says whether harness is one of GUIHarnesses.
+func IsGUI(harness string) bool { return slices.Contains(GUIHarnesses, harness) }

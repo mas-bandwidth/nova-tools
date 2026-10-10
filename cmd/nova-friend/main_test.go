@@ -56,6 +56,8 @@ type rig struct {
 	alive        friend.Aliver
 	deaf         bool              // bob's opencode session takes a turn and never runs the pong line
 	fs           *friendtest.MemFS // the harness settings' filesystem: bob's directory /w/bob
+	exec         friend.Exec
+	windowReader friend.WindowReader
 }
 
 type fakeAlive struct {
@@ -108,10 +110,16 @@ func (r *rig) world() world {
 			}
 			return "", errors.New("executable file not found in ")
 		},
-		random:   func() string { return "r4nd0m" },
-		alive:    r.alive,
-		exec:     r.opencode,
-		settings: r.fs,
+		random: func() string { return "r4nd0m" },
+		alive:  r.alive,
+		exec: func(ctx context.Context, dir, name string, args []string, in string) (string, int, error) {
+			if r.exec != nil {
+				return r.exec(ctx, dir, name, args, in)
+			}
+			return r.opencode(ctx, dir, name, args, in)
+		},
+		settings:     r.fs,
+		windowReader: r.windowReader,
 	}
 }
 

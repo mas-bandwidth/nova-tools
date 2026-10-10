@@ -1477,11 +1477,12 @@ usage:
   nova-friend status --as <me> --dir <d> [--state-dir <d>]
   nova-friend refuse-go --name go|gofmt
   nova-friend resume --as <me> [--dir <d>] [--state-dir <d>] [--dry-run]
+  nova-friend screen <friend> [--lines <n>] [--state-dir <d>] [--json]
   nova-friend serve --as <coordinator> [--redis <addr>] [--dry-run]
   nova-friend version
   nova-friend help [<verb>]
 
-Every verb but run, serve takes --json: the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
+Every verb but run, screen, serve takes --json: the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
 
 exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 
@@ -1789,6 +1790,21 @@ exit codes: 0 done, 2 could not run (the marker cannot be removed).
 effect: local write: writes files on this machine: removes the lanes' pause marker PAUSED from the state directory
 ```
 
+`nova-friend screen -h`:
+
+```
+usage: nova-friend screen [flags]
+from `nova-friend help`:
+  nova-friend screen <friend> [--lines <n>] [--state-dir <d>] [--json]
+example: nova-friend screen bob --lines 40
+flags:
+  --json  print the result as one JSON object instead of lines
+  --lines <int>  how many lines from the end of the session to print (default: 40)
+  --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
+exit codes: 0 printed, 1 refused, 2 could not run.
+effect: inspection: reads, writes nothing
+```
+
 `nova-friend serve -h`:
 
 ```
@@ -2026,6 +2042,22 @@ example: nova-friend reach --as ada --to bob --dry-run
 ```
 
 The result line is first, then one line per step in the order it happened. `--json` carries facts `friend`, `step` (on OK), `tried` (on FAILED), `from` and `step_timeout` (on a dry run), `dry_run`, and items `STEP`, `PROOF` and `NONE`.
+
+### The friend screen
+
+`nova-friend screen <friend> [--lines <n>] [--state-dir <d>] [--json]` prints the last n lines (default 40) of the friend's open session. Hosted sessions use `tmux capture-pane -p -t friend-<name>`. A GUI harness reads only the matching directory or session-title window through macOS accessibility; it refuses with the accessibility remedy when permission is missing, and refuses rather than selecting another window.
+
+```
+SCREEN friend=<f> source=<tmux|window> lines=<n> at=<RFC3339>
+
+<text>
+```
+
+`--json` prints `{"friend":..,"source":..,"at":..,"lines":[..]}`. Exit 0 printed, 1 refused, 2 could not run.
+
+```sh
+nova-friend screen bob --lines 40
+```
 
 ### The friend health check
 
