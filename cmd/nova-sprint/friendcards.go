@@ -295,10 +295,9 @@ func friendFinish(ctx context.Context, name string, p sprint.Packet, report stri
 	if note := friendReportPinNote(report); note != "" {
 		r.Report += "; " + note
 	}
-	// the report's PATHS-PROPOSED line, wherever it stands, rides on the card for brief --widen
-	// (docs/SPEC-SPRINT.md section 2, "recut-widen-r.w1")
-	if globs, ok := member.PathsProposed(report); ok && len(globs) > 0 {
-		r.Report += "; " + member.ProposedKey + " " + strings.Join(globs, ",")
+	// Structured fix lines ride after the one-line summary for Finish to apply.
+	if r.Failed {
+		r.Report = member.CarryHoldFix(r.Report, report, maxFriendReport)
 	}
 	return r, nil
 }

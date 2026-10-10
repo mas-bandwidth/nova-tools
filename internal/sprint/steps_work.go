@@ -1578,6 +1578,22 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		if defect != "" {
 			into = DoneDefect
 		}
+		// a HOLD that names its own fix is applied here, before the failed-work judgment
+		// (hold_fix.go; docs/SPEC-SPRINT.md section 8, the hold fix lines)
+		var holdPrefix string
+		var held holdFix
+		if r.Failed && defect == "" && !passed && kind == "" {
+			held = readHoldFix(s, pr, r.Report, head)
+			switch held.act {
+			case holdFixReady:
+				u := applyHoldFix(s, c, pr, r, who, head, held)
+				friendNext(s, c, &u, p.Units)
+				p.Units = append(p.Units, u)
+				continue
+			case holdFixRefuse:
+				holdPrefix = holdFixRefused + held.why + ": "
+			}
+		}
 		cardSet := map[string]string{"ok": okWord, "head": head, "finished": stamp(s.Now)}
 		if !r.Reported.IsZero() {
 			at := r.Reported
@@ -1645,7 +1661,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		// the brief's bound as this finish leaves the card (brief_bound.go): the same failure
 		// escalates below the ceiling only under the attempt cap
 		bb, atBound := AtBriefBound(withField(pr, FieldCostTotal, set[FieldCostTotal]), r.Report, s.AttemptsCap(pr.Row))
-		if next := s.NextTier(pr); identical && next != "" && !atBound {
+		if next := s.NextTier(pr); identical && next != "" && !atBound && holdPrefix == "" && held.act != holdFixPark {
 			// the second identical failure below its ceiling (rules 1 and 2, nova-tools#5174:
 			// "Flash first on every card; pro only on escalation"): no judgment; the primary
 			// takes the next tier and its why and goes back to ready, as a rework with no
@@ -1669,6 +1685,17 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		// finish wakes, the earlier pair first (Ask, the primary's asked field), each read
 		// with the route it draws. A read the finish creates itself carries no route (a
 		// finish loads none), so no reader can start it.
+		if held.act == holdFixPark {
+			set["brief"] = held.brief
+			set[FieldBriefAttempt] = pr.F("attempt")
+			set[FieldRuleNeed] = held.park + "@" + pr.F("attempt")
+			if held.tier != "" {
+				set[FieldTierNow] = held.tier
+			}
+			if held.gateHost != "" {
+				set[FieldGateHost] = held.gateHost
+			}
+		}
 		asked := map[string]string{}
 		if passed {
 			n := happened(NWorkOK, pr.Row, s.Now, pr.ID)
@@ -1690,6 +1717,15 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			n := judgment(NBriefDefect, pr.Row, s.Now, 0, pr.ID)
 			n.Who, n.Attempt, n.Card = who, attempt, c.ID
 			n.What = "a brief defect, " + defect + ": re-cut the brief; " + r.Report
+			u.Notes = append(u.Notes, n)
+		} else if held.act == holdFixPark || holdPrefix != "" {
+			n := judgment(NWorkFailed, pr.Row, s.Now, pr.Int("failed"), pr.ID)
+			n.Who, n.Attempt = who, attempt
+			if held.act == holdFixPark {
+				n.What = "waiting on " + held.park + " by rule " + RuleHoldNeed + ": " + NHoldFix + ": " + held.said + ": " + r.Report
+			} else {
+				n.What = holdPrefix + r.Report
+			}
 			u.Notes = append(u.Notes, n)
 		} else if atBound {
 			// the attempt cap on one brief, whatever this attempt's failure: the brief is

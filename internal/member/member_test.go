@@ -19,6 +19,15 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 )
 
+func TestMemberFinishCarriesStructuredHoldFix(t *testing.T) {
+	t.Parallel()
+	r := Result{Report: "TIER: pro was discussed, not requested.\n\nThe brief is too narrow.\nPATHS-PROPOSED: internal/sprint/widen.go\nNEEDS: s1-2\nTIER: heavy\nGATE-HOST: linux", Body: "", Ran: true}
+	_, _, report := finishReport(r, Push{None: "no commit"}, "sprint/x")
+	assert.Contains(t, report, "; PATHS-PROPOSED: internal/sprint/widen.go")
+	assert.Equal(t, []string{"PATHS-PROPOSED: internal/sprint/widen.go", "NEEDS: s1-2", "TIER: heavy", "GATE-HOST: linux"}, HoldFixLines(report))
+	assert.LessOrEqual(t, len(report), 500)
+}
+
 // scriptSprint is a Sprint that records every argv and answers from a table,
 // keyed by the verb: beat, queue, take, begin (read --begin), finish, report
 // (read --ok/--broken). An unlisted verb answers 0 with an empty body.

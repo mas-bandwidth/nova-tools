@@ -3,6 +3,7 @@ package sprint
 import (
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
@@ -113,6 +114,9 @@ func collectReport(c CollectCard, from, report string) Collected {
 		if full {
 			r.Head = head
 		}
+	}
+	if r.Failed {
+		r.Report = member.CarryHoldFix(r.Report, report, CollectReportChars)
 	}
 	return r
 }

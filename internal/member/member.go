@@ -320,7 +320,8 @@ type Packet struct {
 	Deadline int    `json:"deadline,omitempty"`
 	// Tier is the tier the route was drawn from when the sprint decided it (a read's
 	// read tier, a rework's --tier); empty when the brief's line 1 names it.
-	Tier string `json:"tier,omitempty"`
+	Tier     string `json:"tier,omitempty"`
+	GateHost string `json:"gate_host,omitempty"` // a hold fix: the next work attempt's gate host class
 	// A decide read's bars on p(defect), as the ask wrote them on the read card
 	// (docs/SPEC-SPRINT.md section 6, the decide read); empty for a strings read.
 	DecideBounce string `json:"decide_bounce,omitempty"`
@@ -1941,7 +1942,7 @@ func finishReport(r Result, pu Push, branch string) (fin Finish, why, report str
 	if fin != FinishOK {
 		report = cut(why + "; " + report)
 	}
-	return fin, why, CarryProposed(report, r)
+	return fin, why, CarryHoldFix(CarryProposed(report, r), r.Report+"\n"+r.Body, 500)
 }
 
 // ProposedKey begins the one line a held report proposes the PATHS its card lacked by
@@ -1989,6 +1990,71 @@ func CarryProposed(report string, r Result) string {
 	}
 	line := cut("; " + ProposedKey + " " + strings.Join(globs, ","))
 	return report[:min(len(report), 500-len(line))] + line
+}
+
+// HoldFixLines reads only a fix at the start of a report line or of an explicit
+// semicolon-delimited segment. Normal prose mentioning a key is not a fix.
+// The compact lines are the grammar carried through one-line finish reports.
+func HoldFixLines(report string) []string {
+	var out []string
+	for _, segment := range strings.FieldsFunc(report, func(r rune) bool { return r == '\n' || r == ';' }) {
+		segment = strings.TrimSpace(segment)
+		for _, key := range []string{"PATHS-PROPOSED:", "NEEDS:", "TIER:", "GATE-HOST:"} {
+			if !strings.HasPrefix(segment, key) {
+				continue
+			}
+			value := strings.TrimSpace(strings.TrimPrefix(segment, key))
+			if key == ProposedKey {
+				parts := strings.Split(value, ",")
+				valid := len(parts) > 0
+				for _, part := range parts {
+					if len(strings.Fields(part)) != 1 {
+						valid = false
+						break
+					}
+				}
+				if !valid {
+					continue
+				}
+				if paths, ok := PathsProposed(segment); ok && len(paths) > 0 {
+					value = strings.Join(paths, ",")
+				}
+			} else if words := strings.Fields(value); len(words) == 1 {
+				value = words[0]
+			} else {
+				continue
+			}
+			out = append(out, key+" "+value)
+			break
+		}
+	}
+	return out
+}
+
+// CarryHoldFix keeps the child's structured fix lines at the end of a bounded
+// one-line finish, where finish can distinguish them from prose.
+func CarryHoldFix(report, raw string, limit int) string {
+	seen := map[string]bool{}
+	for _, line := range HoldFixLines(report) {
+		key, _, _ := strings.Cut(line, ":")
+		seen[key] = true
+	}
+	var added []string
+	for _, line := range HoldFixLines(raw) {
+		key, _, _ := strings.Cut(line, ":")
+		if !seen[key] {
+			added = append(added, line)
+			seen[key] = true
+		}
+	}
+	if len(added) == 0 {
+		return report
+	}
+	suffix := "; " + strings.Join(added, "; ")
+	if len(suffix) > limit {
+		return report
+	}
+	return report[:min(len(report), limit-len(suffix))] + suffix
 }
 
 // Carry is where a card's next attempt starts when brief --widen widens it in place, or a
@@ -2177,6 +2243,9 @@ func CardText(p Packet) string {
 			fmt.Fprintf(&b, " The checkout is on branch %s; JOB.md, which the prompt names first, says where it is and how this card ends. When you end, the member pushes your commit to origin's branch %s from outside the wall.", p.Branch, p.Branch)
 		}
 		b.WriteString("\n\n")
+		if p.GateHost == "linux" {
+			b.WriteString("GATE-HOST: linux was applied to this attempt. Run every executable Go gate on a Linux bench, preserve its output, and report the bench and exit status. A gate run only on this member's machine does not satisfy this card.\n\n")
+		}
 		b.WriteString(cardtree.Guide(cardtree.Parse(p.Brief)))
 	}
 	if strings.TrimSpace(p.Fix) != "" {

@@ -57,6 +57,9 @@ type Packet struct {
 	// and not the brief's line 1: a read's read tier (route.go, readTierOf), a work
 	// card's tier from rework --tier; empty otherwise. JOB.md names it.
 	Tier string `json:"tier,omitempty"`
+	// GateHost is a HOLD fix applied at finish: the next work attempt must run its
+	// Go gates on this host class, not on its member's machine.
+	GateHost string `json:"gate_host,omitempty"`
 	// A decide read's bars on p(defect), the read card's (steps_review.go,
 	// decideFields): its reader asks nova-decide's read decision first and routes the
 	// read by them (docs/SPEC-SPRINT.md section 6); empty for a strings read.
@@ -189,6 +192,9 @@ func PacketOf(prefix string, epoch uint64, c, primary *Card, earlier []*Card, wo
 	if primary != nil {
 		p.Brief = primary.F("brief")
 		p.Rules = primary.F(FieldRules)
+		if p.Kind == "work" {
+			p.GateHost = primary.F(FieldGateHost)
+		}
 		if primary.Int("attempt") == p.Attempt {
 			p.Fix = primary.F("fix")
 		}

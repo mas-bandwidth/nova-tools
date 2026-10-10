@@ -43,3 +43,15 @@ func TestAFriendReportWhoseFirstTwoLinesAreNotPinnedIsReadAllTheSame(t *testing.
 		})
 	}
 }
+
+func TestAFriendSyncCarriesHoldFixLinesToFinish(t *testing.T) {
+	t.Parallel()
+	p := sprint.Packet{Card: "c.w1", Gen: 1, Branch: "sprint/c.w1.g1.e0", Brief: "REPO: mas-bandwidth/nova-tools\n"}
+	report := "Verdict: HOLD\n\nThe gate requires a bench. TIER: pro was only discussed.\n\nNEEDS: s1-2\nTIER: heavy\nGATE-HOST: linux\n"
+	r, err := friendFinish(context.Background(), "amy", p, report, nil)
+	require.NoError(t, err)
+	assert.True(t, r.Failed)
+	assert.Contains(t, r.Report, "friend amy HOLD:")
+	assert.Contains(t, r.Report, "; NEEDS: s1-2; TIER: heavy; GATE-HOST: linux")
+	assert.NotContains(t, r.Report, "; TIER: pro")
+}
