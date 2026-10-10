@@ -45,6 +45,7 @@ cmd/nova-up	0.0	@local	-
 cmd/nova-update	0.0	@run37517528825	self-hosted
 cmd/nova-version	0.0	@run37518625834	self-hosted
 cmd/nova-work	0.1	@run37517528825	self-hosted
+fleet	0.1	@local	-
 internal/atomicfile	1.4	@run37411066588	self-hosted
 internal/bench	0.1	@local	-
 internal/binstamp	0.1	@local	-

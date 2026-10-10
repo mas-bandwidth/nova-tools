@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -141,7 +140,7 @@ else: print('FIXTURE OK')
 			}
 			after, err := os.Stat(held)
 			require.NoError(t, err)
-			assert.Equal(t, before.Sys().(*syscall.Stat_t).Ino, after.Sys().(*syscall.Stat_t).Ino)
+			assert.True(t, os.SameFile(before, after), "the held nova-bus inode changed")
 			bytes, err := os.ReadFile(held)
 			require.NoError(t, err)
 			assert.Equal(t, "old held bus\n", string(bytes))
