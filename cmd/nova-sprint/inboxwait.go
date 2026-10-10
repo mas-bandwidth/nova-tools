@@ -7,12 +7,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
@@ -528,16 +528,11 @@ func pushedKeys(dir string) (map[string]bool, error) {
 // whole beside it and linked into place, so a watcher never reads half of
 // it, and an existing file is never replaced. It says whether it wrote.
 func writeOnce(path, text string) (bool, error) {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(text), 0o644); err != nil {
+	if err := atomicfile.Write(path, []byte(text), 0o644, atomicfile.NoReplace()); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return false, nil
+		}
 		return false, err
 	}
-	err := os.Link(tmp, path)
-	if rmErr := os.Remove(tmp); err == nil && rmErr != nil {
-		return true, rmErr
-	}
-	if errors.Is(err, fs.ErrExist) {
-		return false, nil
-	}
-	return err == nil, err
+	return true, nil
 }
