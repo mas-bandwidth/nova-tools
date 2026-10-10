@@ -52,6 +52,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -419,4 +420,33 @@ func commandLine(args []string) string {
 		words[i] = strconv.Quote(arg)
 	}
 	return strings.Join(words, " ")
+}
+
+// SocketPath is where a unix socket of a test goes: under work when the path
+// fits a Unix socket, else in a fresh private directory under the temp
+// directory, else under /tmp. The bound is 104 bytes, below the shortest
+// sockaddr_un path of the platforms this runs on (104 on macOS, 108 on Linux),
+// as internal/tablemodel's maxSocketPath and cmd/nova-sprint's twinSocketMax.
+// A work directory deep under a long TMPDIR (a CI runner's) cannot hold a
+// socket and redis-server refuses to bind it, so the caller must use this
+// before it starts one. The directory this makes is the caller's to remove.
+func SocketPath(work, name string) (string, error) {
+	if sock := filepath.Join(work, name); len(sock) <= 104 {
+		return sock, nil
+	}
+	var last error
+	for _, root := range []string{os.TempDir(), "/tmp"} {
+		dir, err := os.MkdirTemp(root, "nsb")
+		if err != nil {
+			last = err
+			continue
+		}
+		sock := filepath.Join(dir, name)
+		if len(sock) <= 104 {
+			return sock, nil
+		}
+		// ignored: dir is the empty directory MkdirTemp just made and this call removes nothing else
+		_ = os.Remove(dir)
+	}
+	return "", fmt.Errorf("work directory %s is too long and no short socket path could be made: %v", work, last)
 }
