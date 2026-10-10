@@ -110,13 +110,15 @@ func (r *rig) world() world {
 			}
 			return "", errors.New("executable file not found in ")
 		},
-		random:   func() string { return "r4nd0m" },
-		alive:    r.alive,
+		random: func() string { return "r4nd0m" },
+		alive:  r.alive,
 		exec: func(ctx context.Context, dir, name string, args []string, in string) (string, int, error) {
-			if r.exec != nil { return r.exec(ctx, dir, name, args, in) }
+			if r.exec != nil {
+				return r.exec(ctx, dir, name, args, in)
+			}
 			return r.opencode(ctx, dir, name, args, in)
 		},
-		settings: r.fs,
+		settings:     r.fs,
 		windowReader: r.windowReader,
 	}
 }
