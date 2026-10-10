@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -480,6 +481,7 @@ type nativeRunner struct {
 	benchHome                                      string                       // the home whose nova-bench/mirror a card's clone step borrows (mirrorKeeping); "": the card keeps $HOME
 	load                                           hostload.Source
 	maxLoad, warnLoad                              float64
+	generationTransport                            func(context.Context, string, string) (cardcost.GenerationUsage, error) // nil uses the provider; tests supply an in-process answer
 
 	// launches started and not yet ended; failed ones ended and kept (slotclean.go). mu
 	// guards both: the member's pass tags a launch ended while the cleaner prunes. tagged
@@ -545,9 +547,17 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	logPath := filepath.Join(r.slots, name+".native.log")
 	pidPath := filepath.Join(r.slots, name+".pid")
 	job := filepath.Join(slot, "jobs", p.Card)
+	cardPath := filepath.Join(r.slots, name+".card.md")
+	costModel := p.Model
+	if r.model != "" && (p.Kind == "read" || costModel == "") {
+		costModel = r.model
+	}
 	if pid := livePID(pidPath); pid > 0 {
 		proc, _ := os.FindProcess(pid) // ignored: a pid alive a moment ago; a nil proc makes Stop a no-op
-		c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: proc}
+		if frame, frameErr := cardcontract.ReadFrame(filepath.Join(r.slots, name+cardcontract.FrameName)); frameErr == nil && frame.Model != "" {
+			costModel = frame.Model
+		}
+		c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, cardPath: cardPath, model: costModel, generation: r.generationUsage, done: make(chan struct{}), proc: proc}
 		go func() {
 			for processAlive(pid) {
 				time.Sleep(time.Second)
@@ -579,7 +589,6 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	if err != nil {
 		return nil, err
 	}
-	cardPath := filepath.Join(r.slots, name+".card.md")
 	if err := os.WriteFile(cardPath, []byte(swarm.PointCardAtMirrors(card, r.benchHome)), 0o644); err != nil {
 		return nil, err
 	}
@@ -641,7 +650,7 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 		fmt.Fprintf(r.stderr, "nova-swarm member: NOTE card %s runs as pid %d, and its pid file %s could not be written (%s): a member restarted while it runs cannot find it and may launch the card a second time; let it end before restarting this member; run: ls -ld %s\n",
 			oneline.Field(p.Card), cmd.Process.Pid, oneline.Field(pidPath), oneline.Err(err), oneline.Field(r.slots))
 	}
-	c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{}), proc: cmd.Process}
+	c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, cardPath: cardPath, model: model, generation: r.generationUsage, done: make(chan struct{}), proc: cmd.Process}
 	go func() {
 		c.err = cmd.Wait()
 		release()
@@ -763,6 +772,7 @@ func processAlive(pid int) bool {
 
 type nativeChild struct {
 	card, logPath, results, job string
+	cardPath, model             string
 	done                        chan struct{}
 	err                         error
 	once                        sync.Once
@@ -770,6 +780,9 @@ type nativeChild struct {
 	// proc is native's process: the machine's stop signals it (Stop), and native reaps its
 	// harness's group with its own grace (native_proc_unix.go, the SIGTERM branch of watch).
 	proc *os.Process
+	// generation is explicitly installed by Start, which reads the runner's held
+	// key. A child constructed by a test makes no provider request by default.
+	generation func(context.Context, string) (cardcost.GenerationUsage, error)
 }
 
 // StopGrace is how long a native child told to stop by the machine's stop has to end by
@@ -804,6 +817,170 @@ var noUsageReported = func() string {
 	u.Extra = []string{"usage_source=none"}
 	return u.String()
 }()
+
+// generationIDPattern finds explicit generation metadata, including OpenRouter
+// response ids in a native log (SPEC-SWARM, Every run's cost).
+const generationReadTimeout = 15 * time.Second
+const maxGenerationQuotes = 128
+const maxGenerationCapture = 16 << 20
+
+var generationIDPattern = regexp.MustCompile(`(?:\bgeneration_id=|"generation_id"\s*:\s*")([A-Za-z0-9_-]+)|"id"\s*:\s*"(gen-[A-Za-z0-9_-]+)"`)
+
+// priceRunWithoutUsage recovers a no-usage run from the whole set of provider
+// request quotes, else the exact launch prompt's bytes. It never labels a partial
+// quote sum as an actual run cost (SPEC-SPRINT, Every run's cost).
+func priceRunWithoutUsage(usage string, log []byte, job, cardPath, model string,
+	lookup func(context.Context, string) (cardcost.GenerationUsage, error)) string {
+	if usage == "" {
+		usage = noUsageReported
+	}
+	u := cardcost.ParseUsage(usage)
+	if u.Tokens.Reported() || u.HasActual() {
+		return usage
+	}
+	// The native summary does not forward every provider metadata row; the
+	// launch's own harness capture retains the response ids.
+	captureComplete := true
+	if raw, err := member.ReadRegular(filepath.Join(job, "harness-output.log"), maxGenerationCapture); err == nil {
+		log = append(append(append([]byte{}, log...), '\n'), raw...)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		u.Extra = append(u.Extra, "generation_capture=unreadable")
+		captureComplete = false
+	}
+	ids := generationIDsOf(log)
+	if u.GenerationID != "" {
+		ids = generationIDsOf(append([]byte("generation_id="+strings.ReplaceAll(u.GenerationID, ",", " generation_id=")), log...))
+	}
+	if len(ids) > maxGenerationQuotes {
+		u.Extra = append(u.Extra, "generation_usage=too-many-requests")
+	}
+	pricedModel := u.Model
+	if pricedModel == "" {
+		pricedModel = model
+	}
+	if len(ids) > 0 && len(ids) <= maxGenerationQuotes && lookup != nil && captureComplete && strings.HasPrefix(pricedModel, "openrouter/") {
+		ctx, cancel := context.WithTimeout(context.Background(), generationReadTimeout)
+		defer cancel()
+		total := cardcost.NoTotal()
+		var models []string
+		seenModels := map[string]bool{}
+		complete, actualComplete, tokensComplete := true, true, true
+		for _, id := range ids {
+			quote, err := lookup(ctx, id)
+			q := cardcost.NoUsage().ApplyGeneration(quote)
+			if err != nil || quote.ID != id || (!q.HasActual() && !q.Tokens.Reported()) {
+				complete = false
+				break
+			}
+			total = total.Add(q)
+			actualComplete = actualComplete && q.HasActual()
+			tokensComplete = tokensComplete && q.Tokens.Reported()
+			if quote.Model != "" {
+				actualModel := "openrouter/" + quote.Model
+				if !seenModels[actualModel] {
+					models = append(models, actualModel)
+					seenModels[actualModel] = true
+				}
+			}
+		}
+		if complete && (actualComplete || tokensComplete) {
+			u.Tokens, u.Actual, u.ActualBy = total.Tokens, "", ""
+			if actualComplete {
+				u.Actual, u.ActualBy = total.Actual, cardcost.ActualByGeneration
+			}
+			u.Tokens.Requests = int64(len(ids))
+			u.GenerationID = strings.Join(ids, ",")
+			if len(models) == 1 {
+				u.Model = models[0]
+			} else {
+				if u.Model == "" {
+					u.Model = model
+				}
+				if len(models) > 1 {
+					u.Extra = append(u.Extra, "generation_models="+strings.Join(models, ","))
+				}
+			}
+			u = recoveredUsageSource(u, "generation")
+			return u.String()
+		}
+		u.Extra = append(u.Extra, "generation_usage=incomplete")
+	}
+	if len(ids) > 0 {
+		u.GenerationID = strings.Join(ids, ",")
+	}
+	if n := promptBytesOf(job, cardPath); n > 0 {
+		u.PromptBytes = n
+		if u.Model == "" {
+			u.Model = model
+		}
+		u = recoveredUsageSource(u, "prompt")
+	}
+	return u.String()
+}
+
+// recoveredUsageSource replaces the absent-source marker with the fact recovered
+// from the provider or durable launch prompt (SPEC-SWARM, Every run's cost).
+func recoveredUsageSource(u cardcost.Usage, source string) cardcost.Usage {
+	kept := u.Extra[:0]
+	for _, word := range u.Extra {
+		if !strings.HasPrefix(word, "usage_source=") {
+			kept = append(kept, word)
+		}
+	}
+	u.Extra = append(kept, "usage_source="+source)
+	return u
+}
+
+// generationIDsOf keeps distinct ids in their log order, so repeated log lines
+// cannot charge a request twice (SPEC-SPRINT, Every run's cost).
+func generationIDsOf(log []byte) []string {
+	var ids []string
+	seen := map[string]bool{}
+	for _, m := range generationIDPattern.FindAllSubmatch(log, -1) {
+		id := string(m[1])
+		if id == "" {
+			id = string(m[2])
+		}
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+			if len(ids) > maxGenerationQuotes {
+				break
+			}
+		}
+	}
+	return ids
+}
+
+// promptBytesOf reconstructs nativePrompt from the durable launch card, including
+// the RESULT format and frame prefix. JOB.md is an instruction to read, not the
+// prompt sent (SPEC-SWARM, Every run's cost).
+func promptBytesOf(job, cardPath string) int64 {
+	if cardPath == "" {
+		return 0
+	}
+	card, err := member.ReadRegular(cardPath, maxGenerationCapture)
+	if err != nil || len(card) == 0 {
+		return 0
+	}
+	return int64(len(cardcontract.Prompt(job, swarm.CardPrompt(card))))
+}
+
+// generationUsage reads one provider request over the runner's held key and
+// injected transport (SPEC-SWARM, Every run's cost). Failures expose no key or body.
+func (r *nativeRunner) generationUsage(ctx context.Context, id string) (cardcost.GenerationUsage, error) {
+	if os.Getenv("NOVA_TEST_NO_HOST") != "" && r.generationTransport == nil {
+		return cardcost.GenerationUsage{}, errors.New("generation transport not supplied in no-host test")
+	}
+	key := r.getenv("OPENROUTER_API_KEY")
+	if key == "" {
+		return cardcost.GenerationUsage{}, errors.New("generation key absent")
+	}
+	if r.generationTransport != nil {
+		return r.generationTransport(ctx, key, id)
+	}
+	return cardcost.FetchOpenRouterGeneration(ctx, key, id, nil)
+}
 
 // receiptSpend is this launch's durable per-attempt usage rows read back
 // (member.ReceiptUsage; docs/SPEC-SPRINT.md, "What a card cost"). The job directory is
@@ -987,8 +1164,10 @@ func (c *nativeChild) Result() member.Result {
 	c.once.Do(func() {
 		ran := false
 		var end, usage, provider, refused, budget, gate, gateTests, carry, usageError, nativeSpendLine string
+		var logBytes []byte
 		nativeHasSpend := false
 		if b, err := os.ReadFile(c.logPath); err == nil {
+			logBytes = b
 			carry = cardcontract.ParseCarryLine(b)
 			if m := nativeGateLine.FindSubmatch(b); m != nil {
 				gate, gateTests = string(m[1]), strings.ReplaceAll(strings.TrimSpace(string(m[2])), ",", ", ")
@@ -1095,13 +1274,13 @@ func (c *nativeChild) Result() member.Result {
 			usage = u.String()
 			report = oneline.Cap(report+"; usage receipt unreadable: "+oneline.Escape(usageError), 300)
 		}
-		if usage == "" {
-			// the harness reported nothing and left no receipt: the finish or the read
-			// still carries --usage, saying so (noUsageReported), so a routed read's
-			// verdict is kept and recorded unpriced=no-tokens, never refused for a
-			// missing --usage (docs/SPEC-SPRINT.md, "Reads are priced like work")
-			usage = noUsageReported
-		}
+		// the harness reported nothing and left no receipt: still carry --usage.
+		// A generation id on the log is the provider's per-request quote when the
+		// key is present; otherwise the launch prompt's length rides as prompt_bytes so the
+		// sprint can estimate. With neither, the line is noUsageReported, and a
+		// routed read's verdict is kept (docs/SPEC-SPRINT.md, "Reads are priced
+		// like work"; docs/SPEC-SWARM.md, the member).
+		usage = priceRunWithoutUsage(usage, logBytes, c.job, c.cardPath, c.model, c.generation)
 		if verdict == "not-done" && gate == member.GateGreen {
 			// the child's gate was red only on failures the gate decision classed flaky, and
 			// their rerun passed: the work is done as far as its gate says; the readers read it

@@ -39,9 +39,14 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/readregular"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
+
+// ReadRegular bounds a launch's durable input or capture before a member uses it
+// for cost recovery. It refuses special files through the shared regular-file reader.
+func ReadRegular(path string, limit int64) ([]byte, error) { return readregular.Read(path, limit) }
 
 // Sprint runs one sprint verb and returns its exit code and stdout.
 type Sprint interface {
