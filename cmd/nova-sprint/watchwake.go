@@ -37,6 +37,9 @@ import (
 //	          blocker or a report; a message with no kind is told by its
 //	          subject: no ping, pong, dealt, finished, landed, width, RESULT or
 //	          HOLD notice), never the coordinator's own
+//	file      a line appended to the wake file --wake-file names since the last
+//	          look (the first run starts at the file's end), up to three new
+//	          lines shown
 //	judgment  a judgment new since the last judgment wake, at most one wake in
 //	          --judgment-every
 //	stop      the machine STOPPED by anyone but the coordinator's stop verb,
@@ -66,6 +69,7 @@ func init() { notServed = append(notServed, "watch") }
 // wakeKinds are the kinds, so the help and the evidence name the same words.
 const (
 	wakeBus      = "bus"
+	wakeFile     = "file"
 	wakeJudgment = "judgment"
 	wakeStop     = "stop"
 	wakeFriend   = "friend"
@@ -104,6 +108,7 @@ type wakeMsg struct{ ID, From, Subject, Kind string }
 type wakeLook struct {
 	Coordinator string
 	Msgs        []wakeMsg // the stream's entries after the cursor, oldest first
+	WakeFile    []string  // the wake file's lines, in order; nil when none is watched
 	Judgments   []string  // the open judgments' notes
 	Stopped     bool      // the machine reads STOPPED (not DONE)
 	StopAsked   bool      // and the coordinator's stop verb stopped it
@@ -126,6 +131,8 @@ type wakeSource interface {
 type wakeState struct {
 	Seeded    bool                 `json:"seeded"`
 	Bus       string               `json:"bus"`
+	Wake      int                  `json:"wake"`      // the wake file's lines consumed
+	WakeInit  bool                 `json:"wake_init"` // the wake file's baseline is set
 	Judgments []string             `json:"judgments"`
 	Stop      string               `json:"stop"`
 	Down      map[string]int       `json:"down"`
@@ -262,6 +269,21 @@ func (s *wakeState) step(cfg wakeCfg, l wakeLook, now time.Time) (wakeLine, bool
 		}
 		return woke(wakeBus, strings.Join(ev, "; "))
 	}
+	// the wake file: a line appended since the last look wakes (the first look,
+	// before the baseline is set, is not new)
+	if l.WakeFile != nil {
+		if len(l.WakeFile) > s.Wake {
+			fresh := l.WakeFile[s.Wake:]
+			s.Wake = len(l.WakeFile)
+			if len(fresh) > 3 {
+				fresh = fresh[:3]
+			}
+			return woke(wakeFile, strings.Join(fresh, "; "))
+		}
+		if len(l.WakeFile) < s.Wake {
+			s.Wake = len(l.WakeFile) // the file was replaced or truncated: start over
+		}
+	}
 	if len(fresh) > 0 && due(wakeJudgment, cfg.judgmentEvery) {
 		s.Judgments = slices.Clone(l.Judgments)
 		return woke(wakeJudgment, fmt.Sprintf("%d new: %s", len(fresh), strings.Join(fresh, ", ")))
@@ -362,6 +384,12 @@ func runWake(ctx context.Context, cfg wakeCfg, src wakeSource, path string, now 
 			st.Seeded, st.Judgments = true, slices.Clone(l.Judgments)
 			st.Last = map[string]time.Time{wakeCheck: at}
 		}
+		if l.WakeFile != nil && !st.WakeInit {
+			// a --wake-file first seen -- the first run, or a state seeded before
+			// the flag was given -- starts at the file's end: the lines already
+			// there are the baseline, not news
+			st.WakeInit, st.Wake = true, len(l.WakeFile)
+		}
 		w, ok := st.step(cfg, l, at)
 		if now, _ := json.Marshal(st); ok || string(now) != string(kept) {
 			if err := writeWakeState(path, st); err != nil {
@@ -378,10 +406,11 @@ func runWake(ctx context.Context, cfg wakeCfg, src wakeSource, path string, now 
 
 // storeWake is the wake's source on the store and the bus.
 type storeWake struct {
-	st     *store.Store
-	a      *app
-	stream string // the coordinator's stream; "" with no bus
-	bus    *bus.Bus
+	st       *store.Store
+	a        *app
+	stream   string // the coordinator's stream; "" with no bus
+	bus      *bus.Bus
+	wakeFile string // --wake-file, the lines watched as well; "" watches none
 }
 
 // busBatch bounds one read of the stream.
@@ -442,6 +471,16 @@ func (w *storeWake) look(ctx context.Context, after string) (wakeLook, error) {
 			l.LastLand = t
 		}
 	}
+	if w.wakeFile != "" {
+		lines, err := readWakeFile(w.wakeFile)
+		if err != nil {
+			return l, err
+		}
+		if lines == nil {
+			lines = []string{} // watched and empty is not the same as not watched
+		}
+		l.WakeFile = lines
+	}
 	if w.bus != nil && w.stream != "" {
 		es, err := w.bus.Store.Range(ctx, w.stream, "("+after, "+", busBatch)
 		if err != nil {
@@ -453,6 +492,22 @@ func (w *storeWake) look(ctx context.Context, after string) (wakeLook, error) {
 		}
 	}
 	return l, nil
+}
+
+// readWakeFile reads a wake file's lines in order; a file not there yet is no
+// lines yet, so a --wake-file under a directory that appears later still wakes.
+func readWakeFile(path string) ([]string, error) {
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("the wake file cannot be read: %w", err)
+	}
+	if len(b) == 0 {
+		return nil, nil
+	}
+	return strings.Split(strings.TrimSuffix(string(b), "\n"), "\n"), nil
 }
 
 // cell is a table cell as a count; one that is no number counts none.
@@ -505,8 +560,9 @@ func (a *app) openWakeBus(ctx context.Context) (*bus.Bus, io.Closer, error) {
 func (a *app) cmdWatch(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("watch")
 	d := defaultWakeCfg()
-	wake := fs.Bool("wake", false, "block until the first thing that wakes the coordinator, print WAKE <kind> <time> <evidence> and exit 0 (kinds: bus, judgment, stop, friend, merge, backlog, check)")
+	wake := fs.Bool("wake", false, "block until the first thing that wakes the coordinator, print WAKE <kind> <time> <evidence> and exit 0 (kinds: bus, file, judgment, stop, friend, merge, backlog, check)")
 	state := fs.String("state", "", "the file that keeps the cursors between runs, so no event is missed or woken twice (default: one a store under the user cache directory); the first run starts from now")
+	wakeFilePath := fs.String("wake-file", "", "a file whose lines, appended after the run starts, also wake the coordinator, up to three new lines shown; the first run starts at the file's end")
 	every := fs.Duration("every", d.every, "how often the sprint and the bus are looked at, above 0")
 	check := fs.Duration("check", d.check, "wake with a check this long after the last wake")
 	judgmentEvery := fs.Duration("judgment-every", d.judgmentEvery, "at most one judgment wake in this long")
@@ -551,7 +607,7 @@ func (a *app) cmdWatch(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return a.readFailed("watch", err, stderr)
 	}
-	src := &storeWake{st: st, a: a, bus: b}
+	src := &storeWake{st: st, a: a, bus: b, wakeFile: *wakeFilePath}
 	if coord != "" {
 		src.stream = bus.StreamOf(coord)
 	}
