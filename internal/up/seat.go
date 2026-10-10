@@ -22,7 +22,6 @@ func seatVars(e *Env) []byte {
 		"NOVA_REDIS_ADDR="+RedisAddr(),
 		"NOVA_REDIS_USER="+RedisUsers[0],
 		"NOVA_REDIS_PASSWORD_ENV="+PasswordName(RedisUsers[0]),
-		"JEV_API_KEY=",
 	) {
 		k, v, _ := strings.Cut(kv, "=")
 		fmt.Fprintf(&b, "%s='%s'\n", k, strings.ReplaceAll(v, "'", `'\''`))

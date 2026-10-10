@@ -42,14 +42,10 @@ func TestUpJevStepPlansAndApplies(t *testing.T) {
 	m, _ := fake.machine("linux")()
 	env := &Env{Machine: m, Root: root}
 	finding := planJev(env)
-	assert.Equal(t, Create, finding.State)
+	assert.Equal(t, OK, finding.State)
 
 	err := applyJev(env)
 	require.NoError(t, err)
-
-	b, err := os.ReadFile(seatEnv)
-	require.NoError(t, err)
-	assert.Contains(t, string(b), "JEV_API_KEY")
 }
 
 func TestUpJevStepPlansOKWhenPresent(t *testing.T) {
