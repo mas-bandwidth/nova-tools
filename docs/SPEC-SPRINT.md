@@ -5174,6 +5174,13 @@ beat's one write persists (`Store.FriendBeatProof`). A beat that lands while
 another is in flight can then never have its count erased by the older one, and
 the verb writes the beat once.
 
+### fleet-test-process-alarm-bcb.w2
+
+A `--tests` named with no value is refused, never read as an omission: `fleet beat
+<member> --tests=` and `friend beat <friend> --tests=` answer `--tests wants a
+whole number of at least 0, found an empty value`. Only a beat that does not name
+`--tests` carries no reading.
+
 ### The coordinator's pass
 
 The owner, 2026-10-05: "everything I described above needs to be mechanical, so you

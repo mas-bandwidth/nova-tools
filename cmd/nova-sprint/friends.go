@@ -382,7 +382,7 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	}
 	provided := make(map[string]bool)
 	fs.Visit(func(f *flag.Flag) { provided[f.Name] = true })
-	testsN, testsParent, testsOK, whyTests := beatTestCount(*tests, *oldest)
+	testsN, testsParent, testsOK, whyTests := beatTestCount(*tests, *oldest, provided["tests"])
 	if whyTests != "" {
 		return refuse(stderr, name, whyTests)
 	}

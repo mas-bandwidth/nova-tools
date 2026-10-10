@@ -105,6 +105,40 @@ func TestFriendBeatTakesHerCountsAndLoadAsFleetBeatTakesALoad(t *testing.T) {
 	assert.NotEmpty(t, why)
 }
 
+// TestFriendBeatRefusesAnEmptyTestsReading: her beat carries no reading with
+// no --tests, while an explicitly empty --tests= is a supplied empty value,
+// refused as fleet beat refuses it; she keeps a count and the oldest parent pid.
+// docs/SPEC-SPRINT.md, runaway test processes.
+func TestFriendBeatRefusesAnEmptyTestsReading(t *testing.T) {
+	t.Parallel()
+	ta, _ := friendApp(t, "amy")
+	ta.ok("friend sync")
+	out := ta.ok("friend beat amy")
+	assert.NotContains(t, out, "tests=", "no --tests carries no reading")
+	code, _, errs := ta.do("friend beat amy --tests=")
+	require.Equal(t, 2, code, "an empty --tests= is refused: %q", errs)
+	assert.Contains(t, errs, "--tests wants a whole number of at least 0, found an empty value")
+	out = ta.ok("friend beat amy --tests=17 --oldest=42")
+	assert.Contains(t, out, "tests=17 test_parent=42", "a count and pid are kept")
+}
+
+// TestFleetBeatRefusesAnEmptyTestsReading: fleet beat reads --tests through the
+// same rule as friend beat: no --tests carries no reading, while an explicitly
+// empty --tests= is a supplied empty value and is refused.
+// docs/SPEC-SPRINT.md, runaway test processes.
+func TestFleetBeatRefusesAnEmptyTestsReading(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.live = nil
+	out := ta.ok("fleet beat m1")
+	assert.NotContains(t, out, "tests=", "no --tests carries no reading")
+	code, _, errs := ta.do("fleet beat m1 --tests=")
+	require.Equal(t, 2, code, "an empty --tests= is refused: %q", errs)
+	assert.Contains(t, errs, "--tests wants a whole number of at least 0, found an empty value")
+	out = ta.ok("fleet beat m1 --tests=17 --oldest=42")
+	assert.Contains(t, out, "tests=17 test_parent=42", "a count and pid are kept")
+}
+
 // friend level on the twin: a card queued on one friend moves to another of her class with
 // room, which friend sync delivers as a new job, and the queue file of the friend it left
 // marks it taken.

@@ -211,7 +211,7 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 	if warn, alarm := hostload.FilesBounds(src); alarm < warn {
 		return refuse(stderr, "fleet beat", fmt.Sprintf("--fd-alarm wants a count at or above the warn bound %d, found %d", warn, alarm))
 	}
-	testsN, testsParent, testsOK, whyTests := beatTestCount(*tests, *oldest)
+	testsN, testsParent, testsOK, whyTests := beatTestCount(*tests, *oldest, set["tests"])
 	if whyTests != "" {
 		return refuse(stderr, "fleet beat", whyTests)
 	}
@@ -290,10 +290,15 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 // the machine, and the parent pid of the oldest of them. The verb records the
 // reading it is given; the loop that counts those processes is the beat
 // agent's, so a beat that carries no --tests carries no reading at all and
-// never looks at the process table itself. why refuses a count or pid that is
-// not a whole number. docs/SPEC-SPRINT.md, runaway test processes.
-func beatTestCount(text, oldestText string) (n, parent int, ok bool, why string) {
+// never looks at the process table itself. given is whether --tests was named:
+// an absent flag carries no reading, while a supplied empty value (--tests=)
+// is refused rather than read as an omission. why refuses a count or pid that
+// is not a whole number. docs/SPEC-SPRINT.md, runaway test processes.
+func beatTestCount(text, oldestText string, given bool) (n, parent int, ok bool, why string) {
 	if text == "" {
+		if given {
+			return 0, 0, false, "--tests wants a whole number of at least 0, found an empty value"
+		}
 		if oldestText != "" {
 			return 0, 0, false, "--oldest names the oldest test process's parent pid, and wants --tests"
 		}
