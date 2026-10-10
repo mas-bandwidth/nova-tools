@@ -37,11 +37,14 @@ func TestTreeGateWords(t *testing.T) {
 	assert.Equal(t, basics, gateRuns(true, nil))
 	runs := gateRuns(true, []string{"internal/docs", "internal/ci"})
 	assert.Equal(t, basics, runs[:4])
-	require.Len(t, runs, 8)
-	for i, test := range []string{"^TestStaticcheckFindings$", "^TestUncheckedErrors$", "^TestDeadCode$"} {
+	require.Len(t, runs, 9)
+	for i, test := range []string{"^TestStaticcheckFindings$", "^TestUncheckedErrors$", "^TestDeadCode$", "^TestEveryCommandMeetsTheOnboardingStandard$"} {
 		assert.Equal(t, []string{"go", "test", "-tags", "functional", "-count=1", "-timeout", "600s", "-run", test, "./internal/ci/"}, runs[i+4])
 	}
-	assert.Equal(t, []string{"go", "test", "-count=1", "-timeout", "600s", "./internal/docs/", "./internal/ci/"}, runs[7])
+	assert.Equal(t, []string{"go", "test", "-count=1", "-timeout", "600s", "./internal/docs/", "./internal/ci/"}, runs[8])
+	// the batch's own packages ride the class-tests run, so a batch that breaks a package
+	// outside the tree tests is refused (docs/SPEC-SPRINT.md, the tree gate)
+	assert.Equal(t, []string{"go", "test", "-count=1", "-timeout", "600s", "example.com/m/b"}, gateRuns(true, nil, "example.com/m/b")[4])
 	for p, want := range map[string]bool{
 		"docs/CLI.md":            true,
 		"a/b_test.go":            true,

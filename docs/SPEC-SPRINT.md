@@ -4159,9 +4159,17 @@ section 6). The test is internal/sprint/land_records_test.go
 next head is merged onto it, in a clone that holds a `go.mod`: the module builds
 and vets (`go build ./...`, `go vet ./...`), and when the head's merge changes a
 document or a test file (a `.md`, a `_test.go`) the packages that test the tree
-itself pass (`go test ./internal/docs/ ./internal/ci/`, those the clone has). The
-base's tip is gated once a batch, the tree tests included, before any head is
-merged. A base that is red is first offered its cure (section 8, the base cure):
+itself pass (`go test ./internal/docs/ ./internal/ci/`, those the clone has). On
+the merged batch tip the gate is widened to the batch's own packages: from the
+batch's changed files (`git diff --name-only` base..tip) it tests every package a
+changed `.go` file stands in and every package that imports one of them,
+transitively (`batchPackages` over a `go list -deps`-shaped graph read by
+`packageDeps`, both in `cmd/nova-sprint/landgo.go`), so a batch that breaks a
+package it does not touch directly is refused and the finding names it; the four
+whole-tree functional checks (`TestStaticcheckFindings`, `TestUncheckedErrors`,
+`TestDeadCode`, `TestEveryCommandMeetsTheOnboardingStandard`) run with the tag
+the same way. The base's tip is gated once a batch, the tree tests included,
+before any head is merged. A base that is red is first offered its cure (section 8, the base cure):
 each head of the batch, merged onto the base alone, through the same gate; the
 first whose tree passes lands first as the base fix and the batch goes on after
 it. With no such head the base refuses the batch, nothing pushed or reported and
@@ -4173,7 +4181,12 @@ A merge that made no commit is not gated. Every go run the lander makes in the
 clone, the gate's and the update runs below, is under `GOFLAGS=-mod=readonly`:
 no run writes `go.mod` or `go.sum` (under a caller's `-mod=mod` the update runs
 of 2026-10-03 rewrote `go.mod` and every resolution was refused for it), and a
-module that needs them changed fails the run, which is the card's finding.
+module that needs them changed fails the run, which is the card's finding. The
+widening is bounded: the batch's packages ride the one class-tests run, the
+graph is one cached `go list -deps ./...` per gate, and the wall time is the
+runner's, each run bounded by `landGoBudget` (15m) and the bench by
+`len(runs)` of it, so a gate costs the build, the vet, the functional classes
+and one test of the touched packages and their importers.
 When the server's land loop (`run --land`) has a landing in flight and a fleet
 member other than this machine is up, that landing's gate does not run on the
 server: the lander asks every such member's Go lane, takes the first granted
@@ -4263,7 +4276,7 @@ push of the temporary ref that is refused is said as `copy refused: push
 <ref>: ...` and the gate runs in the clone.
 `--check` is the caller's own command on top, once a batch, as before.
 
-**The base's class gate.** Before a head is merged, the base passes its build, `gofmt -l .` (nonempty output is red even at exit zero), `go vet ./...`, `go vet -tags functional ./...` (the functional tier), staticcheck, errcheck and dead-code checks, then the available tree packages `internal/ci` and `internal/docs`. The analyzer class tests run individually with `-tags functional` and a 600-second test timeout; their whole-tree analysis needs the tag and starts no store. `sprint.BaseClasses` supplies the runs to the same local or bench runner used by the lander; a clone that lacks a class's package skips that class, and a clone without `go.mod` has no gate. The first red class refuses every landing onto the base, under the existing base-gate retries. The rule's stop raises one judgment for that base, naming its class, run and finding plus the `fix-red-<class>-<base>` card stamped by `cardgen.PlanClassRed` and its test. A green base commit is cached across rounds and streams. A queued head is a cure only when its tree passes this complete suite; it lands first, and a head that fixes one class but leaves another red is not a cure. The real lander regression is `TestARedClassOnTheBaseStopsLandings` in `cmd/nova-sprint/land_class_test.go`.
+**The base's class gate.** Before a head is merged, the base passes its build, `gofmt -l .` (nonempty output is red even at exit zero), `go vet ./...`, `go vet -tags functional ./...` (the functional tier), staticcheck, errcheck, dead-code and onboarding checks, then the available tree packages `internal/ci` and `internal/docs`. The analyzer class tests run individually with `-tags functional` and a 600-second test timeout; their whole-tree analysis needs the tag and starts no store. `sprint.BaseClasses` supplies the runs to the same local or bench runner used by the lander; a clone that lacks a class's package skips that class, and a clone without `go.mod` has no gate. The first red class refuses every landing onto the base, under the existing base-gate retries. The rule's stop raises one judgment for that base, naming its class, run and finding plus the `fix-red-<class>-<base>` card stamped by `cardgen.PlanClassRed` and its test. A green base commit is cached across rounds and streams. A queued head is a cure only when its tree passes this complete suite; it lands first, and a head that fixes one class but leaves another red is not a cure. The real lander regression is `TestARedClassOnTheBaseStopsLandings` in `cmd/nova-sprint/land_class_test.go`.
 
 **Always inside PATHS.** Files a change must touch to keep the tree green are always
 inside PATHS, whatever the brief names: every `*_test.go`, every file under a `testdata/`

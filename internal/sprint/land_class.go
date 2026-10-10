@@ -31,6 +31,9 @@ var BaseClasses = []Class{
 	{Name: "staticcheck", Run: []string{"go", "test", "-tags", "functional", "-count=1", "-timeout", "600s", "-run", "^TestStaticcheckFindings$", "./internal/ci/"}, Test: "internal/ci TestStaticcheckFindings", Needs: []string{"internal/ci"}},
 	{Name: "errcheck", Run: []string{"go", "test", "-tags", "functional", "-count=1", "-timeout", "600s", "-run", "^TestUncheckedErrors$", "./internal/ci/"}, Test: "internal/ci TestUncheckedErrors", Needs: []string{"internal/ci"}},
 	{Name: "dead-code", Run: []string{"go", "test", "-tags", "functional", "-count=1", "-timeout", "600s", "-run", "^TestDeadCode$", "./internal/ci/"}, Test: "internal/ci TestDeadCode", Needs: []string{"internal/ci"}},
+	// onboarding is the fourth whole-tree functional check (ONBOARDING point 6): every
+	// cmd/ tool's banner and example block, the same class the batch's gate runs.
+	{Name: "onboarding", Run: []string{"go", "test", "-tags", "functional", "-count=1", "-timeout", "600s", "-run", "^TestEveryCommandMeetsTheOnboardingStandard$", "./internal/ci/"}, Test: "internal/ci TestEveryCommandMeetsTheOnboardingStandard", Needs: []string{"internal/ci"}},
 	{Name: "class-tests", Run: []string{"go", "test", "-count=1", "-timeout", "600s"}, Needs: []string{"internal/ci", "internal/docs"}},
 }
 

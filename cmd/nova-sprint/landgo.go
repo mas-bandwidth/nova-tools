@@ -15,12 +15,18 @@ package main
 // redeclaration behind that tag landed on a base whose lint was red, PR 5435), and when a
 // head changes a Go file, a document, or testdata (.go, .md, testdata/), the analyzer
 // classes and the packages that test the tree itself (treeTests, where the clone has them)
-// pass. sprint.BaseClasses is that suite. The base's tip is gated once a batch before any
-// head is merged, so a base that is red refuses the batch and blames no card, unless a head
-// of the batch cures it (cureBase): that head lands first as the base fix. A head whose
-// merged tree is red is taken off the batch branch and ends the batch as a head that does
-// not merge does, the gate's run and output its finding. A clone with no go.mod has no
-// module and no gate.
+// pass. sprint.BaseClasses is that suite. On the merged batch tip the suite is widened to
+// the batch's own packages: the packages the batch's changed files touch and every package
+// that imports one of them, transitively (batchPackages over a `go list -deps`-shaped
+// graph, packageDeps), so a batch that breaks a package it does not touch directly is
+// refused and the finding names it (2026-10-04: batches that broke cmd/nova-bus,
+// cmd/nova-cairn, cmd/nova-memory and internal/update landed on a gate that tested only
+// internal/docs and internal/ci and turned the base red). The base's tip is gated once a
+// batch before any head is merged, so a base that is red refuses the batch and blames no
+// card, unless a head of the batch cures it (cureBase): that head lands first as the base
+// fix. A head whose merged tree is red is taken off the batch branch and ends the batch as
+// a head that does not merge does, the gate's run and output its finding. A clone with no
+// go.mod has no module and no gate.
 
 import (
 	"bytes"
@@ -32,6 +38,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -162,16 +169,20 @@ func treeTested(p string) bool {
 
 // gateRuns is SPEC-SPRINT's base class suite (sprint.BaseClasses), preserving the build
 // first, then formatting, vet and the functional-tier vet. Analyzer classes and the tree
-// tests need their packages (have: the ones the clone holds) and run only when tests is asked.
-func gateRuns(tests bool, have []string) [][]string {
+// tests need their packages (have: the ones the clone holds) and run only when tests is
+// asked. batch is the batch's own packages on the merged batch tip (batchPackages); they
+// are tested in the class-tests run, so a batch that breaks a package outside have is
+// refused (docs/SPEC-SPRINT.md, the tree gate).
+func gateRuns(tests bool, have []string, batch ...string) [][]string {
 	var runs [][]string
 	for _, class := range sprint.BaseClasses {
 		if class.Name == "class-tests" {
-			if tests && len(have) > 0 {
+			if tests && (len(have) > 0 || len(batch) > 0) {
 				run := slices.Clone(class.Run)
 				for _, p := range have {
 					run = append(run, "./"+p+"/")
 				}
+				run = append(run, batch...)
 				runs = append(runs, run)
 			}
 			continue
@@ -332,15 +343,96 @@ func treePackages(dir string) []string {
 	return have
 }
 
+// batchPackages is the packages the gate tests for a batch: the package each changed .go
+// file stands in (the touched packages) and every package that imports one of them,
+// transitively (its importers). changed are the batch's files on the merged batch tip,
+// repo-relative; deps is `go list -deps`-shaped, an import path to the import paths it
+// depends on. It is pure over its inputs, so a test feeds it a fake, and sorted so the
+// gate's runs are stable. docs/SPEC-SPRINT.md, the tree gate: a batch that breaks a
+// package it does not touch directly is refused here, its finding naming the package.
+func batchPackages(changed []string, deps map[string][]string) []string {
+	dirs := map[string]bool{}
+	for _, f := range changed {
+		f = strings.TrimSpace(f)
+		if !strings.HasSuffix(f, ".go") {
+			continue
+		}
+		if dir := path.Dir(filepath.ToSlash(f)); dir != "." {
+			dirs[dir] = true
+		}
+	}
+	if len(dirs) == 0 {
+		return nil
+	}
+	touched := map[string]bool{}
+	for p := range deps {
+		for dir := range dirs {
+			if strings.HasSuffix(p, "/"+dir) {
+				touched[p] = true
+				break
+			}
+		}
+	}
+	if len(touched) == 0 {
+		return nil
+	}
+	set := map[string]bool{}
+	for p := range touched {
+		set[p] = true
+	}
+	for p, ds := range deps {
+		for _, d := range ds {
+			if touched[d] {
+				set[p] = true
+				break
+			}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for p := range set {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// packageDeps reads the clone's non-standard packages and their dependencies, the shape
+// `go list -deps` prints: each import path to the import paths it depends on, standard
+// packages left out. batchPackages folds the batch's changed files through it. An error
+// (the module does not list, a dependency cannot be resolved) leaves the batch's packages
+// out of the gate, which the build's own finding then carries.
+func (l *lander) packageDeps(ctx context.Context, dir string) (map[string][]string, error) {
+	out, err := l.goRun(ctx, dir, []string{"go", "list", "-deps", "-f", "{{if not .Standard}}{{.ImportPath}}|{{join .Deps \" \"}}{{end}}", "./..."})
+	if err != nil {
+		return nil, err
+	}
+	deps := map[string][]string{}
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		pkg, rest, ok := strings.Cut(line, "|")
+		if !ok {
+			continue
+		}
+		deps[pkg] = strings.Fields(rest)
+	}
+	return deps, nil
+}
+
 // treeGate runs the gate on the clone's tree, the tree tests too when tests: "" when it
-// is green or the clone has no module, else the finding (gateWhy). In the server's land
-// loop with a fleet member other than this machine up, the gate goes to the first such
-// member that grants its Go lane, asked in the ring's order from the slot the batch's
-// stream hashes to (benchRing, landring.go), as one bench run (benchGate). A configured
-// remote bench that cannot run the gate refuses it; it does not run Go on this machine.
-// A land command on its own, or a loop with no remote bench configured, runs here
+// is green or the clone has no module, else the finding (gateWhy). changed are the batch's
+// files on the merged batch tip (repo-relative); with tests asked they widen the suite to
+// the packages they touch and their importers (batchPackages), so a batch that breaks a
+// package outside the tree tests is refused (docs/SPEC-SPRINT.md, the tree gate). In the
+// server's land loop with a fleet member other than this machine up, the gate goes to the
+// first such member that grants its Go lane, asked in the ring's order from the slot the
+// batch's stream hashes to (benchRing, landring.go), as one bench run (benchGate). A
+// configured remote bench that cannot run the gate refuses it; it does not run Go on this
+// machine. A land command on its own, or a loop with no remote bench configured, runs here
 // (goRun). The ledgers' update runs stay here.
-func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
+func (l *lander) treeGate(ctx context.Context, dir string, tests bool, changed ...string) string {
 	if err := ctx.Err(); err != nil {
 		return err.Error()
 	}
@@ -353,7 +445,13 @@ func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 	if err := ctx.Err(); err != nil {
 		return err.Error()
 	}
-	runs := gateRuns(tests, treePackages(dir))
+	var batch []string
+	if tests && len(changed) > 0 {
+		if deps, err := l.packageDeps(ctx, dir); err == nil {
+			batch = batchPackages(changed, deps)
+		}
+	}
+	runs := gateRuns(tests, treePackages(dir), batch...)
 	hosts, inLoop, remote := l.gateBenches(ctx)
 	// A test's gateBench seam stands in for the bench when no fleet member is up
 	// (the class-gate regression: a fake runner, no socket, no beat to keep fresh).
@@ -809,7 +907,8 @@ func (l *lander) gateCard(ctx context.Context, dir string, c landCard, before st
 	if err != nil {
 		return "", "the files the merge of " + c.id + " changed could not be listed: " + firstLine("", err)
 	}
-	why := l.treeGate(ctx, dir, slices.ContainsFunc(strings.Split(changed, "\n"), treeTested))
+	changedFiles := lines(changed)
+	why := l.treeGate(ctx, dir, slices.ContainsFunc(changedFiles, treeTested), changedFiles...)
 	if wait := gateWaitWhy(ctx); wait != "" {
 		return "", wait // cancellation says nothing about the card
 	}
@@ -862,7 +961,8 @@ func (l *lander) cureBase(ctx context.Context, dir, stream string, cards []landC
 			return card, env
 		},
 		Gate: func(ctx context.Context, dir string) string {
-			gate := l.treeGate(ctx, dir, true)
+			changed, _ := l.git(ctx, dir, "diff", "--name-only", "-M", baseSha, "HEAD")
+			gate := l.treeGate(ctx, dir, true, lines(changed)...)
 			benchUnavailable = benchUnavailable || gate == benchGateUnavailableWhy
 			return gate
 		},
