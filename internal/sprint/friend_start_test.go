@@ -86,23 +86,16 @@ func TestAFriendCardIsWorkingOnlyOnceTheFriendStartsIt(t *testing.T) {
 	assert.Empty(t, wc.F("untaken_since"))
 	assert.Contains(t, movedLines(p), "s1-2.w1 friend.amy:ready -> working (started: her beat names it running)")
 
-	// friend sync reads s1-3.w1's job begun: its start receipt moves it to working now
-	w.tick(time.Minute)
-	synced := w.s.Now
-	p = w.must(FriendStart(w.s, FriendStartReq{Friend: "amy", IDs: []string{"s1-3.w1"}, Gens: map[string]int{"s1-3.w1": 1},
-		Why: map[string]string{"s1-3.w1": "a write under jobs/s1-3 after its staging"}}))
+	// past the start window, her beat naming s1-2 running (other work), the deal returned
+	// s1-3.w1 to the pool in that tick, never to be dealt back to her (a receipt within the
+	// window is the separate test TestAFriendStartReceiptStartsACardWithinTheWindow)
 	wc = w.s.Fleet.Card("s1-3.w1")
-	require.Equal(t, Working, wc.Col)
-	assert.Equal(t, stamp(synced), wc.F("taken"), "its deadline runs from the start friend sync read")
-	assert.Equal(t, "1", wc.F(FieldStarted))
-	assert.Contains(t, movedLines(p), "s1-3.w1 friend.amy:ready -> working (started: a write under jobs/s1-3 after its staging)")
-	// a receipt for a card she started already changes nothing; one at another generation,
-	// or for a card not on her row, is refused
-	assert.Empty(t, FriendStart(w.s, FriendStartReq{Friend: "amy", IDs: []string{"s1-3.w1"}, Gens: map[string]int{"s1-3.w1": 1}}).Units)
-	ref := FriendStart(w.s, FriendStartReq{Friend: "amy", IDs: []string{"s1-2.w1", "s1-1.w1"}, Gens: map[string]int{"s1-2.w1": 2, "s1-1.w1": 2}}).Refused
-	require.Len(t, ref, 2)
-	assert.Contains(t, ref[0].Why, "generation 1, not 2")
-	assert.Contains(t, ref[1].Why, "not on friend amy's row")
+	require.NotNil(t, wc)
+	assert.Equal(t, Withdrawn, wc.Col, "past the window it goes back to the pool")
+	assert.Equal(t, amy, wc.Row)
+	assert.Equal(t, amy, wc.F(FieldTakenFrom), "not dealt back to her")
+	assert.Equal(t, "not started by amy in 20m; back to the pool", wc.F(FieldTakenBack))
+	assert.Equal(t, Ready, w.s.StateOf("s1-3"), "its primary is back in the pool")
 
 	// a take moves bob's card to working with no start of his (as a finish's or a
 	// take-back's next does): the next tick puts it back ready, untaken, one line
@@ -112,7 +105,7 @@ func TestAFriendCardIsWorkingOnlyOnceTheFriendStartsIt(t *testing.T) {
 	require.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col)
 	w.tick(time.Minute)
 	back := w.s.Now
-	p = tick("s1-2.w1", "s1-3.w1")
+	p = tick("s1-2.w1")
 	wc = w.s.Fleet.Card("s1-1.w1")
 	require.Equal(t, Ready, wc.Col, "working on a friend's row means started")
 	assert.Equal(t, bob, wc.Row)
@@ -121,13 +114,13 @@ func TestAFriendCardIsWorkingOnlyOnceTheFriendStartsIt(t *testing.T) {
 	assert.Empty(t, wc.F(FieldFriendDeadline))
 	assert.Equal(t, stamp(back), wc.F("untaken_since"), "its start bound runs from its return to ready")
 	assert.Contains(t, movedLines(p), "s1-1.w1 friend.bob:working -> ready (working with no start of hers: it waits ready until she starts it)")
-	assert.Equal(t, 2, w.s.Fleet.Count(amy, Working), "her started cards stay working")
+	assert.Equal(t, 1, w.s.Fleet.Count(amy, Working), "her started card stays working")
 	assert.Equal(t, 0, w.s.Fleet.Count(amy, Ready))
 
 	// bob does not start it within the bound from its return; amy has an idle lane, and it
 	// never goes back to a friend it left
 	w.tick(FriendStartMaxDefault + time.Minute)
-	assert.Empty(t, notStarted(tick("s1-2.w1", "s1-3.w1")))
+	assert.Empty(t, notStarted(tick("s1-2.w1")))
 	assert.Equal(t, bob, w.s.Fleet.Card("s1-1.w1").Row, "a card never goes back to a friend it left")
 	assert.Empty(t, Check(w.s, nil))
 
@@ -136,6 +129,36 @@ func TestAFriendCardIsWorkingOnlyOnceTheFriendStartsIt(t *testing.T) {
 	assert.Equal(t, 45*time.Minute, w.s.FriendStartMax())
 	w.s.Work.SetProp(PropFriendStartMax, "nonsense")
 	assert.Equal(t, FriendStartMaxDefault, w.s.FriendStartMax())
+}
+
+// friend sync's start receipt (FriendStart) moves a card ready on her row to working within
+// the start window, its deadline from then; a receipt for a card she started already changes
+// nothing, and one at another generation or for a card not on her row is refused.
+func TestAFriendStartReceiptStartsACardWithinTheWindow(t *testing.T) {
+	t.Parallel()
+	w := friendWorld(t, friendBrief("friend amy"), friendBrief("friend amy"), friendBrief("friend amy"))
+	amy := FriendRow("amy")
+	seats := []FriendSeat{{Name: "amy", Width: 3, Status: Up, Class: "flash"}}
+	dealWith(w, seats...)
+	require.Equal(t, 3, w.s.Fleet.Count(amy, Ready), "dealt ready, none started")
+
+	w.tick(5 * time.Minute)
+	synced := w.s.Now
+	p := w.must(FriendStart(w.s, FriendStartReq{Friend: "amy", IDs: []string{"s1-3.w1"}, Gens: map[string]int{"s1-3.w1": 1},
+		Why: map[string]string{"s1-3.w1": "a write under jobs/s1-3 after its staging"}}))
+	wc := w.s.Fleet.Card("s1-3.w1")
+	require.Equal(t, Working, wc.Col, "her start receipt moves it to working")
+	assert.Equal(t, stamp(synced), wc.F("taken"), "its deadline runs from the start friend sync read")
+	assert.Equal(t, "1", wc.F(FieldStarted))
+	assert.Contains(t, movedLines(p), "s1-3.w1 friend.amy:ready -> working (started: a write under jobs/s1-3 after its staging)")
+
+	// a receipt for a card she started already changes nothing; one at another generation, or
+	// for a card not on her row, is refused
+	assert.Empty(t, FriendStart(w.s, FriendStartReq{Friend: "amy", IDs: []string{"s1-3.w1"}, Gens: map[string]int{"s1-3.w1": 1}}).Units)
+	ref := FriendStart(w.s, FriendStartReq{Friend: "amy", IDs: []string{"s1-2.w1", "s1-9.w1"}, Gens: map[string]int{"s1-2.w1": 2, "s1-9.w1": 1}}).Refused
+	require.Len(t, ref, 2)
+	assert.Contains(t, ref[0].Why, "generation 1, not 2")
+	assert.Contains(t, ref[1].Why, "not on friend amy's row")
 }
 
 // A friend whose daemon saw a write of hers within the start bound keeps her unstarted cards
@@ -158,20 +181,27 @@ func TestAFriendWritingWithinTheBoundKeepsHerUnstartedCards(t *testing.T) {
 	assert.Equal(t, FriendRow("bob"), w.s.Fleet.Card("s1-1.w1").Row, "no write within the bound: it moves")
 }
 
-// A friend running a job keeps her queue: a card she has not started stays on her row past
-// the start bound while a card she started is working there, though her beat names nothing.
-func TestAFriendRunningAJobKeepsHerUnstartedCards(t *testing.T) {
+// A friend running a job she has started does not keep the rest past the window. The
+// start-bound level skips her (a card she started is working), so the deal returns the
+// unstarted card to the pool. The same tick cannot place it again.
+func TestAFriendRunningAJobReturnsAnUnstartedCard(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("friend amy"), friendBrief("friend amy"))
 	seats := []FriendSeat{{Name: "amy", Width: 2, Status: Up, Class: "flash"}, {Name: "bob", Width: 1, Status: Up, Class: "flash"}}
 	w.must(func() Plan { p, _ := TickDeal(w.s, TickReq{Friends: seats}); return p }())
 	require.Equal(t, 2, w.s.Fleet.Count(FriendRow("amy"), Ready))
 	w.must(FriendStart(w.s, FriendStartReq{Friend: "amy", IDs: []string{"s1-1.w1"}, Gens: map[string]int{"s1-1.w1": 1}}))
-	w.s.Now = t0.Add(FriendStartMaxDefault + time.Hour)
+	w.s.Now = t0.Add(FriendStartWindowDefault + time.Hour)
 	p, _ := TickDeal(w.s, TickReq{Friends: seats})
 	w.must(p)
-	assert.Equal(t, FriendRow("amy"), w.s.Fleet.Card("s1-2.w1").Row, "she is running a job")
+	wc := w.s.Fleet.Card("s1-2.w1")
+	require.NotNil(t, wc)
+	assert.Equal(t, Withdrawn, wc.Col, "past the window it goes back to the pool")
+	assert.Equal(t, FriendRow("amy"), wc.Row)
+	assert.Equal(t, FriendRow("amy"), wc.F(FieldTakenFrom), "not dealt back to her, and not moved onto bob in this tick")
+	assert.Equal(t, Ready, w.s.StateOf("s1-2"), "its primary is back in the pool")
 	assert.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col, "her started card stays working")
+	assert.Equal(t, FriendRow("amy"), w.s.Fleet.Card("s1-1.w1").Row)
 }
 
 // The start-bound level honours a recipient's work restriction (her nova-config row's

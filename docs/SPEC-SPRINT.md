@@ -557,7 +557,7 @@ A card no friend may take stays, and the deadline rule judges it once
 own evening leaves the oldest unstarted cards that hold her free lanes to her
 start (`TestAFriendCardIsWorkingOnlyOnceTheFriendStartsIt`,
 `TestAFriendWritingWithinTheBoundKeepsHerUnstartedCards`,
-`TestAFriendRunningAJobKeepsHerUnstartedCards`,
+`TestAFriendRunningAJobReturnsAnUnstartedCard`,
 `TestTwinStoreAFriendCardIsWorkingOnlyOnceSheStartsIt`,
 `TestFriendSyncStartsACardWhoseJobSheBegan`,
 `TestFriendSyncCollectsAReportOnACardStillReady`). Not yet built: the
@@ -598,6 +598,51 @@ working, is her queue, held to the dealt bound as a member's is
 (`LanesHard`, `OnlyHerTake`, `NeverStrandedSilently`, `FilledAfterTick`, each
 with a reversed witness; `TestAFriendTakesAndFinishesItsOwnReadyCard`,
 `TestADealTakesAFriendsReadyCardAndOneLeftReadyIsAJudgment`).
+
+**A friend is dealt what her session starts** (the night of 2026-10-05: a
+friend at width 8 in batch mode held seven heavy builds for six hours and
+started none, while she did every audit, carry and read she was handed at once;
+another at width 4 worked only by explicit assignment; card
+deal-by-started-lanes-not-width2.w1). In batch mode the deal to a friend is
+bounded by what her session starts, not by her width alone
+(`friendStartedLanes`, `friendLimits`, `friendReturnUnit` in
+`internal/sprint/friend_deal.go`). A friend's card is still placed `ready`
+until she starts it (above). A work card ready on her row that her beat does
+not name running (`friend beat --running`, by its work card id, its job or its
+primary) and that carries no progress, still unstarted when the start window
+has run, goes back to the pool in the tick's deal when the start-bound level
+will not move it: she is on other work (her beat names something, or a card
+she started is working), or no other friend up can take it. A recent write of
+hers within `friend_start_max`, with nothing else showing she is on other
+work, keeps the card (the start may not be read yet). While she is idle and
+another friend up can take it, `friendUnstartedLevel` moves it and the deal
+does not also return it. The return withdraws it on her row at its next
+generation, `taken_back` and its NOTE line "not started by <friend> in
+<window>; back to the pool", `taken_from` her row (so no deal gives it back to
+her), its primary ready with its attempt as it was, as a take-back. The window
+is the work table's property `friend_start_window` (a Go duration), 20 minutes
+when the sprint sets none. From then her **started lanes**, the cards she
+runs (at least 1), are her effective width: she holds her started cards and
+`DealAhead` times her started lanes in all, ready until she starts each one;
+as she starts more her started lanes rise (the larger of her record and what
+she runs), and at her width she is dealt as before. Her width stays the
+ceiling, never the target. The record is `started_lanes` (`<friend>:<n>`) and
+`started_lanes_at` on the cards the deal and the level place on her row and on
+the ones it returns: the newest is hers. The friends' level evens the queues
+on the same limits and skips a card this tick returns. A friend whose
+nova-config roles are reader-first (`reader` and not `builder`) is dealt reads
+before work: a direct deal keeps her room for the frontier reads in review
+that the read ask may ask of her (`readerFirst`, `readsWaitingFor`); the
+tick's own ladder already keeps that room for every friend (`ReadsFirst`), and
+the deal does not reserve it twice. `friend sync` carries her roles to the
+roster. One-shot mode is untouched: one card at a time is her bound already.
+The model is `tla/FriendStartedLanes.tla` (`WidthCeiling`,
+`NeverHeldPastWindow`, `NeverBackToHer`, `RoomToRise`, `DealtWithinLanes`,
+four reversed witnesses; lane occupancy, not the ready column);
+`TestAFriendIsDealtOnlyWhatHerSessionStarts` deals four cards ready to a
+friend whose beat starts one, sees three go back and the next deal give her
+two ready behind the one she started, and her lanes rise as she starts the
+next.
 
 **A friend's card taken back** (the owner, 2026-10-04, on cards dealt to a
 friend who would not start them, which could only be dropped and added again:
