@@ -3007,7 +3007,7 @@ the original failed measurement.
 **Its remedy line.** the assertion names the play, the task and its `until`.
 **Its narrowings.** Only an `until` spelled `.rc != 0` is read; a wait spelled another way is not checked.
 
-### `sprint-tables-locked` — the four sprint tables change only with their lock file
+### `sprint-lock` — the four sprint tables change only with their lock file
 
 **The rule.** `internal/sprint/TABLES.lock` pins the work, readers, merge and fleet tables as `schema.go` defines them (one line per column: `table.column projection fold hidden`, with `label=` where the column has a header label, in table order) and the order the sprint view shows the tables in. A PR that changes any table's shape turns the test red until the lock file changes in the same PR, where a read sees it.
 **The mistake it prevents.** A `provider` column added to the fleet table that nobody asked for (PR 4986); the installed build then failed every tick on the real store. The maintainer, 2026-10-01: "i never want new things unless i ask for them" and "i dislike this drift from the design of nova sprint tables that is *complete and locked*."
@@ -3015,6 +3015,15 @@ the original failed measurement.
 **Its allowlist.** None.
 **Its remedy line.** `schema.go no longer matches internal/sprint/TABLES.lock; a PR that changes a table's shape changes the lock file in the same PR, where a read sees it`, then each differing line, the lock's and the schema's.
 **Its narrowings.** Column width (always 0 here) is not in the lock; a change to what a table holds that is not in its definition (a card's fields, a hidden column's contents) is not seen.
+
+### `brand` — the nova-sprint identity names its treatment and art
+
+**The rule.** `docs/sprint/BRAND.md` names the product treatment, mark, colours, type and voice, with do-and-don't examples. Every file under `assets/sprint/` has a matching row in `docs/ASSET-PROVENANCE.md`, which tells the reader how the original asset came to be.
+**The mistake it prevents.** A new sprint mark that looks like an uncredited photograph or an unexplained third-party drawing, or a brand sheet that leaves the name, palette or voice to drift by guesswork.
+**The test.** `TestSprintBrandSheetIsCompleteAndEveryAssetHasProvenance` (`internal/ci/sprint_brand_class_test.go`) checks for each required heading, at least one sprint asset, and an exact provenance row for every asset file.
+**Its allowlist.** None.
+**Its remedy line.** Add the missing named section to `docs/sprint/BRAND.md` or add the exact asset path and honest provenance to `docs/ASSET-PROVENANCE.md` in the same change.
+**Its narrowings.** It checks headings and asset paths, not whether the prose follows the design or whether a visual works at every size; those remain a review against the brand sheet.
 
 ### `onewriter` — a worker is a client and does not open the store
 
