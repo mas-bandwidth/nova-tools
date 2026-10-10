@@ -930,7 +930,7 @@ the launcher's path, on every seat start, with a timeout nobody chose. The probe
 network call**, and a test asserts it with every egress blocked. What is parsed is the **first
 line of stdout against `^sops (\d+\.\d+\.\d+)`**, everything after it ignored (the reason is a
 comment beside the regex). A version the probe **cannot parse** is a refusal, never a pass; an
-absent or too-old binary is a refusal naming `brew install sops` or `brew upgrade sops`.
+absent or too-old binary is a refusal naming `brew install sops` or `brew upgrade sops` on macOS, and platform-specific install paths on other systems.
 
 ## Rotation, said plainly
 

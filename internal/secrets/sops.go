@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -73,7 +74,7 @@ func sopsDecryptFailure(keyPath, filePath, stderr string) string {
 // CheckSopsVersion probes the sops binary with --disable-version-check to prevent network calls.
 func CheckSopsVersion(run execCommand, sopsPath string) (string, error) {
 	if !filepathIsExecutable(sopsPath) {
-		return "", fmt.Errorf("sops binary %s is absent or not executable; run: brew install sops", sopsPath)
+		return "", fmt.Errorf("sops binary %s is absent or not executable; run: %s", sopsPath, remedy(runtime.GOOS, "sops", "install", MinSopsVersion))
 	}
 
 	out, err := runOr(run)(nil, []string{"PATH=/usr/bin:/bin"}, "", sopsPath, "--version", "--disable-version-check")
@@ -96,7 +97,7 @@ func CheckSopsVersion(run execCommand, sopsPath string) (string, error) {
 	patch, _ := strconv.Atoi(match[3])
 
 	if major < 3 || (major == 3 && minor < 13) || (major == 3 && minor == 13 && patch < 3) {
-		return fmt.Sprintf("%d.%d.%d", major, minor, patch), fmt.Errorf("sops version %d.%d.%d is too old; minimum required is %s; run: brew upgrade sops", major, minor, patch, MinSopsVersion)
+		return fmt.Sprintf("%d.%d.%d", major, minor, patch), fmt.Errorf("sops version %d.%d.%d is too old; minimum required is %s; run: %s", major, minor, patch, MinSopsVersion, remedy(runtime.GOOS, "sops", "upgrade", MinSopsVersion))
 	}
 
 	return fmt.Sprintf("%d.%d.%d", major, minor, patch), nil
@@ -105,7 +106,7 @@ func CheckSopsVersion(run execCommand, sopsPath string) (string, error) {
 // CheckAgeKeygenVersion probes the age-keygen binary.
 func CheckAgeKeygenVersion(run execCommand, ageKeygenPath string) (string, error) {
 	if !filepathIsExecutable(ageKeygenPath) {
-		return "", fmt.Errorf("age-keygen binary %s is absent or not executable; run: brew install age", ageKeygenPath)
+		return "", fmt.Errorf("age-keygen binary %s is absent or not executable; run: %s", ageKeygenPath, remedy(runtime.GOOS, "age", "install", MinAgeKeygenVersion))
 	}
 
 	out, err := runOr(run)(nil, []string{"PATH=/usr/bin:/bin"}, "", ageKeygenPath, "--version")
@@ -124,10 +125,24 @@ func CheckAgeKeygenVersion(run execCommand, ageKeygenPath string) (string, error
 	patch, _ := strconv.Atoi(match[3])
 
 	if major < 1 || (major == 1 && minor < 3) || (major == 1 && minor == 3 && patch < 2) {
-		return fmt.Sprintf("%d.%d.%d", major, minor, patch), fmt.Errorf("age-keygen version %d.%d.%d is too old; minimum required is %s; run: brew upgrade age", major, minor, patch, MinAgeKeygenVersion)
+		return fmt.Sprintf("%d.%d.%d", major, minor, patch), fmt.Errorf("age-keygen version %d.%d.%d is too old; minimum required is %s; run: %s", major, minor, patch, MinAgeKeygenVersion, remedy(runtime.GOOS, "age", "upgrade", MinAgeKeygenVersion))
 	}
 
 	return fmt.Sprintf("%d.%d.%d", major, minor, patch), nil
+}
+
+// remedy returns the platform-specific install or upgrade command for a tool.
+func remedy(goos, tool, verb, minimum string) string {
+	if goos == "darwin" {
+		if verb == "install" {
+			return fmt.Sprintf("brew install %s", tool)
+		}
+		return fmt.Sprintf("brew upgrade %s", tool)
+	}
+	if verb == "install" {
+		return fmt.Sprintf("install %s %s or newer from the tool's release binaries into ~/.local/bin", tool, minimum)
+	}
+	return fmt.Sprintf("upgrade %s to %s or newer from the tool's release binaries into ~/.local/bin", tool, minimum)
 }
 
 func filepathIsExecutable(path string) bool {
