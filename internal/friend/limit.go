@@ -477,10 +477,15 @@ func (l *Limits) Gate(d Deliverer) Deliverer {
 		return d
 	}
 	g := &gated{l: l, d: d}
-	if oh, ok := d.(OneShotHarness); ok {
+	oh, fresh := d.(OneShotHarness)
+	lh, lanes := d.(LaneHarness)
+	switch {
+	case fresh && lanes:
+		return &gatedBoth{gatedLanes: &gatedLanes{gated: g, lh: lh}, oh: oh}
+	case fresh:
 		return &gatedOneShot{gated: g, oh: oh}
 	}
-	if lh, ok := d.(LaneHarness); ok {
+	if lanes {
 		return &gatedLanes{gated: g, lh: lh}
 	}
 	return g
@@ -495,6 +500,17 @@ type gatedOneShot struct {
 }
 
 func (g *gatedOneShot) RunOneShot(ctx context.Context, text string) (LaneTurn, error) {
+	return g.oh.RunOneShot(ctx, text)
+}
+
+// gatedBoth is a harness that is both under the gate (OpenCode): its session lanes and its
+// one-shot runs both go straight through.
+type gatedBoth struct {
+	*gatedLanes
+	oh OneShotHarness
+}
+
+func (g *gatedBoth) RunOneShot(ctx context.Context, text string) (LaneTurn, error) {
 	return g.oh.RunOneShot(ctx, text)
 }
 

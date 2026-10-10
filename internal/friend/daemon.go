@@ -890,7 +890,8 @@ func (l *loop) idle(now time.Time) {
 // says, the row's batch said retired once. Batch is the named fallback for a harness that
 // runs no lane: said once on the record and told to the seat once as a judgment when the
 // row named a mode. A CardRunner that cannot run a card yet records its refusal once and
-// runs nothing. run --mode (Mode) is taken as given, for a test.
+// runs nothing (said only when the row asks for one-shot). run --mode (Mode) is taken as
+// given, for a test; a daemon with no row at all (Row nil, a test's rig) delivers in batch.
 func (l *loop) row(now time.Time) (mode string, width int) {
 	d := l.d
 	mode, width = ModeBatch, d.Width
@@ -908,9 +909,11 @@ func (l *loop) row(now time.Time) (mode string, width int) {
 		width = 1
 	}
 	d.status.Width = width
+	retired := false // the row's batch, retired here
 	if d.Mode != "" {
 		mode = d.Mode
-	} else if mode == ModeBatch && l.runsLanes() {
+	} else if mode == ModeBatch && d.Row != nil && l.runsLanes() {
+		retired = true
 		if !l.saidRetired {
 			l.saidRetired = true
 			d.Record(fmt.Sprintf("%s mode: one-shot lanes at width %d, each refreshing on its own: the row says batch, and batch is retired for a harness that runs lanes (%s)", now.UTC().Format(time.RFC3339), width, dash(d.Harness)))
@@ -920,6 +923,9 @@ func (l *loop) row(now time.Time) (mode string, width int) {
 	if runner, ok := d.Deliver.(CardRunner); ok && mode == ModeOneShot {
 		// a lane per card process: refused, with its remedy, until it can run one
 		why := runner.Refusal()
+		if why != "" && retired {
+			return ModeBatch, width // the row asked for no lane: its refusal is said when the row says one-shot
+		}
 		if why != "" && why != l.saidRefusal {
 			d.Record(now.UTC().Format(time.RFC3339) + " mode: one-shot REFUSED: " + why + "; no lane runs")
 		}

@@ -1674,10 +1674,10 @@ read is not staged here.
 
 ## Every lane refreshes independently (internal/friend/oneshot.go, lanes.go, daemon.go row)
 
-Measured 2026-10-10 about 04:00Z: Freddy (opencode, width 32, row mode batch) had 28 cards
+Measured 2026-10-10 about 04:00Z: an opencode friend (width 32, row mode batch) had 28 cards
 ready on his row and worked 10 or 11 of them while the seat nudged him every minute, and his
-one main session filled its 260k context in about 25 minutes and was replaced; Zhi (dsh,
-width 32, batch) took one "58 card(s) dealt" turn and was silent 20 minutes, so her session
+one main session filled its 260k context in about 25 minutes and was replaced; a dsh friend
+(width 32, batch) took one "58 card(s) dealt" turn and was silent 20 minutes, so her session
 checks read her down. The cause was the batch turn: her row's cards went into her main
 session as one turn, a turn takes the cards ready when it starts, a card dealt mid-turn waits
 for the next, and the main session is both the bottleneck and the context that fills. The
@@ -1751,7 +1751,7 @@ a card on at most one lane (`OneLanePerCard`), the main session never holding a 
 reversed witnesses, each breaking its property: the main session's batch turn
 (`MainHoldsNoCard`), a lane that takes only at a turn's boundary (`Filled`), a lane past the
 width (`WithinWidth`), a lane taking a card another runs (`OneLanePerCard`), a lane that never
-takes a second card (`ReadyStarts`). TLC on hetzner, 2026-10-10: the design 38,926 distinct
+takes a second card (`ReadyStarts`). TLC on a bench, 2026-10-10: the design 38,926 distinct
 states, the live instance 1,624, every witness as declared (tla/RUNS.tsv).
 `TestA32WideFriendStarts32LanesFrom32ReadyCardsWithNoBatchTurn` and
 `TestEachLaneRefreshesOnItsOwnAndADealtCardTakesTheNextFreeLane` hold the code to it.

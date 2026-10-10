@@ -19,7 +19,8 @@ import (
 // cards stayed working for up to 14 hours).
 
 // fakeOpenCode is a harness on the friend's PATH, as opencode answers a lane: `session
-// list` shows ses_1 once a seed has run, a seed run answers ready, and a card turn prints
+// list` shows ses_1 once a seed has run, a seed run answers ready, and a card turn (in a
+// session, or a fresh one-shot run naming its card) prints
 // one line and then does what FAKE_MODE says: exit 3 with nothing written, or write the
 // friend's REPORT.md and RESULT.md into FAKE_OUT and exit 0.
 const fakeOpenCode = `#!/bin/sh
@@ -28,7 +29,7 @@ if [ "$1" = session ]; then
   exit 0
 fi
 case " $* " in
-*" --session "*) ;;
+*" --session "*|*"one card this turn"*) ;;
 *) touch "$FAKE_STATE/opened"; echo ready; exit 0 ;;
 esac
 echo "working on the card"
