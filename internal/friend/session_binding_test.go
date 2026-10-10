@@ -105,7 +105,7 @@ func TestSessionSwitchWaitsForTheActiveTurn(t *testing.T) {
 	r.send(t, r.direct, "bob", PongSubject, PongLine("n1", 0, 0, 0)+"\nsession_id=conversation-a\n")
 	r.step(t, time.Second)
 	r.sc.turn.RLock()
-	assert.True(t, r.sc.SessionRequest(context.Background(), bus.Message{From: "bob", To: []string{"bob"}, Kind: "request", Subject: "session conversation-b"}))
+	assert.True(t, r.sc.HandleSessionRequest(context.Background(), bus.Message{From: "bob", To: []string{"bob"}, Kind: "request", Subject: "session conversation-b"}, func() error { return nil }))
 	proved, _ := r.sc.Proof()
 	assert.False(t, proved)
 	assert.Equal(t, "conversation-a", app.session)

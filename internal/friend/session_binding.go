@@ -149,13 +149,6 @@ const LiveSessionSubject = "live session id wanted"
 
 const activeQuestionPrefix = "\x00active-session-question:"
 
-// SessionRequest handles a request outside the daemon loop. The daemon uses
-// HandleSessionRequest so an asynchronous question is acknowledged only after
-// the adapter succeeds.
-func (s *SessionCheck) SessionRequest(ctx context.Context, msg bus.Message) bool {
-	return s.HandleSessionRequest(ctx, msg, func() error { return nil })
-}
-
 // HandleSessionRequest consumes only self-authored requests on the daemon's own
 // stream. The live-session question is injected asynchronously and acked by its
 // caller only after the adapter succeeds, so a failure remains claimable.
