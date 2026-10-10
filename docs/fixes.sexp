@@ -92,4 +92,12 @@
    :text "nova-friend install takes --deny-self and writes it into the agent, the seat play passes
     nova_friend_deny_self to a reinstall whose plist records none, and with no flag the daemon denies
     the seat's working root, so no lane exits 125 with bad_profile for a missing deny list."
-   :origin "a one-shot friend host, 2026-10-10: every lane exit 125, the daemon ran with no --deny-self")))
+   :origin "a one-shot friend host, 2026-10-10: every lane exit 125, the daemon ran with no --deny-self")
+  (fix "card-lint-ignores-names-in-paths" :release "v1.2.6" :status "in-progress"
+   :title "The card lint reads a person's name in prose, not a path"
+   :text "A brief whose SOURCE or PATHS names a path under a person's home (a ledger at /home/<name>/...)
+    drew personal-name, though a path is not a person; the check skips a token with a slash or a `.md`
+    suffix, matches a name only as a whole word (`every` is not `eve`), and takes the names from the
+    caller -- the coordinator, the owner and the friends table -- so a bare name in prose is refused
+    and an ordinary word that merely holds a name is not."
+   :origin "dogfood 2026-10-10: add refused briefs over a path segment")))

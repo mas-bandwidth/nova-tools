@@ -98,6 +98,11 @@ type BriefBase struct {
 	Listed []string
 	// Friends is each friend's tiers, by name; nil when the friends table was not read.
 	Friends map[string][]string
+	// Names are the personal names a brief may not carry in prose, from the caller: the
+	// coordinator's, the owner's and the friends table's (docs/SPEC-CARD-CONTRACT.md §2,
+	// `personal-name`). A name inside a path token (a slash or a `.md` suffix) is not a
+	// personal name, and an empty set checks no name.
+	Names []string
 }
 
 // BriefFix is the corrected header lines of a brief: each line the checks would change, as it
@@ -377,6 +382,16 @@ func LintBrief(raw []byte, bb BriefBase) ([]CardHeaderFinding, BriefFix) {
 				add("who-serves-tier", 1, fmt.Sprintf("WHO names any friend, and no friend of the table serves tier %s", model.Tier))
 			}
 		}
+	}
+
+	// 12. personal-name: the card check of the same name, run at add where the caller's
+	// names are known; a path token is not a name (docs/SPEC-CARD-CONTRACT.md §2).
+	sourceF := h["SOURCE"]
+	if name, ok := hasPersonalName(sourceF.value, bb.Names); ok {
+		add("personal-name", sourceF.line, fmt.Sprintf("SOURCE %q names the person %q in prose", oneLineCap(sourceF.value, 80), name))
+	}
+	if name, ok := hasPersonalName(pathsF.value, bb.Names); ok {
+		add("personal-name", pathsF.line, fmt.Sprintf("PATHS %q names the person %q in prose", oneLineCap(pathsF.value, 80), name))
 	}
 
 	var fix BriefFix
