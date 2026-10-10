@@ -18,11 +18,7 @@ import (
 // book adds the consumers to the primary as steps would, one step each.
 func book(pr *Card, cons ...Consumer) {
 	for _, c := range cons {
-		set := map[string]string{}
-		addConsumer(pr, set, c)
-		for k, v := range set {
-			pr.Fields[k] = v
-		}
+		RecordConsumer(pr, c)
 	}
 }
 
