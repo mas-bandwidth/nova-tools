@@ -37,6 +37,8 @@ type Agent struct {
 	Coordinator string
 	SilentStop  time.Duration
 	BrokenAfter int
+	// Stages and Mirrors are the daemon's --stages and --mirrors, written only when set.
+	Stages, Mirrors string
 	// ConfigDir is the friend's harness config directory (CLAUDE_CONFIG_DIR),
 	// the daemon's --config-dir, written only when set.
 	ConfigDir string
@@ -106,6 +108,12 @@ func (a Agent) Args() []string {
 	}
 	if a.ConfigDir != "" {
 		args = append(args, "--config-dir", a.ConfigDir)
+	}
+	if a.Stages != "" {
+		args = append(args, "--stages", a.Stages)
+	}
+	if a.Mirrors != "" {
+		args = append(args, "--mirrors", a.Mirrors)
 	}
 	if a.SilentStop > 0 && a.SilentStop != DefaultSilentStop {
 		args = append(args, "--silent-stop", a.SilentStop.String())

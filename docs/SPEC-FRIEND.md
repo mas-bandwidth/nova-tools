@@ -1520,7 +1520,7 @@ second), both ways:
   internal/friend/lanes.go `ProgressArgv`, as `FinishArgv` does): sent bare, the
   server refused it for a card on `friend.<name>` (held by friend.<name>, not <name>).
 - A held card with no `inbox/<job>/BRIEF.md` is written, whole, never over a file there
-  (`atomicfile` NoReplace: friend sync writes the same file the same way, and whichever is
+  (`atomicfile` NoReplace: the daemon adds the current packet tier on the RESULT contract, and whichever writer is
   first writes it). The daemon logs one line per write (`inbox: wrote inbox/<job>/BRIEF.md
   (card <c>, <col> on her row)`); in batch mode the session is told of the briefs in a turn
   of their own, as friend sync's bus message would; in one-shot mode a free lane is handed
@@ -1579,9 +1579,9 @@ schema cards with "JOB.md missing: card not staged": the daemon wrote the brief 
 else, and the coordinator staged clones and `JOB.md` files by hand from a scratchpad script all
 night. Writing the brief without staging the job is half a delivery.
 
-Each reconcile, for every held work card whose `inbox/<job>/BRIEF.md` is there (the daemon's
-write or friend sync's) and whose `jobs/<job>/JOB.md` is not, the daemon stages the job
-(`Daemon.Stage`, `friend.Stager`, wired by `nova-friend run` with her working directory):
+Each reconcile, for every held work card whose `jobs/<job>/JOB.md` is not there, the daemon
+stages the job before it writes the card's brief (the delivery order, below; `Daemon.Stage`,
+`friend.Stager`, wired by `nova-friend run` with her working directory and `--mirrors`):
 
 - The packet is `PacketOf`: the server's `repo`, `base`, `branch` and `attempt` in the
   `friend cards` answer when it sends them, else the brief's own lines (`REPO:`, `BASE:`, and
@@ -1592,7 +1592,7 @@ write or friend sync's) and whose `jobs/<job>/JOB.md` is not, the daemon stages 
   stage nothing here. A packet git could misread (a repository that is no `owner/name`, a base
   or branch that is no ref name, a job that is no single path element) is refused before any
   git runs.
-- One full bare mirror per repository, `mirrors/<owner>/<name>.git`, made the first time
+- One full bare mirror per repository, `<mirrors>/<owner>/<name>.git` (the `--mirrors` setting, default `mirrors` under the state dir), made the first time
   (`git init --bare` and a whole fetch with her account's git credentials: the daemon's
   environment, `GIT_TERMINAL_PROMPT=0`; never shallow and never blob-less, which broke clones
   with "pack has unresolved deltas"), fetched before a stage unless fetched within
@@ -1620,7 +1620,7 @@ write or friend sync's) and whose `jobs/<job>/JOB.md` is not, the daemon stages 
   (`MirrorCloneBudget`, 30 minutes, bounds a fetch; the first is the slow one); a repository's
   fetch, its worktrees added and its worktrees pruned run one at a time. A stage the daemon's stop ends is said nowhere and runs again on
   the next start.
-- No lane is handed a card whose job the daemon stages until its `JOB.md` is there, and in
+- No lane is handed a card whose job the daemon stages until its `JOB.md` is there; its brief is not written until then, and in
   batch mode the session is told of such a brief once its job is staged.
 - A repository her account cannot reach (its first or any later fetch fails, named on the job
   it was staging: `her account cannot reach <repo> (staging jobs/<job>): ...`), or a base it
@@ -1670,6 +1670,57 @@ this change are never pruned (they are no worktree of a mirror) and are left to 
 Not yet: the server's `friend cards` answer does not send `repo` and `base` (cmd/nova-sprint is
 outside this card's paths), so the brief's lines are read; a read's checkout at the head under
 read is not staged here.
+
+## The delivery order (internal/friend/delivery.go)
+
+The coordinator's stopgap `deliver.py` (the night of 2026-10-05) learned the rules the daemon
+now keeps, and `nova-sprint deliver <friend> [--once]` is the coordinator's hand version of the
+same code path (`friend.Delivery.One`):
+
+- **Every card on her row is delivered, whatever its WHO line prefers.** A `WHO: friend <name>`
+  pin is a preference the deal weighed; the deal is the decision, so a card placed on her row is
+  hers to run. Neither the daemon nor `deliver` reads WHO.
+- **The job is staged before the brief is written.** A runner starts a lane within seconds of
+  `BRIEF.md`, and one that met no checkout held the card ("the staged checkout is missing", a
+  dozen HOLDs). For a card whose job is staged here (`Delivery.Owed`: a stage is set, the card
+  names its `REPO`, and its `JOB.md` is not there) the reconcile writes no brief
+  (`SyncInboxOwed` counts it staging, never missing); the stage's goroutine stages the job and
+  then writes `inbox/<job>/BRIEF.md`, and the record says `stage: staged ...` before `inbox:
+  wrote ...`. A stage that fails writes no brief, so no runner meets the card at all; a read,
+  and a card naming no `REPO`, have their brief written alone.
+- **Clones come from a full local mirror.** A blob-less partial mirror breaks the clone ("pack
+  has unresolved deltas"), so a mirror whose `extensions.partialclone` or
+  `remote.origin.promisor` is set is refused naming its remedy (remove it, and the next stage
+  clones a full one). The mirrors' directory is a setting, `--mirrors`, with a working default:
+  `mirrors` under the daemon's state dir, cloned the first time and fetched before each stage.
+- **A friend whose runner stages its own jobs is not staged twice.**
+  `nova-friend run|install --stages runner` (default `daemon`) sets no stage: her briefs are
+  written alone and no job directory is made. Any stage claims its job first: it takes `jobs/.<job>.lock` (an flock;
+  held by another stage, a second daemon beside it, the job is `StartedElsewhere`), then makes
+  `jobs/<job>` with its mark `.nova-friend-stage` in it, or finds that mark left by a stage that
+  ended part way and resumes it. A job directory with no `JOB.md` and no mark was made by
+  another hand (a runner that stages its own) and is never staged over: `stage: skipped
+  jobs/<job>: ... was started elsewhere`, said once, and its brief is written once that hand's
+  `JOB.md` is there. The mark and the lock file go when `JOB.md` is written.
+
+`nova-sprint deliver <friend>` reads her row as `friend cards` answers her daemon and prints one
+line per card, `DELIVER <job> staged|brief|skipped [<why>]`; `--stages runner` and `--mirrors`
+are her daemon's settings, `--root` the directory her `<friend>-working` is under, `--dry-run`
+the lines it would print with nothing written, and with no `--once` it delivers again every
+`--every` (15 s) until interrupted, a card's line said only when it changes. It changes nothing
+on the table.
+
+`TestTheDaemonStagesBeforeItWritesTheBrief` pins the order (no brief there when a stage ends;
+`JOB.md` older than `BRIEF.md`; the record's order; an unreachable card with no brief; the mirror
+where the setting names it), `TestACardPinnedToAnotherFriendOnHerRowIsDelivered` and
+`TestDeliverDeliversAWhoPinnedCardDealtToAnotherFriend` the WHO rule (the latter through the
+tick's deal on a twin store), `TestASecondDaemonBesideASelfStagingRunnerStagesNothingTwice` the
+runner's jobs and the lock, and `TestAStagesOwnPartJobIsResumedAndAPartialMirrorRefused` the
+mark and the mirror. The order is modelled in `internal/friend/tla/DeliverOrder.tla`
+(`MCDeliverOrder`, 144 distinct states, and `MCDeliverOrderRunner`, 289: no lane meets a brief
+with no checkout, no job staged by two hands, every card delivered); its reversed witnesses
+`MCDeliverOrderBrokenBriefFirst` (the brief before the stage: a lane held in 3 states) and
+`MCDeliverOrderBrokenNoClaim` (a stage over another hand's directory: staged twice) fail.
 
 ## One-shot lanes (internal/friend/lanes.go)
 
@@ -2986,3 +3037,7 @@ the message stays pending, never given up, the session reads broken with the
 reason until a turn succeeds, and the detail tells the friend to start a session
 without a preset or read the bus with `nova-bus recv` ("A turn the session
 cannot take").
+
+The delivery writer carries the current packet tier on the brief's `RESULT:` line,
+adding the line when missing and replacing an old embedded tier. A packet with
+no recognized tier keeps its brief unchanged (`TestDeliveryCarriesTheCurrentTierOnTheResultLine`).
