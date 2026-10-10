@@ -84,6 +84,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // WSStates are the six per-stream sets the table counts, in reply order:
@@ -466,6 +467,10 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	epochCmd := pipe.HGet(ctx, ws.EpochKey, ws.EpochField)
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
 		return nil, false, fmt.Errorf("pipeline: %w", err)
+	}
+	// Drop legacy properties on first sight.
+	if err := sprint.DropLegacy(ctx, r.Client, StreamsTable); err != nil {
+		return nil, false, fmt.Errorf("drop legacy: %w", err)
 	}
 	// A dead connection fails every command; the order read standing is the
 	// tick's proof that Redis answered.

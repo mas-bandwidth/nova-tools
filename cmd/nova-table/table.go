@@ -117,6 +117,11 @@ func (app *application) cmdSet(args []string, stdout, stderr io.Writer) int {
 	defer st.Close()
 	trips := st.CountTrips()
 
+	// Drop legacy properties on first sight.
+	if err := sprint.DropLegacy(ctx, c, pos[0]); err != nil {
+		return st.refusal(stderr, verb, err)
+	}
+
 	// Unset properties if requested.
 	if *unset != "" {
 		propsKey := "table:" + pos[0] + ":props"
