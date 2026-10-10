@@ -55,7 +55,7 @@ All functional shards execute under the two-minute timeout cap on the self-hoste
 
 ### 2. Certification Requirement
 
-Before a release can be cut, `certification.yml` must vouch for the exact target commit. `nova-update release cut` queries the forge for completed check runs. If no completed green certification check (`certification` or `certification-ok`) exists on the commit:
+Before a release can be cut, `certification.yml` must vouch for the exact target commit. `nova-update release cut` reads one snapshot of the forge's check runs and applies the same rule `release.yml`'s `ghrelease certified` job does: every certification check (`certification` or `certification-ok`) on the commit must be completed, and the runs sharing the latest update must be uniformly green. An older green beside a newer red refuses, and a run still in flight refuses with a wait line; neither is evidence that the commit is certified.
 - The command refuses with exit code 2.
 - The refusal names the exact dispatch command:
   ```bash

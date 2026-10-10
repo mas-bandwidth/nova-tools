@@ -60,60 +60,100 @@ func PullRequests(commits []Commit) []PR {
 	return prs
 }
 
-// certified is the release gate. A commit must have a green certification run
-// from certification.yml before a release can be cut. This is the same check
-// release.yml makes: the first job asks certification.yml to vouch for the commit.
-// Waivers (dogfood, journey, spend) never cover certification.
-func certified(runs []CheckRun, ref string) error {
-	var found bool
-	var inFlight bool
-	var failed bool
-	var success bool
-	var failConclusion string
+// certificationEvidence is what the certification runs on one commit say: how
+// many there are, how many have not completed, and the group carrying the
+// latest update with how many of its members are not green. It is read from one
+// snapshot, the same way tools/ghrelease/certified.go reads the certification
+// workflow's runs for release.yml.
+type certificationEvidence struct {
+	found    bool
+	inflight int
+	latest   string
+	group    int
+	red      int
+	redRun   CheckRun
+}
 
+// readCertification collects the certification evidence from one snapshot of a
+// commit's check runs. A run not yet completed is not evidence -- it refuses
+// with a wait line -- and the completed runs sharing the maximal UpdatedAt
+// decide, because a rerun of an older run is newer evidence than a later run
+// that was never rerun. The latest-update group must be uniformly green: two
+// runs can share the maximal update time with opposite conclusions and the
+// stamp supplies no order between them, so neither may be read as the winner.
+func readCertification(runs []CheckRun) certificationEvidence {
+	var ev certificationEvidence
+	var certs []CheckRun
 	for _, r := range runs {
 		if r.Name == "certification" || r.Name == "certification-ok" {
-			found = true
-			if r.Status != "completed" {
-				inFlight = true
-			} else if r.Conclusion == "success" {
-				success = true
-			} else {
-				failed = true
-				failConclusion = r.Conclusion
+			certs = append(certs, r)
+		}
+	}
+	ev.found = len(certs) > 0
+	if !ev.found {
+		return ev
+	}
+	for _, r := range certs {
+		if r.Status != "completed" {
+			ev.inflight++
+		}
+	}
+	for _, r := range certs {
+		if r.Status != "completed" {
+			continue
+		}
+		switch {
+		case ev.group == 0 || r.UpdatedAt > ev.latest:
+			ev.latest = r.UpdatedAt
+			ev.group = 1
+			ev.red = 0
+			ev.redRun = r
+			if r.Conclusion != "success" {
+				ev.red = 1
+			}
+		case r.UpdatedAt == ev.latest:
+			ev.group++
+			if r.Conclusion != "success" {
+				ev.red++
+				ev.redRun = r
 			}
 		}
 	}
-	if !found {
+	return ev
+}
+
+// certified is the release gate. A commit must be vouched for by
+// certification.yml before a release can be cut, and the gate is the one
+// release.yml's certified job makes: every certification run on the commit has
+// completed, and the runs carrying the latest update are uniformly green. A
+// newer red beside an older green refuses, and a still-running run refuses with
+// a wait line. Waivers (dogfood, journey, spend) never cover certification.
+func certified(runs []CheckRun, ref string) error {
+	ev := readCertification(runs)
+	if !ev.found {
 		cmd := fmt.Sprintf("gh workflow run certification.yml --ref %s", ref)
 		return refuse(fmt.Sprintf("certify it first: %s (or pass --dispatch-certification to dispatch and wait)", cmd),
 			"no certification run has vouched for this commit: run %s", cmd)
 	}
-	if failed && !success {
-		return refuse("fix the certification failure and cut again; a tag cannot be amended",
-			"certification.yml failed on this commit: %s", failConclusion)
-	}
-	if inFlight && !success {
+	if ev.inflight != 0 {
 		return refuse("wait for certification to finish and cut again (or pass --dispatch-certification to wait)",
-			"certification.yml is still running on this commit")
+			"certification.yml is still running on this commit: %d run(s) not completed", ev.inflight)
+	}
+	if ev.red != 0 {
+		return refuse("fix the certification failure and cut again; a tag cannot be amended",
+			"certification.yml failed on this commit: the latest evidence (%d of %d run(s) not success) concluded %s",
+			ev.red, ev.group, ev.redRun.Conclusion)
 	}
 	return nil
 }
 
+// isCertificationFailure reports whether the snapshot is a settled red rather
+// than a run still to finish. The dispatch wait loop polls with it: an in-flight
+// run keeps the loop waiting, a latest-update group with a non-success member
+// ends it.
 func isCertificationFailure(runs []CheckRun) bool {
-	var hasFailure, hasSuccess, hasInFlight bool
-	for _, r := range runs {
-		if r.Name == "certification" || r.Name == "certification-ok" {
-			if r.Status != "completed" {
-				hasInFlight = true
-			} else if r.Conclusion == "success" {
-				hasSuccess = true
-			} else {
-				hasFailure = true
-			}
-		}
-	}
-	return hasFailure && !hasSuccess && !hasInFlight
+	ev := readCertification(runs)
+	return ev.found && ev.inflight == 0 && ev.red != 0
 }
 
 func restStep(seam func(time.Duration), d time.Duration) {

@@ -216,6 +216,66 @@ func TestCertificationNotCoveredByWaivers(t *testing.T) {
 		"refusal must be about certification, not waivers: %s", errs.String())
 }
 
+// An older green certification run beside a newer red must not vouch: the
+// latest-update group decides, the same rule tools/ghrelease/certified.go makes
+// for release.yml, and tools/ghrelease/testdata/certified/old-green-new-red.json
+// is the fixture a gate that counts any green would pass.
+func TestCutRefusesOlderGreenBesideNewerCertificationRed(t *testing.T) {
+	t.Parallel()
+
+	forge := &fakeCertifyForge{
+		headSHA: "abc123def456",
+		runs: []CheckRun{
+			{Name: "ci", Status: "completed", Conclusion: "success"},
+			{Name: "certification", Status: "completed", Conclusion: "success", UpdatedAt: "2026-10-01T00:00:00Z"},
+			{Name: "certification", Status: "completed", Conclusion: "failure", UpdatedAt: "2026-10-02T00:00:00Z"},
+		},
+	}
+
+	var out, errs bytes.Buffer
+	code := Run("nova-update", []string{
+		"cut", "--repo", "mas-bandwidth/nova-tools", "--from", "main",
+		"--version", "v1.0.0", "--changelog", "/dev/null",
+		"--no-dogfood-gate", "--reason", "test",
+		"--no-journey-gate", "--no-spend-gate",
+		"--spend-since", "2026-10-01T00:00:00Z",
+		"--dry-run",
+	}, &out, &errs, Deps{Forge: forge, Now: time.Now})
+
+	require.Equal(t, 2, code, "an older green must not vouch beside a newer red: %s", errs.String())
+	require.Contains(t, errs.String(), "certification.yml failed",
+		"refusal must be about the latest red: %s", errs.String())
+}
+
+// A certification run still in flight refuses even beside an older green: a
+// snapshot with an unfinished run is not evidence that the commit is certified.
+func TestCutRefusesCertificationStillRunning(t *testing.T) {
+	t.Parallel()
+
+	forge := &fakeCertifyForge{
+		headSHA: "abc123def456",
+		runs: []CheckRun{
+			{Name: "ci", Status: "completed", Conclusion: "success"},
+			{Name: "certification", Status: "completed", Conclusion: "success", UpdatedAt: "2026-10-01T00:00:00Z"},
+			{Name: "certification", Status: "in_progress", UpdatedAt: "2026-10-02T00:00:00Z"},
+		},
+	}
+
+	var out, errs bytes.Buffer
+	code := Run("nova-update", []string{
+		"cut", "--repo", "mas-bandwidth/nova-tools", "--from", "main",
+		"--version", "v1.0.0", "--changelog", "/dev/null",
+		"--no-dogfood-gate", "--reason", "test",
+		"--no-journey-gate", "--no-spend-gate",
+		"--spend-since", "2026-10-01T00:00:00Z",
+		"--dry-run",
+	}, &out, &errs, Deps{Forge: forge, Now: time.Now})
+
+	require.Equal(t, 2, code, "a run still in flight must refuse: %s", errs.String())
+	require.Contains(t, errs.String(), "still running",
+		"refusal must be about the unfinished run: %s", errs.String())
+}
+
 func TestWorkflowLintPRCIIncludesEveryFunctionalShard(t *testing.T) {
 	t.Parallel()
 

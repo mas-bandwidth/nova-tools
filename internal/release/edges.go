@@ -126,7 +126,7 @@ func (g *GH) HeadSHA(ctx context.Context, repo, branch string) (string, error) {
 // first page read as the whole set is a green nobody checked.
 func (g *GH) CheckRuns(ctx context.Context, repo, sha string) ([]CheckRun, error) {
 	out, err := g.api(ctx, "api", "--paginate", "repos/"+repo+"/commits/"+sha+"/check-runs",
-		"--jq", ".check_runs[] | {Name:.name, Status:.status, Conclusion:.conclusion}")
+		"--jq", ".check_runs[] | {Name:.name, Status:.status, Conclusion:.conclusion, UpdatedAt:.updated_at}")
 	if err != nil {
 		return nil, err
 	}

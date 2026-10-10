@@ -39,14 +39,18 @@ import (
 )
 
 // CheckRun is one CI check on a commit, as the forge reports it: the name a
-// person reads in the checks list, the run's status, and its conclusion once it
-// has one. A run that has not completed has an empty Conclusion, which is why
-// both fields are here -- a pending run is not a green one, and reading only the
-// conclusion would make it look like a neutral one.
+// person reads in the checks list, the run's status, its conclusion once it has
+// one, and when the forge last updated it. A run that has not completed has an
+// empty Conclusion, which is why both fields are here -- a pending run is not a
+// green one, and reading only the conclusion would make it look like a neutral
+// one. UpdatedAt orders competing runs on one commit: a rerun of an older run
+// is newer evidence than a run created after it and never rerun, which is the
+// order tools/ghrelease/certified.go reads from the workflow runs API.
 type CheckRun struct {
 	Name       string
 	Status     string // queued, in_progress, completed
 	Conclusion string // success, failure, cancelled, timed_out, skipped, neutral
+	UpdatedAt  string // RFC3339, the forge's last update to the run
 }
 
 // Commit is one commit in a range, with the whole message: the subject carries

@@ -1213,7 +1213,7 @@ queue waits on CI.
 does and runs it: exit 86 and its line), `TestStartFailsClosedOnTheUnitTierShim` (functional-tagged, in
 `internal/ci/redis_ci_test.go`: `testutil.Start` against that shim fails
 closed), `TestUnitLegTakesAtMostTwoCores` (the share
-function, `pkgselect.RunnerShare`, with one runner on any box), `TestFunctionalTierRunsOnlyAsStreamsMerge` and
+function, `pkgselect.RunnerShare`, with one runner on any box), `TestFunctionalTierRunsOnPullRequestAndAsStreamsMerge` and
 `TestSlowAllowlistRowsNameTheirMeasurement`,
 `TestSlowAllowlistRatchetRefusesAnUnmeasuredRow`,
 `TestUnitBudgetsJudgeTheTestNotTheLoad` (a 1.4 s test is exit 0 with its

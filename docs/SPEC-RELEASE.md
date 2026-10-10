@@ -720,10 +720,12 @@ runner pool.
 
 ### 2. Cut requires certification and offers dispatch
 `nova-update release cut` refuses any commit that `certification.yml` has not vouched for
-(the same check `release.yml` makes), names the certification dispatch command
-(`gh workflow run certification.yml --ref <ref>`), and offers `--dispatch-certification`
-to dispatch and wait for certification. Waivers (`--no-dogfood-gate`, `--no-journey-gate`,
-`--no-spend-gate`) never cover certification.
+(the same check `release.yml` makes): every certification run on the commit must be
+completed, and the runs carrying the latest update must be uniformly green, so an older
+green beside a newer red or beside a still-running run refuses. The refusal names the
+certification dispatch command (`gh workflow run certification.yml --ref <ref>`), and
+`--dispatch-certification` dispatches and waits for certification. Waivers
+(`--no-dogfood-gate`, `--no-journey-gate`, `--no-spend-gate`) never cover certification.
 
 ### 3. Workflow publishes the release object
 `release.yml` publishes the release object with the built assets and per-platform checksums:
@@ -821,6 +823,8 @@ One numbered line per test; where one test holds several behaviours, they share 
 70. `TestCutDispatchCertification` — `--dispatch-certification` dispatches `certification.yml` once on the fake and waits for completion.
 71. `TestCertificationNotCoveredByWaivers` — dogfood, journey, and spend waivers never cover certification; an uncertified or failing commit is refused even with all waivers granted.
 72. `TestWorkflowLintPRCIIncludesEveryFunctionalShard` — workflow lint reads `ci.yml`, `certification.yml`, and `release.yml` and asserts PR CI includes every functional shard the merge group runs.
+73. `TestCutRefusesOlderGreenBesideNewerCertificationRed` — an older green certification run beside a newer red refuses: the latest-update group decides.
+74. `TestCutRefusesCertificationStillRunning` — a certification run still in flight refuses even beside an older green.
 
 Demanded, and proven by no test yet (8):
 

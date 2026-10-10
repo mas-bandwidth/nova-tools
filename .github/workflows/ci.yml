@@ -35,9 +35,10 @@
 # Makefile's GOTEST_P), no redis-server on PATH, and slowtests failing a
 # package over 2 s or a test over 1 s unless internal/ci/slow-tests_allowlist.txt
 # names it. The FUNCTIONAL tier is the `functional` job: the tests behind
-# `//go:build functional`, over the same packages, on merge_group (a stream's
-# merge into dev), the nightly schedule and a manual run, never on a pull
-# request. See docs/TESTING.md.
+# `//go:build functional`, over the same packages, on pull_request too (a card
+# PR into a stream branch and a stream PR into dev), on merge_group (a stream's
+# merge into dev), the nightly schedule and a manual run, so a red functional
+# test is red on the pull request that made it. See docs/TESTING.md.
 #
 # NO NATIVE WINDOWS LEG. Every windows-latest leg this file
 # carried — test-windows-pr's four shards, test-hosted-merge's windows leg and

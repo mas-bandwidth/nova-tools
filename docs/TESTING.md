@@ -31,10 +31,11 @@ real one fails there, naming this rule.
 **Functional tests carry the tag and run per stream merge.** A test that needs
 the real thing (a redis-server, a built binary, a child process) lives in a
 `_test.go` that starts with `//go:build functional`. `make test-functional` runs
-only those tests, and ci.yml's `functional` job runs it in the merge queue (a
-whole work stream merging into dev), nightly and by hand, never on a pull
-request. Keep them few and cheap: one server per package (`TestMain`) rather
-than one per test, and the same two-minute cap as every job. On a working machine
+only those tests, and ci.yml's `functional` job runs it on a pull request (a card
+PR into a stream branch or a stream PR into dev), in the merge queue (a whole
+work stream merging into dev), nightly and by hand. Keep them few and cheap: one
+server per package (`TestMain`) rather than one per test, and the same two-minute
+cap as every job. On a working machine
 they run inside one container per run, `make test-functional-container
 PKGS=<packages>` ([TESTING.md](../TESTING.md)), never bare.
 
