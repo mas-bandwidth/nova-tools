@@ -11,7 +11,7 @@ import (
 // stream. A hold takes no new cards; what is dealt and not begun is handed back now
 // (a member's ready cards dealt round the fleet, a reader's reads asked and not begun
 // asked of another, a stream's ready work cards withdrawn); what is begun finishes, or
-// with --return is handed back now too. A held friend keeps no begun card, --return or
+// with --return is handed back now too. A held friend keeps no card, --return or
 // not (FriendTake with Hold: her started ones carry their pushed head to the next taker). The status reads held, the reason beside it,
 // and the hold is a line of the log. The member's and the stream's hold live on their
 // control cards; the reader's and the friend's, as their presence does, in their
@@ -338,7 +338,7 @@ func readTakerUp(s *Snapshot, c *Card, reader string) bool {
 	return false
 }
 
-// holdFriendCards is a friend's hold: a held friend keeps no begun card (the owner,
+// holdFriendCards is a friend's hold: a held friend keeps no card, begun or not (the owner,
 // 2026-10-04, on a held friend still showing two working cards: "nonono"), so every card
 // she has begun, working on her row or read as started, is taken back as friend down takes
 // it (FriendTake with Hold), each primary ready again for the tick to deal to a friend up, a
