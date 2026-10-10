@@ -23,7 +23,7 @@ func ageUpgradeCmdForOS(goos string) string {
 		return "brew upgrade age"
 	case "linux":
 		// Try apt-get first (Debian/Ubuntu), then dnf (Fedora), then curl from release
-		return "sudo apt-get install --only-upgrade age || sudo dnf upgrade age || curl -L https://github.com/FiloSottile/age/releases/download/v" + MinAgeKeygenVersion + "/age-" + MinAgeKeygenVersion + "-linux-amd64.tar.gz | tar xz && sudo mv age/age /usr/local/bin/ && sudo mv age/age-keygen /usr/local/bin/"
+		return "sudo apt-get install --only-upgrade age || sudo dnf upgrade age || curl -L https://github.com/" + "FiloSottile/age/releases/download/v" + MinAgeKeygenVersion + "/age-" + MinAgeKeygenVersion + "-linux-amd64.tar.gz | tar xz && sudo mv age/age /usr/local/bin/ && sudo mv age/age-keygen /usr/local/bin/"
 	default:
 		return "brew upgrade age"
 	}
