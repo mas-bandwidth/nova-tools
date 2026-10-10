@@ -132,15 +132,24 @@ type Card struct {
 	Branch   string `json:"branch,omitempty"`
 	Stream   string `json:"stream,omitempty"`
 	Col      string `json:"col,omitempty"`
+	// A read card's: the work it reads, at its pinned branch and head.
+	Primary    string `json:"primary,omitempty"`
+	Head       string `json:"head,omitempty"`
+	WorkBranch string `json:"work_branch,omitempty"`
+	WorkBase   string `json:"work_base,omitempty"`
+	Report     string `json:"report,omitempty"`
 }
 
 // End is a lane that stopped. HasReport is false when the harness wrote nothing
 // the runner can finish from; ErrLine is then the harness's first error line.
+// For a read lane, Verdict is "ok" or "broken" and Finding names the defect the
+// report's HOLD named.
 type End struct {
 	ID        string
 	HasReport bool
 	Verdict   string
 	Head      string
+	Finding   string
 	Report    string
 	ErrLine   string
 }

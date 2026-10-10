@@ -52,9 +52,11 @@ type Proc interface {
 type Edges struct {
 	Show    func(ctx context.Context, friend string) (Row, error)
 	Queue   func(ctx context.Context, friend string) ([]Card, error)
+	Claim   func(ctx context.Context, card Card) error
 	Start   func(ctx context.Context, card Card) (Proc, error)
 	Report  func(card Card) (string, bool)
 	Finish  func(ctx context.Context, card Card, failed bool, head, report string) error
+	Read    func(ctx context.Context, card Card, verdict, finding string) error
 	Beat    func(ctx context.Context, friend string, beat Beat) error
 	Judge   func(ctx context.Context, subject, body string) error
 	Install func(ctx context.Context, version string) error
@@ -74,16 +76,17 @@ type Runner struct {
 	Out     io.Writer
 	Err     io.Writer
 
-	lanes    Lanes
-	mem      Memory
-	row      Row
-	rowAt    time.Time
-	procs    map[string]procSlot
-	cards    map[string]Card
-	pending  []pendingFinish
-	startErr map[string]string
-	drained  string
-	loaded   bool
+	lanes        Lanes
+	mem          Memory
+	row          Row
+	rowAt        time.Time
+	procs        map[string]procSlot
+	cards        map[string]Card
+	pending      []pendingFinish
+	pendingReads []pendingRead
+	startErr     map[string]string
+	drained      string
+	loaded       bool
 }
 
 type procSlot struct {
@@ -97,6 +100,13 @@ type pendingFinish struct {
 	Report string `json:"report"`
 }
 
+type pendingRead struct {
+	Card    Card   `json:"card"`
+	Verdict string `json:"verdict"`
+	Finding string `json:"finding"`
+	Report  string `json:"report"`
+}
+
 type diskLane struct {
 	Card Card   `json:"card"`
 	PID  int    `json:"pid"`
@@ -104,13 +114,14 @@ type diskLane struct {
 }
 
 type diskState struct {
-	Lanes   []diskLane      `json:"lanes,omitempty"`
-	Pending []pendingFinish `json:"pending,omitempty"`
-	Fault   string          `json:"fault,omitempty"`
-	Count   int             `json:"fault_count,omitempty"`
-	Judged  bool            `json:"judged,omitempty"`
-	Row     Row             `json:"row"`
-	RowAt   time.Time       `json:"row_at,omitempty"`
+	Lanes        []diskLane      `json:"lanes,omitempty"`
+	Pending      []pendingFinish `json:"pending,omitempty"`
+	PendingReads []pendingRead   `json:"pending_reads,omitempty"`
+	Fault        string          `json:"fault,omitempty"`
+	Count        int             `json:"fault_count,omitempty"`
+	Judged       bool            `json:"judged,omitempty"`
+	Row          Row             `json:"row"`
+	RowAt        time.Time       `json:"row_at,omitempty"`
 }
 
 // Run ticks immediately and then every second until ctx ends. Children are
@@ -175,8 +186,12 @@ func (r *Runner) Tick(ctx context.Context, now time.Time) error {
 			card.ID = e.ID
 		}
 		if e.HasReport {
-			failed, head := landOf(e.Verdict, e.Head)
-			r.enqueueFinish(card, failed, head, e.Report)
+			if card.Kind == KindRead {
+				r.enqueueRead(card, e.Verdict, e.Finding, e.Report)
+			} else {
+				failed, head := landOf(e.Verdict, e.Head)
+				r.enqueueFinish(card, failed, head, e.Report)
+			}
 			continue
 		}
 	}
@@ -188,6 +203,7 @@ func (r *Runner) Tick(ctx context.Context, now time.Time) error {
 		r.enqueueFinish(card, true, "", f.Report)
 	}
 	r.flushPending(ctx)
+	r.flushReads(ctx)
 	if step.Judgment != nil && r.Edges.Judge != nil {
 		if err := r.Edges.Judge(ctx, step.Judgment.Subject, step.Judgment.Body); err != nil {
 			r.mem.Judged = false
@@ -202,6 +218,14 @@ func (r *Runner) Tick(ctx context.Context, now time.Time) error {
 			dropped = append(dropped, c.ID)
 			r.fail("start "+c.ID, fmt.Errorf("no start edge"))
 			continue
+		}
+		if r.Edges.Claim != nil {
+			if err := r.Edges.Claim(ctx, c); err != nil {
+				r.fail("claim "+c.ID, err)
+				dropped = append(dropped, c.ID)
+				continue
+			}
+			r.ok("RUNNER CLAIM card=%s kind=%s", c.ID, c.Kind)
 		}
 		proc, err := r.Edges.Start(ctx, c)
 		if err != nil {
@@ -255,8 +279,11 @@ func (r *Runner) Tick(ctx context.Context, now time.Time) error {
 }
 
 func (r *Runner) blockIDs() []string {
-	out := make([]string, 0, len(r.pending))
+	out := make([]string, 0, len(r.pending)+len(r.pendingReads))
 	for _, p := range r.pending {
+		out = append(out, p.Card.ID)
+	}
+	for _, p := range r.pendingReads {
 		out = append(out, p.Card.ID)
 	}
 	return out
@@ -296,6 +323,40 @@ func (r *Runner) flushPending(ctx context.Context) {
 	r.pending = left
 }
 
+func (r *Runner) enqueueRead(card Card, verdict, finding, report string) {
+	if card.ID == "" {
+		return
+	}
+	item := pendingRead{Card: card, Verdict: verdict, Finding: finding, Report: report}
+	for i, p := range r.pendingReads {
+		if p.Card.ID == card.ID {
+			r.pendingReads[i] = item
+			return
+		}
+	}
+	r.pendingReads = append(r.pendingReads, item)
+}
+
+func (r *Runner) flushReads(ctx context.Context) {
+	if len(r.pendingReads) == 0 {
+		return
+	}
+	var left []pendingRead
+	for _, p := range r.pendingReads {
+		if r.Edges.Read == nil {
+			left = append(left, p)
+			continue
+		}
+		if err := r.Edges.Read(ctx, p.Card, p.Verdict, p.Finding); err != nil {
+			r.fail("read "+p.Card.ID, err)
+			left = append(left, p)
+			continue
+		}
+		r.ok("RUNNER READ card=%s verdict=%s", p.Card.ID, p.Verdict)
+	}
+	r.pendingReads = left
+}
+
 func (r *Runner) reap() []End {
 	if len(r.procs) == 0 {
 		return nil
@@ -320,12 +381,18 @@ func (r *Runner) reap() []End {
 		card := r.cards[id]
 		if r.Edges.Report != nil {
 			if text, ok := r.Edges.Report(card); ok && strings.TrimSpace(text) != "" {
-				verdict, head, parsed := parseReport(text)
-				if parsed {
+				if card.Kind == KindRead {
+					if verdict, finding, parsed := parseReadReport(text); parsed {
+						ends = append(ends, End{ID: id, HasReport: true, Verdict: verdict, Finding: finding, Report: text})
+						continue
+					}
+					line = "read report has no verdict"
+				} else if verdict, head, parsed := parseReport(text); parsed {
 					ends = append(ends, End{ID: id, HasReport: true, Verdict: verdict, Head: head, Report: text})
 					continue
+				} else {
+					line = "report has no verdict"
 				}
-				line = "report has no verdict"
 			}
 		}
 		ends = append(ends, End{ID: id, ErrLine: line})
@@ -377,6 +444,7 @@ func (r *Runner) boot() {
 	r.row = st.Row
 	r.rowAt = st.RowAt
 	r.pending = st.Pending
+	r.pendingReads = st.PendingReads
 	for _, n := range st.Lanes {
 		if n.Card.ID == "" || n.PID <= 0 {
 			continue
@@ -396,12 +464,13 @@ func (r *Runner) save() {
 		return
 	}
 	st := diskState{
-		Pending: r.pending,
-		Fault:   r.mem.Fault,
-		Count:   r.mem.FaultCount,
-		Judged:  r.mem.Judged,
-		Row:     r.row,
-		RowAt:   r.rowAt,
+		Pending:      r.pending,
+		PendingReads: r.pendingReads,
+		Fault:        r.mem.Fault,
+		Count:        r.mem.FaultCount,
+		Judged:       r.mem.Judged,
+		Row:          r.row,
+		RowAt:        r.rowAt,
 	}
 	for _, n := range r.lanes.List() {
 		card := r.cards[n.ID]
@@ -480,6 +549,26 @@ func installArgv(version string) []string {
 	return []string{"install", "nova-runner@" + version}
 }
 
+func claimArgv(friend string, card Card) []string {
+	gen := card.Gen
+	if gen < 1 {
+		gen = 1
+	}
+	return []string{"take", "--as", "friend." + friend, fmt.Sprintf("%s@%d", card.ID, gen), "--epoch", strconv.FormatUint(card.Epoch, 10)}
+}
+
+func readArgv(friend string, card Card, verdict, finding string) []string {
+	gen := card.Gen
+	if gen < 1 {
+		gen = 1
+	}
+	args := []string{"read", "--as", "friend." + friend, "--" + verdict, fmt.Sprintf("%s@%d", card.ID, gen), "--epoch", strconv.FormatUint(card.Epoch, 10)}
+	if finding != "" {
+		args = append(args, "--finding", finding)
+	}
+	return args
+}
+
 func judgeArgv(friend, seat, subject, body string) []string {
 	return []string{"send", "--as", friend, "--to", seat, "--subject", subject, "--body", body}
 }
@@ -544,8 +633,8 @@ func splitList(v string) []string {
 }
 
 // ParseQueue reads `nova-sprint queue --as friend.<f> --json`. Cards stay in
-// the sprint's order. ready, working, reading and asked can start; anything
-// else is not her ready queue.
+// the sprint's order. Only a card in the ready column may be claimed; a working
+// card is already claimed by a lane, so the runner does not start it twice.
 func ParseQueue(out string) ([]Card, error) {
 	var body struct {
 		Cards []struct {
@@ -554,19 +643,25 @@ func ParseQueue(out string) ([]Card, error) {
 			Gen     int    `json:"gen"`
 			Attempt int    `json:"attempt"`
 			Packet  *struct {
-				Card     string `json:"card"`
-				Kind     string `json:"kind"`
-				Attempt  int    `json:"attempt"`
-				Gen      int    `json:"gen"`
-				Epoch    uint64 `json:"epoch"`
-				Brief    string `json:"brief"`
-				Branch   string `json:"branch"`
-				Base     string `json:"base"`
-				Repo     string `json:"repo"`
-				Model    string `json:"model"`
-				Deadline int    `json:"deadline"`
-				Tier     string `json:"tier"`
-				Stream   string `json:"stream"`
+				Card       string `json:"card"`
+				Kind       string `json:"kind"`
+				Attempt    int    `json:"attempt"`
+				Gen        int    `json:"gen"`
+				Epoch      uint64 `json:"epoch"`
+				Brief      string `json:"brief"`
+				Branch     string `json:"branch"`
+				Base       string `json:"base"`
+				Repo       string `json:"repo"`
+				Model      string `json:"model"`
+				Deadline   int    `json:"deadline"`
+				Tier       string `json:"tier"`
+				Stream     string `json:"stream"`
+				Primary    string `json:"primary"`
+				Head       string `json:"head"`
+				WorkBranch string `json:"work_branch"`
+				WorkBase   string `json:"work_base"`
+				Report     string `json:"report"`
+				ReadJob    string `json:"read_job"`
 			} `json:"packet"`
 		} `json:"cards"`
 	}
@@ -575,7 +670,7 @@ func ParseQueue(out string) ([]Card, error) {
 	}
 	var cards []Card
 	for _, c := range body.Cards {
-		if !runnableCol(c.Col) || c.ID == "" || c.Packet == nil {
+		if c.Col != "ready" || c.ID == "" || c.Packet == nil {
 			continue
 		}
 		p := c.Packet
@@ -610,22 +705,20 @@ func ParseQueue(out string) ([]Card, error) {
 			tier = headerValue(p.Brief, "tier")
 		}
 		job := jobNameOf(c.ID, p.Epoch, gen)
+		if kind == KindRead && p.ReadJob != "" {
+			job = p.ReadJob
+			if gen > 1 {
+				job += ".g" + strconv.Itoa(gen)
+			}
+		}
 		cards = append(cards, Card{
 			ID: c.ID, Kind: kind, Tier: tier, Model: p.Model, Deadline: p.Deadline,
 			Job: job, Epoch: p.Epoch, Attempt: attempt, Gen: gen, Brief: p.Brief,
 			Repo: repo, Base: base, BaseSha: sha, Branch: branch, Stream: p.Stream, Col: c.Col,
+			Primary: p.Primary, Head: p.Head, WorkBranch: p.WorkBranch, WorkBase: p.WorkBase, Report: p.Report,
 		})
 	}
 	return cards, nil
-}
-
-func runnableCol(col string) bool {
-	switch col {
-	case "", "ready", "working", "reading", "asked":
-		return true
-	default:
-		return false
-	}
 }
 
 func headerValue(brief, key string) string {
@@ -669,6 +762,14 @@ func parseReport(text string) (verdict, head string, ok bool) {
 	return verdict, head, true
 }
 
+// parseReadReport reads a read lane's REPORT.md as the sprint does
+// (sprint.ParseFriendReadReport): LAND closes it ok, HOLD closes it broken with
+// the finding, and anything else is no verdict.
+func parseReadReport(text string) (verdict, finding string, ok bool) {
+	v, f, why := sprint.ParseFriendReadReport(text)
+	return v, f, why == ""
+}
+
 func landOf(verdict, head string) (failed bool, headOut string) {
 	if verdict == "LAND" && sha40.MatchString(head) {
 		return false, head
@@ -706,6 +807,9 @@ func promptOf(friendName string, card Card) string {
 	job := card.Job
 	if job == "" {
 		job = card.ID
+	}
+	if card.Kind == KindRead {
+		return fmt.Sprintf("You are %s, a reader, one read only. Read inbox/%s/BRIEF.md and do the read exactly; stop when outbox/%s/REPORT.md is written. Change nothing, commit nothing, push nothing.\n", friendName, job, job)
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are %s, one-shot, this card only.\n", friendName)
@@ -789,12 +893,20 @@ func realEdges(friendName, dir, harness, seat string, models map[string]string) 
 			}
 			return ParseQueue(out)
 		},
+		Claim: func(ctx context.Context, card Card) error {
+			_, err := outputOf(ctx, "nova-sprint", claimArgv(friendName, card)...)
+			return err
+		},
 		Start: func(ctx context.Context, card Card) (Proc, error) {
 			return startLane(ctx, friendName, dir, harness, models, card)
 		},
 		Report: func(card Card) (string, bool) { return reportText(dir, card) },
 		Finish: func(ctx context.Context, card Card, failed bool, head, report string) error {
 			_, err := outputOf(ctx, "nova-sprint", finishArgv(friendName, card, failed, head, report)...)
+			return err
+		},
+		Read: func(ctx context.Context, card Card, verdict, finding string) error {
+			_, err := outputOf(ctx, "nova-sprint", readArgv(friendName, card, verdict, finding)...)
 			return err
 		},
 		Beat: func(ctx context.Context, name string, beat Beat) error {
@@ -834,17 +946,23 @@ func execInstalled(version string) error {
 }
 
 func startLane(ctx context.Context, friendName, dir, harness string, models map[string]string, card Card) (Proc, error) {
-	if err := writeBrief(dir, card); err != nil {
-		return nil, err
-	}
-	packet := friend.Packet{
-		Card: card.ID, Job: jobOf(card), Repo: card.Repo, Base: card.Base,
-		BaseSha: card.BaseSha, Branch: card.Branch, Attempt: card.Attempt,
-	}
-	if _, err := (&friend.Stager{Dir: dir}).Stage(ctx, packet); err != nil {
-		return nil, err
-	}
 	job := jobOf(card)
+	if card.Kind == KindRead {
+		if err := writeReadBrief(friendName, dir, card); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := writeBrief(dir, card); err != nil {
+			return nil, err
+		}
+		packet := friend.Packet{
+			Card: card.ID, Job: job, Repo: card.Repo, Base: card.Base,
+			BaseSha: card.BaseSha, Branch: card.Branch, Attempt: card.Attempt,
+		}
+		if _, err := (&friend.Stager{Dir: dir}).Stage(ctx, packet); err != nil {
+			return nil, err
+		}
+	}
 	logPath := filepath.Join(friend.JobDir(dir, job), "harness.log")
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return nil, err
@@ -876,6 +994,36 @@ func startLane(ctx context.Context, friendName, dir, harness string, models map[
 		close(proc.done)
 	}()
 	return proc, nil
+}
+
+// writeReadBrief writes a read lane's inbox/<job>/BRIEF.md from the sprint's own
+// read-card brief (sprint.ReadCardBrief): the work under review at its pinned
+// branch and head, no checkout. The harness reads it and writes the report.
+func writeReadBrief(friendName, dir string, card Card) error {
+	p := sprint.Packet{
+		Card: card.ID, Kind: KindRead, Primary: card.Primary, Attempt: card.Attempt,
+		Gen: card.Gen, Epoch: card.Epoch, Brief: card.Brief, Report: card.Report,
+		Head: card.Head, WorkBranch: card.WorkBranch, WorkBase: card.WorkBase, Tier: card.Tier,
+	}
+	body := sprint.ReadCardBrief(friendName, jobOf(card), p, "", time.Time{})
+	if !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	job := jobOf(card)
+	for _, p := range []string{
+		filepath.Join(dir, "inbox", job, "BRIEF.md"),
+	} {
+		if _, err := os.Stat(p); err == nil {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // capLane is the card's own deadline, not a width kill. SIGTERM goes to the

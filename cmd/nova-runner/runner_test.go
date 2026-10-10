@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -36,26 +37,23 @@ func TestParseQueueKeepsTheSprintsOrderAndSkipsWhatIsNotReady(t *testing.T) {
 	t.Parallel()
 	raw := `{
 	  "cards": [
-	    {"id":"d1","col":"ready","gen":1,"packet":{"kind":"read","epoch":15,"tier":"flash","brief":"STATUS: nova-sprint card d1, attempt 1; push your work to the branch sprint/d1;\nREPO: mas-bandwidth/nova-tools\nBASE: sprint/mechanical-2026-10-02@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"}},
+	    {"id":"d1","col":"ready","gen":1,"packet":{"kind":"read","epoch":15,"tier":"flash","primary":"p1","attempt":1,"head":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","work_branch":"sprint/p1.w1","brief":"STATUS: nova-sprint card p1, attempt 1;\nREPO: mas-bandwidth/nova-tools\nBASE: sprint/mechanical-2026-10-02@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"}},
 	    {"id":"gone","col":"done","packet":{"kind":"work","repo":"a/b","base":"main","branch":"sprint/gone"}},
 	    {"id":"w1","col":"working","gen":2,"attempt":3,"packet":{"kind":"work","model":"inception/mercury-2.5","deadline":30,"repo":"a/b","base":"main","branch":"sprint/w1"}}
 	  ]
 	}`
 	cards, err := ParseQueue(raw)
 	require.NoError(t, err)
-	require.Len(t, cards, 2)
+	require.Len(t, cards, 1, "only the ready column is launchable; working and done are not")
 	require.Equal(t, "d1", cards[0].ID)
 	require.Equal(t, KindRead, cards[0].Kind)
 	require.Equal(t, "d1~15", cards[0].Job)
-	require.Equal(t, "sprint/d1", cards[0].Branch)
+	require.Equal(t, "p1", cards[0].Primary)
+	require.Equal(t, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", cards[0].Head)
+	require.Equal(t, "sprint/p1.w1", cards[0].WorkBranch)
 	require.Equal(t, "mas-bandwidth/nova-tools", cards[0].Repo)
 	require.Equal(t, "sprint/mechanical-2026-10-02", cards[0].Base)
 	require.Equal(t, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", cards[0].BaseSha)
-	require.Equal(t, "w1", cards[1].ID)
-	require.Equal(t, KindWork, cards[1].Kind)
-	require.Equal(t, 2, cards[1].Gen)
-	require.Equal(t, "inception/mercury-2.5", cards[1].Model)
-	require.Equal(t, 30, cards[1].Deadline)
 }
 
 func TestCommandLinesMatchTheLoop(t *testing.T) {
@@ -68,6 +66,9 @@ func TestCommandLinesMatchTheLoop(t *testing.T) {
 	require.Equal(t,
 		[]string{"finish", "--as", "friend.ada", "s1-1.w1@2", "--epoch", "15", "--failed", "--report", "harness fault: boom", "--branch", "sprint/s1-1.w1.g2.e15"},
 		finishArgv("ada", card, true, "", "harness fault: boom"))
+	require.Equal(t, []string{"take", "--as", "friend.ada", "s1-1.w1@2", "--epoch", "15"}, claimArgv("ada", card))
+	require.Equal(t, []string{"read", "--as", "friend.ada", "--broken", "s1-1.w1@2", "--epoch", "15", "--finding", "main.go:3 off by one"}, readArgv("ada", card, "broken", "main.go:3 off by one"))
+	require.Equal(t, []string{"read", "--as", "friend.ada", "--ok", "s1-1.w1@2", "--epoch", "15"}, readArgv("ada", card, "ok", ""))
 	require.Equal(t, []string{"install", "nova-runner@1.2.3"}, installArgv("1.2.3"))
 	bin, args := harnessArgv("opencode", "inception/mercury-2.5", "do the card")
 	require.Equal(t, "opencode", bin)
@@ -261,4 +262,96 @@ func TestTickFillsFailsAndFollowsWithoutAClock(t *testing.T) {
 		require.Equal(t, 1, execed)
 		require.Zero(t, r.lanes.Len())
 	})
+}
+
+func TestTickClaimsBeforeLaunchAndSkipsWhatWasNotClaimed(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 7, 21, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+	var claims, starts []string
+	r := &Runner{
+		Friend: "ada", Version: "1",
+		Edges: Edges{
+			Show: func(context.Context, string) (Row, error) {
+				return Row{Width: 16, RunnerVersion: "1"}, nil
+			},
+			Queue: func(context.Context, string) ([]Card, error) {
+				return queueIDs("q", 3, KindWork), nil
+			},
+			Claim: func(_ context.Context, c Card) error {
+				claims = append(claims, c.ID)
+				if c.ID == "q1" {
+					return errors.New("stale generation")
+				}
+				return nil
+			},
+			Start: func(_ context.Context, c Card) (Proc, error) {
+				starts = append(starts, c.ID)
+				return &fakeProc{pid: 1}, nil
+			},
+			Beat: func(context.Context, string, Beat) error { return nil },
+		},
+	}
+	require.NoError(t, r.Tick(ctx, now))
+	require.Equal(t, []string{"q0", "q1", "q2"}, claims)
+	require.Equal(t, []string{"q0", "q2"}, starts, "a card whose take was refused is not launched")
+	require.Equal(t, []string{"q0", "q2"}, r.lanes.IDs())
+}
+
+func TestTickClosesAReadViaTheReadVerb(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 7, 21, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+
+	newReader := func(report string) (*Runner, *[]string) {
+		var closes []string
+		r := &Runner{
+			Friend: "ada", Version: "1", loaded: true,
+			row: Row{Width: 16, RunnerVersion: "1"}, rowAt: now,
+			lanes: Lanes{}.Add(Lane{ID: "d1", Kind: KindRead}),
+			procs: map[string]procSlot{"d1": {proc: &fakeProc{exited: true, pid: 4}}},
+			cards: map[string]Card{"d1": {ID: "d1", Kind: KindRead, Gen: 1, Epoch: 15}},
+			Edges: Edges{
+				Queue:  func(context.Context, string) ([]Card, error) { return nil, nil },
+				Report: func(Card) (string, bool) { return report, true },
+				Read: func(_ context.Context, c Card, verdict, finding string) error {
+					closes = append(closes, c.ID+" "+verdict+" "+finding)
+					return nil
+				},
+				Beat: func(context.Context, string, Beat) error { return nil },
+			},
+		}
+		return r, &closes
+	}
+
+	r, closes := newReader("Verdict: LAND\n")
+	require.NoError(t, r.Tick(ctx, now))
+	require.Equal(t, []string{"d1 ok "}, *closes)
+	require.Zero(t, r.lanes.Len())
+
+	r, closes = newReader("Verdict: HOLD\nmain.go:3 off by one\n")
+	require.NoError(t, r.Tick(ctx, now))
+	require.Equal(t, []string{"d1 broken main.go:3 off by one"}, *closes)
+	require.Zero(t, r.lanes.Len())
+
+	r, closes = newReader("Verdict: HOLD\nnothing wrong here\n")
+	require.NoError(t, r.Tick(ctx, now))
+	require.Empty(t, *closes, "a HOLD that names no defect is not a read")
+	require.Zero(t, r.lanes.Len())
+}
+
+func TestParseReadReportMapsLandAndHold(t *testing.T) {
+	t.Parallel()
+	v, f, ok := parseReadReport("Verdict: LAND\n")
+	require.True(t, ok)
+	require.Equal(t, "ok", v)
+	require.Empty(t, f)
+
+	v, f, ok = parseReadReport("Verdict: HOLD\nmain.go:3 off by one\n")
+	require.True(t, ok)
+	require.Equal(t, "broken", v)
+	require.Equal(t, "main.go:3 off by one", f)
+
+	_, _, ok = parseReadReport("Verdict: HOLD\nnothing wrong\n")
+	require.False(t, ok, "a HOLD that names no defect is no verdict")
 }

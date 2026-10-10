@@ -7,7 +7,9 @@ not ask a coordinator to decide the next lane. The code is `cmd/nova-runner`
 verb). The checks are `TestWidth16With10BusyFillsSixWorkOrTwelveReads`,
 `TestWidthLoweredDoesNotKillLanes`,
 `TestNoReportFailsWithHarnessFaultAndThreeAlikeRaiseOneJudgment`,
-`TestRunnerVersionChangeDrainsThenExecs`, `TestTickFillsFailsAndFollowsWithoutAClock`
+`TestRunnerVersionChangeDrainsThenExecs`, `TestTickFillsFailsAndFollowsWithoutAClock`,
+`TestTickClaimsBeforeLaunchAndSkipsWhatWasNotClaimed`,
+`TestTickClosesAReadViaTheReadVerb`, `TestParseReadReportMapsLandAndHold`
 and `TestHelpExplainsTheLoop`.
 
 The machine is pure. `Next` takes a `World` and returns a `Step`. It does not
@@ -32,19 +34,28 @@ ticker):
    half-slots and a read lane costs one, so width 16 with eight work lanes and
    four reads busy (ten slots, twenty half-slots) takes six more work cards or
    twelve reads. A card that does not fit is left on the queue and a later card
-   that does fit may start, so a leftover half-slot can take a read. Columns
-   `ready`, `working`, `reading` and `asked` are her queue; any other column is
-   not. The runner stages with `friend.Stager` (`jobs/<job>/JOB.md` and the
-   checkout, the same stage nova-friend uses) and writes `inbox/<job>/BRIEF.md`
-   from the packet when that file is absent. It then runs the harness one-shot
-   (`harnessArgv`): `opencode run [--model <m>] <prompt>`, or
-   `claude -p <prompt> [--model <m>]`. The model is the card's, else
-   `--model-<tier>` for that tier. The card's deadline, when it names one, is a
-   `SIGTERM` to that lane's own session (`capLane`) and to no other process.
-   The child is told to write `outbox/<job>/REPORT.md` and `RESULT.md`. Finish
-   is `nova-sprint finish --as friend.<friend> <card>@<gen> --epoch <n>` with
+   that does fit may start, so a leftover half-slot can take a read. Only the
+   `ready` column is launchable: a card in `working` or `reading` is already
+   claimed by a lane, and the runner never starts it again. Each ready card is
+   claimed before it is launched, generation-fenced:
+   `nova-sprint take --as friend.<friend> <card>@<gen> --epoch <n>`
+   (`claimArgv`); a take the sprint refuses is left for the next tick, never
+   launched. A work card is staged with `friend.Stager`
+   (`jobs/<job>/JOB.md` and the checkout, the same stage nova-friend uses) and
+   writes `inbox/<job>/BRIEF.md` from the packet when that file is absent. A
+   read card is staged from its pinned work branch and head
+   (`sprint.ReadCardBrief`, `inbox/<job>/BRIEF.md`), never with a checkout: a
+   read card has no `read --begin` — the take moves it to working, and it is
+   closed with the read verb. Both run the harness one-shot (`harnessArgv`):
+   `opencode run [--model <m>] <prompt>`, or `claude -p <prompt> [--model <m>]`.
+   The model is the card's, else `--model-<tier>` for that tier. The card's
+   deadline, when it names one, is a `SIGTERM` to that lane's own session
+   (`capLane`) and to no other process. A work lane's finish is
+   `nova-sprint finish --as friend.<friend> <card>@<gen> --epoch <n>` with
    `--head` for a `LAND` whose head is a 40-hex sha, and `--failed` otherwise
-   (`finishArgv`, `landOf`).
+   (`finishArgv`, `landOf`). A read lane's close is
+   `nova-sprint read --as friend.<friend> --ok|--broken <card>@<gen>
+   --epoch <n>` with `--finding <defect>` for a broken read (`readArgv`).
 
 3. **Beat.** `nova-sprint friend beat <friend> --working <n> --queue <m>
    --width <w> --running <ids>` at the end of every tick (`beatArgv`).
@@ -60,7 +71,11 @@ ticker):
    judgment (`Judgment`). A fourth in that same streak does not raise another.
    A different line, or a lane that did write a report, starts a new streak.
    The judgment is `nova-bus send --as <friend> --to <seat>`. If the send
-   fails, the next tick raises it again. The runner does not stop.
+   fails, the next tick raises it again. The runner does not stop. A read
+   lane's report is read as the sprint reads it (`parseReadReport`,
+   `sprint.ParseFriendReadReport`): `LAND` closes it ok, `HOLD` with a defect
+   closes it broken, and a `HOLD` that names no file, line or rule is no
+   verdict, so the lane fails with the harness-fault line.
 
 5. **Follow.** When `runner_version` is set and is not this binary's
    (`-X main.version`, default `dev`), `Follow` is true. `Next` starts nothing
@@ -78,10 +93,11 @@ ticker):
 is recorded and is not a second filter: a card the queue did not list is not
 started, and a card it did list is not refused here for its tier.
 
-A finish the sprint refuses stays pending and is retried next tick. Pending
-cards are not started again. The state file `<dir>/runner/state.json` keeps the
-lanes (pid and card), the pending finishes, the fault streak and the last row,
-so a restart adopts a live pid instead of starting the card twice.
+A finish or read close the sprint refuses stays pending and is retried next
+tick. Pending cards are not started again. The state file
+`<dir>/runner/state.json` keeps the lanes (pid and card), the pending finishes
+and read closes, the fault streak and the last row, so a restart adopts a live
+pid instead of starting the card twice.
 
 ## The row
 
@@ -99,8 +115,9 @@ fields. The runner reads:
 
 - It never keeps a width of its own. There is no flag for a max, and a missing
   row width does not become 1.
-- It never starts a card the queue did not give her. It does not call `take`,
-  and it does not scan a directory for briefs.
+- It never starts a card the queue did not give her, and never starts a card
+  that is already working or reading: only the `ready` column is claimed, and
+  only after a generation-fenced `take` succeeds.
 - It never kills a lane because the width dropped, because a version changed,
   or because the runner is stopping. The only signal it sends a lane is that
   lane's own deadline.

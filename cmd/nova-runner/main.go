@@ -34,11 +34,15 @@ The loop, every second:
   2. Fill. While busy slots are under that width (a work lane is 1, a read lane is one half),
      take the next card from
      nova-sprint queue --as friend.<friend> in the sprint's order (reads first,
-     as the queue prints them). Stage the job the way nova-friend does
-     (jobs/<job>/JOB.md, inbox/<job>/BRIEF.md, the checkout) and run the harness
+     as the queue prints them). Only a ready card is claimed: each one is taken
+     with nova-sprint take --as friend.<friend> <card>@<gen> --epoch <n> before
+     it is launched, so a working or reading card is never started twice. A work
+     card is staged the way nova-friend stages it (jobs/<job>/JOB.md,
+     inbox/<job>/BRIEF.md, the checkout) and finished through
+     nova-sprint finish --as friend.<friend>; a read card is staged from its
+     pinned work branch and head (inbox/<job>/BRIEF.md) and closed through
+     nova-sprint read --as friend.<friend> --ok|--broken. The harness runs
      one-shot on the card's model for its tier, capped by the card's deadline.
-     The child writes outbox/<job>/REPORT.md and RESULT.md. Finish through
-     nova-sprint finish --as friend.<friend>.
 
   3. Beat. nova-sprint friend beat <friend> --working <n> --queue <m>
      --width <w> --running <ids> every second with the true lane count.
@@ -54,7 +58,8 @@ The loop, every second:
      child with its own session leader, so a lane survives the exec.
 
 It never keeps a width of its own, never starts a card the queue did not give
-her, and never kills a lane because the width dropped.
+her, never starts a card that is already working or reading, and never kills a
+lane because the width dropped.
 
 --model-<tier> is the harness model when the card names none. The card's own
 model wins. This binary's version is the build stamp (default dev).

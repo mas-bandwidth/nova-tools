@@ -40,6 +40,7 @@ nc	absent	only the darwin sandbox socket test dials with it and that test skips 
 node	absent	page tests run node by name skipping when absent; functional tier does without node
 nova-check	tree	built from the checkout by the tests, or stubbed by them; never expected on the PATH
 nova-config	absent	only tlacheck run --bench any reads the fleet's machine rows with it, on a working machine; its tests hand in the rows
+nova-runner	absent	the runner re-execs itself only after a live install, which the functional tier never runs; its tests drive Runner.Tick with fake edges
 opencode	absent	the vendor harness binary belongs to the card image; the tier drives a fake harness
 pg_ctl	apt	postgresql-16
 ps	apt	procps

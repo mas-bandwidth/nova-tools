@@ -34,6 +34,7 @@ cmd/nova-fuse	0.0	@run37411066588	self-hosted
 cmd/nova-local	0.0	@run37518625834	self-hosted
 cmd/nova-memory	0.6	@run37518625834	self-hosted
 cmd/nova-redis	0.5	@run37518625834	self-hosted
+cmd/nova-runner	0.4	@local	-
 cmd/nova-sandbox	7.0	@local	-
 cmd/nova-secrets	3.3	@run37517528825	self-hosted
 cmd/nova-self-talk	6.9	@run37518625834	self-hosted
