@@ -48,7 +48,7 @@ var verbs []verb
 func init() {
 	verbs = []verb{
 		{"init", "[--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>] [--owner <name>] [--rules <file>]", "init --readers reader-a,reader-b,reader-c --members m1:64,m2:64", (*app).cmdInit},
-		{"add", "--stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> [--brief-file <f2>...]: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--held] [--allow-shared-paths] [--one: a single card is meant] [--replaces <old-id>[,<old-id>]: the one card is their twin] [--allow-personal-base]", "add --stream s1 --count 100", (*app).cmdAdd},
+		{"add", "--stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> [--brief-file <f2>...]: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--held] [--allow-shared-paths] [--one: a single card is meant] [--replaces <old-id>[,<old-id>]: the one card is their twin] [--allow-personal-base] [--allow-done]", "add --stream s1 --count 100", (*app).cmdAdd},
 		{"quack", "--streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]", "quack --streams a,b --count 2 --repo https://example.com/quack.git", (*app).cmdQuack},
 		{"preflight", "--brief-dir <dir> [--repo-dir <dir>]", "preflight --brief-dir .", (*app).cmdPreflight},
 		{"release check", "[--json] [--streams <glob>] [--window <duration>] [--merge-p90 <duration>] [--check <name>]...", "release check", (*app).cmdReleaseCheck},
@@ -1156,6 +1156,16 @@ func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 }
 
 func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
+	allowDone := false
+	filtered := make([]string, 0, len(args))
+	for _, arg := range args {
+		if arg == "--allow-done" || arg == "-allow-done" {
+			allowDone = true
+			continue
+		}
+		filtered = append(filtered, arg)
+	}
+	args = filtered
 	fs, c := a.verbSetup("add")
 	stream := fs.String("stream", "", "the stream the primaries belong to, for life; with --count, several streams comma separated, one step")
 	count := fs.Int("count", 0, "admit n primaries with generated ids <stream>-<n>")
@@ -1219,7 +1229,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		if *every != 0 || *last {
 			return refuse(stderr, "add", "--sentinel-every goes with --count, not a card per brief file")
 		}
-		return a.cmdAddMany(*stream, *needs, *briefDir, briefFiles, *sentinel, *rules, *score, *before, *after, *held, *allowShared, *allowPersonal, *decideRecord, briefOps, sprint.Split(*replaces), c, stdout, stderr)
+		return a.cmdAddMany(*stream, *needs, *briefDir, briefFiles, *sentinel, *rules, *score, *before, *after, *held, *allowShared, *allowPersonal, allowDone, *decideRecord, briefOps, sprint.Split(*replaces), c, stdout, stderr)
 	}
 	if len(briefFiles) == 1 {
 		if *brief != "" {
@@ -1285,7 +1295,17 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		}
 		rs = append(rs, r)
 	}
-	if *sentinel == "" && *brief != "" && len(ids) > 0 { // the cards named, each with the brief (briefdecide.go)
+	if *sentinel == "" && *brief != "" { // the cards named, each with the brief (briefdecide.go)
+		checks := make([]briefCheck, 0, max(1, len(ids)))
+		for _, id := range ids {
+			checks = append(checks, briefCheck{id: id, brief: *brief})
+		}
+		if len(checks) == 0 {
+			checks = append(checks, briefCheck{brief: *brief})
+		}
+		if code := a.holdAlreadyDone(checks, allowDone, stderr); code != 0 {
+			return code
+		}
 		cards := map[string]string{}
 		for _, id := range ids {
 			cards[id] = *brief
@@ -1366,7 +1386,7 @@ func promotionGuard(step store.Step, rs []sprint.AddReq) store.Step {
 // the order the files were named. Every brief is read and linted first (one
 // failing brief refuses the whole call, exit 2, nothing written), and one
 // store write adds every card.
-func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, sentinel, rules, score, before, after string, held, allowShared, allowPersonal bool, decideRecord string, briefOps, replaces []string, c *common, stdout, stderr io.Writer) int {
+func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, sentinel, rules, score, before, after string, held, allowShared, allowPersonal, allowDone bool, decideRecord string, briefOps, replaces []string, c *common, stdout, stderr io.Writer) int {
 	if stream == "" {
 		return refuse(stderr, "add", "wants --stream and --brief-dir <dir> or --brief-file <file>...")
 	}
@@ -1413,6 +1433,13 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 	if code := lintBriefFiles("add", cards, rs, c.max, stderr); code != 0 {
 		return code
 	}
+	checks := make([]briefCheck, len(cards))
+	for i, cd := range cards {
+		checks[i] = briefCheck{id: cd.ID, brief: cd.Brief}
+	}
+	if code := a.holdAlreadyDone(checks, allowDone, stderr); code != 0 {
+		return code
+	}
 	for i := range cards {
 		cards[i].Rules = cardRules(cards[i].Brief, rs).held // each card names the rules the member injects into it
 	}
@@ -1455,10 +1482,6 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 	}
 	if code := a.holdBase("add", st, allowPersonal, stderr, texts...); code != 0 {
 		return code
-	}
-	checks := make([]briefCheck, len(cards))
-	for i, cd := range cards {
-		checks[i] = briefCheck{id: cd.ID, brief: cd.Brief}
 	}
 	if code := holdTlaRecords("add", stderr, checks...); code != 0 {
 		return code

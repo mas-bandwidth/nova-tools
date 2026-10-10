@@ -6551,6 +6551,17 @@ the bar with the rest of the facts, so a unit test fakes them and opens no
 socket. Tests: `TestReleaseCheckFailsWhenTheMergeQueueAgeP90IsOverTheBar`,
 `TestPercentileNearestRankIsTheValueAtItsRank`.
 
+### add-first-check-b.w1
+
+At `add`, nova-sprint checks Git evidence at the brief's `BASE:` in the
+lander's repository clone before asking for a model decision. It refuses a
+card as already done when a work step's `COMMIT:` id prefix matches a base
+commit subject, a pushed branch for that card is an ancestor of the base tip,
+or the brief's declared created files and named `TEST` function are already
+present there. The refusal names the evidence. `--allow-done` bypasses this
+check. Add does not run the `TEST` named by the brief; no test runs on the
+coordinator's machine.
+
 ## 12. The driver
 
 `nova-sprint play` plays the outside world on a tick (`--every`), seeded
