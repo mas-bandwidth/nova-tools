@@ -33,11 +33,11 @@
    :text "docs/roadmap.sexp and docs/fixes.sexp are the data; `make roadmap` writes both pages, and a test
     fails when a page differs from what its data renders."
    :origin "PR #5533")
-  (fix "card-tells-child-its-wall" :release "v1.2.6" :status "planned"
+  (fix "card-tells-child-its-wall" :release "v1.2.6" :status "in-progress"
    :title "The card tells the child its wall: deadline and temporary directory"
    :text "The worker card tells the child its deadline, and the native wall passes the slot temporary
     directory so TMPDIR is the slot one."
-   :origin "nova-tools PR #5575, head 4725d7d7d")
+   :origin "nova-tools PR #5575, head 4725d7d7d; landed in dev as 7dc8304560 via PR #5594")
   (fix "walled-lane-tokens-read" :release "v1.2.6" :status "shipped"
    :title "A walled lane tokens are read where its harness writes them"
    :text "Walled sessions live under the wall home, tokens are read from there first, and a session in no
