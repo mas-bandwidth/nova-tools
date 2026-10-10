@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -277,6 +278,63 @@ func TestWatchWakeFiresOncePerEventAndNeverLapses(t *testing.T) {
 		assert.False(t, s2.Seeded, "no file is a first run")
 		assert.Error(t, writeWakeState(filepath.Join(t.TempDir(), "no", "dir", "x.json"), s))
 	})
+}
+
+// TestWatchWakeWatchesTheWakeFile: the retired script recorded the wake file's
+// line count at start and woke on a line appended to it. --wake-file holds both
+// halves: the first run starts at the file's end, a line appended after wakes
+// with up to three new lines shown, the state keeps the count, and the same
+// lines never wake twice.
+func TestWatchWakeWatchesTheWakeFile(t *testing.T) {
+	t.Parallel()
+	r := newWakeRig(t)
+	r.f.world.WakeFile = []string{"before the run"} // the first run records the count: not new
+	w := r.run(func(n int) {
+		if n == 1 {
+			r.f.world.WakeFile = []string{"before the run", "one", "two", "three", "four"}
+		}
+	})
+	assert.Equal(t, "file", w.Kind)
+	assert.Contains(t, w.Evidence, "one")
+	assert.Contains(t, w.Evidence, "three")
+	assert.NotContains(t, w.Evidence, "four", "up to three new lines")
+	assert.NotContains(t, w.Evidence, "before the run", "the first run starts at the file's end")
+	assert.Contains(t, w.String(), "WAKE file ")
+
+	s, err := readWakeState(r.path)
+	require.NoError(t, err)
+	assert.Equal(t, 5, s.Wake, "the state records the lines consumed")
+
+	r.f.world.WakeFile = append(r.f.world.WakeFile, "five")
+	assert.Equal(t, "file", r.run(nil).Kind, "a later append wakes")
+	assert.Equal(t, "check", r.run(nil).Kind, "the same lines do not wake twice")
+}
+
+// TestWatchWakeSeededOldState: a pre-existing watch --wake state from before
+// --wake-file was enabled has seeded:true and no wake field (decoded as zero).
+// Starting --wake-file with existing lines must initialize the baseline to the
+// file's end rather than immediately waking on existing lines.
+func TestWatchWakeSeededOldState(t *testing.T) {
+	t.Parallel()
+	r := newWakeRig(t)
+	// Seeded state file with no wake fields (as written by an older version).
+	oldState := []byte(`{"seeded":true,"bus":"1728540000000-0","judgments":[]}`)
+	require.NoError(t, os.WriteFile(r.path, oldState, 0o600))
+
+	r.f.world.WakeFile = []string{"existing 1", "existing 2", "existing 3"}
+	w := r.run(nil)
+	assert.Equal(t, "check", w.Kind, "pre-existing lines must not wake an already-seeded state")
+
+	s, err := readWakeState(r.path)
+	require.NoError(t, err)
+	assert.True(t, s.WakeInit, "the wake baseline is initialized")
+	assert.Equal(t, 3, s.Wake, "the wake count records existing lines")
+
+	r.f.world.WakeFile = append(r.f.world.WakeFile, "appended 4")
+	w2 := r.run(nil)
+	assert.Equal(t, "file", w2.Kind, "a line appended after baseline initialization wakes")
+	assert.Contains(t, w2.Evidence, "appended 4")
+	assert.NotContains(t, w2.Evidence, "existing")
 }
 
 func TestWatchRefusesWithoutWake(t *testing.T) {
