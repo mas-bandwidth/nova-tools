@@ -74,15 +74,7 @@ func reportLedger(t *testing.T, ledger *siteLedger, remedy string) {
 // with the tree's own toolchain into a temporary directory: a linter built by
 // another Go cannot read this toolchain's export data.
 func buildModuleTool(t *testing.T, ctx context.Context, root, pkg string) string {
-	t.Helper()
-	bin := filepath.Join(t.TempDir(), filepath.Base(pkg))
-	cmd := exec.CommandContext(ctx, "go", "build", "-o", bin, pkg)
-	cmd.Dir = root
-	cmd.Env = goenv.Clean(os.Environ())
-	cmd.WaitDelay = 5 * time.Second
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "go build %s: %s", pkg, out)
-	return bin
+	return buildLinterTool(t, ctx, root, pkg)
 }
 
 // runLinter runs bin over ./... in dir as lintTarget and returns its stdout.
