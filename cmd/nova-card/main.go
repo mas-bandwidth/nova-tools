@@ -49,7 +49,7 @@ usage:
   nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--name <n>...] [--dropped <id>...] [--dry-run]
   nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
   nova-card generate --from help --tool <name> [--tool <name>...] --out <dir> [--bin-dir <dir>] (--repo-dir <dir> | --repo --base --sha) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
-  nova-card generate --from commits (--range <a>..<b> [--paths <glob>] | --file <list>) --repo-dir <dir> --out <dir> [--tier pro] [--prefix <p>] [--max <n>] [--dry-run]
+  nova-card generate --from commits (--range <a>..<b> [--paths <glob>] | --file <list>) --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--max <n>] [--dry-run]
   nova-card lint --card <file> [--card <file>...] [--name <n>...] [--dropped <id>...]
   nova-card template
   nova-card version
@@ -650,6 +650,24 @@ func commitPaths(dir, sha string) ([]string, error) {
 	return paths, nil
 }
 
+var testFuncRE = regexp.MustCompile(`^func (Test[A-Za-z0-9_]+)\s*\(`)
+
+func packageTestName(repoDir, pkg string) (string, bool) {
+	files, _ := filepath.Glob(filepath.Join(repoDir, filepath.FromSlash(pkg), "*_test.go"))
+	for _, file := range files {
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		for _, match := range testFuncRE.FindAllStringSubmatch(string(raw), -1) {
+			if match[1] != "TestMain" {
+				return match[1], true
+			}
+		}
+	}
+	return "", false
+}
+
 // planCommit creates a re-land card for one commit. The index is used for IDs and waves.
 func planCommit(repoDir, sha, prefix, tier string, index int) (cardgen.Card, error) {
 	// Get changed files for this commit
@@ -678,13 +696,32 @@ func planCommit(repoDir, sha, prefix, tier string, index int) (cardgen.Card, err
 		gates = append(gates, p)
 	}
 	slices.Sort(gates)
+	testPkg, testName := "", ""
+	for _, pkg := range gates {
+		if name, ok := packageTestName(repoDir, pkg); ok {
+			testPkg, testName = pkg, name
+			break
+		}
+	}
+	if testName == "" {
+		testPkg = "internal/ci"
+		var ok bool
+		testName, ok = packageTestName(repoDir, testPkg)
+		if !ok {
+			return cardgen.Card{}, fmt.Errorf("no Go test is available for re-land package or internal/ci")
+		}
+	}
+	start := append([]string(nil), paths...)
+	if !slices.Contains(start, testPkg) {
+		start = append(start, testPkg)
+	}
 	return cardgen.Card{
 		ID:           id,
 		File:         paths[0],
-		Start:        paths,
+		Start:        start,
 		Paths:        paths,
 		GatePackages: gates,
-		Test:         "none (re-land commit)",
+		Test:         testPkg + " " + testName,
 		Tier:         tier,
 		Wave:         index,
 		Deps:         nil,
