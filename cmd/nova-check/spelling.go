@@ -39,6 +39,7 @@ func spellingFlags(f *tool.Flags) {
 	f.Var(&repeatable{}, "ignore", "allowlisted word or @file (repeatable, or comma-separated)")
 	f.Bool("write", false, "apply spelling corrections to files in place")
 	f.Var(&repeatable{}, "exclude", "path prefix not scanned (repeatable; empty by default)")
+	addAllowEmpty(f)
 	addMax(f)
 }
 
@@ -120,6 +121,13 @@ func spelling(c *tool.Call) *tool.Out {
 		return tool.Refuse(oneline.Err(err))
 	}
 
+	// A read of zero files is not green: FAILED, naming the count, with
+	// --allow-empty as the caller's answer that nothing is what they meant
+	// (looks["spelling"], docs/STANDARD.md section 2).
+	if res.FilesScanned == 0 && !c.Bool("allow-empty") {
+		return spellingLookedAtNothing(c, root, res, write, dryRun, maxFlag)
+	}
+
 	// One verdict for both renderings: what was asked (a check, a write, or a
 	// write planned by --dry-run) decides the status, the exit, the facts and
 	// the listing's bound; the line form and the JSON print the same value.
@@ -163,6 +171,51 @@ func spelling(c *tool.Call) *tool.Out {
 
 	fmt.Fprintf(stdout, "SPELLING OK files=%d misspellings=0 excluded=%d\n", res.FilesScanned, res.Excluded)
 	return tool.Exit(0)
+}
+
+// spellingLookedAtNothing is spelling's no-green-over-nothing turn
+// (looks["spelling"]): a read of zero files is FAILED at exit 1, on the stream
+// the run's status belongs on, carrying the same facts the OK would have and
+// naming --allow-empty as the way out. It builds the one Out the JSON uses and
+// renders it, so the line and the JSON cannot drift.
+func spellingLookedAtNothing(c *tool.Call, root string, res check.SpellingResult, write, dryRun bool, maxFlag int) *tool.Out {
+	v := spellingVerdictOf(res, write, dryRun, maxFlag)
+	v.failed, v.exit = true, 1
+	o := spellingJSON(root, res, v)
+	o.Why = []string{"looked at nothing: " + looks["spelling"] + "=0"}
+	o.Remedy = spellingAllowEmpty(c)
+	if c.Bool("json") {
+		o.Render(c.Stdout, true)
+	} else {
+		o.Render(c.Stderr, false)
+	}
+	return tool.Exit(1)
+}
+
+// spellingAllowEmpty is the command a reader pastes to accept a read of zero
+// files: the selectors and modes the run was given, plus the flag
+// addAllowEmpty declared.
+func spellingAllowEmpty(c *tool.Call) string {
+	cmd := "nova-check spelling"
+	if dir := c.Str("dir"); dir != "" {
+		cmd += " --dir " + oneline.ShellWord(dir)
+	}
+	for _, f := range c.Get("file").([]string) {
+		cmd += " --file " + oneline.ShellWord(f)
+	}
+	for _, p := range c.Get("path").([]string) {
+		cmd += " --path " + oneline.ShellWord(p)
+	}
+	for _, e := range c.Get("exclude").([]string) {
+		cmd += " --exclude " + oneline.ShellWord(e)
+	}
+	if c.Bool("write") {
+		cmd += " --write"
+	}
+	if c.Bool("dry-run") {
+		cmd += " --dry-run"
+	}
+	return cmd + " --allow-empty"
 }
 
 // spellingVerdict is one spelling run's answer, computed once and printed by
