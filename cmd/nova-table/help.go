@@ -22,7 +22,7 @@ var commands []command
 func init() {
 	commands = []command{
 		{"create", "<table> --columns <name[:projection[:fold[:label]]],...> [--footer <label>] [--width <col=n,...>]", "create demo --columns 'ready,working,done,note:text,progress:pct(done)'", (*application).cmdCreate},
-		{"set", "<table> [--footer <label>] [--rename <name>] [--columns <spec>] [--hide <cols>] [--show <cols>] [--hidden | --visible]", "set demo --hide ready", (*application).cmdSet},
+		{"set", "<table> [--footer <label>] [--rename <name>] [--columns <spec>] [--hide <cols>] [--show <cols>] [--unset <prop,...>] [--hidden | --visible]", "set demo --hide ready", (*application).cmdSet},
 		{"drop", "<table> [--definition]", "drop demo", (*application).cmdDrop},
 		{"list", "", "list", (*application).cmdList},
 		{"row add", "<table> <row>... [--label <text>] [--exclude <member>] [--owner <verb>] [<col>=<key> ...]", "row add demo build review", (*application).cmdRowAdd},
@@ -46,6 +46,7 @@ func init() {
 		{"member find", "<table> <id>", "member find demo b1", (*application).cmdMemberFind},
 		{"check", "<table>", "check demo", (*application).cmdCheck},
 		{"clear", "<table>", "clear demo", (*application).cmdClear},
+		{"batch", "<table> [--prop-set <json>] [--prop-unset <prop,...>]", "batch demo", (*application).cmdBatch},
 		{"show", "<table> [--at-epoch <n>]", "show demo", (*application).cmdShow},
 		{"render", "<table> | --view <name> [--at-epoch <n>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]", "render --view work", (*application).cmdRender},
 		{"watch", "<table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>] [--once]", "watch --view work --once", (*application).cmdWatch},

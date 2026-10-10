@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 )
@@ -86,6 +88,7 @@ func (app *application) cmdSet(args []string, stdout, stderr io.Writer) int {
 	columns := fs.String("columns", "", "the columns, replaced in place (the create grammar); rows kept")
 	hide := fs.String("hide", "", "columns to hide (kept, read, used by formulas; not drawn), comma-separated")
 	show := fs.String("show", "", "hidden columns to draw again, comma-separated")
+	unset := fs.String("unset", "", "properties to unset from the table, comma-separated")
 	hiddenTable := fs.Bool("hidden", false, "the whole table kept and read, not drawn by watch")
 	visibleTable := fs.Bool("visible", false, "the whole table drawn again by watch")
 	pos, err := parseInterleaved(fs, args)
@@ -112,6 +115,21 @@ func (app *application) cmdSet(args []string, stdout, stderr io.Writer) int {
 	}
 	defer st.Close()
 	trips := st.CountTrips()
+
+	// Unset properties if requested.
+	if *unset != "" {
+		propsKey := "table:" + pos[0] + ":props"
+		fields := strings.Split(*unset, ",")
+		for i := range fields {
+			fields[i] = strings.TrimSpace(fields[i])
+		}
+		if len(fields) > 0 {
+			if err := c.HDel(ctx, propsKey, fields...).Err(); err != nil {
+				return st.refusal(stderr, verb, err)
+			}
+		}
+	}
+
 	if *hide != "" {
 		o.Hide = strings.Split(*hide, ",")
 	}
@@ -461,5 +479,47 @@ func (app *application) cmdView(args []string, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintf(stdout, "VIEW DEL view=%s existed=%d trips=%d\n", pos[0], n, trips.N())
 	}
+	return 0
+}
+
+func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
+	const verb = "batch"
+	fs := verbflag.New(verb)
+	addr := app.redisFlag(fs)
+	write, receipt := app.writeFlags(fs)
+	unset := fs.String("prop-unset", "", "properties to unset, comma-separated")
+	pos, err := parseInterleaved(fs, args)
+	if err != nil {
+		return refuse(stderr, verb, err.Error())
+	}
+	if len(pos) != 1 {
+		return refuse(stderr, verb, "wants one table name: batch <table> [--prop-unset <prop,...>]")
+	}
+
+	ctx := context.Background()
+	st, c, code := app.client(ctx, verb, *addr, stderr)
+	if code != 0 {
+		return code
+	}
+	defer st.Close()
+
+	trips := st.CountTrips()
+
+	// Unset properties if requested.
+	if *unset != "" {
+		propsKey := "table:" + pos[0] + ":props"
+		fields := strings.Split(*unset, ",")
+		for i := range fields {
+			fields[i] = strings.TrimSpace(fields[i])
+		}
+		if len(fields) > 0 {
+			if err := c.HDel(ctx, propsKey, fields...).Err(); err != nil {
+				return st.refusal(stderr, verb, err)
+			}
+		}
+	}
+
+	fmt.Fprintf(stdout, "TABLE BATCH table=%s trips=%d\n", pos[0], trips.N())
+	printReceipt(stdout, write, *receipt)
 	return 0
 }
