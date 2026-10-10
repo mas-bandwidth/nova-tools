@@ -12,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // The merge step's receipt for a landing holds more than the batch's landings: the waiting
@@ -61,6 +63,41 @@ func TestNeedsGateIsTheDisjointFilesRule(t *testing.T) {
 	assert.Empty(t, collide)
 	_, gate = needsGate(nil, nil, nil, nil)
 	assert.False(t, gate)
+}
+
+// An opened protected pull request's cards are not folded into the same batch as a card
+// accepted after it: the new card carries no land_pr URL, and grouping it with the opened
+// pull request's cards makes land read that URL beside an empty URL as two pull requests
+// and refuse the whole batch, so the open pull request can never be polled to landed while
+// the new card stays queued. The opened batch is polled and recorded first; the later card
+// is its own batch (docs/SPEC-SPRINT.md section 7).
+func TestBatchOfKeepsAnOpenedPullRequestBatchApartFromNewCards(t *testing.T) {
+	t.Parallel()
+	const repo = "mas-bandwidth/nova-sprint"
+	const url = "https://forge.example.invalid/mas-bandwidth/nova-sprint/pull/18"
+	withPR := func(id string) landCard {
+		return landCard{id: id, repo: repo, base: "main", primary: &sprint.Card{Fields: map[string]string{sprint.FieldLandPR: url}}}
+	}
+	t.Run("a card accepted after the pull request is its own batch", func(t *testing.T) {
+		t.Parallel()
+		cards := []landCard{withPR("s1-1"), {id: "s1-2", repo: repo, base: "main"}}
+		assert.Equal(t, 1, batchOf(cards), "the new card must not ride in the opened pull request's batch")
+	})
+	t.Run("the opened pull request's cards stay one batch", func(t *testing.T) {
+		t.Parallel()
+		cards := []landCard{withPR("s1-1"), withPR("s1-2")}
+		assert.Equal(t, 2, batchOf(cards), "two cards of one opened pull request stay together")
+	})
+	t.Run("two new cards stay one batch", func(t *testing.T) {
+		t.Parallel()
+		cards := []landCard{{id: "s1-1", repo: repo, base: "main"}, {id: "s1-2", repo: repo, base: "main"}}
+		assert.Equal(t, 2, batchOf(cards), "cards with no pull request yet stay together")
+	})
+	t.Run("a different repository or base still splits", func(t *testing.T) {
+		t.Parallel()
+		cards := []landCard{withPR("s1-1"), {id: "s1-2", repo: "other/repo", base: "main"}}
+		assert.Equal(t, 1, batchOf(cards))
+	})
 }
 
 // runBounded runs fn(i) for each i in 0..n-1 in goroutines, at most width at a time, and

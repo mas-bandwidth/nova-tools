@@ -264,10 +264,15 @@ func (l *lander) openStream(s *sprint.Snapshot, stream string) ([]landCard, bool
 }
 
 // batchOf is the next batch of a stream's cards: the run of consecutive cards from the
-// first naming its repository and base.
+// first naming its repository and base, and carrying one pull request URL (an opened
+// protected land's cards carry one; a card accepted since carries none). A card that
+// follows an opened pull request's cards is cut into its own later batch, so the open
+// pull request is polled and recorded before the later batch is built
+// (docs/SPEC-SPRINT.md section 7).
 func batchOf(cards []landCard) int {
 	n := 1
-	for n < len(cards) && cards[n].repo == cards[0].repo && cards[n].base == cards[0].base {
+	pr := landPR(cards[0])
+	for n < len(cards) && cards[n].repo == cards[0].repo && cards[n].base == cards[0].base && landPR(cards[n]) == pr {
 		n++
 	}
 	return n

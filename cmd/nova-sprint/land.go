@@ -2323,15 +2323,21 @@ func (l *lander) scopeOf(merged []string) []string {
 	return out
 }
 
+// landPR is the pull request URL a card already carries from a protected land's open
+// pull request, "" when none.
+func landPR(c landCard) string {
+	if c.primary == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.primary.F(sprint.FieldLandPR))
+}
+
 // landPRState is the pull request URL the batch's cards already carry. anySet is
 // true when one of them carries one; mismatch when they do not all carry the same URL.
 func landPRState(cards []landCard) (url string, anySet, mismatch bool) {
 	seen := false
 	for _, c := range cards {
-		u := ""
-		if c.primary != nil {
-			u = strings.TrimSpace(c.primary.F(sprint.FieldLandPR))
-		}
+		u := landPR(c)
 		if u != "" {
 			anySet = true
 		}
