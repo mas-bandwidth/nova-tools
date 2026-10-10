@@ -420,6 +420,9 @@ func friendReadAskOf(s *Snapshot, seats []FriendSeat, dir string, cards []*Card)
 			}
 		}
 		name := preferredFriend(withRoom, lanes, free)
+		if pinned, ok := FriendCard(pr); ok && pinned != "" && slices.Contains(withRoom, pinned) {
+			name = pinned // the WHO friend is asked first when she may read and has room
+		}
 		switch {
 		case name != "":
 			if err := askOneFriend(&p, s, pr, seats, name, dir, attempt, free, lanes, declared); err != nil {
