@@ -8,6 +8,10 @@ Command reference and worked examples. Run shell examples from the repository ro
 
 The reference blocks between the `clidoc` markers are generated, not hand-kept: `make clidoc` runs each marked tool's `help` and each verb's `-h` from the built binaries and rewrites only the block between that tool's markers, so a flag a verb takes is a flag the reference names. The prose and the worked examples outside the markers stay hand-written. The test in internal/docs builds the tools and fails, naming `make clidoc`, when a block drifts from what the binaries print.
 
+### tdocs-cli-generated-rb-r3c
+
+Every `## nova-*` section now has a generated reference block, including nova-doctor and nova-up. The four per-verb flag checks remain alongside the generated check.
+
 ## nova-check
 
 <!-- clidoc:begin nova-check -->
@@ -60,11 +64,6 @@ exit codes: 0 pass, 1 check failed, 2 could not run (bad invocation)
 setup:
   mkdir -p ./self/docs
   printf '# Kernel\n' > ./self/docs/SEED-CORE.md
-
-example:
-  nova-check quickstart --dir ./self
-  nova-check links --dir ./self
-  nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
 ```
 
 `nova-check quickstart -h`:
@@ -656,15 +655,6 @@ lines under example: as they are:
 
 setup:
   nova-self-talk example ./pages
-
-example:
-  nova-self-talk ./pages/journal.md
-  nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md
-  nova-self-talk --skip RULES.md ./pages/RULES.md ./pages/journal.md
-
-All three exit 1, and that is the tool working: a finding is a sentence to date,
-cut, relocate or keep on purpose, never a failure. --skip leaves a file unscanned
-and says so on one SELFTALK SKIP line.
 ```
 
 `nova-self-talk scan -h`:
@@ -816,21 +806,6 @@ positional arguments, and every flag takes one value: a flag named twice, or a
 --box value beginning with -, is refused at exit 2. -- ends the flags; after
 it an argument beginning with - is a surface or a reason, never a flag, so a
 caller passing an untrusted surface puts -- before it.
-
-example:
-  nova-fuse init --box ./fuse-box.json
-  nova-fuse status --box ./fuse-box.json
-  nova-fuse check --box ./fuse-box.json a-public-issue-tracker
-  nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"
-  nova-fuse check --box ./fuse-box.json a-forum
-  nova-fuse lift quarantine --box ./fuse-box.json a-forum
-
-Those six are one sitting, in order: create, look, ask, blow the soft fuse,
-watch the answer change, rescind it. init never replaces an existing box.
-Every verb except init, lockdown, and path refuses a path with no box, never
-read as CLEAR; init makes an empty box there and refuses if anything is
-already there, lockdown makes a blown box there in one write, and path reads
-no box at all.
 ```
 
 `nova-fuse version -h`:
@@ -1108,12 +1083,6 @@ setup:
   printf 'The lantern glazing needs clean cloths for brass and glass.\n' > ./corpus/notes/lantern.md
   printf '[Lantern care](lantern.md) keeps the glazing clean.\n' > ./corpus/notes/index-notes.md
   cp ./corpus/notes/lantern.md ./draft.md
-
-example:
-  nova-memory quickstart --root ./corpus
-  nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
-  nova-memory check  --root ./corpus --channels bm25 --k 3 draft.md
-  nova-memory verify --root ./corpus --links info --coverage notes/lantern.md:notes/index-notes.md
 ```
 
 `nova-memory version -h`:
@@ -1321,6 +1290,221 @@ MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not t
 
 ## nova-bus
 
+<!-- clidoc:begin nova-bus -->
+`nova-bus help`:
+
+```
+nova-bus: messages between AIs over Redis streams: sent once, delivered until acked
+
+how it works: the loop: send --as <me> --to <friend> --subject <s> --body <text> sends;
+recv --as <me> --forever --exec '<deliver-into-session>' takes each message in, acked on exit 0;
+ack --as <me> --id <id> acks; an unproven push is a NOTE, not a refusal; --require-push refuses.
+one stream per recipient (bus2:to:<name>) under a consumer group, one log (bus2:log); all or none.
+first run: a Redis at --redis (else NOVA_BUS_REDIS, else fleet:bus); loopback/tailnet only.
+
+usage:
+  nova-bus wait [--as <me>] [--after <id>] [--timeout <duration>] [--skip-subject <prefix,...>] [--wake-file <path>] [--wake-after <cursor>] [--redis <addr>]
+  nova-bus send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--kind <k>] [--token <t>] [--timeout <duration>] [--redis <addr>] [--dry-run]
+  nova-bus peek [--as <me>] [--kind <k>[,<k>]] [--timeout <duration>] [--redis <addr>]
+  nova-bus recv [--as <me>] [--kind <k>[,<k>]] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec <command>] [--timeout <duration>] [--redis <addr>] [--dry-run]
+  nova-bus ack [--as <me>] --id <id,...> [--timeout <duration>] [--redis <addr>] [--dry-run]
+  nova-bus receipts [--as <me>] [--id <id,...>] [--max <n>] [--timeout <duration>] [--redis <addr>]
+  nova-bus overdue [--older <duration>] [--max <n>] [--timeout <duration>] [--redis <addr>]
+  nova-bus log [--bodies] [--max <n>] [--timeout <duration>] [--redis <addr>]
+  nova-bus names [--timeout <duration>] [--redis <addr>]
+  nova-bus version
+  nova-bus help [<verb>]
+
+Every verb takes --json: the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
+
+exit codes: 0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).
+```
+
+`nova-bus wait -h`:
+
+```
+usage: nova-bus wait [flags]
+from `nova-bus help`:
+  nova-bus wait [--as <me>] [--after <id>] [--timeout <duration>] [--skip-subject <prefix,...>] [--wake-file <path>] [--wake-after <cursor>] [--redis <addr>]
+  nova-bus wait --as bob --timeout 1s
+flags:
+  --after <string>  the stream entry id <ms>-<seq> to wait past; default: the stream's last id read once at start, as WAIT ARMED prints it
+  --as <string>  your name, the recipient: the login user when there is one (then it may be left out)
+  --json  print the result as one JSON object instead of lines
+  --redis <string>  the Redis address, host:port (default: NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus)
+  --skip-subject <string>  subjects starting with one of these prefixes, comma-separated, are skipped; matched without case
+  --timeout <duration>  how long to wait before WAIT NONE, a Go duration (1s, 2m); 0 is for ever
+  --wake-after <string>  0 replays the file from byte zero; otherwise the complete wake-after cursor returned by wait; requires --wake-file; preserves unread bytes across rearm and restart
+  --wake-file <string>  a file whose lines, appended after the start, also end the wait (one line per message)
+exit codes: 0 the wait ended: WAIT OK, entries that counted, or WAIT WAKE, a line on the wake file; 1 WAIT NONE, the timeout ran out; 2 could not run (a flag, an input, a store that did not answer).
+effect: inspection: reads, writes nothing
+```
+
+`nova-bus send -h`:
+
+```
+usage: nova-bus send [flags]
+from `nova-bus help`:
+  nova-bus send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--kind <k>] [--token <t>] [--timeout <duration>] [--redis <addr>] [--dry-run]
+  nova-bus send --as ada --to bob --subject hello --body "are you there?"
+flags:
+  --as <string>  your name, the sender: the login user when there is one (then it may be left out)
+  --body <string>  the message's text (or --stdin; at most 1 MiB)
+  --cc <string>  more recipients, comma-separated names; each gets the message as well
+  --dry-run  print what the verb would write and write nothing
+  --json  print the result as one JSON object instead of lines
+  --kind <string>  the kind of message, one of report, ack, status, request, blocker: what a reader filters on
+  --re <string>  the id of the message this one answers
+  --redis <string>  the Redis address, host:port (default: NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus)
+  --require-push  refuse a name with no proven push (deaf: ...) instead of noting it; also NOVA_BUS_REQUIRE_PUSH=1
+  --stdin  read the message's text from stdin
+  --subject <string>  one line saying what the message is (required)
+  --timeout <duration>  how long one call to Redis may take before it is refused as unanswered; a blocking read gets this, its block, and 10s more
+  --to <string>  the recipients, comma-separated names (required)
+  --token <string>  your word for this one send, the same on every retry of it (letters, digits, . _ : -; at most 128 bytes)
+  --token-cleanup <duration>  when the store drops the token (never before its life ends)
+  --token-life <duration>  how long a retry under --token answers the first send
+exit codes: 0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).
+effect: delivery: sends beyond this machine: one entry on every recipient's stream and the log, in one transaction
+```
+
+`nova-bus peek -h`:
+
+```
+usage: nova-bus peek [flags]
+from `nova-bus help`:
+  nova-bus peek [--as <me>] [--kind <k>[,<k>]] [--timeout <duration>] [--redis <addr>]
+  nova-bus peek --as bob
+flags:
+  --as <string>  your name, the recipient: the login user when there is one (then it may be left out)
+  --json  print the result as one JSON object instead of lines
+  --kind <string>  only these kinds, comma-separated, of report, ack, status, request, blocker (default: every kind)
+  --redis <string>  the Redis address, host:port (default: NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus)
+  --timeout <duration>  how long one call to Redis may take before it is refused as unanswered; a blocking read gets this, its block, and 10s more
+exit codes: 0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).
+effect: inspection: reads, writes nothing
+```
+
+`nova-bus recv -h`:
+
+```
+usage: nova-bus recv [flags]
+from `nova-bus help`:
+  nova-bus recv [--as <me>] [--kind <k>[,<k>]] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec <command>] [--timeout <duration>] [--redis <addr>] [--dry-run]
+  nova-bus recv --as bob --exec true
+flags:
+  --ack  ack each message after printing it (a plain recv leaves it pending)
+  --all  take every message waiting, in order, each its own result
+  --as <string>  your name, the recipient: the login user when there is one (then it may be left out)
+  --dry-run  print what the verb would write and write nothing
+  --exec <string>  a shell command run with each message on its stdin; exit 0 acks the message
+  --forever  loop over every message, delivering each with --exec, until a signal
+  --json  print the result as one JSON object instead of lines
+  --kind <string>  only these kinds, comma-separated, of report, ack, status, request, blocker (default: every kind); others are left for the next reader
+  --max <int>  how many messages to take, in order, each its own result; 1 is one message
+  --redis <string>  the Redis address, host:port (default: NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus)
+  --require-push  refuse a name with no proven push (deaf: ...) instead of noting it; also NOVA_BUS_REQUIRE_PUSH=1
+  --timeout <duration>  how long one call to Redis may take before it is refused as unanswered; a blocking read gets this, its block, and 10s more
+exit codes: 0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).
+effect: delivery: sends beyond this machine: moves one message to pending; with --exec it runs the command and acks on exit 0
+```
+
+`nova-bus ack -h`:
+
+```
+usage: nova-bus ack [flags]
+from `nova-bus help`:
+  nova-bus ack [--as <me>] --id <id,...> [--timeout <duration>] [--redis <addr>] [--dry-run]
+  nova-bus ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
+flags:
+  --as <string>  your name, the recipient: the login user when there is one (then it may be left out)
+  --dry-run  print what the verb would write and write nothing
+  --id <string>  the message ids, comma-separated, as recv printed them (required)
+  --json  print the result as one JSON object instead of lines
+  --redis <string>  the Redis address, host:port (default: NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus)
+  --timeout <duration>  how long one call to Redis may take before it is refused as unanswered; a blocking read gets this, its block, and 10s more
+exit codes: 0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).
+effect: delivery: sends beyond this machine: acks the messages on your stream
+```
+
+`nova-bus receipts -h`:
+
+```
+usage: nova-bus receipts [flags]
+from `nova-bus help`:
+  nova-bus receipts [--as <me>] [--id <id,...>] [--max <n>] [--timeout <duration>] [--redis <addr>]
+flags:
+  --as <string>  your name, the recipient: the login user when there is one (then it may be left out)
+  --id <string>  the message ids, comma-separated, as recv printed them (default: every receipt you hold)
+  --json  print the result as one JSON object instead of lines
+  --max <int>  items listed before one MORE line stands for the rest; 0 lists all
+  --redis <string>  the Redis address, host:port (default: NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus)
+  --timeout <duration>  how long one call to Redis may take before it is refused as unanswered; a blocking read gets this, its block, and 10s more
+exit codes: 0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).
+effect: inspection: reads, writes nothing
+```
+
+`nova-bus overdue -h`:
+
+```
+usage: nova-bus overdue [flags]
+from `nova-bus help`:
+  nova-bus overdue [--older <duration>] [--max <n>] [--timeout <duration>] [--redis <addr>]
+flags:
+  --json  print the result as one JSON object instead of lines
+  --max <int>  items listed before one MORE line stands for the rest; 0 lists all
+  --older <duration>  how long a message may wait short of delivered before it is overdue, a Go duration (10m, 1h)
+  --redis <string>  the Redis address, host:port (default: NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus)
+  --timeout <duration>  how long one call to Redis may take before it is refused as unanswered; a blocking read gets this, its block, and 10s more
+exit codes: 0 OVERDUE OK, nothing short of delivered past --older; 1 BUS OVERDUE, one or more; 2 could not run (a flag, a store that did not answer).
+effect: inspection: reads, writes nothing
+```
+
+`nova-bus log -h`:
+
+```
+usage: nova-bus log [flags]
+from `nova-bus help`:
+  nova-bus log [--bodies] [--max <n>] [--timeout <duration>] [--redis <addr>]
+  nova-bus log --max 5
+flags:
+  --bodies  print each message's body as well
+  --json  print the result as one JSON object instead of lines
+  --max <int>  items listed before one MORE line stands for the rest; 0 lists all
+  --redis <string>  the Redis address, host:port (default: NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus)
+  --timeout <duration>  how long one call to Redis may take before it is refused as unanswered; a blocking read gets this, its block, and 10s more
+exit codes: 0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).
+effect: inspection: reads, writes nothing
+```
+
+`nova-bus names -h`:
+
+```
+usage: nova-bus names [flags]
+from `nova-bus help`:
+  nova-bus names [--timeout <duration>] [--redis <addr>]
+  nova-bus names
+flags:
+  --json  print the result as one JSON object instead of lines
+  --redis <string>  the Redis address, host:port (default: NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus)
+  --timeout <duration>  how long one call to Redis may take before it is refused as unanswered; a blocking read gets this, its block, and 10s more
+exit codes: 0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).
+effect: inspection: reads, writes nothing
+```
+
+`nova-bus version -h`:
+
+```
+usage: nova-bus version [flags]
+from `nova-bus help`:
+  nova-bus version
+flags:
+  --json  print the result as one JSON object instead of lines
+exit codes: 0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).
+effect: inspection: reads, writes nothing
+```
+<!-- clidoc:end nova-bus -->
+
 Messages between AIs over Redis streams: sent once, delivered until acked. One
 stream per recipient under a consumer group, one log of everything; a message is
 on every recipient's stream and the log or on none, and is pending from `recv`
@@ -1486,15 +1670,6 @@ usage:
 Every verb but run, serve takes --json: the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
 
 exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
-
-example:
-  nova-friend install --as bob --harness opencode --dir ./bob --dry-run
-  nova-friend uninstall --as bob --dry-run
-  nova-friend host --as bob --harness aider --dir ./bob --dry-run -- aider
-  nova-friend ping --as ada --to bob --nonce abc123
-  nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
-  nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
-  nova-friend status --as bob --dir ./bob
 ```
 
 `nova-friend hook -h`:
@@ -1560,7 +1735,6 @@ effect: delivery: sends beyond this machine: the daemon; messages go into the se
 usage: nova-friend beat [flags]
 from `nova-friend help`:
   nova-friend beat --as <me> [--server <addr>]
-example: nova-friend beat --as bob --server 127.0.0.1:6390
 flags:
   --as <string>  your name, a nova-config friend row (required)
   --dry-run  print what the verb would write and write nothing
@@ -1628,7 +1802,6 @@ effect: local write: writes files on this machine: boots the agent out and remov
 usage: nova-friend check [flags]
 from `nova-friend help`:
   nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--harness codex --dir <d> --session <id> --adapter folder --delivery-dir <watched-dir>] [--json]
-example: nova-friend check --as ada bob
 flags:
   --adapter <string>  delivery route: folder for an existing watched Codex session
   --as <string>  your name, the coordinator (the health check); the friend itself with --harness
@@ -1676,7 +1849,6 @@ effect: local write: writes files on this machine: starts the launch command in 
 usage: nova-friend reach [flags]
 from `nova-friend help`:
   nova-friend reach --as <coordinator> --to <friend> [--step-timeout <duration>] [--from <bus|push|window>] [--harness <h>] [--dir <d>] [--session <id>] [--state-dir <d>] [--redis <addr>] [--dry-run]
-example: nova-friend reach --as ada --to bob --dry-run
 flags:
   --as <string>  your name, the coordinator (required)
   --dir <string>  the friend's working directory
@@ -1747,7 +1919,6 @@ effect: delivery: sends beyond this machine: the session's answer to a PING, one
 usage: nova-friend watch [flags]
 from `nova-friend help`:
   nova-friend watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]
-example: nova-friend watch --as ada --timeout 10m
 flags:
   --as <string>  your name, the coordinator whose stream and wake file are watched (required)
   --json  print the result as one JSON object instead of lines
@@ -2162,6 +2333,473 @@ MIT, see [LICENSE](../LICENSE).
 
 ## nova-swarm
 
+<!-- clidoc:begin nova-swarm -->
+`nova-swarm help`:
+
+```
+nova-swarm: one-task AI workers, each run in the sandbox with a deadline and a token budget
+
+how it works: a card is a task in Markdown with a header and rules.
+native runs one card through a harness; a worker description (JSON) can name
+its model, credentials and readable directories. member runs a sprint's cards
+as native children and sends every sprint verb to the sprint server.
+Launches and results live under --root unless their directories are named separately.
+first run: the examples print two templates and the lint rules; no setup is needed.
+To run a card, supply a harness, model, directories, deadline, token budget and any needed credentials.
+
+usage:
+  nova-swarm version    print this build identity (--version also accepted)
+  nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
+  nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
+  nova-swarm lint      --card <file> (or the bare <file>) [--typed] [--child-rules | --child-rules-file <file>] [--member-injects] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--trust <file>] [--lineup <file>] [--decide [--decide-answers <file>] [--decide-record <file>]] [--max <n>] | --fleet <file> [--max <n>] | --rules
+                       (a bare --card holds the card to nova-swarm's own card contract, the shape native
+                        runs; --rules lists every check; --fleet lints a launcher script against the
+                        coordinator's /bin/bash 3.2. --base-check adds the four checks of a coding card;
+                        --decide asks the brief decision nova-sprint add asks; an adopter's own rules go
+                        in --child-rules-file. --member-injects lints the card as the member stages it.
+                        nova-swarm lint -h has the rest.)
+  nova-swarm step      --card <file> --dir <checkout> [--work <dir>] [--result <file>] [--sandbox <binary> | --no-wall] | --card <file> --remainder <id> --from <step> --land <sha>
+                       (runs the card's own programs: a card whose every work step is a script step,
+                        walked in the checkout with no model, each program, POST command and git in its
+                        own wall (network denied, no credential, the checkout and a private temp the only
+                        writes). --sandbox <binary> names the wall binary each program, POST command and
+                        git runs in, default nova-sandbox on PATH; --no-wall runs them unconfined. One STEP
+                        OK|FAILED line per step; --remainder prints the card a failed step leaves.)
+  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
+  nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
+  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
+  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--max-load <load>] [--warn-load <load>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>]
+                        (run this machine as a sprint member; --server is the address of nova-sprint run --listen.
+                         Each tick beats, reads the queue, reports ended children and takes cards to the
+                         fleet row's width; --width overrides it, and --pass names environment secrets to
+                         hand to children. A reader runs the reads of the readers table; this machine opens
+                         no store. --no-wall runs each child with no wall. nova-swarm member -h has the rest.)
+  nova-swarm disk-guard [--root <dir>]... [--scan <dir>]... [--cache <dir|glob>]... [--cache-max-gb <GiB>] [--modcache-max-gb <GiB>] [--logs <dir>] [--log-max-mb <MiB>] [--log-keep <n>] [--pool-idle <duration>] [--land <dir>] [--clone-age <duration>] [--mirrors <dir>] [--disk-floor <GiB>] [--stop-floor <GiB>] [--dry-run]
+                       (one pass over this machine, run every few minutes by the disk-guard loop row
+                        fleet/loops.yml adds to every machine: it trims every Go build cache over
+                        --cache-max-gb, empties a module cache over --modcache-max-gb, rotates loop logs
+                        over --log-max-mb and sweeps a stopped loop's pool and old land clones. It never
+                        removes anything with uncommitted work or a live process, and prints one REMOVED,
+                        TRIMMED, CLEANED, ROTATED or KEPT line per action. disk-guard -h has the rest.)
+  nova-swarm mirror    --repos <a,b> --base <url> [--dir <dir>] [--every <duration>]
+                       (keep the bench's bare mirrors fresh: each repository cloned into <dir>/<name>.git when absent, then every head and pull-request head fetched, one MIRROR OK or MIRROR FAILED line each; --every runs until stopped. mirror -h has the rest.)
+  nova-swarm install   <disk-guard|mirror-refresh> [--dir <dir>] [--log <file>] [--every <duration>] [--dry-run]
+                       (writes the unit that runs this binary, kept alive, and loads it. disk-guard's own
+                        flags ride on the unit; mirror-refresh is refused here, and its loop runs
+                        nova-swarm mirror as a nova-config loop row.)
+  nova-swarm uninstall <disk-guard|mirror-refresh> [--dir <dir>] [--dry-run]
+                       (unloads that unit and removes its file; a dry run removes nothing.)
+  nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
+  nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
+  nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
+                       (a lease whose holder is still RUNNING is KEPT: SLOTS KEPT, live=<n>, exit 2.
+                        --force frees it anyway and can oversubscribe the bench: an operator's act,
+                        never a card's and never a manager's default)
+  nova-swarm slots list --store <dir>
+  nova-swarm slots run --store <dir> --owner <o> [--n <k>] [--for <duration>] [--kind <kind>] [--label <text>] [--wait <duration>] -- <command> [args...]
+  nova-swarm worker    check <description.json> [--env] [--max <n>]
+
+exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a verification that
+failed, a lint that found a defect; 2 could not run: a missing flag, an unreadable worker
+description, a key file that is absent or empty, a bad invocation; by verb:
+  member: 3 its binary was replaced on disk (MEMBER STOP: its supervisor starts the new
+    one; with children running it first takes no new card and stops when the last is
+    reported)
+
+Inputs: native requires a card, harness, model, slot, root, deadline and token budget.
+Use --tokens <n> for a positive budget, or --tokens unmetered to state that the
+provider has no live accounting. The runner does not infer this from the provider.
+member uses each packet's route and fills missing model, budget or deadline
+values from its flags; a reader's flags override its route. Width comes from
+the fleet row unless --width overrides it. Other defaults are listed in each verb's -h.
+lint takes --card, --fleet or --rules; verify reads --card only when supplied.
+
+Credentials: a worker description names either key_file or secret.
+key_file is read as data, never sourced: one line, a bare key or NAME=<key>,
+mode 0600. secret names an environment variable. The generated harness config
+carries the variable's name, never its value. The legacy --auth option copies
+the provider's auth entry into the data home, mode 0600, and removes it when
+the run ends. A worker naming secret refuses --auth and writes no auth file.
+
+Sandbox: native and member use nova-sandbox unless --no-wall is explicit
+(docs/SPEC-SANDBOX.md); no card can opt out. The NATIVE line reports the opt-out
+as sandbox=none-by-flag. The job directory, data home, temporary directory and
+default shared cache are writable. The slot, harness and toolchain directories,
+worker read_roots and any borrowed Git objects are readable.
+The worker's key file is kept outside its readable roots. If a command runs
+outside the wall but fails inside it, check its dependencies and read_roots.
+
+Prepare a card: save nova-swarm template --name card to a file, fill its <...>
+lines, then run nova-swarm lint --card <file> --child-rules. REPO: names the
+repository; BASE: names the branch the work starts from and lands on.
+Lint names unfilled lines in NOTE output. Hand the completed card to native,
+or to nova-sprint add as a brief. template -h lists the required card lines.
+nova-swarm help <verb> (or <verb> -h) prints its usage, flags, example and exit codes.
+```
+
+`nova-swarm version -h`:
+
+```
+usage: nova-swarm version [flags]
+from `nova-swarm help`:
+  nova-swarm version    print this build identity (--version also accepted)
+exit codes: 0 done; 2 could not run: a missing flag, a file that cannot be read, a bad invocation
+effect: inspection: reads, writes nothing
+```
+
+`nova-swarm doctor -h`:
+
+```
+usage: nova-swarm doctor [flags]
+from `nova-swarm help`:
+  nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
+flags:
+  --local <file>  the nova-swarm binary file to read as the local build (default: ~/.local/bin/nova-swarm)
+  --path <file>  the nova-swarm binary file to read as the one first on PATH (default: PATH's)
+exit codes: 0 the binaries agree, or there is one to read; 2 they drift, one shadows
+  the other, or one cannot be read (the DOCTOR line says which)
+effect: inspection: reads, writes nothing
+```
+
+`nova-swarm verify -h`:
+
+```
+usage: nova-swarm verify [flags]
+from `nova-swarm help`:
+  nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
+effect: inspection: reads the job's RESULT.md and checks its line 1, writes nothing
+flags:
+  --card <file>  the card file, read only when given, for the checks that need the card
+  --contract <line>  required: the card's contract line, which line 1 of RESULT.md must equal exactly
+  --label <label>  required: the job's label, carried on the result line and in the receipt
+  --max <int>  the most evidence lines past the disposition, at least 1
+  --result <file>  required: the job's RESULT.md file, whose line 1 is checked
+  --run-record <file>  the job's exit.json file: the harness's exit code joins the verdict
+  --usage <file>  the job's usage.tsv file: tokens, dollars and wall time join the receipt
+exit codes: 0 the result holds its contract; 1 it does not (the line says why); 2 could
+  not run: a missing flag, a file that cannot be read, a receipt that cannot be written
+```
+
+`nova-swarm lint -h`:
+
+```
+usage: nova-swarm lint [flags]
+from `nova-swarm help`:
+  nova-swarm lint      --card <file> (or the bare <file>) [--typed] [--child-rules | --child-rules-file <file>] [--member-injects] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--trust <file>] [--lineup <file>] [--decide [--decide-answers <file>] [--decide-record <file>]] [--max <n>] | --fleet <file> [--max <n>] | --rules
+  (a bare --card holds the card to nova-swarm's own card contract, the shape native
+  runs; --rules lists every check; --fleet lints a launcher script against the
+  coordinator's /bin/bash 3.2. --base-check adds the four checks of a coding card;
+  --decide asks the brief decision nova-sprint add asks; an adopter's own rules go
+  in --child-rules-file. --member-injects lints the card as the member stages it.
+  nova-swarm lint -h has the rest.)
+  nova-swarm lint --rules
+flags:
+  --base-check  also run the four base checks of a coding card: PATHS exist at the base sha in --repo, no STEP pushes or calls gh, the LEG is in --legs, the deadline meets --p95
+  --card <lint <file>>  the card file to lint before any spend (the bare lint <file> is the same)
+  --child-rules  also hold the card to the child rules: the built-in general rules, or the sentences of --child-rules-file
+  --child-rules-file <file>  the rules file to hold the card to instead of the built-in general rules (it implies --child-rules): one required sentence per line, [name] sentence to name the token
+  --decide  also ask the brief decision nova-sprint add asks (p(converges), the minutes, the questions the card leaves open) and print it on one LINT DECIDE line; Jev with JEV_API_KEY from the environment, or --decide-answers; the lint's verdict is unchanged, and a failing backend prints it, then why, exit 2
+  --decide-answers <file>  with --decide: the fixed backend's answers file (nova-decide's shape), in place of Jev: no network, no key
+  --decide-record <file>  with --decide: the record file the decision is appended to (nova-decide's; created if absent); none records nothing
+  --fleet <string>  a launcher script to lint instead of a card
+  --legs <string>  with --base-check: the fleet leg table, one leg per line or a TSV whose first column is the leg
+  --lineup <string>  with --typed: the sprint lineup, one card id per line or a TSV with an id column, so an unknown depends-on id is named
+  --max <int>  at most this many item lines, 0 for all
+  --member-injects  the member injects the child rules at stage time (rules by reference): the card need not carry them, and a line that contradicts them is still a finding; the rules are --child-rules-file's, else the held file of the card's repository (fleet/child-rules.txt for nova-tools, fleet/child-rules.<repo>.txt for another); it implies --child-rules
+  --p95 <file>  with --base-check: a file of <kind> <seconds> rows, the p95 wall of each kind's finished cards (* answers for any kind)
+  --repo <string>  with --base-check: the git checkout the card's PATHS are resolved in at the base sha (default the working directory)
+  --rules  print every rule token with what it wants, and lint nothing; nova-sprint add holds a brief to the rule-<name> and step-<what> tokens of its rule set (and rule-libraries-considered when the set carries it) and to no other
+  --trust <string>  a file of TRUST kind=<kind> state=<trial|trusted|paused> lines, for the paused check
+  --typed  require the typed header (KIND, PATHS, TEST, PAUSED and DEPENDS-ON lines) even on a card that has none
+exit codes: 0 the card is clean (a NOTE line is advice and changes nothing); 1 a drift,
+  each on its LINT DRIFT line; 2 could not run: a missing flag, a file that cannot be read, a
+  bad invocation
+effect: inspection: reads, writes nothing
+```
+
+`nova-swarm step -h`:
+
+```
+usage: nova-swarm step [flags]
+from `nova-swarm help`:
+  nova-swarm step      --card <file> --dir <checkout> [--work <dir>] [--result <file>] [--sandbox <binary> | --no-wall] | --card <file> --remainder <id> --from <step> --land <sha>
+  (runs the card's own programs: a card whose every work step is a script step,
+  walked in the checkout with no model, each program, POST command and git in its
+  own wall (network denied, no credential, the checkout and a private temp the only
+  writes). --sandbox <binary> names the wall binary each program, POST command and
+  git runs in, default nova-sandbox on PATH; --no-wall runs them unconfined. One STEP
+  OK|FAILED line per step; --remainder prints the card a failed step leaves.)
+effect: local write: commits in the checkout --dir names, and runs the card's programs in their own wall; --dry-run writes nothing
+flags:
+  --card <file>  required: the tree card's file
+  --dir <checkout>  the checkout the steps run in (cwd of every program and POST command); required unless --remainder
+  --dry-run  print each step the walk would run (its language, paths and POST lines) and the wall its commands would run in, and run and write nothing
+  --from <step>  with --remainder: the failed step the remainder starts at
+  --land <sha>  with --remainder: the full sha steps 1..n-1 landed at (the finish's pushed=)
+  --no-wall  run the card's programs with no wall, with this process's own powers: network, environment and every file it can write
+  --remainder <id>  print the remainder card of this card id from --from, staged at --land, and run nothing
+  --result <file>  the RESULT.md file to write in the result shape, the step lines in its body
+  --sandbox <binary>  the wall binary each program, POST command and git runs in (default: nova-sandbox on PATH)
+  --work <directory>  the directory the programs are built in and the steps' private temp made under (default: a new one under TMPDIR)
+exit codes: 0 every step run is ok, each on its STEP OK line (--remainder: the card printed);
+  1 a step failed, on its STEP FAILED line, and the steps after it were not run; 2 could not
+  run: a missing flag, a card that cannot be read, whose tree has a finding or that is not
+  script steps only, no wall and no --no-wall
+```
+
+`nova-swarm template -h`:
+
+```
+usage: nova-swarm template [flags]
+from `nova-swarm help`:
+  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
+  nova-swarm template --name read-pr
+  nova-swarm template --name worker
+flags:
+  --name <name>  required: the template's name: capacity, card, drift, fix, fix-card, models.tsv, probe-row, read, read-pr, replay, result, setup, text, tone, worker (card is a whole card that passes lint --child-rules)
+exit codes: 0 done; 2 could not run: a missing flag, a file that cannot be read, a bad invocation
+effect: inspection: prints a template, writes nothing
+```
+
+`nova-swarm profile -h`:
+
+```
+usage: nova-swarm profile [flags]
+from `nova-swarm help`:
+  nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
+flags:
+  --jobs <glob>  required: a glob of job directories (or timeline.tsv files), each holding a native run's per-turn timeline
+exit codes: 0 done; 2 could not run: a missing flag, a file that cannot be read, a bad invocation
+effect: inspection: reads the timeline.tsv of each job the glob names, writes nothing
+```
+
+`nova-swarm native -h`:
+
+```
+usage: nova-swarm native [flags]
+from `nova-swarm help`:
+  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
+flags:
+  --auth <file>  the harness's auth file, one entry of it copied into the child's data home (not with a --worker naming a secret)
+  --bench <name>  this bench's name, in a staging timeout's report (default: this machine's host name up to its first dot)
+  --card <file>  required: the card file, handed to the child byte for byte as its task
+  --config <file>  the harness's provider config file (opencode.json), copied beside the auth (not with a --worker naming a secret)
+  --deadline <duration>  required: the wall-clock bound that ends the child, a duration such as 30m
+  --frame <file>  the frame file a member wrote: the repository, commit and branch to stage, from which JOB.md and the shims are written
+  --harness <path>  required: the harness binary path the child runs under, checked for existence and execution
+  --identity <owner,name,email>  the pool identity the child commits under, owner,name,email (default: <root>/identity.tsv)
+  --idle <duration>  end the card when neither its output nor its process tree has moved for this duration; 0 turns the watch off (default 5m)
+  --label <label>  the run's label, on its NATIVE line and its result (default: the card file's name without its extension)
+  --model <provider/model>  required without --worker: the provider/model to run, one slash, both sides nonempty
+  --no-shared-caches  keep the Go caches under the child's HOME instead of the bench's shared <root>/cache
+  --no-wall  run the child with no nova-sandbox wall: the caller owns every read and write it makes
+  --owner <string>  accepted and read by nothing, with --slots-store
+  --recipient <value>  a bus lane the card may address (again for more); a bus send is denied inside the wall whatever is named
+  --repo <owner/name>  a repository the card may clone, owner/name (again for more): the wall opens the network to it alone
+  --results-root <dir>  the dir RESULT.md, usage.tsv and the report are published under (default <root>/results)
+  --root <dir>  required: the configured root dir the slot sits under; results go under <root>/results
+  --sandbox <path>  the nova-sandbox binary path that builds the wall (default: nova-sandbox on PATH); not with --no-wall
+  --slot <dir>  required: the slot dir this run executes in, under --root; HOME is a data directory beneath it
+  --slots-store <string>  accepted and read by nothing: native takes no slot lease (the dealer holds a bench's capacity)
+  --stage-timeout <duration>  the bound on staging the card's checkout from the bench mirror, a duration (default 120s)
+  --sweep-now  delete the job directory once its results are published (never before)
+  --tokens <n|unmetered>  required: the token budget, a number of tokens, or the word unmetered when the provider has no live accounting and the deadline is the only stop (n|unmetered)
+  --usage-interval <duration>  how often the token budget's source is read, a duration or whole seconds, at least 1s and under --deadline (default 5s)
+  --usd <string>  the dollar budget per card, a decimal such as 0.50: the harness's reported cost at which the card is stopped (stopped=usd), beside --tokens; empty for none
+  --worker <file>  the worker description file (JSON) that names the model, the key and the read roots; nova-swarm worker check checks it
+exit codes: 0 the child exited 0 (the NATIVE line's OK, or INCOMPLETE and its why=, is
+  the verdict); 1 the child was killed (its deadline, a TERM) or exited 255; any other code is
+  the child's own; 2 could not run: a missing flag, a wall, a card or a worker description that
+  is not there
+effect: delivery: runs the card's harness, which calls the model's provider, and writes the job directory under --root
+```
+
+`nova-swarm member -h`:
+
+```
+usage: nova-swarm member [flags]
+from `nova-swarm help`:
+  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--slots <dir>] [--results-root <dir>] [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--max-load <load>] [--warn-load <load>] [--gocache-limit <GiB>] [--stage-wall <duration>] [--identity <owner>,<name>,<email>]
+  (run this machine as a sprint member; --server is the address of nova-sprint run --listen.
+  Each tick beats, reads the queue, reports ended children and takes cards to the
+  fleet row's width; --width overrides it, and --pass names environment secrets to
+  hand to children. A reader runs the reads of the readers table; this machine opens
+  no store. --no-wall runs each child with no wall. nova-swarm member -h has the rest.)
+flags:
+  --as <name>  required: this machine's name, its row in the fleet table (with --reader, its row in the readers table, reader-<machine>)
+  --auth <file>  the harness's auth file, handed to each child's native --auth
+  --config <file>  the harness's provider config file, handed to each child's native --config
+  --deadline <duration>  the wall-clock bound a card with no route runs to, a duration or whole seconds; a reader given it runs every read to it
+  --disk-floor <GiB>  the free GiB the slots' volume keeps: below it no card starts (default 10; 0 checks nothing)
+  --every <duration>  the time between passes and beats, a duration or whole seconds, above 0 and at most 5s (default 3s)
+  --gh <path>  the gh path the member opens a work card's pull request with, outside the wall (default gh)
+  --gocache-limit <GiB>  the GiB the shared Go build cache is held under by the cleaner, oldest unused entries removed down to 80% of it, never one used in the last two hours (default 20; a busy machine holds its working set with more)
+  --harness <path>  required: the harness binary path each card's child runs under (native --harness)
+  --identity <owner,name,email>  the pool identity every child commits under, owner,name,email (default: the pool's identity.tsv)
+  --max-load <load>  the maximum one-minute host load at which a local child starts (default 0: no load gate)
+  --model <provider/model>  the provider/model a card with no route runs on; a reader given it runs every read on it
+  --no-wall  run each child with no nova-sandbox wall (native --no-wall): the caller owns every read and write it makes
+  --once  run one pass, wait for its starts and pushes, and stop
+  --pass <NAME,...>  the NAME,... of secrets in this environment a child is handed (the loop record's nova-secrets keys); a harness that reads its provider key from the environment needs it
+  --reader  run as a reader: take and run reads of finished work instead of work cards, at its machine's width; a flash card's first read is a decide read, asked with JEV_API_KEY from this environment (docs/SPEC-SPRINT.md section 6)
+  --results-root <dir>  the dir each launch's results are written under (default <root>/results)
+  --root <dir>  required: the dir the launches and results sit under
+  --server <address:port>  required: the sprint server's address:port, which nova-sprint run --listen started on the coordinator's machine; every sprint verb goes there and this machine opens no store
+  --slots <dir>  the dir of the launch directories, one per card launch (default <root>/slots)
+  --stage-wall <duration>  the bound on staging each card's checkout, a duration or whole seconds, handed to native as --stage-timeout: a slow machine under load names a longer one in its loop row's argv (default 120s)
+  --ticks <int>  run this many passes and stop (not with --once; default: run until stopped)
+  --tokens <n|unmetered>  the token budget a card with no route runs on, a number of tokens or the word unmetered (n|unmetered); a reader given it runs every read on it
+  --warn-load <load>  the one-minute host load at which a local child start warns, at or below --max-load (default 0: no warning)
+  --width <int>  an override of the most cards it runs at once, a twin's; a worker runs its fleet row's width, read every tick: a member its own row's, a reader its machine's (reader-<m> runs at m's width)
+  --worker <file>  the worker description file (JSON), handed to each child's native --worker; the secret it names is handed through too
+exit codes: 0 it stopped as asked (--once, --ticks); 2 could not run: a missing flag, a
+  directory that cannot be made; 3 its binary was replaced on disk (MEMBER STOP: its supervisor
+  starts the new one; with children running it first takes no new card and stops when the last
+  is reported)
+effect: delivery: joins a sprint's fleet through --server, runs its cards as native children, pushes their commits and opens their pull requests
+```
+
+`nova-swarm mirror -h`:
+
+```
+usage: nova-swarm mirror [flags]
+from `nova-swarm help`:
+  nova-swarm mirror    --repos <a,b> --base <url> [--dir <dir>] [--every <duration>]
+  (keep the bench's bare mirrors fresh: each repository cloned into <dir>/<name>.git when absent, then every head and pull-request head fetched, one MIRROR OK or MIRROR FAILED line each; --every runs until stopped. mirror -h has the rest.)
+  nova-swarm mirror as a nova-config loop row.)
+effect: local write: creates and fetches into bare repositories under --dir; reads each repository over the network
+flags:
+  --base <url>  the url each repository is fetched from, <url>/<name>.git, such as https://github.com/<org> or git@<alias>:<org>
+  --dir <dir>  the dir the bare mirrors <repo>.git live in (default ~/nova-bench/mirror)
+  --every <duration>  refresh again after this duration, until stopped; 0 refreshes once (default 0)
+  --repos <list>  the repository names to mirror, a comma-separated list
+exit codes: 0 every repository refreshed (MIRROR OK each); 1 a repository failed (MIRROR FAILED
+  names it and the cause; the others are still refreshed); 2 could not run: a missing flag or a bad name
+```
+
+`nova-swarm install -h`:
+
+```
+usage: nova-swarm install [flags]
+from `nova-swarm help`:
+  nova-swarm install   <disk-guard|mirror-refresh> [--dir <dir>] [--log <file>] [--every <duration>] [--dry-run]
+  (writes the unit that runs this binary, kept alive, and loads it. disk-guard's own
+  flags ride on the unit; mirror-refresh is refused here, and its loop runs
+  nova-swarm mirror as a nova-config loop row.)
+flags:
+  --dir <string>  the directory the unit is written into (default: ~/Library/LaunchAgents on macOS, ~/.config/systemd/user on Linux)
+  --dry-run  print the unit and write and load nothing
+  --every <duration>  the least time between two starts
+  --log <string>  the file the unit's lines go to on macOS; on Linux they are in the journal
+exit codes: 0 done (the unit written or kept, and loaded); 1 the unit did not write or load; 2 usage, or mirror-refresh (no mirror verb yet)
+effect: local write: writes the kind's unit (the verb itself, never a wrapper) into --dir and loads it with launchctl (macOS) or systemctl --user (Linux); --dry-run writes nothing
+```
+
+`nova-swarm uninstall -h`:
+
+```
+usage: nova-swarm uninstall [flags]
+from `nova-swarm help`:
+  nova-swarm uninstall <disk-guard|mirror-refresh> [--dir <dir>] [--dry-run]
+  (unloads that unit and removes its file; a dry run removes nothing.)
+flags:
+  --dir <string>  the directory the unit was written into (default: as install's)
+  --dry-run  say which unit would be unloaded and removed, and unload and remove nothing
+exit codes: 0 done (removed, or no unit there); 1 the unit did not unload or remove; 2 usage
+effect: local write: unloads the kind's unit and removes its file from --dir; --dry-run names the unit and unloads and removes nothing
+```
+
+`nova-swarm slots init -h`:
+
+```
+usage: nova-swarm slots init [flags]
+from `nova-swarm help`:
+  nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
+flags:
+  --capacity <int>  required: how many leases the bench grants at once, at least 1
+  --owner <owner>  required: the one owner the store starts with
+  --share <int>  required: how many of those the owner may hold at once, at least 1 and at most --capacity
+  --store <dir>  required: the store dir to create, to hold shares.tsv and slots/
+exit codes: 0 done; 2 could not run: a missing flag, a file that cannot be read, a bad invocation
+```
+
+`nova-swarm slots take -h`:
+
+```
+usage: nova-swarm slots take [flags]
+from `nova-swarm help`:
+  nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
+flags:
+  --for <duration>  required: how long the leases last, a positive duration such as 30m
+  --kind <kind>  the card's kind, charged at its admission weight
+  --label <label>  a label the leases carry, which slots release --label frees
+  --n <int>  required: how many leases to grant, at least 1
+  --owner <string>  required: whose share the leases count against
+  --store <dir>  required: the store dir holding shares.tsv and slots/
+exit codes: 0 the leases are granted; 2 refused: the owner's share or the bench is
+  full (SLOTS REFUSED names the holders), a missing flag, or a store that cannot be read
+```
+
+`nova-swarm slots release -h`:
+
+```
+usage: nova-swarm slots release [flags]
+from `nova-swarm help`:
+  nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
+  (a lease whose holder is still RUNNING is KEPT: SLOTS KEPT, live=<n>, exit 2.
+  --force frees it anyway and can oversubscribe the bench: an operator's act,
+  never a card's and never a manager's default)
+flags:
+  --all  free every lease of the owner (or --label)
+  --force  free a lease whose holder is still running too: an operator's act, which can oversubscribe the bench
+  --label <label>  free the owner's leases carrying this label (or --all)
+  --owner <string>  required: whose leases are freed
+  --store <dir>  required: the store dir holding shares.tsv and slots/
+exit codes: 0 the leases named are freed; 2 a lease's holder still runs (SLOTS
+  KEPT; --force frees it), a missing flag or a store that cannot be read
+```
+
+`nova-swarm slots list -h`:
+
+```
+usage: nova-swarm slots list [flags]
+from `nova-swarm help`:
+  nova-swarm slots list --store <dir>
+flags:
+  --store <dir>  required: the store dir holding shares.tsv and slots/
+exit codes: 0 done; 2 could not run: a missing flag, a file that cannot be read, a bad invocation
+effect: inspection: reads, writes nothing
+```
+
+`nova-swarm slots run -h`:
+
+```
+usage: nova-swarm slots run [flags]
+from `nova-swarm help`:
+  nova-swarm slots run --store <dir> --owner <o> [--n <k>] [--for <duration>] [--kind <kind>] [--label <text>] [--wait <duration>] -- <command> [args...]
+flags:
+  --for <duration>  how long the leases last, a positive duration such as 30m (default 1h)
+  --kind <kind>  the card's kind, charged at its admission weight
+  --label <label>  a label the leases carry (default: command name)
+  --n <int>  how many leases to grant, at least 1 (default 1)
+  --owner <string>  required: whose share the leases count against
+  --store <dir>  required: the store dir holding shares.tsv and slots/
+  --wait <duration>  how long to wait when capacity is occupied, a bounded duration such as 30s
+exit codes: 0 done; 2 could not run: a missing flag, a file that cannot be read, a bad invocation
+```
+
+`nova-swarm worker -h`:
+
+```
+usage: nova-swarm worker [flags]
+from `nova-swarm help`:
+  nova-swarm worker    check <description.json> [--env] [--max <n>]
+exit codes: 0 WORKER OK; 1 the description was read and drifts, each on its WORKER
+  DRIFT line; 2 it cannot be read, or a bad invocation
+effect: inspection: reads, writes nothing
+```
+<!-- clidoc:end nova-swarm -->
+
 ```
 nova-swarm: one-task AI workers, each run in the sandbox with a deadline and a token budget
 
@@ -2395,6 +3033,3121 @@ Removing the copy under `~/.local/bin` is tolerated: with no local copy there is
 shadow with, and the check passes on the PATH binary alone. No flag skips the check.
 
 ## nova-sprint
+
+<!-- clidoc:begin nova-sprint -->
+`nova-sprint help`:
+
+```
+nova-sprint: a sprint of work cards, dealt to a fleet of workers and read before they land
+
+how it works: one store (Redis or a twin file) holds the work, readers, merge
+and fleet tables and the sprint view. A card is one unit of work in a stream.
+Each tick deals ready cards to members (machines with a width), sends finished
+work to readers and queues passed work for merging by stream. Decisions it
+cannot make go to the coordinator's inbox.
+first run: no Redis needed; the store is the file sprint.twin:
+  export NOVA_SPRINT_REDIS=mem:sprint.twin NOVA_SPRINT_ACTOR=boss
+Follow the card flow under "trying it without a Redis", ticking by hand.
+For a real fleet, "A real fleet" explains the server and clients; the example:
+block shows the coordinator's day on that store.
+For one verb's usage, examples, flags and exit codes:
+  nova-sprint help <verb> (or <verb> -h)
+For one group's help: nova-sprint help <group> (fleet, friend, reader, goal,
+stream, lane, merge-window).
+
+usage:
+  nova-sprint init [--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>] [--owner <name>] [--rules <file>]
+  nova-sprint add --stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> [--brief-file <f2>...]: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--held] [--allow-shared-paths] [--one: a single card is meant] [--replaces <old-id>[,<old-id>]: the one card is their twin] [--allow-personal-base]
+  nova-sprint quack --streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]
+  nova-sprint preflight --brief-dir <dir> [--repo-dir <dir>]
+  nova-sprint release check [--json] [--streams <glob>] [--window <duration>] [--merge-p90 <duration>] [--check <name>]...
+  nova-sprint release (<sentinel or held card>... | <selector> [--dry-run]) --reason <text> [--answers <note>]
+  nova-sprint resolve [<id>...] [--stream <s>] [--max <n>]
+  nova-sprint friends watch [--actor <seat>] [--state <file>]
+  nova-sprint status watch [--actor <seat>] [--state <file>]
+  nova-sprint start
+  nova-sprint stop --reason <text> --until <time or duration>
+  nova-sprint stop-return --as <owner-row> <card>@<gen>... --epoch <n> --reason <cancel acknowledgement> [--dry-run]
+  nova-sprint run [--answer-rules=false] [--idle-alarm=false] [--listen <address:port>] [--land] [--decide <dir>]
+  nova-sprint tick [--answer-rules] [--idle-alarm] [--shadow]
+  nova-sprint selftest land [--binary <path>] [--scratch-dir <dir>]
+  nova-sprint selftest [--dir <d>] [--keep]
+  nova-sprint goal set <name> [--file <path>] [--to file:<path>]
+  nova-sprint goal show [<name>]
+  nova-sprint goal drop <name>
+  nova-sprint take --as <member> [<card>@<gen>...] [--epoch <n>] [--max <n>]
+  nova-sprint finish --as <member> <card>@<gen>... --epoch <n> (--head <commit> | --failed) [--report <text>] [--usage <text>]
+  nova-sprint progress --as <worker> <card>[@<gen>]... --epoch <n>
+  nova-sprint ask [<id>... | --group <id> [--expect <n>]] [--stream <s>] [--max <n>] [--another] [--answers <note>]
+  nova-sprint queue --as <reader|member> | --stream <s>
+  nova-sprint read --as <reader> (--begin | --ok | --broken) [<card>[@<gen>]...] --epoch <n> [--max <n>] [--finding <text>] [--usage <text>] | --as <reader> --return <card> --reason <text> --epoch <n> [--usage <text>]
+  nova-sprint accept (<id>... [--heavy --evidence <path> --reason <text>] | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]
+  nova-sprint rework (<id>... | --group <id> [--expect <n>] | <selector> [--dry-run]) [--fix <text>] [--tier <tier>] [--answers <note>] [--one]
+  nova-sprint return (<id>... | --group <id> [--expect <n>] | <selector> [--dry-run]) [--reason <text>] [--answers <note>]
+  nova-sprint redo <card>... [--stream <s>] [--answers <note>]
+  nova-sprint drop (<id>... | --stream <s> --col <state> | --group <id> [--expect <n>] | <selector> [--dry-run]) --reason <text> [--answers <note>] [--one]
+  nova-sprint priority <id>... | (<id>... | --stream <s>) (--blocker | --critical | --fix | --high | --normal | --low) --reason <text>
+  nova-sprint unpin (<id>... | --stream <s>) --reason <text> [--dry-run]
+  nova-sprint rebase --from <branch> --to <branch> [--repo-dir <clone>] [--dry-run]
+  nova-sprint rank (<id>... | <selector> [--dry-run]) (--score <n> | --first | --before <id>) [--answers <note>]
+  nova-sprint relink <old-id>[,<old-id>...] <new-id> [--reason <text>]
+  nova-sprint recut <id> (--tier <flash|pro|heavy|frontier> | --brief-file <path> [--rules <file>]) [--new <id>] | <selector> (--tier <t> | --set-base <branch> | --drop-who)... [--dry-run]
+  nova-sprint twin <card> [--paths <extra,...>] [--needs <card,...>] [--before <card>] [--tier <t>] [--instruction <text>] [--carry]
+  nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>] [--answers <note>] | --dir <dir> [--rules <file>] | --group <id> [--expect <n>] (--brief-file <path> | --dir <dir>) [--answers <note>] | <id> --widen [--repo-dir <clone>] | <id> --tier <flash|pro|heavy|frontier> | <selector> (--set-base <branch> | --drop-who | --tier <t>)... [--dry-run]
+  nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
+  nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]
+  nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
+  nova-sprint verify-landed [--stream <s>...] [--repo-dir <clone>] [--base <branch>]
+  nova-sprint landed <id>... --sha <commit> --reason <text> [--repo-dir <clone>] [--base <branch>]
+  nova-sprint snapshot (--dir <dir> [--keep <n>] [--every <duration>] | --restore-drill <file>)
+  nova-sprint backup (--out <dir> [--part-bytes <n>] [--secrets-store <dir> --secrets-as <seat> --secrets-key <path> --sops <path>] | --file <path> [--dry-run])
+  nova-sprint demo load <backup.xz part>... [--sha256 <hex>] [--dir <dir>] [--xz <path>] [--redis-server <path>]
+  nova-sprint demo stop [--dir <dir>]
+  nova-sprint promote [--every <duration>] [--landings <n>] [--branch <name>] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
+  nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
+  nova-sprint hold <member|reader|friend|stream>... --reason <text> [--return] [--dry-run]
+  nova-sprint unhold <member|reader|friend|stream>... [--reason <text>] [--dry-run]
+  nova-sprint fleet beat <member> [--load <percent>]
+  nova-sprint fleet up <member> [--width <n> | --width 0]
+  nova-sprint fleet down <member>
+  nova-sprint fleet sync [--check] [--pg <dsn>]
+  nova-sprint fleet level
+  nova-sprint fleet quiet <member> (--for <duration> | --until <RFC3339>) --reason <text> | <member> --end [--dry-run]
+  nova-sprint friend sync [--pg <dsn>] [--root <dir>]
+  nova-sprint collect [<friend>...] [--dead-lanes] [--pg <dsn>] [--root <dir>] [--dry-run]
+  nova-sprint friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>] [--active <RFC3339>] [--check <nonce>] [--pong <nonce>] [--run <id>]
+  nova-sprint friend down <friend> [--reason <text>] [--until <RFC3339>]
+  nova-sprint friend up <friend> [--width <n>]
+  nova-sprint friend cards <friend> [--json]
+  nova-sprint friend take <friend> (<id>... | --all-unstarted) [--reason <text>]
+  nova-sprint friend give <friend> <id>... [--reason <text>]
+  nova-sprint friend level
+  nova-sprint friend health <friend> (--state up|asleep|down --seen <RFC3339> --generation <n> [--queue <n>] [--working <n>] [--width <n>] [--reason <text>] [--until <RFC3339>] | --clear)
+  nova-sprint friend clean [--pg <dsn> | --file <path>] [--root <dir>] [--days <n>] [--dry-run]
+  nova-sprint gc [--machine <m>] [--dry-run] [--max-age <d>]
+  nova-sprint friend reconcile <friend> [--root <dir>] [--dry-run]
+  nova-sprint lane take <kind> --machine <m> --as <worker> [--wait <duration>] [--dry-run]
+  nova-sprint lane give <kind> --machine <m> --as <worker> [--dry-run]
+  nova-sprint lane list
+  nova-sprint reader add <reader>... [--tiers <flash[,pro,heavy,frontier]|all|default>]
+  nova-sprint reader set <reader>... --tiers <flash[,pro,heavy,frontier]|all|default>
+  nova-sprint reader away <reader>...
+  nova-sprint reader up <reader>...
+  nova-sprint reader remove <reader>...
+  nova-sprint reader retire <reader>...
+  nova-sprint stream remove <stream>...
+  nova-sprint stream archive <stream>...
+  nova-sprint stream unarchive <stream>...
+  nova-sprint stream set <stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--promotion[=false]] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--base <branch>] [--reason <text>] [--answers <notes>]
+  nova-sprint set [--rework-priority <fix|high|keep>] [--read-tier <flash|pro|default>] [--read-cards <on|off|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>] [--attempts <n|default>] [--friend-idle <duration|default>] [--friend-finish <duration|default>] [--fleet-tiers <tiers|all>] [--friends-tiers <tiers|all>] [--reads <0|1|2|default>]
+  nova-sprint promoted --sha <merge sha> [--answers <note>]
+  nova-sprint merge-window open --for <duration> --reason <text>
+  nova-sprint funded <provider> --reason <text>
+  nova-sprint cost reconcile [--dry-run] [--json]
+  nova-sprint cost reprice [--route <r>]... [--since <RFC3339>] [--dry-run] [--json]
+  nova-sprint ci <id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]
+  nova-sprint wait (<note>[,<note>]... | --group <id> [--expect <n>]) (--for <duration> | --until <RFC3339>)
+  nova-sprint remind (--in <duration> | --at <time>) --note <text> [--for <actor>] | --list | --cancel <id>
+  nova-sprint ack <note>[,<note>]... --reason <text>
+  nova-sprint answer [--dry-run] [--bar <p>] [--every <duration>] [--timeout <duration>] [--backend jev|fixed] [--answers <file>] [--record <file>]
+  nova-sprint inbox [--open <group>] [--read] [--wait [--timeout <duration>] [--push <dir> | --push seat]] [--deadline <duration>] [--stale <duration>]
+  nova-sprint card base <id> <branch> [--repo-dir <clone>]
+  nova-sprint card <id> [--brief | --fields] [--at-epoch <n>] | (--all | --stream <s>) --json: every card, one JSON object a line
+  nova-sprint needs [--stream <s>] [--roots]
+  nova-sprint streams [--repo <owner/name>] [--release <name>] [--cards]
+  nova-sprint held [--stream <s>]
+  nova-sprint sentinels [--stream <s>]
+  nova-sprint sentinel set <id> --needs <a,b>
+  nova-sprint bases
+  nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]
+  nova-sprint check
+  nova-sprint repair
+  nova-sprint watch --wake [--every <duration>] [--state <file>] [--check <duration>] [--judgment-every <duration>] [--merge-every <duration>] [--backlog-every <duration>] [--land-after <duration>] [--merge-over <n>] [--merging-over <n>] [--review-over <n>]
+  nova-sprint seat check
+  nova-sprint machinery
+  nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards] [--rows] [--archived] [--stale <duration>] [--at-epoch <n>]: includes landedSeries] [--release [<name>]]
+  nova-sprint dashboard [--listen <address:port>[,<address:port>...] | none] [--pull <address:port>[,<address:port>...] | none] [--logo <file>] [--every <duration>]
+  nova-sprint handover
+  nova-sprint view coordinator [--all] [--since <cursor>] [--json]
+  nova-sprint view cards [--col <c>] [--stream <s>] [--holder <member>] [--by tier|stream|col|holder] [--json]
+  nova-sprint view worker --as <member|friend> [--since <cursor>] [--json]
+  nova-sprint seat install --harness <name> --target <dir> [--session <id>] [--dir <dir>] [--log <file>] [--server <host:port>] [--config-seat <name> --config-dsn <dsn> --config-password-env <NAME>] [--dry-run]
+  nova-sprint seat watch <dir> [--json]
+  nova-sprint seat uninstall [--dir <dir>]
+  nova-sprint seat deliver [--text <message>] --actor <seat>
+  nova-sprint seat push [--harness <name> --target <dir> [--session <id>]] [--sent <nonce> [--failed <why>]] [--beat bus|friends|transitions [--failed <why>]] [--observe friends|transitions --json] [--dry-run]
+  nova-sprint seat pong <nonce> [--dry-run]
+  nova-sprint seat [--repair --reason <text>] | push [--harness <name> --target <dir> [--session <id>]] | pong <nonce>
+  nova-sprint fsck seat [--pg <host:port or postgres:// URI>]
+  nova-sprint routes
+  nova-sprint rules
+  nova-sprint stats tidy (--friends | --fleet | --routes | --streams | --all)... --reason <text> [--dry-run]
+  nova-sprint stats [--routes [--since <10m|RFC3339>]]
+  nova-sprint play [--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]
+  nova-sprint clear --confirm sprint
+  nova-sprint teardown --confirm sprint
+  nova-sprint live [--bin-dir <dir>] [--dashboard <link>]... [--json]
+  nova-sprint adopt <version|path> --source <checkout> --inventory <file> --reason <text> [--limit <host>] [--receipts <dir>] [--dry-run]
+  nova-sprint server switch [<binary>] [--rollback] [--window <duration>] [--target <path>] [--tick-deadline <duration>]
+  nova-sprint install <server|member|seat-push|friend-sync|table> [--dir <dir>] [--log <file>] [--dry-run] (each kind's own flags are listed by install <kind> -h)
+  nova-sprint uninstall <server|member|seat-push|friend-sync|table> [--dir <dir>] [--dry-run]
+  nova-sprint units --check [--dir <dir>]
+  nova-sprint cost attach <card>.<attempt> --model <provider/model> --input <n> --cache-read <n> --cache-write <n> --output <n> [--reasoning <n>] [--usd <x>] [--source <text>] [--replace] [--dry-run] | --file <tsv> [--replace] [--dry-run]
+  nova-sprint coordinator <name> --reason <text> | <name> --take --approved-by <owner> --reason <text>
+
+Every store verb takes --redis <addr> (else NOVA_SPRINT_REDIS, then
+NOVA_REDIS_ADDR), --actor <name> (else NOVA_SPRINT_ACTOR; no
+default: a verb that writes wants one), --op <id> (the same id again returns
+the recorded result), --json and --max <n> (listed items, and the count of a
+set when the verb takes one; 0 is all listed; --limit is --max for one
+release). The
+coordinator's verbs are the coordinator's alone (the first init names it:
+--coordinator, else the actor); take, finish, read, fleet beat, friend
+beat, lane take and lane give are the workers', whose actor is the member, reader or friend named; merge and ci are
+reports; tick, run, friend clean and promote are the machine's; the reads need no actor (inbox
+--read, which moves the coordinator's cursor, is the coordinator's). The seat
+moves by coordinator <name> --reason <text>: given by its holder or the owner
+(init --owner), or taken by <name> itself with --take --approved-by <owner>,
+each in the log; handover prints what the next seat needs. A set is
+ids, a stream, a column, --max n, or an inbox group: --group <id>, the id
+inbox prints, which does not move, with --expect <n>, the size it printed,
+which refuses a group that has changed. Each verb prints what moved (MOVED),
+what did not and why (REFUSED, on stderr), its summary line, and the sprint's
+line: landed/all percent -> ETA <estimate> (the streams on the table: an
+archived stream's cards leave it; every card left, held ones too, at
+the cards landed an hour: where's over the last hour of running time, the
+whole sprint's average with fewer than five there and on this line; in minutes
+rounded up, days and hours from a day; where shows the largest
+of the last 10 s, and held=N, the cards behind a sentinel not released or
+admitted held; the word alone until one has landed; a stopped
+machine has no ETA: STOPPED, then
+landed/all and the percent when there are cards; every card landed, no ETA:
+done in <time from the first start> while it runs, and STOPPED ... done once
+the machine has stopped itself).
+
+The tables are work, merge, readers and fleet, and the view is sprint; a store
+holds one sprint (a second sprint is a second store). The work table's cost
+column is, per stream, the sum of its landed cards' total cost in US dollars
+(each consumer's actual cost, else its predicted one; - when none was priced),
+with the sum over the streams at the bottom; card <id> shows the detail. clear and teardown want
+--confirm sprint, the name of the view, and refuse anything else.
+
+A work card is named with its generation, <card>@<gen>: the generation the
+worker holds, from queue --as <member> (--json: "gen"). take by id and finish
+name it for every card; a card named without one is refused, naming the live
+generation, and a generation that is not the live one is refused as stale.
+take with no card takes the member's oldest ready cards (--max n, default 1)
+and prints each one's generation.
+```
+
+`nova-sprint init -h`:
+
+```
+usage: nova-sprint init [--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>] [--owner <name>] [--rules <file>]
+from `nova-sprint help`:
+  nova-sprint init [--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>] [--owner <name>] [--rules <file>]
+  nova-sprint init --readers reader-a,reader-b --members m1
+  nova-sprint init --readers reader-a,reader-b --members m1:8
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --attempts <string>  the sprint's attempt cap: how many attempts one brief may run before the card is the coordinator's as a brief defect; 1 to 100 (default 4; later: nova-sprint set --attempts <n>)
+  --coordinator <string>  the sprint's coordinator, the one actor who releases sentinels (default: the actor); the seat then moves by coordinator <name>
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --members <string>  fleet members to bring up, comma separated, each <name> or <name>:<width>, its width the most work cards it runs at once; it holds 2 times that, ready and working (default 64)
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --owner <string>  the sprint's owner, who may give the seat and whose name a take of it carries (coordinator --take --approved-by); set once, never changed (else NOVA_SPRINT_OWNER)
+  --readers <string>  the readers' rows, comma separated
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --rules <string>  the child rules file every brief is held to: one required sentence per line, its path recorded for the sprint (default: the built-in general rules; add --rules <file> overrides it for one add)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint add -h`:
+
+```
+usage: nova-sprint add --stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> [--brief-file <f2>...]: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--held] [--allow-shared-paths] [--one: a single card is meant] [--replaces <old-id>[,<old-id>]: the one card is their twin] [--allow-personal-base]
+from `nova-sprint help`:
+  nova-sprint add --stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> [--brief-file <f2>...]: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--held] [--allow-shared-paths] [--one: a single card is meant] [--replaces <old-id>[,<old-id>]: the one card is their twin] [--allow-personal-base]
+  nova-sprint add --stream s1 --count 1 --one
+  nova-sprint add --stream s1 --count 3 --brief-file brief.txt
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --after <string>  place the cards in line after this primary of the stream
+  --allow-personal-base  admit cards whose brief's BASE: is a personal branch (<name>/* for the sprint's coordinator, its owner or a friends table row), by default refused naming the base and this flag: no sprint watches a personal branch's gate (docs/SPEC-SPRINT.md section 11, bases-view-r.w2)
+  --allow-shared-paths  with a card per brief file (--brief-dir, or --brief-file with no ids): admit cards that name one file in their PATHS: lines though neither needs the other and neither brief declares it on a SHARED: line (by default refused, naming the file and the cards)
+  --before <string>  place the cards in line in front of this primary of the stream
+  --brief <string>  the brief: a child's whole brief, at most 16 KiB (the card lint advises 12000 bytes), held to the card lint (the sentences of the rules file: --rules, else the one init --rules recorded, else the built-in general rules; nova-swarm template --name card prints a card that passes the general ones, nova-swarm lint --rules lists them) and refused, exit 2, nothing written, when it fails; a card with no brief is not linted; a brief that names PATHS, REPO and BASE is also held at the BASE tip (a literal path must exist, a glob must match a file, and every func, type or verb STOP or START names with a file, and a TEST name the tree already holds, must be inside a PATHS file; one line per miss names the nearest file; a new _test file or a NEW: line may be absent); under JEV_API_KEY each card's brief is then asked nova-decide's brief decision (one BRIEF line per card, an uncalibrated rank) and refused under the sprint row's decide_brief_bar, empty by default
+  --brief-dir <string>  one card per *.md file in this directory, in byte order of file name, each card's id its file's name without .md (a1.md is a1); not with --brief-file
+  --brief-file <value>  the brief, read from this file: its bytes as they are, its one trailing newline cut (a brief of many paragraphs), then held to the card lint like --brief; given once with ids, --count or --sentinel, the brief of the cards they name; given alone or again, one card per file in the order given, each card's id its file's name without .md (a1.md is a1); not with --brief or --brief-dir
+  --brief-op <id=op>  id=op: a card's brief decision op id (<id>@brief-<hex>), which add sends its server itself when it asked the decision where it was typed; refused when typed on an add no server runs; repeated, one per card
+  --count <int>  admit n primaries with generated ids <stream>-<n>
+  --decide-record <file>  the record file of the cards' brief decisions under JEV_API_KEY (default ~/nova-sprint/decide/brief.jsonl, the coordinator's root); each card stores it and its op, and land and drop attach the card's end there
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --held  admit the cards held: waiting, a sentinel never reached and no card dealt, nothing raised, until nova-sprint release <id> --reason <text>; a wave loads behind a held sentinel with nothing before it
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --needs <string>  primaries that must land first, comma separated; each is a primary on the table or of this add (default: the brief's Needs: or DEPENDS-ON: line; with a brief per card, added to each card's own)
+  --one  admit a single card (one positional id, --count 1 on one stream, or one --brief-file alone): refused without it, since cards are admitted in waves (--brief-dir, --count 2 or more, several --brief-file)
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --replaces <ids>  the card this add admits is the twin of these ids, comma separated: it takes over every edge where a waiting card needs one of them (that card needs the twin instead, in the same place), each still on the table is dropped with the reason "replaced by <the new id>", and no blocked judgment is raised for it, in one step; a card dropped before is replaced too, and its blocked judgments are answered; one card only (it means --one), never a sentinel
+  --rules <file>  the child rules file, read at add time: one required sentence per line, [name] sentence names its token (default: the file init --rules recorded, else the built-in general rules); e.g. --rules rules/card.txt. A file the members hold (fleet/child-rules*.txt of this build) is by reference: a card on a repository with a held file (fleet/child-rules.txt for nova-tools, fleet/child-rules.<repo>.txt) need not carry it, the card names the file, and the member injects it at stage time
+  --score <string>  the first primary's score; the rest follow it (default: after every primary)
+  --sentinel <string>  admit a sentinel with this id: a stop the coordinator releases; what sorts after it waits for it
+  --sentinel-every <int>  with --count: a sentinel <stream>-gate-<n> after every k cards (a stop by its place in line)
+  --sentinel-last  with --sentinel-every: a sentinel after the last card too
+  --stream <string>  the stream the primaries belong to, for life; with --count, several streams comma separated, one step
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint quack -h`:
+
+```
+usage: nova-sprint quack --streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]
+from `nova-sprint help`:
+  nova-sprint quack --streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --base <string>  the branch of the test repository the cards start from
+  --count <int>  quack cards per stream, at least 1
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --repo <string>  the clone URL of the test repository the quack cards commit to
+  --streams <string>  the streams to cut quack cards into, comma separated (a stream new to the sprint is made)
+  --tiers <string>  the model tiers each stream's cards take in turn, comma separated: frontier, heavy, pro or flash
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint preflight -h`:
+
+```
+usage: nova-sprint preflight --brief-dir <dir> [--repo-dir <dir>]
+from `nova-sprint help`:
+  nova-sprint preflight --brief-dir <dir> [--repo-dir <dir>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --brief-dir <string>  one brief per *.md file in this directory, in byte order of file name: preflight checks each one
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --repo-dir <string>  a repository clone: TEST names a test git grep finds at BASE, and BASE is checked there; without it both are unchecked
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: inspection: reads the briefs, the table and the repository, writes nothing
+```
+
+`nova-sprint release check -h`:
+
+```
+usage: nova-sprint release check [--json] [--streams <glob>] [--window <duration>] [--merge-p90 <duration>] [--check <name>]...
+from `nova-sprint help`:
+  nova-sprint release check [--json] [--streams <glob>] [--window <duration>] [--merge-p90 <duration>] [--check <name>]...
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --check <value>  run only this check, by name (repeat for more; default every check): no-stuck-friend, cards-settled, base-gate-green, two-ok-reads, prose-true, landings-promoted, no-open-judgment, merge-queue-p90
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --merge-p90 <duration>  the bar on merge-queue-p90: the p90 of the time cards spent merging (default 30m)
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --streams <string>  only the log of the streams this glob names (path.Match over the stream's name; default every stream)
+  --window <duration>  how far back a card's merging counts, for merge-queue-p90 (default 24h)
+exit codes: 0 every check passed (RELEASE OK), 1 a check failed (RELEASE NOT READY; each RELEASE CHECK line names what to look at), 2 usage or a store that did not answer
+effect: inspection: reads the store's log and the sprint's settings, writes nothing
+```
+
+`nova-sprint release -h`:
+
+```
+usage: nova-sprint release (<sentinel or held card>... | <selector> [--dry-run]) --reason <text> [--answers <note>]
+from `nova-sprint help`:
+  nova-sprint release check [--json] [--streams <glob>] [--window <duration>] [--merge-p90 <duration>] [--check <name>]...
+  nova-sprint release (<sentinel or held card>... | <selector> [--dry-run]) --reason <text> [--answers <note>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --answers <string>  the judgment notifications this answers, comma separated, each an id as inbox prints it or its alias (j<n>); coordinator-only; one invalid answer refuses the whole step, writing nothing, except an id the machine answered already since the inbox was read, which is a NOTE
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --reason <string>  what you looked at and found: recorded on the sentinel or held card, and in a sentinel's notification; a sentinel not yet reached is released when each card it waits for has landed, was dropped, or is in flight (taken, in review or merging), and refused naming the first that has not started
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint resolve -h`:
+
+```
+usage: nova-sprint resolve [<id>...] [--stream <s>] [--max <n>]
+from `nova-sprint help`:
+  nova-sprint resolve [<id>...] [--stream <s>] [--max <n>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dry-run  plan the step on one read of the sprint and print what it would change (WOULD lines) and refuse, and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --expect <int>  with --group: the group's size as inbox printed it; a group of another size now is refused and nothing changes
+  --group <string>  the members of the inbox group of this id (the id inbox prints; a group number is refused)
+  --json  print one JSON object for a program instead of the lines
+  --limit <value>  alias of --max, a whole number, accepted for one release
+  --max <int>  listed items of each kind (0 is all); when given, at most n cards, in work order; accept and ask take them in stream turns from the work table's stream index
+  --one  rework and drop: act on the one card named though the inbox holds a judgment group of several naming it (refused without it: the group is answered whole)
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --stream <string>  the cards of one stream
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: moves the waiting primaries whose needs landed in the sprint's store; --dry-run writes nothing
+```
+
+`nova-sprint friends watch -h`:
+
+```
+usage: nova-sprint friends watch [--actor <seat>] [--state <file>]
+from `nova-sprint help`:
+  nova-sprint friends watch [--actor <seat>] [--state <file>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --state <string>  optional file holding the last successfully delivered snapshot; each actor and push has its own file
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint status watch -h`:
+
+```
+usage: nova-sprint status watch [--actor <seat>] [--state <file>]
+from `nova-sprint help`:
+  nova-sprint status watch [--actor <seat>] [--state <file>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --state <string>  optional file holding the last successfully delivered snapshot; each actor and push has its own file
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint start -h`:
+
+```
+usage: nova-sprint start [--actor <string>] [--epoch <int>] [--json] [--max <int>] [--op <string>] [--redis <string>]
+from `nova-sprint help`:
+  nova-sprint start
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint stop -h`:
+
+```
+usage: nova-sprint stop --reason <text> --until <time or duration>
+from `nova-sprint help`:
+  nova-sprint stop --reason <text> --until <time or duration>
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --reason <string>  why the machine stops, shown with it: the machine line of where, inbox and the dashboard says "STOPPED by <actor>: <reason>, back by <time>" (required)
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --until <time or duration>  when the machine starts itself again: a time or duration, a duration from now (90m), a clock time (2:04 PM or 14:04, today's or tomorrow's) or an RFC 3339 time; the tick starts it then unless it is stopped again (required)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint run -h`:
+
+```
+usage: nova-sprint run [--answer-rules=false] [--idle-alarm=false] [--listen <address:port>] [--land] [--decide <dir>]
+from `nova-sprint help`:
+  nova-sprint run [--answer-rules=false] [--idle-alarm=false] [--listen <address:port>] [--land] [--decide <dir>]
+  nova-sprint run --listen <address>:<port> --land
+  ticks; serves the workers' verbs (take, finish, read, queue, fleet beat) on
+  <address>:<port>, this machine's address on the fleet's private network (it
+  checks no credential, so a name, a public address, a link-local address
+  and an every-network address such as 0.0.0.0 are refused); serves the
+  coordinator's verbs on 127.0.0.1:<port>; with --land
+  lands what the readers passed, so land is not run by hand beside it.
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --answer-rules  answer the mechanical judgments by rule, recorded "answered by rule <name>" (work came back failed: a harness fault or a HOLD with findings reworked on its tier with the failure as its fix, any other failure redealt, then a tier up; a card at its bound: a tier up, heavy to a friend; a late card: a wait once with progress, else returned and redealt; a conflict in a file no ledger owns: returned, redone on the tip, resumed; the same finding twice: marked a brief defect); nova-config's sprint row answer_rules_off turns single rules off; --answer-rules=false leaves every judgment to the coordinator (run answers by default, a tick by hand only with --answer-rules); nova-sprint rules prints what they would answer now
+  --cpuprofile <string>  write a CPU profile of the loop's first ticks to this file (see --profile-ticks)
+  --decide <dir>  also keep the record of the sprint's attempt and grade decisions in this dir (nova-decide's layer 2: attempt.jsonl, grade.jsonl): the finishes' attempt decisions recorded, every card graded before its first deal with JEV_API_KEY from this environment or read in this process when --keys or keys.json names it, and each decision's outcome attached when its card lands or is dropped, every 5s
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --idle-alarm  when the fleet works under half its width for 5m0s while cards wait, push the coordinator one note (the inbox, and inbox --push) naming the roots the waiting cards are behind, the most cards first, once an episode, and one more when it recovers (run: on by default; a tick by hand only with --idle-alarm)
+  --json  print one JSON object for a program instead of the lines
+  --keys <NAME,...>  the NAME,... of secrets this process reads from the seat login's nova-secrets seat (also recorded as keys.json beside the login): the decision key and each provider key. A name that cannot be read refuses at start. The unit's environment carries no key value
+  --land  also land what the readers passed, every 2s, one landing at a time, as the coordinator (land's defaults: each card's REPO: and BASE: lines); every cycle prints one line, and a landing still running after 10m0s raises one judgment naming the stage; land is then not run by hand
+  --land-parallel <int>  with --land, how many streams each landing merges at once before it lands them one at a time (land --land-parallel)
+  --listen <address:port>  also be the sprint's server: the workers' verbs on this address:port (this machine's address on the fleet's private network; a name, a public address, a link-local address, and an every-network address are refused), where nova-swarm member --server <address>:<port> sends them, and the coordinator's verbs on 127.0.0.1 at the same port, where NOVA_SPRINT_SERVER=127.0.0.1:<port> sends them
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --profile-ticks <int>  the ticks --cpuprofile covers; the profile is written after the last of them
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --tick-deadline <duration>  the least time a tick may take before it is given up (stretched to 3 x the median wall of the last 20 ticks, at most 1m0s): past it the stacks are printed, the tick's plan is given up and the loop goes on; three wedged ticks in a row (given up and not stopped within a further deadline) exit 4 so the supervisor starts the loop again (0: wait for ever)
+exit codes: 0 stopped (an interrupt), 2 usage or a store that did not answer, 3 its binary was replaced on disk (its supervisor starts the new one)
+```
+
+`nova-sprint tick -h`:
+
+```
+usage: nova-sprint tick [--answer-rules] [--idle-alarm] [--shadow]
+from `nova-sprint help`:
+  nova-sprint tick [--answer-rules] [--idle-alarm] [--shadow]
+  nova-sprint tick
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --answer-rules  answer the mechanical judgments by rule, recorded "answered by rule <name>" (work came back failed: a harness fault or a HOLD with findings reworked on its tier with the failure as its fix, any other failure redealt, then a tier up; a card at its bound: a tier up, heavy to a friend; a late card: a wait once with progress, else returned and redealt; a conflict in a file no ledger owns: returned, redone on the tip, resumed; the same finding twice: marked a brief defect); nova-config's sprint row answer_rules_off turns single rules off; --answer-rules=false leaves every judgment to the coordinator (run answers by default, a tick by hand only with --answer-rules); nova-sprint rules prints what they would answer now
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --idle-alarm  when the fleet works under half its width for 5m0s while cards wait, push the coordinator one note (the inbox, and inbox --push) naming the roots the waiting cards are behind, the most cards first, once an episode, and one more when it recovers (run: on by default; a tick by hand only with --idle-alarm)
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --shadow  plan the tick on the store and apply nothing: the store is opened read-only (every write a refusal), no beat, heartbeat, repair or restore is written, and the plan is printed, part by part, with its size and time; server switch runs it as the canary of a new binary
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint selftest land -h`:
+
+```
+usage: nova-sprint selftest land [--binary <path>] [--scratch-dir <dir>]
+from `nova-sprint help`:
+  nova-sprint selftest land [--binary <path>] [--scratch-dir <dir>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --binary <string>  the binary to test (default: this binary)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --scratch-dir <string>  scratch directory for the clone (default: temporary directory)
+exit codes: 0 done, 1 failed (lander broken or card did not land), 2 usage
+effect: inspection: lands a canned card on a scratch clone with this binary, writes nothing to the sprint
+```
+
+`nova-sprint selftest -h`:
+
+```
+usage: nova-sprint selftest [--dir <d>] [--keep]
+from `nova-sprint help`:
+  nova-sprint selftest land [--binary <path>] [--scratch-dir <dir>]
+  nova-sprint selftest [--dir <d>] [--keep]
+flags:
+  --dir <string>  the directory to make the selftest's fresh directory in (default: the system's temporary directory)
+  --keep  keep the fresh directory after the selftest (it is removed on success unless this is given; a failure always keeps it, named in the line)
+exit codes: 0 the selftest landed its card through the tree gate (SELFTEST OK), 1 it did not (SELFTEST FAILED names the step, the why and the kept directory), 2 usage
+effect: local write: makes a fresh directory, a bare origin and a clone whose base holds a go module, runs the card's flow of the walkthrough on a twin file in it and lands one card through the tree gate; writes only in that directory, opens no store of the caller's and no network, and removes it unless --keep
+```
+
+`nova-sprint goal set -h`:
+
+```
+usage: nova-sprint goal set <name> [--file <path>] [--to file:<path>]
+from `nova-sprint help`:
+  nova-sprint goal set <name> [--file <path>] [--to file:<path>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --file <string>  the file that holds the goal text: what this person is to keep doing
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --to <string>  how to reach the person: file:<absolute path> (default: a file this verb prints); bus is not built
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint goal show -h`:
+
+```
+usage: nova-sprint goal show [<name>]
+from `nova-sprint help`:
+  nova-sprint goal show [<name>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: inspection: reads the goals in the sprint's store, writes nothing
+```
+
+`nova-sprint goal drop -h`:
+
+```
+usage: nova-sprint goal drop <name>
+from `nova-sprint help`:
+  nova-sprint goal drop <name>
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint take -h`:
+
+```
+usage: nova-sprint take --as <member> [<card>@<gen>...] [--epoch <n>] [--max <n>]
+from `nova-sprint help`:
+  nova-sprint take --as <member> [<card>@<gen>...] [--epoch <n>] [--max <n>]
+  nova-sprint take --as m1 --epoch 0
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --as <string>  the fleet member taking its cards; several, comma separated, each take from their own ready queue in one step
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --limit <value>  alias of --max, a whole number, accepted for one release
+  --max <int>  listed items of each kind (0 is all); when given, the first n of its ready queue (omitted, 1); with several members, n of each
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint finish -h`:
+
+```
+usage: nova-sprint finish --as <member> <card>@<gen>... --epoch <n> (--head <commit> | --failed) [--report <text>] [--usage <text>]
+from `nova-sprint help`:
+  nova-sprint finish --as <member> <card>@<gen>... --epoch <n> (--head <commit> | --failed) [--report <text>] [--usage <text>]
+  nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --head "$(git -C work rev-parse HEAD)" --report done
+  nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --report done
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --as <string>  the fleet member finishing its cards; several, comma separated, each finishing its own named cards in one step
+  --base <string>  the branch the work started from
+  --branch <string>  the branch the work is on (its packet names the one to use)
+  --decision <string>  the take's attempt decision, one JSON record line as nova-decide makes it (a work member with JEV_API_KEY asks it for every take): its op naming this take's card and attempt, else the finish is refused; kept on the card, recorded by the server's decide lane, and a failed finish whose class is no-result or nothing-to-do at or above that class's bar on the card is routed by it (docs/SPEC-SPRINT.md section 2)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --failed  the work failed (default: ok); a card named by id whose attempt a deadline failed already, with no later attempt started, is finished by this report, LAND or HOLD, rather than refused
+  --head <string>  the commit the work finished at, the head land merges (default: the card's id, for a run with no git: land refuses a head that is not a commit id)
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --report <string>  the worker's report
+  --usage <string>  what the run spent, one line (the member passes its child's budget, wall, tokens by class and cost): kept on the attempt's record, timed and priced
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint progress -h`:
+
+```
+usage: nova-sprint progress --as <worker> <card>[@<gen>]... --epoch <n>
+from `nova-sprint help`:
+  nova-sprint progress --as <worker> <card>[@<gen>]... --epoch <n>
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --as <string>  the fleet member or friend that holds the cards: only the holder stamps a card's progress
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint ask -h`:
+
+```
+usage: nova-sprint ask [<id>... | --group <id> [--expect <n>]] [--stream <s>] [--max <n>] [--another] [--answers <note>]
+from `nova-sprint help`:
+  nova-sprint ask [<id>... | --group <id> [--expect <n>]] [--stream <s>] [--max <n>] [--another] [--answers <note>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --another  one more reader for a primary already asked
+  --answers <string>  the judgment notifications this answers, comma separated, each an id as inbox prints it or its alias (j<n>); coordinator-only; one invalid answer refuses the whole step, writing nothing, except an id the machine answered already since the inbox was read, which is a NOTE
+  --dry-run  plan the step on one read of the sprint and print what it would change (WOULD lines) and refuse, and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --expect <int>  with --group: the group's size as inbox printed it; a group of another size now is refused and nothing changes
+  --group <string>  the members of the inbox group of this id (the id inbox prints; a group number is refused)
+  --instead <string>  take back this reader's read (asked or reading) of the one primary named and ask one other reader, as --another chooses
+  --json  print one JSON object for a program instead of the lines
+  --limit <value>  alias of --max, a whole number, accepted for one release
+  --max <int>  listed items of each kind (0 is all); when given, at most n cards, in work order; accept and ask take them in stream turns from the work table's stream index
+  --one  rework and drop: act on the one card named though the inbox holds a judgment group of several naming it (refused without it: the group is answered whole)
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --stream <string>  the cards of one stream
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: asks a reader for each named primary (one more with --another, another in place with --instead) in the sprint's store; --dry-run writes nothing
+```
+
+`nova-sprint queue -h`:
+
+```
+usage: nova-sprint queue --as <reader|member> | --stream <s>
+from `nova-sprint help`:
+  nova-sprint queue --as <reader|member> | --stream <s>
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --as <string>  a reader (its read cards, asked then reading) or a fleet member (its work cards, ready then working)
+  --col <string>  with --stream: waiting lists the stream's waiting primaries, each with what it still waits for
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --have <string>  with --packets: the cards, comma separated, the worker wants no packet for (it runs them, or will not start them yet)
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --packets <string>  with --as: the packets the worker wants, so the answer carries only those (every other card is listed with its id, column, attempt and gen, and the answer's epoch, with no packet): the first n cards it may start (asked, ready) and every in-flight card (reading, working), each not named by --have; without it every card carries its packet
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --stream <string>  a stream: its merge queue, then its stuck cards
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: inspection: reads a worker's or a stream's cards, writes nothing
+```
+
+`nova-sprint read -h`:
+
+```
+usage: nova-sprint read --as <reader> (--begin | --ok | --broken) [<card>[@<gen>]...] --epoch <n> [--max <n>] [--finding <text>] [--usage <text>] | --as <reader> --return <card> --reason <text> --epoch <n> [--usage <text>]
+from `nova-sprint help`:
+  nova-sprint read --as <reader> (--begin | --ok | --broken) [<card>[@<gen>]...] --epoch <n> [--max <n>] [--finding <text>] [--usage <text>] | --as <reader> --return <card> --reason <text> --epoch <n> [--usage <text>]
+  nova-sprint read --as reader-a --begin --epoch 0
+  nova-sprint read --as reader-a --ok --epoch 0
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --as <string>  the reader; use read-card IDs from queue --as <reader>; several readers, comma separated, each reporting its own named read cards in one step
+  --begin  asked -> reading; a named queued packet uses <read-card>@<gen>, while --max selects the live queue
+  --broken  the read found it broken
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --finding <string>  what the read found; with --broken it names the file (file:line), the line, or the card's STEP or RULE the work breaks, and what to change, or the read is refused
+  --json  print one JSON object for a program instead of the lines
+  --limit <value>  alias of --max, a whole number, accepted for one release
+  --max <int>  listed items of each kind (0 is all); when given, the first n of the reader's queue (omitted, 1)
+  --ok  the read found it good
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --reason <string>  with --return: why the read has no verdict (it reaches the inbox)
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --return <string>  hand back a read the reader holds and has no verdict on: not a read; the next tick asks it of another reader free at the attempt, or of this reader again; no finding against the work
+  --usage <string>  with --ok, --broken or --return: what the read spent, one line (the reader passes its child's tokens, wall and cost): kept on the read card, timed and priced
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint accept -h`:
+
+```
+usage: nova-sprint accept (<id>... [--heavy --evidence <path> --reason <text>] | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]
+from `nova-sprint help`:
+  nova-sprint accept (<id>... [--heavy --evidence <path> --reason <text>] | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --answers <string>  the judgment notifications this answers, comma separated, each an id as inbox prints it or its alias (j<n>); coordinator-only; one invalid answer refuses the whole step, writing nothing, except an id the machine answered already since the inbox was read, which is a NOTE
+  --dry-run  plan the step on one read of the sprint and print what it would change (WOULD lines) and refuse, and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --evidence <string>  with --heavy: the path of a readable file the coordinator's heavy read rests on; its sha256 is recorded beside it
+  --expect <int>  with --group: the group's size as inbox printed it; a group of another size now is refused and nothing changes
+  --group <string>  the members of the inbox group of this id (the id inbox prints; a group number is refused)
+  --heavy  the coordinator's own heavy read of each named primary in review, at its attempt and head: one ok read toward its read rule, recorded on the primary under coordinator:<actor> with --evidence and its sha256, never as a reader's read; a reader's broken read at the attempt stays, marked overruled; wants ids, --evidence and --reason
+  --json  print one JSON object for a program instead of the lines
+  --limit <value>  alias of --max, a whole number, accepted for one release
+  --max <int>  listed items of each kind (0 is all); when given, at most n cards, in work order; accept and ask take them in stream turns from the work table's stream index
+  --one  rework and drop: act on the one card named though the inbox holds a judgment group of several naming it (refused without it: the group is answered whole)
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --read-ok  every primary in review with the ok reads it needs (one reader's for a flash card, two different readers' for a pro card); moves eligible primaries into the merge queue. The tick does this itself every tick and tells the seat (ready to merge); the verb is for a stuck case, and says "nothing waits: the tick accepts" when there is nothing
+  --reason <string>  with --heavy: why the coordinator's read stands, kept on the primary
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --stream <string>  the cards of one stream
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: moves the eligible primaries in review into the merge queue, or records the coordinator's heavy read on each named primary, in the sprint's store; --dry-run writes nothing
+```
+
+`nova-sprint rework -h`:
+
+```
+usage: nova-sprint rework (<id>... | --group <id> [--expect <n>] | <selector> [--dry-run]) [--fix <text>] [--tier <tier>] [--answers <note>] [--one]
+from `nova-sprint help`:
+  nova-sprint rework (<id>... | --group <id> [--expect <n>] | <selector> [--dry-run]) [--fix <text>] [--tier <tier>] [--answers <note>] [--one]
+  nova-sprint rework --group finish-0314a1b2-1.1 --expect 2 --answers finish-0314a1b2-1.1
+  nova-sprint rework s2-4 --fix '<fix>'
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --answers <string>  the judgment notifications this answers, comma separated, each an id as inbox prints it or its alias (j<n>); coordinator-only; one invalid answer refuses the whole step, writing nothing, except an id the machine answered already since the inbox was read, which is a NOTE
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --expect <int>  with --group: the group's size as inbox printed it; a group of another size now is refused and nothing changes
+  --fix <string>  the fix for every primary; without it each takes its own: the finding of its broken read, or the report of its failed work; the next attempt is staged at the tip of the card's base branch, the last pushed attempt's work carried on top where it applies cleanly, and where it does not the child is told that work must be redone
+  --group <string>  the members of the inbox group of this id (the id inbox prints; a group number is refused)
+  --json  print one JSON object for a program instead of the lines
+  --limit <value>  alias of --max, a whole number, accepted for one release
+  --max <int>  listed items of each kind (0 is all); when given, at most n cards, in work order; accept and ask take them in stream turns from the work table's stream index
+  --one  rework and drop: act on the one card named though the inbox holds a judgment group of several naming it (refused without it: the group is answered whole)
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --stream <string>  the cards of one stream
+  --tier <string>  the tier (frontier, heavy, pro or flash) this attempt and every later deal of the card draws its route from, over its brief's line 1, kept on the card: it pins the card, never escalated past it (flash first); a card whose brief pins a model is refused; at a redeal bound it never names a lower tier, and when the attempt before also ended at its bound on the card's tier the rework is refused unless it names a tier above (flash, pro, heavy, frontier) or the provider its takes failed on is back, which lifts it once per tier per card
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint return -h`:
+
+```
+usage: nova-sprint return (<id>... | --group <id> [--expect <n>] | <selector> [--dry-run]) [--reason <text>] [--answers <note>]
+from `nova-sprint help`:
+  nova-sprint return (<id>... | --group <id> [--expect <n>] | <selector> [--dry-run]) [--reason <text>] [--answers <note>]
+  nova-sprint return s2-4 --reason 'suspect of the red batch' --answers merge-0315c3d4-1.1
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --answers <string>  the judgment notifications this answers, comma separated, each an id as inbox prints it or its alias (j<n>); coordinator-only; one invalid answer refuses the whole step, writing nothing, except an id the machine answered already since the inbox was read, which is a NOTE
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --expect <int>  with --group: the group's size as inbox printed it; a group of another size now is refused and nothing changes
+  --group <string>  the members of the inbox group of this id (the id inbox prints; a group number is refused)
+  --json  print one JSON object for a program instead of the lines
+  --limit <value>  alias of --max, a whole number, accepted for one release
+  --max <int>  listed items of each kind (0 is all); when given, at most n cards, in work order; accept and ask take them in stream turns from the work table's stream index
+  --one  rework and drop: act on the one card named though the inbox holds a judgment group of several naming it (refused without it: the group is answered whole)
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --reason <string>  why it goes back to review
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --stream <string>  the cards of one stream
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint redo -h`:
+
+```
+usage: nova-sprint redo <card>... [--stream <s>] [--answers <note>]
+from `nova-sprint help`:
+  nova-sprint redo <card>... [--stream <s>] [--answers <note>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --answers <string>  the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing
+  --dry-run  plan the step on one read of the sprint and print what it would change (WOULD lines) and refuse, and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --expect <int>  with --group: the group's size as inbox printed it; a group of another size now is refused and nothing changes
+  --group <string>  the members of the inbox group of this id (the id inbox prints; a group number is refused)
+  --json  print one JSON object for a program instead of the lines
+  --limit <value>  alias of --max, a whole number, accepted for one release
+  --max <int>  listed items of each kind (0 is all); when given, at most n cards, in work order; accept and ask take them in stream turns from the work table's stream index
+  --one  rework and drop: act on the one card named though the inbox holds a judgment group of several naming it (refused without it: the group is answered whole)
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --stream <string>  the cards of one stream
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: returns, reworks and resumes the named conflicted cards in one step in the sprint's store; --dry-run writes nothing
+```
+
+`nova-sprint drop -h`:
+
+```
+usage: nova-sprint drop (<id>... | --stream <s> --col <state> | --group <id> [--expect <n>] | <selector> [--dry-run]) --reason <text> [--answers <note>] [--one]
+from `nova-sprint help`:
+  nova-sprint drop (<id>... | --stream <s> --col <state> | --group <id> [--expect <n>] | <selector> [--dry-run]) --reason <text> [--answers <note>] [--one]
+  nova-sprint drop --group finish-0314a1b2-1.1 --expect 2 --reason '<why>' --answers finish-0314a1b2-1.1
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --answers <string>  the judgment notifications this answers, comma separated, each an id as inbox prints it or its alias (j<n>); coordinator-only; one invalid answer refuses the whole step, writing nothing, except an id the machine answered already since the inbox was read, which is a NOTE
+  --cascade  drop too every waiting primary that needs a card named, and their dependants, with the same reason; without it a card another waiting primary still needs is refused, naming the dependants
+  --col <string>  the cards in one column (a state)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --expect <int>  with --group: the group's size as inbox printed it; a group of another size now is refused and nothing changes
+  --group <string>  the members of the inbox group of this id (the id inbox prints; a group number is refused)
+  --json  print one JSON object for a program instead of the lines
+  --limit <value>  alias of --max, a whole number, accepted for one release
+  --max <int>  listed items of each kind (0 is all); when given, at most n cards, in work order; accept and ask take them in stream turns from the work table's stream index
+  --one  rework and drop: act on the one card named though the inbox holds a judgment group of several naming it (refused without it: the group is answered whole)
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --reason <string>  why it leaves the table; kept with its record
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --repo <value>  only the cards of the streams recording this repository (owner/name), comma separated or repeated; needs --expect <n>, the number of streams it selects
+  --stream <string>  the cards of one stream
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint priority -h`:
+
+```
+usage: nova-sprint priority <id>... | (<id>... | --stream <s>) (--blocker | --critical | --fix | --high | --normal | --low) --reason <text>
+from `nova-sprint help`:
+  nova-sprint priority <id>... | (<id>... | --stream <s>) (--blocker | --critical | --fix | --high | --normal | --low) --reason <text>
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --blocker  set the level blocker
+  --critical  set the level critical
+  --dry-run  plan the step on one read of the sprint and print what it would change (WOULD lines) and refuse, and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --fix  set the level fix
+  --high  set the level high
+  --json  print one JSON object for a program instead of the lines
+  --low  set the level low
+  --max <int>  listed items of each kind; 0 is all
+  --normal  set the level normal
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --reason <string>  why (required to set), recorded on each card's timeline, and the stream's, with the actor
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --stream <string>  one call sets every card now in the stream, whatever its column and whatever level it had (its own included), and the stream's default for cards added later (a later card's own PRIORITY line wins over the default); a held stream is set and the output says it is held
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: with a level, sets it on the named cards or the stream in the sprint's store; with none, prints the levels and writes nothing; --dry-run writes nothing
+```
+
+`nova-sprint unpin -h`:
+
+```
+usage: nova-sprint unpin (<id>... | --stream <s>) --reason <text> [--dry-run]
+from `nova-sprint help`:
+  nova-sprint unpin (<id>... | --stream <s>) --reason <text> [--dry-run]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dry-run  show the planned unpins and refusals without writing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --reason <string>  required reason recorded with the dropped WHO line
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --stream <string>  unpin unstarted cards in this stream; report each refusal
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint rebase -h`:
+
+```
+usage: nova-sprint rebase --from <branch> --to <branch> [--repo-dir <clone>] [--dry-run]
+from `nova-sprint help`:
+  nova-sprint rebase --from <branch> --to <branch> [--repo-dir <clone>] [--dry-run]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dry-run  show the planned rebases and refusals without writing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --from <string>  the base branch the cards name now, on their BASE: line
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --repo-dir <string>  a clone of the cards' repository, its branches as fetched, for the one git merge-base --is-ancestor --from --to that a dealt card needs; without it, a dealt card's head is not checked
+  --to <string>  the branch that replaces it: it must contain --from (--repo-dir checks it, git merge-base --is-ancestor)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint rank -h`:
+
+```
+usage: nova-sprint rank (<id>... | <selector> [--dry-run]) (--score <n> | --first | --before <id>) [--answers <note>]
+from `nova-sprint help`:
+  nova-sprint rank (<id>... | <selector> [--dry-run]) (--score <n> | --first | --before <id>) [--answers <note>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --answers <string>  the judgment notifications this answers, comma separated, each an id as inbox prints it or its alias (j<n>); coordinator-only; one invalid answer refuses the whole step, writing nothing, except an id the machine answered already since the inbox was read, which is a NOTE
+  --before <string>  in line in front of this primary of the cards' own stream, in the order named, placed as add --before places cards (the line is never renumbered)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --first  ahead of every primary
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --score <string>  the new score of the first id; the rest follow it
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint relink -h`:
+
+```
+usage: nova-sprint relink <old-id>[,<old-id>...] <new-id> [--reason <text>]
+from `nova-sprint help`:
+  nova-sprint relink <old-id>[,<old-id>...] <new-id> [--reason <text>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dry-run  say what would be relinked and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --reason <string>  why the twin replaces the old card, recorded with the answer of each blocked judgment it closes
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: re-points what waited on the old cards to their twin in the sprint's store and answers their blocked judgments; --dry-run writes nothing
+```
+
+`nova-sprint recut -h`:
+
+```
+usage: nova-sprint recut <id> (--tier <flash|pro|heavy|frontier> | --brief-file <path> [--rules <file>]) [--new <id>] | <selector> (--tier <t> | --set-base <branch> | --drop-who)... [--dry-run]
+from `nova-sprint help`:
+  nova-sprint recut <id> (--tier <flash|pro|heavy|frontier> | --brief-file <path> [--rules <file>]) [--new <id>] | <selector> (--tier <t> | --set-base <branch> | --drop-who)... [--dry-run]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --brief-file <string>  the twin's brief, read from this file and held to the card lint as brief holds one; its DEPENDS-ON: line's needs are taken with the old card's (default: the old card's brief)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --new <id>  the twin's id (default: the old id with the next letter, b for a card never re-cut, c for its twin re-cut, and so on)
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --repo-dir <string>  retired with --widen: give it to brief <id> --widen
+  --rules <string>  with --brief-file: the child rules file the brief is held to (default: the file init --rules recorded, else the built-in general rules)
+  --tier <string>  the tier the twin is pinned to (frontier, heavy, pro or flash): every deal and read of it draws its route from it (default: the old card's pin)
+  --widen  retired: a PATHS widening edits the card in place, the same id; run: nova-sprint brief <id> --widen
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint twin -h`:
+
+```
+usage: nova-sprint twin <card> [--paths <extra,...>] [--needs <card,...>] [--before <card>] [--tier <t>] [--instruction <text>] [--carry]
+from `nova-sprint help`:
+  nova-sprint twin <card> [--paths <extra,...>] [--needs <card,...>] [--before <card>] [--tier <t>] [--instruction <text>] [--carry]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --before <string>  the card of the stream the twin stands in front of (default: the card twinned, its place)
+  --carry  the twin starts from the pushed head of the card's latest attempt: THE TASK names that branch and head, and the brief's CARRY: line holds it; refused, exit 1, when no attempt pushed a full head
+  --dry-run  plan the step on one read of the sprint and print what it would change (WOULD lines) and refuse, and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --instruction <string>  the correction, written verbatim at the head of the brief's THE TASK
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --needs <string>  cards the twin needs besides the card's own needs, comma separated
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --paths <string>  globs joined to the brief's PATHS: line, comma separated, each once (a glob that climbs out with .. is refused)
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --tier <string>  the tier the twin is pinned to (frontier, heavy, pro or flash; default: the card's pin)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: replaces the card by its twin in the sprint's store (a merging card is returned first, then twinned; its dry run plans the return alone); --dry-run writes nothing
+```
+
+`nova-sprint brief -h`:
+
+```
+usage: nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>] [--answers <note>] | --dir <dir> [--rules <file>] | --group <id> [--expect <n>] (--brief-file <path> | --dir <dir>) [--answers <note>] | <id> --widen [--repo-dir <clone>] | <id> --tier <flash|pro|heavy|frontier> | <selector> (--set-base <branch> | --drop-who | --tier <t>)... [--dry-run]
+from `nova-sprint help`:
+  nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>] [--answers <note>] | --dir <dir> [--rules <file>] | --group <id> [--expect <n>] (--brief-file <path> | --dir <dir>) [--answers <note>] | <id> --widen [--repo-dir <clone>] | <id> --tier <flash|pro|heavy|frontier> | <selector> (--set-base <branch> | --drop-who | --tier <t>)... [--dry-run]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --answers <string>  the judgment notifications this answers, comma separated, each an id as inbox prints it or its alias (j<n>); coordinator-only; one invalid answer refuses the whole step, writing nothing, except an id the machine answered already since the inbox was read, which is a NOTE
+  --brief <string>  the new brief: a child's whole brief, at most 16 KiB, held to the card lint as add holds one (--rules, else the file init --rules recorded, else the built-in general rules) and to the same PATHS check at the BASE tip (a literal path must exist, a glob must match a file, and every func, type or verb STOP or START names with a file must be inside a PATHS file; a CARRY: head= brief, such as --widen writes, skips the existence check) and refused, exit 2, nothing written, when it fails; a primary waiting, ready or in review takes one in place, on a STOPPED machine or a RUNNING one (there applied at its next tick), keeping its id: one an attempt was dealt for opens its next attempt, staged from its last pushed head, its bound reset; a card working, merging or landed keeps its brief; one that differs in its DEPENDS-ON: line alone is taken in any state, the machine running or the card dealt, and re-points the card's needs
+  --brief-file <string>  the new brief, read from this file: its bytes as they are, its one trailing newline cut; not with --brief
+  --dir <string>  a directory of new briefs: one per *.md file, the card its base name without .md, each read and held as --brief-file's; one bad file refuses the whole call, nothing written; not with an id, --brief or --brief-file; with --group, one file for each member of the group and no other
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --expect <int>  with --group: the group's size as inbox printed it; a group of another size now is refused and nothing changes
+  --group <string>  the members of the inbox group of this id (the id or alias inbox prints): a group of one takes --brief or --brief-file, a group of several --dir
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --repo-dir <string>  with --widen: the clone the base's and the head's files are read in (default: land's clone of the card's REPO:)
+  --rules <string>  the child rules file the brief is held to (default: the file init --rules recorded, else the built-in general rules)
+  --tier <string>  re-tier the card instead of replacing its brief: the tier (frontier, heavy, pro or flash) every later deal and read of the card draws its route from, kept on the card as rework --tier keeps it (it pins the card, never escalated past it); taken on a RUNNING machine and for a card dealt, where it applies to the next attempt; not with --brief or --brief-file
+  --widen  the card's brief edited in place with its PATHS widened by the PATHS-PROPOSED line of its latest attempt's report (the paths before any prose on that line) and a CARRY: line naming that attempt's pushed head, its next attempt starting from it; the same id, no twin; refused, exit 1, for no line, a glob that climbs out with .. or names no file at the base or the head
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint move -h`:
+
+```
+usage: nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
+from `nova-sprint help`:
+  nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --after <string>  place the cards in line after this primary of the stream
+  --before <string>  place the cards in line in front of this primary of the stream
+  --dry-run  plan the step on one read of the sprint and print what it would change (WOULD lines) and refuse, and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --score <string>  the first card's score in its new line; the rest follow it (default: after every primary)
+  --stream <string>  the stream the cards move to: one of the sprint's, or a new one, made as add makes it
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: moves the named cards to the stream, in line where --before, --after or --score says, in the sprint's store; --dry-run writes nothing
+```
+
+`nova-sprint merge -h`:
+
+```
+usage: nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]
+from `nova-sprint help`:
+  nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]
+  nova-sprint merge --stream s1 --batch 1
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --base-red <string>  fact: the base fails its tree gate, this the error (land's base-gate rule, after its third failure): the stream stops, no card moves
+  --base-ref <string>  with --landed: the fetched tip of the base branch in --repo (origin/<base>)
+  --batch <int>  the batch: the head n of the stream's queue (the lander's selection; to record a landing name the cards with --landed)
+  --conflict <string>  fact: this card of the batch did not merge; on its own head (a file conflict, the lander's checks, the tree gate its base passes, as --note and --conflict-kind say) it is reworked at the base's tip, or returned for the widen rule, and the stream goes on; otherwise the stream stops
+  --conflict-kind <string>  with --conflict: file (a path no generated ledger owns did not merge: the card's own, reworked at the tip) or ledger (a generated ledger the lander could not resolve: the stream stops)
+  --conflict-path <value>  with --conflict: a path that did not merge; again, or comma separated, for more
+  --cross <string>  fact: <card>=<other>: the card needs <other> first; <other> is on the table, in another stream, not landed
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --landed <value>  the record by name: <id>@<head> of each card pushed, again or comma separated; each must be merging in --stream at that head and the head an ancestor of --base-ref in --repo, or all are refused and nothing is written
+  --max <int>  listed items of each kind; 0 is all
+  --note <string>  what the facts' source said
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --red  fact: the stream branch went red on the batch
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --rejected  fact: the merge queue rejected the batch
+  --repo <string>  with --landed: a clone whose --base-ref is fetched; git merge-base --is-ancestor runs there, once per card
+  --stream <string>  the stream whose queued batches are selected to merge and land
+  --suspect <value>  with --red: a card of the batch suspected of turning it red; again, comma separated, or ids after it for more
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint land -h`:
+
+```
+usage: nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
+from `nova-sprint help`:
+  nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
+  nova-sprint land --stream s1 --repo-dir work --base sprint/s1
+  nova-sprint land --stream s1 --check 'make test'
+  merges each queued card's head (--no-ff) in queue order onto a branch cut
+  from origin's base, one batch per run of cards naming one REPO: and BASE:
+  (--base for a card naming none); runs --check once per batch; pushes, never
+  forced, rebuilding once on a moved base; then reports the batch as merge
+  --stream s1 --batch <n> does. A head missing or in conflict ends the batch
+  before it and is reported as merge --conflict, a red check as --red, a
+  second rejected push as --rejected. Each head merged is checked first, by
+  script and no model: a head whose diff changes a file outside its brief's
+  PATHS, or leaves a stranded sentence fragment or an unmatched backquote in
+  prose, ends the batch as a head in conflict does. Tests, testdata, tla/RUNS.tsv and
+  tla/CASES.tsv, the docs catalog and AGENTS.md maps are inside every PATHS. A card that adds a directory
+  owns its catalog row and the AGENTS.md maps; a conflict only in those maps, or
+  those maps and added catalog rows, resolves as the ledgers do. A conflict only
+  in the generated ledgers lands: the tip's side, then their tests' update run
+  (NOVA_CI_UPDATE=1) to a fixed point, one commit. A refusal of the card's
+  own head (a file conflict, the lander's checks, a merged tree failing the
+  tree gate its base passes) stops nothing: the card is reworked at the
+  base's tip (the refusal its fix, the seat told once), or for files outside
+  its PATHS returned for the widen rule, and the stream's other cards land in
+  the same pass; a card at its brief's bound goes back to review instead. A
+  ledger the lander could not resolve, or a head origin does not hold, stops
+  the stream, and after resume land merges the head again. The clone is --repo-dir,
+  else the dir= each line names; git uses the caller's environment. A kept
+  clone a pass cut short left not clean is restored to the fetched base before
+  the batch (LAND CLEANED names the files); a --repo-dir one is refused. After
+  the whole pass each landed merge diff is scored (nova-decide's score
+  decision, with the key JEV_API_KEY holds, a minute for the pass; recorded in
+  decide/score.jsonl under the land root): a batch whose cards' top class meets
+  the sprint row's decide_score_bar (empty: none) raises one judgment, landed
+  work scored low, listing them (scored=, judged=).
+  nova-sprint land --land-parallel 4
+  merges the streams' batches beside each other, up to that many at once, each in
+  its own worktree of the clone (<clone>@<stream> under the land root), each batch's
+  tree gated once as a whole (a red gate then gates its heads one by one, to blame
+  the head); then lands the green batches one at a time in priority order: a batch
+  cut from the tip the base still has is pushed with no new gate; one whose base moved
+  (a batch landed before it) is merged again onto the new tip and pushed with no new
+  gate when it changes no file the landings since touched, else gated once combined,
+  and a red combined gate refuses it for this pass, naming what it collided with, and
+  stops no stream. 1 merges the streams one after another.
+  nova-sprint land --stream s1 --dry-run
+  reads the store only: no git, no push, no report. The window: land pins
+  each card's head and attempt as it reads them; a caller's --epoch is held
+  before any git, the queue, the heads and the epoch again just before the
+  push, and the report lands the batch, its cards by name, only while the queue
+  holds each of them at that head at that epoch (one store step); a card
+  accepted or ranked ahead since changes nothing. A clear, a return, a
+  rework or a crash after the check leaves the push unreported (LAND
+  FAILED, exit 2; run land again, never a bare merge, and its own checks
+  decide: an unchanged card is recorded with no new push, a reworked one
+  merged at its new head or met in conflict); a clear there pushes for an epoch
+  just left: nothing is recorded for it, and the push is not undone.
+  nova-sprint land --stream s1
+  run again, it recovers once the outside is quiet (tla/Land.tla, Recovers),
+  not otherwise: a run cut short between the push and the report on every
+  try never reports; and a base that moves twice between the read and the
+  push gives up (one rebuild, then the rejected fact, the stream stopped):
+  nothing is pushed or lost and the cards stay queued; resume the stream
+  (nova-sprint resume --stream s1 --did 'the base moved') and run land again.
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --base <string>  the base branch of a card whose brief names no BASE: line
+  --check <string>  a command run once per batch, by sh -c in the clone on the batch branch, before the push (bounded to 30m); non-zero reports the batch red and pushes nothing
+  --dry-run  print the batches it would land and change nothing: reads the store only (no git, no push, no report)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --land-parallel <int>  how many streams merge at once, each in its own worktree of the clone, before the landings go one at a time (landpass.go); 1 merges the streams one after another
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --repo-dir <string>  the clone to land from, its origin the remote pushed to; each stream's batch is built in a worktree of it under the land root (default: a clone per repository under the directory each line names)
+  --stream <value>  a stream to land (again, or comma separated, for more; default: every stream with cards queued to merge and not stopped)
+exit codes: 0 every batch landed (--dry-run: would land), 1 a batch was refused (its line names the next step), 2 usage, a store that did not answer, or a push that landed and was not reported (run land again)
+```
+
+`nova-sprint landed -h`:
+
+```
+usage: nova-sprint landed <id>... --sha <commit> --reason <text> [--repo-dir <clone>] [--base <branch>]
+from `nova-sprint help`:
+  nova-sprint landed <id>... --sha <commit> --reason <text> [--repo-dir <clone>] [--base <branch>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --base <string>  the base branch of a card whose brief names no BASE: line
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --reason <string>  how the work got there, in a few words (required): a pass cut short after its push, a pull request
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --repo-dir <string>  the clone to check in, its origin the card's repository (default: land's clone per repository)
+  --sha <string>  the commit on origin/<base> the cards' work is in, 7 to 40 hex digits (required)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint snapshot -h`:
+
+```
+usage: nova-sprint snapshot (--dir <dir> [--keep <n>] [--every <duration>] | --restore-drill <file>)
+from `nova-sprint help`:
+  nova-sprint snapshot (--dir <dir> [--keep <n>] [--every <duration>] | --restore-drill <file>)
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dir <string>  the directory the snapshots are written to (required unless --restore-drill)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --every <duration>  take a snapshot now and again each time this passes, until interrupted (default: once)
+  --json  print one JSON object for a program instead of the lines
+  --keep <int>  how many verified snapshots stay; older ones are pruned after a newer one verifies
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --restore-drill <string>  check this snapshot file's integrity (its checksum, the RDB's header, version and CRC-64) and print its counts; not a semantic restore; the live store is never opened
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint backup -h`:
+
+```
+usage: nova-sprint backup (--out <dir> [--part-bytes <n>] [--secrets-store <dir> --secrets-as <seat> --secrets-key <path> --sops <path>] | --file <path> [--dry-run])
+from `nova-sprint help`:
+  nova-sprint backup (--out <dir> [--part-bytes <n>] [--secrets-store <dir> --secrets-as <seat> --secrets-key <path> --sops <path>] | --file <path> [--dry-run])
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dry-run  verify the backup in memory without writing --file; writes nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --file <string>  the file the backup is written to (it must not exist); or --out
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --nova-secrets <string>  the nova-secrets program the --out scan runs under
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --out <string>  the directory the RESTORE dump's parts, SHA256SUMS and README.md are written to (it must not exist or be empty); or --file
+  --part-bytes <int>  the largest part of the xz with --out, in bytes (under 100 MB)
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --redis-server <string>  the redis-server --out restores a Redis store's dump into, a throwaway on a unix socket
+  --scan <string>  the child nova-secrets exec runs: count the values of these variables found on stdin (backup --out runs it)
+  --secrets-as <string>  the nova-secrets seat the --out scan reads (default: the seat login's)
+  --secrets-key <string>  the seat's age key file (default: the seat login's)
+  --secrets-store <string>  the nova-secrets store the --out scan reads (default: the seat login's)
+  --sops <string>  the sops program nova-secrets exec runs (default: the seat login's)
+  --split <string>  the split program --out splits with
+  --xz <string>  the xz program --out compresses with
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: with --out, writes the epoch's keys and the shared keys as a RESTORE text dump, xz -9, split into parts under 100 MB, with SHA256SUMS and a README section, after restoring the parts into a throwaway store under this build's function library, comparing the counts, and scanning for every nova-secrets value under nova-secrets exec (counts only); --out is written only when every step passed. With --file, writes the store to a new owner-only file, restores it into a twin, compares and scans it for secrets, and removes the file when any step fails; --dry-run writes nothing; the store is only read
+```
+
+`nova-sprint demo load -h`:
+
+```
+usage: nova-sprint demo load <backup.xz part>... [--sha256 <hex>] [--dir <dir>] [--xz <path>] [--redis-server <path>]
+from `nova-sprint help`:
+  nova-sprint demo load <backup.xz part>... [--sha256 <hex>] [--dir <dir>] [--xz <path>] [--redis-server <path>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dir <string>  the directory the demo's Redis directory and state file are kept under (default: the user cache directory's nova-sprint/demo)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --redis-server <string>  the redis-server the demo runs, on a free 127.0.0.1 port
+  --sha256 <string>  the sha256 of the joined .xz, when no <joined>.sha256 or SHA256SUMS sits beside the parts
+  --xz <string>  the xz program the backup is decompressed with
+exit codes: 0 the demo is up and where read it, 1 failed (a damaged backup, a demo already up, a Redis that did not start or a line not replayed: what this load started is stopped and removed), 2 usage
+effect: local write: starts a throwaway Redis on a free 127.0.0.1 port in a directory of its own under --dir, loads this build's function library and the backup into it, and records its port, pid and directory in the state file there; the live store is never opened
+```
+
+`nova-sprint demo stop -h`:
+
+```
+usage: nova-sprint demo stop [--dir <dir>]
+from `nova-sprint help`:
+  nova-sprint demo stop [--dir <dir>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dir <string>  the directory demo load kept its state under (default: the user cache directory's nova-sprint/demo)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 stopped and removed, 1 failed (no demo up, or a recorded pid or directory that is not the demo's: nothing stopped or removed), 2 usage
+effect: local write: stops the Redis demo load started (the pid in its state file, only when the Redis at the recorded address is that pid) and removes the recorded directory and the state file; nothing else
+```
+
+`nova-sprint promote -h`:
+
+```
+usage: nova-sprint promote [--every <duration>] [--landings <n>] [--branch <name>] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
+from `nova-sprint help`:
+  nova-sprint promote [--every <duration>] [--landings <n>] [--branch <name>] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --base <string>  the branch the pull request targets, fetched and merged into the cut first (default dev)
+  --branch <string>  the live sprint branch; the cut is taken from origin/<branch> after a fetch, never a local ref (default: the checkout's current branch)
+  --check <string>  the tree gate, a command run in a private checkout of the merged cut before the pull request (default: none)
+  --dry-run  print the branch and the landed cards, or the promotion in flight, and write, enqueue and record nothing: no ref, no config, no push, no pull request, no store write (it reads origin's tips with ls-remote and fetches their objects)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --every <duration>  how often to look, a duration (default 1h); each pass promotes when that long has passed or --landings cards have landed
+  --json  print one JSON object for a program instead of the lines
+  --landings <int>  also promote once this many cards have landed since the last promotion (0: the clock only)
+  --max <int>  listed items of each kind; 0 is all
+  --once  carry one promotion from the cut to the recorded merge (or to the judgment or refusal that stops it) and exit
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --poll <duration>  how often to look while a promotion is in flight, its checks or its merge queue (default 1m)
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --repo-dir <string>  the clone the branch is cut in (default: the current directory)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: delivery: promotes the landed cards toward the development branch and records the promotion in the sprint's store; --dry-run prints the branch and the landed cards and changes nothing
+```
+
+`nova-sprint resume -h`:
+
+```
+usage: nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
+from `nova-sprint help`:
+  nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
+  nova-sprint resume --stream s2 --did 'returned s2-4' --answers merge-0315c3d4-1.1
+  nova-sprint resume --stream s2 --did 'returned s2-4 for rework' --answers merge-0315c3d4-1.1
+  nova-sprint resume --stream s2 --did '<what you did>' --answers merge-0315c3d4-1.1
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --answers <string>  the judgment notifications this answers, comma separated, each an id as inbox prints it or its alias (j<n>); coordinator-only; one invalid answer refuses the whole step, writing nothing, except an id the machine answered already since the inbox was read, which is a NOTE
+  --did <string>  what the coordinator did about the cause; required after a red branch
+  --dry-run  plan the step on one read of the sprint and print what it would change (WOULD lines) and refuse, and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --stream <value>  a stopped stream; again, or comma separated, for more (each is resumed or refused on its own line, and the exit is 1 when any is refused)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: resumes each named stopped stream in the sprint's store, with what was done; --dry-run writes nothing
+```
+
+`nova-sprint hold -h`:
+
+```
+usage: nova-sprint hold <member|reader|friend|stream>... --reason <text> [--return] [--dry-run]
+from `nova-sprint help`:
+  nova-sprint hold <member|reader|friend|stream>... --reason <text> [--return] [--dry-run]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dry-run  check the names and the reason, print what would be held or released, and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --expect <int>  with --repo: the number of streams it selects, as nova-sprint streams --repo <owner/name> printed it
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --reason <string>  why, in words: shown beside the held status and kept in the log; a hold wants one
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --repo <value>  also hold or release the streams recording this repository (owner/name), comma separated or repeated; needs --expect <n>, the number of streams it selects
+  --return  hand back the work begun now too: a member's working cards dealt round the fleet, a reader's reads begun asked of another, a stream's working cards withdrawn to ready (default: what is begun finishes, but a held friend keeps no begun card either way)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: holds the named members, readers, friends or streams in the sprint's store (--return also hands back their begun work); --dry-run writes nothing
+```
+
+`nova-sprint unhold -h`:
+
+```
+usage: nova-sprint unhold <member|reader|friend|stream>... [--reason <text>] [--dry-run]
+from `nova-sprint help`:
+  nova-sprint unhold <member|reader|friend|stream>... [--reason <text>] [--dry-run]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dry-run  check the names and the reason, print what would be held or released, and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --expect <int>  with --repo: the number of streams it selects, as nova-sprint streams --repo <owner/name> printed it
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --reason <string>  why, in words: shown beside the held status and kept in the log; a hold wants one
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --repo <value>  also hold or release the streams recording this repository (owner/name), comma separated or repeated; needs --expect <n>, the number of streams it selects
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: releases the named holds in the sprint's store; --dry-run writes nothing
+```
+
+`nova-sprint fleet beat -h`:
+
+```
+usage: nova-sprint fleet beat <member> [--load <percent>]
+from `nova-sprint help`:
+  nova-sprint fleet beat <member> [--load <percent>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --cores <int>  the machine's logical cores the beat reports, instead of this machine's own (a test's, or another meter's); a member with the default width takes half
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --fd-alarm <int>  the machine's open file descriptors above which the beat says alarm and the tick writes one judgment of the member (else NOVA_FD_ALARM, else 150000)
+  --fd-warn <int>  the machine's open file descriptors above which the beat says warn and lists the top holders (else NOVA_FD_WARN, else 50000)
+  --json  print one JSON object for a program instead of the lines
+  --load <string>  the load as a percent of all the machine's cores, instead of measuring it (a test's, or another meter's)
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --stop-returns <int>  how many stop-returns the member's lanes still owe after the machine's stop (section 14): start waits for zero
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint fleet up -h`:
+
+```
+usage: nova-sprint fleet up <member> [--width <n> | --width 0]
+from `nova-sprint help`:
+  nova-sprint fleet up <member> [--width <n> | --width 0]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --deadline <string>  pin the deadline every card dealt to the member gets, a duration (45m, 2700s); default takes the pin off: each card's own deadline, or 3 times the member's median run wall over its last 50 ok attempts, whichever is larger
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --width <string>  the member's width: the most work cards it runs at once; the deal holds it at 2 times that, ready and working; 1 to 1024 (default: as it is, 64 for a new member); 0 drains the member: no new deals, its untaken ready cards are levelled away, its working cards finish (fleet down deals them again elsewhere)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint fleet down -h`:
+
+```
+usage: nova-sprint fleet down <member>
+from `nova-sprint help`:
+  nova-sprint fleet down <member>
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint fleet sync -h`:
+
+```
+usage: nova-sprint fleet sync [--check] [--pg <dsn>]
+from `nova-sprint help`:
+  nova-sprint fleet sync [--check] [--pg <dsn>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --check  print the drift between the fleet table and the inventory and write nothing: exit 0 when there is none, 2 when there is
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --pg <string>  the config store, Postgres postgres://user@host:port/db with no password (else NOVA_PG_DSN; the password from the variable NOVA_PG_PASSWORD_ENV names), as nova-config takes it
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done (--check: no drift), 1 refused, 2 usage, a store that did not answer, or (--check) there is drift, 3 the config could not be read
+```
+
+`nova-sprint fleet level -h`:
+
+```
+usage: nova-sprint fleet level [--actor <string>] [--epoch <int>] [--json] [--max <int>] [--op <string>] [--redis <string>]
+from `nova-sprint help`:
+  nova-sprint fleet level
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint fleet quiet -h`:
+
+```
+usage: nova-sprint fleet quiet <member> (--for <duration> | --until <RFC3339>) --reason <text> | <member> --end [--dry-run]
+from `nova-sprint help`:
+  nova-sprint fleet quiet <member> (--for <duration> | --until <RFC3339>) --reason <text> | <member> --end [--dry-run]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dry-run  check the member, the time and the reason, print the quiet it would set or end, and write nothing
+  --end  end the member's quiet now, before its time
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --for <string>  how long the member stays quiet, a duration from now (11m, 1h30m)
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --reason <string>  why, in words: every worker's QUIET line and the log carry it; a quiet wants one
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --until <string>  when the member's quiet ends, an RFC3339 time (2026-10-04T15:50:00-07:00), instead of --for
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: sets or ends the member's quiet in the sprint's store (the deal gives it nothing until then, every worker's view carries a QUIET line); --dry-run writes nothing
+```
+
+`nova-sprint friend sync -h`:
+
+```
+usage: nova-sprint friend sync [--pg <dsn>] [--root <dir>]
+from `nova-sprint help`:
+  nova-sprint friend sync [--pg <dsn>] [--root <dir>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --every <duration>  sync now and again each time this passes, until interrupted, as the sprint's coordinator seat when no --actor is given, read again each pass (default: once); friend sync install --every <d> runs it as this machine's service and friend sync uninstall removes it (-h of each), or the friend sync loop row runs it (docs/FRIENDS.md)
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --pg <string>  the config store, Postgres postgres://user@host:port/db with no password (else NOVA_PG_DSN; the password from the variable NOVA_PG_PASSWORD_ENV names), as nova-config takes it
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --root <string>  the directory holding <root>/<friend>-working for a friend whose nova-config row has no dir (else HOME); the sync delivers and collects each friend's sprint cards in her row's dir, else there, and never writes elsewhere
+exit codes: 0 done, 1 refused (a friend row's name, or a working directory that cannot be read), 2 usage or a store that did not answer, 3 the config could not be read or holds no friend row; with --every: 0 interrupted (a failing pass is said and the loop goes on), 2 usage, 3 its binary was replaced (its supervisor starts the new one)
+```
+
+`nova-sprint collect -h`:
+
+```
+usage: nova-sprint collect [<friend>...] [--dead-lanes] [--pg <dsn>] [--root <dir>] [--dry-run]
+from `nova-sprint help`:
+  nova-sprint collect [<friend>...] [--dead-lanes] [--pg <dsn>] [--root <dir>] [--dry-run]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dead-lanes  also finish failed each working card with no report whose friend's runner ENDed its job with report=no (runner.log in her working directory or beside it), so the card is dealt again
+  --dry-run  print what would be finished; finish nothing and read no tip
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --pg <string>  the config store, Postgres postgres://user@host:port/db with no password (else NOVA_PG_DSN), as friend sync reads the roster from it
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --root <string>  the directory holding <root>/<friend>-working (else HOME), a friend's working directory when her nova-config row has no dir (nova-config friend set <friend> --dir); collect reads every friend's outbox in her working directory and writes nothing in it
+exit codes: 0 done (each card on its line, a refused or left one among them, read again by the next collect), 1 refused (a friend not on the roster), 2 usage or a store that did not answer, 3 the config could not be read or holds no friend row
+effect: store write: finishes each working card of the friends' rows that a report in any friend's outbox (or, with --dead-lanes, her runner's END with no report) finishes, as her row; reads the friends' working directories and writes nothing there, and reads origin's tip (one git ls-remote) for each LAND; --dry-run writes nothing and reads no tip
+```
+
+`nova-sprint friend beat -h`:
+
+```
+usage: nova-sprint friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>] [--active <RFC3339>] [--check <nonce>] [--pong <nonce>] [--run <id>]
+from `nova-sprint help`:
+  nova-sprint friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>] [--active <RFC3339>] [--check <nonce>] [--pong <nonce>] [--run <id>]
+  nova-sprint friend beat <friend>, which her nova-friend daemon runs every 1s
+flags:
+  --active <string>  the newest write under her working directory and outbox, as her daemon found it, RFC3339: her session's last activity
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --build <string>  the build her daemon runs (its version line's build): a friend come up is told to update when it is not the server's
+  --check <string>  the nonce of the SESSION CHECK her daemon just put into her session: the server keeps it, so an answer naming it within 15m0s proves her session
+  --daemon-version <string>  this daemon's build stamp, kept on the beat record as daemon_version and read by nova-sprint seat
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --load <string>  her load as a percent, as fleet beat --load gives a machine's
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --pong <string>  the nonce of a check her session answered: her session's evidence for 15m0s while her beat is fresh, only when this daemon's run asked it (--check) within 15m0s, and once; anything else, a time included, is a beat with no proof
+  --present <string>  when her daemon sent her the present on its start, RFC3339: the snap-to-present step of a friend come up
+  --queue <string>  how many jobs she holds queued, as her daemon counts them
+  --reason <string>  why she is down until --until, as her daemon read it
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --run <string>  her daemon's run, its generation: a check proves only when its answer names the run that asked it
+  --running <string>  the cards she is running now, comma separated (work card ids, her job names or primaries): friend take and friend down leave them with her
+  --started <string>  when her daemon started, RFC3339: its generation; a start not seen before raises a status judgment
+  --stop-returns <string>  how many stop-returns her lanes still owe after the machine's stop (section 14): start waits for zero
+  --until <string>  her daemon's word that she is down until then, RFC3339: her harness at its usage limit or out of credits
+  --width <string>  her width as her daemon has it (the deal's is the roster's: friend up --width)
+  --working <string>  how many jobs she is working now, as her daemon counts them
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint friend down -h`:
+
+```
+usage: nova-sprint friend down <friend> [--reason <text>] [--until <RFC3339>]
+from `nova-sprint help`:
+  nova-sprint friend down <friend> [--reason <text>] [--until <RFC3339>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --reason <string>  why she is held, shown on her row (her model allowance ran out)
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --until <string>  when you expect her back, RFC3339, shown on her row
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint friend up -h`:
+
+```
+usage: nova-sprint friend up <friend> [--width <n>]
+from `nova-sprint help`:
+  nova-sprint friend up <friend> [--width <n>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --width <string>  her width: the jobs she works at once; the deal holds her at 2 times that, ready and working; 1 to 1024 (default: as it is; friend sync sets it to her nova-config row's again)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint friend cards -h`:
+
+```
+usage: nova-sprint friend cards <friend> [--json]
+from `nova-sprint help`:
+  nova-sprint friend cards <friend> [--json]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: inspection: reads the cards held on the friend's row, their packets and briefs, writes nothing
+```
+
+`nova-sprint friend take -h`:
+
+```
+usage: nova-sprint friend take <friend> (<id>... | --all-unstarted) [--reason <text>]
+from `nova-sprint help`:
+  nova-sprint friend take <friend> (<id>... | --all-unstarted) [--reason <text>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --all-or-nothing  take none of the cards named when any one is refused
+  --all-unstarted  take every card of hers she has not started, naming no card
+  --dry-run  say which cards would be taken back and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --reason <string>  why the cards are taken back, kept on each card ("taken back by the coordinator: <reason>")
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: takes the named cards back from the friend in the sprint's store; --dry-run writes nothing
+```
+
+`nova-sprint friend give -h`:
+
+```
+usage: nova-sprint friend give <friend> <id>... [--reason <text>]
+from `nova-sprint help`:
+  nova-sprint friend give <friend> <id>... [--reason <text>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dry-run  plan the step on one read of the sprint and print what it would change (WOULD lines) and refuse, and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --reason <string>  why the cards are given back, kept on the note (default: given back by the coordinator)
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: clears the friend's take-back mark on the named cards in the sprint's store; --dry-run writes nothing
+```
+
+`nova-sprint friend level -h`:
+
+```
+usage: nova-sprint friend level [--actor <string>] [--dry-run] [--epoch <int>] [--json] [--max <int>] [--op <string>] [--redis <string>]
+from `nova-sprint help`:
+  nova-sprint friend level
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dry-run  say which friends are up to be levelled and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: moves queued cards between the friends' rows in the sprint's store; --dry-run writes nothing
+```
+
+`nova-sprint friend health -h`:
+
+```
+usage: nova-sprint friend health <friend> (--state up|asleep|down --seen <RFC3339> --generation <n> [--queue <n>] [--working <n>] [--width <n>] [--reason <text>] [--until <RFC3339>] | --clear)
+from `nova-sprint help`:
+  nova-sprint friend health <friend> (--state up|asleep|down --seen <RFC3339> --generation <n> [--queue <n>] [--working <n>] [--width <n>] [--reason <text>] [--until <RFC3339>] | --clear)
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --clear  remove her observation instead of recording one, so her status is her session's evidence alone (a card of hers finished, never her beat); takes no other flag but --dry-run
+  --dry-run  check the observation and say what would be recorded; record nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --generation <uint>  the seat's generation the daemon read (nova-sprint seat); any other than the seat's now is refused
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --queue <int>  what her pong said she has queued
+  --reason <string>  why she is not up, shown on her row while the observation stands (her model allowance ran out)
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --seen <string>  when the proof this rests on was seen, RFC3339 (a session pong for up, a daemon pong for asleep, the judgment for down); a proof not newer than the row's, or dated after the server's clock, is refused
+  --state <string>  what the keepalive saw: up (her session answered), asleep (her daemon answered, her session did not) or down
+  --until <string>  when the daemon expects her back, RFC3339, shown on her row
+  --width <int>  what her pong said her width is
+  --working <int>  what her pong said she is working
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: records the coordinator's observation of the friend in the sprint's store, or removes it with --clear; --dry-run writes nothing
+```
+
+`nova-sprint friend clean -h`:
+
+```
+usage: nova-sprint friend clean [--pg <dsn> | --file <path>] [--root <dir>] [--days <n>] [--dry-run]
+from `nova-sprint help`:
+  nova-sprint friend clean [--pg <dsn> | --file <path>] [--root <dir>] [--days <n>] [--dry-run]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --days <int>  a done job's clean clones and build output are removed once its REPORT.md is this many days old
+  --dry-run  print every removal and listing with the bytes it would free, and remove nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --file <string>  a nova-config store file in PostgreSQL's place (nova-config --file), for trying it with no database
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --pg <string>  the config store whose friend rows are the roster, Postgres postgres://user@host:port/db with no password (else NOVA_PG_DSN; the password from the variable NOVA_PG_PASSWORD_ENV names), as nova-config takes it
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --root <string>  the directory holding <root>/<name>-working for a friend whose nova-config row has no dir (else HOME, else the user's home); a row's dir is cleaned where it says
+exit codes: 0 FRIENDS-CLEAN OK, 1 a removal or a read failed (FRIENDS-CLEAN FAILED names each; the summary is FRIENDS-CLEAN INCOMPLETE) or a friend row's name refused, 2 usage, 3 the config could not be read or holds no friend row
+effect: local write: removes the friends' finished job directories and listings past --days under --root; --dry-run prints every removal with the bytes it would free and removes nothing
+```
+
+`nova-sprint gc -h`:
+
+```
+usage: nova-sprint gc [--machine <m>] [--dry-run] [--max-age <d>]
+from `nova-sprint help`:
+  nova-sprint gc [--machine <m>] [--dry-run] [--max-age <d>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --ai-root <string>  the AI root the working directories are under (else NOVA_AI_ROOT, else ~/ai, else the one the home's <name>-working links name); an absolute path
+  --dry-run  print every removal with the bytes it would free, and remove nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --machine <string>  run gc on this machine (a host name ssh reaches) through the fleet runner, rather than on this one
+  --max <int>  listed items of each kind; 0 is all
+  --max-age <string>  how old a bench directory, a lander worktree or a job no runner names is before it goes: days (2d) or a Go duration (36h)
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 GC OK, 1 a removal or a read failed (GC FAILED names each; the summary is GC INCOMPLETE) or --machine did not answer, 2 usage
+effect: local write: removes, on this machine (or --machine's, through the fleet runner), the job directories of finished or absent lanes, reader checkouts of recorded findings, lander worktrees and bench directories past --max-age, and trims the go caches to their cap; never a path under no known scratch root, never a clone with work that is nowhere else; --dry-run removes nothing
+```
+
+`nova-sprint friend reconcile -h`:
+
+```
+usage: nova-sprint friend reconcile <friend> [--root <dir>] [--dry-run]
+from `nova-sprint help`:
+  nova-sprint friend reconcile <friend> [--root <dir>] [--dry-run]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dry-run  say what each card working on her row would get (collect, keep, return) and write nothing; the reads of the store and her directory are made
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --root <string>  the directory holding <root>/<friend>-working when her nova-config row has no dir (else HOME); her inbox/QUEUE.json and outbox are read in her row's dir, else there, and nothing is written there
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: store write: finishes each card she reported on and returns each she abandoned, in the sprint's store; reads her inbox/QUEUE.json and outbox, writes nothing in her directory, and reads origin's tip (one git ls-remote) for each LAND it collects; --dry-run writes nothing and reads no tip
+```
+
+`nova-sprint lane take -h`:
+
+```
+usage: nova-sprint lane take <kind> --machine <m> --as <worker> [--wait <duration>] [--dry-run]
+from `nova-sprint help`:
+  nova-sprint lane take <kind> --machine <m> --as <worker> [--wait <duration>] [--dry-run]
+  nova-sprint lane take go --machine <m> --as <worker> --wait 30m
+  a store write: granted (exit 0) while the machine's holders are under its
+  width (set --go-lanes, 1 by default) and nobody waits ahead; otherwise
+  queued behind the waiters in the order they asked (exit 1, the place in
+  the queue). --wait asks again every 5s until granted or the wait is over.
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --as <string>  the worker asking, the holder or waiter the lane records
+  --dry-run  check the machine's lanes and say whether the take would be granted or queued; write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --machine <string>  the machine the run is on: its lanes are its own
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --wait <duration>  how long to wait for the grant, asking again every 5s (30m); 0, the default, asks once
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: store write: takes one lane on the machine for the worker, or joins the queue; --dry-run checks availability and writes nothing
+```
+
+`nova-sprint lane give -h`:
+
+```
+usage: nova-sprint lane give <kind> --machine <m> --as <worker> [--dry-run]
+from `nova-sprint help`:
+  nova-sprint lane give <kind> --machine <m> --as <worker> [--dry-run]
+  nova-sprint lane give go --machine <m> --as <worker>
+  gives the lane (or the place in the queue) back when the run exits; the
+  head of the queue is granted. A holder that does not take again within 20m0s
+  is released, and a grant or a place not claimed within 1m0s.
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --as <string>  the worker giving its lane, or its place in the queue, back
+  --dry-run  check whether the worker holds a lane or waits in the queue, and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --machine <string>  the machine the run was on
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: store write: gives the worker's lane or queue position back; --dry-run checks whether a lane is held and writes nothing
+```
+
+`nova-sprint lane list -h`:
+
+```
+usage: nova-sprint lane list [--actor <string>] [--epoch <int>] [--json] [--max <int>] [--op <string>] [--redis <string>]
+from `nova-sprint help`:
+  nova-sprint lane list
+  every machine's holders and queue; where --json --cards carries them as lanes.
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: inspection: lists every machine's lanes and holders, writes nothing
+```
+
+`nova-sprint reader add -h`:
+
+```
+usage: nova-sprint reader add <reader>... [--tiers <flash[,pro,heavy,frontier]|all|default>]
+from `nova-sprint help`:
+  nova-sprint reader add <reader>... [--tiers <flash[,pro,heavy,frontier]|all|default>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --tiers <string>  the tiers this reader reads, comma separated (frontier, heavy, pro or flash); all names every tier; default, or omitted, is flash on a fleet reader while the store holds routes and every tier on a friend's reader
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint reader set -h`:
+
+```
+usage: nova-sprint reader set <reader>... --tiers <flash[,pro,heavy,frontier]|all|default>
+from `nova-sprint help`:
+  nova-sprint reader set <reader>... --tiers <flash[,pro,heavy,frontier]|all|default>
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --tiers <string>  the tiers these readers read, comma separated (frontier, heavy, pro or flash); all names every tier; default is flash on a fleet reader while the store holds routes and every tier on a friend's reader
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint reader away -h`:
+
+```
+usage: nova-sprint reader away <reader>...
+from `nova-sprint help`:
+  nova-sprint reader away <reader>...
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint reader up -h`:
+
+```
+usage: nova-sprint reader up <reader>...
+from `nova-sprint help`:
+  nova-sprint reader up <reader>...
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint reader remove -h`:
+
+```
+usage: nova-sprint reader remove <reader>...
+from `nova-sprint help`:
+  nova-sprint reader remove <reader>...
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint reader retire -h`:
+
+```
+usage: nova-sprint reader retire <reader>...
+from `nova-sprint help`:
+  nova-sprint reader retire <reader>...
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dry-run  say which readers would be retired and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: retires the named readers in the sprint's store; a read it is reading is taken back at the next tick and asked of a reader up with no card at that attempt, and it stays when none can take it; --dry-run writes nothing
+```
+
+`nova-sprint stream remove -h`:
+
+```
+usage: nova-sprint stream remove <stream>...
+from `nova-sprint help`:
+  nova-sprint stream remove <stream>...
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint stream archive -h`:
+
+```
+usage: nova-sprint stream archive <stream>...
+from `nova-sprint help`:
+  nova-sprint stream archive <stream>...
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint stream unarchive -h`:
+
+```
+usage: nova-sprint stream unarchive <stream>...
+from `nova-sprint help`:
+  nova-sprint stream unarchive <stream>...
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint stream set -h`:
+
+```
+usage: nova-sprint stream set <stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--promotion[=false]] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--base <branch>] [--reason <text>] [--answers <notes>]
+from `nova-sprint help`:
+  nova-sprint stream set <stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--promotion[=false]] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--base <branch>] [--reason <text>] [--answers <notes>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --answers <string>  the judgment notifications this answers, comma separated
+  --attempts <string>  the stream's attempt cap, over the sprint's: how many attempts one brief may run before the card is the coordinator's as a brief defect; 1 to 100, or default (the sprint's)
+  --base <string>  the base branch to re-point the stream's cards to: every card not yet dealt and every card queued to merge has its BASE line rewritten; refused when origin holds no such branch or a card's PATHS are absent at its tip; dealt and working cards keep their base
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --land-protected <string>  the repositories (owner/name, comma separated; any for every one) on whose protected branches, dev and main, the lander lands the stream's cards; default takes the mark off, and a card based on a protected branch is then refused at land
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --promotion  mark the streams the promotion stream: they alone take cards cut on dev or main, and land them there (--land-protected any); --promotion=false takes the mark off (--land-protected default)
+  --prose <string>  the globs (PATHS globs, comma separated: security/**,ratings/**) of the files whose backquotes are their own, which the lander does not read for a code span; default takes them off
+  --read-tier <string>  the tier the stream's reads draw their route from when it is stronger than the card's own (flash, pro or heavy; default takes it off: the sprint's)
+  --reason <string>  why the read tier is set, recorded on the stream row (the judgment 'raise the read tier of the stream?' names it)
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --release <string>  the release this stream belongs to (default or none clears it)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint set -h`:
+
+```
+usage: nova-sprint set [--rework-priority <fix|high|keep>] [--read-tier <flash|pro|default>] [--read-cards <on|off|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>] [--attempts <n|default>] [--friend-idle <duration|default>] [--friend-finish <duration|default>] [--fleet-tiers <tiers|all>] [--friends-tiers <tiers|all>] [--reads <0|1|2|default>]
+from `nova-sprint help`:
+  nova-sprint set [--rework-priority <fix|high|keep>] [--read-tier <flash|pro|default>] [--read-cards <on|off|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>] [--attempts <n|default>] [--friend-idle <duration|default>] [--friend-finish <duration|default>] [--fleet-tiers <tiers|all>] [--friends-tiers <tiers|all>] [--reads <0|1|2|default>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --alarm-fleet <string>  the backlog alarm on the fleet: a judgment, once an episode, while the members up work fewer cards than this percent (1 to 100) of their width with a primary ready or waiting; off takes it off (the default)
+  --alarm-merging <string>  the backlog alarm on merging: a judgment, once an episode, while more primaries than this whole number are merging; off takes it off (the default)
+  --alarm-ready <string>  the backlog alarm on the feed: on raises a judgment, once an episode, while no primary is ready and one waits; off takes it off (the default)
+  --alarm-review <string>  the backlog alarm on review: a judgment, once an episode, while more primaries than this whole number are in review; off takes it off (the default)
+  --attempts <string>  the attempt cap: how many attempts one brief may run before the card is the coordinator's as a brief defect (brief, drop; never dealt again); 1 to 100, or default (4); a stream's own: nova-sprint stream set <s> --attempts <n>
+  --dealt-max <string>  how long a work card may wait dealt and never taken (in its member's ready queue, or withdrawn) before it is a judgment: a duration, or default (6h0m0s, 3 times the take deadline); a taken card's own deadline starts at its take
+  --dry-run  plan the step on one read of the sprint and print what it would change (WOULD lines) and refuse, and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --fleet <string>  the fleet's work: off and the deal hands no work card to a machine (its readers still read; no fleet idle alarm), on deals again (the default)
+  --fleet-tiers <string>  the tiers the fleet may take: flash, pro, heavy, frontier, comma separated, or all (the default); the deal hands a machine only a work card, and a member's reader only a read card, whose tier is one of them, on top of each row's own tiers
+  --friend-finish <string>  how long a friend holding working cards may finish none (working to done) before the coordinator's pass judges her idle: a duration, or default (30m0s)
+  --friend-idle <string>  how long a friend holding cards may show no file write under her working directory and outbox before it is an alarm: a duration, or default (20m0s)
+  --friends <string>  the friends' work: off and the deal hands no work card to a friend (her reads still flow; no empty-row alarm), on deals again (the default)
+  --friends-tiers <string>  the tiers the friends may take, as --fleet-tiers says the fleet's: a friend is dealt a work or read card only of one of them, on top of her row's own tiers
+  --go-lanes <string>  the Go lanes of every machine, the Go build and test runs one machine grants at once (nova-sprint lane take go): a whole number from 1, or default (1, one test stream per machine)
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --read-cards <string>  on: the tick asks every read a card in review needs at once, as read cards on the fleet table dealt to friends and to members with a reader row, half a slot each; off or default: the readers table asks, one read at a time
+  --read-tier <string>  the tier every card's reads draw their route from when it is stronger than the card's own (flash, pro or heavy; default takes it off: each card's own tier)
+  --reads <string>  the ok reads at its head every card in review needs, whatever its tier: 0 (no read: a primary whose work finished LAND is accepted on it), 1 or 2; default: one for a flash card, two above
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --rework-priority <string>  the priority a normal or low card gets when its next attempt opens: fix (the default), high, or keep to retain its level
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: sets the sprint's settings named in the sprint's store; --dry-run writes nothing
+```
+
+`nova-sprint promoted -h`:
+
+```
+usage: nova-sprint promoted --sha <merge sha> [--answers <note>]
+from `nova-sprint help`:
+  nova-sprint promoted --sha <merge sha> [--answers <note>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --answers <string>  the judgment notifications this answers, comma separated; coordinator-only; one invalid answer refuses the whole step, writing nothing
+  --dry-run  check the sha and say what would be recorded; record nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --returned <string>  landed cards dev or an audit returned with this promotion, comma separated: each is marked on the card and the tick asks to raise its stream's read tier
+  --sha <string>  the merge commit's sha on dev, 7 to 40 hex digits (required)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: records the promotion in the sprint's store; --dry-run writes nothing
+```
+
+`nova-sprint funded -h`:
+
+```
+usage: nova-sprint funded <provider> --reason <text>
+from `nova-sprint help`:
+  nova-sprint funded <provider> --reason <text>
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dry-run  plan the step on one read of the sprint and print what it would change (WOULD lines) and refuse, and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --reason <string>  the payment made, in a few words (required)
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: ends the provider's rest of its funds in the sprint's store, with the reason; --dry-run writes nothing
+```
+
+`nova-sprint cost reconcile -h`:
+
+```
+usage: nova-sprint cost reconcile [--dry-run] [--json]
+from `nova-sprint help`:
+  nova-sprint cost reconcile [--dry-run] [--json]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dry-run  read each provider's usage and print each gap as the step would record it, and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: reads each provider's usage of today through the seat's key and writes the reconciliation and its gap judgment to the sprint's store; --dry-run writes nothing
+```
+
+`nova-sprint cost reprice -h`:
+
+```
+usage: nova-sprint cost reprice [--route <r>]... [--since <RFC3339>] [--dry-run] [--json]
+from `nova-sprint help`:
+  nova-sprint cost reprice [--route <r>]... [--since <RFC3339>] [--dry-run] [--json]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dry-run  print what the reprice would do, and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --route <value>  reprice only the records this route priced (again, or comma separated, for more; default: every route)
+  --since <string>  reprice only the records that ended at or after this time (RFC3339)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: rewrites every priced consumer record's cost, each card's totals and each stream's landed sum from the records' tokens at the routes' current prices in the sprint's store; --dry-run writes nothing
+```
+
+`nova-sprint ci -h`:
+
+```
+usage: nova-sprint ci <id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]
+from `nova-sprint help`:
+  nova-sprint ci <id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dry-run  plan the step on one read of the sprint and print what it would change (WOULD lines) and refuse, and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --expect <int>  with --group: the group's size as inbox printed it; a group of another size now is refused and nothing changes
+  --green  the run passed
+  --group <string>  the members of the inbox group of this id (the id inbox prints; a group number is refused)
+  --head <string>  the head the run tested (default: the primary's)
+  --json  print one JSON object for a program instead of the lines
+  --limit <value>  alias of --max, a whole number, accepted for one release
+  --max <int>  listed items of each kind (0 is all); when given, at most n cards, in work order; accept and ask take them in stream turns from the work table's stream index
+  --note <string>  what the run said
+  --one  rework and drop: act on the one card named though the inbox holds a judgment group of several naming it (refused without it: the group is answered whole)
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --red  the run failed
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --run <string>  the run's id: a retried report of it is recorded once
+  --source <string>  where the result comes from
+  --stream <string>  the cards of one stream
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: records the CI run's result, red or green, on each named primary in the sprint's store; --dry-run writes nothing
+```
+
+`nova-sprint wait -h`:
+
+```
+usage: nova-sprint wait (<note>[,<note>]... | --group <id> [--expect <n>]) (--for <duration> | --until <RFC3339>)
+from `nova-sprint help`:
+  nova-sprint wait (<note>[,<note>]... | --group <id> [--expect <n>]) (--for <duration> | --until <RFC3339>)
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --expect <int>  with --group: the group's size as inbox printed it; a group of another size now is refused and nothing changes
+  --for <duration>  review it again after this long
+  --group <string>  the notes of the inbox group of this id (the id inbox prints; a group number is refused)
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --until <string>  review it again at this time (RFC3339)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint remind -h`:
+
+```
+usage: nova-sprint remind (--in <duration> | --at <time>) --note <text> [--for <actor>] | --list | --cancel <id>
+from `nova-sprint help`:
+  nova-sprint remind (--in <duration> | --at <time>) --note <text> [--for <actor>] | --list | --cancel <id>
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --at <string>  wake the actor at this time: RFC3339, or a local date and time, date or time of day
+  --cancel <string>  take this timer off the record: its id, from remind --list
+  --dry-run  say what would be written and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --for <string>  the actor woken (default: the caller, --actor or NOVA_SPRINT_ACTOR)
+  --in <duration>  wake the actor this long from now (a duration: 90s, 30m, 4h)
+  --json  print one JSON object for a program instead of the lines
+  --list  print the open timers (id, for, due, note)
+  --max <int>  listed items of each kind; 0 is all
+  --note <string>  the text the judgment carries: what the actor is woken to
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: store write: writes one timer to the sprint's timer record, which the tick of a RUNNING machine raises as one judgment of kind "timer" addressed to its actor at its due time, once (--list reads the open timers, --cancel takes one off); --dry-run writes nothing
+```
+
+`nova-sprint ack -h`:
+
+```
+usage: nova-sprint ack <note>[,<note>]... --reason <text>
+from `nova-sprint help`:
+  nova-sprint ack <note>[,<note>]... --reason <text>
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dry-run  plan the step on one read of the sprint and print what it would change (WOULD lines) and refuse, and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --reason <string>  why nothing is to be done
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: closes the named notifications, nothing to be done, with the reason, in the sprint's store; --dry-run writes nothing
+```
+
+`nova-sprint answer -h`:
+
+```
+usage: nova-sprint answer [--dry-run] [--bar <p>] [--every <duration>] [--timeout <duration>] [--backend jev|fixed] [--answers <file>] [--record <file>]
+from `nova-sprint help`:
+  nova-sprint answer [--dry-run] [--bar <p>] [--every <duration>] [--timeout <duration>] [--backend jev|fixed] [--answers <file>] [--record <file>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --answers <string>  the fixed backend's answers, a JSON file (--backend fixed)
+  --backend <string>  the decision's backend: jev (its key from JEV_API_KEY, which nova-secrets exec sets) or fixed (--answers)
+  --bar <string>  apply a verb whose probability is at or above this bar (else the sprint row's decide_judgment_bar; with neither, nothing is applied: every decision is recorded and what a bar would apply is listed)
+  --dry-run  ask the decision and print what would be applied; apply nothing and write no record
+  --every <duration>  run a pass every duration until the machine is STOPPED (or DONE): the coordinator seat's loop; 0 is one pass
+  --json  print one JSON object for a program instead of the lines
+  --record <string>  the judgment decisions' record, JSON lines (default ~/nova-sprint/decide/judgment.jsonl, its directory made 0700)
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --timeout <duration>  how long one ask of the backend may take; an ask past it is that card's failed row, and nothing is applied for it
+exit codes: 0 done (each routine judgment's card applied or listed; --every: the machine is STOPPED), 1 a line applied was refused or a decision's backend failed, 2 usage, an actor not the coordinator, or a sprint that did not answer
+effect: delivery: sends the routine judgments' state to the decision's backend (Jev), applies the verbs chosen through the sprint's verbs, and appends to --record; --dry-run asks and writes nothing
+```
+
+`nova-sprint inbox -h`:
+
+```
+usage: nova-sprint inbox [--open <group>] [--read] [--wait [--timeout <duration>] [--push <dir> | --push seat]] [--deadline <duration>] [--stale <duration>]
+from `nova-sprint help`:
+  nova-sprint inbox [--open <group>] [--read] [--wait [--timeout <duration>] [--push <dir> | --push seat]] [--deadline <duration>] [--stale <duration>]
+  nova-sprint inbox --wait
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --at-epoch <int>  the inbox as it was at an earlier epoch (before a clear)
+  --deadline <duration>  a judgment open longer is overdue
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --open <string>  list every member, need and notification of the group of this id
+  --push <string>  with --wait, keep running (until interrupted): each new judgment and note to the coordinator is written once as <dir>/<note id>.md, the group as inbox --open prints it and the clock; the files there are the cursor, so a restart pushes nothing twice; a local write; seat is the holder's inbox, ~/<holder>-working/inbox/sprint-judgments, followed through a seat change (a directory named seat is ./seat)
+  --read  move the cursor past what is shown: happened notifications before it are not shown again (open judgments always are)
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --stale <duration>  a stream with no progress for longer is shown stalled
+  --timeout <duration>  with --wait, the longest wait; the inbox is shown when it passes (with --push, how often the loop looks at the machine)
+  --wait  block until a judgment, or a note to the coordinator, that was not in the inbox when the wait began (a held judgment never wakes it), or the machine stops; then show the inbox, saying what is new
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint card base -h`:
+
+```
+usage: nova-sprint card base <id> <branch> [--repo-dir <clone>]
+from `nova-sprint help`:
+  nova-sprint card base <id> <branch> [--repo-dir <clone>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dry-run  plan the step on one read of the sprint and print what it would change (WOULD lines) and refuse, and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --repo-dir <string>  a clone whose origin is asked for the branch, for a card whose brief names no REPO: line
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: re-points the merging card's BASE to the branch in the sprint's store, after asking origin (a read) whether it holds that branch; --dry-run asks origin the same and plans the step, and --dry-run writes nothing
+```
+
+`nova-sprint card -h`:
+
+```
+usage: nova-sprint card <id> [--brief | --fields] [--at-epoch <n>] | (--all | --stream <s>) --json: every card, one JSON object a line
+from `nova-sprint help`:
+  nova-sprint card base <id> <branch> [--repo-dir <clone>]
+  nova-sprint card <id> [--brief | --fields] [--at-epoch <n>] | (--all | --stream <s>) --json: every card, one JSON object a line
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --all  every card on the table, one JSON object a line (its fields, column, needs and brief length), in one read; with --json, and no id
+  --at-epoch <int>  the primary as it was at an earlier epoch (before a clear)
+  --brief  the brief alone, as the card holds it, and nothing else (a card with no brief is refused, exit 1); not with --fields
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --fields  every field of the primary and its cards, one record a line, instead of its story
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --stream <string>  --all of one stream's cards
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: inspection: reads one card, its brief and its attempts, writes nothing
+```
+
+`nova-sprint needs -h`:
+
+```
+usage: nova-sprint needs [--stream <s>] [--roots]
+from `nova-sprint help`:
+  nova-sprint needs [--stream <s>] [--roots]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --roots  print only the roots and the width lines
+  --stream <string>  the waiting cards of one stream (default: every stream)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: inspection: reads the waiting cards, writes nothing
+```
+
+`nova-sprint streams -h`:
+
+```
+usage: nova-sprint streams [--repo <owner/name>] [--release <name>] [--cards]
+from `nova-sprint help`:
+  nova-sprint streams [--repo <owner/name>] [--release <name>] [--cards]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --cards  every card of each stream: its id, state, tier, the first sentence of its THE TASK and its needs
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --release <string>  only the streams of this release (stream set <s> --release <name>)
+  --repo <value>  only the streams recording this repository (owner/name), comma separated or repeated; a stream whose cards name more than one repository is listed by each
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: inspection: reads the work and merge tables once and prints each stream with the repositories and bases its cards record, its release, its open and landed counts, and with --cards every card's id, state, tier, title and needs; writes nothing
+```
+
+`nova-sprint held -h`:
+
+```
+usage: nova-sprint held [--stream <s>]
+from `nova-sprint help`:
+  nova-sprint held [--stream <s>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --stream <string>  the held cards of one stream (default: every stream)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: inspection: reads the held cards of the table, writes nothing
+```
+
+`nova-sprint sentinels -h`:
+
+```
+usage: nova-sprint sentinels [--stream <s>]
+from `nova-sprint help`:
+  nova-sprint sentinels [--stream <s>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --stream <string>  the sentinels of one stream (default: every stream)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: inspection: reads the sentinels and what each waits on, writes nothing
+```
+
+`nova-sprint sentinel set -h`:
+
+```
+usage: nova-sprint sentinel set <id> --needs <a,b>
+from `nova-sprint help`:
+  nova-sprint sentinel set <id> --needs <a,b>
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dry-run  plan the step on one read of the sprint and print what it would change (WOULD lines) and refuse, and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --needs <string>  the sentinel's needs, comma separated, in place of the ones it has: each a card on the table; a sentinel with nothing to wait on is released, not emptied
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: replaces the sentinel's needs in the sprint's store, keeping its id, stream, score and log; --dry-run writes nothing
+```
+
+`nova-sprint bases -h`:
+
+```
+usage: nova-sprint bases [--actor <string>] [--epoch <int>] [--json] [--max <int>] [--op <string>] [--redis <string>]
+from `nova-sprint help`:
+  nova-sprint bases
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: inspection: reads the work and merge tables and writes nothing to the store; fetches origin's dev and each base into land's kept clone of each repository, once a call, and clones nothing
+```
+
+`nova-sprint log -h`:
+
+```
+usage: nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]
+from `nova-sprint help`:
+  nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --at-epoch <int>  the log of an earlier epoch (before a clear), as it was
+  --card <string>  the lines about this card (a primary: its work, read and merge cards too)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --member <string>  the lines of this fleet member or reader: what was dealt to, taken from or read by it
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --since <string>  the lines at or after this time: a duration back from now (10m) or a time (RFC 3339)
+  --stream <string>  the lines of this stream
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: inspection: reads the sprint's change log, writes nothing
+```
+
+`nova-sprint check -h`:
+
+```
+usage: nova-sprint check [--actor <string>] [--epoch <int>] [--json] [--max <int>] [--op <string>] [--redis <string>]
+from `nova-sprint help`:
+  nova-sprint check
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 no violation, 1 a violation (each on its line), 2 usage or a store that did not answer
+effect: inspection: reads the sprint's tables and prints each violation, writes nothing
+```
+
+`nova-sprint repair -h`:
+
+```
+usage: nova-sprint repair [--actor <string>] [--epoch <int>] [--json] [--max <int>] [--op <string>] [--redis <string>]
+from `nova-sprint help`:
+  nova-sprint repair
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint watch -h`:
+
+```
+usage: nova-sprint watch --wake [--every <duration>] [--state <file>] [--check <duration>] [--judgment-every <duration>] [--merge-every <duration>] [--backlog-every <duration>] [--land-after <duration>] [--merge-over <n>] [--merging-over <n>] [--review-over <n>]
+from `nova-sprint help`:
+  nova-sprint watch --wake [--every <duration>] [--state <file>] [--check <duration>] [--judgment-every <duration>] [--merge-every <duration>] [--backlog-every <duration>] [--land-after <duration>] [--merge-over <n>] [--merging-over <n>] [--review-over <n>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --backlog-every <duration>  at most one backlog wake in this long
+  --check <duration>  wake with a check this long after the last wake
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --every <duration>  how often the sprint and the bus are looked at, above 0
+  --json  print one JSON object for a program instead of the lines
+  --judgment-every <duration>  at most one judgment wake in this long
+  --land-after <duration>  merging with no land pass for this long is a merge wake
+  --max <int>  listed items of each kind; 0 is all
+  --merge-every <duration>  at most one merge wake in this long
+  --merge-over <int>  merging over this many is a merge wake
+  --merging-over <int>  merging over this many is a backlog wake
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --review-over <int>  review over this many is a backlog wake
+  --state <string>  the file that keeps the cursors between runs, so no event is missed or woken twice (default: one a store under the user cache directory); the first run starts from now
+  --wake  block until the first thing that wakes the coordinator, print WAKE <kind> <time> <evidence> and exit 0 (kinds: bus, judgment, stop, friend, merge, backlog, check)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint seat check -h`:
+
+```
+usage: nova-sprint seat check [--actor <string>] [--epoch <int>] [--json] [--max <int>] [--op <string>] [--redis <string>]
+from `nova-sprint help`:
+  nova-sprint seat check
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done (every check OK), 1 a check is DOWN, 2 usage or a store that did not answer
+effect: inspection: checks server, store, loop, beats, readers, dashboard, installed versions, merge queue, writes nothing
+```
+
+`nova-sprint machinery -h`:
+
+```
+usage: nova-sprint machinery [--actor <string>] [--epoch <int>] [--json] [--max <int>] [--op <string>] [--redis <string>]
+from `nova-sprint help`:
+  nova-sprint machinery
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done (every check OK), 1 a check is DOWN, 2 usage or a store that did not answer
+effect: inspection: checks server, store, loop, beats, readers, dashboard, installed versions, merge queue, writes nothing
+```
+
+`nova-sprint where -h`:
+
+```
+usage: nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards] [--rows] [--archived] [--stale <duration>] [--at-epoch <n>]: includes landedSeries] [--release [<name>]]
+from `nova-sprint help`:
+  nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards] [--rows] [--archived] [--stale <duration>] [--at-epoch <n>]: includes landedSeries] [--release [<name>]]
+  nova-sprint where
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --all  draw the readers and merge tables too
+  --archived  with --json: the archived streams' rows of the work and merge tables in tables, and their primaries in --rows, beside the live ones (stream archive); their counts are in the footers and the summary either way
+  --at-epoch <int>  the sprint as it was at an earlier epoch (before a clear); the series is that epoch's
+  --cards  with --json: also every dealt work card, judgment and lane
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --every <duration>  the redraw interval with --watch, above 0
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --release  show cards left per release, or for the named release
+  --rows  with --json: also every primary's row of the work table
+  --stale <duration>  a stream with no progress for longer is shown stalled (--json)
+  --watch  redraw in place every --every until interrupted
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: inspection: reads the sprint table, its rows and the epoch log, writes nothing; --json carries landedSeries, cards landed per 10 minutes over the last 24 hours (144 buckets), friends and fleet by the worker of the landed attempt (the last <who>:ok of the card's .wN, never the lander; a sentinel's release is not work)
+```
+
+`nova-sprint dashboard -h`:
+
+```
+usage: nova-sprint dashboard [--listen <address:port>[,<address:port>...] | none] [--pull <address:port>[,<address:port>...] | none] [--logo <file>] [--every <duration>]
+from `nova-sprint help`:
+  nova-sprint dashboard [--listen <address:port>[,<address:port>...] | none] [--pull <address:port>[,<address:port>...] | none] [--logo <file>] [--every <duration>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --every <duration>  read the sprint at most once per this duration, above 0
+  --json  print one JSON object for a program instead of the lines
+  --listen <address:port>  serve the page on each address:port of a comma-separated list, one listener each and one cached copy of the sprint: loopback, or this machine's address on the fleet's private network (the tailnet); 0.0.0.0, :: and public addresses are refused; default 127.0.0.1:7390; none: no page
+  --logo <file>  an image file served as the page's logo and favicon; none: the logo slot renders nothing
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --pull <address:port>  serve the pull routes (/friend/<name>, /machine/<name>, their /api/ JSON and /events/ stream forms, /team and /api/team, /api/sprint, /events) on each address:port of a comma-separated list, the same addresses --listen takes, from the same cached copy, read-only; default 127.0.0.1:7395; none: no pull routes; an http:// or https:// URL of another dashboard: be its puller, reading its /api/sprint once per --every in place of the sprint and serving the page alone (the public copy)
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 stopped (an interrupt), 2 usage or an address it cannot listen on, 3 its binary was replaced on disk (its supervisor starts the new one)
+effect: inspection: serves the page and the pull routes, reads the sprint as where --json --cards does, writes nothing
+```
+
+`nova-sprint handover -h`:
+
+```
+usage: nova-sprint handover [--actor <string>] [--epoch <int>] [--json] [--max <int>] [--op <string>] [--redis <string>]
+from `nova-sprint help`:
+  nova-sprint handover
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: inspection: reads the store, writes nothing
+```
+
+`nova-sprint view coordinator -h`:
+
+```
+usage: nova-sprint view coordinator [--all] [--since <cursor>] [--json]
+from `nova-sprint help`:
+  nova-sprint view coordinator [--all] [--since <cursor>] [--json]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --all  every friend's and machine's row too, as rows (by default only the rows that need a look, as items)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --needs  instead, list every decision waiting on the coordinator (open judgments, held sentinels, stopped streams, held cards), ranked by the cards blocked behind each, ties by age, each with its evidence; takes no --all or --since
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --since <string>  the cursor an earlier view printed: leave out every item it showed that has not changed, and count them (same) and the ones that stand no more (gone)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: inspection: reads what needs the seat (the tables, the inbox, the friends and the machines), writes nothing
+```
+
+`nova-sprint view cards -h`:
+
+```
+usage: nova-sprint view cards [--col <c>] [--stream <s>] [--holder <member>] [--by tier|stream|col|holder] [--json]
+from `nova-sprint help`:
+  nova-sprint view cards [--col <c>] [--stream <s>] [--holder <member>] [--by tier|stream|col|holder] [--json]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --by <string>  count the cards by tier, stream, col or holder instead of listing them
+  --col <string>  only the cards in this column (waiting, ready, working, review, merging, landed)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --holder <string>  only the cards this member or friend is working
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --stream <string>  only the cards of this stream
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: inspection: lists or counts (--by tier|stream|col|holder) the work table's primaries, filtered by --col, --stream, --holder; writes nothing
+```
+
+`nova-sprint view worker -h`:
+
+```
+usage: nova-sprint view worker --as <member|friend> [--since <cursor>] [--json]
+from `nova-sprint help`:
+  nova-sprint view worker --as <member|friend> [--since <cursor>] [--json]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --as <string>  the fleet member or the friend whose view it is
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --since <string>  the cursor an earlier view printed: leave out every card it showed that has not changed
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: inspection: reads the worker's cards, their packets and its results not landed, writes nothing
+```
+
+`nova-sprint seat install -h`:
+
+```
+usage: nova-sprint seat install --harness <name> --target <dir> [--session <id>] [--dir <dir>] [--log <file>] [--server <host:port>] [--config-seat <name> --config-dsn <dsn> --config-password-env <NAME>] [--dry-run]
+from `nova-sprint help`:
+  nova-sprint seat install --harness <name> --target <dir> [--session <id>] [--dir <dir>] [--log <file>] [--server <host:port>] [--config-seat <name> --config-dsn <dsn> --config-password-env <NAME>] [--dry-run]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --config-dsn <dsn>  the config store's PostgreSQL dsn, postgres://user@host:port/db with no password
+  --config-password-env <NAME>  the NAME of the config store's password: the variable nova-config reads it from, else the key of the store login's nova-secrets seat (nova-sprint seat login) it is read from in process
+  --config-seat <name>  the name of the nova-config seat profile written into nova-config's seats.tsv (nova-config --seat <name> reads it); wants --config-dsn and --config-password-env
+  --dir <string>  the directory the unit is written into (default: ~/Library/LaunchAgents on macOS, ~/.config/systemd/user on Linux)
+  --dry-run  print the unit and where it would go, and write and load nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --harness <string>  the harness the seat's AI runs in (required): the push loop delivers each judgment, and the push proof, into the session through its adapter; a harness with no deliver command (claude) gets the folder adapter, each one a file written into --target
+  --json  print one JSON object for a program instead of the lines
+  --log <string>  the file the loop's lines go to, macOS (default: ~/Library/Logs/nova-sprint-seat-push.log); on Linux they are in the journal
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --server <host:port>  the sprint's server, host:port (default NOVA_SPRINT_SERVER): the unit's, and recorded in the seat beside the store login, where seat check reads it when NOVA_SPRINT_SERVER is not set
+  --session <string>  the session's id, for a harness that names one (default: the adapter's newest in --target)
+  --target <string>  the session's directory, where the harness's adapter delivers (required); for the folder adapter, the directory the session watches with a Monitor, which must be there
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: writes the push loop's unit (inbox --wait --push seat) into --dir and loads it with launchctl (macOS) or systemctl --user (Linux); --dry-run prints it and writes nothing
+```
+
+`nova-sprint seat watch -h`:
+
+```
+usage: nova-sprint seat watch <dir> [--json]
+from `nova-sprint help`:
+  nova-sprint seat watch <dir> [--json]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: inspection: watches this machine's directory, prints each complete file path once as it appears, writes nothing; an interrupt stops it
+```
+
+`nova-sprint seat uninstall -h`:
+
+```
+usage: nova-sprint seat uninstall [--dir <dir>]
+from `nova-sprint help`:
+  nova-sprint seat uninstall [--dir <dir>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dir <string>  the directory the unit was written into (default: as seat install's)
+  --dry-run  say which unit would be unloaded and removed, and unload and remove nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: unloads the push loop's unit and removes its file from --dir; --dry-run names the unit and unloads and removes nothing
+```
+
+`nova-sprint seat deliver -h`:
+
+```
+usage: nova-sprint seat deliver [--text <message>] --actor <seat>
+from `nova-sprint help`:
+  nova-sprint seat deliver [--text <message>] --actor <seat>
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --text <string>  message to deliver; without this flag read the bus receiver's standard input (at most 1 MiB)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint seat push -h`:
+
+```
+usage: nova-sprint seat push [--harness <name> --target <dir> [--session <id>]] [--sent <nonce> [--failed <why>]] [--beat bus|friends|transitions [--failed <why>]] [--observe friends|transitions --json] [--dry-run]
+from `nova-sprint help`:
+  nova-sprint seat push [--harness <name> --target <dir> [--session <id>]] [--sent <nonce> [--failed <why>]] [--beat bus|friends|transitions [--failed <why>]] [--observe friends|transitions --json] [--dry-run]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --beat <string>  native observer receipt: bus, friends or transitions; records a completed pass, never a session pong
+  --dry-run  check the flags and the record and print what would be recorded, and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --failed <string>  with --sent or --beat, why the completed push pass failed
+  --harness <string>  the harness the AI holding the seat runs in: its adapter delivers each push into the session (a harness with no deliver command, claude, gets the folder adapter: each push a file in --target)
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --observe <string>  native observer read: friends or transitions, with --json
+  --observed-session <string>  with --beat and --seat-generation, the observation's session id
+  --observed-target <string>  with --beat and --seat-generation, the observation's delivery target
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --seat-generation <uint>  with --beat, the seat generation the completed observation read; with --epoch and --observed-target
+  --sent <string>  the push loop's report: the nonce of the check it delivered
+  --session <string>  with --harness, the session's id, for a harness that names one (default: the adapter's newest in --target)
+  --target <string>  with --harness, the session's directory, where the adapter delivers (for the folder adapter, the directory the session watches, which must be there)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: store write: with --harness and --target, records the seat's push target (harness, target, session, adapter) in the sprint's store; with --sent, records the push loop's delivery of a check or its failure; with neither, prints the record and whether the seat is live and writes nothing; --dry-run checks the same and writes nothing
+```
+
+`nova-sprint seat pong -h`:
+
+```
+usage: nova-sprint seat pong <nonce> [--dry-run]
+from `nova-sprint help`:
+  nova-sprint seat pong <nonce> [--dry-run]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dry-run  check the nonce against the seat's push record and say whether it would prove the seat, and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: store write: proves the seat live by the nonce of the last check delivered, recording the proof in the sprint's store; --dry-run checks the nonce against the record and writes nothing
+```
+
+`nova-sprint seat -h`:
+
+```
+usage: nova-sprint seat [--repair --reason <text>] | push [--harness <name> --target <dir> [--session <id>]] | pong <nonce>
+from `nova-sprint help`:
+  nova-sprint seat check
+  nova-sprint seat install --harness <name> --target <dir> [--session <id>] [--dir <dir>] [--log <file>] [--server <host:port>] [--config-seat <name> --config-dsn <dsn> --config-password-env <NAME>] [--dry-run]
+  nova-sprint seat watch <dir> [--json]
+  nova-sprint seat uninstall [--dir <dir>]
+  nova-sprint seat deliver [--text <message>] --actor <seat>
+  nova-sprint seat push [--harness <name> --target <dir> [--session <id>]] [--sent <nonce> [--failed <why>]] [--beat bus|friends|transitions [--failed <why>]] [--observe friends|transitions --json] [--dry-run]
+  nova-sprint seat pong <nonce> [--dry-run]
+  nova-sprint seat [--repair --reason <text>] | push [--harness <name> --target <dir> [--session <id>]] | pong <nonce>
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --reason <string>  with --repair, why the key is repaired, recorded in the log (required)
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --repair  write the coordinator key from the seat's record when they differ: the record's holder or the owner, with --reason; logged with who and why
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: inspection: reads the seat (holder, epoch, generation), writes nothing
+```
+
+`nova-sprint fsck seat -h`:
+
+```
+usage: nova-sprint fsck seat [--pg <host:port or postgres:// URI>]
+from `nova-sprint help`:
+  nova-sprint fsck seat [--pg <host:port or postgres:// URI>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --pg <string>  the address of nova-config's store, whose sprint row's coordinator is checked: host:port, or a postgres:// URI; else NOVA_PG_DSN
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: inspection: reads the coordinator key, the seat record and the server's actor from the sprint's store and the sprint row's coordinator from nova-config's store, writes nothing
+```
+
+`nova-sprint routes -h`:
+
+```
+usage: nova-sprint routes [--actor <string>] [--epoch <int>] [--json] [--max <int>] [--op <string>] [--redis <string>]
+from `nova-sprint help`:
+  nova-sprint routes
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: inspection: reads the route table and prints each route, writes nothing
+```
+
+`nova-sprint rules -h`:
+
+```
+usage: nova-sprint rules [--actor <string>] [--epoch <int>] [--json] [--max <int>] [--op <string>] [--redis <string>]
+from `nova-sprint help`:
+  nova-sprint rules
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: inspection: reads the rules the tick answers by and why the fleet is idle, writes nothing
+```
+
+`nova-sprint stats tidy -h`:
+
+```
+usage: nova-sprint stats tidy (--friends | --fleet | --routes | --streams | --all)... --reason <text> [--dry-run]
+from `nova-sprint help`:
+  nova-sprint stats tidy (--friends | --fleet | --routes | --streams | --all)... --reason <text> [--dry-run]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --all  all four: --friends --fleet --routes --streams
+  --dry-run  print what would move; write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --fleet  the machines' done cells, as --friends does the friends'
+  --friends  the friends' done cells: their history-only finished cards leave them (done and ok% count from now)
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --reason <string>  why, kept in the archive and the stats record (required)
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --routes  the route counters: archived, and stats --routes counts from now
+  --streams  the streams' landed costs: the work table's cost and per landed count from now
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: local write: takes the history off the done cells named and writes the tidy's archive and stats record to the sprint's store; --dry-run writes nothing
+```
+
+`nova-sprint stats -h`:
+
+```
+usage: nova-sprint stats [--routes [--since <10m|RFC3339>]]
+from `nova-sprint help`:
+  nova-sprint stats tidy (--friends | --fleet | --routes | --streams | --all)... --reason <text> [--dry-run]
+  nova-sprint stats [--routes [--since <10m|RFC3339>]]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --routes  the route table from the log over --since, instead of the live tables
+  --since <string>  with --routes, the window start: a duration back from now (10m) or an RFC 3339 time; the last stats tidy of the routes when not given
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: inspection: reads the sprint's counts and rates, writes nothing
+```
+
+`nova-sprint play -h`:
+
+```
+usage: nova-sprint play [--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]
+from `nova-sprint help`:
+  nova-sprint play [--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --batch <int>  a merge step's batch
+  --broken <float>  the chance a read finds the work broken
+  --cross <float>  the chance a batch has a card that needs a card of another stream first
+  --down <float>  the chance, per member and second, that a member's machine that is up goes down (stops beating)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --every <duration>  between ticks
+  --fail <float>  the chance a work card comes back failed
+  --flap <float>  the chance, per member and second, that a member's machine falls silent, and the same chance that a silent one beats again: --down and --up with the one chance
+  --hold  play the downs as the coordinator's hold (fleet down, fleet up) instead of a machine falling silent; holds it took are released before it stops
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --reads <int>  read cards a reader begins, and reports, in its one call of each a tick; 0 is its whole queue
+  --red <float>  the chance a batch turns the stream branch red
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --seed <uint>  the seed: the same seed plays the same run
+  --silent <value>  <member>@<from>+<for>: the member's machine stops beating <from> after play starts, for <for> (e.g. m3@30s+20s); repeatable
+  --simulation  play the locked simulation: broken=0.1 fail=0.1 stuck=0.1 cross=0.01 down=0.01 up=0.1; a chance flag beside it sets that one chance
+  --stuck <float>  the chance a batch has a card that does not merge
+  --take <int>  work cards a member takes in its one take a tick; 0 is the member's width, else 64
+  --ticks <int>  stop after n ticks; 0 is until every stream lands
+  --up <float>  the chance, per member and second, that a member's machine that is down comes back (beats again)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint clear -h`:
+
+```
+usage: nova-sprint clear --confirm sprint
+from `nova-sprint help`:
+  nova-sprint clear --confirm sprint
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --confirm <string>  the sprint's name, to confirm: the name of its view, sprint
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint teardown -h`:
+
+```
+usage: nova-sprint teardown --confirm sprint
+from `nova-sprint help`:
+  nova-sprint teardown --confirm sprint
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --confirm <string>  the sprint's name, to confirm: the name of its view, sprint
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+```
+
+`nova-sprint live -h`:
+
+```
+usage: nova-sprint live [--bin-dir <dir>] [--dashboard <link>]... [--json]
+from `nova-sprint help`:
+  nova-sprint live [--bin-dir <dir>] [--dashboard <link>]... [--json]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --agents-dir <string>  the launchd agents directory read (else NOVA_LAUNCH_AGENTS, else ~/Library/LaunchAgents)
+  --bin-dir <string>  the bin directory the build is installed in
+  --dashboard <value>  a dashboard binary link that should name the installed nova-sprint (repeatable)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --launchctl <string>  the launchctl the agents are read with
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 the manifest was read (whatever it says: a stale process or a library mismatch is a line, not a failure), 1 the installed nova-sprint or the agents directory could not be read, 2 usage
+effect: inspection: reads only, writes nothing: the installed nova-sprint's version and inode, the store's function library through nova-redis fn check, the dashboard links, and every com.nova.* launchd agent of this login (its plist, its pid from launchctl print, its running arguments from ps, its executable's inode from lsof); a friend daemon's last beat from nova-friend status
+```
+
+`nova-sprint adopt -h`:
+
+```
+usage: nova-sprint adopt <version|path> --source <checkout> --inventory <file> --reason <text> [--limit <host>] [--receipts <dir>] [--dry-run]
+from `nova-sprint help`:
+  nova-sprint adopt <version|path> --source <checkout> --inventory <file> --reason <text> [--limit <host>] [--receipts <dir>] [--dry-run]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --ansible <string>  the ansible-playbook binary
+  --dry-run  run the play with --check: each step says WOULD and nothing is written
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --inventory <string>  the inventory the play reads, the nova-inventory script (else NOVA_INVENTORY)
+  --json  print one JSON object for a program instead of the lines
+  --limit <string>  the one machine to adopt on, as the inventory names it (default: the coordinator group, the seat)
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --reason <string>  why this build is adopted now: the build's dogfood gate reports it and does not refuse
+  --receipts <string>  the dogfood receipts directory (default ~/nova-working/dogfood)
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --source <string>  the nova-tools checkout the build is made from; its fleet/tools.yml is the play
+exit codes: 0 every step of the seat adopted the build (or, with --dry-run, said what it would change), 1 the play stopped or left a step without its line (ADOPT REFUSED step=<step>, with what the rollback did when the window had opened: the steps before it are done, or rolled back, and the play runs again to finish), 2 usage
+effect: local and remote writes through ansible-playbook: the tools play builds the version if missing and runs the new build's checks on the seat (shadow tick, nova-friend install --dry-run) before anything changes; then, in a window, it stops the seat's old server and member (bootout, seen gone in ps), migrates the configuration store as its owning role (nova-config migrate --window, refusing while any other nova session holds the database), loads the function library, installs the tools and bootstraps every stopped or stale nova launchd agent, points the dashboard links at the installed nova-sprint and reinstalls each stale friend daemon with nova-friend install; a refusal in the window puts the tools and library of before back and restarts the old agents (the migration is never undone); --dry-run runs the play with --check and writes nothing
+```
+
+`nova-sprint server switch -h`:
+
+```
+usage: nova-sprint server switch [<binary>] [--rollback] [--window <duration>] [--target <path>] [--tick-deadline <duration>]
+from `nova-sprint help`:
+  nova-sprint server switch [<binary>] [--rollback] [--window <duration>] [--target <path>] [--tick-deadline <duration>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dry-run  run the candidate's shadow tick (read-only) and say what would be switched; switch, roll back and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --rollback  roll back to previous binary, or enable automatic rollback on failed land in window
+  --target <string>  target binary to replace (default: this binary or NOVA_SPRINT_SERVER_BIN)
+  --tick-deadline <duration>  the candidate's shadow tick (<binary> tick --shadow, read-only, against the store --redis names) must end in this long, or the switch is refused
+  --window <string>  rollback window duration: if a land fails within this window, roll back
+exit codes: 0 done, 1 failed or refused (the candidate's shadow tick failed: nothing changed), 2 usage
+effect: local write: runs <binary> tick --shadow against the store first (read-only, under --tick-deadline) and refuses the swap, nothing changed, when it exits non-zero, panics or misses the deadline; then switches the server binary on disk, keeping the previous binary, the shadow's plan size and time at <target>.shadow.json, and rolling back on land failure in the window; --dry-run runs the shadow tick only and switches and writes nothing
+```
+
+`nova-sprint install -h`:
+
+```
+usage: nova-sprint install <server|member|seat-push|friend-sync|table> [--dir <dir>] [--log <file>] [--dry-run] (each kind's own flags are listed by install <kind> -h)
+from `nova-sprint help`:
+  nova-sprint install <server|member|seat-push|friend-sync|table> [--dir <dir>] [--log <file>] [--dry-run] (each kind's own flags are listed by install <kind> -h)
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dir <string>  the directory the unit is in (default: ~/Library/LaunchAgents on macOS, ~/.config/systemd/user on Linux)
+  --dry-run  print what would be done, and write, load, unload and remove nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --log <string>  the file the unit's lines go to, macOS (default: ~/Library/Logs/nova-sprint-<kind>.log); on Linux they are in the journal
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done (the unit written or kept, and loaded), 1 the unit did not write or load (FAILED names it), 2 usage or a unit it refuses (a kind it does not install, the twin, a store login the unit could not use, a flag missing)
+effect: local write: writes the kind's unit (the verb itself, never a wrapper) into --dir and loads it with launchctl (macOS) or systemctl --user (Linux); --dry-run prints it and writes nothing
+```
+
+`nova-sprint uninstall -h`:
+
+```
+usage: nova-sprint uninstall <server|member|seat-push|friend-sync|table> [--dir <dir>] [--dry-run]
+from `nova-sprint help`:
+  nova-sprint uninstall <server|member|seat-push|friend-sync|table> [--dir <dir>] [--dry-run]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --dir <string>  the directory the unit is in (default: ~/Library/LaunchAgents on macOS, ~/.config/systemd/user on Linux)
+  --dry-run  print what would be done, and write, load, unload and remove nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 done (removed, or no unit there), 1 the unit did not unload or remove (FAILED names it), 2 usage
+effect: local write: unloads the kind's unit and removes its file from --dir; --dry-run names the unit and unloads and removes nothing
+```
+
+`nova-sprint units -h`:
+
+```
+usage: nova-sprint units --check [--dir <dir>]
+from `nova-sprint help`:
+  nova-sprint units --check [--dir <dir>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --check  name each unit a running sprint needs installed, missing or different (required)
+  --dir <string>  the directory the units are in (default: ~/Library/LaunchAgents on macOS, ~/.config/systemd/user on Linux)
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+exit codes: 0 every unit a sprint needs is installed, 1 one or more is missing or different (each named with the verb that installs it), 2 usage
+effect: inspection: reads the unit files in --dir and names each unit a sprint needs installed, missing or different; loads and changes nothing
+```
+
+`nova-sprint cost attach -h`:
+
+```
+usage: nova-sprint cost attach <card>.<attempt> --model <provider/model> --input <n> --cache-read <n> --cache-write <n> --output <n> [--reasoning <n>] [--usd <x>] [--source <text>] [--replace] [--dry-run] | --file <tsv> [--replace] [--dry-run]
+from `nova-sprint help`:
+  nova-sprint cost attach <card>.<attempt> --model <provider/model> --input <n> --cache-read <n> --cache-write <n> --output <n> [--reasoning <n>] [--usd <x>] [--source <text>] [--replace] [--dry-run] | --file <tsv> [--replace] [--dry-run]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --cache-read <int>  cache read tokens
+  --cache-write <int>  cache write tokens
+  --dry-run  print what attach would do, and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --file <string>  a TSV of card, attempt, model, input, cache_read, cache_write, output, reasoning, usd, source; one bad row writes nothing
+  --input <int>  uncached input tokens
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --model <string>  the provider/model the run used
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --output <int>  output tokens
+  --reasoning <int>  reasoning tokens (default: not reported)
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --replace  price a record that already holds tokens, and keep the old figures on the card's story
+  --source <string>  where the figures came from, kept on the story when --replace
+  --usd <string>  the harness's own cost, a non-negative decimal
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: store write: prices an existing cost record from the counts given, or from each row of --file, and moves the card's total, a landed card's cost, its stream's sum and the work card's usage; a record that already holds tokens is refused unless --replace, and the old figures go on the card's story; --file is all or none; --dry-run writes nothing
+```
+
+`nova-sprint coordinator -h`:
+
+```
+usage: nova-sprint coordinator <name> --reason <text> | <name> --take --approved-by <owner> --reason <text>
+from `nova-sprint help`:
+  nova-sprint coordinator <name> --reason <text> | <name> --take --approved-by <owner> --reason <text>
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --approved-by <string>  with --take, the sprint's owner who approved it (init --owner, else NOVA_SPRINT_OWNER): the take is refused without the owner's name
+  --dry-run  say whether the seat would move, and how, and write nothing
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --reason <string>  why the seat moves, recorded in the log with who moved it (required)
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the address nova-sprint seat login recorded, whose user and secret it logs in with); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)
+  --take  take the seat as <name>, who runs this, when the holder is away (asleep, out of credits): wants --approved-by
+exit codes: 0 done, 1 failed or incomplete (including refused; the line names why), 2 usage or a store that did not answer
+effect: delivery: moves the seat in the sprint's store, a note to the old holder on a take; --dry-run writes nothing
+```
+<!-- clidoc:end nova-sprint -->
 
 nova-sprint: a sprint of work cards, dealt to a fleet of workers and read before they land
 
@@ -2952,6 +6705,343 @@ release-check-merge-queue-p90-b.w7.
 
 ## nova-sandbox
 
+<!-- clidoc:begin nova-sandbox -->
+`nova-sandbox help`:
+
+```
+nova-sandbox: run one command inside an OS-enforced wall around the directories you name
+
+how it works: the wall is built for one run from your flags and kept nowhere:
+--read directories are readable, --write directories writable, and the kernel
+denies the rest (sandbox-exec on macOS, Landlock on Linux; check says which).
+Paths must exist and be absolute, and HOME must sit inside a --write. The
+command's own exit status comes back; 125 means the wall refused to start it.
+first run: the lines under example:, in order: check the backend, make a scratch
+directory, prove the wall with probe, then run a command that writes inside it.
+
+usage:
+  nova-sandbox --read <dir>... [--read-noexec <dir>...] --write <dir>... [--net-deny]
+               [--net-listen] [--net-allow <host:port>] [--cwd <dir>]
+               [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
+  nova-sandbox probe --write <dir>... [--read <dir>...] [--secret <path>] [--net-deny]
+  nova-sandbox policy --read <dir>... --write <dir>... [--net-deny] [--net-listen]
+               [-- <command> <args...>]
+  nova-sandbox check
+  nova-sandbox run --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]...
+               [--container <disk>] -- <command> <args...>          (darwin)
+  nova-sandbox run --help
+  nova-sandbox reap [--dry-run]                                   (darwin)
+  nova-sandbox worktree --repo <dir> --scratch <dir> --pr <id> [--base <branch>]
+  nova-sandbox worktree --repo <dir> --scratch <dir> --prune
+  nova-sandbox egress plan  --run <id> --policy <file> --model-host <host>
+               --resolver <ip> [--bench-cidr <cidr>]... [--uid <n>] [--veth <if>]
+               --out <file>
+  nova-sandbox egress apply --plan <file> --run <id>                    (linux)
+  nova-sandbox egress check --plan <file>
+  nova-sandbox egress drop  --run <id>                                  (linux)
+  nova-sandbox version
+  nova-sandbox help
+
+  --read <dir>    readable, recursively, and NOT writable. Repeatable, no default.
+                  Shared inputs go here, named once, so N workers read one copy.
+                  It CARRIES EXECUTE: a program under a --read runs.
+  --read-noexec <dir>
+                  readable, recursively, and NOT EXECUTABLE and not writable.
+                  Repeatable, no default. This is the flag for a cache or a data
+                  tree -- a module cache, a node_modules, a downloads directory --
+                  that this user can write to: under --read the job could RUN
+                  whatever lands there, and under this flag it can only read it.
+                  A path in both lists is a refusal, not a merge.
+  --write <dir>   readable AND writable, recursively. Repeatable, no default, and
+                  REQUIRED: a command with no writable directory is a
+                  misconfiguration, not a tighter sandbox. The FIRST --write is
+                  where the working directory and the temp directory default to.
+  --cwd <dir>     the command's working directory; must be inside a --write.
+                  Default: the first --write. A cwd outside the wall denies
+                  getcwd(3) and every git command dies before it reads anything.
+  --tmp <dir>     TMPDIR/TMP/TEMP and zsh TMPPREFIX for the child; must be inside a --write.
+                  Default: <first --write>/.nova-sandbox-tmp, the one directory
+                  this tool creates.
+  --net-deny      an ENFORCED network denial, or a refusal. Without it the tool
+                  makes no promise about the network and the line says
+                  net=nopromise.
+  --net-listen    grant INBOUND ip as well; without it a job that does not
+                  listen cannot be listened to. Never with --net-deny.
+  --net-allow <host:port>  open the loopback host:port named, back up, by name;
+                  the keyless local provider (ollama) that (remote ip) does not
+                  reach. Repeatable.
+  --gpu <n|m>     the explicit local GPU capability: none (default) or metal.
+                  Opt-in only; metal records intent and never widens
+                  mach-lookup or grants blanket device access (#230).
+  --name <c>      the windows container name. Accepted and ignored on darwin, so
+                  one caller builds one argv for three platforms.
+  --acl <t|c>     who adds the windows ACEs. Accepted and ignored on darwin,
+                  with one NOTE line, for the same reason as --name.
+  --secret <path> probe only: the file a probe proves it cannot read. A path is
+                  not a secret; the file's contents are never read. A probe may run
+                  WITHOUT one -- a caller whose key is delivered by nova-secrets
+                  exec into the environment has no key file, and the probe then
+                  proves the wall's other checks (issue #881).
+
+run gives one command a DISPOSABLE place to work and then takes it away: on darwin
+an APFS volume of its own in the boot container, quota'd by --size and mounted at
+/Volumes/nova-<n>. That volume is the only --write, the command runs in a process
+group of its own, and on exit -- normal, error, signal or --timeout -- the group is
+killed and the volume is unmounted and DELETED. Nothing of the run survives on the
+boot volume, so there is no cleanup step. A delete that fails prints SANDBOX LEAK
+with the one command that removes it and exits 3.
+
+  --name <n>      run only: the volume is nova-<n>. Letters, digits, - _ and .
+  --size <s>      run only: the volume's quota, e.g. 8g or 64m. REQUIRED: a
+                  disposable place with no ceiling can fill the boot disk.
+  --timeout <d>   run only: a Go duration after which the whole process group is
+                  killed and the volume deleted anyway. Exit 124.
+  --go            run only: add the Go toolchain's own roots as --read, GOROOT
+                  and GOMODCACHE as go env reports them. A card that builds Go
+                  wants this; nova-sandbox run --help says why.
+  --container <d> run only: the APFS container to make the volume in. Default:
+                  the container the boot volume is in.
+  --dry-run       reap only: print what a reap would take and touch NOTHING.
+
+reap clears what a SIGKILL left: a run killed outright has no path out to delete
+its volume on, so the volume stays mounted and the command's own children are
+reparented to PID 1 still holding it open. reap lists every nova-* volume, kills
+what holds each one (SIGTERM, then SIGKILL) and deletes it -- except a volume a
+LIVE run owns, which it reports and leaves alone. Exit 0 clean, 3 when anything
+remained, so nova-sandbox reap --dry-run is a gate a card can end on.
+
+egress is the card's OUTBOUND wall, and it lives on the BENCH rather than in the
+card, because the worker is the adversary: plan resolves the names in the reviewed
+allowlist (infra/image/egress.txt) ONCE, pins the addresses and writes an nftables
+ruleset that denies everything the card did not name — TCP 443 to the pinned
+addresses, UDP 53 to the resolver, and the metadata address, loopback and the other
+benches denied outright. apply hands that ruleset to nft, check reads one back and
+asserts its invariants, and drop takes the run's table away.
+
+  --run <id>      egress: the run this wall belongs to; the table is nova_egress_<id>
+  --policy <f>    egress plan: the allowlist in git. A name reaches a card only by a
+                  PR to that file, never by a flag on one run.
+  --model-host <h> egress plan: the ONE model host of this run, and it must already
+                  be a line in the policy file.
+  --resolver <ip> egress plan: the only destination UDP 53 is allowed to.
+  --bench-cidr <c> egress plan: another bench, denied. Repeatable.
+  --uid <n>       egress plan: the container's uid on the host (meta skuid).
+  --veth <if>     egress plan: the container's interface (iifname). A plan needs
+                  --uid or --veth: every rule is scoped to the card's own traffic.
+  --out <file>    egress plan: where the ruleset is written.
+  --plan <file>   egress apply and check: the ruleset to apply or to read back.
+
+Every path is yours and none is guessed: a --read, a --read-noexec, a --write, a
+--cwd or a --tmp that does not exist is a refusal and is NOT created. HOME must
+resolve inside a --write (the caller sets it), because almost every tool derives
+a path from it and an inherited HOME is denied by the wall.
+
+A command that runs OUTSIDE the wall and dies inside it is missing a --read:
+a toolchain in a user directory is exactly a caller-supplied read-only root.
+
+exit codes: each verb's own, by verb:
+  the bare wrap and run: the command's own status, 0-124, passed through, and
+    a SANDBOX DONE ... exit=<n> line on stderr after it ends says the command
+    returned it (SANDBOX OK, before it starts, says only that the wall is up);
+    125 nova-sandbox refused before the command ran, a usage error included
+    (a SANDBOX REFUSED line on stderr says why, and no SANDBOX DONE follows);
+    126 the command could not be executed; 127 it is on no PATH entry; 128+N
+    it was killed by signal N; run only: 3 a volume was left (SANDBOX LEAK),
+    124 its --timeout ended it. A command that itself exits 125-127 (or 71,
+    sandbox-exec's own exec failure) is told from the tool by that line.
+  probe, policy, check, version, worktree, egress: 0 done, 1 the verb ran and
+    said NO (probe, egress), 2 could not run (a usage error). reap: 0 clean, 3
+    something remained. <verb> -h gives one verb's codes and flags.
+```
+
+`nova-sandbox probe -h`:
+
+```
+usage: nova-sandbox probe [flags]
+from `nova-sandbox help`:
+  nova-sandbox probe --write <dir>... [--read <dir>...] [--secret <path>] [--net-deny]
+  nova-sandbox probe --write /path/to/pool/jobs/j1 \
+  --secret /path/to/.config/anthropic/env
+flags:
+  --gpu <mode>  the local GPU capability mode: none (the default) or metal
+  --json  print the result as one JSON object on stdout, a refusal included
+  --net-deny  an ENFORCED network denial, or a refusal; without it the line says net=nopromise
+  --net-listen  grant inbound ip as well; never with --net-deny
+  --read <dir>  a dir readable and NOT writable, recursively; it carries execute. Repeatable
+  --read-noexec <dir>  a dir readable, NOT writable and NOT executable: a cache or a data tree. Repeatable
+  --secret <path>  a file path the probe proves it cannot read, outside every --read and --write; its contents are never read
+  --write <dir>  a dir readable and writable, recursively. Repeatable and REQUIRED; HOME must sit inside one
+exit codes: each verb's own, by verb:
+```
+
+`nova-sandbox policy -h`:
+
+```
+usage: nova-sandbox policy [flags]
+from `nova-sandbox help`:
+  nova-sandbox policy --read <dir>... --write <dir>... [--net-deny] [--net-listen]
+  [-- <command> <args...>]
+flags:
+  --cwd <dir>  the command's working dir, inside a --write (default: the first --write)
+  --gpu <mode>  the local GPU capability mode: none (the default) or metal
+  --json  print the result as one JSON object on stdout, a refusal included
+  --name <container>  the windows container name; accepted and ignored on darwin and linux
+  --net-allow <host:port>  open the loopback host:port named. Repeatable
+  --net-deny  an ENFORCED network denial, or a refusal; without it the line says net=nopromise
+  --net-listen  grant inbound ip as well; never with --net-deny
+  --read <dir>  a dir readable and NOT writable, recursively; it carries execute. Repeatable
+  --read-noexec <dir>  a dir readable, NOT writable and NOT executable: a cache or a data tree. Repeatable
+  --tmp <dir>  the child's TMPDIR, a dir inside a --write (default: <first --write>/.nova-sandbox-tmp)
+  --write <dir>  a dir readable and writable, recursively. Repeatable and REQUIRED; HOME must sit inside one
+exit codes: each verb's own, by verb:
+```
+
+`nova-sandbox check -h`:
+
+```
+usage: nova-sandbox check [flags]
+from `nova-sandbox help`:
+  nova-sandbox check
+flags:
+  --json  print the result as one JSON object on stdout, a refusal included
+exit codes: each verb's own, by verb:
+```
+
+`nova-sandbox run -h`:
+
+```
+nova-sandbox run: one command, in a DISPOSABLE place that is deleted on exit (darwin)
+
+usage:
+  nova-sandbox run --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]...
+                   [--container <disk>] -- <command> <args...>
+
+  --name <n>      the volume is nova-<n>, mounted at /Volumes/nova-<n>. Letters,
+                  digits, - _ and . REQUIRED.
+  --size <s>      the volume's quota, e.g. 8g or 64m. REQUIRED: a disposable place
+                  with no ceiling can fill the boot disk.
+  --timeout <d>   a Go duration after which the whole process group is killed and
+                  the volume deleted anyway. Exit 124.
+  --go            add the Go toolchain's own roots as --read: GOROOT and GOMODCACHE,
+                  as `go env` reports them. A toolchain outside the roots the
+                  profile already grants is unreadable inside the wall, and a module
+                  cache lives under the caller's home, which the wall denies -- so a
+                  card that builds Go wants this flag, and the alternative is naming
+                  both by hand in every argv.
+  --max-procs <n> the most processes the command's tree may hold, default 256.
+                  Counted every second; past it the whole process group is killed
+                  and the run ends "runaway: <n> processes" with exit 137.
+  --max-mem <s>   the most resident memory the tree may hold, default 8g. Past it
+                  the group is killed and the run ends "runaway: <n> bytes of memory".
+  --read <dir>    readable, recursively, and NOT writable. Repeatable.
+  --out <dir>     the ONE writable path off the volume. After the command exits
+                  and BEFORE the volume is deleted, the named artifacts are
+                  copied to <dir>/<name>/. Without it nothing survives the run,
+                  which is the whole point of the verb and the wrong answer for
+                  a card that made a commit.
+  --artifact <p>  what leaves, relative to the card's working directory.
+                  Repeatable. Default: RESULT.md, usage.tsv and repo.bundle,
+                  each taken IF PRESENT. An artifact you NAME and did not write
+                  is a refusal. A directory is taken whole.
+  --out-max-bytes <n>
+                  the ceiling on the whole set, default 64m. Measured before a
+                  byte is written; over it is a refusal, not a truncation.
+  --container <d> the APFS container to make the volume in. Default: the container
+                  the boot volume is in.
+```
+
+`nova-sandbox reap -h`:
+
+```
+nova-sandbox reap: clear the disposable volumes a killed run left behind (darwin)
+
+usage:
+  nova-sandbox reap [--dry-run]
+
+  --dry-run   print what a reap would take and touch NOTHING: no signal is sent,
+              no volume is deleted.
+```
+
+`nova-sandbox worktree -h`:
+
+```
+usage: nova-sandbox worktree [flags]
+from `nova-sandbox help`:
+  nova-sandbox worktree --repo <dir> --scratch <dir> --pr <id> [--base <branch>]
+  nova-sandbox worktree --repo <dir> --scratch <dir> --prune
+flags:
+  --base <branch>  the branch it is compared against (default: the pull request's base)
+  --pr <id>  the pull request id whose head the worktree is placed at
+  --prune  remove the worktrees under --scratch whose pull request merged or closed, or that sat unused and stale; never with --pr
+  --repo <dir>  the repository dir the worktree is made from, an absolute path
+  --scratch <dir>  an existing dir the worktrees and their records live in; never created
+exit codes: each verb's own, by verb:
+```
+
+`nova-sandbox egress plan -h`:
+
+```
+usage: nova-sandbox egress plan [flags]
+from `nova-sandbox help`:
+  nova-sandbox egress plan  --run <id> --policy <file> --model-host <host>
+  --resolver <ip> [--bench-cidr <cidr>]... [--uid <n>] [--veth <if>]
+  --out <file>
+flags:
+  --bench-cidr <cidr>  another bench's cidr, denied. Repeatable
+  --model-host <host>  the ONE model host of this run, already a line in the policy
+  --out <file>  the file the ruleset is written to
+  --policy <file>  the reviewed allowlist file in git
+  --resolver <ip>  the only ip UDP 53 is allowed to
+  --run <id>  the run id this wall belongs to; the table is nova_egress_<id>
+  --uid <uid>  the container's uid on the host; a plan needs --uid or --veth
+  --veth <interface>  the container's interface; a plan needs --uid or --veth
+exit codes: each verb's own, by verb:
+```
+
+`nova-sandbox egress apply -h`:
+
+```
+usage: nova-sandbox egress apply [flags]
+from `nova-sandbox help`:
+  nova-sandbox egress apply --plan <file> --run <id>                    (linux)
+flags:
+  --plan <file>  the ruleset file egress plan wrote
+  --run <id>  the run id the plan belongs to
+exit codes: each verb's own, by verb:
+```
+
+`nova-sandbox egress check -h`:
+
+```
+usage: nova-sandbox egress check [flags]
+from `nova-sandbox help`:
+  nova-sandbox egress check --plan <file>
+flags:
+  --plan <file>  the ruleset file to read back and check
+exit codes: each verb's own, by verb:
+```
+
+`nova-sandbox egress drop -h`:
+
+```
+usage: nova-sandbox egress drop [flags]
+from `nova-sandbox help`:
+  nova-sandbox egress drop  --run <id>                                  (linux)
+flags:
+  --run <id>  the run id whose table is taken away
+exit codes: each verb's own, by verb:
+```
+
+`nova-sandbox version -h`:
+
+```
+usage: nova-sandbox version [flags]
+from `nova-sandbox help`:
+  nova-sandbox version
+exit codes: each verb's own, by verb:
+```
+<!-- clidoc:end nova-sandbox -->
+
 Runs one command under OS-enforced containment using `sandbox-exec` on macOS
 or Landlock on supported Linux kernels. Windows has no implemented backend and
 refuses to wrap a command. Run `nova-sandbox check` to inspect backend availability
@@ -3265,6 +7355,350 @@ WORKTREE OK removed=0 kept=1
 
 ## nova-tokens
 
+<!-- clidoc:begin nova-tokens -->
+`nova-tokens help`:
+
+```
+nova-tokens: token spend per day, model and repository, read from AI session logs
+
+how it works: fold reads the logs you name (Claude Code transcripts, OpenCode
+databases, swarm pools, bus notes) and writes one day file per day into --out,
+one row per (day, model, repo). The repo comes from the --repos file: lines of
+<name><TAB><regexp>, and the first match on a session's path wins. check, sum
+and report read the day files back; a count a source never gave prints as -.
+first run: create a tiny transcript and rules file with the lines under setup:
+above example:, then run the lines under example: in order.
+
+usage:
+  nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
+                      [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
+                      [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>] [--dry-run]
+  nova-tokens report (local mode) --who <name> --day <YYYY-MM-DD> --repos <file>
+                      mode: local note body, printed as the tokens note artifact
+                      [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
+                      [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>] [--dry-run]
+  nova-tokens report (store mode) --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]
+                      mode: Redis month summary
+                      [--user <name>] [--password-env <NAME>]
+  the local mode is selected by --who and --day; the store mode by --redis and --month; giving both --who and --redis selects the store mode (--redis wins); a mix of --who and --redis prints the store summary
+  nova-tokens ledger  --out <dir> (--day <YYYY-MM-DD> | --month <YYYY-MM>) --redis <host:port>
+                      [--user <name>] [--password-env <NAME>] [--dry-run]
+  nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
+  nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--allow-empty] [--max <n>]
+  nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--unattributed] [--max <n>]
+  nova-tokens profiles --swarm-root <dir>
+                      one PROFILES MODEL line per model (cards, median output, overshoot), then a PROFILES OK line with totals
+  nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>] [--dry-run]
+                      [--role <name>] [--weights <in,cw,cr,out>]
+  nova-tokens version
+
+Every verb but version takes --json: the same result as one JSON object on stdout, a
+refusal included. A verb that writes takes --dry-run: it is the real run's own plan --
+it reads what the real run reads and refuses what the real run refuses -- prints what it
+would write with dry_run=true on its last line, and writes nothing (ledger --dry-run dials
+no store). The one difference: a dry fold or session takes no fold.lock, so it neither waits for nor
+refuses on a fold holding one. --opencode under --dry-run (and under sources) still reads a
+copy of the database, made in a new directory of the run's own under --scratch
+(.nova-tokens-dry-run-*) and removed before it exits: --scratch is left as it was. `<verb> -h` lists a verb's flags and states its effect.
+
+exit codes: 0 the verb ran and passed; 1 the verb ran and said FAILED -- an unreadable
+source, an unparsed bus line or note, a row of two day bases, a lane-day with competing
+reports, a day that would shrink, a fold whose every message had no id and so folded nothing,
+a check finding (an --out holding no day file is one), a report with nothing to show; 2 could
+not run: a missing flag, a bad flag value, a duplicate label, two sources of one
+provider sharing message ids, sqlite3 absent when
+--opencode is given, a second fold holding the lock.
+
+EXIT 1 STILL WRITES. A fold with one unreadable file writes every day it could compute
+and exits 1: the exit code is about the claim -- a declared source is a claim that the
+report covers it -- and written=true on the TOKENS DAY line is about the files.
+
+Every path is a flag. There is no default output directory, no default transcript
+directory, no default database, no default bus and no default rules file. fold, report
+(its local mode), sum, check, sources, profiles and session read no environment variable
+for a path or a setting: ,  and  are ignored, and a test sets
+them and proves it. Three things do read the environment: --opencode runs sqlite3 found
+on ; and the two Redis verbs, ledger and report --redis, take the store's ACL user
+from --user, else NOVA_SPRINT_REDIS_USER, and its password from the variable
+--password-env names, else (with a user) the one NOVA_SPRINT_REDIS_PASSWORD_ENV names,
+else NOVA_REDIS_BENCH_PASSWORD. The password is never a flag. --timeout is the one flag
+with a default, 120 seconds, because it is how long this tool waits before saying so
+rather than a fact about your data.
+
+A source is declared by flag and every row names its sources, so every number in a day
+file is traceable to the flags of the run that wrote it. A label is [a-z0-9-]+, at most
+32 characters, and unique across the run. --scratch is required with --opencode and
+refused without it, because a scratch directory with nothing to put in it is a flag that
+does nothing. A fold or a report copies the database, with its -wal and -shm, into
+--scratch/opencode-<label>/, replacing the copy there, and leaves it; the live file is
+never opened, because sqlite3 keeps a WAL index beside the file it reads.
+
+The five types -- input, output, cache_write, cache_read, reasoning -- are kept apart, and
+a type the source did not report is written a dash, NEVER 0. A provider that does not expose
+reasoning is not evidence that none occurred, and a zero meaning "not measured" would sum
+into a month claiming to be complete. sum counts the dashes beside the totals. The same
+holds for cost: usd= on a TOKENS AVG line is - when no source reported a cost for it.
+
+A day that would go backwards is refused: TOKENS SHRANK names the type, what the file
+said and what the sources say now, the file is left as it was, and --allow-shrink is the
+person's act. A source that became unreadable must never quietly lower a day's spend.
+
+Two declared sources of one provider that feed the same message ids are refused
+before any day file is written. The refusal names both labels and the duplicate
+count, and the remedy is to drop one of the two flags. An id is comparable only
+within one provider, and a shared id is not dropped from the other source, so
+check and sum never see a doubled day.
+
+A fold merges into the day file by SOURCE: it recomputes the rows its own declared sources
+wrote and keeps every other row exactly as it is, so a run that declares one source does
+not erase what the others reported. A row it can neither keep nor recompute -- one already
+summed over a declared and an undeclared source -- is TOKENS PARTIAL, nothing of that day
+is written, and --allow-shrink does not write it either.
+
+Two notes for one day in one lane are one report only when the later names the earlier in
+its subject: supersedes=<id>[,<id>...], sorted, no duplicates. Nothing else orders them --
+not the Date, not the filename, not the directory listing, not the git history. Two tips
+are TOKENS CONFLICT, nothing folds for that lane-day, and the remedy names every tip; one
+note whose predecessor set names them all clears it.
+
+--note <path> is written whole through atomicfile: the file and its directory must not be
+symlinks.
+
+fold and session hold --out/fold.lock while they write, so two folds of one --out never
+write the same day at once; the second waits, then refuses naming the holder. The lock
+file holds the folding process's id and stays in --out between runs (it is never data);
+check counts it as neither a day file nor a stray.
+
+This tool removes nothing it was given. There is no month file, sum writes nothing, check
+names a stray and leaves it, and no verb deletes, truncates or trims a file it did not make:
+the one removal is the private database copy a dry run or sources made under --scratch.
+
+check counts what it does not name. A calendar day between the first and the last with no
+file is gap=<n>, and it is MISSING only when something says there was spend on it:
+--strict names every gap, --no-spend <file> (one YYYY-MM-DD per line, the days that had
+none) names the gaps your list does not account for. A *.md, a *.log or a pre-* archive
+directory beside the day files is notes=<n> rather than a stray; --strict names those too.
+A gate that cannot go green is a gate people stop reading, and both counts stay on the
+CHECK line, so nothing was hidden to make it green. A gate that cannot go red is no gate
+either: an --out with no day file in it is CHECK FAILED, never a green over nothing.
+
+sources --unattributed prints the path stems that were SEEN and matched no rule, heaviest
+first, capped by --max, with the mentions each stem got (one per message that touched a path
+in it). That listing is what other=<pct>% on a day line is made of, and it is the evidence
+for improving the --repos file.
+
+setup:
+  mkdir -p ./transcripts ./out
+  printf '%s' '{"type":"assistant","timestamp":"2026-09-11T09:12:' > ./transcripts/window.jsonl
+  printf '%s' '00Z","message":{"id":"example-1","model":"claude-' >> ./transcripts/window.jsonl
+  printf '%s' 'fable-5-1","usage":{"input_tokens":812,' >> ./transcripts/window.jsonl
+  printf '%s' '"output_tokens":40,"cache_creation_input_tokens":' >> ./transcripts/window.jsonl
+  printf '%s' '1200,"cache_read_input_tokens":90000},' >> ./transcripts/window.jsonl
+  printf '%s' '"content":[{"type":"tool_use","input":{' >> ./transcripts/window.jsonl
+  printf '%s\n' '"file_path":"/work/schema/wire.md"}}]}}' >> ./transcripts/window.jsonl
+  cp ./transcripts/window.jsonl ./session.jsonl
+  printf 'schema\t(^|/)schema($|/)\n' > ./repos.tsv
+```
+
+`nova-tokens fold -h`:
+
+```
+usage: nova-tokens fold [flags]
+from `nova-tokens help`:
+  nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
+  [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
+  [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>] [--dry-run]
+  nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
+effect: local write: writes the day files in --out, holding --out/fold.lock while it writes, and with --opencode copies the database into --scratch/opencode-<label>/ (replaced, and left); --dry-run reads the same sources, refuses what the real run refuses, and writes nothing (its database copy is made in a new directory under --scratch and removed before it exits)
+flags:
+  --all  fold every day named by the sources
+  --allow-shrink  write a day even when its totals shrink
+  --bus <string>  nova-bus directory with token notes
+  --claude <value>  labeled Claude Code transcript directory; repeatable
+  --day <string>  one UTC day to fold as YYYY-MM-DD
+  --dry-run  read the sources and print what would be written, and write nothing (no day file, no lock)
+  --exclude <value>  path or glob kept out of a recursive source tree (--claude), repeatable (nothing is excluded by default)
+  --json  print the result as one JSON object on stdout instead of lines
+  --max <int>  maximum findings or rows to print; 0 prints all
+  --max-files <int>  ceiling on the transcript files one --claude tree holds (default 20000); the whole tree is walked and counted before any file is opened, and a tree over the ceiling is refused naming the files and bytes it found; 0 is no ceiling
+  --opencode <value>  labeled OpenCode database file; repeatable
+  --out <string>  directory for daily token files
+  --provider <value>  kind:labeled provider export file; repeatable
+  --repos <string>  tab-separated repo names and path regular expressions
+  --scratch <string>  directory the OpenCode database is copied into: opencode-<label>/ in it, replaced and left by a run that writes; a new directory removed before exit by a dry run or sources
+  --swarm <value>  labeled swarm pool directory; repeatable
+  --timeout <int>  seconds to wait for the OpenCode sqlite3 reader
+exit codes: 0 the verb ran and passed; 1 the verb ran and said FAILED -- an unreadable
+```
+
+`nova-tokens report -h`:
+
+```
+usage: nova-tokens report [flags]
+from `nova-tokens help`:
+  nova-tokens report (local mode) --who <name> --day <YYYY-MM-DD> --repos <file>
+  mode: local note body, printed as the tokens note artifact
+  [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
+  [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>] [--dry-run]
+  nova-tokens report (store mode) --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]
+  mode: Redis month summary
+  [--user <name>] [--password-env <NAME>]
+  nova-tokens report --who ada --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
+effect: local write: --note writes the note body to that file, and --opencode copies the database into --scratch/opencode-<label>/ (replaced, and left); --dry-run names the note, copies the database only into a new directory under --scratch removed before it exits, and writes nothing; --redis reads the ledger store over the network, with or without --dry-run
+flags:
+  --bus <string>  nova-bus directory with token notes
+  --by <string>  Redis summary grouping: model, repo, day or tuple
+  --claude <value>  labeled Claude Code transcript directory; repeatable
+  --day <string>  one UTC day to report as YYYY-MM-DD
+  --dry-run  print the body and name the --note file, and write no file
+  --exclude <value>  path or glob kept out of a recursive source tree (--claude), repeatable (nothing is excluded by default)
+  --json  print the result as one JSON object on stdout instead of lines
+  --max <int>  maximum summary rows to print; 0 prints all
+  --max-files <int>  ceiling on the transcript files one --claude tree holds (default 20000); the whole tree is walked and counted before any file is opened, and a tree over the ceiling is refused naming the files and bytes it found; 0 is no ceiling
+  --month <string>  month to summarize as YYYY-MM
+  --note <string>  atomically write the note body to this path
+  --opencode <value>  labeled OpenCode database file; repeatable
+  --password-env <string>  environment variable holding the Redis password
+  --provider <value>  kind:labeled provider export file; repeatable
+  --redis <string>  Redis address for the store summary mode
+  --repos <string>  tab-separated repo names and path regular expressions
+  --scratch <string>  directory the OpenCode database is copied into: opencode-<label>/ in it, replaced and left by a run that writes; a new directory removed before exit by a dry run or sources
+  --supersedes <value>  note id this report replaces; repeatable
+  --swarm <value>  labeled swarm pool directory; repeatable
+  --timeout <int>  seconds to wait for the OpenCode sqlite3 reader
+  --user <string>  Redis username for the store summary mode
+  --who <string>  name to write in each note body row
+exit codes: 0 the verb ran and passed; 1 the verb ran and said FAILED -- an unreadable
+```
+
+`nova-tokens ledger -h`:
+
+```
+usage: nova-tokens ledger [flags]
+from `nova-tokens help`:
+  nova-tokens ledger  --out <dir> (--day <YYYY-MM-DD> | --month <YYYY-MM>) --redis <host:port>
+  [--user <name>] [--password-env <NAME>] [--dry-run]
+effect: delivery: writes each day file's rows to the Redis store at --redis (tokens:ledger:<day>); --dry-run reads the day files, prints what it would write, and dials no store
+flags:
+  --day <string>  one UTC day to index as YYYY-MM-DD
+  --dry-run  read the day files and print the rows that would be written, and dial no store
+  --json  print the result as one JSON object on stdout instead of lines
+  --month <string>  month of day files to index as YYYY-MM
+  --out <string>  directory containing daily token files
+  --password-env <string>  environment variable holding the Redis password
+  --redis <string>  Redis address for the ledger store
+  --user <string>  Redis username for the ledger store
+exit codes: 0 the verb ran and passed; 1 the verb ran and said FAILED -- an unreadable
+```
+
+`nova-tokens sum -h`:
+
+```
+usage: nova-tokens sum [flags]
+from `nova-tokens help`:
+  nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
+  nova-tokens sum --out ./out --month 2026-09
+effect: inspection: reads, writes nothing
+flags:
+  --json  print the result as one JSON object on stdout instead of lines
+  --max <int>  maximum rows to print; 0 prints all
+  --month <string>  month to sum as YYYY-MM
+  --out <string>  directory holding daily token files
+exit codes: 0 the verb ran and passed; 1 the verb ran and said FAILED -- an unreadable
+```
+
+`nova-tokens check -h`:
+
+```
+usage: nova-tokens check [flags]
+from `nova-tokens help`:
+  nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--allow-empty] [--max <n>]
+  nova-tokens check --out ./out
+effect: inspection: reads, writes nothing
+flags:
+  --allow-empty  answer OK on an --out holding no day file; without it files=0 is FAILED, never a green over nothing
+  --json  print the result as one JSON object on stdout instead of lines
+  --max <int>  maximum findings to print; 0 prints all
+  --no-spend <string>  file listing UTC dates with no spend, one per line
+  --out <string>  directory containing daily token files
+  --strict  treat every gap and note as a finding
+  --through <string>  require coverage through this UTC day, YYYY-MM-DD
+exit codes: 0 the verb ran and passed; 1 the verb ran and said FAILED -- an unreadable
+```
+
+`nova-tokens sources -h`:
+
+```
+usage: nova-tokens sources [flags]
+from `nova-tokens help`:
+  nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--unattributed] [--max <n>]
+  nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts
+  nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts --unattributed --max 20
+effect: inspection: reads, writes nothing (--opencode reads a copy made in a new directory under --scratch and removed before it exits)
+flags:
+  --all  inspect every day named by the sources
+  --bus <string>  nova-bus directory with token notes
+  --claude <value>  labeled Claude Code transcript directory; repeatable
+  --day <string>  one UTC day to inspect as YYYY-MM-DD
+  --exclude <value>  path or glob kept out of a recursive source tree (--claude), repeatable (nothing is excluded by default)
+  --json  print the result as one JSON object on stdout instead of lines
+  --max <int>  maximum rows to print; 0 prints all
+  --max-files <int>  ceiling on the transcript files one --claude tree holds (default 20000); the whole tree is walked and counted before any file is opened, and a tree over the ceiling is refused naming the files and bytes it found; 0 is no ceiling
+  --opencode <value>  labeled OpenCode database file; repeatable
+  --provider <value>  kind:labeled provider export file; repeatable
+  --repos <string>  tab-separated repo names and path regular expressions
+  --scratch <string>  directory the OpenCode database is copied into: opencode-<label>/ in it, replaced and left by a run that writes; a new directory removed before exit by a dry run or sources
+  --swarm <value>  labeled swarm pool directory; repeatable
+  --timeout <int>  seconds to wait for the OpenCode sqlite3 reader
+  --unattributed  list seen paths that matched no repo rule, with the mentions each got (one per message that touched it)
+exit codes: 0 the verb ran and passed; 1 the verb ran and said FAILED -- an unreadable
+```
+
+`nova-tokens profiles -h`:
+
+```
+usage: nova-tokens profiles [flags]
+from `nova-tokens help`:
+  nova-tokens profiles --swarm-root <dir>
+  one PROFILES MODEL line per model (cards, median output, overshoot), then a PROFILES OK line with totals
+effect: inspection: reads, writes nothing
+flags:
+  --json  print the result as one JSON object on stdout instead of lines
+  --swarm-root <string>  root containing the swarm pool profiles
+exit codes: 0 the verb ran and passed; 1 the verb ran and said FAILED -- an unreadable
+```
+
+`nova-tokens session -h`:
+
+```
+usage: nova-tokens session [flags]
+from `nova-tokens help`:
+  nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>] [--dry-run]
+  [--role <name>] [--weights <in,cw,cr,out>]
+  nova-tokens session --claude-session ./session.jsonl --out ./out
+effect: local write: with --out it writes the session's days into the day files there, holding --out/fold.lock; without --out, or with --dry-run, it writes nothing
+flags:
+  --claude-session <string>  one Claude Code session transcript jsonl
+  --day <string>  one UTC day to write as YYYY-MM-DD; defaults to every stamped day
+  --dry-run  with --out, print the days that would be written, and write nothing (no directory, no day file, no lock)
+  --json  print the result as one JSON object on stdout instead of lines
+  --out <string>  directory for the resulting daily token file
+  --role <string>  the role the rows are booked under: given, the row is <model>/<role>; the default books the bare model
+  --weights <string>  the WEIGHTED ratios as in,cw,cr,out -- a comparison, not a price: the defaults are the ratios of one vendor's published list prices; set your own
+exit codes: 0 the verb ran and passed; 1 the verb ran and said FAILED -- an unreadable
+```
+
+`nova-tokens version -h`:
+
+```
+usage: nova-tokens version [flags]
+from `nova-tokens help`:
+  nova-tokens version
+effect: inspection: reads, writes nothing
+exit codes: 0 the verb ran and passed; 1 the verb ran and said FAILED -- an unreadable
+```
+<!-- clidoc:end nova-tokens -->
+
 Token spend, folded from declared sources into **one file per day**, keyed exactly by `(day, model, repo)`, with the five token types kept apart — and those day files summed into a month. It reads sources. It never estimates, never fills a gap, and never removes a file. The contract is [docs/SPEC-TOKENS.md](SPEC-TOKENS.md).
 
 The core accounting verbs are `fold`, `report`, `sum`, `check` and `sources` — `nova-tokens help` lists all nine verbs. `fold` reads every declared source and writes the days it could compute. `report` is for a friend on another machine: it folds that machine's own sources for one day and prints, on standard output, exactly the body of a tokens note, so nobody types a number. `sum --out <dir> --month <YYYY-MM>` adds day files into a month and asserts nothing. `check` is the gate. `sources` shows what a fold would count before it writes.
@@ -3313,6 +7747,218 @@ variable `--password-env` names, else for a user `NOVA_SPRINT_REDIS_PASSWORD_ENV
 no user, no variable is read unless `--password-env` names it.
 
 ## nova-update
+
+<!-- clidoc:begin nova-update -->
+`nova-update help`:
+
+```
+nova-update: compare installed tools with their latest releases, and update one when asked
+
+how it works: the manifest is a tab-separated file you write, one tool per line:
+how to read its installed version, where its latest release is published, and
+the command that installs it. check and report compare the two; apply runs one
+named entry's command and reads the version again, nothing else. The release
+verbs build, publish and install nova-tools' own releases.
+first run: the binary alone; the lines under example: write a one-tool manifest
+(Go) to ./versions.tsv and read it; they install nothing.
+
+usage:
+  nova-update example [--out <path>]
+  nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+  nova-update status --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+  nova-update apply --file <path> <name> [--version <v>] [--dry-run] [--timeout <d>]
+  nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to
+    <who,who> | --send --as <friend> --to <who,who>]
+    [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+  nova-update report --store <host:port> [--timeout <d>]
+  nova-update watch --adopt <checks.tsv> [--as <friend> --to <who,who>] [--host <label>]
+    [--timeout <d>] [--budget <d>]
+  nova-update adoption --file <path> [--as <friend>] [--max <n>]
+  nova-update release <cut|build|install|adopt|pull> ...
+    nova-tools' own release pipeline: nova-update help release prints its usage lines
+  nova-update help
+  nova-update version (or --version)
+
+Defaults: --max 20 (0 = all), --timeout 5s, --budget 60s. Repeat --kind to select kinds.
+
+Every verb but watch and release takes --json: the same result as one JSON object on stdout. A result's first line is the verb, OK, FAIL or REFUSED, and the run's counts; `<verb> -h` lists a verb's flags and effect.
+
+Report needs no bus or network. Updates require an explicit apply name. status is check with every entry shown, current ones too. apply --dry-run prints the plan and writes nothing.
+
+A delivery is one nova-bus send on the Redis bus (nova-bus reads its store from NOVA_BUS_REDIS); with --snapshot, a report unchanged since it was confirmed sent to the same recipients is not sent again.
+
+A snapshot uses a sibling .lock file for a kernel lock; its presence never means a process is running.
+
+Locals: latest=local:<path> runs that binary (or argv) on this host to read the version; e.g., local:/usr/local/bin/nova-update or local:go version. The installed column can be a version string (v1.2.3), a single command name found on PATH, or a full argv.
+
+Both nova-update and nova-version read this manifest: they are two binaries that share the manifest reader and report (report prints the same lines under either). Use nova-update to ASK whether what you depend on is current and to CHANGE it: check and status (installed against latest, one line per finding; status shows the current ones too), apply (install the one entry you name, or print the plan with --dry-run), watch (run a file of adoption checks and post the receipt), adoption (list who adopted which tool) and release (cut, build, install, adopt and pull a nova-tools release). Use nova-version to RECORD what is installed: snapshot, diff, moved and send are nova-version's.
+
+THE MANIFEST is the file --file names, written by hand, the same for both tools:
+  nova-update report --file versions.tsv     the six lines that say what versions.tsv holds:
+      1. line 1 is the header, byte for byte: name<TAB>kind<TAB>installed<TAB>latest<TAB>apply<TAB>owner; every other line is six fields, one tab between, none empty; a line starting # is a comment
+      2. kind is harness, engine, model, tool or pin; name is unique in the file; owner is who answers for it
+      3. installed is a version (v1.2.3), a command name on PATH, or an argv whose first line of output carries the version (single spaces, no quotes)
+      4. latest is github:<owner>/<repo>, npm:<package>, brew:<formula>, ollama:<model>:<tag> (kind model), local:<argv> (a pin takes this only), or - for not known yet
+      5. apply is the argv that updates it, or none, split on single spaces, no quotes, no shell: a pipe, a glob or a  is a literal argument; a run prints EVERY problem of the file at once, each with its line, never the first alone
+      6. example: go<TAB>tool<TAB>go version<TAB>local:go version<TAB>none<TAB>me
+
+exit codes: 0 every entry current, an apply that left the box on the target (or an apply --dry-run that printed its plan), a report whose every entry answered; 1 the tool said NO (anything STALE, NEWER, DIFFERENT or UNKNOWN, an apply whose after is not the target, a report with an UNKNOWN or a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy).
+```
+
+`nova-update example -h`:
+
+```
+usage: nova-update example [flags]
+from `nova-update help`:
+  nova-update example [--out <path>]
+  nova-update example --out versions.tsv
+effect: inspection: prints the example manifest; with --out, local write: writes it, never over another file
+flags:
+  --json  print the result as one JSON object instead of lines
+  --out <string>  write the example manifest to this path (an existing file is never overwritten); without it, print the manifest
+exit codes: 0 every entry current, an apply that left the box on the target (or an apply --dry-run that printed its plan), a report whose every entry answered; 1 the tool said NO (anything STALE, NEWER, DIFFERENT or UNKNOWN, an apply whose after is not the target, a report with an UNKNOWN or a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy).
+```
+
+`nova-update check -h`:
+
+```
+usage: nova-update check [flags]
+from `nova-update help`:
+  nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+effect: inspection: reads each tool's installed version and asks its latest source (github:, npm:, brew: and ollama: are network reads); writes nothing
+flags:
+  --budget <duration>  the whole run's deadline, such as 60s
+  --file <string>  the manifest (required): one line per tool, six tab-separated fields name kind installed latest apply owner, written by hand
+  --json  print the result as one JSON object instead of lines
+  --kind <value>  read only entries of this kind (harness, engine, model, tool or pin); repeat for several
+  --max <int>  lines listed per kind before one MORE line stands for the rest; 0 lists all
+  --timeout <duration>  one read's deadline, such as 5s
+exit codes: 0 every entry current, an apply that left the box on the target (or an apply --dry-run that printed its plan), a report whose every entry answered; 1 the tool said NO (anything STALE, NEWER, DIFFERENT or UNKNOWN, an apply whose after is not the target, a report with an UNKNOWN or a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy).
+```
+
+`nova-update status -h`:
+
+```
+usage: nova-update status [flags]
+from `nova-update help`:
+  nova-update status --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+  nova-update status --file versions.tsv
+effect: inspection: the reads of check; writes nothing
+flags:
+  --budget <duration>  the whole run's deadline, such as 60s
+  --file <string>  the manifest (required): one line per tool, six tab-separated fields name kind installed latest apply owner, written by hand
+  --json  print the result as one JSON object instead of lines
+  --kind <value>  read only entries of this kind (harness, engine, model, tool or pin); repeat for several
+  --max <int>  lines listed per kind before one MORE line stands for the rest; 0 lists all
+  --timeout <duration>  one read's deadline, such as 5s
+exit codes: 0 every entry current, an apply that left the box on the target (or an apply --dry-run that printed its plan), a report whose every entry answered; 1 the tool said NO (anything STALE, NEWER, DIFFERENT or UNKNOWN, an apply whose after is not the target, a report with an UNKNOWN or a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy).
+```
+
+`nova-update apply -h`:
+
+```
+usage: nova-update apply [flags]
+from `nova-update help`:
+  nova-update apply --file <path> <name> [--version <v>] [--dry-run] [--timeout <d>]
+  nova-update apply --file versions.tsv go --dry-run
+effect: local write: runs the named entry's apply command, which installs; --dry-run starts no process and writes nothing
+flags:
+  --dry-run  print the plan and install nothing: no process starts
+  --file <string>  the manifest (required): one line per tool, six tab-separated fields name kind installed latest apply owner, written by hand
+  --json  print the result as one JSON object instead of lines
+  --timeout <duration>  the deadline of each version read and of the install command itself, such as 5m for a slow installer
+  --version <string>  the version to install, when the entry's apply argv holds {version}; default: the latest its source reports
+exit codes: 0 every entry current, an apply that left the box on the target (or an apply --dry-run that printed its plan), a report whose every entry answered; 1 the tool said NO (anything STALE, NEWER, DIFFERENT or UNKNOWN, an apply whose after is not the target, a report with an UNKNOWN or a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy).
+```
+
+`nova-update report -h`:
+
+```
+usage: nova-update report [flags]
+from `nova-update help`:
+  nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to
+  <who,who> | --send --as <friend> --to <who,who>]
+  [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+  nova-update report --store <host:port> [--timeout <d>]
+  nova-update report --file versions.tsv     the six lines that say what versions.tsv holds:
+  1. line 1 is the header, byte for byte: name<TAB>kind<TAB>installed<TAB>latest<TAB>apply<TAB>owner; every other line is six fields, one tab between, none empty; a line starting # is a comment
+  2. kind is harness, engine, model, tool or pin; name is unique in the file; owner is who answers for it
+  3. installed is a version (v1.2.3), a command name on PATH, or an argv whose first line of output carries the version (single spaces, no quotes)
+  4. latest is github:<owner>/<repo>, npm:<package>, brew:<formula>, ollama:<model>:<tag> (kind model), local:<argv> (a pin takes this only), or - for not known yet
+  5. apply is the argv that updates it, or none, split on single spaces, no quotes, no shell: a pipe, a glob or a  is a literal argument; a run prints EVERY problem of the file at once, each with its line, never the first alone
+  6. example: go<TAB>tool<TAB>go version<TAB>local:go version<TAB>none<TAB>me
+  nova-update report --file versions.tsv
+effect: inspection: reads each installed version, no latest, no network; --snapshot writes its state file (local write); --send delivers the note through nova-bus (delivery); --store reads the fleet's Redis
+flags:
+  --as <string>  the sender the note is from
+  --budget <duration>  the whole run's deadline, such as 60s
+  --draft  print the note that --send would deliver, and deliver nothing (needs --as, --to)
+  --file <string>  the manifest (required): one line per tool, six tab-separated fields name kind installed latest apply owner, written by hand
+  --host <string>  a label for the machine the report ran on, carried in the note's subject
+  --json  print the result as one JSON object instead of lines
+  --kind <value>  read only entries of this kind (harness, engine, model, tool or pin); repeat for several
+  --max <int>  lines listed per kind before one MORE line stands for the rest; 0 lists all
+  --send  deliver the note through nova-bus (needs --as, --to)
+  --snapshot <string>  a state file that records what was observed and what each recipient was confirmed sent: an unchanged report is not sent again
+  --store <string>  a fleet Redis host:port: report every bench's nova-sprint build from its beat, instead of --file
+  --timeout <duration>  one read's deadline, such as 5s
+  --to <string>  the recipients, comma-separated
+exit codes: 0 every entry current, an apply that left the box on the target (or an apply --dry-run that printed its plan), a report whose every entry answered; 1 the tool said NO (anything STALE, NEWER, DIFFERENT or UNKNOWN, an apply whose after is not the target, a report with an UNKNOWN or a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy).
+```
+
+`nova-update watch -h`:
+
+```
+usage: nova-update watch [flags]
+from `nova-update help`:
+  nova-update watch --adopt <checks.tsv> [--as <friend> --to <who,who>] [--host <label>]
+  [--timeout <d>] [--budget <d>]
+effect: inspection: runs each check's command; with --as and --to, delivery: the receipt goes out through nova-bus send
+flags:
+  --adopt <string>  the checks file (required): a header line check<TAB>command<TAB>owner, then one check per line, its command run as written
+  --as <string>  the sender the receipt is from; with --to, the pass posts the receipt through nova-bus send (nova-bus reads its store from NOVA_BUS_REDIS)
+  --budget <duration>  the whole pass's deadline, such as 60s
+  --host <string>  a label for the machine the pass ran on, carried in the receipt's subject
+  --timeout <duration>  one check's deadline, such as 5s
+  --to <string>  the receipt's recipients, comma-separated (those who answer a refused check)
+exit codes: 0 every entry current, an apply that left the box on the target (or an apply --dry-run that printed its plan), a report whose every entry answered; 1 the tool said NO (anything STALE, NEWER, DIFFERENT or UNKNOWN, an apply whose after is not the target, a report with an UNKNOWN or a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy).
+```
+
+`nova-update adoption -h`:
+
+```
+usage: nova-update adoption [flags]
+from `nova-update help`:
+  nova-update adoption --file <path> [--as <friend>] [--max <n>]
+effect: inspection: reads the ledger, writes nothing
+flags:
+  --as <string>  list only this friend's choices
+  --file <string>  the adoption ledger (required): one line per tool choice, five tab-separated fields tool friend state version detail, written by hand
+  --json  print the result as one JSON object instead of lines
+  --max <int>  choices listed before one MORE line stands for the rest; 0 lists all
+exit codes: 0 every entry current, an apply that left the box on the target (or an apply --dry-run that printed its plan), a report whose every entry answered; 1 the tool said NO (anything STALE, NEWER, DIFFERENT or UNKNOWN, an apply whose after is not the target, a report with an UNKNOWN or a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy).
+```
+
+`nova-update release -h`:
+
+```
+nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--journeys <file> | --no-journey-gate --reason <why>] [--spend-store <addr>] [--spend-since <RFC3339>] [--spend-receipts <file>] [--no-spend-gate --reason <why>] [--dry-run] [--timeout <d>]
+exit codes: 0 the verb did what its line says (a --dry-run printed its plan and changed nothing); 1 it ran and a step failed partway, the FAILED or REFUSED line naming what was done and what to do next; 2 it refused before acting, naming the command to run. `nova-update release <verb> -h` lists a verb's flags.
+```
+
+`nova-update version -h`:
+
+```
+usage: nova-update version [flags]
+from `nova-update help`:
+  nova-update version (or --version)
+  nova-update version
+effect: inspection: prints this binary's version line
+flags:
+  --json  print the result as one JSON object instead of lines
+exit codes: 0 every entry current, an apply that left the box on the target (or an apply --dry-run that printed its plan), a report whose every entry answered; 1 the tool said NO (anything STALE, NEWER, DIFFERENT or UNKNOWN, an apply whose after is not the target, a report with an UNKNOWN or a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy).
+```
+<!-- clidoc:end nova-update -->
 
 `nova-update` checks declared versions and applies one chosen update: bounded reads, explicit UNKNOWN results, no automatic installation. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
 
@@ -3501,6 +8147,225 @@ the wrapper and the `nova-secrets exec` line).
 
 ## nova-version
 
+<!-- clidoc:begin nova-version -->
+`nova-version help`:
+
+```
+nova-version: which version of each tool is installed, recorded and compared
+
+how it works: report reads each tool's installed version; snapshot records a directory's binaries;
+diff compares two snapshots; moved writes the note of what two commits' binaries changed.
+It is one of two binaries sharing the manifest and report; latest and installing are nova-update's.
+THE MANIFEST is the file --file names, written by hand; report -h states its six rules.
+first run: the binary alone; the example lines write a one-tool manifest and read it.
+
+usage:
+  nova-version example [--out <path>]
+  nova-version moved --from <sha> --to <sha> --repo <dir> --out <path> [--timeout <d>] [--budget <d>] [--dry-run]
+  nova-version snapshot --file <manifest>
+  nova-version snapshot --bin <dir> --out <file.tsv> [--timeout <d>] [--budget <d>] [--max <n>] [--dry-run]
+  nova-version diff --from <a.tsv> --to <b.tsv>
+  nova-version report --file <manifest> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+  nova-version send --file <manifest> --as <friend> --to <who,who> [--snapshot <path>] [--host <label>]
+  nova-version version
+  nova-version help [<verb>]
+
+THE MANIFEST is the file --file names: one line per tool, six tab-separated fields name kind installed latest apply owner, written by hand; report -h states its six rules.
+
+Every verb but report, send takes --json: report and send write the note body the bus carries, so they take no --json; report's first line is `REPORT OK checked=1 known=1 unknown=0 changed=- sent=-`. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
+
+exit codes: 0 done, 2 usage or could not run, for every verb; by verb:
+  report: 0 every entry answered; 1 an entry is UNKNOWN; 2 usage, or a
+    manifest that did not read
+  send: 0 nova-bus took the note; 1 an entry is UNKNOWN, or the send was
+    refused or unconfirmed; 2 usage, or a manifest that did not read
+  snapshot: 0 every tool answers; 1 a tool is UNKNOWN; 2 usage, or a
+    manifest or directory that did not read
+  diff: 0 the snapshots compared; 2 usage, or a snapshot that did not read
+  moved: 0 the note written; 2 usage, or a revision or build that did not run
+```
+
+`nova-version example -h`:
+
+```
+usage: nova-version example [flags]
+from `nova-version help`:
+  nova-version example [--out <path>]
+  nova-version example --out versions.tsv
+flags:
+  --json  print the result as one JSON object instead of lines
+  --out <string>  write the example manifest to this path (an existing file is never overwritten); without it, print the manifest
+exit codes: 0 done, 2 usage or could not run, for every verb; by verb:
+  report: 0 every entry answered; 1 an entry is UNKNOWN; 2 usage, or a
+    manifest that did not read
+  send: 0 nova-bus took the note; 1 an entry is UNKNOWN, or the send was
+    refused or unconfirmed; 2 usage, or a manifest that did not read
+  snapshot: 0 every tool answers; 1 a tool is UNKNOWN; 2 usage, or a
+    manifest or directory that did not read
+  diff: 0 the snapshots compared; 2 usage, or a snapshot that did not read
+  moved: 0 the note written; 2 usage, or a revision or build that did not run
+effect: local write: writes files on this machine with --out, never over another file; without it, inspection: prints the example manifest
+```
+
+`nova-version moved -h`:
+
+```
+usage: nova-version moved [flags]
+from `nova-version help`:
+  nova-version moved --from <sha> --to <sha> --repo <dir> --out <path> [--timeout <d>] [--budget <d>] [--dry-run]
+flags:
+  --budget <duration>  whole run deadline
+  --dry-run  build and read both revisions and print the note; write no --out
+  --from <string>  the revision to compare from (required)
+  --json  print the result as one JSON object instead of lines
+  --out <string>  the path of the note to write (required)
+  --repo <string>  the checkout holding both revisions (required)
+  --timeout <duration>  one child's deadline
+  --to <string>  the revision to compare to (required)
+exit codes: 0 done, 2 usage or could not run, for every verb; by verb:
+  report: 0 every entry answered; 1 an entry is UNKNOWN; 2 usage, or a
+    manifest that did not read
+  send: 0 nova-bus took the note; 1 an entry is UNKNOWN, or the send was
+    refused or unconfirmed; 2 usage, or a manifest that did not read
+  snapshot: 0 every tool answers; 1 a tool is UNKNOWN; 2 usage, or a
+    manifest or directory that did not read
+  diff: 0 the snapshots compared; 2 usage, or a snapshot that did not read
+  moved: 0 the note written; 2 usage, or a revision or build that did not run
+effect: local write: writes files on this machine; with --dry-run, the note is printed and nothing is written but the builds' scratch
+```
+
+`nova-version snapshot -h`:
+
+```
+usage: nova-version snapshot [flags]
+from `nova-version help`:
+  nova-version snapshot --file <manifest>
+  nova-version snapshot --bin <dir> --out <file.tsv> [--timeout <d>] [--budget <d>] [--max <n>] [--dry-run]
+  nova-version snapshot --file versions.tsv
+flags:
+  --bin <string>  directory holding the binaries
+  --budget <duration>  whole run deadline
+  --dry-run  read every binary and list the rows; write no --out
+  --file <string>  manifest of adopted tools: count how many answer
+  --json  print the result as one JSON object instead of lines
+  --max <int>  items listed before one MORE line stands for the rest; 0 lists all
+  --out <string>  TSV snapshot to write
+  --timeout <duration>  one binary's read deadline: 30s with --bin, 5s with --file unless --timeout is given
+exit codes: 0 done, 2 usage or could not run, for every verb; by verb:
+  report: 0 every entry answered; 1 an entry is UNKNOWN; 2 usage, or a
+    manifest that did not read
+  send: 0 nova-bus took the note; 1 an entry is UNKNOWN, or the send was
+    refused or unconfirmed; 2 usage, or a manifest that did not read
+  snapshot: 0 every tool answers; 1 a tool is UNKNOWN; 2 usage, or a
+    manifest or directory that did not read
+  diff: 0 the snapshots compared; 2 usage, or a snapshot that did not read
+  moved: 0 the note written; 2 usage, or a revision or build that did not run
+effect: local write: writes files on this machine; with --file or --dry-run, inspection: writes nothing
+```
+
+`nova-version diff -h`:
+
+```
+usage: nova-version diff [flags]
+from `nova-version help`:
+  nova-version diff --from <a.tsv> --to <b.tsv>
+flags:
+  --from <string>  the snapshot to compare from (required)
+  --json  print the result as one JSON object instead of lines
+  --to <string>  the snapshot to compare to (required)
+exit codes: 0 done, 2 usage or could not run, for every verb; by verb:
+  report: 0 every entry answered; 1 an entry is UNKNOWN; 2 usage, or a
+    manifest that did not read
+  send: 0 nova-bus took the note; 1 an entry is UNKNOWN, or the send was
+    refused or unconfirmed; 2 usage, or a manifest that did not read
+  snapshot: 0 every tool answers; 1 a tool is UNKNOWN; 2 usage, or a
+    manifest or directory that did not read
+  diff: 0 the snapshots compared; 2 usage, or a snapshot that did not read
+  moved: 0 the note written; 2 usage, or a revision or build that did not run
+effect: inspection: reads, writes nothing
+```
+
+`nova-version report -h`:
+
+```
+usage: nova-version report [flags]
+from `nova-version help`:
+  nova-version report --file <manifest> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+  nova-version report --file versions.tsv
+flags:
+  --as <string>  the sender the note is from
+  --budget <duration>  whole run deadline
+  --draft  print the note only
+  --file <string>  manifest (required): one line per tool, six tab-separated fields name kind installed latest apply owner, written by hand
+  --host <string>  execution bench label
+  --kind <value>  kind filter; repeat to select kinds
+  --max <int>  per-kind output cap; 0 is all
+  --send  explicit delivery
+  --snapshot <string>  state file of what was observed and confirmed sent: an unchanged report is not sent again
+  --timeout <duration>  one read deadline
+  --to <string>  the recipients, comma-separated
+exit codes: 0 done, 2 usage or could not run, for every verb; by verb:
+  report: 0 every entry answered; 1 an entry is UNKNOWN; 2 usage, or a
+    manifest that did not read
+  send: 0 nova-bus took the note; 1 an entry is UNKNOWN, or the send was
+    refused or unconfirmed; 2 usage, or a manifest that did not read
+  snapshot: 0 every tool answers; 1 a tool is UNKNOWN; 2 usage, or a
+    manifest or directory that did not read
+  diff: 0 the snapshots compared; 2 usage, or a snapshot that did not read
+  moved: 0 the note written; 2 usage, or a revision or build that did not run
+effect: delivery: sends beyond this machine; only with --send, which also writes the --snapshot state file; without --send, report reads and writes nothing (--draft prints the note)
+```
+
+`nova-version send -h`:
+
+```
+usage: nova-version send [flags]
+from `nova-version help`:
+  nova-version send --file <manifest> --as <friend> --to <who,who> [--snapshot <path>] [--host <label>]
+flags:
+  --as <string>  the sender the note is from
+  --budget <duration>  whole run deadline
+  --draft  print the note only
+  --file <string>  manifest (required): one line per tool, six tab-separated fields name kind installed latest apply owner, written by hand
+  --host <string>  execution bench label
+  --kind <value>  kind filter; repeat to select kinds
+  --max <int>  per-kind output cap; 0 is all
+  --snapshot <string>  state file of what was observed and confirmed sent: an unchanged report is not sent again
+  --timeout <duration>  one read deadline
+  --to <string>  the recipients, comma-separated
+exit codes: 0 done, 2 usage or could not run, for every verb; by verb:
+  report: 0 every entry answered; 1 an entry is UNKNOWN; 2 usage, or a
+    manifest that did not read
+  send: 0 nova-bus took the note; 1 an entry is UNKNOWN, or the send was
+    refused or unconfirmed; 2 usage, or a manifest that did not read
+  snapshot: 0 every tool answers; 1 a tool is UNKNOWN; 2 usage, or a
+    manifest or directory that did not read
+  diff: 0 the snapshots compared; 2 usage, or a snapshot that did not read
+  moved: 0 the note written; 2 usage, or a revision or build that did not run
+effect: delivery: sends beyond this machine; --snapshot writes its state file
+```
+
+`nova-version version -h`:
+
+```
+usage: nova-version version [flags]
+from `nova-version help`:
+  nova-version version
+flags:
+  --json  print the result as one JSON object instead of lines
+exit codes: 0 done, 2 usage or could not run, for every verb; by verb:
+  report: 0 every entry answered; 1 an entry is UNKNOWN; 2 usage, or a
+    manifest that did not read
+  send: 0 nova-bus took the note; 1 an entry is UNKNOWN, or the send was
+    refused or unconfirmed; 2 usage, or a manifest that did not read
+  snapshot: 0 every tool answers; 1 a tool is UNKNOWN; 2 usage, or a
+    manifest or directory that did not read
+  diff: 0 the snapshots compared; 2 usage, or a snapshot that did not read
+  moved: 0 the note written; 2 usage, or a revision or build that did not run
+effect: inspection: reads, writes nothing
+```
+<!-- clidoc:end nova-version -->
+
 `nova-version` reports installed tool identities and shares the update reader: local stdout by default, optional delivery through `nova-bus send`. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
 
 ### First run
@@ -3592,6 +8457,314 @@ remove a lock file to break a live lock.
 
 
 ## nova-secrets
+
+<!-- clidoc:begin nova-secrets -->
+`nova-secrets help`:
+
+```
+nova-secrets: encrypted secrets in a git repository, handed to one command at a time
+
+how it works: the store is a git working copy holding a .sops.yaml (one rule per
+seat naming its recipients), a recovery.pub (the recovery key every file is also
+sealed to) and one sops-encrypted <seat>.yaml per seat; a seat is a named identity
+whose age key file (mode 0600) opens its file. exec decrypts only the --only names
+into one command's environment; names reads names without decrypting; no value is printed.
+first run: setup: makes a store from an empty directory (it needs age-keygen
+and sops on PATH); first value: seals one with --stdin, the path a harness takes.
+
+usage:
+  nova-secrets version  print this build identity (--version also accepted)
+  nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path>
+                      --only <NAME,...|all> [--require <NAME>]... -- <cmd> [args...]
+  nova-secrets names  --store <dir> --as <name> [--max <n>] [--json]
+  nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
+  nova-secrets gate   --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
+  nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
+  nova-secrets place  --store <dir> --as <name> --key <path> --sops <path>
+                      --machine <name> --secret <name> [--path <remote path>]
+                      [--machines <file>] [--receipts <dir>] [--ssh <path>] [--dry-run]
+  nova-secrets placed --machine <name> [--receipts <dir>]
+  nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path>
+                      --name NAME [--stdin] [--no-pr] [--dry-run] [--gh <path>] [--git <path>]
+  nova-secrets seat add --store <dir> --as <seat> --pub <age1…>
+                      --from <source seat> --only <NAME,...> --key <path> --sops <path>
+  nova-secrets seat inject --store <dir> --as <seat> --from <source seat>
+                      --only <NAME,...> --key <path> --sops <path> [--no-pr]
+                      [--dry-run] [--gh <path>] [--git <path>]
+  nova-secrets help
+
+flags:
+  --store <dir>        git working copy of the secrets store; check and exec also need it on a
+                       named branch with an upstream tracking ref (see: nova-secrets check --help)
+  --as <name>          seat name selecting <store>/<name>.yaml
+  --key <path>         path to age private key identity file (mode 0600)
+  --sops <path>        path to sops executable
+  --age-keygen <path>  path to age-keygen executable
+  --only <names|all>   comma-separated list of keys to deliver, or 'all' (exec only)
+  --require <name>     assert key must be present in the file (repeatable)
+  --max <n>            maximum items shown before MORE line (default 20, 0=unlimited)
+  --json               names only: the result as one JSON object on stdout, a refusal included
+  --machine <name>     fleet machine to place a secret on (its target comes from --machines)
+  --secret <name>      the key in <store>/<as>.yaml to copy to the machine
+  --path <remote path> remote path to write; default <home>/.config/nova-secrets/<secret>.env
+  --machines <file>    place: fleet registry file: name, ssh target, home, tab separated
+                       gate: the fleet machines registry whose seat column vouches for a
+                       new recipient; without it that rule does not run and the APPROVE
+                       line says machines=-
+  --receipts <dir>     where placed receipts live; default ~/.config/nova-secrets/placed
+  --ssh <path>         ssh executable to use (default ssh)
+  --name NAME          key to seal (seal only)
+  --pub <age1…>        the new seat's age public key, from its own keygen receipt (seat add only)
+  --from <seat>        a seat this machine can open, whose values are re-sealed (seat add,
+                       seat inject)
+  --stdin              read the value from stdin instead of the terminal, the path a harness
+                       takes (seal only)
+  --no-pr              stop after the commit; make no gh call; return the store to its
+                       starting branch (seal, seat inject)
+  --dry-run            prints the plan and writes nothing (place, seal, seat inject): the file, the
+                       recipients, the machine and remote path, the branch and the pull request the
+                       real run would take, as PLAN lines ending in DRY-RUN OK, exit 0; no ssh, no
+                       git write or push, no gh call, no sops encrypt, no value shown. It does
+                       decrypt the seat file the real run reads first (place: --as's, to find
+                       --secret; seal: the existing <as>.yaml, to say add or replace; seat inject:
+                       --from's, to find the names), so --key must open it; seal reads no new value.
+                       seal and seat inject read the store at HEAD, so their store must be
+                       committed; a store with no commit yet is refused with the commit
+                       that starts it
+  --gh <path>          path to the gh executable (seal, seat inject; default: gh)
+  --git <path>         path to the git executable (seal, seat inject; default: git)
+
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+gate verdict, one line per failure), 2 could not run or refused (one line naming
+the remedy); exec ends with the command's own status, and 125 when exec itself
+refused and the command never ran.
+
+setup: needs age-keygen and sops on PATH; run these from an empty directory first
+  mkdir -m 700 -p ~/.config/nova-secrets
+  nova-secrets keygen --as recovery --key ~/.config/nova-secrets/recovery.key \
+    --age-keygen "$(command -v age-keygen)"
+  mkdir -p ./secrets && git -C ./secrets init -q -b main
+  sed -n 's/^# public key: //p' ~/.config/nova-secrets/recovery.key > ./secrets/recovery.pub
+  nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key \
+    --age-keygen "$(command -v age-keygen)" \
+    --store ./secrets | sed -n 's/^SECRETS RULE   //p' > ./secrets/.sops.yaml
+  git -C ./secrets add -A && git -C ./secrets commit -qm 'a new store'
+  git init -q --bare ./secrets.git
+  git -C ./secrets remote add origin ../secrets.git
+  git -C ./secrets push -qu origin main
+
+first value:
+  printf '%s' 'a-token-value' | nova-secrets seal --store ./secrets --as ada \
+    --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops \
+    --name GH_TOKEN --stdin --no-pr
+```
+
+`nova-secrets version -h`:
+
+```
+usage: nova-secrets version [flags]
+from `nova-secrets help`:
+  nova-secrets version  print this build identity (--version also accepted)
+effect: inspection. Prints this build's identity; opens no store, key or program.
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets exec -h`:
+
+```
+usage: nova-secrets exec [flags]
+from `nova-secrets help`:
+  nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path>
+  --only <NAME,...|all> [--require <NAME>]... -- <cmd> [args...]
+  nova-secrets exec   --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user
+effect: delivery. Decrypts <store>/<as>.yaml with --key and becomes <cmd>, with only the --only values in its environment; writes nothing, prints no value.
+flags:
+  --as <name>  the seat's name, selecting <store>/<name>.yaml: letters, digits, - and _ (required)
+  --key <path>  path of this seat's age private key file, mode 0600, as keygen made it (required)
+  --only <names>  the key names to put in the command's environment, comma separated (GH_TOKEN,API_KEY), or all (required)
+  --require <NAME>  a key NAME that must be in the seat's file and in --only, or exec refuses; repeatable
+  --sops <path>  path of the sops program, as printed by: command -v sops (required)
+  --store <dir>  the store's dir: a git working copy holding .sops.yaml and one <seat>.yaml per seat (required)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets names -h`:
+
+```
+usage: nova-secrets names [flags]
+from `nova-secrets help`:
+  nova-secrets names  --store <dir> --as <name> [--max <n>] [--json]
+  nova-secrets names  --store ./secrets --as ada
+effect: inspection. Reads the key names in <store>/<as>.yaml without decrypting it; writes nothing.
+flags:
+  --as <name>  the seat's name, selecting <store>/<name>.yaml: letters, digits, - and _ (required)
+  --json  print the result as one JSON object on stdout, a refusal included: result, facts, items, more
+  --max <n>  n names to list before a MORE line; 0 lists all (default 20)
+  --store <dir>  the store's dir: a git working copy holding .sops.yaml and one <seat>.yaml per seat (required)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets check -h`:
+
+```
+usage: nova-secrets check [flags]
+from `nova-secrets help`:
+  nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
+  nova-secrets check  --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops
+effect: inspection. Reads the store's files and git state and decrypts this seat's file with --key to prove it opens; writes nothing, prints no value.
+flags:
+  --as <name>  the seat's name, selecting <store>/<name>.yaml: letters, digits, - and _ (required)
+  --key <path>  path of this seat's age private key file, mode 0600, as keygen made it (required)
+  --max <n>  n failures of each kind to list before a MORE line; 0 lists all (default 20)
+  --sops <path>  path of the sops program, as printed by: command -v sops (required)
+  --store <dir>  the store's dir: a git working copy holding .sops.yaml and one <seat>.yaml per seat (required)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets gate -h`:
+
+```
+usage: nova-secrets gate [flags]
+from `nova-secrets help`:
+  nova-secrets gate   --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
+effect: inspection. Diffs --base..--head in the store with git and judges every seat rule change; writes nothing, calls no network.
+flags:
+  --base <ref>  the pull request's base commit, a git ref (required)
+  --head <ref>  the pull request's head commit, a git ref (required)
+  --machines <file>  the fleet machines registry file, whose seat column vouches for a new recipient; without it that rule does not run and APPROVE says machines=-
+  --store <dir>  dir of the store checkout the pull request is against (required)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets keygen -h`:
+
+```
+usage: nova-secrets keygen [flags]
+from `nova-secrets help`:
+  nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
+  nova-secrets keygen --as recovery --key ~/.config/nova-secrets/recovery.key \
+  --age-keygen "$(command -v age-keygen)"
+  nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key \
+  --age-keygen "$(command -v age-keygen)" \
+  --store ./secrets | sed -n 's/^SECRETS RULE   //p' > ./secrets/.sops.yaml
+  nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key --age-keygen /opt/homebrew/bin/age-keygen
+effect: local write. Makes one age key file at --key (mode 0600) with --age-keygen, never over an existing file, and prints the .sops.yaml rule block for it.
+flags:
+  --age-keygen <path>  path of the age-keygen program, as printed by: command -v age-keygen (required)
+  --as <name>  the seat name the key is for: letters, digits, - and _ (required)
+  --key <path>  path to write the new private key to; its directory exists with mode 0700 and the file does not (required)
+  --store <dir>  dir of the store, whose recovery.pub fills the rule's recovery key; without it the rule carries <recovery key>
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets place -h`:
+
+```
+usage: nova-secrets place [flags]
+from `nova-secrets help`:
+  nova-secrets place  --store <dir> --as <name> --key <path> --sops <path>
+  --machine <name> --secret <name> [--path <remote path>]
+  [--machines <file>] [--receipts <dir>] [--ssh <path>] [--dry-run]
+  nova-secrets place  --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --machine bench-a --secret DEEPSEEK_API_KEY --machines ./fleet.tsv
+  nova-secrets place  --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --machine bench --secret API_KEY --machines ./fleet.tsv --dry-run
+effect: delivery. Copies one value over ssh to --machine (on ssh's stdin, never in an argument) and writes a receipt under --receipts naming the sealed bytes it decrypted (file, blob) and the store's HEAD (head), never a hash of the value; it reads the seat file once and decrypts a private copy; --dry-run still decrypts that file to find --secret, prints no value, writes nothing and runs no ssh.
+flags:
+  --as <name>  the seat's name, selecting <store>/<name>.yaml: letters, digits, - and _ (required)
+  --dry-run  prints the plan and writes nothing; seal and seat inject read the store at HEAD, so their store must be committed
+  --key <path>  path of this seat's age private key file, mode 0600, as keygen made it (required)
+  --machine <name>  the fleet machine's name, a row of --machines (required)
+  --machines <file>  the fleet registry file: one machine per line, name, ssh target, home, tab separated (default ~/.config/nova-tools/fleet.tsv)
+  --path <path>  the remote path written (default <home>/.config/nova-secrets/<NAME>.env, home from the machine's row)
+  --receipts <dir>  dir the placed receipts live in (default ~/.config/nova-secrets/placed)
+  --secret <NAME>  the key NAME in <store>/<as>.yaml whose value is copied (required)
+  --sops <path>  path of the sops program, as printed by: command -v sops (required)
+  --ssh <path>  path of the ssh program (default ssh)
+  --store <dir>  the store's dir: a git working copy holding .sops.yaml and one <seat>.yaml per seat (required)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets placed -h`:
+
+```
+usage: nova-secrets placed [flags]
+from `nova-secrets help`:
+  nova-secrets placed --machine <name> [--receipts <dir>]
+  nova-secrets placed --machine bench-a
+effect: inspection. Lists the receipts under --receipts for --machine, never a hash of a value: per secret its remote path, file (the seat file it was sealed in), blob (the git blob id of the sealed bytes place decrypted), head (the store's HEAD commit when place started, which need not hold that blob) and stamp; writes nothing.
+flags:
+  --machine <name>  the fleet machine's name whose receipts are listed (required)
+  --receipts <dir>  dir the placed receipts live in (default ~/.config/nova-secrets/placed)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets seal -h`:
+
+```
+usage: nova-secrets seal [flags]
+from `nova-secrets help`:
+  nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path>
+  --name NAME [--stdin] [--no-pr] [--dry-run] [--gh <path>] [--git <path>]
+  nova-secrets seal   --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --name API_KEY --dry-run
+effect: store write. Reads one value at a hidden prompt (or --stdin), seals it into <as>.yaml on a seal/ branch, commits, pushes, opens the pull request and merges it once approved; --no-pr stops after the commit; --dry-run reads no new value, decrypts the existing <as>.yaml (when there is one) to say whether NAME is added or replaced, prints no value and writes nothing.
+flags:
+  --as <name>  the seat's name, selecting <store>/<name>.yaml: letters, digits, - and _ (required)
+  --dry-run  prints the plan and writes nothing; seal and seat inject read the store at HEAD, so their store must be committed
+  --gh <path>  path of the gh program (default gh)
+  --git <path>  path of the git program (default git)
+  --key <path>  path of this seat's age private key file, mode 0600, as keygen made it (required)
+  --name <NAME>  the key NAME to seal: capitals, digits and _, as GH_TOKEN (required)
+  --no-pr  commit on a seal/ branch and stop: no push, no gh call; the store returns to its starting branch
+  --sops <path>  path of the sops program, as printed by: command -v sops (required)
+  --stdin  read the value from standard input instead of a hidden terminal prompt; never put it in an argument
+  --store <dir>  the store's dir: a git working copy holding .sops.yaml and one <seat>.yaml per seat (required)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets seat add -h`:
+
+```
+usage: nova-secrets seat add [flags]
+from `nova-secrets help`:
+  nova-secrets seat add --store <dir> --as <seat> --pub <age1…>
+  --from <source seat> --only <NAME,...> --key <path> --sops <path>
+  nova-secrets seat add --store ./secrets --as bo --pub  --from ada --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops
+effect: local write. Writes the new seat's rule into .sops.yaml and its <as>.yaml, re-sealed from --from; commits nothing.
+flags:
+  --as <name>  the new seat's name; the store holds no <name>.yaml yet (required)
+  --from <seat>  the seat whose values are re-sealed: one this machine's --key opens (required)
+  --key <path>  path of this machine's age private key, the one that opens --from (required)
+  --only <NAMES>  the key NAMES to carry, comma separated: GH_TOKEN,API_KEY (required)
+  --pub <key>  the new seat's age public key (age1…), from its own keygen receipt (required)
+  --sops <path>  path of the sops program, as printed by: command -v sops (required)
+  --store <dir>  the store's dir: a git working copy holding .sops.yaml and one <seat>.yaml per seat (required)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+
+`nova-secrets seat inject -h`:
+
+```
+usage: nova-secrets seat inject [flags]
+from `nova-secrets help`:
+  nova-secrets seat inject --store <dir> --as <seat> --from <source seat>
+  --only <NAME,...> --key <path> --sops <path> [--no-pr]
+  [--dry-run] [--gh <path>] [--git <path>]
+  nova-secrets seat inject --store ./secrets --as bo --from ada --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --no-pr
+  nova-secrets seat inject --store ./secrets --as worker --from lead --only API_KEY --key ~/.config/nova-secrets/lead.key --sops /opt/homebrew/bin/sops --dry-run
+effect: store write. Re-seals the --only values from --from into the existing <as>.yaml on a seal/ branch, commits, pushes, opens the pull request and merges it once approved; --no-pr stops after the commit; --dry-run decrypts the --from seat's file to find the names, prints no value and writes nothing.
+flags:
+  --as <seat>  the existing seat receiving the values; its <seat>.yaml is in the store (required)
+  --dry-run  prints the plan and writes nothing; seal and seat inject read the store at HEAD, so their store must be committed
+  --from <seat>  the seat whose values are re-sealed: one this machine's --key opens (required)
+  --gh <path>  path of the gh program (default gh)
+  --git <path>  path of the git program (default git)
+  --key <path>  path of this machine's age private key, the one that opens --from (required)
+  --no-pr  commit on a seal/ branch and stop: no push, no gh call; the store returns to its starting branch
+  --only <NAMES>  the key NAMES to carry, comma separated: GH_TOKEN,API_KEY (required)
+  --sops <path>  path of the sops program, as printed by: command -v sops (required)
+  --store <dir>  the store's dir: a git working copy holding .sops.yaml and one <seat>.yaml per seat (required)
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+```
+<!-- clidoc:end nova-secrets -->
 
 Stores encrypted credentials for named seats and delivers selected values to a
 child command. Use `nova-secrets help` for store setup, checks and `exec`; the
@@ -3716,6 +8889,132 @@ saying what to do with it, then `SECRETS KEYGEN OK` **last**. A run that ends on
 OK line succeeded; a `NEXT:` line above it is the next step, not a failure.
 
 ## nova-ci
+
+<!-- clidoc:begin nova-ci -->
+`nova-ci help`:
+
+```
+nova-ci: test-time budgets over go test -json output, and this repository's own CI steps
+
+how it works: slowtests and functional work in any Go module and keep no state:
+slowtests reads go test -json events on stdin and prints a CI-SLOW line for each
+package or test over its budget and one CI-LOAD line; functional names the
+packages holding functional-tagged tests. local, new-rule and new-verb need a
+nova-tools checkout; github receipt writes one row of a CI run to a Redis store.
+first run: nothing to set up: slowtests --example reads a built-in event stream.
+In your own module, slowtests reads the events of the packages you name, at a
+60-second budget; the commands under example: are what runs.
+
+usage, in any Go module (no state, no store):
+  nova-ci help        print this banner and the verbs below (inspection)
+  nova-ci version     which build this is: <version> <goos>/<goarch> <go version>
+  nova-ci slowtests [--budget <seconds> | --package-budget <s>] [--test-budget <s>]
+                    [--allowlist <file>] [--sleeps <file>] [--enforce]
+                    [--load <n> --cpus <n>] [--example] [--allow-empty] [--json] [--max <n>]
+                      (inspection) read newline-delimited `go test -json`
+                      TestEvents on stdin (or the built-in example stream with
+                      --example) and print one CI-SLOW line per package whose
+                      total elapsed time is over its budget (--budget, whole
+                      seconds, default 60; --package-budget replaces it) and
+                      per top-level test over --test-budget, then one CI-LOAD
+                      line. The allowlist (row shape:
+                      internal/pkg<TAB>test<TAB>seconds<TAB><measured>s@<where>,
+                      where is run<id> or a bench, - in the test column for a
+                      package's own row; bound: budget sits between its
+                      measurement and three times it, the 3x headroom ceiling)
+                      raises one package's or test's budget. One row,
+                      tab-separated:
+                      internal/ci/slowtests	TestA	4.5	3s@run1
+                      The host's load average (the
+                      larger of its 1- and 5-minute figures, over its CPUs;
+                      --load and --cpus give them by hand) is printed and never
+                      read by the verdict. The times are a measurement: a
+                      CI-SLOW line fails the run only with --enforce (the
+                      nightly reference leg). A test skipped with the marker "SLEEPS:"
+                      and not on --sleeps (internal/pkg<TAB>test<TAB>where) is a
+                      CI-SLEEPS line and fails the run on every leg. A package
+                      go test served from its test cache reports a package
+                      elapsed near zero, so a cached run never trips a package
+                      budget; its tests replay the cached times, which
+                      --test-budget still reads (measure with -count=1). A run
+                      with more finding lines than --max prints the first --max
+                      and one CI-SLOW MORE shown=<n> total=<n> line naming the
+                      flag that prints the rest; --max 0 prints every finding.
+                      --json prints the same verdict as one JSON object.
+  nova-ci functional <package-dir>...
+                      (inspection) print the packages among these that hold
+                      functional tests (a _test.go built only under the
+                      functional build tag) on one line and a go test -run
+                      pattern naming exactly those tests on the next; when
+                      there are none, one line
+                      CI FUNCTIONAL OK packages=0 reason=<why>. A flag, and a
+                      pattern matching no package, are refused.
+
+usage, in a nova-tools checkout (this repository's own CI steps):
+  nova-ci local [--base origin/dev] [--functional] [--dry-run]
+                      (runs tests, writes only a temp dir; needs a nova-tools
+                      checkout) the unit tier CI runs for this diff, on this
+                      machine: the packages CI's selection picks against the
+                      merge base of --base and HEAD, run through the Makefile's
+                      test target (its go test flags and its slowtests budgets)
+                      under nice -n 15 at -p 2, GOMAXPROCS=2 and -count=1; one
+                      PKG line per package with its seconds, one RED line per
+                      failing test with its output. --functional adds the
+                      functional build tag (GOTEST_TAGS=functional); CI runs
+                      those tests in its functional job as a stream merges.
+                      --dry-run prints the packages and the make line, and
+                      runs nothing.
+  nova-ci new-rule [--root <checkout>] [--dry-run] <rule-name>
+                      (local write; needs a nova-tools checkout) scaffold a new
+                      class rule: class test, fixture and make target;
+                      --dry-run lists the files and writes nothing
+  nova-ci new-verb [--root <checkout>] [--dry-run] <tool> <verb>
+                      (local write; needs a nova-tools checkout) scaffold a new
+                      verb of an existing tool: command, test, fixture and make
+                      target; --dry-run lists the files and writes nothing
+  nova-ci bench run --host <h> [--fallback <h>] --dir <tree> [--root <dir>] [--cache <dir>] [--with-git] -- <go command>
+                      (delivery: writes only its own run directory on the bench)
+                      copy the tree, .git left out unless --with-git, to a fresh
+                      run directory on the Linux bench --host (--fallback when it
+                      does not answer), run the command in it under nice -n 19
+                      with GOCACHE, GOFLAGS=-mod=readonly and NOVA_TEST_NO_HOST=1,
+                      stream its output, then remove that directory and nothing
+                      else. One CI BENCH line on stderr ends the run.
+                      example: nova-ci bench run --host <bench> --dir . -- go vet ./cmd/nova-ci/
+  nova-ci github receipt --from-runner --redis <addr> --repo owner/name
+                    --sha <40hex> --run-id <n> --workflow <name>
+                    --conclusion success|failure|cancelled [--pr <n>] [--at <rfc3339>]
+                    [--dry-run]
+                      (store write) the ci-ok job's run receipt: one ev:github
+                      row of the workflow_run shape, sender runner; dialled as
+                      the environment's seat (NOVA_SPRINT_REDIS_USER),
+                      with the password in the variable NOVA_SPRINT_REDIS_PASSWORD_ENV names, never on the line.
+                      A refused write is tried once, not retried. One CI
+                      RECEIPT line. --dry-run checks the fields and prints the
+                      line with ev=-, dialling nothing.
+
+exit codes: 0 done, 1 the verb said no (slowtests, local, github receipt), 2 usage or could not run; by verb:
+  slowtests: 0 inside budget, or CI-SLOW lines without --enforce (a
+    measurement), or an empty stream with --allow-empty; 1 a CI-SLEEPS
+    line, a truncated package (started and never ended), a CI-SLOW line
+    under --enforce, or an empty stream without --allow-empty (the check
+    said no); 2 the invocation could not run (bad flag, unreadable stdin)
+  local: 0 green; 1 a red test, a package that did not build, or a
+    CI-SLEEPS line; 2 a step that could not run, or usage
+  functional: 0 the selection printed (packages=0 included); 2 a flag, or
+    a pattern that matches no package
+  new-rule: 0 the files written (or listed, with --dry-run); 2 usage, not a
+    checkout, a bad name, or a file already there
+  new-verb: 0 the files written (or listed, with --dry-run); 2 usage, not a
+    checkout, a bad name, a tool with no func main, or a file already there
+  bench run: the command's own exit status; 2 also usage, or a run
+    that never reached the command (no bench answered, the copy failed),
+    told apart by its REFUSED line and the missing CI BENCH exit=<n>
+  github receipt: 0 written (or checked, with --dry-run); 1 the store
+    refused the write or could not confirm it; 2 usage or a refused field
+  version: 0 printed; 2 an argument given
+```
+<!-- clidoc:end nova-ci -->
 
 Reads Go test events and reports packages whose accumulated elapsed time exceeds
 a budget. `slowtests` and `functional` work in any Go module; `local`,
@@ -3856,6 +9155,334 @@ nova-ci github receipt REFUSED: --conclusion wants success, failure or cancelled
 
 ## nova-config
 
+<!-- clidoc:begin nova-config -->
+`nova-config help`:
+
+```
+nova-config: a fleet's machines and AI friends as rows in PostgreSQL, applied into Redis
+
+how it works: each kind (machine, fleet, friend, sprint, loop, route, tier) is a
+table of rows in PostgreSQL's schema config, which migrate makes; every write
+adds a history row naming who made it. apply copies the rows into Redis, the
+view the fleet reads; inventory prints that view for Ansible. --file <path>
+keeps the rows in a local JSON file instead, to try every verb with no database.
+first run: the example: lines need no database and write only ./try.json; the fleet's store is
+  export NOVA_PG_DSN=postgres://user@host:5432/db
+then migrate.
+
+usage:
+  nova-config help [<verb>]
+  nova-config version
+  nova-config kinds [--json]
+  nova-config migrate [--pg <dsn> | --file <path>] [--print] [--dry-run] [--json]
+  nova-config status [--pg <dsn> | --file <path>] [--redis <addr>] [--json]
+  nova-config apply [--pg <dsn> | --file <path>] [--redis <addr>] [--actor <name>]
+                    [--kind <kind>] [--dry-run] [--json]
+  nova-config inventory [--redis <addr> | --fixture <file>] [--list | --host <name>]
+                        [--timeout <duration>] [--example]
+  nova-config backup --dir <dir> [--pg <dsn>] [--keep <n>] [--every <duration>] [--json]
+  nova-config <kind> add <name> --<field> <value> ... --actor <name> [--dry-run] [--json]
+  nova-config <kind> set <name> --<field> <value> ... --actor <name> [--dry-run] [--json]
+  nova-config <kind> remove <name> --actor <name> [--dry-run] [--json]
+  nova-config <kind> list [--json]
+  nova-config <kind> show <name> [--json]
+  nova-config <kind> history <name> [--json]
+  nova-config machine width <name> [--json]
+  nova-config machine self [--check] [--json]
+  nova-config loop run <name> [--run-dir <dir>] [--metrics <dir>] [-- <command> ...]
+                    the loop's command under its one lock: a second copy exits 3
+  nova-config login --store <dir> --as <seat> --key <file> --secret <NAME>
+                    --dsn <dsn> --actor <name> [--sops <path>]
+                    records the DSN and where the password is; never the password
+  nova-config login --check
+                    prints that login and whether the secret resolves
+  nova-config logout
+                    removes the recorded login
+  nova-config fleet set|show|history        one row each, no name:
+                                            fleet and sprint have no add, remove or list
+  nova-config sprint set|show|history
+  nova-config <kind> <verb> -h              the verb's flags (required ones marked),
+                                            its effect and a worked example
+
+The store is --pg <dsn> (or NOVA_PG_DSN; the password is never on the line:
+NOVA_PG_PASSWORD_ENV holds the name of the variable that holds the password,
+NOVA_PG_PASSWORD when it is unset, and never the password itself), or --file
+<path>, or --seat <name> (or NOVA_SEAT) which supplies the DSN and password
+variable name from the seat profile (nova-sprint seat install writes it; the
+password, when its variable is unset, is read in this process from the
+nova-secrets seat nova-sprint seat login names), or the login nova-config login records
+(the DSN and friend; the password is read in this process from nova-secrets,
+never recorded and never put in an environment). --pg, NOVA_PG_DSN and
+NOVA_PG_PASSWORD_ENV still win when given. --redis is host:port
+(NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address). --actor is
+the name a write is recorded under (NOVA_FRIEND, the recorded friend, or the
+seat name); its old spelling --as works for one release.
+Lose Redis: run nova-config apply.
+
+Fleet apply and inventory require explicit redis_port and pg_dsn; set both
+with nova-config fleet set --redis_port <port> --pg_dsn <dsn> --actor <name>.
+
+exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run:
+ready=no, nothing attempted), 2 could not run (usage, or a store that did not answer);
+machine self: 2 not a row, 3 unreadable
+
+kinds (nova-config <kind> add -h describes each field):
+  machine  a machine of the fleet, named by its tailnet host: the login, the seat, its ceiling, its
+           runners, the sprint member's width on it, and whether it is a TLC record machine
+           add needs --user --seat --slots; also --runners --width --tla --note
+  fleet    the one row of fleet-wide facts: the store and coordinator machines, Redis port, explicit
+           password-free Postgres URI, the bus store's address and the loops log directory
+           set takes --store --coordinator --redis_port --pg_dsn --bus --loops_dir
+  friend   an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she
+           works at once, her delivery mode, the config directory her claude lanes run with, the
+           per-card token cap her one-shot lanes hold a card at, her working directory, and the
+           optional streams and kinds restrictions on the work she may be dealt
+           add needs --slots --tiers; also --roles --width --mode --config_dir --token_cap --streams
+           --kinds --dir
+  sprint   the one row of sprint-global facts: which friend coordinates and the decide_* bars, each
+           a probability in [0,1]; nova-config sprint set -h says what each bar decides
+           set takes --coordinator --decide_bounce --decide_review --decide_score_bar
+           --decide_attempt_no_result --decide_attempt_nothing_to_do --decide_grade
+           --decide_gate_flaky --decide_gate_preexisting --decide_judgment_bar --decide_brief_bar
+           --answer_rules_off
+  loop     a supervised loop on one machine: its command, the seat and secret names it opens, and
+           how it runs (every n seconds or kept alive); a nova-swarm member's width, a reader's too,
+           is its machine row's, never the argv's
+           add needs --machine --argv; also --seat --keys --every --keepalive --enabled
+  route    a route of a model tier: the provider and model a card of that tier runs on, its token
+           budget and deadline; the tier's array orders its routes; frontier cards are never dealt
+           from routes, they escalate to the coordinator
+           add needs --tier --provider --model --deadline; also --harness --tokens --usd --enabled
+           --first --price_input --price_cache_read --price_cache_write --price_output
+           --reasoning_as_output --long_context --price_input_long --price_output_long
+           --price_request --billing --gateway_percent --price_source --price_as_of --note
+  tier     a model tier's route array: the deal takes routes[index mod len] for each card of the
+           tier, a route named twice taking two turns; one row each for flash and pro and heavy,
+           created by migrate
+           set takes --routes
+```
+
+`nova-config version -h`:
+
+```
+usage: nova-config version [flags]
+from `nova-config help`:
+  nova-config version
+effect: inspection: reads nothing but this binary
+flags:
+  --json  print one JSON object (internal/tool's result shape) instead of the lines
+exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run:
+```
+
+`nova-config kinds -h`:
+
+```
+usage: nova-config kinds [flags]
+from `nova-config help`:
+  nova-config kinds [--json]
+effect: inspection: reads nothing but this binary
+flags:
+  --json  print one JSON object (internal/tool's result shape) instead of the lines
+exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run:
+```
+
+`nova-config migrate -h`:
+
+```
+usage: nova-config migrate [flags]
+from `nova-config help`:
+  nova-config migrate [--pg <dsn> | --file <path>] [--print] [--dry-run] [--json]
+  nova-config migrate --file try.json
+effect: store write: makes or upgrades schema config (or makes the --file), each migration above the greatest recorded once; --print and --dry-run write nothing (--dry-run reads the ledger)
+flags:
+  --dry-run  read the ledger (config.schema_migrations) and print every migration applied, pending (migrate applies it) or missing (below the greatest recorded, which migrate will not apply), and every table of schema config the role does not own, applying none; exit 0 when migrate would apply (ready=yes), 1 when it would refuse (ready=no)
+  --file <path>  a local JSON file standing in for PostgreSQL, at path (migrate --file <path> makes it): the same rows, refusals and history, to try the tool with no database; never the fleet's store
+  --json  print one JSON object (internal/tool's result shape) instead of the lines
+  --max <int>  SQL lines to print under each MIGRATION line before one MORE line stands for the rest; 0 prints each migration whole
+  --pg <dsn>  the PostgreSQL dsn, postgres://user@host:port/db with no password (env NOVA_PG_DSN); NOVA_PG_PASSWORD_ENV holds the name of the variable that holds the password, NOVA_PG_PASSWORD when it is unset, and never the password itself; exclusive with --file
+  --print  list the migrations this binary carries and connect to nothing
+  --window  the stopped window of the seat play: refuse, applying nothing, while any other nova role's session holds the database (the old server or member still runs); --dry-run reports the sessions and refuses nothing
+exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run:
+```
+
+`nova-config status -h`:
+
+```
+usage: nova-config status [flags]
+from `nova-config help`:
+  nova-config status [--pg <dsn> | --file <path>] [--redis <addr>] [--json]
+effect: inspection: reads the store and Redis, writes nothing
+flags:
+  --file <path>  a local JSON file standing in for PostgreSQL, at path (migrate --file <path> makes it): the same rows, refusals and history, to try the tool with no database; never the fleet's store
+  --json  print one JSON object (internal/tool's result shape) instead of the lines
+  --pg <dsn>  the PostgreSQL dsn, postgres://user@host:port/db with no password (env NOVA_PG_DSN); NOVA_PG_PASSWORD_ENV holds the name of the variable that holds the password, NOVA_PG_PASSWORD when it is unset, and never the password itself; exclusive with --file
+  --redis <host:port>  the Redis host:port apply writes (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address); without one, status reads the store alone
+  --seat <seat>  the seat profile in seats.tsv supplying the PostgreSQL DSN and password variable name (env NOVA_SEAT); exclusive with --file
+exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run:
+```
+
+`nova-config apply -h`:
+
+```
+usage: nova-config apply [flags]
+from `nova-config help`:
+  nova-config apply [--pg <dsn> | --file <path>] [--redis <addr>] [--actor <name>]
+  [--kind <kind>] [--dry-run] [--json]
+effect: external delivery: writes Redis, the copy of the rows the fleet reads, through its own Redis Functions; --dry-run prints the lines and writes nothing
+flags:
+  --actor <name>  the name a write is recorded under in the history (env NOVA_FRIEND)
+  --as <name>  the old spelling of --actor, kept for one release; it sets the same name
+  --check  the same as --dry-run
+  --dry-run  print the ADD, SET and REMOVE lines (CHECK ...) and write nothing; it still reads the store and Redis
+  --file <path>  a local JSON file standing in for PostgreSQL, at path (migrate --file <path> makes it): the same rows, refusals and history, to try the tool with no database; never the fleet's store
+  --json  print one JSON object (internal/tool's result shape) instead of the lines
+  --kind <kind>  one kind to apply (machine, fleet, friend, sprint, loop, route, tier); every kind, in order, when unset
+  --move-seat  write the sprint row's coordinator over a live seat that differs (the owner's word); without it apply holds the live seat, writes every other field and prints one APPLY HELD line
+  --pg <dsn>  the PostgreSQL dsn, postgres://user@host:port/db with no password (env NOVA_PG_DSN); NOVA_PG_PASSWORD_ENV holds the name of the variable that holds the password, NOVA_PG_PASSWORD when it is unset, and never the password itself; exclusive with --file
+  --redis <host:port>  the Redis host:port to write (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address)
+  --seat <seat>  the seat profile in seats.tsv supplying the PostgreSQL DSN and password variable name (env NOVA_SEAT); exclusive with --file
+exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run:
+```
+
+`nova-config inventory -h`:
+
+```
+usage: nova-config inventory [flags]
+from `nova-config help`:
+  nova-config inventory [--redis <addr> | --fixture <file>] [--list | --host <name>]
+  [--timeout <duration>] [--example]
+effect: inspection: reads Redis (the state apply wrote) or the --fixture file, never PostgreSQL, and writes nothing
+flags:
+  --example  print a minimal fixture to stdout and open no store; save it and read it back with --fixture
+  --fixture <file>  a YAML or JSON file of machines, the fleet row, loops and each machine's os and arch, read in place of the store; print a minimal one with --example; opens no store
+  --host <name>  print the variables of one machine, by name, as a JSON object; exits 1 when no machine row has that name
+  --list  print the whole inventory (hosts, groups and every host's variables under _meta.hostvars, so ansible never calls --host); the default when neither --list nor --host is given; exclusive with --host
+  --redis <host:port>  the Redis host:port of the applied state (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address); exclusive with --fixture
+  --timeout <duration>  a Go duration, above 0: how long to wait for the store before refusing; ansible runs the verb unattended, so it never waits forever
+exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run:
+```
+
+`nova-config backup -h`:
+
+```
+usage: nova-config backup [flags]
+from `nova-config help`:
+  nova-config backup --dir <dir> [--pg <dsn>] [--keep <n>] [--every <duration>] [--json]
+flags:
+  --dir <directory>  the directory the dumps are written to, on a volume that outlives the database's host (required)
+  --every <duration>  take a dump now and again each time this passes, until interrupted (default: once)
+  --file <path>  a local JSON file standing in for PostgreSQL, at path (migrate --file <path> makes it): the same rows, refusals and history, to try the tool with no database; never the fleet's store
+  --json  print one JSON object (internal/tool's result shape) instead of the lines
+  --keep <int>  how many verified dumps stay; older ones are pruned after a newer one verifies
+  --pg <dsn>  the PostgreSQL dsn, postgres://user@host:port/db with no password (env NOVA_PG_DSN); NOVA_PG_PASSWORD_ENV holds the name of the variable that holds the password, NOVA_PG_PASSWORD when it is unset, and never the password itself; exclusive with --file
+exit codes: 0 done (with --every: interrupted), 1 refused (the dump failed or did not verify), 2 could not run (usage, or no store)
+effect: local write: writes files on this machine; reads PostgreSQL through pg_dump and writes nothing to it
+```
+
+`nova-config machine width -h`:
+
+```
+usage: nova-config machine width [flags]
+from `nova-config help`:
+  nova-config machine width <name> [--json]
+effect: inspection: reads the store (PostgreSQL, or the --file) and writes nothing
+flags:
+  --file <path>  a local JSON file standing in for PostgreSQL, at path (migrate --file <path> makes it): the same rows, refusals and history, to try the tool with no database; never the fleet's store
+  --json  print one JSON object (internal/tool's result shape) instead of the lines
+  --pg <dsn>  the PostgreSQL dsn, postgres://user@host:port/db with no password (env NOVA_PG_DSN); NOVA_PG_PASSWORD_ENV holds the name of the variable that holds the password, NOVA_PG_PASSWORD when it is unset, and never the password itself; exclusive with --file
+  --seat <seat>  the seat profile in seats.tsv supplying the PostgreSQL DSN and password variable name (env NOVA_SEAT); exclusive with --file
+exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run:
+```
+
+`nova-config machine self -h`:
+
+```
+usage: nova-config machine self [flags]
+from `nova-config help`:
+  nova-config machine self [--check] [--json]
+effect: inspection: prints this machine's name and opens no store; --check reads the machine rows
+flags:
+  --check  read the machine rows and exit 2 when this machine's name is none of them (exit 3 when the rows cannot be read); without it no store is opened
+  --file <path>  a local JSON file standing in for PostgreSQL, at path (migrate --file <path> makes it): the same rows, refusals and history, to try the tool with no database; never the fleet's store
+  --json  print one JSON object (internal/tool's result shape) instead of the lines
+  --pg <dsn>  the PostgreSQL dsn, postgres://user@host:port/db with no password (env NOVA_PG_DSN); NOVA_PG_PASSWORD_ENV holds the name of the variable that holds the password, NOVA_PG_PASSWORD when it is unset, and never the password itself; exclusive with --file
+  --seat <seat>  the seat profile in seats.tsv supplying the PostgreSQL DSN and password variable name (env NOVA_SEAT); exclusive with --file
+exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run:
+```
+
+`nova-config loop run -h`:
+
+```
+usage: nova-config loop run [flags]
+from `nova-config help`:
+  nova-config loop run <name> [--run-dir <dir>] [--metrics <dir>] [-- <command> ...]
+exit codes: the command's own, 128+N when a signal ended it; 1 the row is not runnable (missing, disabled, with secrets); 2 usage, or the command did not start; 3 another copy holds the lock
+flags:
+  --dry-run  print what the verb would write and write nothing
+  --file <path>  a local JSON file standing in for PostgreSQL, at path (migrate --file <path> makes it): the same rows, refusals and history, to try the tool with no database; never the fleet's store
+  --metrics <dir>  node_exporter's textfile dir: nova_loop_<name>.prom is written there at each start; empty writes none
+  --pg <dsn>  the PostgreSQL dsn, postgres://user@host:port/db with no password (env NOVA_PG_DSN); NOVA_PG_PASSWORD_ENV holds the name of the variable that holds the password, NOVA_PG_PASSWORD when it is unset, and never the password itself; exclusive with --file
+  --run-dir <dir>  the dir of the loop's lock (<name>.lock) and start count (<name>.starts)
+exit codes: the command's own, 128+N when a signal ended it; 1 the row is not runnable (missing, disabled, with secrets); 2 usage, or the command did not start; 3 another copy holds the lock
+effect: local write: takes <run-dir>/<name>.lock (a second copy exits 3), counts the start in <run-dir>/<name>.starts, writes the restart metrics to --metrics when given, then runs the loop's command (its row's argv, or the command after --) and exits with the command's exit code, 128+N when a signal ended it; it opens the store only when no command follows --; --dry-run reads the row and the start count, prints the LOOP RUN line it would print, and takes no lock, writes nothing and runs nothing
+```
+
+`nova-config login -h`:
+
+```
+usage: nova-config login [flags]
+from `nova-config help`:
+  nova-config login --store <dir> --as <seat> --key <file> --secret <NAME> --dsn <dsn> --actor <name> [--sops <path>]
+  nova-config login --check
+flags:
+  --actor <name>  the name a bare write is recorded under when --as and NOVA_FRIEND are unset
+  --as <string>  the seat of that store whose file holds the password
+  --check  record nothing: print the recorded login and whether its secret resolves (exit 1 when it does not); the password is never shown
+  --dry-run  print what the verb would write and write nothing
+  --dsn <dsn>  the PostgreSQL dsn with no password, postgres://user@host:port/db
+  --friend <name>  the old spelling of --actor, kept for one release; it sets the same name
+  --key <string>  the seat's age key file
+  --secret <string>  the NAME of the password in the seat's file; never the password
+  --sops <string>  the sops binary; empty is the sops on PATH, recorded as its path
+  --store <string>  the nova-secrets store's working copy the password is read from
+exit codes: 0 done, 1 refused (the verb ran and the secret did not resolve), 2 could not run (usage, or a store that did not answer)
+effect: local write: writes files on this machine: the login file (0600) under the per-user config directory; --check and --dry-run write nothing
+```
+
+`nova-config logout -h`:
+
+```
+usage: nova-config logout [flags]
+from `nova-config help`:
+  nova-config logout
+flags:
+  --dry-run  print what the verb would write and write nothing
+exit codes: 0 done, 2 could not run
+effect: local write: writes files on this machine: removes the login file; --dry-run writes nothing
+```
+
+`nova-config fleet -h`:
+
+```
+usage: nova-config fleet [flags]
+from `nova-config help`:
+  nova-config fleet set|show|history        one row each, no name:
+  fleet and sprint have no add, remove or list
+effect: inspection: this help of the fleet verbs; each verb's own -h has its flags and an example
+exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run:
+```
+
+`nova-config sprint -h`:
+
+```
+usage: nova-config sprint [flags]
+from `nova-config help`:
+  nova-config sprint set|show|history
+effect: inspection: this help of the sprint verbs; each verb's own -h has its flags and an example
+exit codes: 0 done, 1 refused (the verb ran and the store said no; migrate --dry-run:
+```
+<!-- clidoc:end nova-config -->
+
 ```
 nova-config kinds [--json]                                               # every kind: its table, its fields, the fields add requires
 nova-config migrate [--pg <dsn> | --file <path>] [--print] [--dry-run] [--window] [--json]   # create or upgrade schema config (or make the --file); --print lists the migrations and connects to nothing; --dry-run reads the ledger and prints each migration applied, pending or missing and each table of schema config the role does not own, applying none, and exits 1 when migrate would refuse (ready=no); the role that runs migrate must own every table in schema config, else migrate refuses before applying any and prints the ALTER TABLE ... OWNER TO lines; --window (the seat play's stopped window) refuses, applying nothing, while any other nova session holds the database; --dry-run also prints owner=<role>|mixed|none (who owns schema config whole) and sessions=<n> with a MIGRATE SESSION line each
@@ -3951,6 +9578,265 @@ Ansible hides a failing inventory script: when the wrapper exits non-zero (`nova
 
 ## nova-redis
 
+<!-- clidoc:begin nova-redis -->
+`nova-redis help`:
+
+```
+nova-redis: run a local Redis store, and keep short-lived named values in it
+
+how it works: serve runs redis-server on loopback or tailnet addresses only, with its data in --dir.
+spill writes a value under <owner>:<name> with a required expiry; recall reads it back.
+fn load and fn check install and verify the functions nova-table and nova-sprint call.
+The password is read from the variable NOVA_REDIS_PASSWORD_ENV names, else NOVA_REDIS_PASSWORD.
+first run: --dry-run needs no store; the throwaway recipe below starts a store on a socket.
+
+usage:
+  nova-redis serve --bind <addr>[,<addr>...] --port <port> --dir <store-dir> [--users <name>[,<name>...]] [--secrets <dir> --as <seat> --key <file> --sops <path> --secret <NAME>] [--dry-run]
+  nova-redis spill --redis <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name> --ttl <duration> --value <text> [--dry-run]
+  nova-redis recall --redis <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name>
+  nova-redis fn load --redis <host:port> [--user <name>] [--password-env <NAME>]
+  nova-redis fn check --redis <host:port> [--user <name>] [--password-env <NAME>]
+  nova-redis acl render
+  nova-redis acl check --redis <host:port> [--user <name>] [--password-env <NAME>]
+  nova-redis acl apply --redis <host:port> [--user <name>] [--password-env <NAME>] [--password-env-for <user>=<VARIABLE>]... [--dry-run]
+  nova-redis install store --secrets <dir> --as <seat> --key <file> --sops <path> --secret <NAME> [--bind <addr>[,<addr>...]] [--port <port>] [--dir <store-dir>] [--units <dir>] [--log <file>] [--dry-run]
+  nova-redis install bus --secrets <dir> --as <seat> --key <file> --sops <path> --secret <NAME> [--bind <addr>[,<addr>...]] [--port <port>] [--dir <store-dir>] [--units <dir>] [--log <file>] [--dry-run]
+  nova-redis uninstall store [--units <dir>] [--dry-run]
+  nova-redis uninstall bus [--units <dir>] [--dry-run]
+  nova-redis version
+  nova-redis help [<verb>]
+
+a throwaway store, by hand: (stop it: redis-cli -s "/redis.sock" shutdown nosave)
+  d=$(mktemp -d)
+  redis-server --port 0 --unixsocket "/redis.sock" --save '' --appendonly no --daemonize yes
+  for _ in $(seq 50); do redis-cli -s "/redis.sock" ping >/dev/null 2>&1 && break; sleep 0.1; done
+then run spill or recall with --redis "/redis.sock" (or a store you may write to).
+
+Every verb but serve, fn load, fn check, acl render, acl check, acl apply, install store, install bus, uninstall store, uninstall bus takes --json: the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
+
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+```
+
+`nova-redis serve -h`:
+
+```
+usage: nova-redis serve [flags]
+from `nova-redis help`:
+  nova-redis serve --bind <addr>[,<addr>...] --port <port> --dir <store-dir> [--users <name>[,<name>...]] [--secrets <dir> --as <seat> --key <file> --sops <path> --secret <NAME>] [--dry-run]
+flags:
+  --as <string>  the seat of the secrets store the password is sealed for (nova-secrets --as)
+  --bind <string>  comma-separated IP addresses to listen on, loopback (127.0.0.1, ::1) or tailnet (100.64.0.0/10, fd7a:115c:a1e0::/48) only
+  --dir <string>  the absolute path of the store directory (AOF, RDB and ACL files), created 0700 when missing
+  --dry-run  print what the verb would write and write nothing
+  --key <string>  the seat's age key file (nova-secrets --key)
+  --port <string>  the TCP port to listen on, 1 to 65535 (6379 is Redis's own)
+  --secret <NAME>  the NAME of the password in the seat; with it, serve reads the password in its own process rather than from NOVA_REDIS_PASSWORD
+  --secrets <string>  the secrets store's working copy the password is in (nova-secrets --store)
+  --sops <string>  the sops binary the seat's file is decrypted with (nova-secrets --sops)
+  --users <string>  comma-separated ACL users the store's ACL file must hold (those nova-redis acl apply set); a store missing one is refused
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: local write: writes files on this machine
+```
+
+`nova-redis spill -h`:
+
+```
+usage: nova-redis spill [flags]
+from `nova-redis help`:
+  nova-redis spill --redis <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name> --ttl <duration> --value <text> [--dry-run]
+  nova-redis spill --dry-run --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi
+  nova-redis spill --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi
+flags:
+  --addr <string>  the old spelling of --redis, kept for one release; it sets the same address and prints a NOTE
+  --dry-run  print what the verb would write and write nothing
+  --json  print the result as one JSON object instead of lines
+  --name <string>  the key's name, the part after <owner>: (no whitespace)
+  --owner <string>  the key's owner prefix, the part before the colon: no ':' or whitespace (a tool's or a worker's name)
+  --password-env <string>  the NAME of the variable that holds the password, never the password itself (default: the variable  names, else NOVA_REDIS_PASSWORD)
+  --redis <string>  the store's address: <host:port>, such as 127.0.0.1:6379, or the absolute path of a Unix socket (no default)
+  --ttl <string>  how long the value lives, a Go duration above zero (10m, 1h30m); a key never lives forever
+  --user <string>  the ACL user to log in as (default ; with neither, the store's default user)
+  --value <string>  the text stored under <owner>:<name>; may be empty but must be given
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: local write: writes files on this machine
+```
+
+`nova-redis recall -h`:
+
+```
+usage: nova-redis recall [flags]
+from `nova-redis help`:
+  nova-redis recall --redis <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name>
+  nova-redis recall --addr 127.0.0.1:6379 --owner ada --name note
+flags:
+  --addr <string>  the old spelling of --redis, kept for one release; it sets the same address and prints a NOTE
+  --json  print the result as one JSON object instead of lines
+  --name <string>  the key's name, as spill was given it: the part after <owner>:
+  --owner <string>  the key's owner prefix, as spill was given it: the part before the colon
+  --password-env <string>  the NAME of the variable that holds the password, never the password itself (default: the variable  names, else NOVA_REDIS_PASSWORD)
+  --redis <string>  the store's address: <host:port>, such as 127.0.0.1:6379, or the absolute path of a Unix socket (no default)
+  --user <string>  the ACL user to log in as (default ; with neither, the store's default user)
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: inspection: reads, writes nothing
+```
+
+`nova-redis fn load -h`:
+
+```
+usage: nova-redis fn load [flags]
+from `nova-redis help`:
+  nova-redis fn load --redis <host:port> [--user <name>] [--password-env <NAME>]
+flags:
+  --addr <string>  the old spelling of --redis, kept for one release; it sets the same address and prints a NOTE
+  --password-env <string>  the NAME of the variable that holds the password, never the password itself (default: the variable  names, else NOVA_REDIS_PASSWORD)
+  --redis <string>  the store's address: <host:port>, such as 127.0.0.1:6379, or the absolute path of a Unix socket (no default)
+  --user <string>  the ACL user to log in as (default ; with neither, the store's default user)
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: local write: writes files on this machine
+```
+
+`nova-redis fn check -h`:
+
+```
+usage: nova-redis fn check [flags]
+from `nova-redis help`:
+  nova-redis fn check --redis <host:port> [--user <name>] [--password-env <NAME>]
+flags:
+  --addr <string>  the old spelling of --redis, kept for one release; it sets the same address and prints a NOTE
+  --password-env <string>  the NAME of the variable that holds the password, never the password itself (default: the variable  names, else NOVA_REDIS_PASSWORD)
+  --redis <string>  the store's address: <host:port>, such as 127.0.0.1:6379, or the absolute path of a Unix socket (no default)
+  --user <string>  the ACL user to log in as (default ; with neither, the store's default user)
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: inspection: reads, writes nothing
+```
+
+`nova-redis acl render -h`:
+
+```
+usage: nova-redis acl render [flags]
+from `nova-redis help`:
+  nova-redis acl render
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: inspection: reads, writes nothing
+```
+
+`nova-redis acl check -h`:
+
+```
+usage: nova-redis acl check [flags]
+from `nova-redis help`:
+  nova-redis acl check --redis <host:port> [--user <name>] [--password-env <NAME>]
+flags:
+  --addr <string>  the old spelling of --redis, kept for one release; it sets the same address and prints a NOTE
+  --password-env <string>  the NAME of the variable that holds the password, never the password itself (default: the variable  names, else NOVA_REDIS_PASSWORD)
+  --redis <string>  the store's address: <host:port>, such as 127.0.0.1:6379, or the absolute path of a Unix socket (no default)
+  --user <string>  the ACL user to log in as (default ; with neither, the store's default user)
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: inspection: reads, writes nothing
+```
+
+`nova-redis acl apply -h`:
+
+```
+usage: nova-redis acl apply [flags]
+from `nova-redis help`:
+  nova-redis acl apply --redis <host:port> [--user <name>] [--password-env <NAME>] [--password-env-for <user>=<VARIABLE>]... [--dry-run]
+flags:
+  --addr <string>  the old spelling of --redis, kept for one release; it sets the same address and prints a NOTE
+  --drop-old  with --rotate, remove the password the variable names instead of adding it: the second half of a rotation
+  --dry-run  print what the verb would write and write nothing
+  --password-env <string>  the NAME of the variable that holds the password, never the password itself (default: the variable  names, else NOVA_REDIS_PASSWORD)
+  --password-env-for <value>  <user>=<VARIABLE>, repeatable: the variable holding the password a user apply creates gets; a user the store lacks is created only with one
+  --redis <string>  the store's address: <host:port>, such as 127.0.0.1:6379, or the absolute path of a Unix socket (no default)
+  --rotate <string>  comma-separated ACL users whose password this run rotates: the variable --password-env-for names for the user holds the password to add beside the old one, or with --drop-old the old one to remove (neither value is printed)
+  --user <string>  the ACL user to log in as (default ; with neither, the store's default user)
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: local write: writes files on this machine
+```
+
+`nova-redis install store -h`:
+
+```
+usage: nova-redis install store [flags]
+from `nova-redis help`:
+  nova-redis install store --secrets <dir> --as <seat> --key <file> --sops <path> --secret <NAME> [--bind <addr>[,<addr>...]] [--port <port>] [--dir <store-dir>] [--units <dir>] [--log <file>] [--dry-run]
+flags:
+  --as <string>  the seat of the secrets store the password is sealed for (nova-secrets --as)
+  --bind <string>  comma-separated IP addresses the server listens on, loopback or tailnet only (serve --bind)
+  --dir <string>  the absolute path of the store directory (serve --dir; default: ~/nova-bench/redis/store)
+  --dry-run  print what the verb would write and write nothing
+  --key <string>  the seat's age key file (nova-secrets --key)
+  --log <string>  the file the server's lines go to, macOS (default: ~/Library/Logs/nova-redis-store.log); on Linux they are in the journal
+  --port <string>  the TCP port the server listens on (serve --port)
+  --secret <NAME>  the NAME of the password in the seat; with it, serve reads the password in its own process rather than from NOVA_REDIS_PASSWORD
+  --secrets <string>  the secrets store's working copy the password is in (nova-secrets --store)
+  --sops <string>  the sops binary the seat's file is decrypted with (nova-secrets --sops)
+  --units <string>  the directory the unit is written into (default: ~/Library/LaunchAgents on macOS, ~/.config/systemd/user on Linux)
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: local write: writes files on this machine
+```
+
+`nova-redis install bus -h`:
+
+```
+usage: nova-redis install bus [flags]
+from `nova-redis help`:
+  nova-redis install bus --secrets <dir> --as <seat> --key <file> --sops <path> --secret <NAME> [--bind <addr>[,<addr>...]] [--port <port>] [--dir <store-dir>] [--units <dir>] [--log <file>] [--dry-run]
+flags:
+  --as <string>  the seat of the secrets store the password is sealed for (nova-secrets --as)
+  --bind <string>  comma-separated IP addresses the server listens on, loopback or tailnet only (serve --bind)
+  --dir <string>  the absolute path of the store directory (serve --dir; default: ~/nova-bench/redis/bus)
+  --dry-run  print what the verb would write and write nothing
+  --key <string>  the seat's age key file (nova-secrets --key)
+  --log <string>  the file the server's lines go to, macOS (default: ~/Library/Logs/nova-redis-bus.log); on Linux they are in the journal
+  --port <string>  the TCP port the server listens on (serve --port)
+  --secret <NAME>  the NAME of the password in the seat; with it, serve reads the password in its own process rather than from NOVA_REDIS_PASSWORD
+  --secrets <string>  the secrets store's working copy the password is in (nova-secrets --store)
+  --sops <string>  the sops binary the seat's file is decrypted with (nova-secrets --sops)
+  --units <string>  the directory the unit is written into (default: ~/Library/LaunchAgents on macOS, ~/.config/systemd/user on Linux)
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: local write: writes files on this machine
+```
+
+`nova-redis uninstall store -h`:
+
+```
+usage: nova-redis uninstall store [flags]
+from `nova-redis help`:
+  nova-redis uninstall store [--units <dir>] [--dry-run]
+flags:
+  --dry-run  print what the verb would write and write nothing
+  --units <string>  the directory the unit was written into (default: as install's)
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: local write: writes files on this machine
+```
+
+`nova-redis uninstall bus -h`:
+
+```
+usage: nova-redis uninstall bus [flags]
+from `nova-redis help`:
+  nova-redis uninstall bus [--units <dir>] [--dry-run]
+flags:
+  --dry-run  print what the verb would write and write nothing
+  --units <string>  the directory the unit was written into (default: as install's)
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: local write: writes files on this machine
+```
+
+`nova-redis version -h`:
+
+```
+usage: nova-redis version [flags]
+from `nova-redis help`:
+  nova-redis version
+flags:
+  --json  print the result as one JSON object instead of lines
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).
+effect: inspection: reads, writes nothing
+```
+<!-- clidoc:end nova-redis -->
+
 ```
 nova-redis serve  --bind <addr>[,<addr>...] --port <port> --dir <store-dir> [--users <u>[,<u>...]] [<secret login>] # run redis-server in the foreground, loopback and tailnet only, AOF on, ACL users kept in <store-dir>/users.acl
 nova-redis install store|bus <secret login> [--bind <addr>] [--port <port>] [--dir <store-dir>] [--units <dir>] [--log <file>] [--dry-run] # serve as a service of this machine
@@ -3985,12 +9871,12 @@ Each of these is refused (exit 2) before the dial, and the refusal names where t
   - `LOADED nova_sprint sha=<d> store=<a>`: the name was free.
   - `UNCHANGED nova_sprint sha=<d> store=<a>`: nothing was sent after the read.
   - `REPLACED nova_sprint sha=<d> was=<old> store=<a>`: other code was under the name.
-  
+
 - `fn check` changes nothing (`redisfn.Check`). Its line is `OK|STALE|MISSING nova_sprint sha=<want> loaded=<d|none> want=<d> store=<a>`, so every line of both verbs holds one `sha=`, this binary's digest:
   - `OK`: the store holds this binary's code, exit 0.
   - `STALE`: the store holds other code, exit 1.
   - `MISSING`: the store holds no library of the name, exit 1.
-  
+
   `STALE` and `MISSING` end in the remedy, `nova-redis fn load <login>`, which logs in as the check did. It keeps every login flag given on the line, even an empty one or one equal to the default, and adds what the environment set to other than the default. Each value is quoted as one POSIX shell word, so the printed command can be pasted as it is.
 
 **The store's ACL.** The `acl` verbs keep the store's users in the shape this build renders (`internal/redisacl`), one user per role: `coordinator` (every key, every function, `FUNCTION LOAD`), the member's `bench`, the table reader's `ns-table` and the friend's `ns-friend`. A role is its key families (`table:*` and `tables`, `view:*` and `views`, `sprint:*`, `machine:*` and `machines`, `bench:*`, `friend:*` and `friends`, `fleet:*`, `loops` and `loop:*`, `routes` and `route:*`, `config:decl`, `tokens:ledger:*` (nova-tokens, under the seat's user); read and write or read only, by role), its command categories (`-@all +@read +@write ... -@dangerous -@scripting`, the reader `+@read` only) and `FCALL` of exactly the functions the embedded library registers in the role's files, `FCALL_RO` of the no-writes ones, read from the library itself; every role may `FUNCTION LIST`. A function runs its commands under the caller's ACL, so each role is also granted, by name, every Redis command its files' Lua calls (`TIME`, `HSET`, `XINFO STREAM` as `+xinfo|stream`, ...), derived from the Lua text, never listed by hand. No function name is listed by hand, so a function added to a file reaches its roles at the next render.
@@ -4019,6 +9905,161 @@ The user needs `FUNCTION LIST` for `fn check`, and `FUNCTION LIST` and `FUNCTION
 `fn load` replaces, so it belongs to the one place that deploys. Two deployers with different builds replace each other's library for as long as both run (`tla/RedisFn.tla`, `MCRedisFnTwoDeployers`). A tool on its way to an `FCALL` calls `redisfn.LoadMissing`, which never replaces a library (nova-tools #3620): nova-table does so on its first `Function not found` (see [nova-table](#nova-table)). The first run's refusals are in [TESTS.md](TESTS.md#nova-redis).
 
 ## nova-cairn
+
+<!-- clidoc:begin nova-cairn -->
+`nova-cairn help`:
+
+```
+nova-cairn: a session's words, kept durably as plain files you can come back to
+
+how it works: a store is a directory you name (--store), plain files only, synced to disk before OK.
+open starts a session and records its --publish policy; append keeps an entry's exact words.
+Same id, same words: duplicate (duplicate=true, exit 0); same id, other words: conflict (exit 1).
+--publish records your policy only: nothing is sent, and every line says published=false.
+first run: the four examples are one sitting: the open makes ./cairns, the rest read it back.
+
+usage:
+  nova-cairn open --store <dir> --session <id> [--source <ptr>] --publish <never|manual|deferred|immediate> [--now <rfc3339-utc>] [--dry-run]
+  nova-cairn NOTE: --publish is a recorded word, nothing more: never, manual, deferred and immediate are the four this tool accepts and it acts on none of them; append with no --publish carries the session's, and one that differs is a conflict naming both (exit 1).
+  nova-cairn append --store <dir> --session <id> --entry <id> (--text <words> | --file <path|->) [--source <ptr>] [--publish <policy>] [--now <rfc3339-utc>] [--dry-run]
+  nova-cairn index --store <dir> [--session <id>] [--max <n>]
+  nova-cairn receipt --store <dir> --session <id> --entry <id> [--text]
+  nova-cairn version
+  nova-cairn help [<verb>]
+
+Every verb takes --json: the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
+
+exit codes: 0 done, 2 usage or could not run, for every verb; by verb:
+  open: 0 the record stands (opened, or already matching); 1 a re-open naming
+    another policy or source; 2 usage, or a store that did not answer
+  append: 0 the words are written, or the entry already holds them
+    (duplicate=true); 1 the entry id holds other words, or --publish names
+    another policy than the session holds; 2 usage, or a store that did not answer
+  index: 0 listed; 2 usage, or a store that did not answer
+  receipt: 0 read; 2 usage, or no such session or entry
+```
+
+`nova-cairn open -h`:
+
+```
+usage: nova-cairn open [flags]
+from `nova-cairn help`:
+  nova-cairn open --store <dir> --session <id> [--source <ptr>] --publish <never|manual|deferred|immediate> [--now <rfc3339-utc>] [--dry-run]
+  nova-cairn open --store ./cairns --session s1 --publish manual
+flags:
+  --dry-run  print what the verb would write and write nothing
+  --json  print the result as one JSON object instead of lines
+  --now <string>  RFC 3339 UTC stamp for tests and replays; default the real clock
+  --publish <string>  the publication policy: never, manual, deferred, immediate (required)
+  --session <string>  the stable session identifier (required)
+  --source <string>  where the record points back to; appends with no --source carry it
+  --store <string>  the checkpoint store directory (required)
+exit codes: 0 done, 2 usage or could not run, for every verb; by verb:
+  open: 0 the record stands (opened, or already matching); 1 a re-open naming
+    another policy or source; 2 usage, or a store that did not answer
+  append: 0 the words are written, or the entry already holds them
+    (duplicate=true); 1 the entry id holds other words, or --publish names
+    another policy than the session holds; 2 usage, or a store that did not answer
+  index: 0 listed; 2 usage, or a store that did not answer
+  receipt: 0 read; 2 usage, or no such session or entry
+effect: local write: writes files on this machine
+```
+
+`nova-cairn append -h`:
+
+```
+usage: nova-cairn append [flags]
+from `nova-cairn help`:
+  nova-cairn append --store <dir> --session <id> --entry <id> (--text <words> | --file <path|->) [--source <ptr>] [--publish <policy>] [--now <rfc3339-utc>] [--dry-run]
+  nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words to keep"
+flags:
+  --dry-run  print what the verb would write and write nothing
+  --entry <string>  the stable entry identifier (required)
+  --file <string>  file holding the exact words; - reads stdin
+  --json  print the result as one JSON object instead of lines
+  --now <string>  RFC 3339 UTC stamp for tests and replays; default the real clock
+  --publish <string>  the publication policy: never, manual, deferred, immediate (default: the one the session was opened with)
+  --session <string>  the stable session identifier (required)
+  --source <string>  where the words came from; recorded, never opened (default: the session's)
+  --store <string>  the checkpoint store directory (required)
+  --text <string>  the exact words, stored byte for byte; exactly one of --text or --file
+exit codes: 0 done, 2 usage or could not run, for every verb; by verb:
+  open: 0 the record stands (opened, or already matching); 1 a re-open naming
+    another policy or source; 2 usage, or a store that did not answer
+  append: 0 the words are written, or the entry already holds them
+    (duplicate=true); 1 the entry id holds other words, or --publish names
+    another policy than the session holds; 2 usage, or a store that did not answer
+  index: 0 listed; 2 usage, or a store that did not answer
+  receipt: 0 read; 2 usage, or no such session or entry
+effect: local write: writes files on this machine
+```
+
+`nova-cairn index -h`:
+
+```
+usage: nova-cairn index [flags]
+from `nova-cairn help`:
+  nova-cairn index --store <dir> [--session <id>] [--max <n>]
+  nova-cairn index --store ./cairns
+flags:
+  --json  print the result as one JSON object instead of lines
+  --max <int>  items listed before one MORE line stands for the rest; 0 lists all
+  --session <string>  one session to index; default every record
+  --store <string>  the checkpoint store directory (required)
+exit codes: 0 done, 2 usage or could not run, for every verb; by verb:
+  open: 0 the record stands (opened, or already matching); 1 a re-open naming
+    another policy or source; 2 usage, or a store that did not answer
+  append: 0 the words are written, or the entry already holds them
+    (duplicate=true); 1 the entry id holds other words, or --publish names
+    another policy than the session holds; 2 usage, or a store that did not answer
+  index: 0 listed; 2 usage, or a store that did not answer
+  receipt: 0 read; 2 usage, or no such session or entry
+effect: inspection: reads, writes nothing
+```
+
+`nova-cairn receipt -h`:
+
+```
+usage: nova-cairn receipt [flags]
+from `nova-cairn help`:
+  nova-cairn receipt --store <dir> --session <id> --entry <id> [--text]
+  nova-cairn receipt --store ./cairns --session s1 --entry e1 --text
+flags:
+  --entry <string>  the stable entry identifier (required)
+  --json  print the result as one JSON object instead of lines
+  --session <string>  the stable session identifier (required)
+  --store <string>  the checkpoint store directory (required)
+  --text  include the entry's stored words as a quoted text fact
+exit codes: 0 done, 2 usage or could not run, for every verb; by verb:
+  open: 0 the record stands (opened, or already matching); 1 a re-open naming
+    another policy or source; 2 usage, or a store that did not answer
+  append: 0 the words are written, or the entry already holds them
+    (duplicate=true); 1 the entry id holds other words, or --publish names
+    another policy than the session holds; 2 usage, or a store that did not answer
+  index: 0 listed; 2 usage, or a store that did not answer
+  receipt: 0 read; 2 usage, or no such session or entry
+effect: inspection: reads, writes nothing
+```
+
+`nova-cairn version -h`:
+
+```
+usage: nova-cairn version [flags]
+from `nova-cairn help`:
+  nova-cairn version
+flags:
+  --json  print the result as one JSON object instead of lines
+exit codes: 0 done, 2 usage or could not run, for every verb; by verb:
+  open: 0 the record stands (opened, or already matching); 1 a re-open naming
+    another policy or source; 2 usage, or a store that did not answer
+  append: 0 the words are written, or the entry already holds them
+    (duplicate=true); 1 the entry id holds other words, or --publish names
+    another policy than the session holds; 2 usage, or a store that did not answer
+  index: 0 listed; 2 usage, or a store that did not answer
+  receipt: 0 read; 2 usage, or no such session or entry
+effect: inspection: reads, writes nothing
+```
+<!-- clidoc:end nova-cairn -->
 
 Keeps a session's words as local checkpoints: the exact words, their source
 pointers and a bounded index. Publication intent is recorded, not carried out:
@@ -4084,6 +10125,281 @@ the whole remedy verb: `open first: nova-cairn open --store <dir> --session <id>
 
 
 ## nova-decide
+
+<!-- clidoc:begin nova-decide -->
+`nova-decide help`:
+
+```
+nova-decide: typed decisions with probabilities, recorded so each one can be calibrated against its outcome
+
+how it works: noul: a yes-or-no question answered with a probability of yes; choice: one option.
+a decision is a named schema of choice or noul questions over a state; jev or fixed answers:
+schema {"name":"q","questions":{"ok":{"type":"noul","instructions":"It asks."}}}
+state R? fixed answers {"ok":{"noul":0.9}} print ASK OK id=f decision=q backend=fixed recorded=new
+ASK ANSWER question=ok type=noul value=yes p=yes:0.9; exit 0 means recorded, never approved.
+
+usage:
+  nova-decide ask --schema <file> --state <file|-> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]
+  nova-decide read --card <file> --diff <file> [--rule <file>] --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]
+  nova-decide score --card <file> --diff <file> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]
+  nova-decide attempt --brief <file> [--result <file>] --reason <line> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]
+  nova-decide grade --brief <file> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]
+  nova-decide gate --output <file> --card <file> [--diff <file>] [--base-red <test,...>] [--bars <flaky,pre-existing>] --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]
+  nova-decide brief --card <file|dir> --backend <jev|fixed> [--answers <file>] --record <file> [--width <n>] [--timeout <d>] [--max <n>] [--dry-run]
+  nova-decide outcome --record <file> --id <decision-id> --label <word> [--note <text>] [--dry-run]
+  nova-decide calibrate --record <file> --decision <name> --question <name[=option]> --positive <label,...> --negative <label,...> [--bars <p,...>]
+  nova-decide import --record <file> [--verdicts <glob>] [--judgments <dir> --log <file>] [--reports <glob>] [--dry-run]
+  nova-decide score-grades --record <file> --log <file> [--day <date>]
+  nova-decide findings --record <file> [--since <time>] [--bar <p>] [--shadow <file> --real <file>] [--read-shadow <file> [--heavy <file>]]
+  nova-decide version
+  nova-decide help [<verb>]
+
+Every verb takes --json: the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
+
+exit codes: 0 done, 1 an outcome conflicts with the one recorded, 2 could not run (a flag, an input, the backend, the record).
+```
+
+`nova-decide ask -h`:
+
+```
+usage: nova-decide ask [flags]
+from `nova-decide help`:
+  nova-decide ask --schema <file> --state <file|-> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]
+  nova-decide ask --schema ./cmd/nova-decide/testdata/schema.json --state ./cmd/nova-decide/testdata/state.txt --backend fixed --answers ./cmd/nova-decide/testdata/answers.json --record ./decisions.jsonl --op first
+flags:
+  --answers <string>  the fixed backend's answers, a JSON file (--backend fixed only)
+  --backend <string>  the backend that answers: jev or fixed (required)
+  --dry-run  print what the verb would write and write nothing
+  --json  print the result as one JSON object instead of lines
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --record <string>  the record file every decision is appended to (JSON lines; created if absent) (required)
+  --schema <string>  the decision's schema, a JSON file (required)
+  --state <string>  the text the decision is made over, a file, or - for stdin (required)
+  --timeout <duration>  how long the backend may take to answer
+exit codes: 0 done, 1 an outcome conflicts with the one recorded, 2 could not run (a flag, an input, the backend, the record).
+effect: delivery: sends beyond this machine; with --backend jev it sends the state to the backend, and it appends to --record
+```
+
+`nova-decide read -h`:
+
+```
+usage: nova-decide read [flags]
+from `nova-decide help`:
+  nova-decide read --card <file> --diff <file> [--rule <file>] --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]
+  nova-decide read --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --backend fixed --answers ./cmd/nova-decide/testdata/read-answers.json --record ./decisions.jsonl --op card-1
+flags:
+  --answers <string>  the fixed backend's answers, a JSON file (--backend fixed only)
+  --backend <string>  the backend that answers: jev or fixed (required)
+  --card <string>  the card the worker was given, a file (required)
+  --diff <string>  the worker's unified diff, a file (required)
+  --dry-run  print what the verb would write and write nothing
+  --json  print the result as one JSON object instead of lines
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --record <string>  the record file every decision is appended to (JSON lines; created if absent) (required)
+  --rule <string>  a rule text the read holds the diff to as well, a file
+  --timeout <duration>  how long the backend may take to answer
+exit codes: 0 done, 1 an outcome conflicts with the one recorded, 2 could not run (a flag, an input, the backend, the record).
+effect: delivery: sends beyond this machine; with --backend jev it sends the card and diff to the backend, and it appends to --record
+```
+
+`nova-decide score -h`:
+
+```
+usage: nova-decide score [flags]
+from `nova-decide help`:
+  nova-decide score --card <file> --diff <file> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]
+  nova-decide score --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --backend fixed --answers ./cmd/nova-decide/testdata/score-answers.json --record ./decisions.jsonl --op card-1@landed@0123456789ab
+flags:
+  --answers <string>  the fixed backend's answers, a JSON file (--backend fixed only)
+  --backend <string>  the backend that answers: jev or fixed (required)
+  --card <string>  the card the worker was given, a file (required)
+  --diff <string>  the landed unified diff, a file (required)
+  --dry-run  print what the verb would write and write nothing
+  --json  print the result as one JSON object instead of lines
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --record <string>  the record file every decision is appended to (JSON lines; created if absent) (required)
+  --timeout <duration>  how long the backend may take to answer
+exit codes: 0 done, 1 an outcome conflicts with the one recorded, 2 could not run (a flag, an input, the backend, the record).
+effect: delivery: sends beyond this machine; with --backend jev it sends the card and diff to the backend, and it appends to --record
+```
+
+`nova-decide attempt -h`:
+
+```
+usage: nova-decide attempt [flags]
+from `nova-decide help`:
+  nova-decide attempt --brief <file> [--result <file>] --reason <line> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]
+  nova-decide attempt --brief ./cmd/nova-decide/testdata/card.md --result ./cmd/nova-decide/testdata/result.md --reason "verdict not-done: tests red in internal/decide" --backend fixed --answers ./cmd/nova-decide/testdata/attempt-answers.json --record ./decisions.jsonl --op c1@1
+flags:
+  --answers <string>  the fixed backend's answers, a JSON file (--backend fixed only)
+  --backend <string>  the backend that answers: jev or fixed (required)
+  --brief <string>  the card's brief the worker was given, a file (required)
+  --dry-run  print what the verb would write and write nothing
+  --json  print the result as one JSON object instead of lines
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --reason <string>  the member's reason line for the take's end, as text (required)
+  --record <string>  the record file every decision is appended to (JSON lines; created if absent) (required)
+  --result <string>  the child's RESULT.md, a file; absent when the child wrote none
+  --timeout <duration>  how long the backend may take to answer
+exit codes: 0 done, 1 an outcome conflicts with the one recorded, 2 could not run (a flag, an input, the backend, the record).
+effect: delivery: sends beyond this machine; with --backend jev it sends the brief, result and reason to the backend, and it appends to --record
+```
+
+`nova-decide grade -h`:
+
+```
+usage: nova-decide grade [flags]
+from `nova-decide help`:
+  nova-decide grade --brief <file> --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]
+  nova-decide grade --brief ./cmd/nova-decide/testdata/card.md --backend fixed --answers ./cmd/nova-decide/testdata/grade-answers.json --record ./decisions.jsonl --op c1@grade
+flags:
+  --answers <string>  the fixed backend's answers, a JSON file (--backend fixed only)
+  --backend <string>  the backend that answers: jev or fixed (required)
+  --brief <string>  the card's brief, a file (required)
+  --dry-run  print what the verb would write and write nothing
+  --examples <string>  few-shot examples from the sprint record, a JSON-lines file of {card, heading, paths, kind, label} (SPEC-NOVA-DECIDE section 11)
+  --held-out <string>  cards left out of the example pool, a file of card ids one per line (with --examples)
+  --json  print the result as one JSON object instead of lines
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --record <string>  the record file every decision is appended to (JSON lines; created if absent) (required)
+  --seed <string>  the seed that picks the examples, so a run reproduces (with --examples)
+  --timeout <duration>  how long the backend may take to answer
+exit codes: 0 done, 1 an outcome conflicts with the one recorded, 2 could not run (a flag, an input, the backend, the record).
+effect: delivery: sends beyond this machine; with --backend jev it sends the brief to the backend, and it appends to --record
+```
+
+`nova-decide gate -h`:
+
+```
+usage: nova-decide gate [flags]
+from `nova-decide help`:
+  nova-decide gate --output <file> --card <file> [--diff <file>] [--base-red <test,...>] [--bars <flaky,pre-existing>] --backend <jev|fixed> [--answers <file>] --record <file> [--op <id>] [--timeout <d>] [--dry-run]
+  nova-decide gate --output ./cmd/nova-decide/testdata/gate-output.txt --card ./cmd/nova-decide/testdata/card.md --diff ./cmd/nova-decide/testdata/card.diff --base-red TestPortInUse --backend fixed --answers ./cmd/nova-decide/testdata/gate-answers.json --record ./decisions.jsonl --op c1@1@gate
+flags:
+  --answers <string>  the fixed backend's answers, a JSON file (--backend fixed only)
+  --backend <string>  the backend that answers: jev or fixed (required)
+  --bars <string>  the flaky and the pre-existing bars, <flaky>,<pre-existing>: each a probability or empty (that route taken by no failure), two set ones summing above 1; empty (the default) routes none, as the sprint row's defaults do; 0.8,0.8 is the starting point
+  --base-red <string>  the failing tests red at the card's base, comma-separated (<Test> or <pkg>.<Test>); given empty, none is
+  --card <string>  the card the worker was given, a file: its PATHS line is read (required)
+  --diff <string>  the card's unified diff, a file: its files and line counts are summarised
+  --dry-run  print what the verb would write and write nothing
+  --json  print the result as one JSON object instead of lines
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --output <string>  the gate's output, a file of go test's output (plain or -v) (required)
+  --record <string>  the record file every decision is appended to (JSON lines; created if absent) (required)
+  --timeout <duration>  how long the backend may take to answer
+exit codes: 0 done, 1 an outcome conflicts with the one recorded, 2 could not run (a flag, an input, the backend, the record).
+effect: delivery: sends beyond this machine; with --backend jev it sends each failure, the card's PATHS and the diff's summary to the backend, and it appends to --record
+```
+
+`nova-decide brief -h`:
+
+```
+usage: nova-decide brief [flags]
+from `nova-decide help`:
+  nova-decide brief --card <file|dir> --backend <jev|fixed> [--answers <file>] --record <file> [--width <n>] [--timeout <d>] [--max <n>] [--dry-run]
+  nova-decide brief --card ./cmd/nova-decide/testdata/greet.md --backend fixed --answers ./cmd/nova-decide/testdata/brief-answers.json --record ./decisions.jsonl
+flags:
+  --answers <string>  the fixed backend's answers, a JSON file (--backend fixed only)
+  --backend <string>  the backend that answers: jev or fixed (required)
+  --card <string>  a card file, or a directory of *.md card files (as add --brief-dir reads it) (required)
+  --dry-run  print what the verb would write and write nothing
+  --json  print the result as one JSON object instead of lines
+  --max <int>  items listed before one MORE line stands for the rest; 0 lists all
+  --record <string>  the record file every decision is appended to (JSON lines; created if absent) (required)
+  --timeout <duration>  how long the backend may take to answer
+  --width <int>  how many cards are asked at once
+exit codes: 0 done, 1 an outcome conflicts with the one recorded, 2 could not run (a flag, an input, the backend, the record).
+effect: delivery: sends beyond this machine; with --backend jev it sends each card to the backend, and it appends to --record
+```
+
+`nova-decide outcome -h`:
+
+```
+usage: nova-decide outcome [flags]
+from `nova-decide help`:
+  nova-decide outcome --record <file> --id <decision-id> --label <word> [--note <text>] [--dry-run]
+  nova-decide outcome --record ./decisions.jsonl --id card-1 --label ok --note "the review found nothing"
+flags:
+  --dry-run  print what the verb would write and write nothing
+  --id <string>  the decision's id, as ask or read printed it (required)
+  --json  print the result as one JSON object instead of lines
+  --label <string>  what turned out true, one word (ok, wrong, pass, fail) (required)
+  --note <string>  why, in a sentence: the finding behind the label
+  --record <string>  the record file the decision is in (required)
+exit codes: 0 done, 1 an outcome conflicts with the one recorded, 2 could not run (a flag, an input, the backend, the record).
+effect: local write: writes files on this machine: appends one outcome line to --record
+```
+
+`nova-decide calibrate -h`:
+
+```
+usage: nova-decide calibrate [flags]
+from `nova-decide help`:
+  nova-decide calibrate --record <file> --decision <name> --question <name[=option]> --positive <label,...> --negative <label,...> [--bars <p,...>]
+  nova-decide calibrate --record ./cmd/nova-decide/testdata/record.jsonl --decision read --question defect --positive wrong --negative ok
+flags:
+  --bars <string>  the thresholds to report, comma-separated probabilities
+  --decision <string>  the decision's name, as its schema names it (read) (required)
+  --json  print the result as one JSON object instead of lines
+  --negative <string>  the outcome labels it should pass, comma-separated (required)
+  --positive <string>  the outcome labels the answer should flag, comma-separated (required)
+  --question <string>  the answer scored: a noul's name, or <choice>=<option> (required)
+  --record <string>  the record file (required)
+exit codes: 0 done, 1 an outcome conflicts with the one recorded, 2 could not run (a flag, an input, the backend, the record).
+effect: inspection: reads, writes nothing
+```
+
+`nova-decide import -h`:
+
+```
+usage: nova-decide import [flags]
+from `nova-decide help`:
+  nova-decide import --record <file> [--verdicts <glob>] [--judgments <dir> --log <file>] [--reports <glob>] [--dry-run]
+flags:
+  --dry-run  print what the verb would write and write nothing
+  --json  print the result as one JSON object instead of lines
+  --judgments <string>  a directory of judgment files, <judgment id>.md; needs --log
+  --log <string>  a nova-sprint log --json export holding the answers to the judgments
+  --record <string>  the record file the labelled decisions are appended to (required)
+  --reports <string>  a glob of REPORT.md files; those beginning Verdict: HOLD are imported
+  --verdicts <string>  a glob of heavy-read VERDICT.md files
+exit codes: 0 done, 1 an outcome conflicts with the one recorded, 2 could not run (a flag, an input, the backend, the record).
+effect: local write: writes files on this machine; it appends to --record one labelled decision per item read, and leaves an item recorded before; --dry-run writes nothing
+```
+
+`nova-decide findings -h`:
+
+```
+usage: nova-decide findings [flags]
+from `nova-decide help`:
+  nova-decide findings --record <file> [--since <time>] [--bar <p>] [--shadow <file> --real <file>] [--read-shadow <file> [--heavy <file>]]
+  nova-decide findings --record ./cmd/nova-decide/testdata/record.jsonl --since 2026-10-01
+flags:
+  --bar <string>  the p at or above which a class counts, a probability
+  --heavy <string>  a record imported from heavy-read verdicts (import --verdicts), to score the shadow reads against them too
+  --json  print the result as one JSON object instead of lines
+  --read-shadow <string>  the read-shadow record, to score Jev's shadow reads against the readers' outcome
+  --real <string>  the judgment-answer record the shadow answers are joined to
+  --record <string>  the record file (required)
+  --shadow <string>  the judgment-shadow record, to score Jev's shadow answers per judgment kind
+  --since <string>  the window's start, RFC 3339 or a date (2006-01-02, UTC); default: seven days before now
+exit codes: 0 done, 1 an outcome conflicts with the one recorded, 2 could not run (a flag, an input, the backend, the record).
+effect: inspection: reads, writes nothing
+```
+
+`nova-decide version -h`:
+
+```
+usage: nova-decide version [flags]
+from `nova-decide help`:
+  nova-decide version
+flags:
+  --json  print the result as one JSON object instead of lines
+exit codes: 0 done, 1 an outcome conflicts with the one recorded, 2 could not run (a flag, an input, the backend, the record).
+effect: inspection: reads, writes nothing
+```
+<!-- clidoc:end nova-decide -->
 
 Typed decisions with probabilities, recorded so each one can be calibrated
 against its outcome. The decide side asks a schema (named, typed questions)
@@ -4165,6 +10481,114 @@ wrong:
 
 ## nova-local
 
+<!-- clidoc:begin nova-local -->
+`nova-local help`:
+
+```
+nova-local: run local models: what an engine has, one model served at a chosen context, and a worker description nova-swarm accepts
+
+how it works: an engine (ollama) serves models from the shared store, <ai-root>/shared/models.
+status reads each engine and the box; serve makes <name>-<ctx>k, the context baked in, and loads it;
+worker writes the one JSON file nova-swarm reads. --base is loopback or a tailnet address only.
+It never fetches weights, never runs a prompt and never judges a model.
+
+usage:
+  nova-local status [--engine <name>] [--base <url>] [--list] [--max <n>] [--timeout <d>]
+  nova-local serve --engine <name> --model <ref> --num-ctx <n> [--base <url>] [--keep-alive <d>] [--seed <n>] [--expect-digest <sha256:...>] [--max-load <f>] [--min-free <size>] [--require-shared-store] [--dry-run]
+  nova-local serve --stop --engine <name> --model <tag> [--base <url>]
+  nova-local worker --engine <name> --model <tag> --out <file> --name <text> --harness <cmd> --harness-args <a,b,{model},...> --worker-dir <abs dir> --key-file <file> --env-var <NAME> --usage <opencode|none> --deadline <d> [--base <url>] [--board <owner/repo#n>] [--dry-run]
+  nova-local version
+  nova-local help [<verb>]
+
+Every verb takes --json: the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
+
+exit codes: 0 done, 1 it ran and said no (no engine answers, a model not pulled, a tag that differs, a threshold the caller gave), 2 could not run (a flag or an input).
+```
+
+`nova-local status -h`:
+
+```
+usage: nova-local status [flags]
+from `nova-local help`:
+  nova-local status [--engine <name>] [--base <url>] [--list] [--max <n>] [--timeout <d>]
+  nova-local status
+flags:
+  --base <string>  the engine's /v1 URL, loopback or a tailnet address; empty is the engine's default
+  --engine <string>  only this engine: one of ollama; empty reports every one
+  --json  print the result as one JSON object instead of lines
+  --list  list every model as one MODEL line, not only the counts
+  --max <int>  items listed before one MORE line stands for the rest; 0 lists all
+  --timeout <duration>  how long each engine has to answer
+exit codes: 0 done, 1 it ran and said no (no engine answers, a model not pulled, a tag that differs, a threshold the caller gave), 2 could not run (a flag or an input).
+effect: inspection: reads, writes nothing; it asks each engine over HTTP and reads the box
+```
+
+`nova-local serve -h`:
+
+```
+usage: nova-local serve [flags]
+from `nova-local help`:
+  nova-local serve --engine <name> --model <ref> --num-ctx <n> [--base <url>] [--keep-alive <d>] [--seed <n>] [--expect-digest <sha256:...>] [--max-load <f>] [--min-free <size>] [--require-shared-store] [--dry-run]
+  nova-local serve --stop --engine <name> --model <tag> [--base <url>]
+  nova-local serve --engine ollama --model gemma4:12b --num-ctx 32768 --seed 7
+flags:
+  --base <string>  the engine's /v1 URL, loopback or a tailnet address; empty is the engine's default
+  --dry-run  print what the verb would write and write nothing
+  --engine <string>  the engine: one of ollama (required)
+  --expect-digest <string>  the digest the model must have (sha256:...); differing is exit 1
+  --json  print the result as one JSON object instead of lines
+  --keep-alive <string>  how long the engine keeps the model loaded after a request
+  --max-load <string>  refuse when the one-minute load average is above this number
+  --min-free <string>  refuse when free memory is below this size (16G, 512M)
+  --model <string>  the model: the reference to serve (gemma4:12b), or with --stop the served tag (required)
+  --num-ctx <int>  the context in tokens, a multiple of 1024 (required to serve; ollama's own default silently truncates)
+  --require-shared-store  refuse when the engine's store is not under the AI root's shared/models
+  --seed <string>  the seed baked into the tag, a whole number; empty bakes none
+  --stop  unload the served tag --model names instead of serving
+exit codes: 0 done, 1 it ran and said no (no engine answers, a model not pulled, a tag that differs, a threshold the caller gave), 2 could not run (a flag or an input).
+effect: delivery: sends beyond this machine; it asks the engine to create the derived tag and load it (--stop unloads it); nothing is written on this machine
+```
+
+`nova-local worker -h`:
+
+```
+usage: nova-local worker [flags]
+from `nova-local help`:
+  nova-local worker --engine <name> --model <tag> --out <file> --name <text> --harness <cmd> --harness-args <a,b,{model},...> --worker-dir <abs dir> --key-file <file> --env-var <NAME> --usage <opencode|none> --deadline <d> [--base <url>] [--board <owner/repo#n>] [--dry-run]
+  nova-local worker --engine ollama --model gemma4-32k --out ./gemma.json --name gemma --harness opencode --harness-args run,--model,ollama/{model},--,{prompt} --worker-dir /cmd/nova-local/testdata/home --key-file /cmd/nova-local/testdata/local.key --env-var OLLAMA_API_KEY --usage opencode --deadline 20m
+flags:
+  --base <string>  the engine's /v1 URL, loopback or a tailnet address; empty is the engine's default
+  --board <string>  the board issue the worker reports to, owner/repo#n; empty for none
+  --deadline <string>  the default deadline per task, a Go duration (20m) (required)
+  --dry-run  print what the verb would write and write nothing
+  --engine <string>  the engine: one of ollama (required)
+  --env-var <string>  the NAME of the variable the provider reads (OLLAMA_API_KEY), never a value (required)
+  --harness <string>  the harness command, found on PATH (opencode) (required)
+  --harness-args <string>  the harness's arguments, comma-separated, {model} and {prompt} placed (required)
+  --json  print the result as one JSON object instead of lines
+  --key-file <string>  a non-empty file nova-swarm reads as the key; stat'ed, never opened (required)
+  --model <string>  the served tag a harness calls (serve's serve_as=) (required)
+  --name <string>  the name nova-swarm calls this worker by (required)
+  --out <string>  the file the description is written to; its directory must exist (required)
+  --usage <string>  opencode (OpenCode's own accounting) or none (required)
+  --worker-dir <string>  the absolute home directory copied into each slot; it must exist (required)
+exit codes: 0 done, 1 it ran and said no (no engine answers, a model not pulled, a tag that differs, a threshold the caller gave), 2 could not run (a flag or an input).
+effect: local write: writes files on this machine; it writes the --out file and nothing else, after asking the engine that it serves --model
+```
+
+`nova-local version -h`:
+
+```
+usage: nova-local version [flags]
+from `nova-local help`:
+  nova-local version
+flags:
+  --json  print the result as one JSON object instead of lines
+exit codes: 0 done, 1 it ran and said no (no engine answers, a model not pulled, a tag that differs, a threshold the caller gave), 2 could not run (a flag or an input).
+effect: inspection: reads, writes nothing
+```
+<!-- clidoc:end nova-local -->
+
 Run local models: what an engine has, one model served at a chosen context,
 and a worker description nova-swarm accepts. It runs no inference, fetches no
 weights and judges no model.
@@ -4211,6 +10635,586 @@ wrong:
 
 
 ## nova-table
+
+<!-- clidoc:begin nova-table -->
+`nova-table help`:
+
+```
+nova-table: tables whose cells are ordered sets, kept in Redis and drawn as text
+
+how it works: a table is rows and columns in one Redis store; each cell is an
+ordered set of members (a card, a job, any id). A column's projection prints
+the set's count, its members, a text or a percentage, and the footer folds each
+column. Every write names the epoch it read and prints a receipt; a view stacks
+tables into one frame that watch redraws in place.
+first run: needs a Redis 7 or later you may write to; an empty one is enough (the first verb loads
+the functions nova-table calls). With no store at all, help and -h answer, and every verb that writes
+runs under --dry-run: it makes every check the real run makes before sending, then prints what it would send:
+example: (the lines need the store the first run describes; this one runs with none)
+  nova-table create demo --columns ready,working,done --dry-run
+a throwaway store, by hand: (stop it: redis-cli -s "/redis.sock" shutdown nosave)
+  d=$(mktemp -d)
+  redis-server --port 0 --unixsocket "/redis.sock" --save '' --appendonly no --daemonize yes
+  for _ in $(seq 50); do redis-cli -s "/redis.sock" ping >/dev/null 2>&1 && break; sleep 0.1; done
+  unset NOVA_SEAT NOVA_SPRINT_SEAT NOVA_SPRINT_REDIS_USER; export NOVA_SPRINT_REDIS="/redis.sock"
+then run the lines under example: in order (or give each verb --redis <host:port or socket path>).
+A verb that finds no store refuses at exit 2 naming the address it tried, what came back, and
+this throwaway command (LIST REFUSED: redis at <addr> ...: unreachable: ...; run: d=$(mktemp -d) ...).
+
+usage:
+  nova-table help [<verb> [<subverb>]]
+  nova-table create <table> --columns <name[:projection[:fold[:label]]],...> [--footer <label>]
+      [--width <col=n,...>]
+  nova-table set <table> [--footer <label>] [--rename <name>] [--columns <spec>]
+      [--hide <cols>] [--show <cols>] [--hidden | --visible]
+  nova-table drop <table> [--definition]
+  nova-table list
+  nova-table row add <table> <row>... [--label <text>] [--exclude <member>] [--owner <verb>] [<col>=<key> ...]
+  nova-table row set <table> <row> <col>=<value>...
+  nova-table row hide <table> <row>...
+  nova-table row show <table> <row>...
+  nova-table row del <table> <row>
+  nova-table row move <table> <row> --first | --last | --before <row> | --after <row>
+  nova-table row order <table> <row>...
+  nova-table row sort <table> [--by name|label|<col>] [--desc] [--keep] | --manual
+  nova-table col add <table> <name[:projection[:fold[:label]]]> [--first | --last | --before <col> | --after <col>]
+  nova-table col del <table> <col>
+  nova-table col move <table> <col> --first | --last | --before <col> | --after <col>
+  nova-table cell add <table> <row> <col> <member>... [--score <n>]
+  nova-table cell remove <table> <row> <col> <member>...
+  nova-table cell move <table> <row> <from-col> <to-col> <member>...
+  nova-table cell members <table> <row> <col>
+  nova-table member create <table> <id>
+  nova-table member find <table> <id>
+  nova-table member read <table> <id>... | <table> --cell <row:col>
+  nova-table batch (<manifest-file> | - | '<json>')
+  nova-table check <table>
+  nova-table clear <table>
+  nova-table show <table> [--at-epoch <n>]
+  nova-table render <table> | --view <name> [--at-epoch <n>]
+      [--width <col=n,...>] [--label-width <n>]
+  nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>]
+      [--title <text>] [--width <col=n,...>] [--label-width <n>] [--check] [--once]
+  nova-table view set <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]
+  nova-table view state <name> (<text> | --clear)
+  nova-table view show <name>
+  nova-table view list
+  nova-table view del <name>
+  nova-table shell [--redis <addr> | --seat <name>] [--keep-going] [--epoch <n>] [--receipt=false]
+  nova-table version
+
+Table write verbs take --epoch <observed epoch> (default 0), --actor, --fence,
+--idem (receipt metadata only; does not deduplicate retries: a second cell add of the same member
+is refused, naming the place it already sits, and a second row add rewrites the row and keeps its
+place) and --receipt. create also takes --epoch-key, --epoch-field (default n), and --member-prefix
+(default table::member:).
+A stale epoch is refused, naming the live epoch:
+  CELL-ADD REFUSED: table "stale-help" row "build" column "ready" member "b1": requested epoch is stale, not the active epoch: requested 0, active 1; run: nova-table show 'stale-help'
+read the epoch off show <table> (it prints epoch=<n>) or off the receipt of every write (it prints
+the new one, epoch=<n>). drop keeps the saved column definition and the
+table's identity unless --definition is given, which removes both and the rows
+of every epoch (and repairs a store left with the identity alone); the
+definition snapshots of earlier epochs remain available.
+View configuration has no table epoch or receipt.
+Quote column specs containing parentheses, for example 'done,pct:pct(done)'.
+
+Store verbs take --redis <addr> (host:port or an absolute Unix socket path)
+(else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address) and
+dial as the seat --seat <name> or NOVA_SEAT names, else as
+NOVA_SPRINT_REDIS_USER with the password in the variable
+NOVA_SPRINT_REDIS_PASSWORD_ENV names. Flags may follow the words.
+
+A column is name[:projection[:fold[:label]]]: the projection is what a body
+cell prints, count (the set's size, the default), members (the members in
+score order), first, last, text (the value written by row set, no set),
+pct(<count-column>) (the share of all count columns in the row),
+pct(<count-column>/<a>+<b>) (the share of the named count columns a, b of the
+row), or sum(<a>+<b>) (the named count columns of the row added). A formula
+names count columns of the same table, hidden or not. The row label is a
+separate cell. The fold is what the footer prints over the column, sum (the
+default for count and sum), max, avg (of count cells), union (of members),
+pooled (the default for pct: the numerators summed over the denominators
+summed), or none. Known-empty percentages print 0.0%; unread inputs print ?.
+Example: 'ok,failed,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%'.
+set --hide/--show hides or shows columns without removing their data. A row's cells are owned by the table unless
+row add binds a column to a set another tool owns (<col>=<key>): a bound
+cell is a view, read freely, and cell add, cell remove, cell move and clear
+refuse it, naming the --owner verb. --exclude names one member the row's
+counts and members leave out. render <table> prints the table and nothing else,
+nothing at all when it is empty. render --view <name> prints one frame with
+the view's timestamp, title and summary line; view state sets a text the
+summary line shows alone, in place of the counts, until --clear. watch redraws it in place every --every
+(1s) with no shell loop, or publishes it to --out by atomic rename.
+
+Order is kept by the table: rows draw in the order they were added and
+columns in the order they were declared, until a verb moves them. row sort
+orders the rows once; with --keep (by name or label) the sort stands, every
+row added later takes its place, and row move and row order are refused
+until row sort --manual. row del of a missing row succeeds with existed=0.
+col del refuses a column that holds members or text, naming all blocking
+members and batch removal commands, or the text to clear first.
+
+shell reads one command per line on a shared connection. It prints write
+receipts by default; --receipt=false disables them. Enter help, quit or exit.
+
+exit codes: 0 done, 1 refused, 2 usage
+```
+
+`nova-table create -h`:
+
+```
+usage: nova-table create <table> --columns <name[:projection[:fold[:label]]],...> [--footer <label>]
+      [--width <col=n,...>]
+
+flags:
+  --columns <string>  the columns, name[:projection[:fold[:label]]] each, comma-separated; pct defaults to the pooled fold, sum to the sum fold
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+  --epoch-field <string>  field in the epoch hash
+  --epoch-key <string>  hash key naming the epoch domain (empty means epoch 0)
+  --footer <string>  the footer row's label (none by default)
+  --member-prefix <string>  member record prefix (default table::member:)
+  --width <string>  fixed column widths, col=n,...
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table set -h`:
+
+```
+usage: nova-table set <table> [--footer <label>] [--rename <name>] [--columns <spec>]
+      [--hide <cols>] [--show <cols>] [--hidden | --visible]
+
+flags:
+  --columns <string>  the columns, replaced in place (the create grammar); rows kept
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+  --footer <string>  the footer row's label ('' for none)
+  --hidden  the whole table kept and read, not drawn by watch
+  --hide <string>  columns to hide (kept, read, used by formulas; not drawn), comma-separated
+  --rename <string>  the table's new name
+  --show <string>  hidden columns to draw again, comma-separated
+  --visible  the whole table drawn again by watch
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table drop -h`:
+
+```
+usage: nova-table drop <table> [--definition]
+
+flags:
+  --definition  also remove the saved column definition, the identity hash and the rows of every epoch; keep the definition snapshots of earlier epochs
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table list -h`:
+
+```
+usage: nova-table list
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: inspection: reads the store, writes nothing
+```
+
+`nova-table row add -h`:
+
+```
+usage: nova-table row add <table> <row>... [--label <text>] [--exclude <member>] [--owner <verb>] [<col>=<key> ...]
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+  --exclude <string>  one member the row's counts and members leave out
+  --label <string>  the row's label, the row header cell (default the row key)
+  --owner <string>  the verb that writes the row's bound sets, named by the refusal of a write here
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table row set -h`:
+
+```
+usage: nova-table row set <table> <row> <col>=<value>...
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table row hide -h`:
+
+```
+usage: nova-table row hide <table> <row>...
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table row show -h`:
+
+```
+usage: nova-table row show <table> <row>...
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table row del -h`:
+
+```
+usage: nova-table row del <table> <row>
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table row move -h`:
+
+```
+usage: nova-table row move <table> <row> --first | --last | --before <row> | --after <row>
+
+flags:
+  --after <string>  put it just after this row
+  --before <string>  put it just before this row
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+  --first  put it first
+  --last  put it last
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table row order -h`:
+
+```
+usage: nova-table row order <table> <row>...
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table row sort -h`:
+
+```
+usage: nova-table row sort <table> [--by name|label|<col>] [--desc] [--keep] | --manual
+
+flags:
+  --by <string>  name (the row key), label, a count column or a text column
+  --desc  largest or last first
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+  --keep  a standing sort (by name or label): rows added later take their place
+  --manual  end a standing sort; the rows stay where they are and are placed by hand again
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table col add -h`:
+
+```
+usage: nova-table col add <table> <name[:projection[:fold[:label]]]> [--first | --last | --before <col> | --after <col>]
+
+flags:
+  --after <string>  put it just after this column
+  --before <string>  put it just before this column
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+  --first  put it first
+  --last  put it last
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table col del -h`:
+
+```
+usage: nova-table col del <table> <col>
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table col move -h`:
+
+```
+usage: nova-table col move <table> <col> --first | --last | --before <col> | --after <col>
+
+flags:
+  --after <string>  put it just after this column
+  --before <string>  put it just before this column
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+  --first  put it first
+  --last  put it last
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table cell add -h`:
+
+```
+usage: nova-table cell add <table> <row> <col> <member>... [--score <n>]
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+  --score <string>  the member's score, its place in the set's order (default the unix time in ms)
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table cell remove -h`:
+
+```
+usage: nova-table cell remove <table> <row> <col> <member>...
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table cell move -h`:
+
+```
+usage: nova-table cell move <table> <row> <from-col> <to-col> <member>...
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table cell members -h`:
+
+```
+usage: nova-table cell members <table> <row> <col>
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: inspection: reads the store, writes nothing
+```
+
+`nova-table member create -h`:
+
+```
+usage: nova-table member create <table> <id>
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table member find -h`:
+
+```
+usage: nova-table member find <table> <id>
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: inspection: reads the store, writes nothing
+```
+
+`nova-table member read -h`:
+
+```
+usage: nova-table member read <table> <id>... | <table> --cell <row:col>
+
+flags:
+  --at-epoch <string>  read a materialised epoch instead of the active one
+  --cell <row:col>  read every member of the cell row:col (repeatable); the ids are then not given
+  --json  print the reading (or the refusal) as one JSON object instead of the lines
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: inspection: reads the store, writes nothing
+```
+
+`nova-table batch -h`:
+
+```
+usage: nova-table batch (<manifest-file> | - | '<json>')
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+  --json  print the receipt (or the refusal, or the --dry-run plan) as one JSON object instead of the lines
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: applies the manifest in one atomic call and prints a receipt; --dry-run makes every check made before sending and prints the plan instead, dialling nothing; the epoch, the revision and each member's expectation are the store's to check, on the real run
+```
+
+`nova-table check -h`:
+
+```
+usage: nova-table check <table>
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: inspection: reads the store, writes nothing
+```
+
+`nova-table clear -h`:
+
+```
+usage: nova-table clear <table>
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the table in the store in one call and prints a receipt; --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table show -h`:
+
+```
+usage: nova-table show <table> [--at-epoch <n>]
+
+flags:
+  --at-epoch <string>  inspect a materialised epoch instead of the active one
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: inspection: reads the store, writes nothing
+```
+
+`nova-table render -h`:
+
+```
+usage: nova-table render <table> | --view <name> [--at-epoch <n>]
+      [--width <col=n,...>] [--label-width <n>]
+
+flags:
+  --at-epoch <string>  read a saved epoch snapshot (table targets only)
+  --label-width <int>  fixed width of the row-label column for this render (0: as wide as the labels)
+  --view <string>  render a stored view once, including its title and summary
+  --width <string>  fixed column widths for this render, col=n,...
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: inspection: reads the store, writes nothing
+```
+
+`nova-table watch -h`:
+
+```
+usage: nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>]
+      [--title <text>] [--width <col=n,...>] [--label-width <n>] [--check] [--once]
+
+flags:
+  --check  run table check every tick; show a stall row on invariant violation
+  --every <duration>  the tick, a duration (1s)
+  --label-width <int>  fixed width of the row-label column for this render (0: as wide as the labels)
+  --once  render once and exit, with no clear
+  --out <string>  publish to this file by atomic rename instead of drawing in place (the file and its directory must not be symlinks)
+  --title <string>  a title line above the tables
+  --view <string>  a stored view: its tables and title, read every frame (view set <name> --tables ...)
+  --width <string>  fixed column widths for this render, col=n,...
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: inspection: reads the store every --every and writes nothing to it; --out writes that one local file, by rename
+```
+
+`nova-table view set -h`:
+
+```
+usage: nova-table view set <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+  --summary <string>  a count column in the first table to count as done (x/y z% -> ETA)
+  --tables <string>  the tables, comma-separated, in order
+  --title <string>  the view's title line
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the view in the store in one call (a view has no epoch and no receipt); --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table view state -h`:
+
+```
+usage: nova-table view state <name> (<text> | --clear)
+
+flags:
+  --clear  clear the state: the summary line shows the counts again
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the view in the store in one call (a view has no epoch and no receipt); --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table view show -h`:
+
+```
+usage: nova-table view show <name>
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: inspection: reads the store, writes nothing
+```
+
+`nova-table view list -h`:
+
+```
+usage: nova-table view list
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: inspection: reads the store, writes nothing
+```
+
+`nova-table view del -h`:
+
+```
+usage: nova-table view del <name>
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: changes the view in the store in one call (a view has no epoch and no receipt); --dry-run runs the real run's own call up to its first command, so it refuses exactly where the real run refuses before sending, and prints that command instead of sending it, dialling nothing; what only the store can check (the table, its epoch, its rows and columns, a bound cell) is left to the real run
+```
+
+`nova-table shell -h`:
+
+```
+usage: nova-table shell [--redis <addr> | --seat <name>] [--keep-going] [--epoch <n>] [--receipt=false]
+
+flags:
+  --dry-run  check the arguments, print the call the verb would send and stop: nothing is dialled or written
+  --keep-going  continue after errors; final exit still reports failure (default true on a terminal)
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: store write: runs each line's verb on one connection, so a line that writes changes the store; entered with --dry-run, every write line is planned instead and nothing is written to the store, and a line saying --dry-run=false is refused (a line that reads still reads the store, and a watch --out line still writes its one local file)
+```
+
+`nova-table version -h`:
+
+```
+usage: nova-table version
+
+exit codes: 0 done, 1 refused, 2 usage
+effect: inspection: reads nothing, writes nothing
+```
+<!-- clidoc:end nova-table -->
 
 Work tables over Redis: ordered-set cells, text notes, percentage formulas,
 batch writes and stored live views. Every table mutation checks its observed
@@ -4556,6 +11560,134 @@ the last good frame and one `store unreachable since <time>` line until recovery
 
 nova-card is pre-alpha: not ready for production use.
 
+<!-- clidoc:begin nova-card -->
+`nova-card help`:
+
+```
+nova-card: writes a directory of pre-linted briefs from a ledger, a findings file or a tool's help
+nova-card is pre-alpha: not ready for production use.
+
+how it works: a source is read from a checkout of the target repository (a ratchet ledger of
+internal/ci, a findings TSV, a tool's rendered help); the planner cuts one card per file with
+its PATHS, TEST and tier computed from the row, plans every ledger in one wave with no
+dependency, and holds every brief to the lint nova-sprint add runs before the directory is written.
+State: none; the directory, its manifest.tsv and the one CARDS OK line are the whole result.
+
+the flow, three lines:
+  nova-card generate --from ledger --ledger serial-tests --repo-dir ./repo --out ./cards
+  nova-sprint add --stream debt --brief-dir ./cards --allow-shared-paths
+  nova-sprint where
+
+usage:
+  nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--name <n>...] [--dropped <id>...] [--dry-run]
+  nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
+  nova-card generate --from help --tool <name> [--tool <name>...] --out <dir> [--bin-dir <dir>] (--repo-dir <dir> | --repo --base --sha) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
+  nova-card lint --card <file> [--card <file>...] [--name <n>...] [--dropped <id>...]
+  nova-card template
+  nova-card version
+  nova-card help [<verb>]
+
+generate reads the repository, the branch and the base sha from --repo-dir (its origin URL,
+its branch, its HEAD); --repo, --base and --sha each override one, and all three together
+need no checkout. A card's PATHS are computed from its START line, never typed: every directory
+a START file lives in, as its Go files and its tests (<dir>/*.go, <dir>/*_test.go), and the docs
+the card names. With a checkout every PATHS entry is checked to exist at it, so a card never
+names a path the add would reject. The ledgers: `nova-card generate -h` lists them.
+A ledger card is flash and a findings or help card is pro unless --tier says otherwise; a card
+whose PATHS name TLA+ model work (a .tla module, an MC config under tla/) is frontier, as
+nova-sprint add tiers it, and --tier flash or pro on such a card is a red line
+(check=model-tier). The TLC run records tla/RUNS.tsv and tla/CASES.tsv alone are no model.
+A ledger plan is one wave with no dependency chain: the lander resolves a ledger conflict as
+the union of removals, so adjacent deletions of one file no longer conflict at land
+(docs/SPEC-SPRINT.md section 7). Every card is wave 1 and shares the ledger's path with no
+need between them, so the add wants --allow-shared-paths; the CARDS line says so.
+lint holds a brief to the lint nova-sprint add runs (the model lines, the child rules under the
+default rule set, a tree card's steps), and past the add to the typed header and the template's
+unfilled <...> lines, which the add does not read, one LINT DRIFT line each; and to the card
+checks: a tier on line 1, a TEST whose package PATHS names, no name --name gives outside
+double-quoted words, no card --dropped gives. generate holds every brief the same before it
+writes. A sprint initialised with --rules holds a brief to that file at
+the add. template prints nova-swarm's card template, the shape every generated brief has.
+
+what it prints:
+  CARDS OK dir=<dir> cards=<n> waves=<k> tier=<t> [frontier=<n>] [shared-paths=yes]   then manifest.tsv in <dir> (--dry-run: the manifest on stdout, dry-run=yes)
+  CARDS NOTE <what was skipped: a row the ledger did not read, a tool with no help>
+  LINT DRIFT card=<id> check=<check> line=<n>: <excerpt>              and nothing is written
+  LINT OK file=<file>
+
+exit codes: 0 done; 1 a brief is red, named on its LINT DRIFT line, and nothing was written;
+2 could not run: a missing flag, a source that cannot be read, a checkout with no HEAD
+```
+
+`nova-card generate -h`:
+
+```
+usage: nova-card generate [flags]
+from `nova-card help`:
+  nova-card generate --from ledger --ledger serial-tests --repo-dir ./repo --out ./cards
+  nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--name <n>...] [--dropped <id>...] [--dry-run]
+  nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
+  nova-card generate --from help --tool <name> [--tool <name>...] --out <dir> [--bin-dir <dir>] (--repo-dir <dir> | --repo --base --sha) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
+  nova-card generate --from findings --file ./cmd/nova-card/testdata/findings.tsv --repo example/repo --base dev --sha 0123456789abcdef0123456789abcdef01234567 --out ./cards
+effect: local write: creates --out and writes one .md per card and manifest.tsv into it; nothing when a brief is red; --dry-run plans, lints and prints the manifest, and writes nothing
+flags:
+  --base <branch>  the branch the BASE: line carries (default: --repo-dir's branch)
+  --bin-dir <dir>  with --from help: the dir holding the tools' binaries (default: PATH)
+  --dropped <id>  the id of a card dropped off the table, which no brief may name; repeat or comma separate for more
+  --dry-run  plan and lint, print the manifest and the CARDS line, and write nothing
+  --file <file>  with --from findings: the TSV file of file:line, finding, remedy, test (a header row is skipped)
+  --from <kind>  the source kind: ledger, findings or help
+  --ledger <name>  with --from ledger: the ledger's name, one of dead-code, fixed-waits, generality-fixtures, namedpaths, serial-tests, sleeps-skips, slowwaits, transcripts
+  --max <int>  write at most this many cards, in source order; 0 is all
+  --minutes <minutes>  the Deadline line's minutes (default: 45 flash, 60 pro)
+  --name <name>  a person, friend or machine name no brief may carry outside double-quoted words; repeat or comma separate for more
+  --out <dir>  the dir the briefs and manifest.tsv are written into; created, and refused when it already holds a brief
+  --prefix <word>  the word every card id opens with (default: the ledger's name, finding, or help)
+  --repo <owner/name>  the owner/name the REPO: line carries (default: --repo-dir's origin)
+  --repo-dir <dir>  a checkout dir of the target repository at the base: the source is read from it, the repository, branch and sha are read off it, and every PATHS entry is checked to exist in it
+  --sha <sha>  the base sha, 40 hex (default: --repo-dir's HEAD)
+  --tier <string>  flash or pro; default by source: a ledger's own (mechanical ledgers flash, decisions pro), findings and help pro
+  --tool <name>  with --from help: a tool name whose help the card is about; repeat for more
+exit codes: 0 done; 1 a brief is red, named on its LINT DRIFT line, and nothing was written;
+```
+
+`nova-card lint -h`:
+
+```
+usage: nova-card lint [flags]
+from `nova-card help`:
+  nova-card lint --card <file> [--card <file>...] [--name <n>...] [--dropped <id>...]
+  nova-card lint --card ./cards/finding-internal-bus-send.md
+  nova-card lint --card ./cards/finding-cmd-nova-bus-main.md
+effect: inspection: reads, writes nothing
+flags:
+  --card <file>  a brief file to hold to the add's lint; repeat for more
+  --dropped <id>  the id of a card dropped off the table, which no brief may name; repeat or comma separate for more
+  --name <name>  a person, friend or machine name no brief may carry outside double-quoted words; repeat or comma separate for more
+exit codes: 0 done; 1 a brief is red, named on its LINT DRIFT line, and nothing was written;
+```
+
+`nova-card template -h`:
+
+```
+usage: nova-card template [flags]
+from `nova-card help`:
+  nova-card template
+effect: inspection: prints the card template, writes nothing
+exit codes: 0 done; 1 a brief is red, named on its LINT DRIFT line, and nothing was written;
+```
+
+`nova-card version -h`:
+
+```
+usage: nova-card version [flags]
+from `nova-card help`:
+  nova-card version
+effect: inspection: prints the build identity
+exit codes: 0 done; 1 a brief is red, named on its LINT DRIFT line, and nothing was written;
+```
+<!-- clidoc:end nova-card -->
+
 ```
 nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--name <n>...] [--dropped <id>...] [--dry-run]
 nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
@@ -4649,6 +11781,91 @@ plans and lints, prints the manifest and the `CARDS OK` line with
 
 nova-work is pre-alpha: not ready for production use.
 
+<!-- clidoc:begin nova-work -->
+`nova-work help`:
+
+```
+nova-work: every issue of an organization's repositories in one tree file, verified field for field
+nova-work is pre-alpha: not ready for production use.
+
+how it works: import reads every issue through your gh login, read-only, into one tree file.
+--dry-run reads GitHub exactly as the import does (every issue, the same calls) and writes nothing.
+verify reads GitHub again: one MISSING, EXTRA or DRIFT line per difference; none is the proof.
+verify --against compares two tree files and reads no network (a minimal tree: verify -h).
+first run: gh logged in (gh auth status); export ORG and REPO, a repository you can read.
+
+usage:
+  nova-work import --org <org> (--out <tree.lisp> [--replace] | --dry-run) [--repo <owner/name>]... [--fixture <dir>] [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>]
+  nova-work verify --tree <tree.lisp> [--repo <owner/name>]... [--max <n>] [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>] [--max-bytes <n>]
+  nova-work verify --tree <tree.lisp> --against <tree.lisp> [--repo <owner/name>]... [--max <n>] [--max-bytes <n>]
+  nova-work version
+  nova-work help [<verb>]
+
+Every verb takes --json: the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
+
+exit codes: 0 done, or verify found no difference; 1 verify found differences, or an import's encoded tree did not read back equal; 2 could not run (a flag, the budget, gh, GitHub, a file)
+```
+
+`nova-work import -h`:
+
+```
+usage: nova-work import [flags]
+from `nova-work help`:
+  nova-work import --org <org> (--out <tree.lisp> [--replace] | --dry-run) [--repo <owner/name>]... [--fixture <dir>] [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>]
+  nova-work import --org  --repo / --page-size 15 --dry-run
+  nova-work import --org  --repo / --page-size 15 --out ./tree.lisp
+flags:
+  --dry-run  print what the verb would write and write nothing
+  --fixture <string>  a directory of recorded GraphQL pages (call-01.json, call-02.json, each with vars and reply) read instead of gh, so import can be tried with no login
+  --gh <path>  the GitHub CLI to run, a path (default: gh on PATH); the path found is echoed as gh=
+  --json  print the result as one JSON object instead of lines
+  --max-calls <int>  the GitHub call budget of the run (default 1500); the estimate is checked against it before any issue is read; 0 is refused
+  --org <string>  the organization whose repositories are read, as GitHub spells it (required)
+  --out <file>  the tree file to write, created, or replaced with --replace; its directory must exist; required unless --dry-run
+  --page-size <int>  issues per GraphQL page, 1 to 100 (default 50); a page GitHub fails to answer is asked again at half the size
+  --replace  replace an existing --out file instead of refusing
+  --repo <owner/name>  read only this repository, as owner/name; repeat for more (default: every repository of the organization)
+  --timeout <duration>  the whole run's deadline (default 30m)
+exit codes: 0 the tree is written (with --dry-run: read and checked, nothing written); 1 the encoded tree did not read back equal to what was fetched, nothing written; 2 could not run (a flag, the budget, gh, GitHub, the --out directory)
+effect: local write: writes the tree file --out names; reads GitHub through gh, read-only; --dry-run reads GitHub exactly as the import does and writes nothing
+```
+
+`nova-work verify -h`:
+
+```
+usage: nova-work verify [flags]
+from `nova-work help`:
+  nova-work verify --tree <tree.lisp> [--repo <owner/name>]... [--max <n>] [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>] [--max-bytes <n>]
+  nova-work verify --tree <tree.lisp> --against <tree.lisp> [--repo <owner/name>]... [--max <n>] [--max-bytes <n>]
+  nova-work verify --tree ./tree.lisp --repo / --page-size 15
+flags:
+  --against <file>  a second tree file to compare with in place of GitHub: no gh and no network
+  --gh <path>  the GitHub CLI to run, a path (default: gh on PATH); the path found is echoed as gh=
+  --json  print the result as one JSON object instead of lines
+  --max <int>  items listed before one MORE line stands for the rest; 0 lists all
+  --max-bytes <int>  the largest tree file read, in bytes (default 134217728)
+  --max-calls <int>  the GitHub call budget of the run (default 1500); the estimate is checked against it before any issue is read; 0 is refused
+  --page-size <int>  issues per GraphQL page, 1 to 100 (default 50); a page GitHub fails to answer is asked again at half the size
+  --repo <owner/name>  read only this repository, as owner/name; repeat for more (default: every repository of the organization)
+  --timeout <duration>  the whole run's deadline (default 30m)
+  --tree <string>  the tree file to compare, as import wrote it (required)
+exit codes: 0 no difference; 1 one or more differences; 2 could not run (a flag, an unreadable or refused tree, the budget, gh, GitHub)
+effect: inspection: reads the tree, and GitHub through gh, read-only (with --against, a second tree file and no network); writes nothing
+```
+
+`nova-work version -h`:
+
+```
+usage: nova-work version [flags]
+from `nova-work help`:
+  nova-work version
+flags:
+  --json  print the result as one JSON object instead of lines
+exit codes: 0 done, or verify found no difference; 1 verify found differences, or an import's encoded tree did not read back equal; 2 could not run (a flag, the budget, gh, GitHub, a file)
+effect: inspection: reads, writes nothing
+```
+<!-- clidoc:end nova-work -->
+
 Every issue of every repository of a GitHub organization in one tree file, with
 each issue's full contents, and a check that the file holds exactly what GitHub
 holds. The design is [SPEC-WORK-V1.md](SPEC-WORK-V1.md); this section is how to
@@ -4689,3 +11906,81 @@ Reads the tree and GitHub again and writes nothing: zero differences is
 `VERIFY OK ... differences=0`, the receipt that the tree holds what GitHub
 holds. `--against <tree>` puts a second tree file where GitHub stands and reads
 no network at all.
+
+
+## nova-doctor
+
+<!-- clidoc:begin nova-doctor -->
+`nova-doctor help`:
+
+```
+nova-doctor: says what is missing for the nova tools to work, and the one line that fixes each
+
+how it works: each check covers one dependency: ok, warn or fail, with evidence and a fix line.
+Every check runs; a fail does not stop the others. --local skips the checks only a fleet
+needs and says which. Exit 0 is all ok (or warn), 1 a warn under --strict, 2 a fail.
+first run: nova-doctor run; nothing is changed, no fix is run for you.
+
+usage:
+  nova-doctor [run] [--check <name>]... [--local] [--strict] [--json]
+  nova-doctor version
+  nova-doctor help [<verb>]
+
+Every verb but run takes --json: run prints one `DOCTOR <check> ok|warn|fail <evidence> [fix: <line>]` line per check; with --json it prints the same results as one object. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
+
+exit codes: 0 every check ok (a warn too, unless --strict), 1 a warn under --strict, 2 a fail, or usage
+```
+
+`nova-doctor version -h`:
+
+```
+usage: nova-doctor version [flags]
+from `nova-doctor help`:
+  nova-doctor version
+flags:
+  --json  print the result as one JSON object instead of lines
+exit codes: 0 every check ok (a warn too, unless --strict), 1 a warn under --strict, 2 a fail, or usage
+effect: inspection: reads, writes nothing
+```
+<!-- clidoc:end nova-doctor -->
+
+See [nova-doctor](../cmd/nova-doctor/README.md) for the setup and worked examples.
+
+## nova-up
+
+<!-- clidoc:begin nova-up -->
+`nova-up help`:
+
+```
+nova-up: sets up nova on one machine, from nothing to a first sprint
+
+how it works: steps in order: platform, dirs, binaries, sprint, secrets, redis, seat, smoke.
+each step plans first, one line: UP <step> <ok|create|change|missing> <detail>; then
+apply runs every step not ok. A missing step (a program, the system) stops the run before
+anything is written, naming the install command. State lives under one root (~/nova).
+first run: needs git, redis, sops, age and the nova tools on PATH; nothing else.
+
+usage:
+  nova-up --local [--root <dir>] [--dry-run] [--json]
+  nova-up version
+  nova-up help [<verb>]
+
+Every verb takes --json: the same result as one JSON object on stdout. A verb that lists takes --max <n> (default 20, 0 lists all) and says MORE for the rest. `<verb> -h` lists a verb's flags.
+
+exit codes: 0 done or nothing to change, 1 a step is missing or failed (the line names it), 2 could not run (a flag).
+```
+
+`nova-up version -h`:
+
+```
+usage: nova-up version [flags]
+from `nova-up help`:
+  nova-up version
+flags:
+  --json  print the result as one JSON object instead of lines
+exit codes: 0 done or nothing to change, 1 a step is missing or failed (the line names it), 2 could not run (a flag).
+effect: inspection: reads, writes nothing
+```
+<!-- clidoc:end nova-up -->
+
+See [nova-up](../cmd/nova-up/README.md) for the setup and worked examples.

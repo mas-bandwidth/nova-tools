@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,6 +48,14 @@ func TestCLIReferenceIsGeneratedFromHelp(t *testing.T) {
 	tools := markerTools(string(raw))
 	require.NotEmpty(t, tools,
 		"docs/CLI.md carries no <!-- clidoc:begin <tool> --> marker; run `make clidoc` to generate the reference blocks")
+	cmds, err := os.ReadDir(filepath.Join(root, "cmd"))
+	require.NoError(t, err)
+	for _, cmd := range cmds {
+		if !cmd.IsDir() || !strings.HasPrefix(cmd.Name(), "nova-") {
+			continue
+		}
+		require.Contains(t, tools, cmd.Name(), "docs/CLI.md needs a clidoc marker for every nova tool; run `make clidoc` after adding %s", cmd.Name())
+	}
 
 	stage := filepath.Join(t.TempDir(), "stage")
 	require.NoError(t, os.MkdirAll(stage, 0o755))
@@ -89,4 +98,17 @@ func TestMarkerToolsHoldsTheScan(t *testing.T) {
 	require.Equal(t, []string{"nova-check", "nova-fuse"},
 		markerTools("<!-- clidoc:begin nova-check -->\n<!-- clidoc:begin nova-fuse -->\n<!-- clidoc:begin nova-check -->"))
 	require.Empty(t, markerTools("no markers here\n<!-- clidoc:begin -->\n<!-- clidoc:end nova-check -->"))
+}
+
+// generatedVerbEntry returns the complete generated -h text for one verb,
+// including continuation lines and the flags table.
+func generatedVerbEntry(t *testing.T, doc, tool, verb string) string {
+	t.Helper()
+	section := strings.SplitN(doc, "<!-- clidoc:end "+tool+" -->", 2)
+	require.Len(t, section, 2, "docs/CLI.md: missing generated %s section", tool)
+	entry := strings.SplitN(section[0], "`"+tool+" "+verb+" -h`:\n\n```\n", 2)
+	require.Len(t, entry, 2, "docs/CLI.md: missing generated %s %s help entry", tool, verb)
+	body := strings.SplitN(entry[1], "\n```", 2)
+	require.Len(t, body, 2, "docs/CLI.md: unclosed generated %s %s help entry", tool, verb)
+	return body[0]
 }

@@ -154,6 +154,7 @@ tools/analyzers/cmd/vetlaw	0.0	@run37411066588	self-hosted
 tools/analyzers/fixtures	0.0	@local	-
 tools/benchstandard	0.8	@local	-
 tools/ci	0.2	@local	-
+tools/clidoc	0.0	@local	-
 tools/fardelay	0.1	@local	-
 tools/functionalrun	0.1	@local	-
 tools/ghrelease	0.2	@local	-
