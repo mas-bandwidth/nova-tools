@@ -1,0 +1,7 @@
+# json-envelope: a --json run prints one object whose status and exit agree; each row's count only falls
+# ceiling: 5
+cmd/nova-fuse:bare 1 the seed records the walk at the rule's landing; the skeleton's one JSON object (internal/tool) lowers the row
+cmd/nova-fuse:transcript 5 the seed records the walk at the rule's landing; the skeleton's one JSON object (internal/tool) lowers the row
+cmd/nova-fuse:unknown-flag 1 the seed records the walk at the rule's landing; the skeleton's one JSON object (internal/tool) lowers the row
+cmd/nova-fuse:unknown-verb 1 the seed records the walk at the rule's landing; the skeleton's one JSON object (internal/tool) lowers the row
+cmd/nova-fuse:verb-no-flags 9 the seed records the walk at the rule's landing; the skeleton's one JSON object (internal/tool) lowers the row

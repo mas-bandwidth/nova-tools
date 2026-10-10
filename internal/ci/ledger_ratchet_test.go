@@ -36,12 +36,13 @@ const (
 	unitSocketsSeedDir       = "internal/ci/testdata/unit-sockets/"
 	refusalGrammarSeedDir    = "internal/ci/testdata/refusal-grammar/"
 	exitWordSeedDir          = "internal/ci/testdata/exit-word/"
+	jsonEnvelopeSeedDir      = "internal/ci/testdata/json-envelope/"
 )
 
 // seedLedgerDirs are the counted ledgers allowed their one-time seed: each is
 // exempt only while the merge base holds no shard of it (docs/SPEC-CI.md,
-// `unit-sockets`, `refusal-grammar` and `exit-word`).
-var seedLedgerDirs = []string{unitSocketsSeedDir, refusalGrammarSeedDir, exitWordSeedDir}
+// `unit-sockets`, `refusal-grammar`, `exit-word` and `json-envelope`).
+var seedLedgerDirs = []string{unitSocketsSeedDir, refusalGrammarSeedDir, exitWordSeedDir, jsonEnvelopeSeedDir}
 
 // parseLedgerRows reads a counted shard's text into its row keys (the first
 // field of each row, the key every class rule's list is shrunk by) and its
@@ -315,7 +316,8 @@ func ledgerRatchetShards(root string, atBase baseLookup) ([]string, error) {
 
 // checkCountedShards checks every counted shard against its merge base version.
 // A ledger named in seedLedgerDirs is its one seed when no shard of it exists in
-// the base (docs/SPEC-CI.md, `unit-sockets` and `refusal-grammar`); after that,
+// the base (docs/SPEC-CI.md, `unit-sockets`, `refusal-grammar`, `exit-word`
+// and `json-envelope`); after that,
 // every shard ratchets.
 func checkCountedShards(root, base string, shards, baseShards []string, atBase baseLookup) ([]string, error) {
 	seeds := map[string]bool{}
@@ -348,7 +350,8 @@ func checkCountedShards(root, base string, shards, baseShards []string, atBase b
 
 // ledgerSeedIsNew reports whether this tree introduces the first shard of the
 // ledger under dir; the initial seed is exempt only while the merge base holds
-// no shard of it (docs/SPEC-CI.md, `unit-sockets` and `refusal-grammar`).
+// no shard of it (docs/SPEC-CI.md, `unit-sockets`, `refusal-grammar`,
+// `exit-word` and `json-envelope`).
 // baseShards is the complete set the base carries, not only the head's names,
 // so a base shard this change deletes still counts as a seed that happened.
 func ledgerSeedIsNew(shards, baseShards []string, dir string) bool {
@@ -571,6 +574,44 @@ func TestExitWordLedgerSeedsOnlyWhenTheBaseHasNoShard(t *testing.T) {
 	problems, err := checkCountedShards(root, "123456789abcdef", shards, nil, missing)
 	require.NoError(t, err)
 	require.Empty(t, problems, "the exit-word ledger is seeded at its introduction")
+
+	baseHasAnotherShard := func(rel string) (string, bool, error) {
+		if rel == existingShard {
+			return "# ceiling: 1\ncmd/nova-sandbox:verb-no-flags 1 reason\n", true, nil
+		}
+		return "", false, nil
+	}
+	seededBase := []string{existingShard}
+	problems, err = checkCountedShards(root, "123456789abcdef", shards, seededBase, baseHasAnotherShard)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		newShard + " is not in the merge base 123456789: a new shard is all growth; justify it beside the rule it measures",
+	}, problems, "a later new package shard remains growth after the ledger has a base")
+
+	replaced := []string{newShard}
+	problems, err = checkCountedShards(root, "123456789abcdef", replaced, seededBase, baseHasAnotherShard)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		newShard + " is not in the merge base 123456789: a new shard is all growth; justify it beside the rule it measures",
+	}, problems, "replacing the base's last shard does not reopen the seed")
+}
+
+// TestJSONEnvelopeLedgerSeedsOnlyWhenTheBaseHasNoShard pins the one-time seed
+// exception for the newly introduced rule (docs/SPEC-CI.md, `json-envelope`).
+func TestJSONEnvelopeLedgerSeedsOnlyWhenTheBaseHasNoShard(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	newShard := jsonEnvelopeSeedDir + "cmd/nova-redis.txt"
+	existingShard := jsonEnvelopeSeedDir + "cmd/nova-sandbox.txt"
+	writeLedgerGuardFixture(t, root, newShard, "# ceiling: 1\ncmd/nova-redis:verb-no-flags 1 reason\n")
+	writeLedgerGuardFixture(t, root, existingShard, "# ceiling: 1\ncmd/nova-sandbox:verb-no-flags 1 reason\n")
+	shards := []string{existingShard, newShard}
+	missing := func(string) (string, bool, error) { return "", false, nil }
+
+	problems, err := checkCountedShards(root, "123456789abcdef", shards, nil, missing)
+	require.NoError(t, err)
+	require.Empty(t, problems, "the json-envelope ledger is seeded at its introduction")
 
 	baseHasAnotherShard := func(rel string) (string, bool, error) {
 		if rel == existingShard {

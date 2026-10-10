@@ -1,0 +1,7 @@
+# json-envelope: a --json run prints one object whose status and exit agree; each row's count only falls
+# ceiling: 5
+cmd/nova-swarm:bare 1 the seed records the walk at the rule's landing; the skeleton's one JSON object (internal/tool) lowers the row
+cmd/nova-swarm:transcript 1 the seed records the walk at the rule's landing; the skeleton's one JSON object (internal/tool) lowers the row
+cmd/nova-swarm:unknown-flag 1 the seed records the walk at the rule's landing; the skeleton's one JSON object (internal/tool) lowers the row
+cmd/nova-swarm:unknown-verb 1 the seed records the walk at the rule's landing; the skeleton's one JSON object (internal/tool) lowers the row
+cmd/nova-swarm:verb-no-flags 19 the seed records the walk at the rule's landing; the skeleton's one JSON object (internal/tool) lowers the row
