@@ -20,10 +20,10 @@ SHA256SUMS digest: 56d9184e122186e04049d1eef3ec61f0d8a8e92a7a93f526fbde4681667f3
 
 Adopt this release with `--expect-sums 56d9184e122186e04049d1eef3ec61f0d8a8e92a7a93f526fbde4681667f36b1`.
 
-CI waived: Glenn, 2026-10-10 ~13:17Z and ~14:45Z
+CI waived: the owner, 2026-10-10 ~13:17Z and ~14:45Z
 CI waived checks: certification-ok=failure, ci-ok=failure, test (macos-latest, 1)=cancelled, test (macos-latest, 12)=failure, test (macos-latest, 7)=cancelled, test (macos-latest, 8)=cancelled, test (ubuntu-latest, 1)=cancelled, test (ubuntu-latest, 7)=cancelled, test (ubuntu-latest, 8)=cancelled, test-hosted (macos-latest, 1)=cancelled, test-hosted (macos-latest, 2)=cancelled, test-hosted (macos-latest, 8)=cancelled, test-hosted (ubuntu-latest, 3)=failure, test-hosted (ubuntu-latest, 6)=cancelled, tick-gate=failure
 
-Recovery journeys incomplete, gate waived: Glenn 2026-10-10 live waivers for v1.2.2 only: spend readouts for non-OpenRouter providers do not exist yet (v1.3 blocker); journey evidence owed; CI waived for the certification tick gate (fails at CI load; per-tick work cap owed in v1.3, draft #5557) and two hosted-runner failures (TestWallCapsAForkBomb on GitHub's landlock ABI 7 kernel; TestDashboardServesWhatServerPyServedFromOnePoller on hosted macOS), both carded for v1.3
+Recovery journeys incomplete, gate waived: the owner 2026-10-10 live waivers for v1.2.2 only: spend readouts for non-OpenRouter providers do not exist yet (v1.3 blocker); journey evidence owed; CI waived for the certification tick gate (fails at CI load; per-tick work cap owed in v1.3, draft #5557) and two hosted-runner failures (TestWallCapsAForkBomb on GitHub's landlock ABI 7 kernel; TestDashboardServesWhatServerPyServedFromOnePoller on hosted macOS), both carded for v1.3
 
 - TestEveryFriendFailureShowsWithinItsBound/harness closed: down within 1 minute: not-run (no --journeys evidence)
 - TestEveryFriendFailureShowsWithinItsBound/session silent: down within 15 minutes of bus silence: not-run (no --journeys evidence)
@@ -31,7 +31,7 @@ Recovery journeys incomplete, gate waived: Glenn 2026-10-10 live waivers for v1.
 - TestEveryFriendFailureShowsWithinItsBound/bus credential revoked: an alarm on the first failed send: not-run (no --journeys evidence)
 - TestEveryFriendFailureShowsWithinItsBound/hold: no card left on him, his cards dealt elsewhere: not-run (no --journeys evidence)
 
-Spend gate waived: Glenn 2026-10-10 live waivers for v1.2.2 only: spend readouts for non-OpenRouter providers do not exist yet (v1.3 blocker); journey evidence owed; CI waived for the certification tick gate (fails at CI load; per-tick work cap owed in v1.3, draft #5557) and two hosted-runner failures (TestWallCapsAForkBomb on GitHub's landlock ABI 7 kernel; TestDashboardServesWhatServerPyServedFromOnePoller on hosted macOS), both carded for v1.3 (window 2026-10-09T00:00:00Z..2026-10-10T14:41:12Z)
+Spend gate waived: the owner 2026-10-10 live waivers for v1.2.2 only: spend readouts for non-OpenRouter providers do not exist yet (v1.3 blocker); journey evidence owed; CI waived for the certification tick gate (fails at CI load; per-tick work cap owed in v1.3, draft #5557) and two hosted-runner failures (TestWallCapsAForkBomb on GitHub's landlock ABI 7 kernel; TestDashboardServesWhatServerPyServedFromOnePoller on hosted macOS), both carded for v1.3 (window 2026-10-09T00:00:00Z..2026-10-10T14:41:12Z)
 - unread: --spend-store <addr> names no sprint store, so the recorded spend cannot be read
 
 **Owed:**
