@@ -43,7 +43,7 @@ func TestRunNamesTheCurrentHolderWhenItRefusesAnOldReport(t *testing.T) {
 		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1", nil
 	}
 	var out, errb strings.Builder
-	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--session", "ses_main", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
+	code := run([]string{"run", "--server", "127.0.0.1:6390", "--as", "bob", "--harness", "opencode", "--session", "ses_main", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
 	require.Equal(t, 0, code, errb.String())
 	assert.Positive(t, looked, "the actual holder source is wired into the daemon")
 	assert.Zero(t, finished, "no finish is sent for a card off her row")

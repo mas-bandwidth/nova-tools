@@ -28,9 +28,9 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 		cli := r.cli()
 		for _, h := range []string{"cursor"} {
 			remedy := "run: the adapter card: give internal/friend a deliver command for " + h + " (NewDeliverer), or run the friend under a harness that has one: opencode, codex, claude, antigravity, dsh, gemini, grok, tmux"
-			cli.Do(t, "run", "--as", "bob", "--harness", h, "--dir", "/w/bob").Exit(2).
+			cli.Do(t, "run", "--server", "127.0.0.1:6390", "--as", "bob", "--harness", h, "--dir", "/w/bob").Exit(2).
 				Err("RUN REFUSED: no deliver command for "+h, "the daemon did not start", remedy)
-			cli.Do(t, "run", "--as", "bob", "--harness", h, "--dir", "/w/bob", "--dry-run").Exit(2).Err("RUN REFUSED: no deliver command for "+h, remedy)
+			cli.Do(t, "run", "--server", "127.0.0.1:6390", "--as", "bob", "--harness", h, "--dir", "/w/bob", "--dry-run").Exit(2).Err("RUN REFUSED: no deliver command for "+h, remedy)
 			cli.Do(t, "install", "--as", "bob", "--harness", h, "--dir", "/w/bob", "--config-dir", "/w/bob-claude").Exit(2).
 				Err("INSTALL REFUSED: no deliver command for "+h, "nothing was written or loaded", remedy)
 			cli.Do(t, "install", "--as", "bob", "--harness", h, "--dir", "/w/bob", "--config-dir", "/w/bob-claude", "--dry-run").Exit(2).Err(remedy)
@@ -65,7 +65,7 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 			return nil
 		}
 		var out, errb strings.Builder
-		code := run([]string{"run", "--as", "bob", "--harness", "dsh", "--dir", "/w/bob", "--session", "session-z"}, strings.NewReader(""), &out, &errb, w)
+		code := run([]string{"run", "--server", "127.0.0.1:6390", "--as", "bob", "--harness", "dsh", "--dir", "/w/bob", "--session", "session-z"}, strings.NewReader(""), &out, &errb, w)
 		require.Equal(t, 0, code, "the daemon ran until it was stopped: %s", errb.String())
 		assert.Equal(t, 1, strings.Count(out.String(), "presence: REFUSED: session check r4nd0m cannot go into the session"), "said once: %s", out.String())
 		assert.Contains(t, out.String(), "minimal")
@@ -106,7 +106,7 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 		}
 		dir := t.TempDir()
 		var out, errb strings.Builder
-		code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
+		code := run([]string{"run", "--server", "127.0.0.1:6390", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
 		assert.Equal(t, 0, code, "the daemon ran until it was stopped, never exiting for want of a proof: %s", errb.String())
 		assert.Empty(t, errb.String())
 		assert.Contains(t, out.String(), "push proof: pending: the first session check goes into the opencode session now")
@@ -142,7 +142,7 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 			return answer, nil
 		}
 		var out, errb strings.Builder
-		code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", t.TempDir(), "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
+		code := run([]string{"run", "--server", "127.0.0.1:6390", "--as", "bob", "--harness", "opencode", "--dir", t.TempDir(), "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
 		require.Equal(t, 0, code, errb.String())
 		assert.Contains(t, out.String(), "push proof: proved: the session answered")
 		var checks, pongs []string
@@ -200,7 +200,7 @@ func TestAClaudeDaemonsCheckGoesInByTheFolderAndItsBeatCarriesThePong(t *testing
 		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1 proved=" + words.Pong, nil
 	}
 	var out, errb strings.Builder
-	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir}, strings.NewReader(""), &out, &errb, w)
+	code := run([]string{"run", "--server", "127.0.0.1:6390", "--as", "bob", "--harness", "claude", "--dir", dir}, strings.NewReader(""), &out, &errb, w)
 	require.Equal(t, 0, code, errb.String())
 	require.NotEmpty(t, answered, "a check went in by the folder and was said on the beat")
 	assert.Equal(t, answered, said[len(said)-1].Pong, "the beat carries the session's answer: %+v", said)

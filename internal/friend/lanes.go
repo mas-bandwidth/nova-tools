@@ -272,6 +272,23 @@ func (s *laneSet) running() bool {
 	return false
 }
 
+// working is how many lanes have a turn under way or a session opening.
+func (s *laneSet) working() int {
+	if s == nil {
+		return 0
+	}
+	n := 0
+	for _, ln := range s.lanes {
+		if ln == nil {
+			continue
+		}
+		if ln.opening || (ln.t != nil && ln.t.running) {
+			n++
+		}
+	}
+	return n
+}
+
 // said is the lanes as the status says them: n:session:card/attempts, the
 // lanes beyond the width the row now gives marked retired, those beyond the
 // live cap a rate limit lowered marked capped, those beyond the width the

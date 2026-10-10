@@ -96,9 +96,11 @@ type Daemon struct {
 	Width                int
 	Store                bus.Store
 	Deliver              Deliverer
-	Beat                 func(ctx context.Context, active time.Time) error // one beat to the sprint server, carrying the session's last activity (zero: none known)
+	Beat                 func(ctx context.Context, active time.Time) error // one beat to the sprint server, carrying the session's last activity (zero: none known); nil beats nothing
 	StepBeatForTests     bool                                              // deterministic fake-clock seam; production has one independent beat caller
 	HarnessStatus        func() (seen, rule string)                        // the beat worker's advisory harness observation; only the loop writes Status
+	// Instance is this run's id on the bus presence record. Empty is filled once.
+	Instance string
 	// Activity is the newest write of the session's files and Cards the ids of
 	// the cards she holds, oldest first (nil: the queue file's queued and working
 	// tasks under Dir). Activity is read by the independent beat cadence at
@@ -559,6 +561,8 @@ type loop struct {
 	followWG     sync.WaitGroup  // it, waited for when Run ends
 	seatHolder   string          // the seat holder as last read; empty while unknown
 	seatRead     time.Time       // when it was read; zero before the first read
+	beatWait     chan error      // a beat that did not answer within beatBudget; nil when none is in flight
+	beatNoted    time.Time       // when the record last said that beat had not answered
 	presentDue   bool            // the present is owed: the session started, its id changed, or she asked (present.go)
 	presentAt    time.Time       // the store's time of the last present, named in the reason
 	lost         map[string]bool // entries the present superseded whose ack failed: superseded again when the claim hands them in
@@ -567,6 +571,11 @@ type loop struct {
 	delivered    time.Time       // when the session last took a turn: the stale bound runs from it
 	session      string          // the session id as last read (Session)
 }
+
+// beatBudget is how long a beat may hold the loop. Past it the beat stays in
+// flight and the loop goes on. One second is the loop's own step, so the
+// budget stays under that.
+const beatBudget = 900 * time.Millisecond
 
 // beatState is the cadence worker's last result. The main loop owns Status and
 // reads a snapshot, so a slow inbox or finish cannot hold the native beat or
@@ -587,7 +596,11 @@ func (b *beatState) snapshot() (active, last time.Time, beats int, err string) {
 
 // beatLoop is this daemon's sole production beat caller. A tick waits for the
 // previous beat, never sending overlapping proof words or duplicate beat verbs.
+// A daemon that beats nothing, its server unset, sends nothing here.
 func (d *Daemon) beatLoop(ctx context.Context, b *beatState) {
+	if d.Beat == nil {
+		return
+	}
 	ticker := time.NewTicker(BeatEvery)
 	defer ticker.Stop()
 	var active, walked time.Time
@@ -753,16 +766,15 @@ func (d *Daemon) Run(ctx context.Context) error {
 		} else if l.unable != "" && !l.told {
 			l.told = d.tellBroken(ctx, l.b, fmt.Sprintf("The session cannot take a turn: %s. The friend reads down; every message stays pending, none given up, and the daemon tries again every %s until a turn succeeds.", l.unable, RecheckEvery))
 		}
+		if storeOK {
+			d.writePresence(ctx, l.presenceSnap(now, width))
+		}
 		if d.StepBeatForTests {
 			if storeOK {
 				if d.Activity != nil && (d.walked.IsZero() || now.Sub(d.walked) >= ActivityEvery) {
-					d.active, d.cards, d.walked = d.Activity(), d.held(), now
+					d.active, d.cards, d.walked = d.Activity(), d.held(), now // one walk serves the beat and the idle watch (they share walked)
 				}
-				if err := d.Beat(ctx, d.active); err != nil {
-					d.status.BeatError = err.Error()
-				} else {
-					d.status.BeatError, d.status.Beats, d.status.LastBeat = "", d.status.Beats+1, now
-				}
+				l.stepBeat(ctx, now)
 			}
 		} else {
 			d.active, d.status.LastBeat, d.status.Beats, d.status.BeatError = beats.snapshot()
@@ -815,6 +827,116 @@ func (l *loop) proof(now time.Time) bool {
 	}
 	d.status.Push, d.status.PushNonce = PushUnproven, nonce
 	return false
+}
+
+// presenceSnap is the daemon's own numbers for the bus record at this step.
+func (l *loop) presenceSnap(now time.Time, width int) presenceSnap {
+	d := l.d
+	s := presenceSnap{At: now, Route: "push", Width: width, Queue: len(l.hand)}
+	switch {
+	case l.passive:
+		s.Route = "passive"
+	case l.busy != nil && !l.busy.running && !l.retry.IsZero():
+		s.Route = "defer"
+	}
+	if l.busy != nil {
+		s.Queue += len(l.busy.entries)
+		if l.busy.running {
+			s.Working++
+		}
+	}
+	if l.lanes != nil {
+		s.Working += l.lanes.working()
+	}
+	if d.Limited != nil {
+		if _, _, on := d.Limited(); on {
+			s.Sleeping = true
+		}
+	}
+	if l.broken {
+		s.BrokenAt = d.status.BrokenAt
+		if s.BrokenAt.IsZero() {
+			s.BrokenAt = now
+		}
+		s.Reason = d.status.SessionReason
+	}
+	return s
+}
+
+// stepBeat runs Beat off the loop. A beat that returns inside beatBudget is
+// the same step the loop used to take. One that does not is left in flight:
+// the loop does not call it again until it returns, and the record says so
+// once a minute. A nil Beat does nothing.
+func (l *loop) stepBeat(ctx context.Context, now time.Time) {
+	d := l.d
+	if d == nil || d.Beat == nil {
+		return
+	}
+	if l.beatWait != nil {
+		select {
+		case err := <-l.beatWait:
+			l.beatWait = nil
+			l.noteBeat(err, now)
+		default:
+			l.noteHung(now)
+		}
+		return
+	}
+	ch := make(chan error, 1)
+	go func() {
+		ch <- d.Beat(ctx, d.active)
+	}()
+	err, ok := recvWithin(ctx, ch, beatBudget)
+	if ok {
+		l.noteBeat(err, now)
+		return
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	l.beatWait = ch
+	l.noteHung(now)
+}
+
+// recvWithin waits up to bound for one value from ch. The bool is false when
+// the bound passes, or when ctx ends before a value is sent.
+func recvWithin(ctx context.Context, ch <-chan error, bound time.Duration) (error, bool) {
+	timer := time.NewTimer(bound)
+	defer timer.Stop()
+	select {
+	case err := <-ch:
+		return err, true
+	case <-timer.C:
+		return nil, false
+	case <-ctx.Done():
+		select {
+		case err := <-ch:
+			return err, true
+		default:
+			return ctx.Err(), false
+		}
+	}
+}
+
+func (l *loop) noteBeat(err error, now time.Time) {
+	d := l.d
+	if err != nil {
+		d.status.BeatError = err.Error()
+		return
+	}
+	d.status.BeatError, d.status.Beats, d.status.LastBeat = "", d.status.Beats+1, now
+}
+
+func (l *loop) noteHung(now time.Time) {
+	d := l.d
+	if d == nil || d.Record == nil {
+		return
+	}
+	if !l.beatNoted.IsZero() && now.Sub(l.beatNoted) < time.Minute {
+		return
+	}
+	l.beatNoted = now
+	d.Record(now.UTC().Format(time.RFC3339) + " beat: no answer within 900ms")
 }
 
 // held is the cards she holds: her row as the server last said it (Held), else

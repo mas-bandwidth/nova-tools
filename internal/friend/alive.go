@@ -413,7 +413,9 @@ func WatchHarness(d *Daemon, adapter Deliverer) *HarnessWatch {
 	if t, ok := adapter.(sessionTurner); ok {
 		t.sessionTurns().clock(func() time.Time { return w.Now() }) // the session's turns on the daemon's clock
 	}
-	d.Beat = w.Beat
+	if d.Beat != nil {
+		d.Beat = w.Beat // a daemon that beats nothing stays that way: the loop calls nothing
+	}
 	d.HarnessStatus = w.Status
 	return w
 }
@@ -454,6 +456,9 @@ func (w *HarnessWatch) Beat(ctx context.Context, active time.Time) error {
 			w.told, w.said = true, said
 			w.record(now, seenLine(live))
 		}
+	}
+	if w.beat == nil {
+		return nil // no server: the check ran, and nothing is sent
 	}
 	return w.beat(ctx, active)
 }

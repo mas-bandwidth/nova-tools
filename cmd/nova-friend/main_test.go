@@ -193,7 +193,7 @@ func TestRefusalsNameEveryProblemAndWhatEachWants(t *testing.T) {
 		says []string
 	}{
 		{"run nothing given", []string{"run"}, []string{"--as is required", "--harness is required", "--dir is required"}},
-		{"run bad harness", []string{"run", "--as", "bob", "--harness", "vim", "--dir", "d"}, []string{`--harness "vim" is no harness`, "opencode, codex, claude, antigravity, dsh"}},
+		{"run bad harness", []string{"run", "--server", "127.0.0.1:6390", "--as", "bob", "--harness", "vim", "--dir", "d"}, []string{`--harness "vim" is no harness`, "opencode, codex, claude, antigravity, dsh"}},
 		{"install nothing given", []string{"install"}, []string{"--as is required", "--harness is required", "--dir is required"}},
 		{"ping nothing given", []string{"ping"}, []string{"--as is required", "--to is required"}},
 		{"ping bad since", []string{"ping", "--as", "ada", "--to", "bob", "--since", "yesterday"}, []string{"--since wants an RFC3339 instant"}},
@@ -433,7 +433,7 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 	}
 	dir := t.TempDir()
 	var out, errb strings.Builder
-	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--width", "4"}, strings.NewReader(""), &out, &errb, w)
+	code := run([]string{"run", "--server", "127.0.0.1:6390", "--as", "bob", "--harness", "opencode", "--dir", dir, "--width", "4"}, strings.NewReader(""), &out, &errb, w)
 	assert.Equal(t, 0, code, errb.String())
 	s, found, err := friend.ReadStatus(friend.StateDirIn(dir))
 	require.NoError(t, err)
@@ -474,7 +474,7 @@ func TestRunReadsTheConfigDirOffTheBeat(t *testing.T) {
 				return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=2" + tc.answer, nil
 			}
 			var out, errb strings.Builder
-			code := run(append([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir()}, tc.flags...), strings.NewReader(""), &out, &errb, w)
+			code := run(append([]string{"run", "--server", "127.0.0.1:6390", "--as", "bob", "--harness", "claude", "--dir", t.TempDir()}, tc.flags...), strings.NewReader(""), &out, &errb, w)
 			assert.Equal(t, 0, code, errb.String())
 			assert.NotContains(t, out.String(), "REFUSED")
 			assert.Contains(t, out.String(), "push proof: owed by the folder: claude runs each card as a process of its own, so the session check goes in as")
@@ -482,7 +482,7 @@ func TestRunReadsTheConfigDirOffTheBeat(t *testing.T) {
 		})
 	}
 	var out, errb strings.Builder
-	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir(), "--config-dir", "~/accounts"}, strings.NewReader(""), &out, &errb, newRig(t, "ada", "bob").world())
+	code := run([]string{"run", "--server", "127.0.0.1:6390", "--as", "bob", "--harness", "claude", "--dir", t.TempDir(), "--config-dir", "~/accounts"}, strings.NewReader(""), &out, &errb, newRig(t, "ada", "bob").world())
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errb.String(), `--config-dir "~/accounts" wants an absolute path`)
 }
@@ -508,7 +508,7 @@ func TestRunRefusesAClaudeOneShotRowWithoutAConfigDir(t *testing.T) {
 	}
 	dir := t.TempDir()
 	var out, errb strings.Builder
-	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir}, strings.NewReader(""), &out, &errb, w)
+	code := run([]string{"run", "--server", "127.0.0.1:6390", "--as", "bob", "--harness", "claude", "--dir", dir}, strings.NewReader(""), &out, &errb, w)
 	assert.Equal(t, 0, code, errb.String())
 	s, _, err := friend.ReadStatus(friend.StateDirIn(dir))
 	require.NoError(t, err)
@@ -577,7 +577,7 @@ func TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir(t *testing.T) {
 					return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1 row_config_dir=/accounts/heavy-a", nil
 				}
 				var out, errb strings.Builder
-				code := run(append([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir, "--coordinator", "ada"}, tc.flags...), strings.NewReader(""), &out, &errb, w)
+				code := run(append([]string{"run", "--server", "127.0.0.1:6390", "--as", "bob", "--harness", "claude", "--dir", dir, "--coordinator", "ada"}, tc.flags...), strings.NewReader(""), &out, &errb, w)
 				require.Equal(t, 0, code, errb.String())
 				mu.Lock()
 				defer mu.Unlock()
@@ -623,7 +623,7 @@ func TestRunWaitsForAStoreThatIsDownAtTheStart(t *testing.T) {
 		return "", nil
 	}
 	var out, errb strings.Builder
-	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", t.TempDir()}, strings.NewReader(""), &out, &errb, w)
+	code := run([]string{"run", "--server", "127.0.0.1:6390", "--as", "bob", "--harness", "opencode", "--dir", t.TempDir()}, strings.NewReader(""), &out, &errb, w)
 	assert.Equal(t, 0, code, errb.String())
 	require.GreaterOrEqual(t, len(slept), 3)
 	assert.Equal(t, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}, slept[:3], "longer each time; the rest are the loop's own pauses")
@@ -641,7 +641,7 @@ func TestRunWaitsForAStoreThatIsDownAtTheStart(t *testing.T) {
 		}
 	}
 	out.Reset()
-	code = run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", t.TempDir()}, strings.NewReader(""), &out, &errb, w)
+	code = run([]string{"run", "--server", "127.0.0.1:6390", "--as", "bob", "--harness", "opencode", "--dir", t.TempDir()}, strings.NewReader(""), &out, &errb, w)
 	assert.Equal(t, 0, code)
 	assert.Equal(t, OpenRetryMax, slept[len(slept)-1], "the wait is capped")
 	assert.Contains(t, out.String(), "opening again in "+OpenRetryMax.String())
@@ -679,7 +679,7 @@ func TestInstallSecretsWrapsTheDaemonInNovaSecretsExec(t *testing.T) {
 	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY", "--seat", "studio", "--dry-run").Exit(2).Err("nova-secrets is not on PATH")
 	r.onPath = map[string]string{"nova-secrets": "/opt/nova/bin/nova-secrets", "sops": "/opt/homebrew/bin/sops"}
 	wrap := "/opt/nova/bin/nova-secrets exec --store " + filepath.Join(r.home, "nova-bench", "secrets") + " --as studio --key " + filepath.Join(r.home, ".config", "nova-secrets", "studio.key") +
-		" --sops /opt/homebrew/bin/sops --only DEEPSEEK_API_KEY,GH_TOKEN --require DEEPSEEK_API_KEY --require GH_TOKEN -- /opt/nova/bin/nova-friend run --as bob --harness opencode --dir /w/bob --redis store.test:6379 --server 127.0.0.1:6390 --width 0"
+		" --sops /opt/homebrew/bin/sops --only DEEPSEEK_API_KEY,GH_TOKEN --require DEEPSEEK_API_KEY --require GH_TOKEN -- /opt/nova/bin/nova-friend run --as bob --harness opencode --dir /w/bob --redis store.test:6379 --width 0"
 	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY,GH_TOKEN", "--seat", "studio", "--dry-run").Exit(0).
 		Out("NOTE the agent runs: nova-secrets exec --as studio --only DEEPSEEK_API_KEY,GH_TOKEN --require DEEPSEEK_API_KEY --require GH_TOKEN -- nova-friend run --as bob --harness opencode --dir /w/bob --width 0, with --redis and --server as given here")
 	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--secrets", "DEEPSEEK_API_KEY,GH_TOKEN", "--seat", "studio").Exit(0).Out("INSTALL OK label=com.nova.friend-bob")
@@ -692,6 +692,21 @@ func TestInstallSecretsWrapsTheDaemonInNovaSecretsExec(t *testing.T) {
 		}
 	}
 	assert.Equal(t, strings.Fields(wrap), args[:len(strings.Fields(wrap))], "the plist's ProgramArguments are the wrap, then the daemon")
+}
+
+// install without --server writes an agent that names no server and beats nothing.
+func TestInstallWithoutServerWritesNoBeat(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	cli := r.cli()
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob").Exit(0).Out("INSTALL OK label=com.nova.friend-bob")
+	raw, err := os.ReadFile(filepath.Join(r.home, "Library", "LaunchAgents", "com.nova.friend-bob.plist"))
+	require.NoError(t, err)
+	text := string(raw)
+	assert.NotContains(t, text, "--server")
+	assert.NotContains(t, text, "6390")
+	assert.Contains(t, text, "--redis")
+	assert.Contains(t, text, "run")
 }
 
 // A broken session is in the status line, with its id and the provider's
@@ -819,7 +834,7 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 			return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1", nil
 		}
 		var out, errb strings.Builder
-		code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
+		code := run([]string{"run", "--server", "127.0.0.1:6390", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
 		require.Equal(t, 0, code, errb.String())
 		require.GreaterOrEqual(t, len(runs), 2, "%v\n%s", runs, out.String())
 		assert.True(t, strings.HasPrefix(runs[0], "run You are bob: one of 1 one-shot lanes of bob, this is lane 1"), runs[0])
@@ -898,7 +913,7 @@ func TestRunWithNoSessionAnsweringBeatsDown(t *testing.T) {
 	stopAfter(&w, &cancel, 17*time.Minute) // the session's own blocking read never pauses the loop; the clock ends it
 	dir := t.TempDir()
 	var out, errb strings.Builder
-	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
+	code := run([]string{"run", "--server", "127.0.0.1:6390", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
 	require.Equal(t, 0, code, errb.String())
 	assert.Contains(t, out.String(), "push proof: proved: the session answered")
 	assert.Contains(t, out.String(), "presence: down: no session answer within 5m0s")
@@ -1013,7 +1028,7 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 		return "", 0, nil
 	}
 	out, errb := &lockedBuilder{mu: &mu}, &strings.Builder{}
-	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--session", "ses_main", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), out, errb, w)
+	code := run([]string{"run", "--server", "127.0.0.1:6390", "--as", "bob", "--harness", "opencode", "--session", "ses_main", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), out, errb, w)
 	require.Equal(t, 0, code, errb.String())
 	mu.Lock()
 	defer mu.Unlock()
@@ -1107,7 +1122,7 @@ func TestRunKeepsTheHarnessWatchAdvisory(t *testing.T) {
 	stopAfter(&w, &cancel, 5*time.Minute)
 	dir := t.TempDir()
 	var out, errb strings.Builder
-	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
+	code := run([]string{"run", "--server", "127.0.0.1:6390", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
 	require.Equal(t, 0, code, errb.String())
 	assert.Positive(t, beats, "the session answered: beats reach the sprint server with no app running")
 	assert.Contains(t, out.String(), "harness: not seen: the harness app is closed; advisory")
@@ -1141,7 +1156,7 @@ func TestTheDaemonsStateDirIsUnderItsDir(t *testing.T) {
 		w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) { return "", nil }
 		stopAfter(&w, &cancel, 3*time.Minute)
 		var out, errb strings.Builder
-		code := run(append([]string{"run", "--as", "bob", "--harness", "opencode", "--coordinator", "ada"}, args...), strings.NewReader(""), &out, &errb, w)
+		code := run(append([]string{"run", "--server", "127.0.0.1:6390", "--as", "bob", "--harness", "opencode", "--coordinator", "ada"}, args...), strings.NewReader(""), &out, &errb, w)
 		require.Equal(t, 0, code, errb.String())
 		return out.String()
 	}

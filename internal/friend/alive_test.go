@@ -73,6 +73,17 @@ func TestAClosedHarnessIsSaidAndNeverHoldsTheBeat(t *testing.T) {
 	assert.LessOrEqual(t, ps.calls, steps/int(AliveEvery/BeatEvery)+1, "one ps per check, not one per beat")
 }
 
+func TestNoBeatStaysNoBeat(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.d.Beat = nil
+	w := WatchHarness(r.d, Stub{Harness: "claude"})
+	assert.Nil(t, r.d.Beat, "a daemon that beats nothing is not given a call")
+	require.NoError(t, w.Beat(context.Background(), time.Time{}))
+	assert.Equal(t, HarnessUnknown, watchSeen(w))
+	assert.Contains(t, strings.Join(r.records, "\n"), "harness check: cannot tell")
+}
+
 func TestAnAdapterThatCannotTellLeavesTheSessionCheckAlone(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)

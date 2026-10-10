@@ -392,7 +392,7 @@ func friendTool(w world) *tool.Tool {
 		f.String("session", "", "the session to deliver into (default: the harness's newest session in --dir; harness tmux: the tmux session, default: the one host saved, else friend-<me>)")
 		f.String("adapter", "", "delivery route: folder for an existing watched Codex session (default: the harness adapter)")
 		f.String("delivery-dir", "", "existing folder watched by that Codex session when --adapter folder")
-		f.String("server", w.server(), "the sprint server, host:port (default: "+ServerEnv+", else "+DefaultServer+")")
+		f.String("server", "", "where a beat is sent, host:port (default: none; with none the daemon beats nothing and writes its presence record on the bus store)")
 		f.Int("width", 0, "the friend's width, from the nova-config friend row; 0 is unknown")
 		f.Duration("silent-stop", friend.DefaultSilentStop, "stop a turn that has printed nothing for this long; a turn that prints runs on")
 		f.Int("broken-after", friend.DefaultBrokenAfter, "turns in a row the provider refuses the same way before the session is broken")
@@ -1627,6 +1627,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 		}
 		d.Route = w.route(server, c.Str("model"))
+	}
+	if server == "" {
+		// no server: the daemon beats nothing and dials nothing. Presence is the bus record.
+		d.Beat, d.Sprint, d.Progress, d.Held, d.Seat, d.Finish, d.Route = nil, nil, nil, nil, nil, nil, nil
 	}
 	watch := friend.WatchHarness(d, deliver)
 	if w.alive != nil {

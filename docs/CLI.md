@@ -1540,7 +1540,7 @@ flags:
   --profile <string>  the wall profile every lane child runs inside when the friend row names none (row_profile=): friend
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
   --refuse-go  put go and gofmt that refuse first on every lane's PATH, and GOROOT nowhere (default: the row's row_refuse_go)
-  --server <string>  the sprint server, host:port (default: NOVA_SPRINT_SERVER, else 127.0.0.1:6390)
+  --server <string>  where a beat is sent, host:port (default: none; with none the daemon beats nothing and writes its presence record on the bus store)
   --session <string>  the session to deliver into (default: the harness's newest session in --dir; harness tmux: the tmux session, default: the one host saved, else friend-<me>)
   --silent-stop <duration>  stop a turn that has printed nothing for this long; a turn that prints runs on
   --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
@@ -1595,7 +1595,7 @@ flags:
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
   --seat <string>  the machine's nova-secrets seat the secrets are opened as (nova-config machine show <self>: seat); wanted with --secrets
   --secrets <string>  the names of the secrets the session needs, comma-separated (never values); wraps the daemon in nova-secrets exec
-  --server <string>  the sprint server, host:port (default: NOVA_SPRINT_SERVER, else 127.0.0.1:6390)
+  --server <string>  where a beat is sent, host:port (default: none; with none the daemon beats nothing and writes its presence record on the bus store)
   --session <string>  the session to deliver into (default: the harness's newest session in --dir; harness tmux: the tmux session, default: the one host saved, else friend-<me>)
   --silent-stop <duration>  stop a turn that has printed nothing for this long; a turn that prints runs on
   --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
@@ -2122,10 +2122,11 @@ once the row's unit runs. What it gets wrong first: no `--redis` and no
 | `serve --as <coordinator> [--redis <addr>] [--dry-run]` | The coordinator's ping loop: a `PING` to every friend row each second, one line per friend up or down (ten seconds without a pong); until a signal |
 | `version`, `help [<verb>]` | The version line; the banner, or a verb's help |
 
-Every store verb takes `--redis <host:port>` (else `NOVA_BUS_REDIS`), the
-daemon `--server <host:port>` (else `NOVA_SPRINT_SERVER`, else
-`127.0.0.1:6390`). Exit codes: 0 done; 1 the verb ran and said no; 2 could
-not run.
+Every store verb takes `--redis <host:port>` (else `NOVA_BUS_REDIS`). The
+daemon's `--server` has no default: with none, the daemon beats nothing and
+presence is the record on the bus store. `beat`, `ping`, and `ping-install`
+still take `--server` (else the environment variable, else `127.0.0.1:6390`).
+Exit codes: 0 done; 1 the verb ran and said no; 2 could not run.
 
 ## Build
 

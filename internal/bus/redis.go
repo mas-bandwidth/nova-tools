@@ -253,6 +253,36 @@ func (r Redis) Marks(ctx context.Context, keys ...string) ([]map[string]string, 
 	return out, nil
 }
 
+// putHashExisting sets fields on key only when the key is already there, and
+// does not touch its expiry. A missing key stays missing.
+var putHashExisting = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
+if #ARGV > 0 then redis.call('HSET', KEYS[1], unpack(ARGV)) end
+return 1
+`)
+
+// PutHash is Store.PutHash: one pipelined HSET and PEXPIRE when ttl is above
+// zero, else HSET of an existing key only.
+func (r Redis) PutHash(ctx context.Context, key string, fields map[string]string, ttl time.Duration) error {
+	return r.call(ctx, false, 0, func(ctx context.Context) error {
+		if ttl <= 0 {
+			args := make([]interface{}, 0, len(fields)*2)
+			for k, v := range fields {
+				args = append(args, k, v)
+			}
+			return putHashExisting.Run(ctx, r.C, []string{key}, args...).Err()
+		}
+		args := make([]interface{}, 0, len(fields)*2)
+		for k, v := range fields {
+			args = append(args, k, v)
+		}
+		pipe := r.C.TxPipeline()
+		pipe.HSet(ctx, key, args...)
+		pipe.PExpire(ctx, key, ttl)
+		return redisconn.Exec(ctx, pipe)
+	})
+}
+
 // forwardLua is the receipt rule (stages.go), as the store's scripts run
 // it: the receipt of id on the hash key moves to state at now
 // (the store's TIME, in seconds) only forward, and only delivered starts one;
