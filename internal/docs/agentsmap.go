@@ -57,8 +57,7 @@ type Entry struct {
 	Purpose string
 	Guard   string
 	Command string
-	Page    bool   // write Path/AGENTS.md listing this directory's children
-	Note    string // prose written after the page's table, for a page
+	Page    bool // write Path/AGENTS.md listing this directory's children
 }
 
 func E(path, purpose, guard, command string) Entry {
@@ -71,12 +70,13 @@ func Page(path, purpose, guard, command string) Entry {
 	return n
 }
 
-// withNote returns e as a page whose table is followed by the note, for the few
-// sentences a friend must read that do not fit the four columns.
-func (e Entry) withNote(text string) Entry {
-	e.Page = true
-	e.Note = text
-	return e
+// pageNotes is prose written after a page's table, for the few sentences a
+// friend must read that do not fit the four columns, keyed by the page's path.
+var pageNotes = map[string]string{
+	"docs": "A HOLD note is read by the machine only for these three lines, each the whole of a trimmed line. Nothing else in a HOLD note is read by a machine. `docs/SPEC-SPRINT.md` section 8 is the rule.\n\n" +
+		"- `PATHS-PROPOSED: <glob>[,<glob>...]` widens PATHS in place when the stream is marked land-protected for the card's repository. The card keeps its id and returns to ready.\n" +
+		"- `NEEDS: <card-id>` adds that dependency when the card has landed, and parks this card waiting when it has not.\n" +
+		"- `TIER: flash|pro|heavy` recuts the tier in place when a friend of the stream serves it.\n",
 }
 
 type CatalogIndex map[string]Entry
@@ -222,9 +222,9 @@ func renderPage(root, dir string, idx CatalogIndex, standard string) string {
 		}
 		b.WriteString(renderRow(e))
 	}
-	if dir != "" && idx[dir].Note != "" {
+	if dir != "" && pageNotes[dir] != "" {
 		b.WriteString("\n")
-		b.WriteString(idx[dir].Note)
+		b.WriteString(pageNotes[dir])
 	}
 	return b.String()
 }
