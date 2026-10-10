@@ -45,14 +45,6 @@
 \* and the tick's rebalance. So a held or down friend holds no card at any
 \* state, not "soon after".
 \*
-\* Batch turn (71c747f6ef): the daemon tracks when a turn is told running, at
-\* the gate, or in the session. Behind/BehindSince track how long since the
-\* session last answered; Capped caps this at BehindCap (45 minutes). A deaf
-\* session (one with no answer) should be shown down within BehindCap + Bound,
-\* not held up by the cap. The model below adds turnAge to track the session's
-\* turn age, and restates UpHasFreshAnswer to require either an answer younger
-\* than Bound or a turn in the session under the cap.
-\*
 \* Broken = "none" is the design. Every other value is a reversed witness,
 \* each caught by one property below:
 \*   "beatup"        the daemon's beat makes the friend up: BeatAloneNeverUp
@@ -72,12 +64,6 @@
 \*                   her row never carries (only a machine's does): her
 \*                   ready card is never taken while she is up,
 \*                   ReadyTakenWhileUp
-\*   "nocap"         back-to-back turns hold a deaf friend up forever:
-\*                   DeafSessionShownDownWithinBoundPlusCap (witness breaks
-\*                   by holding up with turnAge growing unbounded)
-\*   "batter"        a turn counted from BatchTurn alone rather than the gate:
-\*                   DeafSessionShownDownWithinBoundPlusCap (witness breaks
-\*                   by counting turnAge from BatchTurn, not from gate)
 \*
 \* The take (internal/sprint/steps_work.go takeSeat; the card
 \* take-by-id-reads-the-friends-presence.w1): a card on a friend's row is
@@ -95,9 +81,9 @@ CONSTANTS Friends, Cards, Bound, MaxEvents, Broken, Watched
 ASSUME Bound >= 1 /\ MaxEvents \in Nat /\ Watched \subseteq Friends
 
 VARIABLES harness, closedAge, session, limit, daemon, app,
-          held, answered, answerAge, pending, holder, takenFrom, taken, events, turnAge
+          held, answered, answerAge, pending, holder, takenFrom, taken, events
 vars == <<harness, closedAge, session, limit, daemon, app,
-          held, answered, answerAge, pending, holder, takenFrom, taken, events, turnAge>>
+          held, answered, answerAge, pending, holder, takenFrom, taken, events>>
 world == <<harness, closedAge, session, limit, daemon, app>>
 
 Pool == "pool"
@@ -114,7 +100,6 @@ TypeOK ==
   /\ answered \in [Friends -> BOOLEAN]
   /\ answerAge \in [Friends -> 0..Bound]
   /\ pending \in [Friends -> BOOLEAN]
-  /\ turnAge \in [Friends -> 0..Bound]
   /\ holder \in [Cards -> Friends \cup {Pool}]
   /\ takenFrom \in [Cards -> Friends \cup {NoOne}]
   /\ taken \in [Cards -> BOOLEAN]
@@ -160,7 +145,6 @@ Init ==
   /\ answered = [f \in Friends |-> FALSE]
   /\ answerAge = [f \in Friends |-> Bound]
   /\ pending = [f \in Friends |-> FALSE]
-  /\ turnAge = [f \in Friends |-> Bound]
   /\ holder = [c \in Cards |-> Pool]
   /\ takenFrom = [c \in Cards |-> NoOne]
   /\ taken = [c \in Cards |-> FALSE]
@@ -255,15 +239,10 @@ Release(f) ==
   /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, answered, answerAge, pending, holder, takenFrom, taken, events>>
 
 \* Time passes: every age one older, and the tick's rebalance takes back the
-\* cards of every friend no longer up, in the same step. turnAge counts up
-\* when the session is silent (deaf) and resets on Answer. Under the broken
-\* "batter", turnAge is counted from BatchTurn alone (never resets on Answer).
+\* cards of every friend no longer up, in the same step.
 Tick ==
   /\ answerAge' = [f \in Friends |-> Up1(answerAge[f])]
   /\ closedAge' = [f \in Friends |-> IF harness[f] = "closed" THEN Up1(closedAge[f]) ELSE 0]
-  /\ turnAge' = [f \in Friends |->
-                 IF Broken = "batter" THEN Up1(turnAge[f])
-                 ELSE IF session[f] = "silent" THEN Up1(turnAge[f]) ELSE 0]
   /\ TakeBack(held, answered, answerAge')
   /\ UNCHANGED <<harness, session, limit, daemon, app, held, answered, pending, events>>
 
@@ -329,21 +308,8 @@ SpecLive ==
 
 \* ---------------------------------------------------------------- the rules
 
-\* A friend shown up has a session answer younger than the bound, or a turn
-\* in the session that is under the cap. Under the broken "nocap", a deaf
-\* friend is held up indefinitely by back-to-back turns; under "batter",
-\* turnAge is counted from BatchTurn alone rather than the gate, so turnAge
-\* can be arbitrarily old while the friend is shown up.
-UpHasFreshAnswer == \A f \in Friends :
-  Status(f) = "up" =>
-    answered[f] /\ answerAge[f] < Bound \/ turnAge[f] < Bound
-
-\* A deaf session (no answer, session silent) is shown down within Bound + 1
-\* ticks. Under "nocap" or "batter", this fails.
-DeafSessionShownDownWithinBoundPlusCap ==
-  \A f \in Friends :
-    ~answered[f] /\ session[f] = "silent" =>
-      [][turnAge[f] > Bound => Status(f) # "up"]_vars
+\* A friend shown up has a session answer younger than the bound.
+UpHasFreshAnswer == \A f \in Friends : Status(f) = "up" => answered[f] /\ answerAge[f] < Bound
 
 \* A friend shown up has a running harness, or one closed less than the bound
 \* ago: the table cannot see the app close, only the answers stop, so this
