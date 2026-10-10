@@ -2,6 +2,7 @@ package friend
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -256,4 +257,139 @@ func TestOpenCodeCheckRunRefusesARunLackingAFlagItPasses(t *testing.T) {
 	assert.Equal(t, "opencode 2.0.20: its run verb has no --session (opencode run --help), which the adapter passes; no delivery can run until opencode takes it", err.Error())
 	assert.NotContains(t, err.Error(), "\n", "one line")
 	assert.NoError(t, (&OpenCode{Dir: "/w/bob", Run: runner("")}).CheckRun(context.Background()), "a help that lists no flag cannot tell")
+}
+
+// opencode 2.0.25 (the background service, 2026-10-09) makes `opencode run` attach to
+// a shared background service (opencode serve --service) instead of a private
+// server, so provider keys in the daemon's environment never reach the provider.
+// When `opencode run --help` lists --standalone, CheckRun sets Standalone, and
+// every run the adapter makes (Deliver, OpenSession, DeliverTo, and RunRead) carries
+// --standalone. When the help lacks it (as in opencode 1.18.20), no run passes it.
+func TestOpenCodeRunsStandaloneWhenTheHarnessOffersIt(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name                 string
+		help                 string
+		wantStandalone       bool
+		wantDeliver          []string
+		wantOpenSession      []string
+		wantDeliverTo        []string
+		wantRunReadWithModel []string
+		wantRunReadBare      []string
+	}{
+		{
+			name:                 "opencode 2.0.25 lists --standalone",
+			help:                 "opencode run [message..]\n  --session  continue a session\n  --model  the model\n  --standalone  run in this process\n",
+			wantStandalone:       true,
+			wantDeliver:          []string{"run", "--standalone", "--session", "ses_1", "hello"},
+			wantOpenSession:      []string{"run", "--standalone", "seed prompt"},
+			wantDeliverTo:        []string{"run", "--standalone", "--session", "ses_lane", "card prompt"},
+			wantRunReadWithModel: []string{"run", "--standalone", "--model", "inception/mercury-2.5", "read prompt"},
+			wantRunReadBare:      []string{"run", "--standalone", "read prompt no model"},
+		},
+		{
+			name:                 "opencode 1.18.20 lacks --standalone",
+			help:                 "opencode run [message..]\n  --session  continue a session\n  --model  the model\n",
+			wantStandalone:       false,
+			wantDeliver:          []string{"run", "--session", "ses_1", "hello"},
+			wantOpenSession:      []string{"run", "seed prompt"},
+			wantDeliverTo:        []string{"run", "--session", "ses_lane", "card prompt"},
+			wantRunReadWithModel: []string{"run", "--model", "inception/mercury-2.5", "read prompt"},
+			wantRunReadBare:      []string{"run", "read prompt no model"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			var calls [][]string
+			sessionsCalls := 0
+			run := func(_ context.Context, _ string, _ string, args []string, _ string) (string, int, error) {
+				calls = append(calls, append([]string(nil), args...))
+				switch {
+				case len(args) == 1 && args[0] == "--version":
+					return "2.0.25\n", 0, nil
+				case len(args) == 2 && args[0] == "run" && args[1] == "--help":
+					return tc.help, 0, nil
+				case len(args) > 0 && args[0] == "session":
+					sessionsCalls++
+					if sessionsCalls == 1 {
+						return "[]", 0, nil
+					}
+					return fmt.Sprintf(`[{"id":"ses_new","directory":%q,"updated":10}]`, dir), 0, nil
+				default:
+					return "ok\n", 0, nil
+				}
+			}
+
+			// Capability propagation: CheckRun reads help output and sets Standalone
+			probe := &OpenCode{Dir: dir, Run: run}
+			require.NoError(t, probe.CheckRun(context.Background()))
+			assert.Equal(t, tc.wantStandalone, probe.Standalone, "capability propagation sets Standalone")
+
+			// Adapter instance initialized with probed Standalone capability
+			oc := &OpenCode{Dir: dir, Session: "ses_1", Run: run, Standalone: probe.Standalone}
+
+			// 1. Deliver
+			calls = nil
+			exit, err := oc.Deliver(context.Background(), "hello")
+			require.NoError(t, err)
+			assert.Zero(t, exit)
+			require.Len(t, calls, 1)
+			assert.Equal(t, tc.wantDeliver, calls[0], "Deliver argument builder")
+
+			// 2. OpenSession
+			calls = nil
+			sessionsCalls = 0
+			id, err := oc.OpenSession(context.Background(), "seed prompt")
+			require.NoError(t, err)
+			assert.Equal(t, "ses_new", id)
+			require.Len(t, calls, 3)
+			wantList := []string{"session", "list", "--format", "json"}
+			if tc.wantStandalone {
+				wantList = append(wantList, "--standalone")
+			}
+			assert.Equal(t, wantList, calls[0])
+			assert.Equal(t, tc.wantOpenSession, calls[1], "OpenSession argument builder")
+			assert.Equal(t, wantList, calls[2])
+
+			// 3. DeliverTo
+			calls = nil
+			turn, err := oc.DeliverTo(context.Background(), "ses_lane", "card prompt")
+			require.NoError(t, err)
+			assert.Zero(t, turn.Exit)
+			require.Len(t, calls, 1)
+			assert.Equal(t, tc.wantDeliverTo, calls[0], "DeliverTo argument builder")
+
+			// 4. RunRead (with model)
+			calls = nil
+			turn, err = oc.RunRead(context.Background(), "inception/mercury-2.5", "read prompt")
+			require.NoError(t, err)
+			assert.Zero(t, turn.Exit)
+			require.Len(t, calls, 1)
+			assert.Equal(t, tc.wantRunReadWithModel, calls[0], "RunRead with model argument builder")
+
+			// 5. RunRead (without model)
+			calls = nil
+			turn, err = oc.RunRead(context.Background(), "", "read prompt no model")
+			require.NoError(t, err)
+			assert.Zero(t, turn.Exit)
+			require.Len(t, calls, 1)
+			assert.Equal(t, tc.wantRunReadBare, calls[0], "RunRead bare argument builder")
+		})
+	}
+}
+
+// TestListVerbCarriesStandalone: the lane's session listing carries --standalone
+// exactly when CheckRun found it, as the run verb does, and after the subcommand
+// (`session list ... --standalone`: the flag is the subcommand's; before `list`
+// opencode rejects it). Without it opencode 2.0.25 under a lane's wall exits 1
+// on its managed-service port.
+func TestListVerbCarriesStandalone(t *testing.T) {
+	t.Parallel()
+	o := &OpenCode{}
+	assert.Equal(t, "session list --format json", strings.Join(o.listVerb(), " "))
+	o.Standalone = true
+	assert.Equal(t, "session list --format json --standalone", strings.Join(o.listVerb(), " "))
+	assert.Equal(t, "run --standalone --session s1 hi", strings.Join(o.runVerb("--session", "s1", "hi"), " "))
 }
