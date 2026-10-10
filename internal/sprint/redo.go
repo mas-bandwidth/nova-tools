@@ -24,7 +24,7 @@ const LandRefusedFinding = "the landing refused its head: "
 //
 // Files outside its PATHS (RefusedPaths) go back to review marked as the conflict rule marks
 // them (FieldRuleRedo, FieldRuleRefused, FieldRuleRefusal), under the returned judgment: the
-// widen rule twins it wider from its finished head, or the conflict rule's redo reworks it
+// widen rule widens it in place from its finished head, or the conflict rule's redo reworks it
 // (widen.go, rules.go). Any other way is reworked at once: its next attempt waits ready with
 // the refusal as its fix, its finished head the base staging carries onto the tip (BaseOf),
 // its read cards retired, the way kept as its finding (LandRefusedFinding), and the seat told

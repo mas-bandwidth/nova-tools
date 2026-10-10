@@ -21,7 +21,8 @@
 \*   the rule reworks it with the finding as the fix, on the same tier; a finding that names
 \*   a file outside PATHS widens the card's PATHS in place by that file (the same card, never
 \*   a twin), its attempts on the widened brief from the first, at the brief's bound too (a
-\*   widened brief is the bound's remedy); a card at its brief's bound (the same finding
+\*   widened brief is the bound's remedy), at most MaxWidens times a card, past which the
+\*   brief is wrong and the card a mind's; a card at its brief's bound (the same finding
 \*   twice, or Cap attempts on one brief) on any other finding is a mind's, never the rule's.
 \* Part "gate": the lander's base tree gate on one base commit: red or green each time
 \*   it is gated; the third failure stops the stream.
@@ -57,6 +58,8 @@
 \*                PATHS: WidensWiden
 \*   "boundoutside" the read stops a finding naming a file outside PATHS at the brief's
 \*                bound instead of letting the rule widen it: OutsideNeverBound
+\*   "nowidencap" the rule widens on every finding outside PATHS, past MaxWidens:
+\*                WidensBounded
 \*   "nofinding"  the read-broken rule reworks a broken read that carries no finding:
 \*                ReworkHasAFix
 \*   "recount"    a rework starts its attempt without counting it: ReworkKeepsCount
@@ -79,7 +82,11 @@ Cols == {"absent", "waiting", "open", "landed", "dropped"}
 
 \* -- reads: the files a finding may name outside the card's first PATHS, and findings
 \* inside them (or naming no file)
-RdFiles == {"f1", "f2"}
+RdFiles == {"f1", "f2", "f3"}
+
+\* -- reads: the most times readers' findings widen one card's PATHS in place (the code's
+\* MaxReadWidens; 2 here, so a third file outside PATHS reaches the cap)
+MaxWidens == 2
 RdFindings == RdFiles \cup {"in1", "in2"}
 
 \* -- every part's variables
@@ -410,13 +417,19 @@ RdOutside(f) == f \in RdFiles /\ f \notin rdpaths
 \* Cap attempts on one brief
 RdAtBound(f) == f = rdlast \/ rdatt >= Cap
 
+\* the finding names a file outside PATHS and the card's widenings are under the cap: the rule
+\* may widen it in place (a widening is never reset by the brief it writes)
+RdWidenable(f) == RdOutside(f) /\ (rdwidens < MaxWidens \/ Broken = "nowidencap")
+
 \* the outside: a reader finds the attempt broken with finding f (Read writes the brief's
-\* bound judgment instead at the bound, unless f names a file outside PATHS), or the attempt
-\* lands
+\* bound judgment instead at the bound, unless f names a file outside PATHS under the widen
+\* cap; and for a file outside PATHS past the cap), or the attempt lands
 RdReadBroken(f) ==
   /\ rdst = "working"
   /\ rdfind' = f
-  /\ rdst' = IF RdAtBound(f) /\ (~RdOutside(f) \/ Broken = "boundoutside") /\ Broken # "nobound"
+  /\ rdst' = IF Broken # "nobound"
+                  /\ \/ (RdAtBound(f) \/ RdOutside(f)) /\ ~RdWidenable(f)
+                     \/ RdAtBound(f) /\ Broken = "boundoutside"
                THEN "bound" ELSE "broken"
   /\ UNCHANGED <<rdatt, rdlast, rdpaths, rdwidens, rdtotal>>
 RdLands ==
@@ -429,7 +442,7 @@ RdLands ==
 \* the same tier
 RuleReadBroken ==
   /\ rdst = "broken"
-  /\ IF RdOutside(rdfind) \/ Broken = "widenall"
+  /\ IF RdWidenable(rdfind) \/ Broken = "widenall"
        THEN /\ rdpaths' = rdpaths \cup ({rdfind} \cap RdFiles)
             /\ rdatt' = 1 /\ rdlast' = None /\ rdwidens' = rdwidens + 1
        ELSE /\ rdatt' = rdatt + 1 /\ rdlast' = rdfind
@@ -452,9 +465,14 @@ ReadAnswersBounded == rdtotal <= Cap * (Cardinality(RdFiles) + 1)
 \* Every widening widens PATHS by a file.
 WidensWiden == rdwidens <= Cardinality(rdpaths)
 
-\* A finding naming a file outside PATHS is never stopped at the brief's bound: the rule
-\* widens the brief in place, the bound's own remedy.
-OutsideNeverBound == rdst = "bound" => ~RdOutside(rdfind)
+\* A finding naming a file outside PATHS is never stopped at the brief's bound while the
+\* card's widenings are under the cap: the rule widens the brief in place, the bound's own
+\* remedy.
+OutsideNeverBound == rdst = "bound" /\ RdOutside(rdfind) => rdwidens >= MaxWidens
+
+\* Readers' findings widen one card's PATHS at most MaxWidens times: a reader naming a new
+\* file outside PATHS every round never widens it for ever.
+WidensBounded == rdwidens <= MaxWidens
 
 \* Every broken read is answered: by rule below the bound, by a mind at it.
 ReadAnswered == (rdst \in {"broken", "bound"}) ~> (rdst \notin {"broken", "bound"})

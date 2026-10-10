@@ -653,15 +653,23 @@ func Read(s *Snapshot, r ReadReq) Plan {
 				if v := costs[pr.ID][FieldCostTotal]; v != "" {
 					at = withField(pr, FieldCostTotal, v)
 				}
-				// a finding naming files outside PATHS is no bound: the read-broken rule widens
-				// the brief in place by them, the bound's own remedy (rules_read.go)
-				if bb, ok := briefStopAt(s, at, c.Row, r.Finding); ok && len(FilesOutsidePaths(pr.F("brief"), r.Finding)) == 0 {
+				// a finding naming files outside PATHS is no bound while the card may be widened:
+				// the read-broken rule widens the brief in place by them, the bound's own remedy;
+				// past MaxReadWidens such a finding is the bound itself (rules_read.go)
+				outside, spent := len(FilesOutsidePaths(pr.F("brief"), r.Finding)) > 0, ReadWidensSpent(pr)
+				bound := ""
+				if bb, ok := briefStopAt(s, at, c.Row, r.Finding); ok && (!outside || spent != "") {
+					bound = bb.String()
+				} else if outside && spent != "" {
+					bound = spent
+				}
+				if bound != "" {
 					// the same finding as the attempts before (briefStopAt: the same reader class,
 					// file and line, two in a row by default), or too many attempts on one brief:
 					// the brief is wrong, not the worker, and the judgment offers brief and drop
 					// (brief_bound.go)
 					n = judgment(NBriefWrong, pr.Row, s.Now, 0, pr.ID) // its decisions alone: it is the repeat
-					n.Who, n.Attempt, n.What = c.Row, c.Int("attempt"), bb.String()+"; attempt "+c.F("attempt")+" found: "+firstSentence(r.Finding)
+					n.Who, n.Attempt, n.What = c.Row, c.Int("attempt"), bound+"; attempt "+c.F("attempt")+" found: "+firstSentence(r.Finding)
 				}
 				u.Notes = append(u.Notes, n)
 			}

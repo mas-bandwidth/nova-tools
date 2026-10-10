@@ -1,6 +1,7 @@
 package sprint_test
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -143,6 +144,33 @@ func TestABrokenReadIsReworkedByRuleWithItsFinding(t *testing.T) {
 		assert.Equal(t, "2", pr.F(sprint.FieldBriefAttempt), "its brief's bound counts again from attempt 2")
 		assert.Empty(t, r.openOnCard(sprint.NReadBroken, "r-1"))
 		assert.Empty(t, r.openOnCard(sprint.NBriefWrong, "r-1"))
+	})
+	t.Run("widened MaxReadWidens times: a new file outside PATHS is the brief's bound, never widened again", func(t *testing.T) {
+		t.Parallel()
+		r := newConflictRig(t)
+		r.readCard()
+		for i := 1; i <= sprint.MaxReadWidens; i++ {
+			r.brokenRead("r-1", "internal/y/b"+strconv.Itoa(i)+".go:40 still calls the old name, outside PATHS; rename the call too")
+			r.tick()
+			pr := r.snap().Work.Placed("r-1")
+			require.NotNil(t, pr)
+			require.Equal(t, strconv.Itoa(i), pr.F(sprint.FieldReadWidens), "widening %d is counted, and no brief edit resets the count", i)
+			require.Contains(t, pr.F("brief"), "internal/y/b"+strconv.Itoa(i)+".go")
+		}
+		r.brokenRead("r-1", "internal/y/b9.go:40 still calls the old name, outside PATHS; rename the call too")
+		r.tick()
+		r.tick()
+
+		s := r.snap()
+		pr := s.Work.Placed("r-1")
+		require.NotNil(t, pr)
+		assert.Equal(t, sprint.Review, pr.Col, "not widened again")
+		assert.NotContains(t, pr.F("brief"), "internal/y/b9.go")
+		assert.Equal(t, strconv.Itoa(sprint.MaxReadWidens), pr.F(sprint.FieldReadWidens))
+		bound := r.openOnCard(sprint.NBriefWrong, "r-1")
+		require.Len(t, bound, 1, "the brief is wrong: a mind's")
+		assert.Contains(t, bound[0].Note.What, "widened 3 times")
+		assert.Nil(t, s.Work.Card("r-1b"), "never twinned")
 	})
 	t.Run("at the brief's bound: the coordinator's", func(t *testing.T) {
 		t.Parallel()
