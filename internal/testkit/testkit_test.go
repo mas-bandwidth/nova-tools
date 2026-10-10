@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
@@ -117,3 +119,40 @@ func runs(r *recorder, f func()) {
 type capture []byte
 
 func (c *capture) Write(p []byte) (int, error) { *c = append(*c, p...); return len(p), nil }
+
+func TestClockAdvanceMovesNowByTheDuration(t *testing.T) {
+	t.Parallel()
+	start := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	c := testkit.NewClock(start)
+	assert.Equal(t, start, c.Now())
+	c.Advance(5 * time.Minute)
+	assert.Equal(t, start.Add(5*time.Minute), c.Now())
+}
+
+func TestClockAdvancesFromManyGoroutinesLoseNoTime(t *testing.T) {
+	t.Parallel()
+	start := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	c := testkit.NewClock(start)
+	const goroutines = 10
+	const steps = 10
+	startAdvance := make(chan struct{})
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for range goroutines {
+		go func() {
+			defer wg.Done()
+			<-startAdvance
+			for range steps {
+				c.Advance(time.Second)
+			}
+		}()
+	}
+	close(startAdvance)
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	<-done
+	assert.Equal(t, start.Add(100*time.Second), c.Now())
+}
