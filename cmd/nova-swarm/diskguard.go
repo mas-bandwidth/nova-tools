@@ -465,53 +465,28 @@ func (g *guard) pools() {
 }
 
 // bench sweeps bench run directories under each root: any run older than
-// bench.RunAgeLimit with no live process is removed.
+// bench.RunAgeLimit with no live process is removed. Only <root>/runs/* directories
+// are considered; other directories under the root (cache, friends, etc.) are ignored.
 func (g *guard) bench() {
 	for _, root := range g.roots {
-		candidates := make(map[string]os.DirEntry)
-		add := func(parent string) error {
-			entries, err := os.ReadDir(parent)
-			if err != nil {
-				return err
-			}
-			for _, e := range entries {
-				if e.IsDir() {
-					candidates[filepath.Join(parent, e.Name())] = e
-				}
-			}
-			return nil
-		}
 		runs := filepath.Join(root, "runs")
-		err := add(runs)
+		entries, err := os.ReadDir(runs)
 		if err != nil {
 			if os.IsNotExist(err) {
-				err = nil // ignored: a bench without run directories has nothing to sweep
-			} else {
-				g.fail(fmt.Sprintf("the runs directory %s could not be listed (%s)", oneline.Field(runs), oneline.Err(err)))
-				continue
+				continue // ignored: a bench without runs has nothing to sweep
 			}
-		}
-		rootEntries, err := os.ReadDir(root)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			g.fail(fmt.Sprintf("the bench root %s could not be listed (%s)", oneline.Field(root), oneline.Err(err)))
+			g.fail(fmt.Sprintf("the runs directory %s could not be listed (%s)", oneline.Field(runs), oneline.Err(err)))
 			continue
-		}
-		for _, e := range rootEntries {
-			if e.IsDir() && e.Name() != "runs" {
-				dir := filepath.Join(root, e.Name())
-				if err := add(dir); err != nil {
-					g.fail(fmt.Sprintf("the bench directory %s could not be listed (%s)", oneline.Field(dir), oneline.Err(err)))
-				}
-			}
 		}
 		list, ok := g.processes()
 		if !ok {
 			return
 		}
-		for dir, e := range candidates {
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			dir := filepath.Join(runs, e.Name())
 			fi, err := e.Info()
 			if err != nil {
 				continue
