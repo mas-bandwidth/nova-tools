@@ -910,7 +910,7 @@ func (w world) log(c *tool.Call) *tool.Out {
 	if err != nil {
 		return answer(err)
 	}
-	// Filter by --from and --to before applying --max
+	// Filter by --from and --to before applying --max (SPEC-BUS.md, log verb)
 	from := c.Str("from")
 	to := c.Str("to")
 	if from != "" || to != "" {
@@ -935,6 +935,10 @@ func (w world) log(c *tool.Call) *tool.Out {
 			filtered = append(filtered, e)
 		}
 		got = filtered
+	}
+	// Apply --max: log reads oldest first, --max returns the newest match
+	if max := c.Int("max"); max > 0 && len(got) > max {
+		got = got[len(got)-max:]
 	}
 	o := tool.Done().Fact("total", len(got))
 	for _, e := range got {
