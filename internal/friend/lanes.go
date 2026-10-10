@@ -55,6 +55,10 @@ type Card struct {
 	ID     string `json:"id"`
 	Brief  string `json:"brief"`
 	Outbox string `json:"outbox"`
+	// Tier and Model are the card's tier and her row's model for it (Task); a lane's turn
+	// launches her harness on Model (WithModel). Empty when her row names none.
+	Tier  string `json:"tier,omitempty"`
+	Model string `json:"model,omitempty"`
 }
 
 // Epoch is the sprint epoch alone, without the job's generation (docs/FRIENDS.md).
@@ -198,7 +202,7 @@ func NextCard(dir string, skip func(Card) bool) (c Card, found bool, err error) 
 		if !ok {
 			continue
 		}
-		c := Card{ID: t.ID, Brief: filepath.Join(dir, "inbox", base, "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", base)}
+		c := Card{ID: t.ID, Brief: filepath.Join(dir, "inbox", base, "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", base), Tier: t.Tier, Model: t.Model}
 		if skip(c) || !exists(c.Brief) || exists(c.Result()) || exists(c.Report()) {
 			continue
 		}
@@ -329,7 +333,9 @@ func LaneSeed(friend string, n, width int, agents, memory string) string {
 	case agents != "":
 		fmt.Fprintf(&b, "Read %s first: it is who you are.\n", agents)
 	}
-	b.WriteString("From the next turn on, each turn hands you exactly one card: do it, write its REPORT.md and RESULT.md, send one bus line, and stop.\nAnswer this turn with the one word: ready.\n")
+	b.WriteString("From the next turn on, each turn hands you exactly one card: do it, write its REPORT.md and RESULT.md, send one bus line, and stop.\n")
+	b.WriteString("Each turn is launched on the model your nova-config row names for the card's tier, and says it; nova-friend whoami prints your row (tiers, the model per tier, your directory).\n")
+	b.WriteString("Answer this turn with the one word: ready.\n")
 	return b.String()
 }
 
@@ -346,6 +352,9 @@ func CardText(job LaneJob, n, width int, sendLine, pong, notice string, seat str
 	fmt.Fprintf(&b, "nova-friend: lane %d of %d: one card this turn, %s. Do exactly these three things, then stop.\n", n, width, c.ID)
 	if job.Dir != "" {
 		fmt.Fprintf(&b, "Your working directory is the card's job directory, %s. Every path here is absolute: use it exactly as written, leading slash and all.\n", job.Dir)
+	}
+	if run := RunLine(c); run != "" {
+		b.WriteString(run + "\n")
 	}
 	if job.Brief != "" {
 		fmt.Fprintf(&b, "1. Do the card. Its brief is %s, and its whole text is below; work as it says, only where it says.\n", c.Brief)
@@ -565,8 +574,10 @@ func (l *loop) laneStep(now time.Time, width int) {
 		t.text = CardText(ln.job, ln.n, width, send, pong, notice, l.seat(now), t.msgs)
 		ln.t = t
 		dir := ln.job.Dir
+		model := ln.card.Model
 		l.startTurn(t, now, func(ctx context.Context) laneResult {
-			lt, err := lh.DeliverTo(WithLaneDir(LaneContext(ctx), dir), ln.session, t.text)
+			// the turn launches in the card's job directory and on her row's model for the card's tier (models.go)
+			lt, err := lh.DeliverTo(WithModel(WithLaneDir(LaneContext(ctx), dir), model), ln.session, t.text)
 			return laneResult{ln: ln, turn: lt, err: err, t: t}
 		})
 	}

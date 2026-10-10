@@ -49,6 +49,7 @@ func friendCardsOf(ctx context.Context, st *store.Store, name string) ([]friend.
 		h := friend.HeldCard{Card: p.Card, Col: string(cards[i].Col), Kind: cmp.Or(p.Kind, "work"), Branch: p.Branch, Attempt: p.Attempt, Gen: p.Gen, Epoch: p.Epoch}
 		m, _ := cardhdr.ReadModel(p.Brief) // ignored: a line 1 that does not read is the default tier
 		h.Tier = cmp.Or(p.Tier, m.Tier, cardhdr.RouteFlash)
+		h.Model = p.Model // her row's model for the card's tier, never dropped: the lane launches on it and the finish checks it
 		if p.Kind == "read" {
 			// a read card's job is a card's (friendJobOf), the path friend sync writes (friendReadOf)
 			h.Job, h.Branch, h.Brief = friendJobOf(p), cmp.Or(p.WorkBranch, cards[i].F("branch")), friendReadText(st, name, p, cards[i])

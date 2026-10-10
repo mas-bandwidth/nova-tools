@@ -37,12 +37,16 @@ import (
 // reads the brief's REPO: and BASE: lines when the server sends neither); Why is, for a card the answer sends no brief for, why not (the
 // worker view's, ParseView).
 type HeldCard struct {
-	Card    string `json:"card"`
-	Job     string `json:"job"`
-	Col     string `json:"col"`
-	Kind    string `json:"kind,omitempty"`
-	Branch  string `json:"branch,omitempty"`
-	Tier    string `json:"tier,omitempty"`
+	Card   string `json:"card"`
+	Job    string `json:"job"`
+	Col    string `json:"col"`
+	Kind   string `json:"kind,omitempty"`
+	Branch string `json:"branch,omitempty"`
+	Tier   string `json:"tier,omitempty"`
+	// Model is the model her row names for the card's tier (the packet's, written by the
+	// deal): the lane launches her harness on it (WithModel) and the finish checks her
+	// report names it (ModelMismatch). Empty when her row names none.
+	Model   string `json:"model,omitempty"`
 	Stream  string `json:"stream,omitempty"`
 	Attempt int    `json:"attempt,omitempty"`
 	Gen     int    `json:"gen,omitempty"`
@@ -390,7 +394,7 @@ func (d *Daemon) nextCard(skip func(Card) bool) (Card, bool, error) {
 		done := slices.ContainsFunc(q.Tasks, func(t Task) bool {
 			return t.ID == h.Card && t.State == "done" && (t.Job == "" || t.Job == h.Job)
 		})
-		c := Card{ID: h.Card, Brief: filepath.Join(d.Dir, "inbox", h.Job, "BRIEF.md"), Outbox: filepath.Join(d.Dir, "outbox", h.Job)}
+		c := Card{ID: h.Card, Brief: filepath.Join(d.Dir, "inbox", h.Job, "BRIEF.md"), Outbox: filepath.Join(d.Dir, "outbox", h.Job), Tier: h.Tier, Model: h.Model}
 		if done || skip(c) || !exists(c.Brief) || exists(c.Result()) || exists(c.Report()) || d.stageOwed(h) {
 			continue
 		}
