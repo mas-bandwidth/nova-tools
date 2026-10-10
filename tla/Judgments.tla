@@ -122,7 +122,7 @@ Tick ==
   /\ clk < MaxClock
   /\ clk' = clk + 1
   /\ alarms' = [j \in Judgments |->
-       IF status[j] = "open" /\ (clk + 1 - raisedAt[j] >= StaleBound)
+       IF status[j] = "open" /\ (clk + 1 - raisedAt[j] > StaleBound)
        THEN IF Broken = "stale_no_alarm" THEN alarms[j] ELSE 1
        ELSE alarms[j]]
   /\ UNCHANGED <<status, kind, raisedAt, pushed, seatInbox, answered, answeredBy>>
@@ -158,6 +158,6 @@ RuleAnswersOnlyNamed ==
 \* A judgment past the bound raises one alarm.
 StaleRaisesAlarm ==
   \A j \in Judgments:
-    (status[j] = "open" /\ clk - raisedAt[j] >= StaleBound) => (alarms[j] = 1)
+    (status[j] = "open" /\ clk - raisedAt[j] > StaleBound) => (alarms[j] = 1)
 
 =============================================================================
