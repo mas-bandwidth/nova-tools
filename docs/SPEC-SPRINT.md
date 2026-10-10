@@ -4014,6 +4014,10 @@ when it cannot; it adds no state of its own. The base is the sprint branch:
 not marked for promotion, its remedy the sprint branch (re-cut the card with
 `BASE: <the sprint branch>`, or `--base <the sprint branch>` for a card naming no
 `BASE:`) or, for the promotion stream, the mark (the protected branches, below).
+Under `run --land`, each landing gate, Go build and Git command owns a process group tied
+to the server context; cancellation ends the group, including descendants, before the server
+exits. The server ends an orphan gate recorded in its land root before starting a new land
+loop, and its own shutdown ends only a gate record owned by that server process.
 
 **The rebase verb.** `nova-sprint rebase --from <branch> --to <branch> [--repo-dir <clone>] [--dry-run]` moves every unlanded card whose brief's `BASE:` line names
 `--from` to `--to`, on a RUNNING machine as on a STOPPED one. It exists because a

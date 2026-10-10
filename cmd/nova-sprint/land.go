@@ -33,6 +33,7 @@ package main
 // (landprune.go).
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -2010,12 +2011,151 @@ func (l *lander) runCheck(ctx context.Context, dir string) (why, out string) {
 	}
 	b := subproc.Prepare(ctx, landCheckBudget, "sh", "-c", l.check)
 	defer b.Cancel()
+	ownLandProcessGroup(b.Cmd)
 	b.Cmd.Dir, b.Cmd.Env = dir, l.a.gitEnv
-	raw, err := b.Cmd.CombinedOutput()
-	if err = b.Wrap("check "+l.check, err); err != nil {
-		return "the check " + l.check + " failed: " + oneline.Err(err) + checkTail(string(raw)), string(raw)
+	var raw bytes.Buffer
+	b.Cmd.Stdout, b.Cmd.Stderr = &raw, &raw
+	if err := b.Cmd.Start(); err != nil {
+		return "the check " + l.check + " failed: " + oneline.Err(b.Wrap("check "+l.check, err)), ""
 	}
-	return "", string(raw)
+	pid := b.Cmd.Process.Pid
+	if err := l.a.recordGate(pid); err != nil {
+		killErr := b.Cmd.Cancel()
+		waitErr := b.Cmd.Wait()
+		return "the check " + l.check + " failed to record its process group: " + oneline.Err(errors.Join(err, killErr, waitErr)), raw.String()
+	}
+	err := b.Cmd.Wait()
+	clearErr := l.a.clearGate(pid)
+	if err = b.Wrap("check "+l.check, err); err != nil {
+		if clearErr != nil {
+			err = errors.Join(err, clearErr)
+		}
+		return "the check " + l.check + " failed: " + oneline.Err(err) + checkTail(raw.String()), raw.String()
+	}
+	if clearErr != nil {
+		return "the check " + l.check + " completed but its process-group record could not be cleared: " + oneline.Err(clearErr), raw.String()
+	}
+	return "", raw.String()
+}
+
+// gatePath is the live check process-group record owned by a --land server.
+func (a *app) gatePath() (string, error) {
+	root, err := a.landRoot()
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return "", err
+	}
+	return filepath.Join(root, ".gate_pid"), nil
+}
+
+func (a *app) recordGate(pid int) error {
+	path, err := a.gatePath()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())+" "+strconv.Itoa(pid)+"\n"), 0o600)
+}
+
+func (a *app) clearGate(pid int) error {
+	path, err := a.gatePath()
+	if err != nil {
+		return err
+	}
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(b)) != strconv.Itoa(os.Getpid())+" "+strconv.Itoa(pid) {
+		return nil
+	}
+	return os.Remove(path)
+}
+
+// killStaleGate ends a process group left by an earlier --land server before a new one starts.
+func (a *app) killStaleGate(stdout io.Writer) error {
+	path, err := a.gatePath()
+	if err != nil {
+		return err
+	}
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	owner, pid, err := parseGateRecord(string(b))
+	if err != nil {
+		return fmt.Errorf("invalid landing gate pid record %q", strings.TrimSpace(string(b)))
+	}
+	if owner != 0 && landProcessAlive(owner) {
+		return fmt.Errorf("landing gate pid=%d still belongs to live server pid=%d", pid, owner)
+	}
+	if err := killLandProcessGroup(pid); err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	fmt.Fprintf(stdout, "LAND KILLED gate pid=%d from an earlier run\n", pid)
+	return nil
+}
+
+// endGate ties the recorded gate group to this server's shutdown.
+func (a *app) endGate() error {
+	path, err := a.gatePath()
+	if err != nil {
+		return err
+	}
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	owner, pid, err := parseGateRecord(string(b))
+	if err != nil {
+		return fmt.Errorf("invalid landing gate pid record %q", strings.TrimSpace(string(b)))
+	}
+	if owner != 0 && owner != os.Getpid() {
+		return nil
+	}
+	if err := killLandProcessGroup(pid); err != nil {
+		return err
+	}
+	return a.clearGate(pid)
+}
+
+func (a *app) stopLandingServer() error {
+	if a.landServerCancel != nil {
+		a.landServerCancel()
+		a.landServerCancel = nil
+	}
+	return a.endGate()
+}
+
+func parseGateRecord(raw string) (owner, pid int, err error) {
+	parts := strings.Fields(raw)
+	if len(parts) == 1 { // a record from before server ownership was recorded
+		pid, err = strconv.Atoi(parts[0])
+	} else if len(parts) == 2 {
+		owner, err = strconv.Atoi(parts[0])
+		if err == nil {
+			pid, err = strconv.Atoi(parts[1])
+		}
+	} else {
+		err = fmt.Errorf("want one or two pid fields")
+	}
+	if err == nil && (pid <= 1 || owner < 0) {
+		err = fmt.Errorf("pid out of range")
+	}
+	return owner, pid, err
 }
 
 // checkTail is ": <the output's last line>", "" for no output.
@@ -2259,7 +2399,7 @@ func rejected(err error) bool {
 // except -z output whose status columns and paths are byte-exact; an error
 // carries git's own words.
 func (l *lander) git(ctx context.Context, dir string, args ...string) (string, error) {
-	res, err := gitrun.Run(ctx, gitrun.Options{C: dir, Env: l.a.gitEnv, OwnRepo: dir != ""}, args...)
+	res, err := landGitRun(ctx, gitrun.Options{C: dir, Env: l.a.gitEnv, OwnRepo: dir != ""}, args...)
 	if err != nil {
 		words := strings.TrimSpace(string(res.Stderr) + "\n" + string(res.Stdout))
 		return "", fmt.Errorf("git %s: %w: %s", args[0], err, words)
@@ -2268,6 +2408,16 @@ func (l *lander) git(ctx context.Context, dir string, args ...string) (string, e
 		return string(res.Stdout), nil
 	}
 	return strings.TrimSpace(string(res.Stdout)), nil
+}
+
+func landGitRun(ctx context.Context, o gitrun.Options, args ...string) (gitrun.Result, error) {
+	b := gitrun.Prepare(ctx, o, args...)
+	defer b.Cancel()
+	ownLandProcessGroup(b.Cmd)
+	var out, errb bytes.Buffer
+	b.Cmd.Stdout, b.Cmd.Stderr = &out, &errb
+	err := b.Cmd.Run()
+	return gitrun.Result{Stdout: out.Bytes(), Stderr: errb.Bytes()}, b.Wrap("git "+strings.Join(args, " "), err)
 }
 
 // firstLine is a failure's words on one line: the error's, else out's.

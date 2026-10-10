@@ -247,7 +247,7 @@ func (l *lander) verify(ctx context.Context, checks []landedCheck) {
 // ancestor is git's word, and no model's, that a is an ancestor of b in dir: exit 1 is "not
 // an ancestor", a fact; anything else is why it could not be said.
 func (l *lander) ancestor(ctx context.Context, dir, a, b string) (bool, string) {
-	res, err := gitrun.Run(ctx, gitrun.Options{C: dir, Env: l.a.gitEnv, OwnRepo: true}, "merge-base", "--is-ancestor", a, b)
+	res, err := landGitRun(ctx, gitrun.Options{C: dir, Env: l.a.gitEnv, OwnRepo: true}, "merge-base", "--is-ancestor", a, b)
 	var exit *exec.ExitError
 	switch {
 	case err == nil:

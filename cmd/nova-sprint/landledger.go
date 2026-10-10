@@ -360,7 +360,7 @@ func (l *lander) stageCatalogUnion(ctx context.Context, dir string, rest []strin
 	}
 	var sides [3][]byte
 	for i := range sides {
-		res, err := gitrun.Run(ctx, gitrun.Options{C: dir, Env: l.a.gitEnv, OwnRepo: true}, "show", ":"+strconv.Itoa(i+1)+":"+diffcheck.CatalogFile)
+		res, err := landGitRun(ctx, gitrun.Options{C: dir, Env: l.a.gitEnv, OwnRepo: true}, "show", ":"+strconv.Itoa(i+1)+":"+diffcheck.CatalogFile)
 		if err != nil {
 			return nil, "", diffcheck.CatalogFile + " conflicts and has no stage " + strconv.Itoa(i+1) + " to resolve from", ""
 		}
@@ -541,7 +541,7 @@ func (l *lander) remap(ctx context.Context, dir string, c landCard) (note, env s
 		return "", l.restore(ctx, dir, strings.Split(known, "\x00"), env)
 	}
 	var dropped []string
-	if tip, err := gitrun.Run(ctx, gitrun.Options{C: dir, Env: l.a.gitEnv, OwnRepo: true}, "show", "HEAD^1:"+diffcheck.CatalogFile); err == nil {
+	if tip, err := landGitRun(ctx, gitrun.Options{C: dir, Env: l.a.gitEnv, OwnRepo: true}, "show", "HEAD^1:"+diffcheck.CatalogFile); err == nil {
 		path := filepath.Join(dir, filepath.FromSlash(diffcheck.CatalogFile))
 		if merged, err := os.ReadFile(path); err == nil {
 			var fixed []byte
