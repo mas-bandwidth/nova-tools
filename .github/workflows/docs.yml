@@ -1,0 +1,46 @@
+# Docs CI for nova-tools.
+#
+# Why this exists: documentation breaks quietly unless something runs on every
+# change. This workflow runs the docs gates on every pull request and push that
+# touches docs/**, a README, a verbhelp.go or tools/clidoc/**.
+#
+# It follows .github/workflows/ci.yml: a self-hosted Linux runner that already
+# carries Go, so there is no setup-go download and no build-cache step. A
+# self-hosted runner is persistent and keeps its Go build cache on disk, so an
+# actions/cache or setup-go cache there is pure cost (ci.yml explains the rule).
+#
+# What it runs: `make docs-check`, which runs the internal/docs tests, the link
+# check and the generated CLI reference check. Every step is one command; no
+# step or recipe line carries shell control flow.
+
+name: docs
+
+on:
+  push:
+    paths:
+      - 'docs/**'
+      - '**/README.md'
+      - 'cmd/*/verbhelp.go'
+      - 'tools/clidoc/**'
+  pull_request:
+    paths:
+      - 'docs/**'
+      - '**/README.md'
+      - 'cmd/*/verbhelp.go'
+      - 'tools/clidoc/**'
+
+jobs:
+  docs-check:
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 2
+    steps:
+      - name: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2
+
+      - name: use the installed Go toolchain
+        run: go version
+
+      - name: docs-check
+        run: make docs-check
