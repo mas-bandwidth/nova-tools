@@ -289,9 +289,11 @@ A held retired tool is also left alone.
 A check-mode adoption discovers sops even without a staged build and never stops,
 migrates, installs or reinstalls anything. Its final seat receipt is
 `ADOPT DRY-RUN OK host=<h> would_replace=<n> held=<n> stops=<agents> reinstalls=<friends>`.
-With no staged or locally built candidate, it refuses at `step=candidate` and
-asks for the candidate to be staged before another check. There are no candidate
-bytes or manifest from which to measure the replacement and window counts.
+With no staged or locally built candidate, the final receipt instead says
+`would_replace=unmeasured held=<n> stops=unmeasured reinstalls=unmeasured candidate=unstaged`
+and asks for another check after staging. There are no candidate bytes or
+manifest from which to measure replacement and window counts; claiming zero
+would misdescribe the real adoption.
 The real run still performs the candidate checks before opening the window.
 Missing prerequisites refuse with `ADOPT REFUSED step=<task>` and name the
 remedy; optional command results never cause an undefined-stderr template error.

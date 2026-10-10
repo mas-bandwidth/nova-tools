@@ -1710,6 +1710,35 @@ jobs:
           t="$(dirname "$GITHUB_WORKSPACE")/fleet-probe-$RUNNER_NAME.txt"; echo ok > "$t" && rm -f "$t"
           echo "PROBE OK runner=$RUNNER_NAME slot=${{ matrix.slot }}"
 
+  fleet-check:
+    # The ordinary package shards select cmd, internal and tools, not fleet.
+    # This required leg runs the actual check-mode play against fixture files.
+    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, linux, x64, space]
+    timeout-minutes: 2
+    steps:
+      - name: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: use the installed Go toolchain
+        shell: bash
+        run: |
+          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod | head -1)
+          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod | head -1)
+          for d in "$HOME/sdk/$want/bin" "$HOME/go/bin" /usr/local/go/bin; do
+            if [ -x "$d/go" ]; then echo "$d" >> "$GITHUB_PATH"; break; fi
+          done
+      - name: provision Ansible
+        shell: bash
+        run: |
+          python3 -m venv "$RUNNER_TEMP/fleet-ansible"
+          "$RUNNER_TEMP/fleet-ansible/bin/python" -m pip install --disable-pip-version-check 'ansible-core==2.21.5'
+          echo "$RUNNER_TEMP/fleet-ansible/bin" >> "$GITHUB_PATH"
+      - name: check-mode adoption fixture
+        shell: bash
+        run: |
+          command -v ansible-playbook
+          go test -p 2 -count=1 -timeout 90s ./fleet -run '^TestAdoptCheckReachesItsReceipt/unstaged$' -v
+
   ci-ok:
     # THE ONE CHECK TO REQUIRE, and the reason it exists rather than a list of check names
     # in a branch ruleset. It aggregates EXACTLY the jobs of this file and nothing else —
@@ -1737,7 +1766,7 @@ jobs:
     # reference and the run was never created. test-hosted is skipped on a pull
     # request and ci-ok's `always()` still runs; the per-event steps below check
     # exactly the jobs that event actually ran.
-    needs: [lint, test, functional, e2e, lisp-changes, lisp, test-hosted, test-hosted-pr]
+    needs: [lint, test, functional, e2e, lisp-changes, lisp, test-hosted, test-hosted-pr, fleet-check]
     # PRs are self-hosted only; hosted runners are reserved for push to main and
     # the nightly schedule. ci-ok aggregates on the Linux space runner either way.
     runs-on: [self-hosted, linux, x64, space]
@@ -1879,7 +1908,7 @@ jobs:
         run: |
           "$RUNNER_TEMP/ci" aggregate --event "${{ github.event_name }}" \
             --skip-ok lisp,test-hosted-pr --skip-ok-on pull_request=functional \
-            lint=${{ needs.lint.result }} test=${{ needs.test.result }} functional=${{ needs.functional.result }} \
+            lint=${{ needs.lint.result }} test=${{ needs.test.result }} functional=${{ needs.functional.result }} fleet-check=${{ needs.fleet-check.result }} \
             lisp-changes=${{ needs.lisp-changes.result }} lisp=${{ needs.lisp.result }} e2e=${{ needs.e2e.result }} test-hosted-pr=${{ needs.test-hosted-pr.result }}
       - name: a fork's pull request is red here
         if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
@@ -1892,7 +1921,7 @@ jobs:
         shell: bash
         run: |
           "$RUNNER_TEMP/ci" aggregate --event "${{ github.event_name }}" --skip-ok lisp \
-            lint=${{ needs.lint.result }} test=${{ needs.test.result }} e2e=${{ needs.e2e.result }} \
+            lint=${{ needs.lint.result }} test=${{ needs.test.result }} fleet-check=${{ needs.fleet-check.result }} e2e=${{ needs.e2e.result }} \
             lisp-changes=${{ needs.lisp-changes.result }} lisp=${{ needs.lisp.result }} test-hosted=${{ needs.test-hosted.result }}
 
       # THE RUNNER IS THE EVENT SOURCE. The signed webhook receiver sits behind

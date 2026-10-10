@@ -671,11 +671,16 @@
           the candidate is neither staged nor built on this machine, so its checks wait for the run
       when: ansible_check_mode and seat_was is not defined
 
-    - name: "seat: an unstaged candidate cannot have a measured dry-run receipt"
-      ansible.builtin.fail:
+    - name: "seat: the unstaged candidate's dry-run receipt"
+      ansible.builtin.debug:
         msg: >-
-          ADOPT REFUSED step=candidate host={{ inventory_hostname }}: no candidate build is staged on this machine;
-          stage the candidate and run --check again to measure replacements, stops and reinstalls
+          ADOPT DRY-RUN OK host={{ inventory_hostname }} would_replace=unmeasured
+          held={{ nova_tool_hold | length }} stops=unmeasured reinstalls=unmeasured
+          candidate=unstaged; stage the candidate and run --check again to measure changes
+      when: ansible_check_mode and seat_was is not defined
+
+    - name: "seat: finish the unstaged dry run before tasks needing a candidate"
+      ansible.builtin.meta: end_host
       when: ansible_check_mode and seat_was is not defined
 
     - name: "seat: the candidate's checks ran"

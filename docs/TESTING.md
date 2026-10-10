@@ -28,6 +28,13 @@ red on every leg). The
 unit tier's PATH holds a `redis-server` that refuses, so a test that needs a
 real one fails there, naming this rule.
 
+The `fleet-check` CI leg provisions pinned Ansible and runs the unstaged
+`TestAdoptCheckReachesItsReceipt` fixture with `--check`. This is a required
+`ci-ok` input because the ordinary Go package shards select `cmd`, `internal`
+and `tools`, not `fleet`. With `NOVA_CI=1`, missing `ansible-playbook` fails the
+fixture instead of silently skipping it. The full four-case fixture also runs
+on the Linux validation bench before the fleet change is pushed.
+
 **Functional tests carry the tag and run per stream merge.** A test that needs
 the real thing (a redis-server, a built binary, a child process) lives in a
 `_test.go` that starts with `//go:build functional`. `make test-functional` runs

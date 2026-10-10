@@ -32,6 +32,9 @@ func TestAdoptCheckReachesItsReceipt(t *testing.T) {
 			t.Parallel()
 			play, err := exec.LookPath("ansible-playbook")
 			if err != nil {
+				if os.Getenv("NOVA_CI") == "1" {
+					t.Fatal("ansible-playbook is required by the fleet check CI lane")
+				}
 				t.Skip("ansible-playbook is not installed on this machine")
 			}
 			dir := t.TempDir()
@@ -130,9 +133,8 @@ else: sys.exit('unexpected fixture command: '+name+' '+repr(args))
 				assert.Contains(t, string(out), "ADOPT REFUSED step=sops host=localhost")
 				assert.NotContains(t, string(out), "has no attribute")
 			} else if !tc.staged {
-				require.Error(t, err)
-				assert.Contains(t, string(out), "ADOPT REFUSED step=candidate host=localhost")
-				assert.NotContains(t, string(out), "ADOPT DRY-RUN OK")
+				require.NoError(t, err, string(out))
+				assert.Regexp(t, `ADOPT DRY-RUN OK host=localhost would_replace=unmeasured held=1 stops=unmeasured reinstalls=unmeasured candidate=unstaged`, string(out))
 			} else {
 				require.NoError(t, err, string(out))
 				if tc.check {
