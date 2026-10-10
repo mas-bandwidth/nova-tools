@@ -19,9 +19,9 @@ import (
 
 // fleetplays_class_test.go is the fleet-plays rule (docs/SPEC-CI.md,
 // `fleet-plays`): the plays that put a fleet in its configured state
-// (fleet/tools.yml, fleet/redis.yml, fleet/loops.yml) read their values from
-// the inventory `nova-config inventory` prints and from fleet/group_vars, and
-// do their work through the Go tools, never a shell:
+// (fleet/tools.yml, fleet/redis.yml, fleet/loops.yml, fleet/backup.yml) read
+// their values from the inventory `nova-config inventory` prints and from
+// fleet/group_vars, and do their work through the Go tools, never a shell:
 //
 //   - no task uses ansible's shell, script or raw module;
 //   - every play's hosts is a group the inventory prints, or localhost;
@@ -40,7 +40,7 @@ import (
 // groups and the typed loop records the plays read.
 
 // fleetPlays are the plays the rule holds.
-var fleetPlays = []string{"tools.yml", "redis.yml", "loops.yml"}
+var fleetPlays = []string{"tools.yml", "redis.yml", "loops.yml", "backup.yml"}
 
 // fleetFacts are the gathered facts the plays and templates may read.
 var fleetFacts = map[string]bool{"ansible_system": true, "ansible_architecture": true, "ansible_user_id": true, "ansible_user_uid": true, "ansible_env": true, "ansible_check_mode": true}
@@ -290,7 +290,7 @@ func jsonFields(v any) []string {
 	return fleetKeys(m)
 }
 
-// TestFleetPlaysReadOnlyTheInventory holds the three plays and their
+// TestFleetPlaysReadOnlyTheInventory holds the four plays and their
 // templates to the rule, and the fixtures' inventories to what the plays
 // read.
 func TestFleetPlaysReadOnlyTheInventory(t *testing.T) {

@@ -41,6 +41,9 @@ cmd/nova-sprint/balance.go app.balanceLoop provider balance
 cmd/nova-sprint/gc.go app.gcLoop machinery gc
 cmd/nova-sprint/promote.go app.cmdPromote promote
 
+# the data backups (docs/DATA.md)
+cmd/nova-config/backup.go runBackup waits and retries
+
 # displays
 cmd/nova-sprint/dashboard.go app.cmdDashboard dashboard pull
 internal/sprintdash/events.go Server.Run dashboard pull

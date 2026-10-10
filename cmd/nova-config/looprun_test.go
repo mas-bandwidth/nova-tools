@@ -52,12 +52,6 @@ func loopRunDeps(h *harness, f *fakeRunner) deps {
 	return d
 }
 
-func runWith(d deps, args ...string) (int, string, string) {
-	var out, errb bytes.Buffer
-	code := run(args, &out, &errb, d)
-	return code, out.String(), errb.String()
-}
-
 func TestLoopRunIsTheLoopsCommandUnderItsOneLock(t *testing.T) {
 	t.Parallel()
 	h := loopHarness(t, "m1")

@@ -78,6 +78,7 @@ var toolExamples = map[string]string{
 	"apply":     "nova-config apply --dry-run --redis 127.0.0.1:6379 --file try.json",
 	"inventory": "nova-config inventory --example > inv.yml",
 	"loop run":  "nova-config loop run sleeper --run-dir ./run -- sleep 1",
+	"backup":    "nova-config backup --dir /backup/postgres --keep 14",
 	"version":   "nova-config version",
 }
 
