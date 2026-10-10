@@ -1,1 +1,0 @@
-the card's STEP 2 asks for the tier model to be read from the route, and brief.go:30 reads the model from the environment instead; read it from the route.

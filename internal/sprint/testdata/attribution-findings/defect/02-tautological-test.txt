@@ -1,1 +1,0 @@
-internal/sprint/foo_test.go:88 asserts the value it just set, so it passes with the fix reverted; assert the refused plan instead.
