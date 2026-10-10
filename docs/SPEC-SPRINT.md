@@ -4372,7 +4372,7 @@ batch's gate failed on every bench, the lander refused each batch as the card's 
 seat blamed the benches, held and unheld machines, and nothing landed for 100 minutes until the
 gate was run by hand; cmd/nova-sprint/land.go `sayBaseRed`, landpass.go `baseRegate`, landgo.go
 `secondOpinion`; `TestARedBaseIsSaidOnceAndBlamesNoCard`). Before a pass gates any batch, the
-lander gates the base's tip itself, once, serial, in the streams' order (`prepare`, `cut`,
+lander gates the base's tip itself, once per tip, serial across the streams (`prepareCut`, `cut`,
 `gateBase`; the cache consulted first, so a tip a pass pushed as gated is not gated again). A
 base whose tip fails a test ends the pass at once with one line, `BASE RED <tip>: <first
 failing test>` (stderr, where the loop shows what went wrong; `--json`: `base_red`), and one
@@ -4399,7 +4399,10 @@ base cure (section 8) lands it first once it is queued. The dashboard's merge ro
 failing test out of the open judgment and shows the gate red until the base is green again
 (internal/sprintdash, `MergeRowOf`). A base red with no test named (a build or a vet failure,
 the toolchain's transient of 2026-10-04) stays the base-gate rule's: retried at 2 and 5
-minutes, the stream stopped on the third failure, as before.
+minutes, the stream stopped on the third failure, as before. So does a red on another class
+gate of the base's suite (`sprint.ClassGateWhy`: build, gofmt, vet, vet-functional, staticcheck,
+errcheck, dead-code), each with its own `fix-red-<class>-<base>` repair card; only the whole
+tree's own test class (`class-tests`) is said as above.
 
 **A red batch gate gates the base before any head is blamed.** The tip the cache holds green
 can be red (a gate on one bench said green; the tree is red): when a batch's one gate is red,
