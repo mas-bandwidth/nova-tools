@@ -2451,7 +2451,7 @@ nova-sprint init [--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coor
 nova-sprint add --stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> --brief-file <f2>...: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--replaces <old-id>[,<old-id>]]
 nova-sprint quack --streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]
 nova-sprint release (<sentinel>... | <selector> [--dry-run]) --reason <text> [--answers <note>]
-nova-sprint release check [--json] [--streams <glob>] [--window <duration>] [--merge-p90 <duration>] [--check <name>]...
+nova-sprint release check [--json] [--product <name>] [--streams <glob>] [--window <duration>] [--merge-p90 <duration>] [--check <name>]...
 nova-sprint resolve [<id>...] [--stream <s>] [--limit <n>]
 nova-sprint start
 nova-sprint stop
@@ -2949,6 +2949,13 @@ number of cards and the oldest card still merging. One check alone:
 `release check --window 168h`. With no merge in the window it passes and says
 n=0. The contract is [SPEC-RELEASE.md](SPEC-RELEASE.md) section 16, subsection
 release-check-merge-queue-p90-b.w7.
+
+### release-check-product-b.w4
+
+`--product <name>` selects the product to check (nova-sprint|nova-tools; default nova-sprint).
+Each product has its own stream glob (nova-sprint: sprint-v1-*; nova-tools: tools-v1-2-0-), and
+the release gate runs scoped to those streams. When `--streams` is given it overrides the
+product default. The contract is [SPEC-RELEASE.md](SPEC-RELEASE.md) section 16.
 
 ## nova-sandbox
 

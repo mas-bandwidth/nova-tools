@@ -19,6 +19,7 @@ type fakeRelease struct {
 	accept      Acceptance
 	mergeWindow time.Duration
 	mergeP90    time.Duration
+	product     Product
 }
 
 func (f fakeRelease) Now() time.Time          { return f.now }
@@ -42,16 +43,24 @@ func (f fakeRelease) MergeP90() time.Duration {
 	return f.mergeP90
 }
 
+func (f fakeRelease) Product() Product { return f.product }
+
+// relFacts is the release check's facts for testing.
+func relFacts(now time.Time, lines ...Line) fakeRelease {
+	return fakeRelease{now: now, lines: lines, dealtMax: DealtMaxDefault, product: Product{Name: "nova-sprint", Streams: "sprint-v1-*"}}
+}
+
+// relFactsProduct returns facts for a specific product.
+func relFactsProduct(now time.Time, p Product, lines ...Line) fakeRelease {
+	return fakeRelease{now: now, lines: lines, dealtMax: DealtMaxDefault, product: p}
+}
+
 func fleetMove(at time.Time, card, from, to string, set map[string]string) Line {
 	return Line{Kind: LineMove, At: at, Table: Fleet, Card: card, Stream: "s1", From: from, To: to, Set: set}
 }
 
 // hr is the clock t0 plus h hours.
 func hr(h float64) time.Time { return t0.Add(time.Duration(h * float64(time.Hour))) }
-
-func relFacts(now time.Time, lines ...Line) fakeRelease {
-	return fakeRelease{now: now, lines: lines, dealtMax: DealtMaxDefault}
-}
 
 func TestReleaseCheckFailsWhileAFriendWasStuckInTheLastFourHours(t *testing.T) {
 	t.Parallel()
@@ -385,5 +394,88 @@ func TestReleaseCheckRunsTheAcceptanceSentinelsSixChecks(t *testing.T) {
 			assert.True(t, r.OK, r.Line())
 			assert.Contains(t, r.Evidence, "no stream is being accepted", r.Line())
 		}
+	})
+}
+
+// TestReleaseCheckForNovaToolsScopesEveryCheckToItsStreamsAndHead verifies that
+// --product nova-tools scopes checks to tools-v1-2-0-* streams.
+func TestReleaseCheckForNovaToolsScopesEveryCheckToItsStreamsAndHead(t *testing.T) {
+	t.Parallel()
+
+	novaToolsProduct := Product{Name: "nova-tools", Streams: "tools-v1-2-0-*"}
+
+	t.Run("nova-tools check passes when tools stream is green", func(t *testing.T) {
+		t.Parallel()
+		now := hr(2)
+		toolsLine := fleetMove(hr(0), "card-1", "", FriendRow("amy")+":done_ok", nil)
+		toolsLine.Stream = "tools-v1-2-0-1"
+		f := relFactsProduct(now, novaToolsProduct, toolsLine)
+		rep, err := RunReleaseChecks(f, []string{CheckNoStuckFriend})
+		require.NoError(t, err)
+		require.Len(t, rep.Results, 1)
+		assert.True(t, rep.Results[0].OK, rep.Results[0].Line())
+	})
+
+	t.Run("nova-tools check fails when tools stream breaks", func(t *testing.T) {
+		t.Parallel()
+		now := hr(7)
+		toolsLine := fleetMove(hr(0), "card-1", "", FriendRow("amy")+":working", map[string]string{"first_taken": stamp(hr(0))})
+		toolsLine.Stream = "tools-v1-2-0-1"
+		f := relFactsProduct(now, novaToolsProduct, toolsLine)
+		rep, err := RunReleaseChecks(f, []string{CheckNoStuckFriend})
+		require.NoError(t, err)
+		require.Len(t, rep.Results, 1)
+		r := rep.Results[0]
+		assert.False(t, r.OK, r.Line())
+		assert.Equal(t, "RELEASE CHECK no-stuck-friend fail "+r.Evidence, r.Line())
+	})
+
+	t.Run("sprint-v1 streams ignored when checking nova-tools product", func(t *testing.T) {
+		t.Parallel()
+		now := hr(7)
+		// Sprint stream broken, but should be ignored for nova-tools
+		toolsLine := fleetMove(hr(1), "card-2", "", FriendRow("amy")+":done_ok", nil)
+		toolsLine.Stream = "tools-v1-2-0-1"
+		f := relFactsProduct(now, novaToolsProduct, toolsLine)
+		rep, err := RunReleaseChecks(f, []string{CheckNoStuckFriend})
+		require.NoError(t, err)
+		require.Len(t, rep.Results, 1)
+		assert.True(t, rep.Results[0].OK, rep.Results[0].Line())
+	})
+}
+
+// TestProductDefaultAndFor tests the product lookup functions.
+func TestProductDefaultAndFor(t *testing.T) {
+	t.Parallel()
+
+	t.Run("DefaultProducts returns both products", func(t *testing.T) {
+		t.Parallel()
+		prods := DefaultProducts()
+		assert.Len(t, prods, 2)
+		assert.Equal(t, "nova-sprint", prods[0].Name)
+		assert.Equal(t, "nova-tools", prods[1].Name)
+	})
+
+	t.Run("ProductFor finds nova-sprint", func(t *testing.T) {
+		t.Parallel()
+		p, err := ProductFor("nova-sprint")
+		require.NoError(t, err)
+		assert.Equal(t, "nova-sprint", p.Name)
+		assert.Equal(t, "sprint-v1-*", p.Streams)
+	})
+
+	t.Run("ProductFor finds nova-tools", func(t *testing.T) {
+		t.Parallel()
+		p, err := ProductFor("nova-tools")
+		require.NoError(t, err)
+		assert.Equal(t, "nova-tools", p.Name)
+		assert.Equal(t, "tools-v1-2-0-*", p.Streams)
+	})
+
+	t.Run("ProductFor returns error for unknown product", func(t *testing.T) {
+		t.Parallel()
+		p, err := ProductFor("unknown")
+		assert.Error(t, err)
+		assert.Equal(t, Product{}, p)
 	})
 }
