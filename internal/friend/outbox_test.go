@@ -198,6 +198,7 @@ func TestTheFinishChecksTheModelTheDeliveredBriefNames(t *testing.T) {
 	right, wrong, silent := workCard("right.w1", "working"), workCard("wrong.w1", "working"), workCard("silent.w1", "working")
 	for _, c := range []*HeldCard{&right, &wrong, &silent} {
 		c.Tier, c.Model = "pro", "prov/m"
+		c.Brief = withTierLine(c.Brief, c.Tier, c.Model) // the delivered brief names it
 		inboxJob(t, dir, c.Job, c.Brief)
 	}
 	outboxReport(t, dir, right.Job, "Verdict: LAND\nHead: "+head+"\n\nDone.\nModel: prov/m\n")
@@ -222,4 +223,53 @@ func TestTheFinishChecksTheModelTheDeliveredBriefNames(t *testing.T) {
 	}
 	assert.Contains(t, got["wrong.w1@1"][len(got["wrong.w1@1"])-1], "the report says the card ran on other/m, and her brief names prov/m")
 	assert.Contains(t, got["silent.w1@1"][len(got["silent.w1@1"])-1], "the report names no model (want a line Model: prov/m")
+}
+
+// A friend's row can change a tier's model between the deal and the delivery: friend sync
+// rewrites the stored packet's model and writes the delivered BRIEF.md naming the new one,
+// while the friend cards response still sends the old (reader finding, attempt 8). The
+// delivered brief is the one source of truth: a lane runs the model it names, and a finish
+// accepts a report on it, never one on the packet's stale model.
+func TestTheDeliveredBriefsModelWinsOverThePacketsWhenHerRowChanges(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	dir := r.d.Dir
+	row := &twinRow{}
+	r.d.Held = row.held
+	f := &finishes{}
+	r.d.Finish = f.finish
+
+	const head = "0123456789abcdef0123456789abcdef01234567"
+	// the deal wrote old/m; her row changed the tier to new/m, and the brief the daemon
+	// delivered names it, while the packet the server sends still carries old/m
+	right, wrong := workCard("briefed.w1", "working"), workCard("stale.w1", "working")
+	for _, c := range []*HeldCard{&right, &wrong} {
+		c.Tier, c.Model = "pro", "old/m"
+		c.Brief = withTierLine(c.Brief, "pro", "new/m")
+		inboxJob(t, dir, c.Job, c.Brief)
+	}
+	r.d.status.HeldKnown = true
+	r.d.heldIDs, r.d.heldCards = []string{right.Card, wrong.Card}, []HeldCard{right, wrong}
+
+	card, ok, err := r.d.nextCard(func(Card) bool { return false })
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, "new/m", card.Model, "the lane's card carries the delivered brief's model, not the packet's old/m")
+
+	outboxReport(t, dir, right.Job, "Verdict: LAND\nHead: "+head+"\n\nDone.\nModel: new/m\n")
+	outboxReport(t, dir, wrong.Job, "Verdict: LAND\nHead: "+head+"\n\nDone.\nModel: old/m\n")
+	row.set(right, wrong)
+
+	r.run(t, 2)
+
+	got := map[string][]string{}
+	for _, argv := range f.got() {
+		require.GreaterOrEqual(t, len(argv), 4, "%v", argv)
+		got[argv[3]] = argv
+	}
+	require.Len(t, got, 2, "%v", f.got())
+	assert.NotContains(t, got["briefed.w1@1"], "--failed", "a report on the brief's model finishes ok")
+	assert.Equal(t, "friend bob LAND: Done.", got["briefed.w1@1"][len(got["briefed.w1@1"])-1])
+	assert.Contains(t, got["stale.w1@1"], "--failed", "a report on the packet's stale model is a HOLD")
+	assert.Contains(t, got["stale.w1@1"][len(got["stale.w1@1"])-1], "the report says the card ran on old/m, and her brief names new/m")
 }
