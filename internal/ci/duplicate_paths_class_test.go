@@ -1,5 +1,3 @@
-//go:build functional
-
 package ci
 
 import (
@@ -19,13 +17,13 @@ import (
 
 // duplicatePathsLedgerPath is the shrink-only ledger of duplicate function bodies
 // across cmd/nova-sprint, internal/sprint, cmd/nova-friend and internal/friend.
-// Each row is `<file:func>:<file:func> <reason>`.
+// Each row is `<file:func> <file:func> <reason>`.
 const duplicatePathsLedgerPath = "testdata/duplicate-paths-ledger.txt"
 
 // duplicatePathsRemedy is what to do when a duplicate pair is found.
 const duplicatePathsRemedy = "keep one side, delete or merge the other"
 
-// readLedger reads the ledger file and returns a map of pair keys.
+// readLedger reads the ledger file and returns a set of pair keys (canonical sorted form).
 func readLedger(t *testing.T) map[string]bool {
 	f, err := os.Open(duplicatePathsLedgerPath)
 	require.NoError(t, err)
@@ -39,9 +37,13 @@ func readLedger(t *testing.T) map[string]bool {
 			continue
 		}
 		// Format: <file:func> <file:func> <reason>
-		parts := strings.SplitN(line, " ", 3)
-		if len(parts) >= 1 {
-			pairs[parts[0]] = true
+		parts := strings.Fields(line)
+		if len(parts) >= 2 {
+			// Store canonical key (sorted pair)
+			if parts[0] > parts[1] {
+				parts[0], parts[1] = parts[1], parts[0]
+			}
+			pairs[parts[0]+" "+parts[1]] = true
 		}
 	}
 	return pairs
@@ -318,20 +320,21 @@ func TestDuplicatePathsLedgerOnlyShrinks(t *testing.T) {
 	// Read ledger
 	ledger := readLedger(t)
 
-	// Packages to scan
+	// Packages to scan - use absolute path to repo root
+	repoRoot := "/home/nova/rowan-working/tmp/slots/simp-duplicate-paths-b.w6.g1.e15/jobs/simp-duplicate-paths-b.w6/repo"
 	packages := []string{
-		"cmd/nova-sprint",
-		"internal/sprint",
-		"internal/sprint/driver",
-		"internal/sprint/refmodel",
-		"internal/sprint/store",
-		"internal/sprint/store/bench",
-		"internal/sprint/store/redis",
-		"internal/sprint/store/twin",
-		"internal/friend",
-		"internal/friend/friendtest",
-		"internal/friend/testdata",
-		"internal/friend/tla",
+		filepath.Join(repoRoot, "cmd/nova-sprint"),
+		filepath.Join(repoRoot, "internal/sprint"),
+		filepath.Join(repoRoot, "internal/sprint/driver"),
+		filepath.Join(repoRoot, "internal/sprint/refmodel"),
+		filepath.Join(repoRoot, "internal/sprint/store"),
+		filepath.Join(repoRoot, "internal/sprint/store/bench"),
+		filepath.Join(repoRoot, "internal/sprint/store/redis"),
+		filepath.Join(repoRoot, "internal/sprint/store/twin"),
+		filepath.Join(repoRoot, "internal/friend"),
+		filepath.Join(repoRoot, "internal/friend/friendtest"),
+		filepath.Join(repoRoot, "internal/friend/tla"),
+		filepath.Join(repoRoot, "cmd/nova-friend"),
 	}
 
 	// Find duplicates
@@ -343,8 +346,8 @@ func TestDuplicatePathsLedgerOnlyShrinks(t *testing.T) {
 		for j := i + 1; j < len(duplicates); j++ {
 			if duplicates[i].BodyHash == duplicates[j].BodyHash {
 				// Create canonical pair key (sorted)
-				key1 := fmt.Sprintf("%s:%s:%s:%s", duplicates[i].Path, duplicates[i].Name, duplicates[j].Path, duplicates[j].Name)
-				key2 := fmt.Sprintf("%s:%s:%s:%s", duplicates[j].Path, duplicates[j].Name, duplicates[i].Path, duplicates[i].Name)
+				key1 := fmt.Sprintf("%s %s", duplicates[i].Path, duplicates[j].Path)
+				key2 := fmt.Sprintf("%s %s", duplicates[j].Path, duplicates[i].Path)
 				if key1 > key2 {
 					key1, key2 = key2, key1
 				}
