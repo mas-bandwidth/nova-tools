@@ -112,8 +112,12 @@ type app struct {
 	// readTwins is the process's read twin of each store, by address: what
 	// its verbs last read, so a verb after the first reads only what changed
 	// (store/twin.go). It is not the mem twin above, which is a store.
-	readTwinsMu sync.Mutex
-	readTwins   map[string]*store.Twin
+	// friendDirHook, when set (a test), runs in each read of a friend's directory the run
+	// loop's reconcile bounds (friendRead), before it reads: a test blocks it to stand for
+	// a directory that does not answer.
+	friendDirHook func(dir string)
+	readTwinsMu   sync.Mutex
+	readTwins     map[string]*store.Twin
 	// loadCaches is the process's load cache of each store, by address: the
 	// records each table's last whole read found, which a later load of the table
 	// catches up from its change stream instead of reading it whole
