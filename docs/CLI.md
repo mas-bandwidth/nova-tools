@@ -2523,6 +2523,7 @@ nova-sprint wait <note> (--for <duration> | --until <RFC3339>)
 nova-sprint ack <note>... --reason <text>
 nova-sprint answer [--dry-run] [--bar <p>] [--every <duration>] [--timeout <duration>] [--backend jev|fixed] [--answers <file>] [--record <file>]
 nova-sprint inbox [--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>]
+nova-sprint watch --wake [--state <file>] [--wake-file <path>] [--every <duration>] [--check <duration>] [--judgment-every <duration>] [--merge-every <duration>] [--backlog-every <duration>] [--land-after <duration>] [--merge-over <n>] [--merging-over <n>] [--review-over <n>]
 nova-sprint card <id> [--brief | --fields] [--json] [--at-epoch <n>]
 nova-sprint card (--all | --stream <s>) --json [--at-epoch <n>]
 nova-sprint card base <id> <branch> [--repo-dir <clone>]
@@ -2612,11 +2613,13 @@ which refuses a group that has changed. `nova-sprint help <verb>` (or
 
 | command | what it does |
 | --- | --- |
-| `watch --wake [--state <file>] [--every <duration>] [--check <duration>] [--judgment-every <duration>] [--merge-every <duration>] [--backlog-every <duration>] [--land-after <duration>] [--merge-over <n>] [--merging-over <n>] [--review-over <n>]` | The coordinator's wake as one run: blocks until the first of a bus message to the coordinator, a new judgment (one wake in twenty minutes), a stop the coordinator did not ask for, a friend down twice in a row, a merge backlog or no land pass for fifteen minutes, a review or ready backlog, or a ten-minute check; prints one `WAKE <kind> <time> <evidence>` line and exits 0 |
+| `watch --wake [--state <file>] [--wake-file <path>] [--every <duration>] [--check <duration>] [--judgment-every <duration>] [--merge-every <duration>] [--backlog-every <duration>] [--land-after <duration>] [--merge-over <n>] [--merging-over <n>] [--review-over <n>]` | The coordinator's wake as one run: blocks until the first of a message to the coordinator, a line appended to the wake file (up to three new lines shown; the first run starts at the file's end), a new judgment (one wake in twenty minutes), a stop the coordinator did not ask for, a friend down twice in a row, a merge backlog or no land pass for fifteen minutes, a review or ready backlog, or a ten-minute check; prints one `WAKE <kind> <time> <evidence>` line and exits 0 |
 
 `watch` replaces the coordinator's hand wake script: run it in the background, as a
-nova-config loop row, and the session is re-invoked each time it returns. The register
-(docs/STOPGAPS.md, `## coordinator-wake`) and docs/SPRINT-COORDINATOR.md name the verb.
+nova-config loop row, and the session is re-invoked each time it returns. `--wake-file`
+names the append-only file a hand wake appends to; with no flag the file is not watched.
+The register (docs/STOPGAPS.md, `## coordinator-wake`) and docs/SPRINT-COORDINATOR.md
+name the verb.
 
 ### A card's priority
 
