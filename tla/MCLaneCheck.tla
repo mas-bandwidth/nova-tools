@@ -12,13 +12,12 @@ Symmetry == Permutations(Cards) \cup Permutations(FriendKeys)
 \* A finished card never returns. An expired report never becomes fresh by
 \* advancing time. Discard only those dead names in the view (the stale-beat
 \* mutation keeps expired names), and the age of a report naming no card.
-\* A working card at its cap cannot be taken again and has the same future
-\* lane behavior as a finished card. Keep it distinct for NoCap, where that
-\* guard is deliberately absent. Ready cards retain their clocks: Take resets
-\* them, so they can become live again. No event is disabled by this quotient.
-Inert(c) == column[c] = "done" \/
-            (column[c] = "working" /\ ran[c] = Cap /\ Broken # "NoCap")
-CardView == [c \in Cards |-> IF Inert(c) THEN <<"inert", 0>> ELSE <<column[c], ran[c]>>]
+\* Existing runs never restart here. At-cap and finished cards have identical
+\* future lane behavior; NoCap keeps expired active cards distinct. Ready and
+\* working use the same LiveLane test once WorkDeadline's age is supplied, so
+\* their labels are interchangeable in this lane-check-only machine.
+Inert(c) == column[c] = "done" \/ (ran[c] = Cap /\ Broken # "NoCap")
+CardView == [c \in Cards |-> IF Inert(c) THEN Cap + 1 ELSE ran[c]]
 ReportView(age, names) ==
     LET relevant == {c \in names : ~Inert(c)}
         expired == age > FriendLaneLive /\ Broken # "StaleBeat"

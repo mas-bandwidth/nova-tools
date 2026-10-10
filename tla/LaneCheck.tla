@@ -6,7 +6,12 @@ EXTENDS Naturals, Integers, FiniteSets, TLC
 \* supply any subset of Judgments, independently of the lane check. A condition
 \* ending closes its open judgment; a continuing open judgment is never filtered.
 \* Type and subject form the key: card lateness, friend-name stall, friend-row idle.
-\* ReadersFull and ReadTierRule are outside this model.
+\* ReadersFull and ReadTierRule are outside this model. This is the lane check
+\* of existing runs, not attempt lifecycle: new takes and redeals are outside.
+\* Initial ages range independently over every below-cap age and the cap; ages
+\* at/above the cap are equivalent. Both ready and working columns are checked.
+\* Losing and regaining evidence, a quiet-gap-quiet span, and an epoch reset
+\* remain possible before expiry; reset of a card clock is not needed for them.
 CONSTANTS Cards, FriendKeys, Cap, FriendLaneLive, MaxClock, Broken
 VARIABLES clock, column, ran, beatAge, beatRunning, seatAge, seatRunning,
           epoch, open, previous, countEpoch, suppressed, spans,
@@ -38,7 +43,7 @@ Quietable(lanes) == ({"late"} \X lanes) \cup (IF lanes = {} THEN {} ELSE FriendK
 Init ==
     /\ clock = 0
     /\ column \in [Cards -> {"ready", "working"}]
-    /\ ran = [c \in Cards |-> 0]
+    /\ ran \in [Cards -> 0..Cap]
     /\ beatAge = FriendLaneLive + 1 /\ beatRunning = {}
     /\ seatAge = FriendLaneLive + 1 /\ seatRunning = {}
     /\ epoch = 0 /\ countEpoch = 0
@@ -99,14 +104,6 @@ CardFinishes(c) ==
     /\ UNCHANGED <<clock, ran, beatAge, beatRunning, seatAge, seatRunning, epoch,
                    open, previous, countEpoch, suppressed, spans, noRise,
                    noMiss, noStale, epochRestartOK>>
-\* The deal clock of a ready card becomes its first-take clock on take.
-Take(c) ==
-    /\ clock < MaxClock /\ column[c] = "ready"
-    /\ column' = [column EXCEPT ![c] = "working"]
-    /\ ran' = [ran EXCEPT ![c] = 0]
-    /\ UNCHANGED <<clock, beatAge, beatRunning, seatAge, seatRunning, epoch,
-                   open, previous, countEpoch, suppressed, spans, noRise,
-                   noMiss, noStale, epochRestartOK>>
 Clear ==
     /\ clock < MaxClock /\ epoch = 0 /\ epoch' = 1
     /\ open' = {}
@@ -121,7 +118,7 @@ Next == LET machine == Quietable({c \in Cards : MachineLive(c)})
         IN (\E wanted \in SUBSET Judgments : Tick(wanted, machine, actual)) \/
         (\E channel \in {"beat", "seat"}, age \in Ages \cup {-2}, running \in SUBSET Cards :
             Beat(channel, age, running)) \/ BeatStops \/
-        (\E c \in Cards : CardFinishes(c) \/ Take(c)) \/ Clear
+        (\E c \in Cards : CardFinishes(c)) \/ Clear
 Spec == Init /\ [][Next]_vars
 
 TypeOK == /\ clock \in 0..MaxClock /\ column \in [Cards -> {"ready", "working", "done"}]

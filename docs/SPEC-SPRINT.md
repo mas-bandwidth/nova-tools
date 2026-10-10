@@ -5247,9 +5247,12 @@ that keep the same type and subject quiet (`CountedOncePerSpan`), and a candidat
 with no live lane rises (`NoMissedRise`). Stale and future timestamps cannot revive
 a lane (`StaleBeatNeverRevives`); the first tick in a new epoch starts counting
 from none (`CountRestartsAtEpoch`). The `lanecheck` cases and their `RUNS.tsv`
-records check two cards through eight ticks, including three reversed witnesses:
+records check two existing card runs through eight ticks, from independently
+arbitrary initial ages at or below the cap, including three reversed witnesses:
 stale beats accepted, the cap ignored, and every quiet counted again. Readers busy
-and the tier rule are not modelled.
+and the tier rule are not modelled. New takes and redeals belong to attempt
+lifecycle and are outside this lane-check model; loss and return of evidence and
+new quiet spans within a run remain modelled.
 
 Only a judgment being raised is checked. One already open stays the coordinator's, and the
 deadlines and the pass close it when their own condition ends. Each judgment the check
