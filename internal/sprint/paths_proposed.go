@@ -35,6 +35,10 @@ import (
 //     directory (TwinBriefPath), once; the card is dealt nothing more until a mind answers;
 //   - a proposal that climbs out of the repository, is no glob, or names nothing outside the
 //     PATHS the card has is left to a mind, and the card is not dealt again either.
+//
+// A stream marked land-protected does not take this twin. Finish widens PATHS in place on
+// that stream, the same id, back to ready (hold_fix.go). This rule leaves such a judgment
+// rather than cutting a twin, and a shared glob stays the twin command below.
 
 // PropTwinBriefs (the work table's property) and EnvTwinBriefs (the machine's environment)
 // name the directory the paths rule writes a twin's brief under, one directory a card (its
@@ -113,7 +117,16 @@ func rulePaths(s *Snapshot, a *RuleAnswer) bool {
 	if !ok {
 		return false
 	}
+	// a finish that already parked the card on NEEDS leaves this judgment to hold-need
+	// (hold_fix.go). A finish that refused the note is not twinned.
+	if pr.F(FieldRuleNeed) != "" {
+		return false
+	}
 	a.Rule, a.Card = RulePaths, pr.ID
+	if strings.HasPrefix(a.open.Note.What, holdFixRefused) {
+		left(a, "hold fix was not applied, so the paths rule does not twin it and the same brief is not dealt again")
+		return true
+	}
 	said := fmt.Sprintf("attempt %d held with %s", p.Attempt, p.Line())
 	if pr.F(FieldPathsProposed) == p.mark() && strings.HasPrefix(a.open.Note.What, pathsCmdAt) {
 		left(a, said+": its twin command is in the judgment already, a mind's")
@@ -140,6 +153,12 @@ func rulePaths(s *Snapshot, a *RuleAnswer) bool {
 		carry = member.CarryLine(member.Carry{Card: pr.ID, Attempt: p.Attempt, Head: p.Head})
 	}
 	p.Brief = WidenBrief(brief, p.New, carry)
+	// a stream marked land-protected widens PATHS in place at finish (hold_fix.go), the
+	// same id. A judgment that still names such a proposal is not replaced by a twin.
+	if landCovers(s, pr) && len(p.Shared) == 0 {
+		left(a, said+": the stream is marked land-protected, so PATHS widen in place at finish and the card keeps its id")
+		return true
+	}
 	if p.Twin = PathsTwinID(s, pr); p.Twin == "" {
 		left(a, said+": every twin id of "+pr.ID+" is taken; a mind's")
 		return true
