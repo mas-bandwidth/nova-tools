@@ -273,6 +273,12 @@ func (g *GH) TagMessage(ctx context.Context, repo, tag string) (string, error) {
 	return message, nil
 }
 
+// DispatchWorkflow requests that GitHub run the named workflow on ref.
+func (g *GH) DispatchWorkflow(ctx context.Context, repo, workflow, ref string) error {
+	_, err := g.api(ctx, "workflow", "run", workflow, "-R", repo, "--ref", ref)
+	return err
+}
+
 // GoBuild is the production toolchain. CGO is off so the artifact runs on a
 // bench whose libc is not this one's, and the arguments the caller composed --
 // -trimpath and the -ldflags stamp -- are passed through untouched.
