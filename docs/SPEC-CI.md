@@ -1804,6 +1804,21 @@ carry the ones known to be needed. The rest is caught by a run of the tier in
 the image, where `NOVA_CI=1` makes a missing program a failure. It does not
 build the image.
 
+### `functionalrun` — the reaper's pattern matches every run id this tool writes
+
+**The rule.** The reaper pattern (`runIDRE`) in `internal/ci/functionalrun/functionalrun.go`
+matches every run id produced by `newRunID` in the same file.
+**The mistake it prevents.** A mismatch between run id generation and the
+reaper pattern causes the reaper to miss containers that should be cleaned up,
+leaving orphan containers that accumulate over time.
+**The test.** `TestEveryRunIDMatchesTheReapersPattern`
+(`internal/ci/functionalrun/functionalrun_test.go`).
+**Its allowlist.** None.
+**Its remedy line.** ``<file> generates a run id that does not match runIDRE:
+fix the newRunID function to match the pattern in functionalrun.go``.
+**Its narrowings.** Only the direct call to newRunID and the regex in the same
+file are checked; a run id written through a variable is not seen.
+
 ### `redis-version` — every place that names a Redis version names the same one
 
 **The rule.** `ARG REDIS_VERSION` in `infra/functional-image/Containerfile` is
