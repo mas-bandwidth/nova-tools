@@ -58,11 +58,16 @@ func TestAFriendCardIsWorkingOnlyOnceTheFriendStartsIt(t *testing.T) {
 	w.tick(5 * time.Minute)
 	assert.Empty(t, movedLines(tick()))
 	assert.Zero(t, w.s.Fleet.Count(amy, Working))
+	// Give the other two later ready-state stamps, as after a return to ready. This
+	// isolates the eligible one-card level path from a batch too large for Bob's lane.
+	for _, id := range []string{"s1-2.w1", "s1-3.w1"} {
+		w.s.Fleet.Card(id).Fields["untaken_since"] = stamp(w.s.Now)
+	}
 
 	// past the start bound, her beat naming nothing running and nothing of hers working: her
 	// oldest unstarted card goes to bob, who has an idle lane, ready on his row (not started
 	// there either), with one line; the others have no friend with an idle lane to go to
-	w.s.Now = t0.Add(FriendStartMaxDefault + time.Minute)
+	w.s.Now = t0.Add(FriendStartMaxDefault + 4*time.Minute)
 	p := tick()
 	moved := w.s.Fleet.Card("s1-1.w1")
 	assert.Equal(t, bob, moved.Row, "levelled to an eligible friend with an idle lane")
@@ -117,11 +122,15 @@ func TestAFriendCardIsWorkingOnlyOnceTheFriendStartsIt(t *testing.T) {
 	assert.Equal(t, 1, w.s.Fleet.Count(amy, Working), "her started card stays working")
 	assert.Equal(t, 0, w.s.Fleet.Count(amy, Ready))
 
-	// bob does not start it within the bound from its return; amy has an idle lane, and it
-	// never goes back to a friend it left
+	// bob does not start it within the bound from its return. Amy has an idle lane but
+	// the card has left her, so it returns to the pool rather than going back to her.
 	w.tick(FriendStartMaxDefault + time.Minute)
-	assert.Empty(t, notStarted(tick("s1-2.w1")))
+	p = tick("s1-2.w1")
+	assert.Contains(t, strings.Join(notStarted(p), "\n"), "not started by bob in 20m; back to the pool")
 	assert.Equal(t, bob, w.s.Fleet.Card("s1-1.w1").Row, "a card never goes back to a friend it left")
+	assert.Equal(t, Withdrawn, w.s.Fleet.Card("s1-1.w1").Col)
+	assert.Equal(t, bob, w.s.Fleet.Card("s1-1.w1").F(FieldTakenFrom))
+	assert.Equal(t, Ready, w.s.StateOf("s1-1"))
 	assert.Empty(t, Check(w.s, nil))
 
 	// the start bound is a setting
