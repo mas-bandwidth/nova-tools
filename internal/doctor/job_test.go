@@ -66,7 +66,9 @@ type world struct {
 	schemaOwner, seatDrift, serviceDown, machineRow bool
 	// seatServer is the actor the running server reports when it differs from the seat's
 	// holder (a server-actor-only drift): "" is no drift.
-	seatServer string
+	seatServer   string
+	callerActor  string // caller's NOVA_SPRINT_ACTOR, which may disagree with the holder
+	serverListen string // address the caller knows for an executable install repair
 }
 
 // friendFact is one configured friend as the preflight's fakes report it.
@@ -121,6 +123,12 @@ func (e exitErr) ExitCode() int { return e.code }
 
 func (w *world) vars() map[string]string {
 	env := map[string]string{"PATH": "bin", "HOME": testHome, "NOVA_REDIS_ADDR": testRedis, "NOVA_SPRINT_ACTOR": "ada"}
+	if w.callerActor != "" {
+		env["NOVA_SPRINT_ACTOR"] = w.callerActor
+	}
+	if w.serverListen != "" {
+		env["NOVA_SPRINT_SERVER"] = w.serverListen
+	}
 	if w.configEmpty {
 		env["NOVA_SPRINT_ACTOR"] = "ada"
 		env["NOVA_PG_DSN"] = "postgres://nova_config@127.0.0.1:5432/nova"
@@ -520,6 +528,13 @@ func (w *world) run(cmd string) {
 			w.pushNonce = "check-1"
 			w.noncesIssued++
 		}
+	case a.verb == "nova-sprint install server":
+		if f["listen"] != w.serverListen || f["redis"] != testRedis || f["actor"] != "ada" {
+			w.t.Fatalf("server install did not name the holder and known address: %q", cmd)
+		}
+		// The real installer writes --actor into the unit even when the process
+		// that runs it still has NOVA_SPRINT_ACTOR=bob.
+		w.seatServer = ""
 	case a.verb == "nova-sprint seat pong":
 		if f["actor"] != "ada" || f["redis"] != testRedis || len(a.args) != 1 || a.args[0] == "" || a.args[0] != w.pushNonce {
 			w.t.Fatalf("the pong is not the outstanding nonce: %q nonce=%s", cmd, w.pushNonce)
@@ -734,6 +749,8 @@ func TestDoctorNamesTheFirstMissingDependencyAndItsFix(t *testing.T) {
 		t.Parallel()
 		w := healthyWorld(t)
 		w.seatServer = "bob"
+		w.callerActor = "bob"
+		w.serverListen = "127.0.0.1:6399"
 		code, lines := w.doctor(jobArgs["coordinator"]...)
 		assert.Equal(t, 2, code, lines)
 		out := strings.Join(lines, "\n")
@@ -741,10 +758,15 @@ func TestDoctorNamesTheFirstMissingDependencyAndItsFix(t *testing.T) {
 		assert.Contains(t, lines[len(lines)-1], "first_missing=seat-agreement ")
 		_, next, ok := strings.Cut(lines[len(lines)-1], " next: ")
 		require.True(t, ok, lines[len(lines)-1])
-		assert.Equal(t, "nova-sprint install server --listen <address:port> --redis "+testRedis+" --actor ada", next)
+		assert.Equal(t, "nova-sprint install server --listen "+w.serverListen+" --redis "+testRedis+" --actor ada", next)
 		assert.NotContains(t, next, "--repair")
 		_, refused := parseArgv(next)
 		assert.Empty(t, refused, next)
+		w.run(next)
+		assert.Equal(t, "bob", w.callerActor, "the repair must override, not rely on, ambient actor")
+		code, lines = w.doctor(jobArgs["coordinator"]...)
+		assert.Equal(t, 0, code, lines)
+		assert.NotContains(t, strings.Join(lines, "\n"), "DOCTOR seat-agreement fail")
 	})
 	t.Run("missing installed service precedes push", func(t *testing.T) {
 		t.Parallel()

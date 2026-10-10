@@ -129,10 +129,14 @@ func (r *jobRun) seatRepair() string {
 
 // serverInstall is the server-actor drift's command: the server unit is reinstalled
 // as the holder, so the loop restarts as the actor the seat names. --listen is the
-// server's fleet address, which no check reports, so it is named as a placeholder;
-// --actor names the holder, whose NOVA_SPRINT_ACTOR the unit's loop reads.
+// server's fleet address, from NOVA_SPRINT_SERVER when available, otherwise a
+// placeholder the operator must fill; --actor sets the unit's NOVA_SPRINT_ACTOR.
 func (r *jobRun) serverInstall(holder string) string {
-	return fmt.Sprintf("nova-sprint install server --listen <address:port> --redis %s --actor %s", oneline.ShellWord(r.redisAddr()), oneline.ShellWord(holder))
+	listen := "<address:port>"
+	if addr := r.env.Getenv("NOVA_SPRINT_SERVER"); addr != "" {
+		listen = oneline.ShellWord(addr)
+	}
+	return fmt.Sprintf("nova-sprint install server --listen %s --redis %s --actor %s", listen, oneline.ShellWord(r.redisAddr()), oneline.ShellWord(holder))
 }
 
 // holderFromServerDrift is the holder the server drift names (the seat's), read

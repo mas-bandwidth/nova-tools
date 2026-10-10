@@ -235,10 +235,13 @@ func (a *app) installUnit(k sprint.UnitKind, args []string, stdout, stderr io.Wr
 		if *decideDir != "" {
 			u.Args = append(u.Args, "--decide", *decideDir)
 		}
-		for _, e := range []string{"NOVA_SPRINT_ACTOR", OwnerEnv} {
-			if v := a.getenv(e); v != "" {
-				u.Env = append(u.Env, [2]string{e, v})
-			}
+		// --actor overrides a stale caller environment for the installed server.
+		// The loop reads this value from its unit, not from the install command's flags.
+		if c.actor != "" {
+			u.Env = append(u.Env, [2]string{"NOVA_SPRINT_ACTOR", c.actor})
+		}
+		if v := a.getenv(OwnerEnv); v != "" {
+			u.Env = append(u.Env, [2]string{OwnerEnv, v})
 		}
 	case "member":
 		if *as == "" || *server == "" {
