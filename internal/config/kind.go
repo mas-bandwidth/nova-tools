@@ -126,8 +126,10 @@ type Kind struct {
 	// Derive, when set, is run by Apply on the kind's rows before they are
 	// planned: a value another kind's row decides (the sprint's coordinator
 	// as a friend's Redis role) is added here, so Redis holds it and the
-	// stored row does not. nil derives nothing.
-	Derive func(ctx context.Context, st Store, rows []Row) ([]Row, error)
+	// stored row does not. liveCoordinator is the coordinator the live store
+	// holds (the seat), which the friend derive follows; "" for the other
+	// kinds and when the store holds no seat. nil derives nothing.
+	Derive func(ctx context.Context, st Store, liveCoordinator string, rows []Row) ([]Row, error)
 	// ApplyOrder sorts the rows of this kind for apply: a row with a lower
 	// number is written first. nil keeps name order. Friends put the
 	// coordinator first so ns_friend_roles' bootstrap has one.
@@ -179,8 +181,8 @@ const (
 )
 
 // FriendRoles are the roles someone decides for a friend. The coordinator
-// role is not one: who coordinates is the sprint row's one field, and apply
-// derives the Redis role from it (Kind.Derive below), so ns_friend_roles
+// role is not one: who coordinates follows the live seat, and apply derives
+// the Redis role from the seat (Kind.Derive below), so ns_friend_roles
 // still sees exactly one coordinator.
 var FriendRoles = []string{"builder", "may-hold", "reader"}
 
@@ -444,7 +446,7 @@ var Kinds = []*Kind{
 		Fields: []Field{
 			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports; no machine's width"},
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers she can do: comma list of " + strings.Join(Tiers, ", ")},
-			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates is the sprint row's)"},
+			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates follows the live seat)"},
 			{Name: "width", Type: TypeInt, Default: strconv.Itoa(DefaultFriendWidth), Help: "the jobs she works at once, the width nova-sprint friend sync sets on her friends row; at least 1, " + strconv.Itoa(DefaultFriendWidth) + " by default"},
 			{Name: "mode", Type: TypeEnum, Enum: FriendModes, Default: DefaultFriendMode, Help: "how her daemon hands her work: batch (the default: every waiting message in one turn) or one-shot (width lanes, each its own session, handed one card per turn)"},
 			{Name: "config_dir", Type: TypeText, Nullable: true, Help: "the absolute directory a claude one-shot lane runs with as CLAUDE_CONFIG_DIR, her account's login and settings; unset (the default, or --config_dir '') for any other harness; nova-friend run refuses a claude friend in one-shot mode without it"},
@@ -779,18 +781,24 @@ func memberAt(argv []string) (int, bool) {
 	return at, true
 }
 
-// deriveCoordinator is the friend kind's Derive: the sprint row's
-// coordinator gets the coordinator role in the rows apply writes, so
-// friend:<f>:roles in Redis (what ns_friend_roles guards and the deal
-// reads) carries exactly one coordinator, and a handover (sprint set
-// --coordinator) is two SET lines on the next apply: the new coordinator's
-// roles first (ApplyOrder), then the former coordinator's without the coordinator role.
-func deriveCoordinator(ctx context.Context, st Store, rows []Row) ([]Row, error) {
-	sprint, _, err := st.Get(ctx, KindSprint, KindSprint)
-	if err != nil {
-		return nil, err
+// deriveCoordinator is the friend kind's Derive: the friend the live store's
+// seat names (liveCoordinator, the sprint:coordinator apply reads back through
+// the Applier) gets the coordinator role in the rows apply writes, so
+// friend:<f>:roles in Redis (what ns_friend_roles guards and the deal reads)
+// carries exactly one coordinator and follows the live seat, never a stored
+// sprint row the seat disagrees with. With no live seat (a first apply) it
+// falls back to the stored sprint row's coordinator. A handover is two SET
+// lines on the next apply: the new coordinator's roles first (ApplyOrder),
+// then the former coordinator's without the coordinator role.
+func deriveCoordinator(ctx context.Context, st Store, liveCoordinator string, rows []Row) ([]Row, error) {
+	who := liveCoordinator
+	if who == "" {
+		sprint, _, err := st.Get(ctx, KindSprint, KindSprint)
+		if err != nil {
+			return nil, err
+		}
+		who = sprint.Fields["coordinator"]
 	}
-	who := sprint.Fields["coordinator"]
 	out := make([]Row, 0, len(rows))
 	for _, r := range rows {
 		r = r.Clone()
@@ -809,7 +817,7 @@ func deriveCoordinator(ctx context.Context, st Store, rows []Row) ([]Row, error)
 // store that applies the loop kind first). A fleet row that carries no
 // directory is refused with the set that declares one (docs/SPEC-CONFIG.md,
 // "fleet").
-func deriveLoopLog(ctx context.Context, st Store, rows []Row) ([]Row, error) {
+func deriveLoopLog(ctx context.Context, st Store, _ string, rows []Row) ([]Row, error) {
 	fleet, _, err := st.Get(ctx, KindFleet, KindFleet)
 	if err != nil {
 		return nil, err

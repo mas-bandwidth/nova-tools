@@ -229,7 +229,7 @@ func TestApplyLeavesTheKeysCapacityFriendWould(t *testing.T) {
 		k, _ := Lookup(kind)
 		rows, _ := st.List(ctx, kind)
 		if k.Derive != nil {
-			rows, _ = k.Derive(ctx, st, rows)
+			rows, _ = k.Derive(ctx, st, "", rows)
 		}
 		for _, row := range rows {
 			for f, want := range row.Fields {

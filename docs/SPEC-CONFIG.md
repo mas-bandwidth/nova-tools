@@ -241,7 +241,7 @@ facts.
 
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
-| `coordinator` | ref friend | | the deal and the routing: who holds the coordinator role; `sprint set --coordinator <friend>` is the handover | `sprint:coordinator`, and the `coordinator` word in that friend's `friend:<f>:roles` |
+| `coordinator` | ref friend | | the deal and the routing: who coordinates. The friend apply gives the coordinator role to the friend the live `sprint:coordinator` names, never to this row's friend when the two disagree: the role follows the live seat. `sprint set --coordinator <friend>` makes the row agree; the seat moves by nova-sprint's seat verb or `apply --move-seat` | `sprint:coordinator`, and the `coordinator` word in that friend's `friend:<f>:roles` |
 | `decide_bounce` | decimal, default 0.5 | | the ask: a flash card's first read is a decide read (docs/SPEC-SPRINT.md section 6), and p(defect) at or above this bar bounces the work; a probability, at least `decide_review`; both bars empty turns the decide read off | `sprint:decide_bounce` |
 | `decide_review` | decimal, default 0.3 | | the ask: below this bar the decide read lands the work with no model read; from it up to `decide_bounce` the card goes to a strings read | `sprint:decide_review` |
 | `decide_score_bar` | decimal, default empty | | land: every landed diff is scored (docs/SPEC-SPRINT.md section 7, the landed score), and a batch whose cards' top class has a p at or above this bar raises one "landed work scored low" judgment listing them; a probability; empty (the default) records the scores and raises none; 0.7 is the starting point once a review round labels cards independently | `sprint:decide_score_bar` |

@@ -220,9 +220,9 @@ func TestTheSprintRowHoldsTheBriefBar(t *testing.T) {
 	}
 }
 
-// TestDeriveGivesTheSprintCoordinatorTheRole: the rows apply plans carry
-// the coordinator role on the friend the sprint row names and on no other;
-// the stored rows are untouched.
+// TestDeriveGivesTheSprintCoordinatorTheRole: with no live seat the rows
+// apply plans carry the coordinator role on the friend the stored sprint row
+// names and on no other; the stored rows are untouched.
 func TestDeriveGivesTheSprintCoordinatorTheRole(t *testing.T) {
 	t.Parallel()
 
@@ -230,7 +230,7 @@ func TestDeriveGivesTheSprintCoordinatorTheRole(t *testing.T) {
 	st := seed(t)
 	friend, _ := Lookup(KindFriend)
 	rows, _ := st.List(ctx, KindFriend)
-	derived, err := friend.Derive(ctx, st, rows)
+	derived, err := friend.Derive(ctx, st, "", rows)
 	require.NoError(t, err)
 	byName := func(rs []Row, n string) string {
 		for _, r := range rs {
@@ -245,7 +245,7 @@ func TestDeriveGivesTheSprintCoordinatorTheRole(t *testing.T) {
 	require.Equal(t, "builder", byName(rows, "rowan"), "Derive changed its input")
 	_, _, setupErr5775 := st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": ""}, "rowan")
 	require.NoError(t, setupErr5775)
-	derived, _ = friend.Derive(ctx, st, rows)
+	derived, _ = friend.Derive(ctx, st, "", rows)
 	require.Equal(t, "builder", byName(derived, "rowan"), "no coordinator is named")
 }
 
