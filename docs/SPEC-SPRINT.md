@@ -3814,9 +3814,11 @@ cards had none outstanding.
    PATHS, returned for the widen rule. When the cause is the lander's, the
    batch's, the base's or another stream's (a generated ledger the lander
    could not resolve, a head origin does not hold, a red batch, a red base, a
-   rejected push, a need of another stream's card) the stream stops and the
-   coordinator is told. The coordinator may act on the card, the stream, or
-   several streams together.
+   push the remote rejected for a reason other than the base moving, a need of
+   another stream's card) the stream stops and the coordinator is told. A push
+   rejected because the base moved (fetch first, or a non-fast-forward update)
+   never stops the stream: it is a retry. The coordinator may act on the card,
+   the stream, or several streams together.
 
 **The sprint branch.** Every stream lands on the sprint branch, and promotion
 alone reaches dev: a card cut on dev is merged by the lander straight onto it and
@@ -3904,8 +3906,31 @@ ends with `state=`.
 and is given its facts by the caller (what merged, what conflicted, ci result);
 it never decides. Causes of a stop: a conflict on a card the lander could not
 place on the card's own head (below); stream branch red; a card needs a card
-of another stream first; the merge queue rejected; the base fails its tree
-gate.
+of another stream first; the merge queue rejected the push for a reason other
+than the base moving; the base fails its tree gate.
+
+**When a stream stops and when it never does.** A push rejected because the
+base moved (`fetch first`, or `non-fast-forward`) never stops the stream. The
+lander fetches the base, rebuilds the batch on the new tip and pushes again,
+up to `land_push_rebuilds` attempts in the pass (the work table's property of
+that name; empty or unreadable is 5), with a short wait between. Past the bound
+the batch stays queued, nothing is recorded as a stop, and the batch's note is
+`base moving: <n> rebuilds` (`n` the rebuilds after the first push). The next
+pass tries it again. The lander stops a stream only on a fact the next pass
+cannot change, and the stop line names the reason: a head that fails the tree
+gate (the card goes back to review as it does today), or a push rejected for a
+reason other than fetch-first (auth, a protected ref). A land-protected
+refusal is refused before any git and does not stop the stream.
+At the moment it stops, one judgment is pushed to the seat, not only recorded:
+`stream <s> stopped: <reason>; run: nova-sprint resume --stream <s>`. The
+batch's note is `stopped: <reason>`. The stream's control card keeps that
+reason (`stop_reason`), and the dashboard's stream row shows
+`stopped: <reason>` (the stored cause, when a stop recorded no reason). The
+stream's stored state stays `stopped`.
+`land` resumes a push stop (`push` or the stored `rejected` cause) and
+retries. A gate (`base`, `red`) stays stopped until a hand runs `resume`.
+A land-protected refusal is not a stop: it is refused before any git and the
+cards stay queued until the stream is marked.
 
 **A card's own refusal.** The conflict fact (`merge --conflict <card> --note
 <the lander's words> [--conflict-kind file|ledger]`, which land reports) is read

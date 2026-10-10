@@ -35,6 +35,10 @@ type StreamClock struct {
 	// repositories it lands dev and main of; empty for a plain stream
 	// (docs/SPEC-SPRINT.md section 7, protected-bases-pb-b.w2).
 	Promotion string `json:",omitempty"`
+	// Stop is why a stopped stream stopped (FieldStopReason, else the cause),
+	// so the dashboard row can show "stopped: <reason>". Empty when it is not
+	// stopped.
+	Stop string `json:",omitempty"`
 }
 
 // Stalled says a stream that has not landed has made no progress for longer
