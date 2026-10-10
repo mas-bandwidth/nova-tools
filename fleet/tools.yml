@@ -29,6 +29,26 @@
 # and starts them again; --check runs `nova-redis fn check` there and builds
 # and installs nothing. `--tags seat` runs only what adopts the seat: the
 # candidate checks and the seat play.
+#
+# nova-sprint is its own product (mas-bandwidth/nova-sprint, nova-tools PR
+# 5309) and is never taken from nova_source's cmd/: the machine running the
+# play checks out nova_sprint_repo at nova_sprint_ref (main) and builds its
+# ./cmd/nova-sprint for every platform, stamped with nova_version the way the
+# release build stamps the rest, and hashes each build beside it. That build is
+# staged in its OWN directory on every machine, never in the release stage
+# (tools_stage, whose bytes `release install` verifies against the release's
+# SHA256SUMS): the two artifacts have different origins, and mixing them makes
+# the install's checksum check refuse the stage instead of installing. Each
+# machine verifies the staged bytes against the build's checksum before
+# anything installs them, and the seat's candidate checks select the split
+# stage's nova-sprint (the release stage's, when a nova-tools release still
+# ships one, is never the candidate). Every release install in this play -- the
+# install play's, and the seat window's on the coordinator, which installs
+# instead of it -- is followed by a copy of that verified stage's nova-sprint
+# into the bin directory by that name, so `nova-update` and the loops find it
+# where they always have. The window's replacement detection lists the release
+# stage without nova-sprint plus the split stage, so a repeat with the same
+# split bytes measures nothing to replace and opens no window.
 - name: the platform of every machine
   hosts: all
   gather_facts: true
@@ -80,6 +100,59 @@
       ansible.builtin.debug: { msg: "{{ tools_build.stdout_lines | select('match', '^RELEASE BUILD ') | list }}" }
       when: tools_build is not skipped
 
+    # nova-sprint from its own repository (docs/FLEET.md, "tools.yml", step
+    # 2): -trimpath, CGO off and `-s -w -X main.version=` as the release build
+    # stamps every tool (internal/release Ldflags, GoBuild), so the binary
+    # answers nova_version the way nova-update and the loops expect.
+    - name: the nova-sprint checkout at nova_sprint_ref (its own repository)
+      ansible.builtin.git: { repo: "{{ nova_sprint_repo }}", dest: "{{ nova_sprint_src }}", version: "{{ nova_sprint_ref }}" }
+      register: tools_sprint_src
+
+    - name: build nova-sprint in that checkout for every platform, niced, with the build's Go cache
+      ansible.builtin.command:
+        argv: [nice, -n, "19", go, build, -trimpath, -ldflags, "-s -w -X main.version={{ nova_version }}",
+               -o, "{{ nova_sprint_out }}/{{ item }}/nova-sprint{{ '.exe' if item.startswith('windows-') else '' }}", ./cmd/nova-sprint]
+        chdir: "{{ nova_sprint_src }}"
+      environment:
+        GOOS: "{{ item.split('-')[0] }}"
+        GOARCH: "{{ item.split('-')[1] }}"
+        CGO_ENABLED: "0"
+        GOFLAGS: -mod=readonly
+        GOMAXPROCS: "4"
+        GOCACHE: "{{ nova_release_gocache }}"
+      loop: "{{ tools_platforms }}"
+      # the same commit, version and Go give the same bytes (-trimpath); what
+      # changes a machine is the copy in the install play, read by checksum
+      changed_when: false
+      when: not ansible_check_mode
+
+    # The build's own sha256, written beside it in the release build's format:
+    # every machine reads this file when it stages the split build and verifies
+    # the bytes it staged against it before anything installs them.
+    - name: the sha256 of each platform's nova-sprint build
+      ansible.builtin.stat:
+        path: "{{ nova_sprint_out }}/{{ item }}/nova-sprint{{ '.exe' if item.startswith('windows-') else '' }}"
+        get_checksum: true
+        checksum_algorithm: sha256
+      loop: "{{ tools_platforms }}"
+      register: tools_sprint_hashed
+      when: not ansible_check_mode
+
+    - name: the checksum file each machine verifies the staged nova-sprint against
+      ansible.builtin.copy:
+        content: "{{ item.stat.checksum }}  nova-sprint{{ '.exe' if item.item.startswith('windows-') else '' }}\n"
+        dest: "{{ nova_sprint_out }}/{{ item.item }}/SHA256SUMS"
+        mode: "0644"
+      loop: "{{ tools_sprint_hashed.results | default([]) }}"
+      when: not ansible_check_mode and item.stat is defined and item.stat.exists
+
+    - name: what the nova-sprint build made
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'WOULD-BUILD-SPRINT' if ansible_check_mode else 'BUILD-SPRINT' }} repo={{ nova_sprint_repo }} ref={{ nova_sprint_ref }}
+          commit={{ tools_sprint_src.after | default('none') }} version={{ nova_version }} out={{ nova_sprint_out }}
+          platforms={{ tools_platforms | join(',') or 'none' }}
+
     - name: the tools nova-tools no longer ships (fleet/retired-tools.txt)
       ansible.builtin.set_fact:
         tools_retired: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/retired-tools.txt').splitlines() | reject('match', '^\\s*(#|$)') | map('trim') | list }}"
@@ -89,7 +162,9 @@
   gather_facts: false
   vars:
     tools_stage: "{{ nova_release_dir }}/{{ nova_version }}/{{ nova_platform }}"
+    tools_sprint_stage: "{{ nova_release_dir }}/{{ nova_version }}/{{ nova_platform }}-nova-sprint"
     tools_was_version: "{{ tools_was.content | default('') | b64decode | trim }}"
+    tools_sprint_file: "nova-sprint{{ '.exe' if nova_platform.startswith('windows-') else '' }}"
   tasks:
     - name: the build installed now (the build fact)
       ansible.builtin.slurp: { src: "{{ nova_build_file }}" }
@@ -159,15 +234,75 @@
       loop: "{{ tools_send | default([]) }}"
       when: not ansible_check_mode
 
+    # The split build is its own artifact in its own stage, NEVER the release
+    # stage: tools_stage's bytes are what `release install` verifies against the
+    # release's SHA256SUMS, and a nova-sprint built from another repository has
+    # a different origin, so overlaying it there makes that checksum check
+    # refuse the stage instead of installing. The build play wrote each
+    # platform's sha256 beside the build; the machine stages that too and
+    # verifies the bytes it staged against it before anything installs them.
+    # The stage is written on every machine, the coordinator's included,
+    # because the seat's candidate checks below run the desired artifact there.
+    # The split stage is its own directory beside the release stage, so the
+    # release directory task above does not make it; it is created here, before
+    # the first copy, or a fresh version's copy fails with "Destination
+    # directory ... does not exist".
+    - name: the split stage's directory (its own, beside the release stage)
+      ansible.builtin.file: { path: "{{ tools_sprint_stage }}", state: directory, mode: "0755" }
+      when: not ansible_check_mode
+
+    - name: the split repository's nova-sprint, in its own stage (never the release stage)
+      ansible.builtin.copy:
+        src: "{{ nova_sprint_out }}/{{ nova_platform }}/{{ tools_sprint_file }}"
+        dest: "{{ tools_sprint_stage }}/{{ tools_sprint_file }}"
+        mode: "0755"
+      register: tools_sprint_staged
+      when: not ansible_check_mode
+
+    - name: the build play's checksum, staged with it
+      ansible.builtin.copy:
+        src: "{{ nova_sprint_out }}/{{ nova_platform }}/SHA256SUMS"
+        dest: "{{ tools_sprint_stage }}/SHA256SUMS"
+        mode: "0644"
+      when: not ansible_check_mode
+
+    - name: the split build's staged bytes
+      ansible.builtin.stat:
+        path: "{{ tools_sprint_stage }}/{{ tools_sprint_file }}"
+        get_checksum: true
+        checksum_algorithm: sha256
+      register: tools_sprint_bytes
+      when: not ansible_check_mode
+
+    - name: the split build's recorded checksum, on this machine
+      ansible.builtin.slurp: { src: "{{ tools_sprint_stage }}/SHA256SUMS" }
+      register: tools_sprint_recorded
+      when: not ansible_check_mode
+
+    - name: the staged split build is the one the build play hashed (verified before installation)
+      ansible.builtin.assert:
+        that: >-
+          (tools_sprint_bytes.stat.checksum | default('')) ==
+          ((tools_sprint_recorded.content | default('') | b64decode).split() | first | default(''))
+        fail_msg: >-
+          SPRINT REFUSED host={{ inventory_hostname }} platform={{ nova_platform }}: the staged nova-sprint is not the
+          build the build play hashed ({{ tools_sprint_bytes.stat.checksum | default('none') }} vs
+          {{ (tools_sprint_recorded.content | default('') | b64decode).split() | first | default('none') }}); nothing was installed
+        quiet: true
+      when: not ansible_check_mode
+
     # The seat's candidate checks (the seat play below): on the coordinator
-    # machine, before anything on disk or in the store changes, the new
+    # machine, before anything on disk or in the store changes, the desired
     # build itself reads the host (its nova-sprint live: the old library's
     # digest, every agent, every friend daemon's plist flags), plans a tick on
     # the store read-only (its nova-sprint server switch --dry-run) and plans
     # each friend daemon's reinstall (its nova-friend install --dry-run with
     # the flags that daemon's plist records). A refusal here leaves the host
-    # as it was. The candidate is the stage, else, on the machine that built
-    # it, the build's own directory.
+    # as it was. Two candidates are selected: the split stage's nova-sprint
+    # (staged and verified above) for every nova-sprint check -- the release
+    # stage's own, when a nova-tools release still ships one, is never run --
+    # and the release stage for the other tools, else, on the machine that
+    # built it, the build's own directory.
     - name: "seat: the candidate checks, before the install"
       when: inventory_hostname in groups['coordinator'] | default([])
       tags: [seat]
@@ -182,25 +317,40 @@
           NOVA_SPRINT_REDIS_USER: "{{ nova_redis_deploy_user }}"
           NOVA_SPRINT_REDIS_PASSWORD_ENV: "{{ nova_redis_deploy_password_key }}"
       block:
-        - name: "seat: the candidate in the stage"
-          ansible.builtin.stat: { path: "{{ tools_stage }}/nova-sprint", get_checksum: false }
+        - name: "seat: the release stage's other tools (the candidate's nova-friend and the like)"
+          ansible.builtin.stat: { path: "{{ tools_stage }}/nova-update", get_checksum: false }
           register: seat_staged
 
-        - name: "seat: the candidate in the build's own directory"
-          ansible.builtin.stat: { path: "{{ seat_built }}/nova-sprint", get_checksum: false }
+        - name: "seat: those tools in the build's own directory"
+          ansible.builtin.stat: { path: "{{ seat_built }}/nova-update", get_checksum: false }
           register: seat_unstaged
 
-        - name: "seat: the candidate's directory"
+        - name: "seat: the candidate's directory (the release stage, else the build on the machine that built it)"
           ansible.builtin.set_fact:
             seat_cand: >-
               {{ tools_stage if seat_staged.stat.exists else (seat_built if seat_unstaged.stat.exists
                  and (ansible_connection | default('')) == 'local' else '') }}
 
+        - name: "seat: the split build in its own stage"
+          ansible.builtin.stat: { path: "{{ tools_sprint_stage }}/{{ tools_sprint_file }}", get_checksum: false }
+          register: seat_sprint_staged
+
+        - name: "seat: the split build in the build's own directory (the machine that built it)"
+          ansible.builtin.stat: { path: "{{ nova_sprint_out }}/{{ nova_platform }}/{{ tools_sprint_file }}", get_checksum: false }
+          register: seat_sprint_built
+
+        - name: "seat: the desired nova-sprint (the split build; the release stage's is never the candidate)"
+          ansible.builtin.set_fact:
+            seat_sprint: >-
+              {{ (tools_sprint_stage ~ '/' ~ tools_sprint_file) if seat_sprint_staged.stat.exists
+                 else ((nova_sprint_out ~ '/' ~ nova_platform ~ '/' ~ tools_sprint_file)
+                   if seat_sprint_built.stat.exists and (ansible_connection | default('')) == 'local' else '') }}
+
         - name: "seat: the sops binary (nova_sops, else the first of nova_sops_candidates on the machine)"
           ansible.builtin.stat: { path: "{{ item }}" }
           loop: "{{ nova_sops_candidates }}"
           register: seat_sops
-          when: nova_sops is not defined and seat_cand != ''
+          when: nova_sops is not defined and seat_sprint != ''
 
         - name: "seat: the sops the seat is opened with"
           ansible.builtin.set_fact:
@@ -211,7 +361,7 @@
         - name: "seat: the host read by the candidate (its nova-sprint live)"
           ansible.builtin.command:
             argv: >-
-              {{ seat_wrap + [seat_cand ~ '/nova-sprint', 'live', '--json', '--bin-dir', nova_bin_dir,
+              {{ seat_wrap + [seat_sprint, 'live', '--json', '--bin-dir', nova_bin_dir,
                  '--agents-dir', nova_seat_agents_dir, '--launchctl', nova_launchctl]
                  + (nova_seat_dashboard_links | map('regex_replace', '^', '--dashboard=') | list) }}
           environment: "{{ seat_env }}"
@@ -220,7 +370,7 @@
           # ignored: read by the assert below, which names the step
           failed_when: false
           check_mode: false
-          when: seat_cand != ''
+          when: seat_sprint != ''
 
         - name: "seat: the candidate read the host"
           ansible.builtin.assert:
@@ -229,17 +379,17 @@
               ADOPT REFUSED step=live host={{ inventory_hostname }}: the candidate's nova-sprint live printed no manifest
               ({{ (seat_before.stderr or seat_before.stdout) | default('') | truncate(200) }}); nothing was installed or loaded
             quiet: true
-          when: seat_cand != ''
+          when: seat_sprint != ''
 
         - name: "seat: what the host runs, before"
           ansible.builtin.set_fact:
             seat_was: "{{ seat_before.stdout | from_json }}"
-          when: seat_cand != ''
+          when: seat_sprint != ''
 
         - name: "server: the candidate's shadow tick on the store, read-only (its nova-sprint server switch --dry-run)"
           ansible.builtin.command:
             argv: >-
-              {{ seat_wrap + [seat_cand ~ '/nova-sprint', 'server', 'switch', seat_cand ~ '/nova-sprint',
+              {{ seat_wrap + [seat_sprint, 'server', 'switch', seat_sprint,
                  '--target', nova_bin_dir ~ '/nova-sprint', '--dry-run', '--tick-deadline', nova_seat_tick_deadline] }}
           environment: "{{ seat_env }}"
           register: seat_canary
@@ -247,7 +397,7 @@
           # ignored: read by the assert below, which names the step
           failed_when: false
           check_mode: false
-          when: seat_cand != ''
+          when: seat_sprint != ''
 
         - name: "server: the candidate's shadow tick passed"
           ansible.builtin.assert:
@@ -256,7 +406,7 @@
               ADOPT REFUSED step=server host={{ inventory_hostname }}: the candidate's shadow tick failed; nothing was installed or loaded:
               {{ ((seat_canary.stderr | default('')) or (seat_canary.stdout | default(''))) | truncate(300) }}
             quiet: true
-          when: seat_cand != ''
+          when: seat_sprint != ''
 
         # The configuration store's migration runs inside the window below, as
         # nova_pg_owner, the role that owns schema config whole (group_vars:
@@ -359,32 +509,51 @@
         # a refusal puts back only what this adoption kept.
         - name: "seat: the library on the store before the window (what a refusal restores)"
           ansible.builtin.set_fact:
-            seat_old_library: "{{ seat_was.library.loaded if seat_cand != '' else '' }}"
+            seat_old_library: "{{ seat_was.library.loaded if seat_sprint != '' else '' }}"
 
-        - name: "seat: the stage's files and their checksums"
-          ansible.builtin.find: { paths: "{{ seat_cand }}", get_checksum: true, hidden: true }
+        # The replacement detection measures the desired end state: the release
+        # stage WITHOUT its nova-sprint (a nova-tools release that still ships
+        # one must not measure as a replacement on every run, because the split
+        # stage below is the nova-sprint that will be installed) plus the split
+        # stage's own, already verified, nova-sprint.
+        - name: "seat: the release stage's files and their checksums (its nova-sprint is never the desired one)"
+          ansible.builtin.find:
+            paths: "{{ seat_cand }}"
+            get_checksum: true
+            hidden: true
+            excludes: ["{{ tools_sprint_file }}"]
           register: seat_stage_files
           when: seat_cand != ''
+
+        - name: "seat: the split build's own stage, whose nova-sprint is the desired artifact"
+          ansible.builtin.find: { paths: "{{ tools_sprint_stage }}", get_checksum: true, hidden: true }
+          register: seat_sprint_files
+          when: seat_sprint != ''
+
+        - name: "seat: the candidate's files and their checksums (the release's, and the split build's)"
+          ansible.builtin.set_fact:
+            seat_cand_files: "{{ (seat_stage_files.files | default([])) + (seat_sprint_files.files | default([])) }}"
+          when: seat_cand != '' or seat_sprint != ''
 
         - name: "seat: the bin directory's files and their checksums"
           ansible.builtin.find: { paths: "{{ nova_bin_dir }}", get_checksum: true, hidden: true }
           register: seat_bin_files
-          when: seat_cand != ''
+          when: (seat_cand_files | default([])) | length > 0
 
         - name: "seat: what the install would replace"
           ansible.builtin.set_fact:
             seat_replaces: >-
-              {{ seat_stage_files.files | map(attribute='path') | map('basename')
-                 | zip(seat_stage_files.files | map(attribute='checksum')) | map('join', ':') | list
-                 | difference(seat_bin_files.files | map(attribute='path') | map('basename')
-                   | zip(seat_bin_files.files | map(attribute='checksum')) | map('join', ':') | list)
+              {{ seat_cand_files | default([]) | map(attribute='path') | map('basename')
+                 | zip(seat_cand_files | default([]) | map(attribute='checksum')) | map('join', ':') | list
+                 | difference(seat_bin_files.files | default([]) | map(attribute='path') | map('basename')
+                   | zip(seat_bin_files.files | default([]) | map(attribute='checksum')) | map('join', ':') | list)
                  | map('regex_replace', ':[^:]*$', '') | reject('in', ['SHA256SUMS', 'SUMS.digest']) | list }}
-            seat_kept: "{{ seat_bin_files.files | map(attribute='path') | map('basename') | list }}"
-          when: seat_cand != ''
+            seat_kept: "{{ seat_bin_files.files | default([]) | map(attribute='path') | map('basename') | list }}"
+          when: (seat_cand_files | default([])) | length > 0
 
         - name: "seat: the window opens when the install replaces a tool or the library is not the installed build's"
           ansible.builtin.set_fact:
-            seat_window: "{{ seat_cand != '' and ((seat_replaces | default([])) | length > 0 or not seat_was.library.match) }}"
+            seat_window: "{{ seat_sprint != '' and ((seat_replaces | default([])) | length > 0 or not seat_was.library.match) }}"
 
         - name: "seat: this adoption keeps the nova-redis of before (its library is the one on the store)"
           ansible.builtin.set_fact:
@@ -431,6 +600,39 @@
       changed_when: "tools_install.stdout is search('RELEASE INSTALLED .*tools=[1-9]')"
       # the coordinator installs inside the seat play's window, its old server and member stopped
       when: inventory_hostname not in (groups['coordinator'] | default([]))
+
+    # After the release's own install (docs/FLEET.md, "tools.yml", step 3), so
+    # the bin directory holds the build of nova-sprint's own repository even
+    # while a nova-tools release still ships a cmd/nova-sprint: install skips a
+    # tool only when its bytes are already the artifact's (internal/release/
+    # install.go, security#72 finding 2), so a copy made before that install
+    # would be replaced; the copy comes from the stage verified above and
+    # changes nothing on a machine whose bytes are already these. The
+    # coordinator is left out for the same reason the release install above is
+    # (the `when` below is that task's, with check mode): it installs inside
+    # the seat play's window, where the same copy follows that install, so
+    # every mutation of its nova-sprint is inside the window and never before a
+    # rollback snapshot or a refused candidate. remote_src is set because
+    # tools_sprint_stage is a path on the managed machine: without it Ansible
+    # looks for that stage on the controller and a remote member cannot
+    # install the bytes it staged.
+    - name: nova-sprint, built from its own repository, into the bin directory by its name
+      ansible.builtin.copy:
+        src: "{{ tools_sprint_stage }}/{{ tools_sprint_file }}"
+        dest: "{{ nova_bin_dir }}/{{ tools_sprint_file }}"
+        mode: "0755"
+        remote_src: true
+      register: tools_sprint
+      when: not ansible_check_mode and inventory_hostname not in (groups['coordinator'] | default([]))
+
+    - name: the nova-sprint receipt
+      ansible.builtin.debug:
+        msg: >-
+          SPRINT host={{ inventory_hostname }} platform={{ nova_platform }} version={{ nova_version }}
+          repo={{ nova_sprint_repo }} ref={{ nova_sprint_ref }}
+          {{ 'WOULD-COPY' if ansible_check_mode
+             else 'SEAT-WINDOW (the seat play installs it, its old server and member stopped)' if tools_sprint is skipped
+             else ('INSTALLED' if tools_sprint.changed else 'UP-TO-DATE') }}
 
     - name: the retired tools in the bin directory, by exact name (one listing)
       ansible.builtin.find: { paths: "{{ nova_bin_dir }}", patterns: "{{ hostvars['localhost'].tools_retired }}", file_type: any, hidden: true }
@@ -597,6 +799,8 @@
   tags: [seat]
   vars:
     seat_stage: "{{ nova_release_dir }}/{{ nova_version }}/{{ nova_platform }}"
+    tools_sprint_stage: "{{ nova_release_dir }}/{{ nova_version }}/{{ nova_platform }}-nova-sprint"
+    tools_sprint_file: "nova-sprint{{ '.exe' if nova_platform.startswith('windows-') else '' }}"
     seat_wrap_as: >-
       {{ [nova_bin_dir ~ '/nova-secrets', 'exec', '--store', nova_secrets_store, '--as', nova_seat,
           '--key', nova_secrets_key_dir ~ '/' ~ nova_seat ~ '.key', '--sops', nova_sops | default('')] }}
@@ -746,6 +950,29 @@
                         --bin, "{{ nova_bin_dir }}", --platform, "{{ nova_platform }}" ]
               register: seat_install
               changed_when: "seat_install.stdout is search('RELEASE INSTALLED .*tools=[1-9]')"
+
+            # The coordinator installs in this window, not the install play
+            # (that task's `when` skips it), and install replaces a tool whose
+            # bytes differ from the release artifact (internal/release/
+            # install.go, security#72 finding 2): the same copy of the stage
+            # verified above follows this release install too, so the bin
+            # directory holds the build of nova-sprint's own repository when
+            # the seat reads it below. remote_src is set for the same reason
+            # as the install play's copy: the stage path is on this machine.
+            - name: "window: nova-sprint, built from its own repository, into the bin directory by its name"
+              ansible.builtin.copy:
+                src: "{{ tools_sprint_stage }}/{{ tools_sprint_file }}"
+                dest: "{{ nova_bin_dir }}/{{ tools_sprint_file }}"
+                mode: "0755"
+                remote_src: true
+              register: seat_sprint
+
+            - name: "window: the nova-sprint receipt"
+              ansible.builtin.debug:
+                msg: >-
+                  SPRINT host={{ inventory_hostname }} platform={{ nova_platform }} version={{ nova_version }}
+                  repo={{ nova_sprint_repo }} ref={{ nova_sprint_ref }}
+                  {{ 'INSTALLED' if seat_sprint.changed else 'UP-TO-DATE' }}
 
             - name: "window: the build fact's directory"
               ansible.builtin.file: { path: "{{ nova_build_file | dirname }}", state: directory, mode: "0700" }

@@ -108,6 +108,18 @@ nova_release_gate_args: ["--cli", "{{ nova_source }}/docs/CLI.md", "--receipts",
 # --gate report --reason <why> (docs/SPEC-RELEASE.md rule 13).
 nova_release_build_args: []
 
+# nova-sprint is its own product (mas-bandwidth/nova-sprint, nova-tools PR 5309),
+# not a cmd/ of the nova-tools checkout: the build play checks out
+# nova_sprint_repo at nova_sprint_ref into nova_sprint_src on the machine running
+# the play and builds ./cmd/nova-sprint there for every platform, stamped with
+# nova_version, to nova_sprint_out/<platform>/nova-sprint (one file per
+# platform, overwritten each run, so nothing piles up); every machine then holds
+# it in its bin directory by that name.
+nova_sprint_repo: https://github.com/mas-bandwidth/nova-sprint.git
+nova_sprint_ref: main
+nova_sprint_src: "{{ nova_release_out }}/nova-sprint/src"
+nova_sprint_out: "{{ nova_release_out }}/nova-sprint/bin"
+
 # The TLC record machines (the inventory's tla group: the machine rows with
 # tla=true) hold the pinned TLC jar at nova_tla_jar, owned by the login. The
 # tools play's tla play checks its SHA-256 against the sum the repository
