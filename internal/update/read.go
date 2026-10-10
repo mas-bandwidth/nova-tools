@@ -74,7 +74,20 @@ func identity(e Entry, raw string, report bool) Read {
 		if len(f) < 2 {
 			r.Reason = "version line has fewer than two tokens"
 		} else {
-			r.Version = f[1]
+			tok := f[1]
+			if tok == "" {
+				r.Reason = "version token is empty"
+			} else if tok == "devel" || bareCommit.MatchString(tok) {
+				r.Version = tok
+			} else {
+				v := tok
+				v = strings.TrimPrefix(v, "v")
+				if v == "" || !digit.MatchString(v[:1]) || !dotted.MatchString(v) {
+					r.Reason = "version token has no dotted number"
+				} else {
+					r.Version = tok
+				}
+			}
 		}
 		return r
 	}
