@@ -22,10 +22,12 @@ type jsonEnvelopeEnvelope struct {
 	Result jsonEnvelopeResult `json:"result"`
 }
 
-// jsonEnvelopeResult is the result object every --json rendering carries.
+// jsonEnvelopeResult is the result object every --json rendering carries. Exit
+// is a pointer so a missing result.exit is absent, not its zero value: a
+// rendering that drops the field must not pass by agreeing with an exit of 0.
 type jsonEnvelopeResult struct {
 	Status string `json:"status"`
-	Exit   int    `json:"exit"`
+	Exit   *int   `json:"exit"`
 }
 
 // jsonEnvelopeStatus is the status word the exit table requires, the inverse of
@@ -65,8 +67,11 @@ func jsonEnvelopeAnswers(code int, stdout, stderr string) string {
 	if env.Result.Status == "" {
 		return fmt.Sprintf("the JSON object carries no result.status for exit %d; the skeleton renders result {status, exit}: %q", code, jsonEnvelopeFirstLine(lines[0]))
 	}
-	if env.Result.Exit != code {
-		return fmt.Sprintf("result.exit %d disagrees with the process exit %d; the skeleton renders the exit it returns", env.Result.Exit, code)
+	if env.Result.Exit == nil {
+		return fmt.Sprintf("the JSON object carries no result.exit for exit %d; the skeleton renders result {status, exit}: %q", code, jsonEnvelopeFirstLine(lines[0]))
+	}
+	if *env.Result.Exit != code {
+		return fmt.Sprintf("result.exit %d disagrees with the process exit %d; the skeleton renders the exit it returns", *env.Result.Exit, code)
 	}
 	if want := jsonEnvelopeStatus(code); env.Result.Status != want {
 		return fmt.Sprintf("result.status %q disagrees with the exit %d (want %q); the status word follows the exit table", env.Result.Status, code, want)
@@ -103,6 +108,7 @@ func TestJsonEnvelopeJudges(t *testing.T) {
 		{"good failed object", 1, `{"result":{"verb":"run","status":"failed","exit":1}}` + "\n", "", ""},
 		{"the witness: two objects on stdout", 0, goodOK + "\n" + goodOK + "\n", "", "2 lines, not one JSON object"},
 		{"the witness: the object is missing result.status", 0, `{"result":{"verb":"run","exit":0}}` + "\n", "", "no result.status"},
+		{"the witness: the object is missing result.exit", 0, `{"result":{"verb":"run","status":"ok"}}` + "\n", "", "no result.exit"},
 		{"the witness: result.exit disagrees with the exit", 1, `{"result":{"verb":"run","status":"failed","exit":0}}` + "\n", "", "result.exit 0 disagrees with the process exit 1"},
 		{"the witness: result.status disagrees with the exit", 1, `{"result":{"verb":"run","status":"ok","exit":1}}` + "\n", "", `result.status "ok" disagrees with the exit 1`},
 		{"the witness: stdout is the text form, not JSON", 2, "", "RUN REFUSED: why; run: tool help\n", "stdout carries no JSON object"},

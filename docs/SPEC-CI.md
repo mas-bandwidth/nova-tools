@@ -2194,9 +2194,10 @@ verb, each verb with no flags, and each command in the tool's `docs/TESTS.md`
 transcript. `jsonEnvelopeAnswers` reads stdout and refuses it unless it is exactly
 one JSON object whose `result.status` and `result.exit` agree with the exit (0 ok,
 1 failed, every other refused). The witness is `TestJsonEnvelopeJudges`: a fixture
-that carries two objects, no `result.status`, or a disagreeing `result.exit` is
-refused naming the site, and `TestJsonEnvelopeFixesTheFixture` shows the fixed
-fixture passes.
+that carries two objects, no `result.status`, no `result.exit`, or a disagreeing
+`result.exit` is refused naming the site, and `TestJsonEnvelopeFixesTheFixture`
+shows the fixed fixture passes. A missing `result.exit` is refused even when the
+process exit is zero, so a dropped field is never read as its zero value.
 
 **Its ledger.** the `json-envelope` package ledger
 (`internal/ci/testdata/json-envelope/`), one shard per tool at `cmd/<tool>.txt`,
