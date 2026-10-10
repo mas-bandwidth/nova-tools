@@ -5048,11 +5048,14 @@ hours. The tick's overdue part runs the pass (internal/sprint coordinator_pass.g
 - **a friend holds working cards and finishes none** (`a friend holds working cards and
   finishes none`), one on each friend not held holding working cards on her row when
   neither her last working-to-done finish (`finished` of her done cards, ok or failed) nor
-  her oldest working card's take is within the friend-finish window (`set
+  her oldest working card's take nor her unhold is within the friend-finish window (`set
   --friend-finish <duration|default>`, the work table's property `friend_finish`, default
-  30m); it names her cards and the age of her last finish. Only her work cards count: a
-  read is not card work. A friend with a live lane inside its cap raises nothing (a
-  judgment checks the lane before it rises, below).
+  30m). Her unhold is the fleet table's property `friend_unheld.<friend>`, written when
+  the coordinator unholds her (`unhold <friend>`, or `hold <friend> --release`), so a
+  friend brought back by unhold counts her idle window from the unhold and is not judged
+  overdue the moment she returns; it names her cards and the age of her last finish. Only
+  her work cards count: a read is not card work. A friend with a live lane inside its cap
+  raises nothing (a judgment checks the lane before it rises, below).
 - **judgments wait on the coordinator past their deadline** (`judgments wait on the
   coordinator past their deadline`), one about the sprint while any open judgment is
   overdue (its review time, else `DeadlineJudgment`, as the overdue line has it) and its

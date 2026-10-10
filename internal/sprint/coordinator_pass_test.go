@@ -498,3 +498,47 @@ func TestAPinnedCardTheFleetTookIsJudgedOnce(t *testing.T) {
 	r.tick(time.Second)
 	assert.Equal(t, 1, r.count(sprint.Judgment, sprint.NPinIgnored, "f1-9"), "the pass keeps the one note")
 }
+
+// A friend brought back by unhold is not overdue the moment she returns: the idle
+// window counts from the latest of her last finish, her oldest working take or deal,
+// and her unhold, so an unhold starts her idle clock again (docs/SPEC-SPRINT.md
+// section 8, "The coordinator's pass"): a friend whose card has worked far longer
+// than the friend-finish window with no finish is idle, is judged no idle while the
+// coordinator holds her, and is judged none again when she is unheld until a whole
+// window has passed since the unhold.
+func TestAFriendJustUnheldIsNotOverdue(t *testing.T) {
+	t.Parallel()
+	r := newPassRig(t)
+	amy := sprint.FriendRow("amy")
+	fresh := func() { r.pongs["amy"], r.pongs["bob"] = r.clock(), r.clock() }
+
+	// her card has worked since the rig started and no finish has come: past the
+	// friend-finish window she is idle
+	fresh()
+	r.tick(31 * time.Minute)
+	require.NotNil(t, r.open(sprint.NFriendIdle, amy), "a working card older than the window with no finish is idle")
+
+	// she is held (the coordinator's roster hold alone, so her working card stays),
+	// and the pass judges her no idle while she is held
+	require.NoError(t, r.st.SetFriendHeld(r.ctx, "amy", true, "coordinator", "she is away", time.Time{}, 0))
+	fresh()
+	r.tick(time.Second)
+	assert.Nil(t, r.open(sprint.NFriendIdle, amy), "a held friend is not judged idle")
+
+	// she is unheld: the next pass raises no idle judgment for her, though her card
+	// has worked far longer than the window and no finish has come
+	r.hold(sprint.HoldReq{Names: []string{"amy"}, Release: true, Reason: "she is back"})
+	fresh()
+	r.tick(time.Second)
+	assert.Nil(t, r.open(sprint.NFriendIdle, amy), "a friend just unheld is not overdue")
+
+	// not before the friend-finish window past the unhold
+	fresh()
+	r.tick(29 * time.Minute)
+	assert.Nil(t, r.open(sprint.NFriendIdle, amy), "inside the window past the unhold she is not idle")
+
+	// the window past the unhold, and no finish still: idle again
+	fresh()
+	r.tick(2 * time.Minute)
+	assert.NotNil(t, r.open(sprint.NFriendIdle, amy), "past the window after the unhold she is idle again")
+}

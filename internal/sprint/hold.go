@@ -170,6 +170,15 @@ func HoldNames(s *Snapshot, r HoldReq) Plan {
 			var rp Plan
 			rp, line = returnReads(s, t.Name, r.Who)
 			add(rp)
+		case t.Kind == HoldFriend && r.Release:
+			// the friend's unhold time, so the coordinator's pass counts her idle window
+			// from it and does not judge her overdue the moment she is back (idleConds;
+			// docs/SPEC-SPRINT.md section 8, "The coordinator's pass")
+			if s.Fleet != nil {
+				name := PropFriendUnheld(t.Name)
+				was, had := s.Fleet.Prop(name)
+				p.Props = append(p.Props, PropWrite{Table: Fleet, Name: name, Value: stamp(s.Now), Was: was, WasAbsent: !had})
+			}
 		case t.Kind == HoldFriend && !r.Release:
 			var fp Plan
 			fp, line = holdFriendCards(s, t.Name, r)

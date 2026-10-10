@@ -94,6 +94,14 @@ const (
 	PropFriendFinish = "friend_finish"
 )
 
+// PropFriendUnheld is the fleet table's property of when the friend was last unheld
+// (hold <friend> --release, unhold <friend>), one per friend, written by the hold's
+// release plan (hold.go, HoldNames). The idle window counts from the latest of her
+// last finish, her oldest working take or deal, and this, so a friend brought back by
+// unhold is not judged idle the moment she returns (idleConds; docs/SPEC-SPRINT.md
+// section 8, "The coordinator's pass").
+func PropFriendUnheld(friend string) string { return "friend_unheld." + friend }
+
 // FriendSession is what the tick knows of a friend's session beside the tables: her
 // session's last pong as her last beat carries it (zero: her beat carries none), and
 // whether the coordinator holds her (friend down).
@@ -189,9 +197,9 @@ func deafConds(s *Snapshot, r TickReq) []cond {
 }
 
 // idleConds is one condition for each friend not held holding working cards whose last
-// working-to-done finish, or her oldest working card's take when that is later, is older
-// than the friend-finish window, in running time. Only her work cards count: a read is
-// not card work.
+// working-to-done finish, or her oldest working card's take when that is later, or her
+// unhold when that is later, is older than the friend-finish window, in running time.
+// Only her work cards count: a read is not card work.
 func idleConds(s *Snapshot, r TickReq) []cond {
 	if s.Fleet == nil {
 		return nil
@@ -227,6 +235,11 @@ func idleConds(s *Snapshot, r TickReq) []cond {
 		since := last
 		if oldest.After(since) {
 			since = oldest
+		}
+		if v, ok := s.Fleet.Prop(PropFriendUnheld(f)); ok {
+			if u, err := time.Parse(time.RFC3339, v); err == nil && u.After(since) {
+				since = u
+			}
 		}
 		if since.IsZero() {
 			continue
