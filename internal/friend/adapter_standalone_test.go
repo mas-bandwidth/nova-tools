@@ -47,15 +47,17 @@ func TestTheRunTakesStandaloneWhenTheInstalledOpencodeListsIt(t *testing.T) {
 }
 
 // TestListVerbCarriesStandalone: the lane's session listing carries --standalone
-// exactly when CheckRun found it, as the run verb does; without it opencode
-// 2.0.25 under a lane's wall exits 1 on its managed-service port.
+// exactly when CheckRun found it, as the run verb does, and after the subcommand
+// (`session list ... --standalone`: the flag is the subcommand's; before `list`
+// opencode rejects it). Without it opencode 2.0.25 under a lane's wall exits 1
+// on its managed-service port.
 func TestListVerbCarriesStandalone(t *testing.T) {
 	o := &OpenCode{}
 	if got := strings.Join(o.listVerb(), " "); got != "session list --format json" {
 		t.Fatalf("plain listVerb = %q", got)
 	}
 	o.Standalone = true
-	if got := strings.Join(o.listVerb(), " "); got != "session --standalone list --format json" {
+	if got := strings.Join(o.listVerb(), " "); got != "session list --format json --standalone" {
 		t.Fatalf("standalone listVerb = %q", got)
 	}
 	if got := strings.Join(o.runVerb("--session", "s1", "hi"), " "); got != "run --standalone --session s1 hi" {

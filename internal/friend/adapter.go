@@ -281,24 +281,26 @@ type OpenCode struct {
 // runVerb is the run verb as this opencode takes it: `run`, and --standalone
 // when CheckRun found it (Standalone).
 func (o *OpenCode) runVerb(args ...string) []string {
-	return o.verb("run", args...)
-}
-
-// listVerb is `session list --format json`, and --standalone when CheckRun found
-// it: without it opencode 2.0.25 starts its managed service on a fixed port, and
-// a listing under a lane's wall (its own HOME) exits 1 against the instance the
-// daemon's HOME already holds ("Managed service port ... is already in use").
-func (o *OpenCode) listVerb() []string {
-	return o.verb("session", "list", "--format", "json")
-}
-
-// verb is one opencode verb with --standalone after it when Standalone.
-func (o *OpenCode) verb(name string, args ...string) []string {
-	verb := []string{name}
+	verb := []string{"run"}
 	if o.Standalone {
 		verb = append(verb, "--standalone")
 	}
 	return append(verb, args...)
+}
+
+// listVerb is `session list --format json`, and --standalone after it when
+// CheckRun found the flag: without it opencode 2.0.25 starts its managed service
+// on a fixed port, and a listing under a lane's wall (its own HOME) exits 1
+// against the instance the daemon's HOME already holds ("Managed service port
+// ... is already in use"). The flag is `session list`'s, not `session`'s: placed
+// between them opencode answers "Unrecognized flag: --standalone in command
+// opencode session" (measured on 2.0.20 and 2.0.25), so it goes last.
+func (o *OpenCode) listVerb() []string {
+	verb := []string{"session", "list", "--format", "json"}
+	if o.Standalone {
+		verb = append(verb, "--standalone")
+	}
+	return verb
 }
 
 func (o *OpenCode) program() string {
