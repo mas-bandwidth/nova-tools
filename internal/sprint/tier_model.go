@@ -41,10 +41,12 @@ func ModelPaths(paths []string) []string {
 }
 
 // ModelTier is the brief add admits for a card whose PATHS name model work (ModelPaths):
-// with tier: frontier on its line 1 when it names no tier, and said the words the add's
-// unit carries; the brief as given, said "", when it names frontier or names no model
-// work; why the refusal when line 1 names a lower tier. A brief whose model lines do not
-// read is the model-lines check's to refuse, and is given back as it is.
+// with tier: frontier stamped on its RESULT line when the brief carries one, else with the
+// brief unchanged -- the card's own tier field carries frontier and the add persists it
+// (steps_work.go) -- and said the words the add's unit carries; the brief as given, said
+// "", when it names frontier or names no model work; why the refusal when line 1 names a
+// lower tier. A brief whose model lines do not read is the model-lines check's to refuse,
+// and is given back as it is.
 func ModelTier(brief string) (out, said, why string) {
 	model := ModelPaths(decide.CardPaths(brief))
 	if len(model) == 0 {
@@ -59,10 +61,10 @@ func ModelTier(brief string) (out, said, why string) {
 		return brief, "", work + "; a card that writes a model is tiered frontier (docs/SPEC-SPRINT.md, the card decides its model), and line 1 names tier " + m.Tier +
 			": write tier: frontier on line 1, or take the model out of PATHS (tla/RUNS.tsv and tla/CASES.tsv alone are run records, any tier)"
 	}
-	first, rest, nl := strings.Cut(brief, "\n")
-	out = strings.TrimRight(first, " \t") + " tier: " + cardhdr.RouteFrontier
-	if nl {
-		out += "\n" + rest
-	}
+	// the tier is written where the card carries it: its RESULT line when the brief has
+	// one (tieredBrief); when the brief has none the card's own tier field carries it and
+	// the add persists it (steps_work.go). A title or a header is never stamped, and said
+	// is the same either way: the card is tiered frontier (brief_tier.go).
+	out = tieredBrief(brief, cardhdr.RouteFrontier)
 	return out, "tiered frontier: " + work, ""
 }

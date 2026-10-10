@@ -32,7 +32,7 @@ func TestLandTakesTheHighestPriorityStreamFirst(t *testing.T) {
 			briefs := t.TempDir()
 			brief := func(id string) string {
 				path := filepath.Join(briefs, id+".md")
-				require.NoError(t, os.WriteFile(path, []byte(passingBrief("REPO: "+r.remote+"\nBASE: main\n\nWrite "+id+".txt.")), 0o600))
+				require.NoError(t, os.WriteFile(path, []byte(passingBrief("base-repo: "+r.remote+"\nBASE: main\n\nWrite "+id+".txt.")), 0o600))
 				return path
 			}
 			r.promotionStream("s1")

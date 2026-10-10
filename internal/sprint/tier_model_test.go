@@ -1,7 +1,6 @@
 package sprint
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -35,11 +34,17 @@ func TestACardThatWritesAModelIsTieredFrontier(t *testing.T) {
 	for id, want := range map[string]string{"m1": cardhdr.RouteFrontier, "m2": cardhdr.RouteFrontier, "m3": cardhdr.RouteFrontier, "r1": cardhdr.RouteFlash, "g1": cardhdr.RoutePro} {
 		c := w.s.Primary(id)
 		require.NotNil(t, c, id)
-		assert.Equal(t, want, CardTier(c), "%s is dealt on %s", id, want)
-		assert.Equal(t, want, TierWord(c), "%s is counted on %s", id, want)
+		now, ceiling := CardTiers(c)
+		assert.Equal(t, want, now, "%s is dealt on %s", id, want)
+		assert.Equal(t, want, ceiling, "%s is capped at %s", id, want)
 	}
+	// The tier writer stamps only a RESULT line (brief_tier.go): m1's line 1 is a title, so
+	// its brief is unchanged and its own tier field carries frontier (steps_work.go).
 	m1 := w.s.Primary("m1").F("brief")
-	assert.True(t, strings.HasPrefix(m1, "m1: a lease model tier: frontier\n"), "add writes the tier on line 1: %q", m1)
+	assert.Equal(t, brief("m1: a lease model", "tla/Lease.tla,tla/MCLease.cfg,internal/x/*.go"), m1, "a title is never stamped")
+	assert.Equal(t, cardhdr.RouteFrontier, w.s.Primary("m1").F(FieldTier), "the card's tier field carries frontier")
+	assert.Equal(t, cardhdr.RouteFrontier, TierWord(w.s.Primary("m2")), "m2 names frontier on line 1")
+	assert.Equal(t, cardhdr.RouteFlash, TierWord(w.s.Primary("m1")), "the tier word reads line 1, which carries no tier")
 	assert.Equal(t, brief("m2: a friend model tier: frontier", "internal/friend/tla/MCLaneEnd.cfg"), w.s.Primary("m2").F("brief"), "a frontier brief is admitted as written")
 	assert.Equal(t, brief("r1: a run record", "tla/RUNS.tsv,tla/CASES.tsv,internal/x/*.go"), w.s.Primary("r1").F("brief"), "run records alone are no model")
 	moved := map[string]string{}
@@ -92,4 +97,33 @@ func TestModelPathsNameModulesAndConfigsNotRunRecords(t *testing.T) {
 	} {
 		assert.Equal(t, want, len(ModelPaths([]string{entry})) == 1, entry)
 	}
+}
+
+// A model brief whose first line is a header carries no RESULT line for the tier writer to
+// stamp (brief_tier.go), so the card's own tier field carries frontier and the add persists
+// it (steps_work.go): the card keeps the frontier tier its model work requires instead of
+// falling back to flash (the review of attempt 4). The header lines are read as written.
+func TestAHeaderFirstModelCardKeepsTheFrontierTier(t *testing.T) {
+	t.Parallel()
+	brief := "PATHS: tla/Lease.tla,internal/x/*.go\n" +
+		"REPO: mas-bandwidth/nova-tools\n" +
+		"BASE: sprint/mechanical-2026-10-02\n" +
+		"TEST: ./internal/x TestX\n" +
+		"\nTHE TASK. Fix the lease model."
+	w := newWorld(t)
+	p := Add(w.s, AddReq{Stream: "s", Cards: []CardAdd{{ID: "m1", Brief: brief}}})
+	require.Empty(t, p.Refused)
+	w.do(p)
+	c := w.s.Primary("m1")
+	require.NotNil(t, c)
+	assert.Equal(t, brief, c.F("brief"), "the header lines are read as written")
+	assert.Equal(t, cardhdr.RouteFrontier, c.F(FieldTier), "the card's tier field carries frontier")
+	now, ceiling := CardTiers(c)
+	assert.Equal(t, cardhdr.RouteFrontier, now)
+	assert.Equal(t, cardhdr.RouteFrontier, ceiling)
+	moved := map[string]string{}
+	for _, u := range p.Units {
+		moved[u.Key] = u.Moved
+	}
+	assert.Contains(t, moved["m1"], "tiered frontier: PATHS name TLA+ model work (tla/Lease.tla)")
 }

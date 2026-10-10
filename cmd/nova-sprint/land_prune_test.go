@@ -360,7 +360,7 @@ func TestPrunePreservesUnownedBranchesAndOtherStreamBases(t *testing.T) {
 			branch := r.branch("s1-1")
 			if mode == "other stream base" {
 				path := filepath.Join(t.TempDir(), "guard.card")
-				require.NoError(t, os.WriteFile(path, []byte(passingBrief("REPO: "+r.remote+"\nBASE: "+branch+"\n\nWrite guard.txt.")), 0o600))
+				require.NoError(t, os.WriteFile(path, []byte(passingBrief("base-repo: "+r.remote+"\nBASE: "+branch+"\n\nWrite guard.txt.")), 0o600))
 				r.ok("add --stream s2 guard --one --brief-file " + path)
 			}
 
