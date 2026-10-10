@@ -131,11 +131,30 @@ type staticcheckFinding struct {
 	Message string `json:"message"`
 }
 
+// staticcheckCache is the analysis cache every staticcheck run of this package
+// shares, staticcheck's own default (<user cache dir>/staticcheck). A cache
+// made fresh per run re-analysed the standard library and every dependency
+// from source on each run, 50-90 s of the functional internal/ci package at
+// GOMAXPROCS=2 (docs/SPEC-CI.md, `staticcheck`). The cache is
+// content-addressed and salted with the binary's build ID, so a changed
+// package, a changed dependency or another staticcheck version misses it and
+// is analysed again: sharing it changes what is re-done, never what is found.
+// Where the environment names no user cache directory (no HOME), the run gets
+// a cache of its own, which finds the same and only costs the time.
+func staticcheckCache(t *testing.T) string {
+	t.Helper()
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return t.TempDir()
+	}
+	return filepath.Join(dir, "staticcheck")
+}
+
 // staticcheckSites runs staticcheck (its default checks, U1000 `unused`
 // among them) over dir and returns every finding under `<package>:<check>`.
 func staticcheckSites(t *testing.T, ctx context.Context, bin, dir string) map[string][]string {
 	t.Helper()
-	out, err := runLinter(ctx, bin, dir, []string{"STATICCHECK_CACHE=" + t.TempDir()}, "-f", "json")
+	out, err := runLinter(ctx, bin, dir, []string{"STATICCHECK_CACHE=" + staticcheckCache(t)}, "-f", "json")
 	require.NoError(t, err)
 	sites := map[string][]string{}
 	dec := json.NewDecoder(bytes.NewReader(out))
