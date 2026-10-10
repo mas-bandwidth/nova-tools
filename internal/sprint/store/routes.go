@@ -104,6 +104,10 @@ type Bars struct {
 	// RulesOff is the sprint row's rules the machine does not answer by (answer_rules_off: a
 	// comma list of config.AnswerRules); "" turns none off.
 	RulesOff string
+	// TestsAlarm is the sprint row's runaway-test threshold (tests_alarm: how many live
+	// processes named *.test one member or friend may beat); "" or "0" is four times the
+	// width (docs/SPEC-SPRINT.md, runaway test processes).
+	TestsAlarm string
 }
 
 // fields is each bar by its sprint row field (config.SprintKey(field) holds it).
@@ -119,6 +123,7 @@ func (b *Bars) fields() map[string]*string {
 		config.FieldDecideGatePreexisting:    &b.GatePreexisting,
 		config.FieldDecideJudgment:           &b.Judgment,
 		config.FieldAnswerRulesOff:           &b.RulesOff,
+		config.FieldTestsAlarm:               &b.TestsAlarm,
 	}
 }
 
@@ -130,6 +135,7 @@ func (rs RouteSet) into(s *sprint.Snapshot) {
 	s.DecideScoreBar = rs.Bars.Score
 	s.DecideGateFlaky, s.DecideGatePreexisting = rs.Bars.GateFlaky, rs.Bars.GatePreexisting
 	s.RulesOff = sprint.Split(rs.Bars.RulesOff)
+	s.TestsAlarmSetting = rs.Bars.TestsAlarm
 }
 
 // routes is the routes a dealing step plans with, by name, and the tiers'
