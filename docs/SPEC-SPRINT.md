@@ -7119,6 +7119,34 @@ server, member and friend (`TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove`: th
 member stopped before the migration, a refusal after it restarting the old server on the old
 binaries and library).
 
+#### The client of this build is read by the last release's server
+
+A client newer than the server it talks to is an outage the client's own tests cannot see. The
+server runs the verbs a caller sends and parses each verb's flags by name, refusing one it does
+not know; so a flag added to the client alone stops that verb, silently, only where the two meet
+(the member's beat stopped on 2026-10-09 exactly this way). The release's own verb table is
+therefore a contract the next build is held to.
+
+`cmd/nova-sprint/testdata/last-release-verbs.golden` is the last release's table: every verb of
+the tool, and the flags it reads, each with the kind of value it takes (`flag.UnquoteUsage`'s
+word). `make compat-verbs` writes it from the last release tag, so the table is that release's
+own code and never a hand list: the target checks the tag out in a worktree, runs this tree's
+`TestWriteCompatGolden` there -- the test builds the table from the package under test with
+`verbFlags`, which runs a verb with `--help` and returns the flag set it built before it read or
+wrote anything -- and removes the worktree. `TestEveryVerbOfThisClientIsReadByTheLastRelease`
+reads the golden and holds this build's table to it: a verb or flag this client can send that the
+release does not read, or a flag whose value kind changed, is red and names itself, and the only
+tolerated differences are written down as declared removals and additions in `compat_test.go`. A
+client that has outrun the last release is red before it ships.
+
+The same compatibility is held end to end by a functional test, not the unit tier, since it needs
+the play, a store and a seat: `TestAdoptFromEachPastReleaseBeatsGreen`
+(`cmd/nova-sprint/adopt_past_release_functional_test.go`) reads each past cut's own
+`fleet/tools.yml` -- v1.1.0, v1.2.0 and v1.2.1, with every step and the friends' beat check --
+out of its release tag, runs the adopt verb with it on a scratch store and seat, and holds the
+seat's beat green. It is named as a functional test here because the unit tier has none of what
+it needs; the unit-tier half of the contract is the golden table above.
+
 #### store-latency-row-r.w2: where shows the store round trip the server measures
 
 The store latency was measured by hand with redis-cli (20 pings, then 500 on one connection) on
