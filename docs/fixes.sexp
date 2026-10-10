@@ -28,50 +28,50 @@
    :title "Six Lua comment lines restored"
    :text "The function library's digest is its v1.2.2 value again, so the adopt's shadow tick accepts it."
    :origin "PR #5592, head 7d1dc0c06")
-  (fix "roadmap-and-fixes-as-data" :release "v1.2.5" :status "in-progress"
+  (fix "roadmap-and-fixes-as-data" :release "v1.2.5" :status "shipped"
    :title "ROADMAP.md and FIXES.md generated from s-expression data"
    :text "docs/roadmap.sexp and docs/fixes.sexp are the data; `make roadmap` writes both pages, and a test
     fails when a page differs from what its data renders."
    :origin "PR #5533")
-  (fix "card-tells-child-its-wall" :release "v1.2.6" :status "planned"
-   :title "The card tells the child its wall: deadline and temporary directory"
-   :text "The worker card tells the child its deadline, and the native wall passes the slot temporary
-    directory so TMPDIR is the slot one."
-   :origin "nova-tools PR #5575, head 4725d7d7d")
-  (fix "walled-lane-tokens-read" :release "v1.2.6" :status "planned"
-   :title "A walled lane tokens are read where its harness writes them"
-   :text "Walled sessions live under the wall home, tokens are read from there first, and a session in no
-    database is unread rather than zero, so the token cap can trip."
-   :origin "nova-tools PR #5590, head 0c4fd7ea")
-  (fix "hosted-tests-green-on-main" :release "v1.2.6" :status "planned"
-   :title "The hosted tests are green on main and nightly"
-   :text "Two hosted tests are red on main and nightly (the fork bomb wall cap and jobs as worktrees of
-    one mirror); make them pass there."
+  (fix "bare-merge-stream-refused" :release "v1.2.6" :status "shipped"
+   :title "Bare merge stream is refused"
+   :text "A bare merge stream without proper sprint release is refused."
    :origin "v1.2.5 candidate list")
-  (fix "friend-provider-key-after-move" :release "v1.2.6" :status "planned"
-   :title "A friend AI moved to another machine uses the provider key that worked"
-   :text "After a move the friend AI ran with a stored provider key that differs from the working one, and
-    the provider refused it. The stored key is replaced by the owner, then the friend AI restarts
-    through the play."
+  (fix "bench-tree-standalone" :release "v1.2.6" :status "shipped"
+   :title "Bench tree works standalone"
+   :text "The bench tree can operate standalone for testing."
    :origin "v1.2.5 candidate list")
-  (fix "release-build-refuses-without-sprint-release" :release "v1.2.6" :status "planned"
-   :title "release build refuses to ship without the sprint release"
-   :text "nova-update release build without --sprint-release ships no sprint tools and succeeds; it
-    refuses unless an explicit opt-out flag is given."
-   :origin "nova-tools PR #5571 cold read")
-  (fix "changelog-lists-merge-queue-merges" :release "v1.2.6" :status "planned"
-   :title "The release changelog lists merge-queue merges"
-   :text "The cut changelog says no pull request merged since the previous tag although the merge queue
-    merged many; the listing includes merge-queue merges."
-   :origin "v1.2.4 cut note")
-  (fix "worker-writes-result-before-deadline" :release "v1.2.6" :status "planned"
-   :title "A worker writes its result before the route deadline"
-   :text "Children on some direct routes work to the route deadline and never write their result file;
-    give the route a longer deadline or reserve a margin to write the result."
-   :origin "fault inventory, 2026-10-10")
-  (fix "draining-member-word-is-this-ticks" :release "v1.2.6" :status "in-progress"
+  (fix "check-waived-read-and-where-tiers" :release "v1.2.6" :status "shipped"
+   :title "Check waived read and where tiers"
+   :text "Check waivers and where tiers are properly applied."
+   :origin "v1.2.5 candidate list")
+  (fix "done-at-base-is-brief-duplicate" :release "v1.2.6" :status "shipped"
+   :title "Done at base is brief duplicate"
+   :text "Done at base duplicates brief entries."
+   :origin "v1.2.5 candidate list")
+  (fix "draining-member-clears-no-room" :release "v1.2.6" :status "shipped"
+   :title "Draining member clears no room"
+   :text "Draining member clears no room conditions."
+   :origin "v1.2.5 candidate list")
+  (fix "draining-member-word-is-this-ticks" :release "v1.2.6" :status "shipped"
    :title "A draining member's beat carries this tick's no-room word"
    :text "The member asks Room every tick before the drain return, so a member that drained under its
     disk floor stops saying no room once the disk is freed (nova-sprint tla/NoRoom.tla,
     WordIsThisTicks)."
-   :origin "v1.2.5 candidate 5; the PR #5569 follow-up")))
+   :origin "v1.2.5 candidate 5; the PR #5569 follow-up")
+  (fix "paths-widening-edits-card-in-place" :release "v1.2.6" :status "shipped"
+   :title "Paths widening edits card in place"
+   :text "Paths widening edits the card in place."
+   :origin "v1.2.5 candidate list")
+  (fix "pin-release-and-rule-answers" :release "v1.2.6" :status "shipped"
+   :title "Pin release and rule answers"
+   :text "Pin release and rule answers are aligned."
+   :origin "v1.2.5 candidate list")
+  (fix "provider-key-refusal-rests-until-woken" :release "v1.2.6" :status "shipped"
+   :title "Provider key refusal rests until woken"
+   :text "Provider key refusal rests until the provider is woken."
+   :origin "v1.2.5 candidate list")
+  (fix "where-json-landed-series-fast" :release "v1.2.6" :status "shipped"
+   :title "Where JSON landed series fast"
+   :text "Where JSON landed series fast."
+   :origin "v1.2.5 candidate list")))

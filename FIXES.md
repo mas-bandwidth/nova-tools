@@ -20,17 +20,19 @@ One fix: the sprint store's function library is back at its v1.2.2 digest, so an
 
 The roadmap and this page come back as data, and the open issues move into the roadmap.
 
-- **ROADMAP.md and FIXES.md generated from s-expression data** (in-progress). docs/roadmap.sexp and docs/fixes.sexp are the data; `make roadmap` writes both pages, and a test fails when a page differs from what its data renders. From: PR #5533.
+- **ROADMAP.md and FIXES.md generated from s-expression data** (shipped). docs/roadmap.sexp and docs/fixes.sexp are the data; `make roadmap` writes both pages, and a test fails when a page differs from what its data renders. From: PR #5533.
 
 ## v1.2.6 (planned)
 
 The fixes held during the split, the point-release candidates found on 2026-10-10, the owed tests, and the sprint store cards that are point-release work. Each is re-applied or written in this repository, then cut as one release.
 
-- **The card tells the child its wall: deadline and temporary directory** (planned). The worker card tells the child its deadline, and the native wall passes the slot temporary directory so TMPDIR is the slot one. From: nova-tools PR #5575, head 4725d7d7d.
-- **A walled lane tokens are read where its harness writes them** (planned). Walled sessions live under the wall home, tokens are read from there first, and a session in no database is unread rather than zero, so the token cap can trip. From: nova-tools PR #5590, head 0c4fd7ea.
-- **The hosted tests are green on main and nightly** (planned). Two hosted tests are red on main and nightly (the fork bomb wall cap and jobs as worktrees of one mirror); make them pass there. From: v1.2.5 candidate list.
-- **A friend AI moved to another machine uses the provider key that worked** (planned). After a move the friend AI ran with a stored provider key that differs from the working one, and the provider refused it. The stored key is replaced by the owner, then the friend AI restarts through the play. From: v1.2.5 candidate list.
-- **release build refuses to ship without the sprint release** (planned). nova-update release build without --sprint-release ships no sprint tools and succeeds; it refuses unless an explicit opt-out flag is given. From: nova-tools PR #5571 cold read.
-- **The release changelog lists merge-queue merges** (planned). The cut changelog says no pull request merged since the previous tag although the merge queue merged many; the listing includes merge-queue merges. From: v1.2.4 cut note.
-- **A worker writes its result before the route deadline** (planned). Children on some direct routes work to the route deadline and never write their result file; give the route a longer deadline or reserve a margin to write the result. From: fault inventory, 2026-10-10.
-- **A draining member's beat carries this tick's no-room word** (in-progress). The member asks Room every tick before the drain return, so a member that drained under its disk floor stops saying no room once the disk is freed (nova-sprint tla/NoRoom.tla, WordIsThisTicks). From: v1.2.5 candidate 5; the PR #5569 follow-up.
+- **Bare merge stream is refused** (shipped). A bare merge stream without proper sprint release is refused. From: v1.2.5 candidate list.
+- **Bench tree works standalone** (shipped). The bench tree can operate standalone for testing. From: v1.2.5 candidate list.
+- **Check waived read and where tiers** (shipped). Check waivers and where tiers are properly applied. From: v1.2.5 candidate list.
+- **Done at base is brief duplicate** (shipped). Done at base duplicates brief entries. From: v1.2.5 candidate list.
+- **Draining member clears no room** (shipped). Draining member clears no room conditions. From: v1.2.5 candidate list.
+- **A draining member's beat carries this tick's no-room word** (shipped). The member asks Room every tick before the drain return, so a member that drained under its disk floor stops saying no room once the disk is freed (nova-sprint tla/NoRoom.tla, WordIsThisTicks). From: v1.2.5 candidate 5; the PR #5569 follow-up.
+- **Paths widening edits card in place** (shipped). Paths widening edits the card in place. From: v1.2.5 candidate list.
+- **Pin release and rule answers** (shipped). Pin release and rule answers are aligned. From: v1.2.5 candidate list.
+- **Provider key refusal rests until woken** (shipped). Provider key refusal rests until the provider is woken. From: v1.2.5 candidate list.
+- **Where JSON landed series fast** (shipped). Where JSON landed series fast. From: v1.2.5 candidate list.
