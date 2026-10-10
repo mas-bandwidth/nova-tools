@@ -1216,6 +1216,38 @@ finish-t28-1.1  s1-2  failed  rework  0.91  applied  nova-sprint rework s1-2 --o
 ANSWER OK rows=2 applied=2 would_apply=0 listed=0 refused=0 failed=0 left=0 outcomes=0 bar=0.80 record=./judgment.jsonl; run: nova-sprint inbox
 ```
 
+### The client of this build is read by the last release's server
+
+A client newer than the server it talks to stops the verb where the two meet,
+and the client's own tests cannot see it: the server parses a verb's flags by
+name and refuses one it does not know, so a flag added to the client alone is an
+outage (the member's beat stopped on 2026-10-09 exactly this way). The contract
+is the last release's verb table, `cmd/nova-sprint/testdata/last-release-verbs.golden`:
+every verb and the flags it reads, each with the kind of value it takes.
+`make compat-verbs` writes it from the last release tag -- the tag in a worktree,
+`TestWriteCompatGolden` run there computing the table from the package under
+test, the worktree removed -- so the table is that release's own code and never
+a hand list. `cmd/nova-sprint/compat_test.go`'s
+`TestEveryVerbOfThisClientIsReadByTheLastRelease` reads it and is red when this
+build can send a verb or flag the release does not read, or a flag whose value
+kind changed, unless the difference is written down as a declared removal or
+addition there ([SPEC-SPRINT.md, "The client of this build is read by the last
+release's server"](SPEC-SPRINT.md#the-client-of-this-build-is-read-by-the-last-releases-server)).
+
+### The adopt from each past cut beats green (functional)
+
+The same compatibility is held end to end by a functional test, not the unit
+tier, because it needs the play, a store and a seat: the adopt play is run from
+each past cut (v1.1.0, v1.2.0 and v1.2.1) on a scratch store and seat, and the
+beats of the adopted build must come up green. It is named
+`TestAdoptFromEachPastReleaseBeatsGreen`
+(`cmd/nova-sprint/adopt_past_release_functional_test.go`): it reads each cut's
+own `fleet/tools.yml` out of its release tag, runs the adopt verb with it on a
+scratch store and seat, and holds the seat's beat green. It carries
+`//go:build functional`, so it runs with the functional tier
+(`make test-functional`) and never on a pull request; the unit-tier half of the
+same contract is the golden table above.
+
 ## nova-work
 
 Run by `cmd/nova-work/firstrun_test.go` against a recorded conversation with
