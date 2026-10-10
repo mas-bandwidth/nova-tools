@@ -110,6 +110,26 @@ func TestFetchFirstRejectionRebuildsAndPushesAgain(t *testing.T) {
 	assert.Empty(t, f.left)
 }
 
+func TestAMovedBaseRebuildsBeforeTheFirstPushAndAgainAfterARejection(t *testing.T) {
+	t.Parallel()
+	// a batch landed before this one in the pass moved the base: the first push is
+	// preceded by one rebuild, and a fetch-first rejection rebuilds and pushes again.
+	f := &fakePush{
+		stream: "s1",
+		merged: true,
+		errs:   []error{errors.New("! [rejected] main -> main (fetch first)")},
+	}
+	sprint.DrivePush(sprint.PushDrive{Base: "main", Tip: "t0", Bound: 5, Wait: sprint.PushRebuildWait, Moved: true}, f)
+	assert.Equal(t, []int{1, 2}, f.befores)
+	assert.Equal(t, 2, f.rebuilds, "the moved base's rebuild and the rejection's rebuild")
+	assert.Equal(t, []time.Duration{sprint.PushRebuildWait}, f.waits)
+	assert.Equal(t, []string{"tip-1", "tip-2"}, f.pushes, "a moved base is rebuilt before the first push")
+	assert.Equal(t, "tip-2", f.landed)
+	assert.Empty(t, f.stopped)
+	assert.Empty(t, f.judgments)
+	assert.Empty(t, f.left)
+}
+
 func TestFetchFirstBoundLeavesTheBatchQueued(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
