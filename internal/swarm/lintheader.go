@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
@@ -536,4 +537,468 @@ func sortedHeaderKeys(m map[string]headerField) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// A REPORT'S FORM IS CHECKED BY THE MACHINE, NEVER BY A READER (docs/SPEC-SPRINT.md, the
+// report's form). A card may carry a FORM: block after STOP and before PATHS: the report
+// file's path, then one rule per line in a small fixed grammar:
+//
+//	line 1: <exact text>
+//	heading: <level> <regex>
+//	item: <field>, <field>, ...
+//	each item: one <noun>
+//	count: <min>..<max> items
+//
+// nova-sprint finish on a card with a FORM: block reads the named file and checks every
+// rule. A miss refuses the finish, one FORM: line per miss, at most MaxFormMisses; the
+// refusal spends no attempt and asks no read. A third miss on one attempt finishes it FAIL.
+// The card lint refuses a FORM: it cannot parse, as it refuses PATHS. The grammar lives
+// here, in the package the card runner already reads the header with, so a worker's binary
+// can render a skeleton without reaching a sprint's store.
+
+// FormKey is the header line that opens a FORM: block.
+const FormKey = "FORM"
+
+// MaxFormMisses is the most misses one refusal names: a report is repaired by the first
+// ten lines, and a longer list is the same refusal said twice.
+const MaxFormMisses = 10
+
+// FormMissesToFail is the number of misses on one attempt that finishes it FAIL.
+const FormMissesToFail = 3
+
+// FormRule is one rule of a FORM: block, Kind one of the five the grammar names.
+type FormRule struct {
+	Kind  string // line1, heading, item, each, count
+	Text  string // line1: the exact first line
+	Level int    // heading: the number of # marks
+	RE    string // heading: the regular expression
+	re    *regexp.Regexp
+	Field []string // item: the labelled fields, in order
+	Noun  string   // each: the noun each item names exactly once
+	Min   int      // count: the fewest items
+	Max   int      // count: the most items
+	Raw   string   // the rule as the brief wrote it
+}
+
+// Form is a card's FORM: block: the report file it names and the rules the report holds.
+type Form struct {
+	Path  string
+	Rules []FormRule
+}
+
+// HasFormLine says a brief carries a FORM: line, whether or not the block parses: the card
+// lint reads it to refuse a FORM: block it cannot parse, as it refuses a PATHS: line.
+func HasFormLine(brief string) bool {
+	for _, l := range strings.Split(brief, "\n") {
+		if k, _, ok := cardhdr.KeyValue(strings.TrimRight(l, "\r")); ok && k == FormKey {
+			return true
+		}
+	}
+	return false
+}
+
+// formRulePrefixes are the words a rule line starts with; a line after FORM: that starts
+// with one of them is a rule and must parse.
+var formRulePrefixes = []string{"line ", "heading", "item", "each item", "count"}
+
+// formHeaderKeys are the card's header keys. A line after FORM: that starts with one of
+// formRulePrefixes is a rule and must parse; a `KEY: value` line whose key is one of these
+// is the next header and ends the block; and any other non-blank line inside the block is
+// an unknown rule and is refused, as the card lint refuses a FORM: it cannot parse
+// (docs/SPEC-SPRINT.md, the report's form). The names are the exact upper-case keys of
+// cardTypedKeys, the brief's START and STOP, and the card's identity and routing keys.
+var formHeaderKeys = map[string]bool{
+	"KIND": true, "PATHS": true, "TEST": true, "LEGS": true, "SOURCE": true,
+	"START": true, "STOP": true,
+	"REPO": true, "BASE": true, "ROUTE": true, "NEW": true, "SHARED": true,
+	"WHO": true, "DEPENDS-ON": true, "ATTRIBUTION": true,
+}
+
+// ReadForm reads a brief's FORM: block. It returns an error when the block is not there,
+// when its path is empty, when a rule line does not parse, or when the block carries no
+// rule; the error names the brief line the defect sits on, as the card lint prints it.
+func ReadForm(brief string) (Form, error) {
+	lines := strings.Split(brief, "\n")
+	at := -1
+	var f Form
+	for i, l := range lines {
+		k, v, ok := cardhdr.KeyValue(strings.TrimRight(l, "\r"))
+		if !ok || k != FormKey {
+			continue
+		}
+		at = i
+		f.Path = strings.TrimSpace(v)
+		break
+	}
+	if at < 0 {
+		return Form{}, fmt.Errorf("no FORM: line")
+	}
+	if f.Path == "" {
+		return Form{}, fmt.Errorf("FORM: line %d names no report file", at+1)
+	}
+	for i := at + 1; i < len(lines); i++ {
+		line := strings.TrimRight(lines[i], "\r")
+		t := strings.TrimSpace(line)
+		if t == "" {
+			break
+		}
+		if formRuleLine(t) {
+			r, err := parseFormRule(t)
+			if err != nil {
+				return Form{}, fmt.Errorf("FORM: line %d: %v", i+1, err)
+			}
+			r.Raw = t
+			f.Rules = append(f.Rules, r)
+			continue
+		}
+		// Not a rule line: the next card header ends the block, and every other line is
+		// an unknown rule inside the block and is refused, as the card lint refuses a
+		// FORM: it cannot parse (docs/SPEC-SPRINT.md, the report's form).
+		if k, _, ok := cardhdr.KeyValue(line); ok && formHeaderKeys[k] {
+			break
+		}
+		return Form{}, fmt.Errorf("FORM: line %d: %q is no rule the grammar names", i+1, t)
+	}
+	if len(f.Rules) == 0 {
+		return Form{}, fmt.Errorf("FORM: line %d carries no rule", at+1)
+	}
+	for i := range f.Rules {
+		if f.Rules[i].Kind == "heading" {
+			re, err := regexp.Compile(f.Rules[i].RE)
+			if err != nil {
+				return Form{}, fmt.Errorf("FORM: heading: %q is no regular expression: %v", f.Rules[i].RE, err)
+			}
+			f.Rules[i].re = re
+		}
+	}
+	return f, nil
+}
+
+// formRuleLine says a line after FORM: is a rule the grammar names: its first word is one of
+// formRulePrefixes, so ReadForm parses it and refuses a rule the grammar does not hold. A line
+// that is not a rule is the next header (formHeaderKeys) or an unknown line, which ReadForm
+// refuses.
+func formRuleLine(line string) bool {
+	t := strings.TrimSpace(line)
+	for _, p := range formRulePrefixes {
+		if strings.HasPrefix(t, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// parseFormRule reads one rule line.
+func parseFormRule(line string) (FormRule, error) {
+	t := strings.TrimSpace(line)
+	if rest, ok := strings.CutPrefix(t, "line 1:"); ok {
+		text := strings.TrimSpace(rest)
+		if text == "" {
+			return FormRule{}, fmt.Errorf("line 1: names no text")
+		}
+		return FormRule{Kind: "line1", Text: text}, nil
+	}
+	if rest, ok := strings.CutPrefix(t, "heading:"); ok {
+		words := strings.SplitN(strings.TrimSpace(rest), " ", 2)
+		if len(words) != 2 || strings.TrimSpace(words[1]) == "" {
+			return FormRule{}, fmt.Errorf("heading: wants `<level> <regex>`")
+		}
+		level, err := strconv.Atoi(words[0])
+		if err != nil || level < 1 || level > 6 {
+			return FormRule{}, fmt.Errorf("heading: %q is no heading level from 1 to 6", words[0])
+		}
+		if _, err := regexp.Compile(words[1]); err != nil {
+			return FormRule{}, fmt.Errorf("heading: %q is no regular expression: %v", words[1], err)
+		}
+		return FormRule{Kind: "heading", Level: level, RE: words[1]}, nil
+	}
+	if rest, ok := strings.CutPrefix(t, "item:"); ok {
+		var fields []string
+		for _, f := range strings.Split(rest, ",") {
+			f = strings.TrimSpace(f)
+			if f == "" {
+				return FormRule{}, fmt.Errorf("item: has an empty field between its commas")
+			}
+			if !formFieldRE.MatchString(f) {
+				return FormRule{}, fmt.Errorf("item: %q is no field name", f)
+			}
+			fields = append(fields, f)
+		}
+		if len(fields) == 0 {
+			return FormRule{}, fmt.Errorf("item: names no field")
+		}
+		return FormRule{Kind: "item", Field: fields}, nil
+	}
+	if rest, ok := strings.CutPrefix(t, "each item:"); ok {
+		noun, ok := strings.CutPrefix(strings.TrimSpace(rest), "one ")
+		noun = strings.TrimSpace(noun)
+		if !ok || noun == "" {
+			return FormRule{}, fmt.Errorf("each item: wants `one <noun>`")
+		}
+		return FormRule{Kind: "each", Noun: noun}, nil
+	}
+	if rest, ok := strings.CutPrefix(t, "count:"); ok {
+		body := strings.TrimSpace(rest)
+		if !strings.HasSuffix(body, " items") {
+			return FormRule{}, fmt.Errorf("count: wants `<min>..<max> items`")
+		}
+		body = strings.TrimSpace(strings.TrimSuffix(body, " items"))
+		lo, hi, ok := strings.Cut(body, "..")
+		if !ok {
+			return FormRule{}, fmt.Errorf("count: wants `<min>..<max> items`")
+		}
+		min, err1 := strconv.Atoi(strings.TrimSpace(lo))
+		max, err2 := strconv.Atoi(strings.TrimSpace(hi))
+		if err1 != nil || err2 != nil || min < 0 || max < min {
+			return FormRule{}, fmt.Errorf("count: %q is no `<min>..<max>` with min <= max", body)
+		}
+		return FormRule{Kind: "count", Min: min, Max: max}, nil
+	}
+	return FormRule{}, fmt.Errorf("%q is no rule the grammar names", t)
+}
+
+// formFieldRE is what an item's labelled field may be: a Go-identifier word.
+var formFieldRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
+
+// formItemRE reads a numbered item's first line, `3. ...` or `3) ...`.
+var formItemRE = regexp.MustCompile(`^\s*(\d+)[.)]\s+(.*)$`)
+
+// FormMiss is one rule the report misses: the report line, the rule as the brief wrote
+// it and what was found there.
+type FormMiss struct {
+	Line  int    `json:"line"`
+	Rule  string `json:"rule"`
+	Found string `json:"found"`
+}
+
+// String is the refusal line the finish prints: `FORM: <file>:<line>: <rule> (<found>)`.
+func (m FormMiss) String(file string) string {
+	return fmt.Sprintf("FORM: %s:%d: %s (%s)", file, m.Line, m.Rule, m.Found)
+}
+
+// FormOutcome is what a finish does with a report its card's FORM checks.
+type FormOutcome int
+
+const (
+	FormPass   FormOutcome = iota // the report holds every rule
+	FormRefuse                    // the report misses: refuse the finish, spend no attempt
+	FormFail                      // the third miss on one attempt: finish it FAIL
+)
+
+// DecideForm is the finish's form decision: the report held against the form, with prior
+// the form refusals this attempt already spent. A pass goes on; a miss refuses the finish,
+// no attempt and no read spent, each miss one line at most MaxFormMisses; the third miss
+// on the attempt is FormFail and the misses are the report.
+func DecideForm(prior int, f Form, report string) (FormOutcome, []FormMiss) {
+	misses := CheckForm(f, report)
+	return FormDecision(prior, misses), misses
+}
+
+// FormDecision is the outcome of the misses a finish found, with prior the form refusals
+// this attempt already spent: no miss passes, a miss refuses, and the miss that makes
+// FormMissesToFail on the attempt fails it. The finish uses it where the report could not
+// be read at all (the one miss is the unread file), DecideForm where it was checked.
+func FormDecision(prior int, misses []FormMiss) FormOutcome {
+	if len(misses) == 0 {
+		return FormPass
+	}
+	if prior+1 >= FormMissesToFail {
+		return FormFail
+	}
+	return FormRefuse
+}
+
+// CheckForm checks report against every rule of the form, in the form's order, and returns
+// the misses at most MaxFormMisses.
+func CheckForm(f Form, report string) []FormMiss {
+	lines := formLines(report)
+	items := formItems(lines)
+	var out []FormMiss
+	add := func(m FormMiss) {
+		if len(out) < MaxFormMisses {
+			out = append(out, m)
+		}
+	}
+	for _, r := range f.Rules {
+		switch r.Kind {
+		case "line1":
+			found := ""
+			if len(lines) > 0 {
+				found = lines[0]
+			}
+			if found != r.Text {
+				add(FormMiss{Line: 1, Rule: r.Raw, Found: fmt.Sprintf("the first line is %q", found)})
+			}
+		case "heading":
+			ok := false
+			for _, l := range lines {
+				level, text, is := formHeading(l)
+				if is && level == r.Level && r.re.MatchString(text) {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				add(FormMiss{Line: 1, Rule: r.Raw, Found: fmt.Sprintf("no level-%d heading matches %q", r.Level, r.RE)})
+			}
+		case "item":
+			for _, it := range items {
+				for i, field := range r.Field {
+					at := formFieldAt(it.Text, field)
+					if at < 0 {
+						add(FormMiss{Line: it.Line, Rule: r.Raw, Found: fmt.Sprintf("item %d has no %q field", it.N, field)})
+						break
+					}
+					if i > 0 && at < formFieldAt(it.Text, r.Field[i-1]) {
+						add(FormMiss{Line: it.Line, Rule: r.Raw, Found: fmt.Sprintf("item %d has %q before %q", it.N, field, r.Field[i-1])})
+						break
+					}
+				}
+			}
+		case "each":
+			for _, it := range items {
+				if n := formWordCount(it.Text, r.Noun); n != 1 {
+					add(FormMiss{Line: it.Line, Rule: r.Raw, Found: fmt.Sprintf("item %d names %d %s", it.N, n, r.Noun)})
+				}
+			}
+		case "count":
+			if len(items) < r.Min || len(items) > r.Max {
+				add(FormMiss{Line: 1, Rule: r.Raw, Found: fmt.Sprintf("the report has %d items", len(items))})
+			}
+		}
+	}
+	return out
+}
+
+// formLines is a report's lines, the trailing \r of a CRLF file dropped.
+func formLines(report string) []string {
+	lines := strings.Split(report, "\n")
+	for i := range lines {
+		lines[i] = strings.TrimRight(lines[i], "\r")
+	}
+	return lines
+}
+
+// formItem is one numbered item: the number it carries, the line it opens on and its
+// whole text (the following lines through the next item or heading).
+type formItem struct {
+	N    int
+	Line int
+	Text string
+}
+
+// formItems reads a report's numbered items, in order: a line `3. ...`, the lines under it
+// through the next numbered line, heading or blank line joining its text.
+func formItems(lines []string) []formItem {
+	var out []formItem
+	for i := 0; i < len(lines); i++ {
+		m := formItemRE.FindStringSubmatch(lines[i])
+		if m == nil {
+			continue
+		}
+		n, _ := strconv.Atoi(m[1])
+		it := formItem{N: n, Line: i + 1, Text: m[2]}
+		for j := i + 1; j < len(lines); j++ {
+			if formItemRE.MatchString(lines[j]) || strings.TrimSpace(lines[j]) == "" {
+				break
+			}
+			if _, _, is := formHeading(lines[j]); is {
+				break
+			}
+			it.Text += " " + strings.TrimSpace(lines[j])
+			i = j
+		}
+		out = append(out, it)
+	}
+	return out
+}
+
+// formHeading reads a markdown heading: its # level and its text; is false for a line
+// that is no heading.
+func formHeading(line string) (level int, text string, is bool) {
+	t := strings.TrimLeft(line, " \t")
+	if !strings.HasPrefix(t, "#") {
+		return 0, "", false
+	}
+	for level < len(t) && t[level] == '#' {
+		level++
+	}
+	if level > 6 {
+		return 0, "", false
+	}
+	return level, strings.TrimSpace(t[level:]), true
+}
+
+// formFieldAt is the byte offset of the labelled field `field:` in an item's text; -1 when
+// the item does not name it.
+func formFieldAt(text, field string) int {
+	return strings.Index(strings.ToLower(text), strings.ToLower(field)+":")
+}
+
+// formWordCount is how many whole words equal noun in text, case-insensitively.
+func formWordCount(text, noun string) int {
+	n := 0
+	for _, w := range strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9') && r != '_' && r != '-'
+	}) {
+		if w == strings.ToLower(noun) {
+			n++
+		}
+	}
+	return n
+}
+
+// FormRefusalText is the refusal a form miss prints: one line per miss, at most
+// MaxFormMisses, as the finish's `FORM: <file>:<line>: <rule> (<found>)` lines.
+func FormRefusalText(path string, misses []FormMiss) string {
+	var lines []string
+	for _, m := range misses {
+		lines = append(lines, m.String(path))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// ReportSkeleton renders a fill-in skeleton of the report a form asks for: the first line,
+// the heading, and one item per labelled field with the fields and the noun left empty, so
+// a card can carry it under FILL IN and a flash model copies rather than composes.
+func ReportSkeleton(f Form) string {
+	first := "Verdict: LAND"
+	level, heading := 0, ""
+	n := 1
+	var fields []string
+	noun := ""
+	for _, r := range f.Rules {
+		switch r.Kind {
+		case "line1":
+			first = r.Text
+		case "heading":
+			level, heading = r.Level, strings.Trim(r.RE, "^$")
+		case "item":
+			fields = r.Field
+		case "each":
+			noun = r.Noun
+		case "count":
+			if r.Min > 0 {
+				n = r.Min
+			} else if r.Max > 0 {
+				n = 1
+			}
+		}
+	}
+	var b strings.Builder
+	b.WriteString(first + "\n")
+	if heading != "" || level > 0 {
+		b.WriteString("\n" + strings.Repeat("#", max(level, 1)) + " " + heading + "\n")
+	}
+	for i := 1; i <= n; i++ {
+		b.WriteString("\n" + strconv.Itoa(i) + ". ")
+		for _, field := range fields {
+			b.WriteString(field + ": ")
+		}
+		if noun != "" {
+			b.WriteString(noun + ": ")
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
 }

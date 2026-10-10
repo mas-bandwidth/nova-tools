@@ -2332,6 +2332,52 @@ no PATHS-PROPOSED line, an attempt with no pushed head, no clone, a glob that cl
 `TestAWidenReadsThePathBeforeTheProse`). `recut --widen` is retired: it refuses, exit 2,
 nothing written, naming `brief <id> --widen` to run instead.
 
+### The report's form: a FORM: block, checked at the finish
+
+A card whose product is a prose report in a required form may carry a `FORM:` block after
+`STOP:` and before `PATHS:`. The form is the machine's check, never a reader's: the finish
+refuses a report that misses it, so the lane fixes the report in the same attempt instead of
+spending two reads, a rework and a round trip on a form miss (the owner, 2026-10-07: "I want
+everything that is not the model's fault fixed. This means better cards. Better instructions
+etc.").
+
+The block opens with the report file's path (`FORM: outbox/<job>/REPORT.md`) and then one rule
+per line in a small fixed grammar:
+
+- `line 1: <exact text>` — the report's first line is that text (for a work card,
+  `line 1: Verdict: LAND`);
+- `heading: <level> <regex>` — the report carries a Markdown heading of that `#` level whose
+  text matches the regular expression;
+- `item: <field>, <field>, ...` — every numbered item (`1. ...`) names these labelled fields,
+  in this order;
+- `each item: one <noun>` — every numbered item names the noun exactly once (one command);
+- `count: <min>..<max> items` — the report carries a number of numbered items in the range.
+
+The card lint (`nova-sprint add`, `holdCardChecks`) refuses a `FORM:` block it cannot parse,
+as it refuses a `PATHS:` line: a missing or empty path, an unknown rule, a bad level, a bad
+regular expression, an empty item field, a bad noun, and a `count:` that is not
+`<min>..<max>` with min at most max.
+
+`nova-sprint finish` reads the named file at the finish's head and checks every rule. The
+file is the blob `<head>:<path>` in the repository the brief's REPO names, read from land's
+clone of it (the finish's branch is fetched when that commit is not in the clone yet). It
+is not a file in the finish process's working directory: a friend's finish arrives as an
+argv on the sprint server, and a missing file there is not the report. A miss
+refuses the finish, one line per miss at most ten,
+`FORM: <file>:<line>: <rule> (<what was found>)`; the refusal spends no attempt and asks no
+read, and the lane fixes the report and finishes again. The work card counts the refusals of
+one attempt (`form_refusals`); the third miss on one attempt finishes the attempt FAIL with
+the misses as its report. `nova-swarm template --name report --form <FORM block>` prints a
+fill-in skeleton of the report (the first line, the heading, and one item per labelled field
+with the fields empty), so a brief can carry it under FILL IN and a flash model copies rather
+than composes.
+
+A read asked of a card with a `FORM:` block is told the form passed the lint and judges the
+substance; a broken-for-form verdict is not a verdict the ask accepts, because the finish
+refusal is where form lives (`FormReadNote`, `FormFinding`). The seat's rule: a prose-product
+card carries a `FORM:` block and a skeleton, and "readers check line by line" is never a
+brief's instruction again.
+
 ## 3. The lifecycle of a primary
 
 Six states, fixed, in one Go file (`internal/sprint/lifecycle.go`) mirrored by
