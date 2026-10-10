@@ -42,9 +42,6 @@ import (
 //	tier-set              line 1 names a tier, never `-`
 //	tla-is-frontier       a card whose PATHS covers tla/ is tier frontier
 //	who-serves-tier       the friend WHO names (or, for any friend, some friend) serves the tier
-//	personal-name         a SOURCE or PATHS line names no person in prose; the names come from
-//	                      the caller and a token with a slash or a `.md` suffix is a path, not a
-//	                      name (docs/SPEC-CARD-CONTRACT.md section 6, the base check of the same name)
 //
 // NO EVIDENCE IS NOT NEGATIVE EVIDENCE, as the base checks have it: a check that needs the
 // tree and was handed none draws its finding with MISSING, naming what is missing. A brief
@@ -66,7 +63,6 @@ var BriefBaseRemedies = map[string]string{
 	"tier-set":             "line 1 names the card's tier, `tier: flash|pro|heavy|frontier`; a card with no tier, or `-`, was dealt to friends who could not serve it",
 	"tla-is-frontier":      "a card whose PATHS: covers tla/ changes a TLA+ model, and a model is the frontier tier's work: write `tier: frontier` on line 1, or take tla/ out of PATHS: and give the model to its own card",
 	"who-serves-tier":      "the friend WHO: names serves the card's tier (her row's tiers, else her class), or for `WHO: friend` some friend does; name a friend who serves it, raise the tier to one she serves, or drop the WHO: line so the fleet deals it",
-	"personal-name":        "a SOURCE or PATHS line refuses a person's name in prose; a token containing a slash or ending in `.md` is a path, not a name, and a name matches only as a whole word (`every` is not `eve`). The names come from the caller -- the coordinator, the owner and the friends table -- so name the role (the owner, a friend), never the person",
 }
 
 // LedgerKind is the KIND: of a ledger card, the card nova-card generate cuts from a
@@ -102,11 +98,6 @@ type BriefBase struct {
 	Listed []string
 	// Friends is each friend's tiers, by name; nil when the friends table was not read.
 	Friends map[string][]string
-	// Names are the personal names a brief may not carry in prose, from the caller: the
-	// coordinator's, the owner's and the friends table's (docs/SPEC-CARD-CONTRACT.md section 6,
-	// `personal-name`). A name inside a path token (a slash or a `.md` suffix) is not a
-	// personal name, and an empty set checks no name.
-	Names []string
 }
 
 // BriefFix is the corrected header lines of a brief: each line the checks would change, as it
@@ -388,19 +379,6 @@ func LintBrief(raw []byte, bb BriefBase) ([]CardHeaderFinding, BriefFix) {
 		}
 	}
 
-	// 12. personal-name: the card check of the same name, run at add where the caller's
-	// names are known (the caller's Names and the friends table it handed over); a path
-	// token is not a name (docs/SPEC-CARD-CONTRACT.md section 6).
-	names := briefPersonalNames(bb)
-	if source := h["SOURCE"]; source.found {
-		if name, ok := hasPersonalName(source.value, names); ok {
-			add("personal-name", source.line, fmt.Sprintf("SOURCE %q names the person %q in prose", oneLineCap(source.value, 80), name))
-		}
-	}
-	if name, ok := hasPersonalName(pathsF.value, names); ok {
-		add("personal-name", pathsF.line, fmt.Sprintf("PATHS %q names the person %q in prose", oneLineCap(pathsF.value, 80), name))
-	}
-
 	var fix BriefFix
 	if addPaths = notIn(uniq(addPaths), paths); len(addPaths) > 0 {
 		fix = append(fix, "PATHS: "+strings.Join(append(slices.Clone(paths), addPaths...), ","))
@@ -415,18 +393,6 @@ func LintBrief(raw []byte, bb BriefBase) ([]CardHeaderFinding, BriefFix) {
 		fix = append(fix, frontierLine(firstLine(raw)))
 	}
 	return out, fix
-}
-
-// briefPersonalNames is the names the personal-name check reads at add: the caller's
-// explicit Names and the names of the friends table it handed over, sorted so the name
-// a finding reports is stable (docs/SPEC-CARD-CONTRACT.md section 6).
-func briefPersonalNames(bb BriefBase) []string {
-	names := slices.Clone(bb.Names)
-	for name := range bb.Friends {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	return names
 }
 
 // BriefRemedy is what a brief token wants: BriefBaseRemedies, else CardBaseRemedies.

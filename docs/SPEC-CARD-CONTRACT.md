@@ -579,17 +579,13 @@ with no clock and no store). What it holds:
   (`tier-line`) and a TEST whose package is a directory its PATHS names
   (`test-outside-paths`); no brief carries a name `--name` gives outside
   double-quoted words (the owner's, quoted), its own id or its `WHO:` line
-  (`personal-name`; a token with a slash or ending in `.md` is a path, never a
-  name, and a name matches only as a whole word, so an ordinary word that holds
-  one -- `every`, `summary` -- is not the name), nor the id of a card
-  `--dropped` gives (`dropped-card`),
+  (`personal-name`), nor the id of a card `--dropped` gives (`dropped-card`),
   nor `By:` followed by such a name, quoted or not, `friend.<name>` included
   (`author-name`; `Co-Authored-By:` is no `By:`;
   `TestABriefNamesNoFriendAsAuthor`).
   The tree holds no name of the deployment (internal/ci TestGeneralityText),
   so the names come from the caller: `--name` to nova-card, the store's
-  coordinator, owner and friends table to the add, and `--names <file>` to
-  `nova-swarm lint --base-check`.
+  coordinator, owner and friends table to the add.
 - A card whose PATHS reach a model or a configuration under `tla/` runs the
   model in its own gate: its STEP 4 adds, on a Linux TLC bench, `make tlc` for
   each group `tlacheck groups --stale` lists (the groups of the cases the edit

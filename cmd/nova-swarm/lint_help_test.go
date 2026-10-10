@@ -35,11 +35,11 @@ func TestLintHelpExplainsEveryFlag(t *testing.T) {
 	// a flag's placeholder is its type word, not the first backquoted words of its text
 	assert.Contains(t, stdout, "--child-rules-file <file>  ", "--child-rules-file's placeholder is not <file>:\n%s", stdout)
 	assert.NotContains(t, stdout, "<[name]", "--child-rules-file's placeholder is not <file>:\n%s", stdout)
-	for _, want := range []string{"--base-check", "--legs", "--p95", "--names", "--repo", "--child-rules-file"} {
+	for _, want := range []string{"--base-check", "--legs", "--p95", "--repo", "--child-rules-file"} {
 		assert.Contains(t, stdout, want, "lint -h does not list %s", want)
 	}
-	// the banner line lint -h quotes offers the base check with its four inputs
-	for _, want := range []string{"[--base-check [--repo <dir>] [--legs <file>] [--p95 <file>] [--names <file>]]", "[--child-rules | --child-rules-file <file>]", "the four checks of a coding card"} {
+	// the banner line lint -h quotes offers the base check with its three inputs
+	for _, want := range []string{"[--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]]", "[--child-rules | --child-rules-file <file>]", "the four checks of a coding card"} {
 		assert.Contains(t, stdout, want, "lint -h does not quote %q", want)
 	}
 }
