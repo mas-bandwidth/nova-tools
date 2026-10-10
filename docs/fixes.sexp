@@ -15,10 +15,10 @@
    :text "One fix: the sprint store's function library is back at its v1.2.2 digest, so an adopt can load it.")
   (release "v1.2.5" :status "in-progress"
    :text "The roadmap and this page come back as data, and the open issues move into the roadmap.")
-  (release "v1.2.6" :status "planned"
-   :text "The fixes held during the split, the point-release candidates found on 2026-10-10, the owed
-    tests, and the sprint store cards that are point-release work. Each is re-applied or written in
-    this repository, then cut as one release."))
+   (release "v1.2.6" :status "planned"
+    :text "The fixes held during the split, the point-release candidates found on 2026-10-10, the owed
+     tests, and the sprint store cards that are point-release work. Each is re-applied or written in
+     this repository, then cut as one release."))
  :items
  ((fix "split-sprint-tools-leave" :release "v1.2.3" :status "shipped"
    :title "The sprint tools leave nova-tools"
@@ -93,14 +93,19 @@
     nova_friend_deny_self to a reinstall whose plist records none, and with no flag the daemon denies
     the seat's working root, so no lane exits 125 with bad_profile for a missing deny list."
    :origin "a one-shot friend host, 2026-10-10: every lane exit 125, the daemon ran with no --deny-self")
-  (fix "friend-lanes-are-thin-clients" :release "v1.2.6" :status "in-progress"
-   :title "A friend's lanes are thin clients of the sprint server"
-   :text "Each lane asks the server what it holds (take --lane), runs exactly that, and reports by the
-    ids, epoch and lane the server gave; a refusal drops the job and the lane asks again. lanes.json
-    keeps sessions and owed stop-returns only, never what a lane holds, and reads go through the
-    same lane loop. The model is tla/FriendLane.tla."
-   :origin "a one-shot friend host, 2026-10-10: took logged while the server showed the card ready, and progress sent at epoch 0")
-  (fix "friend-wall-reads-its-pinned-harness" :release "v1.2.6" :status "shipped"
+   (fix "fleet-loops-refuses-version-mismatch" :release "v1.2.6" :status "planned"
+    :title "A fleet loops play refuses when its checkout version differs from the adopted release"
+    :text "Fleet plays run only from the checkout of the adopted release, and refuse when the
+     checkout's version differs from the release installed on the host."
+    :origin "dogfood 2026-10-10 evening: fleet-only restart")
+   (fix "friend-lanes-are-thin-clients" :release "v1.2.6" :status "in-progress"
+    :title "A friend's lanes are thin clients of the sprint server"
+    :text "Each lane asks the server what it holds (take --lane), runs exactly that, and reports by the
+     ids, epoch and lane the server gave; a refusal drops the job and the lane asks again. lanes.json
+     keeps sessions and owed stop-returns only, never what a lane holds, and reads go through the
+     same lane loop. The model is tla/FriendLane.tla."
+    :origin "a one-shot friend host, 2026-10-10: took logged while the server showed the card ready, and progress sent at epoch 0")
+   (fix "friend-wall-reads-its-pinned-harness" :release "v1.2.6" :status "shipped"
    :title "A friend's lane wall reads the pinned harness it runs"
    :text "nova-friend install takes --wall-reads and writes it into the agent, and the seat play passes
     nova_friend_wall_reads to a reinstall whose plist records none, so a pinned harness whose shim
