@@ -28,10 +28,11 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "wait-pong", Flags: store},
 		{Verb: "watch", Flags: append([]string{"--as", "ada"}, store...)},
 		{Verb: "status"},
+		{Verb: "peers", Flags: store},
 		{Verb: "reach", Flags: store},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, cli, "nova-friend", "run", "beat", "install", "uninstall", "check", "ping", "pong", "wait-pong", "watch", "status", "reach", "version")
+	testverbhelp.HelpVerb(t, cli, "nova-friend", "run", "beat", "install", "uninstall", "check", "ping", "pong", "wait-pong", "watch", "status", "peers", "reach", "version")
 }
 
 func TestCommandReferenceNamesEveryKnownHarness(t *testing.T) {
@@ -148,4 +149,35 @@ func TestRunHelpNamesTheEnvelopeAndTheTextLimit(t *testing.T) {
 	}
 	require.Contains(t, help, "and <n> more: nova-bus recv --as <me> --all")
 	require.NotContains(t, help, "the rest is the next turn")
+}
+
+// The peers verb's help names every flag, every output line, every JSON field
+// and every exit code, and one example that runs as written; docs/CLI.md
+// carries the same text.
+func TestPeersHelpAndCommandReferenceNameEveryFlagLineFieldAndExit(t *testing.T) {
+	t.Parallel()
+	help := newRig(t).cli().Do(t, "peers", "-h").Exit(0).Stdout
+	raw, err := os.ReadFile("../../docs/CLI.md")
+	require.NoError(t, err)
+	doc := string(raw)
+	for _, text := range []string{
+		"--names <string>", "--redis <string>", "--max <int>", "--json", "--watch", "--every <duration>",
+		"PEER name=<n> state=<up|asleep|down> age=<seconds, one decimal, or -> seen=<RFC3339 or -> harness=<h> route=<push|defer|passive|-> queue=<n> working=<n> width=<n> proved=<seconds ago, or -> version=<v>",
+		"PEERS OK up=<n> asleep=<n> down=<n> of=<n>",
+		"PEERS MORE kind=PEER shown=<m> total=<n> --max <n> raises the ceiling, --max 0 lists all",
+		`{"status":"ok","word":"OK","peers":[{"name":..,"state":..,"age_s":..,"seen":..,"harness":..,"route":..,"queue":..,"working":..,"width":..,"proved_s":..,"version":..}],"up":n,"asleep":n,"down":n,"of":n}`,
+		"Exit 0 when read (some friends down is a fact, not a failure)", "2 when the store does not answer or a flag is wrong",
+		"example: nova-friend peers --names bob",
+	} {
+		require.Contains(t, help, text)
+		require.Contains(t, doc, text)
+	}
+	for _, line := range strings.Split(help, "\n") {
+		if strings.HasPrefix(line, "PEER ") || strings.HasPrefix(line, "PEERS ") {
+			require.Contains(t, doc, line, "docs/CLI.md carries the help's line")
+		}
+	}
+	for _, word := range []string{"sprint"} {
+		require.NotContains(t, strings.ToLower(help), word, "the help says no sprint word")
+	}
 }

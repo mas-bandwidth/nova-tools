@@ -1412,6 +1412,29 @@ you that is not your own and not a PING or a PONG (or whatever
 `--skip-subject` names), or on a line a deliver adapter appends to the wake
 file, so the next turn of the session is the message that arrived.
 
+### Peers
+
+The help of `nova-friend peers -h` says, and this is the same text:
+
+```
+A verb any tool reads to learn who is up, over presence records on the bus store
+(docs/SPEC-FRIEND.md, Presence). Discovers every friend with a presence record
+(bus2:presence:*) and adds any names given in --names; a friend in --names with no
+presence record is down with seen=-.
+
+One line per friend, in name order:
+PEER name=<n> state=<up|asleep|down> age=<seconds, one decimal, or -> seen=<RFC3339 or -> harness=<h> route=<push|defer|passive|-> queue=<n> working=<n> width=<n> proved=<seconds ago, or -> version=<v>
+then PEERS OK up=<n> asleep=<n> down=<n> of=<n>.
+Past --max (default 20, 0 lists all) one MORE line stands for the rest:
+PEERS MORE kind=PEER shown=<m> total=<n> --max <n> raises the ceiling, --max 0 lists all
+
+--json prints one JSON object on standard output:
+{"status":"ok","word":"OK","peers":[{"name":..,"state":..,"age_s":..,"seen":..,"harness":..,"route":..,"queue":..,"working":..,"width":..,"proved_s":..,"version":..}],"up":n,"asleep":n,"down":n,"of":n}
+Exit 0 when read (some friends down is a fact, not a failure); 2 when the store does not answer or a flag is wrong.
+--watch redraws the lines every --every (default 1s, above 0) until interrupted.
+example: nova-friend peers --names bob
+```
+
 ### Commands
 
 | Command | What it does |
@@ -1480,6 +1503,7 @@ usage:
   nova-friend refuse-go --name go|gofmt
   nova-friend resume --as <me> [--dir <d>] [--state-dir <d>] [--dry-run]
   nova-friend serve --as <coordinator> [--redis <addr>] [--dry-run]
+  nova-friend peers [--names <a,b,...>] [--redis <addr>] [--max <n>] [--json] [--watch [--every <duration>]]
   nova-friend version
   nova-friend help [<verb>]
 
@@ -1806,6 +1830,24 @@ exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; stat
 effect: delivery: sends beyond this machine: the coordinator's ping loop; a PING to every friend each second, until a signal
 ```
 
+`nova-friend peers -h`:
+
+```
+usage: nova-friend peers [flags]
+from `nova-friend help`:
+  nova-friend peers [--names <a,b,...>] [--redis <addr>] [--max <n>] [--json] [--watch [--every <duration>]]
+example: nova-friend peers --names bob
+flags:
+  --every <duration>  with --watch: interval between redraws (default: 1s)
+  --json  print the result as one JSON object instead of lines
+  --max <int>  items listed before one MORE line stands for the rest; 0 lists all
+  --names <string>  comma-separated friend names to check in addition to discovered presence records
+  --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
+  --watch  redraw the lines every --every until interrupted
+exit codes: 0 done (some friends down is a fact, not a failure); 2 could not run (the store does not answer or a flag is wrong).
+effect: inspection: reads, writes nothing: reads presence records from the bus store
+```
+
 `nova-friend version -h`:
 
 ```
@@ -2122,7 +2164,7 @@ once the row's unit runs. What it gets wrong first: no `--redis` and no
 | `wait-pong --from <friend> --nonce <n> [--timeout <d>]` | Waits for the pong on the log, from the friend's own stream |
 | `watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]` | The coordinator's wake: waits on its stream, its wake file and events (subject `event:`), prints one line per wake, then `WATCH OK after=<cursor>` (exit 1 `WATCH NONE` past `--timeout`); the cursor is saved in the state directory |
 | `status --as <me> --dir <d> [--state-dir <d>]` | The daemon's state, the last pong, the queue file's counts, and the envelope size: `envelope=<n>` messages the last turn's envelope carried and `envelope_bytes=<b>` its size (at most the harness's text limit, 262144 bytes unless it names its own; the first message always goes in; 0 before the first) |
-| `serve --as <coordinator> [--redis <addr>] [--dry-run]` | The coordinator's ping loop: a `PING` to every friend row each second, one line per friend up or down (ten seconds without a pong); until a signal |
+| `serve --as <coordinator> [--redis <addr>] [--dry-run]` | The coordinator's ping loop: a `PING` to every friend row each second, one line per friend up or down (ten seconds without a pong); until a signal |\n| `peers [--names <a,b,...>] [--redis <addr>] [--max <n>] [--json] [--watch [--every <duration>]]` | The presence records on the bus store: one line per friend, who is up, asleep or down |
 | `version`, `help [<verb>]` | The version line; the banner, or a verb's help |
 
 Every store verb takes `--redis <host:port>` (else `NOVA_BUS_REDIS`), the

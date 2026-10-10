@@ -175,6 +175,32 @@ only after a session pong; a challenge is open for less than a window; the
 outage is said exactly once; only the current nonce ends a challenge; and a
 challenge ends.
 
+## Presence
+
+One record per friend on the bus store, the hash `bus2:presence:<name>`. The daemon writes its own fields every second: one `HSET` of those fields and a `PEXPIRE` of 60 seconds, in one pipeline. A reader tells down (the record is there and `seen` is stale) from gone (no record: the daemon never ran, or it has been a minute dead and the key expired).
+
+The fields are `name`, `seen` (RFC3339 UTC, with milliseconds), `instance` (the daemon run's id), `harness`, `route` (`push`, `defer`, or `passive`: how a message reaches the open session now), `asleep` (`0` or `1`), `queue`, `working`, `width` (numbers the daemon knows, `0` when it knows none), `proved` (RFC3339 of the coordinator's last proved keepalive, empty when none), and `version`. When the daemon has marked the session broken it also writes `broken` (RFC3339 of the mark) and `reason` (the refusal line).
+
+The daemon's write names those fields and no `proved`, so it does not wipe a coordinator's field and it does not replace the hash. The coordinator's keepalive writes only `proved`, and only when the key already exists. It does not refresh the expiry (no `PEXPIRE`), so a dead daemon's record still expires. A friend with no record is left with none. A generation a caller passes is not a field and is not stored.
+
+The state is one pure function of the record and a clock, `PresenceState` in `internal/friend` (this section is the rule). Up when `seen` is within `DownAfter` (10 seconds) and `asleep` is `0`. Asleep when `seen` is within 10 seconds and `asleep` is `1`. Down when `seen` is older than 10 seconds, missing, or zero, when the record is gone, or when `broken` is set, whatever `seen` says. At exactly 10 seconds the state is down, asleep or not: `now` minus `seen` under 10 seconds is fresh, and an age of 10 seconds or more is down.
+
+The daemon's `--server` has no default. With none, the daemon beats nothing and this record is the whole presence. With one, the beat runs beside the delivery loop, on its own goroutine, under a deadline under one second, so a server that does not answer never delays a delivery, a pong, or a presence write. The failure is one record line a minute and never a change of this state. `install` without `--server` writes an agent that names no server.
+
+`DownAfter` is the same 10 seconds as the coordinator's ping.
+
+### Readers (nova-friend peers)
+
+A verb any tool reads to learn who is up: `nova-friend peers [--names <a,b,...>] [--redis <addr>] [--max <n>] [--json] [--watch [--every <duration>]]`. The names are every `bus2:presence:*` record found (SCAN, bounded) plus `--names`; a name in `--names` with no record is down with `seen=-`.
+
+One line per friend, in name order: `PEER name=<n> state=<up|asleep|down> age=<seconds, one decimal, or -> seen=<RFC3339 or -> harness=<h> route=<push|defer|passive|-> queue=<n> working=<n> width=<n> proved=<seconds ago, or -> version=<v>`; then `PEERS OK up=<n> asleep=<n> down=<n> of=<n>` (MORE as the skeleton says past --max, default 20, 0 all).
+
+`--json` prints one JSON object on standard output: `{"status":"ok","word":"OK","peers":[{"name":..,"state":..,"age_s":..,"seen":..,"harness":..,"route":..,"queue":..,"working":..,"width":..,"proved_s":..,"version":..}],"up":n,"asleep":n,"down":n,"of":n}`.
+
+Exit 0 when read (some friends down is a fact, not a failure); 2 when the store does not answer or a flag is wrong.
+
+`--watch` redraws the lines every `--every` (default 1s, above 0) until interrupted: the coordinator's live view, replacing the hand ping loop's log.
+
 ## Presence (internal/friend/presence.go)
 
 The finding of 2026-10-04: three friends read up with eight cards each while

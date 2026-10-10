@@ -56,6 +56,7 @@ type rig struct {
 	alive        friend.Aliver
 	deaf         bool              // bob's opencode session takes a turn and never runs the pong line
 	fs           *friendtest.MemFS // the harness settings' filesystem: bob's directory /w/bob
+	presenceKeys []string
 }
 
 type fakeAlive struct {
@@ -75,6 +76,16 @@ func newRig(t *testing.T, names ...string) *rig {
 	fs := friendtest.NewMemFS()
 	require.NoError(t, fs.MkdirAll("/w/bob", 0o755))
 	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379", "PATH": "/usr/bin:/bin"}, now: start, home: t.TempDir(), alive: fakeAlive{running: true, why: "the fake harness runs"}, fs: fs}
+}
+
+func (r *rig) setPresence(name string, fields map[string]string) {
+	key := friend.PresenceKey(name)
+	r.presenceKeys = append(r.presenceKeys, key)
+	var marks []bus.Mark
+	for k, v := range fields {
+		marks = append(marks, bus.Mark{Key: key, Field: k, Value: v})
+	}
+	_ = r.store.AddAll(context.Background(), nil, nil, marks...)
 }
 
 func (r *rig) world() world {
@@ -108,10 +119,11 @@ func (r *rig) world() world {
 			}
 			return "", errors.New("executable file not found in ")
 		},
-		random:   func() string { return "r4nd0m" },
-		alive:    r.alive,
-		exec:     r.opencode,
-		settings: r.fs,
+		random:       func() string { return "r4nd0m" },
+		alive:        r.alive,
+		exec:         r.opencode,
+		settings:     r.fs,
+		scanPresence: func(ctx context.Context, st bus.Store) ([]string, error) { return r.presenceKeys, nil },
 	}
 }
 
@@ -1353,4 +1365,174 @@ func TestHostHelpExampleIsWhatTheToolPrints(t *testing.T) {
 	for _, p := range onboarding.CompareTranscript([]onboarding.Step{step}, []onboarding.Result{got}, nil) {
 		assert.Fail(t, "the help example differs", p.Message)
 	}
+}
+
+// TestPeersHelpExampleIsWhatTheToolPrints runs the peers verb's help example as
+// written, through the one comparator: the line a reader pastes prints the line
+// the help shows (docs/SPEC-FRIEND.md, "Readers (nova-friend peers)").
+func TestPeersHelpExampleIsWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+	step := onboarding.Step{
+		Line: "$ nova-friend peers --names bob",
+		Args: []string{"peers", "--names", "bob"},
+		Want: []string{
+			"PEER name=bob state=down age=- seen=- harness=- route=- queue=0 working=0 width=0 proved=- version=-",
+			"PEERS OK up=0 asleep=0 down=1 of=1",
+		},
+	}
+	doc, err := os.ReadFile("../../docs/CLI.md")
+	require.NoError(t, err)
+	assert.Contains(t, string(doc), strings.TrimPrefix(step.Line, "$ "), "the executed command is also in the reference")
+	var out, errb strings.Builder
+	w := newRig(t).world()
+	code := run(step.Args, strings.NewReader(""), &out, &errb, w)
+	got := onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}
+	require.Equal(t, 0, code, errb.String())
+	for _, p := range onboarding.CompareTranscript([]onboarding.Step{step}, []onboarding.Result{got}, nil) {
+		assert.Fail(t, "the help example differs", p.Message)
+	}
+}
+
+func TestPeersPrintsEveryFriendsStateFromPresence(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	now := r.now.Add(time.Second) // w.now() in peers() advances r.now by 1s
+	r.setPresence("alice", map[string]string{
+		"name":    "alice",
+		"seen":    now.Add(-2 * time.Second).Format(time.RFC3339Nano),
+		"harness": "claude",
+		"route":   "push",
+		"asleep":  "0",
+		"queue":   "1",
+		"working": "2",
+		"width":   "4",
+		"proved":  now.Add(-5 * time.Second).Format(time.RFC3339Nano),
+		"version": "1",
+	})
+	r.setPresence("bob", map[string]string{
+		"name":    "bob",
+		"seen":    now.Add(-3 * time.Second).Format(time.RFC3339Nano),
+		"harness": "opencode",
+		"route":   "defer",
+		"asleep":  "1",
+		"queue":   "0",
+		"working": "1",
+		"width":   "2",
+		"version": "1",
+	})
+	r.setPresence("charlie", map[string]string{
+		"name":    "charlie",
+		"seen":    now.Add(-15 * time.Second).Format(time.RFC3339Nano),
+		"harness": "codex",
+		"route":   "passive",
+		"version": "1",
+	})
+
+	// david has no presence record, but is passed via --names
+	out := r.cli().Do(t, "peers", "--names", "david").Exit(0)
+	lines := strings.Split(strings.TrimSpace(out.Stdout), "\n")
+	require.Len(t, lines, 5)
+
+	// name order: alice, bob, charlie, david
+	assert.Equal(t, "PEER name=alice state=up age=2.0 seen="+now.Add(-2*time.Second).Format(time.RFC3339Nano)+" harness=claude route=push queue=1 working=2 width=4 proved=5 version=1", lines[0])
+	assert.Equal(t, "PEER name=bob state=asleep age=3.0 seen="+now.Add(-3*time.Second).Format(time.RFC3339Nano)+" harness=opencode route=defer queue=0 working=1 width=2 proved=- version=1", lines[1])
+	assert.Equal(t, "PEER name=charlie state=down age=15.0 seen="+now.Add(-15*time.Second).Format(time.RFC3339Nano)+" harness=codex route=passive queue=0 working=0 width=0 proved=- version=1", lines[2])
+	assert.Equal(t, "PEER name=david state=down age=- seen=- harness=- route=- queue=0 working=0 width=0 proved=- version=-", lines[3])
+	assert.Equal(t, "PEERS OK up=1 asleep=1 down=2 of=4", lines[4])
+}
+
+func TestPeersJSONCarriesTheSameFacts(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	now := r.now.Add(time.Second) // w.now() advances by 1s
+	r.setPresence("alice", map[string]string{
+		"name":    "alice",
+		"seen":    now.Add(-2 * time.Second).Format(time.RFC3339Nano),
+		"harness": "claude",
+		"route":   "push",
+		"asleep":  "0",
+		"queue":   "1",
+		"working": "2",
+		"width":   "4",
+		"proved":  now.Add(-5 * time.Second).Format(time.RFC3339Nano),
+		"version": "1",
+	})
+
+	out := r.cli().Do(t, "peers", "--names", "bob", "--json").Exit(0)
+	var rep friend.PeerReport
+	require.NoError(t, json.Unmarshal([]byte(out.Stdout), &rep))
+	assert.Equal(t, "ok", rep.Status)
+	assert.Equal(t, "OK", rep.Word)
+	assert.Equal(t, 1, rep.Up)
+	assert.Equal(t, 0, rep.Asleep)
+	assert.Equal(t, 1, rep.Down)
+	assert.Equal(t, 2, rep.Of)
+	require.Len(t, rep.Peers, 2)
+
+	assert.Equal(t, "alice", rep.Peers[0].Name)
+	assert.Equal(t, "up", rep.Peers[0].State)
+	require.NotNil(t, rep.Peers[0].AgeS)
+	assert.Equal(t, 2.0, *rep.Peers[0].AgeS)
+	assert.Equal(t, "claude", rep.Peers[0].Harness)
+	assert.Equal(t, "push", rep.Peers[0].Route)
+	assert.Equal(t, 1, rep.Peers[0].Queue)
+	assert.Equal(t, 2, rep.Peers[0].Working)
+	assert.Equal(t, 4, rep.Peers[0].Width)
+	require.NotNil(t, rep.Peers[0].ProvedS)
+	assert.Equal(t, 5.0, *rep.Peers[0].ProvedS)
+	assert.Equal(t, "1", rep.Peers[0].Version)
+
+	assert.Equal(t, "bob", rep.Peers[1].Name)
+	assert.Equal(t, "down", rep.Peers[1].State)
+	assert.Nil(t, rep.Peers[1].AgeS)
+	assert.Equal(t, "-", rep.Peers[1].Seen)
+	assert.Equal(t, "-", rep.Peers[1].Harness)
+	assert.Equal(t, "-", rep.Peers[1].Route)
+	assert.Nil(t, rep.Peers[1].ProvedS)
+	assert.Equal(t, "-", rep.Peers[1].Version)
+}
+
+func TestPeersExitsTwoWhenTheStoreDoesNotAnswer(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.store.Fail = errors.New("connection refused")
+	r.cli().Do(t, "peers").Exit(2)
+}
+
+func TestPeersWatchRedrawsOnTheClock(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	now := r.now
+	r.setPresence("alice", map[string]string{
+		"name":    "alice",
+		"seen":    now.Format(time.RFC3339Nano),
+		"harness": "claude",
+		"route":   "push",
+		"asleep":  "0",
+		"version": "1",
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ticks := 0
+	w := r.world()
+	w.signals = func(c context.Context) (context.Context, context.CancelFunc) {
+		return ctx, cancel
+	}
+	w.sleep = func(c context.Context, d time.Duration) {
+		ticks++
+		r.now = r.now.Add(d)
+		if ticks >= 2 {
+			cancel()
+		}
+	}
+
+	var out, errb strings.Builder
+	code := run([]string{"peers", "--watch", "--every", "1s"}, strings.NewReader(""), &out, &errb, w)
+	assert.Equal(t, 0, code)
+	assert.Empty(t, errb.String())
+
+	stdout := out.String()
+	assert.Contains(t, stdout, "PEER name=alice state=up age=1.0")
+	assert.Contains(t, stdout, "PEER name=alice state=up age=3.0")
+	assert.Equal(t, 2, ticks)
 }

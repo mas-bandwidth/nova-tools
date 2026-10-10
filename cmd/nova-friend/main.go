@@ -12,6 +12,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -100,6 +101,7 @@ type world struct {
 	stepBeat       bool                                // deterministic fake clock in CLI tests; never set by realWorld
 	checkGo        func(func())                        // optional test scheduler for a fake-clock session check
 	reachPermitted func(context.Context) (bool, error) // reach window permission; nil checks the platform without prompting
+	scanPresence   func(ctx context.Context, st bus.Store) ([]string, error)
 }
 
 // readPlist is the installed plist at path, empty when there is none or it
@@ -293,6 +295,24 @@ func realWorld() world {
 				raw[i] = alphabet[int(raw[i])%len(alphabet)]
 			}
 			return string(raw[:])
+		},
+		scanPresence: func(ctx context.Context, st bus.Store) ([]string, error) {
+			r, ok := st.(bus.Redis)
+			if !ok || r.C == nil {
+				return nil, nil
+			}
+			var keys []string
+			iter := r.C.Scan(ctx, 0, "bus2:presence:*", 100).Iterator()
+			for iter.Next(ctx) {
+				keys = append(keys, iter.Val())
+				if len(keys) >= 10000 {
+					break
+				}
+			}
+			if err := iter.Err(); err != nil {
+				return nil, err
+			}
+			return keys, nil
 		},
 	}
 	w.open = w.openRedis
@@ -1052,6 +1072,42 @@ read that fails is one SERVE NOTE until it changes or clears. Stops on SIGINT or
 					f.Prints()
 				},
 				Run: w.serve,
+			},
+			{
+				Name:      "peers",
+				Usage:     "peers [--names <a,b,...>] [--redis <addr>] [--max <n>] [--json] [--watch [--every <duration>]]",
+				Example:   "", // the help's Detail carries the example: peers --names bob
+				Effect:    tool.Inspection + ": reads presence records from the bus store",
+				ExitTable: "0 done (some friends down is a fact, not a failure); 2 could not run (the store does not answer or a flag is wrong).",
+				Detail: `A verb any tool reads to learn who is up, over presence records on the bus store
+(docs/SPEC-FRIEND.md, Presence). Discovers every friend with a presence record
+(bus2:presence:*) and adds any names given in --names; a friend in --names with no
+presence record is down with seen=-.
+
+One line per friend, in name order:
+PEER name=<n> state=<up|asleep|down> age=<seconds, one decimal, or -> seen=<RFC3339 or -> harness=<h> route=<push|defer|passive|-> queue=<n> working=<n> width=<n> proved=<seconds ago, or -> version=<v>
+then PEERS OK up=<n> asleep=<n> down=<n> of=<n>.
+Past --max (default 20, 0 lists all) one MORE line stands for the rest:
+PEERS MORE kind=PEER shown=<m> total=<n> --max <n> raises the ceiling, --max 0 lists all
+
+--json prints one JSON object on standard output:
+{"status":"ok","word":"OK","peers":[{"name":..,"state":..,"age_s":..,"seen":..,"harness":..,"route":..,"queue":..,"working":..,"width":..,"proved_s":..,"version":..}],"up":n,"asleep":n,"down":n,"of":n}
+Exit 0 when read (some friends down is a fact, not a failure); 2 when the store does not answer or a flag is wrong.
+--watch redraws the lines every --every (default 1s, above 0) until interrupted.
+example: nova-friend peers --names bob`,
+				Flags: func(f *tool.Flags) {
+					f.String("names", "", "comma-separated friend names to check in addition to discovered presence records")
+					redis(f)
+					f.Max()
+					f.Bool("watch", false, "redraw the lines every --every until interrupted")
+					f.Duration("every", time.Second, "with --watch: interval between redraws (default: 1s)")
+					f.Check(func(c *tool.Call) {
+						if c.Given("every") && c.Dur("every") <= 0 {
+							c.Problem("--every wants a duration above 0 (got " + c.Str("every") + ")")
+						}
+					})
+				},
+				Run: w.peers,
 			},
 		},
 	}
@@ -2552,4 +2608,135 @@ func parseHolders(out string) (map[string]string, error) {
 		}
 	}
 	return holders, nil
+}
+
+// peers lists the presence state of friends on the bus store (docs/SPEC-FRIEND.md, Presence).
+func (w world) watchPause(ctx context.Context, d time.Duration) bool {
+	w.sleep(ctx, d)
+	return ctx.Err() == nil
+}
+
+func (w world) peers(c *tool.Call) *tool.Out {
+	b, closeStore, refused := w.bus(c)
+	if refused != nil {
+		return refused
+	}
+	defer closeStore()
+
+	var extraNames []string
+	if names := c.Str("names"); names != "" {
+		for _, n := range strings.Split(names, ",") {
+			if n = strings.TrimSpace(n); n != "" {
+				extraNames = append(extraNames, n)
+			}
+		}
+	}
+
+	max := c.Int("max")
+	asJSON := c.Bool("json")
+	watch := c.Bool("watch")
+	every := c.Dur("every")
+
+	renderOnce := func() (*friend.PeerReport, *tool.Out) {
+		ctx, cancel := context.WithTimeout(c.Ctx, 10*time.Second)
+		defer cancel()
+
+		var keys []string
+		if w.scanPresence != nil {
+			k, err := w.scanPresence(ctx, b.Store)
+			if err != nil {
+				return nil, answer(err)
+			}
+			keys = k
+		}
+
+		nameSet := make(map[string]bool)
+		for _, k := range keys {
+			name := strings.TrimPrefix(k, "bus2:presence:")
+			if name != "" {
+				nameSet[name] = true
+			}
+		}
+		for _, n := range extraNames {
+			nameSet[n] = true
+		}
+
+		names := make([]string, 0, len(nameSet))
+		for n := range nameSet {
+			names = append(names, n)
+		}
+		slices.Sort(names)
+
+		queryKeys := make([]string, 0, len(names))
+		for _, n := range names {
+			queryKeys = append(queryKeys, friend.PresenceKey(n))
+		}
+
+		var marks []map[string]string
+		if len(queryKeys) > 0 {
+			m, err := b.Store.Marks(ctx, queryKeys...)
+			if err != nil {
+				return nil, answer(err)
+			}
+			marks = m
+		}
+
+		records := make(map[string]map[string]string, len(queryKeys))
+		for i, k := range queryKeys {
+			if i < len(marks) && len(marks[i]) > 0 {
+				records[k] = marks[i]
+			}
+		}
+
+		rep := friend.EvaluatePeers(records, extraNames, w.now(), max)
+		return &rep, nil
+	}
+
+	if !watch {
+		rep, errOut := renderOnce()
+		if errOut != nil {
+			return errOut
+		}
+		if asJSON {
+			var buf bytes.Buffer
+			enc := json.NewEncoder(&buf)
+			enc.SetEscapeHTML(false)
+			if err := enc.Encode(rep); err != nil {
+				return tool.Refuse("peers: " + err.Error())
+			}
+			fmt.Fprint(c.Stdout, buf.String())
+			return tool.Exit(0)
+		}
+		for _, line := range rep.Lines() {
+			fmt.Fprintln(c.Stdout, line)
+		}
+		return tool.Exit(0)
+	}
+
+	ctx, stop := w.signals(c.Ctx)
+	defer stop()
+
+	for {
+		rep, errOut := renderOnce()
+		if errOut != nil {
+			return errOut
+		}
+		if asJSON {
+			var buf bytes.Buffer
+			enc := json.NewEncoder(&buf)
+			enc.SetEscapeHTML(false)
+			if err := enc.Encode(rep); err != nil {
+				return tool.Refuse("peers: " + err.Error())
+			}
+			fmt.Fprint(c.Stdout, buf.String())
+		} else {
+			for _, line := range rep.Lines() {
+				fmt.Fprintln(c.Stdout, line)
+			}
+		}
+
+		if !w.watchPause(ctx, every) {
+			return tool.Exit(0)
+		}
+	}
 }
