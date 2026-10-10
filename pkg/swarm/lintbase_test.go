@@ -232,3 +232,29 @@ func TestTestDefinedAtRefusesATreeThatIsNotAFullSha(t *testing.T) {
 		assert.Contains(t, err.Error(), "not a full commit sha", tree)
 	}
 }
+
+// TestPersonalNameCheck tests that the personal-name check refuses SOURCE or PATHS
+// lines containing a person's name in a file path, but ignores path tokens.
+func TestPersonalNameCheck(t *testing.T) {
+	t.Parallel()
+
+	// SOURCE without a slash or .md suffix containing a person's name should be refused.
+	cardWithPersonalName := baseCard(map[string]string{"SOURCE": "home alice project README"})
+	fs := findingsFor(LintCardBase(cardWithPersonalName, BaseCheck{}), "personal-name")
+	require.Len(t, fs, 1, "SOURCE with person's name should be refused, got %v", fs)
+
+	// SOURCE with a path token (containing a slash) should pass.
+	cardWithPathToken := baseCard(map[string]string{"SOURCE": "home/alice/README.md"})
+	fs = findingsFor(LintCardBase(cardWithPathToken, BaseCheck{}), "personal-name")
+	require.Empty(t, fs, "SOURCE with path token should pass, got %v", fs)
+
+	// PATHS with a path token (ending in .md) should pass.
+	cardWithPathS := baseCard(map[string]string{"PATHS": "home/bob/README.md"})
+	fs = findingsFor(LintCardBase(cardWithPathS, BaseCheck{}), "personal-name")
+	require.Empty(t, fs, "PATHS with path token should pass, got %v", fs)
+
+	// PATHS without a person's name should pass.
+	cardWithPathsWithoutPersonalName := baseCard(map[string]string{"PATHS": "pkg/foo, cmd/bar"})
+	fs = findingsFor(LintCardBase(cardWithPathsWithoutPersonalName, BaseCheck{}), "personal-name")
+	require.Empty(t, fs, "PATHS without person's name should pass, got %v", fs)
+}

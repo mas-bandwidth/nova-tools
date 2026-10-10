@@ -84,7 +84,7 @@ var cardLintAdvisory = map[string]bool{"size": true, swarm.PlaceholderCheck: tru
 //
 // And the three rules of a tree card (pkg/cardtree): steps-nested, tree-step and
 // script-step, which fire only on a card with a dotted step or a work step.
-var cardLintChecks = 25 + len(swarm.CardChildRemedies) + len(cardtree.Remedies)
+var cardLintChecks = 25 + len(swarm.CardChildRemedies) + len(cardtree.Remedies) + 1 // 46 total rules
 
 // Every drift names its remedy, and the binary can print the whole table.
 //
