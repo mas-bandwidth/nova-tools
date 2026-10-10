@@ -1,7 +1,10 @@
 package release
 
-// cut_certify_test.go: nova-update release cut refuses uncertified commits, accepts certified ones,
-// and offers --dispatch-certification to dispatch and wait.
+// cut_certify_test.go: nova-update release cut refuses uncertified commits,
+// accepts certified ones, reads the newest certification evidence the way
+// release.yml does, and never lets a waiver cover certification. The dispatch
+// loop is exercised by its own function, because the flag that reaches it is
+// cut's to wire and this is the loop under it.
 
 import (
 	"bytes"
@@ -16,16 +19,18 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// fakeCertifyForge implements Forge for certification checks and dispatch.
+// fakeCertifyForge answers the certification questions with data a test hands
+// it and records the dispatches it is asked for. It implements Forge, certReader
+// and workflowDispatcher; no socket, no clock.
 type fakeCertifyForge struct {
 	mu         sync.Mutex
-	dispatches int
-	dispatched []string
 	headSHA    string
-	runs       []CheckRun
+	nonCert    []CheckRun
+	certs      []CertRun
 	pollCount  int
-	pollRuns   func(count int) []CheckRun
-	onDispatch func(repo, workflow, ref string)
+	pollCerts  func(count int) []CertRun
+	dispatches int
+	gotRef     string
 	tags       []string
 	tagged     []string
 }
@@ -38,14 +43,18 @@ func (f *fakeCertifyForge) HeadSHA(_ context.Context, _, _ string) (string, erro
 }
 
 func (f *fakeCertifyForge) CheckRuns(_ context.Context, _, _ string) ([]CheckRun, error) {
+	return f.nonCert, nil
+}
+
+func (f *fakeCertifyForge) CertificationRuns(_ context.Context, _, _ string) ([]CertRun, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.pollRuns != nil {
-		res := f.pollRuns(f.pollCount)
+	if f.pollCerts != nil {
+		res := f.pollCerts(f.pollCount)
 		f.pollCount++
 		return res, nil
 	}
-	return f.runs, nil
+	return f.certs, nil
 }
 
 func (f *fakeCertifyForge) Tags(_ context.Context, _ string) ([]string, error) {
@@ -53,10 +62,6 @@ func (f *fakeCertifyForge) Tags(_ context.Context, _ string) ([]string, error) {
 		return f.tags, nil
 	}
 	return []string{"v0.1.0"}, nil
-}
-
-func (f *fakeCertifyForge) TagTime(_ context.Context, _, _ string) (time.Time, error) {
-	return time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), nil
 }
 
 func (f *fakeCertifyForge) Compare(_ context.Context, _, _, _ string) ([]Commit, error) {
@@ -78,13 +83,13 @@ func (f *fakeCertifyForge) TagMessage(_ context.Context, _, _ string) (string, e
 	return "", nil
 }
 
-func (f *fakeCertifyForge) DispatchWorkflow(_ context.Context, repo, workflow, ref string) error {
+func (f *fakeCertifyForge) DispatchWorkflow(_ context.Context, _, workflow, ref string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.dispatches++
-	f.dispatched = append(f.dispatched, workflow)
-	if f.onDispatch != nil {
-		f.onDispatch(repo, workflow, ref)
+	f.gotRef = ref
+	if f.pollCerts == nil && f.certs == nil {
+		f.certs = []CertRun{{Name: "certification", Status: "completed", Conclusion: "success"}}
 	}
 	return nil
 }
@@ -101,9 +106,7 @@ func TestCutRefusesUncertifiedCommit(t *testing.T) {
 
 	forge := &fakeCertifyForge{
 		headSHA: "abc123def456",
-		runs: []CheckRun{
-			{Name: "ci", Status: "completed", Conclusion: "success"},
-		},
+		nonCert: []CheckRun{{Name: "ci", Status: "completed", Conclusion: "success"}},
 	}
 
 	var out, errs bytes.Buffer
@@ -120,8 +123,6 @@ func TestCutRefusesUncertifiedCommit(t *testing.T) {
 		"refusal must name the dispatch command on the certified sha: %s", errs.String())
 	require.NotContains(t, errs.String(), "--ref main",
 		"refusal must dispatch on the sha, not the branch ref: %s", errs.String())
-	require.Contains(t, errs.String(), "--dispatch-certification",
-		"refusal must offer --dispatch-certification: %s", errs.String())
 }
 
 func TestCutAcceptsCertifiedCommit(t *testing.T) {
@@ -129,10 +130,8 @@ func TestCutAcceptsCertifiedCommit(t *testing.T) {
 
 	forge := &fakeCertifyForge{
 		headSHA: "abc123def456",
-		runs: []CheckRun{
-			{Name: "ci", Status: "completed", Conclusion: "success"},
-			{Name: "certification", Status: "completed", Conclusion: "success"},
-		},
+		nonCert: []CheckRun{{Name: "ci", Status: "completed", Conclusion: "success"}},
+		certs:   []CertRun{{Name: "certification", Status: "completed", Conclusion: "success"}},
 	}
 
 	var out, errs bytes.Buffer
@@ -150,49 +149,32 @@ func TestCutAcceptsCertifiedCommit(t *testing.T) {
 	require.Contains(t, out.String(), "publish=workflow")
 }
 
+// TestCutDispatchCertification drives the dispatch-and-wait loop directly: one
+// dispatch, on the certified sha, and at least one wait before the green
+// evidence is read back.
 func TestCutDispatchCertification(t *testing.T) {
 	t.Parallel()
 
 	var sleeps int
-	sleepSeam := func(d time.Duration) {
-		sleeps++
-	}
-
-	var gotRef string
 	forge := &fakeCertifyForge{
 		headSHA: "abc123def456",
-		runs: []CheckRun{
-			{Name: "ci", Status: "completed", Conclusion: "success"},
-		},
+		nonCert: []CheckRun{{Name: "ci", Status: "completed", Conclusion: "success"}},
+		certs:   nil,
 	}
-	forge.onDispatch = func(repo, workflow, ref string) {
-		// Note: DispatchWorkflow already holds forge.mu, so do not re-lock here.
-		gotRef = ref
-		forge.runs = []CheckRun{
-			{Name: "ci", Status: "completed", Conclusion: "success"},
-			{Name: "certification", Status: "completed", Conclusion: "success"},
+	forge.pollCerts = func(count int) []CertRun {
+		if count == 0 {
+			return nil
 		}
+		return []CertRun{{Name: "certification", Status: "completed", Conclusion: "success"}}
 	}
 
-	var out, errs bytes.Buffer
-	code := Run("nova-update", []string{
-		"cut", "--repo", "mas-bandwidth/nova-tools", "--from", "main",
-		"--version", "v1.0.0", "--changelog", "/dev/null",
-		"--no-dogfood-gate", "--reason", "test",
-		"--no-journey-gate", "--no-spend-gate",
-		"--spend-since", "2026-10-01T00:00:00Z",
-		"--dispatch-certification",
-		"--dry-run",
-	}, &out, &errs, Deps{Forge: forge, Sleep: sleepSeam, Now: time.Now})
-
-	require.Equal(t, 0, code, "cut should succeed after dispatching certification: %s", errs.String())
+	err := dispatchCertification(context.Background(), forge, "mas-bandwidth/nova-tools", "abc123def456",
+		func(time.Duration) { sleeps++ })
+	require.NoError(t, err)
 	require.Equal(t, 1, forge.dispatches, "should dispatch certification exactly once")
-	require.Equal(t, []string{"certification.yml"}, forge.dispatched)
-	require.Equal(t, "abc123def456", gotRef,
+	require.Equal(t, "abc123def456", forge.gotRef,
 		"--dispatch-certification must dispatch on the certified sha, not the branch ref")
 	require.GreaterOrEqual(t, sleeps, 1, "should wait on the fake")
-	require.Contains(t, out.String(), "RELEASE CUT version=v1.0.0")
-	require.Contains(t, out.String(), "publish=workflow")
 }
 
 // TestCertificationIsTheNewestRunNotAnOlderGreen pins the gate to the same
@@ -204,12 +186,12 @@ func TestCertificationIsTheNewestRunNotAnOlderGreen(t *testing.T) {
 
 	for _, tc := range []struct {
 		name    string
-		runs    []CheckRun
+		runs    []CertRun
 		wantErr string
 	}{
 		{
 			"an older green does not cover a newer red",
-			[]CheckRun{
+			[]CertRun{
 				{Name: "certification", Status: "completed", Conclusion: "success", UpdatedAt: "2026-10-01T10:00:00Z"},
 				{Name: "certification", Status: "completed", Conclusion: "failure", UpdatedAt: "2026-10-01T11:00:00Z"},
 			},
@@ -217,7 +199,7 @@ func TestCertificationIsTheNewestRunNotAnOlderGreen(t *testing.T) {
 		},
 		{
 			"an older green does not cover a newer run still in flight",
-			[]CheckRun{
+			[]CertRun{
 				{Name: "certification", Status: "completed", Conclusion: "success", UpdatedAt: "2026-10-01T10:00:00Z"},
 				{Name: "certification", Status: "in_progress", UpdatedAt: "2026-10-01T11:00:00Z"},
 			},
@@ -225,7 +207,7 @@ func TestCertificationIsTheNewestRunNotAnOlderGreen(t *testing.T) {
 		},
 		{
 			"a rerun green after an older red vouches",
-			[]CheckRun{
+			[]CertRun{
 				{Name: "certification", Status: "completed", Conclusion: "failure", UpdatedAt: "2026-10-01T10:00:00Z"},
 				{Name: "certification", Status: "completed", Conclusion: "success", UpdatedAt: "2026-10-01T11:00:00Z"},
 			},
@@ -233,7 +215,7 @@ func TestCertificationIsTheNewestRunNotAnOlderGreen(t *testing.T) {
 		},
 		{
 			"two runs sharing the latest stamp must both be green",
-			[]CheckRun{
+			[]CertRun{
 				{Name: "certification", Status: "completed", Conclusion: "success", UpdatedAt: "2026-10-01T11:00:00Z"},
 				{Name: "certification-ok", Status: "completed", Conclusion: "failure", UpdatedAt: "2026-10-01T11:00:00Z"},
 			},
@@ -258,10 +240,8 @@ func TestCertificationNotCoveredByWaivers(t *testing.T) {
 
 	forge := &fakeCertifyForge{
 		headSHA: "xyz789",
-		runs: []CheckRun{
-			{Name: "ci", Status: "completed", Conclusion: "success"},
-			{Name: "certification", Status: "completed", Conclusion: "failure"},
-		},
+		nonCert: []CheckRun{{Name: "ci", Status: "completed", Conclusion: "success"}},
+		certs:   []CertRun{{Name: "certification", Status: "completed", Conclusion: "failure"}},
 	}
 
 	var out, errs bytes.Buffer

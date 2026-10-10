@@ -42,15 +42,11 @@ import (
 // person reads in the checks list, the run's status, and its conclusion once it
 // has one. A run that has not completed has an empty Conclusion, which is why
 // both fields are here -- a pending run is not a green one, and reading only the
-// conclusion would make it look like a neutral one. UpdatedAt is when the run
-// last changed (RFC3339, UTC), empty before it completes; it is what makes the
-// newest certification run the one that vouches, not merely any run that has
-// ever been green.
+// conclusion would make it look like a neutral one.
 type CheckRun struct {
 	Name       string
 	Status     string // queued, in_progress, completed
 	Conclusion string // success, failure, cancelled, timed_out, skipped, neutral
-	UpdatedAt  string // RFC3339 UTC; the newest run decides (certified)
 }
 
 // Commit is one commit in a range, with the whole message: the subject carries
@@ -101,8 +97,6 @@ type Forge interface {
 	// adopting host through the repository rather than through the machine
 	// whose bits are being checked against it.
 	TagMessage(ctx context.Context, repo, tag string) (string, error)
-	// DispatchWorkflow triggers a GitHub Actions workflow run on the named ref.
-	DispatchWorkflow(ctx context.Context, repo, workflow, ref string) error
 }
 
 // SSH is the edge to another machine: run a command there, or put a directory

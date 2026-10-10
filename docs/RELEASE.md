@@ -26,7 +26,7 @@ A release is real: every commit tagged for release has been vouched for by the f
 +-----------------------------------------------------------------------------------+
 | 3. Release Cut (`nova-update release cut`)                                        |
 |    - Refuses uncertified commits (demands certification.yml run)                  |
-|    - Offers --dispatch-certification to dispatch & poll                           |
+|    - NOVA_RELEASE_DISPATCH_CERTIFICATION=1 dispatches & polls                    |
 |    - Enforces gates (sensitive paths, dogfood, journeys, spend)                   |
 |    - Writes CHANGELOG section with SHA256SUMS digest                              |
 |    - Creates annotated tag with digest                                            |
@@ -61,7 +61,7 @@ Before a release can be cut, `certification.yml` must vouch for the exact target
   ```bash
   gh workflow run certification.yml --ref <sha>
   ```
-- The command offers `--dispatch-certification`, which dispatches the workflow on the certified sha and waits for completion.
+- An automated cutter sets `NOVA_RELEASE_DISPATCH_CERTIFICATION=1` and the command dispatches the workflow on the certified sha and waits for completion.
 - Waivers (`--no-dogfood-gate`, `--no-journey-gate`, `--no-spend-gate`) never waive certification.
 
 ### 3. Automated Publication by `release.yml`

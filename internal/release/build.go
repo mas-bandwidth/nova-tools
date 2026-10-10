@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,55 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/dogfood"
 )
+
+// CertRun is one certification.yml workflow run on a commit, the evidence
+// `cut` reads before a tag. It is the same evidence release.yml reads through
+// `go run ./tools/ghrelease certified` (tools/ghrelease/certified.go): the
+// run's status and conclusion, and the UpdatedAt stamp that orders it. The
+// stamp, not a run id or an array position, decides which evidence is newest,
+// because a rerun of an older run is newer evidence than a later run never
+// rerun.
+type CertRun struct {
+	Name       string
+	Status     string // queued, waiting, in_progress, completed
+	Conclusion string // success, failure, cancelled, timed_out, skipped, neutral
+	UpdatedAt  string // RFC3339 UTC; the newest run decides
+}
+
+// CertificationRuns reads certification.yml's runs on sha. It asks the
+// workflow-runs endpoint rather than the check-runs endpoint because the run's
+// own name and its updated_at are what the gate orders evidence by, and the
+// answer is one snapshot: every run on the commit is fetched once, so a run
+// that finishes red between two asks cannot slip between them.
+func (g *GH) CertificationRuns(ctx context.Context, repo, sha string) ([]CertRun, error) {
+	out, err := g.api(ctx, "api", "--paginate",
+		"repos/"+repo+"/actions/workflows/certification.yml/runs?head_sha="+sha+"&per_page=100",
+		"--jq", ".workflow_runs[] | {Name:.name, Status:.status, Conclusion:.conclusion, UpdatedAt:.updated_at}")
+	if err != nil {
+		return nil, err
+	}
+	var runs []CertRun
+	dec := json.NewDecoder(strings.NewReader(out))
+	for {
+		var r CertRun
+		if err := dec.Decode(&r); err == io.EOF {
+			break
+		} else if err != nil {
+			return nil, fmt.Errorf("cannot read gh's certification runs: %w", err)
+		}
+		runs = append(runs, r)
+	}
+	return runs, nil
+}
+
+// DispatchWorkflow requests that GitHub run the named workflow on ref. It is
+// the one mutation the certification gate needs: `cut` offers to dispatch
+// certification.yml on the exact sha being cut and wait for it, rather than
+// telling the reader to run the command by hand.
+func (g *GH) DispatchWorkflow(ctx context.Context, repo, workflow, ref string) error {
+	_, err := g.api(ctx, "workflow", "run", workflow, "-R", repo, "--ref", ref)
+	return err
+}
 
 // SumsFile is the name of the checksum file in every artifact directory, in the
 // format `sha256sum -c` reads, because the person verifying a copy by hand

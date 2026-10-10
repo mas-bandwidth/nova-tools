@@ -19,7 +19,7 @@ import (
 // same command is the same release on either host. The one exception is
 // --receipts, and internal/release/dogfoodgate.go says at length why the gate
 // in front of the definition of done is worth it.
-const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--journeys <file> | --no-journey-gate --reason <why>] [--spend-store <addr>] [--spend-since <RFC3339>] [--spend-receipts <file>] [--no-spend-gate --reason <why>] [--dispatch-certification] [--dry-run] [--timeout <d>]
+const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--journeys <file> | --no-journey-gate --reason <why>] [--spend-store <addr>] [--spend-since <RFC3339>] [--spend-receipts <file>] [--no-spend-gate --reason <why>] [--dry-run] [--timeout <d>]
 nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--incremental] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why> | --gate report --reason <why>] [--timeout <d>]
 nova-update release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
 nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --repo <owner/name> | --stage <dir> --expect-sums <sha256> | --stage <dir> --expect-sums-from <file>] [--retire <dir>] [--platform <goos-goarch>] (--certify <machines.tsv> --certs <file> --standard <file> | --no-certify) [--dry-run] [--timeout <d>]
@@ -88,8 +88,6 @@ type Deps struct {
 	// Ansible runs the tools play for `cycle` (cycle.go); nil is
 	// ExecAnsible with --ansible.
 	Ansible Ansible
-	// Sleep is the sleep seam for wait loops; nil is time.Sleep.
-	Sleep func(time.Duration)
 }
 
 // options are every flag the five verbs take, in one struct, because they share
@@ -121,8 +119,6 @@ type options struct {
 	platforms                   platformList
 	dryRun                      bool
 	timeout                     time.Duration
-	// dispatchCertification dispatches certification.yml and waits for it to complete
-	dispatchCertification bool
 	// The three that turn on certification after an adopt. They are named together or
 	// not at all: a certificates file with no registry names no machine's roles, and a
 	// registry with no standard has no hash to write.
@@ -256,7 +252,6 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		f.BoolVar(&o.dryRun, "dry-run", false, "decide and print, write nothing")
 		f.StringVar(&o.sums, "sums", "", "one platform's built SHA256SUMS, <out>/<version>/<goos-goarch>/SHA256SUMS; the section and the tag record its digest, and adopt --repo verifies that platform")
 		f.StringVar(&o.securityRead, "security-read", "", "the note id or comment url of the security reader's read, required when the range touches a sensitive path")
-		f.BoolVar(&o.dispatchCertification, "dispatch-certification", false, "dispatch certification.yml and wait for it to complete before proceeding")
 		f.StringVar(&o.localDiff, "local-diff", "", "a checkout to run `git diff --name-only <previous>...<head>` in, when the forge's compare is at its ceiling")
 		f.StringVar(&o.pathsFrom, "paths-from", "", "the path list to classify: written by --local-diff, read back without it")
 		addDogfoodFlags(f, &o, "docs/CLI.md beside --changelog")
