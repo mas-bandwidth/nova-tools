@@ -597,7 +597,10 @@ function renderHero(d, s, ft) {
   // card is that over the cards that landed
   var c = d.done ? s.sum.epoch : s.sum, recorded = c.totalCost;
   setText($("cost"), money(recorded));
-  var per = landed ? money(Math.ceil(recorded / landed)) + " per card" : "";
+  // after a stats reset the cost counts from its mark, and so do the cards it is over
+  // (where --json's stats_reset.landed, the same scope)
+  var perN = d.stats_reset ? int(d.stats_reset.landed) : landed;
+  var per = perN ? money(Math.ceil(recorded / perN)) + " per card" : "";
   setText($("cost-per"), per || " ");
   setText($("inflight"), s.sum.working + (s.sum.fix || 0) + s.sum.review + s.sum.merging);
   inflightLast = s.sum; renderInflight(s.sum);

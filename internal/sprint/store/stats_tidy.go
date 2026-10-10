@@ -43,6 +43,9 @@ type StatsRecord struct {
 	Streams map[string]sprint.StreamBase `json:"streams,omitempty"`
 	// Archives is every archive record's key, oldest first: teardown deletes each by name.
 	Archives []string `json:"archives,omitempty"`
+	// Reset is the last stats reset (ResetStats, stats_reset.go): the counters at its mark,
+	// which every figure it covers counts from. A tidy keeps it as it found it.
+	Reset *sprint.ResetMark `json:"reset,omitempty"`
 }
 
 // The states of an archive record: written before the move, then how the move ended.
@@ -119,25 +122,62 @@ func (st *Store) StatsTidied(ctx context.Context) (StatsRecord, error) {
 
 // StatsSince is when the statistics of the kind start: its last tidy in the store's
 // epoch, zero when there was none ("" is any kind's, the last tidy).
+//
+// A stats reset (ResetStats) later than that tidy is where they start instead: the reset's
+// mark covers every kind.
 func (st *Store) StatsSince(ctx context.Context, kind string) (time.Time, error) {
 	rec, err := st.StatsTidied(ctx)
-	if err != nil || rec.Epoch != st.epoch {
+	if err != nil {
 		return time.Time{}, err
 	}
-	if kind == "" {
-		return rec.Since, nil
+	return rec.sinceIn(st.epoch, kind), nil
+}
+
+// sinceIn is when the statistics of the kind start in the epoch: its last tidy ("" any
+// kind's), or the reset when that is later; zero with neither.
+func (rec StatsRecord) sinceIn(epoch uint64, kind string) time.Time {
+	var t time.Time
+	if rec.Epoch == epoch {
+		t = rec.Since
+		if kind != "" {
+			t = rec.Kinds[kind]
+		}
 	}
-	return rec.Kinds[kind], nil
+	if m := rec.resetIn(epoch); m.Later(t) {
+		t = m.At
+	}
+	return t
 }
 
 // streamBases is the streams' bases the work table's cost column counts from: the
 // record's in the store's epoch, none otherwise.
+//
+// A stats reset later than the last tidy of the streams gives the bases instead (each
+// stream's at its mark, sprint.ResetStream.Base): the later of the two is where the cost
+// column counts from.
 func (st *Store) streamBases(ctx context.Context) (map[string]sprint.StreamBase, error) {
 	rec, err := st.StatsTidied(ctx)
-	if err != nil || rec.Epoch != st.epoch {
+	if err != nil {
 		return nil, err
 	}
-	return rec.Streams, nil
+	return rec.basesIn(st.epoch), nil
+}
+
+// basesIn is the streams' bases in the epoch: the last tidy's of the streams, or the
+// reset's when it is later; none with neither.
+func (rec StatsRecord) basesIn(epoch uint64) map[string]sprint.StreamBase {
+	var bases map[string]sprint.StreamBase
+	var tidied time.Time
+	if rec.Epoch == epoch {
+		bases, tidied = rec.Streams, rec.Kinds[sprint.TidyStreams]
+	}
+	if m := rec.resetIn(epoch); m.Later(tidied) {
+		bases = make(map[string]sprint.StreamBase, len(m.Streams))
+		for stream, b := range m.Streams {
+			bases[stream] = b.Base()
+		}
+	}
+	return bases
 }
 
 // archiveNonce is a short random nonce for an archive's key.

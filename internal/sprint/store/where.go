@@ -144,11 +144,18 @@ func (st *Store) keepWhere(ctx context.Context, m Machine) error {
 		return err
 	}
 	r := whereOf(snap, m, st.now())
-	// per landed since the last tidy of the streams (stats tidy, sprint.PerLandedSince)
-	var bases map[string]sprint.StreamBase
-	if stats.Epoch == st.epoch {
-		bases = stats.Streams
+	// the spend since the stats reset's mark (sprint.TierCostsSince): the total, the work, the
+	// reads and each tier, less the mark's; a stream the mark does not know reads as before
+	if m := stats.resetIn(st.epoch); m != nil {
+		for stream, tc := range r.Streams {
+			if base, ok := m.Streams[stream]; ok {
+				r.Streams[stream] = sprint.TierCostsSince(tc, base)
+			}
+		}
 	}
+	// per landed since the last tidy of the streams or the reset, the later (stats tidy, stats
+	// reset, sprint.PerLandedSince)
+	bases := stats.basesIn(st.epoch)
 	for stream, b := range bases {
 		tc, ok := r.Streams[stream]
 		if !ok {
@@ -303,6 +310,10 @@ type WhereFacts struct {
 	StreamPriorities map[string]string
 	// ReadsWindow is the record's verdicts window (sprint.ReadsWindowOf); zero without it.
 	ReadsWindow sprint.ReadsWindowView
+	// Reset is the stats reset's mark in the pinned epoch (stats_reset.go); nil with none.
+	// The where record's spend is counted from it already (keepWhere); where counts the
+	// fleet's done cells and the landed per card from it.
+	Reset *sprint.ResetMark
 	// HasStoreRTT is set when the server's store round trip record has a sample
 	// within StoreRTTWindow; StoreRTTP50MS and StoreRTTP99MS are its p50 and p99.
 	HasStoreRTT   bool
@@ -335,11 +346,17 @@ func (f WhereFacts) StoreLine() string {
 func (st *Store) WhereFacts(ctx context.Context, workRev uint64) (WhereFacts, error) {
 	var f WhereFacts
 	if kv, err := st.kv(); err == nil {
-		vals, oks, err := getKeys(ctx, kv, []string{keyMachine, keyHeartbeat, keyWhere, keyStoreRTT})
+		vals, oks, err := getKeys(ctx, kv, []string{keyMachine, keyHeartbeat, keyWhere, keyStoreRTT, keyStats})
 		if err != nil {
 			return f, err
 		}
 		f.Records = true
+		// the stats reset's mark, in the same exchange: an unreadable stats record is none
+		// here, as it is no tidy (the tick says it, statsRecordOf)
+		var stats StatsRecord
+		if oks[4] && json.Unmarshal([]byte(vals[4]), &stats) == nil {
+			f.Reset = stats.resetIn(st.epoch)
+		}
 		for i, v := range []any{&f.Machine, &f.Heartbeat} {
 			if oks[i] {
 				if err := json.Unmarshal([]byte(vals[i]), v); err != nil {

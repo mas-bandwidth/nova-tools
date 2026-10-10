@@ -119,6 +119,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"funded":            "funded openrouter --reason paid",
 		"cost reconcile":    "cost reconcile",
 		"cost reprice":      "cost reprice",
+		"stats reset":       "stats reset --reason r",
 		"stats tidy":        "stats tidy --all --reason r",
 		"wait":              "wait x --for 1m",
 		"ack":               "ack x --reason r",
