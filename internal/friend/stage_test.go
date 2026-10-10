@@ -201,8 +201,12 @@ func TestAStageEndedByTheDaemonsStopIsStagedAgain(t *testing.T) {
 			<-ctx.Done()
 			return "", &NotStageable{Repo: p.Repo, Why: "git clone: " + ctx.Err().Error()}
 		}
-		require.NoError(t, os.MkdirAll(JobDir(r.d.Dir, p.Job), 0o755))
-		require.NoError(t, os.WriteFile(filepath.Join(JobDir(r.d.Dir, p.Job), JobFile), []byte("# JOB: work a.w1, attempt 1\n"), 0o644))
+		checkout := filepath.Join(JobDir(r.d.Dir, p.Job), "repo")
+		writeCheckout(t, checkout)
+		brief := filepath.Join(r.d.Dir, "inbox", p.Job, "BRIEF.md")
+		require.NoError(t, os.MkdirAll(filepath.Dir(brief), 0o755))
+		require.NoError(t, os.WriteFile(brief, []byte("STATUS: nova-sprint card a.w1\n"), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(JobDir(r.d.Dir, p.Job), JobFile), []byte(stageRecordText(checkout, brief)), 0o644))
 		return strings.Repeat("a", 40), nil
 	}
 	r.run(t, 1)

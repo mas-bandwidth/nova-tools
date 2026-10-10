@@ -1624,8 +1624,8 @@ write or friend sync's) and whose `jobs/<job>/JOB.md` is not, the daemon stages 
   batch mode the session is told of such a brief once its job is staged.
 - Every retry revalidates the files named by the stage record. A surviving `JOB.md`
   that names neither brief nor checkout, or names a missing one, does not suppress a retry.
-  Staging restores a missing
-  recorded brief from the canonical inbox copy, and recreates a missing checkout on its
+  Staging replaces an incomplete `JOB.md`, restores a missing recorded brief from the
+  canonical inbox copy, and recreates a missing checkout on its
   existing branch without resetting work; a successful retry clears the lane's failure count.
 - **The stage contract** (`internal/friend/lanes.go`, `StageGate`): a lane starts only once
   the stage has written all three of a readable regular brief (a directory is not a brief),

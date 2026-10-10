@@ -651,11 +651,10 @@ func JobText(dir string, p Packet, sha string) string {
 }
 
 func (s *Stager) writeJob(p Packet, sha string) error {
-	err := atomicfile.WriteFile(filepath.Join(JobDir(s.Dir, p.Job), JobFile), []byte(JobText(s.Dir, p, sha)), 0o644, atomicfile.NoReplace())
-	if errors.Is(err, fs.ErrExist) {
-		return nil // staged by another hand between the look and the write
+	if Staged(s.Dir, p.Job) {
+		return nil
 	}
-	return err
+	return atomicfile.WriteFile(filepath.Join(JobDir(s.Dir, p.Job), JobFile), []byte(JobText(s.Dir, p, sha)), 0o644)
 }
 
 // stageResult is one stage's end, handed from its goroutine to the loop.
