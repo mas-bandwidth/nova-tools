@@ -121,6 +121,13 @@ func ServerSwitch(ctx context.Context, opts ServerSwitchOptions) error {
 		}
 	}
 
+	restartingFile := target + ".restarting"
+	// ignored: write restarting indicator file
+	_ = os.WriteFile(restartingFile, []byte("restarting"), 0o644) // ignored: write restarting indicator file
+	defer func() {                                                // ignored: remove restarting indicator file
+		_ = os.Remove(restartingFile) // ignored: remove restarting indicator file
+	}()
+
 	// Switch target to candidate binary
 	if err := copyBinary(opts.Binary, target); err != nil {
 		return fmt.Errorf("server switch: failed to copy candidate binary to %s: %w", target, err)
@@ -223,4 +230,13 @@ func CheckRollbackOnLandFailure(target string, landErr error, now time.Time) (ro
 	// ignored: clean up state file after rollback on failure
 	_ = os.Remove(stateFile)
 	return true, nil
+}
+
+// IsRestarting reports whether a server switch is under way for target.
+func IsRestarting(target string) bool {
+	if target == "" {
+		return false
+	}
+	_, err := os.Stat(target + ".restarting")
+	return err == nil
 }
