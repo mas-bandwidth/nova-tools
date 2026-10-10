@@ -311,15 +311,15 @@ type lander struct {
 	// left (mergeHead): the conflict fact carries them (conflictCard).
 	conflictKind  string
 	conflictPaths []string
-	// cardTips is the batch branch's tip before each head mergeCards merged, then after the
-	// last: what a red batch gate bisects (landpass.go, bisect)
-	cardTips []string
 	out           []landBatch
 	epoch         uint64              // the epoch land read: every report is fenced to it
 	diffs         map[string]string   // each card's merge diff, as checkCard read it, for its score
 	scope         map[string][]string // each card's scope amendments, as checkCard allowed them (sprint.ScopeAmended)
 	prose         map[string][]string // each stream's prose globs (sprint.StreamProse), whose backquotes checkCard does not read
 	toScore       []scoreJob          // the landed batches, scored after the whole pass (landscore.go)
+	// cardTips is the batch branch's tip before each head mergeCards merged, then after the
+	// last: what a red batch gate bisects (landpass.go, bisect)
+	cardTips []string
 	// ledgerLog is the land log's lines for the shrink-only ledgers the batch's merges
 	// resolved (ledgerunion.go), reported with the batch (NOTE) and then cleared.
 	ledgerLog []string
