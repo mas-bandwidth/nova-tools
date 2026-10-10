@@ -237,6 +237,32 @@ func TestIntegrationBranchesAreOneList(t *testing.T) {
 	}
 }
 
+// TestPullRequestConcurrencyKeysOnTheHead pins the cancellation fix
+// (ci-cancelled-under-load, issue #2795): the concurrency group keys a
+// pull_request on its head SHA, so a newer head opens a group of its own and
+// never cancels an older head's run mid-job. Keyed on the PR number, every head
+// of one PR shares a group, and a head pushed while another ran cancels it —
+// under a load of PRs opening together, every run at a head is cut short. Each
+// head gets one full run only when the group names the head.
+func TestPullRequestConcurrencyKeysOnTheHead(t *testing.T) {
+	t.Parallel()
+
+	root := repoRoot(t)
+	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
+	var group string
+	for _, line := range strings.Split(src, "\n") {
+		if strings.HasPrefix(line, "  group: ") {
+			group = line
+			break
+		}
+	}
+	require.NotEmpty(t, group, "ci.yml has no concurrency group line")
+	assert.Contains(t, group, "github.event.pull_request.head.sha",
+		"the concurrency group does not key a pull_request on its head SHA; keyed on anything else, a newer head cancels an older head's run mid-job (ci-cancelled-under-load, #2795)")
+	assert.NotContains(t, group, "github.event.pull_request.number",
+		"the concurrency group keys a pull_request on its number; one PR's heads then share a group, so a newer head cancels the older head's run mid-job (ci-cancelled-under-load, #2795)")
+}
+
 // TestRunnersPerMachineIsOneNumber pins row 9: the fair-share step divides by
 // the number of runners the MACHINE says it runs (NOVA_RUNNERS_PER_MACHINE,
 // exported by the runner service), never by a number written into the
