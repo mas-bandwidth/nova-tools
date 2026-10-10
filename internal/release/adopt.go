@@ -3,6 +3,7 @@ package release
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -254,6 +255,47 @@ func olderThan(self, release string) bool {
 		return false
 	}
 	return lessVersion(versionParts(self), versionParts(release))
+}
+
+// SeatVersionWarning is the one line `nova-sprint version` prints when the
+// seat's own build is older than the build the sprint's server runs, naming both
+// and the remedy; "" when either is not a version, or the seat is not older. It
+// is one direction only: a seat ahead of its server is the adoption's business,
+// not a warning. It decides nothing -- the caller's exit code is its own -- and
+// a warning about a version nobody could compare is worse than none, so an
+// unknown version is silence (olderThan).
+func SeatVersionWarning(self, server string) string {
+	self, server = versionToken(self), versionToken(server)
+	if !olderThan(self, server) {
+		return ""
+	}
+	return "nova-sprint WARNING: this seat runs " + self + " and the sprint's server runs " + server +
+		", which is newer; run: nova-sprint adopt <version> --reason <why>, or nova-sprint seat install"
+}
+
+// versionToken is the version out of a version line (`<tool> <version>
+// <goos>/<goarch> <go>`) or a bare version, "" when the text names none.
+func versionToken(s string) string {
+	for _, f := range strings.Fields(s) {
+		if ValidVersion(f) == nil {
+			return f
+		}
+	}
+	return ""
+}
+
+// seatLines reads the seat-link lines the installed release printed, the lines
+// adopt relays: one per recorded link it could not repoint and one per stale
+// nova binary beside the seat's tools. What the install SAID is the report; a
+// second reading of the record here would be a copy that drifts.
+func seatLines(output, prefix string) []string {
+	var out []string
+	for _, line := range strings.Split(output, "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), prefix); ok {
+			out = append(out, rest)
+		}
+	}
+	return out
 }
 
 func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
@@ -647,6 +689,20 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 				field(machine), field(o.version), field(m[1]))
 			continue
 		}
+		// THE SEAT'S LINKS ARE PART OF THE ADOPTION. The install on the machine
+		// repointed the links its record names and named any it could not and
+		// any stale nova binary beside them; a link it could not repoint is a
+		// half adoption -- the seat still runs a build the release did not
+		// place -- so the machine is refused, named, and what it did place
+		// stays.
+		if linkRefused := seatLines(output, "RELEASE SEAT REFUSED link="); len(linkRefused) > 0 {
+			refused++
+			for _, link := range linkRefused {
+				fmt.Fprintf(errs, "RELEASE REFUSED machine=%s seat-link=%s (adopt repoints every recorded link it can; fix the path it names and adopt again)\n",
+					field(machine), oneLine("", errors.New(link)))
+			}
+			continue
+		}
 		adopted++
 		retired := m[4]
 		if retired == "" {
@@ -657,6 +713,9 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		// tools=21 (it had nothing). Two different facts, two fields.
 		fmt.Fprintf(out, "RELEASE ADOPTED machine=%s version=%s tools=%s skipped=%s retired=%s sent=%s bin=%s\n",
 			field(machine), field(o.version), field(m[2]), field(m[3]), field(retired), field(sent), field(bin))
+		for _, p := range seatLines(output, "RELEASE SEAT STALE ") {
+			fmt.Fprintf(out, "RELEASE SEAT STALE machine=%s %s\n", field(machine), p)
+		}
 		// THE ADOPT INVALIDATED THIS MACHINE'S CERTIFICATES by changing its build. With
 		// --certify the renewal happens here, under the version just installed, so the
 		// machine is never left adopted-and-uncertified with a fill that will refuse it.
