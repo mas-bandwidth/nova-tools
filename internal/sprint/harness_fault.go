@@ -3,6 +3,7 @@ package sprint
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -23,6 +24,11 @@ var harnessFaultClasses = []struct {
 	re    *regexp.Regexp
 }{
 	{"lane died", regexp.MustCompile(`the runner ended job|lane ended with no report|the lane died`)},
+	// an empty run: the lane's harness exited and the model did nothing, no report and not
+	// one token (2026-10-09/10: Freddy's opencode lanes ended "exit 0 after 154s and wrote no
+	// report ... tokens input=0 ... output=0", the provider refusing every turn); matched
+	// before "cost line", which the same report carries as its first error
+	{ClassEmptyRun, regexp.MustCompile(`(?i)\bwrote no report\b|harness-fault: no report|\btokens input=0 cache_read=0 cache_write=0 output=0\b`)},
 	{"no step line", regexp.MustCompile(`carries no line for this step`)},
 	{"not started", regexp.MustCompile(`\bHOLD: not started\b`)},
 	{"staging", regexp.MustCompile(`(?i)refused at staging|^staging refused`)},
@@ -36,6 +42,10 @@ var harnessFaultClasses = []struct {
 	{"deadline", regexp.MustCompile(`(?i)deadline[^.;]*no (result|report)|\bcapped at [0-9]`)},
 	{"no result", regexp.MustCompile(`(?i)^no result:|no RESULT\.md`)},
 }
+
+// ClassEmptyRun is the harness fault of a run that did nothing: no report, zero tokens.
+// Its rework never goes back to the worker it ran on (ruleHarness, emptyRunLeft).
+const ClassEmptyRun = "empty run"
 
 // HarnessFault is the class of a failed report that is a harness fault, "" when it is none.
 func HarnessFault(report string) string {
@@ -94,6 +104,35 @@ func ruleHarness(s *Snapshot, a *RuleAnswer, pr *Card) bool {
 		a.fix = HarnessFix(pr.F("attempt"), class, report)
 		a.Why = fmt.Sprintf("attempt %s ended on a harness fault (%s): the failure is the fix, on the same tier", pr.F("attempt"), class)
 	}
-	a.set = map[string]string{FieldNote: cutText(RuleSaid(RuleFailed, a.Act+": "+a.Why), MaxCardTextBytes)}
+	a.set = map[string]string{}
+	if class == ClassEmptyRun {
+		// never back onto the worker that ran it empty: a machine's rework avoids its member
+		// already (Rework, reworkAvoid); a friend's is left for good (FieldFriendsLeft on the
+		// primary, read by the friends' deal, cardLeft)
+		if f := emptyRunLeft(s, pr); f != "" {
+			left := cardLeft(pr, nil)
+			if !slices.Contains(left, f) {
+				left = append(left, f)
+			}
+			a.set[FieldFriendsLeft] = strings.Join(left, ",")
+			a.Why += ", never again on friend " + f
+		}
+	}
+	a.set[FieldNote] = cutText(RuleSaid(RuleFailed, a.Act+": "+a.Why), MaxCardTextBytes)
 	return true
+}
+
+// emptyRunLeft is the friend whose lane ran the primary's attempt empty, which its rework
+// leaves: "" when a machine ran it (its rework avoids the member: reworkAvoid), or when the
+// card names its friend (WHO: friend <name>, or only): a named friend's rework is hers
+// alone (ReworkPinned), and leaving her would strand it ready.
+func emptyRunLeft(s *Snapshot, pr *Card) string {
+	if _, named := FriendOfRow(strings.TrimPrefix(pr.F(FieldWho), "only.")); named {
+		return ""
+	}
+	f, ok := FriendOfRow(reworkAvoid(s, pr))
+	if !ok {
+		return ""
+	}
+	return f
 }

@@ -74,6 +74,7 @@ var harnessFaults = map[string]string{
 	"no step line":    "friend amy HOLD: step 2 not-done: the result carries no line for this step",
 	"not started":     "friend amy HOLD: not started",
 	"staging":         "friend amy FAIL: refused at staging: no bench mirror of mas-bandwidth/nova-tools",
+	ClassEmptyRun:     emptyRunReport("amy"),
 }
 
 func TestAHarnessFaultFailureReworksTheCardByRule(t *testing.T) {

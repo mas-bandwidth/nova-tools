@@ -223,6 +223,22 @@ func friendTakes(s *Snapshot, f FriendSeat, tier string) bool {
 	return slices.Contains(friendTiers(f), tier) && s.FriendsTake(tier)
 }
 
+// cardLeft is friendsLeft of the work card wc with the friends its primary c has left: the
+// primary carries FieldFriendsLeft when the failed rule reworked it off a friend whose lane
+// ran it empty (ruleHarness, ClassEmptyRun), and no later attempt is dealt to her.
+func cardLeft(c, wc *Card) []string {
+	left := friendsLeft(wc)
+	if c == nil {
+		return left
+	}
+	for _, f := range Split(c.F(FieldFriendsLeft)) {
+		if !slices.Contains(left, f) {
+			left = append(left, f)
+		}
+	}
+	return left
+}
+
 // friendsLeft is the friends the work card has left (FieldFriendsLeft), with the one it
 // was taken back from while it is withdrawn.
 func friendsLeft(wc *Card) []string {
@@ -242,9 +258,9 @@ func friendsLeft(wc *Card) []string {
 // alone serve the tier (tierServed), is a card no worker is left for: the tick's judgment
 // of the tier names it (TickDeal).
 func (s *Snapshot) friendsFor(c *Card, tier string) []FriendSeat {
-	var gone []string
+	gone := cardLeft(c, nil) // the friends a rework moved it off for good
 	if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
-		gone = withdrawnFrom(wc)
+		gone = append(gone, withdrawnFrom(wc)...)
 	}
 	var out []FriendSeat
 	for _, f := range s.Friends {
@@ -460,7 +476,7 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 		}
 		escalated := wc != nil && redealBound(wc)
 		tier := s.DealTier(escalating(s, c))
-		left := friendsLeft(wc)
+		left := cardLeft(c, wc)
 		pinned, pinnedCard := FriendCard(c)
 		leftAtPin := slices.Clone(left)
 		name := pinned
@@ -483,7 +499,7 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 				// back, so it is not stranded ready while one is up with room (the owner's
 				// rule: a held or down friend's cards go to the up friends' ready queues);
 				// never the friend it was withdrawn from or taken back from
-				gone := withdrawnFrom(wc)
+				gone := append(withdrawnFrom(wc), cardLeft(c, nil)...)
 				for _, f := range up {
 					if free[f] > 0 && !slices.Contains(gone, f) && friendTakes(s, seat[f], tier) && friendRestrictionAllows(seat[f], c) {
 						may = append(may, f)
@@ -656,7 +672,7 @@ func friendReclaim(s *Snapshot, seats []FriendSeat, up []string, seat map[string
 // it (friendReclaim), her room, lanes and count taken; false when no friend up may take it.
 func reclaimUnit(s *Snapshot, wc *Card, up []string, seat map[string]FriendSeat, free, lanes, dealt map[string]int, declared map[string]bool, p *Plan) (Unit, bool) {
 	pr := s.Work.Placed(wc.F("primary"))
-	tier, left := s.DealTier(pr), friendsLeft(wc)
+	tier, left := s.DealTier(pr), cardLeft(pr, wc)
 	var may []string
 	for _, f := range up {
 		if lanes[f] > 0 && free[f] > 0 && !slices.Contains(left, f) && friendTakes(s, seat[f], tier) && friendRestrictionAllows(seat[f], pr) {
