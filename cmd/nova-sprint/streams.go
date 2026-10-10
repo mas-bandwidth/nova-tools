@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -43,7 +44,7 @@ func (a *app) cmdStreams(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "streams", err.Error())
 	}
-	s, err := st.Load(context.Background(), []string{sprint.Work, sprint.Merge}, nil)
+	s, err := st.Load(context.Background(), []string{sprint.Work, sprint.Merge, sprint.Fleet}, nil)
 	if err != nil {
 		return a.readFailed("streams", err, stderr)
 	}
@@ -68,9 +69,9 @@ func streamsText(v streamsView) string {
 	}
 	fmt.Fprintf(&b, "STREAMS OK streams=%d cards=%d\n", len(v.Streams), cards)
 	for _, s := range v.Streams {
-		fmt.Fprintf(&b, "STREAM %s repos=%s bases=%s release=%s open=%d landed=%d state=%s\n",
+		fmt.Fprintf(&b, "STREAM %s repos=%s bases=%s release=%s open=%d landed=%d ok=%d failed=%d ok%%=%s state=%s\n",
 			s.Stream, streamsDash(strings.Join(s.Repos, ",")), streamsDash(strings.Join(s.Bases, ",")),
-			streamsDash(s.Release), s.Open, s.Landed, streamsDash(s.State))
+			streamsDash(s.Release), s.Open, s.Landed, s.OK, s.Failed, streamsPct(s.OKPct), streamsDash(s.State))
 		for _, c := range s.Cards {
 			fmt.Fprintf(&b, "CARD %s stream=%s state=%s tier=%s title=%s needs=%s\n",
 				c.ID, s.Stream, c.State, streamsDash(c.Tier), streamsDash(c.Title), streamsDash(strings.Join(c.Needs, ",")))
@@ -95,6 +96,17 @@ func streamsDash(v string) string {
 		return "-"
 	}
 	return v
+}
+
+// streamsPct is a stream's ok% as the line prints it: one decimal, "-" with no
+// attempt a worker ran to an end.
+func streamsPct(p float64) string {
+	return pctOf(p)
+}
+
+// pctOf is an ok% figure as the lines print it: one decimal and a percent sign.
+func pctOf(p float64) string {
+	return strconv.FormatFloat(p, 'f', 1, 64) + "%"
 }
 
 // repoStreams is the streams recording any of the repositories, read from the control

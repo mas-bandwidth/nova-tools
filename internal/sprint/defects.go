@@ -27,11 +27,11 @@ func FindDefects(s *Snapshot, since time.Time, defectClass string) []DefectRecor
 	if s == nil || s.Fleet == nil {
 		return out
 	}
-	for _, c := range s.Fleet.Column(Ready, Working, DoneOK, DoneFailed, Withdrawn) {
+	for _, c := range s.Fleet.Column(Ready, Working, DoneOK, DoneFailed, Withdrawn, Refused, Provider) {
 		blame := c.F(FieldBlame)
 		class := c.F(FieldDefectClass)
 		report := c.F("report")
-		if blame == "" && (c.F("ok") == "no" || c.Col == DoneFailed || c.Col == Withdrawn) {
+		if blame == "" && (c.F("ok") == "no" || c.Col == DoneFailed || IsWithdrawn(c.Col)) {
 			blame, class, _, _ = ClassifyAttempt(report, true)
 		}
 		if blame != BlameCoordinator && blame != BlameProvider {

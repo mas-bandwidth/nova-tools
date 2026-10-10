@@ -126,7 +126,7 @@ func TestEveryMemberUpRefusingAtStagingIsOneJudgment(t *testing.T) {
 	}
 	h.machine()
 	w := h.snap().Fleet.Card("s1-1.w1")
-	assert.Equal(t, sprint.Withdrawn, w.Col, "not dealt again")
+	assert.Equal(t, sprint.Refused, w.Col, "not dealt again")
 	assert.Equal(t, 0, w.Int("redeals"))
 	open := h.openOf(sprint.NBound)
 	require.Len(t, open, 1, "one judgment")
@@ -155,7 +155,7 @@ func TestTheLevelNeverMovesACardBackOntoItsRefuser(t *testing.T) {
 		h.machine()
 	}
 	s := h.snap()
-	for _, c := range s.Fleet.Column(sprint.Ready, sprint.Working, sprint.Withdrawn) {
+	for _, c := range s.Fleet.Column(sprint.Ready, sprint.Working, sprint.Withdrawn, sprint.Refused) {
 		takes, _ := sprint.StagingTakes(c)
 		per := map[string]int{}
 		for _, x := range takes {

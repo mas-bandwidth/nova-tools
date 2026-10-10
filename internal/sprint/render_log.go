@@ -134,7 +134,7 @@ func renderWork(l Line, fromRow, fromCol, toRow, toCol string, moved bool, by st
 		return fmt.Sprintf("attempt %s taken off %s's queue %s", a, fromRow, by)
 	case !moved:
 		return fmt.Sprintf("attempt %s changed %s: %s", a, by, setWords(l.Set))
-	case toCol == Withdrawn:
+	case IsWithdrawn(toCol):
 		return fmt.Sprintf("attempt %s taken back from %s %s", a, fromRow, whyOf(l))
 	case toCol == string(Working):
 		return fmt.Sprintf("%s took attempt %s", toRow, a)
@@ -151,7 +151,7 @@ func renderWork(l Line, fromRow, fromCol, toRow, toCol string, moved bool, by st
 		return fmt.Sprintf("%s finished attempt %s: FAILED", fromRow, a)
 	case toCol == DoneDefect:
 		return fmt.Sprintf("%s finished attempt %s: HOLD on a brief defect (%s)", fromRow, a, l.Set[FieldBriefDefect])
-	case toCol == string(Ready) && fromCol == Withdrawn:
+	case toCol == string(Ready) && IsWithdrawn(fromCol):
 		return fmt.Sprintf("attempt %s redealt to %s (generation %d%s)", a, toRow, l.Gen, redealOf(l))
 	case toCol == string(Ready) && fromRow != toRow && strings.Contains(l.Verb, "level"):
 		return fmt.Sprintf("attempt %s moved from %s's queue to %s's to even the queues %s (generation %d)", a, fromRow, toRow, by, l.Gen)

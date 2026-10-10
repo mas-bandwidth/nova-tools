@@ -19,10 +19,13 @@ import (
 const storeFleet = "ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,load:text,withdrawn,ok,failed,ctl:first:none"
 
 // lockedFleet is the fleet table's definition as internal/sprint/TABLES.lock holds it: the
-// store's, and the hidden defect column after failed (2026-10-05, a brief defect), which only
-// a finish on a brief defect writes and the store takes before that build is installed
-// (nova-table col add fleet defect --after failed; nova-table set fleet --hide defect).
-const lockedFleet = "ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,load:text,withdrawn,ok,failed,defect,ctl:first:none"
+// store's, the hidden defect column after failed (2026-10-05, a brief defect), and the
+// hidden refused and provider columns after withdrawn (2026-10-06, ok-percent-is-work-
+// actually-done), which only a finish of a launch the member refused or a take the provider
+// failed writes, and the store takes before that build is installed (nova-table col add
+// fleet refused --after withdrawn; nova-table col add fleet provider --after refused;
+// nova-table set fleet --hide defect --hide refused --hide provider).
+const lockedFleet = "ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,load:text,withdrawn,refused,provider,ok,failed,defect,ctl:first:none"
 
 // colChecked is the mem twin refusing a display cell of a column its table does
 // not define, as the real store does (ntable: "no such column").

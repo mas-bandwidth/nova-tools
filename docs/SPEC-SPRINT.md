@@ -1231,7 +1231,9 @@ where each stream's control card holds the stream's state, cause, ci and
 show it. The fleet table has a hidden `ctl` column where each member's control
 card holds its status, a hidden `withdrawn`
 column where a work card withdrawn because no member was up is kept (the table
-layer never places a removed member again), and hidden `ok` and `failed`
+layer never places a removed member again), hidden `refused` and `provider`
+columns where a launch the member refused before a lane began and a take the
+provider failed are kept, and hidden `ok` and `failed`
 columns that hold a member's finished work cards, finished ok and finished
 failed, and a hidden `defect` column that holds those that ended on a brief
 defect (section 1, a brief defect), counted in neither. `done` and `ok%` are

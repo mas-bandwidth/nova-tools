@@ -253,7 +253,7 @@ func TestEveryProviderOutOfCreditStopsTheMachine(t *testing.T) {
 	open := h.openOf(sprint.NNoRoute)
 	require.Len(t, open, 1, "the tier waits, once")
 	assert.Contains(t, open[0].Note.What, "class=out-of-credit status=402")
-	assert.Equal(t, sprint.Withdrawn, h.snap().Fleet.Card("s1-1.w1").Col, "not dealt on a resting provider")
+	assert.Equal(t, sprint.Provider, h.snap().Fleet.Card("s1-1.w1").Col, "not dealt on a resting provider")
 
 	why, err := h.st.OutOfCredit(h.ctx)
 	require.NoError(t, err)

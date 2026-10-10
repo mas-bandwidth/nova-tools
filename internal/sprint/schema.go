@@ -57,11 +57,11 @@ var AllOrder = []string{Work, Readers, Merge, Friends, Fleet}
 // charged dollars rounded up to the cent. The rows are the
 // friends'; where draws them from store.FriendRows.
 func FriendsDef() ntable.Table {
-	cols, err := ntable.ParseColumns("ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,active:text,tokens:text:sum,ok,failed")
+	cols, err := ntable.ParseColumns("ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,active:text,tokens:text:sum,ok,failed,refused,provider")
 	if err != nil {
 		panic(fmt.Sprintf("sprint table %s: %v", Friends, err))
 	}
-	return ntable.Table{Name: Friends, Columns: cols, Hidden: []string{DoneOK, DoneFailed}}
+	return ntable.Table{Name: Friends, Columns: cols, Hidden: []string{DoneOK, DoneFailed, Refused, Provider}}
 }
 
 // Readers table columns.
@@ -117,7 +117,24 @@ const (
 	Tokens     = "tokens" // friends.tokens: her cards' usage summed, compact or in dollars
 	Load       = "load"
 	Withdrawn  = "withdrawn"
+	// Refused (hidden) holds a work card whose launch the member refused before a
+	// lane began (launch refused, staging refused): in neither done nor ok%, so a
+	// launch that ran nothing is never the worker's failure, and never the card's.
+	// Provider (hidden) holds a work card whose take the provider failed (402, 429,
+	// no result): in neither done nor ok%, so a provider failure is never the
+	// worker's and never the card's. Each is its own column so a recount re-derives
+	// the reason and the dashboard can show it, nothing hidden.
+	Refused  = "refused"
+	Provider = "provider"
 )
+
+// IsWithdrawn says a fleet column holds a work card taken back for the deal to
+// place again: withdrawn (handed back, taken back, no member up), refused (a
+// launch the member refused before a lane began) or provider (a take the
+// provider failed). The deal, the tick and the recount read all three alike.
+func IsWithdrawn(col string) bool {
+	return col == Withdrawn || col == Refused || col == Provider
+}
 
 // Stream states (the merge table's state column).
 const (
@@ -257,8 +274,8 @@ func (n Names) Definitions() []ntable.Table {
 		mk(Work, "waiting,ready,working,review,merging,landed,cost:text:sum"),
 		mk(Readers, "asked,reading,ok,broken,tiers:text"),
 		mk(Merge, "queued,merged,stuck,ci:text,state:text,since:text,returned,ctl:first:none", Since, Returned, Ctl),
-		mk(Fleet, "ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,load:text,withdrawn,ok,failed,defect,ctl:first:none",
-			Withdrawn, DoneOK, DoneFailed, DoneDefect, Ctl),
+		mk(Fleet, "ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,load:text,withdrawn,refused,provider,ok,failed,defect,ctl:first:none",
+			Withdrawn, Refused, Provider, DoneOK, DoneFailed, DoneDefect, Ctl),
 	}
 }
 

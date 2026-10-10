@@ -242,9 +242,9 @@ func TestRouteCoverRouteStats(t *testing.T) {
 				}},
 			),
 			want: []RouteStat{
-				{Route: flash, Attempts: 2, OK: 1, Failed: 1, Provider: 1, MeanWall: "2m0s"},
+				{Route: flash, Attempts: 2, OK: 1, Failed: 1, Provider: 1, OKPct: 50, MeanWall: "2m0s"},
 				{Route: pro, Attempts: 2, Failed: 2, MeanWall: "-"},
-				{Route: Route{Name: "pin:q/m", Provider: "q", Model: "m"}, Pinned: true, Attempts: 1, OK: 1, MeanWall: "-"},
+				{Route: Route{Name: "pin:q/m", Provider: "q", Model: "m"}, Pinned: true, Attempts: 1, OK: 1, OKPct: 100, MeanWall: "-"},
 			},
 		},
 	} {

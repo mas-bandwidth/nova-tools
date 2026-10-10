@@ -227,7 +227,7 @@ func WorkerStats(cards []*Card) WorkerCounters {
 			c.Coordinator++
 		case blame == BlameProvider:
 			c.Provider++
-		case card.Col == Withdrawn:
+		case IsWithdrawn(card.Col):
 			c.Withdrawn++
 		default:
 			c.Failed++
@@ -236,4 +236,22 @@ func WorkerStats(cards []*Card) WorkerCounters {
 	c.Done = c.OK + c.Failed
 	c.OKPct = ComputeOKPercent(c.OK, c.Failed)
 	return c
+}
+
+// WorkerStatsBy is WorkerStats grouped by a field of the work cards: one
+// WorkerCounters per value of the field, in name order. Empty values are left
+// out. The fleet table's work cards are the attempt records, so a group's
+// counters are the same definition the friends and fleet rows use.
+func WorkerStatsBy(cards []*Card, field string) map[string]WorkerCounters {
+	by := map[string][]*Card{}
+	for _, c := range cards {
+		if v := c.F(field); v != "" {
+			by[v] = append(by[v], c)
+		}
+	}
+	out := make(map[string]WorkerCounters, len(by))
+	for name, cs := range by {
+		out[name] = WorkerStats(cs)
+	}
+	return out
 }

@@ -253,7 +253,7 @@ func readSpent(cards []*Card) bool { return readSpender(cards) != nil }
 // readSpender is the first card that spends its reader (readSpent), nil for none.
 func readSpender(cards []*Card) *Card {
 	for _, c := range cards {
-		if c.Placed() && c.Col != Withdrawn || c.F("verdict") != "" || slices.Contains(spentBy, c.F("retired_by")) {
+		if c.Placed() && !IsWithdrawn(c.Col) || c.F("verdict") != "" || slices.Contains(spentBy, c.F("retired_by")) {
 			return c
 		}
 	}

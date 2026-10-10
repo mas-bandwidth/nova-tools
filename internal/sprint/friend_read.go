@@ -241,7 +241,7 @@ func attemptReadPrefix(pr *Card) string {
 func fleetReadLiveOf(s *Snapshot, pr *Card, cards []*Card) (placed, okCards, broken []*Card) {
 	prefix := attemptReadPrefix(pr)
 	for _, c := range cards {
-		if c == nil || c.F("kind") != "read" || !strings.HasPrefix(c.ID, prefix) || c.Col == Withdrawn {
+		if c == nil || c.F("kind") != "read" || !strings.HasPrefix(c.ID, prefix) || IsWithdrawn(c.Col) {
 			continue
 		}
 		if c.Placed() {

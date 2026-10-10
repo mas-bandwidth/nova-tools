@@ -589,6 +589,10 @@ func AttemptLine(wc *Card) string {
 		}
 	case wc.Col == Withdrawn:
 		end = "withdrawn"
+	case wc.Col == Refused:
+		end = "refused"
+	case wc.Col == Provider:
+		end = "provider"
 	case !wc.Placed():
 		end = "retired"
 	}
@@ -673,13 +677,16 @@ func AttemptLines(wc *Card) []string {
 // RouteStat is one route's record over the work cards dealt on it. A pinned
 // model is a row of its own, Pinned, named pin:<model>.
 type RouteStat struct {
-	Route    Route  `json:"route"`
-	Pinned   bool   `json:"pinned,omitempty"`
-	Attempts int    `json:"attempts"`
-	OK       int    `json:"ok"`
-	Failed   int    `json:"failed"`
-	Provider int    `json:"provider_failures"`
-	MeanWall string `json:"mean_wall"` // taken to finished, over the finished; "-" when none
+	Route    Route `json:"route"`
+	Pinned   bool  `json:"pinned,omitempty"`
+	Attempts int   `json:"attempts"`
+	OK       int   `json:"ok"`
+	Failed   int   `json:"failed"`
+	Provider int   `json:"provider_failures"`
+	// OKPct is the route's ok% over the attempts a worker actually ran to an end:
+	// ok / (ok + failed), provider failures, refusals and withdrawn takes left out.
+	OKPct    float64 `json:"okpct"`
+	MeanWall string  `json:"mean_wall"` // taken to finished, over the finished; "-" when none
 	// RestedUntil is when the route's rest ends while it rests (rule 3, route_rest.go):
 	// RFC3339, "" when it does not rest; `routes` fills it at its clock.
 	RestedUntil string `json:"rested_until,omitempty"`
@@ -713,7 +720,7 @@ func RouteStats(routes []Route, fleet *Table) []RouteStat {
 		}
 		return &out[i]
 	}
-	for _, c := range fleet.Column(Ready, Working, DoneOK, DoneFailed, DoneDefect, Withdrawn) {
+	for _, c := range fleet.Column(Ready, Working, DoneOK, DoneFailed, DoneDefect, Withdrawn, Refused, Provider) {
 		name := c.F(FieldRoute)
 		if name == "" {
 			continue
@@ -741,6 +748,12 @@ func RouteStats(routes []Route, fleet *Table) []RouteStat {
 			st.Failed++
 			st.Provider++
 		}
+		if c.Col == Provider {
+			continue // a take the provider failed: counted apart above, never an attempt that ran
+		}
+		if c.Col == Refused {
+			continue // a launch refused before a lane began: no take of the route
+		}
 		if c.Col == Withdrawn && c.F(FieldProviderError) != "" {
 			continue // dealt again at the next deal: no take of it is on this route now
 		}
@@ -763,6 +776,7 @@ func RouteStats(routes []Route, fleet *Table) []RouteStat {
 	}
 	for i := range out {
 		out[i].MeanWall = "-"
+		out[i].OKPct = ComputeOKPercent(out[i].OK, out[i].Failed)
 		if ws := walls[out[i].Route.Name]; len(ws) > 0 {
 			var sum time.Duration
 			for _, w := range ws {

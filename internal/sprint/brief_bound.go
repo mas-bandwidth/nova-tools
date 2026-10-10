@@ -266,7 +266,7 @@ func AttemptCapDeal(s *Snapshot, r TickReq) Plan {
 			"brief":           briefGainsWho(c.F("brief"), name),
 			FieldBriefAttempt: c.F("attempt"),
 		})
-		if prev := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); prev != nil && prev.Col == Withdrawn {
+		if prev := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); prev != nil && IsWithdrawn(prev.Col) {
 			// the capped attempt's withdrawn work card is retired, its record kept, as
 			// a rework retires the bound's (steps_review.go): a withdrawn card's
 			// primary is ready, and this one is working now

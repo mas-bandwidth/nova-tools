@@ -88,7 +88,7 @@ func TestAFailedFinishGoesByItsAttemptDecisionAtItsClassBar(t *testing.T) {
 		failed string // the primary's failure class; "" when no failed work
 		used   bool
 	}{
-		{"no-result over its bar ends the take", Bars{AttemptNoResult: "0.7"}, verdict, decide.ClassNoResult, 0.93, sprint.Withdrawn, "", true},
+		{"no-result over its bar ends the take", Bars{AttemptNoResult: "0.7"}, verdict, decide.ClassNoResult, 0.93, sprint.Provider, "", true},
 		{"nothing-to-do over its bar is failed work of its class", Bars{AttemptNothingToDo: "0.7"}, verdict, decide.ClassNothingToDo, 0.7, sprint.DoneFailed, "decided nothing-to-do", true},
 		{"no-result is read from its own bar alone", Bars{AttemptNothingToDo: "0.1"}, verdict, decide.ClassNoResult, 0.99, sprint.DoneFailed, verdictClass, false},
 		{"nothing-to-do is read from its own bar alone", Bars{AttemptNoResult: "0.1"}, verdict, decide.ClassNothingToDo, 0.99, sprint.DoneFailed, verdictClass, false},
@@ -98,10 +98,10 @@ func TestAFailedFinishGoesByItsAttemptDecisionAtItsClassBar(t *testing.T) {
 		{"done never routes a failed finish", both, verdict, decide.ClassDone, 0.99, sprint.DoneFailed, verdictClass, false},
 		{"under the bar the prefix stands", both, verdict, decide.ClassNoResult, 0.5, sprint.DoneFailed, verdictClass, false},
 		{"with no bar the prefix stands", Bars{}, verdict, decide.ClassNoResult, 0.99, sprint.DoneFailed, verdictClass, false},
-		{"a provider failure is never made failed work", both, providerLine, decide.ClassNothingToDo, 0.99, sprint.Withdrawn, "", false},
-		{"a provider failure is never made no result", both, providerLine, decide.ClassNoResult, 0.99, sprint.Withdrawn, "", false},
-		{"a staging refusal is the member's", both, cardhdr.EndStaging + ": no bench mirror", decide.ClassNoResult, 0.99, sprint.Withdrawn, "", false},
-		{"a launch refused is the member's", both, cardhdr.EndLaunch + ": no worktree", decide.ClassNoResult, 0.99, sprint.Withdrawn, "", false},
+		{"a provider failure is never made failed work", both, providerLine, decide.ClassNothingToDo, 0.99, sprint.Provider, "", false},
+		{"a provider failure is never made no result", both, providerLine, decide.ClassNoResult, 0.99, sprint.Provider, "", false},
+		{"a staging refusal is the member's", both, cardhdr.EndStaging + ": no bench mirror", decide.ClassNoResult, 0.99, sprint.Refused, "", false},
+		{"a launch refused is the member's", both, cardhdr.EndLaunch + ": no worktree", decide.ClassNoResult, 0.99, sprint.Refused, "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -127,7 +127,7 @@ func TestAFailedFinishGoesByItsAttemptDecisionAtItsClassBar(t *testing.T) {
 				assert.Equal(t, line, wc.F(sprint.FieldDecided), "the work card keeps the decision")
 				assert.Equal(t, fmt.Sprintf("%s p=%.3f used=%s", tc.class, tc.p, used), pr.F(sprint.PrefixDecided+d.Op))
 			}
-			if tc.col == sprint.Withdrawn && !refused {
+			if tc.col == sprint.Provider && !refused {
 				assert.NotEmpty(t, wc.F(sprint.FieldTakeEnded), "an ended take")
 				assert.Zero(t, h.notesOf(sprint.NWorkFailed), "never a failed-work judgment")
 			}
@@ -213,7 +213,7 @@ func TestAFinishCarryingAnotherTakesDecisionIsRefused(t *testing.T) {
 
 			h.must(FinishStep(sprint.FinishReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: gens, Failed: true,
 				Report: "verdict not-done; tests red in x", Decided: decidedLine(decide.ClassNoResult, 0.99, "s1-1", 1), Who: wc.Row}))
-			assert.Equal(t, sprint.Withdrawn, h.snap().Fleet.Card("s1-1.w1").Col, "its own decision routes it")
+			assert.Equal(t, sprint.Provider, h.snap().Fleet.Card("s1-1.w1").Col, "its own decision routes it")
 			h.clean(tc.name)
 		})
 	}
