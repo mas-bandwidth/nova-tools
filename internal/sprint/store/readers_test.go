@@ -25,7 +25,7 @@ func TestReaderStatesFollowTheBeatAndTheHold(t *testing.T) {
 	// the harness beats every reader: all up
 	assert.Equal(t, map[string]string{"reader-a": "up", "reader-b": "up", "reader-c": "up"}, state())
 	// a name that is no row writes no beat
-	wrote, err := h.st.ReaderBeat(h.ctx, "reader-z")
+	wrote, err := h.st.ReaderBeat(h.ctx, "reader-z", "")
 	require.NoError(t, err)
 	assert.False(t, wrote)
 	// the hold is away whatever it beats, and up releases it

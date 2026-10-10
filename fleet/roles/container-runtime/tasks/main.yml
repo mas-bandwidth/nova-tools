@@ -103,9 +103,9 @@
 - name: user namespaces are enabled
   ansible.builtin.assert:
     quiet: true
-    that: container_runtime_userns.stdout | int > 0
+    that: container_runtime_userns.stdout | default(0) | int > 0
     fail_msg: >-
-      user.max_user_namespaces is {{ container_runtime_userns.stdout }}; set it
+      user.max_user_namespaces is {{ container_runtime_userns.stdout | default('') }}; set it
       above zero (sysctl) so an unprivileged user can create a namespace.
 
 # cgroup v2 delegation: the controllers a limit needs must be delegated to the
@@ -178,7 +178,7 @@
     that:
       - container_runtime_info.stdout.split()[0] == "true"
       - container_runtime_info.stdout.split()[1] == "v2"
-    fail_msg: "podman for {{ container_runtime_user }} is not rootless on cgroups v2: {{ container_runtime_info.stdout }}"
+    fail_msg: "podman for {{ container_runtime_user }} is not rootless on cgroups v2: {{ container_runtime_info.stdout | default('') }}"
   when: not ansible_check_mode
 
 # THE PROBE. A trivial container with the flags a functional run uses. podman

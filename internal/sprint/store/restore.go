@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -83,7 +84,7 @@ func ReadState(ctx context.Context, b Backend, names sprint.Names) (SprintState,
 		return s, err
 	}
 	for _, name := range All {
-		if err := readTableState(ctx, at, names, name, put); err != nil {
+		if err := readTableState(ctx, at, names, name, es.N, put); err != nil {
 			return s, err
 		}
 	}
@@ -188,9 +189,10 @@ func ReadState(ctx context.Context, b Backend, names sprint.Names) (SprintState,
 }
 
 // readTableState puts one table's parts: its shape and its rows, and every
-// record it has held, read in read sets. A table the store cannot read is one
-// part, its refusal.
-func readTableState(ctx context.Context, b Backend, names sprint.Names, logical string, put func(string, any) error) error {
+// record it has held, read in read sets at epoch, the sprint's, and a record
+// of an older epoch as the store holds it. A table the store cannot read is
+// one part, its refusal.
+func readTableState(ctx context.Context, b Backend, names sprint.Names, logical string, epoch uint64, put func(string, any) error) error {
 	stored := names.Table(logical)
 	shapes, err := b.Shapes(ctx, []string{stored})
 	if err != nil {
@@ -216,13 +218,28 @@ func readTableState(ctx context.Context, b Backend, names sprint.Names, logical 
 	if err != nil {
 		return fmt.Errorf("table %s: its records: %w", logical, err)
 	}
-	for start := 0; start < len(ids); start += ntable.LimitReadSetMembers {
-		end := min(start+ntable.LimitReadSetMembers, len(ids))
-		res, err := b.ReadSet(ctx, stored, ids[start:end])
+	// The change log every epoch shares names the records of every epoch. A
+	// record an older epoch left is the store's as much as any other, and the
+	// table refuses to read it at the active epoch (MEMBEREPOCH): it is read
+	// as the store holds it (RecordReader), never refused and never left out.
+	// Its stored id says its epoch (sprint.StoredID); a record whose id does
+	// not, and that the read set still refuses, is read the same way.
+	var current, older []string
+	for _, id := range ids {
+		if e, ok := storedEpoch(id); ok && e != epoch {
+			older = append(older, id)
+		} else {
+			current = append(current, id)
+		}
+	}
+	for start := 0; start < len(current); start += ntable.LimitReadSetMembers {
+		end := min(start+ntable.LimitReadSetMembers, len(current))
+		members, refused, err := readSetOrEach(ctx, b, stored, current[start:end])
 		if err != nil {
 			return fmt.Errorf("table %s: %w", logical, err)
 		}
-		for _, m := range res.Members {
+		older = append(older, refused...)
+		for _, m := range members {
 			at := "-"
 			if m.Placed {
 				at = m.Row + ":" + m.Col
@@ -237,7 +254,73 @@ func readTableState(ctx context.Context, b Backend, names sprint.Names, logical 
 			}
 		}
 	}
+	if len(older) == 0 {
+		return nil
+	}
+	rr, ok := b.(RecordReader)
+	if !ok {
+		return fmt.Errorf("table %s: %d record(s) of an older epoch, and this store cannot read a record as it holds it", logical, len(older))
+	}
+	sort.Strings(older)
+	for _, id := range older {
+		raw, found, err := rr.RecordRaw(ctx, stored, names.RecordKey(logical, id), id)
+		if err != nil {
+			return fmt.Errorf("table %s: the record %s of an older epoch: %w", logical, id, err)
+		}
+		if !found {
+			continue // as a read set leaves a missing member out
+		}
+		if err := put(fmt.Sprintf("record %s %s", logical, id), map[string]any{"older": raw}); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// RecordReader reads one record as the store holds it, whatever its epoch and
+// without the table's epoch check: the record key's fields on a Redis, the
+// record's every value on a twin. It is how a sprint's state reads a record an
+// older epoch left (readTableState); ok is false when there is none.
+type RecordReader interface {
+	RecordRaw(ctx context.Context, table, key, id string) (map[string]string, bool, error)
+}
+
+// storedEpoch is the epoch a stored id carries after its last '~'
+// (sprint.StoredID), and false for an id that carries none.
+func storedEpoch(id string) (uint64, bool) {
+	i := strings.LastIndexByte(id, '~')
+	if i < 0 || i == len(id)-1 || strings.Trim(id[i+1:], "0123456789") != "" {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(id[i+1:], 10, 64)
+	return n, err == nil
+}
+
+// readSetOrEach reads ids in one read set; when the read set refuses a member
+// of another epoch, it reads each id alone, and returns the refused ones for
+// the caller to read as the store holds them.
+func readSetOrEach(ctx context.Context, b Backend, table string, ids []string) ([]ntable.ReadSetMember, []string, error) {
+	res, err := b.ReadSet(ctx, table, ids)
+	if err == nil {
+		return res.Members, nil, nil
+	}
+	if refusalCode(err) != "MEMBEREPOCH" {
+		return nil, nil, err
+	}
+	var members []ntable.ReadSetMember
+	var refused []string
+	for _, id := range ids {
+		one, err := b.ReadSet(ctx, table, []string{id})
+		switch {
+		case refusalCode(err) == "MEMBEREPOCH":
+			refused = append(refused, id)
+		case err != nil:
+			return nil, nil, err
+		default:
+			members = append(members, one.Members...)
+		}
+	}
+	return members, refused, nil
 }
 
 // Diff is every part where restored differs from s, the source, sorted: a part
@@ -338,4 +421,49 @@ func (m *Mem) DoneAll(context.Context) (map[string]string, error) {
 // DoneAll is every caller's recorded result at the pinned epoch, in one read.
 func (r *Redis) DoneAll(ctx context.Context) (map[string]string, error) {
 	return r.C.HGetAll(ctx, r.key(keyDone)).Result()
+}
+
+// RecordRaw is the record key's every field, in one read, whatever its epoch.
+func (r *Redis) RecordRaw(ctx context.Context, _, key, _ string) (map[string]string, bool, error) {
+	h, err := r.C.HGetAll(ctx, key).Result()
+	if err != nil {
+		return nil, false, err
+	}
+	return h, len(h) > 0, nil
+}
+
+// RecordRaw is the twin's record of id in table, whatever its epoch: its
+// epoch, place, score, revision and fields.
+func (m *Mem) RecordRaw(_ context.Context, table, _, id string) (map[string]string, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, err := m.table(table)
+	if err != nil {
+		return nil, false, err
+	}
+	mm := t.members[id]
+	if mm == nil {
+		return nil, false, nil
+	}
+	out := map[string]string{
+		"epoch":    strconv.FormatUint(mm.epoch, 10),
+		"revision": strconv.FormatUint(mm.rev, 10),
+	}
+	if mm.placed {
+		out["place"] = mm.row + ":" + mm.col
+		out["score"] = strconv.FormatFloat(mm.score, 'g', -1, 64)
+	}
+	for f, v := range mm.fields {
+		out["field:"+f] = v
+	}
+	return out, true, nil
+}
+
+// RecordRaw reads through a read-only backend.
+func (r readOnly) RecordRaw(ctx context.Context, table, key, id string) (map[string]string, bool, error) {
+	rr, ok := r.b.(RecordReader)
+	if !ok {
+		return nil, false, errors.New("this store cannot read a record as it holds it")
+	}
+	return rr.RecordRaw(ctx, table, key, id)
 }

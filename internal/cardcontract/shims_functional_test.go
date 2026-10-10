@@ -407,6 +407,45 @@ func TestAPushToALocalPathRemoteReachesGit(t *testing.T) {
 	}
 }
 
+// A push run in a repository that is not the staged checkout (a test's own repository under
+// the job's temp directory, pushing to its own `origin`) reaches the real git and records
+// nothing, so the job's last push stays the child's: on 2026-10-09/10 the gates' tests left
+// their commits in pushed.tsv and a finish with no head took one for the child's. A linked
+// worktree of the checkout shares its git directory and is still the card's push.
+func TestAPushFromAnotherRepositoryIsNotTheCardsPush(t *testing.T) {
+	t.Parallel()
+	for _, family := range Families {
+		r := newRig(t, family, "work")
+		head := r.commit(r.repo, "w")
+		code, _, errb := r.sh(r.repo, "git push origin")
+		require.Equal(t, 0, code, "%s: %s", family, errb)
+		tmp := filepath.Join(r.job, ".nova-sandbox-tmp", "TestSomething123", "001")
+		require.NoError(t, os.MkdirAll(tmp, 0o755))
+		// the test's own repository: a clone whose origin is its own bare repository
+		bus, work := filepath.Join(tmp, "bus.git"), filepath.Join(tmp, "work")
+		git(t, tmp, "init", "-q", "--bare", bus)
+		git(t, tmp, "clone", "-q", r.origin, work)
+		git(t, work, "remote", "set-url", "origin", bus)
+		theirs := git(t, work, "rev-parse", "HEAD")
+		code, _, errb = r.sh(work, "git push origin main")
+		require.Equal(t, 0, code, "%s: %s", family, errb)
+		assert.NotContains(t, errb, "pushed by the sprint", "%s: a test's push is not answered by the shim", family)
+		assert.Equal(t, theirs, git(t, bus, "rev-parse", "refs/heads/main"), "%s: the test's push landed", family)
+		_, got := LastPushed(r.job)
+		assert.Equal(t, head, got, "%s: the job's last push is still the child's", family)
+		// a linked worktree of the checkout is the card's own
+		wt := filepath.Join(r.job, "wt")
+		git(t, r.repo, "worktree", "add", "-q", "-b", "side", wt)
+		side := r.commit(wt, "in the worktree")
+		code, _, errb = r.sh(wt, "git push origin side")
+		require.Equal(t, 0, code, "%s: %s", family, errb)
+		branch, got := LastPushed(r.job)
+		assert.Equal(t, side, got, "%s: a linked worktree's push is recorded", family)
+		assert.Equal(t, "side", branch, family)
+		assert.Empty(t, git(t, r.origin, "for-each-ref", "refs/heads/sprint", "refs/heads/side"), "%s: nothing of the card reached origin", family)
+	}
+}
+
 // gh's finishes are scoped to the card's kind: a read never creates a pull
 // request and work never reviews one; neither writes a finish.
 func TestGhFinishesAreScopedToTheCardsKind(t *testing.T) {

@@ -145,12 +145,14 @@ func (st *Store) rootKV() (KV, error) {
 // else measured from src; the record's measuring state carries from beat to
 // beat. It works while the machine is RUNNING or STOPPED and touches no table.
 func (st *Store) Beat(ctx context.Context, member string, given *float64, src hostload.Source) (sprint.Beat, error) {
-	return st.BeatOwing(ctx, member, given, src, nil)
+	return st.BeatOwing(ctx, member, given, src, nil, "")
 }
 
 // BeatOwing is Beat with the stop-returns the member's lanes still owe after the machine's
-// stop (fleet beat --stop-returns; section 14): kept on the record, which start reads.
-func (st *Store) BeatOwing(ctx context.Context, member string, given *float64, src hostload.Source, stopReturns *int) (sprint.Beat, error) {
+// stop (fleet beat --stop-returns; section 14): kept on the record, which start reads; and
+// the member's word that it starts no card (fleet beat --no-room; sprint.Beat.NoRoom), each
+// beat's own: a beat without it clears it.
+func (st *Store) BeatOwing(ctx context.Context, member string, given *float64, src hostload.Source, stopReturns *int, noRoom string) (sprint.Beat, error) {
 	if !sprint.ValidID(member) {
 		return sprint.Beat{}, fmt.Errorf("a member name wants letters, digits, _ and -: %s", member)
 	}
@@ -193,6 +195,7 @@ func (st *Store) BeatOwing(ctx context.Context, member string, given *float64, s
 	} else {
 		b.StopReturns = prev.StopReturns
 	}
+	b.NoRoom = noRoom
 	out, err := json.Marshal(b)
 	if err != nil {
 		return b, err

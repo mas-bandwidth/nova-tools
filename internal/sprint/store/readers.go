@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -59,8 +60,9 @@ func (st *Store) ReaderRows(ctx context.Context) ([]string, error) {
 
 // ReaderBeat writes one beat of reader at the store's clock, to the second,
 // when the readers table has its row; it says whether it wrote. It touches no
-// table: the reader's own queue is its beat.
-func (st *Store) ReaderBeat(ctx context.Context, reader string) (bool, error) {
+// table: the reader's own queue is its beat. noRoom is the reader's word that it
+// starts no read (queue --no-room; sprint.Beat.NoRoom), "" for none.
+func (st *Store) ReaderBeat(ctx context.Context, reader, noRoom string) (bool, error) {
 	rows, err := st.ReaderRows(ctx)
 	if err != nil || !contains(rows, reader) {
 		return false, err
@@ -70,7 +72,7 @@ func (st *Store) ReaderBeat(ctx context.Context, reader string) (bool, error) {
 	if err != nil || states[reader] == sprint.ReaderRetired {
 		return false, err
 	}
-	return true, st.beatReaders(ctx, reader)
+	return true, st.beatReaders(ctx, noRoom, reader)
 }
 
 // BeatReaders is a beat of every reader of the readers table: the readers of
@@ -80,15 +82,15 @@ func (st *Store) BeatReaders(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return st.beatReaders(ctx, rows...)
+	return st.beatReaders(ctx, "", rows...)
 }
 
-func (st *Store) beatReaders(ctx context.Context, readers ...string) error {
+func (st *Store) beatReaders(ctx context.Context, noRoom string, readers ...string) error {
 	kv, err := st.rootKV()
 	if err != nil {
 		return nil // a store that keeps no beats holds every reader up
 	}
-	out, err := json.Marshal(sprint.Beat{At: st.now().UTC().Truncate(time.Second)})
+	out, err := json.Marshal(sprint.Beat{At: st.now().UTC().Truncate(time.Second), NoRoom: noRoom})
 	if err != nil {
 		return err
 	}
@@ -152,13 +154,20 @@ func (st *Store) ForgetReaders(ctx context.Context, readers []string) error {
 // (sprint.ReaderState). A store that keeps no records says none (nil), and
 // every reader is held up.
 func (st *Store) ReaderStates(ctx context.Context, readers []string, now time.Time) (map[string]string, error) {
+	out, _, err := st.readerStates(ctx, readers, now)
+	return out, err
+}
+
+// readerStates is ReaderStates and, beside it, each reader whose fresh beat says it starts
+// no read, with its word (sprint.NoRoomNow).
+func (st *Store) readerStates(ctx context.Context, readers []string, now time.Time) (map[string]string, map[string]string, error) {
 	kv, err := st.rootKV()
 	if err != nil {
-		return nil, nil
+		return nil, nil, nil
 	}
-	out := map[string]string{}
+	out, noRoom := map[string]string{}, map[string]string{}
 	if len(readers) == 0 {
-		return out, nil
+		return out, noRoom, nil
 	}
 	names := make([]string, 0, 2*len(readers))
 	for _, r := range readers {
@@ -166,7 +175,7 @@ func (st *Store) ReaderStates(ctx context.Context, readers []string, now time.Ti
 	}
 	vals, oks, err := getKeys(ctx, kv, names)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for i, r := range readers {
 		var b sprint.Beat
@@ -180,6 +189,9 @@ func (st *Store) ReaderStates(ctx context.Context, readers []string, now time.Ti
 			_ = json.Unmarshal([]byte(vals[2*i+1]), &hold)
 		}
 		out[r] = sprint.ReaderState(hold.Away, b, now)
+		if why := sprint.NoRoomNow(b, now); why != "" {
+			noRoom[r] = why
+		}
 		if hold.Retired {
 			out[r] = sprint.ReaderRetired
 		}
@@ -187,19 +199,36 @@ func (st *Store) ReaderStates(ctx context.Context, readers []string, now time.Ti
 			out[r] = sprint.ReaderHeld // hold <reader> (hold.go): held, whatever it beats
 		}
 	}
-	return out, nil
+	return out, noRoom, nil
 }
 
 // readerStatesInto gives a snapshot its readers' states: the readers table's
-// rows as the snapshot holds them.
+// rows as the snapshot holds them; and its NoRoom, every reader and fleet member
+// whose fresh beat says it starts no card (sprint.Beat.NoRoom), so the deal and
+// the ask pass them by.
 func (st *Store) readerStatesInto(ctx context.Context, s *sprint.Snapshot) error {
-	if s.Readers == nil {
-		return nil
+	noRoom := map[string]string{}
+	if s.Readers != nil {
+		m, nr, err := st.readerStates(ctx, s.Readers.Rows(), s.Now)
+		if err != nil {
+			return err
+		}
+		s.ReaderStates = m
+		maps.Copy(noRoom, nr)
 	}
-	m, err := st.ReaderStates(ctx, s.Readers.Rows(), s.Now)
-	if err != nil {
-		return err
+	if s.Fleet != nil {
+		if _, err := st.rootKV(); err == nil {
+			beats, err := st.Beats(ctx, s.Members())
+			if err != nil {
+				return err
+			}
+			for m, b := range beats {
+				if why := sprint.NoRoomNow(b, s.Now); why != "" {
+					noRoom[m] = why
+				}
+			}
+		}
 	}
-	s.ReaderStates = m
+	s.NoRoom = noRoom
 	return nil
 }

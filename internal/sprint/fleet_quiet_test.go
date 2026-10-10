@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/stretchr/testify/assert"
@@ -119,4 +120,38 @@ func TestFleetQuietDealsNothingAndTellsWorkersUntilItEnds(t *testing.T) {
 		}
 		assert.Empty(t, r.quietLog(), "a refusal writes nothing")
 	})
+}
+
+// TestAMemberWhoseBeatSaysNoRoomIsDealtNothing: a member whose fresh beat says it starts no
+// card (fleet beat --no-room: its free disk under its floor) is dealt nothing by the tick
+// while the other member is dealt as before, and the first beat without it puts the member back in the deal (fault 2 of 2026-10-10: hetzner at
+// 0.0 GiB was dealt 872 cards it handed straight back refused at staging).
+func TestAMemberWhoseBeatSaysNoRoomIsDealtNothing(t *testing.T) {
+	t.Parallel()
+	r := newHoldRig(t, 12, 0)
+	why := "free disk on the volume of /slots is 0.0 GiB, under the floor of 10 GiB"
+	full := func() {
+		r.t.Helper()
+		r.mu.Lock()
+		r.now = r.now.Add(time.Second)
+		r.mu.Unlock()
+		r.beat()
+		zero := 0.0
+		_, err := r.st.BeatOwing(r.ctx, "m1", &zero, hostload.Source{}, nil, why)
+		require.NoError(t, err)
+		_, err = r.st.Tick(r.ctx)
+		require.NoError(t, err)
+	}
+	for range 4 {
+		full()
+		assert.Empty(t, onRow(r.snap(), "m1", "s1", sprint.Ready, sprint.Working), "a member that starts no card is dealt nothing")
+	}
+	s := r.snap()
+	assert.NotEmpty(t, onRow(s, "m2", "s1", sprint.Ready, sprint.Working), "the other member is dealt as before")
+
+	// a beat without the word clears it: the member is dealt again
+	r.tick()
+	r.tick()
+	s = r.snap()
+	assert.NotEmpty(t, onRow(s, "m1", "s1", sprint.Ready, sprint.Working), "the deal gives it cards again")
 }

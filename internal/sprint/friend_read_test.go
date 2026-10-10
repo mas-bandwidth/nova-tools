@@ -122,11 +122,12 @@ func TestAFrontierCardsReadIsAskedAsAFriendCard(t *testing.T) {
 		seat := frontierSeat("amy", 2, Up, t.TempDir())
 		seat.Mode = config.FriendModeOneShot
 		askReaders(t, w, []FriendSeat{seat})
+		// a one-shot friend reads to her width as a batch friend does (one lane per unit of
+		// width, the owner 2026-10-10): two lanes working and the third ready behind them
 		require.Equal(t, Working, w.s.Fleet.Card(ReadCardID("s1-1", 1, "amy")).Col)
-		require.Nil(t, w.s.Fleet.Card(ReadCardID("s1-2", 1, "amy")), "one-shot friend holds no ready read cards")
-		require.Nil(t, w.s.Fleet.Card(ReadCardID("s1-3", 1, "amy")))
-		require.NotNil(t, placedReaderRead(w, "s1-2"), "the rest go to a paid reader")
-		require.NotNil(t, placedReaderRead(w, "s1-3"))
+		require.Equal(t, Working, w.s.Fleet.Card(ReadCardID("s1-2", 1, "amy")).Col)
+		require.Equal(t, Ready, w.s.Fleet.Card(ReadCardID("s1-3", 1, "amy")).Col)
+		require.Empty(t, w.notesOf(NWaitingForReader))
 	})
 
 	t.Run("most free", func(t *testing.T) {

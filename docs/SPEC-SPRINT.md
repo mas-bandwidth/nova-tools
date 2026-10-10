@@ -406,10 +406,12 @@ as a machine's lane that frees takes its next, and the next tick puts it back
 the next tick fills her room
 again (`TestAFriendAtWidthEightWithThirtyCardsHasSixteenDealt`: width 8 with 30
 waiting is 8 working and 8 ready, and a 17th on a landing). In one-shot mode
-(`mode: one-shot`), the machine deals one card at a time (room 1, lane 1), and
-the next only after the last one finished
-(item 22 of tmp/manual-to-verbs-2026-10-04.md;
-`TestDealingRespectsAFriendDeliveryMode`). For either mode, the deal (friends
+(`mode: one-shot`) the machine deals to her width as in batch mode: her daemon runs
+one lane per unit of width, each card a fresh run (docs/SPEC-FRIEND.md, one-shot
+lanes), and the lane a finish frees takes her next at once (the owner, 2026-10-10:
+one card at a time left a one-shot reader at width 32 idle beside 110 cards in review;
+`TestAOneShotFriendIsDealtToHerWidthAsABatchFriendIs`,
+`TestAOneShotFriendsFreedLaneTakesHerNextWhileOtherLanesRun`). For either mode, the deal (friends
 first, before the machines' deal) offers every ready card to its named friend
 whose tiers hold its tier first, then to the friends up whose tiers hold its
 tier, an idle lane first,
@@ -428,9 +430,8 @@ nothing ready for over an hour while the machines were dealt flash cards):
   room (DealAhead times her width) and her lanes (her width) count every card on her
   row, ready and working, work card or read (`sprint.friendLoad`), in the deal, the
   level, her start and the friends' read ask alike; there is no read room beside it.
-  A friend at width 16 holding 10 work cards and 9 reads has no idle lane, and a
-  one-shot friend holds one card at a time, read or work
-  (`TestOneWidthHoldsHerWorkAndReads`).
+  A friend at width 16 holding 10 work cards and 9 reads has no idle lane, in
+  either mode (`TestOneWidthHoldsHerWorkAndReads`).
 - The deal order is one for friends and machines (`sprint.dealOrder`): the stream
   turns from the deal's stream index, each stream's cards in work order, the order
   `tla/SprintTables.tla` and the reference model check; each card then goes to the
@@ -574,8 +575,7 @@ row into working, by id (`<card>@<gen>`) or by count, as a member takes
 (`sprint.Take`, `takeSeat`; her presence as the section below reads it), and `progress` and `finish` then take it as
 they take a member's working card. Her status and her lanes are her friends
 row's, never a control card's: she takes while she is up (held or down, her
-cards wait ready, and the refusal names why), within her lanes (her width in batch mode,
-1 in one-shot mode; hard, as a member's width: a take past them is refused,
+cards wait ready, and the refusal names why), within her lanes (her width, in either mode; hard, as a member's width: a take past them is refused,
 `friend friend.<name> is at its width`), and a card she takes is taken now and
 carries her deadline (`friendTaken`). A card on another row is refused (`not in
 friend.<name> ready`), a friend not on the roster is refused (`no friend
@@ -1293,7 +1293,7 @@ her own session (a wake ping her session answered within `FriendPongWindow`,
 her session's answer to a check her daemon asked within `FriendProofLive` while her beats go on, or
 a card of hers finished within `FriendFinishWindow`; docs/SPEC-FRIEND.md,
 "Presence is her session's evidence"), never on her beat itself. `TakeStep` reads the friends' seats when it names a friend's row.
-Her take is held to her width (1 in one-shot mode), as a machine's is to its
+Her take is held to her width, in either mode, as a machine's is to its
 own. It is refused only when she is not up, and the refusal names why: "friend
 <f> is held: held by the coordinator (friend down)[: <reason>]", "friend <f>
 is down: her beat says down until <t>: <reason>", or "friend <f> is down: no
@@ -6009,7 +6009,7 @@ A restart on a restored dump at a step's boundary repeats no outside effect and 
 
 `nova-sprint backup --out <dir>` is the hand procedure of 2026-10-04 (the coordinator's backup before the release cut) as one verb, its steps in that procedure's order (`backupOut.run`, cmd/nova-sprint/backup_out.go):
 
-1. **The dump.** The keys of the sprint's epoch and the keys every epoch shares, one `RESTORE <key> <ttl ms> <payload>` line a key, each argument quoted as redis-cli quotes and splits it (`store.RestoreLine`, `store.ParseRestoreDump`), sorted by key, into `sprint-epoch<n>.restore.txt`. A key's epoch is read off its name (`store.KeyEpoch`: a table generation `table:<t>:<n>:...`, a sprint key `<name>@<n>`, a stored id `...~<n>`); a key that carries none is shared, and a key of another epoch is left out (`store.InBackup`). On a Redis only the sprint's keys are taken (`store.SprintKey`: `sprint:...`, the four tables `table:<t>` and `table:<t>:...`, `view:sprint`, and the table layer's registries `tables` and `views`), by SCAN, then DUMP and PTTL. A twin store is split into the keys a Redis store of the same state would be (`store.MemDump`) and put back together from them (`store.MemRestore`).
+1. **The dump.** The keys of the sprint's epoch and the keys every epoch shares, one `RESTORE <key> <ttl ms> <payload>` line a key, each argument quoted as redis-cli quotes and splits it (`store.RestoreLine`, `store.ParseRestoreDump`), sorted by key, into `sprint-epoch<n>.restore.txt`. A key's epoch is read off its name (`store.KeyEpoch`: a table generation `table:<t>:<n>:...`, a sprint key `<name>@<n>`, a stored id `...~<n>`); a key that carries none is shared, and a key of another epoch is left out (`store.InBackup`), except a record of one of the four tables (`store.IsRecordKey`): a record an older epoch left is still the store's, its table's change log names it, and it is taken whatever its epoch (`store.BackupKey`). The sprint state reads such a record as the store holds it (`store.RecordReader`), never at the active epoch, where the table refuses it (`MEMBEREPOCH`); a backup never refuses on it. On a Redis only the sprint's keys are taken (`store.SprintKey`: `sprint:...`, the four tables `table:<t>` and `table:<t>:...`, `view:sprint`, and the table layer's registries `tables` and `views`), by SCAN, then DUMP and PTTL. A twin store is split into the keys a Redis store of the same state would be (`store.MemDump`) and put back together from them (`store.MemRestore`).
 2. **xz -9**, the system's binary, into `<dump>.xz`.
 3. **split** into parts `<dump>.xz.part-000`, `-001`, ... each at most `--part-bytes` (default 95000000, under the forge's 100 MB).
 4. **The sums**: the SHA-256 of the text and of the xz, and of each part, in `SHA256SUMS` (sha256sum's format).
