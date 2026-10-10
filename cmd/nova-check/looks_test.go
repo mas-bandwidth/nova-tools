@@ -37,6 +37,10 @@ func TestLinksRefusesAnEmptyTreeUnlessAllowEmpty(t *testing.T) {
 	assert.Contains(t, stdout, `"status":"failed"`, "the JSON is not the failed value the line is: %q", stdout)
 	assert.Contains(t, stdout, `"looked at nothing: files=0"`, "the JSON does not carry the why: %q", stdout)
 	assert.Contains(t, stdout, "--allow-empty", "the JSON remedy does not name the way out: %q", stdout)
+
+	code, stdout, stderr = runCheck(t, "links", "--dir", dir, "--json", "--allow-empty")
+	require.EqualValues(t, 0, code, "json --allow-empty: exit = %d, want 0; stderr = %q", code, stderr)
+	assert.Contains(t, stdout, `"status":"ok"`, "the JSON is not the ok value: %q", stdout)
 }
 
 // TestSpellingRefusesAnEmptyTreeUnlessAllowEmpty pins looks["spelling"]: a --dir
@@ -72,6 +76,11 @@ func TestSpellingRefusesAnEmptyTreeUnlessAllowEmpty(t *testing.T) {
 			assert.Contains(t, stdout, `"status":"failed"`, "%v: the JSON is not the failed value the line is: %q", jsonArgs, stdout)
 			assert.Contains(t, stdout, `"looked at nothing: files=0"`, "%v: the JSON does not carry the why: %q", jsonArgs, stdout)
 			assert.Contains(t, stdout, "--allow-empty", "%v: the JSON remedy does not name the way out: %q", jsonArgs, stdout)
+
+			jsonAllowEmptyArgs := append(append([]string(nil), args...), "--json", "--allow-empty")
+			code, stdout, stderr = runCheck(t, jsonAllowEmptyArgs...)
+			require.EqualValues(t, 0, code, "%v: exit = %d, want 0; stderr = %q", jsonAllowEmptyArgs, code, stderr)
+			assert.Contains(t, stdout, `"status":"ok"`, "%v: the JSON is not ok over deliberate empty set: %q", jsonAllowEmptyArgs, stdout)
 		})
 	}
 }
