@@ -5750,6 +5750,28 @@ copy may carry the rank's own new score, and any other difference breaks
 the rule that every copy has its primary's score. `check` reports a pending operation: in flight while it is younger than
 the grace, cut after it.
 
+#### fsck-friend-queue-agreement-b.w5
+
+fsck's check `friend-queue` holds a friend's own account of her cards to the store's: the
+cards the store has dealt to her row (`sprint.FriendQueueCard`, each the work card and the
+job directory she was handed it in) are the ids her `inbox/QUEUE.json` names, and every
+`REPORT.md` in her outbox belongs to a dealt or finished card. Her files live on her own
+machine, so her daemon carries the queue ids and the outbox ids on its beat
+(`internal/friend/state.go`, `internal/friend/daemon.go`), and the check compares them with
+the store through the comparison friend reconcile uses and never a second one
+(`sprint.FriendReconcileOf`, `sprint.FriendQueueStrays`;
+`internal/sprint/friend_reconcile.go`). The tick's reconcile repairs ordinary drift every
+tick (section 1, friend-reconcile-every-tick-r.w1), so `sprint.FsckFriendQueue` reports only
+a disagreement that is the same on the two reconcile passes it is handed: one violation per
+card (`sprint.FriendQueueCardKind`), an id of her account that is no card or job of her row
+(`sprint.FriendQueueStrayKind`), and an outbox report that belongs to no dealt or finished
+card (`sprint.FriendQueueReportKind`), each surviving both passes. A finding the first pass
+has and the second does not is dropped: the repair worked. Every violation prints
+`FSCK VIOLATION check=friend-queue friend=<f> kind=<k> name=<n> <why>` and names
+`friend reconcile <friend>` as the fix (`sprint.FriendQueueFinding.Line`); the check runs
+none and writes nothing. Tests: `internal/sprint/fsck_friend_queue_test.go`,
+`TestFsckFindsAFriendQueueThatDisagreesWithTheStore`.
+
 ## 10. Steps that touch more than one table
 
 The table layer applies one table per batch. Every mutating verb is one
