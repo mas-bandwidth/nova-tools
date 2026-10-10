@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -57,7 +58,7 @@ func TestTheDaemonFinishesAReportItDidNotStage(t *testing.T) {
 		require.GreaterOrEqual(t, len(argv), 4, "%v", argv)
 		got[argv[3]] = argv
 	}
-	require.Len(t, got, 4, "one finish per working card with a verdict, sent once over three loops: %v", f.got())
+	require.Len(t, got, 5, "one finish per working card with a report, sent once over three loops: %v", f.got())
 	assert.Equal(t, []string{"finish", "--as", "friend.bob", "landed.w1@1", "--epoch", "15", "--head", head, "--branch", "sprint/landed.w1.g1.e15", "--report", "friend bob LAND: The card is done."}, got["landed.w1@1"])
 	assert.Equal(t, []string{"finish", "--as", "friend.bob", "again.w1@3", "--epoch", "15", "--head", head, "--branch", "sprint/again.w1.g1.e15", "--report", "friend bob LAND: third time."}, got["again.w1@3"], "a job's generation is its finish's; a sha is read in lower case")
 	assert.Equal(t, []string{"finish", "--as", "friend.bob", "held.w1@1", "--epoch", "15", "--failed", "--head", head, "--branch", "sprint/held.w1.g1.e15", "--report", "friend bob HOLD: Verdict: HOLD Head: " + head + " no push"}, got["held.w1@1"])
@@ -65,6 +66,9 @@ func TestTheDaemonFinishesAReportItDidNotStage(t *testing.T) {
 	require.Len(t, failed, 11)
 	assert.Equal(t, []string{"finish", "--as", "friend.bob", "failed.w1@1", "--epoch", "15", "--failed", "--branch", "sprint/failed.w1.g1.e15", "--report"}, failed[:10])
 	assert.Equal(t, "friend bob FAIL: "+oneLine(("Verdict: FAIL\n\n" + long)[:600], 600), failed[10], "a failed finish carries the report's first 600 characters")
+	// a report with no parseable verdict is the harness's fault, never the work's: finished
+	// as a harness fault the failed rule redeals, not as FAIL
+	assert.Equal(t, []string{"finish", "--as", "friend.bob", "silent.w1@1", "--epoch", "15", "--failed", "--branch", "sprint/silent.w1.g1.e15", "--report", "friend bob verdict none is not LAND, HOLD or FAIL; I am still working on it."}, got["silent.w1@1"])
 
 	count := func(sub string) int {
 		n := 0
@@ -75,17 +79,18 @@ func TestTheDaemonFinishesAReportItDidNotStage(t *testing.T) {
 		}
 		return n
 	}
-	assert.Equal(t, 1, count("outbox: left outbox/silent.w1~15/REPORT.md: it has no Verdict line"), "a report with no verdict is noted once: %v", r.records)
+	assert.Equal(t, 0, count("outbox: left outbox/silent.w1~15/REPORT.md: it has no Verdict line"), "a report with no verdict is finished, never left")
 	assert.Equal(t, 1, count("outbox: left outbox/ready.w1~15/REPORT.md: card ready.w1 is ready on her row, not working"), "%v", r.records)
 	assert.Equal(t, 1, count("outbox: left outbox/gone.w1~15/REPORT.md: refused: card gone.w1 is not on her row, no longer hers; no row the daemon reads says who holds it now (nova-sprint view coordinator does)"), "%v", r.records)
 	assert.Equal(t, 0, count("not-a-job"), "a directory no card names is not hers to finish")
-	assert.Equal(t, 4, count("outbox: finished card "), "one line per finish: %v", r.records)
+	assert.Equal(t, 5, count("outbox: finished card "), "one line per finish: %v", r.records)
 
-	// she writes the verdict: the next pass finishes it; a finished job is not noted after it leaves her row
+	// a job the daemon finished is never read again: a verdict written after it is not a
+	// second finish, and the finished job is not noted when its card leaves her row
 	outboxReport(t, dir, silent.Job, "Verdict: FAIL\n\nstuck.\n")
 	row.set(silent, ready)
 	r.run(t, 2)
-	assert.Len(t, f.got(), 5)
+	assert.Len(t, f.got(), 5, "a finished job is not finished again")
 	assert.Equal(t, "silent.w1@1", f.got()[4][3])
 	assert.Equal(t, 0, count("card landed.w1 is not on her row"), "a job the daemon finished is not noted when its card leaves her row")
 }
@@ -104,10 +109,72 @@ func TestReportVerdictReadsTheFriendsWords(t *testing.T) {
 	}
 }
 
+// An unparseable verdict is the reader's or the harness's fault, never a finding against
+// the card it read or the work it reported (docs/SPEC-FRIEND.md, the daemon reads every
+// outbox job; the reader row). A read whose report names no verdict is returned with that
+// reason and never counted broken; a work report with no parseable verdict is finished as a
+// harness fault the sprint's failed rule redeals, never as a failed attempt.
+func TestAnUnparseableReadIsTheReadersFault(t *testing.T) {
+	t.Parallel()
+
+	// one classification in outbox.go for reads and work reports alike
+	assert.True(t, NoVerdict("I read the diff and it looks fine to me.\n"), "a read whose first line is prose has no verdict")
+	assert.False(t, NoVerdict("head: abc\nbranch: sprint/a\nverdict: broken\n"), "a read's ok|broken is a verdict")
+	assert.False(t, NoVerdict("Verdict: FAIL\n\nthe bench is red\n"), "a work report's green/red verdict is a verdict")
+	assert.True(t, NoVerdict("Cost: 1c tokens x\nnothing else\n"))
+
+	// a read report whose first line is prose is returned with reason no verdict, and
+	// is never marked broken
+	t.Run("read", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			dir := cardDirFixture(t, nil, nil, nil)
+			h := &readHarness{lanesHarness: &lanesHarness{dir: dir, active: map[string]int{}},
+				verdicts: map[string]string{
+					"a.w1": "I read the diff; it is fine, but I did not write the shape.\n",
+					"b.w1": okResult,
+				}}
+			sp := &readSprint{queue: askedQueue}
+			r := readRig(t, h, sp, 2)
+			r.run(t, 30)
+
+			assert.Empty(t, sp.verbs("--broken"), "an unparseable read is never marked broken")
+			rets := sp.verbs("--return")
+			require.Len(t, rets, 1)
+			assert.Equal(t, "a.w1", rets[0][4])
+			assert.Contains(t, flagValue(rets[0], "--reason"), "no verdict")
+		})
+	})
+
+	// a work report with no parseable verdict is a harness fault that redeals the
+	// attempt, not a failed attempt
+	t.Run("work", func(t *testing.T) {
+		t.Parallel()
+		r := newRig(t)
+		dir := r.d.Dir
+		row := &twinRow{}
+		r.d.Held = row.held
+		f := &finishes{}
+		r.d.Finish = f.finish
+		silent := workCard("silent.w1", "working")
+		inboxJob(t, dir, silent.Job, silent.Brief)
+		outboxReport(t, dir, silent.Job, "I am still working on it.\n")
+		row.set(silent)
+
+		r.run(t, 3)
+
+		require.Len(t, f.got(), 1, "a report with no verdict is finished, not left: %v", r.records)
+		argv := f.got()[0]
+		assert.Equal(t, "silent.w1@1", argv[3])
+		assert.Contains(t, argv, "--failed", "a no-verdict report is a harness fault, finished so the failed rule redeals it")
+		assert.Contains(t, argv[len(argv)-1], "verdict none is not LAND, HOLD or FAIL", "the words the sprint's failed rule reads as a harness fault")
+	})
+}
+
 // The daemon's duty is nova-sprint collect's for her own tree: a LAND finishes only at
 // origin's tip of the card's branch (refused naming the branch otherwise), and a lane her
-// runner ENDed with no report (and no LIMIT) is a dead lane, its REPORT.md written FAIL and
-// its card finished --failed so it is dealt again.
+// runner ENDed with no report (and no LIMIT) is a dead lane, its REPORT.md written with no
+// verdict and its card finished as a harness fault, so the attempt is dealt again.
 func TestTheDaemonFinishesADeadLaneAndALandOnlyAtOriginsTip(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
@@ -156,7 +223,7 @@ func TestTheDaemonFinishesADeadLaneAndALandOnlyAtOriginsTip(t *testing.T) {
 	d := got["dead.w1@1"]
 	require.Len(t, d, 11)
 	assert.Equal(t, []string{"finish", "--as", "friend.bob", "dead.w1@1", "--epoch", "15", "--failed", "--branch", "sprint/dead.w1.g1.e15", "--report"}, d[:10])
-	assert.Contains(t, d[10], "friend bob FAIL: Verdict: FAIL nova-friend of bob: the runner ended job dead.w1~15 with no report, and no run of it is live: "+end)
+	assert.Contains(t, d[10], "friend bob verdict none is not LAND, HOLD or FAIL; nova-friend of bob: the runner ended job dead.w1~15 with no report, and no run of it is live: "+end)
 	report, err := os.ReadFile(filepath.Join(dir, "outbox", dead.Job, "REPORT.md"))
 	require.NoError(t, err)
 	assert.Equal(t, DeadLaneReport("bob", dead.Job, end), string(report))

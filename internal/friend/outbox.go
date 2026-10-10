@@ -26,8 +26,10 @@ import (
 // LAND with a full sha Head finishes with that head, HOLD and FAIL (any other verdict too)
 // finish --failed with the report's first 600 characters; a LAND whose report does not
 // carry the key words of its brief's fix (THE ONE THING LEFT, rework.go) is a HOLD by the
-// daemon, finished --failed with its head kept and the words that say why. A report with no Verdict line,
-// and a job whose card is not working on her row, are noted once and left. The model is
+// daemon, finished --failed with its head kept and the words that say why. A report with
+// no parseable verdict is the reader's or the harness's fault, never the work's: it is
+// finished --failed as a harness fault, which redeals the attempt (NoVerdict), and a job
+// whose card is not working on her row is noted once and left. The model is
 // internal/friend/tla/OutboxFinish.tla (docs/SPEC-FRIEND.md, the daemon reads every outbox
 // job).
 
@@ -44,6 +46,22 @@ const ReportCap = 64 * 1024
 
 // ReportChars is how much of a failed report rides on its finish.
 const ReportChars = 600
+
+// NoVerdictWords is what a work report with no parseable verdict is finished as, friend
+// sync's words: the sprint's failed rule reads "verdict none" as a harness fault and
+// redeals the attempt, never a failed attempt against the work (internal/sprint
+// harness_fault.go).
+const NoVerdictWords = "verdict none is not LAND, HOLD or FAIL"
+
+// NoVerdict is the one classification a read's RESULT.md and a work's REPORT.md share: a
+// report carries no parseable verdict when it has no Verdict: line, or a Verdict: line
+// naming no word. Such a report is the reader's or the harness's fault, never a finding
+// against the card it read or the work it reported (docs/SPEC-FRIEND.md, the daemon reads
+// every outbox job; the reader row).
+func NoVerdict(report string) bool {
+	verdict, _ := reportVerdict(report)
+	return verdict == ""
+}
 
 // outboxState is what the daemon keeps between its outbox passes: the jobs it finished
 // (never sent again, and never noted after their card leaves her row), the finishes the
@@ -111,7 +129,9 @@ func firstChars(s string, n int) string {
 // and generation): LAND with a full sha Head finishes at that head with the report's first
 // paragraph, as friend sync words it; any other verdict (HOLD, FAIL, a LAND with no full sha
 // Head) is --failed, with a HOLD's or FAIL's full sha Head kept, and the report's first
-// ReportChars characters. The branch is the brief's.
+// ReportChars characters. A report with no parseable verdict (verdict "") is a harness
+// fault, finished --failed with the words the sprint's failed rule redeals on (NoVerdict),
+// and keeps no Head. The branch is the brief's.
 func OutboxFinishArgv(friend string, c Card, verdict, head, branch, report string) []string {
 	argv := []string{"finish", "--as", "friend." + friend, c.ID + "@" + strconv.Itoa(c.Gen()), "--epoch", c.Epoch()}
 	full := fullSha.MatchString(head)
@@ -122,6 +142,13 @@ func OutboxFinishArgv(friend string, c Card, verdict, head, branch, report strin
 	case verdict == "LAND":
 		argv = append(argv, "--failed")
 		words = "friend " + friend + " LAND with no Head: <full sha>; " + firstChars(report, ReportChars)
+	case verdict == "":
+		// an unparseable verdict is the reader's or the harness's fault, never the work's:
+		// friend sync's own words for it (docs/SPEC-FRIEND.md, the daemon reads every
+		// outbox job; internal/sprint harness_fault.go, the class "verdict none")
+		full = false
+		argv = append(argv, "--failed")
+		words = "friend " + friend + " " + NoVerdictWords + "; " + firstChars(report, ReportChars)
 	default:
 		argv = append(argv, "--failed")
 		words = "friend " + friend + " " + verdict + ": " + firstChars(report, ReportChars)
@@ -159,8 +186,9 @@ func readReport(outbox, job string) (string, bool, error) {
 // job in her outbox named <work>~<epoch>[.g<gen>] with a REPORT.md is finished when its card
 // is working on her row (a work card, never a read), the job no lane is running; the finish
 // is sent once, and one the server did not take is sent again after OutboxRetry. A report
-// with no Verdict line, one that cannot be read, and a job whose card is not working on her
-// row are said once while they stand, and left.
+// with no parseable verdict is a harness fault, finished so the failed rule redeals it
+// (NoVerdict); one that cannot be read, and a job whose card is not working on her row,
+// are said once while they stand, and left.
 func (l *loop) outboxStep(now time.Time) {
 	d := l.d
 	if d.Finish == nil {
@@ -250,15 +278,16 @@ func (l *loop) outboxStep(now time.Time) {
 			continue
 		}
 		verdict, head := reportVerdict(report)
-		if verdict == "" {
-			note(job, "it has no Verdict line")
-			continue
-		}
 		if t, ok := o.tried[job]; ok && now.Sub(t) < OutboxRetry {
 			continue
 		}
 		card := Card{ID: id, Brief: filepath.Join(d.Dir, "inbox", job, "BRIEF.md"), Outbox: filepath.Join(outbox, job)}
 		written := verdict
+		// A report with no parseable verdict is the reader's or the harness's fault,
+		// never a finding against the work: it is finished as a harness fault, which
+		// redeals the attempt, and never as a failed attempt (docs/SPEC-FRIEND.md, the
+		// daemon reads every outbox job; NoVerdict).
+		noVerdict := NoVerdict(report)
 		if verdict == "LAND" {
 			// a LAND that does not address its brief's first line is a HOLD (rework.go)
 			if held := unaddressed(HeldByDaemon, report, jobFix(card.Brief, h.Brief)); held != "" {
@@ -269,10 +298,14 @@ func (l *loop) outboxStep(now time.Time) {
 		if branch == "" {
 			_, branch = PushedHead(d.Dir, card)
 		}
-		if why := l.offTip(*h, verdict, head, branch); why != "" {
-			o.tried[job] = now
-			note(job, why+"; read again in "+OutboxRetry.String())
-			continue
+		if !noVerdict {
+			if why := l.offTip(*h, verdict, head, branch); why != "" {
+				o.tried[job] = now
+				note(job, why+"; read again in "+OutboxRetry.String())
+				continue
+			}
+		} else {
+			verdict, head, written = "", "", "no verdict"
 		}
 		argv := OutboxFinishArgv(d.Friend, card, verdict, head, branch, report)
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), FinishWait)
@@ -392,10 +425,12 @@ func RunnerEnded(log, job string) (end string, dead bool) {
 	return end, dead
 }
 
-// DeadLaneReport is the REPORT.md the daemon writes for a dead lane: Verdict FAIL, and the
-// runner's END line.
+// DeadLaneReport is the REPORT.md the daemon writes for a dead lane: no verdict line, for a
+// runner that ended with no report is a harness fault, never the card's (NoVerdict), and the
+// runner's END line. The outbox pass that follows finishes it as a harness fault, which
+// redeals the attempt.
 func DeadLaneReport(friend, job, end string) string {
-	return fmt.Sprintf("Verdict: FAIL\n\nnova-friend of %s: the runner ended job %s with no report, and no run of it is live: %s\n", friend, job, oneLine(end, 600))
+	return fmt.Sprintf("nova-friend of %s: the runner ended job %s with no report, and no run of it is live: %s\n", friend, job, oneLine(end, 600))
 }
 
 // deadLanes writes the REPORT.md of every dead lane on her row (DeadLaneReport) and says
