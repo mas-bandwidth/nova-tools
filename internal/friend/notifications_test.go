@@ -317,7 +317,9 @@ func TestDeferredReportSurvivesRestartThenEnqueuesWhenCapacityOpens(t *testing.T
 // Deal notices coalesce per friend in the notification receiver (SPEC-FRIEND.md,
 // notifications): five deal notices while the session is busy collapse into one turn
 // carrying the newest, a batch subject coalesces with the per-card ones, and a notice
-// whose cards are all taken before delivery is withdrawn without a turn.
+// whose cards are all taken before delivery is withdrawn without a turn. A batch list
+// truncated at ten (with its "and N more" marker) is never withdrawn on its visible
+// subset alone, since a card it omits may still be held.
 func TestDealNoticesCoalescePerFriend(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
@@ -390,4 +392,20 @@ func TestDealNoticesCoalescePerFriend(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, stages7)
 	assert.Equal(t, bus.Delivered, stages7[len(stages7)-1].State)
+
+	// A batch list is cut at ten with "and N more": its visible ten are a subset, so a
+	// held card the list omits must keep the notice from being withdrawn on the subset alone.
+	m8 := send("cards dealt: 12 (c-1, c-2, c-3, c-4, c-5, c-6, c-7, c-8, c-9, c-10, and 2 more)")
+	heldCards = []string{"c-11"} // the visible ten have left the row; an omitted card is still held
+	now = now.Add(100 * time.Second)
+	require.NoError(t, n.step(context.Background(), now))
+	require.NoError(t, n.step(context.Background(), now.Add(10*time.Second)))
+	mu.Lock()
+	require.Len(t, delivered, 2, "a truncated batch is delivered, not withdrawn on its visible subset")
+	assert.Contains(t, delivered[1], "c-10")
+	mu.Unlock()
+	stages8, _, err := r.bus.Stages(context.Background(), "bob", m8.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, stages8)
+	assert.Equal(t, bus.Delivered, stages8[len(stages8)-1].State)
 }

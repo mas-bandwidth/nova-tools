@@ -80,35 +80,39 @@ func dealFriend(m bus.Message, fallback string) string {
 
 // dealCards are the cards a deal notice names: the ids of a batch subject's parenthesized
 // list, or the one card of a per-card subject (SPEC-FRIEND.md, notifications). The batch
-// list is cut at ten with a trailing "and N more", which names no card.
-func dealCards(m bus.Message) []string {
+// list is cut at ten with a trailing "and N more", which names no card: truncated then
+// reports that the list is only a subset of the deal, never the whole of it.
+func dealCards(m bus.Message) (cards []string, truncated bool) {
 	if strings.HasPrefix(m.Subject, "cards dealt: ") {
 		start, end := strings.Index(m.Subject, "("), strings.LastIndex(m.Subject, ")")
 		if start != -1 && end > start {
-			var cards []string
 			for _, p := range strings.Split(m.Subject[start+1:end], ",") {
 				p = strings.TrimSpace(p)
-				if p == "" || (strings.HasPrefix(p, "and ") && strings.HasSuffix(p, " more")) {
+				if p == "" {
+					continue
+				}
+				if strings.HasPrefix(p, "and ") && strings.HasSuffix(p, " more") {
+					truncated = true
 					continue
 				}
 				cards = append(cards, p)
 			}
-			return cards
+			return cards, truncated
 		}
 	}
 	if strings.HasPrefix(m.Subject, "card ") {
 		if cardID, _, ok := strings.Cut(strings.TrimPrefix(m.Subject, "card "), " dealt:"); ok {
 			if cardID = strings.TrimSpace(cardID); cardID != "" {
-				return []string{cardID}
+				return []string{cardID}, false
 			}
 		}
 	}
 	if idx := strings.Index(m.Subject, "card="); idx != -1 {
 		if f := strings.Fields(m.Subject[idx+len("card="):]); len(f) > 0 {
-			return []string{f[0]}
+			return []string{f[0]}, false
 		}
 	}
-	return nil
+	return nil, false
 }
 
 // NotificationBatch is the immutable input kept before enqueue. Accepted means the
@@ -139,13 +143,16 @@ type NotificationState struct {
 }
 
 // DealNotice is the newest deal notice owed a friend: the friend it is keyed by, the cards
-// it names, and the bus entry and message it stands for (SPEC-FRIEND.md, notifications).
-// A newer notice replaces it; it is withdrawn when all its cards are taken.
+// it names, whether that list is a truncated subset, and the bus entry and message it stands
+// for (SPEC-FRIEND.md, notifications). A newer notice replaces it; it is withdrawn when all
+// its cards are taken, and a truncated list is never withdrawn because a card it omits may
+// still be held.
 type DealNotice struct {
-	Friend  string      `json:"friend"`
-	Cards   []string    `json:"cards,omitempty"`
-	Entry   string      `json:"entry,omitempty"`
-	Message bus.Message `json:"message,omitempty"`
+	Friend    string      `json:"friend"`
+	Cards     []string    `json:"cards,omitempty"`
+	Truncated bool        `json:"truncated,omitempty"`
+	Entry     string      `json:"entry,omitempty"`
+	Message   bus.Message `json:"message,omitempty"`
 }
 
 // ReadNotificationState and WriteNotificationState use the existing fsynced atomic
@@ -235,13 +242,15 @@ func (d *Daemon) cardsKnown() bool {
 }
 
 // cardsAllTaken is whether every card a notice names has left the friend's row (taken back,
-// finished or returned): the daemon's card state d.held() answers it (SPEC-FRIEND.md, notifications).
-func (n *notificationReceiver) cardsAllTaken(cards []string) bool {
-	if !n.d.cardsKnown() || len(cards) == 0 {
+// finished or returned): the daemon's card state d.held() answers it (SPEC-FRIEND.md,
+// notifications). A notice whose batch list was truncated at ten names only a subset, so it
+// is never withdrawn on that list alone: an omitted card may still be held.
+func (n *notificationReceiver) cardsAllTaken(deal *DealNotice) bool {
+	if deal == nil || deal.Truncated || !n.d.cardsKnown() || len(deal.Cards) == 0 {
 		return false
 	}
 	held := n.d.held()
-	for _, c := range cards {
+	for _, c := range deal.Cards {
 		if slices.Contains(held, c) {
 			return false
 		}
@@ -299,7 +308,7 @@ func (n *notificationReceiver) step(ctx context.Context, now time.Time) error {
 	}
 	if n.state.Pending == nil && n.state.Ready && !now.Before(n.state.ReadyDue) && !now.Before(n.state.RetryAt) {
 		deal := n.dealForFriend()
-		if deal != nil && n.cardsAllTaken(deal.Cards) {
+		if n.cardsAllTaken(deal) {
 			if err := n.withdrawDeal(ctx, deal, []string{deal.Entry}, []bus.Message{deal.Message}); err != nil {
 				return err
 			}
@@ -332,7 +341,7 @@ func (n *notificationReceiver) step(ctx context.Context, now time.Time) error {
 	if !p.Accepted {
 		if p.Ready {
 			deal := n.dealForFriend()
-			if deal != nil && n.cardsAllTaken(deal.Cards) {
+			if n.cardsAllTaken(deal) {
 				if err := n.withdrawDeal(ctx, deal, p.Entries, p.Messages); err != nil {
 					return err
 				}
@@ -440,7 +449,8 @@ func (n *notificationReceiver) receive(ctx context.Context, now time.Time) error
 				silent = append(silent, old.Entry)
 				audited = append(audited, old.Message)
 			}
-			n.state.Deals[friend] = &DealNotice{Friend: friend, Cards: dealCards(m), Entry: e.Entry, Message: m}
+			cards, truncated := dealCards(m)
+			n.state.Deals[friend] = &DealNotice{Friend: friend, Cards: cards, Truncated: truncated, Entry: e.Entry, Message: m}
 			if !n.state.Ready {
 				n.state.Ready = true
 				n.state.ReadyDue = now.Add(n.policy.window())

@@ -1265,9 +1265,12 @@ the older, which is acknowledged as coalesced. Each receive pass reads at most 3
 `--notify-window` (30 seconds) coalesces a burst across passes. When delivery is due, a
 notice whose named cards have all left her row (taken back, finished or returned, as the
 daemon's card state `held` answers) is withdrawn without a turn; otherwise one turn is
-delivered, carrying the newest notice alongside the canonical ready-queue wake. It claims or
-executes nothing; child-finish refill belongs to the existing dispatcher.
-`TestDealNoticesCoalescePerFriend` pins the coalescing and the withdrawal.
+delivered, carrying the newest notice alongside the canonical ready-queue wake. A batch
+list is cut at ten with a trailing `and N more`, so its named cards are only a subset of the
+deal and are never the whole of it: such a notice is not withdrawn on that subset, because a
+card it omits may still be held. It claims or executes nothing; child-finish refill belongs
+to the existing dispatcher. `TestDealNoticesCoalescePerFriend` pins the coalescing, the
+withdrawal, and the truncated batch that is never withdrawn on its visible subset.
 
 The file-synced atomic journal holds one active immutable batch, at most one deferred
 nonurgent report or notice batch, and one ready bit. The app queue permits one unread notification batch
