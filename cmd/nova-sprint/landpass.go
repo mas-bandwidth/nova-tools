@@ -47,6 +47,8 @@ import (
 	"sync"
 	"time"
 
+	"io"
+
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -347,6 +349,7 @@ func (l *lander) pass(ctx context.Context, s *sprint.Snapshot, order []string) (
 		}
 	}
 	l.clearStatus()
+	return failed
 }
 
 // refuse ends the job in phase 1 with a refusal: nothing pushed or reported for it.
