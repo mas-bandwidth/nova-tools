@@ -118,6 +118,23 @@
           list is not an empty one; run: nova-config apply --kind loop, then print the inventory again
         quiet: true
 
+    - name: the installed version on this host (what --check compares)
+      ansible.builtin.slurp: { src: "{{ nova_build_file }}" }
+      register: loop_build
+
+    - name: the installed version on this host
+      ansible.builtin.set_fact:
+        loop_installed: "{{ loop_build.content | default('') | b64decode | trim }}"
+
+    - name: a member refuses when its checkout version differs from the adopted release
+      ansible.builtin.assert:
+        that: nova_version is not defined or nova_version == loop_installed
+        fail_msg: >-
+          {{ inventory_hostname }} has adopted {{ loop_installed }}; this play runs from {{ nova_version }};
+          refuse and run from the adopted checkout, or install {{ nova_version }} first
+        quiet: true
+      when: loop_installed != '' and nova_version is defined
+
     - name: every record nova_loop_only names is on one of this run's machines
       ansible.builtin.assert:
         that: loop_only | reject('in', loop_all) | list | length == 0
