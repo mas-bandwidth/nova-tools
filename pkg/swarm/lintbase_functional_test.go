@@ -64,7 +64,7 @@ func TestLintPathsResolveAtBase(t *testing.T) {
 		"pkg/decide/decide.go",
 		"pkg/decide/decide.go, pkg/decide/entry_test.go",
 		"pkg/decide/*.go",
-		"internal/**",
+		"pkg/**",
 		"none",
 	} {
 		fs = findingsFor(LintCardBase(baseCard(map[string]string{"base-sha": sha, "PATHS": paths}), bc), "paths-at-base")
