@@ -1940,13 +1940,21 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		}
 		mach, _, _ := st.Machine(ctx)
 		machine := st.MachineLine(ctx)
-		judgments, happened := inboxActs(groups, a.now())
+		now := a.now()
+		judgments, happened := inboxActs(groups, now)
 		holder, err := st.B.Coordinator(ctx)
 		if err != nil {
 			return a.readFailed("inbox", err, stderr)
 		}
+		summary, queue := sprint.SeatInbox(v.Open, now, *deadline)
 		out := map[string]any{"groups": groups, "judgments": judgments, "happened": happened, "done": mach.Done(),
-			"last": v.Last, "cursor": v.Cursor, "at": a.now(), "machine": machine, "coordinator": holder}
+			"last": v.Last, "cursor": v.Cursor, "at": now, "machine": machine, "coordinator": holder}
+		if summary != "" {
+			out["summary"] = summary
+		}
+		if len(queue) > 0 {
+			out["queue"] = queue
+		}
 		if *wait {
 			// how the wait ended is in both renderings: the line above, and
 			// woke with the new groups' ids here (the one-value rule)
@@ -1963,6 +1971,14 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	now := a.now()
+	summary, queue := sprint.SeatInbox(v.Open, now, *deadline)
+	if summary != "" {
+		fmt.Fprintln(stdout, summary)
+		for _, l := range queue {
+			fmt.Fprintln(stdout, l)
+		}
+		fmt.Fprintln(stdout)
+	}
 	judg, other := 0, 0
 	for _, g := range v.Groups {
 		if g.Kind == sprint.Judgment {

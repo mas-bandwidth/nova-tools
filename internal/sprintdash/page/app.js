@@ -192,6 +192,42 @@ function allocate(counts, total, n) {
   }
   return out;
 }
+// Same share as allocate, over an explicit key list (the stopped share sits in the bar
+// beside merging without joining STATES, which the legend and the spec keep to seven).
+function allocateKeys(keys, counts, total, n) {
+  var out = {}, used = 0, rem = [];
+  keys.forEach(function (st) {
+    var exact = total ? (counts[st] || 0) * n / total : 0, f = Math.floor(exact);
+    if ((counts[st] || 0) > 0 && f === 0) f = 1;
+    out[st] = f; used += f; rem.push([exact - Math.floor(exact), st]);
+  });
+  rem.sort(function (a, b) { return b[0] - a[0]; });
+  for (var i = 0; used < n && i < rem.length; i++) { if ((counts[rem[i][1]] || 0) > 0) { out[rem[i][1]]++; used++; } }
+  while (used > n) {
+    var big = keys.reduce(function (a, b) { return out[a] >= out[b] ? a : b; });
+    out[big]--; used--;
+  }
+  return out;
+}
+// Merging cards that sit in a stopped stream: the page's split of the merging count.
+// where --json's stream State is the word "stopped" (the cause is not on the row).
+function stoppedMerging(d) {
+  var work = (d && d.tables && d.tables.work) || {};
+  var merge = (d && d.tables && d.tables.merge) || {};
+  var state = {};
+  (d && d.streams || []).forEach(function (s) { if (s && s.Stream) state[s.Stream] = String(s.State || ""); });
+  var cards = 0, streams = 0;
+  Object.keys(work).forEach(function (k) {
+    var st = state[k] || String((merge[k] || {}).state || "");
+    if (st.indexOf("stopped") !== 0) return;
+    var m = int(work[k].merging);
+    if (m > 0) { cards += m; streams++; }
+  });
+  return { cards: cards, streams: streams };
+}
+function stoppedLabel(n, streams) {
+  return n + " in a stopped stream" + ((streams || 1) === 1 ? "" : "s");
+}
 
 // VU meter track: exactly `slots` cells (the machine's width), on a grid of
 // `scale` columns (the widest member's width) so the cells line up down the
@@ -252,7 +288,7 @@ function streamOrder(d) {
 }
 function streamStatus(state, c, total) {
   if (total > 0 && c.landed === total) return ["landed", "done"];
-  if (state === "stopped") return ["stopped", "critical"];
+  if (String(state || "").indexOf("stopped") === 0) return ["stopped", "critical"];
   if (total > 0 && c.waiting === total) return ["held", "warning"];
   if (c.ready + c.working + c.review + (c.fix || 0) + c.merging > 0) return ["working", "active"];
   if (state === "landed") return ["landed", "done"];
@@ -333,8 +369,13 @@ function renderStreams(d) {
     r.node.classList.toggle("group-start", prevRank !== null && rank(k) !== prevRank);
     prevRank = rank(k);
     setText(r.nameT, k);
-    var tone = { landed: "done", working: "active", held: "warning", stopped: "critical" }[status] || "neutral";
-    setPill(r.pill, status, tone, status + (s.State ? " · stream " + s.State + (s.Since ? " since " + clockShort(new Date(s.Since)) : "") : ""));
+    var tone = { landed: "done", working: "active", held: "warning", stopped: "critical stopped" }[status] || "neutral";
+    var label = status, raw = String(s.State || "");
+    if (status === "stopped") {
+      var rest = raw.replace(/^stopped:?\s*/, "");
+      if (rest && rest !== "stopped") label = "stopped: " + rest;
+    }
+    setPill(r.pill, label, tone, label + (s.State ? " · stream " + s.State + (s.Since ? " since " + clockShort(new Date(s.Since)) : "") : ""));
     // an archived stream shown is marked: the total row leaves it out
     var tags = arch[k] ? ["archived"] : []; if (int(m.stuck) > 0) tags.push(m.stuck + " stuck"); if (m.ci === "red") tags.push("ci red");
     setText(r.tag, tags.join(" · "));
@@ -359,11 +400,24 @@ function renderStreams(d) {
 }
 
 var overallLast = null;
-function renderOverall(sum, all) {
-  overallLast = { sum: sum, all: all };
+var BAR_STOPPED = ["landed", "merging", "s-stopped", "fix", "review", "working", "ready", "waiting"];
+function renderOverall(sum, all, stop) {
+  stop = stop || { cards: 0, streams: 0 };
+  var stopped = Math.min(stop.cards || 0, sum.merging || 0);
+  overallLast = { sum: sum, all: all, stop: { cards: stopped, streams: stop.streams || 0 } };
   var box = $("overall"), per = cardsPerCell(all, cellsThatFit(box)), n = Math.ceil(all / per);
-  var share = allocate(sum, all, n), classes = [];
-  STATES.forEach(function (st) { for (var i = 0; i < share[st]; i++) classes.push(st); });
+  var classes = [];
+  if (stopped > 0) {
+    var counts = {};
+    STATES.forEach(function (st) { counts[st] = sum[st] || 0; });
+    counts.merging -= stopped;
+    counts["s-stopped"] = stopped;
+    var share = allocateKeys(BAR_STOPPED, counts, all, n);
+    BAR_STOPPED.forEach(function (st) { for (var i = 0; i < (share[st] || 0); i++) classes.push(st); });
+  } else {
+    var plain = allocate(sum, all, n);
+    STATES.forEach(function (st) { for (var j = 0; j < plain[st]; j++) classes.push(st); });
+  }
   setCells(box, classes, n);
   var lg = $("legend");
   if (!lg._items) {
@@ -373,9 +427,13 @@ function renderOverall(sum, all) {
       lg._items[st] = t; lg.appendChild(it);
     });
   }
-  STATES.forEach(function (st) { setText(lg._items[st], st + " " + sum[st]); });
+  STATES.forEach(function (st) {
+    var text = st + " " + sum[st];
+    if (st === "merging" && stopped > 0) text = "merging " + sum.merging + " (" + stoppedLabel(stopped, stop.streams) + ")";
+    setText(lg._items[st], text);
+  });
 }
-window.addEventListener("resize", function () { if (overallLast) renderOverall(overallLast.sum, overallLast.all); });
+window.addEventListener("resize", function () { if (overallLast) renderOverall(overallLast.sum, overallLast.all, overallLast.stop); });
 
 // One renderer for Fleet and Friends (SPEC.md, the owner 8:07 PM: "the friends table should LOOK
 // exactly like the fleet table"): same columns, cells, pills (the fleet's up / held / down),
@@ -842,7 +900,8 @@ function putKid(box, i, cls, text) {
 function render(d) {
   flashCount = 0;
   var s = renderStreams(d);
-  renderOverall(s.sum, s.all);
+  var stop = stoppedMerging(d);
+  renderOverall(s.sum, s.all, stop);
   renderPie(d);
   renderTopStreams(d);
   var ft = renderFleet(d);

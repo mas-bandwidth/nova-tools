@@ -135,6 +135,7 @@ from the owner edits one line here and nothing else moves.
 ## Progress bar: "ALL CARDS BY STATE" with the legend (landed, merging, fix, review, working, ready, waiting) and counts;
   one cell per card (per N cards when they would be under 4 px; no "1 cell = N" label); working cells pulse steadily
   (2 s); other cells still.
+- Stopped share: merging cards that sit in a stream whose state is stopped are drawn red (`--critical`, cell class `s-stopped`), taken out of the amber merging cells. The merging legend then reads `merging <n> (<k> in a stopped stream)`, or `streams` when more than one stream is stopped. With none stopped the legend and the cells stay the seven states above.
 
 - Fix (the owner, 2026-10-07; his lines are quoted under LOCK 2): a card awaiting
   rework is one purple, `--s-fix` (#8b5cf6 on this dark page; #7c3aed on a light one), everywhere a state is
@@ -160,6 +161,7 @@ from the owner edits one line here and nothing else moves.
   spread evenly across the count columns (fixed table layout); Landed and Cost a little wider; gutters at least 40 px.
 - Rows sorted by status like the fleet table: landed first, then working, then stopped, then held; within a group by stream name. A row moves when its status changes (no animation).
 - Status pill in Work: landed (green), working (blue), held (amber), stopped (red); the subtitle keeps "<n> streams · <l> landed · <h> held". Zero counts muted grey.
+- A stopped stream's pill is red, text and dot. Where the stream's state carries a reason after the word (`stopped: <reason>`), the pill reads `stopped: <reason>`. `where --json` puts the word `stopped` in that state (the control card's cause is the reason; the state cell is the word alone), so the pill reads `stopped` in red until the state carries the reason.
 - Landed as "n / total" with the slash on one vertical line (left number right-aligned to it, total left of it), the
   gap before Landed (after merging) equal to every other column gutter in the row, never tighter. No per-stream bar. Total row: numbers only.
 - Flash: the count columns and Landed flash when their value differs from the previous second; Cost never.

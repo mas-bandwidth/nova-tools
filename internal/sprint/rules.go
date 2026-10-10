@@ -41,6 +41,11 @@ const (
 	// (config.AnswerRules, held equal to RuleNames) does not name it yet, so only run
 	// --answer-rules=false turns it off.
 	RulePaths = "paths"
+	// RulePushResume: a stream stopped because the merge queue rejected a push
+	// resumes itself, except a protected branch, an auth or permission refusal, or
+	// a tree gate. Not in RuleNames, same as paths, so only --answer-rules=false
+	// turns it off. A rejected push the rule resumes is closed here, not left overdue.
+	RulePushResume = "push-resume"
 )
 
 // RuleNames is every rule nova-config's answer_rules_off names, in name order.
@@ -234,6 +239,8 @@ func ruleByType(s *Snapshot, r TickReq, a *RuleAnswer) {
 		ruleReadLate(s, a)
 	case NBaseRed:
 		ruleBaseGate(s, a)
+	case NRejected:
+		rulePushStop(s, a)
 	default:
 		a.Act, a.Why = ActLeft, "no rule answers it"
 	}
@@ -566,6 +573,35 @@ func ruleBaseGate(s *Snapshot, a *RuleAnswer) {
 // baseGreenSaid is the base-gate rule's resume, in its answer.
 func baseGreenSaid(base, sha string) string {
 	return "the base " + orDash(base) + " passes its tree gate again at " + sha
+}
+
+// pushStopNeedsMind says a rejected push is not the rule's to resume: a protected
+// branch, an auth or permission refusal, or a tree gate. A fetch-first rejection
+// and a bare push refusal are the rule's.
+func pushStopNeedsMind(what string) bool {
+	w := strings.ToLower(what)
+	for _, s := range []string{"protected", "auth", "permission", "tree gate"} {
+		if strings.Contains(w, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// rulePushStop resumes a stream stopped on a rejected push (cause rejected) and
+// closes that judgment through TickRuleResume. A refusal a mind has to see stays open.
+func rulePushStop(s *Snapshot, a *RuleAnswer) {
+	a.Rule = RulePushResume
+	ctl := s.StreamCtl(a.open.Note.Stream)
+	if ctl == nil || ctl.F("state") != StreamStopped || ctl.F("cause") != "rejected" {
+		left(a, "the stream is not stopped on a rejected push")
+		return
+	}
+	if pushStopNeedsMind(a.open.Note.What) {
+		left(a, "the push was refused for a protected branch, an auth, or a tree gate: a mind's")
+		return
+	}
+	a.Act, a.Why = ActResume, "a rejected push stops nothing the rules can resume: the stream goes on"
 }
 
 // The tick's rule parts, in the order they run: the conflict's return, its resume, a twin

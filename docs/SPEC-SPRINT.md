@@ -5071,6 +5071,16 @@ it quiet until the episode ends (the next is raised again); `wait --for` until t
 much running time has passed, when one that still stands is raised again; `off` takes
 an alarm off, and an open one clears.
 
+### Landing alarm
+
+A sprint that is not landing says so in one line (the owner, 2026-10-07: a stream stopped at 6:37 PM on a rejected push with 27 cards queued to merge, the lander idle two hours, the page still reading "merging 27", the stop one judgment among 240 overdue). The deadlines part (`tickLandingAlarm`, internal/sprint/landing_alarm.go) raises one judgment, `no landing`, while cards are queued to merge and nothing has landed for a bound, and the lander is not inside a gate:
+
+`no landing for <n> min: <queued> queued; <k> in stopped streams (<names>: <reasons>); lander at <step> for <t>`
+
+`<n>` and `<t>` are whole minutes, truncated. `<k>` is the cards queued in stopped streams, not the count of streams; the names are sorted, and a rejected push's reason reads `push refused`. With nothing stopped the parenthetical is left off (`0 in stopped streams`). The bound is the work-table property `landing_alarm`, in whole minutes; absent, it is 15. `off` or `0` raises nothing. An open `an operation was stuck` whose text names `step=gate` (or any step containing `gate`) is the lander inside a gate, and the alarm stays quiet; with no such judgment the lander is at `land` since the last landing. The judgment is one episode (keyed by its type, so a count that moves is the same line, rewritten in place), pushed on the judgment path, decisions `ack` and `wait`. It is not raised again inside the bound after it is closed (`landing_alarm_at`). It closes when the queue is empty, a card has landed inside the bound, or the lander enters a gate.
+
+The seat's inbox is a queue, never a hole, computed by `SeatInbox` (internal/sprint/landing_alarm.go): same kind on the same subject collapses into one line with a count, and overdue groups come first. The tick sends the coordinator one happened note, `inbox overdue`, when the overdue line changes (`inbox_lead` on the work table); the line is `<n> overdue: <kind> <count>, ...` (kinds sorted; n is overdue judgments). The `inbox` verb opens with the same overdue line, lists the collapsed queue under it, and carries both in its JSON.
+
 ### Drift alarms
 
 On 2026-10-04 and 2026-10-05 the branches drifted for hours before anyone looked: the live
@@ -5538,6 +5548,7 @@ by rule unless `--answer-rules=false` (a `tick` by hand only with `--answer-rule
 read-late`, applied to `sprint:answer_rules_off` and read with the routes) turns single
 rules off (`TestEachRuleHasAnOffSwitch`, `TestAMechanicalJudgmentIsAnsweredByItsRule`);
 `widen` is turned off by that key too, though nova-config's enum does not list it yet.
+`push-resume` is the same kind of rule, not in that enum: an open `stream stopped: the merge queue rejected` whose stream is stopped with cause `rejected` is resumed, and the resume closes the judgment so it is not left overdue. A note that names a protected branch, an auth or permission refusal, or a tree gate is left for a mind. `--answer-rules=false` turns it off with the others. A fetch-first rejection is this rule's to resume; the retry that keeps a fetch-first push from stopping the stream is the sibling card, not this rule.
 `view coordinator` counts what the rules saved the seat: its summary line ends `| rules
 <n>/h`, and its counts carry `rules`, the cards a rule answered in the last hour by the
 `rule_answer` each move writes (`sprint.RuleAnsweredWithin`; a card answered twice in the
