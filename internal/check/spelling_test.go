@@ -504,3 +504,12 @@ func TestSpellingDirRefusesASymlinkedMarkdownFileInsteadOfReadingIt(t *testing.T
 	require.ErrorContains(t, err, "not a regular file", "red before: colour finding from the outside file, got %+v err=%v", res, err)
 	assert.Empty(t, res.Findings, "symlink was read: %+v", res.Findings)
 }
+
+func TestSpellingColumnIs1Based(t *testing.T) {
+	t.Parallel()
+	text := "recieve\n"
+	findings, _, err := checkSpellingText("test.md", text, check.SpellingOptions{})
+	require.NoError(t, err)
+	require.Len(t, findings, 1)
+	assert.Equal(t, 1, findings[0].Column, "column should be 1-based (first character position)")
+}
