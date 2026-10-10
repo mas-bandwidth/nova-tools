@@ -198,6 +198,15 @@ func (a *app) cmdFriendSync(args []string, stdout, stderr io.Writer) int {
 	return code
 }
 
+// friendCapUSDHour is a friend row's dollar cap per clock hour: the field as stored,
+// or the kind's default when the row names none (0 stays 0, which is no cap).
+func friendCapUSDHour(r config.Row) string {
+	if v := r.Fields["cap_usd_hour"]; v != "" {
+		return v
+	}
+	return config.DefaultFriendCapUSDHour
+}
+
 // friendSyncPass is one pass of friend sync on a store it opens as c says: its exit
 // code, and whether it changed anything (a friend added, taken off or updated, a card
 // delivered or finished).
@@ -237,7 +246,7 @@ func (a *app) friendSyncPass(c common, pg, root string, stdout, stderr io.Writer
 			fmt.Fprintf(stderr, "%s %s: friend %s has width %d, and a friend's width is at least 1; run: nova-config friend set %s --width <n>; nothing was changed\n", prog, name, n, width, n)
 			return 1, false
 		}
-		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r), Mode: config.FriendMode(r), ConfigDir: r.Fields["config_dir"], TokenCap: config.FriendTokenCap(r), TokenCapSet: true, Roles: friendRoles(r), Billing: r.Fields["billing"], Streams: r.Fields["streams"], Kinds: r.Fields["kinds"]})
+		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r), Mode: config.FriendMode(r), ConfigDir: r.Fields["config_dir"], CapUSDHour: friendCapUSDHour(r), TokenCap: config.FriendTokenCap(r), TokenCapSet: true, Roles: friendRoles(r), Billing: r.Fields["billing"], Streams: r.Fields["streams"], Kinds: r.Fields["kinds"]})
 	}
 	added, removed, updated, err := st.SyncFriends(ctx, specs)
 	if err != nil {

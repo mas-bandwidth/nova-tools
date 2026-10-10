@@ -184,6 +184,11 @@ const (
 // still sees exactly one coordinator.
 var FriendRoles = []string{"builder", "may-hold", "reader"}
 
+// DefaultFriendCapUSDHour is a friend's dollar cap per clock hour when her row names none
+// (sprint.DefaultFriendCapUSDHour holds the same number): past it she is dealt no card
+// until the next hour. 0 on the row is no cap.
+const DefaultFriendCapUSDHour = "10"
+
 // DefaultFriendWidth is a friend's width when her row names none: the jobs
 // she works at once (the owner, 2026-10-02: "6/1 seems a bit wrong -- need to
 // setup width for friends? Start at 8 for each?"). Migration 0018 fills every
@@ -440,7 +445,7 @@ var Kinds = []*Kind{
 		// rather than stored in configuration.
 		Name:  KindFriend,
 		Table: "friends",
-		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once, her delivery mode, the config directory her claude lanes run with, the per-card token cap her one-shot lanes hold a card at, and the optional streams and kinds restrictions on the work she may be dealt",
+		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once, her delivery mode, the config directory her claude lanes run with, the per-card token cap her one-shot lanes hold a card at, the optional streams and kinds restrictions on the work she may be dealt, and her dollar cap per clock hour",
 		Fields: []Field{
 			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports; no machine's width"},
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers she can do: comma list of " + strings.Join(Tiers, ", ")},
@@ -451,6 +456,7 @@ var Kinds = []*Kind{
 			{Name: "token_cap", Type: TypeInt, Default: strconv.FormatInt(DefaultFriendTokenCap, 10), Help: "tokens one card may spend (input, cached input, output and reasoning summed) before a one-shot lane stops its own run and holds the card; " + strconv.FormatInt(DefaultFriendTokenCap, 10) + " by default, and 0 is no cap"},
 			{Name: "streams", Type: TypeText, Help: "optional comma-separated glob patterns over stream names this friend may be dealt work on; empty means any stream"},
 			{Name: "kinds", Type: TypeNames, Help: "optional comma-separated card KIND values this friend may be dealt; empty means any kind"},
+			{Name: "cap_usd_hour", Type: TypeDecimal, Default: DefaultFriendCapUSDHour, Help: "the dollars her takes may cost in one clock hour, a decimal like 10: past it she is dealt no card until the next hour and the coordinator is told once; 0 is no cap; " + DefaultFriendCapUSDHour + " by default; a friend on a subscription reports no dollars and never reaches it"},
 		},
 		Check: checkFriend,
 		ApplyOrder: func(r Row) int {
@@ -522,6 +528,7 @@ var Kinds = []*Kind{
 			{Name: "usd", Type: TypeDecimal, Help: "the dollar budget per card, a decimal like 0.50: the harness's reported cost at which the card is stopped, beside the token budget; empty (the default) is none"},
 			{Name: "deadline", Type: TypeInt, Required: true, Help: "the seconds a card on this route may run, above 0"},
 			{Name: "enabled", Type: TypeBool, Default: "true", Help: "false takes it out of the deal and needs --note, the measured reason (a disabled route carries its reason); true (the default) keeps it in and needs none"},
+			{Name: "cap_usd_hour", Type: TypeDecimal, Help: "the dollars cards on this route may cost in one clock hour, a decimal like 5: past it the route rests to the next hour with the reason `cap reached: $x of $y this hour` and the coordinator is told once; 0 is no cap; empty (the default) is the tier's: flash 5, pro 20, heavy 0 (0 is uncapped)"},
 			{Name: "first", Type: TypeBool, Default: "false", Help: "true deals this route before the others of its tier (the walk from the tier's index prefers it); false (the default) leaves the walk as it is"},
 			// The price sheet: optional, so a card's predicted cost can be worked
 			// out from its tokens using the pricing configuration saved per route tuple.
