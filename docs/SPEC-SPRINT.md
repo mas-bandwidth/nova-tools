@@ -5593,6 +5593,80 @@ stopped; with the rule off nothing is re-checked or resumed.
 store, rule on and off) and `TestALandPassFindsTheBaseGreenAndItsStreamResumesByRule`
 (cmd/nova-sprint/landbase_test.go, a twin repository) drive it.
 
+#### judgment-answer-latencyb-t-bb.w1
+
+The wall-clock lens (the owner, 2026-10-04, 4:47 PM): the time from add to landed, measured
+per stage, and the waits removed. A judgment a rule answers waited for the next pass of the
+run loop; now it does not. A failed finish the failed rule answers (`ruleFailed`) is
+answered in the step that raises it (`FinishReq.AnswerRules`, `answerAtRaise`,
+internal/sprint/rules.go): the rule is read over the tables as the finish leaves them, the
+primary's next attempt is made in the finish's own unit, and the judgment `work came back
+failed` is never written, so it is never open. The unit records a decided note of the type
+with no `answers` and no wait, `answered by rule failed: answered at raise, <act>: <why>`.
+A primary the rule leaves (a friend's card, a brief defect, the same failure on three cards,
+a bound), the rule turned off (`answer_rules_off`), or a rework the step refuses keeps its
+judgment as before. `run --answer-rules` (on by default in `run`) switches it on at runtime:
+the finish verb, which the server runs for a worker, and the finish a friend's report gives
+her card (friend sync, `friendCollect`) each set `FinishReq.AnswerRules` from the run's flag
+(`app.answersByRule`, cmd/nova-sprint/run.go), so a failed finish is answered in the same step
+when the run answers by rule and raises its judgment when `--answer-rules=false`
+(`TestTheFinishVerbAnswersAFailedFinishAtRaiseWhenTheRunAnswersByRule`,
+cmd/nova-sprint/judgment_answer_verb_test.go).
+
+The judgments that stay are ordered in the inbox by the cards blocked behind each, the
+ranking of view-coordinator-needs (`sprint.NeedWeights` over `sprint.NeedsRank`: through
+needs and stream order, ties by age), and each answer records its wait, raise to answer, on
+its decided note (`Note.Waited`, `waited_ns`; `decided`). The inbox shows a group's wait
+(`waited=`), `view coordinator --needs` a need's age, and `where` the median and p90 of the
+waits of the answers of the last 24 h (`sprint.AnswerWaits`, a line `answered 24h: n=<n>
+wait p50=<d> p90=<d>` and the JSON field `answer_wait`; no line while none were answered).
+`TestRuleableJudgmentsAreAnsweredAtRaiseAndTheRestRecordTheirWait`
+(internal/sprint/judgment_wait_test.go) drives it on the twin store with an injected clock.
+
+#### judgment-answer-latencyb-t-bb.w2
+
+The runtime wiring of the answer at raise (the reader's finding on
+`judgment-answer-latencyb-t-bb.w1`): `cmdRun` stored `--answer-rules` on the tick's store
+alone and never set it on the app, so the finish verb and `friendCollect`, which read
+`app.answersByRule`, saw it off and a normal `run --answer-rules` raised the failed-finish
+judgment instead of answering it. `cmdRun` now sets the app flag at startup
+(`a.setAnswersByRule(rules)`, cmd/nova-sprint/run.go), beside the store's, before the loop
+and the server run: the worker's finish through the server, the friend's finish collected by
+friend sync, and the tick all read the same `run --answer-rules`. The verb test enters
+through the run command and lets it stop once its startup is read, rather than setting the
+flag itself: `run --answer-rules` then a failed finish raises no judgment, and
+`run --answer-rules=false` leaves it open
+(`TestTheFinishVerbAnswersAFailedFinishAtRaiseWhenTheRunAnswersByRule`,
+cmd/nova-sprint/judgment_answer_verb_test.go).
+
+#### judgment-answer-latencyb-t-bb.w3
+
+The window read of the answer waits (the reader's finding on
+`judgment-answer-latencyb-t-bb.w1`): `AnswerWaits` (internal/sprint/store/ops.go) read every
+page of the note log from an empty cursor on every `where` frame, so a frame's work grew with
+the store's whole history though the result uses only the last 24 h. The read now starts at
+the inbox's tail and stops at the window's start: a backend that can read its notes from the
+tail (`NotesBack`, implemented by the Redis and Mem stores, unwrapped through a read-only
+one) hands back the notes at or after `now-window`, newest first, `logPage` at a time, and the
+first note before the window ends the read, so the work is the window's notes, not the
+history's. A backend with no tail read keeps the whole-stream read as before.
+`TestWhereReadsOnlyTheAnswerWaitWindow` (cmd/nova-sprint/judgment_answer_read_test.go) seeds a
+day of old notes and the window's answers on the twin, counts the notes each read hands back,
+and holds that `AnswerWaits` reads no more than the window's notes.
+
+#### judgment-answer-latencyb-t-bcb.w1
+
+The median of the answer waits (the reader's finding on `judgment-answer-latencyb-t-bb.w1`):
+`AnswerWaits` (internal/sprint/inbox.go) took p50 with the nearest-rank selector at every
+sample count, so an even count returned the lower middle wait where the rest of the
+repository takes the median as the mean of the middle two (`statOf`, internal/sprint/cycletime.go;
+`measure`, internal/sprint/stats.go). Waits of 5m and 15m are now reported as p50=10m, not
+p50=5m; p90 stays nearest rank. The injected-clock case
+"an even count's p50 is the mean of the middle two"
+(`TestRuleableJudgmentsAreAnsweredAtRaiseAndTheRestRecordTheirWait`,
+internal/sprint/judgment_wait_test.go) drives two answers five and fifteen minutes after
+their raises and holds p50=10m, p90=15m.
+
 ### wait-many-notes-b.w2
 
 **wait takes several notes, and a group** (the coordinator waited judgments one at a time in a loop, `wait <id> --for 3h` per note). `wait <note>[,<note>]... (--for <duration> | --until <RFC3339>)` sets each named note, and `wait --group <id> [--expect <n>] (--for <duration> | --until <RFC3339>)` sets every note of that inbox group (a stalled stream's group, which has no note, is its own id), as `ack` takes `<note>[,<note>]...` and a verb given `--group` takes the group. Each note is set or refused on its own line (`WAIT OK note=<id> ...`, or `WAIT REFUSED note=<id>: <why>`). `--group` with a size other than `--expect` is refused and nothing changes. A group of one note keeps the one-id command the inbox already prints; a group of several names every note, comma separated (`TestWaitTakesSeveralNotes`).
