@@ -354,12 +354,11 @@ func WaitReleased(ctx context.Context, run Launchctl, target string, timeout, po
 // the label (WaitReleased), then a bootstrap into the user's
 // domain, sent again after wait() while launchd answers EIO, so running it
 // again replaces the agent with the same result. A label launchd's override
-// database holds disabled answers exit 5, EIO, at every try; the first
-// refused bootstrap reads that database once (print-disabled) and enables a
-// disabled label (enable) before the next try, and a bootstrap that still
-// fails names the label, its domain, launchd's exit, whether the label was
-// disabled, and the enable line that is the remedy. It answers the plist's
-// path and the commands it ran.
+// database holds disabled answers exit 5, EIO, at every try; before any
+// bootstrap the database is read once (print-disabled) and a disabled label is
+// enabled (enable), and a bootstrap that still fails names the label, its
+// domain, launchd's exit, whether the label was disabled, and the enable line
+// that is the remedy. It answers the plist's path and the commands it ran.
 func Install(ctx context.Context, a Agent, uid int, run Launchctl, write func(path string, data []byte) error, wait func()) (path string, ran []string, err error) {
 	placed, copy, err := a.BinaryPlan()
 	if err != nil {
@@ -406,8 +405,19 @@ func Install(ctx context.Context, a Agent, uid int, run Launchctl, write func(pa
 	if err != nil {
 		return path, ran, err
 	}
+	// A label launchd's override database holds disabled answers exit 5, EIO,
+	// at every bootstrap, so the database is read before any bootstrap and a
+	// disabled label is enabled first, not after a failed try
+	// (docs/SPEC-FRIEND.md, install).
+	wasDisabled := Disabled(ctx, run, domain, a.Label())
+	if wasDisabled {
+		enable := []string{"enable", target}
+		ran = append(ran, "launchctl "+strings.Join(enable, " "))
+		if eout, eerr := run(ctx, enable...); eerr != nil {
+			return path, ran, fmt.Errorf("launchctl enable %s: %v: %s; run: launchctl enable %s", target, eerr, strings.TrimSpace(eout), target)
+		}
+	}
 	bootstrap := []string{"bootstrap", domain, path}
-	checked, wasDisabled := false, false
 	for try := 1; ; try++ {
 		ran = append(ran, "launchctl "+strings.Join(bootstrap, " "))
 		out, err := run(ctx, bootstrap...)
@@ -415,19 +425,6 @@ func Install(ctx context.Context, a Agent, uid int, run Launchctl, write func(pa
 			return path, ran, nil
 		}
 		retry := strings.Contains(out, "Input/output error") || strings.Contains(out, "Operation already in progress")
-		// The two EIOs are told apart by launchd's override database, read
-		// once: a disabled label is enabled before the next try, so the retries
-		// are not spent on a label launchd will never load as it stands.
-		if retry && !checked {
-			checked = true
-			if wasDisabled = Disabled(ctx, run, domain, a.Label()); wasDisabled {
-				enable := []string{"enable", target}
-				ran = append(ran, "launchctl "+strings.Join(enable, " "))
-				if eout, eerr := run(ctx, enable...); eerr != nil {
-					return path, ran, fmt.Errorf("launchctl enable %s: %v: %s; run: launchctl enable %s", target, eerr, strings.TrimSpace(eout), target)
-				}
-			}
-		}
 		if try == BootstrapTries || !retry {
 			return path, ran, bootstrapRefusal(a.Label(), domain, target, err, out, wasDisabled)
 		}

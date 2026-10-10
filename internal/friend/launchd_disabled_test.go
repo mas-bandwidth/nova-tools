@@ -3,6 +3,7 @@ package friend
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -13,10 +14,10 @@ import (
 // launchd's override database can hold a label disabled after an earlier
 // bootout (or a hand launchctl disable); a bootstrap of a disabled label
 // answers exit 5, Input/output error, the same words launchd answers while it
-// tears an old agent down. Install tells the two EIOs apart by reading
-// `launchctl print-disabled` once, enables a disabled label before its next
-// try, and a bootstrap that still fails names the label, the domain, launchd's
-// exit and the enable line that is the remedy (docs/SPEC-FRIEND.md, install).
+// tears an old agent down. Install reads `launchctl print-disabled` before any
+// bootstrap and enables a disabled label before the first bootstrap, and a
+// bootstrap that still fails names the label, the domain, launchd's exit and
+// the enable line that is the remedy (docs/SPEC-FRIEND.md, install).
 func TestInstallEnablesADisabledLabelBeforeTheBootstrap(t *testing.T) {
 	t.Parallel()
 	a := agent()
@@ -54,16 +55,18 @@ func TestInstallEnablesADisabledLabelBeforeTheBootstrap(t *testing.T) {
 		_, commands, err := Install(context.Background(), a, 501, ctl, recordWrite(map[string]string{}), func() {})
 		require.NoError(t, err)
 		assert.Equal(t, []string{"launchctl bootout " + target,
-			"launchctl bootstrap gui/501 " + a.PlistPath(),
 			"launchctl enable " + target,
+			"launchctl bootstrap gui/501 " + a.PlistPath(),
 			"launchctl bootstrap gui/501 " + a.PlistPath()}, commands)
 		assert.Equal(t, []string{"bootout " + target,
 			"print " + target,
-			"bootstrap gui/501 " + a.PlistPath(),
 			"print-disabled gui/501",
 			"enable " + target,
+			"bootstrap gui/501 " + a.PlistPath(),
 			"bootstrap gui/501 " + a.PlistPath()}, *raw,
-			"the disabled label is read, enabled and only then bootstrapped again")
+			"the disabled label is read and enabled before any bootstrap")
+		assert.Less(t, slices.Index(*raw, "print-disabled gui/501"), slices.Index(*raw, "bootstrap gui/501 "+a.PlistPath()),
+			"the override database is read before the first bootstrap")
 	})
 
 	t.Run("an enabled label is bootstrapped without an enable", func(t *testing.T) {

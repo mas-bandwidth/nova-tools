@@ -61,8 +61,8 @@ func TestInstallBootsOutThenBootstrapsAndIsTheSameTwice(t *testing.T) {
 		assert.Equal(t, a.PlistPath(), path)
 		assert.Equal(t, []string{"launchctl bootout gui/501/com.nova.friend-bob", "launchctl bootstrap gui/501 " + path}, commands)
 	}
-	assert.Equal(t, []string{"bootout gui/501/com.nova.friend-bob", "print gui/501/com.nova.friend-bob", "bootstrap gui/501 " + a.PlistPath(),
-		"bootout gui/501/com.nova.friend-bob", "print gui/501/com.nova.friend-bob", "bootstrap gui/501 " + a.PlistPath()}, ran, "the bootstrap waits for launchd to release the label")
+	assert.Equal(t, []string{"bootout gui/501/com.nova.friend-bob", "print gui/501/com.nova.friend-bob", "print-disabled gui/501", "bootstrap gui/501 " + a.PlistPath(),
+		"bootout gui/501/com.nova.friend-bob", "print gui/501/com.nova.friend-bob", "print-disabled gui/501", "bootstrap gui/501 " + a.PlistPath()}, ran, "the override database is read before the bootstrap, which waits for launchd to release the label")
 	assert.Contains(t, files[a.PlistPath()], "<string>com.nova.friend-bob</string>")
 
 	ctl = func(_ context.Context, args ...string) (string, error) {
