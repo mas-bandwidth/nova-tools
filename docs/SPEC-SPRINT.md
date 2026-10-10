@@ -5181,6 +5181,15 @@ A `--tests` named with no value is refused, never read as an omission: `fleet be
 whole number of at least 0, found an empty value`. Only a beat that does not name
 `--tests` carries no reading.
 
+### fleet-test-process-alarm-bcb.w4
+
+A plain beat carries no test count. `fleet beat` and `friend beat` read `--tests`
+through one rule and record a reading only when the flag names one, so a beat that
+does not name it prints no `tests=` field, sets no `test_parent=`, and stores no
+reading, and its line, JSON and stored report are what they were before the flag
+existed. The verb never lists the process table itself: the count is the beat
+agent's, and only a beat run where the processes are is given it.
+
 ### The coordinator's pass
 
 The owner, 2026-10-05: "everything I described above needs to be mechanical, so you
