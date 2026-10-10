@@ -4069,12 +4069,13 @@ afternoon while hundreds of cards landed on each; folding them took 105 conflict
 (the owner: "promote every cycle or drift causes a big fuckup"). The land round is to merge the
 development branch into the base each cycle in which a sync is due, push a clean merge through
 the round's own tree gate, and on a conflict stop every stream with one judgment naming the
-files. It is not built: a library for it (commit 901463230) was never called by the land round
-and went in the dead code sweep of 2026-10-07. What stands is the reader: the drift (commits
-each side lacks, the last sync and its sha) on the merge table's properties, which
-`sprint.DevDriftOf` reads with the minutes since for the dashboard's merge row and nothing
-writes yet (`TestDevDriftOfReadsTheMergeTablesProperties`). The promotion of dev
-(above) is what keeps the two together until then.
+files. `nova-sprint land --dev-sync` opts into this step before the first landing batch;
+without the flag the land round does not sync. A due sync uses the round's tree gate,
+records the pushed merge and closes an earlier sync-conflict judgment. A conflicting
+merge is aborted and reported with its files; a red gate or refused push stops the
+round. `--dry-run` reads the store without fetching or merging. The drift reader
+(`sprint.DevDriftOf`) continues to show commits each side lacks and the last sync
+on the merge table's properties.
 
 **The lander's checks.** Each head `land` merges is checked by script, no model,
 before the batch's check runs (`internal/diffcheck`), the two checks the decide

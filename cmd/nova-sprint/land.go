@@ -67,6 +67,11 @@ const landCheckBudget = 30 * time.Minute
 func landWords() string {
 	return strings.TrimSpace(`
 Landing, the coordinator's: an external delivery (git pushes the base) and a store write (the merge step):
+  nova-sprint land --dev-sync --check 'make test'
+    opts into merging origin/dev into the base before the first landing batch
+    when a sync is due. The merged tree passes the land round's tree gate
+    before a push; a conflict stops the streams with one judgment. Dev sync
+    is off by default, and --dry-run performs no git operation.
   nova-sprint land --stream s1 --check 'make test'
     merges each queued card's head (--no-ff) in queue order onto a branch cut
     from origin's base, one batch per run of cards naming one REPO: and BASE:
@@ -306,7 +311,7 @@ type lander struct {
 	c                          common
 	st                         *store.Store
 	repoDir, base, check, root string
-	dry, twin                  bool // twin: a mem twin, which has no git
+	dry, twin, devSync         bool // twin: a mem twin, which has no git; devSync is opt-in
 	// conflictKind and conflictPaths are what the last merge that stopped on unmerged paths
 	// left (mergeHead): the conflict fact carries them (conflictCard).
 	conflictKind  string
@@ -416,6 +421,7 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	base := fs.String("base", "", "the base branch of a card whose brief names no BASE: line")
 	check := fs.String("check", "", "a command run once per batch, by sh -c in the clone on the batch branch, before the push (bounded to 30m); non-zero reports the batch red and pushes nothing")
 	dry := fs.Bool("dry-run", false, "print the batches it would land and change nothing: reads the store only (no git, no push, no report)")
+	devSync := fs.Bool("dev-sync", false, "before the first batch, merge the development branch into the base through the round's tree gate (off by default; --dry-run never syncs)")
 	parallel := fs.Int("land-parallel", landParallelDefault, "how many streams merge at once, each in its own worktree of the clone, before the landings go one at a time (landpass.go); 1 merges the streams one after another")
 	pos, err := parse(fs, args)
 	if err != nil {
@@ -461,7 +467,7 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	if a.baseGateFails == nil {
 		a.baseGateFails = map[string]*baseGateFail{}
 	}
-	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch(), diffs: map[string]string{}, scope: map[string][]string{}, prose: map[string][]string{},
+	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, devSync: *devSync, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch(), diffs: map[string]string{}, scope: map[string][]string{}, prose: map[string][]string{},
 		baseGateCache: a.baseGateCache, baseGateFails: a.baseGateFails, cureTried: map[string]bool{}, parallel: *parallel}
 	l.locks()
 	defer l.release()
@@ -512,6 +518,12 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 		return l.report(true, nil, stdout, stderr) // no pass can run without a canonical snapshot
 	}
 	order = stillQueued(s, order)
+	// A requested dev sync is gated and recorded before the first new batch.
+	s, err = l.devSyncBefore(ctx, s)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s land: %s\n", prog, oneline.Err(err))
+		return 1
+	}
 	// the pass: every stream's batch merged beside the others', then the green ones landed
 	// one at a time in this order (landpass.go; tla/LandPass.tla)
 	failed := l.pass(ctx, s, order) || recordFailed
