@@ -25,7 +25,7 @@ func init() {
 // unitsLocal is what a machine nova-up --local set up uses in the fleet's
 // place: nova-up --local installs one loop record's unit, redis-local, itself
 // and reads no nova-config (docs/SPEC-UP.md "Steps", docs/SETUP.md,
-// dep-launchd-units-bc.w5).
+// dep-launchd-units-bc.w6).
 const unitsLocal = "no fleet sprint store: nova-up --local installs one loop record's unit (redis-local) itself; the fleet's loop records are applied by nova-config apply --kind loop and the fleet play"
 
 // loopRecord is one loop record as the check compares a unit against it: the
@@ -47,7 +47,7 @@ type inventoryLoops struct {
 	} `json:"_meta"`
 }
 
-// checkUnits covers the service units (docs/SETUP.md, dep-launchd-units-bc.w5):
+// checkUnits covers the service units (docs/SETUP.md, dep-launchd-units-bc.w6):
 // every long-running nova loop is a nova-config loop record installed as a
 // launchd plist or a systemd user unit. It reads this machine's records from
 // `nova-config inventory` and the units in the service manager's directory,
@@ -56,7 +56,7 @@ type inventoryLoops struct {
 // fleet verb that applies records. A machine whose sprint store is its own
 // twin (`mem:`) runs no fleet and is ok.
 func checkUnits(ctx context.Context, env Env) Result {
-	const doc = "docs/SETUP.md, dep-launchd-units-bc.w5"
+	const doc = "docs/SETUP.md, dep-launchd-units-bc.w6"
 	addr := env.Getenv("NOVA_SPRINT_REDIS")
 	if addr == "" || strings.HasPrefix(addr, "mem:") {
 		return Result{Status: OK, Evidence: unitsLocal}
@@ -108,7 +108,7 @@ func checkUnits(ctx context.Context, env Env) Result {
 	}
 	return Result{Status: Fail,
 		Evidence: "host=" + host + " " + strings.Join(parts, "; "),
-		Fix:      "nova-config apply --kind loop --as <actor>, then ansible-playbook -i ./nova-inventory fleet/loops.yml (" + doc + ")"}
+		Fix:      "nova-config apply --kind loop --actor <actor>, then ansible-playbook -i ./nova-inventory fleet/loops.yml (" + doc + ")"}
 }
 
 // selfLoops is the records of the host this process runs on: the row named by
@@ -237,23 +237,21 @@ func compareUnits(records []loopRecord, found []unitFile) (missing, hand, differ
 }
 
 // sameCommand reports whether the unit runs the record's argv: the record's
-// words as a contiguous run of the unit's command, with the executable compared
-// by base name (to allow for wrapper/executable paths) and remaining arguments
-// compared exactly.
+// words as the final run of the unit's command, with the executable compared
+// by base name (to allow for a nova-secrets wrapper and installed executable
+// path) and remaining arguments compared exactly.
 func sameCommand(record, args []string) bool {
 	if len(record) == 0 || len(args) < len(record) {
 		return false
 	}
-	for i := 0; i+len(record) <= len(args); i++ {
-		matched := filepath.Base(args[i]) == filepath.Base(record[0])
-		for j := 1; j < len(record) && matched; j++ {
-			if args[i+j] != record[j] {
-				matched = false
-			}
-		}
-		if matched {
-			return true
+	i := len(args) - len(record)
+	if filepath.Base(args[i]) != filepath.Base(record[0]) {
+		return false
+	}
+	for j := 1; j < len(record); j++ {
+		if args[i+j] != record[j] {
+			return false
 		}
 	}
-	return false
+	return true
 }

@@ -52,7 +52,7 @@ func runUnitsCheck(t *testing.T, inventory string, write func(dir string)) Resul
 }
 
 // TestDoctorUnitsCheckFindsAHandPlistAndAMissingLoop pins the units check
-// (docs/SETUP.md, dep-launchd-units-bc.w5): it reads this machine's loop records
+// (docs/SETUP.md, dep-launchd-units-bc.w6): it reads this machine's loop records
 // and the installed units and names a record with no unit, a unit with no
 // record (a hand plist), and a unit whose command differs from its record,
 // each with the nova-config and fleet verb that applies records as its fix;
@@ -83,7 +83,7 @@ func TestDoctorUnitsCheckFindsAHandPlistAndAMissingLoop(t *testing.T) {
 		assert.Contains(t, res.Evidence, "orphan", "the hand plist with no record is named")
 		assert.Contains(t, res.Evidence, "helper", "the unit whose command differs is named")
 		assert.NotContains(t, res.Evidence, "redis-local", "the matching loop is not named")
-		assert.Contains(t, res.Fix, "nova-config apply --kind loop")
+		assert.Contains(t, res.Fix, "nova-config apply --kind loop --actor")
 		assert.Contains(t, res.Fix, "fleet/loops.yml")
 	})
 
@@ -96,5 +96,16 @@ func TestDoctorUnitsCheckFindsAHandPlistAndAMissingLoop(t *testing.T) {
 		})
 		assert.Equal(t, OK, res.Status, res)
 		assert.Empty(t, res.Fix)
+	})
+
+	t.Run("extra command arguments differ from the record", func(t *testing.T) {
+		t.Parallel()
+		inv := inventoryJSON(`[{"name":"tick","argv":["nova-sprint","run","--listen"]}]`)
+		res := runUnitsCheck(t, inv, func(dir string) {
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "nova-loop-tick.service"),
+				[]byte(units.SystemdUnit("nova loop tick", []string{"/opt/nova/nova-sprint", "run", "--listen", "--debug"}, nil, 10)), 0o644))
+		})
+		assert.Equal(t, Fail, res.Status, res)
+		assert.Contains(t, res.Evidence, "unit whose command differs: tick")
 	})
 }

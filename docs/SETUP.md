@@ -291,7 +291,7 @@ logo routes detect raster content from its bytes before the file name. Tests:
 `TestDashboardCheck` (internal/doctor) and
 `TestDashboardServesWhatServerPyServedFromOnePoller` (internal/sprintdash).
 
-### dep-launchd-units-bc.w5: the service units
+### dep-launchd-units-bc.w6: the service units
 
 Every long-running nova loop is a nova-config loop record installed as a unit: a launchd
 plist (`com.nova.loop.<name>.plist`) on darwin or a systemd user unit
@@ -304,7 +304,7 @@ loop, `redis-local`, itself in the `redis` step and reads no `nova-config`. A pe
 fleet machine applies the records and installs their units:
 
 ```sh
-nova-config apply --kind loop --as <name>        # reads the loop records from the store
+nova-config apply --kind loop --actor <name>        # reads the loop records from the store
 ansible-playbook -i ./nova-inventory fleet/loops.yml   # one unit per record
 ```
 
