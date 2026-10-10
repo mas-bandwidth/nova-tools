@@ -7139,11 +7139,13 @@ release does not read, or a flag whose value kind changed, is red and names itse
 tolerated differences are written down as declared removals and additions in `compat_test.go`. A
 client that has outrun the last release is red before it ships.
 
-The end-to-end half of the compatibility check is owed by the functional tier, not the unit tier,
-since it needs the play, a store and a seat: running the adopt play from each past cut (v1.1.0,
-v1.2.0 and v1.2.1) on a scratch store and seat and holding the adopted build's beats green.
-The functional tier owes this test (`TestAdoptFromEachPastReleaseBeatsGreen`) rather than it
-existing and running today; the unit-tier half of the contract is the golden table above.
+The same compatibility is held end to end by a functional test, not the unit tier, since it needs
+the play, a store and a seat: `TestAdoptFromEachPastReleaseBeatsGreen`
+(`cmd/nova-sprint/adopt_past_release_functional_test.go`) reads each past cut's own
+`fleet/tools.yml` -- v1.1.0, v1.2.0 and v1.2.1, with every step and the friends' beat check --
+out of its release tag, runs the adopt verb with it on a scratch store and seat, and holds the
+seat's beat green. It carries `//go:build functional`, so it runs with the functional tier and
+never on a pull request; the unit-tier half of the contract is the golden table above.
 
 #### store-latency-row-r.w2: where shows the store round trip the server measures
 

@@ -1236,13 +1236,17 @@ release's server"](SPEC-SPRINT.md#the-client-of-this-build-is-read-by-the-last-r
 
 ### The adopt from each past cut beats green (functional)
 
-The end-to-end half of the compatibility check is owed by the functional
-tier, not the unit tier, because it needs the play, a store and a seat: running
-the adopt play from each past cut (v1.1.0, v1.2.0 and v1.2.1) on a scratch store
-and seat, holding the beats of the adopted build green. The functional tier owes
-this test (`TestAdoptFromEachPastReleaseBeatsGreen`) rather than it existing and
-running today; the unit-tier half of the same contract is the golden table
-above.
+The same compatibility is held end to end by a functional test, not the unit
+tier, because it needs the play, a store and a seat: the adopt play is run from
+each past cut (v1.1.0, v1.2.0 and v1.2.1) on a scratch store and seat, and the
+beats of the adopted build must come up green. It is named
+`TestAdoptFromEachPastReleaseBeatsGreen`
+(`cmd/nova-sprint/adopt_past_release_functional_test.go`): it reads each cut's
+own `fleet/tools.yml` out of its release tag, runs the adopt verb with it on a
+scratch store and seat, and holds the seat's beat green. It carries
+`//go:build functional`, so it runs with the functional tier
+(`make test-functional`) and never on a pull request; the unit-tier half of the
+same contract is the golden table above.
 
 ## nova-work
 
