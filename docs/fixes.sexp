@@ -139,6 +139,7 @@
    :text "The card lint's personal-name check reads the tokens of a SOURCE or PATHS line and skips
     every token with a slash or a `.md` suffix, so a ledger under a named home is not a person, and it
     matches a name only as a whole word, so an ordinary word that holds one (`every`, `summary`) is
-    not the name; the names come from the caller, the explicit Names or the friends table `nova-sprint
-    add` hands over, and a bare name in prose still draws personal-name."
+    not the name; the names come from the caller -- `--names <file>` at `nova-swarm lint
+    --base-check`, and the explicit Names and the friends table the add hands over -- so a bare name
+    in prose still draws personal-name."
    :origin "dogfood 2026-10-10: add refused a brief over a path segment")))

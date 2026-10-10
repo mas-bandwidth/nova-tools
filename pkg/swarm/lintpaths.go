@@ -44,7 +44,7 @@ import (
 //	who-serves-tier       the friend WHO names (or, for any friend, some friend) serves the tier
 //	personal-name         a SOURCE or PATHS line names no person in prose; the names come from
 //	                      the caller and a token with a slash or a `.md` suffix is a path, not a
-//	                      name (docs/SPEC-CARD-CONTRACT.md §2, the base check of the same name)
+//	                      name (docs/SPEC-CARD-CONTRACT.md section 6, the base check of the same name)
 //
 // NO EVIDENCE IS NOT NEGATIVE EVIDENCE, as the base checks have it: a check that needs the
 // tree and was handed none draws its finding with MISSING, naming what is missing. A brief
@@ -103,7 +103,7 @@ type BriefBase struct {
 	// Friends is each friend's tiers, by name; nil when the friends table was not read.
 	Friends map[string][]string
 	// Names are the personal names a brief may not carry in prose, from the caller: the
-	// coordinator's, the owner's and the friends table's (docs/SPEC-CARD-CONTRACT.md §2,
+	// coordinator's, the owner's and the friends table's (docs/SPEC-CARD-CONTRACT.md section 6,
 	// `personal-name`). A name inside a path token (a slash or a `.md` suffix) is not a
 	// personal name, and an empty set checks no name.
 	Names []string
@@ -390,7 +390,7 @@ func LintBrief(raw []byte, bb BriefBase) ([]CardHeaderFinding, BriefFix) {
 
 	// 12. personal-name: the card check of the same name, run at add where the caller's
 	// names are known (the caller's Names and the friends table it handed over); a path
-	// token is not a name (docs/SPEC-CARD-CONTRACT.md §2).
+	// token is not a name (docs/SPEC-CARD-CONTRACT.md section 6).
 	names := briefPersonalNames(bb)
 	if source := h["SOURCE"]; source.found {
 		if name, ok := hasPersonalName(source.value, names); ok {
@@ -419,7 +419,7 @@ func LintBrief(raw []byte, bb BriefBase) ([]CardHeaderFinding, BriefFix) {
 
 // briefPersonalNames is the names the personal-name check reads at add: the caller's
 // explicit Names and the names of the friends table it handed over, sorted so the name
-// a finding reports is stable (docs/SPEC-CARD-CONTRACT.md §2).
+// a finding reports is stable (docs/SPEC-CARD-CONTRACT.md section 6).
 func briefPersonalNames(bb BriefBase) []string {
 	names := slices.Clone(bb.Names)
 	for name := range bb.Friends {

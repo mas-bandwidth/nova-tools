@@ -252,7 +252,7 @@ func TestPersonalNameCheck(t *testing.T) {
 			header: map[string]string{"SOURCE": "alice keeps the ledger"}, names: []string{"alice"},
 			want: `names the person "alice" in prose`},
 		{name: "a path beside a prose name is still the prose",
-			header: map[string]string{"SOURCE": "alice keeps the ledger at /home/alice/ledger.md"}, names: []string{"alice"},
+			header: map[string]string{"SOURCE": "alice keeps the ledger at home/alice/ledger.md"}, names: []string{"alice"},
 			want: `names the person "alice" in prose`},
 		{name: "PATHS path tokens carry no prose name",
 			header: map[string]string{"PATHS": "pkg/foo, cmd/bar"}, names: []string{"alice"}},
@@ -277,4 +277,22 @@ func TestPersonalNameCheck(t *testing.T) {
 			assert.Contains(t, fs[0].Excerpt, tc.want, tc.name)
 		})
 	}
+}
+
+// TestReadNames pins the names file `--base-check --names` reads: one name per line or
+// comma/blank separated, blank lines and `#` comments skipped, de-duplicated and sorted,
+// and an unreadable file an error (docs/SPEC-CARD-CONTRACT.md section 6).
+func TestReadNames(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ok := filepath.Join(dir, "names.txt")
+	require.NoError(t, os.WriteFile(ok, []byte("# the deployment's names\nalice\nbob, carol\n\nalice\n"), 0o600))
+	got, err := ReadNames(ok)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"alice", "bob", "carol"}, got)
+
+	_, err = ReadNames(filepath.Join(dir, "absent.txt"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "names")
 }

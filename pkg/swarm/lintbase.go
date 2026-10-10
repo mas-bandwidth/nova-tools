@@ -40,9 +40,9 @@ import (
 //	               card never named a control a test could fail. "applied cleanly" and
 //	               "make preflight" are English outcomes, not controls.
 //	personal-name  a SOURCE or PATHS line names no person in prose; the names come from
-//	               the caller and a token with a slash or a `.md` suffix is a path, not a
-//	               name (docs/SPEC-CARD-CONTRACT.md §2). `nova-sprint add` runs it too
-//	               (lintpaths.go).
+//	               the caller (`--names <file>`) and a token with a slash or a `.md` suffix
+//	               is a path, not a name (docs/SPEC-CARD-CONTRACT.md section 6).
+//	               `nova-sprint add` runs it too (lintpaths.go).
 //
 // NO EVIDENCE IS NOT NEGATIVE EVIDENCE. A check whose evidence was not handed over
 // (no repository, a base-sha the repository does not hold, no leg table, no p95
@@ -50,15 +50,16 @@ import (
 // excerpt, naming what to hand over. `--base-check` is the ask for these checks,
 // and a check that could not run is not a check that passed.
 
-// BaseCheck is the evidence the five checks read. A nil table or an empty Repo
+// BaseCheck is the evidence the six checks read. A nil table or an empty Repo
 // means that evidence was not handed over.
 type BaseCheck struct {
 	Repo string    // a git repository holding the card's base-sha
 	Legs FleetLegs // the fleet's leg table
 	P95  KindP95   // p95 wall seconds of DONE cards, by KIND; `*` answers for any kind
-	// Names are the personal names a brief may not carry in prose, from the caller: the
-	// coordinator's, the owner's and the friends table's. A name inside a path token (a
-	// slash or a `.md` suffix) is not a personal name (docs/SPEC-CARD-CONTRACT.md §2).
+	// Names are the personal names a brief may not carry in prose, from the caller
+	// (`--names <file>`), the way add hands them at the brief checks (lintpaths.go). A
+	// name inside a path token (a slash or a `.md` suffix) is not a personal name
+	// (docs/SPEC-CARD-CONTRACT.md section 6).
 	Names []string
 }
 
@@ -78,7 +79,7 @@ var CardBaseRemedies = map[string]string{
 	"leg-in-fleet":       "LEG: (or each LEGS: entry) is a leg the fleet's leg table carries -- `sbcl`, not `lisp` -- and the table is handed over with `--legs <file>`",
 	"donewhen-test-name": "DONE-WHEN: names the runner and a literal test that does not exist at the card's base-sha -- `go test ./<pkg> -run <TestName>`, `pytest <file>::<test_name>` (or `-k <test_name>`), `cargo test <name>` -- so the test can be red on base and green at head; an English outcome (\"applied cleanly\", \"make preflight\") or a runner with no test named is not a control, and the repository holding base-sha is handed over with `--repo <dir>`",
 	"deadline-p95":       "DEADLINE: is at or above the measured p95 wall of the card's KIND, in seconds (or `finish within <n> minutes`), and the p95 table is handed over with `--p95 <file>`; a kind with no row needs a `*` row or a measurement first",
-	"personal-name":      "a SOURCE or PATHS line refuses a person's name in prose; a token containing a slash or ending in `.md` is a path, not a name, and a name matches only as a whole word (`every` is not `eve`). The names come from the caller -- the coordinator, the owner and the friends table -- so name the role (the owner, a friend), never the person",
+	"personal-name":      "a SOURCE or PATHS line refuses a person's name in prose; a token containing a slash or ending in `.md` is a path, not a name, and a name matches only as a whole word (`every` is not `eve`). The names come from the caller -- `--names <file>` here, the coordinator, the owner and the friends table at add -- so name the role (the owner, a friend), never the person",
 }
 
 // LintCardBase returns the base-check findings for one card, in the order the
@@ -248,7 +249,7 @@ func LintCardBase(raw []byte, bc BaseCheck) []CardHeaderFinding {
 	}
 
 	// 6. personal-name: the names come from the caller and a path token is not a name
-	// (docs/SPEC-CARD-CONTRACT.md §2).
+	// (docs/SPEC-CARD-CONTRACT.md section 6).
 	if source := h["SOURCE"]; source.found {
 		if name, ok := hasPersonalName(source.value, bc.Names); ok {
 			add("personal-name", source.line, fmt.Sprintf("SOURCE %q names the person %q in prose", oneLineCap(source.value, 80), name))
@@ -730,6 +731,36 @@ func ReadKindP95(p string) (KindP95, error) {
 	return out, nil
 }
 
+// ReadNames reads the personal names `--base-check` holds a SOURCE or PATHS line to: one
+// name per line or comma/blank separated. Blank lines and `#` comments are skipped, the
+// names are sorted and de-duplicated, and a name inside a path token never matches
+// (hasPersonalName; docs/SPEC-CARD-CONTRACT.md section 6). The caller hands them over
+// because the tree holds no name of the deployment (internal/ci TestGeneralityText).
+func ReadNames(p string) ([]string, error) {
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return nil, fmt.Errorf("names %s: %v", p, err)
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(strings.TrimRight(line, "\r"))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		for _, part := range strings.Split(line, ",") {
+			for _, name := range strings.Fields(part) {
+				if !seen[name] {
+					seen[name] = true
+					out = append(out, name)
+				}
+			}
+		}
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
 // tableRows is the non-blank, non-comment lines of a file, split on tabs or spaces.
 func tableRows(p string) ([][]string, error) {
 	b, err := os.ReadFile(p)
@@ -757,7 +788,7 @@ var (
 
 // hasPersonalName returns the caller's name that v carries in prose, and whether v carries
 // one. The names come from the caller -- the coordinator, the owner and the friends table
-// -- and are never a list typed here (docs/SPEC-CARD-CONTRACT.md §2, `personal-name`: "the
+// -- and are never a list typed here (docs/SPEC-CARD-CONTRACT.md section 6, `personal-name`: "the
 // names come from the caller"). A path token, anything containing a slash or ending in
 // `.md`, is not a personal name and is skipped; a name matches only as a whole word, so a
 // name inside an ordinary word (`every`, `summary`) is not the name.

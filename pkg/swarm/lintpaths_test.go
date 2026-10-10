@@ -298,7 +298,7 @@ func TestALedgerCardsExistingClassTestPassesDonewhenOnlyWithItsMarker(t *testing
 }
 
 // TestLintBriefRunsThePersonalNameCheckAtAdd pins that `nova-sprint add` runs the
-// personal-name check on every brief (docs/SPEC-CARD-CONTRACT.md §2): a name in prose is
+// personal-name check on every brief (docs/SPEC-CARD-CONTRACT.md section 6): a name in prose is
 // refused, a path token (a slash or a `.md` suffix) is not a name however it is spelled,
 // a name inside an ordinary word is not the name, and the names come from the caller --
 // the explicit Names and the friends table the add hands over.
@@ -318,7 +318,7 @@ func TestLintBriefRunsThePersonalNameCheckAtAdd(t *testing.T) {
 		{name: "a path under a named home is not a name", source: "home/alice/README.md"},
 		{name: "a prose name from the caller is refused", source: "alice keeps the ledger", want: true},
 		{name: "a friend in prose is refused", source: "bob keeps the ledger", want: true},
-		{name: "a path beside a prose name is still the prose", source: "alice keeps the ledger at /home/alice/ledger.md", want: true},
+		{name: "a path beside a prose name is still the prose", source: "alice keeps the ledger at home/alice/ledger.md", want: true},
 		{name: "a name inside an ordinary word is not the name", source: "every change needs a test"},
 		{name: "a bare name on a PATHS entry is prose", paths: twinPaths + ",alice", want: true},
 	} {
