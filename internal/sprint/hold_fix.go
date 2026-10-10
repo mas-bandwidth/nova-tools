@@ -161,29 +161,41 @@ type holdFixLines struct {
 	gateSeen           bool
 }
 
-// parseHoldFix reads the four lines. A line counts only when it starts with the key,
-// so a mention inside a sentence is not a fix. ok is false when the report has none.
+// parseHoldFix reads the four lines. A finish's report reaches here as one collapsed,
+// prefixed line (member.finishReport's oneLine, friend.OutboxFinishArgv's firstChars), so
+// each key names a fix wherever it stands in the report, the first of its kind winning.
+// ok is false when the report names none.
 func parseHoldFix(report string) (holdFixLines, bool) {
 	var l holdFixLines
-	for _, line := range strings.Split(report, "\n") {
-		line = strings.TrimSpace(line)
-		switch {
-		case !l.pathsSeen && strings.HasPrefix(line, holdFixPaths):
-			l.pathsSeen = true
-			globs, ok := member.PathsProposed(line)
-			l.paths, l.pathsOK = globs, ok && len(globs) > 0
-		case !l.needSeen && strings.HasPrefix(line, holdFixNeeds):
-			l.needSeen = true
-			l.need = holdToken(strings.TrimPrefix(line, holdFixNeeds))
-		case !l.tierSeen && strings.HasPrefix(line, holdFixTier):
-			l.tierSeen = true
-			l.tier = holdToken(strings.TrimPrefix(line, holdFixTier))
-		case !l.gateSeen && strings.HasPrefix(line, holdFixGateHost):
-			l.gateSeen = true
-			l.gateHost = holdToken(strings.TrimPrefix(line, holdFixGateHost))
-		}
+	if globs, ok := member.PathsProposed(report); ok {
+		l.pathsSeen = true
+		l.paths, l.pathsOK = globs, len(globs) > 0
+	}
+	if rest, ok := holdFixRest(report, holdFixNeeds); ok {
+		l.needSeen = true
+		l.need = holdToken(rest)
+	}
+	if rest, ok := holdFixRest(report, holdFixTier); ok {
+		l.tierSeen = true
+		l.tier = holdToken(rest)
+	}
+	if rest, ok := holdFixRest(report, holdFixGateHost); ok {
+		l.gateSeen = true
+		l.gateHost = holdToken(rest)
 	}
 	return l, l.pathsSeen || l.needSeen || l.tierSeen || l.gateSeen
+}
+
+// holdFixRest is the text after the first key in report, cut at the end of its line or at
+// the "; " a carried report ends the line with; ok false when report has no key.
+func holdFixRest(report, key string) (string, bool) {
+	_, rest, ok := strings.Cut(report, key)
+	if !ok {
+		return "", false
+	}
+	rest, _, _ = strings.Cut(rest, "\n")
+	rest, _, _ = strings.Cut(rest, ";")
+	return rest, true
 }
 
 // holdToken is the first word of a fix line's value, quotes and a closing stop removed.

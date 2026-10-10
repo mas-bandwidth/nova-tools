@@ -171,16 +171,46 @@ func TestHoldFixLinesAreAppliedAtFinish(t *testing.T) {
 		w.clean("unchanged")
 	})
 
-	t.Run("a mention that is not its own line is unchanged", func(t *testing.T) {
+	t.Run("a friend sync report prefixes and collapses, and the lines still apply", func(t *testing.T) {
 		t.Parallel()
-		const report = "HOLD: the note says PATHS-PROPOSED: internal/sprint/widen.go in passing"
 		w := holdWorld(t, CardAdd{ID: "s1-1", Brief: brief("s1-1")})
 		markLand(w, LandProtectedAny)
+		report := "friend stella HOLD: Verdict: HOLD Head: " + holdHead + " the fix is outside PATHS PATHS-PROPOSED: internal/sprint/widen.go"
 		finishHold(t, w, "s1-1", report)
 		pr := w.s.Work.Card("s1-1")
-		require.Equal(t, Review, pr.Col)
-		assert.Equal(t, brief("s1-1"), pr.F("brief"))
-		assert.Equal(t, report, w.notesOf(NWorkFailed)[0].What)
+		require.Equal(t, Ready, pr.Col)
+		assert.Contains(t, pr.F("brief"), "internal/sprint/widen.go")
+		assert.Contains(t, w.notesOf(NHoldFix)[0].What, "PATHS widened in place")
+	})
+
+	t.Run("a member finish report carries the paths line and it still applies", func(t *testing.T) {
+		t.Parallel()
+		w := holdWorld(t, CardAdd{ID: "s1-1", Brief: brief("s1-1")})
+		markLand(w, LandProtectedAny)
+		report := "verdict not-done; the fix is outside PATHS; PATHS-PROPOSED: internal/sprint/widen.go"
+		finishHold(t, w, "s1-1", report)
+		pr := w.s.Work.Card("s1-1")
+		require.Equal(t, Ready, pr.Col)
+		assert.Contains(t, pr.F("brief"), "internal/sprint/widen.go")
+	})
+
+	t.Run("a collapsed report with every line applies them together", func(t *testing.T) {
+		t.Parallel()
+		w := holdWorld(t,
+			CardAdd{ID: "s1-1", Brief: brief("s1-1")},
+			CardAdd{ID: "s1-2", Brief: brief("s1-2")},
+		)
+		markLand(w, LandProtectedAny)
+		land(w, "s1-2")
+		w.s.Friends = []FriendSeat{{Name: "worker", Status: Up, Tiers: []string{"pro"}}}
+		report := "friend stella HOLD: Verdict: HOLD Head: " + holdHead + " PATHS-PROPOSED: internal/sprint/widen.go NEEDS: s1-2 TIER: pro GATE-HOST: linux"
+		finishHold(t, w, "s1-1", report)
+		pr := w.s.Work.Card("s1-1")
+		require.Equal(t, Ready, pr.Col)
+		assert.Contains(t, pr.F("brief"), "internal/sprint/widen.go")
+		assert.Equal(t, "s1-2", pr.F("needs"))
+		assert.Equal(t, "pro", pr.F(FieldTierNow))
+		assert.Equal(t, "linux", pr.F("gate_host"))
 	})
 
 	t.Run("an unmarked stream keeps the paths rule", func(t *testing.T) {
