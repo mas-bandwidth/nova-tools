@@ -168,9 +168,11 @@ The built binary is smoke-tested for `nova-check nocode` and for the specific
 properties that job names — not for all of `nocode`, and four of those steps are
 skipped on Windows, the platform those steps most needed to cover. Everything
 else, including all of `nova-fuse`, `nova-memory` and `nova-self-talk`,
-rests on package tests. A third-party import would show up as a
-`go.mod` diff and could not arrive silently, but no check asserts the
-standard-library rule as a rule. Nothing mechanical reads intent.
+rests on package tests. A direct require of `go.mod` is in
+docs/STANDARD.md section 7's adopted set, and
+`TestAdoptedModulesEveryDirectRequireIsAdopted`
+(internal/ci/adopted_modules_class_test.go) holds every non-indirect require to
+it, so no dependency arrives silently. Nothing mechanical reads intent.
 
 ### revert-on-red: the mechanical revert of a red main
 
