@@ -17,6 +17,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `nova-local/` | run local models: what an engine has, one model served at a chosen context, and a worker description nova-swarm accepts | `go test ./cmd/nova-local` | `go test ./cmd/nova-local` |
 | `nova-memory/` | memory indexing and search CLI | `go test ./cmd/nova-memory` | `go test ./cmd/nova-memory` |
 | `nova-redis/` | Redis instance owner: serve, scratch spill/recall, and fn load/check of the function library | `go test ./cmd/nova-redis` | `go test ./cmd/nova-redis` |
+| `nova-runner/` | one-shot friend harness runner that fills her configured sprint width | `go test ./cmd/nova-runner` | `go test ./cmd/nova-runner` |
 | `nova-sandbox/` | OS-level process sandbox CLI | `go test ./cmd/nova-sandbox` | `go test ./cmd/nova-sandbox` |
 | `nova-secrets/` | zero-leak secrets store CLI | `go test ./cmd/nova-secrets` | `go test ./cmd/nova-secrets` |
 | `nova-self-talk/` | flags sentences where a writer passes a standing verdict on themselves | `go test ./cmd/nova-self-talk` | `go test ./cmd/nova-self-talk` |

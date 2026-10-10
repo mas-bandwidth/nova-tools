@@ -13,7 +13,7 @@ import (
 )
 
 // livingTools are the tools the release ships for production use.
-var livingTools = strings.Fields("nova-bus nova-friend nova-table nova-sprint nova-redis nova-config nova-swarm nova-secrets nova-tokens nova-memory nova-decide nova-cairn nova-check nova-self-talk nova-fuse nova-sandbox nova-ci nova-version nova-update nova-local nova-up nova-doctor")
+var livingTools = strings.Fields("nova-bus nova-friend nova-runner nova-table nova-sprint nova-redis nova-config nova-swarm nova-secrets nova-tokens nova-memory nova-decide nova-cairn nova-check nova-self-talk nova-fuse nova-sandbox nova-ci nova-version nova-update nova-local nova-up nova-doctor")
 
 // preAlphaTools are the tools the README may list before they are ready for
 // production use. Each says so in one sentence (stageSentence), the same words
