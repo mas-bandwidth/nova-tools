@@ -3140,8 +3140,11 @@ A reader's checkout is scratch. The friend daemon writes the read under
 `reads/<id>/` and, once the verdict is recorded, removes `reads/<id>/repo` and
 the bench copy under `~/nova-bench/buds/<friend>/reads/<id>` when that bench
 directory is on the same machine (docs/SPEC-FRIEND.md, what is scratch). The
-read's brief, the worker's report and the finding stay. A bench on another
-machine is not removed from here.
+read's brief, the worker's report and the finding stay. The read's RESULT.md
+names the Linux bench it copied to (its `bench:` line), and the daemon removes
+that bench's copy over the ssh `Bench` transport, whatever the finding; a bench
+it cannot reach yet is owed and retried each step until it succeeds
+(docs/SPEC-FRIEND.md, what is scratch).
 
 - **The interim rules of 2026-10-06, until read cards** (the owner, 7:25 PM ET: "fix it
   now, to work around it"; the read-cards change (PR 5392) replaces
