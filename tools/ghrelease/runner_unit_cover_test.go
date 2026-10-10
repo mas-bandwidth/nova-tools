@@ -49,8 +49,9 @@ func TestGhreleaseRunnerCoverFinish(t *testing.T) {
 		}
 	}
 
-	// expiredCtx is a context that has already expired
-	expiredCtx, expiredCancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Minute))
+	// expiredCtx is a context with a fixed past deadline
+	fixedPastTime := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	expiredCtx, expiredCancel := context.WithDeadline(context.Background(), fixedPastTime)
 	expiredCancel()
 
 	tests := []struct {
