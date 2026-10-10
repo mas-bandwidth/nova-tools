@@ -22,6 +22,7 @@ func TestAddRefusesACardWhoseWorkIsAlreadyOnTheBase(t *testing.T) {
 		"cmd/example/example.go":      "package example\n",
 		"cmd/example/example_test.go": "package example\n\nimport \"testing\"\n\nfunc TestTask(t *testing.T) {}\n",
 		"cmd/example/new.go":          "package example\n",
+		"cmd/example/subdir/glob.go":  "package example\n\nimport \"testing\"\n\nfunc TestGlob(t *testing.T) {}\n",
 	}, "sprint/base")
 	git := func(dir string, args ...string) string {
 		t.Helper()
@@ -46,7 +47,7 @@ func TestAddRefusesACardWhoseWorkIsAlreadyOnTheBase(t *testing.T) {
 		if created != "" {
 			head += "NEW: " + created + "\n"
 		}
-		tree := "\nTHE TASK. Complete the example task.\n\nSTEP 1. Implement the example.\n  PATHS: cmd/example/*.go\n  COMMIT: " + commit + "\n  VERDICT: ok when the change is present\n"
+		tree := "\nTHE TASK. Complete the example task.\n\nSTEP 1. Implement the example.\n  PATHS: " + briefS + "\n  COMMIT: " + commit + "\n  VERDICT: ok when the change is present\n"
 		brief := passingBrief(head + "TEST: ./cmd/example " + testName + "\n" + tree)
 		return brief
 	}
@@ -63,7 +64,7 @@ func TestAddRefusesACardWhoseWorkIsAlreadyOnTheBase(t *testing.T) {
 
 	for _, tc := range []struct {
 		name, id, commit, created, testName, briefS string
-		want                                string
+		want                                        string
 	}{
 		{"commit subject", "commit-done", "commit-done: implement", "", "TestNew", "cmd/example/*.go", "commit-done: already landed"},
 		{"pushed branch ancestor", "branch-done", "branch-work: implement", "", "TestNew", "cmd/example/*.go", "branch"},
