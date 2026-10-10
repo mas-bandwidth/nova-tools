@@ -14,7 +14,8 @@ current tip and re-verifies its findings; the help door, `version` and every ref
 verbatim here, and each `--root` and plan defect below was re-checked against the step lines a
 `--dry-run` prints on this bench. In the quoted output `$S` is the bench scratch directory, `$JOB`
 the job directory, `<bin>` the directory the tools are installed in, and `<cwd>` the directory a
-command ran from.
+command ran from; the empty-`--root` run in finding 2 ran with `HOME=$S/home`, so the default
+`~/nova` that `up -h` names resolves under `$S`.
 
 ## Findings
 
@@ -31,7 +32,7 @@ command ran from.
    that cannot work.
    Grade: URGENT (a dry run that says ok for a run that cannot work)
 
-2. `HOME=$S/home nova-up up --local --dry-run --root ""`
+2. `nova-up up --local --dry-run --root ""`
    Printed:
    ```
    UP OK root=$S/home/nova steps=9 changes=7 applied=0 dry_run=true
