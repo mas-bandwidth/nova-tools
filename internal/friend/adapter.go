@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -86,6 +87,34 @@ type Exec func(ctx context.Context, dir, name string, args []string, stdin strin
 // record: the head, enough to see what the session did with the message.
 const OutputKept = 2048
 
+// acceptanceKey carries the adapter's explicit word that a turn was taken.
+// Output alone is not acceptance (SPEC-BUS.md, message-receipts).
+type acceptanceKey struct{}
+
+// WithTurnAccepted carries a callback an adapter calls once it accepts the
+// turn. The callback runs at most once, independently of output and exit.
+func WithTurnAccepted(ctx context.Context, accepted func()) context.Context {
+	var once sync.Once
+	return context.WithValue(ctx, acceptanceKey{}, func() { once.Do(accepted) })
+}
+
+// TurnAccepted confirms the session took the turn. realExec calls it once
+// the delivery command is running; a launch that never starts does not.
+// A context from withoutTurnAcceptance carries no callback
+// (SPEC-BUS.md, message-receipts).
+func TurnAccepted(ctx context.Context) {
+	if accepted, _ := ctx.Value(acceptanceKey{}).(func()); accepted != nil {
+		accepted()
+	}
+}
+
+// withoutTurnAcceptance is a delivery context whose command is not the
+// session taking the turn (a listing, a probe, an export). realExec stamps
+// acceptance only while the context still carries it.
+func withoutTurnAcceptance(ctx context.Context) context.Context {
+	return context.WithValue(ctx, acceptanceKey{}, nil)
+}
+
 // outputKey carries, in a delivery's context, what to call when the command
 // prints: the daemon's watch on a running turn (WithOutputSeen).
 type outputKey struct{}
@@ -153,7 +182,13 @@ func realExec(ctx context.Context, killDelay time.Duration, dir, name string, ar
 	cmd.Stderr = stderr
 	ownGroup(cmd)
 	cmd.WaitDelay = killDelay // the pipes close this long after the group is signalled
-	err := cmd.Run()
+	if err := cmd.Start(); err != nil {
+		return "", 0, err
+	}
+	// The session has the turn once the delivery command is running, not
+	// when it exits. A launch that never starts does not accept.
+	TurnAccepted(ctx)
+	err := cmd.Wait()
 	if ctx.Err() != nil && cmd.Process != nil {
 		killGroup(cmd.Process.Pid) // the leader is dead by now; what it forked is not
 	}
@@ -335,7 +370,7 @@ func (o *OpenCode) Deliver(ctx context.Context, text string) (int, error) {
 	}
 	id := o.Session
 	if id == "" {
-		listing, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"session", "list", "--format", "json"}, "")
+		listing, exit, err := o.Run(withoutTurnAcceptance(ctx), o.Dir, o.program(), []string{"session", "list", "--format", "json"}, "")
 		if err != nil {
 			return 0, fmt.Errorf("opencode session list: %w", err)
 		}
@@ -382,10 +417,10 @@ func (o *OpenCode) CheckRun(ctx context.Context) error {
 		return nil
 	}
 	version := "(version unknown)"
-	if out, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"--version"}, ""); err == nil && exit == 0 && strings.TrimSpace(out) != "" {
+	if out, exit, err := o.Run(withoutTurnAcceptance(ctx), o.Dir, o.program(), []string{"--version"}, ""); err == nil && exit == 0 && strings.TrimSpace(out) != "" {
 		version = strings.Fields(out)[0]
 	}
-	help, _, err := o.Run(ctx, o.Dir, o.program(), []string{"run", "--help"}, "")
+	help, _, err := o.Run(withoutTurnAcceptance(ctx), o.Dir, o.program(), []string{"run", "--help"}, "")
 	if err != nil {
 		return nil
 	}

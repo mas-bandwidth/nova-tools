@@ -260,7 +260,7 @@ func (l *loop) startPresent(now time.Time, withTurn bool) {
 			return
 		}
 		for j := range chunk {
-			if prior[j] == bus.Acted || l.acted[chunk[j].Message().ID] {
+			if prior[j] == bus.Acted {
 				chunk[j].Stage = bus.Acted
 			}
 		}

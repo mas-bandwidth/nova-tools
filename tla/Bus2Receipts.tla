@@ -15,24 +15,25 @@
 \*
 \* The actions: RRecv (recv stamps delivered and hands the message to the
 \* daemon), Take (the daemon drops a message it knows was acted, by its
-\* memory or by the receipt, acking it, else pushes it into a turn), Print
+\* store receipt, acking it, else pushes it into a turn), Print
 \* (the session took the turn: read), Reply (the session sent a message
 \* naming it: acted), TurnEnd (exit 0: acted, remembered, owed an ack),
 \* TurnFail (the turn ran and failed: read, and the claim hands it in
 \* again), DAck, LoseAck (the XACK never landed: the claim hands it in
 \* again), RCrash (a daemon dies holding what it holds, and forgets).
 \*
-\* Broken = "none" is the design; two reversed witnesses, each caught by one
+\* Broken = "none" is the design; four reversed witnesses, each caught by one
 \* property below:
 \*   "pushdup"         the take pushes every message it is handed, acted or
 \*                     not: NoIdActedTwice
-\*   "backstamp"       recv writes delivered over whatever the receipt held
-\*                     (HSET, not the rule): ReceiptNeverMovesBack
+\*   "backstamp"       recv overwrites the receipt: ReceiptNeverMovesBack
+\*   "earlyread"       take stamps read before acceptance: ReadOnlyAfterAcceptance
+\*   "replyundelivered" a reply starts acted without delivery: ActedImpliesDelivered
 
 EXTENDS Bus2
 
-VARIABLES rcpt, hand, turn, ackq, done, acts
-rvars == <<rcpt, hand, turn, ackq, done, acts>>
+VARIABLES rcpt, hand, turn, ackq, done, acts, accepted
+rvars == <<rcpt, hand, turn, ackq, done, acts, accepted>>
 allvars == <<vars, rvars>>
 
 RInit ==
@@ -43,6 +44,7 @@ RInit ==
   /\ ackq = [c \in Consumers |-> {}]
   /\ done = [c \in Consumers |-> {}]
   /\ acts = [m \in Messages |-> [r \in Recipients |-> 0]]
+  /\ accepted = {}
 
 ReceiptStates == {"none", "delivered", "read", "acted"}
 Pairs == Messages \X Recipients
@@ -60,6 +62,7 @@ RTypeOK ==
   /\ ackq \in [Consumers -> SUBSET Pairs]
   /\ done \in [Consumers -> SUBSET Pairs]
   /\ acts \in [Messages -> [Recipients -> Nat]]
+  /\ accepted \subseteq Pairs
 
 \* recv's delivered stamp (Bus.RecvKinds, delivered); the backstamp witness
 \* writes it over whatever the receipt held.
@@ -68,39 +71,41 @@ Delivered(m, r) == IF Broken = "backstamp" THEN "delivered" ELSE Fwd(rcpt[m][r],
 Took(m, r, c) ==
   /\ rcpt' = [rcpt EXCEPT ![m][r] = Delivered(m, r)]
   /\ hand' = [hand EXCEPT ![c] = @ \cup {<<m, r>>}]
-  /\ UNCHANGED <<turn, ackq, done, acts>>
+  /\ UNCHANGED <<turn, ackq, done, acts, accepted>>
 
 \* nova-bus recv by the daemon c: the message it is handed, stamped delivered.
 RRecv(r, c) ==
   \/ RecvPending(r, c) /\ Took(OldestClaimable(r, c), r, c)
   \/ RecvNew(r, c) /\ Took(Oldest(r, "new"), r, c)
 
-\* The daemon's take (internal/friend/daemon.go, read): a message it pushed
-\* into a turn that ended acted (its memory), or whose receipt recv found
+\* The daemon's take (internal/friend/daemon.go, read): a message whose receipt recv found
 \* acted (Entry.Stage), is dropped and acked, never pushed in; any other goes
 \* into the session's turn. The pushdup witness pushes every one.
 Take(c, m, r) ==
   /\ c \in alive /\ <<m, r>> \in hand[c]
   /\ hand' = [hand EXCEPT ![c] = @ \ {<<m, r>>}]
-  /\ IF Broken # "pushdup" /\ (<<m, r>> \in done[c] \/ rcpt[m][r] = "acted")
-       THEN Ack(r, m) /\ UNCHANGED <<rcpt, turn, ackq, done, acts>>
+  /\ IF Broken # "pushdup" /\ rcpt[m][r] = "acted"
+       THEN Ack(r, m) /\ UNCHANGED <<rcpt, turn, ackq, done, acts, accepted>>
        ELSE /\ turn' = [turn EXCEPT ![c] = @ \cup {<<m, r>>}]
             /\ UNCHANGED vars
-            /\ UNCHANGED <<rcpt, ackq, done, acts>>
+            /\ rcpt' = IF Broken = "earlyread"
+                         THEN [rcpt EXCEPT ![m][r] = Fwd(@, "read")] ELSE rcpt
+            /\ UNCHANGED <<ackq, done, acts, accepted>>
 
-\* The session took the turn: it printed (daemon.go, watch).
-Print(c, m, r) ==
+\* The adapter accepted the turn (daemon.go, watch).
+Accept(c, m, r) ==
   /\ c \in alive /\ <<m, r>> \in turn[c]
   /\ rcpt' = [rcpt EXCEPT ![m][r] = Fwd(@, "read")]
+  /\ accepted' = accepted \cup {<<m, r>>}
   /\ UNCHANGED vars
   /\ UNCHANGED <<hand, turn, ackq, done, acts>>
 
 \* The session sent a message naming it (re): acted, in the send's own step.
-Reply(c, m, r) ==
-  /\ c \in alive /\ <<m, r>> \in turn[c]
-  /\ rcpt' = [rcpt EXCEPT ![m][r] = Fwd(@, "acted")]
-  /\ UNCHANGED vars
-  /\ UNCHANGED <<hand, turn, ackq, done, acts>>
+ReceiptReply(m, r) ==
+  /\ Reply(r, m)
+  /\ rcpt' = [rcpt EXCEPT ![m][r] =
+       IF Broken = "replyundelivered" THEN "acted" ELSE Fwd(@, "acted")]
+  /\ UNCHANGED <<hand, turn, ackq, done, acts, accepted>>
 
 \* The turn ended at exit 0 (daemon.go, settle): acted, remembered, owed an ack.
 TurnEnd(c, m, r) ==
@@ -111,6 +116,7 @@ TurnEnd(c, m, r) ==
   /\ done' = [done EXCEPT ![c] = @ \cup {<<m, r>>}]
   /\ ackq' = [ackq EXCEPT ![c] = @ \cup {<<m, r>>}]
   /\ UNCHANGED vars
+  /\ accepted' = accepted \cup {<<m, r>>}
   /\ UNCHANGED hand
 
 \* The turn ran and failed: read, and the claim hands it in again.
@@ -118,15 +124,14 @@ TurnFail(c, m, r) ==
   /\ c \in alive /\ <<m, r>> \in turn[c]
   /\ turn' = [turn EXCEPT ![c] = @ \ {<<m, r>>}]
   /\ hand' = [hand EXCEPT ![c] = @ \cup {<<m, r>>}]
-  /\ rcpt' = [rcpt EXCEPT ![m][r] = Fwd(@, "read")]
   /\ UNCHANGED vars
-  /\ UNCHANGED <<ackq, done, acts>>
+  /\ UNCHANGED <<rcpt, ackq, done, acts, accepted>>
 
 DAck(c, m, r) ==
   /\ c \in alive /\ <<m, r>> \in ackq[c]
   /\ Ack(r, m)
   /\ ackq' = [ackq EXCEPT ![c] = @ \ {<<m, r>>}]
-  /\ UNCHANGED <<rcpt, hand, turn, done, acts>>
+  /\ UNCHANGED <<rcpt, hand, turn, done, acts, accepted>>
 
 \* The XACK never landed: the message stays pending, and the claim hands it
 \* in again to the same daemon. An outside event, bounded with the crashes.
@@ -136,7 +141,7 @@ LoseAck(c, m, r) ==
   /\ hand' = [hand EXCEPT ![c] = @ \cup {<<m, r>>}]
   /\ crashes' = crashes + 1
   /\ UNCHANGED <<st, holder, log, to, alive>>
-  /\ UNCHANGED <<rcpt, turn, done, acts>>
+  /\ UNCHANGED <<rcpt, turn, done, acts, accepted>>
 
 \* A daemon dies holding what it holds: its memory goes with it, the store's
 \* receipts stay.
@@ -146,21 +151,25 @@ RCrash(c) ==
   /\ turn' = [turn EXCEPT ![c] = {}]
   /\ ackq' = [ackq EXCEPT ![c] = {}]
   /\ done' = [done EXCEPT ![c] = {}]
-  /\ UNCHANGED <<rcpt, acts>>
+  /\ UNCHANGED <<rcpt, acts, accepted>>
 
 RNext ==
   \/ \E m \in Messages : Send(m) /\ UNCHANGED rvars
   \/ \E r \in Recipients, c \in Consumers : RRecv(r, c)
   \/ \E c \in Consumers, m \in Messages, r \in Recipients :
-       \/ Take(c, m, r) \/ Print(c, m, r) \/ Reply(c, m, r)
+       \/ Take(c, m, r) \/ Accept(c, m, r)
        \/ TurnEnd(c, m, r) \/ TurnFail(c, m, r) \/ DAck(c, m, r) \/ LoseAck(c, m, r)
   \/ \E c \in Consumers : RCrash(c)
+  \/ \E m \in Messages, r \in Recipients : ReceiptReply(m, r)
 
 \* The receipts over the delivery machine; safety only, so no fairness, and
 \* a dead daemon stays dead (its successor is another consumer).
 ReceiptSpec == RInit /\ [][RNext]_allvars
 
 \* A receipt never moves back.
+ReadOnlyAfterAcceptance ==
+  \A m \in Messages, r \in Recipients : rcpt[m][r] = "read" => <<m, r>> \in accepted
+
 ReceiptNeverMovesBack ==
   [][\A m \in Messages, r \in Recipients : Rank(rcpt'[m][r]) >= Rank(rcpt[m][r])]_allvars
 

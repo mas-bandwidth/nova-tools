@@ -133,7 +133,7 @@ var errNoSession = errors.New("no tmux session")
 
 // capture is the pane's screen as text (SPEC-FRIEND.md, "Hosted in tmux").
 func (t *Tmux) capture(ctx context.Context) (string, error) {
-	out, exit, err := t.Run(ctx, t.Dir, "tmux", []string{"capture-pane", "-p", "-t", t.Session}, "")
+	out, exit, err := t.Run(withoutTurnAcceptance(ctx), t.Dir, "tmux", []string{"capture-pane", "-p", "-t", t.Session}, "")
 	if err != nil {
 		return "", fmt.Errorf("tmux capture-pane: %w", err)
 	}
@@ -188,7 +188,7 @@ func (t *Tmux) Deliver(ctx context.Context, text string) (int, error) {
 		return 0, Deferred{Reason: fmt.Sprintf("a turn runs in %s: its prompt is not shown", t.Session)}
 	}
 	for _, keys := range [][]string{{"send-keys", "-t", t.Session, "-l", TypedLine(text)}, {"send-keys", "-t", t.Session, "Enter"}} {
-		out, exit, err := t.Run(ctx, t.Dir, "tmux", keys, "")
+		out, exit, err := t.Run(withoutTurnAcceptance(ctx), t.Dir, "tmux", keys, "")
 		if err != nil {
 			return 0, fmt.Errorf("tmux send-keys: %w", err)
 		}
@@ -203,6 +203,7 @@ func (t *Tmux) Deliver(ctx context.Context, text string) (int, error) {
 			return 0, err
 		}
 		if !t.idle(screen) {
+			TurnAccepted(ctx) // the prompt has left: the pane took the turn
 			if t.Out != nil {
 				fmt.Fprintln(t.Out, "typed into "+t.Session+"; the turn runs after this")
 			}
@@ -298,7 +299,7 @@ func (t *Tmux) Alive(ctx context.Context) Liveness {
 	if t.Run == nil {
 		return cannotTell("tmux: no runner")
 	}
-	out, exit, err := t.Run(ctx, t.Dir, "tmux", []string{"has-session", "-t", t.Session}, "")
+	out, exit, err := t.Run(withoutTurnAcceptance(ctx), t.Dir, "tmux", []string{"has-session", "-t", t.Session}, "")
 	switch {
 	case err != nil:
 		return cannotTell("tmux has-session: " + err.Error())
