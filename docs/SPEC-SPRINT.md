@@ -2326,7 +2326,13 @@ naming the move. A step refused whole writes nothing, not even the rows of a
 stream it would have declared. A primary leaves waiting only when every need has landed or
 was waived: a step that may move a primary to ready builds its plan on the
 snapshot it read, and the lifecycle judges the needs against it; a plan
-without it moves nothing waiting to ready. The lifecycle is judged first on
+without it moves nothing waiting to ready. A need that names no card is not
+that wait. Resolve removes the id from the field and writes one story line,
+once: `need <id> names no card; detached` (`internal/sprint/steps_work.go`,
+`detachNoCard`; `tla/Needs.tla`). The same resolve does not move the card:
+the lifecycle still judges the move from the pre-state, which still names
+the id, so the card becomes ready on the next resolve when nothing else
+holds it. The lifecycle is judged first on
 every unit of a plan; the needs rule is then judged against the landings of
 the units the lifecycle kept only, so a landing the lifecycle refuses
 satisfies no need. A work-table move whose expectation names no place is
@@ -4694,7 +4700,7 @@ the tick would make, no other open judgment on it).
 | ci red on a primary | rework (with a fix), return, drop, card (look), ack (looked, nothing to do) | yes |
 | a primary came back a second time for the same cause | card (stop and look) | no |
 | a primary is blocked on something dropped | drop, ack (waives the dropped need), or `relink <old> <new>` answers it when the dropped card has a twin (section 2, a card replaced by its twin); the verbs refuse to open one (add refuses a need naming a dropped card, drop refuses a needed card without `--cascade`), so it answers a stored record only | yes |
-| a primary is blocked on something missing | drop, ack (waives the named missing need) | yes |
+| a primary is blocked on something missing | drop, ack (waives the named missing need). Resolve does not open one for a need that names no card: it detaches that id (section 3, `need <id> names no card; detached`). A stored judgment of this type is still answered by drop or ack | yes |
 | reads exhausted | ask --another, rework, drop | no |
 | ready to accept (a primary the pump holds: its CI red at its head, its CI judgment acknowledged; one nothing holds the tick accepts, section 6) | accept, rework, drop | no |
 | returned to review | rework, accept (while its reads stand at its head), drop | no |
@@ -5780,7 +5786,7 @@ command that loads it.
 | release | lands reached sentinels, held ones (`add --held`) that wait for nothing, and sentinels not yet reached whose waits are each landed, dropped or in flight (section 16); clears the hold of a held card, which goes to ready when it waits for nothing else; the coordinator's alone, with `--reason` |
 | card base | re-points a merging card's BASE in one step: the branch asked of the card's origin first (its `REPO:` line, else `--repo-dir`'s origin) and one not there refused, nothing written; the brief's `BASE:` line names the new branch, its dead-base mark cleared and its dead-base judgment answered, its work, reads and place in the merge queue kept, one log line naming the base before and after; the next land pass tries it once (section 7, a dead base); the coordinator's alone |
 | sentinel set | replaces a waiting sentinel's needs in one step, keeping its id, stream, score and log, one log line naming the needs before and after; refused, nothing written, for a need that is no card on the table (every one named), an id that is no sentinel waiting, a cycle, and `--needs ""` (a sentinel with nothing to wait on is released, not emptied); the coordinator's alone (section 16) |
-| resolve | waiting -> ready where needs have landed (the tick does it; by hand for a stuck case) |
+| resolve | waiting -> ready where needs have landed (the tick does it; by hand for a stuck case); a need that names no card is detached in that step (`need <id> names no card; detached`, once) and the card moves on the next resolve (section 3) |
 | start, stop | set the machine RUNNING or STOPPED (section 14); `stop --reason <text> --until <time or duration>`, both wanted (`sprint.StopArgs`), names who stopped it, why, and when the tick starts it again |
 | run | ticks on every line of the log (at most every 100 ms) and once a second while the log is quiet; before each tick it reads its own binary's file, and when a new build was installed under it since it began it stops (`RUN STOP the binary this loop runs was replaced ...`, exit 3) so its supervisor starts the new one: a loop never ticks the store with older code than the verbs run |
 | tick | one tick by hand |
