@@ -339,7 +339,7 @@ func ExecLine(dir, cache string, argv []string) string {
 	for i, a := range argv {
 		words[i] = Quote(a)
 	}
-	return "mkdir -p " + Quote(dir+"/tmp") + " && cd " + Quote(dir+"/repo") + " && TMPDIR=" + tmpdir + " GOTMPDIR=" + tmpdir + " GOCACHE=" + gocache + " " + strings.Join(Env, " ") +
+	return "cd " + Quote(dir+"/repo") + " && mkdir -p ../tmp && TMPDIR=" + tmpdir + " GOTMPDIR=" + tmpdir + " GOCACHE=" + gocache + " " + strings.Join(Env, " ") +
 		" nice -n " + strconv.Itoa(Nice) + " " + strings.Join(words, " ")
 }
 
