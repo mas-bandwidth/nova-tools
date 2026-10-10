@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -118,8 +119,15 @@ func (a *app) cmdDashboard(args []string, stdout, stderr io.Writer) int {
 // --cards does (whereJSON), or, given from (a puller), that dashboard's /api/sprint; each
 // read and the freshness check go to log.
 func (a *app) dashboardServer(redis string, given bool, from string, every time.Duration, logo string, log io.Writer) *sprintdash.Server {
+	var said sync.Once
 	srv := &sprintdash.Server{
-		Read:    func() ([]byte, error) { return a.whereJSON(redis, given) },
+		Read: func() ([]byte, error) {
+			body, err := a.whereJSON(redis, given)
+			if err == nil {
+				said.Do(func() { sayWherePath(body, log) })
+			}
+			return body, err
+		},
 		Now:     a.now,
 		Every:   every,
 		Logo:    logo,
@@ -166,6 +174,33 @@ func (a *app) whereJSON(addr string, given bool) ([]byte, error) {
 		return nil, &sprintdash.ReadError{Why: fmt.Sprintf("where exited %d", code), Detail: line}
 	}
 	return out.Bytes(), nil
+}
+
+// whereJSONPath is which way a where --json document was read: from the sprint's server's
+// last tick's snapshot (a "snapshot" field carries its age), or on the store directly (no
+// field). The dashboard says which once, at its first good read, so a seat sees the fast
+// path is the one in use (CHANGE 5).
+func whereJSONPath(body []byte) (snapshot bool, ageMS int64) {
+	var v struct {
+		Snapshot *snapshotMeta `json:"snapshot"`
+	}
+	if json.Unmarshal(body, &v) != nil || v.Snapshot == nil {
+		return false, 0
+	}
+	return true, v.Snapshot.AgeMS
+}
+
+// sayWherePath reports, once, which way the dashboard reads the sprint: the server's last
+// tick's snapshot with its age, or the store directly. Nothing is written on a failed read.
+func sayWherePath(body []byte, log io.Writer) {
+	if log == nil {
+		return
+	}
+	if snapshot, ageMS := whereJSONPath(body); snapshot {
+		fmt.Fprintf(log, "DASHBOARD reads the sprint's server's last tick's snapshot age_ms=%d\n", ageMS)
+	} else {
+		fmt.Fprintf(log, "DASHBOARD reads the sprint on the store, no server snapshot\n")
+	}
 }
 
 // dashboardAddrs is the --listen or --pull list (flag), each a host:port whose host is an

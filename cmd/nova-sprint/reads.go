@@ -691,6 +691,18 @@ type whereView struct {
 	// last minute, as the server measured it (store.StoreRTTRecord, store-latency-row-r.w2).
 	StoreRTTP50MS *float64 `json:"store_rtt_p50_ms,omitempty"`
 	StoreRTTP99MS *float64 `json:"store_rtt_p99_ms,omitempty"`
+	// Snapshot is where --json's answer through the sprint's server: the document of the
+	// server's last tick (serve.go, whereSnapshots), when that tick ended and how old it was
+	// when it was answered; absent from a read of the store (where --json --fresh, or no
+	// server).
+	Snapshot *snapshotMeta `json:"snapshot,omitempty"`
+}
+
+// snapshotMeta is the age of a where --json answered from the server's last tick: at is
+// when that tick ended, age_ms the milliseconds from then to the answer.
+type snapshotMeta struct {
+	At    time.Time `json:"at"`
+	AgeMS int64     `json:"age_ms"`
 }
 
 // archivedView is where --json's archived streams (stream archive).
@@ -961,6 +973,7 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	cards := fs.Bool("cards", false, "with --json: also every work card dealt to a fleet row and not finished (its row, state, since, deadline and branch) and the open judgments on them, as the dashboard's pull routes serve them, and every machine's lanes (lane list)")
 	archived := fs.Bool("archived", false, "with --json: the archived streams' rows of the work and merge tables in tables, and their primaries in --rows, beside the live ones (stream archive); the summary and the drawn footers count only the streams on the table either way, and archived_cards and archived_landed carry theirs")
 	rows := fs.Bool("rows", false, "with --json: also every primary's row of the work table (id, stream, state, score, and its fields but the brief: card <id> --brief), in work order, so a child reads every card in one call and never loops card calls")
+	fresh := fs.Bool("fresh", false, "with --json: read the store now; through the sprint's server (NOVA_SPRINT_SERVER) where --json answers from the server's last tick's document at once, and refuses one older than two ticks")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled (--json)")
 	atEpoch := fs.Int64("at-epoch", -1, "the sprint as it was at an earlier epoch (before a clear)")
 	var rel releaseFlag
@@ -998,6 +1011,9 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	if *rows && !c.json {
 		return refuse(stderr, "where", "--rows is a field of the JSON view: give --json with it")
 	}
+	if *fresh && !c.json {
+		return refuse(stderr, "where", "--fresh is a read of the JSON view: give --json with it (where without --json always reads the store)")
+	}
 	r := whereRun{c: *c, watch: *watch, all: *all, cards: *cards, rows: *rows, archived: *archived, release: rel, every: *every, stale: *stale, atEpoch: *atEpoch}
 	if addr := a.server(fs); addr != "" {
 		// the sprint's server draws each frame: one plain where a frame, so the watch
@@ -1026,51 +1042,14 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 // one object a frame.
 func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Writer) int {
 	return a.drawLoop(ctx, r, stdout, stderr, func(ctx context.Context) (string, int, bool) {
-		// every frame reads the sprint's epoch again: a clear while it
-		// watches shows the new epoch
-		st, err := a.storeAtCtx(ctx, r.c, r.atEpoch)
-		if err != nil {
-			if ctx.Err() != nil {
-				return "", 0, false // an interrupt cut the read short: the watch is over, not failed
-			}
+		v, frame, opened, err := a.whereRead(ctx, r)
+		switch {
+		case err != nil && ctx.Err() != nil:
+			return "", 0, false // an interrupt cut the read short: the watch is over, not failed
+		case err != nil && !opened:
 			return "", refuse(stderr, "where", err.Error()), false
-		}
-		v, frame, err := a.whereOf(ctx, st, r.stale, r.all, r.archived || !r.c.json)
-		if err != nil {
-			if ctx.Err() != nil {
-				return "", 0, false // an interrupt cut the read short: the watch is over, not failed
-			}
+		case err != nil:
 			return "", a.readFailed("where", err, stderr), false
-		}
-		if r.c.json && r.cards {
-			d, err := st.Dealt(ctx)
-			if err != nil {
-				return "", a.readFailed("where", err, stderr), false
-			}
-			v.Cards, v.Judgments = dealtView(d, st.Names.Prefix, v.Epoch)
-			v.Merging = mergingView(d.Merging)
-			v.MergeRow.OldestMergingMin = oldestMerging(v.At, d.Merging)
-			// every hold in force, with its reason (hold, docs/SPEC-SPRINT.md section 11): the
-			// status cells read held, and this says why; read for the dashboard's form only, so
-			// where --json keeps its one read of records
-			if v.Holds, err = st.Holds(ctx); err != nil {
-				return "", a.readFailed("where", err, stderr), false
-			}
-			if v.Lanes, err = st.LaneRows(ctx); err != nil {
-				return "", a.readFailed("where", err, stderr), false
-			}
-		}
-		if r.c.json && r.rows {
-			s, err := st.Load(ctx, []string{sprint.Work}, nil)
-			if err != nil {
-				return "", a.readFailed("where", err, stderr), false
-			}
-			var gone *archivedView
-			if !r.archived {
-				gone = v.Archived
-			}
-			v.Rows = rowsView(s, gone)
-			v.MergeRow.OldestMergingMin = oldestMerging(v.At, s.Work.Column(string(sprint.Merging)))
 		}
 		if r.c.json {
 			b, _ := json.Marshal(v)
@@ -1081,6 +1060,67 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 		}
 		return frame, 0, true
 	})
+}
+
+// whereRead is one read of the view and its frame, as r asks: every frame of a watch reads
+// the sprint's epoch again, so a clear while it watches shows the new epoch. opened is false
+// when the store did not open (err is then the refusal's).
+func (a *app) whereRead(ctx context.Context, r whereRun) (v whereView, frame string, opened bool, err error) {
+	st, err := a.storeAtCtx(ctx, r.c, r.atEpoch)
+	if err != nil {
+		return whereView{}, "", false, err
+	}
+	if v, frame, err = a.whereOf(ctx, st, r.stale, r.all, r.archived || !r.c.json); err != nil {
+		return whereView{}, "", true, err
+	}
+	if r.c.json && r.cards {
+		if err = whereCards(ctx, st, &v); err != nil {
+			return whereView{}, "", true, err
+		}
+	}
+	if r.c.json && r.rows {
+		if err = whereRows(ctx, st, &v, r.archived); err != nil {
+			return whereView{}, "", true, err
+		}
+	}
+	return v, frame, true, nil
+}
+
+// whereCards is where --json --cards's part of the view: every work card dealt to a fleet
+// row and not finished, the open judgments on them, the merge queue with its heads, every
+// hold in force and every machine's lanes.
+func whereCards(ctx context.Context, st *store.Store, v *whereView) error {
+	d, err := st.Dealt(ctx)
+	if err != nil {
+		return err
+	}
+	v.Cards, v.Judgments = dealtView(d, st.Names.Prefix, v.Epoch)
+	v.Merging = mergingView(d.Merging)
+	v.MergeRow.OldestMergingMin = oldestMerging(v.At, d.Merging)
+	// every hold in force, with its reason (hold, docs/SPEC-SPRINT.md section 11): the
+	// status cells read held, and this says why; read for the dashboard's form only, so
+	// where --json keeps its one read of records
+	if v.Holds, err = st.Holds(ctx); err != nil {
+		return err
+	}
+	v.Lanes, err = st.LaneRows(ctx)
+	return err
+}
+
+// whereRows is where --json --rows's part of the view: every primary's row of the work
+// table, an archived stream's only with archived.
+func whereRows(ctx context.Context, st *store.Store, v *whereView, archived bool) error {
+	s, err := st.Load(ctx, []string{sprint.Work}, nil)
+	if err != nil {
+		return err
+	}
+	var gone *archivedView
+	if !archived {
+		gone = v.Archived
+	}
+	v.Rows = rowsView(s, gone)
+	v.MergeRow.OldestMergingMin = oldestMerging(v.At, s.Work.Column(string(sprint.Merging)))
+	return nil
 }
 
 // drawLoop prints the frames frame gives: once, or with --watch every --every until

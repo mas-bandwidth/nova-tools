@@ -1145,7 +1145,11 @@ tailnet that gives them the json or xml or whatever you choose."). `dashboard --
 on listeners of their own, so a proxy that publishes the page never fronts them, and
 `--listen none` serves no page. Every route answers from the one cached copy the page
 reads: `where --json --cards` (with `--rows`, which place the critical path and are not served, and `--archived`, the archived streams' rows, which the Work panel hides behind its archived line), read at most once a second however many workers pull (the
-owner, 2026-10-03 11:21 AM: "updated once per-second."). `--cards` adds to `where --json`
+owner, 2026-10-03 11:21 AM: "updated once per-second."). Through the sprint's server
+(`NOVA_SPRINT_SERVER`) that read is answered from the server's last tick's snapshot (section
+14, The server, The tick's snapshot) in milliseconds, so the page reads the snapshot and its
+copy follows the sprint once a second; a snapshot older than two ticks is refused, never
+shown as current. `--cards` adds to `where --json`
 the work cards dealt to a fleet row and not finished (each card's row, state, since,
 deadline and branch, read from the fleet's ready and working cells alone, so the read is
 bounded by the fleet's width and never by the sprint's cards) and the open judgments
@@ -6896,7 +6900,38 @@ twin file (`mem:<file>`), which the server writes whole after every verb, every 
 line. The server says what its batches cost once a minute when it answered any: `SERVE
 batches=<n> beat-lane=<n> read-lane=<n> on-line=<n> gone=<n> wait-max=<d> held-max=<d>
 held-by=<verb> over=<d>`. The model is `tla/ServerLanes.tla`. The server keeps
-nothing between requests.
+nothing between requests but its last tick's `where --json` document (The tick's snapshot).
+
+The tick's snapshot. The owner, 2026-10-04: "once per-second updates are a hard requirement",
+and 2026-10-07 6:55 PM: "It's a requirement that it updates at 1s. If it's too slow to update
+at 1s, then that needs to be fixed, at critical priority." Measured that evening, `where --json`
+through the server took 4.6 to 8.5 s wall (89 to 112 store trips, 192 to 560 rows) while the
+tick had the same display ready in 29 ms, and the dashboard, which runs the verb back to back,
+showed a frame every 5 to 8 s. So the server keeps the `where --json` document of its last tick
+in memory: at the end of every tick (once the tick has given back the line) it rebuilds the
+fullest document, `where --json --cards --rows --archived`, from the rows the tick already read
+(its twin: the same four tables every step of the process reads through), never read from the
+store a second time; on a twin file, which has no lanes, the read takes the line, as every
+verb does there. A tick that ends while a build is in flight has it built once more after. A `where --json` sent to the server (`NOVA_SPRINT_SERVER`,
+the forward path) is answered from that document at once, with no line, no lane and no store
+trip: without `--cards`, `--rows` or `--archived` it is the same document with those parts left
+out, byte for byte the document a read of the store gives for the same rows
+(`TestTheSnapshotIsTheFreshReadOfTheSameRows`). The answer carries `"snapshot": {"at": <when
+the tick ended>, "age_ms": <its age at the answer>}`. A document older than two ticks (two of
+the last tick's periods, the time between the last two ticks' ends, each at least TickEvery),
+none yet (no tick has ended since the server began), or a server whose binary was replaced
+under it (a `server switch` under way: the loop stops at its next tick) is refused, exit 1,
+`nova-sprint where: snapshot stale: <age>; run where --json --fresh`, never served silently. A
+read of the document that fails leaves the last one, which goes stale, says `SNAPSHOT the where
+--json document of tick <n> was not read: <why>` once on the server's log, and the refusal names
+it. `where --json --fresh`, and a `where --json` given a flag the document does not hold
+(`--stale`, `--at-epoch`), read the store as before; `where` without `--json` is unchanged.
+`GET /api/sprint` on either listener answers the full document under the same rule (a refusal
+is a 503 with its line), so a page that needs only the document never spawns a process. The
+forward path it is answered from is walked whole, through the client's forward and the
+server's handler, with no store trip, in
+`TestAForwardedWhereJSONAnswersFromTheSnapshotWhole`; the sub-second wall is the design's (no
+store read), not a unit test's wall-clock bound (docs/STANDARD.md, no fixed wall-clock wait).
 
 The tick's turn. The batches, the lanes beside the tick (land's reads and report, decide,
 balance) and the tick take one line of control. The batches and the lanes take it in the order

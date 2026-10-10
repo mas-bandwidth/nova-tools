@@ -27,7 +27,9 @@ import (
 // here it sends the server its plain read, again and again (where --watch: one a
 // frame; inbox --wait: the log's tick-end notes, polled). What a verb's arguments say
 // (its help, its flags, which word is a flag's value) is read by the verb's own flags
-// (readVerb), never by a scan of the words.
+// (readVerb), never by a scan of the words. A where --json sent this way is answered from
+// the server's last tick's document, at once, or refused when that is older than two
+// ticks; where --json --fresh reads the store (serve.go, whereSnapshots).
 
 // ServerEnv names the sprint's server for the coordinator's verbs: host:port.
 const ServerEnv = "NOVA_SPRINT_SERVER"
