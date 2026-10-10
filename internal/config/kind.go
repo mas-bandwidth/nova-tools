@@ -244,6 +244,33 @@ func FriendTokenCap(r Row) int64 {
 	return n
 }
 
+// How a friend's work is paid (the owner, 2026-10-04 4:41 PM): a subscription
+// friend's work is tokens only, the friends category, never in the sprint's
+// dollar columns; an api friend's work is at API rates, priced in dollars under
+// its model's tier as a fleet route's is (nova-sprint friend sync; the deal
+// offers a heavy or pro card to a subscription friend before an api friend or a
+// route takes it, docs/SPEC-SPRINT.md section 1, deal-subscription-first-r-t-bb).
+// Migration 0037 sets every row to the default.
+const (
+	FriendBillingAPI          = "api"
+	FriendBillingSubscription = "subscription"
+)
+
+// FriendBillings are the words of a friend row's billing field.
+var FriendBillings = []string{FriendBillingAPI, FriendBillingSubscription}
+
+// DefaultFriendBilling is how a friend row with no billing word is paid.
+const DefaultFriendBilling = FriendBillingSubscription
+
+// FriendBilling is a friend row's billing: its billing field,
+// DefaultFriendBilling when the row has none.
+func FriendBilling(r Row) string {
+	if b := r.Fields["billing"]; b != "" {
+		return b
+	}
+	return DefaultFriendBilling
+}
+
 // checkFriend is the friend kind's Check: her width is at least 1, a friend
 // working no job at once being no friend of the sprint's (remove the row
 // instead), her config_dir, when set, is an absolute path, and each stream
@@ -440,7 +467,7 @@ var Kinds = []*Kind{
 		// rather than stored in configuration.
 		Name:  KindFriend,
 		Table: "friends",
-		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once, her delivery mode, the config directory her claude lanes run with, the per-card token cap her one-shot lanes hold a card at, and the optional streams and kinds restrictions on the work she may be dealt",
+		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once, her delivery mode, the config directory her claude lanes run with, the per-card token cap her one-shot lanes hold a card at, the optional streams and kinds restrictions on the work she may be dealt, and her billing, how her work is paid",
 		Fields: []Field{
 			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports; no machine's width"},
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers she can do: comma list of " + strings.Join(Tiers, ", ")},
@@ -451,6 +478,7 @@ var Kinds = []*Kind{
 			{Name: "token_cap", Type: TypeInt, Default: strconv.FormatInt(DefaultFriendTokenCap, 10), Help: "tokens one card may spend (input, cached input, output and reasoning summed) before a one-shot lane stops its own run and holds the card; " + strconv.FormatInt(DefaultFriendTokenCap, 10) + " by default, and 0 is no cap"},
 			{Name: "streams", Type: TypeText, Help: "optional comma-separated glob patterns over stream names this friend may be dealt work on; empty means any stream"},
 			{Name: "kinds", Type: TypeNames, Help: "optional comma-separated card KIND values this friend may be dealt; empty means any kind"},
+			{Name: "billing", Type: TypeEnum, Enum: FriendBillings, Default: DefaultFriendBilling, Help: "how her work is paid: subscription (the default: tokens only, in the friends category) or api (at API rates, priced in dollars under its model's tier as a fleet route's work)"},
 		},
 		Check: checkFriend,
 		ApplyOrder: func(r Row) int {
