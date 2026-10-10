@@ -1264,6 +1264,7 @@ func (l *loop) startTurn(t *turn, now time.Time, deliver any) {
 	seen := &atomic.Int64{}
 	tctx = WithOutputSeen(tctx, func() { seen.Add(1) })
 	t.accepted.Store(false)
+	t.readStamped = false // a reused deferral can stamp read again
 	tctx = WithTurnAccepted(tctx, func() { t.accepted.Store(true) })
 	tail := &outputTail{}
 	tctx = WithOutputTail(tctx, tail.add)

@@ -356,9 +356,11 @@ A message is pending or acked on its stream, and that alone cannot tell a
 message that reached the friend daemon from one the session read or one it
 acted on. Every message therefore has a receipt per recipient that moves
 only forward: `delivered` (the recipient's reader took it off its stream:
-`recv`, which the daemon runs), `read` (the turn carrying it started: the
-daemon marks it only after the adapter accepts the turn through
-`TurnAccepted`, or a successful adapter return confirms that acceptance),
+`recv`, which the daemon runs), `read` (the turn carrying it started:
+`realExec` in `internal/friend/adapter.go` calls `TurnAccepted` once the
+delivery command's `Start` has succeeded, while that command is still
+running, and the daemon stamps `read` from that signal before the turn
+ends; a successful adapter return still confirms acceptance),
 `acted` (the turn ended at exit 0, or the
 recipient sent a message whose `re` is its id). The receipts are one hash
 per recipient beside its stream, `bus2:receipt:<name>`, field the message
@@ -387,9 +389,17 @@ Delivery stays at least once (a claim after `ClaimAfter` hands a message in
 again). The daemon uses the stored `acted` receipt as its duplicate authority.
 A second delivery is dropped with one record line, `duplicate dropped id=<id>`,
 and acked, never pushed in twice. The same store receipt covers a restarted
-daemon. Output, a launch failure, and a refusal do not prove acceptance and
-never stamp `read`. Adapters can explicitly signal acceptance while running;
-a successful return also confirms acceptance, including a quiet turn.
+daemon. A command that does not start is not acceptance. A listing, a
+probe, or an export is not the delivery command and does not carry
+acceptance. Adapters that do not start the turn through `realExec` call
+`TurnAccepted` when the session accepts: Grok once the wake line is
+written, tmux once the prompt has left, the folder adapter once the file
+is published. Output alone is not acceptance, and a launch that fails
+before the delivery command starts never stamps `read`. A turn whose
+delivery command started stays `read` when it ends non-zero, not
+`delivered`. A refusal that returns before any delivery command starts
+does not stamp `read`. A successful return still confirms acceptance,
+including a quiet turn.
 When the acted write fails, the daemon keeps the successful turn pending and
 retries only its receipt commit before acking, never the session delivery.
 A crash between an external turn's completion and its receipt commit remains

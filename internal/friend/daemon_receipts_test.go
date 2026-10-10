@@ -3,6 +3,7 @@ package friend
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -47,6 +48,27 @@ func TestReadReceiptNeverOnUnacceptedFailure(t *testing.T) {
 	got, _, err := r.bus.Stages(context.Background(), "bob", m.ID)
 	require.NoError(t, err)
 	assert.Equal(t, bus.Delivered, got[0].State)
+}
+
+// A launch that never starts is not the session taking the turn.
+func TestRealExecDoesNotAcceptACommandThatDoesNotStart(t *testing.T) {
+	t.Parallel()
+	var n atomic.Int64
+	ctx := WithTurnAccepted(context.Background(), func() { n.Add(1) })
+	_, _, err := realExec(ctx, time.Second, t.TempDir(), filepath.Join(t.TempDir(), "missing-delivery"), nil, "")
+	require.Error(t, err)
+	assert.Equal(t, int64(0), n.Load())
+}
+
+// A listing or export context carries no acceptance, even if something calls it.
+func TestWithoutTurnAcceptanceDropsTheSignal(t *testing.T) {
+	t.Parallel()
+	var n atomic.Int64
+	ctx := WithTurnAccepted(context.Background(), func() { n.Add(1) })
+	TurnAccepted(withoutTurnAcceptance(ctx))
+	assert.Equal(t, int64(0), n.Load())
+	TurnAccepted(ctx)
+	assert.Equal(t, int64(1), n.Load())
 }
 
 // Acceptance can arrive before exit and does not depend on printing.
