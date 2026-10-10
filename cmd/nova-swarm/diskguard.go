@@ -485,7 +485,7 @@ func (g *guard) bench() {
 		err := add(runs)
 		if err != nil {
 			if os.IsNotExist(err) {
-				err = nil
+				err = nil // ignored: a bench without run directories has nothing to sweep
 			} else {
 				g.fail(fmt.Sprintf("the runs directory %s could not be listed (%s)", oneline.Field(runs), oneline.Err(err)))
 				continue
@@ -501,7 +501,10 @@ func (g *guard) bench() {
 		}
 		for _, e := range rootEntries {
 			if e.IsDir() && e.Name() != "runs" {
-				_ = add(filepath.Join(root, e.Name()))
+				dir := filepath.Join(root, e.Name())
+				if err := add(dir); err != nil {
+					g.fail(fmt.Sprintf("the bench directory %s could not be listed (%s)", oneline.Field(dir), oneline.Err(err)))
+				}
 			}
 		}
 		list, ok := g.processes()
