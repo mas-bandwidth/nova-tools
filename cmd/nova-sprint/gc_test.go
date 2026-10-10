@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bench"
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 )
 
 // gcApp is an app whose home, AI root and land root are temp directories, on a fixed clock.
@@ -156,4 +157,20 @@ func TestGcVerbFindsTheAIRootWithoutNovaAIRoot(t *testing.T) {
 	assert.Equal(t, gcRemoteBin+" gc --max-age '2d' --ai-root '/v/ai'", gcLine(false, "2d", "/v/ai"))
 	code, _, errs = gcRun(a, "--ai-root", "relative")
 	assert.Equal(t, 2, code, errs)
+}
+
+// A machine row with a nova_root moves gc's bench root under it; a row with
+// none keeps today's <home>/nova-bench.
+func TestTheMachineRowsNovaRootMovesTheBenchDefault(t *testing.T) {
+	t.Parallel()
+	home := "/home/h"
+	withRoot := &app{inventory: func(context.Context, string) ([]config.MachineWidth, error) {
+		return []config.MachineWidth{{Machine: "studio", NovaRoot: "/Volumes/nova"}}, nil
+	}}
+	assert.Equal(t, "/Volumes/nova/bench", withRoot.gcBenchRoot(home))
+
+	noRoot := &app{inventory: func(context.Context, string) ([]config.MachineWidth, error) {
+		return []config.MachineWidth{{Machine: "studio"}}, nil
+	}}
+	assert.Equal(t, filepath.Join(home, "nova-bench"), noRoot.gcBenchRoot(home))
 }

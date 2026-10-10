@@ -15,6 +15,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bench"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
+	"github.com/mas-bandwidth/nova-tools/internal/layout"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
@@ -152,13 +153,10 @@ func gcOn(ctx context.Context, run gcRunner, machine string, dry bool, maxAge, a
 
 // gcLocal is one pass on this machine: the home, the AI root (aiRoot, else NOVA_AI_ROOT,
 // else ~/ai, else the one the home's <name>-working links name: sprint.GCAIRoot), the
-// bench root (~/nova-bench) and land's clones.
+// bench root (the machine row's nova_root + /bench, else ~/nova-bench) and land's clones.
 func (a *app) gcLocal(dry bool, age time.Duration, aiRoot string) sprint.GCResult {
 	home, ai := a.gcRoots(aiRoot)
-	benchRoot := ""
-	if home != "" {
-		benchRoot = filepath.Join(home, "nova-bench")
-	}
+	benchRoot := a.gcBenchRoot(home)
 	land, err := a.landRoot()
 	if err != nil {
 		land = ""
@@ -171,6 +169,19 @@ func (a *app) gcLocal(dry bool, age time.Duration, aiRoot string) sprint.GCResul
 		Worktrees: func(clone string) []string { return gcWorktrees(clone, dry) },
 		Volume:    sprint.GCVolumeUse,
 	})
+}
+
+// gcBenchRoot is the bench root this machine derives: the machine row's
+// nova_root + /bench (layout.ResolveRoot), else today's <home>/nova-bench when
+// no row sets a root, and "" when neither is known.
+func (a *app) gcBenchRoot(home string) string {
+	if nr := a.machineNovaRoot(); nr != "" {
+		return layout.ResolveRoot(nr).Bench
+	}
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, "nova-bench")
 }
 
 // gcRoots is this machine's home and the AI root as given (aiRoot, else NOVA_AI_ROOT,
@@ -330,7 +341,7 @@ func gcDetail(l string) bool {
 func (a *app) gcLocalVolume() string {
 	home, ai := a.gcRoots("")
 	use := -1
-	for _, d := range []string{home, filepath.Join(home, "nova-bench"), sprint.GCAIRoot(home, ai)} {
+	for _, d := range []string{home, a.gcBenchRoot(home), sprint.GCAIRoot(home, ai)} {
 		if d == "" {
 			continue
 		}

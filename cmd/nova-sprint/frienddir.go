@@ -62,25 +62,7 @@ func (a *app) machineNovaRoot() string {
 		return ""
 	}
 	host, _ := os.Hostname()
-	found, many := "", false
-	for _, m := range machines {
-		if m.NovaRoot == "" {
-			continue
-		}
-		if m.Machine == host {
-			return m.NovaRoot
-		}
-		switch {
-		case found == "":
-			found = m.NovaRoot
-		case found != m.NovaRoot:
-			many = true
-		}
-	}
-	if many {
-		return ""
-	}
-	return found
+	return config.NovaRootOf(machines, host)
 }
 
 // friendWorkDir is the friend's working directory as a brief or a view names it to her:
