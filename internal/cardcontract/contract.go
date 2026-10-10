@@ -275,24 +275,29 @@ func StageRecipes(f Frame, job string) error {
 	}
 	root, err := os.OpenRoot(f.Recipes)
 	if err != nil {
+		//lint:ignore ST1005 Stage: is the brief's header line the refusal names
 		return fmt.Errorf("Stage: the recipes directory %s: %w", f.Recipes, err)
 	}
 	defer root.Close()
 	for _, rel := range f.Stage {
 		if !filepath.IsLocal(rel) {
+			//lint:ignore ST1005 Stage: is the brief's header line the refusal names
 			return fmt.Errorf("Stage: %q is not a path inside the recipes directory", rel)
 		}
 		fi, err := root.Lstat(rel)
 		if err != nil || !fi.Mode().IsRegular() {
+			//lint:ignore ST1005 Stage: is the brief's header line the refusal names
 			return fmt.Errorf("Stage: %s is not a regular file inside %s (put it there, or drop the Stage: line)", rel, f.Recipes)
 		}
 		src, err := root.Open(rel)
 		if err != nil {
+			//lint:ignore ST1005 Stage: is the brief's header line the refusal names
 			return fmt.Errorf("Stage: %s cannot be opened inside %s: %w", rel, f.Recipes, err)
 		}
 		b, err := io.ReadAll(src)
 		src.Close()
 		if err != nil {
+			//lint:ignore ST1005 Stage: is the brief's header line the refusal names
 			return fmt.Errorf("Stage: %s: %w", rel, err)
 		}
 		to := filepath.Join(job, RecipesName, rel)
