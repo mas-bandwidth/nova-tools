@@ -74,7 +74,7 @@ func TestFriendStallLadderClimbsAndTakesBackUnstarted(t *testing.T) {
 	assert.Equal(t, "3", rung)
 	var judged bool
 	for _, n := range p3.Notes {
-		if n.Kind == Judgment && n.Type == NStalled {
+		if n.Kind == Judgment && n.Type == NFriendStalled {
 			judged = true
 			assert.Contains(t, n.What, "friend amy stalled")
 			assert.Contains(t, n.What, "two wakes unanswered")

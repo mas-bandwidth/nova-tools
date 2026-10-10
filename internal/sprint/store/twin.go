@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -158,6 +159,12 @@ type Twin struct {
 	// coordinator, the machine's state): what peek answers with beside the
 	// tables.
 	last *sprint.Snapshot
+	// stopsKept is the stops record this process last wrote, its time left out, and
+	// stopsAt that time (stops.go keepStops): an unchanged record is not written again
+	// until StopsRefresh has passed.
+	stopsMu   sync.Mutex
+	stopsKept string
+	stopsAt   time.Time
 }
 
 // NewTwin is an empty twin: its first read reads the store whole.

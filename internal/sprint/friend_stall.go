@@ -228,12 +228,15 @@ func TickFriendStall(s *Snapshot, r TickReq) (Plan, int) {
 					hn.What = fmt.Sprintf("friend %s stalled %s: wake turn 2", f, idleDuration.Round(time.Second))
 					p.Notes = append(p.Notes, hn)
 				case 3:
-					jn := judgment(NStalled, "", s.Now, 0, f)
+					// its own type, kept by the coordinator's pass while her rung stands
+					// (stops.go): as NStalled the check closed it in the tick that raised it
+					jn := judgment(NFriendStalled, "", s.Now, 0, f)
 					jn.Who, jn.To = r.who(), s.Coordinator
 					jn.What = fmt.Sprintf("friend %s stalled %s: two wakes unanswered", f, idleDuration.Round(time.Second))
 					jn.Decisions = []string{
 						"friend take " + f + " --all-unstarted",
 						"friend down " + f + " --reason 'stalled'",
+						"ack", "wait",
 					}
 					p.Notes = append(p.Notes, jn)
 					hn := happened(NFriendStall, "", s.Now)

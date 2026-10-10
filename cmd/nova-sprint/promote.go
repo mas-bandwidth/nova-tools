@@ -124,6 +124,36 @@ type promoter struct {
 	landings int
 	started  time.Time
 	lastAt   time.Time
+	// tell, when set (the verb sets it), writes a note to the coordinator in the store, so
+	// the seat's push delivers it: a judgment of the promotion and an ejection from the merge
+	// queue are never stdout alone (the owner, 2026-10-10: no silent stops). Nil tells none.
+	tell func(ctx context.Context, typ, what, hint string)
+	// queued is the pull request this promoter saw confirmed in the merge queue, and ejected
+	// how many times it found that pull request out of the queue, neither merged nor closed.
+	queued  string
+	ejected int
+}
+
+// The notes a promotion tells the coordinator (promoter.tell).
+const (
+	// NPromoteJudgment is a promotion's judgment (a failed check, a failed merge-group run,
+	// a red pull request, a pull request closed): the decisions are on its hint.
+	NPromoteJudgment = "a promotion needs the coordinator"
+	// NPromoteEjected is a promotion's pull request found out of the merge queue, neither
+	// merged nor closed: the merge queue ejected it, and the promoter queues it again.
+	NPromoteEjected = "a promotion was ejected from the merge queue"
+)
+
+// told tells the coordinator of the promotion's judgment, when the verb tells.
+func (p *promoter) told(ctx context.Context, o promoteOutcome) {
+	if p.tell == nil || o.Judgment == nil {
+		return
+	}
+	what := fmt.Sprintf("promotion %s: %s", o.Branch, o.Judgment.What)
+	if o.Judgment.Tail != "" {
+		what += "; " + oneline.Escape(o.Judgment.Tail)
+	}
+	p.tell(ctx, NPromoteJudgment, what, "decide: "+strings.Join(o.Judgment.Decisions, ", ")+"; nova-sprint promote --once shows it")
 }
 
 // promoteJudgment is the one judgment a promotion raises: a conflicted merge
@@ -202,6 +232,15 @@ func (a *app) cmdPromote(args []string, stdout, stderr io.Writer) int {
 	}
 	if !*dry {
 		p.red = a.redCutter(*c)
+		p.tell = func(ctx context.Context, typ, what, hint string) {
+			st, err := a.store(*c)
+			if err == nil {
+				err = st.Tell(ctx, "promote", typ, what, hint)
+			}
+			if err != nil {
+				fmt.Fprintf(stderr, "NOTE promote: the coordinator was not told (%s): %s\n", oneline.Escape(what), oneline.Err(err))
+			}
+		}
 		p.recordFn = func(ctx context.Context, sha string) error {
 			st, err := a.store(*c)
 			if err != nil {
@@ -545,6 +584,7 @@ func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, s
 			o.Judgment = p.redJudgment(ctx, rRuns, "a check of the pull request failed", "the pull request of "+o.Branch, promoteDecisions, stderr)
 			fmt.Fprintf(stdout, "JUDGMENT promotion red branch=%s decisions=%s cards=%s open=%s\n%s\n", oneline.Field(o.Branch), strings.Join(o.Judgment.Decisions, ","),
 				oneline.Field(dashed(strings.Join(o.Judgment.Cards, ","))), oneline.Field(dashed(strings.Join(o.Judgment.Open, ","))), o.Judgment.Tail)
+			p.told(ctx, o)
 			return o, 1
 		}
 	}
@@ -565,6 +605,16 @@ func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, s
 	entry, err := f.QueueEntry(ctx, view.ID)
 	if err != nil {
 		return o, p.fail(stderr, err)
+	}
+	if entry == "" && p.queued == number {
+		// it was in the queue, and is out of it neither merged nor closed: the queue ejected it
+		p.queued = ""
+		p.ejected++
+		fmt.Fprintf(stdout, "PROMOTE EJECTED branch=%s pr=%s times=%d: out of the merge queue, neither merged nor closed; queued again once its checks pass\n", oneline.Field(o.Branch), number, p.ejected)
+		if p.tell != nil {
+			p.tell(ctx, NPromoteEjected, fmt.Sprintf("pull request %s of %s was ejected from the merge queue (%d times this run): neither merged nor closed; the promoter queues it again once its checks pass", number, o.Branch, p.ejected),
+				"look at its merge-group run: gh pr checks "+number+"; gh run list --branch "+o.Branch)
+		}
 	}
 	if entry == "" {
 		checks, err := f.Checks(ctx, number)
@@ -601,6 +651,7 @@ func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, s
 			return o, p.fail(stderr, errors.New("the merge queue has no entry for pull request "+number+" after the enqueue"))
 		}
 		o.Entry = entry
+		p.queued = number
 		fmt.Fprintf(stdout, "PROMOTE QUEUE branch=%s pr=%s entry=%s\n", oneline.Field(o.Branch), number, oneline.Field(entry))
 		// the queue may have merged it already
 		view, err = f.PR(ctx, number)
@@ -612,6 +663,7 @@ func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, s
 		}
 	}
 	o.Entry = entry
+	p.queued = number
 	return p.wait(o, number, "in the merge queue, entry "+entry, stdout), 0
 }
 
@@ -632,6 +684,7 @@ func (p *promoter) closed(ctx context.Context, o promoteOutcome, number string, 
 		Decisions: append([]string(nil), promoteClosedDecisions...),
 	}
 	fmt.Fprintf(stdout, "JUDGMENT closed-pr branch=%s pr=%s decisions=%s\n", oneline.Field(o.Branch), number, strings.Join(o.Judgment.Decisions, ","))
+	p.told(ctx, o)
 	return o, 1
 }
 
@@ -664,6 +717,7 @@ func (p *promoter) judge(ctx context.Context, o promoteOutcome, kind, check, log
 	if o.Judgment.Tail != "" {
 		fmt.Fprintln(stdout, o.Judgment.Tail)
 	}
+	p.told(ctx, o)
 	return o, 1
 }
 

@@ -429,6 +429,10 @@ MCCoordinatorPassEmpty.cfg	MCCoordinatorPass.tla	pass	-	ignore-terminal	coordina
 MCCoordinatorPassBrokenNoReset.cfg	MCCoordinatorPass.tla	invariant	EmptyAWholeWindow	ignore-terminal	coordinatorpass	required	-
 MCCoordinatorPassPin.cfg	MCCoordinatorPass.tla	pass	-	ignore-terminal	coordinatorpass	required	-
 MCCoordinatorPassBrokenPinRekey.cfg	MCCoordinatorPass.tla	invariant	OneJudgmentAnEpisode	ignore-terminal	coordinatorpass	required	-
+MCCoordinatorPassStop.cfg	MCCoordinatorPass.tla	pass	-	ignore-terminal	coordinatorpass	required	-
+MCCoordinatorPassBrokenSilentStop.cfg	MCCoordinatorPass.tla	invariant	StopSignalled	ignore-terminal	coordinatorpass	required	-
+MCCoordinatorPassBehindEscalate.cfg	MCCoordinatorPass.tla	pass	-	ignore-terminal	coordinatorpass	required	-
+MCCoordinatorPassBrokenAckForever.cfg	MCCoordinatorPass.tla	invariant	EscalatedPastAck	ignore-terminal	coordinatorpass	required	-
 MCWhoPreference.cfg	MCWhoPreference.tla	pass	-	ignore-terminal	whopreference	required	-
 MCWhoPreferenceOnlyWrong.cfg	MCWhoPreference.tla	invariant	OnlyToItsFriend	ignore-terminal	whopreference	required	-
 MCWhoPreferenceRebalanceStarted.cfg	MCWhoPreference.tla	action	NoStartedCardMoves	ignore-terminal	whopreference	required	-

@@ -308,6 +308,10 @@ type WhereFacts struct {
 	HasStoreRTT   bool
 	StoreRTTP50MS float64
 	StoreRTTP99MS float64
+	// Stops is the stops record the tick last wrote (stops.go), when HasStops: every
+	// automatic stop that holds and what waits on the seat, as of its At.
+	Stops    StopsRecord
+	HasStops bool
 }
 
 // StoreLine is where's store line, "store: rtt p50=<ms>ms p99=<ms>ms", or
@@ -335,7 +339,7 @@ func (f WhereFacts) StoreLine() string {
 func (st *Store) WhereFacts(ctx context.Context, workRev uint64) (WhereFacts, error) {
 	var f WhereFacts
 	if kv, err := st.kv(); err == nil {
-		vals, oks, err := getKeys(ctx, kv, []string{keyMachine, keyHeartbeat, keyWhere, keyStoreRTT})
+		vals, oks, err := getKeys(ctx, kv, []string{keyMachine, keyHeartbeat, keyWhere, keyStoreRTT, keyStops})
 		if err != nil {
 			return f, err
 		}
@@ -349,6 +353,9 @@ func (st *Store) WhereFacts(ctx context.Context, workRev uint64) (WhereFacts, er
 		}
 		if r := readStoreRTT(vals[3], oks[3]); len(r.Samples) > 0 && st.now().Sub(time.UnixMilli(r.At)) <= StoreRTTWindow {
 			f.HasStoreRTT, f.StoreRTTP50MS, f.StoreRTTP99MS = true, r.P50MS, r.P99MS
+		}
+		if r, ok := readStops(vals[4], oks[4]); ok && r.Epoch == st.epoch {
+			f.Stops, f.HasStops = r, true
 		}
 		if r, ok := readWhere(vals[2], oks[2]); ok && r.Epoch == st.epoch && (r.Rev == workRev || st.keptBy(r, f.Machine, f.Heartbeat)) {
 			f.Held, f.Critical, f.Tiers, f.Streams, f.StageTimes, f.DealtFleet = r.Held, r.Critical, r.Tiers, r.Streams, r.StageTimes, r.DealtFleet

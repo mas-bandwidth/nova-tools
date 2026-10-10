@@ -1128,6 +1128,12 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 			return last, err
 		}
 	}
+	// The stops record: every automatic stop that holds and what waits on the seat, from
+	// the tick's first read (stops.go). A record not written is said on the stats, never a
+	// failed tick: the judgments the pass raised are the push, the record is their list.
+	if err := st.keepStops(ctx, twin, stopsOf(&first, t.req, now)); err != nil && ctx.Err() == nil {
+		st.stats().note("the stops record was not written: " + err.Error())
+	}
 	// 5. The tick-end note, the coordinator's one wake, is Tick's last step
 	// (tickend.go).
 	if t.lost {
