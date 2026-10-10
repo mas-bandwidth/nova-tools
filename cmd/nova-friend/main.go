@@ -95,6 +95,29 @@ func handleBeat(st *store.Store, args []string) {
 		os.Exit(1)
 	}
 
+	// Validate row equals lanes per spec RULE 3
+	v := sprint.NewWorkingSetValidator(st)
+	judgments, err := v.ValidateRowEqualsLanes(context.Background(), *friendName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: validation failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Expire stale cards per spec RULE 3
+	stale, err := v.ExpireStaleCards(context.Background(), *friendName, time.Now())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: stale check failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Report judgment/stale findings from beat
+	if len(stale) > 0 {
+		fmt.Printf("Stale cards returned to ready: %v\n", stale)
+	}
+	for _, j := range judgments {
+		fmt.Printf("JUDGMENT: %s\n", sprint.BuildJudgmentMessage(j))
+	}
+
 	fmt.Printf("Beat recorded for %s with %d live lanes: %s\n", *friendName, len(lanes), *lanesStr)
 }
 
