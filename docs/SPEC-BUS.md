@@ -40,12 +40,16 @@ nova-bus on 2026-10-04, when the git bus was removed.
   a pong, a daemon-pong or the bare keepalive word; `IsKeepalive`, a prefix
   match without case): the liveness chatter of the friend daemon, not audited
   traffic. A recipient's stream keeps only the newest `KeepaliveWindow` (16)
-  keepalive entries. The bus trims a recipient's acknowledged keepalives past
-  that window when it acks (one store call, `Store.TrimKeepalives`; a store
-  without it keeps every entry): an acknowledged keepalive is one at or below
-  the group's last delivered id and not pending, so a keepalive a reader was
-  handed and did not ack is never trimmed. The one key the store removes is a
-  token's record, by its own expiry.
+  keepalive entries, and `bus2:log` keeps every keepalive as it always has:
+  the friend daemon's check and reach read pings and pongs forward from the
+  log (`LogForward`), so only a recipient's stream is bounded while the log,
+  the audited history, is left whole. The bus trims a recipient's
+  acknowledged keepalives past that window when it acks (one store call,
+  `Store.TrimKeepalives`; a store without it keeps every entry): an
+  acknowledged keepalive is one at or below the group's last delivered id and
+  not pending, so a keepalive a reader was handed and did not ack is never
+  trimmed. The one key the store removes is a token's record, by its own
+  expiry.
 - The keys keep the `bus2:` prefix (`bus2:to:<name>`, `bus2:log`, and
   `bus2:keepalive:<name>`, the coordinator keepalive), and the consumer keeps its
   `nova-bus2` name, although the tool is nova-bus: the fleet's store already holds

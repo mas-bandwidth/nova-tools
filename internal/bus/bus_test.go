@@ -475,6 +475,25 @@ func TestTheBusTrimsAckedKeepalives(t *testing.T) {
 	b, f := rig(t, "ada", "bob")
 	const sent, audited = 1000, 10
 
+	// The audited messages are sent first, so they sit below the keepalive
+	// window: a trim that reached past its window without reading the subject
+	// would delete them, which the assertions below refuse (SPEC-BUS.md, the
+	// data: retention).
+	want := map[string]bool{}
+	for i := range audited {
+		m, err := b.Send(ctx, Message{From: "ada", To: []string{"bob"}, Subject: "work " + strconv.Itoa(i), Body: "x\n"})
+		require.NoError(t, err)
+		want[m.ID] = true
+	}
+	for range audited {
+		e, ok, err := b.Recv(ctx, "bob", 0)
+		require.NoError(t, err)
+		require.True(t, ok)
+		acked, err := b.AckEntry(ctx, "bob", e.Entry)
+		require.NoError(t, err)
+		require.True(t, acked)
+	}
+
 	for i := range sent {
 		_, err := b.Send(ctx, Message{From: "ada", To: []string{"bob"}, Subject: "PING " + strconv.Itoa(i), Body: "x\n"})
 		require.NoError(t, err)
@@ -487,13 +506,6 @@ func TestTheBusTrimsAckedKeepalives(t *testing.T) {
 		acked, err := b.AckEntry(ctx, "bob", e.Entry)
 		require.NoError(t, err)
 		require.True(t, acked)
-	}
-
-	want := map[string]bool{}
-	for i := range audited {
-		m, err := b.Send(ctx, Message{From: "ada", To: []string{"bob"}, Subject: "work " + strconv.Itoa(i), Body: "x\n"})
-		require.NoError(t, err)
-		want[m.ID] = true
 	}
 
 	stream := f.streams[StreamOf("bob")]
