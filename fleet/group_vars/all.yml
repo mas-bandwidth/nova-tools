@@ -149,3 +149,16 @@ nova_seat_friend_drain: 180
 # nova-sprint and nova-swarm member to be gone before it migrates (seconds).
 nova_seat_rollback_dir: "{{ nova_release_dir }}/adopt-rollback"
 nova_seat_quiet: 60
+
+# The coordinator's self a friend's lane wall never writes inside (nova-friend install
+# --deny-self), for a friend whose plist records none; the seat play passes it to the
+# reinstall. Empty (the default) leaves the daemon's own default: the seat's working root,
+# <home>/<seat>-working. A friend's plist that already records --deny-self keeps its own.
+nova_friend_deny_self: ""
+
+# What a friend's lane wall lets its harness read beyond the system roots (nova-friend install
+# --wall-reads), for a friend whose plist records none; the seat play passes it to the reinstall.
+# A pinned harness whose shim lives under the home (~/.local/bin/opencode execs ~/nova-bench/<harness_dir>)
+# needs its directory here or every lane exits 126 (Operation not permitted). Set it in the host's
+# host_vars; empty (the default) adds nothing. A friend's plist that already records --wall-reads keeps its own.
+nova_friend_wall_reads: ""

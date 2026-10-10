@@ -69,6 +69,19 @@ func TestFriendStepRemovesAMovedFriendsUnit(t *testing.T) {
 			assert.Contains(t, command, "--as", "uninstall names the friend")
 			assert.Contains(t, command, "item.friend", "uninstall names the friend live reported")
 
+			// The removal runs only on a real adopt, never under --check, which
+			// reports it instead: the loop is the gone list guarded by
+			// `not ansible_check_mode`, and the --check report is its twin.
+			assert.True(t, removesOnlyOutsideCheck(asText(removed["loop"]), fp.gone),
+				"%s: the removal loop %q is not %s guarded by `if not ansible_check_mode else []`", fp.play, asText(removed["loop"]), fp.gone)
+			var reported bool
+			for _, task := range tasks {
+				if strings.Contains(asText(task["loop"]), fp.gone) && task["when"] == "ansible_check_mode" {
+					reported = true
+				}
+			}
+			assert.True(t, reported, "%s: no --check report (WOULD-REMOVE) of %s", fp.play, fp.gone)
+
 			// A friend the host runs is reinstalled, never removed.
 			reinstall := taskMatching(t, tasks, func(task string, argv []string, loop string) bool {
 				return task == "include_tasks" && strings.Contains(loop, fp.ran)
@@ -76,6 +89,20 @@ func TestFriendStepRemovesAMovedFriendsUnit(t *testing.T) {
 			require.NotNil(t, reinstall, "%s: no reinstall of %s: a stale daemon the host runs is left stale", fp.play, fp.ran)
 		})
 	}
+}
+
+// removesOnlyOutsideCheck says loop is the list gone, emptied under --check:
+// `{{ gone if not ansible_check_mode else [] }}`. The inverse (removing only
+// under --check) and a bare `{{ gone }}` (removing under --check too) are not.
+func removesOnlyOutsideCheck(loop, gone string) bool {
+	return strings.Join(strings.Fields(loop), " ") == "{{ "+gone+" if not ansible_check_mode else [] }}"
+}
+
+func TestRemovalGuardIsTheRightWayRound(t *testing.T) {
+	t.Parallel()
+	assert.True(t, removesOnlyOutsideCheck("{{ ff_gone if not ansible_check_mode else [] }}", "ff_gone"))
+	assert.False(t, removesOnlyOutsideCheck("{{ ff_gone if ansible_check_mode else [] }}", "ff_gone"), "removes only under --check")
+	assert.False(t, removesOnlyOutsideCheck("{{ ff_gone }}", "ff_gone"), "removes under --check too")
 }
 
 // readTools reads fleet/tools.yml as the list of plays it holds.

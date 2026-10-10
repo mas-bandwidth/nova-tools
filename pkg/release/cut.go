@@ -29,25 +29,55 @@ var prNumber = regexp.MustCompile(`\(#(\d+)\)\s*$`)
 // requests appear at all -- the batch is one merge commit.
 var memberNumber = regexp.MustCompile(`#(\d+)\b`)
 
+// mergePullNumber matches the `Merge pull request #n from ...` subject a
+// merge-queue merge leaves. Its number is NOT at the end of the subject as a
+// squash merge's is, so the end-anchored prNumber misses it; a merge commit
+// still names one pull request, and the changelog lists every one.
+var mergePullNumber = regexp.MustCompile(`^Merge pull request #(\d+)\b`)
+
+// mergePR reads a merge commit's message back to its pull request: the number
+// from the `Merge pull request #n from o/b` subject, and the title from the
+// body's first non-empty line (the pull request's own title, which the merge
+// subject does not carry). memberBody is the body with that title line removed,
+// so a `#n` the title merely mentions is not filed as a member.
+func mergePR(subject, body string) (n int, title, memberBody string) {
+	m := mergePullNumber.FindStringSubmatch(subject)
+	if m == nil {
+		return 0, "", body
+	}
+	n, _ = strconv.Atoi(m[1])
+	title = strings.TrimSpace(subject)
+	if trimmed := strings.TrimSpace(body); trimmed != "" {
+		if first, rest, _ := strings.Cut(trimmed, "\n"); strings.TrimSpace(first) != "" {
+			title = strings.TrimSpace(first)
+			memberBody = rest
+		}
+	}
+	return n, title, memberBody
+}
+
 // PullRequests reads a compare range as a changelog. One commit whose subject
-// ends in `(#n)` is one pull request; the rest of the message, if it names other
-// pull requests, is that entry's member list.
+// ends in `(#n)` is one pull request; a `Merge pull request #n from ...` subject
+// is one too, with its title read from the body. The rest of the message, if it
+// names other pull requests, is that entry's member list.
 func PullRequests(commits []Commit) []PR {
 	var prs []PR
 	for _, c := range commits {
 		subject, body, _ := strings.Cut(strings.TrimSpace(c.Message), "\n")
 		subject = strings.TrimSpace(subject)
-		m := prNumber.FindStringSubmatch(subject)
-		if m == nil {
+		n, title, memberBody := 0, "", body
+		if m := prNumber.FindStringSubmatch(subject); m != nil {
+			n, _ = strconv.Atoi(m[1])
+			title = strings.TrimSpace(strings.TrimSuffix(subject, m[0]))
+		} else {
+			n, title, memberBody = mergePR(subject, body)
+		}
+		if n == 0 {
 			continue
 		}
-		n, err := strconv.Atoi(m[1])
-		if err != nil {
-			continue
-		}
-		pr := PR{Number: n, Title: strings.TrimSpace(strings.TrimSuffix(subject, m[0]))}
+		pr := PR{Number: n, Title: title}
 		seen := map[int]bool{n: true}
-		for _, mm := range memberNumber.FindAllStringSubmatch(body, -1) {
+		for _, mm := range memberNumber.FindAllStringSubmatch(memberBody, -1) {
 			member, err := strconv.Atoi(mm[1])
 			if err != nil || seen[member] {
 				continue
