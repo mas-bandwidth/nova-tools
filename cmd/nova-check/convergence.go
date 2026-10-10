@@ -53,11 +53,11 @@ func convergenceVerb() tool.Verb {
 		DryRun:    true,
 		Flags: func(f *tool.Flags) {
 			f.Prints()
-			f.Required("repo", convRepoHint)
-			f.Required("ledger", convLedgerHint)
-			f.Required("receipts", convReceiptsHint)
-			f.Required("retired", convRetiredHint)
-			f.Required("since", convSinceHint)
+			reqFlag(f, "repo", convRepoHint)
+			reqFlag(f, "ledger", convLedgerHint)
+			reqFlag(f, "receipts", convReceiptsHint)
+			reqFlag(f, "retired", convRetiredHint)
+			reqFlag(f, "since", convSinceHint)
 			f.String("bin", "", "directory of scripts not yet replaced by a verb; without it the SCRIPTS stream is absent")
 			f.String("repo-dir", "", "a checkout of --repo, read only; without it the CLASSES stream is absent")
 			f.String("batch-logs", "", "directory of <pr>-round-<n>.log gate logs; the second source for a batch's rounds")
@@ -70,11 +70,6 @@ func convergenceVerb() tool.Verb {
 			f.Int("timeout", convDefaultTimeout, "seconds one child read may take before it is killed and named")
 			f.Bool("json", false, "print the reading as one JSON object instead of the lines")
 			f.Var(&repeatable{}, "by", "narrow the EDGES rounds to this friend's receipts (repeatable; empty reads them all)")
-			f.Check(func(c *tool.Call) {
-				if n := c.Int("timeout"); n <= 0 {
-					c.Problem(fmt.Sprintf("--timeout must be a positive number of seconds (got %d); a child with no deadline is a wait with no end", n))
-				}
-			})
 		},
 		Run: convergence,
 	}

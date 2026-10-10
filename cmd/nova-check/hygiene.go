@@ -35,19 +35,14 @@ func hygieneVerb() tool.Verb {
 			"paths=- and out-of-path is skipped, never silently passed.",
 		ExitTable: exitCodes,
 		Flags: func(f *tool.Flags) {
-			f.Required("repo", "the git checkout to inspect")
-			f.Required("base", "the base git ref of the comparison")
-			f.Required("head", "the head git ref of the comparison")
-			f.Required("identity", "the allowed authors, Name <email>, repeatable with commas; there is no default identity, and a range checked against nobody would admit anybody")
+			reqFlag(f, "repo", "the git checkout to inspect")
+			reqFlag(f, "base", "the base git ref of the comparison")
+			reqFlag(f, "head", "the head git ref of the comparison")
+			reqFlag(f, "identity", "the allowed authors, Name <email>, repeatable with commas; there is no default identity, and a range checked against nobody would admit anybody")
 			f.String("paths", "", "comma-separated allowed path globs; empty skips out-of-path checking")
 			f.String("kind", "", "card kind to validate; empty skips kind-specific checks")
 			f.Max()
 			f.Int("timeout", 120, "git inspection deadline in positive seconds")
-			f.Check(func(c *tool.Call) {
-				if c.Int("timeout") <= 0 {
-					c.Problem("--timeout must be positive")
-				}
-			})
 		},
 		Run: hygieneRun,
 	}

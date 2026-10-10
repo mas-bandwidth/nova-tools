@@ -109,27 +109,16 @@ func dogfoodVerb(sub string, s seams) tool.Verb {
 		v.Flags = func(f *tool.Flags) {
 			f.Prints()
 			addDogfoodSourceFlags(f)
-			f.Required("tool", toolHint)
-			f.Required("verb", verbHint)
-			f.Required("by", byHint)
-			f.Required("notes", notesHint)
-			f.Required("receipts", receiptsHint)
+			reqFlag(f, "tool", toolHint)
+			reqFlag(f, "verb", verbHint)
+			reqFlag(f, "by", byHint)
+			reqFlag(f, "notes", notesHint)
+			reqFlag(f, "receipts", receiptsHint)
 			f.Bool("ok", false, "the verb did what the run needed")
 			f.Bool("not-ok", false, "it did not; file the edge and name it with --issue")
 			f.Int("issue", 0, "the issue number of the edge filed, when there is one")
 			f.String("closes", "", "the id of the finding this run answers, as the gate prints it")
 			addMax(f)
-			f.Check(func(c *tool.Call) {
-				// The verdict is stated, never defaulted: a receipt whose ok= came
-				// from the absence of a flag would be a record of what somebody
-				// forgot to type.
-				if c.Bool("ok") == c.Bool("not-ok") {
-					c.Problem("state the verdict exactly once: --ok when the verb did what the run needed, --not-ok when it did not; refusing to guess")
-				}
-				if n := c.Int("issue"); n < 0 {
-					c.Problem(fmt.Sprintf("--issue must be an issue number, got %d; leave it out when no edge was filed", n))
-				}
-			})
 		}
 		v.Run = func(c *tool.Call) *tool.Out { return dogfoodRecord(c, s.dogfood) }
 	default:
@@ -305,7 +294,7 @@ func reportStranded(read dogfoodRead, maxFlag int, stderr io.Writer) {
 }
 
 func addDogfoodReadFlags(f *tool.Flags) {
-	f.Required("receipts", receiptsHint)
+	reqFlag(f, "receipts", receiptsHint)
 	f.String("authors", "", "file mapping `<tool> <verb> = <who wrote it>`, one per line")
 	f.String("repo", "", "repository to read authorship from when there is no --authors file")
 	f.Int("git-timeout", gitTimeoutDefault, "seconds one --repo authorship read may take before it is killed and named")
