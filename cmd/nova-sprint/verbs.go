@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -429,6 +430,96 @@ func verbExample(name string) string {
 }
 
 func versionLine() string { return buildinfo.Line(prog, version) }
+
+var (
+	defaultHashOnce sync.Once
+	defaultHash     string
+	appVerbHashes   sync.Map // *app -> string
+	appVerbs        sync.Map // *app -> []verb
+)
+
+func (a *app) verbList() []verb {
+	if a != nil {
+		if v, ok := appVerbs.Load(a); ok {
+			return v.([]verb)
+		}
+	}
+	return verbs
+}
+
+func (a *app) verbFlags(name string) (fs *flag.FlagSet) {
+	for _, v := range a.verbList() {
+		if v.name != name {
+			continue
+		}
+		defer func() {
+			r := recover()
+			if h, ok := r.(verbflag.Help); ok {
+				fs = h.FS
+			} else if r != nil {
+				panic(r)
+			}
+		}()
+		v.run(newApp(func(string) string { return "" }), []string{"--help"}, io.Discard, io.Discard)
+		return nil
+	}
+	return nil
+}
+
+func (a *app) verbNameAndWords(argv []string) (string, int) {
+	var bestName string
+	var bestWords int
+	for _, vb := range a.verbList() {
+		w := strings.Fields(vb.name)
+		if len(argv) >= len(w) && slices.Equal(argv[:len(w)], w) && len(w) > bestWords {
+			bestName, bestWords = vb.name, len(w)
+		}
+	}
+	if bestWords > 0 {
+		return bestName, bestWords
+	}
+	if len(argv) > 0 {
+		return argv[0], 1
+	}
+	return "", 0
+}
+
+func (a *app) computeVerbTableHash() string {
+	vbs := a.verbList()
+	h := sha256.New()
+	names := make([]string, 0, len(vbs))
+	for _, v := range vbs {
+		names = append(names, v.name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		fmt.Fprintf(h, "verb:%s\n", name)
+		fs := a.verbFlags(name)
+		if fs != nil {
+			fs.VisitAll(func(f *flag.Flag) {
+				fmt.Fprintf(h, "flag:%s:%T\n", f.Name, f.Value)
+			})
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func (a *app) verbTableHash() string {
+	if a != nil {
+		if h, ok := appVerbHashes.Load(a); ok {
+			return h.(string)
+		}
+		if _, ok := appVerbs.Load(a); ok {
+			h := a.computeVerbTableHash()
+			appVerbHashes.Store(a, h)
+			return h
+		}
+	}
+	defaultHashOnce.Do(func() {
+		defaultHash = (*app)(nil).computeVerbTableHash()
+	})
+	return defaultHash
+}
 
 func helpCommand(path []string, stdout, stderr io.Writer) int {
 	if len(path) == 0 {

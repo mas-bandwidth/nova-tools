@@ -6979,7 +6979,14 @@ worker, a store that did not answer.
 The server is `serve` in cmd/nova-sprint/serve.go, a step with no network in it; the listener is
 a shell around it; the wire and the worker's client are internal/sprintwire. Each rule here has a
 test in cmd/nova-sprint/serve_test.go and internal/sprintwire/worker_test.go, and none opens a
-socket.
+socket. The wire protocol names its version (`sprintwire.Protocol = 1`), client build, and
+verb table hash (`VerbHash`). When a client sends a verb table hash, the server verifies that
+both the protocol version and verb table hash match. When they differ, the server refuses each
+verb in the batch with exit code 2 and exactly one `SKEW` line:
+`SKEW client=<client-build> server=<server-build> verb=<verb> flag=<first-unknown-flag|->`
+naming the client build, server build, verb, and the first flag unknown to the server (or `-`
+if all flags are known). Equal tables and requests with no hash serve as before.
+
 
 #### install-canary-shadow-tick-r.w1: a shadow tick before every server swap
 

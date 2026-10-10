@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 )
 
@@ -343,4 +344,61 @@ func TestAFileFlagIsFoundAsTheVerbParsesIt(t *testing.T) {
 	} {
 		assert.Equal(t, c.want, absolutePaths(append([]string(nil), c.in...)), "%v", c.in)
 	}
+}
+
+// A client and server whose verb tables differ refuse with one SKEW line naming the
+// verb and the flag, never a bare usage error (docs/SPEC-SPRINT.md).
+func TestAClientServerVerbTableMismatchIsOneSkewLine(t *testing.T) {
+	t.Parallel()
+	r := newServerRig(t, twoLanes()...)
+
+	// 1. Equal tables serve as before
+	reqEqual := sprintwire.Request{
+		Protocol: sprintwire.Protocol,
+		VerbHash: r.a.verbTableHash(),
+		Build:    buildinfo.Version(version),
+		Verbs:    [][]string{{"take", "--as", "m1", "--epoch", "0", "--json"}},
+	}
+	resEqual := r.a.serveFrom(reqEqual, true).Results
+	require.Len(t, resEqual, 1)
+	assert.Equal(t, 0, resEqual[0].Code)
+
+	// 2. A request with no hash is served as before
+	reqNoHash := sprintwire.Request{
+		Verbs: [][]string{{"take", "--as", "m1", "--epoch", "0", "--json"}},
+	}
+	resNoHash := r.a.serveFrom(reqNoHash, true).Results
+	require.Len(t, resNoHash, 1)
+	assert.Equal(t, 0, resNoHash[0].Code)
+
+	// 3. A server whose verb table lacks one flag, asked by a client that sends it,
+	// answers exit 2 with exactly one SKEW line naming the verb and the flag.
+	reqMismatch := sprintwire.Request{
+		Protocol: sprintwire.Protocol,
+		VerbHash: "mismatched-client-hash",
+		Build:    "client-v1",
+		Verbs:    [][]string{{"take", "--as", "m1", "--future-flag", "--epoch", "0"}},
+	}
+	resMismatch := r.a.serveFrom(reqMismatch, true).Results
+	require.Len(t, resMismatch, 1)
+	assert.Equal(t, 2, resMismatch[0].Code)
+	assert.Equal(t, "SKEW client=client-v1 server="+buildinfo.Version(version)+" verb=take flag=--future-flag\n", resMismatch[0].Stderr)
+	assert.Empty(t, resMismatch[0].Stdout)
+
+	// Batch mismatch: multiple verbs, second verb has no unknown flag (flag=-)
+	reqBatch := sprintwire.Request{
+		Protocol: sprintwire.Protocol,
+		VerbHash: "mismatched-client-hash",
+		Build:    "client-v1",
+		Verbs: [][]string{
+			{"take", "--as", "m1", "--future-flag"},
+			{"queue", "--as", "m1"},
+		},
+	}
+	resBatch := r.a.serveFrom(reqBatch, true).Results
+	require.Len(t, resBatch, 2)
+	assert.Equal(t, 2, resBatch[0].Code)
+	assert.Equal(t, "SKEW client=client-v1 server="+buildinfo.Version(version)+" verb=take flag=--future-flag\n", resBatch[0].Stderr)
+	assert.Equal(t, 2, resBatch[1].Code)
+	assert.Equal(t, "SKEW client=client-v1 server="+buildinfo.Version(version)+" verb=queue flag=-\n", resBatch[1].Stderr)
 }

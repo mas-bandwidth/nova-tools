@@ -28,9 +28,16 @@ const (
 	MaxVerbs   = 256
 )
 
-// Request is a worker's verbs, in the order to run them.
+// Protocol is the wire protocol version (docs/SPEC-SPRINT.md).
+const Protocol = 1
+
+// Request is a worker's verbs, in the order to run them, naming its protocol version
+// and verb-table hash when the client supports skew detection (docs/SPEC-SPRINT.md).
 type Request struct {
-	Verbs [][]string `json:"verbs"`
+	Protocol int        `json:"protocol,omitempty"`
+	VerbHash string     `json:"verb_hash,omitempty"`
+	Build    string     `json:"build,omitempty"`
+	Verbs    [][]string `json:"verbs"`
 }
 
 // Result is one verb's answer: nova-sprint's exit code, and what it printed.
@@ -47,8 +54,10 @@ type Response struct {
 
 // Client sends verbs to a sprint server.
 type Client struct {
-	Addr string       // host:port
-	HTTP *http.Client // nil is a client that waits Timeout for an answer
+	Addr     string       // host:port
+	HTTP     *http.Client // nil is a client that waits Timeout for an answer
+	Build    string       // the client's build version
+	VerbHash string       // stable hash over the client's verb table
 }
 
 // Timeout is how long a client waits for the server's answer by default.
@@ -58,7 +67,13 @@ const Timeout = 2 * time.Minute
 // error is a server that did not answer, or answered something else: nothing
 // is known of what ran.
 func (c Client) Do(ctx context.Context, verbs ...[]string) ([]Result, error) {
-	body, err := json.Marshal(Request{Verbs: verbs})
+	wreq := Request{Verbs: verbs}
+	if c.VerbHash != "" {
+		wreq.Protocol = Protocol
+		wreq.VerbHash = c.VerbHash
+		wreq.Build = c.Build
+	}
+	body, err := json.Marshal(wreq)
 	if err != nil {
 		return nil, err
 	}
