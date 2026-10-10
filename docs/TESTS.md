@@ -736,9 +736,11 @@ CONFIG MIGRATE file=try.json from=0 to=37 applied=37
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --actor a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
+UNAPPLIED rev=1: --redis is required: host:port (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, or a seat); run: nova-config apply
 
 $ nova-config machine set m1 --width 6 --actor a1 --file try.json
 CONFIG SET kind=machine name=m1 rev=2 changed=width
+UNAPPLIED rev=2: --redis is required: host:port (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, or a seat); run: nova-config apply
 
 $ nova-config machine list --file try.json
 MACHINE name=m1 user=nova seat=s1 slots=8 runners=0 width=6 tla=false note=-

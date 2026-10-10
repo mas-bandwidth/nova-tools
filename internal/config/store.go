@@ -398,6 +398,18 @@ func (m *Mem) History(_ context.Context, kind, name string) ([]Change, error) {
 	return out, nil
 }
 
+// FirstAfter reads the earliest revision of a kind after rev (docs/SPEC-CONFIG.md, Apply).
+func (m *Mem) FirstAfter(_ context.Context, kind string, rev int64) (Change, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, c := range m.history {
+		if c.Kind == kind && c.ID > rev {
+			return c, true, nil
+		}
+	}
+	return Change{}, false, nil
+}
+
 func (m *Mem) Rev(_ context.Context, kind string) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

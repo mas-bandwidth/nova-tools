@@ -113,7 +113,7 @@ func TestRouteVerbsEndToEndOnTheFake(t *testing.T) {
 		if s.pre {
 			assert.True(t, strings.HasPrefix(out, s.out), "%s: %q, want the prefix %q", s.name, out, s.out)
 		} else if s.code == 0 {
-			assert.Equal(t, s.out, out, s.name)
+			assert.Equal(t, s.out, withoutDisposition(t, out), s.name)
 		}
 		if s.errs != "" {
 			assert.Contains(t, errs, s.errs, s.name)
@@ -160,8 +160,10 @@ func TestApplyKindRouteWritesTheViewAndStatusShowsParity(t *testing.T) {
 	t.Parallel()
 
 	h := loopHarness(t)
+	delete(h.env, "NOVA_SPRINT_REDIS") // exercise recovery from an unapplied store write
 	code, _, errs := h.run(t, "route", "add", "r1", "--tier", "flash", "--provider", "p", "--model", "m", "--deadline", "60")
 	require.Equal(t, 0, code, errs)
+	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
 
 	code, out, _ := h.run(t, "apply", "--kind", "route", "--check")
 	require.Equal(t, 0, code)
@@ -180,8 +182,10 @@ func TestApplyKindRouteWritesTheViewAndStatusShowsParity(t *testing.T) {
 	assert.True(t, strings.HasSuffix(out, " route_applied=1 tier_applied=0\n"), out)
 
 	// the price sheet reaches the view the sprint reads, exactly as typed in its one spelling
+	delete(h.env, "NOVA_SPRINT_REDIS")
 	code, _, errs = h.run(t, "route", "set", "r1", "--price_input", "0.10000000000000000000000000001", "--price_output", "2.50", "--billing", "plan")
 	require.Equal(t, 0, code, errs)
+	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
 	code, out, _ = h.run(t, "apply", "--kind", "route")
 	require.Equal(t, 0, code)
 	assert.Equal(t, "APPLY SET kind=route name=r1 changed=price_input,price_output,billing\nCONFIG APPLY kind=route add=0 set=1 remove=0 rev=2 ms=0\n", out)
@@ -241,7 +245,7 @@ func TestTierVerbsEndToEndOnTheFake(t *testing.T) {
 	}
 	code, out, errs := h.run(t, "tier", "set", "flash", "--routes", "a,b,b")
 	require.Equal(t, 0, code, errs)
-	assert.Equal(t, "CONFIG SET kind=tier name=flash rev=4 changed=routes\n", out)
+	assert.Equal(t, "CONFIG SET kind=tier name=flash rev=4 changed=routes\n", withoutDisposition(t, out))
 	for routes, refusal := range map[string]string{"a,nope": "--routes nope names no route row", "off": "--routes off names a disabled route"} {
 		code, _, errs = h.run(t, "tier", "set", "flash", "--routes", routes)
 		assert.Equal(t, 1, code, routes)

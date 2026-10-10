@@ -16,7 +16,10 @@ So there are two stores with two jobs:
   every change to it. `nova-config` is its one writer.
 - **Redis is a copy.** `nova-config apply` writes the configuration into the
   keys the runtime tools read, through the runtime's own Redis Functions, and
-  removes what Postgres does not have. Lose Redis: run `nova-config apply`.
+  removes what Postgres does not have. Apply is automatic: `nova-config apply
+  --every <d>` follows the store into that copy, and `nova-config apply
+  install` runs the loop as this machine's service. The by-hand verb remains
+  for recovery. Lose Redis: run `nova-config apply`.
   The runtime tools read configuration from Redis and never write it.
 
 **History is not configuration.** Scores, receipts, ledgers, beats, copies,
@@ -568,7 +571,44 @@ global ids, so they rise across kinds and never repeat.
 
 ## Apply
 
-`nova-config apply [--kind <k>] [--check]` runs per kind, in kind order:
+Apply is automatic. `nova-config apply --every <d>` reads each kind's store
+revision and the Redis copy's applied revision and, when they differ, applies
+that kind the way one pass of `nova-config apply` does, then waits d and reads
+again. `nova-config apply install` uses 5s when `--every` is omitted. A kind
+whose revisions already match is left alone. One pass stamps the store's
+current revision, the whole gap in one compare-and-set, and does not replay
+each history id; a second pass of the same store writes nothing. An apply that
+fails leaves that kind's applied revision where it was and is reported once,
+until a later pass fails differently or succeeds.
+
+A gap prints `CONFIG GAP kind=<k> store=<n> applied=<n> age=<seconds>s`.
+The age is the wait since the first history revision of that kind after the
+applied revision, not since the latest write. The ordered kind history includes
+removed names even when both the store and Redis views are empty: an add then
+remove before apply still ages from the add and receives the seat judgment.
+A recent write does not hide an older unapplied change. `nova-config status`
+shows the same age as `<kind>_gap_age`, or `unknown` when that revision has no
+history time. A gap older than 60s is also a judgment line for the seat:
+`JUDGMENT kind=<k> store=<n> applied=<n> age=<seconds>s: the Redis copy is behind the store; run: nova-config apply`.
+
+`nova-config apply install [--every <d>] [--machine <m>]` writes the loop as
+this machine's service (a launchd agent, or a systemd user unit) and as the
+loop row `nova-config-apply`, so the dashboard shows it. Its last line is
+`APPLIED rev=<n>` when that row reached Redis, or
+`UNAPPLIED rev=<n>: <why>; run: nova-config apply` when the row is stored and
+the copy is not. `nova-config apply uninstall` removes the unit and that row.
+The by-hand verb remains for recovery. Lose Redis: run `nova-config apply`.
+Each successful add, set, or remove writes the store first, then applies its
+own kind when `--redis`, an environment address, or the seat names Redis. Its
+last line says `APPLIED rev=<n>` when Redis has the write, or `UNAPPLIED
+rev=<n>: <why>; run: nova-config apply` when the store has it but Redis does
+not. A write with no Redis address still succeeds in the store and says
+`UNAPPLIED`; an attempted apply that fails exits 1 so an unattended writer
+sees the failure.
+An explicit `sprint set --coordinator` applies that seat change; background
+passes still hold an unrequested seat move as described below.
+
+`nova-config apply [--kind <k>] [--check]` runs one pass per kind, in kind order:
 machines (the ceilings), the fleet row (a friend with no beat is charged to
 its coordinator machine), friends, the sprint row, loops (each names a
 machine), routes:
@@ -658,9 +698,10 @@ leaves `sprint:coordinator` as it is, and the library reports one
 `APPLY HELD kind=sprint field=coordinator live=<a> row=<b>: the seat moves by
 nova-sprint's seat verb or nova-config apply --kind sprint --move-seat; run
 nova-config sprint set --coordinator <a> to make the row agree` line and exits
-0. A configuration publish never moves the seat unless the owner names the move:
+0. A background configuration publish never moves the seat unless the owner names the move:
 `nova-config apply --move-seat` (`ApplyMovingSeat`) writes the differing
-coordinator. Otherwise the seat moves by nova-sprint's seat verb. `nova-config
+coordinator. An explicit `nova-config sprint set --coordinator` applies its own
+seat move; nova-sprint's seat verb may also move it. `nova-config
 apply` prints every op through `SaidLine`, so the held line is printed whole,
 as the library says it (on `--dry-run` too). `--json` emits `op=held` with
 `name` equal to that line. When the only difference is the coordinator, the
@@ -711,6 +752,13 @@ CHECK ADD|SET|REMOVE kind=<k> name=<n> [changed=<f,g>]
 CONFIG CHECK kind=<k> add=<n> set=<n> remove=<n> rev=<r> applied=<redis rev>
 APPLY ADD|SET|REMOVE kind=<k> name=<n> [changed=<f,g>]
 CONFIG APPLY kind=<k> add=<n> set=<n> remove=<n> rev=<r> ms=<n>
+CONFIG GAP kind=<k> store=<n> applied=<n> age=<seconds>s          (apply --every, a kind whose revisions differ)
+JUDGMENT kind=<k> store=<n> applied=<n> age=<seconds>s: the Redis copy is behind the store; run: nova-config apply
+                                                                   (that gap older than 60s)
+APPLIED rev=<n>                                                    (a write or apply install reached Redis)
+UNAPPLIED rev=<n>: <why>; run: nova-config apply                  (a write, install, or --every pass failed to apply)
+APPLY INSTALL OK unit=<path> written=<t> loaded=true loop=nova-config-apply every=<d>
+APPLY UNINSTALL OK unit=<path> removed=<t> loop=nova-config-apply
 MIGRATION version=<v> file=<f> lines=<n>                 (migrate --print)
 MIGRATION version=<v> file=<f> lines=<n> state=applied|pending|missing   (migrate --dry-run: the ledger; missing is below the greatest recorded and not in the ledger, which migrate will not apply)
 CONFIG MIGRATE print=<n> pg=-

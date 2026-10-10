@@ -245,6 +245,14 @@ func (f *FileStore) History(ctx context.Context, kind, name string) ([]Change, e
 	return f.Mem.History(ctx, kind, name)
 }
 
+// FirstAfter reads the earliest kind revision from the file history (docs/SPEC-CONFIG.md, Apply).
+func (f *FileStore) FirstAfter(ctx context.Context, kind string, rev int64) (Change, bool, error) {
+	if err := f.absent(); err != nil {
+		return Change{}, false, err
+	}
+	return f.Mem.FirstAfter(ctx, kind, rev)
+}
+
 func (f *FileStore) Rev(ctx context.Context, kind string) (int64, error) {
 	if err := f.absent(); err != nil {
 		return 0, err

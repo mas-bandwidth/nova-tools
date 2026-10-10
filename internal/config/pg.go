@@ -690,6 +690,22 @@ func (p *PG) History(ctx context.Context, kind, name string) ([]Change, error) {
 	return out, nil
 }
 
+// FirstAfter reads one ordered kind revision, including a removed row (docs/SPEC-CONFIG.md, Apply).
+func (p *PG) FirstAfter(ctx context.Context, kind string, rev int64) (Change, bool, error) {
+	var c Change
+	var at time.Time
+	err := p.db.QueryRowContext(ctx,
+		`SELECT id, at FROM config.history WHERE kind = $1 AND id > $2 ORDER BY id LIMIT 1`, kind, rev).Scan(&c.ID, &at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Change{}, false, nil
+	}
+	if err != nil {
+		return Change{}, false, fmt.Errorf("postgres: first history after %s %d: %w", kind, rev, err)
+	}
+	c.Kind, c.At = kind, at.UTC().Format(time.RFC3339)
+	return c, true, nil
+}
+
 func (p *PG) Rev(ctx context.Context, kind string) (int64, error) {
 	var v sql.NullInt64
 	if err := p.db.QueryRowContext(ctx, `SELECT max(id) FROM config.history WHERE kind = $1`, kind).Scan(&v); err != nil {

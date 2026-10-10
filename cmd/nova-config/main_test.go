@@ -313,7 +313,7 @@ func TestARefusalNamesEveryMissingFlagAtOnce(t *testing.T) {
 		code, _, errs = h.run(t, "machine", "add", "hulk", "--as", "rowan", "--pg", dsn, "--user", "gaffer", "--seat", "swarm-hulk", "--slots", "40", flag, "x")
 		assert.Equal(t, 2, code, "machine add %s: %d %q", flag, code, errs)
 		assert.Contains(t, errs, "REFUSED: unknown flag "+flag, "machine add %s: %d %q", flag, code, errs)
-		assert.Contains(t, errs, "this verb takes --actor, --as, --dry-run, --file, --json, --note, --pg, --reason, --runners, --seat, --slots, --tla, --user, --width; run: nova-config machine add -h", "machine add %s: the flags it takes", flag)
+		assert.Contains(t, errs, "this verb takes --actor, --as, --dry-run, --file, --json, --note, --pg, --reason, --redis, --runners, --seat, --slots, --tla, --user, --width; run: nova-config machine add -h", "machine add %s: the flags it takes", flag)
 		assert.NotContains(t, errs, "flag provided but not defined", "machine add %s: never the flag package's stock line", flag)
 	}
 	// The friend kind has no runtime fact and no coordinator role: what
@@ -419,7 +419,7 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 		t.Helper()
 		code, out, errs := h.run(t, args...)
 		require.Equal(t, want, code, "%v: exit %d, want %d\nstdout: %s\nstderr: %s", args, code, want, out, errs)
-		return out, errs
+		return withoutDisposition(t, out), errs
 	}
 	out, _ := step(0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64", "--runners", "1")
 	require.Equal(t, "CONFIG ADD kind=machine name=studio rev=1\nNOTE machine=studio width=default: a sprint member at half its cores, as nova-sprint fleet sync reads them from its beat; its width is set apart from its slots; run: nova-config machine set studio --width <n> (0: no member) --actor rowan\n", out, "machine add: %q", out)
@@ -527,7 +527,7 @@ func TestAFriendsWidthRoundTripsThroughSet(t *testing.T) {
 	out, _ := step(0, "friend", "show", "amy")
 	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=2 tiers=flash roles=- width=8 "), "the default width: %q", out)
 	out, _ = step(0, "friend", "set", "amy", "--width", "3")
-	assert.Equal(t, "CONFIG SET kind=friend name=amy rev=2 changed=width\n", out)
+	assert.Equal(t, "CONFIG SET kind=friend name=amy rev=2 changed=width\n", withoutDisposition(t, out))
 	out, _ = step(0, "friend", "show", "amy")
 	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=2 tiers=flash roles=- width=3 "), "the width set: %q", out)
 	_, errs := step(1, "friend", "set", "amy", "--width", "0")
@@ -560,13 +560,15 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	require.Equal(t, fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=0 to=%d applied=%d\n", n, n), out, "migrate: %q", out)
 	out, _ = step(0, "migrate")
 	require.Equal(t, fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=%d to=%d applied=0\n", n, n), out, "migrate twice: %q", out)
+	delete(h.env, "NOVA_SPRINT_REDIS") // recovery scenario: writes reach the store while Redis is unavailable
 	step(0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64")
 	step(0, "friend", "add", "rowan", "--slots", "32", "--tiers", "frontier", "--roles", "builder")
 	step(0, "friend", "add", "stella", "--slots", "32", "--tiers", "frontier,pro")
 	step(0, "fleet", "set", "--coordinator", "studio", "--redis_port", "6380", "--pg_dsn", dsn)
 	step(0, "sprint", "set", "--coordinator", "rowan")
+	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
 	out, errs = step(1, "status")
-	require.Equal(t, "CONFIG STATUS pg=nova_config@127.0.0.1:5432/nova schema="+strconv.Itoa(n)+" machine=1 machine_rev=1 fleet_rev=4 friend=2 friend_rev=3 sprint_rev=5 loop=0 loop_rev=0 route=0 route_rev=0 tier=3 tier_rev=0 redis=127.0.0.1:6379 machine_applied=0 fleet_applied=0 friend_applied=0 sprint_applied=0 loop_applied=0 route_applied=0 tier_applied=0\n", out, "status behind: %q %q", out, errs)
+	require.Equal(t, "CONFIG STATUS pg=nova_config@127.0.0.1:5432/nova schema="+strconv.Itoa(n)+" machine=1 machine_rev=1 fleet_rev=4 friend=2 friend_rev=3 sprint_rev=5 loop=0 loop_rev=0 route=0 route_rev=0 tier=3 tier_rev=0 redis=127.0.0.1:6379 machine_applied=0 machine_gap_age=0s fleet_applied=0 fleet_gap_age=0s friend_applied=0 friend_gap_age=0s sprint_applied=0 sprint_gap_age=0s loop_applied=0 route_applied=0 tier_applied=0\n", out, "status behind: %q %q", out, errs)
 	require.Contains(t, errs, "status REFUSED: Redis is not at the store's revision for 4 kind(s); run: nova-config apply", "status behind: %q %q", out, errs)
 	delete(h.env, "NOVA_FRIEND")
 	// The dry run takes the real run's checks: without an actor both refuse.
@@ -647,19 +649,25 @@ func TestApplyCheckReportsDriftAgainstFleet(t *testing.T) {
 	require.Equal(t, "CONFIG CHECK kind=fleet add=0 set=0 remove=0 rev=3 applied=3\n", out, "want no drift for fleet, got:\n%s", out)
 
 	// 1. Detect drift: update machine slots in Postgres
+	delete(h.env, "NOVA_SPRINT_REDIS")
 	step(0, "machine", "set", "bench-beta", "--slots", "80")
+	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
 	out, _ = step(0, "apply", "--check", "--kind", "machine")
 	wantDrift := "CHECK SET kind=machine name=bench-beta changed=slots\nCONFIG CHECK kind=machine add=0 set=1 remove=0 rev=4 applied=2\n"
 	require.Equal(t, wantDrift, out, "drift on machine slots:\ngot:\n%s\nwant:\n%s", out, wantDrift)
 
 	// 2. Detect drift: add new machine in Postgres
+	delete(h.env, "NOVA_SPRINT_REDIS")
 	step(0, "machine", "add", "bench-gamma", "--user", "user-c", "--seat", "seat-gamma", "--slots", "32")
+	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
 	out, _ = step(0, "apply", "--check", "--kind", "machine")
 	wantDrift = "CHECK SET kind=machine name=bench-beta changed=slots\nCHECK ADD kind=machine name=bench-gamma\nCONFIG CHECK kind=machine add=1 set=1 remove=0 rev=5 applied=2\n"
 	require.Equal(t, wantDrift, out, "drift on machine add+set:\ngot:\n%s\nwant:\n%s", out, wantDrift)
 
 	// 3. Detect drift: change fleet coordinator in Postgres
+	delete(h.env, "NOVA_SPRINT_REDIS")
 	step(0, "fleet", "set", "--coordinator", "bench-beta")
+	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
 	out, _ = step(0, "apply", "--check", "--kind", "fleet")
 	wantDrift = "CHECK SET kind=fleet name=fleet changed=coordinator\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=6 applied=3\n"
 	require.Equal(t, wantDrift, out, "drift on fleet coordinator:\ngot:\n%s\nwant:\n%s", out, wantDrift)
@@ -784,7 +792,7 @@ func TestAFriendsModeRoundTripsThroughSet(t *testing.T) {
 	out, _ := step(0, "friend", "show", "amy")
 	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=2 tiers=flash roles=- width=8 mode=batch "), "the default mode: %q", out)
 	out, _ = step(0, "friend", "set", "amy", "--mode", "one-shot", "--width", "1")
-	assert.Equal(t, "CONFIG SET kind=friend name=amy rev=2 changed=mode,width\n", out)
+	assert.Equal(t, "CONFIG SET kind=friend name=amy rev=2 changed=mode,width\n", withoutDisposition(t, out))
 	out, _ = step(0, "friend", "show", "amy")
 	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=2 tiers=flash roles=- width=1 mode=one-shot "), "the mode set: %q", out)
 	_, errs := step(2, "friend", "set", "amy", "--mode", "lanes")
@@ -814,7 +822,7 @@ func TestAFriendsConfigDirRoundTripsThroughSet(t *testing.T) {
 	out, _ := step(0, "friend", "show", "amy")
 	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=2 tiers=heavy roles=- width=8 mode=one-shot config_dir=- "), "unset: %q", out)
 	out, _ = step(0, "friend", "set", "amy", "--config_dir", "/accounts/heavy-a")
-	assert.Equal(t, "CONFIG SET kind=friend name=amy rev=2 changed=config_dir\n", out)
+	assert.Equal(t, "CONFIG SET kind=friend name=amy rev=2 changed=config_dir\n", withoutDisposition(t, out))
 	out, _ = step(0, "friend", "show", "amy")
 	assert.True(t, strings.HasPrefix(out, "FRIEND name=amy slots=2 tiers=heavy roles=- width=8 mode=one-shot config_dir=/accounts/heavy-a "), "set: %q", out)
 	_, errs := step(1, "friend", "set", "amy", "--config_dir", "accounts/heavy-a")
