@@ -251,30 +251,10 @@ func (w world) checkSeams(c *tool.Call, st bus.Store) friend.CheckSeams {
 				dir = d
 			}
 			if dir == "" {
-				// Check launchd plist if available
-				plistPath := filepath.Join(w.home, "Library", "LaunchAgents", "com.nova.friend-"+name+".plist")
-				if b, err := os.ReadFile(plistPath); err == nil {
-					content := string(b)
-					if idx := strings.Index(content, "<string>--dir</string>"); idx != -1 {
-						rest := content[idx:]
-						if start := strings.Index(rest, "<string>"); start != -1 {
-							rest = rest[start+8:]
-							if end := strings.Index(rest, "</string>"); end != -1 {
-								dir = rest[:end]
-							}
-						}
-					}
-					if harness == "unknown" {
-						if idx := strings.Index(content, "<string>--harness</string>"); idx != -1 {
-							rest := content[idx:]
-							if start := strings.Index(rest, "<string>"); start != -1 {
-								rest = rest[start+8:]
-								if end := strings.Index(rest, "</string>"); end != -1 {
-									harness = rest[:end]
-								}
-							}
-						}
-					}
+				plist := friend.PlistArgs(w.readPlist(friend.Agent{Friend: name, Home: w.home}.PlistPath()))
+				dir = argAfter(plist, "--dir")
+				if harness == "unknown" {
+					harness = argAfter(plist, "--harness")
 				}
 			}
 			return harness, dir, nil
