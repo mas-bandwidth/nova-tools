@@ -82,10 +82,15 @@ func TestFriendBeatTakesHerCountsAndLoadAsFleetBeatTakesALoad(t *testing.T) {
 	assert.Equal(t, 8, f.Width, "her width is the roster's, not her word")
 	assert.Equal(t, sprint.Up, f.Status, "on her session's pong, never on the beat")
 
-	// a beat with none reports none: the last one's counts are not kept
+	// a bare beat leaves the running list and the counts it did not name
 	ta.beatUp("amy")
 	f = whereFriends(ta)["amy"]
-	assert.Nil(t, f.Report)
+	require.NotNil(t, f.Report)
+	assert.Equal(t, []string{"s1-1.w1", "s1-2.w1"}, f.Report.Running)
+	require.NotNil(t, f.Report.Working)
+	require.NotNil(t, f.Report.Queue)
+	assert.Equal(t, 2, *f.Report.Working)
+	assert.Equal(t, 3, *f.Report.Queue)
 	assert.Zero(t, f.Load)
 
 	for _, bad := range []string{"--working -1", "--queue x", "--width 0", "--load lots"} {
