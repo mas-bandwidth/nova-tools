@@ -547,11 +547,14 @@ func TestAHungCheckIsNotHeldBehindATurnWaitingAtTheGate(t *testing.T) {
 	up, reason := r.present(t)
 	assert.False(t, up, "a turn waiting at the gate holds no bound off: down after exactly the bound")
 	assert.Equal(t, NoSessionAnswer, reason)
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the down cancelled no hung check: the batch turn never got through the gate")
-	}
+	require.Eventually(t, func() bool {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, time.Millisecond, "the down cancelled no hung check: the batch turn never got through the gate")
 	app.mu.Lock()
 	assert.Equal(t, 1, app.cancelled, "the hung check was cancelled by its bound")
 	app.mu.Unlock()
