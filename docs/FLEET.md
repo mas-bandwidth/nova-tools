@@ -17,6 +17,38 @@ run would do.
 | `fleet/loops.yml` | one launchd or systemd unit per loop record, none for a record that is gone | every machine |
 | `fleet/container-runtime.yml` | rootless podman, the fleet's container runtime, and its version recorded in `~/.config/nova/podman` | every bench: Linux (apt on Ubuntu and Debian, dnf on Fedora) and macOS (brew, and a podman machine) |
 
+## Adding a member
+
+`nova-sprint fleet add <host> --width <n>` is the one way to add a member end
+to end: one verb, one play (`fleet/member.yml`, which includes `fleet/tools.yml`
+and `fleet/loops.yml`), and then the check that the member is there before it is
+dealt any work. The play converges the machine: the pinned tools (go, sqlite3,
+the pinned harness, age, sops, bats), the nova binaries at the machine's adopted
+release, the member and reader loop units and their records, the route
+credential through the sealed-secrets path (the play opens the seat with
+`nova-secrets exec` and the tool reads the key in its own process; no secret
+value is printed or passed), and a mirror for every repository a live card
+names. The verb adds the fleet and reader rows itself, the member **drained**
+(width 0), so the deal reaches it only once it is proved: the member beats
+within a minute, its reader row is up, and it has taken and finished one probe
+card. Until then the member is not dealt work. Every step prints one line, done
+or the refusal with its remedy; a second run changes nothing; `--dry-run` runs
+the play with `--check`, lists every step, and writes nothing.
+
+```
+nova-sprint fleet add bench-a --width 64 --source . --inventory ./nova-inventory
+nova-sprint fleet add bench-a --width 64 --source . --inventory ./nova-inventory --dry-run
+```
+
+A refusal leaves the member drained (width 0), so nothing is dealt it, and the
+same command run again finishes what is still missing or stale. The play's
+variables `nova_member`, `nova_member_width` and `nova_member_reader` name the
+host, its width and its reader (`reader-<host>`); the rest are defaults in
+`fleet/group_vars/all.yml`. The loop records the play adds are ordinary
+`nova-config` loop rows, so `fleet/loops.yml` renders the member's and reader's
+units from them the next time it runs.
+
+
 ## An adopter's path
 
 Every command runs from a machine with ssh to every machine, in a nova-tools
