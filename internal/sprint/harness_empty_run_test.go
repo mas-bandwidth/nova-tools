@@ -21,7 +21,7 @@ func TestAnEmptyRunIsItsOwnClassBeforeTheCostLine(t *testing.T) {
 	for name, report := range map[string]string{
 		"the log's report":         emptyRunReport("amy"),
 		"the lane's fault words":   "friend amy FAIL: harness-fault: no report; first error: the harness printed no error line",
-		"no report, a cost beside":"friend amy FAIL: the lane wrote no report; Cost: $0.02 tokens input=10 cache_read=0 cache_write=0 output=0",
+		"no report, a cost beside": "friend amy FAIL: the lane wrote no report; Cost: $0.02 tokens input=10 cache_read=0 cache_write=0 output=0",
 	} {
 		assert.Equal(t, ClassEmptyRun, HarnessFault(report), name)
 	}
