@@ -21,6 +21,7 @@ func runTable(args ...string) (int, string, string) {
 }
 
 // at appends --redis <addr> to a command line.
+//lint:ignore U1000 used by the functional tagged tests, which staticcheck reads without build tags
 func at(addr string, args ...string) []string { return append(args, "--redis", addr) }
 
 func TestBareCommandNamesTheDoor(t *testing.T) {
