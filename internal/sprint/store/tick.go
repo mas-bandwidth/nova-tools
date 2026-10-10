@@ -1303,9 +1303,11 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 			stop = p.Stop
 			if part.Name == sprint.PartDone {
 				done = nil
-				if len(p.Notes) > 0 {
-					n := p.Notes[0]
-					done = &n
+				for _, n := range p.Notes {
+					if n.Type == sprint.NSprintDone {
+						done = &n
+						break
+					}
 				}
 			}
 			return p, d
