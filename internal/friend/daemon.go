@@ -162,6 +162,11 @@ type Daemon struct {
 	// it (ParseLaneCaps off its beat), read every step; nil, or a tier it names none for,
 	// is DefaultLaneCaps (lane_cap.go).
 	LaneCaps func() map[string]time.Duration
+	// TurnCap is the wall cap of the daemon's own running turn: a turn that writes nothing
+	// to the session for it makes the friend deaf (the turn-progress watchdog,
+	// docs/SPEC-FRIEND.md, the loop). Nil, or zero, is the tier's cap from LaneCaps: the one
+	// tier her row names when it names exactly one, else the longest default.
+	TurnCap func() time.Duration
 	// LoadLanes and SaveLanes keep the one-shot lanes' state (ReadLanes,
 	// WriteLanes over the state files); nil keeps it in memory only.
 	LoadLanes func() (LaneState, error)
@@ -1626,6 +1631,11 @@ func (d *Daemon) flush(now time.Time) {
 	}
 }
 
+// turnWatchdog is the wall watch on the daemon's own running turn: a turn
+// that writes nothing to the session for the tier's wall cap is hung, not
+// working, so the session is deaf before the turn ends (docs/SPEC-FRIEND.md,
+// the loop; internal/friend/check.go, VerdictDeaf). It stops the turn and
+// says the challenge deaf, so the session check is no longer held behind it.
 func (l *loop) turnWatchdog(now time.Time) {
 	if l == nil || l.d == nil {
 		return
@@ -1639,27 +1649,45 @@ func (l *loop) turnWatchdog(now time.Time) {
 	if started.IsZero() {
 		return
 	}
-	cap := LaneCap("frontier", nil)
-	if d.LaneCaps != nil {
-		cap = LaneCap("frontier", d.LaneCaps())
+	cap := d.turnCap()
+	if cap <= 0 || now.Sub(started) < cap {
+		return
 	}
-	hasWrite := false
 	if d.Activity != nil {
-		lastWrite := d.Activity()
-		if !lastWrite.IsZero() && lastWrite.After(started) {
-			hasWrite = true
+		if lastWrite := d.Activity(); !lastWrite.IsZero() && lastWrite.After(started) {
+			return // the session wrote during the turn: it is working, not hung
 		}
 	}
-	if !hasWrite && now.Sub(started) >= cap {
-		t.stopped = true
-		if t.cancel != nil {
-			t.cancel()
-		}
-		if d.Record != nil {
-			d.Record(fmt.Sprintf("%s subject=%s stopping: no session write for %s (since %s); turn-progress watchdog triggered",
-				now.UTC().Format(time.RFC3339), t.subjects, cap, started.UTC().Format(time.RFC3339)))
+	t.stopped = true
+	if t.cancel != nil {
+		t.cancel()
+	}
+	if d.m != nil && d.m.Challenge != Deaf {
+		d.m.Challenge = Deaf
+	}
+	if d.Record != nil {
+		d.Record(fmt.Sprintf("%s subject=%s stopping: no session write for %s (since %s); turn-progress watchdog: the session is deaf",
+			now.UTC().Format(time.RFC3339), t.subjects, cap, started.UTC().Format(time.RFC3339)))
+	}
+}
+
+// turnCap is the wall cap of the daemon's own running turn: the tier's wall cap
+// (lane_cap.go). TurnCap names it when the daemon knows the turn's tier; else
+// the one tier her row says she works, when it says exactly one; else the
+// longest default, so a turn whose tier is unknown is never cut shorter than it
+// could be owed.
+func (d *Daemon) turnCap() time.Duration {
+	if d.TurnCap != nil {
+		if c := d.TurnCap(); c > 0 {
+			return c
 		}
 	}
+	if d.Rules != nil {
+		if tiers := d.Rules().Tiers; len(tiers) == 1 {
+			return d.laneCap(tiers[0])
+		}
+	}
+	return d.laneCap("")
 }
 
 func (l *loop) sessionFree() bool {
@@ -1670,34 +1698,27 @@ func (l *loop) sessionFree() bool {
 	if l.lanes != nil && l.lanes.running() {
 		return false
 	}
-	var busyTr TurnRecord
-	under(d.Deliver, func(a Deliverer) bool {
+	// the adapter's own word: a session the harness says is busy (Tmux.Busy), or
+	// a headless adapter's turn record (presence.go, TurnRecord), is not free.
+	if under(d.Deliver, func(a Deliverer) bool {
 		if b, ok := a.(interface {
 			Busy(context.Context) (bool, error)
 		}); ok {
-			if run, _ := b.Busy(l.ctx); run {
-				return true
-			}
+			run, _ := b.Busy(l.ctx)
+			return run // an answer that cannot be read counts as busy
 		}
-		if tr, _ := a.(TurnRecord); tr != nil {
-			busyTr = tr
+		if tr, ok := a.(TurnRecord); ok {
+			run, _ := tr.TurnUnderWay()
+			return run
 		}
 		return false
-	})
-	if busyTr != nil {
-		if run, _ := busyTr.TurnUnderWay(); run {
-			return false
-		}
+	}) {
+		return false
 	}
-	var compacting bool
-	under(d.Deliver, func(a Deliverer) bool {
-		if c, ok := a.(interface{ Compacting() bool }); ok && c.Compacting() {
-			compacting = true
-			return true
-		}
-		return false
-	})
-	if compacting {
+	if under(d.Deliver, func(a Deliverer) bool {
+		c, ok := a.(interface{ Compacting() bool })
+		return ok && c.Compacting()
+	}) {
 		return false
 	}
 	if d.Limited != nil {
