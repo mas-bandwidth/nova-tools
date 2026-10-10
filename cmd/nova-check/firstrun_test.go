@@ -291,18 +291,7 @@ var errReadsNothing = readsNothing{}
 // copyTree copies the fixture to where the transcript says it is.
 func copyTree(t *testing.T, from, to string) {
 	t.Helper()
-	entries, err := os.ReadDir(from)
-	require.NoError(t, err)
-	require.NoError(t, os.MkdirAll(to, 0o755))
-	for _, e := range entries {
-		if e.IsDir() {
-			copyTree(t, filepath.Join(from, e.Name()), filepath.Join(to, e.Name()))
-			continue
-		}
-		body, err := os.ReadFile(filepath.Join(from, e.Name()))
-		require.NoError(t, err)
-		require.NoError(t, os.WriteFile(filepath.Join(to, e.Name()), body, 0o644))
-	}
+	require.NoError(t, os.CopyFS(to, os.DirFS(from)))
 }
 
 // THE OK WORD IS A CLAIM THAT EVERY CHECK PASSED (a cold rating of the tools, 2026-09-30:
