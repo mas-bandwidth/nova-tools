@@ -178,6 +178,9 @@ func init() {
 		{"clear", "--confirm sprint", "clear --confirm sprint", (*app).cmdClear},
 		{"teardown", "--confirm sprint", "teardown --confirm sprint", (*app).cmdTeardown},
 		{"live", "[--bin-dir <dir>] [--dashboard <link>]... [--json]", "live --json", (*app).cmdLive},
+		// adopt window is the seat play's window step, before adopt: the dispatcher takes the first
+		// verb whose words lead the line, so the two-word verb must stand before the one-word one.
+		{"adopt window", "--stopped <label>=<pid> [--stopped ...] [--binary <path>] [--window <duration>]", "adopt window --stopped com.nova.loop.srv=4100 --binary ~/.local/bin/nova-sprint --window 60s", (*app).cmdAdoptWindow},
 		{"adopt", "<version|path> --source <checkout> --inventory <file> --reason <text> [--limit <host>] [--receipts <dir>] [--dry-run]", "adopt v1.2.0-dev.0123abc --source . --inventory ./nova-inventory --reason 'the dashboard fix' --dry-run", (*app).cmdAdoptPlay},
 		{"server switch", "[<binary>] [--rollback] [--window <duration>] [--target <path>] [--tick-deadline <duration>]", "server switch /path/to/binary --rollback", (*app).cmdServerSwitch},
 		// last: its example moves the seat, and every coordinator verb's example before it is the holder's
