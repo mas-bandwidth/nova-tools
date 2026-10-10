@@ -194,6 +194,18 @@ func (o *OpenCode) OpenSession(ctx context.Context, seed string) (string, error)
 	return best.ID, nil
 }
 
+// RecoverSession opens a fresh session of the friend in the same directory
+// and hands it seed as its first turn: the daemon's recovery, the one-shot
+// lanes' open (OpenSession). The adapter adopts the new session, so the turns
+// after the handoff go there.
+func (o *OpenCode) RecoverSession(ctx context.Context, seed string) (string, error) {
+	id, err := o.OpenSession(ctx, seed)
+	if err == nil {
+		o.Session = id
+	}
+	return id, err
+}
+
 func (o *OpenCode) sessions(ctx context.Context) ([]session, error) {
 	listing, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"session", "list", "--format", "json"}, "")
 	if err != nil {

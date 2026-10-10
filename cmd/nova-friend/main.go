@@ -399,6 +399,8 @@ func friendTool(w world) *tool.Tool {
 		f.Int("width", 0, "the friend's width, from the nova-config friend row; 0 is unknown")
 		f.Duration("silent-stop", friend.DefaultSilentStop, "stop a turn that has printed nothing for this long; a turn that prints runs on")
 		f.Int("broken-after", friend.DefaultBrokenAfter, "turns in a row the provider refuses the same way before the session is broken")
+		f.Duration("stuck-after", friend.DefaultStuckAfter, "replace a turn that has run this long with output but no progress")
+		f.Int("recover-max", friend.DefaultRecoverMax, "recoveries an hour before a broken session is left to a person")
 		f.Duration("limit-rest", friend.DefaultLimitWait, "how long the friend is down when its harness's usage limit or empty balance names no reset")
 		f.Bool("notifications-only", false, "deliver filtered notifications through one receiver; no sprint beats, proof, claims, jobs, staging, pruning or finishes")
 		f.String("notify-kinds", "request,blocker,report", "message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default")
@@ -454,7 +456,7 @@ state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.
 			},
 			{
 				Name:    "run",
-				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]",
+				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--stuck-after <d>] [--recover-max <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]",
 				Example: "", // a daemon: the example block has no line that runs for ever
 				Effect:  tool.Delivery + ": the daemon; messages go into the session, beats and pongs go out, until a signal",
 				DryRun:  true,
@@ -1440,6 +1442,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return fl.Kind(), until, limited
 		},
 		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"),
+		StuckAfter: c.Dur("stuck-after"), RecoverMax: c.Int("recover-max"),
 		Mailbox: mailbox,
 		Session: func() string {
 			if mailbox != nil {
@@ -1633,6 +1636,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	if !perCard {
 		d.Proof = sc.Proof // nothing goes into the session until it answers its check
+	}
+	if r, ok := deliver.(friend.Recoverer); ok {
+		d.Recover = r // a broken, exhausted or stuck session is replaced by a fresh one (session-recovery)
 	}
 	if c.Str("harness") == "opencode" {
 		db := c.Str("db")
@@ -2184,6 +2190,10 @@ func (w world) status(c *tool.Call) *tool.Out {
 	if s.Session == friend.SessionBroken {
 		o.Fact("session_id", dash(s.SessionID)).Fact("reason", tool.Text(s.SessionReason)).Fact("broken_at", stamp(s.BrokenAt))
 		o.Note("the session is broken: the provider refused the same way turn after turn; the daemon delivers nothing into it, every message stays pending; renew the session, then restart the daemon (install again)")
+	}
+	if s.Session == friend.SessionRecovered {
+		o.Fact("session_from", dash(s.SessionFrom)).Fact("session_to", dash(s.SessionTo)).Fact("reason", tool.Text(s.SessionReason)).Fact("recovered_at", stamp(s.RecoveredAt))
+		o.Note("the session was replaced by a fresh one (" + dash(s.SessionTo) + "): " + s.SessionReason + "; the handoff was its first turn and every message stayed pending")
 	}
 	pr, prFound, prErr := friend.ReadPresence(state)
 	switch {

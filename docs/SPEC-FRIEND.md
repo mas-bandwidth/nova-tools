@@ -552,6 +552,48 @@ counted as delivered while her row read up
 turn in one-shot mode, and the presence file, which the session's own bus
 messages can still hold up.
 
+### session-recovery-r-b.w2: a broken, exhausted or stuck session is replaced with a handoff
+
+The finding of 2026-10-04: one friend's broken Mercury session was fixed by
+hand, and every such session waited on a person to renew it and restart the
+daemon. The daemon now recovers by itself (`internal/friend/recover.go`,
+`Daemon.Recover`, `Daemon.StuckAfter`, `Daemon.RecoverMax`;
+`TestBrokenSessionIsReplacedWithAHandoff`). A session is broken as today after
+`--broken-after` identical provider refusals (`settle`), and also on: a
+context limit, the harness's context-length or prompt-too-long error read from
+a provider refusal's reason (`ContextLimitReason`) or answered as
+`ContextLimit`; a compaction loop, `CompactionAfter` turns in a row that were
+the harness compacting the conversation and nothing else (`Compaction`); and a
+turn that printed but made no progress for `--stuck-after` (45m by default,
+`watch`). On any of them the daemon opens a fresh session in the same harness
+and directory through `Daemon.Recover`, the adapter's own open
+(`OpenCode.RecoverSession`, the one-shot lanes' `OpenSession`, which adopts
+the new session so the turns after it go there); a harness that cannot open
+one is a nil `Recover`, and the session stays broken as today.
+
+The fresh session's first turn is the handoff (`HandoffText`): the friend's
+`inbox/QUEUE.json`, her newest cairn or status file (the newest of
+`cairn*.md` and `STATUS.md` in her directory, at most 32 KiB,
+`HandoffBytes`), the pong line while a challenge is open, and every pending
+message. status.json says `session=recovered from=<old id> to=<new id>
+reason=<...> at=<...>` (`Status.SessionFrom`, `SessionTo`, `RecoveredAt`),
+`nova-friend status` prints `session_from= session_to= reason= recovered_at=`
+with a NOTE, and the coordinator is told once on the bus, `friend <name>:
+session <old> replaced by <new>: <reason>`. A recovery never gives up a
+message: the messages stay pending, ride in the handoff and are handed in
+again. At most `--recover-max` (three by default) recoveries in an hour
+(`RecoverWindow`) are allowed; past that the session stays broken and the
+coordinator is told once that a person is needed. The session reads `ok` again
+on the fresh session's first successful turn. The stuck watch measures from
+the turn's last output, so a turn that keeps printing is never stuck and
+`--silent-stop` (20m) normally stops a silent turn first; `--stuck-after`
+bites when a person raises `--silent-stop` past it. The real adapters answer
+`ContextLimit` from a context-length provider error; `Compaction` is answered
+by the harnesses that report a compaction-only turn. Model:
+`tla/Friend.tla` (owed: `broken`, `recovering`, `recovered` with the handoff
+invariant and the recovery bound; the model and its records are a HOLD for a
+Linux bench, this checkout having no TLC jar).
+
 A harness at its usage limit or out of credits is down until its reset,
 woken after it, and its measured usage rides on its beat
 (`internal/friend/limit.go`; the finding of 2026-10-04: a friend's harness

@@ -148,6 +148,16 @@ type Daemon struct {
 	SilentStop  time.Duration
 	BrokenAfter int
 	Coordinator string
+	// Recover opens a fresh session of the same harness and directory and
+	// hands it the handoff as its first turn, so a broken, exhausted or stuck
+	// session is replaced by itself (nil: the harness cannot open one, and
+	// the session stays broken as today). StuckAfter is how long a turn may
+	// run with output but no completion before the session is replaced
+	// (DefaultStuckAfter when zero); RecoverMax how many recoveries
+	// RecoverWindow allows (DefaultRecoverMax when zero).
+	Recover    Recoverer
+	StuckAfter time.Duration
+	RecoverMax int
 	// Row is the friend's nova-config row as the daemon last read it (from
 	// its beat): her delivery mode (ModeBatch or ModeOneShot) and width,
 	// read every step so a change takes effect without a restart; nil, or
@@ -319,6 +329,7 @@ type turn struct {
 	seenN    int64
 	lastOut  time.Time // when the daemon last saw the turn print, or its start
 	stopped  bool      // the daemon stopped it: silent past SilentStop
+	stuck    bool      // the daemon ended it: output but no progress past StuckAfter
 	capped   bool      // the daemon ended it: its card's wall reached its lane's cap (lane_cap.go)
 	held     bool      // the daemon ended it: a provider failure stopped every lane (lane_parity.go)
 	byStop   bool      // the daemon ended it: the machine's stop cancelled every lane (stop.go)
@@ -549,26 +560,38 @@ type loop struct {
 	broken, told bool
 	unable       string // the reason the session cannot take a turn (SessionRefused), "" when it can; cleared by a turn that succeeds
 	unableTries  int    // the turns refused for it since
-	results      chan result
-	lanes        *laneSet
-	reads        *readSet
-	mode         string // the mode the daemon delivers in now
-	saidNoLanes  bool
-	dealt        []string        // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
-	wake         bool            // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
-	saidRefusal  string          // the card runner's refusal last recorded, "" when it runs
-	tag          string          // this daemon's tag in its lanes' names on a lane mark (laneTag, one_lane.go)
-	following    atomic.Bool     // a Mailbox.Follow runs
-	followWG     sync.WaitGroup  // it, waited for when Run ends
-	seatHolder   string          // the seat holder as last read; empty while unknown
-	seatRead     time.Time       // when it was read; zero before the first read
-	presentDue   bool            // the present is owed: the session started, its id changed, or she asked (present.go)
-	presentAt    time.Time       // the store's time of the last present, named in the reason
-	lost         map[string]bool // entries the present superseded whose ack failed: superseded again when the claim hands them in
-	presentCarry *bus.Entry      // the note a present turn that failed carried, carried again by the next
-	presentRetry time.Time       // when a present whose turn failed is tried again
-	delivered    time.Time       // when the session last took a turn: the stale bound runs from it
-	session      string          // the session id as last read (Session)
+	compacting   int    // turns in a row that were a compaction alone
+	// the recovery budget and the open under way: the recoveries in the
+	// window, whether a fresh session is being opened, its old id and reason,
+	// the result channel, and whether the "needs a person" word was said.
+	recoveries    []time.Time
+	recovering    bool
+	recoverFrom   string
+	recoverReason string
+	recoverCh     chan recoverResult
+	recoverTold   bool
+	stuckAfter    time.Duration
+	recoverMax    int
+	results       chan result
+	lanes         *laneSet
+	reads         *readSet
+	mode          string // the mode the daemon delivers in now
+	saidNoLanes   bool
+	dealt         []string        // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
+	wake          bool            // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
+	saidRefusal   string          // the card runner's refusal last recorded, "" when it runs
+	tag           string          // this daemon's tag in its lanes' names on a lane mark (laneTag, one_lane.go)
+	following     atomic.Bool     // a Mailbox.Follow runs
+	followWG      sync.WaitGroup  // it, waited for when Run ends
+	seatHolder    string          // the seat holder as last read; empty while unknown
+	seatRead      time.Time       // when it was read; zero before the first read
+	presentDue    bool            // the present is owed: the session started, its id changed, or she asked (present.go)
+	presentAt     time.Time       // the store's time of the last present, named in the reason
+	lost          map[string]bool // entries the present superseded whose ack failed: superseded again when the claim hands them in
+	presentCarry  *bus.Entry      // the note a present turn that failed carried, carried again by the next
+	presentRetry  time.Time       // when a present whose turn failed is tried again
+	delivered     time.Time       // when the session last took a turn: the stale bound runs from it
+	session       string          // the session id as last read (Session)
 }
 
 // beatState is the cadence worker's last result. The main loop owns Status and
@@ -635,7 +658,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return d.runNotifications(ctx)
 	}
 	l := &loop{d: d, ctx: ctx, b: &bus.Bus{Store: d.Store}, silentStop: d.SilentStop, brokenAfter: d.BrokenAfter,
-		answered: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, results: make(chan result, 1),
+		recoverCh: make(chan recoverResult, 1),
+		answered:  map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, results: make(chan result, 1),
 		lanes: &laneSet{results: make(chan laneResult, 64), refused: map[string]string{}}, reads: newReadSet(), mode: ModeBatch, tag: laneTag()}
 	_, l.passive = d.Deliver.(interface{ Passive() })
 	l.acted = map[string]bool{}
@@ -645,6 +669,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	if l.brokenAfter <= 0 {
 		l.brokenAfter = DefaultBrokenAfter
+	}
+	l.stuckAfter, l.recoverMax = d.StuckAfter, d.RecoverMax
+	if l.stuckAfter <= 0 {
+		l.stuckAfter = DefaultStuckAfter
+	}
+	if l.recoverMax <= 0 {
+		l.recoverMax = DefaultRecoverMax
 	}
 	d.m = Start(d.Now())
 	l.presentDue, l.delivered = true, d.m.LastPing // a session start: the present comes first
@@ -707,6 +738,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.laneDone(r, now)
 		case r := <-l.reads.results:
 			l.readDone(r, now)
+		case r := <-l.recoverCh:
+			l.recovered(r, now)
 		default:
 		}
 		if d.Mailbox != nil {
@@ -1327,6 +1360,14 @@ func (l *loop) watch(t *turn, now time.Time) {
 		l.d.Record(fmt.Sprintf("%s subject=%s stopping: no output for %s (silent since %s); its process group is signalled",
 			now.UTC().Format(time.RFC3339), t.subjects, l.silentStop, t.lastOut.UTC().Format(time.RFC3339)))
 	}
+	if t == l.busy && !t.stopped && !t.stuck && !t.capped && t.seenN > 0 && now.Sub(t.lastOut) >= l.stuckAfter {
+		// a batch turn that printed but then made no progress for StuckAfter:
+		// the session is stuck, and its messages stay pending for the fresh one
+		t.stuck = true
+		t.cancel()
+		l.d.Record(fmt.Sprintf("%s subject=%s stuck: output but no progress for %s; its process group is signalled and the session is replaced",
+			now.UTC().Format(time.RFC3339), t.subjects, l.stuckAfter))
+	}
 }
 
 // stampProgress stamps progress on the cards whose lane turn printed since the turn's last
@@ -1371,9 +1412,17 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 		delete(l.inHand, e) // acked below, or pending for the claim to hand in again
 	}
 	var refused ProviderRefused
+	var cl ContextLimit
+	var comp Compaction
 	switch {
+	case t.stuck:
+		// output but no progress past StuckAfter: the session is at fault,
+		// not the messages; they stay pending, counted toward nothing
+		l.compacting = 0
+		line += " stuck=true"
+		l.breakSession(d.status.SessionID, fmt.Sprintf("a turn stuck past %s with output but no progress", l.stuckAfter), now)
 	case ok:
-		l.streak, l.refusal = 0, ""
+		l.streak, l.refusal, l.compacting = 0, "", 0
 		l.remember(t)
 		line += l.stampTurn(t, bus.Acted)
 		if len(t.entries) > 0 {
@@ -1388,7 +1437,24 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 				}
 			}
 		}
+	case errors.As(err, &cl) && !t.stopped:
+		l.streak, l.refusal, l.compacting = 0, "", 0
+		line += " session=context_limit"
+		l.breakSession(cl.Session, "context limit: "+cl.Reason, now)
+	case errors.As(err, &comp) && !t.stopped:
+		l.compacting++
+		line += fmt.Sprintf(" compacted=%d/%d", l.compacting, CompactionAfter)
+		if l.compacting >= CompactionAfter {
+			l.breakSession(comp.Session, "compaction loop", now)
+		}
 	case errors.As(err, &refused) && !t.stopped:
+		l.compacting = 0
+		if ContextLimitReason(refused.Reason) {
+			l.streak, l.refusal = 0, ""
+			line += " session=context_limit"
+			l.breakSession(refused.Session, "context limit: "+refused.Reason, now)
+			break
+		}
 		// the session is at fault, not the messages: they stay pending, counted toward nothing
 		if refused.Reason == l.refusal {
 			l.streak++
@@ -1397,12 +1463,11 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 		}
 		line += fmt.Sprintf(" refused=%d/%d", l.streak, l.brokenAfter)
 		if l.streak >= l.brokenAfter && !l.broken {
-			l.broken = true
-			d.status.Session, d.status.SessionID, d.status.SessionReason, d.status.BrokenAt = SessionBroken, refused.Session, oneLine(refused.Reason, 200), now
 			line += " session=broken"
+			l.breakSession(refused.Session, refused.Reason, now)
 		}
 	default:
-		l.streak, l.refusal = 0, ""
+		l.streak, l.refusal, l.compacting = 0, "", 0
 		line += l.stampTurn(t, bus.Read) // the turn ran and failed: read, never acted
 		var given []string
 		for _, e := range t.entries {
@@ -1508,7 +1573,7 @@ func (l *loop) batchDone(r result, now time.Time) {
 	if r.t.stopped {
 		line += fmt.Sprintf(" stopped=%q", "no output for "+l.silentStop.String())
 	}
-	ok := r.err == nil && r.exit == 0 && !r.t.stopped
+	ok := r.err == nil && r.exit == 0 && !r.t.stopped && !r.t.stuck
 	line += l.settle(r.t, ok, r.err, now)
 	l.delivered = now // the session took a turn: the stale bound runs from here
 	l.presentEnded(r.t, ok, now)
@@ -1516,6 +1581,9 @@ func (l *loop) batchDone(r result, now time.Time) {
 		line += fmt.Sprintf("\n%s session=ok: a turn succeeded after %d refused; no longer %s", now.UTC().Format(time.RFC3339), l.unableTries, l.unable)
 		l.unable, l.unableTries, l.told = "", 0, false
 		d.status.Session, d.status.SessionID, d.status.SessionReason, d.status.BrokenAt = SessionOK, "", "", time.Time{}
+	}
+	if ok && d.status.Session == SessionRecovered {
+		d.status.Session, d.status.SessionFrom, d.status.SessionTo, d.status.RecoveredAt = SessionOK, "", "", time.Time{}
 	}
 	for _, part := range strings.Split(line, "\n") {
 		d.Record(part)
