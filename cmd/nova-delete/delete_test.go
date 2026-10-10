@@ -13,8 +13,9 @@ func TestNovaDeleteRefusesAnythingButOneLiteralPath(t *testing.T) {
 	t.Parallel()
 
 	tmpDir := t.TempDir()
+	orig := os.Getenv("NOVA_DELETE_ROOTS")
 	os.Setenv("NOVA_DELETE_ROOTS", tmpDir)
-	defer os.Unsetenv("NOVA_DELETE_ROOTS")
+	defer os.Setenv("NOVA_DELETE_ROOTS", orig)
 
 	tests := []struct {
 		name     string
@@ -47,8 +48,9 @@ func TestNovaDeleteMovesLiteralPath(t *testing.T) {
 	t.Parallel()
 
 	tmpRoot := t.TempDir()
+	orig := os.Getenv("NOVA_DELETE_ROOTS")
 	os.Setenv("NOVA_DELETE_ROOTS", tmpRoot)
-	defer os.Unsetenv("NOVA_DELETE_ROOTS")
+	defer os.Setenv("NOVA_DELETE_ROOTS", orig)
 
 	filePath := filepath.Join(tmpRoot, "testfile.txt")
 	require.NoError(t, os.WriteFile(filePath, []byte("test"), 0644))
@@ -83,8 +85,9 @@ func TestNovaDeleteSweep(t *testing.T) {
 	t.Parallel()
 
 	tmpRoot := t.TempDir()
+	orig := os.Getenv("NOVA_DELETE_ROOTS")
 	os.Setenv("NOVA_DELETE_ROOTS", tmpRoot)
-	defer os.Unsetenv("NOVA_DELETE_ROOTS")
+	defer os.Setenv("NOVA_DELETE_ROOTS", orig)
 
 	oldDir := filepath.Join(tmpRoot, ".quarantine-20200101")
 	require.NoError(t, os.MkdirAll(oldDir, 0755))
@@ -96,7 +99,7 @@ func TestNovaDeleteSweep(t *testing.T) {
 	require.NoError(t, os.MkdirAll(recentDir, 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(recentDir, "recent.txt"), []byte("recent"), 0644))
 
-	swept, err := Sweep(7 * 24 * time.Hour)
+	swept, err := SweepWithRoots(7*24*time.Hour, []string{tmpRoot})
 	require.NoError(t, err)
 	require.Len(t, swept, 1)
 	_, err = os.Stat(oldDir)

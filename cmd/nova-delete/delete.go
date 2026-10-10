@@ -170,6 +170,11 @@ func Sweep(olderThan time.Duration) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	return SweepWithRoots(olderThan, roots)
+}
+
+// SweepWithRoots is the implementation that takes roots directly.
+func SweepWithRoots(olderThan time.Duration, roots []string) ([]string, error) {
 
 	var swept []string
 	now := time.Now()

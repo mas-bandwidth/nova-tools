@@ -4697,7 +4697,7 @@ Move a literal path to quarantine instead of deleting it.
 ```
 nova-delete: moves a literal path to quarantine instead of deleting it
 
-how it works: nova-delete takes exactly one literal absolute path and moves it to a dated quarantine folder
+how it works: takes exactly one literal absolute path and moves it to a dated quarantine folder
 <root>/.quarantine-YYYYMMDD/<basename>.<HHMMSS>.<pid> under the allowed root that holds it.
 Allowed roots are: system temp directory and paths named by NOVA_DELETE_ROOTS (colon-separated).
 The sweep verb removes quarantine entries older than a specified duration.
