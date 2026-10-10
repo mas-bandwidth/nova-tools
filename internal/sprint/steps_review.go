@@ -663,6 +663,17 @@ func Read(s *Snapshot, r ReadReq) Plan {
 					// (brief_bound.go)
 					n = judgment(NBriefWrong, pr.Row, s.Now, 0, pr.ID) // its decisions alone: it is the repeat
 					n.Who, n.Attempt, n.What = c.Row, c.Int("attempt"), bb.String()+"; attempt "+c.F("attempt")+" found: "+firstSentence(r.Finding)
+				} else if reason := BriefDefectOf(r.Finding); reason != "" {
+					// a reader's finding names the brief (PATHS short, a symbol absent at the
+					// base, a form unstated): the brief is the defect, not the work, and the
+					// primary carries the mark so every later step and view reads it
+					// (brief_defect.go; columns.go, the review reason)
+					n = judgment(NBriefDefect, pr.Row, s.Now, 0, pr.ID)
+					n.Who, n.Attempt, n.What = c.Row, c.Int("attempt"), "a brief defect, "+reason+": re-cut the brief; attempt "+c.F("attempt")+" found: "+firstSentence(r.Finding)+"; "+briefDefectRemedy(pr.ID)
+					if costs[pr.ID] == nil {
+						costs[pr.ID] = map[string]string{}
+					}
+					costs[pr.ID][FieldBriefDefect] = reason
 				}
 				u.Notes = append(u.Notes, n)
 			}
@@ -820,6 +831,8 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 	}
 	open := map[string]bool{} // the judgment types open on it after the step
 	offers := false           // one of them offers accept
+	defectWhy, _, _ := ReviewDefect(s, pr)
+	isDefect := ReviewReason(s, pr) == ReviewReasonDefect
 	before := closesFor(s.Open, nil, pr.ID)
 	for _, o := range before {
 		if !st.closing[o.Note.ID] {
@@ -844,10 +857,12 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 		typ = NReadyToAccept
 	case len(open) > 0 || outstanding:
 		return Note{}, false
-	case pr.F(FieldBriefDefect) != "":
-		// a brief defect asks again to re-cut the brief, never a stranded rework (docs/SPEC-SPRINT.md
-		// section 1, a brief defect)
-		typ, why = NBriefDefect, "a brief defect, "+pr.F(FieldBriefDefect)+": re-cut the brief; nothing is open on it"
+	case isDefect:
+		// a brief defect, whichever of item 1's ways named it: a bound judgment, the
+		// primary's own mark, or a stored finding that names the brief (columns.go,
+		// ReviewDefect). It asks again to re-cut the brief, never a stranded rework
+		// (docs/SPEC-SPRINT.md section 1, a brief defect)
+		typ, why = NBriefDefect, "a brief defect, "+defectWhy+": re-cut the brief; nothing is open on it; "+briefDefectRemedy(pr.ID)
 	case pr.F("result") == "failed":
 		typ, why = NStranded, "its work came back failed and nothing is open on it"
 	case reads == 0 && len(before) == 0:

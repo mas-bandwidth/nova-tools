@@ -654,6 +654,11 @@ type whereView struct {
 	// work table's streams, the total width of the fleet members that are up,
 	// the string "<ready>/<2*width>" and whether ready is under width.
 	Ready int64 `json:"ready"`
+	// ReviewReads and ReviewDefect split review by reason (sprint.ReviewSplit): the machine's
+	// work waiting on a read, and the seat's work waiting on a re-cut brief. Carried with
+	// --rows (the dashboard's call), which reads the cards the split is counted from.
+	ReviewReads  int64 `json:"review_reads,omitempty"`
+	ReviewDefect int64 `json:"review_defect,omitempty"`
 	// Backup is the pipeline's backup state (sprint.BackupOf over the work table's count
 	// cells): reads, merges or none; ReadsWaiting the reads wanted now and not asked, from the
 	// tick's where record (sprint.ReadsWaiting).
@@ -1070,6 +1075,8 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 				gone = v.Archived
 			}
 			v.Rows = rowsView(s, gone)
+			reads, defect := sprint.ReviewSplit(s)
+			v.ReviewReads, v.ReviewDefect = int64(reads), int64(defect)
 			v.MergeRow.OldestMergingMin = oldestMerging(v.At, s.Work.Column(string(sprint.Merging)))
 		}
 		if r.c.json {
@@ -2361,7 +2368,7 @@ func (a *app) cardsBulk(st *store.Store, stream string, stdout, stderr io.Writer
 		if stream != "" && c.Row != stream {
 			continue
 		}
-		fields := maps.Clone(c.Fields)
+		fields := sprint.ReviewCardFields(s, c)
 		delete(fields, "brief")
 		if fields == nil {
 			fields = map[string]string{}
@@ -2579,12 +2586,8 @@ func rowsView(s *sprint.Snapshot, gone *archivedView) []primaryRow {
 		if gone.has(c.Row) {
 			continue // an archived stream's: where --json --rows --archived
 		}
-		fields := make(map[string]string, len(c.Fields))
-		for k, v := range c.Fields {
-			if k != "brief" {
-				fields[k] = v
-			}
-		}
+		fields := sprint.ReviewCardFields(s, c)
+		delete(fields, "brief")
 		rows = append(rows, primaryRow{ID: c.ID, Stream: c.Row, Column: c.Col, State: c.Col, Score: c.Score, Fields: fields})
 	}
 	slices.SortStableFunc(rows, func(a, b primaryRow) int {

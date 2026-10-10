@@ -949,6 +949,20 @@ primary, naming the drop and then the add, and a rework closes no `a brief defec
 judgment. A stalled one is offered `re-cut the brief` and `drop`, never `rework`, and when
 nothing is open on it the judgment raised again is `a brief defect`, never `stranded in review`. A route's stats do not count it.
 
+### The review reason: reads and defect
+
+`review` holds two jobs in one column (the owner, 2026-10-07, on 115 cards in review of which 74 were failed attempts and 46 brief defects: "this feels like another state that is not being visualized" and "it also feels like a current hole where all our work goes to die"). A primary in review whose newest report is ok waits on a reader, or on a read already out: the machine's work. A primary the machine has judged "the brief is wrong, not the worker" waits on a person to re-cut the brief: the seat's work, which never moves unless the seat remembers. Each primary in review carries a review reason, `review_reason` (`sprint.FieldReviewReason`, `sprint.ReviewReason`): `read` while it waits on a read, `defect` while the brief is wrong. A primary enters `defect` when any of the ways the brief's defect is named stands:
+
+- a bound judgment open on it, `a card has reached its bound: the brief is wrong, not the worker` (`NBriefWrong`, "The brief is wrong, not the worker" below), raised by the same failure twice or by the attempt cap on one brief;
+- a brief defect judgment open on it (`NBriefDefect`, "A brief defect" above), a worker's HOLD whose reason names the brief, or a reader's broken finding that names the brief (`sprint.BriefDefectOf`: the base lacks a PATHS file, a duplicate of landed work, a decision delivered, PATHS do not hold);
+- the primary's own brief-defect mark (`brief_defect`), the reason a Hold named or the stamp the brief rule wrote.
+
+A reader's finding that names the brief is raised as `a brief defect`, in place of `a reader found it broken`, and the mark is stamped on the primary in the same step. A primary leaves `defect` only by `brief <id> --brief-file` (the edit re-opens its next attempt), `recut` or `drop`, which move it out of review, answer the judgment or clear the mark; the reason is a view of state the sprint already keeps (`sprint.ReviewDefect`), so it is never stale and needs no separate write. `review` then holds only cards whose newest report is ok and that want or have a read.
+
+The reason is not a new column: the work columns are a locked table shape (`internal/sprint/TABLES.lock`), so `review` keeps its primaries and the split is a view. Every count review feeds shows it as `reads <n> · defect <n>`: `where`, `view coordinator`, the dashboard's JSON as `review_reads` and `review_defect`, and `card --all --json` as the `review_reason` field.
+
+The defect alarm is a work table property, `alarm_defect` (`set --alarm-defect <n>`, default 10, `off` to take it off), counted on the defect cards, not the reads. More than n primaries in defect, or any primary in defect longer than 2 hours, raises one judgment of the sprint to the seat, `defect above its alarm`, listing the oldest five with their reasons; it is an episode like every backlog alarm ("Backlog alarms" below), pushed once when it starts and closed once when the count falls under and none is over the age. The pure facts are `sprint.DefectAlarm` and `sprint.DefectCards` (internal/sprint/columns.go).
+
 The frame of `where` and `where --watch` shows work, friends, fleet in that order: the
 readers and merge tables are hidden from it (the owner, 2026-10-02: "I feel like
 reading and merging is something you can handle now. it seems to work, so please
@@ -5052,10 +5066,11 @@ The nova-wake unit: the tool left cmd/ (fleet/retired-tools.txt) and its binary 
 
 ### Backlog alarms
 
-Four conditions of the whole sprint the tick keeps (its deadlines part plans them
-with the deadlines), each off until the coordinator sets its threshold with `set`,
-the work table's properties `alarm_review`, `alarm_merging`, `alarm_fleet` and `alarm_ready`
-(a clear starts the next epoch with none):
+Five conditions of the whole sprint the tick keeps (its deadlines part plans them
+with the deadlines), each off until the coordinator sets its threshold with `set`
+except the defect alarm, which is on by default at 10; the work table's properties
+`alarm_review`, `alarm_merging`, `alarm_fleet`, `alarm_ready` and `alarm_defect`
+(a clear starts the next epoch with none set, so the defect alarm is at its default):
 
 - review above its alarm: more primaries in review than `--alarm-review <n>`;
 - merging above its alarm: more primaries merging than `--alarm-merging <n>`;
@@ -5063,7 +5078,11 @@ the work table's properties `alarm_review`, `alarm_merging`, `alarm_fleet` and `
   more waiting;
 - the fleet works below its alarm: the members up working fewer work cards than
   `--alarm-fleet <percent>` (1 to 100) of their width, while a primary is ready or
-  waiting.
+  waiting;
+- defect above its alarm: more primaries in review held as brief defects than
+  `--alarm-defect <n>` (default 10, `off` to take it off), or any one in defect longer
+  than 2 hours, listing the oldest five with their reasons ("The review reason: reads
+  and defect" above).
 
 An alarm is an episode: one judgment of the sprint (no primaries) written when its
 condition starts, never again while it stands, whatever its counts do (it is keyed by
