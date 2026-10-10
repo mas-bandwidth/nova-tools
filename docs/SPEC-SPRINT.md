@@ -7283,7 +7283,7 @@ sentinel with nothing to wait on is released, not emptied. The coordinator's alo
 
 ### External operands
 
-A card may wait for something outside the sprint (docs/SPEC-ISA.md, the one wait kind, layer 3 of the processor; `tla/CardISA.tla`, `Ext`, `IsaTick` and `Wait`). Beside card ids, an entry of its `DEPENDS-ON:` line (or `Needs:` line, or `--needs`) takes three external forms (`swarm.ParseDependsOperand`):
+A card may wait for something outside the sprint (docs/SPEC-ISA.md, the one wait kind, layer 3 of the processor; `tla/CardISA.tla`, `Ext`, `IsaTick` and `Wait`). Beside card ids, an entry of its `DEPENDS-ON:` line (or `Needs:` line, or `--needs`) takes three external forms (`swarm.parseDependsOperand`):
 
 | form | holds when |
 |---|---|
