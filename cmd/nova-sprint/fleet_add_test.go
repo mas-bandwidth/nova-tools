@@ -101,8 +101,24 @@ func TestFleetAddPlayEmitsEveryStepByTheVerbsReading(t *testing.T) {
 	// drives must read the run's own variables, so a play whose step line stands
 	// in for work the verb never supplies is refused here.
 	assert.Contains(t, play, "'--only', nova_member_route_key", "the credential step must read the route key the verb passes (nova_member_route_key)")
-	assert.Contains(t, play, "'--repos', nova_member_repos", "the mirror step must read the repository list the verb passes (nova_member_repos)")
 	assert.Contains(t, play, "'--base', nova_member_mirror_base", "the mirror step must read the mirror base the verb passes (nova_member_mirror_base)")
+
+	// the route credential reaches the member: the records name the keys and the
+	// seat their units open through nova-secrets, and each member argv names
+	// --pass so the card's child is handed the route's key. A play that names
+	// neither leaves the member's children with no provider key and the probe
+	// card cannot run on its route.
+	assert.Contains(t, play, "'--keys', nova_member_route_key", "the loop records must name the keys their units open (--keys nova_member_route_key)")
+	assert.Contains(t, play, "'--seat', nova_seat", "the loop records must name the seat the keys are opened from (--seat nova_seat)")
+	assert.GreaterOrEqual(t, strings.Count(play, "'--pass', nova_member_route_key"), 3,
+		"the member and reader argvs and the probe run must each name --pass nova_member_route_key so nova-swarm hands the route's key to the child")
+
+	// the mirror list: the verb passes nova_member_repos as one comma-separated
+	// word, group_vars holds the list, and the inventory may hold either, so the
+	// step splits a string into the list mirror --repos takes; a play that joins
+	// the raw value iterates a string character by character on a real run.
+	assert.Contains(t, play, "nova_member_repos.split(',')", "the mirror step must split a comma-separated nova_member_repos into the list --repos takes")
+	assert.Contains(t, play, "fleet_add_repos | join(',')", "the mirror step must join the normalized repository list (fleet_add_repos), not the raw value")
 }
 
 // fleetAddWidth is the member's width on the fleet table: -1 when it has no row.

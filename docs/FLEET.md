@@ -26,9 +26,11 @@ dealt any work. The play converges the machine: the pinned tools (go, sqlite3,
 the pinned harness, age, sops, bats), the nova binaries at the machine's adopted
 release, the member and reader loop records **added and applied, then their units
 rendered from them in the same run**, the route credential through the
-sealed-secrets path (the play opens the seat with `nova-secrets exec` and the
-tool reads the key in its own process; no secret value is printed or passed),
-and a mirror for every repository a live card names. The verb adds the fleet and
+sealed-secrets path (the records name the route's keys and the seat, so
+`fleet/loops.yml` wraps each unit in `nova-secrets exec --only <keys>`, and the
+member and reader argvs and the probe name `--pass` so the card's child is
+handed the route's key; no secret value is printed or passed), and a mirror for
+every repository a live card names. The verb adds the fleet and
 reader rows itself, the member **drained** (width 0), deals it one probe card
 outside that width, and widens it only once it is proved: the member beats
 within a minute, its reader row is up, and it has taken and finished the probe
