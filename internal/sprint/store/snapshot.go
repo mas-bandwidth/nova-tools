@@ -335,7 +335,8 @@ func (t MemTwin) Load(doc []byte) (SnapshotCounts, error) {
 }
 
 // The sprint backup's key-level dump (docs/SPEC-SPRINT.md, sprint-backup-out):
-// the keys of the sprint's epoch and the keys every epoch shares, each as one
+// the keys of the sprint's epoch, the keys every epoch shares and the records
+// an older epoch left (BackupKey), each as one
 // RESTORE line a redis-cli loads, so the dump restores into any empty Redis
 // that holds this build's function library.
 
@@ -435,6 +436,27 @@ func KeyEpoch(key string) (uint64, bool) {
 func InBackup(key string, epoch uint64) bool {
 	n, ok := KeyEpoch(key)
 	return !ok || n == epoch
+}
+
+// BackupKey says a key of a Redis store goes into the backup of epoch: a key
+// of the sprint (SprintKey) that carries that epoch or none (InBackup), or a
+// record of any epoch (IsRecordKey). A record an older epoch left is still
+// the store's: its table's change log names it, and the sprint's state reads
+// it (readTableState), so a backup that left it out would not restore the
+// store as it is.
+func BackupKey(n sprint.Names, key string, epoch uint64) bool {
+	return SprintKey(n, key) && (InBackup(key, epoch) || IsRecordKey(n, key))
+}
+
+// IsRecordKey says the key is a record of one of the sprint's four tables
+// (Names.RecordKey), of any epoch.
+func IsRecordKey(n sprint.Names, key string) bool {
+	for _, t := range []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet} {
+		if p := n.MemberPrefix(t); strings.HasPrefix(key, p) && len(key) > len(p) {
+			return true
+		}
+	}
+	return false
 }
 
 // SprintKey says a key of a Redis store is the sprint's: its sprint keys and
@@ -603,7 +625,8 @@ func CardsByColumn(ctx context.Context, b Backend, names sprint.Names) (map[stri
 // helpers), each payload the JSON of its part of the twin's document: the
 // store's meta and views and machine records, each table's definition, each
 // table generation, each record and each epoch's sprint keys. Only the keys
-// InBackup of epoch are returned.
+// InBackup of epoch are returned, and every record whatever its epoch
+// (BackupKey).
 func MemDump(m *Mem, epoch uint64) ([]DumpKey, error) {
 	doc, err := m.Snapshot()
 	if err != nil {
@@ -614,6 +637,14 @@ func MemDump(m *Mem, epoch uint64) ([]DumpKey, error) {
 		return nil, err
 	}
 	var out []DumpKey
+	addAny := func(key string, v any) error {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		out = append(out, DumpKey{Key: key, Payload: b})
+		return nil
+	}
 	add := func(key string, v any) error {
 		if !InBackup(key, epoch) {
 			return nil
@@ -657,7 +688,8 @@ func MemDump(m *Mem, epoch uint64) ([]DumpKey, error) {
 			}
 		}
 		for id, mem := range t.Members {
-			if err := add(t.Def.MemberPrefix+id, memDumpMember{Table: name, Member: mem}); err != nil {
+			// a record of any epoch, as BackupKey takes it on a Redis
+			if err := addAny(t.Def.MemberPrefix+id, memDumpMember{Table: name, Member: mem}); err != nil {
 				return nil, err
 			}
 		}
