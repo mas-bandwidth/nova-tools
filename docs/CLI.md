@@ -4682,3 +4682,166 @@ Reads the tree and GitHub again and writes nothing: zero differences is
 `VERIFY OK ... differences=0`, the receipt that the tree holds what GitHub
 holds. `--against <tree>` puts a second tree file where GitHub stands and reads
 no network at all.
+
+## nova-delete
+
+Move a literal path to quarantine instead of deleting it.
+
+<!-- clidoc:begin nova-delete -->
+`nova-delete help`:
+
+```
+nova-delete: Move a literal path to quarantine instead of deleting it
+
+how it works:
+  nova-delete takes exactly one literal absolute path and moves it to a dated quarantine folder
+  <root>/.quarantine-YYYYMMDD/<basename>.<HHMMSS>.<pid> under the allowed root that holds it.
+  Allowed roots are: system temp directory and paths named by NOVA_DELETE_ROOTS (colon-separated).
+  The sweep verb removes quarantine entries older than a specified duration.
+
+first run:
+  Set NOVA_DELETE_ROOTS to a colon-separated list of allowed absolute paths, e.g.:
+  NOVA_DELETE_ROOTS=/tmp NOVA_DELETE_ROOTS=/Users/user/data nova-delete /tmp/file.txt
+
+usage:
+  nova-delete <path>
+  nova-delete sweep --older-than <duration>
+  nova-delete help [<verb>]
+
+exit codes:
+  0  success (path moved or skipped because it doesn't exist)
+  1  refusal (the verb ran and said no)
+  2  could not run (bad invocation, e.g., wrong number of args)
+
+example:
+  nova-delete /tmp/to_delete.txt
+  nova-delete sweep --older-than 7d
+```
+
+`nova-delete -h`:
+
+```
+nova-delete: Move a literal path to quarantine instead of deleting it
+
+how it works:
+  nova-delete takes exactly one literal absolute path and moves it to a dated quarantine folder
+  <root>/.quarantine-YYYYMMDD/<basename>.<HHMMSS>.<pid> under the allowed root that holds it.
+  Allowed roots are: system temp directory and paths named by NOVA_DELETE_ROOTS (colon-separated).
+  The sweep verb removes quarantine entries older than a specified duration.
+
+first run:
+  Set NOVA_DELETE_ROOTS to a colon-separated list of allowed absolute paths, e.g.:
+  NOVA_DELETE_ROOTS=/tmp NOVA_DELETE_ROOTS=/Users/user/data nova-delete /tmp/file.txt
+
+usage:
+  nova-delete <path>
+  nova-delete sweep --older-than <duration>
+  nova-delete help [<verb>]
+
+exit codes:
+  0  success (path moved or skipped because it doesn't exist)
+  1  refusal (the verb ran and said no)
+  2  could not run (bad invocation, e.g., wrong number of args)
+
+example:
+  nova-delete /tmp/to_delete.txt
+  nova-delete sweep --older-than 7d
+```
+
+`nova-delete delete -h`:
+
+```
+nova-delete: Move a literal path to quarantine instead of deleting it
+
+how it works:
+  nova-delete takes exactly one literal absolute path and moves it to a dated quarantine folder
+  <root>/.quarantine-YYYYMMDD/<basename>.<HHMMSS>.<pid> under the allowed root that holds it.
+  Allowed roots are: system temp directory and paths named by NOVA_DELETE_ROOTS (colon-separated).
+  The sweep verb removes quarantine entries older than a specified duration.
+
+first run:
+  Set NOVA_DELETE_ROOTS to a colon-separated list of allowed absolute paths, e.g.:
+  NOVA_DELETE_ROOTS=/tmp NOVA_DELETE_ROOTS=/Users/user/data nova-delete /tmp/file.txt
+
+usage:
+  nova-delete <path>
+
+exit codes: 0 success, 1 refusal, 2 bad invocation
+
+example:
+  nova-delete /tmp/to_delete.txt
+```
+
+`nova-delete sweep -h`:
+
+```
+nova-delete: Move a literal path to quarantine instead of deleting it
+
+how it works:
+  nova-delete takes exactly one literal absolute path and moves it to a dated quarantine folder
+  <root>/.quarantine-YYYYMMDD/<basename>.<HHMMSS>.<pid> under the allowed root that holds it.
+  Allowed roots are: system temp directory and paths named by NOVA_DELETE_ROOTS (colon-separated).
+  The sweep verb removes quarantine entries older than a specified duration.
+
+first run:
+  Set NOVA_DELETE_ROOTS to a colon-separated list of allowed absolute paths, e.g.:
+  NOVA_DELETE_ROOTS=/tmp NOVA_DELETE_ROOTS=/Users/user/data nova-delete /tmp/file.txt
+
+usage:
+  nova-delete sweep --older-than <duration>
+
+flags:
+  --older-than <duration>  remove entries older than this duration
+
+exit codes: 0 success, 1 refusal, 2 bad invocation
+```
+
+`nova-delete help delete`:
+
+```
+nova-delete: Move a literal path to quarantine instead of deleting it
+
+how it works:
+  nova-delete takes exactly one literal absolute path and moves it to a dated quarantine folder
+  <root>/.quarantine-YYYYMMDD/<basename>.<HHMMSS>.<pid> under the allowed root that holds it.
+  Allowed roots are: system temp directory and paths named by NOVA_DELETE_ROOTS (colon-separated).
+  The sweep verb removes quarantine entries older than a specified duration.
+
+first run:
+  Set NOVA_DELETE_ROOTS to a colon-separated list of allowed absolute paths, e.g.:
+  NOVA_DELETE_ROOTS=/tmp NOVA_DELETE_ROOTS=/Users/user/data nova-delete /tmp/file.txt
+
+usage:
+  nova-delete <path>
+
+exit codes: 0 success, 1 refusal, 2 bad invocation
+
+example:
+  nova-delete /tmp/to_delete.txt
+```
+
+`nova-delete help sweep`:
+
+```
+nova-delete: Move a literal path to quarantine instead of deleting it
+
+how it works:
+  nova-delete takes exactly one literal absolute path and moves it to a dated quarantine folder
+  <root>/.quarantine-YYYYMMDD/<basename>.<HHMMSS>.<pid> under the allowed root that holds it.
+  Allowed roots are: system temp directory and paths named by NOVA_DELETE_ROOTS (colon-separated).
+  The sweep verb removes quarantine entries older than a specified duration.
+
+first run:
+  Set NOVA_DELETE_ROOTS to a colon-separated list of allowed absolute paths, e.g.:
+  NOVA_DELETE_ROOTS=/tmp NOVA_DELETE_ROOTS=/Users/user/data nova-delete /tmp/file.txt
+
+usage:
+  nova-delete sweep --older-than <duration>
+
+flags:
+  --older-than <duration>  remove entries older than this duration
+
+exit codes: 0 success, 1 refusal, 2 bad invocation
+```
+<!-- clidoc:end nova-delete -->
+

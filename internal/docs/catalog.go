@@ -28,6 +28,7 @@ var DefaultCatalog = []Entry{
 	E("cmd/nova-friend", "what a friend runs to be part of the team: the wake loop over nova-bus, the beat to the sprint server, and the proof of life, as one launchd daemon", "go test ./cmd/nova-friend", "go test -tags functional ./cmd/nova-friend"),
 	E("cmd/nova-cairn", "session checkpoints: a session's exact words kept as plain files, with an index and receipts", "go test ./cmd/nova-cairn", "go test ./cmd/nova-cairn"),
 	E("cmd/nova-decide", "typed decisions with probabilities through a backend, recorded and calibrated against their outcomes", "go test ./cmd/nova-decide", "go test ./cmd/nova-decide"),
+	E("cmd/nova-delete", "moves a literal path to quarantine instead of deleting it", "go test ./cmd/nova-delete", "go test ./cmd/nova-delete"),
 	E("cmd/nova-config", "permanent configuration store (Postgres), friends and machines, applied into Redis", "go test ./cmd/nova-config", "go test ./cmd/nova-config"),
 	E("cmd/nova-check", "checks over markdown records and repositories: links, kernel budget, no-code, floors, corpus, hygiene, dogfood, spelling", "go test ./cmd/nova-check", "go test ./cmd/nova-check"),
 	E("cmd/nova-doctor", "one command that says what is missing and how to fix it: every registered dependency check, exit by the worst", "go test ./cmd/nova-doctor", "go test ./cmd/nova-doctor"),
