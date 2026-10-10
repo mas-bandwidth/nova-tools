@@ -1270,23 +1270,6 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		}
 		c.says = append(c.says, unfilledSays("the brief", *brief)...)
 	}
-	// the brief checks at the base run here, before the card checks and the PATHS
-	// admission, and add applies the LINT FIX lines its own lint computed to the brief it
-	// stores, printing LINT APPLIED; --no-fix refuses instead (docs/SPEC-SPRINT.md section
-	// 11, the brief checks)
-	if *sentinel == "" && *brief != "" && a.gateOnly == nil {
-		if st == nil {
-			var err error
-			if st, err = a.store(*c); err != nil {
-				return refuse(stderr, "add", err.Error())
-			}
-		}
-		fixed, _, code := a.fixBriefBase("add", st, *allowPersonal, *noFix, stderr, briefCheck{id: strings.Join(ids, ","), brief: *brief})
-		if code != 0 {
-			return code
-		}
-		*brief = fixed[0].brief
-	}
 	cardNeeds := sprint.Split(*needs)
 	if *needs == "" {
 		cardNeeds = briefNeeds(*brief) // its Needs: or DEPENDS-ON: line, when --needs is not given
@@ -1349,9 +1332,17 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		if code := a.holdCardChecks("add", st, stderr, checks...); code != 0 {
 			return code
 		}
-		if code := a.holdBriefBase("add", st, *allowPersonal, stderr, checks...); code != 0 {
+		// the brief checks at the base run after the card checks, and add applies the LINT
+		// FIX lines its own lint computed to the brief it stores, printing LINT APPLIED;
+		// --no-fix refuses instead (docs/SPEC-SPRINT.md section 11, the brief checks)
+		fixed, _, code := a.fixBriefBase("add", st, *allowPersonal, *noFix, stderr, checks...)
+		if code != 0 {
 			return code
 		}
+		for i := range checks {
+			checks[i].brief = fixed[i].brief
+		}
+		*brief = fixed[0].brief
 		if code := a.holdPathsAdmit("add", stderr, checks...); code != 0 {
 			return code
 		}
@@ -1432,29 +1423,6 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 	if code := lintBriefFiles("add", cards, rs, c.max, stderr); code != 0 {
 		return code
 	}
-	// the brief checks at the base run here, and add applies the LINT FIX lines its own
-	// lint computed to each brief it stores, printing LINT APPLIED; --no-fix refuses
-	// instead (docs/SPEC-SPRINT.md section 11, the brief checks)
-	if a.gateOnly == nil {
-		if st == nil {
-			s, err := a.store(*c)
-			if err != nil {
-				return refuse(stderr, "add", err.Error())
-			}
-			st = s
-		}
-		checks := make([]briefCheck, len(cards))
-		for i, cd := range cards {
-			checks[i] = briefCheck{id: cd.ID, brief: cd.Brief}
-		}
-		fixed, _, code := a.fixBriefBase("add", st, allowPersonal, noFix, stderr, checks...)
-		if code != 0 {
-			return code
-		}
-		for i := range cards {
-			cards[i].Brief = fixed[i].brief
-		}
-	}
 	for i := range cards {
 		cards[i].Rules = cardRules(cards[i].Brief, rs).held // each card names the rules the member injects into it
 	}
@@ -1508,8 +1476,16 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 	if code := a.holdCardChecks("add", st, stderr, checks...); code != 0 {
 		return code
 	}
-	if code := a.holdBriefBase("add", st, allowPersonal, stderr, checks...); code != 0 {
+	// the brief checks at the base run after the card checks, and add applies the LINT
+	// FIX lines its own lint computed to each brief it stores, printing LINT APPLIED;
+	// --no-fix refuses instead (docs/SPEC-SPRINT.md section 11, the brief checks)
+	fixed, _, code := a.fixBriefBase("add", st, allowPersonal, noFix, stderr, checks...)
+	if code != 0 {
 		return code
+	}
+	for i := range cards {
+		cards[i].Brief = fixed[i].brief
+		checks[i].brief = fixed[i].brief
 	}
 	if code := a.holdPathsAdmit("add", stderr, checks...); code != 0 {
 		return code
