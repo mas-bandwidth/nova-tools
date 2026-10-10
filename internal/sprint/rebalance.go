@@ -98,9 +98,10 @@ func Rebalance(s *Snapshot, seats []FriendSeat, who string) Plan {
 	from, work := map[string]*rebalanceUnit{}, map[string]*Card{}
 	var prims []*Card
 	for _, g := range units {
-		if g.width <= 0 || g.working < g.width {
-			continue // a lane free: its queue is its own to start
+		if g.width <= 0 {
+			continue // no lane: its queue cannot start here
 		}
+		full := g.working >= g.width
 		for _, wc := range s.Fleet.Cell(g.row, Ready) {
 			pr := s.Work.Placed(wc.F("primary"))
 			if wc.F("kind") != "work" || pr == nil || pr.Col != Working || pr.F("work") != wc.ID || IsSentinel(pr) ||
@@ -111,8 +112,14 @@ func Rebalance(s *Snapshot, seats []FriendSeat, who string) Plan {
 			if name, ok := FriendCard(pr); ok && g.friend && name == g.name {
 				continue // its pin is honoured where it sits
 			}
+			if pr.F(FieldPinWaived) != "" && pinCardStarted(s, g.seat, pr, wc) {
+				continue // a waived pin that has started stays where it started
+			}
 			if g.friend && friendStarted(s, g.seat, wc) {
 				continue
+			}
+			if pr.F(FieldPinWaived) == "" && !full {
+				continue // a lane free: its queue is its own to start
 			}
 			if _, rests := cardRest(s, wc); rests {
 				continue // the deal withdraws it (restWithdrawals)
@@ -141,10 +148,17 @@ func Rebalance(s *Snapshot, seats []FriendSeat, who string) Plan {
 func rebalanceTo(s *Snapshot, units []*rebalanceUnit, g *rebalanceUnit, pr, wc *Card, tier string) *rebalanceUnit {
 	want := slices.Index(capLadder, tier)
 	gone := Split(wc.F(FieldRebalancedFrom))
+	pref, prefOK := FriendCard(pr)
+	// A source row with a free lane starts its own queue, so the only move off it is a
+	// waived pin going back to the friend its WHO names: never to a stranger.
+	nonfull := g.working < g.width
 	var may []*rebalanceUnit
 	dist := map[*rebalanceUnit]int{}
 	for _, u := range units {
 		if u == g || u.idle() <= 0 || slices.Contains(gone, u.row) {
+			continue
+		}
+		if nonfull && !(prefOK && pref != "" && u.friend && u.name == pref) {
 			continue
 		}
 		if name, ok := FriendCard(pr); ok && name == "" && g.friend && !u.friend {
@@ -176,6 +190,17 @@ func rebalanceTo(s *Snapshot, units []*rebalanceUnit, g *rebalanceUnit, pr, wc *
 	}
 	if len(may) == 0 {
 		return nil
+	}
+	// a waived pin that has not started goes back to the preferred friend when she
+	// is one of the units that may take it, ahead of a cheaper row
+	if pr.F(FieldPinWaived) != "" {
+		if name, ok := FriendCard(pr); ok && name != "" {
+			for _, u := range may {
+				if u.friend && u.name == name {
+					return u
+				}
+			}
+		}
 	}
 	slices.SortStableFunc(may, func(a, b *rebalanceUnit) int {
 		return cmp.Or(cmp.Compare(dist[a], dist[b]), cmp.Compare(b.idle(), a.idle()), cmp.Compare(a.name, b.name))
@@ -217,8 +242,12 @@ func rebalanceMove(s *Snapshot, p *Plan, declared map[string]bool, ri routeIndex
 		s.movedDeadline(to.name, wc, set) // machine to machine: its route kept, as the level's
 	}
 	changes := []Change{change(Fleet, moveEntry(wc, to.row, Ready, set, unset...))}
-	if len(prim) > 0 {
-		changes = append(changes, change(Work, setEntry(pr, prim)))
+	var clear []string
+	if name, ok := FriendCard(pr); ok && to.friend && name == to.name && pr.Has(FieldPinWaived) {
+		clear = []string{FieldPinWaived, FieldPinSince} // her preference honoured: the waiver and the clock end
+	}
+	if len(prim) > 0 || len(clear) > 0 {
+		changes = append(changes, change(Work, setEntry(pr, prim, clear...)))
 	}
 	what := fmt.Sprintf("rebalanced %s from %s to %s", wc.ID, g.row, to.row)
 	n := happened(NRebalanced, pr.Row, s.Now, pr.ID)

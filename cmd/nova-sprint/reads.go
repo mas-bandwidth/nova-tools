@@ -1354,7 +1354,17 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		}
 	}
 	v.Friends = friends
-	ft := a.friendsTable(friends, now)
+	// pin counts and the hard-pin list read the work table. A failed load leaves
+	// where as it was: the frame does not depend on card bodies.
+	pinCounts := map[string]sprint.PinCount{}
+	onlyTail := ""
+	if snap, loadErr := st.Load(ctx, []string{sprint.Work}, nil); loadErr == nil && snap != nil {
+		pinCounts = sprint.FriendPinCounts(snap)
+		if ids := sprint.OnlyTailIDs(snap); len(ids) > 0 {
+			onlyTail = "only: " + strings.Join(ids, ", ")
+		}
+	}
+	ft := a.friendsTable(friends, now, pinCounts)
 	v.Tables[sprint.Friends] = map[string]map[string]any{}
 	for _, r := range ft.Rows {
 		cells := map[string]any{}
@@ -1375,6 +1385,9 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	// the table layer draws it as it draws the fleet: header, rule, rows, rule,
 	// the folded footer; with no friend the header, its rule and the footer
 	parts[sprint.Friends] = ntable.Render(ft, ntable.RenderOpts{Title: sprint.Friends})
+	if onlyTail != "" {
+		parts[sprint.Friends] = strings.TrimRight(parts[sprint.Friends], "\n") + "\n" + onlyTail + "\n"
+	}
 	order := sprint.ShownOrder
 	if all {
 		order = sprint.AllOrder
@@ -1540,7 +1553,7 @@ func providersView(ctx context.Context, st *store.Store, shapes []ntable.Table, 
 // hidden ok and failed, her width and her status as text; done and ok% are the
 // table's own formulas over the counts (ntable.CellText), as the fleet
 // table's are.
-func (a *app) friendsTable(friends []store.FriendRow, now time.Time) ntable.Table {
+func (a *app) friendsTable(friends []store.FriendRow, now time.Time, pins map[string]sprint.PinCount) ntable.Table {
 	t := sprint.FriendsDef()
 	at := map[string]int{}
 	for j, c := range t.Columns {
@@ -1553,7 +1566,7 @@ func (a *app) friendsTable(friends []store.FriendRow, now time.Time) ntable.Tabl
 		cells[at[sprint.DoneOK]].Count = int64(f.OK)
 		cells[at[sprint.DoneFailed]].Count = int64(f.Failed)
 		t.Rows = append(t.Rows, ntable.Row{Key: f.Name, Cells: cells,
-			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.Status: a.statusCell(f, now), sprint.Active: activeCell(f, now),
+			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.Status: a.statusCell(f, now, pins[f.Name]), sprint.Active: activeCell(f, now),
 				sprint.Tokens: sprint.FriendTokensCell(f.Tokens, f.Charged, f.Billing)}})
 	}
 	return t
@@ -2169,6 +2182,10 @@ type cardView struct {
 	// Who is the worker its brief's WHO line names (sprint.FieldWho): friend for any
 	// friend, friend.<name> for one; absent on a machine's card.
 	Who string `json:"who,omitempty"`
+	// Preferred and Waived are set once a named pin has been waived (sprint.FieldPinWaived):
+	// the friend who is still preferred, and the stamp the waiver was written.
+	Preferred string `json:"preferred,omitempty"`
+	Waived    string `json:"waived,omitempty"`
 	// Priority is its level on the ladder (sprint.CardPriority: blocker, critical, normal,
 	// low; a read card's is reader) and PrioritySource where it comes from (set, computed,
 	// default).
@@ -2255,7 +2272,8 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		}
 		tier, ceiling := sprint.CardTiers(v.Primary)
 		level, source := sprint.CardPriority(v.Primary)
-		b, _ := json.Marshal(cardView{Primary: v.Primary, Column: v.Primary.Col, Tier: tier, Ceiling: ceiling, Grade: v.Primary.F(sprint.FieldGrade), Who: v.Primary.F(sprint.FieldWho), Priority: level, PrioritySource: source, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
+		preferred, waived := pinPreferred(v.Primary)
+		b, _ := json.Marshal(cardView{Primary: v.Primary, Column: v.Primary.Col, Tier: tier, Ceiling: ceiling, Grade: v.Primary.F(sprint.FieldGrade), Who: v.Primary.F(sprint.FieldWho), Preferred: preferred, Waived: waived, Priority: level, PrioritySource: source, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
 			Cost: sprint.CardCostOf(v.Primary), Timeline: events, Texts: texts})
 		fmt.Fprintln(stdout, string(b))
 		return 0
@@ -2380,12 +2398,29 @@ func (a *app) cardsBulk(st *store.Store, stream string, stdout, stderr io.Writer
 }
 
 // whoWord is the CARD OK line's who of a friend's card (sprint.FieldWho: who=friend for
-// any friend, who=friend.<name> for one); nothing for a machine's card.
+// any friend, who=friend.<name> for one); nothing for a machine's card. A waived pin
+// adds preferred=<friend> waived=<time>.
 func whoWord(pr *sprint.Card) string {
-	if w := pr.F(sprint.FieldWho); w != "" {
-		return " who=" + oneline.Field(w)
+	w := ""
+	if v := pr.F(sprint.FieldWho); v != "" {
+		w = " who=" + oneline.Field(v)
 	}
-	return ""
+	if p := sprint.PinPreferredWord(pr); p != "" {
+		w += " " + p
+	}
+	return w
+}
+
+// pinPreferred is the JSON preferred and waived fields, empty until the pin is waived.
+func pinPreferred(pr *sprint.Card) (string, string) {
+	if pr == nil || pr.F(sprint.FieldPinWaived) == "" {
+		return "", ""
+	}
+	name, ok := sprint.FriendCard(pr)
+	if !ok {
+		return "", ""
+	}
+	return name, pr.F(sprint.FieldPinWaived)
 }
 
 // priorityWord is the CARD OK line's priority (sprint.CardPriority), always printed.
@@ -2596,13 +2631,17 @@ func rowsView(s *sprint.Snapshot, gone *archivedView) []primaryRow {
 // statusCell is a friend's status as the table shows it: the word (up, held or
 // down), and for a friend held or down with a reason, the reason and when she
 // is expected back: `down (opus rate limited, until 6:00 PM)`.
-func (a *app) statusCell(f store.FriendRow, now time.Time) string {
-	if f.Reason == "" && f.Until.IsZero() {
-		return f.Status
+func (a *app) statusCell(f store.FriendRow, now time.Time, pins sprint.PinCount) string {
+	cell := f.Status
+	if f.Reason != "" || !f.Until.IsZero() {
+		why := f.Reason
+		if !f.Until.IsZero() {
+			why = strings.TrimPrefix(why+", until "+a.clock12(f.Until, now), ", ")
+		}
+		cell = f.Status + " (" + why + ")"
 	}
-	why := f.Reason
-	if !f.Until.IsZero() {
-		why = strings.TrimPrefix(why+", until "+a.clock12(f.Until, now), ", ")
+	if w := sprint.PinCountWord(pins); w != "" {
+		cell += ", " + w
 	}
-	return f.Status + " (" + why + ")"
+	return cell
 }
