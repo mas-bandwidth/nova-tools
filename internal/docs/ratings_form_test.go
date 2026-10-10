@@ -334,3 +334,51 @@ func markdownCells(row string) []string {
 	}
 	return cells
 }
+
+// TestEveryToolHasACurrentReadRating checks that every tool under cmd/ has a
+// 1.2.0 READ rating in docs/ratings/1.2.0/. A tool is identified by its
+// directory name (e.g. "nova-bus" from cmd/nova-bus). The test walks cmd/
+// and for each nova-* directory, looks for a rating file named
+// "nova-<tool>-<friend>.md" with READ score in the header.
+func TestEveryToolHasACurrentReadRating(t *testing.T) {
+	t.Parallel()
+
+	// Get all tools under cmd/
+	cmdDir := "../../cmd"
+	tools, err := os.ReadDir(cmdDir)
+	require.NoError(t, err)
+
+	// Filter nova-* directories
+	var toolNames []string
+	for _, e := range tools {
+		if e.IsDir() && strings.HasPrefix(e.Name(), "nova-") {
+			toolNames = append(toolNames, e.Name())
+		}
+	}
+
+	// Check ratings directory
+	ratingsDir := "../../docs/ratings/1.2.0"
+	ratings, err := os.ReadDir(ratingsDir)
+	require.NoError(t, err)
+
+	// Build a set of tools that have ratings
+	hasRating := make(map[string]bool)
+	re := regexp.MustCompile(`^nova-(.+)-[a-z]+\.md$`)
+	for _, e := range ratings {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+			matches := re.FindStringSubmatch(e.Name())
+			if len(matches) == 2 {
+				hasRating[matches[1]] = true
+			}
+		}
+	}
+
+	// Check each tool has a rating
+	for _, tool := range toolNames {
+		t.Run(tool, func(t *testing.T) {
+			t.Parallel()
+			toolBase := strings.TrimPrefix(tool, "nova-")
+			require.True(t, hasRating[toolBase], "tool %s has no 1.2.0 READ rating in %s", tool, ratingsDir)
+		})
+	}
+}
