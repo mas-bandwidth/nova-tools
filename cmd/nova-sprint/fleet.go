@@ -280,12 +280,14 @@ func init() {
 }
 
 // fleetAddSteps are the steps of adding a member end to end, in order: the
-// machine steps fleet/member.yml prints, and the store and check steps the verb
-// does. Every one prints exactly one FLEET-ADD line.
+// machine steps the plays print (fleet/member.yml and the fleet/tools.yml it
+// imports), and the store and check steps the verb does. Every one prints
+// exactly one FLEET-ADD line.
 var fleetAddSteps = []string{"rows", "tools", "binaries", "units", "credential", "mirrors", "probe", "beat", "reader"}
 
-// fleetAddPlaySteps are the steps fleet/member.yml must print (the verb does
-// rows, beat and reader itself).
+// fleetAddPlaySteps are the steps the plays must print: member.yml prints the
+// tools, units, credential, mirrors and probe steps, and tools.yml prints the
+// binaries step (the verb does rows, beat and reader itself).
 var fleetAddPlaySteps = []string{"tools", "binaries", "units", "credential", "mirrors", "probe"}
 
 // fleetAddBeatBound is how long a just-added member's beat is allowed to take:
@@ -402,6 +404,15 @@ func (a *app) cmdFleetAdd(args []string, stdout, stderr io.Writer) int {
 	ctx := context.Background()
 	reader := "reader-" + host
 	again := "fix the cause and run the same fleet add again (it changes only what is still missing or stale)"
+	// the probe card this run deals the member: the member is widened to one for
+	// it, so every refusal after the deal drains it again (proven is set once the
+	// member is widened for real)
+	probePrimary, proven := "", false
+	defer func() {
+		if probePrimary != "" && !proven {
+			a.fleetAddUndo(ctx, st, host, probePrimary)
+		}
+	}()
 	argv := []string{"-i", *inventory, play, "-e", "nova_member=" + host,
 		"-e", "nova_member_width=" + strconv.Itoa(w), "-e", "nova_member_reader=" + reader, "--limit", host}
 	if *dry {
@@ -425,6 +436,14 @@ func (a *app) cmdFleetAdd(args []string, stdout, stderr io.Writer) int {
 			rowsWord = "added"
 		}
 		fmt.Fprintf(stdout, "FLEET-ADD step=rows host=%s done member=%s reader=%s (%s, the member drained)\n", host, host, reader, rowsWord)
+
+		// the probe: one card the play's member must take and finish before the
+		// member is dealt any work; the verb deals it outside the member's width
+		probePrimary, err = a.fleetAddProbe(ctx, st, host)
+		if err != nil {
+			fmt.Fprintf(stderr, "%s fleet add REFUSED step=probe host=%s: %s; the member is left drained (width 0); %s; run: nova-sprint fleet add -h\n", prog, host, oneline.Err(err), again)
+			return 1
+		}
 	}
 
 	output, playErr := runner.Play(ctx, argv)
@@ -466,8 +485,9 @@ func (a *app) cmdFleetAdd(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// the check: the member beats within a minute, its reader row is up
-	if step, err := a.fleetAddProve(ctx, st, host, reader); err != nil {
+	// the check: the member beats within a minute, its reader row is up, and it
+	// has taken and finished the probe card the deal gave it
+	if step, err := a.fleetAddProve(ctx, st, host, reader, probePrimary); err != nil {
 		fmt.Fprintf(stderr, "%s fleet add REFUSED step=%s host=%s: %s; the member is left drained (width 0); %s; run: nova-sprint fleet add -h\n", prog, step, host, oneline.Err(err), again)
 		return 1
 	}
@@ -480,6 +500,7 @@ func (a *app) cmdFleetAdd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s fleet add REFUSED step=rows host=%s: %s; the member is left drained (width 0); %s; run: nova-sprint fleet add -h\n", prog, host, oneline.Err(err), again)
 		return 1
 	}
+	proven = true
 	word := "unchanged"
 	if widened {
 		word = "widened"
@@ -521,10 +542,97 @@ func (a *app) fleetAddRows(ctx context.Context, st *store.Store, host, reader st
 	return changed, nil
 }
 
+// fleetAddProbe deals one probe card to a just-added member outside its width:
+// the member is briefly widened to one so the deal reaches it, the probe card
+// is admitted on its own stream and dealt to the member alone, and the play's
+// member loop takes and finishes it. A probe already finished (its primary in
+// Review) is left as it is, so a second run changes nothing; a probe already
+// dealt waits only for the member to take it. It returns the probe card's
+// primary id, which fleetAddProve requires finished before the member is
+// widened for real.
+func (a *app) fleetAddProbe(ctx context.Context, st *store.Store, host string) (string, error) {
+	stream := "probe-" + host
+	primary := stream + "-1"
+	snap, err := st.Load(ctx, []string{sprint.Work}, nil)
+	if err != nil {
+		return "", err
+	}
+	needDeal := false
+	switch c := snap.Work.Card(primary); {
+	case c == nil:
+		// the machine runs, so the add and the deal write the work table
+		// directly (Pump), the tick's own first update, instead of queuing for
+		// the next tick: the probe must be placed before the play runs
+		step := store.AddStep(sprint.AddReq{Stream: stream, IDs: []string{primary}, Brief: fleetAddProbeBrief})
+		step.Pump = true
+		res, err := st.Run(ctx, step)
+		if err != nil {
+			return "", err
+		}
+		if len(res.Refused) > 0 {
+			return "", fmt.Errorf("%s: %s", res.Refused[0].Key, res.Refused[0].Why)
+		}
+		needDeal = true
+	case c.Col == sprint.Ready:
+		needDeal = true
+	case c.Col == sprint.Review:
+		return primary, nil // taken and finished already: a second run changes nothing
+	}
+	// the member is widened to one so the deal (and the take) reach it; its own
+	// width, once proved, is w, and cmdFleetAdd's defer drains it on any refusal
+	if _, err := st.Run(ctx, a.fleetStep(st, "up", host, st.Actor, 1, false, 0, false)); err != nil {
+		return "", err
+	}
+	if needDeal {
+		res, err := st.Run(ctx, fleetAddDealStep(sprint.DealReq{Sel: sprint.Sel{Only: []string{primary}}}))
+		if err != nil {
+			return "", err
+		}
+		if len(res.Refused) > 0 {
+			return "", fmt.Errorf("%s: %s", res.Refused[0].Key, res.Refused[0].Why)
+		}
+	}
+	return primary, nil
+}
+
+// fleetAddDealStep cuts and deals the probe card by hand, the step the tick's
+// deal (sprint.TickDeal) runs: a targeted selection, so no other ready card is
+// dealt while the member is proved. It is a pump step (the machine runs), so
+// the primary's move to working applies at once, not at the next tick.
+func fleetAddDealStep(r sprint.DealReq) store.Step {
+	return store.Step{Args: store.ArgsOf(r), Verb: "deal", Load: []string{sprint.Work, sprint.Fleet, sprint.Merge}, Mirrors: true, Routes: true, Pump: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Deal(s, r) }}
+}
+
+// fleetAddUndo undoes a refused add's probe: the probe card is taken off the
+// table and the member is drained again (width 0), so a member that did not
+// prove leaves no probe card behind and is dealt no work. It runs from
+// cmdFleetAdd's defer on every refusal after the probe was dealt.
+func (a *app) fleetAddUndo(ctx context.Context, st *store.Store, host, probe string) {
+	drop := store.DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{probe}}, Reason: "the probe card of a member add that did not finish"})
+	drop.Pump = true
+	_, _ = st.Run(ctx, drop)                                                     // ignored: the drain below leaves the member drained whether or not the drop moves
+	_, _ = st.Run(ctx, a.fleetStep(st, "up", host, st.Actor, 0, true, 0, false)) // ignored: the refusal stands; the next run drains the member again
+}
+
+// fleetAddProbeBrief is the probe card's brief: one card whose only work is to
+// be taken and finished, proving this member reaches the sprint and reports a
+// finish. Its model, tokens and deadline are drawn from the fleet's routes.
+const fleetAddProbeBrief = `RESULT: fleet-add-probe
+KIND: probe
+BASE: dev
+PATHS: RESULT.md
+TEST: none
+DEPENDS-ON: none
+WHO: any
+DONE-WHEN: RESULT.md exists
+`
+
 // fleetAddProve is the check a just-added member passes before it is dealt
-// work: its beat is within fleetAddBeatBound, and its reader row is up. It
-// names the step that failed ("beat" or "reader") and why.
-func (a *app) fleetAddProve(ctx context.Context, st *store.Store, host, reader string) (string, error) {
+// work: its beat is within fleetAddBeatBound, its reader row is up, and it has
+// taken and finished the probe card (its primary in Review). It names the step
+// that failed ("beat", "reader" or "probe") and why.
+func (a *app) fleetAddProve(ctx context.Context, st *store.Store, host, reader, probe string) (string, error) {
 	beats, err := st.Beats(ctx, []string{host})
 	if err != nil {
 		return "beat", err
@@ -539,6 +647,21 @@ func (a *app) fleetAddProve(ctx context.Context, st *store.Store, host, reader s
 	}
 	if states[reader] != sprint.ReaderUp {
 		return "reader", fmt.Errorf("the reader row %s is %s, not up; its reader loop is not running on %s", reader, states[reader], host)
+	}
+	// the probe: the member took and finished the card the deal gave it; the
+	// play's member pass reports the finish before it returns, and the verb
+	// reads the store
+	snap, err := st.Load(ctx, []string{sprint.Work}, nil)
+	if err != nil {
+		return "probe", err
+	}
+	c := snap.Work.Card(probe)
+	if c == nil || c.Col != sprint.Review {
+		state := "-"
+		if c != nil {
+			state = c.Col
+		}
+		return "probe", fmt.Errorf("the member has not taken and finished the probe card %s (it is %s); its member loop must reach the sprint and report the probe's finish; run: nova-swarm member --as %s --server <address:port> --once, then run fleet add again", probe, state, host)
 	}
 	return "", nil
 }

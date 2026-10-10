@@ -16,7 +16,8 @@ import (
 
 // fakeFleetAddPlay is the play runner fleet add is driven through in the tests:
 // it answers one output and error and keeps the argv it was given. onRun, when
-// set, runs while the play does (a test beats the loops the play would start).
+// set, runs while the play does (a test makes the member take and finish the
+// probe card the verb dealt).
 type fakeFleetAddPlay struct {
 	out   string
 	err   error
@@ -32,31 +33,33 @@ func (f *fakeFleetAddPlay) Play(_ context.Context, argv []string) (string, error
 	return f.out, f.err
 }
 
-// fleetAddPlayOK is fleet/member.yml's output when every step printed its line.
+// fleetAddPlayOK is fleet/member.yml's and fleet/tools.yml's output when every
+// step printed its line, including the binaries step tools.yml prints and the
+// probe step member.yml prints.
 const fleetAddPlayOK = `TASK [the pinned tools] ***
 ok: [bench-c] => {"msg": "FLEET-ADD step=tools host=bench-c done tools=go,sqlite3,harness,age,sops,bats"}
 TASK [the nova binaries at the adopted release] ***
-ok: [bench-c] => {"msg": "FLEET-ADD step=binaries host=bench-c done version=v1.2.0-dev.abc1234 bins=12"}
+ok: [bench-c] => {"msg": "FLEET-ADD step=binaries host=bench-c done version=v1.2.0-dev.abc1234"}
 TASK [the member and reader loop units] ***
 ok: [bench-c] => {"msg": "FLEET-ADD step=units host=bench-c done member=member-bench-c reader=reader-bench-c records=2"}
 TASK [the route credential through the sealed-secrets path] ***
-ok: [bench-c] => {"msg": "FLEET-ADD step=credential host=bench-c done route=pro-a keys=1"}
+ok: [bench-c] => {"msg": "FLEET-ADD step=credential host=bench-c done route_key=none sealed=yes"}
 TASK [a mirror for every repository a live card names] ***
 ok: [bench-c] => {"msg": "FLEET-ADD step=mirrors host=bench-c done repos=1"}
 TASK [the probe card] ***
-ok: [bench-c] => {"msg": "FLEET-ADD step=probe host=bench-c done card=probe-bench-c took=1 finished=1"}
+ok: [bench-c] => {"msg": "FLEET-ADD step=probe host=bench-c done card=probe-bench-c-1 took=1 finished=1"}
 `
 
-// fleetAddPlayNoProbe is the same play without the probe's line: the member
-// has not taken and finished a probe card, so it is not dealt work.
+// fleetAddPlayNoProbe is the same play without the probe's line: the play owes
+// the step and its absence refuses the add.
 const fleetAddPlayNoProbe = `TASK [the pinned tools] ***
 ok: [bench-c] => {"msg": "FLEET-ADD step=tools host=bench-c done tools=go,sqlite3,harness,age,sops,bats"}
 TASK [the nova binaries at the adopted release] ***
-ok: [bench-c] => {"msg": "FLEET-ADD step=binaries host=bench-c done version=v1.2.0-dev.abc1234 bins=12"}
+ok: [bench-c] => {"msg": "FLEET-ADD step=binaries host=bench-c done version=v1.2.0-dev.abc1234"}
 TASK [the member and reader loop units] ***
 ok: [bench-c] => {"msg": "FLEET-ADD step=units host=bench-c done member=member-bench-c reader=reader-bench-c records=2"}
 TASK [the route credential through the sealed-secrets path] ***
-ok: [bench-c] => {"msg": "FLEET-ADD step=credential host=bench-c done route=pro-a keys=1"}
+ok: [bench-c] => {"msg": "FLEET-ADD step=credential host=bench-c done route_key=none sealed=yes"}
 TASK [a mirror for every repository a live card names] ***
 ok: [bench-c] => {"msg": "FLEET-ADD step=mirrors host=bench-c done repos=1"}
 `
@@ -66,6 +69,34 @@ ok: [bench-c] => {"msg": "FLEET-ADD step=mirrors host=bench-c done repos=1"}
 const fleetAddPlayMissingSQLite = `TASK [the pinned tools] ***
 fatal: [bench-c]: FAILED! => {"msg": "FLEET-ADD REFUSED step=tools host=bench-c: sqlite3 is not installed; run: apt-get install -y sqlite3 (or the machine's package manager), then run fleet add again"}
 `
+
+// fleetAddPlayStepsText is the source text of the two plays fleet add runs:
+// fleet/member.yml and the fleet/tools.yml it imports. The step test holds the
+// verb's fleetAddPlaySteps to the lines these files print, so the verb and the
+// play it ships cannot drift.
+func fleetAddPlayStepsText(t *testing.T) string {
+	t.Helper()
+	var b strings.Builder
+	for _, name := range []string{"member.yml", "tools.yml"} {
+		text, err := os.ReadFile(filepath.Join("..", "..", "fleet", name))
+		require.NoError(t, err, name)
+		b.Write(text)
+	}
+	return b.String()
+}
+
+// TestFleetAddPlayEmitsEveryStepByTheVerbsReading pins finding 5: every step
+// fleetAddPlaySteps names has a FLEET-ADD line in the plays fleet add ships
+// (fleet/member.yml and the fleet/tools.yml it imports), including the binaries
+// step, which the verb refuses a run without. A hand-written fake cannot hide
+// a play missing a line: this reads the plays.
+func TestFleetAddPlayEmitsEveryStepByTheVerbsReading(t *testing.T) {
+	t.Parallel()
+	play := fleetAddPlayStepsText(t)
+	for _, step := range fleetAddPlaySteps {
+		assert.Contains(t, play, "FLEET-ADD step="+step+" ", "fleet/member.yml and fleet/tools.yml print no FLEET-ADD step=%s line, and the verb refuses a run without it", step)
+	}
+}
 
 // fleetAddWidth is the member's width on the fleet table: -1 when it has no row.
 func fleetAddWidth(t *testing.T, ta *testApp, member string) int {
@@ -85,9 +116,10 @@ func fleetAddWidth(t *testing.T, ta *testApp, member string) int {
 // host and does a member end to end: it prints one line per step (the machine
 // steps the play printed, the store and check steps the verb did), it adds the
 // member drained so it is dealt no work until its beat, its reader row are
-// there and the play has finished a probe card, and only then widens it. A
-// play that omitted a step, or one that refused, leaves the member drained and
-// is refused; a second run changes nothing; --dry-run writes nothing.
+// there and the member has taken and finished a probe card, and only then
+// widens it. A play that omitted a step, or one that claimed the probe without
+// the member finishing it, leaves the member drained and is refused; a second
+// run changes nothing; --dry-run writes nothing.
 func TestFleetAddSetsUpAMemberEndToEnd(t *testing.T) {
 	t.Parallel()
 	src := t.TempDir()
@@ -96,84 +128,112 @@ func TestFleetAddSetsUpAMemberEndToEnd(t *testing.T) {
 	base := []string{"--source", src, "--inventory", "/inv/nova-inventory"}
 
 	// one member, no others: the new member alone is dealt the ready cards
-	ta := newTestApp(t)
-	ta.ok("init --readers reader-a,reader-b")
-	ta.ok("add --stream s1 --count 4")
-	ta.ok("start")
-	ta.live = []string{"bench-c"}      // only the member being added beats
-	ta.ok("reader add reader-bench-c") // its row beats with every command from here
+	setup := func(ta *testApp) {
+		ta.ok("init --readers reader-a,reader-b")
+		ta.ok("add --stream s1 --count 4")
+		ta.ok("start")
+		ta.live = []string{"bench-c"}      // only the member being added beats
+		ta.ok("reader add reader-bench-c") // its row beats with every command from here
+	}
+	var w whereView
 
-	// the play ended without the probe's line: the member is not dealt work
-	noProbe := &fakeFleetAddPlay{out: fleetAddPlayNoProbe}
-	fleetAddPlayOf.Store(ta.a, noProbe)
+	// the play's line says the probe finished, but the member took and finished
+	// no card: the verb reads the store and refuses, so the member stays drained
+	// and is dealt no work
+	ta := newTestApp(t)
+	setup(ta)
+	claimed := &fakeFleetAddPlay{out: fleetAddPlayOK}
+	fleetAddPlayOf.Store(ta.a, claimed)
 	defer fleetAddPlayOf.Delete(ta.a)
 	code, out, errs := ta.do("fleet add bench-c --width 2 " + strings.Join(base, " "))
 	require.Equal(t, 1, code, "%s%s", out, errs)
 	assert.Contains(t, errs, "fleet add REFUSED step=probe host=bench-c")
+	assert.Contains(t, errs, "has not taken and finished the probe card")
 	assert.Equal(t, 0, fleetAddWidth(t, ta, "bench-c"), "the member is added drained while the probe is unfinished")
 	ta.ok("tick")
-	var w whereView
 	ta.json("where", &w)
 	assert.Equal(t, 0, cardsOf(w, "bench-c"), "a member whose probe has not finished is dealt no work")
 
-	// the whole play: every step's line, the member proven, the member dealt work
+	// the whole play: the member takes and finishes the probe card the verb dealt,
+	// every step's line is there, the member is proved and dealt work
+	okta := newTestApp(t)
+	setup(okta)
 	ok := &fakeFleetAddPlay{out: fleetAddPlayOK}
-	fleetAddPlayOf.Store(ta.a, ok)
-	code, out, errs = ta.do("fleet add bench-c --width 2 " + strings.Join(base, " "))
+	ok.onRun = func() {
+		okta.ok("take --as bench-c --limit 1")
+		okta.ok("finish --as bench-c probe-bench-c-1.w1@1")
+		okta.ok("tick") // the server's tick applies the member's queued take and finish
+	}
+	fleetAddPlayOf.Store(okta.a, ok)
+	defer fleetAddPlayOf.Delete(okta.a)
+	code, out, errs = okta.do("fleet add bench-c --width 2 " + strings.Join(base, " "))
 	require.Equal(t, 0, code, "%s%s", out, errs)
 	for _, step := range []string{"tools", "binaries", "units", "credential", "mirrors", "probe", "rows", "beat", "reader"} {
 		assert.Contains(t, out, "step="+step+" host=bench-c", "the step %s printed its line", step)
 	}
 	assert.Contains(t, out, "step=units host=bench-c done member=member-bench-c reader=reader-bench-c", "the loop units step names the member and reader units")
 	assert.Contains(t, out, "step=mirrors host=bench-c done repos=1", "the mirror for every live card's repository")
+	assert.Contains(t, out, "step=probe host=bench-c done", "the probe step's line")
 	assert.Contains(t, out, "FLEET-ADD OK host=bench-c width=2", "the receipt")
-	assert.Equal(t, 2, fleetAddWidth(t, ta, "bench-c"), "the member is widened only after the check")
+	assert.Equal(t, 2, fleetAddWidth(t, okta, "bench-c"), "the member is widened only after the check")
 	assert.True(t, strings.Contains(strings.Join(ok.argv, " "), "nova_member=bench-c"), "the play is told the member: %v", ok.argv)
 	assert.True(t, strings.Contains(strings.Join(ok.argv, " "), "nova_member_width=2"), "the play is told the width: %v", ok.argv)
 	assert.True(t, strings.Contains(strings.Join(ok.argv, " "), "nova_member_reader=reader-bench-c"), "the play is told the reader: %v", ok.argv)
 	assert.True(t, strings.Contains(strings.Join(ok.argv, " "), "--limit bench-c"), "the play is limited to the host: %v", ok.argv)
 	require.Contains(t, ok.argv, filepath.Join(src, "fleet", "member.yml"), "the play is fleet/member.yml")
 
-	ta.ok("tick")
-	ta.json("where", &w)
+	okta.ok("tick")
+	okta.json("where", &w)
 	assert.Greater(t, cardsOf(w, "bench-c"), 0, "the proven member is dealt work")
 
-	// a second run changes nothing: the same width, the same rows
-	before := fleetAddWidth(t, ta, "bench-c")
+	// a second run changes nothing: the same width, the probe already finished
+	before := fleetAddWidth(t, okta, "bench-c")
 	again := &fakeFleetAddPlay{out: fleetAddPlayOK}
-	fleetAddPlayOf.Store(ta.a, again)
-	code, _, errs = ta.do("fleet add bench-c --width 2 " + strings.Join(base, " "))
+	fleetAddPlayOf.Store(okta.a, again)
+	code, _, errs = okta.do("fleet add bench-c --width 2 " + strings.Join(base, " "))
 	require.Equal(t, 0, code, errs)
-	assert.Equal(t, before, fleetAddWidth(t, ta, "bench-c"), "a second run changed the width")
+	assert.Equal(t, before, fleetAddWidth(t, okta, "bench-c"), "a second run changed the width")
 
-	// the first step's refusal is said with its remedy, the member stays drained
-	refused := &fakeFleetAddPlay{out: fleetAddPlayMissingSQLite, err: errors.New("exit status 2")}
+	// a play that ended without the probe's line is refused, the member drained
 	ta2 := newTestApp(t)
 	ta2.ok("init --readers reader-a,reader-b")
 	ta2.live = []string{"bench-c"}
-	fleetAddPlayOf.Store(ta2.a, refused)
+	noProbe := &fakeFleetAddPlay{out: fleetAddPlayNoProbe}
+	fleetAddPlayOf.Store(ta2.a, noProbe)
 	defer fleetAddPlayOf.Delete(ta2.a)
 	code, _, errs = ta2.do("fleet add bench-c --width 2 " + strings.Join(base, " "))
 	assert.Equal(t, 1, code)
-	assert.Contains(t, errs, "sqlite3 is not installed")
-	assert.Contains(t, errs, "apt-get install -y sqlite3")
-	assert.Equal(t, 0, fleetAddWidth(t, ta2, "bench-c"), "a refused step leaves the member drained")
+	assert.Contains(t, errs, "fleet add REFUSED step=probe host=bench-c")
+	assert.Equal(t, 0, fleetAddWidth(t, ta2, "bench-c"), "a play without the probe step leaves the member drained")
 
-	// --dry-run lists every step, runs the play's --check and writes nothing
+	// the first step's refusal is said with its remedy, the member stays drained
+	refused := &fakeFleetAddPlay{out: fleetAddPlayMissingSQLite, err: errors.New("exit status 2")}
 	ta3 := newTestApp(t)
 	ta3.ok("init --readers reader-a,reader-b")
 	ta3.live = []string{"bench-c"}
-	dry := &fakeFleetAddPlay{out: fleetAddPlayOK}
-	fleetAddPlayOf.Store(ta3.a, dry)
+	fleetAddPlayOf.Store(ta3.a, refused)
 	defer fleetAddPlayOf.Delete(ta3.a)
-	code, out, errs = ta3.do("fleet add bench-c --width 2 --dry-run " + strings.Join(base, " "))
+	code, _, errs = ta3.do("fleet add bench-c --width 2 " + strings.Join(base, " "))
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "sqlite3 is not installed")
+	assert.Contains(t, errs, "apt-get install -y sqlite3")
+	assert.Equal(t, 0, fleetAddWidth(t, ta3, "bench-c"), "a refused step leaves the member drained")
+
+	// --dry-run lists every step, runs the play's --check and writes nothing
+	ta4 := newTestApp(t)
+	ta4.ok("init --readers reader-a,reader-b")
+	ta4.live = []string{"bench-c"}
+	dry := &fakeFleetAddPlay{out: fleetAddPlayOK}
+	fleetAddPlayOf.Store(ta4.a, dry)
+	defer fleetAddPlayOf.Delete(ta4.a)
+	code, out, errs = ta4.do("fleet add bench-c --width 2 --dry-run " + strings.Join(base, " "))
 	require.Equal(t, 0, code, "%s%s", out, errs)
 	assert.Contains(t, out, "FLEET-ADD WOULD-ADD host=bench-c width=2")
-	for _, step := range []string{"rows", "beat", "reader"} {
+	for _, step := range fleetAddSteps {
 		assert.Contains(t, out, "FLEET-ADD WOULD host=bench-c step="+step, "the dry run lists the %s step", step)
 	}
 	assert.Contains(t, dry.argv, "--check", "the dry run runs the play with --check: %v", dry.argv)
-	assert.Equal(t, -1, fleetAddWidth(t, ta3, "bench-c"), "the dry run wrote the member row")
+	assert.Equal(t, -1, fleetAddWidth(t, ta4, "bench-c"), "the dry run wrote the member row")
 
 	// usage: one host and a width
 	for _, bad := range [][]string{

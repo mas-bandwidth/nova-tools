@@ -24,16 +24,19 @@ to end: one verb, one play (`fleet/member.yml`, which includes `fleet/tools.yml`
 and `fleet/loops.yml`), and then the check that the member is there before it is
 dealt any work. The play converges the machine: the pinned tools (go, sqlite3,
 the pinned harness, age, sops, bats), the nova binaries at the machine's adopted
-release, the member and reader loop units and their records, the route
-credential through the sealed-secrets path (the play opens the seat with
-`nova-secrets exec` and the tool reads the key in its own process; no secret
-value is printed or passed), and a mirror for every repository a live card
-names. The verb adds the fleet and reader rows itself, the member **drained**
-(width 0), so the deal reaches it only once it is proved: the member beats
-within a minute, its reader row is up, and it has taken and finished one probe
-card. Until then the member is not dealt work. Every step prints one line, done
-or the refusal with its remedy; a second run changes nothing; `--dry-run` runs
-the play with `--check`, lists every step, and writes nothing.
+release, the member and reader loop records **added and applied, then their units
+rendered from them in the same run**, the route credential through the
+sealed-secrets path (the play opens the seat with `nova-secrets exec` and the
+tool reads the key in its own process; no secret value is printed or passed),
+and a mirror for every repository a live card names. The verb adds the fleet and
+reader rows itself, the member **drained** (width 0), deals it one probe card
+outside that width, and widens it only once it is proved: the member beats
+within a minute, its reader row is up, and it has taken and finished the probe
+card other than by the play's own word — the verb reads the store. Until then
+the member is not dealt work, and a refusal takes the probe card off the table
+and drains the member again. Every step prints one line, done or the refusal
+with its remedy; a second run changes nothing; `--dry-run` runs the play with
+`--check`, lists every step, and writes nothing.
 
 ```
 nova-sprint fleet add bench-a --width 64 --source . --inventory ./nova-inventory
@@ -44,9 +47,11 @@ A refusal leaves the member drained (width 0), so nothing is dealt it, and the
 same command run again finishes what is still missing or stale. The play's
 variables `nova_member`, `nova_member_width` and `nova_member_reader` name the
 host, its width and its reader (`reader-<host>`); the rest are defaults in
-`fleet/group_vars/all.yml`. The loop records the play adds are ordinary
-`nova-config` loop rows, so `fleet/loops.yml` renders the member's and reader's
-units from them the next time it runs.
+`fleet/group_vars/all.yml` (the mirror list `nova_member_repos` and the url they
+are fetched from, `nova_member_mirror_base`, come from the run). The loop
+records the play adds are ordinary `nova-config` loop rows: the play applies
+them and refreshes the inventory before `fleet/loops.yml` reads it, so the
+member's and reader's units exist in the run that adds them.
 
 
 ## An adopter's path
