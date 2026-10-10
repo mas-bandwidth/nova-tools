@@ -19,7 +19,7 @@ import (
 // same command is the same release on either host. The one exception is
 // --receipts, and internal/release/dogfoodgate.go says at length why the gate
 // in front of the definition of done is worth it.
-const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--journeys <file> | --no-journey-gate --reason <why>] [--spend-store <addr>] [--spend-since <RFC3339>] [--spend-receipts <file>] [--no-spend-gate --reason <why>] [--dry-run] [--timeout <d>]
+const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--journeys <file> | --no-journey-gate --reason <why>] [--spend-store <addr>] [--spend-since <RFC3339>] [--spend-receipts <file>] [--no-spend-gate --reason <why>] [--dispatch-certification] [--dry-run] [--timeout <d>]
 nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--incremental] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why> | --gate report --reason <why>] [--timeout <d>]
 nova-update release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
 nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --repo <owner/name> | --stage <dir> --expect-sums <sha256> | --stage <dir> --expect-sums-from <file>] [--retire <dir>] [--platform <goos-goarch>] (--certify <machines.tsv> --certs <file> --standard <file> | --no-certify) [--dry-run] [--timeout <d>]
@@ -88,6 +88,9 @@ type Deps struct {
 	// Ansible runs the tools play for `cycle` (cycle.go); nil is
 	// ExecAnsible with --ansible.
 	Ansible Ansible
+	// Sleep is the wait step for loops (such as dispatchCertification polling);
+	// nil falls back to time.Sleep.
+	Sleep func(time.Duration)
 }
 
 // options are every flag the five verbs take, in one struct, because they share
@@ -110,6 +113,7 @@ type options struct {
 	// noSpend the way past it; it shares --reason with the other waivers.
 	spendStore, spendSince, spendReceipts string
 	noSpend                               bool
+	dispatchCertification                 bool
 	// gate is build's --gate: "refuse" (the default, and the only way cut
 	// runs it) or "report", which prints the open edges and builds.
 	gate        string
@@ -261,6 +265,7 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		f.StringVar(&o.spendSince, "spend-since", "", "the spend window's start, RFC3339 (default: the previous tag's commit), taken back to its UTC day")
 		f.StringVar(&o.spendReceipts, "spend-receipts", "", "the subscription friends' harness receipts over the window: {\"evidence\":\""+ReceiptsKind+"\",\"from\",\"to\",\"friends\":{<friend>:<tokens>}}")
 		f.BoolVar(&o.noSpend, "no-spend-gate", false, "cut without the spend the store recorded matching each provider's own; "+DogfoodReasonFlag+" <why> is then required, and every row that did not pass goes into the changelog")
+		f.BoolVar(&o.dispatchCertification, "dispatch-certification", false, "dispatch certification.yml on an uncertified commit and wait for green before tagging")
 		required = []string{"repo", "from", "version", "changelog"}
 	case "build":
 		f.StringVar(&o.out, "out", "", "the artifact root the release is written under, as <out>/<version>/<goos-goarch>/")

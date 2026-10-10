@@ -36,8 +36,8 @@
 # package over 2 s or a test over 1 s unless internal/ci/slow-tests_allowlist.txt
 # names it. The FUNCTIONAL tier is the `functional` job: the tests behind
 # `//go:build functional`, over the same packages, on merge_group (a stream's
-# merge into dev), the nightly schedule and a manual run, never on a pull
-# request. See docs/TESTING.md.
+# merge into dev), on pull_request (the head-repo guard keeps a fork's PR off the
+# self-hosted pool), the nightly schedule and a manual run. See docs/TESTING.md.
 #
 # NO NATIVE WINDOWS LEG. Every windows-latest leg this file
 # carried — test-windows-pr's four shards, test-hosted-merge's windows leg and
@@ -304,9 +304,9 @@ jobs:
       - name: lint
         # The Go best-practice linters as class tests: staticcheck and errcheck,
         # each held per package to its shrink-only ledger (docs/SPEC-CI.md,
-        # `staticcheck` and `errcheck`). They are functional-tier and the
-        # functional job never runs on a pull request, so this step is where
-        # they gate one. `make lint` also re-runs the gofmt and vet targets
+        # `staticcheck` and `errcheck`). They are functional-tier and run here on
+        # every change, so a pull request gates them beside gofmt and vet.
+        # `make lint` also re-runs the gofmt and vet targets
         # above, which this job's build cache answers at once.
         # internal/ci: TestTheLintJobRunsTheLinterClassTests.
         run: make lint
@@ -805,13 +805,15 @@ jobs:
     # A functional test is one behind `//go:build functional`: a real
     # redis-server, a real binary, a real process. It runs on merge_group (the
     # queue's run of a stream PR into dev), on the nightly schedule and by hand,
-    # and NEVER on pull_request: a card PR into a stream branch and a stream PR
-    # into dev both skip it. Same selected packages as the unit legs, four space
-    # shards, two cores a leg, the two-minute cap. ci-ok requires it when it ran.
-    # internal/ci: TestFunctionalTierRunsOnlyAsStreamsMerge.
+    # and also on pull_request: a card PR into a stream branch and a stream PR
+    # into dev both run it. The pull_request arm carries the head-repo guard every
+    # self-hosted job carries, so a fork PR skips it rather than running real
+    # binaries and processes on the self-hosted pool. Same selected packages as the unit
+    # legs, four space shards, two cores a leg, the two-minute cap. ci-ok requires
+    # it when it ran. internal/ci: TestFunctionalTierRunsOnPullRequestAndAsStreamsMerge.
     name: functional (${{ matrix.entry.name }})
     needs: test-packages
-    if: github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -1862,8 +1864,8 @@ jobs:
       # of this job went wrong. The skip rules are tools/ci/aggregate.go's; the arguments below
       # are the events' own: a skip is ok for the legs that do not run on this event (lisp when
       # no lisp/ path moved, test-hosted-pr on a fork PR, a manual run or a diff that matches no
-      # platform path; functional on a pull request only: it runs on merge_group and
-      # workflow_dispatch, and when it ran it must pass). test-windows-pr is not aggregated:
+      # platform path; functional on a fork's pull request, where its head-repo guard
+      # skips it, and when it ran it must pass). test-windows-pr is not aggregated:
       # the Windows guard is the lint job's `make vet-windows`, so a GOOS=windows compile break
       # is a red `lint`, which this verdict reads.
       - name: every CL-tier job succeeded (pull request, merge group or manual)
