@@ -35,14 +35,16 @@ import (
 )
 
 // Clock is a virtual clock for tests. Now returns the virtual time and Advance
-// moves it. It is safe for concurrent use. Pass time as an argument
-// (now func() time.Time) wherever possible; where code takes a clock, use Clock.
+// moves it. It is safe for concurrent use (docs/STANDARD.md section 8). Pass
+// time as an argument (now func() time.Time) wherever possible; where code
+// takes a clock, use Clock.
 type Clock struct {
 	mu  sync.Mutex
 	now time.Time
 }
 
-// NewClock returns a clock set to start, or a fixed test time when start is zero.
+// NewClock returns a clock set to start, or a fixed test time when start is
+// zero (docs/STANDARD.md section 8).
 func NewClock(start time.Time) *Clock {
 	if start.IsZero() {
 		start = time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
@@ -50,14 +52,14 @@ func NewClock(start time.Time) *Clock {
 	return &Clock{now: start}
 }
 
-// Now returns the current virtual time.
+// Now returns the current virtual time (docs/STANDARD.md section 8).
 func (c *Clock) Now() time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.now
 }
 
-// Advance moves the clock forward by d.
+// Advance moves the clock forward by d (docs/STANDARD.md section 8).
 func (c *Clock) Advance(d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
