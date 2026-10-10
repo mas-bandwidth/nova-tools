@@ -114,6 +114,57 @@ func TestTheAskBatchesTwentyPrimariesInOneStep(t *testing.T) {
 	h.clean("after the batched ask")
 }
 
+// An uncontended backlog larger than a batch is asked in steps that double: a
+// step that committed on its first try met no other writer, so the next writes
+// twice as many, up to AskBatchMax. A hundred and fifty primaries are three
+// writes (20, 40, 80, then the 10 left), not eight of twenty (the certification
+// drive of 2026-10-10: about five hundred primaries in 26 steps of twenty, the
+// ask alone 1.0 to 2.0 s of a tick held to 1 s).
+func TestTheAskBatchDoublesWhileItsStepsAreUncontested(t *testing.T) {
+	t.Parallel()
+	h := inReview(t, 150)
+	var sizes []int
+	writes := 0
+	h.st.B = racingAsk{Mem: h.m, h: h, writes: &writes,
+		lose: func(ps []string) bool { sizes = append(sizes, len(ps)); return false }}
+	res, err := h.st.Tick(h.ctx)
+	require.NoError(t, err)
+	asked, refused := askOf(res)
+	require.Empty(t, refused)
+	require.Len(t, asked, 150, "every primary asked in the one tick")
+	require.Equal(t, []int{20, 40, 80, 10}, sizes, "the ask's writes, primaries each")
+	h.st.B = h.m
+	h.clean("after the doubling ask")
+}
+
+// A step that needed more than its first try puts the batch back to AskBatch:
+// the batch grows only while no other writer comes between a step's read and
+// its write, so a contested fence is written twenty primaries at a time (then
+// one at a time, TestTheAskStepAsksInSmallFencedSteps), never in the batch the
+// quiet steps before it grew to.
+func TestAContestedAskStepPutsTheBatchBack(t *testing.T) {
+	t.Parallel()
+	h := inReview(t, 200)
+	var sizes []int
+	writes := 0
+	h.st.B = racingAsk{Mem: h.m, h: h, writes: &writes,
+		lose: func(ps []string) bool {
+			sizes = append(sizes, len(ps))
+			// the third write (the batch of 80) meets another writer, once
+			return len(sizes) == 3
+		}}
+	res, err := h.st.Tick(h.ctx)
+	require.NoError(t, err)
+	asked, refused := askOf(res)
+	require.Empty(t, refused)
+	require.Len(t, asked, 200, "every primary asked in the one tick")
+	// 20, 40 and 80 uncontested; the 80 meets a writer and commits on its second
+	// try; the sixty left go AskBatch first and double again: 20, then 40
+	require.Equal(t, []int{20, 40, 80, 80, AskBatch, 40}, sizes, "the ask's writes, primaries each")
+	h.st.B = h.m
+	h.clean("after the contested ask")
+}
+
 // The ask writes in small fenced steps: other writers commit every 60 ms and a
 // write's window is 10 ms a primary it names, so a write of six or more always
 // holds another writer's commit. A large batch loses its tries (the live

@@ -38,8 +38,8 @@ import (
 //
 // A thousand cards a stream is the drive against a bench's store (GateStoreEnv,
 // the certification tier). The functional tier drives four hundred a stream: since
-// the tick's ask asks five primaries a fenced step within its two-second budget
-// (store/tick_ask.go), each tick with reads to ask spends that budget, and three
+// the tick's ask asked five primaries a fenced step within its two-second budget
+// (store/tick_ask.go), each tick with reads to ask spent that budget, and three
 // thousand cards on the container's two CPUs took over two minutes alone, past the
 // package's whole timeout. Twelve hundred keep every invariant below, the merge's
 // batch scaled with them (play --batch, a tenth of a stream): the streams' spread is

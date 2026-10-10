@@ -3759,6 +3759,13 @@ writes the first twenty primaries of that plan that this tick has not yet writte
 at most three tries (`store.AskTries`, against the twelve of a whole step, `store.FenceTries`).
 A lost batch falls back to single-primary steps; twenty avoids repeating the full review
 read and plan after every five primaries when no writer contests the fence.
+A step that commits on its first try met no other writer, and the next step writes twice as
+many primaries, up to 160 (`store.AskBatchMax`); a step that needed a second try, or lost,
+puts the batch back to twenty. On 2026-10-10 the certification drive brought about five
+hundred primaries into review in one tick and the ask wrote them in 26 uncontested steps of
+twenty, each planning the whole review table again and making its own fenced write: the ask
+alone took 1.0 to 2.0 s of a tick held to 1 s. Doubling writes them in six steps
+(`TestTheAskBatchDoublesWhileItsStepsAreUncontested`, `TestAContestedAskStepPutsTheBatchBack`).
 A step that loses all three is tried again one primary at a time. A primary that loses its own
 three tries is refused alone, `its ask lost <n> tries this tick in a step of its own (another
 writer moved the fence, or the store refused the write as planned); nothing was written for it;

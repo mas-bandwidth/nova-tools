@@ -18,15 +18,32 @@ import (
 // again twelve times, re-reading about two hundred round trips, and gave every
 // primary up ("the sprint kept changing under this step (12 attempts)"): no
 // read asked for ten minutes, and the tick held the server's line for 20 s.
-// So the ask writes at most AskBatch primaries a step, each step planned on a
-// fresh read with AskTries tries; a batch that loses its tries is tried again
-// a primary at a time, and a primary that loses its own tries is refused alone,
-// and asked again by the next tick. The steps stop at the ask's budget.
+// So the ask writes at most AskBatch primaries in its first step, each step
+// planned on a fresh read with AskTries tries; a batch that loses its tries is
+// tried again a primary at a time, and a primary that loses its own tries is
+// refused alone, and asked again by the next tick. The steps stop at the ask's
+// budget.
+//
+// A step that commits on its first try met no other writer, and the next step
+// writes twice as many, up to AskBatchMax; a step that needed a second try, or
+// lost, puts the batch back to AskBatch. On 2026-10-10 the certification drive
+// (cmd/nova-sprint TestTheDirtyTickDriveOnAStore) brought about five hundred
+// primaries into review in one tick, and the ask wrote them in 26 steps of
+// twenty, every one committed on its first try: each step planned the whole
+// review table again (5 to 25 ms) and made its own fenced write (8 to 39 ms,
+// eleven round trips), and the ask alone took 1.0 to 2.0 s of a tick held to 1 s.
+// Doubling while uncontested writes them in six steps; a contested fence still
+// writes twenty, then one primary at a time.
 const (
-	// AskBatch is the most primaries one fenced step of the tick's ask writes.
+	// AskBatch is the most primaries the first fenced step of the tick's ask
+	// writes, and every step after one that did not commit on its first try.
 	// Twenty avoids replanning the whole review table for every five cards;
 	// a batch that loses its tries is retried one primary at a time below.
 	AskBatch = 20
+	// AskBatchMax is the most primaries any one step of the ask writes: the
+	// batch doubles from AskBatch after each step that committed on its first
+	// try, and stops here.
+	AskBatchMax = 160
 	// AskTries is the plans one step of the tick's ask makes before it gives
 	// its primaries up for this tick.
 	AskTries = 3
@@ -91,6 +108,9 @@ func (t *tickRun) askInSteps(step Step) (Result, askTally, error) {
 	// lostBatch is the last step's batch when it lost its tries: tried again
 	// alone by the steps after it, and due while no plan has counted it since
 	var lostBatch []string
+	// size is the most primaries the next step writes: AskBatch, doubled after
+	// each step that committed on its first try (AskBatchMax)
+	size := AskBatch
 	for n := 0; ; n++ {
 		if n > 0 && !st.now().Before(until) {
 			tally.lost = len(lostBatch)
@@ -111,7 +131,7 @@ func (t *tickRun) askInSteps(step Step) (Result, askTally, error) {
 				// on a fresh read finds them open, and a happened note is said once
 				p.Notes, p.Closes, p.Updates, p.Said = nil, nil, nil, nil
 			}
-			chosen, left = askBatchOf(p, done, gaveUp, single)
+			chosen, left = askBatchOf(p, done, gaveUp, single, size)
 			planned = true
 			kept = sprint.KeepUnits(p, func(u sprint.Unit) bool { return slices.Contains(chosen, u.Key) })
 			return kept
@@ -150,6 +170,7 @@ func (t *tickRun) askInSteps(step Step) (Result, askTally, error) {
 		out.Drained = append(out.Drained, r.Drained...)
 		if r.Lost {
 			lost = true
+			size = AskBatch
 			if len(chosen) == 0 {
 				break
 			}
@@ -168,6 +189,12 @@ func (t *tickRun) askInSteps(step Step) (Result, askTally, error) {
 			continue
 		}
 		committed = true
+		if r.Attempts == 1 {
+			// no other writer came between its read and its write
+			size = min(size*2, AskBatchMax)
+		} else {
+			size = AskBatch
+		}
 		notesDone = notesDone || r.Notes > 0 || len(r.Moved) > 0
 		out.Op = r.Op
 		out.Moved = append(out.Moved, r.Moved...)
@@ -207,10 +234,10 @@ func (t *tickRun) askInSteps(step Step) (Result, askTally, error) {
 }
 
 // askBatchOf is the primaries one step of the ask writes from its plan: the
-// first not written, refused or given up in this tick, at most AskBatch of
-// them, or one alone when the first is from a batch that lost its tries; and
-// how many such primaries the plan holds beyond them.
-func askBatchOf(p sprint.Plan, done, gaveUp, single map[string]bool) (chosen []string, left int) {
+// first not written, refused or given up in this tick, at most size of them,
+// or one alone when the first is from a batch that lost its tries; and how
+// many such primaries the plan holds beyond them.
+func askBatchOf(p sprint.Plan, done, gaveUp, single map[string]bool, size int) (chosen []string, left int) {
 	seen := map[string]bool{}
 	alone := false
 	for _, u := range p.Units {
@@ -220,7 +247,7 @@ func askBatchOf(p sprint.Plan, done, gaveUp, single map[string]bool) (chosen []s
 		}
 		seen[k] = true
 		switch {
-		case alone || len(chosen) == AskBatch:
+		case alone || len(chosen) == size:
 			left++
 		case single[k] && len(chosen) == 0:
 			chosen, alone = []string{k}, true
