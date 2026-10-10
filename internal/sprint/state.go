@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -64,6 +65,13 @@ func withField(c *Card, name, value string) *Card {
 // Table is one table as observed: its revision, its rows in order, its text
 // cells, and its cards (placed, and any unplaced records the step asked for),
 // which are read by Card and Cards.
+//
+// Any number of goroutines may read one table at once: the indexes a read
+// builds on first use (the ids in order, the cells, the lines) are built under
+// lazy, so a read never writes what another read is reading. A change (Put,
+// Drop, SetRows, SetProp, a card's fields) is the one goroutine's that holds
+// the table, as for any Go value; Frozen is the copy another goroutine reads
+// while the table moves on.
 type Table struct {
 	Name     string // logical name
 	Epoch    uint64
@@ -84,6 +92,10 @@ type Table struct {
 	// tables, the archived streams (stream archive).
 	hidden map[string]bool
 
+	// lazy guards the indexes below, which a read builds on first use: two
+	// reads of one table at once (a snapshot shared by goroutines that only
+	// read it) would otherwise both write them.
+	lazy      sync.Mutex
 	cells     map[[2]string][]*Card // built on first use; Put resets it
 	byPrimary map[string][]*Card
 	lines     map[string][]*Card // each row's cards not landed, in score order; built with cells
@@ -116,7 +128,8 @@ func (t *Table) Frozen() *Table {
 	if t == nil {
 		return nil
 	}
-	c := *t
+	// field by field, never *t: the copy has its own lazy, and no index
+	c := &Table{Name: t.Name, Epoch: t.Epoch, Revision: t.Revision, hidden: t.hidden}
 	c.cards = make(map[string]*Card, len(t.cards))
 	maps.Copy(c.cards, t.cards)
 	c.props = make(map[string]string, len(t.props))
@@ -124,12 +137,12 @@ func (t *Table) Frozen() *Table {
 	c.Texts = make(map[string]map[string]string, len(t.Texts))
 	maps.Copy(c.Texts, t.Texts)
 	c.rows = append([]string(nil), t.rows...)
-	c.cells, c.byPrimary, c.lines, c.stops = nil, nil, nil, nil
-	c.ids = nil
+	t.lazy.Lock()
 	if len(t.ids) == len(t.cards) {
 		c.ids = slices.Clone(t.ids) // the same cards: their order kept, not sorted again
 	}
-	return &c
+	t.lazy.Unlock()
+	return c
 }
 
 // Drop takes a card out of the table's cards: a record the table no longer
@@ -161,7 +174,17 @@ func (t *Table) Props() map[string]string {
 	return out
 }
 
-func (t *Table) index() {
+// index is the table's cells and its placed cards by primary, built on first
+// use under lazy.
+func (t *Table) index() (map[[2]string][]*Card, map[string][]*Card) {
+	t.lazy.Lock()
+	defer t.lazy.Unlock()
+	t.indexLocked()
+	return t.cells, t.byPrimary
+}
+
+// indexLocked builds the cells when they are not built; lazy is held.
+func (t *Table) indexLocked() {
 	if t.cells != nil {
 		return
 	}
@@ -285,8 +308,11 @@ func (t *Table) AnyWithPrefix(prefix string) bool {
 }
 
 // sortedIDs is every card's id in id order (ids), built once from the cards
-// when it is not yet built.
+// when it is not yet built, under lazy: the slice returned is read, never
+// written, by the reads that ask for it.
 func (t *Table) sortedIDs() []string {
+	t.lazy.Lock()
+	defer t.lazy.Unlock()
 	if t.ids == nil || len(t.ids) != len(t.cards) {
 		t.ids = slices.Sorted(maps.Keys(t.cards))
 	}
@@ -304,17 +330,17 @@ func (t *Table) Placed(id string) *Card {
 
 // Cell is the cards placed at row and column, in score order (then id).
 func (t *Table) Cell(row, col string) []*Card {
-	t.index()
-	return t.cells[[2]string{row, col}]
+	cells, _ := t.index()
+	return cells[[2]string{row, col}]
 }
 
 // Column is the cards placed in the column on any row, in score order.
 func (t *Table) Column(cols ...string) []*Card {
-	t.index()
+	cells, _ := t.index()
 	var out []*Card
 	for _, r := range t.rows {
 		for _, col := range cols {
-			out = append(out, t.cells[[2]string{r, col}]...)
+			out = append(out, cells[[2]string{r, col}]...)
 		}
 	}
 	SortCards(out)
@@ -324,14 +350,14 @@ func (t *Table) Column(cols ...string) []*Card {
 // Count is the number of cards at row and column.
 func (t *Table) Count(row, col string) int {
 	k := [2]string{row, col}
-	t.index()
-	return len(t.cells[k])
+	cells, _ := t.index()
+	return len(cells[k])
 }
 
 // Of is the placed cards whose primary field names p, in score order.
 func (t *Table) Of(p string) []*Card {
-	t.index()
-	return t.byPrimary[p]
+	_, byPrimary := t.index()
+	return byPrimary[p]
 }
 
 // SortCards orders cards by score, then by id: work order.

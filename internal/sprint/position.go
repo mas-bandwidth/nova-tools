@@ -12,7 +12,14 @@ import "sort"
 // stream's line as it stands. Everything below reads the line through here:
 // StopBefore, PositionWaits, Behind and WaitsFor.
 func (t *Table) openLine(row string) []*Card {
-	t.index()
+	t.lazy.Lock()
+	defer t.lazy.Unlock()
+	return t.openLineLocked(row)
+}
+
+// openLineLocked is openLine with lazy held: the line is built with the cells.
+func (t *Table) openLineLocked(row string) []*Card {
+	t.indexLocked()
 	if t.lines == nil {
 		t.lines = map[string][]*Card{}
 	}
@@ -55,7 +62,9 @@ func StopBefore(s *Snapshot, stream string, score float64, landing map[string]bo
 // lineStops is the row's open line and, for each place in it, the place of
 // the last sentinel at or before it (-1 for none): built once with the line.
 func (t *Table) lineStops(row string) ([]*Card, []int) {
-	line := t.openLine(row)
+	t.lazy.Lock()
+	defer t.lazy.Unlock()
+	line := t.openLineLocked(row)
 	if t.stops == nil {
 		t.stops = map[string][]int{}
 	}
