@@ -128,6 +128,25 @@ func readCommitDeletions(root, commit, event, ref, branch string) (*mergeDeletio
 	if err != nil {
 		return nil, "", err
 	}
+	if len(parents) > 1 && promotionCut(root, parents[1]) {
+		// A promotion merge has the gated base as its first parent and the
+		// throwaway branch as its second. Read declarations from every commit
+		// in that branch since the gated base, rather than only from the merge
+		// tip: the deleted-test rule must not reject a promotion for a row that
+		// was declared below it (docs/SPEC-CI.md, classtests).
+		declared, err := declaredRowsSince(root, parents[0], commit)
+		if err == nil {
+			gone := make(map[string]bool, len(m.Deleted))
+			for _, rel := range m.Deleted {
+				gone[rel] = true
+			}
+			for rel, why := range declared {
+				if gone[rel] {
+					m.Declared[rel] = why
+				}
+			}
+		}
+	}
 	lg, ok := landingRun(event, ref, branch)
 	if !ok {
 		return m, "", nil
@@ -244,6 +263,44 @@ func readCommitDeletions(root, commit, event, ref, branch string) (*mergeDeletio
 	note := fmt.Sprintf("NOTE: %s is a %s at a merge commit: HEAD is compared with its first parent %s as everywhere; %s's history (the second parent %s's ancestry since the merge base %s, %d paths deleted) excused %d guarded deletions and %d declaration rows it made, each gated on %s's queue change by change, none of them a path %s's tip still has; and what HEAD lacks that %s's tip has is checked as the merge's own change (%d findings)",
 		where, lg.kind, parents[0][:9], lg.from, second[:9], since[:9], len(history), excused, excusedRows, lg.from, lg.from, lg.from, len(m.Beyond))
 	return m, note, nil
+}
+
+// promotionCut recognises the frozen commit made by nova-sprint promote. Its
+// subject is deliberately stable because CI sees the merged commit, not the
+// throwaway branch ref that the forge deletes after landing.
+func promotionCut(root, commit string) bool {
+	subject, err := gitOut(root, "show", "-s", "--format=%s", commit)
+	if err != nil {
+		return false
+	}
+	subject = strings.TrimSpace(subject)
+	return strings.HasPrefix(subject, "merge origin/") && strings.Contains(subject, " into promo/")
+}
+
+// declaredRowsSince returns the union of rows added by each commit after
+// base. A net diff is insufficient: a row can be added in one commit and
+// removed by a later commit while the deletion it explains remains in the
+// promotion's tree.
+func declaredRowsSince(root, base, tip string) (map[string]string, error) {
+	out, err := gitOut(root, "log", "--format=%H", "--topo-order", base+".."+tip)
+	if err != nil {
+		return nil, err
+	}
+	declared := map[string]string{}
+	for _, commit := range strings.Fields(out) {
+		parents, err := commitParents(root, commit)
+		if err != nil {
+			return nil, err
+		}
+		diff, err := gitOut(root, "diff", parents[0], commit, "--", deletedTestsLogPath)
+		if err != nil {
+			return nil, err
+		}
+		for rel, why := range declaredRowsAdded(diff) {
+			declared[rel] = why
+		}
+	}
+	return declared, nil
 }
 
 // landing is a run at the tip a promotion has just landed on: the branch it
@@ -761,6 +818,29 @@ func TestMergeRuleReadsTheDeletionOutOfGit(t *testing.T) {
 	gotOld := findings()
 	require.Len(t, gotOld, 1, "an old row: findings = %q; want the deletion red", gotOld)
 	require.True(t, strings.Contains(gotOld[0], "deletes b/keep_functional_test.go"), "an old row: findings = %q; want the deletion red", gotOld)
+}
+
+// TestPromotionReadsDeclarationsBelowItsMergeTip is the promotion regression:
+// the throwaway branch declares a deleted test in an earlier commit, then the
+// promotion merge brings that branch to the development tip. Reading only the
+// merge tip would reject the promotion; reading the branch range keeps it
+// green.
+func TestPromotionReadsDeclarationsBelowItsMergeTip(t *testing.T) {
+	t.Parallel()
+	r := newScratchRepo(t, "main")
+	r.write("gone_test.go", "package gone\n")
+	r.write(deletedTestsLogPath, "# the log\n")
+	r.stage("base")
+	r.git("checkout", "-q", "-b", "promo")
+	r.remove("gone_test.go")
+	r.write(deletedTestsLogPath, "# the log\ngone_test.go moved to the functional tier\n")
+	r.stage("merge origin/dev into promo/2026-10-07-1")
+	r.git("checkout", "-q", "main")
+	r.git("merge", "-q", "--no-edit", "--no-ff", "promo")
+
+	m, _, err := readCommitDeletions(r.root, "HEAD", "push", "refs/heads/feature", "")
+	require.NoError(t, err)
+	assert.Empty(t, m.findings(), "the promotion uses the declaration from the earlier branch commit")
 }
 
 // TestPromotionSkipReadsTheEvent pins the one shape that skips the

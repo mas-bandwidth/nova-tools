@@ -5729,6 +5729,12 @@ layer retires this section.
 
 ## 11. Verbs
 
+Promotion is one mechanical verb: it gates the frozen sprint tip with the
+whole-tree default (build, vet, every package's tests, and the functional tier
+in its container), pushes `promo/<YYYY-MM-DD>-<n>`, opens the pull request to
+the development branch from that throwaway head, and admits it to the merge
+queue. It never names the live sprint branch as the pull-request head.
+
 Each takes a set and is one step. A set is ids, a stream, a column, `--max n`,
 or an inbox group (`--group <id>`; a group number is refused, naming the ids).
 Every verb taking `--group` takes `--expect <n>`: when the group's members now

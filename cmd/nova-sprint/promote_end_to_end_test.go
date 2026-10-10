@@ -282,7 +282,7 @@ func promoteApp(t *testing.T, w *promoteTwin) *testApp {
 // ahead of dev is refused.
 func TestPromoteCarriesACutToARecordedPromotion(t *testing.T) {
 	t.Parallel()
-	const args = "promote --once --branch sprint/live --poll 1m --repo-dir "
+	const args = "promote --once --branch sprint/live --poll 1m --check= --repo-dir "
 
 	t.Run("clean", func(t *testing.T) {
 		t.Parallel()
