@@ -66,11 +66,11 @@ func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
   ]
 }`)
 	repos := reposFile(t, dir)
-	r := invoke(t, "fold", "--out", out, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+grok)
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:reader-f="+grok)
 	wantExit(t, r, 0)
 	wantContains(t, r.stdout, "TOKENS DAY day=2026-09-12 rows=1 ")
 	body := read(t, filepath.Join(out, "2026-09-12.tsv"))
-	const wantRow = "2026-09-12\tgrok-model-example\tunattributed\t1000\t100\t-\t-\t-\t0\tutc\txai:johnny"
+	const wantRow = "2026-09-12\tgrok-model-example\tunattributed\t1000\t100\t-\t-\t-\t0\tutc\txai:reader-f"
 	var data []string
 	for _, line := range strings.Split(strings.TrimSuffix(body, "\n"), "\n") {
 		if strings.HasPrefix(line, "2026-") {
@@ -85,7 +85,7 @@ func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
 
 	missing := filepath.Join(dir, "no-such-usage.json")
 	outMiss := mkdir(t, filepath.Join(dir, "out-missing"))
-	miss := invoke(t, "fold", "--out", outMiss, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+missing)
+	miss := invoke(t, "fold", "--out", outMiss, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:reader-f="+missing)
 	wantExit(t, miss, 1)
 	wantContains(t, miss.stderr, "TOKENS UNREADABLE")
 	wantContains(t, miss.stderr, "does not scan a session store")
@@ -96,7 +96,7 @@ func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
 	// fold is what must refuse the directory without walking it.
 	sessions := filepath.Join(home, ".grok", "sessions")
 	outDir := mkdir(t, filepath.Join(dir, "out-dir"))
-	dirFold := invoke(t, "fold", "--out", outDir, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+sessions)
+	dirFold := invoke(t, "fold", "--out", outDir, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:reader-f="+sessions)
 	wantExit(t, dirFold, 1)
 	wantContains(t, dirFold.stderr, "does not scan a directory")
 	require.False(t, strings.Contains(dirFold.all(), bait), "a directory flag folded the session store:\n%s", dirFold.all())

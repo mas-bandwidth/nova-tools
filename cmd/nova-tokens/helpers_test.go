@@ -430,7 +430,7 @@ func busDir(t *testing.T, dir string, names ...string) string {
 // busNote writes one note into a lane and returns its id.
 func busNote(t *testing.T, bus, lane, file, id, subject, date, body string) string {
 	t.Helper()
-	header := fmt.Sprintf("From: %s\nTo: Rowan\nDate: %s\nId: %s\nSubject: %s\n\n", cases.Title(language.Und, cases.NoLower).String(lane), date, id, subject)
+	header := fmt.Sprintf("From: %s\nTo: friend-c\nDate: %s\nId: %s\nSubject: %s\n\n", cases.Title(language.Und, cases.NoLower).String(lane), date, id, subject)
 	write(t, filepath.Join(bus, "from-"+lane, file), header+body)
 	return id
 }

@@ -19,7 +19,7 @@ func TestFoldOutAbsent(t *testing.T) {
 
 	t.Run("an absent out directory is refused and not created", func(t *testing.T) {
 		out := filepath.Join(dir, "out")
-		r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "glenn="+tr)
+		r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "seat-a="+tr)
 		wantExit(t, r, 2)
 		wantContains(t, r.stderr, "does not exist")
 		wantContains(t, r.stderr, out)
@@ -27,7 +27,7 @@ func TestFoldOutAbsent(t *testing.T) {
 
 	t.Run("a regular file at the out path is refused and untouched", func(t *testing.T) {
 		out := write(t, filepath.Join(dir, "outfile"), "a regular file\n")
-		r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "glenn="+tr)
+		r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "seat-a="+tr)
 		wantExit(t, r, 2)
 		wantContains(t, r.stderr, "is not a directory")
 		wantContains(t, r.stderr, out)

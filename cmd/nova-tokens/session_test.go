@@ -46,9 +46,9 @@ func TestSessionFoldsIntoTheDayFileAndKeepsTheOtherRows(t *testing.T) {
 	t.Parallel()
 
 	out := t.TempDir()
-	existing := "nova-tokens v1 day=2026-09-11 at=2026-09-11T00:00:00Z build=test turns=- sources=emma\n" +
+	existing := "nova-tokens v1 day=2026-09-11 at=2026-09-11T00:00:00Z build=test turns=- sources=operator\n" +
 		"date\tmodel\trepo\tinput\toutput\tcache_write\tcache_read\treasoning\trough\tday_basis\tsources\n" +
-		"2026-09-11\tdeepseek-v4-flash\tnova-tools\t100\t10\t-\t-\t-\t0\tutc\temma\n"
+		"2026-09-11\tdeepseek-v4-flash\tnova-tools\t100\t10\t-\t-\t-\t0\tutc\toperator\n"
 	{
 		err := os.WriteFile(filepath.Join(out, "2026-09-11.tsv"), []byte(existing), 0o644)
 		require.NoError(t, err, err)
@@ -63,9 +63,9 @@ func TestSessionFoldsIntoTheDayFileAndKeepsTheOtherRows(t *testing.T) {
 	require.NoError(t, err, err)
 	body := string(raw)
 	wantContains(t, body, "2026-09-11\tclaude-opus-5\tunattributed\t16\t420\t2500\t20000\t-\t0\tutc\tclaude-session")
-	wantContains(t, body, "2026-09-11\tdeepseek-v4-flash\tnova-tools\t100\t10\t-\t-\t-\t0\tutc\temma")
+	wantContains(t, body, "2026-09-11\tdeepseek-v4-flash\tnova-tools\t100\t10\t-\t-\t-\t0\tutc\toperator")
 	wantContains(t, body, "turns=2")
-	assert.True(t, strings.Contains(body, "sources=claude-session,emma"), "the version line does not name both sources:\n%s", strings.SplitN(body, "\n", 2)[0])
+	assert.True(t, strings.Contains(body, "sources=claude-session,operator"), "the version line does not name both sources:\n%s", strings.SplitN(body, "\n", 2)[0])
 
 	// Folding the same session again is the same file: a fold replaces its own rows and
 	// never adds to them.
@@ -252,18 +252,17 @@ func TestSessionRoleAndWeightsAreFlags(t *testing.T) {
 }
 
 // TestNoFleetNameInHelpOrOutput: the help this tool prints names no machine, person,
-// organisation or home path of one fleet (docs/STANDARD.md section 4). The list is the
-// generality class test's token inventory (internal/ci/generality_class_test.go); a word
-// is a finding whole, the way that class test scans, so an English word that merely holds
-// a name ("whitespace", "minimum") is not one.
+// organisation or home path of one fleet (docs/STANDARD.md section 4). The list holds the
+// role words a fleet's people, machines and friends are written as, and a word is a
+// finding whole, so an English word that merely holds one ("readership") is not one.
 func TestNoFleetNameInHelpOrOutput(t *testing.T) {
 	t.Parallel()
 
 	fleet := map[string]bool{
-		"alex": true, "antman": true, "batman": true, "captainamerica": true,
-		"emma": true, "freddy": true, "glenn": true, "hetzner": true, "hulk": true,
-		"johnny": true, "macbook": true, "mini": true, "rowan": true, "space": true,
-		"spacegame": true, "stella": true, "studio": true, "superman": true, "vision": true,
+		"reader-a": true, "reader-c": true, "reader-d": true, "reader-e": true,
+		"operator": true, "reader-b": true, "seat-a": true, "seat-b": true, "friend-a": true,
+		"reader-f": true, "seat-c": true, "seat-d": true, "friend-c": true, "friend-b": true,
+		"friend-d": true, "reader-g": true, "seat-e": true, "friend-e": true, "friend-f": true,
 	}
 	words := regexp.MustCompile(`[a-zA-Z0-9]+`)
 

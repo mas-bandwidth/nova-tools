@@ -140,11 +140,11 @@ func TestSourcesUnattributedNamesThePathsThatFellToOther(t *testing.T) {
 	// Three messages under one unnamed tree, two under another, one under a repo the
 	// rules DO name: only the five unattributed ones are tallied.
 	for i, p := range []string{
-		"/Users/glenn/deepseek-working-3/cmd/a.go",
-		"/Users/glenn/deepseek-working-3/cmd/b.go",
-		"/Users/glenn/deepseek-working-3/internal/c.go",
-		"/Users/glenn/rowan-working/nova-tools/cmd/d.go",
-		"/Users/glenn/rowan-working/nova-tools/internal/e.go",
+		"/Users/seat-a/deepseek-working-3/cmd/a.go",
+		"/Users/seat-a/deepseek-working-3/cmd/b.go",
+		"/Users/seat-a/deepseek-working-3/internal/c.go",
+		"/Users/seat-a/friend-c-working/nova-tools/cmd/d.go",
+		"/Users/seat-a/friend-c-working/nova-tools/internal/e.go",
 		"/x/schema/f.go",
 	} {
 		lines = append(lines, msg(fmt.Sprintf("m%d", i), "2026-09-11T10:00:00Z", "fable",
@@ -166,8 +166,8 @@ func TestSourcesUnattributedNamesThePathsThatFellToOther(t *testing.T) {
 	require.Equal(t, 2, len(stems), "%d SOURCES UNATTRIBUTED lines, want 2:\n%s", len(stems), r.stdout)
 	// One unnamed tree is ONE stem however many directories inside it were touched: the
 	// three `deepseek-working-3` paths sit in two directories and arrive as one line.
-	wantContains(t, stems[0], "stem=/Users/glenn/deepseek-working-3 mentions=3")
-	wantContains(t, stems[1], "stem=/Users/glenn/rowan-working mentions=2")
+	wantContains(t, stems[0], "stem=/Users/seat-a/deepseek-working-3 mentions=3")
+	wantContains(t, stems[1], "stem=/Users/seat-a/friend-c-working mentions=2")
 	// The path the rules DO name never reaches the tally.
 	wantNotContains(t, r.all(), "schema")
 	wantContains(t, lineWith(r.stdout, "SOURCES OK"), "unattributed=5")

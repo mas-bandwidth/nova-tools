@@ -21,9 +21,9 @@ func TestTheDayFileRoundTripsByteIdentically(t *testing.T) {
 	c.Set(CacheRead, 0)
 	f := &DayFile{
 		Day: "2026-09-11", At: "2026-09-11T23:55:02Z", Build: "abc", Turns: "42",
-		Sources: []string{"bus:emma", "claude:glenn"},
+		Sources: []string{"bus:operator", "claude:seat-a"},
 		Rows: []DayRow{
-			{Date: "2026-09-11", Model: "a", Repo: "schema", Counts: c, Rough: 2, Basis: UTC, Sources: []string{"claude:glenn"}},
+			{Date: "2026-09-11", Model: "a", Repo: "schema", Counts: c, Rough: 2, Basis: UTC, Sources: []string{"claude:seat-a"}},
 		},
 	}
 	text := f.Render()
@@ -179,9 +179,9 @@ func TestMergeDayRetainsReplacesAndRefuses(t *testing.T) {
 	}
 
 	// Retained and replaced, in one merge.
-	old := []DayRow{row("claude-x", "serialize.rs", 410, "swarm:glenn"), row("mercury-2.5", "serialize.rs", 1, "swarm:freddy")}
-	fresh := []DayRow{row("mercury-2.5", "serialize.rs", 2000, "swarm:freddy")}
-	merged, retained, partials := MergeDay(old, fresh, []string{"swarm:freddy"})
+	old := []DayRow{row("claude-x", "serialize.rs", 410, "swarm:seat-a"), row("mercury-2.5", "serialize.rs", 1, "swarm:reader-b")}
+	fresh := []DayRow{row("mercury-2.5", "serialize.rs", 2000, "swarm:reader-b")}
+	merged, retained, partials := MergeDay(old, fresh, []string{"swarm:reader-b"})
 	require.Lenf(t, partials, 0, "partials on a clean merge: %v", partials)
 	assert.EqualValuesf(t, 1, retained, "retained=%d, want 1", retained)
 	require.Falsef(t, len(merged) != 2 || merged[0].Model != "claude-x" || merged[1].Model != "mercury-2.5", "merged rows are not the two, sorted by (model, repo): %v", merged)
@@ -195,22 +195,22 @@ func TestMergeDayRetainsReplacesAndRefuses(t *testing.T) {
 	}
 
 	// A blended row: one row's sources name a declared label and an undeclared one.
-	old = []DayRow{row("claude-x", "serialize.rs", 410, "swarm:freddy", "swarm:glenn")}
-	fresh = []DayRow{row("mercury-2.5", "serialize.rs", 2000, "swarm:freddy")}
-	_, _, partials = MergeDay(old, fresh, []string{"swarm:freddy"})
+	old = []DayRow{row("claude-x", "serialize.rs", 410, "swarm:reader-b", "swarm:seat-a")}
+	fresh = []DayRow{row("mercury-2.5", "serialize.rs", 2000, "swarm:reader-b")}
+	_, _, partials = MergeDay(old, fresh, []string{"swarm:reader-b"})
 	require.Falsef(t, len(partials) != 1 || partials[0].Model != "claude-x", "a blended row was not refused: %v", partials)
 	assert.EqualValuesf(t, PartialBlended, partials[0].Why, "why=%q, want %q", partials[0].Why, PartialBlended)
 
 	// A collision: a retained row and a recomputed row with the same (model, repo).
-	old = []DayRow{row("claude-x", "serialize.rs", 410, "swarm:glenn")}
-	fresh = []DayRow{row("claude-x", "serialize.rs", 2000, "swarm:freddy")}
-	_, _, partials = MergeDay(old, fresh, []string{"swarm:freddy"})
+	old = []DayRow{row("claude-x", "serialize.rs", 410, "swarm:seat-a")}
+	fresh = []DayRow{row("claude-x", "serialize.rs", 2000, "swarm:reader-b")}
+	_, _, partials = MergeDay(old, fresh, []string{"swarm:reader-b"})
 	require.Falsef(t, len(partials) != 1 || partials[0].Why != PartialCollision, "a collision was not refused: %v", partials)
 
 	// Full replacement: nothing retained, and the merge is exactly this run's rows.
-	old = []DayRow{row("claude-x", "serialize.rs", 410, "swarm:glenn")}
-	fresh = []DayRow{row("claude-x", "serialize.rs", 900, "swarm:glenn")}
-	merged, retained, partials = MergeDay(old, fresh, []string{"swarm:glenn"})
+	old = []DayRow{row("claude-x", "serialize.rs", 410, "swarm:seat-a")}
+	fresh = []DayRow{row("claude-x", "serialize.rs", 900, "swarm:seat-a")}
+	merged, retained, partials = MergeDay(old, fresh, []string{"swarm:seat-a"})
 	require.Falsef(t, len(partials) != 0 || retained != 0 || len(merged) != 1, "full replacement is not today's behaviour: %d rows, retained=%d, %v", len(merged), retained, partials)
 	{
 		got, _ := merged[0].Counts.Get(Input)
@@ -219,12 +219,12 @@ func TestMergeDayRetainsReplacesAndRefuses(t *testing.T) {
 
 	// Byte for byte: the retained row renders exactly the line it was parsed from.
 	before := (&DayFile{Day: "2026-09-14", At: "s", Build: "b", Turns: Dash,
-		Sources: []string{"swarm:glenn"}, Rows: []DayRow{row("claude-x", "serialize.rs", 410, "swarm:glenn")}}).Render()
+		Sources: []string{"swarm:seat-a"}, Rows: []DayRow{row("claude-x", "serialize.rs", 410, "swarm:seat-a")}}).Render()
 	parsed, findings := ParseDayFile("2026-09-14", before)
 	require.Lenf(t, findings, 0, "the fixture file does not parse: %v", findings)
-	merged, _, _ = MergeDay(parsed.Rows, []DayRow{row("mercury-2.5", "serialize.rs", 2000, "swarm:freddy")}, []string{"swarm:freddy"})
+	merged, _, _ = MergeDay(parsed.Rows, []DayRow{row("mercury-2.5", "serialize.rs", 2000, "swarm:reader-b")}, []string{"swarm:reader-b"})
 	after := (&DayFile{Day: "2026-09-14", At: "s", Build: "b", Turns: Dash,
-		Sources: []string{"swarm:glenn"}, Rows: []DayRow{merged[0]}}).Render()
+		Sources: []string{"swarm:seat-a"}, Rows: []DayRow{merged[0]}}).Render()
 	assert.EqualValuesf(t, before, after, "a retained row did not come back byte-identical:\nwas:  %q\nnow:  %q", before, after)
 }
 
@@ -342,11 +342,11 @@ func TestPathStemKeepsTheTree(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct{ in, want string }{
-		{"/Users/glenn/deepseek-working-3/cmd/a.go", "/Users/glenn/deepseek-working-3"},
-		{"/Users/glenn/deepseek-working-3", "/Users/glenn/deepseek-working-3"},
+		{"/Users/seat-a/deepseek-working-3/cmd/a.go", "/Users/seat-a/deepseek-working-3"},
+		{"/Users/seat-a/deepseek-working-3", "/Users/seat-a/deepseek-working-3"},
 		{"/x/y", "/x/y"},
 		{"/x", "/x"},
-		{"~/rowan-working/nova-tools/cmd/a.go", "~/rowan-working/nova-tools"},
+		{"~/friend-c-working/nova-tools/cmd/a.go", "~/friend-c-working/nova-tools"},
 		{"~", "~"},
 		{"//double//slash//and//more", "/double/slash/and"},
 		{"github.com:mas-bandwidth/nova-tools", "github.com:mas-bandwidth/nova-tools"},
@@ -408,14 +408,14 @@ func TestTheBusGrammarIsOneGrammar(t *testing.T) {
 
 	// The parser is the serializer's inverse, which is the only way the two stay one
 	// grammar: report writes this and fold --bus reads it.
-	line := BodyLine("2026-09-11", "emma", "gemini", "schema", Input, 1234, UTC)
+	line := BodyLine("2026-09-11", "operator", "gemini", "schema", Input, 1234, UTC)
 	{
 		f := strings.Split(line, "\t")
 		assert.Lenf(t, f, 6, "a UTC line has %d fields, want six: %q", len(f), line)
 	}
-	zoned := BodyLine("2026-09-11", "emma", "gemini", "unattributed", Output, 7, "America/Los_Angeles")
+	zoned := BodyLine("2026-09-11", "operator", "gemini", "unattributed", Output, 7, "America/Los_Angeles")
 	assert.Truef(t, strings.HasSuffix(zoned, "\tday_basis=America/Los_Angeles"), "a zoned line does not carry its basis: %q", zoned)
-	subject := Subject("2026-09-11", "2026-09-11T23:55:02Z", "b", []string{"emma-000000000001", "emma-000000000002"})
+	subject := Subject("2026-09-11", "2026-09-11T23:55:02Z", "b", []string{"operator-000000000001", "operator-000000000002"})
 	p, ok := ParseSubject(subject)
 	assert.Falsef(t, !ok || p.day != "2026-09-11" || len(p.supersedes) != 2 || p.badSet != "", "the subject %q does not parse back: %+v ok=%v", subject, p, ok)
 	// `at=` is an RFC 3339 UTC stamp: `at=garbage build=b` was taken for a tokens note,
@@ -427,9 +427,9 @@ func TestTheBusGrammarIsOneGrammar(t *testing.T) {
 	for _, bad := range []string{"Tokens 2026-09-11", "tokens 2026-09-11 (rough)", "tokens 2026-09-11 at=x",
 		"tokens 11-09-2026", "tokens 2026-09-11 at=garbage build=b", "tokens 2026-09-11 at=2026-09-11T23:55:02-07:00 build=b",
 		"tokens 2026-09-11 build=b at=2026-09-11T23:55:02Z",
-		"tokens 2026-09-11 supersedes=emma-000000000001 at=2026-09-11T23:55:02Z build=b",
-		"tokens 2026-09-11 at=2026-09-11T23:55:02Z supersedes=emma-000000000001 build=b",
-		"tokens 2026-09-11 at=2026-09-11T23:55:02Z build=b supersedes=emma-000000000001 at=2026-09-11T23:55:02Z",
+		"tokens 2026-09-11 supersedes=operator-000000000001 at=2026-09-11T23:55:02Z build=b",
+		"tokens 2026-09-11 at=2026-09-11T23:55:02Z supersedes=operator-000000000001 build=b",
+		"tokens 2026-09-11 at=2026-09-11T23:55:02Z build=b supersedes=operator-000000000001 at=2026-09-11T23:55:02Z",
 		"tokens 2026-02-30", "tokens 2026-13-40"} {
 		{
 			_, ok := ParseSubject(bad)
@@ -437,7 +437,7 @@ func TestTheBusGrammarIsOneGrammar(t *testing.T) {
 		}
 	}
 	{
-		p, _ := ParseSubject("tokens 2026-09-11 at=2026-09-11T23:55:02Z build=b supersedes=emma-000000000002,emma-000000000001")
+		p, _ := ParseSubject("tokens 2026-09-11 at=2026-09-11T23:55:02Z build=b supersedes=operator-000000000002,operator-000000000001")
 		assert.NotEmpty(t, p.badSet, "an unsorted predecessor set was accepted")
 	}
 }

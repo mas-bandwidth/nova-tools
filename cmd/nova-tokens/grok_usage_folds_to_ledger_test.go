@@ -39,16 +39,16 @@ func TestGrokUsageFileFoldsToLedgerRow(t *testing.T) {
   ]
 }`)
 
-	r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--provider", "xai:johnny="+grok)
+	r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--provider", "xai:reader-f="+grok)
 	wantExit(t, r, 0)
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "kind=provider")
-	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "label=xai:johnny")
+	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "label=xai:reader-f")
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "day_basis=utc")
 
 	body := read(t, filepath.Join(out, "2026-09-12.tsv"))
 	line := lineWith(body, "grok-model-example")
 	require.NotEmpty(t, line, "no Grok ledger row in the day file:\n%s", body)
-	assert.Equal(t, "2026-09-12\tgrok-model-example\tunattributed\t1000\t100\t0\t800\t40\t0\tutc\txai:johnny", line, "Grok row is %q, want input/output/cost columns filled", line)
+	assert.Equal(t, "2026-09-12\tgrok-model-example\tunattributed\t1000\t100\t0\t800\t40\t0\tutc\txai:reader-f", line, "Grok row is %q, want input/output/cost columns filled", line)
 
 	c := invoke(t, "check", "--out", out)
 	wantExit(t, c, 0)

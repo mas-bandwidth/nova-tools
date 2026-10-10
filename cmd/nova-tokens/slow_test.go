@@ -6,7 +6,7 @@
 // of this package's 13 s.
 //
 // These tests are behind the `slow` build tag: the PR test jobs do not build them and
-// .github/workflows/nightly-slow.yml does (#516, Glenn's two-minute rule -- a package's
+// .github/workflows/nightly-slow.yml does (#516, seat-a's two-minute rule -- a package's
 // tests answer in a minute). Nothing here is skipped or weakened; it runs nightly, whole.
 
 package main
@@ -71,7 +71,7 @@ func fakeSqlite3Sleeping(t *testing.T) (env []string) {
 }
 
 // rule 19: a subprocess past --timeout is unreadable and the fold goes on.
-// SLOW: 1.0 s on hetzner at dev 64b9bec48, a deadline/wedge/wall bound proved by waiting it out.
+// SLOW: 1.0 s on seat-b at dev 64b9bec48, a deadline/wedge/wall bound proved by waiting it out.
 func TestASubprocessPastTheTimeoutIsUnreadableAndTheFoldGoesOn(t *testing.T) {
 	t.Parallel()
 

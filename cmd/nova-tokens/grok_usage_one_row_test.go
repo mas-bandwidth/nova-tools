@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestGrokUsageFoldsToOneRowWithInOutUsd is #626's red test (Johnny's dogfood):
+// TestGrokUsageFoldsToOneRowWithInOutUsd is #626's red test (reader-f's dogfood):
 // a fixture `grok usage` export, folded through --provider xai, lands ONE row
 // for its turn -- the in and the out in the day file -- and the turn's cost,
 // costUsdTicks, is 77 micro-dollar ticks (the unit the ledger's usd= holds, per
@@ -35,17 +35,17 @@ func TestGrokUsageFoldsToOneRowWithInOutUsd(t *testing.T) {
   ]
 }`)
 
-	r := invoke(t, "fold", "--out", out, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+grok)
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:reader-f="+grok)
 	wantExit(t, r, 0)
 	wantContains(t, r.stdout, "TOKENS DAY day=2026-09-12 rows=1 ")
 	wantContains(t, read(t, filepath.Join(out, "2026-09-12.tsv")),
-		"2026-09-12\tgrok-model-example\tunattributed\t1000\t100\t-\t-\t-\t0\tutc\txai:johnny")
+		"2026-09-12\tgrok-model-example\tunattributed\t1000\t100\t-\t-\t-\t0\tutc\txai:reader-f")
 	{
 		c := invoke(t, "check", "--out", out)
 		assert.Equal(t, 0, c.exit, "check over the folded day: exit %d, want 0\n%s", c.exit, c.stderr)
 	}
 
-	rep := invoke(t, "report", "--who", "johnny", "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+grok)
+	rep := invoke(t, "report", "--who", "reader-f", "--day", "2026-09-12", "--repos", repos, "--provider", "xai:reader-f="+grok)
 	wantExit(t, rep, 0)
 	avg := lineWith(rep.stderr, "TOKENS AVG ")
 	wantContains(t, avg, "model=grok-model-example")

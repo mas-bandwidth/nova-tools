@@ -21,7 +21,7 @@ func TestAvgLinesPerModelAndAll(t *testing.T) {
 	swarmUsage(t, pool, "j2", swarmRowCost("j2", "1", "-", "openai", "gpt-4o", "schema", "2026-09-11T11:00:00Z", "1000", "200", "-", "-", "-", "0.012345"))
 	swarmUsage(t, pool, "j3", swarmRowCost("j3", "1", "-", "x", "zero", "schema", "2026-09-11T12:00:00Z", "0", "-", "-", "-", "-", "0"))
 
-	r := invoke(t, "report", "--who", "rowan", "--day", "2026-09-11", "--repos", repos, "--swarm", "pool="+pool)
+	r := invoke(t, "report", "--who", "friend-c", "--day", "2026-09-11", "--repos", repos, "--swarm", "pool="+pool)
 	wantExit(t, r, 0)
 
 	deepseek := lineWith(r.stderr, "deepseek/deepseek-v3")

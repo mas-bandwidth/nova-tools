@@ -58,7 +58,7 @@ func busCoverRules(t *testing.T) *Rules {
 // busCoverGoodLine is one body line the serializer wrote: the report's grammar, not a
 // hand-built one, so the parser and the serializer stay one grammar in the tests too.
 func busCoverGoodLine(t Type, count int64, day string) string {
-	return BodyLine(day, "emma", "gemini", "schema", t, count, UTC)
+	return BodyLine(day, "operator", "gemini", "schema", t, count, UTC)
 }
 
 // busCoverAll indexes notes the way ReadBus does, by the lane each was read from and its
@@ -302,7 +302,7 @@ func TestBusCoverParseBody(t *testing.T) {
 		},
 		{
 			name: "a rough zoned line keeps its mark and its basis",
-			body: []string{"2026-09-11\temma\tgemini\tschema\toutput\t~7\tday_basis=America/Los_Angeles"},
+			body: []string{"2026-09-11\toperator\tgemini\tschema\toutput\t~7\tday_basis=America/Los_Angeles"},
 			check: func(t *testing.T, n *note) {
 				t.Helper()
 				require.Len(t, n.msgs, 1)
@@ -359,7 +359,7 @@ func TestBusCoverParseBody(t *testing.T) {
 		},
 		{
 			name: "a count with no digits is unparsed",
-			body: []string{"2026-09-11\temma\tgemini\tschema\tinput\tseven"},
+			body: []string{"2026-09-11\toperator\tgemini\tschema\tinput\tseven"},
 			check: func(t *testing.T, n *note) {
 				t.Helper()
 				assert.Len(t, n.lineErrs, 1)
@@ -367,7 +367,7 @@ func TestBusCoverParseBody(t *testing.T) {
 		},
 		{
 			name: "an unknown type name is unparsed",
-			body: []string{"2026-09-11\temma\tgemini\tschema\ttokens\t7"},
+			body: []string{"2026-09-11\toperator\tgemini\tschema\ttokens\t7"},
 			check: func(t *testing.T, n *note) {
 				t.Helper()
 				assert.Len(t, n.lineErrs, 1)
@@ -375,7 +375,7 @@ func TestBusCoverParseBody(t *testing.T) {
 		},
 		{
 			name: "a count that overflows the int64 is unparsed",
-			body: []string{"2026-09-11\temma\tgemini\tschema\tinput\t99999999999999999999"},
+			body: []string{"2026-09-11\toperator\tgemini\tschema\tinput\t99999999999999999999"},
 			check: func(t *testing.T, n *note) {
 				t.Helper()
 				assert.Len(t, n.lineErrs, 1, "the shape admits it, the number does not fit, so the line is unparsed")

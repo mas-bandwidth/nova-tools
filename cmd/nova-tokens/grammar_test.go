@@ -57,7 +57,7 @@ func outputGrammar(t *testing.T) map[string]string {
 
 // grammarPairs splits the head of a line (everything before the free-text tail) into its
 // key=value pairs. A token with no `=` continues the value before it, because a rendered
-// value can carry a space inside quotes.
+// value can carry whitespace inside quotes.
 func grammarPairs(s string) map[string]string {
 	out := map[string]string{}
 	key := ""
@@ -206,10 +206,10 @@ func TestTheOutputGrammarAdmitsTheLinesTheToolPrints(t *testing.T) {
 	// A bus lane carrying a six-field and a seven-field line: day_basis=mixed.
 	dir2 := t.TempDir()
 	out2 := mkdir(t, filepath.Join(dir2, "out"))
-	bus := busDir(t, mkdir(t, filepath.Join(dir2, "bus")), "emma")
-	busNote(t, bus, "emma", "a.md", "emma-000000000001", "tokens 2026-09-11", busDate, strings.Join([]string{
-		"2026-09-11\temma\tutcmodel\tschema\tinput\t100",
-		"2026-09-11\temma\tzonemodel\tschema\tinput\t5\tday_basis=America/Los_Angeles",
+	bus := busDir(t, mkdir(t, filepath.Join(dir2, "bus")), "operator")
+	busNote(t, bus, "operator", "a.md", "operator-000000000001", "tokens 2026-09-11", busDate, strings.Join([]string{
+		"2026-09-11\toperator\tutcmodel\tschema\tinput\t100",
+		"2026-09-11\toperator\tzonemodel\tschema\tinput\t5\tday_basis=America/Los_Angeles",
 		"",
 	}, "\n"))
 	runs = append(runs,
@@ -230,8 +230,8 @@ func TestTheOutputGrammarAdmitsTheLinesTheToolPrints(t *testing.T) {
 		"",
 	}, "\n"))
 	runs = append(runs,
-		invoke(t, "fold", "--out", out3, "--all", "--repos", reposFile(t, dir3), "--provider", "xai:johnny="+xai),
-		invoke(t, "sources", "--all", "--repos", reposFile(t, dir3), "--provider", "xai:johnny="+xai),
+		invoke(t, "fold", "--out", out3, "--all", "--repos", reposFile(t, dir3), "--provider", "xai:reader-f="+xai),
+		invoke(t, "sources", "--all", "--repos", reposFile(t, dir3), "--provider", "xai:reader-f="+xai),
 		invoke(t, "sum", "--out", out3, "--month", "2026-09"),
 		invoke(t, "check", "--out", out3))
 
@@ -244,9 +244,9 @@ func TestTheOutputGrammarAdmitsTheLinesTheToolPrints(t *testing.T) {
 	poolB := mkdir(t, filepath.Join(dir4, "poolB"))
 	swarmUsage(t, poolA, "j1", swarmRow("j1", "1", "-", "claude-x", "serialize", "2026-09-14T01:00:00Z", "410", "100", "0", "0", "-"))
 	swarmUsage(t, poolB, "j2", swarmRow("j2", "1", "-", "claude-x", "serialize", "2026-09-14T02:00:00Z", "2000", "420", "0", "0", "-"))
-	invoke(t, "fold", "--out", out4, "--day", "2026-09-14", "--repos", repos4, "--swarm", "glenn="+poolA, "--swarm", "freddy="+poolB)
+	invoke(t, "fold", "--out", out4, "--day", "2026-09-14", "--repos", repos4, "--swarm", "seat-a="+poolA, "--swarm", "reader-b="+poolB)
 	runs = append(runs,
-		invoke(t, "fold", "--out", out4, "--day", "2026-09-14", "--repos", repos4, "--swarm", "freddy="+poolB))
+		invoke(t, "fold", "--out", out4, "--day", "2026-09-14", "--repos", repos4, "--swarm", "reader-b="+poolB))
 
 	sawPartial := false
 	n := 0

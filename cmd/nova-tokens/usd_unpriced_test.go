@@ -23,11 +23,11 @@ func TestReportJSONNamesAnUnpricedCostAsNull(t *testing.T) {
 	swarmUsage(t, pool, "j2", swarmRowCost("j2", "1", "-", "openai", "gpt-4o", "schema", "2026-09-11T11:00:00Z", "1000", "200", "-", "-", "-", "-"))
 	swarmUsage(t, pool, "j3", swarmRowCost("j3", "1", "-", "openai", "gpt-4o", "schema", "2026-09-12T11:00:00Z", "1000", "200", "-", "-", "-", "-"))
 
-	text := invoke(t, "report", "--who", "rowan", "--day", "2026-09-11", "--repos", repos, "--swarm", "pool="+pool)
+	text := invoke(t, "report", "--who", "friend-c", "--day", "2026-09-11", "--repos", repos, "--swarm", "pool="+pool)
 	wantExit(t, text, 0)
 	wantContains(t, lineWith(text.stderr, "TOKENS AVG day=2026-09-11 model=openai/gpt-4o"), "usd=- usd_per_mtok=-")
 
-	_, got := asJSON(t, "report", "--who", "rowan", "--day", "2026-09-11", "--repos", repos, "--swarm", "pool="+pool, "--json")
+	_, got := asJSON(t, "report", "--who", "friend-c", "--day", "2026-09-11", "--repos", repos, "--swarm", "pool="+pool, "--json")
 	unpriced := avgItem(t, got, "openai/gpt-4o")
 	assert.Nil(t, unpriced["usd"], "an unpriced cost is null in the object, never - and never 0")
 	assert.Nil(t, unpriced["usd_per_mtok"], "an unpriced rate is null in the object")
@@ -35,7 +35,7 @@ func TestReportJSONNamesAnUnpricedCostAsNull(t *testing.T) {
 	assert.Equal(t, "0.02", priced["usd"], "a cost a source reported keeps its value")
 
 	// A day whose only model is unpriced: the one AVG-ALL line is null in the object too.
-	_, all := asJSON(t, "report", "--who", "rowan", "--day", "2026-09-12", "--repos", repos, "--swarm", "pool="+pool, "--json")
+	_, all := asJSON(t, "report", "--who", "friend-c", "--day", "2026-09-12", "--repos", repos, "--swarm", "pool="+pool, "--json")
 	assert.Nil(t, avgItem(t, all, "openai/gpt-4o")["usd"], "an unpriced cost is null on any day")
 	total := itemFields(t, all, "avg-all")
 	assert.Nil(t, total["usd"], "AVG-ALL over only unpriced models is null")

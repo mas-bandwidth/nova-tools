@@ -386,12 +386,12 @@ func TestReportWithOneUnreadableSourceExitsOne(t *testing.T) {
 	bad := mkdir(t, filepath.Join(dir, "bad"))
 	makeUnreadable(t, write(t, filepath.Join(bad, "x.jsonl"), "{}\n"))
 
-	r := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos,
+	r := invoke(t, "report", "--who", "operator", "--day", "2026-09-11", "--repos", repos,
 		"--claude", "g="+good, "--claude", "b="+bad)
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS UNREADABLE")
 	// Exit 1 still writes: the body printed, so the friend can see what it could compute.
-	wantContains(t, r.stdout, "2026-09-11\temma\tf\tschema\tinput\t3")
+	wantContains(t, r.stdout, "2026-09-11\toperator\tf\tschema\tinput\t3")
 }
 
 // TestReportSaysFailedWhenASourceIsUnreadable pins skeleton contract 1.5 on the report
@@ -450,12 +450,12 @@ func TestAHalfReadSuccessorDoesNotReplaceItsPredecessor(t *testing.T) {
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	repos := reposFile(t, dir)
-	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
-	first := busNote(t, bus, "emma", "a.md", "emma-00000000000a", "tokens 2026-09-11", busDate,
-		"2026-09-11\temma\tg\tschema\tinput\t100\n")
-	busNote(t, bus, "emma", "b.md", "emma-00000000000b",
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "operator")
+	first := busNote(t, bus, "operator", "a.md", "operator-00000000000a", "tokens 2026-09-11", busDate,
+		"2026-09-11\toperator\tg\tschema\tinput\t100\n")
+	busNote(t, bus, "operator", "b.md", "operator-00000000000b",
 		"tokens 2026-09-11 at=2026-09-11T20:00:00Z build=b supersedes="+first, busDate,
-		"2026-09-11\temma\tg\tschema\tinput\t250\nthis line is prose\n")
+		"2026-09-11\toperator\tg\tschema\tinput\t250\nthis line is prose\n")
 
 	r := invoke(t, "fold", "--out", out, "--all", "--repos", repos, "--bus", bus)
 	wantExit(t, r, 1)
@@ -463,7 +463,7 @@ func TestAHalfReadSuccessorDoesNotReplaceItsPredecessor(t *testing.T) {
 	wantNotContains(t, r.stdout, "TOKENS SUPERSEDED")
 	// Two tips now, so the lane-day is a conflict and nothing folds for it: the half-read
 	// correction never quietly became the day.
-	wantContains(t, r.stderr, "TOKENS CONFLICT label=bus:emma day=2026-09-11")
+	wantContains(t, r.stderr, "TOKENS CONFLICT label=bus:operator day=2026-09-11")
 	{
 		_, err := os.Stat(filepath.Join(out, "2026-09-11.tsv"))
 		assert.Error(t, err, "a day folded from a successor that did not parse whole")
@@ -600,7 +600,7 @@ func TestAQuotedFieldWhoseContinuationStartsWithAHashIsNotStripped(t *testing.T)
 		`pro",100`,
 		"",
 	}, "\n"))
-	r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--provider", "google:emma="+export)
+	r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--provider", "google:operator="+export)
 	wantExit(t, r, 0)
 	wantNotContains(t, r.stderr, "UNREADABLE")
 	wantNotContains(t, r.stderr, "UNPARSED")

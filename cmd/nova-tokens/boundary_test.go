@@ -277,9 +277,9 @@ func TestNoVerbTouchesACheckoutOrItsRemote(t *testing.T) {
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
 	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 100}, "/x/schema/a.go")+"\n")
-	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
-	busNote(t, bus, "emma", "n.md", "emma-00000000000a", "tokens 2026-09-11", busDate,
-		"2026-09-11\temma\tg\tschema\tinput\t250\n")
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "operator")
+	busNote(t, bus, "operator", "n.md", "operator-00000000000a", "tokens 2026-09-11", busDate,
+		"2026-09-11\toperator\tg\tschema\tinput\t250\n")
 
 	// A bare repository is the fake remote: a push has somewhere to go, and nothing here
 	// may go there. It is built with the real git, before the fake goes on PATH.
@@ -300,9 +300,9 @@ func TestNoVerbTouchesACheckoutOrItsRemote(t *testing.T) {
 
 	// Every verb, including the two that only look and the one that only says which build.
 	runs := [][]string{
-		{"fold", "--out", out, "--all", "--repos", repos, "--claude", "glenn=" + tr, "--bus", bus},
-		{"sources", "--repos", repos, "--all", "--claude", "glenn=" + tr, "--bus", bus},
-		{"report", "--who", "rowan", "--day", "2026-09-11", "--repos", repos, "--claude", "glenn=" + tr},
+		{"fold", "--out", out, "--all", "--repos", repos, "--claude", "seat-a=" + tr, "--bus", bus},
+		{"sources", "--repos", repos, "--all", "--claude", "seat-a=" + tr, "--bus", bus},
+		{"report", "--who", "friend-c", "--day", "2026-09-11", "--repos", repos, "--claude", "seat-a=" + tr},
 		{"sum", "--out", out, "--month", "2026-09"},
 		{"check", "--out", out},
 		{"version"},

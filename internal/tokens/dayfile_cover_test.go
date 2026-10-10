@@ -102,18 +102,18 @@ func TestDayfileCoverSourcesOfUnionsAndSortsRowSources(t *testing.T) {
 		{
 			name: "labels from every row union and sort",
 			rows: []DayRow{
-				dayfileRow("m1", "r1", map[Type]int64{Input: 1}, "swarm:freddy"),
+				dayfileRow("m1", "r1", map[Type]int64{Input: 1}, "swarm:reader-b"),
 				dayfileRow("m2", "r2", map[Type]int64{Input: 1}, "claude", "opencode"),
 			},
-			want: []string{"claude", "opencode", "swarm:freddy"},
+			want: []string{"claude", "opencode", "swarm:reader-b"},
 		},
 		{
 			name: "a label two rows share lands once",
 			rows: []DayRow{
-				dayfileRow("m1", "r1", map[Type]int64{Input: 1}, "swarm:freddy", "claude"),
-				dayfileRow("m2", "r2", map[Type]int64{Input: 1}, "swarm:freddy"),
+				dayfileRow("m1", "r1", map[Type]int64{Input: 1}, "swarm:reader-b", "claude"),
+				dayfileRow("m2", "r2", map[Type]int64{Input: 1}, "swarm:reader-b"),
 			},
-			want: []string{"claude", "swarm:freddy"},
+			want: []string{"claude", "swarm:reader-b"},
 		},
 	}
 	for _, tc := range tests {

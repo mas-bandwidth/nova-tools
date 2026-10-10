@@ -319,7 +319,7 @@ func TestLedgerAndReportDialAsTheAclUser(t *testing.T) {
 	require.False(t, strings.Contains(r.stderr+r.stdout, "sesame"), "a refusal printed the password")
 }
 
-// TestLedgerMonthPipelinesWritesAndDropsSuperfluousPing pins rowan-7fbdefecf56e:
+// TestLedgerMonthPipelinesWritesAndDropsSuperfluousPing pins friend-c-7fbdefecf56e:
 // `ledger --month` pipelines day hash writes in one round trip and openLedger drops
 // the superfluous PING that report --redis and ledger --day previously paid.
 func TestLedgerMonthPipelinesWritesAndDropsSuperfluousPing(t *testing.T) {
@@ -355,7 +355,7 @@ func TestLedgerMonthPipelinesWritesAndDropsSuperfluousPing(t *testing.T) {
 	}
 
 	// 1. Indexing month writes all 3 days in one pipeline and sends no PING.
-	// Before rowan-7fbdefecf56e, openLedger sent a superfluous PING
+	// Before friend-c-7fbdefecf56e, openLedger sent a superfluous PING
 	// and ran a transaction per day in a loop (24 trips for 23 days).
 	r := invoke(t, "ledger", "--out", out, "--month", "2026-09", "--redis", addr)
 	wantExit(t, r, 0)

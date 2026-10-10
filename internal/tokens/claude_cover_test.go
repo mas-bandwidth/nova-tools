@@ -182,9 +182,9 @@ func TestClaudeCoverReadClaudeFoldsTheTranscriptTree(t *testing.T) {
 		"",
 	}, "\n"))
 
-	s := ReadClaude("glenn", dir, os.DirFS(dir), claudeCoverRules(t))
+	s := ReadClaude("seat-a", dir, os.DirFS(dir), claudeCoverRules(t))
 
-	assert.Equalf(t, "claude:glenn", s.Label, "label=%q, want claude:glenn", s.Label)
+	assert.Equalf(t, "claude:seat-a", s.Label, "label=%q, want claude:seat-a", s.Label)
 	assert.Equalf(t, KindClaude, s.Kind, "kind=%q, want %q", s.Kind, KindClaude)
 	assert.Equalf(t, UTC, s.Basis, "basis=%q, want %q: every row is dated from a stamp", s.Basis, UTC)
 	assert.Equalf(t, 3, s.Stat.Files, "files=%d, want 3: two .jsonl and one .output, and the .txt is not a transcript", s.Stat.Files)
@@ -311,7 +311,7 @@ func TestClaudeCoverReadClaudeRefusesWhatItCannotRead(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := tc.write(t)
-			s := ReadClaude("glenn", dir, os.DirFS(dir), claudeCoverRules(t))
+			s := ReadClaude("seat-a", dir, os.DirFS(dir), claudeCoverRules(t))
 			tc.want(t, s)
 		})
 	}
@@ -323,13 +323,13 @@ func TestClaudeCoverReadClaudeRefusesWhatItCannotRead(t *testing.T) {
 func TestClaudeCoverUnreadableCountsAndNamesTheSource(t *testing.T) {
 	t.Parallel()
 
-	s := &Source{Label: Label(KindClaude, "glenn")}
+	s := &Source{Label: Label(KindClaude, "seat-a")}
 	s.unreadable("/w/lost.jsonl", "permission denied")
 	s.unreadable("/w/gone.jsonl", "no such file or directory")
 
 	assert.Equalf(t, 2, s.Stat.Unreadable, "unreadable=%d, want 2", s.Stat.Unreadable)
 	assert.Equalf(t, []Unreadable{
-		{Label: "claude:glenn", Path: "/w/lost.jsonl", Why: "permission denied"},
-		{Label: "claude:glenn", Path: "/w/gone.jsonl", Why: "no such file or directory"},
+		{Label: "claude:seat-a", Path: "/w/lost.jsonl", Why: "permission denied"},
+		{Label: "claude:seat-a", Path: "/w/gone.jsonl", Why: "no such file or directory"},
 	}, s.Unreadables, "the unreadables name the label, the path and the reason: %+v", s.Unreadables)
 }

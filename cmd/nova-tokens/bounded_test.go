@@ -107,12 +107,12 @@ func largestFoldState(t *testing.T) (tmp, out string, args []string) {
 
 	// Four lanes: one of conflicts, one long chain of corrections, one of comments and
 	// unparsed lines, and one quiet.
-	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma", "bo", "cyd", "dee")
-	line := func(d string) string { return d + "\temma\tbusmodel\trepo1\tinput\t5\n" }
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "operator", "bo", "cyd", "dee")
+	line := func(d string) string { return d + "\toperator\tbusmodel\trepo1\tinput\t5\n" }
 	for i := range overflow {
 		d := day(i)
-		busNote(t, bus, "emma", fmt.Sprintf("a%02d.md", i), fmt.Sprintf("emma-0000000%05d", i), "tokens "+d, busDate, line(d))
-		busNote(t, bus, "emma", fmt.Sprintf("b%02d.md", i), fmt.Sprintf("emma-1000000%05d", i), "tokens "+d, busDate, line(d))
+		busNote(t, bus, "operator", fmt.Sprintf("a%02d.md", i), fmt.Sprintf("operator-0000000%05d", i), "tokens "+d, busDate, line(d))
+		busNote(t, bus, "operator", fmt.Sprintf("b%02d.md", i), fmt.Sprintf("operator-1000000%05d", i), "tokens "+d, busDate, line(d))
 	}
 	prev := ""
 	for i := range overflow + 1 {
@@ -132,7 +132,7 @@ func largestFoldState(t *testing.T) (tmp, out string, args []string) {
 
 	args = []string{"--out", out, "--all", "--repos", repos,
 		"--claude", "one=" + claudeDirs[0], "--claude", "two=" + claudeDirs[1], "--claude", "three=" + claudeDirs[2],
-		"--swarm", "pool=" + pool, "--provider", "google:emma=" + g, "--provider", "xai:johnny=" + x, "--bus", bus}
+		"--swarm", "pool=" + pool, "--provider", "google:operator=" + g, "--provider", "xai:reader-f=" + x, "--bus", bus}
 	return dir, out, args
 }
 
@@ -323,7 +323,7 @@ func TestReportIsUncappedBecauseTheBodyIsTheArtifact(t *testing.T) {
 		rules = append(rules, fmt.Sprintf("repo-%02d\t(^|/)repo-%02d($|/)", repo, repo))
 	}
 	repos := write(t, filepath.Join(dir, "ten-repos.tsv"), strings.Join(rules, "\n")+"\n")
-	r := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr)
+	r := invoke(t, "report", "--who", "operator", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr)
 	wantExit(t, r, 0)
 	// Two hundred pairs, four types each: a Claude transcript carries no reasoning count.
 	{

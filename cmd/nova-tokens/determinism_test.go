@@ -80,12 +80,12 @@ func TestNothingAboutTheCheckoutDecidesWhichNoteIsTheDay(t *testing.T) {
 	gitLog, gitEnv := fakeGit(t)
 	dir := t.TempDir()
 	repos := reposFile(t, dir)
-	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
-	line := func(n string) string { return "2026-09-11\temma\tg\tschema\tinput\t" + n + "\n" }
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "operator")
+	line := func(n string) string { return "2026-09-11\toperator\tg\tschema\tinput\t" + n + "\n" }
 	// The successor's filename sorts BEFORE its predecessor's, and (below) its mtime is
 	// older and its position in a rebuilt INDEX is earlier. None of that may matter.
-	first := busNote(t, bus, "emma", "zzz-first.md", "emma-000000000001", "tokens 2026-09-11", busDate, line("100"))
-	second := busNote(t, bus, "emma", "aaa-second.md", "emma-000000000002",
+	first := busNote(t, bus, "operator", "zzz-first.md", "operator-000000000001", "tokens 2026-09-11", busDate, line("100"))
+	second := busNote(t, bus, "operator", "aaa-second.md", "operator-000000000002",
 		"tokens 2026-09-11 at=2026-09-11T20:00:00Z build=b supersedes="+first, busDate, line("250"))
 	_ = second
 
@@ -103,21 +103,21 @@ func TestNothingAboutTheCheckoutDecidesWhichNoteIsTheDay(t *testing.T) {
 	old := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	newer := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
 	{
-		err := os.Chtimes(filepath.Join(bus, "from-emma", "aaa-second.md"), old, old)
+		err := os.Chtimes(filepath.Join(bus, "from-operator", "aaa-second.md"), old, old)
 		require.NoError(t, err, err)
 	}
 	{
-		err := os.Chtimes(filepath.Join(bus, "from-emma", "zzz-first.md"), newer, newer)
+		err := os.Chtimes(filepath.Join(bus, "from-operator", "zzz-first.md"), newer, newer)
 		require.NoError(t, err, err)
 	}
 	// An INDEX sorted by path, the way `nova-bus check --rebuild-index` writes it: a
 	// derived catalogue, and never a statement about which number the friend meant.
-	write(t, filepath.Join(bus, "INDEX.md"), "- from-emma/aaa-second.md\n- from-emma/zzz-first.md\n")
+	write(t, filepath.Join(bus, "INDEX.md"), "- from-operator/aaa-second.md\n- from-operator/zzz-first.md\n")
 	// And a REAL git history in the checkout, whose commit order is the opposite of the
 	// send order: the successor is committed first. Demanded test 6 asks for "the notes'
 	// commit order reversed in a fixture git history"; an empty .git directory was not
 	// one, and nothing about a checkout may decide which note is the day.
-	reversedHistory(t, realGit, bus, "from-emma/aaa-second.md", "from-emma/zzz-first.md")
+	reversedHistory(t, realGit, bus, "from-operator/aaa-second.md", "from-operator/zzz-first.md")
 
 	after := fold(t, mkdir(t, filepath.Join(dir, "out2")))
 	a := strings.SplitN(before, "\n", 2)[1]
@@ -145,8 +145,8 @@ func TestAZonedReportCrossesTheBusWithoutBeingCalledUTC(t *testing.T) {
 		"",
 	}, "\n"))
 	note := filepath.Join(dir, "note.txt")
-	r := invoke(t, "report", "--who", "johnny", "--day", "2026-09-11", "--repos", repos,
-		"--provider", "xai:johnny="+export, "--note", note)
+	r := invoke(t, "report", "--who", "reader-f", "--day", "2026-09-11", "--repos", repos,
+		"--provider", "xai:reader-f="+export, "--note", note)
 	wantExit(t, r, 0)
 	for _, line := range lines(r.stdout) {
 		{
@@ -158,15 +158,15 @@ func TestAZonedReportCrossesTheBusWithoutBeingCalledUTC(t *testing.T) {
 
 	// The note folds to the same rows the export folds to directly.
 	viaBus := mkdir(t, filepath.Join(dir, "out-bus"))
-	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "johnny")
-	busNote(t, bus, "johnny", "n.md", "johnny-000000000001", subject, busDate, read(t, note))
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "reader-f")
+	busNote(t, bus, "reader-f", "n.md", "reader-f-000000000001", subject, busDate, read(t, note))
 	f := invoke(t, "fold", "--out", viaBus, "--day", "2026-09-11", "--repos", repos, "--bus", bus)
 	wantExit(t, f, 0)
 	wantContains(t, lineWith(f.stdout, "TOKENS SOURCE"), "day_basis=America/Los_Angeles")
 	wantContains(t, lineWith(f.stdout, "TOKENS DAY"), "nonutc=1")
 
 	direct := mkdir(t, filepath.Join(dir, "out-direct"))
-	wantExit(t, invoke(t, "fold", "--out", direct, "--day", "2026-09-11", "--repos", repos, "--provider", "xai:johnny="+export), 0)
+	wantExit(t, invoke(t, "fold", "--out", direct, "--day", "2026-09-11", "--repos", repos, "--provider", "xai:reader-f="+export), 0)
 
 	cells := func(text string) string {
 		var keep []string
@@ -181,13 +181,13 @@ func TestAZonedReportCrossesTheBusWithoutBeingCalledUTC(t *testing.T) {
 	// A hand-written seventh field that spells utc, one that is not day_basis=, and an
 	// eighth field are each unparsed: two spellings of one fact would be two grammars.
 	for _, bad := range []string{
-		"2026-09-11\tjohnny\tgrok-4\tunattributed\tinput\t1\tday_basis=utc",
-		"2026-09-11\tjohnny\tgrok-4\tunattributed\tinput\t1\tzone=America/Los_Angeles",
-		"2026-09-11\tjohnny\tgrok-4\tunattributed\tinput\t1\tday_basis=X\textra",
+		"2026-09-11\treader-f\tgrok-4\tunattributed\tinput\t1\tday_basis=utc",
+		"2026-09-11\treader-f\tgrok-4\tunattributed\tinput\t1\tzone=America/Los_Angeles",
+		"2026-09-11\treader-f\tgrok-4\tunattributed\tinput\t1\tday_basis=X\textra",
 	} {
 		one := mkdir(t, filepath.Join(dir, "b"+string(rune('a'+len(bad)%26))))
-		lane := busDir(t, mkdir(t, filepath.Join(one, "bus")), "johnny")
-		busNote(t, lane, "johnny", "n.md", "johnny-000000000002", "tokens 2026-09-11", busDate, bad+"\n")
+		lane := busDir(t, mkdir(t, filepath.Join(one, "bus")), "reader-f")
+		busNote(t, lane, "reader-f", "n.md", "reader-f-000000000002", "tokens 2026-09-11", busDate, bad+"\n")
 		o := mkdir(t, filepath.Join(one, "out"))
 		r := invoke(t, "fold", "--out", o, "--day", "2026-09-11", "--repos", repos, "--bus", lane)
 		wantExit(t, r, 1)
