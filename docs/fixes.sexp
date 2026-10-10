@@ -59,7 +59,7 @@
    :text "nova-update release build without --sprint-release ships no sprint tools and succeeds; it
     refuses unless an explicit opt-out flag is given."
    :origin "nova-tools PR #5571 cold read")
-  (fix "changelog-lists-merge-queue-merges" :release "v1.2.6" :status "planned"
+  (fix "changelog-lists-merge-queue-merges" :release "v1.2.6" :status "in-progress"
    :title "The release changelog lists merge-queue merges"
    :text "The cut changelog says no pull request merged since the previous tag although the merge queue
     merged many; the listing includes merge-queue merges."
@@ -93,6 +93,26 @@
     nova_friend_deny_self to a reinstall whose plist records none, and with no flag the daemon denies
     the seat's working root, so no lane exits 125 with bad_profile for a missing deny list."
    :origin "a one-shot friend host, 2026-10-10: every lane exit 125, the daemon ran with no --deny-self")
+  (fix "friend-lanes-are-thin-clients" :release "v1.2.6" :status "in-progress"
+   :title "A friend's lanes are thin clients of the sprint server"
+   :text "Each lane asks the server what it holds (take --lane), runs exactly that, and reports by the
+    ids, epoch and lane the server gave; a refusal drops the job and the lane asks again. lanes.json
+    keeps sessions and owed stop-returns only, never what a lane holds, and reads go through the
+    same lane loop. The model is tla/FriendLane.tla."
+   :origin "a one-shot friend host, 2026-10-10: took logged while the server showed the card ready, and progress sent at epoch 0")
+  (fix "friend-wall-reads-its-pinned-harness" :release "v1.2.6" :status "shipped"
+   :title "A friend's lane wall reads the pinned harness it runs"
+   :text "nova-friend install takes --wall-reads and writes it into the agent, and the seat play passes
+    nova_friend_wall_reads to a reinstall whose plist records none, so a pinned harness whose shim
+    execs a directory under the home no longer exits 126 (Operation not permitted) for every lane."
+   :origin "a one-shot friend host, 2026-10-10: every lane exit 126 after the harness pin; the wall denied reading the pinned harness directory")
+  (fix "friends-snap-to-the-new-epoch" :release "v1.2.6" :status "in-progress"
+   :title "A friend's new epoch retires her older-epoch items and starts empty"
+   :text "On the sprint's new epoch the daemon moves every older-epoch inbox and outbox item to the
+    retired folder named for its epoch, kept, never deleted, and the live folders start the new epoch
+    empty; on the same signal the lanes forget their sessions and the present is owed, so a full or
+    stale session never carries across a clear."
+   :origin "the seat ledger v1.2.4-held-2026-10-10.md friend snap, 2026-10-10: 323 inbox items and 535 outbox REPORTs of epoch 15, each refused (not on her row)")
   (fix "worker-brief-never-rewrites-history" :release "v1.2.6" :status "planned"
    :title "The worker brief says never amend, rebase or reset onto origin"
    :text "The child rule no-rewrite-history in fleet/child-rules.txt, byte for byte the copy nova-sprint embeds

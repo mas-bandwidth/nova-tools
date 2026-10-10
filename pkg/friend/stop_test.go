@@ -37,7 +37,8 @@ func TestParseMachineReadsTheWordOffTheBeatsAnswer(t *testing.T) {
 		assert.Equal(t, c.ok, ok, c.answer)
 		assert.Equal(t, c.state, st, c.answer)
 	}
-	assert.Equal(t, []string{"stop-return", "--as", "friend.bob", "c1@3", "--epoch", "15", "--reason", "owned process stopped"}, StopReturnArgv("friend.bob", "c1", 3, "15"))
+	assert.Equal(t, []string{"stop-return", "--as", "friend.bob", "c1@3", "--epoch", "15", "--reason", "owned process stopped"}, StopReturnArgv("friend.bob", "c1", 3, "15", 0))
+	assert.Equal(t, []string{"stop-return", "--as", "friend.bob", "c1@3", "--epoch", "15", "--reason", "owned process stopped", "--lane", "2"}, StopReturnArgv("friend.bob", "c1", 3, "15", 2), "a lane's card names its lane")
 }
 
 // stopWordHarness blocks every card's first turn until its context ends (the stop's cancel),
