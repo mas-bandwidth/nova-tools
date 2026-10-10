@@ -47,7 +47,7 @@ Where each field of this cut sits:
 | --- | --- |
 | machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
-| friend (decided for her) | `slots`, `tiers`, `roles`, `width`, `mode`, `config_dir`, `token_cap`, `streams`, `kinds` |
+| friend (decided for her) | `slots`, `tiers`, `roles`, `width`, `mode`, `config_dir`, `token_cap`, `streams`, `kinds`, `dir` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar`, `decide_attempt_no_result`, `decide_attempt_nothing_to_do`, `decide_grade`, `decide_gate_flaky`, `decide_gate_preexisting`, `decide_judgment_bar`, `decide_brief_bar`, `answer_rules_off` |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
 | route (decided per way to run a tier) | `tier`, `provider`, `model`, `harness`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
@@ -228,6 +228,7 @@ configuration. Who coordinates is not her field either: it is the sprint's.
 | `token_cap` | int, at least 0, default 6000000 | | nova-sprint friend sync, onto her friends row; her beat answers it as `row_token_cap=`, and a one-shot lane holds a card when the card's tokens (input, cached input, output and reasoning) reach it (docs/SPEC-FRIEND.md, friend-token-cap-bb.w2). 0 is no cap. Migration 0035 adds the column; every row before it is 6000000 | `friend:<f>:desired` token_cap |
 | `streams` | text, comma-separated glob patterns; empty by default | | nova-sprint friend sync, onto her friends row: the deal hands her only a card whose stream matches one of these patterns, and `add` and `brief` refuse a card naming her whose stream matches none; an empty list is any stream. Migration 0036 adds the column; every row before it is empty | `friend:<f>:desired` streams |
 | `kinds` | list of card KIND values; empty by default | | nova-sprint friend sync, onto her friends row: the deal hands her only a card whose `KIND:` is one of these, and `add` and `brief` refuse a card naming her whose `KIND:` is none of them; an empty list is any kind. Migration 0036 adds the column; every row before it is empty | `friend:<f>:desired` kinds |
+| `dir` | text, nullable: an absolute, clean path | | nova-sprint friend sync, onto her friends row: her working directory, where friend sync delivers her cards and collects her reports and friend reconcile (the verb and the run loop's tick), friend clean and `inbox --wait --push seat` read her inbox and outbox. `friend add` and `friend set --dir <path>` refuse a path that is not an existing directory on the machine running nova-config, or is itself a symlink; every row refuses a relative or unclean path. An explicit path avoids requiring a symlink as a sandbox root. Unset (`--dir ''`, and every row before migration 0037) is `<root>/<name>-working`, which nova-sprint says once a run as a `NOTE friend=<name> has no dir ...` line | `friend:<f>:desired` dir (absent when unset) |
 
 A friend row may restrict the work the sprint deals her: `streams` is a
 comma-separated list of glob patterns over stream names, and `kinds` is a
@@ -504,7 +505,7 @@ config.fleet             (name PK = 'fleet', store -> machines.name,
                           loops_dir, created_at, updated_at;
                           the one row inserted by the migration; loops_dir
                           added by 0033, text NOT NULL DEFAULT '~/nova-bench/loops')
-config.friends           (name PK, slots, tiers, roles, created_at, updated_at;
+config.friends           (name PK, slots, tiers, roles, dir, created_at, updated_at;
                           width added by 0018, integer NOT NULL DEFAULT 8, which fills every row there
                           CHECK (width >= 1))
 config.sprint            (name PK = 'sprint', coordinator -> friends.name,
@@ -644,6 +645,8 @@ logins, wake path and harness are her presence's. Remove: refused while
 registry member, the desired and roles hashes are removed in one
 transaction, with a `config-remove` receipt in `cap:log`; her beat, logins
 and wake path stay, they are hers.
+
+Her working directory is `HSET friend:<f>:desired dir <path>`, or `HDEL` of the field when unset.
 
 Her token cap is `HSET friend:<f>:desired token_cap <n>` the same way (6000000 when the row names none, 0 for no cap).
 
