@@ -281,7 +281,20 @@ type OpenCode struct {
 // runVerb is the run verb as this opencode takes it: `run`, and --standalone
 // when CheckRun found it (Standalone).
 func (o *OpenCode) runVerb(args ...string) []string {
-	verb := []string{"run"}
+	return o.verb("run", args...)
+}
+
+// listVerb is `session list --format json`, and --standalone when CheckRun found
+// it: without it opencode 2.0.25 starts its managed service on a fixed port, and
+// a listing under a lane's wall (its own HOME) exits 1 against the instance the
+// daemon's HOME already holds ("Managed service port ... is already in use").
+func (o *OpenCode) listVerb() []string {
+	return o.verb("session", "list", "--format", "json")
+}
+
+// verb is one opencode verb with --standalone after it when Standalone.
+func (o *OpenCode) verb(name string, args ...string) []string {
+	verb := []string{name}
 	if o.Standalone {
 		verb = append(verb, "--standalone")
 	}
@@ -352,7 +365,7 @@ func (o *OpenCode) Deliver(ctx context.Context, text string) (int, error) {
 	}
 	id := o.Session
 	if id == "" {
-		listing, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"session", "list", "--format", "json"}, "")
+		listing, exit, err := o.Run(ctx, o.Dir, o.program(), o.listVerb(), "")
 		if err != nil {
 			return 0, fmt.Errorf("opencode session list: %w", err)
 		}
