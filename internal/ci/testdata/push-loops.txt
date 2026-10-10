@@ -78,6 +78,7 @@ cmd/nova-sandbox/runwin.go waitForWSBExit waits and retries
 cmd/nova-sandbox/runwin_windows.go winPlace.RemoveTree waits and retries
 cmd/nova-sprint/backup_out.go startServerTwin waits and retries
 cmd/nova-sprint/snapshot.go redisSource.Save waits and retries
+cmd/nova-sprint/adopt.go AdoptWindow.Wait waits and retries
 cmd/nova-swarm/member.go nativeRunner.Start waits and retries
 internal/nsprint/testutil/pg/pg.go Server.ready waits and retries
 internal/nsprint/testutil/redis.go startOnce waits and retries
