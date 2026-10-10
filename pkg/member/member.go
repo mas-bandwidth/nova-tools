@@ -989,7 +989,8 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	// Room is asked every tick, a draining member's too, after the reports, so a launch whose
 	// end rested the member (room) rests it in this pass, and the word its beats carry
 	// (noRoomArgs) is this tick's: asked only past the drain return, a member that drained
-	// under its floor kept saying no room after the disk was freed (nova-tools#5569 follow-up)
+	// under its floor kept saying no room after the disk was freed (nova-tools#5569 follow-up;
+	// tla/NoRoom.tla in nova-sprint, Tick: WordIsThisTicks)
 	ok, why := m.room(now)
 	if m.drain {
 		return acted, nil
