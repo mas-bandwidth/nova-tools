@@ -1046,7 +1046,7 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	}
 	at := snap.Epoch
 	res.Tables = newTables()
-	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: beats, Started: m.FirstStart(snap.Cleared), AnswerRules: st.AnswerRules, IdleAlarm: st.IdleAlarm, WakeFriend: st.WakeFriend}
+	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: beats, Started: m.FirstStart(snap.Cleared), AnswerRules: st.AnswerRules, IdleAlarm: st.IdleAlarm, WakeFriend: st.WakeFriend, SendWidthGoal: st.SendWidthGoal}
 	// the first read as it was: the twin it came from moves on with every
 	// part's writes, and with any other writer in this process
 	first := *snap
@@ -1261,6 +1261,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 				// a plan made to see whether the part has work wakes no one
 				probe := t.req
 				probe.WakeFriend = nil
+				probe.SendWidthGoal = nil
 				p, due := part.Fn(view, probe)
 				p = t.laneChecked(view, probe, part.Name, p)
 				if p.Empty() && due == 0 {
@@ -1281,18 +1282,26 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		// tla/StallLadder.tla, NoWakeWithoutRung): a plan made again after a commit lost
 		// to another writer wakes her once, not once a plan
 		var wakes []stallWake
+		var widthGoals []widthGoalSend
 		fn := func(s *sprint.Snapshot, r sprint.TickReq) (sprint.Plan, int) {
 			if drain {
 				planned = sprint.Drain(s, s.Queue, sprint.MachineActor)
 				return planned, 0
 			}
 			wakes = nil
+			widthGoals = nil
 			if s.Friends == nil {
 				s.Friends = r.Friends
 			}
 			if r.WakeFriend != nil {
 				r.WakeFriend = func(friend string, rung int, d time.Duration) error {
 					wakes = append(wakes, stallWake{friend, rung, d})
+					return nil
+				}
+			}
+			if r.SendWidthGoal != nil {
+				r.SendWidthGoal = func(friend string, reads, work, width int, idle int64) error {
+					widthGoals = append(widthGoals, widthGoalSend{friend, reads, work, width, idle})
 					return nil
 				}
 			}
@@ -1400,6 +1409,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		}
 		if !r.Lost {
 			t.wake(wakes)
+			t.sendWidthGoals(widthGoals)
 		}
 		// Each table this part wrote, other than its own and the work table,
 		// holds what it wrote in its queue until its update runs.
@@ -1462,6 +1472,27 @@ type stallWake struct {
 // (Store.WakeFriend; tla/StallLadder.tla, WokenAtEveryWakeRung): each once, a send
 // that fails said on the tick's result and never failing the tick, as the rung it
 // climbed is written and stands.
+// widthGoalSend is one width goal send to an idle-loaded friend.
+type widthGoalSend struct {
+	friend string
+	reads  int
+	work   int
+	width  int
+	idle   int64
+}
+
+// sendWidthGoals sends the width goal messages of a part's plan, its step committed.
+func (t *tickRun) sendWidthGoals(goals []widthGoalSend) {
+	if t.st.SendWidthGoal == nil {
+		return
+	}
+	for _, g := range goals {
+		if err := t.st.SendWidthGoal(g.friend, g.reads, g.work, g.width, g.idle); err != nil {
+			t.res.Said = append(t.res.Said, fmt.Sprintf("the width goal of friend %s was not sent: %v", g.friend, err))
+		}
+	}
+}
+
 func (t *tickRun) wake(ws []stallWake) {
 	if t.st.WakeFriend == nil {
 		return

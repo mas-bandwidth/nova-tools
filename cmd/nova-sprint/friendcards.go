@@ -964,6 +964,33 @@ func (a *app) wakeFriendStall(ctx context.Context, st *store.Store, name string,
 	return err
 }
 
+// widthGoalSender is the store's SendWidthGoal for the machine (tick and run): the friend
+// idle rule's width goal sent on the bus (sendFriendWidthGoal), a message not sent said on out.
+func (a *app) widthGoalSender(st *store.Store, out io.Writer) func(string, int, int, int, int64) error {
+	return func(name string, reads, work, width int, idle int64) error {
+		return a.sendFriendWidthGoal(context.Background(), st, name, reads, work, width, idle, func(l string) { fmt.Fprintln(out, l) })
+	}
+}
+
+// sendFriendWidthGoal sends a friend who turned idle-loaded the width goal as a bus message.
+func (a *app) sendFriendWidthGoal(ctx context.Context, st *store.Store, name string, reads, work, width int, idle int64, say func(string)) error {
+	m := bus.Message{
+		From:    st.Actor,
+		To:      []string{name},
+		Subject: sprint.BusMessageSubjectIdleLoaded,
+		Body:    sprint.WidthGoalText(name, reads, work, width, idle),
+	}
+	err := a.bus(ctx, m, say)
+	if err == nil {
+		return nil
+	}
+	why := oneline.Escape(err.Error())
+	if say != nil {
+		say(fmt.Sprintf("FRIEND-IDLE NOTE friend=%s: the bus message to her was not sent (%s); tell her by hand", name, why))
+	}
+	return err
+}
+
 // friendReadText is the BRIEF.md of a friend's read, as friend sync and friend cards
 // both write it: the read's brief, the attempt's branch, start commit and head (the packet's,
 // else the card's), and a deadline of thirty minutes on the sprint clock.
