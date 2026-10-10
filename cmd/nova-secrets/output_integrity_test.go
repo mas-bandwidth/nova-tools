@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"io/fs"
 	"os"
@@ -26,11 +27,17 @@ func loadPackagesWithJSON(t *testing.T, dir string, tests bool) []goListPackage 
 	cmd := exec.Command("go", args...)
 	cmd.Dir = dir
 	cmd.Env = goenv.Clean(os.Environ())
-	output, err := cmd.CombinedOutput()
-	require.NoError(t, err, "failed to run go list in %s: %s", dir, string(output))
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	err := cmd.Run()
+	if err != nil {
+		require.NoError(t, err, "failed to run go list in %s: %s", dir, stderr.String())
+	}
 
 	var packages []goListPackage
-	decoder := json.NewDecoder(strings.NewReader(string(output)))
+	decoder := json.NewDecoder(strings.NewReader(stdout.String()))
 	for decoder.More() {
 		var p goListPackage
 		err := decoder.Decode(&p)
