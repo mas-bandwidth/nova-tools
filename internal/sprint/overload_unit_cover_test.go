@@ -45,7 +45,7 @@ func TestSprintOverloadCoverMemberTimeouts(t *testing.T) {
 		fleet := NewTable("Fleet")
 		fleet.SetRows([]string{"m1"})
 		fleet.Put(&Card{ID: "c1", Row: "m1", Col: DoneFailed, Fields: map[string]string{
-			"report":  "deadline: killed",
+			"report":   "deadline: killed",
 			"finished": windowStart.Add(5 * time.Minute).Format(time.RFC3339),
 		}})
 		s := &Snapshot{Now: now, Fleet: fleet}
@@ -125,6 +125,22 @@ func TestSprintOverloadCoverMemberTimeouts(t *testing.T) {
 		assert.Equal(t, "c-a", ts[0].Card)
 		assert.Equal(t, "c-b", ts[1].Card)
 	})
+
+	t.Run("staging refusal via StagingTakes", func(t *testing.T) {
+		t.Parallel()
+		fleet := NewTable("Fleet")
+		fleet.SetRows([]string{"m1"})
+		stakeTake := "r\tmodel\tm1\t" + windowStart.Add(5*time.Minute).Format(time.RFC3339) + "\t\tstage-timeout\t"
+		fleet.Put(&Card{ID: "wc1", Row: "m1", Col: Working, Fields: map[string]string{
+			"gen":            "1",
+			"staging_take_1": stakeTake,
+		}})
+		s := &Snapshot{Now: now, Fleet: fleet}
+		ts := MemberTimeouts(s, "m1")
+		require.Len(t, ts, 1)
+		assert.Equal(t, "wc1", ts[0].Card)
+		assert.Equal(t, TimeoutStaging, ts[0].Kind)
+	})
 }
 
 func TestSprintOverloadCoverOverloaded(t *testing.T) {
@@ -155,6 +171,7 @@ func TestSprintOverloadCoverOverloaded(t *testing.T) {
 		t.Parallel()
 		fleet := NewTable("Fleet")
 		fleet.SetRows([]string{member})
+		fleet.Put(&Card{ID: CtlID(member), Row: member, Col: Ctl, Fields: map[string]string{FieldWidth: "8"}})
 		// Put OverloadTimeouts cards
 		for i := 0; i < OverloadTimeouts; i++ {
 			id := "c" + string(rune('0'+i))
@@ -163,7 +180,6 @@ func TestSprintOverloadCoverOverloaded(t *testing.T) {
 				"finished": windowStart.Add(time.Duration(1+i) * time.Minute).Format(time.RFC3339),
 			}})
 		}
-		fleet.SetWidth(member, 8)
 		s := &Snapshot{Now: now, Fleet: fleet}
 		ol, ok := Overloaded(s, member)
 		assert.True(t, ok)
