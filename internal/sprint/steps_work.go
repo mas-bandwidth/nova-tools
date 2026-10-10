@@ -823,8 +823,12 @@ func ResolveExtras(s *Snapshot) []string {
 	return out
 }
 
-// Resolve moves waiting -> ready where every need has landed. A need that was
-// dropped or missing is a judgment for the coordinator, once.
+// Resolve moves waiting -> ready where every need has landed. A need that
+// names no card is detached first (tla/Needs.tla, Tick): one story line,
+// "need <id> names no card; detached", and the id leaves the field. The
+// lifecycle judges waiting -> ready from the pre-state, which still names
+// that id, so the move is the next resolve. A dropped need is still a
+// judgment for the coordinator, once.
 func Resolve(s *Snapshot, r ResolveReq) Plan { return Lawful(resolvePlan(s, r)) }
 
 func resolvePlan(s *Snapshot, r ResolveReq) Plan {
@@ -845,6 +849,10 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 			if o.Note.Type == NMissingNeed && o.Subject() == c.ID && len(o.Note.Needs) > 0 && len(missingNeeds(s, o.Note.Needs)) == 0 {
 				p.Closes = append(p.Closes, o)
 			}
+		}
+		if u, ok := detachNoCard(s, c, r.Who, bySubject[c.ID]); ok {
+			p.Units = append(p.Units, u)
+			continue
 		}
 		var waits, dropped, missing []string
 		for _, n := range WaitsFor(s, c, nil) {
@@ -904,14 +912,84 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 	return p
 }
 
+// detachNoCard rewrites one waiting card that names an id no card has.
+// The story line is "need <id> names no card; detached", once per id. The
+// card stays where it is: a waiting -> ready move in this unit would be
+// refused, because the lifecycle judges that move from the pre-state
+// (lifecycle.go). tla/Needs.tla Tick removes the id; the Go move is the
+// next resolve. A missing-need judgment whose named needs are all detached
+// is closed with the field.
+func detachNoCard(s *Snapshot, c *Card, who string, open []Open) (Unit, bool) {
+	named := Split(c.F("needs"))
+	seen := map[string]bool{}
+	var gone, next, lines []string
+	for _, n := range named {
+		if s.Work.Card(n) != nil {
+			next = append(next, n)
+			continue
+		}
+		if seen[n] {
+			continue
+		}
+		seen[n] = true
+		gone = append(gone, n)
+		lines = append(lines, "need "+n+" names no card; detached")
+	}
+	if len(gone) == 0 {
+		return Unit{}, false
+	}
+	set := map[string]string{}
+	var unset []string
+	if len(next) == 0 {
+		unset = []string{"needs"}
+	} else {
+		set["needs"] = strings.Join(next, ",")
+	}
+	u := Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, set, unset...))},
+		Moved: "DETACHED " + c.ID + " " + strings.Join(lines, "; ")}
+	for _, o := range open {
+		if o.Subject() != c.ID || o.Note.Type != NMissingNeed {
+			continue
+		}
+		if len(o.Note.Needs) == 0 {
+			u.Closes = append(u.Closes, o)
+			continue
+		}
+		all := true
+		for _, n := range o.Note.Needs {
+			if !seen[n] {
+				all = false
+				break
+			}
+		}
+		if all {
+			u.Closes = append(u.Closes, o)
+		}
+	}
+	for _, line := range lines {
+		n := happened("need detached", c.Row, s.Now, c.ID)
+		n.What, n.Who = line, who
+		u.Notes = append(u.Notes, n)
+	}
+	return u, true
+}
+
 // resolveAfter is resolve as a trigger of a step that lands primaries
 // (landing, by id): every waiting primary whose needs have all landed, with
 // this step's, moves to ready in the same step; a sentinel is marked reached
-// instead, and waits for the coordinator's release.
+// instead, and waits for the coordinator's release. A need that names no
+// card is detached in the same step and does not move the card (detachNoCard).
 func resolveAfter(s *Snapshot, landing map[string]bool, who string) []Unit {
 	var out []Unit
 	for _, c := range s.Work.Column(Waiting) {
-		if landing[c.ID] || IsHeld(c) || len(WaitsFor(s, c, landing)) > 0 {
+		if landing[c.ID] {
+			continue
+		}
+		if u, ok := detachNoCard(s, c, who, s.Open); ok {
+			out = append(out, u)
+			continue
+		}
+		if IsHeld(c) || len(WaitsFor(s, c, landing)) > 0 {
 			continue
 		}
 		if IsSentinel(c) {
