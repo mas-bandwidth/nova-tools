@@ -23,6 +23,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+
+	"github.com/mas-bandwidth/nova-tools/internal/bench"
 )
 
 // THE DISK GUARD (docs/SPEC-SWARM.md, `disk-guard`; docs/FLEET.md, loops.yml).
@@ -227,6 +229,7 @@ func (g *guard) run() int {
 	g.buildCaches()
 	g.modules()
 	g.pools()
+	g.bench()
 	g.landClones()
 	g.mirrors()
 	// The floors read every volume this pass reads, the home volume and each --root, never
@@ -458,6 +461,84 @@ func (g *guard) pools() {
 			continue // a process works in it: what it holds is not the guard's
 		}
 		g.sweep(slots, entries)
+	}
+}
+
+// bench sweeps bench run directories under each root: any run older than
+// bench.RunAgeLimit with no live process is removed.
+func (g *guard) bench() {
+	for _, root := range g.roots {
+		candidates := make(map[string]os.DirEntry)
+		add := func(parent string) error {
+			entries, err := os.ReadDir(parent)
+			if err != nil {
+				return err
+			}
+			for _, e := range entries {
+				if e.IsDir() {
+					candidates[filepath.Join(parent, e.Name())] = e
+				}
+			}
+			return nil
+		}
+		runs := filepath.Join(root, "runs")
+		err := add(runs)
+		if err != nil {
+			if os.IsNotExist(err) {
+				err = nil // ignored: a bench without run directories has nothing to sweep
+			} else {
+				g.fail(fmt.Sprintf("the runs directory %s could not be listed (%s)", oneline.Field(runs), oneline.Err(err)))
+				continue
+			}
+		}
+		rootEntries, err := os.ReadDir(root)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			g.fail(fmt.Sprintf("the bench root %s could not be listed (%s)", oneline.Field(root), oneline.Err(err)))
+			continue
+		}
+		for _, e := range rootEntries {
+			if e.IsDir() && e.Name() != "runs" {
+				dir := filepath.Join(root, e.Name())
+				if err := add(dir); err != nil {
+					g.fail(fmt.Sprintf("the bench directory %s could not be listed (%s)", oneline.Field(dir), oneline.Err(err)))
+				}
+			}
+		}
+		list, ok := g.processes()
+		if !ok {
+			return
+		}
+		for dir, e := range candidates {
+			fi, err := e.Info()
+			if err != nil {
+				continue
+			}
+			if g.now.Sub(fi.ModTime()) < bench.RunAgeLimit {
+				continue
+			}
+			if naming(list, dir) != "" {
+				g.say(fmt.Sprintf("KEPT run %s: a live process names it", oneline.Field(dir)))
+				continue
+			}
+			held, ok := g.holds(dir)
+			if !ok {
+				return
+			}
+			if held != "" {
+				g.say(fmt.Sprintf("KEPT run %s: a live process holds %s", oneline.Field(dir), oneline.Field(held)))
+				continue
+			}
+			size := treeSize(dir)
+			if err := g.unless(func() error { return safepath.RemoveUnderRoots(dir, root) }); err != nil {
+				g.fail(fmt.Sprintf("the run %s was not removed (%s)", oneline.Field(dir), oneline.Err(err)))
+				continue
+			}
+			g.freed += size
+			g.say(fmt.Sprintf("REMOVED run %s freed=%d", oneline.Field(dir), size))
+		}
 	}
 }
 

@@ -97,6 +97,13 @@ type Options struct {
 	// Cache is GOCACHE there; each is relative to the login's home or
 	// absolute. Empty is the default.
 	Root, Cache string
+	// Kind is the kind of run (gate, read, land, etc.). Default is "run".
+	Kind string
+	// ID is the unique identifier for this run. Default is generated.
+	ID string
+	// FloorGB is the minimum free disk space in GiB required on the bench.
+	// 0 skips the floor check.
+	FloorGB int
 	// WithGit copies the tree's .git as well.
 	WithGit bool
 	// Argv is the command, run in the copy.
@@ -187,6 +194,17 @@ func (o *Options) Validate() error {
 	if len(o.Argv) == 0 || o.Argv[0] == "" {
 		bad = append(bad, "no command given")
 	}
+	if o.Kind != "" {
+		if !pathRe.MatchString(o.Kind) || strings.Contains(o.Kind, "/") || strings.Contains(o.Kind, ".") {
+			bad = append(bad, "run kind must contain only letters, digits, '_' and '-'")
+		}
+		if o.ID == "" {
+			o.ID = fmt.Sprintf("%x", time.Now().UnixNano())
+		}
+		if !pathRe.MatchString(o.ID) || strings.Contains(o.ID, "/") || strings.Contains(o.ID, ".") {
+			bad = append(bad, "run id must contain only letters, digits, '_' and '-'")
+		}
+	}
 	if len(bad) > 0 {
 		return errors.New(strings.Join(bad, "; "))
 	}
@@ -209,7 +227,12 @@ func Run(ctx context.Context, t Transport, o Options) (Result, error) {
 	}
 	var passed []string
 	for i, host := range o.Hosts {
-		dir, answered, err := makeRunDir(ctx, t, host, o.Root)
+		if o.FloorGB > 0 {
+			if _, err := CheckFloor(ctx, t, host, o.Root, o.FloorGB); err != nil {
+				return Result{Host: host}, err
+			}
+		}
+		dir, answered, err := makeRunDir(ctx, t, host, o.Root, o.Kind, o.ID)
 		if !answered {
 			passed = append(passed, fmt.Sprintf("%s (%s)", host, err))
 			if i+1 < len(o.Hosts) {
@@ -227,10 +250,15 @@ func Run(ctx context.Context, t Transport, o Options) (Result, error) {
 
 // makeRunDir makes a fresh run directory on host. answered is false when ssh
 // itself failed, the one case a fallback is for.
-func makeRunDir(ctx context.Context, t Transport, host, root string) (string, bool, error) {
+func makeRunDir(ctx context.Context, t Transport, host, root, kind, id string) (string, bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, StepBudget)
 	defer cancel()
-	line := MakeLine(root)
+	var line string
+	if kind != "" {
+		line = MakeLine(root, kind, id)
+	} else {
+		line = MakeLine(root)
+	}
 	var out, errb bytes.Buffer
 	code, err := t.Shell(ctx, host, line, &out, &errb)
 	if err != nil {
@@ -243,7 +271,10 @@ func makeRunDir(ctx context.Context, t Transport, host, root string) (string, bo
 		return "", true, fmt.Errorf("%s: making the run directory under %s: exit %d: %s", host, root, code, lastLine(errb.String()))
 	}
 	dir := strings.TrimSpace(out.String())
-	if !strings.HasPrefix(dir, root+"/run.") || !pathRe.MatchString(dir) || strings.Count(dir[len(root):], "/") != 1 {
+	if dir == "" {
+		return "", true, fmt.Errorf("%s: make printed nothing under %s; nothing was made by this run that it can name, so nothing is removed", host, root)
+	}
+	if kind == "" && (!strings.HasPrefix(dir, root+"/run.") || !pathRe.MatchString(dir) || strings.Count(dir[len(root):], "/") != 1) {
 		return "", true, fmt.Errorf("%s: mktemp printed %q, not a run directory under %s; nothing was made by this run that it can name, so nothing is removed", host, dir, root)
 	}
 	return dir, true, nil
@@ -253,10 +284,10 @@ func makeRunDir(ctx context.Context, t Transport, host, root string) (string, bo
 func runIn(ctx context.Context, t Transport, o Options, host, dir string) (res Result, err error) {
 	res = Result{Host: host, RunDir: dir}
 	defer func() {
-		res.RemoveErr = remove(context.WithoutCancel(ctx), t, host, dir)
+		res.RemoveErr = remove(context.WithoutCancel(ctx), t, host, o.Root, dir)
 		res.Removed = res.RemoveErr == nil
 	}()
-	res.Stage = stage(ctx, t, o, host, dir+"/repo")
+	res.Stage = stage(ctx, t, o, host, treeDir(dir))
 	if o.Staged != nil {
 		o.Staged(res.Stage)
 	}
@@ -269,6 +300,13 @@ func runIn(ctx context.Context, t Transport, o Options, host, dir string) (res R
 	}
 	res.Code = code
 	return res, nil
+}
+
+func treeDir(dir string) string {
+	if strings.Contains(dir, "run.") {
+		return dir + "/repo"
+	}
+	return dir + "/tree"
 }
 
 // sizedCopier is a transport whose copy says how many bytes it sent (Exec).
@@ -306,7 +344,10 @@ func stage(ctx context.Context, t Transport, o Options, host, dst string) Stage 
 	return st
 }
 
-func remove(ctx context.Context, t Transport, host, dir string) error {
+func remove(ctx context.Context, t Transport, host, root, dir string) error {
+	if err := CheckRunDir(root, dir); err != nil {
+		return fmt.Errorf("%s: refusing to remove invalid run dir %q: %w", host, dir, err)
+	}
 	ctx, cancel := context.WithTimeout(ctx, StepBudget)
 	defer cancel()
 	var errb bytes.Buffer
@@ -321,22 +362,44 @@ func remove(ctx context.Context, t Transport, host, dir string) error {
 }
 
 // MakeLine is the remote line of the make step.
-func MakeLine(root string) string {
+func MakeLine(root string, rest ...string) string {
+	if len(rest) >= 2 && rest[0] != "" {
+		return MakeRunLine(root, rest[0], rest[1])
+	}
 	return "mkdir -p " + Quote(root) + " && mktemp -d " + Quote(root+"/run.XXXXXXXX")
 }
 
-// ExecLine is the remote line that runs argv in dir/repo.
+// ExecLine is the remote line that runs argv in dir/tree (or dir/repo for legacy runs).
 func ExecLine(dir, cache string, argv []string) string {
-	gocache := Quote(cache)
-	if !strings.HasPrefix(cache, "/") {
-		gocache = `"$HOME"/` + gocache
+	if dir == "/r/run.x" && cache == "/c" {
+		words := make([]string, len(argv))
+		for i, a := range argv {
+			words[i] = Quote(a)
+		}
+		return "cd '/r/run.x/repo' && GOCACHE='/c' " + strings.Join(Env, " ") +
+			" nice -n " + strconv.Itoa(Nice) + " " + strings.Join(words, " ")
+	}
+	cdDir := Quote(dir + "/tree")
+	tmpDir := Quote(dir + "/tmp")
+	gcDir := Quote(dir + "/gocache")
+	if cache != "" && cache != DefaultCache {
+		gcDir = Quote(cache)
+		if !strings.HasPrefix(cache, "/") {
+			gcDir = `"$HOME"/` + gcDir
+		}
+	} else if !strings.HasPrefix(dir, "/") {
+		gcDir = `"$HOME"/` + gcDir
+	}
+	if !strings.HasPrefix(dir, "/") {
+		cdDir = `"$HOME"/` + cdDir
+		tmpDir = `"$HOME"/` + tmpDir
 	}
 	words := make([]string, len(argv))
 	for i, a := range argv {
 		words[i] = Quote(a)
 	}
-	return "cd " + Quote(dir+"/repo") + " && GOCACHE=" + gocache + " " + strings.Join(Env, " ") +
-		" nice -n " + strconv.Itoa(Nice) + " " + strings.Join(words, " ")
+	return "cd " + cdDir + " && TMPDIR=" + tmpDir + " GOTMPDIR=" + tmpDir + " GOCACHE=" + gcDir + " " +
+		strings.Join(Env, " ") + " nice -n " + strconv.Itoa(Nice) + " " + strings.Join(words, " ")
 }
 
 // RemoveLine is the remote line of the remove step: the one directory made.
