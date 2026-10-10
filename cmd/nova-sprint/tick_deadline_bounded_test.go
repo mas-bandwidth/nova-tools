@@ -116,23 +116,24 @@ func TestTickDeadlineBoundedErrorStillPropagates(t *testing.T) {
 }
 
 // TestTickDeadlineBoundedWedgedExitsFourPastABlockedStderr proves that three
-// further deadline expiries return false even while both diagnostic destinations
-// are blocked; runLoop turns that false result into exitTickDeadline without
-// starting another tick.
+// wedged ticks reach a.exit(exitTickDeadline) and no tick begins beside the one
+// given up even while stderr, where the stacks are written, is blocked: a
+// diagnostic write nobody drains must not keep the wedged loop from its exit.
 func TestTickDeadlineBoundedWedgedExitsFourPastABlockedStderr(t *testing.T) {
 	t.Parallel()
-	a := newApp(func(string) string { return "" })
-	a.after = func(time.Duration) <-chan time.Time {
-		ch := make(chan time.Time, 1)
-		ch <- a.now()
-		return ch
+	l := newDeadlineLoop(t)
+	l.ta.a.tickDeadline = 10 * time.Millisecond
+	s := newAfterScript("deadline", "further", "stop")
+	l.ta.a.after = s.after
+	l.ta.a.tickFn = func(ctx context.Context, _ *store.Store) (store.TickResult, error) {
+		l.tick()
+		return s.deaf(ctx)
 	}
-	blockedOut := newBlockingWriter()
+	var out bytes.Buffer
 	blockedErr := newBlockingWriter()
-	ended := make(chan struct{})
-	wedged := 0
-	assert.False(t, a.awaitGivenUp(ended, time.Millisecond, a.now(), &wedged, blockedOut, blockedErr))
-	assert.Equal(t, TickWedgedToExit, wedged)
-	blockedOut.release()
+	assert.False(t, l.ta.a.runLoop(context.Background(), l.st, 20, 10, &out, blockedErr))
+	assert.Equal(t, []int{exitTickDeadline}, l.exits)
+	assert.Equal(t, 3, l.calls, "no tick begins beside the one given up")
+	assert.Contains(t, out.String(), " TICK WEDGED 3 given-up ticks in a row")
 	blockedErr.release()
 }
