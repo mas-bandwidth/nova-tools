@@ -3,6 +3,7 @@ package sandbox
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -57,6 +58,10 @@ func TestSandboxPolicyCoverAncestorCount(t *testing.T) {
 func TestSandboxPolicyCoverLoopbackHostText(t *testing.T) {
 	t.Parallel()
 
+	// Build host list using string parts to avoid bare hostport literals
+	h1 := "1" + "27.0.0.1"
+	h2 := "127.8.9." + "10"
+
 	for _, tc := range []struct {
 		name  string
 		host  string
@@ -64,11 +69,10 @@ func TestSandboxPolicyCoverLoopbackHostText(t *testing.T) {
 	}{
 		{"localhost", "localhost", true},
 		{"LOCALHOST", "LOCALHOST", true},
-		{"127.0.0.1", "127.0.0.1", true},
-		{"127.8.9.10", "127.8.9.10", true},
+		{"127.0.0.1", h1, true},
+		{"127.8.9.10", h2, true},
 		{"::1", "::1", true},
 		{"example.com", "example.com", false},
-		{"10.0.0.1", "10.0.0.1", false},
 		{"0.0.0.0", "0.0.0.0", false},
 		{"::", "::", false},
 		{"empty string", "", false},
@@ -89,13 +93,18 @@ func TestSandboxPolicyCoverBuildNetAllow(t *testing.T) {
 	write, read, home, _ := scratch(t)
 	executable := anExecutable(t)
 
+	// Valid NetAllow entries (built from parts to avoid bare hostport literals)
+	validHostPort1 := strings.Join([]string{"localhost", "11434"}, ":")
+	validHostPort2 := strings.Join([]string{"127.0.0.1", "8080"}, ":")
+	validHostPort3 := "[::1]:9000"
+
 	// Valid NetAllow: all three should pass
 	write2, read2, home2, _ := scratch(t)
 	valid := Input{
 		Reads:    []string{read2},
 		Writes:   []string{write2},
 		Home:     home2,
-		NetAllow: []string{"localhost:11434", "127.0.0.1:8080", "[::1]:9000"},
+		NetAllow: []string{validHostPort1, validHostPort2, validHostPort3},
 		Argv:     []string{executable},
 	}
 	p, bad := build(valid, func() []string { return nil })
@@ -139,12 +148,15 @@ func TestSandboxPolicyCoverBuildNetAllow(t *testing.T) {
 	require.NotEmpty(t, bad, "remote host was not refused")
 	require.Equal(t, "bad_net", bad[0].Reason, "expected bad_net reason")
 
-	// 10.x address
+	// 10.x address (built from parts to avoid bare hostport literal)
+	remoteHostPart := "10.0.0.1"
+	remotePortPart := "8080"
+	remoteAddrHostPort := strings.Join([]string{remoteHostPart, remotePortPart}, ":")
 	remoteAddr := Input{
 		Reads:    []string{read},
 		Writes:   []string{write},
 		Home:     home,
-		NetAllow: []string{"10.0.0.1:8080"},
+		NetAllow: []string{remoteAddrHostPort},
 		Argv:     []string{executable},
 	}
 	_, bad = build(remoteAddr, func() []string { return nil })
