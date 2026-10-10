@@ -542,6 +542,10 @@ type Snapshot struct {
 	// up, away or down), read by a step that asks (docs/SPEC-SPRINT.md section
 	// 6); nil is none read, and every reader is held up.
 	ReaderStates map[string]string
+	// NoRoom is each fleet member and reader whose fresh beat says it starts no card, with
+	// its word why (Beat.NoRoom: its disk under its floor): the deal gives it no card
+	// (notQuiet) and the ask asks it no read (readerRooms). nil is none read.
+	NoRoom map[string]string
 	// Friends is each friend the deal may give a friend's card to, or whose delivery
 	// mode is consulted by friendNext (FriendSeat); nil is none.
 	Friends []FriendSeat

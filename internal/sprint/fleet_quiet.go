@@ -99,23 +99,30 @@ func quietNow(s *Snapshot) map[string]Quiet {
 	return out
 }
 
-// notQuiet is up without the members quiet now: the deal and the level give a quiet member
-// nothing (docs/SPEC-SPRINT.md section 5, fleet-quiet-machine-b.w7).
+// notQuiet is up without the members quiet now and the members whose fresh beat says they
+// start no card (Snapshot.NoRoom: free disk under the floor): the deal and the level give
+// such a member nothing (docs/SPEC-SPRINT.md section 5, fleet-quiet-machine-b.w7), so a card
+// is not dealt to a machine that hands it straight back refused at staging.
 func notQuiet(s *Snapshot, up []string) []string {
 	quiet := quietNow(s)
-	if len(quiet) == 0 {
+	if len(quiet) == 0 && len(s.NoRoom) == 0 {
 		return up
 	}
 	var out []string
 	for _, m := range up {
-		if _, ok := quiet[m]; !ok {
-			out = append(out, m)
+		if _, ok := quiet[m]; ok {
+			continue
 		}
+		if s.NoRoom[m] != "" {
+			continue
+		}
+		out = append(out, m)
 	}
 	return out
 }
 
-// quietWhy is the members of up quiet now, for a refusal or a hold: "" when none is.
+// quietWhy is the members of up quiet now, and those whose beat says they start no card
+// with their word why, for a refusal or a hold: "" when none is.
 func quietWhy(s *Snapshot, up []string) string {
 	quiet := quietNow(s)
 	var out []string
@@ -124,10 +131,20 @@ func quietWhy(s *Snapshot, up []string) string {
 			out = append(out, m+" until "+stamp(q.Until))
 		}
 	}
-	if len(out) == 0 {
-		return ""
+	var full []string
+	for _, m := range up {
+		if _, ok := quiet[m]; !ok && s.NoRoom[m] != "" {
+			full = append(full, m+" ("+s.NoRoom[m]+")")
+		}
 	}
-	return "quiet: " + strings.Join(out, ", ")
+	var says []string
+	if len(out) > 0 {
+		says = append(says, "quiet: "+strings.Join(out, ", "))
+	}
+	if len(full) > 0 {
+		says = append(says, "starts no card: "+strings.Join(full, ", "))
+	}
+	return strings.Join(says, "; ")
 }
 
 // quietPlan is fleet quiet: the member's quiet set until r.Until with r.Reason, or with

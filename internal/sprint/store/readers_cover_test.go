@@ -50,7 +50,7 @@ func TestReadersCoverForgetReadersDeletesBeatAndHold(t *testing.T) {
 			h := newHarness(t)
 			require.NoError(t, h.st.SetReaderAway(h.ctx, "reader-a", true, "coordinator"))
 			if len(tc.beat) > 0 {
-				require.NoError(t, h.st.beatReaders(h.ctx, tc.beat...))
+				require.NoError(t, h.st.beatReaders(h.ctx, "", tc.beat...))
 			}
 			got, err := h.st.ReaderStates(h.ctx, []string{"reader-a"}, h.st.now())
 			require.NoError(t, err)

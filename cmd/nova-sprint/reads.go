@@ -269,6 +269,7 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 	col := fs.String("col", "", "with --stream: waiting lists the stream's waiting primaries, each with what it still waits for")
 	packets := fs.String("packets", "", "with --as: the packets the worker wants, so the answer carries only those (every other card is listed with its id, column, attempt and gen, and the answer's epoch, with no packet): the first n cards it may start (asked, ready) and every in-flight card (reading, working), each not named by --have; without it every card carries its packet")
 	have := fs.String("have", "", "with --packets: the cards, comma separated, the worker wants no packet for (it runs them, or will not start them yet)")
+	noRoom := fs.String("no-room", "", "with --as a reader: its word that it starts no read, and why (its free disk under its floor); while its beat is fresh the ask asks it none; a queue without it clears it")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "queue", err.Error())
@@ -300,7 +301,7 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 		// the reader's own queue is its beat (docs/SPEC-SPRINT.md section 6):
 		// a name that is no reader's row writes none, and the answer says so
 		// (reader), for the reader loop to say whose verb makes the row
-		if isReader, err = st.ReaderBeat(ctx, *as); err != nil {
+		if isReader, err = st.ReaderBeat(ctx, *as, oneline.Field(*noRoom)); err != nil {
 			return a.readFailed("queue", err, stderr)
 		}
 	}

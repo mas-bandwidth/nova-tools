@@ -493,6 +493,10 @@ type Member struct {
 	// have is the --have of the cards the last pass ended holding (haveWords), for the
 	// reader's beat, which asks its queue on its own clock and reads none of the answer
 	have atomic.Pointer[string]
+	// noRoomWhy is Room's refusal on the last tick it said no ("" while it says yes), for
+	// the beat, which carries it (--no-room) so the deal and the read ask pass this member
+	// by while it starts no card
+	noRoomWhy atomic.Pointer[string]
 
 	// the beat's own clock (BeatLoop): beatMu guards beaten; progress is when the work pass
 	// last advanced, in unix nanoseconds
@@ -738,9 +742,11 @@ func (m *Member) Beat() error {
 	if have := m.have.Load(); have != nil && *have != "" {
 		args = append(args, "--have", *have)
 	}
+	args = append(args, m.noRoomArgs()...)
 	var total uint64
 	if !m.cfg.Reader {
 		args = []string{"fleet", "beat", m.cfg.As, "--stop-returns", strconv.Itoa(m.OwedStopReturns())}
+		args = append(args, m.noRoomArgs()...)
 		if m.cfg.Meter != nil {
 			var pct float64
 			var ok bool
@@ -1631,6 +1637,11 @@ func (m *Member) room(now time.Time) (bool, string) {
 		fmt.Fprintf(m.out, "NOTE take resumed: %s\n", why)
 	}
 	m.noRoom = !ok
+	said := ""
+	if !ok {
+		said = why
+	}
+	m.noRoomWhy.Store(&said)
 	return ok, why
 }
 
@@ -1718,7 +1729,22 @@ func (m *Member) queueArgs() []string {
 	if words := m.haveWords(); words != "" {
 		args = append(args, "--have", words)
 	}
+	if m.cfg.Reader {
+		// a reader's queue is its beat too: it carries the refusal as the beat's does
+		args = append(args, m.noRoomArgs()...)
+	}
 	return args
+}
+
+// noRoomArgs is the beat's --no-room <why> while Room said no on the last tick (the disk
+// floor, the usage source's rest), so the sprint deals this member no card and asks this
+// reader no read until it says yes again; none while it says yes, and none before the
+// first tick. A beat without it clears the word.
+func (m *Member) noRoomArgs() []string {
+	if why := m.noRoomWhy.Load(); why != nil && *why != "" {
+		return []string{"--no-room", *why}
+	}
+	return nil
 }
 
 // haveWords is the cards that need no packet, comma separated, as --have names them, and

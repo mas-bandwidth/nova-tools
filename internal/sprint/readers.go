@@ -90,6 +90,9 @@ func readersText(s *Snapshot) string {
 		case st == "":
 			st = ReaderDown
 		}
+		if why := s.NoRoom[r]; why != "" {
+			st += " (starts no read: " + why + ")"
+		}
 		out = append(out, r+" "+st)
 	}
 	sort.Strings(out)
@@ -685,12 +688,19 @@ func (r readerRoom) after(n int) readerRoom { return readerRoom{width: r.width, 
 // readerRooms is each reader's room (readerRoom). The ask gives a read to the
 // reader with the greatest share (round.pickByRoom, taking the reads it places
 // off the room as it goes) and the level moves reads toward it
-// (round.levelToRoom); a reader with no free room is given nothing by either.
+// (round.levelToRoom); a reader with no free room is given nothing by either,
+// and a reader whose beat says it starts no read (Snapshot.NoRoom) has none.
 func (s *Snapshot) readerRooms(readers []string) map[string]readerRoom {
 	room := make(map[string]readerRoom, len(readers))
 	for _, rd := range readers {
 		w := s.ReaderWidth(rd)
-		room[rd] = readerRoom{width: w, free: w - s.readerLoad(rd)}
+		free := w - s.readerLoad(rd)
+		if s.NoRoom[rd] != "" && free > 0 {
+			// its beat says it starts no read (its disk under its floor): no free room, so
+			// it is asked nothing until its beat says it starts reads again
+			free = 0
+		}
+		room[rd] = readerRoom{width: w, free: free}
 	}
 	return room
 }
