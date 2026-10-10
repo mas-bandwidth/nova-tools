@@ -88,6 +88,7 @@ func StartPresence() *Presence {
 // the friend is up (rose: it was down). A check still open stays open, its
 // answer still owed: only an answered check proves her session to the sprint
 // server. The daemon's own messages never reach here (SessionCheck.read).
+// Model: FriendPresence.tla StatusIn (UpIn), UpHasFreshAnswer.
 func (p *Presence) Heard(now time.Time) (rose bool) {
 	rose = !p.Up
 	p.Up, p.Reason, p.LastHeard, p.Proven = true, "", now, true
@@ -103,6 +104,7 @@ func (p *Presence) Ask(now time.Time, nonce string) {
 // Answer is the session's reply carrying nonce, at now: the latest check's
 // nonce makes the friend up, late or not; any other, or one already
 // answered, changes nothing (current false).
+// Model: FriendPresence.tla Answer, UpHasFreshAnswer (answer resets answerAge).
 func (p *Presence) Answer(now time.Time, nonce string) (current bool) {
 	if nonce == "" || nonce != p.Nonce {
 		return false
@@ -117,6 +119,7 @@ func (p *Presence) Answer(now time.Time, nonce string) (current bool) {
 // a check is owed ProveEvery after the last check went in while up and SessionQuiet after it
 // while down, and an unanswered one the session has not read is asked again
 // only after ReaskAfter.
+// Model: FriendPresence.tla Tick, UpHasFreshAnswer, DeafSessionShownDownWithinBoundPlusCap.
 func (p *Presence) Tick(now time.Time) {
 	if p.Open && now.Sub(p.Asked) >= p.Bound {
 		p.Open = false
