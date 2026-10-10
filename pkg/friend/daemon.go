@@ -567,6 +567,7 @@ type loop struct {
 	presentRetry time.Time       // when a present whose turn failed is tried again
 	delivered    time.Time       // when the session last took a turn: the stale bound runs from it
 	session      string          // the session id as last read (Session)
+	epoch        int             // the sprint epoch her row is at, as the last reconcile read it (epoch.go); 0 before any
 }
 
 // beatState is the cadence worker's last result. The main loop owns Status and

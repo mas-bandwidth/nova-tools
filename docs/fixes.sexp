@@ -74,4 +74,11 @@
    :text "The member asks Room every tick before the drain return, so a member that drained under its
     disk floor stops saying no room once the disk is freed (nova-sprint tla/NoRoom.tla,
     WordIsThisTicks)."
-   :origin "v1.2.5 candidate 5; the PR #5569 follow-up")))
+   :origin "v1.2.5 candidate 5; the PR #5569 follow-up")
+  (fix "friends-snap-to-the-new-epoch" :release "v1.2.6" :status "in-progress"
+   :title "A friend snaps to the new epoch"
+   :text "After a clear her working directory kept every older-epoch inbox item and outbox REPORT,
+    each refused pass after pass; one reconcile now moves the older-epoch inbox and outbox work,
+    whole, to retired/epoch-<its epoch>, kept, and starts a fresh session for her next presence
+    check and lane."
+   :origin "the seat ledger v1.2.4-held-2026-10-10, friend snap")))

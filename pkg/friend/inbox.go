@@ -326,6 +326,16 @@ func (l *loop) inboxStep(now time.Time) {
 			keep[filepath.Base(filepath.Dir(ln.card.Brief))] = true
 		}
 	}
+	// A clear is a new sprint epoch: every older-epoch job in her inbox and outbox is
+	// retired whole to retired/epoch-<its epoch> (SnapToEpoch), and the new epoch starts a
+	// fresh session for the next presence check and lane (laneStep). The epoch is the
+	// greatest her row names; a row that names none snaps nothing.
+	if epoch := RowEpoch(row.Cards); epoch > 0 {
+		if _, err := SnapToEpoch(d.Dir, epoch, keep, now, d.Record); err != nil {
+			d.Record(fmt.Sprintf("%s epoch: the old epoch's work cannot all be retired: %s", now.UTC().Format(time.RFC3339), oneLine(err.Error(), 300)))
+		}
+		l.epoch = epoch
+	}
 	said := map[string]bool{}
 	byJob := map[string]HeldCard{}
 	for _, h := range row.Cards {

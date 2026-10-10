@@ -47,6 +47,10 @@ type LaneState struct {
 	// StopReturns is every card the machine's stop took out of a lane and the stop-return
 	// owed or taken for it (stop.go): a daemon starting up sends what is owed first.
 	StopReturns []StopReturn `json:"stop_returns,omitempty"`
+	// Epoch is the sprint epoch the lanes last opened sessions at (epoch.go): a clear is a
+	// new epoch, and the first laneStep after it forgets every session so each lane starts
+	// a fresh one, never carrying a full or stale session across the clear.
+	Epoch int `json:"epoch,omitempty"`
 }
 
 // Card is one card a lane hands: its id (the queue file's), its brief, and
@@ -423,6 +427,23 @@ func (l *loop) laneStep(now time.Time, width int) {
 	}
 	if l.stopStep(now) {
 		paused = true // NoLaunchAfterStop: no open, no turn, no card taken while STOPPED
+	}
+	// A clear is a new sprint epoch (epoch.go, SnapToEpoch): the lanes forget their
+	// sessions so each opens a fresh one, and the presence check is owed, so a full or
+	// stale session never carries across the clear. The first epoch seen only records it.
+	if l.epoch > 0 && s.state.Epoch != l.epoch {
+		if s.state.Epoch != 0 {
+			s.state.Sessions = map[int]string{}
+			for _, ln := range s.lanes {
+				if ln.t == nil && !ln.opening {
+					ln.session = ""
+				}
+			}
+			l.presentDue = true
+			d.Record(now.UTC().Format(time.RFC3339) + " epoch: a new epoch starts a fresh session: every lane opens a new session, and the present is owed")
+		}
+		s.state.Epoch = l.epoch
+		l.saveLanes(now)
 	}
 	for len(s.lanes) < width {
 		n := len(s.lanes) + 1
