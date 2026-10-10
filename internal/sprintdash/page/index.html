@@ -156,7 +156,7 @@ button.toggle:hover { color: var(--text); border-color: var(--border-strong); }
 .pie-wrap { display: flex; align-items: flex-start; justify-content: center; padding: 2rem 3rem 2rem; border-right: 1px solid var(--border); } /* the disc sits at the top of its column, level with the table head */
 @media (max-width: 1100px) { .pie-wrap { border-right: 0; border-bottom: 1px solid var(--border); } }
 .pie { width: 100%; max-width: 40rem; aspect-ratio: 1 / 1; height: auto; } /* the disc fills its column (the owner 10:50 AM: "too small") */
-.pie path { stroke: var(--surface); stroke-width: 1; }
+.pie path { stroke: var(--surface); stroke-width: 1; stroke-linejoin: round; } /* round joins: a miter at the shared centre poked past it as a notch (the owner 2026-10-10) */
 .toprows .row { grid-template-columns: minmax(var(--name-w), 2fr) repeat(var(--tier-cols, 5), minmax(6rem, 1fr)); } /* the stream name column takes the spare room so a name is never cut (the owner 2026-10-05 4:09 PM: "plenty of room there to print the stream name"); stream, then the tiers with spend in spend order and total, at equal widths (the owner 11:20 AM; 2:50 PM: $0 tiers dropped) */
 .toprows .rank { color: var(--text-3); font-variant-numeric: tabular-nums; }
 .toprows .tiers { color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
