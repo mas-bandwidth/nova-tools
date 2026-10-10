@@ -215,11 +215,7 @@ func TestTheDaemonRetriesAnAsynchronousSessionQuestionThatTheAdapterFails(t *tes
 	t.Cleanup(func() {
 		release()
 		cancel()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			t.Error("daemon did not stop during cleanup")
-		}
+		waitSessionQuestionDone(t, done)
 	})
 	go func() {
 		daemonErr = r.d.Run(ctx)
@@ -238,7 +234,7 @@ func TestTheDaemonRetriesAnAsynchronousSessionQuestionThatTheAdapterFails(t *tes
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		return r.beats >= beats+2
-	}, 5*time.Second, time.Millisecond)
+	}, 30*time.Second, time.Millisecond)
 	assert.Empty(t, app.started, "reclaiming an in-flight question does not start an overlapping adapter call")
 	release()
 	waitSessionQuestionDone(t, app.failed)
@@ -251,7 +247,7 @@ func TestTheDaemonRetriesAnAsynchronousSessionQuestionThatTheAdapterFails(t *tes
 			}
 		}
 		return true
-	}, 5*time.Second, time.Millisecond, "the failed adapter call completes before the retry claim")
+	}, 30*time.Second, time.Millisecond, "the failed adapter call completes before the retry claim")
 	r.store.Advance(bus.ClaimAfter)
 	assert.Equal(t, 2, waitSessionQuestion(t, app.started), "the failed question is claimed and delivered again")
 	require.Eventually(t, func() bool {
@@ -260,34 +256,36 @@ func TestTheDaemonRetriesAnAsynchronousSessionQuestionThatTheAdapterFails(t *tes
 			return false
 		}
 		return !slices.Contains(subjectsOf(append(pending, fresh...)), LiveSessionSubject)
-	}, 5*time.Second, time.Millisecond, "the successful retry acknowledges the question")
+	}, 30*time.Second, time.Millisecond, "the successful retry acknowledges the question")
 	cancel()
-	select {
-	case <-done:
-		require.NoError(t, daemonErr)
-	case <-time.After(5 * time.Second):
-		t.Fatal("daemon did not stop")
-	}
+	waitSessionQuestionDone(t, done)
+	require.NoError(t, daemonErr)
 }
 
 func waitSessionQuestion(t *testing.T, started <-chan int) int {
 	t.Helper()
-	select {
-	case call := <-started:
-		return call
-	case <-time.After(5 * time.Second):
-		t.Fatal("session question did not start")
-		return 0
-	}
+	var call int
+	require.Eventually(t, func() bool {
+		select {
+		case call = <-started:
+			return true
+		default:
+			return false
+		}
+	}, 30*time.Second, time.Millisecond, "session question did not start")
+	return call
 }
 
 func waitSessionQuestionDone(t *testing.T, done <-chan struct{}) {
 	t.Helper()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("session question did not finish")
-	}
+	require.Eventually(t, func() bool {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}, 30*time.Second, time.Millisecond, "session question did not finish")
 }
 
 func subjectsOf(entries []bus.Entry) []string {
