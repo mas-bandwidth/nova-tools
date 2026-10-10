@@ -388,9 +388,9 @@ func (l *loop) inboxStep(now time.Time) {
 	for _, h := range row.Cards {
 		ids = append(ids, h.Card)
 	}
-	d.heldIDs, d.heldCards = ids, row.Cards // in the server's order
-	l.batchTake(now)                        // batch mode: her ready cards taken up to her width (lane_take.go)
-	l.outboxStep(now)                       // every report in her outbox against the row just read
+	d.heldIDs, d.heldCards, d.heldAt = ids, row.Cards, now // in the server's order, as asked at now
+	l.batchTake(now)                                       // batch mode: her ready cards taken up to her width (lane_take.go)
+	l.outboxStep(now)                                      // every report in her outbox against the row just read
 }
 
 // nextCard is the next card a free lane is handed: while the server has said what is on

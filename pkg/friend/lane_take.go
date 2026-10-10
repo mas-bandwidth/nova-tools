@@ -214,7 +214,9 @@ func (l *loop) laneCheck(now time.Time) {
 		return
 	}
 	for _, ln := range l.lanes.lanes {
-		if ln.card == nil || ln.ended != "" || ln.card.Lane == 0 {
+		if ln.card == nil || ln.ended != "" || ln.card.Lane == 0 || !d.heldAt.After(ln.marked) {
+			// a row read asked before the lane was given its card says nothing of it: the card
+			// was ready there, or not yet dealt (only a later read can disagree with the lane)
 			continue
 		}
 		h, ok := d.heldOf(filepath.Base(ln.card.Outbox))

@@ -422,3 +422,31 @@ func TestABatchTakeIsNotSentWhenNoReadyCardCarriesAnEpoch(t *testing.T) {
 }
 
 var _ = os.Remove // the fixtures write the files the lanes read
+
+// A read of her row asked before a lane was given its card says nothing of that card: it still
+// shows it ready, the take came after. The lane is never dropped on such a read, only on one
+// asked after its take (OneRequestApart: lane and server differ by at most one request).
+func TestARowReadOlderThanTheTakeNeverDropsTheLane(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
+		h := &lanesHarness{dir: dir, finish: map[string]bool{}, active: map[string]int{}, block: make(chan struct{})}
+		r, _ := laneRig(t, h, 1)
+		srv := newLaneServer(true, map[string]string{"c1~15": "ready"})
+		srv.wire(r)
+		first, _ := srv.held(context.Background()) // her row as the server says it before any take: c1 ready
+		asked := false
+		r.d.Held = func(context.Context) (Row, error) {
+			if asked {
+				return Row{}, ErrNotDue // no later read comes back
+			}
+			asked = true
+			return first, nil
+		}
+		r.run(t, 30)
+		records := strings.Join(r.records, "\n")
+		turns, _, _ := h.got()
+		assert.Equal(t, []string{"c1"}, ranCards(turns), records)
+		assert.NotContains(t, records, "dropped", "a read older than the take is not the server disagreeing: %s", records)
+	})
+}
