@@ -230,3 +230,28 @@ func TestVolumeRowShowsTheFreeFigure(t *testing.T) {
 		{Name: "/Volumes/nova", Path: "/Volumes/nova"},
 	}, defs)
 }
+
+// The seat judgment of a volume below its stop is written once while it is
+// open: the note names the machine and the guard's judgment line, and one open
+// NVolumeStop for the machine keeps the next, another machine's its own.
+func TestVolumeJudgmentIsWrittenOnceWhileItIsOpen(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	s := &Snapshot{Now: now, Coordinator: "coordinator"}
+	n, ok := VolumeJudgment(s, "studio", "studio /Volumes/nova at 10GB: deals held")
+	require.True(t, ok)
+	assert.Equal(t, Judgment, n.Kind)
+	assert.Equal(t, NVolumeStop, n.Type)
+	assert.Equal(t, []string{"studio"}, n.Primaries)
+	assert.Equal(t, MachineActor, n.Who)
+	assert.Equal(t, "coordinator", n.To)
+	assert.Equal(t, "studio /Volumes/nova at 10GB: deals held", n.What)
+
+	s.Open = append(s.Open, Open{Key: OpenKey(n.ID, "studio"), Note: n})
+	_, ok = VolumeJudgment(s, "studio", "studio /Volumes/nova at 10GB: deals held")
+	assert.False(t, ok, "one open judgment for the machine keeps the next")
+	_, ok = VolumeJudgment(s, "other", "other /Volumes/nova at 5GB: deals held")
+	assert.True(t, ok, "another machine has its own")
+	_, ok = VolumeJudgment(nil, "studio", "studio /Volumes/nova at 10GB: deals held")
+	assert.False(t, ok, "no snapshot is no judgment")
+}

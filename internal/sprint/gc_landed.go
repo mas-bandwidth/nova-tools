@@ -492,3 +492,27 @@ func parseSize(s string) (uint64, error) {
 	}
 	return n * mult, nil
 }
+
+// NVolumeStop is the one open judgment a guarded volume below its stop raises:
+// the machine held its own deals (the guard runs nova-sprint hold), and this
+// note is what the seat is told, written through the store by nova-sprint gc
+// --judgment while no such judgment for that machine is open (docs/SPEC-SPRINT.md,
+// the disk guard's volumes).
+const NVolumeStop = "a volume is under the stop floor"
+
+// VolumeJudgment is the judgment of a guarded volume below its stop, what being
+// the guard's line ("<host> <volume> at <free>: deals held"). It is false when
+// one such judgment for the machine is open already, so the seat is told once
+// while the machine stays held.
+func VolumeJudgment(s *Snapshot, host, what string) (Note, bool) {
+	if s == nil {
+		return Note{}, false
+	}
+	for _, o := range s.Open {
+		if o.Note.Type == NVolumeStop && strings.HasPrefix(o.Note.What, host+" ") {
+			return Note{}, false
+		}
+	}
+	return Note{Kind: Judgment, Type: NVolumeStop, Primaries: []string{host},
+		Who: MachineActor, To: s.Coordinator, At: s.Now, What: what}, true
+}

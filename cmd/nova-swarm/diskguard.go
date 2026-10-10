@@ -120,10 +120,16 @@ type guard struct {
 	// deals and says one judgment. The landed removal itself is gc's class: the
 	// guard is a worker and never opens the sprint's store, so it runs the
 	// command (nova-sprint gc --class landed) and that command reads the cards.
-	// gcLanded is the seam a test fakes.
-	host     string
-	volumes  []guardedVolume
-	gcLanded func() error
+	// gcLanded is the seam a test fakes. Below a volume's stop the guard holds
+	// this machine's deals (holdDeals, nova-sprint hold <host>) and pushes the
+	// one judgment to the seat (judge, nova-sprint gc --judgment); the guard is
+	// a worker and never opens the sprint's store, so both run the command that
+	// reads it, and both are the seams a test fakes.
+	host      string
+	volumes   []guardedVolume
+	gcLanded  func() error
+	holdDeals func(reason string) error
+	judge     func(text string) error
 }
 
 // say is one line of the run's output.
@@ -284,6 +290,13 @@ func (g *guard) run() int {
 		fmt.Fprintf(g.out, "DISK-GUARD INCOMPLETE freed=%d free=%d failed=%d\n", g.freed, free, g.failed)
 		return 1
 	}
+	// A guarded volume below its stop held this machine's deals (sayVolume ran the
+	// hold and the judgment), and the run ends STOP, exit 3, so the loop row's
+	// supervisor stops the loops; never the server's deals.
+	if act.HoldDeals {
+		fmt.Fprintf(g.out, "DISK-GUARD STOP freed=%d %s\n", g.freed, act.Judgment)
+		return 3
+	}
 	if stop {
 		fmt.Fprintf(g.out, "DISK-GUARD STOP freed=%d free=%d floor=%d: the volume is under the stop floor; run: stop the loops on this machine, then free disk\n", g.freed, free, g.stopFloor)
 		return 3
@@ -308,7 +321,8 @@ func (g *guard) guardVolumes() volumeAction {
 }
 
 // sayVolume says the refusal, the one judgment, and each volume's free figure,
-// after the caches. A stop holds this machine's deals and never the server.
+// after the caches. A stop holds this machine's deals, never the server, and
+// pushes the one judgment to the seat.
 func (g *guard) sayVolume(act volumeAction) {
 	if g.volumes == nil {
 		return
@@ -322,12 +336,37 @@ func (g *guard) sayVolume(act volumeAction) {
 			line = "WOULD " + line
 		}
 		g.say(line)
+		g.pushJudgment(act.Judgment)
 	}
 	if act.HoldDeals {
 		g.say("deals held on this machine, never the server")
+		g.hold(act.Judgment)
 	}
 	for _, row := range act.Rows {
 		g.say(row)
+	}
+}
+
+// hold holds this machine's deals below a volume's stop (holdDeals, the reason
+// the judgment), never the server's. Nothing runs under --dry-run, and a run
+// that cannot start is a NOTE line.
+func (g *guard) hold(reason string) {
+	if g.holdDeals == nil || g.dry {
+		return
+	}
+	if err := g.holdDeals(reason); err != nil {
+		g.fail(fmt.Sprintf("this machine's deals could not be held (nova-sprint hold %s --reason %s; %s)", oneline.Field(g.host), oneline.Field(reason), oneline.Err(err)))
+	}
+}
+
+// pushJudgment pushes the one judgment to the seat (judge). Nothing runs under
+// --dry-run, and a run that cannot start is a NOTE line.
+func (g *guard) pushJudgment(text string) {
+	if g.judge == nil || g.dry {
+		return
+	}
+	if err := g.judge(text); err != nil {
+		g.fail(fmt.Sprintf("the judgment was not pushed to the seat (nova-sprint gc --judgment %s; %s)", oneline.Field(text), oneline.Err(err)))
 	}
 }
 
@@ -1199,6 +1238,8 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 	g.host = host
 	g.volumes = g.fillVolumes(vols)
 	g.gcLanded = g.runGCLanded
+	g.holdDeals = g.runHoldDeals
+	g.judge = g.runJudgment
 	return g.run()
 }
 
@@ -1241,6 +1282,32 @@ func (g *guard) fillVolumes(vols []guardedVolume) []guardedVolume {
 // does; with no address it removes nothing and says so.
 func (g *guard) runGCLanded() error {
 	cmd, cancel := subproc.CommandFor(context.Background(), subproc.GoBudget, "nova-sprint", "gc", "--class", "landed")
+	defer cancel()
+	cmd.Stdout = g.out
+	cmd.Stderr = g.out
+	return cmd.Run()
+}
+
+// runHoldDeals holds this machine's deals below a volume's stop (reason is the
+// judgment): nova-sprint hold <host>, the coordinator's verb, run from the
+// guard's environment as gc is. It never holds the server's deals. The command
+// reads the sprint's store from its environment (NOVA_SPRINT_REDIS or
+// NOVA_REDIS_ADDR), as gc does; with no address the hold is refused by the
+// command, whose non-zero exit fails the run.
+func (g *guard) runHoldDeals(reason string) error {
+	cmd, cancel := subproc.CommandFor(context.Background(), subproc.GoBudget, "nova-sprint", "hold", g.host, "--reason", reason)
+	defer cancel()
+	cmd.Stdout = g.out
+	cmd.Stderr = g.out
+	return cmd.Run()
+}
+
+// runJudgment pushes the one judgment to the seat (nova-sprint gc --judgment),
+// which writes an open judgment through the sprint store; the guard, a worker,
+// opens no store itself. The command reads the store from its environment, as
+// gc does; with no address it writes nothing and fails the run.
+func (g *guard) runJudgment(text string) error {
+	cmd, cancel := subproc.CommandFor(context.Background(), subproc.GoBudget, "nova-sprint", "gc", "--judgment", text)
 	defer cancel()
 	cmd.Stdout = g.out
 	cmd.Stderr = g.out

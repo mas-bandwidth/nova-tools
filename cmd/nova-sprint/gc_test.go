@@ -98,6 +98,24 @@ func TestGcVerbRefusesItsUsage(t *testing.T) {
 	}
 }
 
+// gc --judgment writes one open judgment through the sprint store (the disk
+// guard's below-stop seat judgment), removes nothing, and a store that is not
+// there refuses: a judgment with no store is nowhere.
+func TestGcJudgmentWritesOneOpenJudgment(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a --members m1 --coordinator lead --owner ada")
+	out := ta.ok("gc --judgment 'studio /Volumes/nova at 10GB: deals held'")
+	assert.Contains(t, out, "GC OK judgment=studio /Volumes/nova at 10GB: deals held")
+	assert.Contains(t, ta.ok("inbox"), "studio /Volumes/nova at 10GB: deals held")
+
+	// no store address: gc --judgment is refused, exit 1, nothing written
+	a, _, _, _ := gcApp(t)
+	code, _, errs := gcRun(a, "--judgment", "studio /Volumes/nova at 10GB: deals held")
+	assert.Equal(t, 1, code, errs)
+	assert.Contains(t, errs, "no store address to write the judgment to")
+}
+
 // --machine runs the same verb on that machine through the fleet runner, its flags carried;
 // a machine that does not answer is GC FAILED, exit 1.
 func TestGcMachineRunsTheVerbThroughTheFleetRunner(t *testing.T) {

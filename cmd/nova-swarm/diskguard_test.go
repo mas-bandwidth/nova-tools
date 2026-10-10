@@ -376,6 +376,52 @@ func TestDiskGuardNotesALandedRemovalItCouldNotRun(t *testing.T) {
 	assert.Contains(t, out.String(), "DISK-GUARD INCOMPLETE freed=0 free=107374182400 failed=1\n")
 }
 
+// Below a guarded volume's stop the guard holds this machine's deals, never
+// the server's, and pushes the one judgment to the seat, and the run ends
+// STOP, exit 3: the judgment text is the reason of the hold and the note, and
+// the rows still name each volume's free figure (the reader's finding, the
+// guard printed the judgment and "deals held" but held and judged nothing).
+func TestDiskGuardHoldsDealsAndJudgesBelowTheStop(t *testing.T) {
+	t.Parallel()
+	g, out := dgGuard(t)
+	g.host = "studio"
+	g.volumes = []guardedVolume{{
+		Name: "/Volumes/nova", Path: "/Volumes/nova", Free: 10 * volGB, Floor: 200 * volGB, Stop: 50 * volGB,
+	}}
+	var held, judged []string
+	g.holdDeals = func(reason string) error { held = append(held, reason); return nil }
+	g.judge = func(text string) error { judged = append(judged, text); return nil }
+
+	assert.Equal(t, 3, g.run())
+	const judgment = "studio /Volumes/nova at 10GB: deals held"
+	assert.Equal(t, []string{judgment}, held, "the deal hold's reason is the judgment")
+	assert.Equal(t, []string{judgment}, judged, "the seat judgment is pushed once")
+	text := out.String()
+	assert.Contains(t, text, judgment)
+	assert.Contains(t, text, "deals held on this machine, never the server")
+	assert.Contains(t, text, "volume=/Volumes/nova free=10GB red")
+	assert.Contains(t, text, "DISK-GUARD STOP freed=0 "+judgment+"\n")
+}
+
+// A deal hold or a judgment the guard could not start is a NOTE line, and the
+// run ends STOP, exit 3, whatever the note: the volume is still below the stop
+// floor, and the loops stop either way.
+func TestDiskGuardNotesAHoldOrJudgmentItCouldNotRun(t *testing.T) {
+	t.Parallel()
+	g, out := dgGuard(t)
+	g.host = "studio"
+	g.volumes = []guardedVolume{{
+		Name: "/Volumes/nova", Path: "/Volumes/nova", Free: 10 * volGB, Floor: 200 * volGB, Stop: 50 * volGB,
+	}}
+	g.holdDeals = func(string) error { return errors.New("nova-sprint: not found") }
+	g.judge = func(string) error { return errors.New("nova-sprint: not found") }
+	assert.Equal(t, 3, g.run())
+	text := out.String()
+	assert.Contains(t, text, "NOTE this machine's deals could not be held")
+	assert.Contains(t, text, "NOTE the judgment was not pushed to the seat")
+	assert.Contains(t, text, "DISK-GUARD STOP")
+}
+
 // A run that cannot read the process list removes nothing that needs it, says so, and ends
 // INCOMPLETE, exit 1.
 func TestDiskGuardWithoutTheProcessListRemovesNothingThatNeedsIt(t *testing.T) {
