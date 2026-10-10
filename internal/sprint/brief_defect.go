@@ -42,7 +42,10 @@ var briefDefectReasons = []struct {
 	reason string
 }{
 	{regexp.MustCompile(`(?i)` + negated + `\b(?:the\s+)?base\s+lacks\b|\b(?:not|missing)\s+(?:on|from)\s+the\s+base\b|\b(?:does|do)\s+not\s+exist\s+on\s+the\s+base\b`), BriefDefectBase},
-	{regexp.MustCompile(`(?i)` + negated + `\bduplicates?\s+(?:of\s+)?landed\s+work\b`), BriefDefectDuplicate},
+	// the duplicate in the worker's words, or as a worker says it found its card already done
+	// at its base: "nothing to do: the staged base already contains this card's
+	// implementation" (fault 17 of 2026-10-10: ~15 a day counted as the worker's failure)
+	{regexp.MustCompile(`(?i)` + negated + `(?:\bduplicates?\s+(?:of\s+)?landed\s+work\b|\b(?:the\s+)?(?:staged\s+)?base\s+already\s+(?:contains|has|holds|includes)\b)`), BriefDefectDuplicate},
 	{regexp.MustCompile(`(?i)` + negated + `\bdecision\s+(?:(?:is|was|has\s+been|already)\s+)*delivered\b`), BriefDefectDecision},
 	{regexp.MustCompile(`(?i)` + negated + `\bPATHS\s+do\s+not\s+hold\b`), BriefDefectPaths},
 }
