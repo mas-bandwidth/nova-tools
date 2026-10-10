@@ -50,7 +50,8 @@ var Families = []Family{
 	{"sprint", []string{"sprint:*"}, "internal/sprint Names.Key: the epoch, the beats, the tick's keys"},
 	{"machines", []string{"machine:*", "machines"}, "internal/config MachineKey, MachineCeilingKey, MachinesKey"},
 	{"beats", []string{"bench:*"}, "internal/config BeatKey: a machine's measured facts"},
-	{"friends", []string{"friend:*", "friends", "friends:*"}, "internal/config FriendBeatKey, FriendsKey: a friend's beat, desired slots, width, mode and roles"},
+	{"friends", []string{"friend:*", "friends", "friends:*"}, "internal/config FriendBeatKey, FriendsKey: a friend's beat, desired slots, width, mode and roles (the set every role reads)"},
+	{"friendKeys", []string{"friend:*:beat", "friend:*:desired", "friend:*:roles", "friend:*:wakepath", "friend:*:wake", "friend:*:slots", "friends", "friends:*"}, "internal/config FriendBeatKey, FriendsKey: the friend keys a friend's own seat writes, every friend:<name> shape but the working count friend:<name>:width"},
 	{"fleet", []string{"fleet:*"}, "internal/config FleetKey"},
 	{"loops", []string{"loops", "loop:*"}, "internal/config LoopsKey, LoopKey"},
 	{"routes", []string{"routes", "route:*"}, "internal/config RoutesKey, RouteKey"},
@@ -131,7 +132,7 @@ func Roles() []Role {
 		{Name: Member, User: "bench", Keys: keys(with(map[string]string{"tables": "rw", "views": "rw", "sprint": "rw", "beats": "rw", "tokens": "rw", "events": "rw"})),
 			Commands: writerCommands, Files: member, Extra: list},
 		{Name: Table, User: "ns-table", Keys: keys(read), Commands: readerCommands, Files: []string{"lua/table.lua"}, ReadOnly: true, Extra: list},
-		{Name: Friend, User: "ns-friend", Keys: keys(with(map[string]string{"tables": "rw", "views": "rw", "sprint": "rw", "friends": "rw", "tokens": "rw"})),
+		{Name: Friend, User: "ns-friend", Keys: keys(with(map[string]string{"tables": "rw", "views": "rw", "sprint": "rw", "friendKeys": "rw", "tokens": "rw"})),
 			Commands: writerCommands, Files: member, Extra: list},
 	}
 }

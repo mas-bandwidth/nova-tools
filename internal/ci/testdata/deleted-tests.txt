@@ -1472,3 +1472,4 @@ internal/docs/cli_links_flags_test.go the reference line it hand-held is generat
 internal/docs/cli_memory_flags_test.go the reference lines it hand-held are generated now: the clidoc block pastes each `nova-memory <verb> -h`, and TestCLIReferenceIsGeneratedFromHelp fails when docs/CLI.md drifts from it
 internal/docs/cli_spelling_flags_test.go the reference line it hand-held is generated now: the clidoc block pastes `nova-check spelling -h`, and TestCLIReferenceIsGeneratedFromHelp fails when docs/CLI.md drifts from it
 cmd/nova-sprint/recut_widen_test.go recut --widen is retired; TestBriefWidenKeepsTheId and TestAWidenReadsThePathBeforeTheProse cover the in-place brief --widen replacement
+cmd/nova-secrets/exec_width_write_test.go the sprint table's width write rule moved to the seat's Redis ACL (internal/redisacl friendKeys); the refusal the test pinned leaves nova-secrets exec, so the test goes with it

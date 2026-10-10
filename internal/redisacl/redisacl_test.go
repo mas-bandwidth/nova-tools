@@ -56,7 +56,7 @@ func TestRenderGrantsEachRoleItsFilesFunctions(t *testing.T) {
 		{Coordinator, []string{"~*", "+fcall|ns_capacity_machine", "+fcall|ns_friend_roles", "+fcall|ns_table_set", "+fcall_ro|ns_table_read", "+function|load"}, nil},
 		{Member, []string{"~table:*", "~sprint:*", "~bench:*", "~tokens:ledger:*", "~ev:github", "%R~machine:*", "%R~loop:*", "%R~config:decl", "+function|list", "+fcall|ns_ping", "+fcall|ns_table_set", "+fcall|ns_table_read", "+fcall_ro|ns_table_read"},
 			[]string{"~*", "+fcall|ns_capacity_machine", "+function|load"}},
-		{Friend, []string{"~view:*", "~friend:*", "%R~bench:*", "+function|list", "+fcall|ns_table_set"}, []string{"+fcall|ns_friend_roles", "+function|load", "~bench:*"}},
+		{Friend, []string{"~view:*", "%R~friend:*", "~friend:*:beat", "%R~bench:*", "+function|list", "+fcall|ns_table_set"}, []string{"~friend:*", "~friend:*:width", "+fcall|ns_friend_roles", "+function|load", "~bench:*"}},
 		{Table, []string{"%R~table:*", "%R~sprint:*", "%R~bench:*", "+function|list", "+fcall_ro|ns_table_read"},
 			[]string{"~table:*", "+fcall|ns_table_set", "+fcall|ns_table_read", "+@write", "+fcall|ns_ping"}},
 	}
@@ -146,18 +146,19 @@ func TestFamiliesAreTheOwnersKeys(t *testing.T) {
 		family[f.Name] = f.Patterns
 	}
 	for name, ks := range map[string][]string{
-		"tables":   {ntable.DefKey("work"), ntable.ChangesKey("work"), ntable.RowsKeyAt("work", 3), ntable.Registry},
-		"views":    {"view:sprint", "views"},
-		"sprint":   {names.EpochKey(), names.Key("beat:bench-a"), names.KeyAt("tick", 2)},
-		"machines": {config.MachineKey("m"), config.MachineCeilingKey("m"), config.MachinesKey},
-		"beats":    {config.BeatKey("m")},
-		"friends":  {config.FriendBeatKey("f"), config.FriendsKey, "friend:f:roles", "friend:f:desired"},
-		"fleet":    {config.FleetKey("store"), config.FleetKey("coordinator")},
-		"loops":    {config.LoopsKey, config.LoopKey("member-a")},
-		"routes":   {config.RoutesKey, config.RouteKey("pro-a")},
-		"config":   {config.DeclKey},
-		"tokens":   {record.LedgerPrefix + "2026-09-30"},
-		"events":   {wire.Stream},
+		"tables":     {ntable.DefKey("work"), ntable.ChangesKey("work"), ntable.RowsKeyAt("work", 3), ntable.Registry},
+		"views":      {"view:sprint", "views"},
+		"sprint":     {names.EpochKey(), names.Key("beat:bench-a"), names.KeyAt("tick", 2)},
+		"machines":   {config.MachineKey("m"), config.MachineCeilingKey("m"), config.MachinesKey},
+		"beats":      {config.BeatKey("m")},
+		"friends":    {config.FriendBeatKey("f"), config.FriendsKey, "friend:f:roles", "friend:f:desired", "friend:f:width"},
+		"friendKeys": {config.FriendBeatKey("f"), config.FriendsKey, "friend:f:roles", "friend:f:desired", "friend:f:wakepath"},
+		"fleet":      {config.FleetKey("store"), config.FleetKey("coordinator")},
+		"loops":      {config.LoopsKey, config.LoopKey("member-a")},
+		"routes":     {config.RoutesKey, config.RouteKey("pro-a")},
+		"config":     {config.DeclKey},
+		"tokens":     {record.LedgerPrefix + "2026-09-30"},
+		"events":     {wire.Stream},
 	} {
 		for _, k := range ks {
 			assert.True(t, match(family[name], k), "%s: %s", name, k)

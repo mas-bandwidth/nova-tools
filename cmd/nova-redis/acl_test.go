@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"path"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/redisacl"
 )
 
@@ -116,8 +118,50 @@ func TestACLRenderOpensNoStore(t *testing.T) {
 	assert.Equal(t, 0, f.opened)
 }
 
-// check on an empty store says MISSING per user and exits 1; apply sets each
-// and saves; check after it says OK and exits 0; a second apply sets none.
+// TestACLFriendCannotWriteTheWorkingCount pins the sprint table rule in the
+// render: the friend user reads every friend key, so it reads
+// friend:<name>:width, and its writable friend-key family lists every other
+// friend shape -- so no rule it holds grants write to that key. A rendering
+// with ~friend:* again, or one that lost the read, fails.
+func TestACLFriendCannotWriteTheWorkingCount(t *testing.T) {
+	t.Parallel()
+	users, err := redisacl.Render(fn.Spec())
+	require.NoError(t, err)
+	var friend redisacl.User
+	for _, u := range users {
+		if u.Role == redisacl.Friend {
+			friend = u
+		}
+	}
+	require.Equal(t, "ns-friend", friend.Name, "the render has a friend user")
+	const key = "friend:ada:width"
+	read, write := false, false
+	for _, rule := range friend.Rules {
+		var pattern string
+		var writes bool
+		switch {
+		case strings.HasPrefix(rule, "%RW~"):
+			pattern, writes = strings.TrimPrefix(rule, "%RW~"), true
+		case strings.HasPrefix(rule, "~"):
+			pattern, writes = strings.TrimPrefix(rule, "~"), true
+		case strings.HasPrefix(rule, "%R~"):
+			pattern, writes = strings.TrimPrefix(rule, "%R~"), false
+		default:
+			continue
+		}
+		if ok, _ := path.Match(pattern, key); !ok {
+			continue
+		}
+		read = true
+		write = write || writes
+	}
+	assert.True(t, read, "ns-friend must read %s: %v", key, friend.Rules)
+	assert.False(t, write, "ns-friend must not write %s: %v", key, friend.Rules)
+}
+
+// TestACLCheckApplyConverge: a store that lacks the users says MISSING per
+// user and exits 1; apply sets each and saves; check after it says OK and
+// exits 0; a second apply sets none.
 func TestACLCheckApplyConverge(t *testing.T) {
 	t.Parallel()
 	f := &fakeACL{live: map[string]redisacl.Live{}, cat: redisacl.Catalog{"read": {"get"}, "write": {"set"}}}
