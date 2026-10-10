@@ -230,6 +230,12 @@ This specification is locked. No line changes without his words, quoted here wit
   right of critical cards in ordering." / "And should show up as 'fix' state here", "between review and
   merging". The Fix line under the progress bar, the legend's `fix`, Work's `fix` column and the tracks'
   order. Nothing else moves.
+- 2026-10-07 ~6:26 PM ET, the owner, a quoted change after the lock: "please change critical and
+  blocker to have the same bright red color. The difference is that a blocker can evict an already
+  working slot, while a critical does not." Critical takes the blocker's bright red in the dark and
+  the light theme (`--s-critical` and `--p-critical`, both `#ff1a1a`); the legend keeps both words and
+  every segmented bar keeps its order (blocker, critical, fix purple, reads, working). The colour says
+  "the sprint's own fix, first"; eviction is the machine's, not the page's. Nothing else moves.
 - 2026-10-04, the owner, a quoted change after the lock, asking after the merge backlog:
   "Is this progress visible in the sprint dashboard yet?" The page shows one Merge row under the progress bar (the Merge section
   above), read from `where --json`'s `merge_row`. Nothing else moves.
