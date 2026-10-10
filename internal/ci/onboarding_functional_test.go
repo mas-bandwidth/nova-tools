@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -167,23 +168,54 @@ func readmeWhatItDoes(t *testing.T, readme string) map[string]string {
 	return out
 }
 
+// toolBuilds is one compile of each command for this process, keeping both
+// functional walks under the package budget (docs/SPEC-CI.md, "The per-package
+// test time budget"). The grammar walk and onboarding walk both build every
+// tool; on two cores, those duplicate compiles ran past the package's minute.
+// ciBinDir holds those binaries; TestMain removes it.
+var (
+	toolBuilds sync.Map
+	ciBinOnce  sync.Once
+	ciBinErr   error
+)
+
+type toolBuild struct {
+	once sync.Once
+	bin  string
+	out  []byte
+	err  error
+}
+
 // buildTool builds one command and returns its path. It is BUILT rather than called
 // as a package, because what this test is about is what a stranger meets at a shell
-// prompt. Each tool is built ONCE per subtest and run twice (bare, then `help`):
+// prompt. Each tool is built ONCE for the process and run twice (bare, then `help`):
 // building it per invocation made this the slowest package in the tree for no extra
 // evidence -- the same binary answers both questions (#516).
 func buildTool(t *testing.T, root, tool string) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), tool)
-	if runtime.GOOS == "windows" {
-		bin += ".exe"
-	}
-	build := exec.Command("go", "build", "-o", bin, "./cmd/"+tool)
-	build.Env = goenv.Clean(os.Environ())
-	build.Dir = root
-	out, err := build.CombinedOutput()
-	require.NoError(t, err, "building %s: %v\n%s", tool, err, out)
-	return bin
+	key := root + "\x00" + tool
+	v, _ := toolBuilds.LoadOrStore(key, &toolBuild{})
+	b := v.(*toolBuild)
+	b.once.Do(func() {
+		ciBinOnce.Do(func() {
+			ciBinDir, ciBinErr = os.MkdirTemp("", "nova-ci-bins-")
+		})
+		if ciBinErr != nil {
+			b.err = ciBinErr
+			return
+		}
+		bin := filepath.Join(ciBinDir, tool)
+		if runtime.GOOS == "windows" {
+			bin += ".exe"
+		}
+		build := exec.Command("go", "build", "-o", bin, "./cmd/"+tool)
+		build.Env = goenv.Clean(os.Environ())
+		build.Dir = root
+		out, err := build.CombinedOutput()
+		b.bin, b.out, b.err = bin, out, err
+	})
+	require.NoError(t, b.err, "building %s: %v\n%s", tool, b.err, b.out)
+	return b.bin
 }
 
 // runBare runs the built command with the arguments given (none, or `help`).

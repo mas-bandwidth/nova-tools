@@ -105,6 +105,27 @@ func TestDashboardListensOnPrivateAddressesOnly(t *testing.T) {
 	}
 }
 
+// No store is named, and the dashboard is not a puller and has no server.
+// That is a configuration refusal: exit 2, one line on stderr, nothing served.
+// It does not wait, and a named store that then fails to answer still serves.
+func TestADashboardWhoseFirstReadFailsRefusesOnStderr(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.a.getenv = func(k string) string {
+		if k == "NOVA_SPRINT_ACTOR" {
+			return "coordinator"
+		}
+		return ""
+	}
+	code, out, errs := ta.do("dashboard --listen 127.0.0.1:0 --pull none")
+	assert.Equal(t, 2, code, "%s%s", out, errs)
+	assert.Empty(t, out, "a configuration refusal must not be on stdout: %s", out)
+	assert.Contains(t, errs, "nova-sprint dashboard REFUSED")
+	assert.Contains(t, errs, "--redis <addr> is required")
+	assert.Contains(t, errs, "; run: nova-sprint dashboard -h")
+	assert.Equal(t, 1, strings.Count(errs, "\n"), "one line: %s", errs)
+}
+
 // Every refusal comes before any listener: exit 2, one line, nothing served.
 func TestDashboardRefusesBadUse(t *testing.T) {
 	t.Parallel()

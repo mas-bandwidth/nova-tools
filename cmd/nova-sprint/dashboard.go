@@ -76,6 +76,16 @@ func (a *app) cmdDashboard(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	redis := (verbArgs{fs: fs}).given("redis")
+
+	// SPEC-SPRINT-DASHBOARD.md, "Serving and publishing": the first read is
+	// before any listener opens. With no store named and no server or puller,
+	// refuse before serving; a named store that is down is still served.
+	if from == "" && a.getenv(ServerEnv) == "" {
+		if err := a.storeConfigured(*c); err != nil {
+			return refuse(stderr, "dashboard", err.Error())
+		}
+	}
+
 	stdout = &lockedWriter{w: stdout} // the listeners and the reads write lines from their own goroutines
 	srv := a.dashboardServer(c.redis, redis, from, *every, *logo, stdout)
 	ctx, stop := a.notify(context.Background())
