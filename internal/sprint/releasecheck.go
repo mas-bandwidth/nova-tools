@@ -16,6 +16,31 @@ import (
 // with the evidence, and on a fail the evidence names what to look at. The
 // verb `nova-sprint release check` runs the registry and writes nothing.
 
+// Product defines a release product's stream glob and release head.
+type Product struct {
+	Name    string // product name (e.g., "nova-sprint", "nova-tools")
+	Streams string // glob pattern for stream names (e.g., "sprint-v1-*", "tools-v1-2-0-*")
+	Head    string // release head commit SHA
+}
+
+// DefaultProducts returns the built-in product definitions.
+func DefaultProducts() []Product {
+	return []Product{
+		{Name: "nova-sprint", Streams: "sprint-v1-*", Head: ""},
+		{Name: "nova-tools", Streams: "tools-v1-2-0-*", Head: ""},
+	}
+}
+
+// ProductFor returns the product by name, or an error if not found.
+func ProductFor(name string) (Product, error) {
+	for _, p := range DefaultProducts() {
+		if p.Name == name {
+			return p, nil
+		}
+	}
+	return Product{}, fmt.Errorf("unknown product %q", name)
+}
+
 // ReleaseFacts is everything a check may read: the clock, the store's log and
 // the sprint's dealt bound, and the acceptance sentinel's facts
 // (releasecheck_acceptance.go). The unit tests fake it with a struct, and the
@@ -29,6 +54,8 @@ type ReleaseFacts interface {
 	// verb's --window and --merge-p90 (releasecheck_p90.go).
 	MergeWindow() time.Duration
 	MergeP90() time.Duration
+	// Product returns the product being checked.
+	Product() Product
 }
 
 // ReleaseResult is one check's answer.

@@ -44,6 +44,7 @@ type storeRelease struct {
 	accept      sprint.Acceptance
 	mergeWindow time.Duration
 	mergeP90    time.Duration
+	product     sprint.Product
 }
 
 func (s storeRelease) Now() time.Time                { return s.now }
@@ -52,13 +53,15 @@ func (s storeRelease) DealtMax() time.Duration       { return s.dealtMax }
 func (s storeRelease) Acceptance() sprint.Acceptance { return s.accept }
 func (s storeRelease) MergeWindow() time.Duration    { return s.mergeWindow }
 func (s storeRelease) MergeP90() time.Duration       { return s.mergeP90 }
+func (s storeRelease) Product() sprint.Product       { return s.product }
 
 // cmdReleaseCheck runs the release checks and prints one RELEASE CHECK line per check, then
 // RELEASE OK checks=<n> or RELEASE NOT READY failed=<n>; --json prints the one report
 // object. Exit 0 every check passed, 1 one failed, 2 usage or a store that did not answer.
 func (a *app) cmdReleaseCheck(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("release check")
-	streams := fs.String("streams", "", "only the log of the streams this glob names (path.Match over the stream's name; default every stream)")
+	product := fs.String("product", "nova-sprint", "the product to check (nova-sprint|nova-tools); default nova-sprint")
+	streams := fs.String("streams", "", "only the log of the streams this glob names (path.Match over the stream's name; default product's streams)")
 	window := fs.Duration("window", sprint.MergeQueueWindowDefault, "how far back a card's merging counts, for merge-queue-p90 (default 24h)")
 	mergeP90 := fs.Duration("merge-p90", sprint.MergeQueueP90Default, "the bar on merge-queue-p90: the p90 of the time cards spent merging (default 30m)")
 	var names stringList
@@ -66,6 +69,10 @@ func (a *app) cmdReleaseCheck(args []string, stdout, stderr io.Writer) int {
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "release check", argErr("takes no words ", err, pos...))
+	}
+	p, err := sprint.ProductFor(*product)
+	if err != nil {
+		return refuse(stderr, "release check", err.Error())
 	}
 	for _, n := range names {
 		if !slicesHas(sprint.ReleaseCheckNames(), n) {
@@ -87,14 +94,18 @@ func (a *app) cmdReleaseCheck(args []string, stdout, stderr io.Writer) int {
 	}
 	now := a.now()
 	from := now.Add(-sprint.StuckWindow)
-	if lines, err = sprint.ReleaseStreamLines(lines, *streams); err != nil {
+	streamGlob := *streams
+	if streamGlob == "" {
+		streamGlob = p.Streams
+	}
+	if lines, err = sprint.ReleaseStreamLines(lines, streamGlob); err != nil {
 		return refuse(stderr, "release check", err.Error())
 	}
 	s, err := st.Load(ctx, store.All, nil)
 	if err != nil {
 		return a.readFailed("release check", err, stderr)
 	}
-	rep, err := sprint.RunReleaseChecks(storeRelease{now: now, lines: lines, dealtMax: s.DealtMax(), accept: sprint.AcceptanceOf(s, lines, *streams), mergeWindow: *window, mergeP90: *mergeP90}, names)
+	rep, err := sprint.RunReleaseChecks(storeRelease{now: now, lines: lines, dealtMax: s.DealtMax(), accept: sprint.AcceptanceOf(s, lines, streamGlob), mergeWindow: *window, mergeP90: *mergeP90, product: p}, names)
 	if err != nil {
 		return refuse(stderr, "release check", err.Error())
 	}
