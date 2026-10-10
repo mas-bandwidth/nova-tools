@@ -867,7 +867,7 @@
                   ADOPT REFUSED step=server host={{ inventory_hostname }}: {{ ansible_failed_task.name | default('a restart') }} failed for
                   {{ ansible_failed_result.results | default([]) | selectattr('failed', 'defined') | selectattr('failed')
                      | map(attribute='item.label') | join(', ') or seat_restart_labels | join(', ') }};
-                  each was bootstrapped again from its plist (rc {{ seat_again.results | map(attribute='rc') | join(',') }})
+                  each was bootstrapped again from its plist (rc {{ seat_again.results | map(attribute='rc', default='?') | join(',') }})
 
         - name: "server: the manifest after, until each one started is there once, loaded, and runs the installed binary with its plist's arguments"
           ansible.builtin.command: { argv: "{{ seat_live }}" }
