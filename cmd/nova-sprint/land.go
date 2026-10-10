@@ -1450,8 +1450,8 @@ func headWhy(s *sprint.Snapshot, stream string, pins []landCard) string {
 // cure, which gates each head as before: gated says which the build did. The fetch's
 // seconds and the merges' are added to t.
 // behind says the stream has more than one batch waiting; when behind, a code conflict
-// parks only this member for redo on the current tip, and the batch goes on with later
-// cards. when not behind, a code conflict stops the batch as before.
+// stops the batch as before; when not behind, a code conflict parks only this member
+// for redo on the current tip and the batch goes on with later cards.
 func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard, t *landTimes, gateEach bool, behind bool) (merged []string, failed conflictCard, baseSha string, gated bool, why string) {
 	c, why := l.cut(ctx, dir, stream, cards, t)
 	if why != "" {
@@ -1545,8 +1545,8 @@ func (l *lander) cutBranch(ctx context.Context, dir, stream, base string) (strin
 // held to the lander's checks (checkCard), and with gateEach gated (gateCard); after a cure
 // each head is gated whatever gateEach says. The results are build's.
 // behind says the stream has more than one batch waiting; when behind, a code conflict
-// parks only this member for redo on the current tip, and the batch goes on with later cards.
-// when not behind, a code conflict stops the batch as before.
+// stops the batch as before; when not behind, a code conflict parks only this member
+// for redo on the current tip and the batch goes on with later cards.
 func (l *lander) mergeCards(ctx context.Context, dir, stream string, cards []landCard, c landCut, t *landTimes, gateEach bool, behind bool) (merged []string, failed conflictCard, why string) {
 	start := time.Now()
 	defer since(&t.Merge, start)
@@ -1586,7 +1586,7 @@ func (l *lander) mergeCards(ctx context.Context, dir, stream string, cards []lan
 			return nil, failed, env + "; no card is blamed and nothing was pushed or reported"
 		case refused != "":
 			failed = conflictCard{landCard: *card, why: refused, kind: l.conflictKind, paths: l.conflictPaths, emptyCommit: refused == emptyCommitFinding}
-			if !behind {
+			if behind {
 				return merged, failed, ""
 			}
 			continue
