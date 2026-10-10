@@ -2,19 +2,16 @@
 // The contract is docs/SPEC-RUNNER.md.
 //
 //	example:
-//	  nova-runner run --as ada --dir ~/ada-working --harness opencode --seat glenn
+//	  nova-runner run --as ada --dir ~/ada-working --harness opencode --seat coordinator
 package main
 
 import (
-	"context"
-	"errors"
-	"flag"
-	"fmt"
 	"io"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
+
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 // version is this binary's runner_version, set with -X main.version.
@@ -73,80 +70,65 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
-		fmt.Fprint(stdout, helpText)
-		return 0
+	return runnerTool().Run(args, os.Stdin, stdout, stderr)
+}
+
+func runnerTool() *tool.Tool {
+	return &tool.Tool{
+		Name: "nova-runner",
+		What: "keep a friend at her configured width with one-shot harness lanes",
+		How: helpText,
+		Stamp: version,
+		ExitTable: "0 stopped normally, 1 runner failed, 2 invalid invocation",
+		Verbs: []tool.Verb{{
+			Name: "run",
+			Usage: "run --as <friend> --dir <working-dir> --harness <command> --seat <seat> [--model-<tier> <model>]",
+			Example: "run --as ada --dir ~/ada-working --harness opencode --seat coordinator",
+			Effect: tool.Delivery + "; claims and closes sprint cards, sends beats and harness-fault judgments",
+			Flags: func(f *tool.Flags) {
+				f.Required("as", "the friend whose row this runner keeps")
+				f.Required("dir", "her working directory, where nova-friend stages jobs")
+				f.Required("harness", "the one-shot harness command")
+				f.Required("seat", "who hears a harness-fault judgment")
+				for _, tier := range []string{"frontier", "heavy", "pro", "flash"} {
+					f.String("model-"+tier, "", "fallback model for "+tier+" cards")
+				}
+				f.Prints()
+			},
+			Run: runLane,
+		}},
 	}
-	if args[0] != "run" {
-		fmt.Fprintf(stderr, "nova-runner: unknown verb %s; run: nova-runner help\n", args[0])
-		return 2
+}
+
+func runLane(c *tool.Call) *tool.Out {
+	if refused := c.Refused(); refused != nil {
+		return refused
 	}
-	fs := flag.NewFlagSet("nova-runner run", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	as := fs.String("as", "", "the friend whose row this runner keeps")
-	dir := fs.String("dir", "", "her working directory, the one nova-friend stages jobs under")
-	harness := fs.String("harness", "", "the one-shot harness (opencode, claude, or a command on PATH)")
-	seat := fs.String("seat", "", "who hears a harness-fault judgment, nova-bus send --to")
-	frontier := fs.String("model-frontier", "", "model for a frontier card that names none")
-	heavy := fs.String("model-heavy", "", "model for a heavy card that names none")
-	pro := fs.String("model-pro", "", "model for a pro card that names none")
-	flash := fs.String("model-flash", "", "model for a flash card that names none")
-	fs.Usage = func() { fmt.Fprint(stdout, helpText) }
-	if err := fs.Parse(args[1:]); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			fmt.Fprint(stdout, helpText)
-			return 0
-		}
-		fmt.Fprintf(stderr, "nova-runner run: %s; run: nova-runner run -h\n", err)
-		return 2
-	}
-	var missing []string
-	if *as == "" {
-		missing = append(missing, "--as")
-	}
-	if *dir == "" {
-		missing = append(missing, "--dir")
-	}
-	if *harness == "" {
-		missing = append(missing, "--harness")
-	}
-	if *seat == "" {
-		missing = append(missing, "--seat")
-	}
-	if len(missing) > 0 {
-		fmt.Fprintf(stderr, "nova-runner run: needs %s; run: nova-runner run -h\n", strings.Join(missing, ", "))
-		return 2
-	}
-	info, err := os.Stat(*dir)
+	as, dir, harness, seat := c.Str("as"), c.Str("dir"), c.Str("harness"), c.Str("seat")
+	info, err := os.Stat(dir)
 	if err != nil || !info.IsDir() {
-		fmt.Fprintf(stderr, "nova-runner run: --dir %s is not a directory\n", *dir)
-		return 2
-	}
-	if fs.NArg() != 0 {
-		fmt.Fprintf(stderr, "nova-runner run: takes no positional arguments; run: nova-runner run -h\n")
-		return 2
+		return tool.Refuse("--dir " + dir + " is not a directory; give an existing working directory")
 	}
 	r := &Runner{
-		Friend:  *as,
-		Dir:     *dir,
-		Harness: *harness,
-		Seat:    *seat,
+		Friend:  as,
+		Dir:     dir,
+		Harness: harness,
+		Seat:    seat,
 		Version: version,
 		Models: map[string]string{
-			"frontier": *frontier,
-			"heavy":    *heavy,
-			"pro":      *pro,
-			"flash":    *flash,
+			"frontier": c.Str("model-frontier"),
+			"heavy":    c.Str("model-heavy"),
+			"pro":      c.Str("model-pro"),
+			"flash":    c.Str("model-flash"),
 		},
-		Out: stdout,
-		Err: stderr,
+		Out: c.Stdout,
+		Err: c.Stderr,
 	}
-	r.Edges = realEdges(*as, *dir, *harness, *seat, r.Models)
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	r.Edges = realEdges(as, dir, harness, seat, r.Models)
+	ctx, stop := signal.NotifyContext(c.Ctx, syscall.SIGTERM)
 	defer stop()
 	if err := r.Run(ctx); err != nil {
-		fmt.Fprintf(stderr, "nova-runner run: %s\n", err)
-		return 1
+		return tool.Fail("nova-runner run: " + err.Error())
 	}
-	return 0
+	return tool.Exit(0)
 }

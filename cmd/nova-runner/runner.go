@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // The process edges around Next. Each one shells out or starts a child.
@@ -138,7 +140,9 @@ func (r *Runner) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case t := <-tick.C:
-			_ = r.Tick(ctx, t)
+			if err := r.Tick(ctx, t); err != nil {
+				r.fail("tick", err)
+			}
 		}
 	}
 }
@@ -200,7 +204,11 @@ func (r *Runner) Tick(ctx context.Context, now time.Time) error {
 		if card.ID == "" {
 			card.ID = f.ID
 		}
-		r.enqueueFinish(card, true, "", f.Report)
+		if card.Kind == KindRead {
+			r.enqueueRead(card, "return", f.Report, "")
+		} else {
+			r.enqueueFinish(card, true, "", f.Report)
+		}
 	}
 	r.flushPending(ctx)
 	r.flushReads(ctx)
@@ -219,12 +227,14 @@ func (r *Runner) Tick(ctx context.Context, now time.Time) error {
 			r.fail("start "+c.ID, fmt.Errorf("no start edge"))
 			continue
 		}
+		claimed := false
 		if r.Edges.Claim != nil {
 			if err := r.Edges.Claim(ctx, c); err != nil {
 				r.fail("claim "+c.ID, err)
 				dropped = append(dropped, c.ID)
 				continue
 			}
+			claimed = true
 			r.ok("RUNNER CLAIM card=%s kind=%s", c.ID, c.Kind)
 		}
 		proc, err := r.Edges.Start(ctx, c)
@@ -236,6 +246,14 @@ func (r *Runner) Tick(ctx context.Context, now time.Time) error {
 				r.startErr[c.ID] = err.Error()
 				r.fail("start "+c.ID, err)
 			}
+			if claimed {
+				fault := HarnessFault(err.Error())
+				if c.Kind == KindRead {
+					r.enqueueRead(c, "return", fault, "")
+				} else {
+					r.enqueueFinish(c, true, "", fault)
+				}
+			}
 			dropped = append(dropped, c.ID)
 			continue
 		}
@@ -244,6 +262,8 @@ func (r *Runner) Tick(ctx context.Context, now time.Time) error {
 		r.cards[c.ID] = c
 		r.ok("RUNNER START card=%s kind=%s", c.ID, c.Kind)
 	}
+	r.flushPending(ctx)
+	r.flushReads(ctx)
 	r.lanes = step.Lanes.Without(dropped...)
 	beat := BeatOf(r.lanes, queue, r.row.Width)
 	if r.Edges.Beat != nil {
@@ -434,10 +454,14 @@ func (r *Runner) boot() {
 	}
 	raw, err := os.ReadFile(r.statePath())
 	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			r.fail("state", err)
+		}
 		return
 	}
 	var st diskState
-	if json.Unmarshal(raw, &st) != nil {
+	if err := json.Unmarshal(raw, &st); err != nil {
+		r.fail("state", err)
 		return
 	}
 	r.mem = Memory{Fault: st.Fault, FaultCount: st.Count, Judged: st.Judged}
@@ -564,7 +588,11 @@ func readArgv(friend string, card Card, verdict, finding string) []string {
 	}
 	args := []string{"read", "--as", "friend." + friend, "--" + verdict, fmt.Sprintf("%s@%d", card.ID, gen), "--epoch", strconv.FormatUint(card.Epoch, 10)}
 	if finding != "" {
-		args = append(args, "--finding", finding)
+		if verdict == "return" {
+			args = append(args, "--reason", finding)
+		} else {
+			args = append(args, "--finding", finding)
+		}
 	}
 	return args
 }
@@ -573,8 +601,8 @@ func judgeArgv(friend, seat, subject, body string) []string {
 	return []string{"send", "--as", friend, "--to", seat, "--subject", subject, "--body", body}
 }
 
-// ParseRow reads `nova-config friend show` text. The row's width is required.
-func ParseRow(friendName, out string) (Row, error) {
+// parseRow reads `nova-config friend show` text. The row's width is required.
+func parseRow(friendName, out string) (Row, error) {
 	var line string
 	for _, l := range strings.Split(out, "\n") {
 		if strings.HasPrefix(l, "FRIEND ") {
@@ -632,10 +660,10 @@ func splitList(v string) []string {
 	return out
 }
 
-// ParseQueue reads `nova-sprint queue --as friend.<f> --json`. Cards stay in
+// parseQueue reads `nova-sprint queue --as friend.<f> --json`. Cards stay in
 // the sprint's order. Only a card in the ready column may be claimed; a working
 // card is already claimed by a lane, so the runner does not start it twice.
-func ParseQueue(out string) ([]Card, error) {
+func parseQueue(out string) ([]Card, error) {
 	var body struct {
 		Cards []struct {
 			ID      string `json:"id"`
@@ -858,7 +886,7 @@ func firstLine(s string) string {
 }
 
 func outputOf(ctx context.Context, name string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := subproc.Context(ctx, name, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -884,14 +912,14 @@ func realEdges(friendName, dir, harness, seat string, models map[string]string) 
 			if err != nil {
 				return Row{}, err
 			}
-			return ParseRow(name, out)
+			return parseRow(name, out)
 		},
 		Queue: func(ctx context.Context, name string) ([]Card, error) {
 			out, err := outputOf(ctx, "nova-sprint", queueArgv(name)...)
 			if err != nil {
 				return nil, err
 			}
-			return ParseQueue(out)
+			return parseQueue(out)
 		},
 		Claim: func(ctx context.Context, card Card) error {
 			_, err := outputOf(ctx, "nova-sprint", claimArgv(friendName, card)...)
@@ -972,7 +1000,8 @@ func startLane(ctx context.Context, friendName, dir, harness string, models map[
 		return nil, err
 	}
 	bin, args := harnessArgv(harness, modelOf(card, models), promptOf(friendName, card))
-	cmd := exec.Command(bin, args...)
+	// The harness has its own session and deadline; runner shutdown does not kill it.
+	cmd := subproc.Long(context.Background(), bin, args...)
 	cmd.Dir = dir
 	cmd.Stdin = bytes.NewReader(nil)
 	cmd.Stdout = logf
@@ -1037,7 +1066,9 @@ func capLane(deadline, pid int, done <-chan struct{}) {
 	select {
 	case <-done:
 	case <-timer.C:
-		_ = syscall.Kill(-pid, syscall.SIGTERM)
+		if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+			log.Printf("RUNNER FAIL deadline pid=%d: %v", pid, err)
+		}
 	}
 }
 

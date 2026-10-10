@@ -23,7 +23,7 @@ ticker):
 
 1. **Width.** `nova-config friend show <friend>` at most every 10s
    (`RowEvery`, `RowDue`). The row's `width` is the only max. `tiers`, `mode`
-   and `runner_version` are read with it (`ParseRow`). A width change is the
+   and `runner_version` are read with it (`parseRow`). A width change is the
    next `Next`: new lanes start only while the busy half-slots are under the
    new width, and a lane that is already running stays until it ends. Nothing
    in `Step` kills a lane.

@@ -14,6 +14,7 @@ import (
 const (
 	KindWork = "work"
 	KindRead = "read"
+	workHalfSlots = 2
 
 	// FaultPrefix is the report line of a lane that ended with no report.
 	FaultPrefix = "harness fault: "
@@ -41,7 +42,7 @@ func halvesOf(kind string) int {
 	if kind == KindRead {
 		return 1
 	}
-	return 2
+	return workHalfSlots
 }
 
 func (w Width) halves() int {

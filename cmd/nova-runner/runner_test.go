@@ -14,22 +14,22 @@ import (
 func TestParseRowReadsTheFieldsTheLoopUses(t *testing.T) {
 	t.Parallel()
 	out := "FRIEND name=ada slots=64 tiers=frontier,pro roles=builder width=16 mode=one-shot config_dir=- token_cap=6000000 runner_version=1.2.3 created=2023-11-14T22:13:20Z\n"
-	row, err := ParseRow("ada", out)
+	row, err := parseRow("ada", out)
 	require.NoError(t, err)
 	require.Equal(t, Width(16), row.Width)
 	require.Equal(t, []string{"frontier", "pro"}, row.Tiers)
 	require.Equal(t, "one-shot", row.Mode)
 	require.Equal(t, "1.2.3", row.RunnerVersion)
 
-	unset, err := ParseRow("ada", "FRIEND name=ada width=8 mode=batch tiers=- runner_version=-\n")
+	unset, err := parseRow("ada", "FRIEND name=ada width=8 mode=batch tiers=- runner_version=-\n")
 	require.NoError(t, err)
 	require.Empty(t, unset.RunnerVersion)
 	require.Empty(t, unset.Tiers)
 	require.Equal(t, "batch", unset.Mode)
 
-	_, err = ParseRow("ada", "FRIEND name=ada mode=one-shot\n")
+	_, err = parseRow("ada", "FRIEND name=ada mode=one-shot\n")
 	require.ErrorContains(t, err, "no width")
-	_, err = ParseRow("ada", "FRIEND name=bob width=8\n")
+	_, err = parseRow("ada", "FRIEND name=bob width=8\n")
 	require.ErrorContains(t, err, "showed bob")
 }
 
@@ -42,7 +42,7 @@ func TestParseQueueKeepsTheSprintsOrderAndSkipsWhatIsNotReady(t *testing.T) {
 	    {"id":"w1","col":"working","gen":2,"attempt":3,"packet":{"kind":"work","model":"inception/mercury-2.5","deadline":30,"repo":"a/b","base":"main","branch":"sprint/w1"}}
 	  ]
 	}`
-	cards, err := ParseQueue(raw)
+	cards, err := parseQueue(raw)
 	require.NoError(t, err)
 	require.Len(t, cards, 1, "only the ready column is launchable; working and done are not")
 	require.Equal(t, "d1", cards[0].ID)
@@ -69,6 +69,7 @@ func TestCommandLinesMatchTheLoop(t *testing.T) {
 	require.Equal(t, []string{"take", "--as", "friend.ada", "s1-1.w1@2", "--epoch", "15"}, claimArgv("ada", card))
 	require.Equal(t, []string{"read", "--as", "friend.ada", "--broken", "s1-1.w1@2", "--epoch", "15", "--finding", "main.go:3 off by one"}, readArgv("ada", card, "broken", "main.go:3 off by one"))
 	require.Equal(t, []string{"read", "--as", "friend.ada", "--ok", "s1-1.w1@2", "--epoch", "15"}, readArgv("ada", card, "ok", ""))
+	require.Equal(t, []string{"read", "--as", "friend.ada", "--return", "s1-1.w1@2", "--epoch", "15", "--reason", "harness fault: no report"}, readArgv("ada", card, "return", "harness fault: no report"))
 	require.Equal(t, []string{"install", "nova-runner@1.2.3"}, installArgv("1.2.3"))
 	bin, args := harnessArgv("opencode", "inception/mercury-2.5", "do the card")
 	require.Equal(t, "opencode", bin)
@@ -296,6 +297,73 @@ func TestTickClaimsBeforeLaunchAndSkipsWhatWasNotClaimed(t *testing.T) {
 	require.Equal(t, []string{"q0", "q1", "q2"}, claims)
 	require.Equal(t, []string{"q0", "q2"}, starts, "a card whose take was refused is not launched")
 	require.Equal(t, []string{"q0", "q2"}, r.lanes.IDs())
+}
+
+func TestTickClosesAClaimWhoseStartFails(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 7, 21, 0, 0, 0, time.UTC)
+	for _, kind := range []string{KindWork, KindRead} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			card := Card{ID: "card", Kind: kind, Gen: 2, Epoch: 15}
+			var claim, close int
+			r := &Runner{Friend: "ada", Version: "1", Edges: Edges{
+				Show: func(context.Context, string) (Row, error) { return Row{Width: 1, RunnerVersion: "1"}, nil },
+				Queue: func(context.Context, string) ([]Card, error) { return []Card{card}, nil },
+				Claim: func(context.Context, Card) error { claim++; return nil },
+				Start: func(context.Context, Card) (Proc, error) { return nil, errors.New("staging failed") },
+				Finish: func(_ context.Context, c Card, failed bool, head, report string) error {
+					require.Equal(t, KindWork, kind)
+					require.Equal(t, card, c)
+					require.True(t, failed)
+					require.Equal(t, "harness fault: staging failed", report)
+					close++
+					return nil
+				},
+				Read: func(_ context.Context, c Card, verdict, reason string) error {
+					require.Equal(t, KindRead, kind)
+					require.Equal(t, card, c)
+					require.Equal(t, "return", verdict)
+					require.Equal(t, "harness fault: staging failed", reason)
+					close++
+					return nil
+				},
+			}}
+			require.NoError(t, r.Tick(context.Background(), now))
+			require.Equal(t, 1, claim)
+			require.Equal(t, 1, close, "a successfully claimed card must be closed after Start fails")
+			require.Zero(t, r.lanes.Len())
+			require.Empty(t, r.pending)
+			require.Empty(t, r.pendingReads)
+		})
+	}
+}
+
+func TestTickReturnsAReadWithNoReport(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 7, 21, 0, 0, 0, time.UTC)
+	card := Card{ID: "read", Kind: KindRead, Gen: 1, Epoch: 15}
+	var returned int
+	r := &Runner{Friend: "ada", Version: "1", loaded: true,
+		row: Row{Width: 1, RunnerVersion: "1"}, rowAt: now,
+		lanes: Lanes{}.Add(Lane{ID: card.ID, Kind: KindRead}),
+		cards: map[string]Card{card.ID: card},
+		procs: map[string]procSlot{card.ID: {proc: &fakeProc{exited: true, line: "no report", pid: 4}}},
+		Edges: Edges{
+			Queue: func(context.Context, string) ([]Card, error) { return nil, nil },
+			Report: func(Card) (string, bool) { return "", false },
+			Finish: func(context.Context, Card, bool, string, string) error { t.Fatal("a read cannot use finish"); return nil },
+			Read: func(_ context.Context, c Card, verdict, reason string) error {
+				require.Equal(t, card, c)
+				require.Equal(t, "return", verdict)
+				require.Equal(t, "harness fault: no report", reason)
+				returned++
+				return nil
+			},
+		}}
+	require.NoError(t, r.Tick(context.Background(), now))
+	require.Equal(t, 1, returned)
+	require.Zero(t, r.lanes.Len())
 }
 
 func TestTickClosesAReadViaTheReadVerb(t *testing.T) {
