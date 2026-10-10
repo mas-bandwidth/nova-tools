@@ -7,12 +7,16 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 )
+
+const daemonEnvVar = "NOVA_FRIEND_DAEMON"
 
 const usage = `nova-friend: a tool for installing and managing a friend's daemon
 
@@ -186,13 +190,54 @@ func runRun(e env, args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "run", "--deny-self <paths> or NOVA_FRIEND_DENY_SELF")
 	}
 
-	// Run the friend daemon work loop with the wall applied.
-	// The deny paths are already denied by default (sandbox allows only what's in reads/writes).
-	// This is a simple loop that blocks until interrupted.
-	done := make(chan os.Signal, 1)
-	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
-	<-done
-	return 0
+	// If already running as daemon, just wait for signals (no nested sandbox).
+	if e.getenv(daemonEnvVar) != "" {
+		done := make(chan os.Signal, 1)
+		signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
+		<-done
+		return 0
+	}
+
+	// Get HOME from environment.
+	home := e.getenv("HOME")
+	if home == "" {
+		return refuse(stderr, "run", "HOME is not set")
+	}
+
+	// Build the daemon's work directory under HOME.
+	workDir := filepath.Join(home, ".nova-friend", as)
+	if err := os.MkdirAll(workDir, 0o700); err != nil {
+		return refuse(stderr, "run", fmt.Sprintf("mkdir workdir: %v", err))
+	}
+
+	// Build a sandbox policy: the daemon only has access to its work directory.
+	// The denySelf paths are NOT in this policy, so they are denied by default.
+	env := os.Environ()
+	env = append(env, daemonEnvVar+"=1")
+	in := sandbox.Input{
+		Writes: []string{workDir},
+		Home:   home,
+		Argv:   []string{os.Args[0], "run", "--as", as, "--deny-self", denySelf},
+	}
+	p, bad := sandbox.Build(in)
+	if len(bad) > 0 {
+		for _, r := range bad {
+			fmt.Fprintf(stderr, "run: wall refused: reason=%s %s\n", r.Reason, r.Text)
+		}
+		return 1
+	}
+
+	// Run the friend daemon work loop within the sandbox wall.
+	// denySelf paths are denied because they are not in the policy's Reads/Writes.
+	okLine := func() {
+		fmt.Fprintf(stdout, "wall: %s OK\n", sandbox.Backend)
+	}
+	exitCode, err := sandbox.Run(p, env, os.Stdin, stdout, stderr, okLine)
+	if err != nil {
+		fmt.Fprintf(stderr, "run: %v\n", err)
+		return 1
+	}
+	return exitCode
 }
 
 func runUninstall(e env, args []string, stdout, stderr io.Writer) int {
