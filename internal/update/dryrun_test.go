@@ -215,7 +215,7 @@ func TestApplyDryRunPrintsThePlanTheRealApplyTakes(t *testing.T) {
 	}
 	need(t, out,
 		"APPLY OK name=x dry_run=true from=1.0.0 to=1.2.0 source="+strings.ReplaceAll(latest, " ", `\x20`),
-		"APPLY STALE name=x kind=tool installed=1.0.0 latest=1.2.0",
+		"APPLY STALE name=x kind=tool installed=1.0.0 target=1.2.0 source="+strings.ReplaceAll(latest, " ", `\x20`),
 		"APPLY PLAN name=x argv=2 version=1.2.0: "+filepath.Join(f.dir, "installer.sh")+" 1.2.0",
 		"APPLY NOTE dry run: nothing installed, nothing written")
 	sameDir(t, "apply --dry-run", before, dirTree(t, f.dir))
