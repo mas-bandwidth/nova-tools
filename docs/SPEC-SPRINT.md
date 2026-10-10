@@ -1600,7 +1600,19 @@ removes exactly the scratch the machinery made and no longer needs, class by cla
   as any other removal does;
 - `cache`: every Go build cache of the bench root (`cache/go-build`, `buds/<name>/cache/go-build`)
   and of each working directory (`.cache/go-build`), held under its cap (`internal/gocache`,
-  20 GiB).
+  20 GiB);
+- `landed`: `<w>/jobs/<job>` whose card is landed or dropped, removed whole after one hour
+  (`sprint.LandedGrace`), whatever its git state (`sprint.GCLanded`, `sprint.PruneLanded`).
+  The card is the job's id: `<id>~<epoch>`, and `.g<gen>` from the second generation; a name
+  with no epoch is the card. A friend's job name carries `~`, which the jobs class does not
+  take (`safepath.NameOK`). Landed is a placed card in the landed column, its `landed` time;
+  dropped is an unplaced record with `outcome=dropped` and `dropped_at`. An open card's job
+  stays for the jobs class. When the job's own card has no record, a work card's primary
+  decides. The grace is the card's time, or the directory's own time when the card names
+  none. `nova-sprint gc` runs this class with the others; `nova-sprint gc --class landed`
+  runs it alone. The cards are read only when `NOVA_SPRINT_REDIS` or `NOVA_REDIS_ADDR` is
+  set; otherwise the class says so and removes nothing, and a seat login is not opened for
+  it. A clone with uncommitted work does not keep this class: the removal does not consult git.
 
 The known scratch roots are the AI root, the bench root (`~/nova-bench`), land's clone root
 and each plain `<home>/<name>-working` directory; one that is the disk, the home or a
@@ -1627,6 +1639,38 @@ soon as the loop sees it, at most once every ten minutes while it stays there
 `TestGcFindsTheAIRootThroughTheHomesWorkingLinks`, `TestGcVerbFindsTheAIRootWithoutNovaAIRoot`,
 `TestTheTickRunsGcHourlyAndOnAFullVolume`, `TestGcVerbReclaimsThisMachinesFinishedScratch`,
 `TestGcMachineRunsTheVerbThroughTheFleetRunner`.)
+
+### The disk guard's volumes
+
+The volumes a machine's friends work on are guarded like the root disk (`sprint.GuardVolumes`,
+`nova-swarm disk-guard`). They come from `--volume` (a path, `path=floor`, or `path=floor:stop`,
+repeated), else the
+machine row's `disk_volumes` when `nova-config machine show` prints that field, else the root disk
+and the volume that holds the friends' directories (`NOVA_AI_ROOT`, else `~/ai`, and each
+`<home>/<name>-working`). Floor and stop are per volume. A size is bytes or a whole number of GB
+or TB (`200GB`, `50GB`); the defaults are 200 GB and 50 GB, decimal, not the guard's older
+`--disk-floor` of 10 GiB, which still warns on its own line.
+
+Below a volume's floor (free under it) the guard runs `nova-sprint gc --class landed`, then the
+caches, then says `REFUSED <volume> free=<figure>` for the tightest such volume. Below a stop it
+holds this machine's deals, never the server's, and says one judgment `<host> <volume> at
+<free>: deals held`. A volume whose free could not be read is skipped, not treated as empty.
+Each guarded volume is one line, `volume=<name> free=<figure>`, and ` red` when it is under its
+floor. `where` and the page's machine row are that line; this change does not draw them.
+
+The landed removal that guards the volume is gc's class (`sprint.GCLanded`, `sprint.PruneLanded`,
+below). Below a volume's floor the guard, a worker that never reads a card's state itself, runs
+`nova-sprint gc --class landed` (the command reads the sprint's store and removes the landed
+jobs), then the caches, then says the refusal. gc's own loop also runs gc on a machine whose
+fullest volume is at 80% or above. gc walks every friend's `jobs/` under the AI root, which is
+where a landed one-shot job was left on 2026-10-07 after its branch was pruned (kept as commits
+on no remote, or as uncommitted paths). The friend's own prune pass and the one-shot reap call
+this class too (docs/SPEC-FRIEND.md, the prune pass): after the finished-worktree prune the
+daemon asks the sprint server for each job's card and removes the landed or dropped ones whole,
+and gc, which reads the sprint's store, makes the same call where that read answers none.
+(`TestLandedJobIsRemovedAfterTheGrace`,
+`TestOpenJobIsKept`, `TestDroppedJobIsRemoved`,
+`TestGuardRunsLandedBelowTheFloorAndHoldsDealsBelowTheStop`, `TestVolumeRowShowsTheFreeFigure`.)
 
 ## 2. The cards
 

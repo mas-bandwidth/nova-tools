@@ -94,10 +94,13 @@ type GCClass struct {
 }
 
 // GCResult is a pass: each class, the detail lines (a removal, a keep, a refusal, a
-// failure), what it freed, the fullest volume of its roots (-1 not read) and the failures.
+// failure), the paths it removed, what it freed, the fullest volume of its roots (-1 not
+// read) and the failures. Removed lets a caller that records each removal by name (the
+// friend daemon's prune pass) name the jobs without reading the detail's text.
 type GCResult struct {
 	Classes []GCClass
 	Detail  []string
+	Removed []string
 	Freed   int64
 	Volume  int
 	Failed  int
@@ -600,6 +603,7 @@ func (p *gcPass) remove(dir, classDir, why string, clones bool) {
 		}
 		action = "REMOVED"
 	}
+	p.res.Removed = append(p.res.Removed, dir)
 	p.class.Count++
 	p.class.Bytes += size
 	p.res.Freed += size

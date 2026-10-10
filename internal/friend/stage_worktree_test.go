@@ -208,6 +208,43 @@ func TestTheInboxCleanupPrunesFinishedJobs(t *testing.T) {
 	assert.False(t, lives[len(lives)-1][held.Job], "a job off her row is no longer live")
 }
 
+// The same cleanup runs the landed removal, after the finished-worktree prune: PruneLanded
+// removes each landed or dropped card's job whole, whatever its git state, and each removal
+// is said. The one pass is the daemon's prune pass and the one-shot reap alike
+// (docs/SPEC-FRIEND.md, the prune pass).
+func TestTheInboxCleanupRemovesLandedJobs(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	row := &twinRow{}
+	r.d.Held = row.held
+	row.set(workCard("held.w1", "working"))
+	var order []string
+	r.d.Prune = func(context.Context, map[string]bool) ([]string, error) {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		order = append(order, "prune")
+		return nil, nil
+	}
+	r.d.PruneLanded = func(context.Context, map[string]bool) ([]string, error) {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		order = append(order, "landed")
+		return []string{"gone.w1~15"}, nil
+	}
+	r.run(t, 1)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	assert.Equal(t, []string{"prune", "landed"}, order, "the landed removal runs after the finished-worktree prune")
+	var removed []string
+	for _, l := range r.records {
+		if strings.Contains(l, " prune: removed ") {
+			removed = append(removed, l)
+		}
+	}
+	require.Len(t, removed, 1, "the landed job removed is said: %v", removed)
+	assert.Contains(t, removed[0], "prune: removed jobs/gone.w1~15 whole: its card is landed or dropped")
+}
+
 // A mirror made before jobs were worktrees held origin's branches as its own: its first fetch
 // converts it in place, origin's branches deleted as its own and fetched back as remote-tracking
 // refs, so a job's branch never meets a copy of origin's.
