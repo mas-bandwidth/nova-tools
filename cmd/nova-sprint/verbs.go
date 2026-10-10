@@ -169,6 +169,7 @@ func init() {
 		{"seat push", "[--harness <name> --target <dir> [--session <id>]] [--sent <nonce> [--failed <why>]] [--beat bus|friends|transitions [--failed <why>]] [--observe friends|transitions --json] [--dry-run]", "seat push", (*app).cmdSeatPush},
 		{"seat pong", "<nonce> [--dry-run]", "seat pong received-nonce", (*app).cmdSeatPong},
 		{"seat", "[--repair --reason <text>] | push [--harness <name> --target <dir> [--session <id>]] | pong <nonce>", "seat", (*app).cmdSeat},
+		{"fsck", "[--check <name>]...", "fsck", (*app).cmdFsck},
 		{"fsck seat", "[--pg <host:port or postgres:// URI>]", "fsck seat", (*app).cmdFsckSeat},
 		{"routes", "", "routes", (*app).cmdRoutes},
 		{"rules", "", "rules", (*app).cmdRules},
@@ -419,6 +420,7 @@ var verbExamples = map[string][]string{
 		"add --stream s1 --brief-dir briefs",
 		"add --stream s1 --brief-file a.md --brief-file b.md",
 	},
+	"fsck":      {},
 	"fsck seat": {},
 }
 
