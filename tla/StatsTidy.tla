@@ -85,10 +85,10 @@ Move(t) ==
  /\ LET take == {c \in done[epoch] \cap History : Row(c) \in selected[t]}
     IN /\ done' = [done EXCEPT ![epoch] = @ \ take]
        /\ moves' = [moves EXCEPT ![t] = take]
-       /\ beforeMove' = beforeMove /\ (take = {} \/ archives[t] # "absent")
-       /\ keptWork' = keptWork /\ take \subseteq records[epoch]
+       /\ beforeMove' = (beforeMove /\ (take = {} \/ archives[t] # "absent"))
+       /\ keptWork' = (keptWork /\ take \subseteq records[epoch]
              /\ take \subseteq done[epoch]
-             /\ \A c \in take : Row(c) \in selected[t]
+             /\ (\A c \in take : Row(c) \in selected[t]))
  /\ succeeded' = [succeeded EXCEPT ![t] = TRUE]
  /\ pc' = [pc EXCEPT ![t] = IF Broken = "MoveFirst" THEN "lateplan" ELSE "outcome"]
  /\ revision' = revision + 1
