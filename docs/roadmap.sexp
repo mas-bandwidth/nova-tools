@@ -1253,13 +1253,6 @@
    :date "2026-10-10"
    :release "v1.3"
    :origin "issue #3391")
-  (item "wake-serve-blind-commit-limit" :group "ops"
-   :title "nova-wake serve reports blindness instead of healthy when far behind"
-   :text "Serve cannot see a reader whose cursor is over the commit limit behind, yet ends with zero
-    failures and exit zero. It raises the limit or exits with a failure."
-   :date "2026-10-10"
-   :release "v1.3"
-   :origin "issue #3445")
   (item "tokens-redis-user-auth" :group "ops"
    :title "nova-tokens ledger and report accept a Redis user"
    :text "The documented Redis call authenticates as the default user and is refused. A user flag makes it
