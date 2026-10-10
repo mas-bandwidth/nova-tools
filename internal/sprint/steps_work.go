@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 )
 
@@ -1779,20 +1778,15 @@ func lateFinishWhy(c *Card, r FinishReq) string {
 // friendNext is a friend's own take: her finish moves the oldest ready card on her row
 // (the deal dealt it ready behind her working cards: friendDealPass) into working in the
 // same step, taken now, so she never waits for a tick between one card and the next
-// (the owner, 2026-10-04: "just like the fleet"). In one-shot mode (docs/SPEC-SPRINT.md
-// section 1, "A friend's card"), the next is only after the last finished: already-started
-// work is preserved, but queued promotion is gated until shared work/read occupancy on her
-// row reaches zero. A machine's finish does nothing of the kind: the member takes.
+// (the owner, 2026-10-04: "just like the fleet"), in batch and one-shot mode alike: a
+// one-shot friend's lanes are independent, so the lane her finish frees takes her next at
+// once (the owner, 2026-10-10: "every friend lane refreshes independently"). A machine's
+// finish does nothing of the kind: the member takes.
 func friendNext(s *Snapshot, c *Card, u *Unit, prior []Unit) {
 	if !IsFriendRow(c.Row) {
 		return
 	}
 	name, _ := FriendOfRow(c.Row)
-	if s.FriendMode(name) == config.FriendModeOneShot {
-		if friendOccupancy(s, c.Row, u, prior) > 0 {
-			return
-		}
-	}
 	ready := append([]*Card(nil), s.Fleet.Cell(c.Row, Ready)...)
 	ready = slices.DeleteFunc(ready, func(rc *Card) bool {
 		return unitPromoted(prior, rc.ID)
@@ -1805,24 +1799,6 @@ func friendNext(s *Snapshot, c *Card, u *Unit, prior []Unit) {
 	set, unset := friendTaken(s, next, name)
 	u.Changes = append(u.Changes, change(Fleet, moveEntry(next, c.Row, Working, set, unset...)))
 	u.Moved += fmt.Sprintf("; %s ready -> working (her next, taken now)", next.ID)
-}
-
-func friendOccupancy(s *Snapshot, row string, u *Unit, prior []Unit) int {
-	active := 0
-	for _, card := range s.Fleet.Cell(row, Working) {
-		if card.ID == u.Key || unitFinishes(prior, card.ID) {
-			continue
-		}
-		active++
-	}
-	for _, p := range prior {
-		for _, ch := range p.Changes {
-			if ch.Table == Fleet && ch.Entry.Move != nil && ch.Entry.Move.Row == row && ch.Entry.Move.Col == Working {
-				active++
-			}
-		}
-	}
-	return active
 }
 
 func unitFinishes(units []Unit, cardID string) bool {

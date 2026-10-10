@@ -313,13 +313,12 @@ func laneRunsIt(s *Snapshot, seats []FriendSeat, c, wc *Card) string {
 	return ""
 }
 
-// friendRoom is the friend's room and her lanes: DealAhead times her width and her width
-// in batch mode, 1 and 1 in one-shot mode (docs/SPEC-SPRINT.md section 1, "A friend's card"),
-// the room less what her reads take first in this deal (FriendSeat.ReadsFirst).
+// friendRoom is the friend's room and her lanes: DealAhead times her width and her width,
+// in batch mode and in one-shot mode alike (docs/SPEC-SPRINT.md section 1, "A friend's
+// card"): a one-shot friend runs one lane per unit of width, each card a fresh run (her
+// daemon's one-shot lanes, docs/SPEC-FRIEND.md), so she is dealt to her width as a batch
+// friend is; the room less what her reads take first in this deal (FriendSeat.ReadsFirst).
 func friendRoom(f FriendSeat) (room, width int) {
-	if f.Mode == config.FriendModeOneShot {
-		return 1 - f.ReadsFirst, 1
-	}
 	return DealAhead*f.Width - f.ReadsFirst, f.Width
 }
 
