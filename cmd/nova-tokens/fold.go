@@ -310,7 +310,13 @@ func foldDay(s *sink, lists *foldLists, folder *tokens.Folder, sources []*tokens
 					// whose turns nobody can state.
 					file.Turns = tokens.Dash
 				}
-				dayShrinks = tokens.Shrinks(old.Totals(), file.Totals(), d)
+				dayShrinks = combineShrinks(
+					// The day total: every row, retained rows included.
+					tokens.Shrinks(old.Totals(), file.Totals(), d),
+					// Each declared label's own rows, which the day total can hide
+					// when another declared source rises by more.
+					tokens.SourceShrinks(old.Rows, merged, declared, d),
+				)
 				shrank = len(dayShrinks) > 0
 			}
 			// A declared source with zero samples for an explicitly selected existing
@@ -350,11 +356,36 @@ func foldDay(s *sink, lists *foldLists, folder *tokens.Folder, sources []*tokens
 		}
 		for _, sh := range dayShrinks {
 			lists.shrank.Line(s.line("TOKENS", "SHRANK", "a source went quiet; --allow-shrink writes it anyway",
-				"date", sh.Day, "type", tokens.TypeNames[sh.Type], "file", sh.File, "now", sh.Now, "written", written))
+				"date", sh.Day, "type", tokens.TypeNames[sh.Type], "file", sh.File, "now", sh.Now, "written", written, "source", sh.Source))
 		}
 	}
 	lists.day.Line(dayLine(s, d, file, written, dryRun, wouldWrite))
 	return o
+}
+
+// combineShrinks is the day-total shrink list beside the per-source one. A day-total shrink
+// and a per-source shrink with the same type, file and now are one loss said twice, so the
+// per-source line -- the one that names the label -- stands alone. A day-total shrink that
+// no declared source's own rows explain, because retained rows or another source's fall are
+// in the total, keeps its source=- line.
+func combineShrinks(dayTotal, perSource []tokens.Shrink) []tokens.Shrink {
+	if len(perSource) == 0 {
+		return dayTotal
+	}
+	out := make([]tokens.Shrink, 0, len(dayTotal)+len(perSource))
+	for _, d := range dayTotal {
+		same := false
+		for _, s := range perSource {
+			if s.Type == d.Type && s.File == d.File && s.Now == d.Now {
+				same = true
+				break
+			}
+		}
+		if !same {
+			out = append(out, d)
+		}
+	}
+	return append(out, perSource...)
 }
 
 func daysAsked(day string, all bool) string {

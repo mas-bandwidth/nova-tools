@@ -176,10 +176,11 @@ func (d *DayFile) Totals() Counts {
 
 // Shrink is one type that would go backwards.
 type Shrink struct {
-	Day  string
-	Type Type
-	File string // the number in the file
-	Now  string // the number now, or a dash where the source went quiet
+	Day    string
+	Source string // the declared label whose rows fell, or Dash for the day total
+	Type   Type
+	File   string // the number in the file
+	Now    string // the number now, or a dash where the source went quiet
 }
 
 // Shrinks compares what is on disk with what a fold has just computed. A type that is
@@ -187,6 +188,10 @@ type Shrink struct {
 // that went quiet must never silently lower a day's spend.
 //
 // A dash in the file that is a number now is NOT a shrink: that is coverage arriving.
+//
+// Source is Dash: this is the day total, over every row. SourceShrinks is the same
+// comparison per declared label, which is what catches one declared source's loss when
+// another declared source rises by more than it.
 func Shrinks(old, now Counts, day string) []Shrink {
 	var out []Shrink
 	for t := Type(0); t < NTypes; t++ {
@@ -194,12 +199,47 @@ func Shrinks(old, now Counts, day string) []Shrink {
 		is, hasIt := now.Get(t)
 		switch {
 		case hadIt && !hasIt:
-			out = append(out, Shrink{Day: day, Type: t, File: strconv.FormatInt(was, 10), Now: Dash})
+			out = append(out, Shrink{Day: day, Source: Dash, Type: t, File: strconv.FormatInt(was, 10), Now: Dash})
 		case hadIt && hasIt && is < was:
-			out = append(out, Shrink{Day: day, Type: t, File: strconv.FormatInt(was, 10), Now: strconv.FormatInt(is, 10)})
+			out = append(out, Shrink{Day: day, Source: Dash, Type: t, File: strconv.FormatInt(was, 10), Now: strconv.FormatInt(is, 10)})
 		}
 	}
 	return out
+}
+
+// SourceShrinks is Shrinks per declared source label instead of for the day as a whole. The
+// day-total comparison cannot see one declared source's loss when another declared source
+// rises by more than it: the new numbers are bigger. This sums, for each declared label, the
+// cells of every row whose sources cell NAMES that label, in the old rows against the merged
+// rows, so a row that names two declared labels counts toward each and a retained row (no
+// declared source) counts toward none.
+//
+// The result is one Shrink per (label, type) that fell or went from a number to a dash,
+// sorted by label then type, each carrying its label in Source. An empty declared list, or a
+// label whose rows only rose, yields nothing.
+func SourceShrinks(old, merged []DayRow, declared []string, day string) []Shrink {
+	labels := append([]string(nil), declared...)
+	sort.Strings(labels)
+	labels = slices.Compact(labels)
+	var out []Shrink
+	for _, label := range labels {
+		for _, sh := range Shrinks(sourceTotals(old, label), sourceTotals(merged, label), day) {
+			sh.Source = label
+			out = append(out, sh)
+		}
+	}
+	return out
+}
+
+// sourceTotals is the per-type sum of the cells of every row whose sources cell names label.
+func sourceTotals(rows []DayRow, label string) Counts {
+	var c Counts
+	for _, r := range rows {
+		if slices.Contains(r.Sources, label) {
+			c.Add(r.Counts)
+		}
+	}
+	return c
 }
 
 // The merge keeps rows outside a fold's declared sources instead of recomputing
@@ -282,10 +322,8 @@ func MergeDay(old, fresh []DayRow, declared []string) (rows []DayRow, retained i
 		case in > 0:
 			// replaced: this run recomputed every source that wrote it. A (model, repo)
 			// this run no longer reports at all is a row that drops out of the merged
-			// file. If overall day totals fall or become unknown, the shrink comparison catches that
-			// shrink; but if another declared source rises by more than this row's
-			// totals, day-total comparison cannot see the per-source quiet shrink
-			// (preserved as follow-up).
+			// file, and Shrinks cannot see it when another declared source rises by
+			// more; SourceShrinks sums each declared label's own rows and catches it.
 		default:
 			if computed[r.Model+"\t"+r.Repo] {
 				partials = append(partials, partialOf(r, folded, PartialCollision))

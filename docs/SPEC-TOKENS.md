@@ -158,6 +158,16 @@ near the end, and the sections below say how each is met.
     arriving. `--allow-shrink` writes it anyway and
     prints the same line with `written=true`. A source that became unreadable
     must never quietly lower a day's spend.
+    A day total is not enough: it cannot see one declared source's loss
+    when another declared source rises by more than it, because the new
+    numbers are bigger. So the fold also compares, for each source label this
+    run declared, the per-type sum of the cells of every row whose `sources`
+    cell names that label, in the file against the merged file: a label whose
+    sum falls for a type, or that had a number and now has none, is a shrink
+    too. A row whose `sources` cell names two declared labels counts toward
+    each; a retained row (no declared source) counts toward none. Either
+    comparison refuses the day, and each `TOKENS SHRANK` line carries
+    `source=<label>` (or `source=-` for the day total).
     The comparison is with the MERGED file, because the fold merges by
     source: this run's rows replace the rows its own declared sources wrote,
     a row no declared source wrote is retained exactly as it is, and a row
@@ -534,7 +544,7 @@ TOKENS CONFLICT label=bus:<name> day=<d> notes=<id,id,…>: competing reports; s
 TOKENS TOUCHED label=bus:<name> day=<d> repos=<list>
 TOKENS MIXED date=<d> model=<model> repo=<repo> bases=<utc,zone>: two day bases on one row; declare one export for that day
 TOKENS DAY day=<d> rows=<n> models=<n> repos=<n> turns=<n|-> unknown=<pct>% other=<pct>% rough=<n> dashes=<n> nonutc=<n> sources=<labels> written=<true|false>
-TOKENS SHRANK date=<d> type=<type> file=<n> now=<n|-> written=<true|false>: a source went quiet; --allow-shrink writes it anyway
+TOKENS SHRANK date=<d> type=<type> file=<n> now=<n|-> written=<true|false> source=<label|->: a source went quiet; --allow-shrink writes it anyway
 TOKENS QUIET label=<label> day=<d>: a declared source has zero samples for an explicitly selected existing day
 TOKENS PARTIAL date=<d> model=<model> repo=<repo> sources=<labels> folded=<labels> written=<true|false>: this fold declared only some of the sources that wrote the row; declare every source in the file's sources= line, or fold this day into its own --out
 TOKENS MORE kind=<source|unreadable|unparsed|superseded|conflict|touched|mixed|day|partial|quiet> shown=<n> total=<t> <remedy>

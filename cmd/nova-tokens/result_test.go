@@ -214,22 +214,25 @@ func TestCheckOverAnOutWithNoDayFileSaysNo(t *testing.T) {
 }
 
 // A source that fed nothing for a day its file names is said on the note, never "nothing
-// was wrong" (T-3: TOKENS OK ... quiet=1 and then the all-clear).
+// was wrong" (T-3: TOKENS OK ... quiet=1 and then the all-clear). And a quiet source is a
+// per-source shrink even when another declared source rises by more than it (issue #5088
+// item 1): the day is refused, not written with the quiet source's row silently gone.
 func TestAQuietSourceIsTheNoteNotTheAllClear(t *testing.T) {
 	t.Parallel()
 
 	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "ada="+poolA, "--swarm", "bo="+poolB), 0)
 	require.NoError(t, os.Remove(filepath.Join(poolA, "usage", "j1.tsv")))
-	// bo's row grows past what ada's was, so the day does not shrink: ada is quiet alone.
+	// bo's row grows past what ada's was, so the day total does not fall: only the
+	// per-source comparison sees ada go quiet.
 	swarmUsage(t, poolB, "j2", swarmRow("j2", "1", "-", "mercury-2.5", "serialize", "2026-09-14T02:00:00Z", "5000", "5000", "0", "81000", "50"))
 
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "ada="+poolA, "--swarm", "bo="+poolB)
-	wantExit(t, r, 0)
-	assert.Contains(t, r.stdout, " quiet=1\n")
+	wantExit(t, r, 1)
+	assert.Contains(t, r.stderr, " quiet=1\n")
 	assert.Contains(t, r.stderr, "TOKENS QUIET label=swarm:ada day=2026-09-14")
+	assert.Contains(t, r.stderr, "TOKENS SHRANK date=2026-09-14 type=input file=410 now=- written=false source=swarm:ada")
 	assert.NotContains(t, r.stdout, "nothing was wrong")
-	assert.Contains(t, r.stdout, "TOKENS NOTE a declared source fed no message for a day its file names (swarm:ada on 2026-09-14)")
 }
 
 // The banner's word on the environment is the code's: the Redis verbs read the seat from
