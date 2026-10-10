@@ -22,14 +22,14 @@ Each row is MECHANISM and names the file or card that implements it, or METAPHOR
 | speculation | METAPHOR | none |
 | prediction | METAPHOR | none |
 | renaming | METAPHOR | none |
-| reorder buffer and retire | MECHANISM | `internal/sprint/steps_merge.go`, `cmd/nova-sprint/land.go`, `tla/Land.tla` |
+| reorder buffer and retire | MECHANISM | `internal/sprint/steps_merge.go`, `cmd/nova-sprint/land.go`, nova-sprint's `Land.tla` |
 | heterogeneous cores | MECHANISM | `internal/sprint/route.go` |
 | SIMD | METAPHOR | none |
 | caches | METAPHOR | none |
 | interrupts | MECHANISM | `internal/sprint/held.go`, `internal/sprint/steps_tick.go` |
 | counters | MECHANISM | `internal/sprint/stats.go`, `internal/sprint/store/stats.go` |
 | power | METAPHOR | none |
-| debugger | MECHANISM | `cmd/nova-sprint/verbs.go`, `docs/SPRINT-COORDINATOR.md` |
+| debugger | MECHANISM | `cmd/nova-sprint/verbs.go`, nova-sprint's `SPRINT-COORDINATOR.md` |
 
 ISA is the card: its header is the opcode (`internal/cardhdr/cardhdr.go`) and its contract is the instruction format (`docs/SPEC-CARD-CONTRACT.md`). The assembler is `internal/cardgen/cardgen.go`: a structured source becomes briefs `nova-sprint add` admits. Out-of-order issue is the tick in `internal/sprint/steps_tick.go`: a card is admitted while its operands are not ready, and the tick dispatches it when they are. The reorder buffer is the merge queue (`internal/sprint/steps_merge.go`); retire is land, in order (`cmd/nova-sprint/land.go`, `tla/Land.tla`). Heterogeneous cores are the tiers and routes (`internal/sprint/route.go`): flash, pro, heavy and frontier are not one core. An interrupt is a judgment a stall raises (`internal/sprint/held.go`); the tick writes it. Counters are the pass's numbers (`internal/sprint/stats.go`) and the tick's store counters (`internal/sprint/store/stats.go`). The debugger is the inspection the coordinator already runs: `where`, `inbox` and `card` (`cmd/nova-sprint/verbs.go`, `docs/SPRINT-COORDINATOR.md`).
 

@@ -40,7 +40,7 @@ installed release and by nothing else: no side build, no other server in front o
 reads. The pull routes a worker reads its own view from (`/friend/<name>`,
 `/machine/<name>`, their `/api/` and `/events/` forms) are served on the `--pull`
 listeners (default `127.0.0.1:7395`), never on the page's, from the same copy:
-[SPEC-SPRINT.md](SPEC-SPRINT.md), the dashboard. The copy also names the ready
+[SPEC-SPRINT.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT.md), the dashboard. The copy also names the ready
 buffer: `ready`, the ready primaries across streams; `width`, the total width of the
 members that are up; `buffer`, the string `"<ready>/<2*width>"`; and `low`, true while
 `ready` is under `width`. Every answer
