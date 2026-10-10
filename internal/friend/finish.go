@@ -450,6 +450,7 @@ func findCheckout(dir, job string) string {
 		return root
 	}
 	found := ""
+	// ignored: a walk error means no checkout is found, and the lane reads no commits
 	_ = filepath.WalkDir(root, func(path string, e os.DirEntry, err error) error {
 		if found != "" {
 			return filepath.SkipAll
