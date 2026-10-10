@@ -152,8 +152,6 @@ The class-rule names come from **The class tests** in `docs/SPEC-CI.md`. `make m
 
 <!-- class-rules:end -->
 
-After a site is fixed, `NOVA_CI_UPDATE=1 make test PKGS=./internal/ci` lowers its ledger count or drops its stale row and fails once with `updated, rerun`. A counted ledger keeps one file per source package or directory; only a file whose debt shrinks is written. Rerun without the variable to check the result. `TestCommittedMapMatchesTree` holds the maps, including `AGENTS.md`, which embeds this standard.
-
 | dir | purpose | guard | command |
 | --- | --- | --- | --- |
 | `.github/` | CI workflows and automation | `go test ./internal/ci` | `make test` |
