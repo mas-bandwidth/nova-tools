@@ -90,6 +90,13 @@ type Beat struct {
 	// stop (fleet beat --stop-returns; docs/SPEC-SPRINT.md section 14, stop cancels jobs):
 	// start waits for zero. A friend's count is her report's (FriendReport.StopReturns).
 	StopReturns int `json:"stop_returns,omitempty"`
+	// Tests is how many live processes whose name ends in ".test" the beat
+	// agent read on the machine (fleet beat --tests), and TestParent the
+	// oldest parent pid among them (0 when none). Nil is no reading: a beat
+	// that carried no count carries none, and zero is a reading of none.
+	// docs/SPEC-SPRINT.md, fleet-test-process-alarm-b.w8.
+	Tests      *int `json:"tests,omitempty"`
+	TestParent int  `json:"test_parent,omitempty"`
 }
 
 // FriendReport is what a friend's machinery reports with her beat, as a machine's beat
@@ -135,11 +142,29 @@ type FriendReport struct {
 	// seat for version drift among friends (docs/SPEC-SPRINT.md, daemon-supervised-r-b.w8).
 	// Empty when the beat carried none.
 	DaemonVersion string `json:"daemon_version,omitempty"`
+	// Tests is how many live processes whose name ends in ".test" her beat
+	// counted, and TestParent the oldest parent pid among them: the same
+	// fields a machine's beat carries (Beat.Tests). Nil is no reading.
+	Tests      *int `json:"tests,omitempty"`
+	TestParent int  `json:"test_parent,omitempty"`
 }
 
 // SaysDown says the beat is her daemon's word that she is down (FriendReport.Until):
 // however fresh, it never makes her up.
 func (b Beat) SaysDown() bool { return b.Friend != nil && !b.Friend.Until.IsZero() }
+
+// TestCount is the beat's reading of live processes whose name ends in ".test":
+// the beat's own, else its friend report's. ok is false when the beat carried
+// no reading. A count of zero is a reading.
+func (b Beat) TestCount() (n, parent int, ok bool) {
+	if b.Tests != nil {
+		return *b.Tests, b.TestParent, true
+	}
+	if b.Friend != nil && b.Friend.Tests != nil {
+		return *b.Friend.Tests, b.Friend.TestParent, true
+	}
+	return 0, 0, false
+}
 
 // Beaten says the member has beaten at least once.
 func (b Beat) Beaten() bool { return !b.At.IsZero() }

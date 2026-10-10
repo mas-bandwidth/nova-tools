@@ -379,6 +379,13 @@ const FieldDecideJudgment = "decide_judgment_bar"
 // which the sprint's routes read takes.
 const FieldAnswerRulesOff = "answer_rules_off"
 
+// FieldTestsAlarm is the sprint row's runaway-test threshold (docs/SPEC-SPRINT.md,
+// runaway test processes): how many live processes whose name ends in .test one member
+// or friend may beat before the tick raises one judgment. A whole number from 1; 0 (the
+// default) is four times the member's or friend's width. Apply writes it to
+// SprintKey(FieldTestsAlarm), which the sprint's routes read takes.
+const FieldTestsAlarm = "tests_alarm"
+
 // AnswerRules is every rule the sprint answers a mechanical judgment by (internal/sprint,
 // RuleNames, which a test holds equal): work came back failed, a card at its bound, a work
 // card past its deadline, a stream stopped on a conflict in a file no ledger owns, the same
@@ -532,6 +539,7 @@ var Kinds = []*Kind{
 			{Name: FieldDecideJudgment, Type: TypeDecimal, Help: "the judgment bar: nova-sprint answer applies the verb the judgment decision chose when its probability is at or above it, and lists it for the coordinator below it; a probability; empty (the default) applies nothing: every decision is recorded and what a bar would apply is listed; 0.8 is a starting point measured on 100 of the coordinator's own judgments (docs/SPEC-NOVA-DECIDE.md section 13), not an independent calibration"},
 			{Name: FieldDecideBriefBar, Type: TypeDecimal, Help: "the brief bar: nova-sprint add asks the brief decision of each card and refuses a card whose p(converges) is under it, naming the questions it failed; a probability; empty (the default) asks and reports only. The decision is uncalibrated (AUC 0.600 on 234 review labels, docs/SPEC-NOVA-DECIDE.md section 14): leave it empty until calibrate on the brief record's own outcomes supports a bar"},
 			{Name: FieldAnswerRulesOff, Type: TypeList, Enum: AnswerRules, Help: "the rules the machine does not answer judgments by: comma list of " + strings.Join(AnswerRules, ", ") + "; empty (the default) answers by every rule: failed and no-result work redealt then raised a tier, a card at its bound raised a tier (heavy to a friend), a late card waited once or returned and redealt, a conflict in a file no ledger owns returned, redone on the tip and resumed, the same finding twice marked a brief defect, the base tree gate retried before a stream stops, a friend's card she has not started past its bound taken back and dealt again, failed work whose report HOLDs for a card not landed waiting for it, a reader's first finding reworked as the fix, and a late read asked of another reader once an attempt (docs/SPEC-SPRINT.md section 8, answered by rule)"},
+			{Name: FieldTestsAlarm, Type: TypeInt, Help: "the runaway-test threshold: how many live processes whose name ends in .test one member or friend may beat before the tick raises one runaway test processes judgment naming the oldest parent pid; a whole number from 1; 0 (the default) is 4 times the member's or friend's width (docs/SPEC-SPRINT.md, runaway test processes)"},
 		},
 		Check: checkSprint,
 	},

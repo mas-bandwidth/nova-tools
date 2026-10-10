@@ -110,9 +110,9 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 		assert.Equal(t, "flash,frontier,heavy,pro", strings.Join(Tiers, ","), assertionMsg98...)
 	}()
 	sprint, _ := Lookup(KindSprint)
-	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend, the decide read's two bars, the landed score's bar, layer 2's three, the gate decision's two, the judgment bar, the brief bar and the rules turned off", sprint}
+	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend, the decide read's two bars, the landed score's bar, layer 2's three, the gate decision's two, the judgment bar, the brief bar, the runaway-test threshold and the rules turned off", sprint}
 	require.True(t, sprint.Singleton, assertionMsg100...)
-	require.Len(t, sprint.Fields, 12, assertionMsg100...)
+	require.Len(t, sprint.Fields, 13, assertionMsg100...)
 	require.Equal(t, "coordinator", sprint.Fields[0].Name, assertionMsg100...)
 	require.Equal(t, TypeRef, sprint.Fields[0].Type, assertionMsg100...)
 	require.Equal(t, KindFriend, sprint.Fields[0].Ref, assertionMsg100...)

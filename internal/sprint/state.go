@@ -416,6 +416,10 @@ type Snapshot struct {
 	// row, answer_rules_off), read with the routes (docs/SPEC-SPRINT.md section 8, answered by
 	// rule; rules.go).
 	RulesOff []string
+	// TestsAlarmSetting is the sprint row's runaway-test threshold (nova-config's sprint row,
+	// tests_alarm), read with the routes: a whole number from 1; "" or "0" is four times the
+	// member's or friend's width (docs/SPEC-SPRINT.md, runaway test processes; settings.go).
+	TestsAlarmSetting string
 	// ReaderStates is each reader's state as the store derives it (ReaderState:
 	// up, away or down), read by a step that asks (docs/SPEC-SPRINT.md section
 	// 6); nil is none read, and every reader is held up.

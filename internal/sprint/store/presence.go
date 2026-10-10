@@ -151,6 +151,21 @@ func (st *Store) Beat(ctx context.Context, member string, given *float64, src ho
 // BeatOwing is Beat with the stop-returns the member's lanes still owe after the machine's
 // stop (fleet beat --stop-returns; section 14): kept on the record, which start reads.
 func (st *Store) BeatOwing(ctx context.Context, member string, given *float64, src hostload.Source, stopReturns *int) (sprint.Beat, error) {
+	return st.beat(ctx, member, given, src, stopReturns, nil, 0)
+}
+
+// BeatTests is BeatOwing with the beat agent's reading of the machine's test
+// processes: tests is how many live processes whose name ends in ".test" it
+// found and parent the oldest of their parent pids. The reading is stored on the
+// beat record in the beat's one write, so it is not a second write that can
+// overwrite a newer beat (docs/SPEC-SPRINT.md, runaway test processes).
+func (st *Store) BeatTests(ctx context.Context, member string, given *float64, src hostload.Source, stopReturns *int, tests, parent int) (sprint.Beat, error) {
+	return st.beat(ctx, member, given, src, stopReturns, &tests, parent)
+}
+
+// beat is BeatOwing and BeatTests: when tests is not nil, the reading is put on
+// the record the beat writes, in that one write.
+func (st *Store) beat(ctx context.Context, member string, given *float64, src hostload.Source, stopReturns, tests *int, parent int) (sprint.Beat, error) {
 	if !sprint.ValidID(member) {
 		return sprint.Beat{}, fmt.Errorf("a member name wants letters, digits, _ and -: %s", member)
 	}
@@ -192,6 +207,9 @@ func (st *Store) BeatOwing(ctx context.Context, member string, given *float64, s
 		b.StopReturns = *stopReturns
 	} else {
 		b.StopReturns = prev.StopReturns
+	}
+	if tests != nil {
+		b.Tests, b.TestParent = tests, parent
 	}
 	out, err := json.Marshal(b)
 	if err != nil {
