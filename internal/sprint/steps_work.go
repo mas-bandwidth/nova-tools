@@ -1801,15 +1801,6 @@ func friendNext(s *Snapshot, c *Card, u *Unit, prior []Unit) {
 	u.Moved += fmt.Sprintf("; %s ready -> working (her next, taken now)", next.ID)
 }
 
-func unitFinishes(units []Unit, cardID string) bool {
-	for _, u := range units {
-		if u.Key == cardID {
-			return true
-		}
-	}
-	return false
-}
-
 func unitPromoted(units []Unit, cardID string) bool {
 	for _, u := range units {
 		for _, ch := range u.Changes {
