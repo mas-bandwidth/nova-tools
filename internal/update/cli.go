@@ -192,6 +192,9 @@ func help(name string, w io.Writer) int {
 	if _, err := fmt.Fprintf(w, "  %s version (or --version)\n", name); err != nil {
 		return 1
 	}
+	if _, err := fmt.Fprintf(w, "\nAdoption states: evaluated, useful-now, tried, adopted, declined, deferred, unknown, equivalent.\n"); err != nil {
+		return 1
+	}
 	if _, err := fmt.Fprintf(w, "\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s. Repeat --kind to select kinds.\n"); err != nil {
 		return 1
 	}
@@ -729,9 +732,9 @@ func applyDryRun(e Entry, before Read, target string, argv []string) *tool.Out {
 	res := &tool.Out{Verb: "apply", Status: tool.OK}
 	res.Fact("name", e.Name).Fact("dry_run", true).Fact("from", before.Version).Fact("to", target).Fact("source", e.Latest)
 	if before.Known() {
-		res.Item(strings.ToLower(state), "name", e.Name, "kind", e.Kind, "installed", before.Version, "latest", target, "path", before.Path, "source", e.Latest, "owner", e.Owner)
+		res.Item(strings.ToLower(state), "name", e.Name, "kind", e.Kind, "installed", before.Version, "target", target, "source", e.Latest, "path", before.Path, "owner", e.Owner)
 	} else {
-		res.Item("unknown", "name", e.Name, "kind", e.Kind, "installed", "", "path", before.Path, "source", e.Latest, "reason", before.Reason, "remedy", before.Remedy)
+		res.Item("unknown", "name", e.Name, "kind", e.Kind, "installed", "", "target", target, "source", e.Latest, "path", before.Path, "reason", before.Reason, "remedy", before.Remedy)
 	}
 	res.Item("plan", "name", e.Name, "argv", len(argv), "version", target, "command", strings.Join(argv, " "))
 	return res.Note("dry run: nothing installed, nothing written")
