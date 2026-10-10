@@ -19,7 +19,7 @@ import (
 // same command is the same release on either host. The one exception is
 // --receipts, and internal/release/dogfoodgate.go says at length why the gate
 // in front of the definition of done is worth it.
-const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--journeys <file> | --no-journey-gate --reason <why>] [--spend-store <addr>] [--spend-since <RFC3339>] [--spend-receipts <file>] [--no-spend-gate --reason <why>] [--dry-run] [--timeout <d>]
+const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--waive-ci "<who, when>"] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--journeys <file> | --no-journey-gate --reason <why>] [--spend-store <addr>] [--spend-since <RFC3339>] [--spend-receipts <file>] [--no-spend-gate --reason <why>] [--dry-run] [--timeout <d>]
 nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--incremental] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why> | --gate report --reason <why>] [--timeout <d>]
 nova-update release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
 nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --repo <owner/name> | --stage <dir> --expect-sums <sha256> | --stage <dir> --expect-sums-from <file>] [--retire <dir>] [--platform <goos-goarch>] (--certify <machines.tsv> --certs <file> --standard <file> | --no-certify) [--dry-run] [--timeout <d>]
@@ -95,7 +95,11 @@ type Deps struct {
 type options struct {
 	repo, from, version, changelog, out, source, bin, machines, ssh, dest, platform string
 	stage, retire, expectSums, expectSumsFrom, sums, securityRead, reason           string
-	pathsFrom, localDiff                                                            string
+	pathsFrom, localDiff, waiveCI                                                   string
+	// waiveCISet records that --waive-ci was given at all, so that an empty
+	// value is refused rather than read as the flag's absence: cut's CI gate
+	// is the one place the two mean different things.
+	waiveCISet bool
 	// cli and receipts are the dogfood gate's two inputs, and noDogfood is
 	// the way past it. --reason is shared with `pull`, which already had one:
 	// both are somebody saying, in the record, why a release did something
@@ -251,6 +255,7 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		f.StringVar(&o.changelog, "changelog", "", "the CHANGELOG.md the release's section is written to")
 		f.BoolVar(&o.dryRun, "dry-run", false, "decide and print, write nothing")
 		f.StringVar(&o.sums, "sums", "", "one platform's built SHA256SUMS, <out>/<version>/<goos-goarch>/SHA256SUMS; the section and the tag record its digest, and adopt --repo verifies that platform")
+		f.StringVar(&o.waiveCI, "waive-ci", "", `cut past a red or missing CI: the person who waives it and the date, "<who, when>". The red checks and the waiver are written into the tag annotation and the changelog section; an empty value is refused, and certification is not waived by it`)
 		f.StringVar(&o.securityRead, "security-read", "", "the note id or comment url of the security reader's read, required when the range touches a sensitive path")
 		f.StringVar(&o.localDiff, "local-diff", "", "a checkout to run `git diff --name-only <previous>...<head>` in, when the forge's compare is at its ceiling")
 		f.StringVar(&o.pathsFrom, "paths-from", "", "the path list to classify: written by --local-diff, read back without it")
@@ -368,6 +373,16 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 	}
 	if len(f.Args()) != 0 {
 		return refusal(errs, token, fmt.Errorf("release %s takes no positional arguments, got %q", verb, f.Arg(0)))
+	}
+	// --waive-ci with an empty value is refused by cut, and an empty string is
+	// also the flag's default; recording that it was given is what tells the
+	// two apart.
+	if verb == "cut" {
+		f.Visit(func(fl *flag.Flag) {
+			if fl.Name == "waive-ci" {
+				o.waiveCISet = true
+			}
+		})
 	}
 	// EVERY missing flag at once. A refusal that names one of four sends
 	// somebody round the loop four times.

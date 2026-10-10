@@ -705,6 +705,37 @@ tier amounts sum exactly to the displayed total.
 `TestReceiptsAreReadOnlyForTheirWindow`, `TestCostByTierTakesTheRouteTierWhenTheRunRecordsNone`,
 `TestCostByTierAllocatesFractionalCentsWithoutChangingTheTotal`.*
 
+## 19. A red or missing CI is cut past only with `--waive-ci`, and the waiver is in the tag
+
+A tag is a claim about source, and a release must not make that claim about a commit CI never
+vouched for. `cut` reads the check runs on the commit and refuses unless every one has completed
+green — a check that has not finished is as unvouched-for as one that failed, and a commit no run
+has judged is refused too, because "nobody looked" is not "nobody objected". The refusal names the
+checks:
+
+```
+RELEASE CUT REFUSED: CI is not green on this commit: ci=failure; fix the red and cut again; a tag cannot be amended
+RELEASE CUT REFUSED: no check run has judged this commit; dispatch CI on this commit and cut again when it is green
+```
+
+**The way past is the cut's own flag, `--waive-ci "<who, when>"`** — the person who waives the CI
+and the date, the pair the owner's v1.2.0 and v1.2.1 waivers had to be hand-made tags to carry.
+With it the cut prints `RELEASE CUT CI WAIVED waived=<who> checks=<name,...>` and records the
+waiver where the release is read: both the tag annotation and the CHANGELOG section carry
+
+```
+CI waived: <who, when>
+CI waived checks: <name=conclusion, ...>
+```
+
+naming the red checks it let past (or the unfinished ones, or that none judged the commit), so a
+person asking in six months why a version shipped on a red commit reads the answer in the tag. The
+flag is the cut's and no other verb's, and certification is not waived by it: `--no-certify` is
+`adopt`'s, and a waived CI says nothing about a machine's certificate. **An empty value refuses**
+(`--waive-ci ""` is not a waiver), and **a green CI refuses a waiver** with `cut without it; nothing here needs waiving`, because a waiver of nothing is a lie in the release's permanent record.
+
+*Tests: `TestACutWithAWaiverRecordsItInTheTag`.*
+
 ## What this file does not cover
 
 The verbs themselves, the machines file, the retire rule, where `adopt` runs from and the security rules
@@ -784,6 +815,7 @@ One numbered line per test; where one test holds several behaviours, they share 
 65. `TestAReleaseIsRefusedWhenRecordedSpendMissesTheProvidersOwn` — over the window since the previous tag's UTC day, a store figure of $836 against a provider's own $2,250 refuses naming the provider, both figures and the gap; a 3% gap passes (`spend=ok`); a provider whose readout errs, or has none, refuses; subscription friends' recorded tokens are set beside their receipts the same way, and no receipts refuses; no store refuses; `--no-spend-gate --reason` writes every unpassed row into the section.
 66. `TestOpenRouterSpendIsTheActivityDaysAndToday` — openrouter's own count is its activity's completed days in the window plus the key's count of today; no key, or a window past 30 days, is unread; opencode and Inception are unread.
 67. `TestReceiptsAreReadOnlyForTheirWindow` — a receipts file is read only for the window it covers.
+68. `TestACutWithAWaiverRecordsItInTheTag` — a cut over a red or missing CI is refused without `--waive-ci`; with `--waive-ci "<who, when>"` the tag annotation and the CHANGELOG section carry `CI waived: <who, when>` and the red check names; an empty waiver is refused.
 
 Demanded, and proven by no test yet (8):
 
