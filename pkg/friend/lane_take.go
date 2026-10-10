@@ -79,11 +79,11 @@ func ParseLaneHold(member string, n int, out string) (LaneHold, error) {
 		}
 		lane, _ := strconv.Atoi(m[2])
 		if m[1] != member || lane != n {
-			return LaneHold{}, &Refused{Why: fmt.Sprintf("the server's LANE line names %s lane %s, not %s lane %d: %s", m[1], m[2], member, n, oneLine(line, 300))}
+			return LaneHold{}, &Refused{Why: "the server's LANE line names another member's lane or another lane"}
 		}
 		epoch, err := strconv.ParseUint(m[3], 10, 64)
 		if err != nil {
-			return LaneHold{}, &Refused{Why: "the server's LANE line names no epoch: " + oneLine(line, 300)}
+			return LaneHold{}, &Refused{Why: "the server's LANE line names no epoch"}
 		}
 		h := LaneHold{Lane: n, Epoch: epoch, Kind: m[5], Job: m[6]}
 		if m[4] == "-" {
@@ -92,12 +92,13 @@ func ParseLaneHold(member string, n int, out string) (LaneHold, error) {
 		id, g, ok := strings.Cut(m[4], "@")
 		gen, err := strconv.Atoi(g)
 		if !ok || id == "" || err != nil || gen < 1 || h.Job == "" || !validJob(h.Job) {
-			return LaneHold{}, &Refused{Why: "the server's LANE line names no card at a generation and its job: " + oneLine(line, 300)}
+			return LaneHold{}, &Refused{Why: "the server's LANE line names no card at a generation and its job"}
 		}
 		h.Card, h.Gen = id, gen
 		return h, nil
 	}
-	return LaneHold{}, &Refused{Why: "the server answered with no LANE line, so the lane holds nothing it can name: " + oneLine(strings.TrimSpace(out), 300)}
+	// a fixed sentence, never the answer: what the server printed is the record's, not the error's
+	return LaneHold{}, &Refused{Why: "the server answered with no LANE line, so the lane holds nothing it can name"}
 }
 
 // BatchTakeArgv is a batch-mode daemon's take of up to n of her ready cards: `take --as

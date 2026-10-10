@@ -192,7 +192,7 @@ func TestALaneRunsExactlyWhatTheServerSaysItHolds(t *testing.T) {
 	})
 }
 
-// The fault of 2026-10-10 21:42Z on mini-m5, red before the fix: the take answered OK and
+// The fault of 2026-10-10 21:42Z on a one-shot friend host, red before the fix: the take answered OK and
 // moved nothing, her daemon logged "took card ... (ready -> working on her row)" and ran the
 // card while the server still showed it ready, and every progress after it was refused. A
 // lane runs a card only when the server's LANE line names it.

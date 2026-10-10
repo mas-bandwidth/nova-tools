@@ -33,7 +33,7 @@
 (* Reversed witnesses (MCFriendLaneBroken*.cfg), each the code before:    *)
 (*   RunOnNone   a take answered OK that moved nothing is logged "took"   *)
 (*               and the lane runs a card still ready (2026-10-10 21:42Z, *)
-(*               mini-m5): WorkingOnlyOnTheServersSay fails.               *)
+(*               a friend host): WorkingOnlyOnTheServersSay fails.         *)
 (*   LocalEpoch  the lane names the epoch its directory name says, 0 for  *)
 (*               a job with none (progress at epoch 0): every progress is *)
 (*               refused, the server's record still holds the card:      *)
