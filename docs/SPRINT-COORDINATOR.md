@@ -965,6 +965,13 @@ state's seed, so a state written before `--wake-file` was enabled starts at the 
 instead of waking on the lines already there. Tests:
 `TestWatchWakeWatchesTheWakeFile` and `TestWatchWakeSeededOldState` (cmd/nova-sprint).
 
+### simp-retire-buswatch-bc.w2
+
+The retired `watch.sh` behaviours are covered by `TestWatchWakeWatchesTheWakeFile`
+for append wakes and `TestWatchWakeFiresOncePerEventAndNeverLapses` for judgments,
+checks, stops, friends, merge and backlog alarms, and filtered bus messages.
+`TestStopgapWatchShIsRetired` checks the register's per-behaviour test citations.
+
 ## Open items
 
 Each is a place this runbook describes a workaround; the change that removes it is named.
