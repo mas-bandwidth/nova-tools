@@ -2161,14 +2161,22 @@ whoever wrote the brief:
   the brief's STATUS line. One line on the record per finish (`outbox: finished
   card <c> from outbox/<job>/REPORT.md (Verdict <v>, working on her row):
   finish=ok|failed head=<sha> sent=server`).
+- A report with no parseable verdict is the reader's or the harness's fault,
+  never a finding against the work: it is `--failed` with no head and the words
+  `friend <name> verdict none is not LAND, HOLD or FAIL; <the report>`, friend
+  sync's own words for a report with no verdict line, so the sprint's `failed`
+  rule reads it as a harness fault and redeals the attempt, never counts it a
+  failed attempt (`NoVerdict`, `NoVerdictWords`, internal/friend/outbox.go;
+  internal/sprint/harness_fault.go, the class `verdict none`). One classification
+  serves a read's `RESULT.md` and a work's `REPORT.md` (`NoVerdict`).
 - A finish is sent once: a job finished is never sent again, nor noted when its
   card leaves her row. One the server did not answer or refused is said once
   and sent again after `OutboxRetry` (a minute); friend sync may finish it
   first, and the server refuses the second.
-- A report with no `Verdict:` line, a report that cannot be read, a card not
-  on her row, ready and not working, or a read, is said once while it stands
+- A report that cannot be read, a card not on her row, ready and not working,
+  or a read, is said once while it stands
   (`outbox: left outbox/<job>/REPORT.md: <why>`) and left; the next pass reads
-  it again, so a verdict she writes later is finished then.
+  it again.
 - A report on a card that is no longer hers (taken back, dealt to another) is
   refused at finish, never sent, with the line naming who holds it now:
   `refused: card <c> is not on her row, no longer hers; <friend> holds it now`
@@ -2199,9 +2207,12 @@ outbox pass keeps the same rule for her own tree on every sync:
   `REPORT.md`, whose job's last event in her runner's log (`runner.log` in her working
   directory, else in the directory it links into; its last `RunnerLogCap`, 4 MiB) is
   `END <job> ... report=no` with no `LIMIT` after its `START` (`RunnerEnded`, the rule of
-  `sprint.RunnerEnded`), gets a `REPORT.md` written (`DeadLaneReport`: `Verdict: FAIL`
-  and the END line, never over a file there), said on the record (`outbox: dead lane
-  <job>: ...`), and the same pass finishes it `--failed`, so the card is dealt again.
+  `sprint.RunnerEnded`), gets a `REPORT.md` written (`DeadLaneReport`: no verdict line,
+  for a runner that ended with no report is a harness fault, never the card's, and the
+  END line, never over a file there), said on the record (`outbox: dead lane <job>: ...`),
+  and the same pass finishes it `--failed` as a harness fault (`NoVerdict`: `friend <name>
+  verdict none is not LAND, HOLD or FAIL; ... the runner ended job ...`), so the attempt is
+  dealt again, never counted a failed attempt.
 
 The model is `internal/friend/tla/Collect.tla`, both hands (the coordinator's verb over
 every tree, the daemon over hers) finishing from their snapshots against a server that
