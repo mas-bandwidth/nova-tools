@@ -10,15 +10,74 @@ import (
 func TestClassifyWaitingReasonsAndChains(t *testing.T) {
 	t.Parallel()
 
-	t.Run("held", func(t *testing.T) {
+	t.Run("held names who holds it and why", func(t *testing.T) {
 		t.Parallel()
 		w := setup(t, 0)
-		w.s.Work.Put(&Card{ID: "h", Row: "s1", Col: Waiting, Fields: map[string]string{"held": "2026-10-09T00:00:00Z"}})
+		w.s.Work.Put(&Card{ID: "h", Row: "s1", Col: Waiting, Fields: map[string]string{
+			FieldHeld: "2026-10-09T00:00:00Z", FieldHeldBy: "coordinator", FieldHeldReason: "waiting on the vendor",
+		}})
 		v := ClassifyWaiting(w.s, "s1")
 		require.Len(t, v.Cards, 1)
-		assert.Equal(t, "held", v.Cards[0].Reason)
+		assert.Equal(t, WaitHeld, v.Cards[0].Kind)
+		assert.Equal(t, "held by coordinator: waiting on the vendor", v.Cards[0].Reason)
 		assert.Equal(t, "h", v.Cards[0].Head)
 		assert.Equal(t, 0, v.Cards[0].Length)
+	})
+
+	t.Run("held names the coordinator when it records no who or why", func(t *testing.T) {
+		t.Parallel()
+		w := setup(t, 0)
+		w.s.Work.Put(&Card{ID: "h", Row: "s1", Col: Waiting, Fields: map[string]string{FieldHeld: "2026-10-09T00:00:00Z"}})
+		v := ClassifyWaiting(w.s, "s1")
+		require.Len(t, v.Cards, 1)
+		assert.Equal(t, "held by the coordinator (add --held) until release", v.Cards[0].Reason)
+	})
+
+	t.Run("a waived need in another column is not a blocker", func(t *testing.T) {
+		t.Parallel()
+		w := setup(t, 0)
+		w.s.Work.Put(&Card{ID: "dep", Row: "s1", Col: Working})
+		w.s.Work.Put(&Card{ID: "card1", Row: "s1", Col: Waiting, Fields: map[string]string{"needs": "dep", "waived": "dep"}})
+		v := ClassifyWaiting(w.s, "s1")
+		var found WaitingCard
+		for _, c := range v.Cards {
+			if c.ID == "card1" {
+				found = c
+			}
+		}
+		assert.NotEqual(t, WaitNeedColumn, found.Kind, "a waived need still blocked the card: %+v", found)
+		assert.Equal(t, WaitUnmoved, found.Kind, found.Reason)
+	})
+
+	t.Run("a waived need naming no card is not missing", func(t *testing.T) {
+		t.Parallel()
+		w := setup(t, 0)
+		w.s.Work.Put(&Card{ID: "card1", Row: "s1", Col: Waiting, Fields: map[string]string{"needs": "ghost", "waived": "ghost"}})
+		v := ClassifyWaiting(w.s, "s1")
+		var found WaitingCard
+		for _, c := range v.Cards {
+			if c.ID == "card1" {
+				found = c
+			}
+		}
+		assert.NotEqual(t, WaitNeedMissing, found.Kind, "a waived need was called missing: %+v", found)
+	})
+
+	t.Run("a waived waiting need does not head the chain", func(t *testing.T) {
+		t.Parallel()
+		w := setup(t, 0)
+		w.s.Work.Put(&Card{ID: "root", Row: "s1", Col: Waiting, Fields: map[string]string{FieldHeld: "t"}})
+		w.s.Work.Put(&Card{ID: "w", Row: "s1", Col: Waiting, Fields: map[string]string{"needs": "root"}})
+		w.s.Work.Put(&Card{ID: "c", Row: "s1", Col: Waiting, Fields: map[string]string{"needs": "w", "waived": "w"}})
+		v := ClassifyWaiting(w.s, "s1")
+		var found WaitingCard
+		for _, c := range v.Cards {
+			if c.ID == "c" {
+				found = c
+			}
+		}
+		assert.Equal(t, "c", found.Head, "the chain followed a waived need: %+v", found)
+		assert.Equal(t, 0, found.Length)
 	})
 
 	t.Run("behind sentinel not released", func(t *testing.T) {

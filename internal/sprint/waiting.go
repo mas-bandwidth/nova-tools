@@ -71,7 +71,7 @@ func ClassifyWaiting(s *Snapshot, stream string) WaitingView {
 // classifyCard is one waiting card's kind, reason, chain head and chain length.
 func classifyCard(s *Snapshot, c *Card) (kind, reason, head string, length int) {
 	if IsHeld(c) {
-		return WaitHeld, "held", c.ID, 0
+		return WaitHeld, heldReason(c), c.ID, 0
 	}
 
 	behind := PositionWaits(s, c, nil)
@@ -85,6 +85,9 @@ func classifyCard(s *Snapshot, c *Card) (kind, reason, head string, length int) 
 
 	needs, _ := NeedsOf(s, c.ID)
 	for _, n := range needs {
+		if n.Waived {
+			continue // a waived need is satisfied: it blocks nothing and heads no chain
+		}
 		nc := s.Work.Card(n.ID)
 		if nc == nil || nc.Col == "dropped" || n.State == "off the table (dropped)" || n.State == "off the table (-)" {
 			return WaitNeedMissing, "needs " + n.ID + " missing", n.ID, 1
@@ -105,6 +108,22 @@ func classifyCard(s *Snapshot, c *Card) (kind, reason, head string, length int) 
 	}
 
 	return WaitUnmoved, "every need has landed or was waived, and nothing moves it", h, l
+}
+
+// heldReason is why an admitted-held card waits, naming who holds it and the
+// reason: the card's held_by and held_reason when it records them, else the
+// coordinator's own admit (add --held) until release.
+func heldReason(c *Card) string {
+	by, why := c.F(FieldHeldBy), c.F(FieldHeldReason)
+	switch {
+	case by != "" && why != "":
+		return "held by " + by + ": " + why
+	case by != "":
+		return "held by " + by
+	case why != "":
+		return "held: " + why
+	}
+	return "held by the coordinator (add --held) until release"
 }
 
 // followChain follows a waiting card's needs and unreleased sentinels to the
@@ -140,6 +159,9 @@ func followChain(s *Snapshot, start *Card) (string, int) {
 		if nextID == "" {
 			needs, _ := NeedsOf(s, curr.ID)
 			for _, n := range needs {
+				if n.Waived {
+					continue // a waived need is off the chain
+				}
 				nc := s.Work.Card(n.ID)
 				if nc != nil && nc.Placed() && nc.Col == string(Waiting) {
 					nextID = n.ID
