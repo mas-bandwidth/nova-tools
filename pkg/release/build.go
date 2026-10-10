@@ -272,6 +272,9 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	// nova-sprint's tools (the split, v1.2.3) come from its own release,
 	// verified for every platform before the first compile like everything
 	// else a build is asked for.
+	if o.sprintRelease == "" && !o.withoutSprintRelease {
+		return refusal(errs, "BUILD", refuse(sprintReleaseRemedy, "--sprint-release or --without-sprint-release is required"))
+	}
 	sprintTag := "none"
 	sprint := make(map[string][]sprintAsset, len(targets))
 	if o.sprintRelease != "" {
