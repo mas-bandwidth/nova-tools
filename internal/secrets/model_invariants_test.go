@@ -60,7 +60,8 @@ func modelPlace(t *testing.T, f *seatFixture, keyPath, asName, secret, value str
 		StoreDir: f.storeDir, AsName: asName, KeyPath: keyPath, SopsPath: f.sopsPath,
 		Machine: "web-1", Secret: secret, RemotePath: "/srv/web/.config/nova-secrets/" + secret + ".env",
 		Machines: machines, Receipts: receipts, SSH: "ssh", Exec: mf.run,
-		Now: func() time.Time { return time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC) },
+		Guard: testguard.NewGuard(false),
+		Now:   func() time.Time { return time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC) },
 	})
 	require.NoError(t, err, "RunPlace: %v", err)
 	require.Equal(t, value, mf.sshStdin, "the value did not travel to ssh on stdin")
@@ -238,7 +239,6 @@ func TestModelSecretsValueNeverInTheClearAtRest(t *testing.T) {
 
 	t.Run("a receipt names a blob, never a digest of the value", func(t *testing.T) {
 		t.Parallel()
-		defer testguard.AllowHosts()()
 
 		f := newSeatFixture(t)
 		lines, err := RunSeatAdd(f.options(t, "GH_TOKEN,DEEPSEEK_API_KEY"))
@@ -510,7 +510,6 @@ func TestModelSecretsPrivateKeyStaysHome(t *testing.T) {
 // the uncommitted leg is TestModelSecretsReachDirtyPlace.
 func TestModelSecretsReceiptNamesCommittedBlob(t *testing.T) {
 	t.Parallel()
-	defer testguard.AllowHosts()()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
@@ -564,7 +563,6 @@ func TestModelSecretsReceiptNamesCommittedBlob(t *testing.T) {
 // and the blob still names the bytes whose value was placed.
 func TestModelSecretsReachDirtyPlace(t *testing.T) {
 	t.Parallel()
-	defer testguard.AllowHosts()()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
