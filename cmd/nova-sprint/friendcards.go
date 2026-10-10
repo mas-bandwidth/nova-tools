@@ -710,11 +710,17 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir, row
 			continue
 		}
 		brief := filepath.Join(in, "BRIEF.md")
-		if _, err := os.Lstat(brief); errors.Is(err, fs.ErrNotExist) {
+		// The daemon owns stageable work delivery: its Delivery.One stages the
+		// checkout and JOB.md before exposing this brief to a runner. Sync may
+		// publish an already staged job, but never win the brief-first race.
+		held := friend.HeldCard{Card: p.Card, Job: job, Kind: p.Kind, Brief: friendBriefAtDir(name, rowDir, p)}
+		_, stageable := friend.PacketOf(held)
+		waitingForStage := stageable && !friend.Staged(dir, job)
+		if _, err := os.Lstat(brief); errors.Is(err, fs.ErrNotExist) && !waitingForStage {
 			if err := os.MkdirAll(in, 0o755); err != nil {
 				return delivered, finished, err
 			}
-			switch err := atomicfile.WriteFile(brief, []byte(friendBriefAtDir(name, rowDir, p)), 0o644, atomicfile.NoReplace()); {
+			switch err := atomicfile.WriteFile(brief, []byte(held.Brief), 0o644, atomicfile.NoReplace()); {
 			case err == nil:
 				delivered++
 				line := fmt.Sprintf("FRIEND-CARD DELIVERED friend=%s card=%s job=%s branch=%s", name, p.Card, oneline.Field(job), p.Branch)
@@ -725,7 +731,7 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir, row
 			case !errors.Is(err, fs.ErrExist):
 				return delivered, finished, err
 			}
-		} else if err != nil {
+		} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return delivered, finished, err
 		}
 		report, why, at, err := friendReadReport(dir, job)

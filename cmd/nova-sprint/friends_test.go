@@ -38,6 +38,7 @@ const emptyFriends = "friends | ready | working | width | done | ok%  | status |
 func friendApp(t *testing.T, friends ...string) (*testApp, *config.Mem) {
 	t.Helper()
 	ta := newTestApp(t)
+	ta.syncStage = true
 	// the friends' working directories are under HOME, <HOME>/<friend>-working;
 	// none is there until a test writes one (jobs)
 	home, prev := t.TempDir(), ta.a.getenv

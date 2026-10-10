@@ -15,8 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
 
 // The daemon writes every card she holds (the finding of 2026-10-05: from about 18:59 the
@@ -28,7 +26,8 @@ import (
 // her inbox both ways (SyncInbox): a held card with no inbox/<job>/BRIEF.md is written, and
 // a sprint job in her inbox whose card left her row (dropped, returned, landed) is moved to
 // inbox/retired/. Friend sync still writes the same file the same way; whichever comes
-// first writes it, and the other finds it there (docs/SPEC-FRIEND.md, the inbox).
+// first writes it, and the other finds it there; the daemon annotates its RESULT contract
+// with the packet's current tier (docs/SPEC-FRIEND.md, the inbox).
 
 // HeldCard is one card on the friend's row as the server answers it: the card, the job it
 // is delivered as (inbox/<job>), its column (ready or working) and its BRIEF.md whole, with
@@ -129,9 +128,10 @@ const (
 const RetiredDir = "inbox/retired"
 
 // InboxCounts is what one reconcile found: the cards held on her row, the sprint jobs in
-// her inbox, and the held cards whose BRIEF.md is still not there after it.
+// her inbox, the held cards whose BRIEF.md is still not there after it, and among the cards
+// with no BRIEF.md the ones waiting for their job to be staged first (Staging: never Missing).
 type InboxCounts struct {
-	Held, Inbox, Missing int
+	Held, Inbox, Missing, Staging int
 }
 
 // jobRE is a job's name as it may stand in her inbox: a card id, its epoch and its gen
@@ -160,6 +160,13 @@ func sprintBrief(head string, reads bool) bool {
 // file times are; zero retires none. record gets one line per write and per retirement, and
 // one per held card it could not write. The counts are what the inbox holds after the pass.
 func SyncInbox(dir string, row Row, keep map[string]bool, asked, now time.Time, record func(string)) (InboxCounts, error) {
+	return SyncInboxOwed(dir, row, keep, asked, now, record, nil)
+}
+
+// SyncInboxOwed is SyncInbox in the daemon's order: a held card whose job is owed a stage
+// first (owed, Delivery.Owed; nil owes none) has no BRIEF.md written here, counted Staging;
+// the stage writes it once its job is staged (Delivery.One, from stageStep).
+func SyncInboxOwed(dir string, row Row, keep map[string]bool, asked, now time.Time, record func(string), owed func(HeldCard) bool) (InboxCounts, error) {
 	at := now.UTC().Format(time.RFC3339)
 	in := filepath.Join(dir, "inbox")
 	held := row.Cards
@@ -187,25 +194,22 @@ func SyncInbox(dir string, row Row, keep map[string]bool, asked, now time.Time, 
 			firstErr = cmpErr(firstErr, err)
 			continue
 		}
+		if owed != nil && owed(h) {
+			c.Staging++
+			continue
+		}
 		if strings.TrimSpace(h.Brief) == "" {
 			record(fmt.Sprintf("%s inbox: missing inbox/%s/BRIEF.md (card %s, %s on her row): %s; nothing was written", at, h.Job, h.Card, dash(h.Col), cmp.Or(h.Why, "the server sent no brief")))
 			c.Missing++
 			continue
 		}
-		if err := os.MkdirAll(job, 0o755); err != nil {
+		switch wrote, err := writeBrief(job, deliveryBrief(h)); {
+		case err != nil:
 			c.Missing++
 			firstErr = cmpErr(firstErr, err)
-			continue
-		}
-		// a rework's brief is written with its fix first (rework.go, ReworkedBrief)
-		switch err := atomicfile.WriteFile(brief, []byte(ReworkedBrief(h.Brief)), 0o644, atomicfile.NoReplace()); {
-		case err == nil:
-			record(fmt.Sprintf("%s inbox: wrote inbox/%s/BRIEF.md (card %s, %s on her row)", at, h.Job, h.Card, dash(h.Col)))
-		case errors.Is(err, fs.ErrExist): // friend sync wrote it between the look and the write
-		default:
-			c.Missing++
-			firstErr = cmpErr(firstErr, err)
-		}
+		case wrote:
+			record(wroteLine(at, h))
+		} // not wrote: friend sync wrote it between the look and the write
 	}
 	entries, err := os.ReadDir(in)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -235,10 +239,9 @@ func SyncInbox(dir string, row Row, keep map[string]bool, asked, now time.Time, 
 	return c, firstErr
 }
 
-// jobOfWrote is the job a wrote line names: inbox/<job>/BRIEF.md (card ...).
-func jobOfWrote(rest string) string {
-	p, _, _ := strings.Cut(rest, " ")
-	return path.Base(path.Dir(p))
+// wroteLine is the record's line for a brief the daemon wrote.
+func wroteLine(at string, h HeldCard) string {
+	return fmt.Sprintf("%s inbox: wrote inbox/%s/BRIEF.md (card %s, %s on her row)", at, h.Job, h.Card, dash(h.Col))
 }
 
 // briefHead is the first line of a BRIEF.md, read no further than it needs.
@@ -327,10 +330,6 @@ func (l *loop) inboxStep(now time.Time) {
 		}
 	}
 	said := map[string]bool{}
-	byJob := map[string]HeldCard{}
-	for _, h := range row.Cards {
-		byJob[h.Job] = h
-	}
 	record := func(line string) {
 		_, key, _ := strings.Cut(line, " ") // the line without its time
 		if !strings.HasPrefix(key, "inbox: wrote ") && !strings.HasPrefix(key, "inbox: retired ") {
@@ -341,16 +340,12 @@ func (l *loop) inboxStep(now time.Time) {
 		}
 		d.Record(line)
 		if _, rest, ok := strings.Cut(line, " inbox: wrote "); ok && l.mode == ModeBatch {
-			// a batch session is told of each brief written, in a turn of its own (startDealt),
-			// once its job is staged when it is one the daemon stages (stageStep)
-			if h, ok := byJob[jobOfWrote(rest)]; ok && d.stageOwed(h) {
-				d.stageDealt[h.Job] = rest
-			} else {
-				l.dealt = append(l.dealt, rest)
-			}
+			// a batch session is told of each brief written, in a turn of its own (startDealt);
+			// a staged card's brief is written, and told, once its job is staged (stageStep)
+			l.dealt = append(l.dealt, rest)
 		}
 	}
-	c, err := SyncInbox(d.Dir, row, keep, asked, now, record)
+	c, err := SyncInboxOwed(d.Dir, row, keep, asked, now, record, d.delivery().Owed)
 	d.inboxSaid = said
 	d.status.InboxError = ""
 	if err != nil {
@@ -391,7 +386,7 @@ func (d *Daemon) nextCard(skip func(Card) bool) (Card, bool, error) {
 			return t.ID == h.Card && t.State == "done" && (t.Job == "" || t.Job == h.Job)
 		})
 		c := Card{ID: h.Card, Brief: filepath.Join(d.Dir, "inbox", h.Job, "BRIEF.md"), Outbox: filepath.Join(d.Dir, "outbox", h.Job)}
-		if done || skip(c) || !exists(c.Brief) || exists(c.Result()) || exists(c.Report()) || d.stageOwed(h) {
+		if done || skip(c) || !exists(c.Brief) || exists(c.Result()) || exists(c.Report()) || d.delivery().Owed(h) {
 			continue
 		}
 		return c, true, nil

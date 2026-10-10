@@ -781,8 +781,11 @@ nor a lateness (`TestAWithdrawnFriendReadIsAskedAgain`,
 (each run once, at the loop's period: 15 s in the coordinator's loop), carries
 a friend's card across the inbox/outbox standard
 (docs/FRIENDS.md, a sprint card): for each card working or ready on a friend's
-row it writes `inbox/<job>/BRIEF.md` when that is not there and tells her so
-with one nova-bus message from the coordinator to her, subject `card <card>
+row it writes `inbox/<job>/BRIEF.md` when that is not there and tells her so,
+except that work naming a repository waits for its staged `JOB.md` so the
+daemon cannot lose the stage-before-brief race. The daemon may write that brief
+first; sync still collects the card's report. When sync writes a brief, it
+announces it with one nova-bus message from the coordinator to her, subject `card <card>
 dealt: <the FRIEND-CARD DELIVERED line>`, the inbox path in the body (her
 daemon pushes it into her session, which the inbox file alone never does; the
 store is `NOVA_BUS_REDIS`; `NOVA_BUS_REDIS_USER` names its ACL user and
@@ -5009,6 +5012,7 @@ The mechanisms: a **blocking read** waits in the store until the thing arrives (
 | friend bus read | bus to the friend's daemon | timer poll | XREADGROUP BLOCK BeatEvery (1 s) while the session is free; while a turn runs, in one-shot mode or for a passive harness a 0-block read or a peek, then a 1 s Pause | card friend-bus-read-blocks |
 | notification delivery recovery | bus to the existing Codex queue | timer poll | one bounded XREADGROUP BLOCK pass of at most 32 entries, then BeatEvery (1 s); enqueue failures back off ten seconds to one minute; ready courtesies share a 30 s configurable coalescing window | the journal owes recovery and queue capacity is observed only when enqueue is due; the Codex queue offers no capacity-change event, so bounded retries preserve full payloads without an unread-input flood (SPEC-FRIEND.md, Notifications) |
 | friend delivery | the friend's daemon into her session | delivery into a session | each batch as one turn; the tmux adapter looks at the pane every TmuxPoll (500 ms) until its prompt is free | the pane has no idle event; the wait is for the pane, never for a message |
+| coordinator hand delivery | sprint to the coordinator's local friend checkout | timer poll | `deliver` reads the held row every `--every` (default 15 s); `--once` is one read | card friend-cards-pushed-on-the-bus |
 | friend card reconcile | sprint to the friend's daemon (the cards she holds) | timer poll | Held asked once an InboxEvery (1 s), on the daemon's step | card friend-cards-pushed-on-the-bus |
 | friend reader ask | sprint to the friend's reader row (reader-<friend>; a bud's reader is this row) | timer poll | queue --as reader-<friend> once a ReadAskEvery (10 s) | card friend-reads-pushed-on-the-bus |
 | friend beat | the friend's daemon to the sprint | beat | BeatEvery (1 s) | liveness is the beat's absence (FriendBeatEvery; down after fifteen without one) |
@@ -7660,3 +7664,10 @@ friend reaches that friend's inbox by the route her judgments already take: the
 push loop writes a group addressed to someone to that actor's own inbox
 directory (`pushTarget.dirOf`, `~/<actor>-working/inbox/sprint-judgments`), the
 group carrying the note's addressee (`sprint.Group.To`).
+
+The coordinator's `nova-sprint deliver <friend> [--once]` reads the held row
+and uses `friend.Delivery.One`, the daemon's ordered writer: stage the job from
+a full local mirror, write `JOB.md`, then expose `BRIEF.md`. It prints one
+`DELIVER <job> staged|brief|skipped [<why>]` line. `--stages runner` writes
+briefs alone; an existing unmarked job belongs to that runner and is left intact.
+The row's current tier is carried on the brief's `RESULT:` contract.
