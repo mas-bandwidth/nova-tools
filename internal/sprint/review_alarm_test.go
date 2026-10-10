@@ -133,6 +133,28 @@ func TestReviewStarvedRaisesOnceWhenNoReadIsOutForTwoTicks(t *testing.T) {
 	require.Empty(t, p.Props)
 }
 
+func TestReviewStarvedRaisesWithDefaultLegacyReaders(t *testing.T) {
+	t.Parallel()
+	s := reviewAlarmBoard()
+	props := s.Work.Props()
+	delete(props, PropReadCards)
+	s.Work.SetProps(props)
+	require.False(t, s.ReadCardsOn())
+	r := TickReq{Who: "seat"}
+
+	p, due := TickReviewStarved(s, r)
+	require.Zero(t, due)
+	require.Empty(t, p.Notes)
+	require.Len(t, p.Props, 1)
+	require.Equal(t, PropReviewStarvedEp, p.Props[0].Name)
+	applyReviewAlarm(s, p)
+
+	s.Now = s.Now.Add(reviewStarvedDefault)
+	p, due = TickReviewStarved(s, r)
+	require.Zero(t, due)
+	require.Len(t, reviewAlarmJudgments(p, NReviewStarved), 1)
+}
+
 func TestReviewStarvedClosesWhenAReadGoesOut(t *testing.T) {
 	t.Parallel()
 	s := reviewAlarmBoard()
