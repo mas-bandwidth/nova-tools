@@ -151,8 +151,12 @@ type Daemon struct {
 	// Row is the friend's nova-config row as the daemon last read it (from
 	// its beat): her delivery mode (ModeBatch or ModeOneShot) and width,
 	// read every step so a change takes effect without a restart; nil, or
-	// empty answers, deliver in batch at Width.
+	// empty answers, deliver at Width. A harness that runs lanes runs them
+	// whatever the row's mode says: batch is retired for it (row).
 	Row func() (mode string, width int)
+	// Mode is `run --mode`, the row's mode overridden for a test, taken as given;
+	// "" reads the row.
+	Mode string
 	// Pacing is the row's pacing as the daemon last read it: the fraction of each
 	// subscription window the lanes may spend, read every step; nil, or out of
 	// (0, 1], is DefaultPacing (pacing.go). No beat carries the row's pacing yet,
@@ -551,6 +555,8 @@ type loop struct {
 	reads        *readSet
 	mode         string // the mode the daemon delivers in now
 	saidNoLanes  bool
+	saidRetired  bool            // the row's batch, retired for a harness that runs lanes, said once
+	toldFallback bool            // the batch fallback told to the seat once
 	dealt        []string        // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
 	wake         bool            // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
 	saidRefusal  string          // the card runner's refusal last recorded, "" when it runs
@@ -736,6 +742,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.laneStep(now, width)
 			l.readStep(now)
 			d.status.Lanes = l.lanes.said(width)
+			if l.freshLanes() {
+				l.comms(now, drained)
+			}
 		case (l.busy == nil || !l.busy.running) && l.presentOwed(now):
 			l.startPresent(now, true)
 		case l.busy == nil && len(l.hand) > 0:
@@ -874,18 +883,23 @@ func (l *loop) idle(now time.Time) {
 	}
 }
 
-// row is the mode and width the daemon delivers by: the friend's row when
-// Row says it (one-shot needs a harness that opens sessions, LaneHarness,
-// else the daemon delivers in batch and says why once; or a CardRunner that
-// can run a card, else its refusal is recorded once and nothing runs), else
-// batch at Width.
+// row is the mode and width the daemon delivers by. Every lane refreshes independently
+// (the owner, 2026-10-10: "this is a bad design. each lane should refresh
+// independently"; tla/FriendLanes.tla): a harness that runs lanes (a OneShotHarness, a
+// CardRunner, or a LaneHarness) runs one-shot lanes at the row's width whatever its mode
+// says, the row's batch said retired once. Batch is the named fallback for a harness that
+// runs no lane: said once on the record and told to the seat once as a judgment when the
+// row named a mode. A CardRunner that cannot run a card yet records its refusal once and
+// runs nothing (said only when the row asks for one-shot). run --mode (Mode) is taken as
+// given, for a test; a daemon with no row at all (Row nil, a test's rig) delivers in batch.
 func (l *loop) row(now time.Time) (mode string, width int) {
 	d := l.d
 	mode, width = ModeBatch, d.Width
+	named := false // the row said a mode
 	if d.Row != nil {
 		m, w := d.Row()
 		if m != "" {
-			mode = m
+			mode, named = m, true
 		}
 		if w > 0 {
 			width = w
@@ -895,9 +909,23 @@ func (l *loop) row(now time.Time) (mode string, width int) {
 		width = 1
 	}
 	d.status.Width = width
+	retired := false // the row's batch, retired here
+	if d.Mode != "" {
+		mode = d.Mode
+	} else if mode == ModeBatch && d.Row != nil && l.runsLanes() {
+		retired = true
+		if !l.saidRetired {
+			l.saidRetired = true
+			d.Record(fmt.Sprintf("%s mode: one-shot lanes at width %d, each refreshing on its own: the row says batch, and batch is retired for a harness that runs lanes (%s)", now.UTC().Format(time.RFC3339), width, dash(d.Harness)))
+		}
+		mode = ModeOneShot
+	}
 	if runner, ok := d.Deliver.(CardRunner); ok && mode == ModeOneShot {
 		// a lane per card process: refused, with its remedy, until it can run one
 		why := runner.Refusal()
+		if why != "" && retired {
+			return ModeBatch, width // the row asked for no lane: its refusal is said when the row says one-shot
+		}
 		if why != "" && why != l.saidRefusal {
 			d.Record(now.UTC().Format(time.RFC3339) + " mode: one-shot REFUSED: " + why + "; no lane runs")
 		}
@@ -906,16 +934,53 @@ func (l *loop) row(now time.Time) (mode string, width int) {
 		}
 		return mode, width
 	}
-	if mode == ModeOneShot {
-		if _, ok := d.Deliver.(LaneHarness); !ok || l.passive {
-			if !l.saidNoLanes {
-				l.saidNoLanes = true
-				d.Record(now.UTC().Format(time.RFC3339) + " mode: the row says one-shot, and " + d.Harness + " cannot open a session per lane; delivering in batch")
-			}
-			mode = ModeBatch
+	if mode == ModeOneShot && (!l.runsLanes() || l.passive) {
+		if !l.saidNoLanes {
+			l.saidNoLanes = true
+			d.Record(now.UTC().Format(time.RFC3339) + " mode: the row says one-shot, and " + d.Harness + " cannot open a session per lane; delivering in batch")
 		}
+		mode = ModeBatch
+	}
+	if mode == ModeBatch && named && d.Mode == "" && !l.passive && !l.toldFallback {
+		l.toldFallback = true
+		l.tellKind(bus.KindBlocker, fmt.Sprintf("friend %s: batch fallback: %s runs no one-shot lane", d.Friend, dash(d.Harness)),
+			"Her cards go to her main session in batch turns, the named fallback: a turn takes the cards ready when it starts, and a card dealt mid-turn waits for the next. Every lane refreshes independently only on a harness that runs one-shot lanes (dsh, opencode, codex, gemini, grok, claude).\n", now)
 	}
 	return mode, width
+}
+
+// runsLanes says the friend's harness runs one-shot lanes: each card a fresh run
+// (OneShotHarness, CardRunner) or a turn in a lane's own session (LaneHarness).
+func (l *loop) runsLanes() bool {
+	switch l.d.Deliver.(type) {
+	case OneShotHarness, CardRunner, LaneHarness:
+		return true
+	}
+	return false
+}
+
+// freshLanes says each lane's card is a fresh run (OneShotHarness): nothing rides in a
+// lane, and her main session takes the bus messages in turns of their own (comms).
+func (l *loop) freshLanes() bool {
+	_, ok := l.d.Deliver.(OneShotHarness)
+	return ok && !l.passive
+}
+
+// comms is her main session's step while her lanes run fresh: it only talks. The
+// waiting messages go in as one turn when it is free (startBatch, the envelope), an owed
+// wake check as its own, and a deferred turn is tried again at its time; a card is never
+// handed to it, nor the dealt briefs, nor an idle wake (tla/FriendLanes.tla,
+// MainHoldsNoCard).
+func (l *loop) comms(now time.Time, drained bool) {
+	switch {
+	case l.busy == nil && len(l.hand) > 0:
+		l.startBatch(now)
+	case l.busy == nil && l.wake && drained && !l.d.machineStopped():
+		l.startWake(now)
+	case l.busy != nil && !l.busy.running && !l.retry.IsZero() && !now.Before(l.retry):
+		l.retry = time.Time{}
+		l.startTurn(l.busy, now, l.deliverBatch(l.busy))
+	}
 }
 
 // turns is every turn running now: the batch turn and the lanes'.

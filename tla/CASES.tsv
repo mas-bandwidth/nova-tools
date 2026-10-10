@@ -438,6 +438,13 @@ MCFriendReadyTakeBrokenNoFill.cfg	MCFriendReadyTake.tla	action	FilledAfterTick	i
 MCFriendReadyTakeBrokenPastWidth.cfg	MCFriendReadyTake.tla	invariant	LanesHard	ignore-terminal	friendreadytake	required	-
 MCFriendReadyTakeBrokenStranger.cfg	MCFriendReadyTake.tla	invariant	OnlyHerTake	ignore-terminal	friendreadytake	required	-
 MCFriendReadyTakeBrokenNoJudge.cfg	MCFriendReadyTake.tla	invariant	NeverStrandedSilently	ignore-terminal	friendreadytake	required	-
+MCFriendLanes.cfg	MCFriendLanes.tla	pass	-	ignore-terminal	friendlanes	required	-
+MCFriendLanesLive.cfg	MCFriendLanes.tla	pass	-	ignore-terminal	friendlanes	required	-
+MCFriendLanesBrokenBatch.cfg	MCFriendLanes.tla	invariant	MainHoldsNoCard	ignore-terminal	friendlanes	required	-
+MCFriendLanesBrokenBoundary.cfg	MCFriendLanes.tla	invariant	Filled	ignore-terminal	friendlanes	required	-
+MCFriendLanesBrokenPastWidth.cfg	MCFriendLanes.tla	invariant	WithinWidth	ignore-terminal	friendlanes	required	-
+MCFriendLanesBrokenShared.cfg	MCFriendLanes.tla	invariant	OneLanePerCard	ignore-terminal	friendlanes	required	-
+MCFriendLanesBrokenIdle.cfg	MCFriendLanes.tla	temporal	ReadyStarts	ignore-terminal	friendlanes	required	-
 MCFriendRedealLate.cfg	MCFriendRedealLate.tla	pass	-	ignore-terminal	friendredeallate	required	-
 MCFriendRedealLateBrokenStaleStands.cfg	MCFriendRedealLate.tla	invariant	NeverOnAnothersClock	ignore-terminal	friendredeallate	required	-
 MCFriendBrokenDeliverLimited.cfg	MCFriend.tla	action	NoTurnWhileLimited	ignore-terminal	friend	required	-

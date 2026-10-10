@@ -477,10 +477,41 @@ func (l *Limits) Gate(d Deliverer) Deliverer {
 		return d
 	}
 	g := &gated{l: l, d: d}
-	if lh, ok := d.(LaneHarness); ok {
+	oh, fresh := d.(OneShotHarness)
+	lh, lanes := d.(LaneHarness)
+	switch {
+	case fresh && lanes:
+		return &gatedBoth{gatedLanes: &gatedLanes{gated: g, lh: lh}, oh: oh}
+	case fresh:
+		return &gatedOneShot{gated: g, oh: oh}
+	}
+	if lanes {
 		return &gatedLanes{gated: g, lh: lh}
 	}
 	return g
+}
+
+// gatedOneShot is a OneShotHarness under the gate: Deliver, her main session's turn, is
+// gated's; RunOneShot, a lane's fresh run, goes straight to the harness, its output still
+// read for a limit under it, as gatedLanes' lanes are and for the same reason.
+type gatedOneShot struct {
+	*gated
+	oh OneShotHarness
+}
+
+func (g *gatedOneShot) RunOneShot(ctx context.Context, text string) (LaneTurn, error) {
+	return g.oh.RunOneShot(ctx, text)
+}
+
+// gatedBoth is a harness that is both under the gate (OpenCode): its session lanes and its
+// one-shot runs both go straight through.
+type gatedBoth struct {
+	*gatedLanes
+	oh OneShotHarness
+}
+
+func (g *gatedBoth) RunOneShot(ctx context.Context, text string) (LaneTurn, error) {
+	return g.oh.RunOneShot(ctx, text)
 }
 
 // gatedLanes is a LaneHarness under the gate: Deliver, the batch turn and

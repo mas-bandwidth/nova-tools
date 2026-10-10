@@ -36,11 +36,13 @@ import (
 // and the reason carries the one line the session runs. A wake path that
 // is not absolute is a refusal and nothing is written.
 type Grok struct {
-	Dir  string    // the friend's directory: the session's cwd
-	Wake string    // the wake file, when named; else the one the session's monitor tails
-	Run  Exec      // runs ps
-	Out  io.Writer // the daemon's record, when set
-	Home string    // the grok home, ~/.grok when empty
+	Dir  string // the friend's directory: the session's cwd
+	Wake string // the wake file, when named; else the one the session's monitor tails
+	Run  Exec   // runs ps, and a lane's one-shot run
+	// Program is the grok CLI a lane's one-shot run starts ("grok" when empty).
+	Program string
+	Out     io.Writer // the daemon's record, when set
+	Home    string    // the grok home, ~/.grok when empty
 
 	// now and wait are the clock seam. Nil is the wall clock. Tests set both.
 	now  func() time.Time

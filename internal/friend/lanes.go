@@ -431,7 +431,8 @@ func (l *loop) laneStep(now time.Time, width int) {
 	l.oneLaneStep(now)
 	lh, _ := d.Deliver.(LaneHarness)
 	runner, perCard := d.Deliver.(CardRunner)
-	asking := 0 // the lane the hand is asked for
+	oh, fresh := d.Deliver.(OneShotHarness) // each card a fresh run: no session to open
+	asking := 0                             // the lane the hand is asked for
 	held := func(c Card) bool {
 		id := filepath.Base(c.Outbox)
 		legacy := id == c.ID || id == c.ID+"~"+c.Epoch()
@@ -471,7 +472,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 		if paused {
 			continue
 		}
-		if ln.session == "" && !perCard {
+		if ln.session == "" && !perCard && !fresh {
 			if now.Before(ln.openAt) {
 				continue
 			}
@@ -545,6 +546,24 @@ func (l *loop) laneStep(now time.Time, width int) {
 			ln.t = t
 			l.startTurn(t, now, func(ctx context.Context) laneResult {
 				lt, err := runner.RunCard(WithLaneDir(LaneContext(ctx), dir), c)
+				return laneResult{ln: ln, turn: lt, err: err, t: t}
+			})
+			continue
+		}
+		if fresh {
+			// one fresh run of the harness: who she is and the card, nothing riding along
+			// (her messages go to her main session, comms); the lane frees when it ends
+			send := ""
+			if d.CardDone != nil {
+				send = d.CardDone(ln.card.ID, l.coordinator())
+			}
+			agents, memory := d.identity()
+			t := &turn{subjects: fmt.Sprintf("%q", "card "+ln.card.ID)}
+			t.text = OneShotText(d.Friend, ln.job, ln.n, width, send, agents, memory)
+			ln.t = t
+			dir, text := ln.job.Dir, t.text
+			l.startTurn(t, now, func(ctx context.Context) laneResult {
+				lt, err := oh.RunOneShot(WithLaneDir(LaneContext(ctx), dir), text)
 				return laneResult{ln: ln, turn: lt, err: err, t: t}
 			})
 			continue

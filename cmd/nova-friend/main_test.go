@@ -441,7 +441,7 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 	assert.Equal(t, 3, beats)
 	assert.GreaterOrEqual(t, s.Beats, 1, "the count in the file lags up to StatusEvery")
 	assert.Equal(t, 2, s.Width, "the row's width, read from the beat's answer, over --width")
-	assert.Equal(t, "batch", s.Mode, "the row's mode, read from the beat's answer")
+	assert.Equal(t, "one-shot", s.Mode, "the row says batch, and batch is retired for a harness that runs lanes: each lane refreshes on its own")
 }
 
 // The beat's row_config_dir= (or --config-dir over it) is the directory a
@@ -748,12 +748,11 @@ func TestInstallCarriesTheCoordinatorAndANonDefaultSilentStop(t *testing.T) {
 	assert.NotContains(t, string(raw), "--coordinator")
 }
 
-// The row's one-shot mode, read from the beat, wires the lanes end to end:
-// the lane opens its own session of the friend through opencode (a run with
-// no --session, seeded from her own files), keeps it in the state directory,
-// hands it the queued card with the bus line to send, and the friend's
-// directory is allowed in her project config, the home directory's symlink
-// to it too.
+// The row's one-shot mode, read from the beat, wires the lanes end to end: each
+// card is one fresh opencode run (no --session, no session kept), who she is
+// from her own files and the queued card with the bus line to send in one
+// prompt, priced from the session its output names; the friend's directory is
+// allowed in her project config, the home directory's symlink to it too.
 func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
@@ -807,7 +806,7 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 				return `{"messages":[{"info":{"role":"assistant","cost":0.002}}]}`, 0, nil
 			}
 			runs = append(runs, strings.Join(args, " "))
-			return "ok\n", 0, nil
+			return "ok ses_oneshot1\n", 0, nil // the session the fresh run made, named in its output
 		}
 		beats := 0
 		w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
@@ -820,22 +819,24 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		var out, errb strings.Builder
 		code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
 		require.Equal(t, 0, code, errb.String())
-		require.GreaterOrEqual(t, len(runs), 2, "%v\n%s", runs, out.String())
-		assert.True(t, strings.HasPrefix(runs[0], "run You are bob: one of 1 one-shot lanes of bob, this is lane 1"), runs[0])
+		require.NotEmpty(t, runs, "%v\n%s", runs, out.String())
+		// one fresh run per card: no seed turn, no --session, no session listing
+		assert.True(t, strings.HasPrefix(runs[0], "run You are bob: one of 1 lanes of bob, this is lane 1, a fresh run that ends with this one card."), runs[0])
 		assert.Contains(t, runs[0], "Read "+filepath.Join(dir, "AGENTS.md")+" first")
-		assert.True(t, strings.HasPrefix(runs[1], "run --session ses_lane1 nova-friend: lane 1 of 1: one card this turn, c1."), runs[1])
-		assert.Contains(t, runs[1], `3. Send one bus line: /opt/nova/bin/nova-bus send --as bob --to ada --subject "card c1 done" --body "<the first line of your REPORT.md>" --redis store.test:6379`)
+		assert.Contains(t, runs[0], "nova-friend: lane 1 of 1: one card this turn, c1.")
+		assert.NotContains(t, runs[0], "--session")
+		assert.Contains(t, runs[0], `3. Send one bus line: /opt/nova/bin/nova-bus send --as bob --to ada --subject "card c1 done" --body "<the first line of your REPORT.md>" --redis store.test:6379`)
 		lanes, err := friend.ReadLanes(friend.StateDirIn(dir))
 		require.NoError(t, err)
-		assert.Equal(t, map[int]string{1: "ses_lane1"}, lanes.Sessions)
+		assert.Empty(t, lanes.Sessions, "no lane keeps a session")
 		raw, err := os.ReadFile(filepath.Join(dir, "opencode.json"))
 		require.NoError(t, err)
 		assert.Contains(t, string(raw), `"`+filepath.Join(r.home, "bob-working")+`/**": "allow"`)
 		s, _, err := friend.ReadStatus(friend.StateDirIn(dir))
 		require.NoError(t, err)
 		assert.Equal(t, "one-shot", s.Mode)
-		assert.Contains(t, out.String(), "lane=1 session=ses_lane1")
-		assert.Contains(t, out.String(), "opencode: session=ses_lane1 cost=$0.0020 total=$0.0020", "the daemon prices the lane's open from her session record")
+		assert.Contains(t, out.String(), `lane=1 session= subject="card c1"`)
+		assert.Contains(t, out.String(), "opencode: session=ses_oneshot1 cost=$0.0020 total=$0.0020", "the daemon prices the fresh run from the session record its output names")
 	})
 }
 
@@ -1012,7 +1013,9 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 		return "", 0, nil
 	}
 	out, errb := &lockedBuilder{mu: &mu}, &strings.Builder{}
-	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--session", "ses_main", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), out, errb, w)
+	// --mode batch: the main session's turn under the gate is the subject (a batch fallback, and
+	// every comms turn of a one-shot friend, take the same gate)
+	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--session", "ses_main", "--dir", dir, "--coordinator", "ada", "--mode", "batch"}, strings.NewReader(""), out, errb, w)
 	require.Equal(t, 0, code, errb.String())
 	mu.Lock()
 	defer mu.Unlock()

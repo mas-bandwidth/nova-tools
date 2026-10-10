@@ -275,9 +275,17 @@ func under(d Deliverer, f func(Deliverer) bool) bool {
 			d = g.Deliverer
 		case turnGatedLanes:
 			d = g.Deliverer
+		case turnGatedOneShot:
+			d = g.Deliverer
+		case turnGatedBoth:
+			d = g.Deliverer
 		case *gated:
 			d = g.d
 		case *gatedLanes:
+			d = g.d
+		case *gatedOneShot:
+			d = g.d
+		case *gatedBoth:
 			d = g.d
 		default:
 			return false
@@ -314,10 +322,41 @@ func (s *SessionCheck) Gate(inner Deliverer) Deliverer {
 		return inner
 	}
 	g := turnGated{inner, s}
-	if lh, ok := inner.(LaneHarness); ok {
+	oh, fresh := inner.(OneShotHarness)
+	lh, lanes := inner.(LaneHarness)
+	switch {
+	case fresh && lanes:
+		return turnGatedBoth{turnGatedLanes{g, lh}, oh}
+	case fresh:
+		return turnGatedOneShot{g, oh}
+	}
+	if lanes {
 		return turnGatedLanes{g, lh}
 	}
 	return g
+}
+
+// turnGatedOneShot is a OneShotHarness at the check's gate: her main session's turns hold
+// the turn shared; a lane's one-shot run holds nothing, since it is a fresh process and no
+// turn of her session, so a session check never waits on a lane, nor a lane on a check.
+type turnGatedOneShot struct {
+	turnGated
+	oh OneShotHarness
+}
+
+func (g turnGatedOneShot) RunOneShot(ctx context.Context, text string) (LaneTurn, error) {
+	return g.oh.RunOneShot(ctx, text)
+}
+
+// turnGatedBoth is a harness that is both at the check's gate (OpenCode): its session lanes
+// gated as turnGatedLanes', its one-shot runs as turnGatedOneShot's.
+type turnGatedBoth struct {
+	turnGatedLanes
+	oh OneShotHarness
+}
+
+func (g turnGatedBoth) RunOneShot(ctx context.Context, text string) (LaneTurn, error) {
+	return g.oh.RunOneShot(ctx, text)
 }
 
 type turnGated struct {
@@ -766,6 +805,10 @@ func (s *SessionCheck) deliverer() Deliverer {
 	case turnGated:
 		return g.Deliverer
 	case turnGatedLanes:
+		return g.Deliverer
+	case turnGatedOneShot:
+		return g.Deliverer
+	case turnGatedBoth:
 		return g.Deliverer
 	}
 	return s.Deliver

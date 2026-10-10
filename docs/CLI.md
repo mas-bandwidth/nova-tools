@@ -1531,7 +1531,7 @@ flags:
   --limit-rest <duration>  how long the friend is down when its harness's usage limit or empty balance names no reset
   --load-max <int>  the machine's one-minute load above which lanes are held to --load-width; 0 none (default: the row's row_load_max)
   --load-width <int>  the lanes that run while the load is above --load-max
-  --mode <string>  override the friend row's delivery mode, batch or one-shot, for a test (default: the row's, read from each beat)
+  --mode <string>  override the delivery mode, batch or one-shot, for a test (default: one-shot lanes on a harness that runs them, each lane refreshing on its own; batch, the named fallback, on one that does not)
   --model <string>  the friend's model as provider/model, to price a card by the store's route row (default: none, cards are unpriced)
   --notifications-only  deliver filtered notifications through one receiver; no sprint beats, proof, claims, jobs, staging, pruning or finishes
   --notify-kinds <string>  message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default

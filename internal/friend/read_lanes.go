@@ -336,6 +336,8 @@ func (l *loop) startRead(r AskedRead, now time.Time) {
 		switch h := d.Deliver.(type) {
 		case ReadHarness:
 			res.turn, res.err = h.RunRead(ctx, model, prompt)
+		case OneShotHarness: // a fresh run of its own, as a card's lane is
+			res.turn, res.err = h.RunOneShot(WithLaneDir(ctx, dir), prompt)
 		case LaneHarness:
 			_, res.err = h.OpenSession(ctx, prompt)
 		default:
