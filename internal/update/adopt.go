@@ -163,11 +163,10 @@ func watchAdopt(ctx context.Context, checks []AdoptCheck, o options, started tim
 			return 1
 		}
 	}
-	w := out
-	if refused > 0 {
-		w = errs
-	}
-	if _, err := fmt.Fprintln(w, done); err != nil {
+	// The closing count is a verb's own line and prints on stdout on every
+	// outcome (skeleton contract 1.6), so a caller reading stdout keeps the
+	// pass's sha and counts even when a check above it refused.
+	if _, err := fmt.Fprintln(out, done); err != nil {
 		return 1
 	}
 	code := 0
