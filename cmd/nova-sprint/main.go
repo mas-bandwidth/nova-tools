@@ -114,6 +114,11 @@ type app struct {
 	// (store/twin.go). It is not the mem twin above, which is a store.
 	readTwinsMu sync.Mutex
 	readTwins   map[string]*store.Twin
+	// loadCaches is the process's load cache of each store, by address: the
+	// records each table's last whole read found, which a later load of the table
+	// catches up from its change stream instead of reading it whole
+	// (store/loadcache.go). Guarded by readTwinsMu.
+	loadCaches map[string]*store.LoadCache
 	// busWatches is the Watch of each bus store and user sendBus has sent on
 	// (busWatch), and busAlarms the lines its alarms queued for the send that
 	// saw them to say; busOpen dials the store for each send (a test gives a
@@ -522,8 +527,16 @@ func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
 		a.readTwins[c.redis] = store.NewTwin()
 	}
 	tw := a.readTwins[c.redis]
+	if a.loadCaches == nil {
+		a.loadCaches = map[string]*store.LoadCache{}
+	}
+	if a.loadCaches[c.redis] == nil {
+		a.loadCaches[c.redis] = store.NewLoadCache()
+	}
+	lc := a.loadCaches[c.redis]
 	a.readTwinsMu.Unlock()
 	st.ShareTwin(tw)
+	st.ShareLoadCache(lc)
 	st.LockAfterLoss = true // a part that lost a try locks (store/lock.go)
 	if t := a.twins[c.redis]; t != nil {
 		st.NewID = t.newID
