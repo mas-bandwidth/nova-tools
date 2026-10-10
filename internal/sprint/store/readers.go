@@ -216,19 +216,30 @@ func (st *Store) readerStatesInto(ctx context.Context, s *sprint.Snapshot) error
 		s.ReaderStates = m
 		maps.Copy(noRoom, nr)
 	}
-	if s.Fleet != nil {
-		if _, err := st.rootKV(); err == nil {
-			beats, err := st.Beats(ctx, s.Members())
-			if err != nil {
-				return err
-			}
-			for m, b := range beats {
-				if why := sprint.NoRoomNow(b, s.Now); why != "" {
-					noRoom[m] = why
-				}
-			}
-		}
+	if err := st.memberNoRoomInto(ctx, s, noRoom); err != nil {
+		return err
 	}
 	s.NoRoom = noRoom
+	return nil
+}
+
+// memberNoRoomInto adds to into every fleet member of s whose fresh beat says it starts no
+// card, with its word (sprint.NoRoomNow); a store that keeps no beats adds none.
+func (st *Store) memberNoRoomInto(ctx context.Context, s *sprint.Snapshot, into map[string]string) error {
+	if s.Fleet == nil {
+		return nil
+	}
+	if _, err := st.rootKV(); err != nil {
+		return nil
+	}
+	beats, err := st.Beats(ctx, s.Members())
+	if err != nil {
+		return err
+	}
+	for m, b := range beats {
+		if why := sprint.NoRoomNow(b, s.Now); why != "" {
+			into[m] = why
+		}
+	}
 	return nil
 }

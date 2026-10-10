@@ -290,7 +290,9 @@ func ResumeStep(r sprint.ResumeReq) Step {
 func FleetStep(r sprint.FleetReq) Step {
 	// a sync names every member it writes: it applies all or none
 	return Step{Named: r.Op == "sync", Args: ArgsOf(r), Verb: "fleet " + r.Op, Load: tables(sprint.Fleet, sprint.Work), Mirrors: true,
-		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.FleetStep(s, r) }}
+		// up, down, hold and level deal and level: a member under its floor is given nothing
+		ReadNoRoom: true,
+		Plan:       func(s *sprint.Snapshot) sprint.Plan { return sprint.FleetStep(s, r) }}
 }
 
 // CIStep records a CI observation.

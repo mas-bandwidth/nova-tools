@@ -198,6 +198,9 @@ type Step struct {
 	// the deal, the level and the ask pass them by. nil: read with the readers'
 	// states when the step reads those, else none.
 	NoRoom map[string]string
+	// ReadNoRoom says the step deals or levels outside the tick (fleet up, down,
+	// hold, level): with no NoRoom given it reads the members' words itself.
+	ReadNoRoom bool
 	// Friends says the step consults the friends roster (finish, for friendNext
 	// delivery mode): it plans with the friend seats (sprint.Snapshot.Friends).
 	Friends bool
@@ -644,6 +647,11 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		snap.Answered = answered
 		if step.NoRoom != nil {
 			snap.NoRoom = step.NoRoom
+		} else if step.ReadNoRoom {
+			snap.NoRoom = map[string]string{}
+			if err := st.memberNoRoomInto(ctx, snap, snap.NoRoom); err != nil {
+				return res, err
+			}
 		}
 		if step.Readers && step.ReaderStates != nil {
 			snap.ReaderStates = step.ReaderStates
