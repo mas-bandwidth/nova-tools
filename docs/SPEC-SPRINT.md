@@ -1369,7 +1369,22 @@ not level the friends":
 
 `TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne`,
 `TestTwinStoreDealsIdleFriendsFirstAndLevelsEveryTick`.
+### deal-subscription-first-r-t-bb: subscription friends get heavy/pro cards first
 
+**Heavy and pro cards go to friends with subscription billing first** (Glenn,
+2026-10-04: "subscription friends are effectively free"; `sprint.FriendSeat.Billing`,
+`config.FriendRow.Billing`). A friend's `Billing` field (empty when not set; the
+cost card adds the field; see `internal/config/kind.go:224` for the documented
+default) is treated as `subscription` when empty: a friend on a subscription
+pays a flat rate, not per token. The deal offers heavy or pro cards first to:
+1. Friends with `Billing` empty or `subscription`, 2. With room per
+`friend-deal-most-room`, 3. Using fleet routes and API friends only for overflow.
+
+A card naming a `WHO` keeps it with that friend. See
+`internal/sprint/friend_deal.go` for the deal logic and `internal/sprint/store/friends.go`
+for how the billing field is carried through the friend roster.
+
+`TestHeavyAndProCardsGoToSubscriptionFriendsFirst`.
 ### The rebalance: queued work to idle lanes, across friends and fleet
 
 **The tick rebalances queued work across both sides, within the tier sets** (the owner,
