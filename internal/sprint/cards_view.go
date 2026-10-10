@@ -5,7 +5,7 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
 )
 
 // The cards view (docs/SPEC-SPRINT.md section 11, "view cards"): the work table's primaries

@@ -498,7 +498,7 @@ func TestGeneralityGuardrail(t *testing.T) {
 	tree := repoTree(t)
 
 	var files []GeneralitySourceFile
-	for _, f := range tree.GoFilesUnder(false, "cmd", "internal", "tools") {
+	for _, f := range tree.GoFilesUnder(false, "cmd", "internal", "pkg", "tools") {
 		if f.HasDirNamed("testdata") || f.HasDirNamed("vendor") {
 			continue
 		}

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
 )
 
 // Answered by rule (docs/SPEC-SPRINT.md section 8; the owner, 2026-10-04, at 1:36 PM: "I want

@@ -18,7 +18,7 @@ import (
 // card's total cost for that work stream, and then a total at the bottom."): a
 // stream's landed cards' total, each consumer's actual cost else its predicted one,
 // "$" and four places, "-" when none was priced, and the footer the sum over the
-// streams. internal/sprint/cost.go and steps_merge.go; internal/ntable moneyFold.
+// streams. internal/sprint/cost.go and steps_merge.go; pkg/ntable moneyFold.
 
 // landStream plays the stream's n cards to landed: dealt, taken and finished on m1
 // (each with its usage, "" for none), read ok by the readers asked, reader-a and reader-b

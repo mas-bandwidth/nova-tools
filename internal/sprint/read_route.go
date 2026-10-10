@@ -4,8 +4,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
 )
 
 // A read needs a reader, not a route (docs/SPEC-SPRINT.md section 6; the card
@@ -21,7 +21,7 @@ import (
 
 // ownModelReader says the reader brings its own model: it is a friend's reader,
 // reader-<name> for a friend (or a bud, a friend on a Claude account) whose seat the
-// snapshot holds or whose friend row the fleet table has (internal/friend ReaderOf).
+// snapshot holds or whose friend row the fleet table has (pkg/friend ReaderOf).
 // Any other reader is the fleet's and runs its read's route.
 func (s *Snapshot) ownModelReader(reader string) bool {
 	name, ok := strings.CutPrefix(reader, ReaderPrefix)

@@ -1,0 +1,282 @@
+//go:build functional
+
+package ntable_test
+
+// One set of bounds: the server (table.lua), the Go validator and ApplyBatch
+// agree on every number. At the bound a manifest is accepted; one over it is
+// refused by name, with the bound and the count found, the store is untouched,
+// and no part of the input is echoed.
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/pkg/ntable"
+	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func joinN(n int, f func(i int) string) string {
+	parts := make([]string, n)
+	for i := range parts {
+		parts[i] = f(i)
+	}
+	return strings.Join(parts, ",")
+}
+
+type boundCase struct {
+	name   string
+	bound  int
+	limit  string // the name of the limit as refused
+	member string // the member named in the refusal, if any
+	// build returns the members array body for n units of the bounded thing.
+	build func(n int) string
+	// actor pads the manifest (manifest bytes only).
+	actorPad func(n int) string
+}
+
+const echoMarker = "zzq"
+
+func boundCases() []boundCase {
+	return []boundCase{
+		{name: "entries with changes", bound: ntable.LimitChangedEntries, limit: "entries with changes",
+			build: func(n int) string {
+				return joinN(n, func(i int) string {
+					return fmt.Sprintf(`{"id":"%sc%d","expect":{"absent":true},"create":{"row":"build","col":"ready","score":%d}}`, echoMarker, i, i)
+				})
+			}},
+		{name: "guard-only entries", bound: ntable.LimitGuardEntries, limit: "guard-only entries",
+			build: func(n int) string {
+				return joinN(n, func(i int) string { return fmt.Sprintf(`{"id":"%sg%d","expect":{"absent":true}}`, echoMarker, i) })
+			}},
+		{name: "member id bytes", bound: ntable.LimitMemberIDBytes, limit: "member id bytes",
+			build: func(n int) string {
+				return `{"id":"` + strings.Repeat("i", n) + `","expect":{"absent":true}}`
+			}},
+		{name: "field value bytes", bound: ntable.LimitFieldValueBytes, limit: "field value bytes", member: "v",
+			build: func(n int) string {
+				return `{"id":"v","expect":{"absent":true},"create":{"row":"build","col":"ready","score":1},"set":{"k":"` + strings.Repeat("v", n) + `"}}`
+			}},
+		{name: "set fields per member", bound: ntable.LimitSetFields, limit: "set fields per member", member: "b",
+			build: func(n int) string {
+				return `{"id":"b","expect":{},"set":{` + joinN(n, func(i int) string { return fmt.Sprintf(`"%ss%d":"v"`, echoMarker, i) }) + `}}`
+			}},
+		{name: "unset fields per member", bound: ntable.LimitUnsetFields, limit: "unset fields per member", member: "a",
+			build: func(n int) string {
+				return `{"id":"a","expect":{},"unset":[` + joinN(n, func(i int) string { return fmt.Sprintf(`"%su%d"`, echoMarker, i) }) + `]}`
+			}},
+		{name: "guards per member", bound: ntable.LimitFieldGuards, limit: "guards per member", member: "b",
+			build: func(n int) string {
+				return `{"id":"b","expect":{"fields":{` + joinN(n, func(i int) string { return fmt.Sprintf(`"%sg%d":{"absent":true}`, echoMarker, i) }) + `}}}`
+			}},
+		{name: "one_of options", bound: ntable.LimitOneOfOptions, limit: "one_of options", member: "a",
+			build: func(n int) string {
+				// the last option matches the field, so a manifest at the bound passes its guard
+				return `{"id":"a","expect":{"fields":{"role":{"one_of":[` + joinN(n, func(i int) string {
+					if i == n-1 {
+						return `"x"`
+					}
+					return fmt.Sprintf(`"%so%d"`, echoMarker, i)
+				}) + `]}}}}`
+			}},
+	}
+}
+
+func boundsManifest(rev, op, members, actor string) string {
+	return `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"` + rev + `","operation_id":"` + op + `","actor":"` + actor + `","members":[` + members + `]}`
+}
+
+func replyNumber(v any) string { return fmt.Sprint(v) }
+
+func TestBatchBoundsAreOneSet(t *testing.T) {
+	t.Parallel()
+	for _, bc := range boundCases() {
+		bc := bc
+		t.Run(bc.name, func(t *testing.T) {
+			t.Parallel()
+			c, ctx := probeTable(t)
+			seedTwo(t, ctx, c)
+
+			// At the bound: the server accepts, the validator accepts.
+			raw := boundsManifest(probeRev(ctx, c), "at", bc.build(bc.bound), "p")
+			_, err := ntable.ValidateBatchManifestRaw([]byte(raw))
+			require.NoError(t, err, "at the bound %d the Go validator refuses", bc.bound)
+			ans, err := rawApply(ctx, c, raw)
+			require.True(t, replyOpens(ans, err, "OK"), "at the bound %d the server refuses: %v %v", bc.bound, trunc(ans), err)
+
+			// One over: refused on every path with the same name, bound and count.
+			raw = boundsManifest(probeRev(ctx, c), "over", bc.build(bc.bound+1), "p")
+			before := storeImage(t, c)
+
+			ans, err = rawApply(ctx, c, raw)
+			require.NoError(t, err, "raw FCALL")
+			require.True(t, replyOpens(ans, nil, "REFUSED", "LIMIT"), "raw FCALL one over the bound: %v", trunc(ans))
+			assert.Equal(t, bc.limit, ans[2], "raw FCALL refusal %v; want %s, bound %d, observed %d", trunc(ans), bc.limit, bc.bound, bc.bound+1)
+			assert.Equal(t, fmt.Sprint(bc.bound), replyNumber(ans[3]), "raw FCALL refusal %v; want %s, bound %d, observed %d", trunc(ans), bc.limit, bc.bound, bc.bound+1)
+			assert.Equal(t, fmt.Sprint(bc.bound+1), replyNumber(ans[4]), "raw FCALL refusal %v; want %s, bound %d, observed %d", trunc(ans), bc.limit, bc.bound, bc.bound+1)
+			if bc.member != "" {
+				require.GreaterOrEqual(t, len(ans), 6, "raw FCALL refusal does not name member %q: %v", bc.member, trunc(ans))
+				assert.Equal(t, bc.member, ans[5], "raw FCALL refusal does not name member %q: %v", bc.member, trunc(ans))
+			} else {
+				assert.LessOrEqual(t, len(ans), 5, "raw FCALL refusal names a member for a whole-manifest bound: %v", trunc(ans))
+			}
+
+			_, verr := ntable.ValidateBatchManifestRaw([]byte(raw))
+			var le *ntable.LimitError
+			require.ErrorAs(t, verr, &le, "Go validator one over the bound: %v", verr)
+			require.ErrorIs(t, verr, ntable.ErrLimit, "Go validator one over the bound: %v", verr)
+			assert.Equal(t, ntable.LimitError{Name: bc.limit, Bound: bc.bound, Observed: bc.bound + 1, Member: bc.member}, ntable.LimitError{Name: le.Name, Bound: le.Bound, Observed: le.Observed, Member: le.Member}, "Go validator refusal %+v", le)
+
+			var m ntable.BatchManifest
+			require.NoError(t, json.Unmarshal([]byte(raw), &m))
+			_, aerr := ntable.ApplyBatch(ctx, c, m)
+			require.ErrorIs(t, aerr, ntable.ErrLimit, "ApplyBatch one over the bound")
+			for _, w := range []string{bc.limit, fmt.Sprintf("bound %d, observed %d", bc.bound, bc.bound+1), "changed=no", "; run: nova-table"} {
+				assert.ErrorContains(t, aerr, w, "ApplyBatch refusal lacks %q: %s", w, aerr)
+			}
+			for _, e := range []error{verr, aerr} {
+				assert.NotContains(t, e.Error(), echoMarker, "a refusal echoes the input: %.200s", e)
+				if bc.name == "member id bytes" {
+					assert.NotContains(t, e.Error(), "iiii", "a refusal echoes the input: %.200s", e)
+				}
+				assert.NotContains(t, e.Error(), "vvvv", "a refusal echoes the input: %.200s", e)
+			}
+			assert.NotContains(t, fmt.Sprint(ans), echoMarker, "the server refusal echoes the input: %.200s", fmt.Sprint(ans))
+			assert.Equal(t, before, storeImage(t, c), "a refused over-bound manifest changed the store")
+		})
+	}
+}
+
+// The manifest is bounded by its bytes: a 1 MiB request passes, one byte more
+// is refused on every path.
+func TestBatchManifestBytesBound(t *testing.T) {
+	t.Parallel()
+	c, ctx := probeTable(t)
+	seedTwo(t, ctx, c)
+	// The padding is in a guard's options, which no receipt records: the actor is
+	// echoed in the receipt, so a manifest padded with it can exceed the receipt bound.
+	build := func(rev, op string, size int) string {
+		entry := func(pad string) string {
+			return `{"id":"a","expect":{"fields":{"role":{"one_of":["x"` + pad + `]}}}}`
+		}
+		need := size - len(boundsManifest(rev, op, entry(""), ""))
+		// k distinct options, sharing what is left of the size between them
+		k := (need + 59999) / 60000
+		total := need - 3*k // each option is , " n bytes "
+		pad := ""
+		for i := 0; i < k; i++ {
+			n := total / k
+			if i < total%k {
+				n++
+			}
+			pad += `,"` + fmt.Sprintf("%04d", i) + strings.Repeat("p", n-4) + `"`
+		}
+		return boundsManifest(rev, op, entry(pad), "")
+	}
+	rev := probeRev(ctx, c)
+	at := build(rev, "at", ntable.LimitManifestBytes)
+	require.Len(t, at, ntable.LimitManifestBytes, "built %d bytes", len(at))
+	_, err := ntable.ValidateBatchManifestRaw([]byte(at))
+	require.NoError(t, err, "Go validator at the bound")
+	ans, err := rawApply(ctx, c, at)
+	require.True(t, replyOpens(ans, err, "OK"), "server at the bound: %v: %v", trunc(ans), err)
+
+	over := build(probeRev(ctx, c), "over", ntable.LimitManifestBytes+1)
+	before := storeImage(t, c)
+	ans, err = rawApply(ctx, c, over)
+	require.True(t, replyOpens(ans, err, "REFUSED", "LIMIT"), "server one over the bound: %v: %v", trunc(ans), err)
+	require.GreaterOrEqual(t, len(ans), 5, "server one over the bound: %v", trunc(ans))
+	require.Equal(t, "manifest bytes", ans[2], "server one over the bound: %v", trunc(ans))
+	require.Equal(t, fmt.Sprint(ntable.LimitManifestBytes), replyNumber(ans[3]), "server one over the bound: %v", trunc(ans))
+	require.Equal(t, fmt.Sprint(ntable.LimitManifestBytes+1), replyNumber(ans[4]), "server one over the bound: %v", trunc(ans))
+	_, verr := ntable.ValidateBatchManifestRaw([]byte(over))
+	requireLimit(t, "Go validator one over the bound", verr, "manifest bytes", ntable.LimitManifestBytes, ntable.LimitManifestBytes+1)
+	var m ntable.BatchManifest
+	require.NoError(t, json.Unmarshal([]byte(over), &m))
+	// The encoded request ApplyBatch sends is the canonical one; pad past the bound.
+	m.Actor += strings.Repeat("p", 2*1024)
+	_, aerr := ntable.ApplyBatch(ctx, c, m)
+	require.ErrorIs(t, aerr, ntable.ErrLimit, "ApplyBatch one over the bound: %v", aerr)
+	assert.ErrorContains(t, aerr, "manifest bytes", "ApplyBatch one over the bound")
+	assert.ErrorContains(t, aerr, "changed=no", "ApplyBatch one over the bound")
+	assert.NotContains(t, fmt.Sprint(ans), "pppp", "the server refusal echoes the input")
+	assert.NotContains(t, verr.Error(), "pppp", "the validator refusal echoes the input")
+	assert.NotContains(t, aerr.Error(), "pppp", "the ApplyBatch refusal echoes the input")
+	assert.Equal(t, before, storeImage(t, c), "a refused over-bound manifest changed the store")
+}
+
+// A read set is bounded by its members: 1,024 are read, 1,025 refuse.
+func TestReadSetMembersBound(t *testing.T) {
+	t.Parallel()
+	c, ctx := probeTable(t)
+	seedTwo(t, ctx, c)
+	ids := func(n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = fmt.Sprintf("%sm%d", echoMarker, i)
+		}
+		return out
+	}
+	_, err := ntable.ReadSetMembers(ctx, c, "demo", ids(ntable.LimitReadSetMembers))
+	require.NoError(t, err, "at the bound")
+	_, err = ntable.ReadSetMembers(ctx, c, "demo", ids(ntable.LimitReadSetMembers+1))
+	requireLimit(t, "one over the bound", err, "read set members", ntable.LimitReadSetMembers, ntable.LimitReadSetMembers+1)
+	for _, w := range []string{`table "demo" read set`, "changed=no", "; run: nova-table show 'demo'"} {
+		assert.ErrorContains(t, err, w, "refusal lacks %q: %s", w, err)
+	}
+	assert.NotContains(t, err.Error(), echoMarker, "refusal echoes the input: %.200s", err)
+}
+
+// A batch costs what its members cost, not what the table holds (security#78
+// finding 4): a one-member guard batch of a placed member verifies the one cell
+// its record names and reads no other, however many rows the table has. The
+// store's own count (INFO commandstats, through cellReads) is the measure, so
+// the test holds no clock. A placed member whose recorded cell lost it, and an
+// unplaced member that some cell holds, are still refused DRIFT.
+func TestBatchOfOnePlacedMemberDoesNotScanEveryCellOfTheTable(t *testing.T) {
+	t.Parallel()
+	_, c := live(t)
+	ctx := context.Background()
+	const rows = 200
+	require.NoError(t, ntable.Create(ctx, c, demo(), time.Now()))
+	for r := 0; r < rows; r++ {
+		_, err := ntable.RowAdd(ctx, c, "demo", fmt.Sprintf("r%d", r), ntable.RowSpec{})
+		require.NoError(t, err)
+	}
+	guard := func(op string, ids ...string) ntable.BatchManifest {
+		m := ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: probeRev(ctx, c), OperationID: op, Actor: "p"}
+		for _, id := range ids {
+			m.Members = append(m.Members, ntable.BatchMemberEntry{ID: id, Expect: &ntable.MemberExpect{}})
+		}
+		return m
+	}
+	seed := guard("seed")
+	seed.Members = []ntable.BatchMemberEntry{
+		{ID: "a", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "r0", Col: "ready", Score: 1}},
+		{ID: "b", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "r1", Col: "ready", Score: 2}},
+	}
+	_, err := ntable.ApplyBatch(ctx, c, seed)
+	require.NoError(t, err)
+
+	before := cellReads(t, c)
+	_, err = ntable.ApplyBatch(ctx, c, guard("one", "a"))
+	require.NoError(t, err)
+	got := cellReads(t, c) - before
+	require.LessOrEqual(t, got, int64(10), "a one-member guard batch over %d rows x %d columns read cells %d times; want a small constant", rows, len(demo().Columns), got)
+
+	// the recorded cell lost the member: DRIFT
+	require.NoError(t, c.ZRem(ctx, ntable.CellKey("demo", "r1", "ready"), "b").Err())
+	_, err = ntable.ApplyBatch(ctx, c, guard("lost", "b"))
+	require.ErrorIs(t, err, ntable.ErrDrift)
+
+	// an unplaced member held by a cell: DRIFT
+	require.NoError(t, ntable.MemberCreate(ctx, c, "demo", "u"))
+	require.NoError(t, c.ZAdd(ctx, ntable.CellKey("demo", "r5", "done"), redis.Z{Score: 1, Member: "u"}).Err())
+	_, err = ntable.ApplyBatch(ctx, c, guard("stray", "u"))
+	require.ErrorIs(t, err, ntable.ErrDrift)
+}

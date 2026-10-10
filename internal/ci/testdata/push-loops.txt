@@ -9,20 +9,20 @@
 # stops waiting on a clock (it became a push) has its line deleted in the same
 # change; a new timer loop gets its line, and its row, in the change that adds it.
 
-# the friend's daemon (internal/friend, cmd/nova-friend)
-internal/friend/daemon.go loop.read friend bus read
-internal/friend/daemon.go Daemon.beatLoop friend beat
-internal/friend/notifications.go Daemon.runNotifications notification delivery recovery
-internal/friend/adapter_tmux.go Tmux.Deliver friend delivery
+# the friend's daemon (pkg/friend, cmd/nova-friend)
+pkg/friend/daemon.go loop.read friend bus read
+pkg/friend/daemon.go Daemon.beatLoop friend beat
+pkg/friend/notifications.go Daemon.runNotifications notification delivery recovery
+pkg/friend/adapter_tmux.go Tmux.Deliver friend delivery
 cmd/nova-friend/serve.go world.serve coordinator ping
 cmd/nova-friend/wakeping.go world.wakeFriends wake ping
 cmd/nova-friend/wakeping.go world.wakePass wake ping
 cmd/nova-friend/main.go world.waitPong wake ping pong wait
 
-# the fleet member and reader (cmd/nova-swarm member, internal/member)
+# the fleet member and reader (cmd/nova-swarm member, pkg/member)
 cmd/nova-swarm/member.go cmdMember member pass
 cmd/nova-swarm/member.go memberLoop member pass
-internal/member/member.go Member.BeatLoop member beat
+pkg/member/member.go Member.BeatLoop member beat
 
 # the coordinator's inbox and wake (cmd/nova-sprint)
 cmd/nova-sprint/inboxwait.go serverSource.tickEnd coordinator inbox push, through the server
@@ -54,10 +54,10 @@ cmd/nova-table/watch.go watchLoop table and where displays
 cmd/nova-sprint/run.go app.storeRTTLoop samplers and watchdogs
 cmd/nova-swarm/nativesample.go liveSampler.loop samplers and watchdogs
 cmd/nova-swarm/slotclean.go nativeRunner.cleaner samplers and watchdogs
-internal/hostload/sampler.go Sampler.Run samplers and watchdogs
-internal/sandbox/policy.go Policy.watch samplers and watchdogs
-internal/swarm/lease.go startJobLeaseTicking samplers and watchdogs
-internal/swarm/nativeidle.go WatchIdle samplers and watchdogs
+pkg/hostload/sampler.go Sampler.Run samplers and watchdogs
+pkg/sandbox/policy.go Policy.watch samplers and watchdogs
+pkg/swarm/lease.go startJobLeaseTicking samplers and watchdogs
+pkg/swarm/nativeidle.go WatchIdle samplers and watchdogs
 
 # waits on a process, a lock, a file, a server coming up, or a retry backoff
 cmd/nova-friend/main.go realWorld waits and retries
@@ -65,8 +65,8 @@ cmd/nova-friend/main.go world.install waits and retries
 cmd/nova-friend/notifications.go world.installNotifications waits and retries
 cmd/nova-friend/main.go world.openUntil waits and retries
 cmd/nova-friend/wakeping.go world.pingInstall waits and retries
-internal/friend/launchd.go Install waits and retries
-internal/friend/launchd.go WaitReleased waits and retries
+pkg/friend/launchd.go Install waits and retries
+pkg/friend/launchd.go WaitReleased waits and retries
 cmd/nova-sprint/run.go app.awaitGivenUp waits and retries
 cmd/nova-sprint/landpass.go lander.pass waits and retries
 cmd/nova-sandbox/run.go runInVolume waits and retries
@@ -76,18 +76,18 @@ cmd/nova-sprint/backup_out.go startServerTwin waits and retries
 cmd/nova-sprint/snapshot.go redisSource.Save waits and retries
 cmd/nova-swarm/member.go nativeRunner.Start waits and retries
 internal/nsprint/testutil/pg/pg.go Server.ready waits and retries
-internal/nsprint/testutil/redis.go startOnce waits and retries
-internal/sandbox/tree.go Tree.KillAndAwait waits and retries
-internal/secrets/seal.go sealCarry.carry waits and retries
+pkg/nsprint/testutil/redis.go startOnce waits and retries
+pkg/sandbox/tree.go Tree.KillAndAwait waits and retries
+pkg/secrets/seal.go sealCarry.carry waits and retries
 internal/sprint/control_line.go ControlLine.TickLock waits and retries
-internal/swarm/deadline.go Reap waits and retries
-internal/swarm/fileretry.go readFileSteadyBy waits and retries
-internal/swarm/fileretry.go renameSteadyBy waits and retries
-internal/swarm/killpoint_unix.go waitForOrphan waits and retries
-internal/swarm/lock_poll_other.go takeKernelLock waits and retries
-internal/swarm/opencode.go walWait.read waits and retries
-internal/swarm/slots.go TakeSlotLeasesWaiting waits and retries
-internal/swarm/stage.go StageCard waits and retries
+pkg/swarm/deadline.go Reap waits and retries
+pkg/swarm/fileretry.go readFileSteadyBy waits and retries
+pkg/swarm/fileretry.go renameSteadyBy waits and retries
+pkg/swarm/killpoint_unix.go waitForOrphan waits and retries
+pkg/swarm/lock_poll_other.go takeKernelLock waits and retries
+pkg/swarm/opencode.go walWait.read waits and retries
+pkg/swarm/slots.go TakeSlotLeasesWaiting waits and retries
+pkg/swarm/stage.go StageCard waits and retries
 internal/tablemodel/redis.go StartServer waits and retries
 internal/tokens/lock_poll_other.go takeFold waits and retries
 internal/update/snapshot_lock_windows.go lockSnapshot waits and retries

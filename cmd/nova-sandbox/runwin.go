@@ -39,8 +39,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
 )
 
 // winScratchPrefix is the one directory-name shape this verb makes under --scratch and the
@@ -653,7 +653,7 @@ func winEscapeArg(s string) string {
 // an error naming nothing about length.
 //
 // It is a pure function of the string so that it is asserted on any host, like winDir in
-// internal/sandbox. A path that already carries the prefix is left alone, and a UNC path
+// pkg/sandbox. A path that already carries the prefix is left alone, and a UNC path
 // takes \\?\UNC\ with the leading two backslashes replaced, which is the one form of it that
 // is not a simple prefix.
 func winLongPath(p string) string {

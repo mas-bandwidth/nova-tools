@@ -16,8 +16,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
 // cmdSpec is one command a verb runs: the program, its arguments, the
@@ -49,7 +49,7 @@ type cmdRunner interface {
 }
 
 // osCmdRunner is the real cmdRunner. Every child goes through the repository's
-// one door (internal/subproc, internal/gitrun): git through gitrun, with its
+// one door (pkg/subproc, pkg/gitrun): git through gitrun, with its
 // budget by command; a long-lived child (make, a test or build run, a package
 // install, the lisp suite, a secrets-wrapped run) through subproc.Long, bounded
 // by the job's own cap and not by a budget of ours; every other program as a

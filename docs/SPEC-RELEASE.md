@@ -30,7 +30,7 @@ is a line nobody reads.
 ### The list
 
 Each entry is a **directory prefix**, trailing slash included, and the slash is load-bearing:
-`internal/secrets` without it would also catch `internal/secrets<sibling>/` — a directory whose name
+`pkg/secrets` without it would also catch `pkg/secrets<sibling>/` — a directory whose name
 merely begins the same way. Matching is by prefix and by nothing else — no guessing from a file name, no
 substring anywhere in the path.
 
@@ -39,13 +39,13 @@ substring anywhere in the path.
 cmd/nova-sandbox/
 cmd/nova-secrets/
 infra/image/
-internal/sandbox/
-internal/secrets/
+pkg/sandbox/
+pkg/secrets/
 profiles/
 tools/sandboxcheck/
 ```
 
-**The list lives in `internal/release/sensitive.go`, and this block is the same list in the same order.**
+**The list lives in `pkg/release/sensitive.go`, and this block is the same list in the same order.**
 `internal/ci`'s `TestTheSensitivePathListIsTheSameInTheCodeAndInTheSpec` reads both and fails when they
 disagree, because two copies of a security list drift and the copy that drifts is always the one nobody is
 running. A path is added to the Go file and to this block in the same commit.
@@ -226,7 +226,7 @@ RELEASE BUILD OK version=<v> platforms=<a,b,c> tools=<n> sums=<sha256,sha256,sha
 ```
 
 `platforms=` and `sums=` are the same list in the same order, one token each. `pruned=` is the
-retention rule (`internal/release/prune.go`), run last by `build` on `--out` and by `install` on
+retention rule (`pkg/release/prune.go`), run last by `build` on `--out` and by `install` on
 `--from`: of the directories whose names are versions, it keeps the one just built or installed,
 the one the machine had installed before it, and the `KeepBesides` (3) newest of the rest by
 modification time, and removes the others through `safepath.RemoveUnder`. A removal that fails is
@@ -306,7 +306,7 @@ The five verbs that put binaries on every bench in the fleet are declared in thi
 SPEC-UPDATE, in the help string — and in the command reference. `docs/CLI.md` is what the dogfood
 ledger reads, so a verb missing from it would be a verb nothing asks to have been run by a
 non-author. `### The release verb` under `## nova-update` is that section, and a test holds it
-against `internal/release.Verbs` so a sixth release verb fails on the day it is added.
+against `pkg/release.Verbs` so a sixth release verb fails on the day it is added.
 
 *Tests: `TestTheCommandReferenceDeclaresEveryReleaseVerb`,
 `TestTheFourthDogfoodsLessonsAreInTheReleaseSpec`.*
@@ -377,7 +377,7 @@ verbs are its caller, so the claim that a release has been dogfooded is never ju
 person said it was. A tag cannot be quietly amended and pushed again.
 
 **`cut` and `build` run the gate FIRST.** Before the forge is asked anything, before a single tool is
-compiled. The gate is `internal/dogfood.Gate` in process rather than a shell out to `nova-check` — one
+compiled. The gate is `pkg/dogfood.Gate` in process rather than a shell out to `nova-check` — one
 process, one set of refusals, no shell to get wrong — and it is the same read
 `nova-check dogfood gate --cli <reference> --receipts <dir>` does.
 
@@ -415,7 +415,7 @@ cannot be read refuses naming its path: an I/O error is not a tool outside the r
 **The two inputs, and the one default in this package.** `--cli` names the command reference and
 defaults to `docs/CLI.md` beside the checkout the verb was already given (`--changelog` for `cut`,
 `--source` for `build`). `--receipts` names the receipts directory and defaults to
-`DefaultReceiptsDir` (in `internal/release`, under the home directory) **when that directory exists** — the single exception to no path being guessed,
+`DefaultReceiptsDir` (in `pkg/release`, under the home directory) **when that directory exists** — the single exception to no path being guessed,
 taken because the alternative fails in the direction that lets a tool ship. A run with neither is not a
 run that passed: it prints `RELEASE CUT NOTE dogfood-gate=skipped …` naming what was missing.
 
@@ -505,14 +505,14 @@ A failed check applies nothing (`CYCLE FAIL step=check`); a bench with no receip
 
 ## 14. A promised recovery journey is proven at the release revision, or the cut refuses
 
-A review of the release lane (item 5): the chaos suite (`internal/friend/chaos_functional_test.go`) turns every part
+A review of the release lane (item 5): the chaos suite (`pkg/friend/chaos_functional_test.go`) turns every part
 the landed code cannot meet yet into a named skip (`OWED <card>: ...`), so a red-by-design test does
 not block the merge queue, and `go test` reports a parent whose subtests all skipped as a pass. A
 green run was read as proof that a friend whose harness closed, whose session went silent, who hit a
 usage limit or whose bus credential was revoked is detected, his cards are dealt elsewhere and he
 recovers. It proved none of that.
 
-**The promise is the checkout's.** A checkout that ships `internal/friend` promises the journeys in
+**The promise is the checkout's.** A checkout that ships `pkg/friend` promises the journeys in
 `release.PromisedJourneys`, one per chaos subtest; `TestThePromisedJourneysAreTheChaosSuitesSubtests`
 holds the list to the suite's own `t.Run` names. A checkout without the package promises nothing and
 the receipt says `journeys=none-promised`.
@@ -644,7 +644,7 @@ The owner, 2026-10-05: "We should not make a release without verifying that we c
 not < 1/2 of it." and "We must be reliable, and accurate." On 2026-10-04 openrouter's own account
 showed about $2,250 spent while the sprint's cost panel showed $836: runs with no result, reads and
 retries were not priced. The cost records price every paid call whatever its outcome
-(`internal/sprint`, cost.go); this gate is how a release proves they do (`internal/release/spendcheck.go`).
+(`internal/sprint`, cost.go); this gate is how a release proves they do (`pkg/release/spendcheck.go`).
 
 **The window.** From the previous tag's commit (the forge's `commits/<tag>` committer date), or
 `--spend-since <RFC3339>`, taken back to the start of its UTC day (the providers count by the UTC
@@ -752,7 +752,7 @@ One numbered line per test; where one test holds several behaviours, they share 
 2. `TestCutWithASecurityReadSaysSoOnItsOwnLine` — with `--security-read` the cut prints `RELEASE CUT SENSITIVE paths=<n> read=<id>` above its receipt.
 3. `TestCutOfAnOrdinaryRangeSaysNothingAboutSensitivePaths` — an ordinary range prints no `RELEASE CUT SENSITIVE` line.
 4. `TestSensitiveClassifiesByPrefixAndNothingElse` — classification is by directory prefix (trailing slash load-bearing) and nothing else, never by filename or substring.
-5. `TestTheSensitivePathListIsTheSameInTheCodeAndInTheSpec` — the list in `internal/release/sensitive.go` and the spec block stay the same list in the same order.
+5. `TestTheSensitivePathListIsTheSameInTheCodeAndInTheSpec` — the list in `pkg/release/sensitive.go` and the spec block stay the same list in the same order.
 6. `TestCutRefusesARangeTooBigToClassify` — a range whose file list reaches the compare ceiling (300) is refused rather than classified from a prefix.
 7. `TestCutRefusesASecurityReadNoReceiptCouldCarry` — `--security-read` is held to the field law (no whitespace, no `=`, one token) and refused otherwise, even on an ordinary range.
 8. `TestTheTagIsAnnotatedAndCarriesTheSumsDigest` — the tag object's message carries the version, `Cut from <sha>.`, and `sums=<sha256>` (written only with `--sums`).
@@ -782,7 +782,7 @@ One numbered line per test; where one test holds several behaviours, they share 
 32. `TestPullDeletesTheDigestFileToo` — `pull` names and removes `SUMS.digest` alongside the listed artifacts, so the final `rmdir` does not find it non-empty.
 33. `TestAdoptRefusesWhenTheLocalToolPredatesTheRelease` — `adopt` refuses when the local tool predates the release, naming both versions and the `release install` that fixes it.
 34. `TestSnapshotRefusesAMissingFlag` — `nova-version snapshot` requires both `--bin` and `--out` and defaults neither.
-35. `TestTheCommandReferenceDeclaresEveryReleaseVerb` — `docs/CLI.md` declares every release verb, held against `internal/release.Verbs`.
+35. `TestTheCommandReferenceDeclaresEveryReleaseVerb` — `docs/CLI.md` declares every release verb, held against `pkg/release.Verbs`.
 36. `TestTheFourthDogfoodsLessonsAreInTheReleaseSpec` — rules 4 to 10 are in the release spec.
 37. `TestAdoptTakesWindowsDrivePathsForBinAndDest` — drive-absolute paths are accepted for the windows target only (refused by name elsewhere: `TestAdoptRefusesAWindowsPathForALinuxTarget`).
 38. `TestRemotePathFoldsBackslashesForTheFarSidesShell` — backslashes are folded to forward slashes by `RemotePath` before any command is composed (POSIX shell, no PowerShell: `TestAdoptComposesSlashPathsForAWindowsBench`).

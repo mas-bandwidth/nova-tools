@@ -138,7 +138,7 @@ func TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne(t *testing.T) {
 // ready queues. A card the level moved off amy onto bob carries friends_left=amy; when bob
 // is held with his cards handed back, amy is the only friend up with room, and the card is
 // dealt back to her rather than stranded ready (the chaos suite's hold case found it,
-// internal/friend/chaos_functional_test.go). A friend up it never left is still preferred,
+// pkg/friend/chaos_functional_test.go). A friend up it never left is still preferred,
 // and a card is never dealt back to the friend it was withdrawn from or taken back from.
 func TestACardOffAHeldFriendGoesBackToAFriendTheLevelMovedItOff(t *testing.T) {
 	t.Parallel()

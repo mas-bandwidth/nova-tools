@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/memindex"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {

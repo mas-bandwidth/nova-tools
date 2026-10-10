@@ -11,12 +11,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/redisacl"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisacl"
 )
 
 // Every key a store step's own Go reads touch is in the rendered patterns of the
-// role that runs the step (internal/redisacl, Roles). The table layer's keys are
+// role that runs the step (pkg/redisacl, Roles). The table layer's keys are
 // read through the library's functions, which the Lua class tests hold; what a
 // step adds beside them is the route reads its flags turn on (Step.Routes: the
 // routes and the tiers' arrays; Step.Prices: the

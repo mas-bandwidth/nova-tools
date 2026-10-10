@@ -17,7 +17,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
 )
 
 // THE HURT (2026-10-04, 3:21 to 3:37 PM ET, the Studio): a verb under test that
@@ -27,7 +27,7 @@ import (
 // whole suite again, which reached the same verb, which ran the binary again: a
 // chain 289 processes deep, each the parent of the next, until it was killed.
 //
-// THE GUARD is internal/testbin.Enter (docs/TESTS.md, "tests-reexec-guard-everywhere"),
+// THE GUARD is pkg/testbin.Enter (docs/TESTS.md, "tests-reexec-guard-everywhere"),
 // which decides every start of this test binary before any test runs:
 //
 //   - the suite: a `go test` run (its words are -test.* flags), or a child a test

@@ -18,12 +18,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox/darwincheck"
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
-	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/pkg/goenv"
+	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
+	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
+	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 	"github.com/mas-bandwidth/nova-tools/profiles"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -574,7 +574,7 @@ func TestCheckAndVersion(t *testing.T) {
 	code, out, _ = j.tool(t, j.env(), "version")
 	require.Equal(t, 0, code, "version exit %d: %q", code, out)
 	f, ok := buildinfo.Parse(out)
-	require.True(t, ok, "version printed a line internal/buildinfo.Parse refuses: %q", out)
+	require.True(t, ok, "version printed a line pkg/buildinfo.Parse refuses: %q", out)
 	require.Equal(t, "nova-sandbox", f.Tool, "version does not name this tool and its build in fields one and two: %q", out)
 	require.NotEmpty(t, f.Version, "version does not name this tool and its build in fields one and two: %q", out)
 	b, have := f.Extra("backend")
@@ -830,7 +830,7 @@ func copyOfThisBinary(t *testing.T) string {
 	}
 	copied := filepath.Join(t.TempDir(), name)
 	// A COPY, never a link: this helper exists to hand the probe a parent that is
-	// not this binary, and a hard link is this binary (internal/testbin.PlaceCopy).
+	// not this binary, and a hard link is this binary (pkg/testbin.PlaceCopy).
 	require.NoError(t, testbin.PlaceCopy(self, copied))
 	return copied
 }

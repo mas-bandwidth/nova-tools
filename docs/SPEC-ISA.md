@@ -13,7 +13,7 @@ current card uses; the wait mechanisms of today become one kind.
 
 ## The kinds
 
-The instruction kind is a column of the one list, `internal/hygiene/kinds.txt`:
+The instruction kind is a column of the one list, `pkg/hygiene/kinds.txt`:
 the `KIND:` line the brief already carries names the instruction, so the spec
 adds no second vocabulary. One line, one list.
 
@@ -23,7 +23,7 @@ Candidates: script, think, verify, merge, wait, fence, vector.
 |---|---|---|---|---|---|
 | `think` | `BASE`, `PATHS`, `DEPENDS-ON`, `TEST`, `tier` | `head`, `verdict` | a primary's `tier`, its work card, and the finish's `head` and verdict | the model work kinds: `fix-red`, `transcript-test`, `rebase`, `sweep`, `mutation-kill`, `guard`, `ledger` | a work card (`kind=work`) |
 | `verify` | `BASE`, `PATHS`, `TEST`, `DEPENDS-ON` | `verdict` (`ok`, `broken`) | a primary's `readers`, its read card, and the read's verdict | the read kinds: `read`, `probe`, `text`, `tone`, `report` | a read card (`kind=read`) |
-| `script` | `BASE`, `PATHS`, `DEPENDS-ON`, `TEST`, `SCRIPT` | `head`, `verdict` | a work card's `SCRIPT:` steps and their `POST:` lines | none of its own: the step's `SCRIPT:` line, the brief still carries one work kind | a work card whose every work step is a script step (`internal/cardtree`) |
+| `script` | `BASE`, `PATHS`, `DEPENDS-ON`, `TEST`, `SCRIPT` | `head`, `verdict` | a work card's `SCRIPT:` steps and their `POST:` lines | none of its own: the step's `SCRIPT:` line, the brief still carries one work kind | a work card whose every work step is a script step (`pkg/cardtree`) |
 | `merge` | `BASE`, `REPO` | `head`, `verdict` | the merge table's place and the stream's `state` | none: a merge card carries no brief and no child | a merge card (`kind=merge`) |
 | `wait` | `DEPENDS-ON` (its operand names what it waits for) | none | a primary's `needs` and `held`, and a sentinel's `kind` and `reached` | none: a waiting primary is not dealt and runs nothing | a waiting primary, a sentinel, or a held card |
 
@@ -43,7 +43,7 @@ The operands and results, field by field, are today's card lines:
 | `SCRIPT` | `SCRIPT:` | a work step's language and program |
 | `head` | the finish's `head:` | the primary's `head` |
 | `verdict` | the finish's `verdict:` | the primary's result; a read's verdict on its read card |
-| `KIND` | `KIND:` | one row of `internal/hygiene/kinds.txt` |
+| `KIND` | `KIND:` | one row of `pkg/hygiene/kinds.txt` |
 
 ## The one wait kind
 
@@ -111,6 +111,6 @@ concepts after: 1
   no-stall rule's hold.
 - `internal/sprint/steps_sentinel.go`: `IsSentinel`, `WaitsFor`, `Reachable`,
   `Release`, the sentinel's release, which is the same wait.
-- `internal/hygiene/kinds.txt`: the one list of work kinds.
-- `internal/cardtree/tree.go`: the script step, which runs with no model.
+- `pkg/hygiene/kinds.txt`: the one list of work kinds.
+- `pkg/cardtree/tree.go`: the script step, which runs with no model.
 - `docs/SPEC-SPRINT.md` section 2 (the cards), section 5 (the fleet, for the wave) and section 16 (sentinel cards).

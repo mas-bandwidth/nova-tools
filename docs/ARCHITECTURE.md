@@ -7,7 +7,7 @@ Every claim names the spec it comes from; where the code and its spec
 disagree, one has a bug and the tests decide which ([SPEC.md](SPEC.md)).
 
 The tools are one shape. Each binary's verbs, banner, help, version, refusals
-and single output value come from the shared skeleton `internal/tool`, so a
+and single output value come from the shared skeleton `pkg/tool`, so a
 tool is its verbs plus one call into that skeleton ([SPEC.md](SPEC.md)). The
 tools carry the concepts and none of a fleet: machines, seats, friends and
 addresses are configuration, never code ([SPEC-CONFIG.md](SPEC-CONFIG.md)).

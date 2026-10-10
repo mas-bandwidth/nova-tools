@@ -89,7 +89,7 @@ func parseRun(args []string) (runConfig, error) {
 	}
 	c.packages = fs.Args()
 	if len(c.packages) == 0 {
-		return c, errors.New("no package directory given (./internal/ntable/... and so on)")
+		return c, errors.New("no package directory given (./pkg/ntable/... and so on)")
 	}
 	for _, p := range c.packages {
 		if strings.HasPrefix(p, "-") {

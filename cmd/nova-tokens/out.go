@@ -13,10 +13,10 @@ import (
 	"io"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/bounded"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 // sink is one verb's output while it runs.
@@ -180,7 +180,7 @@ func refuse(stdout, stderr io.Writer, asJSON bool, why string) int {
 // start declares --json, parses one verb's flags, and returns the verb's sink. A flag the
 // verb does not take, one missing its value or one with a value it cannot take is refused
 // in the verb's own grammar, naming the verb's flags and the nearest one, with the verb's
-// help as the remedy (verbflag.Explain, the wording internal/tool gives every tool); so is
+// help as the remedy (verbflag.Explain, the wording pkg/tool gives every tool); so is
 // a positional argument, since every verb is flags only. ok is false when it refused, and
 // code is then the exit.
 func start(fs *flag.FlagSet, args []string, token string, stdout, stderr io.Writer) (s *sink, code int, ok bool) {

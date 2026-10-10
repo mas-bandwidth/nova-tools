@@ -659,7 +659,7 @@ func TestRandomSiblingTempIsNotAStrayAndIsPreserved(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// The next fold writes the day file atomically via internal/atomicfile.
+	// The next fold writes the day file atomically via pkg/atomicfile.
 	// Stale random-sibling temporaries from an interrupted run are preserved.
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "glenn="+tr), 0)
 	{

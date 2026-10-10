@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -45,7 +45,7 @@ func snapverbCoverRun(t *testing.T, env Environment, args ...string) (int, strin
 }
 
 // sourceString is the one line a Source reads as on a refusal: every field
-// named, in the order internal/buildinfo writes them. A row that dropped a
+// named, in the order pkg/buildinfo writes them. A row that dropped a
 // field, reordered them, or printed dirty as anything but true/false would
 // fail the exact match.
 func TestSnapverbCoverSourceStringNamesEveryField(t *testing.T) {

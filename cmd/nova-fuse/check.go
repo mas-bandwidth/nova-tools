@@ -7,7 +7,7 @@ import (
 	"io"
 
 	"github.com/mas-bandwidth/nova-tools/internal/fuse"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 // liftRemedy is a POSIX-shell command over the exact box and normalized surface.

@@ -1,4 +1,4 @@
-// Package friendtest holds the test doubles of internal/friend that tests in
+// Package friendtest holds the test doubles of pkg/friend that tests in
 // other packages share.
 package friendtest
 
@@ -10,7 +10,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/mas-bandwidth/nova-tools/internal/friend"
+	"github.com/mas-bandwidth/nova-tools/pkg/friend"
 )
 
 // MemFS is the in-memory twin of friend.OSFS, a friend.SettingsFS: directories, files and symlinks by

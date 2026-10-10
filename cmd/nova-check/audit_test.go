@@ -7,7 +7,7 @@ import (
 )
 
 // The source-level tripwire behind the one-line guarantee: every argument this binary
-// prints is quoted, numeric, literal, escaped through internal/oneline, or exempted here
+// prints is quoted, numeric, literal, escaped through pkg/oneline, or exempted here
 // with its reason. See package audit for what the two walks see and what they cannot.
 func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
 	t.Parallel()
@@ -23,7 +23,7 @@ func TestNoOtherWriterOrShadowCanBypassTheEscape(t *testing.T) {
 
 var checkAudit = audit.Config{
 	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
-	// every one of its four fields through oneline.Field inside internal/buildinfo, where
+	// every one of its four fields through oneline.Field inside pkg/buildinfo, where
 	// TestLineShape and TestLineHoldsWhateverTheStampContains pin it -- including against
 	// a release stamp holding a newline, which is the one field of that line that comes
 	// from outside the toolchain.
@@ -49,9 +49,9 @@ var checkAudit = audit.Config{
 		// package runs a title, a ledger cell, a stamp and a --by name each
 		// holding a newline, an `=` and a bidi override through the whole verb
 		// and asserts one line per stream.
-		"convergence.go|printLines|line": "one line from internal/converge, every field of it rendered through internal/oneline; pinned by TestEveryFieldSurvivesAHostileValue",
+		"convergence.go|printLines|line": "one line from internal/converge, every field of it rendered through pkg/oneline; pinned by TestEveryFieldSurvivesAHostileValue",
 		"convergence.go|printJSON|raw":   "the object encoding/json built, whose encoder escapes every control character as \\u, so the whole object is one line whatever a title or a stamp holds",
-		`hygiene.go|hygieneRun|strings.Join(hygiene.Kinds(), ", ")`: "the card kinds this toolchain declares, read from internal/hygiene/kinds.txt, " +
+		`hygiene.go|hygieneRun|strings.Join(hygiene.Kinds(), ", ")`: "the card kinds this toolchain declares, read from pkg/hygiene/kinds.txt, " +
 			"which is embedded into this binary at build time and holds nothing a caller can write. " +
 			"TestHygieneRefusesAKindTheToolDoesNotDeclare and TestHygieneAcceptsEveryDeclaredKind are the behavioural tests for this site.",
 		// The staged mode's one write that is not display text: an object id
@@ -66,12 +66,12 @@ var checkAudit = audit.Config{
 		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,
 		// their usage literals and lines of this package's own usage const, to the stdout run
 		// hands it; it never prints an argument, so nothing it writes can carry a newline in.
-		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"`,
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
 		// debug.ReadBuildInfo and runtime's GOOS, GOARCH and Version, holds no writer of
 		// its own, and returns a STRING that this package prints -- rendered field by
 		// field through oneline.Field before it is returned.
-		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"sort"`, `"strings"`,
 		// maps and slices sort map keys (slices.Sorted(maps.Keys), slices.AppendSeq):
 		// they return values and hold no writer.
@@ -81,16 +81,16 @@ var checkAudit = audit.Config{
 		// THIS package, which the classifier walks like any other print site, and bounded
 		// puts its own two fields -- the kind and the remedy -- through oneline before
 		// writing them. It writes to the stream the caller hands it and to nothing else.
-		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/bounded"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/check"`,
 		// The shared envelope escapes line fields and JSON strings before writing.
-		`"github.com/mas-bandwidth/nova-tools/internal/tool"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/tool"`,
 		// gitrun starts one bounded git child and hands back its stdout and stderr as bytes
 		// to this package (stagedGit, the cat-file batch); it prints to no stream, and what
 		// comes back is read, never printed, except through the escaped error line.
-		`"github.com/mas-bandwidth/nova-tools/internal/gitrun"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/gitrun"`,
 		// dogfood.go's three, and why none of them can write past the escape:
-		// internal/dogfood holds no writer at all -- it reads a command
+		// pkg/dogfood holds no writer at all -- it reads a command
 		// reference and a directory of receipts, returns values, and renders
 		// its line grammar (Row.Line, Summary.Line, Receipt.RecordLine) into
 		// STRINGS this package prints through oneline.Escape. Its one reach
@@ -99,11 +99,11 @@ var checkAudit = audit.Config{
 		// the receipt's RFC3339 stamp; neither holds a stream.
 		`"context"`,
 		`"time"`,
-		`"github.com/mas-bandwidth/nova-tools/internal/dogfood"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/dogfood"`,
 		// convergence.go's two. internal/converge holds no writer at all: it
 		// reads a forge, a checkout, a directory and three documents through
 		// seams, and returns VALUES -- a report whose every line it renders
-		// through internal/oneline. encoding/json is the --json shape, and its
+		// through pkg/oneline. encoding/json is the --json shape, and its
 		// encoder escapes rather than prints: it returns bytes this file writes.
 		`"encoding/json"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/converge"`,
@@ -120,14 +120,14 @@ var checkAudit = audit.Config{
 		// them is the Fprintf that feeds an object id to the batch's stdin,
 		// and that site is exempted by name below.
 		`"bufio"`, `"bytes"`, `"errors"`, `"os/exec"`, `"path/filepath"`, `"strconv"`,
-		// hygiene.go, and why internal/hygiene cannot write past the escape: it holds no
+		// hygiene.go, and why pkg/hygiene cannot write past the escape: it holds no
 		// writer of its own. It runs git as a subprocess, parses what came back and returns
 		// Findings -- three STRING fields this package renders through oneline.Field and
 		// oneline.Escape at the one print site that carries them. Its errors are returned,
 		// never printed, and reach the stream only through refuse, which escapes them.
 		// The matched text of a secret finding is not in any field it returns (its own
 		// TestHygieneRejectsAKeyShapeAndNeverPrintsIt searches every field for it).
-		`"github.com/mas-bandwidth/nova-tools/internal/hygiene"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/hygiene"`,
 	},
 	MinClassified: 30,
 }

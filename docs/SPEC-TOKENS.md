@@ -11,8 +11,8 @@ gap, and never removes a file.
 This spec is normative. If the code and this document disagree, one of them
 has a bug, and the tests decide which. It stands beside [SPEC.md](SPEC.md),
 whose **Conventions** section (exit codes, no guessed paths, the one-line
-output grammar, the cap-and-count rule, `internal/oneline` and
-`internal/bounded`) applies here unchanged and is not restated. Where this tool
+output grammar, the cap-and-count rule, `pkg/oneline` and
+`pkg/bounded`) applies here unchanged and is not restated. Where this tool
 needs something the Conventions do not cover, it is below and it says so.
 
 The obligation this tool meets is to report token spend. With several
@@ -106,12 +106,12 @@ near the end, and the sections below say how each is met.
    `~123` folds as 123. The row's `rough` column counts the rough lines that
    fed it. `TOKENS DAY` prints `rough=<n>` for the day. A sum carries
    `rough=<n>` through, so a month that rests on rough numbers says so.
-8. **The day file is written whole atomically through internal/atomicfile and
+8. **The day file is written whole atomically through pkg/atomicfile and
    renamed.** `<out>/<day>.tsv` is written whole every time and never
    appended to, never edited in place. Whole is not the same as recomputed --
    a fold recomputes the rows its own declared sources wrote and carries the
    rest of the file's rows over unchanged (rule 10, #268). The write goes
-   through `internal/atomicfile`: a unique temporary sibling
+   through `pkg/atomicfile`: a unique temporary sibling
    `.<day>.tsv.tmp-%08x` in the same directory, fsynced to media, and landed
    by one atomic rename, with best-effort parent-directory fsync. Unique
    temporary names guarantee that temporary files never collide and never
@@ -131,10 +131,10 @@ near the end, and the sections below say how each is met.
    nothing.** There is no month file. `sum` reads day files and writes
    nothing. No verb deletes, truncates or trims any file, including any log.
    The exception is a file THIS RUN makes: the fold's own `fold.lock`, the copy under `--scratch`, the temporary file
-   `internal/atomicfile` writes through before rename (removed on failure or
+   `pkg/atomicfile` writes through before rename (removed on failure or
    cleanup), and, on a platform with no flock, the lock sentinel the release
    removes. The fold's own `fold.lock` is emptied, never removed: on unix its
-   body is the holder stamp `internal/filelock` writes on taking and clears on
+   body is the holder stamp `pkg/filelock` writes on taking and clears on
    release. The report and the ledgers are written through the same atomicfile. A file the tool was given is
    never one of them, and the tripwire that enforces this searches for every
    call that can empty a file -- `os.Remove`, `os.RemoveAll`, `os.Truncate`,
@@ -334,7 +334,7 @@ near the end, and the sections below say how each is met.
     where the OK line leaves stdout, because stdout is the artifact, and
     this sentence is the exception SPEC.md's Conventions allow when a spec
     says so. `--note <path>` writes exactly the stdout bytes to that file, through
-    `internal/atomicfile` (a unique temporary beside it, fsync, one rename; the
+    `pkg/atomicfile` (a unique temporary beside it, fsync, one rename; the
     file and its directory must not be symlinks), and only on `REPORT OK`: a `REPORT FAILED`
     writes nothing and leaves an existing `--note` file byte-unchanged.
     `--supersedes <note-id>`, repeatable, puts `supersedes=<id>[,<id>…]` on
@@ -520,7 +520,7 @@ class, second is `OK`, `FAILED` or one of the informational tokens listed here.
 `report` is the one
 exception: its stdout is exactly the body's lines, and
 `REPORT OK`, `REPORT FAILED` and its `TOKENS UNREADABLE` lines go to stderr. Every path, label, model name,
-repo name, note id and reason renders through `internal/oneline`; every
+repo name, note id and reason renders through `pkg/oneline`; every
 `key=value` carrying stored text is one token via `oneline.Field`; the tail
 after `: ` is capped at `oneline.TailBytes`.
 
@@ -687,7 +687,7 @@ sources that track messages, `-` when none do, aggregated by `sum` onto
 `SUM MONTH` and `SUM TOTAL` as `turns=`. A file whose first line does not
 start with `nova-tokens v1` is refused by `sum` and named by `check`, fixed
 with `fold --day <d>`. Rows sort by `(model, repo)` and stay unique by it.
-The write lands atomically through internal/atomicfile via a unique random-sibling temporary file `.<day>.tsv.tmp-%08x` and rename.
+The write lands atomically through pkg/atomicfile via a unique random-sibling temporary file `.<day>.tsv.tmp-%08x` and rename.
 
 **Absent and empty are one state.** A day with no rows has no file. A fold
 never writes an empty day file and `check` names one as malformed.
@@ -1140,11 +1140,11 @@ seen red before it is trusted.
    and `sum` carries `rough=2` on the pair, the model and the total.
 8. A fold killed with SIGKILL between the temp write and the rename leaves
    the existing day file entire and a temporary file beside it; the next fold
-   writes the day file atomically through internal/atomicfile and preserves
+   writes the day file atomically through pkg/atomicfile and preserves
    the stranded temporary; `check` does not name a valid day-file temporary
    as a stray; a second concurrent fold on one `--out` waits and exits 2 naming
    the holder's pid; a source test finds no `os.Remove` and no `os.RemoveAll` anywhere in
-   the package (except internal/atomicfile's own-run temporary cleanup).
+   the package (except pkg/atomicfile's own-run temporary cleanup).
    This tripwire is the removes-nothing rule's: it reads the list of calls that can empty a
    file and fails on any call it cannot match to a carved-out file. The
    carve-outs are the tripwire's own list; a removal of anything
@@ -1295,7 +1295,7 @@ seen red before it is trusted.
 
 The tool is Go under `cmd/nova-tokens` and `internal/tokens`, built the way
 `cmd/nova-check` is: no hardcoded paths, no default paths, the exit grammar
-above, `internal/oneline` for every printed value, `internal/bounded` for every
+above, `pkg/oneline` for every printed value, `pkg/bounded` for every
 listing, and `ONBOARDING.md`'s first-day standard: a usage banner ending in a
 runnable `example:` block, refusals that say what the flag wants and report
 every independent problem at once, a `### First run` in `docs/CLI.md`, a
@@ -1306,11 +1306,11 @@ pin all three by executing them.
    line with `turns=`, the eleven columns (a twelve-column file, written
    while the `units` column existed, is read too with the twelfth ignored), strict parse (a row with ten columns is an
    error naming the line; a type cell is an integer or `-` and an empty
-   cell is an error), sorted rows, the atomic write through `internal/atomicfile`
+   cell is an error), sorted rows, the atomic write through `pkg/atomicfile`
    and rename under the output lock, the shrink comparison with `-` on either
    side. Tests: round trip is byte-identical; an unversioned file refuses;
    demanded tests 8, 10, 12, 13, 18.
-2. **`internal/tokens/lock.go`**: on unix `internal/filelock` on
+2. **`internal/tokens/lock.go`**: on unix `pkg/filelock` on
    `<out>/fold.lock` (the same flock the earlier binaries took; tla/FileLock.tla),
    elsewhere an exclusive create of a sibling file; a bounded jittered wait,
    exit 2 naming the holder's pid. Tests: demanded test 8's lock half.

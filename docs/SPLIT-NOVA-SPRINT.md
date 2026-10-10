@@ -31,9 +31,9 @@ Each tool is judged by one test: would someone with no nova-sprint use it as it 
 | nova-secrets, nova-sandbox, nova-fuse, nova-memory, nova-cairn, nova-check, nova-self-talk, nova-tokens, nova-version | stay | no sprint import or vocabulary in what they do |
 | nova-update | stays (sprint-flavoured) | `report --store` reads every bench's **nova-sprint** build from its beat; that should become "a tool's build", by name |
 | nova-ci | stays (borderline) | slowtests is general; `github receipt` writes a receipt into the sprint's store through `internal/nsprint/store`; the rest is this repository's own CI |
-| nova-swarm | stays (borderline) | `native`, `step`, `verify`, `lint`, `template`, `slots` and `disk-guard` stand on their own. `member` is the sprint member: it talks to the sprint server over `internal/sprintwire`, with `lint --decide`, `--member-injects` and `--base-check` beside it. The maintainer's line: the execution stays, and the sprint-specific dealing glue (the wire verbs take, beat and report, plus the brief the member injects) moves. A split would give `member` a general work-server client, with nova-sprint as one server |
+| nova-swarm | stays (borderline) | `native`, `step`, `verify`, `lint`, `template`, `slots` and `disk-guard` stand on their own. `member` is the sprint member: it talks to the sprint server over `pkg/sprintwire`, with `lint --decide`, `--member-injects` and `--base-check` beside it. The maintainer's line: the execution stays, and the sprint-specific dealing glue (the wire verbs take, beat and report, plus the brief the member injects) moves. A split would give `member` a general work-server client, with nova-sprint as one server |
 | nova-decide | stays (borderline; maintainer: stays) | `ask`, `outcome`, `calibrate` and `findings` are general. `read`, `score`, `attempt`, `grade`, `gate` and `brief` are the sprint's card questions. A split would keep them as schemas the sprint supplies, not as verbs built into nova-decide |
-| nova-friend | stays | session wake, a building block; it uses `internal/sprintwire` for a friend's beat and take, which is the same glue as nova-swarm `member` |
+| nova-friend | stays | session wake, a building block; it uses `pkg/sprintwire` for a friend's beat and take, which is the same glue as nova-swarm `member` |
 
 **Moved in this cut:** nova-sprint, nova-card and nova-work, plus the sprint dashboard. The dashboard is already a verb of
 the binary (`nova-sprint dashboard`, `internal/sprintdash`), not a program of its own. **Borderline cases, left in place
@@ -61,65 +61,65 @@ nova-work still build as separate mains. Folding them into the binary is the fir
 
 From the dependency graph, these are used by nova-sprint, nova-card or nova-work and by no other cmd:
 `cmd/nova-sprint`, `cmd/nova-card`, `cmd/nova-work`, `internal/sprint` (with `driver`, `store`, `refmodel`),
-`internal/sprintdash`, `internal/cardgen`, `internal/provbalance`, `internal/workfile`, `internal/workgh`,
+`internal/sprintdash`, `internal/cardgen`, `pkg/provbalance`, `internal/workfile`, `internal/workgh`,
 `internal/worklang`, `tools/sprintsize`.
 
-- `internal/provbalance` is a building block (reading a provider's balance). It moves only because no nova-tools cmd
+- `pkg/provbalance` is a building block (reading a provider's balance). It moves only because no nova-tools cmd
   uses it, and the dead-code rule counts from cmd roots. It comes back when a nova-tools tool exposes it, for example
   `nova-config route balance`.
-- `internal/ci/shrinkonly` is used only by nova-card. Its home is nova-tools' CI, so it is copied, not moved.
+- `pkg/ci/shrinkonly` is used only by nova-card. Its home is nova-tools' CI, so it is copied, not moved.
 - The graph agrees with the brief: nova-swarm, nova-bus, nova-friend and nova-decide use no sprint-only package. Their
-  only sprint link is the shared `internal/sprintwire`.
+  only sprint link is the shared `pkg/sprintwire`.
 
 ## (b) Shared packages: copied into nova-sprint `internal/`, later imported from a public nova-tools API
 
 There are 41 packages, all at the same relative path, except that `fleet` became the package fleetrules. Only non-test
-files were copied, plus `internal/swarm/testdata/providers.tsv`, which is embedded. For nova-sprint to import them instead,
+files were copied, plus `pkg/swarm/testdata/providers.tsv`, which is embedded. For nova-sprint to import them instead,
 nova-tools must first move each one out of `internal/` (to `pkg/` or a module of its own). The surface nova-sprint
 uses, measured with a Go AST scan of the moved code:
 
-- `internal/atomicfile` (4): ExactMode NoReplace Write WriteFile
-- `internal/binstamp` (1): Of
-- `internal/buildinfo` (2): Line Parse
-- `internal/bus` (3): Bus Message Redis
-- `internal/cardcontract` (5): Families For Frame ReadTitle Staged
-- `internal/cardcost` (15): ActualByHarness Cents NoTotal NoUsage ParseTotal ParseUsage Prices PricesOf Sum Tokens Total Unreported Usage WhyNoRoute WhyNoTokens
-- `internal/cardhdr` (19): EndLaunch EndNoCommit EndNoResult EndNothing EndPreExisting EndProvider EndStaging IsRoute KeyValue Model ParseTest ReadModel ReadWho RemainderKey RouteFlash RouteFrontier RouteHeavy RouteList RoutePro
-- `internal/cardlimits` (2): BriefAdvisoryBytes MaxBriefBytes
-- `internal/cardtree` (2): Lint Parse
-- `internal/ci/shrinkonly` (2): DeadCode ShrinkOnly
-- `internal/config` (33): DefaultFriendWidth EnvPG FieldDecideAttemptNoResult FieldDecideAttemptNothingToDo FieldDecideBounce FieldDecideBriefBar FieldDecideGateFlaky FieldDecideGatePreexisting FieldDecideGrade FieldDecideJudgment FieldDecideReview FieldDecideScoreBar FriendBeatKey FriendWidth KindFleet KindFriend KindMachine KindSprint MachineWidth Mem Migrations NewMem OpenFile OpenPG ResolveDSN RouteKey RouteTiers RoutesKey Row SprintKey Store TierKey Widths
-- `internal/decide` (105): AckReason Act ActApply ActList Answer Append Ask Attach AttachBriefs AttemptDecided AttemptDecision AttemptLabel AttemptName AttemptOf AttemptQuestion Backend BriefBar BriefDeadline BriefDropped BriefOf BriefOp BriefWidth Briefs Calibrate CardFilePaths Caused Choice ChoiceOf Choose Chosen ClassDone ClassNeedsPro ClassNoResult ClassNothingToDo ClassProviderFailure ClassWrongScope ConflictError Decided Decision DiffSummary End ErrUnknown Failure Find Fixed FixedAnswer Fixes Flaky Gate GateBars GateInput GradeFlash GradeLabel GradeName GradeOp GradePro GradeQuestion GradeSchema GradeScript GradeState HistoryOf JevHTTP JevModel JevSecret JevTimeout JudgmentInput JudgmentName JudgmentOutcome JudgmentSchema JudgmentState Kinds LabelDropped LabelLanded Land LandLabel Load Make Names Outcome ParseAttempt ParseBriefBar ParseDecided ParseFixed ParseGateBars ParseGateOutput ParseJudgmentBar PaymentRefusal PreExisting Reasons RecordAct RedAgain Schema Score ScoreOp Set SettleGate Sum Top Usage VerbAccept VerbAck VerbDrop VerbOf VerbRework VerbWait
-- `internal/diffcheck` (6): Fragments GeneralityLedger GeneralityRoots Outside UpdateEnv UpdatedRerun
-- `internal/gitrun` (3): Options Output Run
-- `internal/gocache` (4): Bounds Hold Limit Slack
-- `internal/goenv` (1): Clean
-- `internal/hostload` (7): HowCPU HowLoad1 Local MaxPercent Measure Source State
-- `internal/hygiene` (1): MatchGlob
-- `internal/member` (7): Child Config Member New Packet Push Result
-- `internal/nsprint/fn` (6): Library Load Loaded Source Spec Sum
-- `internal/nsprint/redisauth` (3): DefaultPasswordEnv PasswordEnvEnv UserEnv
-- `internal/nsprint/testutil` (1): Start
-- `internal/nsprint/verbflag` (12): Explain FlagSynopsis Help HelpIfAsked Insert IsHelp New Parse Print RecoverWith UsageLineSynopsis Verb
-- `internal/ntable` (86): ApplyBatch ApplyBatches BatchDelta BatchManifest BatchMemberDelta BatchMemberEntry Cell CellAdd CellKeyAt CellText CellsCmd ChangesKey Check Column Count Create DefKey DropDefinition EpochPrefix ErrDrift ErrMalformedManifest ErrNoView ErrUnknownOutcome FieldGuard FnRowDel IdentityKey IsRefusal LimitChangedEntries LimitError LimitFieldValueBytes LimitGuardEntries LimitManifestBytes LimitReadSetMembers LimitTableProps MemberCreateOp MemberExpect MemberMoveOp Members NewReader NewRow None ParseColumns PlaceExpect PropsKeyAt QueueCells QueueReadSetMembers QueueViewState Read ReadAt ReadCmd ReadSetCmd ReadSetMember ReadSetMembers ReadSetResult Receipt Refusal Render RenderOpts RenderTables Row RowDel RowKeyAt RowSet RowSetMany RowsAdd RowsHide RowsKeyAt RuleError SameDefinition Set SetOpts Shape Sort Sum SummaryLine Table Text ValidateBatchManifestRaw ValidateColumns View ViewDelete ViewGet ViewSet ViewState ViewStateResult WriteOptions
-- `internal/onboarding` (8): CompareTranscript ExampleLines Field FirstRun Result SplitShell Steps Transcript
-- `internal/oneline` (7): Cap Err Escape Field ShellWord TailBytes WithRemedy
-- `internal/redisacl` (4): Coordinator Member Render Roles
-- `internal/redisconn` (5): Conn Env Exec Open Options
-- `internal/safepath` (2): NameOK RemoveUnderRoots
-- `internal/sprintwire` (9): Client MaxRequest MaxVerbs Path Request Response Result Tries Worker
-- `internal/subproc` (5): Command Context Long Prepare Tool
-- `internal/swarm` (21): CardHeaderFinding CardHeaderValue CardPaths CardRepoURL ChildRemedy ChildRule ChildRulesParagraph DefaultChildRules DefaultRulesName HeldRules HeldRulesText LintCardChildByReference LintCardChildWith LintCardHeader OwnRulesName ReadCardBase ReadChildRules RulesParagraph StagedBrief Template UnfilledTemplateLines
-- `internal/testbin` (1): WriteExecutable
-- `internal/testguard` (1): RefuseHosts
-- `internal/testkit` (5): Main ReadFile Result Tree WriteFile
-- `internal/testredis` (2): FarLink Start
-- `internal/tool` (11): Call Done Fail Field Fields Flags Out Refuse Text Tool Verb
-- `internal/tty` (1): Size
-- `internal/typedrec` (2): IsFullSha NamesADefect
-- with no direct use, copied only because the above import them: `internal/bounded`, `internal/delayproxy`,
-  `internal/filelock`, `internal/goenv`, `internal/harness`, `internal/keyshape`, `internal/log`, `internal/pkgselect`,
-  `internal/redisfn`, `fleet` (as the package fleetrules)
+- `pkg/atomicfile` (4): ExactMode NoReplace Write WriteFile
+- `pkg/binstamp` (1): Of
+- `pkg/buildinfo` (2): Line Parse
+- `pkg/bus` (3): Bus Message Redis
+- `pkg/cardcontract` (5): Families For Frame ReadTitle Staged
+- `pkg/cardcost` (15): ActualByHarness Cents NoTotal NoUsage ParseTotal ParseUsage Prices PricesOf Sum Tokens Total Unreported Usage WhyNoRoute WhyNoTokens
+- `pkg/cardhdr` (19): EndLaunch EndNoCommit EndNoResult EndNothing EndPreExisting EndProvider EndStaging IsRoute KeyValue Model ParseTest ReadModel ReadWho RemainderKey RouteFlash RouteFrontier RouteHeavy RouteList RoutePro
+- `pkg/cardlimits` (2): BriefAdvisoryBytes MaxBriefBytes
+- `pkg/cardtree` (2): Lint Parse
+- `pkg/ci/shrinkonly` (2): DeadCode ShrinkOnly
+- `pkg/config` (33): DefaultFriendWidth EnvPG FieldDecideAttemptNoResult FieldDecideAttemptNothingToDo FieldDecideBounce FieldDecideBriefBar FieldDecideGateFlaky FieldDecideGatePreexisting FieldDecideGrade FieldDecideJudgment FieldDecideReview FieldDecideScoreBar FriendBeatKey FriendWidth KindFleet KindFriend KindMachine KindSprint MachineWidth Mem Migrations NewMem OpenFile OpenPG ResolveDSN RouteKey RouteTiers RoutesKey Row SprintKey Store TierKey Widths
+- `pkg/decide` (105): AckReason Act ActApply ActList Answer Append Ask Attach AttachBriefs AttemptDecided AttemptDecision AttemptLabel AttemptName AttemptOf AttemptQuestion Backend BriefBar BriefDeadline BriefDropped BriefOf BriefOp BriefWidth Briefs Calibrate CardFilePaths Caused Choice ChoiceOf Choose Chosen ClassDone ClassNeedsPro ClassNoResult ClassNothingToDo ClassProviderFailure ClassWrongScope ConflictError Decided Decision DiffSummary End ErrUnknown Failure Find Fixed FixedAnswer Fixes Flaky Gate GateBars GateInput GradeFlash GradeLabel GradeName GradeOp GradePro GradeQuestion GradeSchema GradeScript GradeState HistoryOf JevHTTP JevModel JevSecret JevTimeout JudgmentInput JudgmentName JudgmentOutcome JudgmentSchema JudgmentState Kinds LabelDropped LabelLanded Land LandLabel Load Make Names Outcome ParseAttempt ParseBriefBar ParseDecided ParseFixed ParseGateBars ParseGateOutput ParseJudgmentBar PaymentRefusal PreExisting Reasons RecordAct RedAgain Schema Score ScoreOp Set SettleGate Sum Top Usage VerbAccept VerbAck VerbDrop VerbOf VerbRework VerbWait
+- `pkg/diffcheck` (6): Fragments GeneralityLedger GeneralityRoots Outside UpdateEnv UpdatedRerun
+- `pkg/gitrun` (3): Options Output Run
+- `pkg/gocache` (4): Bounds Hold Limit Slack
+- `pkg/goenv` (1): Clean
+- `pkg/hostload` (7): HowCPU HowLoad1 Local MaxPercent Measure Source State
+- `pkg/hygiene` (1): MatchGlob
+- `pkg/member` (7): Child Config Member New Packet Push Result
+- `pkg/nsprint/fn` (6): Library Load Loaded Source Spec Sum
+- `pkg/nsprint/redisauth` (3): DefaultPasswordEnv PasswordEnvEnv UserEnv
+- `pkg/nsprint/testutil` (1): Start
+- `pkg/nsprint/verbflag` (12): Explain FlagSynopsis Help HelpIfAsked Insert IsHelp New Parse Print RecoverWith UsageLineSynopsis Verb
+- `pkg/ntable` (86): ApplyBatch ApplyBatches BatchDelta BatchManifest BatchMemberDelta BatchMemberEntry Cell CellAdd CellKeyAt CellText CellsCmd ChangesKey Check Column Count Create DefKey DropDefinition EpochPrefix ErrDrift ErrMalformedManifest ErrNoView ErrUnknownOutcome FieldGuard FnRowDel IdentityKey IsRefusal LimitChangedEntries LimitError LimitFieldValueBytes LimitGuardEntries LimitManifestBytes LimitReadSetMembers LimitTableProps MemberCreateOp MemberExpect MemberMoveOp Members NewReader NewRow None ParseColumns PlaceExpect PropsKeyAt QueueCells QueueReadSetMembers QueueViewState Read ReadAt ReadCmd ReadSetCmd ReadSetMember ReadSetMembers ReadSetResult Receipt Refusal Render RenderOpts RenderTables Row RowDel RowKeyAt RowSet RowSetMany RowsAdd RowsHide RowsKeyAt RuleError SameDefinition Set SetOpts Shape Sort Sum SummaryLine Table Text ValidateBatchManifestRaw ValidateColumns View ViewDelete ViewGet ViewSet ViewState ViewStateResult WriteOptions
+- `pkg/onboarding` (8): CompareTranscript ExampleLines Field FirstRun Result SplitShell Steps Transcript
+- `pkg/oneline` (7): Cap Err Escape Field ShellWord TailBytes WithRemedy
+- `pkg/redisacl` (4): Coordinator Member Render Roles
+- `pkg/redisconn` (5): Conn Env Exec Open Options
+- `pkg/safepath` (2): NameOK RemoveUnderRoots
+- `pkg/sprintwire` (9): Client MaxRequest MaxVerbs Path Request Response Result Tries Worker
+- `pkg/subproc` (5): Command Context Long Prepare Tool
+- `pkg/swarm` (21): CardHeaderFinding CardHeaderValue CardPaths CardRepoURL ChildRemedy ChildRule ChildRulesParagraph DefaultChildRules DefaultRulesName HeldRules HeldRulesText LintCardChildByReference LintCardChildWith LintCardHeader OwnRulesName ReadCardBase ReadChildRules RulesParagraph StagedBrief Template UnfilledTemplateLines
+- `pkg/testbin` (1): WriteExecutable
+- `pkg/testguard` (1): RefuseHosts
+- `pkg/testkit` (5): Main ReadFile Result Tree WriteFile
+- `pkg/testredis` (2): FarLink Start
+- `pkg/tool` (11): Call Done Fail Field Fields Flags Out Refuse Text Tool Verb
+- `pkg/tty` (1): Size
+- `pkg/typedrec` (2): IsFullSha NamesADefect
+- with no direct use, copied only because the above import them: `pkg/bounded`, `pkg/delayproxy`,
+  `pkg/filelock`, `pkg/goenv`, `pkg/harness`, `pkg/keyshape`, `pkg/log`, `pkg/pkgselect`,
+  `pkg/redisfn`, `fleet` (as the package fleetrules)
 
 ### The generality pass: one follow-up card per nova-tools package
 
@@ -127,25 +127,25 @@ Each card is "make it usable by a stranger building a different workflow". The v
 
 | package | sprint concept leaking in (API, comments, errors) | the general form |
 |---|---|---|
-| `internal/swarm` | card (275 mentions), brief, reader, coordinator, seat; `CardHeader*`, `CardRepoURL`, `StagedBrief`, `ReadCardBase` | a **task** file with a header and rules: `TaskHeader*`, `TaskRepoURL`, `StagedTask`; "reviewer" in place of reader |
-| `internal/member` | sprint member loop, cards, readers, tiers | a **worker loop** against a work server: beat, take, report, push; the server is an interface and nova-sprint is one implementation |
-| `internal/sprintwire` | "sprint's server", `Worker` verbs | `workwire`: a batch of verbs to a **work server**, request, reply, client; no sprint words in its types |
-| `internal/decide` | card, brief, judgment, tier; `AttemptOf`, `BriefOf`, `ClassNeedsPro` | typed **decisions** over a **subject** (text plus diff). The card questions (read, score, attempt, grade, gate, brief) become schemas the caller supplies, not types built into the package |
-| `internal/cardcontract` | card, sprint, brief, tier, readers | the **task contract**: the frame around a task's work (base, branch, push, finish) |
-| `internal/cardhdr` | card, sprint, friend, tier, route names flash and pro | **task header** keys; routes and tiers are names from config, never built-in constants |
-| `internal/cardcost` | card, sprint, dealt | **task cost**: usage and price per run |
-| `internal/cardtree` | card, sprint, land, coordinator | a **task tree**: parse and lint |
-| `internal/cardlimits` | brief, card | task-text limits |
-| `internal/config` | `KindSprint`, coordinator, friend, tier, seat, `FieldDecide*` (sprint decide bars) | machines, agents, routes and model classes as rows; a workflow registers its own kinds and fields. The sprint's kinds and bars move into nova-sprint's own migrations |
+| `pkg/swarm` | card (275 mentions), brief, reader, coordinator, seat; `CardHeader*`, `CardRepoURL`, `StagedBrief`, `ReadCardBase` | a **task** file with a header and rules: `TaskHeader*`, `TaskRepoURL`, `StagedTask`; "reviewer" in place of reader |
+| `pkg/member` | sprint member loop, cards, readers, tiers | a **worker loop** against a work server: beat, take, report, push; the server is an interface and nova-sprint is one implementation |
+| `pkg/sprintwire` | "sprint's server", `Worker` verbs | `workwire`: a batch of verbs to a **work server**, request, reply, client; no sprint words in its types |
+| `pkg/decide` | card, brief, judgment, tier; `AttemptOf`, `BriefOf`, `ClassNeedsPro` | typed **decisions** over a **subject** (text plus diff). The card questions (read, score, attempt, grade, gate, brief) become schemas the caller supplies, not types built into the package |
+| `pkg/cardcontract` | card, sprint, brief, tier, readers | the **task contract**: the frame around a task's work (base, branch, push, finish) |
+| `pkg/cardhdr` | card, sprint, friend, tier, route names flash and pro | **task header** keys; routes and tiers are names from config, never built-in constants |
+| `pkg/cardcost` | card, sprint, dealt | **task cost**: usage and price per run |
+| `pkg/cardtree` | card, sprint, land, coordinator | a **task tree**: parse and lint |
+| `pkg/cardlimits` | brief, card | task-text limits |
+| `pkg/config` | `KindSprint`, coordinator, friend, tier, seat, `FieldDecide*` (sprint decide bars) | machines, agents, routes and model classes as rows; a workflow registers its own kinds and fields. The sprint's kinds and bars move into nova-sprint's own migrations |
 | `internal/nsprint/*` | the package path itself; `NOVA_SPRINT_REDIS_USER` and `_PASSWORD_ENV`; `fn` carries the sprint's Lua (02_card_move.lua) | a package named store (or `redisauth`, `verbflag`, `fn` at the top level); `NOVA_REDIS_*` env names; the card-move Lua moves to nova-sprint as a library it loads itself |
-| `internal/redisacl` | roles coordinator, member, friend; the `sprint` key family | **roles and key families from configuration**; a workflow declares its own family |
-| `internal/ntable` | stream, sentinel, card in comments and examples | rows, cells and ordered sets only |
-| `internal/diffcheck` | card, lander | a **change gate** over a diff |
-| `internal/pkgselect` | deal, dealt, tier | package selection for a test run, sharded by weight |
-| `internal/gocache`, `internal/hygiene`, `internal/typedrec` | friend, sprint, card in comments and errors | wording only |
+| `pkg/redisacl` | roles coordinator, member, friend; the `sprint` key family | **roles and key families from configuration**; a workflow declares its own family |
+| `pkg/ntable` | stream, sentinel, card in comments and examples | rows, cells and ordered sets only |
+| `pkg/diffcheck` | card, lander | a **change gate** over a diff |
+| `pkg/pkgselect` | deal, dealt, tier | package selection for a test run, sharded by weight |
+| `pkg/gocache`, `pkg/hygiene`, `pkg/typedrec` | friend, sprint, card in comments and errors | wording only |
 | `fleet` (child-rules.txt) | the child rules of a card | rules for any AI task run in this repository |
 | `internal/update` (nova-update `report --store`) | "every bench's nova-sprint build" | a named tool's build on every machine |
-| `internal/ci/shrinkonly` (used by nova-card) | none; its ledgers are nova-tools' own | stays nova-tools CI. The card generator reads it as a source, so the source should be a file format, not this package |
+| `pkg/ci/shrinkonly` (used by nova-card) | none; its ledgers are nova-tools' own | stays nova-tools CI. The card generator reads it as a source, so the source should be a file format, not this package |
 
 ## (c) Docs, specs, TLA, tests, testdata, ledgers that belong to nova-sprint (all moved)
 
@@ -219,7 +219,7 @@ Classified by diff paths against the moved set. Generic ledgers, CLI.md and TEST
 - #5247 admission contract (the nova-swarm lint half stays)
 - #5266 child instructions (child-rules, STANDARD and SPEC-CARD-CONTRACT stay)
 - #5268 friend take fence (FRIENDS.md)
-- #5275 nova-work help (internal/tool stays)
+- #5275 nova-work help (pkg/tool stays)
 - #5281 seat check (the seatcheck package and the functional image stay)
 - #5300 spend rules (its nova-config route half stays; the integration skipped it)
 - #5307 nova-local (nova-local, nova-config and nova-swarm stay; the dealer half moves)
@@ -234,6 +234,6 @@ Classified by diff paths against the moved set. Generic ledgers, CLI.md and TEST
   0029.**
 - Merge order: if the integration PR lands on dev after #5309, its changes under the moved paths conflict as
   modify/delete. Resolve them by deleting the files; the seed already has those changes.
-- dev is red on its own (vet: `internal/ntable` `store_cover_test.go` redeclares `coverPipe`; tests: cmd/nova-config,
-  cmd/nova-redis and internal/config). #5309 adds no red of its own.
+- dev is red on its own (vet: `pkg/ntable` `store_cover_test.go` redeclares `coverPipe`; tests: cmd/nova-config,
+  cmd/nova-redis and pkg/config). #5309 adds no red of its own.
 - nova-sprint's CI uses GitHub-hosted runners. nova-tools' self-hosted runners are registered to nova-tools alone.

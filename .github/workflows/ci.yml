@@ -23,7 +23,7 @@
 # GitHub-hosted compute. The GitHub-hosted runners (ubuntu-latest, macos-latest)
 # run only on push to main and on the nightly schedule, with the full suite.
 # There is ONE exception, for the one platform the self-hosted runners cannot
-# see: test-hosted-pr runs internal/sandbox on ubuntu-latest when the sandbox or
+# see: test-hosted-pr runs pkg/sandbox on ubuntu-latest when the sandbox or
 # a *_linux.go moves, because the sandbox is darwin-only in the self-hosted
 # matrix. Every self-hosted job is guarded by the head-repo check, so a
 # pull_request from a fork skips CI rather than running untrusted code on our
@@ -453,7 +453,7 @@ jobs:
 
       - id: list
         # The fan-out: the packages this event tests, dealt onto the runner
-        # groups (internal/pkgselect, `go run ./tools/ci help test-matrix`). A pull
+        # groups (pkg/pkgselect, `go run ./tools/ci help test-matrix`). A pull
         # request and a merge group carry the packages the change touched and their
         # dependents, read against the event's own base; a push and the nightly run
         # keep the whole tree. The macOS legs are dealt only where the target branch
@@ -707,7 +707,7 @@ jobs:
         # tests mock, functional tests carry the build tag). A directory FIRST
         # on PATH holds a redis-server that prints why and exits 86, so a
         # redis-backed test left untagged fails closed here under NOVA_CI=1
-        # (internal/nsprint/testutil.Start names this line) instead of
+        # (pkg/nsprint/testutil.Start names this line) instead of
         # starting a real server on a shared runner. The `functional` job
         # installs the real one. internal/ci: TestUnitTierRefusesRedisServer.
         shell: bash
@@ -766,7 +766,7 @@ jobs:
         # The budget is 60 s by the two-minute law, except on the Intel Mac
         # benches (about 3x slower per core than a macOS runner), where the
         # alert prints every CI-SLOW line and the budget is 300 s until
-        # cmd/nova-swarm and internal/swarm are fast. The first
+        # cmd/nova-swarm and pkg/swarm are fast. The first
         # night of this check found eight packages between 77 s and 272 s on
         # a macOS runner at load 60 and an Intel Mac at load 2. All of it
         # lives in the Makefile's `test` target: the Makefile is the
@@ -1157,13 +1157,13 @@ jobs:
     # back on the PR and not on main. The sandbox is darwin-only in the
     # self-hosted matrix, so a Linux sandbox break would otherwise only surface
     # on main: that is this job's remaining reason to exist, gated by a path
-    # filter over the PR diff (internal/sandbox/**, any *_linux.go or
+    # filter over the PR diff (pkg/sandbox/**, any *_linux.go or
     # *_linux_test.go).
     #
     # THE WINDOWS ENTRY IS GONE, twice over. A pull request meets Windows once,
     # in the lint job's `make vet-windows` cross-vet, which type-checks the whole
     # tree for GOOS=windows on a Linux runner. The paths the retired leg watched
-    # (cmd/nova-bus/**, internal/bus/**, **/*_windows.go) no longer select a
+    # (cmd/nova-bus/**, pkg/bus/**, **/*_windows.go) no longer select a
     # runner of their own: a *_windows.go that stops compiling is caught by the
     # cross-vet, and what only a real Windows machine can answer is answered by
     # the certification tier.
@@ -1184,10 +1184,10 @@ jobs:
         leg:
           - name: linux
             os: ubuntu-latest
-            packages: ./internal/sandbox
+            packages: ./pkg/sandbox
             filters: |
               changed:
-                - 'internal/sandbox/**'
+                - 'pkg/sandbox/**'
                 - '**/*_linux.go'
                 - '**/*_linux_test.go'
     runs-on: ${{ matrix.leg.os }}
@@ -1706,7 +1706,7 @@ jobs:
       - name: build, one real package, write beside the repo
         if: steps.want.outputs.run == 'yes'
         run: |
-          go build ./... && go test -count=1 ./internal/oneline/
+          go build ./... && go test -count=1 ./pkg/oneline/
           t="$(dirname "$GITHUB_WORKSPACE")/fleet-probe-$RUNNER_NAME.txt"; echo ok > "$t" && rm -f "$t"
           echo "PROBE OK runner=$RUNNER_NAME slot=${{ matrix.slot }}"
 

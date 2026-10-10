@@ -1,5 +1,5 @@
 // Package pg starts the throwaway Postgres the nova-config functional tests
-// share, the way internal/nsprint/testutil starts a throwaway Redis: initdb
+// share, the way pkg/nsprint/testutil starts a throwaway Redis: initdb
 // and pg_ctl from the binaries on PATH (or the well-known install
 // directories, or NOVA_PG_BIN), a free loopback port, everything under the
 // test's temporary directory, trust authentication, and the cleanup stops
@@ -28,7 +28,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
 )
 
 // BinEnv names a directory holding initdb, pg_ctl and postgres, for a

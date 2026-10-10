@@ -35,9 +35,9 @@ import (
 	"runtime"
 	"runtime/debug"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 // version is empty in every ordinary build and is the one override: a release stamps it
@@ -51,7 +51,7 @@ func buildVersion() string {
 	return resolveVersion(version, info, ok)
 }
 
-// resolveVersion is internal/buildinfo's Resolve, which is where the order above now
+// resolveVersion is pkg/buildinfo's Resolve, which is where the order above now
 // lives: five binaries held five copies of it, and a copied answer drifts -- one copy had
 // already lost the build time and the dirty marker, so two lines comparing their versions
 // were comparing two spellings of the same fact. The order, the floor and the twelve-hex

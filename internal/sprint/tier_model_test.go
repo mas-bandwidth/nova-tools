@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
 )
 
 // A card whose PATHS name TLA+ model work (a .tla module or an MC config under tla/) is
@@ -25,7 +25,7 @@ func TestACardThatWritesAModelIsTieredFrontier(t *testing.T) {
 	w := newWorld(t)
 	p := Add(w.s, AddReq{Stream: "s", Cards: []CardAdd{
 		{ID: "m1", Brief: brief("m1: a lease model", "tla/Lease.tla,tla/MCLease.cfg,internal/x/*.go")},
-		{ID: "m2", Brief: brief("m2: a friend model tier: frontier", "internal/friend/tla/MCLaneEnd.cfg")},
+		{ID: "m2", Brief: brief("m2: a friend model tier: frontier", "pkg/friend/tla/MCLaneEnd.cfg")},
 		{ID: "m3", Brief: brief("m3: every model", "tla/**")},
 		{ID: "r1", Brief: brief("r1: a run record", "tla/RUNS.tsv,tla/CASES.tsv,internal/x/*.go")},
 		{ID: "g1", Brief: brief("g1: go only tier: pro", "internal/x/*.go")},
@@ -40,7 +40,7 @@ func TestACardThatWritesAModelIsTieredFrontier(t *testing.T) {
 	}
 	m1 := w.s.Primary("m1").F("brief")
 	assert.True(t, strings.HasPrefix(m1, "m1: a lease model tier: frontier\n"), "add writes the tier on line 1: %q", m1)
-	assert.Equal(t, brief("m2: a friend model tier: frontier", "internal/friend/tla/MCLaneEnd.cfg"), w.s.Primary("m2").F("brief"), "a frontier brief is admitted as written")
+	assert.Equal(t, brief("m2: a friend model tier: frontier", "pkg/friend/tla/MCLaneEnd.cfg"), w.s.Primary("m2").F("brief"), "a frontier brief is admitted as written")
 	assert.Equal(t, brief("r1: a run record", "tla/RUNS.tsv,tla/CASES.tsv,internal/x/*.go"), w.s.Primary("r1").F("brief"), "run records alone are no model")
 	moved := map[string]string{}
 	for _, u := range p.Units {
@@ -67,28 +67,28 @@ func TestACardThatWritesAModelIsTieredFrontier(t *testing.T) {
 func TestModelPathsNameModulesAndConfigsNotRunRecords(t *testing.T) {
 	t.Parallel()
 	for entry, want := range map[string]bool{
-		"tla/Lease.tla":                       true,
-		"tla/MCLease.cfg":                     true,
-		"tla/MC*.cfg":                         true,
-		"tla/*.tla":                           true,
-		"tla/**":                              true,
-		"tla/":                                true,
-		"tla":                                 true,
-		"internal/friend/tla/LaneEnd.tla":     true,
-		"internal/friend/tla/*":               true,
-		"**/*.tla":                            true,
-		"security/**":                         false,
-		"**":                                  false,
-		"internal/x/*":                        false,
-		"tla/RUNS.tsv":                        false,
-		"tla/CASES.tsv":                       false,
-		"tla/*.tsv":                           false,
-		"tla/README.md":                       false,
-		"internal/tlaplus/*.go":               false,
-		"internal/x/config.cfg":               false,
-		"docs/SPEC-SPRINT.md":                 false,
-		"cmd/nova-tla/*.go":                   false,
-		"internal/friend/tla/LaneEnd_test.go": false,
+		"tla/Lease.tla":                  true,
+		"tla/MCLease.cfg":                true,
+		"tla/MC*.cfg":                    true,
+		"tla/*.tla":                      true,
+		"tla/**":                         true,
+		"tla/":                           true,
+		"tla":                            true,
+		"pkg/friend/tla/LaneEnd.tla":     true,
+		"pkg/friend/tla/*":               true,
+		"**/*.tla":                       true,
+		"security/**":                    false,
+		"**":                             false,
+		"internal/x/*":                   false,
+		"tla/RUNS.tsv":                   false,
+		"tla/CASES.tsv":                  false,
+		"tla/*.tsv":                      false,
+		"tla/README.md":                  false,
+		"internal/tlaplus/*.go":          false,
+		"internal/x/config.cfg":          false,
+		"docs/SPEC-SPRINT.md":            false,
+		"cmd/nova-tla/*.go":              false,
+		"pkg/friend/tla/LaneEnd_test.go": false,
 	} {
 		assert.Equal(t, want, len(ModelPaths([]string{entry})) == 1, entry)
 	}

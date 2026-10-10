@@ -1,7 +1,7 @@
 //go:build swarmtest
 
 // Command testprobe is the helper binary TestPausePointThreadDirected
-// (internal/swarm/killpoint_linux_functional_test.go) builds with -tags swarmtest. It is
+// (pkg/swarm/killpoint_linux_functional_test.go) builds with -tags swarmtest. It is
 // committed rather than written into the tree at test time, because a test
 // that creates and deletes files under the repository races every other
 // package that walks the tree in parallel (internal/ci's class tests failed
@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	swarm "github.com/mas-bandwidth/nova-tools/internal/swarm"
+	swarm "github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 func main() {

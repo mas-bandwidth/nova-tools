@@ -25,7 +25,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/fuse"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline/audit"
-	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1243,7 +1243,7 @@ var fuseAudit = audit.Config{
 	// string, and nothing else -- a check on a flag name, with no caller text in it. The
 	// classifier walks its body like the others, so the claim is checked rather than taken.
 	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
-	// every one of its four fields through oneline.Field inside internal/buildinfo, where
+	// every one of its four fields through oneline.Field inside pkg/buildinfo, where
 	// TestLineShape and TestLineHoldsWhateverTheStampContains pin it -- including against
 	// a release stamp holding a newline, which is the one field of that line that comes
 	// from outside the toolchain.
@@ -1262,7 +1262,7 @@ var fuseAudit = audit.Config{
 		// debug.ReadBuildInfo and runtime's GOOS, GOARCH and Version, holds no writer of
 		// its own, and returns a STRING that this package prints -- rendered field by
 		// field through oneline.Field before it is returned.
-		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`, `"time"`,
 		// path/filepath joins a relative --box onto the injected working directory
 		// and reports whether a path is already absolute. It holds no writer and
@@ -1274,7 +1274,7 @@ var fuseAudit = audit.Config{
 		// verbflag words a flag parse error (Explain) and finds the nearest verb
 		// (Nearest); both return strings this package escapes before printing, and
 		// nothing here hands it a stream or calls its Parse or Recover.
-		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"`,
 		// errors and io/fs classify an error (errors.Is against fuse.ErrNoBox and
 		// fs.ErrExist); neither holds a writer.
 		`"errors"`, `"io/fs"`,
@@ -1284,7 +1284,7 @@ var fuseAudit = audit.Config{
 		// bounded puts its own two fields -- the kind and the remedy -- through oneline
 		// before writing them. It writes to the stream the caller hands it and nowhere
 		// else.
-		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
+		`"github.com/mas-bandwidth/nova-tools/pkg/bounded"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/fuse"`,
 	},
 	MinClassified: 40,

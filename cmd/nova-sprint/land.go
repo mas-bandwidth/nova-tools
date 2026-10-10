@@ -48,15 +48,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
-	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
-	"github.com/mas-bandwidth/nova-tools/internal/filelock"
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/decide"
+	"github.com/mas-bandwidth/nova-tools/pkg/diffcheck"
+	"github.com/mas-bandwidth/nova-tools/pkg/filelock"
+	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/subproc"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 // landCheckBudget bounds one --check run: a batch's whole test command.
@@ -1888,7 +1888,7 @@ func checkEmptyCommit(emptyDiff bool, resultText string) string {
 }
 
 // checkCard is the lander's mechanical checks of one card merged onto the batch branch
-// at before (internal/diffcheck; docs/SPEC-SPRINT.md section 7, the lander's checks): the
+// at before (pkg/diffcheck; docs/SPEC-SPRINT.md section 7, the lander's checks): the
 // merge's own diff touches no file outside the card's PATHS (E12) and leaves no stranded
 // sentence fragment or unmatched backquote (E4), and makes no empty commit whose
 // result claims changes (checkEmptyCommit). A card that adds a directory owns its

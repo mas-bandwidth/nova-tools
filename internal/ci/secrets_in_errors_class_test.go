@@ -17,39 +17,39 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/cardgen"
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
 	"github.com/mas-bandwidth/nova-tools/internal/check"
 	ciallowlist "github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
-	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/converge"
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
-	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
-	"github.com/mas-bandwidth/nova-tools/internal/dogfood"
-	"github.com/mas-bandwidth/nova-tools/internal/filelock"
-	"github.com/mas-bandwidth/nova-tools/internal/fleet"
-	"github.com/mas-bandwidth/nova-tools/internal/friend"
-	"github.com/mas-bandwidth/nova-tools/internal/hostload"
-	nslog "github.com/mas-bandwidth/nova-tools/internal/log"
 	nsstore "github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
-	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
-	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
 	"github.com/mas-bandwidth/nova-tools/internal/record"
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
-	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
 	sprintstore "github.com/mas-bandwidth/nova-tools/internal/sprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
-	"github.com/mas-bandwidth/nova-tools/internal/tlc"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+	"github.com/mas-bandwidth/nova-tools/pkg/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/pkg/bus/bustest"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardcost"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardtree"
+	"github.com/mas-bandwidth/nova-tools/pkg/config"
+	"github.com/mas-bandwidth/nova-tools/pkg/decide"
+	"github.com/mas-bandwidth/nova-tools/pkg/diffcheck"
+	"github.com/mas-bandwidth/nova-tools/pkg/dogfood"
+	"github.com/mas-bandwidth/nova-tools/pkg/filelock"
+	"github.com/mas-bandwidth/nova-tools/pkg/fleet"
+	"github.com/mas-bandwidth/nova-tools/pkg/friend"
+	"github.com/mas-bandwidth/nova-tools/pkg/hostload"
+	nslog "github.com/mas-bandwidth/nova-tools/pkg/log"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/ntable"
+	"github.com/mas-bandwidth/nova-tools/pkg/onboarding"
+	"github.com/mas-bandwidth/nova-tools/pkg/pkgselect"
+	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
+	"github.com/mas-bandwidth/nova-tools/pkg/secrets"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/tlc"
+	"github.com/mas-bandwidth/nova-tools/pkg/typedrec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -57,7 +57,7 @@ import (
 // THE CLASS RULE: NO SECRET REACHES AN ERROR (docs/SPEC-CI.md,
 // `secrets-never-in-errors`).
 //
-// A Postgres DSN parse error printed the password (internal/config/pg.go,
+// A Postgres DSN parse error printed the password (pkg/config/pg.go,
 // fix-pg-dsn-parse-error-leak): the parser's message carried the DSN it was
 // given, a refusal travelled to a terminal and a log, and the secret went with
 // it. The fix was one function; the class is every opener that is handed a
@@ -250,147 +250,147 @@ func secretFunctionName(fn any) string {
 // `<repo-relative package directory>.<Name>`. TestNoSecretReachesAnError holds
 // it complete against the tree.
 var secretOpeners = map[string]any{
-	"internal/buildinfo.Parse":                         buildinfo.Parse,
-	"internal/bus/bustest.NewFake":                     bustest.NewFake,
-	"internal/cardcost.ParseSpend":                     cardcost.ParseSpend,
-	"internal/cardcost.ParseTotal":                     cardcost.ParseTotal,
-	"internal/cardcost.ParseUsage":                     cardcost.ParseUsage,
-	"internal/cardgen.ParseFindings":                   cardgen.ParseFindings,
-	"internal/cardgen.ParseLedger":                     cardgen.ParseLedger,
-	"internal/cardhdr.ParseBase":                       cardhdr.ParseBase,
-	"internal/cardhdr.ParseTest":                       cardhdr.ParseTest,
-	"internal/cardtree.Parse":                          cardtree.Parse,
-	"internal/cardtree.ParseRegex":                     cardtree.ParseRegex,
-	"internal/cardtree.ParseVerdicts":                  cardtree.ParseVerdicts,
-	"internal/check.ParseAllowlist":                    check.ParseAllowlist,
-	"internal/check.ParseDenyList":                     check.ParseDenyList,
-	"internal/ci/allowlist.Parse":                      ciallowlist.Parse,
-	"internal/config.OpenFile":                         config.OpenFile,
-	"internal/config.OpenPG":                           config.OpenPG,
-	"internal/converge.ParseCerts":                     converge.ParseCerts,
-	"internal/converge.ParseRetired":                   converge.ParseRetired,
-	"internal/converge.ParseSince":                     converge.ParseSince,
-	"internal/converge.ParseVersions":                  converge.ParseVersions,
-	"internal/decide.ParseBar":                         decide.ParseBar,
-	"internal/decide.ParseBars":                        decide.ParseBars,
-	"internal/decide.ParseBriefBar":                    decide.ParseBriefBar,
-	"internal/decide.ParseDecided":                     decide.ParseDecided,
-	"internal/decide.ParseGateBars":                    decide.ParseGateBars,
-	"internal/decide.ParseGateOutput":                  decide.ParseGateOutput,
-	"internal/decide.ParseJudgmentBar":                 decide.ParseJudgmentBar,
-	"internal/diffcheck.Parse":                         diffcheck.Parse,
-	"internal/dogfood.NewShipped":                      dogfood.NewShipped,
-	"internal/dogfood.ParseAuthors":                    dogfood.ParseAuthors,
-	"internal/dogfood.ParseCLI":                        dogfood.ParseCLI,
-	"internal/dogfood.ParseHelp":                       dogfood.ParseHelp,
-	"internal/dogfood.ParseReference":                  dogfood.ParseReference,
-	"internal/filelock.ParseStamp":                     filelock.ParseStamp,
-	"internal/fleet.ParseWorkload":                     fleet.ParseWorkload,
-	"internal/friend.NewClaude":                        friend.NewClaude,
-	"internal/friend.NewDeliverer":                     friend.NewDeliverer,
-	"internal/friend.NewestCodexSession":               friend.NewestCodexSession,
-	"internal/friend.NewestConversation":               friend.NewestConversation,
-	"internal/friend.NewestDSHSession":                 friend.NewestDSHSession,
-	"internal/friend.ParseHeld":                        friend.ParseHeld,
-	"internal/friend.ParseJob":                         friend.ParseJob,
-	"internal/friend.ParseLaneCaps":                    friend.ParseLaneCaps,
-	"internal/friend.ParseLimit":                       friend.ParseLimit,
-	"internal/friend.ParsePing":                        friend.ParsePing,
-	"internal/friend.ParsePong":                        friend.ParsePong,
-	"internal/friend.ParseProfile":                     friend.ParseProfile,
-	"internal/friend.ParseMachine":                     friend.ParseMachine,
-	"internal/friend.ParseReadQueue":                   friend.ParseReadQueue,
-	"internal/friend.ParseReadSlots":                   friend.ParseReadSlots,
-	"internal/friend.ParseRow":                         friend.ParseRow,
-	"internal/friend.ParseView":                        friend.ParseView,
-	"internal/hostload.ParseProcStat":                  hostload.ParseProcStat,
-	"internal/hostload.ParseTopCPU":                    hostload.ParseTopCPU,
-	"internal/log.New":                                 nslog.New,
-	"internal/nsprint/store.Open":                      nsstore.Open,
-	"internal/nsprint/verbflag.New":                    verbflag.New,
-	"internal/ntable.NewReader":                        ntable.NewReader,
-	"internal/ntable.NewRow":                           ntable.NewRow,
-	"internal/ntable.ParseColumn":                      ntable.ParseColumn,
-	"internal/ntable.ParseColumns":                     ntable.ParseColumns,
-	"internal/ntable.ParseFormula":                     ntable.ParseFormula,
-	"internal/ntable.ParseWidths":                      ntable.ParseWidths,
-	"internal/onboarding.OpeningSentence":              onboarding.OpeningSentence,
-	"internal/pkgselect.ParseDeprecated":               pkgselect.ParseDeprecated,
-	"internal/record.DialLedger":                       record.DialLedger,
-	"internal/sandbox.ParseGPUMode":                    sandbox.ParseGPUMode,
-	"internal/secrets.NewSecret":                       secrets.NewSecret,
-	"internal/secrets.OpenSeatFile":                    secrets.OpenSeatFile,
-	"internal/secrets.ParseSopsConfig":                 secrets.ParseSopsConfig,
-	"internal/secrets.ParseStoreFileWithoutDecrypting": secrets.ParseStoreFileWithoutDecrypting,
-	"internal/sprint.NewTable":                         sprint.NewTable,
-	"internal/sprint.OpenKey":                          sprint.OpenKey,
-	"internal/sprint.ParseAttempts":                    sprint.ParseAttempts,
-	"internal/sprint.ParseDeadline":                    sprint.ParseDeadline,
-	"internal/sprint.ParseFriendReadReport":            sprint.ParseFriendReadReport,
-	"internal/sprint.ParseLaneCap":                     sprint.ParseLaneCap,
-	"internal/sprint.ParseMembers":                     sprint.ParseMembers,
-	"internal/sprint.ParseReadCard":                    sprint.ParseReadCard,
-	"internal/sprint.ParseReaderTiers":                 sprint.ParseReaderTiers,
-	"internal/sprint.ParseRoute":                       sprint.ParseRoute,
-	"internal/sprint.ParseWidth":                       sprint.ParseWidth,
-	"internal/sprint.ParseWorkCard":                    sprint.ParseWorkCard,
-	"internal/sprint/refmodel.New":                     refmodel.New,
-	"internal/sprint/store.NewDeliverer":               sprintstore.NewDeliverer,
-	"internal/swarm.NewWallReader":                     swarm.NewWallReader,
-	"internal/swarm.OpenCodeStoreLocations":            swarm.OpenCodeStoreLocations,
-	"internal/swarm.ParseChildRules":                   swarm.ParseChildRules,
-	"internal/swarm.ParseIdentity":                     swarm.ParseIdentity,
-	"internal/swarm.ParseRouteList":                    swarm.ParseRouteList,
-	"internal/tlc.Parse":                               tlc.Parse,
-	"internal/tokens.ParseDayFile":                     tokens.ParseDayFile,
-	"internal/tokens.ParseMicro":                       tokens.ParseMicro,
-	"internal/tokens.ParseSubject":                     tokens.ParseSubject,
-	"internal/tokens.ParseWeights":                     tokens.ParseWeights,
-	"internal/tokens.ParserColumns":                    tokens.ParserColumns,
-	"internal/typedrec.ParseTableRefusal":              typedrec.ParseTableRefusal,
+	"pkg/buildinfo.Parse":                         buildinfo.Parse,
+	"pkg/bus/bustest.NewFake":                     bustest.NewFake,
+	"pkg/cardcost.ParseSpend":                     cardcost.ParseSpend,
+	"pkg/cardcost.ParseTotal":                     cardcost.ParseTotal,
+	"pkg/cardcost.ParseUsage":                     cardcost.ParseUsage,
+	"internal/cardgen.ParseFindings":              cardgen.ParseFindings,
+	"internal/cardgen.ParseLedger":                cardgen.ParseLedger,
+	"pkg/cardhdr.ParseBase":                       cardhdr.ParseBase,
+	"pkg/cardhdr.ParseTest":                       cardhdr.ParseTest,
+	"pkg/cardtree.Parse":                          cardtree.Parse,
+	"pkg/cardtree.ParseRegex":                     cardtree.ParseRegex,
+	"pkg/cardtree.ParseVerdicts":                  cardtree.ParseVerdicts,
+	"internal/check.ParseAllowlist":               check.ParseAllowlist,
+	"internal/check.ParseDenyList":                check.ParseDenyList,
+	"internal/ci/allowlist.Parse":                 ciallowlist.Parse,
+	"pkg/config.OpenFile":                         config.OpenFile,
+	"pkg/config.OpenPG":                           config.OpenPG,
+	"internal/converge.ParseCerts":                converge.ParseCerts,
+	"internal/converge.ParseRetired":              converge.ParseRetired,
+	"internal/converge.ParseSince":                converge.ParseSince,
+	"internal/converge.ParseVersions":             converge.ParseVersions,
+	"pkg/decide.ParseBar":                         decide.ParseBar,
+	"pkg/decide.ParseBars":                        decide.ParseBars,
+	"pkg/decide.ParseBriefBar":                    decide.ParseBriefBar,
+	"pkg/decide.ParseDecided":                     decide.ParseDecided,
+	"pkg/decide.ParseGateBars":                    decide.ParseGateBars,
+	"pkg/decide.ParseGateOutput":                  decide.ParseGateOutput,
+	"pkg/decide.ParseJudgmentBar":                 decide.ParseJudgmentBar,
+	"pkg/diffcheck.Parse":                         diffcheck.Parse,
+	"pkg/dogfood.NewShipped":                      dogfood.NewShipped,
+	"pkg/dogfood.ParseAuthors":                    dogfood.ParseAuthors,
+	"pkg/dogfood.ParseCLI":                        dogfood.ParseCLI,
+	"pkg/dogfood.ParseHelp":                       dogfood.ParseHelp,
+	"pkg/dogfood.ParseReference":                  dogfood.ParseReference,
+	"pkg/filelock.ParseStamp":                     filelock.ParseStamp,
+	"pkg/fleet.ParseWorkload":                     fleet.ParseWorkload,
+	"pkg/friend.NewClaude":                        friend.NewClaude,
+	"pkg/friend.NewDeliverer":                     friend.NewDeliverer,
+	"pkg/friend.NewestCodexSession":               friend.NewestCodexSession,
+	"pkg/friend.NewestConversation":               friend.NewestConversation,
+	"pkg/friend.NewestDSHSession":                 friend.NewestDSHSession,
+	"pkg/friend.ParseHeld":                        friend.ParseHeld,
+	"pkg/friend.ParseJob":                         friend.ParseJob,
+	"pkg/friend.ParseLaneCaps":                    friend.ParseLaneCaps,
+	"pkg/friend.ParseLimit":                       friend.ParseLimit,
+	"pkg/friend.ParsePing":                        friend.ParsePing,
+	"pkg/friend.ParsePong":                        friend.ParsePong,
+	"pkg/friend.ParseProfile":                     friend.ParseProfile,
+	"pkg/friend.ParseMachine":                     friend.ParseMachine,
+	"pkg/friend.ParseReadQueue":                   friend.ParseReadQueue,
+	"pkg/friend.ParseReadSlots":                   friend.ParseReadSlots,
+	"pkg/friend.ParseRow":                         friend.ParseRow,
+	"pkg/friend.ParseView":                        friend.ParseView,
+	"pkg/hostload.ParseProcStat":                  hostload.ParseProcStat,
+	"pkg/hostload.ParseTopCPU":                    hostload.ParseTopCPU,
+	"pkg/log.New":                                 nslog.New,
+	"internal/nsprint/store.Open":                 nsstore.Open,
+	"pkg/nsprint/verbflag.New":                    verbflag.New,
+	"pkg/ntable.NewReader":                        ntable.NewReader,
+	"pkg/ntable.NewRow":                           ntable.NewRow,
+	"pkg/ntable.ParseColumn":                      ntable.ParseColumn,
+	"pkg/ntable.ParseColumns":                     ntable.ParseColumns,
+	"pkg/ntable.ParseFormula":                     ntable.ParseFormula,
+	"pkg/ntable.ParseWidths":                      ntable.ParseWidths,
+	"pkg/onboarding.OpeningSentence":              onboarding.OpeningSentence,
+	"pkg/pkgselect.ParseDeprecated":               pkgselect.ParseDeprecated,
+	"internal/record.DialLedger":                  record.DialLedger,
+	"pkg/sandbox.ParseGPUMode":                    sandbox.ParseGPUMode,
+	"pkg/secrets.NewSecret":                       secrets.NewSecret,
+	"pkg/secrets.OpenSeatFile":                    secrets.OpenSeatFile,
+	"pkg/secrets.ParseSopsConfig":                 secrets.ParseSopsConfig,
+	"pkg/secrets.ParseStoreFileWithoutDecrypting": secrets.ParseStoreFileWithoutDecrypting,
+	"internal/sprint.NewTable":                    sprint.NewTable,
+	"internal/sprint.OpenKey":                     sprint.OpenKey,
+	"internal/sprint.ParseAttempts":               sprint.ParseAttempts,
+	"internal/sprint.ParseDeadline":               sprint.ParseDeadline,
+	"internal/sprint.ParseFriendReadReport":       sprint.ParseFriendReadReport,
+	"internal/sprint.ParseLaneCap":                sprint.ParseLaneCap,
+	"internal/sprint.ParseMembers":                sprint.ParseMembers,
+	"internal/sprint.ParseReadCard":               sprint.ParseReadCard,
+	"internal/sprint.ParseReaderTiers":            sprint.ParseReaderTiers,
+	"internal/sprint.ParseRoute":                  sprint.ParseRoute,
+	"internal/sprint.ParseWidth":                  sprint.ParseWidth,
+	"internal/sprint.ParseWorkCard":               sprint.ParseWorkCard,
+	"internal/sprint/refmodel.New":                refmodel.New,
+	"internal/sprint/store.NewDeliverer":          sprintstore.NewDeliverer,
+	"pkg/swarm.NewWallReader":                     swarm.NewWallReader,
+	"pkg/swarm.OpenCodeStoreLocations":            swarm.OpenCodeStoreLocations,
+	"pkg/swarm.ParseChildRules":                   swarm.ParseChildRules,
+	"pkg/swarm.ParseIdentity":                     swarm.ParseIdentity,
+	"pkg/swarm.ParseRouteList":                    swarm.ParseRouteList,
+	"pkg/tlc.Parse":                               tlc.Parse,
+	"internal/tokens.ParseDayFile":                tokens.ParseDayFile,
+	"internal/tokens.ParseMicro":                  tokens.ParseMicro,
+	"internal/tokens.ParseSubject":                tokens.ParseSubject,
+	"internal/tokens.ParseWeights":                tokens.ParseWeights,
+	"internal/tokens.ParserColumns":               tokens.ParserColumns,
+	"pkg/typedrec.ParseTableRefusal":              typedrec.ParseTableRefusal,
 }
 
 // secretExempt are the functions the rule finds and does not drive, each with
 // the reason; a row is held to the same two-way comparison as the table.
 var secretExempt = map[string]string{
-	"internal/hostload.ParseIostat":            "built on darwin only, so a test binary on another platform cannot name it",
-	"internal/hostload.ParseProcLoadavg":       "built on linux only, so a test binary on another platform cannot name it",
-	"internal/hostload.ParseFileNr":            "built on linux only, so a test binary on another platform cannot name it",
-	"internal/hostload.ParseLsof":              "built on darwin only, so a test binary on another platform cannot name it",
-	"internal/cairn.Open":                      "writes a session record under the store directory its first string names; driving it would write into the working tree",
-	"internal/nsprint/testutil.NewLocalRemote": "takes a *testing.T and builds a git remote on disk; it is a test fixture, not an opener of a secret",
-	"internal/friend.DialCodexAppServer":       "takes the Codex home, a directory path, never a secret; it dials the app-server socket under it",
+	"pkg/hostload.ParseIostat":            "built on darwin only, so a test binary on another platform cannot name it",
+	"pkg/hostload.ParseProcLoadavg":       "built on linux only, so a test binary on another platform cannot name it",
+	"pkg/hostload.ParseFileNr":            "built on linux only, so a test binary on another platform cannot name it",
+	"pkg/hostload.ParseLsof":              "built on darwin only, so a test binary on another platform cannot name it",
+	"internal/cairn.Open":                 "writes a session record under the store directory its first string names; driving it would write into the working tree",
+	"pkg/nsprint/testutil.NewLocalRemote": "takes a *testing.T and builds a git remote on disk; it is a test fixture, not an opener of a secret",
+	"pkg/friend.DialCodexAppServer":       "takes the Codex home, a directory path, never a secret; it dials the app-server socket under it",
 }
 
 // secretLeakAllowlist are the functions known to carry a secret-shaped string
 // into an error, one `<key> <reason>` per line (a row with no reason is
 // refused). It only shrinks: a function that no longer leaks is a red row to
-// delete. internal/config.OpenPG, the case that started the rule, is never a row.
+// delete. pkg/config.OpenPG, the case that started the rule, is never a row.
 const secretLeakAllowlist = `
-internal/cardtree.ParseRegex echoes the rejected line with %q (internal/cardtree/tree.go:421)
+pkg/cardtree.ParseRegex echoes the rejected line with %q (pkg/cardtree/tree.go:421)
 internal/converge.ParseCerts echoes the file name and the header it read (internal/converge/sources.go:328)
 internal/converge.ParseSince echoes the rejected --since value (internal/converge/converge.go:479)
 internal/converge.ParseVersions echoes the file name and the header it read (internal/converge/sources.go:297)
-internal/decide.ParseBar echoes the rejected bar with %q (internal/decide/attempt.go:190)
-internal/decide.ParseBars echoes the rejected bars with %q (internal/decide/firstread.go:47)
-internal/decide.ParseBriefBar echoes the rejected bar with %q (internal/decide/brief.go:168)
-internal/decide.ParseGateBars echoes the rejected bars with %q (internal/decide/gate.go:313)
-internal/decide.ParseJudgmentBar echoes the rejected bar with %q (internal/decide/judgment.go:243)
-internal/dogfood.ParseAuthors wraps the os.ReadFile error, which names the path argument (internal/dogfood/authors.go:28)
-internal/dogfood.ParseCLI wraps the os.ReadFile error, which names the path argument (internal/dogfood/cli.go:97)
-internal/fleet.ParseWorkload echoes its source argument (internal/fleet/certify.go:184)
-internal/friend.NewDeliverer echoes an unknown harness with %q (internal/friend/adapter.go:253)
-internal/friend.NewestCodexSession wraps the lstat error, which names the dir argument (internal/friend/codex_session.go:21)
-internal/friend.NewestDSHSession echoes its dir argument (internal/friend/adapter_dsh.go:65)
-internal/ntable.ParseColumn echoes the rejected column name with %q (internal/ntable/ntable.go:405)
-internal/ntable.ParseColumns echoes the rejected column name with %q (internal/ntable/ntable.go:405)
-internal/ntable.ParseFormula echoes the rejected projection with %q (internal/ntable/ntable.go:133)
-internal/ntable.ParseWidths echoes the rejected part with %q (internal/ntable/ntable.go:536)
-internal/onboarding.OpeningSentence echoes the tool name and the first help line (internal/onboarding/opening.go:46)
-internal/sandbox.ParseGPUMode echoes the rejected mode in a Refusal (internal/sandbox/gpu.go:30)
-internal/secrets.OpenSeatFile echoes the seat name and the store path in its preflight refusal (internal/secrets/seatfile.go:126, internal/secrets/seatfile.go:149)
-internal/secrets.ParseSopsConfig wraps the read error, which names the store path (internal/secrets/store.go:82)
-internal/secrets.ParseStoreFileWithoutDecrypting returns the os.Open error, which names the path argument (internal/secrets/store.go:250)
+pkg/decide.ParseBar echoes the rejected bar with %q (pkg/decide/attempt.go:190)
+pkg/decide.ParseBars echoes the rejected bars with %q (pkg/decide/firstread.go:47)
+pkg/decide.ParseBriefBar echoes the rejected bar with %q (pkg/decide/brief.go:168)
+pkg/decide.ParseGateBars echoes the rejected bars with %q (pkg/decide/gate.go:313)
+pkg/decide.ParseJudgmentBar echoes the rejected bar with %q (pkg/decide/judgment.go:243)
+pkg/dogfood.ParseAuthors wraps the os.ReadFile error, which names the path argument (pkg/dogfood/authors.go:28)
+pkg/dogfood.ParseCLI wraps the os.ReadFile error, which names the path argument (pkg/dogfood/cli.go:97)
+pkg/fleet.ParseWorkload echoes its source argument (pkg/fleet/certify.go:184)
+pkg/friend.NewDeliverer echoes an unknown harness with %q (pkg/friend/adapter.go:253)
+pkg/friend.NewestCodexSession wraps the lstat error, which names the dir argument (pkg/friend/codex_session.go:21)
+pkg/friend.NewestDSHSession echoes its dir argument (pkg/friend/adapter_dsh.go:65)
+pkg/ntable.ParseColumn echoes the rejected column name with %q (pkg/ntable/ntable.go:405)
+pkg/ntable.ParseColumns echoes the rejected column name with %q (pkg/ntable/ntable.go:405)
+pkg/ntable.ParseFormula echoes the rejected projection with %q (pkg/ntable/ntable.go:133)
+pkg/ntable.ParseWidths echoes the rejected part with %q (pkg/ntable/ntable.go:536)
+pkg/onboarding.OpeningSentence echoes the tool name and the first help line (pkg/onboarding/opening.go:46)
+pkg/sandbox.ParseGPUMode echoes the rejected mode in a Refusal (pkg/sandbox/gpu.go:30)
+pkg/secrets.OpenSeatFile echoes the seat name and the store path in its preflight refusal (pkg/secrets/seatfile.go:126, pkg/secrets/seatfile.go:149)
+pkg/secrets.ParseSopsConfig wraps the read error, which names the store path (pkg/secrets/store.go:82)
+pkg/secrets.ParseStoreFileWithoutDecrypting returns the os.Open error, which names the path argument (pkg/secrets/store.go:250)
 internal/sprint.ParseAttempts echoes the rejected value with %q (internal/sprint/brief_bound.go:83)
 internal/sprint.ParseDeadline echoes the rejected value with %q (internal/sprint/deadline.go:165)
 internal/sprint.ParseMembers echoes the rejected width with %q (internal/sprint/width.go:42)
@@ -398,7 +398,7 @@ internal/sprint.ParseReaderTiers echoes the rejected tier names (internal/sprint
 internal/sprint.ParseRoute echoes the rejected route with %q (internal/sprint/remind.go:108)
 internal/sprint.ParseWidth echoes the rejected width with %q (internal/sprint/width.go:42)
 internal/sprint/store.NewDeliverer echoes the rejected route with %q (internal/sprint/store/remind.go:147 returns the error of internal/sprint/remind.go:108; the bus refusal at remind.go:155 echoes it too)
-internal/swarm.ParseIdentity echoes the rejected identity with %q (internal/swarm/staging.go:89)
+pkg/swarm.ParseIdentity echoes the rejected identity with %q (pkg/swarm/staging.go:89)
 internal/tokens.ParseWeights echoes the rejected weights (internal/tokens/claude_session.go:53)
 `
 
@@ -528,7 +528,7 @@ func secretVerdict(leaks map[string][]string, allowed map[string]string) []strin
 	var out []string
 	for key, ls := range leaks {
 		if _, ok := allowed[key]; !ok && len(ls) > 0 {
-			out = append(out, fmt.Sprintf("%s carries a secret into its output (%s); refuse with the error's type or a fixed sentence and never the input (internal/config/pg.go openPGWithin), the allowlist does not grow", key, ls[0]))
+			out = append(out, fmt.Sprintf("%s carries a secret into its output (%s); refuse with the error's type or a fixed sentence and never the input (pkg/config/pg.go openPGWithin), the allowlist does not grow", key, ls[0]))
 		}
 	}
 	for key := range allowed {
@@ -554,7 +554,7 @@ func TestNoSecretReachesAnError(t *testing.T) {
 	for _, b := range bad {
 		t.Error(b)
 	}
-	assert.NotContains(t, allowed, "internal/config.OpenPG", "the Postgres DSN opener is the case the rule was written for and is never allowlisted")
+	assert.NotContains(t, allowed, "pkg/config.OpenPG", "the Postgres DSN opener is the case the rule was written for and is never allowlisted")
 	for _, f := range secretVerdict(secretLeakFindings(secretOpeners, secretShapes), allowed) {
 		t.Error(f)
 	}
@@ -661,21 +661,21 @@ func TestSecretCheckReadsItsFixtures(t *testing.T) {
 	})
 	t.Run("a table that misses a function or names a stale one is refused", func(t *testing.T) {
 		t.Parallel()
-		found := map[string]bool{"internal/config.OpenPG": true, "internal/new.Open": true}
-		table := map[string]any{"internal/config.OpenPG": config.OpenPG, "internal/gone.Parse": config.OpenPG}
+		found := map[string]bool{"pkg/config.OpenPG": true, "internal/new.Open": true}
+		table := map[string]any{"pkg/config.OpenPG": config.OpenPG, "internal/gone.Parse": config.OpenPG}
 		got := secretTableFindings(found, table, nil)
 		require.Len(t, got, 2)
 		assert.Contains(t, got[0], "internal/gone.Parse: a secretOpeners row names no such function")
 		assert.Contains(t, got[1], "internal/new.Open: an exported Open*")
-		wrong := secretTableFindings(map[string]bool{"internal/config.OpenFile": true}, map[string]any{"internal/config.OpenFile": config.OpenPG}, nil)
+		wrong := secretTableFindings(map[string]bool{"pkg/config.OpenFile": true}, map[string]any{"pkg/config.OpenFile": config.OpenPG}, nil)
 		require.Len(t, wrong, 1)
 		assert.Contains(t, wrong[0], "not that function")
 	})
 	t.Run("the walk finds a function by name and by a string parameter", func(t *testing.T) {
 		t.Parallel()
-		found := secretOpenersInTree(repoTree(t).GoFilesUnder(false, "internal/config"))
-		assert.True(t, found["internal/config.OpenPG"])
-		assert.True(t, found["internal/config.OpenFile"])
-		assert.False(t, found["internal/config.Redact"], "a name outside Open/Parse/Dial/New is not read")
+		found := secretOpenersInTree(repoTree(t).GoFilesUnder(false, "pkg/config"))
+		assert.True(t, found["pkg/config.OpenPG"])
+		assert.True(t, found["pkg/config.OpenFile"])
+		assert.False(t, found["pkg/config.Redact"], "a name outside Open/Parse/Dial/New is not read")
 	})
 }

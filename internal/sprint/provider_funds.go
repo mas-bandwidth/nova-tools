@@ -49,7 +49,7 @@ const (
 // a colon, so it is never a stream's.
 func ProviderSubject(provider string) string { return "provider:" + provider }
 
-// causeRE reads a provider line as native and the member write it (internal/swarm
+// causeRE reads a provider line as native and the member write it (pkg/swarm
 // ProviderCause.Reason): `provider: class=<c> status=<n|-> msg=<m>`.
 var causeRE = regexp.MustCompile(`\bclass=(\S+) status=(\S+) msg=(.*)$`)
 
@@ -63,7 +63,7 @@ func refusal(line string) string {
 	return strings.TrimSpace(line)
 }
 
-// The transient classes of a provider failure (internal/swarm ProviderCause): a rate limit
+// The transient classes of a provider failure (pkg/swarm ProviderCause): a rate limit
 // (a 429, the provider's or upstream of it), the provider's own server error, and the
 // provider not answering in time. Each is the provider's, never the card's, so enough of
 // them on a route rest it (RestsDue); a take that ended with no result is none of them.

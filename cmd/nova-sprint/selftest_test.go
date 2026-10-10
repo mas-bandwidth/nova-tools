@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
+	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,7 +17,7 @@ import (
 // selftestChildEnv marks this test binary run as one case's child: the gate
 // resolves go and the lander resolves git from the process's own PATH, so a
 // case that needs one of them absent is this binary once more under a PATH of
-// its own (the pattern internal/testredis's again is).
+// its own (the pattern pkg/testredis's again is).
 const selftestChildEnv = "NOVA_SELFTEST_CHILD"
 
 // TestSelftestLandsOneCardThroughTheTreeGate pins the install gate a hand step

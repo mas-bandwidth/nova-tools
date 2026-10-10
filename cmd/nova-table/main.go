@@ -1,5 +1,5 @@
 // nova-table: work tables of ordered sets, text and formulas over Redis
-// (internal/ntable). A table is columns with a projection and a
+// (pkg/ntable). A table is columns with a projection and a
 // fold each, rows in a stable order, and one Redis ZSET per body cell, owned
 // by the table or bound to a set another tool owns; render prints it as
 // fixed-width text, watch redraws it once a second. The sprint table's
@@ -23,12 +23,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
-	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/redisauth"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/redisconn"
+	"github.com/mas-bandwidth/nova-tools/pkg/seatcred"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -117,7 +117,7 @@ func refuse(stderr io.Writer, verb, what string) int { return refuseWith(stderr,
 func refused(stderr io.Writer, verb, what string) int { return refuseWith(stderr, verb, what, 1) }
 
 // refuseWith prints a refusal in the one grammar every nova tool's refusal
-// has (docs/STANDARD.md section 2, internal/tool): `<VERB> REFUSED: <what
+// has (docs/STANDARD.md section 2, pkg/tool): `<VERB> REFUSED: <what
 // was wrong>; run: <remedy>`, the verb upper case with its words joined by
 // dashes, TABLE for the tool itself. A line naming no next step of its own
 // points at the verb's help, or the tool's. A verb asked for --json gets the
@@ -140,7 +140,7 @@ func refuseWith(stderr io.Writer, verb, what string, code int) int {
 }
 
 // token is the first word of a refusal: the verb, upper case, its words
-// joined by dashes (CELL-ADD), as internal/tool spells it; TABLE for the tool.
+// joined by dashes (CELL-ADD), as pkg/tool spells it; TABLE for the tool.
 func token(verb string) string {
 	if verb == "" {
 		return "TABLE"
@@ -181,7 +181,7 @@ func (app *application) run(args []string, stdout, stderr io.Writer) (code int) 
 	}
 	if verb := jsonVerb(args); verb != "" && verbflag.BoolAsked(args, "json") {
 		// A verb that answers in JSON answers a refusal in JSON too: the one JSON
-		// object every nova tool's result is (internal/tool's Out, docs/STANDARD.md
+		// object every nova tool's result is (pkg/tool's Out, docs/STANDARD.md
 		// section 2), {"result":{"verb","status":"refused","exit","remedy","why"}},
 		// on stdout, the exit the refusal carried (2 could not run, 1 the store said
 		// no). refuseWith fills it; anything else said on stderr is a note.

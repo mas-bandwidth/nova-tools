@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
 )
 
 // THE GATE'S WALL (docs/SPEC-SPRINT.md section 5, the gate's wall). A card whose gate cannot

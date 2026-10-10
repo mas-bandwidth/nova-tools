@@ -1,5 +1,5 @@
 // Package store binds the sprint core (internal/sprint) to the table layer
-// (internal/ntable): one set read of the tables a step needs, then batch
+// (pkg/ntable): one set read of the tables a step needs, then batch
 // applies, chunked under the table layer's bounds, with an operation record
 // for every step that touches more than one table or writes notifications,
 // and the notifications written by the same step as the move that causes
@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/pkg/ntable"
 )
 
 // Backend is what the sprint needs of a store.

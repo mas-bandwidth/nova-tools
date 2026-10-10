@@ -10,9 +10,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardtree"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 // cleanLine normalizes a line of text, unquoting Go string literals if scanning source code.
@@ -132,7 +132,7 @@ func assertBriefPassesLint(t *testing.T, brief, source string) {
 	assert.Contains(t, brief, "STEP 2.", "%s: must include STEP 2.", source)
 	assert.Contains(t, brief, "-timeout 600s", "%s: must include -timeout 600s in test command", source)
 
-	// Validates against internal/swarm's card lint (under swarm.DefaultChildRules)
+	// Validates against pkg/swarm's card lint (under swarm.DefaultChildRules)
 	findings := swarm.LintCardChildWith([]byte(brief), swarm.DefaultChildRules)
 	assert.Empty(t, findings, "%s: card lint findings: %v", source, findings)
 

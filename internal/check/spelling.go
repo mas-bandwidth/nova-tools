@@ -10,8 +10,8 @@ import (
 	"sync"
 
 	"github.com/client9/misspell"
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/readregular"
+	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/pkg/readregular"
 )
 
 // SpellingFinding is one misspelling finding in an input file or text.

@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/record"
-	"github.com/mas-bandwidth/nova-tools/internal/testredis"
+	"github.com/mas-bandwidth/nova-tools/pkg/testredis"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )

@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+	"github.com/mas-bandwidth/nova-tools/pkg/typedrec"
 )
 
 // Packet is what a worker or a reader is handed with a card, so that no
@@ -51,7 +51,7 @@ type Packet struct {
 	Model    string `json:"model,omitempty"`
 	Tokens   string `json:"tokens,omitempty"`
 	USD      string `json:"usd,omitempty"`     // the dollar budget, a decimal; "" for none (#5094)
-	Harness  string `json:"harness,omitempty"` // the harness the route names (internal/harness); "" is opencode
+	Harness  string `json:"harness,omitempty"` // the harness the route names (pkg/harness); "" is opencode
 	Deadline int    `json:"deadline,omitempty"`
 	// Tier is the tier the card's route is drawn from when the sprint decided it
 	// and not the brief's line 1: a read's read tier (route.go, readTierOf), a work
@@ -85,7 +85,7 @@ type Packet struct {
 // own rules. It is the card's, so no later add changes what an earlier card's child reads.
 const FieldRules = "rules"
 
-// FieldBriefOp and FieldBriefRecord are the card's brief decision (internal/decide,
+// FieldBriefOp and FieldBriefRecord are the card's brief decision (pkg/decide,
 // docs/SPEC-NOVA-DECIDE.md section 14): the op id add asked it under and the record
 // that holds it, written when add asked one, so land and drop attach the card's end
 // to that decision by its exact id; both absent when none was asked.

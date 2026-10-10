@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/testkit"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
 	"github.com/mas-bandwidth/nova-tools/internal/workfile"
 	"github.com/mas-bandwidth/nova-tools/internal/workgh"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -642,7 +642,7 @@ func TestTheVerbsRenderJSON(t *testing.T) {
 }
 
 // A bare command names the verbs and recovery in one refusal line, followed
-// by its stage note (internal/tool.Tool.Stage); it never prints the banner.
+// by its stage note (pkg/tool.Tool.Stage); it never prints the banner.
 func TestABareCommandRefusesWithItsStage(t *testing.T) {
 	t.Parallel()
 	res := workMain(unreachable(t)).Run()

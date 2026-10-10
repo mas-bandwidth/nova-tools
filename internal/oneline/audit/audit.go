@@ -57,7 +57,7 @@ type Config struct {
 	// Err, which are always refused.
 	Shadows []string
 	// Imports lists the import paths the package is allowed, quoted as they appear in
-	// source. internal/oneline is always allowed. An import off the list is a writer
+	// source. pkg/oneline is always allowed. An import off the list is a writer
 	// nobody has read yet, and widening the list is a decision made in the test.
 	Imports []string
 	// MinClassified is the number of printed arguments the walk must reach, so that a
@@ -329,7 +329,7 @@ func onelineImportPath() string {
 	if !ok || info == nil {
 		return `""`
 	}
-	return strconv.Quote(info.Main.Path + "/internal/oneline")
+	return strconv.Quote(info.Main.Path + "/pkg/oneline")
 }
 
 // Bypasses refuses every way of writing to a stream that PrintedArguments cannot see.

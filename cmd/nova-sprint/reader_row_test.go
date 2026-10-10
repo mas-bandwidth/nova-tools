@@ -8,7 +8,7 @@ import (
 
 // A reader's queue says whether its name is a row of the readers table (reader):
 // the queue of a name with no row writes no beat, and the reader loop says so
-// (internal/member; nova-tools#5096 item 23). reader add makes the row; the beat
+// (pkg/member; nova-tools#5096 item 23). reader add makes the row; the beat
 // never does.
 func TestAReadersQueueSaysWhetherItIsARowOfTheReadersTable(t *testing.T) {
 	t.Parallel()

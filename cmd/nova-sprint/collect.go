@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/member"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/pkg/member"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 // collect is the coordinator's hand on the friends' outboxes (the coordinator's stopgap
@@ -24,7 +24,7 @@ import (
 // --dead-lanes a lane her runner ENDed with no report finishes failed so the card is dealt
 // again. A LAND finishes only at origin's tip of the card's branch (friendFinish); a finish
 // leaves working, so a report finished once is never finished twice. Her nova-friend daemon
-// runs the same collection for her own tree on every sync (internal/friend outbox.go).
+// runs the same collection for her own tree on every sync (pkg/friend outbox.go).
 
 func init() {
 	verbClasses["collect"] = classCoordinator

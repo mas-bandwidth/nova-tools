@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/provbalance"
+	"github.com/mas-bandwidth/nova-tools/pkg/provbalance"
 )
 
 // THE BALANCE POLL (nova-tools#5199; the owner, 2026-10-03: "provider out of funds should
 // never be a mystery failure."). The run loop reads each provider's balance every
-// BalancePollEvery through the seat's key (cmd/nova-sprint balance.go, internal/provbalance:
+// BalancePollEvery through the seat's key (cmd/nova-sprint balance.go, pkg/provbalance:
 // the transport), and this step writes what it read: the fleet table's property
 // provider_balance_<provider> (ProviderBalance), with the provider's spend over the last
 // hour as the sprint's own cost records measure it (SpendLastHour).

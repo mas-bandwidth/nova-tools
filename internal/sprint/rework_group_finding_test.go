@@ -16,7 +16,7 @@ import (
 
 const (
 	findingOne = "internal/x.go:12: the guard is missing. Add it."
-	findingTwo = "internal/units/units.go:40: the unit is uncatalogued. Catalogue it."
+	findingTwo = "pkg/units/units.go:40: the unit is uncatalogued. Catalogue it."
 )
 
 // twoFoundBroken is a world with s1-1 and s1-2 dealt, finished and found broken, each with

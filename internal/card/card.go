@@ -12,8 +12,8 @@ import (
 	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardgen"
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
 )
 
 // PackagePaths is a card's PATHS computed from what it starts from: every directory a
@@ -202,8 +202,8 @@ func authorName(line string, names []string) string {
 }
 
 // TestPackage is the package a brief's TEST line names, repository-relative with no
-// ./ and no trailing slash: the first field that is a path (`internal/bus TestY`,
-// `./internal/bus TestY`, `./tools TestY`, `go test ./internal/bus -run TestY`); "" for
+// ./ and no trailing slash: the first field that is a path (`pkg/bus TestY`,
+// `./pkg/bus TestY`, `./tools TestY`, `go test ./pkg/bus -run TestY`); "" for
 // TEST: none or a line that names none.
 func TestPackage(brief string) string {
 	value := ""

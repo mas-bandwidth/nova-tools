@@ -12,7 +12,7 @@
 #
 # import path	seconds
 github.com/mas-bandwidth/nova-tools/cmd/nova-swarm	51.0
-github.com/mas-bandwidth/nova-tools/internal/swarm	17.4
+github.com/mas-bandwidth/nova-tools/pkg/swarm	17.4
 github.com/mas-bandwidth/nova-tools/cmd/nova-bus	10.0
 github.com/mas-bandwidth/nova-tools/internal/pulse	4.5
 github.com/mas-bandwidth/nova-tools/cmd/nova-merge	7.7

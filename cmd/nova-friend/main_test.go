@@ -15,12 +15,12 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus"
-	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
-	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/friend/friendtest"
-	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
-	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/mas-bandwidth/nova-tools/pkg/bus"
+	"github.com/mas-bandwidth/nova-tools/pkg/bus/bustest"
+	"github.com/mas-bandwidth/nova-tools/pkg/friend"
+	"github.com/mas-bandwidth/nova-tools/pkg/onboarding"
+	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,7 +28,7 @@ import (
 var start = time.Date(2026, 10, 4, 3, 0, 0, 0, time.UTC)
 
 // TestMain starts the runtime's signal-mask goroutine outside any synctest
-// bubble. Every run goes through signal.NotifyContext (internal/tool's
+// bubble. Every run goes through signal.NotifyContext (pkg/tool's
 // RunContext); the first such call in the process makes that goroutine and its
 // channels, and made inside a bubble they belong to it, so another bubble's
 // Notify blocks durably on them and the bubble panics as deadlocked.
@@ -412,7 +412,7 @@ func TestInstallWritesTheBeatVerbAndNoHandPlist(t *testing.T) {
 }
 
 // run over the fake store, the fake opencode session and a cancelled context: the
-// daemon's own tests are internal/friend's; here, that the verb wires it.
+// daemon's own tests are pkg/friend's; here, that the verb wires it.
 func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")

@@ -36,12 +36,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
+	"github.com/mas-bandwidth/nova-tools/pkg/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/pkg/diffcheck"
 )
 
 // UpdateEnv is the variable that turns Check into a rewrite. Only the value "1" does. It
-// is defined once, beside the lander that runs the update (internal/diffcheck).
+// is defined once, beside the lander that runs the update (pkg/diffcheck).
 const UpdateEnv = diffcheck.UpdateEnv
 
 // Updating reports whether this run rewrites the lists (NOVA_CI_UPDATE=1).

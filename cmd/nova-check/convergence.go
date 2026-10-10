@@ -19,8 +19,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/converge"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/tool"
 )
 
 // The hints, one per required flag. Each says what the flag is and what a first
@@ -161,7 +161,7 @@ func convergence(c *tool.Call) *tool.Out {
 }
 
 // printLines writes the reading. Every field of every line was rendered through
-// internal/oneline inside internal/converge, where the spec's hostile-value test
+// pkg/oneline inside internal/converge, where the spec's hostile-value test
 // pins it, so what arrives here is already one line and one token per field.
 func printLines(w io.Writer, lines []string) {
 	for _, line := range lines {

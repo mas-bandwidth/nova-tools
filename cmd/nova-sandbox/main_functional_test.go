@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox/darwincheck"
+	"github.com/mas-bandwidth/nova-tools/pkg/goenv"
 	"github.com/mas-bandwidth/nova-tools/profiles"
 	"github.com/stretchr/testify/require"
 )

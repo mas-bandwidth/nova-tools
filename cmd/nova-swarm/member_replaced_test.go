@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/binstamp"
-	"github.com/mas-bandwidth/nova-tools/internal/member"
+	"github.com/mas-bandwidth/nova-tools/pkg/binstamp"
+	"github.com/mas-bandwidth/nova-tools/pkg/member"
 )
 
 // replaceRig is a member of width 2 over a fake sprint that lists two ready work

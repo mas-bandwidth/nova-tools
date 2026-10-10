@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/functional"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 // cmdFunctional prints the functional tier's selection for `make

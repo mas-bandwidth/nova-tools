@@ -15,7 +15,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
+	"github.com/mas-bandwidth/nova-tools/pkg/pkgselect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -135,8 +135,8 @@ func selRead(t *testing.T, path string) string {
 }
 
 const (
-	selListTree = "go list ./cmd/... ./internal/... ./tools/..."
-	selListDeps = "go list -f {{.ImportPath}}{{range .Deps}} {{.}}{{end}} ./cmd/... ./internal/... ./tools/..."
+	selListTree = "go list ./cmd/... ./internal/... ./pkg/... ./tools/..."
+	selListDeps = "go list -f {{.ImportPath}}{{range .Deps}} {{.}}{{end}} ./cmd/... ./internal/... ./pkg/... ./tools/..."
 	selFiles    = "{{.ImportPath}} {{.GoFiles}} {{.CgoFiles}} {{.TestGoFiles}} {{.XTestGoFiles}}"
 )
 
@@ -258,9 +258,9 @@ func TestTestMatrixPullRequestSelectsAgainstItsBase(t *testing.T) {
 		"git diff --name-only basesha HEAD": {out: "cmd/a/a.go\n"},
 		selListDeps:                         {out: selMod + "/cmd/a fmt\n" + selMod + "/cmd/nova-swarm fmt\n" + selMod + "/internal/ci fmt\n" + selMod + "/internal/docs fmt\n"},
 		"go list -m":                        {out: selMod + "\n"},
-		"GOOS=linux go list -f " + selFiles + " ./cmd/... ./internal/...":                            {out: selMod + "/cmd/a [a.go] [] [] []\n" + selMod + "/cmd/nova-swarm [b.go] [] [] []\n"},
-		"GOOS=darwin go list -f " + selFiles + " ./cmd/... ./internal/...":                           {out: selMod + "/cmd/a [a.go a_darwin.go] [] [] []\n" + selMod + "/cmd/nova-swarm [b.go] [] [] []\n"},
-		"GOOS=darwin go list -test -f {{.ImportPath}} {{join .Deps \" \"}} ./cmd/... ./internal/...": {out: selMod + "/cmd/a fmt\n" + selMod + "/cmd/nova-swarm fmt\n"},
+		"GOOS=linux go list -f " + selFiles + " ./cmd/... ./internal/... ./pkg/...":                            {out: selMod + "/cmd/a [a.go] [] [] []\n" + selMod + "/cmd/nova-swarm [b.go] [] [] []\n"},
+		"GOOS=darwin go list -f " + selFiles + " ./cmd/... ./internal/... ./pkg/...":                           {out: selMod + "/cmd/a [a.go a_darwin.go] [] [] []\n" + selMod + "/cmd/nova-swarm [b.go] [] [] []\n"},
+		"GOOS=darwin go list -test -f {{.ImportPath}} {{join .Deps \" \"}} ./cmd/... ./internal/... ./pkg/...": {out: selMod + "/cmd/a fmt\n" + selMod + "/cmd/nova-swarm fmt\n"},
 	})
 	gh := filepath.Join(t.TempDir(), "output")
 	code, out, errb := selRun(func(e env, a []string) int { return testMatrixVerb(e, a, f.host()) }, repo,

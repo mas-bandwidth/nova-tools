@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
 
 // coldRun is run() with no store behind any address and an environment that
@@ -106,7 +106,7 @@ func TestEveryVerbsHelpStatesItsEffectAndDescribesEveryFlag(t *testing.T) {
 				assert.Empty(t, errs)
 				if group {
 					// A group's help lists its verbs; each subverb states its own
-					// effect (internal/tool's group banner).
+					// effect (pkg/tool's group banner).
 					assert.Contains(t, out, "usage: nova-redis "+verb)
 				} else {
 					assert.Regexp(t, `(?m)^effect: \S`, out)
@@ -144,7 +144,7 @@ func TestSpillDryRunNeedsNoStore(t *testing.T) {
 	assert.Contains(t, errs, "--ttl is required and must be above zero")
 }
 
-// jsonOut is the one JSON object --json prints (internal/tool's Out).
+// jsonOut is the one JSON object --json prints (pkg/tool's Out).
 type jsonOut struct {
 	Result struct {
 		Verb, Status, Remedy, Word string

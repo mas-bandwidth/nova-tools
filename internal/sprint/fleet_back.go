@@ -67,7 +67,7 @@ type MachineAdoption struct {
 // episode, and is false while one is in flight there (never two at once);
 // Adoption is the episode's adoption, AdoptNone when it was never started.
 // The tick calls it from inside a plan, so a call must be quick: the work runs
-// beside the tick (cmd/nova-sprint/fleet_back.go, internal/release/adopt_one.go).
+// beside the tick (cmd/nova-sprint/fleet_back.go, pkg/release/adopt_one.go).
 type Adopter interface {
 	Target() string
 	Start(machine, version, episode string) bool

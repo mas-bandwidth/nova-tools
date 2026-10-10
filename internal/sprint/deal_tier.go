@@ -1,6 +1,6 @@
 package sprint
 
-import "github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+import "github.com/mas-bandwidth/nova-tools/pkg/cardhdr"
 
 // DealtTier is the tier a dealt card's packet names (Packet.Tier), never empty
 // (dealt-packet-carries-the-tier.w1; on 2026-10-05 the audit cards were dealt with no tier

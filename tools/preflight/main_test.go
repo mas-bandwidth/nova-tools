@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -91,13 +91,13 @@ func TestAFailingMakeFailsTheRunWithItsExitCode(t *testing.T) {
 func TestPackageArgumentsReachVetAndMake(t *testing.T) {
 	t.Parallel()
 	f := &fakeRunner{}
-	preflight(f).Do(t, "./internal/swarm", "./cmd/nova-swarm").Exit(0).Out("ALL CHECKS PASSED")
+	preflight(f).Do(t, "./pkg/swarm", "./cmd/nova-swarm").Exit(0).Out("ALL CHECKS PASSED")
 	vet := f.named("fake-go")
 	require.Len(t, vet, 1)
-	assert.Equal(t, []string{"vet", "./internal/swarm", "./cmd/nova-swarm"}, vet[0].args)
+	assert.Equal(t, []string{"vet", "./pkg/swarm", "./cmd/nova-swarm"}, vet[0].args)
 	mk := f.named("fake-make")
 	require.Len(t, mk, 1)
-	assert.Equal(t, []string{"test-full", "GO=fake-go", "PKGS=./internal/swarm ./cmd/nova-swarm"}, mk[0].args)
+	assert.Equal(t, []string{"test-full", "GO=fake-go", "PKGS=./pkg/swarm ./cmd/nova-swarm"}, mk[0].args)
 }
 
 func TestRunFlagAndRunEnvReachMakeAsRun(t *testing.T) {
@@ -108,10 +108,10 @@ func TestRunFlagAndRunEnvReachMakeAsRun(t *testing.T) {
 		environ []string
 		want    string
 	}{
-		{"-run", []string{"-run", "TestSpecific", "./internal/swarm"}, nil, "RUN=TestSpecific"},
-		{"--run", []string{"--run", "TestA|TestB", "./internal/swarm"}, nil, "RUN=TestA|TestB"},
-		{"RUN env", []string{"./internal/swarm"}, []string{"RUN=TestEnv"}, "RUN=TestEnv"},
-		{"flag beats env", []string{"-run", "TestFlag", "./internal/swarm"}, []string{"RUN=TestEnv"}, "RUN=TestFlag"},
+		{"-run", []string{"-run", "TestSpecific", "./pkg/swarm"}, nil, "RUN=TestSpecific"},
+		{"--run", []string{"--run", "TestA|TestB", "./pkg/swarm"}, nil, "RUN=TestA|TestB"},
+		{"RUN env", []string{"./pkg/swarm"}, []string{"RUN=TestEnv"}, "RUN=TestEnv"},
+		{"flag beats env", []string{"-run", "TestFlag", "./pkg/swarm"}, []string{"RUN=TestEnv"}, "RUN=TestFlag"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
