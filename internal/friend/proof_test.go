@@ -65,12 +65,6 @@ func (h *proofHarness) got() []string {
 	return slices.Clone(h.texts)
 }
 
-func (h *proofHarness) set(answer bool) {
-	h.mu.Lock()
-	h.answer = answer
-	h.mu.Unlock()
-}
-
 // headlessHarness is the proofHarness as a headless adapter: its own turn record.
 type headlessHarness struct{ *proofHarness }
 
