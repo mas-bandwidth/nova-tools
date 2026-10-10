@@ -5,14 +5,13 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// TestLintRefusesABriefThatHidesTheModel checks that LintCardChildWith refuses briefs that
-// tell the worker to hide or misstate their model or harness.
+// TestLintRefusesABriefThatHidesTheModel checks every documented hiding phrase and the
+// standard honest-attribution paragraph (docs/SPEC-SWARM.md, "Attribution check").
 func TestLintRefusesABriefThatHidesTheModel(t *testing.T) {
 	t.Parallel()
-
-	// Full brief template that passes all other rules
 	fullBrief := func(attrLine string) string {
 		return `RESULT: c sha=0123456789ab tier: pro
 
@@ -33,61 +32,44 @@ Report what was not done.
 
 ` + attrLine
 	}
+	const check = "honest-attribution"
 
-	// Brief that passes: tells worker to name the actual model
-	passingBrief := fullBrief("ATTRIBUTION. name the actual model and harness and never claim one you are not")
-	findings := LintCardChildWith([]byte(passingBrief), DefaultChildRules)
-	// Filter to only check for attribution-related findings
-	var attrFindings []CardHeaderFinding
-	for _, f := range findings {
-		if f.Check == "honest-attribution" {
-			attrFindings = append(attrFindings, f)
+	t.Run("standard attribution passes", func(t *testing.T) {
+		t.Parallel()
+		brief := fullBrief("ATTRIBUTION. Name the actual model and harness; never claim one you are not.")
+		for _, finding := range LintCardChildWith([]byte(brief), DefaultChildRules) {
+			assert.NotEqual(t, check, finding.Check, "standard attribution was flagged at line %d", finding.Line)
 		}
-	}
-	assert.Equal(t, 0, len(attrFindings), "passing brief should have no attribution findings")
+	})
 
-	// Brief that fails: tells worker to never claim Claude
-	hidingBrief1 := fullBrief("ATTRIBUTION. never claim Claude or another model")
-	findings = LintCardChildWith([]byte(hidingBrief1), DefaultChildRules)
-	attrFindings = nil
-	for _, f := range findings {
-		if f.Check == "honest-attribution" {
-			attrFindings = append(attrFindings, f)
-		}
+	for _, tc := range []struct {
+		name  string
+		phrase string
+	}{
+		{name: "never claim another model", phrase: "ATTRIBUTION. Never claim Claude or another model."},
+		{name: "do not mention model or harness", phrase: "ATTRIBUTION. Do not mention the model or harness."},
+		{name: "not mention model", phrase: "ATTRIBUTION. Tell the worker not mention the model."},
+		{name: "hide model or harness", phrase: "ATTRIBUTION. Hide the harness."},
+		{name: "deny model", phrase: "ATTRIBUTION. Deny the model."},
+		{name: "omit harness", phrase: "ATTRIBUTION. Omit the harness."},
+		{name: "misstate model", phrase: "ATTRIBUTION. Misstate the model."},
+		{name: "misrepresent harness", phrase: "ATTRIBUTION. Misrepresent the harness."},
+		{name: "sign as another model", phrase: "ATTRIBUTION. Sign as another model."},
+		{name: "fixed coauthor instruction", phrase: "ATTRIBUTION. Use a Co-Authored-By trailer naming a fixed model."},
+		{name: "fixed coauthor identity", phrase: "ATTRIBUTION. Co-Authored-By: Claude."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			brief := fullBrief(tc.phrase)
+			var got []CardHeaderFinding
+			for _, finding := range LintCardChildWith([]byte(brief), DefaultChildRules) {
+				if finding.Check == check {
+					got = append(got, finding)
+				}
+			}
+			require.Len(t, got, 1, "the hiding phrase should produce one finding")
+			assert.Equal(t, strings.Count(brief[:strings.Index(brief, tc.phrase)], "\n")+1, got[0].Line)
+			assert.Equal(t, tc.phrase, got[0].Excerpt)
+		})
 	}
-	assert.Equal(t, 1, len(attrFindings), "brief hiding model should have one attribution finding")
-	assert.True(t, strings.Contains(attrFindings[0].Excerpt, "never claim"))
-
-	// Brief that fails: tells worker to not mention the model
-	hidingBrief2 := fullBrief("ATTRIBUTION. do not mention the model")
-	findings = LintCardChildWith([]byte(hidingBrief2), DefaultChildRules)
-	attrFindings = nil
-	for _, f := range findings {
-		if f.Check == "honest-attribution" {
-			attrFindings = append(attrFindings, f)
-		}
-	}
-	assert.Equal(t, 1, len(attrFindings), "brief hiding model should have one attribution finding")
-
-	// Brief that fails: tells worker to sign as another model
-	hidingBrief3 := fullBrief("ATTRIBUTION. sign as another model")
-	findings = LintCardChildWith([]byte(hidingBrief3), DefaultChildRules)
-	attrFindings = nil
-	for _, f := range findings {
-		if f.Check == "honest-attribution" {
-			attrFindings = append(attrFindings, f)
-		}
-	}
-	assert.Equal(t, 1, len(attrFindings), "brief hiding model should have one attribution finding")
-
-	// Brief that fails: Co-Authored-By with fixed model
-	hidingBrief4 := fullBrief("ATTRIBUTION. Co-Authored-By trailer naming a fixed model")
-	findings = LintCardChildWith([]byte(hidingBrief4), DefaultChildRules)
-	attrFindings = nil
-	for _, f := range findings {
-		if f.Check == "honest-attribution" {
-			attrFindings = append(attrFindings, f)
-		}
-	}
-	assert.Equal(t, 1, len(attrFindings), "brief hiding model should have one attribution finding")
 }
