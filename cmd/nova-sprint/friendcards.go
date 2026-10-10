@@ -19,6 +19,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
@@ -251,10 +252,13 @@ func friendFinish(ctx context.Context, name string, p sprint.Packet, report stri
 	para = oneline.Cap(para, maxFriendReport)
 	row := sprint.FriendRow(name)
 	r := sprint.FinishReq{Sel: sprint.Sel{IDs: []string{p.Card}}, As: row, Gens: map[string]int{p.Card: p.Gen}, Branch: p.Branch, Who: row}
-	// her card's usage (the result's usage line, or the machinery's Cost: line) rides
-	// on the work card, so the friends table's tokens column sums it per friend
-	if usage, ok := sprint.FriendUsage(report); ok {
-		r.Usage = usage.String()
+	// published usage rides on the finish, priced as a fleet member's is (cost.go,
+	// docs/SPEC-SPRINT.md, "What a card cost"). The card has no fleet route, so the
+	// finish's plan stamps on_route from the route row whose provider/model matches
+	// (friendStampMatchedRoute). A report with no token stays empty, so the record
+	// is unpriced=no-tokens and nothing is guessed.
+	if usage := friendFinishUsage(report); usage != "" {
+		r.Usage = usage
 	}
 	switch {
 	case verdict == VerdictLand && typedrec.IsFullSha(head):
@@ -360,7 +364,255 @@ func friendReadReport(dir, job string) (report, why string, at time.Time, err er
 	if err != nil {
 		return "", "", time.Time{}, err
 	}
-	return string(b), "", fi.ModTime(), nil
+	report = string(b)
+	// RESULT.md carries the same tokens: and cost: lines (internal/friend, PublishCost).
+	// A missing file, a symlink or a file past the cap adds nothing: the report still
+	// finishes, and a Cost: headline in it is read on its own.
+	extra, err := friendResultLines(outDir)
+	if err != nil {
+		return "", "", time.Time{}, err
+	}
+	if extra != "" {
+		// RESULT.md's tokens win over a Cost: headline in the report (the
+		// result when it has them, the report when it does not).
+		if friendHasPublishedTokens(extra) {
+			report = extra + "\n" + report
+		} else {
+			report = strings.TrimRight(report, "\n") + "\n" + extra
+			if !strings.HasSuffix(report, "\n") {
+				report += "\n"
+			}
+		}
+	}
+	return report, "", fi.ModTime(), nil
+}
+
+// friendHasPublishedTokens says the text carries a tokens: line or a Cost:
+// headline's tokens segment, so it is the finish's usage rather than a dollar
+// beside one.
+func friendHasPublishedTokens(text string) bool {
+	_, _, saw := friendTokenLine(text)
+	return saw
+}
+
+// friendResultLines is RESULT.md's tokens: and cost: lines, when the file is a
+// regular file no larger than friendReportReadCap. "" when it is absent, a
+// symlink, or too large. An error is a read that failed after the file checked out.
+func friendResultLines(outDir string) (string, error) {
+	name := filepath.Join(outDir, "RESULT.md")
+	fi, err := os.Lstat(name)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return "", nil
+	case err != nil:
+		return "", err
+	case !fi.Mode().IsRegular() || fi.Size() > friendReportReadCap:
+		return "", nil
+	}
+	b, err := os.ReadFile(name)
+	if err != nil {
+		return "", err
+	}
+	var lines []string
+	for _, line := range strings.Split(string(b), "\n") {
+		t := strings.TrimSpace(line)
+		key, _, ok := strings.Cut(strings.TrimLeft(t, "#*-_ \t"), ":")
+		if !ok {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "tokens", "cost":
+			lines = append(lines, t)
+		}
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+// friendFinishUsage is the usage a friend's finish records (docs/SPEC-SPRINT.md,
+// "What a card cost"): the tokens: line, or the tokens segment of a Cost: headline,
+// with actual_usd from the cost: line when it carries a reported harness dollar.
+// A usage: line is the same counts when neither is there, so the friends table's
+// tokens column still sums it. "" when no token class was reported: the finish
+// then records unpriced=no-tokens and invents nothing.
+func friendFinishUsage(report string) string {
+	tokenLine, costRest, saw := friendTokenLine(report)
+	if saw {
+		u, ok := sprint.FriendUsage("tokens: " + tokenLine)
+		if !ok || !u.Tokens.Reported() {
+			return ""
+		}
+		return friendUsageLine(u, costRest)
+	}
+	u, ok := sprint.FriendUsage(report)
+	if !ok || !u.Tokens.Reported() {
+		return ""
+	}
+	return friendUsageLine(u, costRest)
+}
+
+// friendTokenLine is the first tokens: line, or the tokens segment of the first
+// Cost: headline, and the cost text a dollar is read from: a bare cost: line
+// when one is there, else the headline's text before its tokens segment.
+func friendTokenLine(report string) (tokens, costRest string, saw bool) {
+	var bare, embedded string
+	for _, line := range strings.Split(report, "\n") {
+		t := strings.TrimSpace(strings.TrimLeft(line, "#*-_ \t"))
+		key, rest, ok := strings.Cut(t, ":")
+		if !ok {
+			continue
+		}
+		key = strings.ToLower(strings.TrimSpace(key))
+		rest = strings.TrimSpace(rest)
+		switch key {
+		case "tokens":
+			if !saw {
+				tokens, saw = rest, true
+			}
+		case "cost":
+			if i := strings.Index(rest, " tokens "); i >= 0 {
+				if !saw {
+					tokens, saw = strings.TrimSpace(rest[i+len(" tokens "):]), true
+				}
+				if embedded == "" {
+					embedded = strings.TrimSpace(rest[:i])
+				}
+			} else if bare == "" {
+				bare = rest
+			}
+		}
+	}
+	if bare != "" {
+		return tokens, bare, saw
+	}
+	return tokens, embedded, saw
+}
+
+// friendUsageLine is a parsed usage ready for the finish to price: the route and
+// any harness word are dropped, so the finish's own route row prices it.
+// actual_usd is the harness parenthetical when that word is a dollar. When the
+// parenthetical is present and not a dollar ("-"), actual is absent: the
+// list-price headline is not recorded. With no parenthetical, the first dollar is.
+func friendUsageLine(u cardcost.Usage, costRest string) string {
+	u.Route, u.Prices, u.Predicted, u.Unpriced = "", "", "", ""
+	u.Long = false
+	var extra []string
+	for _, w := range u.Extra {
+		k, _, _ := strings.Cut(w, "=")
+		if k == "harness" || k == "price_route" {
+			continue
+		}
+		extra = append(extra, w)
+	}
+	u.Extra = extra
+	usd, harness := friendUSD(costRest)
+	switch {
+	case harness && usd != "":
+		u.Actual, u.ActualBy = usd, cardcost.ActualByHarness
+	case harness:
+		u.Actual, u.ActualBy = "", ""
+	case usd != "":
+		u.Actual, u.ActualBy = usd, cardcost.ActualByHarness
+	}
+	return u.String()
+}
+
+// friendUSD is the dollar a cost line carries. An opencode: or harness:
+// parenthetical is authoritative: its first word, when a dollar, is the actual,
+// and "-" or any other non-decimal leaves the actual absent. The list-price
+// headline beside that parenthetical is not read. With no parenthetical, the
+// first non-negative decimal is the actual, a leading $ stripped.
+func friendUSD(rest string) (usd string, harness bool) {
+	lower := strings.ToLower(rest)
+	for _, key := range []string{"opencode:", "harness:"} {
+		if i := strings.Index(lower, key); i >= 0 {
+			return harnessUSD(rest[i+len(key):]), true
+		}
+	}
+	return friendFirstUSD(rest), false
+}
+
+// harnessUSD is the first word after opencode: or harness:. A dollar is that
+// cost. "-" and any other non-decimal are unreported.
+func harnessUSD(rest string) string {
+	fields := strings.Fields(rest)
+	if len(fields) == 0 {
+		return ""
+	}
+	w := strings.Trim(fields[0], "(),;")
+	w = strings.TrimPrefix(w, "$")
+	r, err := cardcost.Decimal(w)
+	if err != nil {
+		return ""
+	}
+	return cardcost.Text(r)
+}
+
+// friendFirstUSD is the first non-negative decimal in text, a leading $ stripped.
+func friendFirstUSD(rest string) string {
+	for _, w := range strings.Fields(rest) {
+		w = strings.Trim(w, "(),;")
+		w = strings.TrimPrefix(w, "$")
+		r, err := cardcost.Decimal(w)
+		if err != nil {
+			continue
+		}
+		return cardcost.Text(r)
+	}
+	return ""
+}
+
+// friendStampMatchedRoute sets on_route on each cost record the finish just
+// planned. A friend's card has no fleet route, so workConsumer writes on_route=-
+// while costRecord still prices by the route row whose provider/model matches
+// and records that name as price_route. on_route becomes that name. A record
+// that already names a route, or that matched none, is left as it is.
+func friendStampMatchedRoute(p *sprint.Plan) {
+	if p == nil {
+		return
+	}
+	for i := range p.Units {
+		for j := range p.Units[i].Changes {
+			set := p.Units[i].Changes[j].Entry.Set
+			for k, v := range set {
+				if !strings.HasPrefix(k, sprint.FieldCostRecord) {
+					continue
+				}
+				if next, ok := withMatchedOnRoute(v); ok {
+					set[k] = next
+				}
+			}
+		}
+	}
+}
+
+// withMatchedOnRoute copies price_route onto an empty on_route ("-" or blank).
+// A route already written stays. ok is false when there is nothing to copy.
+func withMatchedOnRoute(line string) (string, bool) {
+	fields := strings.Fields(line)
+	on := -1
+	route := ""
+	for i, w := range fields {
+		k, val, ok := strings.Cut(w, "=")
+		if !ok {
+			continue
+		}
+		switch k {
+		case "on_route":
+			on = i
+			if val != "-" && val != "" {
+				return "", false
+			}
+		case "price_route":
+			if route == "" {
+				route = val
+			}
+		}
+	}
+	if on < 0 || route == "" || route == "-" {
+		return "", false
+	}
+	fields[on] = "on_route=" + route
+	return strings.Join(fields, " "), true
 }
 
 // friendCardsOf delivers and collects one friend's sprint cards in her working directory
@@ -952,6 +1204,12 @@ func (a *app) friendCollect(ctx context.Context, st *store.Store, name string, p
 	}
 	r.Reported = at
 	step := store.FinishStep(r)
+	inner := step.Plan
+	step.Plan = func(s *sprint.Snapshot) sprint.Plan {
+		p := inner(s)
+		friendStampMatchedRoute(&p)
+		return p
+	}
 	step.Actor, step.Epoch = r.Who, &p.Epoch
 	if op != "" {
 		step.CallerOp = op + ".collect." + step.Args
