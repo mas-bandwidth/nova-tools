@@ -34,32 +34,32 @@ import (
 // tier shards run only the touched packages, lightly loaded -- the one condition the
 // assumption survives.
 //
-// So the idle end is now DELIVERED, not waited for. nativeWatchIdle is the seam (see
-// native.go); a test hands the wait the very IdleEnd the watch would have sent and asserts
-// the ORDER of what follows. Nothing sleeps and compares. What the real watch decides, and
-// when, is internal/swarm's question and internal/swarm's tests answer it under their own
-// injected clock.
+// So the idle end is now DELIVERED, not waited for. The watch, the reap and the group kill
+// are fields of the run's own value (native.go); a test hands its own run the very IdleEnd
+// the watch would have sent and asserts the ORDER of what follows. Nothing sleeps and
+// compares, and no package var is swapped, so the test opens with t.Parallel() beside the
+// rest. What the real watch decides, and when, is internal/swarm's question and
+// internal/swarm's tests answer it under their own injected clock.
 
-// idleSeam swaps the three functions the wait reaches the outside world through and records
-// the order they are called in. Every recorder CALLS THROUGH to the real function, so the
-// run still reaps a real process group: the seam observes, it does not simulate.
+// idleSeam builds the three seams one run is handed and records the order they are called
+// in. Every recorder CALLS THROUGH to the real function, so the run still reaps a real
+// process group: the seam observes, it does not simulate.
 type idleSeam struct {
 	mu     sync.Mutex
 	events []string
-	ends   chan swarm.IdleEnd
+	watch  func(swarm.IdleWatch, <-chan struct{}) <-chan swarm.IdleEnd
+	reap   func(pgid int, started string, grace time.Duration) bool
+	kill   func(pgid int, started string)
 }
 
-// newIdleSeam installs the seam for one test and restores the real functions after it.
-// deliver is called with the watch's own IdleWatch once the wait has started it, and
-// returns the end to send -- so a test that needs the child to have reached a state can
-// wait for THAT state, by its own observable, before declaring the card idle.
+// newIdleSeam builds the seam for one test. deliver is called with the watch's own IdleWatch
+// once the wait has started it, and returns the end to send -- so a test that needs the child
+// to have reached a state can wait for THAT state, by its own observable, before declaring
+// the card idle.
 func newIdleSeam(t *testing.T, deliver func(w swarm.IdleWatch) (swarm.IdleEnd, bool)) *idleSeam {
 	t.Helper()
-	s := &idleSeam{ends: make(chan swarm.IdleEnd, 1)}
-	realWatch, realReap, realKill := nativeWatchIdle, nativeReap, nativeKillGroup
-	t.Cleanup(func() { nativeWatchIdle, nativeReap, nativeKillGroup = realWatch, realReap, realKill })
-
-	nativeWatchIdle = func(w swarm.IdleWatch, stop <-chan struct{}) <-chan swarm.IdleEnd {
+	s := &idleSeam{}
+	s.watch = func(w swarm.IdleWatch, stop <-chan struct{}) <-chan swarm.IdleEnd {
 		// The production contract, kept: no window means no watch and a nil channel.
 		if w.Idle <= 0 {
 			return nil
@@ -80,13 +80,13 @@ func newIdleSeam(t *testing.T, deliver func(w swarm.IdleWatch) (swarm.IdleEnd, b
 		}()
 		return out
 	}
-	nativeReap = func(pgid int, started string, grace time.Duration) bool {
+	s.reap = func(pgid int, started string, grace time.Duration) bool {
 		s.record("reap")
-		return realReap(pgid, started, grace)
+		return swarm.Reap(pgid, started, grace)
 	}
-	nativeKillGroup = func(pgid int, started string) {
+	s.kill = func(pgid int, started string) {
 		s.record("kill")
-		realKill(pgid, started)
+		swarm.KillGroup(pgid, started)
 	}
 	return s
 }
@@ -107,8 +107,10 @@ func (s *idleSeam) seen() []string {
 // asserted as an ORDER of events rather than as a race against `--idle`. The watch declares
 // the card idle; the group is REAPED, not shot; the run ends carrying what the watch saw;
 // and the deadline branch never ran, which is provable because it is the only branch that
-// calls nativeKillGroup.
+// calls the group kill.
 func TestNativeIdleIsDecidedByTheWatchsEventNotByAClock(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -131,44 +133,37 @@ func TestNativeIdleIsDecidedByTheWatchsEventNotByAClock(t *testing.T) {
 		return want, true
 	})
 
-	args := []string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin,
-		"--model", "fake/fake-model", "--label", "stillcard", "--card", cardPath, "--slot", slot,
-		"--root", root, "--deadline", "30s", "--idle", "2s", "--no-wall"}
-	var stdout, stderr bytes.Buffer
-	_ = run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
+	var errOut bytes.Buffer
+	res, _ := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: "stillcard",
+		card: []byte(card), slotDir: slot, root: root,
+		deadline: 30 * time.Second, idle: 30 * time.Second, noWall: true,
+		watchIdle: seam.watch, reap: seam.reap, killGroup: seam.kill,
+	}, &errOut)
 
 	// (1) THE ORDER. Not "it happened within n seconds": this, then this, then this.
 	got := seam.seen()
-	require.Equal(t, "watch-started,idle-declared,reap", strings.Join(got, ","), "the wait's events, in order, are watch-started then idle-declared then reap; got %v\n%s\n%s", got, stdout.String(), stderr.String())
-	// (2) AND THE DEADLINE NEVER FIRED. nativeKillGroup is reached from one branch only.
+	require.Equal(t, "watch-started,idle-declared,reap", strings.Join(got, ","), "the wait's events, in order, are watch-started then idle-declared then reap; got %v\n%s", got, errOut.String())
+	// (2) AND THE DEADLINE NEVER FIRED. The group kill is reached from one branch only.
 	for _, e := range seam.seen() {
-		require.NotEqual(t, "kill", e, "the deadline branch ran: an idle card is reaped, never shot\n%s", stdout.String())
+		require.NotEqual(t, "kill", e, "the deadline branch ran: an idle card is reaped, never shot\n%s", errOut.String())
 	}
-	// (3) THE RUN CARRIES WHAT THE WATCH SAW, in its own lines and in the report it owes.
+	// (3) THE RUN CARRIES WHAT THE WATCH SAW, in its own fields and in the report it owes.
 	// This end was REFUSED, so the run takes the wall branch (main.go:1846) and reports it
 	// as the refusal the card never moved past, not as a card that simply went still --
-	// both typed lines, byte for byte, built from the end the seam delivered and nothing
-	// else. `TestNativeIdleSaysACardThatSimplyWentStillWentStill` holds the other branch.
-	for _, want := range []string{
-		"WALL task=stillcard path=/etc/hosts step=3",
-		"WALL REFUSED write /etc/hosts task=stillcard step=3",
-	} {
-		require.Contains(t, stdout.String(), want, "the run reports the watch's own end on %q:\n%s", want, stdout.String())
-	}
-	require.NotContains(t, stdout.String(), "CARD IDLE", "a refused end is a wall death, not a card that went quiet:\n%s", stdout.String())
-	require.Contains(t, stdout.String(), "NATIVE NOTE: the card published no report of its own", "a card the watch ended is given the report it owes:\n%s\n%s", stdout.String(), stderr.String())
-	// THE SUMMARY LINE IS STILL PRINTED, naming this card and the end it got. The old test
-	// asked for the WORD `OK` here, and that word is no longer this PR's to assert: dev
-	// made it a verdict (#1844, main.go "OK IS A VERDICT, NOT A PUNCTUATION MARK"), and a
-	// card the watch ended carries rc=-1, so its verdict against dev is INCOMPLETE while
-	// this branch alone still prints OK. Pinning the word here would pin #1844's question
-	// from the wrong PR and go red the moment the two meet -- which is exactly what it did.
-	// What this test owes is that the run still reports the card and the end, in fields.
-	for _, want := range []string{"NATIVE ", "label=stillcard", "rc=-1", "wall="} {
-		require.Contains(t, stdout.String(), want, "a card the watch ended still prints its summary line, carrying %q:\n%s", want, stdout.String())
-	}
+	// driven by the end the seam delivered and nothing else.
+	// `TestNativeIdleSaysACardThatSimplyWentStillWentStill` holds the other branch.
+	require.True(t, res.idled, "the watch is what ended this card\n%s", errOut.String())
+	require.Equal(t, want, res.idleEnd, "the run carries the watch's own end\n%s", errOut.String())
+	require.Equal(t, swarm.WallRefusal{Path: "/etc/hosts", Step: "3"}, res.wallRefusal, "a refused end is a wall death\n%s", errOut.String())
+	require.Equal(t, -1, res.rc, "a card the watch ended carries rc=-1\n%s", errOut.String())
+	require.NotEmpty(t, res.blockedPath, "a card the watch ended is given the report it owes:\n%s", errOut.String())
+	// The typed line main.go prints for this end, built from the fields the run produced.
+	require.Equal(t, "WALL REFUSED write /etc/hosts task=stillcard step=3",
+		swarm.WallRefusedLine("stillcard", res.idleEnd.Kind, res.idleEnd.Path, res.idleEnd.Step),
+		"a refused end is a wall death, not a card that went quiet:\n%s", errOut.String())
 	raw, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
-	require.NoError(t, err, "a card the machinery ended is given a report naming the block:\n%s", stdout.String())
+	require.NoError(t, err, "a card the machinery ended is given a report naming the block:\n%s", errOut.String())
 	// The report names the DELIVERED duration, which is the one number in the end that no
 	// part of this run could have invented: 240s never appears in the arguments.
 	for _, w := range []string{"RESULT: BLOCKED stillcard", "WALL REFUSED write /etc/hosts", "written-by: nova-swarm native",
@@ -190,6 +185,8 @@ func TestNativeIdleIsDecidedByTheWatchsEventNotByAClock(t *testing.T) {
 // holds that the RUN reaches it, which no test could ask before the seam existed: a
 // no-refusal idle end cannot be arranged by a clock and a fixture at all.
 func TestNativeIdleSaysACardThatSimplyWentStillWentStill(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -206,18 +203,24 @@ func TestNativeIdleSaysACardThatSimplyWentStillWentStill(t *testing.T) {
 		return want, true
 	})
 
-	args := []string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin,
-		"--model", "fake/fake-model", "--label", "quietcard", "--card", cardPath, "--slot", slot,
-		"--root", root, "--deadline", "30s", "--idle", "2s", "--no-wall"}
-	var stdout, stderr bytes.Buffer
-	_ = run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
+	var errOut bytes.Buffer
+	res, _ := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: "quietcard",
+		card: []byte(card), slotDir: slot, root: root,
+		deadline: 30 * time.Second, idle: 30 * time.Second, noWall: true,
+		watchIdle: seam.watch, reap: seam.reap, killGroup: seam.kill,
+	}, &errOut)
 
 	got := seam.seen()
-	require.Equal(t, "watch-started,idle-declared,reap", strings.Join(got, ","), "the wait's events, in order, are watch-started then idle-declared then reap; got %v\n%s\n%s", got, stdout.String(), stderr.String())
-	require.Contains(t, stdout.String(), "CARD IDLE task=quietcard step=16 idle=300s", "a card that simply went still is reported on its own line:\n%s", stdout.String())
-	require.NotContains(t, stdout.String(), "WALL ", "no wall refused this card, so no WALL line may name one:\n%s", stdout.String())
-	require.Contains(t, stdout.String(), "NATIVE NOTE: the card published no report of its own", "a card the watch ended is given the report it owes:\n%s\n%s", stdout.String(), stderr.String())
-	require.NotContains(t, stdout.String(), "why=unknown-acceptance", "a card that went still is not an unknown provider acceptance:\n%s", stdout.String())
+	require.Equal(t, "watch-started,idle-declared,reap", strings.Join(got, ","), "the wait's events, in order, are watch-started then idle-declared then reap; got %v\n%s", got, errOut.String())
+	require.True(t, res.idled, "the watch is what ended this card\n%s", errOut.String())
+	require.False(t, res.idleEnd.Refused, "this end named no refusal\n%s", errOut.String())
+	require.NotEmpty(t, res.blockedPath, "a card the watch ended is given the report it owes:\n%s", errOut.String())
+	// The typed line main.go prints for this end: CARD IDLE, deliberately not a WALL line.
+	require.Equal(t, "CARD IDLE task=quietcard step=16 idle=300s",
+		swarm.CardIdleLine("quietcard", res.idleEnd),
+		"a card that simply went still is reported on its own line:\n%s", errOut.String())
+	require.False(t, res.lost, "a card that went still is not an unknown provider acceptance\n%s", errOut.String())
 	_, err := os.Stat(filepath.Join(job, "provider-acceptance"))
 	require.True(t, os.IsNotExist(err), "a quiet card wrote an acceptance mark: %v", err)
 }
@@ -225,7 +228,8 @@ func TestNativeIdleSaysACardThatSimplyWentStillWentStill(t *testing.T) {
 // TestNativeIdleReapsTheCardInsteadOfShootingIt keeps the REAL signal, because the point of
 // the HOLD ("Idle kill is `KillGroup` ... not `swarm.Reap`
 // (TERM-wait-KILL)") is what the operating system delivers, and a recorder cannot show
-// that. Only the WATCH is seamed here; nativeReap and nativeKillGroup stay real.
+// that. Only the WATCH is seamed here; the run's reap and group kill call through to the
+// real swarm.Reap and swarm.KillGroup.
 //
 // The observable is the one thing that tells a TERM from a KILL from outside the process:
 // FAKE-NOTE-ON-TERM writes `termed` into the job directory on SIGTERM. Under a bare
@@ -233,26 +237,30 @@ func TestNativeIdleSaysACardThatSimplyWentStillWentStill(t *testing.T) {
 // handle. And the card is declared idle only once it has ARMED that handler -- it writes
 // `term-armed` when it does -- so this waits for the thing itself and never for a clock.
 func TestNativeIdleReapsTheCardInsteadOfShootingIt(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	cardPath := filepath.Join(root, "card.md")
 	require.NoError(t, os.WriteFile(cardPath, []byte("FAKE-NOTE-ON-TERM\nFAKE-SLEEP 60\n"), 0o644))
 	job := filepath.Join(slot, "jobs", "politecard")
-	newIdleSeam(t, func(w swarm.IdleWatch) (swarm.IdleEnd, bool) {
+	seam := newIdleSeam(t, func(w swarm.IdleWatch) (swarm.IdleEnd, bool) {
 		waitForFile(t, filepath.Join(job, "term-armed"), "the fixture harness arming its TERM handler")
 		return swarm.IdleEnd{Idle: 240 * time.Second}, true
 	})
 
-	args := []string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin,
-		"--model", "fake/fake-model", "--label", "politecard", "--card", cardPath, "--slot", slot,
-		"--root", root, "--deadline", "30s", "--idle", "2s", "--no-wall"}
-	var stdout, stderr bytes.Buffer
-	_ = run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
+	var errOut bytes.Buffer
+	res, _ := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: "politecard",
+		card: []byte("FAKE-NOTE-ON-TERM\nFAKE-SLEEP 60\n"), slotDir: slot, root: root,
+		deadline: 30 * time.Second, idle: 30 * time.Second, noWall: true,
+		watchIdle: seam.watch, reap: seam.reap, killGroup: seam.kill,
+	}, &errOut)
 
-	require.Contains(t, stdout.String(), "NATIVE NOTE: the card published no report of its own", "the idle watch is what ended this card:\n%s\n%s", stdout.String(), stderr.String())
+	require.True(t, res.idled, "the idle watch is what ended this card:\n%s", errOut.String())
 	_, err := os.Stat(filepath.Join(job, "termed"))
-	require.NoError(t, err, "a card the watch ended is terminated before it is killed, so its harness can flush:\n%s", stdout.String())
+	require.NoError(t, err, "a card the watch ended is terminated before it is killed, so its harness can flush:\n%s", errOut.String())
 }
 
 // TestNativeIdleZeroWatchesNothing: --idle 0 is the behaviour every run had before the watch

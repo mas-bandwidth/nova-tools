@@ -39,13 +39,17 @@ import (
 // time chosen by anybody. What the deadline branch then does is asserted by its effects:
 // the grandchild is gone, which a leader-only kill leaves false for five minutes.
 func TestNativeDeadlineKillsTheWholeTree(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
-	got := deadlineOnATree(t)
-	require.Contains(t, got.stdout, "NATIVE INCOMPLETE ", "a run killed at the deadline still prints its verdict line:\n%s\n%s", got.stdout, got.stderr)
+	got := deadlineOnATree(t, nil)
 	// A run killed at its deadline with a silent harness and no RESULT.md did not succeed,
-	// and does not say it did (nova-tools #1844).
-	require.Contains(t, got.stdout, "why=harness-silent", "the verdict must name why it is incomplete:\n%s", got.stdout)
-	require.NotContains(t, got.stdout, "NATIVE OK", "a run that produced nothing must not say OK:\n%s", got.stdout)
+	// and does not say it did (nova-tools #1844): the verdict main.go reads is INCOMPLETE
+	// with why=harness-silent.
+	verdict, why := nativeVerdictWhy(got.res)
+	require.Equal(t, "INCOMPLETE", verdict, "a run killed at the deadline is not OK; why=%s\n%s", why, got.err)
+	require.Equal(t, "harness-silent", why, "the verdict must name why it is incomplete\n%s", got.err)
+	require.Equal(t, -1, got.res.rc, "the deadline killed the child, and the run records rc=-1\n%s", got.err)
 	// No live child after: the grandchild the harness left behind is gone too. It sleeps
 	// five minutes on its own, so it is gone only because the group was killed. The kill is
 	// SIGKILL and the kernel reaps at its own pace, so this waits on the pid itself; the
@@ -65,13 +69,12 @@ func TestNativeDeadlineKillsTheWholeTree(t *testing.T) {
 // on a clock: a grandchild with five minutes of sleep left is alive the instant the run
 // returns, or the observable above could not tell the fix from the defect.
 func TestNativeDeadlineControlALeaderOnlyKillLeavesTheGrandchild(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
-	realKill := nativeKillGroup
-	t.Cleanup(func() { nativeKillGroup = realKill })
-	nativeKillGroup = func(pgid int, started string) {
+	got := deadlineOnATree(t, func(pgid int, started string) {
 		_ = syscall.Kill(pgid, syscall.SIGKILL) // the leader, not -pgid: the #779 defect
-	}
-	got := deadlineOnATree(t)
+	})
 	defer func() { _ = syscall.Kill(got.grandchild, syscall.SIGKILL) }()
 	// The grandchild is ALIVE, not provably gone: signal 0 answers EPERM for a live
 	// process the runner's own sandbox keeps out of reach (macOS sandbox-exec), which is
@@ -82,27 +85,30 @@ func TestNativeDeadlineControlALeaderOnlyKillLeavesTheGrandchild(t *testing.T) {
 }
 
 type deadlineRun struct {
-	stdout, stderr string
-	slot           string
-	grandchild     int
+	res        nativeRunResult
+	err        string
+	slot       string
+	grandchild int
 }
 
 // deadlineOnATree runs one card whose harness leaves a five-minute grandchild behind and
 // then ignores SIGTERM, and fires the run's deadline the moment the harness has recorded
-// that grandchild. It returns once the run has.
-func deadlineOnATree(t *testing.T) deadlineRun {
+// that grandchild. killGroup, when set, is the run's own group kill (the control's
+// leader-only defect); nil is the real swarm.KillGroup. The run is built here and handed
+// its deadline through its own field, so nothing swaps a package var. It returns once the
+// run has.
+func deadlineOnATree(t *testing.T, killGroup func(pgid int, started string)) deadlineRun {
 	t.Helper()
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	cardPath := filepath.Join(root, "card.md")
-	require.NoError(t, os.WriteFile(cardPath, []byte("FAKE-BACKGROUND-SLEEP 300\nFAKE-IGNORE-TERM\nFAKE-SLEEP 300\n"), 0o644))
+	card := "FAKE-BACKGROUND-SLEEP 300\nFAKE-IGNORE-TERM\nFAKE-SLEEP 300\n"
+	require.NoError(t, os.WriteFile(cardPath, []byte(card), 0o644))
 	bgPath := filepath.Join(slot, "jobs", "deadline", "background.pid")
 
-	realDeadline := nativeDeadline
-	t.Cleanup(func() { nativeDeadline = realDeadline })
 	quit := make(chan struct{})
 	defer close(quit)
-	nativeDeadline = func(time.Duration) (<-chan time.Time, func() bool) {
+	deadlineFn := func(time.Duration) (<-chan time.Time, func() bool) {
 		fire := make(chan time.Time)
 		go func() {
 			// The harness writes the pid after the grandchild has started and before it
@@ -125,41 +131,46 @@ func deadlineOnATree(t *testing.T) deadlineRun {
 		return fire, func() bool { return true }
 	}
 
-	args := []string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
-		"--label", "deadline", "--card", cardPath, "--slot", slot, "--root", root,
-		"--deadline", "10m", "--no-wall"}
-	var stdout, stderr bytes.Buffer
-	returned := make(chan struct{})
+	cfg := nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: "deadline",
+		card: []byte(card), slotDir: slot, root: root,
+		deadline: 10 * time.Minute, noWall: true,
+		deadlineFn: deadlineFn, killGroup: killGroup,
+	}
+	returned := make(chan deadlineRun, 1)
 	go func() {
-		defer close(returned)
-		_ = run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
+		var errOut bytes.Buffer
+		res, _ := nativeRun(cfg, &errOut)
+		returned <- deadlineRun{res: res, err: errOut.String(), slot: slot}
 	}()
 	// A safety net for a run that never returns, which would otherwise hold the package
 	// until go test's own timeout. The green run returns in milliseconds after the pid.
 	select {
-	case <-returned:
+	case got := <-returned:
+		bgRaw, err := os.ReadFile(bgPath)
+		if err != nil {
+			// The harness could not background a process here (issue #3749): on the Studio
+			// runner the grandchild is never recorded, so the pid file is absent and the
+			// deadline wait has nothing to fire on. There is no tree to kill or to leave
+			// behind, so the two deadline tests cannot tell the fix from the defect on this
+			// bench, and they skip with a reason instead of going red for the runner.
+			t.Skipf("the harness cannot background a process here: no background pid was recorded: %v", err)
+		}
+		bg, err := strconv.Atoi(strings.TrimSpace(string(bgRaw)))
+		if err != nil || bg <= 0 {
+			t.Skipf("the harness cannot background a process here: background.pid holds %q: %v", bgRaw, err)
+		}
+		got.grandchild = bg
+		return got
 	case <-time.After(2 * time.Minute):
 		if raw, err := os.ReadFile(bgPath); err == nil {
 			if bg, err := strconv.Atoi(strings.TrimSpace(string(raw))); err == nil && bg > 0 {
 				_ = syscall.Kill(bg, syscall.SIGKILL)
 			}
 		}
-		t.Fatalf("the run did not return after its deadline fired (or the harness never recorded its grandchild):\n%s", stderr.String())
+		t.Fatalf("the run did not return after its deadline fired (or the harness never recorded its grandchild)")
+		return deadlineRun{}
 	}
-	bgRaw, err := os.ReadFile(bgPath)
-	if err != nil {
-		// The harness could not background a process here (issue #3749): on the Studio
-		// runner the grandchild is never recorded, so the pid file is absent and the
-		// deadline wait has nothing to fire on. There is no tree to kill or to leave
-		// behind, so the two deadline tests cannot tell the fix from the defect on this
-		// bench, and they skip with a reason instead of going red for the runner.
-		t.Skipf("the harness cannot background a process here: no background pid was recorded: %v", err)
-	}
-	bg, err := strconv.Atoi(strings.TrimSpace(string(bgRaw)))
-	if err != nil || bg <= 0 {
-		t.Skipf("the harness cannot background a process here: background.pid holds %q: %v", bgRaw, err)
-	}
-	return deadlineRun{stdout: stdout.String(), stderr: stderr.String(), slot: slot, grandchild: bg}
 }
 
 // pidGoneWithin waits for a pid to stop answering signal 0, polling, up to bound.

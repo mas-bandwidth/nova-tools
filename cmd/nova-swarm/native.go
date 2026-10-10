@@ -100,12 +100,24 @@ type nativeRunConfig struct {
 	// A test passes a clock it can fire so the 45s gap is an event.
 	bodyAfter func(time.Duration) <-chan time.Time
 	// deadlineFn, when set, is this one run's deadline event, in place of the
-	// package seam nativeDeadline. A test hands the wait a deadline that fires
-	// when the child it means to kill is there -- never a wall clock -- and it
-	// stays a field on this configuration rather than a package var, so the
-	// test runs in parallel with the others instead of swapping the seam under
-	// them. Nil is production's timer.
+	// real timer. A test hands the wait a deadline that fires when the child it
+	// means to kill is there -- never a wall clock -- and it stays a field on
+	// this configuration rather than a package var, so the test runs in parallel
+	// with the others instead of swapping the seam under them. Nil is
+	// production's timer (realNativeDeadline).
 	deadlineFn func(time.Duration) (<-chan time.Time, func() bool)
+	// watchIdle, reap and killGroup are this one run's seams into the idle
+	// watch, the process-group reap and the group kill. Nil is the real swarm
+	// function (swarm.WatchIdle, swarm.Reap, swarm.KillGroup); a test sets the
+	// one it fakes on its own run, so it runs in parallel with the others
+	// instead of swapping a package var under them.
+	watchIdle func(swarm.IdleWatch, <-chan struct{}) <-chan swarm.IdleEnd
+	reap      func(pgid int, started string, grace time.Duration) bool
+	killGroup func(pgid int, started string)
+	// stdout is where this run's own progress lines go -- the STAGE OK/FAIL
+	// lines and the lines the frame's install and the decide read print. Nil is
+	// os.Stdout, which production leaves.
+	stdout io.Writer
 	// headerWait is how long the proxy waits for response headers after the
 	// request is written; expiry ends the attempt UNKNOWN. Zero means
 	// ProviderHeaderTimeout (45s). Production leaves it zero.
@@ -254,28 +266,25 @@ type nativeRunResult struct {
 // 16an while its own ci-ok was green, because ci.yml's CL tier shards only the
 // touched packages and never puts the machine under that load.
 //
-// These vars are the whole fix on the production side. They are the real functions,
-// byte for byte, and nothing about the run's behaviour is decided by them being variables:
+// These fields are the whole fix on the production side. They are the real functions,
+// byte for byte, and nothing about the run's behaviour is decided by them being fields:
 // no call site changed except the name it is reached through, and no test sets them in a
 // run that is not testing the wait itself. A test may now hand the wait an idle end
 // directly and assert the ORDER of what follows -- idle declared, then the group reaped,
 // then the card ended with the idle reason -- and assert that the deadline branch never
-// ran, because the deadline branch is the only one that calls nativeKillGroup.
-var (
-	nativeWatchIdle = swarm.WatchIdle
-	nativeReap      = swarm.Reap
-	nativeKillGroup = swarm.KillGroup
-	// nativeDeadline is the fourth event the wait can be told about. The
-	// deadline test arranged it with real time -- `--deadline 3s` and a 5 s bound on the
-	// WHOLE run, setup and teardown included -- and on hosted macOS that run took 6.08 s
-	// and 6.13 s at 2a43d771 (3.04 s on a local macOS bench) with the kill unchanged. The binary
-	// gets the real timer, byte for byte; a test hands the wait a deadline that fires when
-	// the tree it means to kill is actually there.
-	nativeDeadline = func(d time.Duration) (fire <-chan time.Time, stop func() bool) {
-		t := time.NewTimer(d)
-		return t.C, t.Stop
-	}
-)
+// ran, because the deadline branch is the only one that reaches killGroup.
+
+// realNativeDeadline is production's deadline event, the fourth event the wait can be
+// told about, and the run's default when a test hands its own through
+// nativeRunConfig.deadlineFn. The deadline test used to arrange it with real time --
+// `--deadline 3s` and a 5 s bound on the WHOLE run, setup and teardown included -- and on
+// hosted macOS that run took 6.08 s and 6.13 s at 2a43d771 (3.04 s on a local macOS bench)
+// with the kill unchanged. The binary gets this timer, byte for byte; a test hands the wait
+// a deadline that fires when the tree it means to kill is actually there.
+func realNativeDeadline(d time.Duration) (fire <-chan time.Time, stop func() bool) {
+	t := time.NewTimer(d)
+	return t.C, t.Stop
+}
 
 // nativeEndLeftovers ends what a harness that exited on its own left in its process
 // group (docs/SPEC-CARD-CONTRACT.md, the finish; docs/SPEC-SWARM.md, `native`): a
@@ -284,11 +293,11 @@ var (
 // (ownChildGroup), so the group is signalled whole: a terminate, swarm.TerminateGrace, then
 // a kill. It returns "" when the group was already empty, else the group and how it ended,
 // <pgid>:reaped or <pgid>:alive (something outlived the kill), for the NATIVE line.
-func nativeEndLeftovers(pgid int, started string) string {
+func nativeEndLeftovers(pgid int, started string, reap func(pgid int, started string, grace time.Duration) bool) string {
 	if !swarm.GroupAlive(pgid, started) {
 		return ""
 	}
-	if nativeReap(pgid, started, swarm.TerminateGrace) {
+	if reap(pgid, started, swarm.TerminateGrace) {
 		return strconv.Itoa(pgid) + ":alive"
 	}
 	return strconv.Itoa(pgid) + ":reaped"
@@ -839,7 +848,7 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 				}
 			}
 			swarm.WriteStageTimeoutResult(jobDir, bench, secs)
-			fmt.Fprintf(os.Stdout, "STAGE FAIL bench=%s repo=%s base=%s secs=%d reason=stage-timeout\n",
+			fmt.Fprintf(cfg.stdout, "STAGE FAIL bench=%s repo=%s base=%s secs=%d reason=stage-timeout\n",
 				oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(swarm.Version8(stageRes.BaseSha)), secs)
 			writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], startTime, time.Now(), time.Time{}, -1, 1, "stage-timeout", nil, errOut)
 			res := nativeRunResult{
@@ -855,7 +864,7 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 			}
 			return nil, res, 1
 		}
-		fmt.Fprintf(os.Stdout, "STAGE FAIL bench=%s repo=%s base=%s reason=%s\n",
+		fmt.Fprintf(cfg.stdout, "STAGE FAIL bench=%s repo=%s base=%s reason=%s\n",
 			oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(stageFailBase(stageRes)), oneline.Escape(stageErr.Error()))
 		refuseNative(errOut, stageErr.Error())
 		return nil, nativeRunResult{}, 2
@@ -863,15 +872,15 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 	if !stageRes.Staged && swarm.CardNamesRepo(cfg.card) {
 		cleanup()
 		named := swarm.ReadCardBase(cfg.card)
-		fmt.Fprintf(os.Stdout, "STAGE FAIL bench=%s repo=%s base=%s reason=no-repo-staged\n",
+		fmt.Fprintf(cfg.stdout, "STAGE FAIL bench=%s repo=%s base=%s reason=no-repo-staged\n",
 			oneline.Field(bench), oneline.Field(named.Named), oneline.Field(swarm.Version8(named.Sha)))
 		refuseNative(errOut, fmt.Sprintf("%s names repo %s but nothing was staged into %s: read the card's REPO:/base-repo: line (owner/name or a clone URL)",
 			oneline.Field(cfg.label), oneline.Field(named.Named), oneline.Field(stageOpts.TargetDir)))
 		return nil, nativeRunResult{}, 2
 	}
-	writeStageOK(os.Stdout, bench, stageRes)
+	writeStageOK(cfg.stdout, bench, stageRes)
 	if stageRes.Carry != nil {
-		fmt.Fprintln(os.Stdout, oneline.Escape(stageRes.Carry.Line()))
+		fmt.Fprintln(cfg.stdout, oneline.Escape(stageRes.Carry.Line()))
 	}
 	if stageRes.Shared {
 		cfg.borrowed = filepath.Join(stageRes.Mirror, "objects")
@@ -886,11 +895,11 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 	decided := ""
 	workStart := ""
 	if cfg.frame != nil && stageRes.Staged {
-		start, err := installFrameTimed(cfg, jobDir, stageRes.BaseSha, stageRes.Carry, os.Stdout)
+		start, err := installFrameTimed(cfg, jobDir, stageRes.BaseSha, stageRes.Carry, cfg.stdout)
 		if err != nil {
 			cleanup()
 			if errors.Is(err, errReadStart) {
-				fmt.Fprintf(os.Stdout, "STAGE FAIL bench=%s repo=%s base=%s reason=%s\n",
+				fmt.Fprintf(cfg.stdout, "STAGE FAIL bench=%s repo=%s base=%s reason=%s\n",
 					oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(stageFailBase(stageRes)), oneline.Escape(err.Error()))
 				refuseNative(errOut, err.Error())
 				return nil, nativeRunResult{}, 2
@@ -901,7 +910,7 @@ func prepare(cfg nativeRunConfig, errOut io.Writer) (*nativePrepared, nativeRunR
 		workStart = start
 		// THE DECIDE READ (nativedecide.go; docs/SPEC-SPRINT.md section 6): a flash card's
 		// first read is decided here, before any child, when its p(defect) is past a bar
-		switch route, op := nativeDecide(cfg, jobDir, start, stageRes.BaseSha, os.Stdout, errOut); route {
+		switch route, op := nativeDecide(cfg, jobDir, start, stageRes.BaseSha, cfg.stdout, errOut); route {
 		case decide.RouteStrings:
 			decided = op
 		case decide.RouteBounce, decide.RouteLand:
@@ -1204,13 +1213,9 @@ func start(s *nativeRunState, attempt int, errOut io.Writer) (*nativeStarted, na
 	started := swarm.StartStamp(pgid)
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	deadline := nativeDeadline
-	if s.prep.cfg.deadlineFn != nil {
-		deadline = s.prep.cfg.deadlineFn
-	}
-	deadlineC, stopDeadline := deadline(s.prep.cfg.deadline)
+	deadlineC, stopDeadline := s.prep.cfg.deadlineFn(s.prep.cfg.deadline)
 	stopWatch := make(chan struct{})
-	idleC := nativeWatchIdle(swarm.IdleWatch{
+	idleC := s.prep.cfg.watchIdle(swarm.IdleWatch{
 		Log: s.outLog, Job: s.prep.jobDir, Pid: pgid, Idle: s.prep.cfg.idle, Reader: s.reader,
 	}, stopWatch)
 
@@ -1249,26 +1254,26 @@ func watch(s *nativeRunState, st *nativeStarted) *nativeWatched {
 				s.res.rc = 0
 			}
 		}
-		s.res.survivors = nativeEndLeftovers(st.pgid, st.started)
+		s.res.survivors = nativeEndLeftovers(st.pgid, st.started, s.prep.cfg.reap)
 	case <-st.deadlineC:
-		nativeKillGroup(st.pgid, st.started)
+		s.prep.cfg.killGroup(st.pgid, st.started)
 		<-st.done
 		s.res.rc = -1
 	case end := <-st.idleC:
 		st.stopDeadline()
-		nativeReap(st.pgid, st.started, swarm.TerminateGrace)
+		s.prep.cfg.reap(st.pgid, st.started, swarm.TerminateGrace)
 		<-st.done
 		s.res.rc = -1
 		s.res.idled, s.res.idleEnd = true, end
 	case <-s.bodyStall:
 		st.stopDeadline()
-		nativeReap(st.pgid, st.started, swarm.TerminateGrace)
+		s.prep.cfg.reap(st.pgid, st.started, swarm.TerminateGrace)
 		<-st.done
 		s.res.rc = -1
 		s.res.lost = true
 	case <-s.termCh:
 		st.stopDeadline()
-		nativeReap(st.pgid, st.started, swarm.TerminateGrace)
+		s.prep.cfg.reap(st.pgid, st.started, swarm.TerminateGrace)
 		<-st.done
 		s.res.rc = -1
 		s.res.terminated = true
@@ -1526,6 +1531,26 @@ func report(s *nativeRunState, errOut io.Writer) (nativeRunResult, int) {
 // errOut). A refusal is a defect in the configuration the run can see before it
 // spends anything, and it names one reason.
 func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code int) {
+	// THE RUN'S OWN SEAMS. The four events the wait can be told about and the
+	// writer its progress lines go to are fields of this run's value; here they
+	// are set to the real functions and os.Stdout when the caller left them
+	// unset, so production is byte for byte what it was. A test sets the field
+	// it fakes on its own configuration instead of swapping a package var.
+	if cfg.watchIdle == nil {
+		cfg.watchIdle = swarm.WatchIdle
+	}
+	if cfg.reap == nil {
+		cfg.reap = swarm.Reap
+	}
+	if cfg.killGroup == nil {
+		cfg.killGroup = swarm.KillGroup
+	}
+	if cfg.deadlineFn == nil {
+		cfg.deadlineFn = realNativeDeadline
+	}
+	if cfg.stdout == nil {
+		cfg.stdout = os.Stdout
+	}
 	// (1) prepare phase
 	p, earlyRes, earlyCode := prepare(cfg, errOut)
 	if earlyCode != 0 || p == nil {
