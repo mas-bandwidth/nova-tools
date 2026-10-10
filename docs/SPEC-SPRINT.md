@@ -5667,6 +5667,20 @@ p50=5m; p90 stays nearest rank. The injected-clock case
 internal/sprint/judgment_wait_test.go) drives two answers five and fifteen minutes after
 their raises and holds p50=10m, p90=15m.
 
+#### judgment-answer-latencyb-t-bcb.w4
+
+The wait of an answer a stream's retirement writes (the reader's finding on
+`judgment-answer-latencyb-t-bb.w1`): `RetireStreams` (internal/sprint/streams.go) closes
+every open judgment naming a stream the work and merge tables no longer hold and writes its
+own decided note, which names the judgment it answers (`Note.Answers`) and carries no wait
+field of its own. The wait is not lost: `AnswerWaits` (internal/sprint/inbox.go) reads the
+raise to answer from the judgment the answer names, so a retired judgment reaches `where`'s
+median and p90 as a reworked one does. The injected-clock case "a judgment a stream's
+retirement closes still shows its wait"
+(`TestRuleableJudgmentsAreAnsweredAtRaiseAndTheRestRecordTheirWait`,
+internal/sprint/judgment_wait_test.go) retires a judgment two hours after its raise and holds
+`n=1 wait p50=2h0m0s p90=2h0m0s`.
+
 ### wait-many-notes-b.w2
 
 **wait takes several notes, and a group** (the coordinator waited judgments one at a time in a loop, `wait <id> --for 3h` per note). `wait <note>[,<note>]... (--for <duration> | --until <RFC3339>)` sets each named note, and `wait --group <id> [--expect <n>] (--for <duration> | --until <RFC3339>)` sets every note of that inbox group (a stalled stream's group, which has no note, is its own id), as `ack` takes `<note>[,<note>]...` and a verb given `--group` takes the group. Each note is set or refused on its own line (`WAIT OK note=<id> ...`, or `WAIT REFUSED note=<id>: <why>`). `--group` with a size other than `--expect` is refused and nothing changes. A group of one note keeps the one-id command the inbox already prints; a group of several names every note, comma separated (`TestWaitTakesSeveralNotes`).

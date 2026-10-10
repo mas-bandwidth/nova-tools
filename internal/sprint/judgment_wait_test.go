@@ -91,6 +91,27 @@ func TestRuleableJudgmentsAreAnsweredAtRaiseAndTheRestRecordTheirWait(t *testing
 		assert.Equal(t, NBlocked, old[0].Type, "the primaries' own weights rank the stream's judgment last")
 	})
 
+	t.Run("a judgment a stream's retirement closes still shows its wait", func(t *testing.T) {
+		t.Parallel()
+		w := newWorld(t)
+		w.must(Add(w.s, AddReq{Stream: "sd", IDs: []string{"d1"}}))
+		n := judgment(NConflict, "sd", t0, 0)
+		n.StreamLevel = true
+		w.note(n)
+		w.tick(2 * time.Hour)
+		// stream remove took the stream off, so the tick retires what named it (RetireStreams,
+		// streams.go): the retirement writes its own decided note, and where must still report
+		// the wait from the raise to the answer, so the median covers every answer, retired or
+		// reworked (docs/SPEC-SPRINT.md, judgment-answer-latencyb-t-bb.w1)
+		p := RetireStreams(w.s, []string{"sd"}, "gone")
+		require.Len(t, p.Notes, 1)
+		w.must(p)
+		got := AnswerWaits(w.notes, w.s.Now, 24*time.Hour)
+		assert.Equal(t, AnswerWait{N: 1, P50: 2 * time.Hour, P90: 2 * time.Hour}, got,
+			"the wait is read from the judgment the answer names")
+		assert.Equal(t, "answered 24h: n=1 wait p50=2h0m0s p90=2h0m0s", got.Line())
+	})
+
 	t.Run("each answer records its wait and the last day shows the median and p90", func(t *testing.T) {
 		t.Parallel()
 		w := setup(t, 3)
