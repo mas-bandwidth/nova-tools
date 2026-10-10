@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 )
 
 const usage = `nova-friend: a tool for installing and managing a friend's daemon
@@ -184,7 +186,34 @@ func runRun(e env, args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "run", "--deny-self <paths> or NOVA_FRIEND_DENY_SELF")
 	}
 
-	return 0
+	home := e.getenv("HOME", "")
+	if home == "" {
+		home = "/tmp"
+	}
+
+	homeDir := filepath.Join(home, ".nova", "friend", as)
+	if err := os.MkdirAll(homeDir, 0750); err != nil {
+		return refuse(stderr, "run", fmt.Sprintf("create home: %v", err))
+	}
+
+	policy := &sandbox.Policy{
+		Writes: []string{homeDir},
+		Cwd:    homeDir,
+		Tmp:    filepath.Join(homeDir, "tmp"),
+		Home:   home,
+		Argv:   []string{"/bin/sh", "-c", "trap 'exit 0' INT TERM; while true; do sleep 3600; done"},
+	}
+	policy.OptRoots = sandbox.OptionalRoots(policy.Argv[0])
+
+	envv := os.Environ()
+	okLine := func() {}
+
+	code, err := sandbox.Run(policy, envv, os.Stdin, stdout, stderr, okLine)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-friend run: %v\n", err)
+		return code
+	}
+	return code
 }
 
 func runUninstall(e env, args []string, stdout, stderr io.Writer) int {
