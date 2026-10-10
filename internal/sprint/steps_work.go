@@ -968,7 +968,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 		if StreamHeld(s, c.Row) {
 			return "its stream " + c.Row + " is held by the coordinator (hold.go): nova-sprint unhold " + c.Row + " deals it again"
 		}
-		if OnlyFriend(c) {
+		if OnlyFriend(c) && !PinReleased(s, c, s.Friends) {
 			return friendCardWhy
 		}
 		return inState(c, Ready)
@@ -1660,7 +1660,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			delete(set, FieldFailureAt)
 			delete(set, FieldFailureTier)
 			delete(set, FieldFailureBound)
-			u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Ready, set, "result", FieldFailure, FieldFailureAt, FieldFailureTier, FieldFailureBound)))
+			u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Ready, set, append([]string{"result", FieldFailure, FieldFailureAt, FieldFailureTier, FieldFailureBound}, ruleAnswerConsumed(pr, set)...)...)))
 			u.Moved = fmt.Sprintf("%s working -> done %s; %s working -> ready (%s)", c.ID, result, pr.ID, why)
 			p.Units = append(p.Units, u)
 			continue
@@ -1713,7 +1713,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			}
 			u.Notes = append(u.Notes, n)
 		}
-		u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Review, set)))
+		u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Review, set, ruleAnswerConsumed(pr, set)...)))
 		if j, ok := reviewJudgment(s, inReview(pr, set), reviewStep{moved: asked, writes: u.Notes, who: who}); ok {
 			u.Notes = append(u.Notes, j)
 		}

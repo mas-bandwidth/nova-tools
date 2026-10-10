@@ -360,7 +360,13 @@ left for nova-tools-1.1.0 into cards, and doing it via the sprint, but doing
 parts on friends where we would normally do friend work."). WHO is a preference (docs/SPEC-CARD-CONTRACT.md, the WHO line; `cardhdr.ReadWho`
 is the one parser). A card with no WHO line, or `WHO: -`, is unpinned. `WHO: friend`
 is any friend. `WHO: friend <name>` prefers that friend while she is up with room.
-`WHO: only friend <name>` is the one hard pin and waits for her alone. `add` and
+`WHO: only friend <name>` is the one hard pin and waits for her alone, until its pin-waits
+stop (`a card pinned to one friend waits while she is not up`) has stood
+`sprint.PinReleaseBound` (one hour): past it, while she is still not up, the pin is a
+preference and the deals offer it on as a named pin is offered while she is not up, to a
+friend up or a machine, with the pin-ignored judgment (`sprint.PinReleased`; the fault
+inventory of 2026-10-10: 21 cards pinned to held friends waited 9 h and more;
+`TestAHardPinToAFriendNotUpPastItsBoundIsOfferedOn`; tla/SprintRules.tla, Part "episodes"). `add` and
 `brief` refuse any other WHO value, a name that is no row of the friends table, and
 `WHO: friend` while the table has no row (exit 2, nothing written). A named friend's
 configured work restriction is held too: a card whose stream matches none of her
@@ -470,7 +476,8 @@ take it (held, not up, the card has left her, her tiers do not hold the tier, or
 she has no room), and whose row and column hold the card now. The pass keeps
 that one judgment, and raises it when the card is already sitting off her row,
 until it is back on her row or leaves ready and working. A hard pin is not
-rotated and is not this judgment. A
+rotated and is not this judgment, except a hard pin released past its bound
+(`sprint.PinReleased`), which is judged as a named pin is. A
 hard pin (`WHO: only friend <name>`) with no room waits ready, held by the
 no-stall rule as waiting for her (`sprint.TickDeal`, its friend deal,
 `sprint.OnlyFriend`); a card a friend takes is never held for want of a machine
@@ -5407,7 +5414,13 @@ verb the judgment's decisions name, applied as the machine; it closes the judgme
 the decided note `answered by rule <name>: <act>: <why>` (the log and the inbox's decided
 list), and writes `rule_answer` (`<name>: <act> at <time>`) on the card it moved; the
 `read-broken` rule writes its decided note on the card too, as its `note` (logged with the
-move). `nova-sprint
+move). Both belong to the attempt the answer started (a twin is created carrying them): that
+attempt's finish clears them (`sprint.ruleAnswerConsumed`), so a card back in review never
+shows an answer that is not its own (the fault inventory of 2026-10-10: 56 of 105 cards in
+review carried a `rule_answer` older than their `finished_at`, 12 of them twins read as
+answered and not moved; `TestARuleAnswerIsConsumedByTheAttemptItStarted`; tla/SprintRules.tla,
+Part "episodes", AnswerApplies), and the `rules` count below counts the answers whose attempt
+is still on its way. `nova-sprint
 rules` prints the same answers, read-only: one `RULE` line per judgment and subject, and
 `RULES OK judgments= acting= left= off= by=<rule>_<act>=<n>,...`.
 

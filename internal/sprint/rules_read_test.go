@@ -63,6 +63,31 @@ func (r *conflictRig) readCard() {
 	r.must(store.AddStep(sprint.AddReq{Stream: "r", IDs: []string{"r-1"}, Brief: readBrief}))
 }
 
+// The fault inventory of 2026-10-10: 56 of 105 cards in review carried a rule_answer older
+// than their finished_at. A rule's answer and note belong to the attempt it started: that
+// attempt's finish consumes them.
+func TestARuleAnswerIsConsumedByTheAttemptItStarted(t *testing.T) {
+	t.Parallel()
+	r := newConflictRig(t)
+	r.readCard()
+	r.brokenRead("r-1", "internal/x/a.go:12 drops the error from Close; return it")
+	r.tick()
+	pr := r.snap().Work.Card("r-1")
+	require.Equal(t, 2, pr.Int("attempt"), "reworked by rule in the tick")
+	require.NotEmpty(t, pr.F(sprint.FieldRuleAnswer), "the answer is on the card while its attempt runs")
+	require.NotEmpty(t, pr.F("note"))
+
+	wc := r.snap().Fleet.Card(sprint.WorkCardID("r-1", 2))
+	require.NotNil(t, wc)
+	r.must(store.TakeStep(sprint.TakeReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: wc.Int("gen")}}))
+	wc = r.snap().Fleet.Card(wc.ID)
+	r.must(store.FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: wc.Int("gen")}, Head: readHead}))
+	pr = r.snap().Work.Card("r-1")
+	require.Equal(t, sprint.Review, pr.Col)
+	assert.Empty(t, pr.F(sprint.FieldRuleAnswer), "its attempt finished: the answer is consumed")
+	assert.Empty(t, pr.F("note"), "and its note")
+}
+
 func TestABrokenReadIsReworkedByRuleWithItsFinding(t *testing.T) {
 	t.Parallel()
 	t.Run("a finding inside PATHS: reworked with it as the fix, on the same tier", func(t *testing.T) {

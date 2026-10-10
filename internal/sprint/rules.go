@@ -597,6 +597,23 @@ var TickRules = []TickPartDef{
 	{PartRuleBrief, TickRuleBrief},
 }
 
+// ruleAnswerConsumed is the fields a finish clears on the primary pr: the rule's answer
+// (FieldRuleAnswer) and its note (FieldNote) belong to the attempt the answer started, a
+// rework's or a twin's (a twin is created carrying them), and that attempt's finish consumes
+// them, so a card back in review never shows an answer that does not apply to it (the fault
+// inventory of 2026-10-10: 56 of 105 cards in review carried a rule_answer older than their
+// finished_at, 12 of them twins read as "answered, not moved"). A field the finish sets
+// itself is kept.
+func ruleAnswerConsumed(pr *Card, set map[string]string) []string {
+	var out []string
+	for _, f := range []string{FieldRuleAnswer, FieldNote} {
+		if _, sets := set[f]; !sets && pr.F(f) != "" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // IsRulePart says the tick part is a rule part: it plans with the routes and the rules
 // turned off (nova-config's sprint row).
 func IsRulePart(name string) bool { return strings.HasPrefix(name, "rule ") }

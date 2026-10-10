@@ -171,6 +171,35 @@ func TestACardPinnedToAFriendWhoIsNotUpIsRaisedUntilUnpinned(t *testing.T) {
 	assert.Nil(t, r.openNote(sprint.NStopPinWaits, "p1-1"), "unpinned, nothing waits on her")
 }
 
+// The fault inventory of 2026-10-10: 21 cards pinned to held friends waited 9 h and more. A
+// hard pin whose friend is not up past PinReleaseBound is a preference: offered on to the
+// friends up and the fleet, with the pin-ignored judgment, as a named pin is while she is not
+// up (sprint.PinReleased).
+func TestAHardPinToAFriendNotUpPastItsBoundIsOfferedOn(t *testing.T) {
+	t.Parallel()
+	r := newHoldRig(t, 0, 0)
+	r.tickBeating(time.Second, "m1", "m2")
+	r.hold(sprint.HoldReq{Names: []string{"amy"}, Reason: "out of credits"})
+	r.must(store.AddStep(sprint.AddReq{Stream: "p1", Cards: []sprint.CardAdd{{ID: "p1-1", Brief: friendsBrief("only friend amy")}}}))
+	r.tickBeating(time.Second, "m1", "m2")
+	r.tickBeating(time.Second, "m1", "m2")
+	require.NotNil(t, r.openNote(sprint.NStopPinWaits, "p1-1"), "the pin waits on her: the stop")
+
+	// within the bound the pin holds: it waits ready for her alone
+	r.tickBeating(sprint.PinReleaseBound/2, "m1", "m2")
+	require.Equal(t, sprint.Ready, r.snap().Work.Card("p1-1").Col, "within the bound the hard pin waits")
+
+	// past the bound it is a preference: dealt on, and the pin-ignored judgment says why
+	r.tickBeating(sprint.PinReleaseBound/2+time.Second, "m1", "m2")
+	r.tickBeating(time.Second, "m1", "m2")
+	require.Equal(t, sprint.Working, r.snap().Work.Card("p1-1").Col, "past the bound the pin is offered on")
+	r.tickBeating(sprint.PassEvery, "m1", "m2")
+	j := r.openNote(sprint.NPinIgnored, "p1-1")
+	require.NotNil(t, j, "dealt away from her, the pin-ignored judgment")
+	assert.Contains(t, j.What, "amy did not take it because she is held")
+	assert.Nil(t, r.openNote(sprint.NStopPinWaits, "p1-1"), "it waits on her no more: the stop closes")
+}
+
 func TestJudgmentsLateOnTheCoordinatorArePushedAndEscalatePastAWait(t *testing.T) {
 	t.Parallel()
 	r := newHoldRig(t, 1, 0)

@@ -271,6 +271,40 @@ func pinStops(s *Snapshot, r TickReq) []Stop {
 	return out
 }
 
+// PinReleaseBound is how long a hard pin waits on a friend who is not up before the pin
+// becomes a preference (PinReleased).
+const PinReleaseBound = time.Hour
+
+// PinReleased says the hard pin c (OnlyFriend) is a preference now: its friend is not up in
+// seats, and its pin-waits stop (NStopPinWaits, pinStops) has stood, open or acknowledged,
+// for PinReleaseBound or longer. The deals then offer it on as a named pin is offered while
+// she is not up, to another friend or a machine, with the pin-ignored judgment (pinConds);
+// the stop stays while it waits ready, so the clock is the stop's and never restarts on the
+// release. The fault inventory of 2026-10-10: 21 cards pinned to held friends waited 9 h and
+// more, and 5 behind them. Seats nil (the friends not read) releases nothing.
+func PinReleased(s *Snapshot, c *Card, seats []FriendSeat) bool {
+	if s == nil || c == nil || seats == nil || !OnlyFriend(c) {
+		return false
+	}
+	name, _ := FriendCard(c)
+	if name == "" {
+		return false
+	}
+	for _, f := range seats {
+		if f.Name == name && f.Status == Up {
+			return false
+		}
+	}
+	for _, os := range [][]Open{s.Open, s.Acked} {
+		for _, o := range os {
+			if o.Note.Type == NStopPinWaits && o.Subject() == c.ID && !o.Note.At.IsZero() && s.Now.Sub(o.Note.At) >= PinReleaseBound {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // needing is the open primaries whose needs name id, in id order.
 func needing(s *Snapshot, id string) []string {
 	var out []string

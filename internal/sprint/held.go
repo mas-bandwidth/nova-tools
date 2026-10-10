@@ -565,7 +565,7 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 		}
 		return strings.Join(held, "; "), "", true
 	case Ready:
-		if OnlyFriend(pr) {
+		if OnlyFriend(pr) && !PinReleased(s, pr, s.Friends) {
 			// the one hard pin (WHO: only friend <name>) waits for her up below her room,
 			// DealAhead times her width (friendDealPass), whose beats and widths are the friends'
 			// records, not the tables'; every other card a friend may take is the fleet's

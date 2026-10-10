@@ -753,16 +753,66 @@ func readCardsAskPart(s *Snapshot, r TickReq, seats []FriendSeat) (Plan, int) {
 	}
 	conds = append(conds, raiseReadTierConds(s)...)
 	conds = append(conds, readsWindowConds(s, r)...)
-	// a read no unit up may take is cannot ask, one judgment, open until a reader may
-	var refused []Refusal
-	for _, id := range slices.Sorted(maps.Keys(waits)) {
-		if strings.HasPrefix(waits[id], NoReaderMayRead) {
-			refused = append(refused, Refusal{Key: id, Why: waits[id]})
-		}
-	}
-	conds = append(conds, cannotAskCond(s, refused)...)
+	// a read no unit up may take is cannot ask: one judgment an episode, the primary in
+	// review waiting for a reader at one attempt (cannotAskEpisodes)
+	refused, held, ended := cannotAskEpisodes(s, r, waits)
+	view := *s
+	view.Open = append(slices.Clone(s.Open), held...)
+	conds = append(conds, cannotAskCond(&view, refused)...)
+	p.Closes = append(p.Closes, ended...)
 	due := notify(&p, s, conds, []string{NCannotAsk, NFewReaders, NReadersBehind, NRaiseReadTier, NBrokenReadsOutrun, NReaderBreaks}, r)
 	return p, due + len(waits)
+}
+
+// cannotAskEpisodes is the read-card ask's cannot-ask condition, one judgment an episode
+// (fault inventory 2026-10-10, item 22: one card judged six times in one wait at one
+// attempt). An episode is a primary in review waiting for a reader at one attempt: it is
+// raised when no unit up may read the primary (NoReaderMayRead), and it stands, whatever
+// the wait's reason this tick, while the primary still waits at that attempt: a primary
+// whose readers are at their room this tick stays a subject of the judgment open on it
+// (or of the coordinator's wait on it), never closed to be raised again when the reason
+// turns back. It ends when the primary is dealt its reads or leaves review (it waits no
+// more: notify closes it) or its attempt moves on (its waiting mark is of another attempt:
+// ended, closed here, and a new episode raised on a later tick). refused is the primaries
+// the condition holds on; held is the coordinator's waits not yet run out on cannot ask,
+// which name a primary as surely as an open judgment does (cannotAskCond's text names the
+// primaries no judgment or wait holds, the ones notify writes it on).
+func cannotAskEpisodes(s *Snapshot, r TickReq, waits map[string]string) (refused []Refusal, held, ended []Open) {
+	on := map[string][]Open{} // the primary's open cannot-ask judgments and live waits
+	for _, o := range s.Open {
+		if o.Note.Type == NCannotAsk && !o.Note.StreamLevel {
+			on[o.Subject()] = append(on[o.Subject()], o)
+		}
+	}
+	for _, o := range s.Acked {
+		if o.Note.Type != NCannotAsk || o.Note.StreamLevel {
+			continue
+		}
+		if !o.Note.Review.IsZero() {
+			base := o.Note.ReviewSet // as notify bases a wait
+			if base.IsZero() {
+				base = o.Note.At
+			}
+			if DueNow(s.Now, o.Note.Review, base, r.Stopped) {
+				continue // run out: notify closes it, and raises it again while no unit may read it
+			}
+		}
+		on[o.Subject()] = append(on[o.Subject()], o)
+		held = append(held, o)
+	}
+	for _, id := range slices.Sorted(maps.Keys(waits)) {
+		if !strings.HasPrefix(waits[id], NoReaderMayRead) && len(on[id]) == 0 {
+			continue // waiting for room, and no episode open: nothing to judge
+		}
+		if c := s.Work.Placed(id); c != nil && len(on[id]) > 0 && c.F(FieldWaitingReader) != "" && waitingAt(c) != max(c.Int("attempt"), 1) {
+			// its attempt moved on: the judgment is of the episode before, ended here (the
+			// primary stays a subject this tick, so notify neither closes it twice nor
+			// raises the next episode before it is closed)
+			ended = append(ended, on[id]...)
+		}
+		refused = append(refused, Refusal{Key: id, Why: waits[id]})
+	}
+	return refused, held, ended
 }
 
 // readCardsWaitingCount is the reads waiting while read cards are on (ReadsWaiting): the
