@@ -12,14 +12,19 @@ import (
 // what a read is, the work under review (repository, branch, head, base, the attempt's start),
 // how to read it, how to finish (outbox/<job>/REPORT.md whose first line is "Verdict: LAND"
 // or "Verdict: HOLD", a HOLD naming each defect), and the card under review verbatim with the
-// worker's report. A one-shot runner that runs inbox/<job>/BRIEF.md and publishes
-// outbox/<job>/REPORT.md runs it unchanged; friend sync closes the read from that report
-// (FriendReadClose).
-func ReadCardBrief(name, job string, p Packet, start string, deadline time.Time) string {
+// worker's report. bench is the line a lane gates on (sprint.BenchLine, docs/SPEC-SPRINT.md
+// section 5, "the bench a lane gates on"): the least loaded bench with its reason, written
+// into the STATUS line so the read's lane runs its go commands on it and never on a name by
+// habit. A one-shot runner that runs inbox/<job>/BRIEF.md and publishes outbox/<job>/REPORT.md
+// runs it unchanged; friend sync closes the read from that report (FriendReadClose).
+func ReadCardBrief(name, job string, p Packet, start string, deadline time.Time, bench string) string {
 	repo, base := briefLine(p.Brief, "REPO:"), briefLine(p.Brief, "BASE:")
 	base = firstNonEmpty(p.WorkBase, base)
 	var b strings.Builder
 	fmt.Fprintf(&b, "STATUS: nova-sprint read card %s, epoch %d: a READ of attempt %d of %s; change nothing, commit nothing, push nothing; when done, write outbox/%s/REPORT.md whose first line is Verdict: LAND or Verdict: HOLD\n", p.Card, p.Epoch, p.Attempt, p.Primary, job)
+	if bench != "" {
+		fmt.Fprintf(&b, "%s\n", bench)
+	}
 	fmt.Fprintf(&b, "WHO: friend %s\n", name)
 	fmt.Fprintf(&b, "Work in ~/%[1]s-working/jobs/%[2]s/: the clone and every file of the read go inside it; the report goes to ~/%[1]s-working/outbox/%[2]s/REPORT.md.\n", name, job)
 	b.WriteString("\n# This card is a READ\n\n")

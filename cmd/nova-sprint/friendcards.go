@@ -627,6 +627,7 @@ func withMatchedOnRoute(line string) (string, bool) {
 // call's deliveries, for the cards the pass wrote; a one-shot friend is woken per
 // card, which is how her runner starts a lane (docs/FRIENDS.md).
 func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir, rowDir string, say func(string)) (delivered, finished int, err error) {
+	bench := benchLine(ctx, st) // one choice for every read this pass delivers, so no lane names a bench by habit
 	// her working cards, then the ready ones dealt behind them (sprint.TickDeal): both are
 	// delivered, and her queue file says which are which
 	// and the ones taken back from her (sprint.FriendTake), withdrawn on her row until the deal
@@ -693,7 +694,7 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir, row
 	}()
 	for i, p := range packets {
 		if p.Kind == "read" {
-			d, f, err := a.friendReadOf(ctx, st, name, dir, rowDir, p, cards[i], say, wake)
+			d, f, err := a.friendReadOf(ctx, st, name, dir, rowDir, p, cards[i], bench, say, wake)
 			delivered, finished = delivered+d, finished+f
 			if err != nil {
 				return delivered, finished, err
@@ -966,8 +967,9 @@ func (a *app) wakeFriendStall(ctx context.Context, st *store.Store, name string,
 
 // friendReadText is the BRIEF.md of a friend's read, as friend sync and friend cards
 // both write it: the read's brief, the attempt's branch, start commit and head (the packet's,
-// else the card's), and a deadline of thirty minutes on the sprint clock.
-func friendReadText(st *store.Store, name string, p sprint.Packet, c *sprint.Card) string {
+// else the card's), and a deadline of thirty minutes on the sprint clock. bench is the line a
+// lane gates on (sprint.BenchLine), written into the read's STATUS line.
+func friendReadText(st *store.Store, name string, p sprint.Packet, c *sprint.Card, bench string) string {
 	if p.ReadJob != "" {
 		// a read asked the old way keeps the old brief
 		branch, head, start := p.WorkBranch, p.Head, ""
@@ -993,18 +995,38 @@ func friendReadText(st *store.Store, name string, p sprint.Packet, c *sprint.Car
 			}
 		}
 	}
-	return sprint.ReadCardBrief(name, friendJobOf(p), p, start, deadline)
+	return sprint.ReadCardBrief(name, friendJobOf(p), p, start, deadline, bench)
 }
 
 // friendReadTextAtDir names the row directory in a review brief header
 // (docs/FRIENDS.md), keeping the pure sprint generators independent of config.
-func friendReadTextAtDir(st *store.Store, name, dir string, p sprint.Packet, c *sprint.Card) string {
-	text := friendReadText(st, name, p, c)
+func friendReadTextAtDir(st *store.Store, name, dir string, p sprint.Packet, c *sprint.Card, bench string) string {
+	text := friendReadText(st, name, p, c, bench)
 	header, body, found := strings.Cut(text, "\n\n")
 	if !found {
 		return text
 	}
 	return strings.ReplaceAll(header, "~/"+name+"-working", friendWorkDir(name, dir)) + "\n\n" + body
+}
+
+// benchLine is the bench a lane gates on now, for a friend's read or work card brief: the
+// least loaded bench under its load cap with its reason (sprint.BenchLine, docs/SPEC-SPRINT.md
+// section 5, "the bench a lane gates on"); "" when the store has no bench to name.
+func benchLine(ctx context.Context, st *store.Store) string {
+	s, err := st.Load(ctx, []string{sprint.Fleet}, nil)
+	if err != nil {
+		return ""
+	}
+	members := s.Members()
+	beats, err := st.Beats(ctx, members)
+	if err != nil {
+		return ""
+	}
+	lanes, err := st.LaneRows(ctx)
+	if err != nil {
+		return ""
+	}
+	return sprint.BenchLine(sprint.BenchRows(members, beats, sprint.GoProcessCounts(lanes)), sprint.BenchCapFactor)
 }
 
 // friendReadOf delivers one friend's read and closes it from the friend's
@@ -1014,7 +1036,7 @@ func friendReadTextAtDir(st *store.Store, name, dir string, p sprint.Packet, c *
 // (sprint.FriendReadClose). It is not a work finish. The job directory is
 // the card id, the path the ask writes, so a brief already there is kept.
 // wake is the pass's: one-shot sends now, batch records the card for the one message.
-func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir, rowDir string, p sprint.Packet, c *sprint.Card, say func(string), wake func(sprint.Packet, string, string) error) (delivered, finished int, err error) {
+func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir, rowDir string, p sprint.Packet, c *sprint.Card, bench string, say func(string), wake func(sprint.Packet, string, string) error) (delivered, finished int, err error) {
 	job := friendJobOf(p)
 	in, why, err := friendInbox(dir, p)
 	if err != nil {
@@ -1029,7 +1051,7 @@ func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir, rowD
 		if err := os.MkdirAll(in, 0o755); err != nil {
 			return 0, 0, err
 		}
-		text := friendReadTextAtDir(st, name, rowDir, p, c)
+		text := friendReadTextAtDir(st, name, rowDir, p, c, bench)
 		switch err := atomicfile.WriteFile(brief, []byte(text), 0o644, atomicfile.NoReplace()); {
 		case err == nil:
 			delivered++
