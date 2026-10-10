@@ -7588,3 +7588,7 @@ friend reaches that friend's inbox by the route her judgments already take: the
 push loop writes a group addressed to someone to that actor's own inbox
 directory (`pushTarget.dirOf`, `~/<actor>-working/inbox/sprint-judgments`), the
 group carrying the note's addressee (`sprint.Group.To`).
+
+### land-live-progress-b.w1~15.g5
+
+The lander prints LANDING stream=<s> phase=<fetch|merge|check|queue|push|report> cards=<n> at=<time> as each stream starts and as each phase begins, and records the current progress in a status file beside its cache clone. nova-sprint land --status prints the current pass, phase and duration, or no land pass running.
