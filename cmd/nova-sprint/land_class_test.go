@@ -44,14 +44,11 @@ func TestARedClassOnTheBaseStopsLandings(t *testing.T) {
 		return "", 0, nil
 	}
 	b.mu.Unlock()
-	for n := range sprint.BaseGateStops {
-		code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
-		assert.Equal(t, 1, code, out+errs)
-		assert.Contains(t, out+errs, "staticcheck")
-		if n < len(sprint.BaseGateRetries) {
-			r.after(sprint.BaseGateRetries[n])
-		}
-	}
+	code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+	assert.Equal(t, 1, code, out+errs)
+	assert.Contains(t, out+errs, "BASE RED ")
+	assert.Contains(t, out+errs, "TestStaticcheckFindings")
+	assert.NotContains(t, out+errs, "fact=conflict", "the base's failing class test cannot blame the card")
 	assert.Equal(t, "stopped base", r.streamState("s1"))
 	assert.Equal(t, map[string]string{"s1-1": "merging/queued"}, r.places("s1-1"))
 	inbox := r.ok("inbox")
@@ -61,8 +58,9 @@ func TestARedClassOnTheBaseStopsLandings(t *testing.T) {
 	}
 	assert.Contains(t, strings.Join(runs, "\n"), "gofmt -l .")
 	assert.Contains(t, strings.Join(runs, "\n"), "functional")
-	r.after(sprint.BaseGateRetries[1])
-	r.do("land --repo-dir " + r.clone + " --base main")
+	_, out, errs = r.do("land --repo-dir " + r.clone + " --base main")
+	assert.Contains(t, out+errs, "still fails its tree gate", "a stopped stream re-checks its base")
+	assert.NotContains(t, out+errs, "fact=conflict")
 	assert.Equal(t, 1, strings.Count(r.ok("inbox"), sprint.NBaseRed), "the same red base has one judgment")
 }
 

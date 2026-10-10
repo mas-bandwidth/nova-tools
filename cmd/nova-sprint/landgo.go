@@ -30,6 +30,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -477,9 +478,67 @@ func (l *lander) ringGate(ctx context.Context, hosts []string, dir string, runs 
 		}
 		if ran {
 			l.gateRing, l.gateSlot = len(hosts), ringSlot(l.gateKey, len(hosts))
+			if why != "" {
+				return l.secondOpinion(ctx, host, why, live, tried, dir, runs, tests, st)
+			}
 		}
 		return why, ran
 	}
+}
+
+// secondOpinion is a red bench gate asked of one more bench before it is believed (the seat,
+// 2026-10-07: every gate on every bench failed for 100 minutes, and the benches were blamed,
+// held and unheld): the same runs on the next live bench of the ring whose lane is granted.
+// Two findings alike (the benches' names and the runs' seconds set aside, sameFinding) are
+// the tree's, not a bench's: the finding stands, said, and no other bench is asked; the
+// caller then gates the base's tip before any head is blamed (baseRegate, landpass.go).
+// Two that differ, or a second bench green, are a bench's own trouble and nobody's finding:
+// the gate runs here instead (ran false), said. With no other bench, or none granting a
+// lane or taking the stage, the one finding stands as before.
+func (l *lander) secondOpinion(ctx context.Context, first, why string, live []string, tried map[string]bool, dir string, runs [][]string, tests bool, st *bench.MirrorStage) (string, bool) {
+	var others []string
+	for _, h := range live {
+		if !tried[h] {
+			others = append(others, h)
+		}
+	}
+	if len(others) == 0 {
+		return why, true
+	}
+	host, err := l.takeGateLane(ctx, others)
+	if err != nil {
+		return why, true
+	}
+	tried[host] = true
+	again, ran, refused := l.gateOn(ctx, host, dir, runs, tests, st)
+	switch {
+	case refused != nil || !ran:
+		return why, true
+	case again == "":
+		l.copySaid("gate red on " + first + " and green on " + host + ": the benches differ, so neither is believed and the gate runs here")
+		return "", false
+	case sameFinding(why, again):
+		l.copySaid("gate red on " + first + " and on " + host + " alike: the tree's finding, not a bench's")
+		return why, true
+	}
+	l.copySaid("gate red on " + first + " and on " + host + " differently: the benches differ, so neither is believed and the gate runs here")
+	return "", false
+}
+
+// benchWords and secondsWords are what two benches' findings of one tree differ in: the
+// bench's name in how the run ended (gateOn), and the seconds go test prints.
+var (
+	benchWords   = regexp.MustCompile(`on the bench \S+`)
+	secondsWords = regexp.MustCompile(`\b\d+(\.\d+)?s\b`)
+)
+
+// sameFinding says two bench gates' findings are one finding: alike once the bench's name
+// and the runs' seconds are set aside.
+func sameFinding(a, b string) bool {
+	norm := func(s string) string {
+		return secondsWords.ReplaceAllString(benchWords.ReplaceAllString(s, "on the bench"), "Ns")
+	}
+	return norm(a) == norm(b)
 }
 
 // gateOn runs the gate on host, whose Go lane the lander holds and gives back: the finding
