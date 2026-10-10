@@ -10,11 +10,11 @@ EXTENDS Naturals, Integers, FiniteSets, TLC
 CONSTANTS Cards, Cap, FriendLaneLive, MaxClock, Broken
 VARIABLES clock, column, ran, beatAge, beatRunning, seatAge, seatRunning,
           epoch, open, previous, countEpoch, suppressed, spans,
-          checked, liveWhenChecked, rose, quiet, epochRestartOK
+          noRise, noMiss, noStale, epochRestartOK
 
 vars == <<clock, column, ran, beatAge, beatRunning, seatAge, seatRunning,
           epoch, open, previous, countEpoch, suppressed, spans,
-          checked, liveWhenChecked, rose, quiet, epochRestartOK>>
+          noRise, noMiss, noStale, epochRestartOK>>
 Judgments == ({"late"} \X Cards) \cup {<<"stall", "friend">>, <<"idle", "row">>}
 \* Ages are an exact freshness quotient: -1 is a future timestamp, and Live+1
 \* represents every stale timestamp. A seat with age -2 has no stored timestamp;
@@ -42,7 +42,7 @@ Init ==
     /\ seatAge = FriendLaneLive + 1 /\ seatRunning = {}
     /\ epoch = 0 /\ countEpoch = 0
     /\ open = {} /\ previous = {} /\ suppressed = 0 /\ spans = 0
-    /\ checked = {} /\ liveWhenChecked = {} /\ rose = {} /\ quiet = {}
+    /\ noRise = TRUE /\ noMiss = TRUE /\ noStale = TRUE
     /\ epochRestartOK = TRUE
 
 \* Each successful tick is atomic, as the stored heartbeat's count and quiets are.
@@ -56,10 +56,11 @@ Tick(wanted) ==
            base == IF countEpoch = epoch THEN suppressed ELSE 0
            added == IF Broken = "CountEveryTick" THEN Cardinality(kept)
                     ELSE Cardinality(kept \ old)
-       IN /\ checked' = candidates
-          /\ liveWhenChecked' = {j \in candidates : ShouldKeep(j)}
-          /\ quiet' = kept
-          /\ rose' = candidates \ kept
+           expected == {j \in candidates : ShouldKeep(j)}
+           raised == candidates \ kept
+       IN /\ noRise' = (raised \cap expected = {})
+          /\ noMiss' = (candidates \ expected \subseteq raised)
+          /\ noStale' = (kept \subseteq expected)
           /\ open' = (open \cap wanted) \cup (candidates \ kept)
           /\ suppressed' = base + added
           /\ spans' = (IF countEpoch = epoch THEN spans ELSE 0) + Cardinality(kept \ old)
@@ -84,34 +85,34 @@ Beat(channel, age, running) ==
           ELSE /\ seatAge' = age /\ seatRunning' = running
                /\ UNCHANGED <<beatAge, beatRunning>>
     /\ UNCHANGED <<clock, column, ran, epoch, open, previous, countEpoch,
-                   suppressed, spans, checked, liveWhenChecked, rose, quiet, epochRestartOK>>
+                   suppressed, spans, noRise, noMiss, noStale, epochRestartOK>>
 BeatStops ==
     /\ clock < MaxClock
     /\ beatRunning' = {} /\ seatRunning' = {}
     /\ UNCHANGED <<clock, column, ran, beatAge, seatAge, epoch, open, previous,
-                   countEpoch, suppressed, spans, checked, liveWhenChecked, rose,
-                   quiet, epochRestartOK>>
+                   countEpoch, suppressed, spans, noRise, noMiss,
+                   noStale, epochRestartOK>>
 CardFinishes(c) ==
     /\ clock < MaxClock /\ Active(c)
     /\ column' = [column EXCEPT ![c] = "done"]
     /\ UNCHANGED <<clock, ran, beatAge, beatRunning, seatAge, seatRunning, epoch,
-                   open, previous, countEpoch, suppressed, spans, checked,
-                   liveWhenChecked, rose, quiet, epochRestartOK>>
+                   open, previous, countEpoch, suppressed, spans, noRise,
+                   noMiss, noStale, epochRestartOK>>
 \* The deal clock of a ready card becomes its first-take clock on take.
 Take(c) ==
     /\ clock < MaxClock /\ column[c] = "ready"
     /\ column' = [column EXCEPT ![c] = "working"]
     /\ ran' = [ran EXCEPT ![c] = 0]
     /\ UNCHANGED <<clock, beatAge, beatRunning, seatAge, seatRunning, epoch,
-                   open, previous, countEpoch, suppressed, spans, checked,
-                   liveWhenChecked, rose, quiet, epochRestartOK>>
+                   open, previous, countEpoch, suppressed, spans, noRise,
+                   noMiss, noStale, epochRestartOK>>
 Clear ==
     /\ clock < MaxClock /\ epoch = 0 /\ epoch' = 1
     /\ open' = {}
     \* Counted receives the old heartbeat: reset happens at the next tick.
     /\ UNCHANGED <<clock, column, ran, beatAge, beatRunning, seatAge, seatRunning,
-                   previous, countEpoch, suppressed, spans, checked,
-                   liveWhenChecked, rose, quiet, epochRestartOK>>
+                   previous, countEpoch, suppressed, spans, noRise,
+                   noMiss, noStale, epochRestartOK>>
 Next == (\E wanted \in SUBSET Judgments : Tick(wanted)) \/
         (\E channel \in {"beat", "seat"}, age \in Ages \cup {-2}, running \in SUBSET Cards :
             Beat(channel, age, running)) \/ BeatStops \/
@@ -124,13 +125,13 @@ TypeOK == /\ clock \in 0..MaxClock /\ column \in [Cards -> {"ready", "working", 
           /\ epoch \in 0..1 /\ countEpoch \in 0..1 /\ countEpoch <= epoch
           /\ open \subseteq Judgments /\ previous \subseteq Judgments
           /\ suppressed \in Nat /\ spans \in Nat
-          /\ checked \subseteq Judgments /\ liveWhenChecked \subseteq checked
-          /\ rose \subseteq checked /\ quiet \subseteq checked /\ epochRestartOK \in BOOLEAN
+          /\ noRise \in BOOLEAN /\ noMiss \in BOOLEAN /\ noStale \in BOOLEAN
+          /\ epochRestartOK \in BOOLEAN
 \* These concern the lane snapshot at the tick, not the later environment: neither
 \* a new beat nor finishing a card retroactively changes a tick or an open judgment.
-NoRiseOverLiveLane == rose \cap liveWhenChecked = {}
-NoMissedRise == checked \ liveWhenChecked \subseteq rose
+NoRiseOverLiveLane == noRise
+NoMissedRise == noMiss
 CountedOncePerSpan == suppressed = spans
-StaleBeatNeverRevives == quiet \subseteq liveWhenChecked
+StaleBeatNeverRevives == noStale
 CountRestartsAtEpoch == epochRestartOK
 =============================================================================
