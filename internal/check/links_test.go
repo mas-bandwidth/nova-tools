@@ -782,3 +782,89 @@ func TestExtractLinkTargetsIsLinearOnALineOfOpenBrackets(t *testing.T) {
 
 	assert.Empty(t, extractLinkTargets(strings.Repeat("[", 4_000_000)))
 }
+
+// TestLinksFragmentValidation checks that fragments (#anchor) are validated
+// against the target file's headings using GitHub's anchor rule.
+func TestLinksFragmentValidation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		files       map[string]string
+		wantChecked int
+		wantBroken  []string // substrings of target:reason
+	}{
+		{
+			name: "valid fragment passes",
+			files: map[string]string{
+				"a.md": "[section](b.md#introduction)",
+				"b.md": "# Introduction\nSome text\n",
+			},
+			wantChecked: 1,
+		},
+		{
+			name: "missing fragment fails",
+			files: map[string]string{
+				"a.md": "[bad](b.md#nope)",
+				"b.md": "# Introduction\nSome text\n",
+			},
+			wantChecked: 1,
+			wantBroken:  []string{"nope", "missing anchor"},
+		},
+		{
+			name: "fragment with spaces converts to dashes",
+			files: map[string]string{
+				"a.md": "[section](b.md#my heading)",
+				"b.md": "# My Heading\nSome text\n",
+			},
+			wantChecked: 1,
+		},
+		{
+			name: "fragment with punctuation drops punctuation",
+			files: map[string]string{
+				"a.md": "[section](b.md#hello-world)",
+				"b.md": "# Hello World!\nSome text\n",
+			},
+			wantChecked: 1,
+		},
+		{
+			name: "fragment case-insensitive",
+			files: map[string]string{
+				"a.md": "[section](b.md#INTRODUCTION)",
+				"b.md": "# Introduction\nSome text\n",
+			},
+			wantChecked: 1,
+		},
+		{
+			name: "fragment on markdown file checked",
+			files: map[string]string{
+				"a.md": "[section](b.md#section)",
+				"b.md": "# Section\nSome text\n",
+			},
+			wantChecked: 1,
+		},
+		{
+			name: "fragment on non-markdown file not checked",
+			files: map[string]string{
+				"a.md":  "[file](b.txt#section)",
+				"b.txt": "some content",
+			},
+			wantChecked: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeTree(t, dir, tt.files)
+			res, err := LinksExcluding(dir, nil)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantChecked, res.Checked, "checked = %d, want %d", res.Checked, tt.wantChecked)
+			var asFailures []Failure
+			for _, b := range res.Broken {
+				asFailures = append(asFailures, Failure{b.File + ":" + b.Target, b.Reason})
+			}
+			wantFailures(t, asFailures, tt.wantBroken)
+		})
+	}
+}
