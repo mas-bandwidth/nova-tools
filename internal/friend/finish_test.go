@@ -2,6 +2,7 @@ package friend
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -30,11 +31,13 @@ func TestHeadFromTheBranchBeatsHeadInTheReport(t *testing.T) {
 	assert.Equal(t, "report named "+reportSHA+", branch is "+tip, dec.Judgment)
 	card := Card{ID: "c1", Outbox: filepath.Join("outbox", "c1~15")}
 	argv := branchFinishArgv("zhi", card, in.Branch, dec, dec.Judgment)
-	joined := strings.Join(argv, " ")
-	assert.NotContains(t, joined, reportSHA)
 	assert.NotContains(t, argv, "--failed")
 	assert.Contains(t, argv, "--head")
 	assert.Contains(t, argv, tip)
+	if i := slices.Index(argv, "--head"); i >= 0 && i+1 < len(argv) {
+		assert.Equal(t, tip, argv[i+1], "the head sent is the branch tip, never the report's sha")
+		assert.NotEqual(t, reportSHA, argv[i+1])
+	}
 
 	named := in
 	named.Tip, named.Commits = "", nil
