@@ -116,14 +116,9 @@ func TestCiCmdrunCoverPrependPath(t *testing.T) {
 	// Do NOT use t.Parallel because we modify the process environment
 	tmpDir := t.TempDir()
 	oldPath := os.Getenv("PATH")
-	defer func() {
-		_ = os.Setenv("PATH", oldPath)
-	}()
-
+	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+oldPath)
 	r := osCmdRunner{}
 	r.PrependPath(tmpDir)
-
 	newPath := os.Getenv("PATH")
-	require.True(t, strings.HasPrefix(newPath, tmpDir))
-	require.Contains(t, newPath, string(os.PathListSeparator)+oldPath)
+	require.Equal(t, tmpDir+string(os.PathListSeparator)+oldPath, newPath)
 }
