@@ -62,11 +62,6 @@ func TestAdoptDryRunFailMessagesDefaultRegisteredAttributes(t *testing.T) {
 	require.NotEmpty(t, plays)
 	attr := regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)(?:\.[A-Za-z_][A-Za-z0-9_]*)+`)
 	for _, path := range plays {
-		if filepath.Base(path) == "seat-friend.yml" {
-			// fleet/seat-friend.yml:38 is outside PATHS. The card names fleet/tools.yml only among plays.
-			// Drop this edit. The fail_msg default is the other-play fix CHANGE 1 asks for, and the new lint walks every fleet/*.yml, so this file stays red until PATHS names it.
-			continue
-		}
 		b, err := os.ReadFile(path)
 		require.NoError(t, err)
 		var doc yaml.Node
