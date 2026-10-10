@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bench"
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 )
 
@@ -219,9 +220,12 @@ type Daemon struct {
 	// Release removes jobs/<job> once its report names a head origin holds (Stager.Release),
 	// at the lane's end, so the directory does not wait for the card to leave her row. Nil
 	// removes none. BenchRoot is the bench directory a recorded read's copy is removed
-	// under (reads/<id> beneath buds/<friend>); empty removes only the local checkout.
+	// under (reads/<id> beneath buds/<friend>); empty removes only the local checkout. Bench
+	// is the transport (ssh) that reaches a Linux bench a read named, which removes its bench
+	// copy there (reads/<id> under ~/nova-bench/buds/<friend>); nil removes no remote copy.
 	Release   func(ctx context.Context, job string) error
 	BenchRoot string
+	Bench     bench.Transport
 	// Tip is origin's tip of a branch of a repository (owner/name), "" when origin has no
 	// such branch (Stager.Tip: one git ls-remote): a report's LAND finishes only at that tip,
 	// as nova-sprint collect's does (outbox.go). Nil reads none, and a LAND finishes at its

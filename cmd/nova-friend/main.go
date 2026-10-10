@@ -33,6 +33,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bench"
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
@@ -1585,6 +1586,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		Prune:     stager.prune(),
 		Release:   stager.release(),
 		BenchRoot: benchRoot(w.home),
+		Bench:     bench.Exec{},
 		Tip:       w.tip,
 		Finish: func(ctx context.Context, argv []string) error {
 			if w.finish == nil {
@@ -1780,8 +1782,9 @@ func (d daemonStager) release() func(ctx context.Context, job string) error {
 }
 
 // benchRoot is the home directory's nova-bench when that directory is there. A recorded
-// read's bench copy is removed under it. It is empty when the directory is not there, and
-// a bench on another machine is not reached.
+// read's same-host bench copy is removed under it. It is empty when the directory is not
+// there; a bench on another machine is reached over the daemon's Bench transport (ssh),
+// which removes the read's copy there (friend releaseRead, read_lanes.go).
 func benchRoot(home string) string {
 	if home == "" {
 		return ""

@@ -1690,8 +1690,13 @@ removing it would drop commits that exist only there.
 A reader lane removes its checkout `reads/<id>/repo` after the verdict is recorded, and, when
 `Daemon.BenchRoot` is set (nova-friend sets it to `~/nova-bench` when that directory is there),
 the bench copy `BenchRoot/buds/<friend>/reads/<id>`. Both go through `safepath.RemoveUnder`.
-The read's own files stay. A bench on another machine is not removed. The prompt's bench rule
-tells the reader the lane removes that directory; it does not ask the reader to remove it.
+The read's own files stay. The read's RESULT.md names the Linux bench it copied to (its
+`bench:` line; the prompt asks for it), and the lane removes that bench's copy
+`~/nova-bench/buds/<friend>/reads/<id>` over `Daemon.Bench` (the one ssh, the same
+authenticated line the reader ran), whatever the finding. A bench the daemon cannot reach
+yet is not dropped: the owed removal is kept and tried again each step until it succeeds,
+so a finished read leaves no bench directory on any machine. The prompt's bench rule tells
+the reader the lane removes that directory; it does not ask the reader to remove it.
 
 The lander's scratch is not a job directory. The clone stays. It still cuts
 `land/base-check` in that clone with `git switch --no-track --force-create` from
