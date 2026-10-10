@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -244,7 +245,11 @@ func reenterTest(t *testing.T, name string) {
 	t.Helper()
 	self, err := os.Executable()
 	require.NoError(t, err)
-	cmd := exec.Command(self, "-test.run=^"+name+"$", "-test.count=1")
+	args := []string{"-test.run=^" + name + "$", "-test.count=1"}
+	if f := flag.Lookup("test.gocoverdir"); f != nil && f.Value.String() != "" {
+		args = append(args, "-test.gocoverdir="+f.Value.String())
+	}
+	cmd := exec.Command(self, args...)
 	cmd.Env = childEnv(childTestEnv + "=1")
 	cmd.WaitDelay = 2 * time.Second
 	out, err := cmd.CombinedOutput()

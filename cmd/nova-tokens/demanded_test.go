@@ -29,6 +29,26 @@ func TestEveryPathIsAFlagAndNoEnvironmentIsConsulted(t *testing.T) {
 		return
 	}
 	dir := t.TempDir()
+	home, hadHome := os.LookupEnv("HOME")
+	tmpdir, hadTmpdir := os.LookupEnv("TMPDIR")
+	xdg, hadXdg := os.LookupEnv("XDG_DATA_HOME")
+	t.Cleanup(func() {
+		if hadHome {
+			os.Setenv("HOME", home)
+		} else {
+			os.Unsetenv("HOME")
+		}
+		if hadTmpdir {
+			os.Setenv("TMPDIR", tmpdir)
+		} else {
+			os.Unsetenv("TMPDIR")
+		}
+		if hadXdg {
+			os.Setenv("XDG_DATA_HOME", xdg)
+		} else {
+			os.Unsetenv("XDG_DATA_HOME")
+		}
+	})
 	// A complete, valid set of sources sitting under every variable a tool might reach for.
 	bait := mkdir(t, filepath.Join(dir, "bait"))
 	write(t, filepath.Join(bait, "t", "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 5}, "/x/schema/a.go")+"\n")
