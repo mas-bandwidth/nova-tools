@@ -56,7 +56,7 @@ are one wait, read once. The operand is the
 - `DEPENDS-ON: <card id>` waits for that card to land. Today's `needs`.
 - `DEPENDS-ON: release` waits for the coordinator's release. Today's held.
 - `DEPENDS-ON: line` waits for every primary of its stream that sorts before it. Today's sentinel.
-- `DEPENDS-ON: external:<condition>` waits for an external condition. The proposed external wait.
+- `DEPENDS-ON: pr <repo>#<n> merged`, `DEPENDS-ON: <branch> contains <sha>` or `DEPENDS-ON: after <RFC3339>` waits for an external condition. Today's hand-polled hold (layer 3, external operands).
 
 | today | the one `wait` kind |
 |---|---|
@@ -64,7 +64,7 @@ are one wait, read once. The operand is the
 | sentinel (`add --sentinel`, `kind=sentinel`, `release`) | `wait`, operand `line` |
 | wave (`heldWave`, a wave behind a held sentinel) | `wait`, operand `release`, many cards at once |
 | `DEPENDS-ON` / `needs` | `wait`, operand `<card id>` |
-| external wait (proposed) | `wait`, operand `external:<condition>` |
+| external wait (a card held and released by hand when a PR merges) | `wait`, operand `pr <repo>#<n> merged`, `<branch> contains <sha>` or `after <RFC3339>` |
 
 A wave is not a fourth mechanism: it is many `wait` cards behind one sentinel
 operand, whose own `wait` operand is `release`. `sprint.WaitOf` is the one code
@@ -91,7 +91,7 @@ it adds:
 | 2 | sentinel (`add --sentinel`, `kind=sentinel`) | `wait`, operand `line` |
 | 3 | wave (`heldWave`) | `wait`, operand `release`, many cards |
 | 4 | `DEPENDS-ON` / `needs` | `wait`, operand `<card id>` |
-| 5 | external wait (proposed) | `wait`, operand `external:<condition>` |
+| 5 | external wait (a card held and released by hand when a PR merges) | `wait`, operand `pr <repo>#<n> merged`, `<branch> contains <sha>` or `after <RFC3339>` |
 
 | line | change |
 |---|---|
@@ -111,6 +111,8 @@ concepts after: 1
   no-stall rule's hold.
 - `internal/sprint/steps_sentinel.go`: `IsSentinel`, `WaitsFor`, `Reachable`,
   `Release`, the sentinel's release, which is the same wait.
+- `internal/sprint/external.go` and `internal/sprint/tick_external.go`: the external
+  operands and the tick's one ask of each, released the first tick they hold.
 - `internal/hygiene/kinds.txt`: the one list of work kinds.
 - `internal/cardtree/tree.go`: the script step, which runs with no model.
 - `docs/SPEC-SPRINT.md` section 2 (the cards), section 5 (the fleet, for the wave) and section 16 (sentinel cards).
