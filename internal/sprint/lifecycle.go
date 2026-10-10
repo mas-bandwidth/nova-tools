@@ -248,3 +248,5 @@ func Rejudge(pre *Snapshot, verb string, changes []Change) []Refusal {
 	}
 	return Lawful(p).Refused
 }
+
+// See the TLA+ model in tla/CardLifecycle.tla for the state machine specification.
